@@ -19,6 +19,7 @@ import {
   generateShoppingHistoryWithAI,
   normalizeShoppingDraftResult,
   normalizeShoppingDraftResults,
+  partitionShoppingRecentItems,
 } from './xingye-shopping-ai';
 import {
   buildShoppingDraftPrompt,
@@ -325,5 +326,117 @@ describe('buildShoppingDraftPrompt', () => {
     const withoutItems = buildShoppingDraftPrompt(base);
     expect(withoutItems).toContain('【近期已记录的物品 · 不要重复】');
     expect(withoutItems).toContain('（无；TA 还没记过购物，放手写）');
+  });
+
+  it('renders the periodic-restock block + seller rules when provided, fallback when absent', () => {
+    const base = {
+      agent: { id: 'agent-s', name: 'Lin', yuan: 'y' as const },
+      profile: null,
+      userIntent: '',
+      recentSceneBlock: '',
+      stableLoreBlock: '',
+      keywordLoreBlock: '',
+      relationshipBlock: '',
+      heartbeatBlock: '',
+    };
+    const withPeriodic = buildShoppingDraftPrompt({
+      ...base,
+      periodicRestockBlock: '「牙膏」· 上次卖家：光阴杂货 · 上次评价：好评',
+    });
+    expect(withPeriodic).toContain('【周期性补货品 · 到补货周期，可以再次购买（但要按上次体验挑卖家）】');
+    expect(withPeriodic).toContain('「牙膏」· 上次卖家：光阴杂货 · 上次评价：好评');
+    // 卖家规则两条都在
+    expect(withPeriodic).toContain('换一家卖家');
+    expect(withPeriodic).toContain('通常还在原来那家买');
+
+    const withoutPeriodic = buildShoppingDraftPrompt(base);
+    expect(withoutPeriodic).toContain('【周期性补货品 · 到补货周期，可以再次购买（但要按上次体验挑卖家）】');
+    expect(withoutPeriodic).toContain('（无；TA 目前没有到补货周期的消耗品');
+  });
+});
+
+describe('partitionShoppingRecentItems', () => {
+  // 固定 now，用相对天数构造 occurredAt，避免 Date.now() 漂移让窗口判定不稳。
+  const NOW = Date.parse('2026-06-11T00:00:00.000Z');
+  const daysAgoIso = (n: number) => new Date(NOW - n * 86_400_000).toISOString();
+  type Row = Parameters<typeof partitionShoppingRecentItems>[0]['rows'][number];
+  const row = (
+    id: string,
+    itemName: string,
+    extra: { category?: string; tags?: string[]; seller?: string; status?: string; daysAgo?: number } = {},
+  ): Row => ({
+    id,
+    title: itemName,
+    createdAt: daysAgoIso(extra.daysAgo ?? 0),
+    metadata: {
+      itemName,
+      ...(extra.category ? { category: extra.category } : {}),
+      ...(extra.tags ? { tags: extra.tags } : {}),
+      ...(extra.seller ? { seller: extra.seller } : {}),
+      ...(extra.status ? { status: extra.status } : {}),
+      occurredAt: daysAgoIso(extra.daysAgo ?? 0),
+    },
+  });
+
+  it('puts durables and in-window consumables into avoid, beyond-window consumables into periodic', () => {
+    const out = partitionShoppingRecentItems({
+      nowMs: NOW,
+      rows: [
+        row('d1', '实木书架', { category: '家具', daysAgo: 3 }), // 耐用品 → avoid
+        row('c1', '抽纸', { category: '日用', daysAgo: 5 }), // 消耗品窗口内 → avoid
+        row('c2', '牙膏', { category: '日用', seller: '光阴杂货', daysAgo: 60 }), // 超窗口 → periodic
+      ],
+    });
+    expect(out.avoidNames).toContain('实木书架');
+    expect(out.avoidNames).toContain('抽纸');
+    expect(out.avoidNames).not.toContain('牙膏');
+    expect(out.periodicItems).toEqual([
+      { name: '牙膏', seller: '光阴杂货', reviewNote: '未评价' },
+    ]);
+  });
+
+  it('derives reviewNote from status (returned) and review sentiment map', () => {
+    const out = partitionShoppingRecentItems({
+      nowMs: NOW,
+      reviewSentimentByEntryId: new Map([
+        ['good1', 'good'],
+        ['bad1', 'bad'],
+      ]),
+      rows: [
+        row('good1', '猫粮', { category: '日用', seller: '街口宠物铺', daysAgo: 45 }),
+        row('bad1', '洗发水', { category: '日用', seller: '楼下超市', daysAgo: 50 }),
+        row('ret1', '咖啡豆', { category: '咖啡', seller: '巷尾烘焙', status: 'returned', daysAgo: 40 }),
+      ],
+    });
+    const byName = Object.fromEntries(out.periodicItems.map((it) => [it.name, it.reviewNote]));
+    expect(byName['猫粮']).toBe('好评');
+    expect(byName['洗发水']).toBe('差评');
+    expect(byName['咖啡豆']).toBe('已退货'); // 退货优先于评价
+  });
+
+  it('folds variants by core type and keeps the most recent purchase as representative', () => {
+    const out = partitionShoppingRecentItems({
+      nowMs: NOW,
+      rows: [
+        row('old', '黑色牙膏', { category: '日用', seller: '老店', daysAgo: 90 }),
+        row('new', '白色牙膏', { category: '日用', seller: '新店', daysAgo: 40 }),
+      ],
+    });
+    // 同核心品类「牙膏」只出现一次，且取最近一次（新店）。
+    expect(out.periodicItems).toHaveLength(1);
+    expect(out.periodicItems[0]).toMatchObject({ seller: '新店' });
+  });
+
+  it('excludes collection items from both buckets', () => {
+    const out = partitionShoppingRecentItems({
+      nowMs: NOW,
+      collectionKeywords: ['手办'],
+      rows: [
+        row('h1', '限量手办', { category: '玩具', daysAgo: 80 }),
+        row('h2', '新款手办', { category: '玩具', daysAgo: 2 }),
+      ],
+    });
+    expect(out.avoidNames).toHaveLength(0);
+    expect(out.periodicItems).toHaveLength(0);
   });
 });

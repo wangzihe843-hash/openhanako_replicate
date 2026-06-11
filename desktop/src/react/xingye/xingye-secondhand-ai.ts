@@ -204,7 +204,7 @@ const SECONDHAND_RECENT_ITEMS_LIMIT = 200;
 /**
  * 读取已有二手 entries 的近期 itemName，去重后作为「别重复」反锚点喂回 prompt。
  *
- * 仿记账 `buildRecentTitlesBlock` / 购物 `buildShoppingRecentItemsBlock`：跨次调用看不见上次
+ * 仿记账 `buildRecentTitlesBlock` / 购物 `buildShoppingRecentItemsBlocks`：跨次调用看不见上次
  * 生成了什么，模型会把 TA 已经挂过 / 卖过的同一件闲置再挂一遍。把近期 itemName 列给模型让它避开。
  *
  * 与入库前 `dedupeItemDrafts`（二手 exemptConsumables=false）口径对齐：
@@ -223,7 +223,7 @@ async function buildSecondhandRecentItemsBlock(
     const names: string[] = [];
     const seenCore = new Set<string>();
     // listAppEntries 返回 jsonl 追加序（最旧在前）；反转成最新在前，确保截断到 LIMIT 时留下的是
-    // **最近**挂出/卖过的品类（与购物 buildShoppingRecentItemsBlock 镜像）。
+    // **最近**挂出/卖过的品类（与购物 buildShoppingRecentItemsBlocks 镜像）。
     for (const row of [...rows].reverse()) {
       const meta = (row.metadata ?? {}) as Record<string, unknown>;
       const raw =

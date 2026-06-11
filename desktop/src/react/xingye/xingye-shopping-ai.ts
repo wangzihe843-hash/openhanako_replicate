@@ -17,6 +17,7 @@ import {
 } from './xingye-lore-runtime-context';
 import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
 import { listAppEntries } from './xingye-app-entry-store';
+import { listAppReviews, reviewSentimentFromStars } from './xingye-app-review-store';
 import {
   collectionKeywordSourceText,
   extractCollectionKeywords,
@@ -186,63 +187,180 @@ async function buildShoppingCurrencyAnchorBlock(agentId: string): Promise<string
   }
 }
 
-/** 近期已记录物品的取样上限：扁平去重列表，最近优先（按核心品类去重后最多喂这么多个不同品类）。 */
+/** 「不要重复」名单取样上限：扁平去重列表，最近优先（按核心品类去重后最多喂这么多个不同品类）。 */
 const SHOPPING_RECENT_ITEMS_LIMIT = 200;
-/** 消耗品「别重复」窗口：超过这个天数的消耗品不再喂给模型（允许 TA 隔段时间再买）。 */
+/** 「周期补货」名单取样上限：到补货周期的消耗品最多喂这么多个（带卖家 + 评价，单条更贵，收紧些）。 */
+const SHOPPING_PERIODIC_ITEMS_LIMIT = 40;
+/**
+ * 消耗品周期去重窗口。同一核心品类**最近一次**购买距今：
+ *  - 在窗口内（默认 30 天）→ 仍按「不要重复」suppress（刚补过货、别又买，保留周期去重防模型反复买）；
+ *  - 超过窗口             → 进入「周期补货」块（到点了、可再次购买，且按上次评价挑卖家）。
+ * 与入库前 `dedupeItemDrafts` 的同名 30 天窗口对齐，避免「prompt 劝再买 ↔ 兜底却丢弃」打架。
+ */
 const SHOPPING_CONSUMABLE_WINDOW_DAYS = 30;
 
+/** 「周期补货」块里「上次评价」的中文标签。 */
+const PERIODIC_REVIEW_NOTE_LABEL: Record<'good' | 'neutral' | 'bad', string> = {
+  good: '好评',
+  neutral: '中评',
+  bad: '差评',
+};
+
+export type ShoppingPeriodicRestockItem = {
+  /** 展示用商品名（已截断）。 */
+  name: string;
+  /** 上次卖家口吻；空字符串表示没记。 */
+  seller: string;
+  /** 上次评价归纳：好评 / 中评 / 差评 / 已退货 / 未评价。 */
+  reviewNote: string;
+};
+
+export type ShoppingRecentPartition = {
+  /** 「不要重复」名单：耐用品 + 仍在补货窗口内的消耗品。扁平 itemName。 */
+  avoidNames: string[];
+  /** 「周期补货」名单：到补货周期（超窗口）的消耗品，带上次卖家 + 上次评价。 */
+  periodicItems: ShoppingPeriodicRestockItem[];
+};
+
+type ShoppingRecentRow = {
+  id: string;
+  title: string;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+};
+
 /**
- * 读取已有购物 entries 的近期 itemName，去重后作为「别重复」反锚点喂回 prompt。
+ * 纯函数：把近期购物 entries 分成「不要重复」与「周期补货」两桶（按核心品类去重，最近优先）。
  *
- * 仿记账 `buildRecentTitlesBlock`：模型反复点「批量历史」/ 单条新增时跨次看不见上次生成了什么，
- * 会把 TA 已记过的同一件物品再生成一遍。把近期 itemName 列给模型让它从源头避开。
+ *  - 收藏品（命中 collectionKeywords）：两桶都不进——TA 会继续攒不同款，既不算重复也不算补货。
+ *  - 消耗品（isRepurchasableConsumable）：看**最近一次**购买距今多久——
+ *      · 窗口内（默认 30 天）→ 落「不要重复」（刚补过货、暂时别再买，保留周期去重防模型反复买）；
+ *      · 超窗口            → 落「周期补货」（到点了、可再次购买；带上次卖家 + 上次评价供挑卖家）。
+ *  - 其余耐用品：落「不要重复」（同核心品类只记一次）。
  *
- * 与入库前的 `dedupeItemDrafts` 口径对齐（避免 prompt 劝阻 ↔ 兜底放行打架）：
- *  - **收藏品**（命中 collectionKeywords）不喂——TA 就是会继续攒不同款，别劝它别买。
- *  - **消耗品**（日用 / 食饮 / 药品）只喂窗口期（默认 30 天）内的——超期的允许重新购买，不再提示避免。
- *  - 其余按**核心品类**去重展示（黑 / 白台灯只列一次），最近优先。
- *
- * 失败（agentId 非法 / 读盘错）→ 返回 ''，generation 主流程不受影响。
+ * reviewNote 取最近一次购买那条 entry 的评价：status='returned' → 已退货；命中评价档位 → 好/中/差评；否则未评价。
+ * 纯函数、无 I/O，便于单测分桶 + 卖家 / 评价拼装。
  */
-async function buildShoppingRecentItemsBlock(
+export function partitionShoppingRecentItems(params: {
+  rows: ReadonlyArray<ShoppingRecentRow>;
+  /** entryId → 该条 agent(买家) 侧评价档位（仅"作出过评价"的 entry 在表里）。 */
+  reviewSentimentByEntryId?: ReadonlyMap<string, 'good' | 'neutral' | 'bad'>;
+  collectionKeywords?: readonly string[];
+  nowMs: number;
+  windowDays?: number;
+  avoidLimit?: number;
+  periodicLimit?: number;
+}): ShoppingRecentPartition {
+  const { rows, reviewSentimentByEntryId, collectionKeywords = [], nowMs } = params;
+  const windowMs = Math.max(0, params.windowDays ?? SHOPPING_CONSUMABLE_WINDOW_DAYS) * 86_400_000;
+  const avoidLimit = params.avoidLimit ?? SHOPPING_RECENT_ITEMS_LIMIT;
+  const periodicLimit = params.periodicLimit ?? SHOPPING_PERIODIC_ITEMS_LIMIT;
+
+  const avoidNames: string[] = [];
+  const periodicItems: ShoppingPeriodicRestockItem[] = [];
+  const seenCore = new Set<string>();
+
+  // listAppEntries 返回 jsonl 追加序（最旧在前）；反转成最新在前——截断到 LIMIT 时留下最近的品类，
+  // 且每个核心品类首次遇到的就是**最近一次**购买（决定补货窗口判定 + 上次卖家 / 评价的取值）。
+  for (const row of [...rows].reverse()) {
+    if (avoidNames.length >= avoidLimit && periodicItems.length >= periodicLimit) break;
+    const meta = (row.metadata ?? {}) as Record<string, unknown>;
+    const raw =
+      typeof meta.itemName === 'string' && meta.itemName.trim()
+        ? meta.itemName.trim()
+        : row.title.trim();
+    if (!raw) continue;
+    if (itemMatchesCollection(raw, collectionKeywords)) continue; // 收藏品两桶都不进
+    const core = extractItemCoreType(raw);
+    if (!core || seenCore.has(core)) continue; // 按核心品类去重，保留最近一次
+    seenCore.add(core);
+
+    const displayName = raw.length > 24 ? `${raw.slice(0, 23)}…` : raw;
+    const tags = Array.isArray(meta.tags) ? (meta.tags as string[]) : undefined;
+    const category = typeof meta.category === 'string' ? meta.category : undefined;
+
+    if (isRepurchasableConsumable(category, tags)) {
+      const occurred = typeof meta.occurredAt === 'string' ? meta.occurredAt : row.createdAt;
+      const t = Date.parse(occurred);
+      const beyondWindow = Number.isFinite(t) && nowMs - t > windowMs;
+      if (beyondWindow) {
+        if (periodicItems.length < periodicLimit) {
+          const status = typeof meta.status === 'string' ? meta.status : '';
+          const seller = typeof meta.seller === 'string' ? meta.seller.trim() : '';
+          let reviewNote: string;
+          if (status === 'returned') {
+            reviewNote = '已退货';
+          } else {
+            const sentiment = reviewSentimentByEntryId?.get(row.id);
+            reviewNote = sentiment ? PERIODIC_REVIEW_NOTE_LABEL[sentiment] : '未评价';
+          }
+          periodicItems.push({ name: displayName, seller, reviewNote });
+        }
+        continue;
+      }
+      // 窗口内消耗品 → 落「不要重复」（刚补过货、暂时别买）
+    }
+    if (avoidNames.length < avoidLimit) avoidNames.push(displayName);
+  }
+
+  return { avoidNames, periodicItems };
+}
+
+export type ShoppingRecentItemsBlocks = {
+  /** 「不要重复」块（耐用品 + 窗口内消耗品）；空 → ''。 */
+  avoidBlock: string;
+  /** 「周期补货」块（超窗口消耗品，带上次卖家 + 上次评价）；空 → ''。 */
+  periodicBlock: string;
+};
+
+/**
+ * 读取已有购物 entries（+ 已生成的评价），分桶后渲染成 prompt 两块反/正锚点。
+ *
+ * 仿记账 `buildRecentTitlesBlock`：模型反复点「批量历史」/ 单条新增时跨次看不见上次生成了什么。
+ *  - 「不要重复」块：让它从源头避开已记过的耐用品 / 刚补过货的消耗品。
+ *  - 「周期补货」块：把到补货周期的消耗品 + 上次卖家 + 上次评价喂回去，让它像真人一样
+ *    （差评 / 退货换家、好评 / 没评价沿用原店）决定再买的卖家。
+ *
+ * 评价懒生成、很多 entry 没有 → 缺失按「未评价」处理（= 不换卖家那一档）。
+ * 失败（agentId 非法 / 读盘错）→ 返回两个空块，generation 主流程不受影响。
+ */
+async function buildShoppingRecentItemsBlocks(
   agentId: string,
   options?: { collectionKeywords?: readonly string[] },
-): Promise<string> {
+): Promise<ShoppingRecentItemsBlocks> {
   try {
     const rows = await listAppEntries(agentId, 'shopping');
-    if (!rows.length) return '';
-    const collectionKeywords = options?.collectionKeywords ?? [];
-    const windowMs = SHOPPING_CONSUMABLE_WINDOW_DAYS * 86_400_000;
-    const nowMs = Date.now();
-    const names: string[] = [];
-    const seenCore = new Set<string>();
-    // listAppEntries 返回 jsonl 追加序（最旧在前）；反转成最新在前，确保截断到 LIMIT 时留下的是
-    // **最近**记录的品类（重度用户最该被避开重复的就是刚记过的），而非最古老的那批。
-    for (const row of [...rows].reverse()) {
-      const meta = (row.metadata ?? {}) as Record<string, unknown>;
-      const raw =
-        typeof meta.itemName === 'string' && meta.itemName.trim()
-          ? meta.itemName.trim()
-          : row.title.trim();
-      if (!raw) continue;
-      if (itemMatchesCollection(raw, collectionKeywords)) continue; // 收藏品不劝阻
-      const tags = Array.isArray(meta.tags) ? (meta.tags as string[]) : undefined;
-      const category = typeof meta.category === 'string' ? meta.category : undefined;
-      if (isRepurchasableConsumable(category, tags)) {
-        const occurred = typeof meta.occurredAt === 'string' ? meta.occurredAt : row.createdAt;
-        const t = Date.parse(occurred);
-        if (Number.isFinite(t) && nowMs - t > windowMs) continue; // 超窗口的消耗品不喂
+    if (!rows.length) return { avoidBlock: '', periodicBlock: '' };
+
+    const reviewSentimentByEntryId = new Map<string, 'good' | 'neutral' | 'bad'>();
+    try {
+      const reviews = await listAppReviews(agentId, 'shopping');
+      for (const rec of reviews) {
+        const agentSide = rec.sides?.find((s) => s.by === 'agent');
+        if (agentSide?.reviewed) {
+          reviewSentimentByEntryId.set(rec.entryId, reviewSentimentFromStars(agentSide.stars));
+        }
       }
-      const core = extractItemCoreType(raw);
-      if (!core || seenCore.has(core)) continue; // 按核心品类去重展示
-      seenCore.add(core);
-      names.push(raw.length > 24 ? `${raw.slice(0, 23)}…` : raw);
-      if (names.length >= SHOPPING_RECENT_ITEMS_LIMIT) break;
+    } catch {
+      // 评价读失败 → 全部按「未评价」，不阻塞主流程
     }
-    if (!names.length) return '';
-    return names.map((n) => `「${n}」`).join('、');
+
+    const { avoidNames, periodicItems } = partitionShoppingRecentItems({
+      rows,
+      reviewSentimentByEntryId,
+      collectionKeywords: options?.collectionKeywords ?? [],
+      nowMs: Date.now(),
+    });
+
+    const avoidBlock = avoidNames.length ? avoidNames.map((n) => `「${n}」`).join('、') : '';
+    const periodicBlock = periodicItems.length
+      ? periodicItems
+          .map((it) => `「${it.name}」· 上次卖家：${it.seller || '没记'} · 上次评价：${it.reviewNote}`)
+          .join('\n')
+      : '';
+    return { avoidBlock, periodicBlock };
   } catch {
-    return '';
+    return { avoidBlock: '', periodicBlock: '' };
   }
 }
 
@@ -389,7 +507,8 @@ export async function generateShoppingDraftWithAI(params: {
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
   const currencyAnchorBlock = await buildShoppingCurrencyAnchorBlock(agent.id);
   const collectionKeywords = extractCollectionKeywords(collectionKeywordSourceText(ownerProfile ?? null));
-  const recentItemsBlock = await buildShoppingRecentItemsBlock(agent.id, { collectionKeywords });
+  const { avoidBlock: recentItemsBlock, periodicBlock: periodicRestockBlock } =
+    await buildShoppingRecentItemsBlocks(agent.id, { collectionKeywords });
 
   let recentContext;
   try {
@@ -457,6 +576,7 @@ export async function generateShoppingDraftWithAI(params: {
     heartbeatBlock,
     currencyAnchorBlock,
     recentItemsBlock,
+    periodicRestockBlock,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
@@ -520,7 +640,8 @@ export async function generateShoppingHistoryWithAI(params: {
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
   const currencyAnchorBlock = await buildShoppingCurrencyAnchorBlock(agent.id);
   const collectionKeywords = extractCollectionKeywords(collectionKeywordSourceText(ownerProfile ?? null));
-  const recentItemsBlock = await buildShoppingRecentItemsBlock(agent.id, { collectionKeywords });
+  const { avoidBlock: recentItemsBlock, periodicBlock: periodicRestockBlock } =
+    await buildShoppingRecentItemsBlocks(agent.id, { collectionKeywords });
 
   let recentContext;
   try {
@@ -587,6 +708,7 @@ export async function generateShoppingHistoryWithAI(params: {
     heartbeatBlock,
     currencyAnchorBlock,
     recentItemsBlock,
+    periodicRestockBlock,
     historyMode,
     desiredCount,
   });

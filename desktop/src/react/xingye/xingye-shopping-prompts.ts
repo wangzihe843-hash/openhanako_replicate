@@ -53,12 +53,19 @@ export function buildShoppingDraftPrompt(args: {
   currencyAnchorBlock?: string;
   /**
    * 已有购物 entries 的近期 itemName 列表（去重、最近优先），作为「别重复」反锚点。
-   * 由 xingye-shopping-ai.ts 的 buildShoppingRecentItemsBlock 计算后传入。
+   * 由 xingye-shopping-ai.ts 的 buildShoppingRecentItemsBlocks 计算后传入。
    * 仿记账 buildRecentTitlesBlock：防止反复点「批量历史」/ 单条新增时，模型又生成
    * TA 已经记过的同一件物品（购物没有"餐次/通勤"槽位，所以是扁平 itemName 列表而非按天分组）。
    * 缺省（首次生成 / 读取失败）→ 空字符串，prompt 渲染「（无；TA 还没记过购物）」。
    */
   recentItemsBlock?: string;
+  /**
+   * 「周期补货」反/正锚点：到补货周期（超 30 天窗口）的消耗品列表，每行带「上次卖家 + 上次评价」。
+   * 由 xingye-shopping-ai.ts 的 buildShoppingRecentItemsBlocks 计算后传入。
+   * 与 recentItemsBlock（不要重复）相反——这些**鼓励再次购买**，但要按上次评价挑卖家
+   * （差评 / 退货换家、好评 / 未评价沿用原店）。缺省 → 空字符串，prompt 渲染「（无）」。
+   */
+  periodicRestockBlock?: string;
   /**
    * 「批量历史生成」模式。无 → 单条 draft（原行为）；有 → 多条 + 强制 occurredAtHint。
    *  - kind='initial'：首次打开 app 的 bootstrap；主要靠 lore，弱依赖最近聊天。
@@ -86,6 +93,7 @@ export function buildShoppingDraftPrompt(args: {
     heartbeatBlock,
     currencyAnchorBlock,
     recentItemsBlock,
+    periodicRestockBlock,
     historyMode,
     desiredCount,
   } = args;
@@ -320,6 +328,18 @@ export function buildShoppingDraftPrompt(args: {
     recentItemsBlock && recentItemsBlock.trim()
       ? recentItemsBlock.trim()
       : '（无；TA 还没记过购物，放手写）',
+    '',
+    '──────────────────',
+    '【周期性补货品 · 到补货周期，可以再次购买（但要按上次体验挑卖家）】',
+    '──────────────────',
+    '下面是 TA 平时会反复补货的消耗品（日用 / 食饮 / 药品 等），上次买到现在已经过了一阵、又到该补货的点。',
+    '**这些可以再次生成购买，不算重复**（和上面「不要重复」名单正相反）。但要像真人一样按上次体验挑卖家：',
+    '- 上次【差评】或【已退货】→ 这次**换一家卖家**（踩过坑了，别再在原来那家买）。',
+    '- 上次【好评】或【未评价】→ 这次**通常还在原来那家买**（用着顺手就回购，别没事频繁换店），沿用上次卖家口吻。',
+    '（每行格式：「商品名」· 上次卖家：X · 上次评价：好评 / 中评 / 差评 / 已退货 / 未评价）',
+    periodicRestockBlock && periodicRestockBlock.trim()
+      ? periodicRestockBlock.trim()
+      : '（无；TA 目前没有到补货周期的消耗品，照常按上面规则生成新东西就行）',
     '',
     '──────────────────',
     '',
