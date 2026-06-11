@@ -94,6 +94,36 @@ describe('buildDivinationContinuityAnchorBlock', () => {
     expect(block).toMatch(/最近抽过这几次/);
   });
 
+  it('有历史 → block 同时给出「可轻度回扣」口子与「严禁照搬」边界', async () => {
+    vi.mocked(loadDivinationEntries).mockResolvedValueOnce([
+      makeEntry({
+        id: 'e1',
+        createdAt: '2026-05-20T10:00:00.000Z',
+        method: 'tarot',
+        methodLabel: '塔罗',
+        symbols: ['倒吊人正位'],
+        agentQuestion: '我是否该再等一等？',
+      }),
+    ]);
+    const block = await buildDivinationContinuityAnchorBlock('ag-d', { method: 'tarot' });
+    // 回扣口子：允许「上次……这次……」作对照
+    expect(block).toMatch(/可轻度回扣/);
+    expect(block).toMatch(/上次……是因为……，这次……/);
+    // 非强制
+    expect(block).toMatch(/非必须/);
+    // 不照搬边界：点名旧符号 OK，但这次仍要换牌、不得照搬整句/整组符号
+    expect(block).toMatch(/这次仍要换牌\/换卦/);
+    expect(block).toMatch(/严禁照搬/);
+    expect(block).toMatch(/字面雷同/);
+  });
+
+  it('无历史 → 不出现「可轻度回扣」提示（空字符串里没有回扣文案）', async () => {
+    vi.mocked(loadDivinationEntries).mockResolvedValueOnce([]);
+    const block = await buildDivinationContinuityAnchorBlock('ag-d', { method: 'tarot' });
+    expect(block).toBe('');
+    expect(block).not.toMatch(/可轻度回扣/);
+  });
+
   it('method 过滤：method=tarot 时只 anchor 塔罗历史，易经条目被排除', async () => {
     vi.mocked(loadDivinationEntries).mockResolvedValueOnce([
       makeEntry({

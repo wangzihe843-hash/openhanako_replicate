@@ -160,6 +160,15 @@ describe('buildDivinationReadingPrompt', () => {
     expect(prompt).toMatch(/第一次占卜/);
   });
 
+  it('近期占卜记录段头部同时框定「避免重复」与「可轻度回扣但不得照搬」双重语义', () => {
+    const prompt = buildDivinationReadingPrompt({
+      agent, agentLike, methodId: 'tarot', methodLabel: '塔罗', symbols: ['◇'],
+    });
+    // 段头不再是纯"避免重复"框架，而是显式给出回扣口子 + 不得照搬边界
+    expect(prompt).toMatch(/【近期占卜记录[^】]*轻度回扣[^】]*】/);
+    expect(prompt).toMatch(/【近期占卜记录[^】]*不得照搬[^】]*】/);
+  });
+
   it('continuityAnchorBlock 给定 → 原样嵌入近期占卜记录段', () => {
     const anchor = [
       '- 最近抽过这几次（请明确避免再抽到同一张牌/同一卦象/同一类解读切入角度）：',

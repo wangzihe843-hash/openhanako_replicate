@@ -204,8 +204,9 @@ export function buildDivinationReadingPrompt(args: {
     '',
     // 占卜防重复 anchor：同 method 历史抽样。塔罗 78 张 / 易经 64 卦的符号池
     // 有限，抽多了必然重复，所以这里只在 prompt 端 soft anchor，不在落盘
-    // 端硬拒绝。详见 buildDivinationContinuityAnchorBlock。
-    '【近期占卜记录（请明确避免重复；含同占法的最近抽签）】',
+    // 端硬拒绝。anchor 同时给出「可轻度回扣」的口子（点名旧牌/卦作对照，但不得照搬）
+    // 与「严禁照搬」的边界——详见 buildDivinationContinuityAnchorBlock。
+    '【近期占卜记录（避免重复为主；如自然，可在正文里轻度回扣最近一两次，但不得照搬旧条目的标题/牌面/卦象/正文任何片段——详见段内说明）】',
     (continuityAnchorBlock ?? '').trim() || '（无；这是 TA 的第一次占卜）',
     '',
     '【占法推荐解释（内部参考，不要复述）】',
