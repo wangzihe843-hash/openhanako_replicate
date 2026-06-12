@@ -6,6 +6,10 @@
  *  - western_fantasy:    西幻 / 中世纪 / 文艺复兴 / 蒸汽朋克 → 早期欧洲小报翻译体
  *  - modern_or_future:   现代 / 近未来 / 赛博朋克 / 废土 / 太空 → 现代八卦狗仔体
  *
+ * 门控（requireAny）：通用材质词（齿轮/黄铜）单独出现时不计分，必须有蒸汽朋克/奇幻锚点
+ * 同现才算数——避免一句童年信物「黄铜纽扣」就把边境军医这类「无世界信号」角色误判成
+ * western_fantasy（欧洲奇幻译体）。与 gift / divination resolver 的 requireAny 同款。
+ *
  * 默认回退：modern_or_future（最通用、最不容易出戏的 fallback）。
  * 用于让 prompt 选择对应的写作守则、信源词汇库、masthead 命名风格。
  *
@@ -56,7 +60,20 @@ type EraClue = {
   termsZh?: readonly string[];
   /** 英文关键词（小写匹配）；语料里命中也算。 */
   termsEn?: readonly string[];
+  /**
+   * 门控（与 xingye-gift-era-resolver / xingye-divination-method-resolver 同款）：
+   * 仅当语料里已出现任一 `requireAny` 锚点时本线索才计分。用于「通用材质词」——
+   * 齿轮/黄铜这类词单独出现（如一句童年信物「黄铜纽扣」）不该把角色拉进西方奇幻，
+   * 必须有真正的蒸汽朋克/奇幻锚点同现才算数。
+   */
+  requireAny?: readonly string[];
 };
+
+/** 蒸汽朋克锚点：通用材质词（齿轮/黄铜）需任一同现才计分。 */
+const STEAMPUNK_ANCHORS_NEWS: readonly string[] = [
+  '蒸汽朋克', '蒸汽机', '飞艇', '差分机', '发条装置', '维多利亚', '工业革命前',
+  'steampunk', 'airship', 'clockwork',
+];
 
 /**
  * Era 关键词表。覆盖范围按以下原则取：
@@ -88,8 +105,9 @@ const ERA_CLUES: readonly EraClue[] = [
   // 中权重欧式中世纪元素
   { era: 'western_fantasy', weight: 14, termsZh: ['酒馆', '吟游诗人', '商队', '佣兵', '雇佣兵', '黑森林', '魔法学院', '修道士', '神殿', '神职', '主教', '红衣主教', '修士'] },
   { era: 'western_fantasy', weight: 14, termsZh: ['长剑', '战锤', '十字弓', '长弓', '盾牌', '盔甲', '皮甲', '锁子甲', '魔杖'] },
-  // 蒸汽朋克
-  { era: 'western_fantasy', weight: 14, termsZh: ['蒸汽机', '齿轮', '飞艇', '黄铜', '工业革命前', '维多利亚'] },
+  // 蒸汽朋克：距离性强词（蒸汽机/飞艇/维多利亚…）裸计；通用材质词（齿轮/黄铜）需锚点同现。
+  { era: 'western_fantasy', weight: 14, termsZh: ['蒸汽机', '飞艇', '工业革命前', '维多利亚'] },
+  { era: 'western_fantasy', weight: 14, termsZh: ['齿轮', '黄铜'], requireAny: STEAMPUNK_ANCHORS_NEWS },
   // 低权重氛围词
   { era: 'western_fantasy', weight: 8, termsZh: ['艾尔', '伊瑞', '塞尔', '艾莉', '加尔', '欧文', '安德烈'] },
   // 英文关键词
@@ -189,6 +207,10 @@ export function resolveNewsEra(agentLike: NewsEraAgentLike | null | undefined): 
   const matchedTerms: string[] = [];
 
   for (const clue of ERA_CLUES) {
+    // 门控：缺锚点的通用材质词不计分（镜像 gift / divination resolver 的 requireAny）。
+    if (clue.requireAny && !clue.requireAny.some((t) => t && (corpus.includes(t) || corpusLo.includes(t)))) {
+      continue;
+    }
     let hit = '';
     if (clue.termsZh) {
       for (const t of clue.termsZh) {

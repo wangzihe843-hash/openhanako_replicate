@@ -6,8 +6,15 @@
  * 确定性判定是刻意的：归属集决定「最爱礼物」从哪一套里选，必须跨次稳定，
  * 不能像 LLM 匹配那样漂移。
  *
- * Tie-break 原则：**虚构特有集优先于真实历史集**——仙侠角色的语料必然同时命中
- * 大量"朝代/古风"词，撞车时选更特异的那个（与 news resolver 的"非现代优先"同款逻辑）。
+ * 门控（requireAny）：通用材质/物资词（黄铜、齿轮、配给、净水…）单独出现时**不计分**，
+ * 必须有真正定义世界观的强锚点（蒸汽朋克/飞艇、废土/核战…）同现才算数。这与
+ * xingye-divination-method-resolver 的 requireAny 同款，避免一句童年信物「黄铜纽扣」或
+ * 一句「药物配给」就把边境军医这类「无世界信号」角色误拉进蒸汽朋克/废土。没有信号的
+ * 角色因此稳定落到兜底 modern，与购物/二手（LLM + currencyAnchor → 当代）保持一致。
+ *
+ * Tie-break 原则：**只有「虚构集 ⊃ 它包含的真实历史集」撞车才翻盘**——仙侠角色的语料
+ * 必然同时命中大量"朝代/古风"词，撞车时选更特异的那个（见 GIFT_ERA_ANCHOR_OF）。
+ * 不相干家族（如废土 vs 蒸汽朋克）之间一律取原始高分者，绝不让低分集凭全局优先级翻盘。
  *
  * 默认回退：modern（最通用、最不容易出戏）。
  */
@@ -44,7 +51,26 @@ type GiftEraClue = {
   weight: number;
   termsZh?: readonly string[];
   termsEn?: readonly string[];
+  /**
+   * 门控（镜像 xingye-divination-method-resolver 的同名机制）：只有当语料里已出现
+   * 任一 `requireAny` 锚点时，本线索才计分。用于「通用材质/物资词」——它们单独出现
+   * 时（如一句童年信物「黄铜纽扣」、一句「药物配给」）不该把角色拉进蒸汽朋克/废土，
+   * 必须有真正定义世界观的强词同现才算数。
+   */
+  requireAny?: readonly string[];
 };
+
+/** steampunk 的世界观锚点：通用材质词（齿轮/黄铜/蒸汽…）需任一同现才计分。 */
+const STEAMPUNK_ANCHORS: readonly string[] = [
+  '蒸汽朋克', '差分机', '飞艇', '蒸汽机', '发条装置', '维多利亚',
+  'steampunk', 'airship', 'clockwork', 'victorian',
+];
+
+/** wasteland 的世界观锚点：通用物资词（配给/净水/聚落…）需任一同现才计分。 */
+const WASTELAND_ANCHORS: readonly string[] = [
+  '废土', '末日', '末世', '核战', '辐射', '避难所', '废墟世界',
+  'wasteland', 'apocalypse', 'post-apocalyptic', 'vault', 'raider',
+];
 
 /**
  * 关键词表。权重原则与 news resolver 一致：
@@ -94,7 +120,10 @@ const GIFT_ERA_CLUES: readonly GiftEraClue[] = [
 
   // ── steampunk（蒸汽朋克）──
   { set: 'steampunk', weight: 22, termsZh: ['蒸汽朋克', '差分机', '飞艇', '蒸汽机', '发条装置'] },
-  { set: 'steampunk', weight: 14, termsZh: ['齿轮', '黄铜', '维多利亚', '机械义肢', '蒸汽', '锅炉', '工业革命'] },
+  // 维多利亚：时代词，单独不足以定调（12 < 阈值），但算锚点，可解锁下方材质词。
+  { set: 'steampunk', weight: 12, termsZh: ['维多利亚'] },
+  // 通用材质词：必须有蒸汽朋克锚点同现才计分（否则一颗黄铜纽扣就能造出蒸汽世界）。
+  { set: 'steampunk', weight: 14, termsZh: ['齿轮', '黄铜', '机械义肢', '蒸汽', '锅炉', '工业革命'], requireAny: STEAMPUNK_ANCHORS },
   { set: 'steampunk', weight: 18, termsEn: ['steampunk', 'airship', 'clockwork', 'victorian'] },
 
   // ── modern（现代都市）──
@@ -111,7 +140,10 @@ const GIFT_ERA_CLUES: readonly GiftEraClue[] = [
 
   // ── wasteland（废土）──
   { set: 'wasteland', weight: 22, termsZh: ['废土', '末日', '末世', '核战', '辐射', '避难所', '废墟世界'] },
-  { set: 'wasteland', weight: 16, termsZh: ['瓶盖', '掠夺者', '聚落', '变异', '辐尘', '拾荒', '配给', '净水'] },
+  // 强废土特异词（瓶盖经济/掠夺者/辐尘）：单独出现已足够指示废土，不门控。
+  { set: 'wasteland', weight: 16, termsZh: ['瓶盖', '掠夺者', '辐尘'] },
+  // 通用物资/聚居词：必须有废土锚点同现才计分（「药物配给」「净水」在医疗/现代语境也常见）。
+  { set: 'wasteland', weight: 16, termsZh: ['聚落', '变异', '拾荒', '配给', '净水'], requireAny: WASTELAND_ANCHORS },
   { set: 'wasteland', weight: 18, termsEn: ['wasteland', 'apocalypse', 'post-apocalyptic', 'vault', 'raider'] },
 
   // ── space（太空/星际）──
@@ -120,7 +152,11 @@ const GIFT_ERA_CLUES: readonly GiftEraClue[] = [
   { set: 'space', weight: 18, termsEn: ['starship', 'galaxy', 'space station', 'interstellar', 'spacefaring'] },
 ];
 
-/** 撞车（分差 ≤ delta）时的优先级：特异虚构集 > 近代真实 > 古代真实 > 现代。 */
+/**
+ * 完全同分（unrelated 家族撞个正好相等）时的确定性兜底顺序：特异虚构集靠前。
+ * 注意：这张表**不再**用于「低分集压过高分集」——那只在虚构集与其真实锚点撞车时
+ * 才允许（见 GIFT_ERA_ANCHOR_OF）；不相干家族一律取原始高分者。
+ */
 const GIFT_ERA_TIE_PRIORITY: readonly XingyeGiftSetId[] = [
   'xianxia',
   'wuxia',
@@ -134,6 +170,31 @@ const GIFT_ERA_TIE_PRIORITY: readonly XingyeGiftSetId[] = [
   'cn_ancient',
   'modern',
 ];
+
+/**
+ * 「虚构集 → 其真实历史锚点」映射。仙侠/武侠的语料必然同时命中一堆古代词、西幻同时
+ * 命中中世纪词——这种「虚构集 ⊃ 它包含的真实历史集」撞车，才是 tie-break 该翻盘的场景
+ * （选更特异的虚构集）。废土 vs 蒸汽朋克这种不相干家族之间没有包含关系，不该互相翻盘。
+ */
+const GIFT_ERA_ANCHOR_OF: Partial<Record<XingyeGiftSetId, XingyeGiftSetId>> = {
+  xianxia: 'cn_ancient',
+  wuxia: 'cn_ancient',
+  west_fantasy: 'west_medieval',
+  steampunk: 'west_medieval',
+  cyberpunk: 'modern',
+  wasteland: 'modern',
+  space: 'modern',
+};
+
+/** 若 a/b 互为「虚构集 ⊃ 真实锚点」关系，返回其中的虚构集；否则 null。 */
+function fictionalOverAnchor(
+  a: XingyeGiftSetId,
+  b: XingyeGiftSetId,
+): XingyeGiftSetId | null {
+  if (GIFT_ERA_ANCHOR_OF[a] === b) return a;
+  if (GIFT_ERA_ANCHOR_OF[b] === a) return b;
+  return null;
+}
 
 const GIFT_ERA_CONFIDENCE_THRESHOLD = 14;
 const GIFT_ERA_CLOSE_SCORE_DELTA = 6;
@@ -212,6 +273,10 @@ export function resolveGiftEra(agentLike: GiftEraAgentLike | null | undefined): 
   const matchedTerms: string[] = [];
 
   for (const clue of GIFT_ERA_CLUES) {
+    // 门控：缺锚点的通用词不计分（镜像 divination resolver 的 requireAny）。
+    if (clue.requireAny && !clue.requireAny.some((t) => t && (corpus.includes(t) || corpusLo.includes(t)))) {
+      continue;
+    }
     let hit = '';
     if (clue.termsZh) {
       for (const t of clue.termsZh) {
@@ -251,18 +316,32 @@ export function resolveGiftEra(agentLike: GiftEraAgentLike | null | undefined): 
   }
 
   if (topScore - secondScore <= GIFT_ERA_CLOSE_SCORE_DELTA) {
-    const tied: XingyeGiftSetId[] = [topSet, secondSet];
-    for (const candidate of GIFT_ERA_TIE_PRIORITY) {
-      if (tied.includes(candidate)) {
-        return {
-          setId: candidate,
-          score: scores[candidate],
-          scores,
-          matchedTerms,
-          reason: `${topSet}@${topScore} vs ${secondSet}@${secondScore} 接近（差 ≤ ${GIFT_ERA_CLOSE_SCORE_DELTA}），按特异优先级选 ${candidate}。`,
-        };
+    // 翻盘只允许发生在「虚构集 ⊃ 真实锚点」撞车（仙侠必然也命中古代词那类）。
+    const fictional = fictionalOverAnchor(topSet, secondSet);
+    if (fictional && fictional !== topSet) {
+      return {
+        setId: fictional,
+        score: scores[fictional],
+        scores,
+        matchedTerms,
+        reason: `${topSet}@${topScore} vs ${secondSet}@${secondScore} 接近（差 ≤ ${GIFT_ERA_CLOSE_SCORE_DELTA}）且互为虚构/真实锚点，按特异优先选 ${fictional}。`,
+      };
+    }
+    // 完全同分的不相干家族：用固定优先级保证确定性（不会让低分压高分）。
+    if (topScore === secondScore && !fictional) {
+      for (const candidate of GIFT_ERA_TIE_PRIORITY) {
+        if (candidate === topSet || candidate === secondSet) {
+          return {
+            setId: candidate,
+            score: scores[candidate],
+            scores,
+            matchedTerms,
+            reason: `${topSet} 与 ${secondSet} 同为 ${topScore} 分且互不包含，按固定优先级选 ${candidate}。`,
+          };
+        }
       }
     }
+    // 其余「接近但不相干」：直接取原始高分者（落到下方 return topSet）。
   }
 
   return {
