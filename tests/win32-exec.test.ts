@@ -5,6 +5,7 @@ const classifyWin32Command = vi.fn();
 const prepareSandboxRuntime = vi.fn<(...args: any[]) => any>((runtimeInfo) => runtimeInfo);
 const existsSync = vi.fn<(...args: any[]) => boolean>(() => false);
 const mkdirSync = vi.fn();
+const statSync = vi.fn<(...args: any[]) => any>(() => ({ isDirectory: () => true }));
 const spawnSync = vi.fn<(...args: any[]) => { status: number; stdout: string; stderr: string }>(() => ({ status: 1, stdout: "", stderr: "" }));
 const systemCmdExe = "C:\\Windows\\System32\\cmd.exe";
 
@@ -23,6 +24,7 @@ vi.mock("../lib/sandbox/win32-runtime-cache.js", () => ({
 vi.mock("fs", () => ({
   existsSync,
   mkdirSync,
+  statSync,
 }));
 
 vi.mock("child_process", () => ({
@@ -41,6 +43,7 @@ describe("createWin32Exec", () => {
     prepareSandboxRuntime.mockImplementation((runtimeInfo) => runtimeInfo);
     existsSync.mockReturnValue(false);
     mkdirSync.mockImplementation(() => undefined);
+    statSync.mockImplementation(() => ({ isDirectory: () => true }));
     spawnSync.mockReturnValue({ status: 1, stdout: "", stderr: "" });
   });
 
@@ -67,6 +70,28 @@ describe("createWin32Exec", () => {
         }),
       })
     );
+  });
+
+  it("rejects before spawning when the working directory is missing", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "cmd", reason: "windows-system-executable" });
+    statSync.mockImplementation((p: any) => {
+      if (p === "C:\\gone") {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+      return { isDirectory: () => true };
+    });
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec();
+
+    await expect(
+      exec("ipconfig /all", "C:\\gone", {
+        onData: () => {},
+        signal: undefined,
+        timeout: 5,
+        env: { PATH: "C:\\Windows\\System32" },
+      }),
+    ).rejects.toMatchObject({ code: "HANA_EXEC_CWD_MISSING", cwd: "C:\\gone" });
+    expect(spawnAndStream).not.toHaveBeenCalled();
   });
 
   it("preserves explicit Python encoding settings while adding other UTF-8 defaults", async () => {
@@ -1623,5 +1648,51 @@ describe("createWin32Exec", () => {
     }
 
     expect(spawnAndStream).not.toHaveBeenCalled();
+  });
+});
+
+describe("isShellSpawnError", () => {
+  const shellPath = "C:\\Git\\bin\\bash.exe";
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    existsSync.mockReturnValue(false);
+    mkdirSync.mockImplementation(() => undefined);
+    statSync.mockImplementation(() => ({ isDirectory: () => true }));
+    spawnSync.mockReturnValue({ status: 1, stdout: "", stderr: "" });
+  });
+
+  async function loadTesting() {
+    const mod = await import("../lib/sandbox/win32-exec.ts");
+    return mod.__testing as any;
+  }
+
+  it("treats ENOENT pointing at the shell as a shell failure when cwd exists", async () => {
+    existsSync.mockImplementation((p: any) => p === "C:\\work");
+    const { isShellSpawnError } = await loadTesting();
+    const err = Object.assign(new Error("spawn bash.exe ENOENT"), { code: "ENOENT", path: shellPath });
+    expect(isShellSpawnError(err, shellPath, "C:\\work")).toBe(true);
+  });
+
+  it("does NOT treat ENOENT as a shell failure when the cwd is missing", async () => {
+    existsSync.mockReturnValue(false);
+    const { isShellSpawnError } = await loadTesting();
+    const err = Object.assign(new Error("spawn bash.exe ENOENT"), { code: "ENOENT", path: shellPath });
+    expect(isShellSpawnError(err, shellPath, "C:\\gone")).toBe(false);
+  });
+
+  it("rejects ENOENT whose err.path points elsewhere", async () => {
+    existsSync.mockReturnValue(true);
+    const { isShellSpawnError } = await loadTesting();
+    const err = Object.assign(new Error("spawn other.exe ENOENT"), { code: "ENOENT", path: "C:\\other.exe" });
+    expect(isShellSpawnError(err, shellPath, "C:\\work")).toBe(false);
+  });
+
+  it("treats EACCES as a shell failure regardless of cwd", async () => {
+    existsSync.mockReturnValue(false);
+    const { isShellSpawnError } = await loadTesting();
+    const err = Object.assign(new Error("spawn EACCES"), { code: "EACCES" });
+    expect(isShellSpawnError(err, shellPath, "C:\\gone")).toBe(true);
   });
 });

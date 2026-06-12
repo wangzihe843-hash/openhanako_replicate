@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { atomicWriteSync } from "../../shared/safe-fs.ts";
 import { randomBytes } from "crypto";
+import { assertExecutionCwd } from "../shell/execution-cwd.ts";
 
 const TERMINAL_ROOT = path.join(".ephemeral", "terminal-sessions");
 
@@ -93,7 +94,7 @@ declare root: any;
     env,
   }: any = {}) {
     const normalizedSessionPath = asNonEmptyString(sessionPath, "sessionPath");
-    const normalizedCwd = asNonEmptyString(cwd, "cwd");
+    const normalizedCwd = assertExecutionCwd(asNonEmptyString(cwd, "cwd"));
     const id = terminalId();
     const now = this._now();
     const entry = {

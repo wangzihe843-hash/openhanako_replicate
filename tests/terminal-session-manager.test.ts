@@ -96,6 +96,23 @@ describe("TerminalSessionManager", () => {
     })).toThrow(/belongs to another session/);
   });
 
+  it("rejects start with a missing cwd before touching the pty backend", async () => {
+    const manager = new TerminalSessionManager({
+      hanakoHome: tmpDir,
+      createBackend: () => backend,
+      now: () => 1770000000000,
+    });
+    const sessionPath = path.join(tmpDir, "agents", "hana", "sessions", "s1.jsonl");
+    const gone = path.join(tmpDir, "gone-workspace");
+
+    await expect(
+      manager.start({ sessionPath, agentId: "hana", cwd: gone }),
+    ).rejects.toMatchObject({ code: "HANA_EXEC_CWD_MISSING", cwd: gone });
+
+    expect(backend.spawn).not.toHaveBeenCalled();
+    expect(manager.list(sessionPath).terminals).toEqual([]);
+  });
+
   it("writes only to a running terminal owned by the same session", async () => {
     const manager = new TerminalSessionManager({
       hanakoHome: tmpDir,

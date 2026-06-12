@@ -9,6 +9,7 @@
  */
 
 import { spawn } from "child_process";
+import { existsSync } from "fs";
 
 const EXIT_STDIO_GRACE_MS = 100;
 
@@ -132,7 +133,7 @@ export function spawnAndStream(cmd, args, { cwd, env, onData, signal, timeout })
       if (settled) return;
       settled = true;
       cleanup();
-      reject(err);
+      reject(enrichSpawnError(err, cwd));
     };
 
     child.stdout?.once("end", onStdoutEnd);
@@ -159,4 +160,17 @@ function killTree(pid) {
   } catch {
     try { process.kill(pid, "SIGKILL"); } catch {}
   }
+}
+
+function enrichSpawnError(err, cwd) {
+  if (!err || err.code !== "ENOENT" || !cwd) return err;
+  try {
+    if (existsSync(cwd)) return err;
+  } catch {
+    return err;
+  }
+  err.cwdMissing = true;
+  err.message = `${err.message}. Likely cause: working directory does not exist: ${cwd}. ` +
+    "The executable path may be fine.";
+  return err;
 }

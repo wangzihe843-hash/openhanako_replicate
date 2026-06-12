@@ -41,6 +41,7 @@ import {
   resolveWin32PowerShellExecutable,
   splitShellLikeArgs as splitShellLikeArgsBase,
 } from "../shell/shell-utils.ts";
+import { assertExecutionCwd } from "../shell/execution-cwd.ts";
 
 const log = createModuleLogger("win32-exec");
 
@@ -428,19 +429,22 @@ function findAndCacheShell(startAfter: any, options: Record<string, any> = {}) {
 const SPAWN_ERROR_CODES = new Set(["ENOENT", "EACCES", "EPERM", "UNKNOWN"]);
 
 /**
- * 判断是否为 shell 启动失败的 spawn 级错误
- * 区分于：命令级错误（shell 启动了但命令返回非零）、abort/timeout、cwd 不存在等
+ * 判断是否为 shell 启动失败的 spawn 级错误。
  *
- * Node.js spawn 在 shell 可执行文件不存在时：err.code="ENOENT", err.path=shellPath
- * 在 cwd 不存在时也抛 ENOENT，但 err.path 不等于 shell 路径
- * 只有确认是 shell 本身的问题才触发降级重试
+ * Node 在 cwd 不存在时同样报 ENOENT，且 err.path 可能仍指向可执行文件。
+ * ENOENT 时先排除 cwd 失效，避免把一个目录问题误判成 shell/helper 问题。
  */
-function isShellSpawnError(err, shellPath) {
+function isShellSpawnError(err, shellPath, cwd) {
   if (!err || typeof err.code !== "string") return false;
   if (!SPAWN_ERROR_CODES.has(err.code)) return false;
-  // ENOENT 特殊处理：只有 err.path 指向 shell 可执行文件时才算 shell 问题
-  // cwd 不存在也会 ENOENT，但 err.path 会是 undefined 或其他值
-  if (err.code === "ENOENT" && err.path && err.path !== shellPath) return false;
+  if (err.code === "ENOENT") {
+    if (err.path && err.path !== shellPath) return false;
+    try {
+      if (cwd && !existsSync(cwd)) return false;
+    } catch {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -1148,6 +1152,7 @@ async function spawnViaSandboxHelper({ sandbox, executable, args, cwd, env, onDa
  */
 export function createWin32Exec({ sandbox = null } = {}) {
   return async (command, cwd, { onData, signal, timeout, env }) => {
+    cwd = assertExecutionCwd(cwd);
     const shellEnv = withWin32SandboxRuntimeEnv(env ?? getShellEnv(), sandbox);
     const route = classifyWin32Command(command);
 
@@ -1512,7 +1517,7 @@ export function createWin32Exec({ sandbox = null } = {}) {
     } catch (err) {
       // 只对 shell 启动失败降级（ENOENT 指向 shell 二进制、EACCES、EPERM）
       // abort / timeout / 命令本身报错 / cwd 不存在 → 原样抛出
-      if (!isShellSpawnError(err, shellInfo.shell)) throw err;
+      if (!isShellSpawnError(err, shellInfo.shell, cwd)) throw err;
 
       log.warn(`Shell exec failed (${shellInfo.label}): ${err.code} ${err.message}, trying fallback…`);
       _cachedShell = null;
@@ -1539,7 +1544,7 @@ export function createWin32Exec({ sandbox = null } = {}) {
         });
       } catch (retryErr) {
         // 降级也失败：抛出富化的错误信息
-        if (fallback && isShellSpawnError(retryErr, fallback.shell)) {
+        if (fallback && isShellSpawnError(retryErr, fallback.shell, cwd)) {
           throw enrichError(retryErr, shellInfo, err);
         }
         throw retryErr;
@@ -1551,4 +1556,5 @@ export function createWin32Exec({ sandbox = null } = {}) {
 export const __testing = {
   getBundledShellCandidates,
   getShellEnvForCandidate,
+  isShellSpawnError,
 };

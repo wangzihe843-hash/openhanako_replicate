@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
 
@@ -33,4 +35,23 @@ describe("spawnAndStream", () => {
     expect(chunks.join("")).toContain("parent-exit");
     expect(elapsedMs).toBeLessThan(900);
   }, 7000);
+
+  it("enriches spawn ENOENT with the missing cwd so the executable is not falsely blamed", async () => {
+    const missingCwd = path.join(os.tmpdir(), `hana-exec-helper-gone-${Date.now()}`);
+    let caught: any;
+    try {
+      await spawnAndStream(process.execPath, ["-e", "process.exit(0)"], {
+        cwd: missingCwd,
+        env: process.env,
+        onData: () => {},
+      } as any);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeTruthy();
+    expect(caught.code).toBe("ENOENT");
+    expect(caught.cwdMissing).toBe(true);
+    expect(caught.message).toContain(missingCwd);
+    expect(caught.message.toLowerCase()).toContain("working directory");
+  });
 });
