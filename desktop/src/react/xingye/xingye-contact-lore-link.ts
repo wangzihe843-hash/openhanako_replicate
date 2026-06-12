@@ -2,9 +2,14 @@ import { listLoreEntries, type XingyeLoreCategory, type XingyeLoreEntry } from '
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
   getConfirmedVirtualContacts,
+  getContactProfile,
   normalizeContactNameForDedupe,
   resolveContactDisplayName,
+  type XingyeContactTargetType,
 } from './xingye-phone-store';
+
+/** 与 xingye-phone-store 内部的 StorageLike 同形（那边没导出）；仅测试注入用。 */
+type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
 
 /**
  * 「通讯录候选池 + 关系设定库身份对齐」共享 hint。
@@ -16,7 +21,21 @@ import {
  *
  * 这两件事在 mail / moments 里各写过一份（且 mail 那份还缺 impression / remark 对齐）；
  * 这里收口成单一来源，让邮件与文件管理走同一套读取 + 渲染 + 去重文案。
+ *
+ * 联系人详情页（xingye-contact-profile-ai）上线后，这里同时承担「详情页 → 其他 app」
+ * 的反哺通道：已初始化详情的联系人会带上 profileDetail（签名 / IP属地 / 近期联系记录），
+ * 让邮件 / 短信 / 文件 / 朋友圈在生成时吃到更丰满的人设。详情未初始化 → 字段缺省，
+ * 各消费方表现与从前一致。
  */
+export type XingyeContactProfileDetailHint = {
+  /** 这个人自己写的个性签名（详情页字段，非主人视角）。 */
+  signature?: string;
+  /** IP属地 / 所在之地。 */
+  ipAddress?: string;
+  /** 最近联系记录摘要「channel｜whenLabel｜summary」，新→旧，最多几条。 */
+  recentLog?: string[];
+};
+
 export type XingyeContactLoreHint = {
   id: string;
   /** 展示名：走 resolveContactDisplayName（备注名 remark 优先 → 通讯录原名），与通讯录 UI 同源。 */
@@ -31,6 +50,8 @@ export type XingyeContactLoreHint = {
    * 非空 = 通讯录里的这个人也出现在设定库里 → prompt 据此告诉模型「这是同一个人，别另写一份」。
    */
   loreAliases?: string[];
+  /** 联系人详情页（若已初始化）的摘要；缺省 = 详情还没生成，消费方按从前的瘦 hint 处理。 */
+  profileDetail?: XingyeContactProfileDetailHint;
 };
 
 /**
@@ -48,6 +69,61 @@ const IDENTITY_MATCH_LORE_CATEGORIES: ReadonlySet<XingyeLoreCategory> = new Set<
 const MIN_MATCH_TOKEN_LENGTH = 2;
 const DEFAULT_CONTACT_HINT_LIMIT = 12;
 const MAX_LORE_ALIASES_PER_CONTACT = 3;
+/** 详情页反哺给其他 app 的「近期往来」条数上限——背景提示而非数据搬运，喂多了挤预算。 */
+const MAX_PROFILE_RECENT_LOG = 3;
+const MAX_PROFILE_LOG_SUMMARY_CHARS = 50;
+const MAX_PROFILE_SIGNATURE_CHARS = 60;
+
+/**
+ * 读取某个联系人的详情页摘要（签名 / IP属地 / 近期联系记录）。
+ * 仅当详情已经初始化（initializedAt 非空）才返回；骨架 profile（只有印象历史）视为无详情。
+ * 任何读取失败 → null，绝不抛错。
+ */
+export function buildContactProfileDetailHint(
+  ownerAgentId: string,
+  targetType: XingyeContactTargetType,
+  targetId: string,
+  storage?: StorageLike | null,
+): XingyeContactProfileDetailHint | null {
+  try {
+    const profile = storage === undefined
+      ? getContactProfile(ownerAgentId, targetType, targetId)
+      : getContactProfile(ownerAgentId, targetType, targetId, storage);
+    if (!profile?.initializedAt) return null;
+    const hint: XingyeContactProfileDetailHint = {};
+    const signature = profile.signature?.trim();
+    if (signature) hint.signature = Array.from(signature).slice(0, MAX_PROFILE_SIGNATURE_CHARS).join('');
+    const ipAddress = profile.ipAddress?.trim();
+    if (ipAddress) hint.ipAddress = ipAddress;
+    const recentLog = profile.contactLog
+      .slice(0, MAX_PROFILE_RECENT_LOG)
+      .map((e) => {
+        const summary = Array.from(e.summary.trim()).slice(0, MAX_PROFILE_LOG_SUMMARY_CHARS).join('');
+        return `${e.channel}｜${e.whenLabel || '近来'}｜${summary}`;
+      })
+      .filter((line) => Boolean(line.trim()));
+    if (recentLog.length) hint.recentLog = recentLog;
+    if (!hint.signature && !hint.ipAddress && !hint.recentLog) return null;
+    return hint;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 详情摘要 → 联系人列表里的附加行（邮件 / 文件 / 朋友圈共用）。
+ * 「勿照搬」提示直接焊在行内：联系记录是已发生的往来，是人设背景，不是供复读的内容模板。
+ */
+function formatProfileDetailLine(detail: XingyeContactProfileDetailHint): string | null {
+  const parts: string[] = [];
+  if (detail.signature) parts.push(`个性签名「${detail.signature}」`);
+  if (detail.ipAddress) parts.push(`IP属地：${detail.ipAddress}`);
+  if (detail.recentLog?.length) {
+    parts.push(`近期往来（新→旧，背景参考，勿原样照搬成新内容）：${detail.recentLog.join('／')}`);
+  }
+  if (!parts.length) return null;
+  return `  ↳ 详情页：${parts.join('；')}`;
+}
 
 function dedupeNonEmpty(values: Iterable<string>): string[] {
   const seen = new Set<string>();
@@ -160,6 +236,8 @@ export function buildContactLoreHints(
       const aliases = matchContactNamesToLore([displayName, c.displayName, c.remark], loreEntries);
       if (aliases.length) hint.loreAliases = aliases;
     }
+    const profileDetail = buildContactProfileDetailHint(id, 'virtual_contact', c.id);
+    if (profileDetail) hint.profileDetail = profileDetail;
     return hint;
   });
 }
@@ -209,7 +287,108 @@ export function formatContactLoreListingBlock(
           .map((t) => `《${t}》`)
           .join('、')}，写到 TA 时按同一人处理，别另起炉灶。`;
       }
+      if (c.profileDetail) {
+        const detailLine = formatProfileDetailLine(c.profileDetail);
+        if (detailLine) line += `\n${detailLine}`;
+      }
       return line;
+    })
+    .join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// SMS 专用：按「已在生成名单里的联系人」逐条取详情 + 设定对齐
+// ---------------------------------------------------------------------------
+// 短信 prompt 的联系人走 contactShape JSON（含 agent 联系人），不经过上面的
+// buildContactLoreHints（那条只取 virtual_contact 候选池）。这里提供配套通道：
+// 对一批给定联系人（通常已剔除 user）逐条补「详情页摘要 + 与设定库的同一人对齐」，
+// 让短信生成既吃到详情人设，又不把通讯录联系人与关系 lore 里的 NPC 当成两个角色。
+
+export type XingyeContactDetailPromptHint = {
+  targetType: XingyeContactTargetType;
+  targetId: string;
+  displayName: string;
+  profileDetail?: XingyeContactProfileDetailHint;
+  loreAliases?: string[];
+};
+
+/**
+ * 给一批联系人构建详情/对齐 hint。
+ * - targetType=user 一律跳过：user 的详情不进任何生成上下文（user↔TA 的短信/邮件本就不允许生成）；
+ * - 既无详情也无 lore 对齐的联系人不出现在结果里（喂了也是空行）；
+ * - lore 只载入一次（relationship/character 两类，与候选池同源）；任何读取失败优雅降级。
+ */
+export function buildContactDetailPromptHints(
+  ownerAgentId: string,
+  contacts: ReadonlyArray<{
+    targetType: XingyeContactTargetType;
+    targetId: string;
+    displayName: string;
+    remark?: string;
+    originalName?: string;
+  }>,
+  options?: { storage?: StorageLike | null },
+): XingyeContactDetailPromptHint[] {
+  const id = (ownerAgentId ?? '').trim();
+  if (!id || !contacts.length) return [];
+
+  let loreEntries: XingyeLoreEntry[] = [];
+  try {
+    const storage = getXingyePersistenceStorage();
+    loreEntries = listLoreEntries(id, storage).filter(
+      (e) => e.enabled && IDENTITY_MATCH_LORE_CATEGORIES.has(e.category),
+    );
+  } catch {
+    loreEntries = [];
+  }
+
+  const out: XingyeContactDetailPromptHint[] = [];
+  for (const c of contacts) {
+    if (!c?.targetId || c.targetType === 'user') continue;
+    const hint: XingyeContactDetailPromptHint = {
+      targetType: c.targetType,
+      targetId: c.targetId,
+      displayName: c.displayName,
+    };
+    const profileDetail = buildContactProfileDetailHint(id, c.targetType, c.targetId, options?.storage);
+    if (profileDetail) hint.profileDetail = profileDetail;
+    if (loreEntries.length) {
+      try {
+        const aliases = matchContactNamesToLore([c.remark, c.displayName, c.originalName], loreEntries);
+        if (aliases.length) hint.loreAliases = aliases;
+      } catch {
+        /* 对齐失败按无对齐处理 */
+      }
+    }
+    if (!hint.profileDetail && !hint.loreAliases?.length) continue;
+    out.push(hint);
+  }
+  return out;
+}
+
+/**
+ * 渲染 SMS prompt 的「联系人详情页补充」块。每个联系人带 targetType:targetId 标头，
+ * 与 prompt 里联系人 JSON 的键对应；空列表返回「（无）」（调用方据此整段跳过）。
+ */
+export function formatContactDetailPromptBlock(
+  hints: ReadonlyArray<XingyeContactDetailPromptHint>,
+): string {
+  if (!hints.length) return '（无）';
+  return hints
+    .map((h) => {
+      const lines = [`- ${h.displayName}［${h.targetType}:${h.targetId}］`];
+      if (h.profileDetail) {
+        const detailLine = formatProfileDetailLine(h.profileDetail);
+        if (detailLine) lines.push(detailLine);
+      }
+      if (h.loreAliases?.length) {
+        lines.push(
+          `  ↳ 同一个人：此联系人即设定库里的 ${h.loreAliases
+            .map((t) => `《${t}》`)
+            .join('、')}——写 TA 时按同一个人处理，人设与事实不得与设定打架，不要拆成两个角色。`,
+        );
+      }
+      return lines.join('\n');
     })
     .join('\n');
 }

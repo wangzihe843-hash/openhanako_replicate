@@ -115,6 +115,32 @@ export function buildContactsEnrichmentPrompt(params: {
   return parts.join('\n');
 }
 
+/**
+ * 「联系人详情页补充」块的使用规则。块本体由 xingye-contact-lore-link 的
+ * formatContactDetailPromptBlock 渲染（含 targetType:targetId 标头），这里只负责
+ * 在 prompt 里解释怎么用：详情是人设背景不是内容模板；带「同一个人」标注的联系人
+ * 必须与设定库角色按同一人写——这是详情反哺后防止「通讯录的人」和「lore 的 NPC」
+ * 裂成两个角色的关键约束。
+ */
+const SMS_CONTACT_DETAIL_RULES = [
+  '【详情页使用规则】',
+  '- 个性签名 / IP属地 / 近期往来是该联系人的人设与近况：短信的话题、口吻、称呼可以呼应这些细节（如顺着某次往来的后续聊），让对话像有来历的真人。',
+  '- 「近期往来」是已经发生过的联系记录：只作背景，禁止把这些条目原样改写成新短信复读一遍。',
+  '- 标了「同一个人：…设定库《…》」的联系人，与设定库里那个角色是同一个人：性格、事实、关系须与设定一致，不得写成两个不同的人。',
+  '- 详情与通讯录画像（impression/tags/faction/status）冲突时，以通讯录画像为准。',
+].join('\n');
+
+/** 详情块整段注入（块 + 规则）；块为空 / 占位「（无）」时整段跳过，prompt 与从前完全一致。 */
+function renderContactDetailSection(contactDetailBlock: string | null | undefined): string[] {
+  const block = (contactDetailBlock ?? '').trim();
+  if (!block || block === '（无）') return [];
+  return [
+    '【联系人详情页补充（来自 TA 通讯录的详情页；按 targetType:targetId 与上方联系人对应）】',
+    block,
+    SMS_CONTACT_DETAIL_RULES,
+  ];
+}
+
 const SMS_CONTACT_PROFILE_RULES = [
   '【联系人画像驱动 — 必须遵守】下方 JSON 里每个联系人已带 impression / relationshipHint / tags / faction / status / shortBio / kind 等；短信内容必须从这些字段推导，不得无视或“各写一套”。',
   '- impression：决定主人对该联系人的主观语气（厌烦、信任、警惕、心软、客气疏离等），短信里双方的措辞要与之一致。',
@@ -147,8 +173,13 @@ export function buildSmsHistoryPrompt(params: {
    * 要求模型为每个联系人换不同话题/情绪。空串 → 这批联系人都没历史，第一次生成。
    */
   continuityAnchorBlock?: string;
+  /**
+   * 「联系人详情页补充」：formatContactDetailPromptBlock 渲染的详情/同一人对齐块。
+   * 空串或「（无）」→ 整段不注入（详情都还没初始化时 prompt 与从前一致）。
+   */
+  contactDetailBlock?: string;
 }) {
-  const { ownerAgent, ownerProfile, contacts, loreContextText, continuityAnchorBlock } = params;
+  const { ownerAgent, ownerProfile, contacts, loreContextText, continuityAnchorBlock, contactDetailBlock } = params;
   const loreSection = renderLoreContextSection(loreContextText);
   const parts: string[] = [
     '你是角色手机短信历史生成器。仅返回严格 JSON，不要 Markdown，不要解释。',
@@ -184,6 +215,7 @@ export function buildSmsHistoryPrompt(params: {
     speakerContextForPhonePrompt(params),
     '联系人列表:',
     JSON.stringify(contacts.slice(0, 12).map(contactShape), null, 2),
+    ...renderContactDetailSection(contactDetailBlock),
   ];
   if (loreSection) parts.push(loreSection);
   // 反重复锚点：放在 prompt 末尾，紧邻输出指令，让模型最后一次看到「这些话题/措辞已经用过」。
@@ -215,8 +247,10 @@ export function buildSmsIncrementalUpdatePrompt(params: {
    * 要求模型为每个联系人换不同话题/情绪。空串 → 这批联系人都没历史。
    */
   continuityAnchorBlock?: string;
+  /** 同 buildSmsHistoryPrompt：详情/同一人对齐块，空或「（无）」整段跳过。 */
+  contactDetailBlock?: string;
 }) {
-  const { ownerAgent, ownerProfile, changeBundles, recentContext, loreContextText, continuityAnchorBlock } = params;
+  const { ownerAgent, ownerProfile, changeBundles, recentContext, loreContextText, continuityAnchorBlock, contactDetailBlock } = params;
   const loreSection = renderLoreContextSection(loreContextText);
   const recentBlock = recentContext
     ? describeRecentContextForPrompt(recentContext)
@@ -271,6 +305,7 @@ export function buildSmsIncrementalUpdatePrompt(params: {
     speakerContextForPhonePrompt(params),
     '变化联系人（含变更字段与原因、现有短信摘要）:',
     JSON.stringify(bundlesJson, null, 2),
+    ...renderContactDetailSection(contactDetailBlock),
     recentBlock,
   ];
   if (loreSection) parts.push(loreSection);

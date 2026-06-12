@@ -64,6 +64,10 @@ import {
   type XingyeLoreRuntimeContextPurpose,
 } from './xingye-lore-runtime-context';
 import { listSmsDrafts } from './xingye-sms-drafts';
+import {
+  buildContactDetailPromptHints,
+  formatContactDetailPromptBlock,
+} from './xingye-contact-lore-link';
 
 export function buildLoreContextForPhone(params: {
   agentId: string;
@@ -853,7 +857,11 @@ export async function generateSmsHistoryWithAI(params: {
       ownerAgent.id,
       smsContacts.map((c) => ({ targetType: c.targetType, targetId: c.targetId, displayName: c.displayName })),
     );
-    const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: smsContacts, userName, loreContextText, continuityAnchorBlock });
+    // 联系人详情页反哺：已初始化详情的联系人带签名/IP/近期往来 + 与设定库的同一人对齐。
+    const contactDetailBlock = formatContactDetailPromptBlock(
+      buildContactDetailPromptHints(ownerAgent.id, smsContacts),
+    );
+    const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: smsContacts, userName, loreContextText, continuityAnchorBlock, contactDetailBlock });
     const { raw } = await requestPhoneAi({
       kind: 'sms_history',
       ownerAgentId: ownerAgent.id,
@@ -937,7 +945,31 @@ type SmsIncrementalBundle = {
   changeLogIds: string[];
   contact: XingyePhoneContactView;
   smsSummary: { latestContent?: string; messageCount: number };
+  /** 该联系人最后一条变更在未消费日志里的下标——越大越新，积压裁剪按它取最近的组。 */
+  lastChangeIndex: number;
 };
+
+/** 一轮增量 SMS 最多处理的联系人组数；超出的更老积压组直接标记消费丢弃。 */
+const MAX_SMS_INCREMENTAL_BUNDLES = 8;
+
+/**
+ * 积压保护（纯函数，可单测）：变更组超过 max 时只保留「最近变更」的 max 组，
+ * 其余视为过期积压——几个月前的变更现在才补短信反而突兀，直接消费掉不生成。
+ * kept 保持原有顺序（即变更日志顺序），不打乱 prompt 呈现。
+ */
+export function capSmsIncrementalBundles<T extends { lastChangeIndex: number }>(
+  bundles: T[],
+  max = MAX_SMS_INCREMENTAL_BUNDLES,
+): { kept: T[]; droppedStale: T[] } {
+  if (bundles.length <= max) return { kept: bundles, droppedStale: [] };
+  const keptSet = new Set(
+    [...bundles].sort((a, b) => b.lastChangeIndex - a.lastChangeIndex).slice(0, max),
+  );
+  return {
+    kept: bundles.filter((b) => keptSet.has(b)),
+    droppedStale: bundles.filter((b) => !keptSet.has(b)),
+  };
+}
 
 export async function generateSmsUpdatesForChangedContactsWithAI(params: {
   ownerAgent: Agent;
@@ -950,7 +982,13 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
   | { ok: true; skipped: true; reason: string }
   | { ok: true; appended: number; consumedLogIds: number }
 > {
-  const storage = params.storage ?? null;
+  /**
+   * 注意：这里**不能** `?? null`。store 层的语义是「显式 null = 没有存储 → 读空」，
+   * 默认参数（undefined）才会落到 getLocalStorage()。生产调用方都不传 storage，
+   * 之前 `params.storage ?? null` 把 undefined 折成 null，导致变更日志永远读空、
+   * 增量 SMS 静默空转（UI 显示成功但什么都没生成）。保持 undefined 透传即可。
+   */
+  const storage = params.storage;
   const { ownerAgent, ownerProfile, contacts } = params;
   const unconsumed = getUnconsumedContactChangesForSms(ownerAgent.id, storage);
   if (!unconsumed.length) {
@@ -964,9 +1002,10 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
     reasons: string[];
     actions: Set<XingyeContactChangeLogItem['action']>;
     fields: Set<string>;
+    lastChangeIndex: number;
   };
   const groupMap = new Map<string, Agg>();
-  for (const log of unconsumed) {
+  unconsumed.forEach((log, index) => {
     const key = `${log.targetType}:${log.targetId}`;
     let agg = groupMap.get(key);
     if (!agg) {
@@ -977,6 +1016,7 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
         reasons: [],
         actions: new Set(),
         fields: new Set(),
+        lastChangeIndex: index,
       };
       groupMap.set(key, agg);
     }
@@ -984,10 +1024,11 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
     if (log.reason.trim()) agg.reasons.push(log.reason.trim());
     agg.actions.add(log.action);
     for (const f of log.changedFields) agg.fields.add(f);
-  }
+    agg.lastChangeIndex = index;
+  });
 
   const invalidIds: string[] = [];
-  const bundles: SmsIncrementalBundle[] = [];
+  const allBundles: SmsIncrementalBundle[] = [];
   for (const agg of groupMap.values()) {
     const contact = contacts.find(c => c.targetType === agg.targetType && c.targetId === agg.targetId);
     if (!contact || contact.targetType === 'user') {
@@ -998,7 +1039,7 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
     const messages = thread?.messages ?? [];
     const msgCount = messages.length;
     const latest = messages.length ? messages[messages.length - 1]?.content : '';
-    bundles.push({
+    allBundles.push({
       targetType: contact.targetType,
       targetId: contact.targetId,
       action: pickPrimaryChangeAction([...agg.actions]),
@@ -1007,7 +1048,18 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
       changeLogIds: agg.changeIds,
       contact,
       smsSummary: { latestContent: latest, messageCount: msgCount },
+      lastChangeIndex: agg.lastChangeIndex,
     });
+  }
+
+  // 积压保护：storage 透传修复前积累的未消费变更可能一次涌入（日志上限 2000 条）。
+  // 只为最近变更的 MAX_SMS_INCREMENTAL_BUNDLES 组生成；更老的组标记消费直接丢弃。
+  const { kept: bundles, droppedStale } = capSmsIncrementalBundles(allBundles);
+  if (droppedStale.length) {
+    invalidIds.push(...droppedStale.flatMap(b => b.changeLogIds));
+    console.info(
+      `[xingye-phone-ai] incremental SMS: dropped ${droppedStale.length} stale change bundles (backlog cap ${MAX_SMS_INCREMENTAL_BUNDLES})`,
+    );
   }
 
   if (invalidIds.length) {
@@ -1035,6 +1087,10 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
     ownerAgent.id,
     bundles.map((b) => ({ targetType: b.targetType, targetId: b.targetId, displayName: b.contact.displayName })),
   );
+  // 联系人详情页反哺（与全量历史生成同源）：测试注入的 storage 同样透传给详情读取。
+  const contactDetailBlock = formatContactDetailPromptBlock(
+    buildContactDetailPromptHints(ownerAgent.id, bundles.map((b) => b.contact), { storage }),
+  );
   const prompt = buildSmsIncrementalUpdatePrompt({
     ownerAgent,
     ownerProfile,
@@ -1043,6 +1099,7 @@ export async function generateSmsUpdatesForChangedContactsWithAI(params: {
     userName,
     loreContextText,
     continuityAnchorBlock,
+    contactDetailBlock,
   });
   const { raw } = await requestPhoneAi({
     kind: 'sms_history',

@@ -421,7 +421,16 @@ export async function generateXingyeMomentDraftWithAI(params: {
   // 通讯录候选池（互动者池）：昵称（remark 优先，走 resolveContactDisplayName 与通讯录 UI 同源）
   // + 发帖人对 TA 的印象 + 与设定库的身份对齐（loreAliases）。与邮件 / 文件管理共用 buildContactLoreHints；
   // 内部读取失败已优雅降级为空数组。
-  const virtualContacts: XingyeMomentVirtualContactHint[] = buildContactLoreHints(agent.id);
+  // 详情页反哺只取个性签名（评论口吻锚点）；联系记录等私密细节不进公开的朋友圈场合。
+  const virtualContacts: XingyeMomentVirtualContactHint[] = buildContactLoreHints(agent.id).map((h) => ({
+    id: h.id,
+    displayName: h.displayName,
+    kind: h.kind,
+    relationshipHint: h.relationshipHint,
+    impression: h.impression,
+    loreAliases: h.loreAliases,
+    signature: h.profileDetail?.signature,
+  }));
 
   // peerAgents：roster 里除发帖 agent 外的其他角色。逐个补 `impressionOfAuthor`——
   // 即该 peer 在自己小手机通讯录里对「发帖人」的备注 / 印象。这是 agent↔agent 之间唯一

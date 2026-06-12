@@ -22,6 +22,12 @@ export type XingyeMomentVirtualContactHint = {
    * 让模型写 TA 时把通讯录与设定库当作同一个人，别各写一份。与邮件 / 文件管理同源。
    */
   loreAliases?: string[];
+  /**
+   * 这位联系人详情页里的个性签名（TA 自己写的，非发帖人视角）——评论口吻的额外锚点。
+   * 详情页未初始化时缺省。联系记录等更私密的详情**刻意不喂**：朋友圈是公开场合，
+   * 评论不该复述两人的私下往来。
+   */
+  signature?: string;
 };
 
 /**
@@ -110,6 +116,7 @@ export function buildMomentDraftPrompt(args: {
           relationshipHint: c.relationshipHint ?? undefined,
           impression: c.impression ?? undefined,
           loreAliases: c.loreAliases?.length ? c.loreAliases : undefined,
+          signature: c.signature ?? undefined,
         })),
         null,
         2,
@@ -230,6 +237,7 @@ export function buildMomentDraftPrompt(args: {
     '【可选互动者池 · 当前角色的虚拟联系人（vc:<id>，仅本人可见）】',
     '（kind 是 TA 与发帖人的关系类型，relationshipHint 是关系线索，impression 是**发帖人对 TA**的印象（发帖人视角，不是 TA 对发帖人的看法）——写 TA 的评论时三者一起定亲疏冷热。）',
     '（若某互动者带 loreAliases，表示 TA 也是设定库《…》里描述的同一个人——写到 TA 时按同一人处理，别和设定库内容打架或写成两个人。）',
+    '（若某互动者带 signature，那是 TA 自己的个性签名——可作为 TA 评论口吻/心境的参考，但不要在评论里复述或点评这句签名。）',
     virtualContactsBlock,
     '',
     '【可选互动者池 · 其他星野角色（agent:<id>，共同好友式可见）】',

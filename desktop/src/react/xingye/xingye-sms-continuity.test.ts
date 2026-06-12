@@ -11,12 +11,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getSmsThreadMock = vi.hoisted(() => vi.fn());
 const listSmsDraftsMock = vi.hoisted(() => vi.fn());
+const getUnconsumedMock = vi.hoisted(() => vi.fn((..._args: unknown[]) => [] as unknown[]));
 
 vi.mock('./xingye-phone-store', async () => {
   const actual: object = await vi.importActual('./xingye-phone-store');
   return {
     ...actual,
     getSmsThread: (...args: unknown[]) => getSmsThreadMock(...args),
+    getUnconsumedContactChangesForSms: (...args: unknown[]) => getUnconsumedMock(...args),
   };
 });
 
@@ -28,7 +30,12 @@ vi.mock('./xingye-sms-drafts', async () => {
   };
 });
 
-import { buildSmsContinuityAnchorBlock } from './xingye-phone-ai';
+import type { Agent } from '../types';
+import {
+  buildSmsContinuityAnchorBlock,
+  capSmsIncrementalBundles,
+  generateSmsUpdatesForChangedContactsWithAI,
+} from './xingye-phone-ai';
 
 const AGENT = 'hanako';
 
@@ -144,5 +151,50 @@ describe('buildSmsContinuityAnchorBlock', () => {
     const blockB = await buildSmsContinuityAnchorBlock(AGENT, { targetType: 'virtual_contact', targetId: '' });
     expect(blockA).toBe('');
     expect(blockB).toBe('');
+  });
+});
+
+describe('generateSmsUpdatesForChangedContactsWithAI — storage 透传回归', () => {
+  beforeEach(() => {
+    getUnconsumedMock.mockReset();
+    getUnconsumedMock.mockReturnValue([]);
+  });
+
+  it('调用方不传 storage 时向 store 透传 undefined（走默认 localStorage），不能折成 null（store 对显式 null 读空 → 增量 SMS 静默空转）', async () => {
+    const result = await generateSmsUpdatesForChangedContactsWithAI({
+      ownerAgent: { id: AGENT, name: 'Hanako', yuan: 'hanako', isPrimary: true } as Agent,
+      ownerProfile: null,
+      contacts: [],
+      agents: [],
+      profiles: {},
+    });
+    expect(result).toMatchObject({ ok: true, skipped: true, reason: 'no_unconsumed_changes' });
+    expect(getUnconsumedMock).toHaveBeenCalledTimes(1);
+    expect(getUnconsumedMock).toHaveBeenCalledWith(AGENT, undefined);
+  });
+});
+
+describe('capSmsIncrementalBundles — 增量 SMS 积压裁剪', () => {
+  const mk = (id: string, lastChangeIndex: number) => ({ id, lastChangeIndex });
+
+  it('不超上限 → 原样返回，无丢弃', () => {
+    const bundles = [mk('a', 0), mk('b', 1)];
+    const { kept, droppedStale } = capSmsIncrementalBundles(bundles, 3);
+    expect(kept).toEqual(bundles);
+    expect(droppedStale).toEqual([]);
+  });
+
+  it('超上限 → 按 lastChangeIndex 保留最近 N 组；kept 保持原顺序，更老的进 droppedStale', () => {
+    const bundles = [mk('a', 0), mk('b', 5), mk('c', 2), mk('d', 9), mk('e', 1)];
+    const { kept, droppedStale } = capSmsIncrementalBundles(bundles, 3);
+    expect(kept.map((b) => b.id)).toEqual(['b', 'c', 'd']);
+    expect(droppedStale.map((b) => b.id)).toEqual(['a', 'e']);
+  });
+
+  it('默认上限为 8', () => {
+    const bundles = Array.from({ length: 10 }, (_, i) => mk(`x${i}`, i));
+    const { kept, droppedStale } = capSmsIncrementalBundles(bundles);
+    expect(kept).toHaveLength(8);
+    expect(droppedStale.map((b) => b.id)).toEqual(['x0', 'x1']);
   });
 });

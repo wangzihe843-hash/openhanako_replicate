@@ -613,3 +613,91 @@ describe('SMS continuityAnchorBlock — prompt 透传', () => {
     expect(prompt).toMatch(/无；这批联系人都还没有 SMS 历史/);
   });
 });
+
+describe('SMS contactDetailBlock — 联系人详情页反哺', () => {
+  const detailBlock = [
+    '- 老王［virtual_contact:vc-active］',
+    '  ↳ 详情页：个性签名「岁月不饶人」；IP属地：城南；近期往来（新→旧，背景参考，勿原样照搬成新内容）：电话｜昨夜｜约了下棋',
+    '  ↳ 同一个人：此联系人即设定库里的 《老王的杂货铺》——写 TA 时按同一个人处理，人设与事实不得与设定打架，不要拆成两个角色。',
+  ].join('\n');
+
+  it('buildSmsHistoryPrompt：详情块与使用规则一起注入', () => {
+    const prompt = buildSmsHistoryPrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [activeView],
+      contactDetailBlock: detailBlock,
+    });
+    expect(prompt).toContain('联系人详情页补充');
+    expect(prompt).toContain('个性签名「岁月不饶人」');
+    expect(prompt).toContain('详情页使用规则');
+    expect(prompt).toContain('禁止把这些条目原样改写成新短信');
+    expect(prompt).toContain('不得写成两个不同的人');
+  });
+
+  it('buildSmsHistoryPrompt：缺省 / 占位「（无）」时整段不注入（与旧 prompt 一致）', () => {
+    const without = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: [activeView] });
+    expect(without).not.toContain('联系人详情页补充');
+    expect(without).not.toContain('详情页使用规则');
+    const placeholder = buildSmsHistoryPrompt({
+      ownerAgent,
+      ownerProfile,
+      contacts: [activeView],
+      contactDetailBlock: '（无）',
+    });
+    expect(placeholder).toBe(without);
+  });
+
+  it('buildSmsIncrementalUpdatePrompt：详情块同样注入', () => {
+    const changeContact = makeContact({
+      targetType: 'virtual_contact',
+      targetId: 'vc-active',
+      displayName: '老王',
+      status: 'active',
+    });
+    const prompt = buildSmsIncrementalUpdatePrompt({
+      ownerAgent,
+      ownerProfile,
+      changeBundles: [{
+        targetType: 'virtual_contact',
+        targetId: 'vc-active',
+        action: 'update',
+        changedFields: ['impression'],
+        mergedReasons: ['x'],
+        changeLogIds: ['cc-1'],
+        contact: changeContact,
+        smsSummary: { messageCount: 0 },
+      }],
+      recentContext: emptyRecent,
+      contactDetailBlock: detailBlock,
+    });
+    expect(prompt).toContain('联系人详情页补充');
+    expect(prompt).toContain('同一个人');
+    expect(prompt).toContain('详情页使用规则');
+  });
+
+  it('buildSmsIncrementalUpdatePrompt：缺省不注入', () => {
+    const changeContact = makeContact({
+      targetType: 'virtual_contact',
+      targetId: 'vc-active',
+      displayName: '老王',
+      status: 'active',
+    });
+    const prompt = buildSmsIncrementalUpdatePrompt({
+      ownerAgent,
+      ownerProfile,
+      changeBundles: [{
+        targetType: 'virtual_contact',
+        targetId: 'vc-active',
+        action: 'update',
+        changedFields: ['impression'],
+        mergedReasons: ['x'],
+        changeLogIds: ['cc-1'],
+        contact: changeContact,
+        smsSummary: { messageCount: 0 },
+      }],
+      recentContext: emptyRecent,
+    });
+    expect(prompt).not.toContain('联系人详情页补充');
+  });
+});
