@@ -88,6 +88,20 @@ describe("first run default workspace", () => {
     expect(fs.statSync(path.join(hanakoHome, "agents", "hanako", "sessions")).isDirectory()).toBe(true);
   });
 
+  it("ignores reserved scope directories (__shared__/__user__) during startup validation", async () => {
+    // __shared__ 是共享礼物库存的存储作用域，__user__ 是用户朋友圈帖的作用域，都不是 agent。
+    fs.mkdirSync(path.join(hanakoHome, "agents", "__shared__", "xingye", "gifts"), { recursive: true });
+    fs.mkdirSync(path.join(hanakoHome, "agents", "__user__", "xingye"), { recursive: true });
+    const { ensureFirstRun } = await import("../core/first-run.ts");
+
+    expect(() => ensureFirstRun(hanakoHome, productDir)).not.toThrow();
+
+    // 默认助手照常播种，保留作用域目录里不应被塞 pinned.md
+    expect(fs.existsSync(path.join(hanakoHome, "agents", "hanako", "config.yaml"))).toBe(true);
+    expect(fs.existsSync(path.join(hanakoHome, "agents", "__shared__", "pinned.md"))).toBe(false);
+    expect(fs.existsSync(path.join(hanakoHome, "agents", "__user__", "pinned.md"))).toBe(false);
+  });
+
   it("fails fast for non-default agent directories without config.yaml", async () => {
     fs.mkdirSync(path.join(hanakoHome, "agents", "custom-agent"), { recursive: true });
     const { ensureFirstRun } = await import("../core/first-run.ts");

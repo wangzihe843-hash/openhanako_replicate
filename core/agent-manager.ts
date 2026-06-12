@@ -22,6 +22,7 @@ import {
 } from "./llm-utils.ts";
 import { findModel, parseModelRef } from "../shared/model-ref.ts";
 import { DEFAULT_HEARTBEAT_INTERVAL_MINUTES } from "../shared/default-workspace.ts";
+import { isReservedAgentScopeId } from "../shared/reserved-agent-scopes.ts";
 import { relativePathInsideBase } from "./message-utils.ts";
 import { detachAgentFromBundles } from "../lib/skill-bundles/store.ts";
 import { assertKnownYuan, getAgentConfigRepairState } from "./yuan-registry.ts";
@@ -524,6 +525,9 @@ export class AgentManager {
 
     const agentId = id?.trim() || await this._generateAgentId(name);
     if (/[\/\\]|\.\./.test(agentId)) throw new Error(t("error.agentIdInvalid"));
+    // 双下划线包裹的 id 是保留存储作用域（__user__/__shared__），真实 agent 不得占用，
+    // 否则全新安装时会先于保留目录建盘、与共享数据混居。
+    if (isReservedAgentScopeId(agentId)) throw new Error(t("error.agentIdInvalid"));
     const agentDir = path.join(this._d.agentsDir, agentId);
 
     if (fs.existsSync(agentDir)) {

@@ -297,6 +297,22 @@ describe("character-card import service", () => {
     expect(second.agent.name).toBe("Ming");
   });
 
+  it("suffixes away reserved scope ids (__user__/__shared__) carried by imported cards", async () => {
+    // 保留存储作用域 id 视作已占用：导入照常成功，但绝不把真实 agent 建在 agents/__user__ 等保留目录上
+    writeJson(path.join(packageDir, "card.json"), {
+      kind: "CharacterCard",
+      agent: { name: "Mole", id: "__user__", yuan: "ming" },
+    });
+
+    const service = createCharacterCardService(engine);
+    const plan = await service.createImportPlanFromPath(packageDir);
+    const result = await service.commitImportPlan(plan.token, {});
+
+    expect(result.agent.id).toMatch(/^__user__-[a-f0-9]{6}$/);
+    expect(result.agent.name).toBe("Mole");
+    expect(fs.existsSync(path.join(agentsDir, "__user__"))).toBe(false);
+  });
+
   it("plans and commits through the route, then emits agent and skill events", async () => {
     writeSkill(packageDir, "skills/research", "research");
     writeJson(path.join(packageDir, "card.json"), {

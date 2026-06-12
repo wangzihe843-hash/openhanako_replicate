@@ -16,6 +16,7 @@ import { normalizePlainDescription } from "../text/internal-narration.ts";
 import { sanitizeSkillName } from "../tools/install-skill.ts";
 import { writeZipFromDirectory } from "../zip-writer.ts";
 import { safeCopyDir } from "../../shared/safe-fs.ts";
+import { isReservedAgentScopeId } from "../../shared/reserved-agent-scopes.ts";
 import { relativePathInsideBase } from "../../core/message-utils.ts";
 import { fromRoot } from "../../shared/hana-root.ts";
 import { loadSkillBundleStore, recordSkillBundle } from "../skill-bundles/store.ts";
@@ -565,7 +566,10 @@ export function createCharacterCardService(engine) {
 
   function resolveUniqueAgentId(rawId, token) {
     if (!rawId) return undefined;
-    if (!fs.existsSync(path.join(engine.agentsDir, rawId))) return rawId;
+    // 保留作用域 id（__user__/__shared__）视作已占用走加后缀分支：后缀打破双下划线包裹，
+    // 导入照常成功，且不会撞 createAgent 的保留 id 拒绝。
+    const taken = isReservedAgentScopeId(rawId) || fs.existsSync(path.join(engine.agentsDir, rawId));
+    if (!taken) return rawId;
     for (let attempt = 0; attempt < 20; attempt++) {
       const candidate = `${rawId}-${suffixFor(`${token}:${rawId}`, attempt)}`;
       if (!fs.existsSync(path.join(engine.agentsDir, candidate))) return candidate;

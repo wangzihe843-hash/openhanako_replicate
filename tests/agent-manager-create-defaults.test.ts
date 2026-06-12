@@ -284,6 +284,17 @@ describe("AgentManager.createAgent default skills.enabled", () => {
     expect(skillsMock.syncAgentSkills).toHaveBeenCalled();
   });
 
+  it("rejects reserved scope ids (__shared__/__user__) as explicit agent ids", async () => {
+    skillsMock._allSkills = [];
+
+    // 保留存储作用域 id 不得被真实 agent 占用（全新安装时保留目录可能还没建盘，existsSync 挡不住）
+    await expect(mgr.createAgent({ name: "Reserved", id: "__shared__", yuan: "hanako" })).rejects.toThrow();
+    await expect(mgr.createAgent({ name: "Reserved", id: "__user__", yuan: "hanako" })).rejects.toThrow();
+
+    expect(fs.existsSync(path.join(agentsDir, "__shared__"))).toBe(false);
+    expect(fs.existsSync(path.join(agentsDir, "__user__"))).toBe(false);
+  });
+
   it("includes each agent memory master state in the agent list", async () => {
     fs.mkdirSync(path.join(agentsDir, "memory-off"), { recursive: true });
     fs.writeFileSync(

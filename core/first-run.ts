@@ -17,6 +17,7 @@ import {
 } from "../shared/default-workspace.ts";
 import { createModuleLogger } from "../lib/debug-log.ts";
 import { USER_PROFILE_FILENAME } from "../lib/user-profile-store.ts";
+import { isReservedAgentScopeId } from "../shared/reserved-agent-scopes.ts";
 
 const log = createModuleLogger("first-run");
 
@@ -33,7 +34,7 @@ export function ensureFirstRun(hanakoHome, productDir) {
   // 2. 如果 agents/ 没有任何 agent → 播种默认 agent
   const agentsDir = path.join(hanakoHome, "agents");
   const agentEntries = fs.readdirSync(agentsDir, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'));
+    .filter(entry => entry.isDirectory() && !entry.name.startsWith('.') && !isReservedAgentScopeId(entry.name));
   for (const entry of agentEntries) {
     validateAgentDirectoryForStartup(agentsDir, entry.name);
   }
@@ -61,7 +62,7 @@ export function ensureFirstRun(hanakoHome, productDir) {
   touchIfMissing(path.join(hanakoHome, 'user', USER_PROFILE_FILENAME));
   const agents = fs.readdirSync(agentsDir, { withFileTypes: true });
   for (const entry of agents) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    if (!entry.isDirectory() || entry.name.startsWith('.') || isReservedAgentScopeId(entry.name)) continue;
     touchIfMissing(path.join(agentsDir, entry.name, 'pinned.md'));
   }
 
