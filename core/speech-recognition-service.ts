@@ -100,6 +100,83 @@ export class SpeechRecognitionService {
       });
   }
 
+  async transcribeAudio({
+    sessionPath,
+    fileId,
+    language,
+    providerId,
+    provider,
+    modelId,
+    model,
+  }: any = {}) {
+    if (!sessionPath || !fileId) throw new Error("sessionPath and fileId are required for audio transcription");
+
+    const file = this._sessionFiles.get(fileId, { sessionPath });
+    if (!file) throw new Error(`session file not found: ${fileId}`);
+
+    const providerRef = providerId || provider || null;
+    const modelRef = modelId || model || null;
+    const config = this.getConfig();
+    const defaultModel = config.defaultModel || null;
+    const targetProvider = providerRef || defaultModel?.provider || null;
+    const targetModel = modelRef || defaultModel?.id || null;
+    if (!targetProvider || !targetModel) {
+      throw new Error("speech recognition model is not configured");
+    }
+
+    const target = this._providers.resolveMediaModel({
+      providerId: targetProvider,
+      modelId: targetModel,
+      capability: CAPABILITY,
+    });
+    const adapter = this._registry.getProtocol(target.model.protocolId) || this._registry.get(target.providerId);
+    if (!adapter?.transcribe) throw new Error(`No speech recognition adapter registered for protocol "${target.model.protocolId}"`);
+
+    const pending = this._updateTranscription(sessionPath, fileId, {
+      status: "pending",
+      providerId: target.providerId,
+      modelId: target.model.id,
+      protocolId: target.model.protocolId,
+      ...(language ? { language } : {}),
+    });
+    this._emitTranscriptionUpdate(sessionPath, fileId, pending.transcription);
+
+    try {
+      const credentialProviderId = target.credentialLane?.providerId || target.providerId;
+      const credentials = this._providers.getCredentials(credentialProviderId) || {};
+      const result = await adapter.transcribe({
+        file,
+        provider: target.provider,
+        model: target.model,
+        credentials,
+        language,
+        fetch: this._fetch,
+      });
+      const ready = this._updateTranscription(sessionPath, fileId, {
+        status: "ready",
+        text: result.text || "",
+        providerId: target.providerId,
+        modelId: target.model.id,
+        protocolId: target.model.protocolId,
+        ...(result.language ? { language: result.language } : language ? { language } : {}),
+        ...(result.durationMs !== undefined ? { durationMs: result.durationMs } : {}),
+      });
+      this._emitTranscriptionUpdate(sessionPath, fileId, ready.transcription);
+      return ready.transcription;
+    } catch (err) {
+      const failed = this._updateTranscription(sessionPath, fileId, {
+        status: "failed",
+        providerId: target.providerId,
+        modelId: target.model.id,
+        protocolId: target.model.protocolId,
+        ...(language ? { language } : {}),
+        error: err?.message || String(err),
+      });
+      this._emitTranscriptionUpdate(sessionPath, fileId, failed.transcription);
+      return failed.transcription;
+    }
+  }
+
   async transcribeVoiceAttachment({ sessionPath, fileId, language }: any = {}) {
     const config = this.getConfig();
     if (!config.enabled || !config.defaultModel) return { status: "skipped", reason: "disabled" };

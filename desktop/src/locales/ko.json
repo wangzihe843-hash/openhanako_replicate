@@ -345,7 +345,11 @@
       "xhigh": "전체 추론"
     },
     "contextWindow": "컨텍스트 {windowK}k",
-    "tokensUsed": "사용 {tokensK}k ({pct}%)"
+    "tokensUsed": "사용 {tokensK}k ({pct}%)",
+    "contextActions": "컨텍스트 작업",
+    "refreshAndCompact": "업데이트 후 압축",
+    "refreshAndCompactTooltip": "최신 메모리와 도구 세트로 업데이트",
+    "compact": "압축"
   },
   "slash": {
     "diary": "오늘의 일기 쓰기",

@@ -329,6 +329,31 @@ describe("SessionFileRegistry", () => {
     });
   });
 
+  it("does not return or rewrite a loaded file id through another sessionPath", () => {
+    const filePath = makeTempFile("voice-cross-session.wav", "RIFF");
+    const ownerSessionPath = makeSessionPath("voice-owner.jsonl");
+    const otherSessionPath = makeSessionPath("voice-other.jsonl");
+    const registry = new SessionFileRegistry({ now: () => 1234 });
+    const file = registry.registerFile({
+      sessionPath: ownerSessionPath,
+      filePath,
+      label: "voice.wav",
+      origin: "voice_input",
+      storageKind: "managed_cache",
+      presentation: "voice-input",
+      listed: false,
+    });
+
+    expect(registry.get(file.id)).toEqual(file);
+    expect(registry.get(file.id, { sessionPath: otherSessionPath })).toBeNull();
+    expect(() => registry.updateTranscription(file.id, {
+      status: "ready",
+      text: "wrong session",
+    }, { sessionPath: otherSessionPath })).toThrow(/session file not found/);
+    expect(fs.existsSync(`${otherSessionPath}.files.json`)).toBe(false);
+    expect(registry.get(file.id, { sessionPath: ownerSessionPath })).toEqual(file);
+  });
+
   it("persists audio waveform metadata in the session sidecar", () => {
     const filePath = makeTempFile("voice.wav", "RIFF");
     const sessionPath = makeSessionPath("voice-waveform.jsonl");

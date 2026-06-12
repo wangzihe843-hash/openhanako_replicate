@@ -126,6 +126,7 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
   if (isSkillSettingsWriteRoute(verb, routePath)) return scoped("settings.write");
   if (isMcpSettingsReadRoute(verb, routePath)) return scoped("settings.read");
   if (isMcpSettingsWriteRoute(verb, routePath)) return scoped("settings.write");
+  if (isMediaSubmitRoute(verb, routePath)) return scoped("chat");
   if (isImageGenerationReadRoute(verb, routePath)) return scoped("settings.read");
   if (isImageGenerationWriteRoute(verb, routePath)) return scoped("settings.write");
   if (isImageGenerationProviderManagementRoute(verb, routePath)) return scoped("providers.manage");
@@ -325,6 +326,7 @@ function isClientLocalOnlyRoute(verb, routePath) {
   if (routePath.startsWith("/api/plugins/dev/") || routePath === "/api/plugins/dev") return true;
   if (routePath === "/api/preferences/computer-use/request-permissions") return true;
   if (routePath.startsWith("/api/plugins/image-gen/media/open/")) return true;
+  if (routePath.startsWith("/api/media/generated/open/")) return true;
   if (/^\/api\/plugins\/[^/]+\/assets\/.+$/.test(routePath) && verb !== "GET" && verb !== "HEAD") {
     return true;
   }
@@ -500,19 +502,39 @@ function isMcpSettingsWriteRoute(verb, routePath) {
 
 function isImageGenerationReadRoute(verb, routePath) {
   if (verb !== "GET" && verb !== "HEAD") return false;
-  return routePath === "/api/plugins/image-gen/providers"
+  return routePath === "/api/media/providers"
+    || routePath === "/api/media/image/providers"
+    || routePath === "/api/media/tasks"
+    || /^\/api\/media\/generated\/[^/]+$/.test(routePath)
+    || /^\/api\/media\/tasks\/batch\/[^/]+$/.test(routePath)
+    || /^\/api\/media\/tasks\/[^/]+$/.test(routePath)
+    || routePath === "/api/plugins/image-gen/providers"
     || routePath === "/api/plugins/image-gen/tasks"
     || /^\/api\/plugins\/image-gen\/media\/[^/]+$/.test(routePath)
     || /^\/api\/plugins\/image-gen\/tasks\/batch\/[^/]+$/.test(routePath)
     || /^\/api\/plugins\/image-gen\/tasks\/[^/]+$/.test(routePath);
 }
 
+function isMediaSubmitRoute(verb, routePath) {
+  if (verb !== "POST") return false;
+  return routePath === "/api/media/generate"
+    || routePath === "/api/media/image/generate"
+    || routePath === "/api/media/video/generate"
+    || routePath === "/api/media/asr/transcribe";
+}
+
 function isImageGenerationWriteRoute(verb, routePath) {
-  return verb === "PUT" && routePath === "/api/plugins/image-gen/config";
+  return verb === "PUT" && (
+    routePath === "/api/media/image/config"
+    || routePath === "/api/plugins/image-gen/config"
+  );
 }
 
 function isImageGenerationProviderManagementRoute(verb, routePath) {
-  return (verb === "POST" && /^\/api\/plugins\/image-gen\/providers\/[^/]+\/models$/.test(routePath))
+  return (verb === "POST" && /^\/api\/media\/image\/providers\/[^/]+\/models$/.test(routePath))
+    || (verb === "DELETE" && /^\/api\/media\/image\/providers\/[^/]+\/models\/[^/]+$/.test(routePath))
+    || (verb === "POST" && /^\/api\/media\/tasks\/[^/]+\/retry$/.test(routePath))
+    || (verb === "POST" && /^\/api\/plugins\/image-gen\/providers\/[^/]+\/models$/.test(routePath))
     || (verb === "DELETE" && /^\/api\/plugins\/image-gen\/providers\/[^/]+\/models\/[^/]+$/.test(routePath))
     || (verb === "POST" && /^\/api\/plugins\/image-gen\/tasks\/[^/]+\/retry$/.test(routePath));
 }

@@ -445,6 +445,48 @@ describe("Poller", () => {
     poller.stop();
   });
 
+  it("keeps response delivery results out of SessionFile and DeferredResult delivery", async () => {
+    const registerSessionFile = vi.fn();
+    const mockAdapter = makeAdapter({
+      query: vi.fn(async () => ({
+        status: "success",
+        files: ["response.png"],
+      })),
+    });
+    const { poller, mockStore, mockBus } = makePoller({
+      adapter: mockAdapter,
+      registerSessionFile,
+    });
+
+    mockStore.get.mockReturnValue({
+      taskId: "task-response",
+      adapterId: "test-adapter",
+      status: "pending",
+      files: [],
+      sessionPath: null,
+      deliveryMode: "response",
+      createdAt: new Date().toISOString(),
+    });
+
+    poller.start();
+    poller.add("task-response");
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(registerSessionFile).not.toHaveBeenCalled();
+    expect(mockStore.update).toHaveBeenCalledWith(
+      "task-response",
+      expect.objectContaining({
+        status: "done",
+        files: ["response.png"],
+      }),
+    );
+    expect(mockBus.request).not.toHaveBeenCalledWith("deferred:resolve", expect.anything());
+    expect(poller.hasPending("task-response")).toBe(false);
+
+    poller.stop();
+  });
+
   it("updates store, emits deferred:fail, and removes from active on adapter failed status", async () => {
     const mockAdapter = makeAdapter({
       query: vi.fn(async () => ({

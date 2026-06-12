@@ -157,7 +157,12 @@ export class SessionFileRegistry {
   }
 
   get(fileId, { sessionPath }: any = {}) {
-    if (fileId && sessionPath && !this._byId.has(fileId)) this._hydrateSession(sessionPath);
+    if (!fileId) return null;
+    if (sessionPath) {
+      this._hydrateSession(sessionPath);
+      const ids = this._idsBySession.get(sessionPath) || [];
+      if (!ids.includes(fileId)) return null;
+    }
     return this._byId.get(fileId) || null;
   }
 
@@ -188,13 +193,13 @@ export class SessionFileRegistry {
 
   updateTranscription(fileId, transcription, { sessionPath }: any = {}) {
     if (!fileId) throw new Error("fileId is required to update transcription");
-    if (sessionPath) this._hydrateSession(sessionPath);
-    const existing = this._byId.get(fileId);
+    const existing = sessionPath
+      ? this.get(fileId, { sessionPath })
+      : this._byId.get(fileId);
     if (!existing) throw new Error(`session file not found: ${fileId}`);
     const ownerSessionPath = sessionPath || existing.sessionPath;
     if (!ownerSessionPath) throw new Error("sessionPath is required to update transcription");
-    this._hydrateSession(ownerSessionPath);
-    const current = this._byId.get(fileId);
+    const current = this.get(fileId, { sessionPath: ownerSessionPath });
     if (!current) throw new Error(`session file not found: ${fileId}`);
     const now = this._now();
     const nextTranscription = normalizeTranscription(transcription, current.transcription, now);

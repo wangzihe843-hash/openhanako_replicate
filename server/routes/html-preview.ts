@@ -8,19 +8,7 @@ const DEFAULT_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_CONTENT_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_ASSET_BYTES = 50 * 1024 * 1024;
 
-export const HTML_PREVIEW_CSP = [
-  "default-src 'none'",
-  "base-uri 'self'",
-  "form-action 'none'",
-  "object-src 'none'",
-  "connect-src 'none'",
-  "script-src 'unsafe-inline' https:",
-  "style-src 'unsafe-inline' https:",
-  "font-src https: data:",
-  "img-src 'self' https: data: blob:",
-  "media-src 'self' https: data: blob:",
-  "frame-ancestors 'self' file: http://127.0.0.1:* http://localhost:*",
-].join("; ");
+export const HTML_PREVIEW_CSP = buildHtmlPreviewCsp();
 
 export function createHtmlPreviewRoute({
   ttlMs = DEFAULT_TTL_MS,
@@ -63,6 +51,7 @@ export function createHtmlPreviewRoute({
       content: servedContent,
       title: typeof body?.title === "string" ? body.title.slice(0, 240) : "",
       sourceDir,
+      csp: buildHtmlPreviewCsp(assetBaseUrl),
       expiresAt,
     });
 
@@ -95,7 +84,7 @@ function servePreview(c, previews, currentTime, headOnly = false) {
   }
 
   c.header("Content-Type", "text/html; charset=utf-8");
-  c.header("Content-Security-Policy", HTML_PREVIEW_CSP);
+  c.header("Content-Security-Policy", preview.csp || HTML_PREVIEW_CSP);
   c.header("Referrer-Policy", "no-referrer");
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Cache-Control", "no-store");
@@ -131,6 +120,49 @@ function servePreviewAsset(c, previews, currentTime, maxAssetBytes, headOnly = f
 function cleanupExpired(previews, currentTime) {
   for (const [id, preview] of previews.entries()) {
     if (preview.expiresAt <= currentTime) previews.delete(id);
+  }
+}
+
+function buildHtmlPreviewCsp(assetBaseUrl = null) {
+  const assetSource = cspSourceFromAssetBase(assetBaseUrl);
+  const baseSources = assetSource ? [assetSource] : ["'self'"];
+  const scriptSources = ["'unsafe-inline'", "https:"];
+  const styleSources = ["'unsafe-inline'", "https:"];
+  const fontSources = ["https:", "data:"];
+  const imageSources = assetSource ? [assetSource, "https:", "data:", "blob:"] : ["'self'", "https:", "data:", "blob:"];
+  const mediaSources = assetSource ? [assetSource, "https:", "data:", "blob:"] : ["'self'", "https:", "data:", "blob:"];
+
+  if (assetSource) {
+    scriptSources.push(assetSource);
+    styleSources.push(assetSource);
+    fontSources.push(assetSource);
+  }
+
+  return [
+    "default-src 'none'",
+    `base-uri ${baseSources.join(" ")}`,
+    "form-action 'none'",
+    "object-src 'none'",
+    "connect-src 'none'",
+    `script-src ${scriptSources.join(" ")}`,
+    `style-src ${styleSources.join(" ")}`,
+    `font-src ${fontSources.join(" ")}`,
+    `img-src ${imageSources.join(" ")}`,
+    `media-src ${mediaSources.join(" ")}`,
+    "frame-ancestors 'self' file: http://127.0.0.1:* http://localhost:*",
+  ].join("; ");
+}
+
+function cspSourceFromAssetBase(assetBaseUrl) {
+  if (!assetBaseUrl) return null;
+  try {
+    const url = new URL(assetBaseUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    url.search = "";
+    url.hash = "";
+    return url.href;
+  } catch {
+    return null;
   }
 }
 

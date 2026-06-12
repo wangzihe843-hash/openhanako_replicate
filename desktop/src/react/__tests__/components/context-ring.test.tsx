@@ -1,12 +1,28 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { fireEvent, screen } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContextRing } from '../../components/input/ContextRing';
 import { useStore } from '../../stores';
+import { refreshSessionCapabilities } from '../../stores/session-actions';
+
+const { sendMock } = vi.hoisted(() => ({
+  sendMock: vi.fn(),
+}));
+
+vi.mock('../../services/websocket', () => ({
+  getWebSocket: vi.fn(() => ({ readyState: 1, send: sendMock })),
+}));
+
+vi.mock('../../stores/session-actions', () => ({
+  refreshSessionCapabilities: vi.fn(() => Promise.resolve(true)),
+}));
 
 describe('ContextRing', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     useStore.setState({
       agentYuan: 'hanako',
       currentSessionPath: '/session/a.jsonl',
@@ -69,5 +85,60 @@ describe('ContextRing', () => {
     await waitFor(() => {
       expect(getByText('100k')).toBeTruthy();
     });
+  });
+
+  it('opens a two-action menu instead of compacting immediately', async () => {
+    useStore.setState({
+      compactingSessions: [],
+    } as never);
+
+    const { container } = render(<ContextRing />);
+    const button = container.querySelector('button') as HTMLButtonElement;
+    fireEvent.click(button);
+
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByText('input.refreshAndCompact')).toBeInTheDocument();
+    expect(screen.getByText('input.compact')).toBeInTheDocument();
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it('runs fresh compact from the update action', async () => {
+    useStore.setState({
+      compactingSessions: [],
+    } as never);
+
+    const { container } = render(<ContextRing />);
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    fireEvent.click(screen.getByText('input.refreshAndCompact'));
+
+    expect(refreshSessionCapabilities).toHaveBeenCalledWith('/session/a.jsonl');
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it('shows a tooltip for the update action', async () => {
+    useStore.setState({
+      compactingSessions: [],
+    } as never);
+
+    const { container } = render(<ContextRing />);
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    fireEvent.mouseEnter(screen.getByText('input.refreshAndCompact'));
+
+    await waitFor(() => {
+      expect(screen.getByText('input.refreshAndCompactTooltip')).toBeInTheDocument();
+    });
+  });
+
+  it('runs ordinary compact from the compact action', async () => {
+    useStore.setState({
+      compactingSessions: [],
+    } as never);
+
+    const { container } = render(<ContextRing />);
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+    fireEvent.click(screen.getByText('input.compact'));
+
+    expect(sendMock).toHaveBeenCalledWith(JSON.stringify({ type: 'compact', sessionPath: '/session/a.jsonl' }));
+    expect(refreshSessionCapabilities).not.toHaveBeenCalled();
   });
 });

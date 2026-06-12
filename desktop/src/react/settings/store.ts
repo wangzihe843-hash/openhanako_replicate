@@ -81,6 +81,7 @@ export interface SettingsSnapshot {
       status?: Record<string, any> | null;
       settings?: Record<string, any>;
     };
+    imageGeneration?: Record<string, any>;
     speechRecognition: Record<string, any>;
     experiments: any[];
   };

@@ -345,7 +345,11 @@
       "xhigh": "フル推論"
     },
     "contextWindow": "コンテキスト {windowK}k",
-    "tokensUsed": "使用済み {tokensK}k ({pct}%)"
+    "tokensUsed": "使用済み {tokensK}k ({pct}%)",
+    "contextActions": "コンテキスト操作",
+    "refreshAndCompact": "更新して圧縮",
+    "refreshAndCompactTooltip": "最新の記憶とツールセットに更新",
+    "compact": "圧縮"
   },
   "slash": {
     "diary": "今日の日記を書く",

@@ -97,7 +97,7 @@ describe('AssistantMessage media generation placeholder', () => {
     fireEvent.click(screen.getByRole('button', { name: 'chat.media.retryLabel' }));
 
     await waitFor(() => {
-      expect(hanaFetch).toHaveBeenCalledWith('/api/plugins/image-gen/tasks/task-img/retry', {
+      expect(hanaFetch).toHaveBeenCalledWith('/api/media/tasks/task-img/retry', {
         method: 'POST',
       });
     });

@@ -85,7 +85,6 @@ import {
 } from "../lib/llm/cache-prefix-contract.ts";
 import { buildSessionCacheSnapshot as buildSessionCacheSnapshotValue } from "./session-cache-snapshot.ts";
 import { repairRestoredToolSnapshotDetailed, sameToolNames } from "./tool-snapshot-repair.ts";
-import { buildSessionCapabilityDrift } from "./session-capability-drift.ts";
 import {
   SESSION_PROMPT_SNAPSHOT_VERSION,
   freezeAgentsFilesResult,
@@ -1172,9 +1171,7 @@ export class SessionCoordinator {
     ];
     let snapshotToolNames = null;  // null signals "do not call setActiveToolsByName"
     let shouldPersistRestoredToolNames = false;
-    // #1624：repair 过滤掉的"已不存在"工具名，进入 capability drift 提示数据，
-    // 不再完全静默；dismissed fingerprint 从 session-meta 读出（跟 session 走）。
-    let invalidSnapshotToolNames: string[] = [];
+    // #1624：dismissed fingerprint 仍从 session-meta 读出，保留未来手动提示链路。
     let restoredDriftDismissedFingerprint: string | null = null;
 
     if (restore) {
@@ -1210,7 +1207,6 @@ export class SessionCoordinator {
           });  // Case A, with current global feature gates enforced
           const repair = repairRestoredToolSnapshotDetailed(gatedRestoredToolNames, allToolNames);
           snapshotToolNames = repair.toolNames;
-          invalidSnapshotToolNames = repair.droppedToolNames;
           shouldPersistRestoredToolNames = !sameToolNames(snapshotToolNames, metaEntry.toolNames);
         } else {
           // Legacy sessions created before tool snapshots had no stable tool
@@ -1234,40 +1230,9 @@ export class SessionCoordinator {
       });
     }
 
-    // ── #1624 Capability drift detection（restore 完成时算一次）──
-    // 对比"本 session 冻结快照"与"当前配置下新建 session 会得到的能力"。
-    // 只产出提示数据，不改变任何运行时行为（冻结快照照常生效，保护 prompt cache）。
-    // 检测失败不阻塞 restore：这是辅助提示功能，降级 = 记日志 + 本次不提示。
+    // #1624 的能力漂移提示模板保留，但 restore 不再主动计算/唤醒。
+    // 这里刻意不构造 live prompt / tool diff，避免切换旧会话时为隐藏提醒付出额外成本。
     let capabilityDrift = null;
-    if (restore && sessionPath && snapshotToolNames !== null) {
-      try {
-        const liveDisabled = agent.config?.tools?.disabled ?? DEFAULT_DISABLED_TOOL_NAMES;
-        const liveToolNames = computeToolSnapshot(allToolNames, liveDisabled, {
-          extraDisabled: extraDisabledToolNames,
-        });
-        // 有冻结 prompt 快照时需要单独 build 一份"现在的" prompt 做对比；
-        // 没有冻结快照时 systemPromptSnapshot 本身就是按当前配置新建的，无漂移。
-        const liveSystemPrompt = restoredPromptSnapshot
-          ? agent.buildSystemPrompt({
-            forceMemoryEnabled: frozenMemoryEnabled,
-            forceExperienceEnabled: frozenExperienceEnabled,
-            cwdOverride: effectiveCwd,
-            targetModel: promptPatchModel
-              || this._resolvePromptModelFromSessionManager(sessionMgr, models),
-            workModeEnabled: frozenWorkMode,
-          })
-          : systemPromptSnapshot;
-        capabilityDrift = buildSessionCapabilityDrift({
-          frozenToolNames: snapshotToolNames,
-          liveToolNames,
-          invalidToolNames: invalidSnapshotToolNames,
-          frozenSystemPrompt: restoredPromptSnapshot?.systemPrompt ?? systemPromptSnapshot,
-          liveSystemPrompt,
-        });
-      } catch (err) {
-        log.warn(`capability drift detection failed for ${path.basename(sessionPath)}: ${err.message}`);
-      }
-    }
 
     Object.assign(sessionEntry, {
       session,

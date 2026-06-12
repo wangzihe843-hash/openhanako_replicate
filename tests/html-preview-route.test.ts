@@ -75,10 +75,18 @@ describe("HTML preview route", () => {
     const registered = await register.json();
     const rendered = await app.request(registered.previewUrl);
     const html = await rendered.text();
+    const csp = rendered.headers.get("Content-Security-Policy") || "";
+    const assetBase = "http://127.0.0.1:14500/preview/html/pv_assets/assets/preview_secret/";
 
-    expect(html).toContain('<base href="http://127.0.0.1:14500/preview/html/pv_assets/assets/preview_secret/">');
-    expect(html.indexOf('<base href="http://127.0.0.1:14500/preview/html/pv_assets/assets/preview_secret/">'))
+    expect(html).toContain(`<base href="${assetBase}">`);
+    expect(html.indexOf(`<base href="${assetBase}">`))
       .toBeLessThan(html.indexOf('<title>Demo</title>'));
+    expect(csp).toContain(`base-uri ${assetBase}`);
+    expect(csp).toContain(`script-src 'unsafe-inline' https: ${assetBase}`);
+    expect(csp).toContain(`style-src 'unsafe-inline' https: ${assetBase}`);
+    expect(csp).toContain(`font-src https: data: ${assetBase}`);
+    expect(csp).toContain(`img-src ${assetBase} https: data: blob:`);
+    expect(csp).toContain(`media-src ${assetBase} https: data: blob:`);
 
     const asset = await app.request("http://127.0.0.1:14500/preview/html/pv_assets/assets/preview_secret/assets/pic.png");
     expect(asset.status).toBe(200);

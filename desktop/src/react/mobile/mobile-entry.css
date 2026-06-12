@@ -571,13 +571,15 @@ html[data-platform="linux"] .tb-toggle-right {
 
 /* 代码块 wrapper：非滚动定位祖先，让复制按钮锚在可视区右上角不随横滚漂移 */
 .md-content .code-block-wrap {
+    --code-block-toolbar-size: 1.7rem;
     position: relative;
     margin: var(--space-sm) 0;
 }
 
-/* wrapper 内的 pre 边距归零，由 wrapper 接管，避免视觉跳动 */
+/* wrapper 内的 pre 外边距归零，由 wrapper 接管；顶部按工具栏高度留位 */
 .md-content .code-block-wrap > pre {
     margin: 0;
+    padding-top: calc(var(--code-block-toolbar-size) + var(--space-xs));
 }
 
 .md-content .code-block-wrap .code-block-toolbar {
@@ -595,8 +597,8 @@ html[data-platform="linux"] .tb-toggle-right {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.7rem;
-    height: 1.7rem;
+    width: var(--code-block-toolbar-size);
+    height: var(--code-block-toolbar-size);
     padding: 0;
     border: 0;
     background: transparent;

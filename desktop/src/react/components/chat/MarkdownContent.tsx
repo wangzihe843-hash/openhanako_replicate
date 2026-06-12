@@ -2,11 +2,11 @@
  * MarkdownContent — 渲染预处理好的 markdown HTML
  *
  * 用 dangerouslySetInnerHTML 设置内容，
- * useEffect 注入代码块复制按钮。
+ * 在渲染前补齐代码块工具栏，并用根事件代理处理工具栏交互。
  */
 
-import { memo, useCallback, useRef, useEffect, useLayoutEffect, useState, type MouseEvent } from 'react';
-import { injectCopyButtons } from '../../utils/format';
+import { memo, useCallback, useMemo, useRef, useLayoutEffect, useState, type MouseEvent } from 'react';
+import { renderCodeBlockToolbarHtml, type CodeBlockToolbarLabels } from '../../utils/format';
 import { useMermaidDiagrams } from '../../hooks/use-mermaid-diagrams';
 import { splitGraphemes } from '../../utils/grapheme';
 import { openInternalLink, resolveLinkTarget, type LinkOpenContext } from '../../utils/link-open';
@@ -79,10 +79,24 @@ function applyTailFade(root: HTMLElement, count: number): void {
   }
 }
 
+function codeBlockToolbarLabels(): CodeBlockToolbarLabels {
+  const t = window.t ?? ((p: string) => p);
+  return {
+    wordWrap: t('codeBlock.wordWrap'),
+    copy: t('attach.copy'),
+    copied: t('attach.copied'),
+  };
+}
+
 export const MarkdownContent = memo(function MarkdownContent({ html, className, tailFadeCount = 0, linkContext }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
   const classes = className ? `md-content ${className}` : 'md-content';
+  const toolbarLabels = useMemo(() => codeBlockToolbarLabels(), []);
+  const renderedHtml = useMemo(() => renderCodeBlockToolbarHtml(html, toolbarLabels), [
+    html,
+    toolbarLabels,
+  ]);
 
   const findAnchor = useCallback((event: MouseEvent): HTMLAnchorElement | null => {
     const root = ref.current;
@@ -93,7 +107,51 @@ export const MarkdownContent = memo(function MarkdownContent({ html, className, 
     return anchor;
   }, []);
 
+  const handleCodeBlockToolbarClick = useCallback((event: MouseEvent): boolean => {
+    const root = ref.current;
+    const target = event.target;
+    if (!root || !(target instanceof Element)) return false;
+
+    const button = target.closest<HTMLButtonElement>('button[data-code-block-action]');
+    if (!button || !root.contains(button)) return false;
+
+    const wrapper = button.closest<HTMLElement>('.code-block-wrap');
+    if (!wrapper || !root.contains(wrapper)) return false;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (button.dataset.codeBlockAction === 'wrap') {
+      const active = wrapper.dataset.wrap === 'true';
+      wrapper.dataset.wrap = active ? 'false' : 'true';
+      button.dataset.active = active ? 'false' : 'true';
+      button.setAttribute('aria-pressed', active ? 'false' : 'true');
+      return true;
+    }
+
+    if (button.dataset.codeBlockAction === 'copy') {
+      const pre = wrapper.querySelector('pre');
+      const code = pre?.querySelector('code');
+      const text = code ? code.textContent : pre?.textContent;
+      const copyPromise = navigator.clipboard?.writeText?.(text || '');
+      void copyPromise?.then(() => {
+        button.dataset.copied = 'true';
+        button.title = toolbarLabels.copied;
+        button.setAttribute('aria-label', toolbarLabels.copied);
+        setTimeout(() => {
+          button.dataset.copied = 'false';
+          button.title = toolbarLabels.copy;
+          button.setAttribute('aria-label', toolbarLabels.copy);
+        }, 1500);
+      });
+      return true;
+    }
+
+    return false;
+  }, [toolbarLabels.copy, toolbarLabels.copied]);
+
   const handleClick = useCallback((event: MouseEvent) => {
+    if (handleCodeBlockToolbarClick(event)) return;
     const anchor = findAnchor(event);
     if (!anchor) return;
     const href = anchor.getAttribute('href') || '';
@@ -105,7 +163,7 @@ export const MarkdownContent = memo(function MarkdownContent({ html, className, 
     event.preventDefault();
     event.stopPropagation();
     void openInternalLink(href, context);
-  }, [findAnchor, linkContext]);
+  }, [findAnchor, handleCodeBlockToolbarClick, linkContext]);
 
   const handleContextMenu = useCallback((event: MouseEvent) => {
     const anchor = findAnchor(event);
@@ -125,13 +183,9 @@ export const MarkdownContent = memo(function MarkdownContent({ html, className, 
   useLayoutEffect(() => {
     if (!ref.current) return;
     applyTailFade(ref.current, tailFadeCount);
-  }, [html, tailFadeCount]);
+  }, [renderedHtml, tailFadeCount]);
 
-  useEffect(() => {
-    if (!ref.current) return;
-    injectCopyButtons(ref.current);
-  }, [html]);
-  useMermaidDiagrams(ref, [html]);
+  useMermaidDiagrams(ref, [renderedHtml]);
 
   return (
     <>
@@ -140,7 +194,7 @@ export const MarkdownContent = memo(function MarkdownContent({ html, className, 
         className={classes}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
-        dangerouslySetInnerHTML={{ __html: html }}
+        dangerouslySetInnerHTML={{ __html: renderedHtml }}
       />
       {linkMenu && (
         <LinkContextMenu

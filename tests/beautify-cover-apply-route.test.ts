@@ -338,6 +338,39 @@ describe("desk beautify cover apply route", () => {
     expect(engine._test.executeIsolated).not.toHaveBeenCalled();
   });
 
+  it("rejects Agent cover generation with a structured error when legacy image-gen runtime has no registry", async () => {
+    const notePath = path.join(tmpDir, "note.md");
+    fs.writeFileSync(notePath, "# Demo\n", "utf-8");
+
+    const { createDeskRoute } = await import("../server/routes/desk.ts");
+    const imageGenCtx = {
+      config: {
+        get: vi.fn((key) => key === "defaultImageModel"
+          ? { provider: "mock-provider", id: "mock-image" }
+          : undefined),
+      },
+      _mediaGen: {},
+      bus: { request: vi.fn(async () => ({})) },
+    };
+    const engine = makeEngine(tmpDir, { imageGenCtx });
+    const app = new Hono();
+    app.route("/api", createDeskRoute(engine, null));
+
+    const res = await app.request("/api/desk/beautify/cover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filePath: notePath }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: "image generation runtime is unavailable",
+      reason: "image-generation-runtime-unavailable",
+    });
+    expect(engine._test.activityStore.add).not.toHaveBeenCalled();
+    expect(engine._test.executeIsolated).not.toHaveBeenCalled();
+  });
+
   it("aborts a hanging Agent cover generation and marks the activity timed out", async () => {
     vi.useFakeTimers();
     const notePath = path.join(tmpDir, "note.md");

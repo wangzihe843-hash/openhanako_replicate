@@ -830,7 +830,10 @@ Plugins should prefer the typed helpers from `@hana/plugin-runtime`. They map to
 | `agent:create` / `agent:update` | Create or update plugin-owned agents, including `visibility: "plugin_private"` |
 | `model:sample-text` | Run a non-streaming utility-model text sample for RAG query rewriting, summarization, routing, and similar plugin-side work |
 | `provider:media-providers` / `provider:resolve-media-model` | Discover configured media providers and resolve a concrete media model |
-| `media:generate-image` | Submit an image generation task through the built-in media task pipeline; completed files are delivered as `SessionFile` records |
+| `media:generate-image` | Submit an image generation task through the built-in media task pipeline; completed files are delivered as `SessionFile` records by default, while `delivery.mode="response"` returns task/file results only |
+| `media:generate` / `media:generate-video` / `media:transcribe-audio` | Submit generic media tasks, video generation, or audio transcription through the native Media Manager |
+
+Plugin backend code should prefer the `@hana/plugin-runtime` helpers. Plugin pages or route handlers that already hold host HTTP credentials can also use the native facade: `POST /api/media/generate`, `POST /api/media/image/generate`, `POST /api/media/video/generate`, and `POST /api/media/asr/transcribe`. These endpoints require chat scope. Image/video requests must include `prompt`; the default `delivery.mode="session"` also requires `sessionPath` and registers completed files as `SessionFile` records. For plugin-owned artifacts, pass `delivery: { mode: "response" }` and omit `sessionPath`; poll `GET /api/media/tasks/:taskId`, then fetch `task.files[]` through `GET /api/media/generated/:filename`. ASR requests still require `sessionPath` and `fileId`; image references must use `SessionFile` references such as `{ kind: "session_file", fileId }`. All of them forward into the same Media Manager task pipeline. Image adapters accept multiple reference images by default; adapters that only support one reference should declare `maxReferenceImages: 1`, and the pipeline rejects oversized requests before enqueueing.
 
 `session:send.context` is injected only into the current provider request. It does not rewrite the visible user message and does not persist as user text. A plugin can run its own RAG, world-state, mood, or character-state system, then attach those snippets when sending:
 
@@ -838,7 +841,9 @@ Plugins should prefer the typed helpers from `@hana/plugin-runtime`. They map to
 import {
   createAgent,
   createSession,
+  generateMedia,
   generateImage,
+  transcribeAudio,
   sampleText,
   sendSessionMessage,
 } from "@hana/plugin-runtime";
@@ -875,8 +880,30 @@ await sendSessionMessage(ctx, session.sessionPath, {
 await generateImage(ctx, {
   sessionPath: session.sessionPath,
   prompt: "A handwritten character card on warm paper",
+  referenceImages: [
+    { kind: "session_file", fileId: "sf_reference_a" },
+    { kind: "session_file", fileId: "sf_reference_b" },
+  ],
   ratio: "3:2",
 });
+
+await generateMedia(ctx, {
+  kind: "video",
+  sessionPath: session.sessionPath,
+  prompt: "A slow page-turn animation on warm paper",
+});
+
+const artifactOnly = await generateImage(ctx, {
+  prompt: "A small icon on transparent background",
+  delivery: { mode: "response" },
+});
+// Later poll /api/media/tasks/{artifactOnly.tasks[0].taskId}
+
+const transcription = await transcribeAudio(ctx, {
+  sessionPath: session.sessionPath,
+  fileId: "session-file-id",
+});
+// transcription = { ok: true, transcription: { status, text, ... } }
 ```
 
 ### Dynamic Tool Registration ⚡ full-access

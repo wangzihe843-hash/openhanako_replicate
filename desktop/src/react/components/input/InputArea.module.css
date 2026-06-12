@@ -307,6 +307,53 @@
     align-items: center;
 }
 
+.context-ring-menu {
+    display: inline-flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    width: max-content;
+    min-width: 0;
+    padding: var(--space-xs);
+    background: var(--panel-card-bg);
+    border: var(--panel-card-border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--panel-card-shadow);
+    animation: hana-fade-up var(--duration-fast) var(--ease-out);
+}
+
+.context-ring-menu-item {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: 100%;
+    height: 28px;
+    padding: 0 var(--space-xs);
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.78rem;
+    line-height: 1;
+    text-align: left;
+    white-space: nowrap;
+    cursor: default;
+    -webkit-app-region: no-drag;
+    transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.context-ring-menu-item:hover:not(:disabled),
+.context-ring-menu-item:focus-visible:not(:disabled) {
+    color: var(--accent);
+    background: var(--accent-light);
+    outline: none;
+}
+
+.context-ring-menu-item:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 /* 思考强度选择器 */
 .thinking-selector {
     position: relative;

@@ -894,7 +894,10 @@ this.register(
 | `agent:create` / `agent:update` | 创建或更新插件拥有的 agent，可设置 `visibility: "plugin_private"` |
 | `model:sample-text` | 使用系统配置的 utility 模型做非流式文本采样，适合 RAG 查询改写、摘要、路由 |
 | `provider:media-providers` / `provider:resolve-media-model` | 读取已配置的媒体供应商和模型 |
-| `media:generate-image` | 通过内置媒体任务管线提交生图任务，完成后以 `SessionFile` 交付 |
+| `media:generate-image` | 通过内置媒体任务管线提交生图任务，默认完成后以 `SessionFile` 交付；`delivery.mode="response"` 时只返回任务/文件结果 |
+| `media:generate` / `media:generate-video` / `media:transcribe-audio` | 通过原生 Media Manager 提交通用媒体任务、视频生成任务或音频转录任务 |
+
+插件后端优先使用 `@hana/plugin-runtime` helpers。插件页面或插件 route handler 如果已经有宿主 HTTP 凭证，也可以使用原生 façade：`POST /api/media/generate`、`POST /api/media/image/generate`、`POST /api/media/video/generate`、`POST /api/media/asr/transcribe`。这些入口需要 chat scope，图片/视频必须传 `prompt`；默认 `delivery.mode="session"` 时还必须传 `sessionPath`，完成后登记 `SessionFile`。如果插件只想拿生成产物，传 `delivery: { mode: "response" }` 可省略 `sessionPath`，完成后轮询 `GET /api/media/tasks/:taskId`，再用 `task.files[]` 调 `GET /api/media/generated/:filename` 读取文件。ASR 仍必须传 `sessionPath` 和 `fileId`。图片参考图只接受 `{ kind: "session_file", fileId }` 这类 SessionFile 引用，底层仍进入同一个 Media Manager 任务管线。图片 adapter 默认允许多张参考图；只支持单张参考图的 adapter 应声明 `maxReferenceImages: 1`，任务管线会在入队前拒绝超量请求。
 
 `session:send.context` 只注入到当轮 provider 请求，不会改写可见用户消息，也不会写入用户消息文本。插件可以在自己的 RAG、世界观、mood、角色状态系统里生成这些片段，然后在发送时附带：
 
@@ -902,7 +905,9 @@ this.register(
 import {
   createAgent,
   createSession,
+  generateMedia,
   generateImage,
+  transcribeAudio,
   sampleText,
   sendSessionMessage,
 } from "@hana/plugin-runtime";
@@ -939,8 +944,30 @@ await sendSessionMessage(ctx, session.sessionPath, {
 await generateImage(ctx, {
   sessionPath: session.sessionPath,
   prompt: "A handwritten character card on warm paper",
+  referenceImages: [
+    { kind: "session_file", fileId: "sf_reference_a" },
+    { kind: "session_file", fileId: "sf_reference_b" },
+  ],
   ratio: "3:2",
 });
+
+await generateMedia(ctx, {
+  kind: "video",
+  sessionPath: session.sessionPath,
+  prompt: "A slow page-turn animation on warm paper",
+});
+
+const artifactOnly = await generateImage(ctx, {
+  prompt: "A small icon on transparent background",
+  delivery: { mode: "response" },
+});
+// 后续轮询 /api/media/tasks/{artifactOnly.tasks[0].taskId}
+
+const transcription = await transcribeAudio(ctx, {
+  sessionPath: session.sessionPath,
+  fileId: "session-file-id",
+});
+// transcription = { ok: true, transcription: { status, text, ... } }
 ```
 
 ### LLM 用量账本

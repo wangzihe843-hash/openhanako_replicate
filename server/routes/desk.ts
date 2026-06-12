@@ -329,23 +329,55 @@ export function createDeskRoute(engine, hub) {
     return agent?.agentName || agent?.name || agentId || null;
   }
 
-  function getImageGenContext() {
-    return engine.pluginManager?.getPlugin?.("image-gen")?.ctx || null;
+  function getImageGenerationRuntime() {
+    if (engine.media) {
+      return {
+        config: engine.media.config,
+        resolveImageModelRef: (ref) => engine.media.resolveImageModelRef(ref),
+      };
+    }
+    const imageGenCtx = engine.pluginManager?.getPlugin?.("image-gen")?.ctx || null;
+    if (!imageGenCtx) return null;
+    const registry = imageGenCtx._mediaGen?.registry || null;
+    if (!registry) {
+      return {
+        config: imageGenCtx.config,
+        unavailableReason: "image-generation-runtime-unavailable",
+        unavailableMessage: "image generation runtime is unavailable",
+      };
+    }
+    return {
+      config: imageGenCtx.config,
+      resolveImageModelRef: (ref) => validateImageModelRef(
+        ref,
+        registry,
+        createSubmitContext(imageGenCtx),
+      ),
+    };
   }
 
   async function resolveDefaultImageModelStatus() {
-    const imageGenCtx = getImageGenContext();
-    if (!imageGenCtx) {
+    const imageRuntime = getImageGenerationRuntime();
+    if (!imageRuntime) {
       return {
         ok: false,
         status: 404,
         reason: "image-gen-unavailable",
-        error: "image generation plugin is unavailable",
+        error: "image generation runtime is unavailable",
+        settingsTarget: "media",
+      };
+    }
+    if (imageRuntime.unavailableReason) {
+      return {
+        ok: false,
+        status: 409,
+        reason: imageRuntime.unavailableReason,
+        error: imageRuntime.unavailableMessage || "image generation runtime is unavailable",
         settingsTarget: "media",
       };
     }
 
-    const defaultModel = imageGenCtx.config?.get?.("defaultImageModel");
+    const defaultModel = imageRuntime.config?.get?.("defaultImageModel");
     if (!defaultModel?.provider || !defaultModel?.id) {
       return {
         ok: false,
@@ -356,23 +388,8 @@ export function createDeskRoute(engine, hub) {
       };
     }
 
-    const registry = imageGenCtx._mediaGen?.registry;
-    if (!registry) {
-      return {
-        ok: false,
-        status: 404,
-        reason: "image-gen-unavailable",
-        error: "image generation runtime is unavailable",
-        settingsTarget: "media",
-      };
-    }
-
     try {
-      const resolved = await validateImageModelRef(
-        { providerId: defaultModel.provider, modelId: defaultModel.id },
-        registry,
-        createSubmitContext(imageGenCtx),
-      );
+      const resolved = await imageRuntime.resolveImageModelRef({ providerId: defaultModel.provider, modelId: defaultModel.id });
       return { ok: true, resolved };
     } catch (err) {
       return {

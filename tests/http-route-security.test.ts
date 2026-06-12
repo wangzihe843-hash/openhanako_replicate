@@ -383,6 +383,20 @@ describe("HTTP route security policy", () => {
       ["GET", "/api/plugins/marketplace"],
       ["GET", "/api/plugins/marketplace/image-gen/readme"],
       ["GET", "/api/plugins/diagnostics"],
+      ["GET", "/api/media/image/providers"],
+      ["GET", "/api/media/providers"],
+      ["POST", "/api/media/generate"],
+      ["POST", "/api/media/image/generate"],
+      ["POST", "/api/media/video/generate"],
+      ["POST", "/api/media/asr/transcribe"],
+      ["PUT", "/api/media/image/config"],
+      ["POST", "/api/media/image/providers/dashscope/models"],
+      ["DELETE", "/api/media/image/providers/dashscope/models/wanx"],
+      ["POST", "/api/media/tasks/task_1/retry"],
+      ["GET", "/api/media/generated/cover.png"],
+      ["HEAD", "/api/media/generated/cover.png"],
+      ["GET", "/api/media/tasks/batch/batch_1"],
+      ["GET", "/api/media/tasks/task_1"],
       ["GET", "/api/plugins/image-gen/providers"],
       ["PUT", "/api/plugins/image-gen/config"],
       ["POST", "/api/plugins/image-gen/providers/dashscope/models"],
@@ -424,6 +438,8 @@ describe("HTTP route security policy", () => {
       ["GET", "/api/plugins?source=community"],
       ["GET", "/api/plugins/marketplace"],
       ["GET", "/api/plugins/diagnostics"],
+      ["GET", "/api/media/image/providers"],
+      ["PUT", "/api/media/image/config"],
       ["GET", "/api/plugins/image-gen/providers"],
       ["PUT", "/api/plugins/image-gen/config"],
       ["GET", "/api/plugins/mcp/state?agentId=hana"],
@@ -431,6 +447,24 @@ describe("HTTP route security policy", () => {
     ]) {
       expect(authorizeHttpRoute({ method, path, principal }), `${method} ${path}`)
         .toMatchObject({ allowed: false, status: 403 });
+    }
+  });
+
+  it("treats media submit routes as chat actions for plugin and client surfaces", async () => {
+    const { authorizeHttpRoute, classifyHttpRoute } = await import("../server/http/route-security.ts");
+
+    for (const path of [
+      "/api/media/generate",
+      "/api/media/image/generate",
+      "/api/media/video/generate",
+      "/api/media/asr/transcribe",
+    ]) {
+      expect(classifyHttpRoute({ method: "POST", path }), path)
+        .toMatchObject({ kind: "scope", scope: "chat" });
+      expect(authorizeHttpRoute({ method: "POST", path, principal: mobilePrincipal() }), path)
+        .toMatchObject({ allowed: true });
+      expect(authorizeHttpRoute({ method: "POST", path, principal: devicePrincipal(["settings.read"]) }), path)
+        .toMatchObject({ allowed: false, status: 403, error: "insufficient_scope" });
     }
   });
 
@@ -453,6 +487,7 @@ describe("HTTP route security policy", () => {
       ["PUT", "/api/skills/external-paths"],
       ["POST", "/api/plugins/dev/install"],
       ["POST", "/api/plugins/dev/demo/reload"],
+      ["POST", "/api/media/generated/open/cover.png"],
       ["POST", "/api/plugins/image-gen/media/open/cover.png"],
     ]) {
       expect(authorizeHttpRoute({ method, path, principal: owner }), `${method} ${path}`)

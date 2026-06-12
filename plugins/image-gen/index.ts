@@ -18,6 +18,20 @@ export default class ImageGenPlugin {
   async onload() {
     const { dataDir, bus, log } = this.ctx;
 
+    try {
+      if (typeof bus?.hasHandler === "function" && bus.hasHandler("media:runtime")) {
+        const result = await bus.request("media:runtime", { consumer: "image-gen" });
+        if (result?.runtime?.registry && result?.runtime?.store && result?.runtime?.poller) {
+          this.ctx._mediaGen = result.runtime;
+          if (result.config) this.ctx.config = result.config;
+          log.info("image-gen plugin bound to native media runtime");
+          return;
+        }
+      }
+    } catch (err) {
+      log.warn(`native media runtime unavailable, falling back to plugin runtime: ${err?.message || err}`);
+    }
+
     const generatedDir = path.join(dataDir, "generated");
     fs.mkdirSync(generatedDir, { recursive: true });
 

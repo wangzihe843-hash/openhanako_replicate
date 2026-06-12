@@ -351,7 +351,7 @@ const MediaGenerationBlock = memo(function MediaGenerationBlock({ block, session
     setRetrying(true);
     setRetryError('');
     try {
-      const res = await hanaFetch(`/api/plugins/image-gen/tasks/${encodeURIComponent(viewBlock.taskId)}/retry`, {
+      const res = await hanaFetch(`/api/media/tasks/${encodeURIComponent(viewBlock.taskId)}/retry`, {
         method: 'POST',
       });
       const data = await res.json().catch(() => null);

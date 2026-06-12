@@ -142,6 +142,7 @@ import { serializeSessionFile } from "../lib/session-files/session-file-response
 import { AutomationSuggestionStore } from "../lib/tools/automation-suggestion-store.ts";
 import { NotificationService } from "../lib/notifications/notification-service.ts";
 import { SpeechRecognitionService } from "./speech-recognition-service.ts";
+import { UniversalMediaManager } from "./media/universal-media-manager.ts";
 import { createCurrentTurnNativeMediaStore } from "./current-turn-native-media.ts";
 import {
   getSkillNameTranslationCachePath,
@@ -193,6 +194,7 @@ export class HanaEngine {
   declare _hubCallbacks: any;
   declare _imageStripNotified: any;
   declare _listeners: any;
+  declare _media: any;
   declare _models: any;
   declare _notifications: any;
   declare _outboundProxyRuntime: any;
@@ -282,6 +284,15 @@ export class HanaEngine {
       preferences: this._prefs,
       sessionFiles: this._sessionFiles,
       emitEvent: (event, sessionPath) => this._emitEvent(event, sessionPath),
+    });
+    this._media = new UniversalMediaManager({
+      hanakoHome: this.hanakoHome,
+      providerRegistry: this._models.providerRegistry,
+      preferences: this._prefs,
+      speechRecognition: this._speechRecognition,
+      sessionFiles: this._sessionFiles,
+      registerSessionFile: (entry) => this.serializeSessionFile(this.registerSessionFile(entry)),
+      onProviderChanged: () => this.onProviderChanged(),
     });
     this._sessionProjects = new SessionProjectCatalogStore({ userDir: this.userDir });
 
@@ -655,6 +666,7 @@ export class HanaEngine {
     return true;
   }
   get speechRecognition() { return this._speechRecognition; }
+  get media() { return this._media; }
   get resources() { return this._resources; }
   getResourceService() {
     if (!this._resources) throw new Error("resource service is not initialized");
@@ -1700,6 +1712,7 @@ export class HanaEngine {
       }
       this._pluginDevEventBusCleanup?.();
       this._pluginDevEventBusCleanup = null;
+      this._media?.dispose?.();
       this._skills?.unwatch();
       this._deferredResultCoordinator?.dispose?.();
       this._deferredResultCoordinator = null;
@@ -1719,6 +1732,7 @@ export class HanaEngine {
    * @param {import('../hub/event-bus.ts').EventBus} bus
    */
   async initPlugins(bus) {
+    this._media?.start?.(bus);
     const builtinPluginsDir = path.join(this.productDir, "..", "plugins");
     const userPluginsDir = path.join(this.hanakoHome, "plugins");
     const devPluginsDir = path.join(this.hanakoHome, "plugins-dev");

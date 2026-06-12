@@ -199,7 +199,7 @@ export function MediaTab() {
   const loadImageProviders = useCallback(async () => {
     setImageConfigLoading(true);
     try {
-      const res = await hanaFetch('/api/plugins/image-gen/providers');
+      const res = await hanaFetch('/api/media/image/providers');
       const data = await res.json();
       const nextProviders = data.providers || {};
       setProviders(nextProviders);
@@ -268,7 +268,7 @@ export function MediaTab() {
 
   const saveConfig = async (updates: Partial<MediaConfig>) => {
     try {
-      const res = await hanaFetch('/api/plugins/image-gen/config', {
+      const res = await hanaFetch('/api/media/image/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ values: encodeConfigPatch(updates) }),

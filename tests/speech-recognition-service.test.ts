@@ -212,6 +212,56 @@ describe("SpeechRecognitionService", () => {
     }
   });
 
+  it("rejects transcribeAudio when fileId belongs to another loaded session", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-speech-cross-session-"));
+    try {
+      const ownerSessionPath = path.join(tmpDir, "owner.jsonl");
+      const otherSessionPath = path.join(tmpDir, "other.jsonl");
+      const voicePath = path.join(tmpDir, "voice.wav");
+      fs.writeFileSync(ownerSessionPath, "{}\n");
+      fs.writeFileSync(otherSessionPath, "{}\n");
+      fs.writeFileSync(voicePath, "RIFF");
+      const sessionFiles = new SessionFileRegistry();
+      const file = sessionFiles.registerFile({
+        sessionPath: ownerSessionPath,
+        filePath: voicePath,
+        label: "voice.wav",
+        origin: "voice_input",
+        storageKind: "managed_cache",
+        presentation: "voice-input",
+        listed: false,
+      });
+      const adapter = {
+        id: "mimo",
+        protocolId: "mimo-chat-completions-asr",
+        types: ["speechRecognition"],
+        transcribe: vi.fn(async () => ({ text: "should not run" })),
+      };
+      const service = new SpeechRecognitionService({
+        providerRegistry: makeProviderRegistry(),
+        preferences: {
+          getSpeechRecognitionConfig: () => ({
+            enabled: true,
+            defaultModel: { provider: "mimo", id: "mimo-v2.5-asr" },
+          }),
+        },
+        sessionFiles,
+        emitEvent: vi.fn(),
+      });
+      service.registerAdapter(adapter);
+
+      await expect(service.transcribeAudio({
+        sessionPath: otherSessionPath,
+        fileId: file.id,
+      })).rejects.toThrow(/session file not found/);
+      expect(adapter.transcribe).not.toHaveBeenCalled();
+      expect(sessionFiles.get(file.id, { sessionPath: ownerSessionPath })?.transcription)
+        .toBeUndefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("logs queued transcription failures instead of swallowing them silently", async () => {
     const warn = vi.fn();
     const service = new SpeechRecognitionService({

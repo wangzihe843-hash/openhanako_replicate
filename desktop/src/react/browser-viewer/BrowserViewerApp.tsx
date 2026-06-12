@@ -6,20 +6,13 @@
  */
 
 import { useState, useEffect, useMemo, useRef, type WheelEvent } from 'react';
+import type { BrowserViewerTab, BrowserViewerUpdate } from '../types';
 import { initTheme } from '../bootstrap';
 
 declare function t(key: string): string;
 declare function setTheme(name: string): void;
 
 initTheme();
-
-type BrowserTab = {
-  tabId: string;
-  title?: string;
-  url?: string | null;
-  canGoBack?: boolean;
-  canGoForward?: boolean;
-};
 
 function tr(key: string, fallback: string) {
   try {
@@ -30,7 +23,14 @@ function tr(key: string, fallback: string) {
   }
 }
 
-function tabTitle(tab: BrowserTab) {
+function isThemePayload(value: unknown): value is { theme: string } {
+  return typeof value === 'object'
+    && value !== null
+    && 'theme' in value
+    && typeof value.theme === 'string';
+}
+
+function tabTitle(tab: BrowserViewerTab) {
   const title = tab.title?.trim();
   if (title) return title;
   if (tab.url) {
@@ -46,7 +46,7 @@ function tabTitle(tab: BrowserTab) {
 export function BrowserViewerApp() {
   const [canBack, setCanBack] = useState(false);
   const [canForward, setCanForward] = useState(false);
-  const [tabs, setTabs] = useState<BrowserTab[]>([]);
+  const [tabs, setTabs] = useState<BrowserViewerTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const tabListRef = useRef<HTMLDivElement | null>(null);
 
@@ -54,12 +54,12 @@ export function BrowserViewerApp() {
     const hana = window.hana;
 
     // 监听主题切换
-    hana?.onSettingsChanged?.((type: string, data: any) => {
-      if (type === 'theme-changed' && data?.theme) setTheme(data.theme);
+    hana?.onSettingsChanged?.((type: string, data: unknown) => {
+      if (type === 'theme-changed' && isThemePayload(data)) setTheme(data.theme);
     });
 
     // 接收浏览器状态更新
-    hana?.onBrowserUpdate?.((data: any) => {
+    hana?.onBrowserUpdate?.((data: BrowserViewerUpdate) => {
       if (Array.isArray(data.tabs)) setTabs(data.tabs);
       if (data.activeTabId !== undefined) setActiveTabId(data.activeTabId);
       if (data.canGoBack !== undefined) setCanBack(data.canGoBack);
@@ -114,6 +114,17 @@ export function BrowserViewerApp() {
             </svg>
           </button>
 
+          {/* Emergency stop */}
+          <button
+            className="stop-btn"
+            title={tr('browser.emergencyStop', 'Stop')}
+            onClick={() => hana?.browserEmergencyStop?.()}
+          >
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <rect x="3" y="3" width="8" height="8" rx="1" fill="currentColor" stroke="none" />
+            </svg>
+          </button>
+
           <div className="nav-sep" />
 
           {/* Back */}
@@ -151,64 +162,53 @@ export function BrowserViewerApp() {
           </button>
         </div>
 
-        <div
-          ref={tabListRef}
-          className="browser-tab-list"
-          onWheel={handleTabWheel}
-        >
-          {tabs.map((tab) => {
-            const isActive = tab.tabId === (activeTab?.tabId || activeTabId);
-            return (
-              <button
-                key={tab.tabId}
-                className={`browser-tab${isActive ? ' active' : ''}`}
-                title={tabTitle(tab)}
-                onClick={() => hana?.browserSwitchTab?.(tab.tabId)}
-                onDoubleClick={() => hana?.browserCloseTab?.(tab.tabId)}
-              >
-                <span className="browser-tab-title">{tabTitle(tab)}</span>
-                <span
-                  className="browser-tab-close"
-                  title={tr('browser.closeTab', 'Close tab')}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    hana?.browserCloseTab?.(tab.tabId);
-                  }}
-                  onDoubleClick={(event) => event.stopPropagation()}
-                >
-                  <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-                    <path d="M4.5 4.5l5 5M9.5 4.5l-5 5" />
-                  </svg>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <button
-          className="tb-btn new-tab-btn"
-          title={tr('browser.newTab', 'New Tab')}
-          onClick={() => hana?.browserNewTab?.()}
-        >
-          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-            <path d="M7 3v8M3 7h8" />
-          </svg>
-        </button>
-
-        <div className="toolbar-drag" />
-
-        {/* Emergency stop */}
-        <div className="toolbar-right">
-          <button
-            className="stop-btn"
-            title={tr('browser.emergencyStop', 'Stop')}
-            onClick={() => hana?.browserEmergencyStop?.()}
+        <div className="browser-tab-strip">
+          <div
+            ref={tabListRef}
+            className="browser-tab-list"
+            onWheel={handleTabWheel}
           >
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-              <rect x="3" y="3" width="8" height="8" rx="1" fill="currentColor" stroke="none" />
+            {tabs.map((tab) => {
+              const isActive = tab.tabId === (activeTab?.tabId || activeTabId);
+              return (
+                <button
+                  key={tab.tabId}
+                  className={`browser-tab${isActive ? ' active' : ''}`}
+                  title={tabTitle(tab)}
+                  onClick={() => hana?.browserSwitchTab?.(tab.tabId)}
+                  onDoubleClick={() => hana?.browserCloseTab?.(tab.tabId)}
+                >
+                  <span className="browser-tab-title">{tabTitle(tab)}</span>
+                  <span
+                    className="browser-tab-close"
+                    title={tr('browser.closeTab', 'Close tab')}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      hana?.browserCloseTab?.(tab.tabId);
+                    }}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                  >
+                    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+                      <path d="M4.5 4.5l5 5M9.5 4.5l-5 5" />
+                    </svg>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            className="tb-btn new-tab-btn"
+            title={tr('browser.newTab', 'New Tab')}
+            onClick={() => hana?.browserNewTab?.()}
+          >
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+              <path d="M7 3v8M3 7h8" />
             </svg>
           </button>
         </div>
+
+        <div className="toolbar-drag" />
       </div>
 
       {/* Card shadow frame (WebContentsView sits on top) */}

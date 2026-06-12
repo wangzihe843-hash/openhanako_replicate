@@ -231,6 +231,7 @@ export function createSettingsSnapshotRoute(engine: any, options: Record<string,
           computerUse: await buildComputerUsePreferences(engine, {
             platform: options.platform || process.platform,
           }),
+          imageGeneration: engine.media?.getImageConfig?.() || engine.preferences?.getImageGenerationConfig?.() || {},
           speechRecognition: engine.speechRecognition?.getConfig?.() || engine.getSpeechRecognitionConfig?.() || { enabled: false },
           experiments: listResolvedExperiments(engine.preferences),
         },

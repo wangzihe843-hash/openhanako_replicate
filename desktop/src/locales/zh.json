@@ -378,7 +378,11 @@
       "xhigh": "最强推理"
     },
     "contextWindow": "上下文 {windowK}k",
-    "tokensUsed": "已用 {tokensK}k ({pct}%)"
+    "tokensUsed": "已用 {tokensK}k ({pct}%)",
+    "contextActions": "上下文操作",
+    "refreshAndCompact": "更新并压缩",
+    "refreshAndCompactTooltip": "更新到最新的记忆和工具集",
+    "compact": "压缩"
   },
   "slash": {
     "diary": "写今日日记",
@@ -2915,6 +2919,7 @@
       "noRegisteredProtocol": "没有注册协议 {protocolId}",
       "multipleProvidersSameModel": "多个 provider 都有同名模型，请同时指定 provider",
       "modelNotInMediaProvider": "没有在 media provider 中找到这个模型",
+      "referenceImageLimitExceeded": "图片生成 provider \"{providerId}\" 最多支持 {max} 张参考图，当前传入 {count} 张",
       "providerNoApiKey": "Provider \"{providerId}\" 未配置 API Key。请在设置 → Providers 中配置。",
       "providerNotLoggedIn": "Provider \"{providerId}\" 未登录。请先在设置 → Providers 登录 OpenAI Codex。",
       "apiKeyNotConfigured": "未配置 API Key",
@@ -3040,6 +3045,7 @@
       "promptDesc": "图片描述（中英文均可）",
       "countDesc": "并发生成张数，默认 1，最大 9",
       "imageDesc": "参考图路径（图生图）",
+      "referenceImagesDesc": "多张参考图路径数组；需要多参考图时优先使用它，单图仍可用 image。实际张数由 adapter 的 maxReferenceImages 限制",
       "ratioDesc": "长宽比：1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9",
       "resolutionDesc": "统一分辨率档位：1k, 2k, 4k；由 adapter 映射为供应商最接近的尺寸",
       "qualityDesc": "画质档位：low, medium, high, auto（由 adapter 映射为供应商参数）",

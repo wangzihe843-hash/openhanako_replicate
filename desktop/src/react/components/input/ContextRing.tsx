@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../../stores';
 import { useI18n } from '../../hooks/use-i18n';
 import { getWebSocket } from '../../services/websocket';
-import { Tooltip } from '../../ui';
+import { refreshSessionCapabilities } from '../../stores/session-actions';
+import { AnchoredPortal, Tooltip } from '../../ui';
 import { shouldShowContextRingTokenLabel } from './context-ring-visibility';
 import styles from './InputArea.module.css';
 
@@ -13,6 +14,8 @@ export function ContextRing() {
   const [contextWindow, setContextWindow] = useState<number | null>(null);
   const [percent, setPercent] = useState<number | null>(null);
   const [compacting, setCompacting] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const anchorRef = useRef<HTMLElement | null>(null);
 
   // 从 Zustand store 同步 context 数据（keyed store 优先，compat global 兜底）
   const currentSessionPath = useStore(s => s.currentSessionPath);
@@ -24,6 +27,8 @@ export function ContextRing() {
   const storeContextWindow = contextEntry?.window ?? globalContextWindow;
   const storeContextPercent = contextEntry?.percent ?? globalContextPercent;
   const storeCompacting = useStore(s => currentSessionPath ? s.compactingSessions.includes(currentSessionPath) : false);
+  const refreshing = useStore(s => currentSessionPath ? s.capabilityRefreshingSessions.includes(currentSessionPath) : false);
+  const busy = compacting || refreshing;
 
   useEffect(() => {
     setTokens(storeContextTokens ?? null);
@@ -32,13 +37,29 @@ export function ContextRing() {
     setCompacting(storeCompacting);
   }, [storeContextTokens, storeContextWindow, storeContextPercent, storeCompacting]);
 
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [currentSessionPath]);
+
   const handleClick = useCallback(() => {
-    if (compacting) return;
+    if (busy) return;
+    setMenuOpen(open => !open);
+  }, [busy]);
+
+  const handleRefreshAndCompact = useCallback(() => {
+    if (!currentSessionPath || busy) return;
+    setMenuOpen(false);
+    void refreshSessionCapabilities(currentSessionPath);
+  }, [busy, currentSessionPath]);
+
+  const handleCompact = useCallback(() => {
+    if (!currentSessionPath || busy) return;
+    setMenuOpen(false);
     const ws = getWebSocket();
     if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'compact', sessionPath: useStore.getState().currentSessionPath }));
+      ws.send(JSON.stringify({ type: 'compact', sessionPath: currentSessionPath }));
     }
-  }, [compacting]);
+  }, [busy, currentSessionPath]);
 
   if (!currentSessionPath) return null;
   const displayTokens = tokens ?? 0;
@@ -68,39 +89,85 @@ export function ContextRing() {
   );
 
   return (
-    <Tooltip content={tooltipContent} placement="top" align="end">
-      {({ ref, ...tooltipProps }) => (
-        <span
-          className={styles['context-ring-wrap']}
-          ref={(node) => ref(node)}
-          {...tooltipProps}
-        >
-          <button
-            className={`${styles['context-ring']}${compacting ? ` ${styles.compacting}` : ''}`}
-            data-yuan={yuan}
-            onClick={handleClick}
-            disabled={compacting}
+    <>
+      <Tooltip content={tooltipContent} placement="top" align="end" disabled={menuOpen}>
+        {({ ref, ...tooltipProps }) => (
+          <span
+            className={styles['context-ring-wrap']}
+            ref={(node) => {
+              anchorRef.current = node;
+              ref(node);
+            }}
+            {...tooltipProps}
           >
-            <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-              <circle cx={center} cy={center} r={r} fill="none" stroke="var(--ring-bg)" strokeWidth={sw} />
-              <circle
-                cx={center} cy={center} r={r}
-                fill="none"
-                stroke="var(--ring-fg)"
-                strokeWidth={sw}
-                strokeLinecap="round"
-                strokeDasharray={circumference}
-                strokeDashoffset={strokeDashoffset}
-                transform={`rotate(-90 ${center} ${center})`}
-                className={styles['context-ring-progress']}
-              />
-            </svg>
-            {showTokenLabel && (
-              <span className={styles['context-ring-label']}>{tokensK}k</span>
-            )}
-          </button>
-        </span>
-      )}
-    </Tooltip>
+            <button
+              className={`${styles['context-ring']}${compacting ? ` ${styles.compacting}` : ''}`}
+              data-yuan={yuan}
+              onClick={handleClick}
+              disabled={busy}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label={t('input.contextActions')}
+            >
+              <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+                <circle cx={center} cy={center} r={r} fill="none" stroke="var(--ring-bg)" strokeWidth={sw} />
+                <circle
+                  cx={center} cy={center} r={r}
+                  fill="none"
+                  stroke="var(--ring-fg)"
+                  strokeWidth={sw}
+                  strokeLinecap="round"
+                  strokeDasharray={circumference}
+                  strokeDashoffset={strokeDashoffset}
+                  transform={`rotate(-90 ${center} ${center})`}
+                  className={styles['context-ring-progress']}
+                />
+              </svg>
+              {showTokenLabel && (
+                <span className={styles['context-ring-label']}>{tokensK}k</span>
+              )}
+            </button>
+          </span>
+        )}
+      </Tooltip>
+      <AnchoredPortal
+        open={menuOpen}
+        anchorRef={anchorRef}
+        className={styles['context-ring-menu']}
+        role="menu"
+        align="end"
+        offset={6}
+        onClose={() => setMenuOpen(false)}
+      >
+        <Tooltip
+          content={t('input.refreshAndCompactTooltip')}
+          placement="left"
+          align="center"
+        >
+          {({ ref, ...tooltipProps }) => (
+            <button
+              type="button"
+              ref={ref}
+              className={styles['context-ring-menu-item']}
+              role="menuitem"
+              onClick={handleRefreshAndCompact}
+              disabled={busy}
+              {...tooltipProps}
+            >
+              {t('input.refreshAndCompact')}
+            </button>
+          )}
+        </Tooltip>
+        <button
+          type="button"
+          className={styles['context-ring-menu-item']}
+          role="menuitem"
+          onClick={handleCompact}
+          disabled={busy}
+        >
+          {t('input.compact')}
+        </button>
+      </AnchoredPortal>
+    </>
   );
 }

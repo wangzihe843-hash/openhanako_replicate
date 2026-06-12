@@ -189,16 +189,40 @@ const { text } = await sampleText(ctx, {
 });
 ```
 
-Media helpers expose Hana's configured provider stack. `listMediaProviders()` and `resolveMediaModel()` read configured image/video/speech-capable providers. `generateImage()` submits an image generation task through the built-in media task pipeline and returns a task/batch result; generated files are delivered as `SessionFile` resources when the task completes.
+Media helpers expose Hana's configured provider stack. `listMediaProviders()` and `resolveMediaModel()` read configured image/video/speech-capable providers. `generateImage()` submits an image generation task through the built-in media task pipeline and returns a task/batch result; by default generated files are delivered as `SessionFile` resources when the task completes. Use `referenceImages` with `SessionFile` references for multi-reference image generation. Image adapters accept multiple reference images by default; adapters that only support one reference should declare `maxReferenceImages: 1`, and the task pipeline will reject larger requests before enqueueing. `generateVideo()`, `generateMedia()`, and `transcribeAudio()` use the same native media manager for video tasks and ASR. `transcribeAudio()` returns `{ ok: true, transcription }`.
 
 ```js
 const result = await generateImage(ctx, {
   sessionPath,
   prompt: 'A handwritten character card on warm paper',
+  referenceImages: [
+    { kind: 'session_file', fileId: 'sf_reference_a' },
+    { kind: 'session_file', fileId: 'sf_reference_b' },
+  ],
   ratio: '3:2',
   resolution: '2k',
 });
 ```
+
+For plugin-owned jobs that should not create chat history, Bridge delivery, or `SessionFile` records, pass `delivery: { mode: 'response' }` and omit `sessionPath`. The returned task can be polled through `GET /api/media/tasks/:taskId`; once it is done, read `task.files[]` and fetch each file from `GET /api/media/generated/:filename`.
+
+```js
+const result = await generateImage(ctx, {
+  prompt: 'A small icon on transparent background',
+  delivery: { mode: 'response' },
+});
+```
+
+Plugin backend code should prefer the SDK helpers above. Lightweight plugin pages or route handlers that already have host HTTP credentials can also submit through the native facade:
+
+```http
+POST /api/media/generate
+POST /api/media/image/generate
+POST /api/media/video/generate
+POST /api/media/asr/transcribe
+```
+
+The image/video endpoints require `prompt`; default `delivery.mode = "session"` also requires `sessionPath`. With `delivery.mode = "response"`, image/video requests may omit `sessionPath` and will not create `SessionFile` records. ASR still requires `sessionPath` and `fileId`. Image reference fields on the native facade accept only `SessionFile` references such as `{ "kind": "session_file", "fileId": "sf_..." }`; raw local paths are reserved for legacy/internal image-gen calls. These routes require chat-scope host credentials and forward into the same native Media Manager task pipeline as the SDK helpers.
 
 For Agent-assisted development, plugins can declare `manifest.dev.scenarios`. These are not runtime features; they are smoke-test instructions for Hana's dev loop and should only describe repeatable checks such as invoking a tool, expecting text in the result, or opening a declared UI surface.
 

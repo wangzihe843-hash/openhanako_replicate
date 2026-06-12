@@ -55,20 +55,31 @@ function hasExplicitIdentity(identity: StreamingStatusIdentity | undefined): boo
       || Object.prototype.hasOwnProperty.call(identity, 'turnId'));
 }
 
+function hasKnownIdentityPart(identity: ActiveSessionStream | StreamingStatusIdentity | undefined): boolean {
+  return !!normalizeIdentityPart(identity?.streamId) || !!normalizeIdentityPart(identity?.turnId);
+}
+
 function identitiesMatch(
   current: ActiveSessionStream | undefined,
   incoming: StreamingStatusIdentity | undefined,
 ): boolean {
-  if (!current || !hasExplicitIdentity(incoming)) return true;
+  if (!current || !hasKnownIdentityPart(current)) return true;
   const currentStreamId = normalizeIdentityPart(current.streamId);
   const incomingStreamId = normalizeIdentityPart(incoming?.streamId);
-  if (currentStreamId && incomingStreamId && currentStreamId !== incomingStreamId) return false;
+  let matchedKnownPart = false;
+  if (currentStreamId && incomingStreamId) {
+    if (currentStreamId !== incomingStreamId) return false;
+    matchedKnownPart = true;
+  }
 
   const currentTurnId = normalizeIdentityPart(current.turnId);
   const incomingTurnId = normalizeIdentityPart(incoming?.turnId);
-  if (currentTurnId && incomingTurnId && currentTurnId !== incomingTurnId) return false;
+  if (currentTurnId && incomingTurnId) {
+    if (currentTurnId !== incomingTurnId) return false;
+    matchedKnownPart = true;
+  }
 
-  return true;
+  return matchedKnownPart;
 }
 
 export const createStreamingSlice = (
@@ -80,7 +91,12 @@ export const createStreamingSlice = (
   addStreamingSession: (path, identity) => set((s) => {
     const active = s.activeSessionStreams || {};
     const current = active[path];
+    const currentStreamId = normalizeIdentityPart(current?.streamId);
+    const currentTurnId = normalizeIdentityPart(current?.turnId);
+    const incomingStreamId = normalizeIdentityPart(identity?.streamId);
+    const incomingTurnId = normalizeIdentityPart(identity?.turnId);
     const explicitIdentity = hasExplicitIdentity(identity);
+    const streamChanged = !!incomingStreamId && incomingStreamId !== currentStreamId;
     return {
       streamingSessions: s.streamingSessions.includes(path)
         ? s.streamingSessions
@@ -89,11 +105,11 @@ export const createStreamingSlice = (
         ...active,
         [path]: {
           streamId: explicitIdentity
-            ? normalizeIdentityPart(identity?.streamId)
-            : (current?.streamId ?? null),
+            ? (incomingStreamId ?? currentStreamId ?? null)
+            : (currentStreamId ?? null),
           turnId: explicitIdentity
-            ? normalizeIdentityPart(identity?.turnId)
-            : (current?.turnId ?? null),
+            ? (incomingTurnId ?? (streamChanged ? null : currentTurnId) ?? null)
+            : (currentTurnId ?? null),
         },
       },
     };
@@ -106,7 +122,8 @@ export const createStreamingSlice = (
         applied = false;
         return {};
       }
-      const { [path]: _removed, ...restActive } = active;
+      const restActive = { ...active };
+      delete restActive[path];
       return {
         streamingSessions: s.streamingSessions.filter(p => p !== path),
         activeSessionStreams: restActive,

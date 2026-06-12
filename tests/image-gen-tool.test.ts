@@ -709,6 +709,56 @@ describe("generate-image tool — image param (image-to-image)", () => {
     expect(submittedParams.image).toBe("/path/to/ref.png");
   });
 
+  it("passes multiple referenceImages to adapters by default", async () => {
+    const { registry, store, poller, adapter } = makeMediaGen({
+      submit: vi.fn(async () => ({ taskId: "t-multi-ref" })),
+    });
+    const ctx = makeCtx({ registry, store, poller });
+
+    await execute({
+      prompt: "merge references",
+      referenceImages: ["/path/ref-a.png", "/path/ref-b.png"],
+    }, ctx);
+
+    const [submittedParams] = adapter.submit.mock.calls[0];
+    expect(submittedParams.image).toEqual(["/path/ref-a.png", "/path/ref-b.png"]);
+  });
+
+  it("rejects multiple referenceImages when the adapter declares a single-reference limit", async () => {
+    const { registry, store, poller, adapter } = makeMediaGen({
+      maxReferenceImages: 1,
+      submit: vi.fn(async () => ({ taskId: "t-single-ref-only" })),
+    });
+    const ctx = makeCtx({ registry, store, poller });
+
+    const result = await execute({
+      prompt: "merge references",
+      referenceImages: ["/path/ref-a.png", "/path/ref-b.png"],
+    }, ctx);
+
+    expect(result.content[0].text).toContain("最多支持 1 张参考图");
+    expect(adapter.submit).not.toHaveBeenCalled();
+    expect(store.add).not.toHaveBeenCalled();
+    expect(poller.add).not.toHaveBeenCalled();
+  });
+
+  it("allows one reference image when the adapter declares a single-reference limit", async () => {
+    const { registry, store, poller, adapter } = makeMediaGen({
+      maxReferenceImages: 1,
+      submit: vi.fn(async () => ({ taskId: "t-single-ref" })),
+    });
+    const ctx = makeCtx({ registry, store, poller });
+
+    await execute({
+      prompt: "use one reference",
+      referenceImages: ["/path/ref-a.png"],
+    }, ctx);
+
+    const [submittedParams] = adapter.submit.mock.calls[0];
+    expect(submittedParams.image).toEqual(["/path/ref-a.png"]);
+    expect(store.add).toHaveBeenCalledOnce();
+  });
+
   it("omits image key from params when not provided", async () => {
     const { registry, store, poller, adapter } = makeMediaGen({
       submit: vi.fn(async () => ({ taskId: "t-no-img" })),

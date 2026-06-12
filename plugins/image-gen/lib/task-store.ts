@@ -28,6 +28,7 @@ function normalizeLoadedTask(task) {
   const providerId = task.providerId || task.adapterId || task.params?.providerId || null;
   const modelId = task.modelId || task.params?.modelId || task.params?.model || null;
   const protocolId = task.protocolId || task.params?.protocolId || LEGACY_PROTOCOL_BY_ADAPTER[providerId] || null;
+  const deliveryMode = task.deliveryMode || task.delivery?.mode || "session";
   const params = {
     ...(task.params || {}),
     ...(providerId ? { providerId } : {}),
@@ -41,6 +42,8 @@ function normalizeLoadedTask(task) {
     modelId,
     protocolId,
     credentialLaneId: task.credentialLaneId || task.params?.credentialLaneId || null,
+    deliveryMode,
+    delivery: task.delivery || { mode: deliveryMode },
     params,
   };
 }
@@ -69,9 +72,9 @@ export class TaskStore {
   /**
    * Add a new task. Throws if taskId already exists.
    *
-   * @param {{ taskId: string, adapterId: string, providerId?: string|null, modelId?: string|null, protocolId?: string|null, credentialLaneId?: string|null, batchId: string, type: string, prompt: string, params: object, sessionPath?: string, deliveryTarget?: object|null, metadata?: object|null, adapterTaskId?: string|null, submitState?: string }} opts
+   * @param {{ taskId: string, adapterId: string, providerId?: string|null, modelId?: string|null, protocolId?: string|null, credentialLaneId?: string|null, batchId: string, type: string, prompt: string, params: object, sessionPath?: string|null, deliveryMode?: string, delivery?: object|null, deliveryTarget?: object|null, metadata?: object|null, adapterTaskId?: string|null, submitState?: string }} opts
    */
-  add({ taskId, adapterId, providerId = null, modelId = null, protocolId = null, credentialLaneId = null, batchId, type, prompt, params, sessionPath, deliveryTarget = null, metadata = null, adapterTaskId = null, submitState = "submitted" }) {
+  add({ taskId, adapterId, providerId = null, modelId = null, protocolId = null, credentialLaneId = null, batchId, type, prompt, params, sessionPath, deliveryMode = "session", delivery = null, deliveryTarget = null, metadata = null, adapterTaskId = null, submitState = "submitted" }) {
     if (this._tasks.has(taskId)) {
       throw new Error(`TaskStore: duplicate taskId "${taskId}"`);
     }
@@ -87,6 +90,10 @@ export class TaskStore {
       prompt,
       params,
       sessionPath: sessionPath || null,
+      deliveryMode: deliveryMode || "session",
+      delivery: delivery && typeof delivery === "object" && !Array.isArray(delivery)
+        ? delivery
+        : { mode: deliveryMode || "session" },
       deliveryTarget: deliveryTarget || null,
       metadata: metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : null,
       adapterTaskId: adapterTaskId || null,

@@ -895,6 +895,27 @@ describe('ws-message-handler turn_end side effects', () => {
     expect(useStore.getState().inputFocusTrigger).toBe(0);
   });
 
+  it('identity-less status=false does not finish a stream with a known streamId', () => {
+    vi.mocked(streamBufferManager.finishTurn).mockClear();
+    useStore.setState({
+      streamingSessions: ['/session/a.jsonl'],
+      activeSessionStreams: {
+        '/session/a.jsonl': { streamId: 'stream_new', turnId: null },
+      },
+      inputFocusTrigger: 0,
+    } as never);
+
+    handleServerMessage({
+      type: 'status',
+      sessionPath: '/session/a.jsonl',
+      isStreaming: false,
+    });
+
+    expect(useStore.getState().streamingSessions).toEqual(['/session/a.jsonl']);
+    expect(streamBufferManager.finishTurn).not.toHaveBeenCalledWith('/session/a.jsonl');
+    expect(useStore.getState().inputFocusTrigger).toBe(0);
+  });
+
   it('background status=false does not request input focus', () => {
     useStore.setState({
       streamingSessions: ['/session/b.jsonl'],

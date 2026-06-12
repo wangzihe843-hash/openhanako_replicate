@@ -80,7 +80,7 @@ describe('MediaProviderDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: /qwen-image-2\.0-pro/ }));
 
     await waitFor(() => {
-      expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/plugins/image-gen/providers/dashscope/models', expect.objectContaining({
+      expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/media/image/providers/dashscope/models', expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ model: { id: 'qwen-image-2.0-pro' } }),
       }));

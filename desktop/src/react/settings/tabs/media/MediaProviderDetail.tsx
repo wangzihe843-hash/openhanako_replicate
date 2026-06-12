@@ -33,12 +33,12 @@ export function MediaProviderDetail({ providerId, provider, config, onSaveConfig
     onSaveConfig({ providerDefaults: { ...current, [providerId]: provDefaults } });
   };
 
-  // ── Model add/remove through the image-gen media provider routes ──
+  // ── Model add/remove through the native media provider routes ──
 
   const addModel = async (modelId: string) => {
     try {
       const candidate = allModels.find(m => m.id === modelId) || { id: modelId };
-      await hanaFetch(`/api/plugins/image-gen/providers/${encodeURIComponent(providerId)}/models`, {
+      await hanaFetch(`/api/media/image/providers/${encodeURIComponent(providerId)}/models`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: candidate }),
@@ -54,7 +54,7 @@ export function MediaProviderDetail({ providerId, provider, config, onSaveConfig
 
   const removeModel = async (modelId: string) => {
     try {
-      await hanaFetch(`/api/plugins/image-gen/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}`, {
+      await hanaFetch(`/api/media/image/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}`, {
         method: 'DELETE',
       });
       invalidateConfigCache();

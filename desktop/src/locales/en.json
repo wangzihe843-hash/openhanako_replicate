@@ -378,7 +378,11 @@
       "xhigh": "full reasoning"
     },
     "contextWindow": "Context {windowK}k",
-    "tokensUsed": "Used {tokensK}k ({pct}%)"
+    "tokensUsed": "Used {tokensK}k ({pct}%)",
+    "contextActions": "Context actions",
+    "refreshAndCompact": "Update and compact",
+    "refreshAndCompactTooltip": "Update to the latest memory and tool set",
+    "compact": "Compact"
   },
   "slash": {
     "diary": "Write today's diary",
@@ -2799,6 +2803,7 @@
       "promptDesc": "Image description (Chinese or English)",
       "countDesc": "Number of concurrent generations, default 1, max 9",
       "imageDesc": "Reference image path (image-to-image)",
+      "referenceImagesDesc": "Array of reference image paths. Use this for multiple references; single-image calls can keep using image. The selected adapter may cap the count with maxReferenceImages.",
       "ratioDesc": "Aspect ratio: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9",
       "resolutionDesc": "Unified resolution tier: 1k, 2k, 4k; adapter maps to the closest vendor size",
       "qualityDesc": "Quality tier: low, medium, high, auto (adapter maps to vendor parameters)",
@@ -3025,6 +3030,7 @@
       "noRegisteredProtocol": "no registered protocol: {protocolId}",
       "multipleProvidersSameModel": "multiple providers have the same model name; please also specify provider",
       "modelNotInMediaProvider": "model not found in any media provider",
+      "referenceImageLimitExceeded": "Image generation provider \"{providerId}\" supports at most {max} reference image(s); received {count}",
       "providerNoApiKey": "Provider \"{providerId}\" has no API Key configured. Please configure it in Settings → Providers.",
       "providerNotLoggedIn": "Provider \"{providerId}\" is not logged in. Please log in to OpenAI Codex in Settings → Providers.",
       "apiKeyNotConfigured": "API Key not configured",

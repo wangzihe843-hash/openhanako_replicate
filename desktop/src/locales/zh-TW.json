@@ -345,7 +345,11 @@
       "xhigh": "最強推理"
     },
     "contextWindow": "上下文 {windowK}k",
-    "tokensUsed": "已用 {tokensK}k ({pct}%)"
+    "tokensUsed": "已用 {tokensK}k ({pct}%)",
+    "contextActions": "上下文操作",
+    "refreshAndCompact": "更新並壓縮",
+    "refreshAndCompactTooltip": "更新到最新的記憶和工具集",
+    "compact": "壓縮"
   },
   "slash": {
     "diary": "寫今日日記",

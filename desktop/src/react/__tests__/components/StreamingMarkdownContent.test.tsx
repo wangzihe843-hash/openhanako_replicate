@@ -3,17 +3,27 @@
 import React from 'react';
 import fs from 'node:fs';
 import path from 'node:path';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StreamingMarkdownContent } from '../../components/chat/StreamingMarkdownContent';
+import { injectCopyButtons } from '../../utils/format';
 import { renderMarkdown } from '../../utils/markdown';
 
 vi.mock('../../utils/mermaid-renderer', () => ({
   renderMermaidDiagrams: vi.fn(async () => undefined),
 }));
 
+vi.mock('../../utils/format', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/format')>();
+  return {
+    ...actual,
+    injectCopyButtons: vi.fn(),
+  };
+});
+
 describe('StreamingMarkdownContent', () => {
   beforeEach(() => {
+    vi.mocked(injectCopyButtons).mockClear();
     vi.spyOn(window, 'requestAnimationFrame');
     vi.spyOn(window, 'cancelAnimationFrame');
     window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) as unknown as typeof window.matchMedia;
@@ -126,6 +136,57 @@ describe('StreamingMarkdownContent', () => {
 
     expect(container.querySelector('.md-content')).toBe(root);
     expect(container.textContent).toContain('后续说明');
+  });
+
+  it('co-renders code block toolbar without post-render DOM injection', () => {
+    const source = '```ts\nconst x = 1;\n```';
+    const html = '<pre><code>const x = 1;</code></pre>';
+
+    const { container } = render(
+      <StreamingMarkdownContent source={source} html={html} active />,
+    );
+
+    expect(container.querySelector('.code-block-wrap')).not.toBeNull();
+    expect(container.querySelector('.code-block-toolbar')).not.toBeNull();
+    expect(container.querySelectorAll('.code-block-toolbar-btn')).toHaveLength(2);
+    expect(injectCopyButtons).not.toHaveBeenCalled();
+  });
+
+  it('handles co-rendered code toolbar wrap and copy actions through React events', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    window.t = ((key: string) => {
+      if (key === 'attach.copy') return '复制';
+      if (key === 'attach.copied') return '已复制';
+      if (key === 'codeBlock.wordWrap') return '自动换行';
+      return key;
+    }) as typeof window.t;
+
+    const { container } = render(
+      <StreamingMarkdownContent
+        source="```ts\nconst x = 1;\n```"
+        html="<pre><code>const x = 1;</code></pre>"
+        active
+      />,
+    );
+
+    const wrapper = container.querySelector<HTMLDivElement>('.code-block-wrap');
+    const buttons = container.querySelectorAll<HTMLButtonElement>('.code-block-toolbar-btn');
+    const wrapBtn = buttons[0];
+    const copyBtn = buttons[1];
+
+    expect(wrapper).not.toBeNull();
+    fireEvent.click(wrapBtn);
+    expect(wrapper?.dataset.wrap).toBe('true');
+    expect(wrapBtn.dataset.active).toBe('true');
+
+    fireEvent.click(copyBtn);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('const x = 1;'));
+    expect(copyBtn.dataset.copied).toBe('true');
+    expect(copyBtn.getAttribute('aria-label')).toBe('已复制');
   });
 
   it('does not typewriter backtick-sensitive inline markdown while streaming', () => {

@@ -14,6 +14,7 @@
 
 import { dirname, join as pathJoin } from "node:path";
 import { readImageSize } from "./image-size.ts";
+import { isResponseDelivery } from "./image-task-runner.ts";
 
 const TICK_MS = 5_000;
 const TWO_MINUTES = 2 * 60 * 1000;
@@ -107,6 +108,7 @@ export class Poller {
    */
   cancel(taskId) {
     if (!this._active.has(taskId)) return;
+    const task = this._store.get(taskId);
     this._cancelled.add(taskId);
     this._active.delete(taskId);
     this._errorCounts.delete(taskId);
@@ -115,8 +117,10 @@ export class Poller {
       failReason: "user cancelled",
       completedAt: new Date().toISOString(),
     });
-    this._bus.request("deferred:abort", { taskId, reason: "user cancelled" }).catch(() => {});
-    this._bus.request("task:remove", { taskId }).catch(() => {});
+    if (!isResponseDelivery(task)) {
+      this._bus.request("deferred:abort", { taskId, reason: "user cancelled" }).catch(() => {});
+      this._bus.request("task:remove", { taskId }).catch(() => {});
+    }
     this._log.info(`[image-gen] task ${taskId} cancelled by user`);
   }
 
@@ -139,6 +143,7 @@ export class Poller {
         continue;
       }
       this._active.add(task.taskId);
+      if (isResponseDelivery(task)) continue;
       // Re-register in DeferredResultStore so resolve/fail notifications work after restart
       this._bus.request("deferred:register", {
         taskId: task.taskId,
@@ -210,6 +215,7 @@ export class Poller {
   }
 
   _registerGeneratedFiles(task, files) {
+    if (isResponseDelivery(task)) return [];
     if (!this._registerSessionFile || !task?.sessionPath || !files?.length) return [];
     const sessionFiles = [];
     for (const file of files) {
@@ -297,12 +303,14 @@ export class Poller {
         completedAt: new Date().toISOString(),
       });
       this._active.delete(taskId);
-      this._bus.request("task:remove", { taskId }).catch(() => {});
-      await this._bus.request("deferred:resolve", {
-        taskId,
-        files: task.files,
-        ...(sessionFiles.length ? { sessionFiles } : {}),
-      });
+      if (!isResponseDelivery(task)) {
+        this._bus.request("task:remove", { taskId }).catch(() => {});
+        await this._bus.request("deferred:resolve", {
+          taskId,
+          files: task.files,
+          ...(sessionFiles.length ? { sessionFiles } : {}),
+        });
+      }
       this._emitTaskDone(task, task.files, dims, sessionFiles);
       return;
     }
@@ -323,8 +331,10 @@ export class Poller {
         completedAt: new Date().toISOString(),
       });
       this._active.delete(taskId);
-      this._bus.request("task:remove", { taskId }).catch(() => {});
-      await this._bus.request("deferred:fail", { taskId, error: err });
+      if (!isResponseDelivery(task)) {
+        this._bus.request("task:remove", { taskId }).catch(() => {});
+        await this._bus.request("deferred:fail", { taskId, error: err });
+      }
       return;
     }
 
@@ -377,12 +387,14 @@ export class Poller {
         completedAt: new Date().toISOString(),
       });
       this._active.delete(taskId);
-      this._bus.request("task:remove", { taskId }).catch(() => {});
-      await this._bus.request("deferred:resolve", {
-        taskId,
-        files,
-        ...(sessionFiles.length ? { sessionFiles } : {}),
-      });
+      if (!isResponseDelivery(task)) {
+        this._bus.request("task:remove", { taskId }).catch(() => {});
+        await this._bus.request("deferred:resolve", {
+          taskId,
+          files,
+          ...(sessionFiles.length ? { sessionFiles } : {}),
+        });
+      }
       this._emitTaskDone(task, files, dims, sessionFiles);
       return;
     }
@@ -395,11 +407,13 @@ export class Poller {
         completedAt: new Date().toISOString(),
       });
       this._active.delete(taskId);
-      this._bus.request("task:remove", { taskId }).catch(() => {});
-      await this._bus.request("deferred:fail", {
-        taskId,
-        error: result.error ?? { code: "GEN_FAILED", message: failReason },
-      });
+      if (!isResponseDelivery(task)) {
+        this._bus.request("task:remove", { taskId }).catch(() => {});
+        await this._bus.request("deferred:fail", {
+          taskId,
+          error: result.error ?? { code: "GEN_FAILED", message: failReason },
+        });
+      }
       return;
     }
 

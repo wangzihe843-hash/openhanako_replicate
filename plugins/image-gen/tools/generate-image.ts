@@ -17,6 +17,11 @@ export const parameters = {
     prompt:     { type: "string", description: t("toolDef.generateImage.promptDesc") },
     count:      { type: "number", description: t("toolDef.generateImage.countDesc") },
     image:      { type: "string", description: t("toolDef.generateImage.imageDesc") },
+    referenceImages: {
+      type: "array",
+      items: { type: "string" },
+      description: t("toolDef.generateImage.referenceImagesDesc"),
+    },
     ratio:      { type: "string", description: t("toolDef.generateImage.ratioDesc") },
     resolution: { type: "string", description: t("toolDef.generateImage.resolutionDesc") },
     quality:    { type: "string", description: t("toolDef.generateImage.qualityDesc") },
