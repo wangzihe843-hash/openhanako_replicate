@@ -25,7 +25,8 @@ import {
 } from './xingye-files-store';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { listLoreEntries } from './xingye-lore-store';
-import { getVirtualContacts } from './xingye-phone-store';
+// 已确认条目：待「新的朋友」通过的候选不参与密码素材/隐藏种子上下文。
+import { getConfirmedVirtualContacts } from './xingye-phone-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
   collectHiddenPasswordCandidates,
@@ -461,7 +462,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
           profile: ownerProfile,
           userName,
           loreEntries: listLoreEntries(ownerAgentId, storage),
-          virtualContacts: getVirtualContacts(ownerAgentId, storage),
+          virtualContacts: getConfirmedVirtualContacts(ownerAgentId, storage),
         });
         const picked = pickRandomCandidate(candidates);
         if (picked) {
@@ -892,7 +893,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
       profile: ownerProfile,
       userName,
       loreEntries: listLoreEntries(ownerAgentId, storage),
-      virtualContacts: getVirtualContacts(ownerAgentId, storage),
+      virtualContacts: getConfirmedVirtualContacts(ownerAgentId, storage),
     });
     const picked = pickRandomCandidate(candidates, {
       excludeValue: undefined,
@@ -936,7 +937,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
         agent: ownerAgent,
         profile: ownerProfile,
         loreEntries: listLoreEntries(ownerAgentId, storage),
-        virtualContacts: getVirtualContacts(ownerAgentId, storage),
+        virtualContacts: getConfirmedVirtualContacts(ownerAgentId, storage),
         // 反重复 anchor + 入库前兜底用——首次解锁通常为空，但 markHiddenFolderSeedGenerated
         // 之外的再次触发（例如未来的「再生成几条」按钮）会有历史条目要避开。
         existingEntries: hiddenEntries,

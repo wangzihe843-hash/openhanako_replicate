@@ -9,6 +9,7 @@ import {
   shouldSkipFamilyContacts as shouldSkipFamilyContactsRule,
 } from './xingye-contact-generator';
 import { appendXingyeEventOnce } from './xingye-event-log';
+import { bigramJaccard, normalizeTitleForDedup } from './xingye-files-dedupe';
 
 export type XingyeContactTargetType =
   | 'user'
@@ -79,8 +80,14 @@ export type XingyePhoneContactMeta = {
   faction?: string;
   status?: XingyeContactStatus;
   linkedAgentId?: string;
-  /** AI 新增、待「新的朋友」确认的虚拟联系人等 */
-  pendingNewFriend?: boolean;
+  /**
+   * 「新的朋友」审批门槛：true = AI 新增、尚未被用户在「新的朋友」里通过的虚拟联系人。
+   * 待确认条目默认不出现在通讯录任何列表（getPhoneContacts 默认排除），
+   * 通过（approvePendingNewFriend）后清掉；拒绝（rejectPendingNewFriend）则整条移除。
+   * 历史字段 pendingNewFriend（仅「未读」语义）已废弃且解析时直接忽略——
+   * 存量联系人一律视为已确认，不会因升级掉进待确认队列。
+   */
+  pendingApproval?: boolean;
   manualEditedFields?: string[];
   source?: XingyeContactSource;
   updatedAt: string;
@@ -220,7 +227,7 @@ export type XingyePhoneContactView = {
   avatarDataUrl?: string;
   agent?: Agent;
   virtualContact?: XingyeVirtualContact;
-  pendingNewFriend?: boolean;
+  pendingApproval?: boolean;
 };
 
 export const XINGYE_PHONE_CONTACTS_STORAGE_KEY = 'xingye.phoneContacts';
@@ -237,6 +244,8 @@ export const XINGYE_PHONE_SMS_HISTORY_GENERATION_STATE_STORAGE_KEY = 'xingye.pho
 export const XINGYE_PHONE_CONTACT_SNAPSHOTS_STORAGE_KEY = 'xingye.phoneContactSnapshots';
 /** 每个 owner 在 localStorage 中最多保留的通讯录快照条数（仅打点，非多份完整联系人副本）。更早的会在加载或新建快照时丢弃。 */
 export const XINGYE_PHONE_CONTACT_SNAPSHOT_MAX = 2;
+/** 联系人详情（账号ID/IP/签名/印象历史/联系记录）：单 key 存整张 map，key 与 meta 同构（owner::targetType::targetId）。 */
+export const XINGYE_PHONE_CONTACT_PROFILES_STORAGE_KEY = 'xingye.phoneContactProfiles';
 export const XINGYE_PHONE_CONTACT_AI_UPDATE_STATE_STORAGE_KEY = 'xingye.phoneContactAiUpdateState';
 /** 通讯录实际变更流水，供短信增量补全消费（不依赖 updatedAt 猜测）。 */
 export const XINGYE_PHONE_CONTACT_CHANGE_LOG_STORAGE_KEY = 'xingye.phone.contactChangeLog';
@@ -348,7 +357,7 @@ function normalizeContactMeta(value: unknown): XingyePhoneContactMeta | null {
     manualEditedFields: Array.isArray(value.manualEditedFields)
       ? value.manualEditedFields.map(normalizeOptionalString).filter((item): item is string => Boolean(item))
       : [],
-    pendingNewFriend: typeof value.pendingNewFriend === 'boolean' ? value.pendingNewFriend : undefined,
+    pendingApproval: typeof value.pendingApproval === 'boolean' ? value.pendingApproval : undefined,
     source: normalizeOptionalString(value.source) as XingyeContactSource | undefined,
     updatedAt: normalizeOptionalString(value.updatedAt) ?? new Date(0).toISOString(),
   };
@@ -849,7 +858,7 @@ export function savePhoneContactMeta(
       faction: normalizeOptionalString(patch.faction),
       status: patch.status ?? 'active',
       linkedAgentId: normalizeOptionalString(patch.linkedAgentId),
-      pendingNewFriend: patch.pendingNewFriend,
+      pendingApproval: patch.pendingApproval,
       manualEditedFields: [],
       source: patch.source ?? 'phone_contacts',
       updatedAt: new Date().toISOString(),
@@ -878,15 +887,20 @@ export function savePhoneContactMeta(
     faction: normalizeOptionalString(patch.faction) ?? previous?.faction,
     status: patch.status ?? previous?.status ?? 'active',
     linkedAgentId: normalizeOptionalString(patch.linkedAgentId) ?? previous?.linkedAgentId,
-    pendingNewFriend: ('pendingNewFriend' in patch && patch.pendingNewFriend !== undefined)
-      ? patch.pendingNewFriend
-      : previous?.pendingNewFriend,
+    pendingApproval: ('pendingApproval' in patch && patch.pendingApproval !== undefined)
+      ? patch.pendingApproval
+      : previous?.pendingApproval,
     manualEditedFields: [...nextManualFields],
     source: patch.source ?? previous?.source ?? 'phone_contacts',
     updatedAt: new Date().toISOString(),
   };
   map[key] = next;
   saveContactMetaMap(map, storage);
+  /** 印象真实变化 → 旧印象进详情页历史（详情页显示「划掉旧印象 + 新印象」）。内部自带去重。 */
+  const prevImpression = previous?.impression?.trim();
+  if (prevImpression && next.impression && next.impression.trim() !== prevImpression) {
+    recordContactImpressionHistory(ownerAgentId, targetType, targetId, prevImpression, storage);
+  }
   if (options?.skipContactChangeLog !== true && options?.markManualFields !== false) {
     const changedFields = diffContactMetaForChangeLog(previous ?? null, next);
     if (changedFields.length > 0) {
@@ -1271,7 +1285,8 @@ export function reconcileVirtualContactInferenceFields(
   profiles: XingyeRoleProfileMap,
   storage: StorageLike | null = getLocalStorage(),
 ) {
-  const views = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage)
+  // includePendingApproval：待确认条目同样要补 tags/faction，避免通过后字段缺失。
+  const views = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true, includePendingApproval: true }, storage)
     .filter(v => v.targetType === 'virtual_contact');
   for (const v of views) {
     const meta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', v.targetId, storage);
@@ -1494,7 +1509,7 @@ export function markContactFieldManual(
     faction: previous?.faction,
     status: previous?.status ?? 'active',
     linkedAgentId: previous?.linkedAgentId,
-    pendingNewFriend: previous?.pendingNewFriend,
+    pendingApproval: previous?.pendingApproval,
     manualEditedFields: [...nextManualFields],
     source: previous?.source ?? 'manual',
     updatedAt: new Date().toISOString(),
@@ -1570,7 +1585,6 @@ export function getDefaultUserContact(ownerAgentId: string, storage: StorageLike
     linkedAgentId: meta?.linkedAgentId,
     source: meta?.source ?? 'system',
     updatedAt: meta?.updatedAt,
-    pendingNewFriend: meta?.pendingNewFriend,
   };
 }
 
@@ -1944,7 +1958,9 @@ function resolveVirtualContactIdByStrictMatchName(
 ): string | undefined {
   const needle = matchName.trim().toLowerCase();
   if (!needle) return undefined;
-  const views = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage)
+  // includePendingApproval：身份解析必须看到待确认条目，既保证同名唯一性判断准确，
+  // 也允许 AI 增量 update 刷新一个还在「新的朋友」里的候选（保持待确认状态不变）。
+  const views = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true, includePendingApproval: true }, storage)
     .filter(v => v.targetType === 'virtual_contact');
   const byDisplay = views.filter(v => v.displayName.trim().toLowerCase() === needle);
   if (byDisplay.length === 1) return byDisplay[0].targetId;
@@ -2021,6 +2037,8 @@ export type ApplyAiGeneratedContactsResult = {
   saved: XingyeVirtualContact[];
   /** 真正新建的虚拟联系人条数（去重后） */
   createdCount: number;
+  /** 新建中被打上 pendingApproval、进「新的朋友」待确认的条数（仅 active；born-blocked/deleted 直接入册不计入） */
+  pendingCount: number;
   /** 与已有联系人合并/更新的条数（同名归并，不新增 id） */
   mergedCount: number;
   /** 被丢弃的条数（空名 / 模板占位 / 同名 blocked-deleted 在 never 模式下被跳过等） */
@@ -2070,14 +2088,26 @@ export function applyAiGeneratedContacts(
     metaSource?: XingyeContactSource;
     /** 默认合并同名（任意状态）；增量 add 传 never；重新生成全部传 regenerate。 */
     mergeMatchingDisplayName?: 'prefer-active-only' | 'never' | 'regenerate';
+    /**
+     * 新建联系人进通讯录的门槛：
+     * - 'direct'（默认）：直接入册——初始化、重新生成全部、心跳草稿采纳（用户已确认）走这条；
+     * - 'pending_approval'：打 pendingApproval 标记，先进「新的朋友」等用户通过。
+     *   「AI 生成联系人」按钮与增量更新的 add 走这条。
+     * 仅影响真正新建且 status 为 active 的条目：生成时就是 blocked/deleted 的新联系人
+     * 直接落黑名单/已删除（TA 的态度已明确，没有「加好友审批」的意义）；
+     * 合并到已有联系人也不会改变其待确认状态。
+     */
+    newContactGate?: 'direct' | 'pending_approval';
   },
 ): ApplyAiGeneratedContactsResult {
   const storage = options?.storage ?? getLocalStorage();
   const virtualSource = options?.virtualSource ?? 'ai_generated';
   const metaSource = options?.metaSource ?? virtualSource;
   const mergeMode = options?.mergeMatchingDisplayName ?? 'prefer-active-only';
+  const newContactGate = options?.newContactGate ?? 'direct';
   const output: XingyeVirtualContact[] = [];
   let createdCount = 0;
+  let pendingCount = 0;
   let mergedCount = 0;
   let skippedCount = 0;
 
@@ -2132,8 +2162,9 @@ export function applyAiGeneratedContacts(
       linkedAgentId: existingMeta?.linkedAgentId ?? existed?.linkedAgentId,
       source: metaSource,
     };
-    if (!existed && metaSource === 'ai_generated') {
-      aiMetaPatch.pendingNewFriend = true;
+    if (!existed && newContactGate === 'pending_approval' && mergedStatus === 'active') {
+      aiMetaPatch.pendingApproval = true;
+      pendingCount += 1;
     }
     const patch = preserveManualContactFields(existingMeta, aiMetaPatch);
     const finalStatus = (patch.status ?? mergedStatus) as XingyeContactStatus;
@@ -2161,7 +2192,7 @@ export function applyAiGeneratedContacts(
     else createdCount += 1;
   }
   ensureDefaultUserContact(ownerAgentId, storage);
-  return { saved: output, createdCount, mergedCount, skippedCount };
+  return { saved: output, createdCount, pendingCount, mergedCount, skippedCount };
 }
 
 export function applyAiContactUpdates(
@@ -2174,6 +2205,11 @@ export function applyAiContactUpdates(
     profiles?: XingyeRoleProfileMap;
     /** 设置时才写入 contact change log（与 AI 增量/回滚后更新配套）。 */
     contactChangeSource?: 'contacts_incremental_update' | 'contacts_rollback_update';
+    /**
+     * 增量 add 默认 'pending_approval'：AI 在更新里认识的新人先进「新的朋友」，
+     * 用户通过后才入册。与初始化/重新生成全部（direct）刻意不对称。
+     */
+    newContactGate?: 'direct' | 'pending_approval';
   },
 ) {
   const storage = options?.storage ?? getLocalStorage();
@@ -2181,6 +2217,7 @@ export function applyAiContactUpdates(
   const profiles = options?.profiles ?? {};
   const canResolveNames = agents.length > 0;
   const contactChangeSource = options?.contactChangeSource;
+  const newContactGate = options?.newContactGate ?? 'pending_approval';
 
   const preVirtual = getVirtualContacts(ownerAgentId, storage).length;
   const preBlockedVc = getContactsByStatus(ownerAgentId, 'blocked', agents, profiles, storage)
@@ -2188,7 +2225,8 @@ export function applyAiContactUpdates(
   const preDeletedVc = getContactsByStatus(ownerAgentId, 'deleted', agents, profiles, storage)
     .filter(c => c.targetType === 'virtual_contact').length;
 
-  const counts = { add: 0, update: 0, delete: 0, block: 0, restore: 0, skip: 0 };
+  /** pendingAdd ⊆ add：新建里实际进「新的朋友」待确认的条数（born-blocked/deleted 的 add 直接入册，不计入）。 */
+  const counts = { add: 0, pendingAdd: 0, update: 0, delete: 0, block: 0, restore: 0, skip: 0 };
 
   for (const raw of updates) {
     const update = normalizeAiContactUpdate(raw);
@@ -2196,9 +2234,10 @@ export function applyAiContactUpdates(
       const result = applyAiGeneratedContacts(ownerAgentId, [{
         ...update.contact,
         targetType: 'virtual_contact',
-      }], { storage, mergeMatchingDisplayName: 'never' });
+      }], { storage, mergeMatchingDisplayName: 'never', newContactGate });
       if (result.createdCount > 0) {
         counts.add += 1;
+        if (result.pendingCount > 0) counts.pendingAdd += 1;
         if (contactChangeSource) {
           const want = update.contact.displayName.trim().toLowerCase();
           const savedVc = result.saved.filter(s => s.displayName.trim().toLowerCase() === want).at(-1)
@@ -2331,11 +2370,12 @@ export function applyAiContactUpdates(
         ...(update.patch ?? {}),
         source: 'ai_generated',
       };
+      /** 审批门槛只能由门槛逻辑/用户操作改动，AI 的 update patch 不允许设置或清除。 */
+      delete aiPayload.pendingApproval;
       if (update.targetType === 'user') {
         delete aiPayload.status;
         delete aiPayload.faction;
         delete aiPayload.linkedAgentId;
-        delete aiPayload.pendingNewFriend;
       }
       if (update.targetType === 'agent') {
         delete aiPayload.status;
@@ -2382,6 +2422,7 @@ export function applyAiContactUpdates(
       virtualDeleted: { before: preDeletedVc, after: postDeletedVc },
     });
   }
+  return counts;
 }
 
 /**
@@ -2430,6 +2471,17 @@ export function clearAllVirtualContactsForOwner(
     metaMutated = true;
   }
   if (metaMutated) saveContactMetaMap(metaMap, storage);
+
+  /** 被清掉的 vc 的详情（账号ID/联系记录等）一并清，避免孤儿数据被未来同 id 复用。 */
+  const profileMap = loadContactProfileMap(storage);
+  let profileMutated = false;
+  for (const key of Object.keys(profileMap)) {
+    if (!key.startsWith(metaPrefix)) continue;
+    if (preservedVirtualIds.has(profileMap[key].targetId)) continue;
+    delete profileMap[key];
+    profileMutated = true;
+  }
+  if (profileMutated) saveContactProfileMap(profileMap, storage);
 }
 
 export function rollbackAndUpdateVirtualContactsWithAI(
@@ -2694,11 +2746,20 @@ export function getPhoneContacts(
   ownerAgentId: string,
   agents: Agent[],
   profiles: XingyeRoleProfileMap,
-  options?: { includeDeleted?: boolean },
+  options?: {
+    includeDeleted?: boolean;
+    /**
+     * 默认排除「新的朋友」待确认条目（pendingApproval）——通讯录列表、短信、
+     * 标签/阵营、各 AI 上下文都不应看到尚未被用户通过的联系人。
+     * 仅「新的朋友」队列与少数 store 内部维护逻辑显式传 true。
+     */
+    includePendingApproval?: boolean;
+  },
   storage: StorageLike | null = getLocalStorage(),
 ): XingyePhoneContactView[] {
   if (!ownerAgentId) return [];
   const includeDeleted = options?.includeDeleted ?? false;
+  const includePendingApproval = options?.includePendingApproval ?? false;
   const views: XingyePhoneContactView[] = [];
   views.push(getDefaultUserContact(ownerAgentId, storage));
   const virtualContacts = getVirtualContacts(ownerAgentId, storage);
@@ -2724,7 +2785,7 @@ export function getPhoneContacts(
       updatedAt: meta?.updatedAt ?? vc.updatedAt,
       avatarDataUrl: vc.avatarDataUrl,
       virtualContact: vc,
-      pendingNewFriend: meta?.pendingNewFriend,
+      pendingApproval: meta?.pendingApproval,
     });
   }
 
@@ -2748,12 +2809,13 @@ export function getPhoneContacts(
       source: meta?.source,
       updatedAt: meta?.updatedAt,
       agent,
-      pendingNewFriend: meta?.pendingNewFriend,
+      pendingApproval: meta?.pendingApproval,
     });
   }
 
   return views
     .filter(item => includeDeleted || item.targetType === 'user' || item.status !== 'deleted')
+    .filter(item => includePendingApproval || item.targetType === 'user' || !item.pendingApproval)
     .sort((a, b) => a.remark.localeCompare(b.remark, 'zh-Hans-CN'));
 }
 
@@ -2855,24 +2917,419 @@ export function getDefaultContactFactions(
   }));
 }
 
-/** AI 新增、尚未在「新的朋友」里标记已读的联系人（含虚拟与真实 agent）。不含 user。 */
+/**
+ * 「新的朋友」审批队列：AI 新增、尚未被用户通过的虚拟联系人。
+ * 正常只会有 active 条目（born-blocked/deleted 的新联系人不打标记、直接入册），
+ * 但这里刻意不按 status 过滤：万一候选在待确认期间被 AI 增量 block/delete，
+ * 它仍要留在队列里可见可处理，否则会被 getPhoneContacts 的默认排除变成永远不可见。
+ */
 export function getPendingNewContacts(
   ownerAgentId: string,
   agents: Agent[],
   profiles: XingyeRoleProfileMap,
   storage?: StorageLike | null,
 ): XingyePhoneContactView[] {
-  return getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }, storage)
-    .filter(item => item.targetType !== 'user' && item.pendingNewFriend && item.status === 'active');
+  return getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true, includePendingApproval: true }, storage)
+    .filter(item => item.targetType === 'virtual_contact' && item.pendingApproval);
 }
 
-export function clearPendingNewFriend(
+/** 「新的朋友」通过：清掉审批标记，联系人正式进入通讯录（按其 status 落到对应分组）。 */
+export function approvePendingNewFriend(
   ownerAgentId: string,
-  targetType: XingyeContactTargetType,
   targetId: string,
   storage?: StorageLike | null,
 ) {
-  return savePhoneContactMeta(ownerAgentId, targetType, targetId, { pendingNewFriend: false }, storage, { markManualFields: false });
+  return savePhoneContactMeta(ownerAgentId, 'virtual_contact', targetId, { pendingApproval: false }, storage, { markManualFields: false });
+}
+
+/**
+ * 「新的朋友」拒绝：整条移除（实体 + meta + 防御性清掉可能存在的短信线程）。
+ * 仅允许移除 pendingApproval 条目——已入册的联系人请走 删除/拉黑，不能从这里硬删。
+ * 不写 contact change log：被拒绝的候选对 TA 的世界来说从未存在过。
+ */
+export function rejectPendingNewFriend(
+  ownerAgentId: string,
+  targetId: string,
+  storage: StorageLike | null = getLocalStorage(),
+): boolean {
+  if (!ownerAgentId || !targetId) return false;
+  const meta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', targetId, storage);
+  if (!meta?.pendingApproval) return false;
+  const vcMap = loadVirtualContactMap(storage);
+  delete vcMap[`${ownerAgentId}::${targetId}`];
+  saveVirtualContactMap(vcMap, storage);
+  const metaMap = loadContactMetaMap(storage);
+  delete metaMap[contactKey(ownerAgentId, 'virtual_contact', targetId)];
+  saveContactMetaMap(metaMap, storage);
+  const threadMap = loadSmsThreadMap(storage);
+  const tKey = threadKey(ownerAgentId, 'virtual_contact', targetId);
+  if (threadMap[tKey]) {
+    delete threadMap[tKey];
+    saveSmsThreadMap(threadMap, storage);
+  }
+  deleteContactProfile(ownerAgentId, 'virtual_contact', targetId, storage);
+  return true;
+}
+
+/**
+ * 给通讯录之外的消费方（邮件/文件/亲友候选池等）的虚拟联系人列表：
+ * 排除「新的朋友」里尚未通过的条目——未确认的候选不应渗进其他 app 的生成上下文。
+ * store 内部的去重/同名解析请继续用 getVirtualContacts（必须看到全量）。
+ */
+export function getConfirmedVirtualContacts(
+  ownerAgentId: string,
+  storage: StorageLike | null = getLocalStorage(),
+): XingyeVirtualContact[] {
+  const metaMap = loadContactMetaMap(storage);
+  return getVirtualContacts(ownerAgentId, storage)
+    .filter(vc => !metaMap[contactKey(ownerAgentId, 'virtual_contact', vc.id)]?.pendingApproval);
+}
+
+// ---------------------------------------------------------------------------
+// 联系人详情（iOS 风格详情页的数据层）：账号ID / IP属地 / 个性签名 / 印象历史 / 联系记录。
+// 旧记录只追加不覆盖（ip/签名变更时旧值进 history；印象变更时旧印象进 impressionHistory）。
+// LLM 流程见 xingye-contact-profile-ai.ts；这里只负责存取、去重、历史。
+// ---------------------------------------------------------------------------
+
+export type XingyeContactProfileHistoryItem = { value: string; recordedAt: string };
+
+export type XingyeContactLogSource = 'init' | 'manual_update' | 'heartbeat';
+
+export type XingyeContactLogEntry = {
+  id: string;
+  /** 联系载体：面谈/电话/短信/微信/邮件，或贴世界观的 灵鹤传书/傀儡传讯/符纸 等——模型按 lore 自定。 */
+  channel: string;
+  /** incoming=对方联系TA，outgoing=TA主动，mutual=面谈/相互。 */
+  direction: 'incoming' | 'outgoing' | 'mutual';
+  /** 世界内口语时间标签（「昨夜」「三天前」），不做真实时间换算。 */
+  whenLabel: string;
+  /** 一行内容简介。 */
+  summary: string;
+  createdAt: string;
+  source: XingyeContactLogSource;
+};
+
+export type XingyeContactProfile = {
+  ownerAgentId: string;
+  targetType: XingyeContactTargetType;
+  targetId: string;
+  /** 模型编的账号ID（贴世界观），初始化一次后不变。 */
+  accountId?: string;
+  ipAddress?: string;
+  ipHistory: XingyeContactProfileHistoryItem[];
+  signature?: string;
+  signatureHistory: XingyeContactProfileHistoryItem[];
+  /** 被替换下来的旧印象（当前印象始终以 contact meta 为准）。 */
+  impressionHistory: XingyeContactProfileHistoryItem[];
+  /** 新→旧排列（更新追加的新记录放最前）。 */
+  contactLog: XingyeContactLogEntry[];
+  /** LLM 详情初始化完成时间；undefined = 仅有印象历史等骨架，详情还没生成。 */
+  initializedAt?: string;
+  updatedAt: string;
+};
+
+const CONTACT_LOG_SIMILARITY_THRESHOLD = 0.82;
+const CONTACT_PROFILE_IMPRESSION_SIMILARITY_THRESHOLD = 0.9;
+const CONTACT_LOG_MAX = 200;
+const CONTACT_PROFILE_HISTORY_MAX = 50;
+/** meta 里的占位印象，不值得进历史。 */
+const CONTACT_IMPRESSION_PLACEHOLDER = '还没有形成明确印象。';
+
+export type XingyeContactLogEntryInput = {
+  channel: string;
+  direction: XingyeContactLogEntry['direction'];
+  whenLabel: string;
+  summary: string;
+};
+
+function normalizeContactLogEntry(value: unknown): XingyeContactLogEntry | null {
+  if (!isRecord(value)) return null;
+  const id = normalizeOptionalString(value.id);
+  const channel = normalizeOptionalString(value.channel);
+  const summary = normalizeOptionalString(value.summary);
+  if (!id || !channel || !summary) return null;
+  const direction = value.direction === 'incoming' || value.direction === 'outgoing' || value.direction === 'mutual'
+    ? value.direction
+    : 'mutual';
+  const source: XingyeContactLogSource = value.source === 'manual_update' || value.source === 'heartbeat'
+    ? value.source
+    : 'init';
+  return {
+    id,
+    channel,
+    direction,
+    whenLabel: normalizeOptionalString(value.whenLabel) ?? '',
+    summary,
+    createdAt: normalizeOptionalString(value.createdAt) ?? new Date(0).toISOString(),
+    source,
+  };
+}
+
+function normalizeProfileHistory(value: unknown): XingyeContactProfileHistoryItem[] {
+  if (!Array.isArray(value)) return [];
+  const out: XingyeContactProfileHistoryItem[] = [];
+  for (const raw of value) {
+    if (!isRecord(raw)) continue;
+    const v = normalizeOptionalString(raw.value);
+    if (!v) continue;
+    out.push({ value: v, recordedAt: normalizeOptionalString(raw.recordedAt) ?? new Date(0).toISOString() });
+  }
+  return out;
+}
+
+function normalizeContactProfile(value: unknown): XingyeContactProfile | null {
+  if (!isRecord(value)) return null;
+  const ownerAgentId = normalizeOptionalString(value.ownerAgentId);
+  const targetType = normalizeOptionalString(value.targetType) as XingyeContactTargetType | undefined;
+  const targetId = normalizeOptionalString(value.targetId);
+  if (!ownerAgentId || !targetType || !targetId) return null;
+  return {
+    ownerAgentId,
+    targetType,
+    targetId,
+    accountId: normalizeOptionalString(value.accountId),
+    ipAddress: normalizeOptionalString(value.ipAddress),
+    ipHistory: normalizeProfileHistory(value.ipHistory),
+    signature: normalizeOptionalString(value.signature),
+    signatureHistory: normalizeProfileHistory(value.signatureHistory),
+    impressionHistory: normalizeProfileHistory(value.impressionHistory),
+    contactLog: Array.isArray(value.contactLog)
+      ? value.contactLog.map(normalizeContactLogEntry).filter((e): e is XingyeContactLogEntry => Boolean(e))
+      : [],
+    initializedAt: normalizeOptionalString(value.initializedAt),
+    updatedAt: normalizeOptionalString(value.updatedAt) ?? new Date(0).toISOString(),
+  };
+}
+
+function loadContactProfileMap(storage: StorageLike | null = getLocalStorage()): Record<string, XingyeContactProfile> {
+  if (!storage) return {};
+  try {
+    const raw = storage.getItem(XINGYE_PHONE_CONTACT_PROFILES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) return {};
+    const result: Record<string, XingyeContactProfile> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      const item = normalizeContactProfile(value);
+      if (item) result[key] = item;
+    }
+    return result;
+  } catch (error) {
+    console.warn('[xingye-phone-store] failed to load contact profiles:', error);
+    return {};
+  }
+}
+
+function saveContactProfileMap(next: Record<string, XingyeContactProfile>, storage: StorageLike | null = getLocalStorage()) {
+  storage?.setItem(XINGYE_PHONE_CONTACT_PROFILES_STORAGE_KEY, JSON.stringify(next));
+  notifyXingyePhoneChanged();
+}
+
+export function getContactProfile(
+  ownerAgentId: string,
+  targetType: XingyeContactTargetType,
+  targetId: string,
+  storage: StorageLike | null = getLocalStorage(),
+): XingyeContactProfile | null {
+  if (!ownerAgentId || !targetId) return null;
+  return loadContactProfileMap(storage)[contactKey(ownerAgentId, targetType, targetId)] ?? null;
+}
+
+function emptyContactProfile(
+  ownerAgentId: string,
+  targetType: XingyeContactTargetType,
+  targetId: string,
+): XingyeContactProfile {
+  return {
+    ownerAgentId,
+    targetType,
+    targetId,
+    ipHistory: [],
+    signatureHistory: [],
+    impressionHistory: [],
+    contactLog: [],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * 联系记录硬去重：与已有条目或本批已采纳条目的 summary 归一化等值 / bigram 相似度过阈即丢。
+ * channel 不参与 summary 比较——同一件事换个载体复述仍是重复。
+ *
+ * 额外的「一次往来」粒度兜底：**同一批**里 channel + whenLabel 都相同的多条，视为模型把
+ * 一段同主题往来（多轮短信聊一件事）拆成了逐条消息，只保留第一条。刻意不跨批启用——
+ * 「上月」这类宽时间标签会误伤后续更新里的合法新增；prompt 端另有粒度规则做主防线。
+ */
+export function dedupeContactLogCandidates(
+  existing: ReadonlyArray<Pick<XingyeContactLogEntry, 'summary'>>,
+  candidates: XingyeContactLogEntryInput[],
+): XingyeContactLogEntryInput[] {
+  const seen = existing.map(e => normalizeTitleForDedup(e.summary)).filter(Boolean);
+  const seenBatchSlots = new Set<string>();
+  const accepted: XingyeContactLogEntryInput[] = [];
+  for (const candidate of candidates) {
+    const norm = normalizeTitleForDedup(candidate.summary);
+    if (!norm) continue;
+    const whenNorm = normalizeTitleForDedup(candidate.whenLabel ?? '');
+    const slot = whenNorm ? `${normalizeTitleForDedup(candidate.channel)}::${whenNorm}` : null;
+    if (slot && seenBatchSlots.has(slot)) continue;
+    const dup = seen.some(prev => prev === norm || bigramJaccard(prev, norm) >= CONTACT_LOG_SIMILARITY_THRESHOLD);
+    if (dup) continue;
+    seen.push(norm);
+    if (slot) seenBatchSlots.add(slot);
+    accepted.push(candidate);
+  }
+  return accepted;
+}
+
+/**
+ * LLM 详情初始化落库。幂等：已有 initializedAt 直接返回现状（懒初始化双发守卫的最后一道）。
+ * 若此前只有印象历史骨架（印象变更早于详情初始化），合并而不是覆盖。
+ */
+export function initializeContactProfile(
+  ownerAgentId: string,
+  targetType: XingyeContactTargetType,
+  targetId: string,
+  init: {
+    accountId?: string;
+    ipAddress?: string;
+    signature?: string;
+    contactLog?: XingyeContactLogEntryInput[];
+  },
+  storage: StorageLike | null = getLocalStorage(),
+): XingyeContactProfile {
+  const map = loadContactProfileMap(storage);
+  const key = contactKey(ownerAgentId, targetType, targetId);
+  const previous = map[key];
+  if (previous?.initializedAt) return previous;
+  const now = new Date().toISOString();
+  const base = previous ?? emptyContactProfile(ownerAgentId, targetType, targetId);
+  const entries = dedupeContactLogCandidates([], init.contactLog ?? []).map(input => ({
+    ...input,
+    id: createId('clog'),
+    createdAt: now,
+    source: 'init' as const,
+  }));
+  const next: XingyeContactProfile = {
+    ...base,
+    accountId: normalizeOptionalString(init.accountId) ?? base.accountId,
+    ipAddress: normalizeOptionalString(init.ipAddress) ?? base.ipAddress,
+    signature: normalizeOptionalString(init.signature) ?? base.signature,
+    contactLog: entries.slice(0, CONTACT_LOG_MAX),
+    initializedAt: now,
+    updatedAt: now,
+  };
+  map[key] = next;
+  saveContactProfileMap(map, storage);
+  return next;
+}
+
+/**
+ * LLM 更新落库：追加联系记录（硬去重）+ 罕见的 ip/签名变更（旧值进 history，不丢）。
+ * accountId 永不在此变更。
+ */
+export function applyContactProfileAiUpdate(
+  ownerAgentId: string,
+  targetType: XingyeContactTargetType,
+  targetId: string,
+  patch: {
+    ipAddress?: string;
+    signature?: string;
+    newContactLog?: XingyeContactLogEntryInput[];
+    source: XingyeContactLogSource;
+  },
+  storage: StorageLike | null = getLocalStorage(),
+): { appended: number; droppedAsDuplicate: number; ipChanged: boolean; signatureChanged: boolean } {
+  const map = loadContactProfileMap(storage);
+  const key = contactKey(ownerAgentId, targetType, targetId);
+  const base = map[key] ?? emptyContactProfile(ownerAgentId, targetType, targetId);
+  const now = new Date().toISOString();
+
+  const candidates = patch.newContactLog ?? [];
+  const accepted = dedupeContactLogCandidates(base.contactLog, candidates);
+  const entries = accepted.map(input => ({
+    ...input,
+    id: createId('clog'),
+    createdAt: now,
+    source: patch.source,
+  }));
+
+  let ipChanged = false;
+  let ipAddress = base.ipAddress;
+  let ipHistory = base.ipHistory;
+  const nextIp = normalizeOptionalString(patch.ipAddress);
+  if (nextIp && nextIp !== base.ipAddress) {
+    if (base.ipAddress) ipHistory = [...ipHistory, { value: base.ipAddress, recordedAt: now }].slice(-CONTACT_PROFILE_HISTORY_MAX);
+    ipAddress = nextIp;
+    ipChanged = true;
+  }
+
+  let signatureChanged = false;
+  let signature = base.signature;
+  let signatureHistory = base.signatureHistory;
+  const nextSignature = normalizeOptionalString(patch.signature);
+  if (nextSignature && nextSignature !== base.signature) {
+    if (base.signature) signatureHistory = [...signatureHistory, { value: base.signature, recordedAt: now }].slice(-CONTACT_PROFILE_HISTORY_MAX);
+    signature = nextSignature;
+    signatureChanged = true;
+  }
+
+  map[key] = {
+    ...base,
+    ipAddress,
+    ipHistory,
+    signature,
+    signatureHistory,
+    contactLog: [...entries, ...base.contactLog].slice(0, CONTACT_LOG_MAX),
+    updatedAt: now,
+  };
+  saveContactProfileMap(map, storage);
+  return { appended: entries.length, droppedAsDuplicate: candidates.length - accepted.length, ipChanged, signatureChanged };
+}
+
+/**
+ * 印象历史：savePhoneContactMeta 在印象真实变化时把**旧印象**推进来。
+ * 去重：占位文案不记；与最近一条历史归一化等值或高相似（≥0.9）不记。
+ * 可在详情初始化之前发生——此时落成无 initializedAt 的骨架，后续 init 合并。
+ */
+export function recordContactImpressionHistory(
+  ownerAgentId: string,
+  targetType: XingyeContactTargetType,
+  targetId: string,
+  oldImpression: string,
+  storage: StorageLike | null = getLocalStorage(),
+): boolean {
+  const value = oldImpression.trim();
+  if (!value || value === CONTACT_IMPRESSION_PLACEHOLDER) return false;
+  const map = loadContactProfileMap(storage);
+  const key = contactKey(ownerAgentId, targetType, targetId);
+  const base = map[key] ?? emptyContactProfile(ownerAgentId, targetType, targetId);
+  const last = base.impressionHistory[base.impressionHistory.length - 1];
+  if (last) {
+    const a = normalizeTitleForDedup(last.value);
+    const b = normalizeTitleForDedup(value);
+    if (a === b || bigramJaccard(a, b) >= CONTACT_PROFILE_IMPRESSION_SIMILARITY_THRESHOLD) return false;
+  }
+  map[key] = {
+    ...base,
+    impressionHistory: [...base.impressionHistory, { value, recordedAt: new Date().toISOString() }].slice(-CONTACT_PROFILE_HISTORY_MAX),
+    updatedAt: new Date().toISOString(),
+  };
+  saveContactProfileMap(map, storage);
+  return true;
+}
+
+function deleteContactProfile(
+  ownerAgentId: string,
+  targetType: XingyeContactTargetType,
+  targetId: string,
+  storage: StorageLike | null = getLocalStorage(),
+) {
+  const map = loadContactProfileMap(storage);
+  const key = contactKey(ownerAgentId, targetType, targetId);
+  if (!(key in map)) return;
+  delete map[key];
+  saveContactProfileMap(map, storage);
 }
 
 export function getSmsThreads(

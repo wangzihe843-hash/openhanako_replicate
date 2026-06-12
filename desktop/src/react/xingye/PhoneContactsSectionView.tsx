@@ -3,7 +3,7 @@ import type { XingyeRoleProfileMap } from './xingye-profile-store';
 import { PhoneContactGroupList } from './PhoneContactGroupList';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import {
-  clearPendingNewFriend,
+  approvePendingNewFriend,
   getBlockedContacts,
   getContactsByFaction,
   getContactsByTag,
@@ -11,6 +11,7 @@ import {
   getDefaultContactTags,
   getDeletedContacts,
   getPendingNewContacts,
+  rejectPendingNewFriend,
   restorePhoneContact,
   unblockPhoneContact,
   type XingyePhoneContactView,
@@ -42,40 +43,66 @@ export function PhoneContactsNewFriendsView({
   agents,
   profiles,
   onBackHome,
-  onSelectContact,
 }: SectionBaseProps) {
   const pending = getPendingNewContacts(ownerAgentId, agents, profiles);
   return (
     <section className={styles.phoneAppCard}>
       <h3 className={styles.phoneAppTitle}>新的朋友</h3>
       <p className={styles.phoneAppHint}>
-        以后这里会显示 TA 新认识的人、关系变化和待确认的社交请求。以下为 AI 最近生成、尚未标记已读的新联系人。
+        TA 在更新/生成中新认识的人会先出现在这里，<strong>你通过后才会进入通讯录</strong>；拒绝则不会保留。
+        初始化和「重新生成全部」的联系人不经过这里，会直接入册。
       </p>
       {pending.length ? (
         <div className={styles.phoneList}>
           {pending.map(contact => (
-            <div key={`${contact.targetType}:${contact.targetId}`} className={styles.phoneSubpageBlock}>
-              <button type="button" className={styles.phoneListItem} onClick={() => onSelectContact(contact)}>
+            <div
+              key={`${contact.targetType}:${contact.targetId}`}
+              className={styles.phoneSubpageBlock}
+              data-testid={`phone-new-friend-${contact.targetId}`}
+            >
+              <div className={styles.phoneListItem}>
                 <span className={styles.phoneListAvatar}>{contact.remark?.slice(0, 1) ?? '?'}</span>
                 <span className={styles.phoneListText}>
                   <strong>{contact.remark}</strong>
                   <span>{contact.impression}</span>
+                  {contact.relationshipHint ? (
+                    <span className={styles.phoneListMeta}>{contact.relationshipHint}</span>
+                  ) : null}
+                  {contact.status !== 'active' ? (
+                    <span className={styles.phoneListMeta}>
+                      通过后将直接进入{contact.status === 'blocked' ? '黑名单' : '「已删除」'}（TA 对这个人的当前态度）
+                    </span>
+                  ) : null}
                 </span>
-              </button>
-              <button
-                type="button"
-                className={styles.phoneWeakAction}
-                onClick={() => {
-                  clearPendingNewFriend(ownerAgentId, contact.targetType, contact.targetId);
-                }}
-              >
-                标记已读
-              </button>
+              </div>
+              <div className={styles.phoneActionRow}>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  data-testid={`phone-new-friend-approve-${contact.targetId}`}
+                  onClick={() => {
+                    approvePendingNewFriend(ownerAgentId, contact.targetId);
+                  }}
+                >
+                  通过
+                </button>
+                <button
+                  type="button"
+                  className={styles.phoneWeakAction}
+                  data-testid={`phone-new-friend-reject-${contact.targetId}`}
+                  onClick={() => {
+                    if (!window.confirm(`拒绝后「${contact.remark}」将被移除，不会进入通讯录。是否继续？`)) return;
+                    rejectPendingNewFriend(ownerAgentId, contact.targetId);
+                  }}
+                >
+                  拒绝
+                </button>
+              </div>
             </div>
           ))}
         </div>
       ) : (
-        <div className={styles.phoneEmptyStateCard}>暂无新的朋友</div>
+        <div className={styles.phoneEmptyStateCard}>暂无待确认的新朋友</div>
       )}
       <div className={styles.phoneActionRow}>
         <button type="button" className={styles.secondaryButton} onClick={onBackHome}>

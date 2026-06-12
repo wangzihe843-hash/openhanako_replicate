@@ -65,7 +65,10 @@ const secretAiMock = vi.hoisted(() => ({
 vi.mock('./xingye-files-secret-ai', () => secretAiMock);
 
 vi.mock('./xingye-lore-store', () => ({ listLoreEntries: vi.fn(() => []) }));
-vi.mock('./xingye-phone-store', () => ({ getVirtualContacts: vi.fn(() => []) }));
+vi.mock('./xingye-phone-store', () => ({
+  getVirtualContacts: vi.fn(() => []),
+  getConfirmedVirtualContacts: vi.fn(() => []),
+}));
 vi.mock('./xingye-persistence', () => ({ getXingyePersistenceStorage: vi.fn(() => null) }));
 
 const storeMockState = vi.hoisted(() => ({

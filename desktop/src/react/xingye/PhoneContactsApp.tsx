@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../stores';
 import type { Agent, Channel } from '../types';
 import { PhoneContactDetail } from './PhoneContactDetail';
@@ -27,9 +27,11 @@ import {
   blockPhoneContact,
   deletePhoneContact,
   getContactAiUpdateState,
+  getPendingNewContacts,
   getPhoneContactGenerationState,
   getPhoneContacts,
   getPhoneAiGenerationState,
+  getVirtualContacts,
   getPhoneProfileFingerprint,
   linkVirtualContactToAgent,
   restorePhoneContact,
@@ -47,6 +49,7 @@ import {
   listPhoneContactDrafts,
   type XingyePendingPhoneContactDraft,
 } from './xingye-phone-contact-drafts';
+import { batchInitializeContactProfilesWithAI } from './xingye-contact-profile-ai';
 import styles from './XingyeShell.module.css';
 
 type ContactsListView =
@@ -77,6 +80,7 @@ export function PhoneContactsApp({
   const _phoneStorageVersion = useXingyePhoneStorageVersion();
   const ownerAgentId = ownerAgent?.id ?? '';
   const ownerProfile = useXingyeRoleProfile(ownerAgentId);
+  const userName = useStore(state => state.userName);
   const profileFingerprint = getPhoneProfileFingerprint(ownerAgent, ownerProfile);
   const agentIdsKey = useMemo(() => agents.map(a => a.id).sort().join(','), [agents]);
   const contactGenInputHash = useMemo(
@@ -85,6 +89,11 @@ export function PhoneContactsApp({
   );
   const contacts = useMemo(
     () => getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }),
+    [ownerAgentId, agents, profiles, _phoneStorageVersion],
+  );
+  // 「新的朋友」待确认队列；contacts 默认不含这些条目，数量单独取用于入口角标。
+  const pendingNewFriendCount = useMemo(
+    () => getPendingNewContacts(ownerAgentId, agents, profiles).length,
     [ownerAgentId, agents, profiles, _phoneStorageVersion],
   );
   // 仅用于 UI 提示「点击更新会读到多少条最近聊天」；与真实 AI 调用同一个 helper，
@@ -113,6 +122,13 @@ export function PhoneContactsApp({
   const aiState = getPhoneAiGenerationState(ownerAgentId, 'contacts_enrichment');
   const [aiManageOpen, setAiManageOpen] = useState(false);
   const [aiManageNotice, setAiManageNotice] = useState<string | null>(null);
+  const [profileBatchBusy, setProfileBatchBusy] = useState(false);
+  const [profileBatchNotice, setProfileBatchNotice] = useState<string | null>(null);
+  /** 「停止」按钮与组件卸载共用的取消旗标；批量执行器每条开始前检查。 */
+  const profileBatchCancelRef = useRef(false);
+  useEffect(() => () => {
+    profileBatchCancelRef.current = true;
+  }, []);
   const [listView, setListView] = useState<ContactsListView>('home');
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [factionFilter, setFactionFilter] = useState<string | null>(null);
@@ -299,6 +315,9 @@ export function PhoneContactsApp({
   useEffect(() => {
     if (!ownerAgentId || !ownerAgent) return;
     if (virtualContacts.length > 0) return;
+    // virtualContacts 来自默认过滤后的视图（不含待确认条目）；用原始实体表再守一道，
+    // 避免「全部还在新的朋友里待确认」时被误判为空通讯录而重跑初始化。
+    if (getVirtualContacts(ownerAgentId).length > 0) return;
     if (shouldAutoSkipVirtualContactGeneration(ownerAgentId, profileFingerprint, contactGenInputHash)) return;
     const contactsNow = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true });
     let cancelled = false;
@@ -373,6 +392,8 @@ export function PhoneContactsApp({
         profiles,
         profileFingerprint,
         mode: 'initial_ai_generate',
+        /** 手动点按钮新增的联系人先进「新的朋友」待确认；仅自动初始化/重新生成全部直接入册。 */
+        newContactGate: 'pending_approval',
       });
       if (result.generatedBy === 'rule_fallback') {
         setAiManageNotice('AI 生成失败，已使用本地规则生成联系人。');
@@ -381,7 +402,7 @@ export function PhoneContactsApp({
       } else if ((result.createdCount ?? 0) === 0) {
         setAiManageNotice('生成结果与已有联系人重复，未新增。');
       } else {
-        setAiManageNotice(`AI 联系人生成完成，实际新增 ${result.createdCount} 条。`);
+        setAiManageNotice(`AI 联系人生成完成，新增 ${result.createdCount} 条已放入「新的朋友」待确认。`);
       }
     } catch (error) {
       setAiManageNotice(error instanceof Error ? error.message : String(error));
@@ -398,7 +419,10 @@ export function PhoneContactsApp({
       const changeNote = result.updatesCount === 0
         ? '没有发现需要更新的联系人。'
         : `已应用 ${result.updatesCount} 条更新。`;
-      setAiManageNotice(`${changeNote} ${ctxNote}`);
+      const pendingNote = result.pendingAddsCount > 0
+        ? ` 其中 ${result.pendingAddsCount} 个新联系人在「新的朋友」等你确认。`
+        : '';
+      setAiManageNotice(`${changeNote}${pendingNote} ${ctxNote}`);
     } catch (error) {
       setAiManageNotice(error instanceof Error ? error.message : String(error));
     }
@@ -426,6 +450,36 @@ export function PhoneContactsApp({
     }
   };
 
+  const handleBatchInitProfiles = async () => {
+    if (!ownerAgent || profileBatchBusy) return;
+    profileBatchCancelRef.current = false;
+    setProfileBatchBusy(true);
+    setProfileBatchNotice(null);
+    try {
+      const result = await batchInitializeContactProfilesWithAI({
+        ownerAgent,
+        ownerProfile,
+        contacts,
+        onProgress: (done, total, current) => {
+          if (current) setProfileBatchNotice(`详情生成中 ${done + 1}/${total}：${current.remark}`);
+        },
+        shouldCancel: () => profileBatchCancelRef.current,
+      });
+      if (result.total === 0) {
+        setProfileBatchNotice('所有联系人都已有详情，无需生成。');
+      } else {
+        const bits = [`新生成 ${result.created} 条`];
+        if (result.skipped) bits.push(`已有跳过 ${result.skipped} 条`);
+        if (result.failed) bits.push(`失败 ${result.failed} 条（可单独打开详情页重试）`);
+        setProfileBatchNotice(`${result.cancelled ? '已停止，' : '批量详情生成完成：'}${bits.join('，')}。`);
+      }
+    } catch (error) {
+      setProfileBatchNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProfileBatchBusy(false);
+    }
+  };
+
   const handleRollbackAndUpdate = async () => {
     if (!ownerAgent) return;
     try {
@@ -433,7 +487,10 @@ export function PhoneContactsApp({
       const ctxNote = result.recentContext.hasOpenHanakoMessages
         ? `已结合最近 OpenHanako 聊天 ${result.recentContext.messageCount} 条。`
         : '暂未读到最近聊天，本次仅根据角色资料和通讯录更新。';
-      setAiManageNotice(`已回滚上次联系人并完成增量更新。${ctxNote}`);
+      const pendingNote = result.pendingAddsCount > 0
+        ? `其中 ${result.pendingAddsCount} 个新联系人在「新的朋友」等你确认。`
+        : '';
+      setAiManageNotice(`已回滚上次联系人并完成增量更新。${pendingNote}${ctxNote}`);
     } catch (error) {
       setAiManageNotice(error instanceof Error ? error.message : String(error));
     }
@@ -483,6 +540,9 @@ export function PhoneContactsApp({
           <PhoneContactDetail
             contact={selectedContact}
             agents={agents}
+            ownerAgent={ownerAgent}
+            ownerProfile={ownerProfile}
+            userName={userName}
             remarkDraft={remarkDraft}
             impressionDraft={impressionDraft}
             relationDraft={relationDraft}
@@ -637,21 +697,37 @@ export function PhoneContactsApp({
                     </button>
                   </div>
                   <p className={styles.phoneAppHint}>
-                    AI 生成联系人：从角色人设/最近对话发现新联系人。将生成 3–8 个候选，并自动跳过已有或重复联系人。
+                    AI 生成联系人：从角色人设/最近对话发现新联系人。将生成 3–8 个候选，自动跳过已有或重复联系人；新增条目会先进入「新的朋友」，你确认后才会出现在通讯录。
                   </p>
                   <p className={styles.phoneAppHint}>
-                    更新联系人：根据最近对话更新已有联系人印象。没有明确变化时可能不会更新。
+                    更新联系人：根据最近对话更新已有联系人印象。没有明确变化时可能不会更新；如果 TA 认识了新的人，也会先进入「新的朋友」待确认。
                   </p>
                   <p className={styles.phoneAppHint}>
                     {recentContextPreview.hasOpenHanakoMessages
                       ? `更新时会参考最近 OpenHanako 聊天（约 ${recentContextPreview.messages.length} 条）。`
                       : '未从当前前端缓存读到最近聊天。本次更新可能不会产生变化。请先在「聊天」tab 打开该角色会话并产生新消息，再返回更新。'}
                   </p>
+                  <div className={styles.phoneActionRow}>
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      data-testid="phone-contacts-batch-profile"
+                      onClick={profileBatchBusy ? () => { profileBatchCancelRef.current = true; } : handleBatchInitProfiles}
+                      disabled={!ownerAgent}
+                    >
+                      {profileBatchBusy ? '停止详情生成' : '批量生成联系人详情'}
+                    </button>
+                  </div>
+                  <p className={styles.phoneAppHint}>
+                    批量生成联系人详情：给所有还没有详情（ID/IP属地/签名/联系记录）的联系人逐条生成，每条一次模型调用、串行执行，可随时停止；已有详情的自动跳过。
+                  </p>
                 </>
               ) : null}
               {contactUpdateState?.status === 'running' ? <p className={styles.phoneAppHint}>AI 更新中…</p> : null}
               {contactUpdateState?.status === 'failed' ? <p className={styles.phoneAppHint}>AI 更新失败：{contactUpdateState.error ?? '未知错误'}</p> : null}
               {aiManageNotice ? <p className={styles.phoneAppHint}>{aiManageNotice}</p> : null}
+              {/* 批量详情进度放在折叠区外：生成中收起 AI 管理面板也能看到进度。 */}
+              {profileBatchNotice ? <p className={styles.phoneAppHint} data-testid="phone-contacts-batch-profile-notice">{profileBatchNotice}</p> : null}
               <div className={styles.phoneActionRow}>
                 <button type="button" className={styles.secondaryButton} onClick={handleEnrichContacts} disabled={!ownerAgent || aiState?.status === 'running'}>
                   {aiState?.status === 'running' ? 'AI 补全中…' : 'AI 补全印象'}
@@ -660,7 +736,12 @@ export function PhoneContactsApp({
                 {aiState?.status === 'success' ? <span className={styles.phoneAppHint}>补全完成</span> : null}
               </div>
             </section>
-            <PhoneContactSections contacts={contacts} onSelect={openContact} onOpenSection={openSection} />
+            <PhoneContactSections
+              contacts={contacts}
+              pendingNewFriendCount={pendingNewFriendCount}
+              onSelect={openContact}
+              onOpenSection={openSection}
+            />
           </>
         ) : listView === 'new_friends' ? (
           <PhoneContactsNewFriendsView

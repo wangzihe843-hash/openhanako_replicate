@@ -1,6 +1,6 @@
 import { useStore } from '../stores';
 import { listLoreEntries } from './xingye-lore-store';
-import { getVirtualContacts } from './xingye-phone-store';
+import { getConfirmedVirtualContacts } from './xingye-phone-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import { readXingyeRoleProfile } from './xingye-profile-store';
 import {
@@ -41,7 +41,8 @@ export async function tryRelockHiddenFolderAfterHeartbeat(
 
     const storage = getXingyePersistenceStorage();
     const lore = listLoreEntries(aid, storage);
-    const contacts = getVirtualContacts(aid, storage);
+    // 已确认条目：待「新的朋友」通过的候选不该成为密码素材（用户可能直接拒绝掉）。
+    const contacts = getConfirmedVirtualContacts(aid, storage);
     const userName = useStore.getState().userName;
     const profile = await readXingyeRoleProfile(aid);
 

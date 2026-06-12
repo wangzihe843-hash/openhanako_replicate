@@ -65,7 +65,7 @@ import {
 } from './xingye-lore-runtime-context';
 import { listSmsDrafts } from './xingye-sms-drafts';
 
-function buildLoreContextForPhone(params: {
+export function buildLoreContextForPhone(params: {
   agentId: string;
   purpose: XingyeLoreRuntimeContextPurpose;
   ownerProfile: XingyeRoleProfile | null | undefined;
@@ -163,14 +163,16 @@ function parsePayload(raw: unknown): XingyePhoneAiPayload {
   };
 }
 
-async function requestPhoneAi(input: {
+export async function requestPhoneAi(input: {
   kind:
     | 'contacts_enrichment'
     | 'sms_history'
     | 'virtual_contacts_generate'
     | 'contacts_incremental_update'
     | 'contacts_regenerate_all'
-    | 'contacts_rollback_update';
+    | 'contacts_rollback_update'
+    | 'contact_profile_init'
+    | 'contact_profile_update';
   ownerAgentId: string;
   ownerProfile: XingyeRoleProfile | null | undefined;
   contacts: XingyePhoneContactView[];
@@ -371,6 +373,12 @@ export async function generateVirtualContactsWithAI(params: {
   profiles: Record<string, XingyeRoleProfile | undefined>;
   profileFingerprint: string;
   mode?: XingyeContactUpdateMode;
+  /**
+   * 新建联系人是否先进「新的朋友」待确认（默认 'direct' 直接入册）。
+   * 自动初始化 / 重新生成全部走 direct；「AI 生成联系人」按钮传 'pending_approval'。
+   * regenerate_all 模式下强制 direct（整本重建没有逐条审批的意义）。
+   */
+  newContactGate?: 'direct' | 'pending_approval';
 }) {
   const { ownerAgent } = params;
   return withVirtualContactAiGenerationLock(ownerAgent.id, () => generateVirtualContactsWithAISequential(params));
@@ -384,10 +392,12 @@ async function generateVirtualContactsWithAISequential(params: {
   profiles: Record<string, XingyeRoleProfile | undefined>;
   profileFingerprint: string;
   mode?: XingyeContactUpdateMode;
+  newContactGate?: 'direct' | 'pending_approval';
 }) {
   const { ownerAgent, ownerProfile, contacts, profileFingerprint, agents, profiles } = params;
   const mode = params.mode ?? 'initial_ai_generate';
   const isRegenerate = mode === 'regenerate_all';
+  const newContactGate = isRegenerate ? 'direct' : (params.newContactGate ?? 'direct');
   const sortedAgentIds = agents.map(a => a.id).sort();
   const inputHash = computePhoneContactGenerationInputHash(profileFingerprint, sortedAgentIds);
   const softBlock = profileLikelyForbidsBlocked(ownerProfile, ownerAgent);
@@ -476,6 +486,7 @@ async function generateVirtualContactsWithAISequential(params: {
     }
     const applyResult = applyAiGeneratedContacts(ownerAgent.id, generated, {
       mergeMatchingDisplayName: isRegenerate ? 'regenerate' : 'prefer-active-only',
+      newContactGate,
     });
     const virtuals = getVirtualContacts(ownerAgent.id);
     const finishedAt = new Date().toISOString();
@@ -493,12 +504,21 @@ async function generateVirtualContactsWithAISequential(params: {
     setContactUpdateState(ownerAgent.id, mode, 'success');
     const noticeBits: string[] = [];
     if (ruleFallbackPadded) noticeBits.push(`AI 返回数量偏少，已用本地规则补足 ${ruleFallbackPadded} 个。`);
+    /** born-blocked/deleted 的新联系人不走审批（直接落黑名单/已删除），按 pendingCount 拆开说。 */
+    const directCreated = applyResult.createdCount - applyResult.pendingCount;
+    const createdNote = newContactGate !== 'pending_approval'
+      ? `实际新增 ${applyResult.createdCount} 条联系人。`
+      : applyResult.pendingCount === 0
+        ? `新增 ${applyResult.createdCount} 条均为已拉黑/已删除关系，已直接归档。`
+        : directCreated > 0
+          ? `新增 ${applyResult.createdCount} 条：${applyResult.pendingCount} 条已放入「新的朋友」待确认，另 ${directCreated} 条为已拉黑/已删除关系，已直接归档。`
+          : `新增 ${applyResult.createdCount} 条已放入「新的朋友」，等你确认后才会进入通讯录。`;
     if (applyResult.createdCount === 0 && applyResult.mergedCount > 0) {
       noticeBits.push('生成结果与已有联系人重复，未新增；已合并刷新印象。');
     } else if (applyResult.createdCount > 0 && applyResult.mergedCount > 0) {
-      noticeBits.push(`实际新增 ${applyResult.createdCount} 条，合并刷新 ${applyResult.mergedCount} 条（同名归并）。`);
+      noticeBits.push(`${createdNote} 另合并刷新 ${applyResult.mergedCount} 条（同名归并）。`);
     } else if (applyResult.createdCount > 0) {
-      noticeBits.push(`实际新增 ${applyResult.createdCount} 条联系人。`);
+      noticeBits.push(createdNote);
     }
     return {
       generatedBy: 'ai' as const,
@@ -570,7 +590,7 @@ export async function updateContactsFromRecentContextWithAI(params: {
       timeoutMs: 120_000,
     });
     const updates = parseContactUpdates(raw);
-    applyAiContactUpdates(ownerAgent.id, updates, {
+    const applyCounts = applyAiContactUpdates(ownerAgent.id, updates, {
       agents,
       profiles,
       contactChangeSource: 'contacts_incremental_update',
@@ -587,6 +607,8 @@ export async function updateContactsFromRecentContextWithAI(params: {
     setContactUpdateState(ownerAgent.id, 'incremental_update', 'success');
     return {
       updatesCount: updates.length,
+      /** 实际进「新的朋友」待确认的新增条数（born-blocked/deleted 的 add 直接入册，不计入），UI 据此提示。 */
+      pendingAddsCount: applyCounts.pendingAdd,
       recentContext: {
         hasOpenHanakoMessages: recentContext.hasOpenHanakoMessages,
         messageCount: recentContext.messages.length,
@@ -669,7 +691,7 @@ export async function rollbackAndUpdateContactsWithAI(params: {
       timeoutMs: 120_000,
     });
     const updates = parseContactUpdates(raw);
-    applyAiContactUpdates(ownerAgent.id, updates, {
+    const applyCounts = applyAiContactUpdates(ownerAgent.id, updates, {
       agents,
       profiles,
       contactChangeSource: 'contacts_rollback_update',
@@ -687,6 +709,7 @@ export async function rollbackAndUpdateContactsWithAI(params: {
     return {
       snapshotId: latest.id,
       updatesCount: updates.length,
+      pendingAddsCount: applyCounts.pendingAdd,
       recentContext: {
         hasOpenHanakoMessages: recentContext.hasOpenHanakoMessages,
         messageCount: recentContext.messages.length,

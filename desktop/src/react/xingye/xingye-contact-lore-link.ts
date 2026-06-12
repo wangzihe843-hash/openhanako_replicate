@@ -1,7 +1,7 @@
 import { listLoreEntries, type XingyeLoreCategory, type XingyeLoreEntry } from './xingye-lore-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
-  getVirtualContacts,
+  getConfirmedVirtualContacts,
   normalizeContactNameForDedupe,
   resolveContactDisplayName,
 } from './xingye-phone-store';
@@ -120,9 +120,10 @@ export function buildContactLoreHints(
   if (!id) return [];
   const limit = options?.limit ?? DEFAULT_CONTACT_HINT_LIMIT;
 
-  let contacts: ReturnType<typeof getVirtualContacts>;
+  let contacts: ReturnType<typeof getConfirmedVirtualContacts>;
   try {
-    contacts = getVirtualContacts(id).slice(0, limit);
+    // 只取已确认条目：还在「新的朋友」待用户通过的候选不应渗进其他 app 的生成上下文。
+    contacts = getConfirmedVirtualContacts(id).slice(0, limit);
   } catch {
     return [];
   }

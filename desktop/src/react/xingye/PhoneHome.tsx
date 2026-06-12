@@ -6,6 +6,7 @@ import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { rememberDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
 import { tryRelockHiddenFolderAfterHeartbeat } from './xingye-files-secret-heartbeat';
+import { maybeAppendContactLogAfterHeartbeat } from './xingye-contact-profile-ai';
 import { PhoneAppIcon } from './PhoneAppIcon';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
 import styles from './XingyeShell.module.css';
@@ -411,6 +412,8 @@ export function PhoneHome({
      * best-effort：内部已 swallow 所有错误，不阻塞心跳 UI。
      */
     if (!failed) void tryRelockHiddenFolderAfterHeartbeat(agent);
+    /** 同样搭车：低概率给某个已初始化详情的联系人追加一条联系记录（best-effort，内部 swallow）。 */
+    if (!failed) void maybeAppendContactLogAfterHeartbeat(agent);
   }, [latestHeartbeat, agent]);
 
   // 卸载时清掉兜底定时器，避免泄漏 / unmount 后 setState。

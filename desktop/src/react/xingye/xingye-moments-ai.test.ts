@@ -13,7 +13,8 @@ vi.mock('./xingye-storage-api', () => ({
 }));
 
 vi.mock('./xingye-phone-store', () => ({
-  getVirtualContacts: vi.fn(),
+  // 互动者池经 buildContactLoreHints 取「已确认」联系人（待『新的朋友』通过的候选不进池）。
+  getConfirmedVirtualContacts: vi.fn(),
   // moments-ai 通过 resolveContactDisplayName 拿到与通讯录 UI 同口径的显示名
   // （meta.remark 优先 → contact.displayName）。测试里默认实现回退到 contact.displayName，
   // 等价于无 phone-contact-meta 的情况；个别 case 用 mockImplementation 注入 remark 优先。
@@ -35,7 +36,7 @@ vi.mock('./xingye-moments-store', async (importOriginal) => {
 
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { postXingyeStorage } from './xingye-storage-api';
-import { getPhoneContactMeta, getVirtualContacts, resolveContactDisplayName } from './xingye-phone-store';
+import { getPhoneContactMeta, getConfirmedVirtualContacts, resolveContactDisplayName } from './xingye-phone-store';
 import { listXingyeMomentPosts } from './xingye-moments-store';
 import {
   generateXingyeMomentDraftWithAI,
@@ -206,7 +207,7 @@ describe('generateXingyeMomentDraftWithAI', () => {
   beforeEach(() => {
     vi.mocked(postXingyeStorage).mockReset();
     vi.mocked(hanaFetch).mockReset();
-    vi.mocked(getVirtualContacts).mockReset();
+    vi.mocked(getConfirmedVirtualContacts).mockReset();
     vi.mocked(resolveContactDisplayName).mockReset();
     vi.mocked(getPhoneContactMeta).mockReset();
     vi.mocked(listXingyeMomentPosts).mockReset();
@@ -214,11 +215,11 @@ describe('generateXingyeMomentDraftWithAI', () => {
     vi.mocked(listXingyeMomentPosts).mockResolvedValue([]);
     vi.mocked(getPhoneContactMeta).mockReturnValue(null as never);
     vi.mocked(postXingyeStorage).mockResolvedValue({ missing: true } as never);
-    vi.mocked(getVirtualContacts).mockReturnValue([]);
+    vi.mocked(getConfirmedVirtualContacts).mockReturnValue([]);
     // Default：fallback 到 contact.displayName（无 remark 场景），与通讯录 UI 一致
     vi.mocked(resolveContactDisplayName).mockImplementation(
       (_ownerAgentId: string, _targetType: unknown, targetId: string) => {
-        const list = vi.mocked(getVirtualContacts).mock.results.flatMap((r) =>
+        const list = vi.mocked(getConfirmedVirtualContacts).mock.results.flatMap((r) =>
           r.type === 'return' ? (r.value as Array<{ id: string; displayName: string }>) : [],
         );
         return list.find((c) => c.id === targetId)?.displayName ?? '虚拟联系人';
@@ -231,7 +232,7 @@ describe('generateXingyeMomentDraftWithAI', () => {
   });
 
   it('prompt enforces likes/comments as mandatory when any pool is non-empty (with few-shot)', async () => {
-    vi.mocked(getVirtualContacts).mockReturnValue([
+    vi.mocked(getConfirmedVirtualContacts).mockReturnValue([
       {
         ownerAgentId: 'linwu',
         id: 'vc-night',
@@ -303,7 +304,7 @@ describe('generateXingyeMomentDraftWithAI', () => {
   });
 
   it('feeds each virtual contact the owner-side impression into the prompt', async () => {
-    vi.mocked(getVirtualContacts).mockReturnValue([
+    vi.mocked(getConfirmedVirtualContacts).mockReturnValue([
       {
         ownerAgentId: 'linwu',
         id: 'vc-1',
@@ -349,7 +350,7 @@ describe('generateXingyeMomentDraftWithAI', () => {
   });
 
   it('passes virtual_contact pool from contacts store + peerAgents into prompt and resolves seed actors', async () => {
-    vi.mocked(getVirtualContacts).mockReturnValue([
+    vi.mocked(getConfirmedVirtualContacts).mockReturnValue([
       {
         ownerAgentId: 'linwu',
         id: 'vc-1',
@@ -404,7 +405,7 @@ describe('generateXingyeMomentDraftWithAI', () => {
   it('uses phone contacts UI display name (meta.remark > contact.displayName) for virtual_contact actorName', async () => {
     // 还原 user 截图里的现象：contact.displayName = "便利店夜班同事"（LLM 起的全称），
     // 用户在通讯录里把 remark 改成"夜班搭子"。朋友圈写入的 actorName 必须是后者。
-    vi.mocked(getVirtualContacts).mockReturnValue([
+    vi.mocked(getConfirmedVirtualContacts).mockReturnValue([
       {
         ownerAgentId: 'hanako',
         id: 'vc-night',
@@ -452,8 +453,8 @@ describe('generateXingyeMomentDraftWithAI', () => {
     expect(prompt).not.toContain('便利店夜班同事');
   });
 
-  it('does not throw when getVirtualContacts itself throws (graceful degradation)', async () => {
-    vi.mocked(getVirtualContacts).mockImplementation(() => {
+  it('does not throw when getConfirmedVirtualContacts itself throws (graceful degradation)', async () => {
+    vi.mocked(getConfirmedVirtualContacts).mockImplementation(() => {
       throw new Error('contacts store unavailable');
     });
     const agent = { id: 'linwu', name: '林雾', yuan: 'y' as const };
@@ -486,7 +487,7 @@ describe('generateXingyeMomentDraftWithAI', () => {
 
   describe('interactions-only mode (existingContent non-empty)', () => {
     it('switches the prompt to interactions-only mode and includes the existing content verbatim', async () => {
-      vi.mocked(getVirtualContacts).mockReturnValue([
+      vi.mocked(getConfirmedVirtualContacts).mockReturnValue([
         {
           ownerAgentId: 'linwu',
           id: 'vc-night',

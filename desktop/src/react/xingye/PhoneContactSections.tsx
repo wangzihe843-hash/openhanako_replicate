@@ -9,6 +9,8 @@ import styles from './XingyeShell.module.css';
 
 interface PhoneContactSectionsProps {
   contacts: XingyePhoneContactView[];
+  /** 「新的朋友」待确认条数；>0 时在入口上显示角标。contacts 本身不含待确认条目。 */
+  pendingNewFriendCount?: number;
   onSelect: (contact: XingyePhoneContactView) => void;
   onOpenSection: (section: PhoneContactsSectionId) => void;
 }
@@ -26,7 +28,7 @@ function isActiveContactStatus(status: XingyePhoneContactView['status'] | undefi
   return status === 'active' || status === undefined;
 }
 
-export function PhoneContactSections({ contacts, onSelect, onOpenSection }: PhoneContactSectionsProps) {
+export function PhoneContactSections({ contacts, pendingNewFriendCount = 0, onSelect, onOpenSection }: PhoneContactSectionsProps) {
   const important = contacts.filter(item => item.targetType === 'user');
   const virtuals = contacts.filter(
     item => item.targetType === 'virtual_contact' && isActiveContactStatus(item.status),
@@ -71,7 +73,9 @@ export function PhoneContactSections({ contacts, onSelect, onOpenSection }: Phon
             className={styles.phoneShortcutButton}
             onClick={() => onOpenSection(item.id)}
           >
-            {item.label}
+            {item.id === 'new_friends' && pendingNewFriendCount > 0
+              ? `${item.label}（${pendingNewFriendCount}）`
+              : item.label}
           </button>
         ))}
       </section>

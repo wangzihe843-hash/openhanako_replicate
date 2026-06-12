@@ -37,13 +37,21 @@ import {
   addSmsMessage,
   applyAiContactUpdates,
   applyAiGeneratedContacts,
+  applyContactProfileAiUpdate,
+  approvePendingNewFriend,
   clearAiSmsHistory,
+  clearAllVirtualContactsForOwner,
+  getContactProfile,
+  initializeContactProfile,
   ensureContactDistribution,
   ensureGeneratedVirtualContacts,
+  getConfirmedVirtualContacts,
+  getPendingNewContacts,
   getPhoneContactMeta,
   getPhoneContacts,
   getUnconsumedContactChangesForSms,
   getVirtualContacts,
+  rejectPendingNewFriend,
   shouldSkipFamilyContacts,
   getSmsThread,
   getSmsThreads,
@@ -367,6 +375,267 @@ describe('xingye-phone-store', () => {
       { storage },
     );
     expect(getUnconsumedContactChangesForSms(ownerAgentId, storage)).toHaveLength(0);
+  });
+
+  describe('「新的朋友」审批门槛（pendingApproval）', () => {
+    const baseContact = (displayName: string): XingyeAiGeneratedContact => ({
+      targetType: 'virtual_contact',
+      displayName,
+      kind: 'friend',
+      impression: '聊得来的新面孔',
+      tags: ['同伴'],
+      faction: '中立',
+      status: 'active',
+      generatedReason: 'test',
+    });
+
+    it('pending_approval：新建联系人先进队列，通过后才出现在通讯录', () => {
+      const ownerAgentId = 'role-gate';
+      const result = applyAiGeneratedContacts(ownerAgentId, [baseContact('待确认甲')], {
+        storage,
+        newContactGate: 'pending_approval',
+      });
+      expect(result.pendingCount).toBe(1);
+      const vc = getVirtualContacts(ownerAgentId, storage)[0];
+      expect(getPhoneContactMeta(ownerAgentId, 'virtual_contact', vc.id, storage)?.pendingApproval).toBe(true);
+
+      // 默认视图不可见；显式 includePendingApproval 可见；队列可见；外部消费方列表不可见。
+      const visible = getPhoneContacts(ownerAgentId, [], {}, { includeDeleted: true }, storage);
+      expect(visible.find(c => c.targetId === vc.id)).toBeUndefined();
+      const withPending = getPhoneContacts(ownerAgentId, [], {}, { includeDeleted: true, includePendingApproval: true }, storage);
+      expect(withPending.find(c => c.targetId === vc.id)).toBeDefined();
+      expect(getPendingNewContacts(ownerAgentId, [], {}, storage).map(c => c.targetId)).toEqual([vc.id]);
+      expect(getConfirmedVirtualContacts(ownerAgentId, storage)).toHaveLength(0);
+
+      approvePendingNewFriend(ownerAgentId, vc.id, storage);
+      expect(getPendingNewContacts(ownerAgentId, [], {}, storage)).toHaveLength(0);
+      expect(getPhoneContacts(ownerAgentId, [], {}, undefined, storage).find(c => c.targetId === vc.id)).toBeDefined();
+      expect(getConfirmedVirtualContacts(ownerAgentId, storage)).toHaveLength(1);
+    });
+
+    it('born-blocked/deleted 的新联系人不走审批：直接落黑名单/已删除', () => {
+      const ownerAgentId = 'role-born-nonactive';
+      const result = applyAiGeneratedContacts(ownerAgentId, [
+        { ...baseContact('生而拉黑'), status: 'blocked' },
+        { ...baseContact('生而删除'), status: 'deleted' },
+        baseContact('正常待确认'),
+      ], { storage, newContactGate: 'pending_approval' });
+      expect(result.createdCount).toBe(3);
+      expect(result.pendingCount).toBe(1);
+
+      // 队列里只有 active 那条；blocked/deleted 直接出现在对应分组，不需要通过。
+      expect(getPendingNewContacts(ownerAgentId, [], {}, storage).map(c => c.remark)).toEqual(['正常待确认']);
+      const all = getPhoneContacts(ownerAgentId, [], {}, { includeDeleted: true }, storage);
+      expect(all.find(c => c.remark === '生而拉黑')?.status).toBe('blocked');
+      expect(all.find(c => c.remark === '生而删除')?.status).toBe('deleted');
+      const blockedVc = getVirtualContacts(ownerAgentId, storage).find(c => c.displayName === '生而拉黑')!;
+      expect(getPhoneContactMeta(ownerAgentId, 'virtual_contact', blockedVc.id, storage)?.pendingApproval).toBeUndefined();
+
+      // 增量 add 的 born-blocked 同样直进：add 计数有、pendingAdd 计数无。
+      const counts = applyAiContactUpdates(ownerAgentId, [{
+        action: 'add',
+        targetType: 'virtual_contact',
+        contact: { ...baseContact('增量拉黑'), status: 'blocked' },
+        reason: '聊到一个 TA 早就拉黑的人',
+      }], { storage });
+      expect(counts.add).toBe(1);
+      expect(counts.pendingAdd).toBe(0);
+      expect(getPendingNewContacts(ownerAgentId, [], {}, storage).map(c => c.remark)).toEqual(['正常待确认']);
+    });
+
+    it('默认 direct（初始化/重新生成全部路径）：不打标记，直接入册', () => {
+      const ownerAgentId = 'role-direct';
+      applyAiGeneratedContacts(ownerAgentId, [baseContact('直进乙')], { storage });
+      const vc = getVirtualContacts(ownerAgentId, storage)[0];
+      expect(getPhoneContactMeta(ownerAgentId, 'virtual_contact', vc.id, storage)?.pendingApproval).toBeUndefined();
+      expect(getPhoneContacts(ownerAgentId, [], {}, undefined, storage).find(c => c.targetId === vc.id)).toBeDefined();
+      expect(getPendingNewContacts(ownerAgentId, [], {}, storage)).toHaveLength(0);
+    });
+
+    it('applyAiContactUpdates 的 add 默认走门槛，且 update patch 不能私改审批标记', () => {
+      const ownerAgentId = 'role-inc-add';
+      const counts = applyAiContactUpdates(ownerAgentId, [{
+        action: 'add',
+        targetType: 'virtual_contact',
+        contact: baseContact('增量丙'),
+        reason: '最近聊天里认识的',
+      }], { storage });
+      expect(counts.add).toBe(1);
+      expect(counts.pendingAdd).toBe(1);
+      const vc = getVirtualContacts(ownerAgentId, storage)[0];
+      expect(getPendingNewContacts(ownerAgentId, [], {}, storage).map(c => c.targetId)).toEqual([vc.id]);
+
+      // AI 的 update patch 即便带上 pendingApproval: false 也不能让候选绕过审批。
+      applyAiContactUpdates(ownerAgentId, [{
+        action: 'update',
+        targetType: 'virtual_contact',
+        targetId: vc.id,
+        patch: { impression: '更熟了', pendingApproval: false },
+        reason: 'x',
+      }], { storage });
+      expect(getPhoneContactMeta(ownerAgentId, 'virtual_contact', vc.id, storage)?.pendingApproval).toBe(true);
+    });
+
+    it('拒绝：整条移除待确认候选；已入册联系人不能从这里硬删', () => {
+      const ownerAgentId = 'role-reject';
+      applyAiGeneratedContacts(ownerAgentId, [baseContact('待拒丁')], { storage, newContactGate: 'pending_approval' });
+      applyAiGeneratedContacts(ownerAgentId, [baseContact('已入册戊')], { storage });
+      const all = getVirtualContacts(ownerAgentId, storage);
+      const pendingVc = all.find(c => c.displayName === '待拒丁')!;
+      const directVc = all.find(c => c.displayName === '已入册戊')!;
+
+      expect(rejectPendingNewFriend(ownerAgentId, pendingVc.id, storage)).toBe(true);
+      expect(getVirtualContacts(ownerAgentId, storage).map(c => c.id)).toEqual([directVc.id]);
+      expect(getPhoneContactMeta(ownerAgentId, 'virtual_contact', pendingVc.id, storage)).toBeNull();
+
+      expect(rejectPendingNewFriend(ownerAgentId, directVc.id, storage)).toBe(false);
+      expect(getVirtualContacts(ownerAgentId, storage)).toHaveLength(1);
+    });
+
+    it('拒绝待确认候选时一并清掉其详情 profile', () => {
+      const ownerAgentId = 'role-reject-profile';
+      applyAiGeneratedContacts(ownerAgentId, [baseContact('带详情的候选')], { storage, newContactGate: 'pending_approval' });
+      const vc = getVirtualContacts(ownerAgentId, storage)[0];
+      initializeContactProfile(ownerAgentId, 'virtual_contact', vc.id, { accountId: 'acc-1' }, storage);
+      expect(getContactProfile(ownerAgentId, 'virtual_contact', vc.id, storage)).not.toBeNull();
+      expect(rejectPendingNewFriend(ownerAgentId, vc.id, storage)).toBe(true);
+      expect(getContactProfile(ownerAgentId, 'virtual_contact', vc.id, storage)).toBeNull();
+    });
+
+    it('存量数据：旧的 pendingNewFriend 未读标记被忽略，既不挡通讯录也不进队列', () => {
+      const ownerAgentId = 'role-legacy';
+      applyAiGeneratedContacts(ownerAgentId, [baseContact('老联系人己')], { storage });
+      const vc = getVirtualContacts(ownerAgentId, storage)[0];
+      const metaMap = JSON.parse(storage.getItem(XINGYE_PHONE_CONTACTS_STORAGE_KEY) ?? '{}') as Record<string, Record<string, unknown>>;
+      metaMap[`${ownerAgentId}::virtual_contact::${vc.id}`].pendingNewFriend = true;
+      storage.setItem(XINGYE_PHONE_CONTACTS_STORAGE_KEY, JSON.stringify(metaMap));
+
+      expect(getPhoneContacts(ownerAgentId, [], {}, undefined, storage).find(c => c.targetId === vc.id)).toBeDefined();
+      expect(getPendingNewContacts(ownerAgentId, [], {}, storage)).toHaveLength(0);
+    });
+  });
+
+  describe('联系人详情 profile（账号ID/IP/签名/印象历史/联系记录）', () => {
+    const ownerAgentId = 'role-profile';
+    const vcId = 'vc-profile-1';
+
+    it('initializeContactProfile 幂等，且合并先行的印象历史骨架', () => {
+      // 印象变更可能先于详情初始化发生——先落一笔印象历史骨架。
+      savePhoneContactMeta(ownerAgentId, 'virtual_contact', vcId, { impression: '第一印象：话很少', source: 'manual' }, storage);
+      savePhoneContactMeta(ownerAgentId, 'virtual_contact', vcId, { impression: '熟了之后挺啰嗦', source: 'manual' }, storage);
+      const skeleton = getContactProfile(ownerAgentId, 'virtual_contact', vcId, storage);
+      expect(skeleton?.initializedAt).toBeUndefined();
+      expect(skeleton?.impressionHistory.map(i => i.value)).toEqual(['第一印象：话很少']);
+
+      const created = initializeContactProfile(ownerAgentId, 'virtual_contact', vcId, {
+        accountId: 'yexing_007',
+        ipAddress: '雾隐城',
+        signature: '夜里别来找我。',
+        contactLog: [
+          { channel: '灵鹤传书', direction: 'incoming', whenLabel: '昨夜', summary: '催还上次借走的罗盘' },
+          // 近逐字重复（硬去重兜底层管这种；换措辞的语义重复靠 prompt 锚点防）→ 应被丢弃
+          { channel: '符纸', direction: 'incoming', whenLabel: '三天前', summary: '催还上次借走的罗盘。' },
+          { channel: '面谈', direction: 'mutual', whenLabel: '上月', summary: '在坊市碰头交换了消息' },
+        ],
+      }, storage);
+      expect(created.initializedAt).toBeTruthy();
+      expect(created.accountId).toBe('yexing_007');
+      expect(created.impressionHistory.map(i => i.value)).toEqual(['第一印象：话很少']);
+      expect(created.contactLog.map(e => e.summary)).toEqual(['催还上次借走的罗盘', '在坊市碰头交换了消息']);
+
+      // 幂等：二次初始化不覆盖。
+      const again = initializeContactProfile(ownerAgentId, 'virtual_contact', vcId, { accountId: 'OTHER' }, storage);
+      expect(again.accountId).toBe('yexing_007');
+    });
+
+    it('applyContactProfileAiUpdate：新记录前插+硬去重；ip/签名变更旧值进 history', () => {
+      // storage 每个用例重建，先把基线详情立起来。
+      initializeContactProfile(ownerAgentId, 'virtual_contact', vcId, {
+        accountId: 'yexing_007',
+        ipAddress: '雾隐城',
+        signature: '夜里别来找我。',
+        contactLog: [
+          { channel: '灵鹤传书', direction: 'incoming', whenLabel: '昨夜', summary: '催还上次借走的罗盘' },
+          { channel: '面谈', direction: 'mutual', whenLabel: '上月', summary: '在坊市碰头交换了消息' },
+        ],
+      }, storage);
+      const result = applyContactProfileAiUpdate(ownerAgentId, 'virtual_contact', vcId, {
+        ipAddress: '落雁滩',
+        signature: '罗盘已收回。',
+        newContactLog: [
+          { channel: '符纸', direction: 'outgoing', whenLabel: '今晨', summary: '约定下旬在渡口碰面' },
+          { channel: '灵鹤传书', direction: 'incoming', whenLabel: '昨夜', summary: '催还上次借走的罗盘' }, // 与已有逐字重复 → 丢
+        ],
+        source: 'manual_update',
+      }, storage);
+      expect(result.appended).toBe(1);
+      expect(result.droppedAsDuplicate).toBe(1);
+      expect(result.ipChanged).toBe(true);
+      expect(result.signatureChanged).toBe(true);
+
+      const profile = getContactProfile(ownerAgentId, 'virtual_contact', vcId, storage)!;
+      expect(profile.contactLog[0].summary).toBe('约定下旬在渡口碰面');
+      expect(profile.contactLog[0].source).toBe('manual_update');
+      expect(profile.ipAddress).toBe('落雁滩');
+      expect(profile.ipHistory.map(i => i.value)).toEqual(['雾隐城']);
+      expect(profile.signatureHistory.map(i => i.value)).toEqual(['夜里别来找我。']);
+    });
+
+    it('「一次往来」兜底：同批 channel+whenLabel 相同的多条只保留第一条，跨批不启用', () => {
+      const tid = 'vc-slot-collapse';
+      // 复刻真实翻车现场：模型把同一场「洗发水争执」的多轮短信拆成了三条「短信·上月」。
+      const created = initializeContactProfile(ownerAgentId, 'virtual_contact', tid, {
+        contactLog: [
+          { channel: '短信', direction: 'incoming', whenLabel: '上月', summary: '他说洗发水用一下，明天买新的' },
+          { channel: '短信', direction: 'outgoing', whenLabel: '上月', summary: '我回他：你上次也这么说' },
+          { channel: '短信', direction: 'incoming', whenLabel: '上月', summary: '他反问：至于吗？一瓶洗发水' },
+          { channel: '电话', direction: 'outgoing', whenLabel: '三个月前', summary: '我打过去质问卫生问题，吵了一架' },
+        ],
+      }, storage);
+      expect(created.contactLog.map(e => e.summary)).toEqual([
+        '他说洗发水用一下，明天买新的',
+        '我打过去质问卫生问题，吵了一架',
+      ]);
+      // 跨批不启用：后续更新再出现「短信·上月」的新往来仍可入册（宽时间标签不该误伤）。
+      const result = applyContactProfileAiUpdate(ownerAgentId, 'virtual_contact', tid, {
+        newContactLog: [{ channel: '短信', direction: 'incoming', whenLabel: '上月', summary: '借厨房谈崩之后他来道歉' }],
+        source: 'manual_update',
+      }, storage);
+      expect(result.appended).toBe(1);
+    });
+
+    it('印象历史去重：占位印象不记；高相似旧印象不重复入栈', () => {
+      const tid = 'vc-impression-dedup';
+      // 占位 → 实际印象：占位文案不进历史。
+      savePhoneContactMeta(ownerAgentId, 'virtual_contact', tid, { impression: '还没有形成明确印象。', source: 'manual' }, storage);
+      savePhoneContactMeta(ownerAgentId, 'virtual_contact', tid, { impression: '看着面善', source: 'manual' }, storage);
+      expect(getContactProfile(ownerAgentId, 'virtual_contact', tid, storage)).toBeNull();
+      // 真实变更 → 旧印象入栈一次。
+      savePhoneContactMeta(ownerAgentId, 'virtual_contact', tid, { impression: '其实精得很', source: 'manual' }, storage);
+      // 改回与历史最后一条几乎相同的文本 → 新旧交替但「看着面善」不再重复入栈。
+      savePhoneContactMeta(ownerAgentId, 'virtual_contact', tid, { impression: '看着面善', source: 'manual' }, storage);
+      const history = getContactProfile(ownerAgentId, 'virtual_contact', tid, storage)?.impressionHistory.map(i => i.value);
+      expect(history).toEqual(['看着面善', '其实精得很']);
+      savePhoneContactMeta(ownerAgentId, 'virtual_contact', tid, { impression: '其实精得很！', source: 'manual' }, storage);
+      const history2 = getContactProfile(ownerAgentId, 'virtual_contact', tid, storage)?.impressionHistory.map(i => i.value);
+      // 「看着面善」与历史最后一条「其实精得很」不相似 → 正常入栈；不会出现连续重复。
+      expect(history2).toEqual(['看着面善', '其实精得很', '看着面善']);
+    });
+
+    it('clearAllVirtualContactsForOwner 连详情一起清（保留 manual 条目的详情）', () => {
+      const owner = 'role-clear-profile';
+      applyAiGeneratedContacts(owner, [
+        { targetType: 'virtual_contact', displayName: 'AI生成者', kind: 'friend', impression: 'a', tags: [], status: 'active', generatedReason: 't' },
+      ], { storage });
+      const aiVc = getVirtualContacts(owner, storage)[0];
+      savePhoneContactMeta(owner, 'virtual_contact', 'vc-manual-keep', { remark: '手动的', source: 'manual' }, storage, { markManualFields: true });
+      initializeContactProfile(owner, 'virtual_contact', aiVc.id, { accountId: 'ai-acc' }, storage);
+      initializeContactProfile(owner, 'virtual_contact', 'vc-manual-keep', { accountId: 'manual-acc' }, storage);
+
+      clearAllVirtualContactsForOwner(owner, storage, { preserveManuallyEdited: true });
+      expect(getContactProfile(owner, 'virtual_contact', aiVc.id, storage)).toBeNull();
+      expect(getContactProfile(owner, 'virtual_contact', 'vc-manual-keep', storage)?.accountId).toBe('manual-acc');
+    });
   });
 
   it('appending a third mock SMS keeps earlier messages in order (incremental append)', () => {

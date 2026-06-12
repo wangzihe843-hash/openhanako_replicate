@@ -77,6 +77,8 @@ const PHONE_GENERATE_KINDS = new Set([
   "files_batch_plan",
   "files_batch_entry",
   "gifts_init",
+  "contact_profile_init",
+  "contact_profile_update",
 ]);
 
 const FORBIDDEN_TERMS = [
