@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { loadHistoryState, saveHistoryState } from './xingye-app-history-state';
+import { XingyePersistenceBindingError } from './xingye-persistence';
 import { generateTripsHistoryWithAI, generateTripsUpdateWithAI } from './xingye-trips-ai';
 import {
   appendTripDraft,
@@ -445,6 +446,19 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
   const [initNotice, setInitNotice] = useState<string | null>(null);
 
   /**
+   * 持久化绑定变更脉冲：切角色后 refreshXingyeAgentPersistence 完成会派发
+   * 'xingye-persistence-changed'。把它纳入初始化 effect 的依赖，让「绑定竞态被守卫拦下、
+   * tried 已重置」的情形在重绑完成后能自动重跑一次初始化（否则没有依赖变化不会重试）。
+   */
+  const [persistenceTick, setPersistenceTick] = useState(0);
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onPersistenceChanged = () => setPersistenceTick((t) => t + 1);
+    window.addEventListener('xingye-persistence-changed', onPersistenceChanged);
+    return () => window.removeEventListener('xingye-persistence-changed', onPersistenceChanged);
+  }, []);
+
+  /**
    * 防跨角色脏写：切角色时 ownerAgentId 变化会触发新一轮 reload，但上一个角色还在飞的
    * 读取可能后落地、用旧数据覆盖新角色。每次 reload 自增请求序号，落 setState 前校验仍是
    * 最新一轮（与 PhoneMmChatApp / PhoneDivinationApp 的 cancelled 守卫同语义，这里用单调
@@ -526,7 +540,13 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
       setInitNotice(`已为 ${author} 翻出 ${drafts.length} 段走过的路`);
       await reloadEntries();
     } catch (e) {
-      setInitError(e instanceof Error ? e.message : String(e));
+      if (e instanceof XingyePersistenceBindingError) {
+        // 持久化还没绑定到本 owner（刚切角色的瞬时竞态）：不是真失败。重置 tried，让重绑完成后
+        // （persistenceTick 自增触发初始化 effect 重跑）再初始化，不弹错误条、不写 initializedAt。
+        initialBootstrapTriedRef.current = null;
+      } else {
+        setInitError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setInitBusy(false);
     }
@@ -564,7 +584,7 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
         console.warn('[PhoneTripsApp] init bootstrap failed:', err);
       }
     })();
-  }, [ownerAgent, ownerAgentId, listLoading, initBusy, entries.length, pendingDrafts.length, runInitialBootstrap]);
+  }, [ownerAgent, ownerAgentId, listLoading, initBusy, entries.length, pendingDrafts.length, runInitialBootstrap, persistenceTick]);
 
   const handleDelete = useCallback(
     async (entryId: string) => {
@@ -640,7 +660,13 @@ export function PhoneTripsApp({ ownerAgent, ownerProfile, displayName, onBack }:
       setManualNotice(`已整理 ${drafts.length} 段新行程草稿，在下方确认或丢弃`);
       await reloadEntries();
     } catch (e) {
-      setManualError(e instanceof Error ? e.message : String(e));
+      setManualError(
+        e instanceof XingyePersistenceBindingError
+          ? '角色数据还在加载（刚切换角色？），请稍候再点一次「整理新行程」。'
+          : e instanceof Error
+            ? e.message
+            : String(e),
+      );
     } finally {
       setManualBusy(false);
     }

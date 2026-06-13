@@ -4,6 +4,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  XingyePersistenceBindingError,
+  assertXingyePersistenceBoundTo,
   flushXingyePersistenceNow,
   getXingyePersistenceStorage,
   refreshXingyeAgentPersistence,
@@ -156,5 +158,33 @@ describe('xingye-persistence agent scoped storage', () => {
     await refreshXingyeAgentPersistence('');
     expect(getXingyePersistenceStorage()).toBeNull();
     expect(vi.mocked(postXingyeStorage)).not.toHaveBeenCalled();
+  });
+
+  describe('assertXingyePersistenceBoundTo (跨角色串读守卫)', () => {
+    it('throws only when persistence is bound to a DIFFERENT agent', async () => {
+      await refreshXingyeAgentPersistence('agent-a');
+      // 绑定到本角色：放行。
+      expect(() => assertXingyePersistenceBoundTo('agent-a')).not.toThrow();
+      // 绑定到别的角色：拦截（这正是 hanako 行程读到林雾 lore 的串读情形）。
+      expect(() => assertXingyePersistenceBoundTo('agent-b')).toThrow(XingyePersistenceBindingError);
+      try {
+        assertXingyePersistenceBoundTo('agent-b');
+      } catch (err) {
+        expect(err).toBeInstanceOf(XingyePersistenceBindingError);
+        expect((err as XingyePersistenceBindingError).expectedAgentId).toBe('agent-b');
+        expect((err as XingyePersistenceBindingError).actualAgentId).toBe('agent-a');
+      }
+    });
+
+    it('does not throw when persistence is unbound/disabled (storage null → ambient reads are empty, no leak)', async () => {
+      await refreshXingyeAgentPersistence('');
+      expect(getXingyePersistenceStorage()).toBeNull();
+      // 未绑定本就安全（读到空而非他人），不拦截——也不误伤未绑定持久化的单元测试。
+      expect(() => assertXingyePersistenceBoundTo('agent-a')).not.toThrow();
+    });
+
+    it('ignores an empty agent id', () => {
+      expect(() => assertXingyePersistenceBoundTo('')).not.toThrow();
+    });
   });
 });

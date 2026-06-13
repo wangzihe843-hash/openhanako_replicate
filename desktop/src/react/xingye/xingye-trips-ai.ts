@@ -7,7 +7,7 @@ import {
   formatXingyeLoreRuntimeContextBlock,
 } from './xingye-lore-runtime-context';
 import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
-import { getXingyePersistenceStorage } from './xingye-persistence';
+import { assertXingyePersistenceBoundTo, getXingyePersistenceStorage } from './xingye-persistence';
 import { peekDeskHeartbeatUiOutcome } from './xingye-desk-heartbeat-memory';
 import { collectRecentContextForAgent, describeRecentContextForPrompt } from './xingye-recent-context';
 import { getRelationshipState } from './xingye-state-store';
@@ -139,6 +139,10 @@ export async function generateTripsHistoryWithAI(params: {
   const timeoutMs = params.timeoutMs ?? 120_000;
   const desiredCount = Math.max(3, Math.min(6, Math.floor(params.desiredCount ?? 4)));
 
+  // 跨角色守卫：下面按 agent.id 读 ambient lore，但 getXingyePersistenceStorage() 绑定的是
+  // 「当前激活角色」；切角色异步重绑未完成时抢跑会串到上一个角色。绑定不一致即抛，由调用方跳过/重试。
+  assertXingyePersistenceBoundTo(agent.id);
+
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
   const userName = await resolveXingyeSpeakerUserName();
 
@@ -251,6 +255,10 @@ export async function generateTripsUpdateWithAI(params: {
   const { agent, ownerProfile } = params;
   const timeoutMs = params.timeoutMs ?? 120_000;
   const desiredCount = Math.max(1, Math.min(3, Math.floor(params.desiredCount ?? 2)));
+
+  // 跨角色守卫：同 generateTripsHistoryWithAI——下面按 agent.id 读 ambient lore / 关系状态 /
+  // 最近上下文，绑定不一致时抢跑会串到上一个角色（关系/上下文无 entry.agentId 过滤兜底）。
+  assertXingyePersistenceBoundTo(agent.id);
 
   const existingTrips = params.existingTrips ?? (await listTripEntries(agent.id));
   const existingKeys = new Set(existingTrips.map((t) => `${t.from.name}→${t.to.name}|${t.chapter}`));

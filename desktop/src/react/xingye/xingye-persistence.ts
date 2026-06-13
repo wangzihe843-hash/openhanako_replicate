@@ -55,6 +55,27 @@ type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 export type XingyePersistenceMode = 'disabled' | 'agent' | 'error';
 
+/**
+ * 「生成类」入口在持久化未绑定到目标角色时抛出的专用错误。
+ *
+ * 调用方（如行程初始化 / 手动整理）可 `instanceof` 判定为「瞬时绑定竞态」而非真失败，
+ * 跳过本次并在重绑完成（'xingye-persistence-changed'）后重试，而不是弹错误条。
+ */
+export class XingyePersistenceBindingError extends Error {
+  readonly code = 'xingye_persistence_binding_mismatch';
+  readonly expectedAgentId: string;
+  readonly actualAgentId: string | null;
+  constructor(expectedAgentId: string, actualAgentId: string | null) {
+    super(
+      `星野持久化未绑定到当前角色（期望「${expectedAgentId}」，实际「${actualAgentId ?? '未绑定'}」）：` +
+        '已跳过本次生成以防跨角色串读，待角色数据加载完成后会自动重试。',
+    );
+    this.name = 'XingyePersistenceBindingError';
+    this.expectedAgentId = expectedAgentId;
+    this.actualAgentId = actualAgentId;
+  }
+}
+
 let mode: XingyePersistenceMode = 'disabled';
 const memory = new Map<string, string>();
 let activeAgentId: string | null = null;
@@ -234,6 +255,30 @@ export function getXingyePersistenceDiagnostics(): {
     activeWorkspace: activeAgentId,
     lastWorkspaceFlushError: lastRefreshError ?? lastAgentFlushError,
   };
+}
+
+/**
+ * 跨角色串读守卫：断言星野持久化「当前已绑定到 agentId」。
+ *
+ * 背景：XingyeShell 用 `void refreshXingyeAgentPersistence(selectedXingyeAgentId)`
+ * 异步重绑持久化；绑定完成前 getXingyePersistenceStorage() 仍指向上一个角色的 in-memory
+ * 数据。手机各 app 的「生成类」入口按各自 ownerAgent 立即读 ambient lore / 关系状态 /
+ * 最近上下文——切角色瞬间若抢跑，会读到「上一个角色」的数据（lore 还有 entry.agentId
+ * 过滤兜底成空，但关系状态 / 最近上下文没有这层过滤，会真的串到别人）。
+ *
+ * 只在「确实绑定到了另一个角色」(mode==='agent' 且 activeAgentId 是别的 id) 时抛
+ * {@link XingyePersistenceBindingError}——这才是 ambient 会串读他人数据的情形。
+ * mode 非 'agent'（未绑定 / 断连 / 出错时 storage 为 null，ambient 读到的是空、不会串到他人）
+ * 本就安全，不拦截，也避免误伤「持久化未绑定」的单元测试与首次绑定前的正常空读。
+ * devLocal（仅测试）走全局 localStorage、不做 agent 绑定，直接跳过校验。
+ */
+export function assertXingyePersistenceBoundTo(agentId: string): void {
+  const id = typeof agentId === 'string' ? agentId.trim() : '';
+  if (!id) return;
+  if (devLocalStorageFallbackEnabled()) return;
+  if (mode === 'agent' && activeAgentId && activeAgentId !== id) {
+    throw new XingyePersistenceBindingError(id, activeAgentId);
+  }
 }
 
 export function getXingyePersistenceStorage(): StorageLike | null {
