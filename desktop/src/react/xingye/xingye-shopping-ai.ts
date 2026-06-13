@@ -199,6 +199,17 @@ const SHOPPING_PERIODIC_ITEMS_LIMIT = 40;
  */
 const SHOPPING_CONSUMABLE_WINDOW_DAYS = 30;
 
+/**
+ * 退货商品「这次从别家再买类似的」的默认中签概率。
+ * 消耗品更高（退了还是会需要、马上换一家补上）；耐用品更低（退货后更可能就此作罢，不再折腾）。
+ * 真随机用 Math.random（见 partition 的 rng 入参默认值），单测可注入确定性 rng。
+ */
+const REBUY_AFTER_RETURN_PROB_CONSUMABLE = 0.7;
+const REBUY_AFTER_RETURN_PROB_DURABLE = 0.3;
+
+/** 「退货重买」名单取样上限：退货品较少见，给个够用的小上限即可。 */
+const SHOPPING_RETURNED_REBUY_LIMIT = 12;
+
 /** 「周期补货」块里「上次评价」的中文标签。 */
 const PERIODIC_REVIEW_NOTE_LABEL: Record<'good' | 'neutral' | 'bad', string> = {
   good: '好评',
@@ -211,15 +222,29 @@ export type ShoppingPeriodicRestockItem = {
   name: string;
   /** 上次卖家口吻；空字符串表示没记。 */
   seller: string;
-  /** 上次评价归纳：好评 / 中评 / 差评 / 已退货 / 未评价。 */
+  /** 上次评价归纳：好评 / 中评 / 差评 / 未评价（退货品已被分流到「退货重买」桶，不再出现在这里）。 */
   reviewNote: string;
 };
 
+export type ShoppingReturnedRebuyItem = {
+  /** 展示用商品名（已截断）。 */
+  name: string;
+  /** 上次（退货那家）卖家口吻；空字符串表示没记。供 prompt 让模型避开这家。 */
+  seller: string;
+  /** 该品类是否消耗品（仅供排序 / 单测断言，prompt 不强依赖）。 */
+  consumable: boolean;
+};
+
 export type ShoppingRecentPartition = {
-  /** 「不要重复」名单：耐用品 + 仍在补货窗口内的消耗品。扁平 itemName。 */
+  /** 「不要重复」名单：耐用品 + 仍在补货窗口内的消耗品 + 未中签的退货品。扁平 itemName。 */
   avoidNames: string[];
   /** 「周期补货」名单：到补货周期（超窗口）的消耗品，带上次卖家 + 上次评价。 */
   periodicItems: ShoppingPeriodicRestockItem[];
+  /**
+   * 「退货重买」名单：上次退货、这一轮中签「可以从别家再买类似的」的商品（消耗品 + 耐用品都可能），
+   * 带上次退货那家卖家供模型避开。中签概率消耗品 > 耐用品（见 REBUY_AFTER_RETURN_PROB_*）。
+   */
+  returnedRebuyItems: ShoppingReturnedRebuyItem[];
 };
 
 type ShoppingRecentRow = {
@@ -230,16 +255,21 @@ type ShoppingRecentRow = {
 };
 
 /**
- * 纯函数：把近期购物 entries 分成「不要重复」与「周期补货」两桶（按核心品类去重，最近优先）。
+ * 纯函数：把近期购物 entries 分成「不要重复」「周期补货」「退货重买」三桶（按核心品类去重，最近优先）。
  *
- *  - 收藏品（命中 collectionKeywords）：两桶都不进——TA 会继续攒不同款，既不算重复也不算补货。
- *  - 消耗品（isRepurchasableConsumable）：看**最近一次**购买距今多久——
+ *  - 收藏品（命中 collectionKeywords）：三桶都不进——TA 会继续攒不同款，既不算重复也不算补货。
+ *  - 退货品（status='returned'）：**优先于补货窗口判定**——退货 ≠「用完补货」，是「这家不合意、可能换家再试」。
+ *    掷骰子（消耗品概率 > 耐用品，见 REBUY_AFTER_RETURN_PROB_*）：
+ *      · 中签 → 落「退货重买」（带上次退货那家卖家，供 prompt 让模型换一家买类似的）；
+ *      · 未中签 → 落「不要重复」（这一轮先不重买）。
+ *  - 消耗品（isRepurchasableConsumable，非退货）：看**最近一次**购买距今多久——
  *      · 窗口内（默认 30 天）→ 落「不要重复」（刚补过货、暂时别再买，保留周期去重防模型反复买）；
  *      · 超窗口            → 落「周期补货」（到点了、可再次购买；带上次卖家 + 上次评价供挑卖家）。
- *  - 其余耐用品：落「不要重复」（同核心品类只记一次）。
+ *  - 其余耐用品（非退货）：落「不要重复」（同核心品类只记一次）。
  *
- * reviewNote 取最近一次购买那条 entry 的评价：status='returned' → 已退货；命中评价档位 → 好/中/差评；否则未评价。
- * 纯函数、无 I/O，便于单测分桶 + 卖家 / 评价拼装。
+ * periodic reviewNote 取最近一次购买那条 entry 的评价：命中评价档位 → 好/中/差评；否则未评价。
+ * 退货品已在上一档分流走，不会进 periodic（故 reviewNote 不再有「已退货」）。
+ * 纯函数、唯一外部依赖是 rng（默认 Math.random，单测可注入），便于单测分桶 + 概率门。
  */
 export function partitionShoppingRecentItems(params: {
   rows: ReadonlyArray<ShoppingRecentRow>;
@@ -250,27 +280,43 @@ export function partitionShoppingRecentItems(params: {
   windowDays?: number;
   avoidLimit?: number;
   periodicLimit?: number;
+  returnedRebuyLimit?: number;
+  /** 退货品「从别家再买」的中签概率。消耗品 > 耐用品。缺省走 REBUY_AFTER_RETURN_PROB_*。 */
+  rebuyAfterReturnProbConsumable?: number;
+  rebuyAfterReturnProbDurable?: number;
+  /** 概率掷骰子源，默认 Math.random；单测注入确定性函数。返回 [0,1)。 */
+  rng?: () => number;
 }): ShoppingRecentPartition {
   const { rows, reviewSentimentByEntryId, collectionKeywords = [], nowMs } = params;
   const windowMs = Math.max(0, params.windowDays ?? SHOPPING_CONSUMABLE_WINDOW_DAYS) * 86_400_000;
   const avoidLimit = params.avoidLimit ?? SHOPPING_RECENT_ITEMS_LIMIT;
   const periodicLimit = params.periodicLimit ?? SHOPPING_PERIODIC_ITEMS_LIMIT;
+  const returnedRebuyLimit = params.returnedRebuyLimit ?? SHOPPING_RETURNED_REBUY_LIMIT;
+  const probConsumable = params.rebuyAfterReturnProbConsumable ?? REBUY_AFTER_RETURN_PROB_CONSUMABLE;
+  const probDurable = params.rebuyAfterReturnProbDurable ?? REBUY_AFTER_RETURN_PROB_DURABLE;
+  const rng = params.rng ?? Math.random;
 
   const avoidNames: string[] = [];
   const periodicItems: ShoppingPeriodicRestockItem[] = [];
+  const returnedRebuyItems: ShoppingReturnedRebuyItem[] = [];
   const seenCore = new Set<string>();
 
   // listAppEntries 返回 jsonl 追加序（最旧在前）；反转成最新在前——截断到 LIMIT 时留下最近的品类，
   // 且每个核心品类首次遇到的就是**最近一次**购买（决定补货窗口判定 + 上次卖家 / 评价的取值）。
   for (const row of [...rows].reverse()) {
-    if (avoidNames.length >= avoidLimit && periodicItems.length >= periodicLimit) break;
+    if (
+      avoidNames.length >= avoidLimit &&
+      periodicItems.length >= periodicLimit &&
+      returnedRebuyItems.length >= returnedRebuyLimit
+    )
+      break;
     const meta = (row.metadata ?? {}) as Record<string, unknown>;
     const raw =
       typeof meta.itemName === 'string' && meta.itemName.trim()
         ? meta.itemName.trim()
         : row.title.trim();
     if (!raw) continue;
-    if (itemMatchesCollection(raw, collectionKeywords)) continue; // 收藏品两桶都不进
+    if (itemMatchesCollection(raw, collectionKeywords)) continue; // 收藏品三桶都不进
     const core = extractItemCoreType(raw);
     if (!core || seenCore.has(core)) continue; // 按核心品类去重，保留最近一次
     seenCore.add(core);
@@ -278,22 +324,32 @@ export function partitionShoppingRecentItems(params: {
     const displayName = raw.length > 24 ? `${raw.slice(0, 23)}…` : raw;
     const tags = Array.isArray(meta.tags) ? (meta.tags as string[]) : undefined;
     const category = typeof meta.category === 'string' ? meta.category : undefined;
+    const status = typeof meta.status === 'string' ? meta.status : '';
+    const consumable = isRepurchasableConsumable(category, tags);
 
-    if (isRepurchasableConsumable(category, tags)) {
+    // 退货品优先分流（不看补货窗口）：掷骰子决定这一轮是否「从别家再买类似的」。
+    if (status === 'returned') {
+      const prob = consumable ? probConsumable : probDurable;
+      if (rng() < prob) {
+        if (returnedRebuyItems.length < returnedRebuyLimit) {
+          const seller = typeof meta.seller === 'string' ? meta.seller.trim() : '';
+          returnedRebuyItems.push({ name: displayName, seller, consumable });
+        }
+      } else if (avoidNames.length < avoidLimit) {
+        avoidNames.push(displayName); // 未中签 → 这一轮先别重买
+      }
+      continue;
+    }
+
+    if (consumable) {
       const occurred = typeof meta.occurredAt === 'string' ? meta.occurredAt : row.createdAt;
       const t = Date.parse(occurred);
       const beyondWindow = Number.isFinite(t) && nowMs - t > windowMs;
       if (beyondWindow) {
         if (periodicItems.length < periodicLimit) {
-          const status = typeof meta.status === 'string' ? meta.status : '';
           const seller = typeof meta.seller === 'string' ? meta.seller.trim() : '';
-          let reviewNote: string;
-          if (status === 'returned') {
-            reviewNote = '已退货';
-          } else {
-            const sentiment = reviewSentimentByEntryId?.get(row.id);
-            reviewNote = sentiment ? PERIODIC_REVIEW_NOTE_LABEL[sentiment] : '未评价';
-          }
+          const sentiment = reviewSentimentByEntryId?.get(row.id);
+          const reviewNote = sentiment ? PERIODIC_REVIEW_NOTE_LABEL[sentiment] : '未评价';
           periodicItems.push({ name: displayName, seller, reviewNote });
         }
         continue;
@@ -303,26 +359,30 @@ export function partitionShoppingRecentItems(params: {
     if (avoidNames.length < avoidLimit) avoidNames.push(displayName);
   }
 
-  return { avoidNames, periodicItems };
+  return { avoidNames, periodicItems, returnedRebuyItems };
 }
 
 export type ShoppingRecentItemsBlocks = {
-  /** 「不要重复」块（耐用品 + 窗口内消耗品）；空 → ''。 */
+  /** 「不要重复」块（耐用品 + 窗口内消耗品 + 未中签退货品）；空 → ''。 */
   avoidBlock: string;
   /** 「周期补货」块（超窗口消耗品，带上次卖家 + 上次评价）；空 → ''。 */
   periodicBlock: string;
+  /** 「退货重买」块（本轮中签的退货品，带上次退货那家卖家供避开）；空 → ''。 */
+  returnedRebuyBlock: string;
 };
 
 /**
- * 读取已有购物 entries（+ 已生成的评价），分桶后渲染成 prompt 两块反/正锚点。
+ * 读取已有购物 entries（+ 已生成的评价），分桶后渲染成 prompt 三块反/正锚点。
  *
  * 仿记账 `buildRecentTitlesBlock`：模型反复点「批量历史」/ 单条新增时跨次看不见上次生成了什么。
- *  - 「不要重复」块：让它从源头避开已记过的耐用品 / 刚补过货的消耗品。
+ *  - 「不要重复」块：让它从源头避开已记过的耐用品 / 刚补过货的消耗品 / 本轮没中签的退货品。
  *  - 「周期补货」块：把到补货周期的消耗品 + 上次卖家 + 上次评价喂回去，让它像真人一样
- *    （差评 / 退货换家、好评 / 没评价沿用原店）决定再买的卖家。
+ *    （差评换家、好评 / 没评价沿用原店）决定再买的卖家。
+ *  - 「退货重买」块：本轮中签的退货品（消耗品概率 > 耐用品），鼓励从**别家**再买类似的。
  *
  * 评价懒生成、很多 entry 没有 → 缺失按「未评价」处理（= 不换卖家那一档）。
- * 失败（agentId 非法 / 读盘错）→ 返回两个空块，generation 主流程不受影响。
+ * 退货品的中签是随机的（每次生成结果可能不同），这是有意的——模拟真人「有时换家再买、有时就此作罢」。
+ * 失败（agentId 非法 / 读盘错）→ 返回三个空块，generation 主流程不受影响。
  */
 async function buildShoppingRecentItemsBlocks(
   agentId: string,
@@ -330,7 +390,7 @@ async function buildShoppingRecentItemsBlocks(
 ): Promise<ShoppingRecentItemsBlocks> {
   try {
     const rows = await listAppEntries(agentId, 'shopping');
-    if (!rows.length) return { avoidBlock: '', periodicBlock: '' };
+    if (!rows.length) return { avoidBlock: '', periodicBlock: '', returnedRebuyBlock: '' };
 
     const reviewSentimentByEntryId = new Map<string, 'good' | 'neutral' | 'bad'>();
     try {
@@ -345,7 +405,7 @@ async function buildShoppingRecentItemsBlocks(
       // 评价读失败 → 全部按「未评价」，不阻塞主流程
     }
 
-    const { avoidNames, periodicItems } = partitionShoppingRecentItems({
+    const { avoidNames, periodicItems, returnedRebuyItems } = partitionShoppingRecentItems({
       rows,
       reviewSentimentByEntryId,
       collectionKeywords: options?.collectionKeywords ?? [],
@@ -358,9 +418,14 @@ async function buildShoppingRecentItemsBlocks(
           .map((it) => `「${it.name}」· 上次卖家：${it.seller || '没记'} · 上次评价：${it.reviewNote}`)
           .join('\n')
       : '';
-    return { avoidBlock, periodicBlock };
+    const returnedRebuyBlock = returnedRebuyItems.length
+      ? returnedRebuyItems
+          .map((it) => `「${it.name}」· 上次退货那家：${it.seller || '没记'}`)
+          .join('\n')
+      : '';
+    return { avoidBlock, periodicBlock, returnedRebuyBlock };
   } catch {
-    return { avoidBlock: '', periodicBlock: '' };
+    return { avoidBlock: '', periodicBlock: '', returnedRebuyBlock: '' };
   }
 }
 
@@ -507,8 +572,11 @@ export async function generateShoppingDraftWithAI(params: {
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
   const currencyAnchorBlock = await buildShoppingCurrencyAnchorBlock(agent.id);
   const collectionKeywords = extractCollectionKeywords(collectionKeywordSourceText(ownerProfile ?? null));
-  const { avoidBlock: recentItemsBlock, periodicBlock: periodicRestockBlock } =
-    await buildShoppingRecentItemsBlocks(agent.id, { collectionKeywords });
+  const {
+    avoidBlock: recentItemsBlock,
+    periodicBlock: periodicRestockBlock,
+    returnedRebuyBlock,
+  } = await buildShoppingRecentItemsBlocks(agent.id, { collectionKeywords });
 
   let recentContext;
   try {
@@ -577,6 +645,7 @@ export async function generateShoppingDraftWithAI(params: {
     currencyAnchorBlock,
     recentItemsBlock,
     periodicRestockBlock,
+    returnedRebuyBlock,
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
@@ -640,8 +709,11 @@ export async function generateShoppingHistoryWithAI(params: {
   const stableLoreBlock = await buildStableLoreBlock(agent.id);
   const currencyAnchorBlock = await buildShoppingCurrencyAnchorBlock(agent.id);
   const collectionKeywords = extractCollectionKeywords(collectionKeywordSourceText(ownerProfile ?? null));
-  const { avoidBlock: recentItemsBlock, periodicBlock: periodicRestockBlock } =
-    await buildShoppingRecentItemsBlocks(agent.id, { collectionKeywords });
+  const {
+    avoidBlock: recentItemsBlock,
+    periodicBlock: periodicRestockBlock,
+    returnedRebuyBlock,
+  } = await buildShoppingRecentItemsBlocks(agent.id, { collectionKeywords });
 
   let recentContext;
   try {
@@ -709,6 +781,7 @@ export async function generateShoppingHistoryWithAI(params: {
     currencyAnchorBlock,
     recentItemsBlock,
     periodicRestockBlock,
+    returnedRebuyBlock,
     historyMode,
     desiredCount,
   });

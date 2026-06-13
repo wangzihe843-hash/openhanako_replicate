@@ -353,6 +353,30 @@ describe('buildShoppingDraftPrompt', () => {
     expect(withoutPeriodic).toContain('【周期性补货品 · 到补货周期，可以再次购买（但要按上次体验挑卖家）】');
     expect(withoutPeriodic).toContain('（无；TA 目前没有到补货周期的消耗品');
   });
+
+  it('renders the returned-rebuy block + another-store rule when provided, fallback when absent', () => {
+    const base = {
+      agent: { id: 'agent-s', name: 'Lin', yuan: 'y' as const },
+      profile: null,
+      userIntent: '',
+      recentSceneBlock: '',
+      stableLoreBlock: '',
+      keywordLoreBlock: '',
+      relationshipBlock: '',
+      heartbeatBlock: '',
+    };
+    const withRebuy = buildShoppingDraftPrompt({
+      ...base,
+      returnedRebuyBlock: '「咖啡豆」· 上次退货那家：巷尾烘焙',
+    });
+    expect(withRebuy).toContain('【上次退掉的商品 · 这次可以从别家再买类似的】');
+    expect(withRebuy).toContain('「咖啡豆」· 上次退货那家：巷尾烘焙');
+    expect(withRebuy).toContain('一定要换一家卖家');
+
+    const withoutRebuy = buildShoppingDraftPrompt(base);
+    expect(withoutRebuy).toContain('【上次退掉的商品 · 这次可以从别家再买类似的】');
+    expect(withoutRebuy).toContain('（无；TA 最近没有要从别家重买的退货商品');
+  });
 });
 
 describe('partitionShoppingRecentItems', () => {
@@ -393,11 +417,13 @@ describe('partitionShoppingRecentItems', () => {
     expect(out.periodicItems).toEqual([
       { name: '牙膏', seller: '光阴杂货', reviewNote: '未评价' },
     ]);
+    expect(out.returnedRebuyItems).toHaveLength(0);
   });
 
-  it('derives reviewNote from status (returned) and review sentiment map', () => {
+  it('derives periodic reviewNote from review sentiment map; returned items leave periodic for the rebuy bucket', () => {
     const out = partitionShoppingRecentItems({
       nowMs: NOW,
+      rng: () => 0, // 退货品必中签 → 落「退货重买」桶
       reviewSentimentByEntryId: new Map([
         ['good1', 'good'],
         ['bad1', 'bad'],
@@ -411,7 +437,43 @@ describe('partitionShoppingRecentItems', () => {
     const byName = Object.fromEntries(out.periodicItems.map((it) => [it.name, it.reviewNote]));
     expect(byName['猫粮']).toBe('好评');
     expect(byName['洗发水']).toBe('差评');
-    expect(byName['咖啡豆']).toBe('已退货'); // 退货优先于评价
+    // 退货品不再进 periodic，而是进「退货重买」桶（带上次退货那家卖家供避开）。
+    expect(byName['咖啡豆']).toBeUndefined();
+    expect(out.returnedRebuyItems).toContainEqual({ name: '咖啡豆', seller: '巷尾烘焙', consumable: true });
+  });
+
+  it('returned items roll the dice: consumables re-bought more often than durables', () => {
+    const rows = [
+      row('rc', '牙膏', { category: '日用', seller: '光阴杂货', status: 'returned', daysAgo: 5 }),
+      row('rd', '书桌', { category: '家具', seller: '老周木作', status: 'returned', daysAgo: 5 }),
+    ];
+    // rng=0（恒中）：消耗品 + 耐用品都进「退货重买」。
+    const all = partitionShoppingRecentItems({ nowMs: NOW, rng: () => 0, rows });
+    expect(all.returnedRebuyItems.map((it) => it.name).sort()).toEqual(['书桌', '牙膏']);
+    expect(all.avoidNames).toHaveLength(0);
+
+    // rng=0.95（恒不中）：都落选 → 进「不要重复」，这一轮不重买。
+    const none = partitionShoppingRecentItems({ nowMs: NOW, rng: () => 0.95, rows });
+    expect(none.returnedRebuyItems).toHaveLength(0);
+    expect(none.avoidNames.sort()).toEqual(['书桌', '牙膏']);
+
+    // rng=0.5：落在耐用品阈值(0.3)与消耗品阈值(0.7)之间 → 仅消耗品中签（验证消耗品概率 > 耐用品）。
+    const mid = partitionShoppingRecentItems({ nowMs: NOW, rng: () => 0.5, rows });
+    expect(mid.returnedRebuyItems.map((it) => it.name)).toEqual(['牙膏']);
+    expect(mid.returnedRebuyItems[0]).toMatchObject({ seller: '光阴杂货', consumable: true });
+    expect(mid.avoidNames).toEqual(['书桌']);
+  });
+
+  it('returned items ignore the restock window (recently-returned still eligible to re-buy)', () => {
+    // 退货品不看 30 天窗口：3 天前刚退的消耗品也能中签从别家再买。
+    const out = partitionShoppingRecentItems({
+      nowMs: NOW,
+      rng: () => 0,
+      rows: [row('r', '洗面奶', { category: '日用', seller: '楼下超市', status: 'returned', daysAgo: 3 })],
+    });
+    expect(out.returnedRebuyItems).toContainEqual({ name: '洗面奶', seller: '楼下超市', consumable: true });
+    expect(out.avoidNames).toHaveLength(0);
+    expect(out.periodicItems).toHaveLength(0);
   });
 
   it('folds variants by core type and keeps the most recent purchase as representative', () => {

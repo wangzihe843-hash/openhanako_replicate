@@ -63,9 +63,15 @@ export function buildShoppingDraftPrompt(args: {
    * 「周期补货」反/正锚点：到补货周期（超 30 天窗口）的消耗品列表，每行带「上次卖家 + 上次评价」。
    * 由 xingye-shopping-ai.ts 的 buildShoppingRecentItemsBlocks 计算后传入。
    * 与 recentItemsBlock（不要重复）相反——这些**鼓励再次购买**，但要按上次评价挑卖家
-   * （差评 / 退货换家、好评 / 未评价沿用原店）。缺省 → 空字符串，prompt 渲染「（无）」。
+   * （差评换家、好评 / 未评价沿用原店）。缺省 → 空字符串，prompt 渲染「（无）」。
    */
   periodicRestockBlock?: string;
+  /**
+   * 「退货重买」正锚点：上次退货、本轮中签「可以从别家再买类似的」的商品列表，每行带「上次退货那家卖家」。
+   * 由 xingye-shopping-ai.ts 的 buildShoppingRecentItemsBlocks 按概率（消耗品 > 耐用品）抽样后传入。
+   * **鼓励再次购买类似商品，但必须换一家卖家**（上次就是在那家退的）。缺省 → 空字符串，prompt 渲染「（无）」。
+   */
+  returnedRebuyBlock?: string;
   /**
    * 「批量历史生成」模式。无 → 单条 draft（原行为）；有 → 多条 + 强制 occurredAtHint。
    *  - kind='initial'：首次打开 app 的 bootstrap；主要靠 lore，弱依赖最近聊天。
@@ -94,6 +100,7 @@ export function buildShoppingDraftPrompt(args: {
     currencyAnchorBlock,
     recentItemsBlock,
     periodicRestockBlock,
+    returnedRebuyBlock,
     historyMode,
     desiredCount,
   } = args;
@@ -334,12 +341,23 @@ export function buildShoppingDraftPrompt(args: {
     '──────────────────',
     '下面是 TA 平时会反复补货的消耗品（日用 / 食饮 / 药品 等），上次买到现在已经过了一阵、又到该补货的点。',
     '**这些可以再次生成购买，不算重复**（和上面「不要重复」名单正相反）。但要像真人一样按上次体验挑卖家：',
-    '- 上次【差评】或【已退货】→ 这次**换一家卖家**（踩过坑了，别再在原来那家买）。',
+    '- 上次【差评】→ 这次**换一家卖家**（踩过坑了，别再在原来那家买）。',
     '- 上次【好评】或【未评价】→ 这次**通常还在原来那家买**（用着顺手就回购，别没事频繁换店），沿用上次卖家口吻。',
-    '（每行格式：「商品名」· 上次卖家：X · 上次评价：好评 / 中评 / 差评 / 已退货 / 未评价）',
+    '（每行格式：「商品名」· 上次卖家：X · 上次评价：好评 / 中评 / 差评 / 未评价）',
     periodicRestockBlock && periodicRestockBlock.trim()
       ? periodicRestockBlock.trim()
       : '（无；TA 目前没有到补货周期的消耗品，照常按上面规则生成新东西就行）',
+    '',
+    '──────────────────',
+    '【上次退掉的商品 · 这次可以从别家再买类似的】',
+    '──────────────────',
+    '下面是 TA 最近退掉（退货）的商品。退货不代表 TA 不想要了——可能只是那家的款式 / 质量 / 卖家不合意。',
+    '**这些可以这次再次生成购买（买同类、类似的商品），不算重复**，但**一定要换一家卖家**'
+    + '——上次就是在那家踩了坑才退的，别再回那家买。可以顺势在 reason / content 里带一点「上次那家不行，这次换一家试试」的心情。',
+    '（每行格式：「商品名」· 上次退货那家：X —— 这次另寻一家买类似的）',
+    returnedRebuyBlock && returnedRebuyBlock.trim()
+      ? returnedRebuyBlock.trim()
+      : '（无；TA 最近没有要从别家重买的退货商品，照常按上面规则生成就行）',
     '',
     '──────────────────',
     '',

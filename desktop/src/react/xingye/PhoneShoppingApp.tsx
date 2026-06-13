@@ -726,12 +726,15 @@ export function PhoneShoppingApp({
           category: typeof r.metadata?.category === 'string' ? r.metadata.category : undefined,
           tags: Array.isArray(r.metadata?.tags) ? (r.metadata.tags as string[]) : undefined,
           occurredAt: typeof r.metadata?.occurredAt === 'string' ? r.metadata.occurredAt : r.createdAt,
+          status: typeof r.metadata?.status === 'string' ? r.metadata.status : undefined,
         }));
         // 与 AI 侧 prompt 反锚点同源（collectionKeywordSourceText），避免「prompt 劝阻 ↔ 兜底放行」打架。
         const collectionKeywords = extractCollectionKeywords(collectionKeywordSourceText(ownerProfile));
+        // 退货品按「当前没拥有」处理：与 AI 侧「退货重买」鼓励同向，避免劝模型从别家再买却被硬去重丢掉。
         const { kept: drafts, dropped } = dedupeItemDrafts(allDrafts, existingItems, {
           exemptConsumables: true,
           collectionKeywords,
+          treatReturnedAsUnowned: true,
         });
         if (drafts.length === 0) {
           setBulkNotice('本次生成的物件都和已有记录重复了，已全部跳过。');

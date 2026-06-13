@@ -174,6 +174,43 @@ describe('dedupeItemDrafts · shopping consumable window (exemptConsumables=true
   });
 });
 
+describe('dedupeItemDrafts · treatReturnedAsUnowned (退货品不占判重槽位)', () => {
+  it('returned-only durable core → re-buy kept (否则 prompt 劝再买被兜底丢弃)', () => {
+    // 实木书架退过货，只有这一条 → 当前没拥有 → 再买同核心耐用品应放行。
+    const { kept, dropped } = dedupeItemDrafts(
+      [{ itemName: '白色书架', category: '家具', occurredAt: daysAgo(0) }],
+      [{ itemName: '实木书架', category: '家具', occurredAt: daysAgo(5), status: 'returned' }],
+      { exemptConsumables: true, treatReturnedAsUnowned: true, nowMs: NOW },
+    );
+    expect(kept.map((k) => k.itemName)).toEqual(['白色书架']);
+    expect(dropped).toHaveLength(0);
+  });
+
+  it('without the flag, returned durable still占槽位 → 再买被丢弃（默认行为不变）', () => {
+    const { kept, dropped } = dedupeItemDrafts(
+      [{ itemName: '白色书架', category: '家具', occurredAt: daysAgo(0) }],
+      [{ itemName: '实木书架', category: '家具', occurredAt: daysAgo(5), status: 'returned' }],
+      { exemptConsumables: true, nowMs: NOW },
+    );
+    expect(kept).toHaveLength(0);
+    expect(dropped.map((d) => d.itemName)).toEqual(['白色书架']);
+  });
+
+  it('core 还留着一件非退货条目 → 照常去重（仅"全退货"品类才豁免）', () => {
+    // 一台还在用的书架(received) + 一台退掉的书架(returned)：仍拥有 → 再买算重复。
+    const { kept, dropped } = dedupeItemDrafts(
+      [{ itemName: '白色书架', category: '家具', occurredAt: daysAgo(0) }],
+      [
+        { itemName: '实木书架', category: '家具', occurredAt: daysAgo(20), status: 'received' },
+        { itemName: '旧书架', category: '家具', occurredAt: daysAgo(5), status: 'returned' },
+      ],
+      { exemptConsumables: true, treatReturnedAsUnowned: true, nowMs: NOW },
+    );
+    expect(kept).toHaveLength(0);
+    expect(dropped.map((d) => d.itemName)).toEqual(['白色书架']);
+  });
+});
+
 describe('collectionKeywordSourceText', () => {
   it('pulls collection habits from behaviorLogic and taboos (两侧口径同源所需字段)', () => {
     expect(

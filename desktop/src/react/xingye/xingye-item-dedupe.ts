@@ -176,6 +176,8 @@ export type ItemDedupEntry = {
   tags?: string[];
   /** 发生时间 ISO（草稿用 occurredAt；已有 entry 用 metadata.occurredAt ?? createdAt）。 */
   occurredAt?: string;
+  /** 条目状态（仅购物用到 'returned'；配合 treatReturnedAsUnowned 决定是否占判重槽位）。 */
+  status?: string;
 };
 
 const DAY_MS = 86_400_000;
@@ -195,6 +197,9 @@ function dateMsOf(iso: string | undefined, fallbackMs: number): number {
  *   - exemptConsumables：true（购物）启用消耗品时间窗豁免；false（二手）所有非收藏品按核心品类一律去重。
  *   - collectionKeywords：lore 抽出的收藏关键词；命中的物件永远保留（收藏家会攒不同款）。
  *   - consumableWindowDays：消耗品判重窗口，默认 30 天。
+ *   - treatReturnedAsUnowned：true（购物）时，已退货（status='returned'）的 existing 条目**不占判重槽位**
+ *     ——退货 = TA 当前并不拥有这件东西，再买不算重复（配合 prompt 的「退货重买」鼓励，避免劝再买却被兜底丢弃）。
+ *     仅作用于「播种」：若同一核心品类还有别的非退货条目，照常占槽位（= 只有"全部退货"的品类才豁免）。
  *   - nowMs：缺日期时的兜底参考时间，默认 Date.now()。
  * @returns kept = 保留；dropped = 判为重复丢弃（供调用方计数提示）。
  *
@@ -207,10 +212,12 @@ export function dedupeItemDrafts<T extends ItemDedupEntry>(
     exemptConsumables?: boolean;
     collectionKeywords?: readonly string[];
     consumableWindowDays?: number;
+    treatReturnedAsUnowned?: boolean;
     nowMs?: number;
   },
 ): { kept: T[]; dropped: T[] } {
   const exemptConsumables = options?.exemptConsumables ?? false;
+  const treatReturnedAsUnowned = options?.treatReturnedAsUnowned ?? false;
   const collectionKeywords = (options?.collectionKeywords ?? [])
     .map((k) => normalizeItemNameForDedup(k))
     .filter(Boolean);
@@ -238,6 +245,9 @@ export function dedupeItemDrafts<T extends ItemDedupEntry>(
   // 先用已有条目播种判重表（收藏品不占槽位）。
   for (const e of existing) {
     if (itemMatchesCollection(e.itemName, collectionKeywords)) continue;
+    // 退货品不占判重槽位（购物启用）：TA 当前没拥有这件东西，再买不算重复。
+    // 只跳过播种——若同核心品类还有别的非退货条目，那条会照常占槽位（= 仅"全退货"品类豁免）。
+    if (treatReturnedAsUnowned && e.status === 'returned') continue;
     const core = extractItemCoreType(e.itemName);
     if (!core) continue;
     if (coreIsConsumable(core)) {
