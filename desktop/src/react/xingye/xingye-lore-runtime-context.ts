@@ -45,6 +45,8 @@ export type XingyeLoreRuntimeContextPurpose =
   | 'secret_space_memory_fragment'
   /** 「TA 的独家专访」秘密空间生成（独立模块，与通用 secret_space_* AI 路径分开） */
   | 'secret_space_interview'
+  /** 「TA 的论坛小号」秘密空间生成（独立模块；purpose 仅作记录） */
+  | 'secret_space_forum'
   | 'relationship_state'
   /** 小手机日记草稿：仅 keyword 命中设定（与 stable 块分离） */
   | 'journal_draft'

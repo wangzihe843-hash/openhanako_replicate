@@ -4383,6 +4383,15 @@
   border-color: rgba(201, 168, 90, 0.32);
 }
 
+.secretSpaceHomeCard_forum {
+  background:
+    radial-gradient(circle at 26% 18%, rgba(255, 255, 255, 0.65), transparent 52%),
+    linear-gradient(155deg, #eef1ff 0%, #e1e6fb 52%, #ccd3f4 100%);
+  --xingye-drawer-fg: #38427d;
+  --xingye-drawer-fg2: rgba(56, 66, 125, 0.62);
+  border-color: rgba(91, 110, 225, 0.3);
+}
+
 /* === Home 入口卡 · 独家专访（B · 片头计数器） ============================
  *
  * 三层布局（绝对 / 相对组合）：
@@ -4533,6 +4542,75 @@
 
 @media (prefers-reduced-motion: reduce) {
   .secretSpaceHomePeekInterviewRecDot { animation: none; }
+}
+
+/* === Home 入口卡 · 论坛小号（匿名马甲 · 讨论气泡） ======================
+ *
+ *   .secretSpaceHomePeek_forum 是 peek 槽（relative 容器）。
+ *   ├─ secretSpaceHomePeekForumBoard    左上角 # 版块 chip
+ *   ├─ secretSpaceHomePeekForumBadge    右上角未读私信红徽
+ *   ├─ secretSpaceHomePeekForumArt      居中 SVG：两个交叠的讨论气泡
+ *   └─ secretSpaceHomePeekForumCaption  底部 mono「@匿名 · 马甲」
+ * ===================================================================== */
+.secretSpaceHomePeek_forum {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  overflow: hidden;
+}
+.secretSpaceHomePeekForumBoard {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  font-family: var(--xingye-font-mono, 'JetBrains Mono', monospace);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: #5b66d6;
+  background: rgba(91, 110, 225, 0.12);
+  border: 1px solid rgba(91, 110, 225, 0.24);
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.secretSpaceHomePeekForumBadge {
+  position: absolute;
+  top: 9px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #e5484d;
+  color: #fff;
+  font-family: var(--xingye-font-mono, 'JetBrains Mono', monospace);
+  font-size: 9px;
+  font-weight: 700;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.65), 0 1px 3px rgba(229, 72, 77, 0.5);
+}
+.secretSpaceHomePeekForumArt {
+  width: 88%;
+  max-width: 156px;
+  display: block;
+  filter: drop-shadow(0 3px 5px rgba(56, 66, 125, 0.16));
+}
+.secretSpaceHomePeekForumCaption {
+  position: absolute;
+  bottom: 9px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  z-index: 2;
+  font-family: var(--xingye-font-mono, 'JetBrains Mono', monospace);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  color: var(--xingye-drawer-fg2, rgba(56, 66, 125, 0.62));
 }
 
 /* === Peek 内容样式 ==================================================== */

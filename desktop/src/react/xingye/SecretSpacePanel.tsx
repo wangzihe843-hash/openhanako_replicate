@@ -16,6 +16,7 @@ import {
   type SecretSpaceCategoryMeta,
 } from './SecretSpaceCategoryView';
 import { SecretSpaceHome, type SecretSpaceCategoryId } from './SecretSpaceHome';
+import { XingyeForumApp } from './XingyeForumApp';
 import {
   SecretSpaceDraftGrid,
   SecretSpaceSavedList,
@@ -223,7 +224,7 @@ function isSecretSpaceManualAppendDebugEnabled(): boolean {
 
 export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const profile = useXingyeRoleProfile(agent?.id);
-  const [view, setView] = useState<'home' | 'category'>('home');
+  const [view, setView] = useState<'home' | 'category' | 'forum'>('home');
   const [activeCategory, setActiveCategory] = useState<SecretSpaceCategoryId | null>(null);
   const [recordsByCategory, setRecordsByCategory] = useState<Record<SecretSpaceCategoryId, SecretSpaceSampleRecord[]>>(
     EMPTY_RECORDS,
@@ -1420,7 +1421,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
 
   return (
     <div className={styles.panelInner}>
-      {view !== 'home' ? (
+      {view === 'category' ? (
         <>
           <h2 className={styles.panelTitle}>秘密空间</h2>
           <p className={styles.panelDescription}>
@@ -1530,7 +1531,9 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
       ) : null}
 
       {view === 'home' ? (
-        <SecretSpaceHome onSelectCategory={openCategory} />
+        <SecretSpaceHome onSelectCategory={openCategory} onOpenForum={() => setView('forum')} />
+      ) : view === 'forum' ? (
+        <XingyeForumApp agent={agent} onBack={goHome} />
       ) : activeMeta ? (
         activeCategory === 'memory_fragment' ? (
           <div className={styles.secretSpaceMemoryWrapper}>

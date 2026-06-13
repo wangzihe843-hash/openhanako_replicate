@@ -205,6 +205,42 @@ function InterviewPeek() {
   );
 }
 
+function ForumPeek() {
+  /*
+   * 论坛小号偷看：左上 # 版块 chip、右上未读私信红徽、居中两个交叠的讨论气泡
+   * （浅色那只是「网友/帖子」，实心强调那只是「TA」），底部 mono「@匿名 · 马甲」。
+   * 用 SVG 画气泡（无描边、靠填色区分，避免交叠处出现接缝），与其它入口卡同等精致。
+   */
+  return (
+    <div className={styles.secretSpaceHomePeek_forum}>
+      <span className={styles.secretSpaceHomePeekForumBoard}># 树洞</span>
+      <span className={styles.secretSpaceHomePeekForumBadge}>3</span>
+      <svg
+        className={styles.secretSpaceHomePeekForumArt}
+        viewBox="0 0 156 112"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden
+        focusable="false"
+      >
+        {/* 后方：网友的帖子气泡（浅填充 + 尾巴 + 两条文字） */}
+        <path d="M30 56 l-9 14 l22 -7 z" fill="rgba(91,110,225,0.16)" />
+        <rect x="12" y="12" width="86" height="46" rx="13" fill="rgba(91,110,225,0.16)" />
+        <rect x="26" y="26" width="56" height="5" rx="2.5" fill="rgba(91,110,225,0.42)" />
+        <rect x="26" y="38" width="38" height="5" rx="2.5" fill="rgba(91,110,225,0.26)" />
+        {/* 前方：TA 的发言气泡（实心强调 + 尾巴 + 两条白字） */}
+        <path d="M128 92 l11 15 l-21 -6 z" fill="#5b66d6" />
+        <rect x="66" y="50" width="78" height="46" rx="14" fill="#5b66d6" />
+        <rect x="80" y="64" width="50" height="5.5" rx="2.75" fill="rgba(255,255,255,0.92)" />
+        <rect x="80" y="76" width="32" height="5.5" rx="2.75" fill="rgba(255,255,255,0.6)" />
+        {/* TA 的匿名头像，骑在自己气泡左上角 */}
+        <circle cx="68" cy="50" r="10.5" fill="#eef1ff" />
+        <circle cx="68" cy="50" r="8" fill="#8a93ea" />
+      </svg>
+      <span className={styles.secretSpaceHomePeekForumCaption}>@匿名 · 马甲</span>
+    </div>
+  );
+}
+
 const ENTRIES: DrawerEntry[] = [
   { id: 'state', label: 'TA 的状态', hint: 'state · 此刻 / 心情', tone: 'state', peek: <StatePeek /> },
   { id: 'draft_reply', label: 'TA 的草稿箱', hint: 'draft · 没说出口的话', tone: 'draft', peek: <DraftPeek /> },
@@ -217,16 +253,18 @@ const ENTRIES: DrawerEntry[] = [
 
 interface SecretSpaceHomeProps {
   onSelectCategory: (id: SecretSpaceCategoryId) => void;
+  /** 打开「TA 的论坛小号」mini-app（独立于普通分类抽屉，走 SecretSpacePanel 的 forum view）。 */
+  onOpenForum: () => void;
 }
 
-export function SecretSpaceHome({ onSelectCategory }: SecretSpaceHomeProps) {
+export function SecretSpaceHome({ onSelectCategory, onOpenForum }: SecretSpaceHomeProps) {
   return (
     <div className={styles.secretSpaceHome} data-testid="secret-space-home">
       <div className={styles.secretSpaceHomeCabinetHeader}>
         <div className={styles.secretSpaceHomeCabinetKicker}>HER · SECRET CABINET</div>
         <h3 className={styles.secretSpaceHomeCabinetTitle}>TA 藏起来的那些东西</h3>
         <p className={styles.secretSpaceHomeCabinetSub}>
-          —— 抽屉里有七个角落，请轻轻一格一格打开。
+          —— 抽屉里藏着好几个角落，请轻轻一格一格打开。
         </p>
       </div>
       <div className={styles.secretSpaceHomeCabinetBody}>
@@ -254,6 +292,22 @@ export function SecretSpaceHome({ onSelectCategory }: SecretSpaceHomeProps) {
               </button>
             );
           })}
+          <button
+            type="button"
+            className={`${styles.secretSpaceHomeCard} ${styles.secretSpaceHomeCard_forum}`}
+            data-testid="secret-space-entry-forum"
+            data-tone="forum"
+            onClick={onOpenForum}
+          >
+            <span aria-hidden className={styles.secretSpaceHomeCardHandle} />
+            <div className={styles.secretSpaceHomeCardPeek}>
+              <ForumPeek />
+            </div>
+            <div className={styles.secretSpaceHomeCardFooter}>
+              <div className={styles.secretSpaceHomeCardTitle}>TA 的论坛小号</div>
+              <div className={styles.secretSpaceHomeCardHint}>forum · 帖子 / 评论 / 私信</div>
+            </div>
+          </button>
         </div>
       </div>
     </div>
