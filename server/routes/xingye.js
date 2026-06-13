@@ -72,6 +72,7 @@ const PHONE_GENERATE_KINDS = new Set([
   "forum_bootstrap",
   "forum_batch",
   "forum_dm",
+  "cp_board",
   "health_day",
   "files_secret_seed",
   "files_draft",

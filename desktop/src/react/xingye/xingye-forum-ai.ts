@@ -19,6 +19,7 @@ import {
   buildXingyeLoreRuntimeQueryText,
   collectXingyeLoreRuntimeContext,
   formatXingyeLoreRuntimeContextBlock,
+  type XingyeLoreRuntimeContextPurpose,
 } from './xingye-lore-runtime-context';
 import { XINGYE_LORE_CATEGORY_LABELS, listLoreEntries } from './xingye-lore-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
@@ -158,7 +159,7 @@ function profilePartsForQuery(profile: XingyeRoleProfile | null | undefined): st
   ].filter((p): p is string => typeof p === 'string' && p.trim().length > 0);
 }
 
-interface ForumGatheredContext {
+export interface ForumGatheredContext {
   agent: Pick<Agent, 'id' | 'name' | 'yuan'>;
   userName: string;
   profile: XingyeRoleProfile | null | undefined;
@@ -168,10 +169,15 @@ interface ForumGatheredContext {
   relationshipBlock: string;
 }
 
-async function gatherForumContext(
+/**
+ * 收集论坛 / CP 板生成共用的角色上下文（profile + 最近聊天 + 关系 + 设定库 keyword 命中）。
+ * `purpose` 仅影响 lore 运行时检索的记录标签（默认论坛小号；CP 板传 'secret_space_cp'）。
+ */
+export async function gatherForumContext(
   agent: Agent,
   ownerProfile: XingyeRoleProfile | null | undefined,
   extraQueryParts: string[] = [],
+  purpose: XingyeLoreRuntimeContextPurpose = 'secret_space_forum',
 ): Promise<ForumGatheredContext> {
   const userName = await resolveXingyeSpeakerUserName();
   const agentName = ownerProfile?.displayName?.trim() || agent.name || '当前角色';
@@ -213,7 +219,7 @@ async function gatherForumContext(
   let keywordLoreBlock = '';
   try {
     const keywordCtx = collectXingyeLoreRuntimeContext(agent.id, {
-      purpose: 'secret_space_forum',
+      purpose,
       queryText,
       includeAlways: false,
       includeKeyword: true,

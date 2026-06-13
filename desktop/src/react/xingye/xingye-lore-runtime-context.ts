@@ -47,6 +47,8 @@ export type XingyeLoreRuntimeContextPurpose =
   | 'secret_space_interview'
   /** 「TA 的论坛小号」秘密空间生成（独立模块；purpose 仅作记录） */
   | 'secret_space_forum'
+  /** 「你和 TA 的 CP」论坛板块生成（论坛子模块；purpose 仅作记录） */
+  | 'secret_space_cp'
   | 'relationship_state'
   /** 小手机日记草稿：仅 keyword 命中设定（与 stable 块分离） */
   | 'journal_draft'

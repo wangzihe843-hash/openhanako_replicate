@@ -29,6 +29,7 @@ import type {
   ForumPost,
   ForumThread,
 } from './xingye-forum-types';
+import { XingyeCpBoard } from './XingyeCpBoard';
 import styles from './XingyeForumApp.module.css';
 
 interface XingyeForumAppProps {
@@ -60,7 +61,7 @@ function avatarText(name: string): string {
   return n.length <= 2 ? n : n.slice(-2);
 }
 
-function formatRelative(iso: string, now: number): string {
+export function formatRelative(iso: string, now: number): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return '';
   const diff = Math.max(0, now - t);
@@ -75,14 +76,14 @@ function formatRelative(iso: string, now: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function formatCount(n: number): string {
+export function formatCount(n: number): string {
   if (n < 1000) return String(n);
   return `${(n / 1000).toFixed(1)}k`;
 }
 
 // ── 子组件 ────────────────────────────────────────────────────────────────────
 
-function Avatar({ name, size = 36 }: { name: string; size?: number }) {
+export function Avatar({ name, size = 36 }: { name: string; size?: number }) {
   return (
     <span
       className={styles.avatar}
@@ -172,6 +173,24 @@ function CommentItem({
   );
 }
 
+/** 主页 feed 下方的「你和 TA 的 CP」入口卡（点开进 CP 子板）。 */
+function CpEntryCard({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button type="button" className={styles.cpEntryCard} onClick={onOpen} data-testid="forum-cp-entry">
+      <span className={styles.cpEntryHeart} aria-hidden>
+        ♡
+      </span>
+      <span className={styles.cpEntryText}>
+        <span className={styles.cpEntryTitle}>你和 TA 的 CP</span>
+        <span className={styles.cpEntrySub}>TA 偷偷关注的板块 · 有人在磕你俩</span>
+      </span>
+      <span className={styles.cpEntryArrow} aria-hidden>
+        ›
+      </span>
+    </button>
+  );
+}
+
 // ── 主组件 ────────────────────────────────────────────────────────────────────
 
 export function XingyeForumApp({ agent, onBack }: XingyeForumAppProps) {
@@ -184,6 +203,8 @@ export function XingyeForumApp({ agent, onBack }: XingyeForumAppProps) {
   const [tab, setTab] = useState<ForumTab>('home');
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  /** 是否进入「你和 TA 的 CP」子板（独立全屏视图，入口在主页 feed 下方）。 */
+  const [cpOpen, setCpOpen] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [bootstrapBusy, setBootstrapBusy] = useState(false);
@@ -228,6 +249,7 @@ export function XingyeForumApp({ agent, onBack }: XingyeForumAppProps) {
     setTab('home');
     setSelectedPostId(null);
     setSelectedThreadId(null);
+    setCpOpen(false);
     setError(null);
     setAiError(null);
     setAiNotice(null);
@@ -355,6 +377,19 @@ export function XingyeForumApp({ agent, onBack }: XingyeForumAppProps) {
 
   // ── 渲染 ──────────────────────────────────────────────────────────────────
 
+  // 「你和 TA 的 CP」是论坛的独立子板：进入后全屏接管，返回回到论坛。
+  // 入口在主页 feed 下方，但即便没有小号也可独立使用（CP 板自带临时马甲）。
+  if (cpOpen) {
+    return (
+      <XingyeCpBoard
+        agent={agent}
+        ownerProfile={profile}
+        forumAccounts={accounts}
+        onBack={() => setCpOpen(false)}
+      />
+    );
+  }
+
   const headerTitle = activeAccount ? `@${activeAccount.username}` : 'TA 的论坛小号';
 
   return (
@@ -407,6 +442,7 @@ export function XingyeForumApp({ agent, onBack }: XingyeForumAppProps) {
             <button type="button" className={styles.primaryBtn} onClick={() => void handleBootstrap()} data-testid="forum-create-first">
               生成一个小号
             </button>
+            <CpEntryCard onOpen={() => setCpOpen(true)} />
           </div>
         ) : null}
 
@@ -445,6 +481,7 @@ export function XingyeForumApp({ agent, onBack }: XingyeForumAppProps) {
                   <PostCard key={post.postId} post={post} now={now} onOpen={setSelectedPostId} />
                 ))
               )}
+              <CpEntryCard onOpen={() => setCpOpen(true)} />
             </div>
           )
         ) : null}

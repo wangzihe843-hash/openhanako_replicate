@@ -1,0 +1,341 @@
+/*
+ * 「你和 TA 的 CP」板块样式。
+ * 根节点复用 XingyeForumApp.module.css 的 .forumApp（--forum-* 变量沿继承），这里只补
+ * CP 专属的：饭圈粉色点缀、体裁标签、草稿卡、彩蛋弹窗、偷看更新条。
+ * 表面 / 边框 / 文字沿用 var(--forum-*)；CP 粉用字面色，与论坛蓝区分开「这是嗑糖的地方」。
+ */
+
+/* ── 顶栏：替关注按钮 ─────────────────────────────────────────── */
+
+.followBtn {
+  border: 1px solid #ffb3cd;
+  background: #fff;
+  color: #e23b74;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.followBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.followDone {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e23b74;
+  white-space: nowrap;
+}
+
+/* ── 偷看更新条 ───────────────────────────────────────────────── */
+
+.introBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, #fff5f8, var(--forum-surface));
+  border-bottom: 1px solid var(--forum-border);
+}
+.introText {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: #6b4753;
+  line-height: 1.5;
+}
+.introSub {
+  color: var(--forum-sub);
+}
+.updateBtn {
+  border: none;
+  background: #ff5c93;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 18px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(255, 92, 147, 0.28);
+}
+.updateBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+  box-shadow: none;
+}
+.gateHint {
+  padding: 7px 14px;
+  font-size: 12px;
+  color: #b06a80;
+  background: #fff3f7;
+}
+
+/* ── 分段：围观 / 草稿箱 ──────────────────────────────────────── */
+
+.segBar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px 0;
+}
+.segBtn {
+  border: 1px solid var(--forum-border);
+  background: var(--forum-surface);
+  color: var(--forum-sub);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-radius: 16px;
+  cursor: pointer;
+}
+.segBtnActive {
+  border-color: #ff8fb3;
+  background: #ffeef4;
+  color: #e23b74;
+}
+
+/* ── feed ────────────────────────────────────────────────────── */
+
+.feed {
+  padding: 10px 12px 24px;
+}
+
+/* ── 体裁标签 ────────────────────────────────────────────────── */
+
+.genreTag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 6px;
+}
+.genreFic {
+  background: #ffe6f0;
+  color: #d23a78;
+}
+.genreAnalysis {
+  background: #e7ecff;
+  color: #4257c4;
+}
+.genreSquee {
+  background: #ffeede;
+  color: #d2701a;
+}
+.genreDiscuss {
+  background: #e9eef0;
+  color: #607080;
+}
+.agentPostTag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: #e8f4ec;
+  color: #1f7a4d;
+}
+.agentPostHint {
+  margin: 12px 0;
+  padding: 8px 12px;
+  background: #e8f4ec;
+  color: #1f7a4d;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+/* ── 草稿箱 ──────────────────────────────────────────────────── */
+
+.draftsView {
+  padding: 12px 12px 28px;
+}
+.draftsIntro {
+  font-size: 12.5px;
+  color: #6b4753;
+  margin: 4px 2px 12px;
+  line-height: 1.5;
+}
+.draftCard {
+  background: var(--forum-surface);
+  border: 1px solid #ffd9e5;
+  border-left: 3px solid #ff8fb3;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.draftHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.draftKind {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 6px;
+}
+.draftKindReply {
+  background: #fff3e0;
+  color: #c77700;
+}
+.draftKindPost {
+  background: #ffe6f0;
+  color: #d23a78;
+}
+.draftTarget {
+  font-size: 12px;
+  color: var(--forum-sub);
+}
+.draftTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--forum-text);
+}
+.draftBody {
+  white-space: pre-wrap;
+  font-size: 14px;
+  color: #2c2f35;
+  line-height: 1.6;
+}
+.draftHesitation {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: #a06676;
+  font-style: italic;
+}
+.draftActions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+.draftSend {
+  border: none;
+  background: #ff5c93;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 18px;
+  border-radius: 16px;
+  cursor: pointer;
+}
+.draftSend:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.draftDiscard {
+  border: 1px solid var(--forum-border);
+  background: var(--forum-surface);
+  color: var(--forum-sub);
+  font-size: 13px;
+  padding: 7px 16px;
+  border-radius: 16px;
+  cursor: pointer;
+}
+.draftDiscard:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ── 空 / 锁定态 ─────────────────────────────────────────────── */
+
+.lockedCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px 28px;
+  text-align: center;
+}
+.lockedHeart {
+  font-size: 40px;
+  color: #ff8fb3;
+}
+.lockedTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--forum-text);
+}
+.lockedDesc {
+  font-size: 13px;
+  color: var(--forum-sub);
+  line-height: 1.7;
+  margin: 0;
+}
+.lockedBtn {
+  border: none;
+  background: #ff5c93;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 9px 24px;
+  border-radius: 20px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(255, 92, 147, 0.3);
+}
+.lockedBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+  box-shadow: none;
+}
+
+/* ── 彩蛋弹窗 ────────────────────────────────────────────────── */
+
+.eggOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(40, 20, 30, 0.42);
+  padding: 24px;
+  z-index: 20;
+}
+.eggCard {
+  width: 100%;
+  max-width: 300px;
+  background: #fff;
+  border-radius: 18px;
+  padding: 24px 22px 18px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  animation: cp-egg-pop 0.22s ease-out;
+}
+@keyframes cp-egg-pop {
+  from {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.eggHeart {
+  font-size: 34px;
+  color: #ff5c93;
+  line-height: 1;
+}
+.eggWho {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #e23b74;
+}
+.eggText {
+  margin: 10px 0 18px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #2c2f35;
+  white-space: pre-wrap;
+}
+.eggClose {
+  border: none;
+  background: #ffeef4;
+  color: #e23b74;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 24px;
+  border-radius: 16px;
+  cursor: pointer;
+}
