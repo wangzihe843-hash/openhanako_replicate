@@ -66,4 +66,18 @@ describe("Windows icon contract", () => {
     expect(main).toContain('"tray.ico"');
     expect(main).not.toMatch(/titleBarOpts[\s\S]*?"tray\.ico"[\s\S]*?return\s+\{\s*frame:\s*false,\s*icon:/);
   });
+
+  it("loads tray icons from packaged resources and rejects empty native images", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf-8"));
+    const main = fs.readFileSync(path.join(ROOT, "desktop", "main.cjs"), "utf-8");
+
+    expect(pkg.build.extraResources).toEqual(expect.arrayContaining([
+      { from: "desktop/src/assets/", to: "assets/" },
+    ]));
+    expect(main).toContain("function resolveTrayAssetCandidates");
+    expect(main).toContain("process.resourcesPath");
+    expect(main).toContain("nativeImage.createFromPath(candidate)");
+    expect(main).toContain("typeof image.isEmpty");
+    expect(main).toContain("Tray icon asset unavailable");
+  });
 });
