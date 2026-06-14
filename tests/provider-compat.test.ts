@@ -428,6 +428,23 @@ describe("normalizeProviderPayload — 通用层", () => {
     expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 4096 });
   });
 
+  it("Kimi Anthropic-compatible utility 请求显式关闭 thinking", () => {
+    const payload = {
+      model: "kimi-k2.6",
+      messages: [{ role: "user", content: "describe image" }],
+      thinking: { type: "enabled", budget_tokens: 8192 },
+    };
+    const result = normalizeProviderPayload(payload, {
+      id: "kimi-k2.6",
+      provider: "kimi-coding",
+      api: "anthropic-messages",
+      reasoning: true,
+      compat: { supportsDeveloperRole: false, thinkingFormat: "anthropic" },
+    }, { mode: "utility" });
+    expect(result).not.toBe(payload);
+    expect(result.thinking).toEqual({ type: "disabled" });
+  });
+
   it("anthropic 模型保留 thinking", () => {
     const payload = {
       model: "claude-opus-4-7",
@@ -580,6 +597,23 @@ describe("normalizeProviderPayload — 通用层", () => {
     }, { mode: "chat" });
     expect(result.max_tokens).toBe(32000);
     expect(payload.max_tokens).toBe(32000);
+  });
+
+  it("协议必填输出上限缺失时从 resolved model maxTokens 补齐", () => {
+    const payload = {
+      model: "kimi-k2.6",
+      messages: [{ role: "user", content: "hi" }],
+    };
+    const result = normalizeProviderPayload(payload, {
+      id: "kimi-k2.6",
+      provider: "kimi-coding",
+      api: "anthropic-messages",
+      maxTokens: 98304,
+      reasoning: true,
+      compat: { thinkingFormat: "anthropic" },
+    }, { mode: "utility" });
+    expect(result).not.toBe(payload);
+    expect(result.max_tokens).toBe(98304);
   });
 
   it("官方 DeepSeek 仍交给 DeepSeek 子模块抬升 thinking 输出预算", () => {

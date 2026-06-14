@@ -782,6 +782,77 @@ function pollServerInfo(infoPath, {
   });
 }
 
+const DEFAULT_SERVER_NETWORK_CONFIG = Object.freeze({
+  mode: "loopback",
+  listenHost: "127.0.0.1",
+  listenPort: 14500,
+});
+const VALID_SERVER_NETWORK_MODES = new Set(["loopback", "lan", "custom_remote"]);
+const LOOPBACK_LISTEN_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+function normalizeDesiredServerNetworkConfig(value) {
+  const input = value && typeof value === "object" ? value : DEFAULT_SERVER_NETWORK_CONFIG;
+  const mode = typeof input.mode === "string" ? input.mode.trim() : "";
+  if (!VALID_SERVER_NETWORK_MODES.has(mode)) throw new Error(`invalid mode: ${mode || "(empty)"}`);
+  const listenHost = typeof input.listenHost === "string" ? input.listenHost.trim() : "";
+  if (!listenHost) throw new Error("listenHost required");
+  if (mode === "loopback" && !LOOPBACK_LISTEN_HOSTS.has(listenHost.toLowerCase())) {
+    throw new Error("loopback mode must use a loopback listenHost");
+  }
+  const listenPort = Number(input.listenPort);
+  if (!Number.isInteger(listenPort) || listenPort < 1024 || listenPort > 65535) {
+    throw new Error("listenPort must be between 1024 and 65535");
+  }
+  return { mode, listenHost, listenPort };
+}
+
+function readDesiredServerNetworkConfig() {
+  const filePath = path.join(hanakoHome, "server-network.json");
+  try {
+    return { config: normalizeDesiredServerNetworkConfig(JSON.parse(fs.readFileSync(filePath, "utf-8"))) };
+  } catch (err) {
+    if (err?.code === "ENOENT") {
+      return { config: { ...DEFAULT_SERVER_NETWORK_CONFIG } };
+    }
+    return { error: err?.message || String(err) };
+  }
+}
+
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function integerOrNull(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function liveServerNetworkFrom(existingInfo, health) {
+  const network = health?.network && typeof health.network === "object" ? health.network : {};
+  return {
+    mode: nonEmptyString(network.mode) || nonEmptyString(network.runtimeMode) || nonEmptyString(existingInfo?.networkMode) || null,
+    listenHost: nonEmptyString(network.listenHost) || nonEmptyString(network.runtimeHost) || nonEmptyString(existingInfo?.configuredHost) || nonEmptyString(existingInfo?.host) || null,
+    actualPort: integerOrNull(network.actualPort) || integerOrNull(existingInfo?.port),
+    configuredMode: nonEmptyString(network.configuredMode) || nonEmptyString(existingInfo?.configuredMode) || null,
+    configuredListenHost: nonEmptyString(network.configuredListenHost) || nonEmptyString(existingInfo?.configuredListenHost) || null,
+    configuredPort: integerOrNull(network.configuredPort) || integerOrNull(existingInfo?.configuredPort),
+  };
+}
+
+function describeReusableServerNetworkMismatch(existingInfo, health, desired) {
+  const live = liveServerNetworkFrom(existingInfo, health);
+  if (live.mode !== desired.mode) {
+    return `network mode mismatch: wanted ${desired.mode}, live ${live.mode || "unknown"}`;
+  }
+  if (live.listenHost !== desired.listenHost) {
+    return `network host mismatch: wanted ${desired.listenHost}, live ${live.listenHost || "unknown"}`;
+  }
+  if (live.actualPort !== desired.listenPort) {
+    return `network port mismatch: wanted ${desired.listenPort}, live ${live.actualPort || "unknown"}`;
+  }
+  return null;
+}
+
 async function verifyReusableServerInfo(existingInfo) {
   const port = Number(existingInfo?.port);
   const token = typeof existingInfo?.token === "string" ? existingInfo.token : "";
@@ -836,6 +907,22 @@ async function verifyReusableServerInfo(existingInfo) {
 
   if (existingInfo.studioId && existingInfo.studioId !== identity.studioId) {
     return { reusable: false, trusted: true, terminate: false, reason: "studio identity mismatch", health, identity };
+  }
+
+  const desiredNetwork = readDesiredServerNetworkConfig();
+  if (desiredNetwork.error) {
+    return { reusable: false, trusted: true, terminate: false, reason: `invalid desired network config: ${desiredNetwork.error}`, health, identity };
+  }
+  const networkMismatch = describeReusableServerNetworkMismatch(existingInfo, health, desiredNetwork.config);
+  if (networkMismatch) {
+    return {
+      reusable: false,
+      trusted: true,
+      terminate: isDesktopOwnedServerInfo(existingInfo),
+      reason: networkMismatch,
+      health,
+      identity,
+    };
   }
 
   return { reusable: true, trusted: true, terminate: false, reason: "ok", health, identity };
@@ -1135,26 +1222,44 @@ function showPrimaryWindow() {
  * - 双击：显示主窗口
  * - 右键菜单：显示 HanaAgent / 设置 / 退出
  */
+function resolveTrayAssetCandidates(fileName) {
+  const candidates = [];
+  if (app.isPackaged && process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, "assets", fileName));
+  }
+  candidates.push(path.join(__dirname, "src", "assets", fileName));
+  return [...new Set(candidates)];
+}
+
+function loadTrayImageFromCandidates(fileNames) {
+  const attempted = [];
+  for (const fileName of fileNames) {
+    for (const candidate of resolveTrayAssetCandidates(fileName)) {
+      attempted.push(candidate);
+      if (!fs.existsSync(candidate)) continue;
+      const image = nativeImage.createFromPath(candidate);
+      if (image && (typeof image.isEmpty !== "function" || !image.isEmpty())) {
+        return { image, path: candidate };
+      }
+    }
+  }
+  throw new Error(`Tray icon asset unavailable; checked: ${attempted.join(", ")}`);
+}
+
 function createTray() {
   const isDev = !app.isPackaged;
-  let icon;
+  let resolved;
   if (process.platform === "win32") {
     // Windows 优先用 .ico，缺失则回退到 .png
     const icoName = isDev ? "tray-dev.ico" : "tray.ico";
-    const icoPath = path.join(__dirname, "src", "assets", icoName);
-    if (fs.existsSync(icoPath)) {
-      icon = nativeImage.createFromPath(icoPath);
-    } else {
-      const pngName = isDev ? "tray-dev-template.png" : "tray-template.png";
-      icon = nativeImage.createFromPath(path.join(__dirname, "src", "assets", pngName));
-    }
+    const pngName = isDev ? "tray-dev-template.png" : "tray-template.png";
+    resolved = loadTrayImageFromCandidates([icoName, pngName]);
   } else {
     const iconName = isDev ? "tray-dev-template.png" : "tray-template.png";
-    const iconPath = path.join(__dirname, "src", "assets", iconName);
-    icon = nativeImage.createFromPath(iconPath);
-    if (process.platform === "darwin") icon.setTemplateImage(true);
+    resolved = loadTrayImageFromCandidates([iconName]);
+    if (process.platform === "darwin") resolved.image.setTemplateImage(true);
   }
-  tray = new Tray(icon);
+  tray = new Tray(resolved.image);
   tray.setToolTip(isDev ? "HanaAgent (dev)" : "HanaAgent");
 
   const buildMenu = () => Menu.buildFromTemplate([
@@ -1241,7 +1346,7 @@ function buildLaunchFailureDialogDetail(err, crashInfo) {
   const rootServerError = structuredPortConflict || extractRootServerStartupError(_serverLogs);
   const tail = crashInfo.length > 800 ? "...\n" + crashInfo.slice(-800) : crashInfo;
   if (!rootServerError) return tail;
-  if (tail.includes(rootServerError)) return tail;
+  if (tail.trimStart().startsWith(rootServerError)) return tail;
   return `${rootServerError}\n\n${tail}`;
 }
 

@@ -779,14 +779,14 @@ export class HanaEngine {
   /** @deprecated Phase 2: 使用 promptSession(path, text, opts) */
   async prompt(text, opts) { return this._sessionCoord.prompt(text, opts); }
   /** @deprecated Phase 2: 使用 abortSession(path) */
-  async abort() { return this._sessionCoord.abort(); }
+  async abort(options) { return this._sessionCoord.abort(options); }
   /** @deprecated Phase 2: 使用 steerSession(path, text) */
   steer(text) { return this._sessionCoord.steer(text); }
 
   // ── Path 感知 API（Phase 2） ──
   async promptSession(p, text, opts) { return this._sessionCoord.promptSession(p, text, opts); }
   steerSession(p, text) { return this._sessionCoord.steerSession(p, text); }
-  async abortSession(p) { return this._sessionCoord.abortSession(p); }
+  async abortSession(p, options) { return this._sessionCoord.abortSession(p, options); }
   get focusSessionPath() { return this._sessionCoord.currentSessionPath; }
   getMessages(p) { return this._sessionCoord.getSessionByPath(p)?.messages ?? []; }
   getSessionWorkspaceFolders(p = this.currentSessionPath) {
@@ -847,7 +847,7 @@ export class HanaEngine {
   async dismissSessionCapabilityDrift(p, fingerprint) { return this._sessionCoord.dismissSessionCapabilityDrift(p, fingerprint); }
   isSessionStreaming(p) { return this._sessionCoord.isSessionStreaming(p); }
   isSessionSwitching(p) { return this._sessionCoord.isSessionSwitching(p); }
-  async abortSessionByPath(p) { return this._sessionCoord.abortSessionByPath(p); }
+  async abortSessionByPath(p, options) { return this._sessionCoord.abortSessionByPath(p, options); }
   async listSessions(options = {}) { return this._sessionCoord.listSessions(options); }
   async continueDeletedAgentSession(p) { return this._sessionCoord.continueDeletedAgentSession(p); }
   getSessionProjectCatalog() { return this._sessionProjects.getCatalog(); }
@@ -1338,6 +1338,7 @@ export class HanaEngine {
       this.syncWorkspaceSkillPaths(this.currentSessionPath ? this.cwd : null, {
         reload: true,
         emitEvent: true,
+        agentId: this.currentAgentId || null,
       }).catch(() => {});
     }
     return {
@@ -1352,6 +1353,7 @@ export class HanaEngine {
     await this.syncWorkspaceSkillPaths(this.currentSessionPath ? this.cwd : null, {
       reload: true,
       emitEvent: true,
+      agentId: this.currentAgentId || null,
     });
   }
 
@@ -1401,7 +1403,13 @@ export class HanaEngine {
     });
   }
 
-  async syncWorkspaceSkillPaths(cwd = null, { reload = true, emitEvent = false, force = false } = {}) {
+  async syncWorkspaceSkillPaths(cwd = null, options: any = {}) {
+    const {
+      reload = true,
+      emitEvent = false,
+      force = false,
+      agentId = this._agentMgr?.activeAgentId || null,
+    } = options;
     if (!this._skills) return false;
     const resolved = this._getResolvedExternalSkillPaths(cwd);
     const changed = !this._sameExternalSkillPaths(this._skills._externalPaths || [], resolved);
@@ -1409,7 +1417,7 @@ export class HanaEngine {
 
     this._skills.setExternalPaths(resolved);
     if (reload) await this.reloadSkills();
-    if (emitEvent) this._emitAppEvent("skills-changed", { agentId: null });
+    if (emitEvent) this._emitAppEvent("skills-changed", { agentId: agentId || null });
     return true;
   }
 

@@ -86,6 +86,13 @@ describe("generate-image tool — metadata", () => {
       type: "object",
     });
   });
+
+  it("exposes image mode as an advanced override, not as the default generation path", () => {
+    expect(parameters.properties.mode).toMatchObject({
+      type: "string",
+    });
+    expect(parameters.properties.mode.description).toMatch(/默认|省略|default|omit/i);
+  });
 });
 
 describe("generate-video tool — metadata", () => {
@@ -94,6 +101,50 @@ describe("generate-video tool — metadata", () => {
     expect(mod.parameters.required).toContain("prompt");
     expect(mod.parameters.properties.options).toMatchObject({
       type: "object",
+    });
+  });
+
+  it("delegates video generation to the universal media bus instead of the legacy adapter path", async () => {
+    const mod = await import("../plugins/image-gen/tools/generate-video.ts");
+    const legacyMediaGen = makeMediaGen();
+    const request = vi.fn(async () => ({
+      ok: true,
+      kind: "video",
+      batchId: "batch-video",
+      prompt: "a moonlit room",
+      delivery: { mode: "session" },
+      tasks: [{ taskId: "task-video" }],
+    }));
+
+    const result = await mod.execute({
+      prompt: "a moonlit room",
+      provider: "agnes",
+      model: "video-model",
+      duration: 5,
+      ratio: "16:9",
+      options: { camera: "slow pan" },
+    }, makeCtx(legacyMediaGen, { request }));
+
+    expect(request).toHaveBeenCalledWith("media:generate-video", {
+      sessionPath: "/sessions/test.jsonl",
+      input: {
+        prompt: "a moonlit room",
+        duration: 5,
+        ratio: "16:9",
+        model: "video-model",
+        provider: "agnes",
+        options: { camera: "slow pan" },
+      },
+    });
+    expect(legacyMediaGen.registry.get).not.toHaveBeenCalled();
+    expect(legacyMediaGen.registry.getByType).not.toHaveBeenCalled();
+    expect(legacyMediaGen.store.add).not.toHaveBeenCalled();
+    expect(legacyMediaGen.poller.add).not.toHaveBeenCalled();
+    expect(result.details.mediaGeneration).toMatchObject({
+      kind: "video",
+      batchId: "batch-video",
+      prompt: "a moonlit room",
+      tasks: [{ taskId: "task-video" }],
     });
   });
 });
@@ -218,6 +269,20 @@ describe("generate-image tool — adapter resolution", () => {
     expect(result.content[0].text).toContain('指定的图片生成 provider "minimax" 不可用');
     expect(requestedAdapter.submit).not.toHaveBeenCalled();
     expect(defaultAdapter.submit).not.toHaveBeenCalled();
+    expect(store.add).not.toHaveBeenCalled();
+  });
+
+  it("rejects image mode ids passed as model ids with guidance back to the default path", async () => {
+    const { registry, store, poller, adapter } = makeMediaGen({
+      submit: vi.fn(async () => ({ taskId: "task-openai" })),
+    });
+    const ctx = makeCtx({ registry, store, poller });
+
+    const result = await execute({ prompt: "a cat", provider: "gemini", model: "image2image" }, ctx);
+
+    expect(result.content[0].text).toContain('"image2image" 是 mode，不是 model');
+    expect(result.content[0].text).toContain("默认生成请省略 model");
+    expect(adapter.submit).not.toHaveBeenCalled();
     expect(store.add).not.toHaveBeenCalled();
   });
 

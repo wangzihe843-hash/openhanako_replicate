@@ -60,6 +60,27 @@ describe("HanaEngine.syncWorkspaceSkillPaths", () => {
     }, null);
   });
 
+  it("emitEvent 时保留调用方传入的 agentId", async () => {
+    const paths = [{ dirPath: "/x", label: "Agents", scope: "workspace" }];
+    const engine = makeFakeEngine(paths);
+
+    await engine.syncWorkspaceSkillPaths("/cwd", {
+      reload: true,
+      emitEvent: true,
+      force: true,
+      agentId: "agent-a",
+    });
+
+    expect(engine._emitEvent).toHaveBeenCalledWith({
+      type: "app_event",
+      event: {
+        type: "skills-changed",
+        payload: { agentId: "agent-a" },
+        source: "server",
+      },
+    }, null);
+  });
+
   it("force: true 但 reload: false 只触发 setExternalPaths，不触发 reload", async () => {
     const paths = [{ dirPath: "/x", label: "Agents", scope: "workspace" }];
     const engine = makeFakeEngine(paths);

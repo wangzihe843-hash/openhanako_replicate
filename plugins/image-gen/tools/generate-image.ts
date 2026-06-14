@@ -26,6 +26,7 @@ export const parameters = {
     resolution: { type: "string", description: t("toolDef.generateImage.resolutionDesc") },
     quality:    { type: "string", description: t("toolDef.generateImage.qualityDesc") },
     model:      { type: "string", description: t("toolDef.generateImage.modelDesc") },
+    mode:       { type: "string", description: t("toolDef.generateImage.modeDesc") },
     provider:   { type: "string", description: t("toolDef.generateImage.providerDesc") },
     options: {
       type: "object",

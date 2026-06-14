@@ -16,7 +16,7 @@ function makeTempDir() {
 }
 
 function makeBridge() {
-  const callText = vi.fn(async () => [
+  const callText = vi.fn(async (_opts?: unknown) => [
     "image_overview: A browser screenshot with a red error banner.",
     "visible_text: Error 500.",
     "objects_and_layout: The banner sits at the top of the page.",
@@ -70,6 +70,9 @@ describe("VisualContextPipeline", () => {
     });
 
     expect(callText).toHaveBeenCalledTimes(1);
+    expect(callText.mock.calls[0][0]).toMatchObject({
+      callPurpose: "auxiliary_vision",
+    });
     expect(result.injected).toBe(1);
     expect(result.messages[1].content[0].text).toContain(VISION_CONTEXT_START);
     expect(result.messages[1].content[0].text).toContain("browser screenshot");

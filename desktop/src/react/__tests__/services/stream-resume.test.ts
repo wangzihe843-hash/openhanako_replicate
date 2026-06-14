@@ -213,4 +213,48 @@ describe('stream-resume', () => {
     expect(statuses).toEqual([{ isStreaming: true, sessionPath: '/background.jsonl' }]);
     expect(useStore.getState().streamingSessions).toEqual(['/background.jsonl']);
   });
+
+  it('force-clears a stale active stream when runtime resume says the session is no longer running', () => {
+    const statuses: Array<{
+      isStreaming: boolean;
+      sessionPath: string | null;
+      force?: boolean;
+    }> = [];
+    useStore.setState({
+      streamingSessions: ['/background.jsonl'],
+      activeSessionStreams: {
+        '/background.jsonl': { streamId: 'stream-new', turnId: null },
+      },
+    } as never);
+    injectHandlers(vi.fn(), (isStreaming, sessionPath, _identity, options) => {
+      statuses.push({ isStreaming, sessionPath, force: options?.force });
+      if (!sessionPath) return;
+      if (isStreaming) {
+        useStore.getState().addStreamingSession(sessionPath, _identity);
+      } else if (options?.force) {
+        useStore.getState().forceRemoveStreamingSession(sessionPath);
+      } else {
+        useStore.getState().removeStreamingSession(sessionPath, _identity);
+      }
+    });
+
+    replayStreamResume({
+      type: 'stream_resume',
+      sessionPath: '/background.jsonl',
+      streamId: null,
+      sinceSeq: 42,
+      nextSeq: 1,
+      isStreaming: false,
+      runtimeIsStreaming: false,
+      reset: false,
+      truncated: false,
+      events: [],
+    });
+
+    expect(statuses).toEqual([
+      { isStreaming: false, sessionPath: '/background.jsonl', force: true },
+    ]);
+    expect(useStore.getState().streamingSessions).toEqual([]);
+    expect(useStore.getState().activeSessionStreams['/background.jsonl']).toBeUndefined();
+  });
 });

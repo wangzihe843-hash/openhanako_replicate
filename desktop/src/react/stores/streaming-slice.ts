@@ -15,6 +15,7 @@ export interface StreamingSlice {
   activeSessionStreams: Record<string, ActiveSessionStream>;
   addStreamingSession: (path: string, identity?: StreamingStatusIdentity) => void;
   removeStreamingSession: (path: string, identity?: StreamingStatusIdentity) => boolean;
+  forceRemoveStreamingSession: (path: string) => boolean;
   /** 后台 session 已完成新输出，但用户尚未切回查看。 */
   unreadOutputSessionPaths: string[];
   markSessionOutputUnread: (path: string) => void;
@@ -124,6 +125,23 @@ export const createStreamingSlice = (
       }
       const restActive = { ...active };
       delete restActive[path];
+      return {
+        streamingSessions: s.streamingSessions.filter(p => p !== path),
+        activeSessionStreams: restActive,
+      };
+    });
+    return applied;
+  },
+  forceRemoveStreamingSession: (path) => {
+    let applied = false;
+    set((s) => {
+      const active = s.activeSessionStreams || {};
+      const hadSession = s.streamingSessions.includes(path);
+      const hadIdentity = Object.prototype.hasOwnProperty.call(active, path);
+      if (!hadSession && !hadIdentity) return {};
+      const restActive = { ...active };
+      delete restActive[path];
+      applied = hadSession || hadIdentity;
       return {
         streamingSessions: s.streamingSessions.filter(p => p !== path),
         activeSessionStreams: restActive,

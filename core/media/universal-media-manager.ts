@@ -129,6 +129,19 @@ function textOrNull(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function logInfo(logger, message) {
+  const fn = typeof logger?.info === "function"
+    ? logger.info
+    : typeof logger?.log === "function"
+      ? logger.log
+      : null;
+  try {
+    fn?.call(logger, message);
+  } catch {
+    // Logging must not break media adapter lifecycle state changes.
+  }
+}
+
 function normalizeImageInput(input: any = {}, {
   sessionPath = null,
   sessionFiles = null,
@@ -483,18 +496,18 @@ export class UniversalMediaManager {
       bus.handle("media:transcribe-audio", (payload: any = {}) => this.transcribeAudio(payload)),
       bus.handle("media-gen:register-adapter", ({ adapter }) => {
         this.registerAdapter(adapter);
-        this._log.info(`adapter registered: ${adapter?.id}`);
+        logInfo(this._log, `adapter registered: ${adapter?.id}`);
         return { ok: true };
       }),
       bus.handle("media-gen:unregister-adapter", ({ adapterId }) => {
         this.unregisterAdapter(adapterId);
-        this._log.info(`adapter unregistered: ${adapterId}`);
+        logInfo(this._log, `adapter unregistered: ${adapterId}`);
         return { ok: true };
       }),
       bus.subscribe((event) => {
         if (event?.type !== "media-gen:adapter-removed" || !event.adapterId) return;
         this.unregisterAdapter(event.adapterId);
-        this._log.info(`adapter removed (event): ${event.adapterId}`);
+        logInfo(this._log, `adapter removed (event): ${event.adapterId}`);
       }),
       bus.handle("media-gen:list-adapters", () => ({
         adapters: this._registry.list().map((adapter) => ({

@@ -81,6 +81,14 @@ describe('streaming-slice', () => {
     expect(slice.activeSessionStreams['/s1']).toEqual({ streamId: 'stream-new', turnId: null });
   });
 
+  it('forceRemoveStreamingSession 清理服务端权威恢复确认的运行态', () => {
+    slice.addStreamingSession('/s1', { streamId: 'stream-new' });
+    const applied = slice.forceRemoveStreamingSession('/s1');
+    expect(applied).toBe(true);
+    expect(slice.streamingSessions).toEqual([]);
+    expect(slice.activeSessionStreams['/s1']).toBeUndefined();
+  });
+
   it('removeStreamingSession 接受匹配的 streamId 并清理 active state', () => {
     slice.addStreamingSession('/s1', { streamId: 'stream-new' });
     const applied = slice.removeStreamingSession('/s1', { streamId: 'stream-new' });

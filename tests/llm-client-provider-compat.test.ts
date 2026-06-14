@@ -385,6 +385,46 @@ describe("callText provider-compat routing", () => {
     ]);
   });
 
+  it("marks auxiliary vision calls as utility intent and disables Kimi Anthropic-compatible thinking", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        content: [{ type: "text", text: "ok" }],
+      }),
+    } as any);
+
+    await callText({
+      api: "anthropic-messages",
+      baseUrl: "https://api.kimi.com/coding",
+      model: {
+        id: "kimi-k2.6",
+        provider: "kimi-coding",
+        api: "anthropic-messages",
+        input: ["text", "image"],
+        reasoning: true,
+        compat: { thinkingFormat: "anthropic" },
+      },
+      callPurpose: "auxiliary_vision",
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "Describe this image." },
+          { type: "image", data: "BASE64", mimeType: "image/jpeg" },
+        ],
+      }],
+      timeoutMs: 5_000,
+    } as any);
+
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.thinking).toEqual({ type: "disabled" });
+    expect(body.messages[0].content[1]).toMatchObject({
+      type: "image",
+      source: { media_type: "image/jpeg", data: "BASE64" },
+    });
+  });
+
   it("adds cache_control to anthropic utility system prompts", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
@@ -649,6 +689,42 @@ describe("callText provider-compat routing", () => {
       code: "LLM_EMPTY_RESPONSE",
       message: "模型未回复正文，请检查思考内容或稍后重试。",
       context: expect.objectContaining({ reason: "empty_after_thinking" }),
+    });
+  });
+
+  it("includes provider error details when the upstream rejects a request", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({
+        error: {
+          type: "invalid_request_error",
+          code: "invalid_image",
+          message: "Invalid request Error",
+        },
+      }),
+    } as any);
+
+    await expect(callText({
+      api: "anthropic-messages",
+      baseUrl: "https://api.kimi.com/coding",
+      model: {
+        id: "kimi-k2.6",
+        provider: "kimi-coding",
+        api: "anthropic-messages",
+      },
+      messages: [{ role: "user", content: "hi" }],
+      timeoutMs: 5_000,
+    } as any)).rejects.toMatchObject({
+      code: "UNKNOWN",
+      message: expect.stringContaining("Invalid request Error"),
+      context: expect.objectContaining({
+        provider: "kimi-coding",
+        model: "kimi-k2.6",
+        status: 400,
+        errorType: "invalid_request_error",
+        errorCode: "invalid_image",
+      }),
     });
   });
 

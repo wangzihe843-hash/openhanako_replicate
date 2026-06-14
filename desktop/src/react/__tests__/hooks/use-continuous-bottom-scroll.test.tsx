@@ -212,6 +212,20 @@ describe('useContinuousBottomScroll', () => {
     expect(metrics.scrollTop).toBeLessThan(860);
   });
 
+  it('does not write non-finite scroll positions when DOM metrics are invalid', () => {
+    const metrics = { scrollHeight: Number.POSITIVE_INFINITY, clientHeight: 300, scrollTop: 700 };
+    render(<Harness onController={() => {}} />);
+    const scrollEl = document.querySelector('[data-testid="scroll"]') as HTMLElement;
+    setScrollMetrics(scrollEl, metrics);
+
+    act(() => {
+      MockResizeObserver.instances[0].trigger();
+      flushRaf(Number.POSITIVE_INFINITY);
+    });
+
+    expect(Number.isFinite(metrics.scrollTop)).toBe(true);
+  });
+
   it('preserves the armed instant landing through a no-op follow (already at bottom)', () => {
     let controller: ContinuousBottomScrollController | null = null;
     const metrics = { scrollHeight: 1000, clientHeight: 300, scrollTop: 700 };

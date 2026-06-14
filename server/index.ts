@@ -215,13 +215,29 @@ const serverRuntimeState = {
   mode: serverNetwork.mode,
   listenHost: serverNetwork.host,
   bindHost: serverNetwork.host,
+  configuredMode: serverNetwork.mode,
+  configuredListenHost: serverNetwork.host,
+  configuredPort: port,
   actualPort: null,
   applyNetworkConfig(network) {
     this.configuredMode = network.mode;
     this.configuredListenHost = network.listenHost;
+    this.configuredPort = network.listenPort;
   },
 };
 const host = serverRuntimeState.bindHost;
+
+function createServerRuntimeNetworkSummary() {
+  return {
+    mode: serverRuntimeState.mode,
+    listenHost: serverRuntimeState.listenHost,
+    bindHost: serverRuntimeState.bindHost,
+    actualPort: Number.isInteger(serverRuntimeState.actualPort) ? serverRuntimeState.actualPort : null,
+    configuredMode: serverRuntimeState.configuredMode || serverRuntimeState.mode,
+    configuredListenHost: serverRuntimeState.configuredListenHost || serverRuntimeState.listenHost,
+    configuredPort: Number.isInteger(serverRuntimeState.configuredPort) ? serverRuntimeState.configuredPort : port,
+  };
+}
 
 let activeFetch: any = (request: any) => {
   const url = new URL(request.url);
@@ -231,6 +247,7 @@ let activeFetch: any = (request: any) => {
       version: appVersion,
       networkMode: serverRuntimeState.mode,
       configuredHost: serverRuntimeState.listenHost,
+      network: createServerRuntimeNetworkSummary(),
     }, { status: 503 });
   }
   return Response.json({ error: "server_starting" }, { status: 503 });
@@ -815,6 +832,7 @@ app.get("/api/health", async (c) => {
     user: engine.userName,
     model: engine.currentModel?.name,
     avatars,
+    network: createServerRuntimeNetworkSummary(),
   });
 });
 
@@ -1052,6 +1070,10 @@ try {
       host,
       configuredHost: serverRuntimeState.listenHost,
       networkMode: serverRuntimeState.mode,
+      configuredMode: serverRuntimeState.configuredMode,
+      configuredListenHost: serverRuntimeState.configuredListenHost,
+      configuredPort: serverRuntimeState.configuredPort,
+      network: createServerRuntimeNetworkSummary(),
       token: SERVER_TOKEN,
       version: appVersion,
       ownerKind: process.env.HANA_SERVER_OWNER === "desktop" ? "desktop" : "standalone",

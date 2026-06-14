@@ -106,6 +106,34 @@ describe('WelcomeScreen workspace picker', () => {
     expect(extraLabel.compareDocumentPosition(addExternal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('turns folder groups into scrollable lists after five items', async () => {
+    useStore.setState({
+      cwdHistory: [
+        '/workspace/One',
+        '/workspace/Two',
+        '/workspace/Three',
+        '/workspace/Four',
+        '/workspace/Five',
+        '/workspace/Six',
+      ],
+      workspaceFolders: [
+        '/workspace/ExtraOne',
+        '/workspace/ExtraTwo',
+        '/workspace/ExtraThree',
+        '/workspace/ExtraFour',
+        '/workspace/ExtraFive',
+        '/workspace/ExtraSix',
+      ],
+    } as never);
+    const { WelcomeScreen } = await import('../../components/WelcomeScreen');
+
+    const { container } = render(<WelcomeScreen />);
+    fireEvent.click(screen.getByRole('button', { name: /工作台：Desktop/ }));
+
+    expect(container.querySelector('[data-folder-history-list="primary"]')).toHaveAttribute('data-scrollable', 'true');
+    expect(container.querySelector('[data-folder-history-list="extra"]')).toHaveAttribute('data-scrollable', 'true');
+  });
+
   it('selects a Studio workspace by mountId instead of a local path', async () => {
     mocks.hanaFetch.mockImplementation(async (path: string) => {
       if (path === '/api/studio/workspaces') {

@@ -471,8 +471,9 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       }
       if (!isSessionRuntimeStreaming(sessionPath)) return;
       ss.isAborted = true;
-      Promise.resolve(hub.abort?.(sessionPath)).then((aborted) => {
-        if (aborted === false) return engine.abortSessionByPath?.(sessionPath);
+      const reason = "turn_stall_timeout";
+      Promise.resolve(hub.abort?.(sessionPath, { reason })).then((aborted) => {
+        if (aborted === false) return engine.abortSessionByPath?.(sessionPath, { reason });
       }).catch((err) => {
         log.warn(`turn stall abort failed for ${path.basename(sessionPath)}: ${err.message}`);
       });
@@ -910,12 +911,15 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
           clearTurnStallWatchdog(ss);
         }
       }
-      broadcast({
+      const payload: any = {
         type: "status",
         isStreaming: !!event.isStreaming,
         sessionPath,
         streamId: statusStreamId,
-      });
+      };
+      if (event.aborted !== undefined) payload.aborted = !!event.aborted;
+      if (typeof event.reason === "string" && event.reason.trim()) payload.reason = event.reason.trim();
+      broadcast(payload);
       if (ss && !event.isStreaming) {
         flushPendingDeferredContentEvents(sessionPath, ss);
         flushPendingTurnCompletionNotification(sessionPath, ss);
@@ -1174,9 +1178,12 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
             if (msg.type === "abort") {
               const abortPath = requireSessionPath(msg, ws); if (!abortPath) return;
               const abortSs = getState(abortPath);
+              const abortReason = typeof msg.reason === "string" && msg.reason.trim()
+                ? msg.reason.trim()
+                : "user_abort";
               if (abortSs) abortSs.isAborted = true;
               let abortAccepted = false;
-              try { abortAccepted = !!(await hub.abort(abortPath)); } catch {}
+              try { abortAccepted = !!(await hub.abort(abortPath, { reason: abortReason })); } catch {}
               if (!abortAccepted) {
                 const abortStreamId = abortSs?.streamId || null;
                 finishStreamingState(abortSs);
@@ -1185,6 +1192,8 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                   isStreaming: false,
                   sessionPath: abortPath,
                   streamId: abortStreamId,
+                  aborted: true,
+                  reason: abortReason,
                 });
               }
               return;

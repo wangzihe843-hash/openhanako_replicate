@@ -7,7 +7,7 @@
  */
 
 import { modelSupportsAnthropicMaxEffort } from "../session-thinking-level.ts";
-import { getReasoningProfile } from "../../shared/model-capabilities.ts";
+import { getReasoningProfile, getThinkingFormat } from "../../shared/model-capabilities.ts";
 
 const CACHE_CONTROL = { type: "ephemeral" };
 const MAX_EFFORT_MIN_OUTPUT_TOKENS = 64000;
@@ -143,6 +143,14 @@ function normalizeRecentUserMessages(messages) {
 
 export function matches(model) {
   if (!model || typeof model !== "object") return false;
+  if (usesAnthropicCacheControl(model)) return true;
+  if (lower(model.api) === "anthropic-messages" && getThinkingFormat(model) === "anthropic") return true;
+  if (isAdaptiveOnlyProfile(model)) return true;
+  return false;
+}
+
+function usesAnthropicCacheControl(model) {
+  if (!model || typeof model !== "object") return false;
   if (lower(model.api) !== "anthropic-messages") return false;
   if (lower(model.provider) === "anthropic") return true;
   if (lower(model.id).startsWith("claude-")) return true;
@@ -234,20 +242,36 @@ function normalizeAdaptiveOnlyThinking(payload, model, options) {
   return effort === "max" ? withMaxEffortOutputBudget(next, model, options) : next;
 }
 
+function shouldDisableThinking(payload, options) {
+  return options?.mode === "utility"
+    || isThinkingOff(options?.reasoningLevel)
+    || payload.thinking?.type === "disabled";
+}
+
+function normalizeStandardThinking(payload, options) {
+  if (!shouldDisableThinking(payload, options)) return payload;
+  const next = { ...payload, thinking: { type: "disabled" } };
+  delete next.reasoning_effort;
+  delete next.output_config;
+  return next;
+}
+
 export function apply(payload, model, options = {}) {
   let result = payload;
 
-  if (Object.prototype.hasOwnProperty.call(payload, "system")) {
+  if (usesAnthropicCacheControl(model) && Object.prototype.hasOwnProperty.call(payload, "system")) {
     const system = normalizeSystem(payload.system);
     if (system.changed) result = { ...result, system: system.value };
   }
 
-  const messages = normalizeRecentUserMessages(result.messages);
-  if (messages.changed) result = { ...result, messages: messages.value };
+  if (usesAnthropicCacheControl(model)) {
+    const messages = normalizeRecentUserMessages(result.messages);
+    if (messages.changed) result = { ...result, messages: messages.value };
+  }
 
   result = isAdaptiveOnlyProfile(model)
     ? normalizeAdaptiveOnlyThinking(result, model, options)
-    : normalizeMaxEffort(result, model, options);
+    : normalizeMaxEffort(normalizeStandardThinking(result, options), model, options);
 
   return result;
 }

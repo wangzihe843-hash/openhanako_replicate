@@ -25,9 +25,9 @@ description: 使用图片/视频生成工具时必读。包含工具参数、非
 - `ratio`：长宽比（1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9）
 - `resolution`：统一分辨率档位（1k, 2k, 4k），adapter 会映射为供应商最接近的尺寸
 - `quality`：画质（low, medium, high, auto）
-- `provider`：指定生图 provider（可选，默认自动选择）。可用 provider 来自 Hana Provider Registry 的 `media.imageGeneration` capability，不从聊天模型列表推断
-- `model`：指定生图模型（可选）
-- `mode`：指定供应商模式（可选，如 text2image / image2image）
+- `provider`：指定生图 provider（高级 override）。用户只说生成图片时必须省略，走设置里的默认 provider；只有用户明确点名 provider，或你已通过 `describe-media-options` 确认默认 provider 不满足需求时才填写。可用 provider 来自 Hana Provider Registry 的 `media.imageGeneration` capability，不从聊天模型列表推断
+- `model`：指定生图模型（高级 override）。普通生成必须省略，走设置里的默认模型；不要把 `text2image` / `image2image` 这类 mode 填进 `model`
+- `mode`：指定供应商模式（高级 override，如 text2image / image2image）。默认必须省略；有 `image` / `referenceImages` 时系统会自动推断 image2image
 - `options`：供应商专属可选参数。普通生成不要主动填；用户明确要求高级参数，或默认值不满足请求时，先调用 `image-gen_describe-media-options`
 
 ### image-gen_generate-video
@@ -51,7 +51,7 @@ description: 使用图片/视频生成工具时必读。包含工具参数、非
 - `model`：模型 id（可选）
 - `mode`：模式 id（可选）
 
-默认策略：用户只说“生成图片/视频”时，直接调用生成工具，只传 prompt 和必要图片；用户提出明确高级约束，或你不知道某 provider/model/mode 支持哪些参数、是否支持参考图时，先查询 options，再把确认过的字段放进生成工具的 `options`。
+默认策略：用户只说“生成图片/视频”时，直接调用生成工具，只传 `prompt` 和必要图片、比例、分辨率、画质；不要主动填写 `provider`、`model`、`mode`，也不要先查询 options。只有用户明确指定 provider/model/mode、高级参数，或默认路径报出“能力不支持”的明确错误时，才调用 `describe-media-options`，再把确认过的字段放进生成工具。
 
 ## 任务路由
 
@@ -71,5 +71,6 @@ description: 使用图片/视频生成工具时必读。包含工具参数、非
 - 生成消耗 provider 额度，大批量前建议提醒用户
 - 不同 provider、同一 provider 的不同模型、同一模型的不同 mode 都可能支持不同参数。不要把参数当 provider 级能力；先看 `describe-media-options` 返回的 model/mode schema
 - Provider 可能来自内置 provider、插件贡献，或 CLI wrapper。不要假设它一定是聊天 provider
+- 普通生成失败时不要自动切换 provider，不要反复试探 provider/model/mode；把错误告诉用户，除非用户明确要求“换一个 provider 试”
 - 视频生成通常比图片慢（几十秒到几分钟），但同样不阻塞
 - 图中需要出现文字时，把文字内容放在**双引号**里

@@ -19,7 +19,12 @@ interface Props {
 }
 
 function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
   return Math.min(Math.max(value, min), max);
+}
+
+function finiteNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
@@ -45,15 +50,17 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
       return;
     }
 
-    const maxScroll = Math.max(0, panel.scrollHeight - panel.clientHeight);
+    const maxScroll = Math.max(0, finiteNumber(panel.scrollHeight) - finiteNumber(panel.clientHeight));
     const panelRect = panel.getBoundingClientRect();
+    const panelTop = finiteNumber(panelRect.top);
+    const panelScrollTop = finiteNumber(panel.scrollTop);
     const next: Record<string, MarkerLayout> = {};
 
     for (const anchor of anchors) {
       const element = messageElementsRef.current?.get(anchor.messageId);
       if (!element) continue;
       const rect = element.getBoundingClientRect();
-      const targetTop = clamp(panel.scrollTop + rect.top - panelRect.top - 16, 0, maxScroll);
+      const targetTop = clamp(panelScrollTop + finiteNumber(rect.top) - panelTop - 16, 0, maxScroll);
       next[anchor.messageId] = {
         targetTop,
       };
@@ -69,7 +76,7 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
       return;
     }
 
-    const threshold = panel.scrollTop + 96;
+    const threshold = finiteNumber(panel.scrollTop) + 96;
     let nextId = anchors[0]?.messageId ?? null;
     for (const anchor of anchors) {
       const layout = layouts[anchor.messageId];
@@ -137,7 +144,7 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
   useLayoutEffect(() => {
     const list = listRef.current;
     if (!list) return;
-    list.scrollTop = list.scrollHeight;
+    list.scrollTop = finiteNumber(list.scrollHeight);
   }, [renderedAnchors.length, visibleRows]);
 
   if (!active || anchors.length === 0) return null;
@@ -170,8 +177,11 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
         <div className={styles.timelineList} ref={listRef}>
           {renderedAnchors.map((anchor) => {
             const selected = anchor.messageId === activeId;
+            const markerWidthEm = Number.isFinite(anchor.markerWidthEm) && anchor.markerWidthEm > 0
+              ? anchor.markerWidthEm
+              : 1;
             const markerStyle: CSSProperties & { '--timeline-marker-width': string } = {
-              '--timeline-marker-width': `${anchor.markerWidthEm}em`,
+              '--timeline-marker-width': `${markerWidthEm}em`,
             };
             return (
               <button

@@ -1170,7 +1170,7 @@ export function createDeskRoute(engine, hub) {
         owner: "workspace",
       });
       if (typeof engine.syncWorkspaceSkillPaths === "function") {
-        await engine.syncWorkspaceSkillPaths(cwd, { reload: true, emitEvent: true, force: true });
+        await engine.syncWorkspaceSkillPaths(cwd, { reload: true, emitEvent: true, force: true, agentId });
       }
       return c.json({
         ok: true,
@@ -1188,6 +1188,7 @@ export function createDeskRoute(engine, hub) {
   route.post("/desk/delete-skill", async (c) => {
     const body = await safeJson(c);
     const { skillDir } = body;
+    const agentId = body.agentId || null;
     if (!skillDir) {
       return c.json({ error: "skillDir is required" }, 400);
     }
@@ -1207,7 +1208,7 @@ export function createDeskRoute(engine, hub) {
       }
       fs.rmSync(skillDir, { recursive: true, force: true });
       if (typeof engine.syncWorkspaceSkillPaths === "function") {
-        await engine.syncWorkspaceSkillPaths(cwd, { reload: true, emitEvent: true, force: true });
+        await engine.syncWorkspaceSkillPaths(cwd, { reload: true, emitEvent: true, force: true, agentId });
       }
       return c.json({ ok: true });
     } catch (err) {

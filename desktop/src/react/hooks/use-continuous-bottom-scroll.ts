@@ -44,12 +44,16 @@ const DEFAULT_STICKY_THRESHOLD = 48;
 const DEFAULT_LARGE_JUMP_PX = 720;
 const FOLLOW_TIME_CONSTANT_MS = 85;
 
+function finiteNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
 function maxScrollTop(el: HTMLElement): number {
-  return Math.max(0, el.scrollHeight - el.clientHeight);
+  return Math.max(0, finiteNumber(el.scrollHeight) - finiteNumber(el.clientHeight));
 }
 
 function distanceFromBottom(el: HTMLElement): number {
-  return maxScrollTop(el) - el.scrollTop;
+  return maxScrollTop(el) - finiteNumber(el.scrollTop);
 }
 
 function prefersReducedMotion(): boolean {
@@ -90,7 +94,7 @@ export function useContinuousBottomScroll({
     if (followingRef.current) return isStickyRef.current;
     const el = scrollRef.current;
     if (!el) return isStickyRef.current;
-    const sticky = distanceFromBottom(el) <= thresholdRef.current;
+    const sticky = distanceFromBottom(el) <= finiteNumber(thresholdRef.current, DEFAULT_STICKY_THRESHOLD);
     isStickyRef.current = sticky;
     return sticky;
   }, [scrollRef]);
@@ -117,7 +121,7 @@ export function useContinuousBottomScroll({
     }
 
     const target = maxScrollTop(el);
-    const current = el.scrollTop;
+    const current = finiteNumber(el.scrollTop);
     const delta = target - current;
 
     if (Math.abs(delta) <= 0.5 || delta < 0) {
@@ -126,17 +130,20 @@ export function useContinuousBottomScroll({
       return;
     }
 
-    if (delta > largeJumpRef.current || prefersReducedMotion()) {
+    const largeJump = finiteNumber(largeJumpRef.current, DEFAULT_LARGE_JUMP_PX);
+    if (delta > largeJump || prefersReducedMotion()) {
       el.scrollTop = target;
       stopFollow();
       return;
     }
 
     followingRef.current = true;
-    const previous = lastFrameTimeRef.current ?? time - 16;
-    const dt = Math.max(1, time - previous);
-    lastFrameTimeRef.current = time;
-    const alpha = 1 - Math.exp(-dt / FOLLOW_TIME_CONSTANT_MS);
+    const safeTime = finiteNumber(time, finiteNumber(lastFrameTimeRef.current, 0) + 16);
+    const previous = finiteNumber(lastFrameTimeRef.current, safeTime - 16);
+    const dt = Math.max(1, safeTime - previous);
+    lastFrameTimeRef.current = safeTime;
+    const rawAlpha = 1 - Math.exp(-dt / FOLLOW_TIME_CONSTANT_MS);
+    const alpha = Number.isFinite(rawAlpha) ? rawAlpha : 1;
     el.scrollTop = current + delta * alpha;
     rafRef.current = window.requestAnimationFrame(runFrame);
   }, [scrollRef, stopFollow]);
@@ -146,7 +153,7 @@ export function useContinuousBottomScroll({
     if (!el || !activeRef.current || !isStickyRef.current) return;
 
     const target = maxScrollTop(el);
-    const delta = target - el.scrollTop;
+    const delta = target - finiteNumber(el.scrollTop);
     if (delta <= 0.5) {
       // Already at bottom: a no-op follow must NOT consume an armed instant landing — the arm is
       // reserved for the first *meaningful* growth (the async hydrate after a switch).
@@ -163,7 +170,8 @@ export function useContinuousBottomScroll({
       return;
     }
 
-    if (delta > largeJumpRef.current || prefersReducedMotion()) {
+    const largeJump = finiteNumber(largeJumpRef.current, DEFAULT_LARGE_JUMP_PX);
+    if (delta > largeJump || prefersReducedMotion()) {
       el.scrollTop = target;
       stopFollow();
       return;

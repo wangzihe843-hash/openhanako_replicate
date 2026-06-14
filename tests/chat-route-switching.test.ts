@@ -219,6 +219,55 @@ describe("chat route model switch guard", () => {
     handlers.onClose({}, ws);
   });
 
+  it("preserves abort metadata on session status broadcasts", () => {
+    let createHandlers;
+    let subscriber;
+    const upgradeWebSocket = vi.fn((factory) => {
+      createHandlers = factory;
+      return () => new Response(null);
+    });
+    const hub = {
+      subscribe: vi.fn((fn) => {
+        subscriber = fn;
+      }),
+      send: vi.fn(async () => {}),
+    };
+    const engine = {
+      agentName: "Hana",
+      abortAllStreaming: vi.fn(async () => {}),
+      getSessionByPath: vi.fn(() => ({ entries: [] })),
+      isSessionStreaming: vi.fn(() => false),
+      isSessionSwitching: vi.fn(() => false),
+      steerSession: vi.fn(() => false),
+      slashDispatcher: null,
+    };
+
+    createChatRoute(engine, hub, { upgradeWebSocket });
+    const handlers = createHandlers({});
+    const ws = { readyState: 1, send: vi.fn() };
+    handlers.onOpen({}, ws);
+
+    subscriber?.({ type: "session_status", isStreaming: true }, "/tmp/reason-session.jsonl");
+    subscriber?.({
+      type: "session_status",
+      isStreaming: false,
+      aborted: true,
+      reason: "turn_stall_timeout",
+    }, "/tmp/reason-session.jsonl");
+
+    const payloads = ws.send.mock.calls.map(([raw]) => JSON.parse(raw));
+    const finish = payloads.find((payload) => payload.type === "status" && payload.isStreaming === false);
+    expect(finish).toMatchObject({
+      type: "status",
+      sessionPath: "/tmp/reason-session.jsonl",
+      isStreaming: false,
+      aborted: true,
+      reason: "turn_stall_timeout",
+    });
+
+    handlers.onClose({}, ws);
+  });
+
   it("keeps remote and host clients on the same server-side session stream", async () => {
     let createHandlers;
     let subscriber;
@@ -703,7 +752,9 @@ describe("chat route model switch guard", () => {
 
       vi.advanceTimersByTime(10);
       await Promise.resolve();
-      expect(hub.abort).toHaveBeenCalledWith("/tmp/stall-watchdog.jsonl");
+      expect(hub.abort).toHaveBeenCalledWith("/tmp/stall-watchdog.jsonl", {
+        reason: "turn_stall_timeout",
+      });
 
       handlers.onClose({}, ws);
     } finally {
@@ -711,6 +762,55 @@ describe("chat route model switch guard", () => {
       else process.env.HANA_TURN_STALL_ABORT_MS = prevTimeout;
       vi.useRealTimers();
     }
+  });
+
+  it("passes a user abort reason through the websocket stop path", async () => {
+    let createHandlers;
+    let subscriber;
+    const upgradeWebSocket = vi.fn((factory) => {
+      createHandlers = factory;
+      return () => new Response(null);
+    });
+    const hub = {
+      subscribe: vi.fn((fn) => {
+        subscriber = fn;
+      }),
+      send: vi.fn(async () => {}),
+      abort: vi.fn(async () => false),
+    };
+    const engine = {
+      agentName: "Hana",
+      abortAllStreaming: vi.fn(async () => {}),
+      getSessionByPath: vi.fn(() => ({ entries: [] })),
+      isSessionStreaming: vi.fn(() => false),
+      isSessionSwitching: vi.fn(() => false),
+      steerSession: vi.fn(() => false),
+      slashDispatcher: null,
+    };
+
+    createChatRoute(engine, hub, { upgradeWebSocket });
+    const handlers = createHandlers({});
+    const ws = { readyState: 1, send: vi.fn() };
+    handlers.onOpen({}, ws);
+
+    subscriber?.({ type: "session_status", isStreaming: true }, "/tmp/user-abort.jsonl");
+    handlers.onMessage({
+      data: JSON.stringify({ type: "abort", sessionPath: "/tmp/user-abort.jsonl" }),
+    }, ws);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(hub.abort).toHaveBeenCalledWith("/tmp/user-abort.jsonl", { reason: "user_abort" });
+    const payloads = ws.send.mock.calls.map(([raw]) => JSON.parse(raw));
+    const finish = payloads.find((payload) => payload.type === "status" && payload.isStreaming === false);
+    expect(finish).toMatchObject({
+      type: "status",
+      sessionPath: "/tmp/user-abort.jsonl",
+      isStreaming: false,
+      aborted: true,
+      reason: "user_abort",
+    });
+
+    handlers.onClose({}, ws);
   });
 
   it("keeps standalone deferred results immediate across repeated deliveries", () => {

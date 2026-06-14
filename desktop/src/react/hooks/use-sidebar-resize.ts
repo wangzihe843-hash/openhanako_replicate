@@ -50,6 +50,22 @@ export function useSidebarResize(): void {
       return Math.max(min, Math.min(upper, value));
     }
 
+    function createResizeEventShield(): () => void {
+      const shield = document.createElement('div');
+      shield.setAttribute('data-resize-event-shield', '');
+      Object.assign(shield.style, {
+        position: 'fixed',
+        inset: '0',
+        zIndex: '2147483647',
+        cursor: 'col-resize',
+        background: 'transparent',
+      });
+      document.body.appendChild(shield);
+      return () => {
+        shield.remove();
+      };
+    }
+
     function getPreviewMaxWidth(): number {
       const state = useStore.getState();
       const occupiedWidth =
@@ -136,10 +152,12 @@ export function useSidebarResize(): void {
       };
 
       let activeDragCleanup: (() => void) | null = null;
+      let removeResizeShield: (() => void) | null = null;
 
       const onMouseDown = (e: MouseEvent) => {
         activeDragCleanup?.();
         activeDragCleanup = null;
+        removeResizeShield = null;
 
         e.preventDefault();
         const sidebarTarget = getSidebar();
@@ -150,6 +168,7 @@ export function useSidebarResize(): void {
         let liveWidth = startW;
         handle.classList.add('active');
         document.body.classList.add('resizing');
+        removeResizeShield = createResizeEventShield();
 
         function onMove(e: MouseEvent): void {
           const delta = isRight ? startX - e.clientX : e.clientX - startX;
@@ -165,6 +184,8 @@ export function useSidebarResize(): void {
           handle!.classList.remove('active');
           document.body.classList.remove('resizing');
           handle!.style.setProperty('--handle-y', '-999px');
+          removeResizeShield?.();
+          removeResizeShield = null;
           const w = liveWidth;
           localStorage.setItem(storageKey, String(w));
           document.removeEventListener('mousemove', onMove);
@@ -178,6 +199,8 @@ export function useSidebarResize(): void {
           handle.classList.remove('active');
           document.body.classList.remove('resizing');
           handle.style.setProperty('--handle-y', '-999px');
+          removeResizeShield?.();
+          removeResizeShield = null;
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
           activeDragCleanup = null;

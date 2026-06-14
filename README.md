@@ -176,3 +176,4 @@ npm run typecheck
 - [安全政策](SECURITY.md)
 - [插件开发指南](PLUGINS.md)
 - [贡献指南](CONTRIBUTING.md)
+- [国内 AtomGit 托管](https://gitcode.com/liliMozi/OpenHanako)

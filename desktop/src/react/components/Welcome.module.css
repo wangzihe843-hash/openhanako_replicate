@@ -106,10 +106,22 @@
     animation: hana-folder-history-in var(--duration-fast) var(--ease-out);
 }
 
+.folderHistoryList {
+    display: flex;
+    flex-direction: column;
+}
+
+.folderHistoryListScrollable {
+    max-height: calc(30px * 5);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
 .folderHistoryItem {
     display: flex;
     align-items: center;
     gap: 0.35rem;
+    min-height: 30px;
     padding: 6px 12px;
     font-size: 0.75rem;
     color: var(--text);
@@ -180,6 +192,7 @@
     display: flex;
     align-items: center;
     gap: 0.35rem;
+    min-height: 30px;
     padding: 6px 12px;
     font-size: 0.75rem;
     color: var(--text-muted);

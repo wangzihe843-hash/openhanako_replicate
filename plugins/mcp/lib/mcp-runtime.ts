@@ -27,13 +27,13 @@ const AUTH_TYPES = new Set(["none", "bearer", "oauth"]);
 const MASKED_SECRET = "********";
 
 // Auto-reconnect backoff, modelled on the MCP SDK's reconnection options:
-// start at 1s, double each attempt, cap at ~30s, give up after a bounded number
-// of attempts and leave the connector "failed" for manual recovery. These are
-// runtime-only knobs (not persisted); per-connector opt-out is `autoReconnect`.
+// start at 1s, double each attempt, and cap at ~30s. Reconnect remains
+// continuous while intent gates allow it; user stop, global disable, removal,
+// autoReconnect=false, and auth-terminal failures are the only terminal exits.
+// These are runtime-only knobs (not persisted).
 const RECONNECT_INITIAL_DELAY_MS = 1_000;
 const RECONNECT_MAX_DELAY_MS = 30_000;
 const RECONNECT_GROW_FACTOR = 2;
-const RECONNECT_MAX_ATTEMPTS = 8;
 
 // Refresh an OAuth access token this long before its stated expiry, so a request
 // firing right at the boundary still goes out with a valid token (clock skew +
@@ -46,7 +46,6 @@ const OAUTH_REFRESH_LEEWAY_MS = 60_000;
 // tool) without ever being written to disk.
 const STATUS_CONNECTING = "connecting";
 const STATUS_RECONNECTING = "reconnecting";
-const STATUS_FAILED = "failed";
 const STATUS_NEEDS_AUTH = "needs-auth";
 
 function normalizeTool(tool) {
@@ -401,7 +400,7 @@ export class McpRuntime {
   }
 
   // Single status derivation: a transient runtime override (connecting/
-  // reconnecting/failed/needs-auth) wins; otherwise read liveness off the
+  // reconnecting/needs-auth) wins; otherwise read liveness off the
   // owning client. Never sourced from anywhere else.
   connectorStatusFor(id) {
     const override = this.connectorStatus.get(id);
@@ -693,13 +692,6 @@ export class McpRuntime {
       if (isAuthError(err)) {
         this._cancelReconnect(id);
         this.connectorStatus.set(id, STATUS_NEEDS_AUTH);
-        return;
-      }
-      if (attempt >= RECONNECT_MAX_ATTEMPTS) {
-        // Exhausted the budget — give up and wait for a manual start.
-        this.reconnectState.delete(id);
-        this.connectorStatus.set(id, STATUS_FAILED);
-        this.ctx.log.warn?.(`mcp connector ${id} failed to reconnect after ${attempt} attempts`);
         return;
       }
       // Still re-checking intent before scheduling the next attempt.

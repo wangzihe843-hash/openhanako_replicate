@@ -99,6 +99,7 @@ export function createAccessRoute({
       }, { now: now() });
       runtimeState.configuredMode = network.mode;
       runtimeState.configuredListenHost = network.listenHost;
+      runtimeState.configuredPort = network.listenPort;
       recordSecurityAuditEvent(c, engine, {
         action: "access.network.update",
         target: "server-network",

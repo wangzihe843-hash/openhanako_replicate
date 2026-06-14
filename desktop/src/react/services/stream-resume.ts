@@ -20,6 +20,7 @@ let _applyStreamingStatus: ((
   isStreaming: boolean,
   sessionPath: string | null,
   identity?: { streamId?: string | null; turnId?: string | null },
+  options?: { force?: boolean },
 ) => boolean | void) | null = null;
 
 export function injectHandlers(
@@ -28,6 +29,7 @@ export function injectHandlers(
     isStreaming: boolean,
     sessionPath: string | null,
     identity?: { streamId?: string | null; turnId?: string | null },
+    options?: { force?: boolean },
   ) => boolean | void,
 ): void {
   _handleServerMessage = handleServerMessage;
@@ -141,6 +143,10 @@ function resolveRuntimeStreaming(msg: any): boolean {
     : !!msg.isStreaming;
 }
 
+function shouldForceApplyRuntimeStreamingStatus(msg: any): boolean {
+  return msg?.runtimeIsStreaming === false;
+}
+
 function prepareStreamMeta(sessionPath: string, streamId: string | null, opts: { resetConsumed?: boolean } = {}): SessionStreamMeta | null {
   const meta = getSessionStreamMeta(sessionPath);
   if (!meta) return null;
@@ -232,7 +238,7 @@ async function rebuildSessionFromResume(msg: any, opts: { finishTurnBeforeHydrat
 
     _applyStreamingStatus?.(resolveRuntimeStreaming(msg), sessionPath, {
       streamId: msg.streamId || null,
-    });
+    }, { force: shouldForceApplyRuntimeStreamingStatus(msg) });
 
     const ws = getWebSocket();
     if (isCurrentSession && useStore.getState().currentSessionPath === sessionPath && ws?.readyState === WebSocket.OPEN && msg.isStreaming) {
@@ -272,7 +278,7 @@ export function replayStreamResume(msg: any): void {
 
   _applyStreamingStatus?.(resolveRuntimeStreaming(msg), sessionPath, {
     streamId: msg.streamId || null,
-  });
+  }, { force: shouldForceApplyRuntimeStreamingStatus(msg) });
 }
 
 registerStreamResumeMetaInvalidator((sessionPath) => {

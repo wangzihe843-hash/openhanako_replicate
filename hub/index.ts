@@ -282,10 +282,11 @@ export class Hub {
   /**
    * 中断生成（支持指定 session）
    */
-  async abort(sessionPath) {
+  async abort(sessionPath, options: any = {}) {
+    const hasOptions = options && Object.keys(options).length > 0;
     return sessionPath
-      ? this._engine.abortSession(sessionPath)
-      : this._engine.abort();
+      ? (hasOptions ? this._engine.abortSession(sessionPath, options) : this._engine.abortSession(sessionPath))
+      : (hasOptions ? this._engine.abort(options) : this._engine.abort());
   }
 
   // ──────────── 调度器管理 ────────────
@@ -503,10 +504,11 @@ export class Hub {
     }));
 
     // ── session:abort ──
-    this._sessionHandlerCleanups.push(bus.handle("session:abort", async ({ sessionPath }: any = {}) => {
+    this._sessionHandlerCleanups.push(bus.handle("session:abort", async ({ sessionPath, reason }: any = {}) => {
       const sp = sessionPath;
       if (!sp) return { aborted: false };
-      const result = await engine.abortSession(sp);
+      const options = typeof reason === "string" && reason.trim() ? { reason: reason.trim() } : null;
+      const result = options ? await engine.abortSession(sp, options) : await engine.abortSession(sp);
       return { aborted: !!result };
     }));
 

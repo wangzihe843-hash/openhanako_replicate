@@ -108,6 +108,13 @@ const TOOL_RESULT_FORMATS = new Set([
   "part",
 ]);
 
+const OUTPUT_CAP_FIELDS = new Set([
+  "max_tokens",
+  "max_completion_tokens",
+  "max_output_tokens",
+  "maxOutputTokens",
+]);
+
 export function normalizeModelProtocolCompat(value: any): Record<string, any> | null {
   if (!isPlainObject(value)) return null;
   const out: Record<string, any> = {};
@@ -124,6 +131,10 @@ export function normalizeModelProtocolCompat(value: any): Record<string, any> | 
 
   if (value.hanaVideoInput === true) out.hanaVideoInput = true;
   if (value.hanaAudioInput === true) out.hanaAudioInput = true;
+  if (value.outputCapRequired === true) out.outputCapRequired = true;
+  if (typeof value.outputCapField === "string" && OUTPUT_CAP_FIELDS.has(value.outputCapField)) {
+    out.outputCapField = value.outputCapField;
+  }
 
   return Object.keys(out).length > 0 ? out : null;
 }

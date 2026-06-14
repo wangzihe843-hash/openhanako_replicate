@@ -147,6 +147,21 @@ export function validateMediaParameters(parameters: any = {}, schema: any = {}) 
   }
 }
 
+function applyExplicitImageSizePrecedence(parameters: any = {}, explicit: any = {}) {
+  if (!isObject(parameters) || !isObject(explicit)) return parameters;
+  const hasExplicitResolution = Object.prototype.hasOwnProperty.call(explicit, "resolution");
+  const hasExplicitSize = Object.prototype.hasOwnProperty.call(explicit, "size");
+  const hasExplicitResolutionType = Object.prototype.hasOwnProperty.call(explicit, "resolution_type");
+
+  if (hasExplicitResolution && !hasExplicitSize) delete parameters.size;
+  if (hasExplicitResolution && !hasExplicitResolutionType) delete parameters.resolution_type;
+  if (hasExplicitSize && !hasExplicitResolution) delete parameters.resolution;
+  if (hasExplicitSize && !hasExplicitResolutionType) delete parameters.resolution_type;
+  if (hasExplicitResolutionType && !hasExplicitResolution) delete parameters.resolution;
+  if (hasExplicitResolutionType && !hasExplicitSize) delete parameters.size;
+  return parameters;
+}
+
 function validateReferenceImageLimits({
   input = {},
   inputLimits = null,
@@ -185,12 +200,14 @@ export function resolveMediaParameters({
   const parameterSchema = mode?.parameterSchema || model?.parameterSchema || null;
   const inputLimits = resolveInputLimits(model, mode);
   validateReferenceImageLimits({ input, inputLimits, providerId, modelId, modeId });
+  const explicit = explicitParameters(kind, input, parameterSchema);
   const resolvedParameters = compactObject({
     ...(isObject(mode?.defaults) ? clone(mode.defaults) : {}),
     ...providerDefaultsForMode(providerDefaults, modelId, modeId),
     ...(isObject(input.options) ? input.options : {}),
-    ...explicitParameters(kind, input, parameterSchema),
+    ...explicit,
   });
+  if (kind === "image") applyExplicitImageSizePrecedence(resolvedParameters, explicit);
   validateMediaParameters(resolvedParameters, parameterSchema);
   return {
     modeId,

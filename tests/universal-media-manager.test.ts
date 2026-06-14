@@ -270,6 +270,31 @@ describe("UniversalMediaManager plugin image input boundary", () => {
 });
 
 describe("media parameter input limits", () => {
+  it("lets explicit image resolution override a provider default size", () => {
+    const result = resolveMediaParameters({
+      kind: "image",
+      providerId: "openai-codex-oauth",
+      input: {
+        prompt: "a classroom cover",
+        resolution: "2k",
+        ratio: "16:9",
+      },
+      providerDefaults: {
+        size: "4K",
+      },
+      model: {
+        id: "gpt-image-2",
+        parameterSchema: { type: "object", properties: {} },
+      },
+    });
+
+    expect(result.resolvedParameters).toMatchObject({
+      resolution: "2k",
+      ratio: "16:9",
+    });
+    expect(result.resolvedParameters).not.toHaveProperty("size");
+  });
+
   it("rejects reference images when the selected model mode is text-only", () => {
     expect(() => resolveMediaParameters({
       kind: "image",
@@ -310,6 +335,93 @@ describe("media parameter input limits", () => {
         }],
       },
     })).toThrow(/at most 3 reference images/);
+  });
+});
+
+describe("UniversalMediaManager adapter registration bus contract", () => {
+  const roots: string[] = [];
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts module loggers that expose log/warn/error but no info method", () => {
+    const root = makeRoot();
+    roots.push(root);
+    const manager = new UniversalMediaManager({
+      hanakoHome: root,
+      preferences: makePreferences(root),
+      providerRegistry: {
+        getMediaProviders: () => [],
+        resolveMediaModel: () => {
+          throw new Error("not configured");
+        },
+      },
+      registerSessionFile: () => {},
+      logger: {
+        log: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      },
+    });
+    const bus = makeBus();
+    manager.start(bus);
+
+    const result = bus.handlers.get("media-gen:register-adapter")({
+      adapter: {
+        id: "jimeng-cli-images",
+        protocolId: "jimeng-cli-images",
+        types: ["image"],
+        submit: vi.fn(),
+      },
+    });
+    expect(result).toEqual({ ok: true });
+    expect(manager.registry.getProtocol("jimeng-cli-images")).toMatchObject({
+      id: "jimeng-cli-images",
+    });
+
+    manager.stop();
+  });
+
+  it("keeps adapter registration independent from logger failures", () => {
+    const root = makeRoot();
+    roots.push(root);
+    const manager = new UniversalMediaManager({
+      hanakoHome: root,
+      preferences: makePreferences(root),
+      providerRegistry: {
+        getMediaProviders: () => [],
+        resolveMediaModel: () => {
+          throw new Error("not configured");
+        },
+      },
+      registerSessionFile: () => {},
+      logger: {
+        info: vi.fn(() => {
+          throw new Error("logger failed");
+        }),
+        warn: vi.fn(),
+        error: vi.fn(),
+      },
+    });
+    const bus = makeBus();
+    manager.start(bus);
+
+    expect(() => bus.handlers.get("media-gen:register-adapter")({
+      adapter: {
+        id: "jimeng-cli-images",
+        protocolId: "jimeng-cli-images",
+        types: ["image"],
+        submit: vi.fn(),
+      },
+    })).not.toThrow();
+    expect(manager.registry.getProtocol("jimeng-cli-images")).toMatchObject({
+      id: "jimeng-cli-images",
+    });
+
+    manager.stop();
   });
 });
 

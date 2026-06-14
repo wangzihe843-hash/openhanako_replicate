@@ -132,12 +132,18 @@ describe("server startup diagnostics contract", () => {
 
   it("reuses only trusted server-info after token health and server identity checks", () => {
     const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+    const serverSource = fs.readFileSync(path.join(root, "server", "index.ts"), "utf-8");
 
     expect(mainSource).toContain("verifyReusableServerInfo");
     expect(mainSource).toContain("/api/health");
     expect(mainSource).toContain("/api/server/identity");
     expect(mainSource).toContain("Authorization: `Bearer ${existingInfo.token}`");
     expect(mainSource).toContain("identity.studioId");
+    expect(mainSource).toContain("readDesiredServerNetworkConfig");
+    expect(mainSource).toContain("describeReusableServerNetworkMismatch");
+    expect(mainSource).toContain("terminate: isDesktopOwnedServerInfo(existingInfo)");
+    expect(serverSource).toContain("configuredPort: serverRuntimeState.configuredPort");
+    expect(serverSource).toContain("network: createServerRuntimeNetworkSummary()");
   });
 
   it("does not terminate standalone servers that desktop only attached to", () => {
@@ -162,6 +168,8 @@ describe("server startup diagnostics contract", () => {
     expect(mainSource).toContain("extractRootServerStartupError");
     expect(mainSource).toContain("buildLaunchFailureDialogDetail");
     expect(mainSource).toContain("const rootServerError = structuredPortConflict || extractRootServerStartupError(_serverLogs)");
+    expect(mainSource).toContain("tail.trimStart().startsWith(rootServerError)");
+    expect(mainSource).not.toContain("tail.includes(rootServerError)");
     expect(mainSource).toContain("return `${rootServerError}\\n\\n${tail}`");
   });
 

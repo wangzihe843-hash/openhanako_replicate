@@ -9,6 +9,13 @@ function readChatCss(): string {
   );
 }
 
+function readTimelineNavigatorSource(): string {
+  return fs.readFileSync(
+    path.join(process.cwd(), 'desktop/src/react/components/chat/ChatTimelineNavigator.tsx'),
+    'utf8',
+  );
+}
+
 function cssBlock(css: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return css.match(new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`))?.groups?.body || '';
@@ -37,5 +44,15 @@ describe('ChatTimelineNavigator layout', () => {
     expect(pointerAutoSelectors.some(selector => selector.includes('.timelineNavExpanded .timelineMarker'))).toBe(false);
     expect(pointerAutoSelectors.some(selector => selector.includes('.timelineNavExpanded .timelineLabel'))).toBe(true);
     expect(pointerAutoSelectors.some(selector => selector.includes('.timelineLine'))).toBe(true);
+  });
+
+  it('guards DOM measurements before writing marker layout and CSS variables', () => {
+    const source = readTimelineNavigatorSource();
+
+    expect(source).toContain('finiteNumber(panel.scrollHeight)');
+    expect(source).toContain('finiteNumber(panel.scrollTop)');
+    expect(source).toContain('finiteNumber(rect.top)');
+    expect(source).toContain('markerWidthEm');
+    expect(source).not.toContain('panel.scrollTop + rect.top - panelRect.top');
   });
 });

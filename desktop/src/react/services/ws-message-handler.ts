@@ -210,6 +210,7 @@ export function applyStreamingStatus(
   isStreaming: boolean,
   sessionPath: string | null,
   identity: { streamId?: string | null; turnId?: string | null } = {},
+  options: { force?: boolean } = {},
 ): boolean {
   // 元数据层：把 isStreaming 视为 sessionPath 维度的权威信号，统一写回 streamingSessions。
   // 这一层不分焦点，任何来源（普通 status、stream_resume 恢复）都必须到达这里，
@@ -220,7 +221,9 @@ export function applyStreamingStatus(
       useStore.getState().addStreamingSession(sessionPath, identity);
       useStore.getState().clearInlineError(sessionPath);
     } else {
-      const applied = useStore.getState().removeStreamingSession(sessionPath, identity);
+      const applied = options.force
+        ? useStore.getState().forceRemoveStreamingSession(sessionPath)
+        : useStore.getState().removeStreamingSession(sessionPath, identity);
       if (!applied) return false;
     }
   }

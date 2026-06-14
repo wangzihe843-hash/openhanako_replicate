@@ -22,6 +22,14 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('\\[');
   });
 
+  it('renders invalid KaTeX as inline error markup instead of throwing', () => {
+    expect(() => renderMarkdown(String.raw`bad math $\notACommand{$ after`)).not.toThrow();
+    const html = renderMarkdown(String.raw`bad math $\notACommand{$ after`);
+
+    expect(html).toContain('katex-error');
+    expect(html).toContain('after');
+  });
+
   it('renders Obsidian ==highlight== syntax as mark', () => {
     const html = renderMarkdown('GDP ==平减指数==');
 

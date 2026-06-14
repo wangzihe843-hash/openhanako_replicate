@@ -441,6 +441,146 @@ describe("SessionCoordinator", () => {
     expect(meta["second.jsonl"].thinkingLevel).toBe("medium");
   });
 
+  it("persists a new session before the first assistant response and keeps the prefix non-duplicated", async () => {
+    const agentDir = path.join(tempDir, "agents", "hana");
+    const sessionDir = path.join(agentDir, "sessions");
+    const sessionPath = path.join(sessionDir, "first-turn-failure.jsonl");
+    fs.mkdirSync(sessionDir, { recursive: true });
+
+    const header = {
+      type: "session",
+      version: 3,
+      id: "sess-first-turn",
+      timestamp: "2026-06-14T12:00:00.000Z",
+      cwd: tempDir,
+    };
+    const sessionManager: any = {
+      fileEntries: [header],
+      flushed: false,
+      getCwd: () => tempDir,
+      getSessionFile: () => sessionPath,
+      _rewriteFile: vi.fn(function () {
+        fs.writeFileSync(
+          sessionPath,
+          `${this.fileEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+          "utf-8",
+        );
+      }),
+    };
+    let listener: any = null;
+    const model = { id: "m", provider: "test" };
+    const agent = {
+      id: "hana",
+      name: "Hana",
+      agentName: "Hana",
+      agentDir,
+      sessionDir,
+      sessionMemoryEnabled: true,
+      memoryMasterEnabled: true,
+      config: {},
+      setMemoryEnabled: vi.fn(),
+      buildSystemPrompt: () => "BASE",
+      tools: [],
+    };
+    const coordinator = new SessionCoordinator({
+      agentsDir: path.join(tempDir, "agents"),
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: model,
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: (level) => level,
+      }),
+      getResourceLoader: () => ({
+        getSystemPrompt: () => "BASE",
+        getAppendSystemPrompt: () => [],
+        getExtensions: () => ({ extensions: [], errors: [] }),
+        getSkills: () => ({ skills: [], diagnostics: [] }),
+        getAgentsFiles: () => ({ agentsFiles: [] }),
+      }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [], customTools: [] }),
+      emitEvent: vi.fn(),
+      getHomeCwd: () => tempDir,
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map([["hana", agent]]),
+      listAgents: () => [agent],
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+    });
+
+    sessionManagerCreateMock.mockReturnValueOnce(sessionManager);
+    createAgentSessionMock.mockResolvedValueOnce({
+      session: {
+        sessionManager,
+        subscribe: vi.fn((fn) => {
+          listener = fn;
+          return vi.fn();
+        }),
+        setActiveToolsByName: vi.fn(),
+        setThinkingLevel: vi.fn(),
+        model,
+      },
+    });
+
+    await coordinator.createSession(null, tempDir, true);
+
+    expect(fs.existsSync(sessionPath)).toBe(true);
+    expect(sessionManager.flushed).toBe(true);
+    expect(JSON.parse(fs.readFileSync(sessionPath, "utf-8").trim())).toMatchObject({
+      type: "session",
+      id: "sess-first-turn",
+    });
+    expect((await coordinator.listSessions()).some((session) => session.path === sessionPath)).toBe(true);
+
+    const userEntry = {
+      type: "message",
+      id: "u1",
+      parentId: null,
+      timestamp: "2026-06-14T12:00:01.000Z",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "look at this image" }],
+        timestamp: Date.now(),
+      },
+    };
+    listener?.({ type: "message_end", message: userEntry.message });
+    sessionManager.fileEntries.push(userEntry);
+    sessionManager.flushed = false;
+    await Promise.resolve();
+
+    let lines = fs.readFileSync(sessionPath, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines.filter((entry) => entry.type === "session")).toHaveLength(1);
+    expect(lines.filter((entry) => entry.type === "message")).toHaveLength(1);
+    expect(sessionManager.flushed).toBe(true);
+
+    const assistantEntry = {
+      type: "message",
+      id: "a1",
+      parentId: "u1",
+      timestamp: "2026-06-14T12:00:02.000Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        timestamp: Date.now(),
+      },
+    };
+    sessionManager.fileEntries.push(assistantEntry);
+    if (sessionManager.flushed) {
+      fs.appendFileSync(sessionPath, `${JSON.stringify(assistantEntry)}\n`, "utf-8");
+    } else {
+      sessionManager._rewriteFile();
+    }
+
+    lines = fs.readFileSync(sessionPath, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines.filter((entry) => entry.type === "session")).toHaveLength(1);
+    expect(lines.filter((entry) => entry.type === "message")).toHaveLength(2);
+  });
+
   it("uses the model-level thinking default for new sessions without an explicit draft", async () => {
     const agentDir = path.join(tempDir, "agents", "hana");
     const sessionDir = path.join(agentDir, "sessions");

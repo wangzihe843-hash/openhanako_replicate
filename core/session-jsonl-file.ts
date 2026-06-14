@@ -221,3 +221,41 @@ export function repairOversizedSessionEntriesInFile(sessionPath, opts: { maxLine
 export function writeSessionEntriesFile(sessionPath, entries) {
   fs.writeFileSync(sessionPath, serializeSessionEntries(entries));
 }
+
+function hasAssistantEntry(entries) {
+  return Array.isArray(entries)
+    && entries.some((entry) => entry?.type === "message" && entry.message?.role === "assistant");
+}
+
+/**
+ * Pi SDK keeps first-turn entries in memory until an assistant message arrives.
+ * Hana needs the session file to exist earlier for sidebar, archive, restart,
+ * and failed pre-prompt work such as auxiliary vision. This helper writes the
+ * manager's current in-memory entries and marks the SDK manager as flushed so
+ * the next assistant append does not duplicate the already-written prefix.
+ */
+export function flushSessionManagerSnapshot(sessionManager, {
+  preAssistantOnly = false,
+}: { preAssistantOnly?: boolean } = {}) {
+  if (!sessionManager || typeof sessionManager !== "object") return false;
+  if (typeof sessionManager._rewriteFile !== "function") return false;
+  const entries = Array.isArray(sessionManager.fileEntries) ? sessionManager.fileEntries : null;
+  if (!entries?.length) return false;
+  if (preAssistantOnly && hasAssistantEntry(entries)) return false;
+  sessionManager._rewriteFile();
+  if ("flushed" in sessionManager) sessionManager.flushed = true;
+  return true;
+}
+
+export function schedulePreAssistantSessionManagerFlush(sessionManager) {
+  const enqueue = typeof queueMicrotask === "function"
+    ? queueMicrotask
+    : (fn) => Promise.resolve().then(fn);
+  enqueue(() => {
+    try {
+      flushSessionManagerSnapshot(sessionManager, { preAssistantOnly: true });
+    } catch {
+      // Best-effort lifecycle persistence must not change prompt behavior.
+    }
+  });
+}

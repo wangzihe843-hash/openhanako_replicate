@@ -906,7 +906,7 @@ function texBracketMath(md: MarkdownItInstance): void {
 }
 
 function applyMarkdownPlugins(md: MarkdownItInstance): void {
-  md.use(mk);
+  md.use(mk, { throwOnError: false, strict: false });
   md.use(texBracketMath);
   md.use(taskLists, { enabled: false, label: true });
   md.use(obsidianImageEmbeds);

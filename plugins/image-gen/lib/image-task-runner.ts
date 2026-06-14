@@ -185,6 +185,14 @@ function explicitModelError(modelId, detail = "") {
     : t("plugin.imageGen.modelUnavailable", { modelId });
 }
 
+const IMAGE_MODE_IDS = new Set(["text2image", "image2image"]);
+
+function rejectModeAsModel(input: any = {}) {
+  const modelId = typeof input.model === "string" ? input.model.trim() : "";
+  if (!IMAGE_MODE_IDS.has(modelId)) return;
+  throw new Error(t("plugin.imageGen.modePassedAsModel", { modeId: modelId }));
+}
+
 async function availableAdapterOrThrow(adapter, submitCtx, providerId) {
   if (!adapter) throw new Error(explicitProviderError(providerId));
   if (typeof adapter.checkAuth === "function") {
@@ -317,6 +325,8 @@ async function legacyAdapterTarget(input, registry, submitCtx) {
 }
 
 export async function resolveImageTarget(input, registry, submitCtx) {
+  rejectModeAsModel(input);
+
   if (input.provider) {
     return targetFromExplicitProvider(input, registry, submitCtx);
   }
