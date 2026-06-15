@@ -551,7 +551,9 @@ export function modelSupportsDirectVideoInput(model: any, context: any = {}) {
 }
 
 function usesOpenAiVideoUrlTransport(model: any, context: any = {}) {
-  return isDashScopeEndpoint(model, context) || isMoonshotEndpoint(model, context);
+  return isDashScopeEndpoint(model, context)
+    || isMoonshotEndpoint(model, context)
+    || isOfficialMimoEndpoint(model, context);
 }
 
 function isDashScopeEndpoint(model: any, context: any = {}) {

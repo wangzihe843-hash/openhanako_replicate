@@ -805,6 +805,35 @@ describe("normalizeProviderPayload — 通用层", () => {
     });
   });
 
+  it("MiMo official video models convert SDK image_url data:video blocks to video_url", () => {
+    const payload = {
+      model: "mimo-v2.5",
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "看一下这段视频" },
+          { type: "image_url", image_url: { url: "data:video/mp4;base64,AAAA" } },
+        ],
+      }],
+    };
+
+    const result = normalizeProviderPayload(payload, {
+      id: "mimo-v2.5",
+      provider: "mimo",
+      api: "openai-completions",
+      input: ["text", "image"],
+      video: true,
+      audio: true,
+      baseUrl: "https://api.xiaomimimo.com/v1",
+    }, { mode: "chat" });
+
+    expect(result).not.toBe(payload);
+    expect(result.messages[0].content).toEqual([
+      { type: "text", text: "看一下这段视频" },
+      { type: "video_url", video_url: { url: "data:video/mp4;base64,AAAA" } },
+    ]);
+  });
+
   it("Zhipu payloads remove OpenAI-only fields and normalize reasoning/output controls", () => {
     const payload = {
       model: "glm-4.7-flash",

@@ -56,6 +56,21 @@ describe("model video capability transport", () => {
     })).toBe(MODEL_VIDEO_TRANSPORTS.OPENAI_VIDEO_URL);
   });
 
+  it("allows official MiMo video models through OpenAI video_url transport", () => {
+    const model = {
+      id: "mimo-v2.5",
+      provider: "mimo",
+      api: "openai-completions",
+      input: ["text", "image"],
+      video: true,
+      baseUrl: "https://api.xiaomimimo.com/v1",
+    };
+
+    expect(modelSupportsVideoInput(model)).toBe(true);
+    expect(resolveModelVideoInputTransport(model)).toBe(MODEL_VIDEO_TRANSPORTS.OPENAI_VIDEO_URL);
+    expect(modelSupportsDirectVideoInput(model)).toBe(true);
+  });
+
   it("does not infer video transport for unknown OpenAI-compatible providers", () => {
     expect(resolveModelVideoInputTransport({
       id: "custom-video",
