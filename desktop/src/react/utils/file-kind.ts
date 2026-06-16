@@ -36,6 +36,10 @@ export function kindOfFileName(name: string, mimeType?: string): FileKind {
   return inferKindByExt(extOfName(name));
 }
 
+export function isMarkdownFileName(name: string | undefined): boolean {
+  return inferKindByExt(extOfName(name || '')) === 'markdown';
+}
+
 const MEDIA_KINDS: ReadonlySet<FileKind> = new Set(['image', 'svg', 'video']);
 
 export function isMediaKind(kind: FileKind): boolean {

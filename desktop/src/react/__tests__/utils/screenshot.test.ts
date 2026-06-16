@@ -15,6 +15,11 @@ vi.mock('../../stores', () => ({
 
 import { takeArticleScreenshot, takeScreenshot } from '../../utils/screenshot';
 
+type TakeMarkdownFileScreenshot = (
+  filePath: string,
+  options?: { saveDir?: string | null; fileName?: string | null },
+) => Promise<void>;
+
 describe('screenshot utils', () => {
   const notices: Array<{ text: string; type: string; deskDir?: string }> = [];
   const noticeHandler = (event: Event) => {
@@ -109,6 +114,83 @@ describe('screenshot utils', () => {
       filePath: '/vault/app.ts',
       articleType: 'code',
       language: 'ts',
+    }));
+  });
+
+  it('Markdown file screenshots read the file and save under the provided workspace', async () => {
+    const hana = {
+      screenshotRender: vi.fn().mockResolvedValue({ success: true, dir: '/workspace/OH-Works/截图' }),
+    };
+    Object.assign(window, { hana });
+    window.platform = {
+      readFileSnapshot: vi.fn(async () => ({ content: '# Report', version: 'v1' })),
+    } as unknown as typeof window.platform;
+
+    const { takeMarkdownFileScreenshot } = await import('../../utils/screenshot') as {
+      takeMarkdownFileScreenshot: TakeMarkdownFileScreenshot;
+    };
+
+    await expect(takeMarkdownFileScreenshot('/workspace/report.md', { saveDir: '/workspace' })).resolves.toBeUndefined();
+
+    expect(window.platform.readFileSnapshot).toHaveBeenCalledWith('/workspace/report.md');
+    expect(hana.screenshotRender).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'article',
+      markdown: '# Report',
+      filePath: '/workspace/report.md',
+      articleType: 'markdown',
+      saveDir: '/workspace',
+    }));
+  });
+
+  it('Markdown file screenshots keep the default screenshot directory when saveDir is omitted', async () => {
+    const hana = {
+      screenshotRender: vi.fn().mockResolvedValue({ success: true, dir: '/tmp/hana-home/截图' }),
+    };
+    Object.assign(window, { hana });
+    window.platform = {
+      readFileSnapshot: vi.fn(async () => ({ content: '# Default dir', version: 'v1' })),
+    } as unknown as typeof window.platform;
+
+    const { takeMarkdownFileScreenshot } = await import('../../utils/screenshot') as {
+      takeMarkdownFileScreenshot: TakeMarkdownFileScreenshot;
+    };
+
+    await expect(takeMarkdownFileScreenshot('/tmp/report.md', { fileName: 'report.md' })).resolves.toBeUndefined();
+
+    expect(hana.screenshotRender).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'article',
+      markdown: '# Default dir',
+      filePath: '/tmp/report.md',
+      articleType: 'markdown',
+      saveDir: '/tmp/hana-home',
+    }));
+  });
+
+  it('Markdown file screenshots can use the display name when a staged path has no extension', async () => {
+    const hana = {
+      screenshotRender: vi.fn().mockResolvedValue({ success: true, dir: '/workspace/OH-Works/截图' }),
+    };
+    Object.assign(window, { hana });
+    window.platform = {
+      readFileSnapshot: vi.fn(async () => ({ content: '# Session report', version: 'v1' })),
+    } as unknown as typeof window.platform;
+
+    const { takeMarkdownFileScreenshot } = await import('../../utils/screenshot') as {
+      takeMarkdownFileScreenshot: TakeMarkdownFileScreenshot;
+    };
+
+    await expect(takeMarkdownFileScreenshot('/tmp/session-files/a1b2c3', {
+      saveDir: '/workspace',
+      fileName: 'report.md',
+    })).resolves.toBeUndefined();
+
+    expect(window.platform.readFileSnapshot).toHaveBeenCalledWith('/tmp/session-files/a1b2c3');
+    expect(hana.screenshotRender).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'article',
+      markdown: '# Session report',
+      filePath: '/tmp/session-files/a1b2c3',
+      articleType: 'markdown',
+      saveDir: '/workspace',
     }));
   });
 

@@ -11,10 +11,12 @@ import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../../stores';
 import { DeskTree } from '../../components/desk/DeskTree';
+import type { CtxMenuState } from '../../components/desk/desk-types';
 import {
   clearAppFileDragPayload,
   getActiveAppFileDragPayload,
 } from '../../utils/app-file-drag';
+import { takeMarkdownFileScreenshot } from '../../utils/screenshot';
 
 const mocks = vi.hoisted(() => ({
   loadDeskTreeFiles: vi.fn(async () => {}),
@@ -27,6 +29,10 @@ vi.mock('../../stores/desk-actions', async (importOriginal) => {
     loadDeskTreeFiles: mocks.loadDeskTreeFiles,
   };
 });
+
+vi.mock('../../utils/screenshot', () => ({
+  takeMarkdownFileScreenshot: vi.fn(async () => undefined),
+}));
 
 function makeDataTransfer() {
   return {
@@ -51,6 +57,18 @@ function renderTree() {
   );
 }
 
+function renderTreeWithMenu(onShowMenu: (state: CtxMenuState) => void) {
+  return render(
+    <DeskTree
+      sortMode="name-asc"
+      onShowMenu={onShowMenu}
+      inlineEdit={null}
+      onInlineEditChange={vi.fn()}
+      onStartCreate={vi.fn(async () => {})}
+    />,
+  );
+}
+
 describe('DeskTree drag payloads for workspace roots', () => {
   let startDrag: ReturnType<typeof vi.fn>;
 
@@ -58,8 +76,11 @@ describe('DeskTree drag payloads for workspace roots', () => {
     vi.clearAllMocks();
     clearAppFileDragPayload();
     startDrag = vi.fn();
-    window.t = ((key: string) => key) as typeof window.t;
+    window.t = ((key: string) => ({
+      'common.screenshotShare': '截图分享',
+    }[key] || key)) as typeof window.t;
     window.platform = { startDrag } as unknown as typeof window.platform;
+    vi.mocked(takeMarkdownFileScreenshot).mockClear();
     document.documentElement.removeAttribute('data-platform');
     useStore.setState({
       deskFiles: [{ name: 'report.md', isDir: false }],
@@ -143,5 +164,43 @@ describe('DeskTree drag payloads for workspace roots', () => {
     const item = container.querySelector('[data-desk-path="very-long-report-name-that-truncates.md"]');
 
     expect(item?.getAttribute('title')).toBe('very-long-report-name-that-truncates.md');
+  });
+
+  it('adds screenshot share to local Markdown workspace context menus', () => {
+    const onShowMenu = vi.fn();
+    useStore.setState({
+      deskBasePath: '/Users/me/project',
+      deskWorkspaceMountId: null,
+      deskWorkspaceNativeRoot: null,
+    } as never);
+
+    const { container } = renderTreeWithMenu(onShowMenu);
+    fireEvent.contextMenu(container.querySelector('[data-desk-path="report.md"]') as Element, { clientX: 8, clientY: 12 });
+
+    const menu = onShowMenu.mock.calls[0][0];
+    const screenshotItem = menu.items.find((item: { label?: string }) => item.label === '截图分享');
+    expect(screenshotItem).toBeTruthy();
+
+    screenshotItem.action();
+    expect(takeMarkdownFileScreenshot).toHaveBeenCalledWith('/Users/me/project/report.md', {
+      saveDir: '/Users/me/project',
+      fileName: 'report.md',
+    });
+  });
+
+  it('does not add screenshot share to non-Markdown workspace context menus', () => {
+    const onShowMenu = vi.fn();
+    useStore.setState({
+      deskBasePath: '/Users/me/project',
+      deskWorkspaceMountId: null,
+      deskWorkspaceNativeRoot: null,
+      deskFiles: [{ name: 'archive.zip', isDir: false }],
+      deskTreeFilesByPath: { '': [{ name: 'archive.zip', isDir: false }] },
+    } as never);
+
+    const { container } = renderTreeWithMenu(onShowMenu);
+    fireEvent.contextMenu(container.querySelector('[data-desk-path="archive.zip"]') as Element, { clientX: 8, clientY: 12 });
+
+    expect(onShowMenu.mock.calls[0][0].items.some((item: { label?: string }) => item.label === '截图分享')).toBe(false);
   });
 });

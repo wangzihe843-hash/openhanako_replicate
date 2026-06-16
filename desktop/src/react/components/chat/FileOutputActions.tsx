@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { isMarkdownFileName } from '../../utils/file-kind';
+import { takeMarkdownFileScreenshot } from '../../utils/screenshot';
 import styles from './Chat.module.css';
 
 interface FileOutputActionsProps {
@@ -59,6 +61,16 @@ function DownloadIcon() {
   );
 }
 
+function ScreenshotShareIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 7h3l1.5-2h7L17 7h3v12H4z" />
+      <circle cx="12" cy="13" r="3.2" />
+      <path d="M7 11h.01" />
+    </svg>
+  );
+}
+
 export function FileOutputActions({ filePath, displayName, downloadUrl, downloadName }: FileOutputActionsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
@@ -70,9 +82,11 @@ export function FileOutputActions({ filePath, displayName, downloadUrl, download
   const revealLabel = window.t('chat.fileActions.revealInFinder');
   const copyLabel = window.t('chat.fileActions.copyPath');
   const downloadLabel = window.t('chat.fileActions.downloadToDevice');
+  const screenshotShareLabel = window.t('common.screenshotShare');
   const isWebRuntime = document.documentElement.getAttribute('data-platform') === 'web';
   const canOpenLocalFile = !isWebRuntime && typeof window.platform?.openFile === 'function';
   const canRevealLocalFile = !isWebRuntime && typeof window.platform?.showInFinder === 'function';
+  const canScreenshotShare = !isWebRuntime && (isMarkdownFileName(displayName) || isMarkdownFileName(filePath));
   const resolvedDownloadName = downloadName || displayName;
 
   const closeMenu = useCallback(() => setMenuOpen(false), []);
@@ -94,6 +108,10 @@ export function FileOutputActions({ filePath, displayName, downloadUrl, download
   const copyPath = useCallback(() => {
     navigator.clipboard?.writeText?.(filePath).catch(() => {});
   }, [filePath]);
+
+  const shareScreenshot = useCallback(() => {
+    void takeMarkdownFileScreenshot(filePath, { fileName: displayName });
+  }, [displayName, filePath]);
 
   const handleMenuItem = useCallback((event: ReactMouseEvent, action: () => void) => {
     event.stopPropagation();
@@ -213,6 +231,17 @@ export function FileOutputActions({ filePath, displayName, downloadUrl, download
               <DownloadIcon />
               <span>{downloadLabel}</span>
             </a>
+          )}
+          {canScreenshotShare && (
+            <button
+              type="button"
+              className={styles.fileOutputActionMenuItem}
+              role="menuitem"
+              onClick={(event) => handleMenuItem(event, shareScreenshot)}
+            >
+              <ScreenshotShareIcon />
+              <span>{screenshotShareLabel}</span>
+            </button>
           )}
           {canRevealLocalFile && (
             <button

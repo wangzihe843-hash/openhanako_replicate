@@ -21,7 +21,9 @@ import {
 } from '../../stores/desk-actions';
 import { schedulePersistCurrentWorkspaceUiState } from '../../stores/workspace-ui-state-actions';
 import { openFilePreview } from '../../utils/file-preview';
+import { isMarkdownFileName } from '../../utils/file-kind';
 import { isWebRuntime, openMobileWorkbenchPreview } from '../../utils/remote-file-preview';
+import { takeMarkdownFileScreenshot } from '../../utils/screenshot';
 import {
   clearAppFileDragPayload,
   readAppFileDragPayload,
@@ -395,6 +397,7 @@ function TreeNode({
     const t = window.t ?? ((p: string, _vars?: Record<string, string | number>) => p);
     if (!selectedPaths.has(subdir)) onSelect(subdir, { multi: false, shift: false });
     const path = fullPath(nativeRootDir || deskBasePath, subdir);
+    const screenshotSaveDir = nativeRootDir || (!deskWorkspaceMountId ? deskBasePath : null);
     const actionEntries = getDragEntries(subdir);
     const deleteLabel = actionEntries.length > 1
       ? t('desk.ctx.deleteSelected', { count: actionEntries.length })
@@ -428,6 +431,14 @@ function TreeNode({
         ] : []),
         ...(nativeRootDir ? [
           { label: t('desk.ctx.copyPath'), action: () => navigator.clipboard.writeText(path).catch(() => {}) },
+        ] : []),
+        ...(!file.isDir && screenshotSaveDir && isMarkdownFileName(file.name) && !isWebRuntime() ? [
+          {
+            label: t('common.screenshotShare'),
+            action: () => {
+              void takeMarkdownFileScreenshot(path, { saveDir: screenshotSaveDir, fileName: file.name });
+            },
+          },
         ] : []),
         { divider: true },
         {
