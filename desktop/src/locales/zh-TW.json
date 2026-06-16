@@ -98,6 +98,15 @@
     "filesUnsupported": "頻道暫時只支援文字訊息，檔案不會加入普通聊天附件",
     "createIntroOptional": "說明"
   },
+  "skills": {
+    "panel": {
+      "title": "Skills",
+      "allTab": "全部技能",
+      "agentTabs": "按助手查看技能",
+      "previousAgent": "上一個助手",
+      "nextAgent": "下一個助手"
+    }
+  },
   "sidebar": {
     "title": "對話",
     "newChat": "新對話",

@@ -106,7 +106,7 @@
   },
   "skills": {
     "panel": {
-      "title": "Skills 管理",
+      "title": "Skills",
       "allTab": "全部技能",
       "agentTabs": "按助手查看技能",
       "previousAgent": "上一个助手",

@@ -40,7 +40,7 @@ describe('ChatSidebarContent', () => {
       'sidebar.bridgeShort': '桥接',
       'sidebar.activity': '助手活动',
       'automation.title': '任务计划',
-      'skills.panel.title': 'Skills 管理',
+      'skills.panel.title': 'Skills',
       'browser.background': '浏览器',
       'browser.backgroundHint': '浏览器',
       'settings.title': '设置',
@@ -69,7 +69,7 @@ describe('ChatSidebarContent', () => {
       />,
     );
 
-    const skillsButton = screen.getByRole('button', { name: 'Skills 管理' });
+    const skillsButton = screen.getByRole('button', { name: 'Skills' });
     expect(skillsButton.previousElementSibling).toHaveTextContent('任务计划');
 
     fireEvent.click(skillsButton);

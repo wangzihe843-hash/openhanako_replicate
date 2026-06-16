@@ -98,6 +98,15 @@
     "filesUnsupported": "チャンネルは現在テキストのみ対応しています。ファイルはチャット添付に追加されません",
     "createIntroOptional": "説明"
   },
+  "skills": {
+    "panel": {
+      "title": "Skills",
+      "allTab": "すべてのスキル",
+      "agentTabs": "アシスタント別にスキルを表示",
+      "previousAgent": "前のアシスタント",
+      "nextAgent": "次のアシスタント"
+    }
+  },
   "sidebar": {
     "title": "チャット",
     "newChat": "新しいチャット",

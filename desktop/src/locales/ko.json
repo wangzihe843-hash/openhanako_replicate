@@ -98,6 +98,15 @@
     "filesUnsupported": "채널은 현재 텍스트 메시지만 지원해요. 파일은 일반 채팅 첨부에 추가되지 않습니다",
     "createIntroOptional": "설명"
   },
+  "skills": {
+    "panel": {
+      "title": "Skills",
+      "allTab": "모든 스킬",
+      "agentTabs": "어시스턴트별 스킬 보기",
+      "previousAgent": "이전 어시스턴트",
+      "nextAgent": "다음 어시스턴트"
+    }
+  },
   "sidebar": {
     "title": "대화",
     "newChat": "새 대화",
