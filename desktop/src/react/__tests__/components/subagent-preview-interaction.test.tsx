@@ -226,6 +226,28 @@ describe('SubagentCard static resource card', () => {
     expect(screen.queryByText('subagent.status.done')).toBeNull();
   });
 
+  it('运行中概览卡不订阅 child session 的高频 text_delta', () => {
+    render(
+      <SubagentCard
+        block={{
+          taskId: 'task-a',
+          task: 'do work',
+          taskTitle: '任务：do work',
+          agentName: 'SORA',
+          streamKey: '/session/subagent-a',
+          streamStatus: 'running',
+        }}
+      />,
+    );
+
+    act(() => {
+      dispatchStreamKey('/session/subagent-a', { type: 'text_delta', sessionPath: '/session/subagent-a', delta: '实时正文不该进概览' });
+    });
+
+    expect(screen.getByText('任务：do work')).toBeTruthy();
+    expect(screen.queryByText('实时正文不该进概览')).toBeNull();
+  });
+
   it('运行中卡片只保留终止按钮，不提供展开入口', async () => {
     render(
       <SubagentCard

@@ -5,6 +5,7 @@ import { findOpenToolIndex, toolCallFromStartEvent, toolCallIdFromEvent } from '
 import type { ChatListItem, ChatMessage, ContentBlock } from '../../stores/chat-types';
 import { useStore } from '../../stores';
 import { loadMessages } from '../../stores/session-actions';
+import { requestStreamResume } from '../../services/stream-resume';
 import { useContinuousBottomScroll } from '../../hooks/use-continuous-bottom-scroll';
 import { ChatTranscript } from './ChatTranscript';
 import styles from './Chat.module.css';
@@ -149,6 +150,7 @@ export function SubagentSessionPreview({ taskId, sessionPath, agentId, streamSta
 
   useEffect(() => {
     if (!sessionPath || streamStatus !== 'running') return;
+    requestStreamResume(sessionPath);
 
     const updateStreamMessage = (updater: (message: ChatMessage) => ChatMessage) => {
       setStreamMessage((prev) => {

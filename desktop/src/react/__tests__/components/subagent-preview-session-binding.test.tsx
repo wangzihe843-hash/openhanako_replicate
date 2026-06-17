@@ -8,6 +8,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { useStore } from '../../stores/index';
 import { SubagentSessionPreview } from '../../components/chat/SubagentSessionPreview';
 import { loadMessages } from '../../stores/session-actions';
+import { requestStreamResume } from '../../services/stream-resume';
 import { dispatchStreamKey } from '../../services/stream-key-dispatcher';
 
 vi.mock('../../stores/session-actions', async () => {
@@ -18,7 +19,12 @@ vi.mock('../../stores/session-actions', async () => {
   };
 });
 
+vi.mock('../../services/stream-resume', () => ({
+  requestStreamResume: vi.fn(),
+}));
+
 const mockedLoadMessages = vi.mocked(loadMessages);
+const mockedRequestStreamResume = vi.mocked(requestStreamResume);
 
 function makeScrollContainerRef() {
   const el = document.createElement('div');
@@ -52,6 +58,7 @@ afterEach(() => {
 describe('SubagentSessionPreview session binding', () => {
   beforeEach(() => {
     mockedLoadMessages.mockClear();
+    mockedRequestStreamResume.mockClear();
     useStore.setState({
       currentSessionPath: '/session/current',
       userName: 'USER SELF',
@@ -80,6 +87,15 @@ describe('SubagentSessionPreview session binding', () => {
       expect(mockedLoadMessages).toHaveBeenCalledWith('/session/subagent');
     });
     expect(mockedLoadMessages).not.toHaveBeenCalledWith('/session/current');
+  });
+
+  it('打开运行中的 subagent detail 时主动请求 child session 流恢复', async () => {
+    render(<SubagentSessionPreview taskId="task-a" sessionPath="/session/subagent" streamStatus="running" scrollContainerRef={makeScrollContainerRef()} />);
+
+    await waitFor(() => {
+      expect(mockedRequestStreamResume).toHaveBeenCalledWith('/session/subagent');
+    });
+    expect(mockedRequestStreamResume).not.toHaveBeenCalledWith('/session/current');
   });
 
   it('sessionPath 未就绪时显示占位态，且不触发加载', () => {
