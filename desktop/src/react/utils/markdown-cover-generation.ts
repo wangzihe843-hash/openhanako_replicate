@@ -1,9 +1,11 @@
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import registry from '../../shared/theme-registry';
-import { PREVIEW_FILE_CHANGE_REFRESH_OPTIONS, refreshPreviewItemsFromFile } from './preview-file-refresh';
+import {
+  PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+  refreshPreviewDocumentTarget,
+} from './preview-document-refresh';
 import {
   normalizeWorkbenchContentRef,
-  refreshPreviewItemsFromRemoteWorkbenchTarget,
 } from './remote-file-preview';
 import type { RemoteWorkbenchContentRef } from '../types';
 
@@ -109,10 +111,16 @@ function coverTargetBody(input: MarkdownCoverTargetInput): Record<string, unknow
 
 async function refreshAfterCover(input: MarkdownCoverTargetInput): Promise<void> {
   if ('filePath' in input && input.filePath) {
-    await refreshPreviewItemsFromFile(input.filePath, PREVIEW_FILE_CHANGE_REFRESH_OPTIONS);
+    await refreshPreviewDocumentTarget(
+      { kind: 'local-file', filePath: input.filePath },
+      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+    );
     return;
   }
-  await refreshPreviewItemsFromRemoteWorkbenchTarget(input.target as RemoteWorkbenchContentRef);
+  await refreshPreviewDocumentTarget(
+    { kind: 'workbench-file', target: input.target as RemoteWorkbenchContentRef },
+    PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+  );
 }
 
 export function dispatchCoverNotice(text: string, type: 'success' | 'error' = 'success'): void {

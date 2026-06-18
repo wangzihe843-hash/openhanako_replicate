@@ -98,6 +98,11 @@ function appendVersionQuery(path: string, version: FileRef['version']): string {
   return `${path}${separator}v=${encodeURIComponent(token)}`;
 }
 
+function appendCacheBustQuery(path: string, attempt: number): string {
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}v=${encodeURIComponent(`${Date.now()}-${attempt}`)}`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -131,6 +136,36 @@ async function readContentForPreview(contentPath: string, previewType: string): 
     return blobToBase64(await res.blob());
   }
   return res.text();
+}
+
+const REMOTE_REFRESH_RETRY_DELAYS_MS = [80, 240, 600] as const;
+
+export interface RemoteWorkbenchRefreshOptions {
+  retryMissing?: boolean;
+  retryUnchanged?: boolean;
+  retryDelaysMs?: readonly number[];
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, Math.max(0, ms)));
+}
+
+async function readRemotePreviewContentWithRetry(
+  contentPath: string,
+  item: PreviewItem,
+  options: RemoteWorkbenchRefreshOptions,
+): Promise<string> {
+  const retryDelaysMs = options.retryDelaysMs ?? REMOTE_REFRESH_RETRY_DELAYS_MS;
+  let lastContent = '';
+  for (let attempt = 0; ; attempt += 1) {
+    const nextContent = await readContentForPreview(appendCacheBustQuery(contentPath, attempt), item.type);
+    const canRetry = attempt < retryDelaysMs.length;
+    const shouldRetryUnchanged = options.retryUnchanged && nextContent === item.content;
+    if (!canRetry || !shouldRetryUnchanged) return nextContent;
+    lastContent = nextContent;
+    await delay(retryDelaysMs[attempt] ?? 0);
+  }
+  return lastContent;
 }
 
 async function openRemoteContentPreview({
@@ -224,19 +259,29 @@ function refsPointToSameWorkbenchFile(
     && normalizedLeft.name === normalizedRight.name;
 }
 
-export async function refreshPreviewItemsFromRemoteWorkbenchTarget(target: RemoteWorkbenchContentRef): Promise<void> {
+export async function refreshPreviewItemsFromRemoteWorkbenchTarget(
+  target: RemoteWorkbenchContentRef,
+  options: RemoteWorkbenchRefreshOptions = {},
+): Promise<void> {
   const normalized = normalizeWorkbenchContentRef(target);
   const state = useStore.getState();
   const matching = (state.previewItems || []).filter(item =>
     refsPointToSameWorkbenchFile(item.remoteContentRef, normalized));
   for (const item of matching) {
     const contentPath = item.remoteContentRef?.contentPath || encodeWorkbenchContentPath(normalized);
-    const separator = contentPath.includes('?') ? '&' : '?';
-    const cacheBustedPath = `${contentPath}${separator}v=${encodeURIComponent(String(Date.now()))}`;
-    const content = await readContentForPreview(cacheBustedPath, item.type);
+    const content = await readRemotePreviewContentWithRetry(contentPath, item, options);
+    const nextVersion = normalized.version ?? item.remoteContentRef?.version ?? item.fileVersion;
+    const remoteContentRef = item.remoteContentRef
+      ? {
+          ...item.remoteContentRef,
+          version: nextVersion,
+        }
+      : item.remoteContentRef;
     upsertPreviewItem({
       ...item,
       content,
+      fileVersion: nextVersion,
+      remoteContentRef,
       status: 'available',
       missingAt: null,
     });

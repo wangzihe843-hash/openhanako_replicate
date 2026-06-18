@@ -11,15 +11,17 @@ import type { PlatformApi } from '../../types';
 
 const mocks = vi.hoisted(() => ({
   hanaFetch: vi.fn(),
-  refreshPreviewItemsFromFile: vi.fn(async () => undefined),
+  refreshPreviewDocumentTarget: vi.fn(async () => undefined),
+  changeOptions: { retryMissing: true, retryUnchanged: true },
 }));
 
 vi.mock('../../hooks/use-hana-fetch', () => ({
   hanaFetch: mocks.hanaFetch,
 }));
 
-vi.mock('../../utils/preview-file-refresh', () => ({
-  refreshPreviewItemsFromFile: mocks.refreshPreviewItemsFromFile,
+vi.mock('../../utils/preview-document-refresh', () => ({
+  PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS: mocks.changeOptions,
+  refreshPreviewDocumentTarget: mocks.refreshPreviewDocumentTarget,
 }));
 
 vi.mock('../../utils/checkpoints', () => ({

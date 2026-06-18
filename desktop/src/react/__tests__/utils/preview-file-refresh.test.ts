@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlatformApi, PreviewItem } from '../../types';
 
-const mockState: { previewItems: PreviewItem[] } = { previewItems: [] };
+const mockState: { previewItems: PreviewItem[]; openTabs: string[] } = { previewItems: [], openTabs: [] };
 const mockUpsertPreviewItem = vi.fn();
 
 vi.mock('../../stores', () => ({
@@ -20,6 +20,7 @@ vi.mock('../../stores/preview-actions', () => ({
 describe('refreshPreviewItemsFromFile', () => {
   beforeEach(() => {
     mockState.previewItems = [];
+    mockState.openTabs = [];
     mockUpsertPreviewItem.mockReset();
     window.platform = {
       readFileSnapshot: vi.fn(async (filePath: string) => ({
@@ -262,4 +263,5 @@ describe('refreshPreviewItemsFromFile', () => {
     });
     expect(noticeSpy).toHaveBeenCalled();
   });
+
 });

@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const previewRefreshMocks = vi.hoisted(() => ({
+  changeOptions: { retryMissing: true, retryUnchanged: true },
+  catchUpOptions: { retryMissing: true },
+  refreshPreviewDocumentTarget: vi.fn(async () => undefined),
+  refreshOpenPreviewDocuments: vi.fn(async () => undefined),
+}));
+
 vi.mock('../../hooks/use-stream-buffer', () => ({
   streamBufferManager: {
     handle: vi.fn(),
@@ -29,6 +36,13 @@ vi.mock('../../services/app-event-actions', () => ({
   handleAppEvent: vi.fn(),
 }));
 
+vi.mock('../../utils/preview-document-refresh', () => ({
+  PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS: previewRefreshMocks.changeOptions,
+  PREVIEW_DOCUMENT_CATCH_UP_REFRESH_OPTIONS: previewRefreshMocks.catchUpOptions,
+  refreshPreviewDocumentTarget: previewRefreshMocks.refreshPreviewDocumentTarget,
+  refreshOpenPreviewDocuments: previewRefreshMocks.refreshOpenPreviewDocuments,
+}));
+
 vi.mock('../../services/stream-resume', () => ({
   replayStreamResume: vi.fn(),
   isStreamResumeRebuilding: () => null,
@@ -51,6 +65,8 @@ import { loadSessions } from '../../stores/session-actions';
 
 afterEach(() => {
   resetSessionRefreshSchedulerForTest();
+  previewRefreshMocks.refreshPreviewDocumentTarget.mockClear();
+  previewRefreshMocks.refreshOpenPreviewDocuments.mockClear();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -473,6 +489,11 @@ describe('ws-message-handler session-scoped desktop events', () => {
         operations: ['created'],
       }),
     ]);
+    expect(previewRefreshMocks.refreshPreviewDocumentTarget).toHaveBeenCalledWith(
+      { kind: 'local-file', filePath: '/workspace/draft.md' },
+      previewRefreshMocks.changeOptions,
+    );
+    expect(previewRefreshMocks.refreshOpenPreviewDocuments).not.toHaveBeenCalled();
   });
 
   it('content_block 文件事件把 resource envelope 同步进 session registry', () => {
@@ -924,6 +945,7 @@ describe('ws-message-handler turn_end side effects', () => {
     });
 
     expect(useStore.getState().inputFocusTrigger).toBe(1);
+    expect(previewRefreshMocks.refreshOpenPreviewDocuments).toHaveBeenCalledWith(previewRefreshMocks.catchUpOptions);
   });
 
   it('background turn_end does not request input focus', () => {
