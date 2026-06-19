@@ -61,6 +61,17 @@ function withoutNestedDefaults(value: any = {}) {
   return out;
 }
 
+function filterDefaultsBySchema(defaults: any = {}, schema: any = null) {
+  if (!isObject(defaults)) return {};
+  if (!isObject(schema?.properties)) return defaults;
+  const props = schema.properties;
+  const out: Record<string, any> = {};
+  for (const [key, value] of Object.entries(defaults)) {
+    if (Object.prototype.hasOwnProperty.call(props, key)) out[key] = value;
+  }
+  return out;
+}
+
 function providerDefaultsForMode(providerDefaults: any = {}, modelId, modeId) {
   if (!isObject(providerDefaults)) return {};
   const modelDefaults = isObject(providerDefaults.models?.[modelId])
@@ -201,9 +212,10 @@ export function resolveMediaParameters({
   const inputLimits = resolveInputLimits(model, mode);
   validateReferenceImageLimits({ input, inputLimits, providerId, modelId, modeId });
   const explicit = explicitParameters(kind, input, parameterSchema);
+  const inheritedDefaults = providerDefaultsForMode(providerDefaults, modelId, modeId);
   const resolvedParameters = compactObject({
     ...(isObject(mode?.defaults) ? clone(mode.defaults) : {}),
-    ...providerDefaultsForMode(providerDefaults, modelId, modeId),
+    ...filterDefaultsBySchema(inheritedDefaults, parameterSchema),
     ...(isObject(input.options) ? input.options : {}),
     ...explicit,
   });
