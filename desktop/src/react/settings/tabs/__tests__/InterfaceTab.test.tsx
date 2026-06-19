@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -42,6 +44,13 @@ function seedSettings() {
     currentAgentId: 'agent-1',
     settingsAgentId: 'agent-1',
   } as never);
+}
+
+function readSettingsComponentStyles(): string {
+  return fs.readFileSync(
+    path.join(process.cwd(), 'desktop/src/react/settings/components/settings-components.module.css'),
+    'utf8',
+  );
 }
 
 describe('InterfaceTab appearance state', () => {
@@ -130,22 +139,43 @@ describe('InterfaceTab appearance state', () => {
     expect(screen.getByTitle('settings.fonts.followReading')).toBeTruthy();
   });
 
-  it('renders the markdown content width as a four-step slider', () => {
+  it('renders reading width and body size offset controls in the appearance font section', () => {
     render(React.createElement(InterfaceTab));
 
-    const slider = screen.getByRole('slider', { name: 'settings.editor.markdownContentWidth' }) as HTMLInputElement;
-    expect(screen.getByText('settings.editor.markdownContentWidth')).toBeTruthy();
-    expect(slider.min).toBe('0');
-    expect(slider.max).toBe('3');
-    expect(slider.step).toBe('1');
-    expect(slider.value).toBe('1');
-    expect(screen.getByText('720 px')).toBeTruthy();
+    const widthSlider = screen.getByRole('slider', { name: 'settings.appearance.readingWidth' }) as HTMLInputElement;
+    const bodySlider = screen.getByRole('slider', { name: 'settings.appearance.bodyFontSizeOffset' }) as HTMLInputElement;
+
+    expect(screen.getByText('settings.appearance.readingWidth')).toBeTruthy();
+    expect(widthSlider.min).toBe('0');
+    expect(widthSlider.max).toBe('3');
+    expect(widthSlider.step).toBe('1');
+    expect(widthSlider.value).toBe('1');
+
+    expect(screen.getByText('settings.appearance.bodyFontSizeOffset')).toBeTruthy();
+    expect(bodySlider.min).toBe('0');
+    expect(bodySlider.max).toBe('4');
+    expect(bodySlider.step).toBe('1');
+    expect(bodySlider.value).toBe('2');
+
+    expect(screen.queryByText('720 px')).toBeNull();
+    expect(screen.queryByText('settings.editor.markdownContentWidth')).toBeNull();
+    expect(screen.queryByText('settings.editor.markdownBodyFontSize')).toBeNull();
+  });
+
+  it('keeps compact step slider ticks aligned to the slider stops without a value pill', () => {
+    const css = readSettingsComponentStyles();
+
+    expect(css).toMatch(/\.stepSlider\s*\{[\s\S]*width:\s*150px/);
+    expect(css).not.toMatch(/\.stepSliderValue/);
+    expect(css).toMatch(/\.stepSliderTicks\s*\{[\s\S]*position:\s*relative/);
+    expect(css).toMatch(/\.stepSliderTicks span\s*\{[\s\S]*position:\s*absolute/);
+    expect(css).toMatch(/\.stepSliderTicks span\s*\{[\s\S]*left:\s*var\(--step-slider-tick-left\)/);
+    expect(css).toMatch(/\.stepSliderTicks span\s*\{[\s\S]*transform:\s*translateX\(-50%\)/);
   });
 
   it('hides fourth through sixth heading typography controls', () => {
     render(React.createElement(InterfaceTab));
 
-    expect(screen.getByText('settings.editor.markdownBodyFontSize')).toBeTruthy();
     expect(screen.getByText('settings.editor.markdownHeading1FontSize')).toBeTruthy();
     expect(screen.getByText('settings.editor.markdownHeading2FontSize')).toBeTruthy();
     expect(screen.getByText('settings.editor.markdownHeading3FontSize')).toBeTruthy();

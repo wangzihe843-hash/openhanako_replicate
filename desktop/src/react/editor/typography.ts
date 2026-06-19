@@ -55,6 +55,7 @@ export function applyEditorTypography(
 
   root.style.setProperty('--editor-markdown-font-family', fontFamily);
   root.style.setProperty('--editor-markdown-font-size', `${markdown.bodyFontSize}px`);
+  root.style.setProperty('--chat-message-font-size', `${markdown.bodyFontSize}px`);
   root.style.setProperty('--editor-markdown-h1-font-size', `${markdown.heading1FontSize}px`);
   root.style.setProperty('--editor-markdown-h2-font-size', `${markdown.heading2FontSize}px`);
   root.style.setProperty('--editor-markdown-h3-font-size', `${markdown.heading3FontSize}px`);

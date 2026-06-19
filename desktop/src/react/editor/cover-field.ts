@@ -62,6 +62,8 @@ interface MarkdownCoverEditorState {
   hasTopCover: boolean;
 }
 
+const coverLineDecoration = Decoration.line({ class: 'cm-markdown-cover-line' });
+
 class MarkdownCoverWidget extends WidgetType {
   constructor(
     readonly cover: MarkdownCover,
@@ -249,6 +251,8 @@ function buildMarkdownCoverEditorState(state: EditorState): MarkdownCoverEditorS
       hasTopCover,
     ),
   }));
+  const coverLine = state.doc.lineAt(range.from);
+  builder.add(coverLine.from, coverLine.from, coverLineDecoration);
 
   return { decorations: builder.finish(), hasTopCover };
 }

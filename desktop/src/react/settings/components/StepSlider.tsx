@@ -32,7 +32,7 @@ export function StepSlider({
   } as CSSProperties;
 
   const tickStyle = {
-    gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))`,
+    '--step-slider-tick-count': String(options.length),
   } as CSSProperties;
 
   return (
@@ -53,17 +53,20 @@ export function StepSlider({
             if (option) onChange(option.value);
           }}
         />
-        <span className={styles.stepSliderValue}>{selected.valueLabel}</span>
       </div>
       <div className={styles.stepSliderTicks} style={tickStyle} aria-hidden="true">
-        {options.map((option, index) => (
-          <span
-            key={option.value}
-            className={index === selectedIndex ? styles.stepSliderTickActive : undefined}
-          >
-            {option.label}
-          </span>
-        ))}
+        {options.map((option, index) => {
+          const position = max === 0 ? 0 : (index / max) * 100;
+          return (
+            <span
+              key={option.value}
+              className={index === selectedIndex ? styles.stepSliderTickActive : undefined}
+              style={{ '--step-slider-tick-left': `${position}%` } as CSSProperties}
+            >
+              {option.label}
+            </span>
+          );
+        })}
       </div>
     </div>
   );

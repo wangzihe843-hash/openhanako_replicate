@@ -16,6 +16,7 @@
     --chat-input-column-extra: 1.25rem;
     --chat-input-column-width: calc(var(--chat-column-width) + var(--chat-input-column-extra));
     --welcome-chat-input-column-width: 40rem;
+    --chat-message-font-size: 15px;
     --radius-sm: 6px;
     --radius-md: 10px;
     --radius-lg: 16px;

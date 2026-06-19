@@ -50,7 +50,7 @@ const BUILT_IN_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     tabId: 'interface',
     titleKey: 'settings.appearance.font',
     pathKeys: ['settings.tabs.interface'],
-    aliases: ['font', 'serif', 'sans', 'typography', 'markdown font', '字体', '宋体', '黑体', '排版', 'Markdown 字体'],
+    aliases: ['font', 'serif', 'sans', 'typography', 'markdown font', 'reading width', 'body size', '字体', '宋体', '黑体', '排版', 'Markdown 字体', '阅读宽度', '正文字号'],
   },
   {
     id: 'interface-language',

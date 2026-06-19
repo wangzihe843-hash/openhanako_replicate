@@ -47,7 +47,7 @@ const VOICE_RECORD_SHORTCUT_MAC = ['⌘', '⇧', 'M'];
 const VOICE_RECORD_SHORTCUT_DEFAULT = ['Ctrl', 'Shift', 'M'];
 
 type MarkdownTypographyKey = Exclude<keyof EditorMarkdownTypography, 'fontPreset'>;
-type MarkdownNumericTypographyKey = Exclude<MarkdownTypographyKey, 'contentWidth'>;
+type MarkdownNumericTypographyKey = Exclude<MarkdownTypographyKey, 'contentWidth' | 'bodyFontSize'>;
 
 interface AppearancePrefs {
   currentTheme: string;
@@ -75,11 +75,13 @@ const EDITOR_FONT_SIZE_ROWS: Array<{
   min: number;
   max: number;
 }> = [
-  { key: 'bodyFontSize', label: 'settings.editor.markdownBodyFontSize', hint: 'settings.editor.markdownBodyFontSizeHint', min: 12, max: 24 },
   { key: 'heading1FontSize', label: 'settings.editor.markdownHeading1FontSize', hint: 'settings.editor.markdownHeading1FontSizeHint', min: 16, max: 40 },
   { key: 'heading2FontSize', label: 'settings.editor.markdownHeading2FontSize', hint: 'settings.editor.markdownHeading2FontSizeHint', min: 15, max: 34 },
   { key: 'heading3FontSize', label: 'settings.editor.markdownHeading3FontSize', hint: 'settings.editor.markdownHeading3FontSizeHint', min: 14, max: 30 },
 ];
+
+const BODY_FONT_SIZE_BASE = 15;
+const BODY_FONT_SIZE_OFFSETS = [-2, -1, 0, 1, 2] as const;
 
 const CONTENT_WIDTH_STEPS: Array<{
   value: string;
@@ -89,8 +91,17 @@ const CONTENT_WIDTH_STEPS: Array<{
   { value: '640', width: 640 },
   { value: '720', width: 720 },
   { value: '800', width: 800 },
-  { value: 'unlimited', width: 'unlimited', labelKey: 'settings.editor.markdownContentWidthUnlimited' },
+  { value: 'unlimited', width: 'unlimited', labelKey: 'settings.appearance.readingWidthUnlimited' },
 ];
+
+function bodyFontSizeOffsetFromValue(value: number): string {
+  const offset = Math.max(-2, Math.min(2, Math.round(value - BODY_FONT_SIZE_BASE)));
+  return String(offset);
+}
+
+function formatBodyFontSizeOffset(offset: number): string {
+  return offset > 0 ? `+${offset}` : String(offset);
+}
 
 export function InterfaceTab() {
   const settingsConfig = useSettingsStore(s => s.settingsConfig);
@@ -118,12 +129,21 @@ export function InterfaceTab() {
   );
   const contentWidthOptions: Array<StepSliderOption & { width: EditorMarkdownContentWidth }> = CONTENT_WIDTH_STEPS.map(option => {
     const label = option.labelKey ? t(option.labelKey) : option.value;
-    const valueLabel = option.width === 'unlimited' ? t('settings.editor.markdownContentWidthUnlimited') : `${option.width} px`;
+    const valueLabel = option.width === 'unlimited' ? t('settings.appearance.readingWidthUnlimited') : option.value;
     return {
       value: option.value,
       width: option.width,
       label,
       valueLabel,
+    };
+  });
+  const bodyFontSizeOptions: Array<StepSliderOption & { size: number }> = BODY_FONT_SIZE_OFFSETS.map(offset => {
+    const label = formatBodyFontSizeOffset(offset);
+    return {
+      value: String(offset),
+      size: BODY_FONT_SIZE_BASE + offset,
+      label,
+      valueLabel: label,
     };
   });
   const fontSelectOptions = [
@@ -250,6 +270,36 @@ export function InterfaceTab() {
             </button>
           ))}
         </div>
+        <SettingsRow
+          label={t('settings.appearance.readingWidth')}
+          hint={t('settings.appearance.readingWidthHint')}
+          control={
+            <StepSlider
+              ariaLabel={t('settings.appearance.readingWidth')}
+              options={contentWidthOptions}
+              value={String(editorTypography.markdown.contentWidth)}
+              onChange={(value) => {
+                const option = contentWidthOptions.find(item => item.value === value);
+                if (option) saveEditorTypography({ contentWidth: option.width });
+              }}
+            />
+          }
+        />
+        <SettingsRow
+          label={t('settings.appearance.bodyFontSizeOffset')}
+          hint={t('settings.appearance.bodyFontSizeOffsetHint')}
+          control={
+            <StepSlider
+              ariaLabel={t('settings.appearance.bodyFontSizeOffset')}
+              options={bodyFontSizeOptions}
+              value={bodyFontSizeOffsetFromValue(editorTypography.markdown.bodyFontSize)}
+              onChange={(value) => {
+                const option = bodyFontSizeOptions.find(item => item.value === value);
+                if (option) saveEditorTypography({ bodyFontSize: option.size });
+              }}
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection title={t('settings.appearance.title')}>
@@ -318,21 +368,6 @@ export function InterfaceTab() {
                   fallback: FOLLOW_READING_FONT_ID,
                 }),
               })}
-            />
-          }
-        />
-        <SettingsRow
-          label={t('settings.editor.markdownContentWidth')}
-          hint={t('settings.editor.markdownContentWidthHint')}
-          control={
-            <StepSlider
-              ariaLabel={t('settings.editor.markdownContentWidth')}
-              options={contentWidthOptions}
-              value={String(editorTypography.markdown.contentWidth)}
-              onChange={(value) => {
-                const option = contentWidthOptions.find(item => item.value === value);
-                if (option) saveEditorTypography({ contentWidth: option.width });
-              }}
             />
           }
         />

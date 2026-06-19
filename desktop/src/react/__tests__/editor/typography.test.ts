@@ -21,6 +21,13 @@ function readEditorTheme(): string {
   );
 }
 
+function readEditorCoverField(): string {
+  return fs.readFileSync(
+    path.join(process.cwd(), 'desktop/src/react/editor/cover-field.ts'),
+    'utf8',
+  );
+}
+
 function readEditorHighlight(): string {
   return fs.readFileSync(
     path.join(process.cwd(), 'desktop/src/react/editor/highlight.ts'),
@@ -99,6 +106,7 @@ describe('editor typography settings', () => {
     const style = root.style;
     expect(style.getPropertyValue('--editor-markdown-font-family')).toBe('var(--font-ui)');
     expect(style.getPropertyValue('--editor-markdown-font-size')).toBe('17px');
+    expect(style.getPropertyValue('--chat-message-font-size')).toBe('17px');
     expect(style.getPropertyValue('--editor-markdown-h1-font-size')).toBe('26px');
     expect(style.getPropertyValue('--editor-markdown-h2-font-size')).toBe('21px');
     expect(style.getPropertyValue('--editor-markdown-h3-font-size')).toBe('19px');
@@ -169,19 +177,28 @@ describe('editor typography settings', () => {
 
   it('uses the same typography variables in markdown editor and preview rendering', () => {
     const theme = readEditorTheme();
+    const coverField = readEditorCoverField();
     const highlight = readEditorHighlight();
     const previewCss = readPreviewStyles();
+    const cmContentBlocks = [...theme.matchAll(/'\.cm-content':\s*\{(?<body>[^}]*)\}/g)];
+    const markdownContentRule = cmContentBlocks.at(-1)?.groups?.body ?? '';
 
     expect(theme).toMatch(/'&':\s*\{\s*fontSize:\s*'var\(--editor-markdown-font-size\)'/);
     expect(theme).toMatch(/lineHeight:\s*'var\(--editor-markdown-line-height\)'/);
-    expect(theme).toMatch(/maxWidth:\s*'var\(--editor-markdown-content-width\)'/);
-    expect(theme).toMatch(/margin:\s*'0 auto'/);
+    expect(theme).toMatch(/'\.cm-line':\s*\{[\s\S]*maxWidth:\s*'var\(--editor-markdown-content-width\)'/);
+    expect(theme).toMatch(/'\.cm-line':\s*\{[\s\S]*margin:\s*'0 auto'/);
+    expect(markdownContentRule).not.toMatch(/maxWidth/);
+    expect(coverField).toMatch(/Decoration\.line\(\{\s*class:\s*'cm-markdown-cover-line'\s*\}\)/);
+    expect(theme).toMatch(/'\.cm-line\.cm-markdown-cover-line':\s*\{[\s\S]*maxWidth:\s*'none'/);
+    expect(theme).toMatch(/'\.cm-markdown-cover':\s*\{[\s\S]*width:\s*'100%'/);
+    expect(theme).toMatch(/'\.cm-markdown-cover':\s*\{[\s\S]*maxWidth:\s*'none'/);
     expect(theme).toMatch(/padding:\s*'0 var\(--editor-markdown-content-padding-x\)'/);
     expect(highlight).toMatch(/tags\.heading1,\s*fontSize:\s*'var\(--editor-markdown-h1-font-size\)'/);
     expect(highlight).toMatch(/tags\.heading6,\s*fontSize:\s*'var\(--editor-markdown-h6-font-size\)'/);
     expect(previewCss).toMatch(/font-size:\s*var\(--editor-markdown-font-size\)/);
     expect(previewCss).toMatch(/max-width:\s*var\(--editor-markdown-content-width\)/);
     expect(previewCss).toMatch(/margin-left:\s*auto/);
+    expect(previewCss).toMatch(/:global\(\.markdown-cover\)\s*\{[\s\S]*width:\s*100%/);
     expect(previewCss).toMatch(/font-size:\s*var\(--editor-markdown-h1-font-size\)/);
     expect(previewCss).toMatch(/font-size:\s*var\(--editor-markdown-h6-font-size\)/);
   });
