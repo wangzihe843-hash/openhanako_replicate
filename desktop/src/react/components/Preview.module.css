@@ -67,6 +67,11 @@
 
 /* Markdown 预览 */
 .previewPanelBody :global(.preview-markdown) {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: var(--editor-markdown-content-width);
+    margin-left: auto;
+    margin-right: auto;
     padding: var(--space-lg) var(--space-lg) var(--space-md);
     font-size: var(--editor-markdown-font-size);
     font-weight: 400;

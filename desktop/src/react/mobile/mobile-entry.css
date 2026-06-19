@@ -12,7 +12,7 @@
     --panel-card-radius: var(--radius-lg);
     --panel-card-border: 1px solid rgba(0, 0, 0, 0.08);
     --panel-card-shadow: none;
-    --chat-column-width: 45rem;
+    --chat-column-width: 720px;
     --chat-input-column-extra: 1.25rem;
     --chat-input-column-width: calc(var(--chat-column-width) + var(--chat-input-column-extra));
     --welcome-chat-input-column-width: 40rem;
@@ -45,6 +45,7 @@
     --editor-markdown-h6-font-size: 14px;
     --editor-markdown-line-height: 1.72;
     --editor-markdown-content-padding-x: 24px;
+    --editor-markdown-content-width: 720px;
     --paper-texture-card-blend-mode: lighten;
     --sidebar-width: 240px;
     --jian-sidebar-width: 260px;

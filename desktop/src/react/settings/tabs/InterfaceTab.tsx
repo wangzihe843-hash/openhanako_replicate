@@ -6,10 +6,12 @@ import { Toggle } from '../widgets/Toggle';
 import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
 import { NumberInput } from '../components/NumberInput';
+import { StepSlider, type StepSliderOption } from '../components/StepSlider';
 import {
   applyEditorTypography,
   mergeEditorTypography,
   normalizeEditorTypography,
+  type EditorMarkdownContentWidth,
   type EditorMarkdownTypography,
 } from '../../editor/typography';
 import {
@@ -45,6 +47,7 @@ const VOICE_RECORD_SHORTCUT_MAC = ['⌘', '⇧', 'M'];
 const VOICE_RECORD_SHORTCUT_DEFAULT = ['Ctrl', 'Shift', 'M'];
 
 type MarkdownTypographyKey = Exclude<keyof EditorMarkdownTypography, 'fontPreset'>;
+type MarkdownNumericTypographyKey = Exclude<MarkdownTypographyKey, 'contentWidth'>;
 
 interface AppearancePrefs {
   currentTheme: string;
@@ -66,7 +69,7 @@ function readAppearancePrefs(): AppearancePrefs {
 }
 
 const EDITOR_FONT_SIZE_ROWS: Array<{
-  key: MarkdownTypographyKey;
+  key: MarkdownNumericTypographyKey;
   label: string;
   hint: string;
   min: number;
@@ -76,6 +79,17 @@ const EDITOR_FONT_SIZE_ROWS: Array<{
   { key: 'heading1FontSize', label: 'settings.editor.markdownHeading1FontSize', hint: 'settings.editor.markdownHeading1FontSizeHint', min: 16, max: 40 },
   { key: 'heading2FontSize', label: 'settings.editor.markdownHeading2FontSize', hint: 'settings.editor.markdownHeading2FontSizeHint', min: 15, max: 34 },
   { key: 'heading3FontSize', label: 'settings.editor.markdownHeading3FontSize', hint: 'settings.editor.markdownHeading3FontSizeHint', min: 14, max: 30 },
+];
+
+const CONTENT_WIDTH_STEPS: Array<{
+  value: string;
+  width: EditorMarkdownContentWidth;
+  labelKey?: string;
+}> = [
+  { value: '640', width: 640 },
+  { value: '720', width: 720 },
+  { value: '800', width: 800 },
+  { value: 'unlimited', width: 'unlimited', labelKey: 'settings.editor.markdownContentWidthUnlimited' },
 ];
 
 export function InterfaceTab() {
@@ -102,6 +116,16 @@ export function InterfaceTab() {
     () => normalizeEditorTypography(settingsConfig?.editor),
     [settingsConfig?.editor],
   );
+  const contentWidthOptions: Array<StepSliderOption & { width: EditorMarkdownContentWidth }> = CONTENT_WIDTH_STEPS.map(option => {
+    const label = option.labelKey ? t(option.labelKey) : option.value;
+    const valueLabel = option.width === 'unlimited' ? t('settings.editor.markdownContentWidthUnlimited') : `${option.width} px`;
+    return {
+      value: option.value,
+      width: option.width,
+      label,
+      valueLabel,
+    };
+  });
   const fontSelectOptions = [
     { value: FOLLOW_READING_FONT_ID, label: t('settings.fonts.followReading') },
     ...READING_FONT_PRESETS.map(preset => ({
@@ -294,6 +318,21 @@ export function InterfaceTab() {
                   fallback: FOLLOW_READING_FONT_ID,
                 }),
               })}
+            />
+          }
+        />
+        <SettingsRow
+          label={t('settings.editor.markdownContentWidth')}
+          hint={t('settings.editor.markdownContentWidthHint')}
+          control={
+            <StepSlider
+              ariaLabel={t('settings.editor.markdownContentWidth')}
+              options={contentWidthOptions}
+              value={String(editorTypography.markdown.contentWidth)}
+              onChange={(value) => {
+                const option = contentWidthOptions.find(item => item.value === value);
+                if (option) saveEditorTypography({ contentWidth: option.width });
+              }}
             />
           }
         />

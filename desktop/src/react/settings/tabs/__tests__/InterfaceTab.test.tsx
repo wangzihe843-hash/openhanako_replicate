@@ -130,6 +130,18 @@ describe('InterfaceTab appearance state', () => {
     expect(screen.getByTitle('settings.fonts.followReading')).toBeTruthy();
   });
 
+  it('renders the markdown content width as a four-step slider', () => {
+    render(React.createElement(InterfaceTab));
+
+    const slider = screen.getByRole('slider', { name: 'settings.editor.markdownContentWidth' }) as HTMLInputElement;
+    expect(screen.getByText('settings.editor.markdownContentWidth')).toBeTruthy();
+    expect(slider.min).toBe('0');
+    expect(slider.max).toBe('3');
+    expect(slider.step).toBe('1');
+    expect(slider.value).toBe('1');
+    expect(screen.getByText('720 px')).toBeTruthy();
+  });
+
   it('hides fourth through sixth heading typography controls', () => {
     render(React.createElement(InterfaceTab));
 

@@ -29,6 +29,9 @@ export const markdownTheme = EditorView.theme({
   },
   '.cm-content': {
     width: '100%',
+    maxWidth: 'var(--editor-markdown-content-width)',
+    margin: '0 auto',
+    boxSizing: 'border-box',
     padding: '0 var(--editor-markdown-content-padding-x)',
   },
   '.cm-activeLine': { backgroundColor: 'transparent' },

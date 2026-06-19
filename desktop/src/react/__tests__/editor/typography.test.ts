@@ -40,6 +40,7 @@ describe('editor typography settings', () => {
     expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.heading6FontSize).toBe(14);
     expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.lineHeight).toBe(1.72);
     expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.contentPadding).toBe(24);
+    expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.contentWidth).toBe(720);
   });
 
   it('normalizes partial and invalid values without mutating the defaults', () => {
@@ -50,6 +51,7 @@ describe('editor typography settings', () => {
         heading6FontSize: 80,
         lineHeight: 'wide',
         contentPadding: -12,
+        contentWidth: 960,
         fontPreset: 'comic',
       },
     });
@@ -61,10 +63,12 @@ describe('editor typography settings', () => {
     expect(normalized.markdown.heading6FontSize).toBe(24);
     expect(normalized.markdown.lineHeight).toBe(1.72);
     expect(normalized.markdown.contentPadding).toBe(0);
+    expect(normalized.markdown.contentWidth).toBe(720);
     expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.contentPadding).toBe(24);
 
-    const selected = normalizeEditorTypography({ markdown: { fontPreset: 'sans' } });
+    const selected = normalizeEditorTypography({ markdown: { fontPreset: 'sans', contentWidth: 'unlimited' } });
     expect(selected.markdown.fontPreset).toBe('sans');
+    expect(selected.markdown.contentWidth).toBe('unlimited');
   });
 
   it('applies normalized typography as document-level CSS variables', () => {
@@ -87,6 +91,7 @@ describe('editor typography settings', () => {
         heading6FontSize: 16,
         lineHeight: 1.8,
         contentPadding: 28,
+        contentWidth: 800,
         fontPreset: 'sans',
       },
     }, root);
@@ -102,6 +107,26 @@ describe('editor typography settings', () => {
     expect(style.getPropertyValue('--editor-markdown-h6-font-size')).toBe('16px');
     expect(style.getPropertyValue('--editor-markdown-line-height')).toBe('1.8');
     expect(style.getPropertyValue('--editor-markdown-content-padding-x')).toBe('28px');
+    expect(style.getPropertyValue('--editor-markdown-content-width')).toBe('800px');
+    expect(style.getPropertyValue('--chat-column-width')).toBe('800px');
+    expect(style.getPropertyValue('--chat-input-column-width')).toBe('calc(var(--chat-column-width) + var(--chat-input-column-extra))');
+  });
+
+  it('maps unlimited reading width to unrestricted CSS max-width values', () => {
+    const values = new Map<string, string>();
+    const root = {
+      style: {
+        setProperty: (name: string, value: string) => values.set(name, value),
+        getPropertyValue: (name: string) => values.get(name) || '',
+      },
+    } as unknown as HTMLElement;
+
+    applyEditorTypography({ markdown: { contentWidth: 'unlimited' } }, root);
+
+    const style = root.style;
+    expect(style.getPropertyValue('--editor-markdown-content-width')).toBe('none');
+    expect(style.getPropertyValue('--chat-column-width')).toBe('none');
+    expect(style.getPropertyValue('--chat-input-column-width')).toBe('none');
   });
 
   it('uses the editor typography variables for markdown preview font size and weight', () => {
@@ -149,10 +174,14 @@ describe('editor typography settings', () => {
 
     expect(theme).toMatch(/'&':\s*\{\s*fontSize:\s*'var\(--editor-markdown-font-size\)'/);
     expect(theme).toMatch(/lineHeight:\s*'var\(--editor-markdown-line-height\)'/);
+    expect(theme).toMatch(/maxWidth:\s*'var\(--editor-markdown-content-width\)'/);
+    expect(theme).toMatch(/margin:\s*'0 auto'/);
     expect(theme).toMatch(/padding:\s*'0 var\(--editor-markdown-content-padding-x\)'/);
     expect(highlight).toMatch(/tags\.heading1,\s*fontSize:\s*'var\(--editor-markdown-h1-font-size\)'/);
     expect(highlight).toMatch(/tags\.heading6,\s*fontSize:\s*'var\(--editor-markdown-h6-font-size\)'/);
     expect(previewCss).toMatch(/font-size:\s*var\(--editor-markdown-font-size\)/);
+    expect(previewCss).toMatch(/max-width:\s*var\(--editor-markdown-content-width\)/);
+    expect(previewCss).toMatch(/margin-left:\s*auto/);
     expect(previewCss).toMatch(/font-size:\s*var\(--editor-markdown-h1-font-size\)/);
     expect(previewCss).toMatch(/font-size:\s*var\(--editor-markdown-h6-font-size\)/);
   });

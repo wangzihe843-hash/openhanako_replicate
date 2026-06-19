@@ -9,6 +9,7 @@ const DEFAULT_MARKDOWN_TYPOGRAPHY = Object.freeze({
   heading6FontSize: 14,
   lineHeight: 1.72,
   contentPadding: 24,
+  contentWidth: 720,
 });
 
 export const DEFAULT_EDITOR_TYPOGRAPHY = Object.freeze({
@@ -28,6 +29,8 @@ const LIMITS = Object.freeze({
 });
 
 const FONT_PRESETS = new Set(["follow", "serif", "sans"]);
+const CONTENT_WIDTH_PRESETS = new Set([640, 720, 800]);
+const UNLIMITED_CONTENT_WIDTH = "unlimited";
 
 function isRecord(value: unknown): value is Record<string, any> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -51,6 +54,12 @@ function normalizeFontPreset(value: unknown, fallback: string): string {
   return typeof value === "string" && FONT_PRESETS.has(value) ? value : fallback;
 }
 
+function normalizeContentWidth(value: unknown, fallback: number | string): number | string {
+  if (value === UNLIMITED_CONTENT_WIDTH) return UNLIMITED_CONTENT_WIDTH;
+  const parsed = readNumber(value);
+  return CONTENT_WIDTH_PRESETS.has(parsed) ? parsed : fallback;
+}
+
 export function normalizeEditorTypography(value: any): { markdown: Record<string, any> } {
   const source = isRecord(value) ? value : {};
   const markdown = isRecord(source.markdown) ? source.markdown : {};
@@ -68,6 +77,7 @@ export function normalizeEditorTypography(value: any): { markdown: Record<string
       heading6FontSize: clampNumber(markdown.heading6FontSize, defaults.heading6FontSize, LIMITS.heading6FontSize),
       lineHeight: clampNumber(markdown.lineHeight, defaults.lineHeight, LIMITS.lineHeight, 2),
       contentPadding: clampNumber(markdown.contentPadding, defaults.contentPadding, LIMITS.contentPadding),
+      contentWidth: normalizeContentWidth(markdown.contentWidth, defaults.contentWidth),
     },
   };
 }

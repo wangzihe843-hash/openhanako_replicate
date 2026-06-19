@@ -312,3 +312,126 @@
     font-size: 0.9rem;
     color: var(--text-muted);
 }
+
+/* ─── StepSlider（有限档位设置用）─── */
+
+.stepSlider {
+    width: min(340px, 42vw);
+    min-width: 260px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.stepSliderTop {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.stepSliderInput {
+    flex: 1;
+    min-width: 0;
+    height: 22px;
+    margin: 0;
+    padding: 0;
+    appearance: none;
+    background: transparent;
+    cursor: default;
+}
+
+.stepSliderInput::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(
+        to right,
+        var(--accent) 0%,
+        var(--accent) var(--step-slider-progress, 0%),
+        var(--border) var(--step-slider-progress, 0%),
+        var(--border) 100%
+    );
+}
+
+.stepSliderInput::-webkit-slider-thumb {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border-radius: 999px;
+    border: 2px solid var(--bg-card);
+    background: var(--accent);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    transition:
+        transform var(--duration-fast) var(--ease-out),
+        box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.stepSliderInput:hover::-webkit-slider-thumb,
+.stepSliderInput:focus-visible::-webkit-slider-thumb {
+    transform: scale(1.08);
+    box-shadow:
+        0 1px 4px rgba(0, 0, 0, 0.18),
+        0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.stepSliderInput::-moz-range-track {
+    height: 4px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--border);
+}
+
+.stepSliderInput::-moz-range-progress {
+    height: 4px;
+    border-radius: 999px;
+    background: var(--accent);
+}
+
+.stepSliderInput::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    border: 2px solid var(--bg-card);
+    background: var(--accent);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+.stepSliderValue {
+    min-width: 62px;
+    padding: 3px 8px;
+    border: var(--border-width, 1px) solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-card);
+    color: var(--text-light);
+    font-size: 0.75rem;
+    line-height: 1.35;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.stepSliderTicks {
+    display: grid;
+    align-items: center;
+    color: var(--text-muted);
+    font-size: 0.66rem;
+    line-height: 1.2;
+}
+
+.stepSliderTicks span {
+    min-width: 0;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.stepSliderTicks span:first-child {
+    text-align: left;
+}
+
+.stepSliderTicks span:last-child {
+    text-align: right;
+}
+
+.stepSliderTickActive {
+    color: var(--text);
+    font-weight: 600;
+}
