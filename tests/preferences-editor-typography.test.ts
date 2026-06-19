@@ -28,6 +28,7 @@ describe('PreferencesManager editor typography preferences', () => {
         heading6FontSize: 14,
         lineHeight: 1.72,
         contentPadding: 24,
+        contentWidth: 720,
       },
     });
   });
@@ -55,6 +56,7 @@ describe('PreferencesManager editor typography preferences', () => {
         heading6FontSize: 14,
         lineHeight: 1.9,
         contentPadding: 24,
+        contentWidth: 720,
       },
     });
     expect(prefs.getPreferences().editor.markdown.bodyFontSize).toBe(18);
