@@ -2242,7 +2242,12 @@ describe("plugin route request-level principal and capability context", () => {
         principalKind: "plugin",
         principalPluginId: "media-board",
       });
-      expect(sessionCreate).toHaveBeenCalledWith({ agentId: "hanako" });
+      expect(sessionCreate).toHaveBeenCalledWith(
+        { agentId: "hanako" },
+        expect.objectContaining({
+          caller: expect.objectContaining({ pluginId: "media-board" }),
+        }),
+      );
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -2420,7 +2425,12 @@ describe("plugin route request-level principal and capability context", () => {
 
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ ok: true });
-      expect(sessionCreate).toHaveBeenCalledWith({ agentId: "hanako" });
+      expect(sessionCreate).toHaveBeenCalledWith(
+        { agentId: "hanako" },
+        expect.objectContaining({
+          caller: expect.objectContaining({ pluginId: "media-board" }),
+        }),
+      );
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

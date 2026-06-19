@@ -283,11 +283,21 @@ export function createAgentsRoute(engine) {
     try {
       const id = c.req.param("id");
       if (!validateId(id)) return c.json({ error: "invalid id" }, 400);
-      await engine.deleteAgent(id);
+      const result = await engine.deleteAgent(id);
+      const replacementAgentId = result?.replacementAgentId || null;
+      if (replacementAgentId) {
+        const replacementAgent = engine.getAgent?.(replacementAgentId);
+        emitAppEvent(engine, "agent-switched", {
+          agentId: replacementAgentId,
+          agentName: replacementAgent?.agentName || replacementAgent?.name || replacementAgentId,
+          sessionPath: result?.replacementSwitchResult?.sessionPath || null,
+        });
+      }
       emitAppEvent(engine, "agent-deleted", { agentId: id });
-      return c.json({ ok: true });
+      return c.json({ ok: true, replacementAgentId });
     } catch (err) {
-      const code = err.message.includes("不能删除当前") ? 400
+      const code = err.message.includes("cannot delete the last agent") ? 400
+        : err.message.includes("不能删除当前") ? 400
         : err.message.includes("不存在") ? 404
         : 500;
       return c.json({ error: err.message }, code);

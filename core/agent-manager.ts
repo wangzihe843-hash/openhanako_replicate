@@ -852,8 +852,14 @@ export class AgentManager {
   // ── Delete ──
 
   async deleteAgent(agentId) {
+    let replacementAgentId = null;
+    let replacementSwitchResult = null;
     if (agentId === this._activeAgentId) {
-      throw new Error(t("error.agentDeleteActive"));
+      replacementAgentId = this._replacementAgentIdForDeletion(agentId);
+      if (!replacementAgentId) {
+        throw new Error("cannot delete the last agent");
+      }
+      replacementSwitchResult = await this.switchAgent(replacementAgentId);
     }
 
     const agentDir = path.join(this._d.agentsDir, agentId);
@@ -930,6 +936,24 @@ export class AgentManager {
     this.invalidateAgentListCache();
     this._rebuildAllAgentSystemPrompts();
     log.log(`已删除助手: ${agentId}`);
+    return {
+      ok: true,
+      replacementAgentId,
+      replacementSwitchResult,
+    };
+  }
+
+  _replacementAgentIdForDeletion(agentId) {
+    const prefs = this._d.getPrefs();
+    const primaryId = prefs.getPrimaryAgent?.();
+    const candidates = [
+      ...new Set([
+        ...[...this._agents.keys()],
+        ...this._scanAgentDirs().map((entry) => entry.name),
+      ]),
+    ].filter((id) => id && id !== agentId && !this.isAgentDeleted(id));
+    if (primaryId && candidates.includes(primaryId)) return primaryId;
+    return candidates[0] || null;
   }
 
   // ── Utility ──
@@ -1097,10 +1121,21 @@ export class AgentManager {
       }
       engine?._emitAppEvent?.("skills-changed", { agentId: ag.id });
     });
-    ag.setNotifyHandler((payload) => {
+    ag.setNotifyHandler((payload: any, context: any = {}) => {
       const engine = this._d.getEngine?.();
       if (typeof engine?.deliverNotification === "function") {
-        return engine.deliverNotification(payload, { agentId: ag.id });
+        return engine.deliverNotification(payload, {
+          agentId: ag.id,
+          ...(typeof context?.sessionPath === "string" && context.sessionPath.trim()
+            ? { sessionPath: context.sessionPath.trim() }
+            : {}),
+          ...(context?.bridgeContext?.isBridgeSession === true
+            ? { bridgeContext: context.bridgeContext }
+            : {}),
+          ...(context?.notificationContext && typeof context.notificationContext === "object"
+            ? { notificationContext: context.notificationContext }
+            : {}),
+        });
       }
       this._d.getHub()?.eventBus?.emit({
         type: "notification",

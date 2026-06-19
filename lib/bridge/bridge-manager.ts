@@ -24,6 +24,7 @@ import { collectMediaItems } from "../tools/media-details.ts";
 import { formatSettingsUpdateText } from "../tools/settings-update-result.ts";
 import { isBridgeOwner, resolveBridgeOwnerDeliveryTarget } from "./owner-policy.ts";
 import { normalizeBridgePlatforms } from "./bridge-context.ts";
+import { parseSessionKey } from "./session-key.ts";
 import { createModuleLogger } from "../debug-log.ts";
 import { t } from "../i18n.ts";
 import { stripToolProtocolTagsFromProse } from "../tool-protocol-sanitizer.ts";
@@ -34,6 +35,52 @@ const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
 
 function normalizeIdempotencyKey(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeProactiveBridgeDeliveryTarget(value, fallbackAgentId = null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (value.kind && value.kind !== "bridge") return null;
+  const sessionKey = typeof value.sessionKey === "string" && value.sessionKey.trim()
+    ? value.sessionKey.trim()
+    : null;
+  const parsed = sessionKey ? parseSessionKey(sessionKey) : null;
+  const fallbackParts = bridgeSessionKeyFallbackParts(sessionKey);
+  const platform = typeof value.platform === "string" && value.platform.trim()
+    ? value.platform.trim()
+    : (parsed?.platform !== "unknown" ? parsed?.platform : null);
+  const { bridgePlatforms } = normalizeBridgePlatforms(platform ? [platform] : []);
+  if (!bridgePlatforms.length) return null;
+  const chatId = typeof value.chatId === "string" && value.chatId.trim()
+    ? value.chatId.trim()
+    : (parsed?.chatId || fallbackParts.chatId);
+  if (!chatId) return null;
+  const agentId = typeof value.agentId === "string" && value.agentId.trim()
+    ? value.agentId.trim()
+    : (parsed?.agentId || fallbackParts.agentId || (typeof fallbackAgentId === "string" && fallbackAgentId.trim() ? fallbackAgentId.trim() : null));
+  return {
+    kind: "bridge",
+    platform: bridgePlatforms[0],
+    chatType: "dm",
+    chatId,
+    userId: typeof value.userId === "string" && value.userId.trim() ? value.userId.trim() : chatId,
+    ...(sessionKey ? { sessionKey } : {}),
+    ...(agentId ? { agentId } : {}),
+  };
+}
+
+function bridgeSessionKeyFallbackParts(sessionKey) {
+  const value = typeof sessionKey === "string" ? sessionKey.trim() : "";
+  if (!value) return { chatId: null, agentId: null };
+  const atIndex = value.lastIndexOf("@");
+  const head = atIndex >= 0 ? value.slice(0, atIndex) : value;
+  const agentId = atIndex >= 0 && value.slice(atIndex + 1).trim()
+    ? value.slice(atIndex + 1).trim()
+    : null;
+  const match = head.match(/^(?:wechat|wx|telegram|tg|feishu|fs|qq)_dm_(.+)$/);
+  return {
+    chatId: match?.[1] || null,
+    agentId,
+  };
 }
 
 function isAbortLikeError(err) {
@@ -1527,6 +1574,7 @@ export class BridgeManager {
     let failed = false;
     let chain = Promise.resolve();
     let createdWithoutMessageId = false;
+    let receiptOnly = false;
 
     const rememberState = (state) => {
       streamState = state || null;
@@ -1542,6 +1590,7 @@ export class BridgeManager {
       const { text } = this._cleanStreamSnapshot(accumulated);
       const next = this._truncateStreamText(text.trim(), maxChars);
       if (!next || next === lastSentText) return;
+      receiptOnly = false;
       const now = Date.now();
       if (!force && lastUpdateTs && now - lastUpdateTs < minIntervalMs) return;
       lastUpdateTs = now;
@@ -1564,6 +1613,7 @@ export class BridgeManager {
         if (!next) return;
         lastSentText = next;
         lastUpdateTs = Date.now();
+        receiptOnly = true;
         try {
           await startMessage(next);
         } catch {
@@ -1571,11 +1621,33 @@ export class BridgeManager {
         }
       },
       onDelta: (_delta, accumulated) => enqueueSnapshot(accumulated || _delta),
+      fail: async (message) => {
+        const failureText = this._truncateStreamText(String(message || t("bridge.replyFailed")).trim(), maxChars);
+        if (!failureText) return;
+        await chain;
+        if (!failed && streamState && !createdWithoutMessageId) {
+          try {
+            await adapter.finishStreamReply(chatId, streamState, failureText, context);
+            receiptOnly = false;
+            return;
+          } catch {
+            failed = true;
+          }
+        }
+        await this._sendAdapterReply(adapter, chatId, failureText, context);
+        receiptOnly = false;
+      },
       finish: async (cleaned) => {
         const { text, mediaUrls } = this._cleanStreamSnapshot(cleaned);
         const textOnly = text.trim();
         await chain;
-        if (!textOnly) return mediaUrls;
+        if (!textOnly) {
+          if (receiptOnly) {
+            await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), context);
+            receiptOnly = false;
+          }
+          return mediaUrls;
+        }
         if (createdWithoutMessageId) return mediaUrls;
         const finalText = this._truncateStreamText(textOnly, maxChars);
         if (!failed) {
@@ -1605,6 +1677,7 @@ export class BridgeManager {
     let lastUpdateTs = 0;
     let failed = false;
     let chain = Promise.resolve();
+    let receiptOnly = false;
 
     const startMessage = async (text) => {
       streamState = await adapter.startRichStreamReply(chatId, text, context);
@@ -1615,6 +1688,7 @@ export class BridgeManager {
       const { text } = this._cleanStreamSnapshot(accumulated);
       const next = this._truncateStreamText(text.trim(), maxChars);
       if (!next || next === lastSentText) return;
+      receiptOnly = false;
       const now = Date.now();
       if (!force && lastUpdateTs && now - lastUpdateTs < minIntervalMs) return;
       lastUpdateTs = now;
@@ -1637,6 +1711,7 @@ export class BridgeManager {
         if (!next) return;
         lastSentText = next;
         lastUpdateTs = Date.now();
+        receiptOnly = true;
         try {
           await startMessage(next);
         } catch {
@@ -1644,12 +1719,31 @@ export class BridgeManager {
         }
       },
       onDelta: (_delta, accumulated) => enqueueSnapshot(accumulated || _delta),
+      fail: async (message) => {
+        const failureText = this._truncateStreamText(String(message || t("bridge.replyFailed")).trim(), maxChars);
+        if (!failureText) return;
+        await chain;
+        if (!failed && streamState) {
+          try {
+            await adapter.finishRichStreamReply(chatId, streamState, failureText, context);
+            receiptOnly = false;
+            return;
+          } catch {
+            failed = true;
+          }
+        }
+        await this._sendAdapterReply(adapter, chatId, failureText, context);
+        receiptOnly = false;
+      },
       finish: async (cleaned) => {
         const { text, mediaUrls } = this._cleanStreamSnapshot(cleaned);
         const textOnly = text.trim();
         await chain;
         if (!textOnly) {
-          if (!failed && streamState && lastSentText) {
+          if (receiptOnly) {
+            await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), context);
+            receiptOnly = false;
+          } else if (!failed && streamState && lastSentText) {
             try {
               await adapter.finishRichStreamReply(chatId, streamState, lastSentText, context);
             } catch {
@@ -1761,7 +1855,7 @@ export class BridgeManager {
       const platformKey = this._getPlatformKey(platform, agentId);
       const entry = this._platforms.get(platformKey);
       const adapter = entry?.adapter;
-      const delivery = this._createStreamDelivery({
+      const delivery: any = this._createStreamDelivery({
         adapter,
         chatId,
         isGroup,
@@ -1848,7 +1942,10 @@ export class BridgeManager {
       } else if (replyError && adapter) {
         // 完全没有可见正文时才发用户可理解的失败提示。
         // best-effort 提示：提示本身发送失败时无法再通知用户，吞掉即可。
-        try { await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), replyContext); } catch {}
+        try {
+          if (typeof delivery.fail === "function") await delivery.fail(t("bridge.replyFailed"));
+          else await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), replyContext);
+        } catch {}
       }
     } catch (err) {
       if (!isAbortLikeError(err)) {
@@ -2453,16 +2550,22 @@ export class BridgeManager {
 
   async _sendProactiveOnce(cleaned, targetAgentId, opts: any = {}, idempotencyKey = null) {
     const contextPolicy = opts.contextPolicy || "record_when_delivered";
+    const explicitTarget = normalizeProactiveBridgeDeliveryTarget(opts.deliveryTarget, targetAgentId);
     const { bridgePlatforms, invalidBridgePlatforms } = normalizeBridgePlatforms(opts.bridgePlatforms);
     if (invalidBridgePlatforms.length) {
       if (idempotencyKey) this._proactiveIdempotency.delete(idempotencyKey);
       throw new Error(`unsupported bridge platform: ${invalidBridgePlatforms.join(", ")}`);
     }
     const platformEntries = [...this._platforms.values()];
-    const deliveryEntries = bridgePlatforms.length
+    const deliveryEntries = explicitTarget
+      ? platformEntries.filter((entry) => (
+          entry.platform === explicitTarget.platform
+          && (!explicitTarget.agentId || entry.agentId === explicitTarget.agentId)
+        ))
+      : bridgePlatforms.length
       ? bridgePlatforms.flatMap((platform) => platformEntries.filter((entry) => entry.platform === platform))
       : platformEntries;
-    const fanOut = bridgePlatforms.length > 0;
+    const fanOut = !explicitTarget && bridgePlatforms.length > 0;
     const deliveries = [];
 
     for (const entry of deliveryEntries) {
@@ -2475,9 +2578,9 @@ export class BridgeManager {
         continue;
       }
 
-      const entryAgentId = entry.agentId;
+      const entryAgentId = explicitTarget?.agentId || entry.agentId;
       const agent = entryAgentId ? this.engine.getAgent(entryAgentId) : null;
-      const ownerTarget = resolveBridgeOwnerDeliveryTarget({
+      const ownerTarget = explicitTarget || resolveBridgeOwnerDeliveryTarget({
         platform,
         agent,
         index: this._readBridgeIndex(entryAgentId, agent),
@@ -2485,7 +2588,7 @@ export class BridgeManager {
       const ownerId = ownerTarget?.userId;
       if (!ownerId) continue;
 
-      const chatId = entry.adapter.resolveOwnerChatId?.(ownerId) || ownerTarget.chatId;
+      const chatId = explicitTarget?.chatId || entry.adapter.resolveOwnerChatId?.(ownerId) || ownerTarget.chatId;
 
       if (entry.adapter.capabilities?.proactive === false && !entry.adapter.canReply?.(chatId)) {
         debugLog()?.log("bridge", `→ ${platform} skipped proactive (no reply context for ${chatId})`);

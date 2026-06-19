@@ -34,10 +34,6 @@ export function createPluginContext({ pluginId, pluginKey, source, pluginDir, da
     sensitiveCapabilities: declaredSensitiveCapabilities,
     fetchImpl,
   });
-  const pluginBus = resolvedAccess === "full-access"
-    ? bus
-    : createRestrictedBusProxy(bus, grantedPermissions);
-
   const prefix = `[plugin:${pluginId}]`;
   const recordLog = (level, args) => {
     if (typeof logSink !== "function") return;
@@ -53,6 +49,22 @@ export function createPluginContext({ pluginId, pluginKey, source, pluginDir, da
     error: (...args) => { recordLog("error", args); console.error(prefix, ...args); },
     debug: (...args) => { recordLog("debug", args); console.debug(prefix, ...args); },
   };
+  const ownerContext = Object.freeze({
+    kind: "plugin",
+    pluginId,
+    pluginKey: pluginKey || pluginId,
+    source: source || "community",
+    pluginDir,
+    dataDir,
+    generatedDir: path.join(dataDir, "generated"),
+    config,
+    log,
+  });
+  const pluginBus = createPluginBusProxy(bus, {
+    ownerContext,
+    grantedPermissions,
+    allowHandle: resolvedAccess === "full-access",
+  });
 
   function registerSessionFile(entry: any = {}) {
     if (typeof registerSessionFileImpl !== "function") {
@@ -102,6 +114,23 @@ export function createPluginContext({ pluginId, pluginKey, source, pluginDir, da
     return { file, mediaItem: toMediaItem(file) };
   }
 
+  const appEvents = Object.freeze({
+    emit(type, payload: any = {}) {
+      const eventType = textOrNull(type);
+      if (!eventType) return false;
+      if (!isPlainObject(payload)) return false;
+      pluginBus.emit({
+        type: "app_event",
+        event: {
+          type: eventType,
+          payload,
+          source: `plugin:${pluginId}`,
+        },
+      }, null);
+      return true;
+    },
+  });
+
   return {
     ...runtimeScope,
     pluginId,
@@ -112,6 +141,7 @@ export function createPluginContext({ pluginId, pluginKey, source, pluginDir, da
     capabilities: declaredCapabilities,
     sensitiveCapabilities: declaredSensitiveCapabilities,
     bus: pluginBus,
+    appEvents,
     network: pluginNetwork,
     config,
     log,
@@ -120,8 +150,9 @@ export function createPluginContext({ pluginId, pluginKey, source, pluginDir, da
   };
 }
 
-function createRestrictedBusProxy(bus, grantedPermissions) {
-  const canReadUsage = hasPermission(grantedPermissions, "usage.read");
+function createPluginBusProxy(bus, { ownerContext, grantedPermissions, allowHandle }) {
+  const fullAccess = allowHandle === true;
+  const canReadUsage = fullAccess || hasPermission(grantedPermissions, "usage.read");
   const getCapability = typeof bus.getCapability === "function"
     ? bus.getCapability.bind(bus)
     : () => null;
@@ -132,32 +163,44 @@ function createRestrictedBusProxy(bus, grantedPermissions) {
     throw forbiddenBusError(type, action, "usage.read");
   };
 
-  return Object.freeze({
+  const proxy: Record<string, any> = {
     emit(event, sessionPath) {
-      if (event?.type === "llm_usage") {
+      if (!fullAccess && event?.type === "llm_usage") {
         throw forbiddenBusError("llm_usage", "emit", "usage.read");
       }
       return bus.emit(event, sessionPath);
     },
     subscribe(callback, filter = {}) {
       const requestedTypes = typesFromFilter(filter);
-      if (!canReadUsage && requestedTypes?.has("llm_usage")) {
+      if (!fullAccess && !canReadUsage && requestedTypes?.has("llm_usage")) {
         throw forbiddenBusError("llm_usage", "subscribe", "usage.read");
       }
       const wrapped = (event, sessionPath) => {
-        if (!canReadUsage && event?.type === "llm_usage") return;
+        if (!fullAccess && !canReadUsage && event?.type === "llm_usage") return;
         return callback(event, sessionPath);
       };
       return bus.subscribe(wrapped, filter);
     },
     async request(type, payload, options) {
       assertUsagePermission(type, "request");
-      return bus.request(type, payload, options);
+      if (typeof bus.request !== "function") {
+        throw new Error("plugin bus request unavailable");
+      }
+      return bus.request(type, payload, {
+        ...(options || {}),
+        caller: ownerContext,
+      });
     },
-    hasHandler: bus.hasHandler.bind(bus),
+    hasHandler: typeof bus.hasHandler === "function" ? bus.hasHandler.bind(bus) : () => false,
     listCapabilities: typeof bus.listCapabilities === "function" ? bus.listCapabilities.bind(bus) : () => [],
     getCapability,
-  });
+  };
+
+  if (allowHandle && typeof bus.handle === "function") {
+    proxy.handle = bus.handle.bind(bus);
+  }
+
+  return Object.freeze(proxy);
 }
 
 function normalizePermissions(permissions) {
@@ -197,6 +240,12 @@ function forbiddenBusError(type, action, permission) {
 function clonePlain(value) {
   if (value === undefined) return undefined;
   return JSON.parse(JSON.stringify(value));
+}
+
+function isPlainObject(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 function textOrNull(value) {

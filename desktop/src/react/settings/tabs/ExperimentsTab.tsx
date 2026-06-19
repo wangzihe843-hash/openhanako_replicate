@@ -370,6 +370,9 @@ export function ExperimentsTab() {
     && experiment.id === DEEPSEEK_ROLEPLAY_REASONING_PATCH_EXPERIMENT_ID
   ));
   const memoryExperiments = experiments.filter((experiment) => experiment.owner === 'memory');
+  const cacheSnapshotExperiment = memoryExperiments.find((experiment) => (
+    experiment.id === CACHE_SNAPSHOT_EXPERIMENT_ID
+  ));
   const showComputerUse = platformName !== 'linux';
 
   useEffect(() => {
@@ -461,7 +464,7 @@ export function ExperimentsTab() {
       )}
       <SettingsSection
         title={t('settings.experiments.memoryTitle')}
-        description={t('settings.experiments.memorySectionDescription')}
+        description={t(cacheSnapshotExperiment?.descriptionKey || 'settings.experiments.memorySectionDescription')}
       >
         {loading ? (
           <div className={styles['experiments-empty']}>Loading...</div>

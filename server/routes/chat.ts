@@ -311,6 +311,21 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
     return ss;
   }
 
+  function getExistingState(sessionPath) {
+    if (!sessionPath) return null;
+    const key = sessionStateKey(sessionPath);
+    if (key !== sessionPath && sessionState.has(sessionPath) && !sessionState.has(key)) {
+      sessionState.set(key, sessionState.get(sessionPath));
+      sessionState.delete(sessionPath);
+    }
+    const ss = sessionState.get(key) || sessionState.get(sessionPath) || null;
+    if (ss) {
+      ss.sessionPath = sessionPath;
+      ss.lastAccessed = Date.now();
+    }
+    return ss;
+  }
+
   const clients = new Map();
 
   function createInitialWsClientRecord(requestContext, { assumeLocalOwner = false } = {}) {
@@ -462,10 +477,14 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
     emitDeferredContentEvents(sessionPath, ss, pending);
   }
 
-  function finishStreamingState(ss) {
+  function finishStreamingState(ss, sessionPath = null) {
     if (!ss) return;
     ss.turnActive = false;
     clearTurnStallWatchdog(ss);
+    if (sessionPath && ss.isThinking) {
+      ss.isThinking = false;
+      emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+    }
     if (ss.isStreaming) finishSessionStream(ss);
     ss.thinkTagParser.reset();
     ss.moodParser.reset();
@@ -658,6 +677,55 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
           case "card_end":
             emitStreamEvent(sessionPath, ss, { type: "card_end" });
             break;
+        }
+      });
+    };
+
+    const feedMoodPipeline = (text) => {
+      ss.moodParser.feed(text, (evt) => {
+        if (evt.type === "text") {
+          feedCardPipeline(evt.data);
+        } else if (evt.type === "mood_start") {
+          emitStreamEvent(sessionPath, ss, { type: "mood_start" });
+        } else if (evt.type === "mood_text") {
+          emitStreamEvent(sessionPath, ss, { type: "mood_text", delta: evt.data });
+        } else if (evt.type === "mood_end") {
+          emitStreamEvent(sessionPath, ss, { type: "mood_end" });
+        }
+      });
+    };
+
+    const flushTerminalParsers = () => {
+      if (ss.isThinking) {
+        ss.isThinking = false;
+        emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+      }
+      ss.thinkTagParser.flush((tEvt) => {
+        if (tEvt.type === "think_text") {
+          emitStreamEvent(sessionPath, ss, { type: "thinking_delta", delta: tEvt.data });
+        } else if (tEvt.type === "think_end") {
+          emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+        } else if (tEvt.type === "text") {
+          feedMoodPipeline(tEvt.data);
+        }
+      });
+      ss.moodParser.flush((evt) => {
+        if (evt.type === "text") {
+          feedCardPipeline(evt.data);
+        } else if (evt.type === "mood_text") {
+          emitStreamEvent(sessionPath, ss, { type: "mood_text", delta: evt.data });
+        }
+      });
+      ss.cardParser.flush((cEvt) => {
+        if (cEvt.type === "text") {
+          emitStreamEvent(sessionPath, ss, { type: "text_delta", delta: cEvt.data });
+        } else if (cEvt.type === "card_text") {
+          emitStreamEvent(sessionPath, ss, { type: "card_text", delta: cEvt.data });
+        } else if (cEvt.type === "card_start") {
+          ss._cardEmitted = true;
+          emitStreamEvent(sessionPath, ss, { type: "card_start", attrs: cEvt.attrs });
+        } else if (cEvt.type === "card_end") {
+          emitStreamEvent(sessionPath, ss, { type: "card_end" });
         }
       });
     };
@@ -925,6 +993,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
           scheduleTurnStallWatchdog(sessionPath, ss);
         } else if (ss.isStreaming) {
           statusStreamId = eventStreamId || ss.streamId || null;
+          flushTerminalParsers();
           finishStreamingState(ss);
         } else {
           statusStreamId = eventStreamId || ss.streamId || null;
@@ -1017,55 +1086,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       if (!ss) return;
       const turnWasAborted = ss.isAborted === true;
       const turnStreamId = ss.streamId || null;
-      // 关闭结构化 thinking（如有）——必须在 flush 之前，否则前端收不到 thinking_end
-      if (ss.isThinking) {
-        ss.isThinking = false;
-        emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
-      }
-      // flush 顺序：ThinkTag → Mood → Card（和 feed 顺序一致）
-      // flush 内部的 mood → card 管线（thinkTag flush 和 mood flush 共用）
-      const feedMoodPipeline = (text) => {
-        ss.moodParser.feed(text, (evt) => {
-          if (evt.type === "text") {
-            feedCardPipeline(evt.data);
-          } else if (evt.type === "mood_start") {
-            emitStreamEvent(sessionPath, ss, { type: "mood_start" });
-          } else if (evt.type === "mood_text") {
-            emitStreamEvent(sessionPath, ss, { type: "mood_text", delta: evt.data });
-          } else if (evt.type === "mood_end") {
-            emitStreamEvent(sessionPath, ss, { type: "mood_end" });
-          }
-        });
-      };
-      ss.thinkTagParser.flush((tEvt) => {
-        if (tEvt.type === "think_text") {
-          emitStreamEvent(sessionPath, ss, { type: "thinking_delta", delta: tEvt.data });
-        } else if (tEvt.type === "think_end") {
-          emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
-        } else if (tEvt.type === "text") {
-          feedMoodPipeline(tEvt.data);
-        }
-      });
-      ss.moodParser.flush((evt) => {
-        if (evt.type === "text") {
-          feedCardPipeline(evt.data);
-        } else if (evt.type === "mood_text") {
-          emitStreamEvent(sessionPath, ss, { type: "mood_text", delta: evt.data });
-        }
-      });
-      ss.cardParser.flush((cEvt) => {
-        if (cEvt.type === "text") {
-          emitStreamEvent(sessionPath, ss, { type: "text_delta", delta: cEvt.data });
-        } else if (cEvt.type === "card_text") {
-          emitStreamEvent(sessionPath, ss, { type: "card_text", delta: cEvt.data });
-        } else if (cEvt.type === "card_start") {
-          ss._cardEmitted = true;
-          emitStreamEvent(sessionPath, ss, { type: "card_start", attrs: cEvt.attrs });
-        } else if (cEvt.type === "card_end") {
-          emitStreamEvent(sessionPath, ss, { type: "card_end" });
-        }
-      });
-
+      flushTerminalParsers();
 
       // 空回复检测：本轮没有文本输出也没有工具调用，提示用户检查配置
       // 被 abort 的 turn 不弹此提示（用户主动停止 / WS 断开 / 连接超时）
@@ -1207,7 +1228,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
               try { abortAccepted = !!(await hub.abort(abortPath, { reason: abortReason })); } catch {}
               if (!abortAccepted) {
                 const abortStreamId = abortSs?.streamId || null;
-                finishStreamingState(abortSs);
+                finishStreamingState(abortSs, abortPath);
                 broadcast({
                   type: "status",
                   isStreaming: false,
@@ -1242,7 +1263,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
               const currentSessionId = typeof msg.sessionId === "string" && msg.sessionId.trim()
                 ? msg.sessionId.trim()
                 : engine.getSessionIdForPath?.(currentPath) || null;
-              const ss = sessionState.get(currentPath);
+              const ss = getExistingState(currentPath);
               const runtimeIsStreaming = typeof engine.isSessionStreaming === "function"
                 ? !!engine.isSessionStreaming(currentPath)
                 : !!ss?.isStreaming;

@@ -453,8 +453,8 @@ export class UniversalMediaManager {
     return null;
   }
 
-  registerAdapter(adapter) {
-    this._registry.register(adapter);
+  registerAdapter(adapter, options: any = {}) {
+    this._registry.register(adapter, options);
   }
 
   unregisterAdapter(adapterId) {
@@ -506,8 +506,9 @@ export class UniversalMediaManager {
       bus.handle("media:generate-image", (payload: any = {}) => this.generateImageFromBus(payload)),
       bus.handle("media:generate-video", (payload: any = {}) => this.generateVideoFromBus(payload)),
       bus.handle("media:transcribe-audio", (payload: any = {}) => this.transcribeAudio(payload)),
-      bus.handle("media-gen:register-adapter", ({ adapter }) => {
-        this.registerAdapter(adapter);
+      bus.handle("media-gen:register-adapter", (payload: any = {}, requestContext: any = null) => {
+        const { adapter } = payload;
+        this.registerAdapter(adapter, { owner: requestContext?.caller || null });
         logInfo(this._log, `adapter registered: ${adapter?.id}`);
         return { ok: true };
       }),
@@ -564,6 +565,11 @@ export class UniversalMediaManager {
       config: this._config,
       videoConfig: this._createVideoConfigBridge(),
     };
+  }
+
+  _submitContextForAdapter(adapter) {
+    const baseContext = this._submitContext();
+    return this._registry.createSubmitContextForAdapter?.(adapter, baseContext) || baseContext;
   }
 
   _toolContext({ sessionId = null, sessionPath = null, sessionRef = null, bridgeContext = null }: any = {}) {
@@ -710,7 +716,7 @@ export class UniversalMediaManager {
       ...(target?.credentialLaneId ? { credentialLaneId: target.credentialLaneId } : {}),
       ...(target?.credentialProviderId ? { credentialProviderId: target.credentialProviderId } : {}),
     };
-    const result = await adapter.submit(params, this._submitContext());
+    const result = await adapter.submit(params, this._submitContextForAdapter(adapter));
     if (!result?.taskId) throw new Error(t("toolDef.generateVideo.submitFailedUnknown"));
 
     this._store.add({

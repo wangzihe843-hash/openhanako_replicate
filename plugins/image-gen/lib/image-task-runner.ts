@@ -149,10 +149,14 @@ export function imageDeferredMeta({ prompt, deliveryTarget = null }: any = {}) {
   };
 }
 
-async function adapterIsAvailable(adapter, submitCtx) {
+function submitContextForAdapter(registry, adapter, submitCtx) {
+  return registry?.createSubmitContextForAdapter?.(adapter, submitCtx) || submitCtx;
+}
+
+async function adapterIsAvailable(adapter, submitCtx, registry = null) {
   if (typeof adapter?.checkAuth !== "function") return true;
   try {
-    const result = await adapter.checkAuth(submitCtx);
+    const result = await adapter.checkAuth(submitContextForAdapter(registry, adapter, submitCtx));
     return result?.ok !== false;
   } catch {
     return false;
@@ -217,11 +221,11 @@ function rejectModeAsModel(input: any = {}) {
   throw new Error(t("plugin.imageGen.modePassedAsModel", { modeId: modelId }));
 }
 
-async function availableAdapterOrThrow(adapter, submitCtx, providerId) {
+async function availableAdapterOrThrow(adapter, submitCtx, providerId, registry = null) {
   if (!adapter) throw new Error(explicitProviderError(providerId));
   if (typeof adapter.checkAuth === "function") {
     try {
-      const auth = await adapter.checkAuth(submitCtx);
+      const auth = await adapter.checkAuth(submitContextForAdapter(registry, adapter, submitCtx));
       if (auth?.ok === false) {
         throw new Error(auth.message || "credentials unavailable");
       }
@@ -282,7 +286,7 @@ async function targetFromExplicitProvider(input, registry, submitCtx) {
   }, { strict: !!input.model });
   if (mediaTarget) return mediaTarget;
 
-  const adapter = await availableAdapterOrThrow(registry.get(input.provider), submitCtx, input.provider);
+  const adapter = await availableAdapterOrThrow(registry.get(input.provider), submitCtx, input.provider, registry);
   return targetFromAdapter(adapter, input, {
     providerId: input.provider,
     modelId: input.model || null,
@@ -337,13 +341,13 @@ async function legacyAdapterTarget(input, registry, submitCtx) {
   const defaultProvider = submitCtx.config?.get?.("defaultImageModel")?.provider;
   if (defaultProvider) {
     const adapter = registry.get(defaultProvider);
-    if (adapter && await adapterIsAvailable(adapter, submitCtx)) return targetFromAdapter(adapter, input);
+    if (adapter && await adapterIsAvailable(adapter, submitCtx, registry)) return targetFromAdapter(adapter, input);
   }
 
   const adapters = registry.getByType("image");
   for (let i = adapters.length - 1; i >= 0; i--) {
     const adapter = adapters[i];
-    if (await adapterIsAvailable(adapter, submitCtx)) return targetFromAdapter(adapter, input);
+    if (await adapterIsAvailable(adapter, submitCtx, registry)) return targetFromAdapter(adapter, input);
   }
   return targetFromAdapter(adapters.at(-1), input);
 }
@@ -505,11 +509,12 @@ export async function retryImageTask({ taskId, ctx }) {
   poller.add(taskId);
 
   const submitCtx = createSubmitContext(ctx);
+  const adapterSubmitCtx = submitContextForAdapter(registry, adapter, submitCtx);
   void runSubmitInBackground({
     taskId,
     adapter,
     params,
-    submitCtx,
+    submitCtx: adapterSubmitCtx,
     store,
     poller,
     ctx,

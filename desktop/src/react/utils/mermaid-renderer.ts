@@ -20,6 +20,7 @@ const MERMAID_CONFIG: MermaidConfig = {
 let mermaidPromise: Promise<MermaidApi> | null = null;
 let testLoader: MermaidLoader | null = null;
 let idSeq = 0;
+let renderSeq = 0;
 
 async function loadMermaid(): Promise<MermaidApi> {
   if (!mermaidPromise) {
@@ -54,9 +55,12 @@ function t(key: string): string {
 }
 
 function ensureSourceToolbar(diagram: HTMLElement, sourceBlock: HTMLElement, source: string): void {
-  diagram.querySelector('.mermaid-source-toolbar')?.remove();
+  const existing = diagram.querySelector<HTMLElement>('.mermaid-source-toolbar');
+  if (existing?.dataset.source === source) return;
+  existing?.remove();
   const toolbar = document.createElement('div');
   toolbar.className = 'mermaid-source-toolbar';
+  toolbar.dataset.source = source;
 
   const toggle = document.createElement('button');
   toggle.type = 'button';
@@ -124,12 +128,15 @@ async function renderMermaidDiagram(diagram: HTMLElement): Promise<void> {
 
   diagram.dataset.mermaidStatus = 'loading';
   diagram.dataset.mermaidSource = source;
+  const currentRenderSeq = String(++renderSeq);
+  diagram.dataset.mermaidRenderSeq = currentRenderSeq;
   diagram.classList.remove('is-rendered', 'is-error');
   rendered.textContent = '';
 
   try {
     const mermaid = await loadMermaid();
     const { svg, bindFunctions } = await mermaid.render(nextMermaidId(), source);
+    if (diagram.dataset.mermaidRenderSeq !== currentRenderSeq || readSource(diagram) !== source) return;
     rendered.innerHTML = svg;
     bindFunctions?.(rendered);
     sourceBlock?.setAttribute('hidden', '');
@@ -137,6 +144,7 @@ async function renderMermaidDiagram(diagram: HTMLElement): Promise<void> {
     diagram.dataset.mermaidStatus = 'rendered';
     diagram.classList.add('is-rendered');
   } catch (err) {
+    if (diagram.dataset.mermaidRenderSeq !== currentRenderSeq || readSource(diagram) !== source) return;
     sourceBlock?.removeAttribute('hidden');
     rendered.textContent = `Mermaid diagram failed to render: ${errorMessage(err)}`;
     diagram.dataset.mermaidStatus = 'error';

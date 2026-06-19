@@ -2094,6 +2094,7 @@ export class HanaEngine {
             ...runtimeCtx,
             ...(sessionPath ? { sessionPath } : {}),
             ...(opts.bridgeContext ? { bridgeContext: opts.bridgeContext } : {}),
+            ...(opts.notificationContext ? { notificationContext: opts.notificationContext } : {}),
             agentId,
             ...executionScope,
           };
@@ -2114,6 +2115,7 @@ export class HanaEngine {
           ...runtimeCtx,
           ...(sessionPath ? { sessionPath } : {}),
           ...(opts.bridgeContext ? { bridgeContext: opts.bridgeContext } : {}),
+          ...(opts.notificationContext ? { notificationContext: opts.notificationContext } : {}),
           agentId,
           ...executionScope,
         };

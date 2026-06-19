@@ -99,6 +99,7 @@ function makeTicker(tmpDir, mode, summaryManager, memoryReflectionRunner, overri
       messages,
       messageCount: messages.length,
     })),
+    ensureSessionLoaded: overrides.ensureSessionLoaded,
     getSessionStreamFn: overrides.getSessionStreamFn || vi.fn(() => vi.fn()),
     sessionDir,
     memoryDir,
@@ -260,6 +261,63 @@ describe("cache snapshot reflection runtime", () => {
       strict: false,
     });
     expect(observation.reason).toMatch(/snapshot unavailable/i);
+  });
+
+  it("write mode reloads a cold session runtime before falling back from snapshot reflection (#1782)", async () => {
+    const summaryData = {
+      summary: "### 重要事实\n- cache snapshot 已恢复。\n\n### 事情经过\n- [2026-06-03 10:01] 恢复 runtime 后写入缓存快照摘要。",
+    };
+    const summaryManager = {
+      rollingSummary: vi.fn().mockResolvedValue("official summary"),
+      createRollingSummaryDraft: vi.fn(),
+      saveSummary: vi.fn(),
+      getSummary: vi.fn().mockReturnValue(null),
+    };
+    const memoryReflectionRunner = {
+      runMemoryReflection: vi.fn().mockResolvedValue({
+        summary: summaryData.summary,
+        changed: true,
+        data: summaryData,
+        metadata: {
+          cacheStrategy: "session_snapshot",
+          strict: true,
+          cachePrefixHash: "b".repeat(64),
+          parentCachePrefixHash: "a".repeat(64),
+        },
+      }),
+    };
+    const buildSessionCacheSnapshot = vi.fn()
+      .mockImplementationOnce(() => {
+        throw new Error("Session cache snapshot unavailable: unknown session after hibernation");
+      })
+      .mockImplementationOnce((sessionPath, { reason, messages }) => ({
+        strategy: "session_snapshot",
+        strict: true,
+        sessionPath,
+        reason,
+        model: { id: "memory-model", provider: "deepseek" },
+        requestModel: { id: "memory-model", provider: "deepseek" },
+        cachePrefixHash: "a".repeat(64),
+        parentCachePrefixHash: "",
+        cacheKeyParams: { thinkingLevel: "medium" },
+        tools: [],
+        messages,
+        messageCount: messages.length,
+      }));
+    const ensureSessionLoaded = vi.fn().mockResolvedValue({ ok: true });
+    const { ticker, sessionPath } = makeTicker(tmpDir, "write", summaryManager, memoryReflectionRunner, {
+      buildSessionCacheSnapshot,
+      ensureSessionLoaded,
+    });
+    writeSession(sessionPath);
+
+    await ticker.flushSession(sessionPath);
+
+    expect(ensureSessionLoaded).toHaveBeenCalledWith(sessionPath);
+    expect(buildSessionCacheSnapshot).toHaveBeenCalledTimes(2);
+    expect(memoryReflectionRunner.runMemoryReflection).toHaveBeenCalledOnce();
+    expect(summaryManager.rollingSummary).not.toHaveBeenCalled();
+    expect(summaryManager.saveSummary).toHaveBeenCalledWith("2026-06-03T10-00-00-000Z_cache", summaryData);
   });
 
   it("startup recovery uses the same rolling summary fallback for cold sessions in write mode (#1666)", async () => {

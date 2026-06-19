@@ -36,6 +36,7 @@ export async function submitImageGeneration({ input = {}, ctx, metadata = null, 
   const target = await resolveImageTarget(input, registry, submitCtx);
   const adapter = target?.adapter || null;
   if (!adapter) throw new Error(t("plugin.imageGen.noProvider"));
+  const adapterSubmitCtx = registry.createSubmitContextForAdapter?.(adapter, submitCtx) || submitCtx;
 
   const count = Math.min(Math.max(input.count || 1, 1), 9);
   const batchId = createTaskId();
@@ -127,7 +128,7 @@ export async function submitImageGeneration({ input = {}, ctx, metadata = null, 
       taskId,
       adapter,
       params,
-      submitCtx,
+      submitCtx: adapterSubmitCtx,
       store,
       poller,
       ctx,

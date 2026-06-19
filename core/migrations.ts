@@ -143,6 +143,8 @@ const migrations = {
   41: migrateIdentityUserNamePlaceholders,
   // Provider Catalog v2：provider/model/capability canonical store 一次性 cutover
   42: migrateProviderCatalogV2Cutover,
+  // Codex 生图参数改为 mode schema 的 resolution 后，清掉旧配置残留的 size 默认值
+  43: migrateCodexImageGenerationDefaultsToResolutionSchema,
 };
 
 // ── Runner ──────────────────────────────────────────────────────────────────
@@ -1347,6 +1349,51 @@ function migrateProviderCatalogV2Cutover(ctx) {
     providerRegistry._entries?.clear?.();
   }
   log?.(`[migrations] #42: provider catalog v2 ready (${Object.keys(catalog.providers || {}).length} providers)`);
+}
+
+const CODEX_IMAGE_PROVIDER_ID = "openai-codex-oauth";
+
+function migrateCodexImageGenerationDefaultsToResolutionSchema(ctx) {
+  const { hanakoHome, prefs, log } = ctx;
+  const preferences = prefs.getPreferences();
+  const prefsChanged = removeCodexImageSizeDefault(
+    preferences?.imageGeneration?.providerDefaults,
+  );
+  if (prefsChanged) {
+    prefs.savePreferences(preferences);
+  }
+
+  const pluginChanged = removeCodexImageSizeDefaultFromPluginConfig(hanakoHome, log);
+  log?.(`[migrations] #43: Codex stale image size defaults removed (preferences=${prefsChanged}, pluginConfig=${pluginChanged})`);
+}
+
+function removeCodexImageSizeDefault(providerDefaults) {
+  const defaults = migrationRecord(providerDefaults);
+  const codexDefaults = migrationRecord(defaults?.[CODEX_IMAGE_PROVIDER_ID]);
+  if (!codexDefaults || !Object.prototype.hasOwnProperty.call(codexDefaults, "size")) {
+    return false;
+  }
+  delete codexDefaults.size;
+  return true;
+}
+
+function removeCodexImageSizeDefaultFromPluginConfig(hanakoHome, log) {
+  const configPath = path.join(hanakoHome, "plugin-data", "image-gen", "config.json");
+  if (!fs.existsSync(configPath)) return false;
+
+  let config;
+  try {
+    config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  } catch (err) {
+    log?.(`[migrations] #43: image-gen plugin config unreadable, skipped (${err.message})`);
+    return false;
+  }
+
+  const changed = removeCodexImageSizeDefault(config?.global?.providerDefaults);
+  if (!changed) return false;
+
+  atomicWriteSync(configPath, JSON.stringify(config, null, 2) + "\n");
+  return true;
 }
 
 function migrateDirectNotifyAutomationsToAgentRuns(ctx) {

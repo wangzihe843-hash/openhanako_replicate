@@ -408,6 +408,9 @@ export class Agent {
         buildSessionCacheSnapshot: (sessionPath, options) => (
           this._cb?.getEngine?.()?.buildSessionCacheSnapshot?.(sessionPath, options)
         ),
+        ensureSessionLoaded: (sessionPath) => (
+          this._cb?.getEngine?.()?.ensureSessionLoaded?.(sessionPath)
+        ),
         getSessionStreamFn: (sessionPath) => (
           this._cb?.getEngine?.()?.getSessionStreamFn?.(sessionPath)
         ),
@@ -496,7 +499,7 @@ export class Agent {
       registerSessionFile: (entry) => this._cb?.registerSessionFile?.(entry),
     });
     this._notifyTool = createNotifyTool({
-      onNotify: (payload) => this._notifyHandler?.(payload),
+      onNotify: (payload, context) => this._notifyHandler?.(payload, context),
     });
     this._stopTaskTool = createStopTaskTool({
       getTaskRegistry: () => this._cb?.getTaskRegistry?.(),

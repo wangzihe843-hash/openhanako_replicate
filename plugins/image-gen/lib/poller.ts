@@ -374,13 +374,14 @@ export class Poller {
       return;
     }
 
-    const ctx = {
+    const baseCtx = {
       dataDir: this._dataDir,
       generatedDir: this._generatedDir,
       bus: this._bus,
       log: this._log,
       task,
     };
+    const ctx = this._registry.createSubmitContextForAdapter?.(adapter, baseCtx) || baseCtx;
 
     let result;
     try {

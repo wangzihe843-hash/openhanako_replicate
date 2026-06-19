@@ -141,6 +141,60 @@ describe("NotificationService", () => {
     });
   });
 
+  it("routes notifications with a persisted bridge delivery target to BridgeManager by default", async () => {
+    const bridgeManager = {
+      sendProactive: vi.fn().mockResolvedValue({
+        platform: "wechat",
+        chatId: "wx-owner",
+        sessionKey: "wx_dm_wx-owner@hana",
+      }),
+    };
+    const service = new NotificationService({
+      emitDesktop: vi.fn(),
+      getBridgeManager: () => bridgeManager,
+    });
+
+    const result = await service.notify(
+      {
+        title: "自动任务",
+        body: "正文",
+      },
+      {
+        agentId: "hana",
+        notificationContext: {
+          bridgeDeliveryTarget: {
+            kind: "bridge",
+            platform: "wechat",
+            chatId: "wx-owner",
+            sessionKey: "wx_dm_wx-owner@hana",
+            agentId: "hana",
+          },
+        },
+      },
+    );
+
+    expect(bridgeManager.sendProactive).toHaveBeenCalledWith(
+      "自动任务\n\n正文",
+      "hana",
+      {
+        contextPolicy: "record_when_delivered",
+        deliveryTarget: {
+          kind: "bridge",
+          platform: "wechat",
+          chatType: "dm",
+          chatId: "wx-owner",
+          sessionKey: "wx_dm_wx-owner@hana",
+          agentId: "hana",
+        },
+      },
+    );
+    expect(result.deliveries[0]).toMatchObject({
+      channel: "bridge_owner",
+      status: "sent",
+      platform: "wechat",
+    });
+  });
+
   it("passes preferred bridge platforms to BridgeManager", async () => {
     const bridgeManager = {
       sendProactive: vi.fn().mockResolvedValue({

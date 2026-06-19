@@ -72,6 +72,18 @@ describe("automation tool", () => {
         jobData: expect.objectContaining({
           label: "Morning Review",
           actorAgentId: "agent-b",
+          executionContext: expect.objectContaining({
+            notificationContext: {
+              bridgeDeliveryTarget: {
+                kind: "bridge",
+                platform: "wechat",
+                chatType: "dm",
+                chatId: "owner",
+                sessionKey: "wechat_dm_owner@agent-a",
+                agentId: "agent-a",
+              },
+            },
+          }),
         }),
         apply: expect.any(Function),
       }),

@@ -62,7 +62,7 @@ describe("createPluginRouteRequestContext", () => {
     const result = await ctx.bus.request("session:create", { agentId: "hanako" });
 
     expect(result).toMatchObject({ ok: true, sessionPath: expect.any(String) });
-    expect(handler).toHaveBeenCalledWith({ agentId: "hanako" });
+    expect(handler).toHaveBeenCalledWith({ agentId: "hanako" }, null);
   });
 
   it("accepts exact permission declarations through sensitiveCapabilities", async () => {

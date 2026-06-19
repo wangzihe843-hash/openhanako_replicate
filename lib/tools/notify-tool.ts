@@ -36,7 +36,7 @@ export function createNotifyTool({ onNotify }) {
         description: "Whether a successfully delivered Bridge notification should be appended to the Bridge conversation context.",
       })),
     }),
-    execute: async (_toolCallId, params) => {
+    execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       const { title, body } = params;
       try {
         const result = await onNotify?.({
@@ -46,6 +46,12 @@ export function createNotifyTool({ onNotify }) {
           channels: params.channels,
           bridgePlatforms: params.bridgePlatforms,
           contextPolicy: params.contextPolicy,
+        }, {
+          sessionPath: typeof ctx?.sessionPath === "string" && ctx.sessionPath.trim() ? ctx.sessionPath.trim() : null,
+          bridgeContext: ctx?.bridgeContext?.isBridgeSession === true ? ctx.bridgeContext : null,
+          notificationContext: ctx?.notificationContext && typeof ctx.notificationContext === "object"
+            ? ctx.notificationContext
+            : null,
         });
         const sent = result?.ok !== false;
         const failure = Array.isArray(result?.deliveries)

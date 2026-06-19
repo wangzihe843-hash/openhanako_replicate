@@ -915,6 +915,14 @@
     margin-right: auto;
 }
 
+.settings-inline-error {
+    max-width: var(--agent-create-content-width, 448px);
+    margin: 0 auto var(--space-sm);
+    color: var(--danger, #9f3a32);
+    font-size: 0.8rem;
+    line-height: 1.45;
+}
+
 .agent-create-actions {
     display: flex;
     justify-content: flex-end;

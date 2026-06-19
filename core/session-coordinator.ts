@@ -43,6 +43,7 @@ import {
   DEEPSEEK_ROLEPLAY_REASONING_PATCH_EXPERIMENT_ID,
   getResolvedExperimentValue,
 } from "../lib/experiments/registry.ts";
+import { isDeepSeekModel } from "./provider-compat.ts";
 import {
   normalizePlainDescription,
   stripClosedInternalNarrationBlocks,
@@ -314,6 +315,65 @@ function recordAssistantUsage({ ledger, event, sessionPath, sessionId, agentId, 
       costRates,
     });
     return ledger.recordError(request.requestId, new Error(errorMessage || "provider request failed"));
+  }
+  return null;
+}
+
+function logDeepSeekReasoningVisibility({ event, model, sessionPath, agentId }: any) {
+  if (!isDeepSeekModel(model)) return;
+  const provider = textOrNull(model?.provider) || "deepseek";
+  const modelId = modelIdFromModel(model) || "unknown";
+  const sessionName = sessionPath ? path.basename(sessionPath) : "unknown";
+  if (event?.type === "message_update") {
+    const sub = event.assistantMessageEvent || event.event || null;
+    if (sub?.type !== "thinking_delta") return;
+    const chars = String(sub.delta ?? sub.text ?? sub.thinking ?? "").length;
+    log.log(`[deepseek reasoning] event=thinking_delta provider=${provider} model=${modelId} agent=${agentId || ""} session=${sessionName} chars=${chars}`);
+    return;
+  }
+  if (event?.type !== "message_end" || event.message?.role !== "assistant") return;
+  const stats = collectThinkingVisibilityStats(event.message);
+  const usage = event.message?.usage || {};
+  const reasoningTokens = firstFiniteNumber(
+    usage.reasoningTokens,
+    usage.reasoning_tokens,
+    usage.output?.reasoningTokens,
+    usage.completion_tokens_details?.reasoning_tokens,
+  );
+  log.log(`[deepseek reasoning] event=message_end provider=${provider} model=${modelId} agent=${agentId || ""} session=${sessionName} thinkingBlocks=${stats.blocks} thinkingChars=${stats.chars} reasoningTokens=${reasoningTokens ?? ""} stopReason=${event.message?.stopReason || ""}`);
+}
+
+function collectThinkingVisibilityStats(message: any) {
+  const blocks = [];
+  const visit = (value) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (typeof value !== "object") return;
+    const type = typeof value.type === "string" ? value.type : "";
+    if (type === "thinking" || type === "reasoning" || type === "reasoning_text") {
+      blocks.push(value);
+    }
+    for (const key of ["content", "thinking", "reasoning", "reasoningText", "text"]) {
+      if (key === "text" && type !== "thinking" && type !== "reasoning" && type !== "reasoning_text") continue;
+      const child = value[key];
+      if (child && typeof child === "object") visit(child);
+    }
+  };
+  visit(message?.content);
+  const chars = blocks.reduce((total, block) => (
+    total
+      + String(block.thinking ?? block.reasoning ?? block.reasoningText ?? block.text ?? block.content ?? "").length
+  ), 0);
+  return { blocks: blocks.length, chars };
+}
+
+function firstFiniteNumber(...values) {
+  for (const value of values) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
   }
   return null;
 }
@@ -1267,6 +1327,12 @@ export class SessionCoordinator {
           surface: "desktop",
           trigger: "user",
         },
+      });
+      logDeepSeekReasoningVisibility({
+        event,
+        model: resolvedModel,
+        sessionPath,
+        agentId: creatingAgentId,
       });
       this._d.emitEvent(
         (event as any).agentId ? event : { ...event, agentId: creatingAgentId },
@@ -4351,6 +4417,8 @@ export class SessionCoordinator {
           getPermissionMode: () => execPermissionMode,
           permissionContext: { isSubagent: !!opts.subagentContext },
           allowHumanApproval: opts.allowHumanApproval !== false,
+          ...(opts.bridgeContext ? { bridgeContext: opts.bridgeContext } : {}),
+          ...(opts.notificationContext ? { notificationContext: opts.notificationContext } : {}),
         },
       );
 

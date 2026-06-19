@@ -50,6 +50,7 @@ function textResult(text, details = undefined) {
 
 function emitMarkdownCoverUpdated(ctx, filePath) {
   try {
+    if (ctx?.appEvents?.emit?.("markdown-cover-updated", { filePath })) return;
     ctx?.bus?.emit?.({
       type: "app_event",
       event: {

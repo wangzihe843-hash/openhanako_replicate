@@ -41,6 +41,28 @@ describe("createPluginContext", () => {
     expect(ctx.sensitiveCapabilities).toEqual(["filesystem.write"]);
   });
 
+  it("exposes a controlled app event emitter", () => {
+    const bus = { emit: vi.fn(), subscribe() {}, request() {}, hasHandler() {} };
+    const ctx = createPluginContext({
+      pluginId: "cover-plugin",
+      pluginDir: "/plugins/cover-plugin",
+      dataDir: "/plugin-data/cover-plugin",
+      bus,
+    } as any);
+
+    expect(ctx.appEvents.emit("markdown-cover-updated", { filePath: "/tmp/a.md" })).toBe(true);
+    expect(ctx.appEvents.emit("bad", "payload")).toBe(false);
+    expect(bus.emit).toHaveBeenCalledOnce();
+    expect(bus.emit).toHaveBeenCalledWith({
+      type: "app_event",
+      event: {
+        type: "markdown-cover-updated",
+        payload: { filePath: "/tmp/a.md" },
+        source: "plugin:cover-plugin",
+      },
+    }, null);
+  });
+
   it("exposes server runtime scope when provided", () => {
     const bus = { emit() {}, subscribe() {}, request() {}, hasHandler() {} };
     const ctx = createPluginContext({
@@ -381,7 +403,7 @@ describe("createPluginContext with accessLevel", () => {
       dataDir: "/tmp/data", bus, accessLevel: "restricted",
     } as any);
     expect(Object.isFrozen(ctx.bus)).toBe(true);
-    expect(() => { ctx.bus.handle = () => {}; }).toThrow();
+    expect(() => { (ctx.bus as any).handle = () => {}; }).toThrow();
   });
 
   it("defaults to restricted when accessLevel omitted", async () => {

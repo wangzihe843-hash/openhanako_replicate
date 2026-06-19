@@ -10,6 +10,7 @@ import { Type, StringEnum } from "../pi-sdk/index.ts";
 import { getToolSessionCwd, getToolSessionPath } from "./tool-session.ts";
 import { createAgentSessionAutomationExecutor } from "../desk/agent-run-automation.ts";
 import { applyConfirmedAutomationDraft } from "./automation-draft.ts";
+import { parseSessionKey } from "../bridge/session-key.ts";
 
 function normalizeSchedule(params, existing: any = null) {
   const type = params.scheduleType || params.type || existing?.type;
@@ -61,9 +62,14 @@ function contextForTool(ctx, {
   const bridgeContext = ctx?.bridgeContext?.isBridgeSession === true
     ? ctx.bridgeContext
     : null;
+  const bridgeDeliveryTarget = bridgeDeliveryTargetForContext(bridgeContext, actorAgentId);
+  const notificationContext = bridgeDeliveryTarget
+    ? { bridgeDeliveryTarget }
+    : null;
   return {
     sessionPath,
     bridgeContext,
+    notificationContext,
     actorAgentId,
     executionContext: {
       kind: "session_workspace",
@@ -71,7 +77,53 @@ function contextForTool(ctx, {
       workspaceFolders,
       sourceSessionPath: sessionPath,
       createdByAgentId: actorAgentId,
+      ...(notificationContext ? { notificationContext } : {}),
     },
+  };
+}
+
+function bridgeDeliveryTargetForContext(bridgeContext, fallbackAgentId = null) {
+  if (bridgeContext?.isBridgeSession !== true) return null;
+  if (bridgeContext.role && bridgeContext.role !== "owner") return null;
+  if (bridgeContext.chatType && bridgeContext.chatType !== "dm") return null;
+  const platform = typeof bridgeContext.platform === "string" && bridgeContext.platform.trim()
+    ? bridgeContext.platform.trim()
+    : null;
+  const chatId = typeof bridgeContext.chatId === "string" && bridgeContext.chatId.trim()
+    ? bridgeContext.chatId.trim()
+    : null;
+  const sessionKey = typeof bridgeContext.sessionKey === "string" && bridgeContext.sessionKey.trim()
+    ? bridgeContext.sessionKey.trim()
+    : null;
+  const parsed = sessionKey ? parseSessionKey(sessionKey) : null;
+  const fallbackParts = bridgeSessionKeyFallbackParts(sessionKey);
+  const resolvedChatId = chatId || fallbackParts.chatId;
+  if (!platform || (!resolvedChatId && !sessionKey)) return null;
+  const agentId = typeof bridgeContext.agentId === "string" && bridgeContext.agentId.trim()
+    ? bridgeContext.agentId.trim()
+    : (parsed?.agentId || fallbackParts.agentId || (typeof fallbackAgentId === "string" && fallbackAgentId.trim() ? fallbackAgentId.trim() : null));
+  return {
+    kind: "bridge",
+    platform,
+    chatType: "dm",
+    ...(resolvedChatId ? { chatId: resolvedChatId } : {}),
+    ...(sessionKey ? { sessionKey } : {}),
+    ...(agentId ? { agentId } : {}),
+  };
+}
+
+function bridgeSessionKeyFallbackParts(sessionKey) {
+  const value = typeof sessionKey === "string" ? sessionKey.trim() : "";
+  if (!value) return { chatId: null, agentId: null };
+  const atIndex = value.lastIndexOf("@");
+  const head = atIndex >= 0 ? value.slice(0, atIndex) : value;
+  const agentId = atIndex >= 0 && value.slice(atIndex + 1).trim()
+    ? value.slice(atIndex + 1).trim()
+    : null;
+  const match = head.match(/^(?:wechat|wx|telegram|tg|feishu|fs|qq)_dm_(.+)$/);
+  return {
+    chatId: match?.[1] || null,
+    agentId,
   };
 }
 

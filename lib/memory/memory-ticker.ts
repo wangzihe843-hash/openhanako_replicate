@@ -86,6 +86,7 @@ export function createMemoryTicker(opts) {
     getEditableMemoryEnabled,
     memoryReflectionRunner,
     buildSessionCacheSnapshot,
+    ensureSessionLoaded,
     getSessionStreamFn,
     getSessionIdForPath,
     memoryDir = path.dirname(memoryMdPath),
@@ -287,6 +288,29 @@ export function createMemoryTicker(opts) {
     return /snapshot/i.test(message) && /unknown session/i.test(message);
   }
 
+  async function _buildSessionCacheSnapshotWithRecovery(sessionPath, options) {
+    try {
+      return buildSessionCacheSnapshot(sessionPath, options);
+    } catch (err) {
+      if (!_isRecoverableSessionSnapshotUnavailable(err) || typeof ensureSessionLoaded !== "function") {
+        throw err;
+      }
+      debugLog()?.warn?.(
+        "memory",
+        `cache snapshot runtime missing for ${path.basename(sessionPath)}; loading session before retry`,
+      );
+      try {
+        await ensureSessionLoaded(sessionPath);
+        return buildSessionCacheSnapshot(sessionPath, options);
+      } catch (retryErr) {
+        if (_isRecoverableSessionSnapshotUnavailable(retryErr)) throw retryErr;
+        const wrapped: any = new Error(`Session cache snapshot unavailable after runtime recovery: ${retryErr?.message || retryErr}`);
+        wrapped.cause = retryErr;
+        throw wrapped;
+      }
+    }
+  }
+
   async function _runSessionSnapshotMemoryReflection({
     sessionPath,
     sessionId,
@@ -315,7 +339,7 @@ export function createMemoryTicker(opts) {
         throw new Error("buildSessionCacheSnapshot is required for session snapshot reflection");
       }
 
-      const snapshot = buildSessionCacheSnapshot(sessionPath, {
+      const snapshot = await _buildSessionCacheSnapshotWithRecovery(sessionPath, {
         reason: "memory.reflection",
         messages,
       });

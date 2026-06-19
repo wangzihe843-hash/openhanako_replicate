@@ -331,6 +331,39 @@ describe("media parameter input limits", () => {
     expect(result.resolvedParameters).not.toHaveProperty("size");
   });
 
+  it("drops stale provider image size defaults when the selected mode schema only accepts resolution", () => {
+    const result = resolveMediaParameters({
+      kind: "image",
+      providerId: "openai-codex-oauth",
+      input: {
+        prompt: "a classroom cover",
+      },
+      providerDefaults: {
+        size: "4K",
+      },
+      model: {
+        id: "gpt-image-2",
+        modes: [{
+          id: "text2image",
+          parameterSchema: {
+            type: "object",
+            properties: {
+              resolution: { type: "string", enum: ["1K", "2K"], default: "2K" },
+              ratio: { type: "string", enum: ["1:1", "3:2"], default: "3:2" },
+            },
+          },
+          defaults: { resolution: "2K", ratio: "3:2" },
+        }],
+      },
+    });
+
+    expect(result.resolvedParameters).toMatchObject({
+      resolution: "2K",
+      ratio: "3:2",
+    });
+    expect(result.resolvedParameters).not.toHaveProperty("size");
+  });
+
   it("rejects image resolution values outside the selected mode schema instead of falling back", () => {
     expect(() => resolveMediaParameters({
       kind: "image",
@@ -463,6 +496,71 @@ describe("UniversalMediaManager adapter registration bus contract", () => {
     expect(result).toEqual({ ok: true });
     expect(manager.registry.getProtocol("jimeng-cli-images")).toMatchObject({
       id: "jimeng-cli-images",
+    });
+
+    manager.stop();
+  });
+
+  it("passes the registering plugin owner context to adapter submit calls", async () => {
+    const root = makeRoot();
+    roots.push(root);
+    const manager = new UniversalMediaManager({
+      hanakoHome: root,
+      preferences: makePreferences(root),
+      providerRegistry: {
+        getMediaProviders: () => [],
+        resolveMediaModel: () => {
+          throw new Error("not configured");
+        },
+      },
+      registerSessionFile: () => {},
+    });
+    const bus = makeBus();
+    manager.start(bus);
+    const pluginDataDir = path.join(root, "plugin-data", "dreamina");
+    const pluginConfig = { get: vi.fn(() => null) };
+    const pluginLog = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const submit = vi.fn(async () => ({ taskId: "dreamina-image-task" }));
+
+    const result = bus.handlers.get("media-gen:register-adapter")({
+      adapter: {
+        id: "dreamina",
+        types: ["image"],
+        submit,
+      },
+    }, {
+      caller: {
+        kind: "plugin",
+        pluginId: "dreamina",
+        pluginKey: "community:dreamina",
+        source: "community",
+        pluginDir: path.join(root, "plugins", "dreamina"),
+        dataDir: pluginDataDir,
+        config: pluginConfig,
+        log: pluginLog,
+      },
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(manager.registry.getRecord("dreamina")?.owner).toMatchObject({
+      pluginId: "dreamina",
+      pluginKey: "community:dreamina",
+      dataDir: pluginDataDir,
+    });
+
+    await manager.generateImageFromBus({
+      prompt: "quiet notebook",
+      provider: "dreamina",
+      delivery: { mode: "response" },
+    });
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect((submit as any).mock.calls[0][1]).toMatchObject({
+      pluginId: "dreamina",
+      pluginKey: "community:dreamina",
+      dataDir: pluginDataDir,
+      generatedDir: path.join(pluginDataDir, "generated"),
+      config: pluginConfig,
+      log: pluginLog,
     });
 
     manager.stop();
