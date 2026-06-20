@@ -43,9 +43,11 @@ interface HttpAuthService {
 
 export function resolveHttpRequestPrincipal(c, engine, {
   serverAuthService,
+  wsTicketService = null,
   connectionKind,
 }: {
   serverAuthService: HttpAuthService;
+  wsTicketService?: any;
   connectionKind: string;
 }) {
   const routePath = new URL(c.req.url).pathname;
@@ -57,6 +59,26 @@ export function resolveHttpRequestPrincipal(c, engine, {
     connectionKind,
   });
   let principal = authResult.principal;
+  if (!principal && routePath === "/ws") {
+    const ticket = c.req.query("wsTicket");
+    if (ticket) {
+      principal = wsTicketService?.consumeTicket?.(ticket, {
+        connectionKind,
+        path: routePath,
+      }) || null;
+      if (!principal) {
+        return {
+          ok: false as const,
+          status: 403,
+          body: {
+            error: "forbidden",
+            reason: "invalid_ws_ticket",
+            connectionKind,
+          },
+        };
+      }
+    }
+  }
   if (!principal && authResult.denied?.reason === "missing_credential") {
     // Plugin surface session 后备认证：插件 iframe 页面调用本插件 route 时的
     // 请求级入口凭证。bearer / web session 优先；只在二者缺席时尝试。

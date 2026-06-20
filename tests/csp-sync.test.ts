@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
+import * as vm from 'node:vm';
 
 /**
  * CSP 双源同步检查：
@@ -71,7 +72,7 @@ describe('CSP sync', () => {
     expect(indexCsp).not.toMatch(/connect-src[^;]*\shttps:(?:\s|;|$)/);
     expect(indexCsp).not.toMatch(/connect-src[^;]*\sws:(?:\s|;|$)/);
     expect(indexCsp).not.toMatch(/connect-src[^;]*\swss:(?:\s|;|$)/);
-    expect(runtimeCsp).toContain('activeServerConnectionId');
+    expect(runtimeCsp).toContain('serverConnections');
     expect(runtimeCsp).not.toMatch(/connect-src[^;]*\shttp:(?:\s|;|$)/);
     expect(runtimeCsp).not.toMatch(/connect-src[^;]*\shttps:(?:\s|;|$)/);
     expect(runtimeCsp).not.toMatch(/connect-src[^;]*\sws:(?:\s|;|$)/);
@@ -94,10 +95,51 @@ describe('CSP sync', () => {
 
     expect(html).toContain('modules/connection-csp.js');
     expect(extractHtmlCsp(path.join(htmlDir, 'settings.html'))).toBeNull();
-    expect(runtimeCsp).toContain('activeServerConnectionId');
+    expect(runtimeCsp).toContain('serverConnections');
     expect(runtimeCsp).not.toMatch(/connect-src[^;]*\shttp:(?:\s|;|$)/);
     expect(runtimeCsp).not.toMatch(/connect-src[^;]*\shttps:(?:\s|;|$)/);
     expect(runtimeCsp).not.toMatch(/connect-src[^;]*\sws:(?:\s|;|$)/);
     expect(runtimeCsp).not.toMatch(/connect-src[^;]*\swss:(?:\s|;|$)/);
+  });
+
+  it('dynamic desktop CSP keeps saved remote origins available after active selection is cleared', () => {
+    const runtimeCsp = fs.readFileSync(path.join(htmlDir, 'modules', 'connection-csp.js'), 'utf-8');
+    let written = '';
+    const storage = {
+      'hana-server-connections-v1': JSON.stringify({
+        schemaVersion: 1,
+        activeServerConnectionId: null,
+        serverConnections: {
+          'lan:node:studio': {
+            connectionId: 'lan:node:studio',
+            kind: 'lan',
+            baseUrl: 'http://192.168.1.9:14500',
+            wsUrl: 'ws://192.168.1.9:14500',
+          },
+        },
+      }),
+    };
+    vm.runInNewContext(runtimeCsp, {
+      URL,
+      window: {
+        location: {
+          host: '127.0.0.1:5173',
+          hostname: '127.0.0.1',
+        },
+      },
+      localStorage: {
+        getItem(key: string) {
+          return storage[key] || null;
+        },
+      },
+      document: {
+        write(value: string) {
+          written += value;
+        },
+      },
+    });
+
+    expect(written).toContain('http://192.168.1.9:14500');
+    expect(written).toContain('ws://192.168.1.9:14500');
   });
 });

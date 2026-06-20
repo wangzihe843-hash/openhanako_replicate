@@ -641,11 +641,30 @@ export function buildConnectionUrl(
 export function buildConnectionWsUrl(
   connection: ServerConnection,
   path = '/ws',
+  opts: { wsTicket?: string | null } = {},
 ): string {
   assertRoutePath(path);
   const url = `${trimTrailingSlash(connection.wsUrl)}${path}`;
+  if (opts.wsTicket) return appendQueryParam(url, 'wsTicket', opts.wsTicket);
   if (!connection.token || !canUseQueryToken(connection)) return url;
   return appendQueryParam(url, 'token', connection.token);
+}
+
+export async function requestConnectionWsTicket(
+  connection: ServerConnection,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string | null> {
+  if (canUseQueryToken(connection)) return null;
+  const res = await fetchImpl(buildConnectionUrl(connection, '/api/ws-ticket'), {
+    method: 'POST',
+    headers: appendConnectionAuth(connection, { 'Content-Type': 'application/json' }),
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    throw new Error(`websocket ticket request failed: ${res.status} ${res.statusText}`);
+  }
+  const body = await res.json();
+  return typeof body?.ticket === 'string' && body.ticket.trim() ? body.ticket : null;
 }
 
 function originOf(value: string | null | undefined): string | null {

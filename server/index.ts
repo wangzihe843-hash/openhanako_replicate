@@ -28,6 +28,7 @@ const checkpointLog = createModuleLogger("checkpoint");
 const sessionFilesLog = createModuleLogger("session-files");
 import { createOutboundProxyRuntime } from "../lib/net/outbound-proxy.ts";
 import { createServerAuthService } from "../core/server-auth.ts";
+import { createWebSocketTicketService } from "../core/ws-auth-ticket.ts";
 import { resolveServerListenOptions } from "../core/server-network-config.ts";
 import { isCorsOriginAllowed } from "./http/cors-policy.ts";
 import { inferHttpConnectionKind } from "./http/transport-context.ts";
@@ -80,6 +81,7 @@ import { ensureLocalIdentityRegistries } from "../core/server-identity.ts";
 import { createResourcesRoute } from "./routes/resources.ts";
 import { createUsageRoute } from "./routes/usage.ts";
 import { createWebAuthRoute } from "./routes/web-auth.ts";
+import { createWebSocketAuthRoute } from "./routes/ws-auth.ts";
 import { createMobileWorkbenchRoute } from "./routes/mobile-workbench.ts";
 import { createStudioWorkspacesRoute } from "./routes/studio-workspaces.ts";
 import { createMobileStaticRoute } from "./routes/mobile-static.ts";
@@ -352,6 +354,7 @@ const serverAuthService = createServerAuthService({
   loopbackToken: SERVER_TOKEN,
   runtimeContext: () => engine.getRuntimeContext(),
 });
+const wsTicketService = createWebSocketTicketService();
 
 // ── 创建 Hono 实例 ──
 const app = new Hono();
@@ -430,6 +433,7 @@ app.use("*", async (c: any, next: any) => {
   // 链路实现与契约见 server/http/request-principal.ts（与测试共用）。
   const resolved = resolveHttpRequestPrincipal(c, engine, {
     serverAuthService,
+    wsTicketService,
     connectionKind: transport.connectionKind,
   });
   if (!resolved.ok) {
@@ -760,6 +764,7 @@ app.route("", createMobileStaticRoute({ distDir: fromRoot("desktop", "dist-rende
 app.route("", createHtmlPreviewRoute());
 app.route("/api", chatRestRoute);
 app.route("", chatWsRoute);
+app.route("/api", createWebSocketAuthRoute({ ticketService: wsTicketService }));
 app.route("/api", createWebAuthRoute({
   hanakoHome: engine.hanakoHome,
   authService: serverAuthService,
