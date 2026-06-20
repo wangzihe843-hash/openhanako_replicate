@@ -38,4 +38,11 @@ describe('ChatResourceCard layout', () => {
     expect(icon).toMatch(/width:\s*32px/);
     expect(icon).toMatch(/height:\s*32px/);
   });
+
+  it('marks interactive resource cards with pointer cursor affordance', () => {
+    const css = readResourceCss();
+    const interactiveButton = cssRule(css, '.interactive button.main');
+
+    expect(interactiveButton).toMatch(/cursor:\s*pointer/);
+  });
 });
