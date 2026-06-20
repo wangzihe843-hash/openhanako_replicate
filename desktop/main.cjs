@@ -679,7 +679,7 @@ function isPidAliveForDiagnostics(pid) {
 }
 
 function hasChildExitObserved(proc) {
-  if (!proc) return true;
+  if (!proc) return false;
   return proc.exitCode !== null || proc.signalCode !== null;
 }
 

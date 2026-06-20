@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { spawnSync } from "child_process";
+import vm from "vm";
 
 const root = process.cwd();
 
@@ -31,6 +32,35 @@ describe("server startup diagnostics contract", () => {
     expect(mainSource).toContain("waitForProcessExit(");
     expect(mainSource).toContain("killPid(pid, true)");
     expect(mainSource).not.toContain("setTimeout(done, 3000)");
+  });
+
+  it("does not treat PID-only reused server shutdown as already exited", async () => {
+    const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+    const hasChildExitObserved = extractFunctionSource(mainSource, "hasChildExitObserved");
+    const waitForProcessExit = extractFunctionSource(mainSource, "waitForProcessExit");
+    let alive = true;
+    let checks = 0;
+    const context = vm.createContext({
+      SERVER_SHUTDOWN_POLL_MS: 1,
+      isPidAliveForDiagnostics: () => {
+        checks++;
+        return alive;
+      },
+      setTimeout,
+      Promise,
+    });
+
+    vm.runInContext(`${hasChildExitObserved}\n${waitForProcessExit}`, context);
+    const wait = context.waitForProcessExit(null, 12345, 25);
+    let settled = false;
+    wait.then(() => { settled = true; });
+
+    await new Promise(resolve => setTimeout(resolve, 5));
+    expect(settled).toBe(false);
+    expect(checks).toBeGreaterThan(0);
+
+    alive = false;
+    await expect(wait).resolves.toBe(true);
   });
 
   it("keeps server-info when shutdown cannot confirm the server is gone", () => {
@@ -185,3 +215,19 @@ describe("server startup diagnostics contract", () => {
     );
   });
 });
+
+function extractFunctionSource(source: string, name: string) {
+  const asyncStart = source.indexOf(`async function ${name}(`);
+  const plainStart = source.indexOf(`function ${name}(`);
+  const start = asyncStart >= 0 ? asyncStart : plainStart;
+  if (start < 0) throw new Error(`missing function ${name}`);
+  const bodyStart = source.indexOf("{", start);
+  if (bodyStart < 0) throw new Error(`missing body for function ${name}`);
+  let depth = 0;
+  for (let i = bodyStart; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    if (source[i] === "}") depth--;
+    if (depth === 0) return source.slice(start, i + 1);
+  }
+  throw new Error(`unterminated function ${name}`);
+}
