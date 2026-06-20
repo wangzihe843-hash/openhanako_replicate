@@ -324,6 +324,7 @@ import { anthropicPlugin } from "../lib/providers/anthropic.ts";
 import { deepseekPlugin } from "../lib/providers/deepseek.ts";
 import { geminiPlugin } from "../lib/providers/gemini.ts";
 import { openrouterPlugin } from "../lib/providers/openrouter.ts";
+import { opencodeGoPlugin } from "../lib/providers/opencode-go.ts";
 import { ollamaPlugin } from "../lib/providers/ollama.ts";
 import { minimaxPlugin } from "../lib/providers/minimax.ts";
 import { minimaxTokenPlanPlugin } from "../lib/providers/minimax-token-plan.ts";
@@ -364,6 +365,7 @@ const BUILTIN_PLUGINS = [
   deepseekPlugin,
   geminiPlugin,
   openrouterPlugin,
+  opencodeGoPlugin,
   ollamaPlugin,
   minimaxPlugin,
   minimaxTokenPlanPlugin,

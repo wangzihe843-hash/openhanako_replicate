@@ -259,17 +259,18 @@ function buildModelEntry(modelEntry, provider, baseUrl = "", api = "openai-compl
   // 3. Gemini OpenAI 兼容层（/v1beta/openai）严格校验，不识别 store 字段会 400。
   //    Native google-generative-ai 不走 Chat Completions，不需要这组 OpenAI 字段兼容。
   if (provider !== "openai") {
+    const knownCompat = normalizeModelProtocolCompat(known?.compat) || {};
     const explicitCompat = isObj
       ? (normalizeModelProtocolCompat(modelEntry.compat) || {})
       : {};
-    const compat: Record<string, unknown> = { ...explicitCompat, supportsDeveloperRole: false };
+    const compat: Record<string, unknown> = { ...knownCompat, ...explicitCompat, supportsDeveloperRole: false };
     if (api === "openai-completions" && (
       provider === "gemini"
       || baseUrl.includes("generativelanguage.googleapis.com")
     )) {
       compat.supportsStore = false;
     }
-    if (isZhipuOpenAICompat(provider, baseUrl, api)) {
+    if (compat.thinkingFormat === "zhipu" || isZhipuOpenAICompat(provider, baseUrl, api)) {
       compat.supportsStore = false;
       compat.supportsReasoningEffort = false;
     }

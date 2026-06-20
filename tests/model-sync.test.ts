@@ -50,6 +50,18 @@ const KNOWN_MODELS = {
   "zhipu-coding": {
     "glm-5.2": { name: "GLM-5.2", context: 1000000, maxOutput: 131072, image: false, reasoning: true, xhigh: true },
   },
+  "opencode-go": {
+    "glm-5.2": {
+      name: "GLM-5.2",
+      context: 1000000,
+      maxOutput: 131072,
+      image: false,
+      reasoning: true,
+      xhigh: true,
+      compat: { thinkingFormat: "zhipu", reasoningProfile: "zhipu-openai" },
+      toolUse: { supportsTools: true, dialect: "openai", toolResultFormat: "message" },
+    },
+  },
   anthropic: {
     "claude-fable-5": {
       name: "Claude Fable 5",
@@ -1583,6 +1595,48 @@ describe("syncModels", () => {
         supportsReasoningEffort: false,
         thinkingFormat: "zhipu",
         reasoningProfile: "zhipu-openai",
+      },
+    });
+  });
+
+  it("projects OpenCode Go GLM-5.2 with explicit Zhipu thinking compat", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      "opencode-go": {
+        base_url: "https://opencode.ai/zen/go/v1",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: ["glm-5.2"],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers["opencode-go"]).toMatchObject({
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      api: "openai-completions",
+      apiKey: "hana-runtime-api-key:opencode-go",
+    });
+    expect(result.providers["opencode-go"].models[0]).toMatchObject({
+      id: "glm-5.2",
+      name: "GLM-5.2",
+      contextWindow: 1000000,
+      maxTokens: 131072,
+      reasoning: true,
+      xhigh: true,
+      compat: {
+        supportsDeveloperRole: false,
+        supportsStore: false,
+        supportsReasoningEffort: false,
+        thinkingFormat: "zhipu",
+        reasoningProfile: "zhipu-openai",
+      },
+      toolUse: {
+        supportsTools: true,
+        dialect: "openai",
+        toolResultFormat: "message",
       },
     });
   });

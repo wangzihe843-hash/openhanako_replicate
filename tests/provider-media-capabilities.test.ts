@@ -267,6 +267,19 @@ describe("ProviderRegistry media capabilities", () => {
     expect(properties).not.toHaveProperty("height");
   });
 
+  it("exposes OpenCode Go as an OpenAI-compatible coding provider", () => {
+    const registry = new ProviderRegistry(tmpHome);
+    registry.reload();
+
+    expect(registry.get("opencode-go")).toMatchObject({
+      id: "opencode-go",
+      displayName: "OpenCode Go",
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      api: "openai-completions",
+    });
+    expect(registry.getDefaultModels("opencode-go")).toEqual(["glm-5.2"]);
+  });
+
   it("uses MiniMax Token Plan credentials as a MiniMax image generation lane", () => {
     fs.writeFileSync(path.join(tmpHome, "added-models.yaml"), YAML.dump({
       providers: {

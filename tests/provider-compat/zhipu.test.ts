@@ -30,6 +30,11 @@ describe("provider-compat/zhipu — matches", () => {
       provider: "custom",
       baseUrl: "https://api.z.ai/api/coding/paas/v4",
     })).toBe(true);
+    expect(zhipu.matches({
+      provider: "opencode-go",
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      compat: { thinkingFormat: "zhipu" },
+    })).toBe(true);
   });
 
   it("tolerates missing model fields", () => {

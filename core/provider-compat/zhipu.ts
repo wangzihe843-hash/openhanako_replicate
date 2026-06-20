@@ -39,6 +39,7 @@ function isThinkingOff(value) {
 
 export function matches(model) {
   if (!model || typeof model !== "object") return false;
+  if (lower(model.compat?.thinkingFormat) === "zhipu") return true;
   const provider = lower(model.provider);
   const baseUrl = lower(model.baseUrl || model.base_url);
   return provider === "zhipu"
