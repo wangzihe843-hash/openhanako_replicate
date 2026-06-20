@@ -1798,6 +1798,11 @@
       "feishuAppId": "App ID",
       "feishuAppSecret": "App Secret",
       "feishuHint": "Feishu 오픈 플랫폼에서 받으세요. 이벤트는 long connection으로 받으며 로컬 callback URL은 필요하지 않습니다",
+      "dingtalk": "DingTalk",
+      "dingtalkClientId": "Client ID / AppKey",
+      "dingtalkClientSecret": "Client Secret / AppSecret",
+      "dingtalkRobotCode": "Robot Code",
+      "dingtalkHint": "DingTalk 내부 기업 앱과 앱 로봇에서 받으세요. 이벤트는 Stream long connection으로 받으며 로컬 callback URL은 필요하지 않습니다",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",
@@ -1826,6 +1831,7 @@
       "testFail": "테스트 실패",
       "noToken": "먼저 Bot Token을 입력해 주세요",
       "noCredentials": "먼저 App ID와 App Secret을 입력해 주세요",
+      "noDingtalkCredentials": "먼저 Client ID, Client Secret, Robot Code를 입력해 주세요",
       "globalSettings": "전역 설정",
       "agentSettings": "에이전트",
       "permissionMode": "권한 모드",
@@ -1866,6 +1872,13 @@
         "\"이벤트 추가\"를 클릭하고 <code>im.message.receive_v1</code>을 추가해 주세요 (메시지 수신)",
         "중요: \"버전 관리\"에서 버전을 생성하고 게시해 주세요 (롱 커넥션 설정에는 게시된 앱이 필요해요)",
         "위 입력란에 App ID와 App Secret을 붙여넣고 스위치를 켜주세요"
+      ],
+      "tutorialDtSteps": [
+        "<code>open.dingtalk.com</code>으로 이동해 개발자 콘솔을 열어 주세요",
+        "내부 기업 앱을 만들고 앱 자격 증명에서 <code>Client ID/AppKey</code>와 <code>Client Secret/AppSecret</code>을 복사해 주세요",
+        "앱 로봇 기능을 추가하고 로봇 상세에서 <code>Robot Code</code>를 복사해 주세요",
+        "로봇 메시지 송수신에 필요한 권한을 확인하고 대상 기업 범위에 배포해 주세요",
+        "위 입력란에 Client ID, Client Secret, Robot Code를 붙여넣고 연결 테스트 후 스위치를 켜주세요"
       ],
       "whatsappHint": "곧 지원 예정"
     }

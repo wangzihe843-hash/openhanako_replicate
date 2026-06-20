@@ -3,6 +3,7 @@ import os from "os";
 
 const createTelegramAdapter = vi.fn();
 const createFeishuAdapter = vi.fn();
+const createDingTalkAdapter = vi.fn();
 const createQQAdapter = vi.fn();
 const createWechatAdapter = vi.fn();
 
@@ -11,6 +12,9 @@ vi.mock("../lib/bridge/telegram-adapter.js", () => ({
 }));
 vi.mock("../lib/bridge/feishu-adapter.js", () => ({
   createFeishuAdapter: (...args) => createFeishuAdapter(...args),
+}));
+vi.mock("../lib/bridge/dingtalk-adapter.js", () => ({
+  createDingTalkAdapter: (...args) => createDingTalkAdapter(...args),
 }));
 vi.mock("../lib/bridge/qq-adapter.js", () => ({
   createQQAdapter: (...args) => createQQAdapter(...args),
@@ -29,6 +33,7 @@ describe("BridgeManager platform status", () => {
   it("starts wechat in connecting state until the adapter reports readiness", () => {
     createTelegramAdapter.mockReset();
     createFeishuAdapter.mockReset();
+    createDingTalkAdapter.mockReset();
     createQQAdapter.mockReset();
     createWechatAdapter.mockReset();
     createWechatAdapter.mockReturnValue({ stop: vi.fn() });

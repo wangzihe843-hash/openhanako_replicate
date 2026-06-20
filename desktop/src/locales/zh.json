@@ -1996,6 +1996,11 @@
       "feishuAppId": "App ID",
       "feishuAppSecret": "App Secret",
       "feishuHint": "从飞书开放平台获取；使用长连接接收事件，不需要本地回调 URL",
+      "dingtalk": "钉钉",
+      "dingtalkClientId": "Client ID / AppKey",
+      "dingtalkClientSecret": "Client Secret / AppSecret",
+      "dingtalkRobotCode": "Robot Code",
+      "dingtalkHint": "从钉钉开放平台的企业内部应用和应用机器人获取；使用 Stream 长连接，不需要本地回调 URL",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",
@@ -2024,6 +2029,7 @@
       "testFail": "测试失败",
       "noToken": "请先输入 Bot Token",
       "noCredentials": "请先填写 App ID 和 App Secret",
+      "noDingtalkCredentials": "请先填写 Client ID、Client Secret 和 Robot Code",
       "globalSettings": "全局设置",
       "agentSettings": "角色",
       "permissionMode": "权限模式",
@@ -2064,6 +2070,13 @@
         "点击「添加事件」，添加 <code>im.message.receive_v1</code>（接收消息）",
         "重要：进入「版本管理与发布」，先创建并发布一个版本（长连接配置需要应用已发布才能保存）",
         "将 App ID 和 App Secret 粘贴到上方输入框，打开开关即可"
+      ],
+      "tutorialDtSteps": [
+        "前往 <code>open.dingtalk.com</code>，进入「开发者后台」",
+        "创建「企业内部应用」，在应用凭证中复制 <code>Client ID/AppKey</code> 和 <code>Client Secret/AppSecret</code>",
+        "添加「应用机器人」能力，复制机器人详情里的 <code>Robot Code</code>",
+        "确认应用已开通机器人收发消息所需权限，并发布到企业可用范围",
+        "将 Client ID、Client Secret 和 Robot Code 粘贴到上方输入框，测试通过后打开开关即可"
       ],
       "whatsappHint": "即将支持"
     },

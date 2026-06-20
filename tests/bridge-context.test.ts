@@ -47,7 +47,7 @@ describe("bridge context", () => {
   });
 
   it("never tells the user to click in the confirmation guidance", () => {
-    for (const sessionKey of ["wx_dm_owner@hana", "fs_dm_owner@hana", "tg_dm_owner@hana", "qq_dm_owner@hana"]) {
+    for (const sessionKey of ["wx_dm_owner@hana", "fs_dm_owner@hana", "dt_dm_owner@hana", "tg_dm_owner@hana", "qq_dm_owner@hana"]) {
       for (const locale of ["zh", "en"]) {
         const line = buildBridgePromptLine(buildBridgeContext({ sessionKey, role: "owner" }, locale), locale);
         expect(line).toContain("/apply");

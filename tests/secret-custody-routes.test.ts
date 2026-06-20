@@ -230,6 +230,7 @@ describe("secret custody across HTTP routes", () => {
         bridge: {
           telegram: { token: "tg-secret", enabled: true },
           feishu: { appId: "cli-id", appSecret: "fs-secret" },
+          dingtalk: { clientId: "dt-client", clientSecret: "dt-secret", robotCode: "ding-robot" },
           qq: { appID: "qq-id", appSecret: "qq-secret" },
           wechat: { botToken: "wx-secret" },
         },
@@ -256,10 +257,14 @@ describe("secret custody across HTTP routes", () => {
 
     expect(readBody.telegram.token).toBe(MASKED_SECRET);
     expect(readBody.feishu.appSecret).toBe(MASKED_SECRET);
+    expect(readBody.dingtalk.clientSecret).toBe(MASKED_SECRET);
+    expect(readBody.dingtalk.clientId).toBe("dt-client");
+    expect(readBody.dingtalk.robotCode).toBe("ding-robot");
     expect(readBody.qq.appSecret).toBe(MASKED_SECRET);
     expect(readBody.wechat.token).toBe(MASKED_SECRET);
     expect(JSON.stringify(readBody)).not.toContain("tg-secret");
     expect(JSON.stringify(readBody)).not.toContain("fs-secret");
+    expect(JSON.stringify(readBody)).not.toContain("dt-secret");
     expect(JSON.stringify(readBody)).not.toContain("qq-secret");
     expect(JSON.stringify(readBody)).not.toContain("wx-secret");
 
@@ -279,6 +284,55 @@ describe("secret custody across HTTP routes", () => {
         telegram: { token: "tg-secret", enabled: false },
       },
     });
+  });
+
+  it("tests DingTalk bridge plaintext credentials without requiring saved config", async () => {
+    const { createBridgeRoute } = await import("../server/routes/bridge.ts");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ accessToken: "dt-access-token", expireIn: 7200 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = {
+      currentAgentId: null,
+      getAgent: () => null,
+    };
+    const app = new Hono();
+    app.route("/api", createBridgeRoute(engine, { getStatus: () => ({}) }));
+
+    const res = await app.request("/api/bridge/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: "dingtalk",
+        credentials: {
+          clientId: "dt-client",
+          clientSecret: "dt-plaintext",
+          robotCode: "ding-robot",
+        },
+      }),
+    });
+    const body = await res.json();
+
+    expect(body).toMatchObject({
+      ok: true,
+      info: {
+        msg: expect.any(String),
+        credentialOk: true,
+        eventDelivery: "stream",
+        callbackUrlRequired: false,
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.dingtalk.io/v1.0/oauth2/accessToken",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ appKey: "dt-client", appSecret: "dt-plaintext" }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
   });
 
   it("tests bridge plaintext credentials without requiring an existing saved agent config", async () => {

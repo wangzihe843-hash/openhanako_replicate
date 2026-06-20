@@ -1996,6 +1996,11 @@
       "feishuAppId": "App ID",
       "feishuAppSecret": "App Secret",
       "feishuHint": "Get from Feishu Open Platform; events use long connection, no local callback URL needed",
+      "dingtalk": "DingTalk",
+      "dingtalkClientId": "Client ID / AppKey",
+      "dingtalkClientSecret": "Client Secret / AppSecret",
+      "dingtalkRobotCode": "Robot Code",
+      "dingtalkHint": "Get these from your DingTalk internal enterprise app and app robot; events use Stream long connection, no local callback URL needed",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",
@@ -2024,6 +2029,7 @@
       "testFail": "Test failed",
       "noToken": "Please enter Bot Token first",
       "noCredentials": "Please enter App ID and App Secret first",
+      "noDingtalkCredentials": "Please enter Client ID, Client Secret, and Robot Code first",
       "globalSettings": "Global Settings",
       "agentSettings": "Agents",
       "permissionMode": "Permission mode",
@@ -2064,6 +2070,13 @@
         "Click \"Add Event\", add <code>im.message.receive_v1</code> (receive messages)",
         "Important: Go to \"Version Management\", create and publish a version first (long connection config requires a published app)",
         "Paste the App ID and App Secret into the input fields above and turn on the switch"
+      ],
+      "tutorialDtSteps": [
+        "Go to <code>open.dingtalk.com</code> and open the Developer Console",
+        "Create an internal enterprise app, then copy <code>Client ID/AppKey</code> and <code>Client Secret/AppSecret</code> from app credentials",
+        "Add the app robot capability and copy the <code>Robot Code</code> from the robot details",
+        "Make sure the app has the robot message permissions it needs and is published to the target enterprise scope",
+        "Paste Client ID, Client Secret, and Robot Code into the fields above, test the connection, then turn on the switch"
       ],
       "whatsappHint": "Coming soon"
     },

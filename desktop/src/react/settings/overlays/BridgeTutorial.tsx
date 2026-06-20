@@ -15,6 +15,7 @@ export function BridgeTutorial() {
 
   const tgSteps: string[] = t('settings.bridge.tutorialTgSteps') || [];
   const fsSteps: string[] = t('settings.bridge.tutorialFsSteps') || [];
+  const dtSteps: string[] = t('settings.bridge.tutorialDtSteps') || [];
 
   return (
     <Overlay
@@ -47,6 +48,14 @@ export function BridgeTutorial() {
             <ol className="bridge-tutorial-steps">
               {Array.isArray(fsSteps) && fsSteps.map((step, i) => (
                 <li key={`fs-step-${i}`} dangerouslySetInnerHTML={{ __html: step }} />
+              ))}
+            </ol>
+          </section>
+          <section className="bridge-tutorial-section">
+            <h4 className="bridge-tutorial-section-title">{t('settings.bridge.dingtalk')}</h4>
+            <ol className="bridge-tutorial-steps">
+              {Array.isArray(dtSteps) && dtSteps.map((step, i) => (
+                <li key={`dt-step-${i}`} dangerouslySetInnerHTML={{ __html: step }} />
               ))}
             </ol>
           </section>

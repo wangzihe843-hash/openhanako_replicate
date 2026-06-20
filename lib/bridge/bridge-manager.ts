@@ -10,6 +10,7 @@ import path from "path";
 import { debugLog } from "../debug-log.ts";
 import { createTelegramAdapter } from "./telegram-adapter.ts";
 import { createFeishuAdapter } from "./feishu-adapter.ts";
+import { createDingTalkAdapter } from "./dingtalk-adapter.ts";
 import { createQQAdapter } from "./qq-adapter.ts";
 import { createWechatAdapter } from "./wechat-adapter.ts";
 import { downloadMedia, bufferToBase64, detectMime, splitMediaFromOutput, formatSize, setMediaLocalRoots, isExtractableReplyMediaSource } from "./media-utils.ts";
@@ -76,7 +77,7 @@ function bridgeSessionKeyFallbackParts(sessionKey) {
   const agentId = atIndex >= 0 && value.slice(atIndex + 1).trim()
     ? value.slice(atIndex + 1).trim()
     : null;
-  const match = head.match(/^(?:wechat|wx|telegram|tg|feishu|fs|qq)_dm_(.+)$/);
+  const match = head.match(/^(?:wechat|wx|telegram|tg|feishu|fs|dingtalk|dt|qq)_dm_(.+)$/);
   return {
     chatId: match?.[1] || null,
     agentId,
@@ -107,6 +108,21 @@ const ADAPTER_REGISTRY = {
     create: (creds, onMessage, hooks, agentId) => createFeishuAdapter({ appId: creds.appId, appSecret: creds.appSecret, agentId, onMessage, onStatus: hooks?.onStatus }),
     getCredentials: (cfg) => cfg?.enabled && cfg?.appId && cfg?.appSecret ? { appId: cfg.appId, appSecret: cfg.appSecret } : null,
     ownerSessionKey: (userId, agentId) => `fs_dm_${userId}@${agentId}`,
+    connectsAsync: true,
+  },
+  dingtalk: {
+    create: (creds, onMessage, hooks, agentId) => createDingTalkAdapter({
+      clientId: creds.clientId,
+      clientSecret: creds.clientSecret,
+      robotCode: creds.robotCode,
+      agentId,
+      onMessage,
+      onStatus: hooks?.onStatus,
+    }),
+    getCredentials: (cfg) => cfg?.enabled && cfg?.clientId && cfg?.clientSecret && cfg?.robotCode
+      ? { clientId: cfg.clientId, clientSecret: cfg.clientSecret, robotCode: cfg.robotCode }
+      : null,
+    ownerSessionKey: (userId, agentId) => `dt_dm_${userId}@${agentId}`,
     connectsAsync: true,
   },
   qq: {

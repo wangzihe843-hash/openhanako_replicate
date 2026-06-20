@@ -31,7 +31,7 @@
  *   { type: "confirmation_resolved", confirmId: "...", action: "confirmed"|"rejected", value?: any }  (用户操作确认卡片后广播，前端更新卡片状态)
  *   { type: "block_update", taskId: "...", patch: { streamStatus: "done"|"failed", summary?: "..." } }  (活跃 block 状态更新)
  *   { type: "browser_status", running: bool, url: "...", thumbnail?: "..." }  (浏览器状态变更，用于前端浮动卡片)
- *   { type: "bridge_status", platform: "telegram"|"feishu", status: "connected"|"disconnected"|"error", error?: "..." }  (外部平台连接状态变更)
+ *   { type: "bridge_status", platform: "telegram"|"feishu"|"dingtalk"|"qq"|"wechat", status: "connected"|"disconnected"|"error", error?: "..." }  (外部平台连接状态变更)
  *   { type: "stream_resume", sessionPath: "...", streamId: "...", sinceSeq: number, nextSeq: number, reset: bool, truncated: bool, isStreaming: bool, runtimeIsStreaming?: bool, events: [{ seq, event, ts }] }  (新协议；isStreaming 是 replay 缓存状态，runtimeIsStreaming 是 engine 运行态)
  */
 

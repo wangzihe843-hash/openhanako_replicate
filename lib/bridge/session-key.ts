@@ -11,6 +11,8 @@ export const SESSION_PREFIX_MAP = [
   ["tg_group_",    "telegram", "group"],
   ["fs_dm_",       "feishu",   "dm"],
   ["fs_group_",    "feishu",   "group"],
+  ["dt_dm_",       "dingtalk", "dm"],
+  ["dt_group_",    "dingtalk", "group"],
   ["qq_dm_",       "qq",       "dm"],
   ["qq_group_",    "qq",       "group"],
   ["wx_dm_",       "wechat",   "dm"],

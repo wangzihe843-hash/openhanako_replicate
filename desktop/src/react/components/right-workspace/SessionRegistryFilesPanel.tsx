@@ -21,7 +21,7 @@ const RUBBER_BAND_MIN = 4;
 
 type SessionFileSortMode = 'time-desc' | 'name-asc' | 'name-desc' | 'type-asc';
 
-type BridgePlatform = 'feishu' | 'telegram' | 'whatsapp' | 'qq' | 'wechat';
+type BridgePlatform = 'feishu' | 'dingtalk' | 'telegram' | 'whatsapp' | 'qq' | 'wechat';
 
 interface BridgeSessionSummary {
   sessionKey: string;
@@ -43,10 +43,11 @@ type MenuState =
   | { type: 'sort'; items: ContextMenuItem[]; position: { x: number; y: number } }
   | { type: 'file'; file: FileRef; position: { x: number; y: number } };
 
-const BRIDGE_PLATFORMS: BridgePlatform[] = ['feishu', 'telegram', 'whatsapp', 'qq', 'wechat'];
+const BRIDGE_PLATFORMS: BridgePlatform[] = ['feishu', 'dingtalk', 'telegram', 'whatsapp', 'qq', 'wechat'];
 
 const BRIDGE_PLATFORM_LABEL_KEYS: Record<BridgePlatform, string> = {
   feishu: 'settings.bridge.feishu',
+  dingtalk: 'settings.bridge.dingtalk',
   telegram: 'settings.bridge.telegram',
   whatsapp: 'settings.bridge.whatsapp',
   qq: 'settings.bridge.qq',
@@ -55,6 +56,7 @@ const BRIDGE_PLATFORM_LABEL_KEYS: Record<BridgePlatform, string> = {
 
 const BRIDGE_PLATFORM_FALLBACK_LABELS: Record<BridgePlatform, string> = {
   feishu: 'Feishu',
+  dingtalk: 'DingTalk',
   telegram: 'Telegram',
   whatsapp: 'WhatsApp',
   qq: 'QQ',

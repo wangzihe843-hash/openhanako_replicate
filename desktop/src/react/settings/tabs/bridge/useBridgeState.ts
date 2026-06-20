@@ -19,6 +19,7 @@ interface PlatformStatusBase {
 
 export interface TelegramStatus extends PlatformStatusBase { token?: string }
 export interface FeishuStatus extends PlatformStatusBase { appId?: string; appSecret?: string }
+export interface DingTalkStatus extends PlatformStatusBase { clientId?: string; clientSecret?: string; robotCode?: string }
 export interface QQStatus extends PlatformStatusBase { appID?: string; appSecret?: string }
 export interface WechatStatus extends PlatformStatusBase { token?: string }
 
@@ -26,6 +27,7 @@ export interface BridgeStatus {
   agentId?: string | null;
   telegram: TelegramStatus;
   feishu: FeishuStatus;
+  dingtalk: DingTalkStatus;
   whatsapp: PlatformStatusBase;
   qq: QQStatus;
   wechat: WechatStatus;
@@ -33,11 +35,11 @@ export interface BridgeStatus {
   readOnly: boolean;
   receiptEnabled: boolean;
   richStreamingEnabled: boolean;
-  knownUsers: { telegram?: KnownUser[]; feishu?: KnownUser[]; whatsapp?: KnownUser[]; qq?: KnownUser[]; wechat?: KnownUser[] };
-  owner: { telegram?: string; feishu?: string; whatsapp?: string; qq?: string; wechat?: string };
+  knownUsers: { telegram?: KnownUser[]; feishu?: KnownUser[]; dingtalk?: KnownUser[]; whatsapp?: KnownUser[]; qq?: KnownUser[]; wechat?: KnownUser[] };
+  owner: { telegram?: string; feishu?: string; dingtalk?: string; whatsapp?: string; qq?: string; wechat?: string };
 }
 
-export type BridgePlatform = 'telegram' | 'feishu' | 'whatsapp' | 'qq' | 'wechat';
+export type BridgePlatform = 'telegram' | 'feishu' | 'dingtalk' | 'whatsapp' | 'qq' | 'wechat';
 
 function normalizeBridgeStatus(data: any): BridgeStatus | null {
   if (!data || typeof data !== 'object') return null;
@@ -45,6 +47,7 @@ function normalizeBridgeStatus(data: any): BridgeStatus | null {
     agentId: data.agentId || null,
     telegram: data.telegram || {},
     feishu: data.feishu || {},
+    dingtalk: data.dingtalk || {},
     whatsapp: data.whatsapp || {},
     qq: data.qq || {},
     wechat: data.wechat || {},
@@ -62,6 +65,9 @@ function bridgeCredentials(status: BridgeStatus | null) {
     tgToken: status?.telegram?.token || '',
     fsAppId: status?.feishu?.appId || '',
     fsAppSecret: status?.feishu?.appSecret || '',
+    dtClientId: status?.dingtalk?.clientId || '',
+    dtClientSecret: status?.dingtalk?.clientSecret || '',
+    dtRobotCode: status?.dingtalk?.robotCode || '',
     qqAppId: status?.qq?.appID || '',
     qqAppSecret: status?.qq?.appSecret || '',
   };
@@ -103,6 +109,9 @@ export function useBridgeState() {
   const [tgToken, setTgToken] = useState(snapshotCredentials.tgToken);
   const [fsAppId, setFsAppId] = useState(snapshotCredentials.fsAppId);
   const [fsAppSecret, setFsAppSecret] = useState(snapshotCredentials.fsAppSecret);
+  const [dtClientId, setDtClientId] = useState(snapshotCredentials.dtClientId);
+  const [dtClientSecret, setDtClientSecret] = useState(snapshotCredentials.dtClientSecret);
+  const [dtRobotCode, setDtRobotCode] = useState(snapshotCredentials.dtRobotCode);
   const [qqAppId, setQqAppId] = useState(snapshotCredentials.qqAppId);
   const [qqAppSecret, setQqAppSecret] = useState(snapshotCredentials.qqAppSecret);
 
@@ -112,6 +121,9 @@ export function useBridgeState() {
     setTgToken(nextCredentials.tgToken);
     setFsAppId(nextCredentials.fsAppId);
     setFsAppSecret(nextCredentials.fsAppSecret);
+    setDtClientId(nextCredentials.dtClientId);
+    setDtClientSecret(nextCredentials.dtClientSecret);
+    setDtRobotCode(nextCredentials.dtRobotCode);
     setQqAppId(nextCredentials.qqAppId);
     setQqAppSecret(nextCredentials.qqAppSecret);
   }, []);
@@ -285,6 +297,7 @@ export function useBridgeState() {
     publicIshiki, setPublicIshiki, savePublicIshiki,
     tgToken, setTgToken,
     fsAppId, setFsAppId, fsAppSecret, setFsAppSecret,
+    dtClientId, setDtClientId, dtClientSecret, setDtClientSecret, dtRobotCode, setDtRobotCode,
     qqAppId, setQqAppId, qqAppSecret, setQqAppSecret,
     saveBridgeConfig, testPlatform, setOwner, saveGlobalSettings,
   };

@@ -120,7 +120,7 @@ function bridgeSessionKeyFallbackParts(sessionKey) {
   const agentId = atIndex >= 0 && value.slice(atIndex + 1).trim()
     ? value.slice(atIndex + 1).trim()
     : null;
-  const match = head.match(/^(?:wechat|wx|telegram|tg|feishu|fs|qq)_dm_(.+)$/);
+  const match = head.match(/^(?:wechat|wx|telegram|tg|feishu|fs|dingtalk|dt|qq)_dm_(.+)$/);
   return {
     chatId: match?.[1] || null,
     agentId,

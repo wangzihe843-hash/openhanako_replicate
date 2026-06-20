@@ -90,6 +90,23 @@ export function PlatformSection({
               </button>
             )}
           </div>
+        ) : isLast ? (
+          <div className="bridge-input-row">
+            <input
+              className={styles['settings-input']}
+              type="text"
+              value={field.value}
+              onChange={(e) => field.onChange(e.target.value)}
+              onBlur={onCredentialBlur}
+            />
+            <button
+              className="bridge-test-btn"
+              disabled={testing}
+              onClick={onTest}
+            >
+              {testing ? '...' : t('settings.bridge.test')}
+            </button>
+          </div>
         ) : (
           <input
             className={styles['settings-input']}
