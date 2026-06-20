@@ -14,6 +14,7 @@ import taskLists from 'markdown-it-task-lists';
 import 'katex/dist/katex.min.css';
 import { sanitizeMarkdownPreviewHtml } from './markdown-html-sanitizer';
 import { extOfName, isImageOrSvgExt } from './file-kind';
+import { uniqueMarkdownHeadingId } from './markdown-document';
 
 type MarkdownItInstance = ReturnType<typeof markdownit>;
 type MarkdownRenderEnv = {
@@ -913,9 +914,25 @@ function applyMarkdownPlugins(md: MarkdownItInstance): void {
   md.use(obsidianHighlights);
   md.use(obsidianCallouts);
   md.use(footnotes);
+  md.use(markdownHeadingAnchors);
   md.use(trimAutoLinkifiedSuffixes);
   md.use(mermaidFences);
   md.use(markdownImageRenderer);
+}
+
+function markdownHeadingAnchors(md: MarkdownItInstance): void {
+  md.core.ruler.push('hana_heading_anchors', (state: StateCore) => {
+    const seen = new Map<string, number>();
+    for (let i = 0; i < state.tokens.length; i += 1) {
+      const token = state.tokens[i];
+      if (token.type !== 'heading_open') continue;
+      const inline = state.tokens[i + 1];
+      if (!inline || inline.type !== 'inline') continue;
+      const text = inline.content.trim();
+      if (!text) continue;
+      token.attrSet('id', uniqueMarkdownHeadingId(text, seen));
+    }
+  });
 }
 
 function fenceLanguage(info: string): string {

@@ -29,6 +29,7 @@ const REMOVE_WITH_CONTENT = new Set([
 ]);
 
 const GLOBAL_ATTRS = new Set(['title', 'style']);
+const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 const ALLOWED_CLASS_NAMES = new Set([
   'markdown-callout',
   'markdown-callout-title',
@@ -318,6 +319,12 @@ function normalizeFootnoteId(tagName: string, raw: string): string | null {
   return null;
 }
 
+function normalizeHeadingId(tagName: string, raw: string): string | null {
+  const value = raw.trim();
+  if (!HEADING_TAGS.has(tagName)) return null;
+  return /^[\p{Letter}\p{Number}_-][\p{Letter}\p{Number}_:-]{0,255}$/u.test(value) ? value : null;
+}
+
 function normalizeFootnoteRole(element: Element, tagName: string, raw: string): string | null {
   const value = raw.trim().toLowerCase();
   if (tagName === 'section' && value === 'doc-endnotes' && hasClass(element, 'footnotes')) {
@@ -396,7 +403,7 @@ function sanitizeAttributes(element: Element, tagName: string): void {
     }
 
     if (name === 'id') {
-      const normalized = normalizeFootnoteId(tagName, attr.value);
+      const normalized = normalizeFootnoteId(tagName, attr.value) || normalizeHeadingId(tagName, attr.value);
       if (normalized) element.setAttribute('id', normalized);
       else element.removeAttribute(attr.name);
       continue;

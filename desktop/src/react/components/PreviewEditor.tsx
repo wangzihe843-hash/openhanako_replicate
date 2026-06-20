@@ -53,12 +53,18 @@ import {
 } from '../utils/markdown-cover-drop';
 import { isRemoteWorkbenchContentRef } from '../utils/remote-file-preview';
 import type { FileVersion, RemoteWorkbenchContentRef, VersionedWriteResult } from '../types';
+import type { PreviewScrollSnapshot } from '../../../../shared/preview-reading-position.ts';
 
 /* ── Types ── */
 
 export interface PreviewEditorHandle {
   getView(): EditorView | null;
   focus(): void;
+  getScrollSnapshot(contentHash?: string): PreviewScrollSnapshot | null;
+  restoreScrollSnapshot(snapshot: PreviewScrollSnapshot | null | undefined): void;
+  scrollToLine(line: number): void;
+  scrollToOffset(from: number, to?: number): void;
+  getTopVisibleLine(): number;
 }
 
 export interface PreviewEditorStats {
@@ -83,6 +89,9 @@ export interface PreviewEditorProps {
   onSelectionCommit?: (view: EditorView) => void;
   onStatsChange?: (stats: PreviewEditorStats) => void;
   onContentChange?: (content: string, fileVersion?: FileVersion | null) => void;
+  initialScrollSnapshot?: PreviewScrollSnapshot | null;
+  contentHash?: string;
+  onScrollSnapshotChange?: (snapshot: PreviewScrollSnapshot, topVisibleLine: number) => void;
   /**
    * 只读模式：禁用编辑、不挂 autosave listener。
    * 调用方（如派生 viewer 窗口）自己把新 content 作为 prop 传入即可。
@@ -129,6 +138,56 @@ function getEditorStats(view: EditorView): PreviewEditorStats {
     selectedChars: countTextChars(getSelectedText(view.state).trim()),
     totalChars: countTextChars(view.state.doc.toString()),
   };
+}
+
+function scrollRatio(scrollTop: number, scrollHeight: number, clientHeight: number): number {
+  const max = Math.max(0, scrollHeight - clientHeight);
+  return max > 0 ? Math.min(1, Math.max(0, scrollTop / max)) : 0;
+}
+
+function getScrollSnapshot(view: EditorView, contentHash?: string): PreviewScrollSnapshot {
+  const el = view.scrollDOM;
+  return {
+    scrollTop: el.scrollTop,
+    scrollLeft: el.scrollLeft,
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+    ratio: scrollRatio(el.scrollTop, el.scrollHeight, el.clientHeight),
+    ...(contentHash ? { contentHash } : {}),
+  };
+}
+
+function restoreEditorScrollSnapshot(view: EditorView, snapshot: PreviewScrollSnapshot | null | undefined): void {
+  if (!snapshot) return;
+  const el = view.scrollDOM;
+  const restore = () => {
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    const top = Number.isFinite(snapshot.scrollTop)
+      ? snapshot.scrollTop
+      : Number.isFinite(snapshot.ratio) ? (snapshot.ratio || 0) * max : 0;
+    el.scrollTop = Math.min(max, Math.max(0, top));
+    el.scrollLeft = Math.max(0, snapshot.scrollLeft || 0);
+  };
+  restore();
+  queueMicrotask(restore);
+  window.requestAnimationFrame?.(restore);
+}
+
+function topVisibleLine(view: EditorView): number {
+  const rect = view.scrollDOM.getBoundingClientRect();
+  const pos = view.posAtCoords({ x: rect.left + 8, y: rect.top + 8 }) ?? view.viewport.from;
+  return Math.max(0, view.state.doc.lineAt(pos).number - 1);
+}
+
+function scrollEditorToOffset(view: EditorView, from: number, to = from): void {
+  const length = view.state.doc.length;
+  const safeFrom = clampPos(from, length);
+  const safeTo = clampPos(to, length);
+  view.dispatch({
+    selection: EditorSelection.single(safeFrom, safeTo),
+    effects: EditorView.scrollIntoView(safeFrom, { y: 'start', yMargin: 64 }),
+  });
+  view.focus();
 }
 
 function restoreScrollPosition(view: EditorView, scrollTop: number, scrollLeft: number): void {
@@ -267,7 +326,7 @@ function isEditorCoverRailDrop(view: EditorView, event: DragEvent): boolean {
 /* ── Editor Component ── */
 
 export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>(
-  function PreviewEditor({ content, filePath, remoteContentRef, fileVersion, saveDocument, mode, language, onSelectionChange, onSelectionCommit, onStatsChange, onContentChange, readOnly = false }, ref) {
+  function PreviewEditor({ content, filePath, remoteContentRef, fileVersion, saveDocument, mode, language, onSelectionChange, onSelectionCommit, onStatsChange, onContentChange, initialScrollSnapshot, contentHash, onScrollSnapshotChange, readOnly = false }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -293,6 +352,13 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
     const lastStatsRef = useRef<PreviewEditorStats | null>(null);
     const contentCbRef = useRef(onContentChange);
     contentCbRef.current = onContentChange;
+    const initialScrollSnapshotRef = useRef(initialScrollSnapshot);
+    initialScrollSnapshotRef.current = initialScrollSnapshot;
+    const contentHashRef = useRef(contentHash);
+    contentHashRef.current = contentHash;
+    const scrollSnapshotCbRef = useRef(onScrollSnapshotChange);
+    scrollSnapshotCbRef.current = onScrollSnapshotChange;
+    const restoredScrollKeyRef = useRef<string>('');
 
     useEffect(() => {
       if (fileVersion !== undefined) {
@@ -312,6 +378,20 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
     useImperativeHandle(ref, () => ({
       getView: () => viewRef.current,
       focus: () => viewRef.current?.focus(),
+      getScrollSnapshot: (hash?: string) => viewRef.current ? getScrollSnapshot(viewRef.current, hash ?? contentHashRef.current) : null,
+      restoreScrollSnapshot: (snapshot) => {
+        if (viewRef.current) restoreEditorScrollSnapshot(viewRef.current, snapshot);
+      },
+      scrollToLine: (line) => {
+        const view = viewRef.current;
+        if (!view) return;
+        const docLine = view.state.doc.line(Math.min(view.state.doc.lines, Math.max(1, line + 1)));
+        scrollEditorToOffset(view, docLine.from);
+      },
+      scrollToOffset: (from, to) => {
+        if (viewRef.current) scrollEditorToOffset(viewRef.current, from, to);
+      },
+      getTopVisibleLine: () => viewRef.current ? topVisibleLine(viewRef.current) : 0,
     }));
 
     const createCheckpointIfDue = useCallback(async (fp: string) => {
@@ -600,6 +680,16 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
       const onSelectionCommitEvent = () => {
         selectionCommitCbRef.current?.(view);
       };
+      let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+      const publishScrollSnapshot = () => {
+        scrollTimer = null;
+        scrollSnapshotCbRef.current?.(getScrollSnapshot(view, contentHashRef.current), topVisibleLine(view));
+      };
+      const onScroll = () => {
+        if (!scrollSnapshotCbRef.current) return;
+        if (scrollTimer) clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(publishScrollSnapshot, 160);
+      };
       const onCoverDragOver = (event: DragEvent) => {
         const canApplyCover = Boolean(filePathRef.current || isRemoteWorkbenchContentRef(remoteContentRefRef.current));
         const coverElement = editorCoverElementFromEvent(event);
@@ -652,14 +742,20 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
       view.dom.addEventListener('mouseup', onSelectionCommitEvent);
       view.dom.addEventListener('touchend', onSelectionCommitEvent);
       view.dom.addEventListener('keyup', onSelectionCommitEvent);
+      view.scrollDOM.addEventListener('scroll', onScroll, { passive: true });
       view.dom.addEventListener('dragover', onCoverDragOver, true);
       view.dom.addEventListener('dragleave', onCoverDragLeave, true);
       view.dom.addEventListener('drop', onCoverDrop, true);
       viewRef.current = view;
       lastStatsRef.current = null;
       emitStatsIfChanged(view);
+      restoreEditorScrollSnapshot(view, initialScrollSnapshotRef.current);
 
       return () => {
+        if (scrollTimer) {
+          clearTimeout(scrollTimer);
+          publishScrollSnapshot();
+        }
         if (saveTimerRef.current) {
           clearTimeout(saveTimerRef.current);
           saveTimerRef.current = null;
@@ -668,6 +764,7 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
         view.dom.removeEventListener('mouseup', onSelectionCommitEvent);
         view.dom.removeEventListener('touchend', onSelectionCommitEvent);
         view.dom.removeEventListener('keyup', onSelectionCommitEvent);
+        view.scrollDOM.removeEventListener('scroll', onScroll);
         view.dom.removeEventListener('dragover', onCoverDragOver, true);
         view.dom.removeEventListener('dragleave', onCoverDragLeave, true);
         view.dom.removeEventListener('drop', onCoverDrop, true);
@@ -675,6 +772,16 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
         viewRef.current = null;
       };
     }, [mode, language, readOnly, filePath, remoteContentRef, emitStatsIfChanged, insertMarkdownAttachments]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅在 mode/language/readOnly/filePath/remoteContentRef 变化时重建 CodeMirror，content/refs 故意省略以避免销毁重建
+
+    useEffect(() => {
+      const view = viewRef.current;
+      const snapshot = initialScrollSnapshot;
+      if (!view || !snapshot) return;
+      const key = `${filePath || remoteContentRef?.contentPath || ''}:${mode}:${contentHash || ''}:${snapshot.updatedAt || ''}:${snapshot.scrollTop}:${snapshot.ratio ?? ''}`;
+      if (restoredScrollKeyRef.current === key) return;
+      restoredScrollKeyRef.current = key;
+      restoreEditorScrollSnapshot(view, snapshot);
+    }, [contentHash, filePath, initialScrollSnapshot, mode, remoteContentRef?.contentPath]);
 
     // content prop change → update editor (skip if already in sync)
     useEffect(() => {

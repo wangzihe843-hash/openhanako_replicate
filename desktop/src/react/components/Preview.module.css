@@ -42,6 +42,7 @@
     min-height: 0;
     position: relative;
     margin: var(--panel-edge-gap);
+    container-type: inline-size;
 }
 
 .previewPanelBody {

@@ -12,6 +12,7 @@ import type { WorkspaceDeskState } from './desk-slice';
 import {
   hydratePersistedPreviewItems,
   loadPersistedWorkspaceUiState,
+  readingPositionsFromPersistedWorkspaceUiState,
   schedulePersistCurrentWorkspaceUiState,
 } from './workspace-ui-state-actions';
 import { hasServerConnection } from '../services/server-connection';
@@ -209,6 +210,10 @@ function buildWorkspaceDeskState(s: ReturnType<typeof useStore.getState>): Works
   const activeTabId = s.activeTabId && openTabs.includes(s.activeTabId)
     ? s.activeTabId
     : (openTabs[0] || null);
+  const openTabSet = new Set(openTabs);
+  const previewReadingPositions = Object.fromEntries(
+    Object.entries(s.previewReadingPositions || {}).filter(([id]) => openTabSet.has(id)),
+  );
   return {
     deskCurrentPath: '',
     deskFiles: [...(s.deskFiles || [])],
@@ -224,6 +229,7 @@ function buildWorkspaceDeskState(s: ReturnType<typeof useStore.getState>): Works
     previewOpen: !!s.previewOpen,
     openTabs,
     activeTabId,
+    previewReadingPositions,
   };
 }
 
@@ -283,6 +289,7 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
       previewOpen: false,
       openTabs: [],
       activeTabId: null,
+      previewReadingPositions: {},
     });
     updateDeskContextBtn();
     return;
@@ -314,6 +321,7 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
     previewOpen: saved?.previewOpen ?? false,
     openTabs: savedOpenTabs,
     activeTabId: activePreviewTabId(savedOpenTabs, saved?.activeTabId),
+    previewReadingPositions: saved?.previewReadingPositions || {},
   });
   updateDeskContextBtn();
 
@@ -323,6 +331,7 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
     const restoredPreviewItemsById = new Map(restoredPreviewItems.map(item => [item.id, item]));
     const restoredOpenTabs = persisted?.openTabs?.filter(id => restoredPreviewItemsById.has(id)) || [];
     const restoredActiveTabId = activePreviewTabId(restoredOpenTabs, persisted?.activeTabId);
+    const restoredReadingPositions = readingPositionsFromPersistedWorkspaceUiState(persisted, restoredOpenTabs);
     if (persisted && deskStateRootKey(useStore.getState().deskBasePath, useStore.getState().deskWorkspaceMountId) === workspaceKey) {
       useStore.setState((state: any) => ({
         deskCurrentPath: '',
@@ -334,6 +343,7 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
         previewOpen: !!persisted.previewOpen,
         openTabs: restoredOpenTabs,
         activeTabId: restoredActiveTabId,
+        previewReadingPositions: restoredReadingPositions,
         ...(restoredPreviewItems.length > 0
           ? {
               previewItems: [

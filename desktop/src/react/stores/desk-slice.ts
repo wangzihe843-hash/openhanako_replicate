@@ -1,5 +1,6 @@
 import type { DeskFile, StudioWorkspace } from '../types';
 import type { RightWorkspaceTab } from '../types';
+import type { PreviewReadingPosition } from '../../../../shared/preview-reading-position.ts';
 
 export interface CwdSkillInfo {
   name: string;
@@ -25,6 +26,7 @@ export interface WorkspaceDeskState {
   previewOpen: boolean;
   openTabs: string[];
   activeTabId: string | null;
+  previewReadingPositions: Record<string, PreviewReadingPosition>;
 }
 
 export interface DeskSlice {
