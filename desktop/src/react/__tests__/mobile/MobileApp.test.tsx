@@ -60,6 +60,20 @@ class MockWebSocket {
 
 describe('MobileApp', () => {
   const fetchMock = vi.fn();
+  const mobileLoginTranslations: Record<string, string> = {
+    'mobile.auth.title': '手机访问 Hana',
+    'mobile.auth.deviceHelp': '输入桌面端为这台设备生成的访问密钥。',
+    'mobile.auth.passwordHelp': '使用桌面端设置的本地账号登录。',
+    'mobile.auth.tabLabel': '登录方式',
+    'mobile.auth.deviceField': '访问密钥',
+    'mobile.auth.deviceTab': '访问密钥',
+    'mobile.auth.passwordTab': '用户名密码',
+    'mobile.auth.usernameField': '用户名',
+    'mobile.auth.passwordField': '密码',
+    'mobile.auth.plaintextWarning': '远程明文链路不接收账号密码。',
+    'mobile.auth.submit': '登录',
+    'mobile.auth.scopeError': '当前登录缺少工作台权限，请重新输入访问密钥。',
+  };
 
   beforeEach(() => {
     fetchMock.mockReset();
@@ -84,7 +98,6 @@ describe('MobileApp', () => {
     document.documentElement.removeAttribute('data-platform');
     delete window.__hanaMobileUpdateAvailable;
     resetStoreForMobileTest();
-    window.t = ((key: string) => key) as typeof window.t;
     window.i18n = {
       locale: 'zh',
       defaultName: 'Hanako',
@@ -92,10 +105,15 @@ describe('MobileApp', () => {
       _agentOverrides: {},
       load: vi.fn(async function load(this: typeof window.i18n, locale: string) {
         this.locale = locale.startsWith('zh') ? 'zh' : locale;
+        this._data = mobileLoginTranslations;
       }),
       setAgentOverrides: vi.fn(),
-      t: (key: string) => key,
+      t: (key: string) => {
+        const value = window.i18n?._data?.[key];
+        return typeof value === 'string' ? value : key;
+      },
     };
+    window.t = ((key: string, vars?: Record<string, string | number>) => window.i18n.t(key, vars)) as typeof window.t;
     window.setTheme = vi.fn();
     window.setSerifFont = vi.fn();
     window.setPaperTexture = vi.fn();
@@ -107,13 +125,15 @@ describe('MobileApp', () => {
     vi.restoreAllMocks();
   });
 
-  it('shows the access-key login when no browser session exists', async () => {
+  it('loads locale before showing the access-key login when no browser session exists', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ authenticated: false, principal: null }));
 
     render(<MobileApp />);
 
-    expect(await screen.findByText('mobile.auth.title')).toBeInTheDocument();
-    expect(screen.getByLabelText('mobile.auth.deviceField')).toBeInTheDocument();
+    expect(await screen.findByText('手机访问 Hana')).toBeInTheDocument();
+    expect(window.i18n.load).toHaveBeenCalledWith('zh-CN');
+    expect(screen.getByLabelText('访问密钥')).toBeInTheDocument();
+    expect(screen.queryByText('mobile.auth.title')).not.toBeInTheDocument();
   });
 
   it('can submit a username and password login without sending a device credential', async () => {
@@ -132,10 +152,10 @@ describe('MobileApp', () => {
 
     render(<MobileApp />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: 'mobile.auth.passwordTab' }));
-    fireEvent.change(screen.getByLabelText('mobile.auth.usernameField'), { target: { value: 'hana-owner' } });
-    fireEvent.change(screen.getByLabelText('mobile.auth.passwordField'), { target: { value: 'secret-password' } });
-    fireEvent.click(screen.getByRole('button', { name: 'mobile.auth.submit' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '用户名密码' }));
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'hana-owner' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret-password' } });
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
 
     await waitFor(() => {
       const loginCall = fetchMock.mock.calls.find(([input]) => String(input).includes('/api/web-auth/login'));
@@ -160,8 +180,8 @@ describe('MobileApp', () => {
 
     render(<MobileApp />);
 
-    expect(await screen.findByText('mobile.auth.title')).toBeInTheDocument();
-    expect(screen.getByText('mobile.auth.scopeError')).toBeInTheDocument();
+    expect(await screen.findByText('手机访问 Hana')).toBeInTheDocument();
+    expect(screen.getByText('当前登录缺少工作台权限，请重新输入访问密钥。')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/web-auth/logout', expect.objectContaining({
       method: 'POST',
     }));
@@ -181,8 +201,8 @@ describe('MobileApp', () => {
 
     render(<MobileApp />);
 
-    expect(await screen.findByText('mobile.auth.title')).toBeInTheDocument();
-    expect(screen.getByText('mobile.auth.scopeError')).toBeInTheDocument();
+    expect(await screen.findByText('手机访问 Hana')).toBeInTheDocument();
+    expect(screen.getByText('当前登录缺少工作台权限，请重新输入访问密钥。')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/web-auth/logout', expect.objectContaining({
       method: 'POST',
     }));

@@ -28,11 +28,17 @@ const MOBILE_EDGE_GESTURE_MAX_VERTICAL_DRIFT = 80;
 const MOBILE_EDGE_GESTURE_DOMINANCE = 1.25;
 const MOBILE_UPDATE_AVAILABLE_EVENT = 'hana-mobile-update-available';
 const MOBILE_APPLY_UPDATE_EVENT = 'hana-mobile-apply-update';
+const DEFAULT_MOBILE_AUTH_LOCALE = 'zh-CN';
 
 const LazyPreviewPanel = lazy(() => import('../components/PreviewPanel').then(module => ({ default: module.PreviewPanel })));
 const LazyMediaViewer = lazy(() => import('../components/shared/MediaViewer/MediaViewer').then(module => ({ default: module.MediaViewer })));
 const LazyWorkspaceCompanionRail = lazy(() => import('../components/app/WorkspaceCompanionRail').then(module => ({ default: module.WorkspaceCompanionRail })));
 const LazySettingsModalShell = lazy(() => import('../components/SettingsModalShell').then(module => ({ default: module.SettingsModalShell })));
+
+let mobileAuthLocaleLoad: {
+  i18n: typeof window.i18n;
+  promise: Promise<void>;
+} | null = null;
 
 type MobileEdgeGesture = {
   edge: 'left' | 'right';
@@ -52,6 +58,7 @@ export function MobileApp(): React.ReactElement {
   const [mobileUpdateAvailable, setMobileUpdateAvailable] = useState(() => window.__hanaMobileUpdateAvailable === true);
 
   const bootstrap = useCallback(async () => {
+    await ensureMobileAuthLocale();
     const session = await readMobileAuthSession();
     if (!session.authenticated || !session.principal) {
       setAuthState('login');
@@ -489,6 +496,30 @@ function scopeAllows(scopes: string[], required: string): boolean {
   if (scopes.includes(required)) return true;
   const [namespace] = required.split('.');
   return scopes.includes(namespace) || scopes.includes(`${namespace}.*`);
+}
+
+function ensureMobileAuthLocale(): Promise<void> {
+  const i18n = window.i18n;
+  if (!i18n?.load) return Promise.resolve();
+  if (mobileAuthLocaleLoad?.i18n === i18n) return mobileAuthLocaleLoad.promise;
+
+  const promise = i18n.load(resolveInitialMobileAuthLocale())
+    .catch((err) => {
+      if (mobileAuthLocaleLoad?.i18n === i18n) mobileAuthLocaleLoad = null;
+      console.warn('[mobile] initial auth locale load failed', err);
+    })
+    .then(() => {
+      if (window.i18n?.locale) {
+        useStore.setState({ locale: window.i18n.locale });
+      }
+    });
+  mobileAuthLocaleLoad = { i18n, promise };
+  return promise;
+}
+
+function resolveInitialMobileAuthLocale(): string {
+  const htmlLocale = document.documentElement.lang.trim();
+  return htmlLocale || DEFAULT_MOBILE_AUTH_LOCALE;
 }
 
 function useNarrowMobileViewport(): boolean {
