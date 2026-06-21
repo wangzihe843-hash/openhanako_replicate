@@ -87,9 +87,24 @@ function approvalTargetForTool(toolName: any, params: any = {}) {
 
 function approvalSideEffectForTool(tool: any, params: any) {
   const describe = tool?.sessionPermission?.describeSideEffect;
-  if (typeof describe !== "function") return null;
-  const sideEffect = describe(params);
+  const sideEffect = typeof describe === "function"
+    ? describe(params)
+    : tool?.sessionPermission?.sideEffect;
   return sideEffect && typeof sideEffect === "object" ? sideEffect : null;
+}
+
+function permissionContextForTool(tool: any, deps: any = {}) {
+  const base = deps.permissionContext && typeof deps.permissionContext === "object"
+    ? deps.permissionContext
+    : {};
+  const toolSessionPermission = tool?.sessionPermission && typeof tool.sessionPermission === "object"
+    ? tool.sessionPermission
+    : null;
+  return {
+    ...base,
+    ...(toolSessionPermission ? { toolSessionPermission } : {}),
+    ...(tool?._pluginId ? { isPluginTool: true, pluginId: tool._pluginId } : {}),
+  };
 }
 
 function summarizeParams(params: any) {
@@ -213,7 +228,12 @@ export function wrapWithSessionPermission(tools: any[] = [], deps: any = {}) {
             ruleIds: safety.ruleIds,
           });
         }
-        const decision: any = classifySessionPermission({ mode, toolName: tool.name, params, context: deps.permissionContext });
+        const decision: any = classifySessionPermission({
+          mode,
+          toolName: tool.name,
+          params,
+          context: permissionContextForTool(tool, deps),
+        });
         if (decision.action === "allow") {
           return tool.execute(...args);
         }

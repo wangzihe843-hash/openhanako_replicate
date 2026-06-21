@@ -164,6 +164,26 @@ import {
 
 Tools should return local files through `stageFile()` and `createMediaDetails()` so desktop, Bridge, Mobile PWA, and future remote clients all consume the same `SessionFile` / Resource identity.
 
+Tools should also declare `sessionPermission` so Hana's session permission mode can make a precise decision before the tool runs. Use `readOnly: true` for pure reads, `kind: "plugin_output"` for bounded writes under `ctx.dataDir` that return `SessionFile` media, and `kind: "external_side_effect"` for provider, network, platform, or account actions that Auto mode should review. Tools that modify user workspace files should stay reviewer-bound unless they can describe a narrower side effect with `describeSideEffect(input)`.
+
+```js
+const tool = defineTool({
+  name: 'create_note',
+  description: 'Create a markdown note in plugin data.',
+  sessionPermission: {
+    kind: 'plugin_output',
+    describeSideEffect: () => ({
+      kind: 'session_file_output',
+      summary: 'Write a markdown file under plugin data and register it as SessionFile media.',
+      ruleId: 'plugin-output-session-file',
+    }),
+  },
+  async execute(input, ctx) {
+    // write under ctx.dataDir, then ctx.stageFile(...)
+  },
+});
+```
+
 ### Runtime ResourceIO API
 
 Use `ctx.resources` for user resources such as local workspace files, mounted files, `SessionFile` references, Resource records, and URLs. Declare the exact manifest capabilities the plugin needs:

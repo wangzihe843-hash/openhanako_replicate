@@ -22,6 +22,15 @@ export const promptGuidelines = [
 
 export { isBeautifyEnabledForAgentConfig as isEnabledForAgentConfig };
 
+export const sessionPermission = {
+  kind: "review",
+  describeSideEffect: (input: any = {}) => ({
+    kind: "workspace_write",
+    summary: `Apply a generated cover image to Markdown file ${input.targetFilePath || input.filePath || "unknown"}.`,
+    ruleId: "beautify-markdown-cover-write",
+  }),
+};
+
 export const parameters = {
   type: "object",
   properties: {

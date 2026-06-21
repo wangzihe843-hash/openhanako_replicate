@@ -169,6 +169,7 @@ export async function execute(input, toolCtx) {  // required
 - Automatically namespaced: `pluginId_name` (e.g. `my-plugin_search`)
 - Restricted plugins' `toolCtx.bus` only has `emit/subscribe/request`, not `handle`
 - New plugins can use `defineTool()` from `@hana/plugin-runtime` for types and default parameters. The current static `tools/*.js` loader still reads named exports.
+- Agent-callable tools should declare `sessionPermission`. Use `readOnly: true` for pure reads, `kind: "plugin_output"` for bounded `ctx.dataDir` writes returned through `stageFile()`, and `kind: "external_side_effect"` for provider, network, platform, or account actions that Auto mode should send to the reviewer. Tools that modify user workspace files should remain reviewer-bound unless they describe a narrower side effect with `describeSideEffect(input)`.
 
 ```js
 import { defineTool } from '@hana/plugin-runtime';
@@ -181,6 +182,7 @@ const tool = defineTool({
     properties: { query: { type: "string" } },
     required: ["query"]
   },
+  sessionPermission: { readOnly: true },
   async execute(input, ctx) {
     ctx.log.info("search", input.query);
     return `results for ${input.query}`;

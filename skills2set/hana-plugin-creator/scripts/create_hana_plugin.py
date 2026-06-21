@@ -324,6 +324,15 @@ export const parameters = {{
   }}
 }};
 
+export const sessionPermission = {{
+  kind: "plugin_output",
+  describeSideEffect: () => ({{
+    kind: "session_file_output",
+    summary: "Create a markdown file in plugin data and register it as SessionFile media.",
+    ruleId: "{plugin_id}-plugin-output",
+  }}),
+}};
+
 export async function execute(input = {{}}, toolCtx) {{
   const sessionRef = toolCtx.sessionRef || (toolCtx.sessionId
     ? {{ sessionId: toolCtx.sessionId, sessionPath: toolCtx.sessionPath || null }}
@@ -376,6 +385,14 @@ const tool = defineTool({{
       title: {{ type: "string" }},
       body: {{ type: "string" }}
     }}
+  }},
+  sessionPermission: {{
+    kind: "plugin_output",
+    describeSideEffect: () => ({{
+      kind: "session_file_output",
+      summary: "Create a markdown file in plugin data and register it as SessionFile media.",
+      ruleId: "{plugin_id}-plugin-output",
+    }}),
   }},
   async execute(input = {{}}, toolCtx) {{
     const sessionRef = toolCtx.sessionRef || (toolCtx.sessionId

@@ -64,6 +64,20 @@ describe("plugin SDK examples and docs", () => {
     expect(creatorSkill).toContain("Do not use local path writes for user resources");
   });
 
+  it("documents plugin tool sessionPermission metadata in SDK guides and Hana Plugin Creator", () => {
+    const sdkGuide = fs.readFileSync(path.join(root, "PLUGIN_SDK.md"), "utf-8");
+    const zhGuide = fs.readFileSync(path.join(root, "PLUGINS.md"), "utf-8");
+    const enGuide = fs.readFileSync(path.join(root, "PLUGINS_EN.md"), "utf-8");
+    const creatorSkill = fs.readFileSync(path.join(root, "skills2set", "hana-plugin-creator", "SKILL.md"), "utf-8");
+
+    for (const doc of [sdkGuide, zhGuide, enGuide, creatorSkill]) {
+      expect(doc).toContain("sessionPermission");
+      expect(doc).toContain("readOnly");
+      expect(doc).toContain("plugin_output");
+      expect(doc).toContain("external_side_effect");
+    }
+  });
+
   it("ships a showcase plugin manifest that exercises iframe grants and UI contributions", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(exampleDir, "manifest.json"), "utf-8"));
 
@@ -92,6 +106,8 @@ describe("plugin SDK examples and docs", () => {
     expect(index).toContain("HANA_BUS_SKIP");
     expect(tool).toContain("defineTool");
     expect(tool).toContain("createMediaDetails");
+    expect(tool).toContain("sessionPermission");
+    expect(tool).toContain("plugin_output");
     expect(panel).toContain("@hana/plugin-sdk");
     expect(panel).toContain("@hana/plugin-components");
     expect(panel).toContain("HanaThemeProvider");
@@ -112,8 +128,11 @@ describe("plugin SDK examples and docs", () => {
     expect(runtimeTypes).toContain("HanaProviderMediaMode");
     expect(runtimeTypes).toContain("HanaPluginResources");
     expect(runtimeTypes).toContain("HanaResourceRef");
+    expect(runtimeTypes).toContain("HanaToolSessionPermission");
+    expect(runtimeTypes).toContain("sessionPermission");
     expect(runtimeTypes).toContain("resources:");
     expect(runtimeReadme).toContain("modes[].inputLimits.referenceImages");
+    expect(runtimeReadme).toContain("sessionPermission");
     expect(sdkTypes).toContain("api:");
     expect(sdkTypes).toContain("fetch(");
     expect(sdkReadme).toContain("hana.api.fetch");

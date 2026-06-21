@@ -3,6 +3,15 @@ import { t } from "../../../lib/i18n.ts";
 export const name = "generate-image";
 export const description = t("toolDef.generateImage.description");
 
+export const sessionPermission = {
+  kind: "external_side_effect",
+  describeSideEffect: (input: any = {}) => ({
+    kind: "external_generation",
+    summary: `Submit image generation${input.provider ? ` to provider ${input.provider}` : ""}.`,
+    ruleId: "media-image-generation",
+  }),
+};
+
 const sessionFileReference = {
   type: "object",
   properties: {

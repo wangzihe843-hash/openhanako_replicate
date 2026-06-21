@@ -3,6 +3,15 @@ import { t } from "../../../lib/i18n.ts";
 export const name = "generate-video";
 export const description = t("toolDef.generateVideo.description");
 
+export const sessionPermission = {
+  kind: "external_side_effect",
+  describeSideEffect: (input: any = {}) => ({
+    kind: "external_generation",
+    summary: `Submit video generation${input.provider ? ` to provider ${input.provider}` : ""}.`,
+    ruleId: "media-video-generation",
+  }),
+};
+
 const sessionFileReference = {
   type: "object",
   properties: {

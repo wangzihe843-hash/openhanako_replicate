@@ -288,12 +288,43 @@ export interface HanaToolContext {
   [key: string]: unknown;
 }
 
+export type HanaToolSessionPermissionKind =
+  | 'read'
+  | 'read_only'
+  | 'plugin_output'
+  | 'session_file_output'
+  | 'workspace_write'
+  | 'external_side_effect'
+  | 'review'
+  | string;
+
+export interface HanaToolSessionPermission<Input = unknown> {
+  /**
+   * True means the tool only reads already-authorized data and may run in
+   * read-only sessions without reviewer escalation.
+   */
+  readOnly?: boolean;
+  /**
+   * Host approval classification hint. Unknown or external side-effect kinds
+   * remain reviewer-bound in Auto mode.
+   */
+  kind?: HanaToolSessionPermissionKind;
+  /**
+   * Override Auto-mode handling for a declared non-read tool.
+   */
+  auto?: 'allow' | 'review';
+  description?: string;
+  sideEffect?: Record<string, unknown>;
+  describeSideEffect?: (input: Input) => Record<string, unknown> | null | undefined;
+}
+
 export interface HanaToolDefinition<Input = unknown, Output = unknown> {
   name: string;
   description: string;
   parameters?: JsonSchema;
   promptSnippet?: string;
   promptGuidelines?: string;
+  sessionPermission?: HanaToolSessionPermission<Input>;
   metadata?: Record<string, unknown>;
   invocationStyle?: 'sdk_tool' | 'pi_tool';
   execute(input: Input, ctx: HanaToolContext): MaybePromise<Output>;

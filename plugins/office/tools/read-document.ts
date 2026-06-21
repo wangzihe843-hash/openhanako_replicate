@@ -11,6 +11,8 @@ export const description = [
   "Requires an absolute filePath. Does not modify files. Unsupported legacy formats such as .doc, .xls, .ppt, and .pptx fail explicitly.",
 ].join(" ");
 
+export const sessionPermission = { readOnly: true };
+
 export const parameters = {
   type: "object",
   properties: {

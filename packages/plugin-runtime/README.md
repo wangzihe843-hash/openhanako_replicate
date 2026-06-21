@@ -150,6 +150,34 @@ path; `resource.watch` resolves watch targets. URL resources are read-only.
 Plugin-generated artifacts can still be written under `ctx.dataDir` and returned
 with `stageFile()`, but user resource edits should go through `ctx.resources`.
 
+## Tool session permissions
+
+Declare `sessionPermission` on Agent-callable tools so Hana can apply the current
+session permission mode before the tool runs. Use `readOnly: true` for pure reads,
+`kind: 'plugin_output'` for bounded plugin-data writes returned through
+`stageFile()`, and `kind: 'external_side_effect'` for provider, network, platform,
+or account actions that Auto mode should send to the reviewer. Workspace edits
+should stay reviewer-bound unless `describeSideEffect(input)` clearly describes
+the target and write behavior.
+
+```ts
+export const renderImage = defineTool({
+  name: 'render_image',
+  description: 'Render an image and return it as SessionFile media.',
+  sessionPermission: {
+    kind: 'plugin_output',
+    describeSideEffect: () => ({
+      kind: 'session_file_output',
+      summary: 'Writes output under plugin data and registers SessionFile media.',
+      ruleId: 'plugin-output-session-file',
+    }),
+  },
+  async execute(input, ctx) {
+    // write under ctx.dataDir, then ctx.stageFile(...)
+  },
+});
+```
+
 ## Session, Agent, model, and media helpers
 
 Plugins that need their own chat surface should use the typed helpers instead of

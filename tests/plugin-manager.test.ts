@@ -560,6 +560,27 @@ describe("tool loading", () => {
     expect(result.content[0].text).toBe("/sessions/static.jsonl:hello");
   });
 
+  it("preserves static plugin tool sessionPermission metadata", async () => {
+    const dir = path.join(pluginsDir, "static-permission");
+    fs.mkdirSync(path.join(dir, "tools"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "tools", "status.js"), `
+      export const name = "status";
+      export const description = "Read plugin status";
+      export const parameters = {};
+      export const sessionPermission = { readOnly: true };
+      export async function execute() {
+        return "ok";
+      }
+    `);
+    const pm = new PluginManager({ pluginsDir, dataDir, bus: await makeBus() } as any);
+    pm.scan();
+    await pm.loadAll();
+
+    const tool = pm.getPluginTool("static-permission", "status");
+
+    expect(tool.sessionPermission).toEqual({ readOnly: true });
+  });
+
   it("finds plugin tools when the action id contains underscores", async () => {
     const dir = path.join(pluginsDir, "underscore-plugin");
     fs.mkdirSync(path.join(dir, "tools"), { recursive: true });
@@ -1248,6 +1269,34 @@ describe("addTool (dynamic registration)", () => {
 
     remove();
     expect(pm.getAllTools()).toHaveLength(0);
+  });
+
+  it("preserves dynamic plugin tool sessionPermission metadata", async () => {
+    const pm = new PluginManager({ pluginsDir, dataDir, bus: await makeBus() } as any);
+    const sessionPermission = {
+      kind: "external_side_effect",
+      describeSideEffect: vi.fn(() => ({
+        kind: "external_api",
+        summary: "Queries a remote MCP server.",
+        ruleId: "mcp-remote-query",
+      })),
+    };
+
+    const remove = pm.addTool("mcp-bridge", {
+      name: "github_search",
+      description: "MCP search tool",
+      sessionPermission,
+      execute: async () => "result",
+    });
+
+    const [tool] = pm.getAllTools();
+    expect(tool.sessionPermission).toBe(sessionPermission);
+    expect(tool.sessionPermission.describeSideEffect({ query: "hana" })).toMatchObject({
+      kind: "external_api",
+      ruleId: "mcp-remote-query",
+    });
+
+    remove();
   });
 
   it("invokes dynamic plugin tools with the SDK input/context signature", async () => {

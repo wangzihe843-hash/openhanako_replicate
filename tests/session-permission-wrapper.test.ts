@@ -7,13 +7,14 @@ const ctx = {
   sessionManager: { getSessionFile: () => "/tmp/session.jsonl" },
 };
 
-function makeTool(name = "write") {
+function makeTool(name = "write", extras: any = {}) {
   return {
     name,
     execute: vi.fn(async () => ({
       content: [{ type: "text", text: "executed" }],
       details: { executed: true },
     })),
+    ...extras,
   };
 }
 
@@ -47,6 +48,26 @@ describe("session permission wrapper", () => {
 
     const result = await wrapped.execute("call-1", { action: "stat", fileId: "sf_1" }, null, null, ctx);
 
+    expect(tool.execute).toHaveBeenCalledOnce();
+    expect(result.details.executed).toBe(true);
+  });
+
+  it("allows plugin tools declared read-only in read-only mode", async () => {
+    const tool = makeTool("office_list-capabilities", {
+      _pluginId: "office",
+      sessionPermission: { readOnly: true },
+    });
+    const approvalGateway = {
+      review: vi.fn(async () => ({ action: "allow", reviewer: "small_tool_model", risk: "low" })),
+    };
+    const [wrapped] = wrapWithSessionPermission([tool], {
+      getPermissionMode: () => "read_only",
+      getApprovalGateway: () => approvalGateway,
+    });
+
+    const result = await wrapped.execute("call-1", {}, null, null, ctx);
+
+    expect(approvalGateway.review).not.toHaveBeenCalled();
     expect(tool.execute).toHaveBeenCalledOnce();
     expect(result.details.executed).toBe(true);
   });
@@ -221,6 +242,74 @@ describe("session permission wrapper", () => {
 
     expect(approvalGateway.review).not.toHaveBeenCalled();
     expect(confirmStore.create).not.toHaveBeenCalled();
+    expect(tool.execute).toHaveBeenCalledOnce();
+    expect(result.details.executed).toBe(true);
+  });
+
+  it("auto mode lets plugin-output tools run when the plugin declares bounded session output", async () => {
+    const tool = makeTool("office_html-to-pdf", {
+      _pluginId: "office",
+      sessionPermission: { kind: "plugin_output" },
+    });
+    const confirmStore = { create: vi.fn() };
+    const approvalGateway = {
+      review: vi.fn(async () => ({ action: "deny_and_continue", reviewer: "small_tool_model", risk: "high" })),
+    };
+    const [wrapped] = wrapWithSessionPermission([tool], {
+      getPermissionMode: () => "auto",
+      getConfirmStore: () => confirmStore,
+      getApprovalGateway: () => approvalGateway,
+      emitEvent: vi.fn(),
+    });
+
+    const result = await wrapped.execute("call-1", { html: "<h1>Hi</h1>" }, null, null, ctx);
+
+    expect(confirmStore.create).not.toHaveBeenCalled();
+    expect(approvalGateway.review).not.toHaveBeenCalled();
+    expect(tool.execute).toHaveBeenCalledOnce();
+    expect(result.details.executed).toBe(true);
+  });
+
+  it("auto mode sends plugin tools with external side effects to the approval reviewer", async () => {
+    const tool = makeTool("media_generate-image", {
+      _pluginId: "media",
+      sessionPermission: {
+        kind: "external_side_effect",
+        describeSideEffect: (params) => ({
+          kind: "external_generation",
+          summary: `Generate image through provider ${params.provider || "default"}.`,
+          risk: "medium",
+          ruleId: "plugin-media-generation",
+        }),
+      },
+    });
+    const approvalGateway = {
+      review: vi.fn(async () => ({
+        action: "allow",
+        reviewer: "small_tool_model",
+        reason: "generation matches user intent",
+        risk: "low",
+      })),
+    };
+    const [wrapped] = wrapWithSessionPermission([tool], {
+      getPermissionMode: () => "auto",
+      getApprovalGateway: () => approvalGateway,
+      emitEvent: vi.fn(),
+    });
+
+    const result = await wrapped.execute("call-1", { prompt: "cover", provider: "openai" }, null, null, ctx);
+
+    expect(approvalGateway.review).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "media_generate-image",
+        sideEffect: expect.objectContaining({
+          kind: "external_generation",
+          summary: "Generate image through provider openai.",
+          ruleId: "plugin-media-generation",
+        }),
+      }),
+      expect.any(Object),
+    );
     expect(tool.execute).toHaveBeenCalledOnce();
     expect(result.details.executed).toBe(true);
   });

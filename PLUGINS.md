@@ -210,6 +210,7 @@ export async function execute(input, toolCtx) {  // 必须
 - 自动加命名空间前缀：`pluginId_name`（如 `my-plugin_search`）
 - restricted 插件的 `toolCtx.bus` 只有 `emit/subscribe/request`，没有 `handle`
 - 新插件可以使用 `@hana/plugin-runtime` 的 `defineTool()` 获得类型和默认参数；当前静态 `tools/*.js` loader 仍读取命名导出。
+- Agent 可调用工具应声明 `sessionPermission`。纯读取工具用 `readOnly: true`；只写 `ctx.dataDir` 并通过 `stageFile()` 返回 `SessionFile` 的工具用 `kind: "plugin_output"`；会访问外部 provider、网络、平台账号或真实世界副作用的工具用 `kind: "external_side_effect"`，Auto 模式会交给 reviewer。修改用户工作区文件的工具默认保持 reviewer-bound，除非能用 `describeSideEffect(input)` 明确描述更窄的副作用。
 - 定时自动化的 `plugin_action` v0 复用工具入口：`pluginId/actionId` 会映射到 `pluginId_actionId` 工具。cron 只保存 `pluginId`、`actionId` 和 JSON 参数；插件作者写的静态 `tools/*.js` 与动态 `ctx.registerTool()` 工具都会收到 SDK 风格的 `(input, ctx)` 调用；插件缺失、工具缺失或插件被禁用时，任务执行失败并记录运行历史，不会自动降级成 Agent 会话。
 
 ```js
@@ -223,6 +224,7 @@ const tool = defineTool({
     properties: { query: { type: "string" } },
     required: ["query"]
   },
+  sessionPermission: { readOnly: true },
   async execute(input, ctx) {
     ctx.log.info("search", input.query);
     return `results for ${input.query}`;

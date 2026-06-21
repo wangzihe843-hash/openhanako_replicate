@@ -112,6 +112,17 @@ const FILE_READ_ACTIONS = new Set([
   "stat",
 ]);
 
+const DECLARED_READ_KINDS = new Set([
+  "read",
+  "readonly",
+  "read_only",
+]);
+
+const DECLARED_AUTO_ALLOW_KINDS = new Set([
+  "plugin_output",
+  "session_file_output",
+]);
+
 export function normalizeSessionPermissionMode(raw) {
   if (typeof raw === "string") return normalizeSessionPermissionMode({ permissionMode: raw });
   if (raw?.permissionMode === SESSION_PERMISSION_MODES.AUTO) return SESSION_PERMISSION_MODES.AUTO;
@@ -214,6 +225,44 @@ function review(toolName) {
   };
 }
 
+function declaredToolSessionPermission(context) {
+  const value = context?.toolSessionPermission || context?.sessionPermission;
+  return value && typeof value === "object" ? value : null;
+}
+
+function hasDeclaredPermissionBoundary(permission) {
+  if (!permission) return false;
+  return permission.readOnly === true
+    || typeof permission.kind === "string"
+    || permission.auto === "allow"
+    || permission.auto === "review";
+}
+
+function isDeclaredReadOnly(permission) {
+  if (!permission) return false;
+  if (permission.readOnly === true) return true;
+  return typeof permission.kind === "string" && DECLARED_READ_KINDS.has(permission.kind);
+}
+
+function isDeclaredAutoAllow(permission) {
+  if (!permission) return false;
+  if (permission.auto === "allow") return true;
+  if (permission.auto === "review") return false;
+  return typeof permission.kind === "string" && DECLARED_AUTO_ALLOW_KINDS.has(permission.kind);
+}
+
+function classifyDeclaredToolPermission(mode, toolName, context) {
+  const permission = declaredToolSessionPermission(context);
+  if (!hasDeclaredPermissionBoundary(permission)) return null;
+  if (isDeclaredReadOnly(permission)) return { action: "allow" };
+  if (mode === SESSION_PERMISSION_MODES.OPERATE) return { action: "allow" };
+  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly(toolName, context);
+  if (mode === SESSION_PERMISSION_MODES.AUTO) {
+    return isDeclaredAutoAllow(permission) ? { action: "allow" } : review(toolName);
+  }
+  return prompt(toolName);
+}
+
 function classifyBrowserAction(mode, action, context) {
   if (BROWSER_READ_ACTIONS.has(action)) return { action: "allow" };
   if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly("browser", context);
@@ -256,6 +305,8 @@ export function classifySessionPermission({ mode, toolName, params, context }: {
         + `This tool is always blocked in subagent context regardless of access level; perform this action from the parent session instead.`,
     });
   }
+  const declared = classifyDeclaredToolPermission(normalized, name, context);
+  if (declared) return declared;
   if (INFORMATION_TOOLS.has(name)) return { action: "allow" };
   if (name === "browser") return classifyBrowserAction(normalized, params?.action, context);
   if (name === "terminal") return classifyTerminalAction(normalized, params?.action, context);

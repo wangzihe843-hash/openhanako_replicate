@@ -12,6 +12,17 @@ export const description = [
   "This tool has file-writing side effects. It fails explicitly when the desktop Chromium helper is unavailable; it does not silently downgrade to a text-only PDF.",
 ].join(" ");
 
+export const sessionPermission = {
+  kind: "review",
+  describeSideEffect: (input: any = {}) => ({
+    kind: input.outputPath ? "workspace_write" : "plugin_output",
+    summary: input.outputPath
+      ? `Export HTML to the requested PDF path: ${input.outputPath}`
+      : "Export HTML to plugin data and register the PDF as a SessionFile.",
+    ruleId: "office-html-to-pdf",
+  }),
+};
+
 export const parameters = {
   type: "object",
   properties: {

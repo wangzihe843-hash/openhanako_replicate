@@ -138,6 +138,7 @@ python3 skills2set/hana-plugin-creator/scripts/create_hana_plugin.py "Jimeng Pro
 ## SDK Rules
 
 - Static `tools/*.js` must export `name`, `description`, `parameters`, and `execute`.
+- Agent-callable tools should declare `sessionPermission`. Use `readOnly: true` for pure reads, `kind: "plugin_output"` for bounded plugin-data writes that return SessionFile media, and `kind: "external_side_effect"` for network/provider/platform actions that Auto mode should send to the reviewer. Tools that modify user workspace files should stay reviewer-bound unless the user has explicitly granted a narrower workflow.
 - React templates may use `@hana/plugin-runtime`, `@hana/plugin-sdk`, and `@hana/plugin-components`.
 - Static iframe resources belong under `assets/` and should be referenced with `hana.assets.url(path)` from browser code or the official `/api/plugins/{pluginId}/assets/...` path from the route shell. This includes CSS, JS, images, fonts, JSON, wasm, and browser-playable videos such as MP4/WebM/MOV. Do not inline large assets as a workaround.
 - Do not create custom plugin routes only to serve static files, such as `/api/video`, `/api/file`, or `/assets/*`, in new Agent-generated code. Existing plugins with static-file compatibility handlers may continue to run; if editing them, prefer adding the official `assets/` references without removing the existing handler unless the user explicitly asks for cleanup.

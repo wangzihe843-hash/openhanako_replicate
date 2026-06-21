@@ -56,6 +56,32 @@ describe('plugin runtime SDK', () => {
     await expect(tool.execute({ query: 'hana' }, {} as any)).resolves.toBe('search:hana');
   });
 
+  it('preserves tool sessionPermission metadata for host approval policy', async () => {
+    const sessionPermission = {
+      kind: 'plugin_output' as const,
+      describeSideEffect: vi.fn(() => ({
+        kind: 'session_file_output',
+        summary: 'Writes generated output into plugin data and registers a SessionFile.',
+        ruleId: 'plugin-output-session-file',
+      })),
+    };
+    const execute = vi.fn(async () => 'ok');
+
+    const tool = defineTool({
+      name: 'create_note',
+      description: 'Create a note',
+      sessionPermission,
+      execute,
+    });
+
+    expect(tool.sessionPermission).toBe(sessionPermission);
+    expect(tool.sessionPermission?.describeSideEffect?.({ title: 'Hana' })).toMatchObject({
+      kind: 'session_file_output',
+      ruleId: 'plugin-output-session-file',
+    });
+    await expect(tool.execute({}, {} as any)).resolves.toBe('ok');
+  });
+
   it('defines commands with stable slash fields', async () => {
     const handler = vi.fn(async () => ({ reply: 'pong' }));
     const command = defineCommand({

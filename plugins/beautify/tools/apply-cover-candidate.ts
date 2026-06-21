@@ -8,6 +8,15 @@ export const description = t("toolDef.applyCoverCandidate.description");
 
 export { isBeautifyEnabledForAgentConfig as isEnabledForAgentConfig };
 
+export const sessionPermission = {
+  kind: "review",
+  describeSideEffect: (input: any = {}) => ({
+    kind: "workspace_write",
+    summary: `Apply a selected cover candidate to Markdown file ${input.targetFilePath || "unknown"}.`,
+    ruleId: "beautify-markdown-cover-write",
+  }),
+};
+
 export const parameters = {
   type: "object",
   properties: {
