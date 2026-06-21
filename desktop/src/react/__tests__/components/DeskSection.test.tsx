@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
     deskTrashTreeItems: vi.fn(async () => true),
     searchDeskFiles: vi.fn(async (): Promise<DeskSearchResult[]> => []),
   jumpToDeskSearchResult: vi.fn(async () => {}),
+  retainLocalFileResourceWatch: vi.fn(() => vi.fn()),
 }));
 
 function pendingCreateInput(): HTMLInputElement {
@@ -41,6 +42,10 @@ vi.mock('../../stores/desk-actions', async (importOriginal) => {
     jumpToDeskSearchResult: mocks.jumpToDeskSearchResult,
   };
 });
+
+vi.mock('../../services/resource-events', () => ({
+  retainLocalFileResourceWatch: mocks.retainLocalFileResourceWatch,
+}));
 
 describe('DeskSection workspace watching', () => {
   let emitWorkspaceChanged: ((event: {
@@ -131,17 +136,12 @@ describe('DeskSection workspace watching', () => {
       </>,
     );
 
-    expect(watchWorkspace).toHaveBeenCalledWith('/tmp/hana-desk');
-    expect(watchWorkspace).toHaveBeenCalledWith('/tmp/hana-desk/notes');
+    expect(mocks.retainLocalFileResourceWatch).toHaveBeenCalledWith('/tmp/hana-desk');
+    expect(mocks.retainLocalFileResourceWatch).toHaveBeenCalledWith('/tmp/hana-desk/notes');
     mocks.loadDeskTreeFiles.mockClear();
 
     await act(async () => {
-      emitWorkspaceChanged?.({
-        rootPath: '/tmp/hana-desk/notes',
-        changedPath: '/tmp/hana-desk/notes/new.md',
-        affectedDir: '/tmp/hana-desk/notes',
-        eventType: 'add',
-      });
+      useStore.getState().markDeskTreeDirty('notes');
     });
 
     expect(mocks.loadDeskTreeFiles).toHaveBeenCalledWith('notes', { force: true });
@@ -152,27 +152,22 @@ describe('DeskSection workspace watching', () => {
 
     render(<WorkspaceFileWatchBridge />);
 
-    expect(watchWorkspace).toHaveBeenCalledWith('/tmp/hana-desk');
-    expect(watchWorkspace).toHaveBeenCalledWith('/tmp/hana-desk/notes');
+    expect(mocks.retainLocalFileResourceWatch).toHaveBeenCalledWith('/tmp/hana-desk');
+    expect(mocks.retainLocalFileResourceWatch).toHaveBeenCalledWith('/tmp/hana-desk/notes');
 
     await act(async () => {
       useStore.setState({ deskExpandedPaths: [] } as never);
     });
 
-    expect(unwatchWorkspace).not.toHaveBeenCalledWith('/tmp/hana-desk/notes');
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(160);
-    });
-
-    expect(unwatchWorkspace).toHaveBeenCalledWith('/tmp/hana-desk/notes');
-    unwatchWorkspace.mockClear();
+    const releaseNotes = mocks.retainLocalFileResourceWatch.mock.results[1]?.value;
+    expect(releaseNotes).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       useStore.setState({ deskBasePath: '' } as never);
     });
 
-    expect(unwatchWorkspace).toHaveBeenCalledWith('/tmp/hana-desk');
+    const releaseRoot = mocks.retainLocalFileResourceWatch.mock.results[0]?.value;
+    expect(releaseRoot).toHaveBeenCalledTimes(1);
   });
 
   it('flushes dirty expanded tree paths when the workspace tree mounts', async () => {
@@ -273,12 +268,14 @@ describe('DeskSection workspace watching', () => {
     );
     mocks.loadDeskTreeFiles.mockClear();
 
+    const { markDeskTreeDirtyForResourceChange } = await import('../../utils/preview-document-refresh');
     await act(async () => {
-      emitWorkspaceChanged?.({
-        rootPath: 'c:\\users\\me\\desk\\notes',
-        changedPath: 'c:\\users\\me\\desk\\notes\\new.md',
-        affectedDir: 'c:\\users\\me\\desk\\notes',
-        eventType: 'add',
+      markDeskTreeDirtyForResourceChange({
+        resource: {
+          kind: 'local-file',
+          provider: 'local_fs',
+          path: 'c:\\users\\me\\desk\\notes\\new.md',
+        },
       });
     });
 

@@ -12,7 +12,6 @@ export const CACHE_SNAPSHOT_EXPERIMENT_ID = "memory.cache_snapshot_reflection";
 export const EDITABLE_MEMORY_EXPERIMENT_ID = "memory.editable_facts";
 export const DEEPSEEK_ROLEPLAY_REASONING_PATCH_EXPERIMENT_ID = "provider.deepseek_roleplay_reasoning_patch";
 export const PROACTIVE_SUBAGENT_EXPERIMENT_ID = "subagent.proactive_delegation";
-export const RESOURCE_IO_TOOLS_EXPERIMENT_ID = "tools.resource_io";
 export { COMPACTION_MODE_EXPERIMENT_ID };
 
 const DEFINITIONS = [
@@ -153,37 +152,6 @@ const DEFINITIONS = [
     sunsetPolicy: {
       removeWhenRetired: true,
       migration: "Read old experiment value for one release after moving to Agent / Memory.",
-    },
-  }),
-  normalizeExperimentDefinition({
-    id: RESOURCE_IO_TOOLS_EXPERIMENT_ID,
-    titleKey: "settings.experiments.resourceIoTools.title",
-    descriptionKey: "settings.experiments.resourceIoTools.description",
-    owner: "session",
-    scope: "global",
-    defaultValue: false,
-    valueSchema: {
-      type: "boolean",
-      presentation: {
-        type: "toggle",
-      },
-    },
-    status: "alpha",
-    risk: "medium",
-    restartPolicy: "new_session",
-    targetHome: {
-      tab: "agent",
-      section: "tools",
-      whenStable: "Move to Agent / Tools once ResourceIO-backed file tools replace the Pi-compatible path.",
-    },
-    exitCriteria: [
-      "read/write/edit/grep/find/ls keep their model-facing names while routing through ResourceIO.",
-      "Local filesystem writes emit resource change events that refresh open markdown documents without relying only on renderer watchers.",
-      "SessionFile remains a resolver and rejects direct write/edit attempts with an explicit error.",
-    ],
-    sunsetPolicy: {
-      removeWhenRetired: true,
-      migration: "Drop the experiment value once ResourceIO tools become the default file-tool backend.",
     },
   }),
   normalizeExperimentDefinition({

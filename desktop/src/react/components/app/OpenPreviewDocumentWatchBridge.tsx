@@ -1,18 +1,11 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useStore } from '../../stores';
-import { watchFileChanges } from '../../services/file-change-events';
+import { retainLocalFileResourceWatch } from '../../services/resource-events';
 import {
   PREVIEW_DOCUMENT_CATCH_UP_REFRESH_OPTIONS,
-  PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
   openPreviewDocumentWatchFilePaths,
   refreshOpenPreviewDocumentsForFilePath,
 } from '../../utils/preview-document-refresh';
-
-function refreshWatchFilePath(filePath: string, options: typeof PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS): void {
-  void refreshOpenPreviewDocumentsForFilePath(filePath, options).catch((err) => {
-    console.warn('[preview-watch] refresh failed:', filePath, err);
-  });
-}
 
 export function OpenPreviewDocumentWatchBridge() {
   const previewItems = useStore(s => s.previewItems);
@@ -37,18 +30,15 @@ export function OpenPreviewDocumentWatchBridge() {
     }
 
     for (const filePath of watchPaths) {
-      if (subscriptionsRef.current.has(filePath)) continue;
-      const unsubscribe = watchFileChanges(filePath, (changedPath) => {
-        refreshWatchFilePath(
-          changedPath,
-          PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
-        );
-      });
-      subscriptionsRef.current.set(filePath, unsubscribe);
-      refreshWatchFilePath(
+      if (!subscriptionsRef.current.has(filePath)) {
+        subscriptionsRef.current.set(filePath, retainLocalFileResourceWatch(filePath));
+      }
+      void refreshOpenPreviewDocumentsForFilePath(
         filePath,
         PREVIEW_DOCUMENT_CATCH_UP_REFRESH_OPTIONS,
-      );
+      ).catch((err) => {
+        console.warn('[preview-resource] catch-up refresh failed:', filePath, err);
+      });
     }
   }, [watchPathsKey]); // eslint-disable-line react-hooks/exhaustive-deps -- watchPathsKey is the reconciled subscription identity.
 

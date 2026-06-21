@@ -10,7 +10,6 @@ vi.mock("../lib/sandbox/index.js", () => ({
 }));
 
 const { HanaEngine } = await import("../core/engine.ts");
-const { RESOURCE_IO_TOOLS_EXPERIMENT_ID } = await import("../lib/experiments/registry.ts");
 
 describe("HanaEngine.buildTools session external sandbox grants", () => {
   let tempRoot;
@@ -189,7 +188,7 @@ describe("HanaEngine.buildTools session external sandbox grants", () => {
     expect(sandboxOpts!.getSandboxNetworkEnabled()).toBe(true);
   });
 
-  it("passes the ResourceIO tools experiment into sandboxed tool construction", () => {
+  it("builds file tools through ResourceIO without a runtime switch", () => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-engine-resource-io-tools-"));
     const hanakoHome = path.join(tempRoot, "hana-home");
     const agentDir = path.join(hanakoHome, "agents", "hana");
@@ -204,7 +203,6 @@ describe("HanaEngine.buildTools session external sandbox grants", () => {
     engine._pluginManager = null;
     engine._prefs = {
       getFileBackup: () => ({ enabled: false }),
-      getExperimentValue: (id) => id === RESOURCE_IO_TOOLS_EXPERIMENT_ID ? true : undefined,
     };
     engine._readPreferences = () => ({ sandbox: true });
     engine._confirmStore = null;
@@ -225,9 +223,8 @@ describe("HanaEngine.buildTools session external sandbox grants", () => {
     });
 
     const sandboxOpts = (createSandboxedTools.mock.calls as any)[0][2];
-    expect(sandboxOpts!.useResourceIoTools).toBe(true);
-    sandboxOpts!.emitEvent({ type: "resource.changed" }, sessionPath);
-    expect(engine._emitEvent).toHaveBeenCalledWith({ type: "resource.changed" }, sessionPath);
+    expect(Object.prototype.hasOwnProperty.call(sandboxOpts!, "useResourceIoTools")).toBe(false);
+    expect(sandboxOpts!.resourceIO).toBeTruthy();
   });
 
   it("includes inherited parent session files in read-only sandbox inputs", () => {

@@ -218,7 +218,7 @@ export async function refreshOpenPreviewDocumentsForFilePath(
   )));
 }
 
-function filePathFromResourceChange(event: ResourceChangeEvent | null | undefined): string | null {
+export function filePathFromResourceChange(event: ResourceChangeEvent | null | undefined): string | null {
   if (!event || typeof event !== 'object') return null;
   if (typeof event.filePath === 'string' && event.filePath.trim()) return event.filePath;
   if (typeof event.path === 'string' && event.path.trim()) return event.path;
@@ -235,6 +235,28 @@ function filePathFromResourceChange(event: ResourceChangeEvent | null | undefine
   if (typeof resource.path === 'string' && resource.path.trim()) return resource.path;
   if (typeof resource.filePath === 'string' && resource.filePath.trim()) return resource.filePath;
   return null;
+}
+
+function parentSubdirForWorkspaceFile(basePath: string, filePath: string): string | null {
+  const base = normalizeComparablePath(basePath);
+  const changed = normalizeComparablePath(filePath);
+  if (!base || !changed) return null;
+  const prefix = base.endsWith('/') ? base : `${base}/`;
+  if (changed !== base && !changed.startsWith(prefix)) return null;
+  const relative = changed === base ? '' : changed.slice(prefix.length);
+  const parent = relative.split('/').slice(0, -1).join('/');
+  return parent.replace(/^\/+|\/+$/g, '');
+}
+
+export function markDeskTreeDirtyForResourceChange(event: ResourceChangeEvent | null | undefined): void {
+  const filePath = filePathFromResourceChange(event);
+  if (!filePath) return;
+  const state = useStore.getState();
+  if (state.deskWorkspaceMountId) return;
+  const basePath = typeof state.deskBasePath === 'string' ? state.deskBasePath : '';
+  const subdir = parentSubdirForWorkspaceFile(basePath, filePath);
+  if (subdir == null) return;
+  state.markDeskTreeDirty(subdir);
 }
 
 export async function refreshOpenPreviewDocumentsForResourceChange(

@@ -276,7 +276,7 @@ function wrapResourceIoTool(tool, options) {
       const before = statSnapshot(target.path);
       const result = await tool.execute(toolCallId, normalizedParams, ...rest);
       const after = statSnapshot(target.path);
-      if (snapshotChanged(before, after)) {
+      if (!options.resourceIO && snapshotChanged(before, after)) {
         emitResourceChanged(options, target, toolName === "write" ? "agent_write" : "agent_edit");
       }
       return result;

@@ -8,13 +8,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PreviewPanel } from '../../components/PreviewPanel';
 import { useStore, type StoreState } from '../../stores';
+import { refreshOpenPreviewDocumentsForResourceChange } from '../../utils/preview-document-refresh';
 import type { PlatformApi } from '../../types';
 
-describe('PreviewPanel markdown editor status', () => {
-  let fileChangedHandler: ((filePath: string) => void) | null;
+const resourceEventMocks = vi.hoisted(() => ({
+  retainLocalFileResourceWatch: vi.fn(() => vi.fn()),
+}));
 
+vi.mock('../../services/resource-events', () => ({
+  retainLocalFileResourceWatch: resourceEventMocks.retainLocalFileResourceWatch,
+}));
+
+describe('PreviewPanel markdown editor status', () => {
   beforeEach(() => {
-    fileChangedHandler = null;
+    resourceEventMocks.retainLocalFileResourceWatch.mockClear();
     window.t = ((key: string) => key) as typeof window.t;
     Range.prototype.getClientRects = vi.fn(() => [] as unknown as DOMRectList);
     Range.prototype.getBoundingClientRect = vi.fn(() => ({
@@ -31,9 +38,7 @@ describe('PreviewPanel markdown editor status', () => {
     window.platform = {
       watchFile: vi.fn(async () => true),
       unwatchFile: vi.fn(async () => true),
-      onFileChanged: vi.fn((handler: (filePath: string) => void) => {
-        fileChangedHandler = handler;
-      }),
+      onFileChanged: vi.fn(),
       readFileSnapshot: vi.fn(async (filePath: string) => ({
         content: filePath.endsWith('inactive.ts') ? 'export const value = 2;\n' : '外部更新',
         version: { mtimeMs: 20, size: 23, sha256: 'fresh' },
@@ -180,7 +185,13 @@ describe('PreviewPanel markdown editor status', () => {
 
     render(<PreviewPanel />);
 
-    fileChangedHandler?.('/tmp/inactive.ts');
+    await refreshOpenPreviewDocumentsForResourceChange({
+      resource: {
+        kind: 'local-file',
+        provider: 'local_fs',
+        path: '/tmp/inactive.ts',
+      },
+    });
 
     await waitFor(() => {
       const inactive = useStore.getState().previewItems.find(item => item.id === 'inactive');
@@ -245,7 +256,7 @@ describe('PreviewPanel markdown editor status', () => {
     render(<PreviewPanel />);
 
     await waitFor(() => {
-      expect(window.platform?.watchFile).toHaveBeenCalledWith('/workspace/src/app.ts');
+      expect(resourceEventMocks.retainLocalFileResourceWatch).toHaveBeenCalledWith('/workspace/src/app.ts');
     });
     await Promise.resolve();
     warnSpy.mockRestore();
@@ -287,26 +298,27 @@ describe('PreviewPanel markdown editor status', () => {
     render(<PreviewPanel />);
 
     await waitFor(() => {
-      expect(window.platform?.watchFile).toHaveBeenCalledWith('/tmp/hana-note.md');
-      expect(window.platform?.watchFile).toHaveBeenCalledWith('/tmp/inactive.ts');
+      expect(resourceEventMocks.retainLocalFileResourceWatch).toHaveBeenCalledWith('/tmp/hana-note.md');
+      expect(resourceEventMocks.retainLocalFileResourceWatch).toHaveBeenCalledWith('/tmp/inactive.ts');
     });
-
-    vi.mocked(window.platform!.unwatchFile!).mockClear();
 
     useStore.setState({ openTabs: ['note', 'inactive', 'extra'] } as Partial<StoreState>);
 
     await waitFor(() => {
-      expect(window.platform?.watchFile).toHaveBeenCalledWith('/tmp/extra.md');
+      expect(resourceEventMocks.retainLocalFileResourceWatch).toHaveBeenCalledWith('/tmp/extra.md');
     });
-    expect(window.platform?.unwatchFile).not.toHaveBeenCalledWith('/tmp/hana-note.md');
-    expect(window.platform?.unwatchFile).not.toHaveBeenCalledWith('/tmp/inactive.ts');
+    const releaseNote = resourceEventMocks.retainLocalFileResourceWatch.mock.results[0]?.value;
+    const releaseInactive = resourceEventMocks.retainLocalFileResourceWatch.mock.results[1]?.value;
+    const releaseExtra = resourceEventMocks.retainLocalFileResourceWatch.mock.results[2]?.value;
+    expect(releaseNote).not.toHaveBeenCalled();
+    expect(releaseInactive).not.toHaveBeenCalled();
 
     useStore.setState({ openTabs: ['note', 'extra'] } as Partial<StoreState>);
 
     await waitFor(() => {
-      expect(window.platform?.unwatchFile).toHaveBeenCalledWith('/tmp/inactive.ts');
+      expect(releaseInactive).toHaveBeenCalledTimes(1);
     });
-    expect(window.platform?.unwatchFile).not.toHaveBeenCalledWith('/tmp/hana-note.md');
-    expect(window.platform?.unwatchFile).not.toHaveBeenCalledWith('/tmp/extra.md');
+    expect(releaseNote).not.toHaveBeenCalled();
+    expect(releaseExtra).not.toHaveBeenCalled();
   });
 });

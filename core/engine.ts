@@ -106,10 +106,6 @@ import { AgentManager } from "./agent-manager.ts";
 import { sanitizeMessagesForModel, stripHistoricalInlineMediaForReplay } from "./message-sanitizer.ts";
 import { normalizeProviderContextMessages, normalizeProviderPayload } from "./provider-compat.ts";
 import { VisionBridge } from "./vision-bridge.ts";
-import {
-  getResolvedExperimentValue,
-  RESOURCE_IO_TOOLS_EXPERIMENT_ID,
-} from "../lib/experiments/registry.ts";
 import { SessionCoordinator } from "./session-coordinator.ts";
 import { SessionManifestResolver } from "./session-manifest/resolver.ts";
 import { SessionManifestStore } from "./session-manifest/store.ts";
@@ -128,6 +124,8 @@ import {
 } from "./llm-utils.ts";
 import { debugLog, createModuleLogger } from "../lib/debug-log.ts";
 import { createSandboxedTools } from "../lib/sandbox/index.ts";
+import { createSandboxResourceIO } from "../lib/resource-io/sandbox-resource-io.ts";
+import { ResourceWatchRegistry } from "../lib/resource-io/resource-watch-registry.ts";
 import { externalReadPathsFromSessionFiles } from "../lib/sandbox/win32-policy.ts";
 import { Win32LegacySandboxCleanupQueue } from "../lib/sandbox/win32-legacy-migration.ts";
 import { t } from "../lib/i18n.ts";
@@ -217,6 +215,7 @@ export class HanaEngine {
   declare _prefs: any;
   declare _resourceAccess: any;
   declare _resourceLoader: any;
+  declare _resourceWatchRegistry: any;
   declare _resources: any;
   declare _runtimeContext: any;
   declare _sessionCoord: any;
@@ -276,6 +275,9 @@ export class HanaEngine {
     this._sessionFiles = new SessionFileRegistry({
       managedCacheRoot: path.join(hanakoHome, "session-files"),
       getSessionIdForPath: (sessionPath) => this.getSessionIdForPath(sessionPath),
+    });
+    this._resourceWatchRegistry = new ResourceWatchRegistry({
+      emitEvent: (event, sessionPath) => this._emitEvent(event, sessionPath),
     });
     this._sessionManifestStoreRecovery = null;
     this._sessionManifestStore = this._openSessionManifestStore();
@@ -761,6 +763,12 @@ export class HanaEngine {
   getResourceAccessService() {
     if (!this._resourceAccess) throw new Error("resource access service is not initialized");
     return this._resourceAccess;
+  }
+  retainResourceWatch(resource) {
+    if (!this._resourceWatchRegistry || typeof this._resourceWatchRegistry.retain !== "function") {
+      throw new Error("resource watch unavailable");
+    }
+    return this._resourceWatchRegistry.retain(resource);
   }
   getResource(resourceId) { return this.getResourceService().getResource(resourceId); }
   resolveResourceContent(resourceId) { return this.getResourceService().resolveContent(resourceId); }
@@ -2184,7 +2192,19 @@ export class HanaEngine {
       });
     };
 
-    const useResourceIoTools = getResolvedExperimentValue(this._prefs, RESOURCE_IO_TOOLS_EXPERIMENT_ID) === true;
+    const resourceIO = createSandboxResourceIO({
+      cwd,
+      agentDir: effectiveAgentDir,
+      workspace: effectiveWorkspace,
+      workspaceFolders,
+      authorizedFolders: staticAuthorizedFolders,
+      getAuthorizedFolders,
+      hanakoHome: this.hanakoHome,
+      getSandboxEnabled: () => this._readPreferences().sandbox !== false,
+      getExternalReadPaths,
+      getSessionPath,
+      emitEvent: (event, sessionPath) => this._emitEvent(event, sessionPath),
+    });
     let result = createSandboxedTools(cwd, allTools, {
       agentDir: effectiveAgentDir,
       workspace: effectiveWorkspace,
@@ -2207,7 +2227,7 @@ export class HanaEngine {
       recordFileOperation: (entry) => this.recordSessionFileOperation(entry),
       getVisionBridge: () => this.getVisionBridge(),
       isVisionAuxiliaryEnabled: () => this.isVisionAuxiliaryEnabled(),
-      useResourceIoTools,
+      resourceIO,
       emitEvent: (event, sessionPath) => this._emitEvent(event, sessionPath),
       legacyCleanupQueue: this._win32LegacySandboxCleanupQueue,
     } as any);

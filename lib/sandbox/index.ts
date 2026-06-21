@@ -11,14 +11,13 @@ import { detectPlatform, checkAvailability } from "./platform.ts";
 import { createSeatbeltExec } from "./seatbelt.ts";
 import { createBwrapExec } from "./bwrap.ts";
 import { createWin32Exec } from "./win32-exec.ts";
-import { wrapPathTool, wrapBashTool } from "./tool-wrapper.ts";
+import { wrapBashTool } from "./tool-wrapper.ts";
 import { createEnhancedReadFile } from "./read-enhanced.ts";
 import { wrapReadImageWithVisionBridge } from "./read-image-vision.ts";
 import { wrapReadOfficeMedia } from "./read-office-media.ts";
 import { createManagedConfigWriteGuard } from "./managed-config-guard.ts";
 import { t } from "../i18n.ts";
-import fs, { constants } from "fs";
-import { access as fsAccess } from "fs/promises";
+import fs from "fs";
 import path, { extname } from "path";
 import {
   createReadTool,
@@ -32,6 +31,8 @@ import {
 import { normalizeWin32ShellPath } from "./win32-path.ts";
 import { serializeSessionFile } from "../session-files/session-file-response.ts";
 import { wrapResourceIoFileTools } from "../resource-io/agent-tools.ts";
+import { createResourceIoToolOperations } from "../resource-io/pi-tool-operations.ts";
+import { createSandboxResourceIO } from "../resource-io/sandbox-resource-io.ts";
 
 /**
  * 为一个 session 创建沙盒包装后的工具集
@@ -58,7 +59,7 @@ import { wrapResourceIoFileTools } from "../resource-io/agent-tools.ts";
  * @param {(entry: object) => void} [opts.recordFileOperation]  记录 write/edit 触达的 session file
  * @param {() => object|null} [opts.getVisionBridge]  辅助视觉桥
  * @param {() => boolean} [opts.isVisionAuxiliaryEnabled]  辅助视觉开关
- * @param {boolean} [opts.useResourceIoTools]  用 ResourceIO 包装同名文件工具
+ * @param {object} [opts.resourceIO]  session 级 ResourceIO 内核；未传入时按 cwd 创建 local_fs 内核
  * @param {(event: object, sessionPath?: string|null) => void} [opts.emitEvent]  ResourceIO 事件出口
  * @param {object|null} [opts.legacyCleanupQueue] Windows 旧 ACL 清理队列
  * @returns {{ tools: object[], customTools: object[] }}
@@ -79,7 +80,7 @@ export function createSandboxedTools(cwd, customTools, {
   recordFileOperation,
   getVisionBridge,
   isVisionAuxiliaryEnabled,
-  useResourceIoTools = false,
+  resourceIO: providedResourceIO,
   emitEvent,
   legacyCleanupQueue = null,
 }) {
@@ -106,18 +107,12 @@ export function createSandboxedTools(cwd, customTools, {
     check: (absolutePath, operation) => new PathGuard(makePolicy()).check(absolutePath, operation),
   };
 
-  // 增强 readFile：xlsx 解析 + 编码检测，保留 PI SDK 默认的 access / detectImageMimeType
+  // 增强 readFile：xlsx 解析 + 编码检测，保留 PI SDK 默认的 image mime 判断
   const IMAGE_MIMES = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp" };
-  const readOps = {
-    readFile: createEnhancedReadFile(),
-    access: (p) => fsAccess(p, constants.R_OK),
-    detectImageMimeType: async (p) => IMAGE_MIMES[extname(p).toLowerCase()] || undefined,
-  };
 
   const platform = detectPlatform();
   const isWin32 = process.platform === "win32";
   const checkManagedConfigWrite = createManagedConfigWriteGuard({ hanakoHome });
-  const wrapOpts = { getSandboxEnabled, getExternalReadPaths, checkManagedConfigWrite };
   const resolveSandboxNetworkEnabled = typeof getSandboxNetworkEnabled === "function"
     ? getSandboxNetworkEnabled
     : () => true;
@@ -128,15 +123,42 @@ export function createSandboxedTools(cwd, customTools, {
     : createBashTool(cwd);
 
   const bashWrapOpts = { getSandboxEnabled, getExternalReadPaths, fallbackTool: normalBashTool, checkManagedConfigWrite };
-  const writeTool = wrapFileTouchTool(createWriteTool(cwd), cwd, {
-    origin: "agent_write",
-    operationForPath: (filePath) => fs.existsSync(filePath) ? "modified" : "created",
+  const resourceIO = providedResourceIO || createSandboxResourceIO({
+    cwd,
+    agentDir,
+    workspace,
+    workspaceFolders,
+    authorizedFolders,
+    getAuthorizedFolders,
+    hanakoHome,
+    getSandboxEnabled,
+    getExternalReadPaths,
+    getSessionPath,
+    emitEvent,
+  });
+  const resourceOps = createResourceIoToolOperations({
+    cwd,
+    resourceIO,
+    getSessionPath: () => getSessionPath?.() || null,
+    detectImageMimeType: async (p) => IMAGE_MIMES[extname(p).toLowerCase()] || undefined,
+  });
+  const enhancedReadFile = createEnhancedReadFile();
+  const readOps = {
+    ...resourceOps.read,
+    readFile: async (p) => {
+      await resourceIO.stat({ kind: "local-file", path: p });
+      return enhancedReadFile(p);
+    },
+  };
+  const editTool = wrapFileTouchTool(createEditTool(cwd, { operations: resourceOps.edit }), cwd, {
+    origin: "agent_edit",
+    operationForPath: () => "modified",
     getSessionPath,
     recordFileOperation,
   });
-  const editTool = wrapFileTouchTool(createEditTool(cwd), cwd, {
-    origin: "agent_edit",
-    operationForPath: () => "modified",
+  const writeToolWithResourceIO = wrapFileTouchTool(createWriteTool(cwd, { operations: resourceOps.write }), cwd, {
+    origin: "agent_write",
+    operationForPath: (filePath) => fs.existsSync(filePath) ? "modified" : "created",
     getSessionPath,
     recordFileOperation,
   });
@@ -154,14 +176,13 @@ export function createSandboxedTools(cwd, customTools, {
     getVisionBridge,
     isVisionAuxiliaryEnabled,
   }), { getSessionPath, resolveSessionFile });
-  const maybeWrapResourceIoFileTools = (tools) => useResourceIoTools
-    ? wrapResourceIoFileTools(tools, {
-        cwd,
-        getSessionPath,
-        resolveSessionFile,
-        emitEvent,
-      })
-    : tools;
+  const buildResourceIoFileTools = (tools) => wrapResourceIoFileTools(tools, {
+    cwd,
+    resourceIO,
+    getSessionPath,
+    resolveSessionFile,
+    emitEvent,
+  });
 
   // ── Windows: PathGuard 包装 + restricted-token exec，关闭沙盒时走 direct fallback ──
   if (platform === "win32-restricted-token") {
@@ -179,14 +200,14 @@ export function createSandboxedTools(cwd, customTools, {
       },
     });
     return {
-      tools: maybeWrapResourceIoFileTools([
-        wrapPathTool(readTool, guard, "read", cwd, wrapOpts),
-        wrapPathTool(writeTool, guard, "write", cwd, wrapOpts),
-        wrapPathTool(editTool, guard, "write", cwd, wrapOpts),
+      tools: buildResourceIoFileTools([
+        readTool,
+        writeToolWithResourceIO,
+        editTool,
         wrapBashTool(sandboxedBashTool, guard, cwd, bashWrapOpts),
-        wrapPathTool(createGrepTool(cwd, undefined), guard, "read", cwd, wrapOpts),
-        wrapPathTool(createFindTool(cwd, undefined), guard, "read", cwd, wrapOpts),
-        wrapPathTool(createLsTool(cwd), guard, "read", cwd, wrapOpts),
+        createGrepTool(cwd, { operations: resourceOps.grep }),
+        createFindTool(cwd, { operations: resourceOps.find }),
+        createLsTool(cwd, { operations: resourceOps.ls }),
       ]),
       customTools,
     };
@@ -215,14 +236,14 @@ export function createSandboxedTools(cwd, customTools, {
   }
 
   return {
-    tools: maybeWrapResourceIoFileTools([
-      wrapPathTool(readTool, guard, "read", cwd, wrapOpts),
-      wrapPathTool(writeTool, guard, "write", cwd, wrapOpts),
-      wrapPathTool(editTool, guard, "write", cwd, wrapOpts),
+    tools: buildResourceIoFileTools([
+      readTool,
+      writeToolWithResourceIO,
+      editTool,
       wrapBashTool(sandboxedBashTool, guard, cwd, bashWrapOpts),
-      wrapPathTool(createGrepTool(cwd, undefined), guard, "read", cwd, wrapOpts),
-      wrapPathTool(createFindTool(cwd, undefined), guard, "read", cwd, wrapOpts),
-      wrapPathTool(createLsTool(cwd), guard, "read", cwd, wrapOpts),
+      createGrepTool(cwd, { operations: resourceOps.grep }),
+      createFindTool(cwd, { operations: resourceOps.find }),
+      createLsTool(cwd, { operations: resourceOps.ls }),
     ]),
     customTools,
   };

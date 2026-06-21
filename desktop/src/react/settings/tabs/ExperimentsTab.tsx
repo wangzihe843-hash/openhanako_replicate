@@ -19,7 +19,6 @@ const CACHE_SNAPSHOT_EXPERIMENT_ID = 'memory.cache_snapshot_reflection';
 const EDITABLE_MEMORY_EXPERIMENT_ID = 'memory.editable_facts';
 const DEEPSEEK_ROLEPLAY_REASONING_PATCH_EXPERIMENT_ID = 'provider.deepseek_roleplay_reasoning_patch';
 const PROACTIVE_SUBAGENT_EXPERIMENT_ID = 'subagent.proactive_delegation';
-const RESOURCE_IO_TOOLS_EXPERIMENT_ID = 'tools.resource_io';
 
 type CacheSnapshotMode = 'off' | 'shadow' | 'write';
 type CompactionMode = 'auto' | 'cache_preserving' | 'pi_compatible';
@@ -366,9 +365,6 @@ export function ExperimentsTab() {
   ));
   const [loading, setLoading] = useState(!Array.isArray(snapshotExperiments));
   const sessionExperiments = experiments.filter((experiment) => experiment.owner === 'session');
-  const toolExperiments = sessionExperiments.filter((experiment) => (
-    experiment.id === RESOURCE_IO_TOOLS_EXPERIMENT_ID
-  ));
   const providerExperiments = experiments.filter((experiment) => (
     experiment.owner === 'provider'
     && experiment.id === DEEPSEEK_ROLEPLAY_REASONING_PATCH_EXPERIMENT_ID
@@ -447,20 +443,6 @@ export function ExperimentsTab() {
                 onValueChange={updateExperimentValue}
               />
             ) : null
-          ))}
-        </SettingsSection>
-      )}
-      {!loading && toolExperiments.length > 0 && (
-        <SettingsSection
-          title={t('settings.experiments.toolsTitle')}
-          description={t('settings.experiments.toolsSectionDescription')}
-        >
-          {toolExperiments.map((experiment) => (
-            <BooleanExperiment
-              key={experiment.id}
-              experiment={experiment}
-              onValueChange={updateExperimentValue}
-            />
           ))}
         </SettingsSection>
       )}

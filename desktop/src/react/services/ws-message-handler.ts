@@ -27,6 +27,7 @@ import { handleAppEvent } from './app-event-actions';
 import {
   PREVIEW_DOCUMENT_CATCH_UP_REFRESH_OPTIONS,
   PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+  markDeskTreeDirtyForResourceChange,
   refreshOpenPreviewDocuments,
   refreshOpenPreviewDocumentsForResourceChange,
   refreshPreviewDocumentTarget,
@@ -481,6 +482,7 @@ export function handleServerMessage(msg: any): void {
   // 非聊天渲染事件走传统 switch
   switch (msg.type) {
     case 'resource.changed': {
+      markDeskTreeDirtyForResourceChange(msg);
       void refreshOpenPreviewDocumentsForResourceChange(
         msg,
         PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,

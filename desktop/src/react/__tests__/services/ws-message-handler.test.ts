@@ -6,6 +6,7 @@ const previewRefreshMocks = vi.hoisted(() => ({
   refreshPreviewDocumentTarget: vi.fn(async () => undefined),
   refreshOpenPreviewDocuments: vi.fn(async () => undefined),
   refreshOpenPreviewDocumentsForResourceChange: vi.fn(async () => undefined),
+  markDeskTreeDirtyForResourceChange: vi.fn(),
 }));
 
 vi.mock('../../hooks/use-stream-buffer', () => ({
@@ -43,6 +44,7 @@ vi.mock('../../utils/preview-document-refresh', () => ({
   refreshPreviewDocumentTarget: previewRefreshMocks.refreshPreviewDocumentTarget,
   refreshOpenPreviewDocuments: previewRefreshMocks.refreshOpenPreviewDocuments,
   refreshOpenPreviewDocumentsForResourceChange: previewRefreshMocks.refreshOpenPreviewDocumentsForResourceChange,
+  markDeskTreeDirtyForResourceChange: previewRefreshMocks.markDeskTreeDirtyForResourceChange,
 }));
 
 vi.mock('../../services/stream-resume', () => ({
@@ -70,6 +72,7 @@ afterEach(() => {
   previewRefreshMocks.refreshPreviewDocumentTarget.mockClear();
   previewRefreshMocks.refreshOpenPreviewDocuments.mockClear();
   previewRefreshMocks.refreshOpenPreviewDocumentsForResourceChange.mockClear();
+  previewRefreshMocks.markDeskTreeDirtyForResourceChange.mockClear();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
