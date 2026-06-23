@@ -230,7 +230,7 @@ describe("secret custody across HTTP routes", () => {
         bridge: {
           telegram: { token: "tg-secret", enabled: true },
           feishu: { appId: "cli-id", appSecret: "fs-secret" },
-          dingtalk: { clientId: "dt-client", clientSecret: "dt-secret", robotCode: "ding-robot" },
+          dingtalk: { clientId: "dt-client", clientSecret: "dt-secret", robotCode: "ding-robot", restBaseUrl: "https://api.dingtalk.io/v1.0" },
           qq: { appID: "qq-id", appSecret: "qq-secret" },
           wechat: { botToken: "wx-secret" },
         },
@@ -260,6 +260,7 @@ describe("secret custody across HTTP routes", () => {
     expect(readBody.dingtalk.clientSecret).toBe(MASKED_SECRET);
     expect(readBody.dingtalk.clientId).toBe("dt-client");
     expect(readBody.dingtalk.robotCode).toBe("ding-robot");
+    expect(readBody.dingtalk.restBaseUrl).toBe("https://api.dingtalk.io/v1.0");
     expect(readBody.qq.appSecret).toBe(MASKED_SECRET);
     expect(readBody.wechat.token).toBe(MASKED_SECRET);
     expect(JSON.stringify(readBody)).not.toContain("tg-secret");
@@ -333,6 +334,109 @@ describe("secret custody across HTTP routes", () => {
         signal: expect.any(AbortSignal),
       }),
     );
+  });
+
+  it("tests DingTalk credentials against the configured REST base URL", async () => {
+    const { createBridgeRoute } = await import("../server/routes/bridge.ts");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ accessToken: "dt-access-token", expireIn: 7200 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = {
+      currentAgentId: null,
+      getAgent: () => null,
+    };
+    const app = new Hono();
+    app.route("/api", createBridgeRoute(engine, { getStatus: () => ({}) }));
+
+    const res = await app.request("/api/bridge/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: "dingtalk",
+        credentials: {
+          clientId: "dt-client",
+          clientSecret: "dt-plaintext",
+          robotCode: "ding-robot",
+          restBaseUrl: "https://tenant-gateway.example/dingtalk/v1.0/",
+        },
+      }),
+    });
+    const body = await res.json();
+
+    expect(body.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://tenant-gateway.example/dingtalk/v1.0/oauth2/accessToken",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ appKey: "dt-client", appSecret: "dt-plaintext" }),
+      }),
+    );
+  });
+
+  it("rejects DingTalk custom webhook credentials instead of mixing chains", async () => {
+    const { createBridgeRoute } = await import("../server/routes/bridge.ts");
+    const agent = {
+      id: "hana",
+      config: { bridge: { dingtalk: {} } },
+      updateConfig: vi.fn(),
+    };
+    const engine = {
+      currentAgentId: "hana",
+      getAgent: (id) => id === "hana" ? agent : null,
+      getBridgeIndex: () => ({}),
+      getBridgeReadOnly: () => false,
+      getBridgeReceiptEnabled: () => true,
+    };
+    const app = new Hono();
+    app.route("/api", createBridgeRoute(engine, { getStatus: () => ({}) }));
+
+    const res = await app.request("/api/bridge/config?agentId=hana", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: "dingtalk",
+        credentials: {
+          webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=custom",
+          webhookSecret: "custom-secret",
+        },
+        enabled: true,
+      }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/custom robot webhook fields/i);
+    expect(agent.updateConfig).not.toHaveBeenCalled();
+  });
+
+  it("reports missing DingTalk Enterprise Stream fields explicitly", async () => {
+    const { createBridgeRoute } = await import("../server/routes/bridge.ts");
+    const engine = {
+      currentAgentId: null,
+      getAgent: () => null,
+    };
+    const app = new Hono();
+    app.route("/api", createBridgeRoute(engine, { getStatus: () => ({}) }));
+
+    const res = await app.request("/api/bridge/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: "dingtalk",
+        credentials: {
+          clientId: "dt-client",
+          clientSecret: "dt-plaintext",
+        },
+      }),
+    });
+    const body = await res.json();
+
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/enterprise robotCode/i);
   });
 
   it("tests bridge plaintext credentials without requiring an existing saved agent config", async () => {

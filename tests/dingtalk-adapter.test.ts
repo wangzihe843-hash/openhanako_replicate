@@ -52,7 +52,12 @@ function jsonResponse(data: any, status = 200) {
   };
 }
 
-function makeAdapter(fetchMock: ReturnType<typeof vi.fn>, onMessage = vi.fn(), onStatus = vi.fn()) {
+function makeAdapter(
+  fetchMock: ReturnType<typeof vi.fn>,
+  onMessage = vi.fn(),
+  onStatus = vi.fn(),
+  overrides: Record<string, any> = {},
+) {
   return createDingTalkAdapter({
     clientId: "dt-client",
     clientSecret: "dt-secret",
@@ -62,6 +67,7 @@ function makeAdapter(fetchMock: ReturnType<typeof vi.fn>, onMessage = vi.fn(), o
     onStatus,
     fetchImpl: fetchMock as any,
     WebSocketImpl: FakeWebSocket as any,
+    ...overrides,
   });
 }
 
@@ -242,6 +248,42 @@ describe("DingTalk bridge adapter", () => {
     });
 
     adapter.stop();
+  });
+
+  it("builds token and robot send requests from the DingTalk REST base URL only", async () => {
+    FakeWebSocket.instances = [];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ endpoint: "wss://stream.example/connect", ticket: "ticket-1" }))
+      .mockResolvedValueOnce(jsonResponse({ accessToken: "token-1", expireIn: 7200 }))
+      .mockResolvedValueOnce(jsonResponse({ processQueryKey: "dm-task" }))
+      .mockResolvedValueOnce(jsonResponse({ processQueryKey: "group-task" }));
+
+    const adapter = makeAdapter(fetchMock, vi.fn(), vi.fn(), {
+      restBaseUrl: "https://tenant-gateway.example/dingtalk/v1.0/",
+      streamOpenUrl: "https://stream-gateway.example/v1.0/gateway/connections/open",
+    });
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+
+    await adapter.sendReply("manager1234", "direct hello", { targetScope: "dm" });
+    await adapter.sendReply("cid-group", "group hello", { targetScope: "group" });
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "https://stream-gateway.example/v1.0/gateway/connections/open",
+      "https://tenant-gateway.example/dingtalk/v1.0/oauth2/accessToken",
+      "https://tenant-gateway.example/dingtalk/v1.0/robot/oToMessages/batchSend",
+      "https://tenant-gateway.example/dingtalk/v1.0/robot/groupMessages/send",
+    ]);
+
+    adapter.stop();
+  });
+
+  it("rejects custom robot webhook credentials for the Enterprise Stream connector", () => {
+    const fetchMock = vi.fn();
+
+    expect(() => makeAdapter(fetchMock, vi.fn(), vi.fn(), {
+      webhookUrl: "https://oapi.dingtalk.com/robot/send?access_token=custom",
+      webhookSecret: "custom-secret",
+    })).toThrow(/custom robot webhook fields/i);
   });
 
   it("splits long replies before sending DingTalk markdown payloads", async () => {

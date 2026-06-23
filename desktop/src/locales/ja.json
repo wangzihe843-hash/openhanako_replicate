@@ -1802,7 +1802,8 @@
       "dingtalkClientId": "Client ID / AppKey",
       "dingtalkClientSecret": "Client Secret / AppSecret",
       "dingtalkRobotCode": "Robot Code",
-      "dingtalkHint": "DingTalk の内部企業アプリとアプリロボットから取得します。イベントは Stream 長接続で受信するため、ローカル callback URL は不要です",
+      "dingtalkRestBaseUrl": "REST Base URL",
+      "dingtalkHint": "内部アプリ認証情報は token/Stream に、Robot Code はエンタープライズ Bot 送信に使います。REST Base URL の既定値は https://api.dingtalk.io/v1.0 です",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",
@@ -1831,7 +1832,7 @@
       "testFail": "テストに失敗しました",
       "noToken": "先に Bot Token を入力してください",
       "noCredentials": "先に App ID と App Secret を入力してください",
-      "noDingtalkCredentials": "先に Client ID、Client Secret、Robot Code を入力してください",
+      "noDingtalkCredentials": "先に Client ID、Client Secret、Robot Code、REST Base URL を入力してください",
       "globalSettings": "グローバル設定",
       "agentSettings": "エージェント",
       "permissionMode": "権限モード",
@@ -1878,7 +1879,8 @@
         "内部企業アプリを作成し、アプリ認証情報から <code>Client ID/AppKey</code> と <code>Client Secret/AppSecret</code> をコピーします",
         "アプリロボット機能を追加し、ロボット詳細から <code>Robot Code</code> をコピーします",
         "ロボットのメッセージ送受信に必要な権限を確認し、対象企業範囲へ公開します",
-        "上の入力欄に Client ID、Client Secret、Robot Code を貼り付け、接続テスト後にスイッチをオンにします"
+        "DingTalk 互換ゲートウェイを明示的に使う場合を除き、REST Base URL は <code>https://api.dingtalk.io/v1.0</code> のままにします",
+        "上の入力欄に Client ID、Client Secret、Robot Code、REST Base URL を貼り付け、接続テスト後にスイッチをオンにします"
       ],
       "whatsappHint": "近日対応予定"
     }

@@ -11,6 +11,7 @@ import { debugLog } from "../debug-log.ts";
 import { createTelegramAdapter } from "./telegram-adapter.ts";
 import { createFeishuAdapter } from "./feishu-adapter.ts";
 import { createDingTalkAdapter } from "./dingtalk-adapter.ts";
+import { normalizeDingTalkBridgeCredentials } from "./dingtalk-contract.ts";
 import { createQQAdapter } from "./qq-adapter.ts";
 import { createWechatAdapter } from "./wechat-adapter.ts";
 import { downloadMedia, bufferToBase64, detectMime, splitMediaFromOutput, formatSize, setMediaLocalRoots, isExtractableReplyMediaSource } from "./media-utils.ts";
@@ -112,16 +113,16 @@ const ADAPTER_REGISTRY = {
   },
   dingtalk: {
     create: (creds, onMessage, hooks, agentId) => createDingTalkAdapter({
-      clientId: creds.clientId,
-      clientSecret: creds.clientSecret,
+      appKey: creds.appKey,
+      appSecret: creds.appSecret,
       robotCode: creds.robotCode,
+      restBaseUrl: creds.restBaseUrl,
+      streamOpenUrl: creds.streamOpenUrl,
       agentId,
       onMessage,
       onStatus: hooks?.onStatus,
     }),
-    getCredentials: (cfg) => cfg?.enabled && cfg?.clientId && cfg?.clientSecret && cfg?.robotCode
-      ? { clientId: cfg.clientId, clientSecret: cfg.clientSecret, robotCode: cfg.robotCode }
-      : null,
+    getCredentials: (cfg) => cfg?.enabled ? normalizeDingTalkBridgeCredentials(cfg) : null,
     ownerSessionKey: (userId, agentId) => `dt_dm_${userId}@${agentId}`,
     connectsAsync: true,
   },
@@ -831,7 +832,13 @@ export class BridgeManager {
       for (const [platform, spec] of Object.entries(ADAPTER_REGISTRY)) {
         const cfg = { ...(bridgeCfg[platform] || {}) };
         if (platform === "wechat") cfg._hanaHome = this.engine.hanakoHome;
-        const creds = spec.getCredentials(cfg);
+        let creds = null;
+        try {
+          creds = spec.getCredentials(cfg);
+        } catch (err) {
+          this._setPlatformConfigError(platform, agentId, err);
+          continue;
+        }
         if (creds) this.startPlatform(platform, creds, agentId);
       }
     }
@@ -847,8 +854,28 @@ export class BridgeManager {
     const spec = ADAPTER_REGISTRY[platform];
     if (!spec) return;
     if (platform === "wechat") cfg._hanaHome = this.engine.hanakoHome;
-    const creds = spec.getCredentials(cfg);
+    let creds = null;
+    try {
+      creds = spec.getCredentials(cfg);
+    } catch (err) {
+      this._setPlatformConfigError(platform, agentId, err);
+      return;
+    }
     if (creds) this.startPlatform(platform, creds, agentId);
+  }
+
+  _setPlatformConfigError(platform, agentId, err) {
+    const message = err?.message || String(err);
+    const key = this._getPlatformKey(platform, agentId);
+    this.stopPlatform(platform, agentId);
+    this._platforms.set(key, {
+      adapter: null,
+      status: "error",
+      error: message,
+      agentId: agentId || null,
+      platform,
+    });
+    this._emitStatus(platform, "error", message, agentId);
   }
 
   /**

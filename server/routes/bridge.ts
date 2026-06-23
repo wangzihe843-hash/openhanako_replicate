@@ -16,6 +16,13 @@ import { t } from "../../lib/i18n.ts";
 import { resolveAgent, resolveAgentStrict } from "../utils/resolve-agent.ts";
 import { telegramBotOptions } from "../../lib/net/outbound-proxy.ts";
 import {
+  DINGTALK_ACCESS_TOKEN_PATH,
+  DINGTALK_REST_API_BASE_URL,
+  assertNoUnsupportedDingTalkRobotFields,
+  buildDingTalkUrl,
+  normalizeDingTalkBridgeCredentials,
+} from "../../lib/bridge/dingtalk-contract.ts";
+import {
   collectSecretPatchPaths,
   isMaskedSecretValue,
   maskSecretValue,
@@ -27,7 +34,6 @@ import { normalizeBridgePermissionMode, SESSION_PERMISSION_MODES } from "../../c
 
 const MAX_BRIDGE_MEDIA_SIZE = 50 * 1024 * 1024;
 const FEISHU_TENANT_TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
-const DINGTALK_ACCESS_TOKEN_URL = "https://api.dingtalk.io/v1.0/oauth2/accessToken";
 
 function feishuLongConnectionInfo() {
   return {
@@ -121,7 +127,7 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
       ...extraFields,
       enabled: !!cfg?.enabled,
       status: live[plat]?.status || "disconnected",
-      error: live[plat]?.error || null,
+      error: live[plat]?.error || extraFields?.configError || null,
       agentId: agent.id,
     };
   };
@@ -129,9 +135,41 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
   const tgToken = bridge.telegram?.token || "";
   const fsAppId = bridge.feishu?.appId || "";
   const fsAppSecret = bridge.feishu?.appSecret || "";
-  const dtClientId = bridge.dingtalk?.clientId || "";
-  const dtClientSecret = bridge.dingtalk?.clientSecret || "";
+  const dtClientId = bridge.dingtalk?.appKey || bridge.dingtalk?.clientId || "";
+  const dtClientSecret = bridge.dingtalk?.appSecret || bridge.dingtalk?.clientSecret || "";
   const dtRobotCode = bridge.dingtalk?.robotCode || "";
+  const dtRestBaseUrl = bridge.dingtalk?.restBaseUrl || DINGTALK_REST_API_BASE_URL;
+  const dtHasConfig = !!(
+    bridge.dingtalk?.enabled
+    || dtClientId
+    || dtClientSecret
+    || dtRobotCode
+    || bridge.dingtalk?.restBaseUrl
+    || bridge.dingtalk?.webhook
+    || bridge.dingtalk?.webhookUrl
+    || bridge.dingtalk?.webhookToken
+    || bridge.dingtalk?.webhookSecret
+    || bridge.dingtalk?.robotWebhook
+    || bridge.dingtalk?.robotToken
+    || bridge.dingtalk?.token
+    || bridge.dingtalk?.secret
+  );
+  let dtConfigured = false;
+  let dtConfigError = null;
+  if (dtHasConfig) {
+    try {
+      normalizeDingTalkBridgeCredentials({
+        ...bridge.dingtalk,
+        appKey: dtClientId,
+        appSecret: dtClientSecret,
+        robotCode: dtRobotCode,
+        restBaseUrl: dtRestBaseUrl,
+      });
+      dtConfigured = true;
+    } catch (err: any) {
+      dtConfigError = err?.message || String(err);
+    }
+  }
 
   const ownerDict = {};
   for (const plat of KNOWN_PLATFORMS) {
@@ -154,10 +192,12 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
       configured: !!(fsAppId && fsAppSecret), appId: fsAppId, appSecret: maskSecretValue(fsAppSecret),
     }),
     dingtalk: platformStatus("dingtalk", bridge.dingtalk, {
-      configured: !!(dtClientId && dtClientSecret && dtRobotCode),
+      configured: dtConfigured,
       clientId: dtClientId,
       clientSecret: maskSecretValue(dtClientSecret),
       robotCode: dtRobotCode,
+      restBaseUrl: dtRestBaseUrl,
+      configError: dtConfigError,
     }),
     qq: platformStatus("qq", bridge.qq, {
       configured: !!(bridge.qq?.appID && (bridge.qq?.appSecret || bridge.qq?.token)),
@@ -248,6 +288,14 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
       Object.assign(patch, resolveBridgeCredentials(platform, credentials, bridgeCfg));
     }
     if (typeof enabled === "boolean") patch.enabled = enabled;
+    if (platform === "dingtalk") {
+      try {
+        assertNoUnsupportedDingTalkRobotFields(patch);
+        if (patch.enabled) normalizeDingTalkBridgeCredentials(patch);
+      } catch (err: any) {
+        return c.json({ ok: false, error: err?.message || String(err) }, 400);
+      }
+    }
 
     agent.updateConfig({ bridge: { [platform]: patch } });
 
@@ -618,15 +666,13 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
           info: feishuTestInfo({ credentialOk: false, response: resp, data }),
         });
       } else if (platform === "dingtalk") {
-        if (!effectiveCredentials.clientId || !effectiveCredentials.clientSecret || !effectiveCredentials.robotCode) {
-          return c.json({ ok: false, error: "clientId, clientSecret and robotCode required" }, 400);
-        }
-        const resp = await fetch(DINGTALK_ACCESS_TOKEN_URL, {
+        const dingtalkCredentials = normalizeDingTalkBridgeCredentials(effectiveCredentials);
+        const resp = await fetch(buildDingTalkUrl(dingtalkCredentials.restBaseUrl, DINGTALK_ACCESS_TOKEN_PATH), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            appKey: effectiveCredentials.clientId,
-            appSecret: effectiveCredentials.clientSecret,
+            appKey: dingtalkCredentials.appKey,
+            appSecret: dingtalkCredentials.appSecret,
           }),
           signal: AbortSignal.timeout(10_000),
         });
@@ -732,7 +778,7 @@ function bridgeSecretKeys(platform: any): any {
   return platform === "feishu"
     ? ["appSecret"]
     : platform === "dingtalk"
-      ? ["clientSecret"]
+      ? ["clientSecret", "appSecret", "webhookToken", "webhookSecret", "token", "secret"]
       : platform === "qq"
         ? ["appSecret", "token"]
         : platform === "wechat"

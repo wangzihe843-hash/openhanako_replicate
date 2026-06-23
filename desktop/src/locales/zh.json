@@ -2002,7 +2002,8 @@
       "dingtalkClientId": "Client ID / AppKey",
       "dingtalkClientSecret": "Client Secret / AppSecret",
       "dingtalkRobotCode": "Robot Code",
-      "dingtalkHint": "从钉钉开放平台的企业内部应用和应用机器人获取；使用 Stream 长连接，不需要本地回调 URL",
+      "dingtalkRestBaseUrl": "REST Base URL",
+      "dingtalkHint": "企业内部应用凭证用于 token/Stream；Robot Code 用于企业机器人发送；REST Base URL 默认 https://api.dingtalk.io/v1.0",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",
@@ -2031,7 +2032,7 @@
       "testFail": "测试失败",
       "noToken": "请先输入 Bot Token",
       "noCredentials": "请先填写 App ID 和 App Secret",
-      "noDingtalkCredentials": "请先填写 Client ID、Client Secret 和 Robot Code",
+      "noDingtalkCredentials": "请先填写 Client ID、Client Secret、Robot Code 和 REST Base URL",
       "globalSettings": "全局设置",
       "agentSettings": "角色",
       "permissionMode": "权限模式",
@@ -2078,7 +2079,8 @@
         "创建「企业内部应用」，在应用凭证中复制 <code>Client ID/AppKey</code> 和 <code>Client Secret/AppSecret</code>",
         "添加「应用机器人」能力，复制机器人详情里的 <code>Robot Code</code>",
         "确认应用已开通机器人收发消息所需权限，并发布到企业可用范围",
-        "将 Client ID、Client Secret 和 Robot Code 粘贴到上方输入框，测试通过后打开开关即可"
+        "REST Base URL 保持默认 <code>https://api.dingtalk.io/v1.0</code>，除非你明确要接入钉钉兼容网关",
+        "将 Client ID、Client Secret、Robot Code 和 REST Base URL 粘贴到上方输入框，测试通过后打开开关即可"
       ],
       "whatsappHint": "即将支持"
     },

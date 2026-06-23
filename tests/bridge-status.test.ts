@@ -50,4 +50,32 @@ describe("BridgeManager platform status", () => {
 
     expect(bm.getStatus("hana").wechat).toMatchObject({ status: "connecting", error: null });
   });
+
+  it("reports DingTalk config errors when enabled credentials are incomplete", () => {
+    createTelegramAdapter.mockReset();
+    createFeishuAdapter.mockReset();
+    createDingTalkAdapter.mockReset();
+    createQQAdapter.mockReset();
+    createWechatAdapter.mockReset();
+
+    const engine = {
+      hanakoHome: os.tmpdir(),
+      agent: null,
+      getAgent: vi.fn(() => null),
+    };
+    const hub = { eventBus: { emit: vi.fn() } };
+    const bm = new BridgeManager({ engine, hub });
+
+    bm.startPlatformFromConfig("dingtalk", {
+      enabled: true,
+      clientId: "dt-client",
+      clientSecret: "dt-secret",
+    }, "hana");
+
+    expect(createDingTalkAdapter).not.toHaveBeenCalled();
+    expect(bm.getStatus("hana").dingtalk).toMatchObject({
+      status: "error",
+      error: expect.stringMatching(/enterprise robotCode/i),
+    });
+  });
 });
