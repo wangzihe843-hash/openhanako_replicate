@@ -531,14 +531,14 @@ async function blobToBase64(blob: Blob): Promise<string> {
   return btoa(binary);
 }
 
-export async function loadDeskTreeFiles(subdir = '', options: { force?: boolean; overrideDir?: string | null; overrideMountId?: string | null } = {}): Promise<void> {
+export async function loadDeskTreeFiles(subdir = '', options: { force?: boolean; overrideDir?: string | null; overrideMountId?: string | null } = {}): Promise<boolean> {
   const s = useStore.getState();
-  if (!hasServerConnection(s)) return;
+  if (!hasServerConnection(s)) return false;
   const mountId = activeDeskMountId(s, options.overrideMountId);
   const dir = mountId ? undefined : activeDeskRoot(s, options.overrideDir);
   const normalizedSubdir = normalizeSubdir(subdir);
   const cached = s.deskTreeFilesByPath?.[normalizedSubdir];
-  if (cached && !options.force) return;
+  if (cached && !options.force) return true;
 
   const key = deskTreeLoadKey(mountId ? studioWorkspaceKey(mountId) : dir, normalizedSubdir);
   const myVersion = (_deskTreeLoadVersion.get(key) || 0) + 1;
@@ -556,7 +556,7 @@ export async function loadDeskTreeFiles(subdir = '', options: { force?: boolean;
     const qs = params.toString() ? `?${params}` : '';
     const res = await hanaFetch(`${mountId ? '/api/workbench/files' : '/api/desk/files'}${qs}`);
     const data = await res.json();
-    if (_deskTreeLoadVersion.get(key) !== myVersion) return;
+    if (_deskTreeLoadVersion.get(key) !== myVersion) return false;
     if (data.error) throw new Error(String(data.error));
     const st = useStore.getState();
     if (mountId) {
@@ -572,9 +572,11 @@ export async function loadDeskTreeFiles(subdir = '', options: { force?: boolean;
     }
     st.setDeskTreeFiles(normalizedSubdir, data.files || []);
     if (!normalizedSubdir) st.setDeskFiles(data.files || []);
+    return true;
   } catch (err) {
     console.error('[desk-tree] load failed:', err);
-    if (_deskTreeLoadVersion.get(key) !== myVersion) return;
+    if (_deskTreeLoadVersion.get(key) !== myVersion) return false;
+    return false;
   }
 }
 

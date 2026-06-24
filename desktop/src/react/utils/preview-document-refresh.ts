@@ -31,18 +31,21 @@ export type ResourceChangeEvent = {
     provider?: unknown;
     path?: unknown;
     filePath?: unknown;
+    isDirectory?: unknown;
   } | null;
   oldResource?: {
     kind?: unknown;
     provider?: unknown;
     path?: unknown;
     filePath?: unknown;
+    isDirectory?: unknown;
   } | null;
   newResource?: {
     kind?: unknown;
     provider?: unknown;
     path?: unknown;
     filePath?: unknown;
+    isDirectory?: unknown;
   } | null;
 };
 
@@ -333,9 +336,28 @@ function parentSubdirForWorkspaceFile(basePath: string, filePath: string): strin
   return parent.replace(/^\/+|\/+$/g, '');
 }
 
+function directorySubdirForWorkspaceFile(basePath: string, filePath: string): string | null {
+  const base = normalizeComparablePath(basePath);
+  const changed = normalizeComparablePath(filePath);
+  if (!base || !changed) return null;
+  const prefix = base.endsWith('/') ? base : `${base}/`;
+  if (changed !== base && !changed.startsWith(prefix)) return null;
+  const relative = changed === base ? '' : changed.slice(prefix.length);
+  return relative.replace(/^\/+|\/+$/g, '');
+}
+
+function isDirectoryResource(resource: ResourceChangeEvent['resource']): boolean {
+  return !!resource && typeof resource === 'object' && (resource as { isDirectory?: unknown }).isDirectory === true;
+}
+
+function resourceDescriptorsFromChange(event: ResourceChangeEvent): Array<ResourceChangeEvent['resource']> {
+  return [event.resource, event.oldResource, event.newResource].filter(Boolean) as Array<ResourceChangeEvent['resource']>;
+}
+
 export function markDeskTreeDirtyForResourceChange(event: ResourceChangeEvent | null | undefined): void {
   const filePaths = filePathsFromResourceChange(event);
   if (filePaths.length === 0) return;
+  if (!event) return;
   const state = useStore.getState();
   const basePath = state.deskWorkspaceMountId
     ? (typeof state.deskWorkspaceNativeRoot === 'string' ? state.deskWorkspaceNativeRoot : '')
@@ -343,6 +365,14 @@ export function markDeskTreeDirtyForResourceChange(event: ResourceChangeEvent | 
   if (!basePath) return;
   for (const filePath of filePaths) {
     const subdir = parentSubdirForWorkspaceFile(basePath, filePath);
+    if (subdir == null) continue;
+    state.markDeskTreeDirty(subdir);
+  }
+  for (const resource of resourceDescriptorsFromChange(event)) {
+    if (!isDirectoryResource(resource)) continue;
+    const filePath = filePathFromResourceDescriptor(resource);
+    if (!filePath) continue;
+    const subdir = directorySubdirForWorkspaceFile(basePath, filePath);
     if (subdir == null) continue;
     state.markDeskTreeDirty(subdir);
   }

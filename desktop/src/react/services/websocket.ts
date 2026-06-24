@@ -8,7 +8,11 @@
 
 import { handleServerMessage, applyStreamingStatus } from './ws-message-handler';
 import { requestStreamResume, injectHandlers, injectWebSocketGetter } from './stream-resume';
-import { catchUpResourceEventsAfterReconnect, recordResourceEventCursor } from './resource-events';
+import {
+  bindResourceEventForegroundCatchUp,
+  catchUpResourceEventsAfterReconnect,
+  recordResourceEventCursor,
+} from './resource-events';
 import { useStore } from '../stores';
 import { setStatus } from '../utils/ui-helpers';
 import {
@@ -32,6 +36,7 @@ let _wsResumeVersion = 0;
 const WS_FAST_RETRY_LIMIT = 20;
 const WS_SLOW_RETRY_DELAY = 60_000;
 let _wsRetryCount = 0;
+let _resourceForegroundCatchUpCleanup: (() => void) | null = null;
 
 // 注入循环依赖的 handlers
 injectHandlers(handleServerMessage, applyStreamingStatus);
@@ -72,6 +77,7 @@ export function connectWebSocket(port?: string, token?: string): void {
     : resolveServerConnection(storeState);
 
   if (!connection) return;
+  ensureResourceForegroundCatchUp();
 
   void openConnectionWebSocket(connection).catch((err) => {
     console.error('[ws] connection setup failed:', err);
@@ -79,6 +85,11 @@ export function connectWebSocket(port?: string, token?: string): void {
     setStatus('status.disconnected', false);
     scheduleReconnect();
   });
+}
+
+function ensureResourceForegroundCatchUp(): void {
+  if (_resourceForegroundCatchUpCleanup) return;
+  _resourceForegroundCatchUpCleanup = bindResourceEventForegroundCatchUp((event) => handleServerMessage(event));
 }
 
 async function openConnectionWebSocket(connection: ServerConnection): Promise<void> {

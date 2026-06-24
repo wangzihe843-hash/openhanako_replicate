@@ -32,6 +32,14 @@ type ResourceEventClientOptions = {
   resubscribeWatches?: () => Promise<void> | void;
 };
 
+type ForegroundCatchUpOptions = {
+  windowObj?: Pick<Window, 'addEventListener' | 'removeEventListener'> | null;
+  documentObj?: Pick<Document, 'addEventListener' | 'removeEventListener' | 'visibilityState'> | null;
+  catchUp?: () => Promise<unknown> | unknown;
+  minIntervalMs?: number;
+  now?: () => number;
+};
+
 export function createResourceEventClient({
   fetchImpl = hanaFetch,
   applyEvent,
@@ -199,4 +207,45 @@ export function recordResourceEventCursor(event: ResourceEvent | null | undefine
 
 export function catchUpResourceEventsAfterReconnect(applyEvent?: (event: ResourceEvent) => void): Promise<unknown> {
   return resourceEventClient.catchUpAfterReconnect({ applyEvent });
+}
+
+export function bindResourceEventForegroundCatchUp(
+  applyEvent?: (event: ResourceEvent) => void,
+  options: ForegroundCatchUpOptions = {},
+): () => void {
+  const windowObj = options.windowObj ?? (typeof window !== 'undefined' ? window : null);
+  const documentObj = options.documentObj ?? (typeof document !== 'undefined' ? document : null);
+  if (!windowObj || !documentObj) return () => {};
+
+  const minIntervalMs = Math.max(0, Math.floor(Number(options.minIntervalMs ?? 1000) || 0));
+  const now = options.now ?? (() => Date.now());
+  const catchUp = options.catchUp ?? (() => catchUpResourceEventsAfterReconnect(applyEvent));
+  let inFlight = false;
+  let lastStartedAt = 0;
+
+  const run = () => {
+    if (documentObj.visibilityState === 'hidden') return;
+    const startedAt = now();
+    if (inFlight || (lastStartedAt && startedAt - lastStartedAt < minIntervalMs)) return;
+    inFlight = true;
+    lastStartedAt = startedAt;
+    Promise.resolve(catchUp())
+      .catch((err) => {
+        console.warn('[resource-events] foreground catch-up failed:', err);
+      })
+      .finally(() => {
+        inFlight = false;
+      });
+  };
+
+  const onVisibilityChange = () => {
+    if (documentObj.visibilityState === 'visible') run();
+  };
+
+  windowObj.addEventListener('focus', run);
+  documentObj.addEventListener('visibilitychange', onVisibilityChange);
+  return () => {
+    windowObj.removeEventListener('focus', run);
+    documentObj.removeEventListener('visibilitychange', onVisibilityChange);
+  };
 }

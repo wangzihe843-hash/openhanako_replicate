@@ -277,6 +277,73 @@ describe("ResourceWatchRegistry", () => {
     vi.useRealTimers();
   });
 
+  it("treats directory basename echoes as a directory rescan instead of a child deletion", async () => {
+    vi.useFakeTimers();
+    const filePath = path.join("/workspace", "notes");
+    const resolvedFilePath = path.resolve(filePath);
+    const resourceKey = resourceKeyForRef({ kind: "local-file", path: resolvedFilePath });
+    const emitEvent = vi.fn();
+    let onChange: ((changedPath?: string | null) => void) | null = null;
+    const statPath = vi.fn(() => ({
+      exists: true,
+      isDirectory: true,
+      mtimeMs: 654,
+      size: null,
+    }));
+
+    const registry = new ResourceWatchRegistry({
+      emitEvent,
+      debounceMs: 5,
+      resolveWatchTarget: vi.fn((resource) => ({
+        ref: resource,
+        filePath,
+        isDirectory: true,
+        resourceKey,
+        resource: {
+          kind: "local-file",
+          provider: "local_fs",
+          path: filePath,
+          filePath,
+        },
+        toResource: (eventPath) => ({
+          resourceKey: resourceKeyForRef({ kind: "local-file", path: eventPath }),
+          resource: {
+            kind: "local-file",
+            provider: "local_fs",
+            path: eventPath,
+            filePath: eventPath,
+          },
+        }),
+      })),
+      watchPath: vi.fn((_targetPath, handler) => {
+        onChange = handler;
+        return { close: vi.fn() };
+      }),
+      statPath,
+    });
+
+    registry.retain({ kind: "local-file", path: filePath });
+    onChange?.("notes");
+    await vi.runAllTimersAsync();
+
+    expect(statPath).toHaveBeenCalledWith(resolvedFilePath);
+    expect(emitEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: "resource.changed",
+      resourceKey,
+      resource: expect.objectContaining({
+        path: resolvedFilePath,
+        filePath: resolvedFilePath,
+        isDirectory: true,
+      }),
+      version: { mtimeMs: 654, size: null },
+    }), null);
+    const fakeChildKey = resourceKeyForRef({ kind: "local-file", path: path.join(resolvedFilePath, "notes") });
+    expect(emitEvent.mock.calls.some(([event]) => {
+      return event?.type === "resource.deleted" && event?.resourceKey === fakeChildKey;
+    })).toBe(false);
+    vi.useRealTimers();
+  });
+
   it("uses provider watch targets and emits canonical provider resources", async () => {
     vi.useFakeTimers();
     const mountRoot = path.join("/mnt", "docs");

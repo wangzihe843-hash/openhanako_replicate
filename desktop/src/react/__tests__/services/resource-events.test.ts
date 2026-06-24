@@ -112,4 +112,42 @@ describe('resource-events', () => {
     expect(applyEvent).toHaveBeenCalledWith(event);
     expect(client.lastSeenSequence()).toBe(6);
   });
+
+  it('requests ResourceIO catch-up when the renderer returns to the foreground', async () => {
+    const listeners = new Map<string, () => void>();
+    const windowObj = {
+      addEventListener: vi.fn((type: string, listener: () => void) => listeners.set(`window:${type}`, listener)),
+      removeEventListener: vi.fn(),
+    };
+    let visibilityState: Document['visibilityState'] = 'hidden';
+    const documentObj = {
+      addEventListener: vi.fn((type: string, listener: () => void) => listeners.set(`document:${type}`, listener)),
+      removeEventListener: vi.fn(),
+      get visibilityState() {
+        return visibilityState;
+      },
+    };
+    const catchUp = vi.fn(async () => undefined);
+    const { bindResourceEventForegroundCatchUp } = await import('../../services/resource-events');
+
+    const dispose = bindResourceEventForegroundCatchUp(undefined, {
+      windowObj: windowObj as never,
+      documentObj: documentObj as never,
+      catchUp,
+      minIntervalMs: 0,
+      now: () => 100,
+    });
+
+    listeners.get('window:focus')?.();
+    expect(catchUp).not.toHaveBeenCalled();
+
+    visibilityState = 'visible';
+    listeners.get('document:visibilitychange')?.();
+    await Promise.resolve();
+
+    expect(catchUp).toHaveBeenCalledTimes(1);
+    dispose();
+    expect(windowObj.removeEventListener).toHaveBeenCalledWith('focus', expect.any(Function));
+    expect(documentObj.removeEventListener).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+  });
 });
