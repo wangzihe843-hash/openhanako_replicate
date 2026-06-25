@@ -5,6 +5,7 @@ import fsp from "fs/promises";
 import os from "os";
 import path from "path";
 import { RcStateStore } from "../core/slash-commands/rc-state.ts";
+import { SessionManifestStore } from "../core/session-manifest/store.ts";
 import { DeferredResultStore } from "../lib/deferred-result-store.ts";
 import { SubagentRunStore } from "../lib/subagent-run-store.ts";
 import { TaskRegistry } from "../lib/task-registry.ts";
@@ -35,8 +36,8 @@ vi.mock("../core/message-utils.js", async () => {
   };
 });
 
-function makeEngine(tmpDir) {
-  return {
+function makeEngine(tmpDir, overrides: any = {}) {
+  const engine: any = {
     agentsDir: path.join(tmpDir, "agents"),
     closeSession: vi.fn(async () => {}),
     setSessionPinned: vi.fn(async () => null),
@@ -44,9 +45,16 @@ function makeEngine(tmpDir) {
       const rel = path.relative(path.join(tmpDir, "agents"), p);
       return rel.split(path.sep)[0] || null;
     },
+    getSessionIdForPath: vi.fn(() => null),
+    getSessionManifest: vi.fn(() => null),
     getAgent: () => ({ agentName: "Hana" }),
     clearSessionTitle: vi.fn(async () => {}),
     listArchivedSessions: vi.fn(async () => []),
+    moveSessionLifecycle: vi.fn(async ({ toPath, lifecycle }) => ({
+      sessionId: "sess_route_lifecycle",
+      lifecycle,
+      currentLocator: { path: path.resolve(toPath) },
+    })),
     emitEvent: vi.fn(),
     rcState: new RcStateStore(),
     discardSessionRuntime: vi.fn(async () => false),
@@ -63,6 +71,25 @@ function makeEngine(tmpDir) {
     getSessionThinkingLevel: vi.fn(() => "medium"),
     isSessionStreaming: vi.fn(() => false),
   };
+  Object.assign(engine, overrides);
+  return engine;
+}
+
+function attachManifestStore(engine, store) {
+  engine.getSessionIdForPath = vi.fn((sessionPath) => (
+    store.resolveByLocatorPath(sessionPath)?.sessionId || null
+  ));
+  engine.getSessionManifest = vi.fn((sessionId) => store.getBySessionId(sessionId));
+  engine.moveSessionLifecycle = vi.fn(async ({ fromPath, toPath, lifecycle, reason }) => {
+    const manifest = store.resolveByLocatorPath(fromPath) || store.resolveByLocatorPath(toPath);
+    if (!manifest) {
+      const error: any = new Error("manifest missing");
+      error.code = "session_manifest_not_found";
+      error.status = 404;
+      throw error;
+    }
+    return store.updateLocatorLifecycle(manifest.sessionId, toPath, lifecycle, reason);
+  });
 }
 
 describe("archive route: mtime semantics", () => {
@@ -158,6 +185,45 @@ describe("archive route: mtime semantics", () => {
       }),
       src,
     );
+  });
+
+  it("updates manifest locator and lifecycle while preserving session identity", async () => {
+    const store = new SessionManifestStore({
+      dbPath: path.join(tmpDir, "session-manifest.db"),
+      idGenerator: () => "sess_archive_manifest",
+      now: () => "2026-06-25T01:00:00.000Z",
+    });
+    try {
+      const src = path.join(tmpDir, "agents", "a", "sessions", "s1.jsonl");
+      const dest = path.join(tmpDir, "agents", "a", "sessions", "archived", "s1.jsonl");
+      store.createForPath({
+        sessionPath: src,
+        ownerAgentId: "a",
+        domain: "desktop",
+        kind: "chat",
+        lifecycle: "active",
+      });
+      attachManifestStore(engine, store);
+
+      const res = await app.request("/api/sessions/archive", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: src }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(store.getBySessionId("sess_archive_manifest")).toMatchObject({
+        lifecycle: "archived",
+        currentLocator: {
+          path: path.resolve(dest),
+          reason: "session_archive",
+        },
+      });
+      expect(store.resolveByLocatorPath(src)?.sessionId).toBe("sess_archive_manifest");
+      expect(store.resolveByLocatorPath(dest)?.sessionId).toBe("sess_archive_manifest");
+    } finally {
+      store.close();
+    }
   });
 
   it("aborts parent tasks and suppresses deferred delivery before moving the active session", async () => {
@@ -333,6 +399,86 @@ describe("POST /api/sessions/restore", () => {
     expect(res.status).toBe(200);
     expect(fs.existsSync(`${archSrc}.files.json`)).toBe(false);
     expect(fs.existsSync(`${activeDest}.files.json`)).toBe(true);
+  });
+
+  it("updates manifest locator and lifecycle while restoring", async () => {
+    const store = new SessionManifestStore({
+      dbPath: path.join(tmpDir, "session-manifest.db"),
+      idGenerator: () => "sess_restore_manifest",
+      now: () => "2026-06-25T01:00:00.000Z",
+    });
+    try {
+      store.createForPath({
+        sessionPath: archSrc,
+        ownerAgentId: "a",
+        domain: "desktop",
+        kind: "chat",
+        lifecycle: "archived",
+      });
+      attachManifestStore(engine, store);
+
+      const res = await app.request("/api/sessions/restore", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: archSrc }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(store.getBySessionId("sess_restore_manifest")).toMatchObject({
+        lifecycle: "active",
+        currentLocator: {
+          path: path.resolve(activeDest),
+          reason: "session_restore",
+        },
+      });
+      expect(store.resolveByLocatorPath(archSrc)?.sessionId).toBe("sess_restore_manifest");
+      expect(store.resolveByLocatorPath(activeDest)?.sessionId).toBe("sess_restore_manifest");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("repairs an active header-only split state before restore", async () => {
+    fs.writeFileSync(activeDest, JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "r1",
+      timestamp: "2026-06-25T01:00:00.000Z",
+      cwd: tmpDir,
+    }) + "\n");
+    fs.writeFileSync(archSrc, [
+      JSON.stringify({ type: "session", version: 3, id: "r1", timestamp: "2026-06-25T01:00:00.000Z", cwd: tmpDir }),
+      JSON.stringify({ type: "message", id: "u1", message: { role: "user", content: "archived full text" } }),
+      "",
+    ].join("\n"));
+
+    const res = await app.request("/api/sessions/restore", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: archSrc }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(fs.existsSync(archSrc)).toBe(false);
+    expect(fs.readFileSync(activeDest, "utf-8")).toContain("archived full text");
+  });
+
+  it("returns 409 when active destination already has messages", async () => {
+    fs.writeFileSync(activeDest, [
+      JSON.stringify({ type: "session", version: 3, id: "r1", timestamp: "2026-06-25T01:00:00.000Z", cwd: tmpDir }),
+      JSON.stringify({ type: "message", id: "u-active", message: { role: "user", content: "active text" } }),
+      "",
+    ].join("\n"));
+
+    const res = await app.request("/api/sessions/restore", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: archSrc }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(fs.existsSync(archSrc)).toBe(true);
+    expect(fs.readFileSync(activeDest, "utf-8")).toContain("active text");
   });
 
   it("returns 409 when active destination exists", async () => {

@@ -3,9 +3,10 @@ import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { createAgentSessionMock, sessionManagerCreateMock } = vi.hoisted(() => ({
+const { createAgentSessionMock, sessionManagerCreateMock, sessionManagerOpenMock } = vi.hoisted(() => ({
   createAgentSessionMock: vi.fn(),
   sessionManagerCreateMock: vi.fn(),
+  sessionManagerOpenMock: vi.fn(),
 }));
 
 vi.mock("../lib/pi-sdk/index.js", () => ({
@@ -14,7 +15,7 @@ vi.mock("../lib/pi-sdk/index.js", () => ({
   SessionManager: {
     create: sessionManagerCreateMock,
     list: vi.fn(async () => []),
-    open: vi.fn(),
+    open: sessionManagerOpenMock,
   },
   SettingsManager: {
     inMemory: vi.fn(() => ({})),
@@ -304,5 +305,30 @@ describe("SessionCoordinator session manifest integration", () => {
       workspaceFolders: [],
       authorizedFolders: [allowedFolder],
     });
+  });
+
+  it("rejects stale active locators after archive without cold-loading a header file", async () => {
+    const coordinator = createCoordinator();
+    await coordinator.createSession(null, tempDir, true);
+    const archivedPath = path.join(tempDir, "agents", "hana", "sessions", "archived", "alpha.jsonl");
+    fs.mkdirSync(path.dirname(archivedPath), { recursive: true });
+    fs.renameSync(sessionPath, archivedPath);
+    store.updateLocatorLifecycle("sess_coord_0001", archivedPath, "archived", "session_archive");
+    sessionManagerOpenMock.mockImplementation(() => {
+      fs.writeFileSync(sessionPath, "unexpected cold load\n");
+      return { getCwd: () => tempDir, getSessionFile: () => sessionPath };
+    });
+
+    await expect(coordinator.ensureSessionLoaded(sessionPath)).rejects.toMatchObject({
+      code: "session_locator_not_active",
+      status: 409,
+    });
+    await expect(coordinator.switchSession(sessionPath)).rejects.toMatchObject({
+      code: "session_locator_not_active",
+      status: 409,
+    });
+
+    expect(sessionManagerOpenMock).not.toHaveBeenCalled();
+    expect(fs.existsSync(sessionPath)).toBe(false);
   });
 });

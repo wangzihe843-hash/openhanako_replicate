@@ -37,7 +37,7 @@ import {
   getStableFeatureDisabledToolNames,
   toolNamesFromObjects,
 } from "./tool-availability.ts";
-import { isActiveSessionPath } from "./message-utils.ts";
+import { isActiveSessionPath, isArchivedDesktopSessionPath } from "./message-utils.ts";
 import { formatWorkspaceScopePrompt, normalizeSessionFolderScope, normalizeWorkspaceScope } from "../shared/workspace-scope.ts";
 import { getProviderPromptPatches } from "./provider-prompt-patches.ts";
 import {
@@ -819,6 +819,113 @@ export class SessionCoordinator {
     }
   }
 
+  _makeSessionLocatorStateError(operation: string, sessionPath: any, manifest: any) {
+    const lifecycle = manifest?.lifecycle || "unknown";
+    const currentPath = manifest?.currentLocator?.path || null;
+    const error: any = new Error(
+      `${operation}: session path is not runnable because its current lifecycle is ${lifecycle}`
+      + (currentPath ? ` at ${currentPath}` : "")
+      + `; requested ${sessionPath}`,
+    );
+    error.code = "session_locator_not_active";
+    error.status = 409;
+    error.sessionId = manifest?.sessionId || null;
+    error.currentPath = currentPath;
+    error.lifecycle = lifecycle;
+    return error;
+  }
+
+  _assertCurrentActiveSessionLocator(sessionPath: any, operation: string) {
+    if (!sessionPath) return null;
+    const manifest = this._resolveSessionManifestForPath(sessionPath);
+    if (!manifest) return null;
+    const currentPath = manifest.currentLocator?.path;
+    const requestedPath = path.resolve(sessionPath);
+    if (manifest.lifecycle && manifest.lifecycle !== "active") {
+      throw this._makeSessionLocatorStateError(operation, sessionPath, manifest);
+    }
+    if (currentPath && path.resolve(currentPath) !== requestedPath) {
+      throw this._makeSessionLocatorStateError(operation, sessionPath, manifest);
+    }
+    return manifest;
+  }
+
+  _isCurrentActiveSessionLocator(sessionPath: any) {
+    try {
+      const manifest = this._resolveSessionManifestForPath(sessionPath);
+      if (!manifest) return true;
+      if (manifest.lifecycle && manifest.lifecycle !== "active") return false;
+      const currentPath = manifest.currentLocator?.path;
+      return !currentPath || path.resolve(currentPath) === path.resolve(sessionPath);
+    } catch {
+      return false;
+    }
+  }
+
+  async moveSessionLifecycle({ fromPath = null, toPath = null, lifecycle = null, reason = "session_lifecycle", manifestDefaults = {} }: any = {}) {
+    if (!this._sessionManifestStore || typeof this._sessionManifestStore.updateLocatorLifecycle !== "function") {
+      const error: any = new Error("Session manifest lifecycle transition is unavailable.");
+      error.code = "session_manifest_unavailable";
+      error.status = 503;
+      throw error;
+    }
+    if (!toPath) {
+      const error: any = new Error("moveSessionLifecycle: toPath is required");
+      error.code = "session_lifecycle_path_required";
+      error.status = 400;
+      throw error;
+    }
+    if (lifecycle !== "active" && lifecycle !== "archived") {
+      const error: any = new Error(`moveSessionLifecycle: unsupported lifecycle ${lifecycle || "(empty)"}`);
+      error.code = "session_lifecycle_invalid";
+      error.status = 400;
+      throw error;
+    }
+
+    let manifest = null;
+    for (const candidate of [fromPath, toPath]) {
+      if (!candidate) continue;
+      manifest = this._resolveSessionManifestForPath(candidate);
+      if (manifest) break;
+    }
+    if (!manifest) {
+      const seedPath = fromPath || toPath;
+      const initialLifecycle = isArchivedDesktopSessionPath(seedPath, this._d.agentsDir) ? "archived" : "active";
+      manifest = this._ensureSessionManifestForPath(seedPath, {
+        ownerAgentId: this._d.agentIdFromSessionPath?.(seedPath) || null,
+        domain: "desktop",
+        kind: "chat",
+        lifecycle: initialLifecycle,
+        provenance: { createdBy: "session_lifecycle_transition" },
+        locatorReason: reason,
+        ...(manifestDefaults || {}),
+      });
+    }
+    if (!manifest?.sessionId) {
+      const error: any = new Error("moveSessionLifecycle: session manifest could not be established");
+      error.code = "session_manifest_not_found";
+      error.status = 404;
+      throw error;
+    }
+
+    const updated = this._sessionManifestStore.updateLocatorLifecycle(
+      manifest.sessionId,
+      toPath,
+      lifecycle,
+      reason,
+    );
+    if (!updated?.currentLocator?.path || path.resolve(updated.currentLocator.path) !== path.resolve(toPath) || updated.lifecycle !== lifecycle) {
+      const error: any = new Error("moveSessionLifecycle: manifest transition verification failed");
+      error.code = "session_lifecycle_transition_failed";
+      error.status = 500;
+      error.sessionId = manifest.sessionId;
+      error.toPath = toPath;
+      error.lifecycle = lifecycle;
+      throw error;
+    }
+    return updated;
+  }
+
   _readSessionCapabilitySnapshot(sessionPath: any) {
     if (!this._sessionManifestStore || !sessionPath) return null;
     try {
@@ -904,10 +1011,10 @@ export class SessionCoordinator {
   _sessionTitleFromMap(titles: any, sessionPath: any, extraLegacyPaths: any[] = []) {
     if (!titles || !sessionPath) return null;
     const keys: string[] = [];
-    const sessionId = this._sessionIdForPath(sessionPath);
-    if (sessionId) keys.push(sessionId);
     for (const candidate of [sessionPath, ...extraLegacyPaths]) {
       if (!candidate) continue;
+      const sessionId = this._sessionIdForPath(candidate);
+      if (sessionId) keys.push(sessionId);
       keys.push(candidate);
       keys.push(path.basename(candidate));
     }
@@ -2256,6 +2363,7 @@ export class SessionCoordinator {
     if (this._isDeletedAgentSessionPath(sessionPath)) {
       throw new Error("switchSession: session belongs to a deleted agent");
     }
+    this._assertCurrentActiveSessionLocator(sessionPath, "switchSession");
 
     // 切到已有 session 时清空 pendingModel（用户的临时选择不应跟到别的 session）
     this._pendingModel = null;
@@ -3478,6 +3586,7 @@ export class SessionCoordinator {
   isRunnableSessionPath(sessionPath: any) {
     if (!isActiveSessionPath(sessionPath, this._d.agentsDir)) return false;
     if (this._isDeletedAgentSessionPath(sessionPath)) return false;
+    if (!this._isCurrentActiveSessionLocator(sessionPath)) return false;
     if (
       this._getSessionEntryByPath(sessionPath)
       || this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath)
@@ -3617,6 +3726,7 @@ export class SessionCoordinator {
     if (this._isDeletedAgentSessionPath(sessionPath)) {
       throw new Error("reloadSessionRuntime: session belongs to a deleted agent");
     }
+    this._assertCurrentActiveSessionLocator(sessionPath, "reloadSessionRuntime");
     const targetAgentId = this._d.agentIdFromSessionPath(sessionPath);
     if (!targetAgentId) {
       throw new Error(`reloadSessionRuntime: cannot resolve agentId for ${sessionPath}`);
@@ -3674,6 +3784,7 @@ export class SessionCoordinator {
     if (this._isDeletedAgentSessionPath(sessionPath)) {
       throw new Error("ensureSessionLoaded: session belongs to a deleted agent");
     }
+    this._assertCurrentActiveSessionLocator(sessionPath, "ensureSessionLoaded");
     const existing = this._getSessionEntryByPath(sessionPath);
     if (existing) {
       existing.lastTouchedAt = Date.now();

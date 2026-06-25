@@ -398,6 +398,18 @@ export class SessionManifestStore {
           updated_at = @updatedAt
         WHERE session_id = @sessionId
       `),
+      updateLocatorLifecycle: this.db.prepare(`
+        UPDATE session_manifests
+        SET
+          lifecycle = @lifecycle,
+          current_locator_type = @currentLocatorType,
+          current_locator_path = @currentLocatorPath,
+          current_locator_key = @currentLocatorKey,
+          current_locator_reason = @currentLocatorReason,
+          locator_updated_at = @locatorUpdatedAt,
+          updated_at = @updatedAt
+        WHERE session_id = @sessionId
+      `),
       setPinnedAt: this.db.prepare(`
         UPDATE session_manifests
         SET pinned_at = @pinnedAt, updated_at = @updatedAt
@@ -597,6 +609,66 @@ export class SessionManifestStore {
         currentLocatorReason: reason,
         locatorUpdatedAt: changedAt,
         updatedAt: changedAt,
+      });
+      return this.getBySessionId(sessionId);
+    })();
+  }
+
+  updateLocatorLifecycle(sessionId, nextSessionPath, lifecycle, reason = "update") {
+    const nextLifecycle = pickString(lifecycle);
+    if (!nextLifecycle) {
+      throw new SessionManifestError(
+        "session_manifest_lifecycle_required",
+        "Session manifest lifecycle is required.",
+        { sessionId, lifecycle },
+      );
+    }
+    const nextLocator = this._locatorFromPath(nextSessionPath);
+    return this.db.transaction(() => {
+      const manifest = this.getBySessionId(sessionId);
+      if (!manifest) {
+        throw new SessionManifestError(
+          "session_manifest_not_found",
+          `Session manifest not found: ${sessionId}`,
+          { sessionId },
+        );
+      }
+
+      if (manifest.currentLocator.key !== nextLocator.key) {
+        this._assertLocatorAvailable(nextLocator.key, sessionId);
+        const changedAt = this._now();
+        this._insertHistoryLocator({
+          sessionId,
+          locatorType: manifest.currentLocator.type,
+          locatorPath: manifest.currentLocator.path,
+          locatorKey: manifest.currentLocator.key,
+          reason,
+          createdAt: changedAt,
+        });
+        this._stmts.deleteHistoryForLocator.run(sessionId, nextLocator.key);
+        this._stmts.updateLocatorLifecycle.run({
+          sessionId,
+          lifecycle: nextLifecycle,
+          currentLocatorType: nextLocator.type,
+          currentLocatorPath: nextLocator.path,
+          currentLocatorKey: nextLocator.key,
+          currentLocatorReason: reason,
+          locatorUpdatedAt: changedAt,
+          updatedAt: changedAt,
+        });
+        return this.getBySessionId(sessionId);
+      }
+
+      const updatedAt = this._now();
+      this._stmts.updateLocatorLifecycle.run({
+        sessionId,
+        lifecycle: nextLifecycle,
+        currentLocatorType: nextLocator.type,
+        currentLocatorPath: nextLocator.path,
+        currentLocatorKey: nextLocator.key,
+        currentLocatorReason: reason,
+        locatorUpdatedAt: updatedAt,
+        updatedAt,
       });
       return this.getBySessionId(sessionId);
     })();

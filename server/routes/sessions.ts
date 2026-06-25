@@ -161,6 +161,17 @@ function routeError(message, code, status) {
   return err;
 }
 
+function statusFromRouteError(err) {
+  return Number.isInteger(err?.status) ? err.status : 500;
+}
+
+function bodyFromRouteError(err) {
+  return {
+    error: err?.message || String(err),
+    ...(err?.code ? { code: err.code } : {}),
+  };
+}
+
 async function resumeBrowserForSessionSwitch(bm, sessionPath) {
   if (typeof bm.resumeForSessionIfAvailable === "function") {
     return await bm.resumeForSessionIfAvailable(sessionPath);
@@ -276,6 +287,7 @@ async function readSessionFileRevision(sessionPath) {
 
 export function createSessionsRoute(engine, hub = null) {
   const route = new Hono();
+  const lifecycleLocks = new Map();
 
   function resolveSessionCacheLocator(sessionPath) {
     if (!sessionPath) return { cacheKey: null, readPath: null, sessionId: null };
@@ -495,6 +507,84 @@ export function createSessionsRoute(engine, hub = null) {
 
   function activePathForArchivedSession(sessionPath) {
     return path.join(path.dirname(path.dirname(sessionPath)), path.basename(sessionPath));
+  }
+
+  function lifecycleLockKeyForPaths(paths) {
+    for (const sessionPath of uniqueLifecyclePaths(paths)) {
+      try {
+        const sessionId = engine.getSessionIdForPath?.(sessionPath);
+        if (typeof sessionId === "string" && sessionId.trim()) return `session:${sessionId.trim()}`;
+      } catch {
+        // Fall through to path-derived legacy lock keys.
+      }
+    }
+    for (const sessionPath of uniqueLifecyclePaths(paths)) {
+      const sessionPathText = typeof sessionPath === "string" ? sessionPath : "";
+      const agentId = engine.agentIdFromSessionPath?.(sessionPathText) || "unknown-agent";
+      const basename = path.basename(sessionPathText);
+      if (basename) return `legacy:${agentId}:${basename}`;
+    }
+    return "legacy:unknown-session";
+  }
+
+  async function withSessionLifecycleLock(paths, fn) {
+    const key = lifecycleLockKeyForPaths(paths);
+    while (lifecycleLocks.has(key)) {
+      await lifecycleLocks.get(key).catch(() => {});
+    }
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    lifecycleLocks.set(key, held);
+    try {
+      return await fn();
+    } finally {
+      if (lifecycleLocks.get(key) === held) lifecycleLocks.delete(key);
+      release();
+    }
+  }
+
+  async function moveSessionLifecycleOrThrow(input) {
+    if (typeof engine.moveSessionLifecycle !== "function") {
+      throw routeError(
+        "Session manifest lifecycle transition is unavailable",
+        "session_manifest_unavailable",
+        503,
+      );
+    }
+    const manifest = await engine.moveSessionLifecycle(input);
+    if (!manifest?.sessionId) {
+      throw routeError(
+        "Session manifest lifecycle transition failed",
+        "session_lifecycle_transition_failed",
+        500,
+      );
+    }
+    return manifest;
+  }
+
+  async function sessionFileHasMessages(sessionPath) {
+    const raw = await fs.readFile(sessionPath, "utf-8");
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        return true;
+      }
+      if (entry?.type === "message" && entry.message) return true;
+    }
+    return false;
+  }
+
+  async function repairHeaderOnlyActiveRestoreTarget(destPath) {
+    if (!(await pathExists(destPath))) return { repaired: false };
+    if (await sessionFileHasMessages(destPath)) {
+      throw routeError("Active path already exists with messages", "active_session_conflict", 409);
+    }
+    await fs.unlink(destPath);
+    deleteSessionFileSidecarSync(destPath);
+    return { repaired: true };
   }
 
   function uniqueLifecyclePaths(paths) {
@@ -1862,39 +1952,60 @@ export function createSessionsRoute(engine, hub = null) {
         return rejectDeletedAgentSession(c);
       }
 
-      // 确认文件存在
-      try {
-        await fs.access(sessionPath);
-      } catch {
-        return c.json({ error: t("error.sessionNotFound") }, 404);
-      }
-
       // 从 session 路径推导归档目录（同 agent 的 sessions/archived/）
       const destPath = archivedPathForActiveSession(sessionPath);
-      const archiveDir = path.dirname(destPath);
-      if (await pathExists(destPath)) {
-        return c.json({ error: "Archived path already exists" }, 409);
-      }
-      if (await pathExists(sessionFileSidecarPath(destPath))) {
-        return c.json({ error: "Stage file sidecar destination already exists" }, 409);
-      }
-      await cleanupSessionLifecycle([sessionPath, destPath], "parent session archived", { skipMemory: true });
+      return await withSessionLifecycleLock([sessionPath, destPath], async () => {
+        const archiveDir = path.dirname(destPath);
+        // 确认文件存在
+        try {
+          await fs.access(sessionPath);
+        } catch {
+          return c.json({ error: t("error.sessionNotFound") }, 404);
+        }
+        if (await pathExists(destPath)) {
+          return c.json({ error: "Archived path already exists" }, 409);
+        }
+        if (await pathExists(sessionFileSidecarPath(destPath))) {
+          return c.json({ error: "Stage file sidecar destination already exists" }, 409);
+        }
+        await cleanupSessionLifecycle([sessionPath, destPath], "parent session archived", { skipMemory: true });
 
-      // 再从 engine 的 session map 中移除。
-      await engine.setSessionPinned(sessionPath, false);
-      await engine.closeSession(sessionPath);
+        // 再从 engine 的 session map 中移除。
+        await engine.setSessionPinned(sessionPath, false);
+        await engine.closeSession(sessionPath);
 
-      await fs.mkdir(archiveDir, { recursive: true });
-      await fs.rename(sessionPath, destPath);
-      moveSessionFileSidecarSync(sessionPath, destPath);
+        await fs.mkdir(archiveDir, { recursive: true });
+        await moveSessionLifecycleOrThrow({
+          fromPath: sessionPath,
+          toPath: destPath,
+          lifecycle: "archived",
+          reason: "session_archive",
+        });
+        try {
+          await fs.rename(sessionPath, destPath);
+          moveSessionFileSidecarSync(sessionPath, destPath);
+        } catch (err) {
+          try {
+            await moveSessionLifecycleOrThrow({
+              fromPath: destPath,
+              toPath: sessionPath,
+              lifecycle: "active",
+              reason: "session_archive_rollback",
+            });
+          } catch (rollbackErr) {
+            lifecycleLog.error(`archive manifest rollback failed for ${sessionPath}: ${rollbackErr.message}`);
+          }
+          throw err;
+        }
 
-      // 将 mtime 置为归档瞬间，使 cleanup 按"归档时间"而非"最后活动时间"判断
-      const nowSec = Date.now() / 1000;
-      await fs.utimes(destPath, nowSec, nowSec);
+        // 将 mtime 置为归档瞬间，使 cleanup 按"归档时间"而非"最后活动时间"判断
+        const nowSec = Date.now() / 1000;
+        await fs.utimes(destPath, nowSec, nowSec);
 
-      return c.json({ ok: true });
+        return c.json({ ok: true });
+      });
     } catch (err) {
-      return c.json({ error: err.message }, 500);
+      return c.json(bodyFromRouteError(err), statusFromRouteError(err));
     }
   });
 
@@ -1923,20 +2034,44 @@ export function createSessionsRoute(engine, hub = null) {
       const activeDir = path.dirname(archDir);
       const destPath = path.join(activeDir, path.basename(sessionPath));
 
-      // 冲突检测：目标位置已存在，不自动改名（违背"禁止非用户预期的 fallback"）
-      try {
-        await fs.access(destPath);
-        return c.json({ error: "Active path already exists" }, 409);
-      } catch { /* 目标不存在，可以恢复 */ }
-      if (await pathExists(sessionFileSidecarPath(destPath))) {
-        return c.json({ error: "Stage file sidecar destination already exists" }, 409);
-      }
+      return await withSessionLifecycleLock([destPath, sessionPath], async () => {
+        try {
+          await fs.access(sessionPath);
+        } catch {
+          return c.json({ error: t("error.sessionNotFound") }, 404);
+        }
 
-      await fs.rename(sessionPath, destPath);
-      moveSessionFileSidecarSync(sessionPath, destPath);
-      return c.json({ ok: true, restoredPath: destPath });
+        await cleanupSessionLifecycle([destPath, sessionPath], "parent session restored", { skipMemory: true });
+
+        // 冲突检测：目标位置已有真实消息时，不自动合并；只有旧 bug 留下的 header-only 文件可修复。
+        await repairHeaderOnlyActiveRestoreTarget(destPath);
+        if (await pathExists(sessionFileSidecarPath(destPath))) {
+          return c.json({ error: "Stage file sidecar destination already exists" }, 409);
+        }
+
+        await fs.rename(sessionPath, destPath);
+        moveSessionFileSidecarSync(sessionPath, destPath);
+        try {
+          await moveSessionLifecycleOrThrow({
+            fromPath: sessionPath,
+            toPath: destPath,
+            lifecycle: "active",
+            reason: "session_restore",
+          });
+        } catch (err) {
+          try {
+            await fs.mkdir(archDir, { recursive: true });
+            await fs.rename(destPath, sessionPath);
+            moveSessionFileSidecarSync(destPath, sessionPath);
+          } catch (rollbackErr) {
+            lifecycleLog.error(`restore file rollback failed for ${destPath}: ${rollbackErr.message}`);
+          }
+          throw err;
+        }
+        return c.json({ ok: true, restoredPath: destPath });
+      });
     } catch (err) {
-      return c.json({ error: err.message }, 500);
+      return c.json(bodyFromRouteError(err), statusFromRouteError(err));
     }
   });
 
@@ -1956,21 +2091,23 @@ export function createSessionsRoute(engine, hub = null) {
         return c.json({ error: "Not an archived session path" }, 403);
       }
       const activeKey = activePathForArchivedSession(sessionPath);
-      await cleanupSessionLifecycle([activeKey, sessionPath], "parent session deleted");
-      try {
-        await fs.unlink(sessionPath);
-        deleteSessionFileSidecarSync(sessionPath);
-      } catch (err) {
-        if (err.code === "ENOENT") {
-          return c.json({ error: t("error.sessionNotFound") }, 404);
+      return await withSessionLifecycleLock([activeKey, sessionPath], async () => {
+        await cleanupSessionLifecycle([activeKey, sessionPath], "parent session deleted");
+        try {
+          await fs.unlink(sessionPath);
+          deleteSessionFileSidecarSync(sessionPath);
+        } catch (err) {
+          if (err.code === "ENOENT") {
+            return c.json({ error: t("error.sessionNotFound") }, 404);
+          }
+          throw err;
         }
-        throw err;
-      }
-      // 清理 titles.json 孤儿（key = 对应的活跃路径）
-      try { await engine.clearSessionTitle(activeKey); } catch {}
-      return c.json({ ok: true });
+        // 清理 titles.json 孤儿（key = 对应的活跃路径）
+        try { await engine.clearSessionTitle(activeKey); } catch {}
+        return c.json({ ok: true });
+      });
     } catch (err) {
-      return c.json({ error: err.message }, 500);
+      return c.json(bodyFromRouteError(err), statusFromRouteError(err));
     }
   });
 
