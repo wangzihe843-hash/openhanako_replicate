@@ -139,17 +139,13 @@
   justify-content: space-between;
   align-items: center;
   gap: var(--space-16);
-  padding: 0.72rem var(--space-16);
-  background: var(--bg-card, #fff);
-  transition: background-color var(--duration-fast) ease;
-}
-
-.row + .row {
-  border-top: 1px solid var(--border, rgba(0, 0, 0, 0.06));
+  padding: 5px var(--space-12);
+  background: transparent;
+  transition: background var(--duration-fast) ease;
 }
 
 .row:hover {
-  background: var(--bg-hover, color-mix(in srgb, var(--bg-card, #fff) 92%, transparent));
+  background: var(--overlay-light, rgba(0, 0, 0, 0.05));
 }
 
 .rowMain { flex: 1; min-width: 0; }

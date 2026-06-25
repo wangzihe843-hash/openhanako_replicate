@@ -38,8 +38,7 @@
 :global(body.paper-texture) .settings-textarea,
 :global(body.paper-texture) .settings-folder-browse,
 :global(body.paper-texture) .settings-folder-clear,
-:global(body.paper-texture) .capability-row,
-:global(body.paper-texture) .skills-list-item,
+:global(body.paper-texture) .skills-list-block,
 :global(body.paper-texture) .cml-picker,
 :global(body.paper-texture) .cml-picker-group,
 :global(body.paper-texture) .cml-edit-panel-input,
@@ -2243,29 +2242,18 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-16);
-    padding: 0.65rem var(--space-16);
-    background-color: var(--bg-card);
+    padding: 5px var(--space-12);
+    background: transparent;
+    transition: background var(--duration-fast);
 }
 
-.capability-row + .capability-row {
-    border-top: 1px solid var(--border);
-}
-
-/* 首尾 item 作为 SettingsSection body 直接子元素时，需要自带圆角贴合白卡 border-radius */
-.capability-row:first-child {
-    border-top-left-radius: var(--radius-card, 8px);
-    border-top-right-radius: var(--radius-card, 8px);
-}
-
-.capability-row:last-child {
-    border-bottom-left-radius: var(--radius-card, 8px);
-    border-bottom-right-radius: var(--radius-card, 8px);
+.capability-row:hover {
+    background: var(--overlay-light);
 }
 
 /* 缩进子项（如 allow_github_fetch） */
 .capability-row-nested {
-    padding-left: calc(var(--space-16) + 1rem);
-    background: var(--bg-hover, color-mix(in srgb, var(--bg-card) 90%, transparent));
+    padding-left: calc(var(--space-12) + 1rem);
 }
 
 .capability-row-label {
@@ -2295,6 +2283,7 @@
 .skills-list-block {
     display: flex;
     flex-direction: column;
+    background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-card, 8px);
     overflow: hidden;
@@ -2315,30 +2304,14 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-16);
-    padding: 0.65rem var(--space-16);
-    background-color: var(--bg-card);
+    padding: 5px var(--space-12);
+    background: transparent;
     cursor: default;
-    transition: background-color var(--duration-fast);
-}
-
-.skills-list-item + .skills-list-item {
-    border-top: 1px solid var(--border);
-}
-
-/* 作为 SettingsSection body 直接子元素时，首尾 item 需要自带圆角对齐白卡 border-radius。
- * 在 .skills-list-block 里有 overflow:hidden 裁掉，不影响视觉 */
-.skills-list-item:first-child {
-    border-top-left-radius: var(--radius-card, 8px);
-    border-top-right-radius: var(--radius-card, 8px);
-}
-
-.skills-list-item:last-child {
-    border-bottom-left-radius: var(--radius-card, 8px);
-    border-bottom-right-radius: var(--radius-card, 8px);
+    transition: background var(--duration-fast);
 }
 
 .skills-list-item:hover {
-    background: var(--bg-hover, color-mix(in srgb, var(--bg-card) 90%, transparent));
+    background: var(--overlay-light);
 }
 
 .skills-list-item.skill-install-highlight,
@@ -2426,18 +2399,13 @@
     background: var(--accent-bg, color-mix(in srgb, var(--accent) 8%, transparent));
 }
 
-.skill-bundle-group + .skill-bundle-group,
-.skill-bundle-loose-zone {
-    border-top: 1px solid var(--border);
-}
-
 .skill-bundle-header {
     display: grid;
     grid-template-columns: 24px minmax(0, 1fr) auto;
     align-items: center;
     gap: var(--space-8);
-    padding: 0.62rem var(--space-16);
-    background: var(--bg-card);
+    padding: 5px var(--space-12);
+    background: transparent;
     transition: background var(--duration-fast);
 }
 
@@ -2450,7 +2418,7 @@
 }
 
 .skill-bundle-header:hover {
-    background: var(--bg-hover, color-mix(in srgb, var(--bg-card) 90%, transparent));
+    background: var(--overlay-light);
 }
 
 .skill-bundle-header:hover .skill-card-delete {
@@ -2498,26 +2466,20 @@
 }
 
 .skill-bundle-children {
-    border-top: 1px solid var(--border);
-    background: color-mix(in srgb, var(--bg-card) 94%, var(--bg-hover));
+    background: transparent;
 }
 
 .skill-bundle-child-row {
-    padding-left: calc(var(--space-16) + 1.6rem);
+    padding-left: calc(var(--space-12) + 1.6rem);
     background: transparent;
 }
 
 .skill-bundle-empty {
-    padding: 0.6rem var(--space-16);
+    padding: 5px var(--space-12);
     color: var(--text-muted);
     font-size: var(--fs-hint);
     font-style: italic;
-    background: var(--bg-card);
-}
-
-.skill-bundle-loose-zone .skills-list-item + .skills-list-item,
-.skill-bundle-children .skills-list-item + .skills-list-item {
-    border-top: 1px solid var(--border);
+    background: transparent;
 }
 
 .skill-bundle-dialog-backdrop {
