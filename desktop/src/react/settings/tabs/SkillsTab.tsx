@@ -574,9 +574,9 @@ export function SkillsTab() {
       <SkillCapabilities installCfg={skillInstallCfg} />
 
       {/* Section 3A: Agent Skills 开关（per-Agent 开关）
-       * AgentSelect 作为 section context；skill list 直接作为 section body children，
-       * 由 SettingsSection 白卡承担卡片视觉，避免卡中卡 */}
+       * flush：skills-list-block 自带卡片视觉，section 不再套外层白卡 */}
       <SettingsSection
+        variant="flush"
         title={t('settings.skills.userSkillsTitle')}
         context={
           <AgentSelect
