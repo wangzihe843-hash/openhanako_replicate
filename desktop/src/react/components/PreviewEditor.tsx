@@ -215,6 +215,17 @@ function replaceDocumentPreservingSelection(view: EditorView, content: string): 
   return true;
 }
 
+function syncEditorRootToDom(view: EditorView): void {
+  const root = view.dom.getRootNode();
+  if (root === view.root) return;
+  const nodeType = (root as Node).nodeType;
+  const isDocument = nodeType === 9;
+  const isShadowRoot = nodeType === 11 && 'host' in root;
+  if (isDocument || isShadowRoot) {
+    view.setRoot(root as Document | ShadowRoot);
+  }
+}
+
 interface MarkdownAttachmentSource {
   file?: File;
   path?: string;
@@ -677,7 +688,11 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
 
       const state = EditorState.create({ doc: content, extensions });
       const view = new EditorView({ state, parent: containerRef.current });
-      const onSelectionCommitEvent = () => {
+      const selectionCommitWindow = containerRef.current.ownerDocument.defaultView ?? surface.window;
+      const handledSelectionCommitEvents = new WeakSet<Event>();
+      const onSelectionCommitEvent = (event: Event) => {
+        if (handledSelectionCommitEvents.has(event)) return;
+        handledSelectionCommitEvents.add(event);
         selectionCommitCbRef.current?.(view);
       };
       let scrollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -742,6 +757,9 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
       view.dom.addEventListener('mouseup', onSelectionCommitEvent);
       view.dom.addEventListener('touchend', onSelectionCommitEvent);
       view.dom.addEventListener('keyup', onSelectionCommitEvent);
+      selectionCommitWindow.addEventListener('mouseup', onSelectionCommitEvent);
+      selectionCommitWindow.addEventListener('touchend', onSelectionCommitEvent);
+      selectionCommitWindow.addEventListener('keyup', onSelectionCommitEvent);
       view.scrollDOM.addEventListener('scroll', onScroll, { passive: true });
       view.dom.addEventListener('dragover', onCoverDragOver, true);
       view.dom.addEventListener('dragleave', onCoverDragLeave, true);
@@ -764,6 +782,9 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
         view.dom.removeEventListener('mouseup', onSelectionCommitEvent);
         view.dom.removeEventListener('touchend', onSelectionCommitEvent);
         view.dom.removeEventListener('keyup', onSelectionCommitEvent);
+        selectionCommitWindow.removeEventListener('mouseup', onSelectionCommitEvent);
+        selectionCommitWindow.removeEventListener('touchend', onSelectionCommitEvent);
+        selectionCommitWindow.removeEventListener('keyup', onSelectionCommitEvent);
         view.scrollDOM.removeEventListener('scroll', onScroll);
         view.dom.removeEventListener('dragover', onCoverDragOver, true);
         view.dom.removeEventListener('dragleave', onCoverDragLeave, true);
@@ -771,7 +792,13 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
         view.destroy();
         viewRef.current = null;
       };
-    }, [mode, language, readOnly, filePath, remoteContentRef, emitStatsIfChanged, insertMarkdownAttachments]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅在 mode/language/readOnly/filePath/remoteContentRef 变化时重建 CodeMirror，content/refs 故意省略以避免销毁重建
+    }, [mode, language, readOnly, filePath, remoteContentRef, surface.window, emitStatsIfChanged, insertMarkdownAttachments]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅在 mode/language/readOnly/filePath/remoteContentRef/surface.window 变化时重建 CodeMirror，content/refs 故意省略以避免销毁重建
+
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view) return;
+      syncEditorRootToDom(view);
+    }, [surface.document]);
 
     useEffect(() => {
       const view = viewRef.current;

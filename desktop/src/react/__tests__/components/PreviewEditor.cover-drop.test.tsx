@@ -150,6 +150,43 @@ describe('PreviewEditor markdown cover drop', () => {
     expect(ref.current?.getView()?.state.doc.toString()).toBe(content);
   });
 
+  it('keeps CodeMirror root on the detached editor document without forcing setRoot', () => {
+    const setRoot = vi.spyOn(EditorView.prototype, 'setRoot');
+    const ref = createRef<PreviewEditorHandle>();
+    const childDocument = document.implementation.createHTMLDocument('detached-editor');
+    const childWindow = Object.create(window) as Window;
+    Object.defineProperty(childWindow, 'document', {
+      configurable: true,
+      value: childDocument,
+    });
+    Object.defineProperty(childDocument, 'defaultView', {
+      configurable: true,
+      value: childWindow,
+    });
+
+    render(
+      <WindowSurfaceProvider surface={{
+        id: 'detached:editor',
+        window: childWindow,
+        document: childDocument,
+        overlayRoot: childDocument.body,
+      }}>
+        <PreviewEditor
+          ref={ref}
+          content="# Detached editor"
+          filePath="/tmp/workspace/detached.md"
+          mode="markdown"
+          saveDocument={async () => ({ ok: true, conflict: false, version: null })}
+        />
+      </WindowSurfaceProvider>,
+      { container: childDocument.body, baseElement: childDocument.body },
+    );
+
+    expect(ref.current?.getView()?.root).toBe(childDocument);
+    expect(setRoot).not.toHaveBeenCalled();
+    setRoot.mockRestore();
+  });
+
   it('keeps regular body image drops on the markdown attachment path', async () => {
     const ref = createRef<PreviewEditorHandle>();
     const { container } = render(

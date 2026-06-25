@@ -3,6 +3,7 @@
  */
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { Transaction } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
 import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PreviewEditor, type PreviewEditorHandle } from '../../components/PreviewEditor';
@@ -153,6 +154,50 @@ describe('PreviewEditor file sync', () => {
     fireEvent.mouseUp(view!.dom);
 
     expect(onSelectionCommit).toHaveBeenCalledWith(view);
+  });
+
+  it('emits selection commit when mouseup lands outside the editor on the surface window', () => {
+    const ref = createRef<PreviewEditorHandle>();
+    const onSelectionCommit = vi.fn();
+
+    render(
+      <PreviewEditor
+        ref={ref}
+        content="alpha\nbeta"
+        filePath="/tmp/hana-note.md"
+        mode="markdown"
+        onSelectionCommit={onSelectionCommit}
+      />,
+    );
+
+    const view = ref.current?.getView();
+    expect(view).toBeTruthy();
+
+    act(() => {
+      view?.dispatch({ selection: { anchor: 0, head: 5 } });
+    });
+
+    fireEvent.mouseUp(window);
+
+    expect(onSelectionCommit).toHaveBeenCalledWith(view);
+  });
+
+  it('does not reset the CodeMirror root when the editor already lives in the main document', () => {
+    const setRoot = vi.spyOn(EditorView.prototype, 'setRoot');
+    const ref = createRef<PreviewEditorHandle>();
+
+    render(
+      <PreviewEditor
+        ref={ref}
+        content="alpha\nbeta"
+        filePath="/tmp/hana-note.md"
+        mode="markdown"
+      />,
+    );
+
+    expect(ref.current?.getView()?.root).toBe(document);
+    expect(setRoot).not.toHaveBeenCalled();
+    setRoot.mockRestore();
   });
 
   it('saves user edits with the file version that was last loaded from disk', async () => {
