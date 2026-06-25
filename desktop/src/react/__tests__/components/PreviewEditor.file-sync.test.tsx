@@ -680,6 +680,126 @@ describe('PreviewEditor file sync', () => {
     expect(notices.some(notice => String(notice.text ?? '').includes('settings.fileChangedOnDisk'))).toBe(false);
   });
 
+  it('treats a same-content file version refresh as the saved editor baseline', async () => {
+    const ref = createRef<PreviewEditorHandle>();
+    const loadedVersion = { mtimeMs: 1, size: 8, sha256: 'loaded' };
+    const caughtUpVersion = { mtimeMs: 2, size: 10, sha256: 'caught-up' };
+    const externalVersion = { mtimeMs: 3, size: 15, sha256: 'external' };
+
+    const { rerender } = render(
+      <PreviewEditor
+        ref={ref}
+        content="original"
+        filePath="/tmp/hana-note.md"
+        fileVersion={loadedVersion}
+        mode="markdown"
+      />,
+    );
+
+    await act(async () => {
+      ref.current?.getView()?.dispatch({
+        changes: { from: 0, to: 'original'.length, insert: 'local edit' },
+        annotations: Transaction.userEvent.of('input.type'),
+      });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      rerender(
+        <PreviewEditor
+          ref={ref}
+          content="local edit"
+          filePath="/tmp/hana-note.md"
+          fileVersion={loadedVersion}
+          mode="markdown"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      rerender(
+        <PreviewEditor
+          ref={ref}
+          content="local edit"
+          filePath="/tmp/hana-note.md"
+          fileVersion={caughtUpVersion}
+          mode="markdown"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      rerender(
+        <PreviewEditor
+          ref={ref}
+          content="external update"
+          filePath="/tmp/hana-note.md"
+          fileVersion={externalVersion}
+          mode="markdown"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(ref.current?.getView()?.state.doc.toString()).toBe('external update');
+  });
+
+  it('re-publishes the editor draft when rejecting an unapplied external refresh', async () => {
+    const ref = createRef<PreviewEditorHandle>();
+    const loadedVersion = { mtimeMs: 1, size: 8, sha256: 'loaded' };
+    const externalVersion = { mtimeMs: 2, size: 15, sha256: 'external' };
+    const onContentChange = vi.fn();
+    const notices: Array<{ text?: string; type?: string }> = [];
+    const onNotice = vi.fn((event: Event) => {
+      notices.push((event as CustomEvent).detail ?? {});
+    });
+    window.addEventListener('hana-inline-notice', onNotice);
+
+    try {
+      const { rerender } = render(
+        <PreviewEditor
+          ref={ref}
+          content="original"
+          filePath="/tmp/hana-note.md"
+          fileVersion={loadedVersion}
+          mode="markdown"
+          onContentChange={onContentChange}
+        />,
+      );
+
+      await act(async () => {
+        ref.current?.getView()?.dispatch({
+          changes: { from: 0, to: 'original'.length, insert: 'local draft' },
+          annotations: Transaction.userEvent.of('input.type'),
+        });
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        rerender(
+          <PreviewEditor
+            ref={ref}
+            content="external update"
+            filePath="/tmp/hana-note.md"
+            fileVersion={externalVersion}
+            mode="markdown"
+            onContentChange={onContentChange}
+          />,
+        );
+        await Promise.resolve();
+      });
+
+      expect(ref.current?.getView()?.state.doc.toString()).toBe('local draft');
+      expect(onContentChange).toHaveBeenLastCalledWith('local draft');
+      expect(onContentChange).toHaveBeenCalledTimes(2);
+      expect(notices.some(notice => String(notice.text ?? '').includes('settings.fileChangedOnDisk'))).toBe(true);
+    } finally {
+      window.removeEventListener('hana-inline-notice', onNotice);
+    }
+  });
+
   it('pastes clipboard images into the markdown attachment folder at the cursor', async () => {
     const ref = createRef<PreviewEditorHandle>();
 
