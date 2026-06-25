@@ -1297,6 +1297,7 @@ describe("sessions route", () => {
       agentsDir,
       closeSession: vi.fn(async () => {}),
       setSessionPinned: vi.fn(async () => null),
+      moveSessionLifecycle: vi.fn(async () => ({ sessionId: "sess_archive" })),
       rcState: null,
     };
 
@@ -1330,6 +1331,7 @@ describe("sessions route", () => {
       agentsDir,
       closeSession: vi.fn(async () => {}),
       setSessionPinned: vi.fn(async () => null),
+      moveSessionLifecycle: vi.fn(async () => ({ sessionId: "sess_archive_cleanup" })),
       getSessionIdForPath: vi.fn((targetPath) => (
         targetPath === sessionPath || targetPath === archivedPath ? "sess_archive_cleanup" : null
       )),
