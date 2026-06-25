@@ -4,7 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t, autoSaveConfig } from '../helpers';
-import { SelectWidget, ProviderGroupHeader, selectWidgetStyles } from '@/ui';
+import { SelectWidget, ProviderIcon, ProviderGroupHeader, selectWidgetStyles } from '@/ui';
 import { browseAgent, setPrimaryAgent, loadSettingsConfig, loadAgents } from '../actions';
 import { AgentCardStack } from './agent/AgentCardStack';
 import { YuanSelector } from './agent/YuanSelector';
@@ -298,6 +298,32 @@ export function AgentTab() {
                 await autoSaveConfig({ models: { chat: { id, provider } } });
               }}
               placeholder={t('settings.api.selectModel')}
+              renderTrigger={(option) => {
+                const slashIdx = currentModel.indexOf('/');
+                const provider = option?.group || (slashIdx > 0 ? currentModel.slice(0, slashIdx) : '');
+                return (
+                  <>
+                    {provider && (
+                      <ProviderIcon provider={provider} className={styles['model-capsule-provider-icon']} />
+                    )}
+                    <span className={styles['model-capsule-value']}>
+                      {option?.label || t('settings.api.selectModel')}
+                    </span>
+                    <svg
+                      className={styles['model-capsule-arrow']}
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M4 6l4 4 4-4" />
+                    </svg>
+                  </>
+                );
+              }}
               renderGroupHeader={(g) => <ProviderGroupHeader provider={g} />}
               popupClassName={selectWidgetStyles.providerInset}
             />

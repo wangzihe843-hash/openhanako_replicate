@@ -3,8 +3,8 @@ import fs from "fs";
 import path from "path";
 import { saveImage } from "../lib/download.ts";
 import {
-  IMAGE_RESOLUTION_TIERS,
-  OPENAI_IMAGE_RATIOS,
+  CODEX_IMAGE_RESOLUTION_TIERS,
+  OPENAI_FLEXIBLE_IMAGE_RATIOS,
   resolveOpenAiImageSize,
 } from "../lib/resolution-tiers.ts";
 import { t } from "../../../lib/i18n.ts";
@@ -153,6 +153,14 @@ function resolveCodexToolSize(params, providerDefaults) {
   return resolveOpenAiImageSize(params, providerDefaults, {
     sourceName: "Codex image",
     flexible: true,
+    supportedRatios: OPENAI_FLEXIBLE_IMAGE_RATIOS,
+    supportedResolutions: CODEX_IMAGE_RESOLUTION_TIERS,
+    defaultRatio: "3:2",
+    defaultResolution: "2K",
+    constraints: {
+      maxEdge: 2048,
+      maxPixels: 2048 * 2048,
+    },
   });
 }
 
@@ -174,8 +182,8 @@ export const openaiCodexImageAdapter = {
   name: "OpenAI Codex (OAuth)",
   types: ["image"],
   capabilities: {
-    ratios: [...OPENAI_IMAGE_RATIOS],
-    resolutions: [...IMAGE_RESOLUTION_TIERS],
+    ratios: [...OPENAI_FLEXIBLE_IMAGE_RATIOS],
+    resolutions: [...CODEX_IMAGE_RESOLUTION_TIERS],
   },
 
   async checkAuth(ctx) {
@@ -202,7 +210,11 @@ export const openaiCodexImageAdapter = {
 
     const quality = params.quality || providerDefaults?.quality;
     if (quality) tool.quality = quality;
-    if (providerDefaults?.background) tool.background = providerDefaults.background;
+    const background = params.background || providerDefaults?.background;
+    if (background) tool.background = background;
+    if (params.output_compression !== undefined || providerDefaults?.output_compression !== undefined) {
+      tool.output_compression = params.output_compression ?? providerDefaults.output_compression;
+    }
 
     const content: any[] = [{ type: "input_text", text: params.prompt }];
     for (const imageUrl of normalizeImages(params.image)) {

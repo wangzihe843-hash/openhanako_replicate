@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import { useStore } from '../stores';
+import { selectSelectedIdsBySession } from '../stores/session-selectors';
 import { rectFromPoints, hitTestMessages, rangeIds, type SelectionRect } from '../utils/box-selection';
 
 interface Params {
@@ -23,7 +24,7 @@ export function useBoxSelection({ messageElementsRef, orderedIds, sessionPath, a
   const addMessagesToSelection = useStore(s => s.addMessagesToSelection);
   const toggleMessageSelection = useStore(s => s.toggleMessageSelection);
   const clearSelection = useStore(s => s.clearSelection);
-  const selectionActive = useStore(s => (s.selectedIdsBySession[sessionPath]?.length ?? 0) > 0);
+  const selectionActive = useStore(s => selectSelectedIdsBySession(s, sessionPath).length > 0);
 
   const enabled = useMemo(
     () => typeof window !== 'undefined'
@@ -110,7 +111,7 @@ export function useBoxSelection({ messageElementsRef, orderedIds, sessionPath, a
     if (!enabled || !active) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if ((useStore.getState().selectedIdsBySession[sessionPath]?.length ?? 0) > 0) {
+      if (selectSelectedIdsBySession(useStore.getState(), sessionPath).length > 0) {
         clearSelection(sessionPath);
       }
     };
@@ -123,7 +124,7 @@ export function useBoxSelection({ messageElementsRef, orderedIds, sessionPath, a
     if (!enabled || e.button !== 0) return;
     const target = e.target as HTMLElement;
     if (target.closest('[data-message-id]')) return;
-    const current = useStore.getState().selectedIdsBySession[sessionPath] || [];
+    const current = selectSelectedIdsBySession(useStore.getState(), sessionPath);
     dragRef.current = {
       x0: e.clientX,
       y0: e.clientY,
@@ -141,7 +142,7 @@ export function useBoxSelection({ messageElementsRef, orderedIds, sessionPath, a
       e.stopPropagation();
       return;
     }
-    const active = (useStore.getState().selectedIdsBySession[sessionPath]?.length ?? 0) > 0;
+    const active = selectSelectedIdsBySession(useStore.getState(), sessionPath).length > 0;
     if (!active) return; // 普通模式不拦截
     const target = e.target as HTMLElement;
     if (target.closest('[data-message-actions]')) return; // 放行截图/复制/全选按钮

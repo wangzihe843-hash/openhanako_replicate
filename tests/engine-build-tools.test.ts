@@ -6,8 +6,12 @@ import { HanaEngine } from "../core/engine.ts";
 
 describe("HanaEngine.buildTools", () => {
   let tmpDir;
+  let engines: HanaEngine[] = [];
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const engine of engines.splice(0).reverse()) {
+      await engine.dispose();
+    }
     if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
     tmpDir = null;
   });
@@ -122,6 +126,9 @@ describe("HanaEngine.buildTools", () => {
     ], {
       agentDir,
       workspace: tmpDir,
+      workspaceFolders: [path.join(tmpDir, "shared")],
+      authorizedFolders: [path.join(tmpDir, "assets-static")],
+      getAuthorizedFolders: () => [path.join(tmpDir, "assets-live")],
       getPermissionMode: () => "auto",
     });
 
@@ -132,8 +139,14 @@ describe("HanaEngine.buildTools", () => {
     );
 
     expect(approvalGateway.review).toHaveBeenCalledWith(
-      expect.objectContaining({ toolName: "stage_files", sessionPath }),
-      expect.any(Object),
+      expect.objectContaining({ toolName: "stage_files", sessionPath, agentId: "focus" }),
+      expect.objectContaining({
+        sessionPath,
+        agentId: "focus",
+        cwd: tmpDir,
+        workspaceFolders: [path.join(tmpDir, "shared")],
+        authorizedFolders: [path.join(tmpDir, "assets-live")],
+      }),
     );
     expect(execute).toHaveBeenCalledOnce();
     expect(result.details.executed).toBe(true);
@@ -146,6 +159,7 @@ describe("HanaEngine.buildTools", () => {
       productDir: tmpDir,
       agentId: "hana",
     } as any);
+    engines.push(engine);
     engine.resolveUtilityConfig = vi.fn(() => ({
       utility: { id: "small-reviewer", provider: "test" },
       utility_large: { id: "large-reviewer", provider: "test" },
@@ -199,10 +213,12 @@ describe("HanaEngine.buildTools", () => {
       resolveUtilityConfig: vi.fn(() => ({ utility: { id: "target-utility" } })),
     };
     engine._usageLedger = { id: "ledger" };
+    engine.getSessionIdForPath = vi.fn(() => "sess_target_1");
 
     const result = engine.resolveUtilityConfig({ sessionPath });
 
     expect(engine.agentIdFromSessionPath).toHaveBeenCalledWith(sessionPath);
+    expect(engine.getSessionIdForPath).toHaveBeenCalledWith(sessionPath);
     expect(engine._configCoord.resolveUtilityConfig).toHaveBeenCalledWith({
       sessionPath,
       agentId: "target",
@@ -211,6 +227,7 @@ describe("HanaEngine.buildTools", () => {
       utility: { id: "target-utility" },
       usageAgentId: "target",
       usageSessionPath: sessionPath,
+      usageSessionId: "sess_target_1",
     });
   });
 
@@ -509,31 +526,104 @@ describe("HanaEngine.buildTools", () => {
       origin: "agent_edit",
     });
     expect(engine._emitEvent).toHaveBeenCalledWith(expect.objectContaining({
-      type: "app_event",
-      event: expect.objectContaining({
-        type: "session-file-updated",
-        payload: expect.objectContaining({
-          sessionPath,
-          filePath: path.join(workspace, "draft.md"),
-          fileId: "sf_created",
-          origin: "agent_write",
-          operation: "created",
-        }),
+      type: "resource.changed",
+      source: "agent_tool",
+      reason: "agent_write",
+      sessionPath,
+      fileId: "sf_created",
+      origin: "agent_write",
+      operation: "created",
+      resource: expect.objectContaining({
+        filePath: path.join(workspace, "draft.md"),
       }),
-    }), null);
+    }), sessionPath);
     expect(engine._emitEvent).toHaveBeenCalledWith(expect.objectContaining({
-      type: "app_event",
-      event: expect.objectContaining({
-        type: "session-file-updated",
-        payload: expect.objectContaining({
-          sessionPath,
-          filePath: path.join(workspace, "draft.md"),
-          fileId: "sf_modified",
-          origin: "agent_edit",
-          operation: "modified",
-        }),
+      type: "resource.changed",
+      source: "agent_tool",
+      reason: "agent_edit",
+      sessionPath,
+      fileId: "sf_modified",
+      origin: "agent_edit",
+      operation: "modified",
+      resource: expect.objectContaining({
+        filePath: path.join(workspace, "draft.md"),
       }),
-    }), null);
+    }), sessionPath);
+  });
+
+  it("registers write and edit session files when Pi SDK uses the file_path alias", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-file-path-alias-"));
+    const agentDir = path.join(tmpDir, "agents", "focus");
+    const workspace = path.join(tmpDir, "workspace");
+    const sessionPath = path.join(agentDir, "sessions", "touch-alias.jsonl");
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.writeFileSync(sessionPath, "{}\n");
+
+    const registerSessionFile = vi.fn(({ sessionPath, filePath, label, origin, operation }) => ({
+      id: `sf_${operation}`,
+      sessionPath,
+      filePath,
+      label,
+      origin,
+      operation,
+    }));
+    const engine = Object.create(HanaEngine.prototype);
+    engine.hanakoHome = tmpDir;
+    engine.registerSessionFile = registerSessionFile;
+    engine.getAgent = vi.fn(() => ({ id: "focus", agentDir, tools: [] }));
+    engine._pluginManager = null;
+    engine._prefs = { getFileBackup: () => ({ enabled: false }) };
+    engine._readPreferences = () => ({ sandbox: false });
+    engine._confirmStore = null;
+    engine._emitEvent = vi.fn();
+    engine.getSessionPermissionMode = vi.fn(() => "operate");
+    engine._agentMgr = {
+      agent: {
+        id: "focus",
+        agentDir,
+        tools: [],
+      },
+    };
+
+    const { tools } = engine.buildTools(workspace, [], {
+      agentDir,
+      workspace,
+      getSessionPath: () => sessionPath,
+    });
+    const write = tools.find(tool => tool.name === "write");
+    const edit = tools.find(tool => tool.name === "edit");
+
+    const writeResult = await write.execute("write-1", { file_path: "alias.md", content: "hello\n" });
+    const editResult = await edit.execute("edit-1", {
+      file_path: "alias.md",
+      edits: [{ oldText: "hello", newText: "hello Hana" }],
+    });
+
+    expect(registerSessionFile).toHaveBeenCalledWith(expect.objectContaining({
+      sessionPath,
+      filePath: path.join(workspace, "alias.md"),
+      label: "alias.md",
+      origin: "agent_write",
+      operation: "created",
+    }));
+    expect(registerSessionFile).toHaveBeenCalledWith(expect.objectContaining({
+      sessionPath,
+      filePath: path.join(workspace, "alias.md"),
+      label: "alias.md",
+      origin: "agent_edit",
+      operation: "modified",
+    }));
+    expect(writeResult.details.sessionFile).toMatchObject({
+      id: "sf_created",
+      filePath: path.join(workspace, "alias.md"),
+      origin: "agent_write",
+    });
+    expect(editResult.details.sessionFile).toMatchObject({
+      id: "sf_modified",
+      filePath: path.join(workspace, "alias.md"),
+      origin: "agent_edit",
+    });
   });
 
   it("lets built-in file tools pick up newly authorized session folders without rebuilding tools", async () => {
@@ -583,7 +673,8 @@ describe("HanaEngine.buildTools", () => {
       path: targetPath,
       content: "before\n",
     });
-    expect(blocked.content[0].text).toContain(targetPath);
+    expect(blocked.content[0].text).toContain("Resource is outside authorized roots");
+    expect(blocked.content[0].text).not.toContain(targetPath);
     expect(fs.existsSync(targetPath)).toBe(false);
 
     authorizedFolders = [authorized];
@@ -643,8 +734,8 @@ describe("HanaEngine.buildTools", () => {
       edits: [{ oldText: "yuan: hanako", newText: "yuan: caikangyong" }],
     });
 
-    expect(writeResult.content[0].text).toContain("managed");
-    expect(editResult.content[0].text).toContain("managed");
+    expect(writeResult.content[0].text.toLowerCase()).toContain("managed");
+    expect(editResult.content[0].text.toLowerCase()).toContain("managed");
     expect(fs.readFileSync(configPath, "utf-8")).toContain("yuan: hanako");
     expect(engine.registerSessionFile).not.toHaveBeenCalled();
   });

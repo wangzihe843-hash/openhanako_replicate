@@ -11,10 +11,15 @@ import { debugLog } from "../../lib/debug-log.ts";
 import { getRawConfig, clearConfigCache } from "../../lib/memory/config-loader.ts";
 import { FactStore } from "../../lib/memory/fact-store.ts";
 import {
-  writeCompiledResetMarker,
   clearCompiledMemoryArtifacts,
   clearCompiledSummarySources,
+  writeCompiledResetMarker,
 } from "../../lib/memory/compiled-memory-state.ts";
+import {
+  buildCompiledMemoryMarkdown,
+  readCompiledMemorySections,
+  writeEditableFactsSection,
+} from "../../lib/memory/compile.ts";
 import {
   readPinnedMemoryItems,
   replacePinnedMemoryItems,
@@ -55,6 +60,10 @@ import {
 import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.ts";
 import { recordSecurityAuditEvent } from "../http/security-audit.ts";
 import { readUserProfile, writeUserProfile } from "../../lib/user-profile-store.ts";
+import {
+  EDITABLE_MEMORY_EXPERIMENT_ID,
+  getResolvedExperimentValue,
+} from "../../lib/experiments/registry.ts";
 
 function hasOwn(value: any, key: string) {
   return !!value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, key);
@@ -64,6 +73,14 @@ function hasProviderMutationPatch(partial: any) {
   if (!partial || typeof partial !== "object") return false;
   if (hasOwn(partial, "providers")) return true;
   return ["api", "embedding_api", "utility_api"].some((key) => hasInlineProviderCredentialPatch(partial[key]));
+}
+
+function isEditableMemoryEnabled(engine: any) {
+  try {
+    return getResolvedExperimentValue(engine.preferences, EDITABLE_MEMORY_EXPERIMENT_ID) === true;
+  } catch {
+    return false;
+  }
 }
 
 function getGlobalValue(globalFields: any[], key: string) {
@@ -612,10 +629,42 @@ export function createConfigRoute(engine: any) {
   route.get("/memories/compiled", async (c) => {
     try {
       const agent = resolveAgent(engine, c);
-      const mdPath = agent.memoryMdPath;
-      const content = await fs.readFile(mdPath, "utf-8").catch(() => "");
-      return c.json({ content });
+      const editableFactsEnabled = isEditableMemoryEnabled(engine);
+      const sections = readCompiledMemorySections(path.dirname(agent.memoryMdPath), {
+        editableFactsEnabled,
+        summaryManager: agent.summaryManager,
+      });
+      const content = editableFactsEnabled
+        ? buildCompiledMemoryMarkdown(sections)
+        : await fs.readFile(agent.memoryMdPath, "utf-8").catch(() => "");
+      return c.json({ content, editableFactsEnabled, sections });
     } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.put("/memories/compiled/facts", async (c) => {
+    try {
+      const denied = denyWithoutScope(c, "settings.write");
+      if (denied) return denied;
+      const agent = resolveAgentStrict(engine, c);
+      if (!isEditableMemoryEnabled(engine)) {
+        return c.json({ error: "editable memory experiment is disabled" }, 400);
+      }
+      const body = await safeJson(c);
+      if (typeof body?.facts !== "string") {
+        return c.json({ error: "facts must be a string" }, 400);
+      }
+      const memDir = path.dirname(agent.memoryMdPath);
+      const normalizedFacts = writeEditableFactsSection(memDir, body.facts, {
+        summaryManager: agent.summaryManager,
+        memoryMdPath: agent.memoryMdPath,
+      });
+      debugLog()?.log("api", `PUT /api/memories/compiled/facts agent=${agent.id}`);
+      await engine.updateConfig({}, { agentId: agent.id });
+      return c.json({ ok: true, facts: normalizedFacts });
+    } catch (err) {
+      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
       return c.json({ error: err.message }, 500);
     }
   });

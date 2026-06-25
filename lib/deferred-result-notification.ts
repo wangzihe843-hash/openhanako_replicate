@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 function escapeXml(str) {
   return String(str)
     .replace(/&/g, "&amp;")
@@ -75,11 +77,20 @@ export function formatDeferredResultNotification(taskId, task) {
   return formatFailNotification(taskId, task?.reason, task?.meta);
 }
 
+function createDeferredResultDeliveryId(taskId) {
+  return `deferred-delivery:${taskId}:${randomUUID()}`;
+}
+
 export function buildDeferredResultMessage(taskId, task) {
   return {
     customType: DEFERRED_RESULT_MESSAGE_TYPE,
     content: formatDeferredResultNotification(taskId, task),
     display: false,
+    details: {
+      schemaVersion: 1,
+      taskId,
+      deliveryId: createDeferredResultDeliveryId(taskId),
+    },
   };
 }
 

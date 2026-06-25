@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { createHash } from "crypto";
 import { detectMime, extOfName, inferFileKind } from "../file-metadata.ts";
+import { isSessionJsonlFilename } from "../session-jsonl.ts";
 
 export const SESSION_FILE_SIDECAR_VERSION = 1;
 export const SESSION_FILE_CACHE_INACTIVE_TTL_MS = 72 * 60 * 60 * 1000;
@@ -12,10 +13,10 @@ export function sessionFileSidecarPath(sessionPath) {
   return `${sessionPath}.files.json`;
 }
 
-export function sessionFilesCacheDir(hanakoHome, sessionPath) {
+export function sessionFilesCacheDir(hanakoHome, sessionRef) {
   if (!hanakoHome) throw new Error("hanakoHome is required for session file cache");
-  if (!sessionPath) throw new Error("sessionPath is required for session file cache");
-  const hash = createHash("sha256").update(String(sessionPath)).digest("hex").slice(0, 24);
+  if (!sessionRef) throw new Error("sessionPath is required for session file cache");
+  const hash = createHash("sha256").update(sessionFileOwnerKey(sessionRef)).digest("hex").slice(0, 24);
   return path.join(hanakoHome, "session-files", hash);
 }
 
@@ -51,9 +52,11 @@ export class SessionFileRegistry {
   declare _loadedSessions: any;
   declare _managedCacheRoot: any;
   declare _now: any;
+  declare _getSessionIdForPath: any;
   declare _sidecarsBySession: any;
-  constructor({ now = () => Date.now(), managedCacheRoot = null }: any = {}) {
+  constructor({ now = () => Date.now(), managedCacheRoot = null, getSessionIdForPath = null }: any = {}) {
     this._now = now;
+    this._getSessionIdForPath = typeof getSessionIdForPath === "function" ? getSessionIdForPath : null;
     this._managedCacheRoot = managedCacheRoot ? normalizeExistingOrResolvedPath(managedCacheRoot) : null;
     this._byId = new Map();
     this._idsBySession = new Map();
@@ -61,7 +64,12 @@ export class SessionFileRegistry {
     this._loadedSessions = new Set();
   }
 
+  setSessionIdResolver(resolver) {
+    this._getSessionIdForPath = typeof resolver === "function" ? resolver : null;
+  }
+
   registerFile({
+    sessionId = null,
     sessionPath,
     filePath,
     label,
@@ -75,7 +83,7 @@ export class SessionFileRegistry {
   }: any = {}) {
     if (!sessionPath) throw new Error("sessionPath is required to register a session file");
     if (!filePath || !path.isAbsolute(filePath)) throw new Error("filePath must be an absolute path");
-    this._hydrateSession(sessionPath);
+    this._hydrateSession(sessionPath, sessionId);
     const normalizedSourceKey = normalizeSourceKey(sourceKey);
 
     let incomingRealPath;
@@ -85,9 +93,14 @@ export class SessionFileRegistry {
       throw new Error(`file not found: ${filePath}`);
     }
 
-    const existing = normalizedSourceKey
+    let existing = normalizedSourceKey
       ? this._findSessionFileBySourceKey(sessionPath, normalizedSourceKey) || this._findSessionFileByRealPath(sessionPath, incomingRealPath)
       : this._findSessionFileByRealPath(sessionPath, incomingRealPath);
+    const ownerKey = sessionFileOwnerKey({ sessionId, sessionPath });
+    const candidateId = buildSessionFileId({ ownerKey, realPath: incomingRealPath, sourceKey: normalizedSourceKey });
+    if (!existing && this._byId.has(candidateId)) {
+      existing = this._byId.get(candidateId);
+    }
     const shouldKeepExistingMaterialization = existing
       && normalizedSourceKey
       && existing.sourceKey === normalizedSourceKey
@@ -105,7 +118,7 @@ export class SessionFileRegistry {
     const mime = stat.isDirectory()
       ? "inode/directory"
       : detectMime(sample, "application/octet-stream", filename);
-    const id = existing?.id || buildSessionFileId({ sessionPath, realPath, sourceKey: normalizedSourceKey });
+    const id = existing?.id || buildSessionFileId({ ownerKey, realPath, sourceKey: normalizedSourceKey });
     const resolvedOperation = operation || inferOperation(origin);
     const operations = addUnique(existing?.operations, resolvedOperation);
     const normalizedWaveform = normalizeAudioWaveform(waveform);
@@ -113,6 +126,7 @@ export class SessionFileRegistry {
     const entry = Object.freeze({
       ...(existing || {}),
       id,
+      ...(sessionId ? { sessionId } : {}),
       sessionPath,
       origin,
       filePath: materializedFilePath,
@@ -138,7 +152,9 @@ export class SessionFileRegistry {
     });
 
     this._remember(entry, sessionPath);
-    const sidecar = this._sidecarsBySession.get(sessionPath) || emptySidecar(sessionPath, this._now());
+    const sidecarKey = this._sessionKeyForPath(sessionPath, sessionId);
+    const sidecar = this._sidecarsBySession.get(sidecarKey) || emptySidecar(sessionPath, this._now(), sessionId);
+    if (sessionId) sidecar.sessionId = sessionId;
     sidecar.files[id] = entry;
     if (shouldAppendRef(sidecar.refs, { fileId: id, origin, operation: resolvedOperation, sourceKey: normalizedSourceKey })) {
       sidecar.refs.push({
@@ -151,19 +167,22 @@ export class SessionFileRegistry {
       });
     }
     sidecar.updatedAt = this._now();
-    this._sidecarsBySession.set(sessionPath, sidecar);
-    this._saveSidecar(sessionPath);
+    this._sidecarsBySession.set(sidecarKey, sidecar);
+    this._saveSidecar(sessionPath, sessionId);
     return entry;
   }
 
-  get(fileId, { sessionPath }: any = {}) {
+  get(fileId, { sessionId = null, sessionPath = null }: any = {}) {
     if (!fileId) return null;
     if (sessionPath) {
-      this._hydrateSession(sessionPath);
-      const ids = this._idsBySession.get(sessionPath) || [];
+      this._hydrateSession(sessionPath, sessionId);
+      const ids = this._idsBySession.get(this._sessionKeyForPath(sessionPath, sessionId)) || [];
       if (!ids.includes(fileId)) return null;
     }
-    return this._byId.get(fileId) || null;
+    const entry = this._byId.get(fileId) || null;
+    if (!entry) return null;
+    if (sessionId && entry.sessionId && entry.sessionId !== sessionId) return null;
+    return entry;
   }
 
   getByFilePath(filePath, { sessionPath }: any = {}) {
@@ -171,7 +190,7 @@ export class SessionFileRegistry {
     if (sessionPath) this._hydrateSession(sessionPath);
     const target = normalizeExistingOrResolvedPath(filePath);
     const ids = sessionPath
-      ? (this._idsBySession.get(sessionPath) || [])
+      ? (this._idsBySession.get(this._sessionKeyForPath(sessionPath)) || [])
       : Array.from(this._byId.keys());
     for (const id of ids) {
       const entry = this._byId.get(id);
@@ -191,15 +210,19 @@ export class SessionFileRegistry {
     return this._findSessionFileBySourceKey(sessionPath, normalizedSourceKey);
   }
 
-  updateTranscription(fileId, transcription, { sessionPath }: any = {}) {
+  updateTranscription(fileId, transcription, { sessionId = null, sessionPath = null }: any = {}) {
     if (!fileId) throw new Error("fileId is required to update transcription");
     const existing = sessionPath
-      ? this.get(fileId, { sessionPath })
+      ? this.get(fileId, { sessionId, sessionPath })
       : this._byId.get(fileId);
     if (!existing) throw new Error(`session file not found: ${fileId}`);
+    if (sessionId && existing.sessionId && existing.sessionId !== sessionId) {
+      throw new Error(`session file not found: ${fileId}`);
+    }
     const ownerSessionPath = sessionPath || existing.sessionPath;
     if (!ownerSessionPath) throw new Error("sessionPath is required to update transcription");
-    const current = this.get(fileId, { sessionPath: ownerSessionPath });
+    const ownerSessionId = sessionId || existing.sessionId || null;
+    const current = this.get(fileId, { sessionId: ownerSessionId, sessionPath: ownerSessionPath });
     if (!current) throw new Error(`session file not found: ${fileId}`);
     const now = this._now();
     const nextTranscription = normalizeTranscription(transcription, current.transcription, now);
@@ -208,30 +231,32 @@ export class SessionFileRegistry {
       transcription: nextTranscription,
     });
     this._remember(next, ownerSessionPath);
-    const sidecar = this._sidecarsBySession.get(ownerSessionPath) || emptySidecar(ownerSessionPath, now);
+    const sidecarKey = this._sessionKeyForPath(ownerSessionPath, ownerSessionId || current.sessionId || null);
+    const sidecar = this._sidecarsBySession.get(sidecarKey) || emptySidecar(ownerSessionPath, now, ownerSessionId || current.sessionId || null);
     sidecar.files[fileId] = next;
     sidecar.updatedAt = now;
-    this._sidecarsBySession.set(ownerSessionPath, sidecar);
-    this._saveSidecar(ownerSessionPath);
+    this._sidecarsBySession.set(sidecarKey, sidecar);
+    this._saveSidecar(ownerSessionPath, sessionId || current.sessionId || null);
     return next;
   }
 
   list(sessionPath) {
     this._hydrateSession(sessionPath);
-    const ids = this._idsBySession.get(sessionPath) || [];
+    const ids = this._idsBySession.get(this._sessionKeyForPath(sessionPath)) || [];
     return ids.map(id => this._byId.get(id)).filter(Boolean);
   }
 
   unloadSession(sessionPath) {
     if (!sessionPath) throw new Error("sessionPath is required to unload session files");
-    const ids = new Set(this._idsBySession.get(sessionPath) || []);
-    const sidecar = this._sidecarsBySession.get(sessionPath);
+    const key = this._sessionKeyForPath(sessionPath);
+    const ids = new Set(this._idsBySession.get(key) || []);
+    const sidecar = this._sidecarsBySession.get(key);
     for (const file of Object.values(sidecar?.files || {}) as any) {
       if ((file as any)?.id) ids.add((file as any).id);
     }
-    const hadSession = this._loadedSessions.has(sessionPath)
-      || this._sidecarsBySession.has(sessionPath)
-      || this._idsBySession.has(sessionPath);
+    const hadSession = this._loadedSessions.has(key)
+      || this._sidecarsBySession.has(key)
+      || this._idsBySession.has(key);
 
     for (const [indexedSessionPath, indexedIds] of this._idsBySession) {
       const retainedIds = indexedIds.filter(id => !ids.has(id));
@@ -242,8 +267,8 @@ export class SessionFileRegistry {
         this._idsBySession.delete(indexedSessionPath);
       }
     }
-    this._sidecarsBySession.delete(sessionPath);
-    this._loadedSessions.delete(sessionPath);
+    this._sidecarsBySession.delete(key);
+    this._loadedSessions.delete(key);
 
     for (const id of ids) {
       if (!this._isFileIdReferencedByLoadedSession(id)) this._byId.delete(id);
@@ -267,7 +292,8 @@ export class SessionFileRegistry {
       return { sessionPath, cold: false, ageMs, expired: 0, deleted: 0 };
     }
 
-    const sidecar = this._sidecarsBySession.get(sessionPath) || emptySidecar(sessionPath, this._now());
+    const sidecarKey = this._sessionKeyForPath(sessionPath);
+    const sidecar = this._sidecarsBySession.get(sidecarKey) || emptySidecar(sessionPath, this._now());
     let expired = 0;
     let deleted = 0;
     let changed = false;
@@ -294,7 +320,7 @@ export class SessionFileRegistry {
 
     if (changed) {
       sidecar.updatedAt = this._now();
-      this._sidecarsBySession.set(sessionPath, sidecar);
+      this._sidecarsBySession.set(sidecarKey, sidecar);
       this._saveSidecar(sessionPath);
     }
 
@@ -312,23 +338,27 @@ export class SessionFileRegistry {
     return results;
   }
 
-  _hydrateSession(sessionPath) {
+  _hydrateSession(sessionPath, sessionId = null) {
     if (!sessionPath) throw new Error("sessionPath is required");
-    if (this._loadedSessions.has(sessionPath)) return;
-    const sidecar = this._readSidecar(sessionPath);
-    this._sidecarsBySession.set(sessionPath, sidecar);
-    this._loadedSessions.add(sessionPath);
+    const key = this._sessionKeyForPath(sessionPath, sessionId);
+    if (this._loadedSessions.has(key)) return;
+    const sidecar = this._readSidecar(sessionPath, sessionId);
+    const resolvedSessionId = sidecar.sessionId || normalizeSessionId(sessionId) || null;
+    const sidecarKey = this._sessionKeyForPath(sessionPath, resolvedSessionId);
+    this._sidecarsBySession.set(sidecarKey, sidecar);
+    this._loadedSessions.add(sidecarKey);
     for (const raw of Object.values(sidecar.files || {}) as any) {
       const entry = freezeEntry({
         ...(raw as any),
+        ...(!(raw as any).sessionId && resolvedSessionId ? { sessionId: resolvedSessionId } : {}),
         operations: (raw as any).operations || operationsFromRefs(sidecar.refs, raw),
       });
-      this._remember(entry, sessionPath);
+      this._remember(entry, sessionPath, resolvedSessionId);
     }
   }
 
   _findSessionFileByRealPath(sessionPath, realPath) {
-    const ids = this._idsBySession.get(sessionPath) || [];
+    const ids = this._idsBySession.get(this._sessionKeyForPath(sessionPath)) || [];
     const target = normalizeExistingOrResolvedPath(realPath);
     for (const id of ids) {
       const entry = this._byId.get(id);
@@ -343,7 +373,7 @@ export class SessionFileRegistry {
     const normalizedSourceKey = normalizeSourceKey(sourceKey);
     if (!normalizedSourceKey) return null;
     const ids = sessionPath
-      ? (this._idsBySession.get(sessionPath) || [])
+      ? (this._idsBySession.get(this._sessionKeyForPath(sessionPath)) || [])
       : Array.from(this._byId.keys());
     for (const id of ids) {
       const entry = this._byId.get(id);
@@ -353,12 +383,15 @@ export class SessionFileRegistry {
     return null;
   }
 
-  _remember(entry, requestedSessionPath = null) {
+  _remember(entry, requestedSessionPath = null, requestedSessionId = null) {
     this._byId.set(entry.id, entry);
-    const sessions = new Set([entry.sessionPath, requestedSessionPath].filter(Boolean));
-    for (const sessionPath of sessions) {
-      if (!this._idsBySession.has(sessionPath)) this._idsBySession.set(sessionPath, []);
-      const ids = this._idsBySession.get(sessionPath);
+    const sessionId = normalizeSessionId(entry.sessionId) || normalizeSessionId(requestedSessionId);
+    const keys = sessionId
+      ? new Set([sessionId])
+      : new Set([entry.sessionPath, requestedSessionPath].filter(Boolean));
+    for (const key of keys) {
+      if (!this._idsBySession.has(key)) this._idsBySession.set(key, []);
+      const ids = this._idsBySession.get(key);
       if (!ids.includes(entry.id)) ids.push(entry.id);
     }
   }
@@ -370,9 +403,10 @@ export class SessionFileRegistry {
     return false;
   }
 
-  _readSidecar(sessionPath) {
+  _readSidecar(sessionPath, sessionId = null) {
     const sidecarPath = sessionFileSidecarPath(sessionPath);
-    if (!fs.existsSync(sidecarPath)) return emptySidecar(sessionPath, this._now());
+    const resolvedSessionId = normalizeSessionId(sessionId) || this._resolveSessionIdForPath(sessionPath);
+    if (!fs.existsSync(sidecarPath)) return emptySidecar(sessionPath, this._now(), resolvedSessionId);
     try {
       const raw = JSON.parse(fs.readFileSync(sidecarPath, "utf-8"));
       if (raw?.version !== SESSION_FILE_SIDECAR_VERSION || !raw.files || typeof raw.files !== "object") {
@@ -381,6 +415,7 @@ export class SessionFileRegistry {
       return {
         version: SESSION_FILE_SIDECAR_VERSION,
         sessionPath: raw.sessionPath || sessionPath,
+        ...(normalizeSessionId(raw.sessionId) || resolvedSessionId ? { sessionId: normalizeSessionId(raw.sessionId) || resolvedSessionId } : {}),
         files: raw.files,
         refs: Array.isArray(raw.refs) ? raw.refs : [],
         createdAt: raw.createdAt || this._now(),
@@ -391,8 +426,8 @@ export class SessionFileRegistry {
     }
   }
 
-  _saveSidecar(sessionPath) {
-    const sidecar = this._sidecarsBySession.get(sessionPath);
+  _saveSidecar(sessionPath, sessionId = null) {
+    const sidecar = this._sidecarsBySession.get(this._sessionKeyForPath(sessionPath, sessionId));
     if (!sidecar) return;
     const sidecarPath = sessionFileSidecarPath(sessionPath);
     fs.mkdirSync(path.dirname(sidecarPath), { recursive: true });
@@ -408,12 +443,26 @@ export class SessionFileRegistry {
       throw new Error(`managed cache file is outside session-files root: ${filePath}`);
     }
   }
+
+  _resolveSessionIdForPath(sessionPath) {
+    if (!sessionPath || typeof this._getSessionIdForPath !== "function") return null;
+    try {
+      return normalizeSessionId(this._getSessionIdForPath(sessionPath));
+    } catch {
+      return null;
+    }
+  }
+
+  _sessionKeyForPath(sessionPath, sessionId = null) {
+    return normalizeSessionId(sessionId) || this._resolveSessionIdForPath(sessionPath) || sessionPath;
+  }
 }
 
-function emptySidecar(sessionPath, now) {
+function emptySidecar(sessionPath, now, sessionId = null) {
   return {
     version: SESSION_FILE_SIDECAR_VERSION,
     sessionPath,
+    ...(sessionId ? { sessionId } : {}),
     files: {},
     refs: [],
     createdAt: now,
@@ -507,7 +556,7 @@ function collectJsonlFiles(dir, out) {
   let entries = [];
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const entry of entries) {
-    if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+    if (entry.isFile() && isSessionJsonlFilename(entry.name)) {
       out.push(path.join(dir, entry.name));
     }
   }
@@ -546,12 +595,30 @@ function readSample(filePath) {
   }
 }
 
-function buildSessionFileId({ sessionPath, realPath, sourceKey }) {
+function buildSessionFileId({ ownerKey, realPath, sourceKey }) {
   const hash = createHash("sha256")
-    .update(JSON.stringify([sessionPath, sourceKey || realPath]))
+    .update(JSON.stringify([ownerKey, sourceKey || realPath]))
     .digest("hex")
     .slice(0, 16);
   return `sf_${hash}`;
+}
+
+function sessionFileOwnerKey(value) {
+  if (value && typeof value === "object") {
+    const sessionId = typeof value.sessionId === "string" && value.sessionId.trim()
+      ? value.sessionId.trim()
+      : null;
+    if (sessionId) return `id:${sessionId}`;
+    const sessionPath = typeof value.sessionPath === "string" && value.sessionPath.trim()
+      ? value.sessionPath
+      : null;
+    if (sessionPath) return `path:${sessionPath}`;
+  }
+  return `path:${String(value)}`;
+}
+
+function normalizeSessionId(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function normalizeSourceKey(value) {

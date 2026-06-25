@@ -7,9 +7,9 @@
  *   - 用户主动 stop（desiredState=stopped）→ 绝不重连（最高优先级红线）
  *   - 全局 disabled → 不重连
  *   - 指数退避时序（1s 起 ×2 封顶）
- *   - 超退避上限标 failed，停止重试，等手动
+ *   - 非认证类失败持续重试，退避封顶但没有尝试次数上限
  *   - 重连成功写回同一 clients/clientErrors（归属唯一）
- *   - 扩展状态 connecting/reconnecting/failed 经 getState 透出
+ *   - 扩展状态 connecting/reconnecting/needs-auth 经 getState 透出
  *   - autoReconnect=false 的连接器不重连
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -215,7 +215,7 @@ describe("MCP runtime auto-reconnect", () => {
     await runtime.dispose();
   });
 
-  it("marks the connector failed after exceeding the reconnect attempt cap and stops retrying", async () => {
+  it("keeps retrying indefinitely with a capped delay after repeated transient reconnect failures", async () => {
     const factory = makeFakeClientFactory();
     const runtime = makeRuntime({ enabled: true, connectors: [STDIO_CONNECTOR] }, factory);
 
@@ -226,20 +226,20 @@ describe("MCP runtime auto-reconnect", () => {
     factory.failAllStarts(new Error("permanently down"));
     first.emitUnexpectedClose("dead for good");
 
-    // Drive well past the cap (backoff tops out at 30s; advance 30s per tick).
+    // Drive well past the old cap (backoff tops out at 30s; advance 30s per tick).
     for (let i = 0; i < 12; i += 1) {
       await vi.advanceTimersByTimeAsync(30_000);
     }
 
     const state = runtime.getState().connectors[0];
-    expect(state.status).toBe("failed");
-    // The error stays recorded — failed is not a silent swallow.
+    expect(state.status).toBe("reconnecting");
+    // The error stays recorded while reconnecting — not a silent swallow.
     expect(state.error).toContain("permanently down");
 
-    const createdAfterFailure = factory.instances.length;
-    // Advancing further must NOT create more clients — retrying has stopped.
-    await vi.advanceTimersByTimeAsync(600_000);
-    expect(factory.instances.length).toBe(createdAfterFailure);
+    const createdAfterRepeatedFailures = factory.instances.length;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(factory.instances.length).toBe(createdAfterRepeatedFailures + 1);
+    expect(runtime.getState().connectors[0].status).toBe("reconnecting");
 
     await runtime.dispose();
   });

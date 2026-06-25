@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { spawnSync } from "child_process";
+import vm from "vm";
 
 const require = createRequire(import.meta.url);
 const root = process.cwd();
@@ -40,6 +41,35 @@ describe("server startup diagnostics contract", () => {
     expect(mainSource).toContain("waitForProcessExit(");
     expect(mainSource).toContain("killPid(pid, true)");
     expect(mainSource).not.toContain("setTimeout(done, 3000)");
+  });
+
+  it("does not treat PID-only reused server shutdown as already exited", async () => {
+    const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+    const hasChildExitObserved = extractFunctionSource(mainSource, "hasChildExitObserved");
+    const waitForProcessExit = extractFunctionSource(mainSource, "waitForProcessExit");
+    let alive = true;
+    let checks = 0;
+    const context = vm.createContext({
+      SERVER_SHUTDOWN_POLL_MS: 1,
+      isPidAliveForDiagnostics: () => {
+        checks++;
+        return alive;
+      },
+      setTimeout,
+      Promise,
+    });
+
+    vm.runInContext(`${hasChildExitObserved}\n${waitForProcessExit}`, context);
+    const wait = context.waitForProcessExit(null, 12345, 25);
+    let settled = false;
+    wait.then(() => { settled = true; });
+
+    await new Promise(resolve => setTimeout(resolve, 5));
+    expect(settled).toBe(false);
+    expect(checks).toBeGreaterThan(0);
+
+    alive = false;
+    await expect(wait).resolves.toBe(true);
   });
 
   it("keeps server-info when shutdown cannot confirm the server is gone", () => {
@@ -141,16 +171,18 @@ describe("server startup diagnostics contract", () => {
 
   it("reuses only trusted server-info after token health and server identity checks", () => {
     const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
-    const lifecycleSource = fs.readFileSync(
-      path.join(root, "desktop", "src", "shared", "server-lifecycle.cjs"),
-      "utf-8",
-    );
+    const serverSource = fs.readFileSync(path.join(root, "server", "index.ts"), "utf-8");
 
     expect(mainSource).toContain("verifyReusableServerInfo");
-    expect(lifecycleSource).toContain("/api/health");
-    expect(lifecycleSource).toContain("/api/server/identity");
-    expect(lifecycleSource).toContain("Authorization: `Bearer ${existingInfo.token}`");
-    expect(lifecycleSource).toContain("identity.studioId");
+    expect(mainSource).toContain("/api/health");
+    expect(mainSource).toContain("/api/server/identity");
+    expect(mainSource).toContain("Authorization: `Bearer ${existingInfo.token}`");
+    expect(mainSource).toContain("identity.studioId");
+    expect(mainSource).toContain("readDesiredServerNetworkConfig");
+    expect(mainSource).toContain("describeReusableServerNetworkMismatch");
+    expect(mainSource).toContain("terminate: isDesktopOwnedServerInfo(existingInfo)");
+    expect(serverSource).toContain("configuredPort: serverRuntimeState.configuredPort");
+    expect(serverSource).toContain("network: createServerRuntimeNetworkSummary()");
   });
 
   it("does not terminate standalone servers that desktop only attached to", () => {
@@ -170,16 +202,15 @@ describe("server startup diagnostics contract", () => {
 
   it("surfaces structured port conflicts instead of burying them under GPU diagnostics", () => {
     const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
-    const lifecycleSource = fs.readFileSync(
-      path.join(root, "desktop", "src", "shared", "server-lifecycle.cjs"),
-      "utf-8",
-    );
+    const lifecycleSource = fs.readFileSync(path.join(root, "desktop", "src", "shared", "server-lifecycle.cjs"), "utf-8");
 
     expect(mainSource).toContain("parsePortInUseStartupError");
     expect(mainSource).toContain("extractRootServerStartupError");
     expect(mainSource).toContain("buildLaunchFailureDialogDetail");
+    expect(mainSource).toContain("serverLogs: _serverLogs");
     expect(lifecycleSource).toContain("const rootServerError = structuredPortConflict");
-    expect(lifecycleSource).toContain("extractRootServerStartupError(serverLogs)");
+    expect(lifecycleSource).toContain("tail.trimStart().startsWith(rootServerError)");
+    expect(lifecycleSource).not.toContain("tail.includes(rootServerError)");
     expect(lifecycleSource).toContain("return `${rootServerError}\\n\\n${tail}`");
   });
 
@@ -236,6 +267,17 @@ describe("server startup diagnostics contract", () => {
     });
     expect(out).toContain("PORT_IN_USE: 127.0.0.1:14500");
     expect(out).toContain("tail of crash");
+  });
+
+  it("buildLaunchFailureDialogDetail does not suppress a root error buried in the crash tail", () => {
+    const rootServerError = "PORT_IN_USE: 127.0.0.1:14500 is already in use (network mode: loopback).";
+    const out = buildLaunchFailureDialogDetail({
+      err: new Error("server died"),
+      crashInfo: `GPU diagnostics first\n${rootServerError}\nmore logs`,
+      serverLogs: [],
+      extractRootServerStartupError: () => rootServerError,
+    });
+    expect(out).toBe(`${rootServerError}\n\nGPU diagnostics first\n${rootServerError}\nmore logs`);
   });
 
   it("buildLaunchFailureDialogDetail falls back to extractor when err lacks startupError", () => {
@@ -319,3 +361,19 @@ describe("server startup diagnostics contract", () => {
     expect(v.terminate).toBe(false);
   });
 });
+
+function extractFunctionSource(source: string, name: string) {
+  const asyncStart = source.indexOf(`async function ${name}(`);
+  const plainStart = source.indexOf(`function ${name}(`);
+  const start = asyncStart >= 0 ? asyncStart : plainStart;
+  if (start < 0) throw new Error(`missing function ${name}`);
+  const bodyStart = source.indexOf("{", start);
+  if (bodyStart < 0) throw new Error(`missing body for function ${name}`);
+  let depth = 0;
+  for (let i = bodyStart; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    if (source[i] === "}") depth--;
+    if (depth === 0) return source.slice(start, i + 1);
+  }
+  throw new Error(`unterminated function ${name}`);
+}

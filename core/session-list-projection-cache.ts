@@ -1,5 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
+import { isSessionJsonlFilename } from "../lib/session-jsonl.ts";
+import { readFileLikePaths } from "../shared/link-aware-fs.ts";
 
 /**
  * Session 文件修订点：`${size}:${mtimeMs}` stat 签名。
@@ -22,9 +24,10 @@ export class SessionListProjectionCache {
   }
 
   async list(sessionDir) {
-    let entries;
+    let files;
     try {
-      entries = await fs.readdir(sessionDir, { withFileTypes: true });
+      files = (await readFileLikePaths(sessionDir, { extension: ".jsonl" }))
+        .filter((filePath) => isSessionJsonlFilename(path.basename(filePath)));
     } catch (err) {
       if (err?.code === "ENOENT") return [];
       throw err;
@@ -32,9 +35,6 @@ export class SessionListProjectionCache {
 
     const previous = this._dirs.get(sessionDir) || new Map();
     const next = new Map();
-    const files = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
-      .map((entry) => path.join(sessionDir, entry.name));
 
     const projections = await Promise.all(files.map(async (filePath) => {
       let stat;

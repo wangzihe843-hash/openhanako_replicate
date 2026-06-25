@@ -62,6 +62,20 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('button', { name: /model.notSelected/ })).toBeTruthy();
   });
 
+  it('shows the selected model provider icon in the closed trigger', () => {
+    const { container } = render(
+      <ModelSelector
+        models={[
+          { id: 'glm-5.2', name: 'GLM-5.2', provider: 'zhipu-coding', isCurrent: true },
+        ]}
+      />,
+    );
+
+    const trigger = screen.getByRole('button', { name: /GLM-5.2/ });
+    expect(trigger.querySelector('svg')).toBeTruthy();
+    expect(container.textContent).toContain('GLM-5.2');
+  });
+
   it('does not open the model menu while the session is streaming', () => {
     render(<ModelSelector models={[{ ...models[0], isCurrent: true }]} isStreaming />);
 

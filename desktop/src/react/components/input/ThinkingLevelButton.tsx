@@ -2,25 +2,34 @@ import { useCallback, useMemo } from 'react';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useI18n } from '../../hooks/use-i18n';
 import { useStore } from '../../stores';
-import { normalizeThinkingLevel, type ThinkingLevel } from '../../stores/model-slice';
+import { DEFAULT_THINKING_LEVELS, normalizeThinkingLevel, normalizeThinkingLevels, type ThinkingLevel } from '../../stores/model-slice';
 import { SelectWidget, type SelectOption } from '@/ui';
 import styles from './InputArea.module.css';
 
-const ALL_THINKING_LEVELS: ThinkingLevel[] = ['off', 'medium', 'high', 'xhigh'];
+const THINKING_LEVEL_COPY: Record<ThinkingLevel, { label: string; description: string }> = {
+  off: { label: '关闭', description: '不推理' },
+  auto: { label: '中等', description: '平衡推理' },
+  low: { label: '浅思', description: '轻量推理' },
+  medium: { label: '中等', description: '平衡推理' },
+  high: { label: '深度', description: '深度推理' },
+  xhigh: { label: '极致', description: '极致推理' },
+  max: { label: '极致', description: '极致推理' },
+};
 
-export function ThinkingLevelButton({ level, onChange, modelXhigh }: {
+export function ThinkingLevelButton({ level, onChange, availableLevels }: {
   level: ThinkingLevel;
   onChange: (level: ThinkingLevel) => void;
-  modelXhigh: boolean;
+  availableLevels?: readonly ThinkingLevel[];
 }) {
   const { t } = useI18n();
   const currentSessionPath = useStore(s => s.currentSessionPath);
   const pendingNewSession = useStore(s => s.pendingNewSession);
   const activeLevel = normalizeThinkingLevel(level);
 
-  const availableLevels = useMemo(() => {
-    return ALL_THINKING_LEVELS.filter(lv => lv !== 'xhigh' || modelXhigh);
-  }, [modelXhigh]);
+  const normalizedAvailableLevels = useMemo(
+    () => normalizeThinkingLevels(availableLevels) ?? DEFAULT_THINKING_LEVELS,
+    [availableLevels],
+  );
 
   const selectLevel = useCallback(async (next: ThinkingLevel) => {
     try {
@@ -62,11 +71,14 @@ export function ThinkingLevelButton({ level, onChange, modelXhigh }: {
 
   const isOff = activeLevel === 'off';
 
-  const options: SelectOption[] = availableLevels.map(lv => ({
-    value: lv,
-    label: tLevel(`input.thinkingLevel.${lv}`, lv),
-    description: tLevel(`input.thinkingDesc.${lv}`, ''),
-  }));
+  const options: SelectOption[] = normalizedAvailableLevels.map(lv => {
+    const copy = THINKING_LEVEL_COPY[lv];
+    return {
+      value: lv,
+      label: tLevel(`input.thinkingLevel.${lv}`, copy.label),
+      description: tLevel(`input.thinkingDesc.${lv}`, copy.description),
+    };
+  });
 
   return (
     <SelectWidget
@@ -77,7 +89,7 @@ export function ThinkingLevelButton({ level, onChange, modelXhigh }: {
       align="end"
       placement="top"
       offset={4}
-      popupMinWidth={160}
+      popupMinWidth={180}
       triggerBare
       triggerClassName={`${styles['thinking-pill']}${isOff ? '' : ` ${styles.active}`}`}
       renderTrigger={() => (

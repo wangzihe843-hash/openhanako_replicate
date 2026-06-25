@@ -57,4 +57,83 @@ describe("workspace UI state", () => {
       jianDrawerOpen: true,
     });
   });
+
+  it("keeps canonical preview tab metadata including source root and reading position", () => {
+    expect(normalizeWorkspaceUiEntry({
+      openTabs: ["note"],
+      activeTabId: "note",
+      previewTabs: [{
+        id: "note",
+        filePath: "/repo/docs/note.md",
+        relativePath: "docs/note.md",
+        title: "note.md",
+        type: "markdown",
+        ext: "MD",
+        sourceRootPath: "/repo",
+        readingPosition: {
+          preview: {
+            scrollTop: 240,
+            scrollHeight: 1200,
+            clientHeight: 600,
+            ratio: 0.4,
+            anchorId: "intro",
+            contentHash: "abc",
+          },
+          edit: {
+            scrollTop: 80,
+          },
+          currentHeadingId: "intro",
+          currentHeadingText: "Intro",
+          contentHash: "abc",
+        },
+      }],
+    })).toMatchObject({
+      openTabs: ["note"],
+      activeTabId: "note",
+      previewTabs: [{
+        id: "note",
+        filePath: "/repo/docs/note.md",
+        relativePath: "docs/note.md",
+        type: "markdown",
+        ext: "md",
+        sourceRootPath: "/repo",
+        readingPosition: {
+          preview: {
+            scrollTop: 240,
+            scrollHeight: 1200,
+            clientHeight: 600,
+            ratio: 0.4,
+            anchorId: "intro",
+            contentHash: "abc",
+          },
+          edit: {
+            scrollTop: 80,
+          },
+          currentHeadingId: "intro",
+          currentHeadingText: "Intro",
+          contentHash: "abc",
+        },
+      }],
+    });
+  });
+
+  it("drops invalid optional preview tab fields instead of keeping legacy runtime branches alive", () => {
+    const entry = normalizeWorkspaceUiEntry({
+      openTabs: ["note"],
+      previewTabs: [{
+        id: "note",
+        relativePath: "docs/note.md",
+        sourceRootPath: "../not-a-root",
+        readingPosition: {
+          preview: {
+            scrollTop: "invalid",
+            anchorId: "kept-only-if-scroll-is-valid",
+          },
+        },
+      }],
+    });
+
+    expect(entry.previewTabs[0]).not.toHaveProperty("sourceRootPath");
+    expect(entry.previewTabs[0]).not.toHaveProperty("readingPosition");
+  });
 });

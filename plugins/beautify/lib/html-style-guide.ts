@@ -18,12 +18,14 @@ export const HTML_STYLE_GUIDE_SECTIONS = [...SECTION_I18N_KEY.keys()];
 
 export const REQUIRED_SECTIONS = ["color", "typography"];
 
-// 已读章节状态：keyed by sessionPath（状态归属唯一确定，不挂全局焦点指针）。
+// 已读章节状态：keyed by sessionId when available; legacy sessionPath remains a compatibility key.
 // 防懒辅助状态，进程内存即可；Map 迭代序 = 插入序，超容量时逐出最旧 session。
 const MAX_TRACKED_SESSIONS = 200;
 const readSectionsBySession = new Map<string, Set<string>>();
 
 export function sessionTrackingKey(ctx: any): string {
+  const sessionId = ctx && typeof ctx.sessionId === "string" ? ctx.sessionId.trim() : "";
+  if (sessionId) return `id:${sessionId}`;
   const sessionPath = ctx && typeof ctx.sessionPath === "string" ? ctx.sessionPath : "";
   return sessionPath || "__no_session__";
 }

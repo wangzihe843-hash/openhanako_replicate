@@ -29,10 +29,13 @@ describe("web_search browser providers", () => {
 
   it("does not require API keys for browser-backed providers", async () => {
     expect(searchProviderRequiresApiKey("auto")).toBe(false);
+    expect(searchProviderRequiresApiKey("anysearch")).toBe(true);
+    expect(searchProviderRequiresApiKey("anysearch_free")).toBe(false);
     expect(searchProviderRequiresApiKey("bing_browser")).toBe(false);
     expect(searchProviderRequiresApiKey("google_browser")).toBe(false);
     expect(searchProviderRequiresApiKey("duckduckgo_browser")).toBe(false);
     await expect(verifySearchKey("auto", "")).resolves.toBe(true);
+    await expect(verifySearchKey("anysearch_free", "")).resolves.toBe(true);
     await expect(verifySearchKey("bing_browser", "")).resolves.toBe(true);
   });
 
@@ -203,6 +206,66 @@ describe("web_search browser providers", () => {
     expect(result.content[0].text).not.toContain("11. **AnySearch Result 11**");
   });
 
+  it("calls paid AnySearch with a bearer token and keeps free diagnostics separate", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        code: 0,
+        message: "success",
+        data: {
+          results: [
+            {
+              title: "Paid AnySearch Result",
+              url: "https://example.com/paid-anysearch",
+              snippet: "Paid AnySearch snippet",
+              content: "Paid AnySearch content",
+            },
+          ],
+          metadata: {
+            total_results: 1,
+            search_time_ms: 88,
+            request_id: "req-anysearch-paid",
+          },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tool = createWebSearchTool({
+      searchConfigResolver: () => ({ provider: "anysearch", api_key: "anysearch-secret" }),
+    });
+    const result = await tool.execute("call-anysearch-paid", {
+      query: "hana paid anysearch",
+      maxResults: 3,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.anysearch.com/v1/search");
+    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
+      "Content-Type": "application/json",
+      "Authorization": "Bearer anysearch-secret",
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      query: "hana paid anysearch",
+      max_results: 3,
+    });
+    expect(result.details).toMatchObject({
+      provider: "anysearch",
+      source_type: "api",
+      diagnostics: {
+        anonymous: false,
+        request_id: "req-anysearch-paid",
+      },
+      results: [
+        {
+          title: "Paid AnySearch Result",
+          url: "https://example.com/paid-anysearch",
+          content: "Paid AnySearch content",
+        },
+      ],
+    });
+  });
+
   it("clamps Tavily requests to its official result ceiling", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
       JSON.stringify({
@@ -307,6 +370,119 @@ describe("web_search browser providers", () => {
           metadata: { quality_score: 68.5 },
         },
       ],
+    });
+  });
+
+  it("auto search tries paid AnySearch before other configured API providers", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        code: 0,
+        message: "success",
+        data: {
+          results: [
+            {
+              title: "Paid AnySearch Result",
+              url: "https://example.com/paid-anysearch",
+              content: "Paid AnySearch content",
+            },
+          ],
+          metadata: {
+            total_results: 1,
+            search_time_ms: 75,
+            request_id: "req-anysearch-auto-paid",
+          },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const rateLimiter = {
+      run: vi.fn(async (_provider, _sourceType, operation) => operation()),
+    };
+
+    const tool = createWebSearchTool({
+      searchConfigResolver: () => ({
+        provider: "auto",
+        api_keys: { tavily: "tvly-key", anysearch: "anysearch-secret" },
+      }),
+      rateLimiter,
+    });
+    const result = await tool.execute("call-auto-anysearch-paid", {
+      query: "hana auto anysearch paid",
+      maxResults: 2,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.anysearch.com/v1/search");
+    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
+      "Authorization": "Bearer anysearch-secret",
+    });
+    expect(rateLimiter.run).toHaveBeenCalledWith("anysearch", "api", expect.any(Function));
+    expect(searchWebMock).not.toHaveBeenCalled();
+    expect(result.details).toMatchObject({
+      provider: "anysearch",
+      source_type: "api",
+      diagnostics: {
+        strategy: "auto",
+        attempts: [
+          {
+            provider: "anysearch",
+            status: "ok",
+          },
+        ],
+      },
+    });
+  });
+
+  it("auto search falls back from paid AnySearch auth failure to the next configured API provider", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ code: 40101, message: "invalid api key" }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      ))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({
+          results: [
+            { title: "Tavily Result", url: "https://example.com/tavily", content: "Tavily snippet" },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ));
+    vi.stubGlobal("fetch", fetchMock);
+    const rateLimiter = {
+      run: vi.fn(async (_provider, _sourceType, operation) => operation()),
+    };
+
+    const tool = createWebSearchTool({
+      searchConfigResolver: () => ({
+        provider: "auto",
+        api_keys: { anysearch: "bad-anysearch-key", tavily: "tvly-key" },
+      }),
+      rateLimiter,
+    });
+    const result = await tool.execute("call-auto-anysearch-auth-fallback", {
+      query: "hana anysearch auth fallback",
+      maxResults: 1,
+    });
+
+    expect(rateLimiter.run).toHaveBeenNthCalledWith(1, "anysearch", "api", expect.any(Function));
+    expect(rateLimiter.run).toHaveBeenNthCalledWith(2, "tavily", "api", expect.any(Function));
+    expect(result.details).toMatchObject({
+      provider: "tavily",
+      diagnostics: {
+        strategy: "auto",
+        attempts: [
+          {
+            provider: "anysearch",
+            status: "error",
+            error_type: "auth",
+          },
+          {
+            provider: "tavily",
+            status: "ok",
+          },
+        ],
+      },
     });
   });
 

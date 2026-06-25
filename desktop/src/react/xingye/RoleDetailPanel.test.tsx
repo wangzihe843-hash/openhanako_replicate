@@ -277,8 +277,10 @@ describe('RoleDetailPanel OpenHanako sync', () => {
 
     // 采用 → 弹层消失，显示已应用精确起点 20
     fireEvent.click(screen.getByTestId('xingye-corruption-seed-accept'));
-    expect(screen.queryByTestId('xingye-corruption-seed-confirm')).not.toBeInTheDocument();
-    expect(screen.getByTestId('xingye-corruption-seed-applied')).toHaveTextContent('20');
+    await waitFor(() => {
+      expect(screen.queryByTestId('xingye-corruption-seed-confirm')).not.toBeInTheDocument();
+      expect(screen.getByTestId('xingye-corruption-seed-applied')).toHaveTextContent('20');
+    });
 
     // 保存 → corruptionSeed 进 profile 落库（收紧到主保存键，避开 LoreEditor 的「保存设定条目」）
     fireEvent.click(screen.getByRole('button', { name: /^保存[到（]/ }));

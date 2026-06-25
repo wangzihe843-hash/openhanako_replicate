@@ -136,6 +136,7 @@ async function makeEngine() {
     getBridgePermissionMode: () => "operate",
     getBridgeReadOnly: () => false,
     getBridgeReceiptEnabled: () => false,
+    getBridgeRichStreamingEnabled: () => true,
     getBridgeIndex: () => ({}),
     getSpeechRecognitionConfig: () => ({ enabled: false }),
     getKeepAwake: () => false,
@@ -170,6 +171,7 @@ describe("settings snapshot route", () => {
       permissionMode: "operate",
       readOnly: false,
       receiptEnabled: false,
+      richStreamingEnabled: true,
     });
     expect(body.preferences.speechRecognition.enabled).toBe(false);
     expect(body.plugins.allowFullAccess).toBe(false);
@@ -220,6 +222,7 @@ describe("settings snapshot route", () => {
       permissionMode: "operate",
       readOnly: false,
       receiptEnabled: false,
+      richStreamingEnabled: true,
     });
     expect(JSON.stringify(body)).not.toContain("tg-secret");
   });

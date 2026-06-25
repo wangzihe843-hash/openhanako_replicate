@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyMarkdownCoverFromGeneratedFile } from "../plugins/beautify/lib/markdown-cover-service.ts";
 
 describe("markdown cover service", () => {
@@ -56,5 +56,59 @@ describe("markdown cover service", () => {
     expect(raw).not.toContain("generatedAt:");
     expect(raw).not.toContain("generator:");
     expect(raw).toMatch(/\n---\n# Title\n\nBody\n$/);
+  });
+
+  it("uses ResourceIO for user resource copy and markdown writes when provided", async () => {
+    const notePath = path.join(tmpDir, "note.md");
+    const generatedPath = path.join(tmpDir, "generated.png");
+    fs.writeFileSync(generatedPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    let writtenMarkdown = "";
+    const resourceIO = {
+      stat: vi.fn(async (ref) => ({
+        exists: true,
+        isDirectory: false,
+        resourceKey: `local_fs:${ref.path}`,
+        resource: ref,
+      })),
+      read: vi.fn(async () => ({
+        content: Buffer.from("# Title\n\nBody\n"),
+      })),
+      mkdir: vi.fn(async () => ({ changeType: "created" })),
+      copy: vi.fn(async () => ({ changeType: "created" })),
+      write: vi.fn(async (_ref, content) => {
+        writtenMarkdown = String(content);
+        return { changeType: "modified" };
+      }),
+    };
+
+    const result = await applyMarkdownCoverFromGeneratedFile({
+      markdownFilePath: notePath,
+      generatedFilePath: generatedPath,
+      actualRatio: "16:9",
+      pixelWidth: 1600,
+      pixelHeight: 900,
+      now: new Date("2026-05-26T10:11:12.000Z"),
+      resourceIO,
+      operationContext: {
+        source: "plugin",
+        reason: "plugin:beautify:cover",
+      },
+    });
+
+    expect(resourceIO.mkdir).toHaveBeenCalledWith(
+      { kind: "local-file", path: path.join(tmpDir, "文本附件") },
+      expect.objectContaining({ source: "plugin", reason: "plugin:beautify:cover", emit: false }),
+    );
+    expect(resourceIO.copy).toHaveBeenCalledWith(
+      { kind: "local-file", path: generatedPath },
+      { kind: "local-file", path: result.attachmentPath },
+      expect.objectContaining({ source: "plugin", reason: "plugin:beautify:cover" }),
+    );
+    expect(resourceIO.write).toHaveBeenCalledWith(
+      { kind: "local-file", path: notePath },
+      expect.stringContaining("cover:"),
+      expect.objectContaining({ source: "plugin", reason: "plugin:beautify:cover" }),
+    );
+    expect(writtenMarkdown).toMatch(/\n---\n# Title\n\nBody\n$/);
   });
 });

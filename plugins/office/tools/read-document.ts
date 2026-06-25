@@ -8,15 +8,22 @@ export const description = [
   "Read supported Office/text documents into structured text for the Agent.",
   "Use for .docx, .xlsx, .xlsm, .pdf, .txt, .md, .csv, .tsv, and .html files.",
   "PDF output is Markdown text with 1-based pageRange continuation metadata; OCR for scanned/image-only PDFs is not supported.",
-  "Requires an absolute filePath. Does not modify files. Unsupported legacy formats such as .doc, .xls, .ppt, and .pptx fail explicitly.",
+  "Use resource for user workspace or mount files. filePath remains accepted for legacy local-only callers.",
+  "Does not modify files. Unsupported legacy formats such as .doc, .xls, .ppt, and .pptx fail explicitly.",
 ].join(" ");
+
+export const sessionPermission = { readOnly: true };
 
 export const parameters = {
   type: "object",
   properties: {
+    resource: {
+      type: "object",
+      description: "ResourceIO ResourceRef to read. Prefer this for workspace, mount, or remote resources.",
+    },
     filePath: {
       type: "string",
-      description: "Absolute path to the document to read.",
+      description: "Legacy absolute local path to the document to read.",
     },
     outputFormat: {
       type: "string",
@@ -48,12 +55,17 @@ export const parameters = {
       description: "xlsx only. Maximum columns per sheet. Default 50.",
     },
   },
-  required: ["filePath"],
+  anyOf: [
+    { required: ["resource"] },
+    { required: ["filePath"] },
+  ],
 };
 
-export async function execute(input) {
+export async function execute(input, ctx: any = {}) {
   try {
-    const result = await readOfficeDocument(input);
+    const result = await readOfficeDocument(input, {
+      resources: ctx?.resources,
+    });
     const text = result.format === "json"
       ? JSON.stringify(result.workbook, null, 2)
       : result.content;

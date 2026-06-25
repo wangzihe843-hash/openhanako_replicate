@@ -14,6 +14,7 @@ interface Props {
   agentId?: string | null;
   readOnly: boolean;
   turnCompletionAssistantIndexes?: ReadonlySet<number>;
+  assistantTurnSelectionIdsByCompletionIndex?: ReadonlyMap<number, readonly string[]>;
   completionTimePersistent?: boolean;
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
 }
@@ -25,6 +26,7 @@ export const ProcessFoldBlock = memo(function ProcessFoldBlock({
   agentId,
   readOnly,
   turnCompletionAssistantIndexes,
+  assistantTurnSelectionIdsByCompletionIndex,
   completionTimePersistent = false,
   registerMessageElement,
 }: Props) {
@@ -98,6 +100,7 @@ export const ProcessFoldBlock = memo(function ProcessFoldBlock({
                 agentId={agentId}
                 readOnly={readOnly}
                 showTurnCompletionTime={turnCompletionAssistantIndexes?.has(entry.originalIndex) ?? false}
+                assistantTurnSelectionIds={assistantTurnSelectionIdsByCompletionIndex?.get(entry.originalIndex)}
                 messageRef={messageRef(entry.item.data.id)}
               />
             ))}

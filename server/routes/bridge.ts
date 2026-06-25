@@ -27,6 +27,7 @@ import { normalizeBridgePermissionMode, SESSION_PERMISSION_MODES } from "../../c
 
 const MAX_BRIDGE_MEDIA_SIZE = 50 * 1024 * 1024;
 const FEISHU_TENANT_TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
+const DINGTALK_ACCESS_TOKEN_URL = "https://api.dingtalk.io/v1.0/oauth2/accessToken";
 
 function feishuLongConnectionInfo() {
   return {
@@ -48,6 +49,28 @@ function feishuTestInfo({ credentialOk, response, data }: { credentialOk?: any; 
     ...(data?.code !== undefined ? { feishuCode: data.code } : {}),
     ...(data?.msg ? { feishuMessage: data.msg } : {}),
     ...(logId ? { logId } : {}),
+  };
+}
+
+function dingtalkStreamInfo() {
+  return {
+    eventDelivery: "stream",
+    callbackUrlRequired: false,
+    stream: {
+      status: "not_tested",
+      reason: "bridge/test validates internal-app credentials only; the runtime Stream connection reports live status after the connector is enabled.",
+    },
+  };
+}
+
+function dingtalkTestInfo({ credentialOk, response, data }: { credentialOk?: any; response?: any; data?: any } = {}) {
+  return {
+    credentialOk,
+    ...dingtalkStreamInfo(),
+    ...(response ? { httpStatus: response.status } : {}),
+    ...(data?.code !== undefined ? { dingtalkCode: data.code } : {}),
+    ...(data?.errcode !== undefined ? { dingtalkErrcode: data.errcode } : {}),
+    ...(data?.message || data?.errmsg || data?.msg ? { dingtalkMessage: data.message || data.errmsg || data.msg } : {}),
   };
 }
 
@@ -106,6 +129,9 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
   const tgToken = bridge.telegram?.token || "";
   const fsAppId = bridge.feishu?.appId || "";
   const fsAppSecret = bridge.feishu?.appSecret || "";
+  const dtClientId = bridge.dingtalk?.clientId || "";
+  const dtClientSecret = bridge.dingtalk?.clientSecret || "";
+  const dtRobotCode = bridge.dingtalk?.robotCode || "";
 
   const ownerDict = {};
   for (const plat of KNOWN_PLATFORMS) {
@@ -117,6 +143,7 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
   const permissionMode = engine.getBridgePermissionMode?.()
     || normalizeBridgePermissionMode({ readOnly });
   const receiptEnabled = engine.getBridgeReceiptEnabled?.() !== false;
+  const richStreamingEnabled = engine.getBridgeRichStreamingEnabled?.() !== false;
 
   return {
     agentId: agent.id,
@@ -125,6 +152,12 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
     }),
     feishu: platformStatus("feishu", bridge.feishu, {
       configured: !!(fsAppId && fsAppSecret), appId: fsAppId, appSecret: maskSecretValue(fsAppSecret),
+    }),
+    dingtalk: platformStatus("dingtalk", bridge.dingtalk, {
+      configured: !!(dtClientId && dtClientSecret && dtRobotCode),
+      clientId: dtClientId,
+      clientSecret: maskSecretValue(dtClientSecret),
+      robotCode: dtRobotCode,
     }),
     qq: platformStatus("qq", bridge.qq, {
       configured: !!(bridge.qq?.appID && (bridge.qq?.appSecret || bridge.qq?.token)),
@@ -138,6 +171,7 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
     permissionMode,
     readOnly,
     receiptEnabled,
+    richStreamingEnabled,
     knownUsers: collectKnownUsers(index),
     owner: ownerDict,
   };
@@ -236,12 +270,12 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
     return c.json({ ok: true });
   });
 
-  /** 更新 bridge 总设置（permissionMode / legacy readOnly / receiptEnabled）— global preferences */
+  /** 更新 bridge 总设置（permissionMode / legacy readOnly / receiptEnabled / richStreamingEnabled）— global preferences */
   route.post("/bridge/settings", async (c) => {
     const body = await safeJson(c);
     const scopeDenied = denyWithoutScope(c, "bridge.manage");
     if (scopeDenied) return scopeDenied;
-    const { permissionMode, readOnly, receiptEnabled } = body;
+    const { permissionMode, readOnly, receiptEnabled, richStreamingEnabled } = body;
     if (typeof permissionMode === "string") {
       const normalized = normalizeBridgePermissionMode({ permissionMode });
       if (normalized !== permissionMode) {
@@ -257,9 +291,12 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
     if (typeof receiptEnabled === "boolean") {
       engine.setBridgeReceiptEnabled(receiptEnabled);
     }
+    if (typeof richStreamingEnabled === "boolean") {
+      engine.setBridgeRichStreamingEnabled?.(richStreamingEnabled);
+    }
     debugLog()?.log(
       "api",
-      `POST /api/bridge/settings permissionMode=${permissionMode} readOnly=${readOnly} receiptEnabled=${receiptEnabled}`,
+      `POST /api/bridge/settings permissionMode=${permissionMode} readOnly=${readOnly} receiptEnabled=${receiptEnabled} richStreamingEnabled=${richStreamingEnabled}`,
     );
     const savedPermissionMode = engine.getBridgePermissionMode?.()
       || normalizeBridgePermissionMode({ readOnly: engine.getBridgeReadOnly() });
@@ -268,6 +305,7 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
       permissionMode: savedPermissionMode,
       readOnly: engine.getBridgeReadOnly(),
       receiptEnabled: engine.getBridgeReceiptEnabled(),
+      richStreamingEnabled: engine.getBridgeRichStreamingEnabled?.() !== false,
     });
   });
 
@@ -506,7 +544,12 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
       await manager.sendMediaItem(
         platform,
         chatId,
-        { type: "session_file", fileId: sessionFile.id, sessionPath },
+        {
+          type: "session_file",
+          fileId: sessionFile.id,
+          ...(sessionFile.sessionId ? { sessionId: sessionFile.sessionId } : {}),
+          sessionPath,
+        },
         agent.id,
       );
       return c.json({ ok: true, fileId: sessionFile.id });
@@ -573,6 +616,36 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
           ok: false,
           error: data.msg || t("error.verifyFailed"),
           info: feishuTestInfo({ credentialOk: false, response: resp, data }),
+        });
+      } else if (platform === "dingtalk") {
+        if (!effectiveCredentials.clientId || !effectiveCredentials.clientSecret || !effectiveCredentials.robotCode) {
+          return c.json({ ok: false, error: "clientId, clientSecret and robotCode required" }, 400);
+        }
+        const resp = await fetch(DINGTALK_ACCESS_TOKEN_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            appKey: effectiveCredentials.clientId,
+            appSecret: effectiveCredentials.clientSecret,
+          }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        const data = await resp.json();
+        const code = data.code ?? data.errcode;
+        const token = data.accessToken || data.access_token;
+        if (resp.ok && token && (code === undefined || code === 0 || code === "0")) {
+          return c.json({
+            ok: true,
+            info: {
+              msg: t("error.tokenSuccess"),
+              ...dingtalkTestInfo({ credentialOk: true, response: resp, data }),
+            },
+          });
+        }
+        return c.json({
+          ok: false,
+          error: data.message || data.errmsg || data.msg || t("error.verifyFailed"),
+          info: dingtalkTestInfo({ credentialOk: false, response: resp, data }),
         });
       } else if (platform === "qq") {
         // v2 鉴权：appID + appSecret → access_token → /users/@me
@@ -658,11 +731,13 @@ function hasExplicitAgentId(c: any) {
 function bridgeSecretKeys(platform: any): any {
   return platform === "feishu"
     ? ["appSecret"]
-    : platform === "qq"
-      ? ["appSecret", "token"]
-      : platform === "wechat"
-        ? ["botToken"]
-        : ["token"];
+    : platform === "dingtalk"
+      ? ["clientSecret"]
+      : platform === "qq"
+        ? ["appSecret", "token"]
+        : platform === "wechat"
+          ? ["botToken"]
+          : ["token"];
 }
 
 function buildBridgeManualSendSessionPath(agentId: any, platform: any, chatId: any) {

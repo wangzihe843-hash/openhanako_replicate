@@ -604,6 +604,64 @@ describe("plugin management API", () => {
       }
     });
 
+    it("serves plugin video assets with byte ranges through the official assets route", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-video-assets-"));
+      try {
+        const pluginDir = path.join(tmpDir, "plugins", "demo");
+        fs.mkdirSync(path.join(pluginDir, "assets", "videos"), { recursive: true });
+        fs.writeFileSync(path.join(pluginDir, "assets", "videos", "background.mp4"), Buffer.from("0123456789abcdef"));
+
+        const engine = mockEngine({
+          hanakoHome: tmpDir,
+          pm: {
+            getPlugin: (id) => (
+              id === "demo"
+                ? { id: "demo", status: "loaded", pluginDir }
+                : null
+            ),
+          },
+        });
+        const pluginApp = new Hono();
+        pluginApp.get("/page", (c) => c.html("<!doctype html><video src=\"/api/plugins/demo/assets/videos/background.mp4\"></video>"));
+        engine.pluginManager.routeRegistry.set("demo", pluginApp);
+        const app = createAppWithProductionPluginResourceAuth(engine);
+
+        const ticketRes = await app.request("/api/plugins/iframe-ticket", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ routeUrl: "/api/plugins/demo/page" }),
+        });
+        const ticketBody = await ticketRes.json();
+        const pageRes = await app.request(
+          `/api/plugins/demo/page?pluginIframeTicket=${encodeURIComponent(ticketBody.ticket)}`,
+        );
+        const cookie = pageRes.headers.get("set-cookie");
+        expect(cookie).toContain("Path=/api/plugins/demo/assets/");
+
+        const rangeRes = await app.request("/api/plugins/demo/assets/videos/background.mp4", {
+          headers: {
+            Cookie: cookie,
+            Range: "bytes=4-7",
+          },
+        });
+        expect(rangeRes.status).toBe(206);
+        expect(rangeRes.headers.get("content-type")).toContain("video/mp4");
+        expect(rangeRes.headers.get("accept-ranges")).toBe("bytes");
+        expect(rangeRes.headers.get("content-range")).toBe("bytes 4-7/16");
+        expect(await rangeRes.text()).toBe("4567");
+
+        const headRes = await app.request("/api/plugins/demo/assets/videos/background.mp4", {
+          method: "HEAD",
+          headers: { Cookie: cookie },
+        });
+        expect(headRes.status).toBe(200);
+        expect(headRes.headers.get("content-type")).toContain("video/mp4");
+        expect(headRes.headers.get("content-length")).toBe("16");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("keeps asset sessions confined to static files under the plugin assets root", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-assets-confined-"));
       try {
@@ -1459,6 +1517,52 @@ describe("plugin management API", () => {
       });
     });
 
+    it("passes sessionId-first config scopes through HTTP routes", async () => {
+      const getConfig = vi.fn(() => ({
+        pluginId: "demo",
+        schema: { properties: { sessionMode: { type: "string", scope: "per-session" } } },
+        values: { sessionMode: "modern" },
+      }));
+      const setConfig = vi.fn(() => ({
+        pluginId: "demo",
+        schema: { properties: { sessionMode: { type: "string", scope: "per-session" } } },
+        values: { sessionMode: "modern" },
+      }));
+      const engine = mockEngine({ getConfig, setConfig });
+      const app = createApp(engine);
+
+      const getRes = await app.request(
+        "/api/plugins/demo/config?scope=per-session&sessionId=sess_http&sessionPath=%2Fsessions%2Flegacy.jsonl",
+      );
+      const putRes = await app.request("/api/plugins/demo/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: "per-session",
+          sessionId: "sess_http",
+          sessionPath: "/sessions/legacy.jsonl",
+          values: { sessionMode: "modern" },
+        }),
+      });
+
+      expect(getRes.status).toBe(200);
+      expect(putRes.status).toBe(200);
+      expect(getConfig).toHaveBeenCalledWith("demo", {
+        scope: "per-session",
+        agentId: undefined,
+        sessionId: "sess_http",
+        sessionPath: "/sessions/legacy.jsonl",
+        legacySessionPath: undefined,
+      });
+      expect(setConfig).toHaveBeenCalledWith("demo", { sessionMode: "modern" }, {
+        scope: "per-session",
+        agentId: undefined,
+        sessionId: "sess_http",
+        sessionPath: "/sessions/legacy.jsonl",
+        legacySessionPath: undefined,
+      });
+    });
+
     it("rejects image-gen default image models whose protocol has no registered adapter", async () => {
       const setConfig = vi.fn();
       const engine = mockEngine({
@@ -1794,6 +1898,50 @@ describe("plugin management API", () => {
         input: { text: "hi" },
         sessionPath: "/tmp/s.jsonl",
         agentId: undefined,
+      });
+    });
+
+    it("passes sessionId-first dev tool invocation bodies through PluginDevService", async () => {
+      const invokeTool = vi.fn(async () => ({
+        pluginId: "demo",
+        toolName: "demo_echo",
+        result: { content: [{ type: "text", text: "ok" }] },
+      }));
+      const engine = mockEngine({
+        pluginDevService: { invokeTool },
+      });
+      const app = createApp(engine);
+
+      const res = await app.request("/api/plugins/dev/demo/tools/echo/invoke", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input: { text: "hi" },
+          sessionId: "sess_http_dev",
+          sessionRef: {
+            sessionId: "sess_http_dev",
+            sessionPath: "/tmp/s.jsonl",
+            legacySessionPath: "/tmp/legacy.jsonl",
+          },
+          sessionPath: "/tmp/ignored.jsonl",
+          agentId: "hana",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ toolName: "demo_echo" });
+      expect(invokeTool).toHaveBeenCalledWith({
+        pluginId: "demo",
+        toolName: "echo",
+        input: { text: "hi" },
+        sessionId: "sess_http_dev",
+        sessionRef: {
+          sessionId: "sess_http_dev",
+          sessionPath: "/tmp/s.jsonl",
+          legacySessionPath: "/tmp/legacy.jsonl",
+        },
+        sessionPath: "/tmp/ignored.jsonl",
+        agentId: "hana",
       });
     });
 
@@ -2138,7 +2286,12 @@ describe("plugin route request-level principal and capability context", () => {
         principalKind: "plugin",
         principalPluginId: "media-board",
       });
-      expect(sessionCreate).toHaveBeenCalledWith({ agentId: "hanako" });
+      expect(sessionCreate).toHaveBeenCalledWith(
+        { agentId: "hanako" },
+        expect.objectContaining({
+          caller: expect.objectContaining({ pluginId: "media-board" }),
+        }),
+      );
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -2316,7 +2469,12 @@ describe("plugin route request-level principal and capability context", () => {
 
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ ok: true });
-      expect(sessionCreate).toHaveBeenCalledWith({ agentId: "hanako" });
+      expect(sessionCreate).toHaveBeenCalledWith(
+        { agentId: "hanako" },
+        expect.objectContaining({
+          caller: expect.objectContaining({ pluginId: "media-board" }),
+        }),
+      );
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

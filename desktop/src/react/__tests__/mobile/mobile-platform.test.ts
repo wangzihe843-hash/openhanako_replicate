@@ -34,4 +34,20 @@ describe('mobile platform capability contract', () => {
     window.platform?.openSettings?.('work');
     expect(listener).toHaveBeenCalledTimes(1);
   });
+
+  it('replaces stale partial platform globals with the mobile event contract', () => {
+    window.platform = {
+      openSettings: vi.fn(),
+      selectFolder: vi.fn(),
+    } as unknown as typeof window.platform;
+
+    installMobilePlatform();
+    const listener = vi.fn();
+    window.platform?.onOpenSettingsModal?.(listener);
+
+    window.platform?.openSettings?.('providers');
+
+    expect(listener).toHaveBeenCalledWith('providers');
+    expect(window.platform?.selectFolder).toBeUndefined();
+  });
 });

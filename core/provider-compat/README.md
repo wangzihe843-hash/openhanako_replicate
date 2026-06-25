@@ -12,6 +12,34 @@
 5. **dispatch 单调性**：dispatcher 按数组顺序遍历，第一个 `matches` 返回 true 的子模块负责处理（first-match-wins）。一个 model 只匹配一个子模块。新 provider 默认加在数组末尾；只有当模块的 `matches` 是另一模块的子集（更具体的规则）时才前置，避免被通用规则吞掉。
 6. **禁止散落**：调用点（`callText`、`engine.js` 钩子、route handler 等）禁止内联 provider-specific 补丁。一旦发现，迁移到本目录。
 
+## Pi SDK 与 Hana 双层边界
+
+Hana 的 provider 出站链路有两层兼容逻辑，排查时必须同时看：
+
+1. **Pi SDK provider serializer / compat**：负责 session、model registry、provider serializer，以及上游内置的兼容探测。它会先按自己的 provider 语义组装请求体。
+2. **Hana provider-compat**：负责最终出站 payload 翻译。`before_provider_request` 和 utility `callText` 都会进入 `normalizeProviderPayload()`，所以 Pi SDK 组出的 payload 不一定就是最终发给供应商的 payload。
+
+两层职责边界：
+
+| 层 | 可以处理 | 禁止处理 |
+|---|---|---|
+| Pi SDK session/model 层 | session lifecycle、模型选择、SDK 支持的 thinking level 枚举、provider serializer 基础结构 | Hana 用户可见语义的最终决策、供应商特殊字段散落到调用点 |
+| Hana provider-compat 层 | provider wire protocol 翻译，例如 `thinking`、`reasoning_effort`、`max_tokens`、历史 `reasoning_content` replay | Agent plan、system prompt、memory、工具列表、session 状态、用户可见 thinking level 的语义判断 |
+
+常见误判：
+
+- 看 Pi SDK 会以为某些 provider 仍发送上游字段，实际 Hana 子模块可能在最终出站前改写。
+- 看 Hana provider-compat 会以为所有 thinking 问题都能在 payload 层修；如果 Pi SDK session 层已经 clamp 了 thinking level，payload 层已经来不及恢复原始意图。
+- `OpenAI-compatible` 只说明请求大信封相似，不说明 thinking 控制、tool replay、effort 枚举等细节兼容。
+
+排查 provider / reasoning bug 的顺序：
+
+1. 查 `core/model-sync.ts` 与 `shared/model-capabilities.ts`：模型是否投影了正确的 `compat.thinkingFormat` / `compat.reasoningProfile`。
+2. 查 Pi SDK serializer：进入 Hana compat 前，SDK 会生成什么 payload，是否存在 session 层 clamp 或枚举转换。
+3. 查 `core/provider-compat.ts` dispatcher：最终会命中哪个子模块，是否 first-match-wins 被更通用模块吞掉。
+4. 查 provider 子模块：`matches()` 范围、`apply()` 字段翻译、utility/off 行为、历史 replay 规则。
+5. 加最终出站契约测试：优先用 `normalizeProviderPayload()` 和 model-sync 测试固定最终 payload，而不是只测试 Pi SDK 中间形态。
+
 ## 新增 provider 补丁的步骤
 
 1. 在 `core/provider-compat/` 下新建 `<provider>.js`
@@ -82,6 +110,8 @@ export function apply(payload, model, options) { ... }
 | `zhipu` | `thinking: { type, clear_thinking }` | Zhipu / BigModel GLM OpenAI-compatible API |
 | `deepseek` | DeepSeek 子模块统一转换 | DeepSeek V4 / reasoner |
 | `openrouter` | `reasoning: { effort }`，历史推理细节由 SDK 通过 `reasoning_details` 回放 | OpenRouter-hosted reasoning models, e.g. DeepSeek / MiMo via OpenRouter |
+| `kimi` | `thinking: { type, keep? }` + `reasoning_effort`，历史推理用 `reasoning_content` 回放 | Kimi Code `/coding/v1`、Moonshot OpenAI-compatible thinking models |
+| `volcengine` | `thinking: { type }` + provider 支持时的 `reasoning_effort` | Volcengine Ark Chat Completions / Agent-Coding Plan reasoning models |
 
 `compat.reasoningProfile` 表示同一 wire format 内部更细的协议契约，例如
 `deepseek-v4-anthropic` 表示 Anthropic Messages 请求体，但思考强度要写入
@@ -153,6 +183,7 @@ Hana 内部用 `{ type: "audio", data, mimeType }` 表示当前轮音频。UI、
 | [`mimo.js`](mimo.js) | MiMo OpenAI-compatible 思考模式协议（chat_template_kwargs + reasoning_content 回放），覆盖官网与 Xiaomi Token Plan `/v1` endpoint | MiMo 不再通过 chat_template_kwargs 控制 thinking；或 pi-ai 原生处理 MiMo replay |
 | [`qwen.js`](qwen.js) | Qwen-style 思考模型 `enable_thinking` quirk；DashScope 视频输入复用 `openai-video-url` 转换 | quirks 系统重构 / Qwen-style 协议改成 reasoning_effort；DashScope 和 Pi SDK 原生支持 video_url |
 | [`zhipu.js`](zhipu.js) | Zhipu / GLM OpenAI-compatible 思考模式协议（thinking.type、preserved thinking、reasoning_content 回放）与 OpenAI-only 字段清理 | pi-ai 原生处理 GLM thinking 控制、reasoning_content 回放和 Zhipu 不支持的 OpenAI-only 字段 |
+| [`volcengine.ts`](volcengine.ts) | Volcengine Ark OpenAI-compatible 思考模式协议（thinking.type、reasoning_effort 映射、utility/off 清理） | pi-ai 原生处理 Volcengine thinking 控制、effort 枚举和 utility/off 历史清理 |
 | [`input-audio.js`](input-audio.js) | 通用 OpenAI-compatible 音频 transport helper，由主入口按 `audioTransport` 调用，不参与 first-match-wins | Pi SDK / provider serializer 原生按模型 transport 输出正确音频块 |
 | [`openai-video-url.js`](openai-video-url.js) | OpenAI-compatible 视频输入 `image_url data:video` → `video_url`，当前用于 Moonshot Kimi 与 DashScope Qwen | Pi SDK 原生按 video MIME 输出 `video_url`；或相关 provider 接受 `image_url data:video` |
 

@@ -221,7 +221,11 @@ export async function evaluateChatAudioSendPreflight({
   };
 }
 
-export function notifyTextModelImageBlocked({
+/**
+ * #1647：视觉能力不可用时不再拦下整条消息，而是显式告知
+ * 「图片已按文件发送，模型看不到内容」。文件身份（SessionFile + 路径）始终随消息发出。
+ */
+export function notifyTextModelImageFileOnly({
   t,
   addToast,
   openSettings,
@@ -231,11 +235,11 @@ export function notifyTextModelImageBlocked({
   openSettings: () => void;
 }): void {
   addToast(
-    t('input.textModelImageBlocked'),
+    t('input.textModelImageFileOnly'),
     'warning',
     9000,
     {
-      dedupeKey: 'text-model-image-blocked',
+      dedupeKey: 'text-model-image-file-only',
       action: {
         label: t('input.openModelSettings'),
         onClick: openSettings,
@@ -244,7 +248,7 @@ export function notifyTextModelImageBlocked({
   );
 }
 
-export function notifyTextModelVideoBlocked({
+export function notifyTextModelVideoFileOnly({
   t,
   addToast,
   openSettings,
@@ -254,11 +258,11 @@ export function notifyTextModelVideoBlocked({
   openSettings: () => void;
 }): void {
   addToast(
-    t('input.textModelVideoBlocked'),
+    t('input.textModelVideoFileOnly'),
     'warning',
     9000,
     {
-      dedupeKey: 'text-model-video-blocked',
+      dedupeKey: 'text-model-video-file-only',
       action: {
         label: t('input.openModelSettings'),
         onClick: openSettings,

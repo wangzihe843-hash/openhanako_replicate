@@ -10,6 +10,7 @@ import path from "path";
 import { debugLog } from "../debug-log.ts";
 import { createTelegramAdapter } from "./telegram-adapter.ts";
 import { createFeishuAdapter } from "./feishu-adapter.ts";
+import { createDingTalkAdapter } from "./dingtalk-adapter.ts";
 import { createQQAdapter } from "./qq-adapter.ts";
 import { createWechatAdapter } from "./wechat-adapter.ts";
 import { downloadMedia, bufferToBase64, detectMime, splitMediaFromOutput, formatSize, setMediaLocalRoots, isExtractableReplyMediaSource } from "./media-utils.ts";
@@ -24,6 +25,7 @@ import { collectMediaItems } from "../tools/media-details.ts";
 import { formatSettingsUpdateText } from "../tools/settings-update-result.ts";
 import { isBridgeOwner, resolveBridgeOwnerDeliveryTarget } from "./owner-policy.ts";
 import { normalizeBridgePlatforms } from "./bridge-context.ts";
+import { parseSessionKey } from "./session-key.ts";
 import { createModuleLogger } from "../debug-log.ts";
 import { t } from "../i18n.ts";
 import { stripToolProtocolTagsFromProse } from "../tool-protocol-sanitizer.ts";
@@ -36,10 +38,61 @@ function normalizeIdempotencyKey(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function normalizeProactiveBridgeDeliveryTarget(value, fallbackAgentId = null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (value.kind && value.kind !== "bridge") return null;
+  const sessionKey = typeof value.sessionKey === "string" && value.sessionKey.trim()
+    ? value.sessionKey.trim()
+    : null;
+  const parsed = sessionKey ? parseSessionKey(sessionKey) : null;
+  const fallbackParts = bridgeSessionKeyFallbackParts(sessionKey);
+  const platform = typeof value.platform === "string" && value.platform.trim()
+    ? value.platform.trim()
+    : (parsed?.platform !== "unknown" ? parsed?.platform : null);
+  const { bridgePlatforms } = normalizeBridgePlatforms(platform ? [platform] : []);
+  if (!bridgePlatforms.length) return null;
+  const chatId = typeof value.chatId === "string" && value.chatId.trim()
+    ? value.chatId.trim()
+    : (parsed?.chatId || fallbackParts.chatId);
+  if (!chatId) return null;
+  const agentId = typeof value.agentId === "string" && value.agentId.trim()
+    ? value.agentId.trim()
+    : (parsed?.agentId || fallbackParts.agentId || (typeof fallbackAgentId === "string" && fallbackAgentId.trim() ? fallbackAgentId.trim() : null));
+  return {
+    kind: "bridge",
+    platform: bridgePlatforms[0],
+    chatType: "dm",
+    chatId,
+    userId: typeof value.userId === "string" && value.userId.trim() ? value.userId.trim() : chatId,
+    ...(sessionKey ? { sessionKey } : {}),
+    ...(agentId ? { agentId } : {}),
+  };
+}
+
+function bridgeSessionKeyFallbackParts(sessionKey) {
+  const value = typeof sessionKey === "string" ? sessionKey.trim() : "";
+  if (!value) return { chatId: null, agentId: null };
+  const atIndex = value.lastIndexOf("@");
+  const head = atIndex >= 0 ? value.slice(0, atIndex) : value;
+  const agentId = atIndex >= 0 && value.slice(atIndex + 1).trim()
+    ? value.slice(atIndex + 1).trim()
+    : null;
+  const match = head.match(/^(?:wechat|wx|telegram|tg|feishu|fs|dingtalk|dt|qq)_dm_(.+)$/);
+  return {
+    chatId: match?.[1] || null,
+    agentId,
+  };
+}
+
 function isAbortLikeError(err) {
   return err?.name === "AbortError"
     || err?.message === "This operation was aborted"
     || err?.type === "aborted";
+}
+
+function unrefTimer(timer) {
+  if (typeof timer?.unref === "function") timer.unref();
+  return timer;
 }
 
 // ── Adapter Registry ─────────────────────────────────────
@@ -55,6 +108,21 @@ const ADAPTER_REGISTRY = {
     create: (creds, onMessage, hooks, agentId) => createFeishuAdapter({ appId: creds.appId, appSecret: creds.appSecret, agentId, onMessage, onStatus: hooks?.onStatus }),
     getCredentials: (cfg) => cfg?.enabled && cfg?.appId && cfg?.appSecret ? { appId: cfg.appId, appSecret: cfg.appSecret } : null,
     ownerSessionKey: (userId, agentId) => `fs_dm_${userId}@${agentId}`,
+    connectsAsync: true,
+  },
+  dingtalk: {
+    create: (creds, onMessage, hooks, agentId) => createDingTalkAdapter({
+      clientId: creds.clientId,
+      clientSecret: creds.clientSecret,
+      robotCode: creds.robotCode,
+      agentId,
+      onMessage,
+      onStatus: hooks?.onStatus,
+    }),
+    getCredentials: (cfg) => cfg?.enabled && cfg?.clientId && cfg?.clientSecret && cfg?.robotCode
+      ? { clientId: cfg.clientId, clientSecret: cfg.clientSecret, robotCode: cfg.robotCode }
+      : null,
+    ownerSessionKey: (userId, agentId) => `dt_dm_${userId}@${agentId}`,
     connectsAsync: true,
   },
   qq: {
@@ -648,6 +716,17 @@ export class BridgeManager {
     return agentId ? `${platform}:${agentId}` : platform;
   }
 
+  _sessionIdentityKeyForPath(sessionPath) {
+    if (!sessionPath) return null;
+    try {
+      const sessionId = this.engine?.getSessionIdForPath?.(sessionPath);
+      if (typeof sessionId === "string" && sessionId.trim()) return sessionId.trim();
+    } catch {
+      // Legacy path fallback keeps bridge behavior working when the manifest index is unavailable.
+    }
+    return sessionPath;
+  }
+
   _collectMediaAllowedRoots(agentId = null) {
     return collectBridgeMediaAllowedRoots(this.engine, { agentId });
   }
@@ -885,28 +964,82 @@ export class BridgeManager {
     return delivery?.receiptMode === "fold_into_stream" && typeof delivery?.startReceipt === "function";
   }
 
-  _sendLlmWaitingReceipt(platform, chatId, agentId, replyContext = null) {
-    const receiptText = this._llmWaitingReceiptText(agentId);
-    if (receiptText === undefined) return;
-
-    const entry = this._platforms.get(this._getPlatformKey(platform, agentId));
-    const adapter = entry?.adapter;
-    if (!adapter) return;
-
-    if (receiptText && adapter.sendReply) {
-      this._sendAdapterReply(adapter, chatId, receiptText, replyContext).catch(() => {});
-    } else if (adapter.sendTypingIndicator) {
-      adapter.sendTypingIndicator(chatId).catch(() => {});
-    }
+  _resolveReceiptCapability(adapter, isGroup) {
+    const capability = adapter?.receiptCapabilities;
+    if (!capability) return null;
+    const scope = isGroup ? "group" : "dm";
+    if (capability.scopes?.length && !capability.scopes.includes(scope)) return null;
+    if (capability.mode === "native_typing" && adapter?.sendTypingIndicator) return capability;
+    if (capability.mode === "text" && adapter?.sendReply) return capability;
+    return null;
   }
 
-  async _startLlmWaitingReceipt({ delivery, platform, chatId, agentId, replyContext }) {
+  _receiptOptions(replyContext = null) {
+    const context = this._normalizeReplyContext(replyContext);
+    if (!context) return {};
+    return {
+      replyContext: context,
+      ...(context.messageThreadId != null ? { messageThreadId: context.messageThreadId } : {}),
+    };
+  }
+
+  _startNativeTypingReceipt(adapter, chatId, capability, replyContext = null) {
+    const options = this._receiptOptions(replyContext);
+    const refreshIntervalMs = Number.isFinite(capability.refreshIntervalMs)
+      ? capability.refreshIntervalMs
+      : 0;
+    let stopped = false;
+    let timer = null;
+
+    const send = () => {
+      if (stopped) return;
+      adapter.sendTypingIndicator(chatId, options).catch(() => {});
+    };
+    send();
+
+    if (refreshIntervalMs > 0) {
+      timer = unrefTimer(setInterval(send, refreshIntervalMs));
+    }
+
+    return {
+      mode: "native_typing",
+      stop: async () => {
+        if (stopped) return;
+        stopped = true;
+        if (timer) clearInterval(timer);
+        if (capability.cancellable && adapter.cancelTypingIndicator) {
+          try { await adapter.cancelTypingIndicator(chatId, options); } catch {}
+        }
+      },
+    };
+  }
+
+  async _startLlmWaitingReceipt({ delivery, platform, chatId, agentId, replyContext, isGroup = false }) {
+    const empty = { mode: "none", stop: async () => {} };
     if (this._deliveryFoldsReceipt(delivery)) {
       const receiptText = this._llmWaitingReceiptText(agentId);
       if (receiptText) await delivery.startReceipt(receiptText);
-      return;
+      return empty;
     }
-    this._sendLlmWaitingReceipt(platform, chatId, agentId, replyContext);
+
+    const receiptText = this._llmWaitingReceiptText(agentId);
+    if (receiptText === undefined) return empty;
+
+    const entry = this._platforms.get(this._getPlatformKey(platform, agentId));
+    const adapter = entry?.adapter;
+    if (!adapter) return empty;
+
+    const capability = this._resolveReceiptCapability(adapter, isGroup);
+    if (capability?.mode === "native_typing") {
+      return this._startNativeTypingReceipt(adapter, chatId, capability, replyContext);
+    }
+
+    if (receiptText && adapter.sendReply) {
+      this._sendAdapterReply(adapter, chatId, receiptText, replyContext).catch(() => {});
+      return { mode: "text", stop: async () => {} };
+    }
+
+    return empty;
   }
 
   /**
@@ -1251,8 +1384,14 @@ export class BridgeManager {
     if (mode === "draft") {
       return this._createDraftStreamDelivery({ adapter, chatId, capability, context });
     }
+    if (mode === "rich_draft") {
+      return this._createRichDraftStreamDelivery({ adapter, chatId, capability, context });
+    }
     if (mode === "edit_message") {
       return this._createEditMessageStreamDelivery({ adapter, chatId, capability, context });
+    }
+    if (mode === "cardkit_stream") {
+      return this._createCardKitStreamDelivery({ adapter, chatId, capability, context });
     }
     if (mode === "block") {
       return this._createBlockStreamDelivery({ adapter, chatId, context });
@@ -1261,15 +1400,38 @@ export class BridgeManager {
   }
 
   _resolveStreamingCapability(adapter, isGroup) {
-    const capability = adapter?.streamingCapabilities;
-    if (!capability || isGroup) return null;
+    if (!adapter || isGroup) return null;
+    const candidates = [
+      ...(Array.isArray(adapter.richStreamingCapabilities)
+        ? adapter.richStreamingCapabilities
+        : [adapter.richStreamingCapabilities]),
+      ...(Array.isArray(adapter.streamingCapabilities)
+        ? adapter.streamingCapabilities
+        : [adapter.streamingCapabilities]),
+    ].filter(Boolean);
+    for (const capability of candidates) {
+      if (this._isStreamingCapabilitySupported(adapter, capability)) return capability;
+    }
+    return null;
+  }
+
+  _isStreamingCapabilitySupported(adapter, capability) {
+    if (!capability) return false;
     if (capability.scopes?.length && !capability.scopes.includes("dm")) return null;
+    if (capability.requiresRichStreaming && this.engine.getBridgeRichStreamingEnabled?.() === false) return null;
     if (capability.mode === "draft" && adapter?.sendDraft && adapter?.sendReply) return capability;
+    if (capability.mode === "rich_draft" && adapter?.sendRichDraft && adapter?.sendRichReply) return capability;
     if (
       capability.mode === "edit_message" &&
       adapter?.startStreamReply &&
       adapter?.updateStreamReply &&
       adapter?.finishStreamReply
+    ) return capability;
+    if (
+      capability.mode === "cardkit_stream" &&
+      adapter?.startRichStreamReply &&
+      adapter?.updateRichStreamReply &&
+      adapter?.finishRichStreamReply
     ) return capability;
     if (capability.mode === "block" && this.blockStreaming && adapter?.sendBlockReply) return capability;
     return null;
@@ -1368,6 +1530,56 @@ export class BridgeManager {
     };
   }
 
+  _createRichDraftStreamDelivery({ adapter, chatId, capability, context }) {
+    const draftId = this._nextDraftId();
+    const minIntervalMs = Number.isFinite(capability.minIntervalMs) ? capability.minIntervalMs : 500;
+    const maxChars = Number.isFinite(capability.maxChars) ? capability.maxChars : 32768;
+    let lastSentText = "";
+    let lastDraftTs = 0;
+    let failed = false;
+
+    const sendSnapshot = (accumulated, force = false) => {
+      if (failed) return;
+      const { text } = this._cleanStreamSnapshot(accumulated);
+      const next = this._truncateStreamText(text.trim(), maxChars);
+      if (!next || next === lastSentText) return;
+      const now = Date.now();
+      if (!force && lastDraftTs && now - lastDraftTs < minIntervalMs) return;
+      lastDraftTs = now;
+      lastSentText = next;
+      adapter.sendRichDraft(chatId, next, {
+        draftId,
+        messageThreadId: context.messageThreadId,
+      }).catch(() => { failed = true; });
+    };
+
+    return {
+      mode: "rich_draft",
+      onDelta: (_delta, accumulated) => sendSnapshot(accumulated || _delta),
+      finish: async (cleaned) => {
+        const { text, mediaUrls } = this._cleanStreamSnapshot(cleaned);
+        const textOnly = text.trim();
+        if (textOnly) {
+          const finalText = this._truncateStreamText(textOnly, maxChars);
+          if (!failed) {
+            try {
+              await adapter.sendRichDraft(chatId, finalText, {
+                draftId,
+                messageThreadId: context.messageThreadId,
+              });
+              await adapter.sendRichReply(chatId, textOnly, context);
+              return mediaUrls;
+            } catch {
+              failed = true;
+            }
+          }
+          await this._sendAdapterReply(adapter, chatId, textOnly, context);
+        }
+        return mediaUrls;
+      },
+    };
+  }
+
   _createEditMessageStreamDelivery({ adapter, chatId, capability, context }) {
     const minIntervalMs = Number.isFinite(capability.minIntervalMs) ? capability.minIntervalMs : 500;
     const maxChars = Number.isFinite(capability.maxChars) ? capability.maxChars : 150_000;
@@ -1378,6 +1590,7 @@ export class BridgeManager {
     let failed = false;
     let chain = Promise.resolve();
     let createdWithoutMessageId = false;
+    let receiptOnly = false;
 
     const rememberState = (state) => {
       streamState = state || null;
@@ -1393,6 +1606,7 @@ export class BridgeManager {
       const { text } = this._cleanStreamSnapshot(accumulated);
       const next = this._truncateStreamText(text.trim(), maxChars);
       if (!next || next === lastSentText) return;
+      receiptOnly = false;
       const now = Date.now();
       if (!force && lastUpdateTs && now - lastUpdateTs < minIntervalMs) return;
       lastUpdateTs = now;
@@ -1415,6 +1629,7 @@ export class BridgeManager {
         if (!next) return;
         lastSentText = next;
         lastUpdateTs = Date.now();
+        receiptOnly = true;
         try {
           await startMessage(next);
         } catch {
@@ -1422,12 +1637,37 @@ export class BridgeManager {
         }
       },
       onDelta: (_delta, accumulated) => enqueueSnapshot(accumulated || _delta),
+      fail: async (message) => {
+        const failureText = this._truncateStreamText(String(message || t("bridge.replyFailed")).trim(), maxChars);
+        if (!failureText) return;
+        await chain;
+        if (!failed && streamState && !createdWithoutMessageId) {
+          try {
+            await adapter.finishStreamReply(chatId, streamState, failureText, context);
+            receiptOnly = false;
+            return;
+          } catch {
+            failed = true;
+          }
+        }
+        await this._sendAdapterReply(adapter, chatId, failureText, context);
+        receiptOnly = false;
+      },
       finish: async (cleaned) => {
         const { text, mediaUrls } = this._cleanStreamSnapshot(cleaned);
         const textOnly = text.trim();
         await chain;
-        if (!textOnly) return mediaUrls;
-        if (createdWithoutMessageId) return mediaUrls;
+        if (!textOnly) {
+          if (receiptOnly) {
+            await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), context);
+            receiptOnly = false;
+          }
+          return mediaUrls;
+        }
+        if (createdWithoutMessageId) {
+          await this._sendAdapterReply(adapter, chatId, textOnly, context);
+          return mediaUrls;
+        }
         const finalText = this._truncateStreamText(textOnly, maxChars);
         if (!failed) {
           try {
@@ -1435,6 +1675,110 @@ export class BridgeManager {
               await startMessage(finalText);
             } else {
               await adapter.finishStreamReply(chatId, streamState, finalText, context);
+            }
+            return mediaUrls;
+          } catch {
+            failed = true;
+          }
+        }
+        await this._sendAdapterReply(adapter, chatId, textOnly, context);
+        return mediaUrls;
+      },
+    };
+  }
+
+  _createCardKitStreamDelivery({ adapter, chatId, capability, context }) {
+    const minIntervalMs = Number.isFinite(capability.minIntervalMs) ? capability.minIntervalMs : 500;
+    const maxChars = Number.isFinite(capability.maxChars) ? capability.maxChars : 150_000;
+    const receiptMode = capability.receiptMode || "fold_into_stream";
+    let streamState = null;
+    let lastSentText = "";
+    let lastUpdateTs = 0;
+    let failed = false;
+    let chain = Promise.resolve();
+    let receiptOnly = false;
+
+    const startMessage = async (text) => {
+      streamState = await adapter.startRichStreamReply(chatId, text, context);
+    };
+
+    const enqueueSnapshot = (accumulated, force = false) => {
+      if (failed) return;
+      const { text } = this._cleanStreamSnapshot(accumulated);
+      const next = this._truncateStreamText(text.trim(), maxChars);
+      if (!next || next === lastSentText) return;
+      receiptOnly = false;
+      const now = Date.now();
+      if (!force && lastUpdateTs && now - lastUpdateTs < minIntervalMs) return;
+      lastUpdateTs = now;
+      lastSentText = next;
+      chain = chain.then(async () => {
+        if (!streamState) {
+          await startMessage(next);
+        } else {
+          await adapter.updateRichStreamReply(chatId, streamState, next, context);
+        }
+      }).catch(() => { failed = true; });
+    };
+
+    return {
+      mode: "cardkit_stream",
+      receiptMode,
+      startReceipt: async (receiptText) => {
+        if (failed || streamState) return;
+        const next = this._truncateStreamText(String(receiptText || "").trim(), maxChars);
+        if (!next) return;
+        lastSentText = next;
+        lastUpdateTs = Date.now();
+        receiptOnly = true;
+        try {
+          await startMessage(next);
+        } catch {
+          failed = true;
+        }
+      },
+      onDelta: (_delta, accumulated) => enqueueSnapshot(accumulated || _delta),
+      fail: async (message) => {
+        const failureText = this._truncateStreamText(String(message || t("bridge.replyFailed")).trim(), maxChars);
+        if (!failureText) return;
+        await chain;
+        if (!failed && streamState) {
+          try {
+            await adapter.finishRichStreamReply(chatId, streamState, failureText, context);
+            receiptOnly = false;
+            return;
+          } catch {
+            failed = true;
+          }
+        }
+        await this._sendAdapterReply(adapter, chatId, failureText, context);
+        receiptOnly = false;
+      },
+      finish: async (cleaned) => {
+        const { text, mediaUrls } = this._cleanStreamSnapshot(cleaned);
+        const textOnly = text.trim();
+        await chain;
+        if (!textOnly) {
+          if (receiptOnly) {
+            await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), context);
+            receiptOnly = false;
+          } else if (!failed && streamState && lastSentText) {
+            try {
+              await adapter.finishRichStreamReply(chatId, streamState, lastSentText, context);
+            } catch {
+              failed = true;
+            }
+          }
+          return mediaUrls;
+        }
+        const finalText = this._truncateStreamText(textOnly, maxChars);
+        if (!failed) {
+          try {
+            if (!streamState) {
+              await startMessage(finalText);
+              await adapter.finishRichStreamReply(chatId, streamState, finalText, context);
+            } else {
+              await adapter.finishRichStreamReply(chatId, streamState, finalText, context);
             }
             return mediaUrls;
           } catch {
@@ -1472,6 +1816,7 @@ export class BridgeManager {
     const batch = this._takePendingBatch(sessionKey);
     if (!batch || batch.lines.length === 0) return;
     this._processing.add(sessionKey);
+    let receiptDelivery = null;
 
     // 取出所有缓冲消息和附件
     const { lines, attachments: pendingAttachments = [], platform, chatId, senderName, avatarUrl, userId, qqPrincipal, isGroup, isOwner, bridgeRole, agentId, messageThreadId, replyContext } = batch;
@@ -1529,7 +1874,7 @@ export class BridgeManager {
       const platformKey = this._getPlatformKey(platform, agentId);
       const entry = this._platforms.get(platformKey);
       const adapter = entry?.adapter;
-      const delivery = this._createStreamDelivery({
+      const delivery: any = this._createStreamDelivery({
         adapter,
         chatId,
         isGroup,
@@ -1537,10 +1882,6 @@ export class BridgeManager {
         messageThreadId,
         replyContext,
       });
-      const foldsReceipt = this._deliveryFoldsReceipt(delivery);
-      if (!foldsReceipt) {
-        this._sendLlmWaitingReceipt(platform, chatId, agentId, replyContext);
-      }
 
       // 如果 agent 正在 streaming，用 steer 注入而不是新建 prompt
       // 但如果有图片附件，不走 steer（Pi SDK 不支持往 streaming 中追加图片），等当前回复结束后正常处理
@@ -1548,9 +1889,7 @@ export class BridgeManager {
         debugLog()?.log("bridge", `steer ${platform} dm (${lines.length} msg(s))`);
         return;
       }
-      if (foldsReceipt) {
-        await this._startLlmWaitingReceipt({ delivery, platform, chatId, agentId, replyContext });
-      }
+      receiptDelivery = await this._startLlmWaitingReceipt({ delivery, platform, chatId, agentId, replyContext, isGroup });
 
       debugLog()?.log("bridge", `flush ${platform} ${isGroup ? "group" : "dm"} (${lines.length} msg(s), ${merged.length} chars${images.length ? `, ${images.length} image(s)` : ""})`);
 
@@ -1622,7 +1961,10 @@ export class BridgeManager {
       } else if (replyError && adapter) {
         // 完全没有可见正文时才发用户可理解的失败提示。
         // best-effort 提示：提示本身发送失败时无法再通知用户，吞掉即可。
-        try { await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), replyContext); } catch {}
+        try {
+          if (typeof delivery.fail === "function") await delivery.fail(t("bridge.replyFailed"));
+          else await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), replyContext);
+        } catch {}
       }
     } catch (err) {
       if (!isAbortLikeError(err)) {
@@ -1630,6 +1972,7 @@ export class BridgeManager {
         debugLog()?.error("bridge", `${platform} message handling failed: ${err.message}`);
       }
     } finally {
+      try { await receiptDelivery?.stop?.(); } catch {}
       this._processing.delete(sessionKey);
     }
 
@@ -1681,7 +2024,7 @@ export class BridgeManager {
    *
    * @private
    */
-  async _flushAttachedDesktopSession({ sessionKey, desktopSessionPath, platform, chatId, agentId, text, images, inboundFiles, messageThreadId, replyContext = null, alreadyLocked = false }) {
+  async _flushAttachedDesktopSession({ sessionKey, desktopSessionPath, platform, chatId, agentId, text, images, inboundFiles, messageThreadId = null, replyContext = null, alreadyLocked = false }) {
     if (!alreadyLocked) {
       if (this._processing.has(sessionKey)) return;
       this._processing.add(sessionKey);
@@ -1689,7 +2032,7 @@ export class BridgeManager {
 
     const entry = this._platforms.get(this._getPlatformKey(platform, agentId));
     const adapter = entry?.adapter;
-    const delivery = this._createStreamDelivery({
+    const delivery: any = this._createStreamDelivery({
       adapter,
       chatId,
       isGroup: false,
@@ -1697,11 +2040,19 @@ export class BridgeManager {
       messageThreadId,
       replyContext,
     });
-    await this._startLlmWaitingReceipt({ delivery, platform, chatId, agentId, replyContext });
+    let receiptDelivery = null;
 
     debugLog()?.log("bridge", `rc-attached flush ${platform} (${text.length} chars → ${desktopSessionPath})`);
 
     try {
+      receiptDelivery = await this._startLlmWaitingReceipt({
+        delivery,
+        platform,
+        chatId,
+        agentId,
+        replyContext,
+        isGroup: false,
+      });
       const displayMessage = {
         text,
         source: "bridge_rc",
@@ -1718,7 +2069,7 @@ export class BridgeManager {
           }))
           : undefined,
       };
-      const { text: replyText, toolMedia } = await this._hub.send(text, {
+      const result = await this._hub.send(text, {
         sessionPath: desktopSessionPath,
         images: images?.length ? images : undefined,
         inboundFiles: inboundFiles?.length ? inboundFiles : undefined,
@@ -1726,6 +2077,15 @@ export class BridgeManager {
         uiContext: null,
         onDelta: delivery.onDelta,
       });
+      const replyText = result?.text || null;
+      const toolMedia = Array.isArray(result?.toolMedia) ? result.toolMedia : [];
+      const replyError = result?.error || null;
+      const replyTruncated = result?.truncated === true;
+
+      if (replyError) {
+        log.error(`rc-attached reply generation error (${platform}, ${desktopSessionPath}): ${replyError}`);
+        debugLog()?.error("bridge", `rc-attached reply generation error: ${replyError}`);
+      }
 
       if (replyText && adapter) {
         const cleaned = this._cleanReplyForPlatform(replyText);
@@ -1750,6 +2110,14 @@ export class BridgeManager {
           sender, text: cleaned,
           isGroup: false, ts: Date.now(),
         });
+        if (replyTruncated) {
+          try { await this._sendAdapterReply(adapter, chatId, t("bridge.replyInterrupted"), replyContext); } catch {}
+        }
+      } else if (replyError && adapter) {
+        try {
+          if (typeof delivery.fail === "function") await delivery.fail(t("bridge.replyFailed"));
+          else await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), replyContext);
+        } catch {}
       }
     } catch (err) {
       if (!isAbortLikeError(err)) {
@@ -1765,6 +2133,7 @@ export class BridgeManager {
         }
       }
     } finally {
+      try { await receiptDelivery?.stop?.(); } catch {}
       if (!alreadyLocked) this._processing.delete(sessionKey);
     }
 
@@ -1998,7 +2367,8 @@ export class BridgeManager {
         messageThreadId: target.messageThreadId,
         replyContext,
       });
-      this._rcMirrorStreams.set(sessionPath, {
+      const streamKey = this._sessionIdentityKeyForPath(sessionPath);
+      this._rcMirrorStreams.set(streamKey, {
         ...target,
         delivery,
         replyContext,
@@ -2008,7 +2378,9 @@ export class BridgeManager {
       return;
     }
 
-    const state = this._rcMirrorStreams.get(sessionPath);
+    const streamKey = this._sessionIdentityKeyForPath(sessionPath);
+    const state = this._rcMirrorStreams.get(streamKey)
+      || (streamKey !== sessionPath ? this._rcMirrorStreams.get(sessionPath) : null);
     if (!state) return;
 
     if (event.type === "message_update") {
@@ -2035,7 +2407,8 @@ export class BridgeManager {
     }
 
     if (event.type === "session_status" && event.isStreaming === false) {
-      this._rcMirrorStreams.delete(sessionPath);
+      this._rcMirrorStreams.delete(streamKey);
+      if (streamKey !== sessionPath) this._rcMirrorStreams.delete(sessionPath);
       const cleaned = this._cleanReplyForPlatform(state.text || "");
       if (!cleaned) return;
 
@@ -2213,16 +2586,22 @@ export class BridgeManager {
 
   async _sendProactiveOnce(cleaned, targetAgentId, opts: any = {}, idempotencyKey = null) {
     const contextPolicy = opts.contextPolicy || "record_when_delivered";
+    const explicitTarget = normalizeProactiveBridgeDeliveryTarget(opts.deliveryTarget, targetAgentId);
     const { bridgePlatforms, invalidBridgePlatforms } = normalizeBridgePlatforms(opts.bridgePlatforms);
     if (invalidBridgePlatforms.length) {
       if (idempotencyKey) this._proactiveIdempotency.delete(idempotencyKey);
       throw new Error(`unsupported bridge platform: ${invalidBridgePlatforms.join(", ")}`);
     }
     const platformEntries = [...this._platforms.values()];
-    const deliveryEntries = bridgePlatforms.length
+    const deliveryEntries = explicitTarget
+      ? platformEntries.filter((entry) => (
+          entry.platform === explicitTarget.platform
+          && (!explicitTarget.agentId || entry.agentId === explicitTarget.agentId)
+        ))
+      : bridgePlatforms.length
       ? bridgePlatforms.flatMap((platform) => platformEntries.filter((entry) => entry.platform === platform))
       : platformEntries;
-    const fanOut = bridgePlatforms.length > 0;
+    const fanOut = !explicitTarget && bridgePlatforms.length > 0;
     const deliveries = [];
 
     for (const entry of deliveryEntries) {
@@ -2235,9 +2614,9 @@ export class BridgeManager {
         continue;
       }
 
-      const entryAgentId = entry.agentId;
+      const entryAgentId = explicitTarget?.agentId || entry.agentId;
       const agent = entryAgentId ? this.engine.getAgent(entryAgentId) : null;
-      const ownerTarget = resolveBridgeOwnerDeliveryTarget({
+      const ownerTarget = explicitTarget || resolveBridgeOwnerDeliveryTarget({
         platform,
         agent,
         index: this._readBridgeIndex(entryAgentId, agent),
@@ -2245,7 +2624,7 @@ export class BridgeManager {
       const ownerId = ownerTarget?.userId;
       if (!ownerId) continue;
 
-      const chatId = entry.adapter.resolveOwnerChatId?.(ownerId) || ownerTarget.chatId;
+      const chatId = explicitTarget?.chatId || entry.adapter.resolveOwnerChatId?.(ownerId) || ownerTarget.chatId;
 
       if (entry.adapter.capabilities?.proactive === false && !entry.adapter.canReply?.(chatId)) {
         debugLog()?.log("bridge", `→ ${platform} skipped proactive (no reply context for ${chatId})`);

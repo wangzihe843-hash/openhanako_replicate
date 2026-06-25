@@ -616,24 +616,44 @@ export async function removeChannelMember(channelId: string, memberId: string): 
 export async function toggleChannelsEnabled(): Promise<boolean | undefined> {
   const s = useStore.getState();
   if (s.channelsEnabled === undefined) return undefined;
+  const previousEnabled = s.channelsEnabled;
   const newEnabled = !s.channelsEnabled;
-  useStore.setState({ channelsEnabled: newEnabled });
-
-  if (newEnabled) {
-    await loadChannels();
-  }
 
   try {
-    await hanaFetch('/api/channels/toggle', {
+    const res = await hanaFetch('/api/channels/toggle', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: newEnabled }),
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    const enabled = typeof data.enabled === 'boolean' ? data.enabled : newEnabled;
+    useStore.setState({ channelsEnabled: enabled });
+
+    if (enabled) {
+      await loadChannels();
+    } else {
+      useStore.setState({
+        channels: [],
+        currentChannel: null,
+        channelMessages: [],
+        channelMessageCache: {},
+        channelMessageCacheDirty: {},
+        channelMembers: [],
+        channelTotalUnread: 0,
+        channelHeaderName: '',
+        channelHeaderMembersText: '',
+        channelInfoName: '',
+        channelIsDM: false,
+      });
+    }
+
+    return enabled;
   } catch (err) {
     console.error('[channels] toggle backend failed:', err);
+    useStore.setState({ channelsEnabled: previousEnabled });
+    return previousEnabled;
   }
-
-  return newEnabled;
 }
 
 // ══════════════════════════════════════════════════════

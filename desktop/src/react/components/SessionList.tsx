@@ -13,7 +13,8 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { formatSessionDate } from '../utils/format';
 import { switchSession, archiveSession, renameSession, pinSession, createNewSession } from '../stores/session-actions';
-import { updateKeyed } from '../stores/create-keyed-slice';
+import { setBrowserStateForPath } from '../stores/browser-slice';
+import { sessionScopedListIncludes } from '../stores/session-slice';
 import type { Session, Agent } from '../types';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../utils/agent-display';
 import {
@@ -401,7 +402,7 @@ function SessionListInner() {
         body: JSON.stringify({ sessionPath }),
       });
       const data = await res.json();
-      updateKeyed('browserBySession', sessionPath, { running: false, url: null, thumbnail: null });
+      setBrowserStateForPath(sessionPath, { running: false, url: null, thumbnail: null });
       closingBrowserSessionsRef.current.delete(sessionPath);
       if (data?.sessions) {
         setBrowserSessions(normalizeBrowserSessionStates(data.sessions));
@@ -611,9 +612,9 @@ function SessionListInner() {
       key={s.path}
       session={s}
       isActive={!pendingNewSession && s.path === activeSessionPath}
-      isStreaming={streamingSessions.includes(s.path)}
+      isStreaming={sessionScopedListIncludes(useStore.getState(), streamingSessions, s.path)}
       isPinned={!!s.pinnedAt}
-      hasUnreadOutput={unreadOutputSessionPaths.includes(s.path)}
+      hasUnreadOutput={sessionScopedListIncludes(useStore.getState(), unreadOutputSessionPaths, s.path)}
       agents={agents}
       browserState={browserSessions[s.path] || null}
       onCloseBrowser={handleCloseBrowserSession}

@@ -11,6 +11,10 @@ const snapshotMock = vi.fn();
 const isRunningMock = vi.fn();
 const currentUrlMock = vi.fn();
 const thumbnailMock = vi.fn();
+const launchMock = vi.fn();
+const closeMock = vi.fn();
+const activeTabMock = vi.fn();
+const getTabsMock = vi.fn();
 
 vi.mock("../lib/browser/browser-manager.js", () => ({
   BrowserManager: {
@@ -20,6 +24,10 @@ vi.mock("../lib/browser/browser-manager.js", () => ({
       isRunning: isRunningMock,
       currentUrl: currentUrlMock,
       thumbnail: thumbnailMock,
+      launch: launchMock,
+      close: closeMock,
+      activeTab: activeTabMock,
+      getTabs: getTabsMock,
     }),
   },
 }));
@@ -43,6 +51,10 @@ describe("browser screenshot vision adaptation", () => {
     isRunningMock.mockReturnValue(true);
     currentUrlMock.mockReturnValue("https://example.test/page");
     thumbnailMock.mockResolvedValue("THUMBNAIL_BASE64");
+    launchMock.mockResolvedValue(undefined);
+    closeMock.mockResolvedValue(undefined);
+    activeTabMock.mockReturnValue(null);
+    getTabsMock.mockReturnValue([]);
   });
 
   afterEach(() => {
@@ -71,6 +83,31 @@ describe("browser screenshot vision adaptation", () => {
       { type: "text", text: expect.stringContaining("browser") },
     ]);
     expect(result.details).toEqual(expect.objectContaining({ action: "screenshot", error: expect.any(String) }));
+  });
+
+  it("keeps browser action logs attached to the session id when the session path moves", async () => {
+    const originalPath = "/tmp/original-session.jsonl";
+    const movedPath = "/tmp/archived/renamed-session.jsonl";
+    const sessionId = "sess_browser_tool_log";
+    const tool = createBrowserTool(() => originalPath, {
+      getSessionIdForPath: (sessionPath) => (
+        sessionPath === originalPath || sessionPath === movedPath ? sessionId : null
+      ),
+    });
+    isRunningMock.mockImplementation((sessionPath) => {
+      if (sessionPath === originalPath && launchMock.mock.calls.length === 0) return false;
+      return true;
+    });
+
+    const started = await tool.execute("call-start", { action: "start" }, null, null, makeCtx(originalPath));
+    expect((started.details as any).status).toBe("launched");
+
+    const stopped = await tool.execute("call-stop", { action: "stop" }, null, null, makeCtx(movedPath));
+
+    expect((stopped.details as any).actionLog).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "start" }),
+      expect.objectContaining({ action: "stop" }),
+    ]));
   });
 
   it("stores browser screenshots as managed session image files for image-capable models", async () => {

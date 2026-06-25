@@ -5,6 +5,8 @@ export const description = t("toolDef.listCapabilities.description");
 
 export { isBeautifyEnabledForAgentConfig as isEnabledForAgentConfig } from "../lib/availability.ts";
 
+export const sessionPermission = { readOnly: true };
+
 export const parameters = {
   type: "object",
   properties: {},

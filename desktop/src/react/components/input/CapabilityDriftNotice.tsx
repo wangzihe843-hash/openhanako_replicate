@@ -8,7 +8,6 @@
  */
 import { useEffect, useState } from 'react';
 import { useI18n } from '../../hooks/use-i18n';
-import { useStore } from '../../stores';
 import {
   dismissSessionCapabilityDrift,
   refreshSessionCapabilities,
@@ -42,7 +41,6 @@ function buildDetailText(
 export function CapabilityDriftNotice({ sessionPath, drift }: CapabilityDriftNoticeProps) {
   const { t } = useI18n();
   const [confirming, setConfirming] = useState(false);
-  const refreshing = useStore(s => s.capabilityRefreshingSessions.includes(sessionPath));
 
   // 切换 session 或漂移数据更新时收起确认态
   useEffect(() => {
@@ -50,19 +48,6 @@ export function CapabilityDriftNotice({ sessionPath, drift }: CapabilityDriftNot
   }, [sessionPath, drift.fingerprint]);
 
   const detail = buildDetailText(drift, t);
-
-  if (refreshing) {
-    return (
-      <div className={styles['capability-drift-notice']} data-testid="capability-drift-notice" role="status">
-        <span className={styles['slash-busy-dot']} />
-        <div className={styles['capability-drift-text']}>
-          <span className={styles['capability-drift-title']}>
-            {t('session.capabilityDrift.refreshing')}
-          </span>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className={styles['capability-drift-notice']} data-testid="capability-drift-notice" role="status">

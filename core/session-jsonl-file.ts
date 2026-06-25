@@ -1,4 +1,7 @@
 import fs from "fs";
+import path from "path";
+import { isSessionJsonlFilename } from "../lib/session-jsonl.ts";
+import { stripAllInlineMediaForHistory } from "./message-sanitizer.ts";
 
 export const DEFAULT_SESSION_JSONL_MAX_LINE_BYTES = 1024 * 1024;
 const DEFAULT_SESSION_JSONL_MAX_STRING_CHARS = 8192;
@@ -51,26 +54,34 @@ function parseSessionLine(line, maxLineBytes) {
   if (byteLength <= maxLineBytes) {
     return { entry: parsed, projected: false, byteLength };
   }
-  const projected = projectOversizedSessionEntry(parsed, { originalByteLength: byteLength });
+  const projected = projectOversizedSessionEntry(parsed, { originalByteLength: byteLength, maxLineBytes });
   return { entry: projected, projected: true, byteLength };
 }
 
-export function projectOversizedSessionEntry(entry, { originalByteLength = null } = {}) {
-  const projected = projectSessionValue(entry, new Set(), {
+export function projectOversizedSessionEntry(entry, { originalByteLength = null, maxLineBytes = DEFAULT_SESSION_JSONL_MAX_LINE_BYTES } = {}) {
+  const mediaStripped = stripEntryInlineMedia(entry);
+  if (mediaStripped.changed) {
+    const strippedByteLength = Buffer.byteLength(JSON.stringify(mediaStripped.entry), "utf8");
+    if (strippedByteLength <= maxLineBytes) {
+      return withRepairMetadata(mediaStripped.entry, {
+        oversizedLineProjected: true,
+        inlineMediaStripped: mediaStripped.result.stripped,
+        ...(originalByteLength ? { originalByteLength } : {}),
+      });
+    }
+  }
+
+  const projected = projectSessionValue(mediaStripped.entry, new Set(), {
     inToolArgs: false,
+    inMessageContent: false,
+    messageRole: null,
     originalByteLength,
   });
-  if (projected && typeof projected === "object" && !Array.isArray(projected)) {
-    return {
-      ...projected,
-      hanaRepair: {
-        ...(projected.hanaRepair || {}),
-        oversizedLineProjected: true,
-        ...(originalByteLength ? { originalByteLength } : {}),
-      },
-    };
-  }
-  return projected;
+  return withRepairMetadata(projected, {
+    oversizedLineProjected: true,
+    ...(mediaStripped.result.stripped ? { inlineMediaStripped: mediaStripped.result.stripped } : {}),
+    ...(originalByteLength ? { originalByteLength } : {}),
+  });
 }
 
 export function repairOversizedSessionEntries(entries, opts: { maxLineBytes?: number } = {}) {
@@ -84,7 +95,7 @@ export function repairOversizedSessionEntries(entries, opts: { maxLineBytes?: nu
     const byteLength = Buffer.byteLength(line, "utf8");
     if (byteLength <= maxLineBytes) return entry;
     projected += 1;
-    return projectOversizedSessionEntry(entry, { originalByteLength: byteLength });
+    return projectOversizedSessionEntry(entry, { originalByteLength: byteLength, maxLineBytes });
   });
   return {
     entries: projected > 0 ? repaired : entries,
@@ -94,6 +105,7 @@ export function repairOversizedSessionEntries(entries, opts: { maxLineBytes?: nu
 
 function projectSessionValue(value, seen, context) {
   if (typeof value === "string") {
+    if (shouldPreserveVisibleMessageString(context)) return value;
     const limit = context.inToolArgs ? 512 : DEFAULT_SESSION_JSONL_MAX_STRING_CHARS;
     if (value.length <= limit) return value;
     return `[omitted ${value.length} chars by Hana session JSONL guard]`;
@@ -114,6 +126,8 @@ function projectSessionValue(value, seen, context) {
 
   const out: Record<string, any> = {};
   let count = 0;
+  const isMessageObject = isLlmMessageObject(value);
+  const messageRole = isMessageObject ? value.role : context.messageRole;
   for (const [key, item] of Object.entries(value)) {
     if (count >= DEFAULT_SESSION_JSONL_MAX_OBJECT_KEYS) {
       out._omittedKeys = Object.keys(value).length - count;
@@ -121,14 +135,73 @@ function projectSessionValue(value, seen, context) {
     }
     count += 1;
     const inToolArgs = context.inToolArgs || TOOL_ARG_KEYS.has(key);
-    if ((LARGE_SESSION_ENTRY_KEYS.has(key) || inToolArgs) && typeof item === "string" && item.length > 512) {
+    const childContext = {
+      ...context,
+      inToolArgs,
+      inMessageContent: context.inMessageContent || (isMessageObject && key === "content"),
+      messageRole,
+      parentContentBlockType: typeof value.type === "string" ? value.type : context.parentContentBlockType,
+    };
+    if (
+      (LARGE_SESSION_ENTRY_KEYS.has(key) || inToolArgs)
+      && typeof item === "string"
+      && item.length > 512
+      && !shouldPreserveVisibleMessageField(key, value, childContext)
+    ) {
       out[key] = `[omitted ${item.length} chars by Hana session JSONL guard]`;
       continue;
     }
-    out[key] = projectSessionValue(item, seen, { ...context, inToolArgs });
+    out[key] = projectSessionValue(item, seen, childContext);
   }
   seen.delete(value);
   return out;
+}
+
+function stripEntryInlineMedia(entry) {
+  const empty = { stripped: 0, strippedImages: 0, strippedVideos: 0, strippedAudios: 0 };
+  if (entry?.type !== "message" || !entry.message) {
+    return { entry, changed: false, result: empty };
+  }
+  const stripped = stripAllInlineMediaForHistory([entry.message]);
+  if (stripped.stripped === 0) {
+    return { entry, changed: false, result: stripped };
+  }
+  return {
+    entry: { ...entry, message: stripped.messages[0] },
+    changed: true,
+    result: stripped,
+  };
+}
+
+function withRepairMetadata(entry, patch) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+  return {
+    ...entry,
+    hanaRepair: {
+      ...(entry.hanaRepair || {}),
+      ...patch,
+    },
+  };
+}
+
+function isLlmMessageObject(value) {
+  return !!value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && typeof value.role === "string"
+    && Object.prototype.hasOwnProperty.call(value, "content");
+}
+
+function shouldPreserveVisibleMessageString(context) {
+  if (context.inToolArgs) return false;
+  if (!context.inMessageContent) return false;
+  return context.messageRole === "user" || context.messageRole === "assistant";
+}
+
+function shouldPreserveVisibleMessageField(key, parent, context) {
+  if (!shouldPreserveVisibleMessageString(context)) return false;
+  if (key === "content" && isLlmMessageObject(parent)) return true;
+  return key === "text" && parent?.type === "text";
 }
 
 /**
@@ -169,6 +242,9 @@ export function readSessionEntriesFile(sessionPath) {
  * @returns {{repaired: boolean, projected: number, skipped: number, backupPath: string|null}}
  */
 export function repairOversizedSessionEntriesInFile(sessionPath, opts: { maxLineBytes?: number } = {}) {
+  if (!isSessionJsonlFilename(path.basename(sessionPath || ""))) {
+    return { repaired: false, projected: 0, skipped: 0, backupPath: null };
+  }
   const maxLineBytes = Math.max(1024, opts.maxLineBytes || DEFAULT_SESSION_JSONL_MAX_LINE_BYTES);
   let raw;
   try {
@@ -204,7 +280,7 @@ export function repairOversizedSessionEntriesInFile(sessionPath, opts: { maxLine
     return { repaired: false, projected: 0, skipped: 0, backupPath: null };
   }
 
-  const backupPath = `${sessionPath}.repair.jsonl`;
+  const backupPath = `${sessionPath}.repair.json`;
   try {
     if (!fs.existsSync(backupPath)) fs.copyFileSync(sessionPath, backupPath);
     writeSessionEntriesFile(sessionPath, repairedEntries.entries);
@@ -220,4 +296,42 @@ export function repairOversizedSessionEntriesInFile(sessionPath, opts: { maxLine
  */
 export function writeSessionEntriesFile(sessionPath, entries) {
   fs.writeFileSync(sessionPath, serializeSessionEntries(entries));
+}
+
+function hasAssistantEntry(entries) {
+  return Array.isArray(entries)
+    && entries.some((entry) => entry?.type === "message" && entry.message?.role === "assistant");
+}
+
+/**
+ * Pi SDK keeps first-turn entries in memory until an assistant message arrives.
+ * Hana needs the session file to exist earlier for sidebar, archive, restart,
+ * and failed pre-prompt work such as auxiliary vision. This helper writes the
+ * manager's current in-memory entries and marks the SDK manager as flushed so
+ * the next assistant append does not duplicate the already-written prefix.
+ */
+export function flushSessionManagerSnapshot(sessionManager, {
+  preAssistantOnly = false,
+}: { preAssistantOnly?: boolean } = {}) {
+  if (!sessionManager || typeof sessionManager !== "object") return false;
+  if (typeof sessionManager._rewriteFile !== "function") return false;
+  const entries = Array.isArray(sessionManager.fileEntries) ? sessionManager.fileEntries : null;
+  if (!entries?.length) return false;
+  if (preAssistantOnly && hasAssistantEntry(entries)) return false;
+  sessionManager._rewriteFile();
+  if ("flushed" in sessionManager) sessionManager.flushed = true;
+  return true;
+}
+
+export function schedulePreAssistantSessionManagerFlush(sessionManager) {
+  const enqueue = typeof queueMicrotask === "function"
+    ? queueMicrotask
+    : (fn) => Promise.resolve().then(fn);
+  enqueue(() => {
+    try {
+      flushSessionManagerSnapshot(sessionManager, { preAssistantOnly: true });
+    } catch {
+      // Best-effort lifecycle persistence must not change prompt behavior.
+    }
+  });
 }

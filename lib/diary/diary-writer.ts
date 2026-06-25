@@ -644,6 +644,7 @@ export async function writeDiary(opts) {
           "- 不要输出 MOOD 区块，日记本身就是你的内心表达",
           "- 直接输出 Markdown 正文，不要代码块包裹",
           "- 第一行用 `# ` 开头写一个标题，标题要包含日期，风格自由",
+          "- 篇幅按材料自然展开，通常 400-1200 字；不要为了凑长度重复，也不要硬压缩关键情绪和事实",
         ]
       : [
           `- Your name is ${agentName}; the user's name is ${userName}`,
@@ -653,6 +654,7 @@ export async function writeDiary(opts) {
           "- Do NOT output a MOOD block — the diary itself is your inner expression",
           "- Output raw Markdown — no code-block wrapping",
           "- Start with a `# ` heading that includes the date; style is up to you",
+          "- Let the length follow the material naturally, usually 250-800 words; do not pad or compress away important feelings and facts",
         ]),
     "",
     isZh ? `请为 ${logicalDate} 写一篇日记。` : `Write a diary entry for ${logicalDate}.`,
@@ -670,7 +672,6 @@ export async function writeDiary(opts) {
       systemPrompt,
       messages: [{ role: "user", content: userPrompt.join("\n") }],
       temperature: 0.7,
-      maxTokens: 2048,
       timeoutMs: 120_000,
       signal: undefined,
       usageLedger: resolvedModel.usageLedger,

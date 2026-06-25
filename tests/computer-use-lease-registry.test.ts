@@ -29,6 +29,82 @@ describe("ComputerLeaseRegistry", () => {
     expect(registry.getLease(ctx, "lease-1")).toEqual(lease);
   });
 
+  it("uses sessionId as the stable lease identity when available", () => {
+    const registry = new ComputerLeaseRegistry({ idFactory: () => "lease-1" as any });
+    const lease = registry.createLease({
+      sessionId: "sess_computer_stable",
+      sessionPath: "/tmp/original.jsonl",
+      agentId: "hana",
+    }, {
+      providerId: "mock",
+      appId: "app.notes",
+    });
+
+    expect(lease).toMatchObject({
+      sessionId: "sess_computer_stable",
+      sessionPath: "/tmp/original.jsonl",
+    });
+    expect(registry.getLease({
+      sessionId: "sess_computer_stable",
+      sessionPath: "/tmp/moved.jsonl",
+      agentId: "hana",
+    }, "lease-1")).toEqual(lease);
+    expect(() => registry.requireActiveLease({
+      sessionId: "sess_other",
+      sessionPath: "/tmp/original.jsonl",
+      agentId: "hana",
+    }, "lease-1")).toThrow(COMPUTER_USE_ERRORS.LEASE_NOT_FOUND);
+  });
+
+  it("keeps path-only legacy callers attached to a sessionId-keyed lease", () => {
+    const registry = new ComputerLeaseRegistry({
+      idFactory: () => "lease-1" as any,
+      snapshotIdFactory: () => "snapshot-1" as any,
+    });
+    const lease = registry.createLease({
+      sessionId: "sess_computer_stable",
+      sessionPath: "/tmp/original.jsonl",
+      agentId: "hana",
+    }, {
+      providerId: "mock",
+      appId: "app.notes",
+    });
+    const pathOnlyCtx = {
+      sessionPath: "/tmp/original.jsonl",
+      agentId: "hana",
+    };
+
+    expect(registry.getActiveLeaseFor(pathOnlyCtx)).toEqual(lease);
+    expect(registry.getLease(pathOnlyCtx, "lease-1")).toEqual(lease);
+    const snapshot = registry.recordSnapshot(pathOnlyCtx, "lease-1", { appId: "app.notes" });
+
+    expect(snapshot).toMatchObject({
+      snapshotId: "snapshot-1",
+      sessionId: "sess_computer_stable",
+      sessionPath: "/tmp/original.jsonl",
+    });
+    expect(() => registry.validateSnapshot(pathOnlyCtx, "lease-1", "snapshot-1")).not.toThrow();
+  });
+
+  it("releases leases by sessionId when a session locator moved", () => {
+    const registry = new ComputerLeaseRegistry({ idFactory: () => "lease-1" as any });
+    const lease = registry.createLease({
+      sessionId: "sess_computer_stable",
+      sessionPath: "/tmp/original.jsonl",
+      agentId: "hana",
+    }, {
+      providerId: "mock",
+      appId: "app.notes",
+    });
+
+    registry.releaseBySession({
+      sessionId: "sess_computer_stable",
+      sessionPath: "/tmp/moved.jsonl",
+    });
+
+    expect(lease.status).toBe("released");
+  });
+
   it("does not let another session read a lease", () => {
     const registry = new ComputerLeaseRegistry({ idFactory: () => "lease-1" as any });
     registry.createLease(ctx, { providerId: "mock", appId: "app.notes" });

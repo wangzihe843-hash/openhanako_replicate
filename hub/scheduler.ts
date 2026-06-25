@@ -50,6 +50,31 @@ function normalizeCronExecutionContext(value) {
     sourceSessionPath: typeof value.sourceSessionPath === "string" && value.sourceSessionPath.trim()
       ? value.sourceSessionPath
       : null,
+    notificationContext: normalizeNotificationContext(value.notificationContext),
+  };
+}
+
+function normalizeNotificationContext(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const target = normalizeBridgeDeliveryTarget(value.bridgeDeliveryTarget || value.deliveryTarget);
+  return target ? { bridgeDeliveryTarget: target } : null;
+}
+
+function normalizeBridgeDeliveryTarget(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (value.kind && value.kind !== "bridge") return null;
+  const platform = typeof value.platform === "string" && value.platform.trim() ? value.platform.trim() : null;
+  const chatId = typeof value.chatId === "string" && value.chatId.trim() ? value.chatId.trim() : null;
+  const sessionKey = typeof value.sessionKey === "string" && value.sessionKey.trim() ? value.sessionKey.trim() : null;
+  if (!platform || (!chatId && !sessionKey)) return null;
+  const agentId = typeof value.agentId === "string" && value.agentId.trim() ? value.agentId.trim() : null;
+  return {
+    kind: "bridge",
+    platform,
+    chatType: "dm",
+    ...(chatId ? { chatId } : {}),
+    ...(sessionKey ? { sessionKey } : {}),
+    ...(agentId ? { agentId } : {}),
   };
 }
 
@@ -333,6 +358,7 @@ export class Scheduler {
     if (ctx.cwd) opts.cwd = ctx.cwd;
     opts.workspaceFolders = ctx.workspaceFolders;
     if (ctx.sourceSessionPath) opts.parentSessionPath = ctx.sourceSessionPath;
+    if (ctx.notificationContext) opts.notificationContext = ctx.notificationContext;
     opts.permissionMode = executor.permissionMode || job.permissionMode || this._engine.getAutomationPermissionMode?.() || "auto";
     opts.allowHumanApproval = false;
     return opts;

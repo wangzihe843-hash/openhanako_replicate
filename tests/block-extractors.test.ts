@@ -180,9 +180,9 @@ describe('present_files', () => {
 
 // ─── image-gen media generation ─────────────────────────────────────────────
 
-describe('image-gen media generation', () => {
+describe('media generation blocks', () => {
   it('extracts one pending media_generation block per submitted image task', () => {
-    const blocks = (extractBlocks as any)('image-gen_generate-image', {
+    const blocks = (extractBlocks as any)('media_generate-image', {
       mediaGeneration: {
         kind: 'image',
         batchId: 'batch-1',
@@ -212,6 +212,25 @@ describe('image-gen media generation', () => {
         status: 'pending',
       },
     ]);
+  });
+
+  it('keeps historical image-gen tool names readable for old sessions', () => {
+    const blocks = (extractBlocks as any)('image-gen_generate-image', {
+      mediaGeneration: {
+        kind: 'image',
+        batchId: 'legacy-batch',
+        prompt: 'A legacy generated image',
+        tasks: [{ taskId: 'legacy-task' }],
+      },
+    });
+
+    expect(blocks[0]).toMatchObject({
+      type: 'media_generation',
+      taskId: 'legacy-task',
+      kind: 'image',
+      batchId: 'legacy-batch',
+      status: 'pending',
+    });
   });
 
   it('replaces historical pending media_generation blocks with completed session file blocks', () => {
@@ -797,6 +816,24 @@ describe('subagent', () => {
     expect(blocks[0].label).toBeNull();
   });
 
+  it("subagent: 新 details 保留 child sessionId，同时兼容 streamKey path", () => {
+    const blocks = (extractBlocks as any)("subagent", {
+      taskId: "t-session-id",
+      task: "任务：整理桌面\n\n请独立完成",
+      taskTitle: "任务：整理桌面",
+      sessionId: "sess_child_block",
+      sessionPath: "/s/moved-child.jsonl",
+      streamStatus: "running",
+    });
+
+    expect(blocks[0]).toMatchObject({
+      type: "subagent",
+      taskId: "t-session-id",
+      sessionId: "sess_child_block",
+      streamKey: "/s/moved-child.jsonl",
+    });
+  });
+
   it("subagent: 展示 label 透传到块，旧 reuseInstance 可兼容映射", () => {
     const blocks = (extractBlocks as any)("subagent", {
       taskId: "t1", taskTitle: "x", sessionPath: "/s/t.jsonl",
@@ -894,6 +931,27 @@ describe('extractBlocks: plugin card extraction', () => {
     const details = { card: { pluginId: 'fm', type: 'native', route: '/x' } };
     const blocks = (extractBlocks as any)('unknown_tool', details);
     expect(blocks[0].card.type).toBe('native');
+  });
+
+  it('allows declarative chat surface cards without iframe routes', () => {
+    const details = {
+      card: {
+        pluginId: 'tavern',
+        type: 'chat.surface',
+        sessionRef: { sessionId: 'sess_tavern_private' },
+        title: 'Tavern run',
+      },
+    };
+    const blocks = (extractBlocks as any)('unknown_tool', details);
+    expect(blocks[0]).toEqual({
+      type: 'plugin_card',
+      card: {
+        pluginId: 'tavern',
+        type: 'chat.surface',
+        sessionRef: { sessionId: 'sess_tavern_private' },
+        title: 'Tavern run',
+      },
+    });
   });
 
   it('strips legacy file payload fields from plugin cards', () => {

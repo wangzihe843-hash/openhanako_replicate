@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import ntpath
 import os
+import posixpath
 import re
 import shutil
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 
 
 SDK_PACKAGES = {
@@ -78,9 +80,25 @@ def package_version(root_package: dict, name: str, fallback: str) -> str:
     return fallback
 
 
+def uses_windows_path_flavor(path: PurePath) -> bool:
+    return isinstance(path, PureWindowsPath) or bool(path.drive)
+
+
+def path_module_for(*paths: PurePath):
+    if any(uses_windows_path_flavor(path) for path in paths):
+        return ntpath
+    return posixpath
+
+
 def relative_file_spec(from_dir: Path, target: Path) -> str:
-    rel = os.path.relpath(target, from_dir)
-    return "file:" + rel.replace(os.sep, "/")
+    path_module = path_module_for(from_dir, target)
+    try:
+        rel = path_module.relpath(str(target), str(from_dir))
+    except ValueError:
+        if not target.is_absolute():
+            raise
+        return target.as_uri()
+    return "file:" + rel.replace("\\", "/")
 
 
 def choose_template(template: str, audience: str) -> str:
@@ -122,13 +140,12 @@ def required_sdk_packages(include_tool: bool, include_ui: bool, include_lifecycl
         return []
     packages: list[str] = []
     if include_tool or include_lifecycle:
+        packages.append("@hana/plugin-protocol")
         packages.append("@hana/plugin-runtime")
     if include_ui:
-        packages.extend([
-            "@hana/plugin-protocol",
-            "@hana/plugin-sdk",
-            "@hana/plugin-components",
-        ])
+        if "@hana/plugin-protocol" not in packages:
+            packages.append("@hana/plugin-protocol")
+        packages.extend(["@hana/plugin-sdk", "@hana/plugin-components"])
     return packages
 
 
@@ -306,9 +323,21 @@ export const parameters = {{
   }}
 }};
 
+export const sessionPermission = {{
+  kind: "plugin_output",
+  describeSideEffect: () => ({{
+    kind: "session_file_output",
+    summary: "Create a markdown file in plugin data and register it as SessionFile media.",
+    ruleId: "{plugin_id}-plugin-output",
+  }}),
+}};
+
 export async function execute(input = {{}}, toolCtx) {{
-  if (!toolCtx.sessionPath) {{
-    throw new Error("{plugin_id}_create_note requires sessionPath");
+  const sessionRef = toolCtx.sessionRef || (toolCtx.sessionId
+    ? {{ sessionId: toolCtx.sessionId, sessionPath: toolCtx.sessionPath || null }}
+    : null);
+  if (!sessionRef?.sessionId) {{
+    throw new Error("{plugin_id}_create_note requires sessionId");
   }}
   if (!toolCtx.stageFile) {{
     throw new Error("{plugin_id}_create_note requires stageFile");
@@ -326,7 +355,8 @@ export async function execute(input = {{}}, toolCtx) {{
   fs.writeFileSync(filePath, `# ${{title}}\\n\\n${{body}}\\n`, "utf-8");
 
   const staged = toolCtx.stageFile({{
-    sessionPath: toolCtx.sessionPath,
+    sessionId: sessionRef.sessionId,
+    sessionRef,
     filePath,
     label: `${{safeName}}.md`,
   }});
@@ -355,9 +385,20 @@ const tool = defineTool({{
       body: {{ type: "string" }}
     }}
   }},
+  sessionPermission: {{
+    kind: "plugin_output",
+    describeSideEffect: () => ({{
+      kind: "session_file_output",
+      summary: "Create a markdown file in plugin data and register it as SessionFile media.",
+      ruleId: "{plugin_id}-plugin-output",
+    }}),
+  }},
   async execute(input = {{}}, toolCtx) {{
-    if (!toolCtx.sessionPath) {{
-      throw new Error("{plugin_id}_create_note requires sessionPath");
+    const sessionRef = toolCtx.sessionRef || (toolCtx.sessionId
+      ? {{ sessionId: toolCtx.sessionId, sessionPath: toolCtx.sessionPath || null }}
+      : null);
+    if (!sessionRef?.sessionId) {{
+      throw new Error("{plugin_id}_create_note requires sessionId");
     }}
     if (!toolCtx.stageFile) {{
       throw new Error("{plugin_id}_create_note requires stageFile");
@@ -375,7 +416,8 @@ const tool = defineTool({{
     fs.writeFileSync(filePath, `# ${{title}}\\n\\n${{body}}\\n`, "utf-8");
 
     const staged = toolCtx.stageFile({{
-      sessionPath: toolCtx.sessionPath,
+      sessionId: sessionRef.sessionId,
+      sessionRef,
       filePath,
       label: `${{safeName}}.md`,
     }});
@@ -489,9 +531,25 @@ export const capabilities = {{
           id: {js_string(model_id)},
           displayName: {js_string(display_name + " Image")},
           protocolId: "local-cli-media",
-          inputs: ["text", "image"],
+          inputs: ["text"],
           outputs: ["image"],
-          supportsEdit: true,
+          modes: [
+            {{
+              id: "text2image",
+              label: "Text to image",
+              inputLimits: {{ referenceImages: {{ min: 0, max: 0 }} }},
+              parameterSchema: {{
+                type: "object",
+                properties: {{
+                  ratio: {{
+                    type: "string",
+                    enum: ["1:1", "16:9", "9:16"],
+                    default: "1:1",
+                  }},
+                }},
+              }},
+            }},
+          ],
         }},
       ],
     }},
@@ -502,19 +560,15 @@ export const capabilities = {{
 
 def create_route(display_name: str) -> str:
     return f"""
-import fs from "node:fs";
-import path from "node:path";
-
 export default function registerPluginUiRoutes(app, ctx) {{
   app.get("/page", (c) => c.html(renderShell(c, ctx, "page")));
   app.get("/widget", (c) => c.html(renderShell(c, ctx, "widget")));
-  app.get("/assets/*", (c) => serveAsset(c, ctx));
 }}
 
 function renderShell(c, ctx, surface) {{
   const hanaCss = c.req.query("hana-css") || "";
   const theme = c.req.query("hana-theme") || "inherit";
-  const base = `/api/plugins/${{ctx.pluginId}}`;
+  const assetBase = `/api/plugins/${{encodeURIComponent(ctx.pluginId)}}/assets`;
   const title = {js_string(display_name)};
 
   return `<!doctype html>
@@ -524,38 +578,13 @@ function renderShell(c, ctx, surface) {{
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${{escapeHtml(title)}}</title>
   ${{hanaCss ? `<link rel="stylesheet" href="${{escapeAttr(hanaCss)}}">` : ""}}
-  <link rel="stylesheet" href="${{base}}/assets/panel.css">
+  <link rel="stylesheet" href="${{assetBase}}/panel.css">
 </head>
 <body data-hana-theme="${{escapeAttr(theme)}}" data-surface="${{surface}}">
   <div id="root" data-surface="${{surface}}"></div>
-  <script type="module" src="${{base}}/assets/panel.js"></script>
+  <script type="module" src="${{assetBase}}/panel.js"></script>
 </body>
 </html>`;
-}}
-
-function serveAsset(c, ctx) {{
-  const rawName = c.req.path.split("/assets/")[1] || "";
-  const fileName = path.basename(decodeURIComponent(rawName));
-  if (!fileName) return c.text("Not found", 404);
-
-  const assetsDir = path.join(ctx.pluginDir, "assets");
-  const filePath = path.join(assetsDir, fileName);
-  if (!filePath.startsWith(assetsDir + path.sep) || !fs.existsSync(filePath)) {{
-    return c.text("Not found", 404);
-  }}
-
-  c.header("Content-Type", contentType(fileName));
-  c.header("Cache-Control", "no-cache");
-  return c.body(fs.readFileSync(filePath));
-}}
-
-function contentType(fileName) {{
-  if (fileName.endsWith(".js")) return "text/javascript; charset=utf-8";
-  if (fileName.endsWith(".css")) return "text/css; charset=utf-8";
-  if (fileName.endsWith(".svg")) return "image/svg+xml";
-  if (fileName.endsWith(".png")) return "image/png";
-  if (fileName.endsWith(".jpg") || fileName.endsWith(".jpeg")) return "image/jpeg";
-  return "application/octet-stream";
 }}
 
 function escapeAttr(value) {{
@@ -621,12 +650,65 @@ function request(type, payload, timeoutMs = 10000) {{
   }});
 }}
 
+function currentPluginId() {{
+  const match = /^\\/api\\/plugins\\/([^/]+)(?:\\/|$)/.exec(window.location.pathname || "");
+  if (!match) throw new Error("Plugin API helper requires an iframe route under /api/plugins/:pluginId/.");
+  return decodeURIComponent(match[1]);
+}}
+
+function normalizePluginApiPath(input) {{
+  if (typeof input !== "string" || !input.trim()) throw new Error("Invalid plugin API path.");
+  const trimmed = input.trim();
+  if (
+    trimmed.includes("\\\\") ||
+    trimmed.includes("\\0") ||
+    trimmed.includes("#") ||
+    trimmed.startsWith("//") ||
+    /^[a-z][a-z0-9+.-]*:/i.test(trimmed)
+  ) throw new Error("Invalid plugin API path.");
+
+  const stripped = trimmed.replace(/^\\/+/, "");
+  if (!stripped || stripped.startsWith("./") || stripped === "api/plugins" || stripped.startsWith("api/plugins/")) {{
+    throw new Error("Invalid plugin API path. Use a route path relative to the current plugin.");
+  }}
+  const queryIndex = stripped.indexOf("?");
+  const rawPath = queryIndex >= 0 ? stripped.slice(0, queryIndex) : stripped;
+  const segments = rawPath.split("/");
+  for (const segment of segments) {{
+    if (!segment) throw new Error("Invalid plugin API path.");
+    const decoded = decodeURIComponent(segment);
+    if (decoded === "." || decoded === ".." || decoded.includes("/") || decoded.includes("\\\\")) {{
+      throw new Error("Invalid plugin API path.");
+    }}
+  }}
+  const parsed = new URL(`http://hana.local/${{stripped}}`);
+  return `${{segments.map(segment => encodeURIComponent(decodeURIComponent(segment))).join("/")}}${{parsed.search}}`;
+}}
+
+function pluginApiUrl(path) {{
+  return `${{window.location.origin}}/api/plugins/${{encodeURIComponent(currentPluginId())}}/${{normalizePluginApiPath(path)}}`;
+}}
+
+function pluginApiFetch(path, init = {{}}) {{
+  const surfaceSession = new URLSearchParams(window.location.search).get("pluginSurfaceSession");
+  if (!surfaceSession) throw new Error("hana.api.fetch requires pluginSurfaceSession in the iframe URL.");
+  const headers = new Headers(init.headers || {{}});
+  headers.set("X-Hana-Plugin-Surface-Session", surfaceSession);
+  return fetch(pluginApiUrl(path), {{ ...init, headers }});
+}}
+
 const hana = {{
   ready: () => event("hana.ready"),
   ui: {{ resize: (size) => event("ui.resize", size) }},
+  api: {{ url: pluginApiUrl, fetch: pluginApiFetch }},
   toast: {{ show: (input) => request("toast.show", input) }},
   external: {{ open: (url) => request("external.open", typeof url === "string" ? {{ url }} : url) }},
   clipboard: {{ writeText: (text) => request("clipboard.writeText", typeof text === "string" ? {{ text }} : text) }},
+  resources: {{
+    open: (input) => request("resource.open", input),
+    pick: (input = {{}}) => request("resource.pick", input),
+    requestAccess: (input) => request("resource.requestAccess", input),
+  }},
   theme: {{
     getSnapshot: () => {{
       const params = new URLSearchParams(window.location.search);
@@ -974,7 +1056,7 @@ export default defineConfig({
   build: {
     outDir: 'assets',
     emptyOutDir: true,
-    sourcemap: true,
+    sourcemap: false,
     lib: {
       entry: path.resolve(__dirname, 'ui', 'Panel.tsx'),
       formats: ['es'],
@@ -1085,14 +1167,28 @@ def create_readme(
     lines.extend([
         "",
         "Install by dragging this folder into Hana Settings > Plugins, or place it under the user plugin directory reported by `/api/plugins/settings`.",
+        "",
+        "## File and resource rules",
+        "",
+        "- The sample note tool writes plugin-owned output under `ctx.dataDir`, then returns it through `stageFile()` as SessionFile media.",
+        "- If you add a feature that reads, edits, or watches user files, use `ctx.resources` with ResourceRef inputs and declare the matching `resource.read`, `resource.search`, `resource.write`, `resource.materialize`, or `resource.watch` capability.",
+        "- Use `ctx.resources.watch()` / `ctx.resources.subscribe()` for backend resource watches, release the returned handle, and filter `resource.changed` / `resource.deleted` / `resource.renamed` bus events by `resourceKeys`.",
+        "- Browser iframe code may open, pick, or request access to resources through `hana.resources.*`, but real file reads and writes belong in server-side plugin tools, routes, or lifecycle code.",
+        "- Do not treat `SessionFile`, mount, URL, or future remote resources as host-local paths. Use `ctx.resources.materialize(ref)` only for libraries that require a concrete execution path, and write back through ResourceIO explicitly.",
+        "- If you create plugin-only chat runs, create sessions with `visibility: \"plugin_private\"` and return `createChatSurfaceCard(ctx, session.sessionRef ?? session, options)` from `details.card`. Do not hand-build path-only chat surface payloads.",
     ])
     if include_ui:
-        lines.append("This plugin requires full-access because Hana page and widget contributions are route-backed iframe UI.")
+        lines.extend([
+            "This plugin requires full-access because Hana page and widget contributions are route-backed WebView/iframe UI.",
+            "Use WebView/iframe cards for existing web apps, remote sites, or standalone HTML. Use native `chat.surface` only for plugin-owned private session transcripts.",
+            "The starter manifest grants only the host calls used by the sample panel. If you add `hana.resources.open()`, `hana.resources.pick()`, or `hana.resources.requestAccess()` calls, add the matching `resource.open`, `resource.pick`, or `resource.requestAccess` entries under `ui.hostCapabilities`.",
+        ])
     if include_provider:
         lines.extend([
             "This plugin requires full-access because provider contributions can affect model discovery and runtime execution.",
             "The sample provider is media-only: `chat.projection = \"none\"` keeps it out of chat model selectors.",
             "CLI-backed providers must use structured argument bindings and output contracts; do not replace them with shell command strings.",
+            "Do not call legacy media generation EventBus namespaces from new provider plugins; declare `providers/*.js` with `capabilities.media.*`, then use stable media helpers or the formal Adapter Plugin API when available.",
         ])
     return "\n".join(lines)
 

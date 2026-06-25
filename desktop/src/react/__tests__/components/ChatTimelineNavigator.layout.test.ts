@@ -2,9 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-function readChatCss(): string {
+function readTimelineRailCss(): string {
   return fs.readFileSync(
-    path.join(process.cwd(), 'desktop/src/react/components/chat/Chat.module.css'),
+    path.join(process.cwd(), 'desktop/src/react/components/shared/TimelineRailNavigator.module.css'),
+    'utf8',
+  );
+}
+
+function readTimelineNavigatorSource(): string {
+  return fs.readFileSync(
+    path.join(process.cwd(), 'desktop/src/react/components/chat/ChatTimelineNavigator.tsx'),
     'utf8',
   );
 }
@@ -27,15 +34,44 @@ function selectorsWithPointerAuto(css: string): string[] {
 }
 
 describe('ChatTimelineNavigator layout', () => {
-  it('does not let the hover rail or expanded card steal clicks from chat content', () => {
-    const css = readChatCss();
+  it('keeps the idle rail click-through while allowing the expanded card to hold hover', () => {
+    const css = readTimelineRailCss();
     const navBlock = cssBlock(css, '.timelineNav');
     const pointerAutoSelectors = selectorsWithPointerAuto(css);
 
     expect(navBlock).toMatch(/pointer-events:\s*none/);
-    expect(pointerAutoSelectors.some(selector => selector.includes('.timelineNavExpanded .timelineCard'))).toBe(false);
+    expect(pointerAutoSelectors.some(selector => selector.includes('.timelineNavExpanded .timelineCard'))).toBe(true);
     expect(pointerAutoSelectors.some(selector => selector.includes('.timelineNavExpanded .timelineMarker'))).toBe(false);
     expect(pointerAutoSelectors.some(selector => selector.includes('.timelineNavExpanded .timelineLabel'))).toBe(true);
     expect(pointerAutoSelectors.some(selector => selector.includes('.timelineLine'))).toBe(true);
+  });
+
+  it('keeps the left rail as a mirror of the shared timeline card', () => {
+    const css = readTimelineRailCss();
+    const navBlock = cssBlock(css, '.timelineNav');
+    const leftNavBlock = cssBlock(css, '.timelineNavLeft');
+    const leftCardBlock = cssBlock(css, '.timelineNavLeft .timelineCard');
+    const markerBlock = cssBlock(css, '.timelineMarker');
+    const lineBlock = cssBlock(css, '.timelineLine');
+
+    expect(navBlock).toMatch(/top:\s*76px/);
+    expect(navBlock).toMatch(/width:\s*64px/);
+    expect(navBlock).toMatch(/height:\s*50%/);
+    expect(leftNavBlock).toMatch(/left:\s*0/);
+    expect(leftCardBlock).toMatch(/left:\s*var\(--timeline-marker-right\)/);
+    expect(markerBlock).toMatch(/--timeline-marker-max-width:\s*1em/);
+    expect(lineBlock).toMatch(/height:\s*4px/);
+    expect(lineBlock).toMatch(/min-width:\s*0\.5em/);
+    expect(lineBlock).toMatch(/max-width:\s*var\(--timeline-marker-max-width\)/);
+  });
+
+  it('guards DOM measurements before writing marker layout and CSS variables', () => {
+    const source = readTimelineNavigatorSource();
+
+    expect(source).toContain('finiteNumber(panel.scrollHeight)');
+    expect(source).toContain('finiteNumber(panel.scrollTop)');
+    expect(source).toContain('finiteNumber(rect.top)');
+    expect(source).toContain('markerWidthEm');
+    expect(source).not.toContain('panel.scrollTop + rect.top - panelRect.top');
   });
 });

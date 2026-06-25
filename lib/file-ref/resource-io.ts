@@ -5,7 +5,7 @@ import { detectMime, extOfName, inferFileKind } from "../file-metadata.ts";
 const DEFAULT_CONFLICT_POLICY = "fail";
 
 type PathFileRef = { type: "path"; path: string };
-type SessionFileRef = { type: "session_file"; fileId: string; sessionPath?: string };
+type SessionFileRef = { type: "session_file"; fileId: string; sessionId?: string; sessionPath?: string };
 type FileRef = PathFileRef | SessionFileRef;
 
 function normalizeExistingOrResolvedPath(filePath) {
@@ -87,6 +87,7 @@ function normalizeFileRef(ref): FileRef {
     return {
       type: "session_file",
       fileId,
+      ...(ref.sessionId ? { sessionId: ref.sessionId } : {}),
       ...(ref.sessionPath ? { sessionPath: ref.sessionPath } : {}),
     };
   }
@@ -110,6 +111,7 @@ function sourceFilename(source) {
 async function resolveFileRef(ref, {
   cwd = process.cwd(),
   resolveSessionFile,
+  sessionId = null,
   sessionPath = null,
 }: any = {}) {
   const normalized = normalizeFileRef(ref);
@@ -126,8 +128,12 @@ async function resolveFileRef(ref, {
   if (typeof resolveSessionFile !== "function") {
     throw new Error("SessionFile resolver unavailable");
   }
+  const lookupSessionId = normalized.sessionId || sessionId || null;
   const lookupSessionPath = normalized.sessionPath || sessionPath || null;
-  const file = resolveSessionFile(normalized.fileId, { sessionPath: lookupSessionPath });
+  const file = resolveSessionFile(
+    normalized.fileId,
+    lookupSessionId ? { sessionId: lookupSessionId } : { sessionPath: lookupSessionPath },
+  );
   const filePath = sessionFilePath(file, normalized.fileId);
   return {
     ref: normalized,
@@ -218,11 +224,12 @@ export async function copyFileRefToPath({
   cwd = process.cwd(),
   allowedRoots = [],
   sourceAllowedRoots = null,
+  sessionId = null,
   sessionPath = null,
   resolveSessionFile,
   registerSessionFile,
 }: any = {}) {
-  const resolved = await resolveFileRef(from, { cwd, resolveSessionFile, sessionPath });
+  const resolved = await resolveFileRef(from, { cwd, resolveSessionFile, sessionId, sessionPath });
   if (!fs.existsSync(resolved.filePath)) throw new Error(`file not found: ${resolved.filePath}`);
   if (resolved.ref.type === "path" && Array.isArray(sourceAllowedRoots)) {
     assertExistingPathInsideAllowedRoots(resolved.filePath, sourceAllowedRoots, cwd, "copy source");
@@ -251,6 +258,7 @@ export async function copyFileRefToPath({
   const registered = typeof registerSessionFile === "function" && sessionPath
     ? registerSessionFile({
       sessionPath,
+      ...(sessionId ? { sessionId } : {}),
       filePath: finalTargetPath,
       label,
       origin: "session_file_copy",

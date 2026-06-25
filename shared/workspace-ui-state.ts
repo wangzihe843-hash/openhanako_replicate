@@ -1,4 +1,5 @@
 import { normalizeWorkspacePath } from "./workspace-history.ts";
+import { normalizePreviewReadingPosition } from "./preview-reading-position.ts";
 
 const MAX_WORKSPACES = 50;
 const MAX_PATHS = 256;
@@ -26,6 +27,15 @@ function normalizeRelativePath(value) {
   return parts.join("/");
 }
 
+function normalizePreviewSourceRootPath(value) {
+  const root = normalizeWorkspacePath(value) || "";
+  if (!root) return "";
+  if (root.startsWith("/") || root.startsWith("//") || /^[A-Za-z]:[\\/]/.test(root) || root.startsWith("studio:")) {
+    return root;
+  }
+  return "";
+}
+
 function uniqueRelativePaths(values, limit = MAX_PATHS) {
   const out = [];
   const seen = new Set();
@@ -45,6 +55,8 @@ function normalizePreviewTab(raw) {
   if (!id) return null;
   const filePath = normalizeWorkspacePath(raw.filePath) || "";
   const relativePath = normalizeRelativePath(raw.relativePath);
+  const sourceRootPath = normalizePreviewSourceRootPath(raw.sourceRootPath);
+  const readingPosition = normalizePreviewReadingPosition(raw.readingPosition);
   if (!filePath && !relativePath) return null;
   return {
     id,
@@ -54,6 +66,8 @@ function normalizePreviewTab(raw) {
     type: cleanString(raw.type, 64) || "file-info",
     ext: cleanString(raw.ext, 32).toLowerCase(),
     language: cleanString(raw.language, 64) || null,
+    ...(sourceRootPath ? { sourceRootPath } : {}),
+    ...(readingPosition ? { readingPosition } : {}),
   };
 }
 

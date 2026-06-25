@@ -10,6 +10,8 @@ export const description = t("toolDef.getCoverStyleGuide.description");
 
 export { isBeautifyEnabledForAgentConfig as isEnabledForAgentConfig };
 
+export const sessionPermission = { readOnly: true };
+
 export const parameters = {
   type: "object",
   properties: {

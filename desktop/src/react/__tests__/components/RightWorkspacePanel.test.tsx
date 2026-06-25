@@ -11,6 +11,7 @@ import type { ChatListItem } from '../../stores/chat-types';
 import { RightWorkspacePanel } from '../../components/right-workspace/RightWorkspacePanel';
 import { openFilePreview } from '../../utils/file-preview';
 import { openMediaViewerForRef } from '../../utils/open-media-viewer';
+import { takeMarkdownFileScreenshot } from '../../utils/screenshot';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 
 vi.mock('../../utils/file-preview', () => ({
@@ -19,6 +20,10 @@ vi.mock('../../utils/file-preview', () => ({
 
 vi.mock('../../utils/open-media-viewer', () => ({
   openMediaViewerForRef: vi.fn(),
+}));
+
+vi.mock('../../utils/screenshot', () => ({
+  takeMarkdownFileScreenshot: vi.fn(async () => undefined),
 }));
 
 vi.mock('../../hooks/use-hana-fetch', () => ({
@@ -47,6 +52,7 @@ const tMap: Record<string, string> = {
   'rightWorkspace.sessionFiles.actions.copyPath': '复制路径',
   'rightWorkspace.sessionFiles.actions.copySelectedPaths': '复制 2 个路径',
   'rightWorkspace.sessionFiles.actions.downloadToDevice': '下载到本机',
+  'common.screenshotShare': '截图分享',
   'rightWorkspace.sessionFiles.actions.sendToBridge': '发送到...',
   'rightWorkspace.sessionFiles.actions.sendToBridgeLoading': '正在加载 Bridge 会话...',
   'rightWorkspace.sessionFiles.actions.sendToBridgeEmpty': '没有可发送的 Bridge 会话',
@@ -128,6 +134,7 @@ describe('RightWorkspacePanel', () => {
     window.t = ((key: string) => tMap[key] || key) as typeof window.t;
     vi.mocked(openFilePreview).mockClear();
     vi.mocked(openMediaViewerForRef).mockClear();
+    vi.mocked(takeMarkdownFileScreenshot).mockClear();
     vi.mocked(hanaFetch).mockReset();
     vi.mocked(hanaFetch).mockImplementation(async () => jsonResponse({ sessions: [] }));
     document.documentElement.removeAttribute('data-platform');
@@ -155,7 +162,7 @@ describe('RightWorkspacePanel', () => {
     const { container } = render(<RightWorkspacePanel />);
 
     const tabList = screen.getByRole('tablist', { name: 'rightWorkspace.tabs.label' });
-    expect(tabList.closest('.jian-card')).toBe(container.querySelector('.jian-card'));
+    expect(tabList.closest('.universal-card')).toBe(container.querySelector('.universal-card'));
     expect(within(tabList).getByRole('tab', { name: '对话文件' })).toBeInTheDocument();
     expect(within(tabList).getByRole('tab', { name: '工作台' })).toHaveAttribute('aria-selected', 'true');
     expect(container.querySelector('[data-right-workspace-tab-slider]')).toBeInTheDocument();
@@ -210,7 +217,7 @@ describe('RightWorkspacePanel', () => {
     const jianInnerBlock = globalCss.match(/\.jian-sidebar-inner\s*\{[\s\S]*?\}/)?.[0] ?? '';
     const floatRightBlock = globalCss.match(/\.float-sidebar\[data-side="right"\]\s*\{[\s\S]*?\}/)?.[0] ?? '';
     const rootBlock = globalCss.match(/:root\s*\{[\s\S]*?\}/)?.[0] ?? '';
-    const jianCardBlock = globalCss.match(/\.jian-card\s*\{[\s\S]*?\}/)?.[0] ?? '';
+    const universalCardBlock = globalCss.match(/\.universal-card,\s*\.jian-card\s*\{[\s\S]*?\}/)?.[0] ?? '';
 
     expect(rootBlock).toMatch(/--panel-edge-gap:\s*var\(--space-sm\);/);
     expect(rootBlock).toMatch(/--panel-card-bg:\s*var\(--bg-card,\s*var\(--bg\)\);/);
@@ -222,10 +229,10 @@ describe('RightWorkspacePanel', () => {
     expect(panelCss).toMatch(/--right-workspace-jian-bottom:\s*var\(--panel-edge-gap\);/);
     expect(jianInnerBlock).toMatch(/padding:\s*0 var\(--panel-edge-gap\) 0 0;/);
     expect(floatRightBlock).toMatch(/padding:\s*0 var\(--panel-edge-gap\);/);
-    expect(jianCardBlock).toMatch(/background(?:-color)?:\s*var\(--panel-card-bg\);/);
-    expect(jianCardBlock).toMatch(/border-radius:\s*var\(--panel-card-radius\);/);
-    expect(jianCardBlock).toMatch(/border:\s*var\(--panel-card-border\);/);
-    expect(jianCardBlock).toMatch(/box-shadow:\s*var\(--panel-card-shadow\);/);
+    expect(universalCardBlock).toMatch(/background(?:-color)?:\s*var\(--panel-card-bg\);/);
+    expect(universalCardBlock).toMatch(/border-radius:\s*var\(--panel-card-radius\);/);
+    expect(universalCardBlock).toMatch(/border:\s*var\(--panel-card-border\);/);
+    expect(universalCardBlock).toMatch(/box-shadow:\s*var\(--panel-card-shadow\);/);
   });
 
   it('places the preview toggle before the open-folder icon in the workspace toolbar', () => {
@@ -677,6 +684,32 @@ describe('RightWorkspacePanel', () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/tmp/session-files/report.pdf');
   });
 
+  it('adds screenshot share to Markdown session file context menus', () => {
+    resetStore([
+      {
+        type: 'message',
+        data: {
+          id: 'a1',
+          role: 'assistant',
+          timestamp: 1700000000000,
+          blocks: [
+            { type: 'file', fileId: 'sf_report', filePath: '/tmp/session-files/a1b2c3', label: 'report.md', ext: 'md', status: 'available' },
+          ],
+        },
+      },
+    ]);
+
+    render(<RightWorkspacePanel />);
+    fireEvent.click(screen.getByRole('tab', { name: '对话文件' }));
+    fireEvent.contextMenu(screen.getByTestId('session-file-row'), { clientX: 24, clientY: 48 });
+
+    fireEvent.click(screen.getByText('截图分享'));
+
+    expect(takeMarkdownFileScreenshot).toHaveBeenCalledWith('/tmp/session-files/a1b2c3', {
+      fileName: 'report.md',
+    });
+  });
+
   it('sends session files to an existing Bridge target from the context submenu', async () => {
     const sendBodies: unknown[] = [];
     vi.mocked(hanaFetch).mockImplementation(async (path, init) => {
@@ -783,7 +816,7 @@ describe('RightWorkspacePanel', () => {
     expect(screen.getByRole('button', { name: '收起笺' })).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('preserves raw Jian execution status when editing the instruction body', async () => {
+  it('hides raw Jian execution status while preserving it when editing the instruction body', async () => {
     vi.useFakeTimers();
     useStore.setState({
       deskJianContent: [
@@ -805,6 +838,11 @@ describe('RightWorkspacePanel', () => {
 
     try {
       render(<RightWorkspacePanel />);
+
+      expect(screen.getByPlaceholderText('写点什么...')).toHaveValue('帮我巡检这个目录，执行五次。');
+      expect(screen.queryByText(/上次任务快照/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/执行状态/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/进度：4\/5/)).not.toBeInTheDocument();
 
       fireEvent.change(screen.getByPlaceholderText('写点什么...'), {
         target: { value: '帮我巡检这个目录，执行五次。 ' },

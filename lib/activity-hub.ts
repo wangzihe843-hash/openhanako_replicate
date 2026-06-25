@@ -25,15 +25,46 @@ function pickNum(v: any, fallback: any) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }
 
-function normalizeEntry(entry: any, existing: any) {
+function normalizeSessionId(value: any) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeSessionPath(value: any) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function normalizeSessionRef(value: any, resolveSessionIdForPath = null) {
+  if (value && typeof value === "object") {
+    const sessionPath = normalizeSessionPath(value.sessionPath);
+    const sessionId = normalizeSessionId(value.sessionId) || resolveSessionIdForPath?.(sessionPath) || null;
+    return { sessionId, sessionPath };
+  }
+  const sessionPath = normalizeSessionPath(value);
+  const sessionId = resolveSessionIdForPath?.(sessionPath) || null;
+  return { sessionId, sessionPath };
+}
+
+function sameSession(entry: any, sessionRef: any) {
+  if (sessionRef.sessionId) return entry.sessionId === sessionRef.sessionId;
+  return !!sessionRef.sessionPath && entry.sessionPath === sessionRef.sessionPath;
+}
+
+function normalizeEntry(entry: any, existing: any, resolveSessionIdForPath = null) {
+  const sessionPath = pickStr(entry.sessionPath, existing?.sessionPath ?? null);
+  const sessionId = normalizeSessionId(entry.sessionId)
+    || normalizeSessionId(existing?.sessionId)
+    || resolveSessionIdForPath?.(sessionPath)
+    || null;
   return {
     id: entry.id,
     kind: VALID_KINDS.has(entry.kind) ? entry.kind : (existing?.kind || "subagent"),
     status: VALID_STATUSES.has(entry.status) ? entry.status : (existing?.status || "running"),
-    sessionPath: pickStr(entry.sessionPath, existing?.sessionPath ?? null),
+    sessionId,
+    sessionPath,
     agentId: pickStr(entry.agentId, existing?.agentId ?? null),
     agentName: pickStr(entry.agentName, existing?.agentName ?? null),
     summary: pickStr(entry.summary, existing?.summary ?? null),
+    childSessionId: pickStr(entry.childSessionId, existing?.childSessionId ?? null),
     childSessionPath: pickStr(entry.childSessionPath, existing?.childSessionPath ?? null),
     threadId: pickStr(entry.threadId, existing?.threadId ?? null),
     threadKind: pickStr(entry.threadKind, existing?.threadKind ?? null),
@@ -54,6 +85,7 @@ function normalizeEntry(entry: any, existing: any) {
 
 export class ActivityHub {
   declare _bus: any;
+  declare _getSessionIdForPath: any;
   declare _store: any;
   declare _entries: Map<string, any>;
   declare _cbs: any[];
@@ -63,8 +95,11 @@ export class ActivityHub {
    * @param {import("./workflow-activity-store.ts").WorkflowActivityStore|null} [store]
    *        可选持久化背书（仅 workflow / workflow_agent 写穿）；传入即在构造时回灌。
    */
-  constructor(bus = null, store = null) {
+  constructor(bus = null, store = null, options: any = {}) {
     this._bus = bus;
+    this._getSessionIdForPath = typeof options?.getSessionIdForPath === "function"
+      ? options.getSessionIdForPath
+      : null;
     this._store = store || null;
     /** @type {Map<string, object>} */
     this._entries = new Map();
@@ -75,7 +110,7 @@ export class ActivityHub {
   upsert(entry) {
     if (!entry || typeof entry.id !== "string" || !entry.id) return null;
     const existing = this._entries.get(entry.id) || null;
-    const next = normalizeEntry(entry, existing);
+    const next = normalizeEntry(entry, existing, (sessionPath) => this._resolveSessionIdForPath(sessionPath));
     this._entries.set(next.id, next);
     // 持久化背书：仅 workflow / workflow_agent 写穿（其它 kind 各有自己的源 / 本就瞬时）。
     if (this._store && PERSISTABLE_KINDS.has(next.kind)) this._store.upsert(next);
@@ -94,7 +129,7 @@ export class ActivityHub {
       const seed = orphaned
         ? { ...raw, status: "failed", finishedAt: raw.finishedAt ?? raw.startedAt ?? null }
         : raw;
-      const next = normalizeEntry(seed, null);
+      const next = normalizeEntry(seed, null, (sessionPath) => this._resolveSessionIdForPath(sessionPath));
       this._entries.set(next.id, next);
       if (orphaned) this._store.upsert(next);
     }
@@ -105,9 +140,10 @@ export class ActivityHub {
    * 用途：重启后前端 slice 为空，会话载入时调用，让右侧卡重新填充。
    */
   rebroadcastSession(sessionPath) {
-    if (!sessionPath) return;
+    const sessionRef = normalizeSessionRef(sessionPath, (path) => this._resolveSessionIdForPath(path));
+    if (!sessionRef.sessionId && !sessionRef.sessionPath) return;
     for (const e of this._entries.values()) {
-      if (e.sessionPath === sessionPath) this._emit({ ...e });
+      if (sameSession(e, sessionRef)) this._emit({ ...e });
     }
   }
 
@@ -120,23 +156,25 @@ export class ActivityHub {
     return [...this._entries.values()].map((e) => ({ ...e }));
   }
 
-  /** 当前对话过滤：只返回归属该 sessionPath 的活动 */
-  listBySession(sessionPath) {
-    if (!sessionPath) return [];
+  /** 当前对话过滤：只返回归属该 session 的活动。sessionPath 是 legacy locator。 */
+  listBySession(sessionRefInput) {
+    const sessionRef = normalizeSessionRef(sessionRefInput, (path) => this._resolveSessionIdForPath(path));
+    if (!sessionRef.sessionId && !sessionRef.sessionPath) return [];
     const out = [];
     for (const e of this._entries.values()) {
-      if (e.sessionPath === sessionPath) out.push({ ...e });
+      if (sameSession(e, sessionRef)) out.push({ ...e });
     }
     return out;
   }
 
   /** session 关闭/退场时回收其活动（内存 + 持久化背书一并清） */
-  clearBySession(sessionPath) {
-    if (!sessionPath) return;
+  clearBySession(sessionRefInput) {
+    const sessionRef = normalizeSessionRef(sessionRefInput, (path) => this._resolveSessionIdForPath(path));
+    if (!sessionRef.sessionId && !sessionRef.sessionPath) return;
     for (const [id, e] of this._entries) {
-      if (e.sessionPath === sessionPath) this._entries.delete(id);
+      if (sameSession(e, sessionRef)) this._entries.delete(id);
     }
-    this._store?.removeBySession?.(sessionPath);
+    this._store?.removeBySession?.(sessionRef.sessionId ? sessionRef : sessionRef.sessionPath);
   }
 
   remove(id) {
@@ -158,5 +196,14 @@ export class ActivityHub {
       try { cb(snapshot); } catch { /* best effort */ }
     }
     this._bus?.emit?.({ type: "agent_activity", entry: snapshot }, entry.sessionPath ?? null);
+  }
+
+  _resolveSessionIdForPath(sessionPath) {
+    if (!sessionPath || typeof this._getSessionIdForPath !== "function") return null;
+    try {
+      return normalizeSessionId(this._getSessionIdForPath(sessionPath));
+    } catch {
+      return null;
+    }
   }
 }

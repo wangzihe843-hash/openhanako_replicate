@@ -25,7 +25,7 @@ interface Props {
   showThinking: boolean;
   thinkingLevel: ThinkingLevel;
   onThinkingChange: (level: ThinkingLevel) => void;
-  modelXhigh: boolean;
+  availableThinkingLevels: ThinkingLevel[];
   models: Model[];
   sessionModel?: SessionModel;
   isStreaming: boolean;
@@ -46,7 +46,7 @@ export const InputControlBar = memo(function InputControlBar(props: Props) {
     t, onAttach, slashBtnRef, onSlashToggle,
     permissionMode, onPermissionModeChange, planModeLocked,
     workMode, onWorkModeChange,
-    showThinking, thinkingLevel, onThinkingChange, modelXhigh,
+    showThinking, thinkingLevel, onThinkingChange, availableThinkingLevels,
     models, sessionModel, isStreaming, hasInput, canSend,
     showAudioInput, audioRecordingActive, audioRecordingBusy, onAudioToggle,
     onSend, onSteer, onStop,
@@ -82,7 +82,7 @@ export const InputControlBar = memo(function InputControlBar(props: Props) {
       <div className={styles['input-controls']}>
         {showThinking ? (
           <div className={styles['model-split-control']}>
-            <ThinkingLevelButton level={thinkingLevel} onChange={onThinkingChange} modelXhigh={modelXhigh} />
+            <ThinkingLevelButton level={thinkingLevel} onChange={onThinkingChange} availableLevels={availableThinkingLevels} />
             <ModelSelector models={models} sessionModel={sessionModel} isStreaming={isStreaming} />
           </div>
         ) : (

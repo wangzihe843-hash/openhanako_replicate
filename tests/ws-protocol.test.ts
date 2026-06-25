@@ -16,6 +16,7 @@ describe("ws protocol session event builders", () => {
 
     expect(build({
       sessionPath: "/sessions/a.jsonl",
+      sessionId: "sess_ws_1",
       sessionEvent: { type: "text_delta", delta: "hello" },
       streamId: "stream_1",
       seq: 7,
@@ -23,9 +24,23 @@ describe("ws protocol session event builders", () => {
       type: "text_delta",
       delta: "hello",
       sessionPath: "/sessions/a.jsonl",
+      sessionId: "sess_ws_1",
+      sessionRefVersion: 2,
       streamId: "stream_1",
       seq: 7,
     });
+  });
+
+  it("rejects conflicting sessionId fields in session stream events", () => {
+    const build = protocolHelper("createSessionStreamEventWsMessage");
+
+    expect(() => build({
+      sessionPath: "/sessions/a.jsonl",
+      sessionId: "sess_ws_1",
+      sessionEvent: { type: "text_delta", delta: "hello", sessionId: "sess_ws_2" },
+      streamId: "stream_1",
+      seq: 7,
+    })).toThrow(/sessionEvent\.sessionId conflicts/);
   });
 
   it("rejects session stream events without an explicit sessionPath", () => {
@@ -73,6 +88,7 @@ describe("ws protocol session event builders", () => {
 
     expect(build({
       sessionPath: "/sessions/a.jsonl",
+      sessionId: "sess_resume_1",
       streamId: "stream_1",
       sinceSeq: 4,
       nextSeq: 8,
@@ -88,6 +104,8 @@ describe("ws protocol session event builders", () => {
     })).toEqual({
       type: "stream_resume",
       sessionPath: "/sessions/a.jsonl",
+      sessionId: "sess_resume_1",
+      sessionRefVersion: 2,
       streamId: "stream_1",
       sinceSeq: 4,
       nextSeq: 8,

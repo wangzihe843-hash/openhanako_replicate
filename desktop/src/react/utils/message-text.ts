@@ -1,8 +1,10 @@
 import { useStore } from '../stores';
+import { sessionScopedValue } from '../stores/session-slice';
 import type { ContentBlock } from '../stores/chat-types';
 
 export function extractSelectedTexts(sessionPath: string, selectedIds: readonly string[]): string {
-  const session = useStore.getState().chatSessions[sessionPath];
+  const state = useStore.getState();
+  const session = sessionScopedValue(state, state.chatSessions, sessionPath);
   if (!session) return '';
   const texts: string[] = [];
   for (const item of session.items) {

@@ -109,6 +109,7 @@ describe("writeDiary hybrid material collection", () => {
     expect(opts.generateTemporarySummary).not.toHaveBeenCalled();
     expect(diaryPrompt()).toContain("## 事情经过");
     expect(diaryPrompt()).toContain("补齐缺失摘要");
+    expect((callText as any).mock.calls[0][0]).not.toHaveProperty("maxTokens");
   });
 
   it("writes new diary files under OH-Works and ignores legacy diary folders", async () => {

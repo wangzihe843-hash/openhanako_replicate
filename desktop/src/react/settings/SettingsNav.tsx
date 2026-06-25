@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore, type PluginSettingsTab } from './store';
 import { getNativeSettingsTabComponent } from './native-settings-tabs';
 import { t } from './helpers';
+import { buildSettingsSearchEntries, searchSettings } from './settings-search-index';
 import styles from './Settings.module.css';
 
 function TabIcon({ d }: { d: string }) {
@@ -68,20 +69,80 @@ export function SettingsNav({ onTabChange }: SettingsNavProps) {
     useShallow(s => ({ activeTab: s.activeTab, pluginSettingsTabs: s.pluginSettingsTabs }))
   );
   const set = useSettingsStore(s => s.set);
+  const [query, setQuery] = useState('');
   const navItems = buildNavItems(pluginSettingsTabs || []);
   const activeNavTab = activeTab === 'plugin-marketplace' ? 'plugins' : activeTab;
+  const trimmedQuery = query.trim();
+  const searchEntries = useMemo(() => buildSettingsSearchEntries(navItems), [navItems]);
+  const searchResults = useMemo(
+    () => searchSettings(trimmedQuery, searchEntries, t),
+    [searchEntries, trimmedQuery],
+  );
+  const isSearching = trimmedQuery.length > 0;
+
+  const openTab = (tab: string) => {
+    set({ activeTab: tab });
+    onTabChange?.(tab);
+  };
 
   return (
     <nav className={styles['settings-nav']}>
-      {navItems.map(item => (
+      <div className={styles['settings-search-shell']}>
+        <svg className={styles['settings-search-icon']} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" />
+        </svg>
+        <input
+          className={styles['settings-search-input']}
+          type="search"
+          value={query}
+          placeholder={t('settings.settingsSearch.placeholder')}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setQuery('');
+          }}
+        />
+        {query && (
+          <button
+            type="button"
+            className={styles['settings-search-clear']}
+            onClick={() => setQuery('')}
+            aria-label={t('settings.settingsSearch.clear')}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M6 6l12 12" />
+              <path d="M18 6 6 18" />
+            </svg>
+          </button>
+        )}
+      </div>
+
+      {isSearching ? (
+        <div className={styles['settings-search-results']} aria-label={t('settings.settingsSearch.results')}>
+          <div className={styles['settings-search-results-title']}>{t('settings.settingsSearch.results')}</div>
+          {searchResults.length > 0 ? searchResults.map(result => (
+            <button
+              key={result.id}
+              type="button"
+              className={styles['settings-search-result']}
+              onClick={() => {
+                openTab(result.tabId);
+                setQuery('');
+              }}
+            >
+              <span className={styles['settings-search-result-title']}>{result.title}</span>
+              <span className={styles['settings-search-result-path']}>{result.path}</span>
+            </button>
+          )) : (
+            <div className={styles['settings-search-empty']}>{t('settings.settingsSearch.noResults')}</div>
+          )}
+        </div>
+      ) : navItems.map(item => (
         <button
           key={item.id}
           className={`${styles['settings-nav-item']}${activeNavTab === item.id ? ' ' + styles['active'] : ''}`}
           data-tab={item.id}
-          onClick={() => {
-            set({ activeTab: item.id });
-            onTabChange?.(item.id);
-          }}
+          onClick={() => openTab(item.id)}
         >
           <TabIcon d={item.d} />
           <span>{item.label}</span>

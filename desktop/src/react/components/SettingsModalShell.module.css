@@ -44,7 +44,7 @@
 }
 
 .card {
-  width: min(864px, calc(100vw - var(--space-lg) - var(--space-lg)));
+  width: min(884px, calc(100vw - 2 * var(--space-lg)));
   height: min(840px, calc(100vh - var(--space-lg) - var(--space-lg)));
   min-height: min(500px, calc(100vh - var(--space-lg) - var(--space-lg)));
   display: flex;

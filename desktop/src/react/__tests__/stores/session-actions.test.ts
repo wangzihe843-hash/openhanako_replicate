@@ -22,6 +22,8 @@ const streamResumeMocks = vi.hoisted(() => ({
 const mockState: MockState = {};
 const initialStateFactory = (): MockState => ({
   currentSessionPath: null,
+  currentSessionId: null,
+  sessionLocatorsById: {} as Record<string, { path: string | null }>,
   pendingSessionSwitchPath: null,
   pendingNewSession: false,
   pendingProjectId: null,
@@ -268,6 +270,10 @@ function jsonResponse(body: unknown, ok = true): Response {
   return { ok, json: async () => body } as unknown as Response;
 }
 
+function mockPermissionDefault(mode = 'ask') {
+  mockFetch.mockResolvedValueOnce(jsonResponse({ permissionMode: mode }));
+}
+
   describe('session-actions', () => {
   beforeEach(() => {
     Object.keys(mockState).forEach(k => delete mockState[k]);
@@ -389,13 +395,14 @@ function jsonResponse(body: unknown, ok = true): Response {
     Object.assign(mockState, {
       currentSessionPath: '/session/current.jsonl',
       unreadOutputSessionPaths: ['/session/next.jsonl', '/session/other.jsonl'],
-      sessions: [{ path: '/session/next.jsonl', cwd: '/tmp/work' }],
+      sessions: [{ path: '/session/next.jsonl', sessionId: 'sess_next', cwd: '/tmp/work' }],
     });
     mockFetch.mockImplementation(async (url: string) => {
       if (url === '/api/sessions/switch') {
         return jsonResponse({
           ok: true,
           path: '/session/next.jsonl',
+          sessionId: 'sess_next',
           cwd: '/tmp/work',
           workspaceFolders: [],
           memoryEnabled: true,
@@ -411,7 +418,17 @@ function jsonResponse(body: unknown, ok = true): Response {
 
     await switchSession('/session/next.jsonl');
 
+    expect(mockFetch).toHaveBeenCalledWith('/api/sessions/switch', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        path: '/session/next.jsonl',
+        sessionId: 'sess_next',
+        currentSessionPath: '/session/current.jsonl',
+      }),
+    }));
     expect(mockState.unreadOutputSessionPaths).toEqual(['/session/other.jsonl']);
+    expect(mockState.currentSessionId).toBe('sess_next');
+    expect(mockState.sessionLocatorsById).toMatchObject({ sess_next: { path: '/session/next.jsonl' } });
   });
 
   it('clears unread output marker when switching into a deleted-agent history session', async () => {
@@ -478,6 +495,53 @@ function jsonResponse(body: unknown, ok = true): Response {
     expect(mockState.currentSessionPath).toBe(newPath);
   });
 
+  it('warns when a deleted-agent continuation succeeds without fresh compaction', async () => {
+    const oldPath = '/tmp/agents/deleted/sessions/old.jsonl';
+    const newPath = '/tmp/agents/hana/sessions/new.jsonl';
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url === '/api/sessions/continue-deleted-agent') {
+        return jsonResponse({
+          ok: true,
+          path: newPath,
+          agentId: 'hana',
+          agentName: 'Hana',
+          compacted: false,
+          compactionError: 'model unavailable',
+        });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse([{ path: newPath, agentId: 'hana', agentName: 'Hana', cwd: '/tmp/work' }]);
+      }
+      if (url === '/api/sessions/switch') {
+        return jsonResponse({
+          ok: true,
+          agentId: 'hana',
+          agentName: 'Hana',
+          cwd: '/tmp/work',
+          workspaceFolders: [],
+          memoryEnabled: true,
+          permissionMode: 'ask',
+          accessMode: 'ask',
+        });
+      }
+      if (String(url).startsWith('/api/sessions/messages')) {
+        return jsonResponse({ messages: [], blocks: [], todos: [], hasMore: false });
+      }
+      if (String(url).startsWith('/api/models')) return jsonResponse({});
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const ok = await continueDeletedAgentSession(oldPath);
+
+    expect(ok).toBe(true);
+    expect(mockState.addToast).toHaveBeenCalledWith(
+      expect.stringContaining('model unavailable'),
+      'warning',
+      6000,
+    );
+    expect(mockState.currentSessionPath).toBe(newPath);
+  });
+
   describe('createNewSession cwd draft', () => {
     it('uses the agent home folder and refreshes the visible desk root', async () => {
       (mockState as Record<string, unknown>).deskBasePath = '/workspace/Desktop';
@@ -485,6 +549,7 @@ function jsonResponse(body: unknown, ok = true): Response {
       (mockState as Record<string, unknown>).deskFiles = [{ name: 'stale.md' }];
       (mockState as Record<string, unknown>).deskJianContent = 'stale';
       (mockState as Record<string, unknown>).homeFolder = '/workspace/AgentHome';
+      mockPermissionDefault();
 
       await createNewSession();
 
@@ -502,6 +567,7 @@ function jsonResponse(body: unknown, ok = true): Response {
       (mockState as Record<string, unknown>).deskBasePath = '/workspace/current-session';
       (mockState as Record<string, unknown>).deskCurrentPath = 'notes';
       (mockState as Record<string, unknown>).deskFiles = [{ name: 'stale.md' }];
+      mockPermissionDefault();
 
       await createNewSession();
 
@@ -519,6 +585,7 @@ function jsonResponse(body: unknown, ok = true): Response {
       let resolveSwitch!: (r: Response) => void;
       const switchResponse = new Promise<Response>(resolve => { resolveSwitch = resolve; });
       mockFetch.mockImplementationOnce(() => switchResponse);
+      mockPermissionDefault();
 
       const switching = switchSession('/session/desktop.jsonl');
       await createNewSession();
@@ -540,9 +607,7 @@ function jsonResponse(body: unknown, ok = true): Response {
 
     it('uses the runtime new-session permission default instead of the old active session mode', async () => {
       mockFetch.mockResolvedValueOnce(jsonResponse({
-        mode: 'operate',
-        accessMode: 'operate',
-        defaultMode: 'read_only',
+        permissionMode: 'read_only',
       }));
 
       await createNewSession();
@@ -556,10 +621,10 @@ function jsonResponse(body: unknown, ok = true): Response {
     it('initializes pending new-session thinking from the server default', async () => {
       (mockState as Record<string, unknown>).thinkingLevel = 'high';
       mockFetch.mockImplementation(async (url: string) => {
-        if (url === '/api/session-permission-mode') {
-          return jsonResponse({ mode: 'ask', defaultMode: 'ask' });
+        if (url === '/api/preferences/session-permission-default') {
+          return jsonResponse({ permissionMode: 'ask' });
         }
-        if (url === '/api/session-thinking-level') {
+        if (url === '/api/session-thinking-level?pendingNewSession=1') {
           return jsonResponse({ thinkingLevel: 'medium' });
         }
         throw new Error(`unexpected fetch: ${url}`);
@@ -567,7 +632,7 @@ function jsonResponse(body: unknown, ok = true): Response {
 
       await createNewSession();
 
-      expect(mockFetch).toHaveBeenCalledWith('/api/session-thinking-level');
+      expect(mockFetch).toHaveBeenCalledWith('/api/session-thinking-level?pendingNewSession=1');
       expect(mockState.thinkingLevel).toBe('medium');
       expect(mockState.pendingNewSessionThinkingLevel).toBe('medium');
     });
@@ -578,8 +643,7 @@ function jsonResponse(body: unknown, ok = true): Response {
         resolveDesk = resolve;
       }));
       mockFetch.mockResolvedValueOnce(jsonResponse({
-        mode: 'ask',
-        defaultMode: 'ask',
+        permissionMode: 'ask',
       }));
 
       const creating = createNewSession();
@@ -734,6 +798,8 @@ function jsonResponse(body: unknown, ok = true): Response {
     });
 
     it('carries an explicit project id from the new-session draft into session creation', async () => {
+      mockPermissionDefault();
+
       await createNewSession({ projectId: 'project-hana', cwd: '/workspace/project-hana' });
       mockFetch.mockResolvedValueOnce(jsonResponse({
         ok: true,
@@ -1399,10 +1465,10 @@ function jsonResponse(body: unknown, ok = true): Response {
     it('posts the explicit pinned state and updates only the matching session after success', async () => {
       const pinnedAt = '2026-04-29T08:00:00.000Z';
       (mockState as Record<string, unknown>).sessions = [
-        { path: '/a', pinnedAt: null },
-        { path: '/b', pinnedAt: null },
+        { path: '/a', sessionId: 'sess_a', pinnedAt: null },
+        { path: '/b', sessionId: 'sess_b', pinnedAt: null },
       ];
-      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true, pinnedAt }));
+      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true, pinnedAt, sessionId: 'sess_a' }));
 
       const ok = await pinSession('/a', true);
 
@@ -1410,11 +1476,11 @@ function jsonResponse(body: unknown, ok = true): Response {
       expect(mockFetch).toHaveBeenCalledWith('/api/sessions/pin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: '/a', pinned: true }),
+        body: JSON.stringify({ path: '/a', sessionId: 'sess_a', pinned: true }),
       });
-      expect((mockState.sessions as Array<{ path: string; pinnedAt: string | null }>)).toEqual([
-        { path: '/a', pinnedAt },
-        { path: '/b', pinnedAt: null },
+      expect((mockState.sessions as Array<{ path: string; sessionId: string; pinnedAt: string | null }>)).toEqual([
+        { path: '/a', sessionId: 'sess_a', pinnedAt },
+        { path: '/b', sessionId: 'sess_b', pinnedAt: null },
       ]);
     });
 
@@ -1439,6 +1505,9 @@ function jsonResponse(body: unknown, ok = true): Response {
   describe('loadMessages revision stamp', () => {
     it('stamps the server revision into the hydrated session cache', async () => {
       const sessionPath = '/session/revisioned.jsonl';
+      (mockState as Record<string, unknown>).sessions = [
+        { path: sessionPath, sessionId: 'sess_revisioned' },
+      ];
       mockFetch.mockResolvedValueOnce(jsonResponse({
         messages: [{ role: 'user', content: 'hi' }],
         blocks: [],
@@ -1449,6 +1518,9 @@ function jsonResponse(body: unknown, ok = true): Response {
 
       await loadMessages(sessionPath);
 
+      expect(mockFetch).toHaveBeenCalledWith(
+        `/api/sessions/messages?path=${encodeURIComponent(sessionPath)}&sessionId=sess_revisioned`,
+      );
       const cached = (mockState.chatSessions as Record<string, { revision?: string | null }>)[sessionPath];
       expect(cached.revision).toBe('2048:1765500000000');
     });

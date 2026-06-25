@@ -36,7 +36,6 @@ import {
   createSubagentReplyTool,
   createSubagentTool,
 } from "../lib/tools/subagent-tool.ts";
-import { writeSubagentSessionMeta } from "../lib/subagent-executor-metadata.ts";
 import { createCheckDeferredTool } from "../lib/tools/check-deferred-tool.ts";
 import { createStopTaskTool } from "../lib/tools/stop-task-tool.ts";
 import { createCurrentStatusTool } from "../lib/tools/current-status-tool.ts";
@@ -59,6 +58,7 @@ import { callText } from "./llm-client.ts";
 import { createModuleLogger } from "../lib/debug-log.ts";
 import {
   CACHE_SNAPSHOT_EXPERIMENT_ID,
+  EDITABLE_MEMORY_EXPERIMENT_ID,
   PROACTIVE_SUBAGENT_EXPERIMENT_ID,
   getResolvedExperimentValue,
 } from "../lib/experiments/registry.ts";
@@ -252,6 +252,14 @@ export class Agent {
      * Agent 不持有 Engine 引用，所有对 Engine 的需求通过此对象间接访问。
      */
     this._cb = null;
+
+    // 团队花名册唯一事实源：AgentManager 注入的 active-agent provider，
+    // tombstone / 坏目录已在 manager 层过滤。Agent 自身禁止私扫 agentsDir，
+    // 否则删除标记对 prompt / subagent / DM / workflow 不可见（#1657 / #1633）。
+    // 与旧行为保持一致：仅在频道能力可用（channelsDir 存在）时暴露花名册。
+    if (this.channelsDir && this.agentsDir) {
+      this._listAgents = () => this._cb?.listActiveAgents?.() ?? [];
+    }
   }
 
   // ════════════════════════════
@@ -399,11 +407,24 @@ export class Agent {
           this._cb?.getPreferences?.(),
           CACHE_SNAPSHOT_EXPERIMENT_ID,
         ),
+        getEditableMemoryEnabled: () => getResolvedExperimentValue(
+          this._cb?.getPreferences?.(),
+          EDITABLE_MEMORY_EXPERIMENT_ID,
+        ) === true,
         buildSessionCacheSnapshot: (sessionPath, options) => (
           this._cb?.getEngine?.()?.buildSessionCacheSnapshot?.(sessionPath, options)
         ),
+        readMemoryReflectionSnapshot: (sessionPath) => (
+          this._cb?.getEngine?.()?.getSessionMemoryReflectionSnapshot?.(sessionPath)
+        ),
+        ensureSessionLoaded: (sessionPath) => (
+          this._cb?.getEngine?.()?.ensureSessionLoaded?.(sessionPath)
+        ),
         getSessionStreamFn: (sessionPath) => (
           this._cb?.getEngine?.()?.getSessionStreamFn?.(sessionPath)
+        ),
+        getSessionIdForPath: (sessionPath) => (
+          this._cb?.getEngine?.()?.getSessionIdForPath?.(sessionPath)
         ),
         onCompiled: () => {
           // _systemPrompt 是非 session 路径（巡检/cron/频道/DM/bridge owner 新建）
@@ -487,10 +508,11 @@ export class Agent {
       getVisionBridge: () => this._cb?.getEngine?.()?.getVisionBridge?.() || null,
       isVisionAuxiliaryEnabled: () => this._cb?.getEngine?.()?.isVisionAuxiliaryEnabled?.() === true,
       getHanakoHome: () => this._cb?.getEngine?.()?.hanakoHome,
+      getSessionIdForPath: (sessionPath) => this._cb?.getEngine?.()?.getSessionIdForPath?.(sessionPath) || null,
       registerSessionFile: (entry) => this._cb?.registerSessionFile?.(entry),
     });
     this._notifyTool = createNotifyTool({
-      onNotify: (payload) => this._notifyHandler?.(payload),
+      onNotify: (payload, context) => this._notifyHandler?.(payload, context),
     });
     this._stopTaskTool = createStopTaskTool({
       getTaskRegistry: () => this._cb?.getTaskRegistry?.(),
@@ -537,46 +559,9 @@ export class Agent {
     // 9. 频道工具 + 私信工具（需要 channelsDir 和 agentsDir）
     if (this.channelsDir && this.agentsDir) {
       const agentId = this.id;
-      const listAgents = () => {
-        try {
-          return fs.readdirSync(this.agentsDir, { withFileTypes: true })
-            .filter(e => e.isDirectory() && fs.existsSync(path.join(this.agentsDir, e.name, "config.yaml")))
-            .map(e => {
-              try {
-                const raw = fs.readFileSync(path.join(this.agentsDir, e.name, "config.yaml"), "utf-8");
-                const nameMatch = raw.match(/^\s*name:\s*(.+)$/m);
-
-                // models.chat 可能是 string 或 { id, provider } 对象格式
-                let chatModel = "";
-                const chatObjMatch = raw.match(/^\s+chat:\s*\n\s+id:\s*(.+)$/m);
-                if (chatObjMatch) {
-                  chatModel = chatObjMatch[1].trim();
-                } else {
-                  const chatStrMatch = raw.match(/^\s+chat:\s+(\S.+)$/m);
-                  if (chatStrMatch) chatModel = chatStrMatch[1].trim();
-                }
-
-                // 读取 description.md（跳过 hash 注释行）
-                let summary = "";
-                try {
-                  const descRaw = fs.readFileSync(path.join(this.agentsDir, e.name, "description.md"), "utf-8");
-                  summary = descRaw.split("\n")
-                    .filter(l => !l.trim().startsWith("<!--"))
-                    .join("\n").trim();
-                } catch {}
-
-                return {
-                  id: e.name,
-                  name: nameMatch?.[1]?.trim() || e.name,
-                  summary,
-                  model: chatModel,
-                };
-              } catch { return { id: e.name, name: e.name, summary: "", model: "" }; }
-            });
-        } catch { return []; }
-      };
-
-      this._listAgents = listAgents;
+      // 花名册来自构造期装配的 active-agent provider（见 constructor），
+      // 这里只取引用传给各工具，不在 Agent 内部扫盘。
+      const listAgents = this._listAgents;
 
       this._channelTool = createChannelTool({
         channelsDir: this.channelsDir,
@@ -616,6 +601,7 @@ export class Agent {
         await this._onInstallCallback?.(skillName);
       },
       registerSessionFile: (entry) => this._cb?.registerSessionFile?.(entry),
+      resolveSessionFile: (fileId, options = {}) => this._cb?.getEngine?.()?.getSessionFile?.(fileId, options) || null,
     });
 
     // 11. subagent 工具
@@ -633,6 +619,7 @@ export class Agent {
       setSubagentController: (id, ctrl) => this._cb?.setSubagentController?.(id, ctrl),
       removeSubagentController: (id) => this._cb?.removeSubagentController?.(id),
       getSessionPath: () => this._cb?.getCurrentSessionPath?.(),
+      getSessionIdForPath: (sp) => this._cb?.getEngine?.()?.getSessionIdForPath?.(sp) || null,
       // 父会话当前权限档：subagent 省略 access 参数时据此继承（Codex 式）。
       // 按显式 sessionPath 反查，不从焦点指针推导（状态归属唯一确定）。
       getSessionPermissionMode: (sp) => this._cb?.getSessionPermissionMode?.(sp) ?? null,
@@ -643,7 +630,13 @@ export class Agent {
       currentAgentId: this.channelsDir && this.agentsDir ? this.id : undefined,
       agentDir: this.agentDir,
       emitEvent: (event, sp) => this._cb?.emitEvent?.(event, sp),
-      persistSubagentSessionMeta: (sessionPath, meta) => writeSubagentSessionMeta(sessionPath, meta),
+      persistSubagentSessionMeta: (sessionPath, meta) => (
+        this._cb?.getEngine?.()?.setSessionExecutorMetadata?.(
+          sessionPath,
+          meta,
+          { source: "subagent_runtime" },
+        )
+      ),
       proactiveDelegation: getResolvedExperimentValue(
         this._cb?.getPreferences?.(),
         PROACTIVE_SUBAGENT_EXPERIMENT_ID,
@@ -660,6 +653,7 @@ export class Agent {
         return this._cb.executeIsolated(prompt, opts);
       },
       getSessionPath: () => this._cb?.getCurrentSessionPath?.(),
+      getSessionPermissionMode: (sp) => this._cb?.getSessionPermissionMode?.(sp) ?? null,
       getParentCwd: () => this._cb?.getCwd?.() || null,
       getAgentId: () => this.id,
       emitEvent: (event, sp) => this._cb?.emitEvent?.(event, sp),
@@ -678,6 +672,8 @@ export class Agent {
       getUsageLedger: () => this._cb?.getEngine?.()?.usageLedger,
       // journal 断点续跑：存储在 agent 数据目录下。
       getJournalDir: () => path.join(this.agentDir, "workflow-journals"),
+      // workflow node session 是审计证据，不能落到 executeIsolated 默认 .ephemeral 后被删掉。
+      getWorkflowSessionDir: () => path.join(this.agentDir, "workflow-sessions"),
     });
 
     // 12. 组装 system prompt（按 master 构建，与 per-session 开关解耦）
@@ -737,6 +733,16 @@ export class Agent {
   setChannelPostHandler(fn) { this._channelPostHandler = fn; }
   setUtilityModel(val) { this._utilityModel = val; }
   setMemoryModel(val) { this._memoryModel = val; }
+
+  /**
+   * 为某个会话面创建带作用域的 search_memory 实例（同一 FactStore，不复制数据归属）。
+   * 频道 phone 会话用它替换默认实例：默认排除其它频道的事实，跨频道需显式参数（#1670）。
+   * FactStore 未初始化（记忆未启用 / runtime 未就绪）时返回 null，调用方不得注入兜底实例。
+   */
+  createConversationScopedMemorySearchTool(conversationScope) {
+    if (!this._factStore) return null;
+    return createMemorySearchTool(this._factStore, { conversationScope });
+  }
 
   // ════════════════════════════
   //  状态访问
@@ -948,9 +954,11 @@ export class Agent {
   /** 查询指定 session 的持久化记忆开关，缺省视为开启 */
   isSessionMemoryEnabledFor(sessionPath) {
     if (!sessionPath) return this._memorySessionEnabled;
-    const metaPath = path.join(this.sessionDir, "session-meta.json");
-    const meta = safeReadJSON(metaPath, {});
-    return meta[path.basename(sessionPath)]?.memoryEnabled !== false;
+    const engine = this._cb?.getEngine?.();
+    if (typeof engine?.getSessionMemoryEnabled === "function") {
+      return engine.getSessionMemoryEnabled(sessionPath) !== false;
+    }
+    return this._memorySessionEnabled;
   }
 
   /** 设置 agent 级别记忆总开关（同时重载 config 以获取 disabledSince/reenableAt） */
@@ -1319,10 +1327,11 @@ export class Agent {
         "当用户本轮附加文件时，消息里可能出现 [SessionFile] JSON 上下文。这里的 fileId 是机器契约，label 只是展示名；读取时优先用 read 的 fileId 参数，不要从 label 或可见文本重建真实路径。\n\n" +
         "当你需要使用本轮会话已经产生或登记过的文件时，先调用 current_status 获取 session_files。它会返回当前 session 的文件清单、fileId、来源、状态和本机路径。不要猜测 session-files 缓存路径。\n\n" +
         "当你需要查看文件元信息或把已有 SessionFile 复制到当前项目目录时，使用 file 工具。查看用 action=stat；复制用 action=copy，并优先传 fileId；它会把原文件复制到当前 cwd 内的目标路径并重新登记为 external SessionFile。不要移动、编辑或删除原 SessionFile。\n\n" +
-        "write/edit 成功后会由工具层自动记录为 session 相关文件；这只表示文件和本次会话有关，不等于已经交付给用户。\n\n" +
-        "当用户要求你把文件发给他、呈现给他、交付给他，或者你创建/修改了一个明确需要用户查看或拿走的文件时，使用 stage_files 标记为已交付。stage 表示把这个 session 相关文件提升为消费端可展示/可发送的文件；已有 SessionFile 时优先传 fileId，不要为了交付而猜真实路径。\n\n" +
+        "当用户要求安装 skill package 时，使用 install_skill。GitHub 仓库用 github_url；当前 Hana server 可见的本机路径用 local_path 或 source={ type: 'path', path }；已经上传或登记为 SessionFile 的 .zip/.skill 包用 fileId 或 source={ type: 'session_file', fileId }。不要把手机/PWA 客户端路径当成 server 路径。\n\n" +
+        "write/edit 成功后会由工具层自动记录为 session 相关文件，让它出现在 Session File 列表里；这条登记不等同于交付给用户。\n\n" +
+        "write/edit 生成或修改文件后，主动调用 stage_files 交付这次变更。优先使用 write/edit 结果里的 SessionFile fileId；只有结果里没有 fileId 且文件还没有 SessionFile 记录时，才传真实存在的本机绝对路径。stage 表示把这个 session 相关文件提升为消费端可展示/可发送的文件。\n\n" +
         "- 已有 SessionFile 时优先传 fileId；只有还没有 SessionFile 记录的本机文件才传真实存在的本机绝对路径\n" +
-        "- 已经 stage 过的同一个文件不需要反复 stage；如文件内容后来又被修改，并且用户需要查看最新版本，再 stage 一次\n" +
+        "- 同一个未变化的文件不要反复 stage；文件内容后来再次变化时，再 stage 最新版本\n" +
         "- 不要只在文本里写文件路径\n" +
         "- 不要在 Agent 层判断具体平台怎么展示或发送，消费端会处理"
       : "\n## Session Files and Delivery\n\n" +
@@ -1330,10 +1339,11 @@ export class Agent {
         "When the user attaches files in the current turn, the message may include [SessionFile] JSON context. fileId is the machine contract and label is display-only; prefer the read tool's fileId argument instead of reconstructing a real path from label or visible text.\n\n" +
         "When you need to use a file that has already been produced or registered in this conversation, call current_status with the session_files key first. It returns the current session file list, fileId, origin, status, and local path. Do not guess session-files cache paths.\n\n" +
         "When you need to inspect file metadata or copy an existing SessionFile into the current project folder, use the file tool. Use action=stat for metadata; use action=copy and prefer passing fileId for copies. This copies the original into the current cwd target and registers the copy as an external SessionFile. Do not move, edit, or delete the original SessionFile.\n\n" +
-        "After write/edit succeeds, the tool layer records the file as session-related automatically; this only means the file belongs to this session, not that it has been delivered to the user.\n\n" +
-        "When the user asks you to send, present, or hand over a file, or when you create/modify a file the user clearly needs to see or take away, use stage_files to mark it as delivered. Staging promotes this session-related file to something consumers can display/send; when a SessionFile already exists, prefer passing fileId and do not guess the real path just to deliver it.\n\n" +
+        "When the user asks you to install a skill package, use install_skill. Use github_url for GitHub repos; use local_path or source={ type: 'path', path } for paths visible to the current Hana server; use fileId or source={ type: 'session_file', fileId } for uploaded or registered .zip/.skill packages. Do not treat a phone/PWA client path as a server path.\n\n" +
+        "After write/edit succeeds, the tool layer records the file as session-related automatically so it appears in Session File; that registration does not mean the file has been delivered to the user.\n\n" +
+        "After write/edit creates or modifies a file, call stage_files for that changed file. Prefer the SessionFile fileId returned by the write/edit result; pass a real local absolute path only when the result has no fileId and the file has no SessionFile record yet. Staging promotes this session-related file to something consumers can display/send.\n\n" +
         "- Prefer fileId for existing SessionFiles; pass real local absolute paths only for local files that do not have a SessionFile record yet\n" +
-        "- Do not repeatedly stage the same file once it has already been staged; if the file is modified later and the user needs the latest version, stage it again\n" +
+        "- Do not repeatedly stage the same unchanged file; if the file is modified again, stage the latest version again\n" +
         "- Do not merely write file paths in text\n" +
         "- Do not decide platform-specific display or sending behavior in the Agent layer; consumers handle it"
     );
@@ -1389,18 +1399,18 @@ export class Agent {
       );
     }
 
-    if (this._isComputerUseAvailableForThisAgent()) {
-      parts.push(isZh
-        ? "\n## 本机应用控制\n\n" +
-          "用户要求打开、查看、点击、输入或控制本机 GUI 应用时，优先使用 computer 工具。" +
-          "不要用 bash、AppleScript、osascript、open -a 或平台脚本控制 GUI 应用；这些路径会绕过 Hana 的应用审批列表，也更容易撞到系统隐私权限。" +
-          "如果需要控制一个新应用，先用 computer 的 start/list_apps 流程触发应用级确认，让用户在输入框上方同意。"
-        : "\n## Desktop App Control\n\n" +
-          "When the user asks to open, inspect, click, type in, or control a local GUI application, prefer the computer tool. " +
-          "Do not use bash, AppleScript, osascript, open -a, or platform scripts to control GUI applications; those paths bypass Hana's app approval list and are more likely to hit OS privacy permissions. " +
-          "For a new app, use the computer start/list_apps flow so the input-area app approval prompt can ask the user to approve it."
-      );
-    }
+	    if (this._isComputerUseAvailableForThisAgent()) {
+	      parts.push(isZh
+	        ? "\n## 本机应用控制\n\n" +
+	          "用户要求打开、查看、点击、输入或控制本机 GUI 应用时，优先使用 computer 工具。" +
+	          "不要用 bash、AppleScript、osascript、open -a 或平台脚本控制 GUI 应用；这些路径会绕过 Hana 的应用审批列表，也更容易撞到系统隐私权限。" +
+	          "如果需要控制一个新应用，先用 computer 的 start/list_apps 流程；Auto 模式会交给自动 reviewer，Ask 模式才会向用户展示应用确认。"
+	        : "\n## Desktop App Control\n\n" +
+	          "When the user asks to open, inspect, click, type in, or control a local GUI application, prefer the computer tool. " +
+	          "Do not use bash, AppleScript, osascript, open -a, or platform scripts to control GUI applications; those paths bypass Hana's app approval list and are more likely to hit OS privacy permissions. " +
+	          "For a new app, use the computer start/list_apps flow; Auto mode routes approval to the automatic reviewer, while Ask mode can show the user an app confirmation."
+	      );
+	    }
 
     // 失败处理（诊断优先于换方案）
     parts.push(isZh

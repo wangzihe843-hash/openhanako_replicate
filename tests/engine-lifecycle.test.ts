@@ -11,19 +11,32 @@ import { autoProjectIdForCwd, UNCATEGORIZED_PROJECT_ID } from "../shared/session
 
 describe("HanaEngine Computer Use lazy runtime", () => {
   let tmpDir = null;
+  let engines: HanaEngine[] = [];
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const engine of engines.splice(0).reverse()) {
+      await engine.dispose();
+    }
     if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
     tmpDir = null;
   });
 
+  function trackEngine(engine: HanaEngine) {
+    engines.push(engine);
+    return engine;
+  }
+
+  function untrackEngine(engine: HanaEngine) {
+    engines = engines.filter((candidate) => candidate !== engine);
+  }
+
   function createEngine() {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-engine-computer-use-"));
-    return new HanaEngine({
+    return trackEngine(new HanaEngine({
       hanakoHome: tmpDir,
       productDir: tmpDir,
       agentId: "hana",
-    } as any);
+    } as any));
   }
 
   it("does not construct the Computer Use runtime during engine construction", () => {
@@ -54,6 +67,7 @@ describe("HanaEngine Computer Use lazy runtime", () => {
     engine._computerHost = { dispose };
 
     await engine.dispose();
+    untrackEngine(engine);
 
     expect(dispose).toHaveBeenCalledOnce();
     expect(engine._computerHost).toBeNull();
@@ -71,11 +85,11 @@ describe("HanaEngine Computer Use lazy runtime", () => {
       },
     });
 
-    const restarted = new HanaEngine({
+    const restarted = trackEngine(new HanaEngine({
       hanakoHome: tmpDir,
       productDir: tmpDir,
       agentId: "hana",
-    } as any);
+    } as any));
 
     expect(restarted.usageLedger.list({}).entries).toMatchObject([
       {

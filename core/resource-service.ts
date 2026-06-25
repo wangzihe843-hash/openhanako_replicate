@@ -22,7 +22,7 @@ export class ResourceService {
   declare _sessionFiles: any;
   declare _runtimeContext: any;
   declare _now: () => number;
-  declare _sessionPathByFileId: Map<string, any>;
+  declare _sessionRefByFileId: Map<string, any>;
 
   constructor({ agentsDir, sessionFiles, runtimeContext, now = () => Date.now() }: { agentsDir?: any; sessionFiles?: any; runtimeContext?: any; now?: () => number } = {}) {
     if (!agentsDir) throw new Error("agentsDir is required for ResourceService");
@@ -32,7 +32,7 @@ export class ResourceService {
     this._sessionFiles = sessionFiles;
     this._runtimeContext = runtimeContext;
     this._now = now;
-    this._sessionPathByFileId = new Map();
+    this._sessionRefByFileId = new Map();
   }
 
   getResource(resourceId) {
@@ -117,12 +117,13 @@ export class ResourceService {
       });
     }
 
-    const loaded = this._sessionFiles.get(fileId);
-    if (loaded) return loaded;
+    const sessionRef = this._findSessionRefForFileId(fileId);
+    if (sessionRef) {
+      const file = this._sessionFiles.get(fileId, sessionRef);
+      if (file) return file;
+    }
 
-    const sessionPath = this._findSessionPathForFileId(fileId);
-    if (!sessionPath) return null;
-    return this._sessionFiles.get(fileId, { sessionPath });
+    return this._sessionFiles.get(fileId);
   }
 
   _reconcileFileAvailability(file) {
@@ -168,9 +169,9 @@ export class ResourceService {
     };
   }
 
-  _findSessionPathForFileId(fileId) {
-    if (this._sessionPathByFileId.has(fileId)) {
-      return this._sessionPathByFileId.get(fileId);
+  _findSessionRefForFileId(fileId) {
+    if (this._sessionRefByFileId.has(fileId)) {
+      return this._sessionRefByFileId.get(fileId);
     }
 
     for (const sidecarPath of collectSessionFileSidecars(this._agentsDir)) {
@@ -183,13 +184,22 @@ export class ResourceService {
       if (raw?.version !== 1 || !raw.files || typeof raw.files !== "object") continue;
 
       const sessionPath = raw.sessionPath || sidecarPath.slice(0, -".files.json".length);
+      const sidecarSessionId = typeof raw.sessionId === "string" && raw.sessionId.trim()
+        ? raw.sessionId.trim()
+        : null;
       for (const id of Object.keys(raw.files)) {
-        if (!this._sessionPathByFileId.has(id)) {
-          this._sessionPathByFileId.set(id, sessionPath);
+        if (!this._sessionRefByFileId.has(id)) {
+          const entrySessionId = typeof raw.files[id]?.sessionId === "string" && raw.files[id].sessionId.trim()
+            ? raw.files[id].sessionId.trim()
+            : null;
+          this._sessionRefByFileId.set(id, {
+            sessionId: entrySessionId || sidecarSessionId,
+            sessionPath,
+          });
         }
       }
       if (Object.prototype.hasOwnProperty.call(raw.files, fileId)) {
-        return sessionPath;
+        return this._sessionRefByFileId.get(fileId);
       }
     }
 

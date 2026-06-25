@@ -10,6 +10,7 @@
  */
 
 import { useStore } from '../stores';
+import { sessionScopedValue } from '../stores/session-slice';
 import type { ChatListItem, ChatMessage, ContentBlock } from '../stores/chat-types';
 import type { Session } from '../types';
 
@@ -136,7 +137,7 @@ function pickCachedLatestSessionForAgent(agentId: string): {
     return { session: null, reason: 'no_session', totalSessionsForAgent: 0 };
   }
   for (const session of sessionsForAgent) {
-    const cached = state.chatSessions[session.path];
+    const cached = sessionScopedValue(state, state.chatSessions, session.path);
     if (cached && Array.isArray(cached.items) && cached.items.length > 0) {
       return { session, reason: 'cached', totalSessionsForAgent: sessionsForAgent.length };
     }
@@ -213,7 +214,8 @@ export function collectRecentContextForAgent(args: CollectArgs): XingyeRecentCon
     };
   }
 
-  const cached = useStore.getState().chatSessions[pick.session.path];
+  const latestState = useStore.getState();
+  const cached = sessionScopedValue(latestState, latestState.chatSessions, pick.session.path);
   const items: ChatListItem[] = cached?.items ?? [];
   if (items.length === 0) {
     return {

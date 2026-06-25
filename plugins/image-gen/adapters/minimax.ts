@@ -8,6 +8,7 @@ import {
 import { t } from "../../../lib/i18n.ts";
 
 const DEFAULT_BASE_URL = "https://api.minimaxi.com/v1";
+const MINIMAX_IMAGE_RATIOS = new Set(["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"]);
 
 function resolveMiniMaxBaseUrl(baseUrl) {
   const base = normalizeBaseUrl(baseUrl, DEFAULT_BASE_URL);
@@ -51,7 +52,7 @@ export const minimaxImageAdapter = {
   name: "MiniMax Image",
   types: ["image"],
   capabilities: {
-    ratios: ["1:1", "16:9", "9:16", "4:3", "3:4"],
+    ratios: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"],
     resolutions: [],
   },
 
@@ -68,17 +69,32 @@ export const minimaxImageAdapter = {
     if (params.size || params.resolution) {
       throw new Error("MiniMax image size/resolution is unsupported");
     }
+    const aspectRatio = params.aspect_ratio || params.aspectRatio || params.ratio || "3:2";
+    if (!MINIMAX_IMAGE_RATIOS.has(aspectRatio)) {
+      throw new Error(`MiniMax image ratio "${aspectRatio}" is unsupported`);
+    }
+    if ((params.width === undefined) !== (params.height === undefined)) {
+      throw new Error("MiniMax image width and height must be provided together");
+    }
+    if (params.width !== undefined || params.height !== undefined) {
+      const width = Number(params.width);
+      const height = Number(params.height);
+      if (!Number.isInteger(width) || !Number.isInteger(height) || width < 512 || width > 2048 || height < 512 || height > 2048 || width % 8 !== 0 || height % 8 !== 0) {
+        throw new Error("MiniMax image width and height must be integers between 512 and 2048, divisible by 8");
+      }
+    }
 
     const creds = await getCredentials(ctx, params);
     const body = {
       model: params.modelId || params.model || "image-01",
       prompt: params.prompt,
       response_format: "base64",
-      ...(params.aspect_ratio || params.aspectRatio || params.ratio
-        ? { aspect_ratio: params.aspect_ratio || params.aspectRatio || params.ratio }
-        : {}),
+      aspect_ratio: aspectRatio,
       ...(params.n ? { n: params.n } : {}),
       ...(params.prompt_optimizer !== undefined ? { prompt_optimizer: params.prompt_optimizer } : {}),
+      ...(params.seed !== undefined ? { seed: params.seed } : {}),
+      ...(params.width !== undefined ? { width: params.width } : {}),
+      ...(params.height !== undefined ? { height: params.height } : {}),
     };
 
     const images = normalizeImageInput(params.image);

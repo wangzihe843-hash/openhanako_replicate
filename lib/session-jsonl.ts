@@ -7,13 +7,21 @@ export function sessionIdFromFilename(filename) {
   return filename.replace(/\.jsonl$/, "");
 }
 
+export function isSessionJsonlFilename(filename) {
+  const name = path.basename(String(filename || ""));
+  return !!name
+    && name === filename
+    && name.endsWith(".jsonl")
+    && !name.includes(".repair.jsonl");
+}
+
 export function listSessionFiles(sessionDir) {
   const results = [];
 
   function scanDir(dir, prefix) {
     try {
       for (const f of fs.readdirSync(dir)) {
-        if (!f.endsWith(".jsonl")) continue;
+        if (!isSessionJsonlFilename(f)) continue;
         const filePath = path.join(dir, f);
         try {
           const stat = fs.statSync(filePath);

@@ -12,38 +12,66 @@ const FORMAT_TO_MIME = {
 
 const OUTPUT_FORMATS = new Set(["jpeg", "png"]);
 
-// 分辨率档位 + 长宽比 → 具体像素值查表
 const SIZE_TABLE = {
+  "1K": {
+    "1:1": "1024x1024", "4:3": "1152x864", "3:4": "864x1152",
+    "16:9": "1280x720", "9:16": "720x1280", "3:2": "1248x832",
+    "2:3": "832x1248", "21:9": "1536x656",
+  },
   "2K": {
     "1:1": "2048x2048", "4:3": "2304x1728", "3:4": "1728x2304",
-    "16:9": "2848x1600", "9:16": "1600x2848", "3:2": "2496x1664",
+    "16:9": "2736x1536", "9:16": "1536x2736", "3:2": "2496x1664",
     "2:3": "1664x2496", "21:9": "3136x1344",
   },
   "4K": {
     "1:1": "4096x4096", "4:3": "3456x2592", "3:4": "2592x3456",
-    "16:9": "4096x2304", "9:16": "2304x4096", "3:2": "3744x2496",
-    "2:3": "2496x3744", "21:9": "4704x2016",
+    "16:9": "3840x2160", "9:16": "2160x3840", "3:2": "3840x2560",
+    "2:3": "2560x3840", "21:9": "4096x1760",
   },
 };
+const SEEDREAM_RATIOS = Object.freeze(Object.keys(SIZE_TABLE["1K"]));
 
 function normalizeSeedreamSizeTier(value) {
   if (!value) return null;
   const raw = String(value).trim();
   const match = raw.toLowerCase().match(/^([124])\s*k$/);
   if (!match) return raw;
-  return match[1] === "4" ? "4K" : "2K";
+  return `${match[1]}K`;
 }
 
-function resolveSize(size, aspectRatio, providerDefaults) {
-  const effectiveRatio = aspectRatio || providerDefaults?.aspect_ratio || providerDefaults?.ratio;
-  const effectiveSize = normalizeSeedreamSizeTier(size || providerDefaults?.size || providerDefaults?.resolution || "2K");
+function isPixelSize(value) {
+  return /^\d{3,5}x\d{3,5}$/i.test(String(value || "").trim());
+}
 
-  if (effectiveRatio) {
-    // 查表：分辨率档位 + 比例 → 像素值
-    const tier = SIZE_TABLE[effectiveSize.toUpperCase()] || SIZE_TABLE["2K"];
-    return tier[effectiveRatio] || effectiveSize;
+function supportedSeedreamPixelSizes(supportedResolutions) {
+  const values = new Set();
+  for (const resolution of supportedResolutions) {
+    for (const size of Object.values(SIZE_TABLE[resolution] || {})) values.add(size);
   }
-  return effectiveSize;
+  return values;
+}
+
+function resolveSize(size, aspectRatio, providerDefaults, modelCapabilities) {
+  const supportedResolutions = modelCapabilities.supportedResolutions;
+  const effectiveRatio = aspectRatio || providerDefaults?.aspect_ratio || providerDefaults?.ratio || "3:2";
+  const explicitSize = size || providerDefaults?.size || providerDefaults?.resolution || modelCapabilities.defaultResolution;
+  const effectiveSize = normalizeSeedreamSizeTier(explicitSize);
+
+  if (isPixelSize(effectiveSize)) {
+    const allowed = supportedSeedreamPixelSizes(supportedResolutions);
+    if (!allowed.has(effectiveSize)) {
+      throw new Error(`Seedream size "${effectiveSize}" is unsupported for model "${modelCapabilities.modelId}"`);
+    }
+    return effectiveSize;
+  }
+
+  if (!supportedResolutions.includes(effectiveSize)) {
+    throw new Error(`Seedream resolution "${explicitSize}" is unsupported for model "${modelCapabilities.modelId}"; supported resolutions: ${supportedResolutions.join(", ")}`);
+  }
+  if (!SEEDREAM_RATIOS.includes(effectiveRatio)) {
+    throw new Error(`Seedream ratio "${effectiveRatio}" is unsupported`);
+  }
+  return SIZE_TABLE[effectiveSize][effectiveRatio];
 }
 
 function resolveOutputFormat(format) {
@@ -61,9 +89,13 @@ function getModelCapabilities(modelId) {
   const isSeedream3 = id.includes("seedream-3-0") || id.includes("seedream3.0");
 
   return {
+    modelId,
     supportsOutputFormat: isSeedream5,
     supportsGuidanceScale: isSeedream3,
     supportsSeed: isSeedream3,
+    supportsReferenceImages: !isSeedream3,
+    supportedResolutions: isSeedream3 ? ["1K"] : ["1K", "2K", "4K"],
+    defaultResolution: isSeedream3 ? "1K" : "4K",
   };
 }
 
@@ -91,7 +123,7 @@ export const volcengineImageAdapter = {
   types: ["image"],
   capabilities: {
     ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"],
-    resolutions: ["1k", "2k", "4k"],
+    resolutions: ["1K", "2K", "4K"],
   },
 
   async checkAuth(ctx) {
@@ -133,6 +165,7 @@ export const volcengineImageAdapter = {
         params.size || params.resolution,
         params.aspect_ratio || params.aspectRatio || params.ratio,
         providerDefaults,
+        modelCapabilities,
       ),
     };
 
@@ -145,6 +178,9 @@ export const volcengineImageAdapter = {
 
     // 5. Handle reference image (local path → base64 data URL)
     if (params.image) {
+      if (!modelCapabilities.supportsReferenceImages) {
+        throw new Error(`Volcengine model "${modelId}" does not support reference images`);
+      }
       const images = Array.isArray(params.image) ? params.image : [params.image];
       body.image = await Promise.all(images.map(async img => {
         if (path.isAbsolute(img) && fs.existsSync(img)) {
@@ -158,13 +194,15 @@ export const volcengineImageAdapter = {
     }
 
     // Apply provider-specific defaults (watermark defaults to false)
-    body.watermark = providerDefaults?.watermark ?? false;
-    if (providerDefaults) {
-      if (modelCapabilities.supportsGuidanceScale && providerDefaults.guidance_scale !== undefined) {
-        body.guidance_scale = providerDefaults.guidance_scale;
+    body.watermark = params.watermark ?? providerDefaults?.watermark ?? false;
+    if (providerDefaults || params) {
+      const guidanceScale = params.guidance_scale ?? params.guidanceScale ?? providerDefaults.guidance_scale ?? providerDefaults.guidanceScale;
+      if (modelCapabilities.supportsGuidanceScale && guidanceScale !== undefined) {
+        body.guidance_scale = guidanceScale;
       }
-      if (modelCapabilities.supportsSeed && providerDefaults.seed !== undefined) {
-        body.seed = providerDefaults.seed;
+      const seed = params.seed ?? providerDefaults.seed;
+      if (modelCapabilities.supportsSeed && seed !== undefined) {
+        body.seed = seed;
       }
     }
 

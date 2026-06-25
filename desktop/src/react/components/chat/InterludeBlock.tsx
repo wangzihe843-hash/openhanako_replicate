@@ -95,7 +95,10 @@ export const InterludeBlock = memo(function InterludeBlock({ block }: { block: I
   const previewSessionPath = typeof block.previewSessionPath === 'string' && block.previewSessionPath.trim()
     ? block.previewSessionPath
     : null;
-  const canPreview = previewEnabled && (detailMarkdown.length > 0 || !!previewSessionPath);
+  const previewSessionId = typeof block.previewSessionId === 'string' && block.previewSessionId.trim()
+    ? block.previewSessionId
+    : null;
+  const canPreview = previewEnabled && (detailMarkdown.length > 0 || !!previewSessionPath || !!previewSessionId);
   const [position, setPosition] = useState<FloatingPosition | null>(null);
 
   const setAnchor = useCallback((node: HTMLButtonElement | HTMLDivElement | null) => {
@@ -183,9 +186,10 @@ export const InterludeBlock = memo(function InterludeBlock({ block }: { block: I
           }}
           role="dialog"
         >
-          {previewSessionPath && block.taskId ? (
+          {(previewSessionPath || previewSessionId) && block.taskId ? (
             <SubagentSessionPreview
               taskId={block.taskId}
+              sessionId={previewSessionId}
               sessionPath={previewSessionPath}
               agentId={block.previewAgentId || null}
               streamStatus={streamStatusFromInterlude(block.status)}

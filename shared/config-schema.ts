@@ -37,6 +37,7 @@ export const CONFIG_SCHEMA = {
   'bridge.permissionMode':      { scope: 'global', setter: 'setBridgePermissionMode', getter: 'getBridgePermissionMode', defaultValue: 'auto' },
   'bridge.readOnly':            { scope: 'global', setter: 'setBridgeReadOnly', getter: 'getBridgeReadOnly', defaultValue: false },
   'bridge.receiptEnabled':      { scope: 'global', setter: 'setBridgeReceiptEnabled', getter: 'getBridgeReceiptEnabled', defaultValue: true },
+  'bridge.richStreamingEnabled': { scope: 'global', setter: 'setBridgeRichStreamingEnabled', getter: 'getBridgeRichStreamingEnabled', defaultValue: true },
   'automation.permissionMode':  { scope: 'global', setter: 'setAutomationPermissionMode', getter: 'getAutomationPermissionMode', defaultValue: 'auto' },
   network_proxy:                { scope: 'global', setter: 'setNetworkProxy', getter: 'getNetworkProxy' },
 };

@@ -95,6 +95,50 @@ describe("SearchRateLimiter", () => {
     await expect(Promise.all(calls)).resolves.toEqual([0, 1, 2, 3]);
   });
 
+  it("allows a larger concurrent burst for paid AnySearch searches", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const limiter = createSearchRateLimiter({ random: () => 0 });
+    const starts = [];
+    const releases = [];
+
+    const calls = Array.from({ length: 6 }, (_, index) => (
+      limiter.run("anysearch", "api", async () => {
+        starts.push([index, Date.now()]);
+        await new Promise((resolve) => {
+          releases[index] = resolve;
+        });
+        return index;
+      })
+    ));
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(starts).toEqual([
+      [0, 0],
+      [1, 0],
+      [2, 0],
+      [3, 0],
+      [4, 0],
+    ]);
+
+    releases[0]();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(starts).toEqual([
+      [0, 0],
+      [1, 0],
+      [2, 0],
+      [3, 0],
+      [4, 0],
+      [5, 0],
+    ]);
+
+    releases[1]();
+    releases[2]();
+    releases[3]();
+    releases[4]();
+    releases[5]();
+    await expect(Promise.all(calls)).resolves.toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
   it("holds subsequent calls after a rate limit error until Retry-After plus jitter", async () => {
     vi.useFakeTimers({ now: 0 });
     const limiter = createSearchRateLimiter({ random: () => 0.5 });

@@ -195,7 +195,7 @@ export function AgentTabScroller({
                 onClick={() => onSelect(item.id)}
                 onKeyDown={event => handleTabKeyDown(event, index)}
               >
-                <span className={styles.agentTabAvatarWrap}>{item.avatar}</span>
+                <span className={styles.agentTabAvatarWrap} aria-hidden="true">{item.avatar}</span>
                 <span className={styles.agentTabName}>{item.label}</span>
               </button>
             );

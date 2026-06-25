@@ -22,7 +22,7 @@ describe('memory viewer layout contract', () => {
   });
 
   it('uses the taller, wider default settings modal size', () => {
-    expect(cssRule(modalCss, '.card')).toMatch(/width:\s*min\(864px,\s*calc\(100vw - var\(--space-lg\) - var\(--space-lg\)\)\);/);
+    expect(cssRule(modalCss, '.card')).toMatch(/width:\s*min\(884px,\s*calc\(100vw - 2 \* var\(--space-lg\)\)\);/);
     expect(cssRule(modalCss, '.card')).toMatch(/height:\s*min\(840px,\s*calc\(100vh - var\(--space-lg\) - var\(--space-lg\)\)\);/);
   });
 });

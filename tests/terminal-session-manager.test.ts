@@ -96,6 +96,23 @@ describe("TerminalSessionManager", () => {
     })).toThrow(/belongs to another session/);
   });
 
+  it("rejects start with a missing cwd before touching the pty backend", async () => {
+    const manager = new TerminalSessionManager({
+      hanakoHome: tmpDir,
+      createBackend: () => backend,
+      now: () => 1770000000000,
+    });
+    const sessionPath = path.join(tmpDir, "agents", "hana", "sessions", "s1.jsonl");
+    const gone = path.join(tmpDir, "gone-workspace");
+
+    await expect(
+      manager.start({ sessionPath, agentId: "hana", cwd: gone }),
+    ).rejects.toMatchObject({ code: "HANA_EXEC_CWD_MISSING", cwd: gone });
+
+    expect(backend.spawn).not.toHaveBeenCalled();
+    expect(manager.list(sessionPath).terminals).toEqual([]);
+  });
+
   it("writes only to a running terminal owned by the same session", async () => {
     const manager = new TerminalSessionManager({
       hanakoHome: tmpDir,
@@ -146,6 +163,30 @@ describe("TerminalSessionManager", () => {
       sessionPath: otherSessionPath,
       terminalId: second.terminalId,
     }).status).toBe("running");
+  });
+
+  it("closes live terminals through a moved session path with the same session id", async () => {
+    const originalPath = path.join(tmpDir, "agents", "hana", "sessions", "original.jsonl");
+    const movedPath = path.join(tmpDir, "agents", "hana", "sessions", "archived", "renamed.jsonl");
+    const sessionId = "sess_terminal_stable";
+    const manager = new TerminalSessionManager({
+      hanakoHome: tmpDir,
+      createBackend: () => backend,
+      getSessionIdForPath: (sessionPath: string) => (
+        sessionPath === originalPath || sessionPath === movedPath ? sessionId : null
+      ),
+    });
+    const started = await manager.start({ sessionPath: originalPath, agentId: "hana", cwd: tmpDir });
+
+    const closed = manager.closeForSession(movedPath);
+
+    expect(closed).toHaveLength(1);
+    expect(closed[0]).toMatchObject({
+      terminalId: started.terminalId,
+      sessionPath: movedPath,
+      status: "killed",
+    });
+    expect(backend.handles[0].killed).toBe(true);
   });
 
   it("uses the backend dispose contract before falling back to kill", async () => {

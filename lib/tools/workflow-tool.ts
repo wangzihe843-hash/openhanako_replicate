@@ -15,6 +15,16 @@ const WORKFLOW_DEADLINE_MS = 10 * 60 * 1000;
 const WORKFLOW_TIMEOUT_BACKSTOP_MS = WORKFLOW_DEADLINE_MS + 30 * 1000;
 const WORKFLOW_AGENT_MAX_CONCURRENT = 256;
 const AGENT_TOTAL_BACKSTOP = 1000;
+const WORKFLOW_DESCRIPTION = [
+  "Run a deterministic JavaScript orchestration script that delegates all real work to workflow agent() nodes.",
+  "Use this for controlled fan-out, cross-verification, staged synthesis, or dynamic loops where each item must be handled.",
+  "The script must start with: export const meta = { name: string, description: string }.",
+  "Available globals: agent(prompt, opts), parallel(thunks), pipeline(items, ...stages), workflow(script, args), phase(title), log(message), budget, args.",
+  'agent() signature is agent(prompt, { label?, model?, agentType?, access?: "read"|"write", schema?, toolFilter? }).',
+  "Always await agent(): const result = await agent('task prompt', { access: 'read', agentType: 'hanako' }); agent() does not return { result }.",
+  "To choose a target agent, use opts.agentType. Do not pass task in opts; put complete task instructions in the first prompt argument.",
+  "The script cannot import modules or access require/process/fs/net. To read/write files or run tools, ask an agent() node to do it.",
+].join("\n");
 
 function buildParameters() {
   return Type.Object({
@@ -30,6 +40,10 @@ function makeLimiter() {
   return createLimiter({ maxConcurrent: WORKFLOW_AGENT_MAX_CONCURRENT, maxTotal: AGENT_TOTAL_BACKSTOP });
 }
 
+function declarativeNodesUnsupported(meta) {
+  return Array.isArray(meta?.nodes);
+}
+
 /** 一条 usage entry 的总 token（优先顶层 totalTokens，回退 input+output）。 */
 function usageTokens(usage) {
   if (!usage) return 0;
@@ -38,17 +52,59 @@ function usageTokens(usage) {
 }
 
 /** 按子节点 session 从 UsageLedger 汇总 token；无 ledger / 无记录返回 null（节点行不显示）。 */
-function sumNodeTokens(ledger, childSessionPath) {
-  if (!ledger?.list || !childSessionPath) return null;
-  const { entries } = ledger.list({ childSessionPath });
+function sumNodeTokens(ledger, { childSessionId = null, childSessionPath = null } = {}) {
+  if (!ledger?.list || (!childSessionId && !childSessionPath)) return null;
+  const filter = childSessionId ? { childSessionId } : { childSessionPath };
+  const { entries } = ledger.list(filter);
   if (!entries?.length) return null;
   return entries.reduce((sum, e) => sum + usageTokens(e.usage), 0);
+}
+
+function sessionIdForPath(deps, sessionPath) {
+  const sessionId = deps.getSessionIdForPath?.(sessionPath);
+  return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : null;
+}
+
+function sessionRefForPath(deps, sessionPath) {
+  const sessionId = sessionIdForPath(deps, sessionPath);
+  return sessionId ? { sessionId, sessionPath } : null;
+}
+
+function sessionInputForPath(deps, sessionPath) {
+  return sessionRefForPath(deps, sessionPath) || sessionPath;
 }
 
 /** 从 agent 数据目录派生 journal 存储路径。 */
 function journalPath(journalDir, runId) {
   if (!journalDir || !runId) return null;
   return path.join(journalDir, `${runId}.jsonl`);
+}
+
+function workflowSessionDir(deps, runId) {
+  const root = deps.getWorkflowSessionDir?.();
+  return root && runId ? path.join(root, runId) : null;
+}
+
+function assertWorkflowResult(result) {
+  if (result === undefined) {
+    throw new Error("workflow returned undefined. Return a string, object, array, number, boolean, or null.");
+  }
+  return result;
+}
+
+function workflowResultToText(result) {
+  assertWorkflowResult(result);
+  if (typeof result === "string") return result;
+  let text;
+  try {
+    text = JSON.stringify(result, null, 2);
+  } catch (err) {
+    throw new Error(`workflow result is not JSON-serializable: ${err?.message || err}`);
+  }
+  if (text === undefined) {
+    throw new Error("workflow returned a non-serializable result. Return a string, object, array, number, boolean, or null.");
+  }
+  return text;
 }
 
 /** 构造接入 UsageLedger 的实时 budget 对象。 */
@@ -81,6 +137,8 @@ function makeBudget(ledger, taskId, budgetTotal) {
  * @param {{
  *   executeIsolated: (prompt: string, isoOpts: object) => Promise<object>,
  *   getSessionPath?: () => string|null,
+ *   getSessionIdForPath?: (sessionPath: string|null) => string|null,
+ *   getSessionPermissionMode?: (sessionPath: string|null) => string|null,
  *   getParentCwd?: () => string|null,
  *   getAgentId?: () => string|undefined,
  *   emitEvent?: (event: object, sessionPath: string|null) => void,
@@ -89,18 +147,24 @@ function makeBudget(ledger, taskId, budgetTotal) {
  *   getSubagentRunStore?: () => import("../subagent-run-store.ts").SubagentRunStore|null,
  *   getSubagentThreadStore?: () => import("../subagent-thread-store.ts").SubagentThreadStore|null,
  *   getJournalDir?: () => string|null,
+ *   getWorkflowSessionDir?: () => string|null,
  * }} deps
  */
 export function createWorkflowTool(deps) {
   return {
     name: "workflow",
     label: "Workflow",
-    description: "Orchestrate multiple sub-agents with a deterministic JS script. Use for controlled fan-out, cross-verification, and result synthesis. Runs in the background; returns taskId immediately.",
+    description: WORKFLOW_DESCRIPTION,
     parameters: buildParameters(),
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       const parentSessionPath = getToolSessionPath(ctx) || deps.getSessionPath?.() || null;
+      const parentSessionRef = sessionRefForPath(deps, parentSessionPath);
+      const parentSessionId = parentSessionRef?.sessionId || null;
       const cwd = getToolSessionCwd(ctx) || deps.getParentCwd?.() || null;
       const agentId = deps.getAgentId?.() || undefined;
+      const parentPermissionMode = parentSessionPath
+        ? (deps.getSessionPermissionMode?.(parentSessionPath) || null)
+        : null;
 
       // 先静态校验脚本头：非法脚本同步报错，不派后台任务
       // （禁止非用户预期 fallback：不把非法输入伪装成"已派出"）。
@@ -110,6 +174,11 @@ export function createWorkflowTool(deps) {
       } catch (err) {
         return toolError(t("tool.workflow.scriptInvalid", { message: err.message }));
       }
+      if (declarativeNodesUnsupported(meta)) {
+        return toolError(
+          "workflow meta.nodes is declarative metadata and is not executable yet; use agent()/parallel()/phase()/log() in the script body.",
+        );
+      }
 
       const store = deps.getDeferredStore?.();
       const runStore = deps.getSubagentRunStore?.();
@@ -118,7 +187,7 @@ export function createWorkflowTool(deps) {
       // deferred 基础设施不可用（或无 parent session）→ 同步兜底执行，调用方直接拿结果。
       // 与 subagent 一致：这是基础设施缺失时的等价行为，不是静默降级。
       if (!store || !parentSessionPath) {
-        return _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath });
+        return _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath, parentPermissionMode });
       }
 
       const taskId = `workflow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -126,9 +195,9 @@ export function createWorkflowTool(deps) {
       const hub = deps.getActivityHub?.();
       const startedAt = Date.now();
 
-      store.defer(taskId, parentSessionPath, { type: "workflow", interlude: true, summary });
-      runStore?.register?.(taskId, { parentSessionPath, summary });
-      hub?.upsert({ id: taskId, kind: "workflow", status: "running", sessionPath: parentSessionPath, agentId, summary, startedAt });
+      store.defer(taskId, sessionInputForPath(deps, parentSessionPath), { type: "workflow", interlude: true, summary });
+      runStore?.register?.(taskId, { parentSessionId, parentSessionPath, summary });
+      hub?.upsert({ id: taskId, kind: "workflow", status: "running", sessionId: parentSessionId, sessionPath: parentSessionPath, agentId, summary, startedAt });
 
       // ── journal：断点续跑 ──
       const jDir = deps.getJournalDir?.() || null;
@@ -154,6 +223,21 @@ export function createWorkflowTool(deps) {
       const budget = makeBudget(ledger, taskId, budgetTotal);
 
       const limiter = makeLimiter();
+      const nodeSessionDir = workflowSessionDir(deps, taskId);
+
+      const baseIsoOpts = {
+        agentId,
+        cwd,
+        parentSessionId,
+        parentSessionPath,
+        subagentContext: true,
+        subagentTaskId: taskId,
+        emitEvents: true,
+        approvalPolicy: "deny_on_prompt",
+        allowHumanApproval: false,
+        ...(nodeSessionDir ? { persist: nodeSessionDir } : {}),
+        ...(parentPermissionMode ? { permissionMode: parentPermissionMode } : {}),
+      };
 
       // ── workflow 嵌套：子 workflow 限一层，共享 limiter / signal / budget ──
       // journal 必须各自独立：每个 createHostApi 的 nodeSeq 都从 0 起，若子 workflow 与父
@@ -172,11 +256,11 @@ export function createWorkflowTool(deps) {
         if (childReplay) childReplayJournals.push(childReplay);
         const childHostApi = createHostApi({
           executeIsolated: (prompt, isoOpts) => deps.executeIsolated(prompt, isoOpts),
-          baseIsoOpts: { agentId, cwd, parentSessionPath, subagentContext: true, subagentTaskId: taskId, emitEvents: true },
+          baseIsoOpts,
           limiter,
           signal: controller.signal,
           onProgress: (evt) => deps.emitEvent?.({ ...evt, type: "workflow_progress", taskId }, parentSessionPath),
-          onAgentEvent: buildAgentEventHandler({ taskId, parentSessionPath, summary, hub, threadStore, deps }),
+          onAgentEvent: buildAgentEventHandler({ taskId, parentSessionId, parentSessionPath, summary, hub, threadStore, deps }),
           budget,
           args: childArgs,
           resolveAgentId: deps.resolveAgentId,
@@ -186,16 +270,16 @@ export function createWorkflowTool(deps) {
         return runWorkflowScript(childScript, childHostApi, {
           signal: controller.signal,
           deadlineMs: WORKFLOW_DEADLINE_MS,
-        }).then(({ result }) => result);
+        }).then(({ result }) => assertWorkflowResult(result));
       };
 
       const hostApi = createHostApi({
         executeIsolated: (prompt, isoOpts) => deps.executeIsolated(prompt, isoOpts),
-        baseIsoOpts: { agentId, cwd, parentSessionPath, subagentContext: true, subagentTaskId: taskId, emitEvents: true },
+        baseIsoOpts,
         limiter,
         signal: controller.signal,
         onProgress: (evt) => deps.emitEvent?.({ ...evt, type: "workflow_progress", taskId }, parentSessionPath),
-        onAgentEvent: buildAgentEventHandler({ taskId, parentSessionPath, summary, hub, threadStore, deps }),
+        onAgentEvent: buildAgentEventHandler({ taskId, parentSessionId, parentSessionPath, summary, hub, threadStore, deps }),
         budget,
         args: params.args,
         resolveAgentId: deps.resolveAgentId,
@@ -208,7 +292,7 @@ export function createWorkflowTool(deps) {
       // DeferredResultCoordinator 监听后以 <hana-background-result type="workflow"> steer 回灌主对话。
       runWorkflowScript(params.script, hostApi, { signal: controller.signal, deadlineMs: WORKFLOW_DEADLINE_MS })
         .then(({ result }) => {
-          const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+          const text = workflowResultToText(result);
           const finishedAt = Date.now();
           const replayHits = (replayJournal?.replayHits ?? 0) + (journal?.replayHits ?? 0)
             + childReplayJournals.reduce((s, j) => s + (j?.replayHits ?? 0), 0);
@@ -242,7 +326,7 @@ export function createWorkflowTool(deps) {
  * 提取 onAgentEvent handler：节点级活动 → ActivityHub 子 entry + ThreadStore。
  * 主流程和嵌套 workflow 共用，避免重复。
  */
-function buildAgentEventHandler({ taskId, parentSessionPath, summary, hub, threadStore, deps }) {
+function buildAgentEventHandler({ taskId, parentSessionId, parentSessionPath, summary, hub, threadStore, deps }) {
   return (evt) => {
     const childId = `${taskId}::${evt.nodeId}`;
     if (evt.phase === "start") {
@@ -253,6 +337,7 @@ function buildAgentEventHandler({ taskId, parentSessionPath, summary, hub, threa
           kind: evt.threadKind || "workflow_node",
           parentTaskId: taskId,
           nodeId: evt.nodeId,
+          parentSessionId,
           parentSessionPath,
           agentId: evt.agentId || null,
           label: evt.label || null,
@@ -261,6 +346,7 @@ function buildAgentEventHandler({ taskId, parentSessionPath, summary, hub, threa
       }
       hub?.upsert({
         id: childId, kind, status: "running",
+        sessionId: parentSessionId,
         sessionPath: parentSessionPath, parentTaskId: taskId,
         threadId: isStep ? null : (evt.threadId || null),
         threadKind: isStep ? null : (evt.threadKind || null),
@@ -275,14 +361,24 @@ function buildAgentEventHandler({ taskId, parentSessionPath, summary, hub, threa
         threadStore?.attachSession?.(evt.threadId, evt.childSessionPath || null, {
           parentTaskId: taskId,
           nodeId: evt.nodeId,
+          parentSessionId,
+          parentSessionPath,
+          childSessionId: evt.childSessionId || null,
         });
       }
-      hub?.upsert({ id: childId, childSessionPath: evt.childSessionPath || null });
+      hub?.upsert({
+        id: childId,
+        childSessionId: evt.childSessionId || null,
+        childSessionPath: evt.childSessionPath || null,
+      });
     } else if (evt.phase === "done") {
       const isStep = typeof evt.stepKind === "string" && evt.stepKind;
       if (!isStep) {
         const node = hub?.get?.(childId);
-        const tokens = sumNodeTokens(deps.getUsageLedger?.(), node?.childSessionPath);
+        const tokens = sumNodeTokens(deps.getUsageLedger?.(), {
+          childSessionId: node?.childSessionId || null,
+          childSessionPath: node?.childSessionPath || null,
+        });
         if (evt.threadId) {
           threadStore?.finishRun?.(evt.threadId, { status: "resolved", close: true });
         }
@@ -301,7 +397,7 @@ function buildAgentEventHandler({ taskId, parentSessionPath, summary, hub, threa
 }
 
 /** deferred 基础设施不可用时同步执行，保留原同步语义（调用方直接拿合成结果）。 */
-async function _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath }) {
+async function _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath, parentPermissionMode }) {
   const limiter = makeLimiter();
   const ledger = deps.getUsageLedger?.();
   const budgetTotal = params.args?.budgetTokens ?? null;
@@ -310,9 +406,20 @@ async function _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath })
   const controller = new AbortController();
   const timeoutTimer = setTimeout(() => controller.abort(), WORKFLOW_TIMEOUT_BACKSTOP_MS);
   if (timeoutTimer.unref) timeoutTimer.unref();
+  const parentSessionId = sessionIdForPath(deps, parentSessionPath);
   const hostApi = createHostApi({
     executeIsolated: (prompt, isoOpts) => deps.executeIsolated(prompt, isoOpts),
-    baseIsoOpts: { agentId, cwd, parentSessionPath, subagentContext: true, emitEvents: true },
+    baseIsoOpts: {
+      agentId,
+      cwd,
+      parentSessionId,
+      parentSessionPath,
+      subagentContext: true,
+      emitEvents: true,
+      approvalPolicy: "deny_on_prompt",
+      allowHumanApproval: false,
+      ...(parentPermissionMode ? { permissionMode: parentPermissionMode } : {}),
+    },
     limiter,
     signal: controller.signal,
     onProgress: (evt) => deps.emitEvent?.({ ...evt, type: "workflow_progress" }, parentSessionPath),
@@ -322,7 +429,7 @@ async function _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath })
   });
   try {
     const { result } = await runWorkflowScript(params.script, hostApi, { signal: controller.signal, deadlineMs: WORKFLOW_DEADLINE_MS });
-    const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+    const text = workflowResultToText(result);
     return toolOk(
       t("tool.workflow.syncComplete", { name: meta.name, count: limiter.totalSpawned, result: text }),
       { workflow: meta.name, agentsSpawned: limiter.totalSpawned, result },

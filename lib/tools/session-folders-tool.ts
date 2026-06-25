@@ -1,9 +1,15 @@
 import path from "path";
-import { SESSION_PERMISSION_MODES, normalizeSessionPermissionMode } from "../../core/session-permission-mode.ts";
+import {
+  SESSION_APPROVAL_POLICIES,
+  SESSION_PERMISSION_MODES,
+  normalizeSessionPermissionMode,
+  resolveSessionApprovalPolicy,
+} from "../../core/session-permission-mode.ts";
 import { StringEnum, Type } from "../pi-sdk/index.ts";
 import { getToolSessionPath } from "./tool-session.ts";
 import { toolError, toolOk } from "./tool-result.ts";
 import { t } from "../i18n.ts";
+import { buildApprovalReviewContext } from "../permission/approval-review-context.ts";
 
 function toStatus(action) {
   if (action === "confirmed") return "confirmed";
@@ -70,12 +76,23 @@ async function askForFolderApproval(action, folder, sessionPath, deps) {
   };
 }
 
-function buildFolderGatewayRequest(action, folder, sessionPath) {
+function stableSessionKey(sessionPath, engine, ctx = null) {
+  const ctxSessionId = typeof ctx?.sessionId === "string" && ctx.sessionId.trim()
+    ? ctx.sessionId.trim()
+    : null;
+  const resolved = !ctxSessionId && typeof engine?.getSessionIdForPath === "function"
+    ? engine.getSessionIdForPath(sessionPath)
+    : null;
+  const sessionId = ctxSessionId || (typeof resolved === "string" && resolved.trim() ? resolved.trim() : null);
+  return sessionId || sessionPath || "session";
+}
+
+function buildFolderGatewayRequest(action, folder, sessionPath, stableKey = null, ctx = null) {
   return {
-    id: `${sessionPath || "session"}:session_folders:${Date.now()}`,
+    id: `${stableKey || sessionPath || "session"}:session_folders:${Date.now()}`,
     kind: "session_folders",
     sessionPath,
-    agentId: null,
+    agentId: ctx?.agentId || null,
     toolName: "session_folders",
     actionName: action,
     params: { action, folder },
@@ -85,7 +102,7 @@ function buildFolderGatewayRequest(action, folder, sessionPath) {
   };
 }
 
-async function reviewFolderApproval(action, folder, sessionPath, deps, engine) {
+async function reviewFolderApproval(action, folder, sessionPath, deps, engine, ctx = null) {
   const mode = normalizeSessionPermissionMode(
     deps.getPermissionMode?.(sessionPath)
       || engine?.getSessionPermissionMode?.(sessionPath)
@@ -96,7 +113,22 @@ async function reviewFolderApproval(action, folder, sessionPath, deps, engine) {
   if (!gateway || typeof gateway.review !== "function") {
     return { allowed: false, status: "ask_user", reason: "approval-gateway-unavailable" };
   }
-  const decision = await gateway.review(buildFolderGatewayRequest(action, folder, sessionPath), { sessionPath });
+  const scope = engine?.getSessionFolderScope?.(sessionPath) || {};
+  const decision = await gateway.review(
+    buildFolderGatewayRequest(action, folder, sessionPath, stableSessionKey(sessionPath, engine, ctx), ctx),
+    buildApprovalReviewContext({
+      source: {
+        ...deps,
+        cwd: scope.cwd,
+        workspaceFolders: scope.workspaceFolders,
+        authorizedFolders: scope.authorizedFolders,
+        userIntentSummary: `${action === "remove" ? "Remove" : "Authorize"} this folder for the current session.`,
+      },
+      ctx,
+      sessionPath,
+      agentId: ctx?.agentId,
+    }),
+  );
   if (decision?.action === "allow") {
     return { allowed: true, status: "approved", decision };
   }
@@ -120,10 +152,10 @@ export function createSessionFoldersTool(deps: Record<string, any> = {}) {
   return {
     name: "session_folders",
     label: "Session Folders",
-    description: "List or request changes to the current session's extra authorized sandbox folders. Use action=list to inspect cwd, prompt-visible workspace folders, user-authorized folders, and effective sandbox roots. Use add/remove only after the user wants this session to gain or drop folder access; changes require user confirmation and do not modify CWD or prompt text.",
+    description: "List or request changes to the current session's extra authorized sandbox folders. Use action=list to inspect cwd, prompt-visible workspace folders, user-authorized folders, and effective sandbox roots. Use add/remove only after the user wants this session to gain or drop folder access; auto mode routes the request to the approval reviewer, ask mode asks the user, and the change never modifies CWD or prompt text.",
     parameters: Type.Object({
       action: StringEnum(["list", "add", "remove"], {
-        description: "list returns the current folder scope. add/remove asks the user to confirm changing the current session's extra authorized folders.",
+        description: "list returns the current folder scope. add/remove requests a scoped authorized-folder change through the current permission mode.",
       }),
       folder: Type.Optional(Type.String({
         description: "Absolute or resolvable folder path for add/remove.",
@@ -153,23 +185,46 @@ export function createSessionFoldersTool(deps: Record<string, any> = {}) {
         });
       }
 
-      let approval: { allowed: boolean; status: string; confirmId?: string; reason?: string; decision?: any } = await reviewFolderApproval(action, folder, sessionPath, deps, engine);
+      const mode = normalizeSessionPermissionMode(
+        deps.getPermissionMode?.(sessionPath)
+          || engine?.getSessionPermissionMode?.(sessionPath)
+          || deps.getPermissionMode?.(),
+      );
+      const approvalPolicy = resolveSessionApprovalPolicy({
+        mode,
+        approvalPolicy: ctx?.approvalPolicy || deps.approvalPolicy,
+        allowHumanApproval: ctx?.allowHumanApproval ?? deps.allowHumanApproval,
+      });
+      let approval: { allowed: boolean; status: string; confirmId?: string; reason?: string; decision?: any; reviewStatus?: string } = mode === SESSION_PERMISSION_MODES.OPERATE
+        ? { allowed: true, status: "session_preapproved" }
+        : await reviewFolderApproval(action, folder, sessionPath, deps, engine, ctx);
       if (!approval.allowed && approval.status === "ask_user") {
-        approval = await askForFolderApproval(action, folder, sessionPath, deps);
+        if (approvalPolicy === SESSION_APPROVAL_POLICIES.DENY_ON_PROMPT) {
+          approval = {
+            ...approval,
+            status: "needs_user_approval_but_unavailable",
+            reviewStatus: "ask_user",
+            reason: approval.reason || "human approval unavailable",
+          };
+        } else {
+          approval = await askForFolderApproval(action, folder, sessionPath, deps);
+        }
       }
       if (!approval.allowed) {
         return toolOk("Session folder authorization was not approved.", {
           action,
           confirmed: false,
           confirmation: {
-            kind: "session_folders",
-            status: approval.status,
-            confirmId: approval.confirmId,
-            reason: approval.reason,
-            reviewer: approval.decision?.reviewer,
-            risk: approval.decision?.risk,
-          },
-        });
+              kind: "session_folders",
+              status: approval.status,
+              reviewStatus: approval.reviewStatus,
+              confirmId: approval.confirmId,
+              reason: approval.reason,
+              reviewer: approval.decision?.reviewer,
+              risk: approval.decision?.risk,
+              approvalPolicy: approval.status === "needs_user_approval_but_unavailable" ? approvalPolicy : undefined,
+            },
+          });
       }
 
       const scope = action === "remove"

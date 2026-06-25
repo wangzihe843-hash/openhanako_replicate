@@ -39,9 +39,9 @@ describe('PlanModeButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'input.autoMode' }));
 
     await waitFor(() => {
-      expect(hanaFetch).toHaveBeenCalledWith('/api/session-permission-mode', expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ mode: 'auto', pendingNewSession: true, persistDefault: true }),
+      expect(hanaFetch).toHaveBeenCalledWith('/api/preferences/session-permission-default', expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ permissionMode: 'auto' }),
       }));
     });
     expect(onChange).toHaveBeenCalledWith('auto');

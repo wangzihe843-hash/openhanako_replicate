@@ -2,19 +2,33 @@
  * @vitest-environment jsdom
  */
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PreviewPanel } from '../../components/PreviewPanel';
 import { useStore, type StoreState } from '../../stores';
+import { refreshOpenPreviewDocumentsForResourceChange } from '../../utils/preview-document-refresh';
 import type { PlatformApi } from '../../types';
 
-describe('PreviewPanel markdown editor status', () => {
-  let fileChangedHandler: ((filePath: string) => void) | null;
+const resourceEventMocks = vi.hoisted(() => ({
+  retainLocalFileResourceWatch: vi.fn(() => vi.fn()),
+  retainResourceWatch: vi.fn(() => vi.fn()),
+  resourceWatchKey: (ref: any) => ref.kind === 'mount'
+    ? `mount:${ref.mountId}:${String(ref.path || '').replace(/^\/+|\/+$/g, '')}`
+    : `local-file:${ref.path}`,
+}));
 
+vi.mock('../../services/resource-events', () => ({
+  retainLocalFileResourceWatch: resourceEventMocks.retainLocalFileResourceWatch,
+  retainResourceWatch: resourceEventMocks.retainResourceWatch,
+  resourceWatchKey: resourceEventMocks.resourceWatchKey,
+}));
+
+describe('PreviewPanel markdown editor status', () => {
   beforeEach(() => {
-    fileChangedHandler = null;
+    resourceEventMocks.retainLocalFileResourceWatch.mockClear();
+    resourceEventMocks.retainResourceWatch.mockClear();
     window.t = ((key: string) => key) as typeof window.t;
     Range.prototype.getClientRects = vi.fn(() => [] as unknown as DOMRectList);
     Range.prototype.getBoundingClientRect = vi.fn(() => ({
@@ -31,9 +45,7 @@ describe('PreviewPanel markdown editor status', () => {
     window.platform = {
       watchFile: vi.fn(async () => true),
       unwatchFile: vi.fn(async () => true),
-      onFileChanged: vi.fn((handler: (filePath: string) => void) => {
-        fileChangedHandler = handler;
-      }),
+      onFileChanged: vi.fn(),
       readFileSnapshot: vi.fn(async (filePath: string) => ({
         content: filePath.endsWith('inactive.ts') ? 'export const value = 2;\n' : '外部更新',
         version: { mtimeMs: 20, size: 23, sha256: 'fresh' },
@@ -93,7 +105,7 @@ describe('PreviewPanel markdown editor status', () => {
 
     render(<PreviewPanel />);
 
-    expect(document.getElementById('previewBody')).toHaveClass('jian-card');
+    expect(document.getElementById('previewBody')).toHaveClass('universal-card');
     expect(shellBlock).toMatch(/margin:\s*var\(--panel-edge-gap\);/);
     expect(bodyBlock).toMatch(/background:\s*var\(--panel-card-bg\);/);
     expect(bodyBlock).toMatch(/border-radius:\s*var\(--panel-card-radius\);/);
@@ -129,6 +141,29 @@ describe('PreviewPanel markdown editor status', () => {
     expect(screen.getByTestId('markdown-editor-status')).toHaveTextContent('选中 0 字 · 共 4 字');
   });
 
+  it('renders a moved-or-deleted page for missing preview targets instead of the editor', () => {
+    useStore.setState({
+      previewItems: [{
+        id: 'missing-note',
+        type: 'markdown',
+        title: 'missing.md',
+        content: 'stale content',
+        filePath: '/tmp/missing.md',
+        status: 'missing',
+        missingAt: 1234,
+      }],
+      openTabs: ['missing-note'],
+      activeTabId: 'missing-note',
+      markdownPreviewIds: [],
+    } as Partial<StoreState>);
+
+    render(<PreviewPanel />);
+
+    expect(screen.getByText('原文稿已移动或者删除')).toBeInTheDocument();
+    expect(within(screen.getByTestId('preview-missing-target')).getByText('missing.md')).toBeInTheDocument();
+    expect(screen.queryByTestId('markdown-editor-status')).not.toBeInTheDocument();
+  });
+
   it('refreshes an inactive open preview tab when its backing file changes', async () => {
     useStore.setState({
       previewOpen: true,
@@ -157,13 +192,81 @@ describe('PreviewPanel markdown editor status', () => {
 
     render(<PreviewPanel />);
 
-    fileChangedHandler?.('/tmp/inactive.ts');
+    await refreshOpenPreviewDocumentsForResourceChange({
+      resource: {
+        kind: 'local-file',
+        provider: 'local_fs',
+        path: '/tmp/inactive.ts',
+      },
+    });
 
     await waitFor(() => {
       const inactive = useStore.getState().previewItems.find(item => item.id === 'inactive');
       expect(inactive?.content).toBe('export const value = 2;\n');
       expect(inactive?.fileVersion).toEqual({ mtimeMs: 20, size: 23, sha256: 'fresh' });
     });
+  });
+
+  it('refreshes open local preview files when the panel mounts', async () => {
+    useStore.setState({
+      previewOpen: true,
+      previewItems: [{
+        id: 'note',
+        type: 'markdown',
+        title: 'note.md',
+        content: 'stale snapshot',
+        filePath: '/tmp/hana-note.md',
+        fileVersion: { mtimeMs: 1, size: 14, sha256: 'stale' },
+      }],
+      openTabs: ['note'],
+      activeTabId: 'note',
+      markdownPreviewIds: [],
+    } as Partial<StoreState>);
+
+    render(<PreviewPanel />);
+
+    await waitFor(() => {
+      const note = useStore.getState().previewItems.find(item => item.id === 'note');
+      expect(note?.content).toBe('外部更新');
+      expect(note?.fileVersion).toEqual({ mtimeMs: 20, size: 23, sha256: 'fresh' });
+    });
+  });
+
+  it('watches open remote workbench preview files by resolved file path across file types', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    useStore.setState({
+      previewOpen: false,
+      deskBasePath: '/workspace',
+      deskWorkspaceMountId: null,
+      deskWorkspaceNativeRoot: null,
+      previewItems: [{
+        id: 'remote-code',
+        type: 'code',
+        title: 'app.ts',
+        content: 'export const value = 1;\n',
+        ext: 'ts',
+        language: 'ts',
+        storageKind: 'remote-content',
+        remoteContentRef: {
+          kind: 'workbench-file',
+          mountId: 'default',
+          subdir: 'src',
+          name: 'app.ts',
+          contentPath: '/api/workbench/content?mountId=default&subdir=src&name=app.ts',
+        },
+      }],
+      openTabs: ['remote-code'],
+      activeTabId: 'remote-code',
+      markdownPreviewIds: [],
+    } as Partial<StoreState>);
+
+    render(<PreviewPanel />);
+
+    await waitFor(() => {
+      expect(resourceEventMocks.retainResourceWatch).toHaveBeenCalledWith({ kind: 'local-file', path: '/workspace/src/app.ts' });
+    });
+    await Promise.resolve();
+    warnSpy.mockRestore();
   });
 
   it('keeps retained file watches alive when the open tab set changes', async () => {
@@ -202,26 +305,27 @@ describe('PreviewPanel markdown editor status', () => {
     render(<PreviewPanel />);
 
     await waitFor(() => {
-      expect(window.platform?.watchFile).toHaveBeenCalledWith('/tmp/hana-note.md');
-      expect(window.platform?.watchFile).toHaveBeenCalledWith('/tmp/inactive.ts');
+      expect(resourceEventMocks.retainResourceWatch).toHaveBeenCalledWith({ kind: 'local-file', path: '/tmp/hana-note.md' });
+      expect(resourceEventMocks.retainResourceWatch).toHaveBeenCalledWith({ kind: 'local-file', path: '/tmp/inactive.ts' });
     });
-
-    vi.mocked(window.platform!.unwatchFile!).mockClear();
 
     useStore.setState({ openTabs: ['note', 'inactive', 'extra'] } as Partial<StoreState>);
 
     await waitFor(() => {
-      expect(window.platform?.watchFile).toHaveBeenCalledWith('/tmp/extra.md');
+      expect(resourceEventMocks.retainResourceWatch).toHaveBeenCalledWith({ kind: 'local-file', path: '/tmp/extra.md' });
     });
-    expect(window.platform?.unwatchFile).not.toHaveBeenCalledWith('/tmp/hana-note.md');
-    expect(window.platform?.unwatchFile).not.toHaveBeenCalledWith('/tmp/inactive.ts');
+    const releaseNote = resourceEventMocks.retainResourceWatch.mock.results[0]?.value;
+    const releaseInactive = resourceEventMocks.retainResourceWatch.mock.results[1]?.value;
+    const releaseExtra = resourceEventMocks.retainResourceWatch.mock.results[2]?.value;
+    expect(releaseNote).not.toHaveBeenCalled();
+    expect(releaseInactive).not.toHaveBeenCalled();
 
     useStore.setState({ openTabs: ['note', 'extra'] } as Partial<StoreState>);
 
     await waitFor(() => {
-      expect(window.platform?.unwatchFile).toHaveBeenCalledWith('/tmp/inactive.ts');
+      expect(releaseInactive).toHaveBeenCalledTimes(1);
     });
-    expect(window.platform?.unwatchFile).not.toHaveBeenCalledWith('/tmp/hana-note.md');
-    expect(window.platform?.unwatchFile).not.toHaveBeenCalledWith('/tmp/extra.md');
+    expect(releaseNote).not.toHaveBeenCalled();
+    expect(releaseExtra).not.toHaveBeenCalled();
   });
 });

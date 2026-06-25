@@ -88,7 +88,7 @@ function buildLaunchFailureDialogDetail({ err, crashInfo, serverLogs = [], extra
     || (typeof extractRootServerStartupError === "function" ? extractRootServerStartupError(serverLogs) : null);
   const tail = crashInfo.length > 800 ? "...\n" + crashInfo.slice(-800) : crashInfo;
   if (!rootServerError) return tail;
-  if (tail.includes(rootServerError)) return tail;
+  if (tail.trimStart().startsWith(rootServerError)) return tail;
   return `${rootServerError}\n\n${tail}`;
 }
 

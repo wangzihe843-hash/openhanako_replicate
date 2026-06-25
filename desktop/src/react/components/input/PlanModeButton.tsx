@@ -72,10 +72,19 @@ export function PlanModeButton({ mode, onChange, locked = false }: {
       const state = useStore.getState();
       const pendingNewSession = state.pendingNewSession === true;
       const sessionPath = pendingNewSession ? null : state.currentSessionPath;
+      if (pendingNewSession) {
+        const res = await hanaFetch('/api/preferences/session-permission-default', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ permissionMode: nextMode }),
+        });
+        const data = await res.json();
+        onChange((data.permissionMode || nextMode) as PermissionMode);
+        return;
+      }
       const body = {
         mode: nextMode,
         pendingNewSession,
-        ...(pendingNewSession ? { persistDefault: true } : {}),
         ...(sessionPath ? { sessionPath } : {}),
       };
       const res = await hanaFetch('/api/session-permission-mode', {

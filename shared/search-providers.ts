@@ -1,9 +1,15 @@
 export const AUTO_SEARCH_PROVIDER = "auto";
+export const SEARCH_CAPABILITY_KIND = "web.search";
 
 export const SEARCH_API_PROVIDER_IDS = Object.freeze([
+  "anysearch",
   "tavily",
   "brave",
   "serper",
+] as const);
+
+export const SEARCH_FREE_API_PROVIDER_IDS = Object.freeze([
+  "anysearch_free",
 ] as const);
 
 export const BROWSER_SEARCH_PROVIDER_IDS = Object.freeze([
@@ -12,7 +18,14 @@ export const BROWSER_SEARCH_PROVIDER_IDS = Object.freeze([
   "duckduckgo_browser",
 ] as const);
 
+export const SEARCH_CAPABILITY_PROVIDERS = Object.freeze([
+  ...SEARCH_API_PROVIDER_IDS.map((id) => ({ id, source: "api", requiresApiKey: true })),
+  ...SEARCH_FREE_API_PROVIDER_IDS.map((id) => ({ id, source: "api", requiresApiKey: false })),
+  ...BROWSER_SEARCH_PROVIDER_IDS.map((id) => ({ id, source: "browser", requiresApiKey: false })),
+]);
+
 const SEARCH_API_PROVIDER_SET = new Set<string>(SEARCH_API_PROVIDER_IDS);
+const SEARCH_FREE_API_PROVIDER_SET = new Set<string>(SEARCH_FREE_API_PROVIDER_IDS);
 const BROWSER_SEARCH_PROVIDER_SET = new Set<string>(BROWSER_SEARCH_PROVIDER_IDS);
 
 export function normalizeSearchProvider(provider: unknown): string {
@@ -23,6 +36,10 @@ export function isSearchApiProvider(provider: unknown): boolean {
   return SEARCH_API_PROVIDER_SET.has(normalizeSearchProvider(provider));
 }
 
+export function isFreeSearchApiProvider(provider: unknown): boolean {
+  return SEARCH_FREE_API_PROVIDER_SET.has(normalizeSearchProvider(provider));
+}
+
 export function isBrowserSearchProvider(provider: unknown): boolean {
   return BROWSER_SEARCH_PROVIDER_SET.has(normalizeSearchProvider(provider));
 }
@@ -31,6 +48,7 @@ export function isKnownSearchProvider(provider: unknown): boolean {
   const normalized = normalizeSearchProvider(provider);
   return normalized === AUTO_SEARCH_PROVIDER
     || isSearchApiProvider(normalized)
+    || isFreeSearchApiProvider(normalized)
     || isBrowserSearchProvider(normalized);
 }
 

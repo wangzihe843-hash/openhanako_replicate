@@ -70,4 +70,21 @@ describe("EventBus capability directory", () => {
     expect(bus.getCapability("usage:list").available).toBe(true);
     off();
   });
+
+  it("declares provider media discovery as stable read capabilities", () => {
+    const bus = new EventBus();
+
+    expect(bus.getCapability("provider:media-providers")).toMatchObject({
+      type: "provider:media-providers",
+      permission: "provider.read",
+      stability: "stable",
+      available: false,
+    });
+    expect(bus.getCapability("provider:resolve-media-model")).toMatchObject({
+      type: "provider:resolve-media-model",
+      permission: "provider.read",
+      stability: "stable",
+      available: false,
+    });
+  });
 });

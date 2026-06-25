@@ -89,7 +89,8 @@ describe("html style guide tracking state", () => {
     expect(HTML_STYLE_GUIDE_VERSION).toBe("2026-06-10");
   });
 
-  it("derives tracking key from ctx.sessionPath with a stable fallback", () => {
+  it("derives tracking key from ctx.sessionId before legacy sessionPath", () => {
+    expect(sessionTrackingKey({ sessionId: "sess_html", sessionPath: "/a/b.jsonl" })).toBe("id:sess_html");
     expect(sessionTrackingKey({ sessionPath: "/a/b.jsonl" })).toBe("/a/b.jsonl");
     expect(sessionTrackingKey({})).toBe("__no_session__");
     expect(sessionTrackingKey(undefined)).toBe("__no_session__");
@@ -163,6 +164,28 @@ describe("beautify html style guide tool", () => {
     await htmlGuideExecute({ section: "typography" }, ctxA);
     const refused = await htmlGuideExecute({ section: "motion" }, ctxB);
     expect(refused.details.kind).toBe("must-read-first");
+  });
+
+  it("tracks read sections by sessionId before legacy sessionPath", async () => {
+    const original = {
+      sessionId: "sess_beautify",
+      sessionPath: "/tmp/style-old.jsonl",
+    };
+    const relocated = {
+      sessionId: "sess_beautify",
+      sessionPath: "/tmp/style-new.jsonl",
+    };
+
+    await htmlGuideExecute({ section: "color" }, original);
+    await htmlGuideExecute({ section: "typography" }, relocated);
+    const served = await htmlGuideExecute({ section: "components" }, relocated);
+    const legacyOnly = await htmlGuideExecute({ section: "components" }, {
+      sessionPath: "/tmp/style-old.jsonl",
+    });
+
+    expect(served.details.kind).toBe("section");
+    expect(served.details.readSections).toEqual(["color", "typography", "components"]);
+    expect(legacyOnly.details.kind).toBe("must-read-first");
   });
 
   it("rejects unknown sections listing the valid ones", async () => {

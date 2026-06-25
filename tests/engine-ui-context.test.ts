@@ -11,10 +11,15 @@ function makeFakeEngine() {
     _uiContextBySession: new Map(),
     _imageStripNotified: new Set(),
     _videoStripNotified: new Set(),
+    _sessionIdsByPath: new Map(),
+    getSessionIdForPath: vi.fn((sessionPath) => fake._sessionIdsByPath.get(sessionPath) || null),
     _currentTurnNativeMedia: { clearSession: vi.fn() },
     _sessionFiles: { unloadSession: vi.fn() },
     _computerHost: { abortSession: vi.fn() },
   };
+  fake._sessionRuntimeKeyForPath = HanaEngine.prototype._sessionRuntimeKeyForPath;
+  fake._deleteSessionRuntimeMapEntry = HanaEngine.prototype._deleteSessionRuntimeMapEntry;
+  fake._deleteSessionRuntimeSetEntry = HanaEngine.prototype._deleteSessionRuntimeSetEntry;
   fake.setUiContext = HanaEngine.prototype.setUiContext;
   fake.getUiContext = HanaEngine.prototype.getUiContext;
   fake.clearSessionRuntimeState = HanaEngine.prototype.clearSessionRuntimeState;
@@ -73,6 +78,22 @@ describe("HanaEngine uiContext", () => {
     expect(engine.getUiContext("/s/a").activeFile).toBe("/new");
   });
 
+  it("有 sessionId 时用 sessionId 存储 UI context，path 只作为 locator", () => {
+    engine._sessionIdsByPath.set("/s/a", "sess_ui_a");
+    engine._sessionIdsByPath.set("/s/a-renamed", "sess_ui_a");
+
+    engine.setUiContext("/s/a", { activeFile: "/a" });
+
+    expect(engine._uiContextBySession.has("sess_ui_a")).toBe(true);
+    expect(engine._uiContextBySession.has("/s/a")).toBe(false);
+    expect(engine.getUiContext("/s/a-renamed")).toEqual({ activeFile: "/a" });
+
+    engine.setUiContext("/s/a-renamed", null);
+
+    expect(engine._uiContextBySession.has("sess_ui_a")).toBe(false);
+    expect(engine.getUiContext("/s/a")).toBeNull();
+  });
+
   it("clearSessionRuntimeState removes only runtime caches for the discarded session", () => {
     engine.setUiContext("/s/a", { activeFile: "/a" });
     engine.setUiContext("/s/b", { activeFile: "/b" });
@@ -89,8 +110,14 @@ describe("HanaEngine uiContext", () => {
     expect(engine._imageStripNotified.has("/s/b")).toBe(true);
     expect(engine._videoStripNotified.has("/s/a")).toBe(false);
     expect(engine._videoStripNotified.has("/s/b")).toBe(true);
-    expect(engine._currentTurnNativeMedia.clearSession).toHaveBeenCalledWith("/s/a");
+    expect(engine._currentTurnNativeMedia.clearSession).toHaveBeenCalledWith({
+      sessionId: null,
+      sessionPath: "/s/a",
+    });
     expect(engine._sessionFiles.unloadSession).toHaveBeenCalledWith("/s/a");
-    expect(engine._computerHost.abortSession).toHaveBeenCalledWith("/s/a");
+    expect(engine._computerHost.abortSession).toHaveBeenCalledWith({
+      sessionId: null,
+      sessionPath: "/s/a",
+    });
   });
 });

@@ -5,17 +5,18 @@
  * methods remain the actual platform boundary.
  */
 
-const STREAMING_MODES = new Set(["draft", "edit_message", "block", "batch"]);
+const STREAMING_MODES = new Set(["draft", "rich_draft", "edit_message", "cardkit_stream", "block", "batch"]);
 
 /**
  * @param {object} opts
  * @param {string} opts.platform
- * @param {"draft"|"edit_message"|"block"|"batch"} opts.mode
+ * @param {"draft"|"rich_draft"|"edit_message"|"cardkit_stream"|"block"|"batch"} opts.mode
  * @param {string[]} [opts.scopes]
  * @param {number} [opts.minIntervalMs]
  * @param {number} [opts.maxChars]
- * @param {"text"|"post"} [opts.renderer]
+ * @param {"text"|"post"|"telegram_rich_markdown"|"feishu_cardkit_markdown"} [opts.renderer]
  * @param {"independent"|"fold_into_stream"} [opts.receiptMode]
+ * @param {boolean} [opts.requiresRichStreaming]
  * @param {string} [opts.source]
  */
 export function createStreamingCapabilities({
@@ -26,6 +27,7 @@ export function createStreamingCapabilities({
   maxChars = 4096,
   renderer = mode === "edit_message" ? "post" : "text",
   receiptMode = mode === "edit_message" ? "fold_into_stream" : "independent",
+  requiresRichStreaming = false,
   source = "",
 }) {
   if (!platform) throw new Error("streaming capability requires platform");
@@ -38,6 +40,7 @@ export function createStreamingCapabilities({
     maxChars,
     renderer,
     receiptMode,
+    requiresRichStreaming,
     source,
   });
 }

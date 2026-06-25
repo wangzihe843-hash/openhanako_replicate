@@ -9,6 +9,9 @@ import { hanaFetch } from '../../../hooks/use-hana-fetch';
 
 const mockState: any = {
   currentSessionPath: null,
+  currentSessionId: null,
+  sessions: [],
+  sessionLocatorsById: {},
   deskBasePath: '/Users/x/OH-WorkSpace',
   currentModel: { id: 'gpt-x', provider: 'openai' },
   sessionModelsByPath: {},
@@ -32,6 +35,9 @@ vi.mock('../../../hooks/use-hana-fetch', () => ({
 describe('SessionStatusCard', () => {
   beforeEach(() => {
     mockState.currentSessionPath = null;
+    mockState.currentSessionId = null;
+    mockState.sessions = [];
+    mockState.sessionLocatorsById = {};
     mockState.deskBasePath = '/Users/x/OH-WorkSpace';
     mockState.currentModel = { id: 'gpt-x', provider: 'openai' };
     mockState.sessionModelsByPath = {};
@@ -52,14 +58,14 @@ describe('SessionStatusCard', () => {
   it('无当前对话返回 null（welcome 态不显示）', () => {
     mockState.currentSessionPath = null;
     const { container } = render(<SessionStatusCard />);
-    expect(container.querySelector('.jian-card')).toBeNull();
+    expect(container.querySelector('.universal-card')).toBeNull();
   });
 
   it('有对话时渲染工作目录 / 模型 / 文件数', () => {
     mockState.currentSessionPath = '/s/a.jsonl';
     mockState.sessionRegistryFilesByPath = { '/s/a.jsonl': [{}, {}, {}] };
     const { container } = render(<SessionStatusCard />);
-    expect(container.querySelector('.jian-card')).toBeTruthy();
+    expect(container.querySelector('.universal-card')).toBeTruthy();
     expect(container.textContent).toContain('gpt-x'); // 模型 id
     expect(container.textContent).toContain('3');      // 文件数
   });
@@ -70,6 +76,31 @@ describe('SessionStatusCard', () => {
     const { container } = render(<SessionStatusCard />);
     expect(container.textContent).toContain('claude-x');
     mockState.sessionModelsByPath = {}; // 复位
+  });
+
+  it('用 sessionId-keyed 授权目录渲染当前 session', () => {
+    mockState.currentSessionPath = '/s/a.jsonl';
+    mockState.currentSessionId = 'sess_a';
+    mockState.sessionLocatorsById = { sess_a: { path: '/s/a.jsonl' } };
+    mockState.sessionAuthorizedFoldersByPath = { sess_a: ['/Users/x/Assets'] };
+
+    const { container } = render(<SessionStatusCard />);
+
+    expect(container.textContent).toContain('Assets');
+  });
+
+  it('用 sessionId-keyed 模型和文件数渲染当前 session', () => {
+    mockState.currentSessionPath = '/s/moved.jsonl';
+    mockState.currentSessionId = 'sess_a';
+    mockState.sessions = [{ sessionId: 'sess_a', path: '/s/moved.jsonl' }];
+    mockState.sessionLocatorsById = { sess_a: { path: '/s/moved.jsonl' } };
+    mockState.sessionModelsByPath = { sess_a: { id: 'claude-x', provider: 'anthropic' } };
+    mockState.sessionRegistryFilesByPath = { sess_a: [{}, {}, {}] };
+
+    const { container } = render(<SessionStatusCard />);
+
+    expect(container.textContent).toContain('claude-x');
+    expect(container.textContent).toContain('3');
   });
 
   it('点击文件夹加号后把授权目录写回当前 session', async () => {

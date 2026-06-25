@@ -40,6 +40,11 @@ describe("DeferredResultCoordinator", () => {
     expect(message.content).toContain("task-id=\"task-1\"");
     expect(message.content).toContain("status=\"success\"");
     expect(message.content).toContain("&lt;ok&gt;");
+    expect(message.details).toMatchObject({
+      schemaVersion: 1,
+      taskId: "task-1",
+      deliveryId: expect.stringContaining("task-1"),
+    });
     expect(store.query("task-1")).toMatchObject({ delivered: true });
   });
 

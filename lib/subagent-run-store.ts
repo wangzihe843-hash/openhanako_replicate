@@ -28,7 +28,9 @@ function normalizeRun(taskId, record: any = {}, existing = null) {
     ...(existing || {}),
     taskId,
     status: normalizeStatus(record.status, existing?.status || "pending"),
+    parentSessionId: pickString(record.parentSessionId) || existing?.parentSessionId || null,
     parentSessionPath: pickString(record.parentSessionPath) || existing?.parentSessionPath || null,
+    childSessionId: pickString(record.childSessionId) || existing?.childSessionId || null,
     childSessionPath: pickString(record.childSessionPath) || pickString(record.sessionPath) || existing?.childSessionPath || null,
     threadId: pickString(record.threadId) || existing?.threadId || null,
     threadKind: pickString(record.threadKind) || existing?.threadKind || null,
@@ -51,12 +53,15 @@ function normalizeRun(taskId, record: any = {}, existing = null) {
 
 export class SubagentRunStore {
 
+  declare _getSessionIdForPath: any;
+
   declare _persistPath: any;
 
   declare _runs: any;
-  constructor(persistPath) {
+  constructor(persistPath = null, { getSessionIdForPath = null }: any = {}) {
     this._persistPath = persistPath || null;
     this._runs = new Map();
+    this._getSessionIdForPath = typeof getSessionIdForPath === "function" ? getSessionIdForPath : () => null;
     if (this._persistPath) this._load();
   }
 
@@ -65,6 +70,7 @@ export class SubagentRunStore {
     const existing = this._runs.get(taskId) || null;
     const next = normalizeRun(taskId, {
       ...record,
+      parentSessionId: this._parentSessionIdFromRecord(record, existing),
       status: existing?.status || "pending",
     }, existing);
     this._runs.set(taskId, next);
@@ -77,6 +83,7 @@ export class SubagentRunStore {
     const existing = this._runs.get(taskId) || null;
     const next = normalizeRun(taskId, {
       ...record,
+      parentSessionId: this._parentSessionIdFromRecord(record, existing),
       childSessionPath,
       status: existing?.status || "pending",
     }, existing);
@@ -113,7 +120,10 @@ export class SubagentRunStore {
   upsert(taskId, record: any = {}) {
     if (!taskId) return null;
     const existing = this._runs.get(taskId) || null;
-    const next = normalizeRun(taskId, record, existing);
+    const next = normalizeRun(taskId, {
+      ...record,
+      parentSessionId: this._parentSessionIdFromRecord(record, existing),
+    }, existing);
     this._runs.set(taskId, next);
     this._save();
     return clone(next);
@@ -134,8 +144,9 @@ export class SubagentRunStore {
       skippedFinal: 0,
     };
     if (!parentSessionPath) return summary;
+    const targetKey = this._parentSessionKeyForPath(parentSessionPath);
     for (const [taskId, run] of this._runs) {
-      if (run.parentSessionPath !== parentSessionPath) continue;
+      if (this._parentSessionKeyForRecord(run) !== targetKey) continue;
       summary.matched++;
       if (run.status !== "pending") {
         summary.skippedFinal++;
@@ -155,6 +166,30 @@ export class SubagentRunStore {
 
   get size() {
     return this._runs.size;
+  }
+
+  _parentSessionIdFromRecord(record: any = {}, existing = null) {
+    return pickString(record.parentSessionId)
+      || this._sessionIdForPath(record.parentSessionPath)
+      || existing?.parentSessionId
+      || this._sessionIdForPath(existing?.parentSessionPath)
+      || null;
+  }
+
+  _sessionIdForPath(sessionPath) {
+    const sessionId = this._getSessionIdForPath?.(sessionPath);
+    return pickString(sessionId);
+  }
+
+  _parentSessionKeyForPath(parentSessionPath) {
+    return this._sessionIdForPath(parentSessionPath) || parentSessionPath;
+  }
+
+  _parentSessionKeyForRecord(run) {
+    return pickString(run?.parentSessionId)
+      || this._sessionIdForPath(run?.parentSessionPath)
+      || run?.parentSessionPath
+      || null;
   }
 
   _save() {

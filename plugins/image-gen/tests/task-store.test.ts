@@ -104,6 +104,23 @@ describe("add / get", () => {
     expect(task.sessionPath).toBe("/path/to/session.jsonl");
   });
 
+  it("stores sessionId and sessionRef when provided", () => {
+    const store = makeStore();
+    const task = store.add(makeTask({
+      sessionId: "sess_image_task",
+      sessionPath: "/path/to/session.jsonl",
+      sessionRef: {
+        sessionId: "sess_image_task",
+        sessionPath: "/path/to/session.jsonl",
+      },
+    }));
+    expect(task.sessionId).toBe("sess_image_task");
+    expect(task.sessionRef).toEqual({
+      sessionId: "sess_image_task",
+      sessionPath: "/path/to/session.jsonl",
+    });
+  });
+
   it("defaults sessionPath to null", () => {
     const store = makeStore();
     const task = store.add(makeTask({}));

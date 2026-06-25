@@ -1,6 +1,7 @@
 import { AppError } from '../shared/errors.ts';
 import { errorBus } from '../shared/error-bus.ts';
 import { normalizeProviderPayload } from './provider-compat.ts';
+import { buildProviderCompatOptions } from './llm-request-policy.ts';
 import { logLlmUsage, normalizeLlmUsage } from '../lib/llm/usage-observer.ts';
 import { appendProviderApiPath, withDefaultProviderHeaders } from '../lib/llm/provider-client.ts';
 import { normalizeProviderHeaders } from '../shared/provider-auth.ts';
@@ -12,6 +13,48 @@ import {
 const EMPTY_AFTER_THINKING_MESSAGE = "模型未回复正文，请检查思考内容或稍后重试。";
 const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 const CODEX_ACCOUNT_CLAIM_PATH = "https://api.openai.com/auth";
+const DEFAULT_CODEX_UTILITY_INSTRUCTIONS = [
+  "You are Hana's utility model.",
+  "Follow the user request exactly and return only the requested content.",
+].join("\n");
+
+export type CallTextMessage = {
+  role?: string;
+  content?: unknown;
+  [key: string]: unknown;
+};
+
+export type CallTextModel = string | (Record<string, unknown> & {
+  id?: unknown;
+  provider?: unknown;
+}) | null;
+
+export type CallTextUsageLedger = {
+  start?: (entry: unknown) => { requestId?: string | null } | null;
+  finish?: (requestId: string | null | undefined, entry: unknown) => unknown;
+  recordError?: (requestId: string, error: unknown, status: string, entry: unknown) => unknown;
+};
+
+export type CallTextOptions = {
+  [key: string]: unknown;
+  api?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: CallTextModel;
+  headers?: Record<string, string> | null;
+  quirks?: string[];
+  systemPrompt?: string;
+  messages?: CallTextMessage[];
+  temperature?: number;
+  maxTokens?: unknown;
+  outputBudgetSource?: unknown;
+  callPurpose?: unknown;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  returnUsage?: boolean;
+  usageContext?: unknown;
+  usageLedger?: CallTextUsageLedger | null;
+};
 
 /**
  * core/llm-client.js — 统一的非流式 LLM 调用入口
@@ -59,6 +102,33 @@ function stripTaggedThinking(text) {
 function positiveInteger(value) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+function truncateErrorBody(text, max = 4000) {
+  const value = typeof text === "string" ? text : "";
+  return value.length > max ? `${value.slice(0, max)}...[truncated]` : value;
+}
+
+function providerErrorObject(data) {
+  return data?.error && typeof data.error === "object" ? data.error : null;
+}
+
+function providerErrorMessage(data, rawText, status) {
+  return data?.error?.message || data?.message || rawText || `HTTP ${status}`;
+}
+
+function providerErrorContext({ data, rawText, modelId, provider, api, status }) {
+  const err = providerErrorObject(data);
+  return {
+    model: modelId,
+    provider,
+    api,
+    status,
+    ...(typeof err?.type === "string" ? { errorType: err.type } : {}),
+    ...(typeof err?.code === "string" ? { errorCode: err.code } : {}),
+    ...(typeof data?.request_id === "string" ? { requestId: data.request_id } : {}),
+    ...(rawText ? { rawErrorBody: truncateErrorBody(rawText) } : {}),
+  };
 }
 
 function resolveCodexResponsesUrl(baseUrl) {
@@ -275,6 +345,7 @@ function convertContentForApi(content, api) {
  * @param {number} [opts.temperature]  温度。未传时不写入请求体，使用 provider 默认值
  * @param {number} [opts.maxTokens]    最大输出 token。未传时不写 output cap，让具体任务决定预算
  * @param {"user"|"system"|"sdk-default"} [opts.outputBudgetSource] 输出上限来源。仅在 maxTokens 显式传入时生效
+ * @param {string} [opts.callPurpose]   调用意图标签，只表达请求目的，不承载模型事实
  * @param {number} [opts.timeoutMs]    超时毫秒 (default 60000)
  * @param {AbortSignal} [opts.signal]  外部取消信号
  * @param {boolean} [opts.returnUsage] 返回 { text, usage }，默认保持旧接口返回纯文本
@@ -294,16 +365,17 @@ export async function callText({
   temperature,
   maxTokens,
   outputBudgetSource = "system",
+  callPurpose,
   timeoutMs = 60_000,
   signal,
   returnUsage = false,
   usageContext,
   usageLedger,
-}) {
+}: CallTextOptions) {
   // 同时接受完整 model 对象和裸 id。modelObj 用于 provider-compat 决策；modelId 入 payload。
   const modelObj = typeof model === "object" && model !== null ? model : null;
-  const modelId = modelObj ? modelObj.id : String(model || "");
-  const provider = modelObj?.provider || "custom";
+  const modelId = modelObj ? String(modelObj.id || "") : String(model || "");
+  const provider = typeof modelObj?.provider === "string" ? modelObj.provider : "custom";
   const explicitMaxTokens = positiveInteger(maxTokens);
   // ── 1. 消息归一化：提取 system 消息合并到 systemPrompt ──
   let mergedSystem = systemPrompt || "";
@@ -362,13 +434,14 @@ export async function callText({
       "chatgpt-account-id": accountId,
     };
     if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+    const codexInstructions = mergedSystem.trim() || DEFAULT_CODEX_UTILITY_INSTRUCTIONS;
     body = {
       model: modelId,
       store: false,
       stream: true,
       ...(explicitMaxTokens !== null && { max_output_tokens: explicitMaxTokens }),
       ...(temperature !== undefined && { temperature }),
-      ...(mergedSystem && { instructions: mergedSystem }),
+      instructions: codexInstructions,
       input: normalizedMessages,
     };
   } else if (api === "openai-responses") {
@@ -421,10 +494,12 @@ export async function callText({
         ? { id: modelId, provider, api, baseUrl, quirks }
         : null
     );
-  body = normalizeProviderPayload(body, modelForCompat, {
+  body = normalizeProviderPayload(body, modelForCompat, buildProviderCompatOptions({
     mode: "utility",
-    ...(explicitMaxTokens !== null && { outputBudgetSource }),
-  });
+    callPurpose,
+    explicitMaxTokens,
+    outputBudgetSource,
+  }));
 
   // ── 4. 发送请求 ──
   const usageRequest = usageLedger?.start?.({
@@ -477,14 +552,22 @@ export async function callText({
   observedUsagePayload = data?.usage ?? null;
 
   if (!res.ok) {
-    const message = data?.error?.message || data?.message || rawText || `HTTP ${res.status}`;
+    const message = providerErrorMessage(data, rawText, res.status);
+    const context = providerErrorContext({
+      data,
+      rawText,
+      modelId,
+      provider,
+      api,
+      status: res.status,
+    });
     if (res.status === 401 || res.status === 403) {
-      throw new AppError('LLM_AUTH_FAILED', { context: { model: modelId, status: res.status } });
+      throw new AppError('LLM_AUTH_FAILED', { message, context });
     }
     if (res.status === 429) {
-      throw new AppError('LLM_RATE_LIMITED', { context: { model: modelId } });
+      throw new AppError('LLM_RATE_LIMITED', { message, context });
     }
-    throw new AppError('UNKNOWN', { message, context: { model: modelId, status: res.status } });
+    throw new AppError('UNKNOWN', { message, context });
   }
 
   // ── 6. 提取文本 ──

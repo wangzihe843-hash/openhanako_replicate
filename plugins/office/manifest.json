@@ -7,6 +7,8 @@
   "hidden": true,
   "capabilities": [
     "office.read",
-    "office.html_to_pdf"
+    "office.html_to_pdf",
+    "resource.read",
+    "resource.materialize"
   ]
 }

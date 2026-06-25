@@ -1,4 +1,5 @@
 // tests/workflow-tool.test.js
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createWorkflowTool } from "../lib/tools/workflow-tool.ts";
 
@@ -57,6 +58,7 @@ describe("workflow tool", () => {
     const exec = vi.fn(async () => ({ replyText: "bug", error: null }));
     const tool = createWorkflowTool({
       executeIsolated: exec, getAgentId: () => "a1", emitEvent: () => {},
+      getSessionPermissionMode: () => "auto",
       getDeferredStore: () => store, getSubagentRunStore: () => makeRunStore(),
     });
     const res = await tool.execute(
@@ -70,6 +72,75 @@ describe("workflow tool", () => {
     expect((exec.mock.calls[0] as any)[1]).toMatchObject({
       agentId: "a1", parentSessionPath: "/s.jsonl", cwd: "/w",
       subagentContext: true, subagentTaskId: res.details.taskId, emitEvents: true,
+      permissionMode: "auto", approvalPolicy: "deny_on_prompt", allowHumanApproval: false,
+    });
+  });
+
+  it("workflow node session 持久化到 workflow-sessions/<runId>，ActivityHub 记录的 child path 不指向 ephemeral", async () => {
+    const store = makeStore();
+    const seenPersistDirs = [];
+    const tool = createWorkflowTool({
+      executeIsolated: async (_p, o) => {
+        seenPersistDirs.push(o.persist);
+        o.onSessionReady?.(`${o.persist}/child.jsonl`);
+        return { replyText: "ok", error: null };
+      },
+      getAgentId: () => "a1",
+      emitEvent: () => {},
+      getWorkflowSessionDir: () => "/agents/hanako/workflow-sessions",
+      getDeferredStore: () => store,
+      getSubagentRunStore: () => makeRunStore(),
+    });
+
+    const res = await tool.execute("c1", { script: META + `return await agent('x')` }, undefined, undefined, makeCtx()) as any;
+    await flush();
+
+    expect(seenPersistDirs[0]).toBe(path.join("/agents/hanako/workflow-sessions", res.details.taskId));
+    expect(seenPersistDirs[0]).not.toContain(".ephemeral");
+  });
+
+  it("派出后台任务时用 parentSessionId 作为内部运行时归属，sessionPath 只作 locator", async () => {
+    const store = makeStore();
+    const runStore = makeRunStore();
+    const upserts = [];
+    const hub = { upsert: vi.fn((e) => { upserts.push({ ...e }); return e; }) };
+    const exec = vi.fn(async () => ({ replyText: "bug", error: null }));
+    const tool = createWorkflowTool({
+      executeIsolated: exec,
+      getAgentId: () => "a1",
+      emitEvent: () => {},
+      getSessionIdForPath: (sessionPath) => sessionPath === "/s.jsonl" ? "sess_parent" : null,
+      getDeferredStore: () => store,
+      getSubagentRunStore: () => runStore,
+      getActivityHub: () => hub,
+    });
+
+    const res = await tool.execute(
+      "c1",
+      { script: META + `return await agent('x')` },
+      undefined,
+      undefined,
+      makeCtx(),
+    ) as any;
+    await flush();
+
+    expect(store.defer).toHaveBeenCalledWith(
+      res.details.taskId,
+      { sessionId: "sess_parent", sessionPath: "/s.jsonl" },
+      expect.objectContaining({ type: "workflow", summary: "demo" }),
+    );
+    expect(runStore.register).toHaveBeenCalledWith(
+      res.details.taskId,
+      expect.objectContaining({ parentSessionId: "sess_parent", parentSessionPath: "/s.jsonl" }),
+    );
+    expect(hub.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      id: res.details.taskId,
+      sessionId: "sess_parent",
+      sessionPath: "/s.jsonl",
+    }));
+    expect((exec.mock.calls[0] as any)[1]).toMatchObject({
+      parentSessionId: "sess_parent",
+      parentSessionPath: "/s.jsonl",
     });
   });
 
@@ -81,6 +152,18 @@ describe("workflow tool", () => {
     });
     const res = await tool.execute("c1", { script: `return 1` }, undefined, undefined, makeCtx()) as any;
     expect(res.details.error).toMatch(/脚本非法/);
+    expect(store.defer).not.toHaveBeenCalled();
+  });
+
+  it("rejects declarative meta.nodes workflows before dispatching a no-op background task (#1639)", async () => {
+    const store = makeStore();
+    const tool = createWorkflowTool({
+      executeIsolated: async () => ({}), emitEvent: () => {},
+      getDeferredStore: () => store, getSubagentRunStore: () => makeRunStore(),
+    });
+    const script = `export const meta = { name: 'nodes', description: 'd', nodes: [{ id: 'a', prompt: 'x' }] }\n`;
+    const res = await tool.execute("c1", { script }, undefined, undefined, makeCtx()) as any;
+    expect(res.details.error).toMatch(/meta\.nodes/);
     expect(store.defer).not.toHaveBeenCalled();
   });
 
@@ -98,6 +181,24 @@ describe("workflow tool", () => {
     expect(runStore.fail).toHaveBeenCalled();
   });
 
+  it("workflow 返回 undefined 时按执行失败处理，不写入成功结果", async () => {
+    const store = makeStore();
+    const runStore = makeRunStore();
+    const tool = createWorkflowTool({
+      executeIsolated: async () => ({ replyText: "ok", error: null }),
+      emitEvent: () => {},
+      getDeferredStore: () => store,
+      getSubagentRunStore: () => runStore,
+    });
+
+    const res = await tool.execute("c1", { script: META + `return undefined` }, undefined, undefined, makeCtx()) as any;
+    await flush();
+
+    expect(store.resolve).not.toHaveBeenCalled();
+    expect(store.fail).toHaveBeenCalledWith(res.details.taskId, expect.stringMatching(/undefined|没有返回结果/));
+    expect(runStore.fail).toHaveBeenCalledWith(res.details.taskId, expect.stringMatching(/undefined|没有返回结果/));
+  });
+
   it("deferred 基础设施不可用时同步兜底执行，直接返回 result", async () => {
     const exec = vi.fn(async () => ({ replyText: "bug", error: null }));
     const tool = createWorkflowTool({
@@ -111,6 +212,16 @@ describe("workflow tool", () => {
     ) as any;
     expect(res.details.result).toBe("bug");
     expect(res.details.agentsSpawned).toBe(1);
+  });
+
+  it("同步执行路径返回 undefined 时返回 toolError", async () => {
+    const tool = createWorkflowTool({
+      executeIsolated: async () => ({ replyText: "ok", error: null }),
+      emitEvent: () => {},
+      // 不提供 getDeferredStore → 同步兜底
+    });
+    const res = await tool.execute("c1", { script: META + `return undefined` }, undefined, undefined, makeCtx()) as any;
+    expect(res.details.error).toMatch(/undefined|没有返回结果/);
   });
 
   it("emitEvent 收到 workflow_progress（phase/log），带 taskId", async () => {
@@ -254,7 +365,7 @@ describe("workflow tool", () => {
     }));
   });
 
-  it("节点 done 从 UsageLedger 按 childSessionPath 汇总 token 写入子 entry", async () => {
+  it("节点 done 从 UsageLedger 按 childSessionId 汇总 token 写入子 entry", async () => {
     const store = makeStore();
     const upserts = [];
     const hub = {
@@ -266,21 +377,26 @@ describe("workflow tool", () => {
       },
     };
     const ledger = {
-      list: ({ childSessionPath }) => ({
-        entries: childSessionPath === "/child.jsonl"
+      list: ({ childSessionId }) => ({
+        entries: childSessionId === "sess_child"
           ? [{ usage: { totalTokens: 1000 } }, { usage: { totalTokens: 234 } }]
           : [],
       }),
     };
     const tool = createWorkflowTool({
-      executeIsolated: async (p, o) => { o.onSessionReady?.("/child.jsonl"); return { replyText: "x", error: null }; },
+      executeIsolated: async (p, o) => {
+        o.onSessionReady?.("/child-moved.jsonl", { sessionId: "sess_child", sessionPath: "/child-moved.jsonl" });
+        return { replyText: "x", error: null };
+      },
       getAgentId: () => "a1", emitEvent: () => {},
+      getSessionIdForPath: (sessionPath) => sessionPath === "/s.jsonl" ? "sess_parent" : null,
       getDeferredStore: () => store, getSubagentRunStore: () => makeRunStore(),
       getActivityHub: () => hub, getUsageLedger: () => ledger,
     });
     const res = await tool.execute("c1", { script: META + `return await agent('x')` }, undefined, undefined, makeCtx()) as any;
     await flush();
     const childId = `${res.details.taskId}::node-1`;
+    expect(upserts.find((e) => e.id === childId && e.childSessionId === "sess_child")).toBeTruthy();
     const done = upserts.find((e) => e.id === childId && e.status === "done");
     expect(done.tokens).toBe(1234); // 1000 + 234
   });

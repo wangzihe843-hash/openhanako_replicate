@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  PLUGIN_RESOURCE_CAPABILITY,
   PLUGIN_UI_CAPABILITY,
   PLUGIN_UI_ERROR_CODE,
   PLUGIN_UI_PROTOCOL,
@@ -67,8 +68,21 @@ describe('plugin UI protocol', () => {
       TOAST_SHOW: 'toast.show',
       EXTERNAL_OPEN: 'external.open',
       SESSION_FILE_OPEN: 'sessionFile.open',
+      RESOURCE_OPEN: 'resource.open',
+      RESOURCE_PICK: 'resource.pick',
+      RESOURCE_REQUEST_ACCESS: 'resource.requestAccess',
       UI_RESIZE: 'ui.resize',
       CLIPBOARD_WRITE_TEXT: 'clipboard.writeText',
+    });
+  });
+
+  it('exports ResourceIO manifest capability names for plugins', () => {
+    expect(PLUGIN_RESOURCE_CAPABILITY).toEqual({
+      READ: 'resource.read',
+      SEARCH: 'resource.search',
+      WRITE: 'resource.write',
+      MATERIALIZE: 'resource.materialize',
+      WATCH: 'resource.watch',
     });
   });
 });

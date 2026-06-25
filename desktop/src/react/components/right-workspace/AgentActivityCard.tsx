@@ -103,7 +103,7 @@ export function AgentActivityCard() {
   });
 
   return (
-    <section className={`jian-card ${styles.card}`} aria-label={t('rightWorkspace.subagent.title')} data-collapsed={collapsed || undefined}>
+    <section className={`universal-card ${styles.card}`} aria-label={t('rightWorkspace.subagent.title')} data-collapsed={collapsed || undefined}>
       <button className={styles.header} type="button" onClick={() => setCollapsed((c) => !c)} aria-expanded={!collapsed}>
         <span className={styles.title}>{t('rightWorkspace.subagent.title')}</span>
         <span className={styles.count}>{sorted.length}</span>

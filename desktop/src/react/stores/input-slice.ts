@@ -1,4 +1,5 @@
 import type { AudioWaveform } from './chat-types';
+import { sessionScopedKey } from './session-slice';
 
 export interface AttachedFile {
   fileId?: string;
@@ -104,10 +105,12 @@ function syncCurrentSessionAttachments(state: InputSlice & { currentSessionPath?
   };
   const currentSessionPath = state.currentSessionPath;
   if (currentSessionPath) {
+    const key = sessionScopedKey(state as any, currentSessionPath) || currentSessionPath;
     patch.attachedFilesBySession = {
       ...state.attachedFilesBySession,
-      [currentSessionPath]: files,
+      [key]: files,
     };
+    if (key !== currentSessionPath) delete patch.attachedFilesBySession[currentSessionPath];
   }
   return patch;
 }
@@ -136,10 +139,17 @@ export const createInputSlice = (
   clearAttachedFiles: () =>
     set((s) => syncCurrentSessionAttachments(s as InputSlice & { currentSessionPath?: string | null }, [])),
   setDraft: (sessionPath, text) =>
-    set((s) => ({ drafts: { ...s.drafts, [sessionPath]: text } })),
+    set((s) => {
+      const key = sessionScopedKey(s as any, sessionPath) || sessionPath;
+      const drafts = { ...s.drafts, [key]: text };
+      if (key !== sessionPath) delete drafts[sessionPath];
+      return { drafts };
+    }),
   clearDraft: (sessionPath) =>
     set((s) => {
+      const key = sessionScopedKey(s as any, sessionPath) || sessionPath;
       const rest = { ...s.drafts };
+      delete rest[key];
       delete rest[sessionPath];
       return { drafts: rest };
     }),

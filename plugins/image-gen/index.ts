@@ -4,13 +4,9 @@ import fs from "node:fs";
 import { AdapterRegistry } from "./lib/adapter-registry.ts";
 import { TaskStore } from "./lib/task-store.ts";
 import { Poller } from "./lib/poller.ts";
-import { volcengineImageAdapter } from "./adapters/volcengine.ts";
-import { openaiImageAdapter } from "./adapters/openai.ts";
-import { openaiCodexImageAdapter } from "./adapters/openai-codex.ts";
-import { minimaxImageAdapter } from "./adapters/minimax.ts";
-import { dashscopeImageAdapter } from "./adapters/dashscope.ts";
-import { geminiImageAdapter } from "./adapters/gemini.ts";
+import { builtinImageGenAdapters } from "./builtin-adapters.ts";
 import { submitImageGeneration } from "./lib/submit-image.ts";
+import { normalizeSessionRef } from "./lib/image-task-runner.ts";
 
 export default class ImageGenPlugin {
   declare ctx: any;
@@ -49,12 +45,9 @@ export default class ImageGenPlugin {
     });
 
     // Built-in adapters
-    registry.register(volcengineImageAdapter);
-    registry.register(openaiImageAdapter);
-    registry.register(openaiCodexImageAdapter);
-    registry.register(minimaxImageAdapter);
-    registry.register(dashscopeImageAdapter);
-    registry.register(geminiImageAdapter);
+    for (const adapter of builtinImageGenAdapters) {
+      registry.register(adapter);
+    }
 
     // Attach to ctx for tools
     this.ctx._mediaGen = { registry, store, poller, generatedDir };
@@ -86,16 +79,18 @@ export default class ImageGenPlugin {
 
     this.register(bus.handle("media-gen:submit-image", async ( payload: any = {}) => {
       const input = payload.input && typeof payload.input === "object" ? payload.input : payload;
-      const sessionPath = typeof payload.sessionPath === "string" && payload.sessionPath.trim()
-        ? payload.sessionPath.trim()
-        : null;
-      if (!sessionPath) return { ok: false, error: "sessionPath is required" };
+      const sessionTarget = normalizeSessionRef(payload);
+      if (!sessionTarget.sessionId && !sessionTarget.sessionPath) {
+        return { ok: false, error: "sessionId or sessionPath is required" };
+      }
       try {
         return await submitImageGeneration({
           input,
           ctx: {
             ...this.ctx,
-            sessionPath,
+            sessionId: sessionTarget.sessionId,
+            sessionPath: sessionTarget.sessionPath,
+            sessionRef: sessionTarget.sessionRef,
             _mediaGen: this.ctx._mediaGen,
           },
           metadata: payload.metadata || null,

@@ -196,9 +196,13 @@ export function buildDeferredResultInterludeBlock(event, { receiverName = "Hana"
   const mergedMeta = { ...(event.meta || {}), ...(meta || {}) };
   const type = mergedMeta.type || event.type || "background-task";
   const status = event.status === "failed" || event.status === "aborted" ? event.status : "success";
+  const deliveryId = cleanText(event.deliveryId);
   const source = resolveSource(mergedMeta, type);
   const previewSessionPath = typeof mergedMeta.sessionPath === "string" && mergedMeta.sessionPath.trim()
     ? mergedMeta.sessionPath
+    : null;
+  const previewSessionId = typeof mergedMeta.sessionId === "string" && mergedMeta.sessionId.trim()
+    ? mergedMeta.sessionId.trim()
     : null;
   const rawPreviewAgentId = mergedMeta.executorAgentId || mergedMeta.agentId || mergedMeta.requestedAgentId;
   const previewAgentId = typeof rawPreviewAgentId === "string" && rawPreviewAgentId.trim()
@@ -212,12 +216,15 @@ export function buildDeferredResultInterludeBlock(event, { receiverName = "Hana"
 
   return {
     type: "interlude",
-    id: `deferred:${event.taskId}:${status}`,
+    id: deliveryId ? `deferred:${event.taskId}:${status}:${deliveryId}` : `deferred:${event.taskId}:${status}`,
     taskId: event.taskId,
+    ...(deliveryId ? { deliveryId } : {}),
     variant: "deferred_result",
+    timelinePlacement: "after_anchor_message",
     status,
     sourceKind: source.kind,
     sourceLabel: source.label,
+    ...(previewSessionId ? { previewSessionId } : {}),
     ...(previewSessionPath ? { previewSessionPath } : {}),
     ...(previewAgentId ? { previewAgentId } : {}),
     text: interludeText({ receiverName, source, status }),

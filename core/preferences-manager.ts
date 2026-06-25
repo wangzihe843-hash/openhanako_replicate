@@ -186,7 +186,7 @@ export class PreferencesManager {
     this.savePreferences(prefs);
   }
 
-  /** 读取新会话默认权限模式。首次安装没有该字段时默认 ask。 */
+  /** 读取新会话默认权限模式。首次安装没有该字段时默认 auto。 */
   getSessionPermissionModeDefault() {
     return normalizeSessionPermissionMode({ permissionMode: this._cache.session_permission_mode_default });
   }
@@ -281,6 +281,22 @@ export class PreferencesManager {
     const bridge = { ...(prefs.bridge || {}) };
     if (enabled === false) bridge.receiptEnabled = false;
     else delete bridge.receiptEnabled;
+    if (Object.keys(bridge).length === 0) delete prefs.bridge;
+    else prefs.bridge = bridge;
+    this.savePreferences(prefs);
+  }
+
+  /** 读取 bridge 富文本流式开关（全局，默认开启） */
+  getBridgeRichStreamingEnabled() {
+    return this._cache.bridge?.richStreamingEnabled !== false;
+  }
+
+  /** 保存 bridge 富文本流式开关；false 表示强制走旧兼容路径 */
+  setBridgeRichStreamingEnabled(enabled) {
+    const prefs = this._mutableCopy();
+    const bridge = { ...(prefs.bridge || {}) };
+    if (enabled === false) bridge.richStreamingEnabled = false;
+    else delete bridge.richStreamingEnabled;
     if (Object.keys(bridge).length === 0) delete prefs.bridge;
     else prefs.bridge = bridge;
     this.savePreferences(prefs);
@@ -675,6 +691,17 @@ export class PreferencesManager {
     return this.getImageGenerationConfig();
   }
 
+  getVideoGenerationConfig() {
+    return normalizeVideoGenerationConfig(this._cache.videoGeneration);
+  }
+
+  setVideoGenerationConfig(config) {
+    const prefs = this._mutableCopy();
+    prefs.videoGeneration = normalizeVideoGenerationConfig(config);
+    this.savePreferences(prefs);
+    return this.getVideoGenerationConfig();
+  }
+
   getSpeechRecognitionConfig() {
     const raw = this._cache.speechRecognition;
     const defaultModel = raw?.defaultModel && typeof raw.defaultModel === "object" && !Array.isArray(raw.defaultModel)
@@ -801,6 +828,23 @@ export function normalizeImageGenerationConfig(value) {
     : null;
   return {
     ...(defaultModel?.provider && defaultModel.id ? { defaultImageModel: defaultModel } : {}),
+    ...(providerDefaults ? { providerDefaults } : {}),
+  };
+}
+
+export function normalizeVideoGenerationConfig(value) {
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const defaultModel = raw.defaultVideoModel && typeof raw.defaultVideoModel === "object" && !Array.isArray(raw.defaultVideoModel)
+    ? {
+      provider: typeof raw.defaultVideoModel.provider === "string" ? raw.defaultVideoModel.provider.trim() : "",
+      id: typeof raw.defaultVideoModel.id === "string" ? raw.defaultVideoModel.id.trim() : "",
+    }
+    : null;
+  const providerDefaults = raw.providerDefaults && typeof raw.providerDefaults === "object" && !Array.isArray(raw.providerDefaults)
+    ? structuredClone(raw.providerDefaults)
+    : null;
+  return {
+    ...(defaultModel?.provider && defaultModel.id ? { defaultVideoModel: defaultModel } : {}),
     ...(providerDefaults ? { providerDefaults } : {}),
   };
 }

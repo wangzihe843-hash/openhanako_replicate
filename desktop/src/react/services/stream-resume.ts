@@ -9,7 +9,7 @@
 
 import { streamBufferManager } from '../hooks/use-stream-buffer';
 import { useStore } from '../stores';
-import { getWebSocket } from './websocket';
+import { sessionIdForPathFromLocatorState, sessionScopedKey } from '../stores/session-slice';
 import { clearChat } from '../stores/agent-actions';
 import { loadMessages } from '../stores/session-actions';
 import { registerSessionStreamMetaCleaner } from '../stores/stream-invalidator';
@@ -20,7 +20,9 @@ let _applyStreamingStatus: ((
   isStreaming: boolean,
   sessionPath: string | null,
   identity?: { streamId?: string | null; turnId?: string | null },
+  options?: { force?: boolean },
 ) => boolean | void) | null = null;
+let _getWebSocket: (() => WebSocket | null) | null = null;
 
 export function injectHandlers(
   handleServerMessage: (msg: any) => void,
@@ -28,10 +30,15 @@ export function injectHandlers(
     isStreaming: boolean,
     sessionPath: string | null,
     identity?: { streamId?: string | null; turnId?: string | null },
+    options?: { force?: boolean },
   ) => boolean | void,
 ): void {
   _handleServerMessage = handleServerMessage;
   _applyStreamingStatus = applyStreamingStatus;
+}
+
+export function injectWebSocketGetter(getWebSocket: () => WebSocket | null): void {
+  _getWebSocket = getWebSocket;
 }
 
 // ── 流恢复版本计数 ──
@@ -49,13 +56,102 @@ type SessionStreamMeta = {
 
 const _sessionStreams: Record<string, SessionStreamMeta> = {};
 
-export function getSessionStreamMeta(sessionPath?: string): SessionStreamMeta | null {
-  const path = sessionPath || useStore.getState().currentSessionPath;
-  if (!path) return null;
-  if (!_sessionStreams[path]) {
-    _sessionStreams[path] = { streamId: null, lastSeq: 0, consumedSeqs: new Set() };
+type StreamSessionInput = string | {
+  sessionId?: unknown;
+  sessionPath?: unknown;
+  path?: unknown;
+  session?: {
+    sessionId?: unknown;
+    path?: unknown;
+  } | null;
+} | null | undefined;
+
+type ResolvedStreamSession = {
+  sessionId: string | null;
+  sessionPath: string | null;
+  key: string | null;
+  isCurrent: boolean;
+};
+
+function normalizeStreamString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function streamRefFromInput(input: StreamSessionInput, opts: any = {}): { sessionId: string | null; sessionPath: string | null } {
+  if (typeof input === 'string') {
+    return {
+      sessionId: normalizeStreamString(opts?.sessionId),
+      sessionPath: normalizeStreamString(input) || normalizeStreamString(opts?.sessionPath),
+    };
   }
-  return _sessionStreams[path];
+  const session = input && typeof input === 'object' && input.session && typeof input.session === 'object'
+    ? input.session
+    : null;
+  return {
+    sessionId: normalizeStreamString(input && typeof input === 'object' ? input.sessionId : null)
+      || normalizeStreamString(session?.sessionId)
+      || normalizeStreamString(opts?.sessionId),
+    sessionPath: normalizeStreamString(input && typeof input === 'object' ? input.sessionPath : null)
+      || normalizeStreamString(input && typeof input === 'object' ? input.path : null)
+      || normalizeStreamString(session?.path)
+      || normalizeStreamString(opts?.sessionPath),
+  };
+}
+
+function resolveStreamSession(
+  input?: StreamSessionInput,
+  opts: { fallbackToCurrent?: boolean; requestOptions?: any } = {},
+): ResolvedStreamSession {
+  const state = useStore.getState();
+  const ref = streamRefFromInput(input, opts.requestOptions);
+  const currentSessionId = normalizeStreamString(state.currentSessionId);
+  const currentSessionPath = normalizeStreamString(state.currentSessionPath);
+  const explicitPath = ref.sessionPath || (opts.fallbackToCurrent !== false ? currentSessionPath : null);
+  const sessionId = ref.sessionId
+    || (explicitPath ? sessionIdForPathFromLocatorState(state, explicitPath) : null)
+    || (explicitPath && explicitPath === currentSessionPath ? currentSessionId : null);
+  const currentPathForSessionId = sessionId && sessionId === currentSessionId ? currentSessionPath : null;
+  const locatorPath = sessionId
+    ? normalizeStreamString(state.sessionLocatorsById?.[sessionId]?.path)
+    : null;
+  const sessionPath = currentPathForSessionId || locatorPath || explicitPath;
+  const key = sessionId || (sessionPath ? sessionScopedKey(state, sessionPath) || sessionPath : null);
+  const isCurrent = (!!sessionId && sessionId === currentSessionId)
+    || (!!sessionPath && sessionPath === currentSessionPath);
+  return { sessionId, sessionPath, key, isCurrent };
+}
+
+function isStillCurrentStreamSession(target: ResolvedStreamSession): boolean {
+  const state = useStore.getState();
+  if (target.sessionId) return state.currentSessionId === target.sessionId;
+  return !!target.sessionPath && state.currentSessionPath === target.sessionPath;
+}
+
+function streamIdentityKey(input?: StreamSessionInput): string | null {
+  return resolveStreamSession(input).key;
+}
+
+export function invalidateSessionStreamMeta(sessionRef?: StreamSessionInput): void {
+  if (sessionRef == null) {
+    for (const key of Object.keys(_sessionStreams)) delete _sessionStreams[key];
+    return;
+  }
+  const target = resolveStreamSession(sessionRef, { fallbackToCurrent: false });
+  const key = target.key || target.sessionPath;
+  if (key) delete _sessionStreams[key];
+  if (target.sessionPath && target.sessionPath !== key) delete _sessionStreams[target.sessionPath];
+}
+
+export function getSessionStreamMeta(sessionRef?: StreamSessionInput): SessionStreamMeta | null {
+  const target = resolveStreamSession(sessionRef);
+  const path = target.sessionPath;
+  const key = target.key || path;
+  if (!key) return null;
+  if (!_sessionStreams[key]) {
+    _sessionStreams[key] = (path ? _sessionStreams[path] : null) || { streamId: null, lastSeq: 0, consumedSeqs: new Set() };
+    if (path && key !== path) delete _sessionStreams[path];
+  }
+  return _sessionStreams[key];
 }
 
 /**
@@ -63,11 +159,20 @@ export function getSessionStreamMeta(sessionPath?: string): SessionStreamMeta | 
  * module-level 流元数据 + 重建版本号，否则这两张 Record 按 sessionPath 只增不减。
  * 若被清的 session 正在重建，连带复位 _streamResumeRebuildingFor，避免悬挂状态。
  */
-export function clearSessionStreamMeta(path: string): void {
-  if (!path) return;
-  delete _sessionStreams[path];
-  delete _streamResumeRebuildVersions[path];
-  if (_streamResumeRebuildingFor === path) {
+export function clearSessionStreamMeta(sessionRef: StreamSessionInput): void {
+  const target = resolveStreamSession(sessionRef, { fallbackToCurrent: false });
+  const key = target.key || target.sessionPath;
+  const path = target.sessionPath;
+  if (!key && !path) return;
+  if (key) {
+    delete _sessionStreams[key];
+    delete _streamResumeRebuildVersions[key];
+  }
+  if (path && path !== key) {
+    delete _sessionStreams[path];
+    delete _streamResumeRebuildVersions[path];
+  }
+  if (_streamResumeRebuildingFor === key || _streamResumeRebuildingFor === path) {
     _streamResumeRebuildingFor = null;
   }
 }
@@ -78,14 +183,14 @@ export function clearSessionStreamMeta(path: string): void {
 registerSessionStreamMetaCleaner(clearSessionStreamMeta);
 
 export function isStreamScopedMessage(msg: any): boolean {
-  return !!(msg && msg.sessionPath && (msg.streamId || Number.isFinite(msg.seq)));
+  const ref = streamRefFromInput(msg, {});
+  return !!(msg && (ref.sessionId || ref.sessionPath) && (msg.streamId || Number.isFinite(msg.seq)));
 }
 
 export function updateSessionStreamMeta(meta: any = {}): boolean {
-  const sessionPath = meta.sessionPath || useStore.getState().currentSessionPath;
-  if (!sessionPath) return true;
-
-  const entry = getSessionStreamMeta(sessionPath);
+  const target = resolveStreamSession(meta);
+  if (!target.key && !target.sessionPath) return true;
+  const entry = getSessionStreamMeta(target);
   if (!entry) return true;
 
   if (meta.streamId) {
@@ -109,11 +214,13 @@ export function isStreamResumeRebuilding(): string | null {
   return _streamResumeRebuildingFor;
 }
 
-export function requestStreamResume(sessionPath?: string, opts: any = {}): void {
-  const path = sessionPath || useStore.getState().currentSessionPath;
-  const ws = getWebSocket();
+export function requestStreamResume(sessionRef?: StreamSessionInput, opts: any = {}): void {
+  const target = resolveStreamSession(sessionRef, { requestOptions: opts });
+  const path = target.sessionPath;
+  const ws = _getWebSocket?.() || null;
   if (!path || !ws || ws.readyState !== WebSocket.OPEN) return;
-  const meta = getSessionStreamMeta(path) || { streamId: null, lastSeq: 0 };
+  const sessionId = target.sessionId || sessionIdForPathFromLocatorState(useStore.getState(), path);
+  const meta = getSessionStreamMeta(target) || { streamId: null, lastSeq: 0 };
   const fromStart = !!opts.fromStart;
   const streamId = opts.streamId !== undefined ? opts.streamId : (meta.streamId || null);
   const sinceSeq = Number.isFinite(opts.sinceSeq)
@@ -122,6 +229,7 @@ export function requestStreamResume(sessionPath?: string, opts: any = {}): void 
   ws.send(JSON.stringify({
     type: 'resume_stream',
     sessionPath: path,
+    ...(sessionId ? { sessionId } : {}),
     streamId,
     sinceSeq,
   }));
@@ -129,14 +237,18 @@ export function requestStreamResume(sessionPath?: string, opts: any = {}): void 
 
 // ── 流恢复 / 重建 ──
 
-function nextResumeRebuildVersion(sessionPath: string): number {
-  const next = (_streamResumeRebuildVersions[sessionPath] ?? 0) + 1;
-  _streamResumeRebuildVersions[sessionPath] = next;
+function nextResumeRebuildVersion(target: ResolvedStreamSession): number {
+  const key = target.key || target.sessionPath;
+  if (!key) return 0;
+  const next = (_streamResumeRebuildVersions[key] ?? 0) + 1;
+  _streamResumeRebuildVersions[key] = next;
+  if (target.sessionPath && key !== target.sessionPath) delete _streamResumeRebuildVersions[target.sessionPath];
   return next;
 }
 
-function isLatestResumeRebuild(sessionPath: string, version: number): boolean {
-  return _streamResumeRebuildVersions[sessionPath] === version;
+function isLatestResumeRebuild(target: ResolvedStreamSession, version: number): boolean {
+  const key = target.key || target.sessionPath;
+  return !!key && _streamResumeRebuildVersions[key] === version;
 }
 
 function shouldHydrateCompletedEmptyResume(msg: any): boolean {
@@ -152,8 +264,12 @@ function resolveRuntimeStreaming(msg: any): boolean {
     : !!msg.isStreaming;
 }
 
-function prepareStreamMeta(sessionPath: string, streamId: string | null, opts: { resetConsumed?: boolean } = {}): SessionStreamMeta | null {
-  const meta = getSessionStreamMeta(sessionPath);
+function shouldForceApplyRuntimeStreamingStatus(msg: any): boolean {
+  return msg?.runtimeIsStreaming === false;
+}
+
+function prepareStreamMeta(sessionRef: StreamSessionInput, streamId: string | null, opts: { resetConsumed?: boolean } = {}): SessionStreamMeta | null {
+  const meta = getSessionStreamMeta(sessionRef);
   if (!meta) return null;
   if (streamId) {
     if (meta.streamId && meta.streamId !== streamId) {
@@ -205,12 +321,12 @@ function dispatchReplayEvent(sessionPath: string, streamId: string | null, entry
 }
 
 async function rebuildSessionFromResume(msg: any, opts: { finishTurnBeforeHydrate?: boolean } = {}): Promise<void> {
-  const currentSessionPath = useStore.getState().currentSessionPath;
-  const sessionPath = msg.sessionPath || currentSessionPath;
+  const target = resolveStreamSession(msg);
+  const sessionPath = target.sessionPath;
   if (!sessionPath) return;
 
-  const isCurrentSession = sessionPath === currentSessionPath;
-  const myVersion = nextResumeRebuildVersion(sessionPath);
+  const isCurrentSession = target.isCurrent;
+  const myVersion = nextResumeRebuildVersion(target);
   if (isCurrentSession) _streamResumeRebuildingFor = sessionPath;
   try {
     if (opts.finishTurnBeforeHydrate) {
@@ -227,11 +343,11 @@ async function rebuildSessionFromResume(msg: any, opts: { finishTurnBeforeHydrat
     }
     await loadMessages(sessionPath);
 
-    if (!isLatestResumeRebuild(sessionPath, myVersion)) return;
-    if (isCurrentSession && useStore.getState().currentSessionPath !== sessionPath) return;
+    if (!isLatestResumeRebuild(target, myVersion)) return;
+    if (isCurrentSession && !isStillCurrentStreamSession(target)) return;
 
     const streamId = msg.streamId || null;
-    const meta = prepareStreamMeta(sessionPath, streamId, { resetConsumed: true });
+    const meta = prepareStreamMeta(target, streamId, { resetConsumed: true });
 
     for (const entry of msg.events || []) {
       dispatchReplayEvent(sessionPath, streamId, entry, meta);
@@ -243,22 +359,22 @@ async function rebuildSessionFromResume(msg: any, opts: { finishTurnBeforeHydrat
 
     _applyStreamingStatus?.(resolveRuntimeStreaming(msg), sessionPath, {
       streamId: msg.streamId || null,
-    });
+    }, { force: shouldForceApplyRuntimeStreamingStatus(msg) });
 
-    const ws = getWebSocket();
-    if (isCurrentSession && useStore.getState().currentSessionPath === sessionPath && ws?.readyState === WebSocket.OPEN && msg.isStreaming) {
-      requestStreamResume(sessionPath);
+    const ws = _getWebSocket?.() || null;
+    if (isCurrentSession && isStillCurrentStreamSession(target) && ws?.readyState === WebSocket.OPEN && msg.isStreaming) {
+      requestStreamResume(target);
     }
   } finally {
-    if (isLatestResumeRebuild(sessionPath, myVersion) && _streamResumeRebuildingFor === sessionPath) {
+    if (isLatestResumeRebuild(target, myVersion) && _streamResumeRebuildingFor === sessionPath) {
       _streamResumeRebuildingFor = null;
     }
   }
 }
 
 export function replayStreamResume(msg: any): void {
-  const currentSessionPath = useStore.getState().currentSessionPath;
-  const sessionPath = msg.sessionPath || currentSessionPath;
+  const target = resolveStreamSession(msg);
+  const sessionPath = target.sessionPath;
   if (!sessionPath) return;
 
   const completedEmptyResume = shouldHydrateCompletedEmptyResume(msg);
@@ -271,7 +387,7 @@ export function replayStreamResume(msg: any): void {
   }
 
   const streamId = msg.streamId || null;
-  const meta = prepareStreamMeta(sessionPath, streamId);
+  const meta = prepareStreamMeta(target, streamId);
 
   for (const entry of msg.events || []) {
     dispatchReplayEvent(sessionPath, streamId, entry, meta);
@@ -283,6 +399,6 @@ export function replayStreamResume(msg: any): void {
 
   _applyStreamingStatus?.(resolveRuntimeStreaming(msg), sessionPath, {
     streamId: msg.streamId || null,
-  });
+  }, { force: shouldForceApplyRuntimeStreamingStatus(msg) });
 }
 

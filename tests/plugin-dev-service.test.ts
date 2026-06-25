@@ -137,6 +137,45 @@ describe("PluginDevService", () => {
     expect(invocation.result.content[0].text).toBe("agent-dev:hi");
   });
 
+  it("passes sessionId-first identity into dev tool invocations", async () => {
+    const sourcePath = writeDevPlugin(sourceRoot, "dev-session-identity");
+    fs.writeFileSync(path.join(sourcePath, "tools", "echo.js"), `
+      export const name = "echo";
+      export const description = "Echo session identity";
+      export async function execute(_params, ctx) {
+        return JSON.stringify({
+          sessionId: ctx.sessionId,
+          sessionPath: ctx.sessionPath,
+          sessionRef: ctx.sessionRef,
+        });
+      }
+    `);
+    await service.installFromSource({ sourcePath });
+
+    const invocation = await service.invokeTool({
+      pluginId: "dev-session-identity",
+      toolName: "echo",
+      input: {},
+      sessionId: "sess_dev_identity",
+      sessionRef: {
+        sessionId: "sess_dev_identity",
+        sessionPath: "/tmp/session.jsonl",
+        legacySessionPath: "/tmp/legacy.jsonl",
+      },
+      sessionPath: "/tmp/ignored.jsonl",
+    });
+
+    expect(JSON.parse(invocation.result.content[0].text)).toEqual({
+      sessionId: "sess_dev_identity",
+      sessionPath: "/tmp/session.jsonl",
+      sessionRef: {
+        sessionId: "sess_dev_identity",
+        sessionPath: "/tmp/session.jsonl",
+        legacySessionPath: "/tmp/legacy.jsonl",
+      },
+    });
+  });
+
   it("reloads from the source slot and refreshes the installed code", async () => {
     const sourcePath = writeDevPlugin(sourceRoot, "dev-reload", { prefix: "One" });
     await service.installFromSource({ sourcePath });
@@ -415,6 +454,47 @@ describe("PluginDevService", () => {
       status: "passed",
     });
     expect(result.steps).toHaveLength(2);
+  });
+
+  it("passes sessionId-first identity from manifest dev scenario tool steps", async () => {
+    const sourcePath = writeDevPlugin(sourceRoot, "scenario-session-dev", {
+      manifest: {
+        dev: {
+          scenarios: [{
+            id: "session-tool",
+            steps: [
+              {
+                invokeTool: {
+                  name: "echo",
+                  input: {},
+                  sessionId: "sess_scenario_dev",
+                  sessionRef: {
+                    sessionId: "sess_scenario_dev",
+                    sessionPath: "/tmp/scenario.jsonl",
+                  },
+                },
+              },
+              { expectToolText: "sess_scenario_dev:/tmp/scenario.jsonl" },
+            ],
+          }],
+        },
+      },
+    });
+    fs.writeFileSync(path.join(sourcePath, "tools", "echo.js"), `
+      export const name = "echo";
+      export const description = "Echo scenario session";
+      export async function execute(_params, ctx) {
+        return ctx.sessionId + ":" + ctx.sessionRef.sessionPath;
+      }
+    `);
+    await service.installFromSource({ sourcePath });
+
+    const result = await service.runScenario({
+      pluginId: "scenario-session-dev",
+      scenarioId: "session-tool",
+    });
+
+    expect(result.status).toBe("passed");
   });
 
   it("requires explicit approval for destructive dev scenarios", async () => {

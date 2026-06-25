@@ -7,7 +7,7 @@
     "style-src": ["'self'", "'unsafe-inline'"],
     "script-src": ["'self'"],
     "font-src": ["'self'", "data:"],
-    "frame-src": ["blob:", "data:", "http://127.0.0.1:*", "http://localhost:*"],
+    "frame-src": ["blob:", "data:", "file:", "http://127.0.0.1:*", "http://localhost:*"],
   };
 
   function addOrigin(out, value) {
@@ -19,21 +19,24 @@
     } catch {}
   }
 
-  function readActiveConnectionSources() {
+  function readPersistedConnectionSources() {
     var out = {};
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return out;
       var parsed = JSON.parse(raw);
-      var id = parsed && parsed.activeServerConnectionId;
-      var connection = id && parsed.serverConnections && parsed.serverConnections[id];
-      if (!connection || connection.kind === "local") return out;
-      addOrigin(out, connection.baseUrl);
-      addOrigin(out, connection.wsUrl);
-      if (connection.baseUrl && !connection.wsUrl) {
-        var base = new URL(connection.baseUrl);
-        addOrigin(out, (base.protocol === "https:" ? "wss:" : "ws:") + "//" + base.host);
-      }
+      var connections = parsed && parsed.serverConnections;
+      if (!connections || typeof connections !== "object") return out;
+      Object.keys(connections).forEach(function (key) {
+        var connection = connections[key];
+        if (!connection || connection.kind === "local") return;
+        addOrigin(out, connection.baseUrl);
+        addOrigin(out, connection.wsUrl);
+        if (connection.baseUrl && !connection.wsUrl) {
+          var base = new URL(connection.baseUrl);
+          addOrigin(out, (base.protocol === "https:" ? "wss:" : "ws:") + "//" + base.host);
+        }
+      });
     } catch {}
     return out;
   }
@@ -49,7 +52,7 @@
     } catch {}
   }
 
-  var scopedSources = readActiveConnectionSources();
+  var scopedSources = readPersistedConnectionSources();
   addDevSources(scopedSources);
   var connectSources = BASE_CSP["connect-src"].concat(Object.keys(scopedSources));
   var directives = Object.assign({}, BASE_CSP, { "connect-src": connectSources });

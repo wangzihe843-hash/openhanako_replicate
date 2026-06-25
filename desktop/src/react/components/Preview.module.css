@@ -42,6 +42,7 @@
     min-height: 0;
     position: relative;
     margin: var(--panel-edge-gap);
+    container-type: inline-size;
 }
 
 .previewPanelBody {
@@ -52,6 +53,32 @@
     background: var(--panel-card-bg);
     border: var(--panel-card-border);
     box-shadow: var(--panel-card-shadow);
+}
+
+.previewUnavailable {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-xs);
+    min-height: 100%;
+    padding: var(--space-lg);
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.previewUnavailable p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--text);
+}
+
+.previewUnavailable span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.75rem;
 }
 
 /* HTML 文件预览：外部网页访问交给内置浏览器，右侧面板只承载本地预览文档。 */
@@ -67,6 +94,11 @@
 
 /* Markdown 预览 */
 .previewPanelBody :global(.preview-markdown) {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: var(--editor-markdown-content-width);
+    margin-left: auto;
+    margin-right: auto;
     padding: var(--space-lg) var(--space-lg) var(--space-md);
     font-size: var(--editor-markdown-font-size);
     font-weight: 400;
@@ -635,12 +667,15 @@
 }
 
 :global(.cm-table-widget) {
+    max-width: 100%;
     margin: var(--space-xs) 0;
     overflow-x: auto;
+    overflow-y: hidden;
 }
 
 :global(.cm-table-widget table) {
-    width: 100%;
+    width: max-content;
+    max-width: none;
     border-collapse: collapse;
     font-size: 0.9em;
     font-family: var(--editor-markdown-font-family, var(--font-serif));
@@ -651,6 +686,7 @@
     border: 1px solid var(--border);
     padding: 0.3em 0.6em;
     text-align: left;
+    white-space: nowrap;
 }
 
 :global(.cm-table-widget th) {

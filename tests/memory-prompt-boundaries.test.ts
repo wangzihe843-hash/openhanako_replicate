@@ -161,6 +161,64 @@ describe("memory prompt boundaries", () => {
     expect(prompt).not.toContain("3月15日");
   });
 
+  it("extracts deep memory facts from JSON wrapped by a thought block (#1642)", async () => {
+    (callText as any).mockResolvedValue([
+      "<thought>先判断这是不是长期画像。</thought>",
+      JSON.stringify([
+        {
+          fact: "用户最近在关注记忆系统",
+          tags: ["记忆系统", "近况"],
+          time: null,
+        },
+      ]),
+    ].join("\n"));
+    const summaryManager = {
+      getDirtySessions: vi.fn().mockReturnValue([
+        {
+          session_id: "thought-wrapped-json-session",
+          summary: "### 重要事实\n- 用户最近在关注记忆系统",
+          snapshot: "",
+          updated_at: "2026-05-16T07:00:00.000Z",
+        },
+      ]),
+      markProcessed: vi.fn(),
+    };
+    const factStore = { addBatch: vi.fn() };
+
+    await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
+
+    expect(factStore.addBatch).toHaveBeenCalledWith([
+      {
+        fact: "用户最近在关注记忆系统",
+        tags: ["记忆系统", "近况"],
+        time: null,
+        session_id: "thought-wrapped-json-session",
+      },
+    ]);
+    expect(summaryManager.markProcessed).toHaveBeenCalledWith("thought-wrapped-json-session");
+  });
+
+  it("keeps dirty sessions retryable when deep memory JSON parsing fails (#1642)", async () => {
+    (callText as any).mockResolvedValue("<thought>无法形成 JSON。</thought>\nno json here");
+    const summaryManager = {
+      getDirtySessions: vi.fn().mockReturnValue([
+        {
+          session_id: "malformed-json-session",
+          summary: "### 重要事实\n- 用户最近在关注记忆系统",
+          snapshot: "",
+          updated_at: "2026-05-16T07:00:00.000Z",
+        },
+      ]),
+      markProcessed: vi.fn(),
+    };
+    const factStore = { addBatch: vi.fn() };
+
+    await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
+
+    expect(factStore.addBatch).not.toHaveBeenCalled();
+    expect(summaryManager.markProcessed).not.toHaveBeenCalled();
+  });
+
   it("corrects example-anchored fact dates when a legacy summary has a single source day", async () => {
     (callText as any).mockResolvedValue(JSON.stringify([
       {

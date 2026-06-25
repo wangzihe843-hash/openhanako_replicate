@@ -1,5 +1,49 @@
 {
   "_comment": "供应商分区未命中时使用的通用模型参考值。它是 unknown/custom provider 的 best-effort baseline，不覆盖 provider-specific known-models.json 条目，也不覆盖用户显式填写的模型字段。",
+  "agnes-2.0-flash": {
+    "name": "Agnes 2.0 Flash",
+    "image": true,
+    "reasoning": false,
+    "toolUse": {
+      "supportsTools": true,
+      "dialect": "openai",
+      "toolResultFormat": "message"
+    }
+  },
+  "claude-fable-5": {
+    "name": "Claude Fable 5",
+    "context": 1000000,
+    "maxOutput": 128000,
+    "image": true,
+    "reasoning": true,
+    "xhigh": true,
+    "visionCapabilities": {
+      "grounding": true,
+      "boxes": true,
+      "points": true,
+      "coordinateSpace": "norm-1000",
+      "boxOrder": "xyxy",
+      "outputFormat": "anchor",
+      "groundingMode": "prompted"
+    }
+  },
+  "claude-mythos-5": {
+    "name": "Claude Mythos 5",
+    "context": 1000000,
+    "maxOutput": 128000,
+    "image": true,
+    "reasoning": true,
+    "xhigh": true,
+    "visionCapabilities": {
+      "grounding": true,
+      "boxes": true,
+      "points": true,
+      "coordinateSpace": "norm-1000",
+      "boxOrder": "xyxy",
+      "outputFormat": "anchor",
+      "groundingMode": "prompted"
+    }
+  },
   "claude-opus-4-7": {
     "name": "Claude Opus 4.7",
     "context": 1000000,
@@ -86,6 +130,14 @@
     "maxOutput": 128000,
     "image": false,
     "reasoning": true
+  },
+  "glm-5.2": {
+    "name": "GLM-5.2",
+    "context": 1000000,
+    "maxOutput": 131072,
+    "image": false,
+    "reasoning": true,
+    "xhigh": true
   },
   "glm-5v-turbo": {
     "name": "GLM-5V Turbo",

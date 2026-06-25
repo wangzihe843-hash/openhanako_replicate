@@ -170,4 +170,25 @@ describe("hana-plugin-creator environment check", () => {
     });
     expect(result.json.requiredPackages.all).toEqual([]);
   });
+
+  it("accepts Python 3.9 for plugin scaffold preflight", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-creator-env-"));
+    roots.push(root);
+    const fakePython = makeFakePython(root);
+
+    const result = runCheck(pluginCreatorCheck, ["--capability", "scaffold"], {
+      ...isolatedPathEnv(root),
+      HANA_PLUGIN_CREATOR_PYTHON: JSON.stringify([process.execPath, fakePython]),
+      FAKE_PYTHON_VERSION: "3.9.6",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.json).toMatchObject({
+      ok: true,
+      code: "ok",
+      python: {
+        minimumVersion: "3.9",
+      },
+    });
+  });
 });

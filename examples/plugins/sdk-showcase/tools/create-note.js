@@ -12,6 +12,14 @@ const tool = defineTool({
       body: { type: "string" }
     }
   },
+  sessionPermission: {
+    kind: "plugin_output",
+    describeSideEffect: () => ({
+      kind: "session_file_output",
+      summary: "Create a markdown file in plugin data and register it as SessionFile media.",
+      ruleId: "sdk-showcase-plugin-output",
+    }),
+  },
   async execute(input = {}, toolCtx) {
     if (!toolCtx.sessionPath) {
       throw new Error("sdk_showcase_create_note requires sessionPath");

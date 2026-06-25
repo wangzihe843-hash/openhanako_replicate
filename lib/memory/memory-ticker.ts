@@ -18,7 +18,10 @@ import {
   compileWeek,
   compileLongterm,
   compileFacts,
+  compileEditableFacts,
   assemble,
+  editableFactsPath,
+  ensureEditableFactsBaseline,
 } from "./compile.ts";
 import { processDirtySessions } from "./deep-memory.ts";
 import { getLogicalDay } from "../time-utils.ts";
@@ -58,6 +61,8 @@ const CACHE_SNAPSHOT_PREVIEW_LIMIT = 16_000;
  * @param {(sessionPath: string) => boolean} [opts.isSessionMemoryEnabled] - 返回指定 session 的记忆状态
  * @param {function} [opts.getTimezone] - 返回用户配置时区
  * @param {function} [opts.getCacheSnapshotReflectionMode] - 返回 off / shadow / write
+   * @param {function} [opts.getEditableMemoryEnabled] - 返回可编辑 Facts 实验开关
+ * @param {(sessionPath: string) => object|null} [opts.readMemoryReflectionSnapshot] - 返回 session 创建时冻结的记忆反思快照
  * @param {string} [opts.agentId] - 当前 agent id，用于实验观察产物归属
  * @param {string} [opts.agentDir] - 当前 agent 数据目录，用于实验观察产物落盘
  */
@@ -79,9 +84,13 @@ export function createMemoryTicker(opts) {
     isSessionMemoryEnabled,
     getTimezone,
     getCacheSnapshotReflectionMode,
+    getEditableMemoryEnabled,
+    readMemoryReflectionSnapshot,
     memoryReflectionRunner,
     buildSessionCacheSnapshot,
+    ensureSessionLoaded,
     getSessionStreamFn,
+    getSessionIdForPath,
     memoryDir = path.dirname(memoryMdPath),
   } = opts;
   const _memoryReflectionRunner = memoryReflectionRunner || { runMemoryReflection: defaultRunMemoryReflection };
@@ -95,13 +104,28 @@ export function createMemoryTicker(opts) {
     && (!isSessionMemoryEnabled || isSessionMemoryEnabled(sessionPath));
   const _getCompiledResetAt = () => readCompiledResetAt(memoryDir);
   const _getTimezone = () => getTimezone?.() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const _sessionIdentityForPath = (sessionPath) => {
+    try {
+      const sessionId = getSessionIdForPath?.(sessionPath);
+      if (typeof sessionId === "string" && sessionId.trim()) return sessionId.trim();
+    } catch {}
+    return sessionIdFromFilename(path.basename(sessionPath));
+  };
   const _getCacheSnapshotReflectionMode = () => {
     const mode = String(getCacheSnapshotReflectionMode?.() || "off");
     return CACHE_SNAPSHOT_REFLECTION_MODES.has(mode) ? mode : "off";
   };
+  const _isEditableMemoryOn = () => getEditableMemoryEnabled?.() === true;
+  const _factsSourcePath = () => {
+    if (!_isEditableMemoryOn()) return factsMdPath;
+    ensureEditableFactsBaseline(memoryDir, summaryManager, {
+      seedFactsPath: factsMdPath,
+    });
+    return editableFactsPath(memoryDir);
+  };
   const _createSourceTimeRangeResolver = () => {
     const filesById = new Map(
-      listSessionFiles(sessionDir).map((entry) => [entry.sessionId, entry.filePath]),
+      listSessionFiles(sessionDir).map((entry) => [_sessionIdentityForPath(entry.filePath), entry.filePath]),
     );
     return (sessionId) => {
       const filePath = filesById.get(sessionId);
@@ -112,9 +136,7 @@ export function createMemoryTicker(opts) {
   };
   const _readMemoryReflectionSnapshot = (sessionPath) => {
     try {
-      const metaPath = path.join(path.dirname(sessionPath), "session-meta.json");
-      const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-      const snapshot = meta[path.basename(sessionPath)]?.memoryReflectionSnapshot;
+      const snapshot = readMemoryReflectionSnapshot?.(sessionPath);
       return snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
         ? snapshot
         : null;
@@ -134,7 +156,7 @@ export function createMemoryTicker(opts) {
   let _lastDailyJobDate = null;
   let _dailyStepsDate = null;               // 当天已完成步骤所属日期
   const _dailyStepsCompleted = new Set();    // 当天已完成的步骤名（断点续跑）
-  const _turnCounts = new Map();             // sessionPath → turn count
+  const _turnCounts = new Map();             // stable session identity → turn count
   const _summaryInProgress = new Set();      // 正在跑滚动摘要的 session
 
   // ── 错误 dedup：相同根因（如凭证持续无效）只在 console 打一次，避免每轮对话都刷屏 ──
@@ -260,6 +282,35 @@ export function createMemoryTicker(opts) {
     };
   }
 
+  function _isRecoverableSessionSnapshotUnavailable(err) {
+    const message = String(err?.message || err || "");
+    if (/session cache snapshot unavailable/i.test(message)) return true;
+    return /snapshot/i.test(message) && /unknown session/i.test(message);
+  }
+
+  async function _buildSessionCacheSnapshotWithRecovery(sessionPath, options) {
+    try {
+      return buildSessionCacheSnapshot(sessionPath, options);
+    } catch (err) {
+      if (!_isRecoverableSessionSnapshotUnavailable(err) || typeof ensureSessionLoaded !== "function") {
+        throw err;
+      }
+      debugLog()?.warn?.(
+        "memory",
+        `cache snapshot runtime missing for ${path.basename(sessionPath)}; loading session before retry`,
+      );
+      try {
+        await ensureSessionLoaded(sessionPath);
+        return buildSessionCacheSnapshot(sessionPath, options);
+      } catch (retryErr) {
+        if (_isRecoverableSessionSnapshotUnavailable(retryErr)) throw retryErr;
+        const wrapped: any = new Error(`Session cache snapshot unavailable after runtime recovery: ${retryErr?.message || retryErr}`);
+        wrapped.cause = retryErr;
+        throw wrapped;
+      }
+    }
+  }
+
   async function _runSessionSnapshotMemoryReflection({
     sessionPath,
     sessionId,
@@ -288,7 +339,7 @@ export function createMemoryTicker(opts) {
         throw new Error("buildSessionCacheSnapshot is required for session snapshot reflection");
       }
 
-      const snapshot = buildSessionCacheSnapshot(sessionPath, {
+      const snapshot = await _buildSessionCacheSnapshotWithRecovery(sessionPath, {
         reason: "memory.reflection",
         messages,
       });
@@ -405,14 +456,14 @@ export function createMemoryTicker(opts) {
   }
 
   async function _doRollingSummary(sessionPath, trigger = "threshold") {
-    if (_summaryInProgress.has(sessionPath)) return; // 并发保护
-    _summaryInProgress.add(sessionPath);
+    const sessionId = _sessionIdentityForPath(sessionPath);
+    if (_summaryInProgress.has(sessionId)) return; // 并发保护
+    _summaryInProgress.add(sessionId);
     try {
       const resetAt = _getCompiledResetAt();
       const { messages } = readSessionMessages(sessionPath, { since: resetAt });
       if (messages.length === 0) return;
 
-      const sessionId = sessionIdFromFilename(path.basename(sessionPath));
       const rollingOptions: { resetAt: any; timeZone: string; memoryReflectionSnapshot?: any } = {
         resetAt,
         timeZone: _getTimezone(),
@@ -424,15 +475,24 @@ export function createMemoryTicker(opts) {
       const resolvedModel = getResolvedMemoryModel();
       const cacheSnapshotMode = _getCacheSnapshotReflectionMode();
       if (cacheSnapshotMode === "write") {
-        await _runSessionSnapshotMemoryReflection({
-          sessionPath,
-          sessionId,
-          messages,
-          resolvedModel,
-          rollingOptions,
-          mode: "write",
-          trigger,
-        });
+        try {
+          await _runSessionSnapshotMemoryReflection({
+            sessionPath,
+            sessionId,
+            messages,
+            resolvedModel,
+            rollingOptions,
+            mode: "write",
+            trigger,
+          });
+        } catch (err) {
+          if (!_isRecoverableSessionSnapshotUnavailable(err)) throw err;
+          debugLog()?.warn?.(
+            "memory",
+            `cache snapshot unavailable for ${path.basename(sessionPath)}; falling back to rolling summary`,
+          );
+          await summaryManager.rollingSummary(sessionId, messages, resolvedModel, rollingOptions);
+        }
       } else {
         await summaryManager.rollingSummary(sessionId, messages, resolvedModel, rollingOptions);
         if (cacheSnapshotMode === "shadow") {
@@ -457,7 +517,7 @@ export function createMemoryTicker(opts) {
         throw err;
       }
     } finally {
-      _summaryInProgress.delete(sessionPath);
+      _summaryInProgress.delete(sessionId);
     }
   }
 
@@ -467,7 +527,7 @@ export function createMemoryTicker(opts) {
     try {
       const resetAt = _getCompiledResetAt();
       await compileToday(summaryManager, todayMdPath, getResolvedMemoryModel(), { since: resetAt });
-      assemble(factsMdPath, todayMdPath, weekMdPath, longtermMdPath, memoryMdPath);
+      assemble(_factsSourcePath(), todayMdPath, weekMdPath, longtermMdPath, memoryMdPath);
       onCompiled?.();
       debugLog()?.log("memory", "today compiled + assembled");
       _markSuccess("compileToday");
@@ -541,7 +601,14 @@ export function createMemoryTicker(opts) {
       // Step 3: compileFacts（独立于 step 1-2）
       if (!_dailyStepsCompleted.has("compileFacts")) {
         try {
-          await compileFacts(summaryManager, factsMdPath, getResolvedMemoryModel(), { since: resetAt });
+          if (_isEditableMemoryOn()) {
+            await compileEditableFacts(summaryManager, editableFactsPath(memoryDir), getResolvedMemoryModel(), {
+              since: resetAt,
+              seedFactsPath: factsMdPath,
+            });
+          } else {
+            await compileFacts(summaryManager, factsMdPath, getResolvedMemoryModel(), { since: resetAt });
+          }
           _dailyStepsCompleted.add("compileFacts");
           _markSuccess("compileFacts");
           _markStepRecovered("compileFacts");
@@ -554,7 +621,7 @@ export function createMemoryTicker(opts) {
 
       // Step 4: assemble（纯文件操作，用已有的 .md 文件组装，总是执行）
       try {
-        assemble(factsMdPath, todayMdPath, weekMdPath, longtermMdPath, memoryMdPath);
+        assemble(_factsSourcePath(), todayMdPath, weekMdPath, longtermMdPath, memoryMdPath);
         onCompiled?.();
       } catch (err) {
         hasFailed = true;
@@ -614,8 +681,9 @@ export function createMemoryTicker(opts) {
    */
   function notifyTurn(sessionPath) {
     if (_stopped) return;
-    const count = (_turnCounts.get(sessionPath) || 0) + 1;
-    _turnCounts.set(sessionPath, count);
+    const sessionKey = _sessionIdentityForPath(sessionPath);
+    const count = (_turnCounts.get(sessionKey) || 0) + 1;
+    _turnCounts.set(sessionKey, count);
 
     const memoryOn = _isSessionMemoryOn(sessionPath);
 
@@ -651,8 +719,9 @@ export function createMemoryTicker(opts) {
   function notifySessionEnd(sessionPath) {
     if (_stopped) return Promise.resolve();
     if (!sessionPath) return Promise.resolve();
-    const count = _turnCounts.get(sessionPath) || 0;
-    _turnCounts.delete(sessionPath);
+    const sessionKey = _sessionIdentityForPath(sessionPath);
+    const count = _turnCounts.get(sessionKey) || 0;
+    _turnCounts.delete(sessionKey);
     if (count === 0) return Promise.resolve();
     if (!_isSessionMemoryOn(sessionPath)) return Promise.resolve();
     return _trackJob(_doRollingSummary(sessionPath, "session_end")
@@ -699,7 +768,7 @@ export function createMemoryTicker(opts) {
       if (mtime.getTime() < cutoff) continue;
       if (resetMs && mtime.getTime() <= resetMs) continue;
       if (!_isSessionMemoryOn(filePath)) continue;
-      const sessionId = sessionIdFromFilename(path.basename(filePath));
+      const sessionId = _sessionIdentityForPath(filePath);
       const existing = summaryManager.getSummary(sessionId);
       const existingSummaryAt = existing?.updated_at ? new Date(existing.updated_at).getTime() : 0;
       const summaryAt = resetMs ? Math.max(existingSummaryAt, resetMs) : existingSummaryAt;
@@ -755,7 +824,7 @@ export function createMemoryTicker(opts) {
       log.error(`notifyPromoted 失败: ${err.message}`);
     }
     // 注册 turn count = 1，后续 notifySessionEnd 不会因 count===0 跳过
-    _turnCounts.set(sessionPath, 1);
+    _turnCounts.set(_sessionIdentityForPath(sessionPath), 1);
   }
 
   /**
@@ -782,7 +851,7 @@ export function createMemoryTicker(opts) {
     if (!_isSessionMemoryOn(sessionPath)) return;
     await _doRollingSummary(sessionPath, "manual");
     await _doCompileTodayAndAssemble();
-    _turnCounts.delete(sessionPath);
+    _turnCounts.delete(_sessionIdentityForPath(sessionPath));
   }
 
   /**

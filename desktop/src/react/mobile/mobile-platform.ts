@@ -6,7 +6,6 @@ const OPEN_SETTINGS_EVENT = 'hana-mobile-open-settings';
 export function installMobilePlatform(): void {
   if (typeof window === 'undefined') return;
   document.documentElement.setAttribute('data-platform', 'web');
-  if (window.platform) return;
 
   const api: Partial<PlatformApi> = {
     getServerPort: async () => window.location.port || '',

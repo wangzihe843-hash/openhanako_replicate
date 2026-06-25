@@ -233,6 +233,40 @@ describe("startup root error extraction", () => {
     expect(root).toContain("0.0.0.0:14500");
   });
 
+  it("extracts server entry import failures as the root startup error", () => {
+    const root = extractRootServerStartupError([
+      "[server-bootstrap] importing server entry\n",
+      '[stderr] [server-bootstrap] failed to import server entry: Error: invalid agent directory "kon": config.yaml missing\n',
+      "[stderr]     at MSe (file:///Applications/HanaAgent.app/Contents/Resources/server/bundle/index.js:55420:11)\n",
+      "--- GPU Startup ---\n",
+      'GPU startup marker: {"status":"failed","reason":"startup-failed"}\n',
+    ]);
+
+    expect(root).toContain('invalid agent directory "kon"');
+    expect(root).toContain("config.yaml missing");
+    expect(root).not.toContain("GPU startup marker");
+  });
+
+  it("falls back to the first stderr Error line when no specific pattern matches", () => {
+    const root = extractRootServerStartupError([
+      "[server] ① ensureFirstRun...\n",
+      "[stderr] Error: first-run template missing: /tmp/product/config.example.yaml\n",
+      "[stderr]     at seedDefaultAgent (file:///bundle/index.js:1:1)\n",
+      "--- GPU Startup ---\n",
+    ]);
+
+    expect(root).toContain("first-run template missing");
+    expect(root).not.toContain("GPU Startup");
+  });
+
+  it("still prefers structured listen errors over generic import failures", () => {
+    const root = extractRootServerStartupError([
+      '[stderr] [server-bootstrap] failed to import server entry: Error: listen EADDRINUSE: address already in use 0.0.0.0:14500\n',
+    ]);
+
+    expect(root).toContain("EADDRINUSE");
+  });
+
   it("does not let GPU diagnostics override a structured server port conflict", () => {
     const root = extractRootServerStartupError([
       '[stderr] [server] startup-error {"code":"PORT_IN_USE","host":"0.0.0.0","port":14500,"networkMode":"loopback","suggestions":["Use Access & Devices to change the port."]}\n',

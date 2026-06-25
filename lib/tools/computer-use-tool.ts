@@ -7,7 +7,13 @@ import {
   computerUseError,
   serializeComputerUseError,
 } from "../../core/computer-use/errors.ts";
-import { SESSION_PERMISSION_MODES, normalizeSessionPermissionMode } from "../../core/session-permission-mode.ts";
+import {
+  SESSION_APPROVAL_POLICIES,
+  SESSION_PERMISSION_MODES,
+  normalizeSessionPermissionMode,
+  resolveSessionApprovalPolicy,
+} from "../../core/session-permission-mode.ts";
+import { buildApprovalReviewContext } from "../permission/approval-review-context.ts";
 
 const MODEL_VISIBLE_COMPUTER_ACTIONS = Object.freeze([
   "status",
@@ -73,9 +79,31 @@ function textResult(text, details = {}) {
 
 function resolveToolCtx(ctx, options) {
   const sessionPath = getToolSessionPath(ctx);
+  const ctxSessionId = typeof ctx?.sessionId === "string" && ctx.sessionId.trim()
+    ? ctx.sessionId.trim()
+    : null;
+  const resolvedSessionId = !ctxSessionId && typeof options.getSessionIdForPath === "function"
+    ? options.getSessionIdForPath(sessionPath)
+    : null;
+  const sessionId = ctxSessionId || (typeof resolvedSessionId === "string" && resolvedSessionId.trim() ? resolvedSessionId.trim() : null);
   const model = ctx?.model || options.getSessionModel?.(sessionPath) || null;
   const agentId = ctx?.agentId || options.getAgentId?.(sessionPath) || null;
-  return { sessionPath, agentId, model };
+  return {
+    sessionId,
+    sessionPath,
+    agentId,
+    model,
+    allowHumanApproval: ctx?.allowHumanApproval,
+    approvalPolicy: ctx?.approvalPolicy,
+    userIntentSummary: ctx?.userIntentSummary,
+    explicitUserAuthorization: ctx?.explicitUserAuthorization,
+    recentApprovalHistory: ctx?.recentApprovalHistory,
+    knownRemotes: ctx?.knownRemotes,
+    knownDomains: ctx?.knownDomains,
+    cwd: ctx?.cwd,
+    workspaceFolders: ctx?.workspaceFolders,
+    authorizedFolders: ctx?.authorizedFolders,
+  };
 }
 
 function actionTarget(params) {
@@ -221,8 +249,9 @@ function toConfirmationStatus(action) {
 
 function buildComputerAppGatewayRequest(approval, toolCtx, params: Record<string, any> = {}) {
   const appName = approval.appName || approval.appId;
+  const stableKey = toolCtx.sessionId || toolCtx.sessionPath || "session";
   return {
-    id: `${toolCtx.sessionPath || "session"}:computer_app_approval:${Date.now()}`,
+    id: `${stableKey}:computer_app_approval:${Date.now()}`,
     kind: "computer_app_approval",
     sessionPath: toolCtx.sessionPath,
     agentId: toolCtx.agentId || null,
@@ -247,19 +276,31 @@ function buildComputerAppGatewayRequest(approval, toolCtx, params: Record<string
   };
 }
 
-async function reviewComputerAppApproval(options, toolCtx, approval, params) {
-  const mode = normalizeSessionPermissionMode(
+function resolveComputerPermissionMode(options, sessionPath) {
+  return normalizeSessionPermissionMode(
+    options.getPermissionMode?.(sessionPath)
+      || options.getPermissionMode?.(),
+  );
+}
+
+async function reviewComputerAppApproval(options, toolCtx, approval, params, mode = null) {
+  const resolvedMode = mode || normalizeSessionPermissionMode(
     options.getPermissionMode?.(toolCtx.sessionPath)
       || options.getPermissionMode?.(),
   );
-  if (mode !== SESSION_PERMISSION_MODES.AUTO) return { allowed: false, status: "ask_user" };
+  if (resolvedMode !== SESSION_PERMISSION_MODES.AUTO) return { allowed: false, status: "ask_user" };
   const gateway = options.getApprovalGateway?.() || options.approvalGateway || null;
   if (!gateway || typeof gateway.review !== "function") {
     return { allowed: false, status: "ask_user", reason: "approval-gateway-unavailable" };
   }
   const decision = await gateway.review(
     buildComputerAppGatewayRequest(approval, toolCtx, params),
-    { sessionPath: toolCtx.sessionPath },
+    buildApprovalReviewContext({
+      source: options,
+      ctx: toolCtx,
+      sessionPath: toolCtx.sessionPath,
+      agentId: toolCtx.agentId,
+    }),
   );
   if (decision?.action === "allow") {
     return { allowed: true, status: "approved", decision };
@@ -277,10 +318,23 @@ async function reviewComputerAppApproval(options, toolCtx, approval, params) {
 
 async function createLeaseWithAppApproval(options, toolCtx, host, params) {
   const target = await resolveStartTarget(toolCtx, host, params);
+  const mode = resolveComputerPermissionMode(options, toolCtx.sessionPath);
+  const approvalPolicy = resolveSessionApprovalPolicy({
+    mode,
+    approvalPolicy: toolCtx.approvalPolicy,
+    allowHumanApproval: toolCtx.allowHumanApproval,
+  });
+  const sessionApprovedToolCtx = {
+    ...toolCtx,
+    computerUseAppApproval: { mode: "session" },
+  };
 
   try {
     return {
-      lease: await host.createLease(toolCtx, target),
+      lease: await host.createLease(
+        mode === SESSION_PERMISSION_MODES.OPERATE ? sessionApprovedToolCtx : toolCtx,
+        target,
+      ),
       confirmation: null,
       confirmed: true,
     };
@@ -291,15 +345,14 @@ async function createLeaseWithAppApproval(options, toolCtx, host, params) {
     const confirmStore = options.getConfirmStore?.() || options.confirmStore || null;
     const approveComputerUseApp = options.approveComputerUseApp;
     const approval = resolveAppApproval(target, serialized);
-    if (!toolCtx.sessionPath || typeof approveComputerUseApp !== "function" || !approval) {
+    if (!toolCtx.sessionPath || !approval) {
       throw err;
     }
 
-    const autoApproval = await reviewComputerAppApproval(options, toolCtx, approval, params);
+    const autoApproval = await reviewComputerAppApproval(options, toolCtx, approval, params, mode);
     if (autoApproval.allowed) {
-      approveComputerUseApp(approval);
       return {
-        lease: await host.createLease(toolCtx, target),
+        lease: await host.createLease(sessionApprovedToolCtx, target),
         confirmation: {
           kind: "computer_app_approval",
           status: autoApproval.status,
@@ -309,6 +362,22 @@ async function createLeaseWithAppApproval(options, toolCtx, host, params) {
           risk: autoApproval.decision?.risk,
         },
         confirmed: true,
+      };
+    }
+    if (autoApproval.status === "ask_user" && approvalPolicy === SESSION_APPROVAL_POLICIES.DENY_ON_PROMPT) {
+      return {
+        lease: null,
+        confirmation: {
+          kind: "computer_app_approval",
+          status: "needs_user_approval_but_unavailable",
+          reviewStatus: "ask_user",
+          approval,
+          reviewer: autoApproval.decision?.reviewer,
+          reason: autoApproval.reason || "human approval unavailable",
+          risk: autoApproval.decision?.risk,
+          approvalPolicy,
+        },
+        confirmed: false,
       };
     }
     if (autoApproval.status !== "ask_user") {
@@ -326,7 +395,7 @@ async function createLeaseWithAppApproval(options, toolCtx, host, params) {
       };
     }
 
-    if (!confirmStore) throw err;
+    if (!confirmStore || typeof approveComputerUseApp !== "function") throw err;
 
     const { confirmId, promise } = confirmStore.create(
       "computer_app_approval",

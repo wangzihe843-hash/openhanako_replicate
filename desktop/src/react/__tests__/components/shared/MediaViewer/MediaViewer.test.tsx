@@ -36,6 +36,15 @@ describe('MediaViewer interaction', () => {
     expect(useStore.getState().mediaViewer).toBeNull();
   });
 
+  it('点击舞台空白区域关闭，点击图片舞台不关闭', () => {
+    useStore.getState().setMediaViewer({ files: [f('a')], currentId: 'a', origin: 'desk' });
+    const { getByTestId } = render(<MediaViewer />);
+    fireEvent.click(getByTestId('image-stage'));
+    expect(useStore.getState().mediaViewer?.currentId).toBe('a');
+    fireEvent.click(getByTestId('media-viewer-stage-wrap'));
+    expect(useStore.getState().mediaViewer).toBeNull();
+  });
+
   it('点击关闭按钮关闭', () => {
     useStore.getState().setMediaViewer({ files: [f('a')], currentId: 'a', origin: 'desk' });
     const { getByTestId } = render(<MediaViewer />);
@@ -85,6 +94,23 @@ describe('MediaViewer interaction', () => {
     expect(getByTestId('media-viewer-next')).toBeTruthy();
   });
 
+  it('左右箭头不随顶部 chrome 自动隐藏', () => {
+    vi.useFakeTimers();
+    try {
+      useStore.getState().setMediaViewer({ files: [f('a'), f('b')], currentId: 'a', origin: 'desk' });
+      const { getByTestId } = render(<MediaViewer />);
+      const prev = getByTestId('media-viewer-prev');
+      const next = getByTestId('media-viewer-next');
+      act(() => {
+        vi.advanceTimersByTime(2600);
+      });
+      expect(prev.className).not.toMatch(/hidden/);
+      expect(next.className).not.toMatch(/hidden/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('video kind 渲染 VideoStage，Space 在 video 未聚焦时不处理', async () => {
     useStore.getState().setMediaViewer({
       files: [{ ...f('v'), kind: 'video', ext: 'mp4' }],
@@ -127,5 +153,39 @@ describe('MediaViewer interaction', () => {
     fireEvent.keyDown(window, { key: '0' });
     const stage = container.querySelector('[data-testid="image-stage"]') as HTMLElement;
     expect(stage.dataset.resetSeq).toBe('1');
+  });
+
+  it('普通滚轮在图片舞台上缩放，无需 Alt 修饰键', async () => {
+    useStore.getState().setMediaViewer({ files: [f('a')], currentId: 'a', origin: 'desk' });
+    const { getByTestId } = render(<MediaViewer />);
+    const stage = getByTestId('image-stage') as HTMLElement;
+    const before = stage.style.transform;
+    fireEvent.wheel(stage, {
+      deltaY: -100,
+      clientX: 120,
+      clientY: 120,
+      altKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      metaKey: false,
+    });
+    await waitFor(() => expect(stage.style.transform).not.toBe(before));
+  });
+
+  it('触控板捏合产生的 ctrl+wheel 在图片舞台上缩放', async () => {
+    useStore.getState().setMediaViewer({ files: [f('a')], currentId: 'a', origin: 'desk' });
+    const { getByTestId } = render(<MediaViewer />);
+    const stage = getByTestId('image-stage') as HTMLElement;
+    const before = stage.style.transform;
+    fireEvent.wheel(stage, {
+      deltaY: -24,
+      clientX: 120,
+      clientY: 120,
+      altKey: false,
+      ctrlKey: true,
+      shiftKey: false,
+      metaKey: false,
+    });
+    await waitFor(() => expect(stage.style.transform).not.toBe(before));
   });
 });

@@ -35,6 +35,7 @@ function registerMobileServiceWorker(): void {
   let reloadStarted = false;
 
   const notifyUpdateAvailable = () => {
+    window.__hanaMobileUpdateAvailable = true;
     window.dispatchEvent(new CustomEvent(MOBILE_UPDATE_AVAILABLE_EVENT));
   };
 

@@ -1,4 +1,5 @@
 import { useStore } from './index';
+import { sessionScopedListIncludes } from './session-slice';
 import type { ChatMessage } from './chat-types';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { collectUiContext } from '../utils/ui-context';
@@ -12,7 +13,7 @@ export async function replayLatestUserMessage(
 
   try {
     const state = useStore.getState();
-    if (state.streamingSessions.includes(sessionPath)) return false;
+    if (sessionScopedListIncludes(state, state.streamingSessions, sessionPath)) return false;
 
     await hanaFetch('/api/sessions/latest-user-message/replay', {
       method: 'POST',

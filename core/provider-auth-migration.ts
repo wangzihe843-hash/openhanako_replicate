@@ -1,9 +1,8 @@
 import fs from "fs";
 import path from "path";
-import YAML from "js-yaml";
-import { atomicWriteSync, safeReadYAMLSync } from "../shared/safe-fs.ts";
 import { getInvalidProviderModelIds } from "../shared/provider-model-validation.ts";
 import { providerCredentialAllowsMissingApiKey } from "../shared/provider-auth.ts";
+import { ProviderCatalogStore } from "./provider-catalog.ts";
 
 function isPlainObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
@@ -13,8 +12,7 @@ function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
-function deletedProviderSet(raw) {
-  const ids = Array.isArray(raw?._deleted_providers) ? raw._deleted_providers : [];
+function deletedProviderSet(ids) {
   return new Set(ids.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim()));
 }
 
@@ -24,22 +22,6 @@ function readJson(filePath) {
   } catch {
     return {};
   }
-}
-
-function writeProvidersYaml(filePath, raw, providers) {
-  const header =
-    "# HanaAgent 供应商配置（全局，跨 agent 共享）\n" +
-    "# 由设置页面管理\n\n";
-  atomicWriteSync(
-    filePath,
-    header + YAML.dump({ ...raw, providers }, {
-      indent: 2,
-      lineWidth: -1,
-      sortKeys: false,
-      quotingType: "\"",
-      forceQuotes: false,
-    }),
-  );
 }
 
 function extractLegacyApiKey(credential) {
@@ -130,29 +112,29 @@ function filterInvalidProviderModels(providerId, models, baseUrl) {
 }
 
 /**
- * API-key provider 的运行时真相源已收敛为 added-models.yaml。
+ * API-key provider 的运行时真相源已收敛为 Provider Catalog v2。
  * 旧版本可能仍把 key 存在 Pi SDK auth.json；在清理 auth.json 前必须先搬迁，
  * 否则一次 provider 同步就会把用户唯一的 API key 删掉。
  * 已经被问题版本清理过 auth.json 的用户，如果 models.json 里仍保留着上次投影的
  * apiKey，也会在下一次同步覆盖 models.json 前抢救回来。
  *
  * 迁移只填补缺失的 api_key：
- * - 不覆盖 added-models.yaml 中已有的 api_key，即使它是空字符串；
+ * - 不覆盖 catalog 中已有的 api_key，即使它是空字符串；
  * - 不迁移 OAuth token；
- * - 凭证来源优先级为 added-models.yaml 显式值 > models.json 投影值 > auth.json 旧值；
+ * - 凭证来源优先级为 Provider Catalog 显式值 > models.json 投影值 > auth.json 旧值；
  * - 尽量从 provider 插件或旧 models.json 回填 base_url/api/models，帮助旧配置自愈。
  */
 export function migrateLegacyApiKeyAuthToProviders({ hanakoHome, providerRegistry, log = () => {} }: { hanakoHome: string; providerRegistry: any; log?: (msg: string) => void }) {
   if (!hanakoHome) return { migrated: 0, providers: [] };
 
   const authPath = path.join(hanakoHome, "auth.json");
-  const providersPath = path.join(hanakoHome, "added-models.yaml");
   const auth = readJson(authPath);
+  const store = providerRegistry?._catalog || new ProviderCatalogStore(hanakoHome);
 
   providerRegistry?.reload?.();
-  const raw = safeReadYAMLSync(providersPath, {}, YAML) || {};
-  const deletedProviders = deletedProviderSet(raw);
-  const providers = isPlainObject(raw.providers) ? { ...raw.providers } : {};
+  const catalog = store.load();
+  const deletedProviders = deletedProviderSet(catalog.meta?.deletedProviders || []);
+  const providers = isPlainObject(catalog.providers) ? { ...catalog.providers } : {};
   const modelsJsonProvidersRaw = readJson(path.join(hanakoHome, "models.json")).providers || {};
   const modelsJsonProviders = isPlainObject(modelsJsonProvidersRaw) ? modelsJsonProvidersRaw : {};
   const providerKeys = new Set([
@@ -217,9 +199,9 @@ export function migrateLegacyApiKeyAuthToProviders({ hanakoHome, providerRegistr
     return { migrated: 0, providers: [] };
   }
 
-  fs.mkdirSync(path.dirname(providersPath), { recursive: true });
-  writeProvidersYaml(providersPath, raw, providers);
+  fs.mkdirSync(hanakoHome, { recursive: true });
+  store.saveProviders(providers, { deletedProviders: [...deletedProviders] });
   providerRegistry?.reload?.();
-  log(`[migrations] legacy API-key auth moved to added-models.yaml (${migratedProviders.join(", ")})`);
+  log(`[migrations] legacy API-key auth moved to provider catalog (${migratedProviders.join(", ")})`);
   return { migrated: migratedProviders.length, providers: migratedProviders };
 }

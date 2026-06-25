@@ -41,3 +41,36 @@ describe("default workspace contract", () => {
     }
   });
 });
+
+describe("restoreDefaultWorkspaceIfMissing", () => {
+  it("recreates the default workspace when it is the cwd and missing", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-restore-ws-"));
+    try {
+      const { restoreDefaultWorkspaceIfMissing, resolveDefaultWorkspacePath } =
+        await import("../shared/default-workspace.ts");
+      const defaultPath = resolveDefaultWorkspacePath(tmpHome);
+
+      expect(fs.existsSync(defaultPath)).toBe(false);
+      expect(restoreDefaultWorkspaceIfMissing(defaultPath, tmpHome)).toBe(true);
+      expect(fs.existsSync(defaultPath)).toBe(true);
+      expect(restoreDefaultWorkspaceIfMissing(defaultPath, tmpHome)).toBe(false);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("never creates anything for a non-default cwd", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-restore-ws-user-"));
+    try {
+      const { restoreDefaultWorkspaceIfMissing } = await import("../shared/default-workspace.ts");
+      const userDir = path.join(tmpHome, "my-projects", "gone");
+
+      expect(restoreDefaultWorkspaceIfMissing(userDir, tmpHome)).toBe(false);
+      expect(fs.existsSync(userDir)).toBe(false);
+      expect(restoreDefaultWorkspaceIfMissing("", tmpHome)).toBe(false);
+      expect(restoreDefaultWorkspaceIfMissing(undefined, tmpHome)).toBe(false);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+});

@@ -217,4 +217,78 @@ describe("studio workspaces route", () => {
       capability: "studio.workspace.create_local_path",
     });
   });
+
+  it("lets the local owner remove a local Studio workspace mount without deleting files", async () => {
+    tmpDir = makeTmpDir();
+    const workspace = path.join(tmpDir, "workspace");
+    const mountRoot = path.join(tmpDir, "client-project");
+    const hanakoHome = path.join(tmpDir, "hana");
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(mountRoot, { recursive: true });
+    fs.writeFileSync(path.join(mountRoot, "brief.md"), "brief", "utf-8");
+    upsertStudioMount(hanakoHome, {
+      mountId: "mount_client",
+      hostStudioId: "studio_1",
+      sourceKind: "storage",
+      provider: "local_fs",
+      rootLocator: { path: mountRoot },
+      label: "Client Project",
+      presentation: "folder",
+      capabilities: ["list", "read", "write"],
+    });
+    const app = await makeApp({
+      hanakoHome,
+      homeCwd: workspace,
+      deskCwd: workspace,
+      getRuntimeContext: () => localRuntime(),
+    });
+
+    const res = await app.request("/api/studio/workspaces/mount_client", {
+      method: "DELETE",
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data).toMatchObject({ ok: true, mountId: "mount_client" });
+    expect(fs.existsSync(path.join(mountRoot, "brief.md"))).toBe(true);
+
+    const list = await app.request("/api/studio/workspaces");
+    const listed = await list.json();
+    expect(listed.workspaces.map((workspace: any) => workspace.mountId)).not.toContain("mount_client");
+  });
+
+  it("does not let a remote device remove a local Studio workspace mount", async () => {
+    tmpDir = makeTmpDir();
+    const workspace = path.join(tmpDir, "workspace");
+    const mountRoot = path.join(tmpDir, "client-project");
+    const hanakoHome = path.join(tmpDir, "hana");
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(mountRoot, { recursive: true });
+    upsertStudioMount(hanakoHome, {
+      mountId: "mount_client",
+      hostStudioId: "studio_1",
+      sourceKind: "storage",
+      provider: "local_fs",
+      rootLocator: { path: mountRoot },
+      label: "Client Project",
+      presentation: "folder",
+      capabilities: ["list", "read", "write"],
+    });
+    const app = await makeApp({
+      hanakoHome,
+      homeCwd: workspace,
+      deskCwd: workspace,
+      getRuntimeContext: () => localRuntime(),
+    }, remotePrincipal());
+
+    const res = await app.request("/api/studio/workspaces/mount_client", {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({
+      error: "local_owner_required",
+      capability: "studio.workspace.remove_local_path",
+    });
+  });
 });

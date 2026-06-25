@@ -1,5 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { useStore } from '../stores';
+import { sessionScopedListIncludes, sessionScopedValue } from '../stores/session-slice';
 import { usePanel } from '../hooks/use-panel';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { formatSessionDate } from '../utils/format';
@@ -484,8 +485,8 @@ export function BridgeChatTranscript({
   useSystemUserIdentity?: boolean;
   emptyLabel: string;
 }) {
-  const items = useStore(s => s.chatSessions[sessionPath]?.items || EMPTY_ITEMS);
-  const isStreaming = useStore(s => s.streamingSessions.includes(sessionPath));
+  const items = useStore(s => sessionScopedValue(s, s.chatSessions, sessionPath)?.items || EMPTY_ITEMS);
+  const isStreaming = useStore(s => sessionScopedListIncludes(s, s.streamingSessions, sessionPath));
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomScroll = useContinuousBottomScroll({
@@ -499,7 +500,7 @@ export function BridgeChatTranscript({
   // session has no messages yet, so the first async hydrate (0 -> N) snaps without animating;
   // an already-loaded session lands via the instant scroll and later growth = streaming (smooth follow).
   useLayoutEffect(() => {
-    const alreadyHydrated = (useStore.getState().chatSessions[sessionPath]?.items?.length ?? 0) > 0;
+    const alreadyHydrated = (sessionScopedValue(useStore.getState(), useStore.getState().chatSessions, sessionPath)?.items?.length ?? 0) > 0;
     if (!alreadyHydrated) bottomScroll.armInstantLanding();
     bottomScroll.scrollToBottom({ mode: 'instant', forceSticky: true });
   }, [bottomScroll, sessionPath]);

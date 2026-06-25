@@ -94,17 +94,26 @@ export class NotificationService {
   }
 
   async notify(payload: any, context: any = {}) {
-    const normalized = normalizeNotificationPayload(payload);
+    const bridgeDeliveryTarget = normalizeBridgeDeliveryTargetFromContext(context);
+    const hasExplicitChannels = Array.isArray(payload?.channels) || (typeof payload?.channels === "string" && payload.channels.trim());
+    const normalized = normalizeNotificationPayload(
+      bridgeDeliveryTarget && !hasExplicitChannels
+        ? { ...payload, channels: [CHANNEL_BRIDGE_OWNER] }
+        : payload,
+    );
+    const deliveryContext = bridgeDeliveryTarget
+      ? { ...context, bridgeDeliveryTarget }
+      : context;
     const idempotencyKey = normalized.idempotencyKey || normalizeIdempotencyKey(context.idempotencyKey);
     if (idempotencyKey) {
       const existing = this._getIdempotentDelivery(idempotencyKey);
       if (existing) return existing;
-      const promise = this._notifyOnce(normalized, context, idempotencyKey);
+      const promise = this._notifyOnce(normalized, deliveryContext, idempotencyKey);
       this._idempotency.set(idempotencyKey, { promise, createdAt: Date.now(), result: null });
       return promise;
     }
 
-    return this._notifyOnce(normalized, context, null);
+    return this._notifyOnce(normalized, deliveryContext, null);
   }
 
   _getIdempotentDelivery(idempotencyKey: any) {
@@ -221,6 +230,7 @@ export class NotificationService {
         contextPolicy: payload.contextPolicy,
       };
       if (payload.bridgePlatforms.length) proactiveOpts.bridgePlatforms = payload.bridgePlatforms;
+      if (context.bridgeDeliveryTarget) proactiveOpts.deliveryTarget = context.bridgeDeliveryTarget;
       if (payload.idempotencyKey) proactiveOpts.idempotencyKey = `${payload.idempotencyKey}:bridge_owner`;
       const result = await manager.sendProactive(text, context.agentId || null, proactiveOpts);
       if (!result) {
@@ -243,4 +253,46 @@ export class NotificationService {
 
 function normalizeSessionPath(value: any) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeBridgeDeliveryTargetFromContext(context: any = {}) {
+  return normalizeBridgeDeliveryTarget(
+    context.bridgeDeliveryTarget
+      || context.deliveryTarget
+      || context.notificationContext?.bridgeDeliveryTarget
+      || context.notificationContext?.deliveryTarget
+      || bridgeTargetFromBridgeContext(context.bridgeContext),
+  );
+}
+
+function bridgeTargetFromBridgeContext(bridgeContext: any) {
+  if (bridgeContext?.isBridgeSession !== true) return null;
+  if (bridgeContext.role && bridgeContext.role !== "owner") return null;
+  if (bridgeContext.chatType && bridgeContext.chatType !== "dm") return null;
+  return {
+    kind: "bridge",
+    platform: bridgeContext.platform,
+    chatType: "dm",
+    chatId: bridgeContext.chatId,
+    sessionKey: bridgeContext.sessionKey,
+    agentId: bridgeContext.agentId,
+  };
+}
+
+function normalizeBridgeDeliveryTarget(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (value.kind && value.kind !== "bridge") return null;
+  const platform = typeof value.platform === "string" && value.platform.trim() ? value.platform.trim() : null;
+  const chatId = typeof value.chatId === "string" && value.chatId.trim() ? value.chatId.trim() : null;
+  const sessionKey = typeof value.sessionKey === "string" && value.sessionKey.trim() ? value.sessionKey.trim() : null;
+  if (!platform || (!chatId && !sessionKey)) return null;
+  const agentId = typeof value.agentId === "string" && value.agentId.trim() ? value.agentId.trim() : null;
+  return {
+    kind: "bridge",
+    platform,
+    chatType: "dm",
+    ...(chatId ? { chatId } : {}),
+    ...(sessionKey ? { sessionKey } : {}),
+    ...(agentId ? { agentId } : {}),
+  };
 }

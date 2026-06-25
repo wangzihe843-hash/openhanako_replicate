@@ -38,6 +38,16 @@ describe("session-list-projection-cache revision", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  function tryLinkFile(target: string, linkPath: string): boolean {
+    try {
+      fs.symlinkSync(target, linkPath, "file");
+      return true;
+    } catch (error) {
+      if (process.platform === "win32" && (error as any)?.code === "EPERM") return false;
+      throw error;
+    }
+  }
+
   it("exposes the file stat signature as the projection revision", async () => {
     const filePath = writeSessionFile(tmpDir, "a.jsonl", [HEADER, USER_MESSAGE]);
     const stat = fs.statSync(filePath);
@@ -75,5 +85,36 @@ describe("session-list-projection-cache revision", () => {
     const [second] = await cache.list(tmpDir);
 
     expect(second.revision).toBe(first.revision);
+  });
+
+  it("includes jsonl files that are reached through a filesystem link", async () => {
+    const realDir = path.join(tmpDir, "real");
+    fs.mkdirSync(realDir, { recursive: true });
+    const realFile = writeSessionFile(realDir, "linked.jsonl", [HEADER, USER_MESSAGE]);
+    const linkedFile = path.join(tmpDir, "linked.jsonl");
+    if (!tryLinkFile(realFile, linkedFile)) return;
+
+    const cache = new SessionListProjectionCache();
+    const [projection] = await cache.list(tmpDir);
+
+    expect(projection.path).toBe(linkedFile);
+    expect(projection.revision).toBe(sessionFileRevision(fs.statSync(linkedFile)));
+  });
+
+  it("does not list repair artifacts as sessions", async () => {
+    const filePath = writeSessionFile(tmpDir, "a.jsonl", [HEADER, USER_MESSAGE]);
+    writeSessionFile(tmpDir, "a.jsonl.repair.jsonl", [
+      HEADER,
+      {
+        ...USER_MESSAGE,
+        message: { role: "user", content: "[omitted 2048 chars by Hana session JSONL guard]" },
+      },
+    ]);
+
+    const cache = new SessionListProjectionCache();
+    const projections = await cache.list(tmpDir);
+
+    expect(projections).toHaveLength(1);
+    expect(projections[0].path).toBe(filePath);
   });
 });

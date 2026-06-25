@@ -56,6 +56,24 @@ describe("ActivityHub", () => {
     expect(hub.listBySession(null)).toEqual([]);
   });
 
+  it("已知 sessionId 时按稳定身份过滤 moved path locator", () => {
+    const hub = new ActivityHub(null, null, {
+      getSessionIdForPath: (sessionPath) => (
+        sessionPath === "/s/original.jsonl" || sessionPath === "/s/moved.jsonl"
+          ? "sess_activity_1"
+          : null
+      ),
+    });
+    hub.upsert({ ...baseEntry, id: "t1", sessionPath: "/s/original.jsonl" });
+    hub.upsert({ ...baseEntry, id: "t2", sessionPath: "/s/other.jsonl" });
+
+    expect(hub.get("t1")).toMatchObject({
+      sessionId: "sess_activity_1",
+      sessionPath: "/s/original.jsonl",
+    });
+    expect(hub.listBySession("/s/moved.jsonl").map(e => e.id)).toEqual(["t1"]);
+  });
+
   it("upsert 广播 agent_activity（带 sessionPath）+ 通知 onChange", () => {
     const bus = makeBus();
     const hub = new ActivityHub(bus);
@@ -110,20 +128,28 @@ describe("ActivityHub", () => {
     expect(seen).toEqual(["t1"]);
   });
 
-  it("workflow_agent 子节点：kind 接受 + parentTaskId/label/phaseLabel/tokens 保留，渐进 upsert", () => {
+  it("workflow_agent 子节点：kind 接受 + parentTaskId/label/phaseLabel/childSessionId/tokens 保留，渐进 upsert", () => {
     const hub = new ActivityHub();
     hub.upsert({
       id: "wf-1::node-1", kind: "workflow_agent", status: "running",
       sessionPath: "/s/a.jsonl", parentTaskId: "wf-1", label: "探索",
       phaseLabel: "Find", agentId: "butter", startedAt: 1000,
     });
-    // 后补 childSessionPath + tokens（done），不带 parentTaskId/label 也应保留
-    hub.upsert({ id: "wf-1::node-1", status: "done", childSessionPath: "/s/child.jsonl", tokens: 1234, finishedAt: 2000 });
+    // 后补 childSessionId/childSessionPath + tokens（done），不带 parentTaskId/label 也应保留
+    hub.upsert({
+      id: "wf-1::node-1",
+      status: "done",
+      childSessionId: "sess_child",
+      childSessionPath: "/s/child.jsonl",
+      tokens: 1234,
+      finishedAt: 2000,
+    });
     const e = hub.get("wf-1::node-1");
     expect(e.kind).toBe("workflow_agent");
     expect(e.parentTaskId).toBe("wf-1");
     expect(e.label).toBe("探索");
     expect(e.phaseLabel).toBe("Find");
+    expect(e.childSessionId).toBe("sess_child");
     expect(e.childSessionPath).toBe("/s/child.jsonl");
     expect(e.tokens).toBe(1234);
     expect(e.status).toBe("done");
@@ -149,11 +175,16 @@ describe("ActivityHub", () => {
 
 function makeFakeStore(initial = []) {
   const map = new Map(initial.map((e) => [e.id, { ...e }]));
+  const matchesSession = (entry, ref) => {
+    if (typeof ref === "string") return entry.sessionPath === ref;
+    if (ref?.sessionId) return entry.sessionId === ref.sessionId;
+    return !!ref?.sessionPath && entry.sessionPath === ref.sessionPath;
+  };
   return {
     upsert: vi.fn((e) => { map.set(e.id, { ...e }); return { ...e }; }),
-    removeBySession: vi.fn((sp) => {
+    removeBySession: vi.fn((ref) => {
       let n = 0;
-      for (const [id, e] of map) if (e.sessionPath === sp) { map.delete(id); n++; }
+      for (const [id, e] of map) if (matchesSession(e, ref)) { map.delete(id); n++; }
       return n;
     }),
     list: () => [...map.values()].map((e) => ({ ...e })),
@@ -246,6 +277,26 @@ describe("ActivityHub 持久化背书", () => {
     hub.clearBySession("/s/a.jsonl");
     expect(hub.get("wf-1")).toBeNull();
     expect(store.removeBySession).toHaveBeenCalledWith("/s/a.jsonl");
+  });
+
+  it("clearBySession 通过 sessionId 清理 moved path 的持久化活动", () => {
+    const store = makeFakeStore();
+    const hub = new ActivityHub(null, store, {
+      getSessionIdForPath: (sessionPath) => (
+        sessionPath === "/s/original.jsonl" || sessionPath === "/s/moved.jsonl"
+          ? "sess_activity_1"
+          : null
+      ),
+    });
+    hub.upsert({ id: "wf-1", kind: "workflow", status: "running", sessionPath: "/s/original.jsonl" });
+
+    hub.clearBySession("/s/moved.jsonl");
+
+    expect(hub.get("wf-1")).toBeNull();
+    expect(store.removeBySession).toHaveBeenCalledWith({
+      sessionId: "sess_activity_1",
+      sessionPath: "/s/moved.jsonl",
+    });
   });
 
   it("无 store 时一切照旧（纯内存，无写穿/回灌）", () => {

@@ -27,8 +27,13 @@ const CAPABILITY_ALLOWED_VALUES = new Set([
 const FOREGROUND_CAPABILITY_VALUES = new Set(["foreground"]);
 
 function sameLeaseOwner(lease, ctx: any = {}) {
-  return lease?.sessionPath === (ctx?.sessionPath || null)
-    && lease?.agentId === (ctx?.agentId || null);
+  if (!lease) return false;
+  if ((lease.agentId || null) !== (ctx?.agentId || null)) return false;
+  const ctxSessionId = ctx?.sessionId || null;
+  const ctxSessionPath = ctx?.sessionPath || null;
+  if (ctxSessionId && lease.sessionId) return lease.sessionId === ctxSessionId;
+  if (ctxSessionId && !lease.sessionId && ctxSessionPath) return lease.sessionPath === ctxSessionPath;
+  return !!ctxSessionPath && lease.sessionPath === ctxSessionPath;
 }
 
 function targetAppId( target: any = {}) {
@@ -120,6 +125,7 @@ export class ComputerHost {
       providers,
       activeLease: activeLease ? {
         leaseId: activeLease.leaseId,
+        ...(activeLease.sessionId ? { sessionId: activeLease.sessionId } : {}),
         sessionPath: activeLease.sessionPath,
         agentId: activeLease.agentId,
         providerId: activeLease.providerId,
@@ -148,7 +154,7 @@ export class ComputerHost {
     const activeLease = await this._reuseOrReplaceActiveLease(ctx, providerId, target);
     if (activeLease) return activeLease;
     const provider = this._providers.require(providerId);
-    this._assertAppApproved(provider, providerId, target);
+    this._assertAppApproved(provider, providerId, target, ctx);
     const providerLease = await provider.createLease?.(ctx, target);
     return this._leases.createLease(ctx, {
       providerId,
@@ -255,6 +261,7 @@ export class ComputerHost {
         provider = null;
       }
       const leaseCtx = {
+        ...(activeLease.sessionId ? { sessionId: activeLease.sessionId } : {}),
         sessionPath: activeLease.sessionPath || null,
         agentId: activeLease.agentId || null,
       };
@@ -283,8 +290,8 @@ export class ComputerHost {
     }
   }
 
-  abortSession(sessionPath) {
-    this._leases.releaseBySession(sessionPath);
+  abortSession(sessionRef) {
+    this._leases.releaseBySession(sessionRef);
   }
 
   async requestPermissions( ctx: any = {}, providerId = null) {
@@ -372,6 +379,7 @@ export class ComputerHost {
       return;
     }
     const leaseCtx = {
+      ...(lease.sessionId ? { sessionId: lease.sessionId } : {}),
       sessionPath: lease.sessionPath || null,
       agentId: lease.agentId || null,
     };
@@ -436,7 +444,7 @@ export class ComputerHost {
     });
   }
 
-  _assertAppApproved(provider, providerId, target: any = {}) {
+  _assertAppApproved(provider, providerId, target: any = {}, ctx: any = {}) {
     if (provider.capabilities?.isolated === true) return;
     const appId = target.appId
       || (target.pid || target.processId ? `pid:${target.pid || target.processId}` : null)
@@ -444,6 +452,7 @@ export class ComputerHost {
       || target.appName
       || null;
     if (appId && isComputerUseAppApproved(this._getSettings?.() || {}, { providerId, appId })) return;
+    if (appId && ctx?.computerUseAppApproval?.mode === "session") return;
     throw computerUseError(
       COMPUTER_USE_ERRORS.APP_APPROVAL_REQUIRED,
       "Computer Use requires app approval before controlling this target.",

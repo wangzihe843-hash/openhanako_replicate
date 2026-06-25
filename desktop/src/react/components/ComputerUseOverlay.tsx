@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useStore } from '../stores';
+import { computerOverlayForSession } from '../stores/computer-overlay-slice';
 import { getWebSocket } from '../services/websocket';
 import styles from './ComputerUseOverlay.module.css';
 
@@ -7,7 +8,7 @@ declare function t(key: string, vars?: Record<string, string | number>): string;
 
 export function ComputerUseOverlay() {
   const currentSessionPath = useStore(s => s.currentSessionPath);
-  const event = useStore(s => currentSessionPath ? s.computerOverlayBySession[currentSessionPath] : null);
+  const event = useStore(s => computerOverlayForSession(s, currentSessionPath));
 
   const foregroundTakeover = !!event && event.inputMode === 'foreground-input' && event.phase !== 'done' && event.phase !== 'error';
 

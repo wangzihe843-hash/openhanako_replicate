@@ -61,6 +61,16 @@ const hanaFetchMock = vi.fn(async (url: string, init?: RequestInit) => {
             presentation: { type: 'toggle' },
           },
         },
+        {
+          id: 'memory.cache_snapshot_reflection',
+          titleKey: 'settings.experiments.cacheSnapshot.title',
+          descriptionKey: 'settings.experiments.cacheSnapshot.description',
+          owner: 'memory',
+          value: 'off',
+          status: 'beta',
+          risk: 'medium',
+          restartPolicy: 'new_session',
+        },
       ],
     }));
   }
@@ -87,17 +97,15 @@ describe('ExperimentsTab', () => {
     const { container } = render(React.createElement(ExperimentsTab));
 
     expect(screen.getByText('settings.experiments.memoryTitle')).toBeTruthy();
-    expect(screen.getByText('settings.experiments.cacheSnapshot.description')).toBeTruthy();
+    expect(await screen.findByText('settings.experiments.cacheSnapshot.description')).toBeTruthy();
     expect(screen.getByText('settings.computerUse.title')).toBeTruthy();
     expect(screen.queryByText('settings.experiments.description')).toBeNull();
 
-    await waitFor(() => {
-      expect(screen.getByText('settings.experiments.empty')).toBeTruthy();
-    });
+    expect(screen.getByText('settings.experiments.cacheSnapshot.title')).toBeTruthy();
 
     const body = Array.from(container.querySelectorAll('[class*="sectionBody"]'))
-      .find((sectionBody) => sectionBody.textContent?.includes('settings.experiments.empty'));
-    expect(body?.textContent).toContain('settings.experiments.empty');
+      .find((sectionBody) => sectionBody.textContent?.includes('settings.experiments.cacheSnapshot.title'));
+    expect(body?.textContent).toContain('settings.experiments.cacheSnapshot.title');
     expect(body?.textContent).not.toContain('settings.experiments.cacheSnapshot.description');
   });
 

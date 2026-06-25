@@ -16,6 +16,7 @@ interface SkillRowProps {
   nameHint?: string;
   deletable?: boolean;
   draggable?: boolean;
+  highlighted?: boolean;
   className?: string;
   extraActions?: React.ReactNode;
   /** 传了就渲染 delete 按钮。Section 1 "技能管理" 传；Section 3 "Agent 配置" 不传。 */
@@ -32,6 +33,7 @@ export function SkillRow({
   nameHint,
   deletable = true,
   draggable = false,
+  highlighted = false,
   className = '',
   extraActions,
   onDelete,
@@ -45,6 +47,7 @@ export function SkillRow({
   return (
     <div
       className={`${styles['skills-list-item']} ${className}`.trim()}
+      data-highlighted-skill={highlighted ? skill.name : undefined}
       draggable={draggable}
       onDragStart={(event) => onDragStart?.(event, skill.name)}
       onDragOver={onDragOver}

@@ -206,6 +206,60 @@ describe("createWechatAdapter", () => {
     fs.rmSync(hanaHome, { recursive: true, force: true });
   });
 
+  it("sends and cancels native typing status through the OpenClaw iLink typing ticket", async () => {
+    let getUpdatesCount = 0;
+    const fetchMock = vi.fn(async (url, options: any = {}) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes("ilink/bot/getupdates")) {
+        getUpdatesCount += 1;
+        if (getUpdatesCount === 1) {
+          return jsonResponse({
+            ret: 0,
+            get_updates_buf: "buf-1",
+            msgs: [{
+              from_user_id: "user-1",
+              context_token: "ctx-1",
+              item_list: [{ type: 1, text_item: { text: "hi" } }],
+            }],
+          });
+        }
+        return new Promise(() => {});
+      }
+      if (requestUrl.includes("ilink/bot/getconfig")) {
+        const payload = JSON.parse(options.body);
+        expect(payload.ilink_user_id).toBe("user-1");
+        expect(payload.context_token).toBe("ctx-1");
+        return jsonResponse({ ret: 0, typing_ticket: "ticket-1" });
+      }
+      if (requestUrl.includes("ilink/bot/sendtyping")) {
+        return jsonResponse({ ret: 0 });
+      }
+      throw new Error(`unexpected fetch: ${requestUrl}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = createWechatAdapter({
+      botToken: "wx-token",
+      agentId: "hana",
+      onMessage: vi.fn(),
+      onStatus: vi.fn(),
+    } as any);
+
+    await vi.waitFor(() => expect(adapter.canReply("user-1")).toBe(true));
+    await (adapter as any).sendTypingIndicator("user-1");
+    await (adapter as any).cancelTypingIndicator("user-1");
+
+    const sendTypingCalls = fetchMock.mock.calls
+      .filter(([url]) => String(url).includes("ilink/bot/sendtyping"))
+      .map(([, options]) => JSON.parse((options as any).body));
+    expect(sendTypingCalls).toEqual([
+      expect.objectContaining({ ilink_user_id: "user-1", typing_ticket: "ticket-1", status: 1 }),
+      expect.objectContaining({ ilink_user_id: "user-1", typing_ticket: "ticket-1", status: 2 }),
+    ]);
+
+    adapter.stop();
+  });
+
   it("prunes expired persisted WeChat context tokens on restart", async () => {
     const hanaHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-wechat-context-expired-"));
     vi.setSystemTime(new Date("2026-06-04T08:00:00.000Z"));

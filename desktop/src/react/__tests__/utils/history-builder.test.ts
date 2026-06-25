@@ -398,6 +398,67 @@ describe('buildItemsFromHistory user image restoration', () => {
     });
   });
 
+  it('保留不依赖 iframe route 的 chat.surface 插件卡片', () => {
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'a-chat-surface',
+        role: 'assistant',
+        content: '已创建插件会话',
+      }],
+      blocks: [{
+        type: 'plugin_card',
+        afterIndex: 0,
+        card: {
+          type: 'chat.surface',
+          pluginId: 'tavern',
+          sessionRef: {
+            sessionId: 'sess_tavern',
+            sessionPath: '/sessions/tavern.jsonl',
+          },
+          title: 'Tavern run',
+          description: 'Private transcript',
+        },
+      }],
+    });
+
+    const first = items[0];
+    expect(first.type).toBe('message');
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.blocks?.at(-1)).toMatchObject({
+      type: 'plugin_card',
+      card: {
+        type: 'chat.surface',
+        pluginId: 'tavern',
+        sessionId: 'sess_tavern',
+        sessionPath: '/sessions/tavern.jsonl',
+        sessionRef: {
+          sessionId: 'sess_tavern',
+          sessionPath: '/sessions/tavern.jsonl',
+        },
+      },
+    });
+  });
+
+  it('保留空 thinking 为已完成思考块', () => {
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'a-empty-thinking',
+        role: 'assistant',
+        content: '',
+        thinking: '',
+      }],
+    });
+
+    const first = items[0];
+    expect(first.type).toBe('message');
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.blocks).toEqual([{
+      type: 'thinking',
+      content: '',
+      sealed: true,
+    }]);
+  });
+
   it('恢复 deferred 幕间消息为独立时间线条目', () => {
     const items = buildItemsFromHistory({
       messages: [{
@@ -433,6 +494,106 @@ describe('buildItemsFromHistory user image restoration', () => {
       taskId: 'subagent-1',
       text: '小花 收到了来自 明 · 大纲评估 的回复',
     });
+  });
+
+  it('显式 after_anchor_message 幕间在恢复时不走旧媒体前置规则', () => {
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'a1',
+        role: 'assistant',
+        content: '提交图片任务',
+      }],
+      blocks: [
+        {
+          type: 'interlude',
+          afterIndex: 0,
+          id: 'deferred:task-img:success',
+          variant: 'deferred_result',
+          timelinePlacement: 'after_anchor_message',
+          taskId: 'task-img',
+          status: 'success',
+          sourceKind: 'tool',
+          sourceLabel: '图片生成',
+          text: '图片结果已抵达',
+        },
+        {
+          type: 'file',
+          afterIndex: 0,
+          replacesTaskId: 'task-img',
+          filePath: '/tmp/image.png',
+          label: 'image.png',
+          ext: 'png',
+        },
+      ],
+    });
+
+    expect(items.map((item) => item.type)).toEqual(['message', 'interlude']);
+    expect(items[0]?.type).toBe('message');
+    if (items[0]?.type !== 'message') throw new Error('expected message');
+    expect(items[0].data.blocks?.map((block) => block.type)).toEqual(['text', 'file']);
+    expect(items[1]?.type).toBe('interlude');
+    if (items[1]?.type !== 'interlude') throw new Error('expected interlude');
+    expect(items[1].data.taskId).toBe('task-img');
+  });
+
+  it('有 sourceIndex 时按 JSONL 顺序恢复幕间，媒体结果仍原地替换占位消息', () => {
+    const items = buildItemsFromHistory({
+      messages: [
+        {
+          id: 'a-media',
+          sourceIndex: 10,
+          role: 'assistant',
+          content: '生成图片',
+        },
+        {
+          id: 'a-final',
+          sourceIndex: 20,
+          role: 'assistant',
+          content: '最终报告',
+        },
+        {
+          id: 'a-ack',
+          sourceIndex: 22,
+          role: 'assistant',
+          content: '收到后台回复',
+        },
+      ],
+      blocks: [
+        {
+          type: 'file',
+          afterIndex: 0,
+          sourceIndex: 12,
+          replacesTaskId: 'task-img',
+          filePath: '/tmp/generated.png',
+          label: 'generated.png',
+          ext: 'png',
+        },
+        {
+          type: 'interlude',
+          afterIndex: 0,
+          sourceIndex: 21,
+          id: 'deferred:subagent-1:success:delivery-1',
+          deliveryId: 'delivery-1',
+          variant: 'deferred_result',
+          timelinePlacement: 'after_anchor_message',
+          taskId: 'subagent-1',
+          status: 'success',
+          sourceKind: 'subagent',
+          text: '小花 收到了来自 明 的回复',
+        },
+      ],
+    });
+
+    expect(items.map((item) => (item.type === 'message' ? item.data.id : item.id))).toEqual([
+      'a-media',
+      'a-final',
+      'deferred:subagent-1:success:delivery-1',
+      'a-ack',
+    ]);
+    const mediaMessage = items[0];
+    expect(mediaMessage?.type).toBe('message');
+    if (mediaMessage?.type !== 'message') throw new Error('expected message');
+    expect(mediaMessage.data.blocks?.map((block) => block.type)).toEqual(['text', 'file']);
   });
 
   it('只有 deferred 幕间消息的历史行不会留下空 assistant 外壳', () => {

@@ -38,6 +38,7 @@ import { VisionBridge, VISION_CONTEXT_START } from "../core/vision-bridge.ts";
 import { createUsageLedger } from "../lib/llm/usage-ledger.ts";
 import { BrowserManager } from "../lib/browser/browser-manager.ts";
 import { DEEPSEEK_ROLEPLAY_REASONING_PATCH_EXPERIMENT_ID } from "../lib/experiments/registry.ts";
+import { SessionManager } from "../lib/pi-sdk/index.js";
 
 const PNG_BASE64 = "iVBORw0KGgo=";
 
@@ -83,6 +84,30 @@ describe("SessionCoordinator", () => {
     expect(streamingReload).not.toHaveBeenCalled();
     expect(summary).toEqual({ reloaded: 1, skipped: 1, failed: 0 });
     expect(coordinator._sessions.get(path.join(tempDir, "idle.jsonl")).lastTouchedAt).toBeGreaterThan(1);
+  });
+
+  it("reads and writes work mode through sessionId-keyed runtime entries", () => {
+    const sessionPath = path.join(tempDir, "agents", "hana", "sessions", "main.jsonl");
+    const runtimeKey = "sess_work_mode";
+    const emitEvent = vi.fn();
+    const entry = { sessionPath, workMode: false };
+    const coordinator = Object.create(SessionCoordinator.prototype);
+    coordinator._sessions = new Map([[runtimeKey, entry]]);
+    coordinator._hibernatedSessionMeta = new Map();
+    coordinator._sessionRuntimeKeyForPath = vi.fn(() => runtimeKey);
+    coordinator.writeSessionMeta = vi.fn();
+    coordinator._d = {
+      emitEvent,
+      emitDevLog: vi.fn(),
+    };
+
+    expect(coordinator.getSessionWorkMode(sessionPath)).toBe(false);
+    expect(coordinator.setSessionWorkMode(sessionPath, true)).toEqual({ ok: true, enabled: true });
+
+    expect(entry.workMode).toBe(true);
+    expect(coordinator.getSessionWorkMode(sessionPath)).toBe(true);
+    expect(coordinator.writeSessionMeta).toHaveBeenCalledWith(sessionPath, { workMode: true });
+    expect(emitEvent).toHaveBeenCalledWith({ type: "work_mode", enabled: true }, sessionPath);
   });
 
   it("builds the session prompt with path-scoped memory without mutating the agent session flag", async () => {
@@ -439,6 +464,146 @@ describe("SessionCoordinator", () => {
     const meta = JSON.parse(fs.readFileSync(path.join(sessionDir, "session-meta.json"), "utf-8"));
     expect(meta["first.jsonl"].thinkingLevel).toBe("high");
     expect(meta["second.jsonl"].thinkingLevel).toBe("medium");
+  });
+
+  it("persists a new session before the first assistant response and keeps the prefix non-duplicated", async () => {
+    const agentDir = path.join(tempDir, "agents", "hana");
+    const sessionDir = path.join(agentDir, "sessions");
+    const sessionPath = path.join(sessionDir, "first-turn-failure.jsonl");
+    fs.mkdirSync(sessionDir, { recursive: true });
+
+    const header = {
+      type: "session",
+      version: 3,
+      id: "sess-first-turn",
+      timestamp: "2026-06-14T12:00:00.000Z",
+      cwd: tempDir,
+    };
+    const sessionManager: any = {
+      fileEntries: [header],
+      flushed: false,
+      getCwd: () => tempDir,
+      getSessionFile: () => sessionPath,
+      _rewriteFile: vi.fn(function () {
+        fs.writeFileSync(
+          sessionPath,
+          `${this.fileEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+          "utf-8",
+        );
+      }),
+    };
+    let listener: any = null;
+    const model = { id: "m", provider: "test" };
+    const agent = {
+      id: "hana",
+      name: "Hana",
+      agentName: "Hana",
+      agentDir,
+      sessionDir,
+      sessionMemoryEnabled: true,
+      memoryMasterEnabled: true,
+      config: {},
+      setMemoryEnabled: vi.fn(),
+      buildSystemPrompt: () => "BASE",
+      tools: [],
+    };
+    const coordinator = new SessionCoordinator({
+      agentsDir: path.join(tempDir, "agents"),
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: model,
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: (level) => level,
+      }),
+      getResourceLoader: () => ({
+        getSystemPrompt: () => "BASE",
+        getAppendSystemPrompt: () => [],
+        getExtensions: () => ({ extensions: [], errors: [] }),
+        getSkills: () => ({ skills: [], diagnostics: [] }),
+        getAgentsFiles: () => ({ agentsFiles: [] }),
+      }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [], customTools: [] }),
+      emitEvent: vi.fn(),
+      getHomeCwd: () => tempDir,
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map([["hana", agent]]),
+      listAgents: () => [agent],
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+    });
+
+    sessionManagerCreateMock.mockReturnValueOnce(sessionManager);
+    createAgentSessionMock.mockResolvedValueOnce({
+      session: {
+        sessionManager,
+        subscribe: vi.fn((fn) => {
+          listener = fn;
+          return vi.fn();
+        }),
+        setActiveToolsByName: vi.fn(),
+        setThinkingLevel: vi.fn(),
+        model,
+      },
+    });
+
+    await coordinator.createSession(null, tempDir, true);
+
+    expect(fs.existsSync(sessionPath)).toBe(true);
+    expect(sessionManager.flushed).toBe(true);
+    expect(JSON.parse(fs.readFileSync(sessionPath, "utf-8").trim())).toMatchObject({
+      type: "session",
+      id: "sess-first-turn",
+    });
+    expect((await coordinator.listSessions()).some((session) => session.path === sessionPath)).toBe(true);
+
+    const userEntry = {
+      type: "message",
+      id: "u1",
+      parentId: null,
+      timestamp: "2026-06-14T12:00:01.000Z",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "look at this image" }],
+        timestamp: Date.now(),
+      },
+    };
+    listener?.({ type: "message_end", message: userEntry.message });
+    sessionManager.fileEntries.push(userEntry);
+    sessionManager.flushed = false;
+    await Promise.resolve();
+
+    let lines = fs.readFileSync(sessionPath, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines.filter((entry) => entry.type === "session")).toHaveLength(1);
+    expect(lines.filter((entry) => entry.type === "message")).toHaveLength(1);
+    expect(sessionManager.flushed).toBe(true);
+
+    const assistantEntry = {
+      type: "message",
+      id: "a1",
+      parentId: "u1",
+      timestamp: "2026-06-14T12:00:02.000Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        timestamp: Date.now(),
+      },
+    };
+    sessionManager.fileEntries.push(assistantEntry);
+    if (sessionManager.flushed) {
+      fs.appendFileSync(sessionPath, `${JSON.stringify(assistantEntry)}\n`, "utf-8");
+    } else {
+      sessionManager._rewriteFile();
+    }
+
+    lines = fs.readFileSync(sessionPath, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines.filter((entry) => entry.type === "session")).toHaveLength(1);
+    expect(lines.filter((entry) => entry.type === "message")).toHaveLength(2);
   });
 
   it("uses the model-level thinking default for new sessions without an explicit draft", async () => {
@@ -1882,11 +2047,13 @@ describe("SessionCoordinator", () => {
         },
       }),
     );
+    const setThinkingLevel = vi.fn();
     createAgentSessionMock.mockResolvedValueOnce({
       session: {
         sessionManager: { getSessionFile: () => sessionFile },
         subscribe: vi.fn(() => vi.fn()),
         setActiveToolsByName: vi.fn(),
+        setThinkingLevel,
         model: { id: "deepseek-v4-pro", provider: "deepseek", name: "DeepSeek V4 Pro" },
       },
     });
@@ -1937,6 +2104,10 @@ describe("SessionCoordinator", () => {
     expect(createAgentSessionMock).toHaveBeenCalledOnce();
     expect(createAgentSessionMock.mock.calls[0][0].thinkingLevel).toBe("high");
     expect(createAgentSessionMock.mock.calls[0][0].resourceLoader.getSystemPrompt()).toBe("FROZEN BASE");
+    expect(setThinkingLevel).toHaveBeenCalledWith("xhigh");
+
+    const meta = JSON.parse(fs.readFileSync(path.join(agent.sessionDir, "session-meta.json"), "utf-8"));
+    expect(meta[path.basename(sessionFile)].thinkingLevel).toBe("xhigh");
   });
 
   it("stores skill pointers for a session and omits restored skills whose source was deleted", async () => {
@@ -2935,6 +3106,67 @@ describe("SessionCoordinator", () => {
       error: "aborted",
     });
     expect(fs.existsSync(sessionFile)).toBe(false);
+  });
+
+  it("keeps a deleted-agent continuation session when fresh compact fails", async () => {
+    const agentsDir = path.join(tempDir, "agents");
+    const sourcePath = path.join(agentsDir, "deleted", "sessions", "old.jsonl");
+    const createdPath = path.join(agentsDir, "hana", "sessions", "continued.jsonl");
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(path.dirname(createdPath), { recursive: true });
+    fs.writeFileSync(sourcePath, "source", "utf-8");
+    fs.writeFileSync(createdPath, "created", "utf-8");
+
+    (SessionManager.open as any).mockReturnValue({
+      getCwd: () => tempDir,
+      getBranch: () => [{
+        type: "message",
+        message: { role: "user", content: "old hello", timestamp: "2026-06-17T00:00:00.000Z" },
+      }],
+    });
+
+    const targetAgent = { id: "hana", agentName: "Hana" };
+    const manager = {
+      getCwd: () => tempDir,
+      appendMessage: vi.fn(),
+      appendModelChange: vi.fn(),
+      _rewriteFile: vi.fn(),
+    };
+    const coordinator = Object.create(SessionCoordinator.prototype);
+    coordinator._assertActiveDesktopSessionPath = vi.fn();
+    coordinator._d = {
+      agentIdFromSessionPath: vi.fn(() => "deleted"),
+      isAgentDeleted: vi.fn((agentId) => agentId === "deleted"),
+      getPrefs: vi.fn(() => ({ getPrimaryAgent: () => "hana" })),
+      getAgentById: vi.fn(() => targetAgent),
+      getAgent: vi.fn(() => targetAgent),
+      getHomeCwd: vi.fn(() => tempDir),
+    };
+    coordinator.createSession = vi.fn(async () => ({
+      sessionPath: createdPath,
+      session: { sessionManager: manager, model: null },
+    }));
+    coordinator.writeSessionMeta = vi.fn(async () => {});
+    coordinator._freshCompactDeletedAgentContinuation = vi.fn(async () => {
+      throw new Error("model unavailable");
+    });
+    coordinator.discardSessionRuntime = vi.fn(async () => {});
+    coordinator.getSessionWorkspaceFolders = vi.fn(() => []);
+
+    const result = await coordinator.continueDeletedAgentSession(sourcePath);
+
+    expect(result).toMatchObject({
+      sessionPath: createdPath,
+      agentId: "hana",
+      compacted: false,
+      compactionError: "model unavailable",
+    });
+    expect(manager.appendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      role: "user",
+      content: [{ type: "text", text: "old hello" }],
+    }));
+    expect(coordinator.discardSessionRuntime).not.toHaveBeenCalled();
+    expect(fs.existsSync(createdPath)).toBe(true);
   });
 
   const isoDeps = () => ({
@@ -4232,6 +4464,50 @@ describe("SessionCoordinator", () => {
     expect(onSessionRuntimeDiscarded).toHaveBeenCalledTimes(2);
     expect(onSessionRuntimeDiscarded).toHaveBeenNthCalledWith(1, livePath, "archive");
     expect(onSessionRuntimeDiscarded).toHaveBeenNthCalledWith(2, hibernatedPath, "archive");
+  });
+
+  it("discardSessionRuntime can skip memory session-end notification for archived sessions", async () => {
+    const notifySessionEnd = vi.fn(async () => {});
+    const agent = {
+      id: "hana",
+      agentName: "小花",
+      sessionDir: path.join(tempDir, "agents", "hana", "sessions"),
+      _memoryTicker: { notifySessionEnd },
+    };
+    const livePath = path.join(agent.sessionDir, "skip-memory.jsonl");
+    fs.mkdirSync(agent.sessionDir, { recursive: true });
+    const session = {
+      isStreaming: false,
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => livePath },
+    };
+    const coordinator = new SessionCoordinator({
+      agentsDir: path.join(tempDir, "agents"),
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({ authStorage: {}, modelRegistry: {}, resolveThinkingLevel: () => "medium" }),
+      getResourceLoader: () => ({ getSystemPrompt: () => "BASE" }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [], customTools: [] }),
+      emitEvent: () => {},
+      getHomeCwd: () => "/tmp/home",
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+      listAgents: () => [{ id: "hana", name: "小花" }],
+      getConfirmStore: () => ({ abortBySession: vi.fn() }),
+      getDeferredResultStore: () => ({ clearBySession: vi.fn() }),
+      closeTerminalsForSession: vi.fn(),
+    });
+    coordinator._sessions.set(livePath, { session, agentId: "hana", unsub: vi.fn() });
+
+    await expect(coordinator.discardSessionRuntime(livePath, "parent session archived", { skipMemory: true })).resolves.toBe(true);
+
+    expect(notifySessionEnd).not.toHaveBeenCalled();
   });
 
   it("discardSessionRuntime keeps a completed discard successful when the discard hook rejects", async () => {

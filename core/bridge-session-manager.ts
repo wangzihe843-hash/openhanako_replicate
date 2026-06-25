@@ -54,9 +54,17 @@ import {
   normalizeSessionThinkingLevel,
   resolveModelDefaultThinkingLevel,
 } from "./session-thinking-level.ts";
-import { repairRestoredToolSnapshot, sameToolNames } from "./tool-snapshot-repair.ts";
+import { sameToolNames } from "./tool-snapshot-repair.ts";
 
 const log = createModuleLogger("bridge-session");
+const BRIDGE_OWNER_DENIED_TOOL_NAMES = Object.freeze([
+  "computer",
+]);
+
+function computeBridgeOwnerActiveToolNames(allToolNames) {
+  const denied = new Set(BRIDGE_OWNER_DENIED_TOOL_NAMES);
+  return uniqueToolNames(allToolNames).filter((name) => !denied.has(name));
+}
 
 function assertVideoInputSupported(model, videos) {
   if (!videos?.length) return;
@@ -335,7 +343,7 @@ export class BridgeSessionManager {
   declare _activeSessions: any;
   declare _deps: any;
   declare _prePromptAbortControllers: any;
-  declare _sessionPathBridgeContexts: any;
+  declare _bridgeContextsBySessionIdentity: any;
   /**
    * @param {object} deps - 注入依赖（不持有 engine 引用）
    * @param {() => object} deps.getAgent - 返回当前 agent（需 sessionDir, yuanPrompt）
@@ -353,7 +361,42 @@ export class BridgeSessionManager {
     this._activeSessions = new Map();
     this._activeSessionRoles = new Map();
     this._prePromptAbortControllers = new Map();
-    this._sessionPathBridgeContexts = new Map();
+    this._bridgeContextsBySessionIdentity = new Map();
+  }
+
+  _bridgeContextIdentityKey(sessionPath) {
+    if (!sessionPath) return null;
+    try {
+      const sessionId = this._deps.getSessionIdForPath?.(sessionPath);
+      if (typeof sessionId === "string" && sessionId.trim()) {
+        return `id:${sessionId.trim()}`;
+      }
+    } catch {
+      // Path fallback below preserves legacy bridge context lookup behavior.
+    }
+    return null;
+  }
+
+  _bridgeContextLegacyPathKeys(sessionPath) {
+    const keys = [];
+    if (!sessionPath) return keys;
+    const resolved = path.resolve(sessionPath);
+    keys.push(`path:${resolved}`);
+    keys.push(resolved);
+    return keys;
+  }
+
+  _bridgeContextLookupKeys(sessionPath) {
+    const identityKey = this._bridgeContextIdentityKey(sessionPath);
+    return [
+      ...(identityKey ? [identityKey] : []),
+      ...this._bridgeContextLegacyPathKeys(sessionPath),
+    ];
+  }
+
+  _bridgeContextWriteKeys(sessionPath) {
+    const identityKey = this._bridgeContextIdentityKey(sessionPath);
+    return identityKey ? [identityKey] : this._bridgeContextLegacyPathKeys(sessionPath);
   }
 
   /** 活跃 bridge sessions（供 bridge-manager abort 用） */
@@ -703,14 +746,18 @@ export class BridgeSessionManager {
     delete raw.notificationHint;
     // 派生字段：重建时由 buildBridgeContext 按平台声明表附加，不缓存代码版本化的能力对象
     delete raw.interactionCapabilities;
-    this._sessionPathBridgeContexts.set(path.resolve(sessionPath), raw);
+    for (const key of this._bridgeContextWriteKeys(sessionPath)) {
+      this._bridgeContextsBySessionIdentity.set(key, raw);
+    }
   }
 
   getBridgeContextForSessionPath(sessionPath, opts: any = {}) {
     if (!sessionPath) return null;
     const resolved = path.resolve(sessionPath);
-    const cached = this._sessionPathBridgeContexts.get(resolved);
-    if (cached) return buildBridgeContext(cached, getLocale());
+    for (const key of this._bridgeContextLookupKeys(sessionPath)) {
+      const cached = this._bridgeContextsBySessionIdentity.get(key);
+      if (cached) return buildBridgeContext(cached, getLocale());
+    }
 
     const agents = opts.agentId
       ? [this._resolveAgent(opts, "getBridgeContextForSessionPath")]
@@ -933,7 +980,6 @@ export class BridgeSessionManager {
         sessionOpts = this._buildOwnerSessionOpts(agent, mm, homeCwd, sessionPathRef, targetModelRef, {
           bridgeContext,
           promptSnapshot,
-          toolNames: entry.toolNames,
         });
       }
       const activeToolNames = this._normalizeToolNames(sessionOpts.activeToolNames);
@@ -962,8 +1008,10 @@ export class BridgeSessionManager {
         throw new Error("bridge inbound files require a resolved sessionPath");
       }
       if (opts.inboundFiles?.length && activeSessionPath) {
+        const activeSessionId = this._deps.getSessionIdForPath?.(activeSessionPath) || null;
         const materialized = await materializeBridgeInboundFiles({
           hanakoHome: this._deps.getHanakoHome?.(),
+          sessionId: activeSessionId,
           sessionPath: activeSessionPath,
           files: opts.inboundFiles,
           registerSessionFile: this._deps.registerSessionFile,
@@ -1323,7 +1371,6 @@ export class BridgeSessionManager {
       ...(baseTools || []).map((tool) => tool?.name),
       ...(baseCustomTools || []).map((tool) => tool?.name),
     ]);
-    const restoredToolNames = this._normalizeToolNames(opts.toolNames);
 
     return {
       model: ownerModel,
@@ -1335,9 +1382,7 @@ export class BridgeSessionManager {
       tools: baseTools,
       customTools: baseCustomTools,
       settingsManager: this._createSettings(ownerModel),
-      activeToolNames: restoredToolNames.length
-        ? repairRestoredToolSnapshot(restoredToolNames, allToolNames)
-        : allToolNames,
+      activeToolNames: computeBridgeOwnerActiveToolNames(allToolNames),
     };
   }
 
@@ -1413,7 +1458,6 @@ export class BridgeSessionManager {
     const sessionOpts = this._buildOwnerSessionOpts(agent, mm, homeCwd, { current: sessionFilePath }, { current: null }, {
       bridgeContext,
       promptSnapshot,
-      toolNames: entry.toolNames,
     });
     const activeToolNames = this._normalizeToolNames(sessionOpts.activeToolNames);
     delete sessionOpts.activeToolNames;

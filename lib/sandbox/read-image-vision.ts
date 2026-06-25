@@ -39,9 +39,9 @@ function base64ContentHash(data) {
   return crypto.createHash("sha256").update(Buffer.from(String(data || ""), "base64")).digest("hex");
 }
 
-function readImageResourceKey({ sessionPath, filePath, mimeType, data }) {
+function readImageResourceKey({ sessionId, sessionPath, filePath, mimeType, data }) {
   const h = crypto.createHash("sha256");
-  h.update(sessionPath || "");
+  h.update(sessionId || sessionPath || "");
   h.update("\0");
   h.update(filePath || "");
   h.update("\0");
@@ -56,6 +56,7 @@ function mediaItemFromSessionFile(file) {
   return {
     type: "session_file",
     fileId: file.fileId || file.id,
+    sessionId: file.sessionId,
     sessionPath: file.sessionPath,
     filePath: file.filePath,
     filename: file.filename || path.basename(file.filePath || file.label || "read-image"),
@@ -69,6 +70,7 @@ function mediaItemFromSessionFile(file) {
 function registerReadImageSource({
   params,
   cwd,
+  sessionId,
   sessionPath,
   recordFileOperation,
 }) {
@@ -78,6 +80,7 @@ function registerReadImageSource({
   }
   try {
     const sessionFile = serializeSessionFile(recordFileOperation({
+      sessionId,
       sessionPath,
       filePath: absolutePath,
       label: path.basename(absolutePath),
@@ -180,11 +183,13 @@ export function wrapReadImageWithVisionBridge(tool, cwd, {
   getVisionBridge,
   isVisionAuxiliaryEnabled,
   getSessionPath,
+  getSessionIdForPath,
   recordFileOperation,
 }: {
   getVisionBridge?: any;
   isVisionAuxiliaryEnabled?: any;
   getSessionPath?: any;
+  getSessionIdForPath?: any;
   recordFileOperation?: any;
 } = {}) {
   if (!tool || tool.name !== "read" || typeof tool.execute !== "function") return tool;
@@ -204,11 +209,13 @@ export function wrapReadImageWithVisionBridge(tool, cwd, {
       if (!bridge?.prepareResources) return result;
 
       const sessionPath = getToolSessionPath(ctx) || getSessionPath?.() || null;
+      const sessionId = getSessionIdForPath?.(sessionPath) || null;
       const absolutePath = resolveToolPath(params?.path ?? params?.file_path, cwd);
       const label = path.basename(absolutePath || params?.path || "image");
       const resources = images.map((image, index) => {
         const mimeType = firstImageMime(image);
         const key = readImageResourceKey({
+          sessionId,
           sessionPath,
           filePath: absolutePath,
           mimeType,
@@ -255,6 +262,7 @@ export function wrapReadImageWithVisionBridge(tool, cwd, {
       const { sessionFile, warning } = registerReadImageSource({
         params,
         cwd,
+        sessionId,
         sessionPath,
         recordFileOperation,
       });

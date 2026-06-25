@@ -1,4 +1,5 @@
 import { useStore } from './index';
+import { sessionScopedValue } from './session-slice';
 import type { PreviewItem } from '../types';
 import type { EditorView } from '@codemirror/view';
 import type { FloatingAnchorRect, QuotedSelection } from './input-slice';
@@ -253,7 +254,8 @@ function clearSelectionIfInteractionLeavesQuoteAction(targetElement: Element | n
 }
 
 function findMessage(sessionPath: string, messageId: string): ChatMessage | null {
-  const session = useStore.getState().chatSessions[sessionPath];
+  const state = useStore.getState();
+  const session = sessionScopedValue(state, state.chatSessions, sessionPath);
   if (!session) return null;
   for (const item of session.items) {
     if (item.type === 'message' && item.data.id === messageId) return item.data;

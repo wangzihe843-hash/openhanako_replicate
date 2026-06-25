@@ -24,6 +24,7 @@
 import {
   SESSION_PERMISSION_MODES,
   isReadOnlyPermissionMode,
+  normalizeSessionPermissionMode,
 } from "../../core/session-permission-mode.ts";
 
 // 乙策略用的精选集（= 收口前 subagent 的现状）。仅 strip 策略下生效。
@@ -37,18 +38,12 @@ export function resolveSubagentToolStrategy() {
 }
 
 /**
- * 省略 access 时的继承映射：subagent 是后台任务，无法交互确认，所以只有两态——
- * 只读（READ_ONLY）或可操作（OPERATE）。父会话档坍缩到这两态：
- *   - 父只读（plan 模式）→ READ_ONLY（用户在只读态派出，subagent 也只读）
- *   - 父可操作 / 先问(ask) / 未知 → OPERATE（普通态派出即可操作）
- * 为什么 ASK 也坍缩成 OPERATE：ASK 需要逐次人工确认，后台 subagent 没有交互界面，
- * 若透传 ASK，side-effect 工具会等一个永不到来的确认、挂到 run 超时（非预期退化）。
- * 用户若要后台 subagent 只读，用显式 access:"read"。
+ * 省略 access 时像 Codex 一样继承父会话档。后台任务无法交互确认这件事不在这里坍缩成
+ * operate，而是在执行层通过 approvalPolicy:"deny_on_prompt" 返回结构化 unavailable。
  */
 function resolveInheritedMode(parentPermissionMode) {
-  return isReadOnlyPermissionMode(parentPermissionMode)
-    ? SESSION_PERMISSION_MODES.READ_ONLY
-    : SESSION_PERMISSION_MODES.OPERATE;
+  if (parentPermissionMode == null) return SESSION_PERMISSION_MODES.OPERATE;
+  return normalizeSessionPermissionMode(parentPermissionMode);
 }
 
 /**
@@ -72,7 +67,7 @@ function resolvePermissionMode(access, parentPermissionMode) {
   if (access === "write") {
     // 子不超父：父档只读时禁止授予写权限（显式报错，不静默降级）。
     if (isReadOnlyPermissionMode(parentPermissionMode)) throw new SubagentAccessDeniedError();
-    return SESSION_PERMISSION_MODES.OPERATE;
+    return resolveInheritedMode(parentPermissionMode);
   }
   return resolveInheritedMode(parentPermissionMode);
 }

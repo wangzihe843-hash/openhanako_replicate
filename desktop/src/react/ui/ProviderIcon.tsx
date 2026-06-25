@@ -14,12 +14,14 @@ const PROVIDER_TO_ICON: Record<string, string> = {
   moonshot: 'moonshot',
   'kimi-coding': 'kimi',
   zhipu: 'zhipu',
+  'zhipu-coding': 'zhipu',
   siliconflow: 'siliconcloud',
   groq: 'groq',
   mistral: 'mistral',
   minimax: 'minimax',
   'minimax-token-plan': 'minimax',
   openrouter: 'openrouter',
+  fireworks: 'fireworks',
   mimo: 'xiaomimimo',
   'mimo-token-plan': 'xiaomimimo',
   ollama: 'ollama',
@@ -32,7 +34,7 @@ interface ProviderIconProps {
 
 /**
  * 渲染某个模型提供商的单色 logo（fill: currentColor，继承父级文字颜色）。
- * 图标数据由 scripts/gen-provider-icons.mjs 从 @lobehub/icons (MIT) 内联生成。
+ * 图标数据由 scripts/gen-provider-icons.mjs 从 @lobehub/icons (MIT) 和本地 SVG 源内联生成。
  * 未知 provider 回退到系统风格的中性 stroke 占位图标，永不为空、永不报错。
  */
 /** 把 provider id 归一到图标 key，兼容 coding-plan / token-plan / oauth / codex 等变体后缀 */

@@ -5,11 +5,20 @@
  * description 不列举设置，由 search 按需返回匹配结果。
  */
 
+import path from "path";
 import { Type, StringEnum } from "../pi-sdk/index.ts";
 import { t } from "../i18n.ts";
 import themeRegistry from "../../desktop/src/shared/theme-registry.cjs";
 import { parseModelRef } from "../../shared/model-ref.ts";
 import { emitAppEvent } from "../../server/app-events.ts";
+import {
+  EDITABLE_MEMORY_EXPERIMENT_ID,
+  getResolvedExperimentValue,
+} from "../experiments/registry.ts";
+import {
+  readEditableFactsText,
+  writeEditableFactsSection,
+} from "../memory/compile.ts";
 import {
   createSettingsToolResult,
   createSettingsUpdate,
@@ -35,6 +44,7 @@ const THINKING_I18N = {
   "low": "settings.agent.thinkingLevels.low",
   "medium": "settings.agent.thinkingLevels.medium",
   "high": "settings.agent.thinkingLevels.high",
+  "max": "settings.agent.thinkingLevels.max",
   "xhigh": "settings.agent.thinkingLevels.xhigh",
 };
 
@@ -105,6 +115,24 @@ function requireAgentId(agent, key) {
   const agentId = agent?.id || null;
   if (!agentId) throw new Error(`${key} requires target agent`);
   return agentId;
+}
+
+function isEditableMemoryEnabled(engine) {
+  try {
+    return getResolvedExperimentValue(engine?.preferences, EDITABLE_MEMORY_EXPERIMENT_ID) === true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveAgentMemoryPaths(agent, key) {
+  const memoryMdPath = agent?.memoryMdPath
+    || (agent?.agentDir ? path.join(agent.agentDir, "memory", "memory.md") : null);
+  if (!memoryMdPath) throw new Error(`${key} requires target agent memory path`);
+  return {
+    memoryMdPath,
+    memoryDir: path.dirname(memoryMdPath),
+  };
 }
 
 const USER_ONLY_SETTINGS = {
@@ -181,11 +209,20 @@ const SETTINGS_REGISTRY = {
   thinking_level: {
     type: "list",
     get label() { return t("toolDef.updateSettings.thinkingBudget"); },
-    options: ["auto", "off", "low", "medium", "high", "xhigh"],
+    options: ["auto", "off", "low", "medium", "high", "max"],
     get optionLabels() { return i18nLabels(THINKING_I18N); },
     searchTerms: ["reasoning", "推理", "思考", "推論"],
-    get: (engine, _agent) => engine.getDefaultThinkingLevel?.() || engine.preferences.getThinkingLevel() || "medium",
+    get: (engine, _agent) => {
+      if (engine.currentSessionPath && typeof engine.getSessionThinkingLevel === "function") {
+        const sessionLevel = engine.getSessionThinkingLevel(engine.currentSessionPath);
+        if (sessionLevel) return sessionLevel;
+      }
+      return engine.getDefaultThinkingLevel?.() || engine.preferences.getThinkingLevel() || "medium";
+    },
     apply: (engine, _agent, v) => {
+      if (engine.currentSessionPath && typeof engine.setSessionThinkingLevel === "function") {
+        return engine.setSessionThinkingLevel(engine.currentSessionPath, v);
+      }
       if (typeof engine.setDefaultThinkingLevel === "function") {
         return engine.setDefaultThinkingLevel(v);
       }
@@ -201,6 +238,35 @@ const SETTINGS_REGISTRY = {
     apply: (engine, agent, v) => {
       if (!agent) throw new Error("no active agent");
       agent.updateConfig({ memory: { enabled: v === true || v === "true" } });
+    },
+  },
+  "memory.facts": {
+    type: "text",
+    get label() { return t("toolDef.updateSettings.memoryFacts"); },
+    get description() { return t("toolDef.updateSettings.memoryFactsDesc"); },
+    scope: "agent",
+    searchTerms: ["facts", "editable memory", "memory facts", "记忆事实", "重要事实", "可编辑记忆"],
+    get: (engine, agent) => {
+      if (!agent) return null;
+      if (!isEditableMemoryEnabled(engine)) return t("toolDef.updateSettings.memoryFactsDisabled");
+      try {
+        const { memoryDir } = resolveAgentMemoryPaths(agent, "memory.facts");
+        return readEditableFactsText(memoryDir);
+      } catch {
+        return null;
+      }
+    },
+    apply: async (engine, agent, v) => {
+      if (!agent) throw new Error("no active agent");
+      if (!isEditableMemoryEnabled(engine)) {
+        throw new Error(t("toolDef.updateSettings.memoryFactsDisabled"));
+      }
+      const { memoryDir, memoryMdPath } = resolveAgentMemoryPaths(agent, "memory.facts");
+      writeEditableFactsSection(memoryDir, v, {
+        summaryManager: agent.summaryManager,
+        memoryMdPath,
+      });
+      await engine.updateConfig?.({}, { agentId: agent.id });
     },
   },
   "experience.enabled": {

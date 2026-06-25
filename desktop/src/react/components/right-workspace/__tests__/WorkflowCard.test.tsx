@@ -32,7 +32,7 @@ describe('WorkflowCard', () => {
   it('无 workflow 返回 null（subagent 不算）', () => {
     mockState.agentActivitiesBySession = { '/s/a.jsonl': [wf({ id: 's1', kind: 'subagent' })] };
     const { container } = render(<WorkflowCard />);
-    expect(container.querySelector('.jian-card')).toBeNull();
+    expect(container.querySelector('.universal-card')).toBeNull();
   });
 
   it('workflow 行显示 agent 数（= 子节点数），未展开不列节点', () => {

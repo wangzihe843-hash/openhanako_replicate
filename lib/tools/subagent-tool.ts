@@ -46,6 +46,7 @@ function directThreadSnapshot(thread) {
     access: thread.access || null,
     agentId: thread.agentId || null,
     agentName: thread.agentName || null,
+    childSessionId: thread.childSessionId || null,
     childSessionPath: thread.childSessionPath || null,
     summary: thread.summary || null,
   };
@@ -86,6 +87,42 @@ function resolveAgentIdentity(listAgents, currentAgentId, agentId) {
     agentId: actualAgentId,
     agentName: target?.name || target?.agentName || actualAgentId,
   });
+}
+
+function sessionIdForPath(deps, sessionPath) {
+  const sessionId = deps.getSessionIdForPath?.(sessionPath);
+  return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : null;
+}
+
+function textOrNull(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function childSessionRefFromReady(deps, sessionPath, ready = null) {
+  const readyObj = ready && typeof ready === "object" ? ready : null;
+  const readyPath = textOrNull(readyObj?.sessionPath) || textOrNull(sessionPath);
+  const sessionId = textOrNull(readyObj?.sessionId) || sessionIdForPath(deps, readyPath);
+  return {
+    sessionId,
+    sessionPath: readyPath,
+  };
+}
+
+function parentSessionRefForPath(deps, sessionPath) {
+  const sessionId = sessionIdForPath(deps, sessionPath);
+  return sessionId ? { sessionId, sessionPath } : null;
+}
+
+function parentSessionInputForPath(deps, sessionPath) {
+  return parentSessionRefForPath(deps, sessionPath) || sessionPath;
+}
+
+function sameParentSession(deps, thread, parentSessionPath) {
+  if (!thread || !parentSessionPath) return false;
+  const parentSessionId = sessionIdForPath(deps, parentSessionPath);
+  const threadSessionId = thread.parentSessionId || sessionIdForPath(deps, thread.parentSessionPath);
+  if (parentSessionId && threadSessionId) return parentSessionId === threadSessionId;
+  return thread.parentSessionPath === parentSessionPath;
 }
 
 function applyRequestedAgentMetadata(target, requestedIdentity) {
@@ -166,6 +203,7 @@ function normalizeSubagentOutcome(result) {
  * @param {() => import("../subagent-run-store.ts").SubagentRunStore|null} [deps.getSubagentRunStore]
  * @param {() => import("../subagent-thread-store.ts").SubagentThreadStore|null} [deps.getSubagentThreadStore]
  * @param {() => string|null} deps.getSessionPath
+ * @param {(sessionPath: string) => string|null} [deps.getSessionIdForPath] - parent session 的稳定身份
  * @param {(sessionPath: string) => string|null} [deps.getSessionPermissionMode] - 父会话当前权限档（operate/ask/read_only）；省略 access 时 subagent 据此继承
  * @param {() => string|null} [deps.getParentCwd] - parent session 当前工作目录，subagent 继承它
  * @param {() => Array} [deps.listAgents]
@@ -173,16 +211,20 @@ function normalizeSubagentOutcome(result) {
  * @param {(event: object, sessionPath?: string|null) => void} [deps.emitEvent]
  */
 export function createSubagentTool(deps) {
-  const activeBySession = new Map(); // sessionPath → count
+  const activeBySession = new Map(); // sessionId || legacy sessionPath → count
   const MAX_PER_SESSION = 10; // 单对话最多 10 个并行 subagent（Codex/cc 式）
   const MAX_GLOBAL = 20;
 
-  function getActive(sp) { return activeBySession.get(sp) || 0; }
-  function incActive(sp) { activeBySession.set(sp, getActive(sp) + 1); }
-  function decActive(sp) {
-    const n = getActive(sp) - 1;
-    if (n <= 0) activeBySession.delete(sp);
-    else activeBySession.set(sp, n);
+  function sessionIdentityKey(sessionPath) {
+    if (!sessionPath) return null;
+    return sessionIdForPath(deps, sessionPath) || sessionPath;
+  }
+  function getActive(sessionKey) { return activeBySession.get(sessionKey) || 0; }
+  function incActive(sessionKey) { activeBySession.set(sessionKey, getActive(sessionKey) + 1); }
+  function decActive(sessionKey) {
+    const n = getActive(sessionKey) - 1;
+    if (n <= 0) activeBySession.delete(sessionKey);
+    else activeBySession.set(sessionKey, n);
   }
   function totalActive() {
     let sum = 0;
@@ -249,6 +291,9 @@ export function createSubagentTool(deps) {
       const requestedIdentity = resolveAgentIdentity(deps.listAgents, deps.currentAgentId, targetAgentId);
 
       const parentSessionPath = getToolSessionPath(ctx);
+      const parentSessionKey = sessionIdentityKey(parentSessionPath);
+      const parentSessionRef = parentSessionRefForPath(deps, parentSessionPath);
+      const parentSessionId = parentSessionRef?.sessionId || null;
       const parentCwd = getToolSessionCwd(ctx) || deps.getParentCwd?.() || null;
 
       // Direct subagent：每次创建都会生成一个系统身份 threadId。label/legacy instance
@@ -275,7 +320,7 @@ export function createSubagentTool(deps) {
       }
 
       // 检查并发限制：per-session + global
-      if (parentSessionPath && getActive(parentSessionPath) >= MAX_PER_SESSION) {
+      if (parentSessionKey && getActive(parentSessionKey) >= MAX_PER_SESSION) {
         return {
           content: [{ type: "text", text: t("error.subagentMaxConcurrent", { max: MAX_PER_SESSION }) }],
         };
@@ -306,7 +351,7 @@ export function createSubagentTool(deps) {
 
       store.defer(
         taskId,
-        parentSessionPath,
+        parentSessionInputForPath(deps, parentSessionPath),
         applyRequestedAgentMetadata(
           mergeExecutorMetadata({
             type: "subagent",
@@ -321,6 +366,7 @@ export function createSubagentTool(deps) {
         ),
       );
       runStore?.register?.(taskId, {
+        parentSessionId,
         parentSessionPath,
         threadId,
         threadKind,
@@ -336,6 +382,7 @@ export function createSubagentTool(deps) {
       const hub = deps.getActivityHub?.();
       hub?.upsert({
         id: taskId, kind: "subagent", status: "running",
+        sessionId: parentSessionId,
         sessionPath: parentSessionPath,
         threadId,
         threadKind,
@@ -354,7 +401,9 @@ export function createSubagentTool(deps) {
       const registry = deps.getTaskRegistry?.();
       registry?.register(taskId, {
         type: "subagent",
+        parentSessionId,
         parentSessionPath,
+        parentSessionRef,
         meta: applyRequestedAgentMetadata(
           mergeExecutorMetadata({ summary: taskSummary }, requestedIdentity),
           requestedIdentity,
@@ -362,13 +411,14 @@ export function createSubagentTool(deps) {
       });
       deps.setSubagentController?.(taskId, controller);
 
-      incActive(parentSessionPath);
+      incActive(parentSessionKey);
 
       // 原子执行，fire-and-forget。sessionPath 通过 onSessionReady 回调后补到前端。
       const executeForAgent = (agentId) => {
         const executorIdentity = resolveAgentIdentity(deps.listAgents, deps.currentAgentId, agentId);
         threadStore?.beginRun?.(threadId, {
           kind: threadKind,
+          parentSessionId,
           parentSessionPath,
           agentId: executorIdentity?.executorAgentId || agentId || realAgentId || null,
           agentName: executorIdentity?.executorAgentNameSnapshot || null,
@@ -394,16 +444,21 @@ export function createSubagentTool(deps) {
             ...(toolAccess.customToolFilter ? { toolFilter: toolAccess.customToolFilter } : {}),
             ...(toolAccess.builtinToolFilter ? { builtinFilter: toolAccess.builtinToolFilter } : {}),
             permissionMode: toolAccess.permissionMode,
+            approvalPolicy: "deny_on_prompt",
+            allowHumanApproval: false,
             subagentContext: true,
             subagentTaskId: taskId,
             fileReadSessionPaths: parentSessionPath ? [parentSessionPath] : [],
             signal: controller.signal,
-	            onSessionReady: (sp) => {
+	            onSessionReady: (sp, ready = null) => {
+              const childSessionRef = childSessionRefFromReady(deps, sp, ready);
+              const childSessionPath = childSessionRef.sessionPath || sp;
 	              // session 创建后立即后补 streamKey + 实际执行者身份
 	              deps.emitEvent?.({
 	                type: "block_update", taskId,
 	                patch: {
-	                  streamKey: sp,
+	                  ...(childSessionRef.sessionId ? { sessionId: childSessionRef.sessionId } : {}),
+	                  streamKey: childSessionPath,
 	                  threadId,
 	                  threadKind,
 	                  agentId: executorIdentity?.executorAgentId || null,
@@ -417,7 +472,8 @@ export function createSubagentTool(deps) {
               // 持久化子代理 sessionPath + 实际执行者身份到 deferred store meta（历史加载用）
               const task = store.query(taskId);
               if (task?.meta) {
-                task.meta.sessionPath = sp;
+                if (childSessionRef.sessionId) task.meta.sessionId = childSessionRef.sessionId;
+                task.meta.sessionPath = childSessionPath;
                 task.meta.threadId = threadId;
                 task.meta.threadKind = threadKind;
                 task.meta.label = label;
@@ -426,7 +482,8 @@ export function createSubagentTool(deps) {
                 applyRequestedAgentMetadata(task.meta, requestedIdentity);
               }
               store._save?.();
-              runStore?.attachSession?.(taskId, sp, {
+              runStore?.attachSession?.(taskId, childSessionPath, {
+                childSessionId: childSessionRef.sessionId,
                 threadId,
                 threadKind,
                 label,
@@ -438,21 +495,23 @@ export function createSubagentTool(deps) {
                 executorMetaVersion: executorIdentity?.executorMetaVersion || null,
               });
               hub?.upsert({
-                id: taskId, childSessionPath: sp, threadId, threadKind,
+                id: taskId, childSessionId: childSessionRef.sessionId, childSessionPath, threadId, threadKind,
                 agentId: executorIdentity?.executorAgentId || null,
                 agentName: executorIdentity?.executorAgentNameSnapshot || null,
                 label,
                 access,
               });
-              threadStore?.attachSession?.(threadId, sp, {
+              threadStore?.attachSession?.(threadId, childSessionPath, {
+                parentSessionId,
                 parentSessionPath,
+                childSessionId: childSessionRef.sessionId,
                 agentId: executorIdentity?.executorAgentId || agentId || realAgentId || null,
                 agentName: executorIdentity?.executorAgentNameSnapshot || null,
                 label,
                 access,
                 summary: taskSummary,
               });
-              void deps.persistSubagentSessionMeta?.(sp, executorIdentity)?.catch?.(() => {});
+              void deps.persistSubagentSessionMeta?.(childSessionPath, executorIdentity)?.catch?.(() => {});
             },
           },
         );
@@ -541,7 +600,7 @@ export function createSubagentTool(deps) {
         clearTimeout(timeoutTimer);
         deps.removeSubagentController?.(taskId);
         registry?.remove(taskId);
-        decActive(parentSessionPath);
+        decActive(parentSessionKey);
       });
 
       return {
@@ -561,6 +620,7 @@ export function createSubagentTool(deps) {
           executorAgentId: requestedIdentity?.executorAgentId || null,
           executorAgentNameSnapshot: requestedIdentity?.executorAgentNameSnapshot || null,
           executorMetaVersion: requestedIdentity?.executorMetaVersion || null,
+          sessionId: null,
           sessionPath: null,  // 通过 block_update 后补 streamKey
           streamStatus: "running",
         },
@@ -584,6 +644,8 @@ export function createSubagentReplyTool(deps) {
     }),
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       const parentSessionPath = getToolSessionPath(ctx);
+      const parentSessionRef = parentSessionRefForPath(deps, parentSessionPath);
+      const parentSessionId = parentSessionRef?.sessionId || null;
       const parentCwd = getToolSessionCwd(ctx) || deps.getParentCwd?.() || null;
       const threadStore = deps.getSubagentThreadStore?.() || null;
       if (!threadStore) {
@@ -591,7 +653,7 @@ export function createSubagentReplyTool(deps) {
       }
       const threadId = typeof params.threadId === "string" ? params.threadId.trim() : "";
       const initialThread = threadStore.get(threadId);
-      const validation = validateDirectThreadForReply(initialThread, parentSessionPath);
+      const validation = validateDirectThreadForReply(initialThread, parentSessionPath, (thread, sp) => sameParentSession(deps, thread, sp));
       if (validation) return validation;
 
       const store = deps.getDeferredStore?.();
@@ -623,7 +685,7 @@ export function createSubagentReplyTool(deps) {
       const executorIdentity = resolveAgentIdentity(deps.listAgents, deps.currentAgentId, initialThread.agentId || undefined);
       const queued = threadStore.isBusy?.(threadId) === true;
 
-      store.defer(taskId, parentSessionPath, mergeExecutorMetadata({
+      store.defer(taskId, parentSessionInputForPath(deps, parentSessionPath), mergeExecutorMetadata({
         type: "subagent",
         interlude: true,
         threadId,
@@ -633,6 +695,7 @@ export function createSubagentReplyTool(deps) {
         summary: taskSummary,
       }, executorIdentity));
       runStore?.register?.(taskId, {
+        parentSessionId,
         parentSessionPath,
         threadId,
         threadKind,
@@ -645,6 +708,7 @@ export function createSubagentReplyTool(deps) {
       });
       hub?.upsert({
         id: taskId, kind: "subagent", status: "running",
+        sessionId: parentSessionId,
         sessionPath: parentSessionPath,
         threadId,
         threadKind,
@@ -660,7 +724,9 @@ export function createSubagentReplyTool(deps) {
       let timeoutTimer = null;
       registry?.register(taskId, {
         type: "subagent",
+        parentSessionId,
         parentSessionPath,
+        parentSessionRef,
         meta: mergeExecutorMetadata({ summary: taskSummary }, executorIdentity),
       });
       deps.setSubagentController?.(taskId, controller);
@@ -675,6 +741,7 @@ export function createSubagentReplyTool(deps) {
         }
         threadStore.beginRun(threadId, {
           kind: "direct",
+          parentSessionId,
           parentSessionPath,
           agentId: latest.agentId || null,
           agentName: latest.agentName || null,
@@ -694,16 +761,21 @@ export function createSubagentReplyTool(deps) {
           ...(toolAccess.customToolFilter ? { toolFilter: toolAccess.customToolFilter } : {}),
           ...(toolAccess.builtinToolFilter ? { builtinFilter: toolAccess.builtinToolFilter } : {}),
           permissionMode: toolAccess.permissionMode,
+          approvalPolicy: "deny_on_prompt",
+          allowHumanApproval: false,
           subagentContext: true,
           subagentTaskId: taskId,
           subagentThreadId: threadId,
           subagentThreadKind: threadKind,
           fileReadSessionPaths: parentSessionPath ? [parentSessionPath] : [],
           signal: controller.signal,
-          onSessionReady: (sp) => {
+          onSessionReady: (sp, ready = null) => {
+            const childSessionRef = childSessionRefFromReady(deps, sp, ready);
+            const childSessionPath = childSessionRef.sessionPath || sp;
             const task = store.query(taskId);
             if (task?.meta) {
-              task.meta.sessionPath = sp;
+              if (childSessionRef.sessionId) task.meta.sessionId = childSessionRef.sessionId;
+              task.meta.sessionPath = childSessionPath;
               task.meta.threadId = threadId;
               task.meta.threadKind = threadKind;
               task.meta.label = latest.label || null;
@@ -711,7 +783,8 @@ export function createSubagentReplyTool(deps) {
               mergeExecutorMetadata(task.meta, executorIdentity);
             }
             store._save?.();
-            runStore?.attachSession?.(taskId, sp, {
+            runStore?.attachSession?.(taskId, childSessionPath, {
+              childSessionId: childSessionRef.sessionId,
               threadId,
               threadKind,
               label: latest.label || null,
@@ -721,14 +794,16 @@ export function createSubagentReplyTool(deps) {
               executorMetaVersion: executorIdentity?.executorMetaVersion || null,
             });
             hub?.upsert({
-              id: taskId, childSessionPath: sp, threadId, threadKind,
+              id: taskId, childSessionId: childSessionRef.sessionId, childSessionPath, threadId, threadKind,
               agentId: executorIdentity?.executorAgentId || null,
               agentName: executorIdentity?.executorAgentNameSnapshot || null,
               label: latest.label || null,
               access: access || latest.access || null,
             });
-            threadStore.attachSession(threadId, sp, {
+            threadStore.attachSession(threadId, childSessionPath, {
+              parentSessionId,
               parentSessionPath,
+              childSessionId: childSessionRef.sessionId,
               agentId: latest.agentId || null,
               agentName: latest.agentName || null,
               label: latest.label || null,
@@ -804,6 +879,7 @@ export function createSubagentReplyTool(deps) {
           task: params.task,
           taskTitle,
           ...directThreadSnapshot(initialThread),
+          sessionId: initialThread.childSessionId || sessionIdForPath(deps, initialThread.childSessionPath) || null,
           sessionPath: initialThread.childSessionPath || null,
           streamStatus: "running",
         },
@@ -831,7 +907,7 @@ export function createSubagentCloseTool(deps) {
       const thread = threadStore.get(threadId);
       if (!thread) return errorResult(`Unknown subagent thread: ${threadId}`, { errorCode: "SUBAGENT_THREAD_NOT_FOUND", threadId });
       if (thread.kind !== "direct") return errorResult(`Subagent thread is not a direct instance: ${threadId}`, { errorCode: "SUBAGENT_THREAD_NOT_DIRECT", threadId });
-      if (thread.parentSessionPath !== parentSessionPath) {
+      if (!sameParentSession(deps, thread, parentSessionPath)) {
         return errorResult(`Subagent thread does not belong to this session: ${threadId}`, { errorCode: "SUBAGENT_THREAD_NOT_IN_SESSION", threadId });
       }
       if (thread.status !== "open") {
@@ -857,7 +933,7 @@ export function createSubagentCloseTool(deps) {
   };
 }
 
-function validateDirectThreadForReply(thread, parentSessionPath) {
+function validateDirectThreadForReply(thread, parentSessionPath, matchesParent = null) {
   if (!thread) {
     return errorResult("Unknown subagent thread", { errorCode: "SUBAGENT_THREAD_NOT_FOUND" });
   }
@@ -867,7 +943,7 @@ function validateDirectThreadForReply(thread, parentSessionPath) {
       threadId: thread.threadId,
     });
   }
-  if (thread.parentSessionPath !== parentSessionPath) {
+  if (matchesParent ? !matchesParent(thread, parentSessionPath) : thread.parentSessionPath !== parentSessionPath) {
     return errorResult(`Subagent thread does not belong to this session: ${thread.threadId}`, {
       errorCode: "SUBAGENT_THREAD_NOT_IN_SESSION",
       threadId: thread.threadId,

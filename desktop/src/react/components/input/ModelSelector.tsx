@@ -1,10 +1,11 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useStore } from '../../stores';
+import { sessionScopedValue } from '../../stores/session-slice';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useI18n } from '../../hooks/use-i18n';
 import type { Model } from '../../types';
 import type { SessionModel } from '../../stores/chat-types';
-import { SelectWidget, ProviderGroupHeader, selectWidgetStyles, type SelectOption } from '@/ui';
+import { SelectWidget, ProviderIcon, ProviderGroupHeader, selectWidgetStyles, type SelectOption } from '@/ui';
 import styles from './InputArea.module.css';
 
 export function ModelSelector({ models, sessionModel, isStreaming = false }: {
@@ -32,12 +33,13 @@ export function ModelSelector({ models, sessionModel, isStreaming = false }: {
 
   const switchModel = useCallback(async (modelId: string, provider?: string) => {
     try {
-      const { currentSessionPath, pendingNewSession, chatSessions, sessionModelsByPath } = useStore.getState();
-      const sessionHasMessages = !!(currentSessionPath && chatSessions[currentSessionPath]?.items?.length);
+      const state = useStore.getState();
+      const { currentSessionPath, pendingNewSession, chatSessions, sessionModelsByPath } = state;
+      const sessionHasMessages = !!(currentSessionPath && sessionScopedValue(state, chatSessions, currentSessionPath)?.items?.length);
 
       if (sessionHasMessages && currentSessionPath) {
         // Same-model guard：严格复合键比较。sm 缺 provider 时视为不可比，走 global 当前。
-        const sm = sessionModelsByPath[currentSessionPath];
+        const sm = sessionScopedValue(state, sessionModelsByPath, currentSessionPath);
         const useSession = !!(sm?.id && sm?.provider);
         const cur = useSession ? sm : models.find(m => m.isCurrent);
         if (cur && modelId === cur.id && provider === cur.provider) return;
@@ -173,7 +175,10 @@ export function ModelSelector({ models, sessionModel, isStreaming = false }: {
       triggerClassName={`${styles['model-pill']}${loading ? ` ${styles['model-pill-disabled']}` : ''}`}
       renderTrigger={() => (
         <>
-          <span>{label}</span>
+          {current?.provider && (
+            <ProviderIcon provider={current.provider} className={styles['model-provider-icon']} />
+          )}
+          <span className={styles['model-pill-label']}>{label}</span>
           <span className={styles['model-arrow']}>▾</span>
         </>
       )}

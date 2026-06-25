@@ -128,8 +128,8 @@ describe("archive route: mtime semantics", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(engine.discardSessionRuntime).toHaveBeenCalledWith(src, "parent session archived");
-    expect(engine.discardSessionRuntime).toHaveBeenCalledWith(dest, "parent session archived");
+    expect(engine.discardSessionRuntime).toHaveBeenCalledWith(src, "parent session archived", { skipMemory: true });
+    expect(engine.discardSessionRuntime).toHaveBeenCalledWith(dest, "parent session archived", { skipMemory: true });
   });
 
   it("invalidates rc attachment and pending that point at the archived session", async () => {

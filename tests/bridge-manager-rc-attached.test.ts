@@ -251,6 +251,34 @@ describe("BridgeManager RC attached-session routing", () => {
     expect(adapter.sendReply).toHaveBeenCalledWith("owner123", "桌面端回复");
   });
 
+  it("keeps rc mirror stream state by sessionId when the desktop locator moves", async () => {
+    const { bm, adapter, engine, rcState } = createMocks();
+    engine.getSessionIdForPath = vi.fn((sessionPath) => (
+      sessionPath === "/s-original.jsonl" || sessionPath === "/s-moved.jsonl"
+        ? "sess_rc_mirror"
+        : null
+    ));
+    rcState.attach("tg_dm_owner123@hana", "/s-original.jsonl", {
+      platform: "telegram",
+      chatId: "owner123",
+      agentId: "hana",
+    });
+
+    await bm._handleRcMirrorEvent({
+      type: "session_user_message",
+      message: { text: "电脑端发起的问题", source: "desktop" },
+    }, "/s-original.jsonl");
+    await bm._handleRcMirrorEvent({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "移动后回复" },
+    }, "/s-moved.jsonl");
+    await bm._handleRcMirrorEvent({ type: "session_status", isStreaming: false }, "/s-moved.jsonl");
+
+    expect(adapter.sendReply).toHaveBeenCalledWith("owner123", "移动后回复");
+    expect(bm._rcMirrorStreams.has("sess_rc_mirror")).toBe(false);
+    expect(bm._rcMirrorStreams.has("/s-original.jsonl")).toBe(false);
+  });
+
   it("does not mirror bridge_rc display messages back to the same bridge session", async () => {
     const { bm, adapter, rcState } = createMocks();
     rcState.attach("tg_dm_owner123@hana", "/s.jsonl", {

@@ -34,10 +34,24 @@ vi.mock('../../settings/actions', () => ({
 }));
 
 vi.mock('@/ui', () => ({
-  SelectWidget: ({ value }: { value?: string }) => (
-    <div data-testid="model-select">{value || ''}</div>
-  ),
+  SelectWidget: ({
+    value,
+    options = [],
+    renderTrigger,
+  }: {
+    value?: string;
+    options?: Array<{ value: string; label: string; group?: string }>;
+    renderTrigger?: (option: { value: string; label: string; group?: string } | undefined, isOpen: boolean) => React.ReactNode;
+  }) => {
+    const current = options.find(o => o.value === value);
+    return (
+      <div data-testid="model-select">
+        {renderTrigger ? renderTrigger(current, false) : (value || '')}
+      </div>
+    );
+  },
   ProviderGroupHeader: ({ provider }: { provider: string }) => <div>{provider}</div>,
+  ProviderIcon: ({ provider }: { provider?: string }) => <svg data-testid={`provider-icon-${provider || 'none'}`} />,
   selectWidgetStyles: { providerInset: 'providerInset' },
 }));
 
@@ -143,6 +157,27 @@ describe('AgentTab settings agent selection', () => {
 
     expect(screen.getByTestId('memory-section')).toHaveAttribute('data-has-utility', 'loading');
     expect(screen.getByTestId('memory-section')).toHaveAttribute('data-memory-enabled', 'true');
+  });
+
+  it('shows the provider icon in the selected agent chat model trigger', async () => {
+    hanaFetchMock.mockImplementation(async (_url: string, _opts?: RequestInit): Promise<MockResponse> => ({
+      json: async () => ({
+        models: [{ id: 'glm-5.2', name: 'GLM-5.2', provider: 'zhipu-coding' }],
+      }),
+    }));
+    useSettingsStore.setState({
+      settingsConfig: {
+        agent: { name: 'Hana', yuan: 'hanako' },
+        memory: { enabled: true },
+        models: { chat: { id: 'glm-5.2', provider: 'zhipu-coding' } },
+      },
+    });
+    const { AgentTab } = await import('../../settings/tabs/AgentTab');
+
+    render(<AgentTab />);
+
+    expect(await screen.findByTestId('provider-icon-zhipu-coding')).toBeTruthy();
+    expect(screen.getByTestId('model-select')).toHaveTextContent('GLM-5.2');
   });
 
   it('confirms character-card export from the live preview overlay', async () => {

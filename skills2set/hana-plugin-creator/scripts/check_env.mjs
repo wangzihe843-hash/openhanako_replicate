@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 const ENV_VAR = "HANA_PLUGIN_CREATOR_PYTHON";
-const MIN_PYTHON_VERSION = [3, 10, 0];
+const MIN_PYTHON_VERSION = [3, 9, 0];
 const MIN_PYTHON_VERSION_TEXT = `${MIN_PYTHON_VERSION[0]}.${MIN_PYTHON_VERSION[1]}`;
 const CHECK_TIMEOUT_MS = 10_000;
 const CAPABILITIES = {

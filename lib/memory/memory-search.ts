@@ -14,14 +14,35 @@ import { createModuleLogger } from "../debug-log.ts";
 
 const log = createModuleLogger("memory-search");
 
+const CHANNEL_SESSION_PREFIX = "channel-";
+
+/**
+ * 会话作用域过滤：频道 phone 会话默认看不到「其它频道」的事实。
+ * 通用事实（session_id 为空或非频道）和当前频道的事实始终可见，
+ * 跨频道检索必须显式传 cross_channel: true（#1670 群聊记忆混淆）。
+ */
+function factVisibleInConversationScope(row, scope, crossChannel) {
+  if (!scope || scope.kind !== "channel") return true;
+  const sessionId = typeof row?.session_id === "string" ? row.session_id : "";
+  if (!sessionId.startsWith(CHANNEL_SESSION_PREFIX)) return true;
+  if (sessionId === `${CHANNEL_SESSION_PREFIX}${scope.channelId}`) return true;
+  return crossChannel === true;
+}
+
 /**
  * 创建 search_memory 工具定义
  * @param {import('./fact-store.ts').FactStore} factStore
  * @param {object} [opts]
  * @param {function} [opts.getMemoryMasterEnabled] - 返回 agent 级别记忆总开关状态
+ * @param {{kind:"channel", channelId:string}} [opts.conversationScope]
+ *   - 会话作用域。频道 phone 会话注入后，默认排除其它频道的事实；
+ *     scoped 实例的 schema 额外暴露 cross_channel 参数供显式跨频道检索
  * @returns {import('../pi-sdk/index.ts').ToolDefinition}
  */
-export function createMemorySearchTool(factStore, opts = {}) {
+export function createMemorySearchTool(factStore, opts: any = {}) {
+  const conversationScope = opts.conversationScope?.kind === "channel" && opts.conversationScope.channelId
+    ? { kind: "channel" as const, channelId: String(opts.conversationScope.channelId) }
+    : null;
   return {
     name: "search_memory",
     label: t("error.memorySearchLabel"),
@@ -39,6 +60,11 @@ export function createMemorySearchTool(factStore, opts = {}) {
       date_to: Type.Optional(
         Type.String({ description: t("error.memorySearchDateToDesc") }),
       ),
+      ...(conversationScope ? {
+        cross_channel: Type.Optional(
+          Type.Boolean({ description: t("error.memorySearchCrossChannelDesc") }),
+        ),
+      } : {}),
     }),
     execute: async (_toolCallId, params) => {
       try {
@@ -58,6 +84,9 @@ export function createMemorySearchTool(factStore, opts = {}) {
         let results = [];
         const seenIds = new Set();
 
+        const crossChannel = conversationScope ? params.cross_channel === true : false;
+        const visibleInScope = (row) => factVisibleInConversationScope(row, conversationScope, crossChannel);
+
         // 策略 1：标签匹配（优先）
         if (params.tags && params.tags.length > 0) {
           const tagResults = factStore.searchByTags(
@@ -66,6 +95,7 @@ export function createMemorySearchTool(factStore, opts = {}) {
             15,
           );
           for (const r of tagResults) {
+            if (!visibleInScope(r)) continue;
             seenIds.add(r.id);
             results.push({ ...r, source: "tag" });
           }
@@ -76,6 +106,7 @@ export function createMemorySearchTool(factStore, opts = {}) {
           const ftsResults = factStore.searchFullText(params.query, 10);
           for (const r of ftsResults) {
             if (seenIds.has(r.id)) continue;
+            if (!visibleInScope(r)) continue;
             seenIds.add(r.id);
             results.push({ ...r, source: "fts" });
           }

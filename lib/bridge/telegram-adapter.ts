@@ -10,6 +10,8 @@ import { debugLog } from "../debug-log.ts";
 import { telegramBotOptions } from "../net/outbound-proxy.ts";
 import { createMediaCapabilities } from "./media-capabilities.ts";
 import { createStreamingCapabilities } from "./streaming-capabilities.ts";
+import { createReceiptCapabilities } from "./receipt-capabilities.ts";
+import { renderTelegramRichMessage } from "./bridge-presentation.ts";
 import { formatTelegramMessageChunks } from "./telegram-format.ts";
 import { createModuleLogger } from "../debug-log.ts";
 
@@ -52,6 +54,25 @@ export const TELEGRAM_STREAMING_CAPABILITIES = createStreamingCapabilities({
   minIntervalMs: 500,
   maxChars: 4096,
   source: "https://core.telegram.org/bots/api#sendmessagedraft",
+});
+
+export const TELEGRAM_RICH_STREAMING_CAPABILITIES = createStreamingCapabilities({
+  platform: "telegram",
+  mode: "rich_draft",
+  scopes: ["dm"],
+  minIntervalMs: 500,
+  maxChars: 32768,
+  renderer: "telegram_rich_markdown",
+  requiresRichStreaming: true,
+  source: "https://core.telegram.org/bots/api#sendrichmessagedraft",
+});
+
+export const TELEGRAM_RECEIPT_CAPABILITIES = createReceiptCapabilities({
+  platform: "telegram",
+  mode: "native_typing",
+  scopes: ["dm", "group"],
+  refreshIntervalMs: 4000,
+  source: "https://core.telegram.org/bots/api#sendchataction",
 });
 
 /** 从 URL 安全提取扩展名（小写，无点号） */
@@ -201,9 +222,11 @@ export function createTelegramAdapter({ token, agentId, onMessage, onStatus }) {
 
   return {
     mediaCapabilities: TELEGRAM_MEDIA_CAPABILITIES,
+    richStreamingCapabilities: TELEGRAM_RICH_STREAMING_CAPABILITIES,
     streamingCapabilities: TELEGRAM_STREAMING_CAPABILITIES,
+    receiptCapabilities: TELEGRAM_RECEIPT_CAPABILITIES,
 
-    async sendTypingIndicator(chatId) {
+    async sendTypingIndicator(chatId, options = {}) {
       try { await bot.sendChatAction(chatId, "typing"); } catch {}
     },
 
@@ -239,6 +262,42 @@ export function createTelegramAdapter({ token, agentId, onMessage, onStatus }) {
       const messageOptions = telegramMessageOptions(options);
       const form = { chat_id: chatId, draft_id: draftId, text, ...(messageOptions || {}) };
       return bot._request("sendMessageDraft", {
+        form,
+      });
+    },
+
+    /** Rich streaming draft（Bot API sendRichMessageDraft） */
+    async sendRichDraft(chatId, text, options: Record<string, any> = {}) {
+      const draftId = Number(options.draftId);
+      if (!Number.isInteger(draftId) || draftId === 0) {
+        throw new Error("Telegram sendRichDraft requires a non-zero integer draftId");
+      }
+      const messageOptions = telegramMessageOptions(options);
+      const richMessage = renderTelegramRichMessage(text, {
+        includeThinkingPlaceholder: options.includeThinkingPlaceholder,
+        thinkingText: options.thinkingText,
+      });
+      const form = {
+        chat_id: chatId,
+        draft_id: draftId,
+        rich_message: JSON.stringify(richMessage),
+        ...(messageOptions || {}),
+      };
+      return bot._request("sendRichMessageDraft", {
+        form,
+      });
+    },
+
+    /** Persistent Rich Message final send（Bot API sendRichMessage） */
+    async sendRichReply(chatId, text, options: Record<string, any> = {}) {
+      const messageOptions = telegramMessageOptions(options);
+      const richMessage = renderTelegramRichMessage(text);
+      const form = {
+        chat_id: chatId,
+        rich_message: JSON.stringify(richMessage),
+        ...(messageOptions || {}),
+      };
+      return bot._request("sendRichMessage", {
         form,
       });
     },

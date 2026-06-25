@@ -26,6 +26,9 @@ const ALLOWED_PLUGIN_ASSET_EXTENSIONS = new Set([
   ".ttf",
   ".otf",
   ".wasm",
+  ".mp4",
+  ".webm",
+  ".mov",
 ]);
 
 class PluginAssetNotFoundError extends Error {

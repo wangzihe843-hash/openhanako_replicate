@@ -8,14 +8,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- store partial patch + API 响应 JSON */
 
 import { useStore } from './index';
+import { sessionScopedKey, sessionScopedListIncludes, sessionScopedValue } from './session-slice';
 import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
 import { buildItemsFromHistory } from '../utils/history-builder';
 import { migrateLegacyTodos } from '../utils/todo-compat';
 import { loadAvatars as loadAvatarsAction, clearChat as clearChatAction } from './agent-actions';
 import { activateWorkspaceDesk } from './desk-actions';
 import { loadModels } from '../utils/ui-helpers';
-import { updateKeyed } from './create-keyed-slice';
 import { snapshotStreamBuffer, clearSessionStreamMeta, type StreamBufferSnapshot } from './stream-invalidator';
+import { browserStateForPath, setBrowserStateForPath } from './browser-slice';
+import { computerOverlayForSession } from './computer-overlay-slice';
 import { renderMarkdown } from '../utils/markdown';
 import type { ChatMessage, ContentBlock } from './chat-types';
 import { readMessageLiveVersion } from './message-live-version';
@@ -36,6 +38,76 @@ function invalidateSessionSwitches(): void {
 function isCurrentSwitch(version: number, path: string): boolean {
   const state = useStore.getState();
   return version === _switchVersion && state.pendingSessionSwitchPath === path;
+}
+
+function normalizeSessionId(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function mergeSessionLocators(current: Record<string, { path: string | null }> = {}, sessions: any[] = []) {
+  const next = { ...current };
+  for (const session of Array.isArray(sessions) ? sessions : []) {
+    const sessionId = normalizeSessionId(session?.sessionId);
+    if (!sessionId) continue;
+    next[sessionId] = { path: typeof session.path === 'string' ? session.path : null };
+  }
+  return next;
+}
+
+function sessionIdForPathFromState(state: Record<string, any>, path: string | null): string | null {
+  if (!path) return null;
+  const session = (state.sessions || []).find((item: any) => item?.path === path);
+  return normalizeSessionId(session?.sessionId);
+}
+
+function currentSessionIdentityPatch(state: Record<string, any>, path: string | null, sessionId: unknown) {
+  const normalizedSessionId = normalizeSessionId(sessionId) || sessionIdForPathFromState(state, path);
+  return {
+    currentSessionPath: path,
+    currentSessionId: normalizedSessionId,
+    ...(normalizedSessionId ? {
+      sessionLocatorsById: {
+        ...(state.sessionLocatorsById || {}),
+        [normalizedSessionId]: { path },
+      },
+    } : {}),
+  };
+}
+
+function sessionMessagesUrl(path: string, extra: Record<string, string> = {}): string {
+  const state = useStore.getState() as Record<string, any>;
+  const params = new URLSearchParams();
+  params.set('path', path);
+  const sessionId = sessionIdForPathFromState(state, path);
+  if (sessionId) params.set('sessionId', sessionId);
+  for (const [key, value] of Object.entries(extra)) {
+    params.set(key, value);
+  }
+  return `/api/sessions/messages?${params.toString()}`;
+}
+
+function putSessionScopedStateValue(
+  state: Record<string, any>,
+  map: Record<string, any> = {},
+  sessionPath: string,
+  value: any,
+): Record<string, any> {
+  const key = sessionScopedKey(state, sessionPath) || sessionPath;
+  const next = { ...map, [key]: value };
+  if (key !== sessionPath) delete next[sessionPath];
+  return next;
+}
+
+function deleteSessionScopedStateValue(
+  state: Record<string, any>,
+  map: Record<string, any> = {},
+  sessionPath: string,
+): Record<string, any> {
+  const key = sessionScopedKey(state, sessionPath) || sessionPath;
+  const next = { ...map };
+  delete next[key];
+  if (key !== sessionPath) delete next[sessionPath];
+  return next;
 }
 
 function isAbortError(err: unknown): boolean {
@@ -59,7 +131,7 @@ function shouldRestoreInputFocus(path: string | null): boolean {
     return false;
   }
   if (state.settingsModal?.open || state.mediaViewer || state.skillViewerData || state.channelCreateOverlayVisible || state.channelRenameOverlayChannelId) return false;
-  if (path && state.computerOverlayBySession?.[path]) return false;
+  if (path && computerOverlayForSession(state as any, path)) return false;
   return true;
 }
 
@@ -99,12 +171,28 @@ function isDeletedAgentSession(path: string): boolean {
   return findSessionProjection(path)?.agentDeleted === true;
 }
 
-function reconcileStreamingSessionsForPath(streamingSessions: string[] | undefined, path: string, isStreaming: boolean): string[] {
+function filterSessionScopedStateList(state: Record<string, any>, list: string[] | undefined, path: string): string[] {
+  const current = Array.isArray(list) ? list : [];
+  const key = sessionScopedKey(state, path) || path;
+  return current.filter((item) => item !== key && item !== path);
+}
+
+function putSessionScopedStateListValue(state: Record<string, any>, list: string[] | undefined, path: string): string[] {
+  const key = sessionScopedKey(state, path) || path;
+  return [...filterSessionScopedStateList(state, list, path), key];
+}
+
+function reconcileStreamingSessionsForPath(
+  state: Record<string, any>,
+  streamingSessions: string[] | undefined,
+  path: string,
+  isStreaming: boolean,
+): string[] {
   const current = Array.isArray(streamingSessions) ? streamingSessions : [];
   if (isStreaming) {
-    return current.includes(path) ? current : [...current, path];
+    return putSessionScopedStateListValue(state, current, path);
   }
-  return current.filter((sessionPath) => sessionPath !== path);
+  return filterSessionScopedStateList(state, current, path);
 }
 
 async function requestActiveSessionStreamResume(path: string, isStreaming: boolean): Promise<void> {
@@ -141,18 +229,24 @@ function clearSessionRuntimeCaches(path: string): void {
   // 的退役 funnel 里显式清掉，避免该 path 的 stream-resume 元数据泄漏。
   clearSessionStreamMeta(path);
   useStore.setState((s: Record<string, any>) => {
-    const { [path]: _attached, ...attachedFilesBySession } = s.attachedFilesBySession || {};
-    const { [path]: _registryFiles, ...sessionRegistryFilesByPath } = s.sessionRegistryFilesByPath || {};
-    const { [path]: _draft, ...drafts } = s.drafts || {};
-    const { [path]: _streamMeta, ...sessionStreams } = s.sessionStreams || {};
-    const { [path]: _activeStream, ...activeSessionStreams } = s.activeSessionStreams || {};
-    const { [path]: _browser, ...browserBySession } = s.browserBySession || {};
-    const { [path]: _computerOverlay, ...computerOverlayBySession } = s.computerOverlayBySession || {};
-    const { [path]: _scroll, ...scrollPositions } = s.scrollPositions || {};
-    const { [path]: _todos, ...todosBySession } = s.todosBySession || {};
-    const { [path]: _todosLive, ...todosLiveVersionBySession } = s.todosLiveVersionBySession || {};
-    const { [path]: _authorizedFolders, ...sessionAuthorizedFoldersByPath } = s.sessionAuthorizedFoldersByPath || {};
-    const { [path]: _capabilityDrift, ...capabilityDriftBySession } = s.capabilityDriftBySession || {};
+    const attachedFilesBySession = deleteSessionScopedStateValue(s, s.attachedFilesBySession || {}, path);
+    const sessionRegistryFilesByPath = deleteSessionScopedStateValue(s, s.sessionRegistryFilesByPath || {}, path);
+    const drafts = deleteSessionScopedStateValue(s, s.drafts || {}, path);
+    const activeSessionStreams = deleteSessionScopedStateValue(s, s.activeSessionStreams || {}, path);
+    const computerOverlayBySession = deleteSessionScopedStateValue(s, s.computerOverlayBySession || {}, path);
+    const scrollPositions = deleteSessionScopedStateValue(s, s.scrollPositions || {}, path);
+    const sessionStreams = deleteSessionScopedStateValue(s, s.sessionStreams || {}, path);
+    const browserBySession = deleteSessionScopedStateValue(s, s.browserBySession || {}, path);
+    const todosBySession = deleteSessionScopedStateValue(s, s.todosBySession || {}, path);
+    const todosLiveVersionBySession = deleteSessionScopedStateValue(s, s.todosLiveVersionBySession || {}, path);
+    const sessionAuthorizedFoldersByPath = deleteSessionScopedStateValue(s, s.sessionAuthorizedFoldersByPath || {}, path);
+    const capabilityDriftBySession = deleteSessionScopedStateValue(s, s.capabilityDriftBySession || {}, path);
+    let inlineErrors = s.inlineErrors;
+    if (inlineErrors) {
+      inlineErrors = deleteSessionScopedStateValue(s, inlineErrors || {}, path);
+      const key = sessionScopedKey(s, path) || path;
+      inlineErrors = { ...inlineErrors, [key]: null, [path]: null };
+    }
     return {
       attachedFilesBySession,
       sessionRegistryFilesByPath,
@@ -162,14 +256,14 @@ function clearSessionRuntimeCaches(path: string): void {
       browserBySession,
       computerOverlayBySession,
       scrollPositions,
-      streamingSessions: (s.streamingSessions || []).filter((sessionPath: string) => sessionPath !== path),
-      unreadOutputSessionPaths: (s.unreadOutputSessionPaths || []).filter((sessionPath: string) => sessionPath !== path),
+      streamingSessions: filterSessionScopedStateList(s, s.streamingSessions || [], path),
+      unreadOutputSessionPaths: filterSessionScopedStateList(s, s.unreadOutputSessionPaths || [], path),
       todosBySession,
       todosLiveVersionBySession,
       sessionAuthorizedFoldersByPath,
       capabilityDriftBySession,
-      capabilityRefreshingSessions: (s.capabilityRefreshingSessions || []).filter((sessionPath: string) => sessionPath !== path),
-      inlineErrors: s.inlineErrors ? { ...s.inlineErrors, [path]: null } : s.inlineErrors,
+      capabilityRefreshingSessions: filterSessionScopedStateList(s, s.capabilityRefreshingSessions || [], path),
+      inlineErrors,
     };
   });
 }
@@ -185,15 +279,15 @@ export async function loadMessages(forPath?: string): Promise<void> {
   // 捕获 hydrate 前的 live 版本：若 fetch 期间有 tool_end 更新 todos，
   // 后面就跳过 hydrate 写入，避免旧快照覆盖刚收到的实时状态。
   const todosLiveVersionBefore =
-    useStore.getState().todosLiveVersionBySession[targetPath] ?? 0;
+    sessionScopedValue(useStore.getState() as Record<string, any>, useStore.getState().todosLiveVersionBySession, targetPath) ?? 0;
   // messages 维度的竞态护栏：rapid switch 或并发 load 时，只有最新一次调用
   // 的响应允许 apply initSession，stale 响应直接丢弃。
   const myVersion = useStore.getState().bumpLoadMessagesVersion(targetPath);
   try {
-    const res = await hanaFetch(`/api/sessions/messages?path=${encodeURIComponent(targetPath)}`);
+    const res = await hanaFetch(sessionMessagesUrl(targetPath));
     const data = await res.json();
     const latestVersion =
-      useStore.getState()._loadMessagesVersion[targetPath] ?? 0;
+      sessionScopedValue(useStore.getState() as Record<string, any>, useStore.getState()._loadMessagesVersion, targetPath) ?? 0;
     if (latestVersion !== myVersion) {
       // 已经有更新的 loadMessages 在途，stale 响应不应覆盖新状态。
       // todos 与 messages 必须作为同一份 hydrate 快照一起生效或一起丢弃。
@@ -208,7 +302,7 @@ export async function loadMessages(forPath?: string): Promise<void> {
       return;
     }
     const todosLiveVersionNow =
-      useStore.getState().todosLiveVersionBySession[targetPath] ?? 0;
+      sessionScopedValue(useStore.getState() as Record<string, any>, useStore.getState().todosLiveVersionBySession, targetPath) ?? 0;
     if (todosLiveVersionNow !== todosLiveVersionBefore) {
       console.log(
         '[loadMessages] 跳过 session hydrate: mid-flight 收到 live todo 更新',
@@ -252,7 +346,7 @@ export async function loadMessages(forPath?: string): Promise<void> {
 export async function completeSessionTodos(sessionPath: string): Promise<boolean> {
   if (!sessionPath) return false;
   const state = useStore.getState();
-  if (state.streamingSessions.includes(sessionPath)) return false;
+  if (sessionScopedListIncludes(state as Record<string, any>, state.streamingSessions, sessionPath)) return false;
 
   try {
     await hanaFetch('/api/sessions/todos/complete', {
@@ -289,15 +383,13 @@ function buildInflightAssistantMessage(snap: StreamBufferSnapshot): ChatMessage 
 export async function loadMoreMessages(forPath?: string): Promise<void> {
   const targetPath = forPath || useStore.getState().currentSessionPath;
   if (!targetPath) return;
-  const session = useStore.getState().chatSessions[targetPath];
+  const session = sessionScopedValue(useStore.getState() as Record<string, any>, useStore.getState().chatSessions, targetPath);
   if (!session || !session.hasMore || session.loadingMore) return;
 
   useStore.getState().setLoadingMore(targetPath, true);
   try {
     const before = session.oldestId ?? '';
-    const res = await hanaFetch(
-      `/api/sessions/messages?path=${encodeURIComponent(targetPath)}&before=${encodeURIComponent(before)}`,
-    );
+    const res = await hanaFetch(sessionMessagesUrl(targetPath, { before }));
     const data = await res.json();
     if (Array.isArray(data.sessionFiles)) {
       useStore.getState().setSessionRegistryFiles(targetPath, data.sessionFiles);
@@ -344,8 +436,8 @@ export function reconcileCurrentSessionMessages(reason = 'unknown'): Promise<voi
   const s = useStore.getState();
   const target = s.currentSessionPath;
   if (!target || s.pendingNewSession || s.pendingSessionSwitchPath) return undefined;
-  if ((s.streamingSessions || []).includes(target)) return undefined;
-  const cached = s.chatSessions?.[target];
+  if (sessionScopedListIncludes(s as Record<string, any>, s.streamingSessions || [], target)) return undefined;
+  const cached = sessionScopedValue(s as Record<string, any>, s.chatSessions, target);
   if (!cached) return undefined; // 冷启动 / 切换路径负责首载
   const projection = s.sessions.find((session) => session.path === target);
   const listRevision = typeof projection?.revision === 'string' ? projection.revision : null;
@@ -378,7 +470,10 @@ export async function loadSessions(): Promise<void> {
     const sessions = data || [];
 
     const s = useStore.getState();
-    useStore.setState({ sessions });
+    useStore.setState((state: any) => ({
+      sessions,
+      sessionLocatorsById: mergeSessionLocators(state.sessionLocatorsById || {}, sessions),
+    }));
 
     if (sessions.length > 0 && !s.currentSessionPath && !s.pendingNewSession && !s.pendingSessionSwitchPath) {
       // 首次加载：走完整的 switchSession 确保后端同步 + 消息加载
@@ -400,7 +495,7 @@ export async function switchSession(path: string): Promise<void> {
   if (path === s.currentSessionPath && !s.pendingNewSession) {
     useStore.setState(state => ({
       pendingSessionSwitchPath: null,
-      unreadOutputSessionPaths: (state.unreadOutputSessionPaths || []).filter((sessionPath: string) => sessionPath !== path),
+      unreadOutputSessionPaths: filterSessionScopedStateList(state as Record<string, any>, state.unreadOutputSessionPaths || [], path),
     }));
     return;
   }
@@ -420,12 +515,17 @@ export async function switchSession(path: string): Promise<void> {
 
   const abortController = new AbortController();
   _switchAbortController = abortController;
+  const targetSessionId = sessionIdForPathFromState(s as Record<string, any>, path);
 
   try {
     const res = await hanaFetch('/api/sessions/switch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, currentSessionPath: s.currentSessionPath }),
+      body: JSON.stringify({
+        path,
+        ...(targetSessionId ? { sessionId: targetSessionId } : {}),
+        currentSessionPath: s.currentSessionPath,
+      }),
       signal: abortController.signal,
     });
     const data = await res.json();
@@ -441,11 +541,16 @@ export async function switchSession(path: string): Promise<void> {
 
     // 以服务端事实对齐当前 session 的流式状态。刷新或重连后，renderer 的本地集合可能已经过期。
     const isStreaming = data.isStreaming === true;
-    const streamingSessions = reconcileStreamingSessionsForPath(state.streamingSessions, path, isStreaming);
+    const streamingSessions = reconcileStreamingSessionsForPath(state as Record<string, any>, state.streamingSessions, path, isStreaming);
     const activeSessionStreams = { ...(state.activeSessionStreams || {}) };
+    const activeStreamKey = sessionScopedKey(state as Record<string, any>, path) || path;
     if (isStreaming) {
-      activeSessionStreams[path] = activeSessionStreams[path] || { streamId: null, turnId: null };
+      activeSessionStreams[activeStreamKey] = activeSessionStreams[activeStreamKey]
+        || activeSessionStreams[path]
+        || { streamId: null, turnId: null };
+      if (activeStreamKey !== path) delete activeSessionStreams[path];
     } else {
+      delete activeSessionStreams[activeStreamKey];
       delete activeSessionStreams[path];
     }
 
@@ -466,7 +571,12 @@ export async function switchSession(path: string): Promise<void> {
     const currentAttachments = state.attachedFiles;
     if (currentPath) {
       useStore.setState(prev => ({
-        attachedFilesBySession: { ...prev.attachedFilesBySession, [currentPath]: [...currentAttachments] },
+        attachedFilesBySession: putSessionScopedStateValue(
+          prev as Record<string, any>,
+          prev.attachedFilesBySession || {},
+          currentPath,
+          [...currentAttachments],
+        ),
       }));
     }
 
@@ -474,15 +584,15 @@ export async function switchSession(path: string): Promise<void> {
     // 一旦 currentSessionPath 指向新 session，主窗口 WebSocket 会将该 session 的流式事件
     // 路由到 streamBufferManager，触发 bumpMessageLiveVersion，导致 loadMessages 的
     // 竞态守卫跳过 hydrate，store 丢失完整历史。提前加载可避免此竞态。
-    const hasData = !!useStore.getState().chatSessions?.[path];
+    const hasData = !!sessionScopedValue(useStore.getState() as Record<string, any>, useStore.getState().chatSessions, path);
     if (!hasData) {
       await loadMessages(path);
       if (myVersion !== _switchVersion) return;
     }
 
     // 批量更新 store（切 currentSessionPath 切换对话内容；可见 desk/preview 状态由 workspace 激活流程恢复）
-    useStore.setState({
-      currentSessionPath: path,
+    useStore.setState((prev: any) => ({
+      ...currentSessionIdentityPatch(prev, path, data.sessionId),
       pendingSessionSwitchPath: null,
       pendingNewSession: false,
       pendingProjectId: null,
@@ -491,20 +601,24 @@ export async function switchSession(path: string): Promise<void> {
       selectedWorkspaceLabel: null,
       workspaceFolders: Array.isArray(data.workspaceFolders) ? data.workspaceFolders : [],
       sessionAuthorizedFoldersByPath: {
-        ...state.sessionAuthorizedFoldersByPath,
-        [path]: Array.isArray(data.authorizedFolders) ? data.authorizedFolders : [],
+        ...putSessionScopedStateValue(
+          state,
+          state.sessionAuthorizedFoldersByPath || {},
+          path,
+          Array.isArray(data.authorizedFolders) ? data.authorizedFolders : [],
+        ),
       },
       selectedAgentId: null,
       welcomeVisible: false,
       memoryEnabled: data.memoryEnabled !== false,
       streamingSessions,
       activeSessionStreams,
-      unreadOutputSessionPaths: (state.unreadOutputSessionPaths || []).filter((sessionPath: string) => sessionPath !== path),
-      attachedFiles: state.attachedFilesBySession[path] || [],
+      unreadOutputSessionPaths: filterSessionScopedStateList(state as Record<string, any>, state.unreadOutputSessionPaths || [], path),
+      attachedFiles: sessionScopedValue(state as Record<string, any>, state.attachedFilesBySession || {}, path) || [],
       deskContextAttached: false,
       docContextAttached: false,
       ...agentPatch,
-    });
+    }));
 
     // 缓存命中跳过了 loadMessages 时，校验修订点：会话在后台期间（如 Bridge /rc
     // 接管 + 本端 WS 断连）磁盘可能已前进，缓存不能直接当真相（issue #1610）。
@@ -522,10 +636,10 @@ export async function switchSession(path: string): Promise<void> {
 
     // 同步浏览器状态到 keyed store（服务端返回当前 session 的 browser 状态）
     if (path) {
-      updateKeyed('browserBySession', path, {
+      setBrowserStateForPath(path, {
         running: !!data.browserRunning,
         url: data.browserUrl || null,
-        thumbnail: data.browserRunning ? (state.browserBySession[path]?.thumbnail ?? null) : null,
+        thumbnail: data.browserRunning ? (browserStateForPath(state as any, path).thumbnail ?? null) : null,
       });
     }
 
@@ -562,6 +676,8 @@ export async function switchSession(path: string): Promise<void> {
         audioTransportSupported: data.currentModelAudioTransportSupported ?? undefined,
         reasoning: data.currentModelReasoning ?? undefined,
         xhigh: data.currentModelXhigh ?? undefined,
+        thinkingLevels: Array.isArray(data.currentModelThinkingLevels) ? data.currentModelThinkingLevels : undefined,
+        defaultThinkingLevel: data.currentModelDefaultThinkingLevel ?? undefined,
         contextWindow: data.currentModelContextWindow ?? undefined,
       });
     }
@@ -577,7 +693,12 @@ export async function switchSession(path: string): Promise<void> {
     import('../services/websocket').then(({ getWebSocket }) => {
       const wsConn = getWebSocket();
       if (wsConn?.readyState === WebSocket.OPEN) {
-        wsConn.send(JSON.stringify({ type: 'context_usage', sessionPath: path }));
+        const sessionId = sessionIdForPathFromState(useStore.getState() as Record<string, any>, path);
+        wsConn.send(JSON.stringify({
+          type: 'context_usage',
+          sessionPath: path,
+          ...(sessionId ? { sessionId } : {}),
+        }));
       }
     }).catch((err) => {
       console.warn('[session] context usage refresh skipped:', err);
@@ -606,7 +727,12 @@ async function switchDeletedAgentSession(path: string, version: number): Promise
   const currentAttachments = state.attachedFiles;
   if (currentPath) {
     useStore.setState(prev => ({
-      attachedFilesBySession: { ...prev.attachedFilesBySession, [currentPath]: [...currentAttachments] },
+      attachedFilesBySession: putSessionScopedStateValue(
+        prev as Record<string, any>,
+        prev.attachedFilesBySession || {},
+        currentPath,
+        [...currentAttachments],
+      ),
     }));
   }
 
@@ -620,17 +746,19 @@ async function switchDeletedAgentSession(path: string, version: number): Promise
     selectedWorkspaceLabel: null,
     workspaceFolders: [],
     sessionAuthorizedFoldersByPath: {
-      ...state.sessionAuthorizedFoldersByPath,
-      [path]: [],
+      ...putSessionScopedStateValue(state, state.sessionAuthorizedFoldersByPath || {}, path, []),
     },
     selectedAgentId: null,
     welcomeVisible: false,
-    streamingSessions: state.streamingSessions.filter((sessionPath: string) => sessionPath !== path),
+    streamingSessions: filterSessionScopedStateList(state as Record<string, any>, state.streamingSessions, path),
     activeSessionStreams: Object.fromEntries(
-      Object.entries(state.activeSessionStreams || {}).filter(([sessionPath]) => sessionPath !== path),
+      Object.entries(state.activeSessionStreams || {}).filter(([sessionPath]) => {
+        const key = sessionScopedKey(state as Record<string, any>, path) || path;
+        return sessionPath !== key && sessionPath !== path;
+      }),
     ),
-    unreadOutputSessionPaths: (state.unreadOutputSessionPaths || []).filter((sessionPath: string) => sessionPath !== path),
-    attachedFiles: state.attachedFilesBySession[path] || [],
+    unreadOutputSessionPaths: filterSessionScopedStateList(state as Record<string, any>, state.unreadOutputSessionPaths || [], path),
+    attachedFiles: sessionScopedValue(state as Record<string, any>, state.attachedFilesBySession || {}, path) || [],
     deskContextAttached: false,
     docContextAttached: false,
   });
@@ -645,7 +773,7 @@ async function switchDeletedAgentSession(path: string, version: number): Promise
   useStore.getState().clearQuotedSelection();
   emitSessionPermissionMode('read_only');
 
-  const hasData = !!useStore.getState().chatSessions?.[path];
+  const hasData = !!sessionScopedValue(useStore.getState() as Record<string, any>, useStore.getState().chatSessions, path);
   if (!hasData) {
     await loadMessages(path);
   }
@@ -658,6 +786,20 @@ async function switchDeletedAgentSession(path: string, version: number): Promise
 interface CreateNewSessionOptions {
   projectId?: string | null;
   cwd?: string | null;
+}
+
+export async function loadPendingNewSessionPermissionDefault(): Promise<SessionPermissionMode> {
+  try {
+    const res = await hanaFetch('/api/preferences/session-permission-default');
+    const data = await res.json();
+    const mode = normalizeSessionPermissionMode(data.permissionMode);
+    if (isPendingNewSessionDraftView()) emitSessionPermissionMode(mode);
+    return mode;
+  } catch (err) {
+    console.warn('[session] load permission default failed:', err);
+    if (isPendingNewSessionDraftView()) emitSessionPermissionMode('ask');
+    return 'ask';
+  }
 }
 
 export async function createNewSession(options: CreateNewSessionOptions = {}): Promise<void> {
@@ -706,17 +848,10 @@ export async function createNewSession(options: CreateNewSessionOptions = {}): P
 
   // 重置 context ring
   useStore.setState({ contextTokens: null, contextWindow: null, contextPercent: null });
-  try {
-    const res = await hanaFetch('/api/session-permission-mode');
-    const data = await res.json();
-    const mode = data.defaultMode || data.mode || 'ask';
-    if (isPendingNewSessionDraftView()) emitSessionPermissionMode(mode);
-  } catch {
-    if (isPendingNewSessionDraftView()) emitSessionPermissionMode('ask');
-  }
+  await loadPendingNewSessionPermissionDefault();
 
   try {
-    const res = await hanaFetch('/api/session-thinking-level');
+    const res = await hanaFetch('/api/session-thinking-level?pendingNewSession=1');
     const data = await res.json();
     if (data.thinkingLevel && isPendingNewSessionDraftView()) {
       useStore.getState().setThinkingLevel(data.thinkingLevel);
@@ -768,6 +903,7 @@ export async function ensureSession(): Promise<boolean> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      throwOnHttpError: false,
     });
     const data = await res.json();
     if (data.error) {
@@ -813,10 +949,14 @@ export async function ensureSession(): Promise<boolean> {
     }
 
     if (data.path) {
-      patch.currentSessionPath = data.path;
+      Object.assign(patch, currentSessionIdentityPatch(useStore.getState() as Record<string, any>, data.path, data.sessionId));
       patch.sessionAuthorizedFoldersByPath = {
-        ...useStore.getState().sessionAuthorizedFoldersByPath,
-        [data.path]: Array.isArray(data.authorizedFolders) ? data.authorizedFolders : [],
+        ...putSessionScopedStateValue(
+          useStore.getState() as Record<string, any>,
+          useStore.getState().sessionAuthorizedFoldersByPath || {},
+          data.path,
+          Array.isArray(data.authorizedFolders) ? data.authorizedFolders : [],
+        ),
       };
       // 初始化空 session，ChatArea 自动渲染
       useStore.getState().initSession(data.path, [], false);
@@ -876,6 +1016,13 @@ export async function continueDeletedAgentSession(path: string): Promise<boolean
 
     await loadSessions();
     await switchSession(data.path);
+    if (data.compactionError) {
+      useStore.getState().addToast(
+        `${tr('session.deletedAgent.continueCompactionFailed')}: ${data.compactionError}`,
+        'warning',
+        6000,
+      );
+    }
     return true;
   } catch (err) {
     console.error('[session] continue deleted-agent session failed:', err);
@@ -1030,10 +1177,15 @@ export async function renameSession(path: string, title: string): Promise<boolea
 
 export async function pinSession(path: string, pinned: boolean): Promise<boolean> {
   try {
+    const localSessionId = sessionIdForPathFromState(useStore.getState() as Record<string, any>, path);
     const res = await hanaFetch('/api/sessions/pin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, pinned }),
+      body: JSON.stringify({
+        path,
+        ...(localSessionId ? { sessionId: localSessionId } : {}),
+        pinned,
+      }),
     });
     const data = await res.json();
     if (!res.ok || data.error) {
@@ -1043,8 +1195,11 @@ export async function pinSession(path: string, pinned: boolean): Promise<boolean
     }
 
     const pinnedAt = typeof data.pinnedAt === 'string' ? data.pinnedAt : null;
+    const responseSessionId = normalizeSessionId(data.sessionId) || localSessionId;
     const sessions = useStore.getState().sessions.map(s =>
-      s.path === path ? { ...s, pinnedAt } : s,
+      (responseSessionId && normalizeSessionId(s.sessionId) === responseSessionId) || s.path === path
+        ? { ...s, pinnedAt }
+        : s,
     );
     useStore.setState({ sessions });
     return true;
@@ -1062,7 +1217,11 @@ export async function pinSession(path: string, pinned: boolean): Promise<boolean
 /** 关闭当前 fingerprint 的提示；服务端持久化在 session-meta，指纹再变才重新提示 */
 export async function dismissSessionCapabilityDrift(path: string, fingerprint: string): Promise<boolean> {
   // 乐观隐藏：dismiss 是低风险操作，失败时恢复提示
-  const prevDrift = useStore.getState().capabilityDriftBySession[path] || null;
+  const prevDrift = sessionScopedValue(
+    useStore.getState() as Record<string, any>,
+    useStore.getState().capabilityDriftBySession,
+    path,
+  ) || null;
   useStore.getState().setSessionCapabilityDrift(path, null);
   try {
     const res = await hanaFetch('/api/sessions/capability-drift/dismiss', {
@@ -1086,7 +1245,7 @@ export async function dismissSessionCapabilityDrift(path: string, fingerprint: s
  */
 export async function refreshSessionCapabilities(path: string): Promise<boolean> {
   const store = useStore.getState();
-  if (store.capabilityRefreshingSessions.includes(path)) return false;
+  if (sessionScopedListIncludes(store as Record<string, any>, store.capabilityRefreshingSessions, path)) return false;
   store.setSessionCapabilityRefreshing(path, true);
   try {
     const res = await hanaFetch('/api/sessions/fresh-compact', {

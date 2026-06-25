@@ -6,6 +6,9 @@ const mockImageGet = vi.fn();
 const mockMessageResourceGet = vi.fn();
 const mockMessageCreate = vi.fn();
 const mockMessageUpdate = vi.fn();
+const mockCardCreate = vi.fn();
+const mockCardSettings = vi.fn();
+const mockCardElementContent = vi.fn();
 const mockImageCreate = vi.fn();
 const mockFileCreate = vi.fn();
 const mockWsStart = vi.fn();
@@ -40,11 +43,23 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
 
   class MockClient {
     declare contact: any;
+    declare cardkit: any;
     declare im: any;
     constructor() {
       this.contact = {
         user: {
           get: mockContactUserGet,
+        },
+      };
+      this.cardkit = {
+        v1: {
+          card: {
+            create: mockCardCreate,
+            settings: mockCardSettings,
+          },
+          cardElement: {
+            content: mockCardElementContent,
+          },
         },
       };
       this.im = {
@@ -117,6 +132,9 @@ describe("createFeishuAdapter", () => {
     mockMessageResourceGet.mockReset();
     mockMessageCreate.mockReset();
     mockMessageUpdate.mockReset();
+    mockCardCreate.mockReset();
+    mockCardSettings.mockReset();
+    mockCardElementContent.mockReset();
     mockImageCreate.mockReset();
     mockFileCreate.mockReset();
     mockWsStart.mockReset();
@@ -829,6 +847,92 @@ describe("createFeishuAdapter", () => {
       data: {
         msg_type: "post",
         content: markdownPostContent("final"),
+      },
+    });
+  });
+
+  it("declares Feishu CardKit rich streaming and updates markdown content by sequence", async () => {
+    mockCardCreate.mockResolvedValue({ data: { card_id: "card_stream_001" } });
+    const adapter = createFeishuAdapter({
+      appId: "app-id",
+      appSecret: "app-secret",
+      agentId: "hana",
+      onMessage: vi.fn(),
+    });
+
+    expect(adapter.richStreamingCapabilities).toMatchObject({
+      mode: "cardkit_stream",
+      scopes: ["dm"],
+      maxChars: 150_000,
+      renderer: "feishu_cardkit_markdown",
+      receiptMode: "fold_into_stream",
+      requiresRichStreaming: true,
+    });
+
+    const state = await adapter.startRichStreamReply("oc_chat", "first");
+    await adapter.updateRichStreamReply("oc_chat", state, "second");
+    await adapter.finishRichStreamReply("oc_chat", state, "final");
+
+    expect(state).toEqual({
+      cardId: "card_stream_001",
+      elementId: "hana_stream_markdown",
+      sequence: 5,
+    });
+    const createCardPayload = mockCardCreate.mock.calls[0][0];
+    expect(createCardPayload).toEqual({
+      data: {
+        type: "card_json",
+        data: expect.any(String),
+      },
+    });
+    expect(JSON.parse(createCardPayload.data.data)).toMatchObject({
+      schema: "2.0",
+      config: { update_multi: true },
+      body: {
+        elements: [{
+          tag: "markdown",
+          element_id: "hana_stream_markdown",
+          content: "first",
+        }],
+      },
+    });
+    expect(mockMessageCreate).toHaveBeenCalledWith({
+      params: { receive_id_type: "chat_id" },
+      data: {
+        receive_id: "oc_chat",
+        msg_type: "interactive",
+        content: JSON.stringify({
+          type: "card",
+          data: { card_id: "card_stream_001" },
+        }),
+      },
+    });
+    expect(mockCardSettings).toHaveBeenNthCalledWith(1, {
+      path: { card_id: "card_stream_001" },
+      data: {
+        settings: JSON.stringify({ streaming_mode: true }),
+        sequence: 2,
+      },
+    });
+    expect(mockCardElementContent).toHaveBeenNthCalledWith(1, {
+      path: { card_id: "card_stream_001", element_id: "hana_stream_markdown" },
+      data: {
+        content: "second",
+        sequence: 3,
+      },
+    });
+    expect(mockCardElementContent).toHaveBeenNthCalledWith(2, {
+      path: { card_id: "card_stream_001", element_id: "hana_stream_markdown" },
+      data: {
+        content: "final",
+        sequence: 4,
+      },
+    });
+    expect(mockCardSettings).toHaveBeenNthCalledWith(2, {
+      path: { card_id: "card_stream_001" },
+      data: {
+        settings: JSON.stringify({ streaming_mode: false }),
+        sequence: 5,
       },
     });
   });

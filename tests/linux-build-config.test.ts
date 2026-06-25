@@ -14,5 +14,8 @@ describe("Linux preview build configuration", () => {
     expect(workflow).toContain("ubuntu-latest");
     expect(workflow).toContain("dist/*.AppImage");
     expect(workflow).toContain("dist/*.deb");
+    expect(workflow).toContain("latest-linux.yml");
+    expect(workflow).toContain("gh release upload \"${{ github.ref_name }}\" \"$LINUX_YML\" --clobber");
+    expect(workflow).toContain("MISSING+=(\"latest-linux.yml\")");
   });
 });

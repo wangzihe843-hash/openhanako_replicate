@@ -83,6 +83,22 @@ describe('useSidebarResize', () => {
     expect(storage.setItem).toHaveBeenCalledWith('hana-channel-inspector-width', '310');
   });
 
+  it('拖拽时创建透明事件盾牌，避免 iframe 吞掉后续 mousemove/mouseup', () => {
+    const handle = document.getElementById('previewResizeHandle') as HTMLElement;
+    const { unmount } = render(<Harness />);
+
+    fireEvent.mouseDown(handle, { clientX: 1200, clientY: 80 });
+    expect(document.querySelector('[data-resize-event-shield]')).toBeTruthy();
+
+    fireEvent.mouseUp(document);
+    expect(document.querySelector('[data-resize-event-shield]')).toBeNull();
+
+    fireEvent.mouseDown(handle, { clientX: 1200, clientY: 80 });
+    expect(document.querySelector('[data-resize-event-shield]')).toBeTruthy();
+    unmount();
+    expect(document.querySelector('[data-resize-event-shield]')).toBeNull();
+  });
+
   it('预览面板宽度上限跟随窗口可用空间，而不是固定 800px', () => {
     const handle = document.getElementById('previewResizeHandle') as HTMLElement;
     const storage = window.localStorage as unknown as { setItem: ReturnType<typeof vi.fn> };

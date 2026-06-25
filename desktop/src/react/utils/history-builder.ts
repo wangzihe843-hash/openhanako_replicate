@@ -58,6 +58,7 @@ export interface HistoryApiResponse {
     toolCalls?: Array<{ id?: string; toolCallId?: string; name: string; args?: Record<string, unknown> }>;
     images?: Array<{ data: string; mimeType: string }>;
     timestamp?: number | string | null;
+    sourceIndex?: number;
   }>;
   sessionFiles?: SessionRegistryFile[];
   blocks?: Array<any>;
@@ -323,9 +324,38 @@ function normalizeHistoryBlock(raw: unknown): Record<string, any> | null {
   if (type === 'plugin_card') {
     if (!isRecord(raw.card)) return null;
     const pluginId = nonEmptyString(raw.card.pluginId);
+    if (!pluginId) return null;
+    const cardType = nonEmptyString(raw.card.type) || 'iframe';
+    if (cardType === 'chat.surface') {
+      const rawSessionRef = isRecord(raw.card.sessionRef) ? raw.card.sessionRef : {};
+      const sessionId = nonEmptyString(raw.card.sessionId) || nonEmptyString(rawSessionRef.sessionId);
+      if (!sessionId) return null;
+      const sessionPath = nonEmptyString(raw.card.sessionPath)
+        || nonEmptyString(rawSessionRef.sessionPath)
+        || nonEmptyString(rawSessionRef.path)
+        || null;
+      const sessionRef = {
+        ...rawSessionRef,
+        sessionId,
+        ...(sessionPath ? { sessionPath } : {}),
+      };
+      return {
+        ...raw,
+        type,
+        afterIndex,
+        card: {
+          ...raw.card,
+          pluginId,
+          type: cardType,
+          sessionId,
+          ...(sessionPath ? { sessionPath } : {}),
+          sessionRef,
+        },
+      };
+    }
     const route = nonEmptyString(raw.card.route);
-    if (!pluginId || !route) return null;
-    return { ...raw, type, afterIndex, card: { ...raw.card, pluginId, route } };
+    if (!route) return null;
+    return { ...raw, type, afterIndex, card: { ...raw.card, pluginId, type: cardType, route } };
   }
 
   if (type === 'cron_confirm') {
@@ -370,7 +400,7 @@ function normalizeHistoryBlock(raw: unknown): Record<string, any> | null {
 
 type InterludeContentBlock = Extract<ContentBlock, { type: 'interlude' }>;
 
-function isInterludeHistoryBlock(block: Record<string, any>): block is InterludeContentBlock & { afterIndex: number } {
+function isInterludeHistoryBlock(block: Record<string, any>): block is InterludeContentBlock & { afterIndex: number; sourceIndex?: number } {
   return block.type === 'interlude';
 }
 
@@ -393,6 +423,7 @@ function isMediaInterludeAnchor(block: Record<string, any>, taskId: string): boo
 }
 
 function shouldPlaceInterludeBeforeMessage(interlude: Record<string, any>, inlineBlocks: Record<string, any>[]): boolean {
+  if (interlude.timelinePlacement === 'after_anchor_message') return false;
   const taskId = nonEmptyString(interlude.taskId);
   if (!taskId) return false;
   return inlineBlocks.some((block) => isMediaInterludeAnchor(block, taskId));
@@ -405,6 +436,45 @@ function normalizeHistoryTimestamp(value: number | string | null | undefined): n
     return Number.isNaN(parsed) ? undefined : parsed;
   }
   return undefined;
+}
+
+function normalizeSourceIndex(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function sourceOrderedItems(
+  items: ChatListItem[],
+  data: HistoryApiResponse,
+  allBlocks: Array<any>,
+): ChatListItem[] {
+  if (!items.length) return items;
+  const orderById = new Map<string, number>();
+  for (let i = 0; i < data.messages.length; i += 1) {
+    const sourceIndex = normalizeSourceIndex(data.messages[i].sourceIndex);
+    if (sourceIndex === null) continue;
+    orderById.set(data.messages[i].id || `hist-${i}`, sourceIndex);
+  }
+  for (const block of allBlocks) {
+    if (!isInterludeHistoryBlock(block)) continue;
+    const sourceIndex = normalizeSourceIndex(block.sourceIndex);
+    const id = nonEmptyString(block.id);
+    if (sourceIndex === null || !id) continue;
+    orderById.set(id, sourceIndex);
+  }
+  if (orderById.size === 0) return items;
+
+  const entries = items.map((item, index) => {
+    const id = item.type === 'message' ? item.data.id : item.id;
+    return { item, index, sourceIndex: orderById.get(id) ?? null };
+  });
+  if (entries.some((entry) => entry.sourceIndex === null)) return items;
+
+  return entries
+    .sort((a, b) => (
+      (a.sourceIndex as number) - (b.sourceIndex as number) ||
+      a.index - b.index
+    ))
+    .map((entry) => entry.item);
 }
 
 export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] {
@@ -518,5 +588,5 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
     }
   }
 
-  return items;
+  return sourceOrderedItems(items, data, allBlocks);
 }

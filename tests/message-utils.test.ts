@@ -23,6 +23,7 @@ import {
   isDesktopSessionPath,
 } from "../core/message-utils.ts";
 import { SessionManager } from "../lib/pi-sdk/index.ts";
+import { TURN_INPUT_CONSUMPTION_EVENT_TYPE } from "../lib/turn-input-presentation.ts";
 
 let tmpDir;
 
@@ -97,6 +98,44 @@ describe("extractTextContent", () => {
     expect(result.text).toBe("hello world");
     expect(result.toolUses).toEqual([]);
     expect(result.images).toEqual([]);
+  });
+
+  it("过滤 OpenAI Responses commentary 文本，只把 final_answer 当正文", () => {
+    const content = [
+      {
+        type: "text",
+        text: "I need to inspect the current status before deciding.",
+        textSignature: JSON.stringify({
+          v: 1,
+          id: "msg_commentary",
+          phase: "commentary",
+        }),
+      },
+      {
+        type: "toolCall",
+        id: "call_1|fc_1",
+        name: "current_status",
+        arguments: { action: "read", key: "ui_context" },
+      },
+      {
+        type: "text",
+        text: "已经查到当前状态。",
+        textSignature: JSON.stringify({
+          v: 1,
+          id: "msg_final",
+          phase: "final_answer",
+        }),
+      },
+    ];
+
+    const result = extractTextContent(content);
+    expect(result.text).toBe("已经查到当前状态。");
+    expect(result.toolUses).toHaveLength(1);
+    expect(result.toolUses[0]).toMatchObject({
+      id: "call_1|fc_1",
+      name: "current_status",
+      args: { action: "read", key: "ui_context" },
+    });
   });
 
   it("content block 数组提取 thinking block", () => {
@@ -211,6 +250,17 @@ describe("desktop session path predicates", () => {
     expect(isActiveDesktopSessionPath(subagent, agentsDir)).toBe(false);
     expect(isArchivedDesktopSessionPath(subagent, agentsDir)).toBe(false);
     expect(isDesktopSessionPath(subagent, agentsDir)).toBe(false);
+  });
+
+  it("rejects repair artifacts as desktop session paths", () => {
+    const agentsDir = "/tmp/agents";
+    const activeRepair = "/tmp/agents/agent1/sessions/abc.jsonl.repair.jsonl";
+    const archivedRepair = "/tmp/agents/agent1/sessions/archived/abc.jsonl.repair.jsonl";
+
+    expect(isActiveDesktopSessionPath(activeRepair, agentsDir)).toBe(false);
+    expect(isArchivedDesktopSessionPath(archivedRepair, agentsDir)).toBe(false);
+    expect(isDesktopSessionPath(activeRepair, agentsDir)).toBe(false);
+    expect(isDesktopSessionPath(archivedRepair, agentsDir)).toBe(false);
   });
 });
 
@@ -329,6 +379,55 @@ describe("loadSessionHistoryMessages", () => {
         taskId: "task-img",
         status: "success",
         type: "image-generation",
+      },
+      display: false,
+    });
+    expect(result[1].id).toEqual(expect.any(String));
+    expect(result[1].timestamp).toEqual(expect.any(String));
+  });
+
+  it("从 Pi session 分支恢复 turn input consumption 作为可重建的 UI 时间线事件", async () => {
+    const sessionDir = path.join(tmpDir, "sessions");
+    const manager = SessionManager.create(tmpDir, sessionDir);
+    manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "before" }] } as any);
+    manager.appendCustomEntry(TURN_INPUT_CONSUMPTION_EVENT_TYPE, {
+      schemaVersion: 1,
+      deliveryId: "delivery-1",
+      input: {
+        entryId: "custom-1",
+        customType: "hana-background-result",
+        taskId: "task-1",
+        deliveryId: "delivery-1",
+      },
+      assistant: {
+        entryId: "assistant-1",
+      },
+      block: {
+        type: "interlude",
+        id: "interlude-delivery-1",
+        deliveryId: "delivery-1",
+        taskId: "task-1",
+        variant: "deferred_result",
+        text: "Hana 收到了回复",
+      },
+    });
+    manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "after" }] } as any);
+
+    const result = await loadSessionHistoryMessages({}, manager.getSessionFile());
+
+    expect(result).toHaveLength(3);
+    expect(result[1]).toMatchObject({
+      role: "custom",
+      customType: TURN_INPUT_CONSUMPTION_EVENT_TYPE,
+      data: {
+        schemaVersion: 1,
+        deliveryId: "delivery-1",
+        block: {
+          type: "interlude",
+          deliveryId: "delivery-1",
+          taskId: "task-1",
+          text: "Hana 收到了回复",
+        },
       },
       display: false,
     });

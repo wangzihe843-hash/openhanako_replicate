@@ -92,7 +92,7 @@
     padding: var(--space-sm) var(--space-md);
     border-radius: var(--radius-chat-card) var(--radius-chat-card) var(--radius-chat-card-inner) var(--radius-chat-card);
     color: var(--text);
-    font-size: 0.95rem;
+    font-size: var(--chat-message-font-size);
     word-break: break-word;
 }
 
@@ -216,6 +216,11 @@
     background: transparent;
 }
 
+.messageFooterBtnActive:hover {
+    color: var(--accent) !important;
+    background: rgba(var(--accent-rgb), 0.16);
+}
+
 /* 用户附件 */
 .userAttachments {
     display: flex;
@@ -310,7 +315,7 @@
 /* 助手消息 */
 .messageAssistant {
     color: var(--hana-text);
-    font-size: 0.95rem;
+    font-size: var(--chat-message-font-size);
     line-height: 1.75;
     word-break: break-word;
     position: relative;
@@ -324,117 +329,6 @@
 .messageAssistantInterludeOnly {
     width: 100%;
     max-width: 100%;
-}
-
-/* ── Message action buttons (shared by user & assistant) ── */
-
-.msgActions {
-    --msg-actions-gap: 6px;
-    --msg-actions-hotspot-width: 78px;
-    position: absolute;
-    bottom: 4px;
-    right: 4px;
-    opacity: 0;
-    padding: 3px;
-    margin: -3px;
-    transition: opacity var(--duration-fast);
-    z-index: 2;
-}
-
-.msgActions::before {
-    content: "";
-    position: absolute;
-    top: -4px;
-    bottom: -4px;
-    right: 100%;
-    width: calc(var(--msg-actions-hotspot-width) + var(--msg-actions-gap));
-    pointer-events: auto;
-}
-
-.msgActionsLeft {
-    left: 4px;
-    right: auto;
-}
-
-.msgActionsLeft::before {
-    right: auto;
-    left: 100%;
-}
-
-.msgActionsVisible { opacity: 1 !important; }
-
-.messageGroupAssistant:hover .msgActions,
-.messageGroupUser:hover .msgActions { opacity: 1; }
-.msgActions:hover { opacity: 1 !important; }
-
-.msgActionsPopover {
-    position: absolute;
-    top: 50%;
-    right: calc(100% + var(--msg-actions-gap));
-    transform: translateY(-50%);
-    display: flex;
-    gap: 2px;
-    box-sizing: border-box;
-    width: max-content;
-    min-width: 0;
-    background: var(--bg-card, #fff);
-    border: 1px solid var(--overlay-light, rgba(0, 0, 0, 0.08));
-    border-radius: var(--radius-md);
-    padding: 2px 3px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--duration-fast);
-}
-
-.msgActions:hover .msgActionsPopover {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-.msgActionsLeft .msgActionsPopover {
-    right: auto;
-    left: calc(100% + var(--msg-actions-gap));
-}
-
-.msgActionBtn {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    position: relative;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    padding: 3px;
-    cursor: default;
-    color: var(--text-muted);
-    line-height: 1;
-    transition: color var(--duration-instant), background var(--duration-instant);
-}
-
-.msgActionBtn:hover {
-    color: var(--text);
-    background: var(--overlay-light);
-}
-
-.msgActionBtn:disabled {
-    opacity: 0.3;
-    cursor: default;
-}
-
-.msgActionBtnActive {
-    color: var(--accent) !important;
-    background: rgba(var(--accent-rgb), 0.10);
-    opacity: 1;
-}
-
-.msgActionBtnActive:hover {
-    color: var(--accent) !important;
-    background: rgba(var(--accent-rgb), 0.16);
-}
-
-.msgActionBtnCopied {
-    color: var(--accent) !important;
 }
 
 .streamTailChunk {
@@ -1766,6 +1660,38 @@
     border-radius: var(--radius-chat-card-inner);
 }
 
+.videoOutputCard {
+    width: min(420px, 100%);
+}
+
+.videoOutputPreview {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    max-height: 450px;
+    object-fit: cover;
+    background: color-mix(in srgb, var(--bg-card, var(--bg)) 78%, var(--text) 10%);
+    border-radius: var(--radius-chat-card-inner);
+}
+
+.videoOutputPlayBadge {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--bg);
+    background: color-mix(in srgb, var(--text) 72%, transparent);
+    border: 1px solid color-mix(in srgb, var(--bg) 60%, transparent);
+    border-radius: 50%;
+    pointer-events: none;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+}
+
 .imageOutputName {
     padding: 0.35rem 0.2rem 0;
     font-size: 0.78rem;
@@ -1923,6 +1849,27 @@
     gap: var(--space-sm);
 }
 
+.cardSessionShell {
+    --chat-scrollbar-bottom-inset: 0px;
+    position: absolute;
+    inset: 0;
+    bottom: 0;
+    background: var(--bg, #fff);
+}
+
+.cardSessionShell .sessionPanel {
+    padding: var(--space-sm) var(--space-sm) 0;
+}
+
+.cardSessionShell .sessionMessages {
+    max-width: none;
+    gap: var(--space-xs);
+}
+
+.cardSessionShell .sessionFooter {
+    height: var(--space-md);
+}
+
 :global(.mobile-desktop-root) .sessionPanel {
     padding-left: var(--space-md);
     padding-right: var(--space-md);
@@ -1930,162 +1877,7 @@
 
 :global(.mobile-desktop-root) .messageUser,
 :global(.mobile-desktop-root) .messageAssistant {
-    font-size: 1rem;
-}
-
-.timelineNav {
-    position: absolute;
-    top: 76px;
-    right: 0;
-    height: 50%;
-    width: 64px;
-    z-index: 4;
-    overflow: visible;
-    pointer-events: none;
-    --timeline-card-width: min(176px, calc(100vw - 96px));
-    --timeline-marker-right: 8px;
-    --timeline-row-height: 28px;
-    --timeline-card-pad-y: 0.375rem;
-    --timeline-marker-pad-left: 0.75rem;
-    --timeline-marker-pad-right: 0.375rem;
-    --timeline-marker-gap: 0.375rem;
-    --timeline-card-surface-outset-right: 0.25rem;
-}
-
-.timelineCard {
-    position: absolute;
-    top: 50%;
-    right: var(--timeline-marker-right);
-    width: var(--timeline-card-width);
-    height: calc(var(--timeline-visible-rows) * var(--timeline-row-height) + 2 * var(--timeline-card-pad-y));
-    max-height: calc(10 * var(--timeline-row-height) + 2 * var(--timeline-card-pad-y));
-    transform: translateY(-50%);
-    border-radius: var(--radius-chat-card);
-    pointer-events: none;
-    overflow: visible;
-}
-
-.timelineCard::before {
-    content: "";
-    position: absolute;
-    inset: 0 calc(-1 * var(--timeline-card-surface-outset-right)) 0 0;
-    border: 1px solid var(--border);
-    border-radius: inherit;
-    background: var(--bg-card, var(--bg));
-    box-shadow: 0 10px 28px var(--shadow);
-    opacity: 0;
-    transform: scale(0.985);
-    transform-origin: center;
-    transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
-    pointer-events: none;
-}
-
-.timelineList {
-    position: relative;
-    z-index: 1;
-    height: 100%;
-    padding-block: var(--timeline-card-pad-y);
-    box-sizing: border-box;
-    overflow-y: auto;
-    overflow-x: hidden;
-    overscroll-behavior: contain;
-    scrollbar-width: none;
-}
-
-.timelineList::-webkit-scrollbar {
-    display: none;
-}
-
-.timelineMarker {
-    position: relative;
-    width: 100%;
-    height: var(--timeline-row-height);
-    border: none;
-    background: transparent;
-    color: rgba(var(--accent-rgb), 0.52);
-    cursor: default;
-    padding: 0 var(--timeline-marker-pad-right) 0 var(--timeline-marker-pad-left);
-    opacity: 0;
-    pointer-events: none;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 24px;
-    align-items: center;
-    gap: var(--timeline-marker-gap);
-    transition: opacity var(--duration-fast) var(--ease-out), color var(--duration-instant) var(--ease-out);
-    --timeline-marker-width: 0.5em;
-}
-
-.timelineNavVisible .timelineMarker,
-.timelineNav:focus-within .timelineMarker {
-    opacity: 1;
-}
-
-.timelineNavExpanded .timelineLabel {
-    pointer-events: auto;
-}
-
-.timelineNavExpanded .timelineLabel {
-    opacity: 1;
-}
-
-.timelineNavExpanded .timelineCard::before {
-    opacity: 1;
-    transform: scale(1);
-}
-
-.timelineLine {
-    position: relative;
-    justify-self: end;
-    width: var(--timeline-marker-width);
-    min-width: 0.5em;
-    max-width: 1em;
-    height: 4px;
-    border-radius: 999px;
-    background: currentColor;
-    opacity: 0.74;
-    pointer-events: auto;
-    transition: opacity var(--duration-instant) var(--ease-out);
-}
-
-.timelineLine::before {
-    content: "";
-    position: absolute;
-    inset: -12px -4px;
-}
-
-.timelineMarker:hover .timelineLine,
-.timelineMarker:focus-visible .timelineLine,
-.timelineMarkerActive .timelineLine {
-    opacity: 1;
-}
-
-.timelineMarkerActive {
-    color: var(--accent);
-}
-
-.timelineMarker:focus-visible {
-    outline: none;
-}
-
-.timelineLabel {
-    display: block;
-    width: 100%;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-align: left;
-    opacity: 0;
-    pointer-events: none;
-    color: var(--text-light);
-    font-family: var(--font-ui);
-    font-size: 0.7rem;
-    line-height: 1.4;
-    transition: opacity var(--duration-fast) var(--ease-out);
-}
-
-.timelineMarkerActive .timelineLabel {
-    color: var(--accent);
+    font-size: var(--chat-message-font-size);
 }
 
 .loadMoreHint {

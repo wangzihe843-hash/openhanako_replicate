@@ -18,29 +18,31 @@ export function browserScreenshotFilename({ base64, mimeType }: { base64?: any; 
   return `browser-screenshot-${hash}.${browserScreenshotExt(mimeType)}`;
 }
 
-export function browserScreenshotPath(hanakoHome, sessionPath, { base64, mimeType }: { base64?: any; mimeType?: any } = {}) {
+export function browserScreenshotPath(hanakoHome, sessionPath, { base64, mimeType, sessionId = null }: { base64?: any; mimeType?: any; sessionId?: any } = {}) {
   return path.join(
-    sessionFilesCacheDir(hanakoHome, sessionPath),
+    sessionFilesCacheDir(hanakoHome, { sessionId, sessionPath }),
     browserScreenshotFilename({ base64, mimeType }),
   );
 }
 
 export async function persistBrowserScreenshotFile({
   hanakoHome,
+  sessionId = null,
   sessionPath,
   base64,
   mimeType = "image/png",
   registerSessionFile,
-}: { hanakoHome?: any; sessionPath?: any; base64?: any; mimeType?: string; registerSessionFile?: any } = {}) {
+}: { hanakoHome?: any; sessionId?: any; sessionPath?: any; base64?: any; mimeType?: string; registerSessionFile?: any } = {}) {
   if (typeof registerSessionFile !== "function") {
     throw new Error("browser screenshot requires registerSessionFile");
   }
-  const filePath = browserScreenshotPath(hanakoHome, sessionPath, { base64, mimeType });
+  const filePath = browserScreenshotPath(hanakoHome, sessionPath, { base64, mimeType, sessionId });
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
   if (!fs.existsSync(filePath)) {
     await fs.promises.writeFile(filePath, Buffer.from(base64, "base64"));
   }
   return serializeSessionFile(await registerSessionFile({
+    ...(sessionId ? { sessionId } : {}),
     sessionPath,
     filePath,
     label: path.basename(filePath),
@@ -51,20 +53,22 @@ export async function persistBrowserScreenshotFile({
 
 export function persistBrowserScreenshotFileSync({
   hanakoHome,
+  sessionId = null,
   sessionPath,
   base64,
   mimeType = "image/png",
   registerSessionFile,
-}: { hanakoHome?: any; sessionPath?: any; base64?: any; mimeType?: string; registerSessionFile?: any } = {}) {
+}: { hanakoHome?: any; sessionId?: any; sessionPath?: any; base64?: any; mimeType?: string; registerSessionFile?: any } = {}) {
   if (typeof registerSessionFile !== "function") {
     throw new Error("browser screenshot requires registerSessionFile");
   }
-  const filePath = browserScreenshotPath(hanakoHome, sessionPath, { base64, mimeType });
+  const filePath = browserScreenshotPath(hanakoHome, sessionPath, { base64, mimeType, sessionId });
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   if (!fs.existsSync(filePath)) {
     fs.writeFileSync(filePath, Buffer.from(base64, "base64"));
   }
   return serializeSessionFile(registerSessionFile({
+    ...(sessionId ? { sessionId } : {}),
     sessionPath,
     filePath,
     label: path.basename(filePath),
@@ -78,6 +82,7 @@ export function browserScreenshotMediaItem(file) {
   return {
     type: "session_file",
     fileId: file.fileId || file.id,
+    ...(file.sessionId ? { sessionId: file.sessionId } : {}),
     sessionPath: file.sessionPath,
     filePath: file.filePath,
     filename: file.filename || path.basename(file.filePath || file.label || "browser-screenshot.png"),

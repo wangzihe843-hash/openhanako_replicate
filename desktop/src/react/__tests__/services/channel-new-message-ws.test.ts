@@ -30,10 +30,6 @@ vi.mock('../../stores/session-actions', () => ({
   loadSessions: vi.fn(),
 }));
 
-vi.mock('../../stores/desk-actions', () => ({
-  loadDeskFiles: vi.fn(),
-}));
-
 vi.mock('../../stores/channel-actions', () => ({
   appendChannelMessage: appendChannelMessageMock,
   markChannelMessagesDirty: markChannelMessagesDirtyMock,

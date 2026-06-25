@@ -271,6 +271,14 @@ describe('InputArea paste and slash menu behavior', () => {
     mocks.updateHandler = undefined;
     mocks.chainInserted = [];
     mocks.editorFocus.mockClear();
+    mocks.ensureSession.mockImplementation(async () => {
+      useStore.setState({
+        currentSessionPath: '/session/input.jsonl',
+        pendingNewSession: false,
+        welcomeVisible: false,
+      } as never);
+      return true;
+    });
     seedInputState();
     mocks.hanaFetch.mockResolvedValue(new Response('{}', { status: 200 }));
     window.platform = {} as typeof window.platform;
@@ -602,6 +610,36 @@ describe('InputArea paste and slash menu behavior', () => {
       quotedText: '原句一\n\n原句二',
     });
     expect(useStore.getState().quotedSelections).toEqual([]);
+  });
+
+  it('adds an optimistic user message with a clientMessageId when sending a prompt', async () => {
+    mocks.editorText = '马上显示这条消息';
+    render(React.createElement(InputArea));
+
+    const preventDefault = vi.fn();
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+    Object.defineProperty(event, 'preventDefault', { value: preventDefault });
+
+    const handled = tiptapKeyDownHandler()?.(null, event);
+
+    expect(handled).toBe(true);
+    await waitFor(() => {
+      expect(mocks.wsSend).toHaveBeenCalledTimes(1);
+    });
+    const payload = JSON.parse(String(mocks.wsSend.mock.calls[0][0]));
+    expect(payload.clientMessageId).toMatch(/^client-user-/);
+
+    const items = useStore.getState().chatSessions['/session/input.jsonl']?.items || [];
+    expect(items).toHaveLength(1);
+    const first = items[0];
+    expect(first?.type).toBe('message');
+    if (!first || first.type !== 'message') throw new Error('expected optimistic message item');
+    expect(first.data).toMatchObject({
+      id: payload.clientMessageId,
+      role: 'user',
+      text: '马上显示这条消息',
+      sendStatus: 'pending',
+    });
   });
 
   it('uploads mobile file-picker attachments through browser File API', async () => {

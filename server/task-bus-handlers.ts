@@ -9,8 +9,20 @@ export function registerTaskRegistryBusHandlers(eventBus, taskRegistry) {
     taskRegistry.unregisterHandler(type);
     return { ok: true };
   });
-  eventBus.handle("task:register", ({ taskId, type, parentSessionPath, meta, pluginId, agentId, persist }) => {
-    taskRegistry.register(taskId, { type, parentSessionPath, meta, pluginId, agentId, persist });
+  eventBus.handle("task:register", ({ taskId, type, parentSessionPath, parentSessionId, parentSessionRef, sessionId, sessionRef, legacySessionPath, meta, pluginId, agentId, persist }) => {
+    taskRegistry.register(taskId, {
+      type,
+      parentSessionPath,
+      parentSessionId,
+      parentSessionRef,
+      sessionId,
+      sessionRef,
+      legacySessionPath,
+      meta,
+      pluginId,
+      agentId,
+      persist,
+    });
     return { ok: true };
   });
   eventBus.handle("task:update", ({ taskId, ...patch }) => {

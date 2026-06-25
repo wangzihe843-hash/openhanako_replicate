@@ -116,6 +116,33 @@ describe("TaskRegistry", () => {
     expect(reg.query("t3")).toMatchObject({ status: "completed", aborted: false });
   });
 
+  it("aborts active tasks by stable parent session id after the parent path moves", () => {
+    const originalPath = "/s/original";
+    const movedPath = "/s/archived/renamed";
+    const sessionId = "sess_task_registry";
+    const reg = new TaskRegistry({
+      getSessionIdForPath: (sessionPath: string) => (
+        sessionPath === originalPath || sessionPath === movedPath ? sessionId : null
+      ),
+    });
+    const abortFn = vi.fn();
+    reg.registerHandler("subagent", { abort: abortFn });
+    reg.register("t1", { type: "subagent", parentSessionPath: originalPath });
+    reg.register("t2", { type: "subagent", parentSessionPath: "/s/other" });
+
+    const result = reg.abortByParentSession(movedPath, "parent session archived");
+
+    expect(result).toMatchObject({ matched: 1, aborted: 1 });
+    expect(abortFn).toHaveBeenCalledWith("t1");
+    expect(abortFn).not.toHaveBeenCalledWith("t2");
+    expect(reg.query("t1")).toMatchObject({
+      parentSessionId: sessionId,
+      status: "aborted",
+      aborted: true,
+    });
+    expect(reg.query("t2")).toMatchObject({ status: "running", aborted: false });
+  });
+
   it("update, complete, and fail keep explicit task state", () => {
     const reg = new TaskRegistry();
     reg.registerHandler("render", { abort: vi.fn() });

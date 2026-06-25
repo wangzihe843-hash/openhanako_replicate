@@ -28,7 +28,8 @@ describe("subagent 工具访问策略收口（Codex 式：显式 access + 继承
   it("access:write → OPERATE（父会话非只读时）", () => {
     expect(resolveSubagentToolAccess({ access: "write" }).permissionMode).toBe("operate");
     expect(resolveSubagentToolAccess({ access: "write", parentPermissionMode: "operate" }).permissionMode).toBe("operate");
-    expect(resolveSubagentToolAccess({ access: "write", parentPermissionMode: "ask" }).permissionMode).toBe("operate");
+    expect(resolveSubagentToolAccess({ access: "write", parentPermissionMode: "ask" }).permissionMode).toBe("ask");
+    expect(resolveSubagentToolAccess({ access: "write", parentPermissionMode: "auto" }).permissionMode).toBe("auto");
   });
 
   // ── attenuation 校验：子权限不得超过父会话（#1614 越权缺口修复） ──
@@ -54,7 +55,7 @@ describe("subagent 工具访问策略收口（Codex 式：显式 access + 继承
     expect(resolveSubagentToolAccess({ parentPermissionMode: "read_only" }).permissionMode).toBe("read_only");
   });
 
-  // ── 省略 access → 继承父会话档，但 subagent 只有两态（后台不能交互确认，ASK 不可用） ──
+  // ── 省略 access → 像 Codex 一样继承父会话档；后台不能问人由执行层 deny_on_prompt 处理 ──
   it("省略 access：父只读 → 只读", () => {
     expect(resolveSubagentToolAccess({ parentPermissionMode: "read_only" }).permissionMode).toBe("read_only");
   });
@@ -63,8 +64,12 @@ describe("subagent 工具访问策略收口（Codex 式：显式 access + 继承
     expect(resolveSubagentToolAccess({ parentPermissionMode: "operate" }).permissionMode).toBe("operate");
   });
 
-  it("省略 access：父先问(ask) → 可操作（后台无法交互确认，ASK 坍缩为 operate，绝不让 subagent 挂在确认上）", () => {
-    expect(resolveSubagentToolAccess({ parentPermissionMode: "ask" }).permissionMode).toBe("operate");
+  it("省略 access：父先问(ask) → 继承 ask", () => {
+    expect(resolveSubagentToolAccess({ parentPermissionMode: "ask" }).permissionMode).toBe("ask");
+  });
+
+  it("省略 access：父自动(auto) → 继承 auto", () => {
+    expect(resolveSubagentToolAccess({ parentPermissionMode: "auto" }).permissionMode).toBe("auto");
   });
 
   it("省略 access + 无父档 → 可操作（= 历史默认行为，subagent 一向全权）", () => {
@@ -75,6 +80,7 @@ describe("subagent 工具访问策略收口（Codex 式：显式 access + 继承
   it("非法 access 值按省略处理（继承父档）", () => {
     expect(resolveSubagentToolAccess({ access: "garbage", parentPermissionMode: "read_only" }).permissionMode).toBe("read_only");
     expect(resolveSubagentToolAccess({ access: "garbage", parentPermissionMode: "operate" }).permissionMode).toBe("operate");
+    expect(resolveSubagentToolAccess({ access: "garbage", parentPermissionMode: "ask" }).permissionMode).toBe("ask");
   });
 
   // ── 乙策略（strip）：按权限档剥离工具清单 ──

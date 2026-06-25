@@ -22,6 +22,14 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('\\[');
   });
 
+  it('renders invalid KaTeX as inline error markup instead of throwing', () => {
+    expect(() => renderMarkdown(String.raw`bad math $\notACommand{$ after`)).not.toThrow();
+    const html = renderMarkdown(String.raw`bad math $\notACommand{$ after`);
+
+    expect(html).toContain('katex-error');
+    expect(html).toContain('after');
+  });
+
   it('renders Obsidian ==highlight== syntax as mark', () => {
     const html = renderMarkdown('GDP ==平减指数==');
 
@@ -136,8 +144,45 @@ describe('renderMarkdown', () => {
 
     expect(html).toContain('<div style="background: #f0f7ff; border: 1px solid #bee1e6; border-radius: 8px; padding: 16px; margin: 12px 0">');
     expect(html).toContain('<center>总结</center>');
-    expect(html).toContain('<h3>会计基础 知识框架</h3>');
+    expect(html).toContain('<h3 id="会计基础-知识框架">会计基础 知识框架</h3>');
     expect(html).toContain('└─ 借贷记账法');
+  });
+
+  it('adds stable heading ids in markdown preview mode', () => {
+    const html = renderMarkdownPreview([
+      '# 概览',
+      '',
+      '## Same Title',
+      '',
+      '## Same Title',
+    ].join('\n'));
+
+    expect(html).toContain('<h1 id="概览">概览</h1>');
+    expect(html).toContain('<h2 id="same-title">Same Title</h2>');
+    expect(html).toContain('<h2 id="same-title-1">Same Title</h2>');
+  });
+
+  it('wraps markdown tables in a constrained horizontal scroll container', () => {
+    const html = renderMarkdown([
+      '| 时间 | 处理方式 |',
+      '| --- | --- |',
+      '| 6~10s 连续叙事 | 合并成一个大分镜，内部分镜头一、镜头二 |',
+    ].join('\n'));
+
+    expect(html).toContain('<div class="markdown-table-scroll">');
+    expect(html).toContain('<table>');
+    expect(html).toContain('</table>\n</div>');
+  });
+
+  it('preserves markdown table scroll containers in preview mode', () => {
+    const html = renderMarkdownPreview([
+      '| 时间 | 处理方式 |',
+      '| --- | --- |',
+      '| 6~10s 连续叙事 | 合并成一个大分镜，内部分镜头一、镜头二 |',
+    ].join('\n'));
+
+    expect(html).toContain('<div class="markdown-table-scroll">');
+    expect(html).toContain('</table>\n</div>');
   });
 
   it('removes dangerous HTML from markdown preview output', () => {

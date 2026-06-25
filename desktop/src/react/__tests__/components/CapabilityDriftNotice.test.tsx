@@ -5,7 +5,6 @@
  *  - 文案按 added / removed+invalid / promptChanged 组装
  *  - 刷新走两步确认（诚实告知压缩会丢细节），确认后才调 refreshSessionCapabilities
  *  - 忽略回传当前 fingerprint
- *  - busy 态隐藏操作按钮
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
@@ -16,14 +15,6 @@ import {
   refreshSessionCapabilities,
 } from '../../stores/session-actions';
 import type { SessionCapabilityDrift } from '../../types';
-
-const storeState = {
-  capabilityRefreshingSessions: [] as string[],
-};
-
-vi.mock('../../stores', () => ({
-  useStore: (selector: (state: typeof storeState) => unknown) => selector(storeState),
-}));
 
 vi.mock('../../hooks/use-i18n', () => ({
   useI18n: () => ({
@@ -55,7 +46,6 @@ function makeDrift(overrides: Partial<SessionCapabilityDrift> = {}): SessionCapa
 describe('CapabilityDriftNotice', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    storeState.capabilityRefreshingSessions = [];
   });
 
   afterEach(() => {
@@ -113,11 +103,4 @@ describe('CapabilityDriftNotice', () => {
     expect(refreshSessionCapabilities).not.toHaveBeenCalled();
   });
 
-  it('busy state hides actions and shows the refreshing label', () => {
-    storeState.capabilityRefreshingSessions = ['/tmp/s.jsonl'];
-    render(<CapabilityDriftNotice sessionPath="/tmp/s.jsonl" drift={makeDrift()} />);
-    expect(screen.getByText('session.capabilityDrift.refreshing')).toBeInTheDocument();
-    expect(screen.queryByText('session.capabilityDrift.refreshButton')).not.toBeInTheDocument();
-    expect(screen.queryByText('session.capabilityDrift.dismissButton')).not.toBeInTheDocument();
-  });
 });

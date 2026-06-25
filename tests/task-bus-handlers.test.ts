@@ -68,4 +68,42 @@ describe("registerTaskRegistryBusHandlers", () => {
     });
     expect(abort).toHaveBeenCalledWith("t1");
   });
+
+  it("uses sessionId as the stable parent identity for registered tasks", () => {
+    const registry = new TaskRegistry();
+    const { bus, request } = createBusHarness();
+    const abort = vi.fn();
+
+    registerTaskRegistryBusHandlers(bus, registry);
+    request("task:register-handler", { type: "render", abort });
+    request("task:register", {
+      taskId: "id-task",
+      type: "render",
+      sessionId: "sess_task",
+      parentSessionPath: "/sessions/old.jsonl",
+    });
+    request("task:register", {
+      taskId: "path-task",
+      type: "render",
+      parentSessionPath: "/sessions/new.jsonl",
+    });
+
+    expect(request("task:list", { parentSessionId: "sess_task" }).map((task) => task.taskId)).toEqual(["id-task"]);
+    expect(registry.abortByParentSession({
+      sessionId: "sess_task",
+      sessionPath: "/sessions/new.jsonl",
+    }, "parent archived")).toMatchObject({
+      matched: 1,
+      aborted: 1,
+    });
+    expect(registry.query("id-task")).toMatchObject({
+      parentSessionId: "sess_task",
+      parentSessionPath: "/sessions/old.jsonl",
+      status: "aborted",
+    });
+    expect(registry.query("path-task")).toMatchObject({
+      parentSessionPath: "/sessions/new.jsonl",
+      status: "running",
+    });
+  });
 });

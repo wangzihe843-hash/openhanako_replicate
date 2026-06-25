@@ -7,6 +7,16 @@ const DEFAULT_LOG_LIMIT = 200;
 const SAFE_PLUGIN_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const REDACT_KEY_RE = /api[-_]?key|token|secret|password|authorization|credential/i;
 const OBJECT_SCHEMA = Object.freeze({ type: "object", additionalProperties: true });
+const SESSION_REF_SCHEMA = Object.freeze({
+  type: "object",
+  properties: {
+    sessionId: { type: "string" },
+    sessionPath: { type: "string" },
+    legacySessionPath: { type: "string" },
+  },
+  required: ["sessionId"],
+  additionalProperties: true,
+});
 
 export const PLUGIN_DEV_EVENT_BUS_CAPABILITIES = Object.freeze([
   {
@@ -137,6 +147,8 @@ export const PLUGIN_DEV_EVENT_BUS_CAPABILITIES = Object.freeze([
         pluginId: { type: "string" },
         toolName: { type: "string" },
         input: { type: "object" },
+        sessionId: { type: "string" },
+        sessionRef: SESSION_REF_SCHEMA,
         sessionPath: { type: "string" },
         agentId: { type: "string" },
       },
@@ -323,6 +335,43 @@ function extractToolResultText(invocation) {
   }
   if (typeof result === "string") return result;
   return JSON.stringify(result ?? "");
+}
+
+function textOrNull(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeDevSessionTarget(target: Record<string, unknown> = {}) {
+  const rawRef = target?.sessionRef && typeof target.sessionRef === "object"
+    ? target.sessionRef as Record<string, unknown>
+    : null;
+  const sessionId = textOrNull(target?.sessionId) || textOrNull(rawRef?.sessionId);
+  const refSessionId = textOrNull(rawRef?.sessionId);
+  if (sessionId && refSessionId && sessionId !== refSessionId) {
+    throw createDevError(
+      "sessionId does not match sessionRef.sessionId",
+      400,
+      "PLUGIN_DEV_SESSION_ID_MISMATCH",
+    );
+  }
+  const sessionPath = textOrNull(rawRef?.sessionPath)
+    || textOrNull(rawRef?.path)
+    || textOrNull(target?.sessionPath);
+  const legacySessionPath = textOrNull(rawRef?.legacySessionPath)
+    || textOrNull(target?.legacySessionPath);
+  if (!sessionId) {
+    return sessionPath ? { sessionPath } : {};
+  }
+  const sessionRef = {
+    sessionId,
+    ...(sessionPath ? { sessionPath } : {}),
+    ...(legacySessionPath ? { legacySessionPath } : {}),
+  };
+  return {
+    sessionId,
+    ...(sessionPath ? { sessionPath } : {}),
+    sessionRef,
+  };
 }
 
 function assertInsideDir(childPath, parentDir) {
@@ -605,7 +654,7 @@ export class PluginDevService {
     };
   }
 
-  async invokeTool({ pluginId, toolName, input = {}, sessionPath, agentId }: any = {}) {
+  async invokeTool({ pluginId, toolName, input = {}, sessionId, sessionRef, sessionPath, agentId }: any = {}) {
     if (!pluginId) throw createDevError("pluginId is required", 400, "PLUGIN_DEV_PLUGIN_ID_REQUIRED");
     if (!toolName) throw createDevError("toolName is required", 400, "PLUGIN_DEV_TOOL_NAME_REQUIRED");
     const entry = this._pluginManager.getPlugin(pluginId, { source: "dev" });
@@ -621,12 +670,13 @@ export class PluginDevService {
       throw createDevError(`Tool "${toolName}" not found for plugin "${pluginId}"`, 404, "PLUGIN_DEV_TOOL_NOT_FOUND");
     }
     const startedAt = Date.now();
+    const sessionTarget = normalizeDevSessionTarget({ sessionId, sessionRef, sessionPath });
     const runtimeCtx = {
       pluginDev: true,
       ...(agentId ? { agentId } : {}),
-      ...(sessionPath ? {
-        sessionPath,
-        sessionManager: { getSessionFile: () => sessionPath },
+      ...sessionTarget,
+      ...(sessionTarget.sessionPath ? {
+        sessionManager: { getSessionFile: () => sessionTarget.sessionPath },
       } : {}),
     };
     const result = await this._pluginManager.executePluginTool(tool, {
@@ -732,6 +782,8 @@ export class PluginDevService {
           pluginId,
           toolName: step.invokeTool.name,
           input: step.invokeTool.input || {},
+          sessionId: step.invokeTool.sessionId,
+          sessionRef: step.invokeTool.sessionRef,
           sessionPath: step.invokeTool.sessionPath,
           agentId: step.invokeTool.agentId,
         });

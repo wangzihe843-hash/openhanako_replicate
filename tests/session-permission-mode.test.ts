@@ -6,7 +6,7 @@ import {
 
 describe("session permission modes", () => {
   it("normalizes missing and legacy fields", () => {
-    expect(normalizeSessionPermissionMode({})).toBe("ask");
+    expect(normalizeSessionPermissionMode({})).toBe("auto");
     expect(normalizeSessionPermissionMode({ permissionMode: "auto" })).toBe("auto");
     expect(normalizeSessionPermissionMode({ accessMode: "operate" })).toBe("operate");
     expect(normalizeSessionPermissionMode({ accessMode: "read_only" })).toBe("read_only");
@@ -23,10 +23,8 @@ describe("session permission modes", () => {
       action: "prompt",
       kind: "tool_action_approval",
     });
-    expect(classifySessionPermission({ mode: "auto", toolName: "write" })).toMatchObject({
-      action: "review",
-      kind: "tool_action_approval",
-    });
+    expect(classifySessionPermission({ mode: "auto", toolName: "write" })).toEqual({ action: "allow" });
+    expect(classifySessionPermission({ mode: "auto", toolName: "bash" })).toEqual({ action: "allow" });
     expect(classifySessionPermission({ mode: "operate", toolName: "write" })).toEqual({ action: "allow" });
   });
 
@@ -68,7 +66,25 @@ describe("session permission modes", () => {
       code: "ACTION_BLOCKED_BY_READ_ONLY",
     });
     expect(classifySessionPermission({ mode: "ask", toolName: "session_folders", params: { action: "add" } })).toEqual({ action: "allow" });
+    expect(classifySessionPermission({ mode: "auto", toolName: "session_folders", params: { action: "add" } })).toEqual({ action: "allow" });
     expect(classifySessionPermission({ mode: "operate", toolName: "session_folders", params: { action: "remove" } })).toEqual({ action: "allow" });
+  });
+
+  it("auto mode reviews only unsandboxed or long-lived boundary changes", () => {
+    for (const toolName of ["write", "edit", "bash", "file", "todo_write", "subagent", "workflow"]) {
+      expect(classifySessionPermission({ mode: "auto", toolName, params: { action: "copy" } }), toolName)
+        .toEqual({ action: "allow" });
+    }
+    const reviewerBoundParams = {
+      browser: { action: "click" },
+      terminal: { action: "start" },
+    };
+    for (const toolName of ["browser", "terminal", "install_skill", "update_settings", "dm", "channel", "notify", "present_files", "stage_files", "pin_memory", "unpin_memory", "record_experience", "automation"]) {
+      expect(classifySessionPermission({ mode: "auto", toolName, params: reviewerBoundParams[toolName] || { action: "start" } }), toolName)
+        .toMatchObject({ action: "review", kind: "tool_action_approval" });
+    }
+    expect(classifySessionPermission({ mode: "auto", toolName: "computer", params: { action: "start" } }))
+      .toEqual({ action: "allow" });
   });
 
   it("blocks subagent tool inside a subagent (anti-recursion), independent of mode", () => {
@@ -167,23 +183,23 @@ describe("session permission modes", () => {
     expect(terminalDeny.details).toMatchObject({ layer: "subagent_access" });
   });
 
-  it("subagent 没有确认模式：ask/auto 在 subagent 上下文坍缩为 operate（永不挂在确认上）", () => {
-    // subagent 上下文 + ask：write 不 prompt，直接放行（坍缩 operate）
+  it("subagent 继承 ask/auto 权限档，不再坍缩为 operate", () => {
+    // subagent 上下文 + ask：分类仍返回 prompt；执行层用 deny_on_prompt 转为结构化 unavailable，避免挂起。
     expect(classifySessionPermission({ mode: "ask", toolName: "write", context: { isSubagent: true } }))
-      .toEqual({ action: "allow" });
+      .toMatchObject({ action: "prompt", kind: "tool_action_approval" });
     expect(classifySessionPermission({ mode: "ask", toolName: "bash", context: { isSubagent: true } }))
-      .toEqual({ action: "allow" });
-    // browser/terminal 的写动作同理（ask 坍缩 operate → 放行，不 prompt）
+      .toMatchObject({ action: "prompt", kind: "tool_action_approval" });
+    // browser/terminal 的写动作同理：继承 ask/auto 语义，不悄悄放大权限。
     expect(classifySessionPermission({ mode: "ask", toolName: "browser", params: { action: "click" }, context: { isSubagent: true } }))
-      .toEqual({ action: "allow" });
+      .toMatchObject({ action: "prompt", kind: "tool_action_approval" });
     expect(classifySessionPermission({ mode: "ask", toolName: "terminal", params: { action: "start" }, context: { isSubagent: true } }))
-      .toEqual({ action: "allow" });
+      .toMatchObject({ action: "prompt", kind: "tool_action_approval" });
     expect(classifySessionPermission({ mode: "auto", toolName: "write", context: { isSubagent: true } }))
       .toEqual({ action: "allow" });
     expect(classifySessionPermission({ mode: "auto", toolName: "bash", context: { isSubagent: true } }))
       .toEqual({ action: "allow" });
     expect(classifySessionPermission({ mode: "auto", toolName: "browser", params: { action: "click" }, context: { isSubagent: true } }))
-      .toEqual({ action: "allow" });
+      .toMatchObject({ action: "review", kind: "tool_action_approval" });
     // 非 subagent 上下文：ask 照常 prompt（不受影响）
     expect(classifySessionPermission({ mode: "ask", toolName: "write" }))
       .toMatchObject({ action: "prompt" });

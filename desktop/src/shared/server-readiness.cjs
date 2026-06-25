@@ -158,12 +158,24 @@ function extractRootServerStartupError(stderrLogs) {
   }
 
   if (!Array.isArray(stderrLogs) || stderrLogs.length === 0) return null;
-  const listenLine = stderrLogs
+  const lines = stderrLogs
     .join("")
     .split(/\r?\n/)
-    .map(line => line.replace(/^\[stderr\]\s*/, "").trim())
-    .find(line => /EADDRINUSE|EACCES/i.test(line));
-  return listenLine || null;
+    .map(line => line.replace(/^\[stderr\]\s*/, "").trim());
+
+  const listenLine = lines.find(line => /EADDRINUSE|EACCES/i.test(line));
+  if (listenLine) return listenLine;
+
+  // 通用 root error：server entry import 失败是启动崩溃的最常见形态
+  //（如 ensureFirstRun 抛错），必须先于 GPU 等历史诊断展示。
+  const importFailureLine = lines.find(line => /failed to import server entry:\s*\S/.test(line));
+  if (importFailureLine) {
+    return importFailureLine.replace(/^\[server-bootstrap\]\s*/, "");
+  }
+
+  // 兜底：第一条裸 Error 行（stack 帧行以 "at " 开头，不会命中）
+  const errorLine = lines.find(line => /^\w*Error\b\s*:/.test(line) || /^Error:/.test(line));
+  return errorLine || null;
 }
 
 function normalizeListenStartupPayload(value) {

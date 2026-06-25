@@ -1,4 +1,5 @@
 import type { Session, SessionCapabilityDrift, SessionPermissionMode, SessionStream, TodoItem } from '../types';
+import type { SessionConfirmationBlock } from './chat-types';
 import type { ThinkingLevel } from './model-slice';
 
 const SESSION_PERMISSION_MODES = new Set(['auto', 'operate', 'ask', 'read_only']);
@@ -9,9 +10,132 @@ function normalizeSessionPermissionMode(mode: unknown): SessionPermissionMode {
     : 'ask';
 }
 
+function normalizeSessionId(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function normalizeSessionPath(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function mergeSessionLocators(
+  current: Record<string, { path: string | null }>,
+  sessions: Session[],
+): Record<string, { path: string | null }> {
+  const next = { ...current };
+  for (const session of sessions || []) {
+    const sessionId = normalizeSessionId(session.sessionId);
+    if (!sessionId) continue;
+    next[sessionId] = { path: normalizeSessionPath(session.path) };
+  }
+  return next;
+}
+
+export type SessionLocatorState = {
+  currentSessionId?: string | null;
+  currentSessionPath?: string | null;
+  sessions?: Array<Pick<Session, 'path' | 'sessionId'>>;
+  sessionLocatorsById?: Record<string, { path: string | null }>;
+};
+
+export function sessionIdForPathFromLocatorState(
+  state: SessionLocatorState,
+  sessionPath: string | null | undefined,
+): string | null {
+  const path = normalizeSessionPath(sessionPath);
+  if (!path) return null;
+  const currentSessionId = normalizeSessionId(state.currentSessionId);
+  if (currentSessionId && state.currentSessionPath === path) return currentSessionId;
+  const session = (state.sessions || []).find((item) => item?.path === path);
+  const sessionId = normalizeSessionId(session?.sessionId);
+  if (sessionId) return sessionId;
+  for (const [id, locator] of Object.entries(state.sessionLocatorsById || {})) {
+    if (locator?.path === path) return id;
+  }
+  return null;
+}
+
+export function sessionScopedKey(
+  state: SessionLocatorState,
+  sessionPath: string | null | undefined,
+): string | null {
+  const path = normalizeSessionPath(sessionPath);
+  if (!path) return null;
+  return sessionIdForPathFromLocatorState(state, path) || path;
+}
+
+export function sessionScopedValue<T>(
+  state: SessionLocatorState,
+  map: Record<string, T> | null | undefined,
+  sessionPath: string | null | undefined,
+): T | undefined {
+  if (!map) return undefined;
+  const path = normalizeSessionPath(sessionPath);
+  if (!path) return undefined;
+  const key = sessionScopedKey(state, path);
+  if (key && Object.prototype.hasOwnProperty.call(map, key)) return map[key];
+  return Object.prototype.hasOwnProperty.call(map, path) ? map[path] : undefined;
+}
+
+export function sessionScopedListIncludes(
+  state: SessionLocatorState,
+  list: readonly string[] | null | undefined,
+  sessionPath: string | null | undefined,
+): boolean {
+  if (!list || !sessionPath) return false;
+  const key = sessionScopedKey(state, sessionPath);
+  return !!key && (list.includes(key) || (key !== sessionPath && list.includes(sessionPath)));
+}
+
+function putSessionScopedListValue(
+  state: SessionLocatorState,
+  list: readonly string[],
+  sessionPath: string,
+): string[] {
+  const key = sessionScopedKey(state, sessionPath) || sessionPath;
+  const next = list.filter((item) => item !== key && item !== sessionPath);
+  next.push(key);
+  return next;
+}
+
+function deleteSessionScopedListValue(
+  state: SessionLocatorState,
+  list: readonly string[],
+  sessionPath: string,
+): string[] {
+  const key = sessionScopedKey(state, sessionPath) || sessionPath;
+  return list.filter((item) => item !== key && item !== sessionPath);
+}
+
+function putSessionScopedValue<T>(
+  state: SessionLocatorState,
+  map: Record<string, T>,
+  sessionPath: string,
+  value: T,
+): Record<string, T> {
+  const key = sessionScopedKey(state, sessionPath) || sessionPath;
+  const next = { ...map, [key]: value };
+  if (key !== sessionPath) delete next[sessionPath];
+  return next;
+}
+
+function deleteSessionScopedValue<T>(
+  state: SessionLocatorState,
+  map: Record<string, T>,
+  sessionPath: string,
+): Record<string, T> {
+  const key = sessionScopedKey(state, sessionPath) || sessionPath;
+  const next = { ...map };
+  delete next[key];
+  if (key !== sessionPath) delete next[sessionPath];
+  return next;
+}
+
 export interface SessionSlice {
   sessions: Session[];
   currentSessionPath: string | null;
+  currentSessionId: string | null;
+  sessionLocatorsById: Record<string, { path: string | null }>;
   pendingSessionSwitchPath: string | null;
   sessionStreams: Record<string, SessionStream>;
   pendingNewSession: boolean;
@@ -32,12 +156,15 @@ export interface SessionSlice {
    * 就跳过 hydrate 写入，避免旧快照覆盖更晚到达的实时状态。
    */
   todosLiveVersionBySession: Record<string, number>;
-  /** #1624：服务端下发的工具能力漂移提示，keyed by sessionPath（null = 无提示） */
+  /** #1624：服务端下发的工具能力漂移提示，keyed by session identity（legacy path 读时兼容） */
   capabilityDriftBySession: Record<string, SessionCapabilityDrift>;
   /** #1624：fresh-compact 刷新进行中的 session 集合（跨切换保留 busy 态） */
   capabilityRefreshingSessions: string[];
+  /** 输入区确认卡片的 live pending 状态，keyed by session identity，避免后台 session 事件被焦点过滤丢失。 */
+  pendingSessionConfirmationsByPath: Record<string, SessionConfirmationBlock>;
   setSessions: (sessions: Session[]) => void;
   setCurrentSessionPath: (path: string | null) => void;
+  setCurrentSessionRef: (ref: { sessionId?: string | null; path?: string | null }) => void;
   setPendingSessionSwitchPath: (path: string | null) => void;
   setSessionStream: (sessionPath: string, stream: SessionStream) => void;
   removeSessionStream: (sessionPath: string) => void;
@@ -54,6 +181,8 @@ export interface SessionSlice {
   bumpTodosLiveVersion: (sessionPath: string) => void;
   setSessionCapabilityDrift: (sessionPath: string, drift: SessionCapabilityDrift | null) => void;
   setSessionCapabilityRefreshing: (sessionPath: string, refreshing: boolean) => void;
+  setPendingSessionConfirmation: (sessionPath: string, block: SessionConfirmationBlock | null) => void;
+  resolvePendingSessionConfirmation: (confirmId: string) => void;
 }
 
 export const createSessionSlice = (
@@ -61,6 +190,8 @@ export const createSessionSlice = (
 ): SessionSlice => ({
   sessions: [],
   currentSessionPath: null,
+  currentSessionId: null,
+  sessionLocatorsById: {},
   pendingSessionSwitchPath: null,
   sessionStreams: {},
   pendingNewSession: false,
@@ -76,17 +207,34 @@ export const createSessionSlice = (
   todosLiveVersionBySession: {},
   capabilityDriftBySession: {},
   capabilityRefreshingSessions: [],
-  setSessions: (sessions) => set({ sessions }),
-  setCurrentSessionPath: (path) => set({ currentSessionPath: path }),
+  pendingSessionConfirmationsByPath: {},
+  setSessions: (sessions) => set((s) => ({
+    sessions,
+    sessionLocatorsById: mergeSessionLocators(s.sessionLocatorsById, sessions),
+  })),
+  setCurrentSessionPath: (path) => set({ currentSessionPath: path, ...(path === null ? { currentSessionId: null } : {}) }),
+  setCurrentSessionRef: (ref) => set((s) => {
+    const sessionId = normalizeSessionId(ref?.sessionId);
+    const sessionPath = normalizeSessionPath(ref?.path);
+    return {
+      currentSessionId: sessionId,
+      currentSessionPath: sessionPath,
+      ...(sessionId ? {
+        sessionLocatorsById: {
+          ...s.sessionLocatorsById,
+          [sessionId]: { path: sessionPath },
+        },
+      } : {}),
+    };
+  }),
   setPendingSessionSwitchPath: (path) => set({ pendingSessionSwitchPath: path }),
   setSessionStream: (sessionPath, stream) =>
     set((s) => ({
-      sessionStreams: { ...s.sessionStreams, [sessionPath]: stream },
+      sessionStreams: putSessionScopedValue(s, s.sessionStreams, sessionPath, stream),
     })),
   removeSessionStream: (sessionPath) =>
     set((s) => {
-      const { [sessionPath]: _, ...rest } = s.sessionStreams;
-      return { sessionStreams: rest };
+      return { sessionStreams: deleteSessionScopedValue(s, s.sessionStreams, sessionPath) };
     }),
   setPendingNewSession: (pending) => set({ pendingNewSession: pending }),
   setPendingProjectId: (projectId) => set({ pendingProjectId: projectId }),
@@ -115,44 +263,83 @@ export const createSessionSlice = (
       if (!path) return { sessionTodos: todos };
       return {
         sessionTodos: todos,
-        todosBySession: { ...s.todosBySession, [path]: todos },
+        todosBySession: putSessionScopedValue(s, s.todosBySession, path, todos),
       };
     }),
   // 新 API：指定 session path
   setSessionTodosForPath: (sessionPath, todos) =>
     set((s) => ({
-      todosBySession: { ...s.todosBySession, [sessionPath]: todos },
+      todosBySession: putSessionScopedValue(s, s.todosBySession, sessionPath, todos),
       // 如果写入的是当前 session，同步更新兼容字段
       sessionTodos: s.currentSessionPath === sessionPath ? todos : s.sessionTodos,
     })),
   setSessionAuthorizedFolders: (sessionPath, folders) =>
     set((s) => ({
-      sessionAuthorizedFoldersByPath: {
-        ...s.sessionAuthorizedFoldersByPath,
-        [sessionPath]: Array.isArray(folders) ? folders : [],
-      },
+      sessionAuthorizedFoldersByPath: putSessionScopedValue(
+        s,
+        s.sessionAuthorizedFoldersByPath,
+        sessionPath,
+        Array.isArray(folders) ? folders : [],
+      ),
     })),
   bumpTodosLiveVersion: (sessionPath) =>
-    set((s) => ({
-      todosLiveVersionBySession: {
-        ...s.todosLiveVersionBySession,
-        [sessionPath]: (s.todosLiveVersionBySession[sessionPath] ?? 0) + 1,
-      },
-    })),
+    set((s) => {
+      const key = sessionScopedKey(s, sessionPath) || sessionPath;
+      return {
+        todosLiveVersionBySession: putSessionScopedValue(
+          s,
+          s.todosLiveVersionBySession,
+          sessionPath,
+          (s.todosLiveVersionBySession[key] ?? s.todosLiveVersionBySession[sessionPath] ?? 0) + 1,
+        ),
+      };
+    }),
   setSessionCapabilityDrift: (sessionPath, drift) =>
     set((s) => {
       if (drift) {
-        return { capabilityDriftBySession: { ...s.capabilityDriftBySession, [sessionPath]: drift } };
+        return {
+          capabilityDriftBySession: putSessionScopedValue(
+            s,
+            s.capabilityDriftBySession,
+            sessionPath,
+            drift,
+          ),
+        };
       }
-      const { [sessionPath]: _, ...rest } = s.capabilityDriftBySession;
-      return { capabilityDriftBySession: rest };
+      return { capabilityDriftBySession: deleteSessionScopedValue(s, s.capabilityDriftBySession, sessionPath) };
     }),
   setSessionCapabilityRefreshing: (sessionPath, refreshing) =>
     set((s) => ({
       capabilityRefreshingSessions: refreshing
-        ? (s.capabilityRefreshingSessions.includes(sessionPath)
-          ? s.capabilityRefreshingSessions
-          : [...s.capabilityRefreshingSessions, sessionPath])
-        : s.capabilityRefreshingSessions.filter((p) => p !== sessionPath),
+        ? putSessionScopedListValue(s, s.capabilityRefreshingSessions, sessionPath)
+        : deleteSessionScopedListValue(s, s.capabilityRefreshingSessions, sessionPath),
     })),
+  setPendingSessionConfirmation: (sessionPath, block) =>
+    set((s) => {
+      const path = typeof sessionPath === 'string' ? sessionPath.trim() : '';
+      if (!path) return {};
+      const key = sessionScopedKey(s, path) || path;
+      const next = { ...s.pendingSessionConfirmationsByPath };
+      if (block?.status === 'pending') {
+        next[key] = block;
+        if (key !== path) delete next[path];
+      } else {
+        delete next[key];
+        delete next[path];
+      }
+      return { pendingSessionConfirmationsByPath: next };
+    }),
+  resolvePendingSessionConfirmation: (confirmId) =>
+    set((s) => {
+      const id = typeof confirmId === 'string' ? confirmId.trim() : '';
+      if (!id) return {};
+      let changed = false;
+      const next = { ...s.pendingSessionConfirmationsByPath };
+      for (const [sessionPath, block] of Object.entries(next)) {
+        if (block.confirmId !== id) continue;
+        delete next[sessionPath];
+        changed = true;
+      }
+      return changed ? { pendingSessionConfirmationsByPath: next } : {};
+    }),
 });

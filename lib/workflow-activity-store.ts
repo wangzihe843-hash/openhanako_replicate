@@ -7,7 +7,7 @@
  * ActivityHub 的「持久化背书」：upsert 写穿、重启回灌、会话退场清理、72h TTL 修剪。
  * 名称沿用 workflow-activity（首次落地时仅 workflow），实为 ActivityHub 通用持久层。
  *
- * 归属：每条 entry 自带 sessionPath，按 path 存取（listBySession / removeBySession），
+ * 归属：每条 entry 自带 sessionId + sessionPath。sessionId 是稳定身份，sessionPath 是 legacy locator。
  * 不从焦点指针推导（状态归属唯一确定）。这是 dumb 持久层——entry 的规范化由 ActivityHub 负责。
  */
 import fs from "node:fs";
@@ -15,6 +15,25 @@ import path from "node:path";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
 
 export const WORKFLOW_ACTIVITY_STORE_VERSION = 1;
+
+function text(value: any) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeSessionRef(value: any) {
+  if (value && typeof value === "object") {
+    return {
+      sessionId: text(value.sessionId),
+      sessionPath: text(value.sessionPath),
+    };
+  }
+  return { sessionId: null, sessionPath: text(value) };
+}
+
+function matchesSession(entry: any, sessionRef: any) {
+  if (sessionRef.sessionId) return text(entry.sessionId) === sessionRef.sessionId;
+  return !!sessionRef.sessionPath && entry.sessionPath === sessionRef.sessionPath;
+}
 
 export class WorkflowActivityStore {
   declare _persistPath: string | null;
@@ -61,21 +80,23 @@ export class WorkflowActivityStore {
     return [...this._entries.values()].map((e) => ({ ...e }));
   }
 
-  listBySession(sessionPath: string) {
-    if (!sessionPath) return [];
+  listBySession(sessionRefInput: any) {
+    const sessionRef = normalizeSessionRef(sessionRefInput);
+    if (!sessionRef.sessionId && !sessionRef.sessionPath) return [];
     const out = [];
     for (const e of this._entries.values()) {
-      if (e.sessionPath === sessionPath) out.push({ ...e });
+      if (matchesSession(e, sessionRef)) out.push({ ...e });
     }
     return out;
   }
 
   /** 会话退场（删除 / 归档 / 冷清理）时回收该 session 的活动，返回删除条数。 */
-  removeBySession(sessionPath: string) {
-    if (!sessionPath) return 0;
+  removeBySession(sessionRefInput: any) {
+    const sessionRef = normalizeSessionRef(sessionRefInput);
+    if (!sessionRef.sessionId && !sessionRef.sessionPath) return 0;
     let removed = 0;
     for (const [id, e] of this._entries) {
-      if (e.sessionPath === sessionPath) {
+      if (matchesSession(e, sessionRef)) {
         this._entries.delete(id);
         removed++;
       }

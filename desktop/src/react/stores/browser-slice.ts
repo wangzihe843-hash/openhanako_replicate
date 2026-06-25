@@ -1,15 +1,18 @@
 import { useStore } from './index';
+import { sessionScopedKey, sessionScopedValue, type SessionLocatorState } from './session-slice';
+
+export interface BrowserSessionState {
+  running: boolean;
+  url: string | null;
+  thumbnail: string | null;
+  thumbnailCapturedAt?: number | null;
+  thumbnailUrl?: string | null;
+  thumbnailFresh?: boolean;
+}
 
 export interface BrowserSlice {
-  /** 按 session path 存储的 browser 状态（权威源） */
-  browserBySession: Record<string, {
-    running: boolean;
-    url: string | null;
-    thumbnail: string | null;
-    thumbnailCapturedAt?: number | null;
-    thumbnailUrl?: string | null;
-    thumbnailFresh?: boolean;
-  }>;
+  /** 按 session identity 存储的 browser 状态。legacy path key 只做读时兼容。 */
+  browserBySession: Record<string, BrowserSessionState>;
 }
 
 export const createBrowserSlice = (
@@ -29,12 +32,41 @@ const DEFAULT_BROWSER_STATE = {
   thumbnailFresh: false,
 };
 
+export function browserStateForPath(
+  state: SessionLocatorState & Pick<BrowserSlice, 'browserBySession'>,
+  sessionPath?: string | null,
+): BrowserSessionState {
+  const sp = sessionPath ?? state.currentSessionPath;
+  if (!sp) return DEFAULT_BROWSER_STATE;
+  return sessionScopedValue(state, state.browserBySession, sp) || DEFAULT_BROWSER_STATE;
+}
+
+export function setBrowserStateForPath(
+  sessionPath: string,
+  value: BrowserSessionState,
+): void {
+  useStore.setState((state) => {
+    const key = sessionScopedKey(state, sessionPath) || sessionPath;
+    const browserBySession = { ...(state.browserBySession || {}), [key]: value };
+    if (key !== sessionPath) delete browserBySession[sessionPath];
+    return { browserBySession };
+  });
+}
+
+export function clearBrowserStateForPath(sessionPath: string): void {
+  useStore.setState((state) => {
+    const key = sessionScopedKey(state, sessionPath) || sessionPath;
+    const browserBySession = { ...(state.browserBySession || {}) };
+    delete browserBySession[key];
+    if (key !== sessionPath) delete browserBySession[sessionPath];
+    return { browserBySession };
+  });
+}
+
 /** 获取指定 session 的浏览器状态。组件中使用此 hook 替代全局 browserRunning/browserUrl/browserThumbnail */
 export function useBrowserState(sessionPath?: string | null) {
   return useStore(st => {
-    const sp = sessionPath ?? st.currentSessionPath;
-    if (!sp) return DEFAULT_BROWSER_STATE;
-    return st.browserBySession[sp] || DEFAULT_BROWSER_STATE;
+    return browserStateForPath(st, sessionPath);
   });
 }
 

@@ -1,3 +1,5 @@
+import { sessionScopedKey } from './session-slice';
+
 export interface ActiveSessionStream {
   streamId: string | null;
   turnId: string | null;
@@ -9,12 +11,13 @@ export interface StreamingStatusIdentity {
 }
 
 export interface StreamingSlice {
-  /** 所有正在 streaming 的 session path 集合（单一事实源） */
+  /** 所有正在 streaming 的 session identity key 集合（legacy path 只做兼容 locator） */
   streamingSessions: string[];
   /** 正在 streaming 的 session 身份。用于忽略旧 turn/status 迟到事件。 */
   activeSessionStreams: Record<string, ActiveSessionStream>;
   addStreamingSession: (path: string, identity?: StreamingStatusIdentity) => void;
   removeStreamingSession: (path: string, identity?: StreamingStatusIdentity) => boolean;
+  forceRemoveStreamingSession: (path: string) => boolean;
   /** 后台 session 已完成新输出，但用户尚未切回查看。 */
   unreadOutputSessionPaths: string[];
   markSessionOutputUnread: (path: string) => void;
@@ -30,7 +33,7 @@ export interface StreamingSlice {
   setModelSwitching: (v: boolean) => void;
 }
 
-// 定时器按 sessionPath 存在模块闭包里，不污染 store 的可见状态。
+// 定时器按 session identity key 存在模块闭包里，不污染 store 的可见状态。
 // 生命周期规则：
 //   - setInlineError 覆盖写入时，先 clear 旧 timer 再起新的，避免"旧 timer 误清新 text"竞态
 //   - clearInlineError 清状态时同步 clear timer，防 timer 在 null 写入后继续 fire
@@ -43,6 +46,27 @@ function cancelTimer(path: string): void {
     clearTimeout(t);
     inlineErrorTimers.delete(path);
   }
+}
+
+function identityKeyForPath(get: (() => any) | undefined, path: string): string {
+  return sessionScopedKey(get?.() || {}, path) || path;
+}
+
+function filterLegacyAndIdentity(list: readonly string[], path: string, key: string): string[] {
+  return list.filter((item) => item !== key && item !== path);
+}
+
+function putIdentityMapValue<T>(map: Record<string, T>, path: string, key: string, value: T): Record<string, T> {
+  const next = { ...map, [key]: value };
+  if (key !== path) delete next[path];
+  return next;
+}
+
+function deleteIdentityMapValue<T>(map: Record<string, T>, path: string, key: string): Record<string, T> {
+  const next = { ...map };
+  delete next[key];
+  if (key !== path) delete next[path];
+  return next;
 }
 
 function normalizeIdentityPart(value: unknown): string | null {
@@ -89,74 +113,92 @@ export const createStreamingSlice = (
   streamingSessions: [],
   activeSessionStreams: {},
   addStreamingSession: (path, identity) => set((s) => {
+    const key = identityKeyForPath(get, path);
     const active = s.activeSessionStreams || {};
-    const current = active[path];
+    const current = active[key] || active[path];
     const currentStreamId = normalizeIdentityPart(current?.streamId);
     const currentTurnId = normalizeIdentityPart(current?.turnId);
     const incomingStreamId = normalizeIdentityPart(identity?.streamId);
     const incomingTurnId = normalizeIdentityPart(identity?.turnId);
     const explicitIdentity = hasExplicitIdentity(identity);
     const streamChanged = !!incomingStreamId && incomingStreamId !== currentStreamId;
+    const streamingSessions = filterLegacyAndIdentity(s.streamingSessions, path, key);
     return {
-      streamingSessions: s.streamingSessions.includes(path)
-        ? s.streamingSessions
-        : [...s.streamingSessions, path],
-      activeSessionStreams: {
-        ...active,
-        [path]: {
+      streamingSessions: [...streamingSessions, key],
+      activeSessionStreams: putIdentityMapValue(active, path, key, {
           streamId: explicitIdentity
             ? (incomingStreamId ?? currentStreamId ?? null)
             : (currentStreamId ?? null),
           turnId: explicitIdentity
             ? (incomingTurnId ?? (streamChanged ? null : currentTurnId) ?? null)
             : (currentTurnId ?? null),
-        },
-      },
+      }),
     };
   }),
   removeStreamingSession: (path, identity) => {
     let applied = true;
     set((s) => {
+      const key = identityKeyForPath(get, path);
       const active = s.activeSessionStreams || {};
-      if (!identitiesMatch(active[path], identity)) {
+      if (!identitiesMatch(active[key] || active[path], identity)) {
         applied = false;
         return {};
       }
-      const restActive = { ...active };
-      delete restActive[path];
       return {
-        streamingSessions: s.streamingSessions.filter(p => p !== path),
-        activeSessionStreams: restActive,
+        streamingSessions: filterLegacyAndIdentity(s.streamingSessions, path, key),
+        activeSessionStreams: deleteIdentityMapValue(active, path, key),
+      };
+    });
+    return applied;
+  },
+  forceRemoveStreamingSession: (path) => {
+    let applied = false;
+    set((s) => {
+      const key = identityKeyForPath(get, path);
+      const active = s.activeSessionStreams || {};
+      const hadSession = s.streamingSessions.includes(key) || (key !== path && s.streamingSessions.includes(path));
+      const hadIdentity = Object.prototype.hasOwnProperty.call(active, key)
+        || (key !== path && Object.prototype.hasOwnProperty.call(active, path));
+      if (!hadSession && !hadIdentity) return {};
+      applied = hadSession || hadIdentity;
+      return {
+        streamingSessions: filterLegacyAndIdentity(s.streamingSessions, path, key),
+        activeSessionStreams: deleteIdentityMapValue(active, path, key),
       };
     });
     return applied;
   },
   unreadOutputSessionPaths: [],
-  markSessionOutputUnread: (path) => set((s) => ({
-    unreadOutputSessionPaths: s.unreadOutputSessionPaths.includes(path)
-      ? s.unreadOutputSessionPaths
-      : [...s.unreadOutputSessionPaths, path],
-  })),
-  clearSessionOutputUnread: (path) => set((s) => ({
-    unreadOutputSessionPaths: s.unreadOutputSessionPaths.filter(p => p !== path),
-  })),
+  markSessionOutputUnread: (path) => set((s) => {
+    const key = identityKeyForPath(get, path);
+    const unread = filterLegacyAndIdentity(s.unreadOutputSessionPaths, path, key);
+    return { unreadOutputSessionPaths: [...unread, key] };
+  }),
+  clearSessionOutputUnread: (path) => set((s) => {
+    const key = identityKeyForPath(get, path);
+    return { unreadOutputSessionPaths: filterLegacyAndIdentity(s.unreadOutputSessionPaths, path, key) };
+  }),
   inlineErrors: {},
   setInlineError: (path, text, ttlMs = 5000) => {
-    cancelTimer(path);
-    set((s) => ({ inlineErrors: { ...s.inlineErrors, [path]: text } }));
+    const key = identityKeyForPath(get, path);
+    cancelTimer(key);
+    if (key !== path) cancelTimer(path);
+    set((s) => ({ inlineErrors: putIdentityMapValue(s.inlineErrors, path, key, text) }));
     if (ttlMs > 0) {
       const timer = setTimeout(() => {
-        inlineErrorTimers.delete(path);
-        const current = get?.().inlineErrors[path];
+        inlineErrorTimers.delete(key);
+        const current = get?.().inlineErrors[key];
         if (current !== text) return;
-        set((s) => ({ inlineErrors: { ...s.inlineErrors, [path]: null } }));
+        set((s) => ({ inlineErrors: putIdentityMapValue(s.inlineErrors, path, key, null) }));
       }, ttlMs);
-      inlineErrorTimers.set(path, timer);
+      inlineErrorTimers.set(key, timer);
     }
   },
   clearInlineError: (path) => {
-    cancelTimer(path);
-    set((s) => ({ inlineErrors: { ...s.inlineErrors, [path]: null } }));
+    const key = identityKeyForPath(get, path);
+    cancelTimer(key);
+    if (key !== path) cancelTimer(path);
+    set((s) => ({ inlineErrors: putIdentityMapValue(s.inlineErrors, path, key, null) }));
   },
   modelSwitching: false,
   setModelSwitching: (v) => set({ modelSwitching: v }),

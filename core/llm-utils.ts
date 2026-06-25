@@ -7,6 +7,7 @@
 import fs from "fs";
 import path from "path";
 import { callText } from "./llm-client.ts";
+import { callTextWithLengthContract, type OutputLengthContract } from "./output-length-contract.ts";
 import { getLocale } from "../lib/i18n.ts";
 import { normalizePlainDescription } from "../lib/text/internal-narration.ts";
 import { createModuleLogger } from "../lib/debug-log.ts";
@@ -60,6 +61,7 @@ async function callLlm({
   quirks,
   usageLedger,
   usageContext,
+  lengthContract,
 }: {
   model: any;
   api: any;
@@ -75,8 +77,9 @@ async function callLlm({
   quirks?: any;
   usageLedger?: any;
   usageContext?: any;
+  lengthContract?: OutputLengthContract;
 }): Promise<string> {
-  return callText({
+  const request = {
     api, model,
     apiKey: api_key,
     baseUrl: base_url,
@@ -88,11 +91,24 @@ async function callLlm({
     ...(quirks != null && { quirks }),
     ...(usageLedger != null && { usageLedger }),
     ...(usageContext != null && { usageContext }),
+  };
+  if (lengthContract) {
+    const result = await callTextWithLengthContract({
+      callText,
+      request,
+      contract: lengthContract,
+    });
+    return result.text;
+  }
+  return callText({
+    ...request,
+    ...(max_tokens != null && { maxTokens: max_tokens, outputBudgetSource }),
   }) as Promise<string>;
 }
 
 function utilityUsageContext(utilConfig, operation, trigger = "tool") {
   const agentId = utilConfig?.usageAgentId || null;
+  const sessionId = utilConfig?.usageSessionId || null;
   const sessionPath = utilConfig?.usageSessionPath || null;
   return {
     source: {
@@ -101,10 +117,45 @@ function utilityUsageContext(utilConfig, operation, trigger = "tool") {
       surface: "system",
       trigger,
     },
-    attribution: sessionPath
-      ? { kind: "session", agentId, sessionPath }
+    attribution: sessionId || sessionPath
+      ? {
+          kind: "session",
+          agentId,
+          ...(sessionId ? { sessionId } : {}),
+          ...(sessionPath ? { sessionPath } : {}),
+        }
       : { kind: "utility", agentId },
   };
+}
+
+function localeLengthContract({
+  isZh,
+  zhLabel,
+  enLabel,
+  zhTarget,
+  enTarget,
+  zhUnit = "chars",
+  enUnit = "words",
+  zhMin,
+  enMin,
+  zhMax,
+  enMax,
+}: {
+  isZh: boolean;
+  zhLabel: string;
+  enLabel: string;
+  zhTarget: number;
+  enTarget: number;
+  zhUnit?: "chars" | "words";
+  enUnit?: "chars" | "words";
+  zhMin?: number;
+  enMin?: number;
+  zhMax?: number;
+  enMax?: number;
+}): OutputLengthContract {
+  return isZh
+    ? { label: zhLabel, target: zhTarget, unit: zhUnit, min: zhMin, max: zhMax, locale: "zh" }
+    : { label: enLabel, target: enTarget, unit: enUnit, min: enMin, max: enMax, locale: "en" };
 }
 
 /**
@@ -173,14 +224,14 @@ export async function summarizeTitle(utilConfig, userText, assistantText, opts: 
       ? `你是一个对话标题生成器。根据用户和助手的第一轮对话，用一句极短的话概括对话主题。
 
 规则：
-1. 标题长度严格控制在 10 个字以内（中文）或 5 个单词以内（英文）
+1. 标题目标约 10 个字（中文）或 5 个单词（英文），保持极短
 2. 语言必须和用户说的第一句话一致：用户说中文就用中文，用户说英文就用英文
 3. 不要加引号、句号或其他标点
 4. 直接输出标题，不要解释`
       : `You are a conversation title generator. Based on the first exchange between user and assistant, summarize the topic in a very short phrase.
 
 Rules:
-1. Keep the title under 5 words (English) or 10 characters (Chinese)
+1. Aim for about 5 words in English or 10 characters in Chinese, and keep it very short
 2. The title language must match the user's first message
 3. No quotes, periods, or other punctuation
 4. Output the title directly, no explanation`;
@@ -197,7 +248,15 @@ Rules:
           content: `${userLabel}：${(userText || "").slice(0, 500)}\n${assistantLabel}：${(assistantText || "").slice(0, 500)}`,
         },
       ],
-      max_tokens: 50,
+      lengthContract: localeLengthContract({
+        isZh,
+        zhLabel: "标题",
+        enLabel: "title",
+        zhTarget: 10,
+        enTarget: 5,
+        zhMin: 1,
+        enMin: 1,
+      }),
       timeoutMs: opts.timeoutMs,
       signal: opts.signal,
       usageLedger: utilConfig.usageLedger,
@@ -285,7 +344,7 @@ export async function summarizeActivity(utilConfig, sessionPath, emitDevLog, pre
       ? `你是一个执行摘要生成器。根据 Agent 的巡检上下文、执行结果和使用的工具，概括它做了什么。
 
 规则：
-1. 用中文，50 字以内
+1. 用中文，目标约 50 字，可在 30-100 字之间自然浮动
 2. 直接输出摘要，不要前缀、不要解释
 3. 说清楚做了什么具体动作（拆解待办、搜索信息、标记完成、读取文件等）
 4. 如果调用了工具，提一下工具名称和做了什么
@@ -293,7 +352,7 @@ export async function summarizeActivity(utilConfig, sessionPath, emitDevLog, pre
       : `You are an execution summary generator. Based on the Agent's patrol context, execution results, and tools used, summarize what it did.
 
 Rules:
-1. In English, under 30 words
+1. In English, aim for about 30 words; 18-60 words is acceptable
 2. Output the summary directly, no prefix or explanation
 3. Be specific about what actions were taken (broke down tasks, searched info, marked complete, read files, etc.)
 4. If tools were called, mention the tool names and what they did
@@ -302,23 +361,34 @@ Rules:
     const contextLabel = isZh ? "巡检上下文" : "Patrol context";
     const replyLabel = isZh ? "Agent 回复" : "Agent reply";
 
-    const text = await callText({
-      api, model,
-      apiKey: api_key,
-      baseUrl: base_url,
-      headers: undefined,
-      signal: undefined,
-      messages: [
-        { role: "system", content: systemContent },
-        {
-          role: "user",
-          content: `${contextLabel}：\n${userText.slice(0, 600)}\n\n${replyLabel}：\n${assistantText.slice(0, 600)}${toolInfo}`,
-        },
-      ],
-      temperature: 0.3,
-      maxTokens: 150,
-      usageLedger: utilConfig.usageLedger,
-      usageContext: utilityUsageContext(utilConfig, "activity_summary", "scheduled"),
+    const { text } = await callTextWithLengthContract({
+      callText,
+      request: {
+        api, model,
+        apiKey: api_key,
+        baseUrl: base_url,
+        headers: undefined,
+        signal: undefined,
+        messages: [
+          { role: "system", content: systemContent },
+          {
+            role: "user",
+            content: `${contextLabel}：\n${userText.slice(0, 600)}\n\n${replyLabel}：\n${assistantText.slice(0, 600)}${toolInfo}`,
+          },
+        ],
+        temperature: 0.3,
+        usageLedger: utilConfig.usageLedger,
+        usageContext: utilityUsageContext(utilConfig, "activity_summary", "scheduled"),
+      },
+      contract: localeLengthContract({
+        isZh,
+        zhLabel: "执行摘要",
+        enLabel: "execution summary",
+        zhTarget: 50,
+        enTarget: 30,
+        zhMin: 1,
+        enMin: 1,
+      }),
     });
 
     return text;
@@ -347,30 +417,42 @@ export async function summarizeActivityQuick(utilConfig, sessionPath) {
     if (!api_key || !base_url || !api) return null;
 
     const systemContent = isZh
-      ? `根据 Agent 的巡检上下文和执行结果，用一两句话概括它做了什么。30 字以内，中文，直接输出。`
-      : `Based on the Agent's patrol context and execution results, summarize what it did in one or two sentences. Under 15 words, English, output directly.`;
+      ? `根据 Agent 的巡检上下文和执行结果，用一两句话概括它做了什么。目标约 30 字，可在 18-60 字之间自然浮动。中文，直接输出。`
+      : `Based on the Agent's patrol context and execution results, summarize what it did in one or two sentences. Aim for about 15 words; 9-30 words is acceptable. English, output directly.`;
 
     const contextLabel = isZh ? "巡检上下文" : "Patrol context";
     const replyLabel = isZh ? "Agent 回复" : "Agent reply";
 
-    return await callText({
-      api, model,
-      apiKey: api_key,
-      baseUrl: base_url,
-      headers: undefined,
-      signal: undefined,
-      messages: [
-        { role: "system", content: systemContent },
-        {
-          role: "user",
-          content: `${contextLabel}：\n${userText.slice(0, 400)}\n\n${replyLabel}：\n${assistantText.slice(0, 400)}`,
-        },
-      ],
-      temperature: 0.3,
-      maxTokens: 80,
-      usageLedger: utilConfig.usageLedger,
-      usageContext: utilityUsageContext(utilConfig, "activity_summary_quick", "scheduled"),
+    const { text } = await callTextWithLengthContract({
+      callText,
+      request: {
+        api, model,
+        apiKey: api_key,
+        baseUrl: base_url,
+        headers: undefined,
+        signal: undefined,
+        messages: [
+          { role: "system", content: systemContent },
+          {
+            role: "user",
+            content: `${contextLabel}：\n${userText.slice(0, 400)}\n\n${replyLabel}：\n${assistantText.slice(0, 400)}`,
+          },
+        ],
+        temperature: 0.3,
+        usageLedger: utilConfig.usageLedger,
+        usageContext: utilityUsageContext(utilConfig, "activity_summary_quick", "scheduled"),
+      },
+      contract: localeLengthContract({
+        isZh,
+        zhLabel: "快速摘要",
+        enLabel: "quick summary",
+        zhTarget: 30,
+        enTarget: 15,
+        zhMin: 1,
+        enMin: 1,
+      }),
     });
+    return text;
   } catch (err) {
     log.error(`summarizeActivityQuick failed: ${formatError(err)}`);
     return null;
@@ -460,7 +542,6 @@ Examples:
         },
         { role: "user", content: name },
       ],
-      max_tokens: 20,
       usageLedger: utilConfig.usageLedger,
       usageContext: utilityUsageContext(utilConfig, "generate_agent_id", "manual"),
     });
@@ -502,8 +583,8 @@ export async function generateDescription(utilConfig, personality, locale) {
 
     const isZh = String(locale || "").startsWith("zh");
     const systemContent = isZh
-      ? "你是产品花名册的第三方编辑。根据以下 AI agent 的公开人格材料，写一段 100 字以内的第三人称简介。要求：像介绍一位助手，而不是替助手自述；涵盖人格特征、专长领域、沟通风格、适合的任务类型；不要使用第一人称；不要输出 <mood>、Vibe、Sparks、Pulse、Reflect 或任何内部标签。纯文本，不要用 markdown 格式。直接输出简介，不要解释。"
-      : "You are a third-person product roster editor. Based on the public persona material below, write a public-facing description of this AI agent in under 100 characters. Describe the assistant from the outside, not in first person. Cover personality traits, expertise, communication style, and suitable tasks. Do not output <mood>, Vibe, Sparks, Pulse, Reflect, or any internal tags. Plain text, no markdown. Output the description directly, no explanation.";
+      ? "你是产品花名册的第三方编辑。根据以下 AI agent 的公开人格材料，写一段第三人称简介。目标约 100 字，可在 60-200 字之间自然浮动。要求：像介绍一位助手，而不是替助手自述；涵盖人格特征、专长领域、沟通风格、适合的任务类型；不要使用第一人称；不要输出 <mood>、Vibe、Sparks、Pulse、Reflect 或任何内部标签。纯文本，不要用 markdown 格式。直接输出简介，不要解释。"
+      : "You are a third-person product roster editor. Based on the public persona material below, write a public-facing description of this AI agent. Aim for about 100 characters; 60-200 characters is acceptable. Describe the assistant from the outside, not in first person. Cover personality traits, expertise, communication style, and suitable tasks. Do not output <mood>, Vibe, Sparks, Pulse, Reflect, or any internal tags. Plain text, no markdown. Output the description directly, no explanation.";
 
     const raw = await callLlm({
       model, api, api_key, base_url,
@@ -512,13 +593,23 @@ export async function generateDescription(utilConfig, personality, locale) {
         { role: "user", content: personality.slice(0, 3000) },
       ],
       temperature: 0.3,
-      max_tokens: 200,
+      lengthContract: localeLengthContract({
+        isZh,
+        zhLabel: "简介",
+        enLabel: "description",
+        zhTarget: 100,
+        enTarget: 100,
+        zhUnit: "chars",
+        enUnit: "chars",
+        zhMin: 1,
+        enMin: 1,
+      }),
       usageLedger: utilConfig.usageLedger,
       usageContext: utilityUsageContext(utilConfig, "generate_description", "manual"),
     });
     if (!raw) return null;
 
-    const text = normalizePlainDescription(raw, 100);
+    const text = normalizePlainDescription(raw);
     return text || null;
   } catch (err) {
     log.error(`generateDescription failed: ${formatError(err)}`);

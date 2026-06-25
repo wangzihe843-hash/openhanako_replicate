@@ -45,6 +45,7 @@ function BridgeProbe() {
     <div>
       <span data-testid="telegram-enabled">{String(status?.telegram?.enabled)}</span>
       <span data-testid="permission-mode">{status?.permissionMode || 'none'}</span>
+      <span data-testid="rich-streaming">{String(status?.richStreamingEnabled)}</span>
       <span data-testid="telegram-token">{tgToken}</span>
       <span data-testid="public-ishiki">{publicIshiki}</span>
     </div>
@@ -93,6 +94,7 @@ describe('useBridgeState snapshot hydration', () => {
             permissionMode: 'operate',
             readOnly: false,
             receiptEnabled: true,
+            richStreamingEnabled: true,
             knownUsers: {},
             owner: {},
           },
@@ -122,6 +124,7 @@ describe('useBridgeState snapshot hydration', () => {
 
     expect(screen.getByTestId('telegram-enabled')).toHaveTextContent('true');
     expect(screen.getByTestId('permission-mode')).toHaveTextContent('operate');
+    expect(screen.getByTestId('rich-streaming')).toHaveTextContent('true');
     expect(screen.getByTestId('telegram-token')).toHaveTextContent('masked-token');
     expect(screen.getByTestId('public-ishiki')).toHaveTextContent('snapshot-public-ishiki');
     expect(mockHanaFetch).toHaveBeenCalledWith(

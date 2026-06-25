@@ -27,6 +27,7 @@ import {
 } from "./search-rate-limiter.ts";
 
 export const DEFAULT_SEARCH_PROVIDER = AUTO_SEARCH_PROVIDER;
+const ANYSEARCH_PROVIDER = "anysearch";
 const ANYSEARCH_FREE_PROVIDER = "anysearch_free";
 const ANYSEARCH_SEARCH_URL = "https://api.anysearch.com/v1/search";
 const DEFAULT_DISPLAY_RESULTS = 10;
@@ -77,8 +78,12 @@ function clampResultsToRange(maxResults, { defaultValue, max, min = 1 }) {
   return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
+function isAnySearchProvider(provider) {
+  return provider === ANYSEARCH_PROVIDER || provider === ANYSEARCH_FREE_PROVIDER;
+}
+
 function maxResultsForProvider(provider, maxResults) {
-  if (provider === ANYSEARCH_FREE_PROVIDER) {
+  if (isAnySearchProvider(provider)) {
     return clampResultsToRange(maxResults, {
       defaultValue: ANYSEARCH_DEFAULT_RESULTS,
       max: ANYSEARCH_MAX_RESULTS,
@@ -222,16 +227,20 @@ async function searchBrave(query, maxResults, apiKey) {
 }
 
 // ════════════════════════════════════════
-// Provider: AnySearch anonymous free tier
+// Provider: AnySearch paid API and anonymous free tier
 // ════════════════════════════════════════
 
-async function searchAnySearchFree(query, maxResults) {
-  const resultLimit = maxResultsForProvider(ANYSEARCH_FREE_PROVIDER, maxResults);
+async function searchAnySearch(query, maxResults, apiKey, provider) {
+  const resultLimit = maxResultsForProvider(provider, maxResults);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
   const res = await fetch(ANYSEARCH_SEARCH_URL, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({
       query,
       max_results: resultLimit,
@@ -249,7 +258,7 @@ async function searchAnySearchFree(query, maxResults) {
   const metadata = anySearchMetadataFrom(data);
   return {
     query,
-    provider: ANYSEARCH_FREE_PROVIDER,
+    provider,
     source_type: "api",
     results: anySearchResultsFrom(data).slice(0, resultLimit).map((r, index) => ({
       title: r.title || "",
@@ -266,7 +275,7 @@ async function searchAnySearchFree(query, maxResults) {
       },
     })),
     diagnostics: {
-      anonymous: true,
+      anonymous: !apiKey,
       total_results: metadata.total_results ?? null,
       search_time_ms: metadata.search_time_ms ?? null,
       request_id: metadata.request_id || "",
@@ -275,7 +284,12 @@ async function searchAnySearchFree(query, maxResults) {
   };
 }
 
+async function searchAnySearchFree(query, maxResults) {
+  return searchAnySearch(query, maxResults, "", ANYSEARCH_FREE_PROVIDER);
+}
+
 const PROVIDERS = {
+  [ANYSEARCH_PROVIDER]: { search: searchAnySearch, requiresApiKey: true, sourceType: "api" },
   [ANYSEARCH_FREE_PROVIDER]: { search: searchAnySearchFree, requiresApiKey: false, sourceType: "api" },
   tavily: { search: searchTavily, requiresApiKey: true, sourceType: "api" },
   brave: { search: searchBrave, requiresApiKey: true, sourceType: "api" },

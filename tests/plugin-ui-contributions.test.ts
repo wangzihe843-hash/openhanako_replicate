@@ -78,6 +78,9 @@ describe('Plugin UI Contributions', () => {
           PLUGIN_UI_CAPABILITY.EXTERNAL_OPEN,
           'unknown.capability',
           PLUGIN_UI_CAPABILITY.CLIPBOARD_WRITE_TEXT,
+          PLUGIN_UI_CAPABILITY.RESOURCE_OPEN,
+          PLUGIN_UI_CAPABILITY.RESOURCE_PICK,
+          PLUGIN_UI_CAPABILITY.RESOURCE_REQUEST_ACCESS,
         ],
       },
       contributes: {
@@ -92,6 +95,9 @@ describe('Plugin UI Contributions', () => {
     expect(pm.getPages()[0].hostCapabilities).toEqual([
       PLUGIN_UI_CAPABILITY.EXTERNAL_OPEN,
       PLUGIN_UI_CAPABILITY.CLIPBOARD_WRITE_TEXT,
+      PLUGIN_UI_CAPABILITY.RESOURCE_OPEN,
+      PLUGIN_UI_CAPABILITY.RESOURCE_PICK,
+      PLUGIN_UI_CAPABILITY.RESOURCE_REQUEST_ACCESS,
     ]);
   });
 
@@ -137,7 +143,10 @@ describe('Plugin UI Contributions', () => {
       id: 'grant-widget-plugin',
       trust: 'full-access',
       ui: {
-        hostCapabilities: [PLUGIN_UI_CAPABILITY.EXTERNAL_OPEN],
+        hostCapabilities: [
+          PLUGIN_UI_CAPABILITY.EXTERNAL_OPEN,
+          PLUGIN_UI_CAPABILITY.RESOURCE_OPEN,
+        ],
       },
       contributes: {
         widget: { title: 'Grant Widget', route: '/widget' },
@@ -150,6 +159,7 @@ describe('Plugin UI Contributions', () => {
 
     expect(pm.getWidgets()[0].hostCapabilities).toEqual([
       PLUGIN_UI_CAPABILITY.EXTERNAL_OPEN,
+      PLUGIN_UI_CAPABILITY.RESOURCE_OPEN,
     ]);
   });
 

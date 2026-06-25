@@ -5,7 +5,13 @@ export const SESSION_PERMISSION_MODES = Object.freeze({
   READ_ONLY: "read_only",
 });
 
-export const DEFAULT_SESSION_PERMISSION_MODE = SESSION_PERMISSION_MODES.ASK;
+export const SESSION_APPROVAL_POLICIES = Object.freeze({
+  INTERACTIVE: "interactive",
+  DENY_ON_PROMPT: "deny_on_prompt",
+  NEVER: "never",
+});
+
+export const DEFAULT_SESSION_PERMISSION_MODE = SESSION_PERMISSION_MODES.AUTO;
 const BRIDGE_PERMISSION_MODE_VALUES = new Set([
   SESSION_PERMISSION_MODES.AUTO,
   SESSION_PERMISSION_MODES.OPERATE,
@@ -40,10 +46,27 @@ const SIDE_EFFECT_TOOLS = new Set([
   "stage_files",
   "present_files",
   "subagent",
+  "workflow",
   "notify",
   "record_experience",
   "pin_memory",
   "unpin_memory",
+]);
+
+const AUTO_REVIEW_TOOLS = new Set([
+  "automation",
+  "browser",
+  "channel",
+  "dm",
+  "install_skill",
+  "notify",
+  "pin_memory",
+  "present_files",
+  "record_experience",
+  "stage_files",
+  "terminal",
+  "unpin_memory",
+  "update_settings",
 ]);
 
 // subagent 上下文固定边界（与 permission mode 无关）：哪怕 operate 也拦。收口在拦截层而非剥离——
@@ -102,6 +125,17 @@ const FILE_READ_ACTIONS = new Set([
   "stat",
 ]);
 
+const DECLARED_READ_KINDS = new Set([
+  "read",
+  "readonly",
+  "read_only",
+]);
+
+const DECLARED_AUTO_ALLOW_KINDS = new Set([
+  "plugin_output",
+  "session_file_output",
+]);
+
 export function normalizeSessionPermissionMode(raw) {
   if (typeof raw === "string") return normalizeSessionPermissionMode({ permissionMode: raw });
   if (raw?.permissionMode === SESSION_PERMISSION_MODES.AUTO) return SESSION_PERMISSION_MODES.AUTO;
@@ -125,6 +159,23 @@ export function normalizeAutomationPermissionMode(raw) {
   const source = typeof raw === "string" ? raw : raw?.permissionMode;
   if (AUTOMATION_PERMISSION_MODE_VALUES.has(source)) return source;
   return SESSION_PERMISSION_MODES.AUTO;
+}
+
+export function normalizeSessionApprovalPolicy(raw) {
+  const source = typeof raw === "string" ? raw : raw?.approvalPolicy;
+  if (source === SESSION_APPROVAL_POLICIES.INTERACTIVE) return SESSION_APPROVAL_POLICIES.INTERACTIVE;
+  if (source === SESSION_APPROVAL_POLICIES.DENY_ON_PROMPT) return SESSION_APPROVAL_POLICIES.DENY_ON_PROMPT;
+  if (source === SESSION_APPROVAL_POLICIES.NEVER) return SESSION_APPROVAL_POLICIES.NEVER;
+  return SESSION_APPROVAL_POLICIES.INTERACTIVE;
+}
+
+export function resolveSessionApprovalPolicy({ mode, approvalPolicy, allowHumanApproval }: { mode?: any; approvalPolicy?: any; allowHumanApproval?: any } = {}) {
+  const normalizedMode = normalizeSessionPermissionMode(mode);
+  if (normalizedMode === SESSION_PERMISSION_MODES.OPERATE) return SESSION_APPROVAL_POLICIES.NEVER;
+  if (normalizedMode === SESSION_PERMISSION_MODES.AUTO) return SESSION_APPROVAL_POLICIES.DENY_ON_PROMPT;
+  if (approvalPolicy != null) return normalizeSessionApprovalPolicy(approvalPolicy);
+  if (allowHumanApproval === false) return SESSION_APPROVAL_POLICIES.DENY_ON_PROMPT;
+  return SESSION_APPROVAL_POLICIES.INTERACTIVE;
 }
 
 export function legacyAccessModeFromPermissionMode(mode) {
@@ -187,6 +238,44 @@ function review(toolName) {
   };
 }
 
+function declaredToolSessionPermission(context) {
+  const value = context?.toolSessionPermission || context?.sessionPermission;
+  return value && typeof value === "object" ? value : null;
+}
+
+function hasDeclaredPermissionBoundary(permission) {
+  if (!permission) return false;
+  return permission.readOnly === true
+    || typeof permission.kind === "string"
+    || permission.auto === "allow"
+    || permission.auto === "review";
+}
+
+function isDeclaredReadOnly(permission) {
+  if (!permission) return false;
+  if (permission.readOnly === true) return true;
+  return typeof permission.kind === "string" && DECLARED_READ_KINDS.has(permission.kind);
+}
+
+function isDeclaredAutoAllow(permission) {
+  if (!permission) return false;
+  if (permission.auto === "allow") return true;
+  if (permission.auto === "review") return false;
+  return typeof permission.kind === "string" && DECLARED_AUTO_ALLOW_KINDS.has(permission.kind);
+}
+
+function classifyDeclaredToolPermission(mode, toolName, context) {
+  const permission = declaredToolSessionPermission(context);
+  if (!hasDeclaredPermissionBoundary(permission)) return null;
+  if (isDeclaredReadOnly(permission)) return { action: "allow" };
+  if (mode === SESSION_PERMISSION_MODES.OPERATE) return { action: "allow" };
+  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly(toolName, context);
+  if (mode === SESSION_PERMISSION_MODES.AUTO) {
+    return isDeclaredAutoAllow(permission) ? { action: "allow" } : review(toolName);
+  }
+  return prompt(toolName);
+}
+
 function classifyBrowserAction(mode, action, context) {
   if (BROWSER_READ_ACTIONS.has(action)) return { action: "allow" };
   if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly("browser", context);
@@ -212,7 +301,6 @@ function classifySessionFoldersAction(mode, action, context) {
 function classifyFileAction(mode, action, context) {
   if (FILE_READ_ACTIONS.has(action)) return { action: "allow" };
   if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly("file", context);
-  if (mode === SESSION_PERMISSION_MODES.AUTO) return review("file");
   if (mode === SESSION_PERMISSION_MODES.ASK) return prompt("file");
   return { action: "allow" };
 }
@@ -230,15 +318,8 @@ export function classifySessionPermission({ mode, toolName, params, context }: {
         + `This tool is always blocked in subagent context regardless of access level; perform this action from the parent session instead.`,
     });
   }
-  // 硬不变量：subagent 没有需要人类确认的模式。后台任务无人交互确认，若走 prompt/review
-  // 会挂在永不到来的确认上（直到超时）。ASK/AUTO 在 subagent 上下文一律坍缩为 operate，
-  // 与 subagent-tool-policy 的继承映射一致。即便上游绕过收口直接给了 ask/auto，也绝不挂起。
-  if (context?.isSubagent && (
-    normalized === SESSION_PERMISSION_MODES.ASK
-    || normalized === SESSION_PERMISSION_MODES.AUTO
-  )) {
-    normalized = SESSION_PERMISSION_MODES.OPERATE;
-  }
+  const declared = classifyDeclaredToolPermission(normalized, name, context);
+  if (declared) return declared;
   if (INFORMATION_TOOLS.has(name)) return { action: "allow" };
   if (name === "browser") return classifyBrowserAction(normalized, params?.action, context);
   if (name === "terminal") return classifyTerminalAction(normalized, params?.action, context);
@@ -251,9 +332,17 @@ export function classifySessionPermission({ mode, toolName, params, context }: {
   }
   if (name === "session_folders") return classifySessionFoldersAction(normalized, params?.action, context);
   if (name === "file") return classifyFileAction(normalized, params?.action, context);
+  if (name === "computer") {
+    if (normalized === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly(name, context);
+    return { action: "allow" };
+  }
   if (normalized === SESSION_PERMISSION_MODES.OPERATE) return { action: "allow" };
   if (normalized === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly(name, context);
-  if (normalized === SESSION_PERMISSION_MODES.AUTO) return review(name);
+  if (normalized === SESSION_PERMISSION_MODES.AUTO) {
+    if (AUTO_REVIEW_TOOLS.has(name)) return review(name);
+    if (SIDE_EFFECT_TOOLS.has(name)) return { action: "allow" };
+    return review(name);
+  }
   if (SIDE_EFFECT_TOOLS.has(name)) return prompt(name);
   return prompt(name);
 }

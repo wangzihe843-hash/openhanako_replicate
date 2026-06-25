@@ -571,19 +571,27 @@ function decodeHttpConfigValues(values: any) {
 
 function decodeHttpConfigBody(body: any) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return { values: {}, scope: "global", agentId: undefined, sessionPath: undefined };
+    return { values: {}, scope: "global", agentId: undefined, sessionId: undefined, sessionPath: undefined, legacySessionPath: undefined };
   }
   const hasValuesEnvelope = Object.prototype.hasOwnProperty.call(body, "values");
   const rawValues = hasValuesEnvelope
     ? body.values
     : Object.fromEntries(
-        Object.entries(body).filter(([key]) => !["scope", "agentId", "sessionPath"].includes(key)),
+        Object.entries(body).filter(([key]) => ![
+          "scope",
+          "agentId",
+          "sessionId",
+          "sessionPath",
+          "legacySessionPath",
+        ].includes(key)),
       );
   return {
     values: decodeHttpConfigValues(rawValues),
     scope: body.scope || "global",
     agentId: body.agentId,
+    sessionId: body.sessionId,
     sessionPath: body.sessionPath,
+    legacySessionPath: body.legacySessionPath,
   };
 }
 
@@ -960,6 +968,8 @@ export function createPluginsRoute(engine: any) {
         pluginId: c.req.param("id"),
         toolName: c.req.param("toolName"),
         input: body.input || {},
+        sessionId: body.sessionId,
+        sessionRef: body.sessionRef,
         sessionPath: body.sessionPath,
         agentId: body.agentId,
       }));
@@ -1109,7 +1119,9 @@ export function createPluginsRoute(engine: any) {
     const config = pm?.getConfig(c.req.param("id"), {
       scope: c.req.query("scope") || "global",
       agentId: c.req.query("agentId") || undefined,
+      sessionId: c.req.query("sessionId") || undefined,
       sessionPath: c.req.query("sessionPath") || undefined,
+      legacySessionPath: c.req.query("legacySessionPath") || undefined,
     });
     if (!config) return c.json({ error: "not found" }, 404);
     return c.json(config);
@@ -1120,7 +1132,7 @@ export function createPluginsRoute(engine: any) {
     if (!pm) return c.json({ error: "Plugin manager not available" }, 500);
     const body = await c.req.json();
     try {
-      const { values, scope, agentId, sessionPath } = decodeHttpConfigBody(body);
+      const { values, scope, agentId, sessionId, sessionPath, legacySessionPath } = decodeHttpConfigBody(body);
       if (c.req.param("id") === "image-gen") {
         const imageDefaultError = validateImageGenDefaultImageModel(engine, values);
         if (imageDefaultError) return c.json({ error: imageDefaultError }, 400);
@@ -1128,7 +1140,9 @@ export function createPluginsRoute(engine: any) {
       const config = pm.setConfig(c.req.param("id"), values, {
         scope,
         agentId,
+        sessionId,
         sessionPath,
+        legacySessionPath,
       });
       const { rawValues: _rawValues, ...safeConfig } = config;
       return c.json(safeConfig);

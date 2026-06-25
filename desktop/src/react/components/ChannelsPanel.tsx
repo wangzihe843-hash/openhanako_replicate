@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../stores';
+import { sessionScopedValue } from '../stores/session-slice';
 import { fetchConfig } from '../hooks/use-config';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
@@ -33,6 +34,21 @@ const CHANNEL_SCROLL_THRESHOLD = 80;
 const EMPTY_CHAT_ITEMS: ChatListItem[] = [];
 const PHONE_STREAM_MESSAGE_PREFIX = 'agent-phone-stream';
 const CHANNEL_COMPOSER_FOCUS_EVENT = 'hana-channel-composer-focus';
+
+function channelMaxScrollTop(el: HTMLElement): number {
+  return Math.max(0, el.scrollHeight - el.clientHeight);
+}
+
+function setChannelScrollTopInstant(el: HTMLElement, top: number): void {
+  const previousScrollBehavior = el.style.scrollBehavior;
+  el.style.scrollBehavior = 'auto';
+  el.scrollTop = top;
+  if (previousScrollBehavior) {
+    el.style.scrollBehavior = previousScrollBehavior;
+  } else {
+    el.style.removeProperty('scroll-behavior');
+  }
+}
 
 export function requestChannelComposerFocus(channelId: string) {
   if (!channelId || typeof window === 'undefined') return;
@@ -105,12 +121,12 @@ export function ChannelMessages() {
   const scrollToBottom = useCallback(() => {
     const el = getScrollContainer();
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    setChannelScrollTopInstant(el, channelMaxScrollTop(el));
     isNearBottomRef.current = true;
     setShowNewMessages(false);
   }, [getScrollContainer]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     isNearBottomRef.current = true;
     previousChannelRef.current = null;
     previousLengthRef.current = 0;
@@ -125,7 +141,7 @@ export function ChannelMessages() {
     return () => el.removeEventListener('scroll', onScroll);
   }, [checkNearBottom, getScrollContainer, messages.length]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = getScrollContainer();
     const channelChanged = previousChannelRef.current !== currentChannel;
     const previousLength = previousLengthRef.current;
@@ -394,7 +410,7 @@ export function AgentPhoneSessionPreview({ sessionPath, agentId, agentYuan }: {
   agentYuan?: string | null;
 }) {
   const { t } = useI18n();
-  const session = useStore(s => (sessionPath ? s.chatSessions[sessionPath] ?? null : null));
+  const session = useStore(s => (sessionPath ? sessionScopedValue(s, s.chatSessions, sessionPath) ?? null : null));
   const items = session?.items ?? EMPTY_CHAT_ITEMS;
   const [loading, setLoading] = useState(false);
   const [streamMessage, setStreamMessage] = useState<ChatMessage | null>(null);
@@ -416,7 +432,7 @@ export function AgentPhoneSessionPreview({ sessionPath, agentId, agentYuan }: {
   // loaded, the instant scroll below lands it and later growth = streaming (keeps smooth follow).
   useLayoutEffect(() => {
     const alreadyHydrated = !!sessionPath
-      && (useStore.getState().chatSessions[sessionPath]?.items?.length ?? 0) > 0;
+      && ((sessionScopedValue(useStore.getState(), useStore.getState().chatSessions, sessionPath)?.items?.length ?? 0) > 0);
     if (sessionPath && !alreadyHydrated) bottomScroll.armInstantLanding();
     bottomScroll.scrollToBottom({ mode: 'instant', forceSticky: true });
     streamTurnRef.current = 0;
@@ -668,7 +684,7 @@ export function ChannelAgentActivityPanel() {
   const resolve = (id: string) => resolveChannelMember(id, userName, userAvatarUrl, agents, isDM ? dmOwnerId : currentAgentId, agentMap);
 
   return (
-    <div className="jian-card">
+    <div className="universal-card">
       <div className="channel-info-section">
         <div className={styles.agentActivityHeader}>
           <div className="channel-info-label">{t('channel.agentActivity')}</div>
@@ -853,7 +869,7 @@ export function ChannelAgentSettingsPanel() {
   const hasMultipleProviders = providerKeys.length > 1 || (providerKeys.length === 1 && providerKeys[0] !== '');
 
   return (
-    <div className={`jian-card ${styles.agentSettingsCard}`}>
+    <div className={`universal-card ${styles.agentSettingsCard}`}>
       <div className="channel-info-section">
         <div className={styles.agentSettingsHeader}>
           <div className="channel-info-label">{t('channel.agentSettings')}</div>

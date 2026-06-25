@@ -19,6 +19,7 @@ describe("ResourceService", () => {
 
   function writeLegacySessionFileSidecar({
     fileId = "sf_legacy",
+    sessionId = null,
     status = "available",
     fileExists = true,
     missingAt = null,
@@ -34,9 +35,11 @@ describe("ResourceService", () => {
     fs.writeFileSync(`${sessionPath}.files.json`, JSON.stringify({
       version: 1,
       sessionPath,
+      ...(sessionId ? { sessionId } : {}),
       files: {
         [fileId]: {
           id: fileId,
+          ...(sessionId ? { sessionId } : {}),
           sessionPath,
           filePath,
           realPath: filePath,
@@ -93,6 +96,29 @@ describe("ResourceService", () => {
       displayName: "Legacy Note",
       lifecycle: { status: "available", missingAt: null },
     });
+  });
+
+  it("indexes manifest-era sidecars by sessionId while keeping path compatibility", async () => {
+    const { ResourceService } = await import("../core/resource-service.ts");
+    const { agentsDir, fileId } = writeLegacySessionFileSidecar({
+      fileId: "sf_manifest",
+      sessionId: "sess_manifest_resource",
+    });
+    const service = makeService(ResourceService, agentsDir);
+
+    const resource = service.getResource("res_sf_manifest");
+
+    expect(resource).toMatchObject({
+      resourceId: "res_sf_manifest",
+      fileId,
+      displayName: "Legacy Note",
+    });
+    expect(service._sessionRefByFileId.get(fileId)).toEqual({
+      sessionId: "sess_manifest_resource",
+      sessionPath: expect.stringContaining("legacy.jsonl"),
+    });
+    expect(service._sessionFiles.get(fileId, { sessionId: "sess_manifest_resource" })?.sessionId)
+      .toBe("sess_manifest_resource");
   });
 
   it("resolves local content for available legacy resources", async () => {

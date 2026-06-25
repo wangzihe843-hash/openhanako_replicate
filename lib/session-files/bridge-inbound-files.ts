@@ -22,10 +22,11 @@ const MIME_EXTENSIONS = {
 
 export async function materializeBridgeInboundFiles({
   hanakoHome,
+  sessionId = null,
   sessionPath,
   files,
   registerSessionFile,
-}: { hanakoHome?: any; sessionPath?: any; files?: any[]; registerSessionFile?: any } = {}) {
+}: { hanakoHome?: any; sessionId?: any; sessionPath?: any; files?: any[]; registerSessionFile?: any } = {}) {
   if (!files?.length) {
     return { sessionFiles: [], imageAttachmentPaths: [], displayAttachments: [] };
   }
@@ -35,7 +36,7 @@ export async function materializeBridgeInboundFiles({
     throw new Error("bridge inbound file materialization requires registerSessionFile");
   }
 
-  const dir = sessionFilesCacheDir(hanakoHome, sessionPath);
+  const dir = sessionFilesCacheDir(hanakoHome, { sessionId, sessionPath });
   await fs.mkdir(dir, { recursive: true });
 
   const sessionFiles = [];
@@ -50,6 +51,7 @@ export async function materializeBridgeInboundFiles({
     await fs.writeFile(filePath, buffer);
 
     const registered = serializeSessionFile(registerSessionFile({
+      ...(sessionId ? { sessionId } : {}),
       sessionPath,
       filePath,
       label: filename,

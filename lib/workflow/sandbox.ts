@@ -1,5 +1,6 @@
 import vm from "node:vm";
 import { extractMeta } from "./meta.ts";
+import { WORKFLOW_RUNTIME_CONTRACT } from "./host-api.ts";
 
 const DEFAULT_DEADLINE_MS = 5 * 60 * 1000;
 
@@ -45,10 +46,15 @@ export async function runWorkflowScript(script, hostApi, opts: { signal?: AbortS
       timeout: deadlineMs, // 仅对同步阶段有效；async 整体超时靠下方 race
     });
   } catch (err) {
-    throw new Error(`workflow "${meta.name}" 脚本错误: ${err.message}`);
+    const message = err instanceof Error ? err.message : String(err);
+    if (/timed out/i.test(message)) {
+      throw new Error(`workflow "${meta.name}" 超时: ${message}`);
+    }
+    throw new Error(`workflow "${meta.name}" 脚本错误: ${message}`);
   }
 
   const result = await raceDeadline(scriptPromise, { signal, deadlineMs, name: meta.name });
+  hostApi?.[WORKFLOW_RUNTIME_CONTRACT]?.assertNoUnawaitedAgentCalls?.();
   return { meta, result };
 }
 

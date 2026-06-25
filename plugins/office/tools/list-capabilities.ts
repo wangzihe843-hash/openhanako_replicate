@@ -7,6 +7,8 @@ export const description = [
   "This tool has no side effects.",
 ].join(" ");
 
+export const sessionPermission = { readOnly: true };
+
 export const parameters = {
   type: "object",
   properties: {},

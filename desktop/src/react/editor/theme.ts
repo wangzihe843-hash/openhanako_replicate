@@ -31,6 +31,14 @@ export const markdownTheme = EditorView.theme({
     width: '100%',
     padding: '0 var(--editor-markdown-content-padding-x)',
   },
+  '.cm-line': {
+    maxWidth: 'var(--editor-markdown-content-width)',
+    margin: '0 auto',
+    boxSizing: 'border-box',
+  },
+  '.cm-line.cm-markdown-cover-line': {
+    maxWidth: 'none',
+  },
   '.cm-activeLine': { backgroundColor: 'transparent' },
   '.cm-activeLineGutter': { backgroundColor: 'transparent' },
   '.cm-cursor': { borderLeftColor: 'var(--text)' },
@@ -54,6 +62,8 @@ export const markdownTheme = EditorView.theme({
   },
   '.cm-markdown-cover': {
     position: 'relative',
+    width: '100%',
+    maxWidth: 'none',
     minHeight: '160px',
     maxHeight: '720px',
     margin: '0 auto',

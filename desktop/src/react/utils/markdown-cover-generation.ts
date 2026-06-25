@@ -1,9 +1,7 @@
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import registry from '../../shared/theme-registry';
-import { refreshPreviewItemsFromFile } from './preview-file-refresh';
 import {
   normalizeWorkbenchContentRef,
-  refreshPreviewItemsFromRemoteWorkbenchTarget,
 } from './remote-file-preview';
 import type { RemoteWorkbenchContentRef } from '../types';
 
@@ -66,7 +64,6 @@ export async function applyMarkdownCoverImage({
   if (!res.ok || data?.error) {
     return { ok: false, error: data?.error || `HTTP ${res.status}` };
   }
-  await refreshAfterCover(targetInput);
   return { ok: true, cover: data?.cover };
 }
 
@@ -90,7 +87,6 @@ export async function applyMarkdownCoverPreset({
   if (!res.ok || data?.error) {
     return { ok: false, error: data?.error || `HTTP ${res.status}` };
   }
-  await refreshAfterCover(targetInput);
   return { ok: true, cover: data?.cover };
 }
 
@@ -105,14 +101,6 @@ function coverTargetBody(input: MarkdownCoverTargetInput): Record<string, unknow
       name: target.name,
     },
   };
-}
-
-async function refreshAfterCover(input: MarkdownCoverTargetInput): Promise<void> {
-  if ('filePath' in input && input.filePath) {
-    await refreshPreviewItemsFromFile(input.filePath);
-    return;
-  }
-  await refreshPreviewItemsFromRemoteWorkbenchTarget(input.target as RemoteWorkbenchContentRef);
 }
 
 export function dispatchCoverNotice(text: string, type: 'success' | 'error' = 'success'): void {

@@ -167,7 +167,7 @@ describe("app-events", () => {
   });
 
   it("toAppEventWsMessage returns null for malformed app_event and non app_event", () => {
-    expect(toAppEventWsMessage({ type: "desk_changed" })).toBeNull();
+    expect(toAppEventWsMessage({ type: "demo_event" })).toBeNull();
     expect(toAppEventWsMessage({ type: "app_event" })).toBeNull();
     expect(toAppEventWsMessage({ type: "app_event", event: { type: "" } })).toBeNull();
   });

@@ -6,6 +6,8 @@ import {
   type FontSelectionId,
 } from '../utils/font-presets';
 
+export type EditorMarkdownContentWidth = 640 | 720 | 800 | 'unlimited';
+
 export interface EditorMarkdownTypography {
   fontPreset: FontSelectionId;
   bodyFontSize: number;
@@ -17,6 +19,7 @@ export interface EditorMarkdownTypography {
   heading6FontSize: number;
   lineHeight: number;
   contentPadding: number;
+  contentWidth: EditorMarkdownContentWidth;
 }
 
 export interface EditorTypography {
@@ -60,6 +63,11 @@ export function applyEditorTypography(
   root.style.setProperty('--editor-markdown-h6-font-size', `${markdown.heading6FontSize}px`);
   root.style.setProperty('--editor-markdown-line-height', String(markdown.lineHeight));
   root.style.setProperty('--editor-markdown-content-padding-x', `${markdown.contentPadding}px`);
+  if (markdown.contentWidth === 'unlimited') {
+    root.style.setProperty('--editor-markdown-content-width', 'none');
+  } else {
+    root.style.setProperty('--editor-markdown-content-width', `${markdown.contentWidth}px`);
+  }
 
   return typography;
 }

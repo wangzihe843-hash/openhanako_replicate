@@ -12,8 +12,8 @@ const mockSwitchSession = vi.fn(async () => {});
 const mockLoadModels = vi.fn(async () => {});
 const mockActivateWorkspaceDesk = vi.fn(async () => {});
 const mockLoadChannels = vi.fn(async () => {});
+const mockApplyChatLayout = vi.fn();
 const mockApplyEditorTypography = vi.fn();
-const mockRefreshPreviewItemsFromFile = vi.fn(async () => {});
 
 vi.mock('../../stores', () => ({
   useStore: {
@@ -51,12 +51,12 @@ vi.mock('../../stores/channel-actions', () => ({
   loadChannels: mockLoadChannels,
 }));
 
-vi.mock('../../editor/typography', () => ({
-  applyEditorTypography: mockApplyEditorTypography,
+vi.mock('../../chat/layout', () => ({
+  applyChatLayout: mockApplyChatLayout,
 }));
 
-vi.mock('../../utils/preview-file-refresh', () => ({
-  refreshPreviewItemsFromFile: mockRefreshPreviewItemsFromFile,
+vi.mock('../../editor/typography', () => ({
+  applyEditorTypography: mockApplyEditorTypography,
 }));
 
 function jsonResponse(body: unknown): Response {
@@ -79,8 +79,8 @@ describe('handleAppEvent', () => {
     mockLoadModels.mockReset();
     mockActivateWorkspaceDesk.mockReset();
     mockLoadChannels.mockReset();
+    mockApplyChatLayout.mockReset();
     mockApplyEditorTypography.mockReset();
-    mockRefreshPreviewItemsFromFile.mockReset();
     vi.resetModules();
 
     (globalThis as Record<string, unknown>).window = {
@@ -272,6 +272,18 @@ describe('handleAppEvent', () => {
     });
   });
 
+  it('chat-layout-changed applies chat layout settings', async () => {
+    const { handleAppEvent } = await import('../../services/app-event-actions');
+
+    handleAppEvent('chat-layout-changed', {
+      chat: { contentWidth: 800 },
+    });
+
+    expect(mockApplyChatLayout).toHaveBeenCalledWith({
+      contentWidth: 800,
+    });
+  });
+
   it('does not echo desktop IPC network proxy broadcasts back to the main process', async () => {
     const settingsChanged = vi.fn();
     (globalThis as any).window.platform = { settingsChanged };
@@ -337,26 +349,6 @@ describe('handleAppEvent', () => {
     expect(mockState.selectedFolder).toBe('/new-home');
     expect(mockState.cwdHistory).toEqual(['/old-home']);
     expect(mockActivateWorkspaceDesk).not.toHaveBeenCalled();
-  });
-
-  it('refreshes open preview items when a markdown cover is updated by a tool', async () => {
-    const { handleAppEvent } = await import('../../services/app-event-actions');
-
-    handleAppEvent('markdown-cover-updated', { filePath: '/notes/demo.md' });
-
-    expect(mockRefreshPreviewItemsFromFile).toHaveBeenCalledWith('/notes/demo.md');
-  });
-
-  it('refreshes open preview items when an agent updates a session file', async () => {
-    const { handleAppEvent } = await import('../../services/app-event-actions');
-
-    handleAppEvent('session-file-updated', {
-      sessionPath: '/sessions/a.jsonl',
-      filePath: '/notes/demo.md',
-      origin: 'agent_edit',
-    });
-
-    expect(mockRefreshPreviewItemsFromFile).toHaveBeenCalledWith('/notes/demo.md');
   });
 
   it('agent-created reloads both agents and channels so the new DM appears immediately', async () => {

@@ -76,12 +76,15 @@ export function ensureLocalIdentityRegistries(hanakoHome) {
     now,
   });
   const serverNode = existingServerNode || createLocalServerNodeIdentity({ now });
+  const repairedIdentityLinks = repairLocalIdentityRegistryLinks(users, studios, { now });
 
   validateIdentityRegistryLinks(users, studios);
 
   if (!existingServerNode) writeJsonAtomic(serverNodePath, serverNode);
   if (!existingUsers) writeJsonAtomic(usersPath, users);
+  else if (repairedIdentityLinks.users) writeJsonAtomic(usersPath, users);
   if (!existingStudios) writeJsonAtomic(studiosPath, studios);
+  else if (repairedIdentityLinks.studios) writeJsonAtomic(studiosPath, studios);
 
   const foundationRegistries = ensureRemoteAccessFoundationRegistries(hanakoHome, { now });
 
@@ -94,6 +97,27 @@ export function ensureLocalIdentityRegistries(hanakoHome) {
     ].filter(Boolean),
     migratedFromLegacySpaces: !existingStudios && !!existingLegacySpaces,
   };
+}
+
+function repairLocalIdentityRegistryLinks(users, studios, { now }) {
+  const userIds = new Set(users.users.map((user) => user.userId));
+  const defaultStudio = getDefaultStudio(studios);
+  const repaired = { users: false, studios: false };
+
+  if (userIds.has(defaultStudio.ownerUserId)) {
+    if (users.defaultUserId !== defaultStudio.ownerUserId) {
+      users.defaultUserId = defaultStudio.ownerUserId;
+      users.updatedAt = now;
+      repaired.users = true;
+    }
+    return repaired;
+  }
+
+  defaultStudio.ownerUserId = users.defaultUserId;
+  defaultStudio.updatedAt = now;
+  studios.updatedAt = now;
+  repaired.studios = true;
+  return repaired;
 }
 
 export function ensureRemoteAccessFoundationRegistries(hanakoHome, { now = new Date().toISOString() } = {}) {

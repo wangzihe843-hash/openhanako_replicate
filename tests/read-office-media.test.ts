@@ -188,4 +188,60 @@ describe("wrapReadOfficeMedia", () => {
     expect(result.details.visionAdapted).toBe(true);
     expect(result.details.media.items).toHaveLength(1);
   });
+
+  it("keeps docx embedded image resource keys stable when a session path moves", async () => {
+    const sessionId = "sess_read_office_media";
+    const originalPath = path.join(tmpDir, "sessions", "original.jsonl");
+    const movedPath = path.join(tmpDir, "sessions", "moved.jsonl");
+    const docxPath = path.join(tmpDir, "embedded.docx");
+    await writeDocxWithEmbeddedPng(docxPath);
+
+    const recordFileOperation = vi.fn((entry) => ({
+      id: `sf_${path.basename(entry.filePath)}`,
+      fileId: `sf_${path.basename(entry.filePath)}`,
+      sessionId: entry.sessionId,
+      sessionPath: entry.sessionPath,
+      filePath: entry.filePath,
+      label: entry.label,
+      filename: entry.label,
+      mime: "image/png",
+      kind: "image",
+      size: fs.statSync(entry.filePath).size,
+      status: "available",
+    }));
+    const wrapped = wrapReadOfficeMedia(makeReadTool({ content: [{ type: "text", text: "Doc text" }] }), tmpDir, {
+      hanakoHome: tmpDir,
+      recordFileOperation,
+      getSessionIdForPath: (sessionPath) => (
+        sessionPath === originalPath || sessionPath === movedPath ? sessionId : null
+      ),
+      getVisionBridge: () => null,
+      isVisionAuxiliaryEnabled: () => false,
+    });
+
+    const first = await wrapped.execute(
+      "call-1",
+      { path: docxPath },
+      null,
+      null,
+      makeCtx(originalPath, { id: "gpt-4o", provider: "openai", input: ["text", "image"] }),
+    );
+    const second = await wrapped.execute(
+      "call-2",
+      { path: docxPath },
+      null,
+      null,
+      makeCtx(movedPath, { id: "gpt-4o", provider: "openai", input: ["text", "image"] }),
+    );
+
+    expect(first.details.officeMedia.resourceKeys).toEqual(second.details.officeMedia.resourceKeys);
+    expect(recordFileOperation).toHaveBeenLastCalledWith(expect.objectContaining({
+      sessionId,
+      sessionPath: movedPath,
+    }));
+    expect(second.details.media.items[0]).toMatchObject({
+      sessionId,
+      sessionPath: movedPath,
+    });
+  });
 });

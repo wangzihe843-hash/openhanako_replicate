@@ -6,6 +6,7 @@ import { createBridgeRoute } from "../server/routes/bridge.ts";
 function makeApp() {
   let readOnly = false;
   let receiptEnabled = false;
+  let richStreamingEnabled = true;
   let permissionMode = "operate";
   const agent = {
     id: "hana",
@@ -23,6 +24,8 @@ function makeApp() {
     setBridgePermissionMode: vi.fn((next) => { permissionMode = next; }),
     getBridgeReceiptEnabled: vi.fn(() => receiptEnabled),
     setBridgeReceiptEnabled: vi.fn((next) => { receiptEnabled = !!next; }),
+    getBridgeRichStreamingEnabled: vi.fn(() => richStreamingEnabled),
+    setBridgeRichStreamingEnabled: vi.fn((next) => { richStreamingEnabled = !!next; }),
   };
   const bridgeManager = {
     getStatus: vi.fn(() => ({})),
@@ -54,6 +57,7 @@ describe("bridge settings route", () => {
       readOnly: true,
       permissionMode: "read_only",
       receiptEnabled: true,
+      richStreamingEnabled: true,
     });
   });
 
@@ -75,6 +79,28 @@ describe("bridge settings route", () => {
       readOnly: false,
       permissionMode: "auto",
       receiptEnabled: false,
+      richStreamingEnabled: true,
+    });
+  });
+
+  it("persists the bridge rich streaming compatibility switch", async () => {
+    const { app, engine } = makeApp();
+
+    const res = await app.request("/api/bridge/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ richStreamingEnabled: false }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(engine.setBridgeRichStreamingEnabled).toHaveBeenCalledWith(false);
+    expect(body).toEqual({
+      ok: true,
+      readOnly: false,
+      permissionMode: "operate",
+      receiptEnabled: false,
+      richStreamingEnabled: false,
     });
   });
 });

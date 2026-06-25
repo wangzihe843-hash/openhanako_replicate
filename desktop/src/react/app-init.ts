@@ -10,7 +10,7 @@
 import { useStore } from './stores';
 import { hanaFetch } from './hooks/use-hana-fetch';
 import { applyAgentIdentity, loadAgents, loadAvatars } from './stores/agent-actions';
-import { loadSessions, switchSession } from './stores/session-actions';
+import { loadPendingNewSessionPermissionDefault, loadSessions, switchSession } from './stores/session-actions';
 import { initSessionProjectCatalog } from './stores/session-project-actions';
 import { connectWebSocket, getWebSocket } from './services/websocket';
 import { setStatus, loadModels } from './utils/ui-helpers';
@@ -23,6 +23,7 @@ import { openSettingsModal } from './stores/settings-modal-actions';
 import { initQuotedSelectionLifecycle } from './stores/selection-actions';
 import { configureAppEventActions, handleAppEvent, readConfigCwdHistory, readConfigHomeFolder, readConfigMemoryMasterEnabled } from './services/app-event-actions';
 import { configureWsMessageHandler } from './services/ws-message-handler';
+import { applyChatLayout } from './chat/layout';
 import { applyEditorTypography } from './editor/typography';
 import {
   LOCAL_CONNECTION_ID,
@@ -191,6 +192,7 @@ export async function initApp(): Promise<void> {
     const healthData = await healthRes.json();
     const configData = await configRes.json();
     applyEditorTypography(configData.editor);
+    applyChatLayout(configData.chat);
 
     // 3. 加载 i18n
     await i18n.load(configData.locale || 'zh-CN');
@@ -228,6 +230,7 @@ export async function initApp(): Promise<void> {
 
   // 10. 加载 agents + sessions
   useStore.setState({ pendingNewSession: true });
+  await loadPendingNewSessionPermissionDefault();
   await loadAgents();
   await loadSessions();
 

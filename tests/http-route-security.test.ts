@@ -65,6 +65,7 @@ describe("HTTP route security policy", () => {
       ["GET", "/api/config"],
       ["GET", "/api/providers/summary"],
       ["GET", "/api/preferences/models"],
+      ["GET", "/api/preferences/session-permission-default"],
       ["GET", "/api/bridge/status"],
       ["GET", "/api/agents/hana/config"],
     ]) {
@@ -542,6 +543,8 @@ describe("HTTP route security policy", () => {
       ["POST", "/api/models/switch"],
       ["GET", "/api/session-permission-mode"],
       ["POST", "/api/session-permission-mode"],
+      ["GET", "/api/preferences/session-permission-default"],
+      ["PUT", "/api/preferences/session-permission-default"],
       ["GET", "/api/session-thinking-level"],
       ["POST", "/api/session-thinking-level"],
       ["POST", "/api/confirm/confirm_1"],

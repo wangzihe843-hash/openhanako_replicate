@@ -34,7 +34,7 @@ describe("createPluginDevTools", () => {
     expect(result.details).toMatchObject({ ok: true, plugin: { id: "demo" } });
   });
 
-  it("passes session and agent context to dev plugin tool invocations", async () => {
+  it("passes session identity and agent context to dev plugin tool invocations", async () => {
     const service = {
       installFromSource: vi.fn(),
       reloadPlugin: vi.fn(),
@@ -59,7 +59,15 @@ describe("createPluginDevTools", () => {
       { pluginId: "demo", toolName: "echo", input: { text: "hi" } },
       null,
       null,
-      { sessionManager: { getSessionFile: () => "/tmp/session.jsonl" } },
+      {
+        sessionId: "sess_dev_tool",
+        sessionRef: {
+          sessionId: "sess_dev_tool",
+          sessionPath: "/tmp/session.jsonl",
+          legacySessionPath: "/tmp/legacy.jsonl",
+        },
+        sessionManager: { getSessionFile: () => "/tmp/ignored.jsonl" },
+      },
     );
 
     expect(service.invokeTool).toHaveBeenCalledWith({
@@ -67,6 +75,12 @@ describe("createPluginDevTools", () => {
       toolName: "echo",
       input: { text: "hi" },
       sessionPath: "/tmp/session.jsonl",
+      sessionId: "sess_dev_tool",
+      sessionRef: {
+        sessionId: "sess_dev_tool",
+        sessionPath: "/tmp/session.jsonl",
+        legacySessionPath: "/tmp/legacy.jsonl",
+      },
       agentId: "hanako",
     });
   });

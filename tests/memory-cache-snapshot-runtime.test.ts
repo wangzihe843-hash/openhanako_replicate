@@ -99,6 +99,7 @@ function makeTicker(tmpDir, mode, summaryManager, memoryReflectionRunner, overri
       messages,
       messageCount: messages.length,
     })),
+    ensureSessionLoaded: overrides.ensureSessionLoaded,
     getSessionStreamFn: overrides.getSessionStreamFn || vi.fn(() => vi.fn()),
     sessionDir,
     memoryDir,
@@ -220,6 +221,131 @@ describe("cache snapshot reflection runtime", () => {
       strict: true,
       summaryPreview: writeSummary,
     });
+  });
+
+  it("write mode falls back to official rolling summary when the live session snapshot is unavailable (#1651)", async () => {
+    const summaryManager = {
+      rollingSummary: vi.fn().mockResolvedValue("official summary"),
+      createRollingSummaryDraft: vi.fn(),
+      saveSummary: vi.fn(),
+      getSummary: vi.fn().mockReturnValue(null),
+    };
+    const memoryReflectionRunner = {
+      runMemoryReflection: vi.fn(),
+    };
+    const buildSessionCacheSnapshot = vi.fn(() => {
+      throw new Error("Session cache snapshot unavailable: unknown session /tmp/cold.jsonl");
+    });
+    const { ticker, agentDir, sessionPath } = makeTicker(tmpDir, "write", summaryManager, memoryReflectionRunner, {
+      buildSessionCacheSnapshot,
+    });
+    writeSession(sessionPath);
+
+    await ticker.flushSession(sessionPath);
+
+    expect(buildSessionCacheSnapshot).toHaveBeenCalledOnce();
+    expect(memoryReflectionRunner.runMemoryReflection).not.toHaveBeenCalled();
+    expect(summaryManager.rollingSummary).toHaveBeenCalledWith(
+      "2026-06-03T10-00-00-000Z_cache",
+      expect.any(Array),
+      expect.anything(),
+      expect.objectContaining({ timeZone: expect.any(String) }),
+    );
+    expect(summaryManager.saveSummary).not.toHaveBeenCalled();
+
+    const observation = readCacheSnapshotObservation(agentDir);
+    expect(observation).toMatchObject({
+      mode: "write",
+      status: "failed",
+      cacheStrategy: "cache_recovery",
+      strict: false,
+    });
+    expect(observation.reason).toMatch(/snapshot unavailable/i);
+  });
+
+  it("write mode reloads a cold session runtime before falling back from snapshot reflection (#1782)", async () => {
+    const summaryData = {
+      summary: "### 重要事实\n- cache snapshot 已恢复。\n\n### 事情经过\n- [2026-06-03 10:01] 恢复 runtime 后写入缓存快照摘要。",
+    };
+    const summaryManager = {
+      rollingSummary: vi.fn().mockResolvedValue("official summary"),
+      createRollingSummaryDraft: vi.fn(),
+      saveSummary: vi.fn(),
+      getSummary: vi.fn().mockReturnValue(null),
+    };
+    const memoryReflectionRunner = {
+      runMemoryReflection: vi.fn().mockResolvedValue({
+        summary: summaryData.summary,
+        changed: true,
+        data: summaryData,
+        metadata: {
+          cacheStrategy: "session_snapshot",
+          strict: true,
+          cachePrefixHash: "b".repeat(64),
+          parentCachePrefixHash: "a".repeat(64),
+        },
+      }),
+    };
+    const buildSessionCacheSnapshot = vi.fn()
+      .mockImplementationOnce(() => {
+        throw new Error("Session cache snapshot unavailable: unknown session after hibernation");
+      })
+      .mockImplementationOnce((sessionPath, { reason, messages }) => ({
+        strategy: "session_snapshot",
+        strict: true,
+        sessionPath,
+        reason,
+        model: { id: "memory-model", provider: "deepseek" },
+        requestModel: { id: "memory-model", provider: "deepseek" },
+        cachePrefixHash: "a".repeat(64),
+        parentCachePrefixHash: "",
+        cacheKeyParams: { thinkingLevel: "medium" },
+        tools: [],
+        messages,
+        messageCount: messages.length,
+      }));
+    const ensureSessionLoaded = vi.fn().mockResolvedValue({ ok: true });
+    const { ticker, sessionPath } = makeTicker(tmpDir, "write", summaryManager, memoryReflectionRunner, {
+      buildSessionCacheSnapshot,
+      ensureSessionLoaded,
+    });
+    writeSession(sessionPath);
+
+    await ticker.flushSession(sessionPath);
+
+    expect(ensureSessionLoaded).toHaveBeenCalledWith(sessionPath);
+    expect(buildSessionCacheSnapshot).toHaveBeenCalledTimes(2);
+    expect(memoryReflectionRunner.runMemoryReflection).toHaveBeenCalledOnce();
+    expect(summaryManager.rollingSummary).not.toHaveBeenCalled();
+    expect(summaryManager.saveSummary).toHaveBeenCalledWith("2026-06-03T10-00-00-000Z_cache", summaryData);
+  });
+
+  it("startup recovery uses the same rolling summary fallback for cold sessions in write mode (#1666)", async () => {
+    const summaryManager = {
+      rollingSummary: vi.fn().mockResolvedValue("official recovery summary"),
+      createRollingSummaryDraft: vi.fn(),
+      saveSummary: vi.fn(),
+      getSummary: vi.fn().mockReturnValue(null),
+    };
+    const memoryReflectionRunner = {
+      runMemoryReflection: vi.fn(),
+    };
+    const { ticker, sessionPath } = makeTicker(tmpDir, "write", summaryManager, memoryReflectionRunner, {
+      buildSessionCacheSnapshot: vi.fn(() => {
+        throw new Error("Session cache snapshot unavailable: unknown session after restart");
+      }),
+    });
+    writeSession(sessionPath);
+
+    await ticker.tick();
+
+    expect(memoryReflectionRunner.runMemoryReflection).not.toHaveBeenCalled();
+    expect(summaryManager.rollingSummary).toHaveBeenCalledWith(
+      "2026-06-03T10-00-00-000Z_cache",
+      expect.any(Array),
+      expect.anything(),
+      expect.objectContaining({ timeZone: expect.any(String) }),
+    );
   });
 
   it("write mode refuses non-strict reflection results", async () => {

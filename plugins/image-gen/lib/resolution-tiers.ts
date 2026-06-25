@@ -11,10 +11,6 @@ const OPENAI_TIER_LONG_EDGE = {
 
 const OPENAI_STANDARD_SIZES_BY_RATIO = {
   "1:1": "1024x1024",
-  "4:3": "1536x1024",
-  "3:4": "1024x1536",
-  "16:9": "1536x1024",
-  "9:16": "1024x1536",
   "3:2": "1536x1024",
   "2:3": "1024x1536",
 };
@@ -32,7 +28,18 @@ export const OPENAI_IMAGE_RATIOS = Object.freeze([
   "21:9",
 ]);
 
-export const IMAGE_RESOLUTION_TIERS = Object.freeze(["1k", "2k", "4k"]);
+export const OPENAI_STANDARD_IMAGE_RATIOS = Object.freeze([
+  "1:1",
+  "3:2",
+  "2:3",
+]);
+
+export const OPENAI_FLEXIBLE_IMAGE_RATIOS = OPENAI_IMAGE_RATIOS;
+
+export const OPENAI_STANDARD_RESOLUTION_TIERS = Object.freeze(["1K"]);
+export const OPENAI_FLEXIBLE_RESOLUTION_TIERS = Object.freeze(["1K", "2K", "4K"]);
+export const CODEX_IMAGE_RESOLUTION_TIERS = Object.freeze(["1K", "2K"]);
+export const IMAGE_RESOLUTION_TIERS = OPENAI_FLEXIBLE_RESOLUTION_TIERS;
 
 function errorPrefix(sourceName) {
   return sourceName ? `${sourceName} ` : "";
@@ -67,6 +74,17 @@ export function normalizeResolutionTier(value, source = "resolution") {
   throw new Error(`image ${source} "${raw}" is unsupported`);
 }
 
+function normalizedSupportedResolutions(values) {
+  if (!Array.isArray(values) || values.length === 0) return null;
+  return values.map((value) => normalizeResolutionTier(value)).filter(Boolean);
+}
+
+function assertSupportedResolutionTier(tier, rawValue, supportedResolutions, sourceName = "OpenAI image") {
+  const supported = normalizedSupportedResolutions(supportedResolutions);
+  if (!supported || supported.includes(tier)) return;
+  throw new Error(`${errorPrefix(sourceName)}resolution "${rawValue}" is unsupported; supported resolutions: ${supportedResolutions.join(", ")}`);
+}
+
 export function normalizeRatio(value, supportedRatios = OPENAI_IMAGE_RATIOS, sourceName = "image") {
   if (!value) return null;
   const parsed = parseRatio(value);
@@ -76,21 +94,25 @@ export function normalizeRatio(value, supportedRatios = OPENAI_IMAGE_RATIOS, sou
   return parsed.label;
 }
 
-function validateOpenAiFlexiblePixelSize(pixelSize, sourceName = "OpenAI image") {
+function validateOpenAiFlexiblePixelSize(pixelSize, sourceName = "OpenAI image", constraints: any = {}) {
   const { width, height, size } = pixelSize;
+  const maxEdge = constraints.maxEdge || OPENAI_MAX_EDGE;
+  const maxPixels = constraints.maxPixels || OPENAI_MAX_PIXELS;
+  const minPixels = constraints.minPixels || OPENAI_MIN_PIXELS;
+  const maxRatio = constraints.maxRatio || OPENAI_MAX_RATIO;
   if (width % 16 !== 0 || height % 16 !== 0) {
     throw new Error(`${errorPrefix(sourceName)}size "${size}" is unsupported: width and height must be multiples of 16`);
   }
-  if (Math.max(width, height) > OPENAI_MAX_EDGE) {
-    throw new Error(`${errorPrefix(sourceName)}size "${size}" is unsupported: maximum edge is ${OPENAI_MAX_EDGE}px`);
+  if (Math.max(width, height) > maxEdge) {
+    throw new Error(`${errorPrefix(sourceName)}size "${size}" is unsupported: maximum edge is ${maxEdge}px`);
   }
   const edgeRatio = Math.max(width, height) / Math.min(width, height);
-  if (edgeRatio > OPENAI_MAX_RATIO) {
-    throw new Error(`${errorPrefix(sourceName)}size "${size}" is unsupported: aspect ratio exceeds ${OPENAI_MAX_RATIO}:1`);
+  if (edgeRatio > maxRatio) {
+    throw new Error(`${errorPrefix(sourceName)}size "${size}" is unsupported: aspect ratio exceeds ${maxRatio}:1`);
   }
   const pixels = width * height;
-  if (pixels < OPENAI_MIN_PIXELS || pixels > OPENAI_MAX_PIXELS) {
-    throw new Error(`${errorPrefix(sourceName)}size "${size}" is unsupported: total pixels must be between ${OPENAI_MIN_PIXELS} and ${OPENAI_MAX_PIXELS}`);
+  if (pixels < minPixels || pixels > maxPixels) {
+    throw new Error(`${errorPrefix(sourceName)}size "${size}" is unsupported: total pixels must be between ${minPixels} and ${maxPixels}`);
   }
   return size;
 }
@@ -115,27 +137,31 @@ function nearestOpenAiStandardSize(ratioLabel = "1:1", sourceName = "OpenAI imag
   return best.size;
 }
 
-function nearestOpenAiFlexibleSize(tier, ratioLabel, sourceName = "OpenAI image") {
+function nearestOpenAiFlexibleSize(tier, ratioLabel, sourceName = "OpenAI image", constraints: any = {}) {
   const normalizedTier = normalizeResolutionTier(tier, "resolution") || "1k";
   if (normalizedTier === "auto") return "auto";
   const ratio = parseRatio(ratioLabel || "1:1");
   if (!ratio) throw new Error(`${errorPrefix(sourceName)}ratio "${ratioLabel}" is unsupported`);
 
   const targetLongEdge = OPENAI_TIER_LONG_EDGE[normalizedTier];
+  const maxEdge = constraints.maxEdge || OPENAI_MAX_EDGE;
+  const maxPixels = constraints.maxPixels || OPENAI_MAX_PIXELS;
+  const minPixels = constraints.minPixels || OPENAI_MIN_PIXELS;
+  const maxRatio = constraints.maxRatio || OPENAI_MAX_RATIO;
   if (!targetLongEdge) {
     throw new Error(`${errorPrefix(sourceName)}resolution "${tier}" is unsupported`);
   }
 
   let best = null;
-  for (let width = 16; width <= OPENAI_MAX_EDGE; width += 16) {
+  for (let width = 16; width <= maxEdge; width += 16) {
     const idealHeight = width / ratio.value;
     const roundedHeight = Math.max(16, Math.round(idealHeight / 16) * 16);
     for (const height of [roundedHeight - 16, roundedHeight, roundedHeight + 16]) {
-      if (height < 16 || height > OPENAI_MAX_EDGE || height % 16 !== 0) continue;
+      if (height < 16 || height > maxEdge || height % 16 !== 0) continue;
       const edgeRatio = Math.max(width, height) / Math.min(width, height);
-      if (edgeRatio > OPENAI_MAX_RATIO) continue;
+      if (edgeRatio > maxRatio) continue;
       const pixels = width * height;
-      if (pixels < OPENAI_MIN_PIXELS || pixels > OPENAI_MAX_PIXELS) continue;
+      if (pixels < minPixels || pixels > maxPixels) continue;
 
       const longEdge = Math.max(width, height);
       const actualRatio = width / height;
@@ -167,7 +193,7 @@ function nearestOpenAiFlexibleSize(tier, ratioLabel, sourceName = "OpenAI image"
   return `${best.width}x${best.height}`;
 }
 
-function normalizeOpenAiSizeInput(value, { ratio, flexible, sourceName }) {
+function normalizeOpenAiSizeInput(value, { ratio, flexible, sourceName, supportedResolutions, constraints }) {
   if (!value) return null;
   const raw = String(value).trim();
   if (!raw) return null;
@@ -175,15 +201,16 @@ function normalizeOpenAiSizeInput(value, { ratio, flexible, sourceName }) {
 
   const pixelSize = parsePixelSize(raw);
   if (pixelSize) {
-    if (flexible) return validateOpenAiFlexiblePixelSize(pixelSize, sourceName);
+    if (flexible) return validateOpenAiFlexiblePixelSize(pixelSize, sourceName, constraints);
     if (Object.values(OPENAI_STANDARD_SIZES_BY_RATIO).includes(pixelSize.size)) return pixelSize.size;
     throw new Error(`${errorPrefix(sourceName)}size "${raw}" is unsupported`);
   }
 
   const tier = normalizeResolutionTier(raw, "size");
   if (tier) {
+    assertSupportedResolutionTier(tier, raw, supportedResolutions, sourceName);
     return flexible
-      ? nearestOpenAiFlexibleSize(tier, ratio || "1:1", sourceName)
+      ? nearestOpenAiFlexibleSize(tier, ratio || "1:1", sourceName, constraints)
       : nearestOpenAiStandardSize(ratio || "1:1", sourceName);
   }
 
@@ -193,36 +220,40 @@ function normalizeOpenAiSizeInput(value, { ratio, flexible, sourceName }) {
 export function resolveOpenAiImageSize( params: any = {}, providerDefaults: any = {}, options: any = {}): string | null {
   const sourceName = options.sourceName || "OpenAI image";
   const flexible = options.flexible !== false;
+  const supportedRatios = options.supportedRatios || (flexible ? OPENAI_FLEXIBLE_IMAGE_RATIOS : OPENAI_STANDARD_IMAGE_RATIOS);
+  const supportedResolutions = options.supportedResolutions || (flexible ? OPENAI_FLEXIBLE_RESOLUTION_TIERS : OPENAI_STANDARD_RESOLUTION_TIERS);
+  const constraints = options.constraints || {};
   const effectiveRatio = params.aspect_ratio
     || params.aspectRatio
     || params.ratio
     || providerDefaults.aspect_ratio
     || providerDefaults.aspectRatio
-    || providerDefaults.ratio;
-  const ratio = normalizeRatio(effectiveRatio, OPENAI_IMAGE_RATIOS, sourceName);
+    || providerDefaults.ratio
+    || options.defaultRatio;
+  const ratio = normalizeRatio(effectiveRatio, supportedRatios, sourceName);
 
   if (params.size) {
-    return normalizeOpenAiSizeInput(params.size, { ratio, flexible, sourceName });
+    return normalizeOpenAiSizeInput(params.size, { ratio, flexible, sourceName, supportedResolutions, constraints });
   }
 
   if (params.resolution) {
-    return normalizeOpenAiSizeInput(params.resolution, { ratio: ratio || "1:1", flexible, sourceName });
+    return normalizeOpenAiSizeInput(params.resolution, { ratio: ratio || "1:1", flexible, sourceName, supportedResolutions, constraints });
   }
 
   if (ratio) {
     const defaultResolution = providerDefaults.resolution || options.defaultResolution;
     if (defaultResolution) {
-      return normalizeOpenAiSizeInput(defaultResolution, { ratio, flexible, sourceName });
+      return normalizeOpenAiSizeInput(defaultResolution, { ratio, flexible, sourceName, supportedResolutions, constraints });
     }
     return nearestOpenAiStandardSize(ratio, sourceName);
   }
 
   if (providerDefaults.size) {
-    return normalizeOpenAiSizeInput(providerDefaults.size, { ratio, flexible, sourceName });
+    return normalizeOpenAiSizeInput(providerDefaults.size, { ratio, flexible, sourceName, supportedResolutions, constraints });
   }
 
   if (providerDefaults.resolution) {
-    return normalizeOpenAiSizeInput(providerDefaults.resolution, { ratio: "1:1", flexible, sourceName });
+    return normalizeOpenAiSizeInput(providerDefaults.resolution, { ratio: options.defaultRatio || "1:1", flexible, sourceName, supportedResolutions, constraints });
   }
 
   return null;

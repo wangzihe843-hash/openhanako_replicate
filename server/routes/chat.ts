@@ -7,7 +7,9 @@
 import { Hono } from "hono";
 import { MoodParser, ThinkTagParser, CardParser } from "../../core/events.ts";
 import { extractBlocks } from "../block-extractors.ts";
+import { normalizePluginChatSurfaceBlocks } from "../plugin-chat-surface.ts";
 import { toAppEventWsMessage } from "../app-events.ts";
+import { toResourceEventWsMessage } from "../resource-events-ws.ts";
 import {
   createSessionStreamEventWsMessage,
   createStreamResumeWsMessage,
@@ -33,10 +35,18 @@ import { AppError } from "../../shared/errors.ts";
 import { errorBus } from "../../shared/error-bus.ts";
 import { createRequestContext } from "../http/boundary.ts";
 import { buildDeferredResultInterludeBlock, resolveDeferredReceiverName } from "../deferred-result-interlude.ts";
+import { DEFERRED_RESULT_MESSAGE_TYPE } from "../../lib/deferred-result-notification.ts";
+import {
+  TURN_INPUT_CONSUMPTION_EVENT_TYPE,
+  TURN_INPUT_PRESENTATION_EVENT_TYPE,
+  buildTurnInputConsumptionRecord,
+  buildTurnInputPresentationEvent,
+} from "../../lib/turn-input-presentation.ts";
 import { buildAutomationSuggestionBlock } from "../suggestion-blocks.ts";
 import { isAllowedChatImageMime, isChatImageBase64WithinLimit } from "../../shared/image-mime.ts";
 import { isAllowedChatVideoMime, isChatVideoBase64WithinLimit } from "../../shared/video-mime.ts";
 import { isAllowedChatAudioMime, isChatAudioBase64WithinLimit } from "../../shared/audio-mime.ts";
+import { getAssistantTextPhase } from "../../shared/text-signature.ts";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -205,7 +215,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
   let disconnectAbortTimer = null;
   const disconnectAbortGraceMs = resolveDisconnectAbortGraceMs();
   const turnStallAbortMs = resolveTurnStallAbortMs();
-  const sessionState = new Map(); // sessionPath -> shared stream state
+  const sessionState = new Map(); // sessionId || legacy sessionPath -> shared stream state
 
   function cancelDisconnectAbort() {
     if (disconnectAbortTimer) {
@@ -247,15 +257,34 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
     wsSend(ws, { type: "error", message: "agent_deleted", sessionPath });
   }
 
+  function sessionIdForPath(sessionPath) {
+    if (!sessionPath) return null;
+    try {
+      const sessionId = engine.getSessionIdForPath?.(sessionPath);
+      return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function sessionStateKey(sessionPath) {
+    return sessionIdForPath(sessionPath) || sessionPath;
+  }
+
   function getState(sessionPath) {
     if (!sessionPath) return null;
-    if (!sessionState.has(sessionPath)) {
+    const key = sessionStateKey(sessionPath);
+    if (key !== sessionPath && sessionState.has(sessionPath) && !sessionState.has(key)) {
+      sessionState.set(key, sessionState.get(sessionPath));
+      sessionState.delete(sessionPath);
+    }
+    if (!sessionState.has(key)) {
       // 超过上限时，循环淘汰非流式的最久未访问 entry
       while (sessionState.size >= MAX_SESSION_STATES) {
         let oldest = null;
         let oldestTime = Infinity;
         for (const [sp, ss] of sessionState) {
-          if (!ss.isStreaming && sp !== sessionPath && ss.lastAccessed < oldestTime) {
+          if (!ss.isStreaming && sp !== key && ss.lastAccessed < oldestTime) {
             oldest = sp;
             oldestTime = ss.lastAccessed;
           }
@@ -263,7 +292,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
         if (oldest) sessionState.delete(oldest);
         else break; // 全是流式 session，无法淘汰
       }
-      sessionState.set(sessionPath, {
+      sessionState.set(key, {
         thinkTagParser: new ThinkTagParser(),
         moodParser: new MoodParser(),
         cardParser: new CardParser(),
@@ -279,15 +308,34 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
         titleRequested: false,
         titlePreview: "",
         pendingDeferredContentEvents: [],
+        pendingTurnInputConsumptions: [],
+        flushedTurnInputConsumptionKeys: new Set(),
         pendingTurnCompletionNotification: null,
+        pendingPhaseTextByIndex: new Map(),
         turnStallTimer: null,
         lastStreamActivityAt: 0,
         lastAccessed: Date.now(),
         ...createSessionStreamState(),
       });
     }
-    const ss = sessionState.get(sessionPath);
+    const ss = sessionState.get(key);
+    ss.sessionPath = sessionPath;
     ss.lastAccessed = Date.now();
+    return ss;
+  }
+
+  function getExistingState(sessionPath) {
+    if (!sessionPath) return null;
+    const key = sessionStateKey(sessionPath);
+    if (key !== sessionPath && sessionState.has(sessionPath) && !sessionState.has(key)) {
+      sessionState.set(key, sessionState.get(sessionPath));
+      sessionState.delete(sessionPath);
+    }
+    const ss = sessionState.get(key) || null;
+    if (ss) {
+      ss.sessionPath = sessionPath;
+      ss.lastAccessed = Date.now();
+    }
     return ss;
   }
 
@@ -391,6 +439,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
     // Phase 4: 始终广播所有事件，前端按 sessionPath 路由到对应 panel
     broadcast(createSessionStreamEventWsMessage({
       sessionPath,
+      sessionId: sessionIdForPath(sessionPath),
       sessionEvent: event,
       streamId: entry.streamId,
       seq: entry.seq,
@@ -400,12 +449,6 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
 
   function buildDeferredResultContentEvents(sessionPath, event) {
     const events = [];
-    if (event.meta?.interlude) {
-      const interlude = buildDeferredResultInterludeBlock(event, {
-        receiverName: resolveDeferredReceiverName(engine, sessionPath),
-      });
-      if (interlude) events.push({ type: "content_block", block: interlude });
-    }
 
     if (event.status === "success") {
       for (const block of enrichSessionFileBlocks(deferredResultFileBlocks(event.result, event.taskId), engine, sessionPath)) {
@@ -441,14 +484,199 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
     emitDeferredContentEvents(sessionPath, ss, pending);
   }
 
-  function finishStreamingState(ss) {
+  function beginStreamingTurnState(sessionPath, ss, { streamId = null, flushDeferred = false } = {}) {
+    if (flushDeferred) flushPendingDeferredContentEvents(sessionPath, ss);
+    ss.pendingTurnCompletionNotification = null;
+    ss.lastStreamActivityAt = Date.now();
+    ss.turnActive = true;
+    ss.thinkTagParser.reset();
+    ss.moodParser.reset();
+    ss.cardParser.reset();
+    ss.pendingPhaseTextByIndex?.clear?.();
+    ss._cardHints = [];
+    ss._cardEmitted = false;
+    ss.isThinking = false;
+    ss.hasOutput = false;
+    ss.hasToolCall = false;
+    ss.hasThinking = false;
+    ss.hasError = false;
+    ss.isAborted = false;
+    ss.titleRequested = false;
+    ss.titlePreview = "";
+    const statusStreamId = beginSessionStream(ss, streamId);
+    scheduleTurnStallWatchdog(sessionPath, ss);
+    return statusStreamId;
+  }
+
+  function textOrNull(value) {
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  }
+
+  function turnInputConsumptionKey(item) {
+    const entryId = item?.input?.entryId || null;
+    if (entryId) return `entry:${entryId}`;
+    const deliveryId = item?.deliveryId || item?.block?.deliveryId || null;
+    if (deliveryId) return `delivery:${deliveryId}`;
+    return item?.block?.id ? `block:${item.block.id}` : null;
+  }
+
+  function turnInputConsumptionAlreadyQueued(ss, item) {
+    const key = turnInputConsumptionKey(item);
+    if (!key) return false;
+    if (ss.flushedTurnInputConsumptionKeys?.has?.(key)) return true;
+    return (ss.pendingTurnInputConsumptions || []).some((queued) => (
+      turnInputConsumptionKey(queued) === key
+    ));
+  }
+
+  function buildPreReplyInterludeBlock(sessionPath, presentation) {
+    if (presentation?.kind !== "pre_reply_interlude" || !presentation.taskId) return null;
+    const task = engine.deferredResults?.query?.(presentation.taskId) || null;
+    const taskStatus = task?.status === "failed" || task?.status === "aborted"
+      ? task.status
+      : presentation.status;
+    const status = taskStatus === "failed" || taskStatus === "aborted" ? taskStatus : "success";
+    const meta = {
+      ...(task?.meta || {}),
+      type: presentation.resultType || task?.meta?.type || "background-task",
+    };
+    const result = Object.prototype.hasOwnProperty.call(presentation, "result")
+      ? presentation.result
+      : task?.result;
+    const reason = presentation.reason || task?.reason || null;
+    return buildDeferredResultInterludeBlock({
+      taskId: presentation.taskId,
+      deliveryId: presentation.deliveryId || null,
+      status,
+      result,
+      reason,
+      meta,
+    }, {
+      receiverName: resolveDeferredReceiverName(engine, sessionPath),
+    });
+  }
+
+  function isUiOnlyMediaTurnInput(presentation) {
+    const resultType = presentation?.resultType || "";
+    return presentation?.status === "success" && (
+      resultType === "image-generation" ||
+      resultType === "video-generation"
+    );
+  }
+
+  function buildTurnInputConsumptionItem(sessionPath, message) {
+    if (message?.role !== "custom") return null;
+    if (message.display !== false) return null;
+    if (message.customType !== DEFERRED_RESULT_MESSAGE_TYPE) return null;
+    const event = buildTurnInputPresentationEvent(message, { deliveryMode: "consumed" });
+    const presentation = event?.presentation;
+    if (!presentation || isUiOnlyMediaTurnInput(presentation)) return null;
+    const details = message.details && typeof message.details === "object" ? message.details : null;
+    const entryId = textOrNull(message.id);
+    const deliveryId =
+      textOrNull(presentation.deliveryId) ||
+      textOrNull(details?.deliveryId) ||
+      (entryId ? `turn-input:${entryId}` : `turn-input:${crypto.randomUUID()}`);
+    const normalizedPresentation = {
+      ...presentation,
+      deliveryId,
+      deliveryMode: "consumed",
+    };
+    const block = buildPreReplyInterludeBlock(sessionPath, normalizedPresentation);
+    if (!block) return null;
+    return {
+      kind: normalizedPresentation.kind,
+      deliveryId,
+      presentation: normalizedPresentation,
+      input: {
+        ...(entryId ? { entryId } : {}),
+        customType: message.customType,
+        deliveryId,
+        taskId: normalizedPresentation.taskId,
+        status: normalizedPresentation.status,
+        resultType: normalizedPresentation.resultType,
+        ...(textOrNull(message.timestamp) ? { timestamp: textOrNull(message.timestamp) } : {}),
+      },
+      block,
+    };
+  }
+
+  function queueConsumedTurnInput(sessionPath, ss, message) {
+    const item = buildTurnInputConsumptionItem(sessionPath, message);
+    if (!item || turnInputConsumptionAlreadyQueued(ss, item)) return;
+    ss.pendingTurnInputConsumptions = [...(ss.pendingTurnInputConsumptions || []), item];
+  }
+
+  function emitTurnInputConsumption(sessionPath, ss, item) {
+    const block = item?.block;
+    if (!block) return;
+    emitStreamEvent(sessionPath, ss, { type: "content_block", block });
+  }
+
+  function persistTurnInputConsumption(sessionPath, item, assistantMessage = null) {
+    if (!sessionPath || typeof engine.recordCustomEntry !== "function") return;
+    const record = buildTurnInputConsumptionRecord({
+      input: item?.input,
+      assistant: assistantMessage && typeof assistantMessage === "object"
+        ? {
+            ...(textOrNull(assistantMessage.id) ? { entryId: textOrNull(assistantMessage.id) } : {}),
+            ...(textOrNull(assistantMessage.parentId) ? { parentId: textOrNull(assistantMessage.parentId) } : {}),
+            ...(textOrNull(assistantMessage.timestamp) ? { timestamp: textOrNull(assistantMessage.timestamp) } : {}),
+          }
+        : null,
+      presentation: item?.presentation,
+      block: item?.block,
+    });
+    if (!record) return;
+    try {
+      engine.recordCustomEntry(sessionPath, TURN_INPUT_CONSUMPTION_EVENT_TYPE, record);
+    } catch (err) {
+      log.warn(`turn input consumption persistence failed: ${err.message}`);
+    }
+  }
+
+  function takePendingTurnInputConsumptionsForAssistant(ss, assistantMessage = null) {
+    const pending = ss.pendingTurnInputConsumptions || [];
+    if (!pending.length) return { items: [], remaining: [] };
+    const parentId = textOrNull(assistantMessage?.parentId);
+    if (!parentId) return { items: pending, remaining: [] };
+    const matchIndex = pending.findIndex((item) => item?.input?.entryId === parentId);
+    if (matchIndex < 0) return { items: [], remaining: pending };
+    return {
+      items: pending.slice(0, matchIndex + 1),
+      remaining: pending.slice(matchIndex + 1),
+    };
+  }
+
+  function flushPendingTurnInputConsumptions(sessionPath, ss, assistantMessage = null) {
+    const { items, remaining } = takePendingTurnInputConsumptionsForAssistant(ss, assistantMessage);
+    if (!items.length) return [];
+    ss.pendingTurnInputConsumptions = remaining;
+    if (!(ss.flushedTurnInputConsumptionKeys instanceof Set)) {
+      ss.flushedTurnInputConsumptionKeys = new Set();
+    }
+    for (const item of items) {
+      persistTurnInputConsumption(sessionPath, item, assistantMessage);
+      emitTurnInputConsumption(sessionPath, ss, item);
+      const key = turnInputConsumptionKey(item);
+      if (key) ss.flushedTurnInputConsumptionKeys.add(key);
+    }
+    return items;
+  }
+
+  function finishStreamingState(ss, sessionPath = null) {
     if (!ss) return;
     ss.turnActive = false;
     clearTurnStallWatchdog(ss);
+    if (sessionPath && ss.isThinking) {
+      ss.isThinking = false;
+      emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+    }
     if (ss.isStreaming) finishSessionStream(ss);
     ss.thinkTagParser.reset();
     ss.moodParser.reset();
     ss.cardParser.reset();
+    ss.pendingPhaseTextByIndex?.clear?.();
   }
 
   function clearTurnStallWatchdog(ss) {
@@ -471,8 +699,9 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       }
       if (!isSessionRuntimeStreaming(sessionPath)) return;
       ss.isAborted = true;
-      Promise.resolve(hub.abort?.(sessionPath)).then((aborted) => {
-        if (aborted === false) return engine.abortSessionByPath?.(sessionPath);
+      const reason = "turn_stall_timeout";
+      Promise.resolve(hub.abort?.(sessionPath, { reason })).then((aborted) => {
+        if (aborted === false) return engine.abortSessionByPath?.(sessionPath, { reason });
       }).catch((err) => {
         log.warn(`turn stall abort failed for ${path.basename(sessionPath)}: ${err.message}`);
       });
@@ -597,6 +826,12 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       return;
     }
 
+    const resourceEventMessage = toResourceEventWsMessage(event, sessionPath);
+    if (resourceEventMessage) {
+      broadcast(resourceEventMessage);
+      return;
+    }
+
     if (event.type === "plugin_ui_changed") {
       broadcast({ type: "plugin_ui_changed" });
       return;
@@ -640,52 +875,153 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       });
     };
 
+    const feedMoodPipeline = (text) => {
+      ss.moodParser.feed(text, (evt) => {
+        if (evt.type === "text") {
+          feedCardPipeline(evt.data);
+        } else if (evt.type === "mood_start") {
+          emitStreamEvent(sessionPath, ss, { type: "mood_start" });
+        } else if (evt.type === "mood_text") {
+          emitStreamEvent(sessionPath, ss, { type: "mood_text", delta: evt.data });
+        } else if (evt.type === "mood_end") {
+          emitStreamEvent(sessionPath, ss, { type: "mood_end" });
+        }
+      });
+    };
+
+    const flushTerminalParsers = () => {
+      if (ss.isThinking) {
+        ss.isThinking = false;
+        emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+      }
+      ss.thinkTagParser.flush((tEvt) => {
+        if (tEvt.type === "think_text") {
+          emitStreamEvent(sessionPath, ss, { type: "thinking_delta", delta: tEvt.data });
+        } else if (tEvt.type === "think_end") {
+          emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+        } else if (tEvt.type === "text") {
+          feedMoodPipeline(tEvt.data);
+        }
+      });
+      ss.moodParser.flush((evt) => {
+        if (evt.type === "text") {
+          feedCardPipeline(evt.data);
+        } else if (evt.type === "mood_text") {
+          emitStreamEvent(sessionPath, ss, { type: "mood_text", delta: evt.data });
+        }
+      });
+      ss.cardParser.flush((cEvt) => {
+        if (cEvt.type === "text") {
+          emitStreamEvent(sessionPath, ss, { type: "text_delta", delta: cEvt.data });
+        } else if (cEvt.type === "card_text") {
+          emitStreamEvent(sessionPath, ss, { type: "card_text", delta: cEvt.data });
+        } else if (cEvt.type === "card_start") {
+          ss._cardEmitted = true;
+          emitStreamEvent(sessionPath, ss, { type: "card_start", attrs: cEvt.attrs });
+        } else if (cEvt.type === "card_end") {
+          emitStreamEvent(sessionPath, ss, { type: "card_end" });
+        }
+      });
+    };
+
+    const phaseTextBuffer = () => {
+      if (!(ss.pendingPhaseTextByIndex instanceof Map)) ss.pendingPhaseTextByIndex = new Map();
+      return ss.pendingPhaseTextByIndex;
+    };
+
+    const textEventBufferKey = (subEvent) => (
+      Number.isInteger(subEvent?.contentIndex) ? String(subEvent.contentIndex) : "__default"
+    );
+
+    const textBlockFromEvent = (subEvent) => {
+      const partialContent = subEvent?.partial?.content;
+      const messageContent = event.message?.content;
+      const content = Array.isArray(partialContent)
+        ? partialContent
+        : Array.isArray(messageContent)
+          ? messageContent
+          : null;
+      if (!content) return null;
+      if (Number.isInteger(subEvent?.contentIndex)) {
+        return content[subEvent.contentIndex] || null;
+      }
+      return content.find((block) => block?.type === "text") || null;
+    };
+
+    const shouldBufferPhaseText = (subEvent) => {
+      const message = subEvent?.partial || event.message || {};
+      const api = typeof message?.api === "string" ? message.api.toLowerCase() : "";
+      const provider = typeof message?.provider === "string" ? message.provider.toLowerCase() : "";
+      return provider === "openai-codex"
+        || api === "openai-codex-responses"
+        || api === "openai-responses"
+        || api === "azure-openai-responses";
+    };
+
+    const thinkingDeltaFromEvent = (subEvent) => {
+      for (const key of ["delta", "reasoning_content", "reasoning_text", "thinking", "thinking_text", "reasoning", "text"]) {
+        const value = subEvent?.[key];
+        if (typeof value === "string" && value.length > 0) return value;
+      }
+      return "";
+    };
+
+    const emitVisibleTextDelta = (delta) => {
+      const text = typeof delta === "string" ? delta : "";
+      if (!text) return;
+      flushPendingTurnInputConsumptions(sessionPath, ss, event.message);
+      ss.hasOutput = true;
+      if (ss.isThinking) {
+        ss.isThinking = false;
+        emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+      }
+
+      // ThinkTagParser（最外层）→ MoodParser → CardParser
+      ss.thinkTagParser.feed(text, (tEvt) => {
+        switch (tEvt.type) {
+          case "think_start":
+            emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
+            break;
+          case "think_text":
+            emitStreamEvent(sessionPath, ss, { type: "thinking_delta", delta: tEvt.data });
+            break;
+          case "think_end":
+            emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+            break;
+          case "text":
+            // 非 think 内容继续走 MoodParser → CardParser 链
+            feedMoodPipeline(tEvt.data);
+            break;
+        }
+      });
+    };
+
     if (event.type === "message_update") {
       if (!ss) return;
       const sub = event.assistantMessageEvent?.type;
 
       if (sub === "text_delta") {
-        ss.hasOutput = true;
-        if (ss.isThinking) {
-          ss.isThinking = false;
-          emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
+        const subEvent = event.assistantMessageEvent;
+        const delta = subEvent.delta || "";
+        if (shouldBufferPhaseText(subEvent)) {
+          const pending = phaseTextBuffer();
+          const key = textEventBufferKey(subEvent);
+          pending.set(key, `${pending.get(key) || ""}${delta}`);
+          return;
         }
-
-        const delta = event.assistantMessageEvent.delta;
-        // ThinkTagParser（最外层）→ MoodParser → CardParser
-        ss.thinkTagParser.feed(delta, (tEvt) => {
-          switch (tEvt.type) {
-            case "think_start":
-              emitStreamEvent(sessionPath, ss, { type: "thinking_start" });
-              break;
-            case "think_text":
-              emitStreamEvent(sessionPath, ss, { type: "thinking_delta", delta: tEvt.data });
-              break;
-            case "think_end":
-              emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
-              break;
-            case "text":
-              // 非 think 内容继续走 MoodParser → CardParser 链
-              ss.moodParser.feed(tEvt.data, (evt) => {
-                switch (evt.type) {
-                  case "text":
-                    feedCardPipeline(evt.data);
-                    break;
-                  case "mood_start":
-                    emitStreamEvent(sessionPath, ss, { type: "mood_start" });
-                    break;
-                  case "mood_text":
-                    emitStreamEvent(sessionPath, ss, { type: "mood_text", delta: evt.data });
-                    break;
-                  case "mood_end":
-                    emitStreamEvent(sessionPath, ss, { type: "mood_end" });
-                    break;
-                }
-              });
-              break;
-          }
-        });
+        emitVisibleTextDelta(delta);
+      } else if (sub === "text_end") {
+        const subEvent = event.assistantMessageEvent;
+        if (!shouldBufferPhaseText(subEvent)) return;
+        const pending = phaseTextBuffer();
+        const key = textEventBufferKey(subEvent);
+        const block = textBlockFromEvent(subEvent);
+        const buffered = pending.get(key);
+        pending.delete(key);
+        if (getAssistantTextPhase(block) === "commentary") return;
+        emitVisibleTextDelta(buffered ?? subEvent.content ?? block?.text ?? "");
       } else if (sub === "thinking_delta") {
+        flushPendingTurnInputConsumptions(sessionPath, ss, event.message);
         ss.hasThinking = true;
         if (!ss.isThinking) {
           ss.isThinking = true;
@@ -693,7 +1029,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
         }
         emitStreamEvent(sessionPath, ss, {
           type: "thinking_delta",
-          delta: event.assistantMessageEvent.delta || "",
+          delta: thinkingDeltaFromEvent(event.assistantMessageEvent),
         });
       } else if (sub === "toolcall_start") {
         // 不在这里关闭 thinking 状态
@@ -703,6 +1039,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       }
     } else if (event.type === "tool_execution_start") {
       if (!ss) return;
+      flushPendingTurnInputConsumptions(sessionPath, ss, event.message);
       ss.hasToolCall = true;
       if (ss.isThinking) {
         ss.isThinking = false;
@@ -727,10 +1064,13 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       });
 
       // Unified content_block emission for all tool results
-      const blocks = enrichSessionFileBlocks(
-        extractBlocks(event.toolName, event.result?.details, event.result),
+      const blocks = normalizePluginChatSurfaceBlocks(
+        enrichSessionFileBlocks(
+          extractBlocks(event.toolName, event.result?.details, event.result),
+          engine,
+          sessionPath,
+        ),
         engine,
-        sessionPath,
       );
       for (const block of blocks) {
         emitStreamEvent(sessionPath, ss, { type: "content_block", block });
@@ -751,10 +1091,6 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
         emitStreamEvent(sessionPath, ss, statusMsg);
         if (statusMsg.running) startBrowserThumbPoll();
         else if (!BrowserManager.instance().hasAnyRunning) stopBrowserThumbPoll();
-      }
-
-      if (["write", "edit", "bash"].includes(event.toolName)) {
-        broadcast({ type: "desk_changed", sessionPath });
       }
     } else if (event.type === "jian_update") {
       broadcast({ type: "jian_update", content: event.content });
@@ -832,6 +1168,20 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
         patch: event.patch,
         sessionPath,
       });
+    } else if (event.type === TURN_INPUT_PRESENTATION_EVENT_TYPE) {
+      // Delivery notifications are advisory only. The timeline UI is bound to the
+      // actual hidden custom_message once the SDK consumes it for an assistant turn.
+    } else if (event.type === "turn_start") {
+      if (!ss) return;
+      if (!ss.turnActive) {
+        const statusStreamId = beginStreamingTurnState(sessionPath, ss);
+        broadcast({
+          type: "status",
+          isStreaming: true,
+          sessionPath,
+          streamId: statusStreamId,
+        });
+      }
     } else if (event.type === "todo_update") {
       broadcast({
         type: "todo_update",
@@ -857,7 +1207,11 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       });
     } else if (event.type === "session_user_message") {
       if (!ss) return;
-      emitStreamEvent(sessionPath, ss, { type: "session_user_message", message: event.message });
+      emitStreamEvent(sessionPath, ss, {
+        type: "session_user_message",
+        clientMessageId: event.clientMessageId || null,
+        message: event.message,
+      });
     } else if (event.type === "voice_transcription_update") {
       broadcast({
         type: "voice_transcription_update",
@@ -878,27 +1232,13 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
           ? event.streamId
           : null;
         if (event.isStreaming) {
-          flushPendingDeferredContentEvents(sessionPath, ss);
-          ss.pendingTurnCompletionNotification = null;
-          ss.lastStreamActivityAt = Date.now();
-          ss.turnActive = true;
-          ss.thinkTagParser.reset();
-          ss.moodParser.reset();
-          ss.cardParser.reset();
-          ss._cardHints = [];
-          ss._cardEmitted = false;
-          ss.isThinking = false;
-          ss.hasOutput = false;
-          ss.hasToolCall = false;
-          ss.hasThinking = false;
-          ss.hasError = false;
-          ss.isAborted = false;
-          ss.titleRequested = false;
-          ss.titlePreview = "";
-          statusStreamId = beginSessionStream(ss, eventStreamId);
-          scheduleTurnStallWatchdog(sessionPath, ss);
+          statusStreamId = beginStreamingTurnState(sessionPath, ss, {
+            streamId: eventStreamId,
+            flushDeferred: true,
+          });
         } else if (ss.isStreaming) {
           statusStreamId = eventStreamId || ss.streamId || null;
+          flushTerminalParsers();
           finishStreamingState(ss);
         } else {
           statusStreamId = eventStreamId || ss.streamId || null;
@@ -906,12 +1246,15 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
           clearTurnStallWatchdog(ss);
         }
       }
-      broadcast({
+      const payload: any = {
         type: "status",
         isStreaming: !!event.isStreaming,
         sessionPath,
         streamId: statusStreamId,
-      });
+      };
+      if (event.aborted !== undefined) payload.aborted = !!event.aborted;
+      if (typeof event.reason === "string" && event.reason.trim()) payload.reason = event.reason.trim();
+      broadcast(payload);
       if (ss && !event.isStreaming) {
         flushPendingDeferredContentEvents(sessionPath, ss);
         flushPendingTurnCompletionNotification(sessionPath, ss);
@@ -972,11 +1315,17 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
     } else if (event.type === "message_end") {
       // Provider 级别错误（超时、连接断开等）通过 message_end 传递，不经过 message_update
       if (!ss) return;
+      if (event.message?.role === "custom" && event.message.display === false) {
+        queueConsumedTurnInput(sessionPath, ss, event.message);
+      }
       if (event.message?.role === "custom" && event.message.display !== false) {
-        const blocks = enrichSessionFileBlocks(
-          extractBlocks(event.message.customType, event.message.details, event.message),
+        const blocks = normalizePluginChatSurfaceBlocks(
+          enrichSessionFileBlocks(
+            extractBlocks(event.message.customType, event.message.details, event.message),
+            engine,
+            sessionPath,
+          ),
           engine,
-          sessionPath,
         );
         for (const block of blocks) {
           emitStreamEvent(sessionPath, ss, { type: "content_block", block });
@@ -990,55 +1339,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       if (!ss) return;
       const turnWasAborted = ss.isAborted === true;
       const turnStreamId = ss.streamId || null;
-      // 关闭结构化 thinking（如有）——必须在 flush 之前，否则前端收不到 thinking_end
-      if (ss.isThinking) {
-        ss.isThinking = false;
-        emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
-      }
-      // flush 顺序：ThinkTag → Mood → Card（和 feed 顺序一致）
-      // flush 内部的 mood → card 管线（thinkTag flush 和 mood flush 共用）
-      const feedMoodPipeline = (text) => {
-        ss.moodParser.feed(text, (evt) => {
-          if (evt.type === "text") {
-            feedCardPipeline(evt.data);
-          } else if (evt.type === "mood_start") {
-            emitStreamEvent(sessionPath, ss, { type: "mood_start" });
-          } else if (evt.type === "mood_text") {
-            emitStreamEvent(sessionPath, ss, { type: "mood_text", delta: evt.data });
-          } else if (evt.type === "mood_end") {
-            emitStreamEvent(sessionPath, ss, { type: "mood_end" });
-          }
-        });
-      };
-      ss.thinkTagParser.flush((tEvt) => {
-        if (tEvt.type === "think_text") {
-          emitStreamEvent(sessionPath, ss, { type: "thinking_delta", delta: tEvt.data });
-        } else if (tEvt.type === "think_end") {
-          emitStreamEvent(sessionPath, ss, { type: "thinking_end" });
-        } else if (tEvt.type === "text") {
-          feedMoodPipeline(tEvt.data);
-        }
-      });
-      ss.moodParser.flush((evt) => {
-        if (evt.type === "text") {
-          feedCardPipeline(evt.data);
-        } else if (evt.type === "mood_text") {
-          emitStreamEvent(sessionPath, ss, { type: "mood_text", delta: evt.data });
-        }
-      });
-      ss.cardParser.flush((cEvt) => {
-        if (cEvt.type === "text") {
-          emitStreamEvent(sessionPath, ss, { type: "text_delta", delta: cEvt.data });
-        } else if (cEvt.type === "card_text") {
-          emitStreamEvent(sessionPath, ss, { type: "card_text", delta: cEvt.data });
-        } else if (cEvt.type === "card_start") {
-          ss._cardEmitted = true;
-          emitStreamEvent(sessionPath, ss, { type: "card_start", attrs: cEvt.attrs });
-        } else if (cEvt.type === "card_end") {
-          emitStreamEvent(sessionPath, ss, { type: "card_end" });
-        }
-      });
-
+      flushTerminalParsers();
 
       // 空回复检测：本轮没有文本输出也没有工具调用，提示用户检查配置
       // 被 abort 的 turn 不弹此提示（用户主动停止 / WS 断开 / 连接超时）
@@ -1089,9 +1390,11 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       ss.hasThinking = false;
       ss.hasError = false;
       ss.isAborted = false;
+      ss.pendingTurnInputConsumptions = [];
       ss.thinkTagParser.reset();
       ss.moodParser.reset();
       ss.cardParser.reset();
+      ss.pendingPhaseTextByIndex?.clear?.();
       ss._cardHints = [];
       ss._cardEmitted = false;
       flushPendingDeferredContentEvents(sessionPath, ss);
@@ -1172,17 +1475,22 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
             if (msg.type === "abort") {
               const abortPath = requireSessionPath(msg, ws); if (!abortPath) return;
               const abortSs = getState(abortPath);
+              const abortReason = typeof msg.reason === "string" && msg.reason.trim()
+                ? msg.reason.trim()
+                : "user_abort";
               if (abortSs) abortSs.isAborted = true;
               let abortAccepted = false;
-              try { abortAccepted = !!(await hub.abort(abortPath)); } catch {}
+              try { abortAccepted = !!(await hub.abort(abortPath, { reason: abortReason })); } catch {}
               if (!abortAccepted) {
                 const abortStreamId = abortSs?.streamId || null;
-                finishStreamingState(abortSs);
+                finishStreamingState(abortSs, abortPath);
                 broadcast({
                   type: "status",
                   isStreaming: false,
                   sessionPath: abortPath,
                   streamId: abortStreamId,
+                  aborted: true,
+                  reason: abortReason,
                 });
               }
               return;
@@ -1207,7 +1515,10 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
             // session 切回时，前端请求补发离屏期间的流式内容
             if (msg.type === "resume_stream") {
               const currentPath = requireSessionPath(msg, ws); if (!currentPath) return;
-              const ss = sessionState.get(currentPath);
+              const currentSessionId = typeof msg.sessionId === "string" && msg.sessionId.trim()
+                ? msg.sessionId.trim()
+                : engine.getSessionIdForPath?.(currentPath) || null;
+              const ss = getExistingState(currentPath);
               const runtimeIsStreaming = typeof engine.isSessionStreaming === "function"
                 ? !!engine.isSessionStreaming(currentPath)
                 : !!ss?.isStreaming;
@@ -1218,6 +1529,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                 });
                 wsSend(ws, createStreamResumeWsMessage({
                   sessionPath: currentPath,
+                  ...(currentSessionId ? { sessionId: currentSessionId } : {}),
                   streamId: resumed.streamId,
                   sinceSeq: resumed.sinceSeq,
                   nextSeq: resumed.nextSeq,
@@ -1230,6 +1542,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
               } else {
                 wsSend(ws, createStreamResumeWsMessage({
                   sessionPath: currentPath,
+                  ...(currentSessionId ? { sessionId: currentSessionId } : {}),
                   streamId: null,
                   sinceSeq: Number.isFinite(msg.sinceSeq) ? Math.max(0, Math.floor(msg.sinceSeq)) : 0,
                   nextSeq: 1,
@@ -1410,6 +1723,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                   await submitDesktopSessionInterjection(engine, {
                     sessionPath: promptSessionPath,
                     text: promptText,
+                    clientMessageId: msg.clientMessageId,
                     images: msg.images,
                     videos: msg.videos,
                     audios: msg.audios,
@@ -1429,6 +1743,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
               try {
                 await hub.send(promptText, {
                   sessionPath: promptSessionPath,
+                  clientMessageId: msg.clientMessageId,
                   images: msg.images,
                   videos: msg.videos,
                   audios: msg.audios,

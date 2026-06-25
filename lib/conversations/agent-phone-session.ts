@@ -78,3 +78,13 @@ export function getAgentPhoneActiveToolNames({ tools = [], customTools = [] } = 
     ...customTools.map((tool) => tool?.name),
   ]);
 }
+
+/**
+ * 把默认 search_memory 替换为会话作用域实例（#1670 群聊记忆混淆）。
+ * 只做同名替换：记忆关闭时快照里本来就没有 search_memory，
+ * 此时不得凭空注入 scoped 实例（保持记忆开关语义）。
+ */
+export function applyConversationScopedMemorySearch(customTools = [], scopedTool = null) {
+  if (!scopedTool) return customTools;
+  return customTools.map((tool) => (tool?.name === "search_memory" ? scopedTool : tool));
+}

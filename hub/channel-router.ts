@@ -699,6 +699,38 @@ export class ChannelRouter {
       ].join("\n");
   }
 
+  /**
+   * 群聊身份/成员表注入（#1670）：让 Agent 明确「我是谁、谁在场、谁在说话」，
+   * 减少把其他成员的发言、设定、记忆当成自己的张冠李戴。
+   */
+  _formatChannelIdentityGuidance(agentId, channelName, isZh) {
+    let members = [];
+    try {
+      const channelFile = path.join(this._engine.channelsDir || "", `${channelName}.md`);
+      const meta: any = getChannelMeta(channelFile);
+      members = Array.isArray(meta?.members) ? meta.members : [];
+    } catch {
+      members = [];
+    }
+    const selfName = this._resolveChannelMemorySenderName(agentId, isZh);
+    const memberNames = members
+      .map((id) => {
+        const display = this._resolveChannelMemorySenderName(id, isZh);
+        if (id === agentId) return isZh ? `${display}（你）` : `${display} (you)`;
+        return display;
+      })
+      .filter(Boolean);
+    const memberLine = memberNames.length
+      ? (isZh
+        ? `- 本频道成员：${memberNames.join("、")}；每条消息行首的名字是发言者`
+        : `- Channel members: ${memberNames.join(", ")}; the name at the start of each line is the speaker`)
+      : "";
+    const identityLine = isZh
+      ? `- 你在本频道只代表 ${selfName} 自己；其他成员的发言、人设和记忆不属于你，不要替他们发言或把他们的经历当成你的`
+      : `- In this channel you only speak as ${selfName}; other members' messages, personas, and memories are not yours — do not speak for them or treat their experiences as your own`;
+    return [memberLine, identityLine].filter(Boolean).join("\n");
+  }
+
   _formatDeliveryWindowGuidance(deliveryWindow, isZh) {
     const dropped = Number(deliveryWindow?.droppedUnreadCount || 0);
     if (dropped <= 0) return "";
@@ -739,6 +771,7 @@ export class ChannelRouter {
     const isZh = getLocale().startsWith("zh");
     const phoneSettings = this._resolveChannelPhoneSettings(channelName);
     const promptGuidance = this._formatPhonePromptGuidance(agentId, phoneSettings, isZh);
+    const identityGuidance = this._formatChannelIdentityGuidance(agentId, channelName, isZh);
     const behaviorGuidance = this._formatChannelBehaviorGuidance(agentId, mentionedAgents, mentionTargeted, isZh);
     const deliveryWindowGuidance = this._formatDeliveryWindowGuidance(deliveryWindow, isZh);
     const repairGuidance = decisionRepairAttempt > 0 ? this._formatDecisionRepairGuidance(isZh) : "";
@@ -766,6 +799,7 @@ export class ChannelRouter {
                 + `${deliveryWindowGuidance ? `${deliveryWindowGuidance}\n\n` : ""}`
                 + `${repairGuidance ? `${repairGuidance}\n\n` : ""}`
                 + `请像群聊成员一样阅读并行动：\n`
+                + `${identityGuidance ? `${identityGuidance}\n` : ""}`
                 + `${behaviorGuidance}\n`
                 + `- 需要旧上下文时，用 channel_read_context 读取频道 Truth；需要事实和长期背景时，用 search_memory\n`
                 + `- 结合此前 Phone Session 内容理解这批消息；本次投递窗口不是频道全部历史\n`
@@ -777,6 +811,7 @@ export class ChannelRouter {
                 + `${deliveryWindowGuidance ? `${deliveryWindowGuidance}\n\n` : ""}`
                 + `${repairGuidance ? `${repairGuidance}\n\n` : ""}`
                 + `Read and act like a group chat member:\n`
+                + `${identityGuidance ? `${identityGuidance}\n` : ""}`
                 + `${behaviorGuidance}\n`
                 + `- Use channel_read_context for older channel Truth; use search_memory for facts and long-term background\n`
                 + `- Interpret this batch together with the prior Phone Session content; this delivery window is not the channel's full history\n`

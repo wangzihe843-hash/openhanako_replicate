@@ -62,6 +62,42 @@ describe("file tool", () => {
     });
   });
 
+  it("stats a SessionFile by sessionId-first fileId shorthand", async () => {
+    const { workspace, source } = makeTree();
+    const sessionId = "sess_file_tool";
+    const resolveSessionFile = vi.fn(() => ({
+      id: "sf_source",
+      fileId: "sf_source",
+      sessionId,
+      sessionPath: "/sessions/moved.jsonl",
+      filePath: source,
+      realPath: source,
+      filename: "cover.png",
+      mime: "image/png",
+      kind: "image",
+      size: 3,
+      status: "available",
+    }));
+    const tool = createFileTool({
+      getCwd: () => workspace,
+      getSessionPath: () => "/sessions/current.jsonl",
+      resolveSessionFile,
+    });
+
+    const result = await tool.execute("file-1", {
+      action: "stat",
+      fileId: "sf_source",
+      sessionId,
+    });
+
+    expect(resolveSessionFile).toHaveBeenCalledWith("sf_source", { sessionId });
+    expect((result.details as any).file).toMatchObject({
+      type: "session_file",
+      fileId: "sf_source",
+      filename: "cover.png",
+    });
+  });
+
   it("copies a SessionFile into the current workspace by fileId", async () => {
     const { workspace, source, sessionPath } = makeTree();
     const registerSessionFile = vi.fn(({ filePath, label, origin, operation, storageKind }) => ({
@@ -113,6 +149,58 @@ describe("file tool", () => {
       sessionPath,
       filePath: targetPath,
       kind: "image",
+    });
+  });
+
+  it("copies a SessionFile by sessionId and preserves sessionId in the media item", async () => {
+    const { workspace, source } = makeTree();
+    const sessionId = "sess_file_copy";
+    const sessionPath = "/sessions/moved.jsonl";
+    const registerSessionFile = vi.fn(({ sessionId, sessionPath, filePath, label, origin, operation, storageKind }) => ({
+      id: "sf_copy",
+      fileId: "sf_copy",
+      sessionId,
+      sessionPath,
+      filePath,
+      label,
+      origin,
+      operation,
+      storageKind,
+      mime: "image/png",
+      kind: "image",
+      size: 3,
+    }));
+    const resolveSessionFile = vi.fn(() => ({
+      id: "sf_source",
+      sessionId,
+      sessionPath,
+      filePath: source,
+      realPath: source,
+      filename: "cover.png",
+      status: "available",
+    }));
+    const tool = createFileTool({
+      getCwd: () => workspace,
+      getSessionPath: () => sessionPath,
+      resolveSessionFile,
+      registerSessionFile,
+    });
+
+    const result = await tool.execute("file-1", {
+      action: "copy",
+      fileId: "sf_source",
+      sessionId,
+      targetDir: "assets",
+      filename: "article-cover.png",
+    });
+
+    expect(resolveSessionFile).toHaveBeenCalledWith("sf_source", { sessionId });
+    expect(registerSessionFile).toHaveBeenCalledWith(expect.objectContaining({ sessionId, sessionPath }));
+    expect((result.details as any).media.items[0]).toMatchObject({
+      type: "session_file",
+      fileId: "sf_copy",
+      sessionId,
+      sessionPath,
     });
   });
 

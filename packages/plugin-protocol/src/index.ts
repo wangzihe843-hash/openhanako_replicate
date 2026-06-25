@@ -24,8 +24,19 @@ export const PLUGIN_UI_CAPABILITY = {
   TOAST_SHOW: 'toast.show',
   EXTERNAL_OPEN: 'external.open',
   SESSION_FILE_OPEN: 'sessionFile.open',
+  RESOURCE_OPEN: 'resource.open',
+  RESOURCE_PICK: 'resource.pick',
+  RESOURCE_REQUEST_ACCESS: 'resource.requestAccess',
   UI_RESIZE: 'ui.resize',
   CLIPBOARD_WRITE_TEXT: 'clipboard.writeText',
+} as const;
+
+export const PLUGIN_RESOURCE_CAPABILITY = {
+  READ: 'resource.read',
+  SEARCH: 'resource.search',
+  WRITE: 'resource.write',
+  MATERIALIZE: 'resource.materialize',
+  WATCH: 'resource.watch',
 } as const;
 
 export type PluginUiErrorCode =
@@ -33,6 +44,193 @@ export type PluginUiErrorCode =
 
 export type PluginUiCapabilityName =
   (typeof PLUGIN_UI_CAPABILITY)[keyof typeof PLUGIN_UI_CAPABILITY];
+
+export type PluginResourceCapabilityName =
+  (typeof PLUGIN_RESOURCE_CAPABILITY)[keyof typeof PLUGIN_RESOURCE_CAPABILITY];
+
+export type PluginResourceRef =
+  | { kind: 'local-file'; path: string }
+  | { kind: 'mount'; mountId: string; path: string }
+  | { kind: 'session-file'; fileId: string; sessionId?: string; sessionPath?: string }
+  | { kind: 'resource'; resourceId: string }
+  | { kind: 'url'; url: string };
+
+export interface PluginResourceVersion {
+  mtimeMs?: number;
+  size?: number | null;
+  sha256?: string;
+  etag?: string;
+  sequence?: number;
+}
+
+export type PluginResourceDescriptor = PluginResourceRef & {
+  provider?: string;
+  filePath?: string;
+  displayName?: string;
+};
+
+export interface PluginResourceStat {
+  resourceKey: string;
+  resource: PluginResourceDescriptor;
+  exists: boolean;
+  isDirectory: boolean;
+  version?: PluginResourceVersion;
+  filePath?: string;
+}
+
+export interface PluginResourceReadResult {
+  resourceKey: string;
+  resource: PluginResourceDescriptor;
+  content: Uint8Array;
+  version?: PluginResourceVersion;
+  filePath?: string;
+}
+
+export interface PluginResourceMutationResult {
+  changeType: 'created' | 'modified';
+  resourceKey: string;
+  resource: PluginResourceDescriptor;
+  version?: PluginResourceVersion;
+  filePath?: string;
+}
+
+export interface PluginResourceWriteConflictResult {
+  ok: false;
+  conflict: true;
+  resourceKey: string;
+  resource: PluginResourceDescriptor;
+  version?: PluginResourceVersion;
+  filePath?: string;
+}
+
+export type PluginResourceWriteExpectedVersionResult =
+  | PluginResourceMutationResult
+  | PluginResourceWriteConflictResult;
+
+export interface PluginResourceMoveResult {
+  oldResourceKey: string;
+  newResourceKey: string;
+  oldResource: PluginResourceDescriptor;
+  newResource: PluginResourceDescriptor;
+  oldFilePath?: string;
+  newFilePath?: string;
+}
+
+export interface PluginResourceTrashOptions {
+  namespace?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PluginResourceTrashResult {
+  resourceKey: string;
+  resource: PluginResourceDescriptor;
+  trashId: string;
+  trashPath?: string;
+  payloadPath?: string;
+  filePath?: string;
+}
+
+export interface PluginResourceEdit {
+  oldText: string;
+  newText: string;
+}
+
+export interface PluginResourceListItem {
+  name: string;
+  isDirectory: boolean;
+  size: number | null;
+  mtimeMs: number;
+}
+
+export interface PluginResourceListResult {
+  resourceKey: string;
+  resource: PluginResourceDescriptor;
+  items: PluginResourceListItem[];
+}
+
+export interface PluginResourceSearchOptions {
+  query?: string;
+  [key: string]: unknown;
+}
+
+export interface PluginResourceSearchMatch {
+  filePath: string;
+  line: number;
+  text: string;
+  name?: string;
+  relativePath?: string;
+  parentSubdir?: string;
+  isDirectory?: boolean;
+  size?: number | null;
+  mtimeMs?: number;
+}
+
+export interface PluginResourceSearchResult {
+  resourceKey: string;
+  resource: PluginResourceDescriptor;
+  matches: PluginResourceSearchMatch[];
+}
+
+export interface PluginResourceMaterializeResult {
+  resourceKey: string;
+  resource: PluginResourceDescriptor;
+  filePath: string;
+  version?: PluginResourceVersion;
+}
+
+export interface PluginResourceWatchTarget {
+  ref?: PluginResourceRef;
+  filePath: string;
+  isDirectory?: boolean;
+  resourceKey: string;
+  resource: PluginResourceDescriptor;
+}
+
+export interface PluginResourceEventCursor {
+  streamId?: string;
+  sequence: number;
+  occurredAt?: string;
+}
+
+export interface PluginResourceError {
+  code: string;
+  message: string;
+  capability?: PluginResourceCapabilityName | string;
+  resource?: PluginResourceDescriptor;
+  cursor?: PluginResourceEventCursor;
+  safeMessage?: string;
+  details?: unknown;
+}
+
+export interface PluginResourceOpenInput {
+  resource: PluginResourceRef | Record<string, unknown>;
+  mode?: 'preview' | 'reveal' | 'download' | string;
+}
+
+export interface PluginResourceOpenResult {
+  opened: boolean;
+}
+
+export interface PluginResourcePickInput {
+  mode?: 'file' | 'directory' | string;
+  multiple?: boolean;
+  capability?: PluginResourceCapabilityName | string;
+}
+
+export interface PluginResourcePickResult {
+  resources: Array<PluginResourceRef | Record<string, unknown>>;
+}
+
+export interface PluginResourceRequestAccessInput {
+  capability: PluginResourceCapabilityName | string;
+  resource?: PluginResourceRef | Record<string, unknown>;
+  reason?: string;
+}
+
+export interface PluginResourceRequestAccessResult {
+  granted: boolean;
+  capability: PluginResourceCapabilityName | string;
+}
 
 export type PluginUiSlot = 'page' | 'widget' | 'card' | 'settings';
 

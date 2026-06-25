@@ -65,6 +65,11 @@ export const BLOCK_EXTRACTORS = {
     }];
   },
 
+  "media_generate-image": (details) => extractMediaGenerationBlocks(details, "image"),
+
+  "media_generate-video": (details) => extractMediaGenerationBlocks(details, "video"),
+
+  // COMPAT(v0.332): Historical sessions may contain old image-gen tool result names.
   "image-gen_generate-image": (details) => extractMediaGenerationBlocks(details, "image"),
 
   "image-gen_generate-video": (details) => extractMediaGenerationBlocks(details, "video"),
@@ -132,6 +137,7 @@ export const BLOCK_EXTRACTORS = {
       requestedAgentName,
       executorAgentId: details.executorAgentId || executor?.agentId || null,
       executorAgentNameSnapshot: details.executorAgentNameSnapshot || executor?.agentName || null,
+      sessionId: details.sessionId || null,
       streamKey: details.sessionPath || "",
       streamStatus: details.streamStatus || "running",
       summary: details.summary || null,
@@ -246,13 +252,14 @@ function extractMediaGenerationBlocks(details, fallbackKind) {
   return blocks.length ? blocks : null;
 }
 
-function resultSessionFileBlocks(result, taskId, afterIndex) {
+function resultSessionFileBlocks(result, taskId, block) {
   if (!result || typeof result !== "object" || Array.isArray(result)) return [];
   const sessionFiles = Array.isArray(result.sessionFiles) ? result.sessionFiles : [];
   return sessionFiles
     .map((file) => sessionFileToContentBlock(file, {
       replacesTaskId: taskId,
-      ...(afterIndex !== undefined ? { afterIndex } : {}),
+      ...(block?.afterIndex !== undefined ? { afterIndex: block.afterIndex } : {}),
+      ...(block?.sourceIndex !== undefined ? { sourceIndex: block.sourceIndex } : {}),
     }))
     .filter(Boolean);
 }
@@ -292,7 +299,7 @@ function mediaGenerationFallbackBlock(block, result) {
 function mediaGenerationReplacementBlocks(block, result) {
   if (!result) return [block];
   if (result.status === "success" || result.status === "resolved") {
-    const fileBlocks = resultSessionFileBlocks(result.result, block.taskId, block.afterIndex);
+    const fileBlocks = resultSessionFileBlocks(result.result, block.taskId, block);
     return fileBlocks.length ? fileBlocks : [mediaGenerationFallbackBlock(block, {
       status: "failed",
       reason: t("deferred.mediaNoDisplayableFiles"),
@@ -358,6 +365,7 @@ export function resolveMediaGenerationBlocks(blocks, results = new Map(), standa
       kind: mediaKindFromDeferredType(result.type),
       status: "pending",
       ...(result.afterIndex !== undefined ? { afterIndex: result.afterIndex } : {}),
+      ...(result.sourceIndex !== undefined ? { sourceIndex: result.sourceIndex } : {}),
     };
     pushInterludesForTask(result.taskId);
     for (const replacement of mediaGenerationReplacementBlocks(syntheticBlock, result)) {

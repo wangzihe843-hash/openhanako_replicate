@@ -22,9 +22,11 @@
 
 import {
   MODEL_AUDIO_TRANSPORTS,
+  MODEL_VIDEO_TRANSPORTS,
   getReasoningProfile,
   isOfficialMimoEndpoint,
   resolveModelAudioInputTransport,
+  resolveModelVideoInputTransport,
 } from "../../shared/model-capabilities.ts";
 import {
   ensureAssistantContentForToolCalls,
@@ -32,6 +34,7 @@ import {
   stripReasoningContent,
 } from "./reasoning-content-replay.ts";
 import { normalizeOpenAIInputAudioPayload } from "./input-audio.ts";
+import { normalizeOpenAIVideoUrlPayload } from "./openai-video-url.ts";
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 
@@ -96,9 +99,13 @@ export function apply(payload, model, options: { mode?: string; reasoningLevel?:
   const mode = options.mode || "chat";
   const reasoningLevel = options.reasoningLevel;
 
-  const base = resolveModelAudioInputTransport(model) === MODEL_AUDIO_TRANSPORTS.MIMO_INPUT_AUDIO
-    ? normalizeOpenAIInputAudioPayload(payload)
-    : payload;
+  let base = payload;
+  if (resolveModelAudioInputTransport(model) === MODEL_AUDIO_TRANSPORTS.MIMO_INPUT_AUDIO) {
+    base = normalizeOpenAIInputAudioPayload(base);
+  }
+  if (resolveModelVideoInputTransport(model) === MODEL_VIDEO_TRANSPORTS.OPENAI_VIDEO_URL) {
+    base = normalizeOpenAIVideoUrlPayload(base);
+  }
   let next = base;
   const editable = () => {
     if (next === base) next = { ...base };

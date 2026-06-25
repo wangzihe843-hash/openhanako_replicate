@@ -76,6 +76,21 @@ describe("experiment registry", () => {
     });
   });
 
+  it("does not expose ResourceIO as a runtime experiment because file tools always use ResourceIO", () => {
+    const ids = getExperimentDefinitions().map((def) => def.id);
+
+    expect(ids).not.toContain("tools.resource_io");
+  });
+
+  it("does not leave stale ResourceIO experiment copy in settings locales", () => {
+    for (const locale of ["en", "zh"]) {
+      const source = fs.readFileSync(path.join(process.cwd(), "desktop", "src", "locales", `${locale}.json`), "utf-8");
+
+      expect(source).not.toContain("resourceIoTools");
+      expect(source).not.toContain("tools.resource_io");
+    }
+  });
+
   it("rejects unknown experiment ids without writing preferences", () => {
     const { prefs } = makePrefs();
 

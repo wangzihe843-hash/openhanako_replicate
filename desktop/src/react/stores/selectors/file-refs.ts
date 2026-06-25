@@ -2,6 +2,7 @@ import type { FileRef } from '../../types/file-ref';
 import type { DeskFile, FileVersion } from '../../types';
 import type { ChatListItem, ContentBlock, ResourceEnvelope, SessionRegistryFile } from '../chat-types';
 import { inferKindByExt, buildFileRefId } from '../../utils/file-kind';
+import { sessionScopedKey, sessionScopedValue, type SessionLocatorState } from '../session-slice';
 
 type StateShape = {
   deskFiles: DeskFile[];
@@ -10,7 +11,7 @@ type StateShape = {
   deskCurrentPath: string;
   chatSessions?: Record<string, unknown>;
   sessionRegistryFilesByPath?: Record<string, readonly SessionRegistryFile[] | undefined>;
-};
+} & SessionLocatorState;
 
 function joinPath(base: string, sub: string, name: string): string {
   // 保持 OS 原生习惯：仅用正斜杠拼接（preload 层自行适配 Windows 反斜杠）。
@@ -69,6 +70,7 @@ type SessionStateShape = StateShape & {
 
 const cachedSession = new Map<string, {
   sessionPath: string;
+  sessionKey: string;
   includeUnlisted: boolean;
   items: readonly ChatListItem[];
   registryFiles: readonly SessionRegistryFile[];
@@ -91,7 +93,7 @@ export function invalidateSessionCache(sessionPath?: string): void {
     return;
   }
   for (const [key, cached] of cachedSession) {
-    if (cached.sessionPath === sessionPath) cachedSession.delete(key);
+    if (cached.sessionPath === sessionPath || cached.sessionKey === sessionPath) cachedSession.delete(key);
   }
 }
 
@@ -101,10 +103,11 @@ export function selectSessionFiles(
   options: { includeUnlisted?: boolean } = {},
 ): readonly FileRef[] {
   const includeUnlisted = options.includeUnlisted === true;
-  const items = state.chatSessions?.[sessionPath]?.items || EMPTY_CHAT_ITEMS;
-  const registryFiles = state.sessionRegistryFilesByPath?.[sessionPath] || EMPTY_REGISTRY_FILES;
+  const sessionKey = sessionScopedKey(state, sessionPath) || sessionPath;
+  const items = sessionScopedValue(state, state.chatSessions, sessionPath)?.items || EMPTY_CHAT_ITEMS;
+  const registryFiles = sessionScopedValue(state, state.sessionRegistryFilesByPath, sessionPath) || EMPTY_REGISTRY_FILES;
   if (!items.length && !registryFiles.length) return EMPTY_SESSION_RESULT;
-  const cacheKey = sessionCacheKey(sessionPath, includeUnlisted);
+  const cacheKey = sessionCacheKey(sessionKey, includeUnlisted);
   const cached = cachedSession.get(cacheKey);
   if (cached && cached.items === items && cached.registryFiles === registryFiles) return cached.result;
 
@@ -122,7 +125,7 @@ export function selectSessionFiles(
     pushUniqueFile(result, seen, {
       id: buildFileRefId({
         source: 'session-registry',
-        sessionPath,
+        sessionKey,
         path: filePath,
         ...(fileId ? { messageId: fileId } : {}),
       }),
@@ -159,7 +162,8 @@ export function selectSessionFiles(
         pushUniqueFile(result, seen, {
           id: buildFileRefId({
             source: 'session-attachment',
-            sessionPath, messageId: msg.id, path: att.path,
+            sessionKey,
+            messageId: msg.id, path: att.path,
           }),
           fileId: att.fileId,
           kind: inferKindByExt(ext),
@@ -189,7 +193,8 @@ export function selectSessionFiles(
           pushUniqueFile(result, seen, {
             id: buildFileRefId({
               source: 'session-block-file',
-              sessionPath, messageId: msg.id, blockIdx: i, path: b.filePath,
+              sessionKey,
+              messageId: msg.id, blockIdx: i, path: b.filePath,
             }),
             fileId: b.fileId,
             kind: inferKindByExt(b.ext),
@@ -213,7 +218,8 @@ export function selectSessionFiles(
           pushUniqueFile(result, seen, {
             id: buildFileRefId({
               source: 'session-block-legacy-artifact',
-              sessionPath, messageId: msg.id, blockIdx: i, path: b.filePath,
+              sessionKey,
+              messageId: msg.id, blockIdx: i, path: b.filePath,
             }),
             fileId: b.fileId,
             kind: inferKindByExt(ext),
@@ -236,7 +242,8 @@ export function selectSessionFiles(
           result.push({
             id: buildFileRefId({
               source: 'session-block-screenshot',
-              sessionPath, messageId: msg.id, blockIdx: i, path: '',
+              sessionKey,
+              messageId: msg.id, blockIdx: i, path: '',
             }),
             kind: 'image',
             source: 'session-block-screenshot',
@@ -253,12 +260,12 @@ export function selectSessionFiles(
     }
   }
 
-  cachedSession.set(cacheKey, { sessionPath, includeUnlisted, items, registryFiles, result });
+  cachedSession.set(cacheKey, { sessionPath, sessionKey, includeUnlisted, items, registryFiles, result });
   return result;
 }
 
-function sessionCacheKey(sessionPath: string, includeUnlisted: boolean): string {
-  return `${includeUnlisted ? 'all' : 'listed'}\u0000${sessionPath}`;
+function sessionCacheKey(sessionKey: string, includeUnlisted: boolean): string {
+  return `${includeUnlisted ? 'all' : 'listed'}\u0000${sessionKey}`;
 }
 
 function presentationOf(file: { presentation?: string } | undefined): string {

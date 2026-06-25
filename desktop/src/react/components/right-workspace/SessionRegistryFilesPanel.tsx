@@ -4,8 +4,9 @@ import { useStore } from '../../stores';
 import { selectSessionFiles } from '../../stores/selectors/file-refs';
 import type { FileRef } from '../../types/file-ref';
 import { ContextMenu, type ContextMenuItem } from '../../ui';
-import { isMediaKind } from '../../utils/file-kind';
+import { isMarkdownFileName, isMediaKind } from '../../utils/file-kind';
 import { fileRefDownloadUrl, isWebRuntime, openFileRefPreview } from '../../utils/remote-file-preview';
+import { takeMarkdownFileScreenshot } from '../../utils/screenshot';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { FileKindIcon } from '../shared/FileKindIcon';
 import {
@@ -20,7 +21,7 @@ const RUBBER_BAND_MIN = 4;
 
 type SessionFileSortMode = 'time-desc' | 'name-asc' | 'name-desc' | 'type-asc';
 
-type BridgePlatform = 'feishu' | 'telegram' | 'whatsapp' | 'qq' | 'wechat';
+type BridgePlatform = 'feishu' | 'dingtalk' | 'telegram' | 'whatsapp' | 'qq' | 'wechat';
 
 interface BridgeSessionSummary {
   sessionKey: string;
@@ -42,10 +43,11 @@ type MenuState =
   | { type: 'sort'; items: ContextMenuItem[]; position: { x: number; y: number } }
   | { type: 'file'; file: FileRef; position: { x: number; y: number } };
 
-const BRIDGE_PLATFORMS: BridgePlatform[] = ['feishu', 'telegram', 'whatsapp', 'qq', 'wechat'];
+const BRIDGE_PLATFORMS: BridgePlatform[] = ['feishu', 'dingtalk', 'telegram', 'whatsapp', 'qq', 'wechat'];
 
 const BRIDGE_PLATFORM_LABEL_KEYS: Record<BridgePlatform, string> = {
   feishu: 'settings.bridge.feishu',
+  dingtalk: 'settings.bridge.dingtalk',
   telegram: 'settings.bridge.telegram',
   whatsapp: 'settings.bridge.whatsapp',
   qq: 'settings.bridge.qq',
@@ -54,6 +56,7 @@ const BRIDGE_PLATFORM_LABEL_KEYS: Record<BridgePlatform, string> = {
 
 const BRIDGE_PLATFORM_FALLBACK_LABELS: Record<BridgePlatform, string> = {
   feishu: 'Feishu',
+  dingtalk: 'DingTalk',
   telegram: 'Telegram',
   whatsapp: 'WhatsApp',
   qq: 'QQ',
@@ -98,6 +101,13 @@ function canCopyFilePath(file: FileRef): boolean {
 
 function canDragFile(file: FileRef): boolean {
   return !isExpired(file) && (!!file.path || !!file.inlineData);
+}
+
+function canScreenshotShareFile(file: FileRef): boolean {
+  return !isWebRuntime()
+    && !isExpired(file)
+    && !!file.path
+    && (file.kind === 'markdown' || isMarkdownFileName(file.name) || isMarkdownFileName(file.path));
 }
 
 function bridgePlatformLabel(platform: BridgePlatform): string {
@@ -595,6 +605,9 @@ export function SessionRegistryFilesPanel() {
     const actionFiles = filesForAction(file);
     const pathFiles = pathBackedFiles(actionFiles);
     const sendableFiles = pathBackedFiles(actionFiles, { requireAvailable: true });
+    const screenshotFile = actionFiles.length === 1 && canScreenshotShareFile(actionFiles[0])
+      ? actionFiles[0]
+      : null;
     const downloadUrl = fileRefDownloadUrl(file);
     const sendTargetItems: ContextMenuItem[] = bridgeTargetsLoading && !bridgeTargetsLoaded
       ? [{ label: tr('rightWorkspace.sessionFiles.actions.sendToBridgeLoading'), disabled: true }]
@@ -613,6 +626,12 @@ export function SessionRegistryFilesPanel() {
         { label: tr('rightWorkspace.sessionFiles.actions.open'), disabled: !canUseFilePath(file), action: () => openFile(file) },
         { label: tr('rightWorkspace.sessionFiles.actions.reveal'), disabled: !canUseFilePath(file), action: () => revealFile(file) },
       ] : []),
+      ...(screenshotFile ? [{
+        label: tr('common.screenshotShare'),
+        action: () => {
+          void takeMarkdownFileScreenshot(screenshotFile.path, { fileName: screenshotFile.name });
+        },
+      }] : []),
       {
         label: tr('rightWorkspace.sessionFiles.actions.downloadToDevice'),
         disabled: !downloadUrl,

@@ -33,6 +33,63 @@ function cleanExpiredFailCounts() {
   }
 }
 
+function stripFullMarkdownFence(text) {
+  const fenceMatch = String(text || "").trim().match(/^```(?:json)?\s*\n([\s\S]*?)\n\s*```\s*$/);
+  return (fenceMatch ? fenceMatch[1] : text).trim();
+}
+
+function stripLeadingThoughtBlocks(text) {
+  let out = String(text || "").trim();
+  const thoughtRe = /^<(?:think|thinking|thought)\b[^>]*>[\s\S]*?<\/(?:think|thinking|thought)>\s*/i;
+  while (thoughtRe.test(out)) {
+    out = out.replace(thoughtRe, "").trim();
+  }
+  return out;
+}
+
+function findJsonArrayCandidate(text) {
+  const s = String(text || "");
+  const start = s.indexOf("[");
+  if (start === -1) return "";
+  let depth = 0;
+  let inString = false;
+  let quote = "";
+  let escaped = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === quote) {
+        inString = false;
+        quote = "";
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      quote = ch;
+      continue;
+    }
+    if (ch === "[") depth += 1;
+    else if (ch === "]") {
+      depth -= 1;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return "";
+}
+
+function normalizeFactJsonOutput(raw) {
+  const withoutFence = stripFullMarkdownFence(raw);
+  const withoutThoughts = stripLeadingThoughtBlocks(withoutFence);
+  const normalized = stripFullMarkdownFence(withoutThoughts).trim();
+  if (normalized.startsWith("[")) return normalized;
+  return findJsonArrayCandidate(normalized);
+}
+
 /**
  * 处理所有脏 session，提取新增元事实写入 fact-store
  *
@@ -177,22 +234,27 @@ async function extractFactsFromDiff(currentSummary, previousSnapshot, resolvedMo
     usageContext,
   }) as string;
 
-  // 兼容 markdown 代码块包裹（提取最外层 fence 之间的内容）
-  const fenceMatch = raw.match(/^```(?:json)?\s*\n([\s\S]*?)\n\s*```\s*$/);
-  const jsonStr = (fenceMatch ? fenceMatch[1] : raw).trim();
+  const jsonStr = normalizeFactJsonOutput(raw);
 
   try {
     const facts = JSON.parse(jsonStr);
-    if (!Array.isArray(facts)) return [];
+    if (!Array.isArray(facts)) {
+      throw new Error("deep memory fact extraction returned non-array JSON");
+    }
     return facts
       .filter((f) => f && typeof f.fact === "string" && f.fact.length > 0)
       .map((f) => ({
         ...f,
         time: normalizeFactTime(f.time, timeContext || {}),
       }));
-  } catch {
-    log.error(`JSON 解析失败: ${jsonStr.slice(0, 200)}`);
-    return [];
+  } catch (err) {
+    const preview = (jsonStr || String(raw || "")).slice(0, 200);
+    log.error(`JSON 解析失败: ${preview}`);
+    const parseErr: Error & { cause?: unknown } = new Error(
+      `deep memory fact extraction returned invalid JSON: ${err?.message || err}`,
+    );
+    parseErr.cause = err;
+    throw parseErr;
   }
 }
 

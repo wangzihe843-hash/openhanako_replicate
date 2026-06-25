@@ -162,4 +162,43 @@ describe("createTelegramAdapter media delivery", () => {
     });
     adapter.stop();
   });
+
+  it("declares Telegram rich draft streaming and sends rich draft/final payloads", async () => {
+    const { adapter, bot } = makeAdapter();
+
+    expect(adapter.richStreamingCapabilities).toMatchObject({
+      mode: "rich_draft",
+      scopes: ["dm"],
+      maxChars: 32768,
+      renderer: "telegram_rich_markdown",
+      requiresRichStreaming: true,
+    });
+
+    await adapter.sendRichDraft("chat-1", "**streaming**", {
+      draftId: 12345,
+      messageThreadId: 67890,
+    });
+    await adapter.sendRichReply("chat-1", "# Final\n\n<details><summary>More</summary>x</details>", {
+      messageThreadId: 67890,
+    });
+
+    expect(bot._request).toHaveBeenNthCalledWith(1, "sendRichMessageDraft", {
+      form: {
+        chat_id: "chat-1",
+        draft_id: 12345,
+        message_thread_id: 67890,
+        rich_message: JSON.stringify({ markdown: "**streaming**" }),
+      },
+    });
+    expect(bot._request).toHaveBeenNthCalledWith(2, "sendRichMessage", {
+      form: {
+        chat_id: "chat-1",
+        message_thread_id: 67890,
+        rich_message: JSON.stringify({
+          markdown: "# Final\n\n<details><summary>More</summary>x</details>",
+        }),
+      },
+    });
+    adapter.stop();
+  });
 });

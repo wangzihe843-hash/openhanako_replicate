@@ -16,6 +16,7 @@ import { hasCompiledMemory, writeCompiledMemorySnapshot } from "../lib/memory/co
 import { t } from "../lib/i18n.ts";
 import { ActivityStore } from "../lib/desk/activity-store.ts";
 import { createHash } from "crypto";
+import { readDirectoryLikeDirentsSync } from "../shared/link-aware-fs.ts";
 import {
   generateAgentId as _generateAgentId,
   generateDescription,
@@ -415,12 +416,46 @@ export class AgentManager {
       .filter(Boolean);
   }
 
+  /**
+   * 团队花名册唯一事实源：返回未删除、config 可用的 agent 轻量条目。
+   * system prompt Team 区块、subagent 发现、DM、workflow、channel 工具
+   * 都通过注入的回调消费这份列表，禁止在 Agent 内部私扫 agentsDir（#1657 / #1633）。
+   */
+  listActiveAgentsForRoster() {
+    try {
+      return this._scanAgentDirs().map((entry) => this._readRosterEntry(entry.name));
+    } catch {
+      return [];
+    }
+  }
+
+  _readRosterEntry(agentId) {
+    const dir = path.join(this._d.agentsDir, agentId);
+    try {
+      const cfg = safeReadYAMLSync(path.join(dir, "config.yaml"), {}, YAML);
+      const chatRef = cfg.models?.chat;
+      const model = typeof chatRef === "object"
+        ? String(chatRef?.id || "")
+        : String(chatRef || "");
+      let summary = "";
+      try {
+        summary = fs.readFileSync(path.join(dir, "description.md"), "utf-8")
+          .split("\n")
+          .filter((l) => !l.trim().startsWith("<!--"))
+          .join("\n")
+          .trim();
+      } catch {}
+      return { id: agentId, name: cfg.agent?.name || agentId, summary, model };
+    } catch {
+      return { id: agentId, name: agentId, summary: "", model: "" };
+    }
+  }
+
   /** 扫盘读取所有 agent 元数据（I/O 密集，由缓存保护） */
   _scanAgentList() {
-    const entries = fs.readdirSync(this._d.agentsDir, { withFileTypes: true });
+    const entries = readDirectoryLikeDirentsSync(this._d.agentsDir);
     const agents = [];
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
       if (this.isAgentDeleted(entry.name)) continue;
       const configPath = path.join(this._d.agentsDir, entry.name, "config.yaml");
       if (!fs.existsSync(configPath)) continue;
@@ -821,8 +856,14 @@ export class AgentManager {
   // ── Delete ──
 
   async deleteAgent(agentId) {
+    let replacementAgentId = null;
+    let replacementSwitchResult = null;
     if (agentId === this._activeAgentId) {
-      throw new Error(t("error.agentDeleteActive"));
+      replacementAgentId = this._replacementAgentIdForDeletion(agentId);
+      if (!replacementAgentId) {
+        throw new Error("cannot delete the last agent");
+      }
+      replacementSwitchResult = await this.switchAgent(replacementAgentId);
     }
 
     const agentDir = path.join(this._d.agentsDir, agentId);
@@ -899,6 +940,24 @@ export class AgentManager {
     this.invalidateAgentListCache();
     this._rebuildAllAgentSystemPrompts();
     log.log(`已删除助手: ${agentId}`);
+    return {
+      ok: true,
+      replacementAgentId,
+      replacementSwitchResult,
+    };
+  }
+
+  _replacementAgentIdForDeletion(agentId) {
+    const prefs = this._d.getPrefs();
+    const primaryId = prefs.getPrimaryAgent?.();
+    const candidates = [
+      ...new Set([
+        ...[...this._agents.keys()],
+        ...this._scanAgentDirs().map((entry) => entry.name),
+      ]),
+    ].filter((id) => id && id !== agentId && !this.isAgentDeleted(id));
+    if (primaryId && candidates.includes(primaryId)) return primaryId;
+    return candidates[0] || null;
   }
 
   // ── Utility ──
@@ -942,18 +1001,16 @@ export class AgentManager {
 
   _scanAgentDirs() {
     try {
-      return fs.readdirSync(this._d.agentsDir, { withFileTypes: true })
-        .filter(e => e.isDirectory()
-          && fs.existsSync(path.join(this._d.agentsDir, e.name, "config.yaml"))
+      return readDirectoryLikeDirentsSync(this._d.agentsDir)
+        .filter(e => fs.existsSync(path.join(this._d.agentsDir, e.name, "config.yaml"))
           && !this.isAgentDeleted(e.name));
     } catch { return []; }
   }
 
   _scanDeletedAgentDirs() {
     try {
-      return fs.readdirSync(this._d.agentsDir, { withFileTypes: true })
-        .filter(e => e.isDirectory()
-          && fs.existsSync(path.join(this._d.agentsDir, e.name, "config.yaml"))
+      return readDirectoryLikeDirentsSync(this._d.agentsDir)
+        .filter(e => fs.existsSync(path.join(this._d.agentsDir, e.name, "config.yaml"))
           && fs.existsSync(this._deletedAgentTombstonePath(e.name)));
     } catch { return []; }
   }
@@ -1040,6 +1097,8 @@ export class AgentManager {
       getLearnSkills:       () => getEngine()?.getLearnSkills?.() ?? {},
       getPreferences:       () => getEngine()?.preferences ?? null,
       isChannelsEnabled:    () => getEngine()?.isChannelsEnabled?.() ?? false,
+      // 花名册唯一事实源：tombstone / 坏目录已在 AgentManager 层过滤
+      listActiveAgents:     () => this.listActiveAgentsForRoster(),
       createChannelEntry:    (input) => getEngine()?.createChannelEntry?.(input),
       resolveUtilityConfig: () => getEngine()?.resolveUtilityConfig?.({ agentId: ag.id }),
       getCwd:               () => getEngine()?.cwd ?? "",
@@ -1066,10 +1125,21 @@ export class AgentManager {
       }
       engine?._emitAppEvent?.("skills-changed", { agentId: ag.id });
     });
-    ag.setNotifyHandler((payload) => {
+    ag.setNotifyHandler((payload: any, context: any = {}) => {
       const engine = this._d.getEngine?.();
       if (typeof engine?.deliverNotification === "function") {
-        return engine.deliverNotification(payload, { agentId: ag.id });
+        return engine.deliverNotification(payload, {
+          agentId: ag.id,
+          ...(typeof context?.sessionPath === "string" && context.sessionPath.trim()
+            ? { sessionPath: context.sessionPath.trim() }
+            : {}),
+          ...(context?.bridgeContext?.isBridgeSession === true
+            ? { bridgeContext: context.bridgeContext }
+            : {}),
+          ...(context?.notificationContext && typeof context.notificationContext === "object"
+            ? { notificationContext: context.notificationContext }
+            : {}),
+        });
       }
       this._d.getHub()?.eventBus?.emit({
         type: "notification",

@@ -1,12 +1,11 @@
 /**
  * SubagentCard — 子 Agent 静态预览状态卡片
  *
- * 订阅 streamKey 上的实时事件，互斥显示当前状态：
- * 思考 / 文字输出 / 工具调用 / 已完成 / 失败 / 已中断
+ * 聊天流中的概览卡只显示静态任务与终态，不订阅 child session 高频流。
+ * 详情实时流由 SubagentSessionPreview 在打开时订阅。
  */
 
-import { memo, useState, useEffect, useRef, useCallback } from 'react';
-import { subscribeStreamKey } from '../../services/stream-key-dispatcher';
+import { memo, useState, useEffect, useCallback } from 'react';
 import { hanaUrl } from '../../hooks/use-hana-fetch';
 import { useStore } from '../../stores';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
@@ -27,6 +26,7 @@ interface SubagentCardProps {
     requestedAgentName?: string;
     executorAgentId?: string;
     executorAgentNameSnapshot?: string;
+    sessionId?: string | null;
     streamKey: string;
     streamStatus: 'running' | 'done' | 'failed' | 'aborted';
     summary?: string;
@@ -38,13 +38,6 @@ interface SubagentCardProps {
 export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardProps) {
   const [status, setStatus] = useState(block.streamStatus);
   const t = window.t ?? ((k: string) => k);
-  const [display, setDisplay] = useState<string>(() => {
-    if (block.streamStatus === 'done') return block.summary || t('subagent.status.done');
-    if (block.streamStatus === 'failed') return block.summary || t('subagent.status.failed');
-    if (block.streamStatus === 'aborted') return block.summary || t('subagent.status.aborted');
-    return t('subagent.status.preparing');
-  });
-  const textRef = useRef('');
 
   // 头像：优先用 agent 头像 API，fallback 到 yuan 剪影头像
   const currentAgentId = useStore(s => s.currentAgentId);
@@ -60,34 +53,7 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
   // Sync block prop changes (from block_update patch)
   useEffect(() => {
     setStatus(block.streamStatus);
-    if (block.streamStatus === 'done') setDisplay(block.summary || t('subagent.status.done'));
-    if (block.streamStatus === 'failed') setDisplay(block.summary || t('subagent.status.failed'));
-    if (block.streamStatus === 'aborted') setDisplay(block.summary || t('subagent.status.aborted'));
-  }, [block.streamStatus, block.summary]);
-
-  // Subscribe to live events
-  useEffect(() => {
-    if (status !== 'running' || !block.streamKey) return;
-
-    const unsub = subscribeStreamKey(block.streamKey, (event: any) => {
-      if (event.type === 'text_delta') {
-        textRef.current += event.delta || '';
-        if (textRef.current.length > 100) textRef.current = textRef.current.slice(-100);
-        setDisplay(textRef.current);
-      } else if (event.type === 'thinking_start') {
-        setDisplay(t('subagent.status.thinking'));
-      } else if (event.type === 'thinking_end') {
-        if (textRef.current) setDisplay(textRef.current);
-      } else if (event.type === 'tool_start') {
-        setDisplay(t('subagent.status.callingTool').replace('{name}', event.name));
-      } else if (event.type === 'tool_end') {
-        if (textRef.current) setDisplay(textRef.current);
-        else setDisplay(t('subagent.status.executing'));
-      }
-    });
-
-    return unsub;
-  }, [block.streamKey, status]);
+  }, [block.streamStatus]);
 
   // "已中断" 仅在历史加载时判断：组件首次 mount 时如果 streamKey 为空且 status=running，
   // 等待一小段时间让 block_update 到达。如果一直没到才标记中断。
@@ -105,12 +71,10 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
       const res = await fetch(hanaUrl(`/api/task/${block.taskId}/abort`), { method: 'POST' });
       if (res.ok) {
         setStatus('aborted');
-        setDisplay(t('subagentAborted'));
       }
     } catch { /* user-initiated abort; silent on network failure */ }
   }, [block.taskId]);
 
-  const headerDisplay = status === 'running' && display ? display : block.taskTitle;
   const displayLabel = block.label || block.reuseInstance || null;
   const statusLabel = isInterrupted
     ? t('subagent.status.interrupted')
@@ -141,7 +105,7 @@ export const SubagentCard = memo(function SubagentCard({ block }: SubagentCardPr
       )}
       title={agentName}
       titleMeta={displayLabel ? `· ${displayLabel}` : undefined}
-      subtitle={headerDisplay}
+      subtitle={block.taskTitle}
       statusLabel={statusLabel}
       statusTone={statusTone}
       actionSlot={status === 'running' && !isInterrupted && (

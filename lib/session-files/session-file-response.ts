@@ -9,6 +9,7 @@ export function serializeSessionFile(file, options = {}) {
     : null;
   return {
     ...(id ? { id, fileId: id } : {}),
+    ...(file.sessionId ? { sessionId: file.sessionId } : {}),
     ...(file.sessionPath ? { sessionPath: file.sessionPath } : {}),
     filePath: file.filePath,
     ...(file.realPath ? { realPath: file.realPath } : {}),

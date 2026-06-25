@@ -230,6 +230,31 @@ describe("ComputerHost", () => {
       .rejects.toMatchObject({ code: COMPUTER_USE_ERRORS.APP_APPROVAL_REQUIRED });
   });
 
+  it("allows a session-scoped app approval lease without persistent app approval", async () => {
+    const provider = createMockComputerProvider({ providerId: "mock" });
+    provider.capabilities.isolated = false;
+    const providers = new ComputerProviderRegistry();
+    providers.register(provider);
+    const host = new ComputerHost({
+      providers,
+      defaultProviderId: "mock",
+      getSettings: () => ({ enabled: true, app_approvals: [] }),
+    });
+
+    const lease = await host.createLease({
+      ...ctx,
+      computerUseAppApproval: { mode: "session" },
+    }, { appId: "app.notes" });
+
+    expect(lease.providerId).toBe("mock");
+    await expect(host.createLease({
+      ...ctx,
+      sessionPath: "/tmp/another-session.jsonl",
+    }, { appId: "app.notes" })).rejects.toMatchObject({
+      code: COMPUTER_USE_ERRORS.APP_APPROVAL_REQUIRED,
+    });
+  });
+
   it("allows non-isolated providers after app approval", async () => {
     const provider = createMockComputerProvider({ providerId: "mock" });
     provider.capabilities.isolated = false;
@@ -388,6 +413,38 @@ describe("ComputerHost", () => {
     const second = await host.createLease(ctx, { appId: "app.notes" });
 
     expect(second.leaseId).toBe(first.leaseId);
+    expect(createLeaseCalls).toBe(1);
+  });
+
+  it("reuses a sessionId-keyed active lease when the session path moved", async () => {
+    const provider = createMockComputerProvider({ providerId: "mock" });
+    let createLeaseCalls = 0;
+    const originalCreateLease = provider.createLease;
+    provider.createLease = async (...args) => {
+      createLeaseCalls += 1;
+      return originalCreateLease(...args);
+    };
+    const { host } = makeHost(provider);
+    const sessionId = "sess_computer_host_stable";
+
+    const first = await host.createLease({
+      ...ctx,
+      sessionId,
+      sessionPath: "/tmp/original-session.jsonl",
+    }, { appId: "app.notes" });
+    const second = await host.createLease({
+      ...ctx,
+      sessionId,
+      sessionPath: "/tmp/moved-session.jsonl",
+    }, { appId: "app.notes" });
+    const snapshot = await host.getAppState({
+      ...ctx,
+      sessionId,
+      sessionPath: "/tmp/moved-session.jsonl",
+    }, first.leaseId);
+
+    expect(second.leaseId).toBe(first.leaseId);
+    expect(snapshot.leaseId).toBe(first.leaseId);
     expect(createLeaseCalls).toBe(1);
   });
 

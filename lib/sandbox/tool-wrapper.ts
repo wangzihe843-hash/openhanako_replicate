@@ -36,6 +36,14 @@ function resolvePath(rawPath, cwd) {
   return path.isAbsolute(rawPath) ? rawPath : path.resolve(cwd, rawPath);
 }
 
+function toolPathParam(params) {
+  if (!params || typeof params !== "object") return null;
+  if (typeof params.path === "string" && params.path) return params.path;
+  if (typeof params.file_path === "string" && params.file_path) return params.file_path;
+  if (typeof params.filePath === "string" && params.filePath) return params.filePath;
+  return null;
+}
+
 function normalizeExistingOrResolvedPath(filePath) {
   const resolved = path.resolve(filePath);
   try { return fs.realpathSync(resolved); }
@@ -364,7 +372,7 @@ export function wrapPathTool(tool, guard, operation, cwd, opts: SandboxOpts = {}
   return {
     ...tool,
     execute: async (toolCallId, params, ...rest) => {
-      const rawPath = params.path;
+      const rawPath = toolPathParam(params);
       const absolutePath = resolvePath(rawPath, cwd);
       const managedConfigCheck = checkManagedConfigWrite(absolutePath, operation, opts);
       if (!managedConfigCheck.allowed) {

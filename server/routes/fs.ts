@@ -54,6 +54,13 @@ function resolveAllowedPath(filePath, allowedRoots) {
   return null;
 }
 
+function escapeHtmlCell(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export function createFsRoute(engine) {
   const route = new Hono();
   const hanakoHome = path.resolve(engine.hanakoHome);
@@ -115,6 +122,39 @@ export function createFsRoute(engine) {
     } catch (err) {
       if (err?.code === "ENOENT") return c.json({ error: "file not found" }, 404);
       return c.json({ error: "docx parse failed" }, 500);
+    }
+  });
+
+  // GET /fs/xlsx-html?path=... → ExcelJS 转 HTML 表格
+  route.get("/fs/xlsx-html", async (c) => {
+    const filePath = c.req.query("path");
+    if (!filePath) return c.json({ error: "missing path" }, 400);
+    const allowedPath = resolveAllowedPath(filePath, getAllowedRoots(c));
+    if (!allowedPath) {
+      return c.json({ error: "path not allowed" }, 403);
+    }
+    try {
+      const stat = fs.statSync(allowedPath);
+      if (!stat.isFile()) return c.json({ error: "not a file" }, 400);
+      if (stat.size > 20 * 1024 * 1024) return c.json({ error: "file too large" }, 413);
+      const ExcelJS = (await import("exceljs")).default;
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(allowedPath);
+      const sheet = workbook.worksheets[0];
+      if (!sheet || sheet.rowCount === 0) return c.json({ error: "xlsx has no rows" }, 422);
+      let html = "<table>";
+      sheet.eachRow((row) => {
+        html += "<tr>";
+        for (let i = 1; i <= sheet.columnCount; i += 1) {
+          html += `<td>${escapeHtmlCell(row.getCell(i).text)}</td>`;
+        }
+        html += "</tr>";
+      });
+      html += "</table>";
+      return c.text(html);
+    } catch (err) {
+      if (err?.code === "ENOENT") return c.json({ error: "file not found" }, 404);
+      return c.json({ error: "xlsx parse failed" }, 500);
     }
   });
 

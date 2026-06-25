@@ -107,27 +107,46 @@ vi.mock('../../components/input/FileMentionMenu', () => ({
 vi.mock('../../components/input/InputStatusBars', () => ({
   InputStatusBars: ({
     slashBusy,
+    slashBusyLabel,
     compacting,
+    compactingLabel,
     screenshotBusy,
+    screenshotLabel,
+    screenshotPageLabel,
     inlineError,
     slashResult,
     onResultClick,
   }: {
     slashBusy?: string | null;
+    slashBusyLabel?: string;
     compacting?: boolean;
+    compactingLabel?: string;
     screenshotBusy?: boolean;
+    screenshotLabel?: string;
+    screenshotPageLabel?: string | null;
     inlineError?: string | null;
     slashResult?: unknown;
     onResultClick?: () => void;
-  }) => (
-    slashBusy || compacting || screenshotBusy || inlineError || slashResult
+  }) => {
+    const label = slashBusy
+      ? slashBusyLabel
+      : compacting
+        ? compactingLabel
+        : screenshotBusy
+          ? (screenshotPageLabel || screenshotLabel)
+          : inlineError
+            ? inlineError
+            : slashResult
+              ? 'slash-result'
+              : null;
+    return label
       ? React.createElement('button', {
         'data-testid': 'input-status-bars',
         onClick: onResultClick,
         type: 'button',
-      })
-      : null
-  ),
+      }, label)
+      : null;
+  },
 }));
 
 vi.mock('../../components/input/InputContextRow', () => ({
@@ -271,6 +290,27 @@ describe('InputArea status stack', () => {
     expectBefore(approvalPrompt, editor);
   });
 
+  it('shows one fresh-compact status when capability refresh is also compacting', () => {
+    const sessionPath = '/session/status-stack.jsonl';
+    useStore.setState({
+      compactingSessions: [sessionPath],
+      capabilityRefreshingSessions: [sessionPath],
+      chatSessions: {
+        [sessionPath]: { items: [] },
+      },
+      pendingSessionConfirmationsByPath: {},
+    } as never);
+
+    render(React.createElement(InputArea));
+
+    const statusBars = screen.getAllByTestId('input-status-bars');
+    expect(statusBars).toHaveLength(1);
+    expect(statusBars[0].textContent).toContain('session.capabilityDrift.refreshing');
+    expect(statusBars[0].textContent).not.toContain('chat.compacting');
+    expect(screen.getAllByText('session.capabilityDrift.refreshing')).toHaveLength(1);
+    expect(screen.queryByTestId('capability-drift-notice')).toBeNull();
+  });
+
   it('reveals screenshot notice directories in the workspace tree without replacing the desk root', async () => {
     render(React.createElement(InputArea));
 
@@ -287,6 +327,27 @@ describe('InputArea status stack', () => {
     expect(deskActionMocks.toggleJianSidebar).toHaveBeenCalledWith(true);
     expect(deskActionMocks.revealDeskDirectory).toHaveBeenCalledWith('/workspace/OH-Works');
     expect(deskActionMocks.loadDeskFiles).not.toHaveBeenCalled();
+  });
+
+  it('opens the generated screenshot image directly when the notice carries a file path', async () => {
+    const openFile = vi.fn();
+    window.platform = { openFile } as unknown as typeof window.platform;
+    render(React.createElement(InputArea));
+
+    window.dispatchEvent(new CustomEvent('hana-inline-notice', {
+      detail: {
+        text: '截图已保存到工作目录下的「OH-Works」文件夹',
+        type: 'success',
+        deskDir: '/workspace/OH-Works/截图',
+        filePath: '/workspace/OH-Works/截图/hanako-20260617.png',
+      },
+    }));
+
+    fireEvent.click(await screen.findByTestId('input-status-bars'));
+
+    expect(openFile).toHaveBeenCalledWith('/workspace/OH-Works/截图/hanako-20260617.png');
+    expect(deskActionMocks.toggleJianSidebar).not.toHaveBeenCalled();
+    expect(deskActionMocks.revealDeskDirectory).not.toHaveBeenCalled();
   });
 
   it('does not show the composer context row for todos alone', () => {

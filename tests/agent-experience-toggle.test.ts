@@ -105,8 +105,9 @@ describe("agent experience toggle", () => {
     expect(prompt).toContain("After write/edit succeeds, the tool layer records the file as session-related automatically");
     expect(prompt).toContain("use the file tool");
     expect(prompt).toContain("use action=copy and prefer passing fileId");
-    expect(prompt).toContain("use stage_files to mark it as delivered");
-    expect(prompt).toContain("Do not repeatedly stage the same file once it has already been staged");
+    expect(prompt).toContain("Staging promotes this session-related file");
+    expect(prompt).toContain("After write/edit creates or modifies a file, call stage_files for that changed file");
+    expect(prompt).toContain("Do not repeatedly stage the same unchanged file");
     expect(prompt).not.toContain("create_artifact");
   });
 

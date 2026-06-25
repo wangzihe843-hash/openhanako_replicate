@@ -74,7 +74,7 @@ function writeResetMarker(memoryDir, resetAt) {
   fs.writeFileSync(path.join(memoryDir, "reset.json"), JSON.stringify({ compiledResetAt: resetAt }, null, 2), "utf-8");
 }
 
-function makeTicker(tmpDir, isSessionMemoryEnabled) {
+function makeTicker(tmpDir, isSessionMemoryEnabled, overrides: any = {}) {
   const summaryManager = {
     rollingSummary: vi.fn().mockResolvedValue("summary"),
     getSummary: vi.fn().mockReturnValue(null),
@@ -88,6 +88,7 @@ function makeTicker(tmpDir, isSessionMemoryEnabled) {
     getResolvedMemoryModel: () => ({ model: "test-model", provider: "test", api: "openai-completions", api_key: "test-key", base_url: "http://localhost:1234" }),
     getMemoryMasterEnabled: () => true,
     isSessionMemoryEnabled,
+    ...overrides,
     getTimezone: () => "Asia/Shanghai",
     onCompiled: vi.fn(),
     sessionDir: path.join(tmpDir, "sessions"),
@@ -127,6 +128,22 @@ describe("memory ticker respects session-level memory toggle", () => {
     expect(summaryManager.rollingSummary).not.toHaveBeenCalled();
     expect(compileToday).not.toHaveBeenCalled();
     expect(assemble).not.toHaveBeenCalled();
+  });
+
+  it("keys rolling summaries by stable sessionId when the manifest resolver can provide it", async () => {
+    const { ticker, summaryManager } = makeTicker(tmpDir, () => true, {
+      getSessionIdForPath: () => "sess_memory_1",
+    });
+
+    ticker.notifyTurn(sessionPath);
+    await ticker.notifySessionEnd(sessionPath);
+
+    expect(summaryManager.rollingSummary).toHaveBeenCalledWith(
+      "sess_memory_1",
+      expect.any(Array),
+      expect.any(Object),
+      expect.any(Object),
+    );
   });
 
   it("never summarizes agent phone sessions even if session memory is enabled", async () => {
@@ -232,8 +249,7 @@ describe("memory ticker respects session-level memory toggle", () => {
     });
   });
 
-  it("passes the session memory reflection snapshot from session-meta into rollingSummary", async () => {
-    const metaPath = path.join(tmpDir, "sessions", "session-meta.json");
+  it("passes the injected session memory reflection snapshot into rollingSummary", async () => {
     const snapshot = {
       version: 1,
       agentName: "Hana",
@@ -243,16 +259,15 @@ describe("memory ticker respects session-level memory toggle", () => {
       existingMemory: "已有长期记忆。",
       roster: "同处于这个系统里的别的 Agent：Butter。",
     };
-    fs.writeFileSync(metaPath, JSON.stringify({
-      [path.basename(sessionPath)]: {
-        memoryReflectionSnapshot: snapshot,
-      },
-    }, null, 2), "utf-8");
-    const { ticker, summaryManager } = makeTicker(tmpDir, () => true);
+    const readMemoryReflectionSnapshot = vi.fn(() => snapshot);
+    const { ticker, summaryManager } = makeTicker(tmpDir, () => true, {
+      readMemoryReflectionSnapshot,
+    });
 
     ticker.notifyTurn(sessionPath);
     await ticker.notifySessionEnd(sessionPath);
 
+    expect(readMemoryReflectionSnapshot).toHaveBeenCalledWith(sessionPath);
     expect(summaryManager.rollingSummary).toHaveBeenCalledOnce();
     expect(summaryManager.rollingSummary.mock.calls[0][3]).toEqual({
       resetAt: null,

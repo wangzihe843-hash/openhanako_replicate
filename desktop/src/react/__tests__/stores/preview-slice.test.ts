@@ -12,6 +12,7 @@ import {
   selectActiveTabId,
   selectPinnedViewers,
   selectMarkdownPreviewIds,
+  selectPreviewReadingPositions,
 } from '../../stores/preview-slice';
 import {
   upsertPreviewItem,
@@ -26,6 +27,7 @@ import {
   canSpawnViewer,
   setMarkdownPreviewActive,
   toggleMarkdownPreview,
+  updatePreviewReadingPosition,
 } from '../../stores/preview-actions';
 import type { PreviewItem } from '../../types';
 
@@ -138,6 +140,13 @@ describe('preview slice (user-level content pool)', () => {
       expect(selectMarkdownPreviewIds(testStore.getState())).toEqual([]);
     });
 
+    it('closeTab 同步清理该 tab 的阅读位置', () => {
+      openTab('a1');
+      updatePreviewReadingPosition('a1', 'preview', { scrollTop: 120, ratio: 0.5 });
+      closeTab('a1');
+      expect(selectPreviewReadingPositions(testStore.getState())).toEqual({});
+    });
+
     it('setActiveTab 切换激活', () => {
       openTab('a1');
       openTab('a2');
@@ -208,6 +217,38 @@ describe('preview slice (user-level content pool)', () => {
       expect(selectOpenTabs(testStore.getState())).toEqual([]);
       expect(selectActiveTabId(testStore.getState())).toBeNull();
       expect(selectMarkdownPreviewIds(testStore.getState())).toEqual([]);
+      expect(selectPreviewReadingPositions(testStore.getState())).toEqual({});
+    });
+  });
+
+  describe('reading position', () => {
+    it('records per-tab preview and edit scroll snapshots without using global focus', () => {
+      updatePreviewReadingPosition('file-a', 'preview', {
+        scrollTop: 300,
+        scrollHeight: 1200,
+        clientHeight: 600,
+        ratio: 0.5,
+        anchorId: 'intro',
+        contentHash: 'hash',
+      }, { id: 'intro', text: 'Intro' });
+      updatePreviewReadingPosition('file-a', 'edit', { scrollTop: 88 });
+
+      expect(selectPreviewReadingPositions(testStore.getState())).toMatchObject({
+        'file-a': {
+          preview: {
+            scrollTop: 300,
+            ratio: 0.5,
+            anchorId: 'intro',
+            contentHash: 'hash',
+          },
+          edit: {
+            scrollTop: 88,
+          },
+          currentHeadingId: 'intro',
+          currentHeadingText: 'Intro',
+          contentHash: 'hash',
+        },
+      });
     });
   });
 

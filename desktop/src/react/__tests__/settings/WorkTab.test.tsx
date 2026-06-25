@@ -181,6 +181,15 @@ describe('WorkTab workspace persistence', () => {
     expect(interval.disabled).toBe(true);
   });
 
+  it('warns that patrol mode can operate in the workspace', async () => {
+    const { WorkTab } = await import('../../settings/tabs/WorkTab');
+
+    render(<WorkTab />);
+
+    expect(await screen.findByText('settings.work.heartbeatOperationalNotice')).toBeTruthy();
+    expect(screen.getByText('settings.work.automationPermissionModeDesc')).toBeTruthy();
+  });
+
   it('keeps global work switches loading until settings config is ready', async () => {
     mockState.settingsConfig = null;
     const { WorkTab } = await import('../../settings/tabs/WorkTab');

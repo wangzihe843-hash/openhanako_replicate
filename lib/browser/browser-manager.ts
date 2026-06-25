@@ -16,7 +16,7 @@
  * - 重启后通过冷保存的 URL 自动恢复浏览器
  *
  * 多实例支持：
- * - 内部状态通过 Map 管理，每个 sessionPath 独立维护 running/url/headless
+ * - 内部状态通过 Map 管理，每个 session identity 独立维护 running/url/headless
  * - 最多 MAX_INSTANCES 个并发浏览器，超出时 LRU 淘汰最久未用的
  *
  * snapshot 实现：主进程通过 webContents.executeJavaScript() 遍历 DOM，
@@ -143,11 +143,13 @@ export class BrowserManager {
   declare _lruOrder: any;
   declare _pending: any;
   declare _browserPreferences: any;
+  declare _getSessionIdForPath: any;
   declare _sessions: any;
   declare _transport: any;
-  constructor() {
-    this._sessions = new Map(); // sessionPath → { running, url, headless }
-    this._lruOrder = [];        // sessionPath[], 最近使用的在末尾
+  constructor({ getSessionIdForPath = null }: any = {}) {
+    this._getSessionIdForPath = typeof getSessionIdForPath === "function" ? getSessionIdForPath : null;
+    this._sessions = new Map(); // session identity key → { sessionPath, running, url, headless }
+    this._lruOrder = [];        // session identity key[], 最近使用的在末尾
     this._headless = false;     // 全局后台模式标记
     this._pending = new Map();  // id → { resolve, reject, timer }
     this._browserPreferences = normalizeBrowserPreferences({});
@@ -181,6 +183,83 @@ export class BrowserManager {
     _hanakoHome = home;
   }
 
+  static setSessionIdResolver(resolver) {
+    BrowserManager.instance().setSessionIdResolver(resolver);
+  }
+
+  setSessionIdResolver(resolver) {
+    this._getSessionIdForPath = typeof resolver === "function" ? resolver : null;
+  }
+
+  _sessionKeyForPath(sessionPath) {
+    if (!sessionPath) return sessionPath;
+    try {
+      const sessionId = this._getSessionIdForPath?.(sessionPath);
+      return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : sessionPath;
+    } catch (err) {
+      log.warn(`browser session identity lookup failed for ${path.basename(sessionPath)}: ${_errorMessage(err)}`);
+      return sessionPath;
+    }
+  }
+
+  _coldStateLookupKeys(sessionPath, coldState: any = null) {
+    if (!sessionPath) return [];
+    const identityKey = this._sessionKeyForPath(sessionPath);
+    const keys = new Set([identityKey, sessionPath].filter(Boolean));
+
+    if (!coldState || typeof coldState !== "object") return [...keys];
+
+    for (const [storedKey, raw] of Object.entries(coldState)) {
+      const storedPath = typeof (raw as any)?.sessionPath === "string" && (raw as any).sessionPath
+        ? (raw as any).sessionPath
+        : storedKey;
+      const storedIdentityKey = this._sessionKeyForPath(storedPath);
+      const storedMapKeyIdentity = this._sessionKeyForPath(storedKey);
+      if (storedIdentityKey === identityKey || storedMapKeyIdentity === identityKey) {
+        keys.add(storedKey);
+        if (storedPath) keys.add(storedPath);
+      }
+    }
+
+    return [...keys];
+  }
+
+  _coldStateRecordForSession(coldState, sessionPath) {
+    if (!coldState || typeof coldState !== "object") return null;
+    for (const key of this._coldStateLookupKeys(sessionPath, coldState)) {
+      if (Object.prototype.hasOwnProperty.call(coldState, key)) {
+        return { key, raw: coldState[key] };
+      }
+    }
+    return null;
+  }
+
+  _deleteColdStateKeysForSession(coldState, sessionPath, keepKey = null) {
+    if (!coldState || typeof coldState !== "object") return;
+    for (const key of this._coldStateLookupKeys(sessionPath, coldState)) {
+      if (key !== keepKey) delete coldState[key];
+    }
+  }
+
+  _getSessionEntry(sessionPath) {
+    const key = this._sessionKeyForPath(sessionPath);
+    return this._sessions.get(key) || (key !== sessionPath ? this._sessions.get(sessionPath) : null) || null;
+  }
+
+  _setSessionEntry(sessionPath, entry) {
+    const key = this._sessionKeyForPath(sessionPath);
+    this._sessions.set(key, { ...entry, sessionPath });
+    if (key !== sessionPath) this._sessions.delete(sessionPath);
+    return key;
+  }
+
+  _deleteSessionEntry(sessionPath) {
+    const key = this._sessionKeyForPath(sessionPath);
+    const deleted = this._sessions.delete(key);
+    const legacyDeleted = key !== sessionPath ? this._sessions.delete(sessionPath) : false;
+    return deleted || legacyDeleted;
+  }
+
   // ════════════════════════════
   //  per-session 状态查询
   // ════════════════════════════
@@ -191,7 +270,7 @@ export class BrowserManager {
    * @returns {boolean}
    */
   isRunning(sessionPath) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntry(sessionPath);
     return !!(entry && entry.running && entry.health !== "unhealthy");
   }
 
@@ -201,7 +280,7 @@ export class BrowserManager {
    * @returns {string|null}
    */
   currentUrl(sessionPath) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntry(sessionPath);
     return activeBrowserUrl(entry);
   }
 
@@ -216,14 +295,15 @@ export class BrowserManager {
   /** 返回所有 running session 的 sessionPath 数组 */
   get runningSessions() {
     const result = [];
-    for (const sp of this._sessions.keys()) {
-      if (this.isRunning(sp)) result.push(sp);
+    for (const [key, entry] of this._sessions) {
+      const sessionPath = entry?.sessionPath || key;
+      if (this.isRunning(sessionPath)) result.push(sessionPath);
     }
     return result;
   }
 
   sessionUnavailableReason(sessionPath) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntry(sessionPath);
     return entry?.health === "unhealthy" ? entry.unavailableReason || null : null;
   }
 
@@ -245,14 +325,14 @@ export class BrowserManager {
 
   _markSessionUnavailable(sessionPath, error) {
     if (!sessionPath) return;
-    const existing = this._sessions.get(sessionPath) || {
+    const existing = this._getSessionEntry(sessionPath) || {
       running: false,
       url: null,
       activeTabId: null,
       tabs: [],
       headless: this._headless,
     };
-    this._sessions.set(sessionPath, {
+    this._setSessionEntry(sessionPath, {
       ...existing,
       running: false,
       health: "unhealthy",
@@ -263,7 +343,7 @@ export class BrowserManager {
   }
 
   _clearSessionUnavailable(sessionPath) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntry(sessionPath);
     if (!entry) return;
     delete entry.health;
     delete entry.unavailableReason;
@@ -301,21 +381,29 @@ export class BrowserManager {
 
   /** 将 sessionPath 移到 LRU 末尾（最近使用） */
   _touchLru(sessionPath) {
-    const idx = this._lruOrder.indexOf(sessionPath);
+    const key = this._sessionKeyForPath(sessionPath);
+    const idx = this._lruOrder.indexOf(key);
     if (idx !== -1) this._lruOrder.splice(idx, 1);
-    this._lruOrder.push(sessionPath);
+    this._lruOrder.push(key);
   }
 
   /** 移除 sessionPath 从 LRU 列表 */
   _removeLru(sessionPath) {
-    const idx = this._lruOrder.indexOf(sessionPath);
+    const key = this._sessionKeyForPath(sessionPath);
+    const idx = this._lruOrder.indexOf(key);
     if (idx !== -1) this._lruOrder.splice(idx, 1);
+    if (key !== sessionPath) {
+      const legacyIdx = this._lruOrder.indexOf(sessionPath);
+      if (legacyIdx !== -1) this._lruOrder.splice(legacyIdx, 1);
+    }
   }
 
   /** 淘汰最久未用的 running session（挂起它），返回是否成功 */
   async _evictLru() {
     // 从 LRU 头部找第一个 running 的 session 淘汰
-    for (const sp of this._lruOrder) {
+    for (const key of this._lruOrder) {
+      const entry = this._sessions.get(key);
+      const sp = entry?.sessionPath || key;
       if (this.isRunning(sp)) {
         log.log(`LRU 淘汰: ${sp}`);
         await this.suspendForSession(sp);
@@ -346,14 +434,17 @@ export class BrowserManager {
 
   _saveColdUrl(sessionPath, url) {
     if (!sessionPath || !url) return;
+    const key = this._sessionKeyForPath(sessionPath);
     const state = this._loadColdState();
-    const liveEntry = this._sessions.get(sessionPath);
+    const liveEntry = this._getSessionEntry(sessionPath);
     if (liveEntry && Array.isArray(liveEntry.tabs) && liveEntry.tabs.length > 0) {
-      state[sessionPath] = serializeColdWorkspace(liveEntry);
+      state[key] = { ...serializeColdWorkspace(liveEntry), sessionPath };
+      this._deleteColdStateKeysForSession(state, sessionPath, key);
       this._saveColdState(state);
       return;
     }
-    const existing = normalizeColdWorkspace(state[sessionPath]);
+    const coldRecord = this._coldStateRecordForSession(state, sessionPath);
+    const existing = normalizeColdWorkspace(coldRecord?.raw);
     const tabs = existing.tabs.length > 0 ? existing.tabs : [createBrowserTab({ url })];
     const activeTabId = existing.activeTabId || tabs[0]?.tabId || null;
     const active = tabs.find(tab => tab.tabId === activeTabId) || tabs[0];
@@ -361,23 +452,30 @@ export class BrowserManager {
       active.url = url;
       active.updatedAt = Date.now();
     }
-    state[sessionPath] = serializeColdWorkspace({ activeTabId, tabs });
+    state[key] = { ...serializeColdWorkspace({ activeTabId, tabs }), sessionPath };
+    this._deleteColdStateKeysForSession(state, sessionPath, key);
     this._saveColdState(state);
   }
 
   _saveColdWorkspace(sessionPath, entry) {
     if (!sessionPath) return;
+    const key = this._sessionKeyForPath(sessionPath);
     const state = this._loadColdState();
     const workspace = serializeColdWorkspace(entry);
-    if (!workspace.url && workspace.tabs.length === 0) delete state[sessionPath];
-    else state[sessionPath] = workspace;
+    if (!workspace.url && workspace.tabs.length === 0) {
+      delete state[key];
+      this._deleteColdStateKeysForSession(state, sessionPath);
+    } else {
+      state[key] = { ...workspace, sessionPath };
+      this._deleteColdStateKeysForSession(state, sessionPath, key);
+    }
     this._saveColdState(state);
   }
 
   _removeColdUrl(sessionPath) {
     if (!sessionPath) return;
     const state = this._loadColdState();
-    delete state[sessionPath];
+    this._deleteColdStateKeysForSession(state, sessionPath);
     this._saveColdState(state);
   }
 
@@ -401,9 +499,20 @@ export class BrowserManager {
   getBrowserSessionStates() {
     const coldState = this._loadColdState();
     const result: any = {};
+    const liveIdentityKeys = new Set();
 
-    for (const [sessionPath, raw] of Object.entries(coldState)) {
+    for (const [identityKey, entry] of this._sessions) {
+      liveIdentityKeys.add(identityKey);
+      const sessionPath = entry?.sessionPath || identityKey;
+      liveIdentityKeys.add(this._sessionKeyForPath(sessionPath));
+    }
+
+    for (const [identityKey, raw] of Object.entries(coldState)) {
       const cold = normalizeColdWorkspace(raw);
+      const sessionPath = typeof (raw as any)?.sessionPath === "string" && (raw as any).sessionPath
+        ? (raw as any).sessionPath
+        : identityKey;
+      if (liveIdentityKeys.has(this._sessionKeyForPath(sessionPath))) continue;
       result[sessionPath] = {
         url: cold.url,
         running: false,
@@ -412,8 +521,10 @@ export class BrowserManager {
       };
     }
 
-    for (const [sessionPath, entry] of this._sessions) {
-      const cold = normalizeColdWorkspace(coldState[sessionPath]);
+    for (const [identityKey, entry] of this._sessions) {
+      const sessionPath = entry?.sessionPath || identityKey;
+      const coldRecord = this._coldStateRecordForSession(coldState, sessionPath);
+      const cold = normalizeColdWorkspace(coldRecord?.raw);
       const url = activeBrowserUrl(entry) || cold.url || null;
       if (entry.health === "unhealthy") {
         result[sessionPath] = {
@@ -512,7 +623,7 @@ export class BrowserManager {
 
   async launch(sessionPath) {
     // 已在运行 → 直接返回
-    const existing = this._sessions.get(sessionPath);
+    const existing = this._getSessionEntry(sessionPath);
     if (this.isRunning(sessionPath)) {
       this._touchLru(sessionPath);
       return;
@@ -545,12 +656,12 @@ export class BrowserManager {
   }
 
   async close(sessionPath) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntry(sessionPath);
     if (!entry) return;
 
     if (!this.isRunning(sessionPath)) {
       try { await this._sendCmd("destroyView", { sessionPath }); } catch {}
-      this._sessions.delete(sessionPath);
+      this._deleteSessionEntry(sessionPath);
       this._removeLru(sessionPath);
       this._removeColdUrl(sessionPath);
       log.log(`浏览器已关闭 ${sessionPath}`);
@@ -560,7 +671,7 @@ export class BrowserManager {
     try { await this._sendCmd("close", { sessionPath }); } catch {}
 
     // 从 Map 和 LRU 中移除
-    this._sessions.delete(sessionPath);
+    this._deleteSessionEntry(sessionPath);
     this._removeLru(sessionPath);
     // 从冷保存中移除
     this._removeColdUrl(sessionPath);
@@ -574,7 +685,7 @@ export class BrowserManager {
    * @param {string} sessionPath - 目标 session 路径
    */
   async suspendForSession(sessionPath) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntry(sessionPath);
     if (!entry || !this.isRunning(sessionPath)) return;
 
     this._saveColdWorkspace(sessionPath, entry);
@@ -582,7 +693,7 @@ export class BrowserManager {
     try { await this._sendCmd("suspend", { sessionPath }); } catch {}
 
     // 挂起完成，冷状态已写磁盘，从 Map 中移除避免僵尸条目累积
-    this._sessions.delete(sessionPath);
+    this._deleteSessionEntry(sessionPath);
     this._removeLru(sessionPath);
   }
 
@@ -594,7 +705,7 @@ export class BrowserManager {
     if (!sessionPath) return;
 
     // 已经在运行 → 刷新 LRU 即可
-    const existing = this._sessions.get(sessionPath);
+    const existing = this._getSessionEntry(sessionPath);
     if (this.isRunning(sessionPath)) {
       this._touchLru(sessionPath);
       return;
@@ -603,7 +714,8 @@ export class BrowserManager {
 
     // 没有运行中的浏览器时，检查冷状态；无冷状态则跳过
     const coldState = this._loadColdState();
-    if (!existing && !coldState[sessionPath]) return;
+    const coldRecord = this._coldStateRecordForSession(coldState, sessionPath);
+    if (!existing && !coldRecord) return;
 
     // 并发数检查
     const runningCount = this.runningSessions.length;
@@ -616,13 +728,14 @@ export class BrowserManager {
     if (result.found) {
       const entry = this._applyWorkspaceResult(sessionPath, result, { running: true });
       entry.headless = this._headless;
+      this._saveColdWorkspace(sessionPath, entry);
       this._touchLru(sessionPath);
       log.log(`热恢复成功 ${sessionPath}`);
       return;
     }
 
     // 2. 冷恢复：从磁盘读 workspace，重新 launch
-    const savedWorkspace = normalizeColdWorkspace(coldState[sessionPath]);
+    const savedWorkspace = normalizeColdWorkspace(coldRecord?.raw);
     if (savedWorkspace.tabs.length === 0) return;
 
     log.log(`冷恢复 ${sessionPath}`);
@@ -634,6 +747,7 @@ export class BrowserManager {
     });
     const entry = this._applyWorkspaceResult(sessionPath, Array.isArray(launchResult?.tabs) ? launchResult : savedWorkspace, { running: true });
     entry.headless = this._headless;
+    this._saveColdWorkspace(sessionPath, entry);
     this._touchLru(sessionPath);
   }
 
@@ -642,7 +756,7 @@ export class BrowserManager {
    * @param {string} sessionPath - 目标 session 路径
    */
   async closeBrowserForSession(sessionPath) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntry(sessionPath);
 
     // 如果是当前活跃的浏览器
     if (entry && this.isRunning(sessionPath)) {
@@ -653,7 +767,7 @@ export class BrowserManager {
     // 销毁挂起的 view
     try { await this._sendCmd("destroyView", { sessionPath }); } catch {}
     // 从 Map 和 LRU 中清理
-    this._sessions.delete(sessionPath);
+    this._deleteSessionEntry(sessionPath);
     this._removeLru(sessionPath);
     // 从冷保存中移除
     this._removeColdUrl(sessionPath);
@@ -661,7 +775,7 @@ export class BrowserManager {
   }
 
   _applyWorkspaceResult(sessionPath, result: any = {}, options: any = {}) {
-    const existing = this._sessions.get(sessionPath) || {
+    const existing = this._getSessionEntry(sessionPath) || {
       running: options.running !== false,
       url: null,
       activeTabId: null,
@@ -686,12 +800,12 @@ export class BrowserManager {
       tabs,
       url: active?.url || result.url || null,
     };
-    this._sessions.set(sessionPath, entry);
+    this._setSessionEntry(sessionPath, entry);
     return entry;
   }
 
   _updateActiveTabFromResult(sessionPath, result: any = {}, tabId: string | null = null) {
-    const existing = this._sessions.get(sessionPath);
+    const existing = this._getSessionEntry(sessionPath);
     if (!existing) return null;
     if (Array.isArray(result.tabs)) {
       return this._applyWorkspaceResult(sessionPath, result);
@@ -714,18 +828,18 @@ export class BrowserManager {
       tabs,
       url: target?.url || existing.url || null,
     };
-    this._sessions.set(sessionPath, entry);
+    this._setSessionEntry(sessionPath, entry);
     return entry;
   }
 
   getTabs(sessionPath) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntry(sessionPath);
     if (!entry) return [];
     return (entry.tabs || []).map(cloneBrowserTab);
   }
 
   activeTab(sessionPath) {
-    const tab = activeBrowserTab(this._sessions.get(sessionPath));
+    const tab = activeBrowserTab(this._getSessionEntry(sessionPath));
     return tab ? cloneBrowserTab(tab) : null;
   }
 
@@ -752,8 +866,8 @@ export class BrowserManager {
     if (!tabId) throw new Error("browser closeTab requires tabId");
     const result = await this._sendSessionCmd("closeTab", { sessionPath, tabId });
     if (Array.isArray(result?.tabs) && result.tabs.length === 0) {
-      const entry = this._sessions.get(sessionPath);
-      this._sessions.set(sessionPath, {
+      const entry = this._getSessionEntry(sessionPath);
+      this._setSessionEntry(sessionPath, {
         ...(entry || {}),
         running: false,
         url: null,

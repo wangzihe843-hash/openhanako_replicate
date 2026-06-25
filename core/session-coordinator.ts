@@ -9,7 +9,9 @@ import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 import { createAgentSession, SessionManager, estimateTokens, refreshSessionModelFromRegistry } from "../lib/pi-sdk/index.ts";
+import { isSessionJsonlFilename } from "../lib/session-jsonl.ts";
 import { createDefaultSettings } from "./session-defaults.ts";
+import { restoreDefaultWorkspaceIfMissing } from "../shared/default-workspace.ts";
 import { computeHardTruncation } from "./compaction-utils.ts";
 import {
   appendCompactionResultToSession,
@@ -42,6 +44,7 @@ import {
   DEEPSEEK_ROLEPLAY_REASONING_PATCH_EXPERIMENT_ID,
   getResolvedExperimentValue,
 } from "../lib/experiments/registry.ts";
+import { isDeepSeekModel } from "./provider-compat.ts";
 import {
   normalizePlainDescription,
   stripClosedInternalNarrationBlocks,
@@ -53,8 +56,10 @@ import {
   repairSessionInlineMediaEntriesInFile,
 } from "./session-inline-media-prune.ts";
 import {
+  flushSessionManagerSnapshot,
   repairOversizedSessionEntries,
   repairOversizedSessionEntriesInFile,
+  schedulePreAssistantSessionManagerFlush,
 } from "./session-jsonl-file.ts";
 import { createVisionContextInjectionExtension } from "./vision-context-injector.ts";
 import {
@@ -85,6 +90,7 @@ import {
 } from "../lib/llm/cache-prefix-contract.ts";
 import { buildSessionCacheSnapshot as buildSessionCacheSnapshotValue } from "./session-cache-snapshot.ts";
 import { repairRestoredToolSnapshotDetailed, sameToolNames } from "./tool-snapshot-repair.ts";
+import { buildSessionCapabilityDrift } from "./session-capability-drift.ts";
 import {
   SESSION_PROMPT_SNAPSHOT_VERSION,
   freezeAgentsFilesResult,
@@ -92,8 +98,13 @@ import {
   normalizeSessionPromptSnapshot,
   normalizeStringArray,
 } from "./session-prompt-snapshot.ts";
+import { buildTurnInputPresentationEvent } from "../lib/turn-input-presentation.ts";
 
 const log = createModuleLogger("session");
+const SESSION_META_PAYLOAD_DIR = "session-meta-payloads";
+const SESSION_META_PAYLOAD_FIELDS = ["promptSnapshot", "memoryReflectionSnapshot"];
+const SESSION_META_PAYLOAD_INLINE_LIMIT_BYTES = 256 * 1024;
+const SESSION_META_INDEX_MAX_BYTES = 1024 * 1024;
 
 /** 巡检/定时任务默认工具白名单（"*" = 与 chat 一致，全部放行） */
 export const PATROL_TOOLS_DEFAULT = "*";
@@ -273,7 +284,7 @@ function costRatesForAssistantUsage({ modelMeta, resolvedModel, fallbackModel }:
   return resolvedModel?.cost ?? null;
 }
 
-function recordAssistantUsage({ ledger, event, sessionPath, agentId, model, source, attribution, resolveModel }: any) {
+function recordAssistantUsage({ ledger, event, sessionPath, sessionId, agentId, model, source, attribution, resolveModel }: any) {
   if (!ledger || event?.type !== "message_end" || event.message?.role !== "assistant") return null;
   const initialModelMeta = {
     provider: textOrNull(event.message?.provider) ?? textOrNull(model?.provider),
@@ -287,6 +298,7 @@ function recordAssistantUsage({ ledger, event, sessionPath, agentId, model, sour
     attribution: attribution || {
       kind: "session",
       agentId: agentId || null,
+      ...(sessionId ? { sessionId } : {}),
       sessionPath,
     },
   };
@@ -306,6 +318,65 @@ function recordAssistantUsage({ ledger, event, sessionPath, agentId, model, sour
       costRates,
     });
     return ledger.recordError(request.requestId, new Error(errorMessage || "provider request failed"));
+  }
+  return null;
+}
+
+function logDeepSeekReasoningVisibility({ event, model, sessionPath, agentId }: any) {
+  if (!isDeepSeekModel(model)) return;
+  const provider = textOrNull(model?.provider) || "deepseek";
+  const modelId = modelIdFromModel(model) || "unknown";
+  const sessionName = sessionPath ? path.basename(sessionPath) : "unknown";
+  if (event?.type === "message_update") {
+    const sub = event.assistantMessageEvent || event.event || null;
+    if (sub?.type !== "thinking_delta") return;
+    const chars = String(sub.delta ?? sub.text ?? sub.thinking ?? "").length;
+    log.log(`[deepseek reasoning] event=thinking_delta provider=${provider} model=${modelId} agent=${agentId || ""} session=${sessionName} chars=${chars}`);
+    return;
+  }
+  if (event?.type !== "message_end" || event.message?.role !== "assistant") return;
+  const stats = collectThinkingVisibilityStats(event.message);
+  const usage = event.message?.usage || {};
+  const reasoningTokens = firstFiniteNumber(
+    usage.reasoningTokens,
+    usage.reasoning_tokens,
+    usage.output?.reasoningTokens,
+    usage.completion_tokens_details?.reasoning_tokens,
+  );
+  log.log(`[deepseek reasoning] event=message_end provider=${provider} model=${modelId} agent=${agentId || ""} session=${sessionName} thinkingBlocks=${stats.blocks} thinkingChars=${stats.chars} reasoningTokens=${reasoningTokens ?? ""} stopReason=${event.message?.stopReason || ""}`);
+}
+
+function collectThinkingVisibilityStats(message: any) {
+  const blocks = [];
+  const visit = (value) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (typeof value !== "object") return;
+    const type = typeof value.type === "string" ? value.type : "";
+    if (type === "thinking" || type === "reasoning" || type === "reasoning_text") {
+      blocks.push(value);
+    }
+    for (const key of ["content", "thinking", "reasoning", "reasoningText", "text"]) {
+      if (key === "text" && type !== "thinking" && type !== "reasoning" && type !== "reasoning_text") continue;
+      const child = value[key];
+      if (child && typeof child === "object") visit(child);
+    }
+  };
+  visit(message?.content);
+  const chars = blocks.reduce((total, block) => (
+    total
+      + String(block.thinking ?? block.reasoning ?? block.reasoningText ?? block.text ?? block.content ?? "").length
+  ), 0);
+  return { blocks: blocks.length, chars };
+}
+
+function firstFiniteNumber(...values) {
+  for (const value of values) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
   }
   return null;
 }
@@ -599,6 +670,7 @@ export class SessionCoordinator {
   declare _metaWriteQueue: Promise<any>;
   declare _prePromptAbortControllers: Map<string, AbortController>;
   declare _turnContextBySession: Map<string, any>;
+  declare _sessionManifestStore: any;
 
   /**
    * @param {object} deps
@@ -640,6 +712,7 @@ export class SessionCoordinator {
     this._metaWriteQueue = Promise.resolve();
     this._prePromptAbortControllers = new Map();
     this._turnContextBySession = new Map();
+    this._sessionManifestStore = deps.sessionManifestStore || null;
   }
 
   static _TITLES_TTL = 60_000; // 60 秒
@@ -693,8 +766,233 @@ export class SessionCoordinator {
     return this._session?.sessionManager?.getSessionFile?.() ?? this._currentSessionPath ?? null;
   }
 
+  _resolveSessionManifestForPath(sessionPath: any) {
+    if (!this._sessionManifestStore || !sessionPath) return null;
+    return this._sessionManifestStore.resolveByLocatorPath(sessionPath);
+  }
+
+  _resolveSessionManifestForId(sessionId: any) {
+    if (!this._sessionManifestStore || !sessionId) return null;
+    return this._sessionManifestStore.getBySessionId(sessionId);
+  }
+
+  _normalizeSessionRef(ref: any) {
+    if (typeof ref === "string") return { sessionId: null, sessionPath: ref };
+    if (!ref || typeof ref !== "object") return { sessionId: null, sessionPath: null };
+    const sessionId = typeof ref.sessionId === "string" && ref.sessionId.trim()
+      ? ref.sessionId.trim()
+      : null;
+    const sessionPath = typeof ref.sessionPath === "string" && ref.sessionPath.trim()
+      ? ref.sessionPath
+      : typeof ref.path === "string" && ref.path.trim()
+        ? ref.path
+        : null;
+    return { sessionId, sessionPath };
+  }
+
+  _resolveSessionWriteRef(ref: any, operation: string) {
+    const normalized = this._normalizeSessionRef(ref);
+    if (normalized.sessionId) {
+      const manifest = this._resolveSessionManifestForId(normalized.sessionId);
+      const sessionPath = manifest?.currentLocator?.path || null;
+      if (!sessionPath) {
+        const error: any = new Error(`${operation}: session manifest not found for ${normalized.sessionId}`);
+        error.code = "session_manifest_not_found";
+        error.status = 404;
+        throw error;
+      }
+      return {
+        sessionId: normalized.sessionId,
+        sessionPath,
+        manifest,
+      };
+    }
+    if (!normalized.sessionPath) {
+      throw new Error(`${operation}: sessionPath is required`);
+    }
+    const manifest = this._resolveSessionManifestForPath(normalized.sessionPath);
+    return {
+      sessionId: manifest?.sessionId || null,
+      sessionPath: normalized.sessionPath,
+      manifest,
+    };
+  }
+
+  _ensureSessionManifestForPath(sessionPath: any, input: any = {}) {
+    if (!this._sessionManifestStore || !sessionPath) return null;
+    const existing = this._sessionManifestStore.resolveByLocatorPath(sessionPath);
+    if (existing) return existing;
+    return this._sessionManifestStore.createForPath({
+      sessionPath,
+      ...input,
+    });
+  }
+
+  _sessionIdForPath(sessionPath: any) {
+    try {
+      return this._resolveSessionManifestForPath(sessionPath)?.sessionId || null;
+    } catch (err) {
+      log.warn(`session manifest lookup failed for ${path.basename(sessionPath || "")}: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  _readSessionCapabilitySnapshot(sessionPath: any) {
+    if (!this._sessionManifestStore || !sessionPath) return null;
+    try {
+      const manifest = this._resolveSessionManifestForPath(sessionPath);
+      if (!manifest?.sessionId || typeof this._sessionManifestStore.getCapabilitySnapshot !== "function") return null;
+      return this._sessionManifestStore.getCapabilitySnapshot(manifest.sessionId);
+    } catch (err) {
+      log.warn(`session capability snapshot read failed for ${path.basename(sessionPath || "")}: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  _writeSessionCapabilitySnapshot(sessionPath: any, partial: any, source = "session_meta_write") {
+    if (!this._sessionManifestStore || !sessionPath || !partial || typeof partial !== "object") return;
+    if (typeof this._sessionManifestStore.setCapabilitySnapshot !== "function") return;
+    const snapshot: any = {};
+    if (Object.prototype.hasOwnProperty.call(partial, "toolNames")) {
+      snapshot.toolNames = partial.toolNames;
+    }
+    if (Object.prototype.hasOwnProperty.call(partial, "promptSnapshot")) {
+      snapshot.promptSnapshot = partial.promptSnapshot;
+    }
+    if (Object.prototype.hasOwnProperty.call(partial, "capabilityDriftDismissedFingerprint")) {
+      snapshot.capabilityDriftDismissedFingerprint = partial.capabilityDriftDismissedFingerprint;
+    }
+    if (Object.keys(snapshot).length === 0) return;
+    try {
+      const manifest = this._resolveSessionManifestForPath(sessionPath);
+      if (!manifest?.sessionId) return;
+      this._sessionManifestStore.setCapabilitySnapshot(manifest.sessionId, snapshot, { source });
+    } catch (err) {
+      log.warn(`session capability snapshot write failed for ${path.basename(sessionPath || "")}: ${err?.message || err}`);
+    }
+  }
+
+  getSessionExecutorMetadata(ref: any) {
+    if (!this._sessionManifestStore || typeof this._sessionManifestStore.getExecutorMetadata !== "function") return null;
+    try {
+      const normalized = this._normalizeSessionRef(ref);
+      const sessionId = normalized.sessionId
+        || (normalized.sessionPath ? this._resolveSessionManifestForPath(normalized.sessionPath)?.sessionId : null);
+      return sessionId ? this._sessionManifestStore.getExecutorMetadata(sessionId) : null;
+    } catch (err) {
+      log.warn(`session executor metadata read failed: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  setSessionExecutorMetadata(ref: any, metadata: any, options: any = {}) {
+    if (!this._sessionManifestStore || typeof this._sessionManifestStore.setExecutorMetadata !== "function") return null;
+    const normalized = this._normalizeSessionRef(ref);
+    let manifest = null;
+    if (normalized.sessionId) {
+      manifest = this._resolveSessionManifestForId(normalized.sessionId);
+    } else if (normalized.sessionPath) {
+      manifest = this._resolveSessionManifestForPath(normalized.sessionPath)
+        || this._ensureSessionManifestForPath(normalized.sessionPath, {
+          ownerAgentId: this._d.agentIdFromSessionPath?.(normalized.sessionPath) || null,
+          domain: "desktop",
+          kind: options.kind || "chat",
+          provenance: { createdBy: options.provenance || "session_executor_metadata" },
+          locatorReason: options.locatorReason || "session_executor_metadata",
+          ...(options.manifestDefaults || {}),
+        });
+    }
+    if (!manifest?.sessionId) return null;
+    try {
+      return this._sessionManifestStore.setExecutorMetadata(
+        manifest.sessionId,
+        metadata,
+        { source: options.source || "subagent_runtime" },
+      );
+    } catch (err) {
+      log.warn(`session executor metadata write failed: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  _sessionTitleKeyForPath(sessionPath: any) {
+    return this._sessionIdForPath(sessionPath) || sessionPath;
+  }
+
+  _sessionTitleFromMap(titles: any, sessionPath: any, extraLegacyPaths: any[] = []) {
+    if (!titles || !sessionPath) return null;
+    const keys: string[] = [];
+    const sessionId = this._sessionIdForPath(sessionPath);
+    if (sessionId) keys.push(sessionId);
+    for (const candidate of [sessionPath, ...extraLegacyPaths]) {
+      if (!candidate) continue;
+      keys.push(candidate);
+      keys.push(path.basename(candidate));
+    }
+    for (const key of [...new Set(keys)]) {
+      if (Object.prototype.hasOwnProperty.call(titles, key) && titles[key]) return titles[key];
+    }
+    return null;
+  }
+
+  _sessionRuntimeKeyForPath(sessionPath: any, opts: any = {}) {
+    if (!sessionPath) return null;
+    if (!this._sessionManifestStore) return sessionPath;
+    try {
+      const manifest = opts.create === true
+        ? this._ensureSessionManifestForPath(sessionPath, opts.manifestDefaults || {})
+        : this._resolveSessionManifestForPath(sessionPath);
+      return manifest?.sessionId || sessionPath;
+    } catch (err) {
+      if (opts.warn !== false) {
+        log.warn(`session runtime key lookup failed for ${path.basename(sessionPath || "")}: ${err?.message || err}`);
+      }
+      return sessionPath;
+    }
+  }
+
+  _sessionPathForEntry(entry: any, fallbackKey: any = null) {
+    return entry?.sessionPath
+      || entry?.session?.sessionManager?.getSessionFile?.()
+      || (typeof fallbackKey === "string" && isSessionJsonlFilename(path.basename(fallbackKey)) ? fallbackKey : null);
+  }
+
+  _getSessionEntryByPath(sessionPath: any) {
+    const key = this._sessionRuntimeKeyForPath(sessionPath, { warn: false });
+    if (!key) return null;
+    return this._sessions.get(key) || (key !== sessionPath ? this._sessions.get(sessionPath) : null) || null;
+  }
+
+  _setRuntimeValueForPath(map: Map<string, any>, sessionPath: any, value: any, opts: any = {}) {
+    const key = this._sessionRuntimeKeyForPath(sessionPath, opts);
+    if (!key) return null;
+    map.set(key, value);
+    if (key !== sessionPath) map.delete(sessionPath);
+    return key;
+  }
+
+  _getRuntimeValueForPath(map: Map<string, any>, sessionPath: any) {
+    const key = this._sessionRuntimeKeyForPath(sessionPath, { warn: false });
+    if (!key) return null;
+    return map.get(key) || (key !== sessionPath ? map.get(sessionPath) : null) || null;
+  }
+
+  _deleteRuntimeValueForPath(map: Map<string, any>, sessionPath: any) {
+    const key = this._sessionRuntimeKeyForPath(sessionPath, { warn: false });
+    if (!key) return false;
+    const deleted = map.delete(key);
+    const legacyDeleted = key !== sessionPath ? map.delete(sessionPath) : false;
+    return deleted || legacyDeleted;
+  }
+
+  _hasRuntimeValueForPath(map: Map<string, any>, sessionPath: any) {
+    const key = this._sessionRuntimeKeyForPath(sessionPath, { warn: false });
+    if (!key) return false;
+    return map.has(key) || (key !== sessionPath && map.has(sessionPath));
+  }
+
   buildSessionCacheSnapshot(sessionPath: any, { reason = "unknown", messages = null }: any = {}) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     if (!entry?.session) {
       throw new Error(`Session cache snapshot unavailable: unknown session ${sessionPath || "(empty)"}`);
     }
@@ -714,13 +1012,14 @@ export class SessionCoordinator {
   }
 
   getSessionStreamFn(sessionPath: any) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     return entry?.session?.agent?.streamFn || null;
   }
 
   async reloadExtensionRunners(reason = "extension_factories_changed") {
     const summary = { reloaded: 0, skipped: 0, failed: 0 };
-    for (const [sessionPath, entry] of this._sessions) {
+    for (const [sessionKey, entry] of this._sessions) {
+      const sessionPath = this._sessionPathForEntry(entry, sessionKey);
       const session = entry?.session;
       if (!session || typeof session.reload !== "function") {
         summary.skipped += 1;
@@ -771,6 +1070,7 @@ export class SessionCoordinator {
     }
     const ownerAgentId = explicitAgentId || agent.id || this._d.getActiveAgentId();
     const effectiveCwd = cwd || this._d.getHomeCwd(agent.id) || process.cwd();
+    restoreDefaultWorkspaceIfMissing(effectiveCwd);
     const models = this._d.getModels();
     // restore 模式：不指定 model，让 PI SDK 从 JSONL 恢复（session model 单一数据源）
     const effectiveModel = restore ? null : (model || this._pendingModel || models.currentModel);
@@ -786,6 +1086,9 @@ export class SessionCoordinator {
       sessionMgr = SessionManager.create(effectiveCwd, agent.sessionDir);
     }
     const sessionPathForMeta = sessionMgr.getSessionFile?.() || null;
+    let restoredCapabilitySnapshot = restore && sessionPathForMeta
+      ? this._readSessionCapabilitySnapshot(sessionPathForMeta)
+      : null;
     let restoredThinkingLevel = null;
     if (restore && sessionPathForMeta) {
       try {
@@ -804,7 +1107,10 @@ export class SessionCoordinator {
     // #1624 refreshCapabilitySnapshots：跳过冻结 promptSnapshot，下游 fresh-build
     // 路径会按当前配置重建并在 metaPatch 持久化（与 !restoredPromptSnapshot 同一条路）。
     const restoredPromptSnapshot = restore && sessionPathForMeta && !refreshCapabilitySnapshots
-      ? await this._readSessionPromptSnapshot(agent, sessionPathForMeta)
+      ? (
+        normalizeSessionPromptSnapshot(restoredCapabilitySnapshot?.promptSnapshot)
+        || await this._readSessionPromptSnapshot(agent, sessionPathForMeta)
+      )
       : null;
     const restoredPromptModel = restore && !restoredPromptSnapshot
       ? this._resolvePromptModelFromSessionManager(sessionMgr, models)
@@ -902,11 +1208,17 @@ export class SessionCoordinator {
     const baseResourceLoader = this._d.getResourceLoader();
     let restoredPermissionMode = null;
     if (restore && sessionPathForMeta) {
+      const manifest = this._resolveSessionManifestForPath(sessionPathForMeta);
+      if (manifest?.permissionModeSnapshot?.mode) {
+        restoredPermissionMode = normalizeSessionPermissionMode(manifest.permissionModeSnapshot.mode);
+      }
+    }
+    if (restore && sessionPathForMeta && restoredPermissionMode === null) {
       try {
         const metaPath = path.join(agent.sessionDir, "session-meta.json");
         const meta = await this._readMetaCached(metaPath);
         const metaEntry = meta[path.basename(sessionPathForMeta)];
-        if (metaEntry) {
+        if (hasSessionPermissionModeFields(metaEntry)) {
           restoredPermissionMode = normalizeSessionPermissionMode(metaEntry);
         }
       } catch (err) {
@@ -929,6 +1241,7 @@ export class SessionCoordinator {
       experiments: frozenExperimentFlags,
       workMode: frozenWorkMode,
       visibleInSessionList: visibleInSessionList === true && !restore,
+      sessionId: null as string | null,
     }; // pre-populated for resourceLoader proxy
     const pluginSessionMeta = normalizePluginSessionMeta({ ownerPluginId, sessionKind, sessionVisibility });
 
@@ -1008,7 +1321,7 @@ export class SessionCoordinator {
       path: "hana-desktop-session-turn-context",
       sessionPathRef,
       getTurnContext: (sessionPath) => sessionPath
-        ? this._turnContextBySession.get(sessionPath) || null
+        ? this._getRuntimeValueForPath(this._turnContextBySession, sessionPath) || null
         : null,
     });
 
@@ -1074,7 +1387,7 @@ export class SessionCoordinator {
       log.warn(`session model fallback: ${modelFallbackMessage}`);
     }
     const resolvedModel = session.model;
-    const actualThinkingLevel = normalizeThinkingLevelForModel(initialThinkingLevel, resolvedModel);
+    const actualThinkingLevel = normalizeThinkingLevelForModel(requestedThinkingLevel, resolvedModel);
     if (actualThinkingLevel !== initialThinkingLevel) {
       initialThinkingLevel = actualThinkingLevel;
       resolvedThinkingLevel = models.resolveThinkingLevel(initialThinkingLevel);
@@ -1087,15 +1400,31 @@ export class SessionCoordinator {
     const sessionPath = session.sessionManager?.getSessionFile?.();
     sessionPathRef.current = sessionPath || sessionPathRef.current || null;
     targetModelRef.current = resolvedModel || targetModelRef.current || null;
+    flushSessionManagerSnapshot(session.sessionManager);
     this._session = session;
     this._currentSessionPath = sessionPath || null;
     this._sessionStarted = false;
+    if (restore && sessionPath && !restoredCapabilitySnapshot) {
+      restoredCapabilitySnapshot = this._readSessionCapabilitySnapshot(sessionPath);
+    }
+    if (restore && sessionPath && restoredPermissionMode === null) {
+      const manifest = this._resolveSessionManifestForPath(sessionPath);
+      if (manifest?.permissionModeSnapshot?.mode) {
+        restoredPermissionMode = normalizeSessionPermissionMode(manifest.permissionModeSnapshot.mode);
+        initialPermissionMode = restoredPermissionMode;
+        initialAccessMode = legacyAccessModeFromPermissionMode(initialPermissionMode);
+        initialPlanMode = isReadOnlyPermissionMode(initialPermissionMode);
+        sessionEntry.permissionMode = initialPermissionMode;
+        sessionEntry.accessMode = initialAccessMode;
+        sessionEntry.planMode = initialPlanMode;
+      }
+    }
     if (restore && sessionPath && restoredPermissionMode === null) {
       try {
         const metaPath = path.join(agent.sessionDir, "session-meta.json");
         const meta = await this._readMetaCached(metaPath);
         const metaEntry = meta[path.basename(sessionPath)];
-        if (metaEntry) {
+        if (hasSessionPermissionModeFields(metaEntry)) {
           initialPermissionMode = normalizeSessionPermissionMode(metaEntry);
           initialAccessMode = legacyAccessModeFromPermissionMode(initialPermissionMode);
           initialPlanMode = isReadOnlyPermissionMode(initialPermissionMode);
@@ -1111,10 +1440,17 @@ export class SessionCoordinator {
     }
     const creatingAgentId = ownerAgentId;
     const unsub = session.subscribe((event) => {
+      if (
+        event?.type === "message_end"
+        && event.message?.role !== "assistant"
+      ) {
+        schedulePreAssistantSessionManagerFlush(session.sessionManager);
+      }
       recordAssistantUsage({
         ledger: this._d.getUsageLedger?.(),
         event,
         sessionPath,
+        sessionId: this._sessionIdForPath(sessionPath),
         agentId: creatingAgentId,
         model: resolvedModel,
         resolveModel: (ref) => findModel(this._d.getModels?.()?.availableModels, ref.id, ref.provider),
@@ -1125,16 +1461,17 @@ export class SessionCoordinator {
           trigger: "user",
         },
       });
+      logDeepSeekReasoningVisibility({
+        event,
+        model: resolvedModel,
+        sessionPath,
+        agentId: creatingAgentId,
+      });
       this._d.emitEvent(
         (event as any).agentId ? event : { ...event, agentId: creatingAgentId },
         sessionPath,
       );
     });
-
-    // 存入 map（SessionEntry）— sessionEntry is the same object the resourceLoader proxy references
-    const mapKey = sessionPath || `_anon_${Date.now()}`;
-    const old = this._sessions.get(mapKey);
-    if (old) old.unsub();
 
     // ── Tool snapshot for session-tool-isolation (parallels session-model-isolation) ──
     // Three branches:
@@ -1173,14 +1510,16 @@ export class SessionCoordinator {
     let shouldPersistRestoredToolNames = false;
     // #1624：dismissed fingerprint 仍从 session-meta 读出，保留未来手动提示链路。
     let restoredDriftDismissedFingerprint: string | null = null;
+    const restoredCapabilityToolNames = Array.isArray(restoredCapabilitySnapshot?.toolNames)
+      ? uniqueToolNames(restoredCapabilitySnapshot.toolNames)
+      : null;
 
     if (restore) {
       if (sessionPath) {
         const metaPathForRestore = path.join(agent.sessionDir, "session-meta.json");
         let metaEntry = null;
         try {
-          const raw = await fsp.readFile(metaPathForRestore, "utf-8");
-          const meta = JSON.parse(raw);
+          const meta = await this._readMetaCached(metaPathForRestore);
           metaEntry = meta[path.basename(sessionPath)];
         } catch (err) {
           if (err.code !== "ENOENT") {
@@ -1188,7 +1527,9 @@ export class SessionCoordinator {
           }
         }
         restoredDriftDismissedFingerprint =
-          typeof metaEntry?.capabilityDriftDismissedFingerprint === "string"
+          typeof restoredCapabilitySnapshot?.capabilityDriftDismissedFingerprint === "string"
+            ? restoredCapabilitySnapshot.capabilityDriftDismissedFingerprint
+            : typeof metaEntry?.capabilityDriftDismissedFingerprint === "string"
             ? metaEntry.capabilityDriftDismissedFingerprint
             : null;
         if (refreshCapabilitySnapshots) {
@@ -1200,6 +1541,13 @@ export class SessionCoordinator {
           });
           shouldPersistRestoredToolNames = true;
           restoredDriftDismissedFingerprint = null;
+        } else if (restoredCapabilityToolNames) {
+          const gatedRestoredToolNames = computeToolSnapshot(restoredCapabilityToolNames, [], {
+            extraDisabled: stableFeatureDisabledToolNames,
+          });
+          const repair = repairRestoredToolSnapshotDetailed(gatedRestoredToolNames, allToolNames);
+          snapshotToolNames = repair.toolNames;
+          shouldPersistRestoredToolNames = !sameToolNames(snapshotToolNames, restoredCapabilityToolNames);
         } else if (metaEntry && Array.isArray(metaEntry.toolNames)) {
           const restoredToolNames = uniqueToolNames(metaEntry.toolNames);
           const gatedRestoredToolNames = computeToolSnapshot(restoredToolNames, [], {
@@ -1263,9 +1611,49 @@ export class SessionCoordinator {
       capabilityDriftDismissedFingerprint: restoredDriftDismissedFingerprint,
       lastTouchedAt: Date.now(),
       unsub,
+      sessionPath,
     });
+    const manifestDefaults = {
+      ownerAgentId: creatingAgentId,
+      domain: "desktop",
+      kind: pluginSessionMeta?.kind || "chat",
+      lifecycle: "active",
+      memoryPolicy: {
+        mode: frozenMemoryEnabled ? "enabled" : "disabled",
+        inheritedFrom: restore ? "session_restore" : "session_create",
+      },
+      permissionModeSnapshot: {
+        mode: initialPermissionMode,
+        source: restore ? "session_restore" : "session_create",
+        capturedAt: new Date().toISOString(),
+      },
+      thinkingLevel: initialThinkingLevel,
+      workspaceScope: {
+        primaryCwd: effectiveCwd,
+        workspaceFolders: workspaceScope.workspaceFolders,
+        authorizedFolders: folderScope.authorizedFolders,
+        ...(workspaceMount?.mountId ? { workspaceMount } : {}),
+      },
+      plugin: pluginSessionMeta,
+      provenance: {
+        createdBy: restore ? "session_restore" : "session_create",
+      },
+      migration: {},
+      locatorReason: restore ? "session_restore" : "session_create",
+    };
+    const manifest = this._ensureSessionManifestForPath(sessionPath, manifestDefaults);
+    if (manifest) {
+      sessionEntry.sessionId = manifest.sessionId;
+    }
+    // 存入 map（SessionEntry）— sessionEntry is the same object the resourceLoader proxy references.
+    // Runtime ownership is keyed by sessionId when the manifest layer is available;
+    // sessionPath remains only a locator resolved at method boundaries.
+    const mapKey = manifest?.sessionId || sessionPath || `_anon_${Date.now()}`;
+    const old = this._sessions.get(mapKey);
+    if (old) old.unsub();
     this._sessions.set(mapKey, sessionEntry);
-    this._hibernatedSessionMeta.delete(mapKey);
+    if (sessionPath && mapKey !== sessionPath) this._sessions.delete(sessionPath);
+    this._deleteRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
 
     // Apply tool snapshot (Case A / Case C). Permission mode is a runtime
     // policy and does not change the stable tool schema.
@@ -1320,6 +1708,9 @@ export class SessionCoordinator {
     } else if (restore && sessionPath) {
       const metaPatch: any = {};
       if (!restoredPromptSnapshot) metaPatch.promptSnapshot = promptSnapshotToWrite;
+      if (restoredThinkingLevel !== initialThinkingLevel) {
+        metaPatch.thinkingLevel = initialThinkingLevel;
+      }
       if (shouldPersistRestoredToolNames && snapshotToolNames !== null) {
         metaPatch.toolNames = snapshotToolNames;
       }
@@ -1354,7 +1745,7 @@ export class SessionCoordinator {
       this._refreshAgentAppearanceSummaryAfterCreate(agent, resolvedModel || effectiveModel || null);
     }
 
-    return { session, sessionPath: sessionPath || mapKey, agentId: creatingAgentId };
+    return { session, sessionPath: sessionPath || mapKey, sessionId: manifest?.sessionId || null, agentId: creatingAgentId };
   }
 
   _refreshAgentAppearanceSummaryAfterCreate(agent: any, targetModel: any) {
@@ -1480,10 +1871,17 @@ export class SessionCoordinator {
           migratedAt: new Date().toISOString(),
         },
       });
-      await this._freshCompactDeletedAgentContinuation(session, transcriptMessages, {
-        sourceSessionPath,
-        sourceAgentId,
-      });
+      let compacted = false;
+      let compactionError = null;
+      try {
+        await this._freshCompactDeletedAgentContinuation(session, transcriptMessages, {
+          sourceSessionPath,
+          sourceAgentId,
+        });
+        compacted = true;
+      } catch (error) {
+        compactionError = error?.message || String(error);
+      }
       (manager as any)._rewriteFile?.();
       return {
         session,
@@ -1492,7 +1890,8 @@ export class SessionCoordinator {
         agentName: targetAgent.agentName || targetAgent.name || targetAgent.id,
         cwd: manager.getCwd?.() || targetCwd,
         workspaceFolders: this.getSessionWorkspaceFolders(createdSessionPath),
-        compacted: true,
+        compacted,
+        compactionError,
       };
     } catch (err) {
       if (createdSessionPath) {
@@ -1520,6 +1919,8 @@ export class SessionCoordinator {
       fileOps: { read: new Set(), written: new Set(), edited: new Set() },
     };
     session?._emit?.({ type: "compaction_start", reason: "deleted_agent_continue" });
+    const targetSessionPath = session.sessionManager?.getSessionFile?.() || null;
+    const targetSessionId = targetSessionPath ? this._sessionIdForPath(targetSessionPath) : null;
     try {
       const result = await createCachePreservingCompactionResult({
         preparation,
@@ -1553,7 +1954,8 @@ export class SessionCoordinator {
           attribution: {
             kind: "session",
             agentId: session.agentId || session.agent?.id || null,
-            sessionPath: session.sessionManager?.getSessionFile?.() || null,
+            ...(targetSessionId ? { sessionId: targetSessionId } : {}),
+            sessionPath: targetSessionPath,
           },
         },
       } as any);
@@ -1581,34 +1983,51 @@ export class SessionCoordinator {
   getSessionWorkspaceFolders(sessionPath = this.currentSessionPath) {
     if (!sessionPath) return [];
     const entry = this._sessionFolderEntry(sessionPath);
-    const folders = Array.isArray(entry?.workspaceFolders)
-      ? entry.workspaceFolders
-      : this._readSessionMetaEntrySync(sessionPath)?.workspaceFolders;
+    const manifest = this._resolveSessionManifestForPath(sessionPath);
+    let folders = null;
+    if (Array.isArray(entry?.workspaceFolders)) {
+      folders = entry.workspaceFolders;
+    } else if (Array.isArray(manifest?.workspaceScope?.workspaceFolders)) {
+      folders = manifest.workspaceScope.workspaceFolders;
+    } else {
+      folders = this._readSessionMetaEntrySync(sessionPath)?.workspaceFolders;
+    }
     return Array.isArray(folders) ? [...folders] : [];
   }
 
   getSessionWorkspaceMount(sessionPath = this.currentSessionPath) {
     if (!sessionPath) return null;
     const entry = this._sessionFolderEntry(sessionPath);
+    const manifest = this._resolveSessionManifestForPath(sessionPath);
     const metaEntry = entry ? null : this._readSessionMetaEntrySync(sessionPath);
     return normalizeSessionWorkspaceMount({
-      workspaceMountId: entry?.workspaceMountId ?? metaEntry?.workspaceMountId,
-      workspaceLabel: entry?.workspaceLabel ?? metaEntry?.workspaceLabel,
+      workspaceMountId: entry?.workspaceMountId
+        ?? manifest?.workspaceScope?.workspaceMount?.mountId
+        ?? metaEntry?.workspaceMountId,
+      workspaceLabel: entry?.workspaceLabel
+        ?? manifest?.workspaceScope?.workspaceMount?.label
+        ?? metaEntry?.workspaceLabel,
     });
   }
 
   getSessionAuthorizedFolders(sessionPath = this.currentSessionPath) {
     if (!sessionPath) return [];
     const entry = this._sessionFolderEntry(sessionPath);
-    const folders = Array.isArray(entry?.authorizedFolders)
-      ? entry.authorizedFolders
-      : this._readSessionMetaEntrySync(sessionPath)?.authorizedFolders;
+    const manifest = this._resolveSessionManifestForPath(sessionPath);
+    let folders = null;
+    if (Array.isArray(entry?.authorizedFolders)) {
+      folders = entry.authorizedFolders;
+    } else if (Array.isArray(manifest?.workspaceScope?.authorizedFolders)) {
+      folders = manifest.workspaceScope.authorizedFolders;
+    } else {
+      folders = this._readSessionMetaEntrySync(sessionPath)?.authorizedFolders;
+    }
     return Array.isArray(folders) ? [...folders] : [];
   }
 
   isDeepSeekRoleplayReasoningPatchEnabled(sessionPath = this.currentSessionPath) {
     if (!sessionPath) return false;
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     const flags = entry?.experiments
       || this._readSessionMetaEntrySync(sessionPath)?.experiments;
     return normalizeSessionExperimentFlags(flags).deepseekRoleplayReasoningPatch === true;
@@ -1616,7 +2035,7 @@ export class SessionCoordinator {
 
   getDeepSeekRoleplayReasoningContext(sessionPath = this.currentSessionPath) {
     if (!sessionPath) return null;
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     const flags = entry?.experiments
       || this._readSessionMetaEntrySync(sessionPath)?.experiments;
     const normalized = normalizeSessionExperimentFlags(flags);
@@ -1627,16 +2046,21 @@ export class SessionCoordinator {
 
   getSessionFolderScope(sessionPath = this.currentSessionPath) {
     const entry = sessionPath ? this._sessionFolderEntry(sessionPath) : null;
+    const manifest = sessionPath ? this._resolveSessionManifestForPath(sessionPath) : null;
     const metaEntry = sessionPath && !entry ? this._readSessionMetaEntrySync(sessionPath) : null;
-    const cwd = this._sessionCwdFor(sessionPath, entry) || null;
+    const cwd = this._sessionCwdFor(sessionPath, entry) || manifest?.workspaceScope?.primaryCwd || null;
     const scope = normalizeSessionFolderScope({
       primaryCwd: cwd,
       workspaceFolders: Array.isArray(entry?.workspaceFolders)
         ? entry.workspaceFolders
-        : metaEntry?.workspaceFolders,
+        : (Array.isArray(manifest?.workspaceScope?.workspaceFolders)
+          ? manifest.workspaceScope.workspaceFolders
+          : metaEntry?.workspaceFolders),
       authorizedFolders: Array.isArray(entry?.authorizedFolders)
         ? entry.authorizedFolders
-        : metaEntry?.authorizedFolders,
+        : (Array.isArray(manifest?.workspaceScope?.authorizedFolders)
+          ? manifest.workspaceScope.authorizedFolders
+          : metaEntry?.authorizedFolders),
     });
     return {
       sessionPath: sessionPath || null,
@@ -1667,6 +2091,15 @@ export class SessionCoordinator {
       workspaceFolders: scope.workspaceFolders,
       authorizedFolders: scope.authorizedFolders,
     });
+    const manifest = this._resolveSessionManifestForPath(sessionPath);
+    if (manifest) {
+      this._sessionManifestStore.setWorkspaceScope(manifest.sessionId, {
+        ...(manifest.workspaceScope || {}),
+        primaryCwd: current.cwd,
+        workspaceFolders: scope.workspaceFolders,
+        authorizedFolders: scope.authorizedFolders,
+      });
+    }
     this._d.emitEvent?.({
       type: "app_event",
       event: {
@@ -1699,7 +2132,9 @@ export class SessionCoordinator {
 
   _sessionFolderEntry(sessionPath: any) {
     if (!sessionPath) return null;
-    return this._sessions.get(sessionPath) || this._hibernatedSessionMeta.get(sessionPath) || null;
+    return this._getSessionEntryByPath(sessionPath)
+      || this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath)
+      || null;
   }
 
   _sessionCwdFor(sessionPath: any, entry: any = null) {
@@ -1721,6 +2156,11 @@ export class SessionCoordinator {
     if (!sessionPath) return null;
     try {
       const metaPath = this._sessionMetaPathFor(sessionPath);
+      const stat = fs.statSync(metaPath);
+      if (stat.size > SESSION_META_INDEX_MAX_BYTES) {
+        log.warn(`session-meta is too large to parse safely (${stat.size} bytes): ${metaPath}`);
+        return null;
+      }
       const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
       const entry = meta[path.basename(sessionPath)];
       return entry && typeof entry === "object" ? entry : null;
@@ -1734,12 +2174,28 @@ export class SessionCoordinator {
     return typeof metaEntry?.memoryEnabled === "boolean" ? metaEntry.memoryEnabled : null;
   }
 
+  getSessionMemoryReflectionSnapshot(sessionPath = this.currentSessionPath) {
+    if (!sessionPath) return null;
+    const entry = this._sessionFolderEntry(sessionPath);
+    const liveSnapshot = entry?.memoryReflectionSnapshot;
+    if (liveSnapshot && typeof liveSnapshot === "object" && !Array.isArray(liveSnapshot)) {
+      return liveSnapshot;
+    }
+    const metaSnapshot = this._readSessionMetaEntrySync(sessionPath)?.memoryReflectionSnapshot;
+    return metaSnapshot && typeof metaSnapshot === "object" && !Array.isArray(metaSnapshot)
+      ? metaSnapshot
+      : null;
+  }
+
   getSessionMemoryEnabled(sessionPath = this.currentSessionPath) {
     if (!sessionPath) return true;
-    const liveEntry = this._sessions.get(sessionPath);
+    const liveEntry = this._getSessionEntryByPath(sessionPath);
     if (typeof liveEntry?.memoryEnabled === "boolean") return liveEntry.memoryEnabled;
-    const hibernatedEntry = this._hibernatedSessionMeta.get(sessionPath);
+    const hibernatedEntry = this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
     if (typeof hibernatedEntry?.memoryEnabled === "boolean") return hibernatedEntry.memoryEnabled;
+    const manifest = this._resolveSessionManifestForPath(sessionPath);
+    if (manifest?.memoryPolicy?.mode === "enabled") return true;
+    if (manifest?.memoryPolicy?.mode === "disabled") return false;
     const stored = this._readSessionMemoryEnabledFromMeta(sessionPath);
     return typeof stored === "boolean" ? stored : true;
   }
@@ -1753,23 +2209,30 @@ export class SessionCoordinator {
       throw new Error("setSessionMemoryEnabled: session belongs to a deleted agent");
     }
     const next = enabled !== false;
-    const liveEntry = this._sessions.get(sessionPath);
+    const liveEntry = this._getSessionEntryByPath(sessionPath);
     if (liveEntry) liveEntry.memoryEnabled = next;
-    const hibernatedEntry = this._hibernatedSessionMeta.get(sessionPath);
+    const hibernatedEntry = this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
     if (hibernatedEntry) hibernatedEntry.memoryEnabled = next;
     await this.writeSessionMeta(sessionPath, { memoryEnabled: next });
+    const manifest = this._resolveSessionManifestForPath(sessionPath);
+    if (manifest) {
+      this._sessionManifestStore.setMemoryPolicy(manifest.sessionId, {
+        mode: next ? "enabled" : "disabled",
+        inheritedFrom: "session_override",
+      });
+    }
     this._emitSessionMetadataUpdated(sessionPath, { memoryEnabled: next });
     return { ok: true, memoryEnabled: next };
   }
 
   _updateSessionFolderRuntimeMeta(sessionPath: any, patch: any) {
-    const liveEntry = this._sessions.get(sessionPath);
+    const liveEntry = this._getSessionEntryByPath(sessionPath);
     if (liveEntry) {
       if (patch.cwd) liveEntry.cwd = patch.cwd;
       liveEntry.workspaceFolders = [...(patch.workspaceFolders || [])];
       liveEntry.authorizedFolders = [...(patch.authorizedFolders || [])];
     }
-    const hibernated = this._hibernatedSessionMeta.get(sessionPath);
+    const hibernated = this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
     if (hibernated) {
       if (patch.cwd) hibernated.cwd = patch.cwd;
       hibernated.workspaceFolders = [...(patch.workspaceFolders || [])];
@@ -1801,12 +2264,12 @@ export class SessionCoordinator {
     const memoryEnabled = this.getSessionMemoryEnabled(sessionPath);
 
     // 如果已在 map 中，切指针
-    const existing = this._sessions.get(sessionPath);
+    const existing = this._getSessionEntryByPath(sessionPath);
     if (existing) {
       if (this._session && this._session !== existing.session) {
         const oldSp = this._session.sessionManager?.getSessionFile?.();
         if (oldSp) {
-          const oldEntry = this._sessions.get(oldSp);
+          const oldEntry = this._getSessionEntryByPath(oldSp);
           const oldAgent = oldEntry ? this._d.getAgentById(oldEntry.agentId) : this._d.getAgent();
           // fire-and-forget：memory flush 不阻塞 switch。memory.md 由 onCompiled 回调
           // 刷到 agent._systemPrompt，只影响下次新建 session；老 session 用自己创建时的
@@ -1826,7 +2289,7 @@ export class SessionCoordinator {
     if (this._session) {
       const oldSp = this._session.sessionManager?.getSessionFile?.();
       if (oldSp) {
-        const oldEntry = this._sessions.get(oldSp);
+        const oldEntry = this._getSessionEntryByPath(oldSp);
         const oldAgent = oldEntry ? this._d.getAgentById(oldEntry.agentId) : this._d.getAgent();
         oldAgent?._memoryTicker?.notifySessionEnd(oldSp).catch((err) =>
           log.warn(`switchSession ${path.basename(oldSp)}: notifySessionEnd failed: ${err.message}`),
@@ -1953,7 +2416,7 @@ export class SessionCoordinator {
     this._sessionStarted = true;
     const sp = this._session.sessionManager?.getSessionFile?.();
     if (sp) {
-      const entry = this._sessions.get(sp);
+      const entry = this._getSessionEntryByPath(sp);
       if (entry) entry.lastTouchedAt = Date.now();
     }
     const engine = this._d.getEngine?.();
@@ -1972,26 +2435,32 @@ export class SessionCoordinator {
     assertAudioInputSupported(this._session.model, opts?.audios);
     const promptOpts = buildPromptMediaOptions(opts);
     const nativeMediaTurn = engine?.beginCurrentTurnNativeMedia?.(sp, opts);
-    if (sp && turnContext) this._turnContextBySession.set(sp, turnContext);
+    if (sp && turnContext) this._setRuntimeValueForPath(this._turnContextBySession, sp, turnContext);
     try {
       await this._session.prompt(text, promptOpts);
     } finally {
-      if (sp && turnContext) this._turnContextBySession.delete(sp);
+      if (sp && turnContext) this._deleteRuntimeValueForPath(this._turnContextBySession, sp);
       engine?.endCurrentTurnNativeMedia?.(nativeMediaTurn);
       pruneSessionInlineMediaHistory(this._session);
       this._projectOversizedSessionHistory(this._session, sp);
       if (sp) this._scheduleRuntimePressureCheck(sp, "prompt");
     }
     if (sp) {
-      const entry = this._sessions.get(sp);
+      const entry = this._getSessionEntryByPath(sp);
       const agent = entry ? this._d.getAgentById(entry.agentId) : this._d.getAgent();
       agent?._memoryTicker?.notifyTurn(sp);
     }
   }
 
-  async abort() {
+  _normalizeAbortReason(options: any, fallback = "abort") {
+    const raw = typeof options === "string" ? options : options?.reason;
+    return typeof raw === "string" && raw.trim() ? raw.trim() : fallback;
+  }
+
+  async abort(options: any = {}) {
+    const reason = this._normalizeAbortReason(options, "abort");
     const sessionPath = this.currentSessionPath;
-    if (sessionPath) return this.abortSession(sessionPath);
+    if (sessionPath) return this.abortSession(sessionPath, { reason });
     if (!this._session?.isStreaming) return false;
 
     try {
@@ -2011,7 +2480,7 @@ export class SessionCoordinator {
     if (!this._session?.isStreaming) return false;
     const sp = this._session.sessionManager?.getSessionFile?.();
     if (sp) {
-      const entry = this._sessions.get(sp);
+      const entry = this._getSessionEntryByPath(sp);
       if (entry) entry.lastTouchedAt = Date.now();
     }
     this._session.steer(text);
@@ -2023,10 +2492,10 @@ export class SessionCoordinator {
   async promptSession(sessionPath: any, text: any, opts: any) {
     const turnContext = normalizeSessionTurnContext(opts?.context);
     this._assertActiveDesktopSessionPath(sessionPath, "promptSession");
-    let entry = this._sessions.get(sessionPath);
+    let entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) {
       await this.ensureSessionLoaded(sessionPath);
-      entry = this._sessions.get(sessionPath);
+      entry = this._getSessionEntryByPath(sessionPath);
     }
     if (!entry) throw new Error(t("error.sessionNotInCache", { path: sessionPath }));
     if (sessionPath === this.currentSessionPath && this._session !== entry.session) {
@@ -2039,7 +2508,7 @@ export class SessionCoordinator {
     if (sessionPath === this.currentSessionPath) this._sessionStarted = true;
     const engine = this._d.getEngine?.();
     const abortController = new AbortController();
-    this._prePromptAbortControllers.set(sessionPath, abortController);
+    this._setRuntimeValueForPath(this._prePromptAbortControllers, sessionPath, abortController);
     try {
       ({ text, opts } = await prepareVisionInputForTextOnlyModel({
         targetModel: entry.session.model,
@@ -2057,8 +2526,8 @@ export class SessionCoordinator {
         signal: abortController.signal,
       }));
     } finally {
-      if (this._prePromptAbortControllers.get(sessionPath) === abortController) {
-        this._prePromptAbortControllers.delete(sessionPath);
+      if (this._getRuntimeValueForPath(this._prePromptAbortControllers, sessionPath) === abortController) {
+        this._deleteRuntimeValueForPath(this._prePromptAbortControllers, sessionPath);
       }
     }
     assertVideoInputSupported(entry.session.model, opts?.videos);
@@ -2081,11 +2550,11 @@ export class SessionCoordinator {
     }
     const promptOpts = buildPromptMediaOptions(opts);
     const nativeMediaTurn = engine?.beginCurrentTurnNativeMedia?.(sessionPath, opts);
-    if (turnContext) this._turnContextBySession.set(sessionPath, turnContext);
+    if (turnContext) this._setRuntimeValueForPath(this._turnContextBySession, sessionPath, turnContext);
     try {
       await entry.session.prompt(text, promptOpts);
     } finally {
-      if (turnContext) this._turnContextBySession.delete(sessionPath);
+      if (turnContext) this._deleteRuntimeValueForPath(this._turnContextBySession, sessionPath);
       engine?.endCurrentTurnNativeMedia?.(nativeMediaTurn);
       pruneSessionInlineMediaHistory(entry.session);
       this._projectOversizedSessionHistory(entry.session, sessionPath);
@@ -2095,20 +2564,26 @@ export class SessionCoordinator {
   }
 
   steerSession(sessionPath: any, text: any) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     if (!entry?.session.isStreaming) return false;
     entry.lastTouchedAt = Date.now();
     entry.session.steer(text);
     return true;
   }
 
+  _emitTurnInputPresentation(sessionPath: any, message: any, deliveryMode: any) {
+    const event = buildTurnInputPresentationEvent(message, { deliveryMode });
+    if (!event) return;
+    this._d.emitEvent?.(event, sessionPath);
+  }
+
   async deliverCustomMessage(sessionPath: any, message: any, options: any = {}) {
     if (!sessionPath) throw new Error("deliverCustomMessage: sessionPath is required");
     this._assertActiveDesktopSessionPath(sessionPath, "deliverCustomMessage");
-    let entry = this._sessions.get(sessionPath);
+    let entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) {
       await this.ensureSessionLoaded(sessionPath);
-      entry = this._sessions.get(sessionPath);
+      entry = this._getSessionEntryByPath(sessionPath);
     }
     if (!entry?.session) {
       throw new Error(`deliverCustomMessage: session not loaded for ${sessionPath}`);
@@ -2120,10 +2595,14 @@ export class SessionCoordinator {
     entry.lastTouchedAt = Date.now();
     if (entry.session.isStreaming) {
       await entry.session.sendCustomMessage(message, { deliverAs: "followUp" });
+      this._emitTurnInputPresentation(sessionPath, message, "followUp");
       return { ok: true, mode: "followUp" };
     }
 
     const triggerTurn = options?.triggerTurn !== false;
+    if (triggerTurn) {
+      this._emitTurnInputPresentation(sessionPath, message, "triggerTurn");
+    }
     await entry.session.sendCustomMessage(message, { triggerTurn });
     return { ok: true, mode: triggerTurn ? "triggerTurn" : "notifyOnly" };
   }
@@ -2133,7 +2612,7 @@ export class SessionCoordinator {
     if (!customType) throw new Error("recordCustomEntry: customType is required");
     this._assertActiveDesktopSessionPath(sessionPath, "recordCustomEntry");
 
-    const liveManager = this._sessions.get(sessionPath)?.session?.sessionManager;
+    const liveManager = this._getSessionEntryByPath(sessionPath)?.session?.sessionManager;
     if (typeof liveManager?.appendCustomEntry === "function") {
       liveManager.appendCustomEntry(customType, data);
       return { ok: true, mode: "live" };
@@ -2193,18 +2672,19 @@ export class SessionCoordinator {
     }
   }
 
-  async abortSession(sessionPath: any) {
-    const pending = this._prePromptAbortControllers.get(sessionPath);
+  async abortSession(sessionPath: any, options: any = {}) {
+    const reason = this._normalizeAbortReason(options, "abort");
+    const pending = this._getRuntimeValueForPath(this._prePromptAbortControllers, sessionPath);
     if (pending) {
       pending.abort();
-      this._prePromptAbortControllers.delete(sessionPath);
-      this._cleanupAbortedSessionSidecars(sessionPath, "abort");
+      this._deleteRuntimeValueForPath(this._prePromptAbortControllers, sessionPath);
+      this._cleanupAbortedSessionSidecars(sessionPath, reason);
       return true;
     }
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     if (!entry?.session.isStreaming) return false;
-    this._cleanupAbortedSessionSidecars(sessionPath, "abort");
-    return this._forceReleaseStreamingSession(entry, sessionPath, "abort");
+    this._cleanupAbortedSessionSidecars(sessionPath, reason);
+    return this._forceReleaseStreamingSession(entry, sessionPath, reason);
   }
 
   // ── Mid-session model switch ──
@@ -2219,10 +2699,10 @@ export class SessionCoordinator {
    */
   async switchSessionModel(sessionPath: any, newModel: any) {
     this._assertActiveDesktopSessionPath(sessionPath, "switchSessionModel");
-    let entry = this._sessions.get(sessionPath);
+    let entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) {
       await this.ensureSessionLoaded(sessionPath);
-      entry = this._sessions.get(sessionPath);
+      entry = this._getSessionEntryByPath(sessionPath);
     }
     if (!entry) throw new Error(t("error.sessionNotInCache", { path: sessionPath }));
     if (sessionPath === this.currentSessionPath && this._session !== entry.session) {
@@ -2315,6 +2795,7 @@ export class SessionCoordinator {
    */
   async _compactWithModel(session: any, effectiveWindow: any, model: any) {
     const sessionPath = session?.sessionManager?.getSessionFile?.() || this.currentSessionPath;
+    const sessionId = this._sessionIdForPath(sessionPath);
     return await runCachePreservingCompactionForSession(session, {
       model,
       settings: {
@@ -2335,6 +2816,7 @@ export class SessionCoordinator {
         attribution: {
           kind: "session",
           agentId: this._d.agentIdFromSessionPath?.(sessionPath) || this._d.getActiveAgentId?.() || null,
+          ...(sessionId ? { sessionId } : {}),
           sessionPath,
         },
       },
@@ -2419,16 +2901,30 @@ export class SessionCoordinator {
     return this._getDefaultPermissionMode();
   }
 
+  setPermissionModeDefault(mode: any) {
+    return this._setDefaultPermissionMode(mode);
+  }
+
   getPermissionMode(sessionPath = this.currentSessionPath) {
     if (!sessionPath) return this._pendingPermissionMode || this._getDefaultPermissionMode();
-    const entry = this._sessions.get(sessionPath) || this._hibernatedSessionMeta.get(sessionPath);
+    const entry = this._sessionFolderEntry(sessionPath);
+    if (!entry) {
+      const manifest = this._resolveSessionManifestForPath(sessionPath);
+      if (manifest?.permissionModeSnapshot?.mode) {
+        return normalizeSessionPermissionMode(manifest.permissionModeSnapshot.mode);
+      }
+    }
     return normalizeSessionPermissionMode(entry || { permissionMode: this._getDefaultPermissionMode() });
   }
 
   getSessionThinkingLevel(sessionPath = this.currentSessionPath) {
     const fallback = this.getDefaultThinkingLevel();
     if (!sessionPath) return fallback;
-    const entry = this._sessions.get(sessionPath) || this._hibernatedSessionMeta.get(sessionPath);
+    const entry = this._sessionFolderEntry(sessionPath);
+    if (!entry) {
+      const manifest = this._resolveSessionManifestForPath(sessionPath);
+      if (manifest?.thinkingLevel) return normalizeSessionThinkingLevel(manifest.thinkingLevel);
+    }
     return normalizeSessionThinkingLevel(entry?.thinkingLevel || fallback);
   }
 
@@ -2436,13 +2932,15 @@ export class SessionCoordinator {
     if (!sessionPath) {
       return { ok: false, error: "session thinking level requires sessionPath" };
     }
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     if (!entry?.session) {
-      const meta = this._hibernatedSessionMeta.get(sessionPath);
+      const meta = this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
       if (meta) {
         const nextLevel = normalizeSessionThinkingLevel(level);
         meta.thinkingLevel = nextLevel;
         await this.writeSessionMeta(sessionPath, { thinkingLevel: nextLevel });
+        const manifest = this._resolveSessionManifestForPath(sessionPath);
+        if (manifest) this._sessionManifestStore.setThinkingLevel(manifest.sessionId, nextLevel);
         this._emitSessionMetadataUpdated(sessionPath, { thinkingLevel: nextLevel });
         return { ok: true, thinkingLevel: nextLevel };
       }
@@ -2453,6 +2951,8 @@ export class SessionCoordinator {
     entry.thinkingLevel = nextLevel;
     entry.session.setThinkingLevel?.(models.resolveThinkingLevel(nextLevel));
     await this.writeSessionMeta(sessionPath, { thinkingLevel: nextLevel });
+    const manifest = this._resolveSessionManifestForPath(sessionPath);
+    if (manifest) this._sessionManifestStore.setThinkingLevel(manifest.sessionId, nextLevel);
     this._emitSessionMetadataUpdated(sessionPath, { thinkingLevel: nextLevel });
     return { ok: true, thinkingLevel: nextLevel };
   }
@@ -2482,6 +2982,13 @@ export class SessionCoordinator {
       accessMode: entry.accessMode,
       planMode: entry.planMode,
     });
+    const manifest = this._resolveSessionManifestForPath(sessionPath);
+    if (manifest) {
+      this._sessionManifestStore.setPermissionModeSnapshot(manifest.sessionId, {
+        mode: nextMode,
+        source: "session_override",
+      });
+    }
     this._emitPermissionModeChanged(nextMode, sessionPath);
     return { ok: true, mode: nextMode, enabled: entry.planMode };
   }
@@ -2496,9 +3003,9 @@ export class SessionCoordinator {
         mode: this._getDefaultPermissionMode(),
       };
     }
-    const entry = this._sessions.get(sp);
+    const entry = this._getSessionEntryByPath(sp);
     if (!entry) {
-      const meta = this._hibernatedSessionMeta.get(sp);
+      const meta = this._getRuntimeValueForPath(this._hibernatedSessionMeta, sp);
       if (meta) return this._applyPermissionModeToEntry(sp, meta, nextMode);
       return {
         ok: false,
@@ -2518,9 +3025,9 @@ export class SessionCoordinator {
         mode: this._getDefaultPermissionMode(),
       };
     }
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) {
-      const meta = this._hibernatedSessionMeta.get(sessionPath);
+      const meta = this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
       if (meta) {
         return this._applyPermissionModeToEntry(sessionPath, meta, nextMode);
       }
@@ -2537,9 +3044,9 @@ export class SessionCoordinator {
     const nextMode = normalizeSessionPermissionMode(mode);
     const sp = this.currentSessionPath;
     if (sp) {
-      const entry = this._sessions.get(sp);
+      const entry = this._getSessionEntryByPath(sp);
       if (!entry) {
-        const meta = this._hibernatedSessionMeta.get(sp);
+        const meta = this._getRuntimeValueForPath(this._hibernatedSessionMeta, sp);
         if (meta) return this._applyPermissionModeToEntry(sp, meta, nextMode);
       }
       if (!entry) return { ok: false, mode: this.getPermissionMode(sp) };
@@ -2578,7 +3085,8 @@ export class SessionCoordinator {
   // 实时由 promptSession 每轮 buildSystemPrompt({ workModeEnabled }) 读取。
   getSessionWorkMode(sessionPath = this.currentSessionPath) {
     if (!sessionPath) return false;
-    const entry = this._sessions.get(sessionPath) || this._hibernatedSessionMeta.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath)
+      || this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
     return entry?.workMode === true;
   }
 
@@ -2595,9 +3103,9 @@ export class SessionCoordinator {
     if (!sessionPath) {
       return { ok: false, error: "session work mode requires sessionPath", enabled: false };
     }
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) {
-      const meta = this._hibernatedSessionMeta.get(sessionPath);
+      const meta = this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
       if (meta) {
         return this._applyWorkModeToEntry(sessionPath, meta, next);
       }
@@ -2630,7 +3138,7 @@ export class SessionCoordinator {
   getCurrentSessionModelRef() {
     const sp = this.currentSessionPath;
     if (!sp) return null;
-    const entry = this._sessions.get(sp) || this._hibernatedSessionMeta.get(sp);
+    const entry = this._sessionFolderEntry(sp);
     if (!entry?.modelId || !entry?.modelProvider) return null;
     return { id: entry.modelId, provider: entry.modelProvider };
   }
@@ -2638,7 +3146,8 @@ export class SessionCoordinator {
   /** 中断所有正在 streaming 的 session */
   async abortAllStreaming() {
     let count = 0;
-    for (const [sp, entry] of this._sessions) {
+    for (const [sessionKey, entry] of this._sessions) {
+      const sp = this._sessionPathForEntry(entry, sessionKey);
       if (entry.session.isStreaming) {
         this._cleanupAbortedSessionSidecars(sp, "abort_all");
         if (this._forceReleaseStreamingSession(entry, sp, "abort_all")) count++;
@@ -2671,8 +3180,8 @@ export class SessionCoordinator {
     entry.lastTouchedAt = Date.now();
 
     this._clearRuntimePressureTimer(sessionPath);
-    this._hibernatedSessionMeta.delete(sessionPath);
-    this._sessions.delete(sessionPath);
+    this._deleteRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
+    this._deleteRuntimeValueForPath(this._sessions, sessionPath);
     if (this._session === session || this.currentSessionPath === sessionPath) {
       this._session = null;
       this._currentSessionPath = null;
@@ -2748,20 +3257,22 @@ export class SessionCoordinator {
   _canHibernateSessionRuntime(entry: any, sessionPath: any) {
     if (!entry?.session || !sessionPath) return false;
     if (entry.session.isStreaming || entry.session.isCompacting || entry._switching) return false;
-    if (this._prePromptAbortControllers.has(sessionPath)) return false;
+    if (this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)) return false;
     const pendingDeferred = this._d.getDeferredResultStore?.()?.listPending?.(sessionPath);
     if (Array.isArray(pendingDeferred) && pendingDeferred.length > 0) return false;
     return true;
   }
 
   async hibernateSessionRuntime(sessionPath: any, reason = "memory_pressure") {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) return false;
     if (!this._canHibernateSessionRuntime(entry, sessionPath)) return false;
 
     const isFocus = this._session === entry.session || this.currentSessionPath === sessionPath;
     if (isFocus) this._currentSessionPath = sessionPath;
-    this._hibernatedSessionMeta.set(sessionPath, {
+    this._setRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath, {
+      sessionId: entry.sessionId || this._sessionRuntimeKeyForPath(sessionPath, { warn: false }),
+      sessionPath,
       agentId: entry.agentId,
       memoryEnabled: entry.memoryEnabled,
       experienceEnabled: entry.experienceEnabled,
@@ -2780,7 +3291,7 @@ export class SessionCoordinator {
       hibernatedAt: Date.now(),
     });
     await this._teardownSessionEntry(entry, sessionPath, reason);
-    this._sessions.delete(sessionPath);
+    this._deleteRuntimeValueForPath(this._sessions, sessionPath);
     this._clearRuntimePressureTimer(sessionPath);
     if (isFocus) {
       this._session = null;
@@ -2794,7 +3305,7 @@ export class SessionCoordinator {
   }
 
   async _checkRuntimeMemoryPressure(sessionPath: any, reason: any) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) return { hibernated: false, reason: "not_loaded" };
     if (!this._memoryPressure.enabled) return { hibernated: false, reason: "disabled" };
     if (!this._canHibernateSessionRuntime(entry, sessionPath)) {
@@ -2838,47 +3349,49 @@ export class SessionCoordinator {
 
   _scheduleRuntimePressureCheck(sessionPath: any, reason = "post_turn") {
     if (!this._memoryPressure.enabled || !sessionPath) return;
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) return;
     const scheduledSession = entry.session;
     this._clearRuntimePressureTimer(sessionPath);
     const delay = Math.max(0, Number(this._memoryPressure.thresholds.checkDelayMs) || 0);
     const timer = setTimeout(() => {
-      this._runtimePressureTimers.delete(sessionPath);
-      const current = this._sessions.get(sessionPath);
+      this._deleteRuntimeValueForPath(this._runtimePressureTimers, sessionPath);
+      const current = this._getSessionEntryByPath(sessionPath);
       if (!current || current.session !== scheduledSession) return;
       this._checkRuntimeMemoryPressure(sessionPath, reason).catch((err) => {
         log.warn(`runtime pressure check failed for ${path.basename(sessionPath)}: ${err.message}`);
       });
     }, delay);
     timer.unref?.();
-    this._runtimePressureTimers.set(sessionPath, timer);
+    this._setRuntimeValueForPath(this._runtimePressureTimers, sessionPath, timer);
   }
 
   _clearRuntimePressureTimer(sessionPath: any) {
-    const timer = this._runtimePressureTimers.get(sessionPath);
+    const timer = this._getRuntimeValueForPath(this._runtimePressureTimers, sessionPath);
     if (!timer) return;
     clearTimeout(timer);
-    this._runtimePressureTimers.delete(sessionPath);
+    this._deleteRuntimeValueForPath(this._runtimePressureTimers, sessionPath);
   }
 
   // ── Session 关闭 ──
 
-  async discardSessionRuntime(sessionPath: any, reason = "discard") {
+  async discardSessionRuntime(sessionPath: any, reason = "discard", options: { skipMemory?: boolean } = {}) {
     if (!sessionPath) return false;
     this._clearRuntimePressureTimer(sessionPath);
-    const hadHibernated = this._hibernatedSessionMeta.delete(sessionPath);
-    const entry = this._sessions.get(sessionPath);
+    const hadHibernated = this._deleteRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     if (entry) {
       const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
-      agent?._memoryTicker?.notifySessionEnd(sessionPath).catch((err) =>
-        log.warn(`discardSessionRuntime ${path.basename(sessionPath)}: notifySessionEnd failed: ${err.message}`),
-      );
+      if (options.skipMemory !== true) {
+        agent?._memoryTicker?.notifySessionEnd(sessionPath).catch((err) =>
+          log.warn(`discardSessionRuntime ${path.basename(sessionPath)}: notifySessionEnd failed: ${err.message}`),
+        );
+      }
       if (entry.session.isStreaming) {
         this._forceReleaseStreamingSession(entry, sessionPath, reason);
       } else {
         await this._teardownSessionEntry(entry, sessionPath, reason);
-        this._sessions.delete(sessionPath);
+        this._deleteRuntimeValueForPath(this._sessions, sessionPath);
       }
     }
 
@@ -2911,11 +3424,13 @@ export class SessionCoordinator {
   async discardSessionsForAgent(agentId: any, reason = "agent deleted") {
     if (!agentId) return 0;
     const paths = new Set();
-    for (const [sessionPath, entry] of this._sessions) {
+    for (const [sessionKey, entry] of this._sessions) {
+      const sessionPath = this._sessionPathForEntry(entry, sessionKey);
       const entryAgentId = entry?.agentId || this._d.agentIdFromSessionPath?.(sessionPath);
       if (entryAgentId === agentId) paths.add(sessionPath);
     }
-    for (const [sessionPath, entry] of this._hibernatedSessionMeta) {
+    for (const [sessionKey, entry] of this._hibernatedSessionMeta) {
+      const sessionPath = this._sessionPathForEntry(entry, sessionKey);
       const entryAgentId = entry?.agentId || this._d.agentIdFromSessionPath?.(sessionPath);
       if (entryAgentId === agentId) paths.add(sessionPath);
     }
@@ -2931,11 +3446,13 @@ export class SessionCoordinator {
   }
 
   async closeAllSessions() {
-    for (const sessionPath of this._runtimePressureTimers.keys()) {
+    for (const [sessionKey, timer] of this._runtimePressureTimers) {
+      const sessionPath = this._sessionPathForEntry(timer, sessionKey) || sessionKey;
       this._clearRuntimePressureTimer(sessionPath);
     }
     // abort all streaming sessions + teardown（记忆收尾由 disposeAll 带超时处理）
-    for (const [sessionPath, entry] of this._sessions) {
+    for (const [sessionKey, entry] of this._sessions) {
+      const sessionPath = this._sessionPathForEntry(entry, sessionKey);
       if (entry.session.isStreaming) {
         this._forceReleaseStreamingSession(entry, sessionPath, "close_all");
       } else {
@@ -2972,7 +3489,8 @@ export class SessionCoordinator {
    * 本方法由 engine.onProviderChanged() 触发。
    */
   refreshAllSessionsModels() {
-    for (const [sessionPath, entry] of this._sessions) {
+    for (const [sessionKey, entry] of this._sessions) {
+      const sessionPath = this._sessionPathForEntry(entry, sessionKey);
       try {
         refreshSessionModelFromRegistry(entry.session);
         this._renewCachePrefixContract(sessionPath, entry, "provider_refresh");
@@ -2985,14 +3503,14 @@ export class SessionCoordinator {
   // ── Session 查询 ──
 
   getSessionByPath(sessionPath: any) {
-    return this._sessions.get(sessionPath)?.session ?? null;
+    return this._getSessionEntryByPath(sessionPath)?.session ?? null;
   }
 
   getSessionContextUsage(sessionPath: any) {
     if (!sessionPath) return null;
-    const live = this._sessions.get(sessionPath)?.session?.getContextUsage?.();
+    const live = this._getSessionEntryByPath(sessionPath)?.session?.getContextUsage?.();
     if (live) return live;
-    return this._hibernatedSessionMeta.get(sessionPath)?.contextUsage || null;
+    return this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath)?.contextUsage || null;
   }
 
   _assertActiveDesktopSessionPath(sessionPath: any, operation: any) {
@@ -3009,7 +3527,10 @@ export class SessionCoordinator {
   isRunnableSessionPath(sessionPath: any) {
     if (!isActiveSessionPath(sessionPath, this._d.agentsDir)) return false;
     if (this._isDeletedAgentSessionPath(sessionPath)) return false;
-    if (this._sessions.has(sessionPath) || this._hibernatedSessionMeta.has(sessionPath)) return true;
+    if (
+      this._getSessionEntryByPath(sessionPath)
+      || this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath)
+    ) return true;
     try {
       return fs.existsSync(sessionPath);
     } catch {
@@ -3023,7 +3544,7 @@ export class SessionCoordinator {
    * 数据在 restore 完成时算好挂在 sessionEntry 上，这里只做读取与 dismiss 过滤。
    */
   getSessionCapabilityDriftNotice(sessionPath: any) {
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     const drift = entry?.capabilityDrift;
     if (!drift?.hasDrift) return null;
     if (entry.capabilityDriftDismissedFingerprint === drift.fingerprint) return null;
@@ -3035,6 +3556,96 @@ export class SessionCoordinator {
     };
   }
 
+  _computeLiveToolSnapshotForEntry(entry: any, sessionPath: any) {
+    const agent = this._d.getAgentById?.(entry?.agentId) || this._d.getAgent?.();
+    if (!agent) return null;
+    const cwd = entry?.cwd || entry?.session?.sessionManager?.getCwd?.() || this._d.getHomeCwd?.(agent.id) || process.cwd();
+    const models = this._d.getModels?.() || {};
+    const model = entry?.session?.model
+      || (entry?.modelId && entry?.modelProvider && Array.isArray(models.availableModels)
+        ? findModel(models.availableModels, entry.modelId, entry.modelProvider)
+        : null)
+      || models.currentModel
+      || null;
+    const toolSnapshotOptions: any = {
+      forceMemoryEnabled: entry?.memoryEnabled !== false,
+      model,
+    };
+    if (typeof agent.experienceEnabled === "boolean") {
+      toolSnapshotOptions.forceExperienceEnabled = entry?.experienceEnabled === true;
+    }
+    const agentToolsSnapshot = typeof agent.getToolsSnapshot === "function"
+      ? agent.getToolsSnapshot(toolSnapshotOptions)
+      : agent.tools;
+    const workspaceScope = normalizeWorkspaceScope({
+      primaryCwd: cwd,
+      workspaceFolders: Array.isArray(entry?.workspaceFolders) ? entry.workspaceFolders : [],
+    });
+    const folderScope = normalizeSessionFolderScope({
+      primaryCwd: cwd,
+      workspaceFolders: workspaceScope.workspaceFolders,
+      authorizedFolders: Array.isArray(entry?.authorizedFolders) ? entry.authorizedFolders : [],
+    });
+    const built = this._d.buildTools?.(cwd, agentToolsSnapshot, {
+      workspace: cwd,
+      workspaceFolders: workspaceScope.workspaceFolders,
+      authorizedFolders: folderScope.authorizedFolders,
+      getAuthorizedFolders: () => this.getSessionAuthorizedFolders(sessionPath),
+      agentDir: agent.agentDir,
+    }) || { tools: [], customTools: [] };
+    const allToolObjects = [
+      ...(built.tools || []),
+      ...(built.customTools || []),
+    ];
+    const allToolNames = toolNamesFromObjects(allToolObjects);
+    const channelsEnabled = this._d.getPrefs?.()?.getChannelsEnabled?.();
+    const extraDisabledToolNames = [
+      ...getStableFeatureDisabledToolNames({ channelsEnabled }),
+      ...computeRuntimeDisabledToolNames(
+        allToolObjects,
+        agent.config,
+        { agentId: entry?.agentId, restore: false, channelsEnabled },
+        { warn: (msg) => log.warn(msg) },
+      ),
+    ];
+    const disabled = agent.config?.tools?.disabled ?? DEFAULT_DISABLED_TOOL_NAMES;
+    return computeToolSnapshot(allToolNames, disabled, {
+      extraDisabled: extraDisabledToolNames,
+    });
+  }
+
+  markCapabilitySnapshotsStale({ agentId = null, reason = "capability_changed" }: any = {}) {
+    const targetAgentId = typeof agentId === "string" && agentId ? agentId : null;
+    let scanned = 0;
+    let marked = 0;
+    for (const entry of this._sessions.values()) {
+      if (!entry?.sessionPath || !entry?.session) continue;
+      if (targetAgentId && entry.agentId !== targetAgentId) continue;
+      scanned += 1;
+      const frozenToolNames = Array.isArray(entry.toolNames)
+        ? entry.toolNames
+        : (entry.activeToolDefinitions || []).map((tool) => tool?.name).filter(Boolean);
+      const liveToolNames = this._computeLiveToolSnapshotForEntry(entry, entry.sessionPath);
+      if (!liveToolNames) continue;
+      const drift = buildSessionCapabilityDrift({
+        frozenToolNames,
+        liveToolNames,
+        frozenSystemPrompt: "",
+        liveSystemPrompt: "",
+      });
+      entry.capabilityDrift = drift.hasDrift ? { ...drift, reason } : null;
+      if (drift.hasDrift) {
+        marked += 1;
+        this._emitSessionMetadataUpdated(entry.sessionPath, {
+          capabilityDrift: this.getSessionCapabilityDriftNotice(entry.sessionPath),
+        });
+      } else {
+        this._emitSessionMetadataUpdated(entry.sessionPath, { capabilityDrift: null });
+      }
+    }
+    return { ok: true, scanned, marked };
+  }
+
   /**
    * #1624：记录"用户关闭了当前 fingerprint 的提示"。持久化在 session-meta
    * （跟 session 走，跨重启生效）；指纹再次变化时才重新提示。
@@ -3044,7 +3655,7 @@ export class SessionCoordinator {
     if (typeof fingerprint !== "string" || !fingerprint) {
       throw new Error("dismissSessionCapabilityDrift: fingerprint required");
     }
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     if (entry) entry.capabilityDriftDismissedFingerprint = fingerprint;
     await this.writeSessionMeta(sessionPath, { capabilityDriftDismissedFingerprint: fingerprint });
     return { ok: true };
@@ -3064,15 +3675,15 @@ export class SessionCoordinator {
       throw new Error(`reloadSessionRuntime: agent "${targetAgentId}" not found`);
     }
 
-    const oldEntry = this._sessions.get(sessionPath);
+    const oldEntry = this._getSessionEntryByPath(sessionPath);
     if (oldEntry) {
       if (oldEntry.session?.isStreaming || oldEntry.session?.isCompacting || oldEntry._switching) {
         throw new Error("reloadSessionRuntime: session is busy");
       }
       await this._teardownSessionEntry(oldEntry, sessionPath, "reload");
-      this._sessions.delete(sessionPath);
+      this._deleteRuntimeValueForPath(this._sessions, sessionPath);
     }
-    this._hibernatedSessionMeta.delete(sessionPath);
+    this._deleteRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
 
     const memoryEnabled = typeof oldEntry?.memoryEnabled === "boolean"
       ? oldEntry.memoryEnabled
@@ -3112,7 +3723,7 @@ export class SessionCoordinator {
     if (this._isDeletedAgentSessionPath(sessionPath)) {
       throw new Error("ensureSessionLoaded: session belongs to a deleted agent");
     }
-    const existing = this._sessions.get(sessionPath);
+    const existing = this._getSessionEntryByPath(sessionPath);
     if (existing) {
       existing.lastTouchedAt = Date.now();
       return existing.session;
@@ -3156,7 +3767,7 @@ export class SessionCoordinator {
       this._sessionStarted = prevSessionStarted;
     }
 
-    const entry = this._sessions.get(sessionPath);
+    const entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) throw new Error(`ensureSessionLoaded: session not in cache after createSession`);
     if (entry.agentId !== targetAgentId) {
       throw new Error(`ensureSessionLoaded: restored agentId mismatch (${entry.agentId} !== ${targetAgentId})`);
@@ -3165,16 +3776,16 @@ export class SessionCoordinator {
   }
 
   isSessionStreaming(sessionPath: any) {
-    return this._prePromptAbortControllers.has(sessionPath)
+    return this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)
       || !!this.getSessionByPath(sessionPath)?.isStreaming;
   }
 
   isSessionSwitching(sessionPath: any) {
-    return !!this._sessions.get(sessionPath)?._switching;
+    return !!this._getSessionEntryByPath(sessionPath)?._switching;
   }
 
-  async abortSessionByPath(sessionPath: any) {
-    return this.abortSession(sessionPath);
+  async abortSessionByPath(sessionPath: any, options: any = {}) {
+    return this.abortSession(sessionPath, options);
   }
 
   async listSessions(options: any = {}) {
@@ -3200,7 +3811,8 @@ export class SessionCoordinator {
         ]);
         const visibleSessions = [];
         for (const s of sessions) {
-          if (titles[s.path]) s.title = titles[s.path];
+          const title = this._sessionTitleFromMap(titles, s.path);
+          if (title) s.title = title;
           s.agentId = agent.id;
           s.agentName = agent.name;
           if (agent.agentDeleted) {
@@ -3211,23 +3823,37 @@ export class SessionCoordinator {
           }
           const sessKey = path.basename(s.path);
           const metaEntry = meta[sessKey];
-          const runtimeEntry = this._sessions.get(s.path) || this._hibernatedSessionMeta.get(s.path);
+          const manifest = this._resolveSessionManifestForPath(s.path);
+          const runtimeEntry = this._sessionFolderEntry(s.path);
           if (hasSessionPermissionModeFields(runtimeEntry)) {
             s.permissionMode = normalizeSessionPermissionMode(runtimeEntry);
           } else if (hasSessionPermissionModeFields(metaEntry)) {
             s.permissionMode = normalizeSessionPermissionMode(metaEntry);
+          } else if (manifest?.permissionModeSnapshot?.mode) {
+            s.permissionMode = normalizeSessionPermissionMode(manifest.permissionModeSnapshot.mode);
           }
           s.workMode = (runtimeEntry?.workMode ?? metaEntry?.workMode) === true;
-          s.pinnedAt = typeof metaEntry?.pinnedAt === "string" ? metaEntry.pinnedAt : null;
+          s.pinnedAt = typeof manifest?.pinnedAt === "string"
+            ? manifest.pinnedAt
+            : (typeof metaEntry?.pinnedAt === "string" ? metaEntry.pinnedAt : null);
           s.projectId = typeof metaEntry?.projectId === "string" && metaEntry.projectId.trim()
             ? metaEntry.projectId.trim()
             : null;
           const workspaceMount = normalizeSessionWorkspaceMount(metaEntry);
           s.workspaceMountId = workspaceMount?.mountId || null;
           s.workspaceLabel = workspaceMount?.label || null;
-          const pluginMeta = metaEntry?.plugin && typeof metaEntry.plugin === "object"
+          const runtimePluginMeta = normalizePluginSessionMeta({
+            ownerPluginId: runtimeEntry?.ownerPluginId,
+            sessionKind: runtimeEntry?.sessionKind,
+            sessionVisibility: runtimeEntry?.sessionVisibility,
+          });
+          const manifestPluginMeta = manifest?.plugin && typeof manifest.plugin === "object"
+            ? manifest.plugin
+            : null;
+          const legacyPluginMeta = metaEntry?.plugin && typeof metaEntry.plugin === "object"
             ? metaEntry.plugin
             : null;
+          const pluginMeta = runtimePluginMeta || manifestPluginMeta || legacyPluginMeta;
           s.ownerPluginId = typeof pluginMeta?.ownerPluginId === "string" ? pluginMeta.ownerPluginId : null;
           s.sessionKind = typeof pluginMeta?.kind === "string" ? pluginMeta.kind : null;
           s.visibility = typeof pluginMeta?.visibility === "string" ? pluginMeta.visibility : "public";
@@ -3241,6 +3867,7 @@ export class SessionCoordinator {
             s.modelProvider = null;
           }
           if (!sessionMatchesListOptions(s, options)) continue;
+          s.sessionId = manifest?.sessionId || this._sessionIdForPath(s.path);
           visibleSessions.push(s);
         }
         return visibleSessions;
@@ -3254,13 +3881,14 @@ export class SessionCoordinator {
 
     const currentPath = this.currentSessionPath;
     const projectedPaths = new Set(allSessions.map((s) => s.path));
-    for (const [sessionPath, entry] of this._sessions) {
+    for (const [sessionKey, entry] of this._sessions) {
+      const sessionPath = this._sessionPathForEntry(entry, sessionKey);
       if (projectedPaths.has(sessionPath)) continue;
       if (!isActiveSessionPath(sessionPath, this._d.agentsDir)) continue;
       const shouldExpose =
         entry.visibleInSessionList === true
         || entry.session?.isStreaming === true
-        || this._prePromptAbortControllers.has(sessionPath)
+        || this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)
         || (sessionPath === currentPath && this._sessionStarted);
       if (!shouldExpose) continue;
 
@@ -3286,6 +3914,7 @@ export class SessionCoordinator {
         visibility: entry.sessionVisibility || "public",
         workspaceMountId: entry.workspaceMountId || null,
         workspaceLabel: entry.workspaceLabel || null,
+        sessionId: entry.sessionId || this._sessionIdForPath(sessionPath),
         pinnedAt: null,
         projectId: null,
         ...(isDeleted ? {
@@ -3311,15 +3940,24 @@ export class SessionCoordinator {
       : this._d.getAgent().sessionDir;
     const titlePath = path.join(sessionDir, "session-titles.json");
     const titles = await this._loadSessionTitlesFor(sessionDir);
-    titles[sessionPath] = title;
+    const titleKey = this._sessionTitleKeyForPath(sessionPath);
+    if (titleKey !== sessionPath) {
+      delete titles[sessionPath];
+      delete titles[path.basename(sessionPath)];
+    }
+    titles[titleKey] = title;
     await fsp.writeFile(titlePath, JSON.stringify(titles, null, 2), "utf-8");
     // 更新缓存
     this._titlesCache.set(sessionDir, { titles: { ...titles }, ts: Date.now() });
   }
 
-  async setSessionPinned(sessionPath: any, pinned: any) {
+  async setSessionPinned(sessionRef: any, pinned: any) {
+    const { sessionId, sessionPath, manifest } = this._resolveSessionWriteRef(sessionRef, "setSessionPinned");
     const pinnedAt = pinned ? new Date().toISOString() : null;
     await this.writeSessionMeta(sessionPath, { pinnedAt });
+    if (manifest || sessionId) {
+      this._sessionManifestStore.setPinnedAt((manifest?.sessionId || sessionId), pinnedAt);
+    }
     await this._verifySessionPinnedState(sessionPath, pinnedAt);
     this._emitSessionMetadataUpdated(sessionPath, { pinnedAt });
     return pinnedAt;
@@ -3327,11 +3965,12 @@ export class SessionCoordinator {
 
   async setSessionPluginMeta(sessionPath: any, patch: any = {}) {
     if (!sessionPath) throw new Error("sessionPath is required");
-    const entry = this._sessions.get(sessionPath) || null;
+    const entry = this._getSessionEntryByPath(sessionPath) || null;
+    const manifest = this._resolveSessionManifestForPath(sessionPath);
     let current: any = {
-      ownerPluginId: entry?.ownerPluginId || null,
-      kind: entry?.sessionKind || null,
-      visibility: entry?.sessionVisibility || "public",
+      ownerPluginId: manifest?.plugin?.ownerPluginId || entry?.ownerPluginId || null,
+      kind: manifest?.plugin?.kind || entry?.sessionKind || null,
+      visibility: manifest?.plugin?.visibility || entry?.sessionVisibility || "public",
     };
     try {
       const metaPath = this._sessionMetaPathFor(sessionPath);
@@ -3355,6 +3994,9 @@ export class SessionCoordinator {
       sessionVisibility: patch.visibility ?? patch.sessionVisibility ?? current.visibility,
     }) || { ownerPluginId: null, kind: null, visibility: "public" };
     await this.writeSessionMeta(sessionPath, { plugin });
+    if (manifest) {
+      this._sessionManifestStore.setPlugin(manifest.sessionId, plugin);
+    }
     if (entry) {
       entry.ownerPluginId = plugin.ownerPluginId || null;
       entry.sessionKind = plugin.kind || null;
@@ -3369,7 +4011,7 @@ export class SessionCoordinator {
     const sessKey = path.basename(sessionPath);
     let meta = {};
     try {
-      meta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
+      meta = await this._readMetaCached(metaPath);
     } catch (err) {
       if (expectedPinnedAt === null && err.code === "ENOENT") return;
       throw new Error(`setSessionPinned: verify failed for ${sessKey}: ${err.message}`);
@@ -3399,8 +4041,19 @@ export class SessionCoordinator {
     }
     let titles;
     try { titles = JSON.parse(raw); } catch { return; }
-    if (!(sessionPath in titles)) return;
-    delete titles[sessionPath];
+    const keys = [
+      this._sessionTitleKeyForPath(sessionPath),
+      sessionPath,
+      path.basename(sessionPath),
+    ].filter(Boolean);
+    let changed = false;
+    for (const key of [...new Set(keys)]) {
+      if (Object.prototype.hasOwnProperty.call(titles, key)) {
+        delete titles[key];
+        changed = true;
+      }
+    }
+    if (!changed) return;
     await fsp.writeFile(titlePath, JSON.stringify(titles, null, 2), "utf-8");
     this._titlesCache.set(sessionDir, { titles: { ...titles }, ts: Date.now() });
   }
@@ -3418,7 +4071,7 @@ export class SessionCoordinator {
       try { files = await fsp.readdir(archDir); } catch { return []; }
       const titles = await this._loadSessionTitlesFor(sessionDir).catch(() => ({}));
       const rows = await Promise.all(files
-        .filter((f) => f.endsWith(".jsonl"))
+        .filter(isSessionJsonlFilename)
         .map(async (f) => {
           const full = path.join(archDir, f);
           try {
@@ -3426,7 +4079,7 @@ export class SessionCoordinator {
             const activeKey = path.join(sessionDir, f);
             return {
               path: full,
-              title: titles[activeKey] || null,
+              title: this._sessionTitleFromMap(titles, full, [activeKey]) || null,
               archivedAt: stat.mtime.toISOString(),
               sizeBytes: stat.size,
               agentId: agent.id,
@@ -3458,7 +4111,8 @@ export class SessionCoordinator {
       try {
         const dirTitles = await this._loadSessionTitlesFor(dir);
         for (const sp of sessionPaths) {
-          if (dirTitles[sp]) titles[sp] = dirTitles[sp];
+          const title = this._sessionTitleFromMap(dirTitles, sp);
+          if (title) titles[sp] = title;
         }
       } catch {
         // titles 可选：某个目录的 session-titles.json 缺失/损坏时，该目录下路径保持预设的 null。
@@ -3491,8 +4145,15 @@ export class SessionCoordinator {
       return cached.data;
     }
     try {
+      const stat = await fsp.stat(metaPath);
+      if (stat.size > SESSION_META_INDEX_MAX_BYTES) {
+        const compacted = await this._compactOversizedSessionMeta(metaPath);
+        const data = await this._hydrateSessionMetaPayloads(metaPath, compacted);
+        this._metaCache.set(metaPath, { data, ts: Date.now() });
+        return data;
+      }
       const raw = await fsp.readFile(metaPath, "utf-8");
-      const data = JSON.parse(raw);
+      const data = await this._hydrateSessionMetaPayloads(metaPath, JSON.parse(raw));
       this._metaCache.set(metaPath, { data, ts: Date.now() });
       return data;
     } catch {
@@ -3678,12 +4339,7 @@ export class SessionCoordinator {
 
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        let meta = {};
-        try {
-          meta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
-        } catch {
-          // file missing or parse error → start fresh
-        }
+        const meta = await this._readSessionMetaIndexForWrite(metaPath);
         meta[sessKey] = {
           ...meta[sessKey],
           ...partial,
@@ -3691,8 +4347,10 @@ export class SessionCoordinator {
         // model is owned by PI SDK via session JSONL — keep session-meta clean
         delete meta[sessKey].model;
         delete meta[sessKey].modelId;
+        meta[sessKey] = await this._externalizeSessionMetaPayloads(metaPath, sessKey, meta[sessKey]);
         await fsp.writeFile(metaPath, JSON.stringify(meta, null, 2));
         this.invalidateMetaCache(metaPath);
+        this._writeSessionCapabilitySnapshot(sessionPath, partial);
         return;
       } catch (err) {
         if (attempt === 0) {
@@ -3704,6 +4362,130 @@ export class SessionCoordinator {
         }
       }
     }
+  }
+
+  _isSessionMetaPayloadRef(value: any, field?: any) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    if (value.kind !== "session-meta-payload") return false;
+    if (field && value.field !== field) return false;
+    return typeof value.path === "string" && value.path.length > 0;
+  }
+
+  _sessionMetaPayloadRelativePath(sessKey: any, field: any) {
+    return path.join(SESSION_META_PAYLOAD_DIR, `${encodeURIComponent(sessKey)}.${field}.json`);
+  }
+
+  _sessionMetaPayloadAbsolutePath(metaPath: any, refPath: any) {
+    return path.join(path.dirname(metaPath), refPath);
+  }
+
+  async _readSessionMetaIndexForWrite(metaPath: any) {
+    try {
+      const stat = await fsp.stat(metaPath);
+      if (stat.size > SESSION_META_INDEX_MAX_BYTES) {
+        return await this._compactOversizedSessionMeta(metaPath);
+      }
+    } catch (err) {
+      if (err?.code !== "ENOENT") {
+        log.warn(`session-meta stat failed for write: ${err.message}`);
+      }
+      return {};
+    }
+    try {
+      return JSON.parse(await fsp.readFile(metaPath, "utf-8"));
+    } catch {
+      return {};
+    }
+  }
+
+  async _quarantineOversizedSessionMeta(metaPath: any) {
+    try {
+      const backupPath = path.join(
+        path.dirname(metaPath),
+        `session-meta.oversized.${Date.now()}.json`,
+      );
+      await fsp.rename(metaPath, backupPath);
+      this.invalidateMetaCache(metaPath);
+      log.warn(`oversized session-meta quarantined: ${backupPath}`);
+    } catch (err) {
+      if (err?.code !== "ENOENT") {
+        log.warn(`oversized session-meta quarantine failed: ${err.message}`);
+      }
+    }
+  }
+
+  async _compactOversizedSessionMeta(metaPath: any) {
+    let data;
+    try {
+      data = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
+    } catch {
+      await this._quarantineOversizedSessionMeta(metaPath);
+      return {};
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      await this._quarantineOversizedSessionMeta(metaPath);
+      return {};
+    }
+    const compacted: any = {};
+    for (const [sessKey, entry] of Object.entries(data)) {
+      compacted[sessKey] = await this._externalizeSessionMetaPayloads(metaPath, sessKey, entry);
+    }
+    await fsp.writeFile(metaPath, JSON.stringify(compacted, null, 2));
+    this.invalidateMetaCache(metaPath);
+    log.warn(`oversized session-meta compacted with payload sidecars: ${metaPath}`);
+    return compacted;
+  }
+
+  async _externalizeSessionMetaPayloads(metaPath: any, sessKey: any, entry: any) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const next = { ...entry };
+    for (const field of SESSION_META_PAYLOAD_FIELDS) {
+      const value = next[field];
+      if (value === undefined || this._isSessionMetaPayloadRef(value, field)) continue;
+      let encoded = "";
+      try {
+        encoded = JSON.stringify(value);
+      } catch {
+        continue;
+      }
+      if (Buffer.byteLength(encoded, "utf-8") <= SESSION_META_PAYLOAD_INLINE_LIMIT_BYTES) continue;
+      const relPath = this._sessionMetaPayloadRelativePath(sessKey, field);
+      const absPath = this._sessionMetaPayloadAbsolutePath(metaPath, relPath);
+      await fsp.mkdir(path.dirname(absPath), { recursive: true });
+      await fsp.writeFile(absPath, encoded, "utf-8");
+      next[field] = {
+        kind: "session-meta-payload",
+        version: 1,
+        field,
+        path: relPath,
+      };
+    }
+    return next;
+  }
+
+  async _hydrateSessionMetaPayloads(metaPath: any, data: any) {
+    if (!data || typeof data !== "object") return {};
+    const hydrated = {};
+    for (const [sessKey, entry] of Object.entries(data)) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        hydrated[sessKey] = entry;
+        continue;
+      }
+      const next = { ...(entry as any) };
+      for (const field of SESSION_META_PAYLOAD_FIELDS) {
+        const ref = next[field];
+        if (!this._isSessionMetaPayloadRef(ref, field)) continue;
+        try {
+          const raw = await fsp.readFile(this._sessionMetaPayloadAbsolutePath(metaPath, ref.path), "utf-8");
+          next[field] = JSON.parse(raw);
+        } catch (err) {
+          log.warn(`session-meta payload read failed for ${sessKey}/${field}: ${err.message}`);
+          delete next[field];
+        }
+      }
+      hydrated[sessKey] = next;
+    }
+    return hydrated;
   }
 
   _sessionMetaPathFor(sessionPath: any) {
@@ -3729,7 +4511,7 @@ export class SessionCoordinator {
     const sessionFileName = path.basename(sessionPath);
     const metaPath = path.join(agent.sessionDir, "session-meta.json");
     try {
-      const meta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
+      const meta = await this._readMetaCached(metaPath);
       if (Array.isArray(meta?.[sessionFileName]?.toolNames)) return;
     } catch (err) {
       if (err.code !== "ENOENT") {
@@ -3871,7 +4653,8 @@ export class SessionCoordinator {
    *   toolFilter, builtinFilter, extraCustomTools, signal,
    *   fileReadSessionPaths (string[] = parent session SessionFile scopes inherited as read-only),
    *   subagentContext (true = 走 subagent 专用 prompt：跳过记忆三段和团队名单),
-   *   allowHumanApproval (false = 后台执行遇到人工确认请求时快速返回未批准),
+   *   approvalPolicy ("deny_on_prompt" = 后台执行遇到人工确认请求时返回结构化 unavailable),
+   *   allowHumanApproval (false = 兼容字段，等价于 approvalPolicy deny_on_prompt),
    *   emitEvents (true 时将 session 事件转发到 EventBus),
    *   onSessionReady (sessionPath => void) 回调，session 创建后、prompt 执行前触发
    */
@@ -3999,6 +4782,9 @@ export class SessionCoordinator {
           getPermissionMode: () => execPermissionMode,
           permissionContext: { isSubagent: !!opts.subagentContext },
           allowHumanApproval: opts.allowHumanApproval !== false,
+          ...(opts.approvalPolicy ? { approvalPolicy: opts.approvalPolicy } : {}),
+          ...(opts.bridgeContext ? { bridgeContext: opts.bridgeContext } : {}),
+          ...(opts.notificationContext ? { notificationContext: opts.notificationContext } : {}),
         },
       );
 
@@ -4104,8 +4890,14 @@ export class SessionCoordinator {
         });
       }
 
-      // 通知调用方 session 已就绪（subagent 用它来后补 streamKey）
-      try { opts.onSessionReady?.(childSessionPath); } catch (err) { log.warn(`isolated onSessionReady callback failed: ${err?.message}`); }
+      const readyChildSessionId = childSessionPath ? this._sessionIdForPath(childSessionPath) : null;
+      // 通知调用方 session 已就绪（subagent 用 path 后补 streamKey；workflow 额外消费稳定 sessionId）
+      try {
+        opts.onSessionReady?.(childSessionPath, {
+          ...(readyChildSessionId ? { sessionId: readyChildSessionId } : {}),
+          sessionPath: childSessionPath,
+        });
+      } catch (err) { log.warn(`isolated onSessionReady callback failed: ${err?.message}`); }
 
       let replyText = "";
       let finalAssistantText = "";
@@ -4117,10 +4909,15 @@ export class SessionCoordinator {
         const parentSessionPath = typeof opts.parentSessionPath === "string" && opts.parentSessionPath.trim()
           ? opts.parentSessionPath
           : null;
+        const parentSessionId = typeof opts.parentSessionId === "string" && opts.parentSessionId.trim()
+          ? opts.parentSessionId.trim()
+          : (parentSessionPath ? this._sessionIdForPath(parentSessionPath) : null);
+        const childSessionId = childSessionPath ? this._sessionIdForPath(childSessionPath) : null;
         recordAssistantUsage({
           ledger: this._d.getUsageLedger?.(),
           event,
           sessionPath: childSessionPath,
+          sessionId: childSessionId,
           agentId: targetAgent.id,
           model: execModel,
           resolveModel: (ref) => findModel(this._d.getModels?.()?.availableModels, ref.id, ref.provider),
@@ -4133,6 +4930,7 @@ export class SessionCoordinator {
               actor: {
                 kind: "subagent",
                 agentId: targetAgent.id || null,
+                ...(childSessionId ? { sessionId: childSessionId } : {}),
                 sessionPath: childSessionPath,
                 taskId: opts.subagentTaskId || null,
                 threadId: opts.subagentThreadId || null,
@@ -4142,6 +4940,7 @@ export class SessionCoordinator {
             ...(parentSessionPath ? {
               parent: {
                 kind: "session",
+                ...(parentSessionId ? { sessionId: parentSessionId } : {}),
                 sessionPath: parentSessionPath,
               },
             } : {}),
@@ -4150,8 +4949,10 @@ export class SessionCoordinator {
             ? {
                 kind: "session",
                 agentId: this._d.agentIdFromSessionPath?.(parentSessionPath) || null,
+                ...(parentSessionId ? { sessionId: parentSessionId } : {}),
                 sessionPath: parentSessionPath,
                 childAgentId: opts.subagentContext ? targetAgent.id || null : undefined,
+                childSessionId: opts.subagentContext ? childSessionId || undefined : undefined,
                 childSessionPath: opts.subagentContext ? childSessionPath : undefined,
                 taskId: opts.subagentContext ? opts.subagentTaskId || null : undefined,
                 threadId: opts.subagentContext ? opts.subagentThreadId || null : undefined,

@@ -10,46 +10,18 @@ describe('MessageActions layout', () => {
     );
   }
 
-  it('anchors the select checkbox group to the lower right of the message block', () => {
+  it('uses inline footer actions instead of the old hover card action rail', () => {
     const css = readChatCss();
-    const block = css.match(/\.msgActions\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
 
-    expect(block).toMatch(/bottom:\s*4px/);
-    expect(block).toMatch(/right:\s*4px/);
-    expect(block).not.toMatch(/top:\s*4px/);
-  });
-
-  it('shows only the checkbox on message hover and keeps the action card scoped to its own hotspot', () => {
-    const css = readChatCss();
-    const actionsBlock = css.match(/\.msgActions\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
-    const hotspotBlock = css.match(/\.msgActions::before\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
-    const actionsHoverRule = css.match(/\.messageGroupAssistant:hover \.msgActions,\s*\.messageGroupUser:hover \.msgActions\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
-    const popoverHoverRule = css.match(/\.msgActions:hover \.msgActionsPopover\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
-    const popoverBlock = css.match(/\.msgActionsPopover\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
-
-    expect(actionsBlock).toMatch(/--msg-actions-gap:\s*6px/);
-    expect(actionsBlock).toMatch(/--msg-actions-hotspot-width:\s*78px/);
-    expect(hotspotBlock).toMatch(/right:\s*100%/);
-    expect(hotspotBlock).toMatch(/width:\s*calc\(var\(--msg-actions-hotspot-width\)\s*\+\s*var\(--msg-actions-gap\)\)/);
-    expect(hotspotBlock).toMatch(/pointer-events:\s*auto/);
-    expect(actionsHoverRule).toMatch(/opacity:\s*1/);
-    expect(popoverHoverRule).toMatch(/opacity:\s*1/);
-    expect(popoverHoverRule).toMatch(/pointer-events:\s*auto/);
-    expect(popoverBlock).toMatch(/right:\s*calc\(100%\s*\+\s*var\(--msg-actions-gap\)\)/);
-    expect(popoverBlock).toMatch(/width:\s*max-content/);
-    expect(popoverBlock).toMatch(/min-width:\s*0/);
-    expect(popoverBlock).toMatch(/pointer-events:\s*none/);
-    expect(popoverBlock).toMatch(/background:\s*var\(--bg-card,\s*#fff\)/);
-    expect(css).not.toMatch(/messageGroupAssistant:hover \.msgActionsPopover/);
-    expect(css).not.toMatch(/messageGroupUser:hover \.msgActionsPopover/);
-    expect(css).not.toMatch(/\.msgActions:focus-within \.msgActionsPopover/);
-    expect(css).not.toMatch(/\.msgActionsPopover:hover/);
+    expect(css).not.toMatch(/\.msgActions\s*\{/);
+    expect(css).not.toMatch(/\.msgActionsPopover/);
+    expect(css).not.toMatch(/--msg-actions/);
     expect(css).not.toMatch(/--msg-actions-popover-width/);
   });
 
-  it('keeps active message action styling when the button is hovered', () => {
+  it('keeps active footer action styling when the button is hovered', () => {
     const css = readChatCss();
-    const block = css.match(/\.msgActionBtnActive:hover\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
+    const block = css.match(/\.messageFooterBtnActive:hover\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
 
     expect(block).toMatch(/color:\s*var\(--accent\)\s*!important/);
     expect(block).toMatch(/background:\s*rgba\(var\(--accent-rgb\),\s*0\.16\)/);

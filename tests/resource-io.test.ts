@@ -58,6 +58,40 @@ describe("ResourceIO v0", () => {
     });
   });
 
+  it("stats a SessionFile ref by sessionId when the path locator moved", async () => {
+    const { sessionPath, pluginFile } = makeTree();
+    const movedPath = path.join(path.dirname(sessionPath), "moved.jsonl");
+    const sessionId = "sess_resource_io";
+    const resolveSessionFile = vi.fn(() => ({
+      id: "sf_cover",
+      fileId: "sf_cover",
+      sessionId,
+      sessionPath: movedPath,
+      filePath: pluginFile,
+      realPath: pluginFile,
+      filename: "cover-source.png",
+      label: "cover-source.png",
+      mime: "image/png",
+      kind: "image",
+      size: 11,
+      status: "available",
+    }));
+
+    const stat = await statFileRef(
+      { type: "session_file", fileId: "sf_cover", sessionId },
+      { resolveSessionFile },
+    );
+
+    expect(resolveSessionFile).toHaveBeenCalledWith("sf_cover", { sessionId });
+    expect(stat).toMatchObject({
+      type: "session_file",
+      fileId: "sf_cover",
+      filename: "cover-source.png",
+      mime: "image/png",
+      kind: "image",
+    });
+  });
+
   it("copies a SessionFile into an allowed local workspace and registers the copy as external", async () => {
     const { sessionPath, pluginFile, workspace } = makeTree();
     const resolveSessionFile = vi.fn(() => ({
@@ -106,6 +140,56 @@ describe("ResourceIO v0", () => {
       filePath: targetPath,
       sessionFile: { fileId: "sf_copied", storageKind: "external" },
     });
+  });
+
+  it("copies and registers SessionFile refs with sessionId ownership", async () => {
+    const { sessionPath, pluginFile, workspace } = makeTree();
+    const sessionId = "sess_resource_copy";
+    const movedPath = path.join(path.dirname(sessionPath), "moved.jsonl");
+    const resolveSessionFile = vi.fn(() => ({
+      id: "sf_cover",
+      fileId: "sf_cover",
+      sessionId,
+      sessionPath: movedPath,
+      filePath: pluginFile,
+      realPath: pluginFile,
+      filename: "cover-source.png",
+      label: "cover-source.png",
+      status: "available",
+    }));
+    const registerSessionFile = vi.fn(({ sessionId, sessionPath, filePath, label, origin, operation, storageKind }) => ({
+      id: "sf_copied",
+      fileId: "sf_copied",
+      sessionId,
+      sessionPath,
+      filePath,
+      label,
+      origin,
+      operation,
+      storageKind,
+    }));
+
+    const result = await copyFileRefToPath({
+      from: { type: "session_file", fileId: "sf_cover", sessionId },
+      targetDir: "assets",
+      filename: "cover.png",
+      cwd: workspace,
+      allowedRoots: [workspace],
+      sessionId,
+      sessionPath: movedPath,
+      resolveSessionFile,
+      registerSessionFile,
+    } as any);
+
+    const targetPath = path.join(workspace, "assets", "cover.png");
+    expect(resolveSessionFile).toHaveBeenCalledWith("sf_cover", { sessionId });
+    expect(registerSessionFile).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId,
+      sessionPath: movedPath,
+      filePath: targetPath,
+      origin: "session_file_copy",
+    }));
+    expect(result.sessionFile).toMatchObject({ fileId: "sf_copied", sessionId });
   });
 
   it("refuses to copy outside allowed roots", async () => {

@@ -90,6 +90,19 @@ describe("DeferredResultStore", () => {
       expect(pending).toHaveLength(1);
       expect(pending[0].taskId).toBe("t1");
     });
+
+    it("uses sessionId as the stable identity when a legacy path changes", () => {
+      store.defer("t1", {
+        sessionId: "sess_deferred",
+        sessionPath: "/s/old.jsonl",
+      }, { type: "image" });
+
+      expect(store.listPending({
+        sessionId: "sess_deferred",
+        sessionPath: "/s/new.jsonl",
+      }).map((task) => task.taskId)).toEqual(["t1"]);
+      expect(store.listPending("/s/new.jsonl")).toEqual([]);
+    });
   });
 
   describe("clearBySession", () => {
@@ -101,6 +114,26 @@ describe("DeferredResultStore", () => {
       expect(store.query("t1")).toBeNull();
       expect(store.query("t2")).toBeNull();
       expect(store.query("t3")).not.toBeNull();
+    });
+
+    it("clears pending tasks by resolved sessionId after the legacy path moves", () => {
+      const resolvingStore = new (DeferredResultStore as any)(mockBus, null, {
+        getSessionIdForPath: (sessionPath: string) => (
+          sessionPath === "/s/old.jsonl" || sessionPath === "/s/moved.jsonl"
+            ? "sess_deferred_resolved"
+            : null
+        ),
+      });
+
+      resolvingStore.defer("t1", "/s/old.jsonl", {});
+      resolvingStore.defer("t2", "/s/other.jsonl", {});
+
+      expect(resolvingStore.listPending("/s/moved.jsonl").map((task) => task.taskId)).toEqual(["t1"]);
+      resolvingStore.clearBySession("/s/moved.jsonl");
+
+      expect(resolvingStore.query("t1")).toBeNull();
+      expect(resolvingStore.query("t2")).not.toBeNull();
+      resolvingStore.dispose();
     });
   });
 
@@ -129,6 +162,27 @@ describe("DeferredResultStore", () => {
         status: "pending",
         delivered: false,
       });
+    });
+
+    it("suppresses by sessionId before legacy path", () => {
+      store.defer("pending", {
+        sessionId: "sess_deferred",
+        sessionPath: "/s/old.jsonl",
+      }, {});
+      store.defer("other", "/s/new.jsonl", {});
+
+      const result = store.suppressBySession({
+        sessionId: "sess_deferred",
+        sessionPath: "/s/new.jsonl",
+      }, "session archived");
+
+      expect(result).toMatchObject({ aborted: 1, suppressed: 0 });
+      expect(store.query("pending")).toMatchObject({
+        status: "aborted",
+        deliverySuppressed: true,
+      });
+      expect(store.query("other")).toMatchObject({ status: "pending" });
+      expect(store.query("other")).not.toHaveProperty("deliverySuppressed");
     });
   });
 

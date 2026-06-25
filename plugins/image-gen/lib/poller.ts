@@ -21,6 +21,29 @@ const TWO_MINUTES = 2 * 60 * 1000;
 const TEN_MINUTES = 10 * 60 * 1000;
 const MAX_CONSECUTIVE_ERRORS = 5;
 
+function callLogger(logger, level, args, fallbackLevel = null) {
+  const fn = typeof logger?.[level] === "function"
+    ? logger[level]
+    : fallbackLevel && typeof logger?.[fallbackLevel] === "function"
+      ? logger[fallbackLevel]
+      : null;
+  if (!fn) return;
+  try {
+    fn.call(logger, ...args);
+  } catch {
+    // Logging must never break media task recovery, cancellation, or polling.
+  }
+}
+
+function createSafeLogger(logger) {
+  return {
+    log: (...args) => callLogger(logger, "log", args, "info"),
+    info: (...args) => callLogger(logger, "info", args, "log"),
+    warn: (...args) => callLogger(logger, "warn", args),
+    error: (...args) => callLogger(logger, "error", args),
+  };
+}
+
 /**
  * Decide whether this tick should trigger a real adapter query for a task.
  *
@@ -32,6 +55,31 @@ export function shouldCheckThisTick(ageMs, tickCount) {
   if (ageMs < TWO_MINUTES) return true;               // < 2 min: every tick
   if (ageMs < TEN_MINUTES) return tickCount % 3 === 0; // 2-10 min: every 3rd
   return tickCount % 6 === 0;                           // 10 min+: every 6th
+}
+
+function textOrNull(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function taskSessionTarget(task) {
+  const rawRef = task?.sessionRef && typeof task.sessionRef === "object" ? task.sessionRef : null;
+  const sessionId = textOrNull(task?.sessionId) || textOrNull(rawRef?.sessionId);
+  const sessionPath =
+    textOrNull(task?.sessionPath)
+    || textOrNull(rawRef?.sessionPath)
+    || textOrNull(rawRef?.path);
+  const legacySessionPath =
+    textOrNull(task?.legacySessionPath)
+    || textOrNull(rawRef?.legacySessionPath)
+    || (sessionId && sessionPath ? sessionPath : null);
+  const sessionRef = sessionId
+    ? {
+      sessionId,
+      ...(sessionPath ? { sessionPath } : {}),
+      ...(legacySessionPath ? { legacySessionPath } : {}),
+    }
+    : null;
+  return { sessionId, sessionPath, legacySessionPath, sessionRef };
 }
 
 export class Poller {
@@ -64,7 +112,7 @@ export class Poller {
     this._bus          = bus;
     this._dataDir      = dataDir || dirname(generatedDir);
     this._generatedDir = generatedDir;
-    this._log          = log;
+    this._log          = createSafeLogger(log);
     this._registerSessionFile = registerSessionFile || null;
 
     /** @type {Set<string>} taskIds being tracked */
@@ -144,10 +192,14 @@ export class Poller {
       }
       this._active.add(task.taskId);
       if (isResponseDelivery(task)) continue;
+      const target = taskSessionTarget(task);
       // Re-register in DeferredResultStore so resolve/fail notifications work after restart
       this._bus.request("deferred:register", {
         taskId: task.taskId,
-        sessionPath: task.sessionPath,
+        ...(target.sessionId ? { sessionId: target.sessionId } : {}),
+        ...(target.sessionPath ? { sessionPath: target.sessionPath } : {}),
+        ...(target.legacySessionPath ? { legacySessionPath: target.legacySessionPath } : {}),
+        ...(target.sessionRef ? { sessionRef: target.sessionRef } : {}),
         meta: {
           type: task.type === "video" ? "video-generation" : "image-generation",
           mediaKind: task.type === "video" ? "video" : "image",
@@ -162,7 +214,10 @@ export class Poller {
       this._bus.request("task:register", {
         taskId: task.taskId,
         type: "media-generation",
-        parentSessionPath: task.sessionPath,
+        ...(target.sessionId ? { parentSessionId: target.sessionId } : {}),
+        ...(target.sessionPath ? { parentSessionPath: target.sessionPath } : {}),
+        ...(target.legacySessionPath ? { legacySessionPath: target.legacySessionPath } : {}),
+        ...(target.sessionRef ? { parentSessionRef: target.sessionRef } : {}),
         meta: {
           type: task.type === "video" ? "video-generation" : "image-generation",
           ...(task.deliveryTarget ? { deliveryTarget: task.deliveryTarget } : {}),
@@ -216,13 +271,16 @@ export class Poller {
 
   _registerGeneratedFiles(task, files) {
     if (isResponseDelivery(task)) return [];
-    if (!this._registerSessionFile || !task?.sessionPath || !files?.length) return [];
+    const { sessionId, sessionPath, sessionRef } = taskSessionTarget(task);
+    if (!this._registerSessionFile || (!sessionId && !sessionPath) || !files?.length) return [];
     const sessionFiles = [];
     for (const file of files) {
       const filePath = pathJoin(this._generatedDir, file);
       try {
         const sessionFile = this._registerSessionFile({
-          sessionPath: task.sessionPath,
+          ...(sessionId ? { sessionId } : {}),
+          ...(sessionPath ? { sessionPath } : {}),
+          ...(sessionRef ? { sessionRef } : {}),
           filePath,
           label: file,
           origin: "plugin_output",
@@ -238,6 +296,7 @@ export class Poller {
 
   _emitTaskDone(task, files, dims, sessionFiles) {
     const latest = this._store.get(task.taskId) || task;
+    const target = taskSessionTarget(latest);
     this._bus.emit({
       type: "media-gen:task-done",
       taskId: task.taskId,
@@ -253,7 +312,8 @@ export class Poller {
       protocolId: latest.protocolId || null,
       metadata: latest.metadata || null,
       task: latest,
-    }, task.sessionPath || null);
+      ...(target.sessionId ? { sessionId: target.sessionId, sessionRef: target.sessionRef } : {}),
+    }, target.sessionPath || null);
   }
 
   _tick() {
@@ -338,12 +398,14 @@ export class Poller {
       return;
     }
 
-    const ctx = {
+    const baseCtx = {
       dataDir: this._dataDir,
       generatedDir: this._generatedDir,
       bus: this._bus,
       log: this._log,
+      task,
     };
+    const ctx = this._registry.createSubmitContextForAdapter?.(adapter, baseCtx) || baseCtx;
 
     let result;
     try {

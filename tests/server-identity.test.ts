@@ -221,6 +221,35 @@ describe("server identity loader", () => {
       .toThrow("default Studio ownerUserId must reference an existing user");
   });
 
+  it("repairs a local legacy default Studio owner link during startup ensure", async () => {
+    tmpDir = makeTmpDir();
+    writeValidIdentity(tmpDir, {
+      studios: {
+        studios: [{
+          studioId: "studio_test",
+          ownerUserId: "user_deleted",
+          label: "Test Studio",
+          kind: "personal",
+          storage: { provider: "legacy_hana_home", legacyRoot: true },
+          membershipModel: "single_user_implicit",
+          createdAt: "2026-05-09T00:00:00.000Z",
+          updatedAt: "2026-05-09T00:00:00.000Z",
+        }],
+      },
+    });
+    const { ensureLocalIdentityRegistries, loadServerIdentity } = await import("../core/server-identity.ts");
+
+    ensureLocalIdentityRegistries(tmpDir);
+
+    expect(loadServerIdentity(tmpDir)).toMatchObject({
+      userId: "user_test",
+      studioId: "studio_test",
+      studioLabel: "Test Studio",
+    });
+    const studios = JSON.parse(fs.readFileSync(path.join(tmpDir, "studios.json"), "utf-8"));
+    expect(studios.studios[0].ownerUserId).toBe("user_test");
+  });
+
   it("maps a legacy spaces.json registry into Studio identity for old data roots", async () => {
     tmpDir = makeTmpDir();
     writeJson(path.join(tmpDir, "server-node.json"), {

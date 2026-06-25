@@ -41,12 +41,28 @@ export function createAuthRoute(engine) {
 
   /** 进行中的 OAuth 流程 */
   const pendingFlows = new Map();
+  const pendingFlowByAuthKey = new Map();
+
+  function deletePendingFlow(sessionId) {
+    const flow = pendingFlows.get(sessionId);
+    if (flow?.authKey && pendingFlowByAuthKey.get(flow.authKey) === sessionId) {
+      pendingFlowByAuthKey.delete(flow.authKey);
+    }
+    pendingFlows.delete(sessionId);
+  }
+
+  function buildStartResponse(sessionId, url, authInstructions, usesCallbackServer) {
+    const resp: Record<string, any> = { sessionId, url };
+    if (authInstructions) resp.instructions = authInstructions;
+    if (usesCallbackServer) resp.polling = true;
+    return resp;
+  }
 
   // 定时清理超时的 pending flow（10 分钟未完成视为超时）
   const _flowCleanupTimer = setInterval(() => {
     const cutoff = Date.now() - 10 * 60 * 1000;
     for (const [k, v] of pendingFlows) {
-      if (v.createdAt < cutoff) pendingFlows.delete(k);
+      if (v.createdAt < cutoff) deletePendingFlow(k);
     }
   }, 60_000);
   _flowCleanupTimer.unref();
@@ -62,6 +78,29 @@ export function createAuthRoute(engine) {
     const { provider } = body;
     if (!provider) {
       return c.json({ error: "provider is required" }, 400);
+    }
+
+    // ProviderRegistry 的 plugin ID 可能和 Pi SDK 的 provider ID 不同（如 "openai-codex-oauth" → "openai-codex"）
+    const authKey = engine.providerRegistry?.getAuthJsonKey(provider) || provider;
+    const existingSessionId = pendingFlowByAuthKey.get(authKey);
+    const existingFlow = existingSessionId ? pendingFlows.get(existingSessionId) : null;
+    if (existingFlow?.result) {
+      deletePendingFlow(existingSessionId);
+    } else if (existingFlow) {
+      try {
+        const url = await existingFlow.urlPromise;
+        if (!existingFlow.response) {
+          existingFlow.response = buildStartResponse(
+            existingSessionId,
+            url,
+            existingFlow.authInstructions,
+            existingFlow.usesCallbackServer,
+          );
+        }
+        return c.json(existingFlow.response);
+      } catch (err) {
+        return c.json({ error: err.message }, 500);
+      }
     }
 
     const sessionId = crypto.randomUUID();
@@ -83,15 +122,26 @@ export function createAuthRoute(engine) {
     let authInstructions = null;
     let usesCallbackServer = false;
 
-    // ProviderRegistry 的 plugin ID 可能和 Pi SDK 的 provider ID 不同（如 "openai-codex-oauth" → "openai-codex"）
-    const authKey = engine.providerRegistry?.getAuthJsonKey(provider) || provider;
-
     // 检查 provider 是否使用本地回调服务器（如 OpenAI Codex）
     const providerObj = engine.authStorage.getOAuthProviders().find(p => p.id === authKey);
     if (providerObj?.usesCallbackServer) usesCallbackServer = true;
 
-    // 启动 OAuth（不 await，loginPromise 会异步 resolve）
-    const loginPromise = engine.authStorage.login(authKey, {
+    const flow: Record<string, any> = {
+      authKey,
+      resolveCode,
+      rejectCode,
+      loginPromise: null,
+      result: null,
+      response: null,
+      urlPromise,
+      authInstructions,
+      usesCallbackServer,
+      createdAt: Date.now(),
+    };
+    pendingFlows.set(sessionId, flow);
+    pendingFlowByAuthKey.set(authKey, sessionId);
+
+    const loginOptions: Record<string, any> = {
       onAuth: (info) => {
         // callback server 流程不需要给前端显示 instructions（那只是提示文本，不是 user_code）
         // 只有设备码流程才需要（instructions 是 user_code）
@@ -100,16 +150,25 @@ export function createAuthRoute(engine) {
         } else {
           authInstructions = info.instructions || null;
         }
+        flow.authInstructions = authInstructions;
         resolveUrl(info.url);
       },
       onPrompt: () => codePromise,
-    }).catch(err => {
+    };
+    if (usesCallbackServer) {
+      // Pi SDK 的 callback-server provider 会把 onManualCodeInput 与浏览器回调 race。
+      // Hana 的 timeout 通过 rejectCode 拒绝这个 promise，SDK 随后 cancelWait 并关闭本地 server。
+      loginOptions.onManualCodeInput = () => codePromise;
+    }
+
+    // 启动 OAuth（不 await，loginPromise 会异步 resolve）
+    const loginPromise = engine.authStorage.login(authKey, loginOptions).catch(err => {
       rejectUrl(err);
       throw err;
     });
+    flow.loginPromise = loginPromise;
 
     // 追踪 loginPromise 的结果（供 poll 端点使用）
-    const flow = { resolveCode, rejectCode, loginPromise, result: null, createdAt: Date.now() };
     loginPromise.then(() => {
       flow.result = { ok: true };
     }).catch(err => {
@@ -120,23 +179,22 @@ export function createAuthRoute(engine) {
 
     try {
       const url = await urlPromise;
-      pendingFlows.set(sessionId, flow);
 
       // 5 分钟超时
       const timer = setTimeout(() => {
         const f = pendingFlows.get(sessionId);
         if (f) {
           f.rejectCode(new Error("OAuth flow timed out"));
-          pendingFlows.delete(sessionId);
+          deletePendingFlow(sessionId);
         }
       }, 5 * 60 * 1000);
       timer.unref();
 
-      const resp: Record<string, any> = { sessionId, url };
-      if (authInstructions) resp.instructions = authInstructions;
-      if (usesCallbackServer) resp.polling = true;
+      const resp = buildStartResponse(sessionId, url, authInstructions, usesCallbackServer);
+      flow.response = resp;
       return c.json(resp);
     } catch (err) {
+      deletePendingFlow(sessionId);
       return c.json({ error: err.message }, 500);
     }
   });
@@ -157,7 +215,7 @@ export function createAuthRoute(engine) {
 
     try {
       await flow.loginPromise;
-      pendingFlows.delete(sessionId);
+      deletePendingFlow(sessionId);
 
       try {
         await engine.onProviderChanged();
@@ -167,7 +225,7 @@ export function createAuthRoute(engine) {
 
       return c.json({ ok: true });
     } catch (err) {
-      pendingFlows.delete(sessionId);
+      deletePendingFlow(sessionId);
       return c.json({ error: err.message }, 500);
     }
   });
@@ -187,7 +245,7 @@ export function createAuthRoute(engine) {
       return c.json({ status: "pending" });
     }
 
-    pendingFlows.delete(sessionId);
+    deletePendingFlow(sessionId);
 
     if (flow.result.ok) {
       try {

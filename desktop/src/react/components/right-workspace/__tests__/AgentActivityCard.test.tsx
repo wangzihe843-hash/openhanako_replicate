@@ -42,7 +42,7 @@ describe('AgentActivityCard', () => {
     mockState.currentSessionPath = '/s/a.jsonl';
     mockState.agentActivitiesBySession = {};
     const { container } = render(<AgentActivityCard />);
-    expect(container.querySelector('.jian-card')).toBeNull();
+    expect(container.querySelector('.universal-card')).toBeNull();
   });
 
   it('只渲染当前 session 的 subagent，running 优先排序', () => {
@@ -62,6 +62,27 @@ describe('AgentActivityCard', () => {
     expect(container.textContent).toContain('点评咖啡');
     expect(container.textContent).not.toContain('别的对话');
     expect(container.textContent).not.toContain('workflow-only');
+  });
+
+  it('reads current session activity from the session id bucket', () => {
+    mockState.currentSessionPath = '/s/a.jsonl';
+    mockState.currentSessionId = 'sess_a';
+    mockState.sessionLocatorsById = { sess_a: { path: '/s/a.jsonl' } };
+    mockState.agentActivitiesBySession = {
+      sess_a: [
+        mk({ id: 'd1', status: 'running', agentName: '小黎', summary: '点评咖啡', startedAt: 3000 }),
+      ],
+      '/s/a.jsonl': [
+        mk({ id: 'legacy', status: 'running', agentName: '旧桶', summary: '旧 path bucket', startedAt: 1000 }),
+      ],
+    };
+
+    const { container } = render(<AgentActivityCard />);
+
+    expect(container.textContent).toContain('点评咖啡');
+    expect(container.textContent).not.toContain('旧 path bucket');
+    mockState.currentSessionId = null;
+    mockState.sessionLocatorsById = {};
   });
 
   it('点击行展开实时流，sessionPath 传 childSessionPath 并对齐 preview entry', () => {
@@ -86,7 +107,7 @@ describe('AgentActivityCard', () => {
     mockState.currentSessionPath = null;
     mockState.agentActivitiesBySession = { '/s/a.jsonl': [mk({ id: 'x' })] };
     const { container } = render(<AgentActivityCard />);
-    expect(container.querySelector('.jian-card')).toBeNull();
+    expect(container.querySelector('.universal-card')).toBeNull();
     mockState.currentSessionPath = '/s/a.jsonl'; // 复位
   });
 });

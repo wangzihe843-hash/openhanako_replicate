@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createInputSlice, type InputSlice } from '../../stores/input-slice';
 
-type SliceState = InputSlice & { currentSessionPath?: string | null };
+type SliceState = InputSlice & {
+  currentSessionId?: string | null;
+  currentSessionPath?: string | null;
+  sessions?: Array<{ sessionId?: string | null; path?: string | null }>;
+  sessionLocatorsById?: Record<string, { path: string | null }>;
+};
 
 function makeSlice(initial?: Partial<SliceState>): SliceState {
   let state: SliceState;
@@ -99,6 +104,27 @@ describe('input-slice attachedFiles session ownership', () => {
     slice.clearAttachedFiles();
     expect(slice.attachedFilesBySession['/session/a']).toEqual([]);
     expect(slice.attachedFiles).toEqual([]);
+  });
+
+  it('当前会话有 sessionId 时，附件和草稿写入 sessionId-keyed 状态', () => {
+    const slice = makeSlice({
+      currentSessionId: 'sess_input',
+      currentSessionPath: '/session/moved',
+      sessions: [{ sessionId: 'sess_input', path: '/session/moved' }],
+      sessionLocatorsById: { sess_input: { path: '/session/moved' } },
+    });
+
+    slice.addAttachedFile({ path: '/tmp/a.txt', name: 'a.txt' });
+    slice.setDraft('/session/moved', 'hello');
+
+    expect(slice.attachedFilesBySession.sess_input).toEqual([
+      { path: '/tmp/a.txt', name: 'a.txt' },
+    ]);
+    expect(slice.attachedFilesBySession['/session/moved']).toBeUndefined();
+    expect(slice.drafts.sess_input).toBe('hello');
+
+    slice.clearDraft('/session/moved');
+    expect(slice.drafts.sess_input).toBeUndefined();
   });
 
   it('没有 currentSessionPath 时只更新当前输入区，不写 keyed 附件状态', () => {

@@ -226,7 +226,7 @@ export function debugLog() {
  * 同时写 console + 持久日志文件，统一替代散落的 console.error / debugLog()?.log()。
  *
  * @param {string} module - 模块标识（如 "engine", "bridge", "session"）
- * @returns {{ log: (msg: string) => void, warn: (msg: string) => void, error: (msg: string) => void }}
+ * @returns {{ log: (msg: string) => void, info: (msg: string) => void, warn: (msg: string) => void, error: (msg: string) => void }}
  *
  * @example
  * const log = createModuleLogger("bridge");
@@ -235,11 +235,13 @@ export function debugLog() {
  * // file:    [HH:MM:SS.mmm] [ERROR] [bridge] connection failed
  */
 export function createModuleLogger(module) {
+  const info = (msg) => {
+    console.log(`[${module}] ${msg}`);
+    _instance?.log(module, msg);
+  };
   return {
-    log(msg) {
-      console.log(`[${module}] ${msg}`);
-      _instance?.log(module, msg);
-    },
+    log: info,
+    info,
     warn(msg) {
       console.warn(`[${module}] ${msg}`);
       _instance?.warn(module, msg);

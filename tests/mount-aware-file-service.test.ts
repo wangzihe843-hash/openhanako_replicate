@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 describe("MountAwareFileService", () => {
   let tmpDir = null;
@@ -116,5 +116,88 @@ describe("MountAwareFileService", () => {
     expect(closed.resolveRoot("mount_docs")).not.toHaveProperty("nativeRootPath");
     expect(closed.resolveRoot("default")).not.toHaveProperty("nativeRootPath");
     expect((await closed.listFiles("mount_docs", "")).mount).not.toHaveProperty("nativeRootPath");
+  });
+
+  it("preserves ResourceIO operation context for workbench mutations", async () => {
+    const { MountAwareFileService } = await import("../core/mount-aware-file-service.ts");
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-mount-file-"));
+    const defaultRoot = path.join(tmpDir, "default");
+    fs.mkdirSync(defaultRoot, { recursive: true });
+    fs.writeFileSync(path.join(defaultRoot, "old.md"), "old", "utf-8");
+    fs.mkdirSync(path.join(defaultRoot, "archive"), { recursive: true });
+    const resourceIO = {
+      stat: vi.fn(async () => ({ exists: false, isDirectory: false, resourceKey: "local_fs:/note.md" })),
+      read: vi.fn(async () => ({ content: Buffer.from(""), resourceKey: "local_fs:/note.md" })),
+      write: vi.fn(async (ref, content) => ({
+        changeType: "created",
+        resourceKey: "local_fs:/note.md",
+        resource: ref,
+        content,
+      })),
+      mkdir: vi.fn(async (ref) => ({
+        changeType: "created",
+        resourceKey: "local_fs:/archive",
+        resource: ref,
+      })),
+      move: vi.fn(async (from, to) => ({
+        oldResourceKey: "local_fs:/old.md",
+        newResourceKey: "local_fs:/archive/old.md",
+        oldResource: from,
+        newResource: to,
+      })),
+      list: vi.fn(async () => ({ items: [] })),
+    };
+    const service = new MountAwareFileService({
+      hanakoHome: tmpDir,
+      defaultRoot,
+      studioId: "studio_1",
+      resourceIO,
+      operationContext: {
+        source: "api",
+        sessionId: "sess_1",
+        sessionPath: "/sessions/current.jsonl",
+        principal: {
+          kind: "api",
+          userId: "user_1",
+          studioId: "studio_1",
+          sessionId: "sess_1",
+          sessionPath: "/sessions/current.jsonl",
+          connectionKind: "lan",
+          credentialKind: "device_credential",
+          requestId: "req_1",
+        },
+        requestId: "req_1",
+      },
+    });
+
+    await service.writeText("default", "", { name: "note.md", content: "hello" }, { reason: "mobile_workbench.write" });
+    await service.move("default", "", { name: "old.md", destSubdir: "archive" }, { reason: "mobile_workbench.move" });
+
+    expect(resourceIO.write).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "local-file", path: path.join(defaultRoot, "note.md") }),
+      "hello",
+      expect.objectContaining({
+        source: "api",
+        reason: "mobile_workbench.write",
+        sessionId: "sess_1",
+        sessionPath: "/sessions/current.jsonl",
+        requestId: "req_1",
+        principal: expect.objectContaining({
+          kind: "api",
+          userId: "user_1",
+          studioId: "studio_1",
+          connectionKind: "lan",
+          credentialKind: "device_credential",
+        }),
+      }),
+    );
+    expect(resourceIO.mkdir).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "local-file", path: path.join(defaultRoot, "archive") }),
+      expect.objectContaining({
+        emit: false,
+        reason: "mobile_workbench.move",
+        principal: expect.objectContaining({ kind: "api", requestId: "req_1" }),
+      }),
+    );
   });
 });

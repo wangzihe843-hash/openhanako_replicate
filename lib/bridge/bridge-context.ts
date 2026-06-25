@@ -1,18 +1,20 @@
 import { parseSessionKey } from "./session-key.ts";
 import { interactionCapabilitiesForPlatform } from "./interaction-capabilities.ts";
 
-export const BRIDGE_NOTIFY_PLATFORMS = ["wechat", "feishu", "telegram", "qq"];
+export const BRIDGE_NOTIFY_PLATFORMS = ["wechat", "feishu", "dingtalk", "telegram", "qq"];
 
 const PLATFORM_LABELS = {
   zh: {
     wechat: "微信",
     feishu: "飞书",
+    dingtalk: "钉钉",
     telegram: "Telegram",
     qq: "QQ",
   },
   en: {
     wechat: "WeChat",
     feishu: "Feishu",
+    dingtalk: "DingTalk",
     telegram: "Telegram",
     qq: "QQ",
   },

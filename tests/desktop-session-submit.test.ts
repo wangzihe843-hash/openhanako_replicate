@@ -49,8 +49,14 @@ function makeFakeSession({ replyText = "desktop reply", toolMedia = [], toolMedi
   };
 }
 
-function sessionFileMarker({ fileId, sessionPath, label, kind = "attachment" }) {
-  return `[SessionFile] ${JSON.stringify({ fileId, sessionPath, label, kind })}`;
+function sessionFileMarker({ fileId, sessionPath, sessionId = undefined, label, kind = "attachment" }) {
+  return `[SessionFile] ${JSON.stringify({
+    fileId,
+    sessionPath,
+    ...(sessionId ? { sessionId } : {}),
+    label,
+    kind,
+  })}`;
 }
 
 describe("submitDesktopSessionMessage", () => {
@@ -84,6 +90,42 @@ describe("submitDesktopSessionMessage", () => {
       expect.objectContaining({ type: "session_status", isStreaming: true }),
       "/tmp/desk.jsonl",
     );
+  });
+
+  it("rejects concurrent submissions for moved paths with the same session id", async () => {
+    const session = makeFakeSession();
+    const ready = (Promise as any).withResolvers();
+    const originalPath = "/tmp/original-desk.jsonl";
+    const movedPath = "/tmp/archived/renamed-desk.jsonl";
+    const sessionId = "sess_desktop_submit";
+    const engine = {
+      getSessionIdForPath: vi.fn((sessionPath) => (
+        sessionPath === originalPath || sessionPath === movedPath ? sessionId : null
+      )),
+      ensureSessionLoaded: vi.fn((sessionPath) => (
+        sessionPath === originalPath ? ready.promise : Promise.resolve(session)
+      )),
+      promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+      isSessionStreaming: vi.fn(() => false),
+    };
+
+    const first = submitDesktopSessionMessage(engine, {
+      sessionPath: originalPath,
+      text: "first",
+      displayMessage: { text: "first" },
+    });
+    await Promise.resolve();
+
+    await expect(submitDesktopSessionMessage(engine, {
+      sessionPath: movedPath,
+      text: "second",
+      displayMessage: { text: "second" },
+    })).rejects.toThrow("session_busy");
+
+    ready.resolve(session);
+    await expect(first).resolves.toMatchObject({ text: "desktop reply" });
   });
 
   it("emits a session-scoped user message, toggles streaming status, and returns captured assistant output", async () => {
@@ -132,6 +174,76 @@ describe("submitDesktopSessionMessage", () => {
       text: "desktop reply",
       toolMedia: [{ type: "remote_url", url: "https://example.com/a.png" }],
     });
+  });
+
+  it("deduplicates SessionFile refs by stable sessionId when it is available", async () => {
+    const session = makeFakeSession();
+    const engine = {
+      getSessionIdForPath: vi.fn(() => "sess_submit_stable"),
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+
+    await submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "open it",
+      displayMessage: { text: "open it" },
+      sessionFileRefs: [
+        {
+          fileId: "sf_note",
+          sessionId: "sess_submit_stable",
+          sessionPath: "/tmp/old-location.jsonl",
+          label: "old note",
+          kind: "attachment",
+        },
+        {
+          fileId: "sf_note",
+          sessionId: "sess_submit_stable",
+          sessionPath: "/tmp/new-location.jsonl",
+          label: "new note",
+          kind: "attachment",
+        },
+      ],
+    });
+
+    expect(engine.promptSession).toHaveBeenCalledWith(
+      "/tmp/desk.jsonl",
+      `${sessionFileMarker({
+        fileId: "sf_note",
+        sessionId: "sess_submit_stable",
+        sessionPath: "/tmp/old-location.jsonl",
+        label: "old note",
+      })}\nopen it`,
+      undefined,
+    );
+  });
+
+  it("threads clientMessageId into the session user message event", async () => {
+    const session = makeFakeSession();
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+
+    await submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "hello",
+      clientMessageId: "client-user-1",
+      displayMessage: { text: "hello" },
+    } as any);
+
+    expect(engine.emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "session_user_message",
+        clientMessageId: "client-user-1",
+        message: expect.objectContaining({ text: "hello" }),
+      }),
+      "/tmp/desk.jsonl",
+    );
   });
 
   it("forwards turn context to promptSession without exposing it in the visible user message", async () => {

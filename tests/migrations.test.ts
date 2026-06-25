@@ -8,10 +8,11 @@ import path from "path";
 import YAML from "js-yaml";
 import { runMigrations } from "../core/migrations.ts";
 import { getAgentPhoneProjectionPath, safeConversationStem } from "../lib/conversations/agent-phone-projection.ts";
+import { SEARCH_CAPABILITY_PROVIDERS } from "../shared/search-providers.ts";
 
 // ── 测试工具 ────────────────────────────────────────────────────────────────
 
-const LATEST_DATA_VERSION = 41;
+const LATEST_DATA_VERSION = 43;
 
 function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-migrations-"));
@@ -315,6 +316,199 @@ describe("migration #30: cron jobs to automation read model", () => {
     });
     expect(job.createdBy).toEqual({ kind: "agent", agentId: "hana" });
     expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+  });
+});
+
+describe("migration #42: provider catalog v2 cutover", () => {
+  let tmpDir, agentsDir, userDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    agentsDir = path.join(tmpDir, "agents");
+    userDir = path.join(tmpDir, "user");
+    fs.mkdirSync(agentsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("migrates legacy provider YAML into provider-catalog.json exactly once", () => {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 41 });
+    fs.writeFileSync(
+      path.join(tmpDir, "added-models.yaml"),
+      YAML.dump({
+        providers: {
+          zhipu: {
+            api_key: "sk-zhipu",
+            base_url: "https://open.bigmodel.cn/api/paas/v4",
+            api: "openai-completions",
+            models: [{ id: "glm-test", reasoning: true, defaultThinkingLevel: "max" }],
+          },
+        },
+      }, { indent: 2, lineWidth: -1, sortKeys: false }),
+      "utf-8",
+    );
+
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistryWithModels({}),
+      log: () => {},
+    });
+
+    const catalog = readJson(path.join(tmpDir, "provider-catalog.json"));
+    expect(catalog.catalogVersion).toBe(2);
+    expect(catalog.providers.zhipu.models[0]).toMatchObject({
+      id: "glm-test",
+      reasoning: true,
+      defaultThinkingLevel: "max",
+    });
+    expect(catalog.capabilities["web.search"]).toEqual({ providers: SEARCH_CAPABILITY_PROVIDERS });
+    expect(prefs.getPreferences()._dataVersion).toBe(LATEST_DATA_VERSION);
+
+    const backups = fs.readdirSync(path.join(tmpDir, "migration-backups"))
+      .filter((name) => name.startsWith("provider-catalog-v1-"));
+    expect(backups).toHaveLength(1);
+  });
+
+  it("refreshes an early generated provider catalog from the final legacy YAML at cutover", () => {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 41 });
+    fs.writeFileSync(
+      path.join(tmpDir, "provider-catalog.json"),
+      JSON.stringify({
+        catalogVersion: 2,
+        providers: {
+          zhipu: {
+            api_key: "sk-stale",
+            api: "openai-completions",
+            models: [{ id: "glm-stale" }],
+          },
+        },
+        capabilities: {
+          "web.search": { providers: [{ id: "brave", source: "api" }] },
+        },
+        meta: { migratedAt: "2026-01-01T00:00:00.000Z" },
+      }, null, 2) + "\n",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "added-models.yaml"),
+      YAML.dump({
+        providers: {
+          zhipu: {
+            api_key: "sk-final",
+            api: "openai-completions",
+            models: [{ id: "glm-final", reasoning: true }],
+          },
+        },
+      }, { indent: 2, lineWidth: -1, sortKeys: false }),
+      "utf-8",
+    );
+
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistryWithModels({}),
+      log: () => {},
+    });
+
+    const catalog = readJson(path.join(tmpDir, "provider-catalog.json"));
+    expect(catalog.providers.zhipu).toMatchObject({
+      api_key: "sk-final",
+      models: [{ id: "glm-final", reasoning: true }],
+    });
+    expect(catalog.capabilities["web.search"].providers).toEqual([{ id: "brave", source: "api" }]);
+    expect(catalog.meta.migrationSource).toBe("added-models.yaml");
+    expect(catalog.meta.providerCatalogCutoverAt).toEqual(expect.any(String));
+  });
+});
+
+describe("migration #43: Codex image generation defaults follow mode schema", () => {
+  let tmpDir, agentsDir, userDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    agentsDir = path.join(tmpDir, "agents");
+    userDir = path.join(tmpDir, "user");
+    fs.mkdirSync(agentsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("removes stale Codex size defaults while preserving other provider defaults", () => {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({
+      _dataVersion: 42,
+      imageGeneration: {
+        defaultImageModel: { provider: "openai-codex-oauth", id: "gpt-image-2" },
+        providerDefaults: {
+          "openai-codex-oauth": {
+            size: "4K",
+            models: {
+              "gpt-image-2": {
+                modes: {
+                  text2image: { ratio: "3:2" },
+                },
+              },
+            },
+          },
+          openai: { size: "1024x1024" },
+        },
+      },
+    });
+    writeJson(path.join(tmpDir, "plugin-data", "image-gen", "config.json"), {
+      global: {
+        providerDefaults: {
+          "openai-codex-oauth": {
+            size: "4K",
+            models: {
+              "gpt-image-2": {
+                modes: {
+                  text2image: { ratio: "3:2" },
+                },
+              },
+            },
+          },
+          openai: { size: "1024x1024" },
+        },
+      },
+    });
+
+    runMigrations({
+      hanakoHome: tmpDir,
+      agentsDir,
+      prefs,
+      providerRegistry: makeRegistryWithModels({}),
+      log: () => {},
+    });
+
+    const nextPrefs = prefs.getPreferences();
+    expect(nextPrefs._dataVersion).toBe(LATEST_DATA_VERSION);
+    expect(nextPrefs.imageGeneration.providerDefaults["openai-codex-oauth"]).toEqual({
+      models: {
+        "gpt-image-2": {
+          modes: {
+            text2image: { ratio: "3:2" },
+          },
+        },
+      },
+    });
+    expect(nextPrefs.imageGeneration.providerDefaults.openai).toEqual({ size: "1024x1024" });
+
+    const pluginConfig = readJson(path.join(tmpDir, "plugin-data", "image-gen", "config.json"));
+    expect(pluginConfig.global.providerDefaults["openai-codex-oauth"]).toEqual({
+      models: {
+        "gpt-image-2": {
+          modes: {
+            text2image: { ratio: "3:2" },
+          },
+        },
+      },
+    });
+    expect(pluginConfig.global.providerDefaults.openai).toEqual({ size: "1024x1024" });
   });
 });
 
@@ -1142,6 +1336,8 @@ describe("migration #2: migrateBridgeToPerAgent", () => {
       primaryAgent: "hana",
       bridge: {
         permissionMode: "operate",
+        receiptEnabled: false,
+        richStreamingEnabled: false,
         telegram: { token: "tok123" },
       },
     });
@@ -1150,7 +1346,11 @@ describe("migration #2: migrateBridgeToPerAgent", () => {
 
     const config = readAgentConfig(agentsDir, "hana");
     expect(config.bridge.telegram.token).toBe("tok123");
-    expect(prefs.getPreferences().bridge).toEqual({ permissionMode: "operate" });
+    expect(prefs.getPreferences().bridge).toEqual({
+      permissionMode: "operate",
+      receiptEnabled: false,
+      richStreamingEnabled: false,
+    });
   });
 
   it("legacy owner key：owner.telegram（无 composite）→ 归入 primary agent", () => {
@@ -2981,6 +3181,12 @@ describe("migration #19 — migrate legacy API-key auth to provider config", () 
     return YAML.load(fs.readFileSync(path.join(tmpDir, "added-models.yaml"), "utf-8"));
   }
 
+  function readPersistedProviders() {
+    const catalogPath = path.join(tmpDir, "provider-catalog.json");
+    if (fs.existsSync(catalogPath)) return readJson(catalogPath).providers;
+    return readAddedModels().providers;
+  }
+
   function makeProviderRegistry() {
     return {
       reload: vi.fn(),
@@ -3057,7 +3263,7 @@ describe("migration #19 — migrate legacy API-key auth to provider config", () 
 
     const prefs = runFrom18();
 
-    const providers = readAddedModels().providers;
+    const providers = readPersistedProviders();
     expect(providers.deepseek).toEqual({
       api_key: "sk-legacy-4d2a",
       base_url: "https://api.deepseek.com",
@@ -3089,7 +3295,7 @@ describe("migration #19 — migrate legacy API-key auth to provider config", () 
 
     runFrom18();
 
-    expect(readAddedModels().providers.deepseek).toEqual({
+    expect(readPersistedProviders().deepseek).toEqual({
       api_key: "sk-legacy-4d2a",
       base_url: "https://api.deepseek.com",
       api: "openai-completions",
@@ -3121,7 +3327,7 @@ describe("migration #19 — migrate legacy API-key auth to provider config", () 
 
     runFrom18();
 
-    expect(readAddedModels().providers.deepseek).toEqual({
+    expect(readPersistedProviders().deepseek).toEqual({
       api_key: "sk-projected-6ad1",
       base_url: "https://api.deepseek.com",
       api: "openai-completions",
@@ -3155,7 +3361,7 @@ describe("migration #19 — migrate legacy API-key auth to provider config", () 
 
     runFrom18();
 
-    expect(readAddedModels().providers.ollama).toEqual({
+    expect(readPersistedProviders().ollama).toEqual({
       base_url: "http://localhost:11434/v1",
       api: "openai-completions",
       models: ["llama3.2"],
@@ -3179,7 +3385,7 @@ describe("migration #19 — migrate legacy API-key auth to provider config", () 
 
     runFrom18();
 
-    expect(readAddedModels().providers.deepseek.api_key).toBe("");
+    expect(readPersistedProviders().deepseek.api_key).toBe("");
   });
 });
 

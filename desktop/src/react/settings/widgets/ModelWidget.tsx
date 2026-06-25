@@ -3,6 +3,7 @@
  * 从 /api/models 读取唯一信源，按 provider 分组、支持搜索和自定义输入
  */
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { ProviderIcon } from '@/ui';
 import { hanaFetch } from '../api';
 import styles from '../Settings.module.css';
 
@@ -110,8 +111,12 @@ export function ModelWidget({
       <button
         className={styles['mdw-trigger']}
         type="button"
+        data-open={open}
         onClick={(e) => { e.stopPropagation(); if (!open) refreshModels(); setOpen(!open); }}
       >
+        {value?.provider && (
+          <ProviderIcon provider={value.provider} className={styles['mdw-provider-icon']} />
+        )}
         <span className={styles['mdw-value']}>{displayValue || `— ${placeholder || t('settings.api.selectModel')} —`}</span>
         <span className={styles['mdw-arrow']}>▾</span>
       </button>

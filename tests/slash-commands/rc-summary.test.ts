@@ -36,6 +36,7 @@ function makeEngine({ utilConfig, chatCreds }: any = {}) {
     resolveModelWithCredentials: chatCreds === undefined
       ? vi.fn(() => { throw new Error("chat not resolved"); })
       : vi.fn(() => chatCreds),
+    getSessionIdForPath: vi.fn(() => "sess_rc_summary"),
   };
 }
 
@@ -77,6 +78,30 @@ describe("summarizeSessionForRc — 3-tier fallback", () => {
     const r = await summarizeSessionForRc(engine, makeAgent(), p);
     expect(r).toBe("utility summary");
     expect(callText).toHaveBeenCalledTimes(1);
+    expect((callText as any).mock.calls[0][0]).not.toHaveProperty("maxTokens");
+  });
+
+  it("records rc summary usage against sessionId while keeping the path locator", async () => {
+    const p = writeSessionFile([makeUserMsg("hi"), makeAssistantMsg("hello")]);
+    (callText as any).mockResolvedValueOnce("utility summary");
+    const engine = makeEngine({
+      utilConfig: {
+        utility: "gpt-4o-mini",
+        api_key: "k",
+        base_url: "https://x",
+        api: "openai",
+      },
+    });
+
+    await summarizeSessionForRc(engine, makeAgent(), p);
+
+    expect(engine.getSessionIdForPath).toHaveBeenCalledWith(p);
+    expect((callText as any).mock.calls[0][0].usageContext.attribution).toMatchObject({
+      kind: "session",
+      agentId: null,
+      sessionId: "sess_rc_summary",
+      sessionPath: p,
+    });
   });
 
   it("Tier 1 fails → falls back to Tier 2 (utility_large)", async () => {
@@ -172,7 +197,7 @@ describe("summarizeSessionForRc — 3-tier fallback", () => {
     expect(r).toBe("padded summary");
   });
 
-  it("asks for a concise but useful Chinese summary under 100 characters", async () => {
+  it("asks for a concise but useful Chinese summary around 100 characters", async () => {
     const p = writeSessionFile([
       makeUserMsg("帮我检查远程控制的摘要为什么太短"),
       makeAssistantMsg("我正在查看 /rc 接管后的摘要生成逻辑，准备调整提示词。", ["read"]),
@@ -189,9 +214,40 @@ describe("summarizeSessionForRc — 3-tier fallback", () => {
     await summarizeSessionForRc(engine, makeAgent(), p);
 
     const system = (callText as any).mock.calls[0][0].messages[0].content;
-    expect(system).toContain("100 字以内");
+    expect(system).toContain("目标约 100 字");
+    expect(system).toContain("60-200 字");
     expect(system).toContain("当前进展");
     expect(system).toContain("下一步线索");
     expect(system).not.toContain("40 字以内");
+  });
+
+  it("repairs an overlong tier result without falling through to the next tier", async () => {
+    const p = writeSessionFile([
+      makeUserMsg("帮我检查远程控制的摘要为什么太短"),
+      makeAssistantMsg("我正在查看 /rc 接管后的摘要生成逻辑，准备调整提示词。", ["read"]),
+    ]);
+    const overlong = `${"非常".repeat(140)}长的摘要。`;
+    (callText as any)
+      .mockResolvedValueOnce(overlong)
+      .mockResolvedValueOnce("正在调整 /rc 摘要提示词，补足当前进展和下一步线索。");
+    const engine = makeEngine({
+      utilConfig: {
+        utility: "u", utility_large: "ul",
+        api_key: "k", base_url: "https://x", api: "openai",
+        large_api_key: "k2", large_base_url: "https://large", large_api: "openai",
+      },
+    });
+
+    const r = await summarizeSessionForRc(engine, makeAgent(), p);
+
+    expect(r).toBe("正在调整 /rc 摘要提示词，补足当前进展和下一步线索。");
+    expect(callText).toHaveBeenCalledTimes(2);
+    expect((callText as any).mock.calls[1][0]).toMatchObject({
+      api: "openai",
+      model: "u",
+      apiKey: "k",
+      baseUrl: "https://x",
+    });
+    expect((callText as any).mock.calls[1][0]).not.toHaveProperty("maxTokens");
   });
 });

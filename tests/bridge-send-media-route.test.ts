@@ -122,6 +122,51 @@ describe("bridge send-media route", () => {
     );
   });
 
+  it("preserves the registered sessionId when delivering the session_file to bridge", async () => {
+    const { app, bridgeManager, hanakoHome } = makeApp({
+      engineOverrides: {
+        registerSessionFile: vi.fn(({ sessionPath, filePath, label, origin }) => ({
+          id: "sf_route",
+          sessionId: "sess_bridge_manual",
+          sessionPath,
+          filePath,
+          realPath: filePath,
+          filename: label,
+          label,
+          origin,
+          kind: "document",
+          mime: "text/plain",
+          size: 2,
+        })),
+      },
+    });
+    const filePath = path.join(hanakoHome, "out.txt");
+    fs.writeFileSync(filePath, "ok");
+
+    const res = await app.request("/api/bridge/send-media?agentId=hana", {
+      method: "POST",
+      body: JSON.stringify({
+        platform: "telegram",
+        chatId: "chat-1",
+        filePath,
+      }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(bridgeManager.sendMediaItem).toHaveBeenCalledWith(
+      "telegram",
+      "chat-1",
+      {
+        type: "session_file",
+        fileId: "sf_route",
+        sessionId: "sess_bridge_manual",
+        sessionPath: "bridge:hana:telegram:chat-1",
+      },
+      "hana",
+    );
+  });
+
   it("allows manual bridge sends from the target agent workspace", async () => {
     const { app, engine, bridgeManager, agent } = makeApp({
       agentOverrides: {

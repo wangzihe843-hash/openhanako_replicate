@@ -663,5 +663,44 @@ describe('channel-actions', () => {
         expect.objectContaining({ method: 'POST' }),
       );
     });
+
+    it('打开频道开关时先启用后端，再加载频道列表', async () => {
+      mockState.channelsEnabled = false;
+      mockFetch.mockImplementation(async (url: string) => {
+        if (url === '/api/channels/toggle') {
+          return {
+            ok: true,
+            json: async () => ({ ok: true, enabled: true }),
+          } as Response;
+        }
+        if (url === '/api/channels') {
+          return {
+            ok: true,
+            json: async () => ({ channels: [{ id: 'ch1', name: 'general', newMessageCount: 0 }] }),
+          } as Response;
+        }
+        if (url === '/api/dm') {
+          return {
+            ok: true,
+            json: async () => ({ dms: [] }),
+          } as Response;
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      const { toggleChannelsEnabled } = await import('../../stores/channel-actions');
+      const result = await toggleChannelsEnabled();
+
+      expect(result).toBe(true);
+      expect(mockFetch.mock.calls.map(([url]) => url)).toEqual([
+        '/api/channels/toggle',
+        '/api/channels',
+        '/api/dm',
+      ]);
+      expect(mockState.channelsEnabled).toBe(true);
+      expect(mockState.channels).toEqual([
+        expect.objectContaining({ id: 'ch1', isDM: false }),
+      ]);
+    });
   });
 });

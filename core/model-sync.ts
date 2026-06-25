@@ -1,5 +1,5 @@
 /**
- * model-sync.js — added-models.yaml → models.json 单向投影
+ * model-sync.js — Provider Catalog provider configs → models.json 单向投影
  *
  * 系统中唯一写 models.json 的地方。从 providers 配置（snake_case）
  * 投影为 Pi SDK 格式（camelCase），附加 known-models.json 元数据。
@@ -11,6 +11,7 @@ import { lookupKnown } from "../shared/known-models.ts";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
 import {
   normalizeModelProtocolCompat,
+  normalizeToolUseContract,
   normalizeVisionCapabilities,
   withHanaAudioInputCompat,
   withHanaVideoInputCompat,
@@ -24,10 +25,8 @@ import { normalizeThinkingLevelForModel } from "./session-thinking-level.ts";
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const PI_BUILTIN_PROVIDER_REUSE = new Set(["kimi-coding"]);
-
-function isPlainObject(value) {
-  return value && typeof value === "object" && !Array.isArray(value);
-}
+const KIMI_CODING_PROVIDER = "kimi-coding";
+const KIMI_CODING_MODEL_ID = "kimi-for-coding";
 
 /**
  * 模型 ID → 人类可读名
@@ -81,10 +80,70 @@ function shouldReusePiBuiltinModel(provider, modelId, api) {
   return api === "anthropic-messages" && !!getPiBuiltinModel(provider, modelId);
 }
 
+function isKimiCodingProvider(provider) {
+  return provider === KIMI_CODING_PROVIDER;
+}
+
+function isOfficialKimiCodingBaseUrl(baseUrl) {
+  try {
+    const parsed = new URL(String(baseUrl || ""));
+    return parsed.hostname === "api.kimi.com"
+      && (
+        parsed.pathname.replace(/\/+$/, "") === "/coding"
+        || parsed.pathname.replace(/\/+$/, "") === "/coding/v1"
+      );
+  } catch {
+    return String(baseUrl || "").replace(/\/+$/, "") === "https://api.kimi.com/coding";
+  }
+}
+
+function getKimiCodingEffectiveApi(provider, baseUrl, api) {
+  if (!isKimiCodingProvider(provider)) return api;
+  if (!isOfficialKimiCodingBaseUrl(baseUrl)) return api;
+  return "openai-completions";
+}
+
+function normalizeKimiCodingModelEntry(modelEntry) {
+  if (typeof modelEntry === "object" && modelEntry !== null) {
+    return { ...modelEntry, id: KIMI_CODING_MODEL_ID };
+  }
+  return KIMI_CODING_MODEL_ID;
+}
+
+function isObjectModelEntry(modelEntry) {
+  return typeof modelEntry === "object" && modelEntry !== null;
+}
+
+function normalizeKimiCodingModelEntries(provider, baseUrl, modelEntries) {
+  if (!isKimiCodingProvider(provider) || !isOfficialKimiCodingBaseUrl(baseUrl)) return modelEntries;
+
+  const byId = new Map();
+  for (const rawEntry of modelEntries) {
+    const entry = normalizeKimiCodingModelEntry(rawEntry);
+    const id = getModelId(entry);
+    const current = byId.get(id);
+    if (!current) {
+      byId.set(id, entry);
+      continue;
+    }
+    if (isObjectModelEntry(current) || !isObjectModelEntry(entry)) continue;
+    byId.set(id, entry);
+  }
+  return Array.from(byId.values());
+}
+
 function isZhipuOpenAICompat(provider, baseUrl, api) {
   return api === "openai-completions" && (
     provider === "zhipu"
+    || provider === "zhipu-coding"
     || baseUrl.includes("open.bigmodel.cn")
+    || (
+      baseUrl.includes("api.z.ai")
+      && (
+        baseUrl.includes("/api/paas/v4")
+        || baseUrl.includes("/api/coding/paas/v4")
+      )
+    )
   );
 }
 
@@ -115,8 +174,14 @@ function buildModelOverride(modelEntry, modelDefaults = {}) {
     });
   }
   if (modelEntry.reasoning !== undefined) override.reasoning = modelEntry.reasoning;
+  if (modelEntry.xhigh !== undefined) override.xhigh = modelEntry.xhigh;
   const compat = normalizeModelProtocolCompat(modelEntry.compat);
   if (compat) override.compat = compat;
+  const toolUse = normalizeToolUseContract(modelEntry.toolUse);
+  if (modelEntry.toolUse !== undefined && !toolUse) {
+    throw new Error(`invalid toolUse contract for model "${getModelId(modelEntry) || "unknown"}"`);
+  }
+  if (toolUse) override.toolUse = toolUse;
   const visionCapabilities = image === true
     ? normalizeVisionCapabilities(modelEntry.visionCapabilities)
     : null;
@@ -149,6 +214,8 @@ function buildModelEntry(modelEntry, provider, baseUrl = "", api = "openai-compl
   const userAudio = isObj ? modelEntry.audio : undefined;
   const knownAudio = known?.audio;
   const audio = userAudio !== undefined ? userAudio : (knownAudio === true);
+  const userXhigh = isObj ? modelEntry.xhigh : undefined;
+  const xhigh = userXhigh !== undefined ? userXhigh : (known?.xhigh === true);
   const entry: Record<string, any> = {
     id,
     name: (isObj && modelEntry.name) || known?.name || humanizeName(id),
@@ -156,6 +223,7 @@ function buildModelEntry(modelEntry, provider, baseUrl = "", api = "openai-compl
     contextWindow: (isObj && modelEntry.context) || known?.context || DEFAULT_CONTEXT_WINDOW,
     reasoning: (isObj && modelEntry.reasoning !== undefined) ? modelEntry.reasoning : (known?.reasoning === true),
   };
+  if (xhigh === true) entry.xhigh = true;
 
   const maxOutput = (isObj && modelEntry.maxOutput) || known?.maxOutput;
   if (maxOutput) entry.maxTokens = maxOutput;
@@ -172,6 +240,13 @@ function buildModelEntry(modelEntry, provider, baseUrl = "", api = "openai-compl
   if (known?.quirks?.length) entry.quirks = known.quirks;
   if (piBuiltin?.headers) entry.headers = { ...piBuiltin.headers };
 
+  const rawToolUse = isObj && modelEntry.toolUse !== undefined ? modelEntry.toolUse : known?.toolUse;
+  const toolUse = normalizeToolUseContract(rawToolUse);
+  if (rawToolUse !== undefined && !toolUse) {
+    throw new Error(`invalid toolUse contract for model "${id}"`);
+  }
+  if (toolUse) entry.toolUse = toolUse;
+
   const rawVisionCapabilities = isObj && modelEntry.visionCapabilities !== undefined
     ? modelEntry.visionCapabilities
     : known?.visionCapabilities;
@@ -184,17 +259,18 @@ function buildModelEntry(modelEntry, provider, baseUrl = "", api = "openai-compl
   // 3. Gemini OpenAI 兼容层（/v1beta/openai）严格校验，不识别 store 字段会 400。
   //    Native google-generative-ai 不走 Chat Completions，不需要这组 OpenAI 字段兼容。
   if (provider !== "openai") {
+    const knownCompat = normalizeModelProtocolCompat(known?.compat) || {};
     const explicitCompat = isObj
       ? (normalizeModelProtocolCompat(modelEntry.compat) || {})
       : {};
-    const compat: Record<string, unknown> = { ...explicitCompat, supportsDeveloperRole: false };
+    const compat: Record<string, unknown> = { ...knownCompat, ...explicitCompat, supportsDeveloperRole: false };
     if (api === "openai-completions" && (
       provider === "gemini"
       || baseUrl.includes("generativelanguage.googleapis.com")
     )) {
       compat.supportsStore = false;
     }
-    if (isZhipuOpenAICompat(provider, baseUrl, api)) {
+    if (compat.thinkingFormat === "zhipu" || isZhipuOpenAICompat(provider, baseUrl, api)) {
       compat.supportsStore = false;
       compat.supportsReasoningEffort = false;
     }
@@ -219,7 +295,7 @@ function filterChatModelEntries(provider, models) {
 /**
  * 单向投影：providers 配置 → models.json（Pi SDK 格式）
  *
- * @param {Record<string, object>} providers - added-models.yaml 中的 providers 块（snake_case）
+ * @param {Record<string, object>} providers - Provider Catalog 中的 providers 块（snake_case）
  * @param {object} [opts]
  * @param {string} opts.modelsJsonPath - models.json 输出路径
  * @param {string} [opts.authJsonPath] - auth.json 路径（OAuth 凭证查找用）
@@ -274,14 +350,19 @@ export function syncModels(providers, opts: Record<string, any> = {}) {
     })) continue;
 
     const effectiveApiKey = apiKey || (hasHeaders ? "headers" : "local");
-    const effectiveApi = p.api || "openai-completions";
+    const configuredApi = p.api || "openai-completions";
+    const effectiveApi = getKimiCodingEffectiveApi(name, p.base_url, configuredApi);
     const effectiveBaseUrl = normalizeProviderBaseUrlForApi({
       provider: name,
       baseUrl: p.base_url,
       api: effectiveApi,
     });
     const modelDefaults = p.model_defaults || {};
-    const chatModels = filterChatModelEntries(name, p.models);
+    const chatModels = normalizeKimiCodingModelEntries(
+      name,
+      p.base_url,
+      filterChatModelEntries(name, p.models),
+    );
     const customModels = [];
     const modelOverrides = {};
 

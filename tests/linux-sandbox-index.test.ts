@@ -1,6 +1,10 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 const originalPlatform = process.platform;
+let tempRoot: string | null = null;
 
 beforeAll(() => {
   Object.defineProperty(process, "platform", { value: "linux", configurable: true });
@@ -50,6 +54,8 @@ vi.mock("../lib/pi-sdk/index.js", () => {
 });
 
 afterEach(() => {
+  if (tempRoot) fs.rmSync(tempRoot, { recursive: true, force: true });
+  tempRoot = null;
   vi.resetModules();
   vi.clearAllMocks();
 });
@@ -90,20 +96,27 @@ describe.skipIf(process.platform !== "linux")("createSandboxedTools on Linux", (
 
   it("resolves read fileId through the current session before path guard and SDK execution", async () => {
     const { createSandboxedTools } = await import("../lib/sandbox/index.ts");
-    const result = createSandboxedTools("/work", [], {
-      agentDir: "/hana/agents/hana",
-      workspace: "/work",
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-linux-session-file-"));
+    const agentDir = path.join(tempRoot, "hana", "agents", "hana");
+    const workspace = path.join(tempRoot, "work");
+    const sessionFilePath = path.join(workspace, "测试123", "报告2026.txt");
+    fs.mkdirSync(path.dirname(sessionFilePath), { recursive: true });
+    fs.writeFileSync(sessionFilePath, "hello", "utf-8");
+
+    const result = createSandboxedTools(workspace, [], {
+      agentDir,
+      workspace,
       workspaceFolders: [],
-      hanakoHome: "/hana",
+      hanakoHome: path.join(tempRoot, "hana"),
       getSandboxEnabled: () => true,
-      getSessionPath: () => "/hana/agents/hana/sessions/main.jsonl",
+      getSessionPath: () => path.join(agentDir, "sessions", "main.jsonl"),
       resolveSessionFile: vi.fn((fileId: any, options: any) => {
         expect(fileId).toBe("sf_cjk_digits");
-        expect(options).toEqual({ sessionPath: "/hana/agents/hana/sessions/main.jsonl" });
+        expect(options).toEqual({ sessionPath: path.join(agentDir, "sessions", "main.jsonl") });
         return {
           fileId,
-          filePath: "/work/测试123/报告2026.txt",
-          realPath: "/work/测试123/报告2026.txt",
+          filePath: sessionFilePath,
+          realPath: sessionFilePath,
           status: "available",
         };
       }),
@@ -116,7 +129,7 @@ describe.skipIf(process.platform !== "linux")("createSandboxedTools on Linux", (
       fileId: "sf_cjk_digits",
     });
 
-    expect(output.details.params.path).toBe("/work/测试123/报告2026.txt");
+    expect(output.details.params.path).toBe(sessionFilePath);
     expect(output.details.params.fileId).toBe("sf_cjk_digits");
   });
 });

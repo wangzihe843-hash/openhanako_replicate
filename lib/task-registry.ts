@@ -18,14 +18,67 @@ const FINAL_STATUSES = new Set(["completed", "failed", "canceled", "aborted"]);
 const KNOWN_STATUSES = new Set([...ACTIVE_STATUSES, ...FINAL_STATUSES]);
 const MAX_TIMER_DELAY = 2_147_483_647;
 
+function textOrNull(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeParentSessionRef(input: any = {}, resolveSessionIdForPath: any = null) {
+  if (typeof input === "string") {
+    const parentSessionPath = textOrNull(input);
+    const parentSessionId = textOrNull(resolveSessionIdForPath?.(parentSessionPath));
+    const parentSessionRef = parentSessionId
+      ? { sessionId: parentSessionId, ...(parentSessionPath ? { sessionPath: parentSessionPath, legacySessionPath: parentSessionPath } : {}) }
+      : null;
+    return { parentSessionId, parentSessionPath, parentSessionRef };
+  }
+  const rawRef = input.parentSessionRef && typeof input.parentSessionRef === "object"
+    ? input.parentSessionRef
+    : input.sessionRef && typeof input.sessionRef === "object"
+      ? input.sessionRef
+      : null;
+  const parentSessionId =
+    textOrNull(input.parentSessionId)
+    || textOrNull(input.sessionId)
+    || textOrNull(rawRef?.sessionId);
+  const parentSessionPath =
+    textOrNull(input.parentSessionPath)
+    || textOrNull(input.sessionPath)
+    || textOrNull(rawRef?.sessionPath)
+    || textOrNull(rawRef?.path);
+  const resolvedParentSessionId = parentSessionId || textOrNull(resolveSessionIdForPath?.(parentSessionPath));
+  const legacySessionPath =
+    textOrNull(input.legacySessionPath)
+    || textOrNull(rawRef?.legacySessionPath)
+    || (resolvedParentSessionId && parentSessionPath ? parentSessionPath : null);
+  const parentSessionRef = resolvedParentSessionId
+    ? {
+      sessionId: resolvedParentSessionId,
+      ...(parentSessionPath ? { sessionPath: parentSessionPath } : {}),
+      ...(legacySessionPath ? { legacySessionPath } : {}),
+    }
+    : null;
+  return { parentSessionId: resolvedParentSessionId, parentSessionPath, parentSessionRef };
+}
+
+function matchesParentSession(task, input, resolveSessionIdForPath = null) {
+  const target = normalizeParentSessionRef(input, resolveSessionIdForPath);
+  if (target.parentSessionId) {
+    return task.parentSessionId === target.parentSessionId
+      || task.parentSessionRef?.sessionId === target.parentSessionId;
+  }
+  return !!target.parentSessionPath && task.parentSessionPath === target.parentSessionPath;
+}
+
 export class TaskRegistry {
   declare _handlers: any;
+  declare _getSessionIdForPath: any;
   declare _persistencePath: any;
   declare _scheduleTimers: any;
   declare _schedules: any;
   declare _tasks: any;
   constructor( options: any = {}) {
     this._persistencePath = typeof options.persistencePath === "string" ? options.persistencePath : null;
+    this._getSessionIdForPath = typeof options.getSessionIdForPath === "function" ? options.getSessionIdForPath : () => null;
     /** @type {Map<string, { abort: (taskId: string) => void, run?: Function }>} */
     this._handlers = new Map();
     /** @type {Map<string, object>} */
@@ -57,7 +110,7 @@ export class TaskRegistry {
 
   // ── 任务实例生命周期 ──
 
-  register(taskId, { type, parentSessionPath = null, meta = {} as any, pluginId = null, agentId = null, persist = true }: any = {}) {
+  register(taskId, { type, parentSessionPath = null, parentSessionId = null, parentSessionRef = null, sessionId = null, sessionRef = null, legacySessionPath = null, meta = {} as any, pluginId = null, agentId = null, persist = true }: any = {}) {
     const id = assertText(taskId, "taskId");
     const taskType = assertText(type, "task type");
     if (!this._handlers.has(taskType)) {
@@ -65,10 +118,20 @@ export class TaskRegistry {
     }
     const existing = this._tasks.get(id);
     const now = Date.now();
+    const parentRef = normalizeParentSessionRef({
+      parentSessionId,
+      parentSessionPath,
+      parentSessionRef,
+      sessionId,
+      sessionRef,
+      legacySessionPath,
+    }, this._getSessionIdForPath);
     const task = {
       taskId: id,
       type: taskType,
-      parentSessionPath: parentSessionPath || null,
+      parentSessionId: parentRef.parentSessionId || existing?.parentSessionId || null,
+      parentSessionPath: parentRef.parentSessionPath || existing?.parentSessionPath || null,
+      parentSessionRef: parentRef.parentSessionRef || existing?.parentSessionRef || null,
       pluginId: pluginId || existing?.pluginId || null,
       agentId: agentId || existing?.agentId || null,
       meta: objectOrEmpty(existing?.meta),
@@ -105,6 +168,13 @@ export class TaskRegistry {
     if (patch.result !== undefined) next.result = patch.result;
     if (patch.error !== undefined) next.error = normalizeError(patch.error);
     if (patch.parentSessionPath !== undefined) next.parentSessionPath = patch.parentSessionPath || null;
+    if (patch.parentSessionId !== undefined) next.parentSessionId = patch.parentSessionId || null;
+    if (patch.parentSessionRef !== undefined) next.parentSessionRef = patch.parentSessionRef || null;
+    if (patch.parentSessionPath !== undefined && patch.parentSessionId === undefined) {
+      const parentRef = normalizeParentSessionRef(next, this._getSessionIdForPath);
+      next.parentSessionId = parentRef.parentSessionId || null;
+      next.parentSessionRef = parentRef.parentSessionRef || null;
+    }
     if (patch.agentId !== undefined) next.agentId = patch.agentId || null;
     if (patch.pluginId !== undefined) next.pluginId = patch.pluginId || null;
     this._tasks.set(task.taskId, next);
@@ -194,7 +264,7 @@ export class TaskRegistry {
     if (!parentSessionPath) return summary;
 
     for (const task of this._tasks.values()) {
-      if (task.parentSessionPath !== parentSessionPath) continue;
+      if (!matchesParentSession(task, parentSessionPath, this._getSessionIdForPath)) continue;
       summary.matched++;
       if (FINAL_STATUSES.has(task.status)) {
         summary.skippedFinal++;
@@ -245,7 +315,8 @@ export class TaskRegistry {
       if (filter.type && task.type !== filter.type) return false;
       if (filter.status && task.status !== filter.status) return false;
       if (filter.pluginId && task.pluginId !== filter.pluginId) return false;
-      if (filter.parentSessionPath && task.parentSessionPath !== filter.parentSessionPath) return false;
+      if ((filter.parentSessionId || filter.sessionId) && !matchesParentSession(task, filter, this._getSessionIdForPath)) return false;
+      if (filter.parentSessionPath && !matchesParentSession(task, filter, this._getSessionIdForPath)) return false;
       return true;
     });
     return tasks.map(clone);

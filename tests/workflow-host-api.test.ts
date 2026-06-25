@@ -28,6 +28,51 @@ describe("host api - agent()", () => {
     expect(calls[0].p).toBe("do it");
   });
 
+  it("inherits permission and non-interactive approval policy into workflow agent nodes", async () => {
+    const calls = [];
+    const api = createHostApi(makeDeps({
+      baseIsoOpts: {
+        agentId: "a1",
+        parentSessionPath: "/s.jsonl",
+        cwd: "/w",
+        permissionMode: "auto",
+        approvalPolicy: "deny_on_prompt",
+        allowHumanApproval: false,
+      },
+      executeIsolated: async (_p, o) => { calls.push(o); return { replyText: "hello", error: null }; },
+    }));
+
+    await api.agent("do it");
+
+    expect(calls[0]).toMatchObject({
+      permissionMode: "auto",
+      approvalPolicy: "deny_on_prompt",
+      allowHumanApproval: false,
+    });
+  });
+
+  it("supports workflow node access narrowing without exceeding the parent permission mode", async () => {
+    const calls = [];
+    const api = createHostApi(makeDeps({
+      baseIsoOpts: {
+        agentId: "a1",
+        parentSessionPath: "/s.jsonl",
+        cwd: "/w",
+        permissionMode: "ask",
+        approvalPolicy: "deny_on_prompt",
+        allowHumanApproval: false,
+      },
+      executeIsolated: async (_p, o) => { calls.push(o); return { replyText: "hello", error: null }; },
+    }));
+
+    await api.agent("read", { access: "read" });
+    await api.agent("write", { access: "write" });
+
+    expect(calls[0].permissionMode).toBe("read_only");
+    expect(calls[1].permissionMode).toBe("ask");
+    expect(calls[1].approvalPolicy).toBe("deny_on_prompt");
+  });
+
   it("opts.model / opts.agentType 透传与解析", async () => {
     const calls = [];
     const api = createHostApi(makeDeps({
@@ -65,6 +110,35 @@ describe("host api - agent()", () => {
     const ac = new AbortController(); ac.abort();
     const api = createHostApi(makeDeps({ signal: ac.signal }));
     await expect(api.agent("x")).rejects.toThrow(/中止/);
+  });
+
+  it("拒绝未知 agent() option，避免把 subagent 工具参数误当 workflow 参数", async () => {
+    const calls = [];
+    const api = createHostApi(makeDeps({
+      executeIsolated: async (p, o) => { calls.push({ p, o }); return { replyText: "x", error: null }; },
+    }));
+
+    expect(() => api.agent("hanako", { task: "读取 README", access: "read" } as any))
+      .toThrow(/unsupported.*task|不支持.*task/i);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("显式 agentType 找不到时失败，不静默落到当前 agent", async () => {
+    const calls = [];
+    const api = createHostApi(makeDeps({
+      resolveAgentId: () => undefined,
+      executeIsolated: async (p, o) => { calls.push({ p, o }); return { replyText: "x", error: null }; },
+    }));
+
+    await expect(api.agent("do it", { agentType: "missing-agent" }))
+      .rejects.toThrow(/agentType.*missing-agent|找不到.*missing-agent/i);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("拒绝无效 access 值", async () => {
+    const api = createHostApi(makeDeps());
+    expect(() => api.agent("do it", { access: "admin" } as any))
+      .toThrow(/access.*read.*write|access.*无效/i);
   });
 
   it("节点级上报：agent() 发 start/session/done，带 nodeId/label/phaseLabel/agentId", async () => {

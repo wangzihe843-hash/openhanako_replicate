@@ -41,6 +41,22 @@ describe("AgentManager.listAgents 缓存", () => {
     fs.writeFileSync(path.join(dir, "identity.md"), `# ${name}\n这是 ${name} 的身份`);
   }
 
+  function linkDirectory(target, linkPath) {
+    fs.symlinkSync(target, linkPath, process.platform === "win32" ? "junction" : "dir");
+  }
+
+  function createLinkedTestAgent(id, name) {
+    const realDir = path.join(tempDir, `real-${id}`);
+    const linkedDir = path.join(agentsDir, id);
+    fs.mkdirSync(realDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(realDir, "config.yaml"),
+      YAML.dump({ agent: { name, yuan: "hanako" } }),
+    );
+    fs.writeFileSync(path.join(realDir, "identity.md"), `# ${name}\n这是 ${name} 的身份`);
+    linkDirectory(realDir, linkedDir);
+  }
+
   function makeMgr() {
     return new AgentManager({
       agentsDir,
@@ -136,6 +152,16 @@ describe("AgentManager.listAgents 缓存", () => {
     const [agent] = mgr.listAgents();
 
     expect(agent.identity).toBe("黎的个人助手");
+  });
+
+  it("listAgents includes agents stored behind a filesystem link", () => {
+    createLinkedTestAgent("linked", "Linked");
+    const mgr = makeMgr();
+
+    const agents = mgr.listAgents();
+
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({ id: "linked", name: "Linked" });
   });
 
   it("excludes tombstoned agents from the active list and exposes deleted metadata", () => {

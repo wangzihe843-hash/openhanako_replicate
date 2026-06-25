@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computerOverlayForSession,
   computeComputerOverlayPosition,
   createComputerOverlaySlice,
   type ComputerOverlaySlice,
@@ -34,6 +35,32 @@ describe('computer overlay slice', () => {
 
     slice.state.clearComputerOverlayForSession('/s1');
     expect(slice.state.computerOverlayBySession['/s1']).toBeUndefined();
+  });
+
+  it('stores overlay events by session id when locator state is available', () => {
+    const slice = makeSlice();
+    Object.assign(slice.state as any, {
+      sessions: [{ path: '/s1', sessionId: 'sess_1' }],
+      sessionLocatorsById: { sess_1: { path: '/s1' } },
+    });
+
+    slice.state.setComputerOverlayForSession('/s1', {
+      phase: 'running',
+      action: 'click_element',
+      visualSurface: 'provider',
+      target: { coordinateSpace: 'element', elementId: 'button-1' },
+      ts: 100,
+    } as never);
+
+    expect(slice.state.computerOverlayBySession.sess_1).toMatchObject({
+      phase: 'running',
+      action: 'click_element',
+      sessionPath: '/s1',
+    });
+    expect(slice.state.computerOverlayBySession['/s1']).toBeUndefined();
+    expect(computerOverlayForSession(slice.state as any, '/s1')).toMatchObject({
+      action: 'click_element',
+    });
   });
 
   it('computes bounded positions for window coordinates', () => {

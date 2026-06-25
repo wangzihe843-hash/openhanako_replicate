@@ -174,6 +174,67 @@ describe("SessionCoordinator.writeSessionMeta serialization", () => {
     expect(entry.memoryEnabled).toBe(true);
   });
 
+  it("stores oversized prompt snapshots in a per-session payload sidecar (#1681)", async () => {
+    const largePrompt = "memory ".repeat(220_000);
+
+    await sessionCoord.writeSessionMeta(fakeSessionPath, {
+      memoryEnabled: true,
+      promptSnapshot: {
+        version: 1,
+        systemPrompt: largePrompt,
+        appendSystemPrompt: [],
+        skillsResult: { skills: [], diagnostics: [] },
+        agentsFilesResult: { agentsFiles: [] },
+      },
+    });
+
+    const metaPath = path.join(sessionDir, "session-meta.json");
+    const rawMeta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
+    const rawEntry = rawMeta[path.basename(fakeSessionPath)];
+    expect(rawEntry.memoryEnabled).toBe(true);
+    expect(rawEntry.promptSnapshot).toMatchObject({
+      kind: "session-meta-payload",
+      field: "promptSnapshot",
+    });
+    expect(JSON.stringify(rawMeta).length).toBeLessThan(20_000);
+
+    const hydrated = await sessionCoord._readMetaCached(metaPath);
+    expect(hydrated[path.basename(fakeSessionPath)].promptSnapshot.systemPrompt).toBe(largePrompt);
+
+    const payloadDir = path.join(sessionDir, "session-meta-payloads");
+    const payloadFiles = await fsp.readdir(payloadDir);
+    expect(payloadFiles.some((name) => name.endsWith(".promptSnapshot.json"))).toBe(true);
+  });
+
+  it("compacts an oversized legacy session-meta file instead of dropping unrelated entries (#1681)", async () => {
+    const metaPath = path.join(sessionDir, "session-meta.json");
+    const legacySessionPath = path.join(sessionDir, "legacy.jsonl");
+    const largePrompt = "legacy ".repeat(220_000);
+    await fsp.writeFile(metaPath, JSON.stringify({
+      "legacy.jsonl": {
+        memoryEnabled: true,
+        promptSnapshot: { systemPrompt: largePrompt },
+      },
+    }), "utf-8");
+
+    await sessionCoord.writeSessionMeta(fakeSessionPath, { memoryEnabled: false });
+
+    const meta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
+    expect(meta[path.basename(fakeSessionPath)].memoryEnabled).toBe(false);
+    expect(meta[path.basename(legacySessionPath)].memoryEnabled).toBe(true);
+    expect(meta[path.basename(legacySessionPath)].promptSnapshot).toMatchObject({
+      kind: "session-meta-payload",
+      field: "promptSnapshot",
+    });
+    expect(JSON.stringify(meta).length).toBeLessThan(20_000);
+
+    const files = await fsp.readdir(sessionDir);
+    expect(files.some((name) => /^session-meta\.oversized\.\d+\.json$/.test(name))).toBe(false);
+
+    const hydrated = await sessionCoord._readMetaCached(metaPath);
+    expect(hydrated[path.basename(legacySessionPath)].promptSnapshot.systemPrompt).toBe(largePrompt);
+  });
+
   it("setSessionPinned writes and clears pinnedAt on the session meta entry", async () => {
     const pinnedAt = await sessionCoord.setSessionPinned(fakeSessionPath, true);
 

@@ -8,6 +8,24 @@ import {
 import { t } from "../../../lib/i18n.ts";
 
 const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/api/v1";
+const WAN_IMAGE_RATIOS = new Set(["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"]);
+const WAN_DEFAULT_RATIO = "3:2";
+const QWEN_IMAGE_RATIOS = new Set(["16:9", "4:3", "1:1", "3:4", "9:16"]);
+const QWEN_DEFAULT_RATIO = "4:3";
+const QWEN_20_SIZE_BY_RATIO = {
+  "16:9": "2688*1536",
+  "9:16": "1536*2688",
+  "1:1": "2048*2048",
+  "4:3": "2368*1728",
+  "3:4": "1728*2368",
+};
+const QWEN_TEXT_SIZE_BY_RATIO = {
+  "16:9": "1664*928",
+  "4:3": "1472*1104",
+  "1:1": "1328*1328",
+  "3:4": "1104*1472",
+  "9:16": "928*1664",
+};
 
 function resolveDashScopeBaseUrl(baseUrl) {
   const base = normalizeBaseUrl(baseUrl, DEFAULT_BASE_URL);
@@ -105,18 +123,77 @@ function normalizeDashScopeSize(value) {
   return raw;
 }
 
-function generationParameters(params, family) {
-  const size = normalizeDashScopeSize(params.size || params.resolution);
+function assertSupportedRatio(value, supported, label) {
+  if (!value) return null;
+  const ratio = String(value).trim();
+  if (!supported.has(ratio)) {
+    throw new Error(`${label} ratio "${value}" is unsupported`);
+  }
+  return ratio;
+}
+
+function assertResolution(value, supported, label) {
+  const resolution = normalizeDashScopeSize(value);
+  if (!resolution) return null;
+  if (!supported.includes(resolution)) {
+    throw new Error(`${label} resolution "${value}" is unsupported; supported resolutions: ${supported.join(", ")}`);
+  }
+  return resolution;
+}
+
+function wanSupportedResolutions(modelId, imagesLength) {
+  const id = String(modelId || "").toLowerCase();
+  if (id === "wan2.7-image-pro" && imagesLength === 0) return ["1K", "2K", "4K"];
+  return ["1K", "2K"];
+}
+
+function resolveWanSizeAndRatio(params, modelId, imagesLength) {
+  const supported = wanSupportedResolutions(modelId, imagesLength);
+  const size = params.size
+    ? assertResolution(params.size, supported, "DashScope Wan")
+    : assertResolution(params.resolution || supported[supported.length - 1], supported, "DashScope Wan");
+  const ratio = assertSupportedRatio(
+    params.aspect_ratio || params.aspectRatio || params.ratio || WAN_DEFAULT_RATIO,
+    WAN_IMAGE_RATIOS,
+    "DashScope Wan",
+  );
+  return { size, ratio };
+}
+
+function resolveQwenSize(params, sizeByRatio, supportedResolution, label) {
+  if (params.size) {
+    const raw = String(params.size).trim();
+    const allowed = new Set(Object.values(sizeByRatio));
+    if (!allowed.has(raw)) {
+      throw new Error(`${label} size "${params.size}" is unsupported; supported sizes: ${[...allowed].join(", ")}`);
+    }
+    return raw;
+  }
+  assertResolution(params.resolution || supportedResolution, [supportedResolution], label);
+  const ratio = assertSupportedRatio(
+    params.aspect_ratio || params.aspectRatio || params.ratio || QWEN_DEFAULT_RATIO,
+    QWEN_IMAGE_RATIOS,
+    label,
+  );
+  return sizeByRatio[ratio];
+}
+
+function generationParameters(params, family, modelId, imagesLength) {
+  let size = null;
+  let aspectRatio = null;
+  if (family === "wan") {
+    const resolved = resolveWanSizeAndRatio(params, modelId, imagesLength);
+    size = resolved.size;
+    aspectRatio = resolved.ratio;
+  } else if (family === "qwen-multimodal") {
+    size = resolveQwenSize(params, QWEN_20_SIZE_BY_RATIO, "2K", "DashScope Qwen 2");
+  } else if (family === "qwen-text2image") {
+    size = resolveQwenSize(params, QWEN_TEXT_SIZE_BY_RATIO, "1K", "DashScope Qwen Image");
+  }
   const parameters: any = {
-    n: 1,
+    n: params.n || 1,
     ...(size ? { size } : {}),
   };
-  if (family === "wan") {
-    if (params.aspect_ratio || params.aspectRatio || params.ratio) {
-      parameters.aspect_ratio = params.aspect_ratio || params.aspectRatio || params.ratio;
-    }
-    return parameters;
-  }
   if (params.negative_prompt || params.negativePrompt) {
     parameters.negative_prompt = params.negative_prompt || params.negativePrompt;
   }
@@ -124,6 +201,10 @@ function generationParameters(params, family) {
     parameters.prompt_extend = params.prompt_extend ?? params.promptExtend;
   }
   if (params.watermark !== undefined) parameters.watermark = params.watermark;
+  if (params.seed !== undefined) parameters.seed = params.seed;
+  if (family === "wan" && aspectRatio) {
+    parameters.aspect_ratio = aspectRatio;
+  }
   return parameters;
 }
 
@@ -155,12 +236,16 @@ export const dashscopeImageAdapter = {
     const creds = await getCredentials(ctx, params);
     const modelId = params.modelId || params.model || "wan2.7-image-pro";
     const family = modelFamily(modelId);
+    const images = normalizeImageInput(params.image);
+    if (family === "qwen-text2image" && images.length > 0) {
+      throw new Error(`DashScope model "${modelId}" does not support reference images`);
+    }
     const body = {
       model: modelId,
       input: family === "qwen-text2image"
         ? { prompt: params.prompt }
-        : { messages: buildMessages(params.prompt, normalizeImageInput(params.image)) },
-      parameters: generationParameters(params, family),
+        : { messages: buildMessages(params.prompt, images) },
+      parameters: generationParameters(params, family, modelId, images.length),
     };
     const endpoint = family === "qwen-text2image"
       ? "/services/aigc/text2image/image-synthesis"

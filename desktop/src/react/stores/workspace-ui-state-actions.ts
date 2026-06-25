@@ -4,6 +4,10 @@ import type { PreviewItem, RightWorkspaceTab } from '../types';
 import { readFileForPreviewType } from '../utils/preview-file-content';
 import { useStore } from './index';
 import { normalizeWorkspacePath } from '../../../../shared/workspace-history.ts';
+import {
+  normalizePreviewReadingPosition,
+  type PreviewReadingPosition,
+} from '../../../../shared/preview-reading-position.ts';
 
 interface PersistedPreviewTab {
   id: string;
@@ -13,6 +17,8 @@ interface PersistedPreviewTab {
   type?: string;
   ext?: string;
   language?: string | null;
+  sourceRootPath?: string;
+  readingPosition?: PreviewReadingPosition;
 }
 
 export interface PersistedWorkspaceUiState {
@@ -58,9 +64,10 @@ function relativePathFor(root: string, filePath: string | undefined): string {
   return normalizedPath.startsWith(prefix) ? normalizedPath.slice(prefix.length) : '';
 }
 
-function previewTabFromItem(root: string, item: PreviewItem): PersistedPreviewTab | null {
+function previewTabFromItem(root: string, item: PreviewItem, readingPosition?: PreviewReadingPosition): PersistedPreviewTab | null {
   if (!item.filePath) return null;
   const relativePath = relativePathFor(root, item.filePath);
+  const normalizedReadingPosition = normalizePreviewReadingPosition(readingPosition);
   return {
     id: item.id,
     filePath: item.filePath,
@@ -69,7 +76,15 @@ function previewTabFromItem(root: string, item: PreviewItem): PersistedPreviewTa
     type: item.type,
     ext: item.ext,
     language: item.language ?? null,
+    ...(item.sourceRootPath ? { sourceRootPath: item.sourceRootPath } : {}),
+    ...(normalizedReadingPosition ? { readingPosition: normalizedReadingPosition } : {}),
   };
+}
+
+function restoredSourceRootPath(tab: PersistedPreviewTab, normalizedRoot: string, type: string): string | undefined {
+  const explicitRoot = normalizeRoot(tab.sourceRootPath);
+  if (explicitRoot) return explicitRoot;
+  return type === 'html' && tab.relativePath ? normalizedRoot : undefined;
 }
 
 export function resolveWorkspaceUiSurface(): WorkspaceUiSurface {
@@ -95,7 +110,7 @@ export function buildPersistedWorkspaceUiState(root: string): PersistedWorkspace
   const previewTabs = (state.openTabs || [])
     .map(id => previewItemsById.get(id))
     .filter((item): item is PreviewItem => !!item)
-    .map(item => previewTabFromItem(root, item))
+    .map(item => previewTabFromItem(root, item, state.previewReadingPositions?.[item.id]))
     .filter((item): item is PersistedPreviewTab => !!item);
   const persistedIds = new Set(previewTabs.map(tab => tab.id));
   const openTabs = (state.openTabs || []).filter(id => persistedIds.has(id));
@@ -114,6 +129,21 @@ export function buildPersistedWorkspaceUiState(root: string): PersistedWorkspace
     activeTabId,
     previewTabs,
   };
+}
+
+export function readingPositionsFromPersistedWorkspaceUiState(
+  persisted: PersistedWorkspaceUiState | null,
+  allowedIds?: Iterable<string>,
+): Record<string, PreviewReadingPosition> {
+  if (!persisted?.previewTabs?.length) return {};
+  const allowed = allowedIds ? new Set(allowedIds) : null;
+  const out: Record<string, PreviewReadingPosition> = {};
+  for (const tab of persisted.previewTabs) {
+    if (!tab.id || (allowed && !allowed.has(tab.id))) continue;
+    const normalized = normalizePreviewReadingPosition(tab.readingPosition);
+    if (normalized) out[tab.id] = normalized;
+  }
+  return out;
 }
 
 export async function loadPersistedWorkspaceUiState(root: string): Promise<PersistedWorkspaceUiState | null> {
@@ -154,6 +184,8 @@ export async function hydratePersistedPreviewItems(
         filePath,
         ext: tab.ext,
         language: tab.language,
+        sourceUrl: read.sourceUrl,
+        sourceRootPath: restoredSourceRootPath(tab, normalizedRoot, type),
         fileVersion: read.fileVersion,
       });
     } catch (err) {

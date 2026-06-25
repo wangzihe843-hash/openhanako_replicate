@@ -11,6 +11,7 @@ import path from "node:path";
 import { atomicWriteSync } from "../../shared/safe-fs.ts";
 import { debugLog } from "../debug-log.ts";
 import { createMediaCapabilities } from "./media-capabilities.ts";
+import { createReceiptCapabilities } from "./receipt-capabilities.ts";
 import {
   createIlinkMediaAesKey,
   decodeIlinkMediaAesKey,
@@ -36,6 +37,14 @@ export const WECHAT_ILINK_MEDIA_CAPABILITIES = createMediaCapabilities({
     document: "native_file",
   },
   source: ".docs/BRIDGE-MEDIA-CAPABILITIES.md#wechat-ilink",
+});
+
+export const WECHAT_ILINK_RECEIPT_CAPABILITIES = createReceiptCapabilities({
+  platform: "wechat",
+  mode: "native_typing",
+  scopes: ["dm"],
+  cancellable: true,
+  source: "https://github.com/Tencent/openclaw-weixin#getconfig",
 });
 
 const LONG_POLL_TIMEOUT_MS = 40_000;
@@ -256,6 +265,7 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
   const contextCachePath = hanaHome ? resolveContextCachePath(hanaHome, botToken) : null;
   let getUpdatesBuf = syncBufPath ? loadSyncBuf(syncBufPath) : "";
   const contextCache = loadContextCache(contextCachePath); // chatId → { token, ts }
+  const typingTicketCache = new Map(); // chatId → { contextToken, ticket }
 
   /** apiPost 带上当前 abortController.signal，stop() 时自动中断所有请求 */
   function api(endpoint, body, timeoutMs?) {
@@ -280,7 +290,9 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
   // ── context_token 管理 ──
 
   function setContextToken(chatId, token) {
+    const prev = contextCache.get(chatId)?.token;
     contextCache.set(chatId, { token, ts: Date.now() });
+    if (prev !== token) typingTicketCache.delete(chatId);
     saveContextCache(contextCachePath, contextCache);
   }
 
@@ -334,6 +346,32 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
       },
       base_info: { channel_version: "1.0.0" },
     });
+  }
+
+  async function getTypingTicket(chatId) {
+    const contextToken = getContextToken(chatId);
+    if (!contextToken) throw new Error("微信: 需要对方最近发过消息才能发送正在输入状态");
+    const cached = typingTicketCache.get(chatId);
+    if (cached?.contextToken === contextToken && cached.ticket) return cached.ticket;
+    const resp = await api("ilink/bot/getconfig", {
+      ilink_user_id: chatId,
+      context_token: contextToken,
+      base_info: { channel_version: "1.0.0" },
+    }, 10_000);
+    const ticket = resp?.typing_ticket;
+    if (!ticket) throw new Error("微信: getconfig 未返回 typing_ticket");
+    typingTicketCache.set(chatId, { contextToken, ticket });
+    return ticket;
+  }
+
+  async function sendTypingStatus(chatId, status) {
+    const typingTicket = await getTypingTicket(chatId);
+    await api("ilink/bot/sendtyping", {
+      ilink_user_id: chatId,
+      typing_ticket: typingTicket,
+      status,
+      base_info: { channel_version: "1.0.0" },
+    }, 10_000);
   }
 
   // ── CDN 媒体上传 ──
@@ -563,6 +601,7 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
   return {
     capabilities: { proactive: false },
     mediaCapabilities: WECHAT_ILINK_MEDIA_CAPABILITIES,
+    receiptCapabilities: WECHAT_ILINK_RECEIPT_CAPABILITIES,
 
     canReply(chatId) {
       return !!getContextToken(chatId);
@@ -575,6 +614,14 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
       for (let i = 0; i < text.length; i += MSG_CHUNK_LIMIT) {
         await sendText(chatId, text.slice(i, i + MSG_CHUNK_LIMIT), ctx);
       }
+    },
+
+    async sendTypingIndicator(chatId) {
+      await sendTypingStatus(chatId, 1);
+    },
+
+    async cancelTypingIndicator(chatId) {
+      await sendTypingStatus(chatId, 2);
     },
 
     // 不提供 sendBlockReply：iLink API 对连续发消息有速率限制，

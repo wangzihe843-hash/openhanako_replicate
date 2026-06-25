@@ -57,12 +57,12 @@ export function createProvidersRoute(engine: any) {
   // ── Provider Summary ──
 
   /**
-   * 统一概览：合并 added-models.yaml + OAuth status + SDK 模型
+   * 统一概览：合并 Provider Catalog + OAuth status + SDK 模型
    * 前端新 ProvidersTab 的核心数据源
    */
   route.get("/providers/summary", async (c) => {
     const rawProviders = engine.providerRegistry.getAllProvidersRaw();
-    // 补全凭证和模型列表（getAllProvidersRaw 返回的是 added-models.yaml 原始数据）
+    // 补全凭证和模型列表（getAllProvidersRaw 返回 catalog overlay + 本地 Provider Plugin 定义）
     const providers: Record<string, any> = {};
     for (const [name, p] of Object.entries(rawProviders) as [string, any][]) {
       const entry = engine.providerRegistry.get(name);
@@ -102,12 +102,14 @@ export function createProvidersRoute(engine: any) {
       return null;
     }
 
-    // 先处理 added-models.yaml 中的 provider（保持顺序）
+    // 先处理 Provider Catalog 中的 provider（保持顺序）
     for (const [name, p] of Object.entries(providers)) {
+      const entry = provRegistry.get(name);
       const isOAuth = provRegistry.isOAuth(name);
       const authType = provRegistry.getAuthType?.(name) || (isOAuth ? "oauth" : "api-key");
       const oauthInfo = getOAuthLoginInfo(name);
-      // added-models.yaml 是模型列表的唯一信源
+      // ProviderRegistry 暴露的 runtime provider 数据是模型列表入口；
+      // 对本地 Provider Plugin，它已经合并了插件声明和 catalog overlay。
       const rawModels = p.models || [];
       const customModels = oauthCustom[name] || [];
       const allowsMissingApiKey = !!p.base_url && provRegistry.allowsMissingApiKey?.(name, p.base_url);
@@ -123,7 +125,7 @@ export function createProvidersRoute(engine: any) {
       result[name] = {
         type: isOAuth ? "oauth" : "api-key",
         auth_type: authType,
-        display_name: oauthInfo?.name || name,
+        display_name: oauthInfo?.name || entry?.displayName || name,
         base_url: p.base_url || "",
         api: p.api || "",
         api_key: maskSecretValue(p.api_key || ""),
@@ -142,7 +144,7 @@ export function createProvidersRoute(engine: any) {
       };
     }
 
-    // 追加 OAuth-only provider（有 auth.json 但没在 added-models.yaml 里）
+    // 追加 OAuth-only provider（有 auth.json 但没在 Provider Catalog 里）
     // 遍历已注册的 OAuth plugin，用 authJsonKey 查 oauthLoginMap
     for (const oauthId of provRegistry.getOAuthProviderIds()) {
       if (result[oauthId]) continue;
@@ -507,7 +509,7 @@ export function createProvidersRoute(engine: any) {
 
   /**
    * 更新模型元数据（context/image/video/reasoning/maxOutput/name）
-   * 写回 added-models.yaml → 触发 model-sync → SDK 模型对象更新
+   * 写回 Provider Catalog → 触发 model-sync → SDK 模型对象更新
    */
   route.put("/providers/:name/models/:modelId", async (c) => {
     const scopeDenied = denyWithoutScope(c, "providers.manage");
@@ -530,7 +532,7 @@ export function createProvidersRoute(engine: any) {
 
   /**
    * 删除模型配置
-   * 从 added-models.yaml 移除指定模型 → 触发 model-sync
+   * 从 Provider Catalog 移除指定模型 → 触发 model-sync
    */
   route.delete("/providers/:name/models/:modelId", async (c) => {
     const scopeDenied = denyWithoutScope(c, "providers.manage");

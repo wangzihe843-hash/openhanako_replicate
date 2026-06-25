@@ -1,4 +1,5 @@
 import type { PreviewItem } from '../types';
+import type { PreviewReadingPosition } from '../../../../shared/preview-reading-position.ts';
 
 // ── Types ──
 
@@ -28,6 +29,8 @@ export interface PreviewSlice {
   pinnedViewers: PinnedViewer[];
   /** 临时 Markdown 阅读预览状态，按 preview item id keyed */
   markdownPreviewIds: string[];
+  /** Markdown 阅读位置，按 preview item id keyed；关闭 tab 时删除，跨重启由 workspace UI state 恢复。 */
+  previewReadingPositions: Record<string, PreviewReadingPosition>;
   addPinnedViewer: (viewer: PinnedViewer) => void;
   removePinnedViewer: (windowId: number) => void;
   clearPinnedViewers: () => void;
@@ -42,6 +45,7 @@ export const createPreviewSlice = (
   activeTabId: null,
   pinnedViewers: [],
   markdownPreviewIds: [],
+  previewReadingPositions: {},
   addPinnedViewer: (viewer) =>
     set((s) => {
       // 防重：同 windowId 存在则跳过（理论上 Electron 不会复用 id）
@@ -67,3 +71,4 @@ export const selectOpenTabs = (s: PreviewSlice): string[] => s.openTabs;
 export const selectActiveTabId = (s: PreviewSlice): string | null => s.activeTabId;
 export const selectPinnedViewers = (s: PreviewSlice): PinnedViewer[] => s.pinnedViewers;
 export const selectMarkdownPreviewIds = (s: PreviewSlice): string[] => s.markdownPreviewIds;
+export const selectPreviewReadingPositions = (s: PreviewSlice): Record<string, PreviewReadingPosition> => s.previewReadingPositions;

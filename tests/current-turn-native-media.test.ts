@@ -62,6 +62,26 @@ describe("current-turn native media store", () => {
     expect(result.messages).toBe(messages);
   });
 
+  it("uses sessionId as the current-turn key when the session file moves", () => {
+    const originalPath = path.join("/tmp", "hana", "before.jsonl");
+    const movedPath = path.join("/tmp", "hana", "after.jsonl");
+    const audioPath = path.join("/tmp", "hana", "session-files", "voice.wav");
+    const store = createCurrentTurnNativeMediaStore();
+    const turn = store.begin({ sessionId: "sess_native_media", sessionPath: originalPath }, {
+      audios: [AUDIO_BLOCK],
+      audioAttachmentPaths: [audioPath],
+    });
+
+    const replay = [{ role: "user", content: [TEXT_BLOCK(`[attached_audio: ${audioPath}]`)] }];
+    expect(store.inject({ sessionId: "sess_native_media", sessionPath: movedPath }, replay)).toMatchObject({
+      changed: true,
+      injectedAudios: 1,
+    });
+
+    store.end(turn);
+    expect(store.inject({ sessionId: "sess_native_media", sessionPath: movedPath }, replay).changed).toBe(false);
+  });
+
   it("clears only the active native media turns for the discarded session", () => {
     const sessionA = path.join("/tmp", "hana", "a.jsonl");
     const sessionB = path.join("/tmp", "hana", "b.jsonl");

@@ -472,6 +472,12 @@ describe("model sync related routes", () => {
           name: "Gpt 5.4",
           provider: "openai-codex",
           reasoning: true,
+          toolUse: {
+            supportsTools: true,
+            dialect: "openai",
+            toolResultFormat: "message",
+            supportsParallelToolCalls: true,
+          },
         },
         {
           id: "deepseek-v4-pro",
@@ -500,6 +506,12 @@ describe("model sync related routes", () => {
     expect(allRes.status).toBe(200);
     expect(allData.models[0].id).toBe("gpt-5.4");
     expect(allData.models[0].name).toBe("Gpt 5.4");
+    expect(allData.models[0].toolUse).toEqual({
+      supportsTools: true,
+      dialect: "openai",
+      toolResultFormat: "message",
+      supportsParallelToolCalls: true,
+    });
     expect(allData.models[1].xhigh).toBe(true);
     expect(allData.models[2]).toMatchObject({
       id: "gpt-audio-mini",
@@ -1502,7 +1514,7 @@ describe("model sync related routes", () => {
           api: "openai-completions",
         }),
         getAuthJsonKey: (id) => id,
-        getDefaultModels: (id) => id === "zhipu" ? ["glm-5.1", "glm-5", "glm-4.7-flash"] : [],
+        getDefaultModels: (id) => id === "zhipu" ? ["glm-5.2", "glm-5.1", "glm-5", "glm-4.7-flash"] : [],
       },
       hanakoHome: "/tmp",
     });
@@ -1517,7 +1529,12 @@ describe("model sync related routes", () => {
 
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.models.slice(0, 3).map(m => m.id)).toEqual(["glm-5", "glm-5.1", "glm-4.7-flash"]);
+    expect(data.models.slice(0, 4).map(m => m.id)).toEqual(["glm-5", "glm-5.2", "glm-5.1", "glm-4.7-flash"]);
+    expect(data.models.find(m => m.id === "glm-5.2")).toMatchObject({
+      name: "GLM-5.2",
+      context: 1000000,
+      maxOutput: 131072,
+    });
     expect(data.models.map(m => m.id)).toEqual(expect.arrayContaining(["glm-5-turbo", "glm-4-flash"]));
   });
 

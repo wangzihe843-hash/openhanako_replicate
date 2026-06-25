@@ -126,7 +126,7 @@ export function RightWorkspacePanel({ compact = false }: { compact?: boolean }) 
     <div className={styles.shell}>
       {!compact && <SessionTodoCard />}
       <div
-        className={`jian-card ${styles.workspaceCard}`}
+        className={`universal-card ${styles.workspaceCard}`}
         data-right-workspace-card=""
         data-jian-open={jianDrawerOpen ? 'true' : 'false'}
       >

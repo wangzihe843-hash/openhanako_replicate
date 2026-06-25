@@ -1,3 +1,5 @@
+import { sessionScopedKey, sessionScopedValue, type SessionLocatorState } from './session-slice';
+
 export type ComputerOverlayPhase = 'preview' | 'running' | 'done' | 'error' | 'clear';
 export type ComputerOverlayVisualSurface = 'renderer' | 'provider';
 
@@ -35,24 +37,38 @@ export const createComputerOverlaySlice = (
 ): ComputerOverlaySlice => ({
   computerOverlayBySession: {},
 
-  setComputerOverlayForSession: (sessionPath, event) => set((state) => ({
-    computerOverlayBySession: {
+  setComputerOverlayForSession: (sessionPath, event) => set((state) => {
+    const key = sessionScopedKey(state as ComputerOverlaySlice & SessionLocatorState, sessionPath) || sessionPath;
+    const computerOverlayBySession = {
       ...state.computerOverlayBySession,
-      [sessionPath]: {
+      [key]: {
         ...event,
         sessionPath,
         phase: event.phase,
         action: event.action,
         ts: event.ts || Date.now(),
       },
-    },
-  })),
+    };
+    if (key !== sessionPath) delete computerOverlayBySession[sessionPath];
+    return { computerOverlayBySession };
+  }),
 
   clearComputerOverlayForSession: (sessionPath) => set((state) => {
-    const { [sessionPath]: _removed, ...rest } = state.computerOverlayBySession;
-    return { computerOverlayBySession: rest };
+    const key = sessionScopedKey(state as ComputerOverlaySlice & SessionLocatorState, sessionPath) || sessionPath;
+    const computerOverlayBySession = { ...state.computerOverlayBySession };
+    delete computerOverlayBySession[key];
+    if (key !== sessionPath) delete computerOverlayBySession[sessionPath];
+    return { computerOverlayBySession };
   }),
 });
+
+export function computerOverlayForSession(
+  state: ComputerOverlaySlice & SessionLocatorState,
+  sessionPath: string | null | undefined,
+): ComputerOverlayState | null {
+  if (!sessionPath) return null;
+  return sessionScopedValue(state, state.computerOverlayBySession, sessionPath) || null;
+}
 
 export function computeComputerOverlayPosition(event: ComputerOverlayState | null | undefined): { x: number; y: number } {
   if (!event) return { x: 50, y: 46 };

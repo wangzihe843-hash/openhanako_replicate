@@ -560,7 +560,22 @@
     padding: 0 0.5rem;
 }
 
-.input-surface-mobile .model-pill span:first-child {
+.input-surface-mobile .model-pill .model-pill-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.model-provider-icon {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+    color: var(--accent);
+    opacity: 0.8;
+}
+
+.model-pill-label {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;

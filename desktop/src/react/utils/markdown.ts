@@ -14,6 +14,7 @@ import taskLists from 'markdown-it-task-lists';
 import 'katex/dist/katex.min.css';
 import { sanitizeMarkdownPreviewHtml } from './markdown-html-sanitizer';
 import { extOfName, isImageOrSvgExt } from './file-kind';
+import { uniqueMarkdownHeadingId } from './markdown-document';
 
 type MarkdownItInstance = ReturnType<typeof markdownit>;
 type MarkdownRenderEnv = {
@@ -906,16 +907,33 @@ function texBracketMath(md: MarkdownItInstance): void {
 }
 
 function applyMarkdownPlugins(md: MarkdownItInstance): void {
-  md.use(mk);
+  md.use(mk, { throwOnError: false, strict: false });
   md.use(texBracketMath);
   md.use(taskLists, { enabled: false, label: true });
   md.use(obsidianImageEmbeds);
   md.use(obsidianHighlights);
   md.use(obsidianCallouts);
   md.use(footnotes);
+  md.use(markdownHeadingAnchors);
   md.use(trimAutoLinkifiedSuffixes);
   md.use(mermaidFences);
   md.use(markdownImageRenderer);
+  md.use(markdownTableScrollWrapper);
+}
+
+function markdownHeadingAnchors(md: MarkdownItInstance): void {
+  md.core.ruler.push('hana_heading_anchors', (state: StateCore) => {
+    const seen = new Map<string, number>();
+    for (let i = 0; i < state.tokens.length; i += 1) {
+      const token = state.tokens[i];
+      if (token.type !== 'heading_open') continue;
+      const inline = state.tokens[i + 1];
+      if (!inline || inline.type !== 'inline') continue;
+      const text = inline.content.trim();
+      if (!text) continue;
+      token.attrSet('id', uniqueMarkdownHeadingId(text, seen));
+    }
+  });
 }
 
 function fenceLanguage(info: string): string {
@@ -965,6 +983,21 @@ function markdownImageRenderer(md: MarkdownItInstance): void {
 
     return self.renderToken(tokens, idx, options);
   };
+}
+
+function markdownTableScrollWrapper(md: MarkdownItInstance): void {
+  const defaultTableOpen = md.renderer.rules.table_open
+    ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+  const defaultTableClose = md.renderer.rules.table_close
+    ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+
+  md.renderer.rules.table_open = (tokens, idx, options, env, self) => (
+    `<div class="markdown-table-scroll">\n${defaultTableOpen(tokens, idx, options, env, self)}`
+  );
+
+  md.renderer.rules.table_close = (tokens, idx, options, env, self) => (
+    `${defaultTableClose(tokens, idx, options, env, self)}</div>\n`
+  );
 }
 
 function buildMarkdownEnv(src: string, options: MarkdownPreviewOptions = {}): MarkdownRenderEnv {

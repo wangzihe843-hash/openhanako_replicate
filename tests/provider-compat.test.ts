@@ -65,6 +65,72 @@ describe("Anthropic Max effort normalization", () => {
     expect(result.output_config).toEqual({ effort: "max" });
     expect(result.max_tokens).toBe(12000);
   });
+
+  it("maps Claude Fable/Mythos budget thinking to adaptive thinking with effort", () => {
+    const payload = {
+      model: "claude-fable-5",
+      messages: [{ role: "user", content: "hi" }],
+      thinking: { type: "enabled", budget_tokens: 8192, display: "omitted" },
+      max_tokens: 42666,
+    };
+    const result = normalizeProviderPayload(payload, {
+      id: "claude-fable-5",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      reasoning: true,
+      maxTokens: 128000,
+      compat: {
+        thinkingFormat: "anthropic",
+        reasoningProfile: "anthropic-adaptive-only",
+      },
+    }, { mode: "chat", reasoningLevel: "xhigh" });
+
+    expect(result).not.toBe(payload);
+    expect(result.thinking).toEqual({ type: "adaptive", display: "omitted" });
+    expect(result.output_config).toEqual({ effort: "max" });
+    expect(result.max_tokens).toBe(64000);
+    expect(payload.thinking).toEqual({ type: "enabled", budget_tokens: 8192, display: "omitted" });
+  });
+
+  it("keeps Claude Fable/Mythos adaptive thinking explicit when no thinking field is present", () => {
+    const result = normalizeProviderPayload({
+      model: "claude-mythos-5",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 12000,
+    }, {
+      id: "claude-mythos-5",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      reasoning: true,
+      maxTokens: 128000,
+      compat: {
+        thinkingFormat: "anthropic",
+        reasoningProfile: "anthropic-adaptive-only",
+      },
+    }, { mode: "chat", reasoningLevel: "medium" });
+
+    expect(result.thinking).toEqual({ type: "adaptive", display: "summarized" });
+    expect(result.output_config).toEqual({ effort: "medium" });
+    expect(result.max_tokens).toBe(12000);
+  });
+
+  it("fails closed when Claude Fable/Mythos thinking is explicitly disabled", () => {
+    expect(() => normalizeProviderPayload({
+      model: "claude-fable-5",
+      messages: [{ role: "user", content: "hi" }],
+      thinking: { type: "disabled" },
+      max_tokens: 12000,
+    }, {
+      id: "claude-fable-5",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      reasoning: true,
+      compat: {
+        thinkingFormat: "anthropic",
+        reasoningProfile: "anthropic-adaptive-only",
+      },
+    }, { mode: "chat", reasoningLevel: "off" })).toThrow(/does not support disabling adaptive thinking/);
+  });
 });
 
 describe("getThinkingFormat", () => {
@@ -141,6 +207,23 @@ describe("getThinkingFormat", () => {
       reasoning: true,
       compat: { supportsDeveloperRole: false },
     })).toBe("openrouter");
+  });
+
+  it("Claude Fable/Mythos adaptive-only 模型派生供应商专属 profile", () => {
+    expect(getReasoningProfile({
+      id: "claude-fable-5",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      reasoning: true,
+    })).toBe("anthropic-adaptive-only");
+
+    expect(getReasoningProfile({
+      id: "anthropic/claude-fable-5",
+      provider: "openrouter",
+      api: "openai-completions",
+      baseUrl: "https://openrouter.ai/api/v1",
+      reasoning: true,
+    })).toBe("openrouter-anthropic-adaptive");
   });
 });
 
@@ -345,6 +428,23 @@ describe("normalizeProviderPayload — 通用层", () => {
     expect(result.thinking).toEqual({ type: "enabled", budget_tokens: 4096 });
   });
 
+  it("Kimi Anthropic-compatible utility 请求显式关闭 thinking", () => {
+    const payload = {
+      model: "kimi-k2.6",
+      messages: [{ role: "user", content: "describe image" }],
+      thinking: { type: "enabled", budget_tokens: 8192 },
+    };
+    const result = normalizeProviderPayload(payload, {
+      id: "kimi-k2.6",
+      provider: "kimi-coding",
+      api: "anthropic-messages",
+      reasoning: true,
+      compat: { supportsDeveloperRole: false, thinkingFormat: "anthropic" },
+    }, { mode: "utility" });
+    expect(result).not.toBe(payload);
+    expect(result.thinking).toEqual({ type: "disabled" });
+  });
+
   it("anthropic 模型保留 thinking", () => {
     const payload = {
       model: "claude-opus-4-7",
@@ -499,6 +599,23 @@ describe("normalizeProviderPayload — 通用层", () => {
     expect(payload.max_tokens).toBe(32000);
   });
 
+  it("协议必填输出上限缺失时从 resolved model maxTokens 补齐", () => {
+    const payload = {
+      model: "kimi-k2.6",
+      messages: [{ role: "user", content: "hi" }],
+    };
+    const result = normalizeProviderPayload(payload, {
+      id: "kimi-k2.6",
+      provider: "kimi-coding",
+      api: "anthropic-messages",
+      maxTokens: 98304,
+      reasoning: true,
+      compat: { thinkingFormat: "anthropic" },
+    }, { mode: "utility" });
+    expect(result).not.toBe(payload);
+    expect(result.max_tokens).toBe(98304);
+  });
+
   it("官方 DeepSeek 仍交给 DeepSeek 子模块抬升 thinking 输出预算", () => {
     const payload = {
       model: "deepseek-v4-flash",
@@ -571,6 +688,65 @@ describe("normalizeProviderPayload — 通用层", () => {
     }
   });
 
+  it("OpenRouter Claude Fable adaptive thinking 用 verbosity 控制 effort，不发送无效 reasoning.effort", () => {
+    const payload = {
+      model: "anthropic/claude-fable-5",
+      messages: [{ role: "user", content: "hi" }],
+      reasoning: { effort: "medium" },
+      thinking: { type: "enabled", budget_tokens: 8192 },
+      max_completion_tokens: 32000,
+    };
+    const model = {
+      id: "anthropic/claude-fable-5",
+      provider: "openrouter",
+      api: "openai-completions",
+      baseUrl: "https://openrouter.ai/api/v1",
+      reasoning: true,
+      maxTokens: 128000,
+      compat: {
+        supportsDeveloperRole: false,
+        thinkingFormat: "openrouter",
+        reasoningProfile: "openrouter-anthropic-adaptive",
+      },
+    };
+
+    const result = normalizeProviderPayload(payload, model, {
+      mode: "chat",
+      reasoningLevel: "xhigh",
+      outputBudgetSource: "sdk-default",
+    });
+
+    expect(result).not.toBe(payload);
+    expect(result.verbosity).toBe("max");
+    expect(result.reasoning).toEqual({ enabled: true });
+    expect(result).not.toHaveProperty("thinking");
+    expect(result).not.toHaveProperty("reasoning_effort");
+    expect(result).not.toHaveProperty("max_completion_tokens");
+    expect(payload.reasoning).toEqual({ effort: "medium" });
+  });
+
+  it("OpenRouter Claude Fable adaptive thinking 显式 off 时 fail closed", () => {
+    expect(() => normalizeProviderPayload({
+      model: "anthropic/claude-fable-5",
+      messages: [{ role: "user", content: "hi" }],
+      reasoning: { effort: "none" },
+    }, {
+      id: "anthropic/claude-fable-5",
+      provider: "openrouter",
+      api: "openai-completions",
+      baseUrl: "https://openrouter.ai/api/v1",
+      reasoning: true,
+      compat: {
+        supportsDeveloperRole: false,
+        thinkingFormat: "openrouter",
+        reasoningProfile: "openrouter-anthropic-adaptive",
+      },
+    }, {
+      mode: "chat",
+      reasoningLevel: "off",
+    })).toThrow(/does not support disabling adaptive thinking/);
+  });
+
   it("DashScope Qwen video models convert SDK image_url data:video blocks to video_url", () => {
     const payload = {
       model: "qwen3-vl-plus",
@@ -627,6 +803,35 @@ describe("normalizeProviderPayload — 通用层", () => {
       type: "video_url",
       video_url: { url: "data:video/webm;base64,AAAA" },
     });
+  });
+
+  it("MiMo official video models convert SDK image_url data:video blocks to video_url", () => {
+    const payload = {
+      model: "mimo-v2.5",
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "看一下这段视频" },
+          { type: "image_url", image_url: { url: "data:video/mp4;base64,AAAA" } },
+        ],
+      }],
+    };
+
+    const result = normalizeProviderPayload(payload, {
+      id: "mimo-v2.5",
+      provider: "mimo",
+      api: "openai-completions",
+      input: ["text", "image"],
+      video: true,
+      audio: true,
+      baseUrl: "https://api.xiaomimimo.com/v1",
+    }, { mode: "chat" });
+
+    expect(result).not.toBe(payload);
+    expect(result.messages[0].content).toEqual([
+      { type: "text", text: "看一下这段视频" },
+      { type: "video_url", video_url: { url: "data:video/mp4;base64,AAAA" } },
+    ]);
   });
 
   it("Zhipu payloads remove OpenAI-only fields and normalize reasoning/output controls", () => {

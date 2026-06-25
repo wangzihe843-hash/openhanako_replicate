@@ -77,11 +77,13 @@ function normalizeThread(threadId, record: any = {}, existing = null) {
     kind,
     status,
     lastRunStatus: normalizeRunStatus(record.lastRunStatus || record.runStatus, existing?.lastRunStatus || "pending"),
+    parentSessionId: pickString(record.parentSessionId) || existing?.parentSessionId || null,
     parentSessionPath: pickString(record.parentSessionPath) || existing?.parentSessionPath || null,
     parentTaskId: pickString(record.parentTaskId) || existing?.parentTaskId || null,
     nodeId: pickString(record.nodeId) || existing?.nodeId || null,
     agentId: pickString(record.agentId) || existing?.agentId || null,
     agentName: pickString(record.agentName) || existing?.agentName || null,
+    childSessionId: pickString(record.childSessionId) || existing?.childSessionId || null,
     childSessionPath: pickString(record.childSessionPath) || pickString(record.sessionPath) || existing?.childSessionPath || null,
     label: pickThreadLabel(record, existing),
     access: normalizeAccess(record.access, existing?.access || null),
@@ -96,12 +98,14 @@ function normalizeThread(threadId, record: any = {}, existing = null) {
 
 export class SubagentThreadStore {
   declare _chains: any;
+  declare _getSessionIdForPath: any;
   declare _persistPath: any;
   declare _threads: any;
-  constructor(persistPath) {
+  constructor(persistPath = null, { getSessionIdForPath = null }: any = {}) {
     this._persistPath = persistPath || null;
     this._threads = new Map();
     this._chains = new Map();
+    this._getSessionIdForPath = typeof getSessionIdForPath === "function" ? getSessionIdForPath : () => null;
     if (this._persistPath) this._load();
   }
 
@@ -110,6 +114,7 @@ export class SubagentThreadStore {
     const existing = this._threads.get(threadId) || null;
     const next = normalizeThread(threadId, {
       ...record,
+      parentSessionId: this._parentSessionIdFromRecord(record, existing),
       status: "open",
       lastRunStatus: "pending",
       runCount: (existing?.runCount || 0) + 1,
@@ -126,6 +131,7 @@ export class SubagentThreadStore {
     const existing = this._threads.get(threadId) || null;
     const next = normalizeThread(threadId, {
       ...record,
+      parentSessionId: this._parentSessionIdFromRecord(record, existing),
       childSessionPath,
       status: existing?.status || "open",
     }, existing);
@@ -141,6 +147,7 @@ export class SubagentThreadStore {
     const close = record.close === true;
     const next = normalizeThread(threadId, {
       ...record,
+      parentSessionId: this._parentSessionIdFromRecord(record, existing),
       status: close ? "closed" : "open",
       lastRunStatus: normalizeRunStatus(record.status || record.lastRunStatus, existing.lastRunStatus),
       closedAt: close ? nowIso() : null,
@@ -153,7 +160,10 @@ export class SubagentThreadStore {
   upsert(threadId, record: any = {}) {
     if (!threadId) return null;
     const existing = this._threads.get(threadId) || null;
-    const next = normalizeThread(threadId, record, existing);
+    const next = normalizeThread(threadId, {
+      ...record,
+      parentSessionId: this._parentSessionIdFromRecord(record, existing),
+    }, existing);
     this._threads.set(threadId, next);
     this._save();
     return clone(next);
@@ -170,9 +180,10 @@ export class SubagentThreadStore {
 
   listOpenDirectBySession(parentSessionPath) {
     if (!parentSessionPath) return [];
+    const targetKey = this._parentSessionKeyForPath(parentSessionPath);
     const out = [];
     for (const rec of this._threads.values()) {
-      if (rec.parentSessionPath !== parentSessionPath) continue;
+      if (this._parentSessionKeyForRecord(rec) !== targetKey) continue;
       if (rec.kind !== "direct") continue;
       if (rec.status !== "open") continue;
       out.push(clone(rec));
@@ -204,9 +215,10 @@ export class SubagentThreadStore {
 
   removeBySession(parentSessionPath) {
     if (!parentSessionPath) return 0;
+    const targetKey = this._parentSessionKeyForPath(parentSessionPath);
     let removed = 0;
     for (const [id, rec] of this._threads) {
-      if (rec.parentSessionPath === parentSessionPath) {
+      if (this._parentSessionKeyForRecord(rec) === targetKey) {
         this._threads.delete(id);
         removed += 1;
       }
@@ -246,6 +258,30 @@ export class SubagentThreadStore {
       if (this._chains.get(threadId) === tail) this._chains.delete(threadId);
     });
     return tail.then(() => run);
+  }
+
+  _parentSessionIdFromRecord(record: any = {}, existing = null) {
+    return pickString(record.parentSessionId)
+      || this._sessionIdForPath(record.parentSessionPath)
+      || existing?.parentSessionId
+      || this._sessionIdForPath(existing?.parentSessionPath)
+      || null;
+  }
+
+  _sessionIdForPath(sessionPath) {
+    const sessionId = this._getSessionIdForPath?.(sessionPath);
+    return pickString(sessionId);
+  }
+
+  _parentSessionKeyForPath(parentSessionPath) {
+    return this._sessionIdForPath(parentSessionPath) || parentSessionPath;
+  }
+
+  _parentSessionKeyForRecord(record) {
+    return pickString(record?.parentSessionId)
+      || this._sessionIdForPath(record?.parentSessionPath)
+      || record?.parentSessionPath
+      || null;
   }
 
   _save() {

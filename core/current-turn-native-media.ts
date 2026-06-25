@@ -3,12 +3,12 @@ import path from "path";
 const ATTACHED_AUDIO_MARKER_RE = /\[attached_audio:\s*([^\]]+)\]/g;
 
 export function createCurrentTurnNativeMediaStore() {
-  const activeTurnsBySessionPath = new Map();
+  const activeTurnsBySessionKey = new Map();
   let nextId = 1;
 
-  function begin(sessionPath, opts: { audios?: any[]; audioAttachmentPaths?: any[] } = {}) {
-    const normalizedSessionPath = normalizePathKey(sessionPath);
-    if (!normalizedSessionPath) return null;
+  function begin(sessionRef, opts: { audios?: any[]; audioAttachmentPaths?: any[] } = {}) {
+    const sessionRefInfo = normalizeSessionRef(sessionRef);
+    if (!sessionRefInfo.key) return null;
     const audios = Array.isArray(opts.audios) ? opts.audios : [];
     const audioAttachmentPaths = Array.isArray(opts.audioAttachmentPaths) ? opts.audioAttachmentPaths : [];
     if (!audios.length || !audioAttachmentPaths.length) return null;
@@ -26,38 +26,45 @@ export function createCurrentTurnNativeMediaStore() {
 
     const turn = {
       id: nextId,
-      sessionPath: normalizedSessionPath,
+      sessionId: sessionRefInfo.sessionId,
+      sessionPath: sessionRefInfo.sessionPath,
+      sessionKey: sessionRefInfo.key,
       audiosByPathKey,
     };
     nextId += 1;
-    const stack = activeTurnsBySessionPath.get(normalizedSessionPath) || [];
+    const stack = activeTurnsBySessionKey.get(sessionRefInfo.key) || [];
     stack.push(turn);
-    activeTurnsBySessionPath.set(normalizedSessionPath, stack);
-    return { id: turn.id, sessionPath: normalizedSessionPath };
+    activeTurnsBySessionKey.set(sessionRefInfo.key, stack);
+    return {
+      id: turn.id,
+      ...(turn.sessionId ? { sessionId: turn.sessionId } : {}),
+      sessionPath: turn.sessionPath,
+    };
   }
 
   function end(token) {
-    if (!token?.sessionPath || !token.id) return;
-    const normalizedSessionPath = normalizePathKey(token.sessionPath);
-    const stack = activeTurnsBySessionPath.get(normalizedSessionPath);
+    if (!token?.id) return;
+    const sessionRefInfo = normalizeSessionRef(token);
+    if (!sessionRefInfo.key) return;
+    const stack = activeTurnsBySessionKey.get(sessionRefInfo.key);
     if (!stack?.length) return;
     const nextStack = stack.filter((turn) => turn.id !== token.id);
     if (nextStack.length) {
-      activeTurnsBySessionPath.set(normalizedSessionPath, nextStack);
+      activeTurnsBySessionKey.set(sessionRefInfo.key, nextStack);
     } else {
-      activeTurnsBySessionPath.delete(normalizedSessionPath);
+      activeTurnsBySessionKey.delete(sessionRefInfo.key);
     }
   }
 
-  function clearSession(sessionPath) {
-    const normalizedSessionPath = normalizePathKey(sessionPath);
-    if (!normalizedSessionPath) return false;
-    return activeTurnsBySessionPath.delete(normalizedSessionPath);
+  function clearSession(sessionRef) {
+    const sessionRefInfo = normalizeSessionRef(sessionRef);
+    if (!sessionRefInfo.key) return false;
+    return activeTurnsBySessionKey.delete(sessionRefInfo.key);
   }
 
-  function inject(sessionPath, messages) {
-    const normalizedSessionPath = normalizePathKey(sessionPath);
-    const stack = normalizedSessionPath ? activeTurnsBySessionPath.get(normalizedSessionPath) : null;
+  function inject(sessionRef, messages) {
+    const sessionRefInfo = normalizeSessionRef(sessionRef);
+    const stack = sessionRefInfo.key ? activeTurnsBySessionKey.get(sessionRefInfo.key) : null;
     const turn = stack?.[stack.length - 1] || null;
     if (!turn || !Array.isArray(messages)) {
       return { messages, changed: false, injectedAudios: 0 };
@@ -164,4 +171,24 @@ function pathKeys(value) {
 
 function normalizePathKey(value) {
   return pathKeys(value)[0] || "";
+}
+
+function normalizeSessionRef(value) {
+  if (value && typeof value === "object") {
+    const sessionId = typeof value.sessionId === "string" && value.sessionId.trim()
+      ? value.sessionId.trim()
+      : null;
+    const sessionPath = normalizePathKey(value.sessionPath);
+    return {
+      sessionId,
+      sessionPath,
+      key: sessionId || sessionPath,
+    };
+  }
+  const sessionPath = normalizePathKey(value);
+  return {
+    sessionId: null,
+    sessionPath,
+    key: sessionPath,
+  };
 }

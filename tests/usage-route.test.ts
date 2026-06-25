@@ -52,4 +52,30 @@ describe("usage route", () => {
     expect(all.status).toBe(200);
     expect(allBody.entries).toHaveLength(600);
   });
+
+  it("passes sessionId filters through to the usage ledger", async () => {
+    let receivedFilter: any = null;
+    const app = new Hono();
+    const engine = {
+      usageLedger: {
+        list: (filter: any = {}) => {
+          receivedFilter = filter;
+          return {
+            entries: [{ requestId: "req-session-id" }],
+            nextCursor: null,
+          };
+        },
+      },
+    };
+
+    app.route("/api", createUsageRoute(engine));
+
+    const res = await app.request("/api/usage/llm?sessionId=sess_usage_route&limit=all");
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.entries).toHaveLength(1);
+    expect(receivedFilter).toMatchObject({ sessionId: "sess_usage_route" });
+    expect(receivedFilter).not.toHaveProperty("limit");
+  });
 });

@@ -20,9 +20,50 @@ function writeAddedModels(providers) {
 }
 
 function readAddedModels() {
+  const catalogPath = path.join(tmpDir, "provider-catalog.json");
+  if (fs.existsSync(catalogPath)) {
+    return readProviderCatalog().providers || {};
+  }
   const ymlPath = path.join(tmpDir, "added-models.yaml");
   const raw = YAML.load(fs.readFileSync(ymlPath, "utf-8"));
   return raw?.providers || {};
+}
+
+function readProviderCatalog() {
+  return JSON.parse(fs.readFileSync(path.join(tmpDir, "provider-catalog.json"), "utf-8"));
+}
+
+function writeProviderCatalog(catalog) {
+  fs.writeFileSync(
+    path.join(tmpDir, "provider-catalog.json"),
+    JSON.stringify(catalog, null, 2) + "\n",
+    "utf-8",
+  );
+}
+
+function readProviderCatalogMeta() {
+  return readProviderCatalog().meta || {};
+}
+
+function readLocalProviderPlugin(providerId) {
+  return JSON.parse(fs.readFileSync(
+    path.join(tmpDir, "provider-plugins", providerId, "providers", `${providerId}.json`),
+    "utf-8",
+  ));
+}
+
+function readLocalProviderManifest(providerId) {
+  return JSON.parse(fs.readFileSync(
+    path.join(tmpDir, "provider-plugins", providerId, "manifest.json"),
+    "utf-8",
+  ));
+}
+
+function readOnlyLocalProviderPluginDir() {
+  const root = path.join(tmpDir, "provider-plugins");
+  const dirs = fs.readdirSync(root).filter((entry) => fs.statSync(path.join(root, entry)).isDirectory());
+  expect(dirs).toHaveLength(1);
+  return dirs[0];
 }
 
 /** 创建一个 registry，注册一个测试插件 */
@@ -55,6 +96,36 @@ afterEach(() => {
 // ── getCredentials ───────────────────────────────────────────────────────────
 
 describe("getCredentials", () => {
+  it("migrates legacy added-models.yaml to provider-catalog.json and uses v2 as the live provider source", () => {
+    writeAddedModels({
+      "test-provider": {
+        api_key: "sk-test-123",
+        base_url: "https://custom.api.com/v1",
+        api: "openai-completions",
+        models: ["model-a"],
+      },
+    });
+    const legacyPath = path.join(tmpDir, "added-models.yaml");
+    const legacyBefore = fs.readFileSync(legacyPath, "utf-8");
+
+    const reg = makeRegistry();
+
+    expect(reg.getCredentials("test-provider")).toMatchObject({
+      apiKey: "sk-test-123",
+      baseUrl: "https://custom.api.com/v1",
+      api: "openai-completions",
+    });
+    expect(readProviderCatalog().providers["test-provider"].models).toEqual(["model-a"]);
+
+    reg.updateModelEntry("test-provider", "model-a", { image: true });
+
+    expect(fs.readFileSync(legacyPath, "utf-8")).toBe(legacyBefore);
+    expect(readProviderCatalog().providers["test-provider"].models[0]).toMatchObject({
+      id: "model-a",
+      image: true,
+    });
+  });
+
   it("keeps MiniMax Token Plan as a distinct Anthropic-compatible provider boundary", () => {
     writeAddedModels({});
     const reg = new ProviderRegistry(tmpDir);
@@ -79,6 +150,28 @@ describe("getCredentials", () => {
     expect(reg.getDefaultModels("minimax-token-plan")).toEqual(
       expect.arrayContaining(["MiniMax-M3", "MiniMax-M2.1-highspeed"])
     );
+  });
+
+  it("registers GLM Coding Plan as a fixed-list Zhipu OpenAI-compatible provider", () => {
+    writeAddedModels({});
+    const reg = new ProviderRegistry(tmpDir);
+
+    const entry = reg.get("zhipu-coding");
+
+    expect(entry).toMatchObject({
+      id: "zhipu-coding",
+      displayName: "智谱 GLM Coding Plan",
+      authType: "api-key",
+      baseUrl: "https://api.z.ai/api/coding/paas/v4",
+      api: "openai-completions",
+      isBuiltin: true,
+    });
+    expect(reg.getDefaultModels("zhipu-coding")).toEqual([
+      "glm-5.2",
+      "glm-5-turbo",
+      "glm-4.7",
+      "glm-4.5-air",
+    ]);
   });
 
   it("返回已配置 provider 的 apiKey/baseUrl/api", () => {
@@ -357,6 +450,15 @@ describe("auth policy", () => {
 // ── builtin defaults ─────────────────────────────────────────────────────────
 
 describe("builtin default models", () => {
+  it("uses the official OpenAI-compatible endpoint for Kimi Coding Plan", () => {
+    writeAddedModels({});
+    const reg = new ProviderRegistry(tmpDir);
+    expect(reg.get("kimi-coding")).toMatchObject({
+      baseUrl: "https://api.kimi.com/coding/v1",
+      api: "openai-completions",
+    });
+  });
+
   it("uses the stable Kimi for Coding model ID for Kimi Coding Plan", () => {
     writeAddedModels({});
     const reg = new ProviderRegistry(tmpDir);
@@ -514,6 +616,40 @@ describe("getAllProvidersRaw", () => {
       _config_error: "invalid_models_config",
       models: [{ id: "model-b" }],
     });
+  });
+});
+
+// ── provider catalog capabilities ───────────────────────────────────────────
+
+describe("provider catalog capabilities", () => {
+  it("exposes non-chat capability providers from provider-catalog.json", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "provider-catalog.json"),
+      JSON.stringify({
+        catalogVersion: 2,
+        providers: {},
+        capabilities: {
+          "web.search": {
+            providers: [
+              { id: "brave", source: "api", requiresApiKey: true },
+              { id: "duckduckgo_browser", source: "browser", requiresApiKey: false },
+            ],
+          },
+        },
+        meta: {},
+      }, null, 2) + "\n",
+      "utf-8",
+    );
+    const reg = makeRegistry();
+
+    const providers = reg.getCapabilityProviders("web.search");
+    providers.push({ id: "polluted", source: "test" });
+
+    expect(reg.getCapabilityProviders("web.search")).toEqual([
+      { id: "brave", source: "api", requiresApiKey: true },
+      { id: "duckduckgo_browser", source: "browser", requiresApiKey: false },
+    ]);
+    expect(reg.getCapabilityProviders("missing.capability")).toEqual([]);
   });
 });
 
@@ -679,6 +815,168 @@ describe("saveProvider", () => {
     const persisted = readAddedModels();
     expect(persisted["new-provider"]).toBeDefined();
     expect(persisted["new-provider"].api_key).toBe("sk-new");
+  });
+
+  it("把新增自定义 provider 保存成本地 Provider Plugin，密钥只留在 catalog overlay", () => {
+    writeAddedModels({});
+    const reg = makeRegistry();
+
+    reg.saveProvider("new-provider", {
+      display_name: "New Provider",
+      auth_type: "api-key",
+      api_key: "sk-new",
+      headers: { "X-API-Key": "header-secret" },
+      base_url: "https://new.api.com/v1",
+      api: "openai-completions",
+      models: [
+        { id: "new-chat", name: "New Chat", reasoning: true, defaultThinkingLevel: "max" },
+      ],
+    });
+
+    const manifest = readLocalProviderManifest("new-provider");
+    expect(manifest).toMatchObject({
+      id: "new-provider",
+      type: "provider-plugin",
+      provider: "new-provider",
+    });
+
+    const plugin = readLocalProviderPlugin("new-provider");
+    expect(plugin).toMatchObject({
+      id: "new-provider",
+      displayName: "New Provider",
+      authType: "api-key",
+      defaultBaseUrl: "https://new.api.com/v1",
+      defaultApi: "openai-completions",
+      models: [
+        { id: "new-chat", name: "New Chat", reasoning: true, defaultThinkingLevel: "max" },
+      ],
+    });
+    expect(plugin).not.toHaveProperty("api_key");
+    expect(plugin).not.toHaveProperty("headers");
+
+    const catalog = readProviderCatalog().providers;
+    expect(catalog["new-provider"]).toEqual({
+      api_key: "sk-new",
+      headers: { "X-API-Key": "header-secret" },
+    });
+
+    const entry = reg.get("new-provider");
+    expect(entry).toMatchObject({
+      id: "new-provider",
+      displayName: "New Provider",
+      baseUrl: "https://new.api.com/v1",
+      api: "openai-completions",
+      source: { kind: "local-provider-plugin" },
+    });
+
+    expect(reg.getAllProvidersRaw()["new-provider"]).toMatchObject({
+      api_key: "sk-new",
+      headers: { "X-API-Key": "header-secret" },
+      base_url: "https://new.api.com/v1",
+      api: "openai-completions",
+      models: [
+        { id: "new-chat", name: "New Chat", reasoning: true, defaultThinkingLevel: "max" },
+      ],
+    });
+  });
+
+  it("把旧 catalog-only 自定义 provider 一次性迁移成本地 Provider Plugin", () => {
+    writeProviderCatalog({
+      catalogVersion: 2,
+      providers: {
+        "custom-old": {
+          display_name: "Custom Old",
+          auth_type: "api-key",
+          api_key: "sk-old",
+          headers: { Authorization: "Bearer old" },
+          base_url: "https://old.example/v1",
+          api: "openai-completions",
+          models: ["old-chat"],
+        },
+      },
+      capabilities: {},
+      meta: {},
+    });
+
+    const reg = new ProviderRegistry(tmpDir);
+    const entry = reg.get("custom-old");
+
+    expect(entry).toMatchObject({
+      id: "custom-old",
+      displayName: "Custom Old",
+      baseUrl: "https://old.example/v1",
+      api: "openai-completions",
+      source: { kind: "local-provider-plugin" },
+    });
+    expect(readLocalProviderPlugin("custom-old")).toMatchObject({
+      id: "custom-old",
+      displayName: "Custom Old",
+      defaultBaseUrl: "https://old.example/v1",
+      defaultApi: "openai-completions",
+      models: ["old-chat"],
+    });
+    expect(readProviderCatalog().providers["custom-old"]).toEqual({
+      api_key: "sk-old",
+      headers: { Authorization: "Bearer old" },
+    });
+    expect(reg.getAllProvidersRaw()["custom-old"]).toMatchObject({
+      api_key: "sk-old",
+      base_url: "https://old.example/v1",
+      api: "openai-completions",
+      models: ["old-chat"],
+    });
+  });
+
+  it("把中文名旧 catalog-only provider 迁移到 safe storage slug 且保留 provider id", () => {
+    const providerId = "硅基流动";
+    writeProviderCatalog({
+      catalogVersion: 2,
+      providers: {
+        [providerId]: {
+          display_name: "硅基流动",
+          auth_type: "api-key",
+          api_key: "sk-silicon",
+          base_url: "https://api.siliconflow.cn/v1",
+          api: "openai-completions",
+          models: ["deepseek-ai/DeepSeek-V3.2"],
+        },
+      },
+      capabilities: {},
+      meta: {},
+    });
+
+    const reg = new ProviderRegistry(tmpDir);
+    const entry = reg.get(providerId);
+
+    expect(entry).toMatchObject({
+      id: providerId,
+      displayName: "硅基流动",
+      baseUrl: "https://api.siliconflow.cn/v1",
+      api: "openai-completions",
+      source: { kind: "local-provider-plugin" },
+    });
+
+    const storageId = readOnlyLocalProviderPluginDir();
+    expect(storageId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+    expect(storageId).not.toBe(providerId);
+
+    const manifest = JSON.parse(fs.readFileSync(path.join(tmpDir, "provider-plugins", storageId, "manifest.json"), "utf-8"));
+    expect(manifest).toMatchObject({
+      id: storageId,
+      provider: providerId,
+    });
+    const providerFile = JSON.parse(fs.readFileSync(
+      path.join(tmpDir, "provider-plugins", storageId, "providers", `${storageId}.json`),
+      "utf-8",
+    ));
+    expect(providerFile).toMatchObject({
+      id: providerId,
+      displayName: "硅基流动",
+      defaultBaseUrl: "https://api.siliconflow.cn/v1",
+    });
+    expect(readProviderCatalog().providers[providerId]).toEqual({
+      api_key: "sk-silicon",
+    });
   });
 
   it("更新已有 provider 的配置（合并）", () => {
@@ -860,6 +1158,59 @@ describe("updateModelEntry type field", () => {
       groundingMode: "prompted",
     });
   });
+
+  it("persists an explicit tool use contract as model metadata", () => {
+    writeAddedModels({
+      "test-provider": {
+        api_key: "key-123",
+        models: ["tool-model"],
+      },
+    });
+    const reg = makeRegistry();
+
+    reg.updateModelEntry("test-provider", "tool-model", {
+      toolUse: {
+        supportsTools: true,
+        dialect: "anthropic",
+        supportsParallelToolCalls: true,
+        supportsForcedToolChoice: true,
+        supportsServerTools: false,
+        toolResultFormat: "content_block",
+        unknown: "drop-me",
+      },
+    });
+
+    const raw = readAddedModels();
+    const entry = raw["test-provider"].models.find(
+      m => (typeof m === "object" ? m.id : m) === "tool-model"
+    );
+    expect(entry.toolUse).toEqual({
+      supportsTools: true,
+      dialect: "anthropic",
+      supportsParallelToolCalls: true,
+      supportsForcedToolChoice: true,
+      supportsServerTools: false,
+      toolResultFormat: "content_block",
+    });
+  });
+
+  it("rejects malformed tool use contracts instead of applying a default dialect", () => {
+    writeAddedModels({
+      "test-provider": {
+        api_key: "key-123",
+        models: ["tool-model"],
+      },
+    });
+    const reg = makeRegistry();
+
+    expect(() => reg.updateModelEntry("test-provider", "tool-model", {
+      toolUse: {
+        supportsTools: true,
+        dialect: "surprise-wire-format",
+        toolResultFormat: "message",
+      },
+    })).toThrow(/invalid toolUse contract/i);
+  });
 });
 
 // ── media model CRUD ─────────────────────────────────────────────────────────
@@ -1035,13 +1386,11 @@ describe("removeProvider", () => {
     const reg = makeRegistry();
 
     reg.removeProvider("test-provider");
-    let raw = YAML.load(fs.readFileSync(path.join(tmpDir, "added-models.yaml"), "utf-8"));
-    expect(raw._deleted_providers).toContain("test-provider");
+    expect(readProviderCatalogMeta().deletedProviders).toContain("test-provider");
 
     reg.saveProvider("test-provider", { api_key: "sk-new" });
-    raw = YAML.load(fs.readFileSync(path.join(tmpDir, "added-models.yaml"), "utf-8"));
-    expect(raw._deleted_providers || []).not.toContain("test-provider");
-    expect(raw.providers["test-provider"].api_key).toBe("sk-new");
+    expect(readProviderCatalogMeta().deletedProviders || []).not.toContain("test-provider");
+    expect(readAddedModels()["test-provider"].api_key).toBe("sk-new");
   });
 
   it("删除不存在的 provider 不报错", () => {

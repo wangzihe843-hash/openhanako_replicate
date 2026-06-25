@@ -116,7 +116,7 @@ describe("image generation retry", () => {
         prompt: "same prompt",
       },
     });
-    expect(bus.request).toHaveBeenCalledWith("deferred:retry", {
+    expect(bus.request).toHaveBeenCalledWith("deferred:retry", expect.objectContaining({
       taskId: "task-img",
       sessionPath: "/sessions/main.jsonl",
       meta: expect.objectContaining({
@@ -127,7 +127,7 @@ describe("image generation retry", () => {
         notifyAgentOnFailure: true,
         prompt: "same prompt",
       }),
-    });
+    }));
     expect(store.update).toHaveBeenCalledWith("task-img", expect.objectContaining({
       status: "pending",
       failReason: null,

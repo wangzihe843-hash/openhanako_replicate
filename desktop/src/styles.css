@@ -18,10 +18,11 @@
     --panel-card-shadow: none;
 
     /* 对话列宽 */
-    --chat-column-width: 45rem;
+    --chat-column-width: 720px;
     --chat-input-column-extra: 1.25rem;
     --chat-input-column-width: calc(var(--chat-column-width) + var(--chat-input-column-extra));
     --welcome-chat-input-column-width: 40rem;
+    --chat-message-font-size: 15px;
 
     /* 圆角 */
     --radius-sm: 5px;
@@ -74,6 +75,7 @@
     --editor-markdown-h6-font-size: 14px;
     --editor-markdown-line-height: 1.72;
     --editor-markdown-content-padding-x: 24px;
+    --editor-markdown-content-width: 720px;
 
     /* 纸质纹理：卡片层默认提亮纸纹，深色主题可关闭补偿 */
     --paper-texture-card-blend-mode: lighten;
@@ -117,6 +119,7 @@ body.paper-texture .sidebar {
 }
 
 /* ② Card 层：bg-card 元素用 lighten 混合，纹理暗部被背景色提亮 */
+body.paper-texture .universal-card,
 body.paper-texture .jian-card,
 body.paper-texture .msg-card,
 body.paper-texture .input-wrapper,
@@ -927,6 +930,29 @@ html[data-platform="linux"] .tb-toggle-right {
     display: none;
 }
 
+.md-content .mermaid-source-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-xs);
+}
+
+.md-content .mermaid-source-toolbar button {
+    border: var(--panel-card-border);
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 0.7rem;
+    padding: 0.15rem var(--space-xs);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.md-content .mermaid-source-toolbar button:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+}
+
 .md-content .mermaid-rendered {
     min-width: 0;
     overflow-x: auto;
@@ -1219,6 +1245,13 @@ html[data-platform="linux"] .tb-toggle-right {
 }
 
 /* 表格 */
+.md-content .markdown-table-scroll {
+    max-width: 100%;
+    margin: var(--space-sm) 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
 .md-content table {
     border-collapse: collapse;
     width: 100%;
@@ -1226,10 +1259,17 @@ html[data-platform="linux"] .tb-toggle-right {
     font-size: 0.9em;
 }
 
+.md-content .markdown-table-scroll > table {
+    width: max-content;
+    max-width: none;
+    margin: 0;
+}
+
 .md-content th, .md-content td {
     border: 1px solid var(--border);
     padding: 0.3em 0.6em;
     text-align: left;
+    white-space: nowrap;
 }
 
 .md-content th {
@@ -2185,7 +2225,8 @@ html[data-platform="linux"] .tb-toggle-right {
     box-shadow: -8px 0 24px rgba(0, 0, 0, 0.06);
 }
 
-/* ── 卡片容器 ── */
+/* ── Universal Card: 主页面 / Workbench / Dock 的全局卡片皮肤 ── */
+.universal-card,
 .jian-card {
     background: var(--panel-card-bg);
     border-radius: var(--panel-card-radius);
@@ -2660,7 +2701,6 @@ body.resizing .channel-inspector-rail {
     min-height: 0;       /* 关键：允许 flex 项被约束，overflow-y 才能生效 */
     overflow-y: auto;
     padding: var(--space-sm) var(--space-lg);
-    scroll-behavior: smooth;
 }
 
 .channel-messages > * {

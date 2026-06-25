@@ -56,6 +56,10 @@ vi.mock('../../components/AutomationPanel', () => ({
   AutomationPanel: () => <section data-testid="automation-panel" />,
 }));
 
+vi.mock('../../components/SkillsPanel', () => ({
+  SkillsPanel: () => <section data-testid="skills-panel" />,
+}));
+
 vi.mock('../../components/BridgePanel', () => ({
   BridgePanel: () => <section data-testid="bridge-panel" />,
 }));

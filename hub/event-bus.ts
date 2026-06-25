@@ -161,6 +161,7 @@ export class EventBus {
     const handlers = this._handlers.get(type);
     if (!handlers || handlers.length === 0) throw new BusNoHandlerError(type);
     const timeout = options.timeout ?? 30000;
+    const requestContext = normalizeRequestContext(options);
 
     let timerId;
     const timeoutPromise = new Promise((_, reject) => {
@@ -169,7 +170,7 @@ export class EventBus {
 
     try {
       return await Promise.race([
-        this._tryHandlers(type, handlers, payload),
+        this._tryHandlers(type, handlers, payload, requestContext),
         timeoutPromise,
       ]);
     } finally {
@@ -177,9 +178,9 @@ export class EventBus {
     }
   }
 
-  async _tryHandlers(type, handlers, payload) {
+  async _tryHandlers(type, handlers, payload, requestContext = null) {
     for (const h of [...handlers]) {
-      const result = await h(payload);
+      const result = await h(payload, requestContext);
       if (result !== EventBus.SKIP) return result;
     }
     throw new BusNoHandlerError(type);
@@ -214,4 +215,12 @@ export class EventBus {
       available: this.hasHandler(capability.type),
     }));
   }
+}
+
+function normalizeRequestContext(options: any = {}) {
+  const caller = options?.caller;
+  if (!caller || typeof caller !== "object" || Array.isArray(caller)) return null;
+  return {
+    caller,
+  };
 }

@@ -13,6 +13,7 @@ import styles from '../../Settings.module.css';
 import {
   AUTO_SEARCH_PROVIDER,
   SEARCH_API_PROVIDER_IDS,
+  isFreeSearchApiProvider,
   isBrowserSearchProvider,
   isSearchApiProvider,
   normalizeSearchApiKeys,
@@ -21,6 +22,7 @@ import {
 type ModelRef = { id: string; provider: string };
 
 const SEARCH_API_PROVIDER_LABELS: Record<string, string> = {
+  anysearch: 'AnySearch',
   tavily: 'Tavily',
   brave: 'Brave Search',
   serper: 'Serper (Google)',
@@ -107,7 +109,7 @@ export function OtherModelsSection({ providers }: { providers: Record<string, { 
 
   const searchProvider = globalModelsConfig?.search?.provider || AUTO_SEARCH_PROVIDER;
   const searchIsAutoProvider = searchProvider === AUTO_SEARCH_PROVIDER;
-  const searchIsBrowserProvider = isBrowserSearchProvider(searchProvider);
+  const searchIsKeylessProvider = isBrowserSearchProvider(searchProvider) || isFreeSearchApiProvider(searchProvider);
   const explicitSearchApiProvider = searchProviderNeedsApiKey(searchProvider) ? searchProvider : '';
 
   const verifySearch = async (provider: string) => {
@@ -251,7 +253,9 @@ export function OtherModelsSection({ providers }: { providers: Record<string, { 
           <label className={styles['settings-form-label']}>{t('settings.api.searchProviderField')}</label>
           <SelectWidget
             options={[
-              { value: AUTO_SEARCH_PROVIDER, label: 'Auto (API -> AnySearch -> Browser)' },
+              { value: AUTO_SEARCH_PROVIDER, label: 'Auto (Paid API -> AnySearch free -> Browser)' },
+              { value: 'anysearch', label: 'AnySearch' },
+              { value: 'anysearch_free', label: 'AnySearch (free)' },
               { value: 'bing_browser', label: 'Bing (Browser)' },
               { value: 'google_browser', label: 'Google (Browser)' },
               { value: 'duckduckgo_browser', label: 'DuckDuckGo (Browser)' },
@@ -262,18 +266,15 @@ export function OtherModelsSection({ providers }: { providers: Record<string, { 
             value={searchProvider}
             onChange={(val) => {
               setSearchKeyEdited({});
-              autoSaveGlobalModels({
-                search: (val === AUTO_SEARCH_PROVIDER || isBrowserSearchProvider(val))
-                  ? { provider: val, api_key: '' }
-                  : { provider: val },
-              });
+              const keyless = val === AUTO_SEARCH_PROVIDER || isBrowserSearchProvider(val) || isFreeSearchApiProvider(val);
+              autoSaveGlobalModels({ search: keyless ? { provider: val, api_key: '' } : { provider: val } });
             }}
             placeholder={t('settings.api.searchProviderField')}
           />
         </div>
         <div className={`${styles['settings-form-field']} ${styles['settings-form-field-half']}`}>
           <label className={styles['settings-form-label']}>{t('settings.api.searchApiKey')}</label>
-          {searchIsBrowserProvider ? (
+          {searchIsKeylessProvider ? (
             <span className={styles['settings-form-hint']}>{t('settings.api.searchApiKeyNotRequired')}</span>
           ) : searchIsAutoProvider ? (
             <>

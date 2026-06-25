@@ -121,6 +121,45 @@ describe("Hub plugin-facing session and agent capabilities", () => {
     expect(engine.setSessionPermissionModeForSession).toHaveBeenCalledWith("/agents/agent-a/sessions/s.jsonl", "read-only");
   });
 
+  it("resolves plugin session bus operations by sessionId before using legacy paths", async () => {
+    const engine = createEngine({
+      resolveSessionRef: vi.fn(() => ({
+        sessionId: "sess_hub",
+        currentLocator: { path: "/agents/agent-a/sessions/s.jsonl" },
+      })),
+      listSessions: vi.fn(async () => [{
+        sessionId: "sess_hub",
+        path: "/agents/agent-a/sessions/s.jsonl",
+        title: "S",
+        agentId: "agent-a",
+      }]),
+    });
+    const hub = new Hub({ engine });
+
+    const update = await hub.eventBus.request("session:update", {
+      sessionId: "sess_hub",
+      sessionPath: "/agents/agent-a/sessions/stale.jsonl",
+      pinned: true,
+    });
+    const send = await hub.eventBus.request("session:send", {
+      sessionId: "sess_hub",
+      text: "hello",
+    });
+
+    expect(update.ok).toBe(true);
+    expect(send).toMatchObject({
+      accepted: true,
+      sessionId: "sess_hub",
+      sessionPath: "/agents/agent-a/sessions/s.jsonl",
+    });
+    expect(engine.setSessionPinned).toHaveBeenCalledWith("/agents/agent-a/sessions/s.jsonl", true);
+    expect(engine.promptSession).toHaveBeenCalledWith(
+      "/agents/agent-a/sessions/s.jsonl",
+      "hello",
+      expect.objectContaining({ sessionId: "sess_hub" }),
+    );
+  });
+
   it("returns public agent profiles and creates plugin-owned agents", async () => {
     const engine = createEngine();
     const hub = new Hub({ engine });

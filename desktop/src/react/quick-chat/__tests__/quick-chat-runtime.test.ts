@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   pickQuickChatRuntimeAgent,
+  resolveQuickChatPermissionMode,
   shouldAdoptRuntimeAgentForQuickChat,
 } from '../quick-chat-runtime';
 
@@ -20,5 +21,12 @@ describe('quick chat runtime state', () => {
 
   it('adopts the runtime agent before a detached session exists', () => {
     expect(shouldAdoptRuntimeAgentForQuickChat(null)).toBe(true);
+  });
+
+  it('reads permission defaults from the preferences route while keeping old response shapes compatible', () => {
+    expect(resolveQuickChatPermissionMode({ permissionMode: 'read_only' })).toBe('read_only');
+    expect(resolveQuickChatPermissionMode({ defaultMode: 'operate' })).toBe('operate');
+    expect(resolveQuickChatPermissionMode({ mode: 'auto' })).toBe('auto');
+    expect(resolveQuickChatPermissionMode({})).toBe('ask');
   });
 });

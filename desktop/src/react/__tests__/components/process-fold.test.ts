@@ -65,6 +65,40 @@ describe('process fold grouping', () => {
     expect(isProcessOnlyAssistantMessage(moodMessage)).toBe(false);
   });
 
+  it('does not throw or fold malformed tool_group blocks', () => {
+    const items: ChatListItem[] = [
+      user('u1'),
+      assistant('a1', [{ type: 'tool_group', collapsed: false } as unknown as ContentBlock]),
+      assistant('a2', [{ type: 'tool_group', tools: null, collapsed: false } as unknown as ContentBlock]),
+      assistant('a3', [toolGroup([tool('read')])]),
+    ];
+
+    expect(() => buildTranscriptRenderItems(items, { isStreaming: false })).not.toThrow();
+    expect(buildTranscriptRenderItems(items, { isStreaming: false }).map((item) => item.type)).toEqual([
+      'source',
+      'source',
+      'source',
+      'source',
+    ]);
+  });
+
+  it('does not throw on malformed text blocks without html/source', () => {
+    const items: ChatListItem[] = [
+      user('u1'),
+      assistant('a1', [
+        thinking(),
+        { type: 'text' } as unknown as ContentBlock,
+        toolGroup([tool('read')]),
+      ]),
+    ];
+
+    expect(() => buildTranscriptRenderItems(items, { isStreaming: false })).not.toThrow();
+    expect(buildTranscriptRenderItems(items, { isStreaming: false })[1]).toMatchObject({
+      type: 'source',
+      item: items[1],
+    });
+  });
+
   it('folds short process narration before the final answer', () => {
     const items: ChatListItem[] = [
       user('u1'),
@@ -102,6 +136,35 @@ describe('process fold grouping', () => {
       },
     });
     expect(rendered[2]).toMatchObject({ type: 'source', item: items[4] });
+  });
+
+  it('does not count card-backed tool calls in process fold stats', () => {
+    const items: ChatListItem[] = [
+      user('u1'),
+      assistant('a1', [thinking(), toolGroup([
+        tool('media_generate-image', false),
+        tool('browser'),
+      ])]),
+      assistant('a2', [thinking(), toolGroup([
+        tool('workflow'),
+        tool('install_skill'),
+      ])]),
+      assistant('a3', [thinking(), toolGroup([
+        tool('update_settings'),
+        { ...tool('automation'), args: { action: 'pending_update' } },
+      ])]),
+    ];
+
+    const rendered = buildTranscriptRenderItems(items, { isStreaming: false });
+
+    expect(rendered[1]).toMatchObject({
+      type: 'process_fold',
+      stats: {
+        toolCount: 1,
+        thinkingCount: 3,
+        unsuccessfulCount: 0,
+      },
+    });
   });
 
   it('keeps user steer messages as hard fold boundaries', () => {

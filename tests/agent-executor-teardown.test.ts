@@ -522,6 +522,10 @@ describe("runAgentSession teardown", () => {
       conversationType: "dm",
     });
     await vi.waitFor(() => expect(engine.registerAgentPhoneAbortHandler).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledOnce();
+      expect(resolvePrompt).toBeTypeOf("function");
+    });
 
     abortHandler?.("phone-disabled");
     expect(session.abort).toHaveBeenCalledOnce();

@@ -7,8 +7,14 @@ import fs from "fs/promises";
 import path from "path";
 import { isToolCallBlock, getToolArgs } from "./llm-utils.ts";
 import { SessionManager } from "../lib/pi-sdk/index.ts";
+import { isSessionJsonlFilename } from "../lib/session-jsonl.ts";
 import { DEFERRED_RESULT_RECORD_TYPE } from "../lib/deferred-result-notification.ts";
+import {
+  TURN_INPUT_CONSUMPTION_EVENT_TYPE,
+  TURN_INPUT_PRESENTATION_EVENT_TYPE,
+} from "../lib/turn-input-presentation.ts";
 import { repairOversizedSessionEntriesInFile } from "./session-jsonl-file.ts";
+import { isAssistantCommentaryTextBlock } from "../shared/text-signature.ts";
 
 /**
  * 工具调用参数摘要键列表
@@ -47,7 +53,7 @@ export function extractTextContent(content, { stripThink = false } = {}) {
   }
   if (!Array.isArray(content)) return { text: "", thinking: "", toolUses: [], images: [] };
   const rawText = content
-    .filter(block => block.type === "text" && block.text)
+    .filter(block => block.type === "text" && block.text && !isAssistantCommentaryTextBlock(block))
     .map(block => block.text)
     .join("");
   const images = content
@@ -77,6 +83,15 @@ export function extractTextContent(content, { stripThink = false } = {}) {
       };
     });
   return { text, thinking, toolUses, images };
+}
+
+export function contentHasThinkingBlock(content, { stripThink = false } = {}) {
+  if (typeof content === "string") {
+    if (!stripThink) return false;
+    return /<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/.test(content);
+  }
+  if (!Array.isArray(content)) return false;
+  return content.some(block => block?.type === "thinking");
 }
 
 export function filterUnreferencedInlineImages(text, images) {
@@ -154,7 +169,14 @@ function historyMessageFromEntry(entry) {
     if (entry.timestamp) message.timestamp = entry.timestamp;
     return message;
   }
-  if (entry?.type === "custom" && entry.customType === DEFERRED_RESULT_RECORD_TYPE) {
+  if (
+    entry?.type === "custom" &&
+    (
+      entry.customType === DEFERRED_RESULT_RECORD_TYPE
+      || entry.customType === TURN_INPUT_PRESENTATION_EVENT_TYPE
+      || entry.customType === TURN_INPUT_CONSUMPTION_EVENT_TYPE
+    )
+  ) {
     const message: Record<string, any> = {
       role: "custom",
       customType: entry.customType,
@@ -273,7 +295,7 @@ function desktopSessionParts(sessionPath, agentsDir) {
 }
 
 function isJsonlFileName(name) {
-  return typeof name === "string" && name.endsWith(".jsonl") && path.basename(name) === name;
+  return isSessionJsonlFilename(name);
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { ChatListItem, ChatMessage, ContentBlock, ToolCall } from '../../stores/chat-types';
+import { isToolCallHiddenFromProcessUi } from '../../utils/tool-call-visibility';
 
 export interface ProcessFoldStats {
   toolCount: number;
@@ -36,16 +37,24 @@ function isAssistantMessage(item: ChatListItem): item is Extract<ChatListItem, {
   return item.type === 'message' && item.data.role === 'assistant';
 }
 
+function hasVisibleToolCallsShape(block: ContentBlock): block is Extract<ContentBlock, { type: 'tool_group' }> {
+  return block.type === 'tool_group' && Array.isArray(block.tools);
+}
+
+function hasRenderableTextShape(block: ContentBlock): block is Extract<ContentBlock, { type: 'text' }> {
+  return block.type === 'text' && (typeof block.html === 'string' || typeof block.source === 'string');
+}
+
 function isProcessBlock(block: ContentBlock): block is Extract<ContentBlock, { type: 'thinking' | 'tool_group' }> {
-  return block.type === 'thinking' || block.type === 'tool_group';
+  return block.type === 'thinking' || hasVisibleToolCallsShape(block);
 }
 
 function isProcessNarrationBlock(block: ContentBlock): block is Extract<ContentBlock, { type: 'thinking' | 'tool_group' | 'text' }> {
-  return block.type === 'thinking' || block.type === 'tool_group' || block.type === 'text';
+  return block.type === 'thinking' || hasVisibleToolCallsShape(block) || hasRenderableTextShape(block);
 }
 
 function visibleToolCalls(block: Extract<ContentBlock, { type: 'tool_group' }>): ToolCall[] {
-  return block.tools.filter((tool) => tool.name !== 'subagent');
+  return Array.isArray(block.tools) ? block.tools.filter((tool) => !isToolCallHiddenFromProcessUi(tool)) : [];
 }
 
 function visibleBlocks(message: ChatMessage): ContentBlock[] {
@@ -63,12 +72,12 @@ export function isProcessOnlyAssistantMessage(message: ChatMessage): boolean {
 
 function textBlocks(message: ChatMessage): Extract<ContentBlock, { type: 'text' }>[] {
   return visibleBlocks(message).filter((block): block is Extract<ContentBlock, { type: 'text' }> => (
-    block.type === 'text'
+    hasRenderableTextShape(block)
   ));
 }
 
 function htmlToPlainText(html: string): string {
-  return html
+  return String(html || '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<[^>]+>/g, '')

@@ -1,5 +1,7 @@
 import vm from "node:vm";
 
+const META_EVAL_TIMEOUT_MS = 500;
+
 /**
  * 静态提取并校验 workflow 脚本开头的 `export const meta = {...}` 字面量，
  * 返回 meta 对象与剥离 export 后可在 async function 里执行的 body。
@@ -24,7 +26,7 @@ export function extractMeta(script) {
   let meta;
   try {
     // 在纯净 context 求值字面量：不暴露任何宿主能力。
-    meta = vm.runInNewContext("(" + literal + ")", Object.create(null), { timeout: 50 });
+    meta = vm.runInNewContext("(" + literal + ")", Object.create(null), { timeout: META_EVAL_TIMEOUT_MS });
   } catch (err) {
     throw new Error("workflow meta 不是合法对象字面量: " + err.message);
   }

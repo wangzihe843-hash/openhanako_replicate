@@ -26,6 +26,8 @@ export const promptGuidelines = [
 
 export { isBeautifyEnabledForAgentConfig as isEnabledForAgentConfig };
 
+export const sessionPermission = { readOnly: true };
+
 export const parameters = {
   type: "object",
   properties: {

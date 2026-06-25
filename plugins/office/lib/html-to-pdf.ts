@@ -161,8 +161,14 @@ export async function renderHtmlToPdf(input: any = {}, ctx: any = {}, deps: any 
   await waitForChild(child, timeoutMs);
 
   const stat = await fsp.stat(outputPath);
-  const staged = ctx.sessionPath && typeof ctx.stageFile === "function"
-    ? ctx.stageFile({ sessionPath: ctx.sessionPath, filePath: outputPath, label: path.basename(outputPath) })
+  const staged = (ctx.sessionId || ctx.sessionPath) && typeof ctx.stageFile === "function"
+    ? ctx.stageFile({
+      ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+      ...(ctx.sessionPath ? { sessionPath: ctx.sessionPath } : {}),
+      ...(ctx.sessionRef ? { sessionRef: ctx.sessionRef } : {}),
+      filePath: outputPath,
+      label: path.basename(outputPath),
+    })
     : null;
 
   return {

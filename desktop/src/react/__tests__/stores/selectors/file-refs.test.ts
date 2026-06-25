@@ -131,6 +131,20 @@ function sessionState(items: ChatListItem[], path = '/s/1', sessionFiles: unknow
   } as any;
 }
 
+function sessionIdState(items: ChatListItem[], sessionId = 'sess_files', path = '/s/moved', sessionFiles: unknown[] = []) {
+  return {
+    deskFiles: [],
+    deskBasePath: '',
+    deskCurrentPath: '',
+    currentSessionId: sessionId,
+    currentSessionPath: path,
+    sessions: [{ sessionId, path }],
+    sessionLocatorsById: { [sessionId]: { path } },
+    chatSessions: { [sessionId]: { items, hasMore: false, loadingMore: false } },
+    sessionRegistryFilesByPath: sessionFiles.length ? { [sessionId]: sessionFiles } : {},
+  } as any;
+}
+
 describe('selectSessionFiles', () => {
   it('空 session 返回 []（引用稳定）', () => {
     const s = sessionState([]);
@@ -174,6 +188,41 @@ describe('selectSessionFiles', () => {
       timestamp: 1234,
       version: { mtimeMs: 5678, size: 99 },
     });
+  });
+
+  it('从 sessionId-keyed 消息和 registry 状态抽取移动后 session 的文件', () => {
+    const refs = selectSessionFiles(sessionIdState([
+      {
+        type: 'message',
+        data: {
+          id: 'm1',
+          role: 'user',
+          content: 'with file',
+          timestamp: 1,
+          attachments: [{
+            path: '/workspace/input.png',
+            name: 'input.png',
+            isDir: false,
+            mimeType: 'image/png',
+          }],
+        },
+      } as ChatListItem,
+    ], 'sess_files', '/s/moved', [{
+      fileId: 'sf_output',
+      filePath: '/workspace/output.md',
+      label: 'output.md',
+      ext: 'md',
+      mime: 'text/markdown',
+    }]), '/s/moved');
+
+    expect(refs.map(ref => ref.path)).toEqual([
+      '/workspace/output.md',
+      '/workspace/input.png',
+    ]);
+    expect(refs.map(ref => ref.id)).toEqual([
+      'sess:sess_files:registry:/workspace/output.md',
+      'sess:sess_files:m1:att:/workspace/input.png',
+    ]);
   });
 
   it('把 session registry 的 resource envelope 带入 FileRef', () => {

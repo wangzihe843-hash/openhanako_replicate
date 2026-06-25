@@ -152,6 +152,92 @@ describe("BrowserManager URL tracking (per-session)", () => {
 });
 
 describe("BrowserManager explicit sessionPath", () => {
+  it("keys browser runtime state by sessionId while accepting moved path locators", async () => {
+    const manager = new BrowserManager({
+      getSessionIdForPath: (sessionPath) => (
+        sessionPath === "/sessions/old.jsonl" || sessionPath === "/sessions/new.jsonl"
+          ? "sess_browser_1"
+          : null
+      ),
+    });
+    manager._sendCmd = vi.fn().mockResolvedValue({
+      url: "https://example.com",
+      title: "Example",
+      snapshot: "...",
+    });
+    manager._saveColdUrl = vi.fn();
+
+    await manager.launch("/sessions/old.jsonl");
+    await manager.navigate("https://example.com", "/sessions/new.jsonl");
+
+    expect(manager._sessions.has("sess_browser_1")).toBe(true);
+    expect(manager._sessions.has("/sessions/old.jsonl")).toBe(false);
+    expect(manager._sessions.has("/sessions/new.jsonl")).toBe(false);
+    expect(manager.isRunning("/sessions/old.jsonl")).toBe(true);
+    expect(manager.currentUrl("/sessions/old.jsonl")).toBe("https://example.com");
+    expect(manager.currentUrl("/sessions/new.jsonl")).toBe("https://example.com");
+    expect(manager._saveColdUrl).toHaveBeenCalledWith("/sessions/new.jsonl", "https://example.com");
+  });
+
+  it("resumes and migrates legacy path-keyed cold workspaces after the session path moves", async () => {
+    const oldPath = "/sessions/old-browser.jsonl";
+    const newPath = "/sessions/new-browser.jsonl";
+    const sessionId = "sess_browser_cold_1";
+    const coldState = {
+      [oldPath]: {
+        sessionPath: oldPath,
+        activeTabId: "tab-page",
+        tabs: [
+          { tabId: "tab-blank", title: "New Tab", url: null },
+          { tabId: "tab-page", title: "Page", url: "https://page.example.com" },
+        ],
+      },
+    };
+    const savedStates: any[] = [];
+    const manager = new BrowserManager({
+      getSessionIdForPath: (sessionPath) => (
+        sessionPath === oldPath || sessionPath === newPath ? sessionId : null
+      ),
+    });
+    manager._loadColdState = vi.fn().mockImplementation(() => JSON.parse(JSON.stringify(coldState)));
+    manager._saveColdState = vi.fn().mockImplementation((state) => {
+      savedStates.push(JSON.parse(JSON.stringify(state)));
+    });
+    manager._sendCmd = vi.fn().mockImplementation(async (cmd, params) => {
+      if (cmd === "resume") return { found: false };
+      if (cmd === "launch") {
+        return {
+          activeTabId: params.activeTabId,
+          tabs: params.tabs,
+        };
+      }
+      return {};
+    });
+
+    await manager.resumeForSession(newPath);
+
+    expect(manager._sendCmd).toHaveBeenNthCalledWith(1, "resume", { sessionPath: newPath });
+    expect(manager._sendCmd).toHaveBeenNthCalledWith(2, "launch", {
+      sessionPath: newPath,
+      tabs: [
+        expect.objectContaining({ tabId: "tab-blank", url: null }),
+        expect.objectContaining({ tabId: "tab-page", url: "https://page.example.com" }),
+      ],
+      activeTabId: "tab-page",
+      acceptCookies: true,
+    });
+    expect(manager.isRunning(oldPath)).toBe(true);
+    expect(manager.isRunning(newPath)).toBe(true);
+    expect(manager.currentUrl(newPath)).toBe("https://page.example.com");
+    expect(savedStates.at(-1)).toEqual({
+      [sessionId]: expect.objectContaining({
+        sessionPath: newPath,
+        activeTabId: "tab-page",
+        url: "https://page.example.com",
+      }),
+    });
+  });
+
   it("searchWeb() uses a transient browser command without registering a session", async () => {
     const manager = new BrowserManager();
     manager._sendCmd = vi.fn().mockResolvedValue({

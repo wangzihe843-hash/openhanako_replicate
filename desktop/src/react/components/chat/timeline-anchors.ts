@@ -1,4 +1,6 @@
 import type { ChatListItem, ChatMessage } from '../../stores/chat-types';
+export { measureTimelineMarkerWidthEm } from '../shared/timeline-marker-width';
+import { measureTimelineMarkerWidthEm } from '../shared/timeline-marker-width';
 
 export interface TimelineAnchor {
   messageId: string;
@@ -51,13 +53,6 @@ export function formatTimelinePromptPreview(text: string, maxChars = 10): string
   const chars = Array.from(normalized);
   if (chars.length <= maxChars) return normalized;
   return `${chars.slice(0, maxChars).join('')}...`;
-}
-
-export function measureTimelineMarkerWidthEm(promptLength: number): number {
-  if (!Number.isFinite(promptLength) || promptLength <= 2) return 0.5;
-
-  const normalized = Math.min(1, Math.log1p(promptLength - 2) / Math.log1p(80));
-  return Number((0.5 + normalized * 0.5).toFixed(3));
 }
 
 function readDateParts(timestamp: number, timeZone?: string): DateParts {

@@ -285,6 +285,7 @@ export function WorkTab() {
           <>
             <SettingsRow
               label={t('settings.work.heartbeatEnabled')}
+              hint={t('settings.work.heartbeatOperationalNotice')}
               control={<Toggle on={agentDesk.heartbeat_enabled} onChange={togglePerAgentHeartbeat} />}
             />
             <SettingsRow

@@ -57,6 +57,7 @@ function browserError(rawMsg: any, details: Record<string, any> = {}) {
  * @param {() => { prepare?: Function }|null} [options.getVisionBridge] - 视觉辅助桥
  * @param {() => boolean} [options.isVisionAuxiliaryEnabled] - 视觉辅助总开关
  * @param {() => string|null} [options.getHanakoHome] - 返回 HANA_HOME
+ * @param {(sessionPath:string|null) => string|null} [options.getSessionIdForPath] - 返回 sessionId
  * @param {(entry: object) => object} [options.registerSessionFile] - 注册 session 文件
  * @param {boolean} [options.screenshotEnabled] - false 时从 schema 屏蔽 screenshot
  * @returns {import('../pi-sdk/index.ts').ToolDefinition}
@@ -67,6 +68,7 @@ export function createBrowserTool(getSessionPath: any, options: {
   getVisionBridge?: () => any;
   isVisionAuxiliaryEnabled?: () => boolean;
   getHanakoHome?: () => string | null;
+  getSessionIdForPath?: (sessionPath: string | null) => string | null;
   registerSessionFile?: (entry: any) => any;
 } = {}) {
   const browser = BrowserManager.instance();
@@ -76,23 +78,28 @@ export function createBrowserTool(getSessionPath: any, options: {
     : BROWSER_ACTIONS.filter((action) => action !== "screenshot");
 
   /** 操作日志 per-session（每次 start 时清空，记录所有操作供回看纠错） */
-  const _actionLogs = new Map(); // sessionPath → action[]
+  const _actionLogs = new Map(); // sessionId || legacy sessionPath → action[]
   const ACTION_LOG_MAX_SESSIONS = 20;  // 最多保留 20 个 session 的日志
   const ACTION_LOG_MAX_PER_SESSION = 200; // 每个 session 最多 200 条
 
+  function actionLogKey(sessionPath: any) {
+    return options.getSessionIdForPath?.(sessionPath) || sessionPath;
+  }
+
   function getActionLog(sessionPath: any) {
-    return _actionLogs.get(sessionPath) || [];
+    return _actionLogs.get(actionLogKey(sessionPath)) || [];
   }
 
   function logAction(sessionPath: any, action: any, params: any, resultSummary: any, error?: any) {
-    if (!_actionLogs.has(sessionPath)) {
-      _actionLogs.set(sessionPath, []);
+    const key = actionLogKey(sessionPath);
+    if (!_actionLogs.has(key)) {
+      _actionLogs.set(key, []);
       // 淘汰最早的 session 日志
       if (_actionLogs.size > ACTION_LOG_MAX_SESSIONS) {
         _actionLogs.delete(_actionLogs.keys().next().value);
       }
     }
-    const log = _actionLogs.get(sessionPath);
+    const log = _actionLogs.get(key);
     log.push({
       ts: new Date().toISOString(),
       action,
@@ -184,7 +191,7 @@ export function createBrowserTool(getSessionPath: any, options: {
               logAction(sessionPath, "start", null, "already_running");
               return toolOk(t("error.browserAlreadyRunning"), { status: "already_running", ...await statusFields(sessionPath) });
             }
-            _actionLogs.delete(sessionPath);
+            _actionLogs.delete(actionLogKey(sessionPath));
             await browser.launch(sessionPath);
             logAction(sessionPath, "start", null, "launched");
             return toolOk(t("error.browserLaunched"), { status: "launched", ...await statusFields(sessionPath) });
@@ -198,7 +205,7 @@ export function createBrowserTool(getSessionPath: any, options: {
             logAction(sessionPath, "stop", null, "closed");
             const sessionLog = [...getActionLog(sessionPath)];
             await browser.close(sessionPath);
-            _actionLogs.delete(sessionPath);
+            _actionLogs.delete(actionLogKey(sessionPath));
             return toolOk(t("error.browserClosed"), { status: "closed", running: false, url: null, actionLog: sessionLog });
           }
 
@@ -234,6 +241,7 @@ export function createBrowserTool(getSessionPath: any, options: {
             const { base64, mimeType } = await browser.screenshot(sessionPath, params.tabId || null);
             const screenshotFile = await persistBrowserScreenshotFile({
               hanakoHome: options.getHanakoHome?.(),
+              sessionId: options.getSessionIdForPath?.(sessionPath) || null,
               sessionPath,
               base64,
               mimeType,

@@ -102,12 +102,69 @@ describe("first run default workspace", () => {
     expect(fs.existsSync(path.join(hanakoHome, "agents", "__user__", "pinned.md"))).toBe(false);
   });
 
-  it("fails fast for non-default agent directories without config.yaml", async () => {
-    fs.mkdirSync(path.join(hanakoHome, "agents", "custom-agent"), { recursive: true });
+  it("keeps startup alive and reports non-default agent directories without config.yaml", async () => {
+    // 历史脏目录：旧版物理删除残留 / phone projection 复活的目录，只有 phone/，没有 config.yaml
+    fs.mkdirSync(path.join(hanakoHome, "agents", "kon", "phone", "conversations"), { recursive: true });
     const { ensureFirstRun } = await import("../core/first-run.ts");
 
-    expect(() => ensureFirstRun(hanakoHome, productDir)).toThrow(
-      'invalid agent directory "custom-agent": config.yaml missing',
-    );
+    const report = ensureFirstRun(hanakoHome, productDir);
+
+    expect(report.invalidAgentDirs).toEqual([
+      { id: "kon", reason: "config_missing" },
+    ]);
+    // 默认 agent 正常播种，启动不被脏目录阻断
+    const cfgPath = path.join(hanakoHome, "agents", "hanako", "config.yaml");
+    expect(fs.existsSync(cfgPath)).toBe(true);
+    // 不往脏目录里喂 pinned.md，避免把垃圾目录越喂越像 agent 目录
+    expect(fs.existsSync(path.join(hanakoHome, "agents", "kon", "pinned.md"))).toBe(false);
+    // 有效 agent 仍然补齐 pinned.md
+    expect(fs.existsSync(path.join(hanakoHome, "agents", "hanako", "pinned.md"))).toBe(true);
+  });
+
+  it("keeps startup alive and reports non-default agent directories with unreadable config.yaml", async () => {
+    const brokenDir = path.join(hanakoHome, "agents", "broken-agent");
+    fs.mkdirSync(brokenDir, { recursive: true });
+    fs.writeFileSync(path.join(brokenDir, "config.yaml"), "agent: [unclosed\n", "utf-8");
+    const { ensureFirstRun } = await import("../core/first-run.ts");
+
+    const report = ensureFirstRun(hanakoHome, productDir);
+
+    expect(report.invalidAgentDirs).toHaveLength(1);
+    expect(report.invalidAgentDirs[0].id).toBe("broken-agent");
+    expect(report.invalidAgentDirs[0].reason).toBe("config_unreadable");
+    // 坏 config 原样保留，不动用户数据
+    expect(fs.readFileSync(path.join(brokenDir, "config.yaml"), "utf-8")).toBe("agent: [unclosed\n");
+    expect(fs.existsSync(path.join(hanakoHome, "agents", "hanako", "config.yaml"))).toBe(true);
+  });
+
+  it("backs up an unreadable default hanako config before reseeding", async () => {
+    const hanakoDir = path.join(hanakoHome, "agents", "hanako");
+    fs.mkdirSync(hanakoDir, { recursive: true });
+    fs.writeFileSync(path.join(hanakoDir, "config.yaml"), "agent: [unclosed\n", "utf-8");
+    const { ensureFirstRun } = await import("../core/first-run.ts");
+
+    const report = ensureFirstRun(hanakoHome, productDir);
+
+    const cfg = YAML.load(fs.readFileSync(path.join(hanakoDir, "config.yaml"), "utf-8"));
+    expect(cfg.agent.name).toBe("Hanako");
+    expect(report.repairedDefaultAgent).toBe(true);
+    const backups = fs.readdirSync(hanakoDir).filter((name) => name.startsWith("config.yaml.broken-"));
+    expect(backups).toHaveLength(1);
+    expect(fs.readFileSync(path.join(hanakoDir, backups[0]), "utf-8")).toBe("agent: [unclosed\n");
+  });
+
+  it("does not report valid or tombstoned agent directories as invalid", async () => {
+    const validDir = path.join(hanakoHome, "agents", "custom-agent");
+    fs.mkdirSync(validDir, { recursive: true });
+    fs.writeFileSync(path.join(validDir, "config.yaml"), "agent:\n  name: Custom\n", "utf-8");
+    const tombstoneDir = path.join(hanakoHome, "agents", "deleted-agent");
+    fs.mkdirSync(tombstoneDir, { recursive: true });
+    fs.writeFileSync(path.join(tombstoneDir, "config.yaml"), "agent:\n  name: Gone\n", "utf-8");
+    fs.writeFileSync(path.join(tombstoneDir, ".deleted-agent.json"), JSON.stringify({ version: 1 }), "utf-8");
+    const { ensureFirstRun } = await import("../core/first-run.ts");
+
+    const report = ensureFirstRun(hanakoHome, productDir);
+
+    expect(report.invalidAgentDirs).toEqual([]);
   });
 });

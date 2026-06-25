@@ -12,6 +12,7 @@ const OUTPUT_CAP_FIELDS = [
   "max_output_tokens",
   "maxOutputTokens",
 ];
+const OUTPUT_CAP_FIELD_SET = new Set(OUTPUT_CAP_FIELDS);
 
 const DEFAULT_OUTPUT_CAP_CAPABILITY = Object.freeze({
   id: "default-optional",
@@ -83,6 +84,16 @@ export function resolveOutputCapCapability(model) {
     || DEFAULT_OUTPUT_CAP_CAPABILITY;
 }
 
+function hasOutputCap(payload) {
+  return OUTPUT_CAP_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(payload, field));
+}
+
+function resolveOutputCapField(model) {
+  const explicit = model?.compat?.outputCapField;
+  if (typeof explicit === "string" && OUTPUT_CAP_FIELD_SET.has(explicit)) return explicit;
+  return "max_tokens";
+}
+
 function isImplicitSdkOutputCap(value, model) {
   const modelLimit = getModelOutputLimit(model);
   if (!modelLimit) return false;
@@ -125,9 +136,17 @@ export function resolveOutputBudgetPolicy(model, options: Record<string, any> = 
 export function normalizeImplicitOutputBudget(payload, model, options: Record<string, any> = {}) {
   if (!payload || typeof payload !== "object") return payload;
   const policy = resolveOutputBudgetPolicy(model, options);
-  if (!policy.removeImplicitSdkDefault) return payload;
-
   let next = payload;
+
+  if (policy.capability.required && !hasOutputCap(next)) {
+    const modelLimit = getModelOutputLimit(model);
+    if (modelLimit !== null) {
+      next = { ...next, [resolveOutputCapField(model)]: modelLimit };
+    }
+  }
+
+  if (!policy.removeImplicitSdkDefault) return next;
+
   for (const field of OUTPUT_CAP_FIELDS) {
     if (!Object.prototype.hasOwnProperty.call(next, field)) continue;
     if (!isImplicitSdkOutputCap(next[field], model)) continue;

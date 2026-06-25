@@ -35,6 +35,7 @@ vi.mock("../lib/browser/browser-manager.js", () => ({
 
 vi.mock("../core/message-utils.js", () => ({
   extractTextContent: vi.fn(() => ({ text: "", images: [], thinking: "", toolUses: [] })),
+  contentHasThinkingBlock: vi.fn(() => false),
   filterUnreferencedInlineImages: vi.fn((_text, images) => images || []),
   loadSessionHistoryMessages: vi.fn(async () => []),
   loadLatestAssistantSummaryFromSessionFile: vi.fn(async () => null),
@@ -127,6 +128,53 @@ describe("sessions route", () => {
     expect(data.currentModelAudioTransportSupported).toBe(true);
   });
 
+  it("switches sessions by sessionId and treats path as a legacy locator", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const app = new Hono();
+    const currentPath = "/tmp/agents/a/sessions/current.jsonl";
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: "/tmp/agents/a/sessions/old.jsonl",
+      memoryEnabled: true,
+      planMode: false,
+      memoryModelUnavailableReason: null,
+      cwd: "/tmp/workspace",
+      currentAgentId: "a",
+      currentModel: { id: "m", provider: "test", input: ["text"] },
+      getSessionManifest: vi.fn((sessionId) => (
+        sessionId === "sess_switch"
+          ? { sessionId, currentLocator: { path: currentPath } }
+          : null
+      )),
+      isSessionStreaming: vi.fn(() => false),
+      switchSession: vi.fn(async () => {}),
+      getSessionByPath: vi.fn(() => ({ messages: [] })),
+      getSessionMemoryEnabled: vi.fn(() => true),
+      getSessionThinkingLevel: vi.fn(() => "medium"),
+      getSessionWorkspaceFolders: vi.fn(() => []),
+      getSessionAuthorizedFolders: vi.fn(() => []),
+      getAgent: vi.fn(() => ({ agentName: "Agent A" })),
+      agentIdFromSessionPath: vi.fn(() => "a"),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "sess_switch",
+        path: "/tmp/agents/a/sessions/stale.jsonl",
+        currentSessionPath: "/tmp/agents/a/sessions/old.jsonl",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(engine.switchSession).toHaveBeenCalledWith(currentPath);
+    expect(browserManagerMock.resumeForSession).toHaveBeenCalledWith(currentPath);
+  });
+
   it("passes workspaceFolders when creating a new session and returns the normalized scope", async () => {
     const { createSessionsRoute } = await import("../server/routes/sessions.ts");
     const app = new Hono();
@@ -141,7 +189,11 @@ describe("sessions route", () => {
       memoryEnabled: true,
       planMode: false,
       memoryModelUnavailableReason: null,
-      createSession: vi.fn(async () => ({ sessionPath: "/tmp/agents/hana/sessions/new.jsonl", agentId: "hana" })),
+      createSession: vi.fn(async () => ({
+        sessionPath: "/tmp/agents/hana/sessions/new.jsonl",
+        sessionId: "sess_route_new",
+        agentId: "hana",
+      })),
       createSessionForAgent: vi.fn(),
       persistSessionMeta: vi.fn(),
       updateConfig: vi.fn(async (patch) => Object.assign(engine.config, patch)),
@@ -168,13 +220,47 @@ describe("sessions route", () => {
       { workspaceFolders: [extra], visibleInSessionList: true, thinkingLevel: "high" },
     );
     expect(data.workspaceFolders).toEqual([extra]);
+    expect(data.sessionId).toBe("sess_route_new");
     expect(hub.eventBus.emit).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "session_created",
-        session: expect.objectContaining({ path: "/tmp/agents/hana/sessions/new.jsonl", thinkingLevel: "high" }),
+        session: expect.objectContaining({
+          path: "/tmp/agents/hana/sessions/new.jsonl",
+          sessionId: "sess_route_new",
+          thinkingLevel: "high",
+        }),
       }),
       "/tmp/agents/hana/sessions/new.jsonl",
     );
+  });
+
+  it("returns a structured no-model error instead of a generic 500 when new session creation cannot select a model (#1643)", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const app = new Hono();
+    const engine = {
+      currentAgentId: "hana",
+      config: {},
+      cwd: "/tmp/workspace",
+      createSession: vi.fn(async () => {
+        throw new Error("No available model");
+      }),
+      createSessionForAgent: vi.fn(),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/new", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/tmp/workspace" }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(data).toMatchObject({
+      error: "No available model",
+      code: "no_available_model",
+    });
   });
 
   it("resolves workspaceMountId on the server when creating a new session", async () => {
@@ -432,6 +518,7 @@ describe("sessions route", () => {
         cwd: "/tmp/work",
         agentId: "hana",
         agentName: "Hana",
+        sessionId: "sess_route_list",
         pinnedAt,
       }]),
       rcState: null,
@@ -443,6 +530,7 @@ describe("sessions route", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
+    expect(data[0].sessionId).toBe("sess_route_list");
     expect(data[0].pinnedAt).toBe(pinnedAt);
   });
 
@@ -726,7 +814,8 @@ describe("sessions route", () => {
         agentName: "Hana",
         cwd: "/tmp/work",
         workspaceFolders: [],
-        compacted: true,
+        compacted: false,
+        compactionError: "model unavailable",
       })),
       getSessionWorkspaceFolders: vi.fn(() => []),
       getAgent: vi.fn(() => ({ agentName: "Hana" })),
@@ -748,7 +837,13 @@ describe("sessions route", () => {
 
     expect(res.status).toBe(200);
     expect(engine.continueDeletedAgentSession).toHaveBeenCalledWith(oldPath);
-    expect(data).toMatchObject({ ok: true, path: newPath, agentId: "hana", compacted: true });
+    expect(data).toMatchObject({
+      ok: true,
+      path: newPath,
+      agentId: "hana",
+      compacted: false,
+      compactionError: "model unavailable",
+    });
     expect(hub.eventBus.emit).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "session_created",
@@ -856,6 +951,9 @@ describe("sessions route", () => {
     };
 
     const engine = {
+      getSessionIdForPath: vi.fn((sessionPath) => (
+        sessionPath.endsWith("has-summary.jsonl") ? "sess_has_summary" : "sess_no_summary"
+      )),
       listSessions: vi.fn(async () => [
         {
           path: "/tmp/agents/hana/sessions/has-summary.jsonl",
@@ -883,6 +981,11 @@ describe("sessions route", () => {
     };
 
     app.route("/api", createSessionsRoute(engine));
+    summaryManager.getSummary.mockImplementation((sessionId) => (
+      sessionId === "sess_has_summary"
+        ? { session_id: sessionId, summary: "### 重要事实\n- 用户在做记忆系统。" }
+        : null
+    ));
 
     const res = await app.request("/api/sessions");
     const data = await res.json();
@@ -892,8 +995,8 @@ describe("sessions route", () => {
       ["/tmp/agents/hana/sessions/has-summary.jsonl", true],
       ["/tmp/agents/hana/sessions/no-summary.jsonl", false],
     ]);
-    expect(summaryManager.getSummary).toHaveBeenCalledWith("has-summary");
-    expect(summaryManager.getSummary).toHaveBeenCalledWith("no-summary");
+    expect(summaryManager.getSummary).toHaveBeenCalledWith("sess_has_summary");
+    expect(summaryManager.getSummary).toHaveBeenCalledWith("sess_no_summary");
   });
 
   it("replays the latest user message through the branch-aware action", async () => {
@@ -1001,6 +1104,7 @@ describe("sessions route", () => {
     const engine = {
       agentsDir: "/tmp/agents",
       setSessionPinned: vi.fn(async (_sessionPath, pinned) => pinned ? pinnedAt : null),
+      getSessionIdForPath: vi.fn(() => "sess_route_pin"),
     };
 
     app.route("/api", createSessionsRoute(engine));
@@ -1013,8 +1117,10 @@ describe("sessions route", () => {
     const pinData = await pinRes.json();
 
     expect(pinRes.status).toBe(200);
-    expect(engine.setSessionPinned).toHaveBeenCalledWith("/tmp/agents/hana/sessions/a.jsonl", true);
-    expect(pinData).toEqual({ ok: true, pinnedAt });
+    expect(engine.setSessionPinned).toHaveBeenCalledWith({
+      sessionPath: "/tmp/agents/hana/sessions/a.jsonl",
+    }, true);
+    expect(pinData).toEqual({ ok: true, pinnedAt, sessionId: "sess_route_pin" });
 
     const unpinRes = await app.request("/api/sessions/pin", {
       method: "POST",
@@ -1024,8 +1130,48 @@ describe("sessions route", () => {
     const unpinData = await unpinRes.json();
 
     expect(unpinRes.status).toBe(200);
-    expect(engine.setSessionPinned).toHaveBeenLastCalledWith("/tmp/agents/hana/sessions/a.jsonl", false);
-    expect(unpinData).toEqual({ ok: true, pinnedAt: null });
+    expect(engine.setSessionPinned).toHaveBeenLastCalledWith({
+      sessionPath: "/tmp/agents/hana/sessions/a.jsonl",
+    }, false);
+    expect(unpinData).toEqual({ ok: true, pinnedAt: null, sessionId: "sess_route_pin" });
+  });
+
+  it("pins sessions by sessionId and treats path as a legacy locator", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const app = new Hono();
+    const pinnedAt = "2026-04-29T08:00:00.000Z";
+    const currentPath = "/tmp/agents/hana/sessions/current.jsonl";
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      getSessionManifest: vi.fn((sessionId) => (
+        sessionId === "sess_route_pin"
+          ? { sessionId, currentLocator: { path: currentPath } }
+          : null
+      )),
+      setSessionPinned: vi.fn(async (_sessionPath, pinned) => pinned ? pinnedAt : null),
+      getSessionIdForPath: vi.fn(() => "sess_route_pin"),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "sess_route_pin",
+        path: "/tmp/agents/hana/sessions/stale.jsonl",
+        pinned: true,
+      }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(engine.setSessionPinned).toHaveBeenCalledWith({
+      sessionId: "sess_route_pin",
+      sessionPath: currentPath,
+    }, true);
+    expect(data).toEqual({ ok: true, pinnedAt, sessionId: "sess_route_pin" });
   });
 
   it("clears pinned state before archiving a session", async () => {
@@ -1056,6 +1202,48 @@ describe("sessions route", () => {
     expect(data).toEqual({ ok: true });
     expect(engine.setSessionPinned).toHaveBeenCalledWith(sessionPath, false);
     expect(fs.existsSync(path.join(path.dirname(sessionPath), "archived", path.basename(sessionPath)))).toBe(true);
+  });
+
+  it("suppresses deferred and confirm state by sessionId during archive cleanup", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const app = new Hono();
+    const agentsDir = path.join(tmpDir, "agents");
+    const sessionPath = path.join(agentsDir, "hana", "sessions", "a.jsonl");
+    const archivedPath = path.join(path.dirname(sessionPath), "archived", path.basename(sessionPath));
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    fs.writeFileSync(sessionPath, "{}\n", "utf-8");
+
+    const deferredSuppressBySession = vi.fn();
+    const confirmAbortBySession = vi.fn();
+    const engine = {
+      agentsDir,
+      closeSession: vi.fn(async () => {}),
+      setSessionPinned: vi.fn(async () => null),
+      getSessionIdForPath: vi.fn((targetPath) => (
+        targetPath === sessionPath || targetPath === archivedPath ? "sess_archive_cleanup" : null
+      )),
+      deferredResults: { suppressBySession: deferredSuppressBySession },
+      confirmStore: { abortBySession: confirmAbortBySession },
+      rcState: null,
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/archive", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: sessionPath }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(deferredSuppressBySession).toHaveBeenCalledWith(
+      { sessionId: "sess_archive_cleanup", sessionPath },
+      "parent session archived",
+    );
+    expect(confirmAbortBySession).toHaveBeenCalledWith({
+      sessionId: "sess_archive_cleanup",
+      sessionPath,
+    });
   });
 
   it("marks current todos completed and removed through an explicit session route", async () => {
@@ -1167,14 +1355,70 @@ describe("sessions route", () => {
     });
   });
 
-  it("restores deferred subagent result as an interlude block", async () => {
+  it("hydrates legacy path-only subagent blocks with sessionId and current manifest locator", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+    const legacyChildPath = "/tmp/agents/hanako/subagent-sessions/child-old.jsonl";
+    const movedChildPath = "/tmp/agents/hanako/subagent-sessions/archive/child-new.jsonl";
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "parent says hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "parent says hi" },
+      {
+        role: "toolResult",
+        toolName: "subagent",
+        details: {
+          taskId: "subagent-legacy",
+          task: "do work",
+          sessionPath: legacyChildPath,
+          streamStatus: "done",
+        },
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: null,
+      getSessionIdForPath: vi.fn((sp) => (
+        sp === legacyChildPath || sp === movedChildPath ? "sess_child_legacy" : null
+      )),
+      getSessionManifest: vi.fn((id) => (
+        id === "sess_child_legacy"
+          ? { sessionId: id, currentLocator: { path: movedChildPath } }
+          : null
+      )),
+      agentIdFromSessionPath: vi.fn((sp) => {
+        const rel = path.relative("/tmp/agents", sp);
+        return rel.split(path.sep)[0] || null;
+      }),
+      getAgent: vi.fn((id) => (id === "hanako" ? { agentName: "Hanako" } : null)),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/messages");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.blocks[0]).toMatchObject({
+      type: "subagent",
+      taskId: "subagent-legacy",
+      sessionId: "sess_child_legacy",
+      streamKey: movedChildPath,
+    });
+  });
+
+  it("restores deferred subagent result as an interlude block before the following assistant reply", async () => {
     const { createSessionsRoute } = await import("../server/routes/sessions.ts");
     const msgUtils = await import("../core/message-utils.ts");
     const app = new Hono();
     const sessionPath = "/tmp/agents/hana/sessions/subagent-result.jsonl";
 
     vi.mocked(msgUtils.extractTextContent)
-      .mockReturnValueOnce({ text: "parent says hi", images: [], thinking: "", toolUses: [] });
+      .mockReturnValueOnce({ text: "parent says hi", images: [], thinking: "", toolUses: [] })
+      .mockReturnValueOnce({ text: "received child result", images: [], thinking: "", toolUses: [] });
     vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
       { role: "assistant", content: "parent says hi" },
       {
@@ -1193,6 +1437,7 @@ describe("sessions route", () => {
         content: "<hana-background-result task-id=\"subagent-1\" status=\"success\" type=\"subagent\">\n子助手完整回复\n</hana-background-result>",
         display: false,
       },
+      { role: "assistant", content: "received child result" },
     ]);
 
     const engine = {
@@ -1232,6 +1477,387 @@ describe("sessions route", () => {
       detailMarkdown: "子助手完整回复",
     });
     expect(interlude.text).not.toContain("长任务说明");
+  });
+
+  it("restores repeated deferred result occurrences for the same task as distinct interludes", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+    const sessionPath = "/tmp/agents/hana/sessions/subagent-result-repeat.jsonl";
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "card from checked results", images: [], thinking: "", toolUses: [] })
+      .mockReturnValueOnce({ text: "received first delivery", images: [], thinking: "", toolUses: [] })
+      .mockReturnValueOnce({ text: "received second delivery", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "card from checked results" },
+      {
+        role: "custom",
+        customType: "hana-background-result",
+        content: "<hana-background-result task-id=\"subagent-1\" status=\"success\" type=\"subagent\">\n子助手完整回复\n</hana-background-result>",
+        display: false,
+      },
+      { role: "assistant", content: "received first delivery" },
+      {
+        role: "custom",
+        customType: "hana-background-result",
+        content: "<hana-background-result task-id=\"subagent-1\" status=\"success\" type=\"subagent\">\n子助手完整回复\n</hana-background-result>",
+        display: false,
+      },
+      { role: "assistant", content: "received second delivery" },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: sessionPath,
+      agentIdFromSessionPath: vi.fn(() => "hana"),
+      getAgent: vi.fn((id) => (id === "hana" ? { agentName: "小花" } : null)),
+      deferredResults: {
+        query: vi.fn(() => ({
+          status: "resolved",
+          result: "子助手完整回复",
+          meta: {
+            type: "subagent",
+            interlude: true,
+            executorAgentNameSnapshot: "明",
+            label: "大纲评估",
+          },
+        })),
+      },
+      subagentRuns: { query: vi.fn(() => null) },
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request(`/api/sessions/messages?path=${encodeURIComponent(sessionPath)}`);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    const interludes = data.blocks.filter((b) => b.type === "interlude");
+    expect(interludes).toHaveLength(2);
+    expect(interludes.map((b) => b.taskId)).toEqual(["subagent-1", "subagent-1"]);
+    expect(interludes.map((b) => b.afterIndex)).toEqual([0, 1]);
+    expect(new Set(interludes.map((b) => b.id)).size).toBe(2);
+  });
+
+  it("exposes JSONL source order for messages and deferred interludes during restore", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+    const sessionPath = "/tmp/agents/hana/sessions/source-order.jsonl";
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "生成图片", images: [], thinking: "", toolUses: [] })
+      .mockReturnValueOnce({ text: "最终报告", images: [], thinking: "", toolUses: [] })
+      .mockReturnValueOnce({ text: "收到后台回复", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "生成图片" },
+      {
+        role: "toolResult",
+        toolName: "media_generate-image",
+        details: {
+          mediaGeneration: {
+            kind: "image",
+            tasks: [{ taskId: "task-img" }],
+          },
+        },
+      },
+      {
+        role: "custom",
+        customType: "hana-deferred-result",
+        data: {
+          schemaVersion: 1,
+          taskId: "task-img",
+          status: "success",
+          type: "image-generation",
+          result: {
+            sessionFiles: [{
+              fileId: "sf_img",
+              filePath: "/tmp/generated.png",
+              label: "generated.png",
+              ext: "png",
+              mime: "image/png",
+              kind: "image",
+            }],
+          },
+        },
+        display: false,
+      },
+      { role: "assistant", content: "最终报告" },
+      {
+        role: "custom",
+        customType: "hana-background-result",
+        content: "<hana-background-result task-id=\"subagent-1\" status=\"success\" type=\"subagent\">\n后台回复\n</hana-background-result>",
+        display: false,
+        details: { deliveryId: "delivery-after-final" },
+      },
+      { role: "assistant", content: "收到后台回复" },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: sessionPath,
+      agentIdFromSessionPath: vi.fn(() => "hana"),
+      getAgent: vi.fn((id) => (id === "hana" ? { agentName: "小花" } : null)),
+      deferredResults: {
+        query: vi.fn(() => ({
+          status: "resolved",
+          result: "后台回复",
+          meta: {
+            type: "subagent",
+            interlude: true,
+            executorAgentNameSnapshot: "明",
+            label: "后台任务",
+          },
+        })),
+      },
+      subagentRuns: { query: vi.fn(() => null) },
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request(`/api/sessions/messages?path=${encodeURIComponent(sessionPath)}`);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.messages.map((m) => [m.content, m.sourceIndex])).toEqual([
+      ["生成图片", 0],
+      ["最终报告", 3],
+      ["收到后台回复", 5],
+    ]);
+    const imageBlock = data.blocks.find((b) => b.type === "file" && b.replacesTaskId === "task-img");
+    expect(imageBlock).toMatchObject({
+      afterIndex: 0,
+      sourceIndex: 1,
+      replacesTaskId: "task-img",
+    });
+    const interlude = data.blocks.find((b) => b.type === "interlude");
+    expect(interlude).toMatchObject({
+      afterIndex: 1,
+      sourceIndex: 4,
+      taskId: "subagent-1",
+    });
+  });
+
+  it("restores consumed turn input ledger records as durable interludes before their assistant reply", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+    const sessionPath = "/tmp/agents/hana/sessions/turn-input-consumption.jsonl";
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "before delivery", images: [], thinking: "", toolUses: [] })
+      .mockReturnValueOnce({ text: "收到 task-a", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "before delivery" },
+      {
+        role: "custom",
+        id: "custom-task-a",
+        customType: "hana-background-result",
+        content: "<hana-background-result task-id=\"task-a\" status=\"success\" type=\"subagent\">\ndone\n</hana-background-result>",
+        display: false,
+        details: { deliveryId: "delivery-consumed" },
+      },
+      {
+        role: "custom",
+        customType: "turn_input_consumption",
+        data: {
+          schemaVersion: 1,
+          deliveryId: "delivery-consumed",
+          input: {
+            entryId: "custom-task-a",
+            customType: "hana-background-result",
+            taskId: "task-a",
+            deliveryId: "delivery-consumed",
+          },
+          assistant: {
+            entryId: "assistant-task-a",
+          },
+          block: {
+            type: "interlude",
+            id: "interlude-delivery-consumed",
+            deliveryId: "delivery-consumed",
+            variant: "deferred_result",
+            taskId: "task-a",
+            status: "success",
+            sourceKind: "subagent",
+            sourceLabel: "Hanako · queued-task",
+            text: "Hana 收到了来自 Hanako · queued-task 的回复",
+            detailMarkdown: "done",
+          },
+        },
+        display: false,
+      },
+      { role: "assistant", id: "assistant-task-a", content: "收到 task-a" },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: sessionPath,
+      agentIdFromSessionPath: vi.fn(() => "hana"),
+      getAgent: vi.fn((id) => (id === "hana" ? { agentName: "Hana" } : null)),
+      deferredResults: {
+        query: vi.fn(() => ({
+          status: "resolved",
+          result: "done",
+          meta: {
+            type: "subagent",
+            interlude: true,
+            executorAgentNameSnapshot: "Hanako",
+            label: "queued-task",
+          },
+        })),
+      },
+      subagentRuns: { query: vi.fn(() => null) },
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request(`/api/sessions/messages?path=${encodeURIComponent(sessionPath)}`);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    const interludes = data.blocks.filter((b) => b.type === "interlude");
+    expect(interludes).toHaveLength(1);
+    expect(interludes[0]).toMatchObject({
+      afterIndex: 0,
+      sourceIndex: 2,
+      deliveryId: "delivery-consumed",
+      taskId: "task-a",
+      text: "Hana 收到了来自 Hanako · queued-task 的回复",
+      detailMarkdown: "done",
+    });
+  });
+
+  it("keeps deferred subagent interlude hidden in history until an assistant reply exists", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+    const sessionPath = "/tmp/agents/hana/sessions/subagent-result-pending-reply.jsonl";
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "parent says hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "parent says hi" },
+      {
+        role: "custom",
+        customType: "hana-background-result",
+        content: "<hana-background-result task-id=\"subagent-1\" status=\"success\" type=\"subagent\">\n子助手完整回复\n</hana-background-result>",
+        display: false,
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: sessionPath,
+      agentIdFromSessionPath: vi.fn(() => "hana"),
+      getAgent: vi.fn((id) => (id === "hana" ? { agentName: "小花" } : null)),
+      deferredResults: {
+        query: vi.fn(() => ({
+          status: "resolved",
+          result: "子助手完整回复",
+          meta: {
+            type: "subagent",
+            interlude: true,
+            executorAgentNameSnapshot: "明",
+            label: "大纲评估",
+          },
+        })),
+      },
+      subagentRuns: { query: vi.fn(() => null) },
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request(`/api/sessions/messages?path=${encodeURIComponent(sessionPath)}`);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.blocks.some((b) => b.type === "interlude")).toBe(false);
+  });
+
+  it("does not attach a hidden deferred interlude across a later user message", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+    const sessionPath = "/tmp/agents/hana/sessions/subagent-result-cross-user.jsonl";
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "parent says hi", images: [], thinking: "", toolUses: [] })
+      .mockReturnValueOnce({ text: "new user question", images: [], thinking: "", toolUses: [] })
+      .mockReturnValueOnce({ text: "reply to user question", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "parent says hi" },
+      {
+        role: "custom",
+        customType: "hana-background-result",
+        content: "<hana-background-result task-id=\"subagent-1\" status=\"success\" type=\"subagent\">\n子助手完整回复\n</hana-background-result>",
+        display: false,
+      },
+      { role: "user", content: "new user question" },
+      { role: "assistant", content: "reply to user question" },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: sessionPath,
+      agentIdFromSessionPath: vi.fn(() => "hana"),
+      getAgent: vi.fn((id) => (id === "hana" ? { agentName: "小花" } : null)),
+      deferredResults: {
+        query: vi.fn(() => ({
+          status: "resolved",
+          result: "子助手完整回复",
+          meta: {
+            type: "subagent",
+            interlude: true,
+            executorAgentNameSnapshot: "明",
+            label: "大纲评估",
+          },
+        })),
+      },
+      subagentRuns: { query: vi.fn(() => null) },
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request(`/api/sessions/messages?path=${encodeURIComponent(sessionPath)}`);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.blocks.some((b) => b.type === "interlude")).toBe(false);
+  });
+
+  it("loads session messages by sessionId and treats path as a legacy locator", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+    const currentPath = "/tmp/agents/hana/sessions/current.jsonl";
+
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: "/tmp/agents/hana/sessions/focus.jsonl",
+      getSessionManifest: vi.fn((sessionId) => (
+        sessionId === "sess_messages"
+          ? { sessionId, currentLocator: { path: currentPath } }
+          : null
+      )),
+      agentIdFromSessionPath: vi.fn(() => "hana"),
+      getAgent: vi.fn(() => ({ agentName: "Hana" })),
+      getSessionFile: vi.fn(() => null),
+      getSessionFileByPath: vi.fn(() => null),
+      listSessionFiles: vi.fn(() => []),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request(
+      `/api/sessions/messages?sessionId=sess_messages&path=${encodeURIComponent("/tmp/agents/hana/sessions/stale.jsonl")}`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(msgUtils.loadSessionHistoryMessages).toHaveBeenCalledWith(engine, currentPath);
   });
 
   it("reload 时从 runStore 回填 workflow inline 块终态（running→done + 补 finishedAt）", async () => {
@@ -1376,17 +2002,89 @@ describe("sessions route", () => {
     expect(data.messages).toEqual([
       {
         id: "0",
+        sourceIndex: 0,
         role: "user",
         content: "hello",
         timestamp: "2026-05-07T05:42:00.000Z",
       },
       {
         id: "1",
+        sourceIndex: 1,
         role: "assistant",
         content: "hi back",
         timestamp: "2026-05-07T05:43:00.000Z",
       },
     ]);
+  });
+
+  it("returns empty assistant thinking blocks from history as completed thinking", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+    const content = [{ type: "thinking", thinking: "" }];
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.contentHasThinkingBlock).mockImplementation((candidate) => candidate === content);
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: null,
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/messages");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.messages).toEqual([{
+      id: "0",
+      sourceIndex: 0,
+      role: "assistant",
+      content: "",
+      thinking: "",
+    }]);
+  });
+
+  it("does not return OpenAI commentary-only history messages as visible text", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+
+    vi.mocked(msgUtils.extractTextContent).mockClear();
+    vi.mocked(msgUtils.contentHasThinkingBlock).mockReturnValue(false);
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      {
+        role: "assistant",
+        content: [{
+          type: "text",
+          text: "I need to inspect the current state.",
+          textSignature: JSON.stringify({
+            v: 1,
+            id: "msg_commentary",
+            phase: "commentary",
+          }),
+        }],
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: null,
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/messages");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.messages).toEqual([]);
+    expect(msgUtils.extractTextContent).not.toHaveBeenCalled();
   });
 
   it("hydrates only the requested display window for long session history", async () => {
@@ -1459,6 +2157,7 @@ describe("sessions route", () => {
     );
     expect(data.messages[0]).toEqual({
       id: "0",
+      sourceIndex: 0,
       role: "user",
       content: "[attached_image: /tmp/a.png]\nsee image",
     });
@@ -1840,6 +2539,7 @@ describe("sessions route", () => {
       {
         type: "file",
         afterIndex: 0,
+        sourceIndex: 2,
         replacesTaskId: "task-img",
         fileId: "sf_img",
         filePath: "/cache/generated.png",
@@ -1893,11 +2593,78 @@ describe("sessions route", () => {
     expect(data.blocks).toEqual([{
       type: "plugin_card",
       afterIndex: 0,
+      sourceIndex: 1,
       card: {
         pluginId: "finance-market",
         route: "/card?id=quote",
         title: "Quote",
         type: "iframe",
+      },
+    }]);
+  });
+
+  it("normalizes plugin chat surface cards from extension custom messages", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+    const sessionPath = "/tmp/agents/hana/sessions/plugin-chat-surface.jsonl";
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "chat surface produced", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "chat surface produced" },
+      {
+        role: "custom",
+        customType: "tavern",
+        content: "",
+        display: true,
+        details: {
+          card: {
+            pluginId: "tavern",
+            type: "chat.surface",
+            sessionRef: {
+              sessionId: "sess_tavern",
+              sessionPath: "/tmp/agents/hana/sessions/stale.jsonl",
+            },
+            title: "Tavern run",
+          },
+        },
+      },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: sessionPath,
+      deferredResults: null,
+      getSessionManifest: vi.fn((sessionId) => sessionId === "sess_tavern"
+        ? {
+          sessionId,
+          currentLocator: { path: "/tmp/agents/hana/sessions/tavern-current.jsonl" },
+          plugin: { ownerPluginId: "tavern", visibility: "plugin_private" },
+        }
+        : null),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request(`/api/sessions/messages?path=${encodeURIComponent(sessionPath)}`);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.blocks).toEqual([{
+      type: "plugin_card",
+      afterIndex: 0,
+      sourceIndex: 1,
+      card: {
+        pluginId: "tavern",
+        type: "chat.surface",
+        sessionId: "sess_tavern",
+        sessionPath: "/tmp/agents/hana/sessions/tavern-current.jsonl",
+        sessionRef: {
+          sessionId: "sess_tavern",
+          sessionPath: "/tmp/agents/hana/sessions/tavern-current.jsonl",
+        },
+        title: "Tavern run",
       },
     }]);
   });
@@ -1963,6 +2730,7 @@ describe("sessions route", () => {
       {
         type: "file",
         afterIndex: 0,
+        sourceIndex: 1,
         replacesTaskId: "task-img",
         fileId: "sf_img",
         filePath: "/cache/generated.png",
@@ -2094,6 +2862,71 @@ describe("sessions route", () => {
     });
   });
 
+  it("uses manifest executor metadata before legacy child-session sidecars", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+
+    const agentsDir = path.join(tmpDir, "agents");
+    const childSessionPath = path.join(agentsDir, "hanako", "subagent-sessions", "child.jsonl");
+    fs.mkdirSync(path.dirname(childSessionPath), { recursive: true });
+    fs.writeFileSync(childSessionPath, "", "utf-8");
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "parent says hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "parent says hi" },
+      {
+        role: "toolResult",
+        toolName: "subagent",
+        details: {
+          taskId: "subagent-1",
+          task: "legacy delegated task",
+          sessionPath: childSessionPath,
+          streamStatus: "done",
+        },
+      },
+    ]);
+
+    const engine = {
+      agentsDir,
+      deferredResults: null,
+      getSessionIdForPath: vi.fn((sp) => (sp === childSessionPath ? "sess_child" : null)),
+      getSessionManifest: vi.fn((sessionId) => (
+        sessionId === "sess_child"
+          ? { currentLocator: { path: childSessionPath } }
+          : null
+      )),
+      getSessionExecutorMetadata: vi.fn(() => ({
+        executorAgentId: "deleted-butter",
+        executorAgentNameSnapshot: "Butter Manifest",
+        executorMetaVersion: 1,
+      })),
+      agentIdFromSessionPath: vi.fn((sp) => {
+        const rel = path.relative(agentsDir, sp);
+        return rel.split(path.sep)[0] || null;
+      }),
+      getAgent: vi.fn((id) => (id === "hanako" ? { agentName: "Hanako" } : null)),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/messages");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(engine.getSessionExecutorMetadata).toHaveBeenCalledWith({
+      sessionId: "sess_child",
+      sessionPath: childSessionPath,
+    });
+    expect(data.blocks[0]).toMatchObject({
+      type: "subagent",
+      agentId: "deleted-butter",
+      agentName: "Butter Manifest",
+      streamKey: childSessionPath,
+    });
+  });
+
   it("keeps pending subagent block running even when child-session tail summary is available", async () => {
     const { createSessionsRoute } = await import("../server/routes/sessions.ts");
     const msgUtils = await import("../core/message-utils.ts");
@@ -2197,6 +3030,81 @@ describe("sessions route", () => {
       streamStatus: "done",
       summary: "child finished",
     });
+  });
+
+  it("deduplicates subagent summary reads by sessionId while resolving stale paths to the current locator", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+    const staleChildPath = "/tmp/agents/hanako/subagent-sessions/stale-child.jsonl";
+    const currentChildPath = "/tmp/agents/hanako/subagent-sessions/current-child.jsonl";
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "parent says hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "parent says hi" },
+      {
+        role: "toolResult",
+        toolName: "subagent",
+        details: {
+          taskId: "subagent-stale",
+          task: "old child",
+          sessionPath: staleChildPath,
+          streamStatus: "running",
+        },
+      },
+      {
+        role: "toolResult",
+        toolName: "subagent",
+        details: {
+          taskId: "subagent-current",
+          task: "current child",
+          sessionPath: currentChildPath,
+          streamStatus: "running",
+        },
+      },
+    ]);
+    vi.mocked(msgUtils.loadLatestAssistantSummaryFromSessionFile).mockClear();
+    vi.mocked(msgUtils.loadLatestAssistantSummaryFromSessionFile)
+      .mockResolvedValueOnce("child finished once");
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: {
+        query: vi.fn((taskId) => ({
+          status: "resolved",
+          result: "deferred result",
+          meta: {
+            sessionPath: taskId === "subagent-stale" ? staleChildPath : currentChildPath,
+          },
+        })),
+      },
+      getSessionIdForPath: vi.fn((sp) => (
+        sp === staleChildPath || sp === currentChildPath ? "sess_child" : null
+      )),
+      getSessionManifest: vi.fn((sessionId) => (
+        sessionId === "sess_child"
+          ? { sessionId, currentLocator: { path: currentChildPath } }
+          : null
+      )),
+      agentIdFromSessionPath: vi.fn((sp) => {
+        const rel = path.relative("/tmp/agents", sp);
+        return rel.split(path.sep)[0] || null;
+      }),
+      getAgent: vi.fn((id) => (id === "hanako" ? { agentName: "Hanako" } : null)),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/messages");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.blocks).toHaveLength(2);
+    expect(msgUtils.loadLatestAssistantSummaryFromSessionFile).toHaveBeenCalledTimes(1);
+    expect(msgUtils.loadLatestAssistantSummaryFromSessionFile).toHaveBeenCalledWith(currentChildPath);
+    expect(data.blocks[0]).toMatchObject({ streamStatus: "done", summary: "child finished once" });
+    expect(data.blocks[1]).toMatchObject({ streamStatus: "done", summary: "child finished once" });
   });
 
   it("hydrates running subagent block from durable run store when deferred delivery state is gone", async () => {

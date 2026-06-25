@@ -4,7 +4,7 @@ import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createUsageLedger } from "../lib/llm/usage-ledger.ts";
 
-function sessionContext(sessionPath = "/tmp/session.jsonl") {
+function sessionContext(sessionPath = "/tmp/session.jsonl", sessionId: string | null = null) {
   return {
     source: {
       subsystem: "session",
@@ -15,6 +15,7 @@ function sessionContext(sessionPath = "/tmp/session.jsonl") {
     attribution: {
       kind: "session",
       agentId: "agent-1",
+      ...(sessionId ? { sessionId } : {}),
       sessionPath,
     },
   };
@@ -116,6 +117,28 @@ describe("Usage ledger", () => {
     expect(ledger.list({ sessionPath: "/sessions/cache.jsonl" }).entries[0].metadata).toMatchObject({
       cacheStrategy: "session_snapshot",
     });
+  });
+
+  it("filters by sessionId so usage survives session path moves", () => {
+    const ledger = createUsageLedger({ now: () => 1_000, requestIdFactory: () => "req-session-id" });
+
+    ledger.record({
+      model: { provider: "openai", modelId: "gpt-5", api: "openai-completions" },
+      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+      usageContext: sessionContext("/sessions/original.jsonl", "sess_usage_stable"),
+    });
+
+    expect(ledger.list({ sessionId: "sess_usage_stable" }).entries).toMatchObject([
+      {
+        requestId: "req-session-id",
+        attribution: {
+          kind: "session",
+          sessionId: "sess_usage_stable",
+          sessionPath: "/sessions/original.jsonl",
+        },
+      },
+    ]);
+    expect(ledger.list({ sessionId: "sess_other" }).entries).toHaveLength(0);
   });
 
   it("records errors without prompt content", () => {

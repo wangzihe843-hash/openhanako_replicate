@@ -8,9 +8,10 @@ import { Hono } from "hono";
 import { safeJson } from "../hono-helpers.ts";
 import { t } from "../../lib/i18n.ts";
 import { extractBlocks, resolveMediaGenerationBlocks } from "../block-extractors.ts";
+import { normalizePluginChatSurfaceBlocks } from "../plugin-chat-surface.ts";
 import { buildDeferredResultInterludeBlock, resolveDeferredReceiverName } from "../deferred-result-interlude.ts";
 import { BrowserManager } from "../../lib/browser/browser-manager.ts";
-import { sessionIdFromFilename } from "../../lib/session-jsonl.ts";
+import { isSessionJsonlFilename, sessionIdFromFilename } from "../../lib/session-jsonl.ts";
 import {
   DEFERRED_RESULT_MESSAGE_TYPE,
   DEFERRED_RESULT_RECORD_TYPE,
@@ -19,11 +20,19 @@ import {
   parseDeferredResultRecord,
 } from "../../lib/deferred-result-notification.ts";
 import {
+  TURN_INPUT_CONSUMPTION_EVENT_TYPE,
+  TURN_INPUT_PRESENTATION_EVENT_TYPE,
+  parseTurnInputConsumptionRecord,
+  parseTurnInputPresentationRecord,
+} from "../../lib/turn-input-presentation.ts";
+import {
   materializeExecutorIdentity,
+  normalizeExecutorMetadata,
   readSubagentSessionMetaSync,
 } from "../../lib/subagent-executor-metadata.ts";
 import {
   extractTextContent,
+  contentHasThinkingBlock,
   filterUnreferencedInlineImages,
   loadSessionHistoryMessages,
   loadLatestAssistantSummaryFromSessionFile,
@@ -46,7 +55,7 @@ import {
 } from "../../lib/session-files/session-file-registry.ts";
 import { serializeSessionFile } from "../../lib/session-files/session-file-response.ts";
 import { browserScreenshotPath } from "../../lib/session-files/browser-screenshot-file.ts";
-import { normalizeSessionThinkingLevel, modelSupportsXhigh } from "../../core/session-thinking-level.ts";
+import { getModelThinkingLevels, normalizeSessionThinkingLevel, modelSupportsXhigh, resolveModelDefaultThinkingLevel } from "../../core/session-thinking-level.ts";
 import {
   modelSupportsDirectAudioInput,
   modelSupportsDirectVideoInput,
@@ -61,6 +70,7 @@ import { createModuleLogger } from "../../lib/debug-log.ts";
 import { searchSessions } from "../../lib/search/session-search.ts";
 import { SessionSearchTokenizerUnavailableError } from "../../lib/search/session-search-tokenizer.ts";
 import { MountAwareFileError, MountAwareFileService } from "../../core/mount-aware-file-service.ts";
+import { isAssistantCommentaryTextBlock } from "../../shared/text-signature.ts";
 
 const log = createModuleLogger("sessions");
 const lifecycleLog = createModuleLogger("sessions/lifecycle");
@@ -151,6 +161,24 @@ function routeError(message, code, status) {
   return err;
 }
 
+function classifySessionCreationError(err) {
+  const message = err?.message || String(err);
+  if (err?.status && Number.isInteger(err.status)) {
+    return { status: err.status, body: { error: message, code: err.code || "session_create_failed" } };
+  }
+  if (
+    /no available model/i.test(message)
+    || /no available models/i.test(message)
+    || /没有可用的模型/.test(message)
+    || /沒有可用的模型/.test(message)
+    || /利用可能なモデルがありません/.test(message)
+    || /사용 가능한 모델이 없/.test(message)
+  ) {
+    return { status: 409, body: { error: message, code: "no_available_model" } };
+  }
+  return { status: 500, body: { error: message } };
+}
+
 const TODO_COMPLETE_MESSAGE =
   "[Hana Todo] The user marked the current todo list as completed and removed it from the session UI. Treat every item in that list as completed. Create a new todo list only if new work needs tracking.";
 
@@ -169,7 +197,7 @@ function hasTextBlockContent(content, { stripThink = false } = {}) {
     return text.length > 0;
   }
   if (!Array.isArray(content)) return false;
-  return content.some(block => block?.type === "text" && block.text);
+  return content.some(block => block?.type === "text" && block.text && !isAssistantCommentaryTextBlock(block));
 }
 
 function hasToolUseContent(content) {
@@ -183,9 +211,24 @@ function isDisplayableHistoryMessage(message) {
     return hasTextBlockContent(message.content) || hasInlineImageContent(message.content);
   }
   if (message.role === "assistant") {
-    return hasTextBlockContent(message.content, { stripThink: true }) || hasToolUseContent(message.content);
+    return hasTextBlockContent(message.content, { stripThink: true })
+      || contentHasThinkingBlock(message.content, { stripThink: true })
+      || hasToolUseContent(message.content);
   }
   return false;
+}
+
+function nextImmediateDisplayableAssistantIndex(sourceMessages, sourceIndex, displayIdxAtSource) {
+  let displayIdx = displayIdxAtSource;
+  for (let i = sourceIndex + 1; i < sourceMessages.length; i += 1) {
+    const message = sourceMessages[i];
+    if (!isDisplayableHistoryMessage(message)) continue;
+    const currentIndex = displayIdx;
+    displayIdx += 1;
+    if (message.role === "user") return null;
+    if (message.role === "assistant") return currentIndex;
+  }
+  return null;
 }
 
 function resolveHistoryPageBounds(sourceMessages, { beforeId, limit, forceAll }) {
@@ -218,21 +261,72 @@ async function readSessionFileRevision(sessionPath) {
 export function createSessionsRoute(engine, hub = null) {
   const route = new Hono();
 
+  function resolveSessionCacheLocator(sessionPath) {
+    if (!sessionPath) return { cacheKey: null, readPath: null, sessionId: null };
+    const sessionId = engine.getSessionIdForPath?.(sessionPath) || null;
+    const manifest = sessionId ? engine.getSessionManifest?.(sessionId) || null : null;
+    const currentPath = typeof manifest?.currentLocator?.path === "string" && manifest.currentLocator.path
+      ? manifest.currentLocator.path
+      : sessionPath;
+    return {
+      cacheKey: sessionId || sessionPath,
+      readPath: currentPath,
+      sessionId,
+    };
+  }
+
+  function currentSessionPathForId(sessionId) {
+    if (!sessionId) return null;
+    const manifest = engine.getSessionManifest?.(sessionId) || null;
+    const currentPath = manifest?.currentLocator?.path;
+    return typeof currentPath === "string" && currentPath ? currentPath : null;
+  }
+
+  function resolveSubagentBlockSession(block, task = null, run = null) {
+    const rawSessionId =
+      block?.sessionId
+      || task?.meta?.sessionId
+      || run?.childSessionId
+      || null;
+    let sessionId = typeof rawSessionId === "string" && rawSessionId.trim() ? rawSessionId.trim() : null;
+    let sessionPath =
+      block?.streamKey
+      || task?.meta?.sessionPath
+      || run?.childSessionPath
+      || null;
+    if (typeof sessionPath !== "string" || !sessionPath.trim()) sessionPath = null;
+    if (!sessionId && sessionPath) {
+      sessionId = engine.getSessionIdForPath?.(sessionPath) || null;
+    }
+    if (sessionId) {
+      sessionPath = currentSessionPathForId(sessionId) || sessionPath;
+    }
+    return { sessionId, sessionPath };
+  }
+
   // session-meta.json sidecar 按 session 目录共享；同一个 request 里遍历几十个 block
   // 时不必每个 block 都重复 readFileSync + JSON.parse。调用端构造一次 Map 当 cache。
   function createSubagentMetaCache() {
     const map = new Map();
     return (sessionPath) => {
       if (!sessionPath) return null;
-      if (map.has(sessionPath)) return map.get(sessionPath);
-      const meta = readSubagentSessionMetaSync(sessionPath);
-      map.set(sessionPath, meta);
+      const { cacheKey, readPath, sessionId } = resolveSessionCacheLocator(sessionPath);
+      if (!cacheKey || !readPath) return null;
+      if (map.has(cacheKey)) return map.get(cacheKey);
+      const manifestMeta = normalizeExecutorMetadata(
+        engine.getSessionExecutorMetadata?.({ sessionId, sessionPath: readPath }),
+      );
+      const meta = manifestMeta || readSubagentSessionMetaSync(readPath);
+      map.set(cacheKey, meta);
       return meta;
     };
   }
 
   function applySubagentIdentity(block, task, readSessionMeta) {
-    const sessionPath = block.streamKey || task?.meta?.sessionPath || null;
+    const sessionRef = resolveSubagentBlockSession(block, task);
+    if (sessionRef.sessionId && !block.sessionId) block.sessionId = sessionRef.sessionId;
+    if (sessionRef.sessionPath) block.streamKey = sessionRef.sessionPath;
+    const sessionPath = sessionRef.sessionPath;
     const sessionMeta = readSessionMeta(sessionPath);
     const resolved =
       materializeExecutorIdentity(sessionMeta, engine.getAgent?.bind(engine))
@@ -256,7 +350,10 @@ export function createSessionsRoute(engine, hub = null) {
   }
 
   function patchBlockExecutorMetadata(block, task, readSessionMeta) {
-    const sessionPath = block.streamKey || task?.meta?.sessionPath || null;
+    const sessionRef = resolveSubagentBlockSession(block, task);
+    if (sessionRef.sessionId && !block.sessionId) block.sessionId = sessionRef.sessionId;
+    if (sessionRef.sessionPath) block.streamKey = sessionRef.sessionPath;
+    const sessionPath = sessionRef.sessionPath;
     const sessionMeta = readSessionMeta(sessionPath);
     const sources = [sessionMeta, task?.meta, block];
 
@@ -295,6 +392,7 @@ export function createSessionsRoute(engine, hub = null) {
       result: run.summary || null,
       reason: run.reason || run.summary || null,
       meta: {
+        sessionId: run.childSessionId || null,
         sessionPath: run.childSessionPath || null,
         requestedAgentId: run.requestedAgentId || null,
         requestedAgentNameSnapshot: run.requestedAgentNameSnapshot || null,
@@ -327,10 +425,12 @@ export function createSessionsRoute(engine, hub = null) {
     const map = new Map();
     return async (sessionPath) => {
       if (!sessionPath) return null;
-      if (!map.has(sessionPath)) {
-        map.set(sessionPath, loadLatestAssistantSummaryFromSessionFile(sessionPath));
+      const { cacheKey, readPath } = resolveSessionCacheLocator(sessionPath);
+      if (!cacheKey || !readPath) return null;
+      if (!map.has(cacheKey)) {
+        map.set(cacheKey, loadLatestAssistantSummaryFromSessionFile(readPath));
       }
-      return await map.get(sessionPath);
+      return await map.get(cacheKey);
     };
   }
 
@@ -342,7 +442,8 @@ export function createSessionsRoute(engine, hub = null) {
     const summaryManager = agent?.summaryManager || null;
     if (!summaryManager || typeof summaryManager.getSummary !== "function") return null;
 
-    const sessionId = sessionIdFromFilename(path.basename(sessionPath));
+    const sessionId = engine.getSessionIdForPath?.(sessionPath)
+      || sessionIdFromFilename(path.basename(sessionPath));
     const record = summaryManager.getSummary(sessionId);
     return record?.summary?.trim() ? record : null;
   }
@@ -384,9 +485,23 @@ export function createSessionsRoute(engine, hub = null) {
     return [...new Set((paths || []).filter((p) => typeof p === "string" && p.trim()))];
   }
 
-  async function cleanupSessionLifecycle(sessionPaths, reason) {
+  function lifecycleSessionRef(sessionPath) {
+    if (!sessionPath) return sessionPath;
+    try {
+      const sessionId = engine.getSessionIdForPath?.(sessionPath);
+      if (typeof sessionId === "string" && sessionId.trim()) {
+        return { sessionId: sessionId.trim(), sessionPath };
+      }
+    } catch {
+      // Keep path-only cleanup for legacy sessions when manifest lookup fails.
+    }
+    return sessionPath;
+  }
+
+  async function cleanupSessionLifecycle(sessionPaths, reason, options: { skipMemory?: boolean } = {}) {
     const bm = BrowserManager.instance();
     for (const sessionPath of uniqueLifecyclePaths(sessionPaths)) {
+      const sessionRef = lifecycleSessionRef(sessionPath);
       try {
         engine.taskRegistry?.abortByParentSession?.(sessionPath, reason);
       } catch (err) {
@@ -403,24 +518,28 @@ export function createSessionsRoute(engine, hub = null) {
         lifecycleLog.warn(`subagent thread cleanup failed for ${sessionPath}: ${err.message}`);
       }
       try {
-        // 右侧 workflow 卡活动随对话退场（内存 + 持久化背书一并清，按 sessionPath 归属）。
-        engine.activityHub?.clearBySession?.(sessionPath);
+        // 右侧 workflow 卡活动随对话退场（内存 + 持久化背书一并清，按 sessionId 归属）。
+        engine.activityHub?.clearBySession?.(sessionRef);
       } catch (err) {
         lifecycleLog.warn(`activity hub cleanup failed for ${sessionPath}: ${err.message}`);
       }
       try {
-        engine.deferredResults?.suppressBySession?.(sessionPath, reason);
+        engine.deferredResults?.suppressBySession?.(sessionRef, reason);
       } catch (err) {
         lifecycleLog.warn(`deferred cleanup failed for ${sessionPath}: ${err.message}`);
       }
       try {
-        engine.confirmStore?.abortBySession?.(sessionPath);
+        engine.confirmStore?.abortBySession?.(sessionRef);
       } catch (err) {
         lifecycleLog.warn(`confirm cleanup failed for ${sessionPath}: ${err.message}`);
       }
       try {
         if (typeof engine.discardSessionRuntime === "function") {
-          await engine.discardSessionRuntime(sessionPath, reason);
+          if (options && Object.keys(options).length > 0) {
+            await engine.discardSessionRuntime(sessionPath, reason, options);
+          } else {
+            await engine.discardSessionRuntime(sessionPath, reason);
+          }
         } else {
           await engine.abortSessionByPath?.(sessionPath);
         }
@@ -518,6 +637,7 @@ export function createSessionsRoute(engine, hub = null) {
         const summaryRecord = getSessionSummaryRecord(s.path, s.agentId || null);
         return ({
           path: s.path,
+          sessionId: s.sessionId || engine.getSessionIdForPath?.(s.path) || null,
           title: s.title || null,
           firstMessage: (s.firstMessage || "").slice(0, 100),
           modified: s.modified?.toISOString() || null,
@@ -587,6 +707,7 @@ export function createSessionsRoute(engine, hub = null) {
       const sessions = await engine.listSessions();
       const results = searchSessions(sessions, trimmedQuery, { phase, limit }).map((s) => ({
         path: s.path,
+        sessionId: s.sessionId || engine.getSessionIdForPath?.(s.path) || null,
         title: s.title || null,
         firstMessage: (s.firstMessage || "").slice(0, 100),
         modified: s.modified?.toISOString?.() || s.modified || null,
@@ -648,9 +769,17 @@ export function createSessionsRoute(engine, hub = null) {
     try {
       const requestContext = createRequestContext(c, engine);
       const body = await safeJson(c);
-      const { path: sessionPath, pinned } = body;
+      const { sessionId, path: legacySessionPath, pinned } = body;
+      let sessionPath = typeof legacySessionPath === "string" ? legacySessionPath : null;
+      if (typeof sessionId === "string" && sessionId.trim()) {
+        const manifest = engine.getSessionManifest?.(sessionId.trim()) || null;
+        if (!manifest?.currentLocator?.path) {
+          return c.json({ error: "Session manifest not found", code: "session_manifest_not_found" }, 404);
+        }
+        sessionPath = manifest.currentLocator.path;
+      }
       if (!sessionPath) {
-        return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
+        return c.json({ error: t("error.missingParam", { param: "sessionId" }) }, 400);
       }
       if (typeof pinned !== "boolean") {
         return c.json({ error: t("error.missingParam", { param: "pinned" }) }, 400);
@@ -667,8 +796,11 @@ export function createSessionsRoute(engine, hub = null) {
         sessionPath,
       });
       if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
-      const pinnedAt = await engine.setSessionPinned(sessionPath, pinned);
-      return c.json({ ok: true, pinnedAt });
+      const pinnedAt = await engine.setSessionPinned({
+        ...(sessionId ? { sessionId } : {}),
+        sessionPath,
+      }, pinned);
+      return c.json({ ok: true, pinnedAt, sessionId: sessionId || engine.getSessionIdForPath?.(sessionPath) || null });
     } catch (err) {
       return c.json({ error: err.message, code: err.code || undefined }, err.status || 500);
     }
@@ -758,7 +890,15 @@ export function createSessionsRoute(engine, hub = null) {
   route.get("/sessions/messages", async (c) => {
     try {
       const requestContext = createRequestContext(c, engine);
-      const queryPath = c.req.query("path") || null;
+      const querySessionId = c.req.query("sessionId") || null;
+      let queryPath = c.req.query("path") || null;
+      if (typeof querySessionId === "string" && querySessionId.trim()) {
+        const manifest = engine.getSessionManifest?.(querySessionId.trim()) || null;
+        if (!manifest?.currentLocator?.path) {
+          return c.json({ error: "Session manifest not found", code: "session_manifest_not_found" }, 404);
+        }
+        queryPath = manifest.currentLocator.path;
+      }
       if (queryPath && !isValidSessionPath(queryPath, engine.agentsDir)) {
         return c.json({ error: "Invalid session path" }, 403);
       }
@@ -790,21 +930,78 @@ export function createSessionsRoute(engine, hub = null) {
       const blocks = [];
       const mediaGenerationResults = new Map();
       const standaloneMediaGenerationResults = [];
-      const deferredInterludeTaskIds = new Set();
+      const deferredInterludeDeliveryIds = new Set();
+      const turnInputConsumptionDeliveryIds = new Set();
+      const turnInputConsumptionEntryIds = new Set();
       const deferredStore = engine.deferredResults;
       const receiverName = resolveDeferredReceiverName(engine, resolvedSessionPath);
-      const recordMediaGenerationResult = (parsed, afterIndex) => {
+      for (const message of sourceMessages) {
+        if (message?.role !== "custom" || message.customType !== TURN_INPUT_CONSUMPTION_EVENT_TYPE) continue;
+        const parsed = parseTurnInputConsumptionRecord(message.data);
+        const deliveryId = typeof parsed?.deliveryId === "string" && parsed.deliveryId.trim()
+          ? parsed.deliveryId.trim()
+          : null;
+        const entryId = typeof parsed?.input?.entryId === "string" && parsed.input.entryId.trim()
+          ? parsed.input.entryId.trim()
+          : null;
+        if (deliveryId) turnInputConsumptionDeliveryIds.add(deliveryId);
+        if (entryId) turnInputConsumptionEntryIds.add(entryId);
+      }
+      const recordMediaGenerationResult = (parsed, afterIndex, sourceIndex = null) => {
         if (!parsed?.taskId || !isMediaGenerationDeferredResult(parsed)) return;
         mediaGenerationResults.set(parsed.taskId, parsed);
         if (parsed.status === "success") {
           standaloneMediaGenerationResults.push({
             ...parsed,
             afterIndex,
+            ...(Number.isInteger(sourceIndex) ? { sourceIndex } : {}),
           });
         }
       };
-      const recordDeferredInterlude = (parsed, afterIndex) => {
-        if (!parsed?.taskId || afterIndex < 0 || deferredInterludeTaskIds.has(parsed.taskId)) return;
+      const recordTurnInputConsumptionInterlude = (message, afterIndex, sourceIndex = null) => {
+        if (!Number.isInteger(afterIndex) || afterIndex < 0) return;
+        const parsed = parseTurnInputConsumptionRecord(message?.data);
+        const block = parsed?.block;
+        if (!block || block.type !== "interlude") return;
+        const normalizedDeliveryId = typeof parsed.deliveryId === "string" && parsed.deliveryId.trim()
+          ? parsed.deliveryId.trim()
+          : null;
+        if (normalizedDeliveryId && deferredInterludeDeliveryIds.has(normalizedDeliveryId)) return;
+        blocks.push({
+          ...block,
+          ...(normalizedDeliveryId ? { deliveryId: normalizedDeliveryId } : {}),
+          afterIndex,
+          ...(Number.isInteger(sourceIndex) ? { sourceIndex } : {}),
+        });
+        if (normalizedDeliveryId) deferredInterludeDeliveryIds.add(normalizedDeliveryId);
+      };
+      const recordTurnInputPresentationInterlude = (message, afterIndex, sourceIndex = null) => {
+        if (!Number.isInteger(afterIndex) || afterIndex < 0) return;
+        const parsed = parseTurnInputPresentationRecord(message?.data);
+        const block = parsed?.block;
+        if (!block || block.type !== "interlude") return;
+        const normalizedDeliveryId = typeof parsed.deliveryId === "string" && parsed.deliveryId.trim()
+          ? parsed.deliveryId.trim()
+          : null;
+        if (normalizedDeliveryId && deferredInterludeDeliveryIds.has(normalizedDeliveryId)) return;
+        blocks.push({
+          ...block,
+          ...(normalizedDeliveryId ? { deliveryId: normalizedDeliveryId } : {}),
+          afterIndex,
+          ...(Number.isInteger(sourceIndex) ? { sourceIndex } : {}),
+        });
+        if (normalizedDeliveryId) deferredInterludeDeliveryIds.add(normalizedDeliveryId);
+      };
+      const recordDeferredInterlude = (parsed, afterIndex, deliveryId = null, sourceIndex = null) => {
+        if (!parsed?.taskId || !Number.isInteger(afterIndex) || afterIndex < 0) return;
+        const normalizedDeliveryId = typeof deliveryId === "string" && deliveryId.trim() ? deliveryId.trim() : null;
+        const sourceMessage = Number.isInteger(sourceIndex) ? sourceMessages[sourceIndex] : null;
+        const sourceEntryId = typeof sourceMessage?.id === "string" && sourceMessage.id.trim()
+          ? sourceMessage.id.trim()
+          : null;
+        if (normalizedDeliveryId && turnInputConsumptionDeliveryIds.has(normalizedDeliveryId)) return;
+        if (sourceEntryId && turnInputConsumptionEntryIds.has(sourceEntryId)) return;
+        if (normalizedDeliveryId && deferredInterludeDeliveryIds.has(normalizedDeliveryId)) return;
         const task = deferredStore?.query?.(parsed.taskId) || null;
         const run = engine.subagentRuns?.query?.(parsed.taskId) || null;
         const runTask = taskFromSubagentRun(run);
@@ -816,20 +1013,25 @@ export function createSessionsRoute(engine, hub = null) {
         };
         const event = {
           taskId: parsed.taskId,
+          deliveryId: normalizedDeliveryId,
           status: parsed.status === "failed" || parsed.status === "aborted" ? parsed.status : "success",
           result: Object.prototype.hasOwnProperty.call(parsed, "result") ? parsed.result : metadataTask?.result,
           reason: parsed.reason || metadataTask?.reason || null,
           meta,
         };
-        if (!meta.interlude) return;
         const block = buildDeferredResultInterludeBlock(event, { receiverName });
         if (!block) return;
-        blocks.push({ ...block, afterIndex });
-        deferredInterludeTaskIds.add(parsed.taskId);
+        blocks.push({
+          ...block,
+          afterIndex,
+          ...(Number.isInteger(sourceIndex) ? { sourceIndex } : {}),
+        });
+        if (normalizedDeliveryId) deferredInterludeDeliveryIds.add(normalizedDeliveryId);
       };
       let displayIdx = 0;
 
-      for (const m of sourceMessages) {
+      for (let sourceIndex = 0; sourceIndex < sourceMessages.length; sourceIndex += 1) {
+        const m = sourceMessages[sourceIndex];
         if (m.role === "user") {
           if (!isDisplayableHistoryMessage(m)) continue;
           const currentIndex = displayIdx;
@@ -839,6 +1041,7 @@ export function createSessionsRoute(engine, hub = null) {
             const visibleImages = filterUnreferencedInlineImages(text, images);
             messages.push({
               id: String(currentIndex),
+              sourceIndex,
               ...(m.id ? { entryId: m.id } : {}),
               role: "user",
               content: text,
@@ -854,10 +1057,11 @@ export function createSessionsRoute(engine, hub = null) {
             const { text, thinking, toolUses } = extractTextContent(m.content, { stripThink: true });
             messages.push({
               id: String(currentIndex),
+              sourceIndex,
               ...(m.id ? { entryId: m.id } : {}),
               role: "assistant",
               content: text,
-              thinking: thinking || undefined,
+              ...(contentHasThinkingBlock(m.content, { stripThink: true }) ? { thinking } : {}),
               toolCalls: toolUses.length ? toolUses : undefined,
               ...(m.timestamp ? { timestamp: m.timestamp } : {}),
             });
@@ -867,7 +1071,7 @@ export function createSessionsRoute(engine, hub = null) {
           if (afterIndex >= pageBounds.startIdx && afterIndex < pageBounds.endIdx) {
             const extracted = extractBlocks(m.toolName, m.details, m);
             for (const b of extracted) {
-              blocks.push({ ...b, afterIndex });
+              blocks.push({ ...b, afterIndex, sourceIndex });
             }
           }
         } else if (m.role === "custom") {
@@ -875,12 +1079,26 @@ export function createSessionsRoute(engine, hub = null) {
           if (m.display !== false && afterIndex >= pageBounds.startIdx && afterIndex < pageBounds.endIdx) {
             const extracted = extractBlocks(m.customType, m.details, m);
             for (const b of extracted) {
-              blocks.push({ ...b, afterIndex });
+              blocks.push({ ...b, afterIndex, sourceIndex });
             }
           }
           const parsed = parseHistoryDeferredResult(m);
-          recordMediaGenerationResult(parsed, afterIndex);
-          recordDeferredInterlude(parsed, afterIndex);
+          recordMediaGenerationResult(parsed, afterIndex, sourceIndex);
+          if (m.customType === TURN_INPUT_CONSUMPTION_EVENT_TYPE) {
+            recordTurnInputConsumptionInterlude(m, afterIndex, sourceIndex);
+          }
+          if (m.customType === TURN_INPUT_PRESENTATION_EVENT_TYPE) {
+            recordTurnInputPresentationInterlude(m, afterIndex, sourceIndex);
+          }
+          if (m.customType === DEFERRED_RESULT_MESSAGE_TYPE) {
+            const nextAssistantIndex = nextImmediateDisplayableAssistantIndex(sourceMessages, sourceIndex, displayIdx);
+            recordDeferredInterlude(
+              parsed,
+              nextAssistantIndex == null ? null : nextAssistantIndex - 1,
+              historyDeferredDeliveryId(m, sourceIndex),
+              sourceIndex,
+            );
+          }
         }
       }
 
@@ -889,13 +1107,16 @@ export function createSessionsRoute(engine, hub = null) {
           if (!isTerminalDeferredTask(task)) continue;
           const parsed = buildDeferredResultRecord(task.taskId, task);
           recordMediaGenerationResult(parsed, pageBounds.total - 1);
-          recordDeferredInterlude(parsed, pageBounds.total - 1);
+          recordDeferredInterlude(parsed, null);
         }
       }
-      const resolvedBlocks = resolveMediaGenerationBlocks(
-        blocks,
-        mediaGenerationResults,
-        standaloneMediaGenerationResults,
+      const resolvedBlocks = normalizePluginChatSurfaceBlocks(
+        resolveMediaGenerationBlocks(
+          blocks,
+          mediaGenerationResults,
+          standaloneMediaGenerationResults,
+        ),
+        engine,
       );
 
       // 重映射 afterIndex 到切片内偏移，过滤超出范围的
@@ -919,10 +1140,19 @@ export function createSessionsRoute(engine, hub = null) {
           const run = runStore?.query?.(b.taskId) || null;
           const runTask = taskFromSubagentRun(run);
           const metadataTask = mergeSubagentTaskMetadata(runTask, task);
+          const durableSessionId = run?.childSessionId || null;
           const durableSessionPath = run?.childSessionPath || null;
+          const deferredSessionId = task?.meta?.sessionId || null;
           const deferredSessionPath = task?.meta?.sessionPath || null;
+          if (!b.sessionId && durableSessionId) b.sessionId = durableSessionId;
+          if (!b.sessionId && deferredSessionId) b.sessionId = deferredSessionId;
           if (!b.streamKey && durableSessionPath) b.streamKey = durableSessionPath;
           if (!b.streamKey && deferredSessionPath) b.streamKey = deferredSessionPath;
+          {
+            const sessionRef = resolveSubagentBlockSession(b, metadataTask, run);
+            if (sessionRef.sessionId && !b.sessionId) b.sessionId = sessionRef.sessionId;
+            if (sessionRef.sessionPath) b.streamKey = sessionRef.sessionPath;
+          }
           patchBlockRequestedMetadata(b, metadataTask);
           patchBlockExecutorMetadata(b, metadataTask, readSessionMeta);
           applySubagentIdentity(b, metadataTask, readSessionMeta);
@@ -1166,9 +1396,9 @@ export function createSessionsRoute(engine, hub = null) {
         createOptions.workspaceMountId = workspaceSelection.mount.mountId;
         createOptions.workspaceLabel = workspaceSelection.mount.label || null;
       }
-      let newSessionPath, newAgentId;
+      let newSessionPath, newSessionId, newAgentId;
       if (agentId && agentId !== (body.currentAgentId || engine.currentAgentId)) {
-        ({ sessionPath: newSessionPath, agentId: newAgentId } = await engine.createSessionForAgent(
+        ({ sessionPath: newSessionPath, sessionId: newSessionId, agentId: newAgentId } = await engine.createSessionForAgent(
           agentId,
           cwd || undefined,
           memFlag,
@@ -1176,7 +1406,7 @@ export function createSessionsRoute(engine, hub = null) {
           createOptions,
         ));
       } else {
-        ({ sessionPath: newSessionPath, agentId: newAgentId } = await engine.createSession(
+        ({ sessionPath: newSessionPath, sessionId: newSessionId, agentId: newAgentId } = await engine.createSession(
           null,
           cwd || undefined,
           memFlag,
@@ -1199,6 +1429,7 @@ export function createSessionsRoute(engine, hub = null) {
       const response = {
         ok: true,
         path: newSessionPath,
+        sessionId: newSessionId || engine.getSessionIdForPath?.(newSessionPath) || null,
         cwd: engine.cwd,
         workspaceFolders: engine.getSessionWorkspaceFolders?.(newSessionPath) || [],
         authorizedFolders: engine.getSessionAuthorizedFolders?.(newSessionPath) || [],
@@ -1218,7 +1449,8 @@ export function createSessionsRoute(engine, hub = null) {
       }, newSessionPath);
       return c.json(response);
     } catch (err) {
-      return c.json({ error: err.message }, 500);
+      const classified = classifySessionCreationError(err);
+      return c.json(classified.body, classified.status);
     }
   });
 
@@ -1346,6 +1578,7 @@ export function createSessionsRoute(engine, hub = null) {
         thinkingLevel: normalizeSessionThinkingLevel(engine.getSessionThinkingLevel?.(newSessionPath) || engine.getThinkingLevel?.()),
         memoryModelUnavailableReason: engine.memoryModelUnavailableReason || null,
         compacted: result.compacted === true,
+        compactionError: result.compactionError || null,
       };
       hub?.eventBus?.emit?.({
         type: "session_created",
@@ -1361,9 +1594,17 @@ export function createSessionsRoute(engine, hub = null) {
   route.post("/sessions/switch", async (c) => {
     try {
       const body = await safeJson(c);
-      const { path: sessionPath, currentSessionPath: oldSessionPath } = body;
+      const { sessionId, path: legacySessionPath, currentSessionPath: oldSessionPath } = body;
+      let sessionPath = typeof legacySessionPath === "string" ? legacySessionPath : null;
+      if (typeof sessionId === "string" && sessionId.trim()) {
+        const manifest = engine.getSessionManifest?.(sessionId.trim()) || null;
+        if (!manifest?.currentLocator?.path) {
+          return c.json({ error: "Session manifest not found", code: "session_manifest_not_found" }, 404);
+        }
+        sessionPath = manifest.currentLocator.path;
+      }
       if (!sessionPath) {
-        return c.json({ error: t("error.missingParam", { param: "path" }) }, 400);
+        return c.json({ error: t("error.missingParam", { param: "sessionId" }) }, 400);
       }
       // 运行路径只允许 active desktop session。归档会话必须先 restore。
       if (!isActiveDesktopSessionPath(sessionPath, engine.agentsDir)) {
@@ -1431,6 +1672,8 @@ export function createSessionsRoute(engine, hub = null) {
         currentModelAudioTransportSupported: modelSupportsDirectAudioInput(activeModel),
         currentModelReasoning: activeModel?.reasoning ?? null,
         currentModelXhigh: modelSupportsXhigh(activeModel),
+        currentModelThinkingLevels: activeModel ? getModelThinkingLevels(activeModel) : null,
+        currentModelDefaultThinkingLevel: activeModel ? resolveModelDefaultThinkingLevel(activeModel) : null,
         currentModelContextWindow: activeModel?.contextWindow ?? null,
         // #1624：restore 时算好的工具/prompt 漂移提示（无漂移或已 dismiss → null）
         capabilityDrift: engine.getSessionCapabilityDriftNotice?.(sessionPath) || null,
@@ -1553,7 +1796,7 @@ export function createSessionsRoute(engine, hub = null) {
         let files;
         try { files = await fs.readdir(archiveDir); } catch { continue; }
         for (const f of files) {
-          if (!f.endsWith(".jsonl")) continue;
+          if (!isSessionJsonlFilename(f)) continue;
           const fp = path.join(archiveDir, f);
           try {
             const stat = await fs.stat(fp);
@@ -1618,7 +1861,7 @@ export function createSessionsRoute(engine, hub = null) {
       if (await pathExists(sessionFileSidecarPath(destPath))) {
         return c.json({ error: "Stage file sidecar destination already exists" }, 409);
       }
-      await cleanupSessionLifecycle([sessionPath, destPath], "parent session archived");
+      await cleanupSessionLifecycle([sessionPath, destPath], "parent session archived", { skipMemory: true });
 
       // 再从 engine 的 session map 中移除。
       await engine.setSessionPinned(sessionPath, false);
@@ -1734,6 +1977,7 @@ function patchSessionFileLifecycleBlocks(blocks, engine, sessionPath) {
         const filePath = browserScreenshotPath(engine.hanakoHome, sessionPath, {
           base64: block.base64,
           mimeType: block.mimeType,
+          sessionId: engine.getSessionIdForPath?.(sessionPath) || null,
         });
         file = engine.getSessionFileByPath(filePath, { sessionPath });
         if (file) block.type = "file";
@@ -1770,6 +2014,15 @@ function parseHistoryDeferredResult(message) {
     return parseDeferredResultNotification(message.content);
   }
   return null;
+}
+
+function historyDeferredDeliveryId(message, sourceIndex) {
+  const details = message?.details && typeof message.details === "object" ? message.details : null;
+  const fromDetails = typeof details?.deliveryId === "string" && details.deliveryId.trim()
+    ? details.deliveryId.trim()
+    : null;
+  if (fromDetails) return fromDetails;
+  return `history:${sourceIndex}`;
 }
 
 function isTerminalDeferredTask(task) {

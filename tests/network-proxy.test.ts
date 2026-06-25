@@ -5,6 +5,7 @@ import {
   isNoProxyMatch,
   normalizeNetworkProxyConfig,
   proxyConfigFromEnvironment,
+  systemProxyConfigToEnvironment,
   proxyConfigToEnvironment,
   resolveProxyForUrl,
 } from "../shared/network-proxy.ts";
@@ -97,6 +98,29 @@ describe("network proxy config", () => {
     expect(electronRules).toContain("<local>");
 
     const env = proxyConfigToEnvironment(manual, {});
+    expect(env.NO_PROXY).toContain("127.0.0.1");
+    expect(env.NO_PROXY).toContain("localhost");
+  });
+
+  it("clears inherited proxy variables when system proxy resolution is direct", () => {
+    const env = systemProxyConfigToEnvironment({
+      httpProxy: "",
+      httpsProxy: "",
+      wsProxy: "",
+      wssProxy: "",
+      noProxy: "",
+    }, {
+      HTTP_PROXY: "http://stale-http.example:8080",
+      http_proxy: "http://stale-http.example:8080",
+      HTTPS_PROXY: "http://stale-https.example:8080",
+      ALL_PROXY: "socks5://stale-all.example:1080",
+      NO_PROXY: "corp.internal",
+    }, { noProxy: "" });
+
+    expect(env.HTTP_PROXY).toBeUndefined();
+    expect(env.http_proxy).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.ALL_PROXY).toBeUndefined();
     expect(env.NO_PROXY).toContain("127.0.0.1");
     expect(env.NO_PROXY).toContain("localhost");
   });

@@ -8,6 +8,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { useStore } from '../../stores/index';
 import { SubagentSessionPreview } from '../../components/chat/SubagentSessionPreview';
 import { loadMessages } from '../../stores/session-actions';
+import { requestStreamResume } from '../../services/stream-resume';
 import { dispatchStreamKey } from '../../services/stream-key-dispatcher';
 
 vi.mock('../../stores/session-actions', async () => {
@@ -18,7 +19,12 @@ vi.mock('../../stores/session-actions', async () => {
   };
 });
 
+vi.mock('../../services/stream-resume', () => ({
+  requestStreamResume: vi.fn(),
+}));
+
 const mockedLoadMessages = vi.mocked(loadMessages);
+const mockedRequestStreamResume = vi.mocked(requestStreamResume);
 
 function makeScrollContainerRef() {
   const el = document.createElement('div');
@@ -52,6 +58,7 @@ afterEach(() => {
 describe('SubagentSessionPreview session binding', () => {
   beforeEach(() => {
     mockedLoadMessages.mockClear();
+    mockedRequestStreamResume.mockClear();
     useStore.setState({
       currentSessionPath: '/session/current',
       userName: 'USER SELF',
@@ -80,6 +87,63 @@ describe('SubagentSessionPreview session binding', () => {
       expect(mockedLoadMessages).toHaveBeenCalledWith('/session/subagent');
     });
     expect(mockedLoadMessages).not.toHaveBeenCalledWith('/session/current');
+  });
+
+  it('打开运行中的 subagent detail 时主动请求 child session 流恢复', async () => {
+    render(<SubagentSessionPreview taskId="task-a" sessionPath="/session/subagent" streamStatus="running" scrollContainerRef={makeScrollContainerRef()} />);
+
+    await waitFor(() => {
+      expect(mockedRequestStreamResume).toHaveBeenCalledWith('/session/subagent');
+    });
+    expect(mockedRequestStreamResume).not.toHaveBeenCalledWith('/session/current');
+  });
+
+  it('有 child sessionId 时通过 locator 读取移动后的 session，而不是继续信任旧 path', async () => {
+    useStore.setState({
+      currentSessionId: 'sess_parent',
+      currentSessionPath: '/session/current',
+      sessionLocatorsById: {
+        sess_child: { path: '/session/moved-child' },
+      },
+      sessions: [
+        { sessionId: 'sess_child', path: '/session/moved-child' },
+      ],
+      chatSessions: {
+        sess_child: {
+          items: [
+            {
+              type: 'message',
+              data: {
+                id: 'a-1',
+                role: 'assistant',
+                blocks: [{ type: 'text', html: '<p>Moved child content</p>' }],
+              },
+            },
+          ],
+          hasMore: false,
+          loadingMore: false,
+        },
+      },
+    } as never);
+
+    render(
+      <SubagentSessionPreview
+        taskId="task-a"
+        sessionId="sess_child"
+        sessionPath="/session/legacy-child"
+        streamStatus="running"
+        scrollContainerRef={makeScrollContainerRef()}
+      />,
+    );
+
+    expect(screen.getByText('Moved child content')).toBeTruthy();
+    expect(mockedLoadMessages).not.toHaveBeenCalledWith('/session/legacy-child');
+    await waitFor(() => {
+      expect(mockedRequestStreamResume).toHaveBeenCalledWith({
+        sessionId: 'sess_child',
+        sessionPath: '/session/moved-child',
+      });
+    });
   });
 
   it('sessionPath 未就绪时显示占位态，且不触发加载', () => {

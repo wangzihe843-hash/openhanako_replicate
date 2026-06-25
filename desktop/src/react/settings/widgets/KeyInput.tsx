@@ -21,6 +21,14 @@ export function KeyInput({ value, onChange, placeholder, onBlur, onReveal, onRev
   const isTransientSecretVisible = visible && revealedValue !== null;
   const displayValue = isTransientSecretVisible ? revealedValue : value;
 
+  const replaceTransientSecret = (nextValue: string) => {
+    const safeValue = revealedValue && nextValue.includes(revealedValue)
+      ? nextValue.replace(revealedValue, '')
+      : nextValue;
+    setRevealedValue(null);
+    onChange(safeValue);
+  };
+
   const toggleVisible = async () => {
     if (visible) {
       setVisible(false);
@@ -56,7 +64,10 @@ export function KeyInput({ value, onChange, placeholder, onBlur, onReveal, onRev
         readOnly={isTransientSecretVisible}
         data-secret-visible={isTransientSecretVisible ? 'true' : undefined}
         onChange={(e) => {
-          if (isTransientSecretVisible) return;
+          if (isTransientSecretVisible) {
+            replaceTransientSecret(e.target.value);
+            return;
+          }
           onChange(e.target.value);
         }}
         onCopy={(e) => {
@@ -69,12 +80,31 @@ export function KeyInput({ value, onChange, placeholder, onBlur, onReveal, onRev
           e.preventDefault();
           e.stopPropagation();
         }}
+        onPaste={(e) => {
+          if (!isTransientSecretVisible) return;
+          e.preventDefault();
+          e.stopPropagation();
+          replaceTransientSecret(e.clipboardData.getData('text'));
+        }}
         onKeyDown={(e) => {
           if (!isTransientSecretVisible) return;
           const key = e.key.toLowerCase();
           if ((e.metaKey || e.ctrlKey) && (key === 'a' || key === 'c' || key === 'x')) {
             e.preventDefault();
             e.stopPropagation();
+            return;
+          }
+          if (e.metaKey || e.ctrlKey || e.altKey) return;
+          if (e.key.length === 1) {
+            e.preventDefault();
+            e.stopPropagation();
+            replaceTransientSecret(e.key);
+            return;
+          }
+          if (e.key === 'Backspace' || e.key === 'Delete') {
+            e.preventDefault();
+            e.stopPropagation();
+            replaceTransientSecret('');
           }
         }}
         placeholder={placeholder}

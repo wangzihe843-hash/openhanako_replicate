@@ -29,7 +29,7 @@ describe('ImageStage', () => {
     expect((window as any).platform.getFileUrl).toHaveBeenCalledWith('/a.png');
   });
 
-  it('只有按住 Option 滚轮才触发图片缩放', async () => {
+  it('普通滚轮和触控板 ctrl+wheel 都触发图片缩放', async () => {
     const { container } = render(<ImageStage file={file} viewport={{ width: 800, height: 600 }} />);
     await waitFor(() => {
       const img = container.querySelector('img');
@@ -42,14 +42,16 @@ describe('ImageStage', () => {
     fireEvent.load(img);
     const stage = container.querySelector('[data-testid="image-stage"]')!;
     const before = (stage as HTMLElement).style.transform || '';
-    fireEvent.wheel(stage, { deltaY: -100, clientX: 400, clientY: 300 });
-    fireEvent.wheel(stage, { deltaY: -100, clientX: 400, clientY: 300, ctrlKey: true });
-    fireEvent.wheel(stage, { deltaY: -100, clientX: 400, clientY: 300, shiftKey: true });
-    fireEvent.wheel(stage, { deltaY: -100, clientX: 400, clientY: 300, altKey: true, metaKey: true });
+
+    fireEvent.wheel(stage, { deltaY: 0, clientX: 400, clientY: 300 });
     expect((stage as HTMLElement).style.transform || '').toBe(before);
 
-    fireEvent.wheel(stage, { deltaY: -100, clientX: 400, clientY: 300, altKey: true });
-    expect((stage as HTMLElement).style.transform || '').not.toBe(before);
+    fireEvent.wheel(stage, { deltaY: -100, clientX: 400, clientY: 300 });
+    await waitFor(() => expect((stage as HTMLElement).style.transform || '').not.toBe(before));
+
+    const afterWheel = (stage as HTMLElement).style.transform || '';
+    fireEvent.wheel(stage, { deltaY: -24, clientX: 400, clientY: 300, ctrlKey: true });
+    await waitFor(() => expect((stage as HTMLElement).style.transform || '').not.toBe(afterWheel));
   });
 
   it('Option 缩放后允许鼠标拖拽平移图片', async () => {

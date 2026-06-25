@@ -105,4 +105,18 @@ describe("Windows icon contract", () => {
     // 防御反向：tray.ico 不应该出现在 titleBarOpts 返回的对象里（titleBarOpts 现在只返 frame/titleBarStyle/icon-from-windowIconOpts）
     expect(main).not.toMatch(/titleBarOpts[\s\S]*?"tray\.ico"[\s\S]*?return\s+\{\s*frame:\s*false,\s*icon:/);
   });
+
+  it("loads tray icons from packaged resources and rejects empty native images", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf-8"));
+    const main = fs.readFileSync(path.join(ROOT, "desktop", "main.cjs"), "utf-8");
+
+    expect(pkg.build.extraResources).toEqual(expect.arrayContaining([
+      { from: "desktop/src/assets/", to: "assets/" },
+    ]));
+    expect(main).toContain("function resolveTrayAssetCandidates");
+    expect(main).toContain("process.resourcesPath");
+    expect(main).toContain("nativeImage.createFromPath(candidate)");
+    expect(main).toContain("typeof image.isEmpty");
+    expect(main).toContain("Tray icon asset unavailable");
+  });
 });

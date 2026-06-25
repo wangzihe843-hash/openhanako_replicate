@@ -3,6 +3,9 @@
  *
  * 覆盖：apply 签名、toggle boolean 转换、agent null guard
  */
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { loadLocale } from "../lib/i18n.ts";
 
@@ -20,6 +23,10 @@ function makeMockPrefs( initial: any = {}) {
     setLocale(v) { store.locale = v; },
     getTimezone: () => store.timezone || "",
     setTimezone(v) { store.timezone = v; },
+    getExperimentValue: vi.fn((id) => store.experiments?.[id]),
+    setExperimentValue: vi.fn((id, value) => {
+      store.experiments = { ...(store.experiments || {}), [id]: value };
+    }),
     getBridgeMediaPublicBaseUrl: () => store.bridge?.mediaPublicBaseUrl || "",
     setBridgeMediaPublicBaseUrl(v) {
       store.bridge = { ...(store.bridge || {}), mediaPublicBaseUrl: v };
@@ -69,6 +76,10 @@ function makeMockEngine( overrides: any = {}) {
       return prefs._store.computer_use;
     }),
     setThinkingLevel: vi.fn(function (v) { prefs.setThinkingLevel(v); }),
+    getDefaultThinkingLevel: vi.fn(() => overrides.defaultThinkingLevel || prefs.getThinkingLevel()),
+    setDefaultThinkingLevel: vi.fn(async function (v) { prefs.setThinkingLevel(v); }),
+    getSessionThinkingLevel: vi.fn((sessionPath) => overrides.sessionThinkingLevels?.[sessionPath] || overrides.sessionThinkingLevel || null),
+    setSessionThinkingLevel: vi.fn(async () => ({ ok: true })),
     setDefaultModel: vi.fn(),
     getEventBus: vi.fn(() => eventBus),
     currentSessionPath: "/sessions/test",
@@ -105,6 +116,25 @@ describe("update-settings-tool", () => {
       emitEvent: vi.fn(),
     });
     return { tool, engine, confirmStore };
+  }
+
+  function makeMemoryAgent(agentId = "agent-test") {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-update-settings-memory-"));
+    const agentDir = path.join(root, agentId);
+    const memoryDir = path.join(agentDir, "memory");
+    fs.mkdirSync(memoryDir, { recursive: true });
+    const agent = {
+      id: agentId,
+      agentDir,
+      memoryMdPath: path.join(memoryDir, "memory.md"),
+      memoryMasterEnabled: true,
+      agentName: "TestAgent",
+      userName: "TestUser",
+      config: { models: { chat: "qwen-plus" } },
+      summaryManager: { getAllSummaries: vi.fn(() => []) },
+      updateConfig: vi.fn(),
+    };
+    return { root, agentDir, memoryDir, agent };
   }
 
   it("apply locale executes directly and returns a settings_update payload without confirmation", async () => {
@@ -270,6 +300,42 @@ describe("update-settings-tool", () => {
     });
   });
 
+  describe("thinking_level session boundary", () => {
+    it("reads the current session thinking level before the model default", async () => {
+      const { tool } = buildTool({
+        defaultThinkingLevel: "high",
+        sessionThinkingLevels: { "/sessions/test": "off" },
+      });
+
+      const result = await tool.execute("c-thinking-get", { action: "search", query: "thinking" });
+
+      expect(result.content[0].text).toContain("thinking_level");
+      expect(result.content[0].text).toContain("off");
+    });
+
+    it("applies thinking_level to the active session when one exists (#1653)", async () => {
+      const { tool, engine } = buildTool({
+        defaultThinkingLevel: "high",
+        sessionThinkingLevels: { "/sessions/test": "high" },
+      });
+
+      await tool.execute("c-thinking-apply", { action: "apply", key: "thinking_level", value: "off" });
+
+      expect(engine.setSessionThinkingLevel).toHaveBeenCalledWith("/sessions/test", "off");
+      expect(engine.setDefaultThinkingLevel).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the model default when there is no active session", async () => {
+      const { tool, engine } = buildTool({ defaultThinkingLevel: "medium" });
+      engine.currentSessionPath = null;
+
+      await tool.execute("c-thinking-default", { action: "apply", key: "thinking_level", value: "low" });
+
+      expect(engine.setSessionThinkingLevel).not.toHaveBeenCalled();
+      expect(engine.setDefaultThinkingLevel).toHaveBeenCalledWith("low");
+    });
+  });
+
   describe("models.chat — 复合键写路径", () => {
     it("apply models.chat 使用 provider/id 调 engine.setDefaultModel", async () => {
       const { tool, engine } = buildTool({
@@ -377,6 +443,70 @@ describe("update-settings-tool", () => {
     });
   });
 
+  describe("memory.facts editable memory boundary", () => {
+    it("rejects Agent fact edits while the editable memory experiment is disabled", async () => {
+      const { root, memoryDir, agent } = makeMemoryAgent("owner");
+      try {
+        fs.writeFileSync(path.join(memoryDir, "facts.md"), "Legacy facts\n", "utf-8");
+        const { tool } = buildTool({
+          agent,
+          currentAgentId: "owner",
+          getAgent: (agentId) => (agentId === "owner" ? agent : null),
+        });
+
+        const result = await tool.execute("c-memory-facts-disabled", {
+          action: "apply",
+          key: "memory.facts",
+          value: "User likes clean boundaries.",
+        });
+
+        expect(result.details.settingsUpdate).toMatchObject({
+          status: "failed",
+          key: "memory.facts",
+        });
+        expect(fs.existsSync(path.join(memoryDir, "editable-facts.md"))).toBe(false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("writes editable facts and rebuilds memory.md when the experiment is enabled", async () => {
+      const { root, memoryDir, agent } = makeMemoryAgent("owner");
+      try {
+        fs.writeFileSync(path.join(memoryDir, "facts.md"), "Legacy facts\n", "utf-8");
+        fs.writeFileSync(path.join(memoryDir, "today.md"), "Today stays read-only.\n", "utf-8");
+        fs.writeFileSync(path.join(memoryDir, "week.md"), "Week stays read-only.\n", "utf-8");
+        fs.writeFileSync(path.join(memoryDir, "longterm.md"), "Long-term stays read-only.\n", "utf-8");
+        const { tool } = buildTool({
+          agent,
+          currentAgentId: "owner",
+          getAgent: (agentId) => (agentId === "owner" ? agent : null),
+          prefsData: { experiments: { "memory.editable_facts": true } },
+        });
+
+        const result = await tool.execute("c-memory-facts-enabled", {
+          action: "apply",
+          key: "memory.facts",
+          value: "User likes clean boundaries.",
+        });
+
+        expect(result.details.settingsUpdate).toMatchObject({
+          status: "applied",
+          key: "memory.facts",
+        });
+        expect(fs.readFileSync(path.join(memoryDir, "editable-facts.md"), "utf-8")).toBe("User likes clean boundaries.\n");
+        const compiled = fs.readFileSync(path.join(memoryDir, "memory.md"), "utf-8");
+        expect(compiled).toContain("## Key facts");
+        expect(compiled).toContain("User likes clean boundaries.");
+        expect(compiled).toContain("Today stays read-only.");
+        expect(compiled).toContain("Week stays read-only.");
+        expect(compiled).toContain("Long-term stays read-only.");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("theme options 包含 new-warm-paper（此前遗漏，本次补齐）", () => {
     it("search 'theme' 结果中 options 包含 new-warm-paper", async () => {
       const { tool } = buildTool();
@@ -386,12 +516,12 @@ describe("update-settings-tool", () => {
       expect(text).not.toContain("claude-design");
     });
 
-    it("search 'theme' 结果中 options 包含全部 11 个选项（10 主题 + auto）", async () => {
+    it("search 'theme' 结果中 options 包含全部 12 个选项（11 主题 + auto）", async () => {
       const { tool } = buildTool();
       const result = await tool.execute("c10", { action: "search", query: "theme" });
       const text = result.content[0].text;
-      // 验证原有主题 + 高对比暗色 + auto 均存在
-      for (const id of ["warm-paper", "midnight", "high-contrast", "grass-aroma", "contemplation", "absolutely", "delve", "deep-think", "new-warm-paper", "midnight-contrast", "auto"]) {
+      // 验证原有主题 + 珊瑚 + 高对比暗色 + auto 均存在
+      for (const id of ["warm-paper", "midnight", "high-contrast", "grass-aroma", "contemplation", "absolutely", "delve", "deep-think", "new-warm-paper", "coral", "midnight-contrast", "auto"]) {
         expect(text).toContain(id);
       }
     });

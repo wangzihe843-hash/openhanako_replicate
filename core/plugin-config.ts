@@ -68,9 +68,14 @@ export function createPluginConfigStore({ dataDir, schema }) {
       if (create && !state.agents[agentId]) state.agents[agentId] = {};
       return state.agents[agentId] || {};
     }
-    const sessionKey = requireScopeId("sessionPath", options.sessionPath);
-    if (create && !state.sessions[sessionKey]) state.sessions[sessionKey] = {};
-    return state.sessions[sessionKey] || {};
+    const { key: sessionKey, legacyKeys } = resolveSessionConfigKey(options);
+    const legacyKey = legacyKeys.find((key) => isPlainObject(state.sessions[key]));
+    if (create && !state.sessions[sessionKey]) {
+      state.sessions[sessionKey] = legacyKey
+        ? structuredClone(state.sessions[legacyKey])
+        : {};
+    }
+    return state.sessions[sessionKey] || (legacyKey ? state.sessions[legacyKey] : {});
   }
 
   return {
@@ -262,6 +267,19 @@ function requireScopeId(label, value) {
     throw new Error(`plugin config ${label} is required for scoped config`);
   }
   return value;
+}
+
+function resolveSessionConfigKey(options: Record<string, any> = {}) {
+  const sessionId = text(options.sessionId, "");
+  if (sessionId) {
+    const legacyKeys = [
+      text(options.sessionPath, ""),
+      text(options.legacySessionPath, ""),
+    ].filter(Boolean);
+    return { key: sessionId, legacyKeys };
+  }
+  const sessionPath = requireScopeId("sessionId or sessionPath", options.sessionPath);
+  return { key: sessionPath, legacyKeys: [] };
 }
 
 function isPlainObject(value) {

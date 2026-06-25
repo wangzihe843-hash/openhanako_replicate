@@ -16,9 +16,10 @@ export function stripInternalNarration(value) {
     .trim();
 }
 
-export function normalizePlainDescription(value, maxLength = 100) {
+export function normalizePlainDescription(value, maxLength = null) {
   const text = stripInternalNarration(value).replace(/\s+/g, " ").trim();
   if (!text) return "";
+  if (maxLength == null) return text;
   if (text.length <= maxLength) return text;
   const cutIdx = Math.max(
     text.lastIndexOf("。", maxLength),

@@ -13,11 +13,59 @@ import { atomicWriteSync } from "../shared/safe-fs.ts";
 
 const CLEANUP_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 天
 
+function textOrNull(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeSessionRef(input, resolveSessionIdForPath = null) {
+  if (typeof input === "string") {
+    const sessionPath = textOrNull(input);
+    const sessionId = textOrNull(resolveSessionIdForPath?.(sessionPath));
+    const sessionRef = sessionId
+      ? { sessionId, ...(sessionPath ? { sessionPath, legacySessionPath: sessionPath } : {}) }
+      : null;
+    return { sessionId, sessionPath, sessionRef };
+  }
+  const rawRef = input?.sessionRef && typeof input.sessionRef === "object"
+    ? input.sessionRef
+    : null;
+  const sessionPath =
+    textOrNull(input?.sessionPath)
+    || textOrNull(input?.path)
+    || textOrNull(rawRef?.sessionPath)
+    || textOrNull(rawRef?.path);
+  const sessionId =
+    textOrNull(input?.sessionId)
+    || textOrNull(rawRef?.sessionId)
+    || textOrNull(resolveSessionIdForPath?.(sessionPath));
+  const legacySessionPath =
+    textOrNull(input?.legacySessionPath)
+    || textOrNull(rawRef?.legacySessionPath)
+    || (sessionId && sessionPath ? sessionPath : null);
+  const sessionRef = sessionId
+    ? {
+      sessionId,
+      ...(sessionPath ? { sessionPath } : {}),
+      ...(legacySessionPath ? { legacySessionPath } : {}),
+    }
+    : null;
+  return { sessionId, sessionPath, sessionRef };
+}
+
+function matchesSession(task, input, resolveSessionIdForPath = null) {
+  const target = normalizeSessionRef(input, resolveSessionIdForPath);
+  if (target.sessionId) {
+    return task.sessionId === target.sessionId || task.sessionRef?.sessionId === target.sessionId;
+  }
+  return !!target.sessionPath && task.sessionPath === target.sessionPath;
+}
+
 export class DeferredResultStore {
   declare _bus: any;
   declare _cleanupTimer: any;
   declare _dirty: any;
   declare _failCbs: any;
+  declare _getSessionIdForPath: any;
   declare _persistPath: any;
   declare _resultCbs: any;
   declare _saveTimer: any;
@@ -26,10 +74,13 @@ export class DeferredResultStore {
    * @param {object} [bus] - EventBus 实例
    * @param {string} [persistPath] - 持久化文件路径。不传则纯内存（兼容测试）。
    */
-  constructor(bus, persistPath) {
+  constructor(bus, persistPath, options: any = {}) {
     this._bus = bus || null;
+    this._getSessionIdForPath = typeof options?.getSessionIdForPath === "function"
+      ? options.getSessionIdForPath
+      : null;
     this._persistPath = persistPath || null;
-    /** @type {Map<string, { status: string, sessionPath: string, meta: object, deferredAt: number, result: any, reason: any, delivered: boolean }>} */
+    /** @type {Map<string, { status: string, sessionId?: string|null, sessionPath: string|null, sessionRef?: object|null, meta: object, deferredAt: number, result: any, reason: any, delivered: boolean }>} */
     this._tasks = new Map();
     this._resultCbs = [];
     this._failCbs = [];
@@ -58,9 +109,12 @@ export class DeferredResultStore {
 
   defer(taskId, sessionPath, meta: any = {}) {
     if (this._tasks.has(taskId)) return;
+    const sessionRef = normalizeSessionRef(sessionPath, this._getSessionIdForPath);
     this._tasks.set(taskId, {
       status: "pending",
-      sessionPath,
+      sessionId: sessionRef.sessionId,
+      sessionPath: sessionRef.sessionPath,
+      sessionRef: sessionRef.sessionRef,
       meta,
       deferredAt: Date.now(),
       result: null,
@@ -81,7 +135,12 @@ export class DeferredResultStore {
       try { cb(taskId, task.sessionPath, result, task.meta); } catch {}
     }
     this._bus?.emit({
-      type: "deferred_result", taskId, status: "success", result, meta: task.meta,
+      type: "deferred_result",
+      taskId,
+      status: "success",
+      result,
+      meta: task.meta,
+      ...(task.sessionId ? { sessionId: task.sessionId, sessionRef: task.sessionRef } : {}),
     }, task.sessionPath);
   }
 
@@ -96,15 +155,23 @@ export class DeferredResultStore {
       try { cb(taskId, task.sessionPath, reason, task.meta); } catch {}
     }
     this._bus?.emit({
-      type: "deferred_result", taskId, status: "failed", reason, meta: task.meta,
+      type: "deferred_result",
+      taskId,
+      status: "failed",
+      reason,
+      meta: task.meta,
+      ...(task.sessionId ? { sessionId: task.sessionId, sessionRef: task.sessionRef } : {}),
     }, task.sessionPath);
   }
 
   retry(taskId, sessionPath, meta: any = {}) {
     const existing = this._tasks.get(taskId);
+    const sessionRef = normalizeSessionRef(sessionPath, this._getSessionIdForPath);
     const next = {
       status: "pending",
-      sessionPath,
+      sessionId: sessionRef.sessionId,
+      sessionPath: sessionRef.sessionPath,
+      sessionRef: sessionRef.sessionRef,
       meta,
       deferredAt: Date.now(),
       result: null,
@@ -134,7 +201,12 @@ export class DeferredResultStore {
       try { cb(taskId, task.sessionPath, task.reason, task.meta); } catch {}
     }
     this._bus?.emit({
-      type: "deferred_result", taskId, status: "aborted", reason: task.reason, meta: task.meta,
+      type: "deferred_result",
+      taskId,
+      status: "aborted",
+      reason: task.reason,
+      meta: task.meta,
+      ...(task.sessionId ? { sessionId: task.sessionId, sessionRef: task.sessionRef } : {}),
     }, task.sessionPath);
   }
 
@@ -175,7 +247,7 @@ export class DeferredResultStore {
   listPending(sessionPath) {
     const result = [];
     for (const [taskId, task] of this._tasks) {
-      if (task.sessionPath === sessionPath && task.status === "pending") {
+      if (matchesSession(task, sessionPath, this._getSessionIdForPath) && task.status === "pending") {
         result.push({ taskId, meta: task.meta, deferredAt: task.deferredAt });
       }
     }
@@ -185,7 +257,7 @@ export class DeferredResultStore {
   listBySession(sessionPath) {
     const result = [];
     for (const [taskId, task] of this._tasks) {
-      if (task.sessionPath === sessionPath) {
+      if (matchesSession(task, sessionPath, this._getSessionIdForPath)) {
         result.push({ taskId, ...task });
       }
     }
@@ -196,7 +268,7 @@ export class DeferredResultStore {
   listUndelivered(sessionPath = null) {
     const result = [];
     for (const [taskId, task] of this._tasks) {
-      if ((!sessionPath || task.sessionPath === sessionPath) && !task.delivered &&
+      if ((!sessionPath || matchesSession(task, sessionPath, this._getSessionIdForPath)) && !task.delivered &&
           (task.status === "resolved" || task.status === "failed" || task.status === "aborted")) {
         result.push({ taskId, ...task });
       }
@@ -226,7 +298,7 @@ export class DeferredResultStore {
 
   clearBySession(sessionPath) {
     for (const [taskId, task] of this._tasks) {
-      if (task.sessionPath === sessionPath && task.status === "pending") {
+      if (matchesSession(task, sessionPath, this._getSessionIdForPath) && task.status === "pending") {
         this._tasks.delete(taskId);
       }
     }
@@ -238,7 +310,7 @@ export class DeferredResultStore {
     let suppressed = 0;
     let unchanged = 0;
     for (const task of this._tasks.values()) {
-      if (task.sessionPath !== sessionPath) continue;
+      if (!matchesSession(task, sessionPath, this._getSessionIdForPath)) continue;
       if (task.status === "pending") {
         task.status = "aborted";
         task.reason = reason;
@@ -311,7 +383,13 @@ export class DeferredResultStore {
       if (!fs.existsSync(this._persistPath)) return;
       const raw = JSON.parse(fs.readFileSync(this._persistPath, "utf-8"));
       for (const [k, v] of Object.entries(raw)) {
-        this._tasks.set(k, { delivered: false, ...(v as any) });
+        const sessionRef = normalizeSessionRef(v, this._getSessionIdForPath);
+        this._tasks.set(k, {
+          delivered: false,
+          ...(v as any),
+          sessionId: (v as any)?.sessionId || sessionRef.sessionId,
+          sessionRef: (v as any)?.sessionRef || sessionRef.sessionRef,
+        });
       }
     } catch { /* best effort */ }
   }

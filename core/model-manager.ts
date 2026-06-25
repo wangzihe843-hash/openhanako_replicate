@@ -19,10 +19,77 @@ import { syncModels } from "./model-sync.ts";
 import { enrichModelFromKnownMetadata } from "./model-known-enrichment.ts";
 import { migrateLegacyApiKeyAuthToProviders } from "./provider-auth-migration.ts";
 import {
+  normalizePiSdkThinkingLevel,
   normalizeSessionThinkingLevel,
+  normalizeThinkingLevelChoices,
   normalizeThinkingLevelForModel,
   resolveModelDefaultThinkingLevel,
 } from "./session-thinking-level.ts";
+
+function isRecord(value): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function modelEntryId(modelEntry: unknown) {
+  return isRecord(modelEntry) ? modelEntry.id : modelEntry;
+}
+
+function modelMetadataKey(provider, modelId) {
+  return `${provider || ""}\0${modelId || ""}`;
+}
+
+function providerModelDefault(rawProvider: Record<string, unknown>, modelId: string) {
+  const modelDefaults = isRecord(rawProvider.model_defaults) ? rawProvider.model_defaults : null;
+  const entry = isRecord(modelDefaults?.[modelId]) ? modelDefaults[modelId] : null;
+  const level = entry?.thinking_level ?? entry?.thinkingLevel;
+  return typeof level === "string" ? level : undefined;
+}
+
+function buildProviderModelMetadataMap(rawProviders: unknown) {
+  const map = new Map<string, Record<string, unknown>>();
+  const providers = isRecord(rawProviders) ? rawProviders : {};
+  for (const [provider, rawProviderValue] of Object.entries(providers)) {
+    const rawProvider = isRecord(rawProviderValue) ? rawProviderValue : {};
+    const models = Array.isArray(rawProvider.models) ? rawProvider.models : [];
+    for (const modelEntry of models) {
+      const modelId = modelEntryId(modelEntry);
+      if (typeof modelId !== "string" || !modelId) continue;
+      const meta: Record<string, unknown> = {};
+      if (isRecord(modelEntry)) {
+        if (modelEntry.xhigh !== undefined) meta.xhigh = modelEntry.xhigh === true;
+        if (modelEntry.defaultThinkingLevel !== undefined) meta.defaultThinkingLevel = modelEntry.defaultThinkingLevel;
+        const thinkingLevels = normalizeThinkingLevelChoices(modelEntry.thinkingLevels);
+        if (thinkingLevels) meta.thinkingLevels = thinkingLevels;
+        if (modelEntry.toolUse !== undefined) meta.toolUse = structuredClone(modelEntry.toolUse);
+        if (modelEntry.visionCapabilities !== undefined) meta.visionCapabilities = structuredClone(modelEntry.visionCapabilities);
+      }
+      const defaultThinkingLevel = providerModelDefault(rawProvider, modelId);
+      if (defaultThinkingLevel !== undefined) meta.defaultThinkingLevel = defaultThinkingLevel;
+      if (Array.isArray(meta.thinkingLevels) && meta.thinkingLevels.includes("max") && meta.xhigh === undefined) meta.xhigh = true;
+      if (Object.keys(meta).length > 0) {
+        map.set(modelMetadataKey(provider, modelId), meta);
+      }
+    }
+  }
+  return map;
+}
+
+function applyProviderModelMetadata(model, metadataByModel) {
+  const meta = metadataByModel.get(modelMetadataKey(model?.provider, model?.id));
+  if (!meta) return model;
+  const merged = { ...model, ...meta };
+  const thinkingLevels = normalizeThinkingLevelChoices(merged.thinkingLevels);
+  if (thinkingLevels) {
+    merged.thinkingLevels = thinkingLevels;
+    if (thinkingLevels.includes("max")) merged.xhigh = true;
+  } else {
+    delete merged.thinkingLevels;
+  }
+  if (typeof merged.defaultThinkingLevel === "string") {
+    merged.defaultThinkingLevel = normalizeThinkingLevelForModel(merged.defaultThinkingLevel, merged);
+  }
+  return merged;
+}
 
 export class ModelManager {
   declare _authStorage: any;
@@ -110,11 +177,18 @@ export class ModelManager {
     return level ? { ...model, defaultThinkingLevel: level } : model;
   }
 
-  /** 刷新可用模型列表，用 added-models.yaml 过滤 */
+  _allowsRuntimeDiscoveredModel(model) {
+    if (!model?.provider) return false;
+    const resolved = this.providerRegistry.resolveChatProvider?.(model.provider);
+    if (resolved) return resolved.projection !== "none";
+    return !!this.providerRegistry.get?.(model.provider);
+  }
+
+  /** 刷新可用模型列表，用 Provider Catalog v2 过滤 */
   async refreshAvailable() {
     const allModels = await this._modelRegistry.getAvailable();
     // Pi SDK 返回所有有 auth 的模型（包括 OAuth 内置模型），
-    // 但用户只想看自己配置的模型。用 added-models.yaml 的模型列表过滤。
+    // 但用户只想看自己配置或 ProviderRegistry 明确声明的模型。
     const rawProviders = this.providerRegistry.getAllProvidersRaw();
     const userModelSets = new Map();
     for (const [name, raw] of Object.entries(rawProviders) as [string, any][]) {
@@ -128,19 +202,20 @@ export class ModelManager {
       const authKey = this.providerRegistry.getAuthJsonKey(name);
       if (authKey !== name) userModelSets.set(authKey, ids);
     }
+    const metadataByModel = buildProviderModelMetadataMap(rawProviders);
     this._availableModels = allModels.filter(m => {
       const allowed = userModelSets.get(m.provider);
-      // 没有在 added-models.yaml 里的 provider → 全部放行（兼容未知来源）
-      if (!allowed) return true;
+      if (!allowed) return this._allowsRuntimeDiscoveredModel(m);
       return allowed.has(m.id);
     })
+      .map(m => applyProviderModelMetadata(m, metadataByModel))
       .map(enrichModelFromKnownMetadata)
       .map(m => this._withPersistedModelDefaultThinkingLevel(m));
     return this._availableModels;
   }
 
   /**
-   * 同步 added-models.yaml → models.json，然后刷新 ModelRegistry。
+   * 同步 Provider Catalog provider configs → models.json，然后刷新 ModelRegistry。
    *
    * ⚠ 刷新后 _availableModels 是全新数组，旧的 model 对象引用（含烤在字段里的
    * 过期 baseUrl）会失效。本方法负责把 _defaultModel 指针也重新定位到新数组里
@@ -228,7 +303,7 @@ export class ModelManager {
   }
 
   /**
-   * Hana 的 API-key provider 凭证源是 added-models.yaml → models.json。
+   * Hana 的 API-key provider 凭证源是 Provider Catalog → models.json。
    * AuthStorage 只保留 OAuth 条目，避免 Pi SDK 优先读取 stale auth.json。
    * @private
    */
@@ -261,9 +336,9 @@ export class ModelManager {
     return model;
   }
 
-  /** legacy auto -> medium，其余原样 */
+  /** Convert Hana-visible thinking levels to the Pi SDK session contract. */
   resolveThinkingLevel(level) {
-    return level === "auto" ? "medium" : level;
+    return normalizePiSdkThinkingLevel(level);
   }
 
   _resolveModelForThinkingDefault(modelRef) {
@@ -444,7 +519,7 @@ export class ModelManager {
   }
 
   /**
-   * 从 Pi SDK registry 获取某 provider 的所有模型（不经过 added-models.yaml 过滤）
+   * 从 Pi SDK registry 获取某 provider 的所有模型（不经过 Provider Catalog 过滤）
    * 用于模型发现（fetch-models），不影响主应用的 availableModels
    * @param {string} name - provider ID
    * @returns {object[]}

@@ -11,6 +11,7 @@ function refFromParams(params: any = {}, key = "ref") {
     return {
       type: "session_file",
       fileId: params.fileId,
+      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       ...(params.sessionPath ? { sessionPath: params.sessionPath } : {}),
     };
   }
@@ -38,6 +39,7 @@ function toMediaItem(file) {
   return {
     type: "session_file",
     fileId,
+    sessionId: file.sessionId,
     sessionPath: file.sessionPath,
     filePath: file.filePath,
     filename: file.filename || path.basename(file.filePath || ""),
@@ -102,8 +104,11 @@ export function createFileTool({
       fileId: Type.Optional(Type.String({
         description: "SessionFile id shorthand. Prefer this for files already produced or attached in the current session.",
       })),
+      sessionId: Type.Optional(Type.String({
+        description: "Stable sessionId that owns fileId. Prefer this over sessionPath when available.",
+      })),
       sessionPath: Type.Optional(Type.String({
-        description: "Optional session JSONL path that owns fileId. Usually omit to use the current session.",
+        description: "Legacy session JSONL path that owns fileId. Usually omit to use the current session.",
       })),
       path: Type.Optional(Type.String({
         description: "Workspace source path shorthand. Relative paths resolve from the current working directory.",
@@ -132,11 +137,13 @@ export function createFileTool({
         || ctx?.sessionPath
         || getSessionPath?.()
         || null;
+      const sessionId = params.sessionId || ctx?.sessionId || null;
 
       try {
         if (params.action === "stat") {
           const file = await statFileRef(refFromParams(params), {
             cwd,
+            sessionId,
             sessionPath,
             resolveSessionFile,
           });
@@ -157,6 +164,7 @@ export function createFileTool({
             cwd,
             allowedRoots: [cwd],
             sourceAllowedRoots: [cwd],
+            sessionId,
             sessionPath,
             resolveSessionFile,
             registerSessionFile,

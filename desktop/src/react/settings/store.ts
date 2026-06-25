@@ -75,6 +75,7 @@ export interface SettingsSnapshot {
       permissionMode: 'auto' | 'operate' | 'read_only';
       readOnly: boolean;
       receiptEnabled: boolean;
+      richStreamingEnabled: boolean;
     };
     computerUse?: {
       selectedProviderId?: string | null;

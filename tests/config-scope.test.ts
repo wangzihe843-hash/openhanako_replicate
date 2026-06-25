@@ -91,6 +91,7 @@ describe("splitByScope", () => {
         permissionMode: "auto",
         readOnly: true,
         receiptEnabled: false,
+        richStreamingEnabled: false,
         telegram: { token: "tg-token" },
       },
     };
@@ -100,11 +101,13 @@ describe("splitByScope", () => {
       expect.objectContaining({ key: "bridge.permissionMode", value: "auto" }),
       expect.objectContaining({ key: "bridge.readOnly", value: true }),
       expect.objectContaining({ key: "bridge.receiptEnabled", value: false }),
+      expect.objectContaining({ key: "bridge.richStreamingEnabled", value: false }),
     ]));
     expect(agent.bridge.telegram).toEqual({ token: "tg-token" });
     expect(agent.bridge.permissionMode).toBeUndefined();
     expect(agent.bridge.readOnly).toBeUndefined();
     expect(agent.bridge.receiptEnabled).toBeUndefined();
+    expect(agent.bridge.richStreamingEnabled).toBeUndefined();
   });
 
   it("extracts automation permission mode as a global work setting", () => {
@@ -208,6 +211,7 @@ describe("injectGlobalFields", () => {
       getBridgePermissionMode: () => "auto",
       getBridgeReadOnly: () => true,
       getBridgeReceiptEnabled: () => false,
+      getBridgeRichStreamingEnabled: () => false,
       getAutomationPermissionMode: () => "auto",
       getNetworkProxy: () => ({ mode: "direct" }),
       getKeepAwake: () => true,
@@ -227,6 +231,7 @@ describe("injectGlobalFields", () => {
     expect(config.bridge?.permissionMode).toBe("auto");
     expect(config.bridge?.readOnly).toBe(true);
     expect(config.bridge?.receiptEnabled).toBe(false);
+    expect(config.bridge?.richStreamingEnabled).toBe(false);
     expect(config.automation?.permissionMode).toBe("auto");
     expect(config.network_proxy).toEqual({ mode: "direct" });
     expect(config.keep_awake).toBe(true);
@@ -251,6 +256,7 @@ describe("injectGlobalFields", () => {
       getBridgePermissionMode: () => "read_only",
       getBridgeReadOnly: () => false,
       getBridgeReceiptEnabled: () => true,
+      getBridgeRichStreamingEnabled: () => true,
     };
     const config: any = {};
     injectGlobalFields(config, engine);
@@ -263,6 +269,7 @@ describe("injectGlobalFields", () => {
     expect(config.bridge.permissionMode).toBe("read_only");
     expect(config.bridge.readOnly).toBe(false);
     expect(config.bridge.receiptEnabled).toBe(true);
+    expect(config.bridge.richStreamingEnabled).toBe(true);
   });
 });
 

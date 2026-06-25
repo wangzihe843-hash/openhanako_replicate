@@ -122,11 +122,13 @@ export function useMediaTransform(opts: {
   }, [fitScale]);
 
   const onWheel = useCallback((e: React.WheelEvent<HTMLElement>) => {
-    if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
+    if (e.deltaY === 0) return;
     e.preventDefault();
     const rect = e.currentTarget.getBoundingClientRect();
     const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const clampedDelta = clamp(e.deltaY, -120, 120);
+    const sensitivity = e.ctrlKey || e.metaKey ? 0.005 : 0.002;
+    const factor = Math.exp(-clampedDelta * sensitivity);
     setTransform((t) => zoomAtPointCentered(t, point, factor, range, opts.natural, opts.viewport));
   }, [opts.natural, opts.viewport, range]);
 

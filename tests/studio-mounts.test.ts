@@ -112,4 +112,32 @@ describe("studio mounts", () => {
       capabilities: ["list", "sudo"],
     })).toThrow("unknown mount capability: sudo");
   });
+
+  it("disables an existing mount without deleting the registry entry", async () => {
+    tmpDir = makeTmpDir();
+    const { disableStudioMount, listStudioMountsForStudio, upsertStudioMount } = await import("../core/studio-mounts.ts");
+    upsertStudioMount(tmpDir, {
+      mountId: "mount_projects",
+      hostStudioId: "studio_host",
+      sourceKind: "storage",
+      provider: "local_fs",
+      label: "Projects",
+      presentation: "folder",
+      capabilities: ["list", "read"],
+    }, { now: "2026-06-17T00:00:00.000Z" });
+
+    const disabled = disableStudioMount(tmpDir, "mount_projects", {
+      hostStudioId: "studio_host",
+      now: "2026-06-17T01:00:00.000Z",
+    });
+
+    expect(disabled).toMatchObject({
+      mountId: "mount_projects",
+      status: "disabled",
+      updatedAt: "2026-06-17T01:00:00.000Z",
+    });
+    expect(listStudioMountsForStudio(tmpDir, "studio_host")).toEqual([
+      expect.objectContaining({ mountId: "mount_projects", status: "disabled" }),
+    ]);
+  });
 });

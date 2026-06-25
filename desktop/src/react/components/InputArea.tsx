@@ -10,6 +10,8 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import type { Editor } from '@tiptap/core';
 import { useStore } from '../stores';
 import { selectPreviewItems, selectActiveTabId } from '../stores/preview-slice';
+import { sessionScopedListIncludes, sessionScopedValue } from '../stores/session-slice';
+import { isSessionCompacting } from '../stores/context-slice';
 import { selectSessionFiles } from '../stores/selectors/file-refs';
 import { isImageFile, isVideoFile } from '../utils/format';
 import { isAudioFileName } from '../utils/file-kind';
@@ -19,7 +21,8 @@ import { revealDeskDirectory, toggleJianSidebar } from '../stores/desk-actions';
 import { getWebSocket } from '../services/websocket';
 import { collectUiContext } from '../utils/ui-context';
 import { formatQuotedSelectionForPrompt } from '../utils/quoted-selection';
-import type { ThinkingLevel } from '../stores/model-slice';
+import { renderMarkdown } from '../utils/markdown';
+import { getModelThinkingLevels, type ThinkingLevel } from '../stores/model-slice';
 import { SlashCommandMenu } from './input/SlashCommandMenu';
 import { FileMentionMenu } from './input/FileMentionMenu';
 import { InputStatusBars } from './input/InputStatusBars';
@@ -43,9 +46,9 @@ import {
   evaluateChatAudioSendPreflight,
   evaluateChatVideoSendPreflight,
   getModelAudioInputMode,
-  notifyTextModelImageBlocked,
+  notifyTextModelImageFileOnly,
   notifyTextModelAudioBlocked,
-  notifyTextModelVideoBlocked,
+  notifyTextModelVideoFileOnly,
 } from '../utils/chat-image-send-preflight';
 import { openProviderModelSettings } from '../utils/model-settings-navigation';
 import { shouldShowThinkingControl } from '../utils/model-thinking';
@@ -65,18 +68,6 @@ import type { ChatListItem, SessionConfirmationBlock } from '../stores/chat-type
 import type { AudioWaveform } from '../stores/chat-types';
 
 const EMPTY_FILE_REFS: readonly import('../types/file-ref').FileRef[] = Object.freeze([]);
-
-// #1624：刷新完成瞬间 drift 已清空但 busy 态还在的兜底渲染数据（只用于 busy 分支）
-const EMPTY_CAPABILITY_DRIFT: import('../types').SessionCapabilityDrift = Object.freeze({
-  version: 1,
-  fingerprint: '',
-  frozenFingerprint: '',
-  addedToolNames: [],
-  removedToolNames: [],
-  invalidToolNames: [],
-  promptChanged: false,
-  hasDrift: false,
-});
 
 function chatVideoMimeTypeForName(name: string, fallback?: string): string {
   if (fallback?.startsWith('video/')) return fallback;
@@ -119,6 +110,12 @@ function chatAudioMimeTypeForName(name: string, fallback?: string): string {
     webm: 'audio/webm',
   };
   return mimeMap[ext] || 'audio/wav';
+}
+
+function createClientUserMessageId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return `client-user-${uuid}`;
+  return `client-user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 async function readFileAsBase64(file: File): Promise<string> {
@@ -289,19 +286,21 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const { t, locale } = useI18n();
 
   // Zustand state
-  const isStreaming = useStore(s => s.streamingSessions.includes(s.currentSessionPath || ''));
+  const isStreaming = useStore(s => sessionScopedListIncludes(s, s.streamingSessions, s.currentSessionPath));
   const connected = useStore(s => s.connected);
   const pendingNewSession = useStore(s => s.pendingNewSession);
   const pendingSessionSwitchPath = useStore(s => s.pendingSessionSwitchPath);
   const currentSessionPath = useStore(s => s.currentSessionPath);
+  const currentAgentId = useStore(s => s.currentAgentId);
+  const selectedAgentId = useStore(s => s.selectedAgentId);
   const currentSessionProjection = useStore(s => s.currentSessionPath
     ? s.sessions.find(session => session.path === s.currentSessionPath)
     : null);
   const deletedAgentReadOnly = currentSessionProjection?.agentDeleted === true;
-  const compacting = useStore(s => currentSessionPath ? s.compactingSessions.includes(currentSessionPath) : false);
+  const compacting = useStore(s => isSessionCompacting(s, currentSessionPath));
   const screenshotBusy = useStore(s => s.screenshotTaskCount > 0);
   const screenshotProgress = useStore(s => s.screenshotProgress);
-  const inlineError = useStore(s => s.inlineErrors[s.currentSessionPath || ''] ?? null);
+  const inlineError = useStore(s => s.currentSessionPath ? (sessionScopedValue(s, s.inlineErrors, s.currentSessionPath) ?? null) : null);
   const sessionFiles = useStore(s => (s.currentSessionPath ? selectSessionFiles(s, s.currentSessionPath) : EMPTY_FILE_REFS));
   const attachedFiles = useStore(s => s.attachedFiles);
   const docContextAttached = useStore(s => s.docContextAttached);
@@ -320,11 +319,24 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const removeToast = useStore(s => s.removeToast);
 
   const globalModelInfo = useMemo(() => models.find(m => m.isCurrent), [models]);
-  const sessionModel = useStore(s => s.currentSessionPath ? s.sessionModelsByPath[s.currentSessionPath] : undefined);
+  const sessionModel = useStore(s => s.currentSessionPath ? sessionScopedValue(s, s.sessionModelsByPath, s.currentSessionPath) : undefined);
+  const sessionModelInfo = useMemo(() => {
+    if (!sessionModel) return undefined;
+    const full = models.find(m => m.id === sessionModel.id && m.provider === sessionModel.provider);
+    return full ? { ...full, ...sessionModel } : sessionModel;
+  }, [models, sessionModel]);
   // #1624：当前 session 的工具能力漂移提示（服务端 restore 时算好，前端只消费）
-  const capabilityDrift = useStore(s => s.currentSessionPath ? (s.capabilityDriftBySession[s.currentSessionPath] ?? null) : null);
-  const capabilityRefreshing = useStore(s => s.currentSessionPath ? s.capabilityRefreshingSessions.includes(s.currentSessionPath) : false);
-  const currentModelInfo = sessionModel || globalModelInfo;
+  const capabilityDrift = useStore(s => s.currentSessionPath ? (sessionScopedValue(s, s.capabilityDriftBySession, s.currentSessionPath) ?? null) : null);
+  const capabilityRefreshing = useStore(s => sessionScopedListIncludes(s, s.capabilityRefreshingSessions, s.currentSessionPath));
+  const compactingStatus = capabilityRefreshing || compacting;
+  const compactingStatusLabel = capabilityRefreshing
+    ? t('session.capabilityDrift.refreshing')
+    : t('chat.compacting');
+  const currentModelInfo = sessionModelInfo || globalModelInfo;
+  const availableThinkingLevels = useMemo(
+    () => getModelThinkingLevels(currentModelInfo),
+    [currentModelInfo],
+  );
   // input 数组缺失视为未知；只有显式 text-only 的模型才在 UI 上标记“辅助视觉”。
   const supportsVision = !Array.isArray(currentModelInfo?.input) || currentModelInfo.input.includes("image");
   const showAudioInput = getModelAudioInputMode(currentModelInfo) === 'native-audio';
@@ -333,10 +345,14 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     [currentModelInfo, models],
   );
   const modelSwitching = useStore(s => s.modelSwitching);
-  const currentSessionItems = useStore(s => s.currentSessionPath ? s.chatSessions[s.currentSessionPath]?.items : undefined);
+  const currentSessionItems = useStore(s => s.currentSessionPath ? sessionScopedValue(s, s.chatSessions, s.currentSessionPath)?.items : undefined);
+  const storedSessionConfirmation = useStore(s => s.currentSessionPath
+    ? sessionScopedValue(s, s.pendingSessionConfirmationsByPath, s.currentSessionPath) || null
+    : null);
   const pendingSessionConfirmation = useMemo(() => {
-    return findLatestInputSessionConfirmation(currentSessionItems, undefined, true);
-  }, [currentSessionItems]);
+    return findLatestInputSessionConfirmation(currentSessionItems, undefined, true)
+      || storedSessionConfirmation;
+  }, [currentSessionItems, storedSessionConfirmation]);
 
   // Local state
   const permissionMode = useStore(s => s.sessionPermissionMode);
@@ -347,7 +363,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashSelected, setSlashSelected] = useState(0);
   const [slashBusy, setSlashBusy] = useState<string | null>(null);
-  const [slashResult, setSlashResult] = useState<{ text: string; type: 'success' | 'error'; deskDir?: string } | null>(null);
+  const [slashResult, setSlashResult] = useState<{ text: string; type: 'success' | 'error'; deskDir?: string; filePath?: string } | null>(null);
   const [visibleSessionConfirmation, setVisibleSessionConfirmation] = useState<SessionConfirmationBlock | null>(null);
   const [sessionConfirmationExiting, setSessionConfirmationExiting] = useState(false);
 
@@ -433,8 +449,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   // ── 全局 inline notice（截图等非斜杠命令的轻提示）──
   useEffect(() => {
     const handler = (e: Event) => {
-      const { text, type, deskDir } = (e as CustomEvent).detail;
-      setSlashResult({ text, type, deskDir });
+      const { text, type, deskDir, filePath } = (e as CustomEvent).detail;
+      setSlashResult({ text, type, deskDir, filePath });
       setTimeout(() => setSlashResult(null), 3000);
     };
     window.addEventListener('hana-inline-notice', handler);
@@ -640,7 +656,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     const ws = getWebSocket();
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     const _s = useStore.getState();
-    if (_s.streamingSessions.includes(_s.currentSessionPath || '')) return false;
+    if (sessionScopedListIncludes(_s, _s.streamingSessions, _s.currentSessionPath)) return false;
     if (_s.pendingSessionSwitchPath) return false;
 
     if (pendingNewSession) {
@@ -673,7 +689,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     await executeCompact(setSlashBusy, () => { editor?.commands.clearContent(); }, setSlashMenuOpen)();
   }, [editor]);
 
-  const skillItems = useSkillSlashItems({ enabled: surface !== 'mobile' });
+  const slashAgentId = pendingNewSession ? (selectedAgentId || currentAgentId) : currentAgentId;
+  const skillItems = useSkillSlashItems({ enabled: surface !== 'mobile', agentId: slashAgentId });
 
   // 注：/stop /new /reset 仅走 bridge 平台（TG/Feishu/...）；桌面端有 GUI，菜单不暴露这些命令。
   // buildSlashCommands 第 5 参留作未来 web/mobile 端需要时再注入。后端 WS 通道 (type:'slash')
@@ -1162,7 +1179,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   // 切换 session 时恢复草稿
   useEffect(() => {
     if (!editor || !currentSessionPath) return;
-    const draft = useStore.getState().drafts[currentSessionPath] || '';
+    const state = useStore.getState();
+    const draft = sessionScopedValue(state, state.drafts, currentSessionPath) || '';
     const current = editor.getText();
     if (draft !== current) {
       if (!draft) {
@@ -1321,7 +1339,12 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const activeServerConnection = useStore(s => s.activeServerConnection);
   useEffect(() => {
     if (activeServerConnection && surface !== 'mobile') {
-      hanaFetch('/api/session-thinking-level')
+      const query = pendingNewSession
+        ? '?pendingNewSession=1'
+        : currentSessionPath
+          ? `?sessionPath=${encodeURIComponent(currentSessionPath)}`
+          : '';
+      hanaFetch(`/api/session-thinking-level${query}`)
         .then(r => r.json())
         .then(d => { if (d.thinkingLevel) setThinkingLevel(d.thinkingLevel as ThinkingLevel); })
         .catch((err: unknown) => console.warn('[InputArea] load thinking level failed', err));
@@ -1333,7 +1356,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     };
     window.addEventListener('hana-plan-mode', handler);
     return () => window.removeEventListener('hana-plan-mode', handler);
-  }, [activeServerConnection, setPermissionMode, setThinkingLevel, surface]);
+  }, [activeServerConnection, currentSessionPath, pendingNewSession, setPermissionMode, setThinkingLevel, surface]);
 
   // ── Handle slash selection (builtin vs skill) ──
   const handleSlashSelect = useCallback((item: SlashItem) => {
@@ -1413,8 +1436,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       const guardState = useStore.getState();
       const guardPath = guardState.currentSessionPath;
       if (guardPath && (
-        guardState.capabilityRefreshingSessions.includes(guardPath)
-        || guardState.compactingSessions.includes(guardPath)
+        sessionScopedListIncludes(guardState, guardState.capabilityRefreshingSessions, guardPath)
+        || isSessionCompacting(guardState, guardPath)
       )) return;
     }
     setSending(true);
@@ -1436,25 +1459,29 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         model: currentModelInfo,
         loadVisionAuxiliaryConfig,
       });
-      if (!imagePreflight.ok) {
-        notifyTextModelImageBlocked({
+      // #1647：视觉能力不可用不再拦下整条消息。图片始终携带文件身份
+      //（displayMessage.attachments → 服务端登记 SessionFile + 注入路径 marker），
+      // 这里只决定是否附带像素载荷；降级是显式的（toast 告知 + 不读字节）。
+      const imagesAsFileOnly = !imagePreflight.ok;
+      if (imagesAsFileOnly) {
+        notifyTextModelImageFileOnly({
           t,
           addToast: useStore.getState().addToast,
           openSettings: () => openProviderModelSettings(currentModelInfo?.provider),
         });
-        return;
       }
       const videoPreflight = await evaluateChatVideoSendPreflight({
         attachments: inputFiles,
         model: currentModelInfo,
       });
-      if (!videoPreflight.ok) {
-        notifyTextModelVideoBlocked({
+      const sendVideosNatively = videoPreflight.ok && videoPreflight.reason === 'native-video';
+      const videosAsFileOnly = !videoPreflight.ok;
+      if (videosAsFileOnly) {
+        notifyTextModelVideoFileOnly({
           t,
           addToast: useStore.getState().addToast,
           openSettings: () => openProviderModelSettings(currentModelInfo?.provider),
         });
-        return;
       }
       const audioPreflight = await evaluateChatAudioSendPreflight({
         attachments: inputFiles,
@@ -1464,12 +1491,13 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       const otherFiles = hasFiles ? inputFiles.filter(f =>
         f.isDirectory || (
           !isImageFile(f.name)
-          && !isVideoFile(f.name)
+          && !(sendVideosNatively && isVideoFile(f.name))
           && !(sendAudiosNatively && isAudioFileName(f.name, f.mimeType))
         )
       ) : [];
 
       const sessionPathForSend = useStore.getState().currentSessionPath;
+      if (!sessionPathForSend) return;
       const sessionFileRefs = otherFiles
         .filter(f => f.fileId)
         .map(f => ({
@@ -1497,7 +1525,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       const imageBase64Map = new Map<string, { base64Data: string; mimeType: string }>();
       const videoBase64Map = new Map<string, { base64Data: string; mimeType: string }>();
       const audioBase64Map = new Map<string, { base64Data: string; mimeType: string }>();
-      for (const img of imageFiles) {
+      // 单图读取失败同样不拦整条消息：该图退化为仅文件身份，显式提示（#1647）
+      const imageFileOnlyPaths = new Set<string>();
+      for (const img of imagesAsFileOnly ? [] : imageFiles) {
         try {
           if (img.base64Data && img.mimeType) {
             images.push({ type: 'image', data: img.base64Data, mimeType: img.mimeType });
@@ -1513,10 +1543,10 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
           }
         } catch (err) {
           console.warn('[input] failed to read image attachment', err);
-          useStore.getState().addToast(t('input.imageReadFailed'), 'error', 6000, {
+          imageFileOnlyPaths.add(img.path);
+          useStore.getState().addToast(t('input.imageReadFailedSentAsFile'), 'warning', 6000, {
             dedupeKey: `image-read-failed:${img.path}`,
           });
-          return;
         }
       }
       for (const audio of sendAudiosNatively ? audioFiles : []) {
@@ -1542,7 +1572,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
           return;
         }
       }
-      for (const video of videoFiles) {
+      for (const video of sendVideosNatively ? videoFiles : []) {
         try {
           if (video.base64Data && video.mimeType) {
             const mimeType = chatVideoMimeTypeForName(video.name, video.mimeType);
@@ -1589,39 +1619,69 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       clearAttachedFiles();
       if (useStore.getState().quotedSelections.length > 0) useStore.getState().clearQuotedSelections();
 
+      const clientMessageId = createClientUserMessageId();
+      const displayMessage = {
+        text,
+        skills: skills.length > 0 ? skills : undefined,
+        quotedText: quotes.length > 0 ? quotes.map(q => q.text).join('\n\n') : undefined,
+        attachments: allFiles.length > 0 ? allFiles.map(f => {
+          const cached = imageBase64Map.get(f.path);
+          const cachedVideo = videoBase64Map.get(f.path);
+          const cachedAudio = audioBase64Map.get(f.path);
+          const imageFile = !f.isDirectory && isImageFile(f.name);
+          return {
+            fileId: f.fileId,
+            path: f.path,
+            name: f.name,
+            isDir: !!f.isDirectory,
+            mimeType: f.mimeType || cached?.mimeType || cachedVideo?.mimeType || cachedAudio?.mimeType || undefined,
+            visionAuxiliary: imageFile && !supportsVision && !imagesAsFileOnly && !imageFileOnlyPaths.has(f.path),
+            ...(f.waveform ? { waveform: f.waveform } : {}),
+          };
+        }) : undefined,
+      };
+
+      useStore.getState().appendOptimisticUserMessage(sessionPathForSend, {
+        id: clientMessageId,
+        role: 'user',
+        text,
+        textHtml: text ? renderMarkdown(text) : undefined,
+        timestamp: Date.now(),
+        attachments: displayMessage.attachments,
+        quotedText: displayMessage.quotedText,
+        skills: displayMessage.skills,
+        sendStatus: 'pending',
+      });
+
       const ws = getWebSocket();
       const wsMsg: Record<string, unknown> = {
         type,
+        clientMessageId,
         text: finalText,
         sessionPath: sessionPathForSend,
         uiContext: collectUiContext(useStore.getState()),
-        displayMessage: {
-          text,
-          skills: skills.length > 0 ? skills : undefined,
-          quotedText: quotes.length > 0 ? quotes.map(q => q.text).join('\n\n') : undefined,
-          attachments: allFiles.length > 0 ? allFiles.map(f => {
-            const cached = imageBase64Map.get(f.path);
-            const cachedVideo = videoBase64Map.get(f.path);
-            const cachedAudio = audioBase64Map.get(f.path);
-            const imageFile = !f.isDirectory && isImageFile(f.name);
-            return {
-              fileId: f.fileId,
-              path: f.path,
-              name: f.name,
-              isDir: !!f.isDirectory,
-              mimeType: f.mimeType || cached?.mimeType || cachedVideo?.mimeType || cachedAudio?.mimeType || undefined,
-              visionAuxiliary: imageFile && !supportsVision,
-              ...(f.waveform ? { waveform: f.waveform } : {}),
-            };
-          }) : undefined,
-        },
+        displayMessage,
       };
       if (sessionFileRefs.length > 0) wsMsg.sessionFileRefs = sessionFileRefs;
       if (images.length > 0) wsMsg.images = images;
       if (videos.length > 0) wsMsg.videos = videos;
       if (audios.length > 0) wsMsg.audios = audios;
       if (skills.length > 0) wsMsg.skills = skills;
-      ws?.send(JSON.stringify(wsMsg));
+      if (!ws) {
+        useStore.getState().markOptimisticUserMessageFailed(
+          sessionPathForSend,
+          clientMessageId,
+          'websocket_unavailable',
+        );
+        return;
+      }
+      try {
+        ws.send(JSON.stringify(wsMsg));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        useStore.getState().markOptimisticUserMessageFailed(sessionPathForSend, clientMessageId, message);
+        throw err;
+      }
     } finally {
       setSending(false);
     }
@@ -1724,10 +1784,14 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   };
 
   const handleSlashResultClick = useCallback(() => {
+    if (slashResult?.filePath) {
+      window.platform?.openFile?.(slashResult.filePath);
+      return;
+    }
     if (!slashResult?.deskDir) return;
     toggleJianSidebar(true);
     void revealDeskDirectory(slashResult.deskDir);
-  }, [slashResult?.deskDir]);
+  }, [slashResult?.deskDir, slashResult?.filePath]);
 
   const handleContinueDeletedAgentSession = useCallback(async () => {
     const path = currentSessionPath;
@@ -1758,8 +1822,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       <InputStatusBars
         slashBusy={slashBusy}
         slashBusyLabel={slashCommands.find(c => c.name === slashBusy)?.busyLabel || t('common.executing')}
-        compacting={compacting}
-        compactingLabel={t('chat.compacting')}
+        compacting={compactingStatus}
+        compactingLabel={compactingStatusLabel}
         screenshotBusy={screenshotBusy}
         screenshotLabel={t('common.screenshotInProgress')}
         screenshotPageLabel={screenshotProgress && screenshotProgress.totalPages > 0
@@ -1771,7 +1835,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         screenshotProgress={screenshotProgress}
         inlineError={inlineError}
         slashResult={slashResult}
-        onResultClick={slashResult?.deskDir ? handleSlashResultClick : undefined}
+        onResultClick={(slashResult?.filePath || slashResult?.deskDir) ? handleSlashResultClick : undefined}
       />
       <div className={styles['slash-menu-anchor']} ref={slashMenuRef}>
         {slashMenuOpen && filteredCommands.length > 0 && (
@@ -1791,10 +1855,10 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         )}
       </div>
       <div className={styles['input-stack']}>
-        {(capabilityDrift || capabilityRefreshing) && !visibleSessionConfirmation && !deletedAgentReadOnly && currentSessionPath && (
+        {capabilityDrift && !capabilityRefreshing && !visibleSessionConfirmation && !deletedAgentReadOnly && currentSessionPath && (
           <CapabilityDriftNotice
             sessionPath={currentSessionPath}
-            drift={capabilityDrift ?? EMPTY_CAPABILITY_DRIFT}
+            drift={capabilityDrift}
           />
         )}
         {visibleSessionConfirmation && (
@@ -1835,7 +1899,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             showThinking={showThinkingControl}
             thinkingLevel={thinkingLevel}
             onThinkingChange={setThinkingLevel}
-            modelXhigh={(sessionModel ? (sessionModel.xhigh ?? models.find(m => m.id === sessionModel.id && m.provider === sessionModel.provider)?.xhigh) : globalModelInfo?.xhigh) ?? false}
+            availableThinkingLevels={availableThinkingLevels}
             models={models}
             sessionModel={sessionModel}
             isStreaming={isStreaming}

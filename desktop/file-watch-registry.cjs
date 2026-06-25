@@ -10,7 +10,7 @@ const { normalizeFileWatchPath } = require("./file-watch-path.cjs");
  * - 任意一侧 unwatch / renderer destroyed 只移除自己的订阅，不影响其他订阅者
  */
 
-function createFileWatchRegistry({ watch, notifySubscriber, debounceMs = 50 } = {}) {
+function createFileWatchRegistry({ watch, notifySubscriber, debounceMs = 50, onError } = {}) {
   if (typeof watch !== "function") {
     throw new Error("createFileWatchRegistry: watch function required");
   }
@@ -20,6 +20,7 @@ function createFileWatchRegistry({ watch, notifySubscriber, debounceMs = 50 } = 
 
   const entries = new Map(); // fileKey -> { fileKey, filePath, watcher, subscribers:Set<number>, debounceTimer }
   const filesBySubscriber = new Map(); // subscriberId -> Set<filePath>
+  const pendingCloses = new Set();
 
   function bindSubscriber(fileKey, subscriberId) {
     let files = filesBySubscriber.get(subscriberId);
@@ -39,7 +40,14 @@ function createFileWatchRegistry({ watch, notifySubscriber, debounceMs = 50 } = 
 
   function closeEntry(fileKey, entry) {
     if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
-    try { entry.watcher?.close?.(); } catch {}
+    try {
+      const result = entry.watcher?.close?.();
+      if (result && typeof result.then === "function") {
+        const pending = result.catch(() => {});
+        pendingCloses.add(pending);
+        pending.finally(() => pendingCloses.delete(pending));
+      }
+    } catch {}
     entries.delete(fileKey);
   }
 
@@ -72,6 +80,11 @@ function createFileWatchRegistry({ watch, notifySubscriber, debounceMs = 50 } = 
         }
       }, debounceMs);
     });
+    if (watcher && typeof watcher.on === "function") {
+      watcher.on("error", (err) => {
+        if (typeof onError === "function") onError(err, resolvedPath);
+      });
+    }
 
     entry = { fileKey, filePath: resolvedPath, watcher, subscribers: new Set(), debounceTimer: null };
     entries.set(fileKey, entry);
@@ -114,10 +127,16 @@ function createFileWatchRegistry({ watch, notifySubscriber, debounceMs = 50 } = 
     }
   }
 
+  async function flushPendingCloses() {
+    if (pendingCloses.size === 0) return;
+    await Promise.allSettled([...pendingCloses]);
+  }
+
   return {
     watchFile,
     unwatchFile,
     unwatchAllForSubscriber,
+    flushPendingCloses,
   };
 }
 

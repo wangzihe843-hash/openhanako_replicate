@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useStore } from '../../stores';
+import { isSessionCompacting } from '../../stores/context-slice';
+import { sessionScopedListIncludes, sessionScopedValue } from '../../stores/session-slice';
 import { useI18n } from '../../hooks/use-i18n';
 import { getWebSocket } from '../../services/websocket';
 import { refreshSessionCapabilities } from '../../stores/session-actions';
@@ -19,15 +21,17 @@ export function ContextRing() {
 
   // 从 Zustand store 同步 context 数据（keyed store 优先，compat global 兜底）
   const currentSessionPath = useStore(s => s.currentSessionPath);
-  const contextEntry = useStore(s => s.contextBySession[s.currentSessionPath || '']);
+  const contextEntry = useStore(s => (
+    s.currentSessionPath ? sessionScopedValue(s, s.contextBySession, s.currentSessionPath) : null
+  ));
   const globalContextTokens = useStore(s => s.contextTokens);
   const globalContextWindow = useStore(s => s.contextWindow);
   const globalContextPercent = useStore(s => s.contextPercent);
   const storeContextTokens = contextEntry?.tokens ?? globalContextTokens;
   const storeContextWindow = contextEntry?.window ?? globalContextWindow;
   const storeContextPercent = contextEntry?.percent ?? globalContextPercent;
-  const storeCompacting = useStore(s => currentSessionPath ? s.compactingSessions.includes(currentSessionPath) : false);
-  const refreshing = useStore(s => currentSessionPath ? s.capabilityRefreshingSessions.includes(currentSessionPath) : false);
+  const storeCompacting = useStore(s => isSessionCompacting(s, currentSessionPath));
+  const refreshing = useStore(s => sessionScopedListIncludes(s, s.capabilityRefreshingSessions, currentSessionPath));
   const busy = compacting || refreshing;
 
   useEffect(() => {

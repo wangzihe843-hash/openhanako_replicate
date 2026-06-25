@@ -12,6 +12,7 @@ import type { WorkspaceDeskState } from './desk-slice';
 import {
   hydratePersistedPreviewItems,
   loadPersistedWorkspaceUiState,
+  readingPositionsFromPersistedWorkspaceUiState,
   schedulePersistCurrentWorkspaceUiState,
 } from './workspace-ui-state-actions';
 import { hasServerConnection } from '../services/server-connection';
@@ -168,11 +169,51 @@ export async function applyStudioWorkspace(workspace: Pick<StudioWorkspace, 'mou
   await loadDeskFiles('', null, mountId);
 }
 
+export async function removeStudioWorkspace(mountId: string): Promise<boolean> {
+  const normalized = normalizeMountId(mountId);
+  const s = useStore.getState();
+  if (!normalized || !hasServerConnection(s)) return false;
+  useStore.setState((state: any) => ({
+    studioWorkspaces: (state.studioWorkspaces || [])
+      .filter((workspace: StudioWorkspace) => workspace.mountId !== normalized),
+  }));
+  try {
+    const res = await hanaFetch(`/api/studio/workspaces/${encodeURIComponent(normalized)}`, {
+      method: 'DELETE',
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(String(data.error));
+    const nextWorkspaces = await loadStudioWorkspaces();
+    const latest = useStore.getState();
+    if (latest.selectedWorkspaceMountId === normalized || latest.deskWorkspaceMountId === normalized) {
+      useStore.setState({
+        selectedWorkspaceMountId: null,
+        selectedWorkspaceLabel: null,
+      });
+      const defaultWorkspace = nextWorkspaces.find((workspace) => workspace.isDefault);
+      if (defaultWorkspace && defaultWorkspace.nativeRootPath) {
+        await activateWorkspaceDesk(defaultWorkspace.nativeRootPath, { mountId: null, reload: true });
+      } else {
+        await activateWorkspaceDesk(null, { mountId: null, reload: false });
+      }
+    }
+    return true;
+  } catch (err) {
+    console.error('[workspace] remove studio workspace failed:', err);
+    await loadStudioWorkspaces();
+    return false;
+  }
+}
+
 function buildWorkspaceDeskState(s: ReturnType<typeof useStore.getState>): WorkspaceDeskState {
   const openTabs = [...(s.openTabs || [])];
   const activeTabId = s.activeTabId && openTabs.includes(s.activeTabId)
     ? s.activeTabId
     : (openTabs[0] || null);
+  const openTabSet = new Set(openTabs);
+  const previewReadingPositions = Object.fromEntries(
+    Object.entries(s.previewReadingPositions || {}).filter(([id]) => openTabSet.has(id)),
+  );
   return {
     deskCurrentPath: '',
     deskFiles: [...(s.deskFiles || [])],
@@ -188,6 +229,7 @@ function buildWorkspaceDeskState(s: ReturnType<typeof useStore.getState>): Works
     previewOpen: !!s.previewOpen,
     openTabs,
     activeTabId,
+    previewReadingPositions,
   };
 }
 
@@ -247,6 +289,7 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
       previewOpen: false,
       openTabs: [],
       activeTabId: null,
+      previewReadingPositions: {},
     });
     updateDeskContextBtn();
     return;
@@ -278,6 +321,7 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
     previewOpen: saved?.previewOpen ?? false,
     openTabs: savedOpenTabs,
     activeTabId: activePreviewTabId(savedOpenTabs, saved?.activeTabId),
+    previewReadingPositions: saved?.previewReadingPositions || {},
   });
   updateDeskContextBtn();
 
@@ -287,6 +331,7 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
     const restoredPreviewItemsById = new Map(restoredPreviewItems.map(item => [item.id, item]));
     const restoredOpenTabs = persisted?.openTabs?.filter(id => restoredPreviewItemsById.has(id)) || [];
     const restoredActiveTabId = activePreviewTabId(restoredOpenTabs, persisted?.activeTabId);
+    const restoredReadingPositions = readingPositionsFromPersistedWorkspaceUiState(persisted, restoredOpenTabs);
     if (persisted && deskStateRootKey(useStore.getState().deskBasePath, useStore.getState().deskWorkspaceMountId) === workspaceKey) {
       useStore.setState((state: any) => ({
         deskCurrentPath: '',
@@ -298,6 +343,7 @@ export async function activateWorkspaceDesk(root: string | null | undefined, opt
         previewOpen: !!persisted.previewOpen,
         openTabs: restoredOpenTabs,
         activeTabId: restoredActiveTabId,
+        previewReadingPositions: restoredReadingPositions,
         ...(restoredPreviewItems.length > 0
           ? {
               previewItems: [
@@ -385,11 +431,6 @@ export async function loadDeskFiles(subdir?: string, overrideDir?: string | null
   } catch (err) {
     console.error('[jian-desk] load failed:', err);
     if (myVersion !== _deskLoadVersion) return;
-    const st = useStore.getState();
-    st.setDeskFiles([]);
-    st.setDeskCurrentPath('');
-    st.setDeskTreeFiles('', []);
-    st.setDeskJianContent(null);
     updateDeskContextBtn();
   }
 }
@@ -534,7 +575,6 @@ export async function loadDeskTreeFiles(subdir = '', options: { force?: boolean;
   } catch (err) {
     console.error('[desk-tree] load failed:', err);
     if (_deskTreeLoadVersion.get(key) !== myVersion) return;
-    useStore.getState().setDeskTreeFiles(normalizedSubdir, []);
   }
 }
 

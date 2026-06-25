@@ -311,6 +311,26 @@ function proxyConfigToEnvironment(config, baseEnv = process.env) {
   return env;
 }
 
+function systemProxyConfigToEnvironment(resolved, baseEnv = process.env, config = {}) {
+  const noProxy = withForcedLocalProxyBypass(resolved?.noProxy || config?.noProxy || "");
+  const candidate = normalizeNetworkProxyConfig({
+    mode: "manual",
+    httpProxy: resolved?.httpProxy || "",
+    httpsProxy: resolved?.httpsProxy || "",
+    wsProxy: resolved?.wsProxy || "",
+    wssProxy: resolved?.wssProxy || "",
+    noProxy,
+  });
+
+  if (candidate.mode === "manual") {
+    return proxyConfigToEnvironment(candidate, baseEnv);
+  }
+
+  const env = proxyConfigToEnvironment({ mode: "direct" }, baseEnv);
+  if (noProxy) env.NO_PROXY = env.no_proxy = noProxy;
+  return env;
+}
+
 function formatElectronProxyServer(proxyUrl) {
   if (!proxyUrl) return "";
   const parsed = new URL(proxyUrl);
@@ -352,6 +372,7 @@ module.exports = {
   proxyConfigFromEnvironment,
   resolveProxyForUrl,
   proxyConfigToEnvironment,
+  systemProxyConfigToEnvironment,
   formatElectronProxyServer,
   electronProxyRulesForConfig,
   electronProxyBypassRulesForConfig,

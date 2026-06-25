@@ -22,6 +22,14 @@ function jsonResponse(body: unknown): Response {
   return { ok: true, json: async () => body } as unknown as Response;
 }
 
+function optionForText(text: string): HTMLElement {
+  const option = screen.getByText(text).closest('[role="option"]');
+  if (!(option instanceof HTMLElement)) {
+    throw new Error(`Option not found for ${text}`);
+  }
+  return option;
+}
+
 describe('ThinkingLevelButton', () => {
   afterEach(() => {
     cleanup();
@@ -43,9 +51,9 @@ describe('ThinkingLevelButton', () => {
     } as never);
     const onChange = vi.fn();
 
-    const { container } = render(<ThinkingLevelButton level="medium" onChange={onChange} modelXhigh />);
+    const { container } = render(<ThinkingLevelButton level="medium" onChange={onChange} availableLevels={['off', 'medium', 'high', 'max']} />);
     fireEvent.click(container.querySelector('button') as HTMLButtonElement);
-    fireEvent.click(screen.getByRole('option', { name: 'high' }));
+    fireEvent.click(optionForText('深度'));
 
     await waitFor(() => {
       expect(hanaFetch).toHaveBeenCalledWith('/api/session-thinking-level', expect.objectContaining({
@@ -60,9 +68,9 @@ describe('ThinkingLevelButton', () => {
     vi.mocked(hanaFetch).mockResolvedValueOnce(jsonResponse({ ok: true, thinkingLevel: 'high' }));
     const onChange = vi.fn();
 
-    const { container } = render(<ThinkingLevelButton level="medium" onChange={onChange} modelXhigh={false} />);
+    const { container } = render(<ThinkingLevelButton level="medium" onChange={onChange} availableLevels={['off', 'medium', 'high']} />);
     fireEvent.click(container.querySelector('button') as HTMLButtonElement);
-    fireEvent.click(screen.getByRole('option', { name: 'high' }));
+    fireEvent.click(optionForText('深度'));
 
     await waitFor(() => expect(onChange).toHaveBeenCalledWith('high'));
     expect(hanaFetch).toHaveBeenCalledWith('/api/session-thinking-level', expect.objectContaining({
@@ -73,20 +81,51 @@ describe('ThinkingLevelButton', () => {
   });
 
   it('shows Medium instead of Auto for legacy auto state', () => {
-    const { container } = render(<ThinkingLevelButton level="auto" onChange={vi.fn()} modelXhigh={false} />);
+    const { container } = render(<ThinkingLevelButton level="auto" onChange={vi.fn()} availableLevels={['off', 'medium', 'high']} />);
 
     fireEvent.click(container.querySelector('button') as HTMLButtonElement);
 
     expect(screen.queryByRole('option', { name: /auto/i })).toBeNull();
-    expect(screen.getByRole('option', { name: 'medium' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /中等/ })).toBeTruthy();
   });
 
   it('hides the xhigh level when the model does not support it', () => {
-    const { container } = render(<ThinkingLevelButton level="off" onChange={vi.fn()} modelXhigh={false} />);
+    const { container } = render(<ThinkingLevelButton level="off" onChange={vi.fn()} availableLevels={['off', 'medium', 'high']} />);
 
     fireEvent.click(container.querySelector('button') as HTMLButtonElement);
 
-    expect(screen.getByRole('option', { name: 'high' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /深度/ })).toBeTruthy();
     expect(screen.queryByRole('option', { name: 'xhigh' })).toBeNull();
+  });
+
+  it('shows and saves Max for models that support the deep thinking tier', async () => {
+    vi.mocked(hanaFetch).mockResolvedValueOnce(jsonResponse({ ok: true, thinkingLevel: 'max' }));
+    const onChange = vi.fn();
+
+    const { container } = render(<ThinkingLevelButton level="medium" onChange={onChange} availableLevels={['off', 'medium', 'high', 'max']} />);
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+
+    expect(screen.getByRole('option', { name: /极致/ })).toBeTruthy();
+    expect(screen.getByText('极致推理')).toBeTruthy();
+    expect(screen.queryByRole('option', { name: /^max$/i })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'xhigh' })).toBeNull();
+
+    fireEvent.click(optionForText('极致'));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith('max'));
+    expect(hanaFetch).toHaveBeenCalledWith('/api/session-thinking-level', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ level: 'max' }),
+    }));
+  });
+
+  it('does not render a trailing checkmark for the selected thinking level', () => {
+    const { container } = render(<ThinkingLevelButton level="high" onChange={vi.fn()} availableLevels={['off', 'medium', 'high', 'max']} />);
+
+    fireEvent.click(container.querySelector('button') as HTMLButtonElement);
+
+    const selected = optionForText('深度');
+    expect(selected.getAttribute('aria-selected')).toBe('true');
+    expect(selected.querySelector('[data-select-check]')).toBeNull();
   });
 });

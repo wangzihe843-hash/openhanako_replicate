@@ -80,7 +80,7 @@ describe("desk route", () => {
       const res = await app.request("/api/desk/install-skill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filePath: zipPath, dir: cwd }),
+        body: JSON.stringify({ filePath: zipPath, dir: cwd, agentId: "agent-a" }),
       });
 
       expect(res.status).toBe(200);
@@ -101,7 +101,7 @@ describe("desk route", () => {
       expect(extractZipMock).toHaveBeenCalledWith(zipPath, expect.stringContaining(".tmp-install-"));
       expect(fs.existsSync(path.join(cwd, ".agents", "skills", "sample-skill", "SKILL.md"))).toBe(true);
       expect(fs.existsSync(path.join(cwd, ".agents", "skills", "sample-skill", "references", "guide.md"))).toBe(true);
-      expect(syncWorkspaceSkillPaths).toHaveBeenCalledWith(cwd, { reload: true, emitEvent: true, force: true });
+      expect(syncWorkspaceSkillPaths).toHaveBeenCalledWith(cwd, { reload: true, emitEvent: true, force: true, agentId: "agent-a" });
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -135,7 +135,7 @@ describe("desk route", () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ ok: true });
       expect(fs.existsSync(skillDir)).toBe(false);
-      expect(syncWorkspaceSkillPaths).toHaveBeenCalledWith(cwd, { reload: true, emitEvent: true, force: true });
+      expect(syncWorkspaceSkillPaths).toHaveBeenCalledWith(cwd, { reload: true, emitEvent: true, force: true, agentId: null });
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -194,7 +194,7 @@ describe("desk route", () => {
       expect(installed.status).toBe(200);
       expect(await installed.json()).toMatchObject({ ok: true, name: "sample-skill" });
       expect(fs.existsSync(path.join(workspace, ".agents", "skills", "sample-skill", "SKILL.md"))).toBe(true);
-      expect(syncWorkspaceSkillPaths).toHaveBeenCalledWith(fs.realpathSync(workspace), { reload: true, emitEvent: true, force: true });
+      expect(syncWorkspaceSkillPaths).toHaveBeenCalledWith(fs.realpathSync(workspace), { reload: true, emitEvent: true, force: true, agentId: null });
 
       const deleted = await app.request("/api/desk/delete-skill", {
         method: "POST",
@@ -221,6 +221,7 @@ describe("desk route", () => {
       for (const dir of [cwd, extra, sibling]) fs.mkdirSync(dir, { recursive: true });
 
       const engine = {
+        hanakoHome: path.join(tempRoot, "hana-home"),
         deskCwd: cwd,
         homeCwd: cwd,
         isApprovedWorkspaceDir: vi.fn((dir) => dir === cwd || dir === extra),
@@ -252,6 +253,7 @@ describe("desk route", () => {
       fs.writeFileSync(path.join(selectedHome, "mio.md"), "ok");
 
       const engine = {
+        hanakoHome: path.join(tempRoot, "hana-home"),
         deskCwd: currentHome,
         homeCwd: currentHome,
         getExplicitHomeCwd: vi.fn((agentId) => (agentId === "mio" ? selectedHome : null)),
@@ -285,6 +287,7 @@ describe("desk route", () => {
       fs.writeFileSync(path.join(selectedWorkspace, "visible.txt"), "ok");
 
       const engine = {
+        hanakoHome: path.join(tempRoot, "hana-home"),
         config: { cwd_history: [selectedWorkspace] },
         deskCwd: agentHome,
         homeCwd: agentHome,
@@ -410,6 +413,7 @@ describe("desk route", () => {
       fs.writeFileSync(path.join(cwd, "notes", "chapter.md"), "chapter", "utf-8");
 
       const engine = {
+        hanakoHome: path.join(tempRoot, "hana"),
         deskCwd: cwd,
         homeCwd: cwd,
       };
@@ -449,6 +453,7 @@ describe("desk route", () => {
       fs.writeFileSync(path.join(cwd, "old.md"), "old", "utf-8");
 
       const engine = {
+        hanakoHome: path.join(tempRoot, "hana"),
         deskCwd: cwd,
         homeCwd: cwd,
       };
@@ -491,6 +496,7 @@ describe("desk route", () => {
       fs.mkdirSync(cwd, { recursive: true });
 
       const engine = {
+        hanakoHome: path.join(tempRoot, "hana"),
         deskCwd: cwd,
         homeCwd: cwd,
       };
@@ -565,6 +571,7 @@ describe("desk route", () => {
       fs.writeFileSync(path.join(cwd, ".git", "desk-private"), "hidden", "utf-8");
 
       const engine = {
+        hanakoHome: path.join(tempRoot, "hana-home"),
         deskCwd: cwd,
         homeCwd: cwd,
       };
@@ -646,6 +653,7 @@ describe("desk route", () => {
       fs.writeFileSync(draggedFile, "dragged content", "utf-8");
 
       const engine = {
+        hanakoHome: path.join(tempRoot, "hana"),
         deskCwd: cwd,
         homeCwd: cwd,
       };

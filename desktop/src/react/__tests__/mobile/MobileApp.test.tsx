@@ -60,6 +60,20 @@ class MockWebSocket {
 
 describe('MobileApp', () => {
   const fetchMock = vi.fn();
+  const mobileLoginTranslations: Record<string, string> = {
+    'mobile.auth.title': '手机访问 Hana',
+    'mobile.auth.deviceHelp': '输入桌面端为这台设备生成的访问密钥。',
+    'mobile.auth.passwordHelp': '使用桌面端设置的本地账号登录。',
+    'mobile.auth.tabLabel': '登录方式',
+    'mobile.auth.deviceField': '访问密钥',
+    'mobile.auth.deviceTab': '访问密钥',
+    'mobile.auth.passwordTab': '用户名密码',
+    'mobile.auth.usernameField': '用户名',
+    'mobile.auth.passwordField': '密码',
+    'mobile.auth.plaintextWarning': '远程明文链路不接收账号密码。',
+    'mobile.auth.submit': '登录',
+    'mobile.auth.scopeError': '当前登录缺少工作台权限，请重新输入访问密钥。',
+  };
 
   beforeEach(() => {
     fetchMock.mockReset();
@@ -82,8 +96,8 @@ describe('MobileApp', () => {
     })));
     MockWebSocket.instances = [];
     document.documentElement.removeAttribute('data-platform');
+    delete window.__hanaMobileUpdateAvailable;
     resetStoreForMobileTest();
-    window.t = ((key: string) => key) as typeof window.t;
     window.i18n = {
       locale: 'zh',
       defaultName: 'Hanako',
@@ -91,10 +105,15 @@ describe('MobileApp', () => {
       _agentOverrides: {},
       load: vi.fn(async function load(this: typeof window.i18n, locale: string) {
         this.locale = locale.startsWith('zh') ? 'zh' : locale;
+        this._data = mobileLoginTranslations;
       }),
       setAgentOverrides: vi.fn(),
-      t: (key: string) => key,
+      t: (key: string) => {
+        const value = window.i18n?._data?.[key];
+        return typeof value === 'string' ? value : key;
+      },
     };
+    window.t = ((key: string, vars?: Record<string, string | number>) => window.i18n.t(key, vars)) as typeof window.t;
     window.setTheme = vi.fn();
     window.setSerifFont = vi.fn();
     window.setPaperTexture = vi.fn();
@@ -102,16 +121,19 @@ describe('MobileApp', () => {
 
   afterEach(() => {
     cleanup();
+    delete window.__hanaMobileUpdateAvailable;
     vi.restoreAllMocks();
   });
 
-  it('shows the access-key login when no browser session exists', async () => {
+  it('loads locale before showing the access-key login when no browser session exists', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ authenticated: false, principal: null }));
 
     render(<MobileApp />);
 
-    expect(await screen.findByText('mobile.auth.title')).toBeInTheDocument();
-    expect(screen.getByLabelText('mobile.auth.deviceField')).toBeInTheDocument();
+    expect(await screen.findByText('手机访问 Hana')).toBeInTheDocument();
+    expect(window.i18n.load).toHaveBeenCalledWith('zh-CN');
+    expect(screen.getByLabelText('访问密钥')).toBeInTheDocument();
+    expect(screen.queryByText('mobile.auth.title')).not.toBeInTheDocument();
   });
 
   it('can submit a username and password login without sending a device credential', async () => {
@@ -130,10 +152,10 @@ describe('MobileApp', () => {
 
     render(<MobileApp />);
 
-    fireEvent.click(await screen.findByRole('tab', { name: 'mobile.auth.passwordTab' }));
-    fireEvent.change(screen.getByLabelText('mobile.auth.usernameField'), { target: { value: 'hana-owner' } });
-    fireEvent.change(screen.getByLabelText('mobile.auth.passwordField'), { target: { value: 'secret-password' } });
-    fireEvent.click(screen.getByRole('button', { name: 'mobile.auth.submit' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '用户名密码' }));
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'hana-owner' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret-password' } });
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
 
     await waitFor(() => {
       const loginCall = fetchMock.mock.calls.find(([input]) => String(input).includes('/api/web-auth/login'));
@@ -158,8 +180,8 @@ describe('MobileApp', () => {
 
     render(<MobileApp />);
 
-    expect(await screen.findByText('mobile.auth.title')).toBeInTheDocument();
-    expect(screen.getByText('mobile.auth.scopeError')).toBeInTheDocument();
+    expect(await screen.findByText('手机访问 Hana')).toBeInTheDocument();
+    expect(screen.getByText('当前登录缺少工作台权限，请重新输入访问密钥。')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/web-auth/logout', expect.objectContaining({
       method: 'POST',
     }));
@@ -179,8 +201,8 @@ describe('MobileApp', () => {
 
     render(<MobileApp />);
 
-    expect(await screen.findByText('mobile.auth.title')).toBeInTheDocument();
-    expect(screen.getByText('mobile.auth.scopeError')).toBeInTheDocument();
+    expect(await screen.findByText('手机访问 Hana')).toBeInTheDocument();
+    expect(screen.getByText('当前登录缺少工作台权限，请重新输入访问密钥。')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/web-auth/logout', expect.objectContaining({
       method: 'POST',
     }));
@@ -212,6 +234,7 @@ describe('MobileApp', () => {
       chatModel: { id: 'deepseek-chat', provider: 'deepseek' },
     });
     expect(useStore.getState().sessions.some(session => session.path === '/hana/sessions/one.jsonl')).toBe(true);
+    expect(useStore.getState().sessionLocatorsById.sess_mobile_one).toEqual({ path: '/hana/sessions/one.jsonl' });
     fireEvent.click(screen.getByTitle('sidebar.jian'));
     expect(await screen.findByText('note.md')).toBeInTheDocument();
   });
@@ -264,6 +287,8 @@ describe('MobileApp', () => {
 
   it('opens the settings modal from the mobile platform settings event', async () => {
     installMobilePlatform();
+    const onOpenSettingsModal = vi.fn(window.platform?.onOpenSettingsModal?.bind(window.platform));
+    window.platform!.onOpenSettingsModal = onOpenSettingsModal;
     fetchMock.mockImplementation((input: RequestInfo | URL, options?: RequestInit) => {
       const url = String(input);
       if (url.includes('/api/web-auth/session')) {
@@ -274,6 +299,7 @@ describe('MobileApp', () => {
 
     render(<MobileApp />);
     await waitForMobileChatReady();
+    await waitFor(() => expect(onOpenSettingsModal).toHaveBeenCalled());
 
     act(() => {
       window.platform?.openSettings?.('providers');
@@ -300,6 +326,31 @@ describe('MobileApp', () => {
       act(() => {
         window.dispatchEvent(new Event('hana-mobile-update-available'));
       });
+
+      expect(await screen.findByText('mobile.update.available')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'mobile.update.reload' }));
+
+      expect(applyUpdate).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('hana-mobile-apply-update', applyUpdate);
+    }
+  });
+
+  it('keeps a PWA update notice that arrives before the mobile shell is ready', async () => {
+    const applyUpdate = vi.fn();
+    window.addEventListener('hana-mobile-apply-update', applyUpdate);
+    window.__hanaMobileUpdateAvailable = true;
+    fetchMock.mockImplementation((input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/web-auth/session')) {
+        return Promise.resolve(jsonResponse({ authenticated: true, principal: principal(['chat', 'resources.read', 'files.read', 'files.write']) }));
+      }
+      return Promise.resolve(jsonResponse(jsonResponseForMobile(url, options)));
+    });
+
+    try {
+      render(<MobileApp />);
+      await waitForMobileChatReady();
 
       expect(await screen.findByText('mobile.update.available')).toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'mobile.update.reload' }));
@@ -807,7 +858,7 @@ function jsonResponseForMobile(
   }
   if (url.includes('/api/sessions')) {
     return [
-      { path: '/hana/sessions/one.jsonl', title: '日常记录', firstMessage: '', modified: '2026-05-16T00:00:00.000Z', messageCount: 2, agentId: 'hana', agentName: 'Hana', cwd: '/workspace' },
+      { path: '/hana/sessions/one.jsonl', sessionId: 'sess_mobile_one', title: '日常记录', firstMessage: '', modified: '2026-05-16T00:00:00.000Z', messageCount: 2, agentId: 'hana', agentName: 'Hana', cwd: '/workspace' },
     ];
   }
   return {};

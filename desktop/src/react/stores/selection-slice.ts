@@ -1,3 +1,5 @@
+import { sessionScopedKey, sessionScopedValue } from './session-slice';
+
 export interface SelectionSlice {
   selectedIdsBySession: Record<string, string[]>;
   toggleMessageSelection: (sessionPath: string, messageId: string) => void;
@@ -12,37 +14,45 @@ export const createSelectionSlice = (
   selectedIdsBySession: {},
 
   toggleMessageSelection: (sessionPath, messageId) => set((s) => {
-    const current = s.selectedIdsBySession[sessionPath] || [];
+    const key = sessionScopedKey(s as any, sessionPath) || sessionPath;
+    const current = sessionScopedValue(s as any, s.selectedIdsBySession, sessionPath) || [];
     const next = current.includes(messageId)
       ? current.filter(id => id !== messageId)
       : [...current, messageId];
     const copy = { ...s.selectedIdsBySession };
-    if (next.length === 0) delete copy[sessionPath];
-    else copy[sessionPath] = next;
+    delete copy[sessionPath];
+    if (next.length === 0) delete copy[key];
+    else copy[key] = next;
     return {
       selectedIdsBySession: copy,
     };
   }),
 
   setMessageSelection: (sessionPath, messageIds) => set((s) => {
+    const key = sessionScopedKey(s as any, sessionPath) || sessionPath;
     const next = Array.from(new Set(messageIds.filter(Boolean)));
     const copy = { ...s.selectedIdsBySession };
-    if (next.length === 0) delete copy[sessionPath];
-    else copy[sessionPath] = next;
+    delete copy[sessionPath];
+    if (next.length === 0) delete copy[key];
+    else copy[key] = next;
     return { selectedIdsBySession: copy };
   }),
 
   addMessagesToSelection: (sessionPath, messageIds) => set((s) => {
-    const current = s.selectedIdsBySession[sessionPath] || [];
+    const key = sessionScopedKey(s as any, sessionPath) || sessionPath;
+    const current = sessionScopedValue(s as any, s.selectedIdsBySession, sessionPath) || [];
     const next = Array.from(new Set([...current, ...messageIds.filter(Boolean)]));
     const copy = { ...s.selectedIdsBySession };
-    if (next.length === 0) delete copy[sessionPath];
-    else copy[sessionPath] = next;
+    delete copy[sessionPath];
+    if (next.length === 0) delete copy[key];
+    else copy[key] = next;
     return { selectedIdsBySession: copy };
   }),
 
   clearSelection: (sessionPath) => set((s) => {
+    const key = sessionScopedKey(s as any, sessionPath) || sessionPath;
     const copy = { ...s.selectedIdsBySession };
+    delete copy[key];
     delete copy[sessionPath];
     return { selectedIdsBySession: copy };
   }),

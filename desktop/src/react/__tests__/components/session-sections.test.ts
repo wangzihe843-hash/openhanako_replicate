@@ -23,7 +23,7 @@ function makeSession(overrides: Partial<Session>): Session {
 }
 
 describe('buildSessionSections', () => {
-  it('places pinned sessions first and excludes them from date sections', () => {
+  it('places pinned sessions first, sorts them by modified time, and excludes them from date sections', () => {
     const sections = buildSessionSections([
       makeSession({
         path: '/sessions/today.jsonl',
@@ -31,14 +31,14 @@ describe('buildSessionSections', () => {
         modified: '2026-04-29T07:00:00.000Z',
       }),
       makeSession({
-        path: '/sessions/old-pin.jsonl',
-        firstMessage: 'old pin',
-        modified: '2026-04-20T07:00:00.000Z',
-        pinnedAt: '2026-04-29T07:00:00.000Z',
+        path: '/sessions/recent-pin.jsonl',
+        firstMessage: 'recent pin',
+        modified: '2026-04-29T09:00:00.000Z',
+        pinnedAt: '2026-04-28T07:00:00.000Z',
       }),
       makeSession({
-        path: '/sessions/new-pin.jsonl',
-        firstMessage: 'new pin',
+        path: '/sessions/freshly-pinned-old-chat.jsonl',
+        firstMessage: 'freshly pinned old chat',
         modified: '2026-04-28T07:00:00.000Z',
         pinnedAt: '2026-04-29T08:00:00.000Z',
       }),
@@ -53,8 +53,8 @@ describe('buildSessionSections', () => {
       titleKey: 'sidebar.pinned',
     });
     expect(sections[0].items.map(item => item.path)).toEqual([
-      '/sessions/new-pin.jsonl',
-      '/sessions/old-pin.jsonl',
+      '/sessions/recent-pin.jsonl',
+      '/sessions/freshly-pinned-old-chat.jsonl',
     ]);
     expect(sections[1]).toMatchObject({
       kind: 'date',
@@ -181,6 +181,31 @@ describe('buildSessionProjectView', () => {
     expect(sections.rootProjects[0].items.map(item => item.path)).toEqual([
       '/sessions/b.jsonl',
       '/sessions/a.jsonl',
+    ]);
+  });
+
+  it('sorts pinned project-view sessions by modified time instead of pin time', () => {
+    const cwd = '/Users/test/Desktop/project-hana';
+    const view = buildSessionProjectView([
+      makeSession({
+        path: '/sessions/recent-pin.jsonl',
+        firstMessage: 'recent pin',
+        cwd,
+        modified: '2026-05-28T09:00:00.000Z',
+        pinnedAt: '2026-05-27T08:00:00.000Z',
+      }),
+      makeSession({
+        path: '/sessions/freshly-pinned-old-chat.jsonl',
+        firstMessage: 'freshly pinned old chat',
+        cwd,
+        modified: '2026-05-28T07:00:00.000Z',
+        pinnedAt: '2026-05-28T10:00:00.000Z',
+      }),
+    ], { projects: [] });
+
+    expect(view.pinned.map(item => item.path)).toEqual([
+      '/sessions/recent-pin.jsonl',
+      '/sessions/freshly-pinned-old-chat.jsonl',
     ]);
   });
 

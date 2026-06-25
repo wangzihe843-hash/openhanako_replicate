@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { SessionFileRegistry } from "../lib/session-files/session-file-registry.ts";
+import { SessionFileRegistry, sessionFilesCacheDir } from "../lib/session-files/session-file-registry.ts";
 
 describe("SessionFileRegistry", () => {
   let tmpDir = null;
@@ -68,6 +68,65 @@ describe("SessionFileRegistry", () => {
     const reloaded = new SessionFileRegistry({ now: () => 9999 });
     expect(reloaded.get(file.id, { sessionPath })).toEqual(file);
     expect(reloaded.list(sessionPath)).toEqual([file]);
+  });
+
+  it("uses sessionId as the stable owner for new file ids and managed cache dirs", () => {
+    const filePath = makeTempFile("note.md", "# hello\n");
+    const firstSessionPath = makeSessionPath("first.jsonl");
+    const movedSessionPath = makeSessionPath("moved.jsonl");
+    const registry = new SessionFileRegistry({ now: () => 1234 });
+
+    const first = registry.registerFile({
+      sessionId: "sess_files_1",
+      sessionPath: firstSessionPath,
+      filePath,
+      origin: "stage_files",
+      sourceKey: "source:stable",
+    });
+    const moved = registry.registerFile({
+      sessionId: "sess_files_1",
+      sessionPath: movedSessionPath,
+      filePath,
+      origin: "stage_files",
+      sourceKey: "source:stable",
+    });
+
+    expect(moved.id).toBe(first.id);
+    expect(first.sessionId).toBe("sess_files_1");
+    expect(readSidecar(firstSessionPath).sessionId).toBe("sess_files_1");
+    expect(readSidecar(movedSessionPath).sessionId).toBe("sess_files_1");
+    expect(sessionFilesCacheDir(ensureTempDir(), { sessionId: "sess_files_1", sessionPath: firstSessionPath })).toBe(
+      sessionFilesCacheDir(ensureTempDir(), { sessionId: "sess_files_1", sessionPath: movedSessionPath }),
+    );
+  });
+
+  it("indexes loaded sidecars by sessionId while accepting moved path locators", () => {
+    const filePath = makeTempFile("moved-id-sidecar/a.txt", "a");
+    const oldSessionPath = makeSessionPath("old-id-owner.jsonl");
+    const newSessionPath = makeSessionPath("new-id-owner.jsonl");
+    const writer = new SessionFileRegistry({ now: () => 1234 });
+    const entry = writer.registerFile({
+      sessionId: "sess_files_moved",
+      sessionPath: oldSessionPath,
+      filePath,
+      origin: "stage_files",
+    });
+
+    fs.renameSync(`${oldSessionPath}.files.json`, `${newSessionPath}.files.json`);
+    const registry = new SessionFileRegistry({
+      now: () => 5678,
+      getSessionIdForPath: (sessionPath) => (
+        sessionPath === oldSessionPath || sessionPath === newSessionPath
+          ? "sess_files_moved"
+          : null
+      ),
+    });
+
+    expect(registry.list(newSessionPath)).toEqual([entry]);
+    expect(registry._idsBySession.has("sess_files_moved")).toBe(true);
+    expect(registry._idsBySession.has(oldSessionPath)).toBe(false);
+    expect(registry._idsBySession.has(newSessionPath)).toBe(false);
+    expect(registry.get(entry.id, { sessionPath: oldSessionPath })).toEqual(entry);
   });
 
   it("marks managed cache files expired when their session is cold for 72 hours", () => {

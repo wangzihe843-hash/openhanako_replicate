@@ -124,6 +124,34 @@ describe("Poller", () => {
     expect(poller.running).toBe(false);
   });
 
+  it("recovers pending tasks when logger only exposes log instead of info", () => {
+    const task = {
+      taskId: "recovered-task",
+      adapterId: "test-adapter",
+      type: "image",
+      status: "pending",
+      submitState: "submitted",
+      files: [],
+      prompt: "restore me",
+      sessionPath: "/sessions/main.jsonl",
+      createdAt: new Date().toISOString(),
+    };
+    const { poller, log } = makePoller({
+      store: {
+        listPending: vi.fn(() => [task]),
+      },
+    });
+    const fallbackLog = vi.fn();
+    (log as any).info = undefined;
+    (log as any).log = fallbackLog;
+
+    expect(() => poller.start()).not.toThrow();
+    expect(poller.hasPending("recovered-task")).toBe(true);
+    expect(fallbackLog).toHaveBeenCalledWith("[image-gen] poller recovered 1 pending task(s)");
+
+    poller.stop();
+  });
+
   // ── add / hasPending ───────────────────────────────────────────────────────
 
   it("adds a taskId and reports it as pending", () => {
@@ -131,6 +159,41 @@ describe("Poller", () => {
     poller.start();
     poller.add("task1");
     expect(poller.hasPending("task1")).toBe(true);
+    poller.stop();
+  });
+
+  it("cancels a task even when the info logger fails", () => {
+    const task = {
+      taskId: "task1",
+      adapterId: "test-adapter",
+      status: "pending",
+      submitState: "submitted",
+      files: [],
+      createdAt: new Date().toISOString(),
+      sessionPath: "/sessions/main.jsonl",
+    };
+    const { poller, mockStore } = makePoller({
+      store: {
+        get: vi.fn(() => task),
+        update: vi.fn(() => task),
+      },
+      log: {
+        info: vi.fn(() => {
+          throw new Error("logger failed");
+        }),
+      },
+    });
+
+    poller.start();
+    poller.add("task1");
+
+    expect(() => poller.cancel("task1")).not.toThrow();
+    expect(poller.hasPending("task1")).toBe(false);
+    expect(mockStore.update).toHaveBeenCalledWith("task1", expect.objectContaining({
+      status: "cancelled",
+      failReason: "user cancelled",
+    }));
+
     poller.stop();
   });
 
@@ -238,6 +301,47 @@ describe("Poller", () => {
         dataDir: "/tmp/image-gen-data",
         generatedDir: "/tmp/image-gen-generated",
       })
+    );
+
+    poller.stop();
+  });
+
+  it("passes full task metadata to adapter.query so async video adapters can use both video_id and task_id", async () => {
+    const mockAdapter = makeAdapter({
+      types: ["video"],
+      query: vi.fn(async () => ({ status: "pending" })),
+    });
+    const { poller, mockStore } = makePoller({ adapter: mockAdapter });
+    const task = {
+      taskId: "task_123",
+      adapterId: "agnes-videos",
+      adapterTaskId: "video_123",
+      providerId: "agnes",
+      modelId: "agnes-video-v2.0",
+      protocolId: "agnes-videos",
+      type: "video",
+      status: "pending",
+      files: [],
+      createdAt: new Date().toISOString(),
+    };
+
+    mockStore.get.mockReturnValue(task);
+
+    poller.start();
+    poller.add("task_123");
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(mockAdapter.query).toHaveBeenCalledWith(
+      "video_123",
+      expect.objectContaining({
+        task: expect.objectContaining({
+          taskId: "task_123",
+          adapterTaskId: "video_123",
+          modelId: "agnes-video-v2.0",
+          type: "video",
+        }),
+      }),
     );
 
     poller.stop();
@@ -441,6 +545,57 @@ describe("Poller", () => {
         sessionFiles: [expect.objectContaining({ fileId: "sf_generated" })],
       }),
     );
+
+    poller.stop();
+  });
+
+  it("registers completed generated files with sessionId when the path locator is absent", async () => {
+    const registerSessionFile = vi.fn(({ sessionId, sessionRef, sessionPath, filePath, label, origin, storageKind }) => ({
+      id: "sf_generated",
+      fileId: "sf_generated",
+      sessionId,
+      sessionRef,
+      sessionPath,
+      filePath,
+      label,
+      origin,
+      storageKind,
+    }));
+    const mockAdapter = makeAdapter({
+      query: vi.fn(async () => ({
+        status: "success",
+        files: ["id-only.png"],
+      })),
+    });
+    const { poller, mockStore } = makePoller({
+      adapter: mockAdapter,
+      registerSessionFile,
+    });
+
+    mockStore.get.mockReturnValue({
+      taskId: "task1",
+      adapterId: "test-adapter",
+      status: "pending",
+      files: [],
+      sessionId: "sess_image_task",
+      sessionRef: { sessionId: "sess_image_task" },
+      sessionPath: null,
+      createdAt: new Date().toISOString(),
+    });
+
+    poller.start();
+    poller.add("task1");
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(registerSessionFile).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "sess_image_task",
+      sessionRef: { sessionId: "sess_image_task" },
+      filePath: path.join("/tmp/image-gen-generated", "id-only.png"),
+      label: "id-only.png",
+      origin: "plugin_output",
+      storageKind: "plugin_data",
+    }));
 
     poller.stop();
   });
@@ -715,6 +870,50 @@ describe("Poller", () => {
         triggerParentTurn: false,
         notifyAgentOnFailure: true,
       }),
+    }));
+
+    poller.stop();
+  });
+
+  it("recovers pending sessionId-only tasks with session references on start", () => {
+    const { poller, mockBus } = makePoller({
+      store: {
+        listPending: vi.fn(() => [
+          {
+            taskId: "recovered-session-id",
+            adapterId: "test-adapter",
+            status: "pending",
+            type: "image",
+            prompt: "id-only",
+            sessionId: "sess_media",
+            sessionRef: { sessionId: "sess_media" },
+            sessionPath: null,
+            createdAt: new Date().toISOString(),
+          },
+        ]),
+        get: vi.fn(() => null),
+        update: vi.fn(),
+      },
+    });
+
+    poller.start();
+
+    const deferredCall = mockBus.request.mock.calls.find(
+      ([type, payload]) => type === "deferred:register" && payload.taskId === "recovered-session-id",
+    );
+    const taskCall = mockBus.request.mock.calls.find(
+      ([type, payload]) => type === "task:register" && payload.taskId === "recovered-session-id",
+    );
+
+    expect(deferredCall?.[1]).toEqual(expect.objectContaining({
+      taskId: "recovered-session-id",
+      sessionId: "sess_media",
+      sessionRef: { sessionId: "sess_media" },
+    }));
+    expect(taskCall?.[1]).toEqual(expect.objectContaining({
+      taskId: "recovered-session-id",
+      parentSessionId: "sess_media",
+      parentSessionRef: { sessionId: "sess_media" },
     }));
 
     poller.stop();

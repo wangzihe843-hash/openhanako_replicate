@@ -2,6 +2,14 @@
 const DEFAULT_RETRY_JITTER_MS = 1_000;
 
 const DEFAULT_POLICIES = Object.freeze({
+  anysearch: Object.freeze({
+    minIntervalMs: 0,
+    jitterMs: 0,
+    maxConcurrent: 5,
+    rateLimitBaseDelayMs: 2_000,
+    retryJitterMs: DEFAULT_RETRY_JITTER_MS,
+    maxCooldownMs: 5 * 60_000,
+  }),
   anysearch_free: Object.freeze({
     minIntervalMs: 0,
     jitterMs: 0,

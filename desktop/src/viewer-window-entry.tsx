@@ -3,20 +3,20 @@
  *
  * 语义：
  * - 派生出的只读副本窗口，展示主面板某个 tab 对应的本地文件
- * - Live 只读：viewer 自己 watchFile，文件外部变化时重新 readFile 并刷新
+ * - 只读：viewer 读取启动时传入的本地文件内容
  * - 与主面板 preview **不通信**（不 dock、不回写、不共享 zustand store）
  * - 仅支持可编辑文本类型（markdown / code / csv），其他类型的 tab 在主面板不提供「在新窗口查看」入口
  *
  * 生命周期：
  *   主进程 spawn BrowserWindow → did-finish-load → IPC `viewer-load` 送文件元信息
- *   → readFile → 渲染 PreviewEditor(readOnly) → watchFile → 变化时 readFile + setContent
+ *   → readFile → 渲染 PreviewEditor(readOnly)
  *   → 窗口 close → 主进程广播 `viewer-closed` 给主 renderer 清 store
  */
 
 import { createRoot } from 'react-dom/client';
 import { useEffect, useState } from 'react';
 import { PreviewEditor } from './react/components/PreviewEditor';
-import { watchFileChanges } from './react/services/file-change-events';
+import { retainViewerLocalFileResourceWatch } from './viewer-resource-events';
 
 type ViewerMode = 'markdown' | 'code' | 'csv';
 
@@ -36,6 +36,8 @@ function typeToMode(type: string): ViewerMode {
 
 // Subset of the renderer-side `window.platform` we use in the viewer.
 interface ViewerPlatform {
+  getServerPort?(): Promise<string | number | null | undefined>;
+  getServerToken?(): Promise<string | null | undefined>;
   readFile(path: string): Promise<string | null>;
   onViewerLoad?(callback: (data: ViewerLoadPayload) => void): void;
   viewerClose?(): void;
@@ -66,7 +68,7 @@ function ViewerApp() {
     });
   }, []);
 
-  // 2. 初始读取 + 挂 file watch
+  // 2. 初始读取 + 后端 ResourceEvent live reload
   useEffect(() => {
     if (!payload?.filePath) return;
     const platform = getPlatform();
@@ -81,21 +83,7 @@ function ViewerApp() {
       setLoadError(message);
     };
 
-    // 初始内容
-    platform.readFile(payload.filePath)
-      .then((c) => {
-        if (cancelled) return;
-        if (c == null) {
-          fail(fileUnavailableError(payload));
-          return;
-        }
-        setLoadError(null);
-        setContent(c);
-      })
-      .catch(fail);
-
-    const unwatch = watchFileChanges(payload.filePath, () => {
-      if (cancelled) return;
+    const reload = () => {
       platform.readFile(payload.filePath)
         .then((c) => {
           if (cancelled) return;
@@ -107,11 +95,20 @@ function ViewerApp() {
           setContent(c);
         })
         .catch(fail);
+    };
+
+    reload();
+    const watch = retainViewerLocalFileResourceWatch(payload.filePath, platform, {
+      onChanged: reload,
+    });
+    watch.ready.catch((err) => {
+      if (cancelled) return;
+      console.warn('[viewer] ResourceIO live reload unavailable:', err);
     });
 
     return () => {
       cancelled = true;
-      unwatch();
+      watch.release();
     };
   }, [payload?.filePath]);
 

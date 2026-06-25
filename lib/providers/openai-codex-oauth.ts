@@ -4,6 +4,26 @@
  * 通过 OAuth 接入，对应 auth.json 中的 openai-codex 条目。
  */
 
+import {
+  OPENAI_FLEXIBLE_IMAGE_RATIOS,
+  enumParam,
+  integerParam,
+  mediaMode,
+  noReferenceImages,
+  referenceImages,
+} from "./media-schema-helpers.ts";
+
+const GPT_IMAGE_2_PROPERTIES = {
+  ratio: enumParam(OPENAI_FLEXIBLE_IMAGE_RATIOS, "3:2"),
+  resolution: enumParam(["1K", "2K"], "2K"),
+  quality: enumParam(["auto", "low", "medium", "high"], "auto"),
+  format: enumParam(["png", "jpeg", "webp"], "png"),
+  background: enumParam(["auto", "opaque"], "auto"),
+  output_compression: integerParam({ minimum: 0, maximum: 100 }),
+};
+
+const GPT_IMAGE_2_DEFAULTS = { ratio: "3:2", resolution: "2K" };
+
 /** @type {import('../provider-registry.ts').ProviderPlugin} */
 export const openaiCodexOAuthPlugin = {
   id: "openai-codex-oauth",
@@ -40,6 +60,12 @@ export const openaiCodexOAuthPlugin = {
             outputs: ["image"],
             supportsEdit: true,
             aliases: ["2", "image-2"],
+            modes: [
+              mediaMode("text2image", "Text to image", GPT_IMAGE_2_PROPERTIES, GPT_IMAGE_2_DEFAULTS, noReferenceImages()),
+              mediaMode("image2image", "Image edit/reference", GPT_IMAGE_2_PROPERTIES, GPT_IMAGE_2_DEFAULTS, referenceImages()),
+            ],
+            ratios: [...OPENAI_FLEXIBLE_IMAGE_RATIOS],
+            resolutions: ["1K", "2K"],
           },
         ],
       },

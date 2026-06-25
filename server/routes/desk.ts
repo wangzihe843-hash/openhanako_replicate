@@ -22,18 +22,15 @@ import { resolveCoverGalleryPresetImagePath } from "../../plugins/beautify/lib/c
 import { buildCoverStyleGuideForAgent } from "../../plugins/beautify/lib/cover-style-guide.ts";
 import { createSubmitContext, validateImageModelRef } from "../../plugins/image-gen/lib/image-task-runner.ts";
 import { DEFAULT_ACTIVITY_EXECUTION_TIMEOUT_MS, activityTimeoutPatch } from "../../lib/desk/activity-store.ts";
-import { emitAppEvent } from "../app-events.ts";
 import { t } from "../../lib/i18n.ts";
 import { realPath, isSensitivePath } from "../utils/path-security.ts";
 import { readAuthPrincipal } from "../http/capability-guard.ts";
 import { jsonRouteError } from "../http/route-errors.ts";
 import { isLocalOwnerPrincipal } from "../http/route-security.ts";
 import { createRequestContext } from "../http/boundary.ts";
-import { createModuleLogger } from "../../lib/debug-log.ts";
+import { createApiResourceOperationContext, requestIdFromHono } from "../http/resource-operation-context.ts";
 import { MountAwareFileError, MountAwareFileService } from "../../core/mount-aware-file-service.ts";
 import { materializeUploadedSkillPackage } from "../utils/uploaded-skill-package.ts";
-
-const log = createModuleLogger("desk");
 
 /** 安全路径校验：target 必须在 baseDir 内部（解析 symlink 后比较） */
 function isInsidePath(target, baseDir) {
@@ -107,6 +104,13 @@ function deskRouteError(c, code, message, status) {
   return jsonRouteError(c, { code, message, status });
 }
 
+function deskFileActionErrorMessage(err) {
+  if (err?.code === "resource_not_found") return "not found";
+  if (err?.code === "target_already_exists") return "target already exists";
+  if (err?.code === "already_exists") return "already exists";
+  return err?.message || err?.code || "file action failed";
+}
+
 function getStudioCronStore(engine) {
   return engine.getStudioCronStore?.() || null;
 }
@@ -148,111 +152,9 @@ function validateRouteExecutor(executor) {
   return `unsupported automation executor: ${executor.kind}`;
 }
 
-/** 列出工作台目录下的文件（异步） */
-async function listWorkspaceFiles(dir) {
-  let entries;
-  try {
-    entries = await fs.promises.readdir(dir, { withFileTypes: true });
-  } catch (err) {
-    // 目录不存在 → 空列表；权限错误等真实异常 → 向上抛
-    if (err.code === "ENOENT") return [];
-    throw err;
-  }
-  const items = await Promise.all(
-    entries
-      .filter(e => !e.name.startsWith("."))
-      .map(async (e) => {
-        const fullPath = path.join(dir, e.name);
-        try {
-          const stat = await fs.promises.stat(fullPath);
-          return {
-            name: e.name,
-            size: stat.size,
-            mtime: stat.mtime.toISOString(),
-            isDir: e.isDirectory(),
-          };
-        } catch (err) {
-          // ENOENT = 文件在 readdir 后被删除，正常跳过；其他错误也跳过单项不影响整体
-          if (err.code !== "ENOENT") log.warn(`stat failed for ${e.name}: ${err.message}`);
-          return null;
-        }
-      })
-  );
-  return items.filter(Boolean).sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime());
-}
-
-const WORKSPACE_SEARCH_SKIP_DIRS = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  "node_modules",
-  ".next",
-  ".turbo",
-  "dist",
-  "build",
-  "coverage",
-]);
 const WORKSPACE_SEARCH_LIMIT = 80;
 const BEAUTIFY_OPTIONAL_TOOL_NAME = "beautify";
 const MAX_COVER_UPLOAD_BYTES = 25 * 1024 * 1024;
-
-function toRelativeSubdir(root, target) {
-  const rel = path.relative(root, target);
-  return rel.split(path.sep).filter(Boolean).join("/");
-}
-
-async function searchWorkspaceFiles(root, query, {
-  limit = WORKSPACE_SEARCH_LIMIT,
-} = {}) {
-  const needle = String(query || "").trim().toLowerCase();
-  if (!needle) return [];
-  const results = [];
-
-  async function walk(dir) {
-    if (results.length >= limit) return;
-    let entries;
-    try {
-      entries = await fs.promises.readdir(dir, { withFileTypes: true });
-    } catch (err) {
-      if (err.code !== "ENOENT" && err.code !== "EACCES") {
-        log.warn(`search readdir failed for ${dir}: ${err.message}`);
-      }
-      return;
-    }
-
-    entries.sort((a, b) => a.name.localeCompare(b.name, "zh"));
-    for (const entry of entries) {
-      if (results.length >= limit) break;
-      if (entry.name.startsWith(".")) continue;
-      const fullPath = path.join(dir, entry.name);
-      const isDir = entry.isDirectory();
-      if (isDir && WORKSPACE_SEARCH_SKIP_DIRS.has(entry.name)) continue;
-      const relativePath = toRelativeSubdir(root, fullPath);
-      const parentSubdir = toRelativeSubdir(root, path.dirname(fullPath));
-
-      if (entry.name.toLowerCase().includes(needle)) {
-        try {
-          const stat = await fs.promises.stat(fullPath);
-          results.push({
-            name: entry.name,
-            relativePath,
-            parentSubdir,
-            isDir,
-            size: isDir ? null : stat.size,
-            mtime: stat.mtime.toISOString(),
-          });
-        } catch (err) {
-          if (err.code !== "ENOENT") log.warn(`search stat failed for ${entry.name}: ${err.message}`);
-        }
-      }
-
-      if (isDir) await walk(fullPath);
-    }
-  }
-
-  await walk(root);
-  return results.sort((a, b) => a.relativePath.localeCompare(b.relativePath, "zh")).slice(0, limit);
-}
 
 export function createDeskRoute(engine, hub) {
   const route = new Hono();
@@ -288,7 +190,7 @@ export function createDeskRoute(engine, hub) {
       "请按这个顺序完成：",
       "1. 阅读目标 Markdown 文件，理解文章内容和情绪。",
       "2. 你自己写一条给生图模型使用的英文提示词。",
-      "3. 调用 image-gen_generate-image 生成 1 张图片，ratio 固定传 3:2，resolution 传 2k。",
+      "3. 调用 media_generate-image 生成 1 张图片，ratio 固定传 3:2，resolution 传 2k。",
       "4. 调用 check_pending_tasks 查询本会话的图片生成任务；如果任务还没完成，停止当前轮次并说明 cover 会在后台任务完成后继续处理。",
       "5. 图片生成成功后，从 resolved 结果的 sessionFiles[0].filePath 取生成图片绝对路径。",
       "6. 调用 beautify_create-cover，把生成图片应用到 Markdown：",
@@ -487,16 +389,31 @@ export function createDeskRoute(engine, hub) {
     return !principal || principal.kind === "unknown" || isLocalOwnerPrincipal(principal);
   }
 
-  function fileServiceForRequest(c) {
+  function fileServiceForRequest(c, defaultRootOverride = null) {
     const requestContext = createRequestContext(c, engine);
     return new MountAwareFileService({
       hanakoHome: engine.hanakoHome,
-      defaultRoot: defaultDeskDir(engine),
+      defaultRoot: defaultRootOverride || defaultDeskDir(engine),
       studioId: requestContext?.studioId || engine.getRuntimeContext?.()?.studioId || null,
       createCheckpoint: typeof engine.createUserEditCheckpoint === "function"
         ? (args) => engine.createUserEditCheckpoint(args)
         : null,
+      resourceIO: resourceIOForEngine(engine),
+      operationContext: createApiResourceOperationContext({
+        requestContext,
+        requestId: requestIdFromHono(c),
+      }),
     });
+  }
+
+  function resourceIOForEngine(engine) {
+    const candidate = engine?.resourceIO || engine?.getResourceIO?.();
+    return candidate
+      && typeof candidate.stat === "function"
+      && typeof candidate.write === "function"
+      && typeof candidate.list === "function"
+      ? candidate
+      : null;
   }
 
   function resolveWorkspaceRootFromRequest(c, body = null) {
@@ -629,14 +546,6 @@ export function createDeskRoute(engine, hub) {
     return err;
   }
 
-  function emitMarkdownCoverUpdated(targetInfo) {
-    if (targetInfo.target) {
-      emitAppEvent(engine, "markdown-cover-updated", { target: targetInfo.target });
-    } else {
-      emitAppEvent(engine, "markdown-cover-updated", { filePath: targetInfo.filePath });
-    }
-  }
-
   async function validateBeautifyGenerationAccess(body) {
     const status = await getBeautifyGenerationStatus(body?.executorAgentId || body?.agentId);
     if (!status.executorAgentId) return { error: "agent unavailable", status: 500, reason: "agent-unavailable" };
@@ -685,8 +594,13 @@ export function createDeskRoute(engine, hub) {
       const result = await (applyMarkdownCoverFromGeneratedFile as any)({
         markdownFilePath: targetInfo.filePath,
         generatedFilePath: image.filePath,
+        resourceIO: resourceIOForEngine(engine),
+        operationContext: createApiResourceOperationContext({
+          requestContext: createRequestContext(c, engine),
+          requestId: requestIdFromHono(c),
+          reason: "desk.beautify.cover.apply",
+        }),
       });
-      emitMarkdownCoverUpdated(targetInfo);
       return c.json({
         ok: true,
         ...(targetInfo.target ? { target: targetInfo.target } : {}),
@@ -720,8 +634,13 @@ export function createDeskRoute(engine, hub) {
       const result = await (applyMarkdownCoverFromGeneratedFile as any)({
         markdownFilePath: targetInfo.filePath,
         generatedFilePath: imageFilePath,
+        resourceIO: resourceIOForEngine(engine),
+        operationContext: createApiResourceOperationContext({
+          requestContext: createRequestContext(c, engine),
+          requestId: requestIdFromHono(c),
+          reason: "desk.beautify.cover.preset_apply",
+        }),
       });
-      emitMarkdownCoverUpdated(targetInfo);
       return c.json({
         ok: true,
         ...(targetInfo.target ? { target: targetInfo.target } : {}),
@@ -1187,7 +1106,7 @@ export function createDeskRoute(engine, hub) {
         owner: "workspace",
       });
       if (typeof engine.syncWorkspaceSkillPaths === "function") {
-        await engine.syncWorkspaceSkillPaths(cwd, { reload: true, emitEvent: true, force: true });
+        await engine.syncWorkspaceSkillPaths(cwd, { reload: true, emitEvent: true, force: true, agentId });
       }
       return c.json({
         ok: true,
@@ -1205,6 +1124,7 @@ export function createDeskRoute(engine, hub) {
   route.post("/desk/delete-skill", async (c) => {
     const body = await safeJson(c);
     const { skillDir } = body;
+    const agentId = body.agentId || null;
     if (!skillDir) {
       return c.json({ error: "skillDir is required" }, 400);
     }
@@ -1224,7 +1144,7 @@ export function createDeskRoute(engine, hub) {
       }
       fs.rmSync(skillDir, { recursive: true, force: true });
       if (typeof engine.syncWorkspaceSkillPaths === "function") {
-        await engine.syncWorkspaceSkillPaths(cwd, { reload: true, emitEvent: true, force: true });
+        await engine.syncWorkspaceSkillPaths(cwd, { reload: true, emitEvent: true, force: true, agentId });
       }
       return c.json({ ok: true });
     } catch (err) {
@@ -1255,7 +1175,12 @@ export function createDeskRoute(engine, hub) {
     }
     const target = subdir ? path.join(dir, subdir) : dir;
     if (!isInsidePath(target, dir)) return c.json({ error: "invalid path" });
-    return c.json({ files: await listWorkspaceFiles(target), subdir: subdir || "", basePath: dir });
+    try {
+      const result = await fileServiceForRequest(c, dir).listFiles("default", subdir);
+      return c.json({ files: result.files, subdir: subdir || "", basePath: dir });
+    } catch (err) {
+      return c.json({ error: deskFileActionErrorMessage(err), ...(err?.code ? { code: err.code } : {}) }, err?.status || 400);
+    }
   });
 
   /** 搜索工作台文件名（递归，默认跳过隐藏目录和常见依赖/构建目录） */
@@ -1269,14 +1194,14 @@ export function createDeskRoute(engine, hub) {
     const limit = Number.isFinite(limitRaw) && limitRaw > 0
       ? Math.min(limitRaw, WORKSPACE_SEARCH_LIMIT)
       : WORKSPACE_SEARCH_LIMIT;
-    let stat = null;
     try {
-      stat = await fs.promises.stat(dir);
-    } catch {
-      return c.json({ results: [], basePath: dir, query });
+      await fileServiceForRequest(c, dir).listFiles("default", "");
+      const result = await fileServiceForRequest(c, dir).searchFiles("default", query);
+      return c.json({ results: result.results.slice(0, limit), basePath: dir, query });
+    } catch (err) {
+      if (err?.code === "resource_not_found") return c.json({ results: [], basePath: dir, query });
+      return c.json({ error: deskFileActionErrorMessage(err), ...(err?.code ? { code: err.code } : {}) }, err?.status || 400);
     }
-    if (!stat.isDirectory()) return c.json({ error: t("error.pathNotFound") });
-    return c.json({ results: await searchWorkspaceFiles(dir, query, { limit }), basePath: dir, query });
   });
 
   /** 读取指定目录的 jian.md */
@@ -1291,12 +1216,12 @@ export function createDeskRoute(engine, hub) {
     }
     const target = subdir ? path.join(dir, subdir) : dir;
     if (!isInsidePath(target, dir)) return c.json({ error: "invalid path" });
-    const jianPath = path.join(target, "jian.md");
-    if (!fs.existsSync(jianPath)) return c.json({ content: null });
     try {
-      return c.json({ content: fs.readFileSync(jianPath, "utf-8") });
-    } catch {
-      return c.json({ content: null });
+      const result = await fileServiceForRequest(c, dir).readText("default", subdir, "jian.md");
+      return c.json({ content: result.exists ? result.content : null });
+    } catch (err) {
+      if (err?.code === "resource_not_found") return c.json({ content: null });
+      return c.json({ error: deskFileActionErrorMessage(err), ...(err?.code ? { code: err.code } : {}) }, err?.status || 400);
     }
   });
 
@@ -1314,20 +1239,20 @@ export function createDeskRoute(engine, hub) {
     }
     const target = sub ? path.join(dir, sub) : dir;
     if (!isInsidePath(target, dir)) return c.json({ error: "invalid path" });
-    const jianPath = path.join(target, "jian.md");
 
     try {
       if (content === null || content === undefined || content.trim() === "") {
-        // 内容为空 → 删除 jian.md
-        if (fs.existsSync(jianPath)) fs.unlinkSync(jianPath);
+        await fileServiceForRequest(c, dir).safeDeleteIfExists("default", sub, "jian.md", { reason: "desk.jian.delete" });
         return c.json({ ok: true, content: null });
       }
-      // 确保目录存在
-      fs.mkdirSync(target, { recursive: true });
-      fs.writeFileSync(jianPath, content, "utf-8");
+      await fileServiceForRequest(c, dir).writeText("default", sub, {
+        action: "writeText",
+        name: "jian.md",
+        content,
+      }, { reason: "desk.jian.write" });
       return c.json({ ok: true, content });
     } catch (err) {
-      return c.json({ error: err.message });
+      return c.json({ error: deskFileActionErrorMessage(err), ...(err?.code ? { code: err.code } : {}) }, err?.status || 400);
     }
   });
 
@@ -1358,7 +1283,9 @@ export function createDeskRoute(engine, hub) {
       const target = subdir ? path.join(baseDir, subdir) : baseDir;
       return isInsidePath(target, baseDir) ? target : null;
     };
+    const reasonFor = (name) => `desk.files.${name}`;
 
+    try {
     switch (action) {
       case "upload": {
         // upload 接受调用方提供的绝对源路径列表，把本机文件复制进 desk。
@@ -1371,6 +1298,7 @@ export function createDeskRoute(engine, hub) {
         if (!Array.isArray(paths) || paths.length === 0) {
           return deskRouteError(c, "workspace_file_validation_failed", "paths required", 400);
         }
+        const files = fileServiceForRequest(c, baseDir);
         const results = [];
         for (const srcPath of paths) {
           try {
@@ -1382,20 +1310,13 @@ export function createDeskRoute(engine, hub) {
               results.push({ src: srcPath, error: "sensitive path blocked" });
               continue;
             }
-            const fname = path.basename(srcPath);
-            const dest = path.join(dir, fname);
-            const stat = fs.statSync(srcPath);
-            if (stat.isDirectory()) {
-              fs.cpSync(srcPath, dest, { recursive: true });
-            } else {
-              fs.copyFileSync(srcPath, dest);
-            }
-            results.push({ src: srcPath, name: fname });
+            const copied = await files.copyLocalPathIntoDirectory("default", subdirStr, srcPath, { reason: reasonFor("upload") });
+            results.push({ src: srcPath, name: copied.filename });
           } catch (err) {
             results.push({ src: srcPath, error: err.message });
           }
         }
-        return c.json({ ok: true, results, files: await listWorkspaceFiles(dir) });
+        return c.json({ ok: true, results, files: await files.filesForDirectory("default", subdirStr) });
       }
 
       case "create": {
@@ -1403,33 +1324,28 @@ export function createDeskRoute(engine, hub) {
           return deskRouteError(c, "workspace_file_validation_failed", "name and content required", 400);
         }
         if (!isPlainEntryName(name)) return c.json({ error: "invalid name" });
-        const createTarget = path.join(dir, name);
-        if (!isInsidePath(createTarget, dir)) return c.json({ error: "invalid name" });
-        if (fs.existsSync(createTarget)) return c.json({ error: "target already exists" });
-        fs.writeFileSync(createTarget, content, "utf-8");
-        return c.json({ ok: true, files: await listWorkspaceFiles(dir) });
+        const files = fileServiceForRequest(c, baseDir);
+        const result = await files.writeText("default", subdirStr, { action: "create", name, content }, {
+          reason: reasonFor("create"),
+          mustNotExist: true,
+        });
+        return c.json({ ok: true, files: result.files });
       }
 
       case "mkdir": {
         if (!name) return deskRouteError(c, "workspace_file_validation_failed", "name required", 400);
         if (!isPlainEntryName(name)) return c.json({ error: "invalid name" });
-        const mkTarget = path.join(dir, name);
-        if (!isInsidePath(mkTarget, dir)) return c.json({ error: "invalid name" });
-        if (fs.existsSync(mkTarget)) return c.json({ error: "already exists" });
-        fs.mkdirSync(mkTarget, { recursive: true });
-        return c.json({ ok: true, files: await listWorkspaceFiles(dir) });
+        const files = fileServiceForRequest(c, baseDir);
+        const result = await files.mkdir("default", subdirStr, { name }, { reason: reasonFor("mkdir") });
+        return c.json({ ok: true, files: result.files });
       }
 
       case "rename": {
         if (!oldName || !newName) return deskRouteError(c, "workspace_file_validation_failed", "oldName and newName required", 400);
         if (!isPlainEntryName(oldName) || !isPlainEntryName(newName)) return c.json({ error: "invalid name" });
-        const src = path.join(dir, oldName);
-        const dest = path.join(dir, newName);
-        if (!isInsidePath(src, dir) || !isInsidePath(dest, dir)) return c.json({ error: "invalid name" });
-        if (!fs.existsSync(src)) return c.json({ error: "not found" });
-        if (fs.existsSync(dest)) return c.json({ error: "target already exists" });
-        fs.renameSync(src, dest);
-        return c.json({ ok: true, files: await listWorkspaceFiles(dir) });
+        const files = fileServiceForRequest(c, baseDir);
+        const result = await files.rename("default", subdirStr, { oldName, newName }, { reason: reasonFor("rename") });
+        return c.json({ ok: true, files: result.files });
       }
 
       case "move": {
@@ -1446,21 +1362,20 @@ export function createDeskRoute(engine, hub) {
         if (!fs.existsSync(destDir) || !fs.statSync(destDir).isDirectory()) {
           return c.json({ error: "destFolder is not a directory" });
         }
+        const files = fileServiceForRequest(c, baseDir);
         const results = [];
         for (const n of names) {
-          const src = path.join(dir, path.basename(n));
-          const dest = path.join(destDir, path.basename(n));
-          if (!isInsidePath(src, dir)) { results.push({ name: n, error: "invalid name" }); continue; }
-          if (!fs.existsSync(src)) { results.push({ name: n, error: "not found" }); continue; }
-          if (fs.existsSync(dest)) { results.push({ name: n, error: "target already exists" }); continue; }
           try {
-            fs.renameSync(src, dest);
+            await files.move("default", subdirStr, {
+              name: path.basename(n),
+              destSubdir: path.basename(destFolder),
+            }, { reason: reasonFor("move") });
             results.push({ name: n, ok: true });
           } catch (err) {
-            results.push({ name: n, error: err.message });
+            results.push({ name: n, error: deskFileActionErrorMessage(err) });
           }
         }
-        return c.json({ ok: true, results, files: await listWorkspaceFiles(dir) });
+        return c.json({ ok: true, results, files: await files.filesForDirectory("default", subdirStr) });
       }
 
       case "movePaths": {
@@ -1476,63 +1391,36 @@ export function createDeskRoute(engine, hub) {
           return c.json({ error: "destSubdir is not a directory" });
         }
 
-        const affectedSubdirs = new Set([destSubdir, currentSubdir]);
-        const results = [];
-        for (const item of items) {
-          const sourceSubdir = item && typeof item.sourceSubdir === "string" ? item.sourceSubdir : "";
-          const itemName = item && typeof item.name === "string" ? path.basename(item.name) : "";
-          if (!itemName) { results.push({ name: item?.name, error: "invalid name" }); continue; }
-          const sourceDir = subdirToDir(sourceSubdir);
-          if (!sourceDir) { results.push({ name: itemName, error: "invalid sourceSubdir" }); continue; }
-
-          const src = path.join(sourceDir, itemName);
-          const dest = path.join(destDir, itemName);
-          if (!isInsidePath(src, sourceDir) || !isInsidePath(dest, destDir)) {
-            results.push({ name: itemName, error: "invalid path" });
-            continue;
-          }
-          if (!fs.existsSync(src)) { results.push({ name: itemName, error: "not found" }); continue; }
-          if (src === dest) { results.push({ name: itemName, ok: true, skipped: true }); continue; }
-          if (fs.existsSync(dest)) { results.push({ name: itemName, error: "target already exists" }); continue; }
-
-          const sourceRel = sourceSubdir ? `${sourceSubdir}/${itemName}` : itemName;
-          if (fs.statSync(src).isDirectory() && (destSubdir === sourceRel || destSubdir.startsWith(`${sourceRel}/`))) {
-            results.push({ name: itemName, error: "cannot move folder into itself" });
-            continue;
-          }
-
-          try {
-            fs.renameSync(src, dest);
-            affectedSubdirs.add(sourceSubdir);
-            affectedSubdirs.add(destSubdir);
-            results.push({ name: itemName, ok: true });
-          } catch (err) {
-            results.push({ name: itemName, error: err.message });
-          }
-        }
-
-        const filesByPath = {};
-        for (const subdir of affectedSubdirs) {
-          if (!isValidSubdir(subdir)) continue;
-          const targetDir = subdirToDir(subdir);
-          if (targetDir && fs.existsSync(targetDir) && fs.statSync(targetDir).isDirectory()) {
-            filesByPath[subdir] = await listWorkspaceFiles(targetDir);
-          }
-        }
-        return c.json({ ok: true, results, filesByPath, files: await listWorkspaceFiles(dir) });
+        const files = fileServiceForRequest(c, baseDir);
+        const result = await files.movePaths("default", {
+          items,
+          destSubdir,
+          currentSubdir,
+          createDestIfMissing: false,
+        }, { reason: reasonFor("move_paths") });
+        return c.json({
+          ok: true,
+          results: result.results,
+          filesByPath: result.filesByPath,
+          files: result.files,
+        });
       }
 
       case "remove": {
         if (!name) return deskRouteError(c, "workspace_file_validation_failed", "name required", 400);
-        const rmTarget = path.join(dir, path.basename(name));
-        if (!isInsidePath(rmTarget, dir)) return c.json({ error: "invalid name" });
-        if (!fs.existsSync(rmTarget)) return c.json({ error: "not found" });
-        fs.rmSync(rmTarget, { recursive: true, force: true });
-        return c.json({ ok: true, files: await listWorkspaceFiles(dir) });
+        const files = fileServiceForRequest(c, baseDir);
+        const result = await files.safeDelete("default", subdirStr, { name }, { reason: reasonFor("remove") });
+        return c.json({ ok: true, trashId: result.trashId, files: result.files });
       }
 
       default:
         return deskRouteError(c, "unknown_workspace_file_action", `unknown action: ${action}`, 400);
+    }
+    } catch (err) {
+      return c.json({
+        error: deskFileActionErrorMessage(err),
+        ...(err?.code ? { code: err.code } : {}),
+      }, err?.status || 400);
     }
   });
 

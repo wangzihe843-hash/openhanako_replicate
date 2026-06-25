@@ -113,6 +113,26 @@ describe("SubagentThreadStore", () => {
     });
   });
 
+  it("attachSession persists childSessionId alongside the child locator", () => {
+    const store = new SubagentThreadStore(storePath);
+    store.beginRun("workflow-1::node-1", {
+      kind: "workflow_node",
+      parentSessionId: "sess_parent",
+      parentSessionPath: "/parent.jsonl",
+    });
+
+    store.attachSession("workflow-1::node-1", "/child-moved.jsonl", {
+      childSessionId: "sess_child",
+    });
+
+    expect(store.get("workflow-1::node-1")).toMatchObject({
+      parentSessionId: "sess_parent",
+      parentSessionPath: "/parent.jsonl",
+      childSessionId: "sess_child",
+      childSessionPath: "/child-moved.jsonl",
+    });
+  });
+
   it("removes all threads owned by a parent session", () => {
     const store = new SubagentThreadStore(storePath);
     store.beginRun("a", { kind: "direct", parentSessionPath: "/s/a.jsonl" });
@@ -242,6 +262,26 @@ describe("SubagentThreadStore", () => {
         summary: "可继续",
       }),
     ]);
+  });
+
+  it("matches parent session threads by stable session id after the parent path moves", () => {
+    const originalPath = "/s/original.jsonl";
+    const movedPath = "/s/archived/renamed.jsonl";
+    const sessionId = "sess_subagent_threads";
+    const store = new SubagentThreadStore(storePath, {
+      getSessionIdForPath: (sessionPath: string) => (
+        sessionPath === originalPath || sessionPath === movedPath ? sessionId : null
+      ),
+    });
+    store.beginRun("subagent-a", { kind: "direct", parentSessionPath: originalPath });
+    store.beginRun("workflow-a", { kind: "workflow_node", parentSessionPath: originalPath });
+    store.beginRun("subagent-b", { kind: "direct", parentSessionPath: "/s/other.jsonl" });
+
+    expect(store.listOpenDirectBySession(movedPath).map((thread) => thread.threadId)).toEqual(["subagent-a"]);
+    expect(store.removeBySession(movedPath)).toBe(2);
+    expect(store.get("subagent-a")).toBeNull();
+    expect(store.get("workflow-a")).toBeNull();
+    expect(store.get("subagent-b")).toBeTruthy();
   });
 
   it("closes a direct thread explicitly and rejects closing workflow nodes through direct close", () => {

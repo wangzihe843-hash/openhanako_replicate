@@ -33,13 +33,16 @@ import { parseCSV, injectCopyButtons } from '../../utils/format';
 import { fileIconSvg } from '../../utils/icons';
 import { openFilePreview } from '../../utils/file-preview';
 import { openInternalLink, resolveLinkTarget, type LinkOpenContext } from '../../utils/link-open';
+import { showError } from '../../utils/ui-helpers';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useStore } from '../../stores';
 import { upsertPreviewItem } from '../../stores/preview-actions';
 import { isRemoteWorkbenchContentRef, normalizeWorkbenchContentRef, saveRemoteWorkbenchContent } from '../../utils/remote-file-preview';
 import { useMermaidDiagrams } from '../../hooks/use-mermaid-diagrams';
 import { LinkContextMenu, type LinkContextMenuState } from '../shared/LinkContextMenu';
+import { DocumentReferencesBlock, MarkdownPropertiesBlock } from './MarkdownChrome';
 import type { PreviewItem } from '../../types';
+import previewStyles from '../Preview.module.css';
 
 declare function t(key: string, vars?: Record<string, string | number>): string;
 
@@ -88,6 +91,24 @@ interface PreviewRendererProps {
   previewItem: PreviewItem;
 }
 
+function missingPreviewTitle(): string {
+  const translated = window.t?.('preview.fileMovedOrDeleted');
+  return translated && translated !== 'preview.fileMovedOrDeleted'
+    ? translated
+    : '原文稿已移动或者删除';
+}
+
+function MissingPreviewTarget({ previewItem }: { previewItem: PreviewItem }) {
+  const label = previewItem.title || previewItem.filePath || '';
+
+  return (
+    <div className={previewStyles.previewUnavailable} role="status" data-testid="preview-missing-target">
+      <p>{missingPreviewTitle()}</p>
+      {label && <span title={label}>{label}</span>}
+    </div>
+  );
+}
+
 // ── HtmlPreview ──
 // HTML 内容由 server 注册为 token 化短期文档；右侧 Preview 只承载本地
 // artifact/file-backed HTML，用 DOM iframe 渲染，外部网页访问交给内置浏览器。
@@ -108,6 +129,7 @@ function HtmlPreview({ previewItem }: { previewItem: PreviewItem }) {
         title: previewItem.title,
         content: previewItem.content,
         sourceFilePath: previewItem.filePath,
+        sourceRootPath: previewItem.sourceRootPath,
       }),
     })
       .then(async (res) => {
@@ -125,7 +147,7 @@ function HtmlPreview({ previewItem }: { previewItem: PreviewItem }) {
     return () => {
       cancelled = true;
     };
-  }, [previewItem.content, previewItem.filePath, previewItem.title]);
+  }, [previewItem.content, previewItem.filePath, previewItem.sourceRootPath, previewItem.title]);
 
   if (error) {
     return <pre className="preview-code">{error}</pre>;
@@ -490,10 +512,20 @@ function MarkdownPreview({ previewItem }: { previewItem: PreviewItem }) {
       ...linkContext,
       label: anchor.textContent?.trim() || undefined,
     };
-    if (resolveLinkTarget(href, context).kind === 'anchor') return;
+    const target = resolveLinkTarget(href, context);
+    if (target.kind === 'anchor') return;
     event.preventDefault();
     event.stopPropagation();
-    void openInternalLink(href, context);
+    void (async () => {
+      if (target.kind === 'file' && /\.(md|markdown|mdx|txt|csv|json|ya?ml)$/i.test(target.filePath) && window.platform?.readFileSnapshot) {
+        const snapshot = await window.platform.readFileSnapshot(target.filePath).catch(() => null);
+        if (!snapshot) {
+          showError(`Link target not found: ${target.filePath}`);
+          return;
+        }
+      }
+      await openInternalLink(href, context);
+    })();
   }, [findAnchor, linkContext]);
 
   const handleLinkContextMenu = useCallback((event: MouseEvent) => {
@@ -522,20 +554,25 @@ function MarkdownPreview({ previewItem }: { previewItem: PreviewItem }) {
     <>
       {cover && <MarkdownCoverView previewItem={previewItem} cover={cover} />}
       {cover ? (
-        <div
-          ref={divRef}
-          className="preview-markdown md-content markdown-has-cover"
-          onClick={handleLinkClick}
-          onContextMenu={handleLinkContextMenu}
-          dangerouslySetInnerHTML={{
-            __html: renderMarkdownPreview(body, {
-              filePath: previewItem.filePath,
-              getFileUrl: window.platform?.getFileUrl,
-            }),
-          }}
-        />
+        <>
+          <MarkdownPropertiesBlock content={previewItem.content} />
+          <div
+            ref={divRef}
+            className="preview-markdown md-content markdown-has-cover"
+            onClick={handleLinkClick}
+            onContextMenu={handleLinkContextMenu}
+            dangerouslySetInnerHTML={{
+              __html: renderMarkdownPreview(body, {
+                filePath: previewItem.filePath,
+                getFileUrl: window.platform?.getFileUrl,
+              }),
+            }}
+          />
+          <DocumentReferencesBlock previewItem={previewItem} />
+        </>
       ) : (
         <MarkdownNoCoverDropHost coverTarget={coverTarget}>
+          <MarkdownPropertiesBlock content={previewItem.content} />
           <div
             ref={divRef}
             className="preview-markdown md-content"
@@ -548,6 +585,7 @@ function MarkdownPreview({ previewItem }: { previewItem: PreviewItem }) {
               }),
             }}
           />
+          <DocumentReferencesBlock previewItem={previewItem} />
         </MarkdownNoCoverDropHost>
       )}
       {linkMenu && (
@@ -596,21 +634,42 @@ function CsvPreview({ content }: { content: string }) {
 }
 
 // ── PdfPreview ──
-// data: URL 在 Electron 中无法渲染大 PDF，改用 blob URL 触发 Chromium 内置查看器
+// sourceUrl 是新路径；content/base64 只保留给旧 previewItem 兼容。
 
-function PdfPreview({ content }: { content: string }) {
-  const url = useMemo(() => {
-    const raw = atob(content);
+function appendPdfViewerHash(url: string): string {
+  if (!url || url === 'about:blank') return url;
+  const params = 'toolbar=0&navpanes=0';
+  const hashIndex = url.indexOf('#');
+  if (hashIndex < 0) return `${url}#${params}`;
+  const prefix = url.slice(0, hashIndex + 1);
+  const hash = url.slice(hashIndex + 1);
+  return `${prefix}${hash ? `${hash}&` : ''}${params}`;
+}
+
+function PdfPreview({ previewItem }: { previewItem: PreviewItem }) {
+  const source = useMemo(() => {
+    if (previewItem.sourceUrl) {
+      return { url: previewItem.sourceUrl, revoke: false };
+    }
+    if (!previewItem.content) {
+      return { url: 'about:blank', revoke: false };
+    }
+    const raw = atob(previewItem.content);
     const bytes = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-    return URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-  }, [content]);
+    if (typeof URL.createObjectURL !== 'function') {
+      return { url: `data:application/pdf;base64,${previewItem.content}`, revoke: false };
+    }
+    return { url: URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })), revoke: true };
+  }, [previewItem.content, previewItem.sourceUrl]);
 
   useEffect(() => {
-    return () => URL.revokeObjectURL(url);
-  }, [url]);
+    return () => {
+      if (source.revoke) URL.revokeObjectURL(source.url);
+    };
+  }, [source]);
 
-  return <iframe className="preview-pdf" src={`${url}#toolbar=0&navpanes=0`} />;
+  return <iframe className="preview-pdf" src={appendPdfViewerHash(source.url)} />;
 }
 
 // ── FileInfoPreview ──
@@ -644,6 +703,10 @@ function FileInfoPreview({ previewItem }: { previewItem: PreviewItem }) {
 // ── PreviewRenderer ──
 
 export function PreviewRenderer({ previewItem }: PreviewRendererProps) {
+  if (previewItem.status === 'missing') {
+    return <MissingPreviewTarget previewItem={previewItem} />;
+  }
+
   switch (previewItem.type) {
     case 'html':
       return <HtmlPreview previewItem={previewItem} />;
@@ -670,7 +733,7 @@ export function PreviewRenderer({ previewItem }: PreviewRendererProps) {
       return <LegacyMediaFallback previewItem={previewItem} />;
 
     case 'pdf':
-      return <PdfPreview content={previewItem.content} />;
+      return <PdfPreview previewItem={previewItem} />;
 
     case 'docx':
       return (

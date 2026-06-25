@@ -10,6 +10,12 @@ import { debugLog } from "../debug-log.ts";
 import { downloadMedia, detectMime, formatSize, streamToBuffer } from "./media-utils.ts";
 import { createMediaCapabilities } from "./media-capabilities.ts";
 import { createStreamingCapabilities } from "./streaming-capabilities.ts";
+import {
+  createBridgePresentation,
+  FEISHU_CARDKIT_STREAM_ELEMENT_ID,
+  renderFeishuCardKitCard,
+  renderFeishuCardKitSettings,
+} from "./bridge-presentation.ts";
 import { createModuleLogger } from "../debug-log.ts";
 import {
   renderFeishuOutbound,
@@ -53,6 +59,18 @@ export const FEISHU_STREAMING_CAPABILITIES = createStreamingCapabilities({
   source: "https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/update",
 });
 
+export const FEISHU_CARDKIT_STREAMING_CAPABILITIES = createStreamingCapabilities({
+  platform: "feishu",
+  mode: "cardkit_stream",
+  scopes: ["dm"],
+  minIntervalMs: 500,
+  maxChars: 150_000,
+  renderer: "feishu_cardkit_markdown",
+  receiptMode: "fold_into_stream",
+  requiresRichStreaming: true,
+  source: "https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=content&project=cardkit&resource=card.element&version=v1",
+});
+
 const FEISHU_WS_OPEN = 1;
 const FEISHU_WS_INITIAL_POLL_MS = 500;
 const FEISHU_WS_INITIAL_MAX_CHECKS = 20;
@@ -65,6 +83,12 @@ type FeishuStreamState = {
   previousMessageId?: string | null;
   renderKind?: FeishuOutboundKind;
   missingMessageId?: boolean;
+};
+
+type FeishuCardKitStreamState = {
+  cardId: string;
+  elementId: string;
+  sequence: number;
 };
 
 function unrefTimer(timer: any) {
@@ -88,6 +112,17 @@ function extractFeishuMessageId(res: any) {
     res?.message_id,
     res?.data?.message?.message_id,
     res?.message?.message_id,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return null;
+}
+
+function extractFeishuCardId(res: any) {
+  const candidates = [
+    res?.data?.card_id,
+    res?.card_id,
   ];
   for (const value of candidates) {
     if (typeof value === "string" && value.trim()) return value;
@@ -568,6 +603,55 @@ export function createFeishuAdapter({ appId, appSecret, agentId, onMessage, onSt
     return client.im.message.create(feishuOutboundCreatePayload(chatId, rendered));
   }
 
+  function feishuCardKitCreatePayload(text: string) {
+    return {
+      data: {
+        type: "card_json",
+        data: JSON.stringify(renderFeishuCardKitCard(text)),
+      },
+    };
+  }
+
+  function feishuCardInstanceMessagePayload(chatId: string, cardId: string) {
+    return {
+      params: { receive_id_type: "chat_id" as const },
+      data: {
+        receive_id: chatId,
+        msg_type: "interactive" as const,
+        content: JSON.stringify({
+          type: "card",
+          data: { card_id: cardId },
+        }),
+      },
+    };
+  }
+
+  function nextCardKitSequence(state: FeishuCardKitStreamState) {
+    state.sequence += 1;
+    return state.sequence;
+  }
+
+  async function setCardKitStreamingMode(state: FeishuCardKitStreamState, streamingMode: boolean) {
+    return client.cardkit.v1.card.settings({
+      path: { card_id: state.cardId },
+      data: {
+        settings: renderFeishuCardKitSettings(streamingMode),
+        sequence: nextCardKitSequence(state),
+      },
+    });
+  }
+
+  async function updateCardKitMarkdownContent(state: FeishuCardKitStreamState, text: string) {
+    const presentation = createBridgePresentation(text);
+    return client.cardkit.v1.cardElement.content({
+      path: { card_id: state.cardId, element_id: state.elementId },
+      data: {
+        content: presentation.markdown || " ",
+        sequence: nextCardKitSequence(state),
+      },
+    });
+  }
+
   async function updateOutboundMessage(messageId: string, rendered: FeishuOutboundMessage) {
     return client.im.message.update(feishuOutboundUpdatePayload(messageId, rendered));
   }
@@ -595,6 +679,7 @@ export function createFeishuAdapter({ appId, appSecret, agentId, onMessage, onSt
 
   return {
     mediaCapabilities: FEISHU_MEDIA_CAPABILITIES,
+    richStreamingCapabilities: FEISHU_CARDKIT_STREAMING_CAPABILITIES,
     streamingCapabilities: FEISHU_STREAMING_CAPABILITIES,
 
     async sendReply(chatId, text) {
@@ -647,6 +732,35 @@ export function createFeishuAdapter({ appId, appSecret, agentId, onMessage, onSt
 
     async finishStreamReply(chatId, state, text) {
       await this.updateStreamReply(chatId, state, text);
+    },
+
+    async startRichStreamReply(chatId, text) {
+      const createRes = await callFeishu("CardKit 卡片创建", () => client.cardkit.v1.card.create(
+        feishuCardKitCreatePayload(text),
+      ));
+      const cardId = extractFeishuCardId(createRes);
+      if (!cardId) throw new Error("飞书 CardKit 卡片创建失败：未返回 card_id");
+      const state: FeishuCardKitStreamState = {
+        cardId,
+        elementId: FEISHU_CARDKIT_STREAM_ELEMENT_ID,
+        sequence: 1,
+      };
+      await callFeishu("CardKit 卡片发送", () => client.im.message.create(
+        feishuCardInstanceMessagePayload(chatId, cardId),
+      ));
+      await callFeishu("CardKit 流式设置", () => setCardKitStreamingMode(state, true));
+      return state;
+    },
+
+    async updateRichStreamReply(_chatId, state: FeishuCardKitStreamState, text) {
+      if (!state?.cardId) throw new Error("Feishu CardKit stream update requires cardId");
+      if (!state?.elementId) throw new Error("Feishu CardKit stream update requires elementId");
+      await callFeishu("CardKit 内容更新", () => updateCardKitMarkdownContent(state, text));
+    },
+
+    async finishRichStreamReply(chatId, state: FeishuCardKitStreamState, text) {
+      await this.updateRichStreamReply(chatId, state, text);
+      await callFeishu("CardKit 流式关闭", () => setCardKitStreamingMode(state, false));
     },
 
     /** 下载飞书图片（通过 image_key） */

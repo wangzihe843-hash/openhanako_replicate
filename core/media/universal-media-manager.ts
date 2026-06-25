@@ -4,7 +4,10 @@ import { createModuleLogger } from "../../lib/debug-log.ts";
 import { t } from "../../lib/i18n.ts";
 import { MediaAdapterRegistry } from "../media-adapter-registry.ts";
 import { createPluginConfigStore, normalizePluginConfigSchema } from "../plugin-config.ts";
-import { normalizeImageGenerationConfig } from "../preferences-manager.ts";
+import {
+  normalizeImageGenerationConfig,
+  normalizeVideoGenerationConfig,
+} from "../preferences-manager.ts";
 import { TaskStore } from "../../plugins/image-gen/lib/task-store.ts";
 import { Poller } from "../../plugins/image-gen/lib/poller.ts";
 import { submitImageGeneration } from "../../plugins/image-gen/lib/submit-image.ts";
@@ -13,21 +16,35 @@ import {
   normalizeMediaDelivery,
   retryImageTask,
 } from "../../plugins/image-gen/lib/image-task-runner.ts";
-import { volcengineImageAdapter } from "../../plugins/image-gen/adapters/volcengine.ts";
-import { openaiImageAdapter } from "../../plugins/image-gen/adapters/openai.ts";
-import { openaiCodexImageAdapter } from "../../plugins/image-gen/adapters/openai-codex.ts";
-import { minimaxImageAdapter } from "../../plugins/image-gen/adapters/minimax.ts";
-import { dashscopeImageAdapter } from "../../plugins/image-gen/adapters/dashscope.ts";
-import { geminiImageAdapter } from "../../plugins/image-gen/adapters/gemini.ts";
+import { resolveMediaParameters } from "./media-parameters.ts";
+import { builtinImageGenAdapters } from "../../plugins/image-gen/builtin-adapters.ts";
 
 const log = createModuleLogger("media");
 const IMAGE_CAPABILITY = "image_generation";
+const VIDEO_CAPABILITY = "video_generation";
 
 const IMAGE_GENERATION_CONFIG_SCHEMA = normalizePluginConfigSchema("image-gen", {
   properties: {
     defaultImageModel: {
       type: "object",
       title: "默认图片模型",
+      properties: {
+        id: { type: "string" },
+        provider: { type: "string" },
+      },
+    },
+    providerDefaults: {
+      type: "object",
+      title: "per-provider 默认参数",
+    },
+  },
+});
+
+const VIDEO_GENERATION_CONFIG_SCHEMA = normalizePluginConfigSchema("video-gen", {
+  properties: {
+    defaultVideoModel: {
+      type: "object",
+      title: "默认视频模型",
       properties: {
         id: { type: "string" },
         provider: { type: "string" },
@@ -73,11 +90,75 @@ function normalizeConfigPatch(patch) {
   return next;
 }
 
+function normalizeVideoConfigPatch(patch) {
+  const values = isObject(patch) ? patch : {};
+  const next: Record<string, any> = {};
+  if (Object.prototype.hasOwnProperty.call(values, "defaultVideoModel")) {
+    const value = values.defaultVideoModel;
+    if (value === undefined || value === null) {
+      next.defaultVideoModel = undefined;
+    } else if (isObject(value)) {
+      const provider = typeof value.provider === "string" ? value.provider.trim() : "";
+      const id = typeof value.id === "string" ? value.id.trim() : "";
+      if (!provider || !id) throw new Error("defaultVideoModel requires provider and id");
+      next.defaultVideoModel = { provider, id };
+    } else {
+      throw new Error("defaultVideoModel must be an object with provider and id");
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(values, "providerDefaults")) {
+    const value = values.providerDefaults;
+    if (value === undefined || value === null) {
+      next.providerDefaults = undefined;
+    } else if (isObject(value)) {
+      next.providerDefaults = structuredClone(value);
+    } else {
+      throw new Error("providerDefaults must be an object");
+    }
+  }
+  return next;
+}
+
 function textOrNull(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function normalizeSessionRefPayload(payload: any = {}) {
+  const rawRef = payload.sessionRef && typeof payload.sessionRef === "object" ? payload.sessionRef : null;
+  const sessionId = textOrNull(payload.sessionId) || textOrNull(rawRef?.sessionId);
+  const sessionPath =
+    textOrNull(payload.sessionPath)
+    || textOrNull(rawRef?.sessionPath)
+    || textOrNull(rawRef?.path);
+  const legacySessionPath =
+    textOrNull(payload.legacySessionPath)
+    || textOrNull(rawRef?.legacySessionPath)
+    || (sessionId && sessionPath ? sessionPath : null);
+  const sessionRef = sessionId
+    ? {
+      sessionId,
+      ...(sessionPath ? { sessionPath } : {}),
+      ...(legacySessionPath ? { legacySessionPath } : {}),
+    }
+    : null;
+  return { sessionId, sessionPath, sessionRef };
+}
+
+function logInfo(logger, message) {
+  const fn = typeof logger?.info === "function"
+    ? logger.info
+    : typeof logger?.log === "function"
+      ? logger.log
+      : null;
+  try {
+    fn?.call(logger, message);
+  } catch {
+    // Logging must not break media adapter lifecycle state changes.
+  }
+}
+
 function normalizeImageInput(input: any = {}, {
+  sessionId = null,
   sessionPath = null,
   sessionFiles = null,
   allowRawReferences = false,
@@ -88,6 +169,7 @@ function normalizeImageInput(input: any = {}, {
       throw new Error("referenceImages must be an array of session_file references");
     }
     next.referenceImages = resolveImageReferences(next.referenceImages, {
+      sessionId,
       sessionPath,
       sessionFiles,
       allowRawReferences,
@@ -97,6 +179,7 @@ function normalizeImageInput(input: any = {}, {
   if (Object.prototype.hasOwnProperty.call(next, "image") && next.image !== undefined) {
     const images = Array.isArray(next.image) ? next.image : [next.image];
     const resolved = resolveImageReferences(images, {
+      sessionId,
       sessionPath,
       sessionFiles,
       allowRawReferences,
@@ -111,6 +194,7 @@ function normalizeImageInput(input: any = {}, {
 }
 
 function resolveImageReferences(references, {
+  sessionId,
   sessionPath,
   sessionFiles,
   allowRawReferences,
@@ -118,6 +202,7 @@ function resolveImageReferences(references, {
 }: any = {}) {
   return references
     .map((reference) => resolveImageReference(reference, {
+      sessionId,
       sessionPath,
       sessionFiles,
       allowRawReferences,
@@ -127,6 +212,7 @@ function resolveImageReferences(references, {
 }
 
 function resolveImageReference(reference, {
+  sessionId,
   sessionPath,
   sessionFiles,
   allowRawReferences,
@@ -147,9 +233,9 @@ function resolveImageReference(reference, {
   }
   const fileId = textOrNull(reference.fileId) || textOrNull(reference.id);
   if (!fileId) throw new Error(`${fieldName} session_file reference requires fileId`);
-  if (!sessionPath) throw new Error("sessionPath is required to resolve session_file references");
+  if (!sessionId && !sessionPath) throw new Error("sessionId or sessionPath is required to resolve session_file references");
   if (!sessionFiles?.get) throw new Error("session file registry unavailable");
-  const file = sessionFiles.get(fileId, { sessionPath });
+  const file = sessionFiles.get(fileId, { sessionId, sessionPath });
   if (!file) throw new Error(`session file not found: ${fileId}`);
   if (file.kind !== "image" && !String(file.mime || "").startsWith("image/")) {
     throw new Error(`${fieldName} session_file must reference an image file`);
@@ -161,6 +247,19 @@ function resolveImageReference(reference, {
 
 function normalizeMediaKind(payload) {
   return textOrNull(payload?.kind) || textOrNull(payload?.type) || textOrNull(payload?.mediaKind) || "image";
+}
+
+function projectMediaProviderModel(model, adapterAvailable) {
+  const name = model.displayName || model.name || model.id;
+  return {
+    ...model,
+    id: model.id,
+    name,
+    displayName: name,
+    protocolId: model.protocolId,
+    credentialLaneId: model.credentialLaneId,
+    adapterAvailable,
+  };
 }
 
 export class UniversalMediaManager {
@@ -239,14 +338,7 @@ export class UniversalMediaManager {
   }
 
   _registerBuiltinAdapters() {
-    for (const adapter of [
-      volcengineImageAdapter,
-      openaiImageAdapter,
-      openaiCodexImageAdapter,
-      minimaxImageAdapter,
-      dashscopeImageAdapter,
-      geminiImageAdapter,
-    ]) {
+    for (const adapter of builtinImageGenAdapters) {
       this.registerAdapter(adapter);
     }
   }
@@ -269,6 +361,22 @@ export class UniversalMediaManager {
       },
       getSchema() {
         return structuredClone(IMAGE_GENERATION_CONFIG_SCHEMA);
+      },
+    };
+  }
+
+  _createVideoConfigBridge() {
+    return {
+      get: (key) => {
+        const config = this.getVideoConfig();
+        if (!key) return structuredClone(config);
+        return config[key];
+      },
+      getAll: () => {
+        return structuredClone(this.getVideoConfig());
+      },
+      getSchema() {
+        return structuredClone(VIDEO_GENERATION_CONFIG_SCHEMA);
       },
     };
   }
@@ -301,6 +409,37 @@ export class UniversalMediaManager {
     return structuredClone(normalized);
   }
 
+  getVideoConfig() {
+    return normalizeVideoGenerationConfig(this._preferences.getVideoGenerationConfig?.() || {});
+  }
+
+  setVideoConfig(patch) {
+    const updates = normalizeVideoConfigPatch(patch);
+    this._validateVideoConfigPatch(updates);
+    const current = this.getVideoConfig();
+    const next = { ...current };
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined) delete next[key];
+      else next[key] = value;
+    }
+    const normalized = normalizeVideoGenerationConfig(next);
+    this._preferences.setVideoGenerationConfig?.(normalized);
+    return structuredClone(normalized);
+  }
+
+  _validateVideoConfigPatch(updates) {
+    if (!Object.prototype.hasOwnProperty.call(updates, "defaultVideoModel")) return;
+    const value = updates.defaultVideoModel;
+    if (value === undefined || value === null) return;
+    this.resolveVideoModelRef({ providerId: value.provider, modelId: value.id });
+  }
+
+  async validateVideoConfigPatch(updates) {
+    const patch = normalizeVideoConfigPatch(updates);
+    this._validateVideoConfigPatch(patch);
+    return null;
+  }
+
   _validateImageConfigPatch(updates) {
     if (!Object.prototype.hasOwnProperty.call(updates, "defaultImageModel")) return;
     const value = updates.defaultImageModel;
@@ -314,8 +453,8 @@ export class UniversalMediaManager {
     return null;
   }
 
-  registerAdapter(adapter) {
-    this._registry.register(adapter);
+  registerAdapter(adapter, options: any = {}) {
+    this._registry.register(adapter, options);
   }
 
   unregisterAdapter(adapterId) {
@@ -367,20 +506,21 @@ export class UniversalMediaManager {
       bus.handle("media:generate-image", (payload: any = {}) => this.generateImageFromBus(payload)),
       bus.handle("media:generate-video", (payload: any = {}) => this.generateVideoFromBus(payload)),
       bus.handle("media:transcribe-audio", (payload: any = {}) => this.transcribeAudio(payload)),
-      bus.handle("media-gen:register-adapter", ({ adapter }) => {
-        this.registerAdapter(adapter);
-        this._log.info(`adapter registered: ${adapter?.id}`);
+      bus.handle("media-gen:register-adapter", (payload: any = {}, requestContext: any = null) => {
+        const { adapter } = payload;
+        this.registerAdapter(adapter, { owner: requestContext?.caller || null });
+        logInfo(this._log, `adapter registered: ${adapter?.id}`);
         return { ok: true };
       }),
       bus.handle("media-gen:unregister-adapter", ({ adapterId }) => {
         this.unregisterAdapter(adapterId);
-        this._log.info(`adapter unregistered: ${adapterId}`);
+        logInfo(this._log, `adapter unregistered: ${adapterId}`);
         return { ok: true };
       }),
       bus.subscribe((event) => {
         if (event?.type !== "media-gen:adapter-removed" || !event.adapterId) return;
         this.unregisterAdapter(event.adapterId);
-        this._log.info(`adapter removed (event): ${event.adapterId}`);
+        logInfo(this._log, `adapter removed (event): ${event.adapterId}`);
       }),
       bus.handle("media-gen:list-adapters", () => ({
         adapters: this._registry.list().map((adapter) => ({
@@ -423,16 +563,25 @@ export class UniversalMediaManager {
       log: this._log,
       generatedDir: this._generatedDir,
       config: this._config,
+      videoConfig: this._createVideoConfigBridge(),
     };
   }
 
-  _toolContext({ sessionPath = null, bridgeContext = null }: any = {}) {
+  _submitContextForAdapter(adapter) {
+    const baseContext = this._submitContext();
+    return this._registry.createSubmitContextForAdapter?.(adapter, baseContext) || baseContext;
+  }
+
+  _toolContext({ sessionId = null, sessionPath = null, sessionRef = null, bridgeContext = null }: any = {}) {
     return {
       dataDir: this._dataDir,
       bus: this._bus,
       log: this._log,
       config: this._config,
+      videoConfig: this._createVideoConfigBridge(),
+      sessionId,
       sessionPath,
+      sessionRef,
       bridgeContext,
       _mediaGen: this.runtime,
     };
@@ -453,7 +602,8 @@ export class UniversalMediaManager {
   }
 
   async generateImageFromBus(payload: any = {}, { allowRawReferences = false }: any = {}) {
-    const sessionPath = textOrNull(payload.sessionPath);
+    const sessionTarget = normalizeSessionRefPayload(payload);
+    const { sessionId, sessionPath, sessionRef } = sessionTarget;
     const inputSource = payload.input && isObject(payload.input)
       ? {
         ...payload.input,
@@ -475,11 +625,12 @@ export class UniversalMediaManager {
         deliveryMode: payload.deliveryMode,
       };
     const delivery = normalizeMediaDelivery(inputSource);
-    if (!sessionPath && !isResponseDelivery(delivery)) throw new Error("sessionPath is required");
+    if (!sessionId && !sessionPath && !isResponseDelivery(delivery)) throw new Error("sessionId or sessionPath is required");
     const input = normalizeImageInput({
       ...inputSource,
       delivery,
     }, {
+        sessionId,
         sessionPath,
         sessionFiles: this._sessionFiles,
         allowRawReferences,
@@ -487,7 +638,9 @@ export class UniversalMediaManager {
     if (!textOrNull(input.prompt)) throw new Error("prompt is required");
     return this.submitImage({
       input,
+      sessionId,
       sessionPath,
+      sessionRef,
       metadata: {
         ...(isObject(payload.metadata) ? payload.metadata : {}),
         ...(textOrNull(payload.pluginId) ? { pluginId: textOrNull(payload.pluginId) } : {}),
@@ -497,63 +650,93 @@ export class UniversalMediaManager {
     });
   }
 
-  async submitImage({ input, sessionPath, metadata = null, deliveryTarget = undefined, bridgeContext = null }: any = {}) {
+  async submitImage({ input, sessionId = null, sessionPath, sessionRef = null, metadata = null, deliveryTarget = undefined, bridgeContext = null }: any = {}) {
     if (!this._bus || !this._poller) throw new Error(t("plugin.imageGen.notInitialized"));
     return submitImageGeneration({
       input,
-      ctx: this._toolContext({ sessionPath, bridgeContext }),
+      ctx: this._toolContext({ sessionId, sessionPath, sessionRef, bridgeContext }),
       metadata,
       deliveryTarget,
     } as any);
   }
 
   async generateVideoFromBus(payload: any = {}) {
-    const sessionPath = textOrNull(payload.sessionPath);
-    const input = payload.input && isObject(payload.input)
+    const sessionTarget = normalizeSessionRefPayload(payload);
+    const { sessionId, sessionPath, sessionRef } = sessionTarget;
+    const inputSource = payload.input && isObject(payload.input)
       ? {
         ...payload.input,
         ...(payload.delivery !== undefined ? { delivery: payload.delivery } : {}),
         ...(payload.deliveryMode !== undefined ? { deliveryMode: payload.deliveryMode } : {}),
       }
       : payload;
-    const delivery = normalizeMediaDelivery(input);
-    if (!sessionPath && !isResponseDelivery(delivery)) throw new Error("sessionPath is required");
-    return this.submitVideo({ input, sessionPath });
+    const delivery = normalizeMediaDelivery(inputSource);
+    if (!sessionId && !sessionPath && !isResponseDelivery(delivery)) throw new Error("sessionId or sessionPath is required");
+    const input = normalizeImageInput({
+      ...inputSource,
+      delivery,
+    }, {
+      sessionId,
+      sessionPath,
+      sessionFiles: this._sessionFiles,
+      allowRawReferences: false,
+    });
+    return this.submitVideo({ input, sessionId, sessionPath, sessionRef });
   }
 
-  async submitVideo({ input = {}, sessionPath }: any = {}) {
+  async submitVideo({ input = {}, sessionId = null, sessionPath = null, sessionRef = null }: any = {}) {
     if (!this._bus || !this._poller) throw new Error(t("plugin.imageGen.notInitialized"));
     if (!textOrNull(input.prompt)) throw new Error("prompt is required");
     const delivery = normalizeMediaDelivery(input);
     const responseDelivery = isResponseDelivery(delivery);
-    if (!sessionPath && !responseDelivery) throw new Error("sessionPath is required");
-    const adapter = input.provider
-      ? this._registry.get(input.provider)
-      : this._registry.getByType("video").at(-1) || null;
+    if (!sessionId && !sessionPath && !responseDelivery) throw new Error("sessionId or sessionPath is required");
+    const target = this._resolveVideoTarget(input);
+    const adapter = target?.adapter || null;
     if (!adapter) throw new Error(t("toolDef.generateVideo.noProvider"));
+    const providerDefaults = this.getVideoConfig()?.providerDefaults?.[target.providerId] || {};
+    const parameterResolution = resolveMediaParameters({
+      kind: "video",
+      input,
+      providerId: target.providerId,
+      model: target.model,
+      providerDefaults,
+    });
 
     const batchId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const params = {
       type: "video",
       prompt: input.prompt,
+      ...parameterResolution.resolvedParameters,
       ...(input.image && { image: input.image }),
-      ...(input.duration && { duration: input.duration }),
-      ...(input.ratio && { ratio: input.ratio }),
-      ...(input.model && { model: input.model }),
+      mode: parameterResolution.modeId,
+      resolvedParameters: parameterResolution.resolvedParameters,
+      ...(target?.providerId ? { providerId: target.providerId } : {}),
+      ...(target?.modelId ? { modelId: target.modelId, model: target.modelId } : (input.model ? { model: input.model } : {})),
+      ...(target?.protocolId ? { protocolId: target.protocolId } : {}),
+      ...(target?.credentialLaneId ? { credentialLaneId: target.credentialLaneId } : {}),
+      ...(target?.credentialProviderId ? { credentialProviderId: target.credentialProviderId } : {}),
     };
-    const result = await adapter.submit(params, this._submitContext());
+    const result = await adapter.submit(params, this._submitContextForAdapter(adapter));
     if (!result?.taskId) throw new Error(t("toolDef.generateVideo.submitFailedUnknown"));
 
     this._store.add({
       taskId: result.taskId,
       adapterId: adapter.id,
+      ...(result.providerTaskId || result.adapterTaskId ? { adapterTaskId: result.providerTaskId || result.adapterTaskId } : {}),
       batchId,
       type: "video",
       prompt: input.prompt,
       params,
+      sessionId,
       sessionPath,
+      sessionRef,
       deliveryMode: delivery.mode,
       delivery,
+      ...(target?.providerId ? { providerId: target.providerId } : {}),
+      ...(target?.modelId ? { modelId: target.modelId } : {}),
+      ...(target?.protocolId ? { protocolId: target.protocolId } : {}),
+      ...(target?.credentialLaneId ? { credentialLaneId: target.credentialLaneId } : {}),
+      ...(target?.credentialProviderId ? { credentialProviderId: target.credentialProviderId } : {}),
     });
     if (result.files?.length) {
       this._store.update(result.taskId, { files: result.files });
@@ -562,7 +745,9 @@ export class UniversalMediaManager {
     if (!responseDelivery) {
       await this._bus.request("deferred:register", {
         taskId: result.taskId,
+        sessionId,
         sessionPath,
+        sessionRef,
         meta: {
           type: "video-generation",
           mediaKind: "video",
@@ -576,6 +761,8 @@ export class UniversalMediaManager {
       await this._bus.request("task:register", {
         taskId: result.taskId,
         type: "media-generation",
+        sessionId,
+        sessionRef,
         parentSessionPath: sessionPath,
         meta: { type: "video-generation", prompt: input.prompt },
       }).catch(() => {});
@@ -589,6 +776,139 @@ export class UniversalMediaManager {
       prompt: input.prompt,
       delivery,
       tasks: [{ taskId: result.taskId }],
+    };
+  }
+
+  _resolveVideoTarget(input: any = {}) {
+    const providerId = textOrNull(input.provider);
+    const modelId = textOrNull(input.model) || textOrNull(input.modelId);
+
+    if (providerId && modelId) {
+      try {
+        return this._videoTargetFromMediaRef({ providerId, modelId });
+      } catch (err) {
+        const legacyAdapter = this._registry.get(providerId);
+        if (legacyAdapter) {
+          return {
+            adapter: legacyAdapter,
+            providerId,
+            modelId,
+            model: null,
+            protocolId: legacyAdapter.protocolId || null,
+            credentialLaneId: null,
+            credentialProviderId: providerId,
+          };
+        }
+        throw err;
+      }
+    }
+
+    if (providerId) {
+      const provider = this._providers.getMediaProviders(VIDEO_CAPABILITY)
+        .find((item) => item.providerId === providerId);
+      for (const model of provider?.models || []) {
+        const target = this._videoTargetFromMediaRef({ providerId, modelId: model.id }, { strict: false });
+        if (target) return target;
+      }
+      const adapter = this._registry.get(providerId);
+      if (adapter) {
+        return {
+          adapter,
+          providerId,
+          modelId: null,
+          model: null,
+          protocolId: adapter.protocolId || null,
+          credentialLaneId: null,
+          credentialProviderId: providerId,
+        };
+      }
+      return null;
+    }
+
+    if (modelId) {
+      const matches = [];
+      for (const provider of this._providers.getMediaProviders(VIDEO_CAPABILITY) || []) {
+        if (provider.models?.some?.((model) => model.id === modelId || model.aliases?.includes?.(modelId))) {
+          matches.push({ providerId: provider.providerId, modelId });
+        }
+      }
+      if (matches.length > 1) throw new Error(`Video model "${modelId}" is available from multiple providers`);
+      if (matches.length === 1) return this._videoTargetFromMediaRef(matches[0]);
+      throw new Error(`Video model "${modelId}" not found`);
+    }
+
+    const defaultModel = this.getVideoConfig()?.defaultVideoModel;
+    if (defaultModel?.provider && defaultModel.id) {
+      return this._videoTargetFromMediaRef({
+        providerId: defaultModel.provider,
+        modelId: defaultModel.id,
+      });
+    }
+
+    for (const provider of this._providers.getMediaProviders(VIDEO_CAPABILITY) || []) {
+      for (const model of provider.models || []) {
+        const target = this._videoTargetFromMediaRef({ providerId: provider.providerId, modelId: model.id }, { strict: false });
+        if (target) return target;
+      }
+    }
+
+    const adapter = this._registry.getByType("video").at(-1) || null;
+    if (!adapter) return null;
+    return {
+      adapter,
+      providerId: adapter.id || null,
+      modelId: null,
+      model: null,
+      protocolId: adapter.protocolId || null,
+      credentialLaneId: null,
+      credentialProviderId: adapter.id || null,
+    };
+  }
+
+  _videoTargetFromMediaRef(ref, { strict = true }: any = {}) {
+    let resolved;
+    try {
+      resolved = this._providers.resolveMediaModel({
+        providerId: ref.providerId,
+        modelId: ref.modelId,
+        capability: VIDEO_CAPABILITY,
+      });
+    } catch (err) {
+      if (strict) throw err;
+      return null;
+    }
+    const protocolId = resolved?.model?.protocolId;
+    if (!protocolId) {
+      if (strict) throw new Error(`Media model "${ref.providerId}/${ref.modelId}" missing protocolId`);
+      return null;
+    }
+    const adapter = this._registry.getProtocol?.(protocolId) || this._registry.get?.(resolved.providerId);
+    if (!adapter) {
+      if (strict) throw new Error(`No video generation adapter registered for protocol "${protocolId}"`);
+      return null;
+    }
+    return {
+      adapter,
+      providerId: resolved.providerId,
+      modelId: resolved.model.id,
+      model: resolved.model,
+      protocolId,
+      credentialLaneId: resolved.credentialLane?.id || null,
+      credentialProviderId: resolved.credentialLane?.providerId || resolved.providerId,
+    };
+  }
+
+  resolveVideoModelRef(ref: any = {}) {
+    const providerId = ref.providerId || ref.provider;
+    const modelId = ref.modelId || ref.id || ref.model;
+    const target = this._videoTargetFromMediaRef({ providerId, modelId });
+    return {
+      providerId: target.providerId,
+      modelId: target.modelId,
+      protocolId: target.protocolId,
+      adapterId: target.adapter?.id || null,
+      credentialLaneId: target.credentialLaneId || null,
+      credentialProviderId: target.credentialProviderId || target.providerId,
     };
   }
 
@@ -656,14 +976,10 @@ export class UniversalMediaManager {
     for (const provider of this._providers.getMediaProviders(IMAGE_CAPABILITY) || []) {
       const credentialStatus = this._providers.getMediaProviderCredentialStatus?.(provider.providerId, IMAGE_CAPABILITY) || {};
       const models = (provider.models || [])
-        .map((model) => ({
-          id: model.id,
-          name: model.displayName || model.name || model.id,
-          displayName: model.displayName || model.name || model.id,
-          protocolId: model.protocolId,
-          credentialLaneId: model.credentialLaneId,
-          adapterAvailable: this.hasAdapterForImageModel(provider.providerId, model),
-        }))
+        .map((model) => projectMediaProviderModel(
+          model,
+          this.hasAdapterForImageModel(provider.providerId, model),
+        ))
         .filter((model) => {
           if (model.adapterAvailable) return true;
           this._log.warn(
@@ -701,6 +1017,52 @@ export class UniversalMediaManager {
     return Boolean(this._registry.getProtocol?.(model.protocolId) || this._registry.get(providerId));
   }
 
+  async listVideoProviders() {
+    const providers: any = {};
+    for (const provider of this._providers.getMediaProviders(VIDEO_CAPABILITY) || []) {
+      const credentialStatus = this._providers.getMediaProviderCredentialStatus?.(provider.providerId, VIDEO_CAPABILITY) || {};
+      const models = (provider.models || [])
+        .map((model) => projectMediaProviderModel(
+          model,
+          this.hasAdapterForVideoModel(provider.providerId, model),
+        ))
+        .filter((model) => {
+          if (model.adapterAvailable) return true;
+          this._log.warn(
+            `[media] settings hide video model "${provider.providerId}/${model.id}": `
+            + (model.protocolId
+              ? `no adapter registered for protocol "${model.protocolId}"`
+              : "protocol unrecognized (model has no protocolId)"),
+          );
+          return false;
+        });
+      if (!models.length) continue;
+      const modelIds = new Set(models.map((model) => model.id));
+      providers[provider.providerId] = {
+        ...provider,
+        ...credentialStatus,
+        hasCredentials: credentialStatus.hasCredentials === true,
+        unavailableReason: credentialStatus.unavailableReason || null,
+        credentialLanes: credentialStatus.lanes,
+        activeCredentialLaneId: credentialStatus.activeLaneId || null,
+        activeCredentialProviderId: credentialStatus.activeProviderId || null,
+        models,
+        availableModels: Array.isArray(provider.availableModels)
+          ? provider.availableModels.filter((model) => modelIds.has(model.id))
+          : [],
+      };
+    }
+    return {
+      providers,
+      config: this.getVideoConfig(),
+    };
+  }
+
+  hasAdapterForVideoModel(providerId, model) {
+    if (!model?.protocolId) return false;
+    return Boolean(this._registry.getProtocol?.(model.protocolId) || this._registry.get(providerId));
+  }
+
   resolveImageModelRef(ref: any = {}) {
     const providerId = ref.providerId || ref.provider;
     const modelId = ref.modelId || ref.id || ref.model;
@@ -732,6 +1094,18 @@ export class UniversalMediaManager {
 
   async removeImageProviderModel(providerId, modelId) {
     this._providers.removeMediaModel(providerId, IMAGE_CAPABILITY, modelId);
+    await this._onProviderChanged();
+    return { ok: true };
+  }
+
+  async setVideoProviderModel(providerId, model) {
+    this._providers.addMediaModel(providerId, VIDEO_CAPABILITY, model);
+    await this._onProviderChanged();
+    return { ok: true };
+  }
+
+  async removeVideoProviderModel(providerId, modelId) {
+    this._providers.removeMediaModel(providerId, VIDEO_CAPABILITY, modelId);
     await this._onProviderChanged();
     return { ok: true };
   }

@@ -1,3 +1,25 @@
+import type {
+  PluginResourceDescriptor,
+  PluginResourceEdit,
+  PluginResourceListItem,
+  PluginResourceListResult,
+  PluginResourceMaterializeResult,
+  PluginResourceMoveResult,
+  PluginResourceReadResult,
+  PluginResourceRef,
+  PluginResourceSearchMatch,
+  PluginResourceSearchOptions,
+  PluginResourceSearchResult,
+  PluginResourceStat,
+  PluginResourceTrashOptions,
+  PluginResourceTrashResult,
+  PluginResourceVersion,
+  PluginResourceWatchTarget,
+  PluginResourceWriteConflictResult,
+  PluginResourceWriteExpectedVersionResult,
+  PluginResourceMutationResult,
+} from '@hana/plugin-protocol';
+
 export type MaybePromise<T> = T | Promise<T>;
 
 export type JsonSchema = Record<string, unknown>;
@@ -9,9 +31,23 @@ export interface HanaToolResult {
   details?: Record<string, unknown>;
 }
 
+export interface HanaSessionRef {
+  sessionId: string;
+  sessionPath?: string | null;
+  legacySessionPath?: string | null;
+}
+
+export type HanaSessionTarget = string | HanaSessionRef | {
+  sessionId?: string | null;
+  sessionPath?: string | null;
+  path?: string | null;
+  legacySessionPath?: string | null;
+};
+
 export interface HanaSessionFile {
   id?: string | null;
   fileId?: string | null;
+  sessionId?: string | null;
   sessionPath?: string | null;
   filePath?: string;
   realPath?: string;
@@ -69,6 +105,64 @@ export interface HanaResourceEnvelope {
   [key: string]: unknown;
 }
 
+export type HanaResourceRef = PluginResourceRef;
+export type HanaResourceVersion = PluginResourceVersion;
+export type HanaResourceDescriptor = PluginResourceDescriptor;
+export type HanaResourceStat = PluginResourceStat;
+export type HanaResourceReadResult = PluginResourceReadResult;
+export type HanaResourceMutationResult = PluginResourceMutationResult;
+export type HanaResourceWriteConflictResult = PluginResourceWriteConflictResult;
+export type HanaResourceWriteExpectedVersionResult = PluginResourceWriteExpectedVersionResult;
+export type HanaResourceMoveResult = PluginResourceMoveResult;
+export type HanaResourceTrashOptions = PluginResourceTrashOptions;
+export type HanaResourceTrashResult = PluginResourceTrashResult;
+export type HanaResourceEdit = PluginResourceEdit;
+export type HanaResourceListItem = PluginResourceListItem;
+export type HanaResourceListResult = PluginResourceListResult;
+export type HanaResourceSearchOptions = PluginResourceSearchOptions;
+export type HanaResourceSearchMatch = PluginResourceSearchMatch;
+export type HanaResourceSearchResult = PluginResourceSearchResult;
+export type HanaResourceMaterializeResult = PluginResourceMaterializeResult;
+export type HanaResourceWatchTarget = PluginResourceWatchTarget;
+
+export interface HanaPluginResourceMutationOptions {
+  emit?: boolean;
+}
+
+export interface HanaPluginResourceWatchOptions {
+  purpose?: string | null;
+  sessionRef?: HanaSessionRef | { sessionPath?: string | null; path?: string | null } | null;
+  /** @deprecated Prefer sessionId/sessionRef on the invocation context. */
+  sessionPath?: string | null;
+}
+
+export interface HanaResourceWatchSubscription {
+  subscriptionId: string;
+  resourceKeys: string[];
+  unsubscribe(): boolean;
+  close(): boolean;
+}
+
+export interface HanaPluginResources {
+  stat(ref: HanaResourceRef | Record<string, unknown>): Promise<HanaResourceStat>;
+  read(ref: HanaResourceRef | Record<string, unknown>): Promise<HanaResourceReadResult>;
+  list(ref: HanaResourceRef | Record<string, unknown>): Promise<HanaResourceListResult>;
+  search(ref: HanaResourceRef | Record<string, unknown>, options?: HanaResourceSearchOptions): Promise<HanaResourceSearchResult>;
+  materialize(ref: HanaResourceRef | Record<string, unknown>): Promise<HanaResourceMaterializeResult>;
+  write(ref: HanaResourceRef | Record<string, unknown>, content: string | Uint8Array | ArrayBuffer, options?: HanaPluginResourceMutationOptions): Promise<HanaResourceMutationResult>;
+  writeExpectedVersion(ref: HanaResourceRef | Record<string, unknown>, content: string | Uint8Array | ArrayBuffer, expectedVersion: HanaResourceVersion, options?: HanaPluginResourceMutationOptions): Promise<HanaResourceWriteExpectedVersionResult>;
+  edit(ref: HanaResourceRef | Record<string, unknown>, edits: HanaResourceEdit[], options?: HanaPluginResourceMutationOptions): Promise<HanaResourceMutationResult>;
+  mkdir(ref: HanaResourceRef | Record<string, unknown>, options?: HanaPluginResourceMutationOptions): Promise<HanaResourceMutationResult>;
+  delete(ref: HanaResourceRef | Record<string, unknown>, options?: HanaPluginResourceMutationOptions): Promise<HanaResourceMutationResult>;
+  copy(from: HanaResourceRef | Record<string, unknown>, to: HanaResourceRef | Record<string, unknown>, options?: HanaPluginResourceMutationOptions): Promise<HanaResourceMutationResult>;
+  rename(from: HanaResourceRef | Record<string, unknown>, to: HanaResourceRef | Record<string, unknown>, options?: HanaPluginResourceMutationOptions): Promise<HanaResourceMoveResult>;
+  move(from: HanaResourceRef | Record<string, unknown>, to: HanaResourceRef | Record<string, unknown>, options?: HanaPluginResourceMutationOptions): Promise<HanaResourceMoveResult>;
+  trash(ref: HanaResourceRef | Record<string, unknown>, trashOptions?: HanaResourceTrashOptions, options?: HanaPluginResourceMutationOptions): Promise<HanaResourceTrashResult>;
+  watch(ref: HanaResourceRef | Record<string, unknown>, options?: HanaPluginResourceWatchOptions): HanaResourceWatchSubscription;
+  subscribe(resources: Array<HanaResourceRef | Record<string, unknown>>, options?: HanaPluginResourceWatchOptions): HanaResourceWatchSubscription;
+  resolveWatchTarget?(ref: HanaResourceRef | Record<string, unknown>, options?: HanaPluginResourceWatchOptions): HanaResourceWatchTarget;
+}
+
 export interface HanaExecutionBoundary {
   schemaVersion: 1;
   boundaryId: string;
@@ -99,6 +193,7 @@ export interface HanaExecutionBoundary {
 export interface HanaSessionFileMediaItem {
   type: 'session_file';
   fileId: string;
+  sessionId?: string | null;
   sessionPath?: string | null;
   filePath?: string;
   label?: string;
@@ -120,6 +215,37 @@ export interface HanaMediaDetails {
   };
 }
 
+export interface HanaChatSurfaceCardOptions {
+  title?: string;
+  description?: string;
+  mode?: 'transcript' | 'full' | string;
+  composer?: boolean;
+  aspectRatio?: string;
+}
+
+export interface HanaChatSurfaceCardDetails {
+  type: 'chat.surface';
+  pluginId: string;
+  sessionId: string;
+  sessionRef: HanaSessionRef;
+  sessionPath?: string;
+  title?: string;
+  description: string;
+  mode: 'transcript' | 'full' | string;
+  composer?: boolean;
+  aspectRatio?: string;
+}
+
+export interface HanaPluginNetworkFetchInit extends RequestInit {
+  timeoutMs?: number;
+  cacheTtlMs?: number;
+  maxResponseBytes?: number;
+}
+
+export interface HanaPluginNetwork {
+  fetch(input: string | URL | Request, init?: HanaPluginNetworkFetchInit): Promise<Response>;
+}
+
 export interface HanaToolContext {
   serverId: string;
   serverNodeId?: string;
@@ -135,13 +261,48 @@ export interface HanaToolContext {
   dataDir: string;
   capabilities?: string[];
   sensitiveCapabilities?: string[];
+  sessionId?: string | null;
+  sessionRef?: HanaSessionRef | null;
+  /** @deprecated Use sessionId/sessionRef. Kept for legacy plugins. */
   sessionPath?: string | null;
   bus: HanaEventBus;
+  network: HanaPluginNetwork;
+  resources: HanaPluginResources;
   config: HanaPluginConfigStore;
   log: HanaPluginLogger;
   registerSessionFile?: (input: Record<string, unknown>) => HanaSessionFile;
   stageFile?: (input: Record<string, unknown>) => HanaStagedSessionFile;
   [key: string]: unknown;
+}
+
+export type HanaToolSessionPermissionKind =
+  | 'read'
+  | 'read_only'
+  | 'plugin_output'
+  | 'session_file_output'
+  | 'workspace_write'
+  | 'external_side_effect'
+  | 'review'
+  | string;
+
+export interface HanaToolSessionPermission<Input = unknown> {
+  /**
+   * True means the tool only reads already-authorized data and may run in
+   * read-only sessions without reviewer escalation.
+   */
+  readOnly?: boolean;
+  /**
+   * Host approval classification hint. Unknown or external side-effect kinds
+   * remain reviewer-bound in Auto mode.
+   */
+  kind?: HanaToolSessionPermissionKind;
+  /**
+   * Override Auto-mode handling for a declared non-read tool.
+   */
+  auto?: 'allow' | 'review';
+  description?: string;
+  sideEffect?: Record<string, unknown>;
+  describeSideEffect?: (input: Input) => Record<string, unknown> | null | undefined;
 }
 
 export interface HanaToolDefinition<Input = unknown, Output = unknown> {
@@ -150,6 +311,7 @@ export interface HanaToolDefinition<Input = unknown, Output = unknown> {
   parameters?: JsonSchema;
   promptSnippet?: string;
   promptGuidelines?: string;
+  sessionPermission?: HanaToolSessionPermission<Input>;
   metadata?: Record<string, unknown>;
   invocationStyle?: 'sdk_tool' | 'pi_tool';
   execute(input: Input, ctx: HanaToolContext): MaybePromise<Output>;
@@ -218,6 +380,28 @@ export interface HanaProviderChatCapability {
   [key: string]: unknown;
 }
 
+export interface HanaMediaReferenceImageLimits {
+  min?: number;
+  max?: number;
+  [key: string]: unknown;
+}
+
+export interface HanaMediaInputLimits {
+  referenceImages?: HanaMediaReferenceImageLimits;
+  [key: string]: unknown;
+}
+
+export interface HanaProviderMediaMode {
+  id: string;
+  label?: string;
+  parameterSchema?: JsonSchema;
+  defaults?: Record<string, unknown>;
+  inputLimits?: HanaMediaInputLimits;
+  pricing?: Record<string, unknown>;
+  agentHints?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface HanaProviderMediaModel {
   id: string;
   displayName?: string;
@@ -227,6 +411,10 @@ export interface HanaProviderMediaModel {
   supportsEdit?: boolean;
   aliases?: string[];
   credentialLaneId?: string;
+  modes?: HanaProviderMediaMode[];
+  parameterSchema?: JsonSchema;
+  defaults?: Record<string, unknown>;
+  inputLimits?: HanaMediaInputLimits;
   [key: string]: unknown;
 }
 
@@ -285,6 +473,8 @@ export interface HanaPluginConfigStore {
 export interface HanaPluginConfigScopeOptions {
   scope?: 'global' | 'per-agent' | 'per-session';
   agentId?: string;
+  sessionId?: string;
+  /** @deprecated Use sessionId. Kept for legacy config scopes. */
   sessionPath?: string;
 }
 
@@ -365,6 +555,9 @@ export interface HanaAgentUpdateInput {
 export interface HanaModelSampleInput {
   systemPrompt?: string;
   messages: Array<{ role: string; content: unknown }>;
+  sessionId?: string;
+  sessionRef?: HanaSessionRef;
+  /** @deprecated Use sessionId/sessionRef. */
   sessionPath?: string;
   agentId?: string;
   temperature?: number;
@@ -398,6 +591,9 @@ export interface HanaMediaDelivery {
 }
 
 export interface HanaGenerateImageInput {
+  sessionId?: string;
+  sessionRef?: HanaSessionRef;
+  /** @deprecated Use sessionId/sessionRef. */
   sessionPath?: string;
   prompt: string;
   count?: number;
@@ -406,6 +602,8 @@ export interface HanaGenerateImageInput {
   ratio?: string;
   resolution?: string;
   quality?: string;
+  mode?: string;
+  options?: Record<string, unknown>;
   model?: string;
   provider?: string;
   input?: Record<string, unknown>;
@@ -416,11 +614,18 @@ export interface HanaGenerateImageInput {
 }
 
 export interface HanaGenerateVideoInput {
+  sessionId?: string;
+  sessionRef?: HanaSessionRef;
+  /** @deprecated Use sessionId/sessionRef. */
   sessionPath?: string;
   prompt: string;
-  image?: string;
+  image?: HanaGenerateImageReference | HanaGenerateImageReference[] | string;
+  referenceImages?: HanaGenerateImageReference[];
   duration?: number;
   ratio?: string;
+  resolution?: string;
+  mode?: string;
+  options?: Record<string, unknown>;
   model?: string;
   provider?: string;
   input?: Record<string, unknown>;
@@ -434,9 +639,22 @@ export interface HanaGenerateMediaInput {
   kind?: 'image' | 'video' | 'audio' | 'image_generation' | 'video_generation' | 'speech_recognition' | 'asr' | 'transcription' | string;
   type?: string;
   mediaKind?: string;
+  sessionId?: string;
+  sessionRef?: HanaSessionRef;
+  /** @deprecated Use sessionId/sessionRef. */
   sessionPath?: string;
   fileId?: string;
   prompt?: string;
+  image?: HanaGenerateImageReference | HanaGenerateImageReference[] | string;
+  referenceImages?: HanaGenerateImageReference[];
+  duration?: number;
+  ratio?: string;
+  resolution?: string;
+  quality?: string;
+  mode?: string;
+  options?: Record<string, unknown>;
+  model?: string;
+  provider?: string;
   delivery?: HanaMediaDelivery;
   deliveryMode?: string;
   input?: Record<string, unknown>;
@@ -444,7 +662,10 @@ export interface HanaGenerateMediaInput {
 }
 
 export interface HanaTranscribeAudioInput {
-  sessionPath: string;
+  sessionId?: string;
+  sessionRef?: HanaSessionRef;
+  /** @deprecated Use sessionId/sessionRef. */
+  sessionPath?: string;
   fileId: string;
   language?: string;
   providerId?: string;
@@ -470,6 +691,40 @@ export interface HanaEventBus {
   handle?(type: string, handler: (payload: unknown) => MaybePromise<unknown>): () => void;
   listCapabilities?(): HanaEventBusCapability[];
   getCapability?(type: string): HanaEventBusCapability | null;
+}
+
+export interface HanaPluginRouteRequestContext {
+  pluginId: string;
+  agentId: string | null;
+  principal: Record<string, unknown> | null;
+  capabilityGrant: {
+    accessLevel: string;
+    declaredPermissions: readonly string[];
+    legacyDeclaration: boolean;
+  };
+  bus: Pick<HanaEventBus, 'request' | 'emit' | 'subscribe' | 'hasHandler' | 'getCapability' | 'listCapabilities'>;
+}
+
+export interface HanaPluginHonoLikeContext {
+  get?(name: string): unknown;
+}
+
+export function getPluginRequestContext(c: HanaPluginHonoLikeContext): HanaPluginRouteRequestContext {
+  if (!c || typeof c.get !== 'function') {
+    throw new Error('getPluginRequestContext requires a Hono context with c.get(name)');
+  }
+  const requestContext = c.get('pluginRequestContext');
+  if (!requestContext || typeof requestContext !== 'object') {
+    throw new Error('getPluginRequestContext must be called inside a Hana plugin route handler');
+  }
+  const bus = (requestContext as Record<string, unknown>).bus;
+  const request = bus && typeof bus === 'object'
+    ? (bus as { request?: unknown }).request
+    : null;
+  if (typeof request !== 'function') {
+    throw new Error('getPluginRequestContext found an invalid plugin route request context');
+  }
+  return requestContext as HanaPluginRouteRequestContext;
 }
 
 export interface HanaBusSubscriptionFilter {
@@ -514,12 +769,12 @@ export interface HanaNormalizedUsage {
 }
 
 export type HanaUsageAttribution =
-  | { kind: 'session'; agentId: string | null; sessionPath: string }
-  | { kind: 'phone_conversation'; agentId: string; conversationId: string; conversationType: 'channel' | 'dm'; sessionPath?: string | null }
+  | { kind: 'session'; agentId: string | null; sessionId?: string | null; sessionPath?: string | null }
+  | { kind: 'phone_conversation'; agentId: string; conversationId: string; conversationType: 'channel' | 'dm'; sessionId?: string | null; sessionPath?: string | null }
   | { kind: 'memory'; agentId: string | null }
   | { kind: 'automation'; jobId?: string | null; runId?: string | null; agentId?: string | null }
-  | { kind: 'plugin'; pluginId: string; agentId?: string | null; sessionPath?: string | null }
-  | { kind: 'utility'; agentId?: string | null; sessionPath?: string | null }
+  | { kind: 'plugin'; pluginId: string; agentId?: string | null; sessionId?: string | null; sessionPath?: string | null }
+  | { kind: 'utility'; agentId?: string | null; sessionId?: string | null; sessionPath?: string | null }
   | { kind: 'unknown' };
 
 export interface HanaUsageSource {
@@ -530,12 +785,14 @@ export interface HanaUsageSource {
   actor?: {
     kind: 'session' | 'phone_conversation' | 'automation' | 'plugin' | 'subagent' | 'unknown' | string;
     agentId?: string | null;
+    sessionId?: string | null;
     sessionPath?: string | null;
     taskId?: string | null;
     [key: string]: unknown;
   };
   parent?: {
     kind: 'session' | 'phone_conversation' | 'automation' | 'plugin' | 'unknown' | string;
+    sessionId?: string;
     sessionPath?: string;
     conversationId?: string;
     conversationType?: 'channel' | 'dm';
@@ -571,6 +828,7 @@ export interface HanaUsageListFilter {
   since?: string;
   until?: string;
   attributionKind?: string;
+  sessionId?: string;
   sessionPath?: string;
   agentId?: string;
   subsystem?: string;
@@ -587,7 +845,9 @@ export interface HanaUsageListResult {
 }
 
 export interface HanaUsageEventMeta {
+  sessionId?: string | null;
   sessionPath?: string | null;
+  sessionRef?: HanaSessionRef | null;
 }
 
 export interface HanaPluginLogger {
@@ -609,6 +869,8 @@ export interface HanaBusHandlerContext {
   executionBoundary?: HanaExecutionBoundary;
   pluginId: string;
   bus: HanaEventBus;
+  network?: HanaPluginNetwork;
+  resources?: HanaPluginResources;
   config?: HanaPluginConfigStore;
   log?: HanaPluginLogger;
   [key: string]: unknown;
@@ -638,7 +900,13 @@ export interface HanaPluginContext {
   dataDir: string;
   capabilities?: string[];
   sensitiveCapabilities?: string[];
+  sessionId?: string | null;
+  sessionRef?: HanaSessionRef | null;
+  /** @deprecated Use sessionId/sessionRef. Kept for legacy plugins. */
+  sessionPath?: string | null;
   bus: HanaEventBus;
+  network: HanaPluginNetwork;
+  resources: HanaPluginResources;
   config: HanaPluginConfigStore;
   log: HanaPluginLogger;
   registerTool?: (tool: HanaToolDefinition) => () => void;
@@ -813,15 +1081,83 @@ function withContextMetadata(
   ctx: { pluginId?: string | null },
   context: HanaSessionTurnContext | null | undefined,
 ): HanaSessionTurnContext | null | undefined {
-  if (!context) return context;
   const pluginId = pluginIdFromContext(ctx);
   if (!pluginId) return context;
+  if (!context) {
+    return { metadata: { pluginId } };
+  }
   return {
     ...context,
     metadata: {
       pluginId,
       ...(context.metadata || {}),
     },
+  };
+}
+
+function textOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function normalizeSessionTarget(target: HanaSessionTarget): Record<string, unknown> {
+  if (typeof target === 'string') return { sessionPath: target };
+  if (!target || typeof target !== 'object') return { sessionPath: target as unknown };
+
+  const sessionId = textOrNull((target as any).sessionId);
+  const sessionPath = textOrNull((target as any).sessionPath) || textOrNull((target as any).path);
+  const legacySessionPath = textOrNull((target as any).legacySessionPath);
+  if (!sessionId) {
+    return sessionPath ? { sessionPath } : {};
+  }
+
+  const sessionRef: HanaSessionRef = {
+    sessionId,
+    ...(sessionPath ? { sessionPath } : {}),
+    ...(legacySessionPath ? { legacySessionPath } : {}),
+  };
+  return {
+    sessionId,
+    ...(sessionPath ? { sessionPath } : {}),
+    ...(legacySessionPath ? { legacySessionPath } : {}),
+    sessionRef,
+  };
+}
+
+function sessionRefFromTarget(target: HanaSessionTarget): HanaSessionRef | null {
+  const payload = normalizeSessionTarget(target);
+  return (payload.sessionRef as HanaSessionRef | undefined) || null;
+}
+
+export function createChatSurfaceCard(
+  ctx: { pluginId?: string | null },
+  target: HanaSessionTarget,
+  options: HanaChatSurfaceCardOptions = {},
+): HanaChatSurfaceCardDetails {
+  const pluginId = pluginIdFromContext(ctx);
+  if (!pluginId) {
+    throw new Error('createChatSurfaceCard requires ctx.pluginId');
+  }
+  const payload = normalizeSessionTarget(target);
+  const sessionId = textOrNull(payload.sessionId);
+  const sessionPath = textOrNull(payload.sessionPath);
+  if (!sessionId) {
+    throw new Error('createChatSurfaceCard requires sessionId or sessionRef; sessionPath alone is legacy locator metadata');
+  }
+  const sessionRef: HanaSessionRef = {
+    sessionId,
+    ...(sessionPath ? { sessionPath } : {}),
+  };
+  return {
+    type: 'chat.surface',
+    pluginId,
+    sessionId,
+    sessionRef,
+    ...(sessionPath ? { sessionPath } : {}),
+    ...(options.title ? { title: options.title } : {}),
+    description: options.description || 'Plugin private chat session.',
+    mode: options.mode || 'transcript',
+    ...(options.composer !== undefined ? { composer: options.composer } : {}),
+    ...(options.aspectRatio ? { aspectRatio: options.aspectRatio } : {}),
   };
 }
 
@@ -835,10 +1171,10 @@ export function createSession(
 
 export function getSession(
   ctx: { bus?: Pick<HanaEventBus, 'request'> | null },
-  sessionPath: string,
+  target: HanaSessionTarget,
   options?: Record<string, unknown>,
 ): Promise<unknown> {
-  return requestBus(ctx, 'session:get', { sessionPath }, options);
+  return requestBus(ctx, 'session:get', normalizeSessionTarget(target), options);
 }
 
 export function listSessions(
@@ -851,37 +1187,50 @@ export function listSessions(
 
 export function updateSession(
   ctx: { pluginId?: string | null; bus?: Pick<HanaEventBus, 'request'> | null },
-  sessionPath: string,
+  target: HanaSessionTarget,
   patch: HanaSessionUpdateInput,
   options?: Record<string, unknown>,
 ): Promise<unknown> {
-  return requestBus(ctx, 'session:update', { sessionPath, ...withOwnerPlugin(ctx, { ...patch }) }, options);
+  return requestBus(ctx, 'session:update', {
+    ...normalizeSessionTarget(target),
+    ...withOwnerPlugin(ctx, { ...patch }),
+  }, options);
 }
 
 export function sendSessionMessage(
   ctx: { pluginId?: string | null; bus?: Pick<HanaEventBus, 'request'> | null },
-  sessionPath: string,
+  target: HanaSessionTarget,
   input: HanaSessionSendInput,
   options?: Record<string, unknown>,
 ): Promise<unknown> {
   return requestBus(ctx, 'session:send', {
+    ...normalizeSessionTarget(target),
     ...input,
-    sessionPath,
     context: withContextMetadata(ctx, input.context),
   }, options);
 }
 
 export function subscribeSessionEvents(
   ctx: { bus?: Pick<HanaEventBus, 'subscribe'> | null },
-  sessionPath: string,
-  handler: (event: unknown, meta: { sessionPath: string | null }) => void,
+  target: HanaSessionTarget,
+  handler: (event: unknown, meta: { sessionId: string | null; sessionPath: string | null; sessionRef: HanaSessionRef | null }) => void,
 ): () => void {
   if (!ctx.bus || typeof ctx.bus.subscribe !== 'function') {
     throw new Error('plugin bus subscribe unavailable');
   }
+  const filter = normalizeSessionTarget(target);
+  const targetRef = sessionRefFromTarget(target);
   return ctx.bus.subscribe((event, scopedSessionPath) => {
-    handler(event, { sessionPath: scopedSessionPath || null });
-  }, { sessionPath });
+    const eventSessionId = event && typeof event === 'object' ? textOrNull((event as any).sessionId) : null;
+    const sessionId = eventSessionId || targetRef?.sessionId || null;
+    const sessionPath = scopedSessionPath || targetRef?.sessionPath || null;
+    const sessionRef = sessionId ? {
+      sessionId,
+      ...(sessionPath ? { sessionPath } : {}),
+      ...(targetRef?.legacySessionPath ? { legacySessionPath: targetRef.legacySessionPath } : {}),
+    } : null;
+    handler(event, { sessionId, sessionPath, sessionRef });
+  }, filter);
 }
 
 export function listAgents(
@@ -1015,7 +1364,26 @@ export function subscribeUsageEvents(
     if (!event || typeof event !== 'object') return;
     const typed = event as { type?: unknown; entry?: unknown };
     if (typed.type !== 'llm_usage') return;
-    handler(typed.entry as HanaUsageLedgerEntry, { sessionPath });
+    const entry = typed.entry as HanaUsageLedgerEntry;
+    const entrySessionId =
+      textOrNull((entry as any)?.attribution?.sessionId)
+      || textOrNull((entry as any)?.source?.actor?.sessionId)
+      || textOrNull((entry as any)?.source?.parent?.sessionId);
+    const entrySessionPath =
+      textOrNull((entry as any)?.attribution?.sessionPath)
+      || textOrNull((entry as any)?.source?.actor?.sessionPath)
+      || textOrNull((entry as any)?.source?.parent?.sessionPath)
+      || textOrNull(sessionPath);
+    handler(entry, {
+      ...(entrySessionId ? { sessionId: entrySessionId } : {}),
+      sessionPath: entrySessionPath,
+      ...(entrySessionId ? {
+        sessionRef: {
+          sessionId: entrySessionId,
+          ...(entrySessionPath ? { sessionPath: entrySessionPath } : {}),
+        },
+      } : {}),
+    });
   }, { types: ['llm_usage'] });
 }
 
@@ -1081,6 +1449,7 @@ export function sessionFileToMediaItem(file: HanaSessionFile): HanaSessionFileMe
     type: 'session_file',
     fileId,
   };
+  assignDefined(item, 'sessionId', file.sessionId);
   assignDefined(item, 'sessionPath', file.sessionPath);
   assignDefined(item, 'filePath', file.filePath);
   assignDefined(item, 'label', firstText(file.label, file.displayName, file.filename));

@@ -109,6 +109,95 @@ describe('ToolGroupBlock', () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it('hides media generation tools because media blocks and output cards are the UI', () => {
+    const { container } = render(
+      <ToolGroupBlock
+        collapsed={false}
+        tools={[
+          {
+            name: 'media_generate-image',
+            args: {
+              prompt: 'Japanese anime doodle style illustration',
+              resolution: '2K',
+            },
+            done: true,
+            success: true,
+          },
+          {
+            name: 'media_generate-video',
+            args: {
+              prompt: 'A short product reveal clip',
+              duration: 5,
+            },
+            done: true,
+            success: true,
+          },
+        ]}
+      />,
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('hides current card-backed tools while keeping visible browser and compatibility tools', () => {
+    render(
+      <ToolGroupBlock
+        collapsed={false}
+        tools={[
+          {
+            name: 'workflow',
+            args: { taskId: 'workflow-1', workflow: 'Morning brief' },
+            done: true,
+            success: true,
+          },
+          {
+            name: 'install_skill',
+            args: { skill_name: 'daily-review' },
+            done: true,
+            success: true,
+          },
+          {
+            name: 'update_settings',
+            args: { key: 'locale' },
+            done: true,
+            success: true,
+          },
+          {
+            name: 'automation',
+            args: { action: 'pending_add', label: 'Tea' },
+            done: true,
+            success: true,
+          },
+          {
+            name: 'browser',
+            args: { action: 'screenshot' },
+            done: true,
+            success: true,
+          },
+          {
+            name: 'browser',
+            args: { action: 'navigate', url: 'https://example.com' },
+            done: true,
+            success: true,
+          },
+          {
+            name: 'present_files',
+            args: { path: 'legacy.txt' },
+            done: true,
+            success: true,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('example.com')).toBeInTheDocument();
+    expect(screen.getByText('legacy.txt')).toBeInTheDocument();
+    expect(screen.queryByText('Morning brief')).not.toBeInTheDocument();
+    expect(screen.queryByText('daily-review')).not.toBeInTheDocument();
+    expect(screen.queryByText('locale')).not.toBeInTheDocument();
+    expect(screen.queryByText('Tea')).not.toBeInTheDocument();
+  });
+
   it('keeps the tool layout box full width within its message for selection and side controls', () => {
     const css = fs.readFileSync(
       path.join(process.cwd(), 'desktop/src/react/components/chat/Chat.module.css'),

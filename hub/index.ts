@@ -153,6 +153,7 @@ export class Hub {
    * @param {string}  [opts.cwd]         工作目录覆盖
    * @param {string}  [opts.model]       模型覆盖
    * @param {string}  [opts.persist]     持久化目录（activity session）
+   * @param {string}  [opts.permissionMode] 后台隔离执行权限档，默认 auto
    * @returns {Promise<*>}
    */
   async send(text, opts: any = {}) {
@@ -165,6 +166,7 @@ export class Hub {
       cwd,
       model,
       persist,
+      permissionMode,
       from,
       to,
       onDelta,
@@ -175,13 +177,14 @@ export class Hub {
       audios,
       audioAttachmentPaths,
       inboundFiles,
+      clientMessageId,
       sessionPath,
       agentId,
       uiContext,
       displayMessage,
       sessionFileRefs,
     } = opts;
-    const o = { sessionKey, role, ephemeral, meta, isGroup, cwd, model, persist, from, to, onDelta, images, imageAttachmentPaths, videos, videoAttachmentPaths, audios, audioAttachmentPaths, inboundFiles, sessionPath, agentId, uiContext, displayMessage, sessionFileRefs };
+    const o = { sessionKey, role, ephemeral, meta, isGroup, cwd, model, persist, permissionMode, from, to, onDelta, images, imageAttachmentPaths, videos, videoAttachmentPaths, audios, audioAttachmentPaths, inboundFiles, clientMessageId, sessionPath, agentId, uiContext, displayMessage, sessionFileRefs };
 
     // ── 图片预处理：持久化到磁盘 + 插入 [attached_image] 标记 ──
     // 在路由之前统一处理，所有消息路径（WS / Bridge DM / Bridge Group）共享
@@ -250,6 +253,7 @@ export class Hub {
             audios: o.audios,
             audioAttachmentPaths: o.audioAttachmentPaths,
             inboundFiles: o.inboundFiles,
+            clientMessageId: o.clientMessageId,
             onDelta: o.onDelta,
             uiContext: o.uiContext,
             displayMessage: o.displayMessage,
@@ -267,7 +271,14 @@ export class Hub {
       },
       { // 隔离执行（cron/heartbeat/channel）
         match: o => o.ephemeral,
-        handle: () => this._engine.executeIsolated(text, { cwd: o.cwd, model: o.model, persist: o.persist }),
+        handle: () => this._engine.executeIsolated(text, {
+          cwd: o.cwd,
+          model: o.model,
+          persist: o.persist,
+          permissionMode: o.permissionMode || "auto",
+          approvalPolicy: "deny_on_prompt",
+          allowHumanApproval: false,
+        }),
       },
     ];
 
@@ -280,10 +291,11 @@ export class Hub {
   /**
    * 中断生成（支持指定 session）
    */
-  async abort(sessionPath) {
+  async abort(sessionPath, options: any = {}) {
+    const hasOptions = options && Object.keys(options).length > 0;
     return sessionPath
-      ? this._engine.abortSession(sessionPath)
-      : this._engine.abort();
+      ? (hasOptions ? this._engine.abortSession(sessionPath, options) : this._engine.abortSession(sessionPath))
+      : (hasOptions ? this._engine.abort(options) : this._engine.abort());
   }
 
   // ──────────── 调度器管理 ────────────
@@ -399,11 +411,13 @@ export class Hub {
       });
       engine.persistSessionMeta?.();
       const sessionPath = result.sessionPath;
+      const sessionId = sessionPath ? engine.getSessionIdForPath?.(sessionPath) || null : null;
       if (payload.permissionMode !== undefined && sessionPath) {
         engine.setSessionPermissionModeForSession?.(sessionPath, payload.permissionMode);
       }
       const response = {
         ok: true,
+        ...(sessionId ? { sessionId, sessionRef: { sessionId, sessionPath } } : {}),
         sessionPath,
         path: sessionPath,
         agentId: result.agentId,
@@ -422,23 +436,26 @@ export class Hub {
     }));
 
     // ── session:get ──
-    this._sessionHandlerCleanups.push(bus.handle("session:get", async ({ sessionPath, ownerPluginId }: any = {}) => {
-      if (!sessionPath) throw new Error("sessionPath is required");
+    this._sessionHandlerCleanups.push(bus.handle("session:get", async (payload: any = {}) => {
+      const target = resolvePluginSessionTarget(engine, payload, "session:get");
+      const { sessionPath, sessionId } = target;
       if (!isValidSessionPath(sessionPath, engine.agentsDir)) {
         throw new Error("Invalid session path");
       }
       const sessions = await engine.listSessions({
         includePluginPrivate: true,
-        ...(ownerPluginId ? { ownerPluginId } : {}),
+        ...(payload.ownerPluginId ? { ownerPluginId: payload.ownerPluginId } : {}),
       });
-      const session = sessions.find((item) => item.path === sessionPath) || null;
+      const session = sessions.find((item) => (
+        (sessionId && item.sessionId === sessionId) || item.path === sessionPath
+      )) || null;
       if (!session) return { session: null };
-      return { session };
+      return { session: { ...session, ...(sessionId && !session.sessionId ? { sessionId } : {}) } };
     }));
 
     // ── session:update ──
-    this._sessionHandlerCleanups.push(bus.handle("session:update", async ({
-      sessionPath,
+    this._sessionHandlerCleanups.push(bus.handle("session:update", async (payload: any = {}) => {
+      const {
       title,
       pinned,
       projectId,
@@ -449,8 +466,9 @@ export class Hub {
       sessionKind,
       visibility,
       sessionVisibility,
-    }: any = {}) => {
-      if (!sessionPath) throw new Error("sessionPath is required");
+      } = payload;
+      const target = resolvePluginSessionTarget(engine, payload, "session:update");
+      const { sessionPath, sessionId } = target;
       if (!isValidSessionPath(sessionPath, engine.agentsDir)) {
         throw new Error("Invalid session path");
       }
@@ -479,38 +497,54 @@ export class Hub {
         });
       }
       const sessions = await engine.listSessions({ includePluginPrivate: true });
-      return { ok: true, session: sessions.find((item) => item.path === sessionPath) || null };
+      const session = sessions.find((item) => (
+        (sessionId && item.sessionId === sessionId) || item.path === sessionPath
+      )) || null;
+      return { ok: true, ...(sessionId ? { sessionId } : {}), session };
     }));
 
     // ── session:send ──
-    this._sessionHandlerCleanups.push(bus.handle("session:send", async ({ text, sessionPath, ...opts }) => {
+    this._sessionHandlerCleanups.push(bus.handle("session:send", async ({ text, ...opts }) => {
       if (!text || typeof text !== "string" || !text.trim()) {
         throw new Error("text is required");
       }
-      const sp = sessionPath;
-      if (!sp) throw new Error("sessionPath is required for session:send");
+      const target = resolvePluginSessionTarget(engine, opts, "session:send");
+      const sp = target.sessionPath;
       if (engine.isSessionStreaming(sp)) throw new Error("session_busy");
       if (opts.context !== undefined) {
         opts.context = normalizeSessionTurnContext(opts.context);
+      }
+      if (target.sessionId) {
+        opts.sessionId = target.sessionId;
+        opts.sessionRef = target.sessionRef;
       }
       engine.promptSession(sp, text, opts).catch(err => {
         log.error(`session:send promptSession error: ${err.message}`);
         bus.emit({ type: "error", error: err.message, source: "session:send" }, sp);
       });
-      return { sessionPath: sp, accepted: true };
+      return {
+        ...(target.sessionId ? { sessionId: target.sessionId, sessionRef: target.sessionRef } : {}),
+        sessionPath: sp,
+        accepted: true,
+      };
     }));
 
     // ── session:abort ──
-    this._sessionHandlerCleanups.push(bus.handle("session:abort", async ({ sessionPath }: any = {}) => {
-      const sp = sessionPath;
+    this._sessionHandlerCleanups.push(bus.handle("session:abort", async (payload: any = {}) => {
+      const target = resolvePluginSessionTarget(engine, payload, "session:abort", { required: false });
+      const sp = target?.sessionPath;
       if (!sp) return { aborted: false };
-      const result = await engine.abortSession(sp);
-      return { aborted: !!result };
+      const { reason } = payload;
+      const options = typeof reason === "string" && reason.trim() ? { reason: reason.trim() } : null;
+      const result = options ? await engine.abortSession(sp, options) : await engine.abortSession(sp);
+      return { aborted: !!result, ...(target.sessionId ? { sessionId: target.sessionId, sessionRef: target.sessionRef } : {}) };
     }));
 
     // ── session:history ──
-    this._sessionHandlerCleanups.push(bus.handle("session:history", async ({ sessionPath, limit: rawLimit }: any = {}) => {
-      if (!sessionPath) throw new Error("sessionPath is required");
+    this._sessionHandlerCleanups.push(bus.handle("session:history", async (payload: any = {}) => {
+      const { limit: rawLimit } = payload;
+      const target = resolvePluginSessionTarget(engine, payload, "session:history");
+      const { sessionPath, sessionId } = target;
       if (!isValidSessionPath(sessionPath, engine.agentsDir)) {
         throw new Error("Invalid session path");
       }
@@ -537,7 +571,7 @@ export class Hub {
         }
         if (messages.length >= limit) break;
       }
-      return { messages };
+      return { messages, ...(sessionId ? { sessionId, sessionRef: target.sessionRef } : {}) };
     }));
 
     // ── session:list ──
@@ -707,13 +741,17 @@ export class Hub {
           credentialLanes: credentialStatus.lanes,
           activeCredentialLaneId: credentialStatus.activeLaneId || null,
           activeCredentialProviderId: credentialStatus.activeProviderId || null,
-          models: provider.models.map((model) => ({
-            id: model.id,
-            name: model.displayName || model.name || model.id,
-            displayName: model.displayName || model.name || model.id,
-            protocolId: model.protocolId,
-            credentialLaneId: model.credentialLaneId,
-          })),
+          models: provider.models.map((model) => {
+            const name = model.displayName || model.name || model.id;
+            return {
+              ...model,
+              id: model.id,
+              name,
+              displayName: name,
+              protocolId: model.protocolId,
+              credentialLaneId: model.credentialLaneId,
+            };
+          }),
           availableModels: [],
         };
       }
@@ -744,6 +782,7 @@ export class Hub {
         return {
           providerId: resolved.providerId,
           modelId: resolved.model.id,
+          model: resolved.model,
           protocolId: resolved.model.protocolId,
           capability: resolved.capability,
           credentialLaneId: lane?.id || status.activeLaneId || null,
@@ -752,33 +791,6 @@ export class Hub {
       } catch (err) {
         return { error: err.message || String(err) };
       }
-    }));
-
-    this._sessionHandlerCleanups.push(bus.handle("media:generate-image", async (payload: any = {}) => {
-      const sessionPath = textOrNull(payload.sessionPath);
-      if (!sessionPath) throw new Error("sessionPath is required");
-      const input = payload.input && typeof payload.input === "object"
-        ? payload.input
-        : {
-          prompt: payload.prompt,
-          count: payload.count,
-          image: payload.image,
-          ratio: payload.ratio,
-          resolution: payload.resolution,
-          quality: payload.quality,
-          model: payload.model,
-          provider: payload.provider,
-        };
-      if (!textOrNull(input.prompt)) throw new Error("prompt is required");
-      return bus.request("media-gen:submit-image", {
-        input,
-        sessionPath,
-        metadata: {
-          ...(payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {}),
-          ...(textOrNull(payload.pluginId) ? { pluginId: textOrNull(payload.pluginId) } : {}),
-        },
-        ...(payload.deliveryTarget !== undefined ? { deliveryTarget: payload.deliveryTarget } : {}),
-      });
     }));
 
     this._sessionHandlerCleanups.push(bus.handle("provider:add-media-model", async ({
@@ -823,6 +835,17 @@ export class Hub {
       const { agent: fresh } = resolveAgentForBus(engine, agentId);
       return { config: fresh?.config || agent.config };
     }));
+
+    this._sessionHandlerCleanups.push(bus.handle("session:capability-drift:mark-stale", async (payload: any = {}) => {
+      if (typeof engine.markCapabilitySnapshotsStale !== "function") {
+        return { error: "capability_drift_unavailable" };
+      }
+      try {
+        return engine.markCapabilitySnapshotsStale(payload);
+      } catch (err) {
+        return { error: err.message || String(err) };
+      }
+    }));
   }
 
   _setupDmHandler() {
@@ -848,6 +871,50 @@ function matchesAgentPhoneAbortFilter( meta: any = {}, filter = null) {
 
 function textOrNull(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function resolvePluginSessionTarget(engine, payload: any = {}, operation = "session", options: any = {}) {
+  const rawRef = payload?.sessionRef && typeof payload.sessionRef === "object"
+    ? payload.sessionRef
+    : null;
+  const sessionId = textOrNull(payload?.sessionId) || textOrNull(rawRef?.sessionId);
+  const inputPath =
+    textOrNull(payload?.sessionPath)
+    || textOrNull(rawRef?.sessionPath)
+    || textOrNull(rawRef?.path);
+  const legacySessionPath =
+    textOrNull(payload?.legacySessionPath)
+    || textOrNull(rawRef?.legacySessionPath)
+    || (sessionId && inputPath ? inputPath : null);
+
+  let sessionPath = inputPath;
+  if (sessionId) {
+    const resolved = engine.resolveSessionRef?.({
+      sessionId,
+      sessionPath: inputPath,
+      legacySessionPath,
+    });
+    sessionPath =
+      textOrNull(resolved?.currentLocator?.path)
+      || textOrNull(resolved?.sessionPath)
+      || inputPath;
+  }
+
+  const resolvedSessionId = sessionId || (sessionPath ? engine.getSessionIdForPath?.(sessionPath) || null : null);
+  if (!sessionPath) {
+    if (options.required === false) return null;
+    throw new Error(`${operation} requires sessionId or sessionPath`);
+  }
+
+  const sessionRef = resolvedSessionId
+    ? {
+      sessionId: resolvedSessionId,
+      sessionPath,
+      ...(legacySessionPath ? { legacySessionPath } : {}),
+    }
+    : null;
+
+  return { sessionId: resolvedSessionId, sessionPath, sessionRef };
 }
 
 function resolveRequestedModel(engine, raw) {

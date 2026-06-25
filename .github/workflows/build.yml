@@ -276,6 +276,15 @@ jobs:
           echo "=== Uploading latest-mac.yml (merged) ==="
           gh release upload "${{ github.ref_name }}" latest-mac.yml --clobber
 
+          echo "=== Uploading latest-linux.yml ==="
+          LINUX_YML=$(find artifacts -name 'latest-linux.yml' | head -1)
+          if [ -n "$LINUX_YML" ]; then
+            echo "  $LINUX_YML"
+            gh release upload "${{ github.ref_name }}" "$LINUX_YML" --clobber
+          else
+            echo "::warning::latest-linux.yml not found (Linux build may have failed)"
+          fi
+
       # 硬约束：release 必须包含所有必需产物，缺一个 CI 就 fail，draft 状态留给人手动检查。
       # 防止以后再有 shell 写漏 / electron-builder 配置改坏 / 单架构构建挂掉 造成的 yml 缺失。
       - name: Verify release assets
@@ -291,6 +300,7 @@ jobs:
           MISSING=()
           echo "$ASSETS" | grep -qx 'latest-mac.yml' || MISSING+=("latest-mac.yml")
           echo "$ASSETS" | grep -qx 'latest.yml' || MISSING+=("latest.yml")
+          echo "$ASSETS" | grep -qx 'latest-linux.yml' || MISSING+=("latest-linux.yml")
           echo "$ASSETS" | grep -qE '^HanaAgent-.*-macOS-arm64\.dmg$' || MISSING+=("macOS-arm64.dmg")
           echo "$ASSETS" | grep -qE '^HanaAgent-.*-macOS-arm64\.zip$' || MISSING+=("macOS-arm64.zip")
           echo "$ASSETS" | grep -qE '^HanaAgent-.*-macOS-x64\.dmg$' || MISSING+=("macOS-x64.dmg")

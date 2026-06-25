@@ -1,6 +1,6 @@
 # @hana/plugin-components
 
-React component primitives for Hana plugin iframes.
+React component primitives for Hana plugin WebViews/iframes.
 
 ```tsx
 import {
@@ -30,7 +30,7 @@ export function PluginPanel() {
 
 `HanaThemeProvider` has three modes:
 
-- `inherit`: use host CSS variables when the iframe receives them, then fall back to Hana defaults from `styles.css`.
+- `inherit`: use host CSS variables when the WebView/iframe receives them, then fall back to Hana defaults from `styles.css`.
 - `hana`: set one of Hana's named theme token groups, such as `warm-paper` or `midnight`.
 - `custom`: set only the tokens you provide. Missing tokens still fall back through host variables and SDK defaults.
 

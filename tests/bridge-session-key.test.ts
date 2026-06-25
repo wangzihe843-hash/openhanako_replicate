@@ -15,6 +15,8 @@ describe("parseSessionKey", () => {
       ["tg_group_abc",    { platform: "telegram",  chatType: "group", chatId: "abc",  agentId: null }],
       ["fs_dm_u001",      { platform: "feishu",    chatType: "dm",    chatId: "u001", agentId: null }],
       ["fs_group_g99",    { platform: "feishu",    chatType: "group", chatId: "g99",  agentId: null }],
+      ["dt_dm_u001",      { platform: "dingtalk",  chatType: "dm",    chatId: "u001", agentId: null }],
+      ["dt_group_c99",    { platform: "dingtalk",  chatType: "group", chatId: "c99",  agentId: null }],
     ];
 
     for (const [key, expected] of cases) {
@@ -27,6 +29,8 @@ describe("parseSessionKey", () => {
       ["tg_dm_123@hana",       { platform: "telegram",  chatType: "dm",    chatId: "123",  agentId: "hana" }],
       ["tg_group_abc@kuro",    { platform: "telegram",  chatType: "group", chatId: "abc",  agentId: "kuro" }],
       ["fs_dm_u001@hana",      { platform: "feishu",    chatType: "dm",    chatId: "u001", agentId: "hana" }],
+      ["dt_dm_u001@hana",      { platform: "dingtalk",  chatType: "dm",    chatId: "u001", agentId: "hana" }],
+      ["dt_group_c99@hana",    { platform: "dingtalk",  chatType: "group", chatId: "c99",  agentId: "hana" }],
       ["qq_dm_x99@agent-1",    { platform: "qq",        chatType: "dm",    chatId: "x99",  agentId: "agent-1" }],
       ["wx_dm_wxid@hana",      { platform: "wechat",    chatType: "dm",    chatId: "wxid", agentId: "hana" }],
     ];
@@ -69,7 +73,8 @@ describe("KNOWN_PLATFORMS", () => {
     expect(KNOWN_PLATFORMS).toContain("feishu");
     expect(KNOWN_PLATFORMS).toContain("qq");
     expect(KNOWN_PLATFORMS).toContain("wechat");
-    expect(KNOWN_PLATFORMS.length).toBe(4);
+    expect(KNOWN_PLATFORMS).toContain("dingtalk");
+    expect(KNOWN_PLATFORMS.length).toBe(5);
   });
 
   it("is consistent with SESSION_PREFIX_MAP", () => {
@@ -86,11 +91,13 @@ describe("collectKnownUsers", () => {
       "tg_dm_111": { file: "tg_111.jsonl", userId: "111", name: "Alice" },
       "tg_dm_222": { file: "tg_222.jsonl", userId: "222", name: "Bob" },
       "fs_dm_aaa": { file: "fs_aaa.jsonl", userId: "aaa", name: "Charlie" },
+      "dt_dm_dt001": { file: "dt_001.jsonl", userId: "dt001", name: "Dana" },
     };
 
     const result = collectKnownUsers(index);
     expect(result.telegram).toHaveLength(2);
     expect(result.feishu).toHaveLength(1);
+    expect(result.dingtalk).toEqual([{ userId: "dt001", name: "Dana" }]);
     expect(result.qq).toBeUndefined();
   });
 

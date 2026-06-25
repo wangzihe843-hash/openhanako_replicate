@@ -27,6 +27,34 @@ function normalizePath(input) {
   return filePath;
 }
 
+async function resolveInputPath(input, options: any = {}) {
+  if (input?.resource) {
+    const resourceIO = options?.resources || options?.resourceIO || null;
+    if (!resourceIO || typeof resourceIO.materialize !== "function") {
+      const error = new Error("office_read-document resource input requires ctx.resources.materialize");
+      (error as any).code = "OFFICE_RESOURCE_MATERIALIZE_UNAVAILABLE";
+      throw error;
+    }
+    const materialized = await resourceIO.materialize(input.resource);
+    const filePath = typeof materialized?.filePath === "string" ? materialized.filePath.trim() : "";
+    if (!filePath || !path.isAbsolute(filePath)) {
+      const error = new Error("office_read-document materialize result must include an absolute filePath");
+      (error as any).code = "OFFICE_RESOURCE_MATERIALIZE_INVALID";
+      throw error;
+    }
+    return {
+      filePath,
+      resourceKey: materialized?.resourceKey || null,
+      resource: materialized?.resource || input.resource,
+    };
+  }
+  return {
+    filePath: normalizePath(input),
+    resourceKey: null,
+    resource: null,
+  };
+}
+
 function truncateText(text, maxChars) {
   if (text.length <= maxChars) return { text, truncated: false };
   return {
@@ -136,8 +164,8 @@ async function readTextLike(filePath, ext) {
   };
 }
 
-export async function readOfficeDocument(input: any = {}) {
-  const filePath = normalizePath(input);
+export async function readOfficeDocument(input: any = {}, options: any = {}) {
+  const { filePath, resourceKey, resource } = await resolveInputPath(input, options);
   const ext = path.extname(filePath).toLowerCase();
   const outputFormat = input.outputFormat === "html" || input.outputFormat === "json" || input.outputFormat === "markdown"
     ? input.outputFormat
@@ -177,6 +205,8 @@ export async function readOfficeDocument(input: any = {}) {
 
   return {
     filePath,
+    ...(resourceKey ? { resourceKey } : {}),
+    ...(resource ? { resource } : {}),
     filename: path.basename(filePath),
     ext,
     ...result,

@@ -188,6 +188,45 @@ describe("HanaEngine.buildTools session external sandbox grants", () => {
     expect(sandboxOpts!.getSandboxNetworkEnabled()).toBe(true);
   });
 
+  it("builds file tools through ResourceIO without a runtime switch", () => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-engine-resource-io-tools-"));
+    const hanakoHome = path.join(tempRoot, "hana-home");
+    const agentDir = path.join(hanakoHome, "agents", "hana");
+    const workspace = path.join(tempRoot, "workspace");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.mkdirSync(workspace, { recursive: true });
+    const sessionPath = path.join(agentDir, "sessions", "one.jsonl");
+
+    const engine = Object.create(HanaEngine.prototype);
+    engine.hanakoHome = hanakoHome;
+    engine.getAgent = vi.fn(() => ({ id: "hana", agentDir, tools: [] }));
+    engine._pluginManager = null;
+    engine._prefs = {
+      getFileBackup: () => ({ enabled: false }),
+    };
+    engine._readPreferences = () => ({ sandbox: true });
+    engine._confirmStore = null;
+    engine._emitEvent = vi.fn();
+    engine.getSessionPermissionMode = vi.fn(() => "operate");
+    engine._agentMgr = { agent: { id: "hana", agentDir, tools: [] } };
+    engine.listSessionFiles = vi.fn(() => []);
+    engine.getSessionIdForPath = vi.fn(() => "session-one");
+    engine.getSessionFile = vi.fn();
+    engine.recordSessionFileOperation = vi.fn();
+    engine.getVisionBridge = vi.fn(() => null);
+    engine.isVisionAuxiliaryEnabled = vi.fn(() => false);
+
+    engine.buildTools(workspace, [], {
+      agentDir,
+      workspace,
+      getSessionPath: () => sessionPath,
+    });
+
+    const sandboxOpts = (createSandboxedTools.mock.calls as any)[0][2];
+    expect(Object.prototype.hasOwnProperty.call(sandboxOpts!, "useResourceIoTools")).toBe(false);
+    expect(sandboxOpts!.resourceIO).toBeTruthy();
+  });
+
   it("includes inherited parent session files in read-only sandbox inputs", () => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-engine-sandbox-parent-files-"));
     const hanakoHome = path.join(tempRoot, "hana-home");

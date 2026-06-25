@@ -1,18 +1,22 @@
 /**
  * agent-activity-slice.ts — Agent Activity 实时活动（后台任务）
  *
- * 消费后端 ActivityHub 广播的 agent_activity 事件，按 sessionPath 存储（权威源）。
- * 右侧 Activity 卡按当前对话 sessionPath 取——统一真相源（subagent / workflow / 巡检）。
+ * 消费后端 ActivityHub 广播的 agent_activity 事件。entry 自带 sessionId + sessionPath；
+ * store 内部按 sessionId/scoped key 分桶，sessionPath 只作为实时流 locator 和旧数据兼容键。
  */
+
+import { sessionScopedKey, sessionScopedValue, type SessionLocatorState } from './session-slice';
 
 export interface AgentActivityEntry {
   id: string;
   kind: 'subagent' | 'workflow' | 'workflow_agent' | 'workflow_step' | 'heartbeat' | 'cron';
   status: 'running' | 'done' | 'failed' | 'aborted';
+  sessionId?: string | null;
   sessionPath: string | null;
   agentId: string | null;
   agentName: string | null;
   summary: string | null;
+  childSessionId?: string | null;
   childSessionPath: string | null;
   threadId?: string | null;
   threadKind?: string | null;
@@ -28,7 +32,7 @@ export interface AgentActivityEntry {
 }
 
 export interface AgentActivitySlice {
-  /** 按 session path 存储的活动列表（权威源，前端按当前对话过滤展示） */
+  /** 按 session identity key 存储的活动列表（读旧 path key 兼容） */
   agentActivitiesBySession: Record<string, AgentActivityEntry[]>;
   upsertAgentActivity: (entry: AgentActivityEntry) => void;
   clearAgentActivities: (sessionPath: string) => void;
@@ -42,18 +46,23 @@ export const createAgentActivitySlice = (
     const sp = entry?.sessionPath;
     if (!sp || !entry?.id) return; // 无归属/无 id 不入库（禁止从焦点 session 兜底）
     set((s) => {
-      const list = s.agentActivitiesBySession[sp] || [];
+      const key = entry.sessionId?.trim() || sessionScopedKey(s as AgentActivitySlice & SessionLocatorState, sp) || sp;
+      const list = sessionScopedValue(s as AgentActivitySlice & SessionLocatorState, s.agentActivitiesBySession, sp) || [];
       const idx = list.findIndex((e) => e.id === entry.id);
       const next = idx >= 0
         ? list.map((e) => (e.id === entry.id ? { ...e, ...entry } : e))
         : [...list, entry];
-      return { agentActivitiesBySession: { ...s.agentActivitiesBySession, [sp]: next } };
+      const agentActivitiesBySession = { ...s.agentActivitiesBySession, [key]: next };
+      if (key !== sp) delete agentActivitiesBySession[sp];
+      return { agentActivitiesBySession };
     });
   },
   clearAgentActivities: (sessionPath) => {
     set((s) => {
-      if (!s.agentActivitiesBySession[sessionPath]) return {};
+      const key = sessionScopedKey(s as AgentActivitySlice & SessionLocatorState, sessionPath) || sessionPath;
+      if (!s.agentActivitiesBySession[key] && !s.agentActivitiesBySession[sessionPath]) return {};
       const next = { ...s.agentActivitiesBySession };
+      delete next[key];
       delete next[sessionPath];
       return { agentActivitiesBySession: next };
     });
@@ -65,5 +74,5 @@ const EMPTY: AgentActivityEntry[] = [];
 /** 当前对话的活动列表（稳定空引用，避免无活动时触发 re-render） */
 export const selectAgentActivities =
   (sessionPath: string | null) =>
-  (s: AgentActivitySlice): AgentActivityEntry[] =>
-    sessionPath ? (s.agentActivitiesBySession[sessionPath] || EMPTY) : EMPTY;
+  (s: AgentActivitySlice & SessionLocatorState): AgentActivityEntry[] =>
+    sessionPath ? (sessionScopedValue(s, s.agentActivitiesBySession, sessionPath) || EMPTY) : EMPTY;

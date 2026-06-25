@@ -18,10 +18,8 @@ function request(overrides = {}) {
 }
 
 describe("ApprovalGateway", () => {
-  it("hard-denies git push before model reviewers can approve it", async () => {
-    const smallToolModelReviewer = vi.fn(async () => ({ action: "allow", reason: "looks fine" }));
-    const largeToolModelReviewer = vi.fn(async () => ({ action: "allow", reason: "explicitly authorized" }));
-    const gateway = createApprovalGateway({ smallToolModelReviewer, largeToolModelReviewer });
+  it("does not own hard safety boundaries such as git push", async () => {
+    const gateway = createApprovalGateway();
 
     const decision = await gateway.review(request({
       toolName: "bash",
@@ -32,17 +30,15 @@ describe("ApprovalGateway", () => {
     }));
 
     expect(decision).toMatchObject({
-      action: "hard_deny",
+      action: "ask_user",
       reviewer: "policy",
-      risk: "critical",
+      risk: "medium",
     });
-    expect(decision.reason).toContain("/privacy-push");
-    expect(smallToolModelReviewer).not.toHaveBeenCalled();
-    expect(largeToolModelReviewer).not.toHaveBeenCalled();
+    expect(decision.reason).toContain("reviewer unavailable");
   });
 
-  it("hard-denies git push with global git options before model reviewers can approve it", async () => {
-    const smallToolModelReviewer = vi.fn(async () => ({ action: "allow", reason: "looks fine" }));
+  it("lets reviewer policy evaluate commands after hard safety has already been checked by the caller", async () => {
+    const smallToolModelReviewer = vi.fn(async () => ({ action: "allow", reason: "caller safety already checked", risk: "low" }));
     const gateway = createApprovalGateway({ smallToolModelReviewer });
 
     await expect(gateway.review(request({
@@ -50,30 +46,12 @@ describe("ApprovalGateway", () => {
       params: { command: "git -C /repo push origin main" },
       target: { type: "command", label: "git -C /repo push origin main" },
     }))).resolves.toMatchObject({
-      action: "hard_deny",
-      reviewer: "policy",
-      ruleIds: ["privacy-push-required"],
-    });
-    await expect(gateway.review(request({
-      toolName: "bash",
-      params: { command: "git --git-dir /repo/.git push origin --tags" },
-      target: { type: "command", label: "git --git-dir /repo/.git push origin --tags" },
-    }))).resolves.toMatchObject({
-      action: "hard_deny",
-      reviewer: "policy",
-      ruleIds: ["push-tags-blocked"],
-    });
-    await expect(gateway.review(request({
-      toolName: "bash",
-      params: { command: "git -c user.name=hana push --force-with-lease origin main" },
-      target: { type: "command", label: "git -c user.name=hana push --force-with-lease origin main" },
-    }))).resolves.toMatchObject({
-      action: "hard_deny",
-      reviewer: "policy",
-      ruleIds: ["force-push-blocked"],
+      action: "allow",
+      reviewer: "small_tool_model",
+      reason: "caller safety already checked",
     });
 
-    expect(smallToolModelReviewer).not.toHaveBeenCalled();
+    expect(smallToolModelReviewer).toHaveBeenCalledOnce();
   });
 
   it("does not hard-deny unrelated commands that happen to use --force", async () => {

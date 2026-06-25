@@ -12,10 +12,11 @@
     --panel-card-radius: var(--radius-lg);
     --panel-card-border: 1px solid rgba(0, 0, 0, 0.08);
     --panel-card-shadow: none;
-    --chat-column-width: 45rem;
+    --chat-column-width: 720px;
     --chat-input-column-extra: 1.25rem;
     --chat-input-column-width: calc(var(--chat-column-width) + var(--chat-input-column-extra));
     --welcome-chat-input-column-width: 40rem;
+    --chat-message-font-size: 15px;
     --radius-sm: 6px;
     --radius-md: 10px;
     --radius-lg: 16px;
@@ -45,6 +46,7 @@
     --editor-markdown-h6-font-size: 14px;
     --editor-markdown-line-height: 1.72;
     --editor-markdown-content-padding-x: 24px;
+    --editor-markdown-content-width: 720px;
     --paper-texture-card-blend-mode: lighten;
     --sidebar-width: 240px;
     --jian-sidebar-width: 260px;
@@ -72,6 +74,7 @@ body.paper-texture .sidebar {
     background-attachment: fixed;
 }
 
+body.paper-texture .universal-card,
 body.paper-texture .jian-card,
 body.paper-texture .msg-card,
 body.paper-texture .input-wrapper,
@@ -772,6 +775,13 @@ html[data-platform="linux"] .tb-toggle-right {
     border-top: 1px solid var(--border);
 }
 
+.md-content .markdown-table-scroll {
+    max-width: 100%;
+    margin: var(--space-sm) 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
 .md-content table {
     width: 100%;
     margin: var(--space-sm) 0;
@@ -779,11 +789,18 @@ html[data-platform="linux"] .tb-toggle-right {
     font-size: 0.9em;
 }
 
+.md-content .markdown-table-scroll > table {
+    width: max-content;
+    max-width: none;
+    margin: 0;
+}
+
 .md-content th,
 .md-content td {
     padding: 0.3em 0.6em;
     border: 1px solid var(--border);
     text-align: left;
+    white-space: nowrap;
 }
 
 .md-content th {
@@ -869,6 +886,7 @@ html[data-platform="linux"] .tb-toggle-right {
     box-shadow: -8px 0 24px rgba(0, 0, 0, 0.06);
 }
 
+.universal-card,
 .jian-card {
     overflow: hidden;
     border: var(--panel-card-border);

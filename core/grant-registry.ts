@@ -12,10 +12,24 @@ const STATUSES = new Set(["active", "revoked", "expired"]);
 
 export function ensureGrantRegistry(hanakoHome, { now = new Date().toISOString() } = {}) {
   const filePath = grantRegistryPath(hanakoHome);
-  const existing = readJsonIfPresent(filePath, GRANTS_FILE);
+  const existing = readGrantRegistryForStartup(filePath, now);
   if (existing) {
-    validateGrantRegistry(existing, GRANTS_FILE);
-    return existing;
+    try {
+      return validateGrantRegistry(existing, GRANTS_FILE);
+    } catch (err) {
+      const repaired = repairGrantRegistryShape(existing, now);
+      if (repaired) {
+        try {
+          validateGrantRegistry(repaired, GRANTS_FILE);
+          writeJsonAtomic(filePath, repaired);
+          return repaired;
+        } catch (repairErr) {
+          quarantineGrantRegistry(filePath, existing, now, repairErr);
+        }
+      } else {
+        quarantineGrantRegistry(filePath, existing, now, err);
+      }
+    }
   }
   const registry = createEmptyGrantRegistry(now);
   writeJsonAtomic(filePath, registry);
@@ -97,6 +111,61 @@ function createEmptyGrantRegistry(now) {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function readGrantRegistryForStartup(filePath, now) {
+  try {
+    return readJsonIfPresent(filePath, GRANTS_FILE);
+  } catch (err) {
+    quarantineGrantRegistry(filePath, null, now, err);
+    return null;
+  }
+}
+
+function repairGrantRegistryShape(value, now) {
+  if (!isPlainObject(value) || value.schemaVersion !== SCHEMA_VERSION || !Array.isArray(value.grants)) {
+    return null;
+  }
+  let changed = false;
+  const grants = [];
+  for (const grant of value.grants) {
+    if (!isPlainObject(grant)) return null;
+    const next = { ...grant };
+    if (next.schemaVersion === undefined) {
+      next.schemaVersion = SCHEMA_VERSION;
+      changed = true;
+    }
+    try {
+      normalizeGrantRecord(next, GRANTS_FILE);
+    } catch {
+      return null;
+    }
+    grants.push(next);
+  }
+  if (!changed) return null;
+  return {
+    ...value,
+    grants,
+    updatedAt: now,
+  };
+}
+
+function quarantineGrantRegistry(filePath, parsedValue, now, err) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const stamp = now.replace(/[:.]/g, "-");
+    const quarantinePath = `${filePath}.quarantine-${stamp}`;
+    fs.renameSync(filePath, quarantinePath);
+    const reasonPath = `${quarantinePath}.reason.txt`;
+    const reason = [
+      `quarantinedAt=${now}`,
+      `reason=${err?.message || String(err)}`,
+      parsedValue ? `schemaVersion=${parsedValue.schemaVersion ?? "(missing)"}` : "schemaVersion=(unreadable)",
+    ].join("\n") + "\n";
+    fs.writeFileSync(reasonPath, reason, "utf-8");
+  } catch {
+    // Startup repair must never make a bad grants file fatal.
+  }
 }
 
 function validateGrantRegistry(value, label) {

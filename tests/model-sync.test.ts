@@ -1,7 +1,7 @@
 /**
  * model-sync.js 单元测试
  *
- * 测试：added-models.yaml → models.json 单向投影
+ * 测试：Provider Catalog provider configs → models.json 单向投影
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -46,6 +46,41 @@ const KNOWN_MODELS = {
   },
   zhipu: {
     "glm-4.7-flash": { name: "GLM-4.7 Flash", context: 200000, maxOutput: 128000, reasoning: true },
+  },
+  "zhipu-coding": {
+    "glm-5.2": { name: "GLM-5.2", context: 1000000, maxOutput: 131072, image: false, reasoning: true, xhigh: true },
+  },
+  volcengine: {
+    "doubao-seed-2-0-pro-260215": {
+      name: "Doubao Seed 2.0 Pro",
+      context: 262144,
+      maxOutput: 16384,
+      image: true,
+      reasoning: true,
+    },
+  },
+  "opencode-go": {
+    "glm-5.2": {
+      name: "GLM-5.2",
+      context: 1000000,
+      maxOutput: 131072,
+      image: false,
+      reasoning: true,
+      xhigh: true,
+      compat: { thinkingFormat: "zhipu", reasoningProfile: "zhipu-openai" },
+      toolUse: { supportsTools: true, dialect: "openai", toolResultFormat: "message" },
+    },
+  },
+  anthropic: {
+    "claude-fable-5": {
+      name: "Claude Fable 5",
+      context: 1000000,
+      maxOutput: 128000,
+      image: true,
+      reasoning: true,
+      xhigh: true,
+      compat: { thinkingFormat: "anthropic", reasoningProfile: "anthropic-adaptive-only" },
+    },
   },
   openai: {
     "gpt-4o": {
@@ -117,6 +152,15 @@ const KNOWN_MODELS = {
     },
   },
   openrouter: {
+    "anthropic/claude-fable-5": {
+      name: "Anthropic/Claude Fable 5",
+      context: 1000000,
+      maxOutput: 128000,
+      image: true,
+      reasoning: true,
+      xhigh: true,
+      compat: { thinkingFormat: "openrouter", reasoningProfile: "openrouter-anthropic-adaptive" },
+    },
     "deepseek/deepseek-v3.2": {
       name: "Deepseek/Deepseek V3.2",
       context: 163840,
@@ -198,6 +242,10 @@ afterEach(() => {
 async function loadSync() {
   const mod = await import("../core/model-sync.ts");
   return mod.syncModels;
+}
+
+function readProviderCatalogProviders() {
+  return JSON.parse(fs.readFileSync(path.join(tmpDir, "provider-catalog.json"), "utf-8")).providers || {};
 }
 
 describe("syncModels", () => {
@@ -290,6 +338,63 @@ describe("syncModels", () => {
     });
   });
 
+  it("projects explicit tool use contracts into runtime model metadata", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      custom: {
+        base_url: "https://custom.api.com/v1",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: [
+          {
+            id: "tool-model",
+            toolUse: {
+              supportsTools: true,
+              dialect: "openai",
+              supportsParallelToolCalls: true,
+              toolResultFormat: "message",
+            },
+          },
+        ],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers.custom.models[0].toolUse).toEqual({
+      supportsTools: true,
+      dialect: "openai",
+      supportsParallelToolCalls: true,
+      toolResultFormat: "message",
+    });
+  });
+
+  it("rejects malformed tool use contracts instead of silently falling back", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      custom: {
+        base_url: "https://custom.api.com/v1",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: [
+          {
+            id: "tool-model",
+            toolUse: {
+              supportsTools: true,
+              dialect: "surprise-wire-format",
+              toolResultFormat: "message",
+            },
+          },
+        ],
+      },
+    };
+
+    expect(() => syncModels(providers, { modelsJsonPath })).toThrow(/invalid toolUse contract/i);
+  });
+
   it("skips providers without api_key (and not localhost/OAuth)", async () => {
     const syncModels = await loadSync();
 
@@ -373,6 +478,34 @@ describe("syncModels", () => {
     expect(model.reasoning).toBe(true);
     expect(model.quirks).toEqual(["enable_thinking"]);
     expect(model.compat.thinkingFormat).toBe("qwen");
+  });
+
+  it("preserves user-declared max thinking capability for local model objects", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      zhipu: {
+        base_url: "https://open.bigmodel.cn/api/paas/v4",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: [{
+          id: "local-max-capable-model",
+          name: "Local Max Capable Model",
+          reasoning: true,
+          xhigh: true,
+          defaultThinkingLevel: "max",
+        }],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    const model = result.providers.zhipu.models[0];
+    expect(model.id).toBe("local-max-capable-model");
+    expect(model.reasoning).toBe(true);
+    expect(model.xhigh).toBe(true);
+    expect(model.defaultThinkingLevel).toBe("max");
   });
 
   it("projects native and prompted visual grounding family formats", async () => {
@@ -480,7 +613,7 @@ describe("syncModels", () => {
     expect(model.reasoning).toBe(true);
   });
 
-  it("projects Kimi Coding Plan stable model with Anthropic thinking compat", async () => {
+  it("normalizes legacy Kimi Coding Plan configs to the official OpenAI-compatible endpoint", async () => {
     const syncModels = await loadSync();
 
     const providers = {
@@ -488,7 +621,7 @@ describe("syncModels", () => {
         base_url: "https://api.kimi.com/coding/",
         api: "anthropic-messages",
         api_key: "sk-test",
-        models: ["kimi-for-coding"],
+        models: ["kimi-k2.6"],
       },
     };
 
@@ -496,15 +629,25 @@ describe("syncModels", () => {
 
     const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
     expect(result.providers["kimi-coding"]).toMatchObject({
-      baseUrl: "https://api.kimi.com/coding/",
-      api: "anthropic-messages",
+      baseUrl: "https://api.kimi.com/coding/v1",
+      api: "openai-completions",
       apiKey: "hana-runtime-api-key:kimi-coding",
     });
-    expect(result.providers["kimi-coding"].models).toBeUndefined();
+    expect(result.providers["kimi-coding"].models[0]).toMatchObject({
+      id: "kimi-for-coding",
+      name: "Kimi for Coding",
+      reasoning: true,
+      headers: { "User-Agent": "KimiCLI/1.5" },
+      compat: {
+        supportsDeveloperRole: false,
+        thinkingFormat: "kimi",
+        reasoningProfile: "kimi-openai",
+      },
+    });
     expect(result.providers["kimi-coding"].modelOverrides).toBeUndefined();
   });
 
-  it("preserves user metadata for Pi built-in Kimi Coding models as model overrides", async () => {
+  it("preserves user metadata while projecting Kimi Coding Plan to the official model id", async () => {
     const syncModels = await loadSync();
 
     const providers = {
@@ -512,19 +655,26 @@ describe("syncModels", () => {
         base_url: "https://api.kimi.com/coding/",
         api: "anthropic-messages",
         api_key: "sk-test",
-        models: [{ id: "kimi-for-coding", name: "Kimi 自定义显示名", maxOutput: 16000, image: true, video: true }],
+        models: [{ id: "kimi-for-coding", name: "Kimi 自定义显示名", maxOutput: 16000, image: true, video: true, xhigh: true }],
       },
     };
 
     syncModels(providers, { modelsJsonPath });
 
     const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
-    expect(result.providers["kimi-coding"].models).toBeUndefined();
-    expect(result.providers["kimi-coding"].modelOverrides["kimi-for-coding"]).toEqual({
+    expect(result.providers["kimi-coding"].modelOverrides).toBeUndefined();
+    expect(result.providers["kimi-coding"].models[0]).toMatchObject({
+      id: "kimi-for-coding",
       name: "Kimi 自定义显示名",
       maxTokens: 16000,
+      xhigh: true,
       input: ["text", "image"],
-      compat: { hanaVideoInput: true },
+      compat: {
+        supportsDeveloperRole: false,
+        thinkingFormat: "kimi",
+        reasoningProfile: "kimi-openai",
+        hanaVideoInput: true,
+      },
     });
   });
 
@@ -546,9 +696,14 @@ describe("syncModels", () => {
     const model = result.providers["kimi-coding"].models[0];
     expect(model.id).toBe("kimi-for-coding");
     expect(model.headers).toEqual({ "User-Agent": "KimiCLI/1.5" });
+    expect(model.compat).toMatchObject({
+      supportsDeveloperRole: false,
+      thinkingFormat: "kimi",
+      reasoningProfile: "kimi-openai",
+    });
   });
 
-  it("marks Anthropic-compatible reasoning models with anthropic thinking format", async () => {
+  it("keeps Kimi Coding on official OpenAI-compatible thinking while other Anthropic-compatible reasoning models use anthropic format", async () => {
     const syncModels = await loadSync();
 
     const providers = {
@@ -575,9 +730,17 @@ describe("syncModels", () => {
     syncModels(providers, { modelsJsonPath });
 
     const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
-    expect(result.providers["kimi-coding"].models[0].compat).toMatchObject({
-      supportsDeveloperRole: false,
-      thinkingFormat: "anthropic",
+    expect(result.providers["kimi-coding"]).toMatchObject({
+      baseUrl: "https://api.kimi.com/coding/v1",
+      api: "openai-completions",
+    });
+    expect(result.providers["kimi-coding"].models[0]).toMatchObject({
+      id: "kimi-for-coding",
+      compat: {
+        supportsDeveloperRole: false,
+        thinkingFormat: "kimi",
+        reasoningProfile: "kimi-openai",
+      },
     });
     expect(result.providers.minimax.models[0].compat).toMatchObject({
       supportsDeveloperRole: false,
@@ -888,6 +1051,92 @@ describe("syncModels", () => {
     expect(mimo.compat).not.toHaveProperty("reasoningProfile");
   });
 
+  it("projects Volcengine reasoning models with Volcengine thinking compat", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      volcengine: {
+        base_url: "https://ark.cn-beijing.volces.com/api/v3",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: ["doubao-seed-2-0-pro-260215"],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    const model = result.providers.volcengine.models[0];
+    expect(model).toMatchObject({
+      id: "doubao-seed-2-0-pro-260215",
+      reasoning: true,
+      compat: {
+        supportsDeveloperRole: false,
+        thinkingFormat: "volcengine",
+      },
+    });
+  });
+
+  it("projects Claude Fable adaptive-only profile for Anthropic Messages providers", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      anthropic: {
+        base_url: "https://api.anthropic.com",
+        api: "anthropic-messages",
+        api_key: "sk-test",
+        models: ["claude-fable-5"],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    const model = result.providers.anthropic.models[0];
+    expect(model).toMatchObject({
+      id: "claude-fable-5",
+      contextWindow: 1000000,
+      maxTokens: 128000,
+      input: ["text", "image"],
+      reasoning: true,
+      compat: {
+        supportsDeveloperRole: false,
+        thinkingFormat: "anthropic",
+        reasoningProfile: "anthropic-adaptive-only",
+      },
+    });
+  });
+
+  it("projects Claude Fable OpenRouter profile without Anthropic Messages fields", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      openrouter: {
+        base_url: "https://openrouter.ai/api/v1",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: ["anthropic/claude-fable-5"],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    const model = result.providers.openrouter.models[0];
+    expect(model).toMatchObject({
+      id: "anthropic/claude-fable-5",
+      contextWindow: 1000000,
+      maxTokens: 128000,
+      input: ["text", "image"],
+      reasoning: true,
+      compat: {
+        supportsDeveloperRole: false,
+        thinkingFormat: "openrouter",
+        reasoningProfile: "openrouter-anthropic-adaptive",
+      },
+    });
+  });
+
   it("writes Pi-loadable models when Hana video capability is enabled", async () => {
     const syncModels = await loadSync();
     const { AuthStorage, createModelRegistry } = await import("../lib/pi-sdk/index.ts");
@@ -1181,9 +1430,9 @@ describe("syncModels", () => {
 
     const result = await mm.setModelDefaultThinkingLevel({ id: "gpt-4o", provider: "openai" }, "high");
 
-    const raw = YAML.load(fs.readFileSync(path.join(tmpDir, "added-models.yaml"), "utf-8"));
-    expect(raw.providers.openai.models).toBeUndefined();
-    expect(raw.providers.openai.model_defaults).toEqual({
+    const providers = readProviderCatalogProviders();
+    expect(providers.openai.models).toBeUndefined();
+    expect(providers.openai.model_defaults).toEqual({
       "gpt-4o": { thinking_level: "high" },
     });
     expect(result.thinkingLevel).toBe("high");
@@ -1221,10 +1470,25 @@ describe("syncModels", () => {
     expect(result.providers.deepseek.models[0].id).toBe("deepseek-chat");
     expect(result.providers["dashscope-coding"]).toBeUndefined();
     expect(result.providers["string-provider"]).toBeUndefined();
-    expect(mm.availableModels).toEqual([
-      { id: "deepseek-chat", provider: "deepseek" },
-      { id: "unconfigured-model", provider: "other" },
-    ]);
+    expect(mm.availableModels).toEqual([{ id: "deepseek-chat", provider: "deepseek" }]);
+  });
+
+  it("keeps SDK-auth alias providers available without a provider model allow list", async () => {
+    const { ModelManager } = await import("../core/model-manager.ts");
+    fs.writeFileSync(path.join(tmpDir, "added-models.yaml"), "providers: {}\n", "utf-8");
+
+    const mm = new ModelManager({ hanakoHome: tmpDir });
+    mm._modelRegistry = {
+      refresh: vi.fn(),
+      getAvailable: vi.fn().mockResolvedValue([
+        { id: "gpt-5-codex", provider: "openai-codex" },
+        { id: "shadow-model", provider: "shadow-sdk-provider" },
+      ]),
+    };
+
+    await mm.refreshAvailable();
+
+    expect(mm.availableModels).toEqual([{ id: "gpt-5-codex", provider: "openai-codex" }]);
   });
 
   it("handles multiple providers in one call", async () => {
@@ -1334,6 +1598,85 @@ describe("syncModels", () => {
       supportsReasoningEffort: false,
       thinkingFormat: "zhipu",
       reasoningProfile: "zhipu-openai",
+    });
+  });
+
+  it("projects GLM Coding Plan through the Z.AI OpenAI-compatible endpoint with Zhipu thinking compat", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      "zhipu-coding": {
+        base_url: "https://api.z.ai/api/coding/paas/v4",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: ["glm-5.2"],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers["zhipu-coding"]).toMatchObject({
+      baseUrl: "https://api.z.ai/api/coding/paas/v4",
+      api: "openai-completions",
+      apiKey: "hana-runtime-api-key:zhipu-coding",
+    });
+    expect(result.providers["zhipu-coding"].models[0]).toMatchObject({
+      id: "glm-5.2",
+      name: "GLM-5.2",
+      contextWindow: 1000000,
+      maxTokens: 131072,
+      reasoning: true,
+      xhigh: true,
+      compat: {
+        supportsDeveloperRole: false,
+        supportsStore: false,
+        supportsReasoningEffort: false,
+        thinkingFormat: "zhipu",
+        reasoningProfile: "zhipu-openai",
+      },
+    });
+  });
+
+  it("projects OpenCode Go GLM-5.2 with explicit Zhipu thinking compat", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      "opencode-go": {
+        base_url: "https://opencode.ai/zen/go/v1",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: ["glm-5.2"],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers["opencode-go"]).toMatchObject({
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      api: "openai-completions",
+      apiKey: "hana-runtime-api-key:opencode-go",
+    });
+    expect(result.providers["opencode-go"].models[0]).toMatchObject({
+      id: "glm-5.2",
+      name: "GLM-5.2",
+      contextWindow: 1000000,
+      maxTokens: 131072,
+      reasoning: true,
+      xhigh: true,
+      compat: {
+        supportsDeveloperRole: false,
+        supportsStore: false,
+        supportsReasoningEffort: false,
+        thinkingFormat: "zhipu",
+        reasoningProfile: "zhipu-openai",
+      },
+      toolUse: {
+        supportsTools: true,
+        dialect: "openai",
+        toolResultFormat: "message",
+      },
     });
   });
 

@@ -172,6 +172,26 @@ function runWithTargetNode(cmd, opts = {}) {
   });
 }
 
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function writeSmokeScriptWithRetry(filePath, contents) {
+  const retryable = new Set(["EMFILE", "ENFILE"]);
+  let lastError = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      fs.writeFileSync(filePath, contents);
+      return;
+    } catch (err) {
+      lastError = err;
+      if (!retryable.has(err?.code)) throw err;
+      await delay(250 * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
 function ensureNodePtySpawnHelperExecutable(baseDir) {
   if (isWin) return;
   const nodePtyRoot = path.join(baseDir, "node_modules", "node-pty");
@@ -189,10 +209,10 @@ function ensureNodePtySpawnHelperExecutable(baseDir) {
   }
 }
 
-function runJiebaRuntimeSmokeIfNeeded() {
+async function runJiebaRuntimeSmokeIfNeeded() {
   if (!externalPkg.dependencies["@node-rs/jieba"]) return;
   const smokeScript = path.join(outDir, ".jieba-smoke.mjs");
-  fs.writeFileSync(smokeScript, buildJiebaRuntimeSmokeScript());
+  await writeSmokeScriptWithRetry(smokeScript, buildJiebaRuntimeSmokeScript());
   try {
     runWithTargetNode(path.basename(smokeScript));
   } finally {
@@ -200,10 +220,10 @@ function runJiebaRuntimeSmokeIfNeeded() {
   }
 }
 
-function runBetterSqliteRuntimeSmokeIfNeeded() {
+async function runBetterSqliteRuntimeSmokeIfNeeded() {
   if (!externalPkg.dependencies["better-sqlite3"]) return;
   const smokeScript = path.join(outDir, ".better-sqlite3-smoke.mjs");
-  fs.writeFileSync(smokeScript, buildBetterSqliteRuntimeSmokeScript());
+  await writeSmokeScriptWithRetry(smokeScript, buildBetterSqliteRuntimeSmokeScript());
   try {
     runWithTargetNode(path.basename(smokeScript));
   } finally {
@@ -453,20 +473,61 @@ console.log("[build-server] dependencies installed");
 // ── 8. @vercel/nft 追踪：只保留运行时实际需要的文件 ──
 // 从 bundle 入口出发，静态分析所有 import/require 链，
 // 删除 node_modules 里没被追踪到的文件（.d.ts、.map、多余平台二进制等）
+const shouldRunNftTrace = process.env.HANA_BUILD_SERVER_NFT_TRACE === "1"
+  || (!isWin && process.env.HANA_BUILD_SERVER_NFT_TRACE !== "0");
+let fileList = null;
+if (shouldRunNftTrace) {
 console.log("[build-server] running nft trace...");
 
 // nft 是 ESM，用动态 import
 const { nodeFileTrace } = await import("@vercel/nft");
-let fileList;
+const NFT_IGNORED_IO_ERRORS = new Set(["ENOENT", "ENOTDIR", "EACCES", "EPERM", "EMFILE", "ENFILE", "EINVAL"]);
+const nftFileIOConcurrency = Number(process.env.HANA_BUILD_SERVER_NFT_IO_CONCURRENCY)
+  || (isWin ? 64 : 1024);
+async function nftReadFile(filePath) {
+  try {
+    return await fs.promises.readFile(filePath);
+  } catch (err) {
+    if (NFT_IGNORED_IO_ERRORS.has(err?.code)) return null;
+    throw err;
+  }
+}
+async function nftStat(filePath) {
+  try {
+    return await fs.promises.stat(filePath);
+  } catch (err) {
+    if (NFT_IGNORED_IO_ERRORS.has(err?.code)) return null;
+    throw err;
+  }
+}
+async function nftReadlink(filePath) {
+  try {
+    return await fs.promises.readlink(filePath);
+  } catch (err) {
+    if (NFT_IGNORED_IO_ERRORS.has(err?.code)) return null;
+    throw err;
+  }
+}
 try {
   ({ fileList } = await nodeFileTrace(
     [path.join(outDir, "bundle", "index.js")],
-    { base: outDir, conditions: ["node", "import"] },
+    {
+      base: outDir,
+      processCwd: outDir,
+      conditions: ["node", "import"],
+      fileIOConcurrency: nftFileIOConcurrency,
+      readFile: nftReadFile,
+      stat: nftStat,
+      readlink: nftReadlink,
+    },
   ));
 } catch (e) {
   // Windows CI 上 nft 可能因用户目录不存在而报错，跳过裁剪
   console.warn(`[build-server] nft trace failed (${e.message}), skipping prune`);
   fileList = null;
+}
+} else {
+  console.warn("[build-server] nft trace skipped on win32; set HANA_BUILD_SERVER_NFT_TRACE=1 to force it");
 }
 
 const nmDir = path.join(outDir, "node_modules");
@@ -539,8 +600,8 @@ try {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 }
-runBetterSqliteRuntimeSmokeIfNeeded();
-runJiebaRuntimeSmokeIfNeeded();
+await runBetterSqliteRuntimeSmokeIfNeeded();
+await runJiebaRuntimeSmokeIfNeeded();
 
 // ── 8b. 删除 koffi 多余平台二进制 ──
 // koffi 带了 18 个平台的 .node 文件，nft 全部追踪到了（因为 require 路径指向包根）。

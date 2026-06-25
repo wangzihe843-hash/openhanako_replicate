@@ -9,8 +9,8 @@ import {
   hasChatImageAttachments,
   hasChatVideoAttachments,
   notifyTextModelAudioBlocked,
-  notifyTextModelImageBlocked,
-  notifyTextModelVideoBlocked,
+  notifyTextModelImageFileOnly,
+  notifyTextModelVideoFileOnly,
   evaluateChatVideoSendPreflight,
 } from '../../utils/chat-image-send-preflight';
 
@@ -122,23 +122,23 @@ describe('chat image send preflight', () => {
     expect(loadVisionAuxiliaryConfig).not.toHaveBeenCalled();
   });
 
-  it('builds one actionable warning toast for text-only image sends', () => {
+  it('builds one actionable file-only notice toast for text-only image sends (#1647)', () => {
     const addToast = vi.fn();
     const openSettings = vi.fn();
     const t = (key: string) => `i18n:${key}`;
 
-    notifyTextModelImageBlocked({
+    notifyTextModelImageFileOnly({
       t,
       addToast,
       openSettings,
     });
 
     expect(addToast).toHaveBeenCalledWith(
-      'i18n:input.textModelImageBlocked',
+      'i18n:input.textModelImageFileOnly',
       'warning',
       9000,
       {
-        dedupeKey: 'text-model-image-blocked',
+        dedupeKey: 'text-model-image-file-only',
         action: {
           label: 'i18n:input.openModelSettings',
           onClick: expect.any(Function),
@@ -195,23 +195,23 @@ describe('chat image send preflight', () => {
     });
   });
 
-  it('builds one actionable warning toast for unsupported video sends', () => {
+  it('builds one actionable file-only notice toast for unsupported video sends', () => {
     const addToast = vi.fn();
     const openSettings = vi.fn();
     const t = (key: string) => `i18n:${key}`;
 
-    notifyTextModelVideoBlocked({
+    notifyTextModelVideoFileOnly({
       t,
       addToast,
       openSettings,
     });
 
     expect(addToast).toHaveBeenCalledWith(
-      'i18n:input.textModelVideoBlocked',
+      'i18n:input.textModelVideoFileOnly',
       'warning',
       9000,
       {
-        dedupeKey: 'text-model-video-blocked',
+        dedupeKey: 'text-model-video-file-only',
         action: {
           label: 'i18n:input.openModelSettings',
           onClick: expect.any(Function),

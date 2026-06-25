@@ -22,6 +22,16 @@ const PLUGIN_SOURCE_EXTS = [".ts", ".js"];
 function isPluginSourceFile(filename) {
   return PLUGIN_SOURCE_EXTS.some((ext) => filename.endsWith(ext));
 }
+
+function hasSkillSourceEntry(skillsDir) {
+  if (!fs.existsSync(skillsDir)) return false;
+  for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".md")) return true;
+    if (entry.isDirectory() && fs.existsSync(path.join(skillsDir, entry.name, "SKILL.md"))) return true;
+  }
+  return false;
+}
+
 function resolvePluginEntry(pluginDir) {
   for (const ext of PLUGIN_SOURCE_EXTS) {
     const p = path.join(pluginDir, `index${ext}`);
@@ -39,6 +49,9 @@ const KNOWN_UI_HOST_CAPABILITIES = new Set([
   "external.open",
   "clipboard.writeText",
   "sessionFile.open",
+  "resource.open",
+  "resource.pick",
+  "resource.requestAccess",
 ]);
 const DEFAULT_PLUGIN_LOAD_TIMEOUT_MS = 15_000;
 const PLUGIN_SOURCE_PRIORITY = Object.freeze({
@@ -152,6 +165,58 @@ function getDynamicToolInvocationStyle( toolDef: any = {}) {
   return style === "pi_tool" ? "pi_tool" : "sdk_tool";
 }
 
+function textOrNull(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeToolSessionRef(runtimeCtx: any = {}, fallbackSessionPath = null) {
+  const rawRef = runtimeCtx?.sessionRef && typeof runtimeCtx.sessionRef === "object"
+    ? runtimeCtx.sessionRef
+    : null;
+  const sessionId = textOrNull(runtimeCtx?.sessionId) || textOrNull(rawRef?.sessionId);
+  const sessionPath = textOrNull(runtimeCtx?.sessionPath)
+    || textOrNull(rawRef?.sessionPath)
+    || textOrNull(rawRef?.path)
+    || textOrNull(fallbackSessionPath);
+  const legacySessionPath = textOrNull(runtimeCtx?.legacySessionPath) || textOrNull(rawRef?.legacySessionPath);
+  if (!sessionId) {
+    return {
+      ...(sessionPath ? { sessionPath } : {}),
+    };
+  }
+  const sessionRef = {
+    sessionId,
+    ...(sessionPath ? { sessionPath } : {}),
+    ...(legacySessionPath ? { legacySessionPath } : {}),
+  };
+  return {
+    sessionId,
+    ...(sessionPath ? { sessionPath } : {}),
+    sessionRef,
+  };
+}
+
+function withInvocationSessionHelpers(ctx, sessionCtx) {
+  const hasSessionRef = sessionCtx?.sessionId || sessionCtx?.sessionPath || sessionCtx?.sessionRef;
+  if (!hasSessionRef) return {};
+  return {
+    registerSessionFile: typeof ctx.registerSessionFile === "function"
+      ? (entry: any = {}) => ctx.registerSessionFile({
+        ...sessionCtx,
+        ...entry,
+        sessionRef: entry.sessionRef || sessionCtx.sessionRef,
+      })
+      : undefined,
+    stageFile: typeof ctx.stageFile === "function"
+      ? (entry: any = {}) => ctx.stageFile({
+        ...sessionCtx,
+        ...entry,
+        sessionRef: entry.sessionRef || sessionCtx.sessionRef,
+      })
+      : undefined,
+  };
+}
+
 export class PluginManager {
   declare _agentTemplates: any;
   declare _appVersion: any;
@@ -170,6 +235,9 @@ export class PluginManager {
   declare _preferencesManager: any;
   declare _providerPlugins: any;
   declare _registerSessionFile: any;
+  declare _emitResourceChanged: any;
+  declare _resourceIO: any;
+  declare _resourceWatch: any;
   declare _routeApps: any;
   declare _runtimeContext: any;
   declare _scanned: any;
@@ -193,6 +261,9 @@ export class PluginManager {
     appVersion,
     getSessionPath,
     registerSessionFile,
+    emitResourceChanged,
+    resourceIO,
+    resourceWatch,
     slashRegistry,
     loadTimeoutMs,
     lifecycleTimeoutMs,
@@ -206,6 +277,9 @@ export class PluginManager {
     this._appVersion = appVersion || "0.0.0";
     this._getSessionPath = getSessionPath || (() => null);
     this._registerSessionFile = registerSessionFile || null;
+    this._emitResourceChanged = typeof emitResourceChanged === "function" ? emitResourceChanged : null;
+    this._resourceIO = resourceIO || null;
+    this._resourceWatch = resourceWatch || null;
     this._logSink = typeof logSink === "function" ? logSink : null;
     this._runtimeContext = runtimeContext || null;
     this._plugins = new Map();
@@ -624,12 +698,16 @@ export class PluginManager {
       bus: this._bus,
       accessLevel,
       registerSessionFile: this._registerSessionFile,
+      emitResourceChanged: this._emitResourceChanged,
+      resourceIO: this._resourceIO,
+      resourceWatch: this._resourceWatch,
       configSchema: entry.configSchema,
       logSink: this._logSink,
       runtimeContext: this._runtimeContext,
       permissions: entry.manifest?.permissions,
       capabilities: entry.capabilities,
       sensitiveCapabilities: entry.sensitiveCapabilities,
+      network: entry.manifest?.network,
     });
 
     // All plugins: declarative contributions
@@ -758,18 +836,23 @@ export class PluginManager {
           parameters: mod.parameters ?? {},
           ...(mod.promptSnippet ? { promptSnippet: mod.promptSnippet } : {}),
           ...(mod.promptGuidelines ? { promptGuidelines: mod.promptGuidelines } : {}),
+          ...(mod.sessionPermission && typeof mod.sessionPermission === "object" ? { sessionPermission: mod.sessionPermission } : {}),
           ...(typeof mod.isEnabledForAgentConfig === "function" ? { isEnabledForAgentConfig: mod.isEnabledForAgentConfig } : {}),
           execute: async (_toolCallId, params, signalOrRuntimeCtx, _onUpdate, piCtx) => {
             await this.activatePlugin(entry.id, { event: `onToolCall:${mod.name}`, toolName: mod.name }, { pluginKey: entry.pluginKey });
             const { ctx: runtimeCtx, hasExplicitCtx } = normalizeToolRuntimeContext(signalOrRuntimeCtx, piCtx);
-            const sessionPath = runtimeCtx?.sessionPath
+            const fallbackSessionPath = runtimeCtx?.sessionPath
               || getToolSessionPath(runtimeCtx)
               || (!hasExplicitCtx ? this._getSessionPath?.() : null)
               || null;
-            const sessionCtx = { sessionPath };
+            const sessionCtx = normalizeToolSessionRef(runtimeCtx, fallbackSessionPath);
+            const helperCtx = withInvocationSessionHelpers(ctx, sessionCtx);
+            const invocationResources = typeof ctx.__createInvocationResources === "function"
+              ? ctx.__createInvocationResources({ ...runtimeCtx, ...sessionCtx })
+              : ctx.resources;
             const mergedCtx = hasExplicitCtx
-              ? { ...ctx, ...runtimeCtx, ...sessionCtx }
-              : { ...ctx, ...sessionCtx };
+              ? { ...ctx, ...runtimeCtx, ...sessionCtx, ...helperCtx, resources: invocationResources }
+              : { ...ctx, ...sessionCtx, ...helperCtx, resources: invocationResources };
             const raw = await origExecute(params, mergedCtx);
             return normalizePluginToolResult(raw, ctx.pluginId);
           },
@@ -801,8 +884,9 @@ export class PluginManager {
       parameters: toolDef.parameters || { type: "object", properties: {} },
       execute: async (toolCallId, params, signalOrRuntimeCtx, onUpdate, piCtx) => {
         const { ctx: runtimeCtx } = normalizeToolRuntimeContext(signalOrRuntimeCtx, piCtx);
-        const sessionPath = runtimeCtx?.sessionPath || getToolSessionPath(runtimeCtx) || null;
-        const mergedCtx = sessionPath ? { ...runtimeCtx, sessionPath } : runtimeCtx;
+        const fallbackSessionPath = runtimeCtx?.sessionPath || getToolSessionPath(runtimeCtx) || null;
+        const sessionCtx = normalizeToolSessionRef(runtimeCtx, fallbackSessionPath);
+        const mergedCtx = { ...runtimeCtx, ...sessionCtx };
         const raw = invocationStyle === "pi_tool"
           ? origExecute.length >= 5
             ? await origExecute(toolCallId, params, signalOrRuntimeCtx, onUpdate, mergedCtx)
@@ -822,6 +906,9 @@ export class PluginManager {
     }
     if (toolDef.metadata && typeof toolDef.metadata === "object") {
       tool.metadata = { ...toolDef.metadata };
+    }
+    if (toolDef.sessionPermission && typeof toolDef.sessionPermission === "object") {
+      tool.sessionPermission = toolDef.sessionPermission;
     }
     this._tools.push(tool);
     return () => {
@@ -864,7 +951,7 @@ export class PluginManager {
 
   async _loadSkillPaths(entry) {
     const skillsDir = path.join(entry.pluginDir, "skills");
-    if (!fs.existsSync(skillsDir)) return;
+    if (!hasSkillSourceEntry(skillsDir)) return;
     this._skillPaths.push({
       dirPath: skillsDir,
       label: `plugin:${entry.id}`,

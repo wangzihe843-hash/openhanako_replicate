@@ -90,6 +90,7 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
 
   if (routePath === "/api/health") return AUTHENTICATED_ONLY;
   if (routePath === "/api/server/identity") return AUTHENTICATED_ONLY;
+  if (routePath === "/api/ws-ticket") return verb === "POST" ? scoped("chat") : LOCAL_ONLY;
   if (isClientLocalOnlyRoute(verb, routePath)) return LOCAL_ONLY;
 
   if (routePath === "/ws") return scoped("chat");
@@ -118,6 +119,9 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
     return scoped("chat");
   }
   if (routePath === "/api/preferences/sidebar-ui") {
+    return (verb === "GET" || verb === "PUT") ? scoped("chat") : LOCAL_ONLY;
+  }
+  if (routePath === "/api/preferences/session-permission-default") {
     return (verb === "GET" || verb === "PUT") ? scoped("chat") : LOCAL_ONLY;
   }
   if (isSettingsReadRoute(verb, routePath)) return scoped("settings.read");

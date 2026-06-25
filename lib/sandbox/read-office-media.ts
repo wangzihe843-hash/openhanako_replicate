@@ -58,9 +58,9 @@ function contentHash(buffer) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
-function officeMediaResourceKey({ sessionPath, docxPath, index, mimeType, hash }) {
+function officeMediaResourceKey({ sessionId, sessionPath, docxPath, index, mimeType, hash }) {
   const h = crypto.createHash("sha256");
-  h.update(sessionPath || "");
+  h.update(sessionId || sessionPath || "");
   h.update("\0");
   h.update(docxPath || "");
   h.update("\0");
@@ -90,6 +90,7 @@ function mediaItemFromSessionFile(file) {
   return {
     type: "session_file",
     fileId: file.fileId || file.id,
+    ...(file.sessionId ? { sessionId: file.sessionId } : {}),
     sessionPath: file.sessionPath,
     filePath: file.filePath,
     filename: file.filename || path.basename(file.filePath || file.label || "docx-image"),
@@ -193,6 +194,7 @@ async function materializeDocxImages({
   docxPath,
   images,
   hanakoHome,
+  sessionId = null,
   sessionPath,
   recordFileOperation,
 }) {
@@ -205,7 +207,7 @@ async function materializeDocxImages({
         const label = `${path.basename(docxPath)}#${image.index}`;
         return {
           ...image,
-          key: officeMediaResourceKey({ sessionPath, docxPath, index: image.index, mimeType: image.mimeType, hash: image.hash }),
+          key: officeMediaResourceKey({ sessionId, sessionPath, docxPath, index: image.index, mimeType: image.mimeType, hash: image.hash }),
           label,
           mediaItem: null,
           sessionFile: null,
@@ -215,7 +217,7 @@ async function materializeDocxImages({
     };
   }
 
-  const dir = sessionFilesCacheDir(hanakoHome, sessionPath);
+  const dir = sessionFilesCacheDir(hanakoHome, { sessionId, sessionPath });
   await fs.mkdir(dir, { recursive: true });
   const docBase = safeFilenamePart(path.basename(docxPath, path.extname(docxPath)), "document");
   const entries = [];
@@ -229,6 +231,7 @@ async function materializeDocxImages({
     let sessionFile = null;
     try {
       sessionFile = serializeSessionFile(recordFileOperation({
+        ...(sessionId ? { sessionId } : {}),
         sessionPath,
         filePath,
         label,
@@ -241,7 +244,7 @@ async function materializeDocxImages({
     }
     entries.push({
       ...image,
-      key: officeMediaResourceKey({ sessionPath, docxPath, index: image.index, mimeType: image.mimeType, hash: image.hash }),
+      key: officeMediaResourceKey({ sessionId, sessionPath, docxPath, index: image.index, mimeType: image.mimeType, hash: image.hash }),
       label,
       filePath,
       sessionFile,
@@ -319,8 +322,9 @@ export function wrapReadOfficeMedia(tool, cwd, {
   getVisionBridge,
   isVisionAuxiliaryEnabled,
   getSessionPath,
+  getSessionIdForPath,
   recordFileOperation,
-}: { hanakoHome?: any; getVisionBridge?: any; isVisionAuxiliaryEnabled?: any; getSessionPath?: any; recordFileOperation?: any } = {}) {
+}: { hanakoHome?: any; getVisionBridge?: any; isVisionAuxiliaryEnabled?: any; getSessionPath?: any; getSessionIdForPath?: any; recordFileOperation?: any } = {}) {
   if (!tool || tool.name !== "read" || typeof tool.execute !== "function") return tool;
 
   return {
@@ -342,10 +346,12 @@ export function wrapReadOfficeMedia(tool, cwd, {
       if (!images.length) return result;
 
       const sessionPath = getToolSessionPath(ctx) || getSessionPath?.() || null;
+      const sessionId = getSessionIdForPath?.(sessionPath) || null;
       const { entries, warnings } = await materializeDocxImages({
         docxPath: absolutePath,
         images,
         hanakoHome,
+        sessionId,
         sessionPath,
         recordFileOperation,
       });

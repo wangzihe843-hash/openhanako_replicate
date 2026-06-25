@@ -288,7 +288,7 @@ export function WorkflowCard() {
       .sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
 
   return (
-    <section className={`jian-card ${styles.card}`} aria-label="Workflow" data-collapsed={collapsed || undefined}>
+    <section className={`universal-card ${styles.card}`} aria-label="Workflow" data-collapsed={collapsed || undefined}>
       <button className={styles.header} type="button" onClick={() => setCollapsed((c) => !c)} aria-expanded={!collapsed}>
         <span className={styles.title}>{t('rightWorkspace.workflow.title')}</span>
         <span className={styles.count}>{sorted.length}</span>

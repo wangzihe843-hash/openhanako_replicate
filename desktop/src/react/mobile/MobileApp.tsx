@@ -28,11 +28,17 @@ const MOBILE_EDGE_GESTURE_MAX_VERTICAL_DRIFT = 80;
 const MOBILE_EDGE_GESTURE_DOMINANCE = 1.25;
 const MOBILE_UPDATE_AVAILABLE_EVENT = 'hana-mobile-update-available';
 const MOBILE_APPLY_UPDATE_EVENT = 'hana-mobile-apply-update';
+const DEFAULT_MOBILE_AUTH_LOCALE = 'zh-CN';
 
 const LazyPreviewPanel = lazy(() => import('../components/PreviewPanel').then(module => ({ default: module.PreviewPanel })));
 const LazyMediaViewer = lazy(() => import('../components/shared/MediaViewer/MediaViewer').then(module => ({ default: module.MediaViewer })));
 const LazyWorkspaceCompanionRail = lazy(() => import('../components/app/WorkspaceCompanionRail').then(module => ({ default: module.WorkspaceCompanionRail })));
 const LazySettingsModalShell = lazy(() => import('../components/SettingsModalShell').then(module => ({ default: module.SettingsModalShell })));
+
+let mobileAuthLocaleLoad: {
+  i18n: typeof window.i18n;
+  promise: Promise<void>;
+} | null = null;
 
 type MobileEdgeGesture = {
   edge: 'left' | 'right';
@@ -49,8 +55,10 @@ export function MobileApp(): React.ReactElement {
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [mobileUpdateAvailable, setMobileUpdateAvailable] = useState(() => window.__hanaMobileUpdateAvailable === true);
 
   const bootstrap = useCallback(async () => {
+    await ensureMobileAuthLocale();
     const session = await readMobileAuthSession();
     if (!session.authenticated || !session.principal) {
       setAuthState('login');
@@ -78,6 +86,20 @@ export function MobileApp(): React.ReactElement {
       cancelled = true;
     };
   }, [bootstrap]);
+
+  useEffect(() => {
+    const handleUpdateAvailable = () => {
+      window.__hanaMobileUpdateAvailable = true;
+      setMobileUpdateAvailable(true);
+    };
+    if (window.__hanaMobileUpdateAvailable === true) setMobileUpdateAvailable(true);
+    window.addEventListener(MOBILE_UPDATE_AVAILABLE_EVENT, handleUpdateAvailable);
+    return () => window.removeEventListener(MOBILE_UPDATE_AVAILABLE_EVENT, handleUpdateAvailable);
+  }, []);
+
+  const applyMobileUpdate = useCallback(() => {
+    window.dispatchEvent(new Event(MOBILE_APPLY_UPDATE_EVENT));
+  }, []);
 
   const login = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -121,15 +143,23 @@ export function MobileApp(): React.ReactElement {
 
   return (
     <ErrorBoundary region="mobile">
-      <MobileDesktopShell principal={principal} />
+      <MobileDesktopShell
+        principal={principal}
+        mobileUpdateAvailable={mobileUpdateAvailable}
+        onApplyMobileUpdate={applyMobileUpdate}
+      />
     </ErrorBoundary>
   );
 }
 
 function MobileDesktopShell({
   principal,
+  mobileUpdateAvailable,
+  onApplyMobileUpdate,
 }: {
   principal: MobilePrincipal | null;
+  mobileUpdateAvailable: boolean;
+  onApplyMobileUpdate: () => void;
 }) {
   const sidebarOpen = useStore(s => s.sidebarOpen);
   const jianOpen = useStore(s => s.jianOpen);
@@ -144,7 +174,6 @@ function MobileDesktopShell({
   const edgeGestureRef = useRef<MobileEdgeGesture | null>(null);
   const previousWsStateRef = useRef(wsState);
   const t = window.t ?? ((p: string) => p);
-  const [mobileUpdateAvailable, setMobileUpdateAvailable] = useState(false);
 
   const titlebarTitle = useMemo(() => {
     if (pendingNewSession) return t('sidebar.newChat');
@@ -165,12 +194,6 @@ function MobileDesktopShell({
       openSettingsModal(tab);
     });
     return typeof unsubscribe === 'function' ? unsubscribe : undefined;
-  }, []);
-
-  useEffect(() => {
-    const handleUpdateAvailable = () => setMobileUpdateAvailable(true);
-    window.addEventListener(MOBILE_UPDATE_AVAILABLE_EVENT, handleUpdateAvailable);
-    return () => window.removeEventListener(MOBILE_UPDATE_AVAILABLE_EVENT, handleUpdateAvailable);
   }, []);
 
   const refreshMobileSessions = useCallback(() => {
@@ -217,10 +240,6 @@ function MobileDesktopShell({
     }
     useStore.setState({ sidebarOpen: false });
     toggleJianSidebar(true);
-  }, []);
-
-  const applyMobileUpdate = useCallback(() => {
-    window.dispatchEvent(new Event(MOBILE_APPLY_UPDATE_EVENT));
   }, []);
 
   const handleTouchStart = useCallback((event: React.TouchEvent<HTMLElement>) => {
@@ -321,7 +340,7 @@ function MobileDesktopShell({
       {mobileUpdateAvailable && (
         <div className="mobile-update-banner" role="status">
           <span>{t('mobile.update.available')}</span>
-          <button type="button" onClick={applyMobileUpdate}>{t('mobile.update.reload')}</button>
+          <button type="button" onClick={onApplyMobileUpdate}>{t('mobile.update.reload')}</button>
         </div>
       )}
       <div className="app mobile-desktop-app">
@@ -477,6 +496,30 @@ function scopeAllows(scopes: string[], required: string): boolean {
   if (scopes.includes(required)) return true;
   const [namespace] = required.split('.');
   return scopes.includes(namespace) || scopes.includes(`${namespace}.*`);
+}
+
+function ensureMobileAuthLocale(): Promise<void> {
+  const i18n = window.i18n;
+  if (!i18n?.load) return Promise.resolve();
+  if (mobileAuthLocaleLoad?.i18n === i18n) return mobileAuthLocaleLoad.promise;
+
+  const promise = i18n.load(resolveInitialMobileAuthLocale())
+    .catch((err) => {
+      if (mobileAuthLocaleLoad?.i18n === i18n) mobileAuthLocaleLoad = null;
+      console.warn('[mobile] initial auth locale load failed', err);
+    })
+    .then(() => {
+      if (window.i18n?.locale) {
+        useStore.setState({ locale: window.i18n.locale });
+      }
+    });
+  mobileAuthLocaleLoad = { i18n, promise };
+  return promise;
+}
+
+function resolveInitialMobileAuthLocale(): string {
+  const htmlLocale = document.documentElement.lang.trim();
+  return htmlLocale || DEFAULT_MOBILE_AUTH_LOCALE;
 }
 
 function useNarrowMobileViewport(): boolean {

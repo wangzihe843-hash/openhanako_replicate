@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../stores';
+import { sessionScopedValue } from '../stores/session-slice';
 import type { Agent, Channel } from '../types';
 import { PhoneContactDetail } from './PhoneContactDetail';
 import { PhoneContactSections } from './PhoneContactSections';
@@ -103,7 +104,10 @@ export function PhoneContactsApp({
     const sessionPaths = state.sessions
       .filter(session => session.agentId === ownerAgentId)
       .map(session => session.path);
-    return sessionPaths.reduce((acc, path) => acc + (state.chatSessions[path]?.items?.length ?? 0), 0);
+    return sessionPaths.reduce(
+      (acc, path) => acc + (sessionScopedValue(state, state.chatSessions, path)?.items?.length ?? 0),
+      0,
+    );
   });
   const recentContextPreview = useMemo(
     () => collectRecentContextForAgent({ agentId: ownerAgentId }),

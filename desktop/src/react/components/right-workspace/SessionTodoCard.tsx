@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../../stores';
 import { completeSessionTodos } from '../../stores/session-actions';
+import { sessionScopedListIncludes, sessionScopedValue } from '../../stores/session-slice';
 import type { TodoItem, TodoStatus } from '../../types';
 import styles from './SessionTodoCard.module.css';
 
@@ -43,11 +44,11 @@ export function SessionTodoCard() {
   const sessionPath = useStore((s) => s.currentSessionPath);
   const todos = useStore((s) => {
     const path = s.currentSessionPath;
-    return path ? (s.todosBySession[path] ?? EMPTY_TODOS) : EMPTY_TODOS;
+    return path ? (sessionScopedValue(s, s.todosBySession, path) ?? EMPTY_TODOS) : EMPTY_TODOS;
   });
   const streaming = useStore((s) => {
     const path = s.currentSessionPath;
-    return !!path && s.streamingSessions.includes(path);
+    return sessionScopedListIncludes(s, s.streamingSessions, path);
   });
   const t = window.t ?? ((k: string) => k);
 
@@ -71,7 +72,7 @@ export function SessionTodoCard() {
   }
 
   return (
-    <section className={`jian-card ${styles.card}`} aria-label={t('rightWorkspace.todo.title')}>
+    <section className={`universal-card ${styles.card}`} aria-label={t('rightWorkspace.todo.title')}>
       <div className={styles.header}>
         <span className={styles.title}>{t('rightWorkspace.todo.title')}</span>
         <span className={styles.count}>{done}/{todos.length}</span>

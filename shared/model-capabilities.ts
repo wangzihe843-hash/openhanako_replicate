@@ -83,13 +83,39 @@ const MODEL_THINKING_FORMATS = new Set([
   "zhipu",
   "deepseek",
   "openrouter",
+  "kimi",
+  "volcengine",
 ]);
 
 const MODEL_REASONING_PROFILES = new Set([
+  "anthropic-adaptive-only",
   "deepseek-v4-anthropic",
   "deepseek-v4-openai",
   "mimo-openai",
+  "openrouter-anthropic-adaptive",
   "zhipu-openai",
+  "kimi-openai",
+]);
+
+const TOOL_USE_DIALECTS = new Set([
+  "openai",
+  "anthropic",
+  "gemini",
+  "mistral",
+  "none",
+]);
+
+const TOOL_RESULT_FORMATS = new Set([
+  "message",
+  "content_block",
+  "part",
+]);
+
+const OUTPUT_CAP_FIELDS = new Set([
+  "max_tokens",
+  "max_completion_tokens",
+  "max_output_tokens",
+  "maxOutputTokens",
 ]);
 
 export function normalizeModelProtocolCompat(value: any): Record<string, any> | null {
@@ -108,8 +134,38 @@ export function normalizeModelProtocolCompat(value: any): Record<string, any> | 
 
   if (value.hanaVideoInput === true) out.hanaVideoInput = true;
   if (value.hanaAudioInput === true) out.hanaAudioInput = true;
+  if (value.outputCapRequired === true) out.outputCapRequired = true;
+  if (typeof value.outputCapField === "string" && OUTPUT_CAP_FIELDS.has(value.outputCapField)) {
+    out.outputCapField = value.outputCapField;
+  }
 
   return Object.keys(out).length > 0 ? out : null;
+}
+
+export function normalizeToolUseContract(value: any): Record<string, any> | null {
+  if (!isPlainObject(value)) return null;
+  if (typeof value.supportsTools !== "boolean") return null;
+
+  const dialect = lower(value.dialect);
+  if (!TOOL_USE_DIALECTS.has(dialect)) return null;
+  const toolResultFormat = lower(value.toolResultFormat);
+  if (!TOOL_RESULT_FORMATS.has(toolResultFormat)) return null;
+
+  const out: Record<string, any> = {
+    supportsTools: value.supportsTools,
+    dialect,
+    toolResultFormat,
+  };
+  if (typeof value.supportsParallelToolCalls === "boolean") {
+    out.supportsParallelToolCalls = value.supportsParallelToolCalls;
+  }
+  if (typeof value.supportsForcedToolChoice === "boolean") {
+    out.supportsForcedToolChoice = value.supportsForcedToolChoice;
+  }
+  if (typeof value.supportsServerTools === "boolean") {
+    out.supportsServerTools = value.supportsServerTools;
+  }
+  return out;
 }
 
 export function isOfficialMimoEndpoint(model: any, context: any = {}) {
@@ -125,11 +181,27 @@ function isOfficialZhipuEndpoint(model: any, context: any = {}) {
   if (provider === "zhipu") return true;
 
   const host = getBaseHost(model, context);
-  return host === "open.bigmodel.cn" || host.endsWith(".open.bigmodel.cn");
+  const baseUrl = getBaseUrl(model, context);
+  return host === "open.bigmodel.cn"
+    || host.endsWith(".open.bigmodel.cn")
+    || (
+      host === "api.z.ai"
+      && (
+        baseUrl.includes("/api/paas/v4")
+        || baseUrl.includes("/api/coding/paas/v4")
+      )
+    );
 }
 
 function isDeepSeekV4ModelId(id: string): boolean {
   return id === "deepseek-v4" || id.startsWith("deepseek-v4-") || id.startsWith("deepseek-v4.");
+}
+
+function isAnthropicAdaptiveOnlyModelId(id: string): boolean {
+  return id === "claude-fable-5"
+    || id === "claude-mythos-5"
+    || id === "anthropic/claude-fable-5"
+    || id === "anthropic/claude-mythos-5";
 }
 
 function isDeepSeekThinkingModelId(id: string): boolean {
@@ -139,6 +211,30 @@ function isDeepSeekThinkingModelId(id: string): boolean {
 function isOpenAIReasoningApi(model: any, context: any = {}) {
   const api = getApi(model, context);
   return api === "openai-completions" || api === "openai-responses" || api === "";
+}
+
+function isOfficialKimiOpenAIEndpoint(model: any, context: any = {}) {
+  if (!isOpenAIReasoningApi(model, context)) return false;
+
+  const provider = getProvider(model, context);
+  if (provider === "kimi-coding" || provider === "moonshot") return true;
+
+  const host = getBaseHost(model, context);
+  const baseUrl = getBaseUrl(model, context);
+  return (
+    host === "api.kimi.com"
+    && baseUrl.includes("/coding/v1")
+  ) || host === "api.moonshot.cn";
+}
+
+function isOfficialVolcengineEndpoint(model: any, context: any = {}) {
+  if (!isOpenAIReasoningApi(model, context)) return false;
+
+  const provider = getProvider(model, context);
+  if (provider === "volcengine" || provider === "volcengine-coding") return true;
+
+  const host = getBaseHost(model, context);
+  return host === "ark.cn-beijing.volces.com" || host.endsWith(".volces.com");
 }
 
 function isMimoFamilyModel(model: any, context: any = {}) {
@@ -218,6 +314,14 @@ export function getThinkingFormat(model: any, context: any = {}) {
     return "openrouter";
   }
 
+  if (isOfficialKimiOpenAIEndpoint(model, context) && model.reasoning === true) {
+    return "kimi";
+  }
+
+  if (isOfficialVolcengineEndpoint(model, context) && model.reasoning === true) {
+    return "volcengine";
+  }
+
   if (
     isOfficialDeepSeekEndpoint(model, context)
     && (model.reasoning === true || isDeepSeekThinkingModelId(modelId))
@@ -257,7 +361,22 @@ export function getReasoningProfile(model: any, context: any = {}) {
   const explicit = lower(model.compat?.reasoningProfile || model.compat?.thinkingProfile);
   if (explicit) return explicit;
 
-  if (isOpenRouterEndpoint(model, context)) return null;
+  const modelId = getModelId(model, context);
+
+  if (isOpenRouterEndpoint(model, context)) {
+    if (model.reasoning === true && isAnthropicAdaptiveOnlyModelId(modelId)) {
+      return "openrouter-anthropic-adaptive";
+    }
+    return null;
+  }
+
+  if (
+    model.reasoning === true
+    && isAnthropicAdaptiveOnlyModelId(modelId)
+    && getThinkingFormat(model, context) === "anthropic"
+  ) {
+    return "anthropic-adaptive-only";
+  }
 
   if (isOfficialMimoEndpoint(model, context) && model.reasoning === true) {
     const api = getApi(model, context);
@@ -273,8 +392,11 @@ export function getReasoningProfile(model: any, context: any = {}) {
     }
   }
 
+  if (isOfficialKimiOpenAIEndpoint(model, context) && model.reasoning === true) {
+    return "kimi-openai";
+  }
+
   if (isOfficialDeepSeekEndpoint(model, context)) {
-    const modelId = getModelId(model, context);
     if (!isDeepSeekV4ModelId(modelId)) return null;
 
     const api = getApi(model, context);
@@ -444,7 +566,9 @@ export function modelSupportsDirectVideoInput(model: any, context: any = {}) {
 }
 
 function usesOpenAiVideoUrlTransport(model: any, context: any = {}) {
-  return isDashScopeEndpoint(model, context) || isMoonshotEndpoint(model, context);
+  return isDashScopeEndpoint(model, context)
+    || isMoonshotEndpoint(model, context)
+    || isOfficialMimoEndpoint(model, context);
 }
 
 function isDashScopeEndpoint(model: any, context: any = {}) {

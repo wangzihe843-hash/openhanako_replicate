@@ -140,7 +140,7 @@ export function DeskDropZone({
   }, []);
 
   const className = [
-    framed ? 'jian-card' : '',
+    framed ? 'universal-card' : '',
     s.section,
     rightWorkspaceLayout ? s.rightWorkspaceSection : '',
     dragging ? s.dragOver : '',

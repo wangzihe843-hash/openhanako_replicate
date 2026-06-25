@@ -7,9 +7,8 @@
 
 import { useCallback } from 'react';
 import { useStore } from '../stores';
-import { updateKeyed } from '../stores/create-keyed-slice';
 import { hanaFetch } from '../hooks/use-hana-fetch';
-import { useBrowserState } from '../stores/browser-slice';
+import { setBrowserStateForPath, useBrowserState } from '../stores/browser-slice';
 
 export function BrowserCard() {
   const { running: browserRunning, url: browserUrl, thumbnail: browserThumbnail } = useBrowserState();
@@ -22,9 +21,7 @@ export function BrowserCard() {
     e.stopPropagation();
     const sessionPath = useStore.getState().currentSessionPath;
     if (sessionPath) {
-      updateKeyed('browserBySession', sessionPath,
-        { running: false, url: null, thumbnail: null },
-      );
+      setBrowserStateForPath(sessionPath, { running: false, url: null, thumbnail: null });
     }
     window.platform?.browserEmergencyStop?.();
     if (sessionPath) {

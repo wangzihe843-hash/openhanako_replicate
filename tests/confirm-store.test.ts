@@ -12,6 +12,7 @@ describe("ConfirmStore", () => {
     );
 
     expect(store.get(confirmId)).toEqual({
+      sessionId: null,
       sessionPath: "/sessions/a.jsonl",
       kind: "tool_action_approval",
       payload: { toolName: "write" },
@@ -20,5 +21,33 @@ describe("ConfirmStore", () => {
 
     (store as any).resolve(confirmId, "rejected");
     expect(store.get(confirmId)).toBeNull();
+  });
+
+  it("aborts pending confirmations by stable session id after the session path moves", async () => {
+    const originalPath = "/sessions/original.jsonl";
+    const movedPath = "/sessions/archived/renamed.jsonl";
+    const sessionId = "sess_confirm_stable";
+    const store = new ConfirmStore({
+      getSessionIdForPath: (sessionPath: string) => (
+        sessionPath === originalPath || sessionPath === movedPath ? sessionId : null
+      ),
+    });
+    const { confirmId, promise } = (store as any).create(
+      "tool_action_approval",
+      { toolName: "write" },
+      originalPath,
+      60_000,
+    );
+
+    expect(store.get(confirmId)).toMatchObject({
+      sessionPath: originalPath,
+      sessionId,
+    });
+
+    store.abortBySession(movedPath);
+
+    await expect(promise).resolves.toEqual({ action: "aborted" });
+    expect(store.get(confirmId)).toBeNull();
+    expect(store.size).toBe(0);
   });
 });

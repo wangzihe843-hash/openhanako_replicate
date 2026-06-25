@@ -30,6 +30,24 @@ describe('session-selectors', () => {
     expect(selectSelectedIdsBySession(state, '/panel')).toBe(selected);
   });
 
+  it('用 sessionId-keyed 选中状态匹配移动后的 session path', () => {
+    const selected = ['m-1', 'm-2'];
+    const state = {
+      currentSessionId: 'sess_panel',
+      currentSessionPath: '/sessions/panel-moved.jsonl',
+      sessions: [{ sessionId: 'sess_panel', path: '/sessions/panel-moved.jsonl' }],
+      sessionLocatorsById: {
+        sess_panel: { path: '/sessions/panel-moved.jsonl' },
+      },
+      selectedIdsBySession: {
+        sess_panel: selected,
+      },
+      streamingSessions: [],
+    };
+
+    expect(selectSelectedIdsBySession(state, '/sessions/panel-moved.jsonl')).toBe(selected);
+  });
+
   it('streaming 判断只依赖显式 sessionPath', () => {
     const state = {
       selectedIdsBySession: {},

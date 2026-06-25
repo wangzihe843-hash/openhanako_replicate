@@ -27,5 +27,5 @@ export function shouldAdoptRuntimeAgentForQuickChat(sessionPath: string | null):
 }
 
 export function resolveQuickChatPermissionMode(data: any): PermissionMode {
-  return (data?.defaultMode || data?.mode || 'ask') as PermissionMode;
+  return (data?.permissionMode || data?.defaultMode || data?.mode || 'ask') as PermissionMode;
 }

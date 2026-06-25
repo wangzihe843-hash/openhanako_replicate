@@ -1,131 +1,20 @@
-const GIT_PUSH_RULES = {
-  force: {
-    id: "force-push-blocked",
-    reason: "Force push is not eligible for automatic approval.",
-  },
-  tags: {
-    id: "push-tags-blocked",
-    reason: "Pushing tags is not eligible for automatic approval.",
-  },
-  push: {
-    id: "privacy-push-required",
-    reason: "Git remote push must go through /privacy-push and explicit final user confirmation.",
-  },
-};
-
 const ALLOWED_ACTIONS = new Set(["allow", "deny_and_continue", "ask_user", "hard_deny"]);
 const REVIEWER_ACTIONS = new Set([...ALLOWED_ACTIONS, "escalate"]);
 const REVIEWER_SYSTEM_PROMPT = `You are Hana's automatic tool approval reviewer.
-Decide whether the requested tool action may run without interrupting the user.
+Decide whether the requested tool action may run under Auto mode without interrupting the user.
 Return JSON only, with this shape:
 {"action":"allow|deny_and_continue|ask_user|escalate","reason":"short concrete reason","risk":"low|medium|high|critical","saferAlternative":"optional safer next step","ruleIds":["optional-policy-id"]}
 
 Rules:
-- Never approve git push, force-push, tag push, credential exposure, destructive deletion outside the authorized workspace, or actions that bypass explicit user confirmation.
-- Use ask_user when intent, target, or blast radius is unclear.
+- You replace only the human approval decision. You do not expand the sandbox, writable roots, network policy, app capability, or SafetyPolicy.
+- Hard safety requests such as git push, force-push, tag push, credential exposure, destructive deletion outside the authorized workspace, or actions that bypass explicit user confirmation should already be blocked before review; if one reaches you, do not approve it.
+- Allow only when the requested action is clearly within the user's visible intent and the supplied trustEnvironment.
+- Use ask_user when intent, target, trustEnvironment, or blast radius is unclear. In Auto mode this means the action will not run; it is not a request to interrupt the user.
 - Use deny_and_continue when the agent should choose a safer path without asking.
 - If you are the small reviewer, allow only obvious low-risk in-scope actions; otherwise use escalate, ask_user, or deny_and_continue.
 - If you are the large reviewer, make the final risk decision from the supplied request and trust context.`;
 
-function commandFromRequest(request: any = {}) {
-  const command = request.params?.command || request.params?.cmd || request.target?.label;
-  return typeof command === "string" ? command : "";
-}
-
-function tokenizeCommand(command) {
-  const tokens = [];
-  let token = "";
-  let quote = null;
-  let escaped = false;
-  for (const char of command) {
-    if (escaped) {
-      token += char;
-      escaped = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) quote = null;
-      else token += char;
-      continue;
-    }
-    if (char === "\"" || char === "'") {
-      quote = char;
-      continue;
-    }
-    if (/\s/.test(char)) {
-      if (token) tokens.push(token);
-      token = "";
-      continue;
-    }
-    token += char;
-  }
-  if (token) tokens.push(token);
-  return tokens;
-}
-
-function isGitExecutableToken(token) {
-  const normalized = String(token || "").replace(/\\/g, "/");
-  return normalized === "git" || normalized.endsWith("/git");
-}
-
-function gitGlobalOptionConsumesValue(token) {
-  if (token.includes("=")) return false;
-  return token === "-C"
-    || token === "-c"
-    || token === "--git-dir"
-    || token === "--work-tree"
-    || token === "--namespace"
-    || token === "--exec-path"
-    || token === "--config-env"
-    || token === "--super-prefix";
-}
-
-function detectGitPush(command) {
-  const tokens = tokenizeCommand(command);
-  for (let i = 0; i < tokens.length; i += 1) {
-    if (!isGitExecutableToken(tokens[i])) continue;
-    let j = i + 1;
-    while (j < tokens.length) {
-      const token = tokens[j];
-      if (token === "push") {
-        const args = tokens.slice(j + 1);
-        return {
-          hasForce: args.some((arg) => arg === "--force" || arg.startsWith("--force-with-lease")),
-          hasTags: args.includes("--tags"),
-        };
-      }
-      if (token === "--") break;
-      if (token.startsWith("-")) {
-        j += gitGlobalOptionConsumesValue(token) ? 2 : 1;
-        continue;
-      }
-      break;
-    }
-  }
-  return null;
-}
-
 function deterministicDecision(request: any = {}) {
-  const command = commandFromRequest(request);
-  if (command) {
-    const gitPush = detectGitPush(command);
-    const rule = gitPush?.hasForce
-      ? GIT_PUSH_RULES.force
-      : (gitPush?.hasTags ? GIT_PUSH_RULES.tags : (gitPush ? GIT_PUSH_RULES.push : null));
-    if (rule) {
-      return {
-        action: "hard_deny",
-        reviewer: "policy",
-        reason: rule.reason,
-        risk: "critical",
-        ruleIds: [rule.id],
-      };
-    }
-  }
   if (isDeferredMutationDraft(request)) {
     return {
       action: "allow",
@@ -204,7 +93,9 @@ function buildReviewerInput(request: any, context: any = {}) {
       authorizedFolders: Array.isArray(context.authorizedFolders) ? context.authorizedFolders : [],
       knownRemotes: Array.isArray(context.knownRemotes) ? context.knownRemotes : [],
       knownDomains: Array.isArray(context.knownDomains) ? context.knownDomains : [],
+      executionContext: context.executionContext || "",
     },
+    visibleTranscript: Array.isArray(context.visibleTranscript) ? context.visibleTranscript : [],
     recentApprovalHistory: Array.isArray(context.recentApprovalHistory) ? context.recentApprovalHistory : [],
   };
 }

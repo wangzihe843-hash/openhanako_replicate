@@ -72,6 +72,52 @@ describe("plugin config schema", () => {
     }
   });
 
+  it("uses sessionId for per-session config while reading legacy sessionPath buckets", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-config-"));
+    try {
+      const schema = normalizePluginConfigSchema("demo", {
+        properties: {
+          sessionMode: { type: "string", scope: "per-session" },
+        },
+      });
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({
+        schemaVersion: 1,
+        global: {},
+        agents: {},
+        sessions: {
+          "/sessions/legacy.jsonl": { sessionMode: "legacy" },
+        },
+      }), "utf-8");
+      const store = createPluginConfigStore({ dataDir: dir, schema });
+
+      expect(store.get("sessionMode", {
+        scope: "per-session",
+        sessionId: "sess_config",
+        sessionPath: "/sessions/legacy.jsonl",
+      })).toBe("legacy");
+
+      store.set("sessionMode", "modern", {
+        scope: "per-session",
+        sessionId: "sess_config",
+        sessionPath: "/sessions/legacy.jsonl",
+      });
+
+      expect(store.get("sessionMode", {
+        scope: "per-session",
+        sessionId: "sess_config",
+      })).toBe("modern");
+      expect(store.getState()).toMatchObject({
+        sessions: {
+          sess_config: { sessionMode: "modern" },
+          "/sessions/legacy.jsonl": { sessionMode: "legacy" },
+        },
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("reads old flat config files as global config", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-plugin-config-"));
     try {

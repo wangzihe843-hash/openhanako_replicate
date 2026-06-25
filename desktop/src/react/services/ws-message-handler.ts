@@ -10,9 +10,10 @@ import { streamBufferManager } from '../hooks/use-stream-buffer';
 import { dispatchStreamKey } from './stream-key-dispatcher';
 import { useStore } from '../stores';
 import { updateKeyed } from '../stores/create-keyed-slice';
+import { sessionScopedKey, sessionScopedListIncludes, sessionScopedValue } from '../stores/session-slice';
+import { browserStateForPath, setBrowserStateForPath } from '../stores/browser-slice';
 import { scheduleSessionsRefresh } from './session-refresh-scheduler';
 import { handleLegacyArtifactBlock } from '../stores/preview-actions';
-import { loadDeskFiles } from '../stores/desk-actions';
 import {
   appendChannelMessage as appendChannelMessageAction,
   loadChannels as loadChannelsAction,
@@ -22,6 +23,11 @@ import {
 } from '../stores/channel-actions';
 import { showError } from '../utils/ui-helpers';
 import { handleAppEvent } from './app-event-actions';
+import {
+  PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+  markDeskTreeDirtyForResourceChange,
+  refreshOpenPreviewDocumentsForResourceChange,
+} from '../utils/preview-document-refresh';
 import {
   replayStreamResume,
   isStreamResumeRebuilding,
@@ -41,6 +47,45 @@ function syncSessionPermissionMode(mode: unknown) {
   if (mode === 'auto' || mode === 'operate' || mode === 'ask' || mode === 'read_only') {
     useStore.getState().setSessionPermissionMode?.(mode);
   }
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function sessionIdentityFromMessage(msg: any): { sessionId: string | null; sessionPath: string | null } {
+  const session = msg?.session && typeof msg.session === 'object' ? msg.session : null;
+  return {
+    sessionId: nonEmptyString(msg?.sessionId) || nonEmptyString(session?.sessionId),
+    sessionPath: nonEmptyString(msg?.sessionPath) || nonEmptyString(msg?.path) || nonEmptyString(session?.path),
+  };
+}
+
+function rememberSessionLocatorFromMessage(msg: any): void {
+  const { sessionId, sessionPath } = sessionIdentityFromMessage(msg);
+  if (!sessionId || !sessionPath) return;
+  useStore.setState((state: any) => {
+    const currentLocator = state.sessionLocatorsById?.[sessionId] || null;
+    const patch: Record<string, any> = {};
+    if (currentLocator?.path !== sessionPath) {
+      patch.sessionLocatorsById = {
+        ...(state.sessionLocatorsById || {}),
+        [sessionId]: { path: sessionPath },
+      };
+    }
+    if (state.currentSessionPath === sessionPath && state.currentSessionId !== sessionId) {
+      patch.currentSessionId = sessionId;
+    }
+    return Object.keys(patch).length ? patch : {};
+  });
+}
+
+function isFocusedSessionMessage(msg: any): boolean {
+  const { sessionId, sessionPath } = sessionIdentityFromMessage(msg);
+  if (!sessionId && !sessionPath) return true;
+  const state = useStore.getState();
+  return (!!sessionPath && state.currentSessionPath === sessionPath)
+    || (!!sessionId && state.currentSessionId === sessionId);
 }
 
 export function configureWsMessageHandler(options: {
@@ -90,6 +135,11 @@ function upsertCreatedSession(msg: any): void {
       ? msg.sessionPath
       : null;
   if (!sessionPath) return;
+  const sessionId = typeof incoming.sessionId === 'string' && incoming.sessionId.trim()
+    ? incoming.sessionId.trim()
+    : typeof msg.sessionId === 'string' && msg.sessionId.trim()
+      ? msg.sessionId.trim()
+      : null;
 
   const state = useStore.getState();
   const existing: any = state.sessions.find((s: any) => s.path === sessionPath) || {};
@@ -97,6 +147,7 @@ function upsertCreatedSession(msg: any): void {
   const next = {
     ...existing,
     path: sessionPath,
+    sessionId: sessionId || existing.sessionId || null,
     title: typeof incoming.title === 'string' ? incoming.title : existing.title ?? null,
     firstMessage: typeof incoming.firstMessage === 'string' ? incoming.firstMessage : existing.firstMessage ?? '',
     modified: typeof incoming.modified === 'string' ? incoming.modified : existing.modified ?? now,
@@ -113,6 +164,12 @@ function upsertCreatedSession(msg: any): void {
   useStore.setState({
     sessions: [next, ...state.sessions.filter((s: any) => s.path !== sessionPath)]
       .sort((a: any, b: any) => new Date(b.modified || 0).getTime() - new Date(a.modified || 0).getTime()),
+    ...(sessionId ? {
+      sessionLocatorsById: {
+        ...(state.sessionLocatorsById || {}),
+        [sessionId]: { path: sessionPath },
+      },
+    } : {}),
   });
 }
 
@@ -175,7 +232,8 @@ function applyTodoToolEnd(msg: any): void {
 }
 
 function isKnownChatSession(sessionPath: string, state = useStore.getState()): boolean {
-  return !!state.chatSessions?.[sessionPath] || state.sessions.some((s: any) => s.path === sessionPath);
+  return !!sessionScopedValue(state, state.chatSessions, sessionPath)
+    || state.sessions.some((s: any) => s.path === sessionPath);
 }
 
 function requestInputFocusForCurrentSession(sessionPath: string | null): void {
@@ -198,7 +256,7 @@ function applyCompactionLifecycle(msg: any): void {
   if (msg.type !== 'compaction_end') return;
 
   useStore.getState().removeCompactingSession(sp);
-  const existingWindow = useStore.getState().contextBySession[sp]?.window ?? null;
+  const existingWindow = sessionScopedValue(useStore.getState(), useStore.getState().contextBySession, sp)?.window ?? null;
   const window = msg.contextWindow ?? existingWindow;
   updateKeyed('contextBySession', sp,
     { tokens: msg.tokens ?? null, window, percent: msg.percent ?? null },
@@ -210,17 +268,21 @@ export function applyStreamingStatus(
   isStreaming: boolean,
   sessionPath: string | null,
   identity: { streamId?: string | null; turnId?: string | null } = {},
+  options: { force?: boolean } = {},
 ): boolean {
   // 元数据层：把 isStreaming 视为 sessionPath 维度的权威信号，统一写回 streamingSessions。
   // 这一层不分焦点，任何来源（普通 status、stream_resume 恢复）都必须到达这里，
   // 否则重连后服务端说「已结束」前端却留着旧的 streaming 标记，UI 会卡在"思考中"。
-  const wasStreaming = !!sessionPath && useStore.getState().streamingSessions.includes(sessionPath);
+  const wasStreaming = !!sessionPath
+    && sessionScopedListIncludes(useStore.getState(), useStore.getState().streamingSessions, sessionPath);
   if (sessionPath) {
     if (isStreaming) {
       useStore.getState().addStreamingSession(sessionPath, identity);
       useStore.getState().clearInlineError(sessionPath);
     } else {
-      const applied = useStore.getState().removeStreamingSession(sessionPath, identity);
+      const applied = options.force
+        ? useStore.getState().forceRemoveStreamingSession(sessionPath)
+        : useStore.getState().removeStreamingSession(sessionPath, identity);
       if (!applied) return false;
     }
   }
@@ -277,7 +339,8 @@ function normalizeMessageTimestamp(value: unknown): number {
 }
 
 function replayUserMessageAlreadyHydrated(sessionPath: string, message: any): boolean {
-  const session = useStore.getState().chatSessions[sessionPath];
+  const state = useStore.getState();
+  const session = sessionScopedValue(state, state.chatSessions, sessionPath);
   const last = session?.items?.[session.items.length - 1];
   if (!last || last.type !== 'message' || last.data?.role !== 'user') return false;
   const text = typeof message?.text === 'string' ? message.text : '';
@@ -295,7 +358,7 @@ function applyVoiceTranscriptionUpdate(msg: any): void {
 
   let changed = false;
   useStore.setState((s: any) => {
-    const session = s.chatSessions?.[sessionPath];
+    const session = sessionScopedValue<any>(s, s.chatSessions, sessionPath);
     if (!session) return {};
     const items = session.items.map((item: any) => {
       if (item?.type !== 'message' || !Array.isArray(item.data?.attachments)) return item;
@@ -310,19 +373,38 @@ function applyVoiceTranscriptionUpdate(msg: any): void {
       return { ...item, data: { ...item.data, attachments } };
     });
     if (!changed) return {};
+    const sessionKey = sessionScopedKey(s, sessionPath) || sessionPath;
+    const chatSessions = {
+      ...s.chatSessions,
+      [sessionKey]: { ...session, items },
+    };
+    if (sessionKey !== sessionPath) delete chatSessions[sessionPath];
     return {
-      chatSessions: {
-        ...s.chatSessions,
-        [sessionPath]: { ...session, items },
-      },
+      chatSessions,
     };
   });
   if (changed) bumpMessageLiveVersion(sessionPath);
 }
 
+function applyInputSessionConfirmationBlock(msg: any): void {
+  if (msg.type !== 'content_block') return;
+  const block = msg.block;
+  if (block?.type !== 'session_confirmation' || block.surface !== 'input') return;
+  const sessionPath = typeof msg.sessionPath === 'string' ? msg.sessionPath.trim() : '';
+  if (!sessionPath) {
+    console.warn('[ws] input session_confirmation missing sessionPath, skipping pending cache');
+    return;
+  }
+  useStore.getState().setPendingSessionConfirmation?.(
+    sessionPath,
+    block.status === 'pending' ? block : null,
+  );
+}
+
 // ── 消息分发（大 switch） ──
 
 export function handleServerMessage(msg: any): void {
+  rememberSessionLocatorFromMessage(msg);
   const state = useStore.getState();
 
   const rebuildingFor = isStreamResumeRebuilding();
@@ -348,6 +430,8 @@ export function handleServerMessage(msg: any): void {
   if (msg.type === 'compaction_start' || msg.type === 'compaction_end') {
     applyCompactionLifecycle(msg);
   }
+
+  applyInputSessionConfirmationBlock(msg);
 
   // 活跃 block 事件路由：非当前 session 的聊天事件也要写入正常聊天缓存。
   // stream-key-dispatcher 只负责卡片/预览订阅，不能吞掉主 transcript 的后台流。
@@ -392,6 +476,23 @@ export function handleServerMessage(msg: any): void {
 
   // 非聊天渲染事件走传统 switch
   switch (msg.type) {
+    case 'resource.changed': {
+      markDeskTreeDirtyForResourceChange(msg);
+      void refreshOpenPreviewDocumentsForResourceChange(
+        msg,
+        PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+      );
+      break;
+    }
+    case 'resource.deleted':
+    case 'resource.renamed': {
+      markDeskTreeDirtyForResourceChange(msg);
+      void refreshOpenPreviewDocumentsForResourceChange(
+        msg,
+        PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+      );
+      break;
+    }
     case 'session_branch_reset': {
       const sp = msg.sessionPath;
       const targetId = msg.clientMessageId || msg.messageId;
@@ -423,16 +524,12 @@ export function handleServerMessage(msg: any): void {
       scheduleSessionsRefresh('session_created');
       break;
 
-    case 'desk_changed':
-      loadDeskFiles();
-      break;
-
     case 'browser_status': {
       const bsp = msg.sessionPath;
       if (!bsp) { console.warn('[ws] event missing sessionPath:', msg.type); break; }
       const bRunning = !!msg.running;
       const bUrl = msg.url || null;
-      const prev = state.browserBySession[bsp] ?? null;
+      const prev = browserStateForPath(state, bsp);
       const hasFreshThumbnail = bRunning && typeof msg.thumbnail === 'string' && msg.thumbnail.length > 0;
       const bThumbnail = bRunning ? (hasFreshThumbnail ? msg.thumbnail : prev?.thumbnail ?? null) : null;
       const thumbnailCapturedAt = bRunning
@@ -446,20 +543,7 @@ export function handleServerMessage(msg: any): void {
           : prev?.thumbnailUrl ?? null
         : null;
       const thumbnailFresh = bRunning && hasFreshThumbnail;
-      updateKeyed('browserBySession', bsp,
-        { running: bRunning, url: bUrl, thumbnail: bThumbnail, thumbnailCapturedAt, thumbnailUrl, thumbnailFresh },
-      );
-      // renderBrowserCard — no-op (browser card rendering handled by React)
-      if (typeof window !== 'undefined' && window.platform?.updateBrowserViewer) {
-        window.platform.updateBrowserViewer({
-          running: bRunning,
-          url: bUrl,
-          thumbnail: bThumbnail,
-          thumbnailCapturedAt,
-          thumbnailUrl,
-          thumbnailFresh,
-        });
-      }
+      setBrowserStateForPath(bsp, { running: bRunning, url: bUrl, thumbnail: bThumbnail, thumbnailCapturedAt, thumbnailUrl, thumbnailFresh });
       break;
     }
 
@@ -474,10 +558,8 @@ export function handleServerMessage(msg: any): void {
     case 'browser_bg_status': {
       const bgSp = msg.sessionPath;
       if (!bgSp) { console.warn('[ws] event missing sessionPath:', msg.type); break; }
-      const prev = useStore.getState().browserBySession[bgSp] || { running: false, url: null, thumbnail: null };
-      updateKeyed('browserBySession', bgSp,
-        { ...prev, running: !!msg.running },
-      );
+      const prev = browserStateForPath(useStore.getState(), bgSp);
+      setBrowserStateForPath(bgSp, { ...prev, running: !!msg.running });
       break;
     }
 
@@ -581,27 +663,44 @@ export function handleServerMessage(msg: any): void {
     case 'session_user_message': {
       const sp = msg.sessionPath;
       if (!sp || !msg.message) break;
-      if (!useStore.getState().chatSessions[sp]) {
+      const current = useStore.getState();
+      if (!sessionScopedValue(current, current.chatSessions, sp)) {
         useStore.getState().initSession(sp, [], false);
       }
       if (msg.__fromReplay === true && replayUserMessageAlreadyHydrated(sp, msg.message)) {
         break;
       }
       const text = typeof msg.message.text === 'string' ? msg.message.text : '';
-      useStore.getState().appendItem(sp, {
-        type: 'message',
-        data: {
-          id: msg.message.id || `user-${Date.now()}`,
-          role: 'user',
-          text,
-          textHtml: text ? renderMarkdown(text) : undefined,
-          timestamp: normalizeMessageTimestamp(msg.message.timestamp),
-          attachments: msg.message.attachments,
-          quotedText: msg.message.quotedText,
-          skills: msg.message.skills,
-          deskContext: msg.message.deskContext ?? undefined,
-        },
-      });
+      const clientMessageId = typeof msg.clientMessageId === 'string' && msg.clientMessageId
+        ? msg.clientMessageId
+        : typeof msg.message.clientMessageId === 'string' && msg.message.clientMessageId
+          ? msg.message.clientMessageId
+          : null;
+      const serverMessageId = typeof msg.message.id === 'string' && msg.message.id
+        ? msg.message.id
+        : typeof msg.message.sourceEntryId === 'string' && msg.message.sourceEntryId
+          ? msg.message.sourceEntryId
+          : undefined;
+      const data = {
+        id: clientMessageId || serverMessageId || `user-${Date.now()}`,
+        sourceEntryId: serverMessageId,
+        role: 'user' as const,
+        text,
+        textHtml: text ? renderMarkdown(text) : undefined,
+        timestamp: normalizeMessageTimestamp(msg.message.timestamp),
+        attachments: msg.message.attachments,
+        quotedText: msg.message.quotedText,
+        skills: msg.message.skills,
+        deskContext: msg.message.deskContext ?? undefined,
+      };
+      if (clientMessageId && useStore.getState().confirmOptimisticUserMessage(sp, clientMessageId, data)) {
+        bumpMessageLiveVersion(sp);
+        if (sp === useStore.getState().currentSessionPath) {
+          useStore.setState({ welcomeVisible: false });
+        }
+        break;
+      }
+      useStore.getState().appendItem(sp, { type: 'message', data });
       bumpMessageLiveVersion(sp);
       if (sp === useStore.getState().currentSessionPath) {
         useStore.setState({ welcomeVisible: false });
@@ -647,6 +746,7 @@ export function handleServerMessage(msg: any): void {
 
     case 'session_metadata_updated': {
       const sp = msg.sessionPath;
+      const sid = typeof msg.sessionId === 'string' && msg.sessionId.trim() ? msg.sessionId.trim() : null;
       const metadata = msg.metadata && typeof msg.metadata === 'object' ? msg.metadata : {};
       if (!sp) { console.warn('[ws] event missing sessionPath:', msg.type); break; }
       const hasPinnedAt = Object.prototype.hasOwnProperty.call(metadata, 'pinnedAt');
@@ -654,7 +754,7 @@ export function handleServerMessage(msg: any): void {
       if (hasPinnedAt || hasProjectId) {
         useStore.setState((s) => ({
           sessions: s.sessions.map((session) => {
-            if (session.path !== sp) return session;
+            if (session.path !== sp && (!sid || session.sessionId !== sid)) return session;
             return {
               ...session,
               ...(hasPinnedAt
@@ -670,12 +770,14 @@ export function handleServerMessage(msg: any): void {
       if (sp === useStore.getState().currentSessionPath && typeof metadata.thinkingLevel === 'string') {
         useStore.getState().setThinkingLevel(metadata.thinkingLevel);
       }
+      if (Object.prototype.hasOwnProperty.call(metadata, 'capabilityDrift')) {
+        useStore.getState().setSessionCapabilityDrift(sp, metadata.capabilityDrift || null);
+      }
       break;
     }
 
     case 'plan_mode': {
-      const sp = msg.sessionPath;
-      if (!sp || sp === useStore.getState().currentSessionPath) {
+      if (isFocusedSessionMessage(msg)) {
         const mode = msg.mode || (msg.enabled ? 'read_only' : 'operate');
         syncSessionPermissionMode(mode);
         window.dispatchEvent(new CustomEvent('hana-plan-mode', {
@@ -686,8 +788,7 @@ export function handleServerMessage(msg: any): void {
     }
 
     case 'permission_mode': {
-      const sp = msg.sessionPath;
-      if (!sp || sp === useStore.getState().currentSessionPath) {
+      if (isFocusedSessionMessage(msg)) {
         syncSessionPermissionMode(msg.mode);
         window.dispatchEvent(new CustomEvent('hana-plan-mode', {
           detail: { enabled: msg.mode === 'read_only', mode: msg.mode },
@@ -705,8 +806,7 @@ export function handleServerMessage(msg: any): void {
     }
 
     case 'access_mode': {
-      const sp = msg.sessionPath;
-      if (!sp || sp === useStore.getState().currentSessionPath) {
+      if (isFocusedSessionMessage(msg)) {
         const mode = msg.permissionMode || msg.mode;
         syncSessionPermissionMode(mode);
         window.dispatchEvent(new CustomEvent('hana-plan-mode', {
@@ -771,7 +871,7 @@ export function handleServerMessage(msg: any): void {
     case 'context_usage': {
       const sp = msg.sessionPath;
       if (!sp) { console.warn('[ws] event missing sessionPath:', msg.type); break; }
-      const existingWindow = useStore.getState().contextBySession[sp]?.window ?? null;
+      const existingWindow = sessionScopedValue(useStore.getState(), useStore.getState().contextBySession, sp)?.window ?? null;
       const window = msg.contextWindow ?? existingWindow;
       if (msg.tokens != null || window != null || msg.percent != null) {
         updateKeyed('contextBySession', sp,
@@ -832,6 +932,7 @@ export function handleServerMessage(msg: any): void {
 
         return changed ? { chatSessions: nextSessions } : {};
       });
+      useStore.getState().resolvePendingSessionConfirmation?.(msg.confirmId);
       changedPaths = Array.from(new Set(changedPaths));
       for (const sp of changedPaths) bumpMessageLiveVersion(sp);
       break;
@@ -848,14 +949,15 @@ export function handleServerMessage(msg: any): void {
 
     case 'status': {
       const sp = msg.sessionPath || null;
+      const sid = typeof msg.sessionId === 'string' && msg.sessionId.trim() ? msg.sessionId.trim() : null;
       // streamingSessions 维护 + 焦点 UI 占位一并由 applyStreamingStatus 处理
       const applied = applyStreamingStatus(msg.isStreaming, sp, {
         streamId: msg.streamId ?? null,
         turnId: msg.turnId ?? null,
       });
       if (sp && applied) {
-        if (msg.isStreaming) streamBufferManager.beginTurn(sp);
-        else streamBufferManager.finishTurn(sp);
+        if (msg.isStreaming) streamBufferManager.beginTurn(sp, sid);
+        else streamBufferManager.finishTurn(sp, sid);
       }
       break;
     }

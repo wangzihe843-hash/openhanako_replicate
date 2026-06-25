@@ -37,6 +37,8 @@ interface SkillBundleTreeProps {
   onReorderBundles?: (bundleIds: string[]) => void;
   onMoveSkillToBundle?: (skillName: string, bundle: SkillBundleInfo, index?: number) => void;
   onRemoveSkillFromBundles?: (skillName: string) => void;
+  highlightedSkillName?: string | null;
+  highlightedBundleId?: string | null;
 }
 
 function skillDragType() {
@@ -92,6 +94,8 @@ export function SkillBundleTree({
   onReorderBundles,
   onMoveSkillToBundle,
   onRemoveSkillFromBundles,
+  highlightedSkillName,
+  highlightedBundleId,
 }: SkillBundleTreeProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const skillByName = useMemo(() => new Map(skills.map(skill => [skill.name, skill])), [skills]);
@@ -193,7 +197,8 @@ export function SkillBundleTree({
           return (
             <div className={styles['skill-bundle-group']} key={bundle.id}>
               <div
-                className={styles['skill-bundle-header']}
+                className={`${styles['skill-bundle-header']}${highlightedBundleId === bundle.id ? ` ${styles['skill-bundle-highlight']}` : ''}`}
+                data-highlighted-bundle={highlightedBundleId === bundle.id ? bundle.id : undefined}
                 data-testid={`skill-bundle-header-${bundle.id}`}
                 draggable={canManage}
                 onDragStart={(event) => startBundleDrag(event, bundle.id)}
@@ -291,7 +296,8 @@ export function SkillBundleTree({
                         onToggle={mode === 'agent' ? onToggleSkill : undefined}
                         onDragOver={(event) => { if (canManage) event.preventDefault(); }}
                         onDrop={(event) => dropOnBundle(event, bundle, index)}
-                        className={styles['skill-bundle-child-row']}
+                        className={`${styles['skill-bundle-child-row']}${highlightedSkillName === skillName ? ` ${styles['skill-install-highlight']}` : ''}`}
+                        highlighted={highlightedSkillName === skillName}
                         extraActions={canManage ? (
                           <button
                             className={styles['skill-bundle-icon-button']}
@@ -330,6 +336,8 @@ export function SkillBundleTree({
               onDragStart={startSkillDrag}
               onDelete={canManage ? onDeleteSkill : undefined}
               onToggle={mode === 'agent' ? onToggleSkill : undefined}
+              className={highlightedSkillName === skill.name ? styles['skill-install-highlight'] : ''}
+              highlighted={highlightedSkillName === skill.name}
             />
           ))}
           {looseSkills.length === 0 ? (

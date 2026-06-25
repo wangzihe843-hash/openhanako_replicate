@@ -3,7 +3,7 @@
  *
  * 职责：
  *   - 管理所有已知 provider 的静态声明（能力、协议、认证类型）
- *   - 将插件声明与 added-models.yaml 用户配置合并为 ProviderEntry
+ *   - 将插件声明与 Provider Catalog 用户配置合并为 ProviderEntry
  *   - 读取 provider 凭证（api_key / base_url / api）
  *   - 管理 provider 的模型列表（CRUD + 持久化）
  *
@@ -24,10 +24,20 @@ import {
 import { validateProviderModels } from "../shared/provider-model-validation.ts";
 import {
   normalizeModelProtocolCompat,
+  normalizeToolUseContract,
   normalizeVisionCapabilities,
 } from "../shared/model-capabilities.ts";
 import { validateProviderRuntime } from "./media-runtime-contract.ts";
 import { capabilityKey, inferMediaProtocolId } from "./media-protocols.ts";
+import { ProviderCatalogStore } from "./provider-catalog.ts";
+import {
+  LocalProviderPluginStore,
+  isLocalProviderPlugin,
+  isSafeLocalProviderPluginProviderId,
+  providerConfigHasLocalDefinition,
+  providerPluginToCatalogDefinition,
+  splitLocalProviderConfig,
+} from "./local-provider-plugin-store.ts";
 
 const _defaultModels = JSON.parse(
   fs.readFileSync(fromRoot("lib", "default-models.json"), "utf-8"),
@@ -37,7 +47,7 @@ const MALFORMED_PROVIDER_CONFIG = "malformed_provider_config";
 const INVALID_MODELS_CONFIG = "invalid_models_config";
 const DELETED_PROVIDERS_KEY = "_deleted_providers";
 const PROVIDER_RUNTIME_META_KEYS = new Set(["_config_error"]);
-const THINKING_LEVEL_VALUES = new Set(["auto", "off", "low", "medium", "high", "xhigh"]);
+const THINKING_LEVEL_VALUES = new Set(["auto", "off", "low", "medium", "high", "xhigh", "max"]);
 const MEDIA_USER_CONFIG_KEYS = {
   imageGeneration: "image_generation",
   videoGeneration: "video_generation",
@@ -183,17 +193,24 @@ function normalizeCredentialLane(lane, fallbackProviderId) {
   };
 }
 
-function normalizeMediaCapability(capability, entry) {
+function allowMediaModelWithoutProtocol(entry) {
+  const kind = entry?.source?.kind;
+  return kind === "user" || kind === "local-provider-plugin";
+}
+
+function normalizeMediaCapability(capability, entry, capabilityName) {
   if (!capability || typeof capability !== "object") return null;
   const models = [];
   const seen = new Set();
   for (const model of capability.models || []) {
-    const normalized = normalizeMediaModel(model, { protocolId: entry?.runtime?.protocolId });
+    const rawId = getModelId(model);
+    const inferredProtocolId = inferMediaProtocolId(entry.id, capabilityName, rawId, providerProtocolContext(entry));
+    const normalized = normalizeMediaModel(model, { protocolId: entry?.runtime?.protocolId || inferredProtocolId });
     if (!normalized) continue;
     if (seen.has(normalized.id)) {
       throw new Error(`Duplicate media model "${normalized.id}" in provider "${entry.id}"`);
     }
-    if (!normalized.protocolId) {
+    if (!normalized.protocolId && !allowMediaModelWithoutProtocol(entry)) {
       throw new Error(`Media model "${normalized.id}" in provider "${entry.id}" missing protocolId`);
     }
     seen.add(normalized.id);
@@ -227,7 +244,7 @@ function normalizeCapabilities(plugin, entry) {
   const media: any = {};
   for (const [rawKey, rawCapability] of Object.entries(rawMedia)) {
     const key = capabilityKey(rawKey);
-    const normalized = normalizeMediaCapability(rawCapability, entry);
+    const normalized = normalizeMediaCapability(rawCapability, entry, rawKey);
     if (normalized) media[key] = normalized;
     else if (rawCapability !== undefined) media[key] = rawCapability;
   }
@@ -270,7 +287,8 @@ function getModelType(providerId, modelEntry) {
 
 /** ProviderEntry → 推断上下文（唯一构造点，避免两个调用方各传一套字段） */
 function providerProtocolContext(entry) {
-  return { api: entry?.api, sourceKind: entry?.source?.kind };
+  const kind = entry?.source?.kind;
+  return { api: entry?.api, sourceKind: kind === "local-provider-plugin" ? "user" : kind };
 }
 
 function normalizeUserMediaModels(providerId, userConfig, capabilityName, declaredModels, entry) {
@@ -300,11 +318,13 @@ function normalizeUserMediaModels(providerId, userConfig, capabilityName, declar
 // ── 内置插件 ────────────────────────────────────────────────────────────────
 
 import { dashscopePlugin } from "../lib/providers/dashscope.ts";
+import { agnesPlugin } from "../lib/providers/agnes.ts";
 import { openaiPlugin } from "../lib/providers/openai.ts";
 import { anthropicPlugin } from "../lib/providers/anthropic.ts";
 import { deepseekPlugin } from "../lib/providers/deepseek.ts";
 import { geminiPlugin } from "../lib/providers/gemini.ts";
 import { openrouterPlugin } from "../lib/providers/openrouter.ts";
+import { opencodeGoPlugin } from "../lib/providers/opencode-go.ts";
 import { ollamaPlugin } from "../lib/providers/ollama.ts";
 import { minimaxPlugin } from "../lib/providers/minimax.ts";
 import { minimaxTokenPlanPlugin } from "../lib/providers/minimax-token-plan.ts";
@@ -335,14 +355,17 @@ import { xaiPlugin } from "../lib/providers/xai.ts";
 import { dashscopeCodingPlugin } from "../lib/providers/dashscope-coding.ts";
 import { kimiCodingPlugin } from "../lib/providers/kimi-coding.ts";
 import { volcegineCodingPlugin } from "../lib/providers/volcengine-coding.ts";
+import { zhipuCodingPlugin } from "../lib/providers/zhipu-coding.ts";
 
 const BUILTIN_PLUGINS = [
+  agnesPlugin,
   dashscopePlugin,
   openaiPlugin,
   anthropicPlugin,
   deepseekPlugin,
   geminiPlugin,
   openrouterPlugin,
+  opencodeGoPlugin,
   ollamaPlugin,
   minimaxPlugin,
   minimaxTokenPlanPlugin,
@@ -373,6 +396,7 @@ const BUILTIN_PLUGINS = [
   dashscopeCodingPlugin,
   kimiCodingPlugin,
   volcegineCodingPlugin,
+  zhipuCodingPlugin,
 ];
 
 // ── Types (JSDoc) ─────────────────────────────────────────────────────────────
@@ -385,6 +409,10 @@ const BUILTIN_PLUGINS = [
  * @property {string} defaultBaseUrl
  * @property {string} defaultApi
  * @property {string} [authJsonKey] - OAuth provider 在 auth.json 中的 key（不同于 id 时）
+ * @property {Array<string|object>} [models] - 固定 chat 模型列表（本地 Provider Plugin 可直接声明）
+ * @property {object} [capabilities]
+ * @property {object} [runtime]
+ * @property {object} [source]
  */
 
 /**
@@ -405,16 +433,22 @@ export class ProviderRegistry {
   declare _addedModelsMtime: any;
   declare _authJsonCache: any;
   declare _authJsonMtime: any;
+  declare _builtinPlugins: any;
+  declare _catalog: ProviderCatalogStore;
   declare _entries: any;
   declare _hanakoHome: any;
+  declare _localProviderPlugins: LocalProviderPluginStore;
   declare _plugins: any;
   /**
    * @param {string} hanakoHome - 用户数据根目录（如 ~/.hanako-dev）
    */
   constructor(hanakoHome) {
     this._hanakoHome = hanakoHome;
+    this._catalog = new ProviderCatalogStore(hanakoHome);
+    this._localProviderPlugins = new LocalProviderPluginStore(hanakoHome);
     /** @type {Map<string, ProviderPlugin>} id → plugin */
     this._plugins = new Map();
+    this._builtinPlugins = new Map();
     /** @type {Map<string, ProviderEntry>} id → entry（合并后） */
     this._entries = new Map();
 
@@ -427,7 +461,58 @@ export class ProviderRegistry {
     // 注册内置插件
     for (const plugin of BUILTIN_PLUGINS) {
       this._plugins.set(plugin.id, plugin);
+      this._builtinPlugins.set(plugin.id, plugin);
     }
+    this._reloadLocalProviderPlugins();
+  }
+
+  _isBuiltinPlugin(id, plugin) {
+    return this._builtinPlugins.get(id) === plugin;
+  }
+
+  _reloadLocalProviderPlugins() {
+    for (const [id, plugin] of [...this._plugins.entries()]) {
+      if (isLocalProviderPlugin(plugin)) this._plugins.delete(id);
+    }
+    for (const plugin of this._localProviderPlugins.readAll()) {
+      validateProviderRuntime(plugin.runtime);
+      this._plugins.set(plugin.id, plugin);
+    }
+  }
+
+  _mergeRawProviderConfig(providerId, overlay = {}) {
+    const plugin = this._plugins.get(providerId);
+    if (!isLocalProviderPlugin(plugin)) return cloneData(overlay || {});
+    return {
+      ...providerPluginToCatalogDefinition(plugin),
+      ...(overlay || {}),
+    };
+  }
+
+  _writeLocalProviderPlugin(providerId, config, existingPlugin = null) {
+    const { plugin, overlay } = splitLocalProviderConfig(providerId, config, existingPlugin);
+    validateProviderRuntime(plugin.runtime);
+    validateProviderModels(providerId, plugin.models, { baseUrl: plugin.defaultBaseUrl });
+    const saved = this._localProviderPlugins.writeProvider(providerId, plugin);
+    this._plugins.set(providerId, saved);
+    return overlay;
+  }
+
+  _migrateCatalogOnlyProvidersToLocalPlugins(userConfig) {
+    let changed = false;
+    const nextConfig = cloneData(userConfig || {});
+    for (const [providerId, config] of Object.entries(userConfig || {}) as [string, any][]) {
+      if (this._plugins.has(providerId)) continue;
+      if (!isSafeLocalProviderPluginProviderId(providerId)) continue;
+      if (!providerConfigHasLocalDefinition(config)) continue;
+      nextConfig[providerId] = this._writeLocalProviderPlugin(providerId, config, null);
+      changed = true;
+    }
+    if (!changed) return userConfig;
+    this._saveAddedModels(nextConfig, {
+      localProviderPluginsMigratedAt: new Date().toISOString(),
+    });
+    return this._loadAddedModels();
   }
 
   /**
@@ -448,7 +533,7 @@ export class ProviderRegistry {
   }
 
   /**
-   * 一次性迁移：将 agent config.models.overrides 的模型能力字段迁移到 added-models.yaml
+   * 一次性迁移：将 agent config.models.overrides 的模型能力字段迁移到 Provider Catalog
    * @param {string} agentsDir - agents 目录
    * @param {Function} [log] - 日志函数
    */
@@ -499,7 +584,7 @@ export class ProviderRegistry {
           const existing = typeof prov.models[idx] === "object" ? prov.models[idx] : { id: modelId };
           prov.models[idx] = { ...existing, ...meta };
           changed = true;
-          log(`[migrate] override ${modelId}: ${Object.keys(meta).join(",")} → added-models.yaml`);
+          log(`[migrate] override ${modelId}: ${Object.keys(meta).join(",")} → Provider Catalog`);
           break;
         }
       }
@@ -522,20 +607,19 @@ export class ProviderRegistry {
 
     if (changed) {
       this._saveAddedModels(userConfig);
-      log("[migrate] model overrides migrated to added-models.yaml");
+      log("[migrate] model overrides migrated to Provider Catalog");
     }
   }
 
-  /** 从 _hanakoHome 直接读 added-models.yaml（mtime 缓存，文件未变时跳过磁盘读取） */
+  /** 从 Provider Catalog v2 读取用户 provider 配置（mtime 缓存，文件未变时跳过磁盘读取） */
   _loadAddedModels() {
-    const ymlPath = path.join(this._hanakoHome, "added-models.yaml");
     try {
-      const mtime = fs.statSync(ymlPath).mtimeMs;
+      const catalog = this._catalog.load();
+      const mtime = fs.statSync(this._catalog.catalogPath).mtimeMs;
       if (this._addedModelsCache && mtime === this._addedModelsMtime) {
         return cloneData(this._addedModelsCache);
       }
-      const raw = safeReadYAMLSync(ymlPath, {}, YAML) || {};
-      this._addedModelsCache = normalizeProviderUserConfigMap(raw.providers);
+      this._addedModelsCache = normalizeProviderUserConfigMap(catalog.providers);
       this._addedModelsMtime = mtime;
       return cloneData(this._addedModelsCache);
     } catch {
@@ -543,48 +627,30 @@ export class ProviderRegistry {
     }
   }
 
-  /** 将 providers 对象写入 _hanakoHome/added-models.yaml */
+  /** 将 providers 对象写入 Provider Catalog v2 */
   _saveAddedModels(providers, meta: any = {}) {
-    const ymlPath = path.join(this._hanakoHome, "added-models.yaml");
-    // 读取现有文件以保留 _migrated 等顶层元数据
-    const existing = safeReadYAMLSync(ymlPath, {}, YAML) || {};
-    const header =
-      "# HanaAgent 供应商配置（全局，跨 agent 共享）\n" +
-      "# 由设置页面管理\n\n";
-    const data = { ...existing, providers: stripProviderRuntimeMetaMap(providers) };
-    if (Array.isArray(meta.deletedProviders)) {
-      const deletedProviders = normalizeDeletedProviders(meta.deletedProviders);
-      if (deletedProviders.length > 0) data[DELETED_PROVIDERS_KEY] = deletedProviders;
-      else delete data[DELETED_PROVIDERS_KEY];
-    }
-    const yamlStr = header + YAML.dump(data, {
-      indent: 2,
-      lineWidth: -1,
-      sortKeys: false,
-      quotingType: "\"",
-      forceQuotes: false,
-    });
-    atomicWriteSync(ymlPath, yamlStr);
+    this._catalog.saveProviders(stripProviderRuntimeMetaMap(providers), meta);
     // 写入后失效缓存，下次 _loadAddedModels 会重读
     this._addedModelsCache = null;
     this._addedModelsMtime = 0;
   }
 
   /**
-   * 从 added-models.yaml 加载用户配置，与所有插件声明合并
-   * 每次 added-models.yaml 变更后调用
+   * 从 Provider Catalog 加载用户配置，与所有插件声明合并
+   * 每次 Provider Catalog 变更后调用
    */
   reload() {
     this._entries.clear();
-    const userConfig = this._loadAddedModels();
+    this._reloadLocalProviderPlugins();
+    const userConfig = this._migrateCatalogOnlyProvidersToLocalPlugins(this._loadAddedModels());
 
     // 1. 先处理所有已注册插件（内置 + 外部注册的）
     for (const [id, plugin] of this._plugins) {
       const uc = userConfig[id] || {};
-      this._entries.set(id, this._merge(plugin, uc, true));
+      this._entries.set(id, this._merge(plugin, uc, this._isBuiltinPlugin(id, plugin)));
     }
 
-    // 2. 处理 added-models.yaml 中有但没有对应插件的条目（用户自定义 provider）
+    // 2. 处理 Provider Catalog 中有但没有对应插件的条目（用户自定义 provider）
     for (const [id, uc] of Object.entries(userConfig) as [string, any][]) {
       if (this._entries.has(id)) continue;
       // 没有插件声明，从配置推断
@@ -655,6 +721,16 @@ export class ProviderRegistry {
     return this.get(providerId)?.capabilities || null;
   }
 
+  getCapabilityRegistry() {
+    return cloneData(this._catalog.load().capabilities || {});
+  }
+
+  getCapabilityProviders(capability) {
+    if (typeof capability !== "string" || !capability.trim()) return [];
+    const config = this.getCapabilityRegistry()[capability.trim()];
+    return Array.isArray(config?.providers) ? cloneData(config.providers) : [];
+  }
+
   resolveChatProvider(providerId) {
     const entry = this.get(providerId);
     if (!entry) return null;
@@ -674,8 +750,7 @@ export class ProviderRegistry {
   }
 
   getChatModelIds(providerId) {
-    const userConfig = this._loadAddedModels();
-    const models = userConfig[providerId]?.models || [];
+    const models = this.getAllProvidersRaw()[providerId]?.models || [];
     return models
       .filter((model) => getModelType(providerId, model) === "chat")
       .map(getModelId)
@@ -688,7 +763,7 @@ export class ProviderRegistry {
     if (!entry) return [];
     const key = capabilityKey(capability);
     const declared = entry.capabilities?.media?.[key]?.models || [];
-    const userConfig = this._loadAddedModels()[providerId] || {};
+    const userConfig = this.getAllProvidersRaw()[providerId] || {};
     const userModels = normalizeUserMediaModels(providerId, userConfig, capability, declared, entry);
     const byId = new Map();
     for (const model of declared) byId.set(model.id, model);
@@ -847,46 +922,47 @@ export class ProviderRegistry {
    * @returns {string[]}
    */
   getDefaultModels(providerId) {
-    return _defaultModels[providerId] || [];
+    if (_defaultModels[providerId]) return _defaultModels[providerId];
+    const plugin = this._plugins.get(providerId);
+    if (Array.isArray(plugin?.models)) {
+      return plugin.models.map(getModelId).filter(Boolean);
+    }
+    return [];
   }
 
   /**
-   * 更新 provider 的用户配置（写 added-models.yaml）
+   * 更新 provider 的用户配置（写 Provider Catalog）
    * 只更新非凭证字段（base_url / api / display_name / auth_type）
    * @param {string} providerId
    * @param {{ base_url?: string, api?: string, display_name?: string, auth_type?: string }} overrides
    */
   setUserConfig(providerId, overrides) {
-    const userConfig = this._loadAddedModels();
-    userConfig[providerId] = { ...(userConfig[providerId] || {}), ...overrides };
-    this._saveAddedModels(userConfig);
-    // 更新内存中的 entry
-    this._entries.delete(providerId);
-    if (this._plugins.has(providerId)) {
-      const plugin = this._plugins.get(providerId);
-      this._entries.set(providerId, this._merge(plugin, userConfig[providerId], true));
-    } else {
-      this.reload(); // 自定义 provider 走完整 reload
-    }
+    this.saveProvider(providerId, overrides);
   }
 
   /**
-   * 删除一个 provider（仅从 added-models.yaml，内置插件的插件声明保留）
+   * 删除一个 provider（仅从 Provider Catalog 用户配置删除，内置插件声明保留）
    * @param {string} providerId
    */
   remove(providerId) {
     const userConfig = this._loadAddedModels();
-    if (!Object.prototype.hasOwnProperty.call(userConfig, providerId)) return;
-    delete userConfig[providerId];
-    const existing = safeReadYAMLSync(path.join(this._hanakoHome, "added-models.yaml"), {}, YAML) || {};
-    const deletedProviders = normalizeDeletedProviders(existing[DELETED_PROVIDERS_KEY]);
+    const plugin = this._plugins.get(providerId);
+    const hasCatalogEntry = Object.prototype.hasOwnProperty.call(userConfig, providerId);
+    const hasLocalPlugin = isLocalProviderPlugin(plugin);
+    if (!hasCatalogEntry && !hasLocalPlugin) return;
+    if (hasCatalogEntry) delete userConfig[providerId];
+    if (hasLocalPlugin) {
+      this._localProviderPlugins.removeProvider(providerId);
+      this._plugins.delete(providerId);
+    }
+    const deletedProviders = this._catalog.getDeletedProviders();
     if (!deletedProviders.includes(providerId)) deletedProviders.push(providerId);
     this._saveAddedModels(userConfig, { deletedProviders });
     this._entries.delete(providerId);
     // 如果有内置插件声明，以默认值重建 entry
     if (this._plugins.has(providerId)) {
-      const plugin = this._plugins.get(providerId);
-      this._entries.set(providerId, this._merge(plugin, {}, true));
+      const remainingPlugin = this._plugins.get(providerId);
+      this._entries.set(providerId, this._merge(remainingPlugin, {}, this._isBuiltinPlugin(providerId, remainingPlugin)));
     }
   }
 
@@ -925,7 +1001,7 @@ export class ProviderRegistry {
 
   /**
    * 读取 provider 的凭证信息（apiKey, baseUrl, api）
-   * 从 added-models.yaml 读取用户配置值，baseUrl/api 不存在时回退到插件默认值。
+   * 从 Provider Catalog 读取用户配置值，baseUrl/api 不存在时回退到插件默认值。
    * OAuth provider 若 YAML 无 api_key，自动从 auth.json 补全 access token；
    * 若 auth.json 含 resourceUrl 且 YAML 未配 base_url，用 resourceUrl 作为 baseUrl。
    * @param {string} providerId
@@ -1011,24 +1087,31 @@ export class ProviderRegistry {
   }
 
   /**
-   * 读取某 provider 在 added-models.yaml 中的模型 ID 列表
+   * 读取某 provider 在 Provider Catalog 中的模型 ID 列表
    * 模型条目可以是字符串或 {id, name?, context?, maxOutput?} 对象，统一提取 id
    * @param {string} providerId
    * @returns {string[]}
    */
   getProviderModels(providerId) {
-    const userConfig = this._loadAddedModels();
-    const uc = userConfig[providerId];
+    const uc = this.getAllProvidersRaw()[providerId];
     if (!uc?.models || !Array.isArray(uc.models)) return [];
     return uc.models.map((m) => (typeof m === "object" ? m.id : m));
   }
 
   /**
-   * 返回 added-models.yaml 的原始数据（不经过插件合并）
+   * 返回运行时 provider 数据。
+   * Built-in/plugin provider 只返回用户 catalog overlay；本地 Provider Plugin 会把
+   * 插件声明合并进去，让模型同步和设置页仍能看到用户自定义 provider 的完整定义。
    * @returns {Record<string, any>}
    */
   getAllProvidersRaw() {
-    return this._loadAddedModels();
+    const userConfig = this._loadAddedModels();
+    const raw = cloneData(userConfig);
+    for (const [providerId, plugin] of this._plugins) {
+      if (!isLocalProviderPlugin(plugin)) continue;
+      raw[providerId] = this._mergeRawProviderConfig(providerId, raw[providerId] || {});
+    }
+    return raw;
   }
 
   _providerConfigIdForModelDefaults(providerId) {
@@ -1080,23 +1163,18 @@ export class ProviderRegistry {
    * @param {string | { id: string, name?: string, context?: number, maxOutput?: number }} model
    */
   addModel(providerId, model) {
-    const userConfig = this._loadAddedModels();
-    if (!userConfig[providerId]) userConfig[providerId] = {};
-    if (!Array.isArray(userConfig[providerId].models)) {
-      userConfig[providerId].models = [];
-    }
+    const rawProvider = this.getAllProvidersRaw()[providerId] || {};
+    const models = Array.isArray(rawProvider.models) ? rawProvider.models : [];
 
     const newId = typeof model === "object" ? model.id : model;
-    const exists = userConfig[providerId].models.some(
+    const exists = models.some(
       (m) => (typeof m === "object" ? m.id : m) === newId,
     );
     if (exists) return;
 
-    const nextModels = [...userConfig[providerId].models, model];
-    validateProviderModels(providerId, nextModels, { baseUrl: userConfig[providerId].base_url });
-    userConfig[providerId].models = nextModels;
-    this._saveAddedModels(userConfig);
-    this._entries.clear();
+    const nextModels = [...models, model];
+    validateProviderModels(providerId, nextModels, { baseUrl: rawProvider.base_url });
+    this.saveProvider(providerId, { models: nextModels });
   }
 
   /**
@@ -1105,15 +1183,13 @@ export class ProviderRegistry {
    * @param {string} modelId
    */
   removeModel(providerId, modelId) {
-    const userConfig = this._loadAddedModels();
-    const uc = userConfig[providerId];
+    const uc = this.getAllProvidersRaw()[providerId];
     if (!uc?.models || !Array.isArray(uc.models)) return;
 
-    uc.models = uc.models.filter(
+    const models = uc.models.filter(
       (m) => (typeof m === "object" ? m.id : m) !== modelId,
     );
-    this._saveAddedModels(userConfig);
-    this._entries.clear();
+    this.saveProvider(providerId, { models });
   }
 
   /**
@@ -1121,15 +1197,11 @@ export class ProviderRegistry {
    * 裸字符串条目会被升级为对象
    * @param {string} providerId
    * @param {string} modelId
-   * @param {{ name?: string, context?: number, maxOutput?: number, image?: boolean, video?: boolean, reasoning?: boolean, defaultThinkingLevel?: string, compat?: object, visionCapabilities?: object }} meta
+   * @param {{ name?: string, context?: number, maxOutput?: number, image?: boolean, video?: boolean, reasoning?: boolean, xhigh?: boolean, thinkingLevels?: string[], defaultThinkingLevel?: string, compat?: object, toolUse?: object, visionCapabilities?: object }} meta
    */
   updateModelEntry(providerId, modelId, meta) {
-    const userConfig = this._loadAddedModels();
-    if (!userConfig[providerId]) userConfig[providerId] = {};
-    if (!Array.isArray(userConfig[providerId].models)) {
-      userConfig[providerId].models = [];
-    }
-    const uc = userConfig[providerId];
+    const rawProvider = this.getAllProvidersRaw()[providerId] || {};
+    const models = Array.isArray(rawProvider.models) ? rawProvider.models : [];
 
     // 兼容前端仍可能发来 vision 字段（过渡期）：转写为 image
     if (meta && typeof meta === "object" && meta.vision !== undefined && meta.image === undefined) {
@@ -1137,18 +1209,23 @@ export class ProviderRegistry {
     }
 
     // 白名单：只允许模型能力字段（image 是标准名，vision 为旧名不写入）
-    const ALLOWED = ["name", "context", "maxOutput", "image", "video", "reasoning", "type", "defaultThinkingLevel"];
+    const ALLOWED = ["name", "context", "maxOutput", "image", "video", "reasoning", "xhigh", "thinkingLevels", "type", "defaultThinkingLevel"];
     const safe: any = {};
     for (const key of ALLOWED) {
       if (meta[key] !== undefined) safe[key] = meta[key];
     }
     const compat = normalizeModelProtocolCompat(meta?.compat);
     if (compat) safe.compat = compat;
+    const toolUse = normalizeToolUseContract(meta?.toolUse);
+    if (meta?.toolUse !== undefined && !toolUse) {
+      throw new Error(`invalid toolUse contract for model "${modelId}"`);
+    }
+    if (toolUse) safe.toolUse = toolUse;
     const visionCapabilities = normalizeVisionCapabilities(meta?.visionCapabilities);
     if (visionCapabilities) safe.visionCapabilities = visionCapabilities;
 
     let found = false;
-    const nextModels = uc.models.map((m) => {
+    const nextModels = models.map((m) => {
       const mid = typeof m === "object" ? m.id : m;
       if (mid !== modelId) return m;
       found = true;
@@ -1166,10 +1243,8 @@ export class ProviderRegistry {
       nextModels.push({ id: modelId, ...safe });
     }
 
-    validateProviderModels(providerId, nextModels, { baseUrl: uc.base_url });
-    uc.models = nextModels;
-    this._saveAddedModels(userConfig);
-    this._entries.clear();
+    validateProviderModels(providerId, nextModels, { baseUrl: rawProvider.base_url });
+    this.saveProvider(providerId, { models: nextModels });
   }
 
   _ensureMediaConfig(userConfig, providerId, capability) {
@@ -1248,7 +1323,7 @@ export class ProviderRegistry {
   }
 
   /**
-   * 创建或更新一个 provider 条目（合并写入 added-models.yaml）
+   * 创建或更新一个 provider 条目（合并写入 Provider Catalog）
    * @param {string} providerId
    * @param {Record<string, any>} data - 要写入的字段（api_key, base_url, api, models 等）
    */
@@ -1259,16 +1334,21 @@ export class ProviderRegistry {
       providerData.headers = normalizeProviderHeaders(providerData.headers);
     }
     const nextProvider = { ...(userConfig[providerId] || {}), ...providerData };
+    const existingPlugin = this._plugins.get(providerId);
+    const persistAsLocalPlugin = isLocalProviderPlugin(existingPlugin) || !existingPlugin;
 
     if (seedDefaultModels && (!Array.isArray(nextProvider.models) || nextProvider.models.length === 0)) {
       const defaults = this.getDefaultModels(providerId);
       if (defaults.length > 0) nextProvider.models = [...defaults];
     }
 
-    validateProviderModels(providerId, nextProvider.models, { baseUrl: nextProvider.base_url });
-    userConfig[providerId] = nextProvider;
-    const existing = safeReadYAMLSync(path.join(this._hanakoHome, "added-models.yaml"), {}, YAML) || {};
-    const deletedProviders = normalizeDeletedProviders(existing[DELETED_PROVIDERS_KEY])
+    if (persistAsLocalPlugin) {
+      userConfig[providerId] = this._writeLocalProviderPlugin(providerId, nextProvider, existingPlugin);
+    } else {
+      validateProviderModels(providerId, nextProvider.models, { baseUrl: nextProvider.base_url });
+      userConfig[providerId] = nextProvider;
+    }
+    const deletedProviders = this._catalog.getDeletedProviders()
       .filter((id) => id !== providerId);
     this._saveAddedModels(userConfig, { deletedProviders });
     this._entries.clear();
@@ -1290,7 +1370,7 @@ export class ProviderRegistry {
    * @returns {{ id: string, name?: string, type: string }[]}
    */
   getModelsByType(providerId, type) {
-    const raw = this._loadAddedModels();
+    const raw = this.getAllProvidersRaw();
     const models = raw[providerId]?.models || [];
     const results = [];
     for (const m of models) {
@@ -1311,7 +1391,7 @@ export class ProviderRegistry {
    * @returns {{ provider: string, id: string, name?: string, type: string }[]}
    */
   getAllModelsByType(type) {
-    const raw = this._loadAddedModels();
+    const raw = this.getAllProvidersRaw();
     const results = [];
     for (const providerId of Object.keys(raw)) {
       for (const entry of this.getModelsByType(providerId, type)) {

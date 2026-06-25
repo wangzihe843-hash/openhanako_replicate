@@ -212,6 +212,59 @@ describe("SpeechRecognitionService", () => {
     }
   });
 
+  it("transcribes a SessionFile by sessionId when no path locator is supplied", async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-speech-service-"));
+    try {
+      const sessionPath = path.join(tmpDir, "session.jsonl");
+      const audioPath = path.join(tmpDir, "voice.wav");
+      fs.writeFileSync(sessionPath, "{}\n");
+      fs.writeFileSync(audioPath, "RIFF");
+      const sessionFiles = new SessionFileRegistry();
+      const file = sessionFiles.registerFile({
+        sessionId: "sess_asr",
+        sessionPath,
+        filePath: audioPath,
+        label: "voice.wav",
+        origin: "voice_input",
+        storageKind: "managed_cache",
+      });
+      const emitEvent = vi.fn();
+      const adapter = {
+        id: "mimo",
+        protocolId: "mimo-chat-completions-asr",
+        types: ["speechRecognition"],
+        transcribe: vi.fn(async () => ({ text: "done", language: "en" })),
+      };
+      const service = new SpeechRecognitionService({
+        providerRegistry: makeProviderRegistry(),
+        preferences: {
+          getSpeechRecognitionConfig: () => ({
+            enabled: true,
+            defaultModel: { provider: "mimo", id: "mimo-v2.5-asr" },
+          }),
+        },
+        sessionFiles,
+        emitEvent,
+      });
+      service.registerAdapter(adapter);
+
+      const result = await service.transcribeAudio({ sessionId: "sess_asr", fileId: file.id });
+
+      expect(result).toMatchObject({ status: "ready", text: "done" });
+      expect(sessionFiles.get(file.id, { sessionId: "sess_asr" })?.transcription).toMatchObject({
+        status: "ready",
+        text: "done",
+      });
+      expect(emitEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: "voice_transcription_update",
+        sessionId: "sess_asr",
+        fileId: file.id,
+      }), null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects transcribeAudio when fileId belongs to another loaded session", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-speech-cross-session-"));
     try {

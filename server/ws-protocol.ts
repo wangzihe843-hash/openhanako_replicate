@@ -26,12 +26,13 @@
  *   { type: "jian_update", content: "..." }
  *   { type: "devlog", text: "...", level: "info"|"heartbeat"|"error" }
  *   { type: "activity_update", activity: { id, type, label, agentId, agentName, startedAt, finishedAt, summary, sessionFile, status, error?, summaryZh?, consumedCount?, giftDrop? } }  (summaryZh/consumedCount 为星野巡检 consumer 聚合的小手机事件；giftDrop:{nameZh} 为心跳 10% 掉落到全体共享礼物库存的礼物，前端据此弹漂浮提示，见 hub/scheduler.ts)
- *   { type: "content_block", block: { type: "file"|"media_generation"|"artifact"|"screenshot"|"skill"|"plugin_card"|"suggestion_card"|"cron_confirm"|"settings_confirm"|"settings_update", ... } }  (工具结果统一内容块，含 stage_files/image-gen 占位与完成替换/旧 create_artifact 兼容输出/browser screenshot/install_skill/plugin card/建议卡片/cron 兼容确认/settings 确认/设置结果)
+ *   { type: "content_block", block: { type: "file"|"media_generation"|"artifact"|"screenshot"|"skill"|"plugin_card"|"suggestion_card"|"cron_confirm"|"settings_confirm"|"settings_update", ... } }  (工具结果统一内容块，含 stage_files/media_generation 占位与完成替换/旧 create_artifact 兼容输出/browser screenshot/install_skill/plugin card/建议卡片/cron 兼容确认/settings 确认/设置结果)
  *   { type: "session_user_message", sessionPath: "...", message: { text, attachments?, quotedText?, skills?, deskContext? } }  (桌面/RC 统一用户消息，参与 stream_resume)
  *   { type: "confirmation_resolved", confirmId: "...", action: "confirmed"|"rejected", value?: any }  (用户操作确认卡片后广播，前端更新卡片状态)
  *   { type: "block_update", taskId: "...", patch: { streamStatus: "done"|"failed", summary?: "..." } }  (活跃 block 状态更新)
+ *   { type: "work_mode", enabled: bool, sessionPath: "..." }  (每会话工作模式状态变更)
  *   { type: "browser_status", running: bool, url: "...", thumbnail?: "..." }  (浏览器状态变更，用于前端浮动卡片)
- *   { type: "bridge_status", platform: "telegram"|"feishu", status: "connected"|"disconnected"|"error", error?: "..." }  (外部平台连接状态变更)
+ *   { type: "bridge_status", platform: "telegram"|"feishu"|"dingtalk"|"qq"|"wechat", status: "connected"|"disconnected"|"error", error?: "..." }  (外部平台连接状态变更)
  *   { type: "stream_resume", sessionPath: "...", streamId: "...", sinceSeq: number, nextSeq: number, reset: bool, truncated: bool, isStreaming: bool, runtimeIsStreaming?: bool, events: [{ seq, event, ts }] }  (新协议；isStreaming 是 replay 缓存状态，runtimeIsStreaming 是 engine 运行态)
  */
 
@@ -74,16 +75,27 @@ export function createSessionStreamEventWsMessage(input) {
   const payload = assertObject(input, "input", context);
   const sessionPath = assertNonEmptyString(payload.sessionPath, "sessionPath", context);
   const sessionEvent = assertSessionEventPayload(payload.sessionEvent, "sessionEvent", context);
+  const sessionId = optionalNonEmptyString(
+    Object.prototype.hasOwnProperty.call(payload, "sessionId")
+      ? payload.sessionId
+      : sessionEvent.sessionId,
+    "sessionId",
+    context,
+  );
   const streamId = assertNonEmptyString(payload.streamId, "streamId", context);
   const seq = assertPositiveInteger(payload.seq, "seq", context);
 
   assertCompatibleField(sessionEvent, "sessionPath", sessionPath, context);
+  if (sessionId) assertCompatibleField(sessionEvent, "sessionId", sessionId, context);
+  assertCompatibleField(sessionEvent, "sessionRefVersion", 2, context);
   assertCompatibleField(sessionEvent, "streamId", streamId, context);
   assertCompatibleField(sessionEvent, "seq", seq, context);
 
   return {
     ...sessionEvent,
     sessionPath,
+    ...(sessionId ? { sessionId } : {}),
+    sessionRefVersion: 2,
     streamId,
     seq,
   };
@@ -94,6 +106,7 @@ export function createStreamResumeWsMessage(input) {
   const context = "Invalid WebSocket stream_resume message";
   const payload = assertObject(input, "input", context);
   const sessionPath = assertNonEmptyString(payload.sessionPath, "sessionPath", context);
+  const sessionId = optionalNonEmptyString(payload.sessionId, "sessionId", context);
   const streamId = assertNullableNonEmptyString(payload.streamId, "streamId", context);
   const sinceSeq = assertNonNegativeInteger(payload.sinceSeq, "sinceSeq", context);
   const nextSeq = assertPositiveInteger(payload.nextSeq, "nextSeq", context);
@@ -105,6 +118,7 @@ export function createStreamResumeWsMessage(input) {
   const message: Record<string, unknown> = {
     type: "stream_resume",
     sessionPath,
+    ...(sessionId ? { sessionId, sessionRefVersion: 2 } : {}),
     streamId,
     sinceSeq,
     nextSeq,
@@ -167,6 +181,11 @@ function assertNonEmptyString(value, field, context) {
 
 function assertNullableNonEmptyString(value, field, context) {
   if (value === null) return null;
+  return assertNonEmptyString(value, field, context);
+}
+
+function optionalNonEmptyString(value, field, context) {
+  if (value === undefined || value === null) return null;
   return assertNonEmptyString(value, field, context);
 }
 

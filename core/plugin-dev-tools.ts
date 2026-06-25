@@ -23,18 +23,58 @@ function safeJson(value) {
 function findRuntimeCtx(args) {
   for (let i = args.length - 1; i >= 2; i -= 1) {
     const value = args[i];
-    if (value && typeof value === "object" && (value.sessionManager || value.sessionPath || value.agentId || value.model)) {
+    if (value && typeof value === "object" && (value.sessionManager || value.sessionId || value.sessionRef || value.sessionPath || value.agentId || value.model)) {
       return value;
     }
   }
   return null;
 }
 
-function getSessionPath(params, runtimeCtx) {
-  return params.sessionPath
-    || runtimeCtx?.sessionManager?.getSessionFile?.()
-    || runtimeCtx?.sessionPath
-    || null;
+function textOrNull(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function createDevToolError(message, code) {
+  const err = new Error(message) as Error & { code?: string; status?: number };
+  err.code = code;
+  err.status = 400;
+  return err;
+}
+
+function normalizeSessionTarget(params, runtimeCtx) {
+  const hasParamTarget = !!(params?.sessionId || params?.sessionRef || params?.sessionPath);
+  const source = hasParamTarget ? params : runtimeCtx;
+  const rawRef = source?.sessionRef && typeof source.sessionRef === "object"
+    ? source.sessionRef
+    : null;
+  const explicitSessionId = textOrNull(source?.sessionId);
+  const refSessionId = textOrNull(rawRef?.sessionId);
+  if (explicitSessionId && refSessionId && explicitSessionId !== refSessionId) {
+    throw createDevToolError(
+      "sessionId does not match sessionRef.sessionId",
+      "PLUGIN_DEV_SESSION_ID_MISMATCH",
+    );
+  }
+  const sessionId = explicitSessionId || refSessionId;
+  const sessionPath = textOrNull(rawRef?.sessionPath)
+    || textOrNull(rawRef?.path)
+    || textOrNull(source?.sessionPath)
+    || (!hasParamTarget ? textOrNull(runtimeCtx?.sessionManager?.getSessionFile?.()) : null);
+  const legacySessionPath = textOrNull(rawRef?.legacySessionPath)
+    || textOrNull(source?.legacySessionPath);
+  if (!sessionId) {
+    return sessionPath ? { sessionPath } : {};
+  }
+  const sessionRef = {
+    sessionId,
+    ...(sessionPath ? { sessionPath } : {}),
+    ...(legacySessionPath ? { legacySessionPath } : {}),
+  };
+  return {
+    sessionId,
+    ...(sessionPath ? { sessionPath } : {}),
+    sessionRef,
+  };
 }
 
 function createSchema(properties, required = []) {
@@ -160,16 +200,21 @@ export function createPluginDevTools({ pluginDevService, getAgentId }: { pluginD
         pluginId: { type: "string" },
         toolName: { type: "string" },
         input: { type: "object", additionalProperties: true },
+        sessionId: { type: "string" },
+        sessionRef: { type: "object", additionalProperties: true },
         sessionPath: { type: "string" },
         agentId: { type: "string" },
       }, ["pluginId", "toolName"]),
-      handler: ({ params, runtimeCtx, service }) => service.invokeTool({
-        pluginId: params.pluginId,
-        toolName: params.toolName,
-        input: params.input || {},
-        sessionPath: getSessionPath(params, runtimeCtx),
-        agentId: params.agentId || runtimeCtx?.agentId || getAgentId?.(),
-      }),
+      handler: ({ params, runtimeCtx, service }) => {
+        const sessionTarget = normalizeSessionTarget(params, runtimeCtx);
+        return service.invokeTool({
+          pluginId: params.pluginId,
+          toolName: params.toolName,
+          input: params.input || {},
+          ...sessionTarget,
+          agentId: params.agentId || runtimeCtx?.agentId || getAgentId?.(),
+        });
+      },
     }),
     createPluginDevTool({
       name: "plugin_dev_diagnostics",

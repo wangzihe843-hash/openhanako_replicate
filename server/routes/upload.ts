@@ -226,8 +226,9 @@ function normalizeSessionPath(value) {
 
 function resolveUploadTarget(engine, sessionPath) {
   if (sessionPath) {
+    const sessionId = engine?.getSessionIdForPath?.(sessionPath) || null;
     return {
-      dir: sessionFilesCacheDir(engine.hanakoHome, sessionPath),
+      dir: sessionFilesCacheDir(engine.hanakoHome, { sessionId, sessionPath }),
       storageKind: "managed_cache",
       shouldCleanOldUploads: false,
     };

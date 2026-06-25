@@ -16,7 +16,7 @@ interface Props {
     totalPages: number;
   } | null;
   inlineError: string | null;
-  slashResult: { text: string; type: 'success' | 'error'; deskDir?: string } | null;
+  slashResult: { text: string; type: 'success' | 'error'; deskDir?: string; filePath?: string } | null;
   onResultClick: (() => void) | undefined;
 }
 
@@ -32,6 +32,7 @@ export const InputStatusBars = memo(function InputStatusBars({
     ? Math.min(100, Math.max(0, (completedBlocks / totalBlocks) * 100))
     : 0;
   const progressLabel = screenshotPageLabel || screenshotLabel;
+  const resultClickable = !!onResultClick;
 
   return (
     <>
@@ -76,9 +77,9 @@ export const InputStatusBars = memo(function InputStatusBars({
       )}
       {!slashBusy && !compacting && !screenshotBusy && !inlineError && slashResult && (
         <div
-          className={`${styles['slash-busy-bar']}${slashResult.deskDir ? ` ${styles['slash-busy-bar-clickable']}` : ''}`}
+          className={`${styles['slash-busy-bar']}${resultClickable ? ` ${styles['slash-busy-bar-clickable']}` : ''}`}
           onClick={onResultClick}
-          role={slashResult.deskDir ? 'button' : undefined}
+          role={resultClickable ? 'button' : undefined}
         >
           <span className={styles[slashResult.type === 'success' ? 'slash-result-dot-ok' : 'slash-result-dot-err']} />
           <span>{slashResult.text}</span>

@@ -8,6 +8,8 @@
  * PUT  /api/preferences/appearance  — 更新跨前端外观偏好
  * GET  /api/preferences/notifications  — 读取跨前端通知偏好
  * PUT  /api/preferences/notifications  — 更新跨前端通知偏好
+ * GET  /api/preferences/session-permission-default  — 读取新 session 默认权限模式
+ * PUT  /api/preferences/session-permission-default  — 更新新 session 默认权限模式
  * GET  /api/preferences/quick-chat  — 读取快速聊天入口偏好
  * PUT  /api/preferences/quick-chat  — 更新快速聊天入口偏好
  * GET  /api/preferences/browser  — 读取内置浏览器偏好
@@ -48,6 +50,7 @@ import {
   isComputerUsePlatformSupported,
   selectedComputerProviderId,
 } from "../../core/computer-use/platform-support.ts";
+import { SESSION_PERMISSION_MODES } from "../../core/session-permission-mode.ts";
 import { collectSecretPatchPaths, isMaskedSecretValue, maskSecretValue, resolveSecretPatch } from "../../shared/secret-custody.ts";
 import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.ts";
 import { recordSecurityAuditEvent } from "../http/security-audit.ts";
@@ -84,6 +87,17 @@ export async function buildComputerUsePreferences(engine: any, { platform = proc
     status,
     selectedProviderId: status?.selectedProviderId || selectedComputerProviderIdFromSettings(settings, platform),
   };
+}
+
+type SessionPermissionMode = typeof SESSION_PERMISSION_MODES[keyof typeof SESSION_PERMISSION_MODES];
+const SESSION_PERMISSION_MODE_VALUES = new Set<string>(Object.values(SESSION_PERMISSION_MODES));
+
+function parseSessionPermissionDefaultMode(body: any): SessionPermissionMode {
+  const mode = body?.permissionMode ?? body?.mode;
+  if (typeof mode !== "string" || !SESSION_PERMISSION_MODE_VALUES.has(mode)) {
+    throw new Error("permissionMode must be one of auto, operate, ask, read_only");
+  }
+  return mode as SessionPermissionMode;
 }
 
 function maskSearchApiKeys(apiKeys: any) {
@@ -256,6 +270,36 @@ export function createPreferencesRoute(engine: any, options: Record<string, any>
       return c.json({ ok: true, appearance });
     } catch (err) {
       return c.json({ error: err.message }, 400);
+    }
+  });
+
+  route.get("/preferences/session-permission-default", async (c) => {
+    try {
+      return c.json({ permissionMode: engine.getSessionPermissionModeDefault?.() || SESSION_PERMISSION_MODES.ASK });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.put("/preferences/session-permission-default", async (c) => {
+    try {
+      const body = await safeJson(c);
+      if (!body || typeof body !== "object") {
+        return c.json({ error: "invalid JSON body" }, 400);
+      }
+      if (typeof engine.setSessionPermissionModeDefault !== "function") {
+        return c.json({ error: "session permission default preferences unavailable" }, 500);
+      }
+      let permissionMode;
+      try {
+        permissionMode = parseSessionPermissionDefaultMode(body);
+      } catch (err) {
+        return c.json({ error: err.message }, 400);
+      }
+      const saved = engine.setSessionPermissionModeDefault(permissionMode);
+      return c.json({ ok: true, permissionMode: saved });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
     }
   });
 

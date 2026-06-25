@@ -3,6 +3,7 @@ import path from "path";
 import { atomicWriteSync } from "../../shared/safe-fs.ts";
 import { normalizeLlmUsage } from "./usage-observer.ts";
 import {
+  attributionSessionId,
   attributionSessionPath,
   isUnknownUsageContext as isUnknownUsageContextValue,
   normalizeUsageContext,
@@ -241,7 +242,9 @@ function matchesFilter(entry, filter) {
   if (filter.until && entry.startedAt && entry.startedAt > filter.until) return false;
   if (filter.status && entry.status !== filter.status) return false;
   if (filter.attributionKind && entry.attribution?.kind !== filter.attributionKind) return false;
+  if (filter.sessionId && attributionSessionId(entry.attribution) !== filter.sessionId) return false;
   if (filter.sessionPath && attributionSessionPath(entry.attribution) !== filter.sessionPath) return false;
+  if (filter.childSessionId && entry.attribution?.childSessionId !== filter.childSessionId) return false;
   if (filter.childSessionPath && entry.attribution?.childSessionPath !== filter.childSessionPath) return false;
   if (filter.agentId && entry.attribution?.agentId !== filter.agentId) return false;
   if (filter.subsystem && entry.source?.subsystem !== filter.subsystem) return false;

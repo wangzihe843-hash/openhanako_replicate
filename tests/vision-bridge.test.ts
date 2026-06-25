@@ -30,6 +30,26 @@ function makeTempDir() {
   return dir;
 }
 
+async function passthroughResizeImage(input) {
+  return {
+    data: input.data,
+    mimeType: input.mimeType,
+    originalWidth: 100,
+    originalHeight: 100,
+    width: 100,
+    height: 100,
+    wasResized: false,
+  };
+}
+
+function makeVisionBridge(options = {}) {
+  return new VisionBridge({
+    resizeImage: passthroughResizeImage,
+    formatDimensionNote: () => undefined,
+    ...options,
+  });
+}
+
 function makeBridge(callText = vi.fn(async () => [
   "image_overview: A desk screenshot with a red error banner.",
   "user_request_answer: The screenshot shows an error state relevant to the question.",
@@ -38,7 +58,7 @@ function makeBridge(callText = vi.fn(async () => [
 ].join("\n")), resolveVisionConfig = null) {
   return {
     callText,
-    bridge: new VisionBridge({
+    bridge: makeVisionBridge({
       resolveVisionConfig: resolveVisionConfig || (() => ({
         model: { id: "qwen-vl", provider: "dashscope", input: ["text", "image"] },
         api: "openai-completions",
@@ -72,8 +92,10 @@ describe("VisionBridge", () => {
     });
 
     expect(callText).toHaveBeenCalledTimes(1);
-    expect((callText.mock.calls as any)[0][0].messages[0].content[0].text).toContain("User request");
-    expect((callText.mock.calls as any)[0][0].messages[0].content[0].text).toContain("what is this?");
+    const request = (callText.mock.calls as any)[0][0];
+    expect(request.systemPrompt).toContain("auxiliary vision model");
+    expect(request.messages[0].content[0].text).toContain("User request");
+    expect(request.messages[0].content[0].text).toContain("what is this?");
     expect(result.images).toBeUndefined();
     expect(result.text).toContain(`[attached_image: ${pathA}]`);
 
@@ -85,6 +107,37 @@ describe("VisionBridge", () => {
     expect(injected.messages[0].content[0].text).toContain("image_overview");
     expect(injected.messages[0].content[0].text).toContain("user_request_answer");
     expect(injected.messages[0].content[0].text).toContain(VISION_CONTEXT_END);
+  });
+
+  it("records auxiliary vision usage against sessionId while keeping the path locator", async () => {
+    const sessionPath = path.join(tmpSessionRoot, "session-usage.jsonl");
+    const sessionId = "sess_vision_usage";
+    const callText = vi.fn(async () => "image_overview: A screenshot.");
+    const bridge = makeVisionBridge({
+      resolveVisionConfig: () => ({
+        model: { id: "qwen-vl", provider: "dashscope", input: ["text", "image"] },
+        api: "openai-completions",
+        api_key: "sk-test",
+        base_url: "https://example.test/v1",
+      }),
+      callText,
+      getSessionIdForPath: (candidate) => candidate === sessionPath ? sessionId : null,
+    });
+
+    await bridge.prepare({
+      sessionPath,
+      targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
+      text: `[attached_image: ${pathA}]\nwhat is this?`,
+      images: [image],
+      imageAttachmentPaths: [pathA],
+    });
+
+    const request = (callText.mock.calls as any)[0][0];
+    expect(request.usageContext.attribution).toMatchObject({
+      kind: "session",
+      sessionId,
+      sessionPath,
+    });
   });
 
   it("restores vision notes from the session sidecar after the in-memory bridge is gone", async () => {
@@ -109,7 +162,7 @@ describe("VisionBridge", () => {
       targetModel: { id: "deepseek-chat", provider: "deepseek" },
     });
 
-    const restored = new VisionBridge({
+    const restored = makeVisionBridge({
       resolveVisionConfig: () => null,
       callText: vi.fn(),
     });
@@ -150,7 +203,7 @@ describe("VisionBridge", () => {
       }),
     ]);
 
-    const restored = new VisionBridge({
+    const restored = makeVisionBridge({
       resolveVisionConfig: () => null,
       callText: vi.fn(),
     });
@@ -161,6 +214,62 @@ describe("VisionBridge", () => {
       note: expect.stringContaining("image_overview"),
       visionModel: { id: "qwen-vl", provider: "dashscope" },
       targetModel: { id: "deepseek-chat", provider: "deepseek" },
+    });
+  });
+
+  it("keeps persisted resource notes attached to the session id when the session path moves", async () => {
+    const dir = makeTempDir();
+    const originalSessionPath = path.join(dir, "original.jsonl");
+    const movedSessionPath = path.join(dir, "archived", "renamed.jsonl");
+    const sessionId = "sess_vision_notes_stable";
+    const resourceKey = "visual-resource:browser-shot-moved";
+    const getSessionIdForPath = (sessionPath) => (
+      sessionPath === originalSessionPath || sessionPath === movedSessionPath
+        ? sessionId
+        : null
+    );
+    const callText = vi.fn(async () => "image_overview: moved path screenshot.");
+    const bridge = makeVisionBridge({
+      resolveVisionConfig: () => ({
+        model: { id: "qwen-vl", provider: "dashscope", input: ["text", "image"] },
+        api: "openai-completions",
+        api_key: "sk-test",
+        base_url: "https://example.test/v1",
+      }),
+      callText,
+      getSessionIdForPath,
+    });
+
+    await bridge.prepareResources({
+      sessionPath: originalSessionPath,
+      targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
+      userRequest: "review the moved browser screenshot",
+      resources: [{
+        key: resourceKey,
+        label: "browser screenshot",
+        image,
+      }],
+    });
+
+    const sidecar = JSON.parse(fs.readFileSync(path.join(dir, "session-vision-notes.json"), "utf-8"));
+    expect(sidecar.sessions[sessionId].images[resourceKey]).toMatchObject({
+      imagePath: resourceKey,
+      sessionId,
+    });
+    expect(sidecar.sessions[path.basename(originalSessionPath)]).toBeUndefined();
+
+    const restored = makeVisionBridge({
+      resolveVisionConfig: () => null,
+      callText: vi.fn(),
+      getSessionIdForPath,
+    });
+    const entry = restored.lookupNote(movedSessionPath, resourceKey);
+
+    expect(entry).toMatchObject({
+      imagePath: resourceKey,
+      sessionId,
+      sessionPath: movedSessionPath,
+      note: "image_overview: moved path screenshot.",
     });
   });
 
@@ -189,7 +298,7 @@ describe("VisionBridge", () => {
       }),
     ]);
 
-    const restored = new VisionBridge({
+    const restored = makeVisionBridge({
       resolveVisionConfig: () => null,
       callText: vi.fn(),
     });
@@ -210,7 +319,7 @@ describe("VisionBridge", () => {
     const firstImage = path.join(dir, "first.png");
     const secondImage = path.join(dir, "second.png");
     const { callText } = makeBridge();
-    const bridge = new VisionBridge({
+    const bridge = makeVisionBridge({
       resolveVisionConfig: () => ({
         model: { id: "qwen-vl", provider: "dashscope", input: ["text", "image"] },
         api: "openai-completions",
@@ -256,12 +365,28 @@ describe("VisionBridge", () => {
   it("normalizes auxiliary vision image bytes before calling DashScope-compatible models", async () => {
     const dir = makeTempDir();
     const sessionPath = path.join(dir, "session.jsonl");
-    const { bridge, callText } = makeBridge(undefined, () => ({
+    const callText = vi.fn(async () => "image_overview: resized image.");
+    const resizeImage = vi.fn(async (input, options) => ({
+      data: JPEG_BASE64,
+      mimeType: "image/jpeg",
+      originalWidth: 4000,
+      originalHeight: 3000,
+      width: 2000,
+      height: 1500,
+      wasResized: true,
+      options,
+    }));
+    const bridge = makeVisionBridge({
+      resolveVisionConfig: () => ({
       model: { id: "qwen3-vl-plus", provider: "dashscope", input: ["text", "image"] },
       api: "openai-completions",
       api_key: "sk-test",
       base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    }));
+      }),
+      callText,
+      resizeImage,
+      formatDimensionNote: vi.fn(() => undefined),
+    });
 
     await bridge.prepareResources({
       sessionPath,
@@ -274,12 +399,56 @@ describe("VisionBridge", () => {
       }],
     });
 
+    expect(resizeImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "image",
+        data: JPEG_BASE64,
+        mimeType: "image/jpeg",
+      }),
+      expect.objectContaining({
+        maxWidth: 2000,
+        maxHeight: 2000,
+        jpegQuality: 80,
+      }),
+    );
     const content = (callText.mock.calls as any)[0][0].messages[0].content;
     expect(content[1]).toMatchObject({
       type: "image",
       data: JPEG_BASE64,
       mimeType: "image/jpeg",
     });
+  });
+
+  it("fails closed before auxiliary vision calls when image preprocessing cannot compress", async () => {
+    const dir = makeTempDir();
+    const sessionPath = path.join(dir, "session.jsonl");
+    const callText = vi.fn(async () => "should not be called");
+    const bridge = makeVisionBridge({
+      resolveVisionConfig: () => ({
+        model: { id: "qwen-vl", provider: "dashscope", input: ["text", "image"] },
+        api: "openai-completions",
+        api_key: "sk-test",
+        base_url: "https://example.test/v1",
+      }),
+      callText,
+      resizeImage: vi.fn(async () => null),
+      formatDimensionNote: vi.fn(() => undefined),
+    });
+
+    await expect(bridge.prepareResources({
+      sessionPath,
+      targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
+      userRequest: "inspect generated image",
+      resources: [{
+        key: "visual-resource:too-large",
+        label: "too large image",
+        image,
+      }],
+    })).rejects.toMatchObject({
+      code: "IMAGE_INPUT_PREPROCESS_FAILED",
+    });
+
+    expect(callText).not.toHaveBeenCalled();
   });
 
   it("routes Gemini family models through their native box_2d format", async () => {
@@ -539,9 +708,9 @@ describe("VisionBridge", () => {
     expect((callText.mock.calls as any)[0][0].timeoutMs).toBe(120_000);
   });
 
-  it("caps auxiliary vision output by the model maxTokens contract", async () => {
+  it("does not cap auxiliary vision output from model maxTokens metadata", async () => {
     const callText = vi.fn(async () => "image_overview: capped");
-    const bridge = new VisionBridge({
+    const bridge = makeVisionBridge({
       resolveVisionConfig: () => ({
         model: { id: "qwen-vl-plus", provider: "openrouter", input: ["text", "image"], maxTokens: 2048 },
         api: "openai-completions",
@@ -549,7 +718,6 @@ describe("VisionBridge", () => {
         base_url: "https://example.test/v1",
       }),
       callText,
-      visionMaxTokens: 4096,
     });
 
     await bridge.prepare({
@@ -560,7 +728,7 @@ describe("VisionBridge", () => {
       imageAttachmentPaths: [pathA],
     });
 
-    expect((callText.mock.calls as any)[0][0].maxTokens).toBe(2048);
+    expect((callText.mock.calls as any)[0][0]).not.toHaveProperty("maxTokens");
   });
 
   it("does nothing for image-capable target models", async () => {
@@ -579,7 +747,7 @@ describe("VisionBridge", () => {
   });
 
   it("fails closed when a text-only target has images but no vision model", async () => {
-    const bridge = new VisionBridge({
+    const bridge = makeVisionBridge({
       resolveVisionConfig: () => null,
       callText: vi.fn(),
     });

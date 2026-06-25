@@ -238,6 +238,25 @@ export const BUILTIN_EVENT_BUS_CAPABILITIES = Object.freeze([
     owner: "system",
   },
   {
+    type: "session:capability-drift:mark-stale",
+    title: "Mark session capability drift",
+    description: "Recompute capability drift for loaded sessions after tool or prompt capability sources change.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        agentId: { type: "string" },
+        reason: { type: "string" },
+        connectorId: { type: "string" },
+      },
+      additionalProperties: true,
+    },
+    outputSchema: OBJECT_SCHEMA,
+    permission: "session.write",
+    errors: ["NO_HANDLER", "TIMEOUT", "INTERNAL_ERROR"],
+    stability: "stable",
+    owner: "system",
+  },
+  {
     type: "model:sample-text",
     title: "Sample text model",
     description: "Run a non-streaming utility text-model call for plugin RAG, routing, and summarization.",
@@ -299,7 +318,7 @@ export const BUILTIN_EVENT_BUS_CAPABILITIES = Object.freeze([
     outputSchema: OBJECT_SCHEMA,
     permission: "provider.read",
     errors: ["NO_HANDLER", "TIMEOUT", "INTERNAL_ERROR"],
-    stability: "experimental",
+    stability: "stable",
     owner: "system",
   },
   {
@@ -321,7 +340,7 @@ export const BUILTIN_EVENT_BUS_CAPABILITIES = Object.freeze([
     outputSchema: OBJECT_SCHEMA,
     permission: "provider.read",
     errors: ["NO_HANDLER", "TIMEOUT", "INTERNAL_ERROR"],
-    stability: "experimental",
+    stability: "stable",
     owner: "system",
   },
   {

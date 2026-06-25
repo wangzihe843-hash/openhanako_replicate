@@ -47,6 +47,11 @@ export const BRIDGE_INTERACTION_CAPABILITIES: Record<string, ReturnType<typeof c
     confirmationMode: "text_command",
     source: "core/slash-commands/bridge-commands.ts#apply",
   }),
+  dingtalk: createInteractionCapabilities({
+    platform: "dingtalk",
+    confirmationMode: "text_command",
+    source: "core/slash-commands/bridge-commands.ts#apply",
+  }),
   telegram: createInteractionCapabilities({
     platform: "telegram",
     confirmationMode: "text_command",

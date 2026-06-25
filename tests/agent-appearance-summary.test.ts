@@ -58,6 +58,12 @@ describe("agent appearance summary", () => {
     expect(sanitizeAgentAppearanceSummary("这张头像展示了一个角色。")).toBe("");
   });
 
+  it("does not hard-truncate natural self-appearance summaries", () => {
+    const longSummary = `你的形象是${"银白色发丝与深色外套".repeat(120)}。`;
+
+    expect(sanitizeAgentAppearanceSummary(longSummary)).toBe(longSummary);
+  });
+
   it("formats the cached summary as natural self-knowledge", () => {
     const section = formatAgentAppearancePrompt("你的形象是银白色短发，神情安静。", "zh-CN");
 
@@ -113,6 +119,7 @@ describe("agent appearance summary", () => {
       type: "image",
       mimeType: "image/png",
     });
+    expect(callText.mock.calls[0][0]).not.toHaveProperty("maxTokens");
     expect(readCachedAgentAppearanceSummary(agentDir)?.summary).toBe(summary);
   });
 

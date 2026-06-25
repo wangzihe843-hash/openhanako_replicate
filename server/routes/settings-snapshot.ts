@@ -177,6 +177,7 @@ function buildBridgePreferences(engine: any) {
     permissionMode,
     readOnly: engine.getBridgeReadOnly?.() === true,
     receiptEnabled: engine.getBridgeReceiptEnabled?.() !== false,
+    richStreamingEnabled: engine.getBridgeRichStreamingEnabled?.() !== false,
   };
 }
 

@@ -18,6 +18,18 @@ interface FooterProps {
   children: React.ReactNode;
 }
 
+interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+  children: React.ReactNode;
+}
+
+function Card({ children, className, ...rest }: CardProps) {
+  return (
+    <div className={[styles.sectionCard, className].filter(Boolean).join(' ')} {...rest}>
+      {children}
+    </div>
+  );
+}
+
 function Footer({ children }: FooterProps) {
   return <div className={styles.sectionFooter}>{children}</div>;
 }
@@ -78,6 +90,7 @@ function SettingsSectionBase({ title, description, context, variant = 'default',
 }
 
 export const SettingsSection = Object.assign(SettingsSectionBase, {
+  Card,
   Footer,
   Note,
   SubBlock,

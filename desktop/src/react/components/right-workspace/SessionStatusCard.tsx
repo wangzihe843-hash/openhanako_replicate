@@ -7,6 +7,7 @@
 import { type MouseEvent, useState } from 'react';
 import { Collapse } from '@/ui';
 import { useStore } from '../../stores';
+import { sessionScopedValue } from '../../stores/session-slice';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import styles from './SessionStatusCard.module.css';
 import { workspaceDisplayName } from '../../../../../shared/workspace-history.ts';
@@ -39,11 +40,15 @@ export function SessionStatusCard() {
   const deskWorkspaceMountId = useStore((s) => s.deskWorkspaceMountId);
   const deskWorkspaceLabel = useStore((s) => s.deskWorkspaceLabel);
   const currentModel = useStore((s) => s.currentModel);
-  const sessionModel = useStore((s) => (sessionPath ? s.sessionModelsByPath[sessionPath] : null));
-  const filesCount = useStore((s) => (sessionPath ? (s.sessionRegistryFilesByPath[sessionPath]?.length ?? 0) : 0));
+  const sessionModel = useStore((s) => (
+    sessionPath ? (sessionScopedValue(s, s.sessionModelsByPath, sessionPath) ?? null) : null
+  ));
+  const filesCount = useStore((s) => (
+    sessionPath ? (sessionScopedValue(s, s.sessionRegistryFilesByPath, sessionPath)?.length ?? 0) : 0
+  ));
   const authorizedFolders = useStore((s) => (
     sessionPath
-      ? (s.sessionAuthorizedFoldersByPath?.[sessionPath] ?? EMPTY_AUTHORIZED_FOLDERS)
+      ? (sessionScopedValue(s, s.sessionAuthorizedFoldersByPath, sessionPath) ?? EMPTY_AUTHORIZED_FOLDERS)
       : EMPTY_AUTHORIZED_FOLDERS
   ));
   const setSessionAuthorizedFolders = useStore((s) => s.setSessionAuthorizedFolders);
@@ -97,7 +102,7 @@ export function SessionStatusCard() {
   }
 
   return (
-    <section className={`jian-card ${styles.card}`} aria-label={t('rightWorkspace.session.title')} data-collapsed={collapsed || undefined}>
+    <section className={`universal-card ${styles.card}`} aria-label={t('rightWorkspace.session.title')} data-collapsed={collapsed || undefined}>
       <div className={styles.header}>
         <button className={styles.headerToggle} type="button" onClick={() => setCollapsed((c) => !c)} aria-expanded={!collapsed}>
           <span className={styles.title}>{t('rightWorkspace.session.title')}</span>

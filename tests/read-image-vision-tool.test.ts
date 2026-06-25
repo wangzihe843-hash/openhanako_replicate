@@ -125,6 +125,49 @@ describe("wrapReadImageWithVisionBridge", () => {
     ]);
   });
 
+  it("keeps auxiliary vision resource keys stable when a session path moves", async () => {
+    const sessionId = "sess_read_image_vision";
+    const originalPath = "/sessions/original.jsonl";
+    const movedPath = "/sessions/moved.jsonl";
+    const keys: string[] = [];
+    const base = makeReadTool(imageResult);
+    const prepareResources = vi.fn(async ({ resources }) => {
+      keys.push(resources[0].key);
+      return {
+        notes: [{
+          key: resources[0].key,
+          label: "shot.png",
+          note: "image_overview: Same image.",
+        }],
+      };
+    });
+    const wrapped = wrapReadImageWithVisionBridge(base, "/workspace", {
+      getVisionBridge: () => ({ prepareResources }),
+      isVisionAuxiliaryEnabled: () => true,
+      getSessionIdForPath: (sessionPath: string) => (
+        sessionPath === originalPath || sessionPath === movedPath ? sessionId : null
+      ),
+    } as any);
+
+    await wrapped.execute(
+      "call-1",
+      { path: "shot.png" },
+      null,
+      null,
+      makeCtx(originalPath, { id: "deepseek-chat", provider: "deepseek", input: ["text"] }),
+    );
+    await wrapped.execute(
+      "call-2",
+      { path: "shot.png" },
+      null,
+      null,
+      makeCtx(movedPath, { id: "deepseek-chat", provider: "deepseek", input: ["text"] }),
+    );
+
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
   it("keeps the existing unsupported-image result when auxiliary vision is disabled", async () => {
     const base = makeReadTool(imageResult);
     const prepareResources = vi.fn();

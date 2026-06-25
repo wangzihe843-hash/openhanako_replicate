@@ -53,4 +53,40 @@ describe("workflow end-to-end (mock executeIsolated)", () => {
     const { result } = await runWorkflowScript(META + `return args.target`, host);
     expect(result).toBe(42);
   });
+
+  it("未 await 的 agent() 调用会让 workflow 失败且不会启动该节点", async () => {
+    const exec = vi.fn(async () => ({ replyText: "bug", error: null }));
+    const script = META + `
+      const read = agent('read README');
+      return 'done';
+    `;
+
+    await expect(runWorkflowScript(script, makeHost(exec)))
+      .rejects.toThrow(/agent\(\).*await|await.*agent\(\)/i);
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("未知 agent() option 即使未 await 也会同步失败", async () => {
+    const exec = vi.fn(async () => ({ replyText: "bug", error: null }));
+    const script = META + `
+      const read = agent('hanako', { task: '读取 README', access: 'read' });
+      return 'done';
+    `;
+
+    await expect(runWorkflowScript(script, makeHost(exec)))
+      .rejects.toThrow(/unsupported.*task|不支持.*task/i);
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("读取 agent().result 会立即失败，避免把 Promise 当结果拼进后续任务", async () => {
+    const exec = vi.fn(async () => ({ replyText: "bug", error: null }));
+    const script = META + `
+      const read = agent('read README');
+      return read.result;
+    `;
+
+    await expect(runWorkflowScript(script, makeHost(exec)))
+      .rejects.toThrow(/await agent\(\).*result|agent\(\).*Promise/i);
+    expect(exec).not.toHaveBeenCalled();
+  });
 });

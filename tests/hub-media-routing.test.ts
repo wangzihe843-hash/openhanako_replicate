@@ -38,6 +38,25 @@ function createEngine(overrides = {}) {
 }
 
 describe("Hub media routing", () => {
+  it("preserves clientMessageId when routing desktop session messages", async () => {
+    const engine = createEngine();
+    const hub = new Hub({ engine });
+
+    await hub.send("hello", {
+      sessionPath: "/agents/hanako/sessions/chat.jsonl",
+      clientMessageId: "client-user-1",
+      displayMessage: { text: "hello" },
+    });
+
+    expect(submitDesktopSessionMessageMock).toHaveBeenCalledWith(
+      engine,
+      expect.objectContaining({
+        sessionPath: "/agents/hanako/sessions/chat.jsonl",
+        clientMessageId: "client-user-1",
+      }),
+    );
+  });
+
   it("preserves native audio fields when routing desktop session messages", async () => {
     const engine = createEngine();
     const hub = new Hub({ engine });
@@ -75,6 +94,47 @@ describe("Hub media routing", () => {
     expect(engine.prompt).toHaveBeenCalledWith(
       "listen",
       expect.objectContaining({ audios }),
+    );
+  });
+
+  it("routes ephemeral activity through non-interactive auto permission", async () => {
+    const engine = createEngine();
+    const hub = new Hub({ engine });
+
+    await hub.send("background tick", {
+      ephemeral: true,
+      cwd: "/work",
+      persist: "/agents/hanako/activity",
+    });
+
+    expect(engine.executeIsolated).toHaveBeenCalledWith(
+      "background tick",
+      expect.objectContaining({
+        cwd: "/work",
+        persist: "/agents/hanako/activity",
+        permissionMode: "auto",
+        approvalPolicy: "deny_on_prompt",
+        allowHumanApproval: false,
+      }),
+    );
+  });
+
+  it("preserves explicit ephemeral permission mode without enabling human approval", async () => {
+    const engine = createEngine();
+    const hub = new Hub({ engine });
+
+    await hub.send("background operate", {
+      ephemeral: true,
+      permissionMode: "operate",
+    });
+
+    expect(engine.executeIsolated).toHaveBeenCalledWith(
+      "background operate",
+      expect.objectContaining({
+        permissionMode: "operate",
+        approvalPolicy: "deny_on_prompt",
+        allowHumanApproval: false,
+      }),
     );
   });
 

@@ -183,21 +183,40 @@ export async function applyMarkdownCoverFromGeneratedFile({
   pixelWidth,
   pixelHeight,
   now = new Date(),
+  resourceIO = null,
+  operationContext = {},
 }: any = {}) {
   assertAbsoluteFilePath("markdownFilePath", markdownFilePath);
   assertAbsoluteFilePath("generatedFilePath", generatedFilePath);
   assertSupportedImageFilePath(generatedFilePath);
 
-  const markdownStat = fs.statSync(markdownFilePath);
-  if (!markdownStat.isFile()) throw new Error("markdownFilePath must point to a file");
-  const generatedStat = fs.statSync(generatedFilePath);
-  if (!generatedStat.isFile()) throw new Error("generatedFilePath must point to a file");
+  const io = isResourceIO(resourceIO) ? resourceIO : null;
+  const markdownRef = { kind: "local-file", path: markdownFilePath };
+  const generatedRef = { kind: "local-file", path: generatedFilePath };
+  if (io) {
+    const markdownStat = await io.stat(markdownRef);
+    if (!markdownStat?.exists || markdownStat?.isDirectory) throw new Error("markdownFilePath must point to a file");
+    const generatedStat = await io.stat(generatedRef);
+    if (!generatedStat?.exists || generatedStat?.isDirectory) throw new Error("generatedFilePath must point to a file");
+  } else {
+    const markdownStat = fs.statSync(markdownFilePath);
+    if (!markdownStat.isFile()) throw new Error("markdownFilePath must point to a file");
+    const generatedStat = fs.statSync(generatedFilePath);
+    if (!generatedStat.isFile()) throw new Error("generatedFilePath must point to a file");
+  }
 
   const target = uniqueAttachmentPath(markdownFilePath, generatedFilePath, now);
-  fs.mkdirSync(target.attachmentDir, { recursive: true });
-  fs.copyFileSync(generatedFilePath, target.absolutePath);
+  if (io) {
+    await io.mkdir({ kind: "local-file", path: target.attachmentDir }, { ...operationContext, emit: false });
+    await io.copy(generatedRef, { kind: "local-file", path: target.absolutePath }, operationContext);
+  } else {
+    fs.mkdirSync(target.attachmentDir, { recursive: true });
+    fs.copyFileSync(generatedFilePath, target.absolutePath);
+  }
 
-  const rawMarkdown = fs.readFileSync(markdownFilePath, "utf-8");
+  const rawMarkdown = io
+    ? bufferToUtf8((await io.read(markdownRef)).content)
+    : fs.readFileSync(markdownFilePath, "utf-8");
   const { data, body } = splitFrontMatter(rawMarkdown);
   const detectedDimensions = (
     Number.isFinite(pixelWidth) && Number.isFinite(pixelHeight)
@@ -224,10 +243,29 @@ export async function applyMarkdownCoverFromGeneratedFile({
   }
 
   const nextMarkdown = serializeFrontMatter({ ...data, cover }, body);
-  atomicWriteSync(markdownFilePath, nextMarkdown);
+  if (io) {
+    await io.write(markdownRef, nextMarkdown, operationContext);
+  } else {
+    atomicWriteSync(markdownFilePath, nextMarkdown);
+  }
   return {
     cover,
     markdownFilePath,
     attachmentPath: target.absolutePath,
   };
+}
+
+function isResourceIO(value) {
+  return value
+    && typeof value.stat === "function"
+    && typeof value.read === "function"
+    && typeof value.write === "function"
+    && typeof value.copy === "function"
+    && typeof value.mkdir === "function";
+}
+
+function bufferToUtf8(content) {
+  return Buffer.isBuffer(content)
+    ? content.toString("utf-8")
+    : Buffer.from(content || "").toString("utf-8");
 }

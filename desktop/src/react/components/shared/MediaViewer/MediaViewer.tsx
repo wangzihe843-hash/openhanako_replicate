@@ -121,6 +121,10 @@ export function MediaViewer() {
     if (e.target === e.currentTarget) closeMediaViewer();
   };
 
+  const onStageWrapClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) closeMediaViewer();
+  };
+
   return (
     <motion.div
       ref={containerRef}
@@ -153,14 +157,14 @@ export function MediaViewer() {
       {multi && (
         <>
           <button
-            className={`${styles.navBtn} ${styles.navPrev} ${chromeVisible ? '' : styles.hidden}`}
+            className={`${styles.navBtn} ${styles.navPrev}`}
             data-testid="media-viewer-prev"
             aria-label={t('mediaViewer.prev')}
             disabled={!canPrev}
             onClick={(e) => { e.stopPropagation(); goPrev(); }}
           >‹</button>
           <button
-            className={`${styles.navBtn} ${styles.navNext} ${chromeVisible ? '' : styles.hidden}`}
+            className={`${styles.navBtn} ${styles.navNext}`}
             data-testid="media-viewer-next"
             aria-label={t('mediaViewer.next')}
             disabled={!canNext}
@@ -170,7 +174,11 @@ export function MediaViewer() {
       )}
 
       {/* Stage */}
-      <div className={styles.stageWrap} onClick={(e) => e.stopPropagation()}>
+      <div
+        className={styles.stageWrap}
+        data-testid="media-viewer-stage-wrap"
+        onClick={onStageWrapClick}
+      >
         {current.kind === 'video' ? (
           <VideoStage file={current} viewport={viewport} />
         ) : (

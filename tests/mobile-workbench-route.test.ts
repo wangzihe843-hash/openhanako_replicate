@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { Hono } from "hono";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { upsertStudioMount } from "../core/studio-mounts.ts";
 
 function makeTmpDir() {
@@ -14,6 +14,26 @@ function makeApp(engine) {
   return import("../server/routes/mobile-workbench.ts").then(({ createMobileWorkbenchRoute }) => {
     app.route("/api", createMobileWorkbenchRoute(engine));
     return app;
+  });
+}
+
+async function makeRouteResourceIO({ hanakoHome, workspace, eventBus = {}, studioId = "studio_1" }: Record<string, any>) {
+  const { createSandboxResourceIO } = await import("../lib/resource-io/sandbox-resource-io.ts");
+  return createSandboxResourceIO({
+    cwd: workspace,
+    agentDir: workspace,
+    workspace,
+    workspaceFolders: [workspace],
+    authorizedFolders: [workspace],
+    hanakoHome,
+    getSandboxEnabled: () => false,
+    getSessionPath: () => null,
+    emitEvent: (event: any) => {
+      if (event?.type === "resource.changed") eventBus.changed?.(event);
+      if (event?.type === "resource.renamed") eventBus.renamed?.(event);
+      if (event?.type === "resource.deleted") eventBus.deleted?.(event);
+    },
+    studioId,
   });
 }
 
@@ -115,6 +135,8 @@ describe("mobile workbench route", () => {
     const content = await app.request("/api/workbench/content?name=note.md");
     expect(content.status).toBe(200);
     expect(await content.text()).toBe("old");
+    expect(Number(content.headers.get("X-Hana-File-MtimeMs"))).toBeGreaterThan(0);
+    expect(content.headers.get("X-Hana-File-Size")).toBe(String(Buffer.byteLength("old")));
 
     const write = await app.request("/api/workbench/actions", {
       method: "POST",
@@ -316,6 +338,114 @@ describe("mobile workbench route", () => {
     });
     expect(typeof data.version.mtimeMs).toBe("number");
     expect(fs.readFileSync(target, "utf-8")).toBe("new body");
+  });
+
+  it("emits ResourceEvents for successful Workbench text writes", async () => {
+    tmpDir = makeTmpDir();
+    const workspace = path.join(tmpDir, "workspace");
+    fs.mkdirSync(workspace, { recursive: true });
+    const target = path.join(workspace, "note.md");
+    fs.writeFileSync(target, "old", "utf-8");
+    const realTarget = fs.realpathSync(target);
+    const changed = vi.fn();
+    const resourceIO = await makeRouteResourceIO({
+      hanakoHome: path.join(tmpDir, "hana"),
+      workspace,
+      eventBus: { changed },
+    });
+    const app = await makeApp({
+      hanakoHome: path.join(tmpDir, "hana"),
+      deskCwd: workspace,
+      homeCwd: workspace,
+      getResourceIO: () => resourceIO,
+    });
+
+    const res = await app.request("/api/workbench/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "writeText", name: "note.md", content: "new body" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({
+      changeType: "modified",
+      resourceKey: expect.stringContaining("note.md"),
+      source: "api",
+      reason: "mobile_workbench.write",
+      resource: expect.objectContaining({
+        kind: "local-file",
+        provider: "local_fs",
+        filePath: realTarget,
+      }),
+      version: expect.objectContaining({
+        size: Buffer.byteLength("new body"),
+      }),
+    }));
+  });
+
+  it("emits ResourceEvents for Workbench mkdir, rename, and safe delete", async () => {
+    tmpDir = makeTmpDir();
+    const workspace = path.join(tmpDir, "workspace");
+    const hanakoHome = path.join(tmpDir, "hana");
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.writeFileSync(path.join(workspace, "draft.md"), "draft", "utf-8");
+    const changed = vi.fn();
+    const renamed = vi.fn();
+    const deleted = vi.fn();
+    const resourceIO = await makeRouteResourceIO({
+      hanakoHome,
+      workspace,
+      eventBus: { changed, renamed, deleted },
+    });
+    const app = await makeApp({
+      hanakoHome,
+      deskCwd: workspace,
+      homeCwd: workspace,
+      getResourceIO: () => resourceIO,
+    });
+
+    const mkdir = await app.request("/api/workbench/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "mkdir", name: "notes" }),
+    });
+    expect(mkdir.status).toBe(200);
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({
+      changeType: "created",
+      reason: "mobile_workbench.mkdir",
+      resource: expect.objectContaining({
+        filePath: fs.realpathSync(path.join(workspace, "notes")),
+      }),
+    }));
+
+    const rename = await app.request("/api/workbench/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "rename", oldName: "draft.md", newName: "renamed.md" }),
+    });
+    expect(rename.status).toBe(200);
+    expect(renamed).toHaveBeenCalledWith(expect.objectContaining({
+      reason: "mobile_workbench.rename",
+      oldResource: expect.objectContaining({
+        filePath: expect.stringContaining("draft.md"),
+      }),
+      newResource: expect.objectContaining({
+        filePath: fs.realpathSync(path.join(workspace, "renamed.md")),
+      }),
+    }));
+
+    const remove = await app.request("/api/workbench/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "safeDelete", name: "renamed.md" }),
+    });
+    expect(remove.status).toBe(200);
+    expect(deleted).toHaveBeenCalledWith(expect.objectContaining({
+      reason: "mobile_workbench.safe_delete",
+      resource: expect.objectContaining({
+        filePath: expect.stringContaining("renamed.md"),
+      }),
+    }));
   });
 
   it("rejects path traversal in mobile file names and subdirectories", async () => {
@@ -540,6 +670,8 @@ describe("mobile workbench route", () => {
     const content = await app.request("/api/workbench/content?mountId=mount_docs&name=mounted.md");
     expect(content.status).toBe(200);
     expect(await content.text()).toBe("mount body");
+    expect(Number(content.headers.get("X-Hana-File-MtimeMs"))).toBeGreaterThan(0);
+    expect(content.headers.get("X-Hana-File-Size")).toBe(String(Buffer.byteLength("mount body")));
 
     const write = await app.request("/api/workbench/actions", {
       method: "POST",

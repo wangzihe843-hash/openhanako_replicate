@@ -72,10 +72,6 @@ function isPinnedSession(session: Session): boolean {
   return typeof session.pinnedAt === 'string' && session.pinnedAt.length > 0;
 }
 
-function pinnedTime(session: Session): number {
-  return timestamp(session.pinnedAt);
-}
-
 function modifiedTime(session: Session): number {
   return timestamp(session.modified);
 }
@@ -90,6 +86,10 @@ function compareByPath(a: Session, b: Session): number {
   return String(a.path || '').localeCompare(String(b.path || ''));
 }
 
+function compareByModifiedDesc(a: Session, b: Session): number {
+  return modifiedTime(b) - modifiedTime(a) || compareByPath(a, b);
+}
+
 export function autoProjectIdForCwd(cwd: string | null | undefined): string {
   return makeAutoProjectIdForCwd(cwd);
 }
@@ -100,7 +100,7 @@ export function buildSessionSections(
 ): SessionSection[] {
   const pinned = sessions
     .filter(isPinnedSession)
-    .sort((a, b) => pinnedTime(b) - pinnedTime(a) || compareByPath(a, b));
+    .sort(compareByModifiedDesc);
   const regular = sessions.filter(session => !isPinnedSession(session));
 
   const sections: SessionSection[] = [];
@@ -123,7 +123,7 @@ export function buildSessionSections(
 
   // Sort within each group: newest modified first
   for (const group of DATE_GROUP_ORDER) {
-    dateGroups[group].sort((a, b) => modifiedTime(b) - modifiedTime(a) || compareByPath(a, b));
+    dateGroups[group].sort(compareByModifiedDesc);
   }
 
   for (const group of DATE_GROUP_ORDER) {
@@ -156,7 +156,7 @@ export function buildSessionProjectView(
   const catalogLoaded = options.catalogLoaded ?? true;
   const pinned = sessions
     .filter(isPinnedSession)
-    .sort((a, b) => pinnedTime(b) - pinnedTime(a) || compareByPath(a, b));
+    .sort(compareByModifiedDesc);
   const regular = sessions.filter(session => !isPinnedSession(session));
 
   const catalogFolders = normalizeCatalogFolders(catalog.folders);
@@ -193,7 +193,7 @@ export function buildSessionProjectView(
   }
 
   for (const project of projectById.values()) {
-    project.items.sort((a, b) => modifiedTime(b) - modifiedTime(a) || compareByPath(a, b));
+    project.items.sort(compareByModifiedDesc);
   }
 
   const allProjects = Array.from(projectById.values());

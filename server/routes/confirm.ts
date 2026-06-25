@@ -88,6 +88,7 @@ function targetForConfirmation(pending, requestContext) {
   return {
     kind: "session",
     studioId: requestContext.studioId,
+    sessionId: pending.sessionId || null,
     sessionPath: pending.sessionPath,
   };
 }

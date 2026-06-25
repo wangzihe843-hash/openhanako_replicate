@@ -13,6 +13,9 @@ const actionMocks = vi.hoisted(() => ({
 
 const mockState: any = {
   currentSessionPath: '/s/a.jsonl',
+  currentSessionId: null,
+  sessions: [],
+  sessionLocatorsById: {},
   todosBySession: {},
   streamingSessions: [],
 };
@@ -26,6 +29,9 @@ vi.mock('../../../stores/session-actions', () => ({
 describe('SessionTodoCard', () => {
   beforeEach(() => {
     mockState.currentSessionPath = '/s/a.jsonl';
+    mockState.currentSessionId = null;
+    mockState.sessions = [];
+    mockState.sessionLocatorsById = {};
     mockState.todosBySession = {};
     mockState.streamingSessions = [];
     actionMocks.completeSessionTodos.mockClear();
@@ -43,7 +49,7 @@ describe('SessionTodoCard', () => {
 
   it('无 todo 返回 null', () => {
     const { container } = render(<SessionTodoCard />);
-    expect(container.querySelector('.jian-card')).toBeNull();
+    expect(container.querySelector('.universal-card')).toBeNull();
   });
 
   it('渲染三态 + 完成计数，in_progress 用 activeForm', () => {
@@ -58,11 +64,23 @@ describe('SessionTodoCard', () => {
     expect(container.textContent).toContain('写代码中'); // in_progress → activeForm
   });
 
+  it('用 sessionId-keyed todos 渲染当前 session', () => {
+    mockState.currentSessionId = 'sess_a';
+    mockState.sessionLocatorsById = { sess_a: { path: '/s/a.jsonl' } };
+    mockState.todosBySession.sess_a = [
+      { content: '迁移 renderer store', activeForm: '迁移中', status: 'in_progress' },
+    ];
+
+    const { container } = render(<SessionTodoCard />);
+
+    expect(container.textContent).toContain('迁移中');
+  });
+
   it('无对话返回 null', () => {
     mockState.currentSessionPath = null;
     mockState.todosBySession['/s/a.jsonl'] = [{ content: 'x', activeForm: 'x', status: 'pending' }];
     const { container } = render(<SessionTodoCard />);
-    expect(container.querySelector('.jian-card')).toBeNull();
+    expect(container.querySelector('.universal-card')).toBeNull();
   });
 
   it('从右侧面板触发全部标记为已完成', async () => {

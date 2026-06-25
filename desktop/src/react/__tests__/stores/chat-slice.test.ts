@@ -9,14 +9,14 @@ import { createChatSlice, type ChatSlice } from '../../stores/chat-slice';
 import type { SessionModel, ChatListItem } from '../../stores/chat-types';
 import { registerStreamBufferInvalidator, registerSessionStreamMetaCleaner } from '../../stores/stream-invalidator';
 
-function makeSlice(): ChatSlice {
-  let state: ChatSlice;
+function makeSlice(initial: Record<string, unknown> = {}): ChatSlice {
+  let state: ChatSlice & Record<string, unknown>;
   const set = (partial: Partial<ChatSlice> | ((s: ChatSlice) => Partial<ChatSlice>)) => {
     const patch = typeof partial === 'function' ? partial(state) : partial;
     state = { ...state, ...patch };
   };
   const get = () => state;
-  state = createChatSlice(set as never, get);
+  state = { ...createChatSlice(set as never, get), ...initial };
   return new Proxy({} as ChatSlice, {
     get: (_, key: string) => (state as unknown as Record<string, unknown>)[key],
   });
@@ -76,6 +76,35 @@ describe('chat-slice', () => {
     expect(slice.chatSessions).toEqual({});
     expect(slice.sessionModelsByPath).toEqual({});
     expect(slice._loadMessagesVersion).toEqual({});
+  });
+
+  it('有 sessionId locator 时，消息、模型、registry 和清理都使用 sessionId key', () => {
+    slice = makeSlice({
+      currentSessionId: 'sess_chat',
+      currentSessionPath: '/sessions/moved.jsonl',
+      sessions: [{ sessionId: 'sess_chat', path: '/sessions/moved.jsonl' }],
+      sessionLocatorsById: { sess_chat: { path: '/sessions/moved.jsonl' } },
+    });
+
+    slice.initSession('/sessions/moved.jsonl', [], false);
+    slice.updateSessionModel('/sessions/moved.jsonl', MODEL);
+    slice.setSessionRegistryFiles('/sessions/moved.jsonl', [{
+      fileId: 'sf_1',
+      filePath: '/tmp/out.md',
+      label: 'out.md',
+      mime: 'text/markdown',
+      status: 'available',
+    }]);
+
+    expect(slice.chatSessions.sess_chat).toBeDefined();
+    expect(slice.chatSessions['/sessions/moved.jsonl']).toBeUndefined();
+    expect(slice.sessionModelsByPath.sess_chat).toEqual(MODEL);
+    expect(slice.sessionRegistryFilesByPath.sess_chat).toHaveLength(1);
+
+    slice.clearSession('/sessions/moved.jsonl');
+    expect(slice.chatSessions.sess_chat).toBeUndefined();
+    expect(slice.sessionModelsByPath.sess_chat).toBeUndefined();
+    expect(slice.sessionRegistryFilesByPath.sess_chat).toBeUndefined();
   });
 
   describe('updateSessionModel', () => {
@@ -266,6 +295,76 @@ describe('chat-slice', () => {
       const activities = (seeded as unknown as { agentActivitiesBySession: Record<string, unknown> }).agentActivitiesBySession;
       expect(activities).toBe(seededMap); // 引用未变 → set 未触碰该 map
     });
+  });
+
+  describe('appendInterludeItem', () => {
+    it('appendInterludeItem 把幕间作为下一轮回复前置项追加到时间线尾部并去重', () => {
+      slice.initSession('/a', [
+        { type: 'message', data: { id: 'u1', role: 'user', text: 'run workflow' } },
+        {
+          type: 'message',
+          data: {
+            id: 'a-card',
+            role: 'assistant',
+            blocks: [{
+              type: 'workflow',
+              taskId: 'workflow-1',
+              taskTitle: '冒烟测试',
+              streamStatus: 'running',
+            }],
+          },
+        },
+      ], false);
+
+      const interlude = {
+        type: 'interlude' as const,
+        id: 'deferred:workflow-1:success',
+        variant: 'deferred_result',
+        taskId: 'workflow-1',
+        status: 'success',
+        sourceKind: 'workflow',
+        text: 'Hanako 收到了来自 冒烟测试 workflow 的结果',
+      };
+
+      expect(slice.appendInterludeItem('/a', interlude)).toBe(true);
+      expect(slice.appendInterludeItem('/a', interlude)).toBe(true);
+      expect(slice.chatSessions['/a']?.items.map((item) => (
+        item.type === 'message' ? item.data.id : item.id
+      ))).toEqual(['u1', 'a-card', 'deferred:workflow-1:success']);
+    });
+
+    it('同一 task 的不同 delivery 幕间作为不同输入事件保留', () => {
+      slice.initSession('/a', [
+        { type: 'message', data: { id: 'a-card', role: 'assistant', text: 'card from checked results' } },
+      ], false);
+
+      const first = {
+        type: 'interlude' as const,
+        id: 'deferred:task-a:success:delivery-1',
+        deliveryId: 'delivery-1',
+        variant: 'deferred_result',
+        taskId: 'task-a',
+        status: 'success',
+        sourceKind: 'subagent',
+        text: 'Hanako 收到了来自 A 的回复',
+      };
+      const second = {
+        ...first,
+        id: 'deferred:task-a:success:delivery-2',
+        deliveryId: 'delivery-2',
+      };
+
+      expect(slice.appendInterludeItem('/a', first)).toBe(true);
+      expect(slice.appendInterludeItem('/a', second)).toBe(true);
+      expect(slice.chatSessions['/a']?.items.map((item) => (
+        item.type === 'message' ? item.data.id : item.id
+      ))).toEqual([
+        'a-card',
+        'deferred:task-a:success:delivery-1',
+        'deferred:task-a:success:delivery-2',
+      ]);
+    });
+
   });
 
   describe('truncateSessionFromMessage', () => {

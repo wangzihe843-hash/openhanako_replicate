@@ -20,6 +20,7 @@ import { atomicWriteSync, safeReadFile } from "../../shared/safe-fs.ts";
 import { normalizeCompiledLLMResult, normalizeCompiledSectionBody } from "./compiled-memory-state.ts";
 import { attachPromptLayoutMetadata, buildUtilityPromptLayout } from "../llm/prompt-layout.ts";
 import {
+  buildCompileEditableFactsPrompt,
   buildCompileFactsPrompt,
   buildCompileLongtermPrompt,
   buildCompileTodayPrompt,
@@ -42,11 +43,15 @@ const EMPTY_MEMORY_ZH = "（暂无记忆）\n";
 const EMPTY_MEMORY_EN = "(No memory yet)\n";
 export function getEmptyMemory() { return _isZh() ? EMPTY_MEMORY_ZH : EMPTY_MEMORY_EN; }
 
+export const EDITABLE_FACTS_FILE = "editable-facts.md";
+export const EDITABLE_FACTS_STATE_FILE = "editable-facts-state.json";
+
 const COMPILE_PROMPT_BUILDERS = {
   compile_today: buildCompileTodayPrompt,
   compile_week: buildCompileWeekPrompt,
   compile_longterm: buildCompileLongtermPrompt,
   compile_facts: buildCompileFactsPrompt,
+  compile_editable_facts: buildCompileEditableFactsPrompt,
 };
 
 // ════════════════════════════
@@ -252,45 +257,13 @@ export async function compileLongterm(weekMdPath, longtermPath, resolvedModel) {
     ? (isZh
         ? `## 上一份长期情况\n\n${prevLongterm}\n\n## 本周新增\n\n${weekContent}`
         : `## Previous long-term context\n\n${prevLongterm}\n\n## This week's additions\n\n${weekContent}`)
-    : weekContent;
+    : (isZh
+        ? `## 本周新增\n\n${weekContent}`
+        : `## This week's additions\n\n${weekContent}`);
 
   const result = await _compactLLM(
     input,
-    isZh
-      ? `请把以下内容整合成一份长期用户画像记录。
-
-记忆不是工作日志，也不是协作手册。到 longterm 这一层，记录已经是最稳定的用户画像核心。只保留"如果一年后回看仍然适合用来理解用户这个人"的内容：
-- 用户的身份、人格特质、审美、兴趣、价值取向
-- 用户长期喜欢或讨厌的事物
-- 用户长期关系和稳定生活背景
-- 用户持续关注或投入的长期关注方向
-
-去掉这些"单次性内容"：
-- 某天/某周完成的具体任务
-- 用户偏好的工作方式、协作流程、工程纪律
-- 工具使用习惯、检查顺序、汇报格式
-- 某类任务的处理方法
-- 助手的具体产出内容
-- 任何"这周/那周"级别的细节
-
-最多 400 字。不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文列表或段落。`
-      : `Consolidate the following into a long-term user-profile record.
-
-Memory is not a work log or collaboration manual. At the longterm layer, the record is the most stable user-profile core. Keep only what would still help understand the user as a person "if reviewed a year from now":
-- The user's identity, personality traits, aesthetics, interests, and values
-- Things the user has long liked or disliked
-- Long-term relationships and stable life background
-- Persistent long-term focus directions
-
-Remove these "one-off" contents:
-- Specific tasks completed on a particular day or week
-- User-preferred work style, collaboration process, or engineering discipline
-- Tool habits, validation order, report format
-- How to handle a class of task
-- Specific content of assistant's output
-- Any "this week / that week" level details
-
-Max 240 words. Do not output Markdown headings. Do not start with #, ##, or ###; output body text only.`,
+    buildCompileLongtermPrompt(getLocale()),
     resolvedModel,
     600,
     "compile_longterm",
@@ -340,24 +313,162 @@ export async function compileFacts(summaryManager, outputPath, resolvedModel, op
     return "compiled";
   }
 
-  // 把旧 facts 和新摘要里的事实合并后去重
   const newFacts = factParts.join("\n");
-  const combined = prevFacts
-    ? `${prevFacts}\n${newFacts}`
-    : newFacts;
-
   const isZh = _isZh();
+  const combined = prevFacts
+    ? (isZh
+        ? `## 现有 Facts\n\n${prevFacts}\n\n## 新增候选 Facts\n\n${newFacts}`
+        : `## Existing Facts\n\n${prevFacts}\n\n## New Candidate Facts\n\n${newFacts}`)
+    : (isZh
+        ? `## 新增候选 Facts\n\n${newFacts}`
+        : `## New Candidate Facts\n\n${newFacts}`);
+
   const result = await _compactLLM(
     combined,
-    isZh
-      ? "将以下重要事实去重合并（200字以内）。只保留稳定的、跨时间有效的用户画像：身份、人格特质、审美、兴趣、喜欢或讨厌的事物、长期关系、长期关注方向。不要保留工作方式、协作流程、工具偏好、执行细节。矛盾时以最新为准。不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文列表或段落。"
-      : "Deduplicate and merge the following key facts (under 120 words). Keep only stable, time-persistent user-profile facts: identity, personality traits, aesthetics, interests, likes/dislikes, long-term relationships, and long-term focus directions. Do not keep work style, collaboration process, tool preferences, or execution details. When facts conflict, prefer the latest. Do not output Markdown headings. Do not start with #, ##, or ###; output body text only.",
+    buildCompileFactsPrompt(getLocale()),
     resolvedModel,
     300,
     "compile_facts",
   );
 
   atomicWrite(outputPath, normalizeCompiledLLMResult(result, "compileFacts"));
+  return "compiled";
+}
+
+export function editableFactsPath(memoryDir) {
+  return path.join(memoryDir, EDITABLE_FACTS_FILE);
+}
+
+export function editableFactsStatePath(memoryDir) {
+  return path.join(memoryDir, EDITABLE_FACTS_STATE_FILE);
+}
+
+export function readEditableFactsText(memoryDir) {
+  const editablePath = editableFactsPath(memoryDir);
+  const sourcePath = fs.existsSync(editablePath)
+    ? editablePath
+    : path.join(memoryDir, "facts.md");
+  return normalizeCompiledSectionBody(safeReadFile(sourcePath, ""));
+}
+
+export function readCompiledMemorySections(memoryDir, opts: Record<string, any> = {}) {
+  const editableFactsEnabled = opts.editableFactsEnabled === true;
+  if (editableFactsEnabled) {
+    ensureEditableFactsBaseline(memoryDir, opts.summaryManager || null, {
+      seedFactsPath: path.join(memoryDir, "facts.md"),
+    });
+  }
+  const factsPath = editableFactsEnabled ? editableFactsPath(memoryDir) : path.join(memoryDir, "facts.md");
+  return {
+    facts: normalizeCompiledSectionBody(safeReadFile(factsPath, "")),
+    today: normalizeCompiledSectionBody(safeReadFile(path.join(memoryDir, "today.md"), "")),
+    week: normalizeCompiledSectionBody(safeReadFile(path.join(memoryDir, "week.md"), "")),
+    longterm: normalizeCompiledSectionBody(safeReadFile(path.join(memoryDir, "longterm.md"), "")),
+  };
+}
+
+export function writeEditableFactsSection(memoryDir, facts, opts: Record<string, any> = {}) {
+  ensureEditableFactsBaseline(memoryDir, opts.summaryManager || null, {
+    seedFactsPath: path.join(memoryDir, "facts.md"),
+  });
+  const targetPath = editableFactsPath(memoryDir);
+  const normalizedFacts = normalizeCompiledSectionBody(String(facts ?? ""));
+  atomicWrite(targetPath, normalizedFacts ? `${normalizedFacts}\n` : "");
+  assemble(
+    targetPath,
+    path.join(memoryDir, "today.md"),
+    path.join(memoryDir, "week.md"),
+    path.join(memoryDir, "longterm.md"),
+    opts.memoryMdPath || path.join(memoryDir, "memory.md"),
+  );
+  return normalizedFacts;
+}
+
+export function ensureEditableFactsBaseline(memoryDir, summaryManager = null, opts: Record<string, any> = {}) {
+  fs.mkdirSync(memoryDir, { recursive: true });
+  const outputPath = opts.outputPath || editableFactsPath(memoryDir);
+  const statePath = opts.statePath || editableFactsStatePath(memoryDir);
+  const seedFactsPath = opts.seedFactsPath || path.join(memoryDir, "facts.md");
+  const summaries = opts.summaries || getAllSummariesForFacts(summaryManager);
+  const latestSummaryUpdatedAt = latestSummaryUpdate(summaries);
+  let changed = false;
+
+  if (!fs.existsSync(outputPath)) {
+    const seedFacts = normalizeCompiledSectionBody(safeReadFile(seedFactsPath, ""));
+    atomicWrite(outputPath, seedFacts);
+    changed = true;
+  }
+
+  const state = readEditableFactsState(statePath);
+  if (!state.lastCompiledSummaryUpdatedAt && latestSummaryUpdatedAt) {
+    writeEditableFactsState(statePath, latestSummaryUpdatedAt);
+    changed = true;
+  }
+
+  return { changed, latestSummaryUpdatedAt };
+}
+
+export async function compileEditableFacts(summaryManager, outputPath, resolvedModel, opts: Record<string, any> = {}) {
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  const statePath = opts.statePath || path.join(path.dirname(outputPath), EDITABLE_FACTS_STATE_FILE);
+  const summaries = getAllSummariesForFacts(summaryManager);
+  const baseline = ensureEditableFactsBaseline(path.dirname(outputPath), summaryManager, {
+    ...opts,
+    outputPath,
+    statePath,
+    summaries,
+  });
+  if (baseline.changed) return "compiled";
+
+  const state = readEditableFactsState(statePath);
+  const since = latestIso(state.lastCompiledSummaryUpdatedAt, opts.since || null);
+  const sessions = summaries.filter((s) => {
+    const updated = s?.updated_at || s?.created_at || "";
+    return updated && (!since || updated > since);
+  });
+  if (sessions.length === 0) return "skipped";
+
+  const factParts = [];
+  const skippedSessionIds = [];
+  for (const s of sessions) {
+    if (!s.summary) continue;
+    if (!hasFactSectionHeading(s.summary)) {
+      skippedSessionIds.push(s.session_id);
+      continue;
+    }
+    const text = extractFactSection(s.summary);
+    if (text && !isEmptyFactSection(text)) factParts.push(text);
+  }
+  if (skippedSessionIds.length > 0) {
+    log.warn(`compileEditableFacts: ${skippedSessionIds.length} 份摘要缺少 ${FACT_SECTION_TITLES.join("/")} 标题段，已跳过: ${skippedSessionIds.join(", ")}`);
+  }
+
+  const nextWatermark = latestSummaryUpdate(sessions);
+  if (factParts.length === 0) {
+    if (nextWatermark) writeEditableFactsState(statePath, nextWatermark);
+    return "compiled";
+  }
+
+  const prevFacts = normalizeCompiledSectionBody(safeReadFile(outputPath, ""));
+  const newFacts = factParts.join("\n");
+  const isZh = _isZh();
+  const combined = prevFacts
+    ? (isZh
+        ? `## 当前可信 Facts\n\n${prevFacts}\n\n## 新增候选 Facts\n\n${newFacts}`
+        : `## Current Trusted Facts\n\n${prevFacts}\n\n## New Candidate Facts\n\n${newFacts}`)
+    : (isZh
+        ? `## 新增候选 Facts\n\n${newFacts}`
+        : `## New Candidate Facts\n\n${newFacts}`);
+  const result = await _compactLLM(
+    combined,
+    buildCompileEditableFactsPrompt(getLocale()),
+    resolvedModel,
+    300,
+    "compile_editable_facts",
+  );
+
+  atomicWrite(outputPath, normalizeCompiledLLMResult(result, "compileEditableFacts"));
+  if (nextWatermark) writeEditableFactsState(statePath, nextWatermark);
   return "compiled";
 }
 
@@ -377,20 +488,22 @@ export function assemble(factsPath, todayPath, weekPath, longtermPath, memoryMdP
   const week     = normalizeCompiledSectionBody(read(weekPath));
   const longterm = normalizeCompiledSectionBody(read(longtermPath));
 
+  atomicWrite(memoryMdPath, buildCompiledMemoryMarkdown({ facts, today, week, longterm }));
+}
+
+export function buildCompiledMemoryMarkdown({ facts = "", today = "", week = "", longterm = "" } = {}) {
   // 四个标题始终保留，空栏写占位符，避免格式漂移
   const isZh = _isZh();
   const empty = isZh ? "（暂无）" : "(none)";
   const section = (title, content) =>
-    `## ${title}\n\n${content || empty}`;
+    `## ${title}\n\n${normalizeCompiledSectionBody(content) || empty}`;
 
-  const md = [
+  return [
     section(isZh ? "重要事实" : "Key facts", facts),
     section(isZh ? "今天" : "Today", today),
     section(isZh ? "本周早些时候" : "Earlier this week", week),
     section(isZh ? "长期情况" : "Long-term context", longterm),
   ].join("\n\n") + "\n";
-
-  atomicWrite(memoryMdPath, md);
 }
 
 /**
@@ -461,4 +574,50 @@ function computeFingerprint(keys) {
 
 function atomicWrite(filePath, content) {
   atomicWriteSync(filePath, content);
+}
+
+function readEditableFactsState(statePath) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+    const value = raw?.lastCompiledSummaryUpdatedAt;
+    return {
+      lastCompiledSummaryUpdatedAt: value && !Number.isNaN(Date.parse(value)) ? value : null,
+    };
+  } catch {
+    return { lastCompiledSummaryUpdatedAt: null };
+  }
+}
+
+function writeEditableFactsState(statePath, lastCompiledSummaryUpdatedAt) {
+  if (!lastCompiledSummaryUpdatedAt || Number.isNaN(Date.parse(lastCompiledSummaryUpdatedAt))) return;
+  atomicWrite(statePath, JSON.stringify({
+    lastCompiledSummaryUpdatedAt,
+    updatedAt: new Date().toISOString(),
+  }, null, 2) + "\n");
+}
+
+function getAllSummariesForFacts(summaryManager) {
+  if (!summaryManager) return [];
+  if (typeof summaryManager.getAllSummaries === "function") {
+    return summaryManager.getAllSummaries().filter((s) => s?.summary);
+  }
+  if (typeof summaryManager.getSummariesInRange === "function") {
+    return summaryManager.getSummariesInRange(new Date(0), new Date()).filter((s) => s?.summary);
+  }
+  return [];
+}
+
+function latestSummaryUpdate(summaries) {
+  return (summaries || [])
+    .map((s) => s?.updated_at || s?.created_at || "")
+    .filter((value) => value && !Number.isNaN(Date.parse(value)))
+    .sort()
+    .at(-1) || null;
+}
+
+function latestIso(a, b) {
+  const values = [a, b]
+    .filter((value) => value && !Number.isNaN(Date.parse(value)))
+    .sort();
+  return values.at(-1) || null;
 }

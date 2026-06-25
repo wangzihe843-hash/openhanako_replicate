@@ -34,4 +34,31 @@ describe('SkillBundleTree', () => {
 
     expect(screen.getByText('writer')).toBeTruthy();
   });
+
+  it('marks highlighted skills and bundles for short install feedback', () => {
+    const skills: SkillInfo[] = [
+      { name: 'writer', description: 'Write carefully', enabled: false, source: 'user' },
+      { name: 'reader', description: 'Read closely', enabled: false, source: 'user' },
+    ];
+
+    const { container } = render(
+      <SkillBundleTree
+        mode="manage"
+        bundles={[{
+          id: 'writing-bundle',
+          name: 'Writing Bundle',
+          skillNames: ['writer'],
+          source: 'user',
+        }]}
+        skills={skills}
+        nameHints={{}}
+        emptyText="No skills"
+        highlightedSkillName="reader"
+        highlightedBundleId="writing-bundle"
+      />,
+    );
+
+    expect(container.querySelector('[data-highlighted-skill="reader"]')).toBeTruthy();
+    expect(container.querySelector('[data-highlighted-bundle="writing-bundle"]')).toBeTruthy();
+  });
 });

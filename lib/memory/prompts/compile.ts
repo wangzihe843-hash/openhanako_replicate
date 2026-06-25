@@ -109,7 +109,7 @@ export function buildCompileLongtermPrompt(locale = "zh-CN") {
     templateVersion: "compile-longterm.v1",
     cacheGroup: "memory.compile.longterm",
     systemPrompt: isZh
-      ? `请把以下内容整合成一份长期用户画像记录。
+      ? `请综合「上一份长期情况」和「本周新增」，重写成一份新的长期情况。必须控制在 400 字以内。
 
 记忆不是工作日志，也不是协作手册。到 longterm 这一层，记录已经是最稳定的用户画像核心。只保留"如果一年后回看仍然适合用来理解用户这个人"的内容：
 - 用户的身份、人格特质、审美、兴趣、价值取向
@@ -125,8 +125,13 @@ export function buildCompileLongtermPrompt(locale = "zh-CN") {
 - 助手的具体产出内容
 - 任何"这周/那周"级别的细节
 
-最多 400 字。不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文列表或段落。`
-      : `Consolidate the following into a long-term user-profile record.
+处理方式：
+- 不要追加，不要把旧内容和新内容分开复述
+- 必须做取舍、抽象、合并，把重复或过细的信息压成更高层概括
+- 如果上一份长期情况已经很长，优先概括旧内容，再吸收真正重要的新内容
+
+不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文列表或段落。`
+      : `Synthesize "Previous long-term context" and "This week's additions", then rewrite them into one new long-term context. You must keep the result under 240 words.
 
 Memory is not a work log or collaboration manual. At the longterm layer, the record is the most stable user-profile core. Keep only what would still help understand the user as a person "if reviewed a year from now":
 - The user's identity, personality traits, aesthetics, interests, and values
@@ -142,7 +147,12 @@ Remove these "one-off" contents:
 - Specific content of assistant's output
 - Any "this week / that week" level details
 
-Max 240 words. Do not output Markdown headings. Do not start with #, ##, or ###; output body text only.`,
+How to process:
+- Do not append; do not restate old and new content separately
+- Make tradeoffs, abstract, and merge; compress repeated or overly specific details into higher-level facts
+- If the previous long-term context is already long, summarize it first, then absorb only genuinely important new content
+
+Do not output Markdown headings. Do not start with #, ##, or ###; output body text only.`,
   };
 }
 
@@ -152,7 +162,18 @@ export function buildCompileFactsPrompt(locale = "zh-CN") {
     templateVersion: "compile-facts.v1",
     cacheGroup: "memory.compile.facts",
     systemPrompt: isZh
-      ? "将以下重要事实去重合并（200字以内）。只保留稳定的、跨时间有效的用户画像：身份、人格特质、审美、兴趣、喜欢或讨厌的事物、长期关系、长期关注方向。不要保留工作方式、协作流程、工具偏好、执行细节。矛盾时以最新为准。不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文列表或段落。"
-      : "Deduplicate and merge the following key facts (under 120 words). Keep only stable, time-persistent user-profile facts: identity, personality traits, aesthetics, interests, likes/dislikes, long-term relationships, and long-term focus directions. Do not keep work style, collaboration process, tool preferences, or execution details. When facts conflict, prefer the latest. Do not output Markdown headings. Do not start with #, ##, or ###; output body text only.",
+      ? "请综合「现有 Facts」和「新增候选 Facts」，重写成一份新的重要事实。必须控制在 200 字以内，宁可概括合并，也不要堆叠罗列。现有 Facts 是基础，但如果过长，必须压成更高层概括；新增候选 Facts 只在能纠正、补充或更新稳定用户画像时吸收。只保留稳定的、跨时间有效的用户画像：身份、人格特质、审美、兴趣、喜欢或讨厌的事物、长期关系、长期关注方向。矛盾时以新增候选 Facts 为准。不要追加，不要把两部分分别复述。不要保留工作方式、协作流程、工具偏好、执行细节。不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文列表或段落。"
+      : "Synthesize \"Existing Facts\" and \"New Candidate Facts\", then rewrite them into one new Key Facts section. You must keep the result under 120 words; prefer concise abstraction and merging over stacked lists. Existing Facts are the base, but if they are too long, compress them into higher-level facts. Absorb New Candidate Facts only when they correct, supplement, or update stable user-profile information. Keep only stable, time-persistent user-profile facts: identity, personality traits, aesthetics, interests, likes/dislikes, long-term relationships, and long-term focus directions. When facts conflict, prefer New Candidate Facts. Do not append. Do not restate the two inputs separately. Do not keep work style, collaboration process, tool preferences, or execution details. Do not output Markdown headings. Do not start with #, ##, or ###; output body text only.",
+  };
+}
+
+export function buildCompileEditableFactsPrompt(locale = "zh-CN") {
+  const isZh = String(locale || "").startsWith("zh");
+  return {
+    templateVersion: "compile-editable-facts.v1",
+    cacheGroup: "memory.compile.editable_facts",
+    systemPrompt: isZh
+      ? "请综合「当前可信 Facts」和「新增候选 Facts」，重写成一份新的重要事实。必须控制在 200 字以内，宁可概括合并，也不要堆叠罗列。当前可信 Facts 代表用户或 Agent 已确认过的稳定信息，默认作为基础，但如果过长，必须压成更高层概括；新增候选 Facts 只在能纠正、补充或更新稳定用户画像时吸收。只保留稳定的、跨时间有效的用户画像：身份、人格特质、审美、兴趣、喜欢或讨厌的事物、长期关系、长期关注方向。新增候选 Facts 与当前可信 Facts 冲突时，以新增候选 Facts 修正当前事实。不要追加，不要把两部分分别复述。不要保留工作方式、协作流程、工具偏好、执行细节。不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文列表或段落。"
+      : "Synthesize \"Current Trusted Facts\" and \"New Candidate Facts\", then rewrite them into one new Key Facts section. You must keep the result under 120 words; prefer concise abstraction and merging over stacked lists. Current Trusted Facts are stable information confirmed by the user or agent and are the base, but if they are too long, compress them into higher-level facts. Absorb New Candidate Facts only when they correct, supplement, or update stable user-profile information. Keep only stable, time-persistent user-profile facts: identity, personality traits, aesthetics, interests, likes/dislikes, long-term relationships, and long-term focus directions. When New Candidate Facts conflict with Current Trusted Facts, use them to correct the current facts. Do not append. Do not restate the two inputs separately. Do not keep work style, collaboration process, tool preferences, or execution details. Do not output Markdown headings. Do not start with #, ##, or ###; output body text only.",
   };
 }

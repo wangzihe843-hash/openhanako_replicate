@@ -1,8 +1,40 @@
 import crypto from "crypto";
 import { COMPUTER_USE_ERRORS, computerUseError } from "./errors.ts";
 
-function leaseKey(sessionPath: any, agentId: any, leaseId: any) {
-  return `${sessionPath || ""}\0${agentId || ""}\0${leaseId}`;
+function leaseOwnerKey(sessionId: any, sessionPath: any) {
+  return sessionId || sessionPath || null;
+}
+
+function leaseKey(sessionId: any, sessionPath: any, agentId: any, leaseId: any) {
+  return `${leaseOwnerKey(sessionId, sessionPath) || ""}\0${agentId || ""}\0${leaseId}`;
+}
+
+function normalizeSessionRef(ctx: any = {}) {
+  if (typeof ctx === "string") {
+    return { sessionId: null, sessionPath: ctx || null, agentId: null };
+  }
+  return {
+    sessionId: ctx?.sessionId || null,
+    sessionPath: ctx?.sessionPath || null,
+    agentId: ctx?.agentId || null,
+  };
+}
+
+function sameSessionIdentity(lease: any, ctx: any = {}) {
+  const ref = normalizeSessionRef(ctx);
+  if (ref.sessionId && lease?.sessionId) return lease.sessionId === ref.sessionId;
+  if (ref.sessionId && !lease?.sessionId && ref.sessionPath) return lease?.sessionPath === ref.sessionPath;
+  if (ref.sessionPath) return lease?.sessionPath === ref.sessionPath;
+  return false;
+}
+
+function sameLeaseOwner(lease: any, ctx: any) {
+  return sameSessionIdentity(lease, ctx)
+    && lease.agentId === (normalizeSessionRef(ctx).agentId || null);
+}
+
+function sameSessionOwner(lease: any, ctx: any) {
+  return sameSessionIdentity(lease, ctx);
 }
 
 export class ComputerLeaseRegistry {
@@ -28,6 +60,7 @@ export class ComputerLeaseRegistry {
     const leaseId = target?.leaseId || this._idFactory();
     const lease = {
       leaseId,
+      sessionId: ctx?.sessionId || null,
       sessionPath: ctx?.sessionPath || null,
       agentId: ctx?.agentId || null,
       providerId: target.providerId,
@@ -41,7 +74,7 @@ export class ComputerLeaseRegistry {
         ? structuredClone(target.providerState)
         : {},
     };
-    this._leases.set(leaseKey(lease.sessionPath, lease.agentId, lease.leaseId), lease);
+    this._leases.set(leaseKey(lease.sessionId, lease.sessionPath, lease.agentId, lease.leaseId), lease);
     return lease;
   }
 
@@ -56,8 +89,7 @@ export class ComputerLeaseRegistry {
     for (const lease of this._leases.values()) {
       if (
         lease.status === "active"
-        && lease.sessionPath === (ctx?.sessionPath || null)
-        && lease.agentId === (ctx?.agentId || null)
+        && sameLeaseOwner(lease, ctx)
       ) {
         return lease;
       }
@@ -69,8 +101,7 @@ export class ComputerLeaseRegistry {
     let found = null;
     for (const lease of this._leases.values()) {
       if (
-        lease.sessionPath === (ctx?.sessionPath || null)
-        && lease.agentId === (ctx?.agentId || null)
+        sameLeaseOwner(lease, ctx)
       ) {
         found = lease;
       }
@@ -79,7 +110,13 @@ export class ComputerLeaseRegistry {
   }
 
   getLease(ctx, leaseId) {
-    return this._leases.get(leaseKey(ctx?.sessionPath || null, ctx?.agentId || null, leaseId)) || null;
+    const ref = normalizeSessionRef(ctx);
+    const direct = this._leases.get(leaseKey(ref.sessionId, ref.sessionPath, ref.agentId, leaseId));
+    if (direct && sameLeaseOwner(direct, ref)) return direct;
+    for (const lease of this._leases.values()) {
+      if (lease.leaseId === leaseId && sameLeaseOwner(lease, ref)) return lease;
+    }
+    return null;
   }
 
   requireActiveLease(ctx, leaseId) {
@@ -119,18 +156,19 @@ export class ComputerLeaseRegistry {
       ...snapshot,
       snapshotId,
       leaseId,
+      sessionId: lease.sessionId,
       sessionPath: lease.sessionPath,
       agentId: lease.agentId,
       capturedAt: snapshot?.capturedAt || new Date(this._now()).toISOString(),
     };
-    this._snapshots.set(leaseKey(lease.sessionPath, lease.agentId, snapshotId), record);
+    this._snapshots.set(leaseKey(lease.sessionId, lease.sessionPath, lease.agentId, snapshotId), record);
     lease.lastSnapshotId = snapshotId;
     return record;
   }
 
   validateSnapshot(ctx, leaseId, snapshotId) {
     const lease = this.requireActiveLease(ctx, leaseId);
-    const snapshot = this._snapshots.get(leaseKey(lease.sessionPath, lease.agentId, snapshotId));
+    const snapshot = this._snapshots.get(leaseKey(lease.sessionId, lease.sessionPath, lease.agentId, snapshotId));
     if (!snapshot || snapshot.leaseId !== leaseId) {
       throw computerUseError(COMPUTER_USE_ERRORS.STALE_SNAPSHOT, `Snapshot is stale or unknown: ${snapshotId}`, { leaseId, snapshotId });
     }
@@ -144,9 +182,9 @@ export class ComputerLeaseRegistry {
     return snapshot;
   }
 
-  releaseBySession(sessionPath) {
+  releaseBySession(sessionRef) {
     for (const lease of this._leases.values()) {
-      if (lease.sessionPath === sessionPath && lease.status === "active") {
+      if (sameSessionOwner(lease, sessionRef) && lease.status === "active") {
         lease.status = "released";
       }
     }

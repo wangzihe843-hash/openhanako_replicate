@@ -2,7 +2,10 @@ import fs from "fs";
 import path from "path";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { MountAwareFileError, MountAwareFileService } from "../../core/mount-aware-file-service.ts";
+import {
+  MountAwareFileError,
+  MountAwareFileService,
+} from "../../core/mount-aware-file-service.ts";
 import {
   consumeRemoteWriteLease,
   issueRemoteWriteLease,
@@ -11,6 +14,7 @@ import {
 import { safeJson } from "../hono-helpers.ts";
 import { serveFileContent } from "../http/file-content.ts";
 import { createRequestContext } from "../http/boundary.ts";
+import { createApiResourceOperationContext, requestIdFromHono } from "../http/resource-operation-context.ts";
 import { recordSecurityAuditEvent } from "../http/security-audit.ts";
 import { isLocalOwnerPrincipal } from "../http/route-security.ts";
 
@@ -80,25 +84,25 @@ export function createMobileWorkbenchRoute(engine) {
     const auth = authorizeWorkbench(c, engine, "files.write");
     if (auth.response) return auth.response;
     const body = await safeJson(c);
-    const files = fileService(engine, auth.requestContext);
+    const files = fileService(engine, auth.requestContext, c, body);
     const mountId = workbenchMountIdFromBody(body);
     const subdir = body.subdir || "";
 
     try {
       switch (body.action) {
         case "mkdir":
-          return await writeActionResponse(c, engine, "mobile_workbench.mkdir", auth, mountId, () => files.mkdir(mountId, subdir, body));
+          return await writeActionResponse(c, engine, "mobile_workbench.mkdir", auth, mountId, (options) => files.mkdir(mountId, subdir, body, options));
         case "create":
         case "writeText":
-          return await writeActionResponse(c, engine, "mobile_workbench.write", auth, mountId, () => files.writeText(mountId, subdir, body));
+          return await writeActionResponse(c, engine, "mobile_workbench.write", auth, mountId, (options) => files.writeText(mountId, subdir, body, options));
         case "rename":
-          return await writeActionResponse(c, engine, "mobile_workbench.rename", auth, mountId, () => files.rename(mountId, subdir, body));
+          return await writeActionResponse(c, engine, "mobile_workbench.rename", auth, mountId, (options) => files.rename(mountId, subdir, body, options));
         case "move":
-          return await writeActionResponse(c, engine, "mobile_workbench.move", auth, mountId, () => files.move(mountId, subdir, body));
+          return await writeActionResponse(c, engine, "mobile_workbench.move", auth, mountId, (options) => files.move(mountId, subdir, body, options));
         case "movePaths":
-          return await writeActionResponse(c, engine, "mobile_workbench.move_paths", auth, mountId, () => files.movePaths(mountId, body));
+          return await writeActionResponse(c, engine, "mobile_workbench.move_paths", auth, mountId, (options) => files.movePaths(mountId, body, options));
         case "safeDelete":
-          return await writeActionResponse(c, engine, "mobile_workbench.safe_delete", auth, mountId, () => files.safeDelete(mountId, subdir, body));
+          return await writeActionResponse(c, engine, "mobile_workbench.safe_delete", auth, mountId, (options) => files.safeDelete(mountId, subdir, body, options));
         default:
           return c.json({ error: "unknown_action" }, 400);
       }
@@ -114,12 +118,12 @@ export function createMobileWorkbenchRoute(engine) {
     if (auth.response) return auth.response;
     try {
       const body = await safeJson(c);
-      const filesService = fileService(engine, auth.requestContext);
+      const filesService = fileService(engine, auth.requestContext, c, body);
       const mountId = workbenchMountIdFromBody(body);
       const subdir = body.subdir || "";
       const files = Array.isArray(body.files) ? body.files : [body];
 
-      return await writeActionResponse(c, engine, "mobile_workbench.upload", auth, mountId, async () => {
+      return await writeActionResponse(c, engine, "mobile_workbench.upload", auth, mountId, async (options) => {
         const results = [];
         for (const file of files) {
           try {
@@ -127,8 +131,7 @@ export function createMobileWorkbenchRoute(engine) {
             if (!contentBase64) throw routeError("contentBase64 required", "invalid_upload", 400);
             const buffer = Buffer.from(contentBase64, "base64");
             if (buffer.byteLength > MAX_UPLOAD_BYTES) throw routeError("file too large", "file_too_large", 413);
-            const target = filesService.writeFileTarget(mountId, subdir, file.name);
-            fs.writeFileSync(target.target, buffer);
+            const target = await filesService.writeFileContent(mountId, subdir, file.name, buffer, options);
             results.push({ name: target.filename, ok: true, size: buffer.byteLength });
           } catch (err) {
             results.push({ name: file?.name || null, ok: false, error: err.code || "upload_failed" });
@@ -234,7 +237,7 @@ async function writeActionResponse(c, engine, action, auth, mountId, operation) 
       resourceIds: [mountId || "default"],
       mountId: mountId && mountId !== "default" ? mountId : null,
     } as any);
-    const result = await operation();
+    const result = await operation({ reason: action });
     if (lease) consumeRemoteWriteLease(engine?.hanakoHome, lease);
     return auditActionResult(c, engine, action, result, auth, lease);
   } catch (err) {
@@ -273,7 +276,8 @@ function routeError(message, code, status) {
   return err;
 }
 
-function fileService(engine, requestContext) {
+function fileService(engine, requestContext, c = null, body = null) {
+  const resourceIO = resourceIOForEngine(engine);
   return new MountAwareFileService({
     hanakoHome: engine.hanakoHome,
     defaultRoot: engine.defaultDeskCwd || engine.homeCwd || engine.deskCwd,
@@ -283,7 +287,24 @@ function fileService(engine, requestContext) {
       : null,
     // 只对桌面端 local owner 披露 local_fs 根的 native 路径；远端/配对设备不披露。
     discloseNativeRoot: isLocalOwnerPrincipal(requestContext?.authPrincipal),
+    resourceIO,
+    operationContext: createApiResourceOperationContext({
+      requestContext,
+      sessionId: body?.sessionId,
+      sessionPath: body?.sessionPath,
+      requestId: body?.requestId || requestIdFromHono(c),
+    }),
   });
+}
+
+function resourceIOForEngine(engine) {
+  const candidate = engine?.resourceIO || engine?.getResourceIO?.();
+  return candidate
+    && typeof candidate.stat === "function"
+    && typeof candidate.write === "function"
+    && typeof candidate.list === "function"
+    ? candidate
+    : null;
 }
 
 function workbenchError(c, err) {
