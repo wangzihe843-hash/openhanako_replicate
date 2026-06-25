@@ -1068,6 +1068,9 @@
       "system": "System",
       "hardwareAcceleration": "Hardware Acceleration",
       "hardwareAccelerationHint": "Use the GPU to render app windows. Turning this off takes effect on next launch and uses software rendering for Windows GPU-driver startup recovery.",
+      "sidebar": "Sidebar",
+      "sessionListSingleLine": "Single-line session list",
+      "sessionListSingleLineHint": "When enabled, each session uses one row. Hovering reveals the right-side actions while the title shortens with an ellipsis.",
       "shortcuts": "Shortcuts",
       "voiceRecordingShortcut": "Voice recording/send",
       "voiceRecordingShortcutHint": "When the main chat page is focused, press once to start recording, then press again to finish and send."
@@ -2019,7 +2022,8 @@
       "dingtalkClientId": "Client ID / AppKey",
       "dingtalkClientSecret": "Client Secret / AppSecret",
       "dingtalkRobotCode": "Robot Code",
-      "dingtalkHint": "Get these from your DingTalk internal enterprise app and app robot; events use Stream long connection, no local callback URL needed",
+      "dingtalkRestBaseUrl": "REST Base URL",
+      "dingtalkHint": "Internal app credentials are used for token/Stream; Robot Code is used for Enterprise bot sends; REST Base URL defaults to https://api.dingtalk.io/v1.0",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",
@@ -2048,7 +2052,7 @@
       "testFail": "Test failed",
       "noToken": "Please enter Bot Token first",
       "noCredentials": "Please enter App ID and App Secret first",
-      "noDingtalkCredentials": "Please enter Client ID, Client Secret, and Robot Code first",
+      "noDingtalkCredentials": "Please enter Client ID, Client Secret, Robot Code, and REST Base URL first",
       "globalSettings": "Global Settings",
       "agentSettings": "Agents",
       "permissionMode": "Permission mode",
@@ -2095,7 +2099,8 @@
         "Create an internal enterprise app, then copy <code>Client ID/AppKey</code> and <code>Client Secret/AppSecret</code> from app credentials",
         "Add the app robot capability and copy the <code>Robot Code</code> from the robot details",
         "Make sure the app has the robot message permissions it needs and is published to the target enterprise scope",
-        "Paste Client ID, Client Secret, and Robot Code into the fields above, test the connection, then turn on the switch"
+        "Keep REST Base URL as <code>https://api.dingtalk.io/v1.0</code> unless you intentionally use a DingTalk-compatible gateway",
+        "Paste Client ID, Client Secret, Robot Code, and REST Base URL into the fields above, test the connection, then turn on the switch"
       ],
       "whatsappHint": "Coming soon"
     },

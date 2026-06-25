@@ -6,6 +6,7 @@ import {
   normalizeBackslashEscapedDoubleQuotes,
   quoteCmdArg,
   resolveWin32CmdExecutable,
+  resolveWin32DefaultPowerShellExecutable,
   resolveWin32PowerShellExecutable,
   splitShellLikeArgs,
 } from "../lib/shell/shell-utils.ts";
@@ -45,6 +46,49 @@ describe("shell utils", () => {
     expect(resolveWin32PowerShellExecutable("pwsh.exe", {}, { resolveOnPath: () => "D:\\PowerShell\\pwsh.exe" })).toBe(
       "D:\\PowerShell\\pwsh.exe"
     );
+  });
+
+  it("prefers a probed PowerShell 7 executable for the Windows default", () => {
+    const spawn = (command, args) => {
+      if (command === "where.exe" && args[0] === "pwsh.exe") {
+        return { status: 0, stdout: "D:\\PowerShell\\7\\pwsh.exe\r\n", stderr: "" };
+      }
+      if (command === "D:\\PowerShell\\7\\pwsh.exe") {
+        return { status: 0, stdout: "7\r\n", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "" };
+    };
+
+    expect(resolveWin32DefaultPowerShellExecutable({ SystemRoot: "C:\\Windows" }, {
+      spawn,
+      exists: () => false,
+      cache: false,
+    })).toBe("D:\\PowerShell\\7\\pwsh.exe");
+  });
+
+  it("falls back to Windows PowerShell 5.1 when pwsh is missing or too old", () => {
+    const spawn = (command) => {
+      if (command === "where.exe") return { status: 0, stdout: "D:\\PowerShell\\6\\pwsh.exe\r\n", stderr: "" };
+      if (command === "D:\\PowerShell\\6\\pwsh.exe") return { status: 0, stdout: "6\r\n", stderr: "" };
+      return { status: 1, stdout: "", stderr: "" };
+    };
+
+    expect(resolveWin32DefaultPowerShellExecutable({ SystemRoot: "C:\\Windows" }, {
+      spawn,
+      exists: () => false,
+      cache: false,
+    })).toBe("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  });
+
+  it("keeps HANA_POWERSHELL above automatic pwsh detection", () => {
+    expect(resolveWin32DefaultPowerShellExecutable({
+      HANA_POWERSHELL: "E:\\Tools\\pwsh-custom.exe",
+      SystemRoot: "C:\\Windows",
+    }, {
+      spawn: () => { throw new Error("automatic detection should not run"); },
+      exists: () => false,
+      cache: false,
+    })).toBe("E:\\Tools\\pwsh-custom.exe");
   });
 
   it("can reject unterminated quotes for execution parsers", () => {

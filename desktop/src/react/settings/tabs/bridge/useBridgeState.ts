@@ -19,7 +19,7 @@ interface PlatformStatusBase {
 
 export interface TelegramStatus extends PlatformStatusBase { token?: string }
 export interface FeishuStatus extends PlatformStatusBase { appId?: string; appSecret?: string }
-export interface DingTalkStatus extends PlatformStatusBase { clientId?: string; clientSecret?: string; robotCode?: string }
+export interface DingTalkStatus extends PlatformStatusBase { clientId?: string; clientSecret?: string; robotCode?: string; restBaseUrl?: string }
 export interface QQStatus extends PlatformStatusBase { appID?: string; appSecret?: string }
 export interface WechatStatus extends PlatformStatusBase { token?: string }
 
@@ -68,6 +68,7 @@ function bridgeCredentials(status: BridgeStatus | null) {
     dtClientId: status?.dingtalk?.clientId || '',
     dtClientSecret: status?.dingtalk?.clientSecret || '',
     dtRobotCode: status?.dingtalk?.robotCode || '',
+    dtRestBaseUrl: status?.dingtalk?.restBaseUrl || '',
     qqAppId: status?.qq?.appID || '',
     qqAppSecret: status?.qq?.appSecret || '',
   };
@@ -112,6 +113,7 @@ export function useBridgeState() {
   const [dtClientId, setDtClientId] = useState(snapshotCredentials.dtClientId);
   const [dtClientSecret, setDtClientSecret] = useState(snapshotCredentials.dtClientSecret);
   const [dtRobotCode, setDtRobotCode] = useState(snapshotCredentials.dtRobotCode);
+  const [dtRestBaseUrl, setDtRestBaseUrl] = useState(snapshotCredentials.dtRestBaseUrl);
   const [qqAppId, setQqAppId] = useState(snapshotCredentials.qqAppId);
   const [qqAppSecret, setQqAppSecret] = useState(snapshotCredentials.qqAppSecret);
 
@@ -124,6 +126,7 @@ export function useBridgeState() {
     setDtClientId(nextCredentials.dtClientId);
     setDtClientSecret(nextCredentials.dtClientSecret);
     setDtRobotCode(nextCredentials.dtRobotCode);
+    setDtRestBaseUrl(nextCredentials.dtRestBaseUrl);
     setQqAppId(nextCredentials.qqAppId);
     setQqAppSecret(nextCredentials.qqAppSecret);
   }, []);
@@ -297,7 +300,7 @@ export function useBridgeState() {
     publicIshiki, setPublicIshiki, savePublicIshiki,
     tgToken, setTgToken,
     fsAppId, setFsAppId, fsAppSecret, setFsAppSecret,
-    dtClientId, setDtClientId, dtClientSecret, setDtClientSecret, dtRobotCode, setDtRobotCode,
+    dtClientId, setDtClientId, dtClientSecret, setDtClientSecret, dtRobotCode, setDtRobotCode, dtRestBaseUrl, setDtRestBaseUrl,
     qqAppId, setQqAppId, qqAppSecret, setQqAppSecret,
     saveBridgeConfig, testPlatform, setOwner, saveGlobalSettings,
   };

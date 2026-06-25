@@ -32,7 +32,7 @@ import {
   normalizeWorkspaceUiEntry,
   normalizeWorkspaceUiSurface,
 } from "../../shared/workspace-ui-state.ts";
-import { normalizeSidebarUiPrefs } from "../../shared/sidebar-ui-state.ts";
+import { normalizeSidebarUiPrefs, normalizeSidebarUiPrefsPatch } from "../../shared/sidebar-ui-state.ts";
 import { normalizeNotificationPreferences } from "../../shared/notification-preferences.ts";
 import { normalizeQuickChatPreferences } from "../../shared/quick-chat-preferences.ts";
 import { normalizeBrowserPreferences } from "../../shared/browser-preferences.ts";
@@ -460,7 +460,7 @@ export function createPreferencesRoute(engine: any, options: Record<string, any>
       if (typeof engine.setSidebarUiPrefs !== "function") {
         return c.json({ error: "sidebar UI preferences unavailable" }, 500);
       }
-      const sidebarUi = engine.setSidebarUiPrefs(normalizeSidebarUiPrefs(body.sidebarUi || body));
+      const sidebarUi = engine.setSidebarUiPrefs(normalizeSidebarUiPrefsPatch(body.sidebarUi || body));
       return c.json({ ok: true, sidebarUi });
     } catch (err) {
       return c.json({ error: err.message }, 400);

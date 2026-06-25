@@ -138,4 +138,30 @@ describe("ProviderCatalogStore", () => {
     expect(catalog.capabilities["web.search"].providers).toEqual([{ id: "brave", source: "api" }]);
     expect(catalog.capabilities["future.action"].providers).toEqual([{ id: "future", mode: "adapter" }]);
   });
+
+  it("loads provider-catalog.json files that start with a UTF-8 BOM", () => {
+    const store = new ProviderCatalogStore(tmpDir);
+    fs.writeFileSync(
+      store.catalogPath,
+      "\uFEFF" + JSON.stringify({
+        catalogVersion: 2,
+        providers: {
+          deepseek: {
+            api_key: "sk-bom",
+            base_url: "https://api.deepseek.com",
+            api: "openai-completions",
+            models: ["deepseek-v4-pro"],
+          },
+        },
+      }, null, 2) + "\n",
+      "utf-8",
+    );
+
+    const catalog = store.load();
+
+    expect(catalog.providers.deepseek).toMatchObject({
+      api_key: "sk-bom",
+      models: ["deepseek-v4-pro"],
+    });
+  });
 });

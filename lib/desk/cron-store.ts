@@ -20,6 +20,10 @@ import { atomicWriteSync } from "../../shared/safe-fs.ts";
 import { createModuleLogger } from "../debug-log.ts";
 
 const log = createModuleLogger("cron-store");
+const MIN_EVERY_INTERVAL_MS = 60_000;
+const DOUBLE_NORMALIZED_EVERY_FACTOR = 60_000;
+const DOUBLE_NORMALIZED_EVERY_DIVISOR = MIN_EVERY_INTERVAL_MS * DOUBLE_NORMALIZED_EVERY_FACTOR;
+const MAX_COMPAT_REPAIRED_EVERY_INTERVAL_MS = 366 * 24 * 60 * 60 * 1000;
 
 export function normalizeCronModelRef(model) {
   const parsed = parseModelRef(model);
@@ -59,6 +63,34 @@ function assertCanEnableAutomationJob(job) {
   if (!isAgentSessionAutomation(job)) return;
   if (typeof job.prompt === "string" && job.prompt.trim()) return;
   throw new Error("prompt required to enable agent automation");
+}
+
+function parseEveryScheduleMs(schedule) {
+  const ms = typeof schedule === "number" ? schedule : parseInt(schedule, 10);
+  return Number.isFinite(ms) ? ms : NaN;
+}
+
+function normalizeEveryScheduleMs(schedule) {
+  const ms = parseEveryScheduleMs(schedule);
+  if (!Number.isFinite(ms)) return schedule;
+  return Math.max(MIN_EVERY_INTERVAL_MS, ms);
+}
+
+function repairPersistedEverySchedule(schedule) {
+  const ms = parseEveryScheduleMs(schedule);
+  if (!Number.isSafeInteger(ms) || ms < DOUBLE_NORMALIZED_EVERY_DIVISOR) {
+    return { schedule: normalizeEveryScheduleMs(schedule), repaired: false };
+  }
+  const decoded = ms / DOUBLE_NORMALIZED_EVERY_FACTOR;
+  const isKnownPollutionShape =
+    Number.isSafeInteger(decoded)
+    && decoded >= MIN_EVERY_INTERVAL_MS
+    && decoded <= MAX_COMPAT_REPAIRED_EVERY_INTERVAL_MS
+    && ms % DOUBLE_NORMALIZED_EVERY_DIVISOR === 0;
+  if (!isKnownPollutionShape) {
+    return { schedule: normalizeEveryScheduleMs(schedule), repaired: false };
+  }
+  return { schedule: decoded, repaired: true };
 }
 
 export class CronStore {
@@ -134,10 +166,17 @@ export class CronStore {
         job.model = normalizedModel;
         dirty = true;
       }
-      // every 类型最小间隔 clamp
-      if (job.type === "every" && typeof job.schedule === "number" && job.schedule < 60000) {
-        job.schedule = 60000;
-        dirty = true;
+      // every 类型的持久化契约是毫秒。读旧数据时同时修正早期
+      // suggestion add 入口把毫秒再次当分钟乘 60000 的污染值。
+      if (job.type === "every") {
+        const repaired = repairPersistedEverySchedule(job.schedule);
+        if (job.schedule !== repaired.schedule) {
+          job.schedule = repaired.schedule;
+          if (job.enabled !== false && repaired.repaired) {
+            job.nextRunAt = this._calcNextRun(job.type, job.schedule, new Date().toISOString());
+          }
+          dirty = true;
+        }
       }
       // consecutiveErrors 缺失补 0
       if (job.consecutiveErrors === undefined) {
@@ -203,8 +242,7 @@ export class CronStore {
 
     // every 类型最小间隔 clamp
     if (type === "every") {
-      const ms = typeof schedule === "number" ? schedule : parseInt(schedule, 10);
-      if (ms < 60000) schedule = 60000;
+      schedule = normalizeEveryScheduleMs(schedule);
     }
 
     // at 类型校验
@@ -264,8 +302,7 @@ export class CronStore {
 
     let schedule = input.schedule;
     if (type === "every") {
-      const ms = typeof schedule === "number" ? schedule : parseInt(schedule, 10);
-      if (Number.isFinite(ms) && ms < 60000) schedule = 60000;
+      schedule = repairPersistedEverySchedule(schedule).schedule;
     }
 
     const now = new Date().toISOString();
@@ -415,11 +452,11 @@ export class CronStore {
 
     if ("schedule" in partial || "type" in partial) {
       if (job.type === "every") {
-        const ms = typeof job.schedule === "number" ? job.schedule : parseInt(job.schedule, 10);
+        const ms = parseEveryScheduleMs(job.schedule);
         if (!Number.isFinite(ms) || ms <= 0) {
           throw new Error(`无效的 every schedule: "${job.schedule}"，必须是正整数毫秒`);
         }
-        job.schedule = Math.max(60000, ms);
+        job.schedule = Math.max(MIN_EVERY_INTERVAL_MS, ms);
       }
       if (job.type === "at") {
         const target = new Date(job.schedule);

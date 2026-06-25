@@ -17,6 +17,7 @@ export type ResourceDescriptor = ResourceRef & {
   provider?: string;
   filePath?: string;
   displayName?: string;
+  isDirectory?: boolean;
 };
 
 export type ResourceEventSource =

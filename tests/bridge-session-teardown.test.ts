@@ -121,7 +121,7 @@ function makeDepsWithTools(agent, options: { toolNames?: string[]; customToolNam
 }
 
 function bridgeLiveToolSnapshot(names) {
-  const denied = new Set(["computer"]);
+  const denied = new Set(["computer", "browser"]);
   return names.filter((name) => !denied.has(name));
 }
 
@@ -514,6 +514,7 @@ describe("BridgeSessionManager teardown", () => {
       "media_generate-image",
       "media_generate-video",
       "computer",
+      "browser",
     ];
     const manager = new BridgeSessionManager(makeDepsWithTools(agent, {
       toolNames: liveToolNames,
@@ -550,10 +551,18 @@ describe("BridgeSessionManager teardown", () => {
 
     const expected = bridgeLiveToolSnapshot(liveToolNames);
     expect(setActiveToolsByName).toHaveBeenCalledWith(expected);
+    const createArgs = createAgentSessionMock.mock.calls.at(-1)[0];
+    const exposedToolNames = [
+      ...createArgs.tools.map((tool) => tool.name),
+      ...createArgs.customTools.map((tool) => tool.name),
+    ];
+    expect(exposedToolNames).not.toContain("computer");
+    expect(exposedToolNames).not.toContain("browser");
     expect(setActiveToolsByName.mock.calls[0][0]).not.toContain("retired_tool");
     expect(setActiveToolsByName.mock.calls[0][0]).toContain("media_generate-image");
     expect(setActiveToolsByName.mock.calls[0][0]).toContain("media_generate-video");
     expect(setActiveToolsByName.mock.calls[0][0]).not.toContain("computer");
+    expect(setActiveToolsByName.mock.calls[0][0]).not.toContain("browser");
     expect(manager.readIndex(agent)["tg_dm_restore_tools@agent-a"].toolNames)
       .toEqual(expected);
   });
@@ -565,6 +574,7 @@ describe("BridgeSessionManager teardown", () => {
       "todo_write",
       "media_generate-image",
       "computer",
+      "browser",
     ];
     const manager = new BridgeSessionManager(makeDepsWithTools(agent, {
       toolNames: liveToolNames,
@@ -603,6 +613,8 @@ describe("BridgeSessionManager teardown", () => {
 
     const expected = bridgeLiveToolSnapshot(liveToolNames);
     expect(setActiveToolsByName).toHaveBeenCalledWith(expected);
+    const createArgs = createAgentSessionMock.mock.calls.at(-1)[0];
+    expect(createArgs.tools.map((tool) => tool.name)).not.toContain("browser");
     const indexEntry = manager.readIndex(agent)["tg_dm_compact_tools@agent-a"];
     expect(indexEntry.toolNames).toEqual(expected);
   });

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCommandRunner } from "../lib/shell/command-runner.ts";
+import { resolveWin32DefaultPowerShellExecutable } from "../lib/shell/shell-utils.ts";
 
 describe("createCommandRunner", () => {
   it("invokes the POSIX shell profile with executable and argv", async () => {
@@ -37,17 +38,18 @@ describe("createCommandRunner", () => {
 
   it("uses PowerShell for Windows native one-shot commands", async () => {
     const spawnCommand = vi.fn(async () => ({ exitCode: 0 }));
+    const env = { SystemRoot: "C:\\Windows" };
     const run = createCommandRunner({
       platform: "win32",
       spawnCommand,
     });
 
     await run("Write-Output 1", "C:\\work", {
-      env: { SystemRoot: "C:\\Windows" },
+      env,
     });
 
     expect(spawnCommand).toHaveBeenCalledWith(expect.objectContaining({
-      executable: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      executable: resolveWin32DefaultPowerShellExecutable(env),
       args: [
         "-NoLogo",
         "-NoProfile",
@@ -57,7 +59,7 @@ describe("createCommandRunner", () => {
         "Write-Output 1",
       ],
       cwd: "C:\\work",
-      env: { SystemRoot: "C:\\Windows" },
+      env,
       profile: expect.objectContaining({
         id: "windows-powershell",
         family: "powershell",

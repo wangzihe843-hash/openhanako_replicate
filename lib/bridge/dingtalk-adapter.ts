@@ -14,14 +14,28 @@ import { createModuleLogger, debugLog } from "../debug-log.ts";
 import { webSocketOptionsForUrl } from "../net/outbound-proxy.ts";
 import { createBridgeOutboundHttp } from "./outbound-http.ts";
 import { createStreamingCapabilities } from "./streaming-capabilities.ts";
+import {
+  DINGTALK_ACCESS_TOKEN_PATH,
+  DINGTALK_ACCESS_TOKEN_URL,
+  DINGTALK_BOT_CALLBACK_TOPIC,
+  DINGTALK_DM_SEND_PATH,
+  DINGTALK_DM_SEND_URL,
+  DINGTALK_GROUP_SEND_PATH,
+  DINGTALK_GROUP_SEND_URL,
+  DINGTALK_STREAM_OPEN_URL,
+  buildDingTalkUrl,
+  normalizeDingTalkBridgeCredentials,
+} from "./dingtalk-contract.ts";
 
 const log = createModuleLogger("dingtalk");
 
-export const DINGTALK_BOT_CALLBACK_TOPIC = "/v1.0/im/bot/messages/get";
-export const DINGTALK_STREAM_OPEN_URL = "https://api.dingtalk.com/v1.0/gateway/connections/open";
-export const DINGTALK_ACCESS_TOKEN_URL = "https://api.dingtalk.io/v1.0/oauth2/accessToken";
-export const DINGTALK_DM_SEND_URL = "https://api.dingtalk.io/v1.0/robot/oToMessages/batchSend";
-export const DINGTALK_GROUP_SEND_URL = "https://api.dingtalk.io/v1.0/robot/groupMessages/send";
+export {
+  DINGTALK_ACCESS_TOKEN_URL,
+  DINGTALK_BOT_CALLBACK_TOPIC,
+  DINGTALK_DM_SEND_URL,
+  DINGTALK_GROUP_SEND_URL,
+  DINGTALK_STREAM_OPEN_URL,
+};
 
 const MAX_MSG_SIZE = 100_000;
 const MAX_OUTBOUND_TEXT_BYTES = 12_000;
@@ -187,6 +201,8 @@ function normalizeDingTalkInboundMessage(payload: Record<string, any>, agentId: 
  * @param {string} opts.clientId - 钉钉企业内部应用 AppKey / clientId
  * @param {string} opts.clientSecret - 钉钉企业内部应用 AppSecret / clientSecret
  * @param {string} opts.robotCode - 机器人编码
+ * @param {string} [opts.restBaseUrl] - 钉钉 REST OpenAPI base URL
+ * @param {string} [opts.streamOpenUrl] - 钉钉 Stream 连接注册 endpoint
  * @param {string} opts.agentId
  * @param {(msg: object) => void} opts.onMessage
  * @param {(status: string, error?: string) => void} [opts.onStatus]
@@ -194,26 +210,46 @@ function normalizeDingTalkInboundMessage(payload: Record<string, any>, agentId: 
  * @param {typeof WebSocket} [opts.WebSocketImpl]
  */
 export function createDingTalkAdapter({
+  appKey,
+  appSecret,
   clientId,
   clientSecret,
   robotCode,
+  restBaseUrl,
+  streamOpenUrl,
   agentId,
   onMessage,
   onStatus,
   fetchImpl,
   WebSocketImpl = WebSocket,
   reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS,
+  ...extraConfig
 }: {
-  clientId: string;
-  clientSecret: string;
+  appKey?: string;
+  appSecret?: string;
+  clientId?: string;
+  clientSecret?: string;
   robotCode: string;
+  restBaseUrl?: string;
+  streamOpenUrl?: string;
   agentId: string;
   onMessage: (msg: Record<string, any>) => void;
   onStatus?: (status: string, error?: string) => void;
   fetchImpl?: any;
   WebSocketImpl?: any;
   reconnectDelayMs?: number;
+  [key: string]: any;
 }) {
+  const contract = normalizeDingTalkBridgeCredentials({
+    ...extraConfig,
+    appKey,
+    appSecret,
+    clientId,
+    clientSecret,
+    robotCode,
+    restBaseUrl,
+    streamOpenUrl,
+  });
   const http = createBridgeOutboundHttp({ platform: "dingtalk", fetchImpl });
   let accessToken: string | null = null;
   let tokenExpiresAt = 0;
@@ -225,10 +261,10 @@ export function createDingTalkAdapter({
     if (accessToken && Date.now() < tokenExpiresAt - TOKEN_EXPIRY_SKEW_MS) return accessToken;
     const res = await http.request({
       stage: "token",
-      url: DINGTALK_ACCESS_TOKEN_URL,
+      url: buildDingTalkUrl(contract.restBaseUrl, DINGTALK_ACCESS_TOKEN_PATH),
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ appKey: clientId, appSecret: clientSecret }),
+      body: JSON.stringify({ appKey: contract.appKey, appSecret: contract.appSecret }),
       idempotent: true,
     });
     const data = await responseJsonOrText(res);
@@ -244,12 +280,12 @@ export function createDingTalkAdapter({
   async function openStreamRegistration() {
     const res = await http.request({
       stage: "stream_open",
-      url: DINGTALK_STREAM_OPEN_URL,
+      url: contract.streamOpenUrl,
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        clientId,
-        clientSecret,
+        clientId: contract.appKey,
+        clientSecret: contract.appSecret,
         subscriptions: [
           { topic: DINGTALK_BOT_CALLBACK_TOPIC, type: "CALLBACK" },
         ],
@@ -295,7 +331,7 @@ export function createDingTalkAdapter({
     acknowledge(envelope);
     const payload = safeJsonParse(envelope.data);
     if (!payload || typeof payload !== "object") return;
-    if (payload.robotCode && robotCode && payload.robotCode !== robotCode) return;
+    if (payload.robotCode && contract.robotCode && payload.robotCode !== contract.robotCode) return;
 
     const normalized = normalizeDingTalkInboundMessage(payload, agentId);
     if (!normalized) return;
@@ -384,15 +420,15 @@ export function createDingTalkAdapter({
       for (let i = 0; i < chunks.length; i += 1) {
         const msgParam = markdownPayload(chunks[i], i, chunks.length);
         if (scope === "group") {
-          results.push(await requestRobotApi("send_group", DINGTALK_GROUP_SEND_URL, {
-            robotCode,
+          results.push(await requestRobotApi("send_group", buildDingTalkUrl(contract.restBaseUrl, DINGTALK_GROUP_SEND_PATH), {
+            robotCode: contract.robotCode,
             openConversationId: String(chatId),
             msgKey: "sampleMarkdown",
             msgParam,
           }));
         } else {
-          results.push(await requestRobotApi("send_dm", DINGTALK_DM_SEND_URL, {
-            robotCode,
+          results.push(await requestRobotApi("send_dm", buildDingTalkUrl(contract.restBaseUrl, DINGTALK_DM_SEND_PATH), {
+            robotCode: contract.robotCode,
             userIds: [String(chatId)],
             msgKey: "sampleMarkdown",
             msgParam,

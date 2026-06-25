@@ -67,6 +67,13 @@ const BUILT_IN_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     aliases: ['shortcut', 'keyboard', 'voice shortcut', '快捷键', '键盘', '录音快捷键', '语音快捷键'],
   },
   {
+    id: 'interface-sidebar',
+    tabId: 'interface',
+    titleKey: 'settings.interface.sidebar',
+    pathKeys: ['settings.tabs.interface'],
+    aliases: ['sidebar', 'session list', 'compact sessions', 'single line', 'density', '侧边栏', '会话列表', '单行', '紧凑', '密度'],
+  },
+  {
     id: 'general-startup',
     tabId: 'general',
     titleKey: 'settings.general.startup.title',

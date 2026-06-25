@@ -6,7 +6,11 @@ import { normalizeResourceRef, resourceKeyForRef } from "./resource-refs.ts";
 import type { ResourceRef } from "./types.ts";
 
 type WatchHandle = { close: () => void };
-type WatchPath = (targetPath: string, handler: (changedPath?: string | null) => void) => WatchHandle;
+type WatchChange =
+  | { kind: "exact"; path: string }
+  | { kind: "rescan"; path?: string | null; reason?: string };
+type WatchChangeInput = string | null | undefined | WatchChange;
+type WatchPath = (targetPath: string, handler: (changedPath?: WatchChangeInput) => void) => WatchHandle;
 type WatchResourceSnapshot = {
   resourceKey: string;
   resource: any;
@@ -46,6 +50,7 @@ type Entry = {
   handle: WatchHandle;
   timer: ReturnType<typeof setTimeout> | null;
   pendingPath: string | null;
+  pendingRescan: boolean;
 };
 
 type Subscription = {
@@ -169,6 +174,7 @@ export class ResourceWatchRegistry {
       handle: this.watchPath(filePath, (changedPath) => this.schedule(entry, changedPath)),
       timer: null,
       pendingPath: null,
+      pendingRescan: false,
     };
     this.entries.set(resourceKey, entry);
     return () => this.release(resourceKey);
@@ -202,12 +208,18 @@ export class ResourceWatchRegistry {
     entry.handle.close();
   }
 
-  schedule(entry: Entry, changedPath?: string | null): void {
+  schedule(entry: Entry, changedPath?: WatchChangeInput): void {
     if (!this.entries.has(entry.resourceKey)) {
       this.droppedEventCount += 1;
       return;
     }
-    if (changedPath) entry.pendingPath = changedPath;
+    const change = normalizeWatchChange(entry.filePath, changedPath, entry.isDirectory);
+    if (change.kind === "rescan") {
+      entry.pendingRescan = true;
+      entry.pendingPath = null;
+    } else if (!entry.pendingRescan) {
+      entry.pendingPath = change.path;
+    }
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = setTimeout(() => {
       entry.timer = null;
@@ -220,8 +232,11 @@ export class ResourceWatchRegistry {
       this.droppedEventCount += 1;
       return;
     }
-    const eventPath = normalizeChangedPath(entry.filePath, entry.pendingPath, entry.isDirectory);
+    const eventPath = entry.pendingRescan
+      ? entry.filePath
+      : normalizeChangedPath(entry.filePath, entry.pendingPath, entry.isDirectory);
     entry.pendingPath = null;
+    entry.pendingRescan = false;
     let stat;
     let snapshot;
     try {
@@ -231,7 +246,11 @@ export class ResourceWatchRegistry {
       this.recordError(err);
       return;
     }
-    const { resourceKey, resource } = snapshot;
+    const { resourceKey } = snapshot;
+    const resource = {
+      ...snapshot.resource,
+      isDirectory: stat.isDirectory,
+    };
     if (!stat.exists) {
       this.eventBus.deleted({
         resourceKey,
@@ -280,6 +299,35 @@ function defaultResolveWatchTarget(input: unknown): WatchTarget {
   };
 }
 
+function normalizeWatchChange(rootPath: string, changedPath: WatchChangeInput, rootIsDirectory = false): WatchChange {
+  if (!changedPath) {
+    return rootIsDirectory
+      ? { kind: "rescan", path: rootPath, reason: "filename_unavailable" }
+      : { kind: "exact", path: rootPath };
+  }
+  if (typeof changedPath === "object" && "kind" in changedPath) {
+    if (changedPath.kind === "rescan") {
+      return { kind: "rescan", path: changedPath.path || rootPath, reason: changedPath.reason };
+    }
+    return { kind: "exact", path: changedPath.path };
+  }
+  const value = String(changedPath);
+  if (!value) {
+    return rootIsDirectory
+      ? { kind: "rescan", path: rootPath, reason: "filename_unavailable" }
+      : { kind: "exact", path: rootPath };
+  }
+  const candidate = path.isAbsolute(value)
+    ? normalizeWatchPath(value)
+    : rootIsDirectory
+      ? path.join(rootPath, value)
+      : rootPath;
+  if (rootIsDirectory && isDirectorySelfEcho(rootPath, candidate)) {
+    return { kind: "rescan", path: rootPath, reason: "directory_self_echo" };
+  }
+  return { kind: "exact", path: candidate };
+}
+
 function normalizeChangedPath(rootPath: string, changedPath?: string | null, rootIsDirectory = false): string {
   if (!changedPath) return rootPath;
   const value = String(changedPath);
@@ -301,16 +349,23 @@ function localWatchSnapshot(filePath: string): WatchResourceSnapshot {
   };
 }
 
-function defaultWatchPath(targetPath: string, handler: (changedPath?: string | null) => void): WatchHandle {
+function defaultWatchPath(targetPath: string, handler: (changedPath?: WatchChangeInput) => void): WatchHandle {
   const rootPath = path.normalize(targetPath);
   const rootIsDirectory = safeIsDirectory(rootPath);
   const watcher = fs.watch(rootPath, { persistent: false }, (_eventType, filename) => {
-    let changedPath = rootPath;
-    if (rootIsDirectory && filename) {
+    if (rootIsDirectory) {
+      if (!filename) {
+        handler({ kind: "rescan", path: rootPath, reason: "filename_unavailable" });
+        return;
+      }
       const value = String(filename);
-      changedPath = path.isAbsolute(value) ? normalizeWatchPath(value) : path.join(rootPath, value);
+      const changedPath = path.isAbsolute(value) ? normalizeWatchPath(value) : path.join(rootPath, value);
+      handler(isDirectorySelfEcho(rootPath, changedPath)
+        ? { kind: "rescan", path: rootPath, reason: "directory_self_echo" }
+        : { kind: "exact", path: changedPath });
+      return;
     }
-    handler(changedPath);
+    handler(rootPath);
   });
   return { close: () => watcher.close() };
 }
@@ -325,6 +380,24 @@ function safeIsDirectory(targetPath: string): boolean {
   } catch {
     return false;
   }
+}
+
+function safePathExists(targetPath: string): boolean {
+  try {
+    fs.accessSync(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isDirectorySelfEcho(rootPath: string, candidatePath: string): boolean {
+  const root = normalizeWatchPath(rootPath);
+  const candidate = normalizeWatchPath(candidatePath);
+  if (candidate === root) return true;
+  return path.dirname(candidate) === root
+    && path.basename(candidate) === path.basename(root)
+    && !safePathExists(candidate);
 }
 
 function defaultStatPath(targetPath: string) {

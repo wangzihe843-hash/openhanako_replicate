@@ -59,11 +59,17 @@ import { sameToolNames } from "./tool-snapshot-repair.ts";
 const log = createModuleLogger("bridge-session");
 const BRIDGE_OWNER_DENIED_TOOL_NAMES = Object.freeze([
   "computer",
+  "browser",
 ]);
 
 function computeBridgeOwnerActiveToolNames(allToolNames) {
   const denied = new Set(BRIDGE_OWNER_DENIED_TOOL_NAMES);
   return uniqueToolNames(allToolNames).filter((name) => !denied.has(name));
+}
+
+function filterBridgeOwnerToolObjects(tools) {
+  const denied = new Set(BRIDGE_OWNER_DENIED_TOOL_NAMES);
+  return (tools || []).filter((tool) => tool?.name && !denied.has(tool.name));
 }
 
 function assertVideoInputSupported(model, videos) {
@@ -1367,9 +1373,11 @@ export class BridgeSessionManager {
       },
     });
 
+    const ownerTools = filterBridgeOwnerToolObjects(baseTools);
+    const ownerCustomTools = filterBridgeOwnerToolObjects(baseCustomTools);
     const allToolNames = uniqueToolNames([
-      ...(baseTools || []).map((tool) => tool?.name),
-      ...(baseCustomTools || []).map((tool) => tool?.name),
+      ...ownerTools.map((tool) => tool?.name),
+      ...ownerCustomTools.map((tool) => tool?.name),
     ]);
 
     return {
@@ -1379,8 +1387,8 @@ export class BridgeSessionManager {
         normalizeSessionThinkingLevel(prefs?.thinking_level),
       )),
       resourceLoader: visionResourceLoader,
-      tools: baseTools,
-      customTools: baseCustomTools,
+      tools: ownerTools,
+      customTools: ownerCustomTools,
       settingsManager: this._createSettings(ownerModel),
       activeToolNames: computeBridgeOwnerActiveToolNames(allToolNames),
     };

@@ -1386,6 +1386,30 @@ describe("syncModels", () => {
     expect(result.providers.ollama.models[0].id).toBe("llama3");
   });
 
+  it("projects known Ollama vision model families as image-capable even when discovery saved bare ids", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      ollama: {
+        base_url: "http://localhost:11434/v1",
+        api: "openai-completions",
+        auth_type: "none",
+        models: [
+          "llava:latest",
+          { id: "minicpm-v:8b", name: "MiniCPM-V 8B" },
+        ],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers.ollama.models.map((model) => [model.id, model.input])).toEqual([
+      ["llava:latest", ["text", "image"]],
+      ["minicpm-v:8b", ["text", "image"]],
+    ]);
+  });
+
   it("derives no-auth policy from ProviderRegistry for existing Ollama configs", async () => {
     const { ModelManager } = await import("../core/model-manager.ts");
     fs.writeFileSync(path.join(tmpDir, "added-models.yaml"), [

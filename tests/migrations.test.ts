@@ -3335,6 +3335,38 @@ describe("migration #19 — migrate legacy API-key auth to provider config", () 
     });
   });
 
+  it("rescues a secret-only custom provider when its local plugin definition is missing", () => {
+    writeAuth({});
+    writeAddedModels({
+      providers: {
+        "my-provider": {
+          api_key: "sk-secret-only",
+        },
+      },
+    });
+    writeJson(path.join(tmpDir, "models.json"), {
+      providers: {
+        "my-provider": {
+          baseUrl: "https://api.example.com/v1",
+          api: "openai-completions",
+          apiKey: "sk-secret-only",
+          models: [
+            { id: "custom-chat" },
+          ],
+        },
+      },
+    });
+
+    runFrom18();
+
+    expect(readPersistedProviders()["my-provider"]).toEqual({
+      api_key: "sk-secret-only",
+      base_url: "https://api.example.com/v1",
+      api: "openai-completions",
+      models: ["custom-chat"],
+    });
+  });
+
   it("does not persist the synthetic local API key from no-auth provider projections", () => {
     writeAuth({});
     writeAddedModels({

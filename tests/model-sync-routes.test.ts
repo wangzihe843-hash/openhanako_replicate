@@ -1016,6 +1016,55 @@ describe("model sync related routes", () => {
     expect(data.models[0].id).toBe("MiniMax-M2.5");
   });
 
+  it("marks discovered Ollama vision model families as image-capable", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.ts");
+    const app = new Hono();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [
+          { id: "llava:latest" },
+          { id: "minicpm-v:8b" },
+          { id: "llama3.2" },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = withResolveCreds({
+      getRegistryModelsForProvider: vi.fn().mockReturnValue([]),
+      providerRegistry: {
+        getCredentials: () => null,
+        getAuthJsonKey: (id) => id,
+        getDefaultModels: () => [],
+      },
+      hanakoHome: fs.mkdtempSync(path.join(os.tmpdir(), "hana-ollama-discovery-")),
+    });
+
+    try {
+      app.route("/api", createProvidersRoute(engine));
+
+      const res = await app.request("/api/providers/fetch-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "ollama",
+          base_url: "http://localhost:11434/v1",
+          api: "openai-completions",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.models.find((model) => model.id === "llava:latest")).toMatchObject({ image: true });
+      expect(data.models.find((model) => model.id === "minicpm-v:8b")).toMatchObject({ image: true });
+      expect(data.models.find((model) => model.id === "llama3.2")?.image).toBeUndefined();
+    } finally {
+      fs.rmSync(engine.hanakoHome, { recursive: true, force: true });
+    }
+  });
+
   it("provider fetch-models uses saved request headers as credentials", async () => {
     const { createProvidersRoute } = await import("../server/routes/providers.ts");
     const app = new Hono();

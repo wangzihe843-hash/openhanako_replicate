@@ -27,7 +27,10 @@ vi.mock("../lib/memory/compile.js", () => ({
   compileWeek: vi.fn().mockResolvedValue("compiled"),
   compileLongterm: vi.fn().mockResolvedValue("compiled"),
   compileFacts: vi.fn().mockResolvedValue("compiled"),
+  compileEditableFacts: vi.fn().mockResolvedValue("compiled"),
   assemble: vi.fn(),
+  editableFactsPath: vi.fn((memoryDir) => `${memoryDir}/editable-facts.md`),
+  ensureEditableFactsBaseline: vi.fn(),
 }));
 
 vi.mock("../lib/memory/deep-memory.js", () => ({
@@ -51,6 +54,7 @@ import {
   compileWeek,
   compileLongterm,
   compileFacts,
+  compileEditableFacts,
   assemble,
 } from "../lib/memory/compile.ts";
 import { processDirtySessions } from "../lib/memory/deep-memory.ts";
@@ -65,7 +69,11 @@ function writeSession(sessionPath: any) {
   fs.writeFileSync(sessionPath, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
 }
 
-function makeTicker(tmpDir: any, summaryManagerOverride?: any) {
+function readDailyState(tmpDir: any) {
+  return JSON.parse(fs.readFileSync(path.join(tmpDir, "daily-state.json"), "utf-8"));
+}
+
+function makeTicker(tmpDir: any, summaryManagerOverride?: any, tickerOptions: any = {}) {
   fs.mkdirSync(path.join(tmpDir, "sessions"), { recursive: true });
   const summaryManager = summaryManagerOverride || {
     rollingSummary: vi.fn().mockResolvedValue("summary"),
@@ -84,6 +92,7 @@ function makeTicker(tmpDir: any, summaryManagerOverride?: any) {
     weekMdPath: path.join(tmpDir, "week.md"),
     longtermMdPath: path.join(tmpDir, "longterm.md"),
     factsMdPath: path.join(tmpDir, "facts.md"),
+    ...tickerOptions,
   });
 }
 
@@ -161,6 +170,115 @@ describe("_doDaily step orchestration", () => {
     // _doCompileTodayAndAssemble always runs regardless
     expect(compileToday).toHaveBeenCalledOnce();
     expect(assemble).toHaveBeenCalledOnce();
+  });
+
+  it("restores completed daily state after ticker recreation", async () => {
+    await ticker.tick();
+    const state = readDailyState(tmpDir);
+    expect(state.dailyCompletedAt).toEqual(expect.any(String));
+    expect(Object.keys(state.completedSteps).sort()).toEqual([
+      "compileFacts",
+      "compileLongterm",
+      "compileToday",
+      "compileWeek",
+      "deepMemory",
+    ]);
+
+    await ticker.stop();
+    vi.clearAllMocks();
+    ticker = makeTicker(tmpDir);
+
+    await ticker.tick();
+
+    expect(compileWeek).not.toHaveBeenCalled();
+    expect(compileLongterm).not.toHaveBeenCalled();
+    expect(compileFacts).not.toHaveBeenCalled();
+    expect(processDirtySessions).not.toHaveBeenCalled();
+    expect(compileToday).toHaveBeenCalledOnce();
+    expect(assemble).toHaveBeenCalledOnce();
+  });
+
+  it("persists partial daily checkpoints and retries only unfinished steps after recreation", async () => {
+    (compileWeek as any).mockRejectedValueOnce(new Error("network error"));
+    await ticker.tick();
+
+    const failedState = readDailyState(tmpDir);
+    expect(failedState.dailyCompletedAt).toBeNull();
+    expect(failedState.completedSteps.compileToday).toEqual(expect.any(String));
+    expect(failedState.completedSteps.compileFacts).toEqual(expect.any(String));
+    expect(failedState.completedSteps.deepMemory).toEqual(expect.any(String));
+    expect(failedState.completedSteps.compileWeek).toBeUndefined();
+    expect(failedState.completedSteps.compileLongterm).toBeUndefined();
+
+    await ticker.stop();
+    vi.clearAllMocks();
+    ticker = makeTicker(tmpDir);
+
+    await ticker.tick();
+
+    expect(compileWeek).toHaveBeenCalledOnce();
+    expect(compileLongterm).toHaveBeenCalledOnce();
+    expect(compileFacts).not.toHaveBeenCalled();
+    expect(processDirtySessions).not.toHaveBeenCalled();
+  });
+
+  it("invalidates persisted daily state when compiled memory resetAt changes", async () => {
+    await ticker.tick();
+    await ticker.stop();
+    fs.writeFileSync(path.join(tmpDir, "reset.json"), JSON.stringify({
+      compiledResetAt: "2026-04-18T00:00:00.000Z",
+    }) + "\n");
+
+    vi.clearAllMocks();
+    ticker = makeTicker(tmpDir);
+
+    await ticker.tick();
+
+    expect(compileWeek).toHaveBeenCalledOnce();
+    expect(compileLongterm).toHaveBeenCalledOnce();
+    expect(compileFacts).toHaveBeenCalledOnce();
+    expect(processDirtySessions).toHaveBeenCalledOnce();
+    expect(readDailyState(tmpDir).resetAt).toBe("2026-04-18T00:00:00.000Z");
+  });
+
+  it("invalidates persisted daily state when editable facts mode changes", async () => {
+    await ticker.tick();
+    await ticker.stop();
+
+    vi.clearAllMocks();
+    ticker = makeTicker(tmpDir, undefined, { getEditableMemoryEnabled: () => true });
+
+    await ticker.tick();
+
+    expect(compileWeek).toHaveBeenCalledOnce();
+    expect(compileLongterm).toHaveBeenCalledOnce();
+    expect(compileFacts).not.toHaveBeenCalled();
+    expect(compileEditableFacts).toHaveBeenCalledOnce();
+    expect(processDirtySessions).toHaveBeenCalledOnce();
+    expect(readDailyState(tmpDir).factsMode).toBe("editable");
+  });
+
+  it("clears persisted daily checkpoints when startup recovery writes new summaries", async () => {
+    await ticker.tick();
+    await ticker.stop();
+
+    const rollingSummary = vi.fn().mockResolvedValue("summary");
+    const sessionPath = path.join(tmpDir, "sessions", "recovered.jsonl");
+    writeSession(sessionPath);
+
+    vi.clearAllMocks();
+    ticker = makeTicker(tmpDir, {
+      rollingSummary,
+      getSummary: vi.fn().mockReturnValue(null),
+    });
+
+    await ticker.tick();
+
+    expect(rollingSummary).toHaveBeenCalledOnce();
+    expect(compileWeek).toHaveBeenCalledOnce();
+    expect(compileLongterm).toHaveBeenCalledOnce();
+    expect(compileFacts).toHaveBeenCalledOnce();
+    expect(processDirtySessions).toHaveBeenCalledOnce();
   });
 
   it("compileFacts failure does not block other steps", async () => {

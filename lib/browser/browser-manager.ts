@@ -593,6 +593,96 @@ export class BrowserManager {
     return { ok: true };
   }
 
+  get browserHostConnected() {
+    return this._transport.connected === true;
+  }
+
+  resumeReadinessForSession(sessionPath) {
+    const hostConnected = this.browserHostConnected;
+    if (!sessionPath) {
+      return {
+        canResume: false,
+        reason: "missing_session_path",
+        hostConnected,
+        hasResumeState: false,
+        running: false,
+        url: null,
+      };
+    }
+
+    const existing = this._getSessionEntry(sessionPath);
+    const running = this.isRunning(sessionPath);
+    const coldState = this._loadColdState();
+    const coldRecord = this._coldStateRecordForSession(coldState, sessionPath);
+    const cold = normalizeColdWorkspace(coldRecord?.raw);
+    const url = activeBrowserUrl(existing) || cold.url || null;
+    const hasResumeState = !!existing || cold.tabs.length > 0 || !!cold.url;
+
+    if (running) {
+      return {
+        canResume: false,
+        reason: "already_running",
+        hostConnected,
+        hasResumeState: true,
+        running: true,
+        url,
+      };
+    }
+    if (existing?.health === "unhealthy") {
+      return {
+        canResume: false,
+        reason: "browser_session_unavailable",
+        hostConnected,
+        hasResumeState: true,
+        running: false,
+        url,
+        unavailableReason: existing.unavailableReason || null,
+      };
+    }
+    if (!hasResumeState) {
+      return {
+        canResume: false,
+        reason: "no_browser_state",
+        hostConnected,
+        hasResumeState: false,
+        running: false,
+        url: null,
+      };
+    }
+    if (!hostConnected) {
+      return {
+        canResume: false,
+        reason: "browser_host_unavailable",
+        hostConnected,
+        hasResumeState: true,
+        running: false,
+        url,
+      };
+    }
+    return {
+      canResume: true,
+      reason: null,
+      hostConnected,
+      hasResumeState: true,
+      running: false,
+      url,
+    };
+  }
+
+  async resumeForSessionIfAvailable(sessionPath) {
+    const readiness = this.resumeReadinessForSession(sessionPath);
+    if (!readiness.canResume) {
+      return { status: "skipped", ...readiness };
+    }
+    await this.resumeForSession(sessionPath);
+    return {
+      status: "resumed",
+      ...this.resumeReadinessForSession(sessionPath),
+      running: this.isRunning(sessionPath),
+      url: this.currentUrl(sessionPath),
+    };
+  }
+
   /**
    * 向浏览器宿主发送命令并等待结果
    * @param {string} cmd - 命令名

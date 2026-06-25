@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { createPreferencesRoute } from "../server/routes/preferences.ts";
+import { mergeSidebarUiPrefs } from "../shared/sidebar-ui-state.ts";
 
 function makeApp(engine) {
   const app = new Hono();
@@ -88,8 +89,8 @@ describe("workspace UI preference routes", () => {
       getUtilityApi: vi.fn(() => ({})),
       getSidebarUiPrefs: vi.fn(() => sidebarUi),
       setSidebarUiPrefs: vi.fn((patch) => {
-        sidebarUi = patch;
-        return patch;
+        sidebarUi = mergeSidebarUiPrefs(sidebarUi || {}, patch);
+        return sidebarUi;
       }),
     };
     const app = makeApp(engine);
@@ -120,11 +121,55 @@ describe("workspace UI preference routes", () => {
       collapsedFolderIds: ["folder-a"],
       showAllProjectIds: ["project-b"],
     });
+    expect(putBody.sidebarUi.sessionList).toEqual({ rowMode: "two-line" });
 
     const getRes = await app.request("/api/preferences/sidebar-ui");
     expect(getRes.status).toBe(200);
     expect(engine.getSidebarUiPrefs).toHaveBeenCalledTimes(1);
     await expect(getRes.json()).resolves.toEqual({ sidebarUi: putBody.sidebarUi });
+  });
+
+  it("persists sidebar session list density without resetting project view state", async () => {
+    let sidebarUi = mergeSidebarUiPrefs({}, {
+      projectView: {
+        collapsedProjectIds: ["project-a"],
+        collapsedFolderIds: ["folder-a"],
+        showAllProjectIds: ["project-b"],
+      },
+    });
+    const engine = {
+      getSharedModels: vi.fn(() => ({})),
+      getSearchConfig: vi.fn(() => ({})),
+      getUtilityApi: vi.fn(() => ({})),
+      getSidebarUiPrefs: vi.fn(() => sidebarUi),
+      setSidebarUiPrefs: vi.fn((patch) => {
+        sidebarUi = mergeSidebarUiPrefs(sidebarUi || {}, patch);
+        return sidebarUi;
+      }),
+    };
+    const app = makeApp(engine);
+
+    const putRes = await app.request("/api/preferences/sidebar-ui", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionList: { rowMode: "single-line" },
+      }),
+    });
+    const putBody = await putRes.json();
+
+    expect(putRes.status).toBe(200);
+    expect(engine.setSidebarUiPrefs).toHaveBeenCalledWith({
+      sessionList: { rowMode: "single-line" },
+    });
+    expect(putBody.sidebarUi).toEqual({
+      projectView: {
+        collapsedProjectIds: ["project-a"],
+        collapsedFolderIds: ["folder-a"],
+        showAllProjectIds: ["project-b"],
+      },
+      sessionList: { rowMode: "single-line" },
+    });
   });
 
   it("separates workspace UI state by requested surface", async () => {

@@ -38,6 +38,11 @@ import {
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import { renderMarkdown } from '../utils/markdown';
 import { cwdFromAutoProjectId } from '../../../../shared/session-projects.ts';
+import {
+  normalizeSidebarUiPrefs,
+  type SidebarSessionListRowMode,
+  type SidebarUiPrefs,
+} from '../../../../shared/sidebar-ui-state.ts';
 import { FolderIcon } from './shared/FolderIcon';
 import styles from './SessionList.module.css';
 
@@ -154,35 +159,11 @@ function readInitialSessionViewMode(): SessionViewMode {
   }
 }
 
-function uniqueStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const item of value) {
-    if (typeof item !== 'string') continue;
-    const id = item.trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    out.push(id);
-  }
-  return out;
-}
-
-function normalizeSidebarProjectViewPrefs(data: unknown): SidebarProjectViewPrefs {
+function normalizeSidebarUiResponse(data: unknown): SidebarUiPrefs {
   const raw = data && typeof data === 'object' && !Array.isArray(data)
-    ? (data as { sidebarUi?: unknown; projectView?: unknown })
+    ? (data as { sidebarUi?: unknown })
     : {};
-  const sidebarUi = raw.sidebarUi && typeof raw.sidebarUi === 'object' && !Array.isArray(raw.sidebarUi)
-    ? raw.sidebarUi as { projectView?: unknown }
-    : raw;
-  const projectView = sidebarUi.projectView && typeof sidebarUi.projectView === 'object' && !Array.isArray(sidebarUi.projectView)
-    ? sidebarUi.projectView as Partial<SidebarProjectViewPrefs>
-    : {};
-  return {
-    collapsedProjectIds: uniqueStringArray(projectView.collapsedProjectIds),
-    collapsedFolderIds: uniqueStringArray(projectView.collapsedFolderIds),
-    showAllProjectIds: uniqueStringArray(projectView.showAllProjectIds),
-  };
+  return normalizeSidebarUiPrefs(raw.sidebarUi || data);
 }
 
 function sidebarProjectViewPayload(
@@ -237,6 +218,7 @@ function SessionListInner() {
 
   const [browserSessions, setBrowserSessions] = useState<Record<string, BrowserSessionState>>({});
   const [viewMode, setViewModeState] = useState<SessionViewMode>(readInitialSessionViewMode);
+  const [sessionListRowMode, setSessionListRowMode] = useState<SidebarSessionListRowMode>('two-line');
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set());
   const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(() => new Set());
   const [showAllProjectIds, setShowAllProjectIds] = useState<Set<string>>(() => new Set());
@@ -356,6 +338,14 @@ function SessionListInner() {
     }).catch(err => console.warn('[sessions] persist sidebar UI prefs failed:', err));
   }, []);
 
+  const applySidebarUiPrefs = useCallback((data: unknown) => {
+    const prefs = normalizeSidebarUiResponse(data);
+    setCollapsedProjectIds(new Set(prefs.projectView.collapsedProjectIds));
+    setCollapsedFolderIds(new Set(prefs.projectView.collapsedFolderIds));
+    setShowAllProjectIds(new Set(prefs.projectView.showAllProjectIds));
+    setSessionListRowMode(prefs.sessionList.rowMode);
+  }, []);
+
   useEffect(() => {
     if (viewMode !== 'project') return;
     loadSessionProjectCatalog()
@@ -363,22 +353,38 @@ function SessionListInner() {
   }, [viewMode]);
 
   useEffect(() => {
-    if (viewMode !== 'project') return;
     let cancelled = false;
     hanaFetch('/api/preferences/sidebar-ui')
       .then(res => res.json())
       .then(data => {
         if (cancelled) return;
-        const prefs = normalizeSidebarProjectViewPrefs(data);
-        setCollapsedProjectIds(new Set(prefs.collapsedProjectIds));
-        setCollapsedFolderIds(new Set(prefs.collapsedFolderIds));
-        setShowAllProjectIds(new Set(prefs.showAllProjectIds));
+        applySidebarUiPrefs(data);
       })
       .catch(err => console.warn('[sessions] fetch sidebar UI prefs failed:', err));
     return () => {
       cancelled = true;
     };
-  }, [viewMode]);
+  }, [applySidebarUiPrefs]);
+
+  useEffect(() => {
+    const handleLocalSettings = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (!detail || detail.type !== 'sidebar-ui-changed') return;
+      applySidebarUiPrefs(detail.sidebarUi || detail);
+    };
+    window.addEventListener('hana-settings', handleLocalSettings);
+    const unsubscribe = window.platform?.onSettingsChanged?.((type: string, data: unknown) => {
+      if (type !== 'sidebar-ui-changed') return;
+      const payload = data && typeof data === 'object' && !Array.isArray(data)
+        ? (data as { sidebarUi?: unknown })
+        : {};
+      applySidebarUiPrefs(payload.sidebarUi || data);
+    });
+    return () => {
+      window.removeEventListener('hana-settings', handleLocalSettings);
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [applySidebarUiPrefs]);
 
   useEffect(() => {
     if (!projectNameDialog) return;
@@ -617,6 +623,7 @@ function SessionListInner() {
       hasUnreadOutput={sessionScopedListIncludes(useStore.getState(), unreadOutputSessionPaths, s.path)}
       agents={agents}
       browserState={browserSessions[s.path] || null}
+      rowMode={sessionListRowMode}
       onCloseBrowser={handleCloseBrowserSession}
       draggable={options.draggable === true && s.agentDeleted !== true}
       onDragStart={handleSessionDragStart}
@@ -1476,7 +1483,7 @@ const SessionSearchItem = memo(function SessionSearchItem({
 
 // ── Session Item ──
 
-const SessionItem = memo(function SessionItem({ session: s, isActive, isStreaming, isPinned, hasUnreadOutput, agents, browserState, onCloseBrowser, draggable = false, onDragStart, onDragEnd }: {
+const SessionItem = memo(function SessionItem({ session: s, isActive, isStreaming, isPinned, hasUnreadOutput, agents, browserState, rowMode, onCloseBrowser, draggable = false, onDragStart, onDragEnd }: {
   session: Session;
   isActive: boolean;
   isStreaming: boolean;
@@ -1484,6 +1491,7 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isStreamin
   hasUnreadOutput: boolean;
   agents: Agent[];
   browserState: BrowserSessionState | null;
+  rowMode: SidebarSessionListRowMode;
   onCloseBrowser: (sessionPath: string) => void;
   draggable?: boolean;
   onDragStart?: (event: React.DragEvent, session: Session) => void;
@@ -1567,6 +1575,10 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isStreamin
   const hasStatusSlot = !!browserUrl;
   const showStatusDot = isStreaming || hasUnreadOutput;
   const statusDotState = isStreaming ? 'running' : 'unread';
+  const isSingleLine = rowMode === 'single-line';
+  const displayTitle = s.title || s.firstMessage || t('session.untitled');
+  const metaText = parts.join(' · ');
+  const itemTitle = [displayTitle, metaText, rcLabel].filter(Boolean).join('\n');
   const browserTitle = [
     browserUrl,
     browserState?.unavailableReason,
@@ -1587,9 +1599,11 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isStreamin
   return (
     <>
       <button
-        className={`${styles.sessionItem}${isActive ? ` ${styles.sessionItemActive}` : ''}${isDeletedAgentSession ? ` ${styles.sessionItemReadOnly}` : ''}`}
+        className={`${styles.sessionItem}${isSingleLine ? ` ${styles.sessionItemSingleLine}` : ''}${isActive ? ` ${styles.sessionItemActive}` : ''}${isDeletedAgentSession ? ` ${styles.sessionItemReadOnly}` : ''}`}
         data-session-path={s.path}
+        data-row-mode={rowMode}
         data-unread-output={hasUnreadOutput ? 'true' : 'false'}
+        title={itemTitle}
         draggable={draggable && !editing && !isDeletedAgentSession}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
@@ -1620,7 +1634,7 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isStreamin
             />
           ) : (
             <div className={styles.sessionItemTitle}>
-              {s.title || s.firstMessage || t('session.untitled')}
+              {displayTitle}
             </div>
           )}
           {hasStatusSlot && (
@@ -1642,29 +1656,36 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isStreamin
               )}
             </div>
           )}
+          {isSingleLine && rcLabel && (
+            <div className={styles.sessionRcBadgeInline}>
+              {rcLabel}
+            </div>
+          )}
+          {!isDeletedAgentSession && (
+            <div className={styles.sessionItemActions} data-session-actions="">
+              {!editing && (
+                <div className={styles.sessionPinBtn} title={t(isPinned ? 'session.unpin' : 'session.pin')} onClick={handlePin}>
+                  <PinIcon />
+                </div>
+              )}
+              <div className={styles.sessionArchiveBtn} title={t('session.archive')} onClick={handleArchive}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="21 8 21 21 3 21 3 8" />
+                  <rect x="1" y="3" width="22" height="5" />
+                  <line x1="10" y1="12" x2="14" y2="12" />
+                </svg>
+              </div>
+            </div>
+          )}
         </div>
 
-        {!editing && !isDeletedAgentSession && (
-          <div className={styles.sessionPinBtn} title={t(isPinned ? 'session.unpin' : 'session.pin')} onClick={handlePin}>
-            <PinIcon />
+        {!isSingleLine && (
+          <div className={styles.sessionItemMeta}>
+            {metaText}
           </div>
         )}
 
-        {!isDeletedAgentSession && (
-          <div className={styles.sessionArchiveBtn} title={t('session.archive')} onClick={handleArchive}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="21 8 21 21 3 21 3 8" />
-              <rect x="1" y="3" width="22" height="5" />
-              <line x1="10" y1="12" x2="14" y2="12" />
-            </svg>
-          </div>
-        )}
-
-        <div className={styles.sessionItemMeta}>
-          {parts.join(' · ')}
-        </div>
-
-        {rcLabel && (
+        {!isSingleLine && rcLabel && (
           <div className={styles.sessionRcBadge}>
             {rcLabel}
           </div>

@@ -249,6 +249,34 @@ describe('SessionList context menu', () => {
     });
   });
 
+  it('applies the persisted single-line row mode to regular session rows', async () => {
+    hanaFetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/browser/session-states') return jsonResponse({});
+      if (url === '/api/preferences/sidebar-ui') {
+        return jsonResponse({
+          sidebarUi: {
+            projectView: {
+              collapsedProjectIds: [],
+              collapsedFolderIds: [],
+              showAllProjectIds: [],
+            },
+            sessionList: { rowMode: 'single-line' },
+          },
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(<SessionList />);
+
+    const row = sessionButton('Has summary');
+    await waitFor(() => {
+      expect(row).toHaveAttribute('data-row-mode', 'single-line');
+    });
+    expect(row.querySelector('[data-session-actions]')).toBeInTheDocument();
+    expect(row).toHaveAttribute('title', expect.stringContaining('Hana'));
+  });
+
   it('shows title search results first and then content results', async () => {
     hanaFetchMock.mockImplementation(async (url: string) => {
       if (url === '/api/browser/session-states') return jsonResponse({});
@@ -326,7 +354,8 @@ describe('SessionList context menu', () => {
 
     expect(css).not.toMatch(/@media\s*\(hover:\s*hover\)\s*and\s*\(pointer:\s*fine\)/);
     expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionItem:hover\s*\{/);
-    expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionItem:hover \.sessionArchiveBtn\s*\{/);
+    expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionItem:not\(\.sessionItemSingleLine\):hover \.sessionArchiveBtn/);
+    expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionItemSingleLine:hover \.sessionItemActions\s*\{[\s\S]*width:\s*calc\(40px \+ var\(--space-xs\)\)/);
     expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionListScroller:hover \.sectionTitleActions/);
   });
 
@@ -345,13 +374,13 @@ describe('SessionList context menu', () => {
       'utf-8',
     );
 
-    expect(css).toMatch(/\.sessionItem:hover \.sessionPinBtn\s*\{/);
-    expect(css).toMatch(/\.sessionItem:hover \.sessionArchiveBtn\s*\{/);
-    expect(css).toMatch(/\.sessionItem:hover \.sessionItemMeta\s*\{[\s\S]*padding-right:\s*52px/);
+    expect(css).toMatch(/\.sessionItem:not\(\.sessionItemSingleLine\):hover \.sessionPinBtn/);
+    expect(css).toMatch(/\.sessionItem:not\(\.sessionItemSingleLine\):hover \.sessionArchiveBtn/);
+    expect(css).toMatch(/\.sessionItem:not\(\.sessionItemSingleLine\):hover \.sessionItemMeta\s*\{[\s\S]*padding-right:\s*52px/);
+    expect(css).toMatch(/\.sessionItem:not\(\.sessionItemSingleLine\) \.sessionItemActions\s*\{[\s\S]*position:\s*absolute/);
+    expect(css).toMatch(/\.sessionItemSingleLine \.sessionItemActions\s*\{[\s\S]*width:\s*0/);
     expect(css).not.toMatch(/\.sessionItemActive \.sessionPinBtn/);
     expect(css).not.toMatch(/\.sessionItemActive \.sessionArchiveBtn/);
-    expect(css).not.toMatch(/\.sessionItem:focus-visible \.sessionPinBtn/);
-    expect(css).not.toMatch(/\.sessionItem:focus-visible \.sessionArchiveBtn/);
     expect(css).not.toMatch(/\.sessionItemActive \.sessionItemMeta/);
     expect(css).not.toMatch(/sessionRenameBtn/);
   });

@@ -182,29 +182,33 @@ export function BridgeTab() {
           { key: 'clientId', label: t('settings.bridge.dingtalkClientId'), type: 'text', value: b.dtClientId, onChange: b.setDtClientId },
           { key: 'clientSecret', label: t('settings.bridge.dingtalkClientSecret'), type: 'secret', value: b.dtClientSecret, onChange: b.setDtClientSecret },
           { key: 'robotCode', label: t('settings.bridge.dingtalkRobotCode'), type: 'text', value: b.dtRobotCode, onChange: b.setDtRobotCode },
+          { key: 'restBaseUrl', label: t('settings.bridge.dingtalkRestBaseUrl'), type: 'text', value: b.dtRestBaseUrl, onChange: b.setDtRestBaseUrl },
         ]}
         onToggle={async (on) => {
-          if (on && (!b.dtClientId.trim() || !b.dtClientSecret.trim() || !b.dtRobotCode.trim())) { b.showToast(t('settings.bridge.noDingtalkCredentials'), 'error'); return; }
+          if (on && (!b.dtClientId.trim() || !b.dtClientSecret.trim() || !b.dtRobotCode.trim() || !b.dtRestBaseUrl.trim())) { b.showToast(t('settings.bridge.noDingtalkCredentials'), 'error'); return; }
           await b.saveBridgeConfig('dingtalk', {
             clientId: b.dtClientId.trim(),
             clientSecret: b.dtClientSecret.trim(),
             robotCode: b.dtRobotCode.trim(),
+            restBaseUrl: b.dtRestBaseUrl.trim(),
           }, on);
         }}
         onTest={() => {
-          if (!b.dtClientId.trim() || !b.dtClientSecret.trim() || !b.dtRobotCode.trim()) { b.showToast(t('settings.bridge.noDingtalkCredentials'), 'error'); return; }
+          if (!b.dtClientId.trim() || !b.dtClientSecret.trim() || !b.dtRobotCode.trim() || !b.dtRestBaseUrl.trim()) { b.showToast(t('settings.bridge.noDingtalkCredentials'), 'error'); return; }
           b.testPlatform('dingtalk', {
             clientId: b.dtClientId.trim(),
             clientSecret: b.dtClientSecret.trim(),
             robotCode: b.dtRobotCode.trim(),
+            restBaseUrl: b.dtRestBaseUrl.trim(),
           });
         }}
         onCredentialBlur={async () => {
-          if (b.dtClientId.trim() && b.dtClientSecret.trim() && b.dtRobotCode.trim())
+          if (b.dtClientId.trim() && b.dtClientSecret.trim() && b.dtRobotCode.trim() && b.dtRestBaseUrl.trim())
             await b.saveBridgeConfig('dingtalk', {
               clientId: b.dtClientId.trim(),
               clientSecret: b.dtClientSecret.trim(),
               robotCode: b.dtRobotCode.trim(),
+              restBaseUrl: b.dtRestBaseUrl.trim(),
             }, undefined);
         }}
         testing={b.testingPlatform === 'dingtalk'}

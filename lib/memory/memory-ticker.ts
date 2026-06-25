@@ -33,12 +33,16 @@ import { writeCacheSnapshotObservation } from "./cache-snapshot-observation.ts";
 import { runMemoryReflection as defaultRunMemoryReflection } from "./memory-reflection-runner.ts";
 import { validateRollingSummaryFormat } from "./rolling-summary-format.ts";
 import { CACHE_STRATEGIES } from "../llm/cache-strategy-contract.ts";
+import { atomicWriteSync } from "../../shared/safe-fs.ts";
 
 const log = createModuleLogger("memory-ticker");
 
 const TURNS_PER_SUMMARY = 10;   // 每隔多少轮触发一次滚动摘要
 const CACHE_SNAPSHOT_REFLECTION_MODES = new Set(["shadow", "write"]);
 const CACHE_SNAPSHOT_PREVIEW_LIMIT = 16_000;
+const DAILY_STATE_FILE = "daily-state.json";
+const DAILY_STATE_SCHEMA_VERSION = 1;
+const DAILY_STEP_KEYS = ["compileToday", "compileWeek", "compileLongterm", "compileFacts", "deepMemory"];
 
 // ── 主调度器 ──
 
@@ -155,7 +159,10 @@ export function createMemoryTicker(opts) {
   let _dailyRunning = false;
   let _lastDailyJobDate = null;
   let _dailyStepsDate = null;               // 当天已完成步骤所属日期
+  let _dailyStepsContextKey = null;          // 日期 + resetAt + factsMode，防止同日配置变更误跳过
+  let _dailyCompletedAt = null;
   const _dailyStepsCompleted = new Set();    // 当天已完成的步骤名（断点续跑）
+  const _dailyStepCompletedAt = new Map();   // stepName → ISO timestamp
   const _turnCounts = new Map();             // stable session identity → turn count
   const _summaryInProgress = new Set();      // 正在跑滚动摘要的 session
 
@@ -212,6 +219,144 @@ export function createMemoryTicker(opts) {
       _activeJobs.delete(promise);
     });
     return promise;
+  }
+
+  // ── 每日任务状态持久化：进程重启后继续跳过已完成的 expensive steps ──
+
+  function _dailyStatePath() {
+    return path.join(memoryDir, DAILY_STATE_FILE);
+  }
+
+  function _normalizeResetAt(value) {
+    if (!value || Number.isNaN(Date.parse(value))) return null;
+    return new Date(value).toISOString();
+  }
+
+  function _dailyFactsMode() {
+    return _isEditableMemoryOn() ? "editable" : "legacy";
+  }
+
+  function _dailyContext(logicalDate = getLogicalDay().logicalDate) {
+    return {
+      logicalDate,
+      resetAt: _normalizeResetAt(_getCompiledResetAt()),
+      factsMode: _dailyFactsMode(),
+    };
+  }
+
+  function _dailyContextKey(context) {
+    return [context.logicalDate, context.resetAt || "", context.factsMode].join("\n");
+  }
+
+  function _isValidIso(value) {
+    return typeof value === "string" && value.length > 0 && !Number.isNaN(Date.parse(value));
+  }
+
+  function _readDailyState() {
+    try {
+      const raw = JSON.parse(fs.readFileSync(_dailyStatePath(), "utf-8"));
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+      if (raw.schemaVersion !== DAILY_STATE_SCHEMA_VERSION) return null;
+      const completedSteps = raw.completedSteps && typeof raw.completedSteps === "object" && !Array.isArray(raw.completedSteps)
+        ? raw.completedSteps
+        : {};
+      return {
+        logicalDate: typeof raw.logicalDate === "string" ? raw.logicalDate : "",
+        resetAt: _normalizeResetAt(raw.resetAt),
+        factsMode: raw.factsMode === "editable" ? "editable" : "legacy",
+        completedSteps,
+        dailyCompletedAt: _isValidIso(raw.dailyCompletedAt) ? new Date(raw.dailyCompletedAt).toISOString() : null,
+      };
+    } catch (err) {
+      if (err?.code !== "ENOENT") {
+        debugLog()?.error("memory", `daily state read failed: ${err?.message || err}`);
+      }
+      return null;
+    }
+  }
+
+  function _stateMatchesContext(state, context) {
+    return Boolean(state)
+      && state.logicalDate === context.logicalDate
+      && state.resetAt === context.resetAt
+      && state.factsMode === context.factsMode;
+  }
+
+  function _allDailyStepsCompleted() {
+    return DAILY_STEP_KEYS.every((stepKey) => _dailyStepsCompleted.has(stepKey));
+  }
+
+  function _resetDailyProgressForContext(context) {
+    _dailyStepsCompleted.clear();
+    _dailyStepCompletedAt.clear();
+    _dailyCompletedAt = null;
+    _dailyStepsDate = context.logicalDate;
+    _dailyStepsContextKey = _dailyContextKey(context);
+    if (_lastDailyJobDate === context.logicalDate) _lastDailyJobDate = null;
+  }
+
+  function _restoreDailyProgress(context = _dailyContext()) {
+    const contextKey = _dailyContextKey(context);
+    if (_dailyStepsContextKey !== contextKey) {
+      _resetDailyProgressForContext(context);
+    }
+
+    const state = _readDailyState();
+    if (!_stateMatchesContext(state, context)) {
+      return context;
+    }
+
+    for (const stepKey of DAILY_STEP_KEYS) {
+      const completedAt = state.completedSteps?.[stepKey];
+      if (!_isValidIso(completedAt)) continue;
+      _dailyStepsCompleted.add(stepKey);
+      _dailyStepCompletedAt.set(stepKey, new Date(completedAt).toISOString());
+    }
+    _dailyCompletedAt = state.dailyCompletedAt;
+    _dailyStepsDate = context.logicalDate;
+    _dailyStepsContextKey = contextKey;
+    if (_dailyCompletedAt && _allDailyStepsCompleted()) {
+      _lastDailyJobDate = context.logicalDate;
+    }
+    return context;
+  }
+
+  function _writeDailyState(context) {
+    const completedSteps = {};
+    for (const stepKey of DAILY_STEP_KEYS) {
+      const completedAt = _dailyStepCompletedAt.get(stepKey);
+      if (completedAt) completedSteps[stepKey] = completedAt;
+    }
+    const state = {
+      schemaVersion: DAILY_STATE_SCHEMA_VERSION,
+      logicalDate: context.logicalDate,
+      resetAt: context.resetAt,
+      factsMode: context.factsMode,
+      completedSteps,
+      dailyCompletedAt: _dailyCompletedAt,
+      updatedAt: new Date().toISOString(),
+    };
+    fs.mkdirSync(memoryDir, { recursive: true });
+    atomicWriteSync(_dailyStatePath(), JSON.stringify(state, null, 2) + "\n");
+  }
+
+  function _markDailyStepCompleted(stepKey, context) {
+    _dailyStepsCompleted.add(stepKey);
+    _dailyStepCompletedAt.set(stepKey, new Date().toISOString());
+    try {
+      _writeDailyState(context);
+    } catch (err) {
+      debugLog()?.error("memory", `daily state write failed after ${stepKey}: ${err?.message || err}`);
+    }
+  }
+
+  function _clearPersistedDailyProgress(context, reason) {
+    _resetDailyProgressForContext(context);
+    try {
+      _writeDailyState(context);
+    } catch (err) {
+      debugLog()?.error("memory", `daily state clear failed (${reason}): ${err?.message || err}`);
+    }
   }
 
   // ── 内部：滚动摘要 ──
@@ -545,13 +690,8 @@ export function createMemoryTicker(opts) {
     _dailyRunning = true;
     try {
       const todayStr = getLogicalDay().logicalDate;
-      const resetAt = _getCompiledResetAt();
-
-      // 日期变化时重置步骤跟踪
-      if (_dailyStepsDate !== todayStr) {
-        _dailyStepsCompleted.clear();
-        _dailyStepsDate = todayStr;
-      }
+      const context = _restoreDailyProgress(_dailyContext(todayStr));
+      const resetAt = context.resetAt;
 
       log.log(`每日任务开始 (${todayStr})`);
       let hasFailed = false;
@@ -560,7 +700,7 @@ export function createMemoryTicker(opts) {
       if (!_dailyStepsCompleted.has("compileToday")) {
         try {
           await compileToday(summaryManager, todayMdPath, getResolvedMemoryModel(), { since: resetAt });
-          _dailyStepsCompleted.add("compileToday");
+          _markDailyStepCompleted("compileToday", context);
           _markSuccess("compileToday");
           _markStepRecovered("compileToday(daily)");
         } catch (err) {
@@ -574,7 +714,7 @@ export function createMemoryTicker(opts) {
       if (!_dailyStepsCompleted.has("compileWeek")) {
         try {
           await compileWeek(summaryManager, weekMdPath, getResolvedMemoryModel(), { since: resetAt });
-          _dailyStepsCompleted.add("compileWeek");
+          _markDailyStepCompleted("compileWeek", context);
           _markSuccess("compileWeek");
           _markStepRecovered("compileWeek");
         } catch (err) {
@@ -588,7 +728,7 @@ export function createMemoryTicker(opts) {
       if (!_dailyStepsCompleted.has("compileLongterm") && _dailyStepsCompleted.has("compileWeek")) {
         try {
           await compileLongterm(weekMdPath, longtermMdPath, getResolvedMemoryModel());
-          _dailyStepsCompleted.add("compileLongterm");
+          _markDailyStepCompleted("compileLongterm", context);
           _markSuccess("compileLongterm");
           _markStepRecovered("compileLongterm");
         } catch (err) {
@@ -609,7 +749,7 @@ export function createMemoryTicker(opts) {
           } else {
             await compileFacts(summaryManager, factsMdPath, getResolvedMemoryModel(), { since: resetAt });
           }
-          _dailyStepsCompleted.add("compileFacts");
+          _markDailyStepCompleted("compileFacts", context);
           _markSuccess("compileFacts");
           _markStepRecovered("compileFacts");
         } catch (err) {
@@ -638,7 +778,7 @@ export function createMemoryTicker(opts) {
               getSourceTimeRange: _createSourceTimeRangeResolver(),
             },
           );
-          _dailyStepsCompleted.add("deepMemory");
+          _markDailyStepCompleted("deepMemory", context);
           if (processed > 0) {
             log.log(`deep-memory: ${processed} session, ${factsAdded} 条新事实`);
           }
@@ -657,6 +797,12 @@ export function createMemoryTicker(opts) {
         debugLog()?.error("memory", `daily job partial failure, completed: [${done}]`);
       } else {
         _lastDailyJobDate = todayStr;
+        _dailyCompletedAt = new Date().toISOString();
+        try {
+          _writeDailyState(context);
+        } catch (err) {
+          debugLog()?.error("memory", `daily state final write failed: ${err?.message || err}`);
+        }
         log.log(`每日任务完成`);
       }
     } finally {
@@ -667,8 +813,8 @@ export function createMemoryTicker(opts) {
   function _checkDailyJob() {
     if (_stopped) return;
     if (!_isMemoryMasterOn()) return;
-    const todayStr = getLogicalDay().logicalDate;
-    if (_lastDailyJobDate !== todayStr) {
+    const context = _restoreDailyProgress();
+    if (_lastDailyJobDate !== context.logicalDate) {
       _trackJob(_doDaily()); // 后台，不 await
     }
   }
@@ -764,6 +910,7 @@ export function createMemoryTicker(opts) {
     const resetAt = _getCompiledResetAt();
     const resetMs = resetAt ? Date.parse(resetAt) : null;
     const sessions = listSessionFiles(sessionDir);
+    let recovered = 0;
     for (const { filePath, mtime } of sessions) {
       if (mtime.getTime() < cutoff) continue;
       if (resetMs && mtime.getTime() <= resetMs) continue;
@@ -774,8 +921,10 @@ export function createMemoryTicker(opts) {
       const summaryAt = resetMs ? Math.max(existingSummaryAt, resetMs) : existingSummaryAt;
       if (mtime.getTime() > summaryAt + 5000) { // 5s 宽限，避免极近时间戳误判
         await _doRollingSummary(filePath, "recovery");
+        recovered += 1;
       }
     }
+    return recovered;
   }
 
   /**
@@ -791,9 +940,13 @@ export function createMemoryTicker(opts) {
 
   async function _tickCore() {
     if (!_isMemoryMasterOn()) return;
-    await _recoverUnsummarized(); // 补偿崩溃/重启前未收尾的 session
-    const todayStr = getLogicalDay().logicalDate;
-    if (_lastDailyJobDate !== todayStr) {
+    const recovered = await _recoverUnsummarized(); // 补偿崩溃/重启前未收尾的 session
+    let context = _restoreDailyProgress();
+    if (recovered > 0) {
+      _clearPersistedDailyProgress(context, "summary recovery");
+      context = _dailyContext(context.logicalDate);
+    }
+    if (_lastDailyJobDate !== context.logicalDate) {
       await _doDaily(); // 启动时 await，确保中间文件就绪后再 assemble
     }
     await _doCompileTodayAndAssemble();

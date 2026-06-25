@@ -21,6 +21,11 @@ function cloneData<T>(value: T): T {
   return structuredClone(value);
 }
 
+function readJsonTextWithoutBom(filePath: string) {
+  const raw = fs.readFileSync(filePath, "utf-8");
+  return raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
+}
+
 function normalizeDeletedProviders(value: any): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(
@@ -174,7 +179,7 @@ export class ProviderCatalogStore {
   _readExistingCatalog() {
     let parsed: any = null;
     try {
-      parsed = JSON.parse(fs.readFileSync(this.catalogPath, "utf-8"));
+      parsed = JSON.parse(readJsonTextWithoutBom(this.catalogPath));
     } catch (err: any) {
       if (err?.code === "ENOENT") return null;
       throw err;

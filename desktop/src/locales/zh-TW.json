@@ -988,6 +988,9 @@
       "system": "系統",
       "hardwareAcceleration": "硬體加速",
       "hardwareAccelerationHint": "使用顯示卡繪製視窗內容。關閉後會在下次啟動使用軟體渲染，可用於恢復 Windows 顯示卡驅動導致的啟動閃退。",
+      "sidebar": "側邊欄",
+      "sessionListSingleLine": "會話列表單行顯示",
+      "sessionListSingleLineHint": "開啟後，每條會話只佔一行；滑鼠懸停時右側按鈕出現，標題自動縮短並顯示省略號。",
       "shortcuts": "快捷鍵",
       "voiceRecordingShortcut": "語音錄製/傳送",
       "voiceRecordingShortcutHint": "主聊天頁面聚焦時，按一次開始錄音，再按一次結束並傳送。"
@@ -1810,7 +1813,8 @@
       "dingtalkClientId": "Client ID / AppKey",
       "dingtalkClientSecret": "Client Secret / AppSecret",
       "dingtalkRobotCode": "Robot Code",
-      "dingtalkHint": "從釘釘開放平台的企業內部應用和應用機器人取得；使用 Stream 長連線，不需要本機回呼 URL",
+      "dingtalkRestBaseUrl": "REST Base URL",
+      "dingtalkHint": "企業內部應用憑證用於 token/Stream；Robot Code 用於企業機器人發送；REST Base URL 預設 https://api.dingtalk.io/v1.0",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",
@@ -1839,7 +1843,7 @@
       "testFail": "測試失敗",
       "noToken": "請先輸入 Bot Token",
       "noCredentials": "請先填寫 App ID 和 App Secret",
-      "noDingtalkCredentials": "請先填寫 Client ID、Client Secret 和 Robot Code",
+      "noDingtalkCredentials": "請先填寫 Client ID、Client Secret、Robot Code 和 REST Base URL",
       "globalSettings": "全域設定",
       "agentSettings": "角色",
       "permissionMode": "權限模式",
@@ -1886,7 +1890,8 @@
         "建立「企業內部應用」，在應用憑證中複製 <code>Client ID/AppKey</code> 和 <code>Client Secret/AppSecret</code>",
         "新增「應用機器人」能力，複製機器人詳情裡的 <code>Robot Code</code>",
         "確認應用已開通機器人收發訊息所需權限，並發布到企業可用範圍",
-        "將 Client ID、Client Secret 和 Robot Code 貼到上方輸入框，測試通過後打開開關即可"
+        "REST Base URL 保持預設 <code>https://api.dingtalk.io/v1.0</code>，除非你明確要接入釘釘相容閘道",
+        "將 Client ID、Client Secret、Robot Code 和 REST Base URL 貼到上方輸入框，測試通過後打開開關即可"
       ],
       "whatsappHint": "即將支援"
     }

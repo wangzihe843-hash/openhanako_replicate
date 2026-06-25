@@ -607,6 +607,29 @@ describe("BrowserManager multi-instance", () => {
     expect(manager.getTabs(SP1).map(tab => tab.tabId)).toEqual(["tab-blank", "tab-page"]);
   });
 
+  it("resumeForSessionIfAvailable returns a typed skip when no browser host is connected", async () => {
+    const manager = new BrowserManager();
+    manager._transport = { connected: false };
+    manager._loadColdState = vi.fn().mockReturnValue({
+      [SP1]: {
+        activeTabId: "tab-page",
+        tabs: [{ tabId: "tab-page", title: "Page", url: "https://cold.example.com" }],
+      },
+    });
+    manager._sendCmd = vi.fn();
+
+    const result = await manager.resumeForSessionIfAvailable(SP1);
+
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: "browser_host_unavailable",
+      hostConnected: false,
+      hasResumeState: true,
+      url: "https://cold.example.com",
+    });
+    expect(manager._sendCmd).not.toHaveBeenCalled();
+  });
+
   it("hasAnyRunning returns true when at least one session is running", async () => {
     const manager = new BrowserManager();
     manager._sendCmd = vi.fn().mockResolvedValue({});

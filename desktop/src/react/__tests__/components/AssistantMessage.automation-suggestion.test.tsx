@@ -16,7 +16,7 @@ vi.mock('../../utils/screenshot', () => ({
   takeScreenshot: vi.fn(),
 }));
 
-function renderSuggestion(status = 'approved') {
+function renderSuggestion(status = 'approved', jobDataOverrides: Record<string, unknown> = {}) {
   return render(
     <AssistantMessage
       showAvatar={false}
@@ -42,6 +42,7 @@ function renderSuggestion(status = 'approved') {
               label: '奶茶提醒',
               prompt: '提醒我喝奶茶',
               actorAgentId: 'hanako',
+              ...jobDataOverrides,
             },
           },
         }],
@@ -123,6 +124,25 @@ describe('AssistantMessage automation suggestion card', () => {
       expect(body.actorAgentId).toBe('maomao');
       expect(body.executor.agentId).toBe('maomao');
       expect(body.executionContext.cwd).toBe('/home/maomao');
+    });
+  });
+
+  it('submits every suggestion schedules as milliseconds', async () => {
+    renderSuggestion('pending', {
+      type: 'every',
+      schedule: 7_200_000,
+      label: '双小时提醒',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'automation.openDraft' }));
+    fireEvent.click(screen.getByRole('button', { name: 'automation.confirmCreate' }));
+
+    await waitFor(() => {
+      const deskCronCall = vi.mocked(hanaFetch).mock.calls.find(([url]) => url === '/api/desk/cron');
+      expect(deskCronCall).toBeTruthy();
+      const body = JSON.parse((deskCronCall?.[1] as RequestInit).body as string);
+      expect(body.type).toBe('every');
+      expect(body.schedule).toBe(7_200_000);
     });
   });
 });

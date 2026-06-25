@@ -138,6 +138,7 @@ export function migrateLegacyApiKeyAuthToProviders({ hanakoHome, providerRegistr
   const modelsJsonProvidersRaw = readJson(path.join(hanakoHome, "models.json")).providers || {};
   const modelsJsonProviders = isPlainObject(modelsJsonProvidersRaw) ? modelsJsonProvidersRaw : {};
   const providerKeys = new Set([
+    ...Object.keys(providers),
     ...(isPlainObject(auth) ? Object.keys(auth) : []),
     ...Object.keys(modelsJsonProviders),
   ]);
@@ -160,7 +161,6 @@ export function migrateLegacyApiKeyAuthToProviders({ hanakoHome, providerRegistr
       continue;
     }
     const current = isPlainObject(providers[providerId]) ? providers[providerId] : {};
-    if (hasOwn(current, "api_key")) continue;
 
     const modelsJsonProvider = getModelsJsonProvider(
       modelsJsonProviders,
@@ -168,28 +168,46 @@ export function migrateLegacyApiKeyAuthToProviders({ hanakoHome, providerRegistr
       providerKey,
       entry?.authJsonKey,
     );
+    const hasExplicitCatalogApiKey = hasOwn(current, "api_key");
     const projectedApiKey = extractProjectedApiKey(modelsJsonProvider);
-    const apiKey = (
+    const rescuedApiKey = (
       projectedApiKey && !isSyntheticLocalApiKey(projectedApiKey, entry, modelsJsonProvider)
         ? projectedApiKey
         : ""
     ) || getLegacyApiKey(auth, providerId, providerKey, entry?.authJsonKey);
-    if (!apiKey) continue;
+    if (!hasExplicitCatalogApiKey && !rescuedApiKey) continue;
 
-    const next = { ...current, api_key: apiKey };
+    const next = { ...current };
+    let changed = false;
+    if (!hasExplicitCatalogApiKey) {
+      next.api_key = rescuedApiKey;
+      changed = true;
+    }
 
     const baseUrl = current.base_url || modelsJsonProvider?.baseUrl || entry?.baseUrl || "";
-    if (baseUrl && !hasOwn(current, "base_url")) next.base_url = baseUrl;
+    if (baseUrl && !hasOwn(current, "base_url")) {
+      next.base_url = baseUrl;
+      changed = true;
+    }
 
     const api = current.api || modelsJsonProvider?.api || entry?.api || "";
-    if (api && !hasOwn(current, "api")) next.api = api;
+    if (api && !hasOwn(current, "api")) {
+      next.api = api;
+      changed = true;
+    }
 
     if (!hasOwn(current, "models") || !Array.isArray(current.models)) {
       const modelIds = modelIdsFromModelsJsonProvider(modelsJsonProvider);
-      const seededModels = modelIds.length > 0 ? modelIds : defaultModels(providerRegistry, providerId);
+      const seededModels = modelIds.length > 0
+        ? modelIds
+        : (entry?.source?.kind === "local-provider-plugin" ? [] : defaultModels(providerRegistry, providerId));
       const validModels = filterInvalidProviderModels(providerId, seededModels, baseUrl);
-      if (validModels.length > 0) next.models = validModels;
+      if (validModels.length > 0) {
+        next.models = validModels;
+        changed = true;
+      }
     }
+    if (!changed) continue;
 
     providers[providerId] = next;
     migratedProviders.push(providerId);

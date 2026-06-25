@@ -269,6 +269,44 @@ describe("automation tool", () => {
     }));
   });
 
+  it("stores every suggestions in milliseconds before the desktop card applies them", async () => {
+    const store = makeStore();
+    const { store: suggestionStore, created } = makeSuggestionStore("automation_suggestion_every", "7200");
+    const tool = createAutomationTool(store, {
+      automationSuggestionStore: suggestionStore,
+      getAgentId: () => "agent-a",
+      getSessionCwd: () => "/workspace/current",
+      getSessionWorkspaceFolders: () => [],
+      getHomeCwd: (agentId: string) => `/home/${agentId}`,
+    });
+
+    const result = await tool.execute(
+      "call_every",
+      {
+        action: "create",
+        scheduleType: "every",
+        schedule: "120",
+        label: "Two hour reminder",
+        prompt: "remind me every two hours",
+      },
+      undefined,
+      undefined,
+      { sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" } },
+    );
+
+    expect(result.details.jobData).toMatchObject({
+      type: "every",
+      schedule: 7_200_000,
+    });
+
+    await created[0].apply();
+
+    expect(store.addJob).toHaveBeenCalledWith(expect.objectContaining({
+      type: "every",
+      schedule: 7_200_000,
+    }));
+  });
+
   it("updates existing automations only after the update suggestion is applied", async () => {
     const existingJob = {
       id: "studio_job_9",

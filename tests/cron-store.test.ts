@@ -629,6 +629,47 @@ describe("CronStore _load 错误处理", () => {
     expect(store.getJob("job_2").schedule).toBe(120000);
   });
 
+  it("读取旧污染 every schedule 时把重复分钟归一化修回毫秒", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    const intendedMs = 7_200_000;
+    const pollutedMs = intendedMs * 60_000;
+
+    const data = {
+      jobs: [
+        {
+          id: "job_polluted",
+          type: "every",
+          schedule: pollutedMs,
+          prompt: "every two hours",
+          enabled: true,
+          model: "",
+          consecutiveErrors: 0,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          nextRunAt: "2039-09-10T00:00:00.000Z",
+          trigger: { kind: "every", intervalMs: pollutedMs },
+        },
+      ],
+      nextNum: 2,
+    };
+    fs.writeFileSync(jobsPath, JSON.stringify(data), "utf-8");
+
+    const before = Date.now();
+    const store = new CronStore(jobsPath, runsDir);
+    const after = Date.now();
+    const job = store.getJob("job_polluted");
+    const nextRunTime = new Date(job.nextRunAt).getTime();
+
+    expect(job.schedule).toBe(intendedMs);
+    expect(job.trigger.intervalMs).toBe(intendedMs);
+    expect(nextRunTime).toBeGreaterThanOrEqual(before + intendedMs - 1000);
+    expect(nextRunTime).toBeLessThanOrEqual(after + intendedMs + 1000);
+
+    const saved = JSON.parse(fs.readFileSync(jobsPath, "utf-8"));
+    expect(saved.jobs[0].schedule).toBe(intendedMs);
+    expect(saved.jobs[0].trigger.intervalMs).toBe(intendedMs);
+  });
+
   it("多次 listJobs 幂等（清洗后 _save，后续不再重复写）", () => {
     const { jobsPath, runsDir } = makeTmpPaths();
     fs.mkdirSync(path.dirname(jobsPath), { recursive: true });

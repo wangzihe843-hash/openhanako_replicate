@@ -179,6 +179,80 @@ describe("desk cron route", () => {
     expect(data.job.schedule).toBe(7_200_000);
   });
 
+  it("adds every schedules with numeric milliseconds without double-normalizing", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-cron-"));
+    roots.push(root);
+    const service = new StudioCronService({
+      hanakoHome: root,
+      agentsDir: path.join(root, "agents"),
+      getStudioId: () => "studio-main",
+    });
+    const app = await createApp({
+      getAgent: (id) => (id === "agent-a" ? { id, agentName: "Agent A" } : null),
+      getStudioCronStore: () => service,
+      listAgents: () => [],
+    });
+
+    const res = await app.request("/api/desk/cron", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "add",
+        scheduleType: "every",
+        schedule: 7_200_000,
+        prompt: "every two hours",
+        actorAgentId: "agent-a",
+        executionContext: {
+          kind: "session_workspace",
+          cwd: "/workspace/a",
+          workspaceFolders: [],
+          sourceSessionPath: "/sessions/a.jsonl",
+          createdByAgentId: "agent-a",
+        },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.type).toBe("every");
+    expect(data.job.schedule).toBe(7_200_000);
+  });
+
+  it("updates every schedules with numeric milliseconds without double-normalizing", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-cron-"));
+    roots.push(root);
+    const service = new StudioCronService({ hanakoHome: root, agentsDir: path.join(root, "agents"), getStudioId: () => "studio-main" });
+    const job = service.addJob({
+      type: "cron",
+      schedule: "0 9 * * *",
+      prompt: "studio job",
+      actorAgentId: "agent-a",
+      executionContext: {
+        kind: "session_workspace",
+        cwd: "/workspace/a",
+        workspaceFolders: [],
+        sourceSessionPath: "/sessions/a.jsonl",
+        createdByAgentId: "agent-a",
+      },
+    });
+    const app = await createApp({
+      getAgent: (id) => ({ id, agentName: id }),
+      getStudioCronStore: () => service,
+      listAgents: () => [],
+    });
+
+    const res = await app.request("/api/desk/cron", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "update", id: job.id, type: "every", schedule: 7_200_000 }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.type).toBe("every");
+    expect(data.job.schedule).toBe(7_200_000);
+  });
+
   it("adds studio jobs only with explicit actorAgentId and executionContext", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-cron-"));
     roots.push(root);

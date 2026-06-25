@@ -178,6 +178,24 @@
     position: relative;
 }
 
+.sessionItemSingleLine {
+    --session-single-line-track-height: 20px;
+
+    min-height: 30px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+}
+
+.sessionItemSingleLine .sessionItemHeader {
+    height: var(--session-single-line-track-height);
+}
+
+.sessionItemSingleLine .sessionItemTitle,
+.sessionItemSingleLine .sessionRenameInput {
+    height: var(--session-single-line-track-height);
+    line-height: var(--session-single-line-track-height);
+}
+
 @media (any-hover: hover) and (any-pointer: fine) {
     .sessionItem:hover {
         background: var(--accent-light);
@@ -215,7 +233,7 @@
 }
 
 @media (any-hover: hover) and (any-pointer: fine) {
-    .sessionItem:hover .sessionItemMeta {
+    .sessionItem:not(.sessionItemSingleLine):hover .sessionItemMeta {
         padding-right: 52px;
     }
 }
@@ -238,11 +256,50 @@
     text-overflow: ellipsis;
 }
 
+.sessionRcBadgeInline {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 1 auto;
+    max-width: 72px;
+    min-width: 0;
+    padding: 0.12rem 0.34rem;
+    border-radius: 999px;
+    background: rgba(var(--accent-rgb), 0.12);
+    color: var(--accent);
+    font-size: 0.65rem;
+    line-height: 1.2;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* 行内操作按钮 */
-.sessionPinBtn {
+.sessionItemActions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-shrink: 0;
+    gap: var(--space-xs);
+    z-index: 1;
+}
+
+.sessionItem:not(.sessionItemSingleLine) .sessionItemActions {
     position: absolute;
     bottom: 4px;
-    right: 28px;
+    right: 4px;
+}
+
+.sessionItemSingleLine .sessionItemActions {
+    width: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition: width var(--duration-fast) var(--ease-out), opacity var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
+}
+
+.sessionPinBtn,
+.sessionArchiveBtn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -256,24 +313,60 @@
     opacity: 0;
     pointer-events: none;
     transition: opacity var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
-    z-index: 1;
 }
 
-.sessionPinBtn svg {
+.sessionArchiveBtn {
+    color: var(--danger);
+}
+
+.sessionPinBtn svg,
+.sessionArchiveBtn svg {
     pointer-events: none;
 }
 
 @media (any-hover: hover) and (any-pointer: fine) {
-    .sessionItem:hover .sessionPinBtn {
+    .sessionItem:not(.sessionItemSingleLine):hover .sessionPinBtn,
+    .sessionItem:not(.sessionItemSingleLine):hover .sessionArchiveBtn {
         opacity: 0.5;
         pointer-events: auto;
     }
 
-    .sessionPinBtn:hover {
+    .sessionItemSingleLine:hover .sessionItemActions {
+        width: calc(40px + var(--space-xs));
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .sessionItemSingleLine:hover .sessionPinBtn,
+    .sessionItemSingleLine:hover .sessionArchiveBtn {
+        opacity: 0.62;
+        pointer-events: auto;
+    }
+
+    .sessionPinBtn:hover,
+    .sessionItemSingleLine .sessionPinBtn:hover {
         opacity: 1 !important;
         background: var(--accent-light);
         color: var(--accent);
     }
+
+    .sessionArchiveBtn:hover,
+    .sessionItemSingleLine .sessionArchiveBtn:hover {
+        opacity: 1 !important;
+        background: rgba(var(--danger-rgb), 0.08);
+    }
+}
+
+.sessionItemSingleLine:focus-within .sessionItemActions {
+    width: calc(40px + var(--space-xs));
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.sessionItemSingleLine:focus-within .sessionPinBtn,
+.sessionItemSingleLine:focus-within .sessionArchiveBtn {
+    opacity: 0.62;
+    pointer-events: auto;
 }
 
 /* 重命名输入框 */
@@ -298,43 +391,6 @@
 
 :global(.mobile-desktop-root) .sessionItemMeta {
     font-size: 0.72rem;
-}
-
-/* 归档按钮 */
-.sessionArchiveBtn {
-    position: absolute;
-    bottom: 4px;
-    right: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    background: none;
-    border: none;
-    border-radius: 3px;
-    color: var(--danger);
-    cursor: default;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
-    z-index: 1;
-}
-
-.sessionArchiveBtn svg {
-    pointer-events: none;
-}
-
-@media (any-hover: hover) and (any-pointer: fine) {
-    .sessionItem:hover .sessionArchiveBtn {
-        opacity: 0.5;
-        pointer-events: auto;
-    }
-
-    .sessionArchiveBtn:hover {
-        opacity: 1 !important;
-        background: rgba(var(--danger-rgb), 0.08);
-    }
 }
 
 .sessionItemReadOnly .sessionItemTitle {
@@ -421,6 +477,7 @@
     display: flex;
     align-items: center;
     gap: 0.35rem;
+    width: 100%;
     min-width: 0;
     overflow: hidden;
 }

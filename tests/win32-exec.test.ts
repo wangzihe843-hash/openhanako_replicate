@@ -255,6 +255,42 @@ describe("createWin32Exec", () => {
     );
   });
 
+  it("prefers a probed pwsh executable for default Windows shell commands", async () => {
+    classifyWin32Command.mockReturnValue({ runner: "powershell-command", reason: "default-powershell" });
+    const pwshExe = "D:\\PowerShell\\7\\pwsh.exe";
+    spawnSync.mockImplementation((command: any, args: any[]) => {
+      if (command === "where" && args[0] === "pwsh.exe") {
+        return { status: 0, stdout: `${pwshExe}\r\n`, stderr: "" };
+      }
+      if (command === pwshExe) {
+        return { status: 0, stdout: "7\r\n", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "" };
+    });
+    const createWin32Exec = await loadExecFactory();
+    const exec = createWin32Exec();
+
+    await exec("Write-Output 1", "C:\\work", {
+      onData: () => {},
+      signal: undefined,
+      timeout: 5,
+      env: { PATH: "D:\\PowerShell\\7;C:\\Windows\\System32", SystemRoot: "C:\\Windows" },
+    });
+
+    expect(spawnAndStream).toHaveBeenCalledWith(
+      pwshExe,
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Write-Output 1",
+      ],
+      expect.objectContaining({ cwd: "C:\\work" })
+    );
+  });
+
   it("routes batch scripts through cmd call without bash", async () => {
     classifyWin32Command.mockReturnValue({ runner: "cmd-script", reason: "cmd-script-file" });
     const createWin32Exec = await loadExecFactory();

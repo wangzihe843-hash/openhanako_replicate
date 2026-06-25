@@ -988,6 +988,9 @@
       "system": "시스템",
       "hardwareAcceleration": "하드웨어 가속",
       "hardwareAccelerationHint": "GPU로 앱 창을 렌더링합니다. 끄면 다음 실행부터 소프트웨어 렌더링을 사용해 Windows GPU 드라이버로 인한 시작 충돌 복구에 도움이 됩니다.",
+      "sidebar": "사이드바",
+      "sessionListSingleLine": "세션 목록 한 줄 표시",
+      "sessionListSingleLineHint": "켜면 각 세션이 한 줄만 사용해요. 마우스를 올리면 오른쪽 작업 버튼이 나타나고 제목은 말줄임표로 줄어들어요.",
       "shortcuts": "단축키",
       "voiceRecordingShortcut": "음성 녹음/전송",
       "voiceRecordingShortcutHint": "메인 채팅 화면에 포커스가 있을 때 한 번 누르면 녹음을 시작하고, 다시 누르면 종료 후 전송합니다."
@@ -1818,7 +1821,8 @@
       "dingtalkClientId": "Client ID / AppKey",
       "dingtalkClientSecret": "Client Secret / AppSecret",
       "dingtalkRobotCode": "Robot Code",
-      "dingtalkHint": "DingTalk 내부 기업 앱과 앱 로봇에서 받으세요. 이벤트는 Stream long connection으로 받으며 로컬 callback URL은 필요하지 않습니다",
+      "dingtalkRestBaseUrl": "REST Base URL",
+      "dingtalkHint": "내부 앱 자격 증명은 token/Stream에, Robot Code는 기업 로봇 발송에 사용됩니다. REST Base URL 기본값은 https://api.dingtalk.io/v1.0 입니다",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",
@@ -1847,7 +1851,7 @@
       "testFail": "테스트 실패",
       "noToken": "먼저 Bot Token을 입력해 주세요",
       "noCredentials": "먼저 App ID와 App Secret을 입력해 주세요",
-      "noDingtalkCredentials": "먼저 Client ID, Client Secret, Robot Code를 입력해 주세요",
+      "noDingtalkCredentials": "먼저 Client ID, Client Secret, Robot Code, REST Base URL을 입력해 주세요",
       "globalSettings": "전역 설정",
       "agentSettings": "에이전트",
       "permissionMode": "권한 모드",
@@ -1894,7 +1898,8 @@
         "내부 기업 앱을 만들고 앱 자격 증명에서 <code>Client ID/AppKey</code>와 <code>Client Secret/AppSecret</code>을 복사해 주세요",
         "앱 로봇 기능을 추가하고 로봇 상세에서 <code>Robot Code</code>를 복사해 주세요",
         "로봇 메시지 송수신에 필요한 권한을 확인하고 대상 기업 범위에 배포해 주세요",
-        "위 입력란에 Client ID, Client Secret, Robot Code를 붙여넣고 연결 테스트 후 스위치를 켜주세요"
+        "DingTalk 호환 게이트웨이를 명시적으로 쓰는 경우가 아니면 REST Base URL은 <code>https://api.dingtalk.io/v1.0</code> 기본값을 유지해 주세요",
+        "위 입력란에 Client ID, Client Secret, Robot Code, REST Base URL을 붙여넣고 연결 테스트 후 스위치를 켜주세요"
       ],
       "whatsappHint": "곧 지원 예정"
     }

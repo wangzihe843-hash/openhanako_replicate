@@ -4,12 +4,20 @@ export interface SidebarUiProjectViewPrefs {
   showAllProjectIds: string[];
 }
 
+export type SidebarSessionListRowMode = "two-line" | "single-line";
+
+export interface SidebarUiSessionListPrefs {
+  rowMode: SidebarSessionListRowMode;
+}
+
 export interface SidebarUiPrefs {
   projectView: SidebarUiProjectViewPrefs;
+  sessionList: SidebarUiSessionListPrefs;
 }
 
 const MAX_IDS = 256;
 const MAX_ID_LENGTH = 240;
+const DEFAULT_SESSION_LIST_ROW_MODE: SidebarSessionListRowMode = "two-line";
 
 function cleanId(value: unknown): string {
   if (typeof value !== "string") return "";
@@ -31,10 +39,22 @@ function uniqueIds(values: unknown): string[] {
   return out;
 }
 
+function normalizeRowMode(value: unknown): SidebarSessionListRowMode {
+  return value === "single-line" ? "single-line" : DEFAULT_SESSION_LIST_ROW_MODE;
+}
+
+export type SidebarUiPrefsPatch = {
+  projectView?: Partial<SidebarUiProjectViewPrefs>;
+  sessionList?: Partial<SidebarUiSessionListPrefs>;
+};
+
 export function normalizeSidebarUiPrefs(raw: unknown = {}): SidebarUiPrefs {
   const source = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const projectView = source.projectView && typeof source.projectView === "object" && !Array.isArray(source.projectView)
     ? (source.projectView as Record<string, unknown>)
+    : {};
+  const sessionList = source.sessionList && typeof source.sessionList === "object" && !Array.isArray(source.sessionList)
+    ? (source.sessionList as Record<string, unknown>)
     : {};
   return {
     projectView: {
@@ -42,7 +62,43 @@ export function normalizeSidebarUiPrefs(raw: unknown = {}): SidebarUiPrefs {
       collapsedFolderIds: uniqueIds(projectView.collapsedFolderIds),
       showAllProjectIds: uniqueIds(projectView.showAllProjectIds),
     },
+    sessionList: {
+      rowMode: normalizeRowMode(sessionList.rowMode),
+    },
   };
+}
+
+export function normalizeSidebarUiPrefsPatch(raw: unknown = {}): SidebarUiPrefsPatch {
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const patch: SidebarUiPrefsPatch = {};
+  const projectView = source.projectView && typeof source.projectView === "object" && !Array.isArray(source.projectView)
+    ? (source.projectView as Record<string, unknown>)
+    : null;
+  if (projectView) {
+    const nextProjectView: Partial<SidebarUiProjectViewPrefs> = {};
+    for (const key of ["collapsedProjectIds", "collapsedFolderIds", "showAllProjectIds"] as const) {
+      if (Object.prototype.hasOwnProperty.call(projectView, key)) {
+        nextProjectView[key] = uniqueIds(projectView[key]);
+      }
+    }
+    if (Object.keys(nextProjectView).length > 0) {
+      patch.projectView = nextProjectView;
+    }
+  }
+
+  const sessionList = source.sessionList && typeof source.sessionList === "object" && !Array.isArray(source.sessionList)
+    ? (source.sessionList as Record<string, unknown>)
+    : null;
+  if (sessionList && Object.prototype.hasOwnProperty.call(sessionList, "rowMode")) {
+    const rowMode = sessionList.rowMode === "single-line" || sessionList.rowMode === "two-line"
+      ? sessionList.rowMode
+      : null;
+    if (rowMode) {
+      patch.sessionList = { rowMode };
+    }
+  }
+
+  return patch;
 }
 
 export function mergeSidebarUiPrefs(current: unknown = {}, partial: unknown = {}): SidebarUiPrefs {
@@ -57,5 +113,17 @@ export function mergeSidebarUiPrefs(current: unknown = {}, partial: unknown = {}
       nextProjectView[key] = uniqueIds(patchProjectView[key]);
     }
   }
-  return normalizeSidebarUiPrefs({ projectView: nextProjectView });
+  const patchSessionList = patch.sessionList && typeof patch.sessionList === "object" && !Array.isArray(patch.sessionList)
+    ? (patch.sessionList as Record<string, unknown>)
+    : {};
+  const nextSessionList: SidebarUiSessionListPrefs = { ...base.sessionList };
+  if (Object.prototype.hasOwnProperty.call(patchSessionList, "rowMode")) {
+    if (patchSessionList.rowMode === "single-line" || patchSessionList.rowMode === "two-line") {
+      nextSessionList.rowMode = patchSessionList.rowMode;
+    }
+  }
+  return normalizeSidebarUiPrefs({
+    projectView: nextProjectView,
+    sessionList: nextSessionList,
+  });
 }

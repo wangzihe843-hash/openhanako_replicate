@@ -10,7 +10,7 @@ import type { DeskSearchResult } from '../../types';
 
 const mocks = vi.hoisted(() => ({
     loadDeskFiles: vi.fn(async () => {}),
-    loadDeskTreeFiles: vi.fn(async () => {}),
+    loadDeskTreeFiles: vi.fn(async (_subdir?: string, _options?: { force?: boolean }) => true),
     deskCreateFileInSubdir: vi.fn(async () => true),
     deskMkdirInSubdir: vi.fn(async () => true),
     deskMoveTreeFiles: vi.fn(async () => {}),
@@ -69,6 +69,7 @@ describe('DeskSection workspace watching', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    mocks.loadDeskTreeFiles.mockImplementation(async () => true);
     localStorageData = {};
     vi.stubGlobal('localStorage', {
       getItem: vi.fn((key: string) => localStorageData[key] ?? null),
@@ -203,9 +204,31 @@ describe('DeskSection workspace watching', () => {
     } as never);
 
     render(<DeskSection />);
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     expect(mocks.loadDeskTreeFiles).toHaveBeenCalledWith('notes', { force: true });
     expect(useStore.getState().deskDirtyTreePaths).toEqual([]);
+  });
+
+  it('keeps visible dirty tree paths when their background refresh fails', async () => {
+    const { DeskSection } = await import('../../components/DeskSection');
+    mocks.loadDeskTreeFiles.mockImplementation(async (subdir, options) => {
+      return subdir === 'notes' && options?.force === true ? false : true;
+    });
+    useStore.setState({
+      deskDirtyTreePaths: ['notes'],
+      deskExpandedPaths: ['notes'],
+    } as never);
+
+    render(<DeskSection />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mocks.loadDeskTreeFiles).toHaveBeenCalledWith('notes', { force: true });
+    expect(useStore.getState().deskDirtyTreePaths).toEqual(['notes']);
   });
 
   it('renders a single-column tree and expands folders by explicit subdir', async () => {
@@ -813,6 +836,7 @@ describe('DeskSection workspace watching', () => {
       useStore.setState({
         deskExpandedPaths: ['notes', 'archive'],
       } as never);
+      await Promise.resolve();
     });
 
     expect(mocks.loadDeskTreeFiles).toHaveBeenCalledWith('archive', { force: true });

@@ -38,6 +38,7 @@ import {
   normalizeBackslashEscapedDoubleQuotes,
   quoteCmdArg,
   resolveWin32CmdExecutable,
+  resolveWin32DefaultPowerShellExecutable,
   resolveWin32PowerShellExecutable,
   splitShellLikeArgs as splitShellLikeArgsBase,
 } from "../shell/shell-utils.ts";
@@ -772,6 +773,14 @@ function resolvePowerShellExecutable(token, env = process.env) {
   });
 }
 
+function resolveDefaultPowerShellExecutable(env = process.env) {
+  return resolveWin32DefaultPowerShellExecutable(env, {
+    resolveOnPath: (commandName) => firstPathResult(commandName, env),
+    exists: existsSync,
+    spawn: spawnSync,
+  });
+}
+
 function parsePowerShellCommand(command, env) {
   const args = splitShellLikeArgs(command);
   const token = args[0] || "";
@@ -792,14 +801,14 @@ function parsePowerShellFileCommand(command, env) {
     throw new Error(`[win32-exec] Internal error: PowerShell file runner received non-.ps1 command: ${command}`);
   }
   return {
-    executable: resolvePowerShellExecutable("powershell.exe", env),
+    executable: resolveDefaultPowerShellExecutable(env),
     args: [...powerShellBaseArgs(), "-File", script, ...args.slice(1)],
   };
 }
 
 function parseDefaultPowerShellCommand(command, env) {
   return {
-    executable: resolvePowerShellExecutable("powershell.exe", env),
+    executable: resolveDefaultPowerShellExecutable(env),
     args: [...powerShellBaseArgs(), "-Command", normalizeBackslashEscapedDoubleQuotes(command)],
   };
 }

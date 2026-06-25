@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { resolveWin32DefaultPowerShellExecutable } from "../lib/shell/shell-utils.ts";
 import { resolveTerminalShell } from "../lib/terminal/shell-resolver.ts";
 
 describe("resolveTerminalShell", () => {
@@ -16,6 +17,7 @@ describe("resolveTerminalShell", () => {
 
   it("uses PowerShell for Windows interactive terminals", () => {
     const resolveWin32ShellRuntime = vi.fn();
+    const env = { ComSpec: "C:\\Windows\\System32\\cmd.exe" };
 
     // 显式给 SystemRoot，避免 win32SystemRoot 回退到宿主 process.env.SystemRoot
     // —— 在 Windows 上跑 CI 时宿主 SystemRoot 大小写可能是 "C:\WINDOWS"
@@ -28,7 +30,7 @@ describe("resolveTerminalShell", () => {
     });
 
     expect(resolved).toEqual({
-      file: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      file: resolveWin32DefaultPowerShellExecutable(env),
       args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass"],
       env,
     });

@@ -897,6 +897,98 @@ describe("normalizeProviderPayload — 通用层", () => {
     expect(result).not.toHaveProperty("reasoning_effort");
     expect(result).not.toHaveProperty("max_completion_tokens");
   });
+
+  it("OpenCode Go GLM first-turn payload enables thinking without clear_thinking", () => {
+    const payload = {
+      model: "glm-5.2",
+      messages: [{ role: "user", content: "hi" }],
+      reasoning_effort: "high",
+    };
+
+    const result = normalizeProviderPayload(payload, {
+      id: "glm-5.2",
+      provider: "opencode-go",
+      api: "openai-completions",
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      reasoning: true,
+      compat: { thinkingFormat: "zhipu", reasoningProfile: "zhipu-openai" },
+    }, { mode: "chat", reasoningLevel: "high" });
+
+    expect(result.thinking).toEqual({ type: "enabled" });
+    expect(result).not.toHaveProperty("reasoning_effort");
+    expect(payload).not.toHaveProperty("thinking");
+  });
+
+  it("OpenCode Go GLM replay preserves reasoning_content without clear_thinking=false", () => {
+    const payload = {
+      model: "glm-5.2",
+      messages: [
+        { role: "user", content: "需要查天气" },
+        {
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "Need to call the weather tool." }],
+          tool_calls: [{
+            id: "call_1",
+            type: "function",
+            function: { name: "weather", arguments: "{}" },
+          }],
+        },
+        { role: "tool", tool_call_id: "call_1", content: "sunny" },
+        { role: "user", content: "继续" },
+      ],
+      reasoning_effort: "high",
+    };
+
+    const result = normalizeProviderPayload(payload, {
+      id: "glm-5.2",
+      provider: "opencode-go",
+      api: "openai-completions",
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      reasoning: true,
+      compat: { thinkingFormat: "zhipu", reasoningProfile: "zhipu-openai" },
+    }, { mode: "chat", reasoningLevel: "high" });
+
+    expect(result.thinking).toEqual({ type: "enabled" });
+    expect(result.thinking).not.toHaveProperty("clear_thinking");
+    expect(result.messages[1]).toMatchObject({
+      content: "",
+      reasoning_content: "Need to call the weather tool.",
+    });
+    expect(payload.messages[1]).not.toHaveProperty("reasoning_content");
+  });
+
+  it("Zhipu GLM replay still sends clear_thinking=false for preserved thinking", () => {
+    const payload = {
+      model: "glm-5.2",
+      messages: [
+        { role: "user", content: "需要查天气" },
+        {
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "Need to call the weather tool." }],
+          tool_calls: [{
+            id: "call_1",
+            type: "function",
+            function: { name: "weather", arguments: "{}" },
+          }],
+        },
+        { role: "tool", tool_call_id: "call_1", content: "sunny" },
+        { role: "user", content: "继续" },
+      ],
+      reasoning_effort: "high",
+    };
+
+    const result = normalizeProviderPayload(payload, {
+      id: "glm-5.2",
+      provider: "zhipu-coding",
+      api: "openai-completions",
+      baseUrl: "https://api.z.ai/api/coding/paas/v4",
+      reasoning: true,
+      compat: { thinkingFormat: "zhipu", reasoningProfile: "zhipu-openai" },
+    }, { mode: "chat", reasoningLevel: "high" });
+
+    expect(result.thinking).toEqual({ type: "enabled", clear_thinking: false });
+    expect(result.messages[1]).toHaveProperty("reasoning_content", "Need to call the weather tool.");
+  });
 });
 
 describe("normalizeProviderPayload — DeepSeek Anthropic 模式", () => {

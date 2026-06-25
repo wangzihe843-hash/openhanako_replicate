@@ -93,7 +93,6 @@ export function DeskSection({
   const deskExpandedPaths = useStore(st => st.deskExpandedPaths);
   const deskTreeFilesByPath = useStore(st => st.deskTreeFilesByPath);
   const deskDirtyTreePaths = useStore(st => st.deskDirtyTreePaths);
-  const clearDeskTreeDirty = useStore(st => st.clearDeskTreeDirty);
   const setDeskExpandedPaths = useStore(st => st.setDeskExpandedPaths);
   const selectedFolder = useStore(st => st.selectedFolder);
   const deskWorkspaceMountId = useStore(st => st.deskWorkspaceMountId);
@@ -111,11 +110,14 @@ export function DeskSection({
     if (!deskBasePath || deskDirtyTreePaths.length === 0) return;
     const { reloadSubdirs, clearSubdirs } = visibleDirtyTreeReloads(deskBasePath, deskDirtyTreePaths, deskExpandedPaths);
     if (reloadSubdirs.length === 0) return;
-    clearDeskTreeDirty(clearSubdirs);
-    for (const subdir of reloadSubdirs) {
-      void loadDeskTreeFiles(subdir, { force: true });
+    for (let index = 0; index < reloadSubdirs.length; index += 1) {
+      const subdir = reloadSubdirs[index];
+      const dirtySubdir = clearSubdirs[index];
+      void loadDeskTreeFiles(subdir, { force: true }).then((ok) => {
+        if (ok !== false) useStore.getState().clearDeskTreeDirty([dirtySubdir]);
+      });
     }
-  }, [clearDeskTreeDirty, deskBasePath, deskDirtyTreePaths, deskExpandedPaths]);
+  }, [deskBasePath, deskDirtyTreePaths, deskExpandedPaths]);
 
   // ── 共享 context menu 状态 ──
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);

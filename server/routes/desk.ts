@@ -139,6 +139,20 @@ function normalizeRouteCreatedBy(value) {
   return { kind: "user" };
 }
 
+function normalizeRouteEverySchedule(schedule) {
+  if (typeof schedule === "number") {
+    if (!Number.isFinite(schedule) || schedule < 60_000) {
+      throw new Error("every schedule must be at least 60000 milliseconds");
+    }
+    return schedule;
+  }
+  const minutes = parseInt(schedule, 10);
+  if (isNaN(minutes) || minutes <= 0) {
+    throw new Error("every schedule must be a positive number (minutes)");
+  }
+  return minutes * 60_000;
+}
+
 function normalizeRouteExecutor(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.kind !== "string") {
     return null;
@@ -909,11 +923,11 @@ export function createDeskRoute(engine, hub) {
           return c.json({ error: `Invalid scheduleType: ${type}. Must be at/every/cron.` }, 400);
         }
         if (type === "every") {
-          const minutes = parseInt(params.schedule, 10);
-          if (isNaN(minutes) || minutes <= 0) {
-            return c.json({ error: "every schedule must be a positive number (minutes)" }, 400);
+          try {
+            params.schedule = normalizeRouteEverySchedule(params.schedule);
+          } catch (err) {
+            return c.json({ error: err.message }, 400);
           }
-          params.schedule = minutes * 60_000;
         }
         const actorAgentId = typeof params.actorAgentId === "string" && params.actorAgentId.trim()
           ? params.actorAgentId.trim()
@@ -995,17 +1009,10 @@ export function createDeskRoute(engine, hub) {
         }
         const nextType = fields.type || existingJob.type;
         if (fields.schedule !== undefined && nextType === "every") {
-          if (typeof fields.schedule === "number") {
-            if (!Number.isFinite(fields.schedule) || fields.schedule <= 0) {
-              return c.json({ error: "every schedule must be a positive number" }, 400);
-            }
-            fields.schedule = fields.schedule < 60_000 ? fields.schedule * 60_000 : fields.schedule;
-          } else {
-            const minutes = parseInt(fields.schedule, 10);
-            if (isNaN(minutes) || minutes <= 0) {
-              return c.json({ error: "every schedule must be a positive number (minutes)" }, 400);
-            }
-            fields.schedule = minutes * 60_000;
+          try {
+            fields.schedule = normalizeRouteEverySchedule(fields.schedule);
+          } catch (err) {
+            return c.json({ error: err.message }, 400);
           }
         }
         let job;

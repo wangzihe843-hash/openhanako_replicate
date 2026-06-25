@@ -161,6 +161,22 @@ function routeError(message, code, status) {
   return err;
 }
 
+async function resumeBrowserForSessionSwitch(bm, sessionPath) {
+  if (typeof bm.resumeForSessionIfAvailable === "function") {
+    return await bm.resumeForSessionIfAvailable(sessionPath);
+  }
+  await bm.resumeForSession(sessionPath);
+  return {
+    status: "resumed",
+    canResume: true,
+    reason: null,
+    hostConnected: null,
+    hasResumeState: true,
+    running: bm.isRunning(sessionPath),
+    url: bm.currentUrl(sessionPath) || null,
+  };
+}
+
 function classifySessionCreationError(err) {
   const message = err?.message || String(err);
   if (err?.status && Number.isInteger(err.status)) {
@@ -1622,8 +1638,9 @@ export function createSessionsRoute(engine, hub = null) {
 
       await engine.switchSession(sessionPath);
 
-      // 恢复目标 session 的浏览器（若有）
-      await bm.resumeForSession(sessionPath);
+      // 恢复目标 session 的浏览器（若有）。无 browser host 的 server/PWA 环境只记录 typed skip；
+      // 一旦判断为可恢复，resumeForSession 内的真实 browser 错误仍会向外抛出。
+      const browserResume = await resumeBrowserForSessionSwitch(bm, sessionPath);
 
       const session = engine.getSessionByPath(sessionPath);
 
@@ -1659,6 +1676,7 @@ export function createSessionsRoute(engine, hub = null) {
         agentName: switchedAgent?.agentName || switchedAgentId,
         browserRunning: bm.isRunning(sessionPath),
         browserUrl: bm.currentUrl(sessionPath) || null,
+        browserResume,
         isStreaming: engine.isSessionStreaming(sessionPath),
         currentModelId: activeModel?.id || null,
         currentModelProvider: activeModel?.provider || null,

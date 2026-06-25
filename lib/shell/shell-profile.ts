@@ -1,6 +1,7 @@
 import {
   baseNameForShellPath,
   envValue,
+  resolveWin32DefaultPowerShellExecutable,
   resolveWin32CmdExecutable,
   resolveWin32PowerShellExecutable,
 } from "./shell-utils.ts";
@@ -71,7 +72,17 @@ function resolvePosixDefault({ platform, env }) {
 
 function resolvePowerShellDefault({ env }) {
   return powershellProfile({
-    executable: resolveWin32PowerShellExecutable("powershell.exe", env),
+    executable: resolveWin32DefaultPowerShellExecutable(env),
+    env,
+  });
+}
+
+function resolvePowerShellProfile({ env, token = "powershell.exe" }: {
+  env?: NodeJS.ProcessEnv;
+  token?: string;
+} = {}) {
+  return powershellProfile({
+    executable: resolveWin32PowerShellExecutable(token, env),
     env,
   });
 }
@@ -128,9 +139,11 @@ export function resolveShellProfile({
         getWin32ShellEnvForRuntime,
       });
     }
-    if (profileName === "powershell" || profileName === "pwsh" || profileName === "default") {
+    if (profileName === "default") {
       return resolvePowerShellDefault({ env });
     }
+    if (profileName === "powershell") return resolvePowerShellProfile({ env, token: "powershell.exe" });
+    if (profileName === "pwsh") return resolvePowerShellProfile({ env, token: "pwsh.exe" });
     throw new Error(`unsupported Windows shell profile: ${profile}`);
   }
 

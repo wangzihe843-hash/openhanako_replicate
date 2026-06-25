@@ -52,4 +52,19 @@ describe("enrichModelFromKnownMetadata", () => {
       reasoningProfile: "kimi-openai",
     });
   });
+
+  it("adds image input to runtime-discovered Ollama vision model families", () => {
+    const model = {
+      id: "llava:latest",
+      name: "LLaVA Latest",
+      api: "openai-completions",
+      provider: "ollama",
+      baseUrl: "http://localhost:11434/v1",
+      input: ["text"],
+    };
+
+    const enriched = enrichModelFromKnownMetadata(model);
+
+    expect(enriched.input).toEqual(["text", "image"]);
+  });
 });

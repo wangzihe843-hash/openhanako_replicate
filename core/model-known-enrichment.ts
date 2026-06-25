@@ -1,8 +1,9 @@
 import { getPiModel } from "../lib/pi-sdk/index.ts";
 import { lookupKnown } from "../shared/known-models.ts";
 import { normalizeVisionCapabilities, withThinkingFormatCompat } from "../shared/model-capabilities.ts";
+import { inferOllamaModelMetadata } from "../shared/ollama-model-metadata.ts";
 
-const RUNTIME_ENRICHED_PROVIDERS = new Set(["kimi-coding"]);
+const RUNTIME_ENRICHED_PROVIDERS = new Set(["kimi-coding", "ollama"]);
 const KIMI_CODING_MODEL_ID = "kimi-for-coding";
 
 function isPlainObject(value) {
@@ -69,7 +70,11 @@ export function enrichModelFromKnownMetadata(model) {
 
   const hasImageInput = Array.isArray(normalizedModel.input) && normalizedModel.input.includes("image");
   const knownImage = known?.image ?? known?.vision;
-  const image = hasImageInput || knownImage === true;
+  const inferredImage = inferOllamaModelMetadata(normalizedModel.provider, normalizedModel.id)?.image;
+  const image = hasImageInput || knownImage === true || inferredImage === true;
+  if (image && !hasImageInput) {
+    patch.input = ["text", "image"];
+  }
   const visionCapabilities = image ? normalizeVisionCapabilities(known?.visionCapabilities) : null;
   if (visionCapabilities && !normalizedModel.visionCapabilities) {
     patch.visionCapabilities = visionCapabilities;

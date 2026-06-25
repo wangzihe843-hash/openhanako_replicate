@@ -15,6 +15,7 @@ import {
 } from "../../shared/provider-auth.ts";
 import { filterDiscoveredProviderModels } from "../../shared/provider-model-validation.ts";
 import { listKnownProviderModels, lookupKnown } from "../../shared/known-models.ts";
+import { enrichOllamaModelMetadata } from "../../shared/ollama-model-metadata.ts";
 import { clearConfigCache } from "../../lib/memory/config-loader.ts";
 import { collectSecretPatchPaths, isMaskedSecretValue, maskSecretValue } from "../../shared/secret-custody.ts";
 import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.ts";
@@ -299,6 +300,10 @@ export function createProvidersRoute(engine: any) {
     return merged;
   }
 
+  function enrichDiscoveredModelMetadata(name: any, models: any[]) {
+    return models.map((model) => enrichOllamaModelMetadata(name, model));
+  }
+
   async function refreshProviderModels() {
     (clearConfigCache as any)();
     await engine.onProviderChanged();
@@ -314,7 +319,7 @@ export function createProvidersRoute(engine: any) {
     // 尝试 Pi SDK registry（含内置 OAuth 模型 + models.json 模型，不经过 availableModels 白名单）
     const registryModels = engine.getRegistryModelsForProvider(name);
     if (registryModels.length > 0) {
-      const normalized = normalizeRegistryModels(registryModels);
+      const normalized = enrichDiscoveredModelMetadata(name, normalizeRegistryModels(registryModels));
       const payload = filterProviderModels(name, normalized);
       if (payload.models.length === 0 && payload.ignoredModels?.length > 0) {
         return {
@@ -334,7 +339,10 @@ export function createProvidersRoute(engine: any) {
       || engine.providerRegistry.getDefaultModels(authKey)
       || [];
     if (defaults.length > 0) {
-      const builtinModels = defaults.map(id => ({ id, name: id, context: null, maxOutput: null }));
+      const builtinModels = enrichDiscoveredModelMetadata(
+        name,
+        defaults.map(id => ({ id, name: id, context: null, maxOutput: null })),
+      );
       const payload = filterProviderModels(name, builtinModels);
       saveToCache(name, payload.models);
       return { source: "builtin", ...payload };
@@ -417,7 +425,10 @@ export function createProvidersRoute(engine: any) {
 
         if (res.ok) {
           const data = await res.json();
-          const remoteModels = supplementRemoteModels(name, normalizeRemoteModels(data, effectiveApi));
+          const remoteModels = enrichDiscoveredModelMetadata(
+            name,
+            supplementRemoteModels(name, normalizeRemoteModels(data, effectiveApi)),
+          );
           const { models, ignoredModels } = filterDiscoveredProviderModels(name, remoteModels, {
             baseUrl: effectiveBaseUrl,
           });
