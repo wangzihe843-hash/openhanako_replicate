@@ -22,18 +22,15 @@ const browserManagerMock = {
   resumeForSession: vi.fn(async (sp) => {
     browserManagerMock._sessions.set(sp, { running: true, url: "https://after.example.com" });
   }),
-  resumeForSessionIfAvailable: vi.fn(async (sp) => {
-    await browserManagerMock.resumeForSession(sp);
-    return {
-      status: "resumed",
-      canResume: false,
-      reason: "already_running",
-      hostConnected: true,
-      hasResumeState: true,
-      running: browserManagerMock.isRunning(sp),
-      url: browserManagerMock.currentUrl(sp),
-    };
-  }),
+  resumeForSessionIfAvailable: vi.fn(async (sp) => ({
+    status: "skipped",
+    canResume: false,
+    reason: "no_browser_state",
+    hostConnected: true,
+    hasResumeState: false,
+    running: browserManagerMock.isRunning(sp),
+    url: browserManagerMock.currentUrl(sp),
+  })),
   closeBrowserForSession: vi.fn(),
   getBrowserSessions: vi.fn(() => ({})),
   getBrowserSessionStates: vi.fn(() => ({})),
@@ -119,6 +116,18 @@ describe("sessions route", () => {
     };
 
     app.route("/api", createSessionsRoute(engine));
+    browserManagerMock.resumeForSessionIfAvailable.mockImplementationOnce(async (sp) => {
+      await browserManagerMock.resumeForSession(sp);
+      return {
+        status: "resumed",
+        canResume: false,
+        reason: "already_running",
+        hostConnected: true,
+        hasResumeState: true,
+        running: browserManagerMock.isRunning(sp),
+        url: browserManagerMock.currentUrl(sp),
+      };
+    });
 
     const res = await app.request("/api/sessions/switch", {
       method: "POST",
@@ -187,7 +196,7 @@ describe("sessions route", () => {
     expect(res.status).toBe(200);
     expect(engine.switchSession).toHaveBeenCalledWith(currentPath);
     expect(browserManagerMock.resumeForSessionIfAvailable).toHaveBeenCalledWith(currentPath);
-    expect(browserManagerMock.resumeForSession).toHaveBeenCalledWith(currentPath);
+    expect(browserManagerMock.resumeForSession).not.toHaveBeenCalledWith(currentPath);
   });
 
   it("skips opportunistic browser resume without failing when no browser host is attached", async () => {
@@ -244,6 +253,64 @@ describe("sessions route", () => {
       status: "skipped",
       reason: "browser_host_unavailable",
       hostConnected: false,
+    });
+  });
+
+  it("keeps cold browser resume deferred during session switch", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const app = new Hono();
+    const targetPath = "/tmp/agents/a/sessions/cold-browser.jsonl";
+
+    browserManagerMock.resumeForSessionIfAvailable.mockResolvedValueOnce({
+      status: "skipped",
+      canResume: false,
+      reason: "cold_resume_deferred",
+      hostConnected: true,
+      hasResumeState: true,
+      running: false,
+      url: "https://cold.example.com",
+    });
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: "/tmp/agents/a/sessions/old.jsonl",
+      memoryEnabled: true,
+      planMode: false,
+      memoryModelUnavailableReason: null,
+      cwd: "/tmp/workspace",
+      currentAgentId: "a",
+      currentModel: { id: "m", provider: "test", input: ["text"] },
+      isSessionStreaming: vi.fn(() => false),
+      switchSession: vi.fn(async (sessionPath) => {
+        engine.currentSessionPath = sessionPath;
+      }),
+      getSessionByPath: vi.fn(() => ({ messages: [] })),
+      getSessionMemoryEnabled: vi.fn(() => true),
+      getSessionThinkingLevel: vi.fn(() => "medium"),
+      getSessionWorkspaceFolders: vi.fn(() => []),
+      getSessionAuthorizedFolders: vi.fn(() => []),
+      getAgent: vi.fn(() => ({ agentName: "Agent A" })),
+      agentIdFromSessionPath: vi.fn(() => "a"),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: targetPath, currentSessionPath: "/tmp/agents/a/sessions/old.jsonl" }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(browserManagerMock.resumeForSessionIfAvailable).toHaveBeenCalledWith(targetPath);
+    expect(browserManagerMock.resumeForSession).not.toHaveBeenCalledWith(targetPath);
+    expect(data.browserRunning).toBe(false);
+    expect(data.browserUrl).toBeNull();
+    expect(data.browserResume).toMatchObject({
+      status: "skipped",
+      reason: "cold_resume_deferred",
+      hostConnected: true,
     });
   });
 

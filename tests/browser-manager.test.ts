@@ -441,6 +441,10 @@ describe("BrowserManager explicit sessionPath", () => {
     });
     manager._loadColdState = vi.fn().mockReturnValue({
       "/sessions/cold-session.json": "https://cold.example.com",
+      "/sessions/blank-cold.json": {
+        activeTabId: "tab-blank",
+        tabs: [{ tabId: "tab-blank", title: "New Tab", url: null }],
+      },
       [SP2]: "https://saved-broken.example.com",
     });
 
@@ -628,6 +632,94 @@ describe("BrowserManager multi-instance", () => {
       url: "https://cold.example.com",
     });
     expect(manager._sendCmd).not.toHaveBeenCalled();
+  });
+
+  it("resumeForSessionIfAvailable auto-resumes only a warm suspended host view", async () => {
+    const manager = new BrowserManager();
+    manager._transport = { connected: true };
+    manager._loadColdState = vi.fn().mockReturnValue({
+      [SP1]: {
+        activeTabId: "tab-page",
+        tabs: [{ tabId: "tab-page", title: "Page", url: "https://cold.example.com" }],
+      },
+    });
+    manager._saveColdWorkspace = vi.fn();
+    manager._sendCmd = vi.fn().mockImplementation(async (cmd) => {
+      if (cmd === "resume") {
+        return {
+          found: true,
+          activeTabId: "tab-page",
+          tabs: [{ tabId: "tab-page", title: "Page", url: "https://warm.example.com" }],
+        };
+      }
+      throw new Error(`unexpected browser command: ${cmd}`);
+    });
+
+    const result = await manager.resumeForSessionIfAvailable(SP1);
+
+    expect(manager._sendCmd).toHaveBeenCalledTimes(1);
+    expect(manager._sendCmd).toHaveBeenCalledWith("resume", { sessionPath: SP1 });
+    expect(result).toMatchObject({
+      status: "resumed",
+      running: true,
+      url: "https://warm.example.com",
+    });
+    expect(manager.currentUrl(SP1)).toBe("https://warm.example.com");
+  });
+
+  it("resumeForSessionIfAvailable defers cold resume instead of launching during session switch", async () => {
+    const manager = new BrowserManager();
+    manager._transport = { connected: true };
+    manager._loadColdState = vi.fn().mockReturnValue({
+      [SP1]: {
+        activeTabId: "tab-page",
+        tabs: [{ tabId: "tab-page", title: "Page", url: "https://cold.example.com" }],
+      },
+    });
+    manager._sendCmd = vi.fn().mockImplementation(async (cmd) => {
+      if (cmd === "resume") return { found: false };
+      throw new Error(`unexpected browser command: ${cmd}`);
+    });
+
+    const result = await manager.resumeForSessionIfAvailable(SP1);
+
+    expect(manager._sendCmd).toHaveBeenCalledTimes(1);
+    expect(manager._sendCmd).toHaveBeenCalledWith("resume", { sessionPath: SP1 });
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: "cold_resume_deferred",
+      hostConnected: true,
+      hasResumeState: true,
+      running: false,
+      url: "https://cold.example.com",
+    });
+    expect(manager.isRunning(SP1)).toBe(false);
+  });
+
+  it("blank cold workspaces are not resumable and are pruned when suspended", async () => {
+    const manager = new BrowserManager();
+    const blankWorkspace = {
+      activeTabId: "tab-blank",
+      tabs: [{ tabId: "tab-blank", title: "New Tab", url: null }],
+    };
+    manager._transport = { connected: true };
+    manager._loadColdState = vi.fn().mockReturnValue({ [SP1]: blankWorkspace });
+    manager._saveColdState = vi.fn();
+    manager._sendCmd = vi.fn();
+
+    const result = await manager.resumeForSessionIfAvailable(SP1);
+
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: "no_browser_state",
+      hasResumeState: false,
+      url: null,
+    });
+    expect(manager._sendCmd).not.toHaveBeenCalled();
+
+    manager._saveColdWorkspace(SP1, blankWorkspace);
+
+    expect(manager._saveColdState).toHaveBeenCalledWith({});
   });
 
   it("hasAnyRunning returns true when at least one session is running", async () => {
