@@ -21,7 +21,7 @@ const paper: Transition = { type: 'spring', stiffness: 500, damping: 38, mass: 0
 const paperGentle: Transition = { type: 'spring', stiffness: 350, damping: 34, mass: 1.0 };
 
 /** 纸质利落：菜单、tooltip、小元素。过冲极轻，响应最快。 */
-const paperSnap: Transition = { type: 'spring', stiffness: 600, damping: 40, mass: 0.6 };
+const paperSnap: Transition = { type: 'spring', stiffness: 800, damping: 34, mass: 0.5 };
 
 export const spring = { paper, paperGentle, paperSnap } as const;
 
