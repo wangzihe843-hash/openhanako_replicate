@@ -200,6 +200,15 @@ export function GiftPanel({ agent }: GiftPanelProps) {
       setGiftState(state);
       setLog(logRows);
       setInventory(inv);
+      if (state.initializedAt) {
+        try {
+          const counts = await grantInitGiftInventory(agent.id);
+          if (seq !== reloadSeqRef.current) return;
+          setInventory(counts);
+        } catch (error) {
+          console.warn('[GiftPanel] reconcile init inventory failed:', error);
+        }
+      }
       // 首次打开自动初始化：每个 agent 只自动尝试一次；读取失败（抛错）不会走到这里，
       // 不会被误判为未初始化。
       if (!state.initializedAt && initialBootstrapTriedRef.current !== agent.id) {

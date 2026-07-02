@@ -108,7 +108,7 @@ export function ChatEntryPanel({
           </div>
           <p className={styles.detailCopy}>
             {previewBackgroundDataUrl
-              ? '这张背景来自 XingyeRoleProfile.chatBackgroundDataUrl，仅用于星野模式 UI。'
+              ? '这张背景来自 XingyeRoleProfile.chatBackgroundDataUrl，会同步显示在星野预览与 OpenHanako 真实聊天中。'
               : '当前角色还没有设置聊天背景。'}
           </p>
         </div>

@@ -82,6 +82,9 @@ let activeAgentId: string | null = null;
 let refreshVersion = 0;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const FLUSH_DEBOUNCE_MS = 450;
+const FLUSH_RETRY_MS = 5_000;
+let flushPending = false;
+let memoryRevision = 0;
 let lastAgentFlushError: string | null = null;
 let lastRefreshError: string | null = null;
 
@@ -211,30 +214,55 @@ async function loadAgentScopedMemory(agentId: string): Promise<Map<string, strin
   return next;
 }
 
-function scheduleFlush(): void {
+function scheduleFlush(delayMs = FLUSH_DEBOUNCE_MS): void {
   if (mode !== 'agent') return;
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = setTimeout(() => {
     flushTimer = null;
     void flushNow();
-  }, FLUSH_DEBOUNCE_MS);
+  }, delayMs);
 }
 
-async function flushNow(): Promise<void> {
-  if (mode !== 'agent' || !activeAgentId) return;
+async function flushNow(): Promise<boolean> {
+  if (mode !== 'agent' || !activeAgentId || !flushPending) return true;
+  const revision = memoryRevision;
   lastAgentFlushError = null;
   try {
     for (const [key, raw] of memory.entries()) {
       await writeAgentFile(activeAgentId, key, raw);
     }
+    if (revision === memoryRevision) {
+      flushPending = false;
+    } else {
+      scheduleFlush();
+    }
+    return true;
   } catch (err) {
+    flushPending = true;
     lastAgentFlushError = err instanceof Error ? err.message : String(err);
     console.warn('[xingye-persistence] agent flush failed:', err);
+    scheduleFlush(FLUSH_RETRY_MS);
+    return false;
   }
 }
 
 export async function flushXingyePersistenceNow(): Promise<void> {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
   await flushNow();
+}
+
+async function flushPendingBeforeTransition(myVersion: number): Promise<boolean> {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  if (!flushPending) return true;
+  const flushed = await flushNow();
+  if (myVersion !== refreshVersion) return false;
+  return flushed;
 }
 
 export function getXingyePersistenceDiagnostics(): {
@@ -302,10 +330,14 @@ export function getXingyePersistenceStorage(): StorageLike | null {
     },
     setItem(key: string, value: string) {
       memory.set(key, value);
+      memoryRevision += 1;
+      flushPending = true;
       scheduleFlush();
     },
     removeItem(key: string) {
       memory.delete(key);
+      memoryRevision += 1;
+      flushPending = true;
       scheduleFlush();
     },
   };
@@ -324,14 +356,11 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
   if (!id) {
     // 进入 disabled 前先落盘上一个 agent 的 debounced 待写（此刻 mode 仍 'agent'、activeAgentId 仍指向它）。
     // 否则 memory.clear() 后定时器再 fire 时 flushNow 因 mode!=='agent' 早退，上一个 agent 的待写被静默丢弃。
-    if (flushTimer) {
-      clearTimeout(flushTimer);
-      flushTimer = null;
-      await flushNow();
-      if (myVersion !== refreshVersion) return;
-    }
+    if (!(await flushPendingBeforeTransition(myVersion))) return;
     mode = 'disabled';
     memory.clear();
+    memoryRevision += 1;
+    flushPending = false;
     activeAgentId = null;
     emitPersistenceChanged();
     return;
@@ -339,14 +368,11 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
 
   if (!hasServerConnection(useStore.getState())) {
     // 同上：断连进入 disabled 前，先把上一个 agent 的待写落盘，避免丢失。
-    if (flushTimer) {
-      clearTimeout(flushTimer);
-      flushTimer = null;
-      await flushNow();
-      if (myVersion !== refreshVersion) return;
-    }
+    if (!(await flushPendingBeforeTransition(myVersion))) return;
     mode = 'disabled';
     memory.clear();
+    memoryRevision += 1;
+    flushPending = false;
     activeAgentId = null;
     emitPersistenceChanged();
     return;
@@ -363,12 +389,7 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
   // pickAgentScopedData filters owner-tagged rows to empty and overwrites the
   // OLD agent's file with {} (silent per-character data wipe), while owner-less
   // rows leak into the wrong agent's file.
-  if (flushTimer) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
-    await flushNow();
-    if (myVersion !== refreshVersion) return;
-  }
+  if (!(await flushPendingBeforeTransition(myVersion))) return;
 
   try {
     const loaded = await loadAgentScopedMemory(id);
@@ -376,6 +397,8 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     if (myVersion !== refreshVersion) return;
     memory.clear();
     for (const [key, raw] of loaded) memory.set(key, raw);
+    memoryRevision += 1;
+    flushPending = false;
     activeAgentId = id;
     mode = 'agent';
     lastRefreshError = null;
@@ -386,6 +409,8 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     if (myVersion !== refreshVersion) return;
     mode = 'error';
     memory.clear();
+    memoryRevision += 1;
+    flushPending = false;
     activeAgentId = null;
     emitPersistenceChanged();
   }
@@ -403,6 +428,8 @@ export async function refreshXingyeWorkspacePersistence(agentId?: string | null)
 export function resetXingyePersistenceForTests(): void {
   mode = 'disabled';
   memory.clear();
+  memoryRevision = 0;
+  flushPending = false;
   activeAgentId = null;
   lastAgentFlushError = null;
   lastRefreshError = null;
