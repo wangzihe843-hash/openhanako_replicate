@@ -19,13 +19,29 @@ const git = path.join(root, "cmd", "git.exe");
 // MinGit 不打包 bash.exe；POSIX 契约是 usr/bin/sh.exe（bash 以 sh 模式运行），参数 -c
 const sh = path.join(root, "usr", "bin", "sh.exe");
 
+const runtimeEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "path"),
+);
+runtimeEnv.PATH = [
+  path.join(root, "bin"),
+  path.join(root, "usr", "bin"),
+  path.join(root, "mingw64", "bin"),
+  path.join(root, "cmd"),
+  process.env.PATH || process.env.Path || "",
+].filter(Boolean).join(path.delimiter);
+
 const workRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-mingit-smoke-"));
 const repoDir = path.join(workRoot, "repo");
 const cloneDir = path.join(workRoot, "repo-copy");
 
 function run(label, exe, args, opts = {}) {
   try {
-    const out = execFileSync(exe, args, { encoding: "utf-8", timeout: 30000, ...opts });
+    const out = execFileSync(exe, args, {
+      encoding: "utf-8",
+      timeout: 30000,
+      env: runtimeEnv,
+      ...opts,
+    });
     console.log(`PASS  ${label}: ${(out || "").trim().split(/\r?\n/)[0] || "(no output)"}`);
     return true;
   } catch (err) {
