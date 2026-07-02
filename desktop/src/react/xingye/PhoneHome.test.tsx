@@ -11,6 +11,10 @@ import { PhoneHome } from './PhoneHome';
 import { useStore } from '../stores';
 
 const fetchMock = vi.hoisted(() => vi.fn());
+const heartbeatSideEffects = vi.hoisted(() => ({
+  appendContactLog: vi.fn().mockResolvedValue({ appended: false }),
+  appendForum: vi.fn().mockResolvedValue({ appended: false }),
+}));
 
 vi.mock('../hooks/use-hana-fetch', () => ({
   hanaFetch: fetchMock,
@@ -22,6 +26,14 @@ vi.mock('./XingyeAgentAvatar', () => ({
 
 vi.mock('./xingye-files-secret-heartbeat', () => ({
   tryRelockHiddenFolderAfterHeartbeat: vi.fn().mockResolvedValue({ relocked: false, state: null }),
+}));
+
+vi.mock('./xingye-contact-profile-ai', () => ({
+  maybeAppendContactLogAfterHeartbeat: heartbeatSideEffects.appendContactLog,
+}));
+
+vi.mock('./xingye-forum-ai', () => ({
+  maybeAppendForumAfterHeartbeat: heartbeatSideEffects.appendForum,
 }));
 
 const agent: Agent = {
@@ -89,16 +101,20 @@ function pushHeartbeatActivity(overrides: Partial<Activity> = {}): void {
 describe('PhoneHome heartbeat trigger', () => {
   beforeEach(() => {
     fetchMock.mockReset();
+    heartbeatSideEffects.appendContactLog.mockClear();
+    heartbeatSideEffects.appendForum.mockClear();
     hbSeq = 0;
     useStore.setState({ activities: [] });
   });
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     useStore.setState({ activities: [] });
   });
 
   it('fire-and-forget 触发后等 activity_update 经 store 回填 summaryZh，并处理 cooldown / 失败', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
     fetchMock
       .mockResolvedValueOnce({
         ok: true,
@@ -129,6 +145,8 @@ describe('PhoneHome heartbeat trigger', () => {
       expect(screen.getByRole('status')).toHaveTextContent('巡检完毕');
     });
     expect(screen.getByRole('status')).toHaveTextContent('自上次巡检以来：短信×2（共 2 条）');
+    expect(heartbeatSideEffects.appendContactLog).toHaveBeenCalledWith(agent);
+    expect(heartbeatSideEffects.appendForum).toHaveBeenCalledWith(agent);
 
     // 2) 冷却中：路由回 cooldown，不依赖 activity_update
     fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
