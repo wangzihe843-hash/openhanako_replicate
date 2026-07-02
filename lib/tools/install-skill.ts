@@ -4,23 +4,23 @@
  * 让 agent 能自行安装技能（skill）到全局 skill pool，并只为当前 agent 启用。
  *
  * 模型侧工具只接受完整 skill package 来源。当前公开入口：
- *   A. github_url — 从 GitHub 仓库拉取完整 skill package（有 star 数门槛）
+ *   A. github_url — 从 GitHub 仓库拉取完整 skill package
  *   B. local_path / source(path) — 从当前 Hana server 可见路径安装完整 package
  *   C. fileId / source(session_file) — 从已登记 SessionFile package 安装
  *
  * 开关（agent config.yaml）：
  *   capabilities.learn_skills.enabled          — 整体开关
  *   capabilities.learn_skills.allow_github_fetch — GitHub 拉取开关（只管 github_url）
- *   capabilities.learn_skills.min_stars         — star 数门槛（默认 25，仅 GitHub）
  *
  * 安全策略：
- *   - GitHub URL 需满足 star 门槛 + 安全审查（审查 SKILL.md，安装完整目录）。
- *   - 本地 / SessionFile 来源必须先解析为 FileRef，再审查 SKILL.md，最后安装完整目录。
+ *   - GitHub URL / 本地 / SessionFile 来源会审查 SKILL.md，安装完整目录。
+ *   - 安全审查是软门槛：未通过时先提醒风险；用户明确确认后可带 risk_accepted=true 继续安装。
  *   - 禁止用 skill_content 安装单个 SKILL.md；多文件 skill 必须保留 package 目录结构。
  */
 
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import { Type } from "../pi-sdk/index.ts";
 import { t } from "../i18n.ts";
 import { callText } from "../../core/llm-client.ts";
@@ -35,9 +35,9 @@ import {
 } from "../skills/skill-package-installer.ts";
 import { statFileRef } from "../file-ref/resource-io.ts";
 
-const GITHUB_API_TIMEOUT = 15_000;
 const SAFETY_REVIEW_TIMEOUT = 20_000;
 const MAX_SKILL_SIZE = 50_000; // 50KB
+const RISK_CONFIRMATION_TTL_MS = 10 * 60 * 1000;
 
 export { sanitizeSkillName };
 
@@ -191,11 +191,74 @@ function sourceRefFromParams(params: any = {}) {
   return null;
 }
 
+function riskConfirmationDigest(skillContent: any) {
+  return crypto.createHash("sha256").update(String(skillContent || ""), "utf-8").digest("hex");
+}
+
+function pruneExpiredRiskConfirmations(pending: any, now = Date.now()) {
+  for (const [token, entry] of pending.entries()) {
+    if (!entry || entry.expiresAt <= now) pending.delete(token);
+  }
+}
+
+function createRiskConfirmationToken(pending: any, { sourceKey, skillContent, reason }: any) {
+  pruneExpiredRiskConfirmations(pending);
+  const token = `risk_${crypto.randomUUID()}`;
+  pending.set(token, {
+    sourceKey,
+    digest: riskConfirmationDigest(skillContent),
+    reason: String(reason || ""),
+    expiresAt: Date.now() + RISK_CONFIRMATION_TTL_MS,
+  });
+  return token;
+}
+
+function consumeRiskAcceptance(pending: any, params: any, { sourceKey, skillContent }: any) {
+  if (params?.risk_accepted !== true) return { accepted: false };
+  pruneExpiredRiskConfirmations(pending);
+  const token = typeof params?.risk_confirmation_token === "string"
+    ? params.risk_confirmation_token.trim()
+    : "";
+  if (!token) return { accepted: false, rejection: "missing_confirmation_token" };
+  const entry = pending.get(token);
+  if (!entry) return { accepted: false, rejection: "invalid_or_expired_confirmation_token" };
+  const digest = riskConfirmationDigest(skillContent);
+  if (entry.sourceKey !== sourceKey || entry.digest !== digest) {
+    pending.delete(token);
+    return { accepted: false, rejection: "confirmation_target_changed" };
+  }
+  pending.delete(token);
+  return { accepted: true };
+}
+
+function safetyReviewNeedsConfirmationResult(reason: any, details: any = {}, riskConfirmationToken = "") {
+  return {
+    content: [{ type: "text", text: t("error.installSkillSafetyFailed", { reason }) }],
+    details: {
+      ...details,
+      safetyReview: false,
+      requiresRiskConfirmation: true,
+      ...(riskConfirmationToken ? { riskConfirmationToken } : {}),
+      riskReason: reason,
+      riskAccepted: false,
+      nextAction: "ask_user_then_retry_with_risk_accepted",
+    },
+  };
+}
+
+function safetyReviewStatusNote({ safetyPassed, riskOverride, riskReason }: any = {}) {
+  if (safetyPassed) return t("error.installSkillSafetyPassed");
+  if (riskOverride) return t("error.installSkillSafetyOverride", { reason: riskReason || "" });
+  return "";
+}
+
 export function createInstallSkillTool({ getUserSkillsDir, getConfig, resolveUtilityConfig, onInstalled, registerSessionFile, resolveSessionFile }: any) {
+  const pendingRiskConfirmations = new Map();
+
   return {
     name: "install_skill",
     label: "Install Skill",
-    description: "Install a complete skill package into the shared skill pool, enabled only for the current Agent by default. Provide github_url for a GitHub repo, local_path for a package path visible to the current Hana server, fileId for an uploaded SessionFile package, or source as a typed FileRef such as { type: 'path', path } / { type: 'session_file', fileId }. The full package directory is installed so references/scripts/assets are preserved. Do not provide raw skill_content or a single SKILL.md file.",
+    description: "Install a complete skill package into the shared skill pool, enabled only for the current Agent by default. Provide github_url for a GitHub repo, local_path for a package path visible to the current Hana server, fileId for an uploaded SessionFile package, or source as a typed FileRef such as { type: 'path', path } / { type: 'session_file', fileId }. The full package directory is installed so references/scripts/assets are preserved. Do not provide raw skill_content or a single SKILL.md file. If the safety review returns requiresRiskConfirmation, explain the risk to the user and call again with risk_accepted=true plus the returned risk_confirmation_token only after explicit user confirmation.",
     parameters: Type.Object({
       github_url: Type.Optional(
         Type.String({ description: "GitHub repo URL containing a complete skill package with SKILL.md" })
@@ -216,6 +279,12 @@ export function createInstallSkillTool({ getUserSkillsDir, getConfig, resolveUti
       sessionPath: Type.Optional(
         Type.String({ description: "Legacy session JSONL path that owns fileId. Usually omit to use the current session." })
       ),
+      risk_accepted: Type.Optional(
+        Type.Boolean({ description: "Set true only after the user explicitly confirms installing despite a failed safety review warning." })
+      ),
+      risk_confirmation_token: Type.Optional(
+        Type.String({ description: "Opaque token returned by a previous requiresRiskConfirmation result. Required with risk_accepted=true." })
+      ),
       reason: Type.String({ description: "Explain why this skill is needed (for audit, required)" }),
     }),
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
@@ -224,7 +293,6 @@ export function createInstallSkillTool({ getUserSkillsDir, getConfig, resolveUti
       const enabled = learnCfg.enabled === true;
       const allowGithub = learnCfg.allow_github_fetch === true;
       const skipSafetyReview = learnCfg.safety_review === false;
-      const minStars = typeof learnCfg.min_stars === "number" ? learnCfg.min_stars : 25;
 
       // ── 整体开关检查 ──
       if (!enabled) {
@@ -264,37 +332,7 @@ export function createInstallSkillTool({ getUserSkillsDir, getConfig, resolveUti
 
         const { owner, repo, subpath } = parsed;
 
-        // 1. 查询 star 数
-        let stars = 0;
-        try {
-          const apiRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-            headers: { "User-Agent": "HanaAgentBot/1.0", Accept: "application/vnd.github.v3+json" },
-            signal: AbortSignal.timeout(GITHUB_API_TIMEOUT),
-          });
-          if (!apiRes.ok) {
-            return {
-              content: [{ type: "text", text: t("error.installSkillGithubApiFailed", { status: apiRes.status }) }],
-              details: {},
-            };
-          }
-          const repoData = await apiRes.json();
-          stars = repoData.stargazers_count || 0;
-        } catch (err) {
-          return {
-            content: [{ type: "text", text: t("error.installSkillGithubApiError", { msg: err.message }) }],
-            details: {},
-          };
-        }
-
-        // 2. Star 门槛检查（一律执行，不可绕过）
-        if (stars < minStars) {
-          return {
-            content: [{ type: "text", text: t("error.installSkillStarTooLow", { stars, min: minStars }) }],
-            details: {},
-          };
-        }
-
-        // 3. 获取完整 skill package。GitHub 模式必须保留 references/assets/scripts
+        // 1. 获取完整 skill package。GitHub 模式必须保留 references/assets/scripts
         // 等同目录资源，安全审查只读取其中的 SKILL.md。
         let prepared = null;
         try {
@@ -311,22 +349,42 @@ export function createInstallSkillTool({ getUserSkillsDir, getConfig, resolveUti
           };
         }
         const content = fs.readFileSync(prepared.skillFilePath, "utf-8");
+        const sourceKey = `github:${owner}/${repo}:${subpath || ""}`;
 
-        // 4. 安全审查（可通过设置关闭）
+        // 2. 安全审查（可通过设置关闭；失败后允许用户确认继续）
         let safetyPassed = false;
+        let riskOverride = false;
+        let riskReason = "";
         if (!skipSafetyReview) {
           const review = await safetyReview(content, resolveUtilityConfig);
           if (!review.safe) {
-            prepared.cleanup?.();
-            return {
-              content: [{ type: "text", text: t("error.installSkillSafetyFailed", { reason: review.reason }) }],
-              details: {},
-            };
+            const riskAcceptance = consumeRiskAcceptance(pendingRiskConfirmations, params, {
+              sourceKey,
+              skillContent: content,
+            });
+            if (!riskAcceptance.accepted) {
+              const token = createRiskConfirmationToken(pendingRiskConfirmations, {
+                sourceKey,
+                skillContent: content,
+                reason: review.reason,
+              });
+              prepared.cleanup?.();
+              return safetyReviewNeedsConfirmationResult(review.reason, {
+                source: "github",
+                owner,
+                repo,
+                subpath,
+                ...(riskAcceptance.rejection ? { riskAcceptanceRejection: riskAcceptance.rejection } : {}),
+              }, token);
+            }
+            riskOverride = true;
+            riskReason = review.reason || "";
+          } else {
+            safetyPassed = true;
           }
-          safetyPassed = true;
         }
 
-        // 5. 安装完整目录，并把 Agent 自主安装的 skill 标记为不默认启用。
+        // 3. 安装完整目录，并把 Agent 自主安装的 skill 标记为不默认启用。
         let installed;
         try {
           installed = installSkillPackageFromDirectory({
@@ -350,17 +408,18 @@ export function createInstallSkillTool({ getUserSkillsDir, getConfig, resolveUti
         const skillFilePath = installed.filePath;
         const installedFile = registerInstalledSkillFile(registerSessionFile, ctx, skillFilePath);
 
-        // 7. 触发回调
+        // 触发回调：安装后才把 skill 加进当前 agent enabled 列表。
         await onInstalled?.(installed.name);
 
-        const safetyNote = safetyPassed ? t("error.installSkillSafetyPassed") : "";
+        const safetyNote = safetyReviewStatusNote({ safetyPassed, riskOverride, riskReason });
         return {
-          content: [{ type: "text", text: t("error.installSkillSuccess", { name: installed.name, source: prepared.fetchedFrom, stars, reason }) + (safetyNote ? "\n" + safetyNote : "") }],
+          content: [{ type: "text", text: t("error.installSkillSuccess", { name: installed.name, source: prepared.fetchedFrom, reason }) + (safetyNote ? "\n" + safetyNote : "") }],
           details: {
             skillName: installed.name,
-            stars,
             source: "github",
             safetyReview: safetyPassed,
+            riskOverride,
+            ...(riskReason ? { riskReason } : {}),
             skillFilePath,
             installedSkillSource: installed.installedSkillSource,
             ...(installedFile ? { installedFile } : {}),
@@ -407,17 +466,34 @@ export function createInstallSkillTool({ getUserSkillsDir, getConfig, resolveUti
         }
 
         const content = fs.readFileSync(prepared.skillFilePath, "utf-8");
+        const sourceKey = `${sourceRef.kind}:${sourceFile.filePath}`;
         let safetyPassed = false;
+        let riskOverride = false;
+        let riskReason = "";
         try {
           if (!skipSafetyReview) {
             const review = await safetyReview(content, resolveUtilityConfig);
             if (!review.safe) {
-              return {
-                content: [{ type: "text", text: t("error.installSkillSafetyFailed", { reason: review.reason }) }],
-                details: {},
-              };
+              const riskAcceptance = consumeRiskAcceptance(pendingRiskConfirmations, params, {
+                sourceKey,
+                skillContent: content,
+              });
+              if (!riskAcceptance.accepted) {
+                const token = createRiskConfirmationToken(pendingRiskConfirmations, {
+                  sourceKey,
+                  skillContent: content,
+                  reason: review.reason,
+                });
+                return safetyReviewNeedsConfirmationResult(review.reason, {
+                  source: sourceRef.kind,
+                  ...(riskAcceptance.rejection ? { riskAcceptanceRejection: riskAcceptance.rejection } : {}),
+                }, token);
+              }
+              riskOverride = true;
+              riskReason = review.reason || "";
+            } else {
+              safetyPassed = true;
             }
-            safetyPassed = true;
           }
 
           const installed = installSkillPackageFromDirectory({
@@ -431,13 +507,15 @@ export function createInstallSkillTool({ getUserSkillsDir, getConfig, resolveUti
 
           await onInstalled?.(installed.name);
 
-          const safetyNote = safetyPassed ? t("error.installSkillSafetyPassed") : "";
+          const safetyNote = safetyReviewStatusNote({ safetyPassed, riskOverride, riskReason });
           return {
             content: [{ type: "text", text: t("error.installSkillSuccessLocal", { name: installed.name, reason }) + (safetyNote ? "\n" + safetyNote : "") }],
             details: {
               skillName: installed.name,
               source: sourceRef.kind,
               safetyReview: safetyPassed,
+              riskOverride,
+              ...(riskReason ? { riskReason } : {}),
               skillFilePath,
               installedSkillSource: installed.installedSkillSource,
               ...(installedFile ? { installedFile } : {}),
