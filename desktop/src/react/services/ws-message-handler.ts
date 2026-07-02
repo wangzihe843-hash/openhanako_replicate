@@ -454,8 +454,13 @@ export function handleServerMessage(msg: any): void {
       scheduleSessionsRefresh('turn_end');
       const turnSp = msg.sessionPath;
       if (turnSp) {
+        const wasStreaming = sessionScopedListIncludes(useStore.getState(), useStore.getState().streamingSessions, turnSp);
+        applyStreamingStatus(false, turnSp, {
+          streamId: msg.streamId ?? null,
+          turnId: msg.turnId ?? null,
+        });
         requestContextUsage(turnSp);
-        requestInputFocusForCurrentSession(turnSp);
+        if (!wasStreaming) requestInputFocusForCurrentSession(turnSp);
       } else {
         console.warn('[ws] turn_end missing sessionPath, skipping context_usage request');
       }
@@ -959,6 +964,20 @@ export function handleServerMessage(msg: any): void {
         if (msg.isStreaming) streamBufferManager.beginTurn(sp, sid);
         else streamBufferManager.finishTurn(sp, sid);
       }
+      break;
+    }
+
+    case 'slash_result': {
+      if (typeof window === 'undefined') break;
+      if (!isFocusedSessionMessage(msg)) break;
+      const text = typeof msg.text === 'string' ? msg.text.trim() : '';
+      if (!text) break;
+      window.dispatchEvent(new CustomEvent('hana-inline-notice', {
+        detail: {
+          text,
+          type: msg.level === 'error' || msg.error ? 'error' : 'success',
+        },
+      }));
       break;
     }
   }

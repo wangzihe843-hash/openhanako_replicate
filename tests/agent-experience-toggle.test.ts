@@ -96,6 +96,13 @@ describe("agent experience toggle", () => {
     expect(agent.getToolsSnapshot().map((tool) => tool.name)).not.toContain("wait");
   });
 
+  it("does not expose the legacy terminal command tool", () => {
+    const { agent, root } = makeAgent({ experienceEnabled: false });
+    roots.push(root);
+
+    expect(agent.getToolsSnapshot().map((tool) => tool.name)).not.toContain("terminal");
+  });
+
   it("guides fresh sessions to record session files and deliver them through stage_files", () => {
     const { agent, root } = makeAgent({ experienceEnabled: false });
     roots.push(root);

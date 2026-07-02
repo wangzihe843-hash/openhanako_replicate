@@ -237,8 +237,22 @@ export function extractToolDetail(name: string, args: Record<string, unknown> | 
       const p = (args.file_path || args.path || '') as string;
       return { text: truncatePath(p), href: p || undefined, hrefType: 'file' };
     }
-    case 'bash': {
-      const command = typeof args.command === 'string' ? args.command : '';
+    case 'bash':
+    case 'exec_command': {
+      const command = typeof args.command === 'string'
+        ? args.command
+        : typeof args.cmd === 'string'
+          ? args.cmd
+          : '';
+      return { text: truncateHead(command, 40), title: command || undefined };
+    }
+    case 'terminal':
+    case 'write_stdin': {
+      const command = typeof args.command === 'string'
+        ? args.command
+        : typeof args.chars === 'string'
+          ? args.chars
+          : '';
       return { text: truncateHead(command, 40), title: command || undefined };
     }
     case 'glob':

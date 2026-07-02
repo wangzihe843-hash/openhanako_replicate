@@ -37,7 +37,7 @@ describe('Mobile PWA entry split', () => {
     const jianInnerBlock = css.match(/\.jian-sidebar-inner\s*\{[\s\S]*?\}/)?.[0] ?? '';
     const universalCardBlock = css.match(/\.universal-card,\s*\.jian-card\s*\{[\s\S]*?\}/)?.[0] ?? '';
 
-    expect(css).toMatch(/--panel-edge-gap:\s*var\(--space-sm\);/);
+    expect(css).toMatch(/--panel-edge-gap:\s*var\(--space-8\);/);
     expect(css).toMatch(/--panel-card-bg:\s*var\(--bg-card,\s*var\(--bg\)\);/);
     expect(css).toMatch(/--panel-card-radius:\s*var\(--radius-lg\);/);
     expect(css).toMatch(/--panel-card-border:\s*1px solid rgba\(0,\s*0,\s*0,\s*0\.08\);/);

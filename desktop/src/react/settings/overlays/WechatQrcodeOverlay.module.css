@@ -17,7 +17,7 @@
 .card {
   background: var(--bg-card);
   border-radius: var(--radius-lg);
-  padding: var(--space-xl);
+  padding: var(--space-40);
   max-width: 340px;
   width: 90%;
   position: relative;
@@ -26,8 +26,8 @@
 
 .closeBtn {
   position: absolute;
-  top: var(--space-sm);
-  right: var(--space-sm);
+  top: var(--space-8);
+  right: var(--space-8);
   background: none;
   border: none;
   cursor: default;
@@ -45,7 +45,7 @@
   font-size: 15px;
   font-weight: 500;
   color: var(--text-primary);
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-16);
 }
 
 .qrcodeContainer {
@@ -53,7 +53,7 @@
   align-items: center;
   justify-content: center;
   min-height: 200px;
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-16);
 }
 
 .qrcodeImg {

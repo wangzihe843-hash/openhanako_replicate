@@ -1,8 +1,8 @@
 .root {
   width: min(100%, 360px);
-  margin-top: var(--space-xs);
+  margin-top: var(--space-4);
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--fs-caption);
   line-height: 1.45;
 }
 
@@ -10,7 +10,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-xs);
+  gap: var(--space-4);
   min-width: 0;
   flex-wrap: wrap;
 }
@@ -31,7 +31,7 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--space-xs);
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 

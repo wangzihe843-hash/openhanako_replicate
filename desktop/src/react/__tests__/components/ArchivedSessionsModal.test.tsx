@@ -10,7 +10,6 @@ const restoreMock = vi.fn();
 const deleteMock = vi.fn();
 const cleanupMock = vi.fn();
 const toastMock = vi.fn();
-const loadSessionsMock = vi.fn();
 
 vi.mock('../../stores/session-actions', () => ({
   listArchivedSessions: (...args: unknown[]) => listMock(...args),
@@ -18,7 +17,6 @@ vi.mock('../../stores/session-actions', () => ({
   deleteArchivedSession: (...args: unknown[]) => deleteMock(...args),
   cleanupArchivedSessions: (...args: unknown[]) => cleanupMock(...args),
   showSidebarToast: (...args: unknown[]) => toastMock(...args),
-  loadSessions: (...args: unknown[]) => loadSessionsMock(...args),
 }));
 
 vi.mock('../../hooks/use-i18n', () => ({
@@ -36,7 +34,6 @@ beforeEach(() => {
   deleteMock.mockReset();
   cleanupMock.mockReset();
   toastMock.mockReset();
-  loadSessionsMock.mockReset();
 });
 
 afterEach(() => {
@@ -56,6 +53,7 @@ describe('ArchivedSessionsModal', () => {
     listMock.mockResolvedValue([
       {
         path: '/x/a.jsonl',
+        sessionId: 'sess_archived_a',
         title: 'Alpha',
         archivedAt: new Date(Date.now() - 2 * 86400_000).toISOString(),
         sizeBytes: 1024 * 1024,
@@ -89,6 +87,7 @@ describe('ArchivedSessionsModal', () => {
     listMock.mockResolvedValue([
       {
         path: '/x/a.jsonl',
+        sessionId: 'sess_archived_a',
         title: 'Alpha',
         archivedAt: new Date().toISOString(),
         sizeBytes: 100,
@@ -96,13 +95,15 @@ describe('ArchivedSessionsModal', () => {
         agentName: 'Hana',
       },
     ]);
-    restoreMock.mockResolvedValue('ok');
+    restoreMock.mockResolvedValue({ status: 'ok', restoredPath: '/x/a.jsonl', sessionId: 'sess_archived_a' });
     window.confirm = vi.fn(() => true);
     render(<ArchivedSessionsModal open={true} onClose={() => {}} />);
     await waitFor(() => screen.getByText('Alpha'));
     fireEvent.click(screen.getByText('session.archived.restore'));
-    await waitFor(() => expect(restoreMock).toHaveBeenCalledWith('/x/a.jsonl'));
-    await waitFor(() => expect(loadSessionsMock).toHaveBeenCalled());
+    await waitFor(() => expect(restoreMock).toHaveBeenCalledWith(expect.objectContaining({
+      path: '/x/a.jsonl',
+      sessionId: 'sess_archived_a',
+    })));
   });
 
   it('skips restore when user cancels confirm', async () => {
@@ -134,7 +135,7 @@ describe('ArchivedSessionsModal', () => {
         agentName: 'Hana',
       },
     ]);
-    restoreMock.mockResolvedValue('conflict');
+    restoreMock.mockResolvedValue({ status: 'conflict' });
     window.confirm = vi.fn(() => true);
     render(<ArchivedSessionsModal open={true} onClose={() => {}} />);
     await waitFor(() => screen.getByText('Alpha'));
@@ -148,6 +149,7 @@ describe('ArchivedSessionsModal', () => {
     listMock.mockResolvedValue([
       {
         path: '/x/a.jsonl',
+        sessionId: 'sess_archived_delete',
         title: 'A',
         archivedAt: new Date(Date.now() - 40 * 86400_000).toISOString(),
         sizeBytes: 100,
@@ -167,6 +169,7 @@ describe('ArchivedSessionsModal', () => {
     listMock.mockResolvedValue([
       {
         path: '/x/a.jsonl',
+        sessionId: 'sess_archived_delete',
         title: 'A',
         archivedAt: new Date().toISOString(),
         sizeBytes: 100,
@@ -186,6 +189,7 @@ describe('ArchivedSessionsModal', () => {
     listMock.mockResolvedValue([
       {
         path: '/x/a.jsonl',
+        sessionId: 'sess_archived_delete',
         title: 'A',
         archivedAt: new Date().toISOString(),
         sizeBytes: 100,
@@ -198,6 +202,9 @@ describe('ArchivedSessionsModal', () => {
     render(<ArchivedSessionsModal open={true} onClose={() => {}} />);
     await waitFor(() => screen.getByText('A'));
     fireEvent.click(screen.getByText('session.archived.deleteForever'));
-    await waitFor(() => expect(deleteMock).toHaveBeenCalledWith('/x/a.jsonl'));
+    await waitFor(() => expect(deleteMock).toHaveBeenCalledWith(expect.objectContaining({
+      path: '/x/a.jsonl',
+      sessionId: 'sess_archived_delete',
+    })));
   });
 });

@@ -255,7 +255,7 @@ export function MediaProviderDetail({ providerId, provider, capability = 'imageG
       </div>
 
       {/* Credential status */}
-      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 'var(--space-16)', display: 'flex', alignItems: 'center', gap: '6px' }}>
         <span style={{
           width: 6, height: 6, borderRadius: '50%',
           background: provider.hasCredentials ? 'var(--success)' : 'var(--text-muted)',
@@ -357,13 +357,13 @@ export function MediaProviderDetail({ providerId, provider, capability = 'imageG
 
       {/* Provider-specific defaults */}
       {provider.models.length > 0 && (
-        <div style={{ marginTop: 'var(--space-md)', paddingTop: 'var(--space-md)', borderTop: '1px solid var(--overlay-light)' }}>
+        <div style={{ marginTop: 'var(--space-16)', paddingTop: 'var(--space-16)', borderTop: '1px solid var(--overlay-light)' }}>
           <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '10px' }}>
             {t('settings.media.providerDefaults')}
           </div>
           {schemaDrivenDefaults ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: modelModes.length > 1 ? '1fr 1fr' : '1fr', gap: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-12)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: modelModes.length > 1 ? '1fr 1fr' : '1fr', gap: 'var(--space-12)' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                     {capability === 'videoGeneration' ? t('settings.media.videoModels') : t('settings.media.models')}
@@ -393,12 +393,12 @@ export function MediaProviderDetail({ providerId, provider, capability = 'imageG
                   </div>
                 )}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-12)' }}>
                 {schemaEntries.map(([key, property]) => renderSchemaControl(key, property))}
               </div>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-12)' }}>
               {capability === 'imageGeneration' && fallbackResolutions.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>

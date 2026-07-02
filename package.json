@@ -1,6 +1,6 @@
 {
   "name": "hanako",
-  "version": "0.345.6",
+  "version": "0.350.2",
   "type": "module",
   "description": "HanaAgent - a personal AI agent with memory and soul",
   "license": "Apache-2.0",
@@ -219,7 +219,7 @@
       "requestedExecutionLevel": "asInvoker",
       "extraResources": [
         {
-          "from": "vendor/git-portable",
+          "from": "vendor/mingit",
           "to": "git"
         },
         {

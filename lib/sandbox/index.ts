@@ -11,7 +11,7 @@ import { detectPlatform, checkAvailability } from "./platform.ts";
 import { createSeatbeltExec } from "./seatbelt.ts";
 import { createBwrapExec } from "./bwrap.ts";
 import { createWin32Exec } from "./win32-exec.ts";
-import { wrapBashTool } from "./tool-wrapper.ts";
+import { wrapBashTool, wrapCommandExec } from "./tool-wrapper.ts";
 import { createEnhancedReadFile } from "./read-enhanced.ts";
 import { wrapReadImageWithVisionBridge } from "./read-image-vision.ts";
 import { wrapReadOfficeMedia } from "./read-office-media.ts";
@@ -33,6 +33,7 @@ import { serializeSessionFile } from "../session-files/session-file-response.ts"
 import { wrapResourceIoFileTools } from "../resource-io/agent-tools.ts";
 import { createResourceIoToolOperations } from "../resource-io/pi-tool-operations.ts";
 import { createSandboxResourceIO } from "../resource-io/sandbox-resource-io.ts";
+import { createExecCommandTools } from "../exec-command/tool.ts";
 
 /**
  * 为一个 session 创建沙盒包装后的工具集
@@ -59,6 +60,8 @@ import { createSandboxResourceIO } from "../resource-io/sandbox-resource-io.ts";
  * @param {(entry: object) => void} [opts.recordFileOperation]  记录 write/edit 触达的 session file
  * @param {() => object|null} [opts.getVisionBridge]  辅助视觉桥
  * @param {() => boolean} [opts.isVisionAuxiliaryEnabled]  辅助视觉开关
+ * @param {() => object|null} [opts.getTerminalSessionManager]  当前 engine 的 terminal session manager
+ * @param {() => string} [opts.getAgentId]  当前 agent id
  * @param {object} [opts.resourceIO]  session 级 ResourceIO 内核；未传入时按 cwd 创建 local_fs 内核
  * @param {(event: object, sessionPath?: string|null) => void} [opts.emitEvent]  ResourceIO 事件出口
  * @param {object|null} [opts.legacyCleanupQueue] Windows 旧 ACL 清理队列
@@ -80,6 +83,8 @@ export function createSandboxedTools(cwd, customTools, {
   recordFileOperation,
   getVisionBridge,
   isVisionAuxiliaryEnabled,
+  getTerminalSessionManager,
+  getAgentId,
   resourceIO: providedResourceIO,
   emitEvent,
   legacyCleanupQueue = null,
@@ -195,28 +200,43 @@ export function createSandboxedTools(cwd, customTools, {
     emitEvent,
     withResourceTarget: resourceOps.withResourceTarget,
   });
+  const createExecToolsForBash = (bashTool, commandExec = null) => createExecCommandTools({
+    bashTool,
+    commandExec,
+    getTerminalSessionManager,
+    getAgentId,
+    getCwd: () => cwd,
+    platform: process.platform,
+  });
 
   // ── Windows: PathGuard 包装 + restricted-token exec，关闭沙盒时走 direct fallback ──
   if (platform === "win32-restricted-token") {
+    const directWin32Exec = createWin32Exec();
+    const sandboxedWin32Exec = (command, execCwd, execOpts) => createWin32Exec({
+      sandbox: {
+        policy: makePolicy(),
+        hanakoHome,
+        getExternalReadPaths,
+        getSandboxNetworkEnabled: resolveSandboxNetworkEnabled,
+        legacyCleanupQueue,
+      },
+    })(command, execCwd, execOpts);
     const sandboxedBashTool = createBashTool(cwd, {
       operations: {
-        exec: ((command, execCwd, execOpts) => createWin32Exec({
-          sandbox: {
-            policy: makePolicy(),
-            hanakoHome,
-            getExternalReadPaths,
-            getSandboxNetworkEnabled: resolveSandboxNetworkEnabled,
-            legacyCleanupQueue,
-          },
-        })(command, execCwd, execOpts)) as any,
+        exec: sandboxedWin32Exec as any,
       },
+    });
+    const wrappedBashTool = wrapBashTool(sandboxedBashTool, guard, cwd, bashWrapOpts);
+    const wrappedWin32Exec = wrapCommandExec(sandboxedWin32Exec, guard, cwd, {
+      ...bashWrapOpts,
+      fallbackExec: directWin32Exec,
     });
     return {
       tools: buildResourceIoFileTools([
         readTool,
         writeToolWithResourceIO,
         editTool,
-        wrapBashTool(sandboxedBashTool, guard, cwd, bashWrapOpts),
+        ...createExecToolsForBash(wrappedBashTool, wrappedWin32Exec),
         createGrepTool(cwd, { operations: resourceOps.grep }),
         createFindTool(cwd, { operations: resourceOps.find }),
         createLsTool(cwd, { operations: resourceOps.ls }),
@@ -247,12 +267,13 @@ export function createSandboxedTools(cwd, customTools, {
     };
   }
 
+  const wrappedBashTool = wrapBashTool(sandboxedBashTool, guard, cwd, bashWrapOpts);
   return {
     tools: buildResourceIoFileTools([
       readTool,
       writeToolWithResourceIO,
       editTool,
-      wrapBashTool(sandboxedBashTool, guard, cwd, bashWrapOpts),
+      ...createExecToolsForBash(wrappedBashTool),
       createGrepTool(cwd, { operations: resourceOps.grep }),
       createFindTool(cwd, { operations: resourceOps.find }),
       createLsTool(cwd, { operations: resourceOps.ls }),
@@ -316,7 +337,7 @@ function wrapFileTouchTool(tool, cwd, {
           origin,
           operation,
         }));
-        return appendSessionFileDetails(result, sessionFile);
+        return appendSessionFileDetails(result, sessionFile, absolutePath);
       } catch (err) {
         return appendRegistrationWarning(result, err);
       }
@@ -336,7 +357,7 @@ function addSessionFileParameters(parameters) {
       ...parameters.properties,
       fileId: {
         type: "string",
-        description: "SessionFile id from current_status/session_files or attached [SessionFile] context. Use this instead of path when fileId is available; it is resolved before path.",
+        description: "SessionFile id from current_status/session_files or attached [SessionFile] context. Use this for read/stat/copy access. Do not use fileId for write/edit; use writableLocalRef.path or an ordinary local path for modifications.",
       },
       sessionPath: {
         type: "string",
@@ -389,13 +410,28 @@ function wrapSessionFilePathTool(tool, { getSessionPath, resolveSessionFile }: {
   };
 }
 
-function appendSessionFileDetails(result, sessionFile) {
+function sessionFileRef(sessionFile) {
+  const fileId = sessionFile?.fileId || sessionFile?.id || null;
+  return fileId ? { kind: "session-file", fileId } : null;
+}
+
+function writableLocalRef(filePath) {
+  return typeof filePath === "string" && path.isAbsolute(filePath)
+    ? { kind: "local-file", path: filePath }
+    : null;
+}
+
+function appendSessionFileDetails(result, sessionFile, filePath = null) {
   if (!sessionFile) return result;
+  const sessionRef = sessionFileRef(sessionFile);
+  const writableRef = writableLocalRef(filePath);
   return {
     ...(result || {}),
     details: {
       ...(result?.details || {}),
       sessionFile,
+      ...(sessionRef ? { sessionFileRef: sessionRef } : {}),
+      ...(writableRef ? { writableLocalRef: writableRef } : {}),
     },
   };
 }

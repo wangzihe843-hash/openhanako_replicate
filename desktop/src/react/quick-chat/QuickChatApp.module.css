@@ -48,7 +48,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 0.76rem;
+  font-size: var(--fs-caption);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -98,7 +98,7 @@
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-8);
   -webkit-app-region: no-drag;
 }
 
@@ -111,7 +111,7 @@
   color: var(--text-muted);
   background: var(--bg-card);
   font-family: inherit;
-  font-size: 0.72rem;
+  font-size: var(--fs-hint);
   cursor: default;
   -webkit-app-region: no-drag;
 }
@@ -142,7 +142,7 @@
 
 .emptyTranscript {
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   line-height: 1.6;
 }
 
@@ -150,7 +150,7 @@
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-8);
   min-width: 0;
   border-color: color-mix(in srgb, var(--overlay-light) 78%, var(--text-muted) 22%);
   box-shadow: none;
@@ -196,7 +196,7 @@
 }
 
 .rightControls {
-  gap: 0.25rem;
+  gap: var(--space-4);
 }
 
 .lockedPlanMode {
@@ -270,7 +270,7 @@
 
 .errorLine {
   color: var(--danger);
-  font-size: 0.72rem;
+  font-size: var(--fs-hint);
   line-height: 1.35;
   -webkit-app-region: no-drag;
 }

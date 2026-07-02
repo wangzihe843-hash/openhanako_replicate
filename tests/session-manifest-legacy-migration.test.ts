@@ -149,6 +149,10 @@ describe("session manifest legacy migration", () => {
         legacyTitle: "Archived title",
       },
     });
+
+    const titles = JSON.parse(fs.readFileSync(path.join(active.sessionDir, "session-titles.json"), "utf-8"));
+    expect(titles[activeManifest.sessionId]).toBe("Active title");
+    expect(titles[archivedManifest.sessionId]).toBe("Archived title");
   });
 
   it("imports capability snapshots and repairs permission from oversized session-meta backups", () => {
@@ -245,6 +249,21 @@ describe("session manifest legacy migration", () => {
     expect(second).toEqual({ scanned: 1, created: 0, existing: 1, skipped: 0 });
     expect(store.resolveByLocatorPath(active.sessionPath)?.sessionId).toBe("sess_migrate_0001");
     expect(store.list()).toHaveLength(1);
+  });
+
+  it("does not overwrite an existing sessionId title while backfilling legacy title keys", () => {
+    const active = writeSession("hana", "active-title.jsonl");
+    const existing = store.createForPath({ sessionPath: active.sessionPath, ownerAgentId: "hana" });
+    fs.writeFileSync(path.join(active.sessionDir, "session-titles.json"), JSON.stringify({
+      [active.sessionPath]: "Legacy title",
+      [existing.sessionId]: "Current title",
+    }, null, 2));
+
+    const result = migrateLegacySessions({ hanaHome, store, migratedAt: "2026-06-18T03:02:00.000Z" });
+
+    expect(result).toEqual({ scanned: 1, created: 0, existing: 1, skipped: 0 });
+    const titles = JSON.parse(fs.readFileSync(path.join(active.sessionDir, "session-titles.json"), "utf-8"));
+    expect(titles[existing.sessionId]).toBe("Current title");
   });
 
   it("scans legacy sessions through symlinked agent directories", () => {

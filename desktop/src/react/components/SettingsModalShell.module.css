@@ -9,7 +9,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-lg);
+  padding: var(--space-24);
   background:
     radial-gradient(circle at 50% 42%, rgba(248, 245, 237, 0.1), rgba(20, 18, 14, 0.16) 62%, rgba(20, 18, 14, 0.24)),
     rgba(20, 18, 14, 0.2);
@@ -44,9 +44,9 @@
 }
 
 .card {
-  width: min(884px, calc(100vw - 2 * var(--space-lg)));
-  height: min(840px, calc(100vh - var(--space-lg) - var(--space-lg)));
-  min-height: min(500px, calc(100vh - var(--space-lg) - var(--space-lg)));
+  width: min(884px, calc(100vw - 2 * var(--space-24)));
+  height: min(840px, calc(100vh - var(--space-24) - var(--space-24)));
+  min-height: min(500px, calc(100vh - var(--space-24) - var(--space-24)));
   display: flex;
   overflow: hidden;
   background: var(--bg);
@@ -67,7 +67,7 @@
 }
 
 .card[data-wide="true"] {
-  width: min(1200px, calc(100vw - var(--space-lg) - var(--space-lg)));
+  width: min(1200px, calc(100vw - var(--space-24) - var(--space-24)));
 }
 
 .card.open {
@@ -85,12 +85,12 @@
 
 @media (max-width: 760px) {
   .overlay {
-    padding: var(--space-sm);
+    padding: var(--space-8);
   }
 
   .card {
-    width: calc(100vw - var(--space-sm) - var(--space-sm));
-    height: calc(100vh - var(--space-sm) - var(--space-sm));
+    width: calc(100vw - var(--space-8) - var(--space-8));
+    height: calc(100vh - var(--space-8) - var(--space-8));
     min-height: 0;
   }
 }

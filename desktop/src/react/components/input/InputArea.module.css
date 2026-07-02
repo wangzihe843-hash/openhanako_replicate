@@ -8,7 +8,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-sm);
+    gap: var(--space-8);
     flex-wrap: nowrap;
 }
 
@@ -29,7 +29,7 @@
 }
 
 .input-surface-mobile .input-bottom-bar {
-    gap: 0.25rem;
+    gap: var(--space-4);
     min-width: 0;
 }
 
@@ -130,7 +130,7 @@
     gap: 0.3rem;
     padding: 0.2rem 0.55rem;
     font-family: inherit;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     background: var(--bg-card);
     border: 1px solid rgba(var(--accent-rgb), 0.12);
@@ -266,7 +266,7 @@
     border: none;
     background: transparent;
     cursor: default;
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     color: var(--text-muted);
     transition: color var(--duration-slow) var(--ease-out);
@@ -291,7 +291,7 @@
 }
 
 .context-ring-label {
-    font-size: 0.68rem;
+    font-size: var(--fs-hint);
     line-height: 1;
     font-variant-numeric: tabular-nums;
 }
@@ -310,10 +310,10 @@
 .context-ring-menu {
     display: inline-flex;
     flex-direction: column;
-    gap: var(--space-xs);
+    gap: var(--space-4);
     width: max-content;
     min-width: 0;
-    padding: var(--space-xs);
+    padding: var(--space-4);
     background: var(--panel-card-bg);
     border: var(--panel-card-border);
     border-radius: var(--radius-sm);
@@ -327,13 +327,13 @@
     justify-content: flex-start;
     width: 100%;
     height: 28px;
-    padding: 0 var(--space-xs);
+    padding: 0 var(--space-4);
     border: none;
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text);
     font: inherit;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     line-height: 1;
     text-align: left;
     white-space: nowrap;
@@ -426,11 +426,11 @@
 .thinking-option {
     display: flex;
     align-items: baseline;
-    gap: 0.5rem;
+    gap: var(--space-8);
     width: 100%;
     padding: 0.4rem 0.65rem;
     font-family: inherit;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text);
     background: none;
     border: none;
@@ -506,7 +506,7 @@
 }
 
 .thinking-option-desc {
-    font-size: 0.68rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     margin-left: auto;
 }
@@ -537,7 +537,7 @@
     height: 24px;
     padding: 0 0.4rem;
     font-family: inherit;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     line-height: 1;
     color: var(--text-muted);
     background: var(--bg-card);
@@ -619,8 +619,8 @@
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    padding: var(--space-xs);
-    margin-bottom: var(--space-xs);
+    padding: var(--space-4);
+    margin-bottom: var(--space-4);
     min-width: 180px;
     max-height: 360px;
     overflow-y: auto;
@@ -639,7 +639,7 @@
     width: 100%;
     padding: 0.4rem 0.6rem;
     font-family: inherit;
-    font-size: 0.8rem;
+    font-size: var(--fs-ui);
     color: var(--text-light);
     background: none;
     border: none;
@@ -703,7 +703,7 @@
     cursor: default;
     text-align: left;
     color: var(--text);
-    font-size: 0.88rem;
+    font-size: var(--fs-body);
     transition: background var(--duration-instant);
     overflow: hidden;
 }
@@ -733,7 +733,7 @@
 
 .slash-menu-desc {
     color: var(--text-muted);
-    font-size: 0.82rem;
+    font-size: var(--fs-ui);
     margin-left: auto;
     white-space: nowrap;
     overflow: hidden;
@@ -775,7 +775,7 @@
     color: var(--text);
     cursor: default;
     font-family: inherit;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     text-align: left;
     transition: background var(--duration-instant);
 }
@@ -831,16 +831,16 @@
 .file-mention-empty {
     padding: 8px 10px;
     color: var(--text-muted);
-    font-size: 0.82rem;
+    font-size: var(--fs-ui);
 }
 
 .slash-busy-bar {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    margin-bottom: 6px;
-    font-size: 0.85rem;
+    gap: var(--space-8);
+    padding: var(--space-6) var(--space-12);
+    margin-bottom: var(--space-6);
+    font-size: var(--fs-ui);
     color: var(--text-muted);
     background: var(--panel-card-bg);
     border: var(--panel-card-border);
@@ -924,9 +924,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 12px;
-    margin-bottom: 6px;
-    font-size: 0.85rem;
+    padding: var(--space-6) var(--space-12);
+    margin-bottom: var(--space-6);
+    font-size: var(--fs-ui);
     color: #c08080;
     background: var(--panel-card-bg);
     border: var(--panel-card-border);
@@ -938,10 +938,10 @@
 .capability-drift-notice {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    margin-bottom: 6px;
-    font-size: 0.85rem;
+    gap: var(--space-8);
+    padding: var(--space-6) var(--space-12);
+    margin-bottom: var(--space-6);
+    font-size: var(--fs-ui);
     color: var(--text-muted);
     background: var(--panel-card-bg);
     border: var(--panel-card-border);
@@ -953,7 +953,7 @@
 .capability-drift-text {
     display: flex;
     align-items: baseline;
-    gap: 0.5rem;
+    gap: var(--space-8);
     min-width: 0;
     flex: 1;
     overflow: hidden;
@@ -967,7 +967,7 @@
 
 .capability-drift-detail {
     color: var(--text-muted);
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -987,7 +987,7 @@
     height: 24px;
     padding: 0 0.6rem;
     font-family: inherit;
-    font-size: 0.74rem;
+    font-size: var(--fs-caption);
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
     background: transparent;
@@ -1075,7 +1075,7 @@
 }
 
 .session-confirmation-title {
-    font-size: 0.84rem;
+    font-size: var(--fs-ui);
     line-height: 1.28;
     color: var(--text);
     font-weight: 600;
@@ -1090,7 +1090,7 @@
     align-items: baseline;
     gap: 0.35rem;
     min-width: 0;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     line-height: 1.25;
     white-space: nowrap;
     overflow: hidden;
@@ -1134,7 +1134,7 @@
     height: 28px;
     padding: 0 0.65rem;
     font-family: inherit;
-    font-size: 0.76rem;
+    font-size: var(--fs-caption);
     border-radius: var(--radius-sm);
     border: 1px solid rgba(var(--accent-rgb), 0.18);
     background: var(--bg-card);
@@ -1185,7 +1185,7 @@
     position: fixed;
     z-index: 10000;
     min-width: 8.5rem;
-    padding: var(--space-xs);
+    padding: var(--space-4);
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
@@ -1198,7 +1198,7 @@
     width: 100%;
     padding: 0.4rem 0.6rem;
     font-family: inherit;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text);
     background: transparent;
     border: none;
@@ -1221,14 +1221,14 @@
 .session-confirmation-resolved {
     align-self: center;
     flex-shrink: 0;
-    font-size: 0.76rem;
+    font-size: var(--fs-caption);
     color: var(--text-muted);
 }
 
 @media (max-width: 640px) {
     .session-confirmation-prompt {
         flex-direction: column;
-        gap: var(--space-sm);
+        gap: var(--space-8);
     }
 
     .session-confirmation-actions {
@@ -1242,11 +1242,11 @@
     z-index: 1;
     display: flex;
     flex-direction: column;
-    gap: var(--space-sm);
+    gap: var(--space-8);
     background: var(--bg-card);
     border: 1px solid rgba(0, 0, 0, 0.08);
     border-radius: var(--radius-chat-surface, 16px);
-    padding: var(--space-md) var(--space-md) var(--space-sm);
+    padding: var(--space-16) var(--space-16) var(--space-8);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
     transition: border-color 0.3s var(--ease-out),
                 box-shadow 0.3s var(--ease-out);
@@ -1269,14 +1269,14 @@
 
 .audio-recording-card {
     position: absolute;
-    right: var(--space-md);
+    right: var(--space-16);
     bottom: 42px;
     z-index: 4;
     display: flex;
     align-items: center;
     gap: 0.55rem;
     min-width: 132px;
-    max-width: min(260px, calc(100% - 2 * var(--space-md)));
+    max-width: min(260px, calc(100% - 2 * var(--space-16)));
     padding: 0.5rem 0.65rem;
     color: var(--text);
     background: color-mix(in srgb, var(--bg-card) 94%, var(--accent) 6%);
@@ -1308,14 +1308,14 @@
 }
 
 .audio-recording-title {
-    font-size: 0.74rem;
+    font-size: var(--fs-caption);
     line-height: 1.2;
     color: var(--text);
     white-space: nowrap;
 }
 
 .audio-recording-time {
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     line-height: 1.2;
     color: var(--accent);
     font-variant-numeric: tabular-nums;
@@ -1324,7 +1324,7 @@
 .audio-recording-error {
     max-width: 210px;
     color: var(--danger);
-    font-size: 0.68rem;
+    font-size: var(--fs-hint);
     line-height: 1.35;
 }
 
@@ -1352,7 +1352,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: var(--space-sm);
+    padding: var(--space-8);
     border-radius: inherit;
     background: color-mix(in srgb, var(--bg-card) 72%, transparent);
     backdrop-filter: blur(5px) saturate(0.72);
@@ -1365,13 +1365,13 @@
     align-items: center;
     width: min(360px, 100%);
     gap: 0.45rem;
-    padding: 0.35rem var(--space-sm);
+    padding: 0.35rem var(--space-8);
     text-align: center;
 }
 
 .deleted-agent-title {
     color: var(--text);
-    font-size: 0.82rem;
+    font-size: var(--fs-ui);
     font-weight: 600;
     line-height: 1.3;
 }
@@ -1379,7 +1379,7 @@
 .deleted-agent-text {
     max-width: 32rem;
     color: var(--text-muted);
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     line-height: 1.55;
 }
 
@@ -1387,13 +1387,13 @@
     min-width: 150px;
     height: 28px;
     margin-top: 0.1rem;
-    padding: 0 0.75rem;
+    padding: 0 var(--space-12);
     border: 1px solid color-mix(in srgb, var(--text-muted) 26%, transparent);
     border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--bg-card) 86%, var(--text) 4%);
     color: var(--text);
     font-family: inherit;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     line-height: 26px;
     cursor: default;
     transition: border-color var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
@@ -1431,7 +1431,7 @@
 
 .deleted-agent-error {
     color: var(--danger);
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     line-height: 1.4;
 }
 
@@ -1452,7 +1452,7 @@
 .input-box {
     width: 100%;
     font-family: inherit;
-    font-size: 0.95rem;
+    font-size: var(--fs-title);
     line-height: 1.6;
     color: var(--text);
     background: none;
@@ -1486,10 +1486,10 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.25rem;
+    gap: var(--space-4);
     padding: 0.35rem 0.65rem;
     font-family: inherit;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     background: var(--accent);
     color: white;
     border: 1px solid var(--accent);
@@ -1551,7 +1551,7 @@
     display: flex;
     flex-wrap: nowrap;
     align-items: flex-end;
-    padding: var(--space-sm) 0 var(--space-xs);
+    padding: var(--space-8) 0 var(--space-4);
 }
 
 /* 左侧附件/引用区域 — 文件与文字引用同一横向流 */
@@ -1577,7 +1577,7 @@
     gap: 0.35rem;
     padding: 0.3rem 0.55rem;
     max-width: 140px;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     background: var(--bg-card);
     border: 1px solid var(--overlay-light);
@@ -1589,7 +1589,7 @@
 .media-attachment-at {
     flex: 0 0 auto;
     color: var(--accent);
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     font-weight: 600;
     line-height: 1;
     opacity: 0.88;

@@ -29,7 +29,7 @@ import {
 
 // 乙策略用的精选集（= 收口前 subagent 的现状）。仅 strip 策略下生效。
 const STRIP_CUSTOM_TOOLS = ["web_search", "web_fetch", "todo_write", "browser"];
-const STRIP_BUILTIN_TOOLS = ["read", "write", "edit", "bash", "grep", "find", "ls"];
+const STRIP_BUILTIN_TOOLS = ["read", "write", "edit", "exec_command", "write_stdin", "grep", "find", "ls"];
 const STRIP_BUILTIN_READONLY = ["read", "grep", "find", "ls"];
 
 /** 当前策略：env 覆盖，默认甲（intercept）。便于性能 A/B。 */

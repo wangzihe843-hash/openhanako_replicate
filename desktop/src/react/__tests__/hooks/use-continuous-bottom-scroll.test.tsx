@@ -136,6 +136,30 @@ describe('useContinuousBottomScroll', () => {
     expect(metrics.scrollTop).toBe(420);
   });
 
+  it('cancels an active follow when the user changes scrollTop through a scroll-only path', () => {
+    const metrics = { scrollHeight: 1000, clientHeight: 300, scrollTop: 700 };
+    render(<Harness onController={() => {}} />);
+    const scrollEl = document.querySelector('[data-testid="scroll"]') as HTMLElement;
+    setScrollMetrics(scrollEl, metrics);
+
+    act(() => {
+      metrics.scrollHeight = 1060;
+      MockResizeObserver.instances[0].trigger();
+      flushRaf(16);
+    });
+    expect(metrics.scrollTop).toBeGreaterThan(700);
+
+    act(() => {
+      metrics.scrollTop = 520;
+      fireEvent.scroll(scrollEl);
+      metrics.scrollHeight = 1120;
+      MockResizeObserver.instances[0].trigger();
+      flushRaf(32);
+    });
+
+    expect(metrics.scrollTop).toBe(520);
+  });
+
   it('can be explicitly marked sticky again and jump to bottom', () => {
     let controller: ContinuousBottomScrollController | null = null;
     const metrics = { scrollHeight: 1000, clientHeight: 300, scrollTop: 120 };

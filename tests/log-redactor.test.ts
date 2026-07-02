@@ -11,7 +11,7 @@ const {
 describe("log redaction", () => {
   it("redacts secrets, auth headers, query tokens, and common key prefixes", () => {
     const raw = [
-      "Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz123456",
+      "Authorization: Bearer demo-key",
       "url=https://user:pass@example.com/cb?token=secret-token&safe=1",
       "client_secret=abc123abc123abc123abc123",
       "api_key: gsk_abcdefghijklmnopqrstuvwxyz",
@@ -20,7 +20,7 @@ describe("log redaction", () => {
 
     const cleaned = redactLogText(raw);
 
-    expect(cleaned).not.toContain("sk-abcdefghijklmnopqrstuvwxyz123456");
+    expect(cleaned).not.toContain("demo-key");
     expect(cleaned).not.toContain("secret-token");
     expect(cleaned).not.toContain("abc123abc123abc123abc123");
     expect(cleaned).not.toContain("gsk_abcdefghijklmnopqrstuvwxyz");
@@ -107,11 +107,11 @@ describe("log redaction", () => {
     const label = redactLogLabel("bridge\nbad module!");
     const formatted = formatLogArgs([
       "token=abc123abc123abc123abc123",
-      { authorization: "Bearer sk-abcdefghijklmnopqrstuvwxyz123456" },
+      { authorization: "Bearer demo-key" },
     ]);
 
     expect(label).toBe("bridge_bad_module_");
     expect(formatted).not.toContain("abc123abc123abc123abc123");
-    expect(formatted).not.toContain("sk-abcdefghijklmnopqrstuvwxyz123456");
+    expect(formatted).not.toContain("demo-key");
   });
 });

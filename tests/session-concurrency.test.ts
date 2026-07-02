@@ -32,7 +32,7 @@ vi.mock("../lib/pi-sdk/index.js", async () => {
     },
     Type,
     StringEnum,
-    PI_BUILTIN_TOOL_NAMES: Object.freeze(["read", "write", "edit", "bash", "grep", "find", "ls"]),
+    PI_BUILTIN_TOOL_NAMES: Object.freeze(["read", "write", "edit", "exec_command", "write_stdin", "grep", "find", "ls"]),
   };
 });
 

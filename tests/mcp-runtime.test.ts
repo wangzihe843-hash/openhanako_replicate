@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { Hono } from "hono";
 import {
   McpRuntime,
   MCP_CONNECTORS_STATUS_TOOL_NAME,
@@ -9,6 +10,7 @@ import {
   toMcpToolId,
 } from "../plugins/mcp/lib/mcp-runtime.ts";
 import { McpHttpError } from "../plugins/mcp/lib/mcp-http-client.ts";
+import registerMcpRoutes from "../plugins/mcp/routes/api.ts";
 
 describe("MCP runtime policy", () => {
   it("uses stable sanitized tool ids for dynamic MCP tools", () => {
@@ -364,7 +366,7 @@ describe("MCP runtime policy", () => {
   });
 
   it("marks agent session capability snapshots stale after MCP agent tool settings change", async () => {
-    const request = vi.fn(async (type, payload) => {
+    const request = vi.fn(async (type, _payload) => {
       if (type === "agent:config") {
         return { config: { mcp: { connectors: { github: { enabled: true } } } } };
       }
@@ -400,6 +402,81 @@ describe("MCP runtime policy", () => {
       },
     } as any);
 
+    expect(request).toHaveBeenCalledWith("session:capability-drift:mark-stale", {
+      agentId: "hana",
+      connectorId: "github",
+      reason: "mcp.agent.tool.enable",
+    });
+  });
+
+  it("marks session capability snapshots stale for MCP REST settings mutations", async () => {
+    let stored = { enabled: false, connectors: [] };
+    const request = vi.fn(async (type) => {
+      if (type === "agent:config") return { config: {} };
+      if (type === "session:capability-drift:mark-stale") return { ok: true, marked: 1 };
+      return {};
+    });
+    const runtime = new McpRuntime({
+      dataDir: "/tmp/mcp-test",
+      config: {
+        get: vi.fn(() => stored),
+        set: vi.fn((_key, value) => {
+          stored = value;
+        }),
+      },
+      registerTool: vi.fn(() => () => {}),
+      bus: { request },
+      log: console,
+    });
+    const app = new Hono();
+    registerMcpRoutes(app, { _mcpRuntime: runtime, bus: { request }, log: console });
+
+    const res = await app.request("/settings/enabled", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(request).toHaveBeenCalledWith("session:capability-drift:mark-stale", {
+      reason: "mcp.global.enabled",
+    });
+  });
+
+  it("marks only the target agent stale for MCP REST agent tool mutations", async () => {
+    const request = vi.fn(async (type, _payload) => {
+      if (type === "agent:config") {
+        return { config: { mcp: { connectors: { github: { enabled: true } } } } };
+      }
+      if (type === "agent:update-config") {
+        return { config: { mcp: { connectors: { github: { enabled: true, tools: { search: true } } } } } };
+      }
+      if (type === "session:capability-drift:mark-stale") return { ok: true, marked: 1 };
+      return {};
+    });
+    const runtime = new McpRuntime({
+      dataDir: "/tmp/mcp-test",
+      config: {
+        get: vi.fn(() => ({
+          enabled: true,
+          connectors: [{ id: "github", name: "GitHub", tools: [{ name: "search" }] }],
+        })),
+        set: vi.fn(),
+      },
+      registerTool: vi.fn(() => () => {}),
+      bus: { request },
+      log: console,
+    });
+    const app = new Hono();
+    registerMcpRoutes(app, { _mcpRuntime: runtime, bus: { request }, log: console });
+
+    const res = await app.request("/agents/hana/connectors/github", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tools: { search: true } }),
+    });
+
+    expect(res.status).toBe(200);
     expect(request).toHaveBeenCalledWith("session:capability-drift:mark-stale", {
       agentId: "hana",
       connectorId: "github",

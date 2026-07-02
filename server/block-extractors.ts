@@ -161,6 +161,16 @@ export const BLOCK_EXTRACTORS = {
     }];
   },
 
+  show_card: (details) => {
+    if (!details?.code) return null;
+    return [{
+      type: "interactive_card",
+      cardId: details.cardId || "",
+      title: details.title || "",
+      code: details.code,
+    }];
+  },
+
   update_settings: (details) => {
     if (details.settingsUpdate) {
       return [{

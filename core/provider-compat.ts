@@ -24,11 +24,13 @@ import * as mimo from "./provider-compat/mimo.ts";
 import * as qwen from "./provider-compat/qwen.ts";
 import * as zhipu from "./provider-compat/zhipu.ts";
 import * as volcengine from "./provider-compat/volcengine.ts";
+import * as longcat from "./provider-compat/longcat.ts";
 import * as agnes from "./provider-compat/agnes.ts";
 import * as openaiInputAudio from "./provider-compat/openai-input-audio.ts";
 import * as openaiVideoUrl from "./provider-compat/openai-video-url.ts";
 import * as openrouter from "./provider-compat/openrouter.ts";
 import * as anthropic from "./provider-compat/anthropic.ts";
+import * as codexResponses from "./provider-compat/codex-responses.ts";
 import { normalizeImplicitOutputBudget } from "./provider-compat/output-budget.ts";
 import { stripOrphanToolResults } from "./provider-compat/tool-pairing.ts";
 import { normalizeOpenAIInputAudioPayload } from "./provider-compat/input-audio.ts";
@@ -59,11 +61,13 @@ const PROVIDER_MODULES: ProviderModule[] = [
   qwen,
   zhipu,
   volcengine,
+  longcat,
   agnes,
   openaiInputAudio,
   openaiVideoUrl,
   openrouter,
   anthropic,
+  codexResponses,
 ];
 
 function lower(value) {
@@ -96,6 +100,7 @@ export function getThinkingFormat(model) {
   if (isDeepSeekModel(model)) return "deepseek";
   if (zhipu.matches(model)) return "zhipu";
   if (volcengine.matches(model)) return "volcengine";
+  if (longcat.matches(model)) return "longcat";
   return null;
 }
 
@@ -126,6 +131,7 @@ function stripIncompatibleThinking(payload, model) {
     || thinkingFormat === "zhipu"
     || thinkingFormat === "kimi"
     || thinkingFormat === "volcengine"
+    || thinkingFormat === "longcat"
   ) return payload;
   const { thinking, ...rest } = payload;
   return rest;
@@ -247,6 +253,72 @@ function normalizeAudioTransportPayload(payload, model) {
   return payload;
 }
 
+function isToolResultMessage(message) {
+  return message?.role === "toolResult";
+}
+
+function resourceMetadataValue(value) {
+  return typeof value === "string" && value.trim().length > 0 ? value : "(none)";
+}
+
+function formatEmbeddedResourceText(resource, body) {
+  return [
+    "[embedded resource]",
+    `uri: ${resourceMetadataValue(resource?.uri)}`,
+    `name: ${resourceMetadataValue(resource?.name)}`,
+    `mimeType: ${resourceMetadataValue(resource?.mimeType)}`,
+    "",
+    body,
+  ].join("\n");
+}
+
+function projectResourceBlockToText(block) {
+  if (!block || typeof block !== "object" || block.type !== "resource") {
+    return { block, changed: false };
+  }
+  const resource = block.resource && typeof block.resource === "object"
+    ? block.resource
+    : null;
+  if (typeof resource?.text === "string") {
+    return {
+      block: {
+        type: "text",
+        text: formatEmbeddedResourceText(resource, `content:\n${resource.text}`),
+      },
+      changed: true,
+    };
+  }
+  const reason = typeof resource?.blob === "string"
+    ? "content: [binary resource omitted; no model-visible text was provided]"
+    : "content: [resource has no text content]";
+  return {
+    block: {
+      type: "text",
+      text: formatEmbeddedResourceText(resource, reason),
+    },
+    changed: true,
+  };
+}
+
+function projectToolResultResourcesForModel(messages) {
+  let changed = false;
+  const nextMessages = messages.map((message) => {
+    if (!isToolResultMessage(message) || !Array.isArray(message?.content)) {
+      return message;
+    }
+    let contentChanged = false;
+    const nextContent = message.content.map((block) => {
+      const projected = projectResourceBlockToText(block);
+      if (projected.changed) contentChanged = true;
+      return projected.block;
+    });
+    if (!contentChanged) return message;
+    changed = true;
+    return { ...message, content: nextContent };
+  });
+  return changed ? nextMessages : messages;
+}
+
 /**
  * Provider payload 兼容化的唯一入口。chat 路径与 utility 路径共享。
  *
@@ -290,7 +362,8 @@ export function normalizeProviderPayload(payload, model, options = {}) {
 
 /**
  * Provider context 兼容化入口。运行于 Pi SDK context hook，早于 provider
- * serializer，专门承载 replay/history 这类 payload hook 已经来不及处理的协议校验。
+ * serializer，承载 replay/history 这类 payload hook 已经来不及处理的协议校验，
+ * 以及只影响模型可见副本的 provider-agnostic content projection。
  *
  * @param {Array|any} messages — Pi SDK AgentMessage[]
  * @param {object|null|undefined} model
@@ -301,14 +374,15 @@ export function normalizeProviderContextMessages(messages, model, options = {}) 
   if (!Array.isArray(messages)) return messages;
 
   const normalizedOptions = normalizeProviderOptions(options);
+  const result = projectToolResultResourcesForModel(messages);
   for (const mod of PROVIDER_MODULES) {
     if (mod.matches(model)) {
       if (typeof mod.normalizeContextMessages === "function") {
-        return mod.normalizeContextMessages(messages, model, normalizedOptions);
+        return mod.normalizeContextMessages(result, model, normalizedOptions);
       }
       break;
     }
   }
 
-  return messages;
+  return result;
 }

@@ -22,18 +22,15 @@ const browserManagerMock = {
   resumeForSession: vi.fn(async (sp) => {
     browserManagerMock._sessions.set(sp, { running: true, url: "https://after.example.com" });
   }),
-  resumeForSessionIfAvailable: vi.fn(async (sp) => {
-    await browserManagerMock.resumeForSession(sp);
-    return {
-      status: "resumed",
-      canResume: false,
-      reason: "already_running",
-      hostConnected: true,
-      hasResumeState: true,
-      running: browserManagerMock.isRunning(sp),
-      url: browserManagerMock.currentUrl(sp),
-    };
-  }),
+  resumeForSessionIfAvailable: vi.fn(async (sp) => ({
+    status: "skipped",
+    canResume: false,
+    reason: "no_browser_state",
+    hostConnected: true,
+    hasResumeState: false,
+    running: browserManagerMock.isRunning(sp),
+    url: browserManagerMock.currentUrl(sp),
+  })),
   closeBrowserForSession: vi.fn(),
   getBrowserSessions: vi.fn(() => ({})),
   getBrowserSessionStates: vi.fn(() => ({})),
@@ -119,6 +116,18 @@ describe("sessions route", () => {
     };
 
     app.route("/api", createSessionsRoute(engine));
+    browserManagerMock.resumeForSessionIfAvailable.mockImplementationOnce(async (sp) => {
+      await browserManagerMock.resumeForSession(sp);
+      return {
+        status: "resumed",
+        canResume: false,
+        reason: "already_running",
+        hostConnected: true,
+        hasResumeState: true,
+        running: browserManagerMock.isRunning(sp),
+        url: browserManagerMock.currentUrl(sp),
+      };
+    });
 
     const res = await app.request("/api/sessions/switch", {
       method: "POST",
@@ -187,7 +196,7 @@ describe("sessions route", () => {
     expect(res.status).toBe(200);
     expect(engine.switchSession).toHaveBeenCalledWith(currentPath);
     expect(browserManagerMock.resumeForSessionIfAvailable).toHaveBeenCalledWith(currentPath);
-    expect(browserManagerMock.resumeForSession).toHaveBeenCalledWith(currentPath);
+    expect(browserManagerMock.resumeForSession).not.toHaveBeenCalledWith(currentPath);
   });
 
   it("skips opportunistic browser resume without failing when no browser host is attached", async () => {
@@ -244,6 +253,64 @@ describe("sessions route", () => {
       status: "skipped",
       reason: "browser_host_unavailable",
       hostConnected: false,
+    });
+  });
+
+  it("keeps cold browser resume deferred during session switch", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const app = new Hono();
+    const targetPath = "/tmp/agents/a/sessions/cold-browser.jsonl";
+
+    browserManagerMock.resumeForSessionIfAvailable.mockResolvedValueOnce({
+      status: "skipped",
+      canResume: false,
+      reason: "cold_resume_deferred",
+      hostConnected: true,
+      hasResumeState: true,
+      running: false,
+      url: "https://cold.example.com",
+    });
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: "/tmp/agents/a/sessions/old.jsonl",
+      memoryEnabled: true,
+      planMode: false,
+      memoryModelUnavailableReason: null,
+      cwd: "/tmp/workspace",
+      currentAgentId: "a",
+      currentModel: { id: "m", provider: "test", input: ["text"] },
+      isSessionStreaming: vi.fn(() => false),
+      switchSession: vi.fn(async (sessionPath) => {
+        engine.currentSessionPath = sessionPath;
+      }),
+      getSessionByPath: vi.fn(() => ({ messages: [] })),
+      getSessionMemoryEnabled: vi.fn(() => true),
+      getSessionThinkingLevel: vi.fn(() => "medium"),
+      getSessionWorkspaceFolders: vi.fn(() => []),
+      getSessionAuthorizedFolders: vi.fn(() => []),
+      getAgent: vi.fn(() => ({ agentName: "Agent A" })),
+      agentIdFromSessionPath: vi.fn(() => "a"),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: targetPath, currentSessionPath: "/tmp/agents/a/sessions/old.jsonl" }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(browserManagerMock.resumeForSessionIfAvailable).toHaveBeenCalledWith(targetPath);
+    expect(browserManagerMock.resumeForSession).not.toHaveBeenCalledWith(targetPath);
+    expect(data.browserRunning).toBe(false);
+    expect(data.browserUrl).toBeNull();
+    expect(data.browserResume).toMatchObject({
+      status: "skipped",
+      reason: "cold_resume_deferred",
+      hostConnected: true,
     });
   });
 
@@ -964,7 +1031,42 @@ describe("sessions route", () => {
     );
   });
 
-  it("rejects write operations against deleted-agent sessions", async () => {
+  it("returns typed 422 when a deleted-agent continuation source has no transcript", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const app = new Hono();
+    const agentsDir = path.join(tmpDir, "agents");
+    const oldPath = path.join(agentsDir, "deleted", "sessions", "empty.jsonl");
+    fs.mkdirSync(path.dirname(oldPath), { recursive: true });
+    fs.writeFileSync(oldPath, "{}\n");
+    const emptyError = new Error("continueDeletedAgentSession: source session has no displayable transcript") as any;
+    emptyError.code = "SESSION_TRANSCRIPT_EMPTY";
+    emptyError.status = 422;
+    const engine = {
+      agentsDir,
+      agentIdFromSessionPath: vi.fn(() => "deleted"),
+      isAgentDeleted: vi.fn(() => true),
+      continueDeletedAgentSession: vi.fn(async () => {
+        throw emptyError;
+      }),
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/continue-deleted-agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: oldPath }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(422);
+    expect(data).toMatchObject({
+      code: "SESSION_TRANSCRIPT_EMPTY",
+      error: "continueDeletedAgentSession: source session has no displayable transcript",
+    });
+  });
+
+  it("rejects content/runtime writes but allows safe unpin for deleted-agent sessions", async () => {
     const { createSessionsRoute } = await import("../server/routes/sessions.ts");
     const app = new Hono();
     const deletedPath = "/tmp/agents/deleted/sessions/old.jsonl";
@@ -985,6 +1087,11 @@ describe("sessions route", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: deletedPath, pinned: true }),
     });
+    const unpin = await app.request("/api/sessions/pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: deletedPath, pinned: false }),
+    });
     const rename = await app.request("/api/sessions/rename", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -997,10 +1104,11 @@ describe("sessions route", () => {
     });
 
     expect(pin.status).toBe(409);
+    expect(unpin.status).toBe(200);
     expect(rename.status).toBe(409);
     expect(switchRes.status).toBe(409);
     expect(await pin.json()).toMatchObject({ error: "agent_deleted" });
-    expect(engine.setSessionPinned).not.toHaveBeenCalled();
+    expect(engine.setSessionPinned).toHaveBeenCalledWith({ sessionPath: deletedPath }, false);
     expect(engine.saveSessionTitle).not.toHaveBeenCalled();
     expect(engine.switchSession).not.toHaveBeenCalled();
   });
@@ -1229,6 +1337,7 @@ describe("sessions route", () => {
 
     expect(pinRes.status).toBe(200);
     expect(engine.setSessionPinned).toHaveBeenCalledWith({
+      sessionId: "sess_route_pin",
       sessionPath: "/tmp/agents/hana/sessions/a.jsonl",
     }, true);
     expect(pinData).toEqual({ ok: true, pinnedAt, sessionId: "sess_route_pin" });
@@ -1242,12 +1351,13 @@ describe("sessions route", () => {
 
     expect(unpinRes.status).toBe(200);
     expect(engine.setSessionPinned).toHaveBeenLastCalledWith({
+      sessionId: "sess_route_pin",
       sessionPath: "/tmp/agents/hana/sessions/a.jsonl",
     }, false);
     expect(unpinData).toEqual({ ok: true, pinnedAt: null, sessionId: "sess_route_pin" });
   });
 
-  it("pins sessions by sessionId and treats path as a legacy locator", async () => {
+  it("pins sessions by sessionId and rejects stale locator paths", async () => {
     const { createSessionsRoute } = await import("../server/routes/sessions.ts");
     const app = new Hono();
     const pinnedAt = "2026-04-29T08:00:00.000Z";
@@ -1266,12 +1376,29 @@ describe("sessions route", () => {
 
     app.route("/api", createSessionsRoute(engine));
 
-    const res = await app.request("/api/sessions/pin", {
+    const mismatch = await app.request("/api/sessions/pin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sessionId: "sess_route_pin",
         path: "/tmp/agents/hana/sessions/stale.jsonl",
+        pinned: true,
+      }),
+    });
+    const mismatchData = await mismatch.json();
+
+    expect(mismatch.status).toBe(409);
+    expect(mismatchData).toMatchObject({
+      code: "session_locator_mismatch",
+      sessionId: "sess_route_pin",
+      currentPath,
+    });
+
+    const res = await app.request("/api/sessions/pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "sess_route_pin",
         pinned: true,
       }),
     });
@@ -1297,6 +1424,7 @@ describe("sessions route", () => {
       agentsDir,
       closeSession: vi.fn(async () => {}),
       setSessionPinned: vi.fn(async () => null),
+      moveSessionLifecycle: vi.fn(async () => ({ sessionId: "sess_archive" })),
       rcState: null,
     };
 
@@ -1310,8 +1438,8 @@ describe("sessions route", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data).toEqual({ ok: true });
-    expect(engine.setSessionPinned).toHaveBeenCalledWith(sessionPath, false);
+    expect(data).toMatchObject({ ok: true, sessionId: "sess_archive" });
+    expect(engine.setSessionPinned).toHaveBeenCalledWith({ sessionPath }, false);
     expect(fs.existsSync(path.join(path.dirname(sessionPath), "archived", path.basename(sessionPath)))).toBe(true);
   });
 
@@ -1330,6 +1458,7 @@ describe("sessions route", () => {
       agentsDir,
       closeSession: vi.fn(async () => {}),
       setSessionPinned: vi.fn(async () => null),
+      moveSessionLifecycle: vi.fn(async () => ({ sessionId: "sess_archive_cleanup" })),
       getSessionIdForPath: vi.fn((targetPath) => (
         targetPath === sessionPath || targetPath === archivedPath ? "sess_archive_cleanup" : null
       )),

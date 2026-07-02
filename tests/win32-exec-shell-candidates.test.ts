@@ -32,6 +32,54 @@ describe("win32 bundled shell candidates", () => {
     expect(candidates.find((candidate) => path.win32.basename(candidate.shell) === "busybox.exe")?.args).toEqual(["sh", "-c"]);
   });
 
+  it("discovers MinGit usr/bin/sh.exe as the POSIX candidate when no bash is bundled", () => {
+    const gitRoot = "C:\\Program Files\\Hanako\\resources\\git";
+    const existing = new Set([
+      path.win32.join(gitRoot, "cmd", "git.exe"),
+      path.win32.join(gitRoot, "mingw64", "bin", "git.exe"),
+      path.win32.join(gitRoot, "usr", "bin", "sh.exe"),
+    ]);
+
+    const candidates = __testing.getBundledShellCandidates(
+      { HANA_ROOT: "C:\\Program Files\\Hanako\\resources\\server" },
+      {
+        resourcesPath: "C:\\Program Files\\Hanako\\resources",
+        resourceSiblingDir: () => null,
+        exists: (filePath) => existing.has(filePath),
+      },
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(path.win32.relative(gitRoot, candidates[0].shell))
+      .toBe(path.win32.join("usr", "bin", "sh.exe"));
+    expect(candidates[0].args).toEqual(["-c"]);
+    expect(candidates[0].bundledRoot).toBe(gitRoot);
+    // 对外契约是 sh-compatible，不承诺 Bash
+    expect(candidates[0].label).not.toMatch(/bash/i);
+  });
+
+  it("keeps bundled bash ahead of MinGit sh when both layouts exist", () => {
+    const gitRoot = "C:\\Program Files\\Hanako\\resources\\git";
+    const existing = new Set([
+      path.win32.join(gitRoot, "usr", "bin", "bash.exe"),
+      path.win32.join(gitRoot, "usr", "bin", "sh.exe"),
+    ]);
+
+    const candidates = __testing.getBundledShellCandidates(
+      { HANA_ROOT: "C:\\Program Files\\Hanako\\resources\\server" },
+      {
+        resourcesPath: "C:\\Program Files\\Hanako\\resources",
+        resourceSiblingDir: () => null,
+        exists: (filePath) => existing.has(filePath),
+      },
+    );
+
+    expect(candidates.map((candidate) => path.win32.relative(gitRoot, candidate.shell))).toEqual([
+      path.win32.join("usr", "bin", "bash.exe"),
+      path.win32.join("usr", "bin", "sh.exe"),
+    ]);
+  });
+
   it("prepends bundled PortableGit runtime directories to the shell PATH", () => {
     const gitRoot = "C:\\Program Files\\Hanako\\resources\\git";
     const shell = path.win32.join(gitRoot, "bin", "bash.exe");

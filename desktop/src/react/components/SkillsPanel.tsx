@@ -129,6 +129,8 @@ export function SkillsPanel() {
   const [allViewAgentId, setAllViewAgentId] = useState<string | null>(firstUsableAgentId(agents, currentAgentId));
   const [skillsList, setSkillsList] = useState<SkillInfo[]>([]);
   const [skillBundles, setSkillBundles] = useState<SkillBundleInfo[]>([]);
+  const [loadedAgentId, setLoadedAgentId] = useState<string | null>(null);
+  const [bundleExpandedByAgent, setBundleExpandedByAgent] = useState<Record<string, Record<string, boolean>>>({});
   const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [highlight, setHighlight] = useState<HighlightState>({ skillName: null, bundleId: null });
@@ -155,12 +157,13 @@ export function SkillsPanel() {
     if (!agentId) {
       setSkillsList([]);
       setSkillBundles([]);
+      setLoadedAgentId(null);
       return;
     }
     setLoading(true);
     try {
       const [skillsRes, bundlesRes] = await Promise.all([
-        hanaFetch(`/api/skills?agentId=${encodeURIComponent(agentId)}`),
+        hanaFetch(`/api/skills?agentId=${encodeURIComponent(agentId)}&runtime=1`),
         hanaFetch(`/api/skills/bundles?agentId=${encodeURIComponent(agentId)}`),
       ]);
       const data = await readJsonObject(skillsRes);
@@ -171,6 +174,7 @@ export function SkillsPanel() {
       if (bundleError) throw new Error(bundleError);
       setSkillsList(skillListField(data));
       setSkillBundles(bundleListField(bundleData));
+      setLoadedAgentId(agentId);
     } catch (err) {
       console.error('[skills-panel] load failed:', err);
       addToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
@@ -213,7 +217,16 @@ export function SkillsPanel() {
 
   const visibleSkills = skillsList.filter(skill => !skill.hidden);
   const userSkills = visibleSkills.filter(skill => skill.source !== 'external');
+  const manageableSkills = userSkills.filter(skill => skill.source !== 'workspace' && skill.managedBy !== 'workspace' && skill.managedBy !== 'plugin');
   const canManage = selectedTabId === ALL_SKILLS_TAB;
+  const treeSkills = canManage ? manageableSkills : userSkills;
+  const hasLoadedTreeItems = treeSkills.length > 0 || skillBundles.length > 0;
+  const shouldShowInitialLoading = loading && !(loadedAgentId === selectedAgentId && hasLoadedTreeItems);
+  const bundleExpandedState = selectedAgentId ? (bundleExpandedByAgent[selectedAgentId] || {}) : {};
+  const setSelectedBundleExpandedState = useCallback((next: Record<string, boolean>) => {
+    if (!selectedAgentId) return;
+    setBundleExpandedByAgent(prev => ({ ...prev, [selectedAgentId]: next }));
+  }, [selectedAgentId]);
 
   const flashInstalled = useCallback((next: HighlightState) => {
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
@@ -640,15 +653,15 @@ export function SkillsPanel() {
               </>
             ) : null}
 
-            {loading ? (
+            {shouldShowInitialLoading ? (
               <div className={styles.empty}>{t('status.loading')}</div>
-            ) : userSkills.length === 0 && skillBundles.length === 0 ? (
+            ) : treeSkills.length === 0 && skillBundles.length === 0 ? (
               <div className={styles.empty}>{t('settings.skills.noUser')}</div>
             ) : (
               <SkillBundleTree
                 mode={canManage ? 'manage' : 'agent'}
                 bundles={skillBundles}
-                skills={userSkills}
+                skills={treeSkills}
                 nameHints={{}}
                 emptyText={t('settings.skills.noUser')}
                 onDeleteSkill={canManage ? deleteSkill : undefined}
@@ -663,6 +676,8 @@ export function SkillsPanel() {
                 onToggleBundle={canManage ? undefined : toggleBundle}
                 highlightedSkillName={highlight.skillName}
                 highlightedBundleId={highlight.bundleId}
+                expandedState={bundleExpandedState}
+                onExpandedStateChange={setSelectedBundleExpandedState}
               />
             )}
           </div>

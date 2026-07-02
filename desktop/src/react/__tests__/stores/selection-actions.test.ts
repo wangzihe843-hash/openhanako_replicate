@@ -154,6 +154,27 @@ describe('captureSelection', () => {
     }
   });
 
+  it('does not create a chat candidate when the mouseup is a right-click (button 2)', () => {
+    const dispose = initQuotedSelectionLifecycle(document);
+    try {
+      seedChatFixture();
+      document.body.innerHTML = `
+        <section data-chat-selection-root="" data-session-path="/session/a.jsonl">
+          <article data-message-id="assistant-1">
+            <p><span id="selected-text">right click should not quote</span></p>
+          </article>
+        </section>
+      `;
+      selectElementText(document.getElementById('selected-text')!);
+
+      window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 2 }));
+
+      expect(useStore.getState().quoteCandidate).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
   it('captures preview quote immediately when the preview selection is committed', () => {
     document.body.innerHTML = '<main><span id="selected-text">preview quote</span></main>';
     selectElementText(document.getElementById('selected-text')!);

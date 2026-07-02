@@ -979,6 +979,98 @@ describe("saveProvider", () => {
     });
   });
 
+  it("merges local provider plugin model metadata when catalog overlay only has bare ids", () => {
+    writeAddedModels({});
+    const reg = new ProviderRegistry(tmpDir);
+
+    reg.saveProvider("custom-vl", {
+      display_name: "Custom VL",
+      auth_type: "api-key",
+      api_key: "sk-vl",
+      base_url: "https://vl.example/v1",
+      api: "openai-completions",
+      models: [{
+        id: "vl-model",
+        name: "VL Model",
+        context: 128000,
+        maxOutput: 16000,
+        image: true,
+        video: true,
+        audio: true,
+        reasoning: true,
+      }],
+    });
+
+    const catalog = readProviderCatalog();
+    catalog.providers["custom-vl"].models = ["vl-model"];
+    writeProviderCatalog(catalog);
+
+    const reloaded = new ProviderRegistry(tmpDir);
+    const model = reloaded.getAllProvidersRaw()["custom-vl"].models[0];
+    expect(model).toMatchObject({
+      id: "vl-model",
+      name: "VL Model",
+      context: 128000,
+      maxOutput: 16000,
+      image: true,
+      video: true,
+      audio: true,
+      reasoning: true,
+    });
+  });
+
+  it("replaces local provider plugin models when an explicit model list is saved", () => {
+    writeAddedModels({});
+    const reg = new ProviderRegistry(tmpDir);
+
+    reg.saveProvider("custom-local", {
+      display_name: "Custom Local",
+      auth_type: "api-key",
+      api_key: "sk-local",
+      base_url: "https://local.example/v1",
+      api: "openai-completions",
+      models: [
+        { id: "keep-model", name: "Keep Model", context: 128000, image: true },
+        { id: "drop-model", name: "Drop Model", reasoning: true },
+      ],
+    });
+
+    reg.saveProvider("custom-local", { models: ["keep-model"] });
+
+    expect(readLocalProviderPlugin("custom-local").models).toEqual([
+      { id: "keep-model", name: "Keep Model", context: 128000, image: true },
+    ]);
+
+    const reloaded = new ProviderRegistry(tmpDir);
+    expect(reloaded.getProviderModels("custom-local")).toEqual(["keep-model"]);
+  });
+
+  it("removes local provider plugin models without resurrecting them after reload", () => {
+    writeAddedModels({});
+    const reg = new ProviderRegistry(tmpDir);
+
+    reg.saveProvider("custom-local", {
+      display_name: "Custom Local",
+      auth_type: "api-key",
+      api_key: "sk-local",
+      base_url: "https://local.example/v1",
+      api: "openai-completions",
+      models: [
+        { id: "keep-model", name: "Keep Model", image: true },
+        { id: "drop-model", name: "Drop Model", reasoning: true },
+      ],
+    });
+
+    reg.removeModel("custom-local", "drop-model");
+
+    expect(readLocalProviderPlugin("custom-local").models).toEqual([
+      { id: "keep-model", name: "Keep Model", image: true },
+    ]);
+
+    const reloaded = new ProviderRegistry(tmpDir);
+    expect(reloaded.getProviderModels("custom-local")).toEqual(["keep-model"]);
+  });
+
   it("更新已有 provider 的配置（合并）", () => {
     writeAddedModels({
       "test-provider": {
@@ -1111,6 +1203,32 @@ describe("updateModelEntry type field", () => {
       m => (typeof m === "object" ? m.id : m) === "model-a"
     );
     expect(entry).toEqual({ id: "model-a", type: "image" });
+  });
+
+  it("persists audio and normalizes context/max output aliases in updateModelEntry", () => {
+    writeAddedModels({
+      "test-provider": {
+        api_key: "key-123",
+        models: ["model-a"],
+      },
+    });
+    const reg = makeRegistry();
+    reg.updateModelEntry("test-provider", "model-a", {
+      audio: true,
+      contextWindow: 32768,
+      maxTokens: 8192,
+    });
+
+    const raw = readAddedModels();
+    const entry = raw["test-provider"].models.find(
+      m => (typeof m === "object" ? m.id : m) === "model-a"
+    );
+    expect(entry).toEqual({
+      id: "model-a",
+      audio: true,
+      context: 32768,
+      maxOutput: 8192,
+    });
   });
 
   it("persists controlled protocol capabilities and filters unknown compat fields", () => {

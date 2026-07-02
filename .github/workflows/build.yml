@@ -40,15 +40,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Windows: 下载 PortableGit（含 bash + coreutils），解压后裁剪，打包进安装包
-      - name: Download & prune PortableGit
+      # Windows: 下载官方 MinGit（git + sh-compatible shell + coreutils，非交互运行时），打包进安装包
+      - name: Download MinGit
         if: runner.os == 'Windows'
-        run: node scripts/download-git-portable.js
+        run: node scripts/download-mingit.js
 
-      # 裁剪后实测 bash + coreutils + git 仍可运行；删错 DLL/工具时这里 fail fast，不出残缺包
-      - name: Smoke-test pruned PortableGit
+      # 实测 git 全流程（init/commit/clone）+ sh + coreutils 可运行；runtime 残缺时 fail fast，不出残缺包
+      - name: Smoke-test MinGit
         if: runner.os == 'Windows'
-        run: node scripts/smoke-git-portable.mjs vendor/git-portable
+        run: node scripts/smoke-mingit.mjs vendor/mingit
 
       - name: Build client bundles (main + preload + renderer)
         run: npm run build:client

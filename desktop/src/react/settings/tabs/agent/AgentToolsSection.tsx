@@ -74,6 +74,7 @@ export function AgentToolsSection({ availableTools, disabled }: Props) {
 
   return (
     <SettingsSection
+      variant="list"
       title={t("settings.agent.tools.title")}
       description={t("settings.agent.tools.description")}
     >

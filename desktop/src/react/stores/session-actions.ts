@@ -60,6 +60,18 @@ function sessionIdForPathFromState(state: Record<string, any>, path: string | nu
   return normalizeSessionId(session?.sessionId);
 }
 
+function sessionByIdentityOrPath(state: Record<string, any>, sessionId: string | null, sessionPath: string | null): any | null {
+  const sessions = Array.isArray(state.sessions) ? state.sessions : [];
+  if (sessionId) {
+    const byId = sessions.find((item: any) => normalizeSessionId(item?.sessionId) === sessionId);
+    if (byId) return byId;
+  }
+  if (sessionPath) {
+    return sessions.find((item: any) => item?.path === sessionPath) || null;
+  }
+  return null;
+}
+
 function currentSessionIdentityPatch(state: Record<string, any>, path: string | null, sessionId: unknown) {
   const normalizedSessionId = normalizeSessionId(sessionId) || sessionIdForPathFromState(state, path);
   return {
@@ -737,6 +749,7 @@ async function switchDeletedAgentSession(path: string, version: number): Promise
   }
 
   useStore.setState({
+    ...currentSessionIdentityPatch(state as Record<string, any>, path, projection?.sessionId),
     currentSessionPath: path,
     pendingSessionSwitchPath: null,
     pendingNewSession: false,
@@ -1037,10 +1050,14 @@ export async function continueDeletedAgentSession(path: string): Promise<boolean
 
 export async function archiveSession(path: string): Promise<void> {
   try {
+    const localSessionId = sessionIdForPathFromState(useStore.getState() as Record<string, any>, path);
     const res = await hanaFetch('/api/sessions/archive', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({
+        path,
+        ...(localSessionId ? { sessionId: localSessionId } : {}),
+      }),
     });
     const data = await res.json();
     if (data.error) {
@@ -1054,7 +1071,7 @@ export async function archiveSession(path: string): Promise<void> {
     clearSessionRuntimeCaches(path);
     if (isCurrent) {
       clearChatAction();
-      useStore.setState({ currentSessionPath: null });
+      useStore.setState({ currentSessionPath: null, currentSessionId: null });
     }
 
     await loadSessions();
@@ -1077,14 +1094,21 @@ export async function archiveSession(path: string): Promise<void> {
 
 export interface ArchivedSession {
   path: string;
+  sessionId?: string | null;
   title: string | null;
   archivedAt: string;
   sizeBytes: number;
   agentId: string;
   agentName: string;
+  agentDeleted?: boolean;
+  readOnlyReason?: string | null;
+  deletedAt?: string | null;
 }
 
-export type RestoreResult = 'ok' | 'conflict' | 'error';
+export type RestoreResult =
+  | { status: 'ok'; restoredPath: string | null; sessionId: string | null }
+  | { status: 'conflict'; error?: string }
+  | { status: 'error'; error?: string };
 
 export async function listArchivedSessions(): Promise<ArchivedSession[]> {
   try {
@@ -1097,28 +1121,51 @@ export async function listArchivedSessions(): Promise<ArchivedSession[]> {
   }
 }
 
-export async function restoreSession(path: string): Promise<RestoreResult> {
+export async function restoreSession(target: string | Pick<ArchivedSession, 'path' | 'sessionId'>): Promise<RestoreResult> {
+  const sessionPath = typeof target === 'string' ? target : target.path;
+  const sessionId = typeof target === 'string' ? null : normalizeSessionId(target.sessionId);
   try {
     const res = await hanaFetch('/api/sessions/restore', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({
+        path: sessionPath,
+        ...(sessionId ? { sessionId } : {}),
+      }),
     });
-    if (res.status === 409) return 'conflict';
-    if (!res.ok) return 'error';
-    return 'ok';
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 409) return { status: 'conflict', error: data?.error };
+    if (!res.ok) return { status: 'error', error: data?.error || res.statusText };
+    const restoredPath = typeof data?.restoredPath === 'string' ? data.restoredPath : null;
+    const restoredSessionId = normalizeSessionId(data?.sessionId) || sessionId;
+
+    await loadSessions();
+    const restoredSession = sessionByIdentityOrPath(
+      useStore.getState() as Record<string, any>,
+      restoredSessionId,
+      restoredPath,
+    );
+    if (restoredSession?.path) {
+      await switchSession(restoredSession.path);
+    }
+    return { status: 'ok', restoredPath, sessionId: restoredSessionId };
   } catch (err) {
     console.error('[archived] restore failed:', err);
-    return 'error';
+    return { status: 'error', error: errorMessage(err) };
   }
 }
 
-export async function deleteArchivedSession(path: string): Promise<boolean> {
+export async function deleteArchivedSession(target: string | Pick<ArchivedSession, 'path' | 'sessionId'>): Promise<boolean> {
+  const sessionPath = typeof target === 'string' ? target : target.path;
+  const sessionId = typeof target === 'string' ? null : normalizeSessionId(target.sessionId);
   try {
     const res = await hanaFetch('/api/sessions/archived/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({
+        path: sessionPath,
+        ...(sessionId ? { sessionId } : {}),
+      }),
     });
     return res.ok;
   } catch (err) {

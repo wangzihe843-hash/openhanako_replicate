@@ -87,7 +87,7 @@ describe("subagent 工具访问策略收口（Codex 式：显式 access + 继承
   it("strip（乙）：write 档剥离全集清单", () => {
     const a = resolveSubagentToolAccess({ access: "write", strategy: "strip" });
     expect(a.strategy).toBe("strip");
-    expect(a.builtinToolFilter).toEqual(["read", "write", "edit", "bash", "grep", "find", "ls"]);
+    expect(a.builtinToolFilter).toEqual(["read", "write", "edit", "exec_command", "write_stdin", "grep", "find", "ls"]);
     expect(a.customToolFilter).toEqual(["web_search", "web_fetch", "todo_write", "browser"]);
     expect(a.permissionMode).toBe("operate");
   });

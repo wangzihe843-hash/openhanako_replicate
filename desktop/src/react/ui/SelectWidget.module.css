@@ -9,7 +9,7 @@
   justify-content: space-between;
   width: 100%;
   font-family: inherit;
-  font-size: 0.85rem;
+  font-size: var(--fs-ui);
   line-height: 1.5;
   color: var(--text);
   background-color: var(--bg-card);
@@ -48,7 +48,7 @@
   width: 14px;
   height: 14px;
   color: var(--text-muted);
-  margin-left: var(--space-sm);
+  margin-left: var(--space-8);
   transition: transform var(--duration-fast) var(--ease-out);
 }
 
@@ -90,7 +90,7 @@
   width: 100%;
   padding: 0.4rem 0.65rem;
   font-family: inherit;
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   color: var(--text);
   background: none;
   border: none;
@@ -134,7 +134,7 @@
 }
 
 .optionDesc {
-  font-size: 0.68rem;
+  font-size: var(--fs-hint);
   color: var(--text-muted);
   margin-left: auto;
 }
@@ -146,7 +146,7 @@
 
 .groupHeader {
   padding: 0.45rem 0.55rem 0.15rem;
-  font-size: 0.68rem;
+  font-size: var(--fs-hint);
   color: var(--text-muted);
   letter-spacing: 0.04em;
   text-transform: uppercase;

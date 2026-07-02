@@ -54,7 +54,7 @@ export function normalizeScheduleDateKey(dateLabel: string | undefined): string 
   if (typeof dateLabel !== 'string') return '';
   let s = dateLabel.trim();
   if (!s) return '';
-  s = s.replace(/　/g, ' ');
+  s = s.replace(/\u3000/g, ' ');
   s = s.replace(/[！-～]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
   s = s.replace(/\s+/g, ' ');
   s = s.toLowerCase();

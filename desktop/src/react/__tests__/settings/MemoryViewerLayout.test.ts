@@ -12,7 +12,7 @@ function cssRule(source: string, selector: string) {
 
 describe('memory viewer layout contract', () => {
   it('keeps long memory content inside a scrollable body', () => {
-    expect(cssRule(css, '.memory-viewer-backdrop')).toMatch(/padding:\s*var\(--space-md\);/);
+    expect(cssRule(css, '.memory-viewer-backdrop')).toMatch(/padding:\s*var\(--space-16\);/);
     expect(cssRule(css, '.memory-viewer')).toMatch(/max-height:\s*100%;/);
     expect(cssRule(css, '.memory-viewer')).toMatch(/overflow:\s*hidden;/);
 
@@ -22,7 +22,7 @@ describe('memory viewer layout contract', () => {
   });
 
   it('uses the taller, wider default settings modal size', () => {
-    expect(cssRule(modalCss, '.card')).toMatch(/width:\s*min\(884px,\s*calc\(100vw - 2 \* var\(--space-lg\)\)\);/);
-    expect(cssRule(modalCss, '.card')).toMatch(/height:\s*min\(840px,\s*calc\(100vh - var\(--space-lg\) - var\(--space-lg\)\)\);/);
+    expect(cssRule(modalCss, '.card')).toMatch(/width:\s*min\(884px,\s*calc\(100vw - 2 \* var\(--space-24\)\)\);/);
+    expect(cssRule(modalCss, '.card')).toMatch(/height:\s*min\(840px,\s*calc\(100vh - var\(--space-24\) - var\(--space-24\)\)\);/);
   });
 });

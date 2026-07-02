@@ -18,6 +18,16 @@ let quotedSelectionLifecycle:
   | { target: Document; cleanup: () => void }
   | null = null;
 
+/**
+ * 右键（contextmenu 主按钮，button === 2）的 mouseup 不是选区提交手势，
+ * 不能触发"引用到对话"候选。所有选区提交入口共用这一个判断，避免散落多份。
+ * 跨窗口安全：用属性探测而非 `instanceof MouseEvent`——子窗口的 MouseEvent
+ * 构造函数与主窗口不同源，跨 realm 的 instanceof 恒为 false 会让过滤失效。
+ */
+export function isContextMenuButton(event: Event): boolean {
+  return 'button' in event && (event as MouseEvent).button === 2;
+}
+
 export function initQuotedSelectionLifecycle(target: Document = document): () => void {
   if (quotedSelectionLifecycle?.target === target) {
     return quotedSelectionLifecycle.cleanup;
@@ -42,6 +52,7 @@ export function initQuotedSelectionLifecycle(target: Document = document): () =>
   const handledSelectionCommitEvents = new WeakSet<Event>();
   const handleSelectionCommit = (event: Event) => {
     if (handledSelectionCommitEvents.has(event)) return;
+    if (isContextMenuButton(event)) return;
     handledSelectionCommitEvents.add(event);
     if (suppressNextSelectionCommit) {
       suppressNextSelectionCommit = false;
@@ -190,10 +201,6 @@ export function captureChatSelection(sessionPath: string, fallbackAnchorRect?: F
     updatedAt: Date.now(),
   };
   useStore.getState().setQuoteCandidate(quotedSelection);
-}
-
-export function scheduleCaptureChatSelection(sessionPath: string, fallbackAnchorRect?: FloatingAnchorRect): void {
-  captureChatSelection(sessionPath, fallbackAnchorRect);
 }
 
 function captureDocumentChatSelection(target: Document, fallbackAnchorRect?: FloatingAnchorRect): void {

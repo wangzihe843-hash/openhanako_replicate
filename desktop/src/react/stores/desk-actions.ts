@@ -15,7 +15,11 @@ import {
   readingPositionsFromPersistedWorkspaceUiState,
   schedulePersistCurrentWorkspaceUiState,
 } from './workspace-ui-state-actions';
-import { hasServerConnection } from '../services/server-connection';
+import {
+  hasServerConnection,
+  isLocalOwnerConnection,
+  resolveServerConnection,
+} from '../services/server-connection';
 import { isWebRuntime } from '../utils/platform-runtime';
 import { mergeWorkspaceHistory, normalizeWorkspacePath, removeWorkspaceHistoryEntries } from '../../../../shared/workspace-history.ts';
 
@@ -49,6 +53,15 @@ function deskStateRootKey(root: string | null | undefined, mountId: string | nul
 function activeDeskMountId(s: ReturnType<typeof useStore.getState>, overrideMountId?: string | null): string | null {
   if (overrideMountId !== undefined) return normalizeMountId(overrideMountId);
   return normalizeMountId(s.deskWorkspaceMountId);
+}
+
+function canUseNativeDeskPath(s: ReturnType<typeof useStore.getState>): boolean {
+  const connection = resolveServerConnection(s);
+  return !connection || isLocalOwnerConnection(connection);
+}
+
+function shouldUseWorkbenchDeskAction(s: ReturnType<typeof useStore.getState>): boolean {
+  return isWebRuntime() || !!activeDeskMountId(s) || !canUseNativeDeskPath(s);
 }
 
 function activeDeskRoot(s: ReturnType<typeof useStore.getState>, overrideDir?: string | null): string | undefined {
@@ -1013,7 +1026,7 @@ export async function deskRenameTreeItem(sourceSubdir: string, oldName: string, 
 
 export async function deskTrashTreeItems(items: DeskTreeMoveItem[]): Promise<boolean> {
   const s = useStore.getState();
-  if (isWebRuntime() || activeDeskMountId(s)) {
+  if (shouldUseWorkbenchDeskAction(s)) {
     return deskSafeDeleteMobileWorkbenchItems(items);
   }
   const trashItem = window.platform?.trashItem;

@@ -104,7 +104,7 @@ export function SkillCapabilities({ installCfg }: SkillCapabilitiesProps) {
             />
           </div>
         )}
-        <p className={styles['settings-inline-note']} style={{ padding: 'var(--space-sm) var(--space-md)', margin: 0 }}>{t('settings.skills.learnHint')}</p>
+        <p className={styles['settings-inline-note']} style={{ padding: 'var(--space-8) var(--space-16)', margin: 0 }}>{t('settings.skills.learnHint')}</p>
       </SettingsSection>
 
       {showGithubWarning && (

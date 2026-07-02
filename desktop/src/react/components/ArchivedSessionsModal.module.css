@@ -1,7 +1,7 @@
 .overlay {
   position: fixed;
   inset: 0;
-  padding: var(--space-lg);
+  padding: var(--space-24);
   background: rgba(0, 0, 0, 0.3);
   backdrop-filter: blur(6px);
   display: flex;
@@ -28,12 +28,12 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: var(--space-md) var(--space-lg) var(--space-sm);
+  padding: var(--space-16) var(--space-24) var(--space-8);
   border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.08));
 }
 
 .title {
-  font-size: 1.05rem;
+  font-size: var(--fs-title);
   font-weight: 600;
   letter-spacing: 0.03em;
   margin: 0;
@@ -63,8 +63,8 @@
 .content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-md) var(--space-md);
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-16) var(--space-16);
   min-height: 0;
   overflow: hidden;
 }
@@ -73,22 +73,22 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: var(--space-md);
-  padding: 0.6rem var(--space-md);
+  gap: var(--space-16);
+  padding: 0.6rem var(--space-16);
   background: var(--bg-card, #fff);
   border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
   border-radius: var(--radius-card, 8px);
 }
 
 .summaryText {
-  font-size: 0.75rem;
+  font-size: var(--fs-caption);
   color: var(--text-muted, rgba(0, 0, 0, 0.6));
   line-height: 1.45;
 }
 
 .cleanupBtns {
   display: flex;
-  gap: var(--space-sm);
+  gap: var(--space-8);
   flex-wrap: wrap;
 }
 
@@ -97,9 +97,9 @@
   border: 1px solid var(--border, rgba(0, 0, 0, 0.15));
   border-radius: var(--radius-input, 6px);
   min-height: 32px;
-  padding: 0 var(--space-md);
+  padding: 0 var(--space-16);
   cursor: default;
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   color: var(--text, inherit);
   font-family: inherit;
   transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease, transform var(--duration-fast) ease;
@@ -128,34 +128,30 @@
 }
 
 .loading, .empty {
-  padding: var(--space-xl) var(--space-lg);
+  padding: var(--space-40) var(--space-24);
   text-align: center;
   color: var(--text-muted, rgba(0, 0, 0, 0.5));
-  font-size: 0.75rem;
+  font-size: var(--fs-caption);
 }
 
 .row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: var(--space-md);
-  padding: 0.72rem var(--space-md);
-  background: var(--bg-card, #fff);
-  transition: background-color var(--duration-fast) ease;
-}
-
-.row + .row {
-  border-top: 1px solid var(--border, rgba(0, 0, 0, 0.06));
+  gap: var(--space-16);
+  padding: 5px var(--space-12);
+  background: transparent;
+  transition: background var(--duration-fast) ease;
 }
 
 .row:hover {
-  background: var(--bg-hover, color-mix(in srgb, var(--bg-card, #fff) 92%, transparent));
+  background: var(--overlay-light, rgba(0, 0, 0, 0.05));
 }
 
 .rowMain { flex: 1; min-width: 0; }
 
 .rowTitle {
-  font-size: 0.85rem;
+  font-size: var(--fs-ui);
   font-weight: 600;
   color: var(--text, #3b3d3f);
   line-height: 1.35;
@@ -165,18 +161,18 @@
 }
 
 .rowMeta {
-  margin-top: 0.25rem;
-  font-size: 0.72rem;
+  margin-top: var(--space-4);
+  font-size: var(--fs-hint);
   line-height: 1.4;
   color: var(--text-muted, rgba(0, 0, 0, 0.55));
 }
 
 .rowActions {
   display: flex;
-  gap: var(--space-sm);
+  gap: var(--space-8);
   flex-wrap: wrap;
   flex-shrink: 0;
-  margin-left: var(--space-md);
+  margin-left: var(--space-16);
 }
 
 .rowActions button {
@@ -184,9 +180,9 @@
   border: 1px solid var(--border, rgba(0, 0, 0, 0.15));
   border-radius: var(--radius-input, 6px);
   min-height: 32px;
-  padding: 0 var(--space-md);
+  padding: 0 var(--space-16);
   cursor: default;
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   color: var(--text, inherit);
   font-family: inherit;
   transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
@@ -194,7 +190,7 @@
 
 @media (max-width: 720px) {
   .overlay {
-    padding: var(--space-md);
+    padding: var(--space-16);
   }
 
   .modal {
@@ -203,16 +199,16 @@
   }
 
   .header {
-    padding: var(--space-md) var(--space-md) var(--space-sm);
+    padding: var(--space-16) var(--space-16) var(--space-8);
   }
 
   .title {
-    font-size: 1rem;
+    font-size: var(--fs-title);
   }
 
   .content {
-    padding: var(--space-md);
-    gap: var(--space-sm);
+    padding: var(--space-16);
+    gap: var(--space-8);
   }
 
   .summaryCard,

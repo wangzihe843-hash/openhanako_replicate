@@ -9,6 +9,7 @@ import { stripAllInlineMediaForHistory } from "./message-sanitizer.ts";
 import { buildSessionCacheSnapshot } from "./session-cache-snapshot.ts";
 import { runSessionSnapshotSideTask } from "../lib/llm/session-snapshot-side-task-runner.ts";
 import { buildCacheStrategyMetadata } from "../lib/llm/cache-strategy-contract.ts";
+import { normalizeProviderContextMessages } from "./provider-compat.ts";
 
 const DEFAULT_HARD_TRUNCATE_THRESHOLD = 0.85;
 const COMPACTION_REQUEST_BUFFER_TOKENS = 1024;
@@ -434,7 +435,11 @@ export async function createCachePreservingCompactionResult({
   const requests = buildCachePreservingCompactionRequests({ preparation: effectivePreparation, customInstructions });
 
   async function runRequest(request) {
-    const llmMessages = await convertToLlm(request.messages);
+    const rawLlmMessages = await convertToLlm(request.messages);
+    const llmMessages = normalizeProviderContextMessages(rawLlmMessages, model, {
+      mode: "chat",
+      reasoningLevel: effectiveThinkingLevel,
+    });
     const suffixMessage = llmMessages[llmMessages.length - 1];
     const prefixMessages = llmMessages.slice(0, -1);
     const options = {

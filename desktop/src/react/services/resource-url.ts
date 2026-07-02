@@ -1,5 +1,5 @@
 import type { FileRef } from '../types/file-ref';
-import { buildConnectionUrl, type ServerConnection } from './server-connection';
+import { buildConnectionUrl, isLocalOwnerConnection, type ServerConnection } from './server-connection';
 
 export type FileRefUrlMode = 'local-file' | 'resource-content' | 'inline-data';
 
@@ -21,7 +21,7 @@ export function resolveFileRefUrl(ref: FileRef, {
   platform?: ResourceUrlPlatform | null;
   preferLocalFile?: boolean;
 }): FileRefUrlResult {
-  const isLocalTransport = !connection || connection.kind === 'local';
+  const isLocalTransport = !connection || isLocalOwnerConnection(connection);
   const getFileUrl = platform?.getFileUrl;
   const canUseLocalFile = preferLocalFile
     && isLocalTransport

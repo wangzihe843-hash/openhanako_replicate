@@ -5,7 +5,7 @@
     align-items: center;
     gap: 0.35rem;
     padding: 0.3rem 0.55rem;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     background: var(--bg-card);
     border: 1px solid var(--overlay-light);
@@ -61,7 +61,7 @@
     border: none;
     color: var(--text-muted);
     cursor: default;
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     border-radius: 50%;
     flex-shrink: 0;
     opacity: 0.5;

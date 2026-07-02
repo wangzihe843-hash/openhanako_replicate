@@ -438,7 +438,7 @@ describe("resource-io route", () => {
   it("returns sanitized ResourceIO denial errors", async () => {
     const resourceIO = {
       write: vi.fn(async () => {
-        const err: any = new Error("Denied /Users/example/private/repo/.git/config");
+        const err: any = new Error("Denied /tmp/hana-fixture/private/repo/.git/config");
         err.code = "resource_access_denied";
         err.status = 403;
         err.safeMessage = "Resource access denied by authority policy";
@@ -452,7 +452,7 @@ describe("resource-io route", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        resource: { kind: "local-file", path: "/Users/example/private/repo/.git/config" },
+        resource: { kind: "local-file", path: "/tmp/hana-fixture/private/repo/.git/config" },
         content: "bad",
       }),
     });
@@ -464,6 +464,6 @@ describe("resource-io route", () => {
       code: "resource_access_denied",
       safeMessage: "Resource access denied by authority policy",
     });
-    expect(JSON.stringify(body)).not.toContain("/Users/example");
+    expect(JSON.stringify(body)).not.toContain("/tmp/hana-fixture");
   });
 });

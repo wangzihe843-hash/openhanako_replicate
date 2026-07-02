@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   CORE_TOOL_NAMES,
   GLOBAL_TOOL_NAMES,
+  LEGACY_INTERNAL_TOOL_NAMES,
   STANDARD_TOOL_NAMES,
   OPTIONAL_TOOL_NAMES,
   assertAllToolsCategorized,
@@ -14,17 +15,24 @@ describe("tool-categories constants", () => {
     const core = new Set(CORE_TOOL_NAMES);
     const standard = new Set(STANDARD_TOOL_NAMES);
     const global = new Set(GLOBAL_TOOL_NAMES);
+    const legacyInternal = new Set(LEGACY_INTERNAL_TOOL_NAMES);
     const optional = new Set(OPTIONAL_TOOL_NAMES);
     for (const name of core) {
       expect(standard.has(name)).toBe(false);
       expect(global.has(name)).toBe(false);
+      expect(legacyInternal.has(name)).toBe(false);
       expect(optional.has(name)).toBe(false);
     }
     for (const name of standard) {
       expect(global.has(name)).toBe(false);
+      expect(legacyInternal.has(name)).toBe(false);
       expect(optional.has(name)).toBe(false);
     }
     for (const name of global) {
+      expect(legacyInternal.has(name)).toBe(false);
+      expect(optional.has(name)).toBe(false);
+    }
+    for (const name of legacyInternal) {
       expect(optional.has(name)).toBe(false);
     }
   });
@@ -43,6 +51,19 @@ describe("tool-categories constants", () => {
       ...OPTIONAL_TOOL_NAMES,
     ]);
     expect(all.has("cron")).toBe(false);
+  });
+
+  it("uses Codex-style command tools as the core Agent command surface", () => {
+    expect(CORE_TOOL_NAMES).toEqual(expect.arrayContaining(["exec_command", "write_stdin"]));
+    expect(CORE_TOOL_NAMES).not.toContain("bash");
+    expect(CORE_TOOL_NAMES).not.toContain("terminal");
+    expect(STANDARD_TOOL_NAMES).not.toContain("terminal");
+  });
+
+  it("keeps retired transports categorized without re-exposing them to agents", () => {
+    expect(new Set(LEGACY_INTERNAL_TOOL_NAMES)).toEqual(new Set(["terminal"]));
+    expect(OPTIONAL_TOOL_NAMES).not.toContain("terminal");
+    expect(GLOBAL_TOOL_NAMES).not.toContain("terminal");
   });
 
   it("GLOBAL_TOOL_NAMES is exactly the global setting governed whitelist", () => {
@@ -100,7 +121,7 @@ describe("computeSettingsAvailableToolNames", () => {
 });
 
 describe("computeToolSnapshot", () => {
-  const allNames = ["read", "bash", "browser", "automation", "todo_write", "web_fetch"];
+  const allNames = ["read", "exec_command", "write_stdin", "browser", "automation", "todo_write", "web_fetch"];
 
   it("returns all names when disabled is empty", () => {
     expect(computeToolSnapshot(allNames, [])).toEqual(allNames);
@@ -108,7 +129,7 @@ describe("computeToolSnapshot", () => {
 
   it("removes optional tools that are in disabled list", () => {
     expect(computeToolSnapshot(allNames, ["browser"])).toEqual(
-      ["read", "bash", "automation", "todo_write", "web_fetch"]
+      ["read", "exec_command", "write_stdin", "automation", "todo_write", "web_fetch"]
     );
   });
 
@@ -130,11 +151,11 @@ describe("computeToolSnapshot", () => {
 
   it("deduplicates tool names while preserving the first occurrence", () => {
     const result = computeToolSnapshot(
-      ["read", "bash", "read", "browser", "browser", "todo_write"],
+      ["read", "exec_command", "read", "browser", "browser", "todo_write"],
       [],
     );
 
-    expect(result).toEqual(["read", "bash", "browser", "todo_write"]);
+    expect(result).toEqual(["read", "exec_command", "browser", "todo_write"]);
   });
 
   it("treats null disabled as empty (no tools removed)", () => {

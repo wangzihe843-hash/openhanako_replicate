@@ -34,17 +34,17 @@
 
 .size-sm {
     padding: 0.3rem 0.8rem;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
 }
 
 .size-md {
     padding: 0.4rem 1rem;
-    font-size: 0.82rem;
+    font-size: var(--fs-ui);
 }
 
 .size-lg {
     padding: 0.55rem 1.4rem;
-    font-size: 0.9rem;
+    font-size: var(--fs-body);
 }
 
 /* ── 变体 ── */

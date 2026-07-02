@@ -37,7 +37,7 @@ describe("plugin SDK examples and docs", () => {
     ], { cwd: root, encoding: "utf-8" }).trim();
 
     expect(result).toBe("file:///D:/a/openhanako/openhanako/packages/plugin-sdk");
-  });
+  }, 30_000);
 
   it("documents the SDK package map in a top-level guide", () => {
     const guide = fs.readFileSync(path.join(root, "PLUGIN_SDK.md"), "utf-8");

@@ -1,0 +1,25 @@
+export function execCommandDescription({ platform = process.platform }: { platform?: NodeJS.Platform } = {}) {
+  const common = [
+    "Run a short, one-shot local command in the current session.",
+    "Use tty=true only when the command must remain interactive or long-running; then continue with write_stdin.",
+    "For local GUI app control, use the computer tool instead of shell commands.",
+  ];
+  if (platform === "win32") {
+    common.push(
+      "On Windows the default shell is PowerShell. Use PowerShell cmdlets and syntax by default.",
+      "Use shell=\"cmd\" only for cmd.exe builtins or batch files.",
+      "Use shell=\"bash\" only for explicit POSIX commands; the bundled runtime provides an sh-compatible shell (POSIX sh syntax, not full Bash). Bash-specific features require a system Git Bash install.",
+      "Avoid POSIX heredocs on Windows; use python -c, PowerShell here-strings, or a temporary file instead.",
+    );
+  } else {
+    common.push("On macOS/Linux the default shell is the existing POSIX shell runner.");
+  }
+  return common.join(" ");
+}
+
+export function writeStdinDescription() {
+  return [
+    "Write input to a running exec_command process started with tty=true.",
+    "Pass the process_id returned by exec_command and the exact characters to send, including newlines when needed.",
+  ].join(" ");
+}

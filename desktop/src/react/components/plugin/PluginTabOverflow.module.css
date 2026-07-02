@@ -51,7 +51,7 @@
     background: none;
     color: var(--text-light);
     font-family: var(--font-ui);
-    font-size: 0.76rem;
+    font-size: var(--fs-caption);
     cursor: default;
     text-align: left;
     white-space: nowrap;

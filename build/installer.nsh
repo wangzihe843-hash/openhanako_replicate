@@ -83,10 +83,8 @@ CRCCheck off
   !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\server\bootstrap.js" "resources\server\bootstrap.js"
   !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\server\bundle\index.js" "resources\server\bundle\index.js"
   !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\server\node_modules\better-sqlite3\build\Release\better_sqlite3.node" "better-sqlite3 native addon"
-  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\git\cmd\git.exe" "PortableGit git.exe"
-  IfFileExists "$INSTDIR\resources\git\bin\bash.exe" +3 0
-    IfFileExists "$INSTDIR\resources\git\usr\bin\bash.exe" +2 0
-      StrCpy $R2 "$R2$\r$\n- PortableGit bash.exe: $INSTDIR\resources\git\bin\bash.exe or $INSTDIR\resources\git\usr\bin\bash.exe"
+  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\git\cmd\git.exe" "MinGit git.exe"
+  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\git\usr\bin\sh.exe" "MinGit sh.exe"
 
   ${If} $R2 != ""
     DetailPrint "HanaAgent install surface self-check failed."

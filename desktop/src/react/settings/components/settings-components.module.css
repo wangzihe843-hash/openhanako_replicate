@@ -8,7 +8,7 @@
 /* ─── Section ─── */
 
 .section {
-    margin-bottom: var(--space-xl);
+    margin-bottom: var(--space-40);
 }
 
 .section:last-child {
@@ -19,16 +19,16 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-md);
-    margin-bottom: var(--space-md);
+    gap: var(--space-16);
+    margin-bottom: var(--space-16);
 }
 
 .sectionHeaderWithDescription {
-    margin-bottom: var(--space-xs);
+    margin-bottom: var(--space-4);
 }
 
 .sectionTitle {
-    font-size: 1rem;
+    font-size: var(--fs-title);
     font-weight: 600;
     color: var(--text);
     letter-spacing: 0.05em;
@@ -49,9 +49,9 @@
 }
 
 .sectionDescription {
-    margin: 0 0 var(--space-md);
+    margin: 0 0 var(--space-16);
     color: var(--text-muted);
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     line-height: 1.5;
 }
 
@@ -73,20 +73,20 @@
 }
 
 .sectionBody > .sectionCard:not(:first-child) {
-    margin-top: var(--space-md);
+    margin-top: var(--space-16);
 }
 
 .sectionFooter {
     display: flex;
     justify-content: flex-end;
     /* 和 row 一样的 padding 节奏；border-top 作为和上一个 row 的分隔线 */
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-8) var(--space-16);
     border-top: var(--border-width, 1px) solid var(--border);
 }
 
 /* Hero variant：用于 AboutTab */
 .sectionHero {
-    padding: var(--space-xl) var(--space-md);
+    padding: var(--space-40) var(--space-16);
     text-align: center;
 }
 
@@ -124,20 +124,34 @@
     display: none;
 }
 
+/* List variant：保留卡片容器，行内去分隔线、加 hover、压缩行高 */
+.sectionList > .sectionBody > .row {
+    padding: 5px var(--space-12);
+    transition: background var(--duration-fast);
+}
+
+.sectionList > .sectionBody > .row:hover {
+    background: var(--overlay-light);
+}
+
+.sectionList > .sectionBody > .row + .row::before {
+    display: none;
+}
+
 /* Section 内的警告块（sandbox 关闭时显示等）
  * 位置：卡片内，row 之后，和 row 之间用贴边的伪元素分隔线 */
 .sectionWarning {
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-8) var(--space-16);
     color: var(--danger, #b56b66);
-    font-size: 0.75rem;
+    font-size: var(--fs-caption);
     line-height: 1.5;
     position: relative;
 }
 
 .sectionNote {
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-8) var(--space-16);
     color: var(--text-muted);
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     line-height: 1.4;
     position: relative;
 }
@@ -145,7 +159,7 @@
 /* ─── SubBlock ─── */
 
 .subBlock {
-    margin-bottom: var(--space-md);
+    margin-bottom: var(--space-16);
 }
 
 .subBlock:last-child {
@@ -153,16 +167,16 @@
 }
 
 .subBlockTitle {
-    font-size: 0.9rem;
+    font-size: var(--fs-body);
     font-weight: 600;
     color: var(--text-light);
-    margin: 0 0 var(--space-sm) 0;
+    margin: 0 0 var(--space-8) 0;
 }
 
 /* ─── Row ─── */
 
 .row {
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-8) var(--space-16);
     position: relative;
 }
 
@@ -191,13 +205,13 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-md);
+    gap: var(--space-16);
 }
 
 .rowStacked {
     display: flex;
     flex-direction: column;
-    gap: var(--space-md);
+    gap: var(--space-16);
 }
 
 .rowText {
@@ -209,13 +223,13 @@
 }
 
 .rowLabel {
-    font-size: 0.9rem;
+    font-size: var(--fs-body);
     color: var(--text);
     font-weight: 500;
 }
 
 .rowHint {
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     line-height: 1.4;
 }
@@ -228,7 +242,7 @@
     flex-shrink: 0;
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
+    gap: var(--space-8);
 }
 
 .rowStacked .rowControl {
@@ -239,18 +253,18 @@
 /* ─── ExpandableRow ─── */
 
 .expandable {
-    margin-top: var(--space-sm);
+    margin-top: var(--space-8);
 }
 
 .expandableHeader {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: var(--space-4);
     background: none;
     border: none;
-    padding: var(--space-sm) 0;
+    padding: var(--space-8) 0;
     font-family: inherit;
-    font-size: 0.85rem;
+    font-size: var(--fs-ui);
     color: var(--text-light);
     cursor: default;
     transition: color var(--duration-fast);
@@ -265,7 +279,7 @@
 .expandableChevron {
     display: inline-block;
     transition: transform var(--duration-fast) ease;
-    font-size: 1rem;
+    font-size: var(--fs-title);
     color: var(--text-muted);
 }
 
@@ -275,14 +289,14 @@
 
 .expandableCount {
     color: var(--text-muted);
-    font-size: 0.8rem;
+    font-size: var(--fs-ui);
 }
 
 .expandableBody {
-    padding: var(--space-sm) 0 var(--space-md);
+    padding: var(--space-8) 0 var(--space-16);
     display: flex;
     flex-direction: column;
-    gap: var(--space-sm);
+    gap: var(--space-8);
 }
 
 /* ─── NumberInput（SPEC §3.6 Number-Unit Row 用）─── */
@@ -290,7 +304,7 @@
 .numberInput {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: var(--space-4);
 }
 
 .numberInputField {
@@ -301,7 +315,7 @@
     background: var(--bg-card);
     color: var(--text);
     font-family: inherit;
-    font-size: 0.9rem;
+    font-size: var(--fs-body);
     text-align: right;
     transition: border-color var(--duration-slow) var(--ease-out);
 }
@@ -321,7 +335,7 @@
 }
 
 .numberInputUnit {
-    font-size: 0.9rem;
+    font-size: var(--fs-body);
     color: var(--text-muted);
 }
 
@@ -416,7 +430,7 @@
     position: relative;
     height: 16px;
     color: var(--text-muted);
-    font-size: 0.66rem;
+    font-size: var(--fs-hint);
     line-height: 1.2;
 }
 

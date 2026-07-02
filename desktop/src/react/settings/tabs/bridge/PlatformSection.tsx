@@ -131,7 +131,7 @@ export function PlatformSection({
       {/* 无凭据（如 WhatsApp）：只显示 hint */}
       {credentialFields.length === 0 && hint && (
         <div style={{
-          padding: 'var(--space-sm) var(--space-md)',
+          padding: 'var(--space-8) var(--space-16)',
           fontSize: '0.7rem',
           color: 'var(--text-muted)',
           lineHeight: 1.4,
@@ -144,7 +144,7 @@ export function PlatformSection({
 
       {ownerUsers && onOwnerChange && (
         <div style={{
-          padding: 'var(--space-sm) var(--space-md)',
+          padding: 'var(--space-8) var(--space-16)',
           borderTop: '1px solid var(--border)',
         }}>
           <OwnerSelect

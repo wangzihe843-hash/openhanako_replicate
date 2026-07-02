@@ -246,6 +246,7 @@ describe('SkillsTab — sticky skillsViewAgentId & toggleSkill race guard', () =
     );
     expect(skillsCalls.length).toBeGreaterThanOrEqual(1);
     expect(skillsCalls[0][0]).toContain('agentId=agent-a');
+    expect(skillsCalls[0][0]).toContain('runtime=1');
   });
 
   it('uploads a selected skill package when no local path picker is available', async () => {

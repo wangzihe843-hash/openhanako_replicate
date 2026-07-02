@@ -154,7 +154,7 @@ describe('OnboardingApp locale switching', () => {
       target: { value: 'http://192.168.31.75:14500' },
     });
     fireEvent.change(screen.getByLabelText('访问密钥'), {
-      target: { value: 'hana_dev_remote_secret' },
+      target: { value: 'fixture-key' },
     });
     fireEvent.click(screen.getByRole('button', { name: '连接' }));
 

@@ -67,13 +67,17 @@ function buildToolApprovalGatewayRequest(tool: any, toolName: any, params: any, 
     params: params && typeof params === "object" ? params : {},
     target,
     blastRadius: target.type === "url" || target.type === "domain" ? "external" : "workspace",
-    reversibility: toolName === "bash" || toolName === "terminal" ? "unknown" : "moderate",
+    reversibility: toolName === "bash" || toolName === "exec_command" || toolName === "terminal" || toolName === "write_stdin" ? "unknown" : "moderate",
     ...(sideEffect ? { sideEffect } : {}),
   };
 }
 
 function approvalTargetForTool(toolName: any, params: any = {}) {
-  const command = typeof params.command === "string" ? params.command : "";
+  const command = typeof params.command === "string"
+    ? params.command
+    : typeof params.cmd === "string"
+      ? params.cmd
+      : "";
   if (command) return { type: "command", label: command };
   const path = typeof params.path === "string" ? params.path : typeof params.file_path === "string" ? params.file_path : "";
   if (path) return { type: "file", label: path, path };
@@ -109,7 +113,7 @@ function permissionContextForTool(tool: any, deps: any = {}) {
 
 function summarizeParams(params: any) {
   if (!params || typeof params !== "object") return "";
-  const keys = ["action", "path", "file_path", "command", "url", "key", "label"];
+  const keys = ["action", "path", "file_path", "command", "cmd", "process_id", "url", "key", "label"];
   for (const key of keys) {
     const value = params[key];
     if (typeof value === "string" && value.trim()) return `${key}: ${value.trim().slice(0, 160)}`;

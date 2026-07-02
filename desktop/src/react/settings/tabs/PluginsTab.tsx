@@ -548,7 +548,7 @@ export function PluginsTab() {
           <p style={{
             fontSize: '0.7rem',
             color: 'var(--text-muted)',
-            marginTop: 'var(--space-sm)',
+            marginTop: 'var(--space-8)',
           }}>
             {t('settings.plugins.pluginsDir', { path: pluginUserDir })}
           </p>

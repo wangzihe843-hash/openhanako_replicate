@@ -38,6 +38,7 @@ vi.mock("../lib/debug-log.js", () => ({
 
 import { SessionCoordinator } from "../core/session-coordinator.ts";
 import { SessionManifestStore } from "../core/session-manifest/store.ts";
+import { repairRestoredToolSnapshot } from "../core/tool-snapshot-repair.ts";
 import { isBeautifyEnabledForAgentConfig } from "../plugins/beautify/lib/availability.ts";
 import { CORE_TOOL_NAMES } from "../shared/tool-categories.ts";
 
@@ -50,7 +51,7 @@ function makeTool(name) {
 // createSandboxedTools().tools, NOT from agent.tools. Mirror that structure so
 // tests exercise the real code paths.
 const SDK_BUILTIN_OBJS = [
-  "read", "bash", "edit", "write", "grep", "find", "ls",
+  "read", "write", "edit", "exec_command", "write_stdin", "grep", "find", "ls",
 ].map(makeTool);
 
 // HanaAgent custom tools — in production these come from agent.tools getter
@@ -75,20 +76,7 @@ function defaultBaselineNames() {
 }
 
 function restoredSnapshot(names, availableNames = allNames()) {
-  const available = new Set(availableNames);
-  const seen = new Set();
-  const result = [];
-  for (const name of names || []) {
-    if (typeof name !== "string" || name.length === 0 || seen.has(name) || !available.has(name)) continue;
-    seen.add(name);
-    result.push(name);
-  }
-  for (const name of CORE_TOOL_NAMES) {
-    if (!available.has(name) || seen.has(name)) continue;
-    seen.add(name);
-    result.push(name);
-  }
-  return result;
+  return repairRestoredToolSnapshot(names, availableNames, { coreToolNames: CORE_TOOL_NAMES });
 }
 
 describe("session-coordinator tool snapshot (createSession)", () => {
@@ -204,6 +192,22 @@ describe("session-coordinator tool snapshot (createSession)", () => {
 
     const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
     expect(meta[path.basename(sessionPath)].accessMode).toBe("operate");
+  });
+
+  it("includes enabled MCP tools in fresh session runtime options and snapshots", async () => {
+    const mcpTool = { ...makeTool("mcp_github_search"), _pluginId: "mcp" };
+    coord._d.buildTools = () => ({
+      tools: SDK_BUILTIN_OBJS,
+      customTools: [...HANAKO_CUSTOM_OBJS, mcpTool],
+    });
+    currentAgentConfig = { tools: { disabled: [] } };
+
+    const { sessionPath } = await coord.createSession(null, tmpDir, true);
+
+    expect(lastSessionOptions.customTools.map((tool) => tool.name)).toContain("mcp_github_search");
+    expect(activeToolsSpy.mock.calls[0][0]).toContain("mcp_github_search");
+    const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
+    expect(meta[path.basename(sessionPath)].toolNames).toContain("mcp_github_search");
   });
 
   it("starts fresh sessions from the persisted global permission default", async () => {
@@ -503,18 +507,19 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(entry.toolNames).toEqual(restoredSnapshot(["read", "browser"]));
   });
 
-  it("Case C: snapshot includes Pi SDK built-ins (regression for P1 — bundle must carry read/bash/etc)", async () => {
+  it("Case C: snapshot includes sandbox built-ins (regression for P1 — bundle must carry command/file tools)", async () => {
     currentAgentConfig = { tools: { disabled: ["browser"] } };
     await coord.createSession(null, tmpDir, true);
 
     const appliedList = activeToolsSpy.mock.calls[0][0];
-    // All 7 Pi SDK built-ins must be in the active set even though agent.tools
+    // Sandbox-provided built-ins must be in the active set even though agent.tools
     // doesn't contain them — they come from sessionTools. Without the P1 fix,
     // setActiveToolsByName would receive only custom tool names and silently
-    // disable read/bash/edit/write/grep/find/ls for every fresh session.
-    for (const name of ["read", "bash", "edit", "write", "grep", "find", "ls"]) {
+    // disable read/edit/write/grep/find/ls/exec_command/write_stdin for every fresh session.
+    for (const name of ["read", "write", "edit", "exec_command", "write_stdin", "grep", "find", "ls"]) {
       expect(appliedList).toContain(name);
     }
+    expect(appliedList).not.toContain("bash");
   });
 
   it("Case C: browser disabled is excluded from snapshot", async () => {
@@ -626,9 +631,8 @@ describe("session-coordinator tool snapshot (createSession)", () => {
 
   // ── Case A tests ─────────────────────────────────────────────
 
-  it("Case A: restore with meta containing toolNames replays that exact snapshot", async () => {
-    // Pre-write meta with a specific short snapshot
-    const replayList = restoredSnapshot(["read", "bash", "edit", "todo_write"]);
+  it("Case A: restore with legacy bash in toolNames maps it to exec_command", async () => {
+    const replayList = ["read", "bash", "edit", "todo_write"];
     const metaPath = path.join(sessionDir, "session-meta.json");
     await fsp.writeFile(
       metaPath,
@@ -638,7 +642,9 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     await coord.createSession(null, tmpDir, true, null, { restore: true });
 
     expect(activeToolsSpy).toHaveBeenCalledTimes(1);
-    expect(activeToolsSpy.mock.calls[0][0]).toEqual(replayList);
+    expect(activeToolsSpy.mock.calls[0][0]).toEqual(restoredSnapshot(replayList));
+    expect(activeToolsSpy.mock.calls[0][0]).toContain("exec_command");
+    expect(activeToolsSpy.mock.calls[0][0]).not.toContain("bash");
   });
 
   it("Case A: restore deduplicates frozen toolNames before applying them", async () => {
@@ -652,9 +658,26 @@ describe("session-coordinator tool snapshot (createSession)", () => {
 
     expect(activeToolsSpy).toHaveBeenCalledTimes(1);
     expect(activeToolsSpy.mock.calls[0][0]).toEqual(restoredSnapshot(["read", "bash", "todo_write"]));
+    expect(activeToolsSpy.mock.calls[0][0]).not.toContain("bash");
 
     const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
     expect(meta[path.basename(fakeSessionPath)].toolNames).toEqual(restoredSnapshot(["read", "bash", "todo_write"]));
+  });
+
+  it("Case A: restore maps legacy terminal to exec_command and write_stdin", async () => {
+    const replayList = ["read", "terminal", "todo_write"];
+    await fsp.writeFile(
+      path.join(sessionDir, "session-meta.json"),
+      JSON.stringify({ [path.basename(fakeSessionPath)]: { toolNames: replayList } }, null, 2),
+    );
+
+    await coord.createSession(null, tmpDir, true, null, { restore: true });
+
+    expect(activeToolsSpy).toHaveBeenCalledTimes(1);
+    expect(activeToolsSpy.mock.calls[0][0]).toEqual(restoredSnapshot(replayList));
+    expect(activeToolsSpy.mock.calls[0][0]).toContain("exec_command");
+    expect(activeToolsSpy.mock.calls[0][0]).toContain("write_stdin");
+    expect(activeToolsSpy.mock.calls[0][0]).not.toContain("terminal");
   });
 
   it("Case A: restore repairs corrupted snapshots that lost available core tools only", async () => {
@@ -877,7 +900,8 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     const appliedList = activeToolsSpy.mock.calls[0][0];
     expect(appliedList).toContain("browser");
     expect(appliedList).toContain("web_search");
-    expect(appliedList).toContain("bash");
+    expect(appliedList).toContain("exec_command");
+    expect(appliedList).not.toContain("bash");
     expect(coord.getAccessMode()).toBe("read_only");
   });
 
@@ -972,7 +996,8 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     const planList = activeToolsSpy.mock.calls[0][0];
     expect(planList).toContain("read");
     expect(planList).toContain("browser");
-    expect(planList).toContain("bash");
+    expect(planList).toContain("exec_command");
+    expect(planList).not.toContain("bash");
     expect(planList).toContain("automation");
     expect(coord.getAccessMode()).toBe("read_only");
   });

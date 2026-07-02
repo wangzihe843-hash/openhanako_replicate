@@ -70,11 +70,13 @@ function errorResult(err) {
 export function createFileTool({
   getCwd,
   getSessionPath,
+  getAuthorizedFolders,
   resolveSessionFile,
   registerSessionFile,
 }: {
   getCwd?: any;
   getSessionPath?: any;
+  getAuthorizedFolders?: any;
   resolveSessionFile?: any;
   registerSessionFile?: any;
 } = {}) {
@@ -138,6 +140,15 @@ export function createFileTool({
         || getSessionPath?.()
         || null;
       const sessionId = params.sessionId || ctx?.sessionId || null;
+      const authorizedFolders = (() => {
+        try {
+          const folders = getAuthorizedFolders?.(sessionPath, ctx);
+          return Array.isArray(folders) ? folders.filter((item) => typeof item === "string" && item.trim()) : [];
+        } catch {
+          return [];
+        }
+      })();
+      const allowedRoots = [cwd, ...authorizedFolders];
 
       try {
         if (params.action === "stat") {
@@ -162,8 +173,8 @@ export function createFileTool({
             filename: target.filename,
             conflictPolicy: params.conflictPolicy || "fail",
             cwd,
-            allowedRoots: [cwd],
-            sourceAllowedRoots: [cwd],
+            allowedRoots,
+            sourceAllowedRoots: allowedRoots,
             sessionId,
             sessionPath,
             resolveSessionFile,

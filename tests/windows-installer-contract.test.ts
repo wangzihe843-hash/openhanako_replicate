@@ -160,8 +160,18 @@ describe("Windows NSIS installer contract", () => {
     expect(verify).toContain('$INSTDIR\\resources\\server\\bundle\\index.js');
     expect(verify).toContain('$INSTDIR\\resources\\server\\node_modules\\better-sqlite3\\build\\Release\\better_sqlite3.node');
     expect(verify).toContain('$INSTDIR\\resources\\git\\cmd\\git.exe');
+    expect(verify).toContain('$INSTDIR\\resources\\git\\usr\\bin\\sh.exe');
     expect(verify).toContain('MessageBox MB_OK|MB_ICONSTOP');
     expect(verify).toContain('Quit');
+  });
+
+  it("verifies the MinGit install surface without requiring the retired bundled bash", () => {
+    const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
+    const verify = extractMacro(source, "hanakoVerifyInstallSurface");
+
+    // MinGit 不再打包 bash.exe；安装器与资源是同一个包的原子产物，自检要求 sh.exe 即可
+    expect(verify).not.toContain("bash.exe");
+    expect(verify).not.toContain("PortableGit");
   });
 
   it("records installer phase timing without changing install success conditions", () => {

@@ -25,7 +25,7 @@
     align-items: center;
     gap: 0.35rem;
     padding: 0.3rem 0.55rem;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     background: transparent;
     border: 1px solid transparent;

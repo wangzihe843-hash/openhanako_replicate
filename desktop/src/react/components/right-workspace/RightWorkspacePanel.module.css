@@ -33,7 +33,7 @@
     display: flex;
     align-items: center;
     min-height: 40px;
-    padding: 6px calc(var(--space-sm) + 7.5rem) 2px var(--space-md);
+    padding: 6px calc(var(--space-8) + 7.5rem) 2px var(--space-16);
 }
 
 .workspaceTitle {
@@ -44,7 +44,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: "Songti SC", "Noto Serif CJK SC", serif;
-    font-size: 0.95rem;
+    font-size: var(--fs-title);
     font-weight: 600;
     color: var(--accent);
 }
@@ -57,7 +57,7 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 2px;
-    margin: 0 var(--space-sm);
+    margin: 0 var(--space-8);
     padding: 2px;
     border-radius: var(--radius-sm);
     background: var(--overlay-subtle);
@@ -91,7 +91,7 @@
     background: transparent;
     color: var(--text-muted);
     font-family: inherit;
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     font-weight: 400;
     cursor: default;
     transition: color var(--duration-fast) var(--ease-out);
@@ -142,7 +142,7 @@
     align-items: center;
     height: var(--right-workspace-list-toolbar-height);
     min-height: 0;
-    margin: 0 var(--space-sm);
+    margin: 0 var(--space-8);
 }
 
 .sessionFilesSortButton {
@@ -156,7 +156,7 @@
     background: transparent;
     color: var(--text-muted);
     font-family: inherit;
-    font-size: 0.65rem;
+    font-size: var(--fs-hint);
     line-height: 1;
     cursor: default;
     transition: background var(--duration-fast), color var(--duration-fast);
@@ -186,9 +186,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: var(--space-lg);
+    padding: var(--space-24);
     color: var(--text-muted);
-    font-size: 0.76rem;
+    font-size: var(--fs-caption);
     text-align: center;
 }
 
@@ -218,7 +218,7 @@
     margin: 0 2px;
     border-radius: 4px;
     color: var(--text);
-    font-size: 0.74rem;
+    font-size: var(--fs-caption);
     line-height: 1.4;
     cursor: default;
     user-select: none;
@@ -261,7 +261,7 @@
 
 .fileName {
     color: var(--text);
-    font-size: 0.74rem;
+    font-size: var(--fs-caption);
     line-height: 1.4;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -292,7 +292,7 @@
     align-items: center;
     gap: 2px;
     opacity: 0;
-    padding-left: var(--space-sm);
+    padding-left: var(--space-8);
     background: linear-gradient(
         90deg,
         transparent,
@@ -390,7 +390,7 @@
     height: 46px;
     display: flex;
     align-items: center;
-    padding: 0 var(--space-md);
+    padding: 0 var(--space-16);
     border-bottom: 1px solid var(--jian-note-border, rgba(200, 160, 110, 0.2));
 }
 

@@ -19,6 +19,13 @@ describe('SelectionQuoteActionSurface', () => {
   });
 
   it('adds the current selection candidate as an independent quote chip source', () => {
+    const removeAllRanges = vi.fn();
+    const getSelection = vi.spyOn(window, 'getSelection').mockReturnValue({
+      rangeCount: 1,
+      removeAllRanges,
+    } as unknown as Selection);
+    const requestInputFocus = vi.fn();
+    useStore.setState({ requestInputFocus } as never);
     useStore.getState().setQuoteCandidate({
       text: '第一段引用',
       sourceTitle: 'Assistant message',
@@ -36,6 +43,9 @@ describe('SelectionQuoteActionSurface', () => {
     expect(useStore.getState().quotedSelections).toHaveLength(1);
     expect(useStore.getState().quotedSelections[0]).toMatchObject({ text: '第一段引用' });
     expect(useStore.getState().quoteCandidate).toBeNull();
+    expect(removeAllRanges).toHaveBeenCalledOnce();
+    expect(requestInputFocus).toHaveBeenCalledOnce();
+    getSelection.mockRestore();
   });
 
   it('keeps the readable action label visible without rendering a duplicate tooltip', () => {

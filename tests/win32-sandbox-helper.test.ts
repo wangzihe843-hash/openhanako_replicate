@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import fs from "fs";
+import path from "path";
 import {
   buildWin32SandboxTokenDiagnosticArgs,
   buildWin32SandboxHelperArgs,
@@ -74,5 +76,15 @@ describe("buildWin32SandboxHelperArgs", () => {
       "-Command",
       "Write-Output ok",
     ]);
+  });
+
+  it("keeps required ACL failures diagnosable with numeric Win32 codes", () => {
+    const helperSource = fs.readFileSync(
+      path.join(process.cwd(), "desktop", "native", "HanaWindowsSandboxHelper", "main.cpp"),
+      "utf-8",
+    );
+
+    expect(helperSource).toContain("static std::wstring win32Diagnostic(DWORD code)");
+    expect(helperSource).toContain('fail(L"cannot apply ACL for " + path + L": " + win32Diagnostic(rc))');
   });
 });

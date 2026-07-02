@@ -50,8 +50,8 @@ describe('AssistantMessage skill blocks', () => {
       kind: 'skill_source',
       owner: 'user',
       skillName: 'university-info',
-      baseDir: '/Users/example/.hanako/skills/university-info',
-      filePath: '/Users/example/.hanako/skills/university-info/SKILL.md',
+      baseDir: '/tmp/hana-fixture/.hanako/skills/university-info',
+      filePath: '/tmp/hana-fixture/.hanako/skills/university-info/SKILL.md',
       editable: true,
       readonly: false,
     };
@@ -78,7 +78,7 @@ describe('AssistantMessage skill blocks', () => {
     expect(mocks.openSkillPreview).toHaveBeenCalledTimes(1);
     expect(mocks.openSkillPreview).toHaveBeenCalledWith(
       'university-info',
-      '/Users/example/.hanako/skills/university-info/SKILL.md',
+      '/tmp/hana-fixture/.hanako/skills/university-info/SKILL.md',
       installedSkillSource,
     );
   });

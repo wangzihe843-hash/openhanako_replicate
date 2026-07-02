@@ -5,6 +5,7 @@
  * list/get 协议；每个状态项由独立 provider 负责，后续扩展只加 provider。
  */
 
+import path from "path";
 import { StringEnum, Type } from "../pi-sdk/index.ts";
 import { getAppearanceStatus } from "./appearance-status.ts";
 import { getToolSessionPath } from "./tool-session.ts";
@@ -144,10 +145,27 @@ function normalizeOperations(value) {
     : [];
 }
 
+function sessionFileRef(fileId) {
+  return fileId ? { kind: "session-file", fileId } : null;
+}
+
+function writableLocalRefForSessionFile(source, status) {
+  const origin = nullableString(source.origin);
+  const filePath = nullableString(source.filePath);
+  if (origin !== "agent_write" && origin !== "agent_edit") return null;
+  if (status === "expired" || source.isDirectory === true) return null;
+  if (!filePath || !path.isAbsolute(filePath)) return null;
+  return { kind: "local-file", path: filePath };
+}
+
 function normalizeSessionFile(file) {
   const source = file && typeof file === "object" ? file : {};
+  const fileId = nullableString(source.fileId || source.id);
+  const status = nullableString(source.status) || "available";
   return {
-    fileId: nullableString(source.fileId || source.id),
+    fileId,
+    sessionFileRef: sessionFileRef(fileId),
+    writableLocalRef: writableLocalRefForSessionFile(source, status),
     label: nullableString(source.label || source.displayName || source.filename || source.filePath),
     displayName: nullableString(source.displayName),
     filename: nullableString(source.filename),
@@ -158,7 +176,7 @@ function normalizeSessionFile(file) {
     origin: nullableString(source.origin),
     operations: normalizeOperations(source.operations),
     storageKind: nullableString(source.storageKind),
-    status: nullableString(source.status) || "available",
+    status,
     missingAt: nullableNumber(source.missingAt),
     createdAt: nullableNumber(source.createdAt),
     isDirectory: source.isDirectory === true,

@@ -54,7 +54,7 @@ describe("desktop launch integrity helper", () => {
       "server-bootstrap",
       "server-bundle",
       "better-sqlite3-native",
-      "portable-git",
+      "bundled-git",
     ]);
     expect(result.missing.map(item => item.relativePath)).toEqual([
       "HanaAgent.exe",
@@ -82,7 +82,7 @@ describe("desktop launch integrity helper", () => {
     writeFile(resourcesPath, "server/bundle/index.js");
     writeFile(resourcesPath, "server/node_modules/better-sqlite3/build/Release/better_sqlite3.node");
     writeFile(resourcesPath, "git/cmd/git.exe");
-    writeFile(resourcesPath, "git/usr/bin/bash.exe");
+    writeFile(resourcesPath, "git/usr/bin/sh.exe");
 
     const result = helper.checkWindowsInstallSurface({
       execPath: path.join(tmp, "HanaAgent.exe"),
@@ -98,8 +98,56 @@ describe("desktop launch integrity helper", () => {
       "server-bootstrap",
       "server-bundle",
       "better-sqlite3-native",
-      "portable-git",
+      "bundled-git",
     ]);
+  });
+
+  it("still accepts a legacy PortableGit surface that bundles bash.exe instead of sh.exe", () => {
+    const helper = loadHelper();
+    if (!helper) return;
+
+    const tmp = makeTempDir();
+    const resourcesPath = path.join(tmp, "resources");
+    writeFile(tmp, "HanaAgent.exe");
+    writeFile(resourcesPath, "app.asar");
+    writeFile(resourcesPath, "app-update.yml");
+    writeFile(resourcesPath, "server/hana-server.exe");
+    writeFile(resourcesPath, "server/bootstrap.js");
+    writeFile(resourcesPath, "server/bundle/index.js");
+    writeFile(resourcesPath, "server/node_modules/better-sqlite3/build/Release/better_sqlite3.node");
+    writeFile(resourcesPath, "git/cmd/git.exe");
+    writeFile(resourcesPath, "git/usr/bin/bash.exe");
+
+    const result = helper.checkWindowsInstallSurface({
+      execPath: path.join(tmp, "HanaAgent.exe"),
+      resourcesPath,
+    });
+
+    expect(result).toMatchObject({ ok: true, missing: [] });
+  });
+
+  it("flags the bundled Git runtime when git.exe exists without any POSIX shell", () => {
+    const helper = loadHelper();
+    if (!helper) return;
+
+    const tmp = makeTempDir();
+    const resourcesPath = path.join(tmp, "resources");
+    writeFile(tmp, "HanaAgent.exe");
+    writeFile(resourcesPath, "app.asar");
+    writeFile(resourcesPath, "app-update.yml");
+    writeFile(resourcesPath, "server/hana-server.exe");
+    writeFile(resourcesPath, "server/bootstrap.js");
+    writeFile(resourcesPath, "server/bundle/index.js");
+    writeFile(resourcesPath, "server/node_modules/better-sqlite3/build/Release/better_sqlite3.node");
+    writeFile(resourcesPath, "git/cmd/git.exe");
+
+    const result = helper.checkWindowsInstallSurface({
+      execPath: path.join(tmp, "HanaAgent.exe"),
+      resourcesPath,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.missing.map(item => item.id)).toEqual(["bundled-git"]);
   });
 
   it("records legacy unpacked app directory diagnostics without accepting it as a fallback", () => {
@@ -117,7 +165,7 @@ describe("desktop launch integrity helper", () => {
     writeFile(resourcesPath, "server/bundle/index.js");
     writeFile(resourcesPath, "server/node_modules/better-sqlite3/build/Release/better_sqlite3.node");
     writeFile(resourcesPath, "git/cmd/git.exe");
-    writeFile(resourcesPath, "git/usr/bin/bash.exe");
+    writeFile(resourcesPath, "git/usr/bin/sh.exe");
 
     const result = helper.checkWindowsInstallSurface({
       execPath: path.join(tmp, "HanaAgent.exe"),

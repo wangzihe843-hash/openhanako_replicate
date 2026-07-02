@@ -336,8 +336,10 @@ function mockPermissionDefault(mode = 'ask') {
     const deletedPath = '/tmp/agents/deleted/sessions/old.jsonl';
     Object.assign(mockState, {
       currentSessionPath: null,
+      currentSessionId: 'sess_previous',
       sessions: [{
         path: deletedPath,
+        sessionId: 'sess_deleted_history',
         agentDeleted: true,
         agentId: 'deleted',
         agentName: 'Deleted',
@@ -356,6 +358,10 @@ function mockPermissionDefault(mode = 'ask') {
 
     expect(mockFetch).not.toHaveBeenCalledWith('/api/sessions/switch', expect.anything());
     expect(mockState.currentSessionPath).toBe(deletedPath);
+    expect(mockState.currentSessionId).toBe('sess_deleted_history');
+    expect(mockState.sessionLocatorsById).toMatchObject({
+      sess_deleted_history: { path: deletedPath },
+    });
     expect(mockState.pendingSessionSwitchPath).toBeNull();
     expect(mockState.pendingNewSession).toBe(false);
     expect(mockState.currentAgentId).toBeNull();
@@ -435,6 +441,7 @@ function mockPermissionDefault(mode = 'ask') {
     const deletedPath = '/tmp/agents/deleted/sessions/unread.jsonl';
     Object.assign(mockState, {
       currentSessionPath: '/session/current.jsonl',
+      currentSessionId: 'sess_current_should_clear',
       unreadOutputSessionPaths: [deletedPath, '/session/other.jsonl'],
       sessions: [{
         path: deletedPath,
@@ -454,6 +461,7 @@ function mockPermissionDefault(mode = 'ask') {
     await switchSession(deletedPath);
 
     expect(mockState.unreadOutputSessionPaths).toEqual(['/session/other.jsonl']);
+    expect(mockState.currentSessionId).toBeNull();
   });
 
   it('continues a deleted-agent session by creating and switching to the returned primary-agent session', async () => {
@@ -1385,6 +1393,10 @@ function mockPermissionDefault(mode = 'ask') {
   describe('archiveSession 按 path 清缓存', () => {
     it('归档非当前 session 时也按归档 path 清理 chat / stream 相关缓存', async () => {
       (mockState as Record<string, unknown>).currentSessionPath = '/current';
+      (mockState as Record<string, unknown>).sessions = [
+        { path: '/archived', sessionId: 'sess_archived' },
+        { path: '/current', sessionId: 'sess_current' },
+      ];
       (mockState.chatSessions as Record<string, unknown>)['/archived'] = {
         items: [{ type: 'message', data: { id: '1', text: 'archived' } }],
         hasMore: false,
@@ -1405,6 +1417,10 @@ function mockPermissionDefault(mode = 'ask') {
 
       await archiveSession('/archived');
 
+      expect(mockFetch).toHaveBeenCalledWith('/api/sessions/archive', expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ path: '/archived', sessionId: 'sess_archived' }),
+      }));
       const clearSessionMock = (mockState as unknown as {
         clearSession: ReturnType<typeof vi.fn>;
       }).clearSession;

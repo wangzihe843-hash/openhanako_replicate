@@ -249,6 +249,19 @@ function legacyTitleFor(titles, sessionDir, sessionPath) {
   return titles[sessionPath] || titles[activePath] || titles[path.basename(sessionPath)] || null;
 }
 
+function backfillLegacyTitleSessionIdKey(titlesPath, titles, sessionDir, sessionPath, manifest) {
+  if (!manifest?.sessionId || !titles || typeof titles !== "object" || Array.isArray(titles)) return;
+  if (titles[manifest.sessionId]) return;
+  const title = manifest.provenance?.legacyTitle || legacyTitleFor(titles, sessionDir, sessionPath);
+  if (typeof title !== "string" || !title.trim()) return;
+  titles[manifest.sessionId] = title;
+  try {
+    fs.writeFileSync(titlesPath, JSON.stringify(titles, null, 2));
+  } catch {
+    delete titles[manifest.sessionId];
+  }
+}
+
 function buildLegacyManifestInput({
   agentId,
   sessionDir,
@@ -411,7 +424,8 @@ export function migrateLegacySessions(opts: any = {}) {
       const sessionDir = group.sessionDir;
       if (!fs.existsSync(sessionDir)) continue;
       const metaSources = readSessionMetaSources(sessionDir);
-      const titles = readJsonFile(path.join(sessionDir, "session-titles.json"), {});
+      const titlesPath = path.join(sessionDir, "session-titles.json");
+      const titles = readJsonFile(titlesPath, {});
       const sessionRows = group.sessionRowsFor(sessionDir);
 
       for (const row of sessionRows) {
@@ -424,6 +438,7 @@ export function migrateLegacySessions(opts: any = {}) {
             const permissionRepaired = repairPermissionSnapshotFromLegacyMeta(opts.store, repaired, candidates);
             importLegacyCapabilitySnapshot(opts.store, permissionRepaired || repaired, candidates);
             importLegacyExecutorMetadata(opts.store, permissionRepaired || repaired, candidates);
+            backfillLegacyTitleSessionIdKey(titlesPath, titles, sessionDir, row.sessionPath, permissionRepaired || repaired);
             result.existing += 1;
             continue;
           }
@@ -440,6 +455,7 @@ export function migrateLegacySessions(opts: any = {}) {
           const candidates = sessionMetaCandidates(metaSources, row.sessionPath);
           importLegacyCapabilitySnapshot(opts.store, manifest, candidates);
           importLegacyExecutorMetadata(opts.store, manifest, candidates);
+          backfillLegacyTitleSessionIdKey(titlesPath, titles, sessionDir, row.sessionPath, manifest);
           result.created += 1;
         } catch (error) {
           if (opts.stopOnError === true) throw error;

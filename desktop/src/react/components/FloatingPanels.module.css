@@ -13,7 +13,7 @@
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    padding: var(--space-xl) var(--space-lg);
+    padding: var(--space-40) var(--space-24);
     pointer-events: none;
     transition: left var(--duration-slow) var(--ease-out);
 }
@@ -50,13 +50,13 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-md) var(--space-lg);
+    padding: var(--space-16) var(--space-24);
     border-bottom: 1px solid var(--overlay-light);
     flex-shrink: 0;
 }
 
 .floatingPanelTitle {
-    font-size: 0.85rem;
+    font-size: var(--fs-ui);
     font-weight: 600;
     color: var(--text);
     margin: 0;
@@ -82,7 +82,7 @@
 .floatingPanelBody {
     flex: 1;
     overflow-y: auto;
-    padding: var(--space-md) var(--space-lg);
+    padding: var(--space-16) var(--space-24);
     scroll-behavior: smooth;
 }
 
@@ -108,7 +108,7 @@
     border: none;
     color: var(--text-muted);
     cursor: default;
-    font-size: 0.75rem;
+    font-size: var(--fs-caption);
     padding: 3px 6px;
     border-radius: var(--radius-sm);
     transition: color var(--duration-fast), background var(--duration-fast);
@@ -120,7 +120,7 @@
 }
 
 .floatingPanelSubtitle {
-    font-size: 0.75rem;
+    font-size: var(--fs-caption);
     color: var(--text-muted);
     flex: 1;
     text-align: center;
@@ -154,14 +154,14 @@
 }
 
 .detailHeaderName {
-    font-size: 0.82rem;
+    font-size: var(--fs-ui);
     font-weight: 600;
     color: var(--text);
     line-height: 1.2;
 }
 
 .detailHeaderSubtitle {
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -170,7 +170,7 @@
 
 /* 详情视图里的消息 */
 .activityDetailMsg {
-    margin-bottom: var(--space-md);
+    margin-bottom: var(--space-16);
 }
 
 .activityDetailMsgUser {
@@ -181,9 +181,9 @@
     display: inline-block;
     max-width: 90%;
     text-align: left;
-    padding: 0.5rem 0.75rem;
+    padding: var(--space-8) var(--space-12);
     border-radius: var(--radius-md);
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     line-height: 1.6;
 }
 
@@ -200,7 +200,7 @@
 }
 
 .activityDetailBubble :global(.md-content) {
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
 }
 
 .activityHbToggle {
@@ -208,7 +208,7 @@
     align-items: center;
     gap: 6px;
     margin-left: auto;
-    margin-right: var(--space-sm);
+    margin-right: var(--space-8);
 }
 
 .actPromoteBtn {
@@ -218,12 +218,12 @@
     background: none;
     border: 1px solid var(--overlay-light);
     color: var(--text-muted);
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     padding: 3px 10px;
     border-radius: var(--radius-sm);
     cursor: default;
     margin-left: auto;
-    margin-right: var(--space-sm);
+    margin-right: var(--space-8);
     transition: color var(--duration-fast), border-color var(--duration-fast), background var(--duration-fast);
     white-space: nowrap;
 }
@@ -237,7 +237,7 @@
 .activityCards {
     display: flex;
     flex-direction: column;
-    gap: var(--space-sm);
+    gap: var(--space-8);
 }
 
 /* Sidebar 计数 badge */
@@ -255,13 +255,13 @@
 .automationList {
     display: flex;
     flex-direction: column;
-    gap: var(--space-xs);
+    gap: var(--space-4);
 }
 
 .autoItem {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--space-8);
     padding: 0.55rem 0.7rem;
     border: 1px solid var(--overlay-light);
     border-radius: var(--radius-md);
@@ -283,7 +283,7 @@
 }
 
 .autoItemLabel {
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -296,7 +296,7 @@
 }
 
 .autoItemLabelInput {
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     font-family: inherit;
     color: var(--text);
     background: var(--bg);
@@ -308,7 +308,7 @@
 }
 
 .autoItemSchedule {
-    font-size: 0.65rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
 }
 
@@ -335,7 +335,7 @@
 }
 
 .autoItemExecutorName {
-    font-size: 0.65rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
 }
 
@@ -410,7 +410,7 @@
     display: block;
     width: 100%;
     text-align: left;
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     font-family: inherit;
     padding: 5px 8px;
     border: none;
@@ -468,10 +468,10 @@
 }
 
 .automationEmpty {
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text-muted);
     text-align: center;
-    padding: var(--space-xl) 0;
+    padding: var(--space-40) 0;
     line-height: 1.6;
 }
 
@@ -533,7 +533,7 @@
     max-height: 18rem;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: var(--space-md);
+    padding: var(--space-16);
     border: var(--panel-card-border);
     border-top: 0;
     border-bottom-right-radius: var(--radius-chat-card);
@@ -541,7 +541,7 @@
     background: var(--panel-card-bg);
     box-shadow: var(--panel-card-shadow);
     color: var(--text-muted);
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     line-height: 1.6;
 }
 
@@ -552,7 +552,7 @@
 .actCard {
     border: 1px solid var(--overlay-light);
     border-radius: var(--radius-md);
-    padding: var(--space-md);
+    padding: var(--space-16);
     transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
     background: var(--bg-card, var(--bg));
 }
@@ -565,8 +565,8 @@
 .actCardHead {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
-    margin-bottom: var(--space-xs);
+    gap: var(--space-8);
+    margin-bottom: var(--space-4);
 }
 
 .actCardAvatar {
@@ -578,7 +578,7 @@
 }
 
 .actCardAgentName {
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text);
     font-weight: 600;
 }
@@ -593,23 +593,23 @@
 }
 
 .actCardTime {
-    font-size: 0.68rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     margin-left: auto;
 }
 
 .actCardSummary {
-    font-size: 0.82rem;
+    font-size: var(--fs-ui);
     color: var(--text);
     line-height: 1.6;
-    margin-bottom: var(--space-xs);
+    margin-bottom: var(--space-4);
 }
 
 .actCardMeta {
     display: flex;
     align-items: center;
-    gap: var(--space-md);
-    font-size: 0.68rem;
+    gap: var(--space-16);
+    font-size: var(--fs-hint);
     color: var(--text-muted);
 }
 
@@ -630,7 +630,7 @@
 .actCardViewHint {
     margin-left: auto;
     color: var(--accent);
-    font-size: 0.68rem;
+    font-size: var(--fs-hint);
     opacity: 0;
     transition: opacity var(--duration-fast);
 }
@@ -641,9 +641,9 @@
 
 .activityEmpty {
     text-align: center;
-    padding: var(--space-xl) var(--space-sm);
+    padding: var(--space-40) var(--space-8);
     color: var(--text-muted);
-    font-size: 0.82rem;
+    font-size: var(--fs-ui);
 }
 
 /* 只读 session banner */
@@ -651,10 +651,10 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-8) var(--space-16);
     background: var(--overlay-light);
     border-bottom: 1px solid var(--overlay-medium);
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text-muted);
     flex-shrink: 0;
 }
@@ -662,11 +662,11 @@
 .readonlyBannerInfo {
     display: flex;
     align-items: center;
-    gap: var(--space-md);
+    gap: var(--space-16);
 }
 
 .readonlyBannerTime {
-    font-size: 0.68rem;
+    font-size: var(--fs-hint);
     opacity: 0.7;
 }
 
@@ -675,7 +675,7 @@
     border: 1px solid var(--overlay-medium);
     border-radius: var(--radius-sm);
     color: var(--text-muted);
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     padding: 3px 10px;
     cursor: default;
     transition: all var(--duration-fast);
@@ -712,7 +712,7 @@
     border: none;
     border-radius: var(--radius-sm);
     cursor: default;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text);
     transition: background var(--duration-fast);
 }
@@ -767,7 +767,7 @@
     background: none;
     border: none;
     cursor: default;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text);
     text-align: left;
     transition: background var(--duration-instant);
@@ -792,7 +792,7 @@
     align-items: center;
     gap: 6px;
     padding: 6px 14px;
-    font-size: 0.8rem;
+    font-size: var(--fs-ui);
     font-weight: 500;
     color: var(--text-muted);
     background: none;
@@ -835,21 +835,21 @@
 }
 
 .bridgeContactList {
-    padding: var(--space-sm) 0;
+    padding: var(--space-8) 0;
 }
 
 .bridgeContactEmpty {
-    padding: var(--space-lg) var(--space-md);
+    padding: var(--space-24) var(--space-16);
     text-align: center;
-    font-size: 0.75rem;
+    font-size: var(--fs-caption);
     color: var(--text-muted);
 }
 
 .bridgeContactItem {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
-    padding: 8px 12px;
+    gap: var(--space-8);
+    padding: var(--space-8) var(--space-12);
     cursor: default;
     transition: background var(--duration-instant);
 }
@@ -871,7 +871,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.65rem;
+    font-size: var(--fs-hint);
     font-weight: 600;
     flex-shrink: 0;
 }
@@ -889,7 +889,7 @@
 }
 
 .bridgeContactName {
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -897,7 +897,7 @@
 }
 
 .bridgeContactTime {
-    font-size: 0.65rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     margin-top: 1px;
 }
@@ -913,7 +913,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px var(--space-md);
+    padding: 6px var(--space-16);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
@@ -921,7 +921,7 @@
 .bridgeChatHeaderHidden { display: none; }
 
 .bridgeChatHeaderName {
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     font-weight: 600;
     color: var(--text);
 }
@@ -950,32 +950,32 @@
     align-items: center;
     justify-content: center;
     color: var(--text-muted);
-    font-size: 0.8rem;
+    font-size: var(--fs-ui);
 }
 
 .bridgeChatMessages {
     flex: 1;
     overflow-y: auto;
-    padding: var(--space-lg) var(--space-md) var(--space-md);
+    padding: var(--space-24) var(--space-16) var(--space-16);
     scroll-behavior: smooth;
 }
 
 .bridgeChatNoMsg {
     text-align: center;
     color: var(--text-muted);
-    font-size: 0.78rem;
-    padding: var(--space-xl) 0;
+    font-size: var(--fs-caption);
+    padding: var(--space-40) 0;
 }
 
 .bridgeBubbleRow {
     display: flex;
-    margin-bottom: var(--space-sm);
+    margin-bottom: var(--space-8);
 }
 
 .bridgeBubbleWrap {
     display: flex;
     flex-direction: column;
-    margin-bottom: var(--space-sm);
+    margin-bottom: var(--space-8);
 }
 
 .bridgeBubbleIn {
@@ -988,9 +988,9 @@
 
 .bridgeBubble {
     max-width: 92%;
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-8) var(--space-16);
     border-radius: var(--radius-md);
-    font-size: 0.95rem;
+    font-size: var(--fs-title);
     line-height: 1.75;
     word-break: break-word;
 }
@@ -1015,10 +1015,10 @@
 }
 
 .bridgeBubbleTime {
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     margin-top: 2px;
-    padding: 0 var(--space-xs);
+    padding: 0 var(--space-4);
 }
 
 /* 未配置蒙版 */
@@ -1039,7 +1039,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-12);
     color: var(--text-muted);
     text-align: center;
 }
@@ -1049,7 +1049,7 @@
 }
 
 .bridgeOverlayText {
-    font-size: 0.85rem;
+    font-size: var(--fs-ui);
     line-height: 1.5;
     max-width: 220px;
 }
@@ -1058,12 +1058,12 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 16px;
+    padding: var(--space-6) var(--space-16);
     border-radius: 6px;
     border: none;
     background: color-mix(in srgb, var(--text-muted) 10%, transparent);
     color: var(--text-muted);
-    font-size: 0.8rem;
+    font-size: var(--fs-ui);
     cursor: default;
     transition: background var(--duration-fast);
 }

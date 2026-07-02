@@ -125,7 +125,10 @@ function buildWindowsInstallSurfaceChecks({ execPath, resourcesPath } = {}) {
   const gitRoot = path.join(resourcesRoot, "git");
   const gitExe = path.join(gitRoot, "cmd", "git.exe");
   const appExecutableLabel = executablePath ? path.basename(executablePath) : "HanaAgent.exe";
-  const bashCandidates = [
+  // MinGit 打包 usr/bin/sh.exe（sh-compatible POSIX shell）；bash.exe 是老 PortableGit
+  // 安装面的遗留布局，升级半途的混合状态不应误报为损坏。任一存在即视为 POSIX shell 完整。
+  const posixShellCandidates = [
+    path.join(gitRoot, "usr", "bin", "sh.exe"),
     path.join(gitRoot, "bin", "bash.exe"),
     path.join(gitRoot, "usr", "bin", "bash.exe"),
   ];
@@ -175,11 +178,11 @@ function buildWindowsInstallSurfaceChecks({ execPath, resourcesPath } = {}) {
       paths: [path.join(serverRoot, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node")],
     },
     {
-      id: "portable-git",
-      label: "PortableGit",
+      id: "bundled-git",
+      label: "Bundled Git runtime (MinGit)",
       relativePath: "resources/git",
-      paths: [gitExe, ...bashCandidates],
-      exists: () => canRead(gitExe) && bashCandidates.some(canRead),
+      paths: [gitExe, ...posixShellCandidates],
+      exists: () => canRead(gitExe) && posixShellCandidates.some(canRead),
     },
   ];
 }

@@ -1,6 +1,6 @@
 .container {
   display: inline-block;
-  margin: var(--space-sm) 0;
+  margin: var(--space-8) 0;
   border-radius: var(--radius-chat-card);
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
@@ -13,12 +13,12 @@
 }
 .title {
   padding: 0.35rem 0.5rem 0.2rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   color: var(--text-muted);
 }
 .description {
   padding: 0.4rem 0.5rem;
-  font-size: 0.82rem;
+  font-size: var(--fs-ui);
   color: var(--text-secondary);
   line-height: 1.5;
   white-space: pre-wrap;
@@ -44,7 +44,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-serif);
-  font-size: 0.86rem;
+  font-size: var(--fs-body);
   color: var(--text-secondary);
 }
 .chatSurfaceBody {

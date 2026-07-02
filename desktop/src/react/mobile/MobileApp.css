@@ -7,7 +7,7 @@ body,
 .mobile-desktop-root {
   height: 100vh;
   height: 100dvh;
-  font-size: 1.0625rem;
+  font-size: var(--fs-title);
   overflow: hidden;
   touch-action: pan-y;
   overscroll-behavior-x: contain;
@@ -27,7 +27,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-12);
   padding: 8px 10px 8px 14px;
   border: 1px solid var(--overlay-light);
   border-radius: 8px;
@@ -40,14 +40,14 @@ body,
 .mobile-update-banner span {
   min-width: 0;
   font-family: var(--font-serif);
-  font-size: 0.92rem;
+  font-size: var(--fs-body);
   line-height: 1.25;
 }
 
 .mobile-update-banner button {
   flex: 0 0 auto;
   min-height: 30px;
-  padding: 0 12px;
+  padding: 0 var(--space-12);
   border: 1px solid var(--accent);
   border-radius: 6px;
   color: var(--accent);
@@ -110,7 +110,7 @@ body,
   min-width: 0;
   color: var(--text);
   font-family: var(--font-serif);
-  font-size: 0.9rem;
+  font-size: var(--fs-body);
   font-weight: 600;
   line-height: 1;
 }
@@ -171,11 +171,11 @@ body,
   }
 
   .mobile-desktop-root .chat-area {
-    padding: calc(var(--titlebar-h) + 12px) var(--space-md) calc(var(--input-card-h, 152px) + 2.5rem);
+    padding: calc(var(--titlebar-h) + var(--space-12)) var(--space-16) calc(var(--input-card-h, 152px) + 2.5rem);
   }
 
   .mobile-desktop-root .input-area {
-    padding: 0 var(--space-sm) calc(env(safe-area-inset-bottom, 0px) + var(--space-sm));
+    padding: 0 var(--space-8) calc(env(safe-area-inset-bottom, 0px) + var(--space-8));
   }
 
   .mobile-desktop-root #previewPanel[data-preview-open="false"] {

@@ -55,10 +55,6 @@ export const parameters = {
       description: "xlsx only. Maximum columns per sheet. Default 50.",
     },
   },
-  anyOf: [
-    { required: ["resource"] },
-    { required: ["filePath"] },
-  ],
 };
 
 export async function execute(input, ctx: any = {}) {

@@ -13,7 +13,7 @@ import mk from '@traptitech/markdown-it-katex';
 import taskLists from 'markdown-it-task-lists';
 import 'katex/dist/katex.min.css';
 import { sanitizeMarkdownPreviewHtml } from './markdown-html-sanitizer';
-import { extOfName, isImageOrSvgExt } from './file-kind';
+import { EXT_TO_KIND, extOfName, isImageOrSvgExt } from './file-kind';
 import { uniqueMarkdownHeadingId } from './markdown-document';
 
 type MarkdownItInstance = ReturnType<typeof markdownit>;
@@ -480,8 +480,24 @@ function isAutoLinkifyToken(token: Token | undefined, type: 'link_open' | 'link_
   return token?.type === type && token.markup === 'linkify' && token.info === 'auto';
 }
 
+const WINDOWS_ABSOLUTE_PATH_RE = /^[A-Za-z]:[\\/]/;
+const SCHEME_RE = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+
+function isKnownLocalFileExtension(text: string): boolean {
+  const ext = extOfName(text);
+  return Boolean(ext && EXT_TO_KIND[ext]);
+}
+
+function isLikelyLocalFileAutolink(text: string): boolean {
+  const value = text.trim();
+  if (!value) return false;
+  if (value.includes('@')) return false;
+  if (SCHEME_RE.test(value) && !WINDOWS_ABSOLUTE_PATH_RE.test(value)) return false;
+  return isKnownLocalFileExtension(value);
+}
+
 function trimAutoLinkifiedSuffixes(md: MarkdownItInstance): void {
-  md.core.ruler.after('inline', 'trim_auto_linkified_suffixes', (state: StateCore) => {
+  md.core.ruler.after('linkify', 'trim_auto_linkified_suffixes', (state: StateCore) => {
     for (const blockToken of state.tokens) {
       const children = blockToken.children;
       if (!children?.length) continue;
@@ -510,6 +526,27 @@ function trimAutoLinkifiedSuffixes(md: MarkdownItInstance): void {
           children.splice(index + 3, 0, suffixToken);
         }
         index += 2;
+      }
+    }
+  });
+}
+
+function unwrapLocalFileAutoLinks(md: MarkdownItInstance): void {
+  md.core.ruler.after('trim_auto_linkified_suffixes', 'unwrap_local_file_auto_links', (state: StateCore) => {
+    for (const blockToken of state.tokens) {
+      const children = blockToken.children;
+      if (!children?.length) continue;
+
+      for (let index = 0; index < children.length - 2; index += 1) {
+        const open = children[index];
+        const text = children[index + 1];
+        const close = children[index + 2];
+        if (!isAutoLinkifyToken(open, 'link_open') || text?.type !== 'text' || !isAutoLinkifyToken(close, 'link_close')) {
+          continue;
+        }
+        if (!isLikelyLocalFileAutolink(text.content)) continue;
+
+        children.splice(index, 3, text);
       }
     }
   });
@@ -916,6 +953,7 @@ function applyMarkdownPlugins(md: MarkdownItInstance): void {
   md.use(footnotes);
   md.use(markdownHeadingAnchors);
   md.use(trimAutoLinkifiedSuffixes);
+  md.use(unwrapLocalFileAutoLinks);
   md.use(mermaidFences);
   md.use(markdownImageRenderer);
   md.use(markdownTableScrollWrapper);

@@ -7,7 +7,6 @@ import {
   deleteArchivedSession,
   cleanupArchivedSessions,
   showSidebarToast,
-  loadSessions,
   type ArchivedSession,
 } from '../stores/session-actions';
 import styles from './ArchivedSessionsModal.module.css';
@@ -49,25 +48,23 @@ export function ArchivedSessionsModal({ open, onClose, zIndex = 1000 }: Props) {
 
   const totalSize = list.reduce((s, x) => s + x.sizeBytes, 0);
 
-  const handleRestore = async (p: string) => {
+  const handleRestore = async (item: ArchivedSession) => {
     if (!window.confirm(t('session.archived.restoreConfirm'))) return;
-    const r = await restoreSession(p);
-    if (r === 'conflict') {
+    const r = await restoreSession(item);
+    if (r.status === 'conflict') {
       showSidebarToast(t('session.archived.restoreConflict'));
       return;
     }
-    if (r === 'error') {
+    if (r.status === 'error') {
       showSidebarToast(t('session.archived.restoreFailed'));
       return;
     }
     await refresh();
-    // 恢复后主列表应同步刷新
-    await loadSessions();
   };
 
-  const handleDelete = async (p: string) => {
+  const handleDelete = async (item: ArchivedSession) => {
     if (!window.confirm(t('session.archived.deleteConfirm'))) return;
-    const ok = await deleteArchivedSession(p);
+    const ok = await deleteArchivedSession(item);
     if (ok) await refresh();
     else showSidebarToast(t('session.archived.deleteFailed'));
   };
@@ -146,13 +143,13 @@ export function ArchivedSessionsModal({ open, onClose, zIndex = 1000 }: Props) {
                     <div className={styles.rowActions}>
                       <button
                         title={t('session.archived.restore')}
-                        onClick={() => handleRestore(item.path)}
+                        onClick={() => handleRestore(item)}
                       >
                         {t('session.archived.restore')}
                       </button>
                       <button
                         title={t('session.archived.deleteForever')}
-                        onClick={() => handleDelete(item.path)}
+                        onClick={() => handleDelete(item)}
                       >
                         {t('session.archived.deleteForever')}
                       </button>

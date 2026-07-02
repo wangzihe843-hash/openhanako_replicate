@@ -263,7 +263,8 @@ export type RichBlock =
     startedAt?: number | null;
     finishedAt?: number | null;
   }
-  | { type: 'plugin_card'; card: import('../types').PluginCardDetails };
+  | { type: 'plugin_card'; card: import('../types').PluginCardDetails }
+  | { type: 'interactive_card'; cardId: string; title: string; code: string };
 
 export type ContentBlock = TextDecorator | RichBlock;
 

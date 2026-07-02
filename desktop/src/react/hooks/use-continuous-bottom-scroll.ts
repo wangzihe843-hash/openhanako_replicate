@@ -76,6 +76,7 @@ export function useContinuousBottomScroll({
   const lastFrameTimeRef = useRef<number | null>(null);
   const followingRef = useRef(false);
   const instantLandingArmedRef = useRef(false);
+  const programmaticScrollTopRef = useRef<number | null>(null);
 
   activeRef.current = active;
   thresholdRef.current = stickyThreshold;
@@ -88,6 +89,12 @@ export function useContinuousBottomScroll({
     }
     followingRef.current = false;
     lastFrameTimeRef.current = null;
+  }, []);
+
+  const setProgrammaticScrollTop = useCallback((el: HTMLElement, value: number) => {
+    const safeValue = finiteNumber(value);
+    programmaticScrollTopRef.current = safeValue;
+    el.scrollTop = safeValue;
   }, []);
 
   const checkSticky = useCallback(() => {
@@ -125,14 +132,14 @@ export function useContinuousBottomScroll({
     const delta = target - current;
 
     if (Math.abs(delta) <= 0.5 || delta < 0) {
-      el.scrollTop = target;
+      setProgrammaticScrollTop(el, target);
       stopFollow();
       return;
     }
 
     const largeJump = finiteNumber(largeJumpRef.current, DEFAULT_LARGE_JUMP_PX);
     if (delta > largeJump || prefersReducedMotion()) {
-      el.scrollTop = target;
+      setProgrammaticScrollTop(el, target);
       stopFollow();
       return;
     }
@@ -144,9 +151,9 @@ export function useContinuousBottomScroll({
     lastFrameTimeRef.current = safeTime;
     const rawAlpha = 1 - Math.exp(-dt / FOLLOW_TIME_CONSTANT_MS);
     const alpha = Number.isFinite(rawAlpha) ? rawAlpha : 1;
-    el.scrollTop = current + delta * alpha;
+    setProgrammaticScrollTop(el, current + delta * alpha);
     rafRef.current = window.requestAnimationFrame(runFrame);
-  }, [scrollRef, stopFollow]);
+  }, [scrollRef, setProgrammaticScrollTop, stopFollow]);
 
   const followBottom = useCallback(() => {
     const el = scrollRef.current;
@@ -157,7 +164,7 @@ export function useContinuousBottomScroll({
     if (delta <= 0.5) {
       // Already at bottom: a no-op follow must NOT consume an armed instant landing — the arm is
       // reserved for the first *meaningful* growth (the async hydrate after a switch).
-      el.scrollTop = target;
+      setProgrammaticScrollTop(el, target);
       return;
     }
 
@@ -165,14 +172,14 @@ export function useContinuousBottomScroll({
     // animating from a mid position, then disarm so subsequent streaming growth animates normally.
     if (instantLandingArmedRef.current) {
       instantLandingArmedRef.current = false;
-      el.scrollTop = target;
+      setProgrammaticScrollTop(el, target);
       stopFollow();
       return;
     }
 
     const largeJump = finiteNumber(largeJumpRef.current, DEFAULT_LARGE_JUMP_PX);
     if (delta > largeJump || prefersReducedMotion()) {
-      el.scrollTop = target;
+      setProgrammaticScrollTop(el, target);
       stopFollow();
       return;
     }
@@ -191,11 +198,11 @@ export function useContinuousBottomScroll({
 
     const mode = options.mode ?? 'instant';
     if (mode === 'instant') {
-      el.scrollTop = maxScrollTop(el);
+      setProgrammaticScrollTop(el, maxScrollTop(el));
       return;
     }
     followBottom();
-  }, [followBottom, markSticky, scrollRef, stopFollow]);
+  }, [followBottom, markSticky, scrollRef, setProgrammaticScrollTop, stopFollow]);
 
   useEffect(() => {
     if (!active) stopFollow();
@@ -208,7 +215,15 @@ export function useContinuousBottomScroll({
     if (!el || !active) return undefined;
 
     const onScroll = () => {
-      if (followingRef.current) return;
+      if (followingRef.current) {
+        const expected = programmaticScrollTopRef.current;
+        const current = finiteNumber(el.scrollTop);
+        if (expected !== null && Math.abs(current - expected) <= 1) return;
+        if (distanceFromBottom(el) > finiteNumber(thresholdRef.current, DEFAULT_STICKY_THRESHOLD)) {
+          cancelFollow();
+          return;
+        }
+      }
       checkSticky();
     };
     const onWheel = (event: WheelEvent) => {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore, type StoreState } from '../../stores';
 import type { PreviewItem, RemoteWorkbenchContentRef } from '../../types';
+import type { ResourceChangeEvent } from '../../utils/preview-document-refresh';
 
 const mocks = vi.hoisted(() => ({
   refreshPreviewItemsFromFile: vi.fn(async () => undefined),
@@ -228,39 +229,24 @@ describe('preview document refresh', () => {
     );
   });
 
-  it('matches mounted workbench preview documents by mount registry when another mount is active', async () => {
+  it('builds mount ResourceRefs for mounted workbench preview documents', async () => {
     const openRemote = remoteRef('note.md', 'mount_docs');
     useStore.setState({
-      deskBasePath: 'studio:mount_other',
-      deskWorkspaceMountId: 'mount_other',
-      deskWorkspaceNativeRoot: '/Users/me/Other',
-      studioWorkspaces: [
-        { mountId: 'mount_docs', label: 'Docs', nativeRootPath: '/Users/me/Documents' },
-        { mountId: 'mount_other', label: 'Other', nativeRootPath: '/Users/me/Other' },
-      ],
+      deskBasePath: 'studio:mount_docs',
+      deskWorkspaceMountId: 'mount_docs',
+      deskWorkspaceNativeRoot: '/Users/me/Documents',
       previewItems: [
         remoteItem('open-remote', openRemote),
       ],
       openTabs: ['open-remote'],
     } as Partial<StoreState>);
     const {
-      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
       openPreviewDocumentWatchResources,
-      refreshOpenPreviewDocumentsForFilePath,
     } = await import('../../utils/preview-document-refresh');
 
     expect(openPreviewDocumentWatchResources().map(item => item.ref)).toEqual([
       { kind: 'mount', mountId: 'mount_docs', path: 'notes/note.md' },
     ]);
-
-    await refreshOpenPreviewDocumentsForFilePath('/Users/me/Documents/notes/note.md');
-
-    expect(mocks.refreshPreviewItemsFromFile).not.toHaveBeenCalled();
-    expect(mocks.refreshPreviewItemsFromRemoteWorkbenchTarget).toHaveBeenCalledTimes(1);
-    expect(mocks.refreshPreviewItemsFromRemoteWorkbenchTarget).toHaveBeenCalledWith(
-      openRemote,
-      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
-    );
   });
 
   it('refreshes matching open documents from a ResourceIO local change event', async () => {
@@ -283,7 +269,7 @@ describe('preview document refresh', () => {
         provider: 'local_fs',
         path: '/workspace/notes/local.md',
       },
-    } as any);
+    } satisfies ResourceChangeEvent);
 
     expect(mocks.refreshPreviewItemsFromFile).toHaveBeenCalledTimes(1);
     expect(mocks.refreshPreviewItemsFromFile).toHaveBeenCalledWith(
@@ -313,7 +299,7 @@ describe('preview document refresh', () => {
         provider: 'local_fs',
         path: '/workspace/notes/deleted.md',
       },
-    } as any);
+    } satisfies ResourceChangeEvent);
 
     await refreshOpenPreviewDocumentsForResourceChange({
       type: 'resource.renamed',
@@ -327,7 +313,7 @@ describe('preview document refresh', () => {
         provider: 'local_fs',
         path: '/workspace/notes/new.md',
       },
-    } as any);
+    } satisfies ResourceChangeEvent);
 
     expect(mocks.refreshPreviewItemsFromFile).toHaveBeenCalledTimes(3);
     expect(mocks.refreshPreviewItemsFromFile).toHaveBeenCalledWith(
@@ -369,7 +355,7 @@ describe('preview document refresh', () => {
         path: 'notes/note.md',
         filePath: '/Users/me/Documents/notes/note.md',
       },
-    } as any);
+    } satisfies ResourceChangeEvent);
 
     expect(mocks.refreshPreviewItemsFromFile).not.toHaveBeenCalled();
     expect(mocks.refreshPreviewItemsFromRemoteWorkbenchTarget).toHaveBeenCalledTimes(1);
@@ -377,5 +363,166 @@ describe('preview document refresh', () => {
       openRemote,
       PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
     );
+  });
+
+  it('matches mounted workbench preview documents by mount registry when another mount is active', async () => {
+    const openRemote = remoteRef('note.md', 'mount_docs');
+    useStore.setState({
+      deskBasePath: 'studio:mount_other',
+      deskWorkspaceMountId: 'mount_other',
+      deskWorkspaceNativeRoot: '/Users/me/Other',
+      studioWorkspaces: [
+        { mountId: 'mount_docs', label: 'Docs', nativeRootPath: '/Users/me/Documents' },
+        { mountId: 'mount_other', label: 'Other', nativeRootPath: '/Users/me/Other' },
+      ],
+      previewItems: [
+        remoteItem('open-remote', openRemote),
+      ],
+      openTabs: ['open-remote'],
+    } as Partial<StoreState>);
+    const {
+      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+      openPreviewDocumentWatchFilePaths,
+      refreshOpenPreviewDocumentsForFilePath,
+    } = await import('../../utils/preview-document-refresh');
+
+    expect(openPreviewDocumentWatchFilePaths()).toEqual(['/Users/me/Documents/notes/note.md']);
+
+    await refreshOpenPreviewDocumentsForFilePath('/Users/me/Documents/notes/note.md');
+    expect(mocks.refreshPreviewItemsFromFile).not.toHaveBeenCalled();
+    expect(mocks.refreshPreviewItemsFromRemoteWorkbenchTarget).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshPreviewItemsFromRemoteWorkbenchTarget).toHaveBeenCalledWith(
+      openRemote,
+      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+    );
+  });
+
+  it('refreshes open local preview documents below a ResourceIO directory change', async () => {
+    useStore.setState({
+      previewItems: [
+        localItem('open-child', '/workspace/notes/a.md'),
+        localItem('open-other', '/workspace/other/a.md'),
+      ],
+      openTabs: ['open-child', 'open-other'],
+    } as Partial<StoreState>);
+    const {
+      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+      refreshOpenPreviewDocumentsForResourceChange,
+    } = await import('../../utils/preview-document-refresh');
+
+    await refreshOpenPreviewDocumentsForResourceChange({
+      type: 'resource.changed',
+      resource: {
+        kind: 'local-file',
+        provider: 'local_fs',
+        path: '/workspace/notes',
+        isDirectory: true,
+      },
+    } satisfies ResourceChangeEvent);
+
+    expect(mocks.refreshPreviewItemsFromFile).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshPreviewItemsFromFile).toHaveBeenCalledWith(
+      '/workspace/notes/a.md',
+      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+    );
+    expect(mocks.refreshPreviewItemsFromRemoteWorkbenchTarget).not.toHaveBeenCalled();
+  });
+
+  it('refreshes mounted workbench preview documents from mount resource events without native file projections', async () => {
+    const openRemote = remoteRef('note.md', 'mount_docs');
+    useStore.setState({
+      previewItems: [
+        remoteItem('open-remote', openRemote),
+        remoteItem('unrelated-remote', remoteRef('other.md', 'mount_docs')),
+      ],
+      openTabs: ['open-remote', 'unrelated-remote'],
+    } as Partial<StoreState>);
+    const {
+      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+      refreshOpenPreviewDocumentsForResourceChange,
+    } = await import('../../utils/preview-document-refresh');
+
+    await refreshOpenPreviewDocumentsForResourceChange({
+      type: 'resource.changed',
+      resource: {
+        kind: 'mount',
+        provider: 'mount',
+        mountId: 'mount_docs',
+        path: 'notes/note.md',
+      },
+    } satisfies ResourceChangeEvent);
+
+    expect(mocks.refreshPreviewItemsFromFile).not.toHaveBeenCalled();
+    expect(mocks.refreshPreviewItemsFromRemoteWorkbenchTarget).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshPreviewItemsFromRemoteWorkbenchTarget).toHaveBeenCalledWith(
+      openRemote,
+      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+    );
+  });
+
+  it('refreshes mounted workbench child documents below a mount directory event', async () => {
+    const openRemote = remoteRef('note.md', 'mount_docs');
+    useStore.setState({
+      previewItems: [
+        remoteItem('open-remote', openRemote),
+        remoteItem('unrelated-remote', { ...remoteRef('root.md', 'mount_docs'), subdir: '' }),
+      ],
+      openTabs: ['open-remote', 'unrelated-remote'],
+    } as Partial<StoreState>);
+    const {
+      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+      refreshOpenPreviewDocumentsForResourceChange,
+    } = await import('../../utils/preview-document-refresh');
+
+    await refreshOpenPreviewDocumentsForResourceChange({
+      type: 'resource.changed',
+      resource: {
+        kind: 'mount',
+        provider: 'mount',
+        mountId: 'mount_docs',
+        path: 'notes',
+        isDirectory: true,
+      },
+    } satisfies ResourceChangeEvent);
+
+    expect(mocks.refreshPreviewItemsFromFile).not.toHaveBeenCalled();
+    expect(mocks.refreshPreviewItemsFromRemoteWorkbenchTarget).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshPreviewItemsFromRemoteWorkbenchTarget).toHaveBeenCalledWith(
+      openRemote,
+      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+    );
+  });
+
+  it('refreshes local native-open documents below a projected mount directory event', async () => {
+    useStore.setState({
+      previewItems: [
+        localItem('native-open', '/Users/me/Documents/notes/note.md'),
+        localItem('native-other', '/Users/me/Documents/archive/note.md'),
+      ],
+      openTabs: ['native-open', 'native-other'],
+    } as Partial<StoreState>);
+    const {
+      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+      refreshOpenPreviewDocumentsForResourceChange,
+    } = await import('../../utils/preview-document-refresh');
+
+    await refreshOpenPreviewDocumentsForResourceChange({
+      type: 'resource.changed',
+      resource: {
+        kind: 'mount',
+        provider: 'mount',
+        mountId: 'mount_docs',
+        path: 'notes',
+        filePath: '/Users/me/Documents/notes',
+        isDirectory: true,
+      },
+    } satisfies ResourceChangeEvent);
+
+    expect(mocks.refreshPreviewItemsFromFile).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshPreviewItemsFromFile).toHaveBeenCalledWith(
+      '/Users/me/Documents/notes/note.md',
+      PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
+    );
+    expect(mocks.refreshPreviewItemsFromRemoteWorkbenchTarget).not.toHaveBeenCalled();
   });
 });

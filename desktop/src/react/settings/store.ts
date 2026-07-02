@@ -26,6 +26,9 @@ export interface SkillInfo {
   externalLabel?: string | null;
   externalPath?: string | null;
   readonly?: boolean;
+  managedBy?: string | null;
+  configurable?: boolean;
+  deletable?: boolean;
 }
 
 export interface ProviderSummary {

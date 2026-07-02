@@ -168,6 +168,7 @@ vi.mock('../../hooks/use-slash-items', () => ({
       execute: vi.fn(),
     },
   ],
+  useServerSlashCommandItems: () => [],
 }));
 
 vi.mock('../../utils/paste-upload-feedback', () => ({

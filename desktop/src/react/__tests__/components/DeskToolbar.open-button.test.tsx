@@ -20,6 +20,11 @@ describe('Desk open-folder buttons for workspace roots', () => {
     window.platform = { openFolder } as unknown as typeof window.platform;
     document.documentElement.removeAttribute('data-platform');
     useStore.setState({
+      activeServerConnection: null,
+      activeServerConnectionId: null,
+      serverConnections: {},
+      serverPort: 62950,
+      serverToken: 'local-token',
       deskBasePath: '',
       deskWorkspaceMountId: null,
       deskWorkspaceLabel: null,
@@ -59,6 +64,41 @@ describe('Desk open-folder buttons for workspace roots', () => {
       deskBasePath: 'studio:mount_remote',
       deskWorkspaceMountId: 'mount_remote',
       deskWorkspaceLabel: 'Remote',
+      deskWorkspaceNativeRoot: null,
+    } as never);
+
+    render(
+      <>
+        <DeskOpenIconButton />
+        <DeskOpenButton />
+      </>,
+    );
+
+    expect(screen.queryByRole('button', { name: 'desk.openInFinder' })).toBeNull();
+    expect(openFolder).not.toHaveBeenCalled();
+  });
+
+  it('hides the buttons for remote clients viewing the default workspace', () => {
+    useStore.setState({
+      activeServerConnection: {
+        connectionId: 'browser:server_lan',
+        kind: 'lan',
+        serverId: 'server_lan',
+        userId: 'user_lan',
+        studioId: 'studio_lan',
+        label: 'LAN Hana',
+        baseUrl: 'http://hana.local:14500',
+        wsUrl: 'ws://hana.local:14500',
+        token: null,
+        authState: 'paired',
+        trustState: 'lan',
+        credentialKind: 'device_credential',
+        platformAccountId: null,
+        officialServiceKind: null,
+        capabilities: ['resources', 'files'],
+      },
+      deskBasePath: '/Users/server/project',
+      deskWorkspaceMountId: null,
       deskWorkspaceNativeRoot: null,
     } as never);
 

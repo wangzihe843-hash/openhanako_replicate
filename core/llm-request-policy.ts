@@ -26,6 +26,7 @@ export function buildProviderCompatOptions({
   const normalizedPurpose = normalizeCallPurpose(callPurpose);
   return {
     mode,
+    ...(mode === "utility" ? { reasoningLevel: "off" } : {}),
     ...(normalizedPurpose ? { callPurpose: normalizedPurpose } : {}),
     ...(explicitMaxTokens !== null && explicitMaxTokens !== undefined ? { outputBudgetSource } : {}),
   };

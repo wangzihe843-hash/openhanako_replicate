@@ -35,7 +35,7 @@
     align-items: center;
     gap: 3px;
     padding: 2px 6px;
-    font-size: 0.68rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     background: transparent;
     border: none;
@@ -85,14 +85,14 @@
 .coverMenu button {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: var(--space-4);
     width: 100%;
     padding: 6px 8px;
     border: 0;
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text);
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     text-align: left;
     white-space: nowrap;
     cursor: default;
@@ -131,7 +131,7 @@
     max-width: calc(var(--preview-panel-width) - 32px);
     max-height: min(72vh, 680px);
     overflow: auto;
-    padding: var(--space-md);
+    padding: var(--space-16);
     border: 1px solid var(--overlay-light);
     border-radius: var(--radius-card, 8px);
     background: var(--bg-card, var(--bg));
@@ -144,15 +144,15 @@
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: var(--space-md);
-    margin-bottom: var(--space-sm);
-    padding-bottom: var(--space-sm);
+    gap: var(--space-16);
+    margin-bottom: var(--space-8);
+    padding-bottom: var(--space-8);
     border-bottom: 1px solid var(--overlay-light);
 }
 
 .coverGalleryTitle {
     color: var(--text);
-    font-size: 0.9rem;
+    font-size: var(--fs-body);
     font-weight: 600;
 }
 
@@ -179,7 +179,7 @@
 .coverGalleryGrid {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: var(--space-sm);
+    gap: var(--space-8);
 }
 
 .coverGalleryItem {

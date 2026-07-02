@@ -1588,7 +1588,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                 return;
               }
               const sendReply = async (text) => {
-                wsSend(ws, { type: "slash_result", sessionPath: sp, text });
+                wsSend(ws, { type: "slash_result", sessionPath: sp, text, level: "success" });
               };
               const res = await dispatcher.tryDispatch(msg.text.trim(), {
                 sessionRef: { kind: "desktop", agentId, sessionPath: sp },
@@ -1598,7 +1598,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                 reply: sendReply,
               });
               if (!res.handled) {
-                wsSend(ws, { type: "slash_result", sessionPath: sp, text: t("chat.unknownCommand", { text: msg.text }) });
+                wsSend(ws, { type: "slash_result", sessionPath: sp, text: t("chat.unknownCommand", { text: msg.text }), level: "error" });
               }
               return;
             }

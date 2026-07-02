@@ -2,6 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const originalPlatform = process.platform;
 const createWin32Exec = vi.fn(() => vi.fn(async () => ({ exitCode: 0 })));
+const Type = {
+  Object: (properties) => ({ type: "object", properties }),
+  String: (options = {}) => ({ type: "string", ...options }),
+  Number: (options = {}) => ({ type: "number", ...options }),
+  Boolean: (options = {}) => ({ type: "boolean", ...options }),
+  Optional: (schema) => schema,
+};
 
 vi.mock("../lib/sandbox/win32-exec.js", () => ({
   createWin32Exec,
@@ -24,6 +31,7 @@ vi.mock("../lib/pi-sdk/index.js", () => {
     createGrepTool: vi.fn(() => makeTool("grep")),
     createFindTool: vi.fn(() => makeTool("find")),
     createLsTool: vi.fn(() => makeTool("ls")),
+    Type,
   };
 });
 
@@ -51,8 +59,19 @@ describe("createSandboxedTools on Windows", () => {
     } as any);
 
     expect(createWin32Exec).toHaveBeenCalledWith();
-    const bashTool = tools.find((tool) => tool.name === "bash");
-    await bashTool.execute("call-1", { command: "echo ok" });
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "read",
+      "write",
+      "edit",
+      "exec_command",
+      "write_stdin",
+      "grep",
+      "find",
+      "ls",
+    ]);
+    expect(tools.find((tool) => tool.name === "bash")).toBeUndefined();
+    const execCommandTool = tools.find((tool) => tool.name === "exec_command");
+    await execCommandTool.execute("call-1", { cmd: "echo ok" });
     expect(createWin32Exec).toHaveBeenCalledWith(expect.objectContaining({
       sandbox: expect.objectContaining({
         policy: expect.objectContaining({ mode: "standard" }),

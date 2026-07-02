@@ -2510,7 +2510,7 @@ describe("plugin route request-level principal and capability context", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: "Bearer revoked-or-bogus-device-token",
+          Authorization: "Bearer bad-token",
           [PLUGIN_SURFACE_SESSION_HEADER]: surfaceSession.token,
         },
         body: JSON.stringify({}),

@@ -107,6 +107,7 @@ vi.mock('../../components/input/InputControlBar', () => ({
 
 vi.mock('../../hooks/use-slash-items', () => ({
   useSkillSlashItems: () => [],
+  useServerSlashCommandItems: () => [],
 }));
 
 vi.mock('../../utils/paste-upload-feedback', () => ({

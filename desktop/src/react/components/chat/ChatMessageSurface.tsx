@@ -1,19 +1,19 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useStore } from '../../stores';
 import { sessionScopedListIncludes, sessionScopedValue } from '../../stores/session-slice';
 import { loadMoreMessages } from '../../stores/session-actions';
-import { getSelectionCommitAnchorRect, scheduleCaptureChatSelection } from '../../stores/selection-actions';
 import { useBoxSelection } from '../../hooks/use-box-selection';
 import { useContinuousBottomScroll } from '../../hooks/use-continuous-bottom-scroll';
 import type { ChatListItem } from '../../stores/chat-types';
 import { ChatTimelineNavigator } from './ChatTimelineNavigator';
 import { ChatTranscript } from './ChatTranscript';
-import { buildTimelineAnchors } from './timeline-anchors';
+import { buildTimelineAnchors, type TimelineAnchor } from './timeline-anchors';
 import { useXingyeRoleProfile } from '../../xingye/xingye-profile-store';
 import styles from './Chat.module.css';
 
 const EMPTY_ITEMS: ChatListItem[] = [];
+const EMPTY_TIMELINE_ANCHORS: TimelineAnchor[] = [];
 const LOAD_MORE_THRESHOLD = 200;
 const SCROLL_THRESHOLD = 50;
 const TIMELINE_HOVER_ZONE_PX = 64;
@@ -50,13 +50,16 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
   const contentRef = useRef<HTMLDivElement>(null);
   const messageElementsRef = useRef(new Map<string, HTMLDivElement>());
   const [timelineRailVisible, setTimelineRailVisible] = useState(false);
+  const [timelinePrepared, setTimelinePrepared] = useState(false);
   const bottomScroll = useContinuousBottomScroll({
     scrollRef: ref,
     contentRef,
     active,
     stickyThreshold: SCROLL_THRESHOLD,
   });
-  const timelineAnchors = useMemo(() => buildTimelineAnchors(items), [items]);
+  const timelineAnchors = useMemo(() => (
+    active && timelinePrepared ? buildTimelineAnchors(items) : EMPTY_TIMELINE_ANCHORS
+  ), [active, items, timelinePrepared]);
   const emitScrollButton = useCallback((state: ChatScrollButtonState) => {
     onScrollButtonChange?.(state);
   }, [onScrollButtonChange]);
@@ -75,10 +78,10 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
     return ids;
   }, [items]);
   const boxSelection = useBoxSelection({ messageElementsRef, orderedIds, sessionPath, active });
-  const handleCaptureSelection = useCallback((event: ReactMouseEvent<HTMLDivElement> | ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!active) return;
-    scheduleCaptureChatSelection(sessionPath, getSelectionCommitAnchorRect(event.nativeEvent));
-  }, [active, sessionPath]);
+  // 聊天选区提交不在组件层挂 mouseup/keyup：document 级 initQuotedSelectionLifecycle
+  // 已按 surface 统一捕获（主窗口 + 每个拆窗子窗各注册一次，且查询各自 document 的
+  // 原生选区）。组件层再挂一份既冗余、又会在子窗口里误查主窗口 document。这里只需
+  // 标注 data-chat-selection-root / data-session-path 供 document lifecycle 定位。
   const handleShellPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const xFromRight = rect.right - event.clientX;
@@ -87,10 +90,17 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
     const inRailY = yFromTop >= TIMELINE_TOP_OFFSET_PX
       && yFromTop <= TIMELINE_TOP_OFFSET_PX + rect.height * TIMELINE_HEIGHT_RATIO;
     setTimelineRailVisible(inRailX && inRailY);
-  }, []);
+    if (active && inRailX && inRailY) setTimelinePrepared(true);
+  }, [active]);
   const handleShellPointerLeave = useCallback(() => {
     setTimelineRailVisible(false);
   }, []);
+
+  useEffect(() => {
+    if (active) return;
+    setTimelineRailVisible(false);
+    setTimelinePrepared(false);
+  }, [active]);
 
   useEffect(() => {
     const el = ref.current;
@@ -185,11 +195,12 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
 
   const shellClassName = variant === 'card'
     ? `${styles.sessionShell} ${styles.cardSessionShell}`
-    : `${styles.sessionShell}${chatBackgroundDataUrl ? ` ${styles.sessionShellWithBackground}` : ''}`;
+    : `${styles.sessionShell}${active ? ` ${styles.sessionShellActive}` : ''}${chatBackgroundDataUrl ? ` ${styles.sessionShellWithBackground}` : ''}`;
 
   return (
     <div
       className={shellClassName}
+      data-active={active ? 'true' : 'false'}
       onPointerMove={handleShellPointerMove}
       onPointerLeave={handleShellPointerLeave}
       style={{
@@ -214,8 +225,6 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
         data-session-path={sessionPath}
         onPointerDown={boxSelection.onPointerDown}
         onClickCapture={boxSelection.onClickCapture}
-        onMouseUp={handleCaptureSelection}
-        onKeyUp={handleCaptureSelection}
       >
         <div
           ref={contentRef}

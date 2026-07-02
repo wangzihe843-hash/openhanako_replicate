@@ -4,6 +4,7 @@ import os from "os";
 import path from "path";
 import YAML from "js-yaml";
 import { ModelManager } from "../core/model-manager.ts";
+import { ProviderRegistry } from "../core/provider-registry.ts";
 
 let tmpDir;
 
@@ -130,6 +131,55 @@ describe("ModelManager AuthStorage ownership", () => {
     await expect(getDeepseekApiKey(manager)).resolves.toBe("sk-projected-6ad1");
     const persistedProviders = readPersistedProviders();
     expect(persistedProviders.deepseek.api_key).toBe("sk-projected-6ad1");
+  });
+
+  it("does not seed bare model ids into catalog overlays for local provider plugins", async () => {
+    const registry = new ProviderRegistry(tmpDir);
+    registry.saveProvider("custom-vl", {
+      display_name: "Custom VL",
+      auth_type: "api-key",
+      base_url: "https://vl.example/v1",
+      api: "openai-completions",
+      models: [{
+        id: "vl-model",
+        name: "VL Model",
+        image: true,
+        audio: true,
+        context: 128000,
+        maxOutput: 16000,
+      }],
+    });
+    writeAuth({
+      "custom-vl": { type: "api_key", key: "sk-legacy-vl" },
+    });
+    writeModelsJson({
+      providers: {
+        "custom-vl": {
+          baseUrl: "https://vl.example/v1",
+          api: "openai-completions",
+          apiKey: "sk-projected-vl",
+          models: [{ id: "vl-model" }],
+        },
+      },
+    });
+
+    const manager = new ModelManager({ hanakoHome: tmpDir });
+    manager.init();
+    await manager.syncAndRefresh();
+
+    const persistedProviders = readPersistedProviders();
+    expect(persistedProviders["custom-vl"].api_key).toBe("sk-projected-vl");
+    expect(persistedProviders["custom-vl"].models).toBeUndefined();
+
+    const reloaded = new ProviderRegistry(tmpDir);
+    expect(reloaded.getAllProvidersRaw()["custom-vl"].models[0]).toMatchObject({
+      id: "vl-model",
+      name: "VL Model",
+      image: true,
+      audio: true,
+      context: 128000,
+      maxOutput: 16000,
+    });
   });
 
   it("API-key provider runtime lookup uses added-models credentials over stale auth.json", async () => {

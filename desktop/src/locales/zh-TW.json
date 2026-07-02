@@ -2117,7 +2117,20 @@
     "cut": "剪下",
     "copy": "複製",
     "paste": "貼上",
-    "selectAll": "全選"
+    "selectAll": "全選",
+    "undo": "復原",
+    "redo": "重做",
+    "bold": "粗體",
+    "italic": "斜體",
+    "strikethrough": "刪除線",
+    "inlineCode": "行內程式碼",
+    "heading1": "標題 1",
+    "heading2": "標題 2",
+    "heading3": "標題 3",
+    "blockquote": "引用",
+    "codeBlock": "程式碼區塊",
+    "horizontalRule": "分隔線",
+    "list": "清單"
   },
   "rightWorkspace": {
     "activity": {

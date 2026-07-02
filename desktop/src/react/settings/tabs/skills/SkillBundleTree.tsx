@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import type { SkillInfo } from '../../store';
 import { t } from '../../helpers';
 import { SkillRow } from './SkillRow';
@@ -39,6 +39,8 @@ interface SkillBundleTreeProps {
   onRemoveSkillFromBundles?: (skillName: string) => void;
   highlightedSkillName?: string | null;
   highlightedBundleId?: string | null;
+  expandedState?: Record<string, boolean>;
+  onExpandedStateChange?: (next: Record<string, boolean>) => void;
 }
 
 function skillDragType() {
@@ -78,6 +80,22 @@ function bundleEnabledState(bundle: SkillBundleInfo, skillByName: Map<string, Sk
   };
 }
 
+function skillConfigurable(skill: SkillInfo) {
+  if (skill.configurable === false) return false;
+  if (skill.readonly) return false;
+  if (skill.source === 'workspace') return false;
+  if (skill.managedBy === 'workspace' || skill.managedBy === 'plugin') return false;
+  return true;
+}
+
+function skillDeletable(skill: SkillInfo) {
+  if (skill.deletable === false) return false;
+  if (skill.readonly) return false;
+  if (skill.source === 'workspace') return false;
+  if (skill.managedBy === 'workspace' || skill.managedBy === 'plugin') return false;
+  return true;
+}
+
 export function SkillBundleTree({
   mode,
   bundles,
@@ -96,8 +114,19 @@ export function SkillBundleTree({
   onRemoveSkillFromBundles,
   highlightedSkillName,
   highlightedBundleId,
+  expandedState,
+  onExpandedStateChange,
 }: SkillBundleTreeProps) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [internalExpanded, setInternalExpanded] = useState<Record<string, boolean>>({});
+  const expanded = expandedState ?? internalExpanded;
+  const setBundleExpanded = useCallback((bundleId: string, nextExpanded: boolean) => {
+    const next = { ...expanded, [bundleId]: nextExpanded };
+    if (expandedState) {
+      onExpandedStateChange?.(next);
+    } else {
+      setInternalExpanded(next);
+    }
+  }, [expanded, expandedState, onExpandedStateChange]);
   const skillByName = useMemo(() => new Map(skills.map(skill => [skill.name, skill])), [skills]);
   const bundledNames = useMemo(() => new Set(bundles.flatMap(bundle => bundle.skillNames)), [bundles]);
   const looseSkills = skills.filter(skill => !bundledNames.has(skill.name));
@@ -167,7 +196,7 @@ export function SkillBundleTree({
             {t('settings.skills.createBundleBtn')}
           </button>
         ) : null}
-        <p className={styles['agent-skill-empty']} style={{ padding: 'var(--space-md)', margin: 0 }}>
+        <p className={styles['agent-skill-empty']} style={{ padding: 'var(--space-16)', margin: 0 }}>
           {emptyText}
         </p>
       </div>
@@ -210,7 +239,7 @@ export function SkillBundleTree({
                   type="button"
                   aria-label={isExpanded ? t('settings.skills.collapseBundleAriaLabel') : t('settings.skills.expandBundleAriaLabel')}
                   title={isExpanded ? t('settings.skills.collapseBundleAriaLabel') : t('settings.skills.expandBundleAriaLabel')}
-                  onClick={() => setExpanded(prev => ({ ...prev, [bundle.id]: !isExpanded }))}
+                  onClick={() => setBundleExpanded(bundle.id, !isExpanded)}
                 >
                   {isExpanded ? '⌄' : '›'}
                 </button>
@@ -289,11 +318,11 @@ export function SkillBundleTree({
                         key={`${bundle.id}:${skillName}`}
                         skill={skill}
                         nameHint={nameHints[skillName]}
-                        deletable={canManage}
-                        draggable={canManage}
-                        onDragStart={startSkillDrag}
-                        onDelete={canManage ? onDeleteSkill : undefined}
-                        onToggle={mode === 'agent' ? onToggleSkill : undefined}
+                        deletable={canManage && skillDeletable(skill)}
+                        draggable={canManage && skillDeletable(skill)}
+                        onDragStart={canManage && skillDeletable(skill) ? startSkillDrag : undefined}
+                        onDelete={canManage && skillDeletable(skill) ? onDeleteSkill : undefined}
+                        onToggle={mode === 'agent' && skillConfigurable(skill) ? onToggleSkill : undefined}
                         onDragOver={(event) => { if (canManage) event.preventDefault(); }}
                         onDrop={(event) => dropOnBundle(event, bundle, index)}
                         className={`${styles['skill-bundle-child-row']}${highlightedSkillName === skillName ? ` ${styles['skill-install-highlight']}` : ''}`}
@@ -331,11 +360,11 @@ export function SkillBundleTree({
               key={skill.name}
               skill={skill}
               nameHint={nameHints[skill.name]}
-              deletable={canManage}
-              draggable={canManage}
-              onDragStart={startSkillDrag}
-              onDelete={canManage ? onDeleteSkill : undefined}
-              onToggle={mode === 'agent' ? onToggleSkill : undefined}
+              deletable={canManage && skillDeletable(skill)}
+              draggable={canManage && skillDeletable(skill)}
+              onDragStart={canManage && skillDeletable(skill) ? startSkillDrag : undefined}
+              onDelete={canManage && skillDeletable(skill) ? onDeleteSkill : undefined}
+              onToggle={mode === 'agent' && skillConfigurable(skill) ? onToggleSkill : undefined}
               className={highlightedSkillName === skill.name ? styles['skill-install-highlight'] : ''}
               highlighted={highlightedSkillName === skill.name}
             />

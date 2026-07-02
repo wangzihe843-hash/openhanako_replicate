@@ -206,12 +206,25 @@ describe('extractToolDetail', () => {
     expect(d.href).toBeUndefined();
   });
 
+  it('exec_command 沿用 bash 命令详情文案', () => {
+    const d = extractToolDetail('exec_command', { cmd: 'npm test -- --runInBand' });
+    expect(d.text).toBe('npm test -- --runInBand');
+    expect(d.title).toBe('npm test -- --runInBand');
+    expect(d.href).toBeUndefined();
+  });
+
   it('bash 工具长命令保留完整 title 供 hover 审计', () => {
     const command = 'rm -rf /Users/jason/.claude/plugins/marketplaces/temp_*';
     const d = extractToolDetail('bash', { command });
 
     expect(d.text).toBe('rm -rf /Users/jason/.claude/plugins/mar…');
     expect(d.title).toBe(command);
+  });
+
+  it('write_stdin 沿用 terminal 输入详情文案', () => {
+    const d = extractToolDetail('write_stdin', { process_id: 'term_1', chars: 'q\n' });
+    expect(d.text).toBe('q\n');
+    expect(d.title).toBe('q\n');
   });
 
   it('web_search 提取查询，无 href', () => {

@@ -2,39 +2,39 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--space-sm);
-    padding: var(--space-sm) 0;
+    gap: var(--space-8);
+    padding: var(--space-8) 0;
 }
 
 .wechat-login-info {
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text-secondary);
 }
 
 .wechat-btn-row {
     display: flex;
-    gap: var(--space-sm);
+    gap: var(--space-8);
 }
 
 .wechat-scan-row {
     display: flex;
     justify-content: center;
-    padding: var(--space-sm) 0;
+    padding: var(--space-8) 0;
 }
 
 .wechat-hints {
     display: flex;
     flex-direction: column;
-    gap: var(--space-xs);
-    margin-top: var(--space-sm);
-    font-size: 0.7rem;
+    gap: var(--space-4);
+    margin-top: var(--space-8);
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     line-height: 1.4;
 }
 
 .wechat-info-reminder {
-    margin-top: var(--space-xs);
-    padding: var(--space-xs) var(--space-sm);
+    margin-top: var(--space-4);
+    padding: var(--space-4) var(--space-8);
     color: var(--text-light);
     background: rgba(var(--accent-rgb, 83, 125, 150), 0.1);
     border-left: 2px solid rgba(var(--accent-rgb, 83, 125, 150), 0.48);
@@ -47,7 +47,7 @@
 .bridge-permission-trigger {
     min-width: 152px;
     padding: 0.32rem 0.55rem;
-    font-size: 0.8rem;
+    font-size: var(--fs-ui);
     border-radius: var(--radius-sm);
 }
 
@@ -73,7 +73,7 @@
 .bridge-permission-option {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: var(--space-4);
     min-width: 0;
     white-space: nowrap;
 }
@@ -94,7 +94,7 @@
     height: 14px;
     color: currentColor;
     opacity: 0.7;
-    margin-left: var(--space-sm);
+    margin-left: var(--space-8);
 }
 
 .bridge-permission-option svg {

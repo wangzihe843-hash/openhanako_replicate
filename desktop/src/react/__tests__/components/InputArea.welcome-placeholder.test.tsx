@@ -106,6 +106,7 @@ vi.mock('../../components/input/SessionConfirmationPrompt', () => ({
 
 vi.mock('../../hooks/use-slash-items', () => ({
   useSkillSlashItems: () => [],
+  useServerSlashCommandItems: () => [],
 }));
 
 vi.mock('../../utils/paste-upload-feedback', () => ({

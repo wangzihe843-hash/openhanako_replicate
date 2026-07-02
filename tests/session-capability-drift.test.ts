@@ -24,11 +24,11 @@ import {
 describe("computeSessionCapabilityFingerprint", () => {
   it("is insensitive to tool name ordering and duplicates", () => {
     const a = computeSessionCapabilityFingerprint({
-      toolNames: ["read", "bash", "edit"],
+      toolNames: ["read", "exec_command", "edit"],
       systemPrompt: "p",
     });
     const b = computeSessionCapabilityFingerprint({
-      toolNames: ["edit", "read", "bash", "read"],
+      toolNames: ["edit", "read", "exec_command", "read"],
       systemPrompt: "p",
     });
     expect(a).toBe(b);
@@ -237,8 +237,8 @@ describe("normalizeSystemPromptForFingerprint — dynamic segments (#1624 C1)", 
 
   it("reports no drift across a memory-only recompile (end-to-end shape)", () => {
     const drift = buildSessionCapabilityDrift({
-      frozenToolNames: ["read", "bash"],
-      liveToolNames: ["bash", "read"],
+      frozenToolNames: ["read", "exec_command"],
+      liveToolNames: ["exec_command", "read"],
       frozenSystemPrompt: buildPromptFixture({ memory: "旧记忆", pinned: "旧置顶", appearance: "银发。" }),
       liveSystemPrompt: buildPromptFixture({ memory: "后台 compile 后的新记忆", pinned: "新置顶", appearance: "黑发。", date: "Friday, June 12, 2026, 08:00 CST" }),
     });
@@ -259,8 +259,8 @@ describe("normalizeSystemPromptForFingerprint — dynamic segments (#1624 C1)", 
 describe("buildSessionCapabilityDrift", () => {
   it("reports no drift when frozen and live sets match", () => {
     const drift = buildSessionCapabilityDrift({
-      frozenToolNames: ["read", "bash"],
-      liveToolNames: ["bash", "read"],
+      frozenToolNames: ["read", "exec_command"],
+      liveToolNames: ["exec_command", "read"],
       frozenSystemPrompt: "p",
       liveSystemPrompt: "p",
     });
@@ -330,16 +330,17 @@ describe("buildSessionCapabilityDrift", () => {
 });
 
 describe("repairRestoredToolSnapshotDetailed", () => {
-  it("returns the same kept list as repairRestoredToolSnapshot plus the dropped names", () => {
-    const snapshot = ["read", "retired_tool", "bash", "another_dead"];
-    const all = ["read", "bash", "edit"];
+  it("maps legacy command tools while still reporting truly dropped names", () => {
+    const snapshot = ["read", "retired_tool", "bash", "terminal", "another_dead"];
+    const all = ["read", "exec_command", "write_stdin", "edit"];
     const detailed = repairRestoredToolSnapshotDetailed(snapshot, all, { coreToolNames: [] });
     expect(detailed.toolNames).toEqual(repairRestoredToolSnapshot(snapshot, all, { coreToolNames: [] }));
+    expect(detailed.toolNames).toEqual(["read", "exec_command", "write_stdin"]);
     expect(detailed.droppedToolNames).toEqual(["retired_tool", "another_dead"]);
   });
 
   it("reports no drops for a fully valid snapshot", () => {
-    const detailed = repairRestoredToolSnapshotDetailed(["read"], ["read", "bash"], { coreToolNames: [] });
+    const detailed = repairRestoredToolSnapshotDetailed(["read"], ["read", "exec_command"], { coreToolNames: [] });
     expect(detailed.toolNames).toEqual(["read"]);
     expect(detailed.droppedToolNames).toEqual([]);
   });

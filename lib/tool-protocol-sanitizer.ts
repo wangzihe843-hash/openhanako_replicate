@@ -150,4 +150,3 @@ export function isToolProtocolFragment(value: any) {
   const stripped = stripToolProtocolTagsFromProse(normalized);
   return stripped.length < normalized.length && stripped.trim().length === 0;
 }
-

@@ -3,7 +3,7 @@ import { lookupKnown } from "../shared/known-models.ts";
 import { normalizeVisionCapabilities, withThinkingFormatCompat } from "../shared/model-capabilities.ts";
 import { inferOllamaModelMetadata } from "../shared/ollama-model-metadata.ts";
 
-const RUNTIME_ENRICHED_PROVIDERS = new Set(["kimi-coding", "ollama"]);
+const RUNTIME_ENRICHED_PROVIDERS = new Set(["kimi-coding", "ollama", "volcengine-coding"]);
 const KIMI_CODING_MODEL_ID = "kimi-for-coding";
 
 function isPlainObject(value) {
@@ -74,6 +74,8 @@ export function enrichModelFromKnownMetadata(model) {
   const image = hasImageInput || knownImage === true || inferredImage === true;
   if (image && !hasImageInput) {
     patch.input = ["text", "image"];
+  } else if (normalizedModel.provider === "volcengine-coding" && !Array.isArray(normalizedModel.input)) {
+    patch.input = ["text"];
   }
   const visionCapabilities = image ? normalizeVisionCapabilities(known?.visionCapabilities) : null;
   if (visionCapabilities && !normalizedModel.visionCapabilities) {

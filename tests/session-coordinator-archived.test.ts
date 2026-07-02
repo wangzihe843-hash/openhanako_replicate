@@ -3,8 +3,9 @@ import fs from "fs/promises";
 import fsSync from "fs";
 import os from "os";
 import path from "path";
+import { SessionManifestStore } from "../core/session-manifest/store.ts";
 
-async function loadCoord(tmpDir) {
+async function loadCoord(tmpDir, overrides: any = {}) {
   const { SessionCoordinator } = await import("../core/session-coordinator.ts");
   const deps = {
     agentsDir: path.join(tmpDir, "agents"),
@@ -22,6 +23,7 @@ async function loadCoord(tmpDir) {
     },
     listDeletedAgents: () => [],
     isAgentDeleted: () => false,
+    ...overrides,
   };
   return new SessionCoordinator(deps);
 }
@@ -114,6 +116,94 @@ describe("session-coordinator: archived helpers", () => {
     const coord = await loadCoord(tmpDir);
     const list = await coord.listArchivedSessions();
     expect(list[0].title).toBe("Preserved");
+  });
+
+  it("listArchivedSessions reads title from legacy active-path sessionId", async () => {
+    const sessDir = path.join(tmpDir, "agents", "a", "sessions");
+    const aArch = path.join(sessDir, "archived");
+    await fs.mkdir(aArch, { recursive: true });
+    const archivedPath = path.join(aArch, "legacy.jsonl");
+    const activeKey = path.join(sessDir, "legacy.jsonl");
+    await fs.writeFile(archivedPath, "{}\n");
+    const store = new SessionManifestStore({
+      dbPath: path.join(tmpDir, "session-manifest.db"),
+      idGenerator: () => "sess_legacy_active_title",
+      now: () => "2026-06-25T01:00:00.000Z",
+    });
+    try {
+      store.createForPath({
+        sessionPath: activeKey,
+        ownerAgentId: "a",
+        domain: "desktop",
+        kind: "chat",
+        lifecycle: "active",
+      });
+      await fs.writeFile(
+        path.join(sessDir, "session-titles.json"),
+        JSON.stringify({ sess_legacy_active_title: "Legacy ID title" }),
+      );
+
+      const coord = await loadCoord(tmpDir, { sessionManifestStore: store });
+      const list = await coord.listArchivedSessions();
+      expect(list[0].title).toBe("Legacy ID title");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("listArchivedSessions returns stable sessionId for archived rows", async () => {
+    const sessDir = path.join(tmpDir, "agents", "a", "sessions");
+    const aArch = path.join(sessDir, "archived");
+    await fs.mkdir(aArch, { recursive: true });
+    const archivedPath = path.join(aArch, "stable.jsonl");
+    await fs.writeFile(archivedPath, "{}\n");
+    const store = new SessionManifestStore({
+      dbPath: path.join(tmpDir, "session-manifest.db"),
+      idGenerator: () => "sess_archived_stable",
+      now: () => "2026-06-25T01:00:00.000Z",
+    });
+    try {
+      const coord = await loadCoord(tmpDir, { sessionManifestStore: store });
+      const list = await coord.listArchivedSessions();
+
+      expect(list).toHaveLength(1);
+      expect(list[0]).toMatchObject({
+        path: archivedPath,
+        sessionId: "sess_archived_stable",
+        agentId: "a",
+      });
+      expect(store.getBySessionId("sess_archived_stable")).toMatchObject({
+        lifecycle: "archived",
+        currentLocator: { path: path.resolve(archivedPath) },
+      });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("listArchivedSessions includes deleted-agent archived sessions", async () => {
+    const deletedArch = path.join(tmpDir, "agents", "deleted", "sessions", "archived");
+    await fs.mkdir(deletedArch, { recursive: true });
+    const archivedPath = path.join(deletedArch, "old.jsonl");
+    await fs.writeFile(archivedPath, "{}\n");
+
+    const coord = await loadCoord(tmpDir, {
+      listAgents: () => [],
+      listDeletedAgents: () => [{ id: "deleted", name: "Deleted Agent", deletedAt: "2026-06-03T01:03:00.000Z" }],
+      isAgentDeleted: (id) => id === "deleted",
+    });
+    const list = await coord.listArchivedSessions();
+
+    expect(list).toEqual([
+      expect.objectContaining({
+        path: archivedPath,
+        agentId: "deleted",
+        agentName: "Deleted Agent",
+        agentDeleted: true,
+        readOnlyReason: "agent_deleted",
+        deletedAt: "2026-06-03T01:03:00.000Z",
+      }),
+    ]);
   });
 
   it("listSessions includes tombstoned agent sessions as read-only deleted-agent history", async () => {

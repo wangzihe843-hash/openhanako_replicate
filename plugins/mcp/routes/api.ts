@@ -16,6 +16,11 @@ export default function registerMcpRoutes(app, ctx) {
     return c.json(rt.getState(config));
   }
 
+  async function markCapabilitySnapshotsStale(payload: Record<string, unknown>) {
+    const rt = runtime();
+    await rt?._markCapabilitySnapshotsStale?.(payload);
+  }
+
   function redirectUriForRequest(c) {
     const url = new URL(c.req.url);
     return new URL("/api/plugins/mcp/oauth/callback", url.origin).href;
@@ -33,6 +38,7 @@ export default function registerMcpRoutes(app, ctx) {
     const { enabled } = await c.req.json();
     try {
       await rt.setEnabled(enabled === true);
+      await markCapabilitySnapshotsStale({ reason: "mcp.global.enabled" });
       return currentState(c);
     } catch (err) {
       ctx.log.error(`set global enabled failed: ${err.message}`);
@@ -48,6 +54,7 @@ export default function registerMcpRoutes(app, ctx) {
     if (!rt) return c.json({ error: "not initialized" }, 503);
     try {
       const connector = rt.addConnector(await c.req.json());
+      await markCapabilitySnapshotsStale({ reason: "mcp.connector.add", connectorId: connector.id });
       const state = rt.getState();
       const publicConnector = state.connectors.find((item) => item.id === connector.id) || connector;
       return c.json({ connector: publicConnector, server: publicConnector, state });
@@ -61,6 +68,7 @@ export default function registerMcpRoutes(app, ctx) {
     if (!rt) return c.json({ error: "not initialized" }, 503);
     try {
       const connector = await rt.updateConnector(c.req.param("id"), await c.req.json());
+      await markCapabilitySnapshotsStale({ reason: "mcp.connector.update", connectorId: connector.id });
       const state = rt.getState();
       const publicConnector = state.connectors.find((item) => item.id === connector.id) || connector;
       return c.json({ connector: publicConnector, server: publicConnector, state });
@@ -74,6 +82,7 @@ export default function registerMcpRoutes(app, ctx) {
     if (!rt) return c.json({ error: "not initialized" }, 503);
     try {
       await rt.removeConnector(c.req.param("id"));
+      await markCapabilitySnapshotsStale({ reason: "mcp.connector.remove", connectorId: c.req.param("id") });
       return c.json(rt.getState());
     } catch (err) {
       return c.json({ error: err.message }, 400);
@@ -86,7 +95,10 @@ export default function registerMcpRoutes(app, ctx) {
     try {
       const id = c.req.param("id");
       if (action === "start") await rt.startConnector(id);
-      else if (action === "stop") await rt.stopConnector(id);
+      else if (action === "stop") {
+        await rt.stopConnector(id);
+        await markCapabilitySnapshotsStale({ reason: "mcp.connector.stop", connectorId: id });
+      }
       else if (action === "refresh-tools") {
         const tools = await rt.refreshTools(id);
         return c.json({ tools, state: rt.getState() });
@@ -101,11 +113,20 @@ export default function registerMcpRoutes(app, ctx) {
     const rt = runtime();
     if (!rt) return c.json({ error: "not initialized" }, 503);
     try {
+      const patch = await c.req.json();
       const config = await rt.updateAgentMcpConnector(
         c.req.param("agentId"),
         c.req.param("id"),
-        await c.req.json(),
+        patch,
       );
+      const reason = patch?.tools && typeof patch.tools === "object"
+        ? "mcp.agent.tool.enable"
+        : "mcp.agent.connector.enable";
+      await markCapabilitySnapshotsStale({
+        reason,
+        agentId: c.req.param("agentId"),
+        connectorId: c.req.param("id"),
+      });
       return c.json({ config });
     } catch (err) {
       return c.json({ error: err.message }, 400);

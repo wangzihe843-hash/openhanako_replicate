@@ -1134,6 +1134,96 @@ describe("normalizeProviderContextMessages — DeepSeek Anthropic replay", () =>
   });
 });
 
+describe("normalizeProviderContextMessages — MCP resource projection", () => {
+  it("projects toolResult resource.text blocks into model-visible text without mutating input", () => {
+    const textBlock = { type: "text", text: "plain tool output" };
+    const resourceBlock = {
+      type: "resource",
+      resource: {
+        uri: "file:///workspace/note.md",
+        name: "note.md",
+        mimeType: "text/markdown",
+        text: "# Notes\nUse this context.",
+      },
+    };
+    const messages = [
+      {
+        role: "toolResult",
+        toolCallId: "call_1",
+        toolName: "read_resource",
+        content: [textBlock, resourceBlock],
+      },
+    ];
+
+    const result = normalizeProviderContextMessages(messages, {
+      id: "gpt-5",
+      provider: "openai",
+      api: "openai-responses",
+    }, { mode: "chat" });
+
+    expect(result).not.toBe(messages);
+    expect(result[0]).not.toBe(messages[0]);
+    expect(result[0].content[0]).toBe(textBlock);
+    expect(result[0].content[1]).toEqual({
+      type: "text",
+      text: expect.stringContaining("# Notes\nUse this context."),
+    });
+    expect(result[0].content[1].text).toContain("uri: file:///workspace/note.md");
+    expect(result[0].content[1].text).toContain("name: note.md");
+    expect(result[0].content[1].text).toContain("mimeType: text/markdown");
+    expect(messages[0].content[1]).toBe(resourceBlock);
+  });
+
+  it("uses a text placeholder for resource.blob without injecting base64", () => {
+    const messages = [
+      {
+        role: "toolResult",
+        toolCallId: "call_1",
+        toolName: "read_resource",
+        content: [{
+          type: "resource",
+          resource: {
+            uri: "file:///workspace/pixel.png",
+            name: "pixel.png",
+            mimeType: "image/png",
+            blob: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+          },
+        }],
+      },
+    ];
+
+    const result = normalizeProviderContextMessages(messages, null, { mode: "chat" });
+    const text = result[0].content[0].text;
+
+    expect(result).not.toBe(messages);
+    expect(text).toContain("uri: file:///workspace/pixel.png");
+    expect(text).toContain("name: pixel.png");
+    expect(text).toContain("mimeType: image/png");
+    expect(text).toContain("binary resource omitted");
+    expect(text).not.toContain("iVBORw0KGgo");
+    expect(messages[0].content[0].resource.blob).toContain("iVBORw0KGgo");
+  });
+
+  it("leaves non-toolResult resource blocks untouched", () => {
+    const messages = [
+      {
+        role: "user",
+        content: [{
+          type: "resource",
+          resource: {
+            uri: "file:///workspace/user.md",
+            name: "user.md",
+            mimeType: "text/markdown",
+            text: "do not project here",
+          },
+        }],
+      },
+    ];
+
+    expect(normalizeProviderContextMessages(messages, null, { mode: "chat" })).toBe(messages);
+  });
+});
+
 describe("normalizeProviderPayload — DeepSeek chat 模式", () => {
   const deepseekModel = {
     id: "deepseek-v4-pro",

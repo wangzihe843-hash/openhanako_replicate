@@ -332,6 +332,61 @@ describe("desktop GPU startup policy", () => {
     });
   });
 
+  it("re-enables GPU recovery eligibility when hidden startup begins the main window after server boot", () => {
+    const hanakoHome = makeHome();
+    markGpuStartupPending({
+      hanakoHome,
+      platform: "win32",
+      phase: "electron-starting",
+      startupId: "hidden-launch",
+      now: "2026-05-19T01:00:00.000Z",
+    });
+    markGpuStartupPhase({
+      hanakoHome,
+      platform: "win32",
+      phase: "server-starting",
+      startupId: "hidden-launch",
+      now: "2026-05-19T01:00:01.000Z",
+    });
+    markGpuStartupPhase({
+      hanakoHome,
+      platform: "win32",
+      phase: "server-ready",
+      startupId: "hidden-launch",
+      now: "2026-05-19T01:00:02.000Z",
+    });
+    markGpuStartupPhase({
+      hanakoHome,
+      platform: "win32",
+      phase: "main-window-starting",
+      startupId: "hidden-launch",
+      now: "2026-05-19T01:00:03.000Z",
+    });
+
+    const policy = resolveGpuStartupPolicy({
+      hanakoHome,
+      platform: "win32",
+      argv: ["Hanako.exe"],
+      env: {},
+      now: "2026-05-19T01:01:00.000Z",
+    });
+
+    const state = readJson(path.join(hanakoHome, "user", "gpu-startup.json"));
+    expect(policy.mode).toBe("gpu-sandbox-compat");
+    expect(policy.reason).toBe("previous-startup-incomplete");
+    expect(state.autoGpuMode).toMatchObject({
+      mode: "gpu-sandbox-compat",
+      reason: "previous-startup-incomplete",
+      previousStartup: expect.objectContaining({
+        phase: "main-window-starting",
+        gpuRecovery: expect.objectContaining({
+          eligible: true,
+          phase: "main-window-starting",
+        }),
+      }),
+    });
+  });
+
   it.each([
     ["gpu-sandbox-compat", true, false],
     ["gpu-backend-compat", true, true],

@@ -54,4 +54,44 @@ describe('resolveSlashSubmitSelection', () => {
 
     expect(result).toBeNull();
   });
+
+  it('allows server slash commands to keep arguments on submit', () => {
+    const commands = [
+      ...makeCommands(),
+      {
+        name: 'plugin_hello',
+        aliases: ['hello'],
+        label: '/plugin_hello',
+        description: 'plugin command',
+        busyLabel: '',
+        icon: '',
+        type: 'server-command' as const,
+        execute: vi.fn(),
+      },
+    ];
+
+    const result = resolveSlashSubmitSelection({
+      text: '/hello world',
+      skills: [],
+      commands,
+      selectedIndex: 0,
+      dismissedText: null,
+    });
+
+    expect(result?.name).toBe('plugin_hello');
+  });
+
+  it('does not treat builtin slash commands with arguments as local commands', () => {
+    const commands = makeCommands();
+
+    const result = resolveSlashSubmitSelection({
+      text: '/compact now',
+      skills: [],
+      commands,
+      selectedIndex: 0,
+      dismissedText: null,
+    });
+
+    expect(result).toBeNull();
+  });
 });

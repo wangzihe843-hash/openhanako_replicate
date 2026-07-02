@@ -20,9 +20,9 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--space-12);
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-ui);
   z-index: 1;
 }
 .spinner {
@@ -34,13 +34,13 @@
   animation: hana-spin 0.8s linear infinite;
 }
 .retryBtn {
-  padding: 6px 16px;
+  padding: var(--space-6) var(--space-16);
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-primary);
   cursor: default;
-  font-size: 0.8rem;
+  font-size: var(--fs-ui);
 }
 .retryBtn:hover {
   background: var(--bg-hover);
@@ -51,5 +51,5 @@
   justify-content: center;
   flex: 1;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--fs-ui);
 }

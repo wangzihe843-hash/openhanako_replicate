@@ -262,7 +262,7 @@ describe('server connection helpers', () => {
   it('creates a LAN device ServerConnection from manual URL, credential, and server identity', () => {
     const connection = createDeviceServerConnection({
       baseUrl: '192.168.31.75:14500/mobile/',
-      credential: 'hana_dev_remote_secret',
+      credential: 'fixture-key',
       identity: {
         connectionKind: 'lan',
         serverId: 'server_lan',
@@ -287,7 +287,7 @@ describe('server connection helpers', () => {
       label: 'Personal Studio',
       baseUrl: 'http://192.168.31.75:14500',
       wsUrl: 'ws://192.168.31.75:14500',
-      token: 'hana_dev_remote_secret',
+      token: 'fixture-key',
       trustState: 'lan',
       credentialKind: 'device_credential',
       capabilities: ['chat', 'resources', 'files'],
@@ -351,7 +351,7 @@ describe('server connection helpers', () => {
   it('normalizes the browser desktop PWA URL when creating a manual LAN connection', () => {
     const connection = createDeviceServerConnection({
       baseUrl: '192.168.31.75:14500/desktop/',
-      credential: 'hana_dev_remote_secret',
+      credential: 'fixture-key',
       identity: {
         connectionKind: 'lan',
         serverId: 'server_lan',
@@ -399,17 +399,17 @@ describe('server connection helpers', () => {
 
     const connection = await connectDeviceServerConnection({
       baseUrl: 'http://192.168.31.75:14500/',
-      credential: 'hana_dev_remote_secret',
+      credential: 'fixture-key',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
     expect(fetchImpl).toHaveBeenNthCalledWith(1, 'http://192.168.31.75:14500/api/web-auth/login', expect.objectContaining({
       method: 'POST',
       credentials: 'include',
-      body: JSON.stringify({ credential: 'hana_dev_remote_secret' }),
+      body: JSON.stringify({ credential: 'fixture-key' }),
     }));
     expect(fetchImpl).toHaveBeenNthCalledWith(2, 'http://192.168.31.75:14500/api/server/identity', expect.objectContaining({
-      headers: { Authorization: 'Bearer hana_dev_remote_secret' },
+      headers: { Authorization: 'Bearer fixture-key' },
       credentials: 'include',
     }));
     expect(connection.connectionId).toBe('lan:node_lan:studio_lan');
@@ -428,7 +428,7 @@ describe('server connection helpers', () => {
     })!;
     const remote = createDeviceServerConnection({
       baseUrl: 'http://192.168.31.75:14500',
-      credential: 'hana_dev_remote_secret',
+      credential: 'fixture-key',
       identity: {
         connectionKind: 'lan',
         serverId: 'server_lan',

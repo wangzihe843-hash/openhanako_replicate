@@ -5,7 +5,7 @@ import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ExcelJS from "exceljs";
 
-import { execute as readDocument } from "../plugins/office/tools/read-document.ts";
+import { execute as readDocument, parameters as readDocumentParameters } from "../plugins/office/tools/read-document.ts";
 import { execute as listCapabilities } from "../plugins/office/tools/list-capabilities.ts";
 import { renderHtmlToPdf } from "../plugins/office/lib/html-to-pdf.ts";
 import { isOfficeEnabledForAgentConfig } from "../plugins/office/lib/availability.ts";
@@ -91,6 +91,28 @@ describe("office plugin tools", () => {
     expect(isOfficeEnabledForAgentConfig({})).toBe(true);
     expect(isOfficeEnabledForAgentConfig({ tools: { disabled: [] } })).toBe(true);
     expect(isOfficeEnabledForAgentConfig({ tools: { disabled: ["office"] } })).toBe(false);
+  });
+
+  it("keeps read-document parameters compatible with Moonshot/Kimi root schema rules", () => {
+    expect(readDocumentParameters).toMatchObject({
+      type: "object",
+      properties: expect.objectContaining({
+        resource: expect.objectContaining({ type: "object" }),
+        filePath: expect.objectContaining({ type: "string" }),
+      }),
+    });
+    expect(readDocumentParameters).not.toHaveProperty("anyOf");
+    expect(readDocumentParameters).not.toHaveProperty("required");
+  });
+
+  it("validates missing read-document input at runtime", async () => {
+    const result = await readDocument({});
+
+    expect(result.content[0].text).toContain("office_read-document requires resource or filePath");
+    expect(result.details.error).toMatchObject({
+      code: "OFFICE_READ_FAILED",
+      message: "office_read-document requires resource or filePath",
+    });
   });
 
   it("reads xlsx workbooks as structured JSON", async () => {

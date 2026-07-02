@@ -2354,7 +2354,20 @@
     "cut": "Cut",
     "copy": "Copy",
     "paste": "Paste",
-    "selectAll": "Select All"
+    "selectAll": "Select All",
+    "undo": "Undo",
+    "redo": "Redo",
+    "bold": "Bold",
+    "italic": "Italic",
+    "strikethrough": "Strikethrough",
+    "inlineCode": "Inline Code",
+    "heading1": "Heading 1",
+    "heading2": "Heading 2",
+    "heading3": "Heading 3",
+    "blockquote": "Blockquote",
+    "codeBlock": "Code Block",
+    "horizontalRule": "Horizontal Rule",
+    "list": "List"
   },
   "rightWorkspace": {
     "activity": {

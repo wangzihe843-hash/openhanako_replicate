@@ -20,7 +20,7 @@ function asPositiveInt(value, fallback, max) {
 
 function normalizePath(input) {
   const filePath = typeof input?.filePath === "string" ? input.filePath.trim() : "";
-  if (!filePath) throw new Error("office_read-document requires filePath");
+  if (!filePath) throw new Error("office_read-document requires resource or filePath");
   if (!path.isAbsolute(filePath)) {
     throw new Error("office_read-document requires an absolute filePath");
   }

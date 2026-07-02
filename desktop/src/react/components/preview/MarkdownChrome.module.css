@@ -1,6 +1,6 @@
 .propertiesBlock,
 .referencesBlock {
-    margin: 0 auto var(--space-md);
+    margin: 0 auto var(--space-16);
     max-width: var(--editor-markdown-content-width);
     font-family: var(--font-ui);
     color: var(--text);
@@ -20,7 +20,7 @@
     list-style: none;
     cursor: default;
     color: var(--text-muted);
-    font-size: 0.74rem;
+    font-size: var(--fs-caption);
 }
 
 .propertiesBlock summary::-webkit-details-marker,
@@ -41,10 +41,10 @@
 .propertyRow {
     display: grid;
     grid-template-columns: minmax(72px, 0.32fr) minmax(0, 1fr);
-    gap: 12px;
+    gap: var(--space-12);
     padding: 5px 0;
     border-top: 1px solid var(--overlay-subtle);
-    font-size: 0.76rem;
+    font-size: var(--fs-caption);
 }
 
 .propertyRow dt {
@@ -62,7 +62,7 @@
 .propertiesError {
     margin-top: 8px;
     color: var(--danger, #a94442);
-    font-size: 0.74rem;
+    font-size: var(--fs-caption);
     line-height: 1.5;
 }
 
@@ -95,13 +95,13 @@
     outline: none;
     background: transparent;
     color: var(--text);
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
 }
 
 .findCount {
     min-width: 42px;
     text-align: right;
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
 }
 
@@ -126,8 +126,8 @@
 
 .diagnosticsBadge {
     position: absolute;
-    left: 12px;
-    bottom: 12px;
+    left: var(--space-12);
+    bottom: var(--space-12);
     z-index: 5;
     max-width: calc(100% - 160px);
     padding: 5px 8px;
@@ -137,7 +137,7 @@
     color: var(--text-muted);
     box-shadow: 0 4px 14px var(--shadow, rgba(0, 0, 0, 0.08));
     font-family: var(--font-ui);
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -145,8 +145,8 @@
 }
 
 .referencesBlock {
-    margin-top: var(--space-xl);
-    padding-top: var(--space-md);
+    margin-top: var(--space-40);
+    padding-top: var(--space-16);
     border-top: 1px solid var(--overlay-light);
 }
 
@@ -157,7 +157,7 @@
 .referencesBlock h4 {
     margin: 0 0 6px;
     color: var(--text);
-    font-size: 0.76rem;
+    font-size: var(--fs-caption);
     font-weight: 600;
 }
 
@@ -173,7 +173,7 @@
     gap: 10px;
     padding: 5px 0;
     border-top: 1px solid var(--overlay-subtle);
-    font-size: 0.74rem;
+    font-size: var(--fs-caption);
 }
 
 .referencesBlock li span,

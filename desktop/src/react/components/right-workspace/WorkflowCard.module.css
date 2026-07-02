@@ -2,7 +2,7 @@
     flex: 0 0 auto;
     display: flex;
     flex-direction: column;
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-8) var(--space-16);
     gap: 6px;
     transition: gap 0.25s var(--ease-out);
 }
@@ -31,13 +31,13 @@
     flex: 1;
     text-align: left;
     font-family: "Songti SC", "Noto Serif CJK SC", serif;
-    font-size: 0.9rem;
+    font-size: var(--fs-body);
     font-weight: 600;
     color: var(--accent);
 }
 
 .count {
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
 }
 
@@ -80,7 +80,7 @@
     color: inherit;
     text-align: left;
     cursor: default;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
 }
 
 .row:hover {
@@ -90,7 +90,7 @@
 .statusIcon {
     text-align: center;
     color: var(--text-light);
-    font-size: 0.82rem;
+    font-size: var(--fs-ui);
     line-height: 1;
 }
 
@@ -125,13 +125,13 @@
 }
 
 .agentCount {
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     white-space: nowrap;
 }
 
 .duration {
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
@@ -164,7 +164,7 @@
     color: inherit;
     text-align: left;
     cursor: default;
-    font-size: 0.74rem;
+    font-size: var(--fs-caption);
 }
 
 .nodeRow:hover {
@@ -200,7 +200,7 @@
 }
 
 .nodeTokens {
-    font-size: 0.68rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
@@ -216,7 +216,7 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 6px 7px 7px;
-    font-size: 0.74rem;
+    font-size: var(--fs-caption);
 }
 
 .scroll :global(.message) {
@@ -248,7 +248,7 @@
 }
 
 .phaseName {
-  font-size: 0.78rem;
+  font-size: var(--fs-caption);
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -292,13 +292,13 @@
 }
 
 .miniEllipsis {
-  font-size: 0.68rem;
+  font-size: var(--fs-hint);
   color: var(--text-muted);
   line-height: 1;
 }
 
 .phaseCount {
-  font-size: 0.7rem;
+  font-size: var(--fs-hint);
   color: var(--text-muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -323,7 +323,7 @@
 
 /* tokens 汇总（workflow row 增加） */
 .tokenSum {
-  font-size: 0.7rem;
+  font-size: var(--fs-hint);
   color: var(--text-muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;

@@ -1,7 +1,7 @@
 import React from 'react';
 import styles from './settings-components.module.css';
 
-type Variant = 'default' | 'hero' | 'double-column' | 'flush';
+type Variant = 'default' | 'hero' | 'double-column' | 'flush' | 'list';
 
 interface SettingsSectionProps {
   title?: React.ReactNode;
@@ -66,6 +66,7 @@ function SettingsSectionBase({ title, description, context, variant = 'default',
     variant === 'hero' && styles.sectionHero,
     variant === 'double-column' && styles.sectionDoubleColumn,
     variant === 'flush' && styles.sectionFlush,
+    variant === 'list' && styles.sectionList,
     className,
   ].filter(Boolean).join(' ');
 

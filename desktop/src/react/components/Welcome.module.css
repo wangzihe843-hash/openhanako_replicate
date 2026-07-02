@@ -8,7 +8,7 @@
     align-items: center;
     justify-content: center;
     min-height: 60vh;
-    gap: var(--space-sm);
+    gap: var(--space-8);
 }
 
 .welcomeAvatar {
@@ -18,7 +18,7 @@
     object-fit: cover;
     user-select: none;
     box-shadow: 0 4px 16px var(--shadow);
-    margin-bottom: var(--space-xs);
+    margin-bottom: var(--space-4);
     cursor: default;
     transition: box-shadow var(--duration-fast);
 }
@@ -28,7 +28,7 @@
 }
 
 .welcomeText {
-    font-size: 1.05rem;
+    font-size: var(--fs-title);
     color: var(--text-light);
     letter-spacing: 0.06em;
     font-family: var(--font-serif);
@@ -39,10 +39,10 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    margin-top: var(--space-sm);
+    margin-top: var(--space-8);
     padding: 0.3rem 0.65rem;
     font-family: inherit;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     background: none;
     border: none;
@@ -78,7 +78,7 @@
 .folderSelectWrap {
     position: relative;
     display: inline-block;
-    margin-top: var(--space-sm);
+    margin-top: var(--space-8);
 }
 
 .folderSelectWrap .folderSelectBtn {
@@ -122,8 +122,8 @@
     align-items: center;
     gap: 0.35rem;
     min-height: 30px;
-    padding: 6px 12px;
-    font-size: 0.75rem;
+    padding: var(--space-6) var(--space-12);
+    font-size: var(--fs-caption);
     color: var(--text);
     cursor: default;
     transition: background var(--duration-instant);
@@ -156,8 +156,8 @@
 }
 
 .folderHistorySectionLabel {
-    padding: 4px 12px 2px;
-    font-size: 0.68rem;
+    padding: var(--space-4) var(--space-12) 2px;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     opacity: 0.78;
 }
@@ -193,8 +193,8 @@
     align-items: center;
     gap: 0.35rem;
     min-height: 30px;
-    padding: 6px 12px;
-    font-size: 0.75rem;
+    padding: var(--space-6) var(--space-12);
+    font-size: var(--fs-caption);
     color: var(--text-muted);
     cursor: default;
     transition: background var(--duration-instant);
@@ -210,10 +210,10 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    margin-top: var(--space-xs);
+    margin-top: var(--space-4);
     padding: 0.3rem 0.65rem;
     font-family: inherit;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     background: none;
     border: none;
@@ -253,10 +253,10 @@
 /* Agent 选择器 */
 .welcomeAgentSelector {
     display: flex;
-    gap: 0.5rem;
+    gap: var(--space-8);
     justify-content: center;
     flex-wrap: wrap;
-    margin-top: var(--space-sm);
+    margin-top: var(--space-8);
 }
 
 .welcomeAgentSelector:empty {
@@ -273,7 +273,7 @@
     background: var(--bg-card);
     cursor: default;
     font-family: inherit;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text-muted);
     transition: all var(--duration-fast) var(--ease-out);
     -webkit-app-region: no-drag;

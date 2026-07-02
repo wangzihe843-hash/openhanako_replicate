@@ -22,8 +22,13 @@ interface Props {
 function getToolLabel(name: string, phase: string, agentName: string): string {
   const t = window.t;
   const vars = { name: agentName };
-  const val = t?.(`tool.${name}.${phase}`, vars);
-  if (val && val !== `tool.${name}.${phase}`) return val;
+  const labelName = name === 'exec_command'
+    ? 'bash'
+    : name === 'write_stdin'
+      ? 'terminal'
+      : name;
+  const val = t?.(`tool.${labelName}.${phase}`, vars);
+  if (val && val !== `tool.${labelName}.${phase}`) return val;
   return t?.(`tool._fallback.${phase}`, vars) || name;
 }
 

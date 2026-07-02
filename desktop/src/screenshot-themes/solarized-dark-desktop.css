@@ -131,6 +131,13 @@ pre code {
 .hljs-variable { color: var(--orange); }
 .hljs-type { color: var(--yellow); }
 
+.markdown-table-scroll {
+  max-width: 100%;
+  margin: 1.5em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -138,10 +145,16 @@ table {
   font-size: 0.95em;
 }
 
+.markdown-table-scroll > table {
+  min-width: max-content;
+  margin: 0;
+}
+
 th, td {
   border: 1px solid var(--base01);
   padding: 0.6em 1em;
   text-align: left;
+  white-space: nowrap;
 }
 
 th {

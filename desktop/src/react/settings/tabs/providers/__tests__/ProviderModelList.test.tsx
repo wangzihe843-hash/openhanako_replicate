@@ -196,6 +196,79 @@ describe('ProviderModelList', () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
+  it('persists discovered model metadata when enabling a fetched model', async () => {
+    const onRefresh = vi.fn(async () => {});
+    mocks.hanaFetch
+      .mockResolvedValueOnce(jsonResponse({ models: [] }))
+      .mockResolvedValueOnce(jsonResponse({
+        models: [
+          {
+            id: 'custom-vllm-chat',
+            name: 'Custom vLLM Chat',
+            context: 32768,
+            maxOutput: 4096,
+            image: true,
+            video: true,
+            audio: true,
+            reasoning: true,
+          },
+        ],
+      }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    render(
+      <ProviderModelList
+        providerId="custom-vllm"
+        summary={{
+          type: 'api-key',
+          auth_type: 'api-key',
+          display_name: 'Custom vLLM',
+          base_url: 'http://127.0.0.1:8000/v1',
+          api: 'openai-completions',
+          api_key: 'sk-test',
+          models: ['existing-model'],
+          custom_models: [],
+          has_credentials: true,
+          supports_oauth: false,
+          is_coding_plan: false,
+          can_delete: true,
+        }}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.providers.fetchModels' }));
+
+    const option = await screen.findByRole('button', { name: /custom-vllm-chat/ });
+    fireEvent.click(option);
+
+    await waitFor(() => {
+      expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/config', expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({
+          providers: {
+            'custom-vllm': {
+              models: [
+                'existing-model',
+                {
+                  id: 'custom-vllm-chat',
+                  name: 'Custom vLLM Chat',
+                  context: 32768,
+                  maxOutput: 4096,
+                  image: true,
+                  video: true,
+                  audio: true,
+                  reasoning: true,
+                },
+              ],
+            },
+          },
+        }),
+      }));
+    });
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
   it('does not serialize untouched capability defaults as explicit false overrides', async () => {
     const onRefresh = vi.fn(async () => {});
     mocks.hanaFetch.mockResolvedValue(jsonResponse({ models: [] }));

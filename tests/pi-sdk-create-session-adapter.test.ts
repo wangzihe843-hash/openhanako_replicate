@@ -36,7 +36,7 @@ vi.mock("@mariozechner/pi-ai/oauth", async () => ({
 }));
 
 vi.mock("../lib/pi-sdk/session-options.js", async () => ({
-  PI_BUILTIN_TOOL_NAMES: Object.freeze(["read", "write", "edit", "bash", "grep", "find", "ls"]),
+  PI_BUILTIN_TOOL_NAMES: Object.freeze(["read", "write", "edit", "exec_command", "write_stdin", "grep", "find", "ls"]),
   normalizeCreateAgentSessionOptions: vi.fn(opts => ({
     ...opts,
     normalizedByAdapter: true,
@@ -55,7 +55,7 @@ describe("Pi SDK createAgentSession adapter", () => {
 
     await adapter.createAgentSession(sessionOptions);
 
-    expect(adapter.PI_BUILTIN_TOOL_NAMES).toEqual(["read", "write", "edit", "bash", "grep", "find", "ls"]);
+    expect(adapter.PI_BUILTIN_TOOL_NAMES).toEqual(["read", "write", "edit", "exec_command", "write_stdin", "grep", "find", "ls"]);
     expect(sdk.createAgentSession).toHaveBeenCalledWith({
       ...sessionOptions,
       normalizedByAdapter: true,

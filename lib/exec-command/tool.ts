@@ -1,0 +1,182 @@
+import { Type } from "../pi-sdk/index.ts";
+import { getToolSessionPath } from "../tools/tool-session.ts";
+import { execCommandDescription, writeStdinDescription } from "./guidance.ts";
+import { classifyExecCommand } from "./policy.ts";
+import {
+  jsonResult,
+  normalizeExecCommandParams,
+  normalizeWriteStdinParams,
+  textResult,
+} from "./schema.ts";
+import { runExecCommandDirect, runExecCommandOnce, startExecCommandTty } from "./runner.ts";
+import { renderCommandForExecShell, renderCommandWithWorkdir, resolveExecShell } from "./shell.ts";
+
+export function createExecCommandTools({
+  bashTool,
+  commandExec,
+  getTerminalSessionManager,
+  getAgentId,
+  getCwd,
+  platform = process.platform,
+  env = process.env,
+}: any = {}) {
+  const execCommandTool = {
+    name: "exec_command",
+    label: "Exec Command",
+    description: execCommandDescription({ platform }),
+    sessionPermission: {
+      sideEffect: { kind: "command", commandParam: "cmd" },
+      describeSideEffect: (params: any = {}) => ({
+        kind: params.tty ? "interactive_command" : "command",
+        command: params.cmd || params.command || "",
+      }),
+    },
+    parameters: Type.Object({
+      cmd: Type.String({ description: "Command to execute. On Windows this is PowerShell syntax unless shell is set." }),
+      workdir: Type.Optional(Type.String({ description: "Working directory. Defaults to the current session cwd." })),
+      shell: Type.Optional(Type.String({ description: "Optional shell override: auto, powershell, pwsh, cmd, bash." })),
+      tty: Type.Optional(Type.Boolean({ description: "Start an interactive PTY-backed process instead of a one-shot command." })),
+      yield_time_ms: Type.Optional(Type.Number({ description: "Requested initial wait budget in milliseconds. Recorded for scheduling; not a command timeout." })),
+      max_output_tokens: Type.Optional(Type.Number({ description: "Approximate maximum output token budget returned by this call." })),
+      timeout: Type.Optional(Type.Number({ description: "Optional one-shot timeout in seconds." })),
+    }),
+    execute: async (toolCallId: any, params: any = {}, signal: any, onUpdate: any, ctx: any) => {
+      const normalized = normalizeExecCommandParams(params, ctx, {
+        defaultCwd: getCwd?.() || process.cwd(),
+      });
+      if (!normalized.ok) return normalized.error;
+
+      const value = normalized.value;
+      const classification = classifyExecCommand(value.cmd, { platform });
+      if (classification.unsupportedSyntax) {
+        return textResult(
+          "This command uses POSIX heredoc syntax, but Windows exec_command defaults to PowerShell. Use PowerShell syntax, python -c, or write a temporary script file instead.",
+          {
+            errorCode: classification.errorCode,
+            execCommand: {
+              ok: false,
+              cmd: value.cmd,
+              workdir: value.workdir,
+              shell: "powershell",
+              platform,
+              classification,
+            },
+          },
+        );
+      }
+
+      const shell = resolveExecShell({ shell: value.shell, platform });
+      const defaultCwd = ctx?.sessionManager?.getCwd?.() || getCwd?.() || process.cwd();
+      const commandWithWorkdir = renderCommandWithWorkdir(value.cmd, shell, {
+        workdir: value.workdir,
+        defaultCwd,
+        platform,
+      });
+      const renderedCommand = renderCommandForExecShell(commandWithWorkdir, shell, { platform });
+      const execDetails = {
+        cmd: value.cmd,
+        commandWithWorkdir,
+        renderedCommand,
+        workdir: value.workdir,
+        shell: shell.label,
+        shellFamily: shell.family,
+        shellRequested: shell.requested,
+        tty: value.tty,
+        platform,
+        classification,
+        yieldTimeMs: value.yieldTimeMs,
+        maxOutputTokens: value.maxOutputTokens,
+      };
+
+      if (value.tty) {
+        return startExecCommandTty({
+          manager: getTerminalSessionManager?.(),
+          getAgentId,
+          getCwd,
+          command: renderedCommand,
+          workdir: value.workdir,
+          label: params.label || value.cmd.slice(0, 64),
+          ctx,
+          execDetails,
+          cols: params.cols,
+          rows: params.rows,
+        });
+      }
+
+      if (commandExec) {
+        return runExecCommandDirect({
+          commandExec,
+          command: renderedCommand,
+          workdir: value.workdir,
+          timeout: value.timeout,
+          signal,
+          onUpdate,
+          execDetails,
+          maxOutputTokens: value.maxOutputTokens,
+          platform,
+        });
+      }
+
+      if (!bashTool?.execute) {
+        return textResult("exec_command runner unavailable", {
+          errorCode: "EXEC_COMMAND_RUNNER_UNAVAILABLE",
+          execCommand: execDetails,
+        });
+      }
+
+      return runExecCommandOnce({
+        bashTool,
+        toolCallId,
+        command: renderedCommand,
+        timeout: value.timeout,
+        signal,
+        onUpdate,
+        ctx,
+        execDetails,
+        maxOutputTokens: value.maxOutputTokens,
+      });
+    },
+  };
+
+  const writeStdinTool = {
+    name: "write_stdin",
+    label: "Write Stdin",
+    description: writeStdinDescription(),
+    sessionPermission: {
+      sideEffect: { kind: "terminal_input" },
+      describeSideEffect: (params: any = {}) => ({
+        kind: "terminal_input",
+        processId: params.process_id || params.processId || "",
+      }),
+    },
+    parameters: Type.Object({
+      process_id: Type.String({ description: "process_id returned by exec_command with tty=true." }),
+      chars: Type.Optional(Type.String({ description: "Characters to write to stdin, including newline if needed." })),
+    }),
+    execute: async (_toolCallId: any, params: any = {}, _signal: any, _onUpdate: any, ctx: any) => {
+      const normalized = normalizeWriteStdinParams(params);
+      if (!normalized.ok) return normalized.error;
+      const sessionPath = getToolSessionPath(ctx);
+      if (!sessionPath) {
+        return textResult("current session is required to write stdin", {
+          errorCode: "WRITE_STDIN_SESSION_REQUIRED",
+        });
+      }
+      const manager = getTerminalSessionManager?.();
+      if (!manager) {
+        return textResult("terminal manager unavailable", {
+          errorCode: "WRITE_STDIN_TERMINAL_MANAGER_UNAVAILABLE",
+        });
+      }
+      const value = normalized.value;
+      return jsonResult(manager.write({
+        sessionPath,
+        terminalId: value.processId,
+        chars: value.chars,
+      }));
+    },
+  };
+
+  void env;
+  return [execCommandTool, writeStdinTool];
+}

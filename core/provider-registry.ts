@@ -34,6 +34,7 @@ import {
   LocalProviderPluginStore,
   isLocalProviderPlugin,
   isSafeLocalProviderPluginProviderId,
+  mergeProviderModelEntries,
   providerConfigHasLocalDefinition,
   providerPluginToCatalogDefinition,
   splitLocalProviderConfig,
@@ -483,9 +484,17 @@ export class ProviderRegistry {
   _mergeRawProviderConfig(providerId, overlay = {}) {
     const plugin = this._plugins.get(providerId);
     if (!isLocalProviderPlugin(plugin)) return cloneData(overlay || {});
+    const definition: Record<string, any> = providerPluginToCatalogDefinition(plugin);
+    const rawOverlay: Record<string, any> = overlay || {};
+    const merged: Record<string, any> = {
+      ...definition,
+      ...rawOverlay,
+    };
+    if (Object.prototype.hasOwnProperty.call(definition, "models") || Object.prototype.hasOwnProperty.call(rawOverlay, "models")) {
+      merged.models = mergeProviderModelEntries(definition.models, rawOverlay.models);
+    }
     return {
-      ...providerPluginToCatalogDefinition(plugin),
-      ...(overlay || {}),
+      ...merged,
     };
   }
 
@@ -1197,7 +1206,7 @@ export class ProviderRegistry {
    * 裸字符串条目会被升级为对象
    * @param {string} providerId
    * @param {string} modelId
-   * @param {{ name?: string, context?: number, maxOutput?: number, image?: boolean, video?: boolean, reasoning?: boolean, xhigh?: boolean, thinkingLevels?: string[], defaultThinkingLevel?: string, compat?: object, toolUse?: object, visionCapabilities?: object }} meta
+   * @param {{ name?: string, context?: number, contextWindow?: number, maxOutput?: number, maxTokens?: number, maxOutputTokens?: number, image?: boolean, video?: boolean, audio?: boolean, reasoning?: boolean, xhigh?: boolean, thinkingLevels?: string[], defaultThinkingLevel?: string, compat?: object, toolUse?: object, visionCapabilities?: object }} meta
    */
   updateModelEntry(providerId, modelId, meta) {
     const rawProvider = this.getAllProvidersRaw()[providerId] || {};
@@ -1207,9 +1216,18 @@ export class ProviderRegistry {
     if (meta && typeof meta === "object" && meta.vision !== undefined && meta.image === undefined) {
       meta = { ...meta, image: meta.vision };
     }
+    if (meta && typeof meta === "object" && meta.contextWindow !== undefined && meta.context === undefined) {
+      meta = { ...meta, context: meta.contextWindow };
+    }
+    if (meta && typeof meta === "object" && meta.maxTokens !== undefined && meta.maxOutput === undefined) {
+      meta = { ...meta, maxOutput: meta.maxTokens };
+    }
+    if (meta && typeof meta === "object" && meta.maxOutputTokens !== undefined && meta.maxOutput === undefined) {
+      meta = { ...meta, maxOutput: meta.maxOutputTokens };
+    }
 
     // 白名单：只允许模型能力字段（image 是标准名，vision 为旧名不写入）
-    const ALLOWED = ["name", "context", "maxOutput", "image", "video", "reasoning", "xhigh", "thinkingLevels", "type", "defaultThinkingLevel"];
+    const ALLOWED = ["name", "context", "maxOutput", "image", "video", "audio", "reasoning", "xhigh", "thinkingLevels", "type", "defaultThinkingLevel"];
     const safe: any = {};
     for (const key of ALLOWED) {
       if (meta[key] !== undefined) safe[key] = meta[key];

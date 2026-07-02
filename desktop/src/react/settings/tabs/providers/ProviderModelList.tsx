@@ -12,10 +12,80 @@ interface DiscoveredModel {
   id: string;
   name?: string;
   context?: number | null;
+  contextWindow?: number | null;
   maxOutput?: number | null;
+  maxTokens?: number | null;
+  maxOutputTokens?: number | null;
+  image?: boolean;
+  vision?: boolean;
+  video?: boolean;
+  audio?: boolean;
+  reasoning?: boolean;
+  xhigh?: boolean;
+  type?: string;
+  defaultThinkingLevel?: string;
+  thinkingLevels?: string[];
+  compat?: Record<string, unknown>;
+  toolUse?: Record<string, unknown>;
+  visionCapabilities?: Record<string, unknown>;
 }
 
 type CapabilityKind = 'image' | 'video' | 'audio' | 'reasoning';
+type ProviderModelEntry = string | { id: string; [key: string]: unknown };
+
+function modelIdOf(model: ProviderModelEntry): string {
+  return typeof model === 'object' ? model.id : model;
+}
+
+function numberFromMeta(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function boolFromMeta(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function plainObjectFromMeta(value: unknown): Record<string, unknown> | undefined {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function compactDiscoveredModelEntry(model: DiscoveredModel): ProviderModelEntry {
+  const id = model.id.trim();
+  if (!id) return model.id;
+
+  const entry: Record<string, unknown> = { id };
+  const name = typeof model.name === 'string' ? model.name.trim() : '';
+  if (name && name !== id) entry.name = name;
+
+  const context = numberFromMeta(model.context) ?? numberFromMeta(model.contextWindow);
+  if (context !== undefined) entry.context = context;
+
+  const maxOutput = numberFromMeta(model.maxOutput)
+    ?? numberFromMeta(model.maxTokens)
+    ?? numberFromMeta(model.maxOutputTokens);
+  if (maxOutput !== undefined) entry.maxOutput = maxOutput;
+
+  const image = boolFromMeta(model.image ?? model.vision);
+  if (image !== undefined) entry.image = image;
+  for (const key of ['video', 'audio', 'reasoning', 'xhigh'] as const) {
+    const value = boolFromMeta(model[key]);
+    if (value !== undefined) entry[key] = value;
+  }
+
+  if (typeof model.type === 'string' && model.type.trim()) entry.type = model.type.trim();
+  if (typeof model.defaultThinkingLevel === 'string' && model.defaultThinkingLevel.trim()) {
+    entry.defaultThinkingLevel = model.defaultThinkingLevel.trim();
+  }
+  if (Array.isArray(model.thinkingLevels)) entry.thinkingLevels = [...model.thinkingLevels];
+  for (const key of ['compat', 'toolUse', 'visionCapabilities'] as const) {
+    const value = plainObjectFromMeta(model[key]);
+    if (value) entry[key] = value;
+  }
+
+  return Object.keys(entry).length === 1 ? id : entry as ProviderModelEntry;
+}
 
 function CapabilityIcon({ kind }: { kind: CapabilityKind }) {
   const label = t(`settings.api.capability.${kind}`);
@@ -74,9 +144,7 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
   useEffect(() => { loadDiscoveredModels(); }, [providerId]);
 
   const rawModels = summary.models || [];
-  /** 从混合数组条目提取 model ID */
-  const modelId = (m: any): string => typeof m === 'object' ? m.id : m;
-  const currentModelIds = rawModels.map(modelId);
+  const currentModelIds = rawModels.map(modelIdOf);
   // Merge: discovered model IDs + custom_models, deduplicated, with currentModelIds included for display
   const discoveredIds = discoveredModels.map(m => m.id);
   const allModels = [...new Set([...currentModelIds, ...discoveredIds, ...(summary.custom_models || [])])];
@@ -86,10 +154,12 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
   const addModelToProvider = async (mid: string) => {
     if (currentModelIds.includes(mid)) return;
     try {
+      const discovered = discoveredModels.find(model => model.id === mid);
+      const nextEntry = discovered ? compactDiscoveredModelEntry(discovered) : mid;
       await hanaFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ providers: { [providerId]: { models: [...rawModels, mid] } } }),
+        body: JSON.stringify({ providers: { [providerId]: { models: [...rawModels, nextEntry] } } }),
       });
       invalidateConfigCache();
       await onRefresh();
@@ -101,7 +171,7 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
 
   const removeModelFromProvider = async (mid: string) => {
     try {
-      const next = rawModels.filter((m: any) => (typeof m === 'object' ? m.id : m) !== mid);
+      const next = rawModels.filter((m: ProviderModelEntry) => modelIdOf(m) !== mid);
       await hanaFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -201,7 +271,9 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
           </div>
           <div className={styles['pv-fav-list']}>
             {currentModelIds.map(mid => {
-              const meta = lookupModelMeta(mid, providerId) || {};
+              const rawEntry = rawModels.find((m: ProviderModelEntry) => modelIdOf(m) === mid);
+              const entryMeta = rawEntry && typeof rawEntry === 'object' ? rawEntry : {};
+              const meta = { ...(lookupModelMeta(mid, providerId) || {}), ...entryMeta };
               const displayName = meta.displayName || meta.name || mid;
               const showModelId = displayName !== mid;
               return (
@@ -281,7 +353,10 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
                 const isAdded = currentModelIds.includes(mid);
                 const meta = lookupModelMeta(mid, providerId) || {};
                 const discovered = discoveredModels.find(d => d.id === mid);
-                const ctx = meta.context || discovered?.context;
+                const ctx = numberFromMeta(meta.context)
+                  ?? numberFromMeta(meta.contextWindow)
+                  ?? numberFromMeta(discovered?.context)
+                  ?? numberFromMeta(discovered?.contextWindow);
                 return (
                   <button
                     key={mid}

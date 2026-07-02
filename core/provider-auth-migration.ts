@@ -196,11 +196,14 @@ export function migrateLegacyApiKeyAuthToProviders({ hanakoHome, providerRegistr
       changed = true;
     }
 
-    if (!hasOwn(current, "models") || !Array.isArray(current.models)) {
+    if (entry?.source?.kind === "local-provider-plugin") {
+      // Local provider plugin definition owns model metadata. Avoid writing models.json
+      // ids into the catalog overlay, where a bare id can erase model capability fields.
+    } else if (!hasOwn(current, "models") || !Array.isArray(current.models)) {
       const modelIds = modelIdsFromModelsJsonProvider(modelsJsonProvider);
       const seededModels = modelIds.length > 0
         ? modelIds
-        : (entry?.source?.kind === "local-provider-plugin" ? [] : defaultModels(providerRegistry, providerId));
+        : defaultModels(providerRegistry, providerId);
       const validModels = filterInvalidProviderModels(providerId, seededModels, baseUrl);
       if (validModels.length > 0) {
         next.models = validModels;

@@ -42,7 +42,8 @@ describe("agents route: tools.disabled", () => {
       id: agentId,
       tools: [
         { name: "read" },
-        { name: "bash" },
+        { name: "exec_command" },
+        { name: "write_stdin" },
         { name: "beautify_create-cover", _pluginId: "beautify" },
         { name: "office_html-to-pdf", _pluginId: "office" },
         { name: "browser" },
@@ -137,17 +138,17 @@ describe("agents route: tools.disabled", () => {
     const res = await app.request(`/api/agents/${agentId}/config`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tools: { disabled: ["browser", "bash", "edit"] } }),
+      body: JSON.stringify({ tools: { disabled: ["browser", "exec_command", "edit"] } }),
     });
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.error).toContain("bash");
+    expect(body.error).toContain("exec_command");
     expect(body.error).toContain("edit");
     // browser is valid — must not appear in the invalid names list
-    // The error message format is: "Invalid tool names in tools.disabled: bash, edit. Only optional tools..."
+    // The error message format is: "Invalid tool names in tools.disabled: exec_command, edit. Only optional tools..."
     // "browser" does not appear anywhere in the invalid list portion
-    expect(body.error).not.toMatch(/bash.*browser|browser.*bash/);
-    const invalidPortion = body.error.split(".")[0]; // "Invalid tool names in tools.disabled: bash, edit"
+    expect(body.error).not.toMatch(/exec_command.*browser|browser.*exec_command/);
+    const invalidPortion = body.error.split(".")[0]; // "Invalid tool names in tools.disabled: exec_command, edit"
     expect(invalidPortion).not.toContain("browser");
   });
 
@@ -168,6 +169,9 @@ describe("agents route: tools.disabled", () => {
     const body = await res.json();
     expect(Array.isArray(body.availableTools)).toBe(true);
     expect(body.availableTools).toContain("read");
+    expect(body.availableTools).toContain("exec_command");
+    expect(body.availableTools).toContain("write_stdin");
+    expect(body.availableTools).not.toContain("bash");
     expect(body.availableTools).toContain("browser");
     expect(body.availableTools).toContain("beautify");
     expect(body.availableTools).toContain("office");

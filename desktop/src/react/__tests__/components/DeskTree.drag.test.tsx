@@ -83,6 +83,11 @@ describe('DeskTree drag payloads for workspace roots', () => {
     vi.mocked(takeMarkdownFileScreenshot).mockClear();
     document.documentElement.removeAttribute('data-platform');
     useStore.setState({
+      activeServerConnection: null,
+      activeServerConnectionId: null,
+      serverConnections: {},
+      serverPort: 62950,
+      serverToken: 'local-token',
       deskFiles: [{ name: 'report.md', isDir: false }],
       deskTreeFilesByPath: { '': [{ name: 'report.md', isDir: false }] },
       deskExpandedPaths: [],
@@ -147,6 +152,41 @@ describe('DeskTree drag payloads for workspace roots', () => {
 
     expect(getActiveAppFileDragPayload()?.files).toEqual([
       expect.objectContaining({ path: 'workbench:mount_remote:report.md' }),
+    ]);
+    expect(startDrag).not.toHaveBeenCalled();
+  });
+
+  it('keeps workbench references for a remote client viewing the default workspace', () => {
+    useStore.setState({
+      activeServerConnection: {
+        connectionId: 'browser:server_lan',
+        kind: 'lan',
+        serverId: 'server_lan',
+        userId: 'user_lan',
+        studioId: 'studio_lan',
+        label: 'LAN Hana',
+        baseUrl: 'http://hana.local:14500',
+        wsUrl: 'ws://hana.local:14500',
+        token: null,
+        authState: 'paired',
+        trustState: 'lan',
+        credentialKind: 'device_credential',
+        platformAccountId: null,
+        officialServiceKind: null,
+        capabilities: ['resources', 'files'],
+      },
+      deskBasePath: '/Users/server/project',
+      deskWorkspaceMountId: null,
+      deskWorkspaceNativeRoot: null,
+    } as never);
+
+    const { container } = renderTree();
+    const item = container.querySelector('[data-desk-path="report.md"]');
+    expect(item).not.toBeNull();
+    fireEvent.dragStart(item as Element, { dataTransfer: makeDataTransfer() });
+
+    expect(getActiveAppFileDragPayload()?.files).toEqual([
+      expect.objectContaining({ path: 'workbench:default:report.md' }),
     ]);
     expect(startDrag).not.toHaveBeenCalled();
   });

@@ -122,7 +122,7 @@ const remoteConnection = {
   label: 'LAN Studio',
   baseUrl: 'http://192.168.31.75:14500',
   wsUrl: 'ws://192.168.31.75:14500',
-  token: 'hana_dev_remote_secret',
+  token: 'fixture-key',
   trustState: 'lan',
   credentialKind: 'device_credential',
 };
@@ -408,7 +408,7 @@ describe('AccessTab', () => {
       target: { value: 'http://192.168.31.75:14500' },
     });
     fireEvent.change(screen.getByLabelText('settings.access.remoteServerKey'), {
-      target: { value: 'hana_dev_remote_secret' },
+      target: { value: 'fixture-key' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'settings.access.connectLanServer' }));
 
@@ -416,13 +416,13 @@ describe('AccessTab', () => {
       expect(fetch).toHaveBeenCalledWith('http://192.168.31.75:14500/api/web-auth/login', expect.objectContaining({
         method: 'POST',
         credentials: 'include',
-        body: JSON.stringify({ credential: 'hana_dev_remote_secret' }),
+        body: JSON.stringify({ credential: 'fixture-key' }),
       }));
     });
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith('http://192.168.31.75:14500/api/server/identity', expect.objectContaining({
         credentials: 'include',
-        headers: { Authorization: 'Bearer hana_dev_remote_secret' },
+        headers: { Authorization: 'Bearer fixture-key' },
       }));
       expect(window.hana.reloadMainWindow).toHaveBeenCalledTimes(1);
     });

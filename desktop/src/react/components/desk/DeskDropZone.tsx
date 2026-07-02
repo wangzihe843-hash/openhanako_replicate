@@ -3,6 +3,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { useStore } from '../../stores';
 import {
   deskCurrentDir,
   deskUploadFiles,
@@ -15,10 +16,20 @@ import {
   clearAppFileDragPayload,
   readAppFileDragPayload,
 } from '../../utils/app-file-drag';
+import { canUseNativeResourcePath } from '../../services/resource-access';
+import { resolveServerConnection } from '../../services/server-connection';
 import { isWebRuntime } from '../../utils/platform-runtime';
 import type { CtxMenuState } from './desk-types';
 import type { InlineCreateKind } from './DeskTree';
 import s from './Desk.module.css';
+
+function currentResourceAccessContext() {
+  return { connection: resolveServerConnection(useStore.getState()) };
+}
+
+function shouldUseBrowserDeskUpload(): boolean {
+  return isWebRuntime() || !canUseNativeResourcePath(currentResourceAccessContext());
+}
 
 export function DeskDropZone({
   children,
@@ -76,12 +87,13 @@ export function DeskDropZone({
     e.preventDefault();
     e.stopPropagation();
     const tFn = window.t ?? ((p: string) => p);
+    const canUseNativePath = canUseNativeResourcePath(currentResourceAccessContext());
     onShowMenu({
       position: { x: e.clientX, y: e.clientY },
       items: [
         { label: tFn('desk.ctx.newMdFile'), action: () => { void onStartCreate('', 'markdown'); } },
         { label: tFn('desk.ctx.newFolder'), action: () => { void onStartCreate('', 'folder'); } },
-        ...(!isWebRuntime() ? [
+        ...(!isWebRuntime() && canUseNativePath ? [
           { label: tFn('desk.ctx.openInFinder'), action: () => { const p = deskCurrentDir(); if (p) window.platform?.showInFinder?.(p); } },
         ] : []),
       ],
@@ -122,7 +134,7 @@ export function DeskDropZone({
     const text = e.dataTransfer.getData('text/plain');
 
     if (files && files.length > 0) {
-      if (isWebRuntime()) {
+      if (shouldUseBrowserDeskUpload()) {
         await deskUploadBrowserFilesToSubdir(Array.from(files), '');
         return;
       }

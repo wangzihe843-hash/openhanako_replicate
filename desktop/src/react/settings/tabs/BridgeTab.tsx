@@ -83,12 +83,12 @@ export function BridgeTab() {
 
       {/* 对外意识：hint 在上、textarea 在下，直接作为 section body children（单 textarea 不套 row） */}
       <SettingsSection title={t('settings.agent.publicIshiki')}>
-        <div style={{ padding: 'var(--space-sm) var(--space-md)' }}>
+        <div style={{ padding: 'var(--space-8) var(--space-16)' }}>
           <div style={{
             fontSize: '0.7rem',
             color: 'var(--text-muted)',
             lineHeight: 1.5,
-            marginBottom: 'var(--space-sm)',
+            marginBottom: 'var(--space-8)',
             whiteSpace: 'pre-line',
           }}>
             {t('settings.agent.publicIshikiHint')}

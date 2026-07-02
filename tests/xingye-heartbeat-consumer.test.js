@@ -40,6 +40,16 @@ async function waitFor(predicate) {
   throw new Error("timed out waiting for condition");
 }
 
+async function runNextBeat(heartbeat) {
+  const started = Date.now();
+  while (Date.now() - started < 1000) {
+    const result = await heartbeat.beat();
+    if (result !== null) return result;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("timed out waiting to start the next heartbeat");
+}
+
 function createSchedulerFixture() {
   const tempRoot = mktemp();
   const agentsDir = path.join(tempRoot, "agents");
@@ -176,7 +186,7 @@ describe("Xingye heartbeat event consumer", () => {
     expect(readJson(agentBLogPath).events[0].consumedBy).toBeUndefined();
     expect(fs.readFileSync(historyPath, "utf-8").trim().split(/\r?\n/)).toHaveLength(1);
 
-    await heartbeat.beat();
+    await runNextBeat(heartbeat);
     expect(fs.readFileSync(historyPath, "utf-8").trim().split(/\r?\n/)).toHaveLength(1);
 
     agentALog.events.push({
@@ -190,7 +200,7 @@ describe("Xingye heartbeat event consumer", () => {
     });
     fs.writeFileSync(agentALogPath, JSON.stringify(agentALog, null, 2), "utf-8");
 
-    await heartbeat.beat();
+    await runNextBeat(heartbeat);
 
     const nextResult = readJson(resultPath);
     expect(nextResult.eventCount).toBe(1);

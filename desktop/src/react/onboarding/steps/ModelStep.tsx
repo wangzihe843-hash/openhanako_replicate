@@ -29,6 +29,7 @@ function toSavedModelEntry(model: AddedModelDraft): AddedModelEntry {
     || typeof model.context === 'number'
     || typeof model.maxOutput === 'number'
     || typeof model.image === 'boolean'
+    || typeof model.video === 'boolean'
     || typeof model.audio === 'boolean'
     || typeof model.reasoning === 'boolean';
   if (!hasMeta) return model.id;
@@ -38,6 +39,7 @@ function toSavedModelEntry(model: AddedModelDraft): AddedModelEntry {
     ...(typeof model.context === 'number' ? { context: model.context } : {}),
     ...(typeof model.maxOutput === 'number' ? { maxOutput: model.maxOutput } : {}),
     ...(typeof model.image === 'boolean' ? { image: model.image } : {}),
+    ...(typeof model.video === 'boolean' ? { video: model.video } : {}),
     ...(typeof model.audio === 'boolean' ? { audio: model.audio } : {}),
     ...(typeof model.reasoning === 'boolean' ? { reasoning: model.reasoning } : {}),
   };
@@ -57,6 +59,28 @@ function numberFromMeta(value: unknown): number | undefined {
 
 function boolFromMeta(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
+}
+
+function draftFromDiscoveredModel(model: DiscoveredModel): AddedModelDraft {
+  const draft: AddedModelDraft = { id: model.id };
+  const name = model.name?.trim();
+  const context = numberFromMeta(model.context) ?? numberFromMeta(model.contextWindow);
+  const maxOutput = numberFromMeta(model.maxOutput)
+    ?? numberFromMeta(model.maxTokens)
+    ?? numberFromMeta(model.maxOutputTokens);
+  const image = boolFromMeta(model.image ?? model.vision);
+  const video = boolFromMeta(model.video);
+  const audio = boolFromMeta(model.audio);
+  const reasoning = boolFromMeta(model.reasoning);
+
+  if (name && name !== model.id) draft.name = name;
+  if (context !== undefined) draft.context = context;
+  if (maxOutput !== undefined) draft.maxOutput = maxOutput;
+  if (image !== undefined) draft.image = image;
+  if (video !== undefined) draft.video = video;
+  if (audio !== undefined) draft.audio = audio;
+  if (reasoning !== undefined) draft.reasoning = reasoning;
+  return draft;
 }
 
 export function ModelStep({
@@ -128,6 +152,7 @@ export function ModelStep({
       context: numberFromMeta(reference?.context) ?? numberFromMeta(fetched?.context),
       maxOutput: numberFromMeta(reference?.maxOutput) ?? numberFromMeta(fetched?.maxOutput),
       image: boolFromMeta(reference?.image ?? reference?.vision),
+      video: boolFromMeta(reference?.video) ?? boolFromMeta(fetched?.video),
       audio: boolFromMeta(reference?.audio),
       reasoning: boolFromMeta(reference?.reasoning),
     };
@@ -140,6 +165,7 @@ export function ModelStep({
       context: model.context ?? baseline.context,
       maxOutput: model.maxOutput ?? baseline.maxOutput,
       image: model.image ?? baseline.image,
+      video: model.video ?? baseline.video,
       audio: model.audio ?? baseline.audio,
       reasoning: model.reasoning ?? baseline.reasoning,
     };
@@ -159,20 +185,23 @@ export function ModelStep({
     label: labelForModel(model.id),
   }));
 
-  const addModel = useCallback((rawModelId: string) => {
+  const addModel = useCallback((rawModelId: string, source: 'discovered' | 'manual' = 'discovered') => {
     const modelId = rawModelId.trim();
     if (!modelId || addedModelIds.has(modelId)) return;
-    const next = [...addedModels, { id: modelId }];
+    const fetched = source === 'discovered'
+      ? fetchedModels.find(model => model.id === modelId)
+      : undefined;
+    const next = [...addedModels, fetched ? draftFromDiscoveredModel(fetched) : { id: modelId }];
     setAddedModels(next);
     if (!selectedModel) setSelectedModel(modelId);
     setAddMenuOpen(false);
     setModelSearch('');
-  }, [addedModelIds, addedModels, selectedModel]);
+  }, [addedModelIds, addedModels, fetchedModels, selectedModel]);
 
   const addManualModel = useCallback(() => {
     const modelId = manualModelId.trim();
     if (!modelId) return;
-    addModel(modelId);
+    addModel(modelId, 'manual');
     if (!addedModelIds.has(modelId)) setManualModelId('');
   }, [addModel, addedModelIds, manualModelId]);
 
@@ -210,6 +239,7 @@ export function ModelStep({
       const name = editName.trim();
       return {
         id: model.id,
+        ...(typeof model.video === 'boolean' ? { video: model.video } : {}),
         ...(name && name !== baseline.name ? { name } : {}),
         ...(context && context !== baseline.context ? { context } : {}),
         ...(maxOutput && maxOutput !== baseline.maxOutput ? { maxOutput } : {}),

@@ -5,7 +5,7 @@
 
 ## 核心纪律
 
-1. **唯一对外入口**：所有出站 payload 兼容必须经过 [`core/provider-compat.js`](../provider-compat.js) 的 `normalizeProviderPayload(payload, model, options)`。chat 路径（`engine.js` 注册的 `before_provider_request` 钩子）和 utility 路径（`llm-client.js` 的 `callText`）共享这一个入口。需要在 provider serializer 之前处理的 replay/history 规则走同文件的 `normalizeProviderContextMessages(messages, model, options)`。
+1. **唯一对外入口**：所有出站 payload 兼容必须经过 [`core/provider-compat.js`](../provider-compat.js) 的 `normalizeProviderPayload(payload, model, options)`。chat 路径（`engine.js` 注册的 `before_provider_request` 钩子）和 utility 路径（`llm-client.js` 的 `callText`）共享这一个入口。需要在 provider serializer 之前处理的 replay/history 规则，以及只影响模型可见副本的通用 content projection，走同文件的 `normalizeProviderContextMessages(messages, model, options)`。
 2. **通用补丁留主入口**：与 provider 无关的处理（空 tools 数组剥离、按 `compat.thinkingFormat` 剥离不兼容的 `thinking` 字段、移除 SDK 注入的隐式 output cap、孤儿 toolResult 配对兜底、按 `compat.audioTransport` 执行音频 transport pre-pass）写在 `provider-compat.js` 主入口或同目录通用 helper。孤儿 toolResult 兜底逻辑在 [`tool-pairing.js`](tool-pairing.js)（provider-agnostic helper，删除 OpenAI-compatible 序列化 payload 里父 `tool_calls` 已被 SDK 丢弃的 `role:"tool"`，issue #1285），由主入口 `stripOrphanToolMessages` 调用；它不是 provider 子模块（无 `matches`/`apply`），不进 first-match-wins 分发。
 3. **Provider-specific 补丁拆子文件**：每个 provider 一个 `core/provider-compat/<name>.js`，互不串扰。
 4. **接口契约**：每个子文件 export `matches(model) → boolean`（必须容忍 `model = null/undefined`，不抛错）和 `apply(payload, model, options) → payload`（不可 mutate 输入 payload）。如果该 provider 有 serializer 前的 replay/history 约束，可以额外 export `normalizeContextMessages(messages, model, options) → messages`。
@@ -186,6 +186,7 @@ Hana 内部用 `{ type: "audio", data, mimeType }` 表示当前轮音频。UI、
 | [`volcengine.ts`](volcengine.ts) | Volcengine Ark OpenAI-compatible 思考模式协议（thinking.type、reasoning_effort 映射、utility/off 清理） | pi-ai 原生处理 Volcengine thinking 控制、effort 枚举和 utility/off 历史清理 |
 | [`input-audio.js`](input-audio.js) | 通用 OpenAI-compatible 音频 transport helper，由主入口按 `audioTransport` 调用，不参与 first-match-wins | Pi SDK / provider serializer 原生按模型 transport 输出正确音频块 |
 | [`openai-video-url.js`](openai-video-url.js) | OpenAI-compatible 视频输入 `image_url data:video` → `video_url`，当前用于 Moonshot Kimi 与 DashScope Qwen | Pi SDK 原生按 video MIME 输出 `video_url`；或相关 provider 接受 `image_url data:video` |
+| [`codex-responses.ts`](codex-responses.ts) | ChatGPT Codex Responses OAuth endpoint 不支持的 output cap / temperature 字段清理 | Codex Responses 接受这些字段且语义与 OpenAI public Responses 一致；或 pi-ai 原生 Codex serializer 已省略 |
 
 子模块的对外 API 仅有 `matches` 和 `apply` 两个 export。其它 export（如 replay helper 的 `extractReasoningFromContent`、`ensureReasoningContentForToolCalls`）属于实现细节、仅供同文件和单元测试访问，**不构成对外契约**。升级 SDK 想删 helper 时不需顾虑外部依赖。
 

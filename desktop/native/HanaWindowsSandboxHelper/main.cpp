@@ -119,6 +119,10 @@ static std::wstring hexDword(DWORD code) {
     return buffer;
 }
 
+static std::wstring win32Diagnostic(DWORD code) {
+    return L"rc=" + std::to_wstring(code) + L" hex=" + hexDword(code) + L" message=" + win32Message(code);
+}
+
 static std::wstring boolDiagnosticValue(bool value) {
     return value ? L"true" : L"false";
 }
@@ -397,8 +401,8 @@ static bool ensureAce(
         &descriptor
     );
     if (rc != ERROR_SUCCESS) {
-        if (required) fail(L"cannot read ACL for " + path + L": " + win32Message(rc));
-        else debug(L"skipping optional ACL update for " + path + L": " + win32Message(rc));
+        if (required) fail(L"cannot read ACL for " + path + L": " + win32Diagnostic(rc));
+        else debug(L"skipping optional ACL update for " + path + L": " + win32Diagnostic(rc));
         return false;
     }
 
@@ -419,8 +423,8 @@ static bool ensureAce(
     PACL newDacl = nullptr;
     rc = SetEntriesInAclW(1, &access, oldDacl, &newDacl);
     if (rc != ERROR_SUCCESS) {
-        if (required) fail(L"cannot build ACL for " + path + L": " + win32Message(rc));
-        else debug(L"skipping optional ACL update for " + path + L": " + win32Message(rc));
+        if (required) fail(L"cannot build ACL for " + path + L": " + win32Diagnostic(rc));
+        else debug(L"skipping optional ACL update for " + path + L": " + win32Diagnostic(rc));
         if (descriptor) LocalFree(descriptor);
         return false;
     }
@@ -437,8 +441,8 @@ static bool ensureAce(
     if (newDacl) LocalFree(newDacl);
     if (rc != ERROR_SUCCESS) {
         if (descriptor) LocalFree(descriptor);
-        if (required) fail(L"cannot apply ACL for " + path + L": " + win32Message(rc));
-        else debug(L"skipping optional ACL update for " + path + L": " + win32Message(rc));
+        if (required) fail(L"cannot apply ACL for " + path + L": " + win32Diagnostic(rc));
+        else debug(L"skipping optional ACL update for " + path + L": " + win32Diagnostic(rc));
         return false;
     }
     if (restores) {

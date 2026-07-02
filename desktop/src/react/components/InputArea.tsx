@@ -37,7 +37,7 @@ import {
   mergeEditorFileRefs,
   type FileMentionItem,
 } from '../utils/file-mention-items';
-import { useSkillSlashItems } from '../hooks/use-slash-items';
+import { useServerSlashCommandItems, useSkillSlashItems } from '../hooks/use-slash-items';
 import { notifyPasteUploadFailure } from '../utils/paste-upload-feedback';
 import { extractPlainUrlPaste } from '../utils/plain-url-paste';
 import { createInputEditorExtensions } from './input/input-editor-extensions';
@@ -57,7 +57,7 @@ import { calculateInputCardBottomInset, parseCssPixels } from '../utils/input-ca
 import { buildWaveformFromBlob, buildWaveformFromPcmChunks } from '../utils/audio-waveform';
 import { prepareChatImageUpload } from '../utils/chat-image-upload-compression';
 import {
-  XING_PROMPT, executeDiary, executeCompact, buildSlashCommands, getSlashMatches,
+  XING_PROMPT, executeDiary, executeCompact, executeSlashViaWs, buildSlashCommands, getSlashMatches,
   resolveSlashSubmitSelection,
   type SlashItem,
 } from './input/slash-commands';
@@ -691,13 +691,13 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
 
   const slashAgentId = pendingNewSession ? (selectedAgentId || currentAgentId) : currentAgentId;
   const skillItems = useSkillSlashItems({ enabled: surface !== 'mobile', agentId: slashAgentId });
+  const serverCommandItems = useServerSlashCommandItems({ enabled: surface !== 'mobile', agentId: slashAgentId });
 
   // 注：/stop /new /reset 仅走 bridge 平台（TG/Feishu/...）；桌面端有 GUI，菜单不暴露这些命令。
-  // buildSlashCommands 第 5 参留作未来 web/mobile 端需要时再注入。后端 WS 通道 (type:'slash')
-  // 和 REST /api/commands 保留作扩展面，不影响现有桌面 UX。
+  // serverCommandItems 只展示非 core 的服务端命令（插件 / 扩展），避免把桌面已有 GUI 的 core 命令重复暴露。
   const slashCommands = useMemo(
-    () => [...buildSlashCommands(t, diaryFn, xingFn, compactFn), ...skillItems],
-    [diaryFn, xingFn, compactFn, t, skillItems],
+    () => [...buildSlashCommands(t, diaryFn, xingFn, compactFn), ...serverCommandItems, ...skillItems],
+    [diaryFn, xingFn, compactFn, t, serverCommandItems, skillItems],
   );
 
   const filteredCommands = useMemo(() => {
@@ -1362,8 +1362,18 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const handleSlashSelect = useCallback((item: SlashItem) => {
     if (inputLocked) return;
     slashDismissedTextRef.current = null;
+    const slashText = editor?.getText().trim() || inputText.trim();
     if (item.type === 'builtin') {
-      item.execute();
+      item.execute(slashText);
+      return;
+    }
+    if (item.type === 'server-command') {
+      void executeSlashViaWs(
+        item.name,
+        setSlashBusy,
+        () => { editor?.commands.clearContent(); },
+        setSlashMenuOpen,
+      )(slashText);
       return;
     }
     if (!editor) return;
@@ -1374,7 +1384,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       .focus()
       .run();
     setSlashMenuOpen(false);
-  }, [editor, inputLocked]);
+  }, [editor, inputLocked, inputText]);
 
   const handleFileMentionSelect = useCallback((item: FileMentionItem) => {
     if (inputLocked) return;
@@ -1764,7 +1774,6 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     isStreaming,
     hasContent,
     inputLocked,
-    editor,
     slashMenuOpen,
     slashSelected,
   ]);

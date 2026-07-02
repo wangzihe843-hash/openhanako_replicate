@@ -138,7 +138,7 @@ function SpeechProviderDetail({
         <h2 className={styles['pv-detail-title']}>{provider.displayName || providerId}</h2>
       </div>
 
-      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 'var(--space-16)', display: 'flex', alignItems: 'center', gap: '6px' }}>
         <span style={{
           width: 6, height: 6, borderRadius: '50%',
           background: provider.hasCredentials ? 'var(--success)' : 'var(--text-muted)',

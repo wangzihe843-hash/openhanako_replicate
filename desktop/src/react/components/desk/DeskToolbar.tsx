@@ -6,6 +6,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../../stores';
 import { deskNativeRootDir, jumpToDeskSearchResult, loadDeskFiles, searchDeskFiles } from '../../stores/desk-actions';
 import { togglePreviewPanel } from '../../stores/preview-actions';
+import { canUseNativeResourcePath } from '../../services/resource-access';
+import { resolveServerConnection } from '../../services/server-connection';
 import type { DeskSearchResult } from '../../types';
 import { isWebRuntime } from '../../utils/platform-runtime';
 import {
@@ -26,19 +28,27 @@ import s from './Desk.module.css';
 // local_fs mount 用服务端披露的 native root（#1616）。没有 native 路径的
 // mount（远端/虚拟）继续隐藏按钮。
 
+function canUseNativeDeskPath() {
+  return canUseNativeResourcePath({ connection: resolveServerConnection(useStore.getState()) });
+}
+
 function openDeskNativeFolder(): void {
+  if (!canUseNativeDeskPath()) return;
   const root = deskNativeRootDir(useStore.getState());
   if (!root) return;
   window.platform?.openFolder?.(root);
 }
 
 export function DeskOpenButton() {
-  const isMountWithoutNativeRoot = useStore(st => !!st.deskWorkspaceMountId && !st.deskWorkspaceNativeRoot);
+  const hasNativeRoot = useStore(st => (
+    canUseNativeResourcePath({ connection: resolveServerConnection(st) })
+    && !!deskNativeRootDir(st)
+  ));
   const handleClick = useCallback(() => {
     openDeskNativeFolder();
   }, []);
 
-  if (isWebRuntime() || isMountWithoutNativeRoot) return null;
+  if (isWebRuntime() || !hasNativeRoot) return null;
 
   return (
     <button className={s.openBtn} onClick={handleClick}>
@@ -49,14 +59,16 @@ export function DeskOpenButton() {
 }
 
 export function DeskOpenIconButton() {
-  const hasNativeRoot = useStore(st => !!deskNativeRootDir(st));
-  const isMountWithoutNativeRoot = useStore(st => !!st.deskWorkspaceMountId && !st.deskWorkspaceNativeRoot);
+  const hasNativeRoot = useStore(st => (
+    canUseNativeResourcePath({ connection: resolveServerConnection(st) })
+    && !!deskNativeRootDir(st)
+  ));
   const label = (window.t ?? ((p: string) => p))('desk.openInFinder');
   const handleClick = useCallback(() => {
     openDeskNativeFolder();
   }, []);
 
-  if (isWebRuntime() || isMountWithoutNativeRoot) return null;
+  if (isWebRuntime() || !hasNativeRoot) return null;
 
   return (
     <button className={`${s.sortBtn} ${s.iconBtn}`} onClick={handleClick} title={label} aria-label={label} disabled={!hasNativeRoot}>

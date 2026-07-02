@@ -23,13 +23,13 @@ describe("LLM cache prefix contract", () => {
     const base = buildLlmContextCachePrefixContract({
       model: { id: "deepseek-v4-pro", provider: "deepseek", api: "openai-completions", baseUrl: "https://api.deepseek.com" },
       systemPrompt: "stable system prompt",
-      tools: [tool("read"), tool("bash")],
+      tools: [tool("read"), tool("exec_command")],
       messages: [{ role: "user", content: "first turn" }],
     } as any);
     const afterToolCall = buildLlmContextCachePrefixContract({
       model: { id: "deepseek-v4-pro", provider: "deepseek", api: "openai-completions", baseUrl: "https://api.deepseek.com" },
       systemPrompt: "stable system prompt",
-      tools: [tool("read"), tool("bash")],
+      tools: [tool("read"), tool("exec_command")],
       messages: [
         { role: "user", content: "first turn" },
         { role: "assistant", tool_calls: [{ id: "call_1", function: { name: "read" } }] },

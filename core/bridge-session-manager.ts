@@ -60,6 +60,8 @@ const log = createModuleLogger("bridge-session");
 const BRIDGE_OWNER_DENIED_TOOL_NAMES = Object.freeze([
   "computer",
   "browser",
+  "hana_card_guide",
+  "show_card",
 ]);
 
 function computeBridgeOwnerActiveToolNames(allToolNames) {

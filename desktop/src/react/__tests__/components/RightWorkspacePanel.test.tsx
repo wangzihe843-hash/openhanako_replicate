@@ -14,9 +14,15 @@ import { openMediaViewerForRef } from '../../utils/open-media-viewer';
 import { takeMarkdownFileScreenshot } from '../../utils/screenshot';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 
-vi.mock('../../utils/file-preview', () => ({
-  openFilePreview: vi.fn(async () => undefined),
-}));
+const mockOpenFilePreview = vi.hoisted(() => vi.fn(async () => undefined));
+
+vi.mock('../../utils/file-preview', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/file-preview')>();
+  return {
+    ...actual,
+    openFilePreview: mockOpenFilePreview,
+  };
+});
 
 vi.mock('../../utils/open-media-viewer', () => ({
   openMediaViewerForRef: vi.fn(),
@@ -90,6 +96,11 @@ function resetStore(items: ChatListItem[] = []) {
       },
     },
     sessionRegistryFilesByPath: {},
+    activeServerConnection: null,
+    activeServerConnectionId: null,
+    serverConnections: {},
+    serverPort: 62950,
+    serverToken: 'local-token',
     rightWorkspaceTab: 'workspace',
     jianDrawerOpen: true,
     deskBasePath: '/tmp/hana-work',
@@ -219,7 +230,7 @@ describe('RightWorkspacePanel', () => {
     const rootBlock = globalCss.match(/:root\s*\{[\s\S]*?\}/)?.[0] ?? '';
     const universalCardBlock = globalCss.match(/\.universal-card,\s*\.jian-card\s*\{[\s\S]*?\}/)?.[0] ?? '';
 
-    expect(rootBlock).toMatch(/--panel-edge-gap:\s*var\(--space-sm\);/);
+    expect(rootBlock).toMatch(/--panel-edge-gap:\s*var\(--space-8\);/);
     expect(rootBlock).toMatch(/--panel-card-bg:\s*var\(--bg-card,\s*var\(--bg\)\);/);
     expect(rootBlock).toMatch(/--panel-card-radius:\s*var\(--radius-lg\);/);
     expect(rootBlock).toMatch(/--panel-card-border:\s*1px solid rgba\(0,\s*0,\s*0,\s*0\.08\);/);
@@ -417,6 +428,80 @@ describe('RightWorkspacePanel', () => {
     const download = screen.getByRole('link', { name: '下载到本机 report.pdf' });
     expect(download).toHaveAttribute('href', 'http://hana.local:14500/api/resources/res_sf_report/content');
     expect(download).toHaveAttribute('download', 'report.pdf');
+  });
+
+  it('previews remote resource-backed session files through ResourceIO without local path controls', async () => {
+    vi.mocked(hanaFetch).mockImplementation(async (url) => {
+      if (String(url).startsWith('/api/resources/res_sf_report/content')) {
+        return new Response('# remote report\n', { status: 200 });
+      }
+      return jsonResponse({ sessions: [] });
+    });
+    resetStore([]);
+    useStore.setState({
+      activeServerConnection: {
+        connectionId: 'browser:server_lan',
+        kind: 'lan',
+        serverId: 'server_lan',
+        userId: 'user_lan',
+        studioId: 'studio_lan',
+        label: 'LAN Hana',
+        baseUrl: 'http://hana.local:14500',
+        wsUrl: 'ws://hana.local:14500',
+        token: null,
+        authState: 'paired',
+        trustState: 'lan',
+        credentialKind: 'device_credential',
+        platformAccountId: null,
+        officialServiceKind: null,
+        capabilities: ['resources', 'files'],
+      },
+      sessionRegistryFilesByPath: {
+        '/sessions/main.jsonl': [{
+          fileId: 'sf_report',
+          filePath: '/remote/cache/report.md',
+          label: 'report.md',
+          ext: 'md',
+          status: 'available',
+          resource: {
+            schemaVersion: 1,
+            resourceId: 'res_sf_report',
+            name: 'studios/studio_lan/resources/res_sf_report',
+            studioId: 'studio_lan',
+            type: 'file',
+            source: 'session_file',
+            fileId: 'sf_report',
+            lifecycle: { status: 'available', missingAt: null },
+            storage: { provider: 'session_file', localOnly: true },
+            links: {
+              self: '/api/resources/res_sf_report',
+              content: '/api/resources/res_sf_report/content',
+            },
+          },
+        }],
+      },
+    } as never);
+
+    render(<RightWorkspacePanel />);
+    fireEvent.click(screen.getByRole('tab', { name: '对话文件' }));
+
+    expect(screen.getByRole('button', { name: '预览 report.md' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '下载到本机 report.md' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '打开 report.md' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '定位 report.md' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '复制路径 report.md' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '预览 report.md' }));
+
+    await waitFor(() => {
+      expect(hanaFetch).toHaveBeenCalledWith('/api/resources/res_sf_report/content');
+    });
+    expect(openFilePreview).not.toHaveBeenCalled();
+    expect(useStore.getState().previewItems[0]).toMatchObject({
+      title: 'report.md',
+      content: '# remote report\n',
+      storageKind: 'remote-content',
+    });
   });
 
   it('uses preview and download actions without local path controls in the PWA session file panel', () => {
@@ -792,9 +877,9 @@ describe('RightWorkspacePanel', () => {
       inlineData: { base64: 'iVBORw0...', mimeType: 'image/png' },
     }), { origin: 'session', sessionPath: '/sessions/main.jsonl' });
 
-    expect(screen.getByRole('button', { name: `打开 ${name}` })).toBeDisabled();
-    expect(screen.getByRole('button', { name: `定位 ${name}` })).toBeDisabled();
-    expect(screen.getByRole('button', { name: `复制路径 ${name}` })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: `打开 ${name}` })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: `定位 ${name}` })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: `复制路径 ${name}` })).not.toBeInTheDocument();
   });
 
   it('collapses and expands the Jian drawer without unmounting its editor state', () => {

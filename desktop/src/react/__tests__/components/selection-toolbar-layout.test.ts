@@ -30,8 +30,8 @@ describe('selection quote action surface layout', () => {
 
     expect(declarationValue(selectionButton, 'min-width')).toBe('88px');
     expect(declarationValue(selectionButton, 'height')).toBe('28px');
-    expect(declarationValue(selectionButton, 'gap')).toBe('var(--space-xs)');
-    expect(declarationValue(selectionButton, 'padding')).toBe('0 var(--space-sm)');
+    expect(declarationValue(selectionButton, 'gap')).toBe('var(--space-4)');
+    expect(declarationValue(selectionButton, 'padding')).toBe('0 var(--space-8)');
     expect(declarationValue(selectionButton, 'white-space')).toBe('nowrap');
   });
 

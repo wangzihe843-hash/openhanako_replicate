@@ -33,6 +33,8 @@ const INFORMATION_TOOLS = new Set([
 
 const SIDE_EFFECT_TOOLS = new Set([
   "bash",
+  "exec_command",
+  "write_stdin",
   "write",
   "edit",
   "computer",
@@ -65,6 +67,7 @@ const AUTO_REVIEW_TOOLS = new Set([
   "record_experience",
   "stage_files",
   "terminal",
+  "write_stdin",
   "unpin_memory",
   "update_settings",
 ]);
@@ -292,6 +295,23 @@ function classifyTerminalAction(mode, action, context) {
   return { action: "allow" };
 }
 
+function classifyExecCommandAction(mode, params, context) {
+  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly("exec_command", context);
+  if (params?.tty === true) {
+    if (mode === SESSION_PERMISSION_MODES.AUTO) return review("exec_command");
+    if (mode === SESSION_PERMISSION_MODES.ASK) return prompt("exec_command");
+  }
+  if (mode === SESSION_PERMISSION_MODES.ASK) return prompt("exec_command");
+  return { action: "allow" };
+}
+
+function classifyWriteStdinAction(mode, context) {
+  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly("write_stdin", context);
+  if (mode === SESSION_PERMISSION_MODES.AUTO) return review("write_stdin");
+  if (mode === SESSION_PERMISSION_MODES.ASK) return prompt("write_stdin");
+  return { action: "allow" };
+}
+
 function classifySessionFoldersAction(mode, action, context) {
   if (action === "list") return { action: "allow" };
   if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly("session_folders", context);
@@ -322,6 +342,8 @@ export function classifySessionPermission({ mode, toolName, params, context }: {
   if (declared) return declared;
   if (INFORMATION_TOOLS.has(name)) return { action: "allow" };
   if (name === "browser") return classifyBrowserAction(normalized, params?.action, context);
+  if (name === "exec_command") return classifyExecCommandAction(normalized, params, context);
+  if (name === "write_stdin") return classifyWriteStdinAction(normalized, context);
   if (name === "terminal") return classifyTerminalAction(normalized, params?.action, context);
   // 静默草稿工具：在 ASK 提示兜底之前判定。OPERATE/ASK 一律放行（草稿非约束、面板还有「确认生成」，
   // 不该重复弹工具确认）；READ_ONLY 仍走下面的只读拦截。subagent 已在函数开头被 SUBAGENT_BLOCKED 拦死，

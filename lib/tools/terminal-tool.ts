@@ -36,7 +36,7 @@ export function createTerminalTool({
   return {
     name: "terminal",
     label: "Terminal",
-    description: "Manage per-session persistent terminal sessions. Use the existing bash tool for short one-shot commands. Use terminal only for long-running or interactive processes that need continued stdin/stdout, such as dev servers, REPLs, ssh, or shells. Actions: start, write, read, close, list.",
+    description: "Legacy internal terminal-session transport. The default Agent command surface is exec_command with tty=true plus write_stdin. Actions: start, write, read, close, list.",
     parameters: Type.Object({
       action: Type.String({ description: "One of: start, write, read, close, list." }),
       terminal_id: Type.Optional(Type.String({ description: "Terminal id returned by action=start or action=list." })),

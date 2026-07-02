@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
   DEFAULT_WORKSPACE_DIRNAME,
+  isDefaultWorkspacePath,
   resolveDefaultWorkspacePath,
 } from "../shared/default-workspace.ts";
 
@@ -21,6 +22,15 @@ describe("default workspace contract", () => {
 
   it("uses 31 minutes as the patrol interval default", () => {
     expect(DEFAULT_HEARTBEAT_INTERVAL_MINUTES).toBe(31);
+  });
+
+  it("identifies the default workspace path without creating it", () => {
+    const homeDir = path.join(os.tmpdir(), "hana-default-workspace-identify");
+    const defaultPath = path.join(homeDir, "Desktop", "OH-WorkSpace");
+
+    expect(isDefaultWorkspacePath(defaultPath, homeDir)).toBe(true);
+    expect(isDefaultWorkspacePath(path.join(homeDir, "custom-work"), homeDir)).toBe(false);
+    expect(fs.existsSync(defaultPath)).toBe(false);
   });
 
   it("resolves the default workspace path without creating it during query access", async () => {

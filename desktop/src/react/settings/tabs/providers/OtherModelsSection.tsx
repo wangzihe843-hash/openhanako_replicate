@@ -184,7 +184,7 @@ export function OtherModelsSection({ providers }: { providers: Record<string, { 
   );
 
   return (
-    <div style={{ padding: 'var(--space-md)' }}>
+    <div style={{ padding: 'var(--space-16)' }}>
       <div className={styles['settings-form-grid']}>
         <div className={`${styles['settings-form-field']} ${styles['settings-form-field-half']}`}>
           <label className={styles['settings-form-label']}>{t('settings.api.utilityModel')}</label>

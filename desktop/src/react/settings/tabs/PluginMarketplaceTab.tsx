@@ -245,7 +245,7 @@ export function PluginMarketplaceTab() {
 
                 <div className={styles['skills-list-block']}>
                   <div className={styles['skills-list-item']} style={{ alignItems: 'flex-start', cursor: 'default' }}>
-                    <div className={styles['skills-list-info']} style={{ gap: 'var(--space-sm)', width: '100%' }}>
+                    <div className={styles['skills-list-info']} style={{ gap: 'var(--space-8)', width: '100%' }}>
                       {selectedPlugin ? (
                         <>
                           <div className={styles['plugin-marketplace-detail-header']}>

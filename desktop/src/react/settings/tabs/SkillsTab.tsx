@@ -76,7 +76,7 @@ export function SkillsTab() {
     try {
       const snapshotAgentId = agentId;
       const [skillsRes, bundlesRes] = await Promise.all([
-        hanaFetch(`/api/skills?agentId=${encodeURIComponent(agentId)}`),
+        hanaFetch(`/api/skills?agentId=${encodeURIComponent(agentId)}&runtime=1`),
         hanaFetch(`/api/skills/bundles?agentId=${encodeURIComponent(agentId)}`),
       ]);
       const data = await skillsRes.json();
@@ -125,6 +125,7 @@ export function SkillsTab() {
 
   const visible = skillsList.filter(s => !s.hidden);
   const userSkills = visible.filter(s => s.source !== 'external');
+  const manageableSkills = userSkills.filter(s => s.source !== 'workspace' && s.managedBy !== 'workspace' && s.managedBy !== 'plugin');
   const externalSkills = visible.filter(s => s.source === 'external');
 
   // 后台翻译技能名
@@ -549,13 +550,13 @@ export function SkillsTab() {
 
         {skillsLoading ? (
           <p className={`${styles['settings-muted-note']} ${styles['skills-empty']}`}>{t('status.loading')}</p>
-        ) : userSkills.length === 0 && skillBundles.length === 0 ? (
+        ) : manageableSkills.length === 0 && skillBundles.length === 0 ? (
           <p className={`${styles['settings-muted-note']} ${styles['skills-empty']}`}>{t('settings.skills.noUser')}</p>
         ) : (
           <SkillBundleTree
             mode="manage"
             bundles={skillBundles}
-            skills={userSkills}
+            skills={manageableSkills}
             nameHints={nameHints}
             emptyText={t('settings.skills.noUser')}
             onDeleteSkill={deleteSkill}
@@ -574,9 +575,9 @@ export function SkillsTab() {
       <SkillCapabilities installCfg={skillInstallCfg} />
 
       {/* Section 3A: Agent Skills 开关（per-Agent 开关）
-       * AgentSelect 作为 section context；skill list 直接作为 section body children，
-       * 由 SettingsSection 白卡承担卡片视觉，避免卡中卡 */}
+       * flush：skills-list-block 自带卡片视觉，section 不再套外层白卡 */}
       <SettingsSection
+        variant="flush"
         title={t('settings.skills.userSkillsTitle')}
         context={
           <AgentSelect
@@ -586,11 +587,11 @@ export function SkillsTab() {
         }
       >
         {skillsLoading ? (
-          <p className={styles['agent-skill-empty']} style={{ padding: 'var(--space-md)', margin: 0 }}>
+          <p className={styles['agent-skill-empty']} style={{ padding: 'var(--space-16)', margin: 0 }}>
             {t('status.loading')}
           </p>
         ) : userSkills.length === 0 && skillBundles.length === 0 ? (
-          <p className={styles['agent-skill-empty']} style={{ padding: 'var(--space-md)', margin: 0 }}>
+          <p className={styles['agent-skill-empty']} style={{ padding: 'var(--space-16)', margin: 0 }}>
             {t('settings.skills.noUser')}
           </p>
         ) : (
@@ -613,7 +614,7 @@ export function SkillsTab() {
           fontSize: '0.7rem',
           color: 'var(--text-muted)',
           lineHeight: 1.4,
-          margin: '0 0 var(--space-md)',
+          margin: '0 0 var(--space-16)',
         }}>
           {t('settings.skills.compatDesc')}
         </p>

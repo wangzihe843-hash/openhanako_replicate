@@ -36,21 +36,26 @@ The final artifact must be a complete skill package: it must contain SKILL.md, a
 
 export interface SlashItem {
   name: string;
+  aliases?: string[];
   label: string;
   description: string;
   busyLabel: string;
   icon: string;
-  type: 'builtin' | 'skill';
-  execute: () => Promise<void> | void;
+  type: 'builtin' | 'skill' | 'server-command';
+  execute: (inputText?: string) => Promise<void> | void;
 }
 
 export const MAX_SLASH_TRIGGER_LENGTH = 20;
 
 export function getSlashMatches(text: string, commands: SlashItem[]): SlashItem[] {
   const normalized = text.trim();
-  if (!normalized.startsWith('/') || normalized.length > MAX_SLASH_TRIGGER_LENGTH) return [];
-  const query = normalized.slice(1).toLowerCase();
-  return commands.filter(command => command.name.startsWith(query));
+  if (!normalized.startsWith('/')) return [];
+  const query = normalized.slice(1).split(/\s+/, 1)[0].toLowerCase();
+  if (query.length > MAX_SLASH_TRIGGER_LENGTH) return [];
+  return commands.filter(command => {
+    if (command.name.startsWith(query)) return true;
+    return (command.aliases || []).some(alias => alias.toLowerCase().startsWith(query));
+  });
 }
 
 export function resolveSlashSubmitSelection({
@@ -70,7 +75,11 @@ export function resolveSlashSubmitSelection({
   const matches = getSlashMatches(text, commands);
   if (matches.length === 0) return null;
   if (dismissedText === text.trim()) return null;
-  return matches[selectedIndex] || matches[0] || null;
+  const selected = matches[selectedIndex] || matches[0] || null;
+  if (!selected) return null;
+  const hasArgs = /\s/.test(text.trim().slice(1));
+  if (hasArgs && selected.type !== 'server-command') return null;
+  return selected;
 }
 
 // ── Command Executors ──
@@ -163,17 +172,20 @@ export function executeSlashViaWs(
   setBusy: (name: string | null) => void,
   setInput: (text: string) => void,
   setMenuOpen: (open: boolean) => void,
-): () => Promise<void> {
-  return async () => {
+): (inputText?: string) => Promise<void> {
+  return async (inputText?: string) => {
     setBusy(cmd);
     setInput('');
     setMenuOpen(false);
+    const rawText = typeof inputText === 'string' && inputText.trim().startsWith('/')
+      ? inputText.trim()
+      : `/${cmd}`;
     try {
       const ws = getWebSocket();
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'slash',
-          text: '/' + cmd,
+          text: rawText,
           sessionPath: useStore.getState().currentSessionPath,
         }));
       }

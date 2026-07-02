@@ -102,6 +102,38 @@ describe("desktop main GPU startup contract", () => {
     }
   });
 
+  it("records Windows window-starting phases before BrowserWindow creation can fail", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+    const mainStartingIndex = source.indexOf('phase: "main-window-starting"');
+    const mainCreateIndex = source.indexOf("createMainWindow();");
+    const mainCreatedIndex = source.indexOf('phase: "main-window-created"');
+    const onboardingStartingIndex = source.indexOf('phase: "onboarding-window-starting"');
+    const onboardingCreateIndex = source.indexOf('createOnboardingWindow({ skipToTutorial: "1" });');
+    const onboardingCreatedIndex = source.indexOf('phase: "onboarding-window-created"');
+
+    expect(mainStartingIndex).toBeGreaterThan(-1);
+    expect(mainCreateIndex).toBeGreaterThan(-1);
+    expect(mainCreatedIndex).toBeGreaterThan(-1);
+    expect(mainStartingIndex).toBeLessThan(mainCreateIndex);
+    expect(mainCreateIndex).toBeLessThan(mainCreatedIndex);
+    expect(onboardingStartingIndex).toBeGreaterThan(-1);
+    expect(onboardingCreateIndex).toBeGreaterThan(-1);
+    expect(onboardingCreatedIndex).toBeGreaterThan(-1);
+    expect(onboardingStartingIndex).toBeLessThan(onboardingCreateIndex);
+    expect(onboardingCreateIndex).toBeLessThan(onboardingCreatedIndex);
+  });
+
+  it("creates the main BrowserWindow through the Windows diagnostic wrapper", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+    const helperIndex = source.indexOf("function createBrowserWindowWithDiagnostics");
+    const mainCreateIndex = source.indexOf('createBrowserWindowWithDiagnostics("main", opts, { windowsMinimalRetry: true })');
+    const directCreateIndex = source.indexOf("mainWindow = new BrowserWindow(opts)");
+
+    expect(helperIndex).toBeGreaterThan(-1);
+    expect(mainCreateIndex).toBeGreaterThan(helperIndex);
+    expect(directCreateIndex).toBe(-1);
+  });
+
   it("listens for GPU child process exits instead of deprecated GPU crash hooks", () => {
     const source = fs.readFileSync(MAIN_PATH, "utf-8");
 

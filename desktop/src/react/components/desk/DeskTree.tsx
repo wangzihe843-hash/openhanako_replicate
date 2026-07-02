@@ -20,9 +20,13 @@ import {
   loadDeskTreeFiles,
 } from '../../stores/desk-actions';
 import { schedulePersistCurrentWorkspaceUiState } from '../../stores/workspace-ui-state-actions';
-import { openFilePreview } from '../../utils/file-preview';
 import { isMarkdownFileName } from '../../utils/file-kind';
-import { isWebRuntime, openMobileWorkbenchPreview } from '../../utils/remote-file-preview';
+import {
+  canUseNativeResourcePath,
+  resolveWorkbenchNativePath,
+} from '../../services/resource-access';
+import { resolveServerConnection } from '../../services/server-connection';
+import { isWebRuntime, openWorkbenchFilePreview } from '../../utils/remote-file-preview';
 import { takeMarkdownFileScreenshot } from '../../utils/screenshot';
 import {
   clearAppFileDragPayload,
@@ -43,9 +47,12 @@ function parentSubdir(path: string): string {
   return idx >= 0 ? path.slice(0, idx) : '';
 }
 
-function fullPath(basePath: string, subdir: string): string {
-  if (!basePath) return subdir;
-  return subdir ? `${basePath}/${subdir}` : basePath;
+function currentResourceAccessContext() {
+  return { connection: resolveServerConnection(useStore.getState()) };
+}
+
+function shouldUseBrowserDeskUpload(): boolean {
+  return isWebRuntime() || !canUseNativeResourcePath(currentResourceAccessContext());
 }
 
 function isDescendant(path: string, parent: string): boolean {
@@ -365,21 +372,24 @@ function TreeNode({
 
   const previewFile = useCallback(() => {
     if (file.isDir) return;
-    const mountId = deskWorkspaceMountId || (isWebRuntime() ? 'default' : null);
-    if (mountId) {
-      void openMobileWorkbenchPreview({ file, subdir: parent, mountId });
-      return;
-    }
-    const path = fullPath(deskBasePath, subdir);
-    const ext = file.name.split('.').pop()?.toLowerCase() || '';
-    openFilePreview(path, file.name, ext, { origin: 'desk', sourceRootPath: deskBasePath });
-  }, [deskBasePath, deskWorkspaceMountId, file, parent, subdir]);
+    void openWorkbenchFilePreview({
+      file,
+      subdir: parent,
+      mountId: deskWorkspaceMountId || null,
+      localRootPath: deskBasePath,
+      nativeRootPath: nativeRootDir,
+    });
+  }, [deskBasePath, deskWorkspaceMountId, file, nativeRootDir, parent]);
 
   const handleClick = useCallback((event: React.MouseEvent) => {
     const multi = event.metaKey || event.ctrlKey;
     onSelect(subdir, { multi, shift: event.shiftKey });
     if (file.isDir && !multi && !event.shiftKey) toggleFolder();
-    if (!file.isDir && (isWebRuntime() || deskWorkspaceMountId) && !multi && !event.shiftKey) previewFile();
+    const shouldPreviewOnClick = !file.isDir
+      && !multi
+      && !event.shiftKey
+      && (isWebRuntime() || !!deskWorkspaceMountId || !canUseNativeResourcePath(currentResourceAccessContext()));
+    if (shouldPreviewOnClick) previewFile();
   }, [deskWorkspaceMountId, file.isDir, onSelect, previewFile, subdir, toggleFolder]);
 
   const openFile = useCallback(() => {
@@ -396,8 +406,16 @@ function TreeNode({
     e.stopPropagation();
     const t = window.t ?? ((p: string, _vars?: Record<string, string | number>) => p);
     if (!selectedPaths.has(subdir)) onSelect(subdir, { multi: false, shift: false });
-    const path = fullPath(nativeRootDir || deskBasePath, subdir);
-    const screenshotSaveDir = nativeRootDir || (!deskWorkspaceMountId ? deskBasePath : null);
+    const resourceContext = currentResourceAccessContext();
+    const canUseNativePath = canUseNativeResourcePath(resourceContext);
+    const nativePath = resolveWorkbenchNativePath({
+      file,
+      subdir: parent,
+      mountId: deskWorkspaceMountId || null,
+      localRootPath: deskBasePath,
+      nativeRootPath: nativeRootDir,
+    }, resourceContext);
+    const screenshotSaveDir = nativePath ? (nativeRootDir || (!deskWorkspaceMountId ? deskBasePath : null)) : null;
     const actionEntries = getDragEntries(subdir);
     const deleteLabel = actionEntries.length > 1
       ? t('desk.ctx.deleteSelected', { count: actionEntries.length })
@@ -417,8 +435,8 @@ function TreeNode({
               if (hasCachedChildren) scheduleBackgroundTreeRefresh(subdir, rootKey);
               else void loadDeskTreeFiles(subdir);
             } else {
-              if (isWebRuntime() || !nativeRootDir) previewFile();
-              else window.platform?.openFile?.(path);
+              if (nativePath && !isWebRuntime()) window.platform?.openFile?.(nativePath);
+              else previewFile();
             }
           },
         },
@@ -426,17 +444,17 @@ function TreeNode({
           { label: t('desk.ctx.newMdFile'), action: () => { void onStartCreate(subdir, 'markdown'); } },
           { label: t('desk.ctx.newFolder'), action: () => { void onStartCreate(subdir, 'folder'); } },
         ] : []),
-        ...(!isWebRuntime() && nativeRootDir ? [
-          { label: t('desk.ctx.openInFinder'), action: () => window.platform?.showInFinder?.(path) },
+        ...(!isWebRuntime() && nativePath ? [
+          { label: t('desk.ctx.openInFinder'), action: () => window.platform?.showInFinder?.(nativePath) },
         ] : []),
-        ...(nativeRootDir ? [
-          { label: t('desk.ctx.copyPath'), action: () => navigator.clipboard.writeText(path).catch(() => {}) },
+        ...(nativePath ? [
+          { label: t('desk.ctx.copyPath'), action: () => navigator.clipboard.writeText(nativePath).catch(() => {}) },
         ] : []),
-        ...(!file.isDir && screenshotSaveDir && isMarkdownFileName(file.name) && !isWebRuntime() ? [
+        ...(!file.isDir && nativePath && screenshotSaveDir && isMarkdownFileName(file.name) && !isWebRuntime() ? [
           {
             label: t('common.screenshotShare'),
             action: () => {
-              void takeMarkdownFileScreenshot(path, { saveDir: screenshotSaveDir, fileName: file.name });
+              void takeMarkdownFileScreenshot(nativePath, { saveDir: screenshotSaveDir, fileName: file.name });
             },
           },
         ] : []),
@@ -449,7 +467,7 @@ function TreeNode({
         {
           label: deleteLabel,
           danger: true,
-          disabled: actionEntries.length === 0 || (!isWebRuntime() && !deskWorkspaceMountId && !window.platform?.trashItem),
+          disabled: actionEntries.length === 0 || (canUseNativePath && !isWebRuntime() && !deskWorkspaceMountId && !window.platform?.trashItem),
           action: async () => {
             const confirmed = window.confirm?.(
               actionEntries.length > 1
@@ -467,7 +485,7 @@ function TreeNode({
         },
       ],
     });
-  }, [deskBasePath, deskWorkspaceMountId, expandedPaths, file.isDir, file.name, getDragEntries, nativeRootDir, onBeginRename, onSelect, onShowMenu, onStartCreate, previewFile, selectedPaths, setDeskExpandedPaths, subdir, treeFilesByPath]);
+  }, [deskBasePath, deskWorkspaceMountId, expandedPaths, file, getDragEntries, nativeRootDir, onBeginRename, onSelect, onShowMenu, onStartCreate, parent, previewFile, selectedPaths, setDeskExpandedPaths, subdir, treeFilesByPath]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (event.key !== 'Enter' || isRenaming || inlineEdit) return;
@@ -484,24 +502,38 @@ function TreeNode({
     // native root 可用时（普通文件夹 / 披露了 native root 的 local_fs mount）
     // 携带真实绝对路径并发起原生拖拽；只有拿不到 native 路径的 mount 才退回
     // workbench 引用（#1622）。
-    const draggedFiles = dragEntries.map(entry => ({
-      id: `workspace:${entry.subdir}`,
-      name: entry.file.name,
-      path: deskWorkspaceMountId && !nativeRootDir
-        ? `workbench:${deskWorkspaceMountId}:${entry.subdir}`
-        : fullPath(nativeRootDir || deskBasePath, entry.subdir),
-      sourceSubdir: entry.parent,
-      isDirectory: entry.file.isDir,
-    }));
-    if (draggedFiles.length === 0) return;
+    const resourceContext = currentResourceAccessContext();
+    const dragRows = dragEntries.map(entry => {
+      const nativePath = resolveWorkbenchNativePath({
+        file: entry.file,
+        subdir: entry.parent,
+        mountId: deskWorkspaceMountId || null,
+        localRootPath: deskBasePath,
+        nativeRootPath: nativeRootDir,
+      }, resourceContext);
+      return {
+        nativePath,
+        payload: {
+          id: `workspace:${entry.subdir}`,
+          name: entry.file.name,
+          path: nativePath || `workbench:${deskWorkspaceMountId || 'default'}:${entry.subdir}`,
+          sourceSubdir: entry.parent,
+          isDirectory: entry.file.isDir,
+        },
+      };
+    });
+    if (dragRows.length === 0) return;
+    const draggedFiles = dragRows.map(row => row.payload);
     const payload = writeAppFileDragPayload(e.dataTransfer, {
       source: 'workspace',
       files: draggedFiles,
     });
     e.currentTarget.addEventListener('dragend', () => clearAppFileDragPayload(payload.dragId), { once: true });
     e.preventDefault();
-    const paths = draggedFiles.map(item => item.path);
-    if (!deskWorkspaceMountId || nativeRootDir) window.platform?.startDrag?.(paths.length === 1 ? paths[0] : paths);
+    const nativePaths = dragRows.map(row => row.nativePath).filter((path): path is string => !!path);
+    if (nativePaths.length === dragRows.length && nativePaths.length > 0) {
+      window.platform?.startDrag?.(nativePaths.length === 1 ? nativePaths[0] : nativePaths);
+    }
   }, [deskBasePath, deskWorkspaceMountId, getDragEntries, nativeRootDir, onSelect, selectedPaths, subdir]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -538,7 +570,7 @@ function TreeNode({
 
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
-      if (isWebRuntime() || deskWorkspaceMountId) {
+      if (shouldUseBrowserDeskUpload() || deskWorkspaceMountId) {
         await deskUploadBrowserFilesToSubdir(Array.from(files), subdir);
         setDropTarget(false);
         return;

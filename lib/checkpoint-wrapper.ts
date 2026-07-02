@@ -5,8 +5,8 @@ export function wrapWithCheckpoint(tools, { store, maxFileSizeKb, cwd, getSessio
     if (tool.name === "write" || tool.name === "edit") {
       return wrapPathTool(tool, store, maxFileSizeKb, cwd, getSessionPath);
     }
-    if (tool.name === "bash") {
-      return wrapBashTool(tool, store, maxFileSizeKb, cwd, getSessionPath);
+    if (tool.name === "bash" || tool.name === "exec_command") {
+      return wrapCommandTool(tool, store, maxFileSizeKb, cwd, getSessionPath);
     }
     return tool;
   });
@@ -44,11 +44,17 @@ function wrapPathTool(tool, store, maxFileSizeKb, cwd, getSessionPath) {
 const RM_PATTERN = /\brm\s+(?:-[^\s]*\s+)*([^\s|;&]+)/;
 const MV_PATTERN = /\bmv\s+(?:-[^\s]*\s+)*([^\s|;&]+)\s+[^\s|;&]+/;
 
-function wrapBashTool(tool, store, maxFileSizeKb, cwd, getSessionPath) {
+function commandFromParams(params) {
+  if (typeof params?.command === "string") return params.command;
+  if (typeof params?.cmd === "string") return params.cmd;
+  return "";
+}
+
+function wrapCommandTool(tool, store, maxFileSizeKb, cwd, getSessionPath) {
   return {
     ...tool,
     execute: async (toolCallId, params, ...rest) => {
-      const cmd = params.command || "";
+      const cmd = commandFromParams(params);
 
       let match;
       if ((match = RM_PATTERN.exec(cmd))) {
@@ -57,9 +63,9 @@ function wrapBashTool(tool, store, maxFileSizeKb, cwd, getSessionPath) {
           try {
             await store.save({
               sessionPath: getSessionPath(),
-              tool: "bash:rm",
+              tool: `${tool.name}:rm`,
               source: "llm",
-              reason: "tool-bash-rm",
+              reason: `tool-${tool.name}-rm`,
               filePath,
               maxSizeKb: maxFileSizeKb,
             });
@@ -71,9 +77,9 @@ function wrapBashTool(tool, store, maxFileSizeKb, cwd, getSessionPath) {
           try {
             await store.save({
               sessionPath: getSessionPath(),
-              tool: "bash:mv",
+              tool: `${tool.name}:mv`,
               source: "llm",
-              reason: "tool-bash-mv",
+              reason: `tool-${tool.name}-mv`,
               filePath,
               maxSizeKb: maxFileSizeKb,
             });

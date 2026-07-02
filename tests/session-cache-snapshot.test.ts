@@ -38,7 +38,7 @@ describe("session cache snapshot", () => {
       model: runtimeModel,
       cacheKeyParams: { thinkingLevel: "high", toolChoice: "auto" },
       systemPrompt: "stable system",
-      tools: [tool("read"), tool("bash")],
+      tools: [tool("read"), tool("exec_command")],
       messages: [
         {
           role: "user",
@@ -59,7 +59,7 @@ describe("session cache snapshot", () => {
       reason: "compaction",
       model,
       cacheKeyParams: { thinkingLevel: "high", toolChoice: "auto" },
-      toolNames: ["read", "bash"],
+      toolNames: ["read", "exec_command"],
       strict: true,
     });
     expect(snapshot.requestModel).toEqual(runtimeModel);

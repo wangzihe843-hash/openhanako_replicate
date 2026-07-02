@@ -361,6 +361,7 @@ describe("memory-ticker getHealthStatus", () => {
         failCount: 0,
       });
     }
+    expect(h).not.toHaveProperty("cacheSnapshotReflection");
   });
 
   it("records lastSuccessAt for each step after a successful tick", async () => {

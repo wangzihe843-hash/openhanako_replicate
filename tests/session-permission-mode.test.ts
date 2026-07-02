@@ -25,7 +25,27 @@ describe("session permission modes", () => {
     });
     expect(classifySessionPermission({ mode: "auto", toolName: "write" })).toEqual({ action: "allow" });
     expect(classifySessionPermission({ mode: "auto", toolName: "bash" })).toEqual({ action: "allow" });
+    expect(classifySessionPermission({ mode: "auto", toolName: "exec_command", params: { cmd: "npm test" } })).toEqual({ action: "allow" });
     expect(classifySessionPermission({ mode: "operate", toolName: "write" })).toEqual({ action: "allow" });
+  });
+
+  it("treats exec_command one-shot like bash but protects interactive stdin", () => {
+    expect(classifySessionPermission({ mode: "read_only", toolName: "exec_command", params: { cmd: "npm test" } })).toMatchObject({
+      action: "deny",
+      code: "ACTION_BLOCKED_BY_READ_ONLY",
+    });
+    expect(classifySessionPermission({ mode: "ask", toolName: "exec_command", params: { cmd: "npm test" } })).toMatchObject({
+      action: "prompt",
+      kind: "tool_action_approval",
+    });
+    expect(classifySessionPermission({ mode: "auto", toolName: "exec_command", params: { cmd: "npm run dev", tty: true } })).toMatchObject({
+      action: "review",
+      kind: "tool_action_approval",
+    });
+    expect(classifySessionPermission({ mode: "auto", toolName: "write_stdin", params: { process_id: "term_1", chars: "q" } })).toMatchObject({
+      action: "review",
+      kind: "tool_action_approval",
+    });
   });
 
   it("treats browser information gathering separately from page actions", () => {
@@ -71,15 +91,16 @@ describe("session permission modes", () => {
   });
 
   it("auto mode reviews only unsandboxed or long-lived boundary changes", () => {
-    for (const toolName of ["write", "edit", "bash", "file", "todo_write", "subagent", "workflow"]) {
+    for (const toolName of ["write", "edit", "bash", "exec_command", "file", "todo_write", "subagent", "workflow"]) {
       expect(classifySessionPermission({ mode: "auto", toolName, params: { action: "copy" } }), toolName)
         .toEqual({ action: "allow" });
     }
     const reviewerBoundParams = {
       browser: { action: "click" },
       terminal: { action: "start" },
+      write_stdin: { process_id: "term_1" },
     };
-    for (const toolName of ["browser", "terminal", "install_skill", "update_settings", "dm", "channel", "notify", "present_files", "stage_files", "pin_memory", "unpin_memory", "record_experience", "automation"]) {
+    for (const toolName of ["browser", "terminal", "write_stdin", "install_skill", "update_settings", "dm", "channel", "notify", "present_files", "stage_files", "pin_memory", "unpin_memory", "record_experience", "automation"]) {
       expect(classifySessionPermission({ mode: "auto", toolName, params: reviewerBoundParams[toolName] || { action: "start" } }), toolName)
         .toMatchObject({ action: "review", kind: "tool_action_approval" });
     }

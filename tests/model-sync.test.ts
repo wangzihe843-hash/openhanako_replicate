@@ -1242,6 +1242,48 @@ describe("syncModels", () => {
     expect(model.maxTokens).toBe(4096);
   });
 
+  it("projects discovered custom provider model metadata without falling back to default context", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      "custom-vllm": {
+        base_url: "http://127.0.0.1:8000/v1",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: [
+          {
+            id: "custom-vllm-chat",
+            name: "Custom vLLM Chat",
+            context: 32768,
+            maxOutput: 4096,
+            image: true,
+            video: true,
+            audio: true,
+            reasoning: true,
+          },
+        ],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    const model = result.providers["custom-vllm"].models[0];
+    expect(model).toMatchObject({
+      id: "custom-vllm-chat",
+      name: "Custom vLLM Chat",
+      contextWindow: 32768,
+      maxTokens: 4096,
+      input: ["text", "image"],
+      reasoning: true,
+      compat: {
+        hanaVideoInput: true,
+        hanaAudioInput: true,
+      },
+    });
+    expect(model.contextWindow).not.toBe(128000);
+  });
+
   it("uses atomic write (tmp + rename)", async () => {
     const syncModels = await loadSync();
 

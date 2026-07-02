@@ -2,6 +2,7 @@
  * @vitest-environment jsdom
  */
 import '@testing-library/jest-dom/vitest';
+import { EditorView } from '@codemirror/view';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -57,9 +58,26 @@ function putWorkspaceImageOnDrag(dataTransfer: DataTransfer) {
   });
 }
 
+function elementRect(width = 960, height = 640): DOMRect {
+  return {
+    x: 0,
+    y: 0,
+    width,
+    height,
+    top: 0,
+    right: width,
+    bottom: height,
+    left: 0,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
 describe('PreviewEditor markdown cover drop', () => {
+  let elementRectSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     window.t = ((key: string) => key) as typeof window.t;
+    elementRectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => elementRect());
     Range.prototype.getClientRects = vi.fn(() => [] as unknown as DOMRectList);
     Range.prototype.getBoundingClientRect = vi.fn(() => ({
       x: 0,
@@ -86,6 +104,7 @@ describe('PreviewEditor markdown cover drop', () => {
       onFileChanged: vi.fn(),
     } as unknown as PlatformApi;
     mocks.hanaFetch.mockReset();
+    mocks.refreshPreviewDocumentTarget.mockClear();
     mocks.hanaFetch.mockResolvedValue(new Response(JSON.stringify({
       ok: true,
       cover: { image: '文本附件/demo-cover.png' },
@@ -98,6 +117,7 @@ describe('PreviewEditor markdown cover drop', () => {
   afterEach(() => {
     clearAppFileDragPayload();
     cleanup();
+    elementRectSpy.mockRestore();
   });
 
   it('replaces an existing editor cover when a workspace image is dropped on it', async () => {
@@ -140,7 +160,43 @@ describe('PreviewEditor markdown cover drop', () => {
         }),
       }));
     });
+    await waitFor(() => {
+      expect(mocks.refreshPreviewDocumentTarget).toHaveBeenCalledWith({
+        kind: 'local-file',
+        filePath: '/tmp/workspace/demo.md',
+      });
+    });
     expect(ref.current?.getView()?.state.doc.toString()).toBe(content);
+  });
+
+  it('keeps CodeMirror root on the detached editor document without forcing setRoot', () => {
+    const setRoot = vi.spyOn(EditorView.prototype, 'setRoot');
+    const ref = createRef<PreviewEditorHandle>();
+    const childDocument = document.implementation.createHTMLDocument('detached-editor');
+    const childWindow = Object.create(window) as Window;
+    Object.defineProperty(childWindow, 'document', {
+      configurable: true,
+      value: childDocument,
+    });
+    Object.defineProperty(childDocument, 'defaultView', {
+      configurable: true,
+      value: childWindow,
+    });
+
+    render(
+      <PreviewEditor
+        ref={ref}
+        content="# Detached editor"
+        filePath="/tmp/workspace/detached.md"
+        mode="markdown"
+        saveDocument={async () => ({ ok: true, conflict: false, version: null })}
+      />,
+      { container: childDocument.body, baseElement: childDocument.body },
+    );
+
+    expect(ref.current?.getView()?.root).toBe(childDocument);
+    expect(setRoot).not.toHaveBeenCalled();
+    setRoot.mockRestore();
   });
 
   it('keeps regular body image drops on the markdown attachment path', async () => {
@@ -213,6 +269,12 @@ describe('PreviewEditor markdown cover drop', () => {
           agentId: undefined,
         }),
       }));
+    });
+    await waitFor(() => {
+      expect(mocks.refreshPreviewDocumentTarget).toHaveBeenCalledWith({
+        kind: 'local-file',
+        filePath: '/tmp/workspace/demo.md',
+      });
     });
     expect(ref.current?.getView()?.state.doc.toString()).toBe(content);
   });

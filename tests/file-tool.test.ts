@@ -221,4 +221,28 @@ describe("file tool", () => {
     expect(result.content[0].text).toMatch(/copy source is outside allowed roots/i);
     expect(fs.existsSync(path.join(workspace, "assets", "cover.png"))).toBe(false);
   });
+
+  it("allows file.copy to use live authorized session folders outside cwd", async () => {
+    const { workspace, sessionPath } = makeTree();
+    const authorized = path.join(tmpDir!, "authorized-assets");
+    const source = path.join(authorized, "cover.png");
+    const targetDir = path.join(authorized, "exports");
+    fs.mkdirSync(authorized, { recursive: true });
+    fs.writeFileSync(source, "png");
+    const tool = createFileTool({
+      getCwd: () => workspace,
+      getSessionPath: () => sessionPath,
+      getAuthorizedFolders: vi.fn(() => [authorized]),
+    });
+
+    const result = await tool.execute("file-1", {
+      action: "copy",
+      path: source,
+      targetDir,
+      filename: "copied.png",
+    });
+
+    expect(result.content[0].text).toContain("copied.png");
+    expect(fs.readFileSync(path.join(targetDir, "copied.png"), "utf8")).toBe("png");
+  });
 });

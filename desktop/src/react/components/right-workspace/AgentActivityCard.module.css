@@ -3,7 +3,7 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-8) var(--space-16);
     gap: 6px;
     transition: gap 0.25s var(--ease-out);
 }
@@ -29,13 +29,13 @@
     flex: 1;
     text-align: left;
     font-family: "Songti SC", "Noto Serif CJK SC", serif;
-    font-size: 0.9rem;
+    font-size: var(--fs-body);
     font-weight: 600;
     color: var(--accent);
 }
 
 .count {
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
 }
 
@@ -112,7 +112,7 @@
 }
 
 .name {
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text);
     white-space: nowrap;
     overflow: hidden;
@@ -122,7 +122,7 @@
 /* 复用实例后缀（如 ·探索）：与名字同色同号、紧贴，读作名字的延长后缀（非独立灰块） */
 .instance {
     flex-shrink: 0;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text);
     margin-left: 1px;
     white-space: nowrap;
@@ -130,7 +130,7 @@
 
 .summary {
     min-width: 0;
-    font-size: 0.74rem;
+    font-size: var(--fs-caption);
     color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
@@ -151,7 +151,7 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 6px 7px 7px;
-    font-size: 0.74rem;
+    font-size: var(--fs-caption);
 }
 
 .scroll :global(.message) {

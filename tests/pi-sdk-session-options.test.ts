@@ -22,7 +22,7 @@ function makeAgentTool(name) {
 
 describe("Pi SDK session option normalization", () => {
   it("exposes stable Hana built-in tool names without SDK prebuilt objects", () => {
-    expect(PI_BUILTIN_TOOL_NAMES).toEqual(["read", "write", "edit", "bash", "grep", "find", "ls"]);
+    expect(PI_BUILTIN_TOOL_NAMES).toEqual(["read", "write", "edit", "exec_command", "write_stdin", "grep", "find", "ls"]);
     expect(Object.isFrozen(PI_BUILTIN_TOOL_NAMES)).toBe(true);
   });
 
@@ -79,7 +79,7 @@ describe("Pi SDK session option normalization", () => {
 
   it("normalizes Hana Tool[] plus customTools into Pi 0.68+ name allowlist and SDK custom tools", () => {
     const read = makeAgentTool("read");
-    const bash = makeAgentTool("bash");
+    const execCommand = makeAgentTool("exec_command");
     const custom = {
       name: "web_search",
       description: "search",
@@ -89,16 +89,37 @@ describe("Pi SDK session option normalization", () => {
 
     const normalized = normalizeCreateAgentSessionOptions({
       cwd: "/tmp/project",
-      tools: [read, bash],
+      tools: [read, execCommand],
       customTools: [custom],
       model: { id: "m" },
     }, "0.70.2");
 
-    expect(normalized.tools).toEqual(["read", "bash", "web_search"]);
-    expect(normalized.customTools.map(t => t.name)).toEqual(["read", "bash", "web_search"]);
+    expect(normalized.tools).toEqual(["read", "exec_command", "web_search"]);
+    expect(normalized.customTools.map(t => t.name)).toEqual(["read", "exec_command", "web_search"]);
     expect(normalized.customTools[0]).not.toBe(read);
     expect(normalized.customTools[2]).not.toBe(custom);
     expect(normalized.model).toEqual({ id: "m" });
+  });
+
+  it("keeps MCP custom tool definitions in the Pi SDK name allowlist", () => {
+    const read = makeAgentTool("read");
+    const mcpTool = {
+      name: "mcp_github_search",
+      description: "Search GitHub through MCP",
+      parameters: { type: "object", properties: { query: { type: "string" } } },
+      invocationStyle: "pi_tool",
+      execute: vi.fn(),
+    };
+
+    const normalized = normalizeCreateAgentSessionOptions({
+      tools: [read],
+      customTools: [mcpTool],
+    }, "0.70.2");
+
+    expect(normalized.tools).toEqual(["read", "mcp_github_search"]);
+    expect(normalized.customTools.map(t => t.name)).toEqual(["read", "mcp_github_search"]);
+    expect(normalized.customTools[1]).not.toBe(mcpTool);
+    expect(normalized.customTools[1].parameters).toEqual(mcpTool.parameters);
   });
 
   it("keeps empty tools empty for explicit no-tools sessions", () => {
@@ -112,9 +133,9 @@ describe("Pi SDK session option normalization", () => {
   });
 
   it("deduplicates active names while preserving first occurrence order", () => {
-    expect(uniqueToolNames(["read", "bash", "read", "", null, "web_search"])).toEqual([
+    expect(uniqueToolNames(["read", "exec_command", "read", "", null, "web_search"])).toEqual([
       "read",
-      "bash",
+      "exec_command",
       "web_search",
     ]);
   });

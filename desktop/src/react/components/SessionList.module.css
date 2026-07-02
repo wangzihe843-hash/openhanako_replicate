@@ -5,7 +5,7 @@
 .sessionList {
     flex: 1;
     overflow-y: auto;
-    padding: 0 var(--space-sm);
+    padding: 0 var(--space-8);
     -webkit-app-region: no-drag;
 }
 
@@ -24,7 +24,7 @@
     align-items: center;
     gap: 8px;
     height: 30px;
-    margin: 15px var(--space-sm) 6px;
+    margin: 15px var(--space-8) 6px;
     padding: 0 8px;
     background: color-mix(in srgb, var(--sidebar-bg, var(--bg)) 97%, var(--text) 3%);
     border: none;
@@ -37,7 +37,7 @@
     position: absolute;
     left: 50%;
     top: -10px;
-    width: 184px;
+    width: 72%;
     height: 1px;
     transform: translateX(-50%);
     background: color-mix(in srgb, var(--text-muted) 18%, transparent);
@@ -59,7 +59,7 @@
     background: transparent;
     color: var(--text);
     font-family: inherit;
-    font-size: 0.76rem;
+    font-size: var(--fs-caption);
     line-height: 24px;
 }
 
@@ -100,11 +100,11 @@
 }
 
 .sessionSearchSectionTitle {
-    font-size: 0.65rem;
+    font-size: var(--fs-hint);
     font-weight: 600;
     color: var(--text-muted);
     letter-spacing: 0;
-    padding: var(--space-sm) var(--space-sm) 2px;
+    padding: var(--space-8) var(--space-8) 2px;
     opacity: 0.72;
     user-select: none;
 }
@@ -112,7 +112,7 @@
 .sessionSearchItem {
     display: flex;
     flex-direction: column;
-    padding: 6px var(--space-sm);
+    padding: 6px var(--space-8);
     margin-bottom: 1px;
     border-radius: var(--radius-sm);
     cursor: default;
@@ -144,7 +144,7 @@
 .sessionSearchSnippet {
     margin-top: 4px;
     color: var(--text-muted);
-    font-size: 0.68rem;
+    font-size: var(--fs-hint);
     line-height: 1.45;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -154,16 +154,16 @@
 
 .sessionSearchStatus,
 .sessionSearchEmpty {
-    padding: 10px var(--space-sm);
+    padding: 10px var(--space-8);
     color: var(--text-muted);
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     line-height: 1.5;
 }
 
 .sessionItem {
     display: flex;
     flex-direction: column;
-    padding: 6px var(--space-sm);
+    padding: 6px var(--space-8);
     margin-bottom: 1px;
     border-radius: var(--radius-sm);
     cursor: default;
@@ -206,8 +206,12 @@
     background: var(--accent-light);
 }
 
+.sessionItemPending {
+    box-shadow: inset 2px 0 0 rgba(var(--accent-rgb), 0.38);
+}
+
 .sessionItemTitle {
-    font-size: 0.8rem;
+    font-size: var(--fs-ui);
     color: var(--text);
     line-height: 1.4;
     overflow: hidden;
@@ -221,8 +225,12 @@
     font-weight: 600;
 }
 
+.sessionItemPending .sessionItemTitle {
+    opacity: 0.9;
+}
+
 .sessionItemMeta {
-    font-size: 0.66rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     margin-top: 1px;
     opacity: 0.8;
@@ -247,7 +255,7 @@
     border-radius: 999px;
     background: rgba(var(--accent-rgb), 0.12);
     color: var(--accent);
-    font-size: 0.65rem;
+    font-size: var(--fs-hint);
     line-height: 1.2;
     font-weight: 600;
     max-width: calc(100% - 28px);
@@ -266,7 +274,7 @@
     border-radius: 999px;
     background: rgba(var(--accent-rgb), 0.12);
     color: var(--accent);
-    font-size: 0.65rem;
+    font-size: var(--fs-hint);
     line-height: 1.2;
     font-weight: 600;
     white-space: nowrap;
@@ -280,7 +288,7 @@
     align-items: center;
     justify-content: flex-end;
     flex-shrink: 0;
-    gap: var(--space-xs);
+    gap: var(--space-4);
     z-index: 1;
 }
 
@@ -332,7 +340,7 @@
     }
 
     .sessionItemSingleLine:hover .sessionItemActions {
-        width: calc(40px + var(--space-xs));
+        width: calc(40px + var(--space-4));
         opacity: 1;
         pointer-events: auto;
     }
@@ -358,7 +366,7 @@
 }
 
 .sessionItemSingleLine:focus-within .sessionItemActions {
-    width: calc(40px + var(--space-xs));
+    width: calc(40px + var(--space-4));
     opacity: 1;
     pointer-events: auto;
 }
@@ -371,7 +379,7 @@
 
 /* 重命名输入框 */
 .sessionRenameInput {
-    font-size: 0.8rem;
+    font-size: var(--fs-ui);
     color: var(--accent);
     line-height: 1.4;
     background: var(--accent-light);
@@ -386,11 +394,11 @@
 
 :global(.mobile-desktop-root) .sessionItemTitle,
 :global(.mobile-desktop-root) .sessionRenameInput {
-    font-size: 0.9rem;
+    font-size: var(--fs-body);
 }
 
 :global(.mobile-desktop-root) .sessionItemMeta {
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
 }
 
 .sessionItemReadOnly .sessionItemTitle {
@@ -413,6 +421,11 @@
 
 .sessionStreamingDot[data-state="running"] {
     animation: hana-pulse 2s ease-in-out infinite;
+}
+
+.sessionStreamingDot[data-state="pending"] {
+    opacity: 0.78;
+    animation: hana-pulse 1.2s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -495,7 +508,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: flex-end;
-    gap: var(--space-sm);
+    gap: var(--space-8);
     min-width: max-content;
     flex-shrink: 0;
 }
@@ -505,13 +518,13 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-sm);
+    gap: var(--space-8);
     min-height: 28px;
-    font-size: 0.82rem;
+    font-size: var(--fs-ui);
     font-weight: 600;
     color: var(--text-muted);
     letter-spacing: 0;
-    padding: var(--space-sm) var(--space-sm) 3px;
+    padding: var(--space-8) var(--space-8) 3px;
     opacity: 0.72;
     user-select: none;
 }
@@ -520,13 +533,13 @@
     display: inline-flex;
     align-items: center;
     min-width: 0;
-    gap: var(--space-xs);
+    gap: var(--space-4);
 }
 
 .sectionTitleActions {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: var(--space-4);
     flex-shrink: 0;
     opacity: 0;
     transition: opacity var(--duration-fast);
@@ -566,7 +579,7 @@
 }
 
 .sessionSectionTitle:first-child {
-    padding-top: var(--space-xs);
+    padding-top: var(--space-4);
 }
 
 .pinnedSection {
@@ -575,7 +588,7 @@
 }
 
 .pinnedSection .sessionSectionTitle {
-    padding: var(--space-xs) var(--space-sm) 2px;
+    padding: var(--space-4) var(--space-8) 2px;
 }
 
 .pinnedSectionTitle {
@@ -594,12 +607,12 @@
 .projectRow {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
+    gap: var(--space-8);
     min-height: 31px;
-    padding: 4px var(--space-sm);
+    padding: 4px var(--space-8);
     border-radius: var(--radius-sm);
     color: var(--text-muted);
-    font-size: 0.82rem;
+    font-size: var(--fs-ui);
     line-height: 1.35;
     cursor: default;
     transition: background var(--duration-fast), color var(--duration-fast);
@@ -695,13 +708,13 @@
     align-items: center;
     width: 100%;
     min-height: 30px;
-    padding: 4px var(--space-sm);
+    padding: 4px var(--space-8);
     border: none;
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-muted);
     font: inherit;
-    font-size: 0.82rem;
+    font-size: var(--fs-ui);
     line-height: 1.35;
     text-align: left;
     cursor: default;
@@ -730,7 +743,7 @@
 
 .projectNameDialog {
     width: min(280px, calc(100vw - 32px));
-    padding: 12px;
+    padding: var(--space-12);
     border: 1px solid var(--overlay-light);
     border-radius: var(--radius-sm);
     background: var(--bg-card, var(--bg));
@@ -740,7 +753,7 @@
 .projectNameDialogTitle {
     margin-bottom: 8px;
     color: var(--text-secondary);
-    font-size: 0.75rem;
+    font-size: var(--fs-caption);
     font-weight: 600;
 }
 
@@ -753,7 +766,7 @@
     background: var(--bg);
     color: var(--text-primary);
     font: inherit;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     outline: none;
 }
 
@@ -765,7 +778,7 @@
 .projectNameDialogActions {
     display: flex;
     justify-content: flex-end;
-    gap: var(--space-xs);
+    gap: var(--space-4);
     margin-top: 10px;
 }
 
@@ -777,7 +790,7 @@
     background: transparent;
     color: var(--text-secondary);
     font: inherit;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     cursor: default;
 }
 
@@ -796,7 +809,7 @@
     z-index: 9998;
     width: min(320px, calc(100vw - 12px));
     max-height: min(340px, calc(100vh - 12px));
-    padding: 10px 12px;
+    padding: 10px var(--space-12);
     background: var(--bg-card, var(--bg));
     border: 1px solid var(--overlay-light);
     border-radius: var(--radius-md);
@@ -805,7 +818,7 @@
 }
 
 .sessionSummaryTitle {
-    font-size: 0.65rem;
+    font-size: var(--fs-hint);
     line-height: 1.35;
     color: var(--text-muted);
     opacity: 0.78;
@@ -817,14 +830,14 @@
     max-height: 280px;
     overflow-y: auto;
     padding-right: 3px;
-    font-size: 0.66rem;
+    font-size: var(--fs-hint);
     line-height: 1.55;
     color: var(--text-muted);
 }
 
 .sessionSummaryBody h3 {
     margin: 0 0 4px;
-    font-size: 0.66rem;
+    font-size: var(--fs-hint);
     line-height: 1.35;
     font-weight: 600;
     color: var(--text);
@@ -832,7 +845,7 @@
 
 .sessionSummaryBody ul {
     margin: 0 0 7px;
-    padding-left: 1rem;
+    padding-left: var(--space-16);
 }
 
 .sessionSummaryBody li {
@@ -858,7 +871,7 @@
 /* 空状态 */
 .sessionEmpty {
     text-align: center;
-    padding: var(--space-lg) var(--space-sm);
+    padding: var(--space-24) var(--space-8);
     color: var(--text-muted);
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
 }

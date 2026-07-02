@@ -13,7 +13,7 @@
  * - 每个 chat session 可以独立拥有自己的浏览器实例
  * - 切换 session 时，浏览器被挂起（不销毁），切回来直接恢复
  * - 页面状态（表单、滚动位置等）完全保留
- * - 重启后通过冷保存的 URL 自动恢复浏览器
+ * - 重启后保留冷保存的 URL，等待用户显式打开浏览器时恢复
  *
  * 多实例支持：
  * - 内部状态通过 Map 管理，每个 session identity 独立维护 running/url/headless
@@ -103,6 +103,12 @@ function activeBrowserTab(entry: any) {
 
 function activeBrowserUrl(entry: any) {
   return activeBrowserTab(entry)?.url || entry?.url || null;
+}
+
+function workspaceHasRestorableUrl(workspace: any) {
+  if (typeof workspace?.url === "string" && workspace.url.length > 0) return true;
+  return Array.isArray(workspace?.tabs)
+    && workspace.tabs.some((tab) => typeof tab?.url === "string" && tab.url.length > 0);
 }
 
 function normalizeColdWorkspace(raw: any) {
@@ -462,7 +468,7 @@ export class BrowserManager {
     const key = this._sessionKeyForPath(sessionPath);
     const state = this._loadColdState();
     const workspace = serializeColdWorkspace(entry);
-    if (!workspace.url && workspace.tabs.length === 0) {
+    if (!workspaceHasRestorableUrl(workspace)) {
       delete state[key];
       this._deleteColdStateKeysForSession(state, sessionPath);
     } else {
@@ -509,6 +515,7 @@ export class BrowserManager {
 
     for (const [identityKey, raw] of Object.entries(coldState)) {
       const cold = normalizeColdWorkspace(raw);
+      if (!workspaceHasRestorableUrl(cold)) continue;
       const sessionPath = typeof (raw as any)?.sessionPath === "string" && (raw as any).sessionPath
         ? (raw as any).sessionPath
         : identityKey;
@@ -616,7 +623,7 @@ export class BrowserManager {
     const coldRecord = this._coldStateRecordForSession(coldState, sessionPath);
     const cold = normalizeColdWorkspace(coldRecord?.raw);
     const url = activeBrowserUrl(existing) || cold.url || null;
-    const hasResumeState = !!existing || cold.tabs.length > 0 || !!cold.url;
+    const hasResumeState = !!existing || workspaceHasRestorableUrl(cold);
 
     if (running) {
       return {
@@ -674,7 +681,28 @@ export class BrowserManager {
     if (!readiness.canResume) {
       return { status: "skipped", ...readiness };
     }
-    await this.resumeForSession(sessionPath);
+
+    if (this.runningSessions.length >= MAX_INSTANCES) {
+      await this._evictLru();
+    }
+
+    const result = await this._sendCmd("resume", { sessionPath });
+    if (!result?.found) {
+      return {
+        status: "skipped",
+        ...readiness,
+        canResume: false,
+        reason: "cold_resume_deferred",
+        running: false,
+      };
+    }
+
+    const entry = this._applyWorkspaceResult(sessionPath, result, { running: true });
+    entry.headless = this._headless;
+    this._saveColdWorkspace(sessionPath, entry);
+    this._touchLru(sessionPath);
+    log.log(`热恢复成功 ${sessionPath}`);
+
     return {
       status: "resumed",
       ...this.resumeReadinessForSession(sessionPath),
@@ -826,7 +854,7 @@ export class BrowserManager {
 
     // 2. 冷恢复：从磁盘读 workspace，重新 launch
     const savedWorkspace = normalizeColdWorkspace(coldRecord?.raw);
-    if (savedWorkspace.tabs.length === 0) return;
+    if (!workspaceHasRestorableUrl(savedWorkspace)) return;
 
     log.log(`冷恢复 ${sessionPath}`);
     const launchResult = await this._sendCmd("launch", {

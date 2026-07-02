@@ -16,6 +16,6 @@ describe('settings search sidebar layout', () => {
   it('keeps the modal shell wide enough after expanding the navigation rail', () => {
     const css = readProjectFile('desktop/src/react/components/SettingsModalShell.module.css');
 
-    expect(css).toContain('width: min(884px, calc(100vw - 2 * var(--space-lg)));');
+    expect(css).toContain('width: min(884px, calc(100vw - 2 * var(--space-24)));');
   });
 });

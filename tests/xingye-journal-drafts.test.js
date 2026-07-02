@@ -113,7 +113,7 @@ describe("createProposeDraftTool (dispatch)", () => {
   it("declares xingye_propose_draft with module enum + per-module nested payloads", () => {
     const tool = createProposeDraftTool({ agentDir, agentId: "agent-a" });
     expect(tool.name).toBe("xingye_propose_draft");
-    /** @ts-ignore — pi-sdk Type.Object has `.properties` */
+    /** @ts-expect-error — pi-sdk Type.Object has `.properties` */
     const props = tool.parameters.properties;
     expect(Object.keys(props)).toEqual(
       expect.arrayContaining(["module", "reason", "sourceEventIds", "journal"]),

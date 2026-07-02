@@ -121,7 +121,7 @@ function makeDepsWithTools(agent, options: { toolNames?: string[]; customToolNam
 }
 
 function bridgeLiveToolSnapshot(names) {
-  const denied = new Set(["computer", "browser"]);
+  const denied = new Set(["computer", "browser", "hana_card_guide", "show_card"]);
   return names.filter((name) => !denied.has(name));
 }
 
@@ -515,6 +515,8 @@ describe("BridgeSessionManager teardown", () => {
       "media_generate-video",
       "computer",
       "browser",
+      "hana_card_guide",
+      "show_card",
     ];
     const manager = new BridgeSessionManager(makeDepsWithTools(agent, {
       toolNames: liveToolNames,
@@ -563,6 +565,8 @@ describe("BridgeSessionManager teardown", () => {
     expect(setActiveToolsByName.mock.calls[0][0]).toContain("media_generate-video");
     expect(setActiveToolsByName.mock.calls[0][0]).not.toContain("computer");
     expect(setActiveToolsByName.mock.calls[0][0]).not.toContain("browser");
+    expect(setActiveToolsByName.mock.calls[0][0]).not.toContain("hana_card_guide");
+    expect(setActiveToolsByName.mock.calls[0][0]).not.toContain("show_card");
     expect(manager.readIndex(agent)["tg_dm_restore_tools@agent-a"].toolNames)
       .toEqual(expected);
   });
@@ -575,6 +579,7 @@ describe("BridgeSessionManager teardown", () => {
       "media_generate-image",
       "computer",
       "browser",
+      "show_card",
     ];
     const manager = new BridgeSessionManager(makeDepsWithTools(agent, {
       toolNames: liveToolNames,

@@ -21,6 +21,13 @@ function canRefreshAnchorFromNativeSelection(selectionAnchorKind: QuotedSelectio
   return selectionAnchorKind !== 'codemirror';
 }
 
+function clearNativeSelectionAfterQuote() {
+  if (typeof window === 'undefined') return;
+  const selection = window.getSelection?.();
+  if (!selection || selection.rangeCount === 0) return;
+  selection.removeAllRanges();
+}
+
 export function SelectionQuoteActionSurface() {
   const quoteCandidate = useStore(s => s.quoteCandidate);
   const addQuotedSelection = useStore(s => s.addQuotedSelection);
@@ -96,6 +103,7 @@ export function SelectionQuoteActionSurface() {
   const handleAddQuote = useCallback(() => {
     if (!quoteCandidate) return;
     addQuotedSelection(quoteCandidate);
+    clearNativeSelectionAfterQuote();
     clearQuoteCandidate();
     requestInputFocus();
   }, [addQuotedSelection, clearQuoteCandidate, quoteCandidate, requestInputFocus]);

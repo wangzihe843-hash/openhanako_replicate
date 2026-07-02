@@ -80,6 +80,12 @@ describe('SkillsPanel', () => {
     render(<SkillsPanel />);
     await flushMicrotasks(4);
 
+    expect(fetchMock.mock.calls.some((call) =>
+      typeof call[0] === 'string'
+      && call[0].includes('/api/skills?agentId=agent-a')
+      && call[0].includes('runtime=1'),
+    )).toBe(true);
+
     fireEvent.click(screen.getByRole('tab', { name: 'Mao' }));
 
     const file = new File(['skill'], 'new-skill.skill');
@@ -90,10 +96,10 @@ describe('SkillsPanel', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some((call) =>
       typeof call[0] === 'string' && call[0].includes('/api/skills/install?agentId=agent-b'),
     )).toBe(true));
-    await flushMicrotasks(6);
-
-    expect(screen.getByRole('tab', { name: 'skills.panel.allTab' })).toHaveAttribute('aria-selected', 'true');
-    expect(document.querySelector('[data-highlighted-skill="new-skill"]')).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: 'skills.panel.allTab' })).toHaveAttribute('aria-selected', 'true');
+      expect(document.querySelector('[data-highlighted-skill="new-skill"]')).toBeTruthy();
+    });
   });
 
   it('installs dropped skills for the current agent from all skills by default', async () => {
@@ -244,8 +250,13 @@ describe('SkillsPanel', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Mao' }));
     await screen.findByText('Writing Bundle');
 
+    fireEvent.click(screen.getByRole('button', { name: 'settings.skills.expandBundleAriaLabel' }));
+    expect(screen.getByText('reader')).toBeTruthy();
+
     fireEvent.click(screen.getByTestId('skill-bundle-toggle-writing-bundle'));
 
     await waitFor(() => expect(bundleToggled).toBe(true));
+    expect(screen.getByText('reader')).toBeTruthy();
+    expect(screen.queryByText('status.loading')).toBeNull();
   });
 });

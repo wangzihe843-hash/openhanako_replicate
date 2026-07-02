@@ -414,7 +414,7 @@ export function AgentTab() {
             }}
           />}
         />
-        <div style={{ padding: 'var(--space-sm) var(--space-md)' }}>
+        <div style={{ padding: 'var(--space-8) var(--space-16)' }}>
           {experienceEnabled === undefined ? null : experienceEnabled === false ? (
             <div className={styles['exp-empty']}>{t('settings.experience.paused')}</div>
           ) : expCategories.length === 0 ? (

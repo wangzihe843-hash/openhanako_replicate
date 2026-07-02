@@ -14,6 +14,7 @@ import { WorkflowInlineCard } from './WorkflowInlineCard';
 import { InterludeBlock } from './InterludeBlock';
 import { SettingsConfirmCard } from './SettingsConfirmCard';
 import { SettingsUpdateCard } from './SettingsUpdateCard';
+import { InteractiveCard } from './InteractiveCard';
 import { useMessageFooterActions } from './MessageActions';
 import { MessageFooterActions, formatMessageTime, type MessageFooterAction } from './MessageFooterActions';
 import { ChatResourceCard } from './ChatResourceCard';
@@ -35,7 +36,7 @@ import type { FileRef } from '../../types/file-ref';
 import { openPreview } from '../../stores/preview-actions';
 import { replayLatestUserMessage } from '../../stores/message-turn-actions';
 import { selectIsStreamingSession, selectSelectedIdsBySession } from '../../stores/session-selectors';
-import { extractSelectedTexts } from '../../utils/message-text';
+import { extractSelectedTexts, extractTextBlockPlainText } from '../../utils/message-text';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
 import { ScheduleEditor } from '../automation/ScheduleEditor';
 import { SelectWidget, type SelectOption } from '@/ui';
@@ -103,6 +104,7 @@ export const AssistantMessage = memo(function AssistantMessage({
     [message.blocks],
   );
   const isInterludeOnly = blocks.length > 0 && blocks.every(block => block.type === 'interlude');
+  const hasWideBlock = blocks.some(b => b.type === 'interactive_card');
 
   const [copied, setCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -116,10 +118,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         (b): b is ContentBlock & { type: 'text' } => b.type === 'text'
       );
       if (textBlocks.length === 0) return;
-      // eslint-disable-next-line no-restricted-syntax
-      const tmp = document.createElement('div');
-      tmp.innerHTML = textBlocks.map(b => b.html).join('\n');
-      text = tmp.innerText.trim();
+      text = extractTextBlockPlainText(textBlocks);
     }
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
@@ -181,7 +180,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           <span className={styles.avatarName}>{displayName}</span>
         </div>
       )}
-      <div className={`${styles.message} ${styles.messageAssistant}${isInterludeOnly ? ` ${styles.messageAssistantInterludeOnly}` : ''}`}>
+      <div className={`${styles.message} ${styles.messageAssistant}${hasWideBlock ? ` ${styles.messageHasWideBlock}` : ''}${isInterludeOnly ? ` ${styles.messageAssistantInterludeOnly}` : ''}`}>
         {blocks.map((block, i) => (
           <ContentBlockErrorBoundary
             key={`block-${i}`}
@@ -1051,6 +1050,7 @@ const CronConfirmBlock = memo(function CronConfirmBlock({ block, sessionPath }: 
               value={draftLabel}
               onChange={e => setDraftLabel(e.target.value)}
               placeholder={window.t('automation.draftTitle')}
+              spellCheck={false}
             />
             <button className={styles.automationDraftIconButton} type="button" title={window.t('automation.closeDraft')} onClick={() => setModalOpen(false)}>
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1065,6 +1065,7 @@ const CronConfirmBlock = memo(function CronConfirmBlock({ block, sessionPath }: 
             onChange={e => setDraftPrompt(e.target.value)}
             placeholder={window.t('automation.promptPlaceholder', { agent: agentInfo.displayName })}
             aria-label={window.t('automation.field.prompt')}
+            spellCheck={false}
           />
           <div className={styles.automationDraftFooter}>
             <ScheduleEditor draft={scheduleDraft} onChange={setScheduleDraft} className={styles.automationDraftSchedule} />
@@ -1159,3 +1160,4 @@ BLOCK_RENDERERS['cron_confirm'] = CronConfirmBlock;
 BLOCK_RENDERERS['suggestion_card'] = CronConfirmBlock;
 BLOCK_RENDERERS['settings_confirm'] = SettingsConfirmBlock;
 BLOCK_RENDERERS['settings_update'] = SettingsUpdateBlock;
+BLOCK_RENDERERS['interactive_card'] = InteractiveCard;

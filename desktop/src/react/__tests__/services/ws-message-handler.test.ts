@@ -1079,6 +1079,45 @@ describe('ws-message-handler turn_end side effects', () => {
     expect(useStore.getState().inputFocusTrigger).toBe(0);
   });
 
+  it('turn_end clears the matching stream when status=false is missing', () => {
+    useStore.setState({
+      streamingSessions: ['/session/a.jsonl'],
+      activeSessionStreams: {
+        '/session/a.jsonl': { streamId: 'stream_done', turnId: null },
+      },
+      inputFocusTrigger: 0,
+    } as never);
+
+    handleServerMessage({
+      type: 'turn_end',
+      sessionPath: '/session/a.jsonl',
+      streamId: 'stream_done',
+    });
+
+    expect(useStore.getState().streamingSessions).toEqual([]);
+    expect(useStore.getState().activeSessionStreams).toEqual({});
+    expect(useStore.getState().inputFocusTrigger).toBe(1);
+  });
+
+  it('stale turn_end does not clear a newer stream identity', () => {
+    useStore.setState({
+      streamingSessions: ['/session/a.jsonl'],
+      activeSessionStreams: {
+        '/session/a.jsonl': { streamId: 'stream_new', turnId: null },
+      },
+      inputFocusTrigger: 0,
+    } as never);
+
+    handleServerMessage({
+      type: 'turn_end',
+      sessionPath: '/session/a.jsonl',
+      streamId: 'stream_old',
+    });
+
+    expect(useStore.getState().streamingSessions).toEqual(['/session/a.jsonl']);
+    expect(useStore.getState().activeSessionStreams['/session/a.jsonl']?.streamId).toBe('stream_new');
+  });
+
   it('passes sessionId from status events into stream buffer lifecycle', () => {
     const sessionId = 'sess_status_stream';
     vi.mocked(streamBufferManager.beginTurn).mockClear();
@@ -1145,6 +1184,30 @@ describe('ws-message-handler turn_end side effects', () => {
     });
 
     expect(requestContextUsage).toHaveBeenCalledWith('/session/a.jsonl');
+  });
+
+  it('shows focused slash_result through the inline notice bridge', () => {
+    const windowTarget = new EventTarget();
+    vi.stubGlobal('window', windowTarget);
+    const listener = vi.fn();
+    window.addEventListener('hana-inline-notice', listener);
+
+    try {
+      handleServerMessage({
+        type: 'slash_result',
+        sessionPath: '/session/a.jsonl',
+        text: 'plugin command finished',
+      });
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect((listener.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({
+        text: 'plugin command finished',
+        type: 'success',
+      });
+    } finally {
+      window.removeEventListener('hana-inline-notice', listener);
+      vi.unstubAllGlobals();
+    }
   });
 
   it('does not mark an old browser thumbnail as fresh when a running update omits thumbnail data', () => {

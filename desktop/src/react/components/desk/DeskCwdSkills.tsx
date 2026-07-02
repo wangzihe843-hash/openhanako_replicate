@@ -5,6 +5,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../../stores';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
+import { canUseNativeResourcePath } from '../../services/resource-access';
+import { resolveServerConnection } from '../../services/server-connection';
 import { isWebRuntime } from '../../utils/platform-runtime';
 import type { CwdSkillInfo } from '../../stores/desk-slice';
 import css from './Desk.module.css';
@@ -21,6 +23,10 @@ function fileToBase64(file: File): Promise<string> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+function canUseNativeDeskPath() {
+  return canUseNativeResourcePath({ connection: resolveServerConnection(useStore.getState()) });
 }
 
 async function loadCwdSkills() {
@@ -103,6 +109,7 @@ export function DeskCwdSkillsButton() {
 export function DeskCwdSkillsPanel() {
   const { open, skills } = useCwdSkillsOpen();
   const deskWorkspaceMountId = useStore(s => s.deskWorkspaceMountId);
+  const canUseNativePath = useStore(s => canUseNativeResourcePath({ connection: resolveServerConnection(s) }));
   const t = window.t ?? ((p: string) => p);
   const [visible, setVisible] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -153,11 +160,12 @@ export function DeskCwdSkillsPanel() {
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
     const { deskBasePath: dir, deskWorkspaceMountId: mountId } = useStore.getState();
+    const canUseNativePathForDrop = canUseNativeDeskPath();
     console.log('[cwd-skills] drop: files=', files.length, 'dir=', dir);
     if (!dir) return;
     let installed = false;
     for (const file of files) {
-      const filePath = window.platform?.getFilePath?.(file);
+      const filePath = canUseNativePathForDrop ? window.platform?.getFilePath?.(file) : null;
       console.log('[cwd-skills] filePath=', filePath, 'file.name=', file.name);
       try {
         const s = useStore.getState();
@@ -231,7 +239,7 @@ export function DeskCwdSkillsPanel() {
                       className={css.cwdSkillItem}
                       key={s.name}
                       onDoubleClick={() => {
-                        if (deskWorkspaceMountId) return;
+                        if (deskWorkspaceMountId || !canUseNativePath) return;
                         window.platform?.openSkillViewer?.({
                           name: s.name,
                           baseDir: s.baseDir,
@@ -258,7 +266,7 @@ export function DeskCwdSkillsPanel() {
         )}
         {cmPos && (
           <div className={css.cwdCtxMenu} style={{ position: 'fixed', left: cmPos.x, top: cmPos.y, zIndex: 9999 }}>
-            {!isWebRuntime() && !deskWorkspaceMountId && (
+            {!isWebRuntime() && !deskWorkspaceMountId && canUseNativePath && (
               <button onClick={() => {
                 const target = cmSkill?.baseDir || (useStore.getState().deskBasePath + '/.agents/skills');
                 window.platform?.showInFinder?.(target);

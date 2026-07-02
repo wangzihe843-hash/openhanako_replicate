@@ -62,7 +62,7 @@ describe('InputArea layout', () => {
     );
     const inputWrapperBlock = cssBlock(css, String.raw`\.input-wrapper`);
 
-    expect(inputWrapperBlock).toMatch(/padding:\s*var\(--space-md\)\s+var\(--space-md\)\s+var\(--space-sm\)/);
+    expect(inputWrapperBlock).toMatch(/padding:\s*var\(--space-16\)\s+var\(--space-16\)\s+var\(--space-8\)/);
   });
 
   it('keeps mobile drawers out of the flex layout while they close', () => {
@@ -71,7 +71,7 @@ describe('InputArea layout', () => {
       'utf8',
     );
 
-    expect(css).toMatch(/\.mobile-desktop-root\s*\{[^}]*font-size:\s*1\.0625rem/s);
+    expect(css).toMatch(/\.mobile-desktop-root\s*\{[^}]*font-size:\s*var\(--fs-title\)/s);
     expect(css).toMatch(/\.mobile-desktop-root \.sidebar,\s*\.mobile-desktop-root \.jian-sidebar\s*\{[^}]*position:\s*fixed/s);
     expect(css).toMatch(/\.mobile-desktop-root \.sidebar,\s*\.mobile-desktop-root \.jian-sidebar\s*\{[^}]*box-shadow:\s*none/s);
     expect(css).toMatch(/\.mobile-desktop-root \.jian-sidebar-inner\s*\{[^}]*box-shadow:\s*none/s);
@@ -140,8 +140,8 @@ describe('InputArea layout', () => {
     const footerBlock = cssBlock(css, String.raw`\.sessionFooter`);
 
     expect(shellBlock).toMatch(/--chat-scrollbar-bottom-inset:\s*var\(--input-card-bottom-inset,\s*calc\(var\(--input-card-h,\s*0px\) \/ 2\)\)/);
-    expect(shellBlock).toMatch(/bottom:\s*calc\(var\(--chat-scrollbar-bottom-inset\) \+ var\(--space-lg\)\)/);
-    expect(footerBlock).toMatch(/height:\s*calc\(var\(--chat-scrollbar-bottom-inset\) \+ var\(--space-lg\) \+ 5rem\)/);
+    expect(shellBlock).toMatch(/bottom:\s*calc\(var\(--chat-scrollbar-bottom-inset\) \+ var\(--space-24\)\)/);
+    expect(footerBlock).toMatch(/height:\s*calc\(var\(--chat-scrollbar-bottom-inset\) \+ var\(--space-24\) \+ 5rem\)/);
   });
 
   it('floats the scroll-to-bottom FAB above the measured input card instead of a fixed offset (#1297)', () => {
@@ -153,6 +153,6 @@ describe('InputArea layout', () => {
 
     // FAB 必须跟随输入卡片实时高度（--input-card-h），不能写死固定 bottom，
     // 否则多行输入时输入框升高会盖住 FAB（#1297）。
-    expect(fabBlock).toMatch(/bottom:\s*calc\(var\(--input-card-h[^)]*\)\s*\+\s*var\(--space-md\)\)/);
+    expect(fabBlock).toMatch(/bottom:\s*calc\(var\(--input-card-h[^)]*\)\s*\+\s*var\(--space-16\)\)/);
   });
 });

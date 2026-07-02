@@ -67,6 +67,28 @@ describe("Agent platform prompt identity", () => {
     expect(prompt).toContain("https://github.com/liliMozi/openhanako");
   });
 
+  it("distinguishes SessionFile identity from writable local refs in Chinese", () => {
+    const prompt = makeAgent("zh-CN").buildSystemPrompt({
+      forceMemoryEnabled: false,
+      forceExperienceEnabled: false,
+    });
+
+    expect(prompt).toContain("sessionFileRef 是读取/交付身份");
+    expect(prompt).toContain("writableLocalRef 是继续修改时使用的本机路径");
+    expect(prompt).toContain("write/edit 必须用 writableLocalRef.path");
+  });
+
+  it("distinguishes SessionFile identity from writable local refs in English", () => {
+    const prompt = makeAgent("en").buildSystemPrompt({
+      forceMemoryEnabled: false,
+      forceExperienceEnabled: false,
+    });
+
+    expect(prompt).toContain("sessionFileRef in the tool result is the read/delivery identity");
+    expect(prompt).toContain("writableLocalRef is the local path to use for later modifications");
+    expect(prompt).toContain("write/edit must use writableLocalRef.path");
+  });
+
   it("formats prompt times with an unambiguous 24-hour clock", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-04T07:53:00.000Z"));

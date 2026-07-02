@@ -60,7 +60,7 @@ export function WechatSection({ status, showToast, onSaveConfig, onReload, agent
 
   return (
     <SettingsSection title={t('settings.bridge.wechat')} context={statusContext}>
-      <div style={{ padding: 'var(--space-sm) var(--space-md)' }}>
+      <div style={{ padding: 'var(--space-8) var(--space-16)' }}>
         {status?.token ? (
           <div className={bridgeStyles['wechat-logged-in']}>
             <span className={bridgeStyles['wechat-login-info']}>

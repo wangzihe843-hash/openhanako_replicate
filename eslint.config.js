@@ -16,6 +16,7 @@ export default [
       'desktop/dist-renderer/**',
       'desktop/native/**/.build/**',
       '.claude/**',
+      '.codex_refs/**',
       '.cache/**',
       '**/*.cjs',
     ],

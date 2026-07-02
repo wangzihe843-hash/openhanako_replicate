@@ -16,7 +16,9 @@ const GPU_RECOVERY_STARTUP_PHASES = new Set([
   "electron-starting",
   "launching-splash",
   "splash-ready",
+  "main-window-starting",
   "main-window-created",
+  "onboarding-window-starting",
   "onboarding-window-created",
 ]);
 const NON_GPU_STARTUP_PHASES = new Set([

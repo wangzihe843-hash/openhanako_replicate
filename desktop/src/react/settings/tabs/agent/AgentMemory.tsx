@@ -179,9 +179,9 @@ export function MemorySection({ agentId, hasUtilityModel, memoryEnabled, current
 
   return (
     <SettingsSection title={t('settings.memory.sectionTitle')} context={memoryToggle}>
-      <div style={{ padding: 'var(--space-sm) var(--space-md)' }}>
+      <div style={{ padding: 'var(--space-8) var(--space-16)' }}>
         {utilityModelReady && !hasUtilityModel && (
-          <p className={styles['settings-inline-note']} style={{ opacity: 0.6, marginTop: 0, marginBottom: 'var(--space-md)' }}>{t('settings.memory.needsUtilityModel')}</p>
+          <p className={styles['settings-inline-note']} style={{ opacity: 0.6, marginTop: 0, marginBottom: 'var(--space-16)' }}>{t('settings.memory.needsUtilityModel')}</p>
         )}
 
         <div className={hasUtilityModel !== true || memoryEnabled !== true ? 'settings-disabled' : ''}>

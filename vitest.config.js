@@ -18,6 +18,7 @@ export default defineConfig({
     exclude: [
       ...configDefaults.exclude,
       ".cache/**",
+      // Local references and worktree copies contain duplicate test snapshots.
       ".codex_refs/**",
       ".claude/**",
       "desktop/native/**/.build/**",

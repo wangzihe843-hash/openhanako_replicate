@@ -102,14 +102,14 @@ describe("SessionCoordinator.writeSessionMeta serialization", () => {
 
   it("two concurrent writeSessionMeta calls with different fields preserve both", async () => {
     const p1 = sessionCoord.writeSessionMeta(fakeSessionPath, { memoryEnabled: false });
-    const p2 = sessionCoord.writeSessionMeta(fakeSessionPath, { toolNames: ["read", "bash"] });
+    const p2 = sessionCoord.writeSessionMeta(fakeSessionPath, { toolNames: ["read", "exec_command"] });
     await Promise.all([p1, p2]);
 
     const metaPath = path.join(sessionDir, "session-meta.json");
     const meta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
     const entry = meta[path.basename(fakeSessionPath)];
     expect(entry.memoryEnabled).toBe(false);
-    expect(entry.toolNames).toEqual(["read", "bash"]);
+    expect(entry.toolNames).toEqual(["read", "exec_command"]);
   });
 
   it("three sequential writes accumulate fields correctly", async () => {
@@ -233,6 +233,33 @@ describe("SessionCoordinator.writeSessionMeta serialization", () => {
 
     const hydrated = await sessionCoord._readMetaCached(metaPath);
     expect(hydrated[path.basename(legacySessionPath)].promptSnapshot.systemPrompt).toBe(largePrompt);
+  });
+
+  it("externalizes medium prompt snapshots when the aggregate meta index exceeds its budget", async () => {
+    const mediumPrompt = "context ".repeat(20_000);
+    const sessionPaths = Array.from({ length: 10 }, (_, index) => path.join(sessionDir, `aggregate-${index}.jsonl`));
+
+    for (const sessionPath of sessionPaths) {
+      await sessionCoord.writeSessionMeta(sessionPath, {
+        memoryEnabled: true,
+        promptSnapshot: {
+          version: 1,
+          systemPrompt: mediumPrompt,
+          appendSystemPrompt: [],
+          skillsResult: { skills: [], diagnostics: [] },
+          agentsFilesResult: { agentsFiles: [] },
+        },
+      });
+    }
+
+    const metaPath = path.join(sessionDir, "session-meta.json");
+    const rawMeta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
+    expect(Buffer.byteLength(JSON.stringify(rawMeta, null, 2), "utf-8")).toBeLessThan(1024 * 1024);
+    expect(Object.values(rawMeta).some((entry: any) => entry.promptSnapshot?.kind === "session-meta-payload"))
+      .toBe(true);
+
+    const hydrated = await sessionCoord._readMetaCached(metaPath);
+    expect(hydrated[path.basename(sessionPaths[0])].promptSnapshot.systemPrompt).toBe(mediumPrompt);
   });
 
   it("setSessionPinned writes and clears pinnedAt on the session meta entry", async () => {

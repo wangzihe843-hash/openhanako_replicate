@@ -5,6 +5,13 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 const originalPlatform = process.platform;
 let tempRoot: string | null = null;
+const Type = {
+  Object: (properties) => ({ type: "object", properties }),
+  String: (options = {}) => ({ type: "string", ...options }),
+  Number: (options = {}) => ({ type: "number", ...options }),
+  Boolean: (options = {}) => ({ type: "boolean", ...options }),
+  Optional: (schema) => schema,
+};
 
 beforeAll(() => {
   Object.defineProperty(process, "platform", { value: "linux", configurable: true });
@@ -50,6 +57,7 @@ vi.mock("../lib/pi-sdk/index.js", () => {
     createGrepTool: vi.fn(() => makeTool("grep")),
     createFindTool: vi.fn(() => makeTool("find")),
     createLsTool: vi.fn(() => makeTool("ls")),
+    Type,
   };
 });
 
@@ -60,8 +68,8 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe.skipIf(process.platform !== "linux")("createSandboxedTools on Linux", () => {
-  it("fails closed for bash when bwrap is unavailable while sandbox remains enabled", async () => {
+describe("createSandboxedTools on Linux", () => {
+  it("fails closed for exec_command when bwrap is unavailable while sandbox remains enabled", async () => {
     const { createSandboxedTools } = await import("../lib/sandbox/index.ts");
     const result = createSandboxedTools("/work", [], {
       agentDir: "/hana/agents/hana",
@@ -71,14 +79,15 @@ describe.skipIf(process.platform !== "linux")("createSandboxedTools on Linux", (
       getSandboxEnabled: () => true,
     } as any);
 
-    const bash = result.tools.find((tool) => tool.name === "bash");
-    const output = await bash.execute("call-1", { command: "pwd" });
+    expect(result.tools.find((tool) => tool.name === "bash")).toBeUndefined();
+    const execCommand = result.tools.find((tool) => tool.name === "exec_command");
+    const output = await execCommand.execute("call-1", { cmd: "pwd" });
 
     expect(output.content[0].text).not.toBe("direct bash");
     expect(output.content[0].text).toMatch(/bwrap|sandbox|沙盒|系统/);
   });
 
-  it("uses the direct bash fallback when the user explicitly disables sandbox", async () => {
+  it("uses the direct bash transport fallback when the user explicitly disables sandbox", async () => {
     const { createSandboxedTools } = await import("../lib/sandbox/index.ts");
     const result = createSandboxedTools("/work", [], {
       agentDir: "/hana/agents/hana",
@@ -88,8 +97,9 @@ describe.skipIf(process.platform !== "linux")("createSandboxedTools on Linux", (
       getSandboxEnabled: () => false,
     } as any);
 
-    const bash = result.tools.find((tool) => tool.name === "bash");
-    const output = await bash.execute("call-2", { command: "pwd" });
+    expect(result.tools.find((tool) => tool.name === "bash")).toBeUndefined();
+    const execCommand = result.tools.find((tool) => tool.name === "exec_command");
+    const output = await execCommand.execute("call-2", { cmd: "pwd" });
 
     expect(output.content[0].text).toBe("direct bash");
   });

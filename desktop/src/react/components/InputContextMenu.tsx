@@ -7,6 +7,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { ContextMenu, type ContextMenuItem } from '../ui';
+import { useStore } from '../stores';
 
 declare function t(key: string): string;
 
@@ -30,6 +31,7 @@ interface MenuState {
   position: { x: number; y: number };
   target: HTMLElement;
   selectionSnapshot: SelectionSnapshot | null;
+  readOnlyText?: boolean;
 }
 
 interface SelectionSnapshot {
@@ -132,17 +134,30 @@ export function InputContextMenu() {
   useEffect(() => {
     const handleContextMenu = (e: MouseEvent) => {
       const target = e.target;
-      if (!isTextInput(target)) return;
+      if (!target || !(target instanceof HTMLElement)) return;
 
-      // 如果已有更具体的右键菜单（比如 desk 的），不拦截
-      if ((target as HTMLElement).closest('[data-no-input-ctx]')) return;
+      // 已有更具体的右键菜单（desk 卡片等），不拦截
+      if (target.closest('[data-no-input-ctx]')) return;
+      // CodeMirror 编辑器由 EditorContextMenu 处理
+      if (target.closest('.cm-editor')) return;
 
-      e.preventDefault();
-      setMenu({
-        position: { x: e.clientX, y: e.clientY },
-        target,
-        selectionSnapshot: captureSelection(target),
-      });
+      if (isTextInput(target)) {
+        e.preventDefault();
+        setMenu({
+          position: { x: e.clientX, y: e.clientY },
+          target,
+          selectionSnapshot: captureSelection(target),
+        });
+      } else {
+        e.preventDefault();
+        useStore.getState().clearQuoteCandidate?.();
+        setMenu({
+          position: { x: e.clientX, y: e.clientY },
+          target,
+          selectionSnapshot: null,
+          readOnlyText: true,
+        });
+      }
     };
 
     document.addEventListener('contextmenu', handleContextMenu);
@@ -154,6 +169,29 @@ export function InputContextMenu() {
   if (!menu) return null;
 
   const { target, selectionSnapshot } = menu;
+
+  if (menu.readOnlyText) {
+    const sel = window.getSelection();
+    const hasTextSelection = !!sel && !sel.isCollapsed && sel.toString().length > 0;
+    const readOnlyItems: ContextMenuItem[] = [
+      {
+        label: t('ctx.copy'),
+        disabled: !hasTextSelection,
+        action: () => {
+          try { void window.platform?.runEditCommand?.('copy'); }
+          catch { /* noop */ }
+        },
+      },
+    ];
+    return (
+      <ContextMenu
+        items={readOnlyItems}
+        position={menu.position}
+        onClose={handleClose}
+      />
+    );
+  }
+
   const hasSelection = getContentSelectionText(target).length > 0;
   const hasContent = getContent(target).length > 0;
   const editable = isEditable(target);

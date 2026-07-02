@@ -249,6 +249,54 @@ describe("session-compactor", () => {
     });
   });
 
+  it("projects MCP resource content before cache-preserving compaction provider calls", async () => {
+    const resultStream = {
+      result: vi.fn(async () => ({
+        stopReason: "stop",
+        content: [{ type: "text", text: "resource summary" }],
+      })),
+    };
+    const streamFn = vi.fn(async () => resultStream);
+    const resourceBlock = {
+      type: "resource",
+      resource: {
+        uri: "file:///workspace/spec.md",
+        name: "spec.md",
+        mimeType: "text/markdown",
+        text: "Compaction must keep this visible.",
+      },
+    };
+
+    await createCachePreservingCompactionResult({
+      preparation: {
+        firstKeptEntryId: "entry-keep",
+        tokensBefore: 1234,
+        messagesToSummarize: [
+          {
+            role: "toolResult",
+            toolCallId: "call_read",
+            toolName: "read_resource",
+            content: [resourceBlock],
+          },
+        ],
+        settings: { reserveTokens: 1000 },
+      },
+      model: { id: "gpt-5", provider: "openai", api: "openai-responses", reasoning: false },
+      systemPrompt: "system prompt",
+      streamFn,
+      convertToLlm: vi.fn(async (messages) => messages),
+    } as any);
+
+    const [, context] = streamFn.mock.calls[0] as any;
+    const projected = context.messages[0].content[0];
+    expect(projected.type).toBe("text");
+    expect(projected.text).toContain("uri: file:///workspace/spec.md");
+    expect(projected.text).toContain("name: spec.md");
+    expect(projected.text).toContain("mimeType: text/markdown");
+    expect(projected.text).toContain("Compaction must keep this visible.");
+    expect(resourceBlock.resource.text).toBe("Compaction must keep this visible.");
+  });
+
   it("writes cache-preserving compaction results back into the session branch", async () => {
     const preparation = {
       firstKeptEntryId: "entry-keep",

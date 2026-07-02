@@ -213,6 +213,44 @@ describe('SessionList context menu', () => {
     expect(archiveSessionMock).toHaveBeenCalledWith('/tmp/agents/hana/sessions/with-summary.jsonl');
   });
 
+  it('allows deleted-agent sessions to unpin and archive without exposing rename or pin', async () => {
+    useStore.setState({
+      sessions: [{
+        path: '/tmp/agents/deleted/sessions/pinned.jsonl',
+        title: 'Deleted pinned',
+        firstMessage: 'old',
+        modified: '2026-04-29T08:00:00.000Z',
+        messageCount: 2,
+        agentId: 'deleted',
+        agentName: 'Deleted',
+        cwd: '/tmp/project',
+        pinnedAt: '2026-04-29T08:10:00.000Z',
+        hasSummary: false,
+        agentDeleted: true,
+      }],
+      currentSessionPath: null,
+      pendingSessionSwitchPath: null,
+      pendingNewSession: false,
+      agents: [],
+      streamingSessions: [],
+      unreadOutputSessionPaths: [],
+      browserBySession: {},
+      locale: 'zh',
+    });
+
+    render(<SessionList />);
+
+    fireEvent.contextMenu(sessionButton('Deleted pinned'), { clientX: 24, clientY: 32 });
+    expect(screen.queryByText('session.rename')).not.toBeInTheDocument();
+    expect(screen.queryByText('session.pin')).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByText('session.unpin'));
+    expect(pinSessionMock).toHaveBeenCalledWith('/tmp/agents/deleted/sessions/pinned.jsonl', false);
+
+    fireEvent.contextMenu(sessionButton('Deleted pinned'), { clientX: 24, clientY: 32 });
+    fireEvent.click(await screen.findByText('session.archive'));
+    expect(archiveSessionMock).toHaveBeenCalledWith('/tmp/agents/deleted/sessions/pinned.jsonl');
+  });
+
   it('closes a sidebar browser badge without switching the session row', async () => {
     const browserStates = {
       '/tmp/agents/hana/sessions/with-summary.jsonl': {
@@ -341,7 +379,7 @@ describe('SessionList context menu', () => {
       'utf-8',
     );
 
-    expect(css).toMatch(/\.sessionSummaryBody\s*\{[\s\S]*font-size:\s*0\.66rem/);
+    expect(css).toMatch(/\.sessionSummaryBody\s*\{[\s\S]*font-size:\s*var\(--fs-hint\)/);
     expect(css).not.toMatch(/\.sessionContextMenu/);
     expect(css).not.toMatch(/sessionItemSummaryEmpty/);
   });
@@ -355,7 +393,7 @@ describe('SessionList context menu', () => {
     expect(css).not.toMatch(/@media\s*\(hover:\s*hover\)\s*and\s*\(pointer:\s*fine\)/);
     expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionItem:hover\s*\{/);
     expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionItem:not\(\.sessionItemSingleLine\):hover \.sessionArchiveBtn/);
-    expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionItemSingleLine:hover \.sessionItemActions\s*\{[\s\S]*width:\s*calc\(40px \+ var\(--space-xs\)\)/);
+    expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionItemSingleLine:hover \.sessionItemActions\s*\{[\s\S]*width:\s*calc\(40px \+ var\(--space-4\)\)/);
     expect(css).toMatch(/@media\s*\(any-hover:\s*hover\)\s*and\s*\(any-pointer:\s*fine\)\s*\{[\s\S]*\.sessionListScroller:hover \.sectionTitleActions/);
   });
 
@@ -410,6 +448,26 @@ describe('SessionList context menu', () => {
     const dot = row.querySelector('[data-session-status-dot]');
     expect(dot).toBeInTheDocument();
     expect(dot).toHaveAttribute('data-state', 'running');
+  });
+
+  it('marks the pending switch row immediately without changing the committed session path', () => {
+    useStore.setState({
+      currentSessionPath: '/tmp/agents/hana/sessions/no-summary.jsonl',
+      pendingSessionSwitchPath: '/tmp/agents/hana/sessions/with-summary.jsonl',
+      streamingSessions: [],
+      unreadOutputSessionPaths: [],
+    } as never);
+
+    render(<SessionList />);
+
+    const pendingRow = sessionButton('Has summary');
+    expect(pendingRow).toHaveAttribute('data-switch-pending', 'true');
+    const dot = pendingRow.querySelector('[data-session-status-dot]');
+    expect(dot).toBeInTheDocument();
+    expect(dot).toHaveAttribute('data-state', 'pending');
+
+    const currentRow = sessionButton('No summary');
+    expect(currentRow).toHaveAttribute('data-switch-pending', 'false');
   });
 
   it('keeps the status dot after a background session finishes until the user opens it', () => {
@@ -1050,7 +1108,7 @@ describe('SessionList context menu', () => {
 
     const baseTitleRule = css.match(/\.sessionSectionTitle\s*\{[^}]*\}/)?.[0] || '';
     const pinnedTitleRule = css.match(/\.pinnedSection \.sessionSectionTitle\s*\{[^}]*\}/)?.[0] || '';
-    expect(baseTitleRule).toContain('font-size: 0.82rem');
+    expect(baseTitleRule).toContain('font-size: var(--fs-ui)');
     expect(pinnedTitleRule).not.toContain('font-size:');
   });
 });

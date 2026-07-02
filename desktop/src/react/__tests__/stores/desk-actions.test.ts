@@ -43,6 +43,9 @@ describe('desk-actions workspace roots', () => {
     };
     useStore.setState({
       serverPort: 62950,
+      activeServerConnection: null,
+      activeServerConnectionId: null,
+      serverConnections: {},
       deskBasePath: '',
       deskWorkspaceMountId: null,
       deskWorkspaceLabel: null,
@@ -1002,6 +1005,55 @@ describe('desk-actions workspace roots', () => {
     const ok = await deskTrashTreeItems([{ sourceSubdir: 'notes', name: 'chapter.md', isDirectory: false }]);
 
     expect(ok).toBe(true);
+    expect(mockHanaFetch).toHaveBeenCalledWith('/api/workbench/actions', expect.objectContaining({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'safeDelete',
+        mountId: 'default',
+        subdir: 'notes',
+        name: 'chapter.md',
+      }),
+    }));
+    expect(useStore.getState().deskTreeFilesByPath.notes).toEqual([]);
+  });
+
+  it('safe-deletes default workspace tree items through ResourceIO for remote desktop clients', async () => {
+    const trashItem = vi.fn(async () => true);
+    window.platform = { trashItem } as unknown as typeof window.platform;
+    useStore.setState({
+      activeServerConnection: {
+        connectionId: 'browser:server_lan',
+        kind: 'lan',
+        serverId: 'server_lan',
+        userId: 'user_lan',
+        studioId: 'studio_lan',
+        label: 'LAN Hana',
+        baseUrl: 'http://hana.local:14500',
+        wsUrl: 'ws://hana.local:14500',
+        token: null,
+        authState: 'paired',
+        trustState: 'lan',
+        credentialKind: 'device_credential',
+        platformAccountId: null,
+        officialServiceKind: null,
+        capabilities: ['resources', 'files'],
+      },
+      deskBasePath: '/server/workspace',
+      deskTreeFilesByPath: {
+        notes: [{ name: 'chapter.md', isDir: false }],
+      },
+    } as never);
+    mockHanaFetch.mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      files: [],
+    }));
+
+    const { deskTrashTreeItems } = await import('../../stores/desk-actions');
+    const ok = await deskTrashTreeItems([{ sourceSubdir: 'notes', name: 'chapter.md', isDirectory: false }]);
+
+    expect(ok).toBe(true);
+    expect(trashItem).not.toHaveBeenCalled();
     expect(mockHanaFetch).toHaveBeenCalledWith('/api/workbench/actions', expect.objectContaining({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

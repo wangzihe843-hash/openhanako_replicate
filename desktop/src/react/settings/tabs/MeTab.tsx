@@ -138,7 +138,7 @@ export function MeTab() {
       </SettingsSection>
 
       {/* 保存按钮：tab 底部独立居中，用实心 accent 样式（页面级主动作） */}
-      <div style={{ display: 'flex', justifyContent: 'center', marginTop: 'var(--space-md)' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', marginTop: 'var(--space-16)' }}>
         <button className={styles['settings-save-btn-sm']} onClick={save}>
           {t('settings.save')}
         </button>

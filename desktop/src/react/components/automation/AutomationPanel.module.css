@@ -2,12 +2,12 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    margin-bottom: var(--space-sm);
+    margin-bottom: var(--space-8);
 }
 
 .agentTabsFrame {
-    margin: 0 calc(var(--space-lg) * -1) var(--space-md);
-    padding: var(--space-sm) var(--space-lg) 10px;
+    margin: 0 calc(var(--space-24) * -1) var(--space-16);
+    padding: var(--space-8) var(--space-24) 10px;
     display: grid;
     grid-template-columns: 26px minmax(0, 1fr) 26px;
     align-items: start;
@@ -18,8 +18,8 @@
     min-width: 0;
     overflow-x: auto;
     overflow-y: visible;
-    padding-top: var(--space-sm);
-    margin-top: calc(var(--space-sm) * -1);
+    padding-top: var(--space-8);
+    margin-top: calc(var(--space-8) * -1);
     scrollbar-width: none;
     -ms-overflow-style: none;
     scroll-behavior: smooth;
@@ -114,7 +114,7 @@
     white-space: nowrap;
     text-align: center;
     color: var(--text-muted);
-    font-size: 0.68rem;
+    font-size: var(--fs-hint);
     line-height: 1.25;
 }
 
@@ -127,7 +127,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    margin: 0 0 var(--space-sm);
+    margin: 0 0 var(--space-8);
     padding: 2px;
     overflow-x: auto;
     scrollbar-width: none;
@@ -149,7 +149,7 @@
     background: transparent;
     color: var(--text-muted);
     font: inherit;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     padding: 4px 8px;
     cursor: default;
     transition: color var(--duration-fast), background var(--duration-fast), border-color var(--duration-fast);
@@ -169,7 +169,7 @@
 .categoryTabCount {
     min-width: 1.2em;
     color: var(--text-light);
-    font-size: 0.66rem;
+    font-size: var(--fs-hint);
     font-variant-numeric: tabular-nums;
     text-align: center;
 }
@@ -233,14 +233,14 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.8rem;
+    font-size: var(--fs-ui);
     font-weight: 600;
     color: var(--text);
 }
 
 .groupCount,
 .meta {
-    font-size: 0.68rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
     white-space: nowrap;
 }
@@ -300,7 +300,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     color: var(--text);
 }
 
@@ -340,7 +340,7 @@
     gap: 3px;
     min-width: 0;
     color: var(--text-muted);
-    font-size: 0.66rem;
+    font-size: var(--fs-hint);
 }
 
 .field input,
@@ -352,7 +352,7 @@
     background: var(--bg);
     color: var(--text);
     font: inherit;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     outline: none;
 }
 
@@ -392,7 +392,7 @@
     background: var(--bg);
     color: var(--text);
     font: inherit;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     line-height: 1;
     transition: background var(--duration-fast), border-color var(--duration-fast), box-shadow var(--duration-fast);
 }
@@ -427,7 +427,7 @@
     background: var(--bg);
     color: var(--text);
     font: inherit;
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     line-height: 1;
     text-align: left;
     cursor: default;
@@ -489,7 +489,7 @@
     background: transparent;
     color: var(--text-muted);
     font: inherit;
-    font-size: 0.76rem;
+    font-size: var(--fs-caption);
     cursor: default;
     transition: background var(--duration-fast), color var(--duration-fast);
 }
@@ -531,7 +531,7 @@
     background: rgba(var(--accent-rgb), 0.05);
     color: var(--accent);
     font: inherit;
-    font-size: 0.7rem;
+    font-size: var(--fs-hint);
     padding: 4px 9px;
     cursor: default;
 }

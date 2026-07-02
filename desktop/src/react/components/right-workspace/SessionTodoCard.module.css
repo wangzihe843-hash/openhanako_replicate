@@ -2,7 +2,7 @@
     flex: 0 0 auto;
     display: flex;
     flex-direction: column;
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-8) var(--space-16);
     gap: 5px;
     max-height: 32%;
     overflow: hidden;
@@ -17,13 +17,13 @@
 
 .title {
     font-family: "Songti SC", "Noto Serif CJK SC", serif;
-    font-size: 0.9rem;
+    font-size: var(--fs-body);
     font-weight: 600;
     color: var(--accent);
 }
 
 .count {
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
     color: var(--text-muted);
 }
 
@@ -40,14 +40,14 @@
     grid-template-columns: 15px minmax(0, 1fr);
     gap: 7px;
     align-items: baseline;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     line-height: 1.5;
 }
 
 .icon {
     text-align: center;
     color: var(--text-light);
-    font-size: 0.72rem;
+    font-size: var(--fs-hint);
 }
 
 .text {
@@ -83,11 +83,11 @@
     display: inline-flex;
     align-items: center;
     align-self: stretch;
-    gap: var(--space-xs);
-    margin-top: var(--space-xs);
-    padding: var(--space-xs) 0 0;
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+    padding: var(--space-4) 0 0;
     font: inherit;
-    font-size: 0.78rem;
+    font-size: var(--fs-caption);
     line-height: 1.5;
     color: var(--accent);
     text-align: left;

@@ -318,6 +318,8 @@ export function RoleDetailPanel({
 
     await browseAgent(agent.id);
 
+    // The native agent flow expects a programmatic file input before opening CropOverlay.
+    // eslint-disable-next-line no-restricted-syntax
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/png,image/jpeg,image/webp';

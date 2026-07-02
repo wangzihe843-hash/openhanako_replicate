@@ -11,7 +11,7 @@ import path from "path";
 import { createAgentSession, SessionManager, estimateTokens, refreshSessionModelFromRegistry } from "../lib/pi-sdk/index.ts";
 import { isSessionJsonlFilename } from "../lib/session-jsonl.ts";
 import { createDefaultSettings } from "./session-defaults.ts";
-import { restoreDefaultWorkspaceIfMissing } from "../shared/default-workspace.ts";
+import { isDefaultWorkspacePath, restoreDefaultWorkspaceIfMissing } from "../shared/default-workspace.ts";
 import { computeHardTruncation } from "./compaction-utils.ts";
 import {
   appendCompactionResultToSession,
@@ -37,7 +37,11 @@ import {
   getStableFeatureDisabledToolNames,
   toolNamesFromObjects,
 } from "./tool-availability.ts";
-import { extractTextContent, isActiveSessionPath } from "./message-utils.ts";
+import {
+  extractTextContent,
+  isActiveSessionPath,
+  isArchivedDesktopSessionPath,
+} from "./message-utils.ts";
 import { formatWorkspaceScopePrompt, normalizeSessionFolderScope, normalizeWorkspaceScope } from "../shared/workspace-scope.ts";
 import { getProviderPromptPatches } from "./provider-prompt-patches.ts";
 import {
@@ -226,6 +230,15 @@ function activeToolDefinitionsFromSnapshot(allToolObjects: any, snapshotToolName
 
 function normalizeDeletedAgentTranscriptMessage(message: any) {
   if (!message || typeof message !== "object") return null;
+  if (message.role === "compactionSummary") {
+    const text = textOrNull(message.summary) || extractPlainTextFromContent(message.content).trim();
+    if (!text) return null;
+    return {
+      role: "assistant",
+      content: [{ type: "text", text: `[历史压缩摘要]\n${text}` }],
+      timestamp: timestampFromHistoryMessage(message),
+    };
+  }
   if (message.role !== "user" && message.role !== "assistant") return null;
   const text = extractPlainTextFromContent(message.content, { stripThink: message.role === "assistant" }).trim();
   if (!text) return null;
@@ -239,16 +252,35 @@ function normalizeDeletedAgentTranscriptMessage(message: any) {
 function readSessionBranchMessages(sessionPath: any) {
   const manager = SessionManager.open(sessionPath, path.dirname(sessionPath));
   const branch = manager.getBranch();
-  return branch
-    .filter(entry => entry?.type === "message" && (entry as any).message)
-    .map(entry => ({
-      ...(entry as any).message,
-      timestamp: (entry as any).message.timestamp ?? entry.timestamp ?? null,
-    }));
+  const messages: any[] = [];
+  for (const entry of branch) {
+    if (entry?.type === "message" && (entry as any).message) {
+      messages.push({
+        ...(entry as any).message,
+        timestamp: (entry as any).message.timestamp ?? entry.timestamp ?? null,
+      });
+      continue;
+    }
+    if (entry?.type === "compaction" && textOrNull((entry as any).summary)) {
+      messages.push({
+        role: "compactionSummary",
+        summary: (entry as any).summary,
+        timestamp: (entry as any).timestamp ?? null,
+      });
+    }
+  }
+  return messages;
 }
 
 function textOrNull(value: any) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function deletedAgentContinuationError(code: string, message: string, status = 422) {
+  const err = new Error(`continueDeletedAgentSession: ${message}`);
+  (err as any).code = code;
+  (err as any).status = status;
+  return err;
 }
 
 function modelIdFromModel(model: any) {
@@ -837,6 +869,113 @@ export class SessionCoordinator {
     }
   }
 
+  _makeSessionLocatorStateError(operation: string, sessionPath: any, manifest: any) {
+    const lifecycle = manifest?.lifecycle || "unknown";
+    const currentPath = manifest?.currentLocator?.path || null;
+    const error: any = new Error(
+      `${operation}: session path is not runnable because its current lifecycle is ${lifecycle}`
+      + (currentPath ? ` at ${currentPath}` : "")
+      + `; requested ${sessionPath}`,
+    );
+    error.code = "session_locator_not_active";
+    error.status = 409;
+    error.sessionId = manifest?.sessionId || null;
+    error.currentPath = currentPath;
+    error.lifecycle = lifecycle;
+    return error;
+  }
+
+  _assertCurrentActiveSessionLocator(sessionPath: any, operation: string) {
+    if (!sessionPath) return null;
+    const manifest = this._resolveSessionManifestForPath(sessionPath);
+    if (!manifest) return null;
+    const currentPath = manifest.currentLocator?.path;
+    const requestedPath = path.resolve(sessionPath);
+    if (manifest.lifecycle && manifest.lifecycle !== "active") {
+      throw this._makeSessionLocatorStateError(operation, sessionPath, manifest);
+    }
+    if (currentPath && path.resolve(currentPath) !== requestedPath) {
+      throw this._makeSessionLocatorStateError(operation, sessionPath, manifest);
+    }
+    return manifest;
+  }
+
+  _isCurrentActiveSessionLocator(sessionPath: any) {
+    try {
+      const manifest = this._resolveSessionManifestForPath(sessionPath);
+      if (!manifest) return true;
+      if (manifest.lifecycle && manifest.lifecycle !== "active") return false;
+      const currentPath = manifest.currentLocator?.path;
+      return !currentPath || path.resolve(currentPath) === path.resolve(sessionPath);
+    } catch {
+      return false;
+    }
+  }
+
+  async moveSessionLifecycle({ fromPath = null, toPath = null, lifecycle = null, reason = "session_lifecycle", manifestDefaults = {} }: any = {}) {
+    if (!this._sessionManifestStore || typeof this._sessionManifestStore.updateLocatorLifecycle !== "function") {
+      const error: any = new Error("Session manifest lifecycle transition is unavailable.");
+      error.code = "session_manifest_unavailable";
+      error.status = 503;
+      throw error;
+    }
+    if (!toPath) {
+      const error: any = new Error("moveSessionLifecycle: toPath is required");
+      error.code = "session_lifecycle_path_required";
+      error.status = 400;
+      throw error;
+    }
+    if (lifecycle !== "active" && lifecycle !== "archived") {
+      const error: any = new Error(`moveSessionLifecycle: unsupported lifecycle ${lifecycle || "(empty)"}`);
+      error.code = "session_lifecycle_invalid";
+      error.status = 400;
+      throw error;
+    }
+
+    let manifest = null;
+    for (const candidate of [fromPath, toPath]) {
+      if (!candidate) continue;
+      manifest = this._resolveSessionManifestForPath(candidate);
+      if (manifest) break;
+    }
+    if (!manifest) {
+      const seedPath = fromPath || toPath;
+      const initialLifecycle = isArchivedDesktopSessionPath(seedPath, this._d.agentsDir) ? "archived" : "active";
+      manifest = this._ensureSessionManifestForPath(seedPath, {
+        ownerAgentId: this._d.agentIdFromSessionPath?.(seedPath) || null,
+        domain: "desktop",
+        kind: "chat",
+        lifecycle: initialLifecycle,
+        provenance: { createdBy: "session_lifecycle_transition" },
+        locatorReason: reason,
+        ...(manifestDefaults || {}),
+      });
+    }
+    if (!manifest?.sessionId) {
+      const error: any = new Error("moveSessionLifecycle: session manifest could not be established");
+      error.code = "session_manifest_not_found";
+      error.status = 404;
+      throw error;
+    }
+
+    const updated = this._sessionManifestStore.updateLocatorLifecycle(
+      manifest.sessionId,
+      toPath,
+      lifecycle,
+      reason,
+    );
+    if (!updated?.currentLocator?.path || path.resolve(updated.currentLocator.path) !== path.resolve(toPath) || updated.lifecycle !== lifecycle) {
+      const error: any = new Error("moveSessionLifecycle: manifest transition verification failed");
+      error.code = "session_lifecycle_transition_failed";
+      error.status = 500;
+      error.sessionId = manifest.sessionId;
+      error.toPath = toPath;
+      error.lifecycle = lifecycle;
+      throw error;
+    }
+    return updated;
+  }
+
   _readSessionCapabilitySnapshot(sessionPath: any) {
     if (!this._sessionManifestStore || !sessionPath) return null;
     try {
@@ -922,10 +1061,10 @@ export class SessionCoordinator {
   _sessionTitleFromMap(titles: any, sessionPath: any, extraLegacyPaths: any[] = []) {
     if (!titles || !sessionPath) return null;
     const keys: string[] = [];
-    const sessionId = this._sessionIdForPath(sessionPath);
-    if (sessionId) keys.push(sessionId);
     for (const candidate of [sessionPath, ...extraLegacyPaths]) {
       if (!candidate) continue;
+      const sessionId = this._sessionIdForPath(candidate);
+      if (sessionId) keys.push(sessionId);
       keys.push(candidate);
       keys.push(path.basename(candidate));
     }
@@ -1102,8 +1241,11 @@ export class SessionCoordinator {
       throw new Error("createSession: target agent unavailable");
     }
     const ownerAgentId = explicitAgentId || agent.id || this._d.getActiveAgentId();
-    const effectiveCwd = cwd || this._d.getHomeCwd(agent.id) || process.cwd();
-    restoreDefaultWorkspaceIfMissing(effectiveCwd);
+    const configuredHomeCwd = this._d.getHomeCwd(agent.id);
+    const effectiveCwd = cwd || configuredHomeCwd || process.cwd();
+    if (!restore && !cwd && isDefaultWorkspacePath(configuredHomeCwd) && isDefaultWorkspacePath(effectiveCwd)) {
+      restoreDefaultWorkspaceIfMissing(effectiveCwd);
+    }
     const models = this._d.getModels();
     // restore 模式：不指定 model，让 PI SDK 从 JSONL 恢复（session model 单一数据源）
     const effectiveModel = restore ? null : (model || this._pendingModel || models.currentModel);
@@ -1512,8 +1654,9 @@ export class SessionCoordinator {
     //   B. restore=true + meta missing        → legacy session, keep all tools
     //   C. restore=false                       → fresh compute from agent config
     //
-    // allToolNames must cover the COMPLETE active set: Pi SDK built-ins
-    // (read/bash/edit/write/grep/find/ls) from sessionTools + HanaAgent
+    // allToolNames must cover the COMPLETE active set: Hana built-ins
+    // (read/write/edit/exec_command/write_stdin/grep/find/ls) from
+    // sessionTools + HanaAgent
     // customs + plugin tools from sessionCustomTools. Using only agent.tools
     // would silently drop SDK built-ins and plugin tools when
     // setActiveToolsByName is applied.
@@ -1875,7 +2018,11 @@ export class SessionCoordinator {
       .map(normalizeDeletedAgentTranscriptMessage)
       .filter(Boolean);
     if (transcriptMessages.length === 0) {
-      throw new Error("continueDeletedAgentSession: source session has no displayable transcript");
+      throw deletedAgentContinuationError(
+        "SESSION_TRANSCRIPT_EMPTY",
+        "source session has no displayable transcript",
+        422,
+      );
     }
 
     let createdSessionPath = null;
@@ -1915,10 +2062,12 @@ export class SessionCoordinator {
       } catch (error) {
         compactionError = error?.message || String(error);
       }
+      await this.setSessionPinned(sourceSessionPath, false);
       (manager as any)._rewriteFile?.();
       return {
         session,
         sessionPath: createdSessionPath,
+        sessionId: this._sessionIdForPath(createdSessionPath),
         agentId: targetAgent.id,
         agentName: targetAgent.agentName || targetAgent.name || targetAgent.id,
         cwd: manager.getCwd?.() || targetCwd,
@@ -2283,6 +2432,7 @@ export class SessionCoordinator {
     if (this._isDeletedAgentSessionPath(sessionPath)) {
       throw new Error("switchSession: session belongs to a deleted agent");
     }
+    this._assertCurrentActiveSessionLocator(sessionPath, "switchSession");
 
     // 切到已有 session 时清空 pendingModel（用户的临时选择不应跟到别的 session）
     this._pendingModel = null;
@@ -3561,6 +3711,7 @@ export class SessionCoordinator {
   isRunnableSessionPath(sessionPath: any) {
     if (!isActiveSessionPath(sessionPath, this._d.agentsDir)) return false;
     if (this._isDeletedAgentSessionPath(sessionPath)) return false;
+    if (!this._isCurrentActiveSessionLocator(sessionPath)) return false;
     if (
       this._getSessionEntryByPath(sessionPath)
       || this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath)
@@ -3700,6 +3851,7 @@ export class SessionCoordinator {
     if (this._isDeletedAgentSessionPath(sessionPath)) {
       throw new Error("reloadSessionRuntime: session belongs to a deleted agent");
     }
+    this._assertCurrentActiveSessionLocator(sessionPath, "reloadSessionRuntime");
     const targetAgentId = this._d.agentIdFromSessionPath(sessionPath);
     if (!targetAgentId) {
       throw new Error(`reloadSessionRuntime: cannot resolve agentId for ${sessionPath}`);
@@ -3757,6 +3909,7 @@ export class SessionCoordinator {
     if (this._isDeletedAgentSessionPath(sessionPath)) {
       throw new Error("ensureSessionLoaded: session belongs to a deleted agent");
     }
+    this._assertCurrentActiveSessionLocator(sessionPath, "ensureSessionLoaded");
     const existing = this._getSessionEntryByPath(sessionPath);
     if (existing) {
       existing.lastTouchedAt = Date.now();
@@ -4097,7 +4250,12 @@ export class SessionCoordinator {
    * title 的存储 key 仍是活跃路径——从 archived 路径反推活跃路径再查 titles.json。
    */
   async listArchivedSessions() {
-    const agents = this._d.listAgents();
+    const activeAgents = this._d.listAgents();
+    const deletedAgents = this._d.listDeletedAgents?.() || [];
+    const agents = [
+      ...activeAgents.map(agent => ({ ...agent, agentDeleted: false })),
+      ...deletedAgents.map(agent => ({ ...agent, agentDeleted: true })),
+    ];
     const perAgent = await Promise.all(agents.map(async (agent) => {
       const sessionDir = path.join(this._d.agentsDir, agent.id, "sessions");
       const archDir = path.join(sessionDir, "archived");
@@ -4111,13 +4269,36 @@ export class SessionCoordinator {
           try {
             const stat = await fsp.stat(full);
             const activeKey = path.join(sessionDir, f);
+            const archivedManifest = this._resolveSessionManifestForPath(full);
+            const activeManifest = archivedManifest ? null : this._resolveSessionManifestForPath(activeKey);
+            const manifest = archivedManifest
+              || (activeManifest?.sessionId && this._sessionManifestStore?.updateLocatorLifecycle
+                ? this._sessionManifestStore.updateLocatorLifecycle(
+                  activeManifest.sessionId,
+                  full,
+                  "archived",
+                  "archived_session_list_repair",
+                )
+                : null)
+              || this._ensureSessionManifestForPath(full, {
+                ownerAgentId: agent.id,
+                domain: "desktop",
+                kind: "chat",
+                lifecycle: "archived",
+                provenance: { createdBy: "archived_session_list_repair" },
+                locatorReason: "archived_session_list",
+              });
             return {
               path: full,
+              sessionId: manifest?.sessionId || null,
               title: this._sessionTitleFromMap(titles, full, [activeKey]) || null,
               archivedAt: stat.mtime.toISOString(),
               sizeBytes: stat.size,
               agentId: agent.id,
               agentName: agent.name,
+              agentDeleted: agent.agentDeleted === true,
+              readOnlyReason: agent.agentDeleted === true ? "agent_deleted" : null,
+              deletedAt: agent.deletedAt || null,
             };
           } catch {
             return null;
@@ -4382,7 +4563,8 @@ export class SessionCoordinator {
         delete meta[sessKey].model;
         delete meta[sessKey].modelId;
         meta[sessKey] = await this._externalizeSessionMetaPayloads(metaPath, sessKey, meta[sessKey]);
-        await fsp.writeFile(metaPath, JSON.stringify(meta, null, 2));
+        const compactedMeta = await this._externalizeSessionMetaForIndexBudget(metaPath, meta);
+        await fsp.writeFile(metaPath, JSON.stringify(compactedMeta, null, 2));
         this.invalidateMetaCache(metaPath);
         this._writeSessionCapabilitySnapshot(sessionPath, partial);
         return;
@@ -4464,14 +4646,63 @@ export class SessionCoordinator {
     for (const [sessKey, entry] of Object.entries(data)) {
       compacted[sessKey] = await this._externalizeSessionMetaPayloads(metaPath, sessKey, entry);
     }
-    await fsp.writeFile(metaPath, JSON.stringify(compacted, null, 2));
+    const budgeted = await this._externalizeSessionMetaForIndexBudget(metaPath, compacted);
+    await fsp.writeFile(metaPath, JSON.stringify(budgeted, null, 2));
     this.invalidateMetaCache(metaPath);
     log.warn(`oversized session-meta compacted with payload sidecars: ${metaPath}`);
-    return compacted;
+    return budgeted;
   }
 
-  async _externalizeSessionMetaPayloads(metaPath: any, sessKey: any, entry: any) {
+  _sessionMetaIndexSizeBytes(data: any) {
+    try {
+      return Buffer.byteLength(JSON.stringify(data, null, 2), "utf-8");
+    } catch {
+      return Number.POSITIVE_INFINITY;
+    }
+  }
+
+  _sessionMetaPayloadSizeBytes(value: any) {
+    try {
+      return Buffer.byteLength(JSON.stringify(value), "utf-8");
+    } catch {
+      return 0;
+    }
+  }
+
+  async _externalizeSessionMetaForIndexBudget(metaPath: any, meta: any) {
+    if (this._sessionMetaIndexSizeBytes(meta) <= SESSION_META_INDEX_MAX_BYTES) return meta;
+
+    const next = { ...meta };
+    const candidates: any[] = [];
+    for (const [sessKey, entry] of Object.entries(next)) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      for (const field of SESSION_META_PAYLOAD_FIELDS) {
+        const value = (entry as any)[field];
+        if (value === undefined || this._isSessionMetaPayloadRef(value, field)) continue;
+        const byteLength = this._sessionMetaPayloadSizeBytes(value);
+        if (byteLength <= 0) continue;
+        candidates.push({ sessKey, field, byteLength });
+      }
+    }
+
+    candidates.sort((a, b) => b.byteLength - a.byteLength);
+    for (const candidate of candidates) {
+      next[candidate.sessKey] = await this._externalizeSessionMetaPayloads(
+        metaPath,
+        candidate.sessKey,
+        next[candidate.sessKey],
+        { forceFields: new Set([candidate.field]) },
+      );
+      if (this._sessionMetaIndexSizeBytes(next) <= SESSION_META_INDEX_MAX_BYTES) break;
+    }
+    return next;
+  }
+
+  async _externalizeSessionMetaPayloads(metaPath: any, sessKey: any, entry: any, options: any = {}) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const forceFields = options?.forceFields instanceof Set
+      ? options.forceFields
+      : new Set(Array.isArray(options?.forceFields) ? options.forceFields : []);
     const next = { ...entry };
     for (const field of SESSION_META_PAYLOAD_FIELDS) {
       const value = next[field];
@@ -4482,7 +4713,10 @@ export class SessionCoordinator {
       } catch {
         continue;
       }
-      if (Buffer.byteLength(encoded, "utf-8") <= SESSION_META_PAYLOAD_INLINE_LIMIT_BYTES) continue;
+      if (
+        !forceFields.has(field)
+        && Buffer.byteLength(encoded, "utf-8") <= SESSION_META_PAYLOAD_INLINE_LIMIT_BYTES
+      ) continue;
       const relPath = this._sessionMetaPayloadRelativePath(sessKey, field);
       const absPath = this._sessionMetaPayloadAbsolutePath(metaPath, relPath);
       await fsp.mkdir(path.dirname(absPath), { recursive: true });

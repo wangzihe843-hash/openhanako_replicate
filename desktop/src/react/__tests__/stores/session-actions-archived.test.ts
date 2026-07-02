@@ -39,44 +39,69 @@ describe('archived-session actions', () => {
     expect(await listArchivedSessions()).toEqual([]);
   });
 
-  it("restoreSession returns 'ok' on 200", async () => {
+  it("restoreSession returns structured ok on 200 and posts sessionId when available", async () => {
     hanaFetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ ok: true }),
+      json: async () => ({ ok: true, restoredPath: '/x/restored.jsonl', sessionId: 'sess_archived' }),
+    });
+    hanaFetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ([]),
     });
     const { restoreSession } = await import('../../stores/session-actions');
-    expect(await restoreSession('/x/a.jsonl')).toBe('ok');
+    await expect(restoreSession({ path: '/x/a.jsonl', sessionId: 'sess_archived' })).resolves.toEqual({
+      status: 'ok',
+      restoredPath: '/x/restored.jsonl',
+      sessionId: 'sess_archived',
+    });
+    expect(hanaFetchMock).toHaveBeenCalledWith(
+      '/api/sessions/restore',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ path: '/x/a.jsonl', sessionId: 'sess_archived' }),
+      }),
+    );
   });
 
-  it("restoreSession returns 'conflict' on 409", async () => {
+  it("restoreSession returns conflict on 409", async () => {
     hanaFetchMock.mockResolvedValueOnce({
       ok: false,
       status: 409,
       json: async () => ({ error: 'conflict' }),
     });
     const { restoreSession } = await import('../../stores/session-actions');
-    expect(await restoreSession('/x/a.jsonl')).toBe('conflict');
+    await expect(restoreSession('/x/a.jsonl')).resolves.toEqual({
+      status: 'conflict',
+      error: 'conflict',
+    });
   });
 
-  it("restoreSession returns 'error' on 500", async () => {
+  it("restoreSession returns error on 500", async () => {
     hanaFetchMock.mockResolvedValueOnce({
       ok: false,
       status: 500,
       json: async () => ({ error: 'boom' }),
     });
     const { restoreSession } = await import('../../stores/session-actions');
-    expect(await restoreSession('/x/a.jsonl')).toBe('error');
+    await expect(restoreSession('/x/a.jsonl')).resolves.toEqual({
+      status: 'error',
+      error: 'boom',
+    });
   });
 
-  it('deleteArchivedSession posts path and returns true on ok', async () => {
+  it('deleteArchivedSession posts path/sessionId and returns true on ok', async () => {
     hanaFetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ok: true }) });
     const { deleteArchivedSession } = await import('../../stores/session-actions');
-    const r = await deleteArchivedSession('/x/a.jsonl');
+    const r = await deleteArchivedSession({ path: '/x/a.jsonl', sessionId: 'sess_delete_archived' });
     expect(r).toBe(true);
     expect(hanaFetchMock).toHaveBeenCalledWith(
       '/api/sessions/archived/delete',
-      expect.objectContaining({ method: 'POST' }),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ path: '/x/a.jsonl', sessionId: 'sess_delete_archived' }),
+      }),
     );
   });
 

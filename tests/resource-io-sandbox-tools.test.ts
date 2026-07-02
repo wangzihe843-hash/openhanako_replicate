@@ -12,7 +12,7 @@ describe("ResourceIO sandbox file tools", () => {
     tempRoot = null;
   });
 
-  function makeTools() {
+  function makeTools(options: any = {}) {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-resource-sandbox-tools-"));
     const workspace = path.join(tempRoot, "workspace");
     const hanakoHome = path.join(tempRoot, "hana-home");
@@ -29,8 +29,9 @@ describe("ResourceIO sandbox file tools", () => {
       getSandboxEnabled: () => true,
       getSessionPath: () => sessionPath,
       emitEvent,
+      recordFileOperation: options.recordFileOperation,
     } as any);
-    return { workspace, emitEvent, tools: result.tools };
+    return { workspace, emitEvent, sessionPath, tools: result.tools };
   }
 
   function makeToolsWithResourceIO(resourceIO) {
@@ -83,6 +84,40 @@ describe("ResourceIO sandbox file tools", () => {
       reason: "agent_edit",
       resourceKey: `local_fs:${path.join(realWorkspace, "notes", "a.md").replace(/\\/g, "/")}`,
     }), expect.any(String));
+  });
+
+  it("returns separate SessionFile identity and writable local refs for write outputs", async () => {
+    const recordFileOperation = vi.fn(({ sessionPath, filePath, label, origin, operation }) => ({
+      id: "sf_notes",
+      fileId: "sf_notes",
+      sessionPath,
+      filePath,
+      label,
+      origin,
+      operations: [operation],
+      storageKind: "external",
+      status: "available",
+    }));
+    const { workspace, sessionPath, tools } = makeTools({ recordFileOperation });
+    const write = tools.find((tool) => tool.name === "write");
+    const targetPath = path.join(workspace, "notes", "a.md");
+
+    const result = await write.execute("write-refs", {
+      path: "notes/a.md",
+      content: "hello",
+    });
+
+    expect(recordFileOperation).toHaveBeenCalledWith(expect.objectContaining({
+      sessionPath,
+      filePath: targetPath,
+      origin: "agent_write",
+      operation: "created",
+    }));
+    expect(result.details).toMatchObject({
+      sessionFile: { fileId: "sf_notes", filePath: targetPath },
+      sessionFileRef: { kind: "session-file", fileId: "sf_notes" },
+      writableLocalRef: { kind: "local-file", path: targetPath },
+    });
   });
 
   it("routes mount ResourceRefs through ResourceIO instead of local workspace paths", async () => {

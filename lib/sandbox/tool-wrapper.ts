@@ -18,6 +18,7 @@ interface SandboxOpts {
   getExternalReadPaths?: () => string[];
   checkManagedConfigWrite?: (absolutePath: string, operation: string) => { allowed: boolean; reason?: string } | undefined;
   fallbackTool?: any;
+  fallbackExec?: any;
 }
 
 /** 构造被拦截时返回给 LLM 的结果 */
@@ -357,6 +358,58 @@ function extractPathChecks(command, cwd) {
   return [...checks.values()];
 }
 
+function checkCommandExecutionAccess(command, guard, cwd, opts: SandboxOpts = {}) {
+  const rawCommand = String(command || "");
+  let pathChecks = null;
+  if (cwd && typeof opts.checkManagedConfigWrite === "function") {
+    pathChecks = extractPathChecks(rawCommand, cwd);
+    for (const p of pathChecks) {
+      const managedConfigCheck = checkManagedConfigWrite(p.path, p.operation, opts);
+      if (!managedConfigCheck.allowed) {
+        return { blocked: blockedResult(managedConfigCheck.reason), sandboxDisabled: false };
+      }
+    }
+  }
+
+  if (opts.getSandboxEnabled && !opts.getSandboxEnabled()) {
+    return { blocked: null, sandboxDisabled: true };
+  }
+
+  for (const [pattern, reasonFn] of PREFLIGHT_PATTERNS) {
+    if (pattern.test(rawCommand)) {
+      return { blocked: blockedResult(reasonFn()), sandboxDisabled: false };
+    }
+  }
+
+  if (guard && cwd) {
+    const paths = pathChecks || extractPathChecks(rawCommand, cwd);
+    for (const p of paths) {
+      if (shouldSkipCommandPathGuard(p.operation)) continue;
+      const result = checkWithExternalReadGrant(guard, p.path, p.operation, opts);
+      if (!result.allowed) {
+        return {
+          blocked: blockedResult(t("sandbox.restrictedPath", { path: p.rawPath })),
+          sandboxDisabled: false,
+        };
+      }
+    }
+  }
+
+  return { blocked: null, sandboxDisabled: false };
+}
+
+function blockedCommandError(result) {
+  const err: any = new Error(result?.content?.[0]?.text || "Command blocked");
+  err.hanaCommandBlockedResult = result;
+  return err;
+}
+
+function annotateSandboxWriteError(err) {
+  if (err?.message?.includes("Operation not permitted")) {
+    err.message += "\n\n" + t("sandbox.writeRestricted");
+  }
+}
+
 /**
  * 包装路径类工具（read, write, edit, grep, find, ls）
  *
@@ -416,44 +469,18 @@ export function wrapBashTool(tool, guard, cwd, opts: SandboxOpts = {}) {
   return {
     ...tool,
     execute: async (toolCallId, params, ...rest) => {
-      let pathChecks = null;
-      if (cwd && typeof opts.checkManagedConfigWrite === "function") {
-        pathChecks = extractPathChecks(params.command, cwd);
-        for (const p of pathChecks) {
-          const managedConfigCheck = checkManagedConfigWrite(p.path, p.operation, opts);
-          if (!managedConfigCheck.allowed) {
-            return blockedResult(managedConfigCheck.reason);
-          }
-        }
-      }
+      const access = checkCommandExecutionAccess(params?.command, guard, cwd, opts);
+      if (access.blocked) return access.blocked;
+      const targetTool = access.sandboxDisabled ? (opts.fallbackTool || tool) : tool;
 
       // 沙盒动态关闭 → 使用无 OS 沙盒的 bash 工具，跳过 preflight 和 PathGuard，
       // 保留产品级托管配置边界。
-      if (opts.getSandboxEnabled && !opts.getSandboxEnabled()) {
-        return (opts.fallbackTool || tool).execute(toolCallId, params, ...rest);
-      }
-
-      // preflight
-      for (const [pattern, reasonFn] of PREFLIGHT_PATTERNS) {
-        if (pattern.test(params.command)) {
-          return blockedResult(reasonFn());
-        }
-      }
-
-      // 路径校验：从命令中提取绝对路径，检查 PathGuard
-      if (guard && cwd) {
-        const paths = pathChecks || extractPathChecks(params.command, cwd);
-        for (const p of paths) {
-          if (shouldSkipCommandPathGuard(p.operation)) continue;
-          const result = checkWithExternalReadGrant(guard, p.path, p.operation, opts);
-          if (!result.allowed) {
-            return blockedResult(t("sandbox.restrictedPath", { path: p.rawPath }));
-          }
-        }
+      if (access.sandboxDisabled) {
+        return targetTool.execute(toolCallId, params, ...rest);
       }
 
       try {
-        const result = await tool.execute(toolCallId, params, ...rest);
+        const result = await targetTool.execute(toolCallId, params, ...rest);
 
         // 成功路径的错误翻译（exitCode 0 但 stderr 有 sandbox 拒绝）
         const text = result?.content?.[0]?.text;
@@ -465,11 +492,24 @@ export function wrapBashTool(tool, guard, cwd, opts: SandboxOpts = {}) {
       } catch (err) {
         // Pi SDK 对非零退出 throw Error，错误消息里包含 stderr 输出。
         // 如果是沙盒拦截导致的，追加友好提示。
-        if (err.message?.includes("Operation not permitted")) {
-          err.message += "\n\n" + t("sandbox.writeRestricted");
-        }
+        annotateSandboxWriteError(err);
         throw err;
       }
     },
+  };
+}
+
+export function wrapCommandExec(exec, guard, cwd, opts: SandboxOpts = {}) {
+  return async (command, execCwd, execOpts = {}) => {
+    const access = checkCommandExecutionAccess(command, guard, execCwd || cwd, opts);
+    if (access.blocked) throw blockedCommandError(access.blocked);
+
+    const targetExec = access.sandboxDisabled && opts.fallbackExec ? opts.fallbackExec : exec;
+    try {
+      return await targetExec(command, execCwd, execOpts);
+    } catch (err) {
+      annotateSandboxWriteError(err);
+      throw err;
+    }
   };
 }
