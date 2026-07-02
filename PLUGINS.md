@@ -33,7 +33,7 @@ export async function execute(input) {
 
 ## 从想法到插件
 
-完整实操流程见 `.docs/PLUGIN-DEVELOPMENT.md`。开发时先选插件形态：
+完整实操流程见 `PLUGIN_SDK.md`。开发时先选插件形态：
 
 | 形态 | 适合什么 | 权限 |
 |------|----------|------|
@@ -338,7 +338,7 @@ route.get("/live-scores", async (c) => {
 - `type: "iframe"` / `type: "webview"`：用于插件自己的 Web UI、远程网站、单独 HTML 或复杂浏览器 UI。旧 `iframe` 卡继续兼容；新文档把它定位成正式 WebView escape hatch。
 - `type: "chat.surface"`：用于把插件自己创建的 `plugin_private` / `private` session 作为原生聊天 transcript 嵌进当前聊天流。它只接受 `sessionId/sessionRef`，宿主会校验该 session 属于当前 plugin 且不是公开 session。
 
-命名边界：未来可组合 native cards 属于 Infinity Chalkboard / Card Kernel。`workbench` 是旧代码 namespace，不作为新插件作者需要学习的公开概念。详见 `.docs/INFINITY-CHALKBOARD.md`。
+命名边界：未来可组合 native cards 属于 Infinity Chalkboard / Card Kernel。`workbench` 是旧代码 namespace，不作为新插件作者需要学习的公开概念。
 
 WebView 卡片示例：
 

@@ -33,7 +33,7 @@ export async function execute(input) {
 
 ## From Idea To Plugin
 
-Read `.docs/PLUGIN-DEVELOPMENT.md` for the end-to-end workflow. Pick the plugin shape first:
+Read `PLUGIN_SDK.md` for the end-to-end workflow. Pick the plugin shape first:
 
 | Shape | Best for | Permission |
 |------|----------|------------|
@@ -300,7 +300,7 @@ Tools can automatically render visual cards in the chat by declaring `card` in t
 - `type: "iframe"` / `type: "webview"` for plugin web UI, remote pages, standalone HTML, or complex browser UI. The old `iframe` type remains compatible; new docs treat it as the WebView escape hatch.
 - `type: "chat.surface"` for showing a plugin-owned `plugin_private` / `private` session transcript natively in the current chat stream. It accepts `sessionId/sessionRef`; the host verifies same-plugin ownership before rendering.
 
-Naming boundary: future composable native cards belong to Infinity Chalkboard / Card Kernel. `workbench` is a legacy code namespace, not a public concept for new plugin authors. See `.docs/INFINITY-CHALKBOARD.md`.
+Naming boundary: future composable native cards belong to Infinity Chalkboard / Card Kernel. `workbench` is a legacy code namespace, not a public concept for new plugin authors.
 
 ```js
 return {

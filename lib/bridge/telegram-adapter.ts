@@ -44,7 +44,7 @@ export const TELEGRAM_MEDIA_CAPABILITIES = createMediaCapabilities({
       document: 20 * 1024 * 1024,
     },
   },
-  source: ".docs/BRIDGE-MEDIA-CAPABILITIES.md#telegram",
+  source: "docs/BRIDGE-MEDIA-CAPABILITIES.md#telegram",
 });
 
 export const TELEGRAM_STREAMING_CAPABILITIES = createStreamingCapabilities({

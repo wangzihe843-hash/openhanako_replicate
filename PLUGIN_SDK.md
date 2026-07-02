@@ -9,7 +9,7 @@ Hana's plugin SDK is split into small packages so plugin authors can choose only
 | `@hana/plugin-runtime` | plugin Node runtime | Helpers for tools, lifecycle plugins, EventBus handlers, SessionFile media details, providers, and Pi SDK extensions. |
 | `@hana/plugin-components` | WebView/iframe React UI | Hana-styled React primitives with theme fallback: controls, cards, rows, lists, and empty states. |
 
-For the end-to-end plugin author workflow, read `.docs/PLUGIN-DEVELOPMENT.md` first, then use this file as the SDK package map.
+For the end-to-end plugin author workflow, read `PLUGINS_EN.md` first, then use this file as the SDK package map.
 
 Run `npm run build:packages` after SDK changes. The command builds all SDK packages and their `.d.ts` files:
 
