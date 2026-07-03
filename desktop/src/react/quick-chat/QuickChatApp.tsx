@@ -47,7 +47,9 @@ interface QuickAttachment {
 interface DetachedSessionResponse {
   ok?: boolean;
   path?: string;
+  sessionId?: string | null;
   agentId?: string | null;
+  agentName?: string | null;
   permissionMode?: PermissionMode;
   error?: string;
 }
@@ -104,6 +106,50 @@ function acceptQuickChatServerMessage(msg: any, sessionPath: string | null): boo
   return true;
 }
 
+export function bindQuickChatDetachedSession(options: {
+  path: string;
+  sessionId?: string | null;
+  agentId?: string | null;
+  agentName?: string | null;
+  now?: string;
+}): void {
+  const sessionPath = typeof options.path === 'string' && options.path.trim() ? options.path : null;
+  if (!sessionPath) return;
+  const sessionId = typeof options.sessionId === 'string' && options.sessionId.trim()
+    ? options.sessionId.trim()
+    : null;
+  const now = options.now || new Date().toISOString();
+
+  useStore.getState().setCurrentSessionRef?.({ sessionId, path: sessionPath });
+  useStore.setState({ pendingNewSession: false });
+
+  const state = useStore.getState();
+  if (!sessionScopedValue(state, state.chatSessions, sessionPath)) {
+    state.initSession(sessionPath, [], false);
+  }
+
+  useStore.setState((current: any) => {
+    const existing = current.sessions.some((item: { path?: string; sessionId?: string | null }) => (
+      item.path === sessionPath || (!!sessionId && item.sessionId === sessionId)
+    ));
+    if (existing) return {};
+    return {
+      sessions: [{
+        path: sessionPath,
+        sessionId,
+        title: null,
+        firstMessage: '',
+        modified: now,
+        messageCount: 0,
+        agentId: options.agentId || null,
+        agentName: options.agentName || null,
+        cwd: null,
+        _optimistic: true,
+      }, ...current.sessions],
+    };
+  });
+}
+
 export function QuickChatApp() {
   const { t } = useI18n();
   const [connection, setConnection] = useState<ServerConnection | null>(null);
@@ -139,7 +185,7 @@ export function QuickChatApp() {
     [agents, selectedAgentId],
   );
   const sessionItems = useStore(useCallback((state) => (
-    sessionPath ? state.chatSessions[sessionPath]?.items ?? EMPTY_SESSION_ITEMS : EMPTY_SESSION_ITEMS
+    sessionPath ? sessionScopedValue(state, state.chatSessions, sessionPath)?.items ?? EMPTY_SESSION_ITEMS : EMPTY_SESSION_ITEMS
   ), [sessionPath]));
   const isStreaming = useStore(useCallback((state) => (
     sessionScopedListIncludes(state, state.streamingSessions, sessionPath)
@@ -511,23 +557,13 @@ export function QuickChatApp() {
     const agent = agentsRef.current.find((item) => item.id === resolvedAgentId)
       || runtime?.agent
       || selectedAgent;
-    const store = useStore.getState();
-    if (!store.chatSessions[data.path]) store.initSession(data.path, [], false);
-    if (!store.sessions.some((item: { path?: string }) => item.path === data.path)) {
-      useStore.setState((state: any) => ({
-        sessions: [{
-          path: data.path,
-          title: null,
-          firstMessage: '',
-          modified: now,
-          messageCount: 0,
-          agentId: resolvedAgentId,
-          agentName: agent?.name || null,
-          cwd: null,
-          _optimistic: true,
-        }, ...state.sessions],
-      }));
-    }
+    bindQuickChatDetachedSession({
+      path: data.path,
+      sessionId: data.sessionId,
+      agentId: resolvedAgentId,
+      agentName: data.agentName || agent?.name || null,
+      now,
+    });
     return data.path;
   }, [apiFetch, applyRuntimePermissionMode, refreshQuickChatRuntimeState, selectedAgent, t]);
 

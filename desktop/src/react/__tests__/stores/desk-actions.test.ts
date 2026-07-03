@@ -15,6 +15,10 @@ function jsonResponse(body: unknown): Response {
   return { json: async () => body } as unknown as Response;
 }
 
+function jsonStatusResponse(body: unknown, status: number): Response {
+  return { status, json: async () => body } as unknown as Response;
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => { resolve = r; });
@@ -109,6 +113,56 @@ describe('desk-actions workspace roots', () => {
     );
   });
 
+  it('prunes a stale local workspace history entry when the selected local root is missing', async () => {
+    useStore.setState({
+      selectedFolder: '/workspace/Missing',
+      deskBasePath: '/workspace/Missing',
+      cwdHistory: ['/workspace/Missing', '/workspace/Keep'],
+      deskFiles: [{ name: 'old.md', isDir: false }],
+      deskTreeFilesByPath: { '': [{ name: 'old.md', isDir: false }] },
+    } as never);
+    mockHanaFetch
+      .mockResolvedValueOnce(jsonStatusResponse({ error: { code: 'resource_not_found', message: 'missing' } }, 404))
+      .mockResolvedValueOnce(jsonResponse({ cwd_history: ['/workspace/Keep'] }));
+
+    const { loadDeskFiles } = await import('../../stores/desk-actions');
+    await loadDeskFiles();
+
+    expect(useStore.getState().selectedFolder).toBeNull();
+    expect(useStore.getState().deskBasePath).toBe('');
+    expect(useStore.getState().deskFiles).toEqual([]);
+    expect(useStore.getState().deskTreeFilesByPath).toEqual({});
+    expect(useStore.getState().cwdHistory).toEqual(['/workspace/Keep']);
+    expect(mockHanaFetch).toHaveBeenNthCalledWith(
+      2,
+      '/api/config/workspaces/recent',
+      expect.objectContaining({
+        method: 'DELETE',
+        body: JSON.stringify({ path: '/workspace/Missing' }),
+      }),
+    );
+  });
+
+  it('keeps local workspace history on permission errors', async () => {
+    useStore.setState({
+      selectedFolder: '/workspace/Private',
+      deskBasePath: '/workspace/Private',
+      cwdHistory: ['/workspace/Private', '/workspace/Keep'],
+      deskFiles: [{ name: 'private.md', isDir: false }],
+    } as never);
+    mockHanaFetch.mockResolvedValueOnce(jsonStatusResponse({
+      error: { code: 'insufficient_scope', message: 'forbidden' },
+    }, 403));
+
+    const { loadDeskFiles } = await import('../../stores/desk-actions');
+    await loadDeskFiles();
+
+    expect(useStore.getState().selectedFolder).toBe('/workspace/Private');
+    expect(useStore.getState().deskBasePath).toBe('/workspace/Private');
+    expect(useStore.getState().cwdHistory).toEqual(['/workspace/Private', '/workspace/Keep']);
+    expect(mockHanaFetch).toHaveBeenCalledTimes(1);
+  });
+
   it('loads files through the workbench mount route when a Studio workspace is active', async () => {
     useStore.setState({
       deskBasePath: 'studio:mount_docs',
@@ -132,6 +186,31 @@ describe('desk-actions workspace roots', () => {
     );
     expect(useStore.getState().deskFiles).toEqual([{ name: 'remote.md', isDir: false }]);
     expect(useStore.getState().deskBasePath).toBe('studio:mount_docs');
+  });
+
+  it('does not prune local workspace history when a Studio mount load returns 404', async () => {
+    const existingFiles = [{ name: 'remote.md', isDir: false }];
+    useStore.setState({
+      selectedFolder: '/workspace/Local',
+      deskBasePath: 'studio:mount_docs',
+      deskWorkspaceMountId: 'mount_docs',
+      deskWorkspaceLabel: 'Docs',
+      cwdHistory: ['/workspace/Local'],
+      deskFiles: existingFiles,
+      deskTreeFilesByPath: { '': existingFiles },
+    } as never);
+    mockHanaFetch.mockResolvedValueOnce(jsonStatusResponse({
+      error: { code: 'resource_not_found', message: 'missing' },
+    }, 404));
+
+    const { loadDeskFiles } = await import('../../stores/desk-actions');
+    await loadDeskFiles();
+
+    expect(useStore.getState().selectedFolder).toBe('/workspace/Local');
+    expect(useStore.getState().cwdHistory).toEqual(['/workspace/Local']);
+    expect(useStore.getState().deskBasePath).toBe('studio:mount_docs');
+    expect(useStore.getState().deskFiles).toBe(existingFiles);
+    expect(mockHanaFetch).toHaveBeenCalledTimes(1);
   });
 
   it('stores the disclosed native root of a local_fs workspace from the workbench files response', async () => {

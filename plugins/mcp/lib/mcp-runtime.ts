@@ -339,7 +339,7 @@ export class McpRuntime {
     const config = this.getConfig();
     if (config.enabled) {
       for (const connector of config.connectors.filter((s) => s.autoStart)) {
-        this.startConnector(connector.id).catch((err) => {
+        this.startConnector(connector.id, { retryInitialFailure: true }).catch((err) => {
           this.ctx.log.warn(`auto-start failed for ${connector.id}: ${err.message}`);
         });
       }
@@ -470,7 +470,7 @@ export class McpRuntime {
     return this.removeConnector(id);
   }
 
-  async startConnector(id) {
+  async startConnector(id, options: any = {}) {
     const config = this.getConfig();
     if (!config.enabled) throw new Error("MCP connectors are disabled globally");
     const connector = config.connectors.find((s) => s.id === id);
@@ -499,8 +499,21 @@ export class McpRuntime {
     } catch (err) {
       this.clients.delete(id);
       this.clientErrors.set(id, err.message || "MCP connector failed to start");
-      this.connectorStatus.delete(id);
       await client.stop().catch(() => {});
+      if (isAuthError(err)) {
+        this._cancelReconnect(id);
+        if (this._isDesiredLiveConnector(id)) {
+          this.connectorStatus.set(id, STATUS_NEEDS_AUTH);
+        } else {
+          this.connectorStatus.delete(id);
+        }
+        throw err;
+      }
+      if (options.retryInitialFailure === true && this._canAutoReconnect(id)) {
+        this._scheduleReconnect(id);
+      } else {
+        this.connectorStatus.delete(id);
+      }
       throw err;
     } finally {
       this.establishing.delete(id);

@@ -77,6 +77,94 @@ function defaultDeskRoot(s: ReturnType<typeof useStore.getState>): string | unde
     || undefined;
 }
 
+async function responseJsonOrEmpty(res: any): Promise<any> {
+  if (!res || typeof res.json !== 'function') return {};
+  try {
+    return await res.json();
+  } catch (err) {
+    if (res.status === 404) return {};
+    throw err;
+  }
+}
+
+function routeErrorCode(data: any): string {
+  if (!data || typeof data !== 'object') return '';
+  if (typeof data.code === 'string') return data.code;
+  const error = data.error;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    if (typeof error.code === 'string') return error.code;
+    if (typeof error.message === 'string') return error.message;
+  }
+  return '';
+}
+
+function routeErrorMessage(data: any): string {
+  if (!data || typeof data !== 'object') return 'desk request failed';
+  if (typeof data.error === 'string') return data.error;
+  if (data.error && typeof data.error === 'object') {
+    if (typeof data.error.message === 'string') return data.error.message;
+    if (typeof data.error.code === 'string') return data.error.code;
+  }
+  if (typeof data.message === 'string') return data.message;
+  return 'desk request failed';
+}
+
+function isMissingLocalDeskRootResponse(res: any, data: any): boolean {
+  if (res?.status === 403) return false;
+  if (res?.status === 404) return true;
+  return routeErrorCode(data) === 'resource_not_found';
+}
+
+async function pruneStaleLocalDeskRoot(dir: string): Promise<void> {
+  const normalized = normalizeFolder(dir);
+  if (!normalized) return;
+
+  useStore.setState((state: any) => {
+    const patch: Record<string, any> = {
+      cwdHistory: removeWorkspaceHistoryEntries(state.cwdHistory, [normalized]),
+    };
+    if (normalizeFolder(state.selectedFolder) === normalized) {
+      patch.selectedFolder = null;
+    }
+    if (normalizeFolder(state.deskBasePath) === normalized) {
+      Object.assign(patch, {
+        deskBasePath: '',
+        deskCurrentPath: '',
+        deskFiles: [],
+        deskTreeFilesByPath: {},
+        deskExpandedPaths: [],
+        deskSelectedPath: '',
+        deskWorkspaceMountId: null,
+        deskWorkspaceLabel: null,
+        deskWorkspaceNativeRoot: null,
+      });
+    }
+    return patch;
+  });
+
+  const s = useStore.getState();
+  if (!hasServerConnection(s)) return;
+  try {
+    const res = await hanaFetch('/api/config/workspaces/recent', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: normalized }),
+    });
+    const data = await responseJsonOrEmpty(res);
+    if (Array.isArray(data.cwd_history)) {
+      useStore.setState({
+        cwdHistory: removeWorkspaceHistoryEntries(
+          mergeWorkspaceHistory(data.cwd_history, []),
+          [normalized],
+        ),
+      });
+    }
+  } catch (err) {
+    console.error('[workspace] prune stale history failed:', err);
+  }
+}
+
 function selectedDeskAgentId(s: ReturnType<typeof useStore.getState>): string | null {
   return typeof s.selectedAgentId === 'string' && s.selectedAgentId.trim()
     ? s.selectedAgentId.trim()
@@ -421,9 +509,14 @@ export async function loadDeskFiles(subdir?: string, overrideDir?: string | null
     if (curPath) params.set('subdir', curPath);
     const qs = params.toString() ? `?${params}` : '';
     const res = await hanaFetch(`${mountId ? '/api/workbench/files' : '/api/desk/files'}${qs}`);
-    const data = await res.json();
+    const data = await responseJsonOrEmpty(res);
     if (myVersion !== _deskLoadVersion) return;
-    if (data.error) throw new Error(String(data.error));
+    if (!mountId && dir && isMissingLocalDeskRootResponse(res, data)) {
+      await pruneStaleLocalDeskRoot(dir);
+      updateDeskContextBtn();
+      return;
+    }
+    if (data.error) throw new Error(routeErrorMessage(data));
     const st = useStore.getState();
     st.setDeskFiles(data.files || []);
     st.setDeskTreeFiles('', data.files || []);
