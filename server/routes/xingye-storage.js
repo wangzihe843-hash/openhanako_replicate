@@ -306,15 +306,16 @@ export function createXingyeStorageRoute(engine) {
           // 与 writeJsonl/deleteJsonlRecord 同锁串行化；锁段不嵌套取锁（sync 内部不再取同锁），无死锁。
           await withXingyeAgentEventLock(agentId, async () => {
             const loreEntriesWrite = isAgentLoreEntriesJsonPath(relativePath);
-            // A null tombstone for lore must still run the derived-memory sync;
-            // normalize it to an empty object so stale stable lore is removed.
-            const dataToWrite = loreEntriesWrite && body.data == null ? {} : body.data;
+            // Preserve a null tombstone on disk for Storage.removeItem semantics,
+            // while treating it as an empty lore map for derived-memory cleanup.
+            const dataToWrite = body.data;
+            const loreEntriesForSync = loreEntriesWrite && dataToWrite == null ? {} : dataToWrite;
             await atomicWrite(target, Buffer.from(JSON.stringify(dataToWrite, null, 2), "utf-8"));
             if (
               loreEntriesWrite
-              && dataToWrite != null
-              && typeof dataToWrite === "object"
-              && !Array.isArray(dataToWrite)
+              && loreEntriesForSync != null
+              && typeof loreEntriesForSync === "object"
+              && !Array.isArray(loreEntriesForSync)
             ) {
               const hanakoHome = resolveHanakoHomeFromAgentsDir(engine.agentsDir);
               if (!hanakoHome) {
@@ -326,7 +327,7 @@ export function createXingyeStorageRoute(engine) {
                   await syncXingyeStableLoreMemoryFile({
                     hanakoHome,
                     agentId,
-                    entries: dataToWrite,
+                    entries: loreEntriesForSync,
                   });
                 } catch (err) {
                   console.warn(

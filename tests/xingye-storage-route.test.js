@@ -401,6 +401,16 @@ describe("xingye storage route", () => {
         }),
       });
       expect(clearLore.status).toBe(200);
+      const readClearedLore = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "readJson",
+          agentId: "agent-a",
+          relativePath: "lore/entries.json",
+        }),
+      });
+      expect(await readClearedLore.json()).toMatchObject({ ok: true, data: null });
       expect(readXingyeStableLoreMemoryForPromptSync({
         hanakoHome,
         agentId: "agent-a",
