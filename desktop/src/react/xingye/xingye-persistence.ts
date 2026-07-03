@@ -78,6 +78,7 @@ export class XingyePersistenceBindingError extends Error {
 
 let mode: XingyePersistenceMode = 'disabled';
 const memory = new Map<string, string>();
+const removedKeys = new Set<string>();
 let activeAgentId: string | null = null;
 let refreshVersion = 0;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -85,6 +86,7 @@ const FLUSH_DEBOUNCE_MS = 450;
 const FLUSH_RETRY_MS = 5_000;
 let flushPending = false;
 let memoryRevision = 0;
+let flushInFlight: Promise<boolean> | null = null;
 let pendingTransitionAgentId: string | null | undefined;
 let lastAgentFlushError: string | null = null;
 let lastRefreshError: string | null = null;
@@ -165,11 +167,11 @@ async function readAgentFile(agentId: string, key: string): Promise<string | nul
   return wrapped == null ? null : JSON.stringify(wrapped);
 }
 
-async function writeAgentFile(agentId: string, key: string, raw: string): Promise<void> {
+async function writeAgentFile(agentId: string, key: string, raw: string | null): Promise<void> {
   const relativePath = KEY_TO_AGENT_RELATIVE[key];
   if (!relativePath) return;
-  const parsed = parseJson(raw);
-  const data = pickAgentScopedData(key, agentId, parsed);
+  const parsed = raw == null ? null : parseJson(raw);
+  const data = raw == null ? null : pickAgentScopedData(key, agentId, parsed);
   await postXingyeStorage({ action: 'writeJson', agentId, relativePath, data });
 }
 
@@ -220,37 +222,60 @@ function scheduleFlush(delayMs = FLUSH_DEBOUNCE_MS): void {
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = setTimeout(() => {
     flushTimer = null;
-    void flushNow().then(async (flushed) => {
-      if (!flushed || pendingTransitionAgentId === undefined) return;
-      const targetAgentId = pendingTransitionAgentId;
-      pendingTransitionAgentId = undefined;
-      await refreshXingyeAgentPersistence(targetAgentId);
-    });
+    void flushAndResumePendingTransition();
   }, delayMs);
 }
 
-async function flushNow(): Promise<boolean> {
-  if (mode !== 'agent' || !activeAgentId || !flushPending) return true;
-  const revision = memoryRevision;
-  lastAgentFlushError = null;
-  try {
-    for (const [key, raw] of memory.entries()) {
-      await writeAgentFile(activeAgentId, key, raw);
-    }
-    if (revision === memoryRevision) {
-      flushPending = false;
-      return true;
-    } else {
-      scheduleFlush();
+async function runFlushLoop(): Promise<boolean> {
+  while (mode === 'agent' && activeAgentId && flushPending) {
+    const agentId = activeAgentId;
+    const revision = memoryRevision;
+    const snapshot: Array<[string, string | null]> = [
+      ...Array.from(memory.entries()),
+      ...Array.from(removedKeys)
+        .filter((key) => !memory.has(key))
+        .map((key): [string, null] => [key, null]),
+    ];
+    lastAgentFlushError = null;
+    try {
+      for (const [key, raw] of snapshot) {
+        await writeAgentFile(agentId, key, raw);
+      }
+    } catch (err) {
+      flushPending = true;
+      lastAgentFlushError = err instanceof Error ? err.message : String(err);
+      console.warn('[xingye-persistence] agent flush failed:', err);
+      scheduleFlush(FLUSH_RETRY_MS);
       return false;
     }
-  } catch (err) {
-    flushPending = true;
-    lastAgentFlushError = err instanceof Error ? err.message : String(err);
-    console.warn('[xingye-persistence] agent flush failed:', err);
-    scheduleFlush(FLUSH_RETRY_MS);
-    return false;
+
+    if (mode === 'agent' && activeAgentId === agentId && revision === memoryRevision) {
+      flushPending = false;
+      removedKeys.clear();
+      return true;
+    }
   }
+  return !flushPending;
+}
+
+function flushNow(): Promise<boolean> {
+  if (flushInFlight) return flushInFlight;
+  const current = runFlushLoop();
+  flushInFlight = current;
+  const clearCurrent = () => {
+    if (flushInFlight === current) flushInFlight = null;
+  };
+  void current.then(clearCurrent, clearCurrent);
+  return current;
+}
+
+async function flushAndResumePendingTransition(): Promise<boolean> {
+  const flushed = await flushNow();
+  if (!flushed || pendingTransitionAgentId === undefined) return flushed;
+  const targetAgentId = pendingTransitionAgentId;
+  pendingTransitionAgentId = undefined;
+  await refreshXingyeAgentPersistence(targetAgentId);
+  return true;
 }
 
 export async function flushXingyePersistenceNow(): Promise<void> {
@@ -258,7 +283,7 @@ export async function flushXingyePersistenceNow(): Promise<void> {
     clearTimeout(flushTimer);
     flushTimer = null;
   }
-  await flushNow();
+  await flushAndResumePendingTransition();
 }
 
 async function flushPendingBeforeTransition(
@@ -341,12 +366,14 @@ export function getXingyePersistenceStorage(): StorageLike | null {
     },
     setItem(key: string, value: string) {
       memory.set(key, value);
+      removedKeys.delete(key);
       memoryRevision += 1;
       flushPending = true;
       scheduleFlush();
     },
     removeItem(key: string) {
       memory.delete(key);
+      removedKeys.add(key);
       memoryRevision += 1;
       flushPending = true;
       scheduleFlush();
@@ -373,6 +400,7 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     if (!(await flushPendingBeforeTransition(myVersion, null))) return;
     mode = 'disabled';
     memory.clear();
+    removedKeys.clear();
     memoryRevision += 1;
     flushPending = false;
     activeAgentId = null;
@@ -385,6 +413,7 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     if (!(await flushPendingBeforeTransition(myVersion, null))) return;
     mode = 'disabled';
     memory.clear();
+    removedKeys.clear();
     memoryRevision += 1;
     flushPending = false;
     activeAgentId = null;
@@ -411,6 +440,7 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     if (myVersion !== refreshVersion) return;
     memory.clear();
     for (const [key, raw] of loaded) memory.set(key, raw);
+    removedKeys.clear();
     memoryRevision += 1;
     flushPending = false;
     activeAgentId = id;
@@ -423,6 +453,7 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     if (myVersion !== refreshVersion) return;
     mode = 'error';
     memory.clear();
+    removedKeys.clear();
     memoryRevision += 1;
     flushPending = false;
     activeAgentId = null;
@@ -442,6 +473,7 @@ export async function refreshXingyeWorkspacePersistence(agentId?: string | null)
 export function resetXingyePersistenceForTests(): void {
   mode = 'disabled';
   memory.clear();
+  removedKeys.clear();
   memoryRevision = 0;
   flushPending = false;
   pendingTransitionAgentId = undefined;

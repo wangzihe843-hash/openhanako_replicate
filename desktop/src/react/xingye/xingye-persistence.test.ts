@@ -184,6 +184,75 @@ describe('xingye-persistence agent scoped storage', () => {
     }
   });
 
+  it('serializes overlapping flushes so an older write cannot overwrite a newer revision', async () => {
+    await refreshXingyeAgentPersistence('agent-a');
+    getXingyePersistenceStorage()?.setItem(
+      'xingye.phoneContacts',
+      JSON.stringify({ note: 'old revision' }),
+    );
+
+    let releaseFirstWrite: (() => void) | undefined;
+    vi.mocked(postXingyeStorage).mockImplementationOnce(async (body: Record<string, unknown>) => (
+      new Promise((resolve) => {
+        releaseFirstWrite = () => {
+          const key = `${body.agentId}:${body.relativePath}`;
+          hoisted.files.set(key, body.data);
+          resolve({ ok: true });
+        };
+      })
+    ));
+
+    const firstFlush = flushXingyePersistenceNow();
+    expect(releaseFirstWrite).toBeTypeOf('function');
+
+    getXingyePersistenceStorage()?.setItem(
+      'xingye.phoneContacts',
+      JSON.stringify({ note: 'new revision' }),
+    );
+    const secondFlush = flushXingyePersistenceNow();
+
+    releaseFirstWrite?.();
+    await Promise.all([firstFlush, secondFlush]);
+
+    resetXingyePersistenceForTests();
+    await refreshXingyeAgentPersistence('agent-a');
+    expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts'))
+      .toContain('new revision');
+  });
+
+  it('resumes a queued agent switch after an explicit flush succeeds', async () => {
+    await refreshXingyeAgentPersistence('agent-a');
+    getXingyePersistenceStorage()?.setItem(
+      'xingye.phoneContacts',
+      JSON.stringify({ note: 'pending before explicit flush' }),
+    );
+    vi.mocked(postXingyeStorage).mockRejectedValueOnce(new Error('temporary network failure'));
+
+    await refreshXingyeAgentPersistence('agent-b');
+    expect(() => assertXingyePersistenceBoundTo('agent-b')).toThrow(XingyePersistenceBindingError);
+
+    await flushXingyePersistenceNow();
+
+    expect(() => assertXingyePersistenceBoundTo('agent-b')).not.toThrow();
+    expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts')).toBeNull();
+  });
+
+  it('persists removeItem so deleted agent data does not reappear after reload', async () => {
+    await refreshXingyeAgentPersistence('agent-a');
+    getXingyePersistenceStorage()?.setItem(
+      'xingye.phoneContacts',
+      JSON.stringify({ note: 'delete me' }),
+    );
+    await flushXingyePersistenceNow();
+
+    getXingyePersistenceStorage()?.removeItem('xingye.phoneContacts');
+    await flushXingyePersistenceNow();
+
+    resetXingyePersistenceForTests();
+    await refreshXingyeAgentPersistence('agent-a');
+    expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts')).toBeNull();
+  });
+
   it('does not expose formal business storage without an explicit agent id', async () => {
     await refreshXingyeAgentPersistence('');
     expect(getXingyePersistenceStorage()).toBeNull();
