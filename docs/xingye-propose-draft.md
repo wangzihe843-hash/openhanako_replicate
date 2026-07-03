@@ -91,12 +91,12 @@
 
 > 这是 `xingye-journal-draft` 上线时踩的坑：UI 显示成了「兴业草稿」而不是「星野日记草稿」。
 
-Skill 默认显示名走 [core/llm-utils.js](../core/llm-utils.js) 的 `translateSkillNames`——把英文 kebab-case 名字喂给翻译模型出短中文名。**模型不知道项目术语**：
+Skill 默认显示名走 [core/llm-utils.ts](../core/llm-utils.ts) 的 `translateSkillNames`——把英文 kebab-case 名字喂给翻译模型出短中文名。**模型不知道项目术语**：
 
 - `xingye` 在这个项目里是「星野」（character / 产品线名）
 - 翻译模型按拼音 fallback 会翻成「兴业」（兴盛事业），完全不是本意
 
-[lib/skills/skill-metadata.js](../lib/skills/skill-metadata.js) 支持的 frontmatter 覆盖字段：
+[lib/skills/skill-metadata.ts](../lib/skills/skill-metadata.ts) 支持的 frontmatter 覆盖字段：
 
 ```yaml
 ---
@@ -109,7 +109,7 @@ display-name-ko: 호시노 {韩文} 초안
 ---
 ```
 
-[lib/skills/skill-name-translation-cache.js](../lib/skills/skill-name-translation-cache.js) 翻译前**先查 `skill.displayNames[lang]`**：命中 → 直接用、不调模型、不写缓存（确定性、不依赖外部模型）；没有 → 才走 LLM 兜底。所以：
+[lib/skills/skill-name-translation-cache.ts](../lib/skills/skill-name-translation-cache.ts) 翻译前**先查 `skill.displayNames[lang]`**：命中 → 直接用、不调模型、不写缓存（确定性、不依赖外部模型）；没有 → 才走 LLM 兜底。所以：
 
 - **所有 `xingye-*` 命名的 skill 都必须写 `display-name-zh` 和 `display-name-zh-TW`**（中文圈用户主力）
 - 日韩可选；不写就走 LLM 翻译，会得到一个合理但不一定贴项目的译名
@@ -133,10 +133,10 @@ metadata:
 | --- | --- |
 | [tests/xingye-propose-draft-skill-sync.test.js](../tests/xingye-propose-draft-skill-sync.test.js) | dispatch enum ↔ `skills2set/xingye-{module}-draft/` 目录双向同步 |
 | [tests/heartbeat-auto-draft-directive.test.js](../tests/heartbeat-auto-draft-directive.test.js) | mustPropose=true 时的 directive prompt 含全部模块名（**只是"含字符串"级别的断言，不能自动发现新模块没补**——加新模块时手动同步） |
-| [tests/tool-categories.test.js](../tests/tool-categories.test.js) | `xingye_propose_draft` 在 OPTIONAL_TOOL_NAMES 白名单里 |
-| [tests/optional-tool-names-drift.test.js](../tests/optional-tool-names-drift.test.js) | 前端 [AgentToolsSection.tsx](../desktop/src/react/settings/tabs/agent/AgentToolsSection.tsx) 的本地副本与 `shared/tool-categories.js` 同步 |
-| [tests/skill-metadata.test.js](../tests/skill-metadata.test.js) | `display-name-{lang}` 解析行为（顶层 / 嵌套 / 空字符串 / 截断） |
-| [tests/skill-name-translation-cache.test.js](../tests/skill-name-translation-cache.test.js) | override 短路 LLM、不持久化到缓存；部分语言未覆盖时仍走 LLM 兜底 |
+| [tests/tool-categories.test.ts](../tests/tool-categories.test.ts) | `xingye_propose_draft` 在 OPTIONAL_TOOL_NAMES 白名单里 |
+| [tests/optional-tool-names-drift.test.ts](../tests/optional-tool-names-drift.test.ts) | 前端 [AgentToolsSection.tsx](../desktop/src/react/settings/tabs/agent/AgentToolsSection.tsx) 的本地副本与 `shared/tool-categories.ts` 同步 |
+| [tests/skill-metadata.test.ts](../tests/skill-metadata.test.ts) | `display-name-{lang}` 解析行为（顶层 / 嵌套 / 空字符串 / 截断） |
+| [tests/skill-name-translation-cache.test.ts](../tests/skill-name-translation-cache.test.ts) | override 短路 LLM、不持久化到缓存；部分语言未覆盖时仍走 LLM 兜底 |
 
 ---
 
