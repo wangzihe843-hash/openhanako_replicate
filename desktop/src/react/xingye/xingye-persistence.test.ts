@@ -253,6 +253,49 @@ describe('xingye-persistence agent scoped storage', () => {
     expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts')).toBeNull();
   });
 
+  it('flushes edits made to the old agent while the target agent is still loading', async () => {
+    await refreshXingyeAgentPersistence('agent-a');
+    const storageA = getXingyePersistenceStorage();
+
+    let releaseTargetRead: (() => void) | undefined;
+    vi.mocked(postXingyeStorage).mockImplementationOnce(async () => (
+      new Promise((resolve) => {
+        releaseTargetRead = () => resolve({ ok: true, missing: true, data: null });
+      })
+    ));
+
+    const switching = refreshXingyeAgentPersistence('agent-b');
+    await vi.waitFor(() => expect(releaseTargetRead).toBeTypeOf('function'));
+    storageA?.setItem(
+      'xingye.phoneContacts',
+      JSON.stringify({ note: 'edited during target load' }),
+    );
+    releaseTargetRead?.();
+    await switching;
+
+    resetXingyePersistenceForTests();
+    await refreshXingyeAgentPersistence('agent-a');
+    expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts'))
+      .toContain('edited during target load');
+  });
+
+  it('does not let a stale Storage object write into the newly selected agent', async () => {
+    await refreshXingyeAgentPersistence('agent-a');
+    const storageA = getXingyePersistenceStorage();
+    await refreshXingyeAgentPersistence('agent-b');
+
+    storageA?.setItem(
+      'xingye.phoneContacts',
+      JSON.stringify({ note: 'must not leak into agent-b' }),
+    );
+    await flushXingyePersistenceNow();
+
+    expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts')).toBeNull();
+    resetXingyePersistenceForTests();
+    await refreshXingyeAgentPersistence('agent-b');
+    expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts')).toBeNull();
+  });
+
   it('does not expose formal business storage without an explicit agent id', async () => {
     await refreshXingyeAgentPersistence('');
     expect(getXingyePersistenceStorage()).toBeNull();

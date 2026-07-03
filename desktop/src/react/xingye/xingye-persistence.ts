@@ -86,6 +86,7 @@ const FLUSH_DEBOUNCE_MS = 450;
 const FLUSH_RETRY_MS = 5_000;
 let flushPending = false;
 let memoryRevision = 0;
+let storageBindingVersion = 0;
 let flushInFlight: Promise<boolean> | null = null;
 let pendingTransitionAgentId: string | null | undefined;
 let lastAgentFlushError: string | null = null;
@@ -294,11 +295,16 @@ async function flushPendingBeforeTransition(
     clearTimeout(flushTimer);
     flushTimer = null;
   }
-  if (!flushPending) return true;
-  const flushed = await flushNow();
-  if (myVersion !== refreshVersion) return false;
-  if (!flushed) pendingTransitionAgentId = targetAgentId;
-  return flushed;
+  while (true) {
+    const revision = memoryRevision;
+    const flushed = await flushNow();
+    if (myVersion !== refreshVersion) return false;
+    if (!flushed) {
+      pendingTransitionAgentId = targetAgentId;
+      return false;
+    }
+    if (revision === memoryRevision && !flushPending) return true;
+  }
 }
 
 export function getXingyePersistenceDiagnostics(): {
@@ -359,12 +365,21 @@ export function getXingyePersistenceStorage(): StorageLike | null {
   if (mode !== 'agent' || !activeAgentId) {
     return null;
   }
+  const boundAgentId = activeAgentId;
+  const boundVersion = storageBindingVersion;
+  const isCurrentBinding = () => (
+    mode === 'agent'
+    && activeAgentId === boundAgentId
+    && storageBindingVersion === boundVersion
+  );
 
   return {
     getItem(key: string) {
+      if (!isCurrentBinding()) return null;
       return memory.has(key) ? memory.get(key) ?? null : null;
     },
     setItem(key: string, value: string) {
+      if (!isCurrentBinding()) return;
       memory.set(key, value);
       removedKeys.delete(key);
       memoryRevision += 1;
@@ -372,6 +387,7 @@ export function getXingyePersistenceStorage(): StorageLike | null {
       scheduleFlush();
     },
     removeItem(key: string) {
+      if (!isCurrentBinding()) return;
       memory.delete(key);
       removedKeys.add(key);
       memoryRevision += 1;
@@ -402,6 +418,7 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     memory.clear();
     removedKeys.clear();
     memoryRevision += 1;
+    storageBindingVersion += 1;
     flushPending = false;
     activeAgentId = null;
     emitPersistenceChanged();
@@ -415,6 +432,7 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     memory.clear();
     removedKeys.clear();
     memoryRevision += 1;
+    storageBindingVersion += 1;
     flushPending = false;
     activeAgentId = null;
     emitPersistenceChanged();
@@ -438,10 +456,15 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     const loaded = await loadAgentScopedMemory(id);
     // A newer refresh superseded us during the load — don't clobber its memory.
     if (myVersion !== refreshVersion) return;
+    // Writes made through the still-valid old-agent Storage object while the
+    // target was loading must settle before replacing the shared Map.
+    if (!(await flushPendingBeforeTransition(myVersion, id))) return;
+    if (myVersion !== refreshVersion) return;
     memory.clear();
     for (const [key, raw] of loaded) memory.set(key, raw);
     removedKeys.clear();
     memoryRevision += 1;
+    storageBindingVersion += 1;
     flushPending = false;
     activeAgentId = id;
     mode = 'agent';
@@ -455,6 +478,7 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     memory.clear();
     removedKeys.clear();
     memoryRevision += 1;
+    storageBindingVersion += 1;
     flushPending = false;
     activeAgentId = null;
     emitPersistenceChanged();
@@ -475,6 +499,7 @@ export function resetXingyePersistenceForTests(): void {
   memory.clear();
   removedKeys.clear();
   memoryRevision = 0;
+  storageBindingVersion += 1;
   flushPending = false;
   pendingTransitionAgentId = undefined;
   activeAgentId = null;

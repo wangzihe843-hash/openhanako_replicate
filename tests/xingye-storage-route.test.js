@@ -390,6 +390,23 @@ describe("xingye storage route", () => {
       expect(promptSlice.length).toBeGreaterThan(0);
       expect(promptSlice).toContain("Stable summary for core prompt.");
 
+      const clearLore = await app.request("/api/xingye/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "writeJson",
+          agentId: "agent-a",
+          relativePath: "lore/entries.json",
+          data: null,
+        }),
+      });
+      expect(clearLore.status).toBe(200);
+      expect(readXingyeStableLoreMemoryForPromptSync({
+        hanakoHome,
+        agentId: "agent-a",
+        maxChars: 4000,
+      }).trim()).toBe("");
+
       const keywordOnly = {
         id: "lore-kw-1",
         agentId: "agent-a",

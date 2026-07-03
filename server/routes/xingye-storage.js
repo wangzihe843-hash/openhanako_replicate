@@ -305,12 +305,16 @@ export function createXingyeStorageRoute(engine) {
           // 让 lore-memory.md（core/agent.js 注入的 '# 星野核心设定' prompt 来源）与 entries.json 失配。
           // 与 writeJsonl/deleteJsonlRecord 同锁串行化；锁段不嵌套取锁（sync 内部不再取同锁），无死锁。
           await withXingyeAgentEventLock(agentId, async () => {
-            await atomicWrite(target, Buffer.from(JSON.stringify(body.data, null, 2), "utf-8"));
+            const loreEntriesWrite = isAgentLoreEntriesJsonPath(relativePath);
+            // A null tombstone for lore must still run the derived-memory sync;
+            // normalize it to an empty object so stale stable lore is removed.
+            const dataToWrite = loreEntriesWrite && body.data == null ? {} : body.data;
+            await atomicWrite(target, Buffer.from(JSON.stringify(dataToWrite, null, 2), "utf-8"));
             if (
-              isAgentLoreEntriesJsonPath(relativePath)
-              && body.data != null
-              && typeof body.data === "object"
-              && !Array.isArray(body.data)
+              loreEntriesWrite
+              && dataToWrite != null
+              && typeof dataToWrite === "object"
+              && !Array.isArray(dataToWrite)
             ) {
               const hanakoHome = resolveHanakoHomeFromAgentsDir(engine.agentsDir);
               if (!hanakoHome) {
@@ -322,7 +326,7 @@ export function createXingyeStorageRoute(engine) {
                   await syncXingyeStableLoreMemoryFile({
                     hanakoHome,
                     agentId,
-                    entries: body.data,
+                    entries: dataToWrite,
                   });
                 } catch (err) {
                   console.warn(
