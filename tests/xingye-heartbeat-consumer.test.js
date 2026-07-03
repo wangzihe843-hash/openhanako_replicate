@@ -244,10 +244,10 @@ describe("Xingye heartbeat event consumer", () => {
     const logPath = writeEventLog(fixture.agentsDir, "agent-a", [newTypeEvent, moodEvent]);
 
     const heartbeat = fixture.scheduler.getHeartbeat("agent-a");
-    expect(heartbeat.triggerNow()).toBe(true);
+    await runNextBeat(heartbeat);
 
     const resultPath = path.join(fixture.agentsDir, "agent-a", "xingye", "heartbeat", "result.json");
-    await waitFor(() => fs.existsSync(resultPath));
+    expect(fs.existsSync(resultPath)).toBe(true);
 
     const result = readJson(resultPath);
     // 服务端 consumer 用 'xingye.heartbeat'，仍把这两条视为未消费（独立追踪）。
@@ -263,7 +263,7 @@ describe("Xingye heartbeat event consumer", () => {
       ]),
     );
 
-    await waitFor(() => readJson(logPath).events.every((event) => event.consumedBy?.["xingye.heartbeat"]));
+    expect(readJson(logPath).events.every((event) => event.consumedBy?.["xingye.heartbeat"])).toBe(true);
     const persisted = readJson(logPath).events;
     const j = persisted.find((event) => event.id === "evt-new-1");
     // 服务端写回时既加上自己的 key，也保留 renderer 已写的 'heartbeat' 键。
