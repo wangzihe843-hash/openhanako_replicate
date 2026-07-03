@@ -219,7 +219,7 @@ async function loadAgentScopedMemory(agentId: string): Promise<Map<string, strin
 }
 
 function scheduleFlush(delayMs = FLUSH_DEBOUNCE_MS): void {
-  if (mode !== 'agent') return;
+  if (mode !== 'agent' && pendingTransitionAgentId === undefined) return;
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = setTimeout(() => {
     flushTimer = null;
@@ -492,6 +492,8 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     storageBindingVersion += 1;
     flushPending = false;
     activeAgentId = null;
+    pendingTransitionAgentId = id;
+    scheduleFlush(FLUSH_RETRY_MS);
     emitPersistenceChanged();
   }
 }

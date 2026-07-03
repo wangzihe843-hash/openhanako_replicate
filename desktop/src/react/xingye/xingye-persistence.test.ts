@@ -309,6 +309,22 @@ describe('xingye-persistence agent scoped storage', () => {
       .toContain('edited before target load failed');
   });
 
+  it('automatically retries a transient failure during the initial agent load', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(postXingyeStorage).mockRejectedValueOnce(new Error('temporary initial read failure'));
+
+      await refreshXingyeAgentPersistence('agent-a');
+      expect(getXingyePersistenceStorage()).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(getXingyePersistenceStorage()).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not let a stale Storage object write into the newly selected agent', async () => {
     await refreshXingyeAgentPersistence('agent-a');
     const storageA = getXingyePersistenceStorage();
