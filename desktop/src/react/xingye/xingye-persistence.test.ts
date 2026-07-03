@@ -154,28 +154,34 @@ describe('xingye-persistence agent scoped storage', () => {
     expect(reloadedA['agent-a::agent::peer']?.remark).toBe('pending before disable');
   });
 
-  it('keeps the current agent bound when a pending flush fails, then allows a safe retry', async () => {
-    await refreshXingyeAgentPersistence('agent-a');
-    getXingyePersistenceStorage()?.setItem(
-      'xingye.phoneContacts',
-      JSON.stringify({ note: 'must survive a transient write failure' }),
-    );
-    vi.mocked(postXingyeStorage).mockRejectedValueOnce(new Error('temporary network failure'));
+  it('keeps the current agent bound after a failed flush, then automatically resumes the requested switch', async () => {
+    vi.useFakeTimers();
+    try {
+      await refreshXingyeAgentPersistence('agent-a');
+      getXingyePersistenceStorage()?.setItem(
+        'xingye.phoneContacts',
+        JSON.stringify({ note: 'must survive a transient write failure' }),
+      );
+      vi.mocked(postXingyeStorage).mockRejectedValueOnce(new Error('temporary network failure'));
 
-    await refreshXingyeAgentPersistence('agent-b');
+      await refreshXingyeAgentPersistence('agent-b');
 
-    expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts'))
-      .toContain('must survive a transient write failure');
-    expect(() => assertXingyePersistenceBoundTo('agent-b')).toThrow(XingyePersistenceBindingError);
+      expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts'))
+        .toContain('must survive a transient write failure');
+      expect(() => assertXingyePersistenceBoundTo('agent-b')).toThrow(XingyePersistenceBindingError);
 
-    await flushXingyePersistenceNow();
-    await refreshXingyeAgentPersistence('agent-b');
-    expect(() => assertXingyePersistenceBoundTo('agent-b')).not.toThrow();
+      await vi.advanceTimersByTimeAsync(5_000);
 
-    resetXingyePersistenceForTests();
-    await refreshXingyeAgentPersistence('agent-a');
-    expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts'))
-      .toContain('must survive a transient write failure');
+      expect(() => assertXingyePersistenceBoundTo('agent-b')).not.toThrow();
+      expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts')).toBeNull();
+
+      resetXingyePersistenceForTests();
+      await refreshXingyeAgentPersistence('agent-a');
+      expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts'))
+        .toContain('must survive a transient write failure');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not expose formal business storage without an explicit agent id', async () => {

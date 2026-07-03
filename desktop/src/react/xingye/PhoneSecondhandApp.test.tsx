@@ -92,7 +92,7 @@ describe('PhoneSecondhandApp', () => {
     await waitFor(() => {
       expect(appEntryStoreMock.listAppEntries).toHaveBeenCalledWith('linwu', 'secondhand');
     });
-    expect(screen.getByText('还没有二手记录。')).toBeInTheDocument();
+    expect(await screen.findByText('还没有二手记录。')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '新增二手记录' }));
     fireEvent.change(screen.getByLabelText('物品名'), { target: { value: '灰蓝色围巾' } });

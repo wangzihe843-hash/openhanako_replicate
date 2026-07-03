@@ -85,6 +85,7 @@ const FLUSH_DEBOUNCE_MS = 450;
 const FLUSH_RETRY_MS = 5_000;
 let flushPending = false;
 let memoryRevision = 0;
+let pendingTransitionAgentId: string | null | undefined;
 let lastAgentFlushError: string | null = null;
 let lastRefreshError: string | null = null;
 
@@ -219,7 +220,12 @@ function scheduleFlush(delayMs = FLUSH_DEBOUNCE_MS): void {
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = setTimeout(() => {
     flushTimer = null;
-    void flushNow();
+    void flushNow().then(async (flushed) => {
+      if (!flushed || pendingTransitionAgentId === undefined) return;
+      const targetAgentId = pendingTransitionAgentId;
+      pendingTransitionAgentId = undefined;
+      await refreshXingyeAgentPersistence(targetAgentId);
+    });
   }, delayMs);
 }
 
@@ -233,10 +239,11 @@ async function flushNow(): Promise<boolean> {
     }
     if (revision === memoryRevision) {
       flushPending = false;
+      return true;
     } else {
       scheduleFlush();
+      return false;
     }
-    return true;
   } catch (err) {
     flushPending = true;
     lastAgentFlushError = err instanceof Error ? err.message : String(err);
@@ -254,7 +261,10 @@ export async function flushXingyePersistenceNow(): Promise<void> {
   await flushNow();
 }
 
-async function flushPendingBeforeTransition(myVersion: number): Promise<boolean> {
+async function flushPendingBeforeTransition(
+  myVersion: number,
+  targetAgentId: string | null,
+): Promise<boolean> {
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;
@@ -262,6 +272,7 @@ async function flushPendingBeforeTransition(myVersion: number): Promise<boolean>
   if (!flushPending) return true;
   const flushed = await flushNow();
   if (myVersion !== refreshVersion) return false;
+  if (!flushed) pendingTransitionAgentId = targetAgentId;
   return flushed;
 }
 
@@ -351,12 +362,15 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
   const myVersion = ++refreshVersion;
   const id = typeof agentId === 'string' ? agentId.trim() : '';
 
+  // A newer explicit request supersedes any transition queued by an earlier
+  // failed flush. If this request also fails, it becomes the new retry target.
+  pendingTransitionAgentId = undefined;
   lastRefreshError = null;
 
   if (!id) {
     // 进入 disabled 前先落盘上一个 agent 的 debounced 待写（此刻 mode 仍 'agent'、activeAgentId 仍指向它）。
     // 否则 memory.clear() 后定时器再 fire 时 flushNow 因 mode!=='agent' 早退，上一个 agent 的待写被静默丢弃。
-    if (!(await flushPendingBeforeTransition(myVersion))) return;
+    if (!(await flushPendingBeforeTransition(myVersion, null))) return;
     mode = 'disabled';
     memory.clear();
     memoryRevision += 1;
@@ -368,7 +382,7 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
 
   if (!hasServerConnection(useStore.getState())) {
     // 同上：断连进入 disabled 前，先把上一个 agent 的待写落盘，避免丢失。
-    if (!(await flushPendingBeforeTransition(myVersion))) return;
+    if (!(await flushPendingBeforeTransition(myVersion, null))) return;
     mode = 'disabled';
     memory.clear();
     memoryRevision += 1;
@@ -389,7 +403,7 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
   // pickAgentScopedData filters owner-tagged rows to empty and overwrites the
   // OLD agent's file with {} (silent per-character data wipe), while owner-less
   // rows leak into the wrong agent's file.
-  if (!(await flushPendingBeforeTransition(myVersion))) return;
+  if (!(await flushPendingBeforeTransition(myVersion, id))) return;
 
   try {
     const loaded = await loadAgentScopedMemory(id);
@@ -430,6 +444,7 @@ export function resetXingyePersistenceForTests(): void {
   memory.clear();
   memoryRevision = 0;
   flushPending = false;
+  pendingTransitionAgentId = undefined;
   activeAgentId = null;
   lastAgentFlushError = null;
   lastRefreshError = null;
