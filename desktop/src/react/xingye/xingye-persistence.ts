@@ -471,9 +471,20 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     lastRefreshError = null;
     emitPersistenceChanged();
   } catch (err) {
-    lastRefreshError = err instanceof Error ? err.message : String(err);
     console.warn('[xingye-persistence] refresh failed:', err);
     if (myVersion !== refreshVersion) return;
+    lastRefreshError = err instanceof Error ? err.message : String(err);
+    if (mode === 'agent' && activeAgentId) {
+      // The old binding stays valid while the target loads, so edits can arrive
+      // before a rejected read. Settle those edits before returning and keep the
+      // old binding alive; otherwise clearing the Map here silently loses them.
+      await flushPendingBeforeTransition(myVersion, id);
+      if (myVersion !== refreshVersion) return;
+      pendingTransitionAgentId = id;
+      scheduleFlush(FLUSH_RETRY_MS);
+      emitPersistenceChanged();
+      return;
+    }
     mode = 'error';
     memory.clear();
     removedKeys.clear();

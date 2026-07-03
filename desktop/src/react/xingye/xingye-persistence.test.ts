@@ -279,6 +279,36 @@ describe('xingye-persistence agent scoped storage', () => {
       .toContain('edited during target load');
   });
 
+  it('preserves old-agent edits when the target agent load fails', async () => {
+    await refreshXingyeAgentPersistence('agent-a');
+    const storageA = getXingyePersistenceStorage();
+
+    let rejectTargetRead: (() => void) | undefined;
+    vi.mocked(postXingyeStorage).mockImplementationOnce(async () => (
+      new Promise((_, reject) => {
+        rejectTargetRead = () => reject(new Error('temporary target read failure'));
+      })
+    ));
+
+    const switching = refreshXingyeAgentPersistence('agent-b');
+    await vi.waitFor(() => expect(rejectTargetRead).toBeTypeOf('function'));
+    storageA?.setItem(
+      'xingye.phoneContacts',
+      JSON.stringify({ note: 'edited before target load failed' }),
+    );
+    rejectTargetRead?.();
+    await switching;
+
+    expect(storageA?.getItem('xingye.phoneContacts'))
+      .toContain('edited before target load failed');
+    expect(() => assertXingyePersistenceBoundTo('agent-b')).toThrow(XingyePersistenceBindingError);
+
+    resetXingyePersistenceForTests();
+    await refreshXingyeAgentPersistence('agent-a');
+    expect(getXingyePersistenceStorage()?.getItem('xingye.phoneContacts'))
+      .toContain('edited before target load failed');
+  });
+
   it('does not let a stale Storage object write into the newly selected agent', async () => {
     await refreshXingyeAgentPersistence('agent-a');
     const storageA = getXingyePersistenceStorage();
