@@ -86,7 +86,7 @@ describe('AssistantMessage completion actions', () => {
   it('shows completed time and retry for the latest finished assistant reply', async () => {
     render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
         message={assistantMessage}
@@ -128,7 +128,7 @@ describe('AssistantMessage completion actions', () => {
   it('does not render a footer unless the caller marks the assistant message as turn completion', () => {
     render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
         message={assistantMessage}
@@ -147,7 +147,7 @@ describe('AssistantMessage completion actions', () => {
   it('keeps time available for older turn-ending assistant replies without retry controls', () => {
     render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
         message={assistantMessage}
@@ -171,7 +171,7 @@ describe('AssistantMessage completion actions', () => {
   it('hides the assistant footer while the assistant reply is still streaming', () => {
     render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming
         isSelected={false}
         message={assistantMessage}

@@ -19,7 +19,7 @@ vi.mock('../../utils/screenshot', () => ({
 function renderSuggestion(status = 'approved', jobDataOverrides: Record<string, unknown> = {}) {
   return render(
     <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
       showAvatar={false}

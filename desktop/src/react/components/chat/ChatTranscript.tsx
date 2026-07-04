@@ -7,7 +7,7 @@ import { InterludeBlock } from './InterludeBlock';
 import { buildTranscriptRenderItems, type TranscriptRenderItem } from './process-fold';
 import { useStore } from '../../stores';
 import { selectIsStreamingSession, selectSelectedIdsBySession } from '../../stores/session-selectors';
-import { resolveAgentDisplayInfo } from '../../utils/agent-display';
+import { resolveAgentDisplayInfo, type AgentDisplayInfo } from '../../utils/agent-display';
 
 interface Props {
   items: ChatListItem[];
@@ -38,17 +38,14 @@ export const ChatTranscript = memo(function ChatTranscript({
   const userAvatarUrl = useStore(s => s.userAvatarUrl);
   const storeUserName = useStore(s => s.userName);
   const t = window.t ?? ((p: string) => p);
-  const agentDisplay = useMemo(() => {
-    const displayInfo = resolveAgentDisplayInfo({
+  const agentDisplay = useMemo<AgentDisplayInfo & { yuan: string }>(() => {
+    const info = resolveAgentDisplayInfo({
       id: agentId || null,
       agents,
       fallbackAgentName: globalAgentName,
       fallbackAgentYuan: globalYuan,
     });
-    return {
-      displayName: displayInfo.displayName,
-      yuan: displayInfo.yuan || globalYuan,
-    };
+    return { ...info, yuan: info.yuan || globalYuan };
   }, [agentId, agents, globalAgentName, globalYuan]);
   const viewerIdentity = useMemo(() => ({
     name: storeUserName || t('common.me'),
@@ -182,7 +179,7 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
   turnCompletionAssistantIndexes: ReadonlySet<number>;
   assistantTurnSelectionIdsByCompletionIndex: ReadonlyMap<number, readonly string[]>;
   isStreamingSession: boolean;
-  agentDisplay: { displayName: string; yuan: string };
+  agentDisplay: AgentDisplayInfo & { yuan: string };
   viewerIdentity: { name: string; avatarUrl: string | null };
   selectedIds: readonly string[];
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
@@ -293,7 +290,7 @@ const TranscriptItemView = memo(function TranscriptItemView({
   isLatestAssistantMessage: boolean;
   showTurnCompletionTime: boolean;
   assistantTurnSelectionIds?: readonly string[];
-  agentDisplay: { displayName: string; yuan: string };
+  agentDisplay: AgentDisplayInfo & { yuan: string };
   viewerIdentity: { name: string; avatarUrl: string | null };
   isStreaming: boolean;
   selectedIds: readonly string[];

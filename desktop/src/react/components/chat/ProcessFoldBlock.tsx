@@ -1,6 +1,6 @@
 import { memo, useCallback, useId, useMemo, useState } from 'react';
 import { Collapse } from '@/ui';
-import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
+import { AgentAvatar, type AgentDisplayInfo } from '../../utils/agent-display';
 import { AssistantMessage } from './AssistantMessage';
 import { MessageFooterActions, formatMessageTime } from './MessageFooterActions';
 import { buildProcessFoldSummary, type ProcessFoldRenderItem } from './process-fold';
@@ -15,7 +15,7 @@ interface Props {
   turnCompletionAssistantIndexes?: ReadonlySet<number>;
   assistantTurnSelectionIdsByCompletionIndex?: ReadonlyMap<number, readonly string[]>;
   completionTimePersistent?: boolean;
-  agentDisplay: { displayName: string; yuan: string };
+  agentDisplay: AgentDisplayInfo & { yuan: string };
   isStreaming: boolean;
   selectedIds: readonly string[];
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
@@ -40,12 +40,7 @@ export const ProcessFoldBlock = memo(function ProcessFoldBlock({
   const t = window.t ?? ((p: string) => p);
 
   const displayName = agentDisplay.displayName;
-  const displayInfo = useMemo(() => resolveAgentDisplayInfo({
-    id: agentId || null,
-    agents: [],
-    fallbackAgentName: displayName,
-    fallbackAgentYuan: agentDisplay.yuan,
-  }), [agentId, agentDisplay.displayName, agentDisplay.yuan, displayName]);
+  const displayInfo = agentDisplay;
   const summary = useMemo(
     () => buildProcessFoldSummary(
       group.stats,

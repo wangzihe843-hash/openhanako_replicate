@@ -58,7 +58,7 @@ describe('AssistantMessage skill blocks', () => {
 
     render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
         showAvatar={false}

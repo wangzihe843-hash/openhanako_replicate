@@ -37,7 +37,7 @@ import { openPreview } from '../../stores/preview-actions';
 import { replayLatestUserMessage } from '../../stores/message-turn-actions';
 import { selectSelectedIdsBySession } from '../../stores/session-selectors';
 import { extractSelectedTexts, extractTextBlockPlainText } from '../../utils/message-text';
-import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
+import { AgentAvatar, resolveAgentDisplayInfo, type AgentDisplayInfo } from '../../utils/agent-display';
 import { ScheduleEditor } from '../automation/ScheduleEditor';
 import { SelectWidget, type SelectOption } from '@/ui';
 import {
@@ -56,7 +56,7 @@ interface Props {
   sessionPath: string;
   agentId?: string | null;
   readOnly?: boolean;
-  agentDisplay: { displayName: string; yuan: string };
+  agentDisplay: AgentDisplayInfo & { yuan: string };
   isStreaming: boolean;
   isSelected: boolean;
   isLatestAssistantMessage?: boolean;
@@ -87,14 +87,9 @@ export const AssistantMessage = memo(function AssistantMessage({
 }: Props) {
   const t = window.t ?? ((p: string) => p);
 
+  const displayInfo = agentDisplay;
   const displayName = agentDisplay.displayName;
   const displayYuan = agentDisplay.yuan;
-  const displayInfo = useMemo(() => resolveAgentDisplayInfo({
-    id: agentId || null,
-    agents: [],
-    fallbackAgentName: displayName,
-    fallbackAgentYuan: displayYuan,
-  }), [agentId, displayName, displayYuan]);
 
   const blocks = useMemo(
     () => (message.blocks || [])

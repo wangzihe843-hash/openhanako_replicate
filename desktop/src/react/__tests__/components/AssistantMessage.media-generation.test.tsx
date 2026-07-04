@@ -42,7 +42,7 @@ describe('AssistantMessage media generation placeholder', () => {
   it('renders a grey image placeholder with inline status text and cycling dot slot', () => {
     const { container } = render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
         showAvatar={false}
@@ -85,7 +85,7 @@ describe('AssistantMessage media generation placeholder', () => {
 
     render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
         showAvatar={false}
@@ -130,7 +130,7 @@ describe('AssistantMessage media generation placeholder', () => {
 
     render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
         showAvatar={false}
@@ -168,7 +168,7 @@ describe('AssistantMessage media generation placeholder', () => {
 
     expect(() => render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
         showAvatar={false}

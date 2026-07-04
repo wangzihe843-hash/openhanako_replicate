@@ -483,7 +483,7 @@ describe('computer app approval prompt', () => {
       },
       showAvatar: false,
       sessionPath: '/session/a.jsonl',
-      agentDisplay: { displayName: 'Hana', yuan: 'hana' },
+      agentDisplay: { id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false },
       isStreaming: false,
       isSelected: false,
     }));

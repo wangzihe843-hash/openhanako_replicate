@@ -53,7 +53,7 @@ describe('expired session file presentation', () => {
   it('renders an expired assistant file block as a disabled file card', () => {
     render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
         showAvatar={false}
@@ -400,7 +400,7 @@ describe('expired session file presentation', () => {
   it('renders assistant file actions as a split button with reveal and copy menu actions', async () => {
     render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
         showAvatar={false}
@@ -481,7 +481,7 @@ describe('expired session file presentation', () => {
 
     render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
         showAvatar={false}
@@ -557,7 +557,7 @@ describe('expired session file presentation', () => {
 
     render(
       <AssistantMessage
-        agentDisplay={{ displayName: 'Hana', yuan: 'hana' }}
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
         isStreaming={false}
         isSelected={false}
         showAvatar={false}
