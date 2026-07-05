@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   chainInserted: [] as unknown[],
   ensureSession: vi.fn(async () => true),
   loadSessions: vi.fn(),
+  upsertOptimisticSessionFirstMessage: vi.fn(),
   hanaFetch: vi.fn(),
   wsSend: vi.fn(),
   editorFocus: vi.fn(),
@@ -100,6 +101,7 @@ vi.mock('../../hooks/use-hana-fetch', () => ({
 vi.mock('../../stores/session-actions', () => ({
   ensureSession: mocks.ensureSession,
   loadSessions: mocks.loadSessions,
+  upsertOptimisticSessionFirstMessage: mocks.upsertOptimisticSessionFirstMessage,
 }));
 
 vi.mock('../../stores/desk-actions', () => ({
@@ -271,6 +273,7 @@ describe('InputArea paste and slash menu behavior', () => {
     mocks.updateHandler = undefined;
     mocks.chainInserted = [];
     mocks.editorFocus.mockClear();
+    mocks.upsertOptimisticSessionFirstMessage.mockClear();
     mocks.ensureSession.mockImplementation(async () => {
       useStore.setState({
         currentSessionPath: '/session/input.jsonl',
@@ -367,6 +370,11 @@ describe('InputArea paste and slash menu behavior', () => {
       expect(mocks.loadSessions).toHaveBeenCalledTimes(1);
       expect(mocks.wsSend).toHaveBeenCalledTimes(1);
     });
+    expect(mocks.upsertOptimisticSessionFirstMessage).toHaveBeenCalledWith(
+      '/session/input.jsonl',
+      '你好 Hana',
+      expect.any(String),
+    );
   });
 
   it('maps mobile insertParagraph beforeinput to the same send path as Enter', async () => {

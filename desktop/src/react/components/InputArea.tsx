@@ -16,7 +16,12 @@ import { selectSessionFiles } from '../stores/selectors/file-refs';
 import { isImageFile, isVideoFile } from '../utils/format';
 import { isAudioFileName } from '../utils/file-kind';
 import { useI18n } from '../hooks/use-i18n';
-import { continueDeletedAgentSession, ensureSession, loadSessions } from '../stores/session-actions';
+import {
+  continueDeletedAgentSession,
+  ensureSession,
+  loadSessions,
+  upsertOptimisticSessionFirstMessage,
+} from '../stores/session-actions';
 import { revealDeskDirectory, toggleJianSidebar } from '../stores/desk-actions';
 import { getWebSocket } from '../services/websocket';
 import { collectUiContext } from '../utils/ui-context';
@@ -1666,6 +1671,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       }
       try {
         ws.send(JSON.stringify(wsMsg));
+        upsertOptimisticSessionFirstMessage(sessionPathForSend, text, new Date().toISOString());
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         useStore.getState().markOptimisticUserMessageFailed(sessionPathForSend, clientMessageId, message);

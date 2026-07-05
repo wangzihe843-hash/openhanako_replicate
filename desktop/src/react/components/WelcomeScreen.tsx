@@ -11,7 +11,6 @@ import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useI18n } from '../hooks/use-i18n';
 import { loadModels } from '../utils/ui-helpers';
-import { precreatePendingSession } from '../stores/session-actions';
 import {
   activateWorkspaceDesk,
   addWorkspaceFolder,
@@ -175,7 +174,7 @@ function AgentChips({ agents, selectedId }: {
       void activateWorkspaceDesk(homeFolder, { mountId: null });
     }
     // 切换到该 agent 的 chat model
-    precreateAfterAgentModelSwitch(agent);
+    refreshModelsAfterAgentModelSwitch(agent);
   }, [agents]);
 
   return (
@@ -221,7 +220,7 @@ function AgentChip({ agent, isSelected, onClick }: {
   );
 }
 
-function precreateAfterAgentModelSwitch(agent: Agent | undefined): void {
+function refreshModelsAfterAgentModelSwitch(agent: Agent | undefined): void {
   if (agent?.chatModel?.id && agent.chatModel.provider) {
     hanaFetch('/api/models/set', {
       method: 'POST',
@@ -229,12 +228,9 @@ function precreateAfterAgentModelSwitch(agent: Agent | undefined): void {
       body: JSON.stringify({ modelId: agent.chatModel.id, provider: agent.chatModel.provider }),
     }).then(() => {
       loadModels();
-    }).catch(() => {}).finally(() => {
-      precreatePendingSession();
-    });
+    }).catch(() => {});
     return;
   }
-  precreatePendingSession();
 }
 
 // ── Folder Picker ──
@@ -291,7 +287,6 @@ function FolderPicker({
     const workspace = await createLocalStudioWorkspaceFromFolder(folder);
     if (workspace) {
       await applyStudioWorkspace(workspace);
-      precreatePendingSession();
     }
   }, []);
 
@@ -299,7 +294,6 @@ function FolderPicker({
     const folder = await window.platform?.selectFolder?.();
     if (!folder) return;
     addWorkspaceFolder(folder);
-    precreatePendingSession();
   }, []);
 
   const handleButtonClick = useCallback(() => {
@@ -312,15 +306,11 @@ function FolderPicker({
 
   const handleSelectWorkspace = useCallback((workspace: StudioWorkspace) => {
     setShowHistory(false);
-    void applyStudioWorkspace(workspace).then(() => {
-      precreatePendingSession();
-    });
+    void applyStudioWorkspace(workspace);
   }, []);
 
   const handleRemoveWorkspace = useCallback((mountId: string) => {
-    void removeStudioWorkspace(mountId).then(() => {
-      precreatePendingSession();
-    });
+    void removeStudioWorkspace(mountId);
   }, []);
 
   const handleSelectHistory = useCallback((folder: string) => {
@@ -336,12 +326,10 @@ function FolderPicker({
         workspaceFolders: [],
       });
       void activateWorkspaceDesk(homeFolder, { mountId: null });
-      precreateAfterAgentModelSwitch(agent);
+      refreshModelsAfterAgentModelSwitch(agent);
       return;
     }
-    void applyFolder(folder).then(() => {
-      precreatePendingSession();
-    });
+    void applyFolder(folder);
   }, [agents, currentAgentId]);
 
   const selectedWorkspace = selectedWorkspaceMountId
@@ -391,7 +379,6 @@ function FolderPicker({
           onRemoveStudioWorkspace={handleRemoveWorkspace}
           onRemoveWorkspaceFolder={(folder) => {
             removeWorkspaceFolder(folder);
-            precreatePendingSession();
           }}
         />
       )}
@@ -588,7 +575,6 @@ function MemoryToggle({ enabled, masterEnabled, t }: {
 }) {
   const handleClick = useCallback(() => {
     useStore.setState((s) => ({ memoryEnabled: !s.memoryEnabled }));
-    precreatePendingSession();
   }, []);
   const disabled = !masterEnabled;
   const label = disabled ? t('welcome.memoryDisabled') : t(enabled ? 'welcome.memoryOn' : 'welcome.memoryOff');

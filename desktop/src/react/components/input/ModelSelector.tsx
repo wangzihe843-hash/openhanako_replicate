@@ -3,7 +3,6 @@ import { useStore } from '../../stores';
 import { sessionScopedValue } from '../../stores/session-slice';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useI18n } from '../../hooks/use-i18n';
-import { precreatePendingSession } from '../../stores/session-actions';
 import type { Model } from '../../types';
 import type { SessionModel } from '../../stores/chat-types';
 import { SelectWidget, ProviderIcon, ProviderGroupHeader, selectWidgetStyles, type SelectOption } from '@/ui';
@@ -90,8 +89,6 @@ export function ModelSelector({ models, sessionModel, isStreaming = false }: {
         if (currentSessionPath && !pendingNewSession) {
           const { createNewSession } = await import('../../stores/session-actions');
           await createNewSession();
-        } else if (pendingNewSession) {
-          precreatePendingSession();
         }
         const res = await hanaFetch('/api/models');
         const data = await res.json();

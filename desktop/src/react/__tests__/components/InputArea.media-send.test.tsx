@@ -9,6 +9,7 @@ import { useStore } from '../../stores';
 const mocks = vi.hoisted(() => ({
   clearContent: vi.fn(),
   hanaFetch: vi.fn(),
+  upsertOptimisticSessionFirstMessage: vi.fn(),
   wsSend: vi.fn(),
 }));
 
@@ -72,6 +73,7 @@ vi.mock('../../hooks/use-hana-fetch', () => ({
 vi.mock('../../stores/session-actions', () => ({
   ensureSession: vi.fn(async () => true),
   loadSessions: vi.fn(),
+  upsertOptimisticSessionFirstMessage: mocks.upsertOptimisticSessionFirstMessage,
 }));
 
 vi.mock('../../stores/desk-actions', () => ({

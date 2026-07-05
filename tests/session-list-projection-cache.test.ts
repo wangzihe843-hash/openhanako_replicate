@@ -87,6 +87,17 @@ describe("session-list-projection-cache revision", () => {
     expect(second.revision).toBe(first.revision);
   });
 
+  it("keeps firstMessage empty for header-only sessions instead of returning a UI placeholder", async () => {
+    writeSessionFile(tmpDir, "empty.jsonl", [HEADER]);
+
+    const cache = new SessionListProjectionCache();
+    const [projection] = await cache.list(tmpDir);
+
+    expect(projection.messageCount).toBe(0);
+    expect(projection.firstMessage).toBe("");
+    expect(projection.allMessagesText).toBe("");
+  });
+
   it("includes jsonl files that are reached through a filesystem link", async () => {
     const realDir = path.join(tmpDir, "real");
     fs.mkdirSync(realDir, { recursive: true });

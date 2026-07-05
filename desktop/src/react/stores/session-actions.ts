@@ -32,7 +32,6 @@ function invalidateSessionSwitches(): void {
   _switchVersion += 1;
   _switchAbortController?.abort();
   _switchAbortController = null;
-  pendingSessionPreparation = null;
   useStore.setState({ pendingSessionSwitchPath: null });
 }
 
@@ -476,7 +475,9 @@ export async function loadSessions(): Promise<void> {
   try {
     const res = await hanaFetch('/api/sessions');
     const data = await res.json();
-    const sessions = data || [];
+    const serverSessions = Array.isArray(data) ? data.map(normalizeServerSessionProjection) : [];
+    const localSessions = useStore.getState().sessions || [];
+    const sessions = mergeSessionsWithOptimisticFirstMessages(serverSessions, localSessions);
 
     const s = useStore.getState();
     useStore.setState((state: any) => ({
@@ -489,6 +490,122 @@ export async function loadSessions(): Promise<void> {
       await switchSession(sessions[0].path);
     }
   } catch { /* ignore */ }
+}
+
+const EMPTY_FIRST_MESSAGE_PLACEHOLDER = '(no messages)';
+
+function nonPlaceholderText(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  return trimmed === EMPTY_FIRST_MESSAGE_PLACEHOLDER ? '' : trimmed;
+}
+
+function normalizeServerSessionProjection(session: any): any {
+  if (!session || typeof session !== 'object') return session;
+  if (session.firstMessage === EMPTY_FIRST_MESSAGE_PLACEHOLDER) {
+    return { ...session, firstMessage: '' };
+  }
+  return session;
+}
+
+function withoutOptimisticFirstMessageMarker(session: any): any {
+  if (!session || typeof session !== 'object') return session;
+  if (!session._optimisticFirstMessage) return session;
+  const { _optimisticFirstMessage, ...rest } = session;
+  return rest;
+}
+
+function isOptimisticFirstMessageProjection(session: any): boolean {
+  return !!(session && session._optimisticFirstMessage && Number(session.messageCount || 0) > 0);
+}
+
+function serverProjectionHasPersistedContent(session: any): boolean {
+  return Number(session?.messageCount || 0) > 0
+    || !!nonPlaceholderText(session?.firstMessage)
+    || !!nonPlaceholderText(session?.title);
+}
+
+function shouldKeepOptimisticFirstMessage(serverSession: any, localSession: any): boolean {
+  return isOptimisticFirstMessageProjection(localSession)
+    && !serverProjectionHasPersistedContent(serverSession);
+}
+
+function mergeSessionsWithOptimisticFirstMessages(serverSessions: any[], localSessions: any[]): any[] {
+  const localByPath = new Map<string, any>();
+  for (const session of localSessions) {
+    if (typeof session?.path === 'string' && isOptimisticFirstMessageProjection(session)) {
+      localByPath.set(session.path, session);
+    }
+  }
+  if (localByPath.size === 0) return serverSessions.map(withoutOptimisticFirstMessageMarker);
+
+  const seenPaths = new Set<string>();
+  const merged = serverSessions.map((serverSession) => {
+    const path = typeof serverSession?.path === 'string' ? serverSession.path : null;
+    if (!path) return withoutOptimisticFirstMessageMarker(serverSession);
+    seenPaths.add(path);
+    const localSession = localByPath.get(path);
+    if (!shouldKeepOptimisticFirstMessage(serverSession, localSession)) {
+      return withoutOptimisticFirstMessageMarker(serverSession);
+    }
+    return {
+      ...localSession,
+      ...serverSession,
+      firstMessage: nonPlaceholderText(localSession.firstMessage),
+      messageCount: Math.max(Number(localSession.messageCount || 0), 1),
+      modified: localSession.modified,
+      _optimisticFirstMessage: true,
+    };
+  });
+
+  const localOnly = Array.from(localByPath.values()).filter((session) => !seenPaths.has(session.path));
+  return [...localOnly, ...merged];
+}
+
+export function upsertOptimisticSessionFirstMessage(
+  sessionPath: string | null | undefined,
+  messageText: string,
+  timestamp = new Date().toISOString(),
+): void {
+  const path = typeof sessionPath === 'string' && sessionPath.trim() ? sessionPath : null;
+  if (!path) return;
+
+  useStore.setState((state: any) => {
+    const sessions = Array.isArray(state.sessions) ? state.sessions : [];
+    const existingIndex = sessions.findIndex((session: any) => session?.path === path);
+    const existing = existingIndex >= 0 ? sessions[existingIndex] : null;
+    if (existing && !isOptimisticFirstMessageProjection(existing) && serverProjectionHasPersistedContent(existing)) {
+      return {};
+    }
+    const sessionId = normalizeSessionId(existing?.sessionId)
+      || (state.currentSessionPath === path ? normalizeSessionId(state.currentSessionId) : null)
+      || sessionIdForPathFromState(state, path);
+    const firstMessage = nonPlaceholderText(existing?.firstMessage) || nonPlaceholderText(messageText);
+    const messageCount = Math.max(Number(existing?.messageCount || 0), 1);
+    const optimisticProjection = {
+      ...(existing || {}),
+      path,
+      ...(sessionId ? { sessionId } : {}),
+      agentId: existing?.agentId ?? state.currentAgentId ?? state.selectedAgentId ?? null,
+      agentName: existing?.agentName ?? state.agentName ?? '',
+      cwd: existing?.cwd ?? state.deskBasePath ?? state.selectedFolder ?? '',
+      projectId: existing?.projectId ?? state.pendingProjectId ?? null,
+      workspaceMountId: existing?.workspaceMountId ?? state.deskWorkspaceMountId ?? state.selectedWorkspaceMountId ?? null,
+      workspaceLabel: existing?.workspaceLabel ?? state.deskWorkspaceLabel ?? state.selectedWorkspaceLabel ?? null,
+      firstMessage,
+      messageCount,
+      modified: timestamp,
+      created: existing?.created ?? timestamp,
+      _optimisticFirstMessage: true,
+    };
+    const nextSessions = existingIndex >= 0
+      ? sessions.map((session: any, index: number) => (index === existingIndex ? optimisticProjection : session))
+      : [optimisticProjection, ...sessions];
+    return {
+      sessions: nextSessions,
+      sessionLocatorsById: mergeSessionLocators(state.sessionLocatorsById || {}, nextSessions),
+    };
+  });
 }
 
 // ══════════════════════════════════════════════════════
@@ -794,17 +911,6 @@ interface CreateNewSessionOptions {
 
 type PendingSessionCreateBody = Record<string, any>;
 
-type PendingSessionPrecreateResult =
-  | { ok: true; data: any }
-  | { ok: false; error: unknown };
-
-interface PendingSessionPreparation {
-  key: string;
-  promise: Promise<PendingSessionPrecreateResult>;
-}
-
-let pendingSessionPreparation: PendingSessionPreparation | null = null;
-
 function buildPendingSessionCreateBody(state: Record<string, any>): PendingSessionCreateBody {
   const body: PendingSessionCreateBody = { memoryEnabled: state.memoryEnabled };
   if (state.selectedWorkspaceMountId) {
@@ -842,10 +948,6 @@ function currentPendingSessionDraft(): { body: PendingSessionCreateBody; key: st
   return { body, key: pendingSessionCreateKey(body) };
 }
 
-function canPrecreatePendingSession(state: Record<string, any>): boolean {
-  return !!(state.connected || state.serverPort || state.activeServerConnection);
-}
-
 async function postPendingSessionCreate(body: PendingSessionCreateBody): Promise<any> {
   const res = await hanaFetch('/api/sessions/new', {
     method: 'POST',
@@ -854,40 +956,6 @@ async function postPendingSessionCreate(body: PendingSessionCreateBody): Promise
     throwOnHttpError: false,
   });
   return res.json();
-}
-
-export function precreatePendingSession(): void {
-  const state = useStore.getState() as Record<string, any>;
-  if (
-    state.pendingNewSession !== true
-    || state.currentSessionPath
-    || state.pendingSessionSwitchPath
-    || !canPrecreatePendingSession(state)
-  ) {
-    pendingSessionPreparation = null;
-    return;
-  }
-
-  const body = buildPendingSessionCreateBody(state);
-  const key = pendingSessionCreateKey(body);
-  if (pendingSessionPreparation?.key === key) return;
-
-  const preparation: PendingSessionPreparation = {
-    key,
-    promise: postPendingSessionCreate(body)
-      .then((data) => {
-        if (data?.error) throw new Error(String(data.error));
-        return { ok: true as const, data };
-      })
-      .catch((error) => {
-        console.warn('[session] precreate pending session failed:', error);
-        if (pendingSessionPreparation === preparation) {
-          pendingSessionPreparation = null;
-        }
-        return { ok: false as const, error };
-      }),
-  };
-  pendingSessionPreparation = preparation;
 }
 
 async function applyCreatedPendingSession(data: any, stateBeforeApply: Record<string, any>): Promise<boolean> {
@@ -946,7 +1014,6 @@ async function applyCreatedPendingSession(data: any, stateBeforeApply: Record<st
     useStore.getState().initSession(data.path, [], false);
   }
 
-  pendingSessionPreparation = null;
   useStore.setState(patch);
   if (data.thinkingLevel) {
     useStore.getState().setThinkingLevel(data.thinkingLevel);
@@ -1050,8 +1117,6 @@ export async function createNewSession(options: CreateNewSessionOptions = {}): P
     useStore.getState().setPendingNewSessionThinkingLevel(null);
   }
 
-  precreatePendingSession();
-
   // pending 状态下刷新 model 列表，让 ModelSelector 显示 agent Chat 默认 model
   loadModels();
 
@@ -1068,34 +1133,11 @@ export async function ensureSession(): Promise<boolean> {
       const draft = currentPendingSessionDraft();
       if (!draft) return true;
 
-      let data: any | null = null;
-      const preparation = pendingSessionPreparation?.key === draft.key
-        ? pendingSessionPreparation
-        : null;
-
-      if (preparation) {
-        const result = await preparation.promise;
-        if (pendingSessionPreparation === preparation) {
-          pendingSessionPreparation = null;
-        }
-
-        const latestDraft = currentPendingSessionDraft();
-        if (!latestDraft) return true;
-        if (latestDraft.key !== draft.key) {
-          continue;
-        }
-        if (result.ok) {
-          data = result.data;
-        }
-      }
-
-      if (!data) {
-        data = await postPendingSessionCreate(draft.body);
-        const latestDraft = currentPendingSessionDraft();
-        if (!latestDraft) return true;
-        if (latestDraft.key !== draft.key) {
-          continue;
-        }
+      const data = await postPendingSessionCreate(draft.body);
+      const latestDraft = currentPendingSessionDraft();
+      if (!latestDraft) return true;
+      if (latestDraft.key !== draft.key) {
+        continue;
       }
 
       return applyCreatedPendingSession(data, useStore.getState() as Record<string, any>);

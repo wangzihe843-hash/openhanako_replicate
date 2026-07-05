@@ -267,10 +267,10 @@ import {
   loadMessages,
   loadSessions,
   pinSession,
-  precreatePendingSession,
   reconcileCurrentSessionMessages,
   refreshSessionCapabilities,
   switchSession,
+  upsertOptimisticSessionFirstMessage,
 } from '../../stores/session-actions';
 import { snapshotStreamBuffer } from '../../stores/stream-invalidator';
 
@@ -295,7 +295,6 @@ function mockPermissionDefault(mode = 'ask') {
     (globalThis.window as unknown as { hana?: unknown }).hana = {};
     installStoreMethods();
     mockFetch.mockReset();
-    precreatePendingSession();
     mockClearChat.mockReset();
     mockLoadDeskFiles.mockReset();
     streamResumeMocks.requestStreamResume.mockReset();
@@ -713,21 +712,43 @@ function mockPermissionDefault(mode = 'ask') {
       expect(mockState.workspaceFolders).toEqual(['/reference-a']);
     });
 
-    it('adopts a matching precreated pending session without posting a second new-session request', async () => {
+    it('enters a pending draft without posting a new-session request', async () => {
+      mockFetch.mockImplementation(async (url: string) => {
+        if (url === '/api/preferences/session-permission-default') {
+          return jsonResponse({ permissionMode: 'ask' });
+        }
+        if (url === '/api/session-thinking-level?pendingNewSession=1') {
+          return jsonResponse({ thinkingLevel: 'medium' });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await createNewSession();
+
+      expect(mockState.pendingNewSession).toBe(true);
+      expect(mockState.currentSessionPath).toBeNull();
+      expect(mockFetch.mock.calls.some(([url]) => url === '/api/sessions/new')).toBe(false);
+    });
+
+    it('posts one new-session request at send time using the current pending draft', async () => {
       Object.assign(mockState, {
         pendingNewSession: true,
         memoryEnabled: true,
-        selectedFolder: '/workspace-a',
+        selectedFolder: '/workspace-b',
         serverPort: '62950',
       });
 
-      let resolvePrecreate!: (response: Response) => void;
-      const precreateResponse = new Promise<Response>(resolve => { resolvePrecreate = resolve; });
       const createBodies: unknown[] = [];
       mockFetch.mockImplementation(async (url: string, opts?: RequestInit) => {
         if (url === '/api/sessions/new') {
           createBodies.push(JSON.parse(String(opts?.body)));
-          return precreateResponse;
+          return jsonResponse({
+            ok: true,
+            path: '/session/fresh.jsonl',
+            sessionId: 'sess_fresh',
+            cwd: '/workspace-b',
+            workspaceFolders: [],
+          });
         }
         if (url === '/api/sessions') {
           return jsonResponse([]);
@@ -735,93 +756,16 @@ function mockPermissionDefault(mode = 'ask') {
         throw new Error(`unexpected fetch: ${url}`);
       });
 
-      precreatePendingSession();
-      const ensuring = ensureSession();
-      resolvePrecreate(jsonResponse({
-        ok: true,
-        path: '/session/precreated.jsonl',
-        sessionId: 'sess_precreated',
-        cwd: '/workspace-a',
-        workspaceFolders: [],
-      }));
-
-      await expect(ensuring).resolves.toBe(true);
+      await expect(ensureSession()).resolves.toBe(true);
 
       expect(createBodies).toEqual([{
         memoryEnabled: true,
-        cwd: '/workspace-a',
+        cwd: '/workspace-b',
         currentSessionPath: null,
       }]);
       expect(mockFetch.mock.calls.filter(([url]) => url === '/api/sessions/new')).toHaveLength(1);
-      expect(mockState.currentSessionPath).toBe('/session/precreated.jsonl');
-      expect(mockState.currentSessionId).toBe('sess_precreated');
-      expect((mockState.chatSessions as Record<string, unknown>)['/session/precreated.jsonl']).toBeTruthy();
-    });
-
-    it('does not adopt a stale precreated session when the pending draft changes mid-flight', async () => {
-      Object.assign(mockState, {
-        pendingNewSession: true,
-        memoryEnabled: true,
-        selectedFolder: '/workspace-a',
-        serverPort: '62950',
-      });
-
-      let resolveStale!: (response: Response) => void;
-      let resolveFresh!: (response: Response) => void;
-      const staleResponse = new Promise<Response>(resolve => { resolveStale = resolve; });
-      const freshResponse = new Promise<Response>(resolve => { resolveFresh = resolve; });
-      const createBodies: unknown[] = [];
-      mockFetch.mockImplementation(async (url: string, opts?: RequestInit) => {
-        if (url === '/api/sessions/new') {
-          const body = JSON.parse(String(opts?.body));
-          createBodies.push(body);
-          if (createBodies.length === 1) return staleResponse;
-          if (createBodies.length === 2) return freshResponse;
-          throw new Error('unexpected extra new-session request');
-        }
-        if (url === '/api/sessions') {
-          return jsonResponse([]);
-        }
-        throw new Error(`unexpected fetch: ${url}`);
-      });
-
-      precreatePendingSession();
-      const ensuring = ensureSession();
-      Object.assign(mockState, { selectedFolder: '/workspace-b' });
-      precreatePendingSession();
-
-      resolveStale(jsonResponse({
-        ok: true,
-        path: '/session/stale.jsonl',
-        sessionId: 'sess_stale',
-        cwd: '/workspace-a',
-        workspaceFolders: [],
-      }));
-      resolveFresh(jsonResponse({
-        ok: true,
-        path: '/session/fresh.jsonl',
-        sessionId: 'sess_fresh',
-        cwd: '/workspace-b',
-        workspaceFolders: [],
-      }));
-
-      await expect(ensuring).resolves.toBe(true);
-
-      expect(createBodies).toEqual([
-        {
-          memoryEnabled: true,
-          cwd: '/workspace-a',
-          currentSessionPath: null,
-        },
-        {
-          memoryEnabled: true,
-          cwd: '/workspace-b',
-          currentSessionPath: null,
-        },
-      ]);
       expect(mockState.currentSessionPath).toBe('/session/fresh.jsonl');
       expect(mockState.currentSessionId).toBe('sess_fresh');
-      expect((mockState.chatSessions as Record<string, unknown>)['/session/stale.jsonl']).toBeUndefined();
       expect((mockState.chatSessions as Record<string, unknown>)['/session/fresh.jsonl']).toBeTruthy();
     });
 
@@ -1146,6 +1090,117 @@ function mockPermissionDefault(mode = 'ask') {
       expect(mockState.currentSessionPath).toBeNull();
       expect(mockState.pendingSessionSwitchPath).toBe('/b');
       expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the first optimistic user message when the server list is still empty for that session', async () => {
+      Object.assign(mockState, {
+        currentSessionPath: '/session/new.jsonl',
+        currentSessionId: 'sess_new',
+        currentAgentId: 'hana',
+        agentName: 'Hana',
+        deskBasePath: '/workspace',
+        sessions: [],
+      });
+      upsertOptimisticSessionFirstMessage(
+        '/session/new.jsonl',
+        '第一句话',
+        '2026-07-06T01:02:03.000Z',
+      );
+      mockFetch.mockResolvedValueOnce(jsonResponse([
+        {
+          path: '/session/new.jsonl',
+          sessionId: 'sess_new',
+          title: null,
+          firstMessage: '',
+          modified: '2026-07-06T01:02:02.000Z',
+          messageCount: 0,
+          cwd: '/workspace',
+          agentId: 'hana',
+          agentName: 'Hana',
+        },
+      ]));
+
+      await loadSessions();
+
+      expect((mockState.sessions as any[])[0]).toMatchObject({
+        path: '/session/new.jsonl',
+        sessionId: 'sess_new',
+        firstMessage: '第一句话',
+        messageCount: 1,
+        modified: '2026-07-06T01:02:03.000Z',
+        _optimisticFirstMessage: true,
+      });
+    });
+
+    it('does not replace a persisted first message when sending later messages', () => {
+      Object.assign(mockState, {
+        currentSessionPath: '/session/existing.jsonl',
+        currentSessionId: 'sess_existing',
+        sessions: [
+          {
+            path: '/session/existing.jsonl',
+            sessionId: 'sess_existing',
+            title: '正式标题',
+            firstMessage: '第一句话',
+            modified: '2026-07-06T01:02:03.000Z',
+            messageCount: 3,
+          },
+        ],
+      });
+
+      upsertOptimisticSessionFirstMessage(
+        '/session/existing.jsonl',
+        '第四句话',
+        '2026-07-06T01:03:00.000Z',
+      );
+
+      expect((mockState.sessions as any[])[0]).toMatchObject({
+        path: '/session/existing.jsonl',
+        firstMessage: '第一句话',
+        messageCount: 3,
+        modified: '2026-07-06T01:02:03.000Z',
+      });
+      expect((mockState.sessions as any[])[0]._optimisticFirstMessage).toBeUndefined();
+    });
+
+    it('lets the persisted server projection replace the optimistic first-message projection', async () => {
+      Object.assign(mockState, {
+        currentSessionPath: '/session/new.jsonl',
+        currentSessionId: 'sess_new',
+        currentAgentId: 'hana',
+        agentName: 'Hana',
+        deskBasePath: '/workspace',
+        sessions: [],
+      });
+      upsertOptimisticSessionFirstMessage(
+        '/session/new.jsonl',
+        '第一句话',
+        '2026-07-06T01:02:03.000Z',
+      );
+      mockFetch.mockResolvedValueOnce(jsonResponse([
+        {
+          path: '/session/new.jsonl',
+          sessionId: 'sess_new',
+          title: '正式标题',
+          firstMessage: '第一句话',
+          modified: '2026-07-06T01:02:05.000Z',
+          messageCount: 1,
+          cwd: '/workspace',
+          agentId: 'hana',
+          agentName: 'Hana',
+        },
+      ]));
+
+      await loadSessions();
+
+      expect((mockState.sessions as any[])[0]).toMatchObject({
+        path: '/session/new.jsonl',
+        title: '正式标题',
+        firstMessage: '第一句话',
+        messageCount: 1,
+        modified: '2026-07-06T01:02:05.000Z',
+      });
+      expect((mockState.sessions as any[])[0]._optimisticFirstMessage).toBeUndefined();
     });
   });
 

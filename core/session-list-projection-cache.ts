@@ -118,7 +118,7 @@ async function buildSessionProjection(filePath, stat) {
       modified: getSessionModifiedDate(entries, header, stat.mtime),
       revision: sessionFileRevision(stat),
       messageCount,
-      firstMessage: firstMessage || "(no messages)",
+      firstMessage,
       allMessagesText: allMessages.join(" "),
     };
   } catch {

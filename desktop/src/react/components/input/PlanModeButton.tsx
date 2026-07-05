@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useI18n } from '../../hooks/use-i18n';
 import { useStore } from '../../stores';
-import { precreatePendingSession } from '../../stores/session-actions';
 import styles from './InputArea.module.css';
 
 export type PermissionMode = 'auto' | 'operate' | 'ask' | 'read_only';
@@ -81,7 +80,6 @@ export function PlanModeButton({ mode, onChange, locked = false }: {
         });
         const data = await res.json();
         onChange((data.permissionMode || nextMode) as PermissionMode);
-        precreatePendingSession();
         return;
       }
       const body = {
