@@ -41,6 +41,7 @@ export const MessageFooterActions = memo(function MessageFooterActions({
         visible ? styles.messageFooterActionsVisible : '',
         timePersistent && timeText ? styles.messageFooterActionsTimePersistent : '',
       ].filter(Boolean).join(' ')}
+      data-message-actions=""
       data-testid={testId}
     >
       {timeText && <span className={styles.messageFooterTime}>{timeText}</span>}
