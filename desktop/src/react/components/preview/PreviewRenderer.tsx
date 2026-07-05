@@ -82,7 +82,7 @@ function LegacyMediaFallback({ previewItem }: { previewItem: PreviewItem }) {
       onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
     >
-      <span>此图片预览已升级，点此在新查看器打开</span>
+      <span>{window.t?.('preview.legacyImageUpgrade') ?? 'This image preview has been upgraded. Click to open in the new viewer.'}</span>
     </div>
   );
 }
@@ -95,7 +95,7 @@ function missingPreviewTitle(): string {
   const translated = window.t?.('preview.fileMovedOrDeleted');
   return translated && translated !== 'preview.fileMovedOrDeleted'
     ? translated
-    : '原文稿已移动或者删除';
+    : 'The original draft was moved or deleted';
 }
 
 function MissingPreviewTarget({ previewItem }: { previewItem: PreviewItem }) {
@@ -272,7 +272,10 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
       upsertPreviewItem({ ...previewItem, content: nextContent, fileVersion: nextVersion });
       return;
     }
-    dispatchCoverNotice('Cover 布局保存失败，文件可能已被外部修改。', 'error');
+    dispatchCoverNotice(
+      window.t?.('preview.coverLayoutSaveFailed') ?? 'Failed to save cover layout. The file may have been modified externally.',
+      'error',
+    );
   }, [previewItem]);
 
   const deleteCover = useCallback(async () => {
@@ -294,10 +297,13 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
 
     if (result?.ok) {
       upsertPreviewItem({ ...previewItem, content: nextContent, fileVersion: nextVersion });
-      dispatchCoverNotice('已删除封面。', 'success');
+      dispatchCoverNotice(window.t?.('preview.coverDeleted') ?? 'Cover removed.', 'success');
       return;
     }
-    dispatchCoverNotice('封面删除失败，文件可能已被外部修改。', 'error');
+    dispatchCoverNotice(
+      window.t?.('preview.coverDeleteFailed') ?? 'Failed to remove cover. The file may have been modified externally.',
+      'error',
+    );
   }, [previewItem]);
 
   const finishDrag = useCallback(() => {

@@ -157,7 +157,7 @@ export function ChannelTabBar() {
     const label = getTabLabel(tab, pluginPages, locale);
     setMenu({
       position: { x: e.clientX, y: e.clientY },
-      items: [{ label: `取消固定「${label}」`, action: () => hidePluginTab(tab) }],
+      items: [{ label: t('channel.unpinPluginTab', { label }), action: () => hidePluginTab(tab) }],
     });
   }, [pluginPages, locale]);
 
@@ -271,7 +271,7 @@ export function ChannelTabBar() {
             const label = getTabLabel(tab, pluginPages, locale);
             setMenu({
               position: { x: e.clientX, y: e.clientY },
-              items: [{ label: `取消固定「${label}」`, action: () => hidePluginTab(tab) }],
+              items: [{ label: t('channel.unpinPluginTab', { label }), action: () => hidePluginTab(tab) }],
             });
           }}
         />

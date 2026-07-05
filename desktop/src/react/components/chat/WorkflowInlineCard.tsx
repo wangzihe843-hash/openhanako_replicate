@@ -23,11 +23,18 @@ interface WorkflowInlineCardProps {
   };
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  running: '◐ 运行中',
-  done: '✓ 已完成',
-  failed: '✗ 失败',
-  aborted: '⊘ 已终止',
+const STATUS_LABEL_KEY: Record<string, string> = {
+  running: 'chat.workflowInline.running',
+  done: 'chat.workflowInline.done',
+  failed: 'chat.workflowInline.failed',
+  aborted: 'chat.workflowInline.aborted',
+};
+
+const STATUS_LABEL_FALLBACK: Record<string, string> = {
+  running: '◐ Running',
+  done: '✓ Done',
+  failed: '✗ Failed',
+  aborted: '⊘ Stopped',
 };
 
 const STATUS_TONE = {
@@ -42,7 +49,12 @@ function statusTone(status: WorkflowInlineCardProps['block']['streamStatus']) {
 }
 
 function statusLabel(status: WorkflowInlineCardProps['block']['streamStatus']) {
-  return STATUS_LABEL[status] ?? status;
+  const key = STATUS_LABEL_KEY[status];
+  if (key) {
+    const translated = t(key);
+    if (translated !== key) return translated;
+  }
+  return STATUS_LABEL_FALLBACK[status] ?? status;
 }
 
 export const WorkflowInlineCard = memo(function WorkflowInlineCard({ block }: WorkflowInlineCardProps) {

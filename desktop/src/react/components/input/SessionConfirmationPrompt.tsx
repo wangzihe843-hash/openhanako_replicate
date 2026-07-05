@@ -19,8 +19,10 @@ interface SessionConfirmationPromptProps {
 
 function displayTitle(block: SessionConfirmationBlock) {
   if (block.kind === 'computer_app_approval') {
-    const appName = block.subject?.label || '这个应用';
-    return `是否允许 Hana 控制 ${appName}`;
+    const appName = block.subject?.label || textWithFallback('approval.computerApp.defaultAppName', 'this app');
+    const translated = window.t?.('approval.computerApp.controlTitle', { appName });
+    if (translated && translated !== 'approval.computerApp.controlTitle') return translated;
+    return `Allow Hana to control ${appName}`;
   }
   return block.title;
 }

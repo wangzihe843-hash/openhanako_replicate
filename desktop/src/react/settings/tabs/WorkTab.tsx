@@ -240,7 +240,7 @@ export function WorkTab() {
 
       {/* ── Per-agent section（AgentSelect 作为 context，section 内所有配置针对该 agent） ── */}
       <SettingsSection
-        title="Agent 工作台设置"
+        title={t('settings.work.agentDeskSection')}
         context={<AgentSelect value={selectedAgentId} onChange={setSelectedAgentId} />}
       >
         {agentDesk && (

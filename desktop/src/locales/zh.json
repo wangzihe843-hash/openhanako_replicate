@@ -14,6 +14,15 @@
       "title": "小花美术馆",
       "upload": "自己上传",
       "close": "关闭小花美术馆"
+    },
+    "notice": {
+      "taskCreated": "已创建 cover 后台任务。",
+      "generateFailed": "Cover 生成失败：{error}",
+      "applySuccess": "已应用上传图片为 cover。",
+      "applySuccessGallery": "已应用「{title}」为 cover。",
+      "applyFailed": "Cover 应用失败：{error}",
+      "selectImageFile": "请选择图片文件作为 cover。",
+      "readImageFailed": "读取图片失败。"
     }
   },
   "selection": {
@@ -107,7 +116,8 @@
     "noModelsAvailable": "没有可用模型",
     "toolReadOnly": "只读",
     "toolWrite": "写入",
-    "filesUnsupported": "频道暂只支持文本消息，文件不会加入普通聊天附件"
+    "filesUnsupported": "频道暂只支持文本消息，文件不会加入普通聊天附件",
+    "unpinPluginTab": "取消固定「{label}」"
   },
   "skills": {
     "panel": {
@@ -231,7 +241,8 @@
       "cancelButton": "取消",
       "refreshing": "正在压缩对话并刷新工具…",
       "refreshFailed": "刷新失败"
-    }
+    },
+    "rcTakingOver": "{platform} 接管中"
   },
   "common": {
     "on": "开",
@@ -310,7 +321,13 @@
       "fallbackAssistant": "助手消息"
     },
     "modelSwitching": "正在切换模型，请稍候",
-    "unknownCommand": "[未知命令] {text}"
+    "unknownCommand": "[未知命令] {text}",
+    "workflowInline": {
+      "running": "◐ 运行中",
+      "done": "✓ 已完成",
+      "failed": "✗ 失败",
+      "aborted": "⊘ 已终止"
+    }
   },
   "time": {
     "justNow": "刚刚",
@@ -382,7 +399,8 @@
       "medium": "中等",
       "high": "深度",
       "xhigh": "极致",
-      "max": "极致"
+      "max": "极致",
+      "low": "浅思"
     },
     "thinkingDesc": {
       "off": "不推理",
@@ -390,14 +408,20 @@
       "medium": "平衡推理",
       "high": "深度推理",
       "xhigh": "极致推理",
-      "max": "极致推理"
+      "max": "极致推理",
+      "low": "轻量推理"
     },
     "contextWindow": "上下文 {windowK}k",
     "tokensUsed": "已用 {tokensK}k ({pct}%)",
     "contextActions": "上下文操作",
     "refreshAndCompact": "更新并压缩",
     "refreshAndCompactTooltip": "更新到最新的记忆和工具集",
-    "compact": "压缩"
+    "compact": "压缩",
+    "noAskThisConversation": "本对话不再询问",
+    "confirmMoreOptions": "更多确认选项",
+    "attachmentDirectory": "[目录] {label}",
+    "attachmentFile": "[附件] {label}",
+    "referenceDocument": "[参考文档] {path}"
   },
   "slash": {
     "diary": "写今日日记",
@@ -1767,7 +1791,8 @@
       "injectAgentsMd": "注入 AGENTS.md",
       "injectAgentsMdDesc": "开启后，新会话会读取当前工作目录到 Git 根目录之间的 AGENTS.md。",
       "injectClaudeMd": "注入 CLAUDE.md",
-      "injectClaudeMdDesc": "开启后，新会话会读取当前工作目录到 Git 根目录之间的 CLAUDE.md。"
+      "injectClaudeMdDesc": "开启后，新会话会读取当前工作目录到 Git 根目录之间的 CLAUDE.md。",
+      "agentDeskSection": "Agent 工作台设置"
     },
     "toolCaps": {
       "title": "技能安装权限"
@@ -1862,7 +1887,11 @@
       "dissolveBundleTitle": "打散 Bundle",
       "dissolveBundleAriaLabel": "打散 {name}",
       "removeFromBundleTitle": "移出 Bundle，变为散装 Skill",
-      "removeFromBundleAriaLabel": "将 {name} 移出 Bundle"
+      "removeFromBundleAriaLabel": "将 {name} 移出 Bundle",
+      "toggleEnable": "启用 Skill",
+      "toggleDisable": "关闭 Skill",
+      "toggleEnableNamed": "启用 {name}",
+      "toggleDisableNamed": "关闭 {name}"
     },
     "plugins": {
       "title": "插件",
@@ -2532,7 +2561,14 @@
     "resetContextTip": "下次消息将开启新对话",
     "replyInterrupted": "（回复中断，以上内容可能不完整）",
     "replyFailed": "（回复生成失败，请稍后重试）",
-    "sessionBusy": "当前桌面会话仍在回复中，请稍后再发"
+    "sessionBusy": "当前桌面会话仍在回复中，请稍后再发",
+    "platform": {
+      "telegram": "Telegram",
+      "feishu": "飞书",
+      "wechat": "微信",
+      "qq": "QQ",
+      "bridge": "Bridge"
+    }
   },
   "notification": {
     "turnCompletionBody": "这一轮已经完成"
@@ -3059,7 +3095,12 @@
       "saveImage": "保存图片",
       "regenerateWithPrompt": "自定义提示词生成图片",
       "deleteCover": "删除封面"
-    }
+    },
+    "fileMovedOrDeleted": "原稿件已移动或者删除",
+    "legacyImageUpgrade": "此图片预览已升级，点此在新查看器打开",
+    "coverLayoutSaveFailed": "Cover 布局保存失败，文件可能已被外部修改。",
+    "coverDeleted": "已删除封面。",
+    "coverDeleteFailed": "封面删除失败，文件可能已被外部修改。"
   },
   "mediaViewer": {
     "ariaLabel": "媒体预览",
@@ -3091,7 +3132,8 @@
     "update": {
       "available": "Hana 有新版本可用",
       "reload": "刷新"
-    }
+    },
+    "startupFailed": "HanaAgent 启动失败"
   },
   "approval": {
     "toolAction": {
@@ -3102,7 +3144,9 @@
     "reject": "拒绝",
     "computerApp": {
       "title": "允许 Hana 使用电脑",
-      "body": "Hana 想控制这个应用来继续当前任务。"
+      "body": "Hana 想控制这个应用来继续当前任务。",
+      "controlTitle": "是否允许 Hana 控制 {appName}",
+      "defaultAppName": "这个应用"
     },
     "sessionFolders": {
       "title": "允许 Hana 修改本对话的文件夹授权",
@@ -3148,7 +3192,36 @@
   "toolDef": {
     "updateSettings": {
       "memoryFacts": "记忆 Facts",
-      "memoryFactsDesc": "当前 Agent 的可编辑当下记忆 Facts。"
+      "memoryFactsDesc": "当前 Agent 的可编辑当下记忆 Facts。",
+      "searchResult": "找到 {count} 个匹配设置：\n\n{results}\n\n使用 action \"apply\" 并提供 key 和 value 来修改设置。",
+      "searchNoResults": "没有匹配 \"{query}\" 的设置，请尝试更宽泛的关键词。",
+      "searchMissingQuery": "search 操作需要提供 query 参数。",
+      "applyMissingParams": "apply 操作需要同时提供 key 和 value 参数。",
+      "frontendOnly": "仅客户端",
+      "sandbox": "沙盒安全",
+      "sandboxDesc": "限制文件系统写入范围",
+      "sandboxNetwork": "沙盒网络",
+      "sandboxNetworkDesc": "允许沙盒命令访问公网；Windows 命令沙盒不支持网络隔离，始终保留当前用户的网络访问",
+      "locale": "语言",
+      "timezone": "时区",
+      "timezoneDesc": "IANA 时区（如 Asia/Shanghai）",
+      "bridgeMediaPublicBaseUrl": "Bridge 文件公网 URL",
+      "bridgeMediaPublicBaseUrlDesc": "外部平台拉取本地暂存文件时使用的公网 HTTP/HTTPS 基址，通常由反向代理或隧道提供。留空则回退到 HANA_BRIDGE_PUBLIC_BASE_URL。",
+      "computerUse": "Computer Use",
+      "computerUseDesc": "开启后，新对话会向主 Agent 暴露 computer 工具；关闭后新对话不可见，旧对话若调用会被拒绝。",
+      "thinkingBudget": "思考深度",
+      "memory": "记忆系统",
+      "memoryDesc": "开启/关闭当前 Agent 的记忆",
+      "experience": "经验库",
+      "experienceDesc": "开启/关闭当前 Agent 的经验库",
+      "agentName": "Agent 名称",
+      "userName": "用户名称",
+      "workingDir": "工作目录",
+      "workingDirDesc": "Agent 文件系统工作目录",
+      "theme": "主题",
+      "chatModel": "聊天模型",
+      "fileBackup": "文件备份",
+      "fileBackupDesc": "AI 修改文件前自动备份"
     },
     "generateImage": {
       "description": "根据文字描述生成图片。非阻塞：提交后立即返回，完成后自动显示。",
@@ -3223,6 +3296,15 @@
     "listCapabilities": {
       "description": "列出 Beautify 工具目前支持的审美增强能力。",
       "text": "Beautify 当前支持两类能力。1) Markdown cover 工作流：先读取封面风格说明，再准备一张图片，可以来自生图工具、未来的内置头图库或用户本地图片，最后把图片复制到附件文件夹并写入 cover frontmatter。2) 整页 HTML 美学规范：生成网页 / 排版页 / 报告页前，先用 beautify_get-html-style-guide 获取 Hana 默认美术方向（无参拿路由器，再按 section 逐节取规范）。"
+    },
+    "todoWrite": {
+      "summaryEmpty": "已清空待办",
+      "summaryStats": "{total} 项待办：{completed} 已完成，{in_progress} 进行中，{pending} 待处理"
     }
+  },
+  "link": {
+    "copyPath": "复制路径",
+    "copyLink": "复制链接",
+    "openInSystemBrowser": "用系统浏览器打开"
   }
 }

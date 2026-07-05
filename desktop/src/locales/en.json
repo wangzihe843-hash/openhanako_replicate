@@ -14,6 +14,15 @@
       "title": "Hana Gallery",
       "upload": "Upload your own",
       "close": "Close Hana Gallery"
+    },
+    "notice": {
+      "taskCreated": "Cover background task created.",
+      "generateFailed": "Cover generation failed: {error}",
+      "applySuccess": "Uploaded image applied as cover.",
+      "applySuccessGallery": "Applied \"{title}\" as cover.",
+      "applyFailed": "Failed to apply cover: {error}",
+      "selectImageFile": "Please choose an image file for the cover.",
+      "readImageFailed": "Failed to read the image."
     }
   },
   "selection": {
@@ -64,6 +73,7 @@
     "created": "Channel #{name} created ✿",
     "createFailed": "Create failed",
     "alreadyExists": "Channel already exists",
+    "unpinPluginTab": "Unpin \"{label}\"",
     "deleteChannel": "Delete channel",
     "deleteConfirm": "Delete channel \"{name}\"? Message history cannot be recovered.",
     "deleted": "Channel deleted",
@@ -216,6 +226,7 @@
       "deleteFailed": "Delete failed",
       "daysAgo": "Archived {days} days ago"
     },
+    "rcTakingOver": "{platform} active",
     "subagentRunStateUnrecoverable": "Historical sub-session run state is unrecoverable",
     "subagentLinkUnrecoverable": "Historical sub-session link is unrecoverable",
     "capabilityDrift": {
@@ -310,7 +321,13 @@
       "fallbackAssistant": "Assistant message"
     },
     "modelSwitching": "Switching model, please wait",
-    "unknownCommand": "[Unknown command] {text}"
+    "unknownCommand": "[Unknown command] {text}",
+    "workflowInline": {
+      "running": "◐ Running",
+      "done": "✓ Done",
+      "failed": "✗ Failed",
+      "aborted": "⊘ Stopped"
+    }
   },
   "time": {
     "justNow": "Just now",
@@ -356,6 +373,11 @@
     "askMode": "Ask before acting",
     "readOnlyMode": "Read-only mode",
     "accessModeLocked": "Access mode cannot be changed right now",
+    "noAskThisConversation": "Don't ask again in this conversation",
+    "confirmMoreOptions": "More confirmation options",
+    "attachmentDirectory": "[Directory] {label}",
+    "attachmentFile": "[Attachment] {label}",
+    "referenceDocument": "[Reference] {path}",
     "deskContext": "With desk context",
     "pastedImage": "Pasted image",
     "textModelImageFileOnly": "The current model cannot view images and auxiliary vision is not enabled: images are sent as files, so the model only sees the file path, not the image content.",
@@ -377,20 +399,22 @@
     "commandMenu": "Command menu",
     "docContext": "With document",
     "thinkingLevel": {
-      "off": "off",
-      "auto": "auto",
-      "medium": "medium",
-      "high": "high",
-      "xhigh": "max",
-      "max": "max"
+      "off": "Off",
+      "auto": "Auto",
+      "low": "Light",
+      "medium": "Medium",
+      "high": "Deep",
+      "xhigh": "Max",
+      "max": "Max"
     },
     "thinkingDesc": {
-      "off": "no reasoning",
-      "auto": "model decides depth",
-      "medium": "balanced reasoning",
-      "high": "deep reasoning",
-      "xhigh": "maximum reasoning",
-      "max": "maximum reasoning"
+      "off": "No reasoning",
+      "auto": "Model decides depth",
+      "low": "Light reasoning",
+      "medium": "Balanced reasoning",
+      "high": "Deep reasoning",
+      "xhigh": "Maximum reasoning",
+      "max": "Maximum reasoning"
     },
     "contextWindow": "Context {windowK}k",
     "tokensUsed": "Used {tokensK}k ({pct}%)",
@@ -1767,7 +1791,8 @@
       "injectAgentsMd": "Inject AGENTS.md",
       "injectAgentsMdDesc": "When enabled, new sessions read AGENTS.md from the current working directory up to the Git root.",
       "injectClaudeMd": "Inject CLAUDE.md",
-      "injectClaudeMdDesc": "When enabled, new sessions read CLAUDE.md from the current working directory up to the Git root."
+      "injectClaudeMdDesc": "When enabled, new sessions read CLAUDE.md from the current working directory up to the Git root.",
+      "agentDeskSection": "Agent desk settings"
     },
     "toolCaps": {
       "title": "Skill Installation Permissions"
@@ -1797,6 +1822,10 @@
       "learnHint": "Try asking your assistant: install this local skill package / find me some safe and useful skills from GitHub",
       "reloaded": "Skills reloaded",
       "reload": "Reload skills",
+      "toggleEnable": "Enable Skill",
+      "toggleDisable": "Disable Skill",
+      "toggleEnableNamed": "Enable {name}",
+      "toggleDisableNamed": "Disable {name}",
       "compatTitle": "Compatible Skills",
       "compatDesc": "Auto-discover skills installed by other AI tools",
       "compatNoSkills": "No external skills found",
@@ -2532,7 +2561,19 @@
     "resetContextTip": "Next message will start a new conversation",
     "replyInterrupted": "(Reply interrupted — the content above may be incomplete)",
     "replyFailed": "(Reply generation failed. Please try again later.)",
-    "sessionBusy": "The desktop session is still responding, please try again later"
+    "sessionBusy": "The desktop session is still responding, please try again later",
+    "platform": {
+      "telegram": "Telegram",
+      "feishu": "Feishu",
+      "wechat": "WeChat",
+      "qq": "QQ",
+      "bridge": "Bridge"
+    }
+  },
+  "link": {
+    "copyPath": "Copy path",
+    "copyLink": "Copy link",
+    "openInSystemBrowser": "Open in system browser"
   },
   "notification": {
     "turnCompletionBody": "This turn is complete"
@@ -3086,6 +3127,11 @@
   "preview.exitMarkdownPreview": "Back to editing",
   "preview.markdownEditorStatus": "Selected {selected} chars · Total {total} chars",
   "preview.markdownAttachmentInsertFailed": "Failed to insert attachment",
+  "preview.fileMovedOrDeleted": "The original draft was moved or deleted",
+  "preview.legacyImageUpgrade": "This image preview has been upgraded. Click to open in the new viewer.",
+  "preview.coverLayoutSaveFailed": "Failed to save cover layout. The file may have been modified externally.",
+  "preview.coverDeleted": "Cover removed.",
+  "preview.coverDeleteFailed": "Failed to remove cover. The file may have been modified externally.",
   "subagent": {
     "status": {
       "interrupted": "Interrupted",
@@ -3184,6 +3230,7 @@
     "retry": "Retry"
   },
   "mobile": {
+    "startupFailed": "HanaAgent failed to start",
     "auth": {
       "scopeError": "Current login lacks workspace access. Please re-enter the access key.",
       "loginFailed": "Login failed",
@@ -3215,7 +3262,9 @@
     "reject": "Deny",
     "computerApp": {
       "title": "Allow Hana to use the computer",
-      "body": "Hana wants to control this app to continue the current task."
+      "body": "Hana wants to control this app to continue the current task.",
+      "controlTitle": "Allow Hana to control {appName}",
+      "defaultAppName": "this app"
     },
     "sessionFolders": {
       "title": "Allow Hana to modify folder authorization for this conversation",

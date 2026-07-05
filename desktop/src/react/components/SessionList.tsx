@@ -1571,7 +1571,9 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isPending,
     if (dirName) parts.push(dirName);
   }
   if (s.modified) parts.push(formatSessionDate(s.modified));
-  const rcLabel = s.rcAttachment ? `${formatRcPlatform(s.rcAttachment.platform)} 接管中` : null;
+  const rcLabel = s.rcAttachment
+    ? t('session.rcTakingOver', { platform: formatRcPlatform(s.rcAttachment.platform, t) })
+    : null;
   const browserUrl = browserState?.url || null;
   const hasStatusSlot = !!browserUrl;
   const showStatusDot = isPending || isStreaming || hasUnreadOutput;
@@ -1899,13 +1901,13 @@ const SessionSummaryPreviewCard = memo(function SessionSummaryPreviewCard({
   );
 });
 
-function formatRcPlatform(platform: string) {
+function formatRcPlatform(platform: string, t: (key: string) => string) {
   const lower = (platform || '').toLowerCase();
-  if (lower === 'tg' || lower === 'telegram') return 'Telegram';
-  if (lower === 'feishu' || lower === 'fs') return '飞书';
-  if (lower === 'wechat' || lower === 'wx') return '微信';
-  if (lower === 'qq') return 'QQ';
-  return platform || 'Bridge';
+  if (lower === 'tg' || lower === 'telegram') return t('bridge.platform.telegram');
+  if (lower === 'feishu' || lower === 'fs') return t('bridge.platform.feishu');
+  if (lower === 'wechat' || lower === 'wx') return t('bridge.platform.wechat');
+  if (lower === 'qq') return t('bridge.platform.qq');
+  return platform || t('bridge.platform.bridge');
 }
 
 // ── Agent Avatar Badge ──

@@ -1496,7 +1496,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       if (otherFiles.length > 0) {
         const fileBlock = otherFiles.map(f => {
           const label = f.fileId ? (f.name || f.path) : f.path;
-          return f.isDirectory ? `[目录] ${label}` : `[附件] ${label}`;
+          return f.isDirectory
+            ? t('input.attachmentDirectory', { label })
+            : t('input.attachmentFile', { label });
         }).join('\n');
         finalText = text ? `${text}\n\n${fileBlock}` : fileBlock;
       }
@@ -1584,7 +1586,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       // 文档上下文
       let docForRender: { path: string; name: string } | null = null;
       if (docContextAttached && currentDoc) {
-        finalText = finalText ? `${finalText}\n\n[参考文档] ${currentDoc.path}` : `[参考文档] ${currentDoc.path}`;
+        finalText = finalText
+          ? `${finalText}\n\n${t('input.referenceDocument', { path: currentDoc.path })}`
+          : t('input.referenceDocument', { path: currentDoc.path });
         docForRender = currentDoc;
       }
       if (docContextAttached) setDocContextAttached(false);
