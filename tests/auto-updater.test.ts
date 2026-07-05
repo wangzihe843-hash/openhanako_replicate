@@ -56,6 +56,12 @@ describe("auto-updater", () => {
     mockAutoUpdater.allowPrerelease = false;
     mockAutoUpdater.installDirectory = undefined;
     mockExePath = "/Applications/HanaAgent.app/Contents/MacOS/HanaAgent";
+    delete process.env.HANA_UPDATE_FEED_URL;
+    delete process.env.HANA_UPDATE_SOURCE;
+    delete process.env.HANA_UPDATE_PROVIDER;
+    delete process.env.HANA_UPDATE_DIGEST_BASE_URL;
+    delete process.env.HANA_ATOMGIT_UPDATE_FEED_URL;
+    delete process.env.HANA_ATOMGIT_RELEASE_BASE_URL;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: false,
       status: 404,
@@ -100,12 +106,25 @@ describe("auto-updater", () => {
   it("should configure autoUpdater correctly", () => {
     initWithMockWindow();
     expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledWith({
+      provider: "generic",
+      url: "https://gitcode.com/liliMozi/OpenHanako/releases/download/latest/",
+    });
+    expect(mockAutoUpdater.autoDownload).toBe(false);
+    expect(mockAutoUpdater.autoInstallOnAppQuit).toBe(false);
+  });
+
+  it("resolves AtomGit as the default feed with GitHub fallback", () => {
+    const config = mod.resolveUpdateFeedConfig({});
+    expect(config.feedURL).toEqual({
+      provider: "generic",
+      url: "https://gitcode.com/liliMozi/OpenHanako/releases/download/latest/",
+    });
+    expect(config.fallbackConfigs).toHaveLength(1);
+    expect(config.fallbackConfigs[0].feedURL).toEqual({
       provider: "github",
       owner: "liliMozi",
       repo: "openhanako",
     });
-    expect(mockAutoUpdater.autoDownload).toBe(false);
-    expect(mockAutoUpdater.autoInstallOnAppQuit).toBe(false);
   });
 
   it("resolves AtomGit as a generic update feed with matching digest URLs", () => {
@@ -117,6 +136,16 @@ describe("auto-updater", () => {
     expect(mod.buildReleaseDigestUrl("0.425.4", config)).toBe(
       "https://gitcode.com/liliMozi/OpenHanako/releases/download/v0.425.4/release-digest.v1.json",
     );
+  });
+
+  it("can force GitHub as the only update feed", () => {
+    const config = mod.resolveUpdateFeedConfig({ HANA_UPDATE_SOURCE: "github" });
+    expect(config.feedURL).toEqual({
+      provider: "github",
+      owner: "liliMozi",
+      repo: "openhanako",
+    });
+    expect(config.fallbackConfigs).toEqual([]);
   });
 
   it("loads digest from the generic feed directory when an explicit feed URL is configured", () => {
@@ -162,6 +191,35 @@ describe("auto-updater", () => {
       handlers["update-not-available"]();
     }
     expect(mod.getState().status).toBe("latest");
+  });
+
+  it("falls back to GitHub when the default AtomGit check fails", async () => {
+    mockAutoUpdater.checkForUpdates
+      .mockRejectedValueOnce(new Error("Cannot find latest.yml in the latest release artifacts"))
+      .mockResolvedValueOnce({});
+
+    initWithMockWindow();
+    await ipcHandlers["auto-update-check"]();
+
+    expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(mockAutoUpdater.setFeedURL).toHaveBeenNthCalledWith(1, {
+      provider: "generic",
+      url: "https://gitcode.com/liliMozi/OpenHanako/releases/download/latest/",
+    });
+    expect(mockAutoUpdater.setFeedURL).toHaveBeenNthCalledWith(2, {
+      provider: "generic",
+      url: "https://gitcode.com/liliMozi/OpenHanako/releases/download/latest/",
+    });
+    expect(mockAutoUpdater.setFeedURL).toHaveBeenNthCalledWith(3, {
+      provider: "github",
+      owner: "liliMozi",
+      repo: "openhanako",
+    });
+    expect(mod.getState().updateSource).toEqual({
+      provider: "github",
+      owner: "liliMozi",
+      repo: "openhanako",
+    });
   });
 
   it("treats missing latest metadata as no update available instead of an update error", () => {

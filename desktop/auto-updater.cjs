@@ -27,6 +27,7 @@ let _ipcHandlersRegistered = false;
 let _updaterConfigured = false;
 let _installPromise = null;
 let _digestRequestId = 0;
+let _fallbackCheckInProgress = false;
 
 function trimTrailingSlash(value) {
   return String(value || "").replace(/\/+$/, "");
@@ -35,6 +36,36 @@ function trimTrailingSlash(value) {
 function ensureTrailingSlash(value) {
   const trimmed = trimTrailingSlash(value);
   return trimmed ? `${trimmed}/` : "";
+}
+
+function createGithubFeedConfig(digestBaseUrl = "") {
+  return {
+    feedURL: {
+      provider: "github",
+      owner: DEFAULT_GITHUB_OWNER,
+      repo: DEFAULT_GITHUB_REPO,
+    },
+    source: {
+      provider: "github",
+      owner: DEFAULT_GITHUB_OWNER,
+      repo: DEFAULT_GITHUB_REPO,
+    },
+    digestBaseUrl: digestBaseUrl || `https://github.com/${DEFAULT_GITHUB_OWNER}/${DEFAULT_GITHUB_REPO}/releases/download`,
+    fallbackConfigs: [],
+  };
+}
+
+function createAtomGitFeedConfig(env = process.env, digestBaseUrl = "") {
+  const feedUrl = env.HANA_ATOMGIT_UPDATE_FEED_URL || `${DEFAULT_ATOMGIT_RELEASE_BASE_URL}/latest`;
+  return {
+    feedURL: { provider: "generic", url: ensureTrailingSlash(feedUrl) },
+    source: {
+      provider: "atomgit",
+      feedUrl: ensureTrailingSlash(feedUrl),
+    },
+    digestBaseUrl: digestBaseUrl || env.HANA_ATOMGIT_RELEASE_BASE_URL || DEFAULT_ATOMGIT_RELEASE_BASE_URL,
+    fallbackConfigs: [createGithubFeedConfig()],
+  };
 }
 
 function resolveUpdateFeedConfig(env = process.env) {
@@ -51,34 +82,54 @@ function resolveUpdateFeedConfig(env = process.env) {
         feedUrl,
       },
       digestBaseUrl: digestBaseUrl || `${feedUrl}{asset}`,
+      fallbackConfigs: [],
     };
   }
 
-  if (source === "atomgit" || source === "gitcode") {
-    const feedUrl = env.HANA_ATOMGIT_UPDATE_FEED_URL || `${DEFAULT_ATOMGIT_RELEASE_BASE_URL}/latest`;
-    return {
-      feedURL: { provider: "generic", url: ensureTrailingSlash(feedUrl) },
-      source: {
-        provider: "atomgit",
-        feedUrl: ensureTrailingSlash(feedUrl),
-      },
-      digestBaseUrl: digestBaseUrl || env.HANA_ATOMGIT_RELEASE_BASE_URL || DEFAULT_ATOMGIT_RELEASE_BASE_URL,
-    };
+  if (source === "github") {
+    return createGithubFeedConfig(digestBaseUrl);
   }
 
-  return {
-    feedURL: {
-      provider: "github",
-      owner: DEFAULT_GITHUB_OWNER,
-      repo: DEFAULT_GITHUB_REPO,
-    },
-    source: {
-      provider: "github",
-      owner: DEFAULT_GITHUB_OWNER,
-      repo: DEFAULT_GITHUB_REPO,
-    },
-    digestBaseUrl: digestBaseUrl || `https://github.com/${DEFAULT_GITHUB_OWNER}/${DEFAULT_GITHUB_REPO}/releases/download`,
-  };
+  return createAtomGitFeedConfig(env, digestBaseUrl);
+}
+
+function feedSourceLabel(config) {
+  const source = config?.source || {};
+  if (source.provider === "github") return `github:${source.owner}/${source.repo}`;
+  if (source.feedUrl) return `${source.provider}:${source.feedUrl}`;
+  return source.provider || "unknown";
+}
+
+function applyUpdateFeedConfig(config) {
+  _updateFeedConfig = config;
+  setState({ updateSource: _updateFeedConfig.source });
+  autoUpdater.setFeedURL(_updateFeedConfig.feedURL);
+}
+
+async function checkForUpdatesWithFallback(source = "manual") {
+  const primaryConfig = resolveUpdateFeedConfig();
+  applyUpdateFeedConfig(primaryConfig);
+
+  _fallbackCheckInProgress = primaryConfig.fallbackConfigs.length > 0;
+  try {
+    return await autoUpdater.checkForUpdates();
+  } catch (primaryError) {
+    for (const fallbackConfig of primaryConfig.fallbackConfigs) {
+      const primaryMessage = primaryError?.message || String(primaryError);
+      logUpdate(`update check via ${feedSourceLabel(primaryConfig)} failed; retrying via ${feedSourceLabel(fallbackConfig)}: ${primaryMessage}`);
+      applyUpdateFeedConfig(fallbackConfig);
+      setState({ status: "checking", progress: null, error: null, digest: null, digestUrl: null, digestError: null });
+      try {
+        return await autoUpdater.checkForUpdates();
+      } catch (fallbackError) {
+        primaryError = fallbackError;
+      }
+    }
+    throw primaryError;
+  } finally {
+    _fallbackCheckInProgress = false;
+    logUpdate(`update check finished: source=${source}, activeFeed=${feedSourceLabel(_updateFeedConfig)}`);
+  }
 }
 
 let _updateFeedConfig = resolveUpdateFeedConfig();
@@ -425,9 +476,7 @@ async function dirSize(dir) {
 
 function setupAutoUpdater() {
   // 显式设置 feed URL，不依赖 app-update.yml（electron-builder --dir 不生成该文件）
-  _updateFeedConfig = resolveUpdateFeedConfig();
-  setState({ updateSource: _updateFeedConfig.source });
-  autoUpdater.setFeedURL(_updateFeedConfig.feedURL);
+  applyUpdateFeedConfig(resolveUpdateFeedConfig());
 
   autoUpdater.autoDownload = false;          // 由我们控制（磁盘空间检查后手动触发）
   autoUpdater.autoInstallOnAppQuit = false;  // 只在用户明确点击"重启更新"时安装
@@ -506,6 +555,10 @@ function setupAutoUpdater() {
 
   autoUpdater.on("error", (err) => {
     if (isMissingLatestMetadataError(err)) {
+      if (_fallbackCheckInProgress && _updateFeedConfig.fallbackConfigs.length > 0) {
+        logUpdate(`update metadata unavailable from ${feedSourceLabel(_updateFeedConfig)}; waiting for fallback: ${err?.message || String(err)}`);
+        return;
+      }
       logUpdate(`update metadata not ready; treating as no update available: ${err?.message || String(err)}`);
       if (_updateState.status === "installing" && _setIsUpdating) _setIsUpdating(false);
       setState({ status: "latest", error: null, progress: null });
@@ -529,7 +582,7 @@ function registerIpcHandlers() {
     if (_updateState.status === "installing") return getState();
     resetState();
     try {
-      await autoUpdater.checkForUpdates();
+      await checkForUpdatesWithFallback("manual");
     } catch (err) {
       if (isMissingLatestMetadataError(err)) {
         setState({ status: "latest", error: null, progress: null });
@@ -560,7 +613,7 @@ function startPolling() {
   _checkTimer = setInterval(() => {
     // 每 tick 都重新读 preferences：用户关掉开关后，下一 tick 就不再自动查
     if (!isAutoCheckEnabled()) return;
-    autoUpdater.checkForUpdates().catch(() => {});
+    checkForUpdatesWithFallback("poll").catch(() => {});
   }, CHECK_INTERVAL);
 }
 
@@ -600,7 +653,7 @@ async function checkForUpdatesAuto() {
   // 用户关了自动检查开关：启动时也不自动 check
   if (!isAutoCheckEnabled()) return;
   try {
-    await autoUpdater.checkForUpdates();
+    await checkForUpdatesWithFallback("startup");
   } catch {}
 }
 
