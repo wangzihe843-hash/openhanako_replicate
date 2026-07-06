@@ -1,60 +1,43 @@
 {
   "schemaVersion": 1,
-  "tag": "v0.357.16",
-  "version": "0.357.16",
-  "previousTag": "v0.357.14",
-  "generatedAt": "2026-07-05T23:05:00.000Z",
+  "tag": "v0.357.17",
+  "version": "0.357.17",
+  "previousTag": "v0.357.16",
+  "generatedAt": "2026-07-06T00:54:00.000Z",
   "noUserFacingChanges": false,
   "summary": {
-    "zh": "会话列表不再出现空白占位，聊天里也能看清命令工具具体做了什么。",
-    "en": "Session lists no longer show empty placeholders, and command tool calls are easier to read in chat."
+    "zh": "记忆时间线会按逻辑日正确归档，日记忆不再把跨天对话混进错误日期。",
+    "en": "Memory timeline entries now attach to the correct logical day, so daily summaries stop mixing cross-day conversations into the wrong date."
   },
   "counts": {
     "feature": 0,
-    "fix": 2,
+    "fix": 1,
     "improvement": 0,
     "migration": 0
   },
   "source": {
     "owner": "liliMozi",
     "repo": "openhanako",
-    "commitRange": "v0.357.14..24f31cd3f",
-    "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.357.16",
+    "commitRange": "v0.357.16..1b850da24",
+    "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.357.17",
     "releaseNotes": ""
   },
   "items": [
     {
-      "id": "session-list-placeholders",
+      "id": "memory-timeline-logical-day",
       "kind": "fix",
       "importance": "medium",
       "title": {
-        "zh": "会话列表不再空白占位",
-        "en": "No more empty session placeholders"
+        "zh": "记忆时间线按逻辑日归档",
+        "en": "Memory timeline respects logical days"
       },
       "summary": {
-        "zh": "修复新建或切换会话时侧边栏出现空白条目的问题，列表只显示真实会话。",
-        "en": "Fixes blank sidebar rows when creating or switching sessions so the list only shows real conversations."
+        "zh": "修复记忆编译时 timeline 条目归属错误的问题，跨天 session 的摘要不会再污染相邻日期的日记忆。",
+        "en": "Fixes timeline assignment during memory compilation so cross-day session summaries no longer bleed into neighboring daily memory entries."
       },
       "details": [],
       "sources": [
-        { "type": "commit", "ref": "7fed5cdbe", "title": "fix: avoid empty session placeholders" }
-      ]
-    },
-    {
-      "id": "command-tool-details",
-      "kind": "fix",
-      "importance": "medium",
-      "title": {
-        "zh": "命令工具过程更清晰",
-        "en": "Clearer command tool progress"
-      },
-      "summary": {
-        "zh": "聊天流里展示命令工具调用的关键参数摘要，方便跟进 Agent 正在执行什么。",
-        "en": "Chat now shows concise argument summaries for command tool invocations so you can follow what the agent is running."
-      },
-      "details": [],
-      "sources": [
-        { "type": "commit", "ref": "24f31cd3f", "title": "fix: show command tool invocation details" }
+        { "type": "commit", "ref": "1b850da24", "title": "fix: assign memory timeline entries by logical day" }
       ]
     }
   ]
