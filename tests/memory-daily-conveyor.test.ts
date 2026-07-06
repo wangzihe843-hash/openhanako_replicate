@@ -6,8 +6,8 @@
  *      （fingerprint 命中跳过、当天重跑覆盖、无内容零占位；P3 起优先从当天最终版
  *      today 草稿蒸馏，草稿缺失时显式 log 后回落到按 session 摘要编译）
  *   2. assembleWeekFromDaily — 从 daily/ 目录纯文件装配 week.md（零 LLM）
- *      （6-7 条、日期顺序、总长上限截断）
- *   3. rollDailyWindow — 滚出 7 日窗口的 daily 条目 fold 进 longterm 并删除源文件
+ *      （最近 6 个已结束逻辑日、日期顺序、总长上限截断）
+ *   3. rollDailyWindow — 滚出 6 日窗口的 daily 条目 fold 进 longterm 并删除源文件
  *      （fold 失败保留重试、显式日志、成功后删除）
  *   4. migrateLegacyWeekToLongterm — 旧 week.md 一次性 fold 进 longterm（幂等）
  *   5. shiftLogicalDate — 逻辑日期算术工具
@@ -43,6 +43,7 @@ const RESOLVED_MODEL = { model: "m", api: "openai-completions", api_key: "k", ba
 
 function makeFakeSummaryManager(summaries) {
   return {
+    getAllSummaries: vi.fn(() => summaries),
     getSummariesInRange: vi.fn().mockReturnValue(summaries),
   };
 }
@@ -156,22 +157,26 @@ describe("compileDaily", () => {
     expect(request.systemPrompt).toMatch(/两三句话|一两句话|两三句|简短|一两句/);
   });
 
-  it("queries the day's summaries using the logical-day range for the given date", async () => {
+  it("scans candidate summaries before filtering by event logical day", async () => {
     const mgr = makeFakeSummaryManager([]);
 
     await compileDaily(mgr, dailyDir, "2026-07-03", RESOLVED_MODEL);
 
-    const [start, end] = mgr.getSummariesInRange.mock.calls[0];
-    expect(start.toISOString()).toBe(new Date(2026, 6, 3, 4, 0, 0, 0).toISOString());
-    expect(end.toISOString()).toBe(new Date(2026, 6, 4, 4, 0, 0, 0).toISOString());
+    expect(mgr.getAllSummaries).toHaveBeenCalledOnce();
+    expect(mgr.getSummariesInRange).not.toHaveBeenCalled();
   });
 
-  it("respects a since watermark passed through opts", async () => {
-    const mgr = makeFakeSummaryManager([]);
+  it("respects a since watermark before filtering events", async () => {
+    const mgr = makeFakeSummaryManager([
+      { session_id: "old", updated_at: "2026-07-03T05:00:00.000Z", summary: "旧摘要不应进入。" },
+      { session_id: "new", updated_at: "2026-07-03T05:01:00.000Z", summary: "新摘要应进入。" },
+    ]);
 
     await compileDaily(mgr, dailyDir, "2026-07-03", RESOLVED_MODEL, { since: "2026-07-03T05:00:00.000Z" });
 
-    expect(mgr.getSummariesInRange.mock.calls[0][2]).toEqual({ since: "2026-07-03T05:00:00.000Z" });
+    const request = (callText as any).mock.calls[0][0];
+    expect(request.messages[0].content).toContain("新摘要应进入。");
+    expect(request.messages[0].content).not.toContain("旧摘要不应进入。");
   });
 
   // -------------------------------------------------------------------------
@@ -193,7 +198,8 @@ describe("compileDaily", () => {
     const request = (callText as any).mock.calls[0][0];
     expect(request.messages[0].content).toContain("用户今天完善了记忆传送带的设计，并推进了草稿蒸馏。");
     expect(request.messages[0].content).not.toContain("不应该被使用的原始摘要");
-    // 草稿路径可用时不应该去查 session 摘要——蒸馏输入体量只取决于草稿，不随当天摘要数量增长
+    // 草稿路径可用且没有可解析 timeline 条目时，应优先蒸馏草稿，而不是使用旧摘要整包。
+    expect(mgr.getAllSummaries).toHaveBeenCalledOnce();
     expect(mgr.getSummariesInRange).not.toHaveBeenCalled();
     expect(fs.readFileSync(path.join(dailyDir, "2026-07-03.md"), "utf-8")).toContain("用户完善了记忆传送带。");
   });
@@ -224,8 +230,45 @@ describe("compileDaily", () => {
     expect(result).toBe("compiled");
     // 回落必须留下可观测的痕迹，不能静默产出（保数据的受控降级）
     expect(warnSpy.mock.calls.some(([msg]) => String(msg).includes("今日草稿不可用"))).toBe(true);
-    expect(mgr.getSummariesInRange).toHaveBeenCalledOnce();
+    expect(mgr.getAllSummaries).toHaveBeenCalledOnce();
+    expect(mgr.getSummariesInRange).not.toHaveBeenCalled();
     expect(fs.readFileSync(path.join(dailyDir, "2026-07-03.md"), "utf-8")).toContain("回落路径编译出的日记。");
+    warnSpy.mockRestore();
+  });
+
+  it("fallback compiles only timeline entries that belong to the requested logical day", async () => {
+    const todayDraftPath = path.join(tmpDir, "does-not-exist.md");
+    const mgr = makeFakeSummaryManager([
+      {
+        session_id: "cross-day",
+        created_at: "2026-07-05T12:00:00.000Z",
+        updated_at: "2026-07-06T07:24:15.044Z",
+        source_time_range: {
+          start: "2026-07-05T12:00:00.000Z",
+          end: "2026-07-06T07:24:15.044Z",
+          timezone: "Asia/Shanghai",
+          localDates: ["2026-07-05", "2026-07-06"],
+        },
+        summary: [
+          "### 重要事实",
+          "- 无",
+          "",
+          "### 事情经过",
+          "- 2026-07-05 17:40 用户关注 Cursor 自研模型发布时间",
+          "- 2026-07-06 07:24 用户排查生产记忆目录",
+        ].join("\n"),
+      },
+    ]);
+    (callText as any).mockResolvedValueOnce("用户关注 Cursor 自研模型发布时间。");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await compileDaily(mgr, dailyDir, "2026-07-05", RESOLVED_MODEL, { todayDraftPath });
+
+    expect(result).toBe("compiled");
+    const request = (callText as any).mock.calls[0][0];
+    expect(request.messages[0].content).toContain("2026-07-05 17:40");
+    expect(request.messages[0].content).toContain("Cursor 自研模型");
+    expect(request.messages[0].content).not.toContain("生产记忆目录");
     warnSpy.mockRestore();
   });
 
@@ -286,7 +329,7 @@ describe("assembleWeekFromDaily", () => {
     expect(content).toContain("2026-07-03");
   });
 
-  it("keeps only the most recent 7 daily entries", () => {
+  it("keeps only the most recent 6 completed daily entries", () => {
     const dates = [];
     for (let i = 1; i <= 9; i++) {
       const d = `2026-07-${String(i).padStart(2, "0")}`;
@@ -297,11 +340,12 @@ describe("assembleWeekFromDaily", () => {
     assembleWeekFromDaily(dailyDir, weekPath);
 
     const content = fs.readFileSync(weekPath, "utf-8");
-    // 最老的两天（07-01, 07-02）应被排除在外
+    // 最老的三天（07-01, 07-02, 07-03）应被排除在外
     expect(content).not.toContain("2026-07-01");
     expect(content).not.toContain("2026-07-02");
-    // 最近 7 天应全部在
-    for (const d of dates.slice(-7)) {
+    expect(content).not.toContain("2026-07-03");
+    // 最近 6 个已结束逻辑日应全部在
+    for (const d of dates.slice(-6)) {
       expect(content).toContain(d);
     }
   });
@@ -312,7 +356,7 @@ describe("assembleWeekFromDaily", () => {
   });
 
   it("truncates from the oldest entries when total length exceeds the hard cap", () => {
-    for (let i = 1; i <= 7; i++) {
+    for (let i = 1; i <= 6; i++) {
       const d = `2026-07-0${i}`;
       writeDailyFile(d, "很长的一段记录内容。".repeat(50));
     }
@@ -322,7 +366,7 @@ describe("assembleWeekFromDaily", () => {
     const content = fs.readFileSync(weekPath, "utf-8");
     expect(content.length).toBeLessThanOrEqual(500 + 200); // 允许日期抬头等少量结构性开销
     // 最新的一天应该保留，最老的被截掉
-    expect(content).toContain("2026-07-07");
+    expect(content).toContain("2026-07-06");
     expect(content).not.toContain("2026-07-01");
   });
 
@@ -368,10 +412,10 @@ describe("listDailyEntries / readDailyEntryBody / writeDailyEntryBody", () => {
       fs.writeFileSync(path.join(dailyDir, `${d}.md`), `## ${d}\n\n内容${i}\n`, "utf-8");
     }
 
-    const entries = listDailyEntries(dailyDir, { maxDays: 7 });
+    const entries = listDailyEntries(dailyDir);
 
     expect(entries.map((e) => e.date)).toEqual([
-      "2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06",
+      "2026-07-04", "2026-07-05", "2026-07-06",
       "2026-07-07", "2026-07-08", "2026-07-09",
     ]);
   });

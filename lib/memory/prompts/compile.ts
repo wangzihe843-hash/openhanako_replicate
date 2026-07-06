@@ -4,13 +4,13 @@ export function buildCompileTodayPrompt(locale = "zh-CN") {
     templateVersion: "compile-today.v2",
     cacheGroup: "memory.compile.today",
     systemPrompt: isZh
-      ? `你会收到「上一版今日草稿」和「新增或修订的对话摘要（delta）」，请据此更新出一份新的"用户近况与大主题清单"草稿。
+      ? `你会收到「上一版今日草稿」和「新增或修订的时间线条目（delta）」，请据此更新出一份新的"用户近况与大主题清单"草稿。
 
 处理原则：
 - 上一版草稿是今天已经沉淀的内容，默认保留；delta 里标注"取代先前相关记述"的条目，说明对应的旧内容已经过时或不准确，请用它更新/替换草稿里的相关部分，而不是并列保留新旧两种说法
 - delta 里没有标注"取代"的条目是今天新发生的事，正常并入
 - 把同一主题/项目的多次往返归并为一件事，不要逐条流水账
-- 时间标注用主时段（"上午/傍晚"或粗略 HH:MM 区间），不需精确到分钟
+- 每条输出必须保留粗时间锚点，例如"上午"、"07:20 左右"、"傍晚"；不要把时间完全删掉
 - 记忆的核心职责是维护用户模型，优先记录用户是谁、喜欢什么、在意什么、最近关注什么
 - 工作相关内容只允许保留到大主题层级：只写用户最近关注的领域/项目/主题，不写该主题里的细节
 
@@ -27,13 +27,13 @@ export function buildCompileTodayPrompt(locale = "zh-CN") {
 - 来回修改、重试、被打断又恢复这类过程波动
 
 输出 3-5 条粗颗粒事件，每条 1-2 句。最多 300 字。一天平淡就写得短。不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文列表或段落。`
-      : `You will receive the "previous today draft" and "new or revised conversation summaries (delta)". Update them into a new "user-current-state and broad-theme list" draft.
+      : `You will receive the "previous today draft" and "new or revised timeline entries (delta)". Update them into a new "user-current-state and broad-theme list" draft.
 
 Processing principles:
 - The previous draft is what today has already settled; keep it by default. Delta entries marked "supersedes prior mention" mean the corresponding old content is outdated or inaccurate — use them to update/replace the related part of the draft rather than keeping both the old and new statements side by side
 - Delta entries without a "supersedes" marker are new things that happened today; merge them in normally
 - Merge multiple back-and-forth on the same topic/project into ONE event; do not enumerate line by line
-- Time markers use major periods ("morning/evening" or rough HH:MM range), no minute-level precision
+- Each output item must keep a coarse time anchor, such as "morning", "around 07:20", or "evening"; do not remove time entirely
 - Memory's core job is to maintain a user model: prioritize who the user is, what they like, what they care about, and what they are broadly focused on recently
 - Work-related content may only be kept at the broad-theme level: record the domain/project/theme, not details inside that theme
 
@@ -59,12 +59,13 @@ export function buildCompileDailyPrompt(locale = "zh-CN") {
     templateVersion: "compile-daily.v2",
     cacheGroup: "memory.compile.daily",
     systemPrompt: isZh
-      ? `你会收到这一天最终版的"今日草稿"（当天结束时对用户近况的整理稿），请把它蒸馏成两三句话的简短日记条目。
+      ? `你会收到这一天的时间线条目或最终版"今日草稿"（当天结束时对用户近况的整理稿），请把它蒸馏成两三句话的简短日记条目。
 
 关键定位：这是给一周概览用的一条记录，不是详细日志。读的人只需要一眼看出这一天大致发生了什么、用户在关注什么。
 
 提炼原则：
 - 把同一主题/项目的多次往返归并为一件事，不要逐条流水账
+- 保留这一天的粗时间感，例如"上午"、"傍晚"或一个代表性 HH:MM；不要写成无时间锚点的主题标签
 - 记忆的核心职责是维护用户模型：优先记录用户是谁、喜欢什么、在意什么、这天关注什么
 - 工作相关内容只允许保留到大主题层级：只写用户这天关注的领域/项目/主题，不写该主题里的细节
 
@@ -76,12 +77,13 @@ export function buildCompileDailyPrompt(locale = "zh-CN") {
 - 来回修改、重试、被打断又恢复这类过程波动
 
 只输出两三句话，最多 60 字。这天平淡就写得更短。不要输出日期抬头（调用方会自行加上日期），不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文。`
-      : `You will receive that day's final "today draft" (the end-of-day writeup of the user's current state). Distill it into a short two-to-three sentence diary entry.
+      : `You will receive that day's timeline entries or final "today draft" (the end-of-day writeup of the user's current state). Distill it into a short two-to-three sentence diary entry.
 
 Positioning: this is one entry feeding a weekly overview, not a detailed log. The reader only needs a glance at what broadly happened that day and what the user was focused on.
 
 Principles:
 - Merge multiple back-and-forth on the same topic/project into ONE event; do not enumerate line by line
+- Preserve the day's coarse sense of time, such as "morning", "evening", or one representative HH:MM; do not turn it into timeless topic labels
 - Memory's core job is to maintain a user model: prioritize who the user is, what they like, what they care about, and what they focused on that day
 - Work-related content may only be kept at the broad-theme level: record the domain/project/theme, not details inside that theme
 

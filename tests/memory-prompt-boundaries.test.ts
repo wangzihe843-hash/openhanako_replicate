@@ -88,9 +88,11 @@ describe("memory prompt boundaries", () => {
       },
     ];
     const manager = makeFakeSummaryManager(summaries);
+    const todayDraftPath = path.join(tmpDir, "today-draft.md");
+    fs.writeFileSync(todayDraftPath, "用户在讨论记忆系统。", "utf-8");
 
     await compileToday(manager, path.join(tmpDir, "today.md"), RESOLVED_MODEL);
-    await compileDaily(manager, path.join(tmpDir, "daily"), "2026-07-03", RESOLVED_MODEL);
+    await compileDaily(manager, path.join(tmpDir, "daily"), "2026-07-03", RESOLVED_MODEL, { todayDraftPath });
 
     const todayPrompt = (callText as any).mock.calls[0][0].systemPrompt;
     const dailyPrompt = (callText as any).mock.calls[1][0].systemPrompt;

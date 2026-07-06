@@ -50,6 +50,7 @@ const RESOLVED_MODEL = { model: "m", api: "openai-completions", api_key: "k", ba
 
 function makeFakeSummaryManager(summaries) {
   return {
+    getAllSummaries: vi.fn(() => summaries),
     getSummariesInRange: vi.fn().mockReturnValue(summaries),
   };
 }
@@ -65,6 +66,7 @@ function makeFakeSummaryManager(summaries) {
 // 调用 LLM"这条契约——水位线过滤发生在 summaryManager 侧，假 mock 必须如实模拟。
 function makeWatermarkAwareSummaryManager(summaries) {
   return {
+    getAllSummaries: vi.fn(() => summaries),
     getSummariesInRange: vi.fn((start, end, opts: any = {}) => {
       const since = opts?.since || null;
       return summaries.filter((s) => {
@@ -82,6 +84,8 @@ describe("compileToday watermark increment", () => {
   let statePath;
 
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 3, 17, 10, 0, 0)); // 2026-04-17 10:00 local
     vi.clearAllMocks();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-compile-"));
     todayPath = path.join(tmpDir, "today.md");
@@ -90,6 +94,7 @@ describe("compileToday watermark increment", () => {
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.useRealTimers();
   });
 
   it("does not write watermark state when sessions are empty", async () => {
@@ -168,6 +173,79 @@ describe("compileToday watermark increment", () => {
     expect(secondRequest.messages[0].content).toContain("revised summary");
   });
 
+  it("does not include yesterday timeline entries merely because a summary was updated today", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 6, 6, 7, 30, 0)); // 2026-07-06 07:30 local
+      const mgr = makeWatermarkAwareSummaryManager([
+        {
+          session_id: "old-cross-day",
+          created_at: "2026-06-28T06:45:05.668Z",
+          updated_at: "2026-07-05T23:24:15.044Z",
+          source_time_range: {
+            start: "2026-06-28T04:12:56.977Z",
+            end: "2026-07-04T20:49:25.409Z",
+            timezone: "Asia/Shanghai",
+            localDates: ["2026-06-28", "2026-07-05"],
+          },
+          summary: "### 重要事实\n- 无\n\n### 事情经过\n- 2026-07-05 04:48 用户询问多个 Claude 账号是否违反 Anthropic ToS，助手搜索并解答",
+        },
+      ]);
+
+      await compileToday(mgr, todayPath, RESOLVED_MODEL);
+
+      expect(callText).not.toHaveBeenCalled();
+      expect(fs.existsSync(todayPath)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({
+        logicalDate: "2026-07-06",
+        lastCompiledSummaryUpdatedAt: "2026-07-05T23:24:15.044Z",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("compiles only timeline entries that belong to the current logical day", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 6, 6, 7, 30, 0)); // 2026-07-06 07:30 local
+      const mgr = makeWatermarkAwareSummaryManager([
+        {
+          session_id: "cross-day",
+          created_at: "2026-07-05T12:00:00.000Z",
+          updated_at: "2026-07-05T23:24:15.044Z",
+          source_time_range: {
+            start: "2026-07-04T20:49:25.409Z",
+            end: "2026-07-05T23:24:15.044Z",
+            timezone: "Asia/Shanghai",
+            localDates: ["2026-07-05", "2026-07-06"],
+          },
+          summary: [
+            "### 重要事实",
+            "- 无",
+            "",
+            "### 事情经过",
+            "- 2026-07-05 04:48 用户询问多个 Claude 账号是否违反 Anthropic ToS，助手搜索并解答",
+            "- [2026-07-06 07:24] 用户排查生产记忆目录，确认今天记忆被旧摘要污染",
+          ].join("\n"),
+        },
+      ]);
+      (callText as any).mockResolvedValueOnce("07:24 左右：用户排查生产记忆目录。");
+
+      await compileToday(mgr, todayPath, RESOLVED_MODEL);
+
+      expect(callText).toHaveBeenCalledOnce();
+      const request = (callText as any).mock.calls[0][0];
+      expect(request.messages[0].content).toContain("2026-07-06 07:24");
+      expect(request.messages[0].content).not.toContain("[2026-07-06 07:24]");
+      expect(request.messages[0].content).toContain("用户排查生产记忆目录");
+      expect(request.messages[0].content).not.toContain("Anthropic ToS");
+      expect(fs.readFileSync(todayPath, "utf-8")).toBe("07:24 左右：用户排查生产记忆目录。");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("resets the draft and watermark when the logical date changes", async () => {
     vi.useFakeTimers();
     try {
@@ -181,8 +259,8 @@ describe("compileToday watermark increment", () => {
       expect(fs.readFileSync(todayPath, "utf-8")).toBe("day one draft");
       expect(JSON.parse(fs.readFileSync(statePath, "utf-8")).logicalDate).toBe("2026-04-17");
 
-      // 日期切换到第二天，且第二天暂无任何摘要（真实场景：新一天 getSummariesInRange
-      // 按新一天的 rangeStart 查询，昨天的摘要天然落在范围外，这里直接给空数组模拟）
+      // 日期切换到第二天，且第二天暂无任何摘要（真实场景：编译层扫描候选摘要，
+      // 再按 timeline 条目时间筛选，昨天的条目天然落在范围外；这里直接给空数组模拟）
       vi.setSystemTime(new Date(2026, 3, 18, 10, 0, 0)); // 2026-04-18 10:00 local
       const mgrDay2Empty = makeWatermarkAwareSummaryManager([]);
       await compileToday(mgrDay2Empty, todayPath, RESOLVED_MODEL);
@@ -247,12 +325,15 @@ describe("compiled section formatting", () => {
   let tmpDir;
 
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 3, 29, 10, 0, 0)); // 2026-04-29 10:00 local
     vi.clearAllMocks();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-compile-format-"));
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.useRealTimers();
   });
 
   it("strips model-emitted headings before writing today.md", async () => {
@@ -703,17 +784,33 @@ describe("compiled memory reset watermark filtering", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("passes since to summary range queries for today and daily", async () => {
-    const summaries = [
-      { session_id: "new", updated_at: "2026-04-29T08:30:00.000Z", summary: "new summary" },
-    ];
-    const mgr = makeFakeSummaryManager(summaries);
+  it("applies since before compiling today and daily", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 3, 29, 10, 0, 0)); // 2026-04-29 10:00 local
+      (callText as any)
+        .mockResolvedValueOnce("today compiled")
+        .mockResolvedValueOnce("daily compiled");
 
-    await compileToday(mgr, path.join(tmpDir, "today.md"), RESOLVED_MODEL, { since: "2026-04-29T08:00:00.000Z" });
-    await compileDaily(mgr, path.join(tmpDir, "daily"), "2026-04-29", RESOLVED_MODEL, { since: "2026-04-29T08:00:00.000Z" });
+      const summaries = [
+        { session_id: "old", updated_at: "2026-04-29T08:00:00.000Z", summary: "old summary" },
+        { session_id: "new", updated_at: "2026-04-29T08:30:00.000Z", summary: "new summary" },
+      ];
+      const mgr = makeFakeSummaryManager(summaries);
 
-    expect(mgr.getSummariesInRange.mock.calls[0][2]).toEqual({ since: "2026-04-29T08:00:00.000Z" });
-    expect(mgr.getSummariesInRange.mock.calls[1][2]).toEqual({ since: "2026-04-29T08:00:00.000Z" });
+      await compileToday(mgr, path.join(tmpDir, "today.md"), RESOLVED_MODEL, { since: "2026-04-29T08:00:00.000Z" });
+      await compileDaily(mgr, path.join(tmpDir, "daily"), "2026-04-29", RESOLVED_MODEL, { since: "2026-04-29T08:00:00.000Z" });
+
+      expect(callText).toHaveBeenCalledTimes(2);
+      const todayRequest = (callText as any).mock.calls[0][0];
+      const dailyRequest = (callText as any).mock.calls[1][0];
+      expect(todayRequest.messages[0].content).toContain("new summary");
+      expect(todayRequest.messages[0].content).not.toContain("old summary");
+      expect(dailyRequest.messages[0].content).toContain("new summary");
+      expect(dailyRequest.messages[0].content).not.toContain("old summary");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("respects the reset watermark (since) when compiling editable facts", async () => {

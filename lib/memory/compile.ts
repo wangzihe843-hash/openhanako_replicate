@@ -3,7 +3,7 @@
  *
  * compileToday()         → today.md（当天 sessions）
  * compileDaily()         → memory/daily/{date}.md（已结束那天的两三句话日记，独立指纹缓存）
- * assembleWeekFromDaily() → week.md（纯文件装配最近 6-7 天的日记条目，零 LLM）
+ * assembleWeekFromDaily() → week.md（纯文件装配最近 6 个已结束逻辑日，零 LLM）
  * rollDailyWindow()      → 把滚出窗口的 daily 条目 fold 进 longterm.md 后删除源文件
  * compileLongterm()      → longterm.md（fold 任意内容到长期，被 rollDailyWindow /
  *                          migrateLegacyWeekToLongterm 复用的通用入口）
@@ -17,7 +17,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import { getLogicalDay, getLogicalDayForDate, shiftLogicalDate } from "../time-utils.ts";
+import { DAY_BOUNDARY_HOUR, getLogicalDay, getLogicalDayForDate, shiftLogicalDate } from "../time-utils.ts";
 import { callText } from "../../core/llm-client.ts";
 import { getLocale } from "../i18n.ts";
 import { atomicWriteSync, safeReadFile } from "../../shared/safe-fs.ts";
@@ -32,10 +32,13 @@ import {
 import { withMemoryReasoningBuffer } from "./llm-budget.ts";
 import {
   FACT_SECTION_TITLES,
+  TIMELINE_SECTION_TITLES,
+  extractMarkdownSection,
   extractFactSection,
   hasFactSectionHeading,
   isEmptyFactSection,
 } from "./rolling-summary-format.ts";
+import { normalizeSourceTimeRange } from "./time-context.ts";
 import { createModuleLogger } from "../debug-log.ts";
 
 const log = createModuleLogger("memory-compile");
@@ -54,12 +57,14 @@ export const EDITABLE_FACTS_STATE_FILE = "editable-facts-state.json";
 export const TODAY_STATE_FILE = "today-state.json";
 export const TODAY_STATE_SCHEMA_VERSION = 1;
 
-// daily 传送带默认参数：week 段展示最近 7 天，超过这个天数的条目 fold 进 longterm 后删除。
-export const DAILY_WINDOW_RETENTION_DAYS = 7;
-// week.md 硬性总长上限（字符数）：7 条 daily（单条极紧的 budget）加合理结构开销后的总量级，
+// daily 传送带默认参数：week 段展示今天之前的 6 个已结束逻辑日；更早的条目 fold 进 longterm。
+export const DAILY_WINDOW_RETENTION_DAYS = 6;
+// week.md 硬性总长上限（字符数）：6 条 daily（单条极紧的 budget）加合理结构开销后的总量级，
 // 与被取代的 LLM week 段体量大致相当。
 export const WEEK_ASSEMBLY_MAX_CHARS = 1200;
 const DAILY_FILE_RE = /^(\d{4}-\d{2}-\d{2})\.md$/;
+const SUMMARY_EVENT_DATE_TIME_RE = /\b(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})\b/;
+const SUMMARY_EVENT_DATE_RE = /\b(\d{4}-\d{2}-\d{2})\b/;
 
 const COMPILE_PROMPT_BUILDERS = {
   compile_today: buildCompileTodayPrompt,
@@ -103,23 +108,194 @@ function writeTodayState(statePath, logicalDate, lastCompiledSummaryUpdatedAt) {
   }, null, 2) + "\n");
 }
 
+function getCandidateSummariesForCompile(summaryManager, since = null) {
+  if (!summaryManager) return [];
+  const filter = (summaries) => (summaries || [])
+    .filter((s) => s?.summary)
+    .filter((s) => !since || isAfterIso(s.updated_at || s.created_at, since));
+
+  if (typeof summaryManager.getAllSummaries === "function") {
+    return filter(summaryManager.getAllSummaries());
+  }
+  if (typeof summaryManager.getSummariesInRange === "function") {
+    return summaryManager.getSummariesInRange(new Date(0), new Date(), { since }).filter((s) => s?.summary);
+  }
+  return [];
+}
+
+function splitTimelineListItems(text) {
+  const items = [];
+  let current = "";
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const match = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (match) {
+      if (current.trim()) items.push(current.trim());
+      current = match[1].trim();
+      continue;
+    }
+    const trimmed = line.trim();
+    if (trimmed && current) current += `\n${trimmed}`;
+  }
+  if (current.trim()) items.push(current.trim());
+  return items;
+}
+
+function isEmptyTimelineItem(text) {
+  const normalized = String(text || "").trim().replace(/^[-*+]\s+/, "").trim().toLowerCase();
+  return !normalized || normalized === "无" || normalized === "none";
+}
+
+function logicalDateForEventParts(date, hour) {
+  if (hour != null && Number(hour) < DAY_BOUNDARY_HOUR) return shiftLogicalDate(date, -1);
+  return date;
+}
+
+function logicalDateForIso(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return null;
+  return getLogicalDay(date).logicalDate;
+}
+
+function fallbackSummaryLogicalDate(summaryRecord) {
+  const sourceRange = normalizeSourceTimeRange(summaryRecord?.source_time_range);
+  if (sourceRange.start && sourceRange.end) {
+    const startLogical = logicalDateForIso(sourceRange.start);
+    const endLogical = logicalDateForIso(sourceRange.end);
+    if (startLogical && startLogical === endLogical) return startLogical;
+    return null;
+  }
+  if (sourceRange.localDates.length === 1) return sourceRange.localDates[0];
+  return logicalDateForIso(summaryRecord?.updated_at || summaryRecord?.created_at);
+}
+
+function stripLeadingEventTimestamp(text) {
+  return String(text || "")
+    .replace(/^\s*\[?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}\]?\s*[:：\-—–]?\s*/, "")
+    .replace(/^\s*\[?\d{4}-\d{2}-\d{2}\]?\s*[:：\-—–]?\s*/, "")
+    .trim();
+}
+
+function extractTimelineEvents(summaryRecord) {
+  const timeline = extractMarkdownSection(summaryRecord?.summary || "", TIMELINE_SECTION_TITLES);
+  const items = splitTimelineListItems(timeline);
+  const events = [];
+  const sessionId = summaryRecord?.session_id || "";
+  const updatedAt = summaryRecord?.updated_at || summaryRecord?.created_at || "";
+  const createdAt = summaryRecord?.created_at || updatedAt;
+
+  items.forEach((item, index) => {
+    if (isEmptyTimelineItem(item)) return;
+    let date = null;
+    let time = null;
+    let logicalDate = null;
+    const dateTimeMatch = item.match(SUMMARY_EVENT_DATE_TIME_RE);
+    if (dateTimeMatch) {
+      date = dateTimeMatch[1];
+      time = `${dateTimeMatch[2]}:${dateTimeMatch[3]}`;
+      logicalDate = logicalDateForEventParts(date, Number(dateTimeMatch[2]));
+    } else {
+      const dateMatch = item.match(SUMMARY_EVENT_DATE_RE);
+      if (dateMatch) {
+        date = dateMatch[1];
+        logicalDate = date;
+      } else {
+        logicalDate = fallbackSummaryLogicalDate(summaryRecord);
+        date = logicalDate;
+      }
+    }
+    if (!logicalDate) return;
+    const body = stripLeadingEventTimestamp(item) || item.trim();
+    const timeLabel = time ? `${date} ${time}` : date;
+    events.push({
+      sessionId,
+      summaryUpdatedAt: updatedAt,
+      summaryCreatedAt: createdAt,
+      index,
+      logicalDate,
+      timeLabel,
+      body,
+      raw: item,
+      source: "timeline",
+      key: `${sessionId}:${updatedAt}:${index}:${timeLabel}:${crypto.createHash("sha1").update(item).digest("hex").slice(0, 12)}`,
+    });
+  });
+
+  return events;
+}
+
+function fallbackSummaryAsEvent(summaryRecord, logicalDate) {
+  const ownerDate = fallbackSummaryLogicalDate(summaryRecord);
+  if (ownerDate !== logicalDate) return null;
+  const sessionId = summaryRecord?.session_id || "";
+  const updatedAt = summaryRecord?.updated_at || summaryRecord?.created_at || "";
+  const body = normalizeCompiledSectionBody(summaryRecord?.summary || "");
+  if (!body) return null;
+  return {
+    sessionId,
+    summaryUpdatedAt: updatedAt,
+    summaryCreatedAt: summaryRecord?.created_at || updatedAt,
+    index: 0,
+    logicalDate,
+    timeLabel: logicalDate,
+    body,
+    raw: body,
+    source: "summary",
+    key: `${sessionId}:${updatedAt}:fallback:${crypto.createHash("sha1").update(body).digest("hex").slice(0, 12)}`,
+  };
+}
+
+function timelineEventsForLogicalDate(summaries, logicalDate, opts: { includeFallback?: boolean } = {}) {
+  const events = [];
+  const summariesWithEvents = new Set();
+  for (const summary of summaries || []) {
+    const extracted = extractTimelineEvents(summary);
+    if (extracted.length > 0) summariesWithEvents.add(summary?.session_id || summary);
+    events.push(...extracted.filter((event) => event.logicalDate === logicalDate));
+  }
+
+  if (opts.includeFallback !== false) {
+    for (const summary of summaries || []) {
+      const summaryKey = summary?.session_id || summary;
+      if (summariesWithEvents.has(summaryKey)) continue;
+      const fallback = fallbackSummaryAsEvent(summary, logicalDate);
+      if (fallback) events.push(fallback);
+    }
+  }
+
+  return events.sort((a, b) => {
+    const byTime = String(a.timeLabel || "").localeCompare(String(b.timeLabel || ""));
+    if (byTime) return byTime;
+    return String(a.key).localeCompare(String(b.key));
+  });
+}
+
+function formatTimelineEventsForCompile(events, opts: { since?: any; includeRevisionMarker?: boolean } = {}) {
+  const isZh = _isZh();
+  return (events || []).map((event) => {
+    const isRevision = opts.includeRevisionMarker && opts.since && !isAfterIso(event.summaryCreatedAt, opts.since);
+    const marker = isRevision
+      ? (isZh ? "（取代先前相关记述）\n" : "(supersedes prior mention)\n")
+      : "";
+    return `${marker}- ${event.timeLabel} ${event.body}`.trim();
+  }).join("\n");
+}
+
 /**
- * 编译今天的 session 摘要 → today.md（水位线增量：只把新增/修订过的摘要当 delta
- * 喂给 LLM，与上一版 today.md 草稿合并产出新草稿，输入不随一天里摘要数量增长）。
+ * 编译今天的 timeline 条目 → today.md（水位线增量：只重扫新增/修订过的摘要，
+ * 再把其中属于当前逻辑日的 timeline 条目当 delta 喂给 LLM）。
  *
  * 水位线状态落在 today-state.json（与 editable-facts-state.json 同构）：
  * - 逻辑日切换（state.logicalDate 与当前逻辑日不一致）→ 草稿与水位线一起重置，
  *   新一天从空白开始独立积累
- * - 同一逻辑日、水位线存在 → 只取 updated_at 晚于水位线的摘要作为 delta
- * - 同一逻辑日、水位线不存在（老用户升级 / 状态丢失）→ 一次性把当天已有的全部
- *   摘要当一次 delta，与 today.md 里已有的旧草稿（合法产物，直接续写）合并；
+ * - 同一逻辑日、水位线存在 → 只重扫 updated_at 晚于水位线的摘要，并按条目时间筛今天
+ * - 同一逻辑日、水位线不存在（老用户升级 / 状态丢失）→ 一次性扫描所有摘要里的
+ *   今天条目，与 today.md 里已有的旧草稿（合法产物，直接续写）合并；
  *   之后落下水位线，后续调用回到正常增量路径（迁移幂等：重复调用只是重新跑一次
  *   同样的合并，不会重复累积）
  *
- * delta 中每条摘要都会标注是"新增"还是"取代先前相关记述"：session 首次出现
- * （created_at 晚于水位线）算新增；水位线之前就存在但被 rollingSummary 覆盖式
- * 更新过（created_at 早于等于水位线、updated_at 晚于水位线）算修订，提示 LLM
- * 用它替换草稿里的旧内容而不是并列保留。
+ * delta 中每条 timeline 事件都会标注是"新增"还是"取代先前相关记述"：所在 session
+ * 首次出现（created_at 晚于水位线）算新增；水位线之前就存在但被 rollingSummary
+ * 覆盖式更新过（created_at 早于等于水位线、updated_at 晚于水位线）算修订。
  *
  * @param {import('./session-summary.ts').SessionSummaryManager} summaryManager
  * @param {string} outputPath
@@ -131,7 +307,7 @@ export async function compileToday(summaryManager, outputPath, resolvedModel, op
   fs.mkdirSync(memoryDir, { recursive: true });
   const statePath = opts.statePath || todayStatePath(memoryDir);
 
-  const { logicalDate, rangeStart } = getLogicalDay();
+  const { logicalDate } = getLogicalDay();
   let state = readTodayState(statePath);
   const dayChanged = Boolean(state) && state.logicalDate !== logicalDate;
   if (dayChanged) {
@@ -142,7 +318,7 @@ export async function compileToday(summaryManager, outputPath, resolvedModel, op
 
   const resetSince = opts.since || null;
   const watermark = latestIso(state?.lastCompiledSummaryUpdatedAt, resetSince);
-  const sessions = summaryManager.getSummariesInRange(rangeStart, new Date(), { since: watermark });
+  const sessions = getCandidateSummariesForCompile(summaryManager, watermark);
 
   if (sessions.length === 0) {
     // 空 sessions 分两种现场：
@@ -159,23 +335,29 @@ export async function compileToday(summaryManager, outputPath, resolvedModel, op
   }
 
   const nextWatermark = latestSummaryUpdate(sessions);
+  const events = timelineEventsForLogicalDate(sessions, logicalDate);
+  if (events.length === 0) {
+    if (!state) {
+      const cur = safeReadFile(outputPath, "");
+      if (cur.length > 0) atomicWrite(outputPath, "");
+    }
+    if (nextWatermark) writeTodayState(statePath, logicalDate, nextWatermark);
+    return "compiled";
+  }
+
   const previousDraft = normalizeCompiledSectionBody(safeReadFile(outputPath, ""));
   const isZh = _isZh();
-  const deltaBlocks = sessions.map((s) => {
-    const isRevision = watermark && !isAfterIso(s.created_at, watermark);
-    const marker = isRevision
-      ? (isZh ? "（取代先前相关记述）" : " (supersedes prior mention)")
-      : "";
-    return isZh ? `${marker}\n${s.summary}` : `${s.summary}${marker}`;
+  const delta = formatTimelineEventsForCompile(events, {
+    since: watermark,
+    includeRevisionMarker: true,
   });
-  const delta = deltaBlocks.join("\n\n---\n\n");
   const input = previousDraft
     ? (isZh
-        ? `## 上一版今日草稿\n\n${previousDraft}\n\n## 新增或修订的摘要（delta）\n\n${delta}`
-        : `## Previous today draft\n\n${previousDraft}\n\n## New or revised summaries (delta)\n\n${delta}`)
+        ? `## 上一版今日草稿\n\n${previousDraft}\n\n## 新增或修订的时间线条目（delta）\n\n${delta}`
+        : `## Previous today draft\n\n${previousDraft}\n\n## New or revised timeline entries (delta)\n\n${delta}`)
     : (isZh
-        ? `## 新增或修订的摘要（delta）\n\n${delta}`
-        : `## New or revised summaries (delta)\n\n${delta}`);
+        ? `## 新增或修订的时间线条目（delta）\n\n${delta}`
+        : `## New or revised timeline entries (delta)\n\n${delta}`);
 
   const result = await _compactLLM(
     input,
@@ -193,9 +375,8 @@ export async function compileToday(summaryManager, outputPath, resolvedModel, op
 /**
  * 编译已结束那天 → memory/daily/{logicalDate}.md
  *
- * v2：输入从"当天全部 session 摘要"改为"当天最终版 today.md 草稿"（compileToday
- * 增量维护出来的成品，本身已经是压缩过的用户近况小结）。compileDaily 只需要把
- * 这份小结再蒸馏成两三句话，输入体量与当天摘要条数无关。
+ * v3：输入优先使用该逻辑日的 timeline 条目。today.md 草稿只作为旧数据兼容
+ * fallback：当摘要里没有可解析时间线条目时，才蒸馏当天最终版 today.md 草稿。
  *
  * 草稿缺失时的受控降级（opts.todayDraftPath 指向的文件不存在或为空，典型于
  * 升级首日草稿状态尚未建立、或状态文件意外丢失）：显式记录一条 warn 日志后
@@ -222,25 +403,33 @@ export async function compileDaily(summaryManager, dailyDir, logicalDate, resolv
   const fpPath = outputPath + ".fingerprint";
 
   const draftText = opts.todayDraftPath ? normalizeCompiledSectionBody(safeReadFile(opts.todayDraftPath, "")) : "";
-  let input = draftText;
+  const candidateSummaries = getCandidateSummariesForCompile(summaryManager, opts.since || null);
+  const timelineEvents = timelineEventsForLogicalDate(candidateSummaries, logicalDate, { includeFallback: false });
+  const fallbackEvents = timelineEvents.length === 0
+    ? timelineEventsForLogicalDate(candidateSummaries, logicalDate, { includeFallback: true })
+    : [];
+  let input = timelineEvents.length > 0
+    ? formatTimelineEventsForCompile(timelineEvents)
+    : draftText;
   let fpKeys;
 
-  if (draftText) {
+  if (timelineEvents.length > 0) {
+    fpKeys = timelineEvents.map((event) => event.key);
+  } else if (draftText) {
     fpKeys = [`draft:${draftText}`];
   } else {
-    // 回落路径：草稿缺失（升级首日 / 状态丢失）但当天摘要可能仍在，显式记录后
-    // 按旧路径直接编译摘要，保数据的受控降级——不静默产空。
-    const { rangeStart, rangeEnd } = getLogicalDayForDate(logicalDate);
-    const sessions = summaryManager.getSummariesInRange(rangeStart, rangeEnd, { since: opts.since || null });
-    if (sessions.length === 0) {
+    // 回落路径：新旧草稿都不可用，但旧摘要可能没有规范 timeline 段。仅当整份摘要
+    // 能通过 source_time_range / updated_at 明确归到该逻辑日时才使用，避免跨天摘要整包污染。
+    const legacyEvents = fallbackEvents;
+    if (legacyEvents.length === 0) {
       // 零占位：当天确实没有草稿也没有摘要，不落文件；同时清掉可能存在的旧指纹，
       // 避免之后补齐时被过期指纹挡住（理由同 compileToday 的空 sessions 分支）。
       try { fs.unlinkSync(fpPath); } catch {}
       return "skipped";
     }
     log.warn(`compileDaily: ${logicalDate} 的今日草稿不可用，回落到按当天 session 摘要编译`);
-    input = sessions.map((s) => s.summary).join("\n\n---\n\n");
-    fpKeys = sessions.map((s) => `${s.session_id}:${s.updated_at}`);
+    input = formatTimelineEventsForCompile(legacyEvents);
+    fpKeys = legacyEvents.map((event) => event.key);
   }
 
   const fp = computeFingerprint(fpKeys);
@@ -254,7 +443,7 @@ export async function compileDaily(summaryManager, dailyDir, logicalDate, resolv
     promptSpec,
     resolvedModel,
     // week 段过去是 600 tokens／7 条 ≈ 85/条；daily 单条 budget 从紧，
-    // 保证 7 条装配起来的总量不超过原 week 段体量。
+    // 保证 6 条装配起来的总量不超过原 week 段体量。
     100,
     "compile_daily",
   );

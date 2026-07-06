@@ -133,6 +133,8 @@ describe("rolling summary format single source", () => {
     expect(text).toContain(buildRollingSummaryFormatRequirements("zh-CN"));
     expect(text).toContain("### 重要事实");
     expect(text).toContain("### 事情经过");
+    expect(text).toContain("YYYY-MM-DD HH:MM");
+    expect(text).toContain("不要只写 HH:MM");
   });
 
   it("the legacy utility rolling summary prompt embeds the shared format requirements verbatim", async () => {
@@ -153,10 +155,13 @@ describe("rolling summary format single source", () => {
   });
 
   it("buildRollingSummaryPrompt embeds the shared format requirements in both locales", () => {
-    expect(buildRollingSummaryPrompt({ locale: "zh-CN" }).systemPrompt)
-      .toContain(buildRollingSummaryFormatRequirements("zh-CN"));
-    expect(buildRollingSummaryPrompt({ locale: "en-US" }).systemPrompt)
-      .toContain(buildRollingSummaryFormatRequirements("en-US"));
+    const zhPrompt = buildRollingSummaryPrompt({ locale: "zh-CN" }).systemPrompt;
+    const enPrompt = buildRollingSummaryPrompt({ locale: "en-US" }).systemPrompt;
+    expect(zhPrompt).toContain(buildRollingSummaryFormatRequirements("zh-CN"));
+    expect(enPrompt).toContain(buildRollingSummaryFormatRequirements("en-US"));
+    expect(zhPrompt).toContain("YYYY-MM-DD HH:MM");
+    expect(enPrompt).toContain("YYYY-MM-DD HH:MM");
+    expect(enPrompt).toContain("do not use date-less HH:MM only");
   });
 });
 

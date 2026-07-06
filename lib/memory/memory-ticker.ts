@@ -21,7 +21,7 @@
  * 读时迁移，把 alpha 阶段遗留的 editable-facts.md 并入 facts.md。
  *
  * week 段不再是独立 LLM 编译产物：旧版 compileWeek（过去 7 天摘要整周编译）已
- * 退役，week.md 改为从 memory/daily/ 目录纯文件装配最近 6-7 天的日记条目
+ * 退役，week.md 改为从 memory/daily/ 目录纯文件装配最近 6 个已结束逻辑日的日记条目
  * （assembleWeekFromDaily，零 LLM）。创建 ticker 时会先跑一次幂等的读时迁移
  * （migrateLegacyWeekToLongterm），把旧版 week.md 整段 fold 进 longterm 一次，
  * daily 传送带自迁移日起独立积累。
@@ -762,7 +762,7 @@ export function createMemoryTicker(opts) {
         }
       }
 
-      // Step 2: rollDailyWindow——把滚出 7 日窗口的 daily 条目 fold 进 longterm 并删除源文件。
+      // Step 2: rollDailyWindow——把滚出 6 日窗口的 daily 条目 fold 进 longterm 并删除源文件。
       // 依赖 compileDaily 已经把昨天落盘，否则窗口判断会漏看最新一天（虽然滚动窗口本身
       // 判断的是"更早"的条目，但保持与 compileWeek→compileLongterm 相同的顺序约束更安全）。
       if (!_dailyStepsCompleted.has("rollDailyWindow") && _dailyStepsCompleted.has("compileDaily")) {
