@@ -284,6 +284,9 @@
     "markAllComplete": "全部标记为已完成"
   },
   "chat": {
+    "find": {
+      "locateFailed": "未能定位到该消息"
+    },
     "send": "发送",
     "steer": "插话",
     "stop": "停止",

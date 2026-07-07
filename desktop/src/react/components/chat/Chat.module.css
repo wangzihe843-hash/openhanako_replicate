@@ -2092,3 +2092,24 @@
         transform: none;
     }
 }
+
+/* 查找定位：目标消息一次性强调（duration 由 token 派生：0.25s × 6.4 = 1.6s） */
+.locateFlash {
+    animation-name: locate-flash;
+    animation-duration: calc(var(--duration-slow) * 6.4);
+    animation-timing-function: var(--ease-out);
+    animation-iteration-count: 1;
+}
+
+@keyframes locate-flash {
+    0% { background-color: color-mix(in srgb, var(--accent) 28%, transparent); }
+    100% { background-color: transparent; }
+}
+
+/* 查找词高亮（JS 创建的原生 mark，走全局类；样式对齐 preview-find-mark） */
+:global(mark.chat-find-mark) {
+    border-radius: 2px;
+    background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+    color: inherit;
+    padding: 0;
+}

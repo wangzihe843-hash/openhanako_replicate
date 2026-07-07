@@ -5,6 +5,9 @@ import { sessionScopedListIncludes, sessionScopedValue } from '../../stores/sess
 import { loadMoreMessages } from '../../stores/session-actions';
 import { useBoxSelection } from '../../hooks/use-box-selection';
 import { useContinuousBottomScroll } from '../../hooks/use-continuous-bottom-scroll';
+import { useI18n } from '../../hooks/use-i18n';
+import { resolveLocateStep } from './locate-step';
+import { applyFindMarks, clearFindMarks } from '../../utils/find-marks';
 import type { ChatListItem } from '../../stores/chat-types';
 import { ChatTimelineNavigator } from './ChatTimelineNavigator';
 import { ChatTranscript } from './ChatTranscript';
@@ -190,6 +193,157 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
     }
     prevLen.current = items.length;
   }, [items, items.length, active, bottomScroll]);
+
+  const { t } = useI18n();
+  const pendingLocate = useStore(s => s.pendingMessageLocate);
+  const findState = useStore(s => sessionScopedValue(s, s.chatFindBySession, sessionPath));
+  // 定位意图的进度守卫：同一意图连续 load-more 后 oldestId 未前进 → 放弃，防无限重试
+  const locateProgressRef = useRef<{ key: string; lastOldestId: string | undefined } | null>(null);
+  // 查找高亮：流式期间同一查询不重复标注 / 从未标注过则 clear 短路
+  const markKeyRef = useRef<string | null>(null);
+  const hadMarksRef = useRef(false);
+
+  // —— 定位意图消费：补加载 → 滚动 → flash ——
+  // 消费侧校验 sessionPath：意图不属于本 surface 就忽略（状态归属纪律）。
+  // 卡片实例是嵌入式投影，不响应全局导航意图。
+  useEffect(() => {
+    if (variant === 'card') return;
+    if (!pendingLocate) {
+      locateProgressRef.current = null;
+      return;
+    }
+    if (!active || pendingLocate.sessionPath !== sessionPath) return;
+    const intentKey = `${pendingLocate.sessionPath}#${pendingLocate.messageIndex}#${pendingLocate.term}`;
+    if (locateProgressRef.current && locateProgressRef.current.key !== intentKey) {
+      locateProgressRef.current = null;
+    }
+    const cleanups: Array<() => void> = [];
+    // 意图存在期间用户手动干预（滚轮/触摸）即取消，不跟用户抢滚动
+    const panel = ref.current;
+    if (panel) {
+      const cancelByUser = () => {
+        useStore.getState().clearMessageLocate();
+        locateProgressRef.current = null;
+      };
+      panel.addEventListener('wheel', cancelByUser, { passive: true, once: true });
+      panel.addEventListener('touchstart', cancelByUser, { passive: true, once: true });
+      cleanups.push(() => {
+        panel.removeEventListener('wheel', cancelByUser);
+        panel.removeEventListener('touchstart', cancelByUser);
+      });
+    }
+    const targetId = String(pendingLocate.messageIndex);
+    const element = messageElementsRef.current.get(targetId) ?? null;
+    const state = useStore.getState();
+    const session = sessionScopedValue(state, state.chatSessions, sessionPath);
+    const giveUp = () => {
+      const latest = useStore.getState();
+      latest.addToast(t('chat.find.locateFailed'), 'error', 4000);
+      latest.clearMessageLocate();
+      locateProgressRef.current = null;
+    };
+    const finishScroll = (target: HTMLDivElement) => {
+      const scrollPanel = ref.current;
+      if (!scrollPanel) {
+        console.warn('[chat-find] locate scroll skipped: panel element missing');
+        useStore.getState().clearMessageLocate();
+        locateProgressRef.current = null;
+        return;
+      }
+      // 退出贴底跟随，防止流式 ResizeObserver 立刻把视口拽回底部
+      bottomScroll.cancelFollow();
+      const panelRect = scrollPanel.getBoundingClientRect();
+      const rect = target.getBoundingClientRect();
+      const maxScroll = Math.max(0, scrollPanel.scrollHeight - scrollPanel.clientHeight);
+      const targetTop = Math.min(maxScroll, Math.max(0, scrollPanel.scrollTop + rect.top - panelRect.top - 16));
+      const reduceMotion = typeof window.matchMedia === 'function'
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      scrollPanel.scrollTo({ top: targetTop, behavior: reduceMotion ? 'auto' : 'smooth' });
+      target.classList.remove(styles.locateFlash);
+      // 强制 reflow 重启动画（连续定位同一条消息时）
+      void target.offsetWidth;
+      target.classList.add(styles.locateFlash);
+      useStore.getState().clearMessageLocate();
+      locateProgressRef.current = null;
+    };
+    const step = resolveLocateStep({
+      targetIndex: pendingLocate.messageIndex,
+      elementPresent: !!element,
+      itemPresent: !!session?.items.some(it => it.type === 'message' && it.data.id === targetId),
+      oldestId: session?.oldestId,
+      hasMore: session?.hasMore ?? false,
+      loadingMore: session?.loadingMore ?? false,
+    });
+    if (step === 'load-more') {
+      const prev = locateProgressRef.current;
+      if (prev && prev.key === intentKey && prev.lastOldestId === session?.oldestId) {
+        // 上一轮 load-more 后 oldestId 没前进（失败或空页），停止重试
+        giveUp();
+      } else {
+        locateProgressRef.current = { key: intentKey, lastOldestId: session?.oldestId };
+        loadMoreMessages(sessionPath);
+      }
+    } else if (step === 'give-up') {
+      giveUp();
+    } else if (step === 'wait-element') {
+      // items 里有但 DOM 未注册。翻页在途交给 loadingMore 依赖重触发；
+      // 否则有界等待：双帧后仍未注册（折叠块内 / 渲染为 null）则放弃。
+      if (!session?.loadingMore) {
+        let raf2 = 0;
+        const raf1 = requestAnimationFrame(() => {
+          raf2 = requestAnimationFrame(() => {
+            // 复核意图身份：两帧窗口内意图可能已被取消或替换，不误清新意图
+            const currentIntent = useStore.getState().pendingMessageLocate;
+            const currentKey = currentIntent
+              ? `${currentIntent.sessionPath}#${currentIntent.messageIndex}#${currentIntent.term}`
+              : null;
+            if (currentKey !== intentKey) return;
+            const settled = messageElementsRef.current.get(targetId);
+            if (settled) finishScroll(settled);
+            else giveUp();
+          });
+        });
+        cleanups.push(() => {
+          cancelAnimationFrame(raf1);
+          cancelAnimationFrame(raf2);
+        });
+      }
+    } else if (step === 'scroll' && element) {
+      finishScroll(element);
+    }
+    // step === 'wait'：items / loadingMore 变化经依赖数组重触发本 effect
+    return () => {
+      for (const dispose of cleanups) dispose();
+    };
+  }, [active, pendingLocate, items, sessionPath, loadingMore, variant, t, bottomScroll]);
+
+  // —— 查找高亮：查找条打开期间对已加载消息词级 mark ——
+  useEffect(() => {
+    if (variant === 'card') return; // 卡片投影不做查找标注
+    if (!active) return; // 非 active 实例不跑；切回 active 时依赖变化自然重跑
+    const container = contentRef.current;
+    if (!container) return;
+    if (!findState?.open || !findState.query.trim()) {
+      markKeyRef.current = null;
+      if (hadMarksRef.current) {
+        clearFindMarks(container, 'chat-find-mark');
+        hadMarksRef.current = false;
+      }
+      return;
+    }
+    const markKey = `${findState.query}|${(findState.tokens ?? []).join(',')}`;
+    // 流式期间同一查询已标注过：不重跑 TreeWalker，防与流式 reconcile 打架循环；
+    // 流式结束边沿（isSessionStreaming 翻 false）经依赖重跑补标。
+    if (isSessionStreaming && markKeyRef.current === markKey) return;
+    const terms = [findState.query.trim(), ...findState.tokens];
+    // rAF 合并：items 高频变化（流式）时不在同帧重复跑 TreeWalker
+    const raf = requestAnimationFrame(() => {
+      applyFindMarks(container, terms, 'chat-find-mark');
+      markKeyRef.current = markKey;
+      hadMarksRef.current = true;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [variant, active, findState?.open, findState?.query, findState?.tokens, items, isSessionStreaming]);
 
   const shellClassName = variant === 'card'
     ? `${styles.sessionShell} ${styles.cardSessionShell}`

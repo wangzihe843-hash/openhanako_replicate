@@ -284,6 +284,9 @@
     "markAllComplete": "Mark all as complete"
   },
   "chat": {
+    "find": {
+      "locateFailed": "Could not locate that message"
+    },
     "send": "Send",
     "steer": "Steer",
     "stop": "Stop",
