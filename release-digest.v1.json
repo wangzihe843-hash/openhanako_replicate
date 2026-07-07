@@ -1,43 +1,183 @@
 {
   "schemaVersion": 1,
-  "tag": "v0.357.17",
-  "version": "0.357.17",
-  "previousTag": "v0.357.16",
-  "generatedAt": "2026-07-06T00:54:00.000Z",
+  "tag": "v0.358.8",
+  "version": "0.358.8",
+  "previousTag": "v0.357.17",
+  "generatedAt": "2026-07-07T01:38:00.000Z",
   "noUserFacingChanges": false,
   "summary": {
-    "zh": "记忆时间线会按逻辑日正确归档，日记忆不再把跨天对话混进错误日期。",
-    "en": "Memory timeline entries now attach to the correct logical day, so daily summaries stop mixing cross-day conversations into the wrong date."
+    "zh": "文档查看器加载更稳，Markdown 表格与列表编辑更顺手，聊天滚动和移动端焦点也更可靠。",
+    "en": "Viewer windows load more reliably, Markdown tables and list editing feel smoother, and chat scrolling plus mobile focus behave more predictably."
   },
   "counts": {
     "feature": 0,
-    "fix": 1,
-    "improvement": 0,
+    "fix": 6,
+    "improvement": 1,
     "migration": 0
   },
   "source": {
     "owner": "liliMozi",
     "repo": "openhanako",
-    "commitRange": "v0.357.16..1b850da24",
-    "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.357.17",
+    "commitRange": "v0.357.17..20c57f367",
+    "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.358.8",
     "releaseNotes": ""
   },
   "items": [
     {
-      "id": "memory-timeline-logical-day",
+      "id": "viewer-load-contract",
       "kind": "fix",
-      "importance": "medium",
+      "importance": "high",
       "title": {
-        "zh": "记忆时间线按逻辑日归档",
-        "en": "Memory timeline respects logical days"
+        "zh": "文档查看器不再卡在加载页",
+        "en": "Viewer windows stop getting stuck on Loading"
       },
       "summary": {
-        "zh": "修复记忆编译时 timeline 条目归属错误的问题，跨天 session 的摘要不会再污染相邻日期的日记忆。",
-        "en": "Fixes timeline assignment during memory compilation so cross-day session summaries no longer bleed into neighboring daily memory entries."
+        "zh": "查看器改为由窗口主动拉取内容，避免冷启动时推送早于监听注册导致载荷丢失。",
+        "en": "Viewer windows now pull their payload explicitly, preventing cold-start races where content was pushed before the renderer subscribed."
       },
       "details": [],
       "sources": [
-        { "type": "commit", "ref": "1b850da24", "title": "fix: assign memory timeline entries by logical day" }
+        {
+          "type": "commit",
+          "ref": "cd21e47f4",
+          "title": "fix: viewer window Loading race via explicit pull contract"
+        }
+      ]
+    },
+    {
+      "id": "markdown-table-wrap",
+      "kind": "fix",
+      "importance": "medium",
+      "title": {
+        "zh": "Markdown 表格在内容宽度内换行",
+        "en": "Markdown tables wrap within the content width"
+      },
+      "summary": {
+        "zh": "聊天与截图分享里的宽表格不再横向滚动，改为在版面内自动换行显示。",
+        "en": "Wide tables in chat and screenshot shares wrap inside the layout instead of forcing horizontal scrolling."
+      },
+      "details": [],
+      "sources": [
+        {
+          "type": "commit",
+          "ref": "3825b5211",
+          "title": "fix: wrap markdown tables instead of horizontal scroll (#2063)"
+        },
+        {
+          "type": "commit",
+          "ref": "862b63d76",
+          "title": "fix: wrap screenshot share markdown tables within content width"
+        }
+      ]
+    },
+    {
+      "id": "scroll-focus-mobile",
+      "kind": "fix",
+      "importance": "medium",
+      "title": {
+        "zh": "聊天滚动与移动端焦点更稳定",
+        "en": "Chat scrolling and mobile focus are more stable"
+      },
+      "summary": {
+        "zh": "回合结束后的滚动跟随更贴底，下拉菜单在滚动时会关闭，移动端输入焦点恢复也更可靠。",
+        "en": "Turn-end scrolling stays pinned to the bottom, dropdowns close while scrolling, and mobile input focus restores more reliably."
+      },
+      "details": [],
+      "sources": [
+        {
+          "type": "commit",
+          "ref": "accf9bfc6",
+          "title": "fix: turn-end scroll stickiness, dropdown scroll-close scope, mobile focus restore (#2045)"
+        }
+      ]
+    },
+    {
+      "id": "rich-list-editing",
+      "kind": "fix",
+      "importance": "medium",
+      "title": {
+        "zh": "富文本列表编辑更顺手",
+        "en": "Rich list editing is smoother"
+      },
+      "summary": {
+        "zh": "列表草稿在切换或重开时会被保留；Shift+Enter 可在当前项内拆出新列表项。",
+        "en": "List drafts are preserved when you navigate away and back; Shift+Enter splits the current item into a new list entry."
+      },
+      "details": [],
+      "sources": [
+        {
+          "type": "commit",
+          "ref": "d8793f13e",
+          "title": "fix: preserve rich list input drafts"
+        },
+        {
+          "type": "commit",
+          "ref": "3c7c2ad3e",
+          "title": "fix: split list item on shift enter"
+        }
+      ]
+    },
+    {
+      "id": "markdown-chapter-rail",
+      "kind": "improvement",
+      "importance": "low",
+      "title": {
+        "zh": "章节导航移到右侧",
+        "en": "Chapter navigation moves to the right edge"
+      },
+      "summary": {
+        "zh": "Markdown 长文的章节目录栏改到右侧，阅读区布局更一致。",
+        "en": "The chapter rail for long Markdown documents now sits on the right edge for a more consistent reading layout."
+      },
+      "details": [],
+      "sources": [
+        {
+          "type": "commit",
+          "ref": "e30ee1694",
+          "title": "fix: move markdown chapter rail to the right edge"
+        }
+      ]
+    },
+    {
+      "id": "interactive-card-scrollbar",
+      "kind": "fix",
+      "importance": "low",
+      "title": {
+        "zh": "交互卡片隐藏多余滚动条",
+        "en": "Interactive cards hide unnecessary scrollbars"
+      },
+      "summary": {
+        "zh": "交互式卡片区域不再显示多余的滚动条，视觉更干净。",
+        "en": "Interactive card surfaces no longer show redundant scrollbars, keeping the layout cleaner."
+      },
+      "details": [],
+      "sources": [
+        {
+          "type": "commit",
+          "ref": "4bc8f3313",
+          "title": "fix: hide interactive card scrollbar"
+        }
+      ]
+    },
+    {
+      "id": "cover-notice-paths",
+      "kind": "fix",
+      "importance": "low",
+      "title": {
+        "zh": "封面提示路径判断更可靠",
+        "en": "Cover notice routing is more reliable"
+      },
+      "summary": {
+        "zh": "封面相关提示的路径分支收窄得更明确，减少误判。",
+        "en": "Cover notice handling now uses explicit discriminant narrowing so path-specific prompts are less likely to misfire."
+      },
+      "details": [],
+      "sources": [
+        {
+          "type": "commit",
+          "ref": "49a3e8409",
+          "title": "fix: explicit discriminant narrowing in cover notice paths"
+        }
       ]
     }
   ]
