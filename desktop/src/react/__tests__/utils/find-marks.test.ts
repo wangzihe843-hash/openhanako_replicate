@@ -48,6 +48,16 @@ describe('find-marks', () => {
     expect(marks[0].textContent).toBe('session_search');
   });
 
+  it('scopeSelector：作用域外的文本节点不被 mark（保护 React 直渲区域）', () => {
+    const root = document.createElement('div');
+    root.innerHTML = '<p>outside abc</p><div data-find-markable=""><p>inside abc</p></div>';
+    const marks = applyFindMarks(root, ['abc'], 'x-mark', { scopeSelector: '[data-find-markable]' });
+    expect(marks.length).toBe(1);
+    expect(marks[0].closest('[data-find-markable]')).not.toBeNull();
+    expect(root.querySelector('p')!.querySelector('mark')).toBeNull();
+    expect(root.textContent).toBe('outside abcinside abc');
+  });
+
   it('null root 与空 terms 安全返回', () => {
     expect(applyFindMarks(null, ['a'], 'x')).toEqual([]);
     const root = document.createElement('div');

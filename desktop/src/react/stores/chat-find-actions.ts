@@ -59,6 +59,8 @@ export async function runChatFind(path: string, query: string): Promise<void> {
     return;
   }
   useStore.getState().setChatFindResults(path, results);
+  // 防切换窗口内 debounce 残留把陈旧定位意图种给已离开的会话
+  if (useStore.getState().currentSessionPath !== path) return;
   const last = results.matches[results.matches.length - 1];
   if (last) {
     useStore.getState().requestMessageLocate({ sessionPath: path, messageIndex: last.index, term: trimmed });

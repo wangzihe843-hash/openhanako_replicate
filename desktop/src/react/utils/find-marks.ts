@@ -16,17 +16,23 @@ export function applyFindMarks(
   root: HTMLElement | null,
   terms: string[],
   className: string,
+  options?: {
+    /** 只标注 closest(scopeSelector) 命中的文本节点；不传则全树标注（preview 现状） */
+    scopeSelector?: string;
+  },
 ): HTMLElement[] {
   if (!root) return [];
   clearFindMarks(root, className);
   const needles = [...new Set(terms.map((t) => t.toLowerCase()).filter(Boolean))]
     .sort((a, b) => b.length - a.length); // 长词优先，避免短词先占位拆碎长词
   if (needles.length === 0) return [];
+  const scopeSelector = options?.scopeSelector;
 
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
       if (!parent || parent.closest(`mark.${className}`)) return NodeFilter.FILTER_REJECT;
+      if (scopeSelector && !parent.closest(scopeSelector)) return NodeFilter.FILTER_REJECT;
       const value = node.nodeValue?.toLowerCase();
       if (!value || !needles.some((n) => value.includes(n))) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;

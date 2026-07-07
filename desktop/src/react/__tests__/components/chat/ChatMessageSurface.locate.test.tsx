@@ -36,13 +36,14 @@ vi.mock('../../../components/chat/ChatTimelineNavigator', () => ({
 
 vi.mock('../../../stores/session-actions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../stores/session-actions')>();
-  return { ...actual, loadMoreMessages: vi.fn() };
+  return { ...actual, loadMoreMessages: vi.fn(), reconcileCurrentSessionMessages: vi.fn() };
 });
 
-import { loadMoreMessages } from '../../../stores/session-actions';
+import { loadMoreMessages, reconcileCurrentSessionMessages } from '../../../stores/session-actions';
 import { ChatMessageSurface } from '../../../components/chat/ChatMessageSurface';
 
 const loadMoreMessagesMock = vi.mocked(loadMoreMessages);
+const reconcileMock = vi.mocked(reconcileCurrentSessionMessages);
 
 const SESSION = '/chat/find-locate.jsonl';
 
@@ -67,7 +68,7 @@ function message(id: string, text = `msg-${id}`): ChatListItem {
   };
 }
 
-function setSession(partial: { items: ChatListItem[]; hasMore: boolean; loadingMore: boolean; oldestId: string | undefined }) {
+function setSession(partial: { items: ChatListItem[]; hasMore: boolean; loadingMore: boolean; oldestId: string | undefined; revision?: string | null }) {
   useStore.setState((state) => ({
     chatSessions: {
       ...state.chatSessions,
@@ -92,6 +93,7 @@ describe('ChatMessageSurface locate intent consumption', () => {
     // 都是新函数，会让依赖了 t 的 effect 每渲染必重跑，掩盖依赖数组问题
     (window as unknown as { t: (path: string) => string }).t = (path: string) => path;
     loadMoreMessagesMock.mockClear();
+    reconcileMock.mockClear();
     useStore.setState({
       chatSessions: {
         [SESSION]: {
@@ -187,6 +189,79 @@ describe('ChatMessageSurface locate intent consumption', () => {
       expect(useStore.getState().pendingMessageLocate).toBeNull();
     });
     expect(useStore.getState().toasts.length).toBe(0);
+  });
+
+  it('live id 消息：目标序号超出 canonical 空间 → reconcile 重载 → items 重建后滚动到目标并 clear 意图', async () => {
+    setSession({
+      items: [message('10'), message('11'), message('stream-live-1')],
+      hasMore: false,
+      loadingMore: false,
+      oldestId: '10',
+      revision: 'r1',
+    });
+    const { container } = render(<ChatMessageSurface sessionPath={SESSION} />);
+    const panel = container.querySelector('[data-chat-selection-root]') as HTMLElement & { scrollTo?: unknown };
+    const scrollToSpy = vi.fn();
+    panel.scrollTo = scrollToSpy as never;
+
+    act(() => {
+      useStore.getState().requestMessageLocate({ sessionPath: SESSION, messageIndex: 12, term: 'x' });
+    });
+    // 目标 12 > newestNumeric 11 → refresh：调 reconcile 而不是误 give-up
+    expect(reconcileMock).toHaveBeenCalledTimes(1);
+    expect(useStore.getState().pendingMessageLocate).not.toBeNull();
+    expect(useStore.getState().toasts.length).toBe(0);
+
+    // 模拟 reconcile 成功：items 重建为 canonical id、revision 前进
+    act(() => {
+      setSession({
+        items: [message('10'), message('11'), message('12')],
+        hasMore: false,
+        loadingMore: false,
+        oldestId: '10',
+        revision: 'r2',
+      });
+    });
+
+    await waitFor(() => {
+      expect(useStore.getState().pendingMessageLocate).toBeNull();
+    });
+    expect(scrollToSpy).toHaveBeenCalledTimes(1);
+    expect(useStore.getState().toasts.length).toBe(0);
+    expect(reconcileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refresh 后 revision 未前进（流式中 reconcile no-op）→ give-up toast，僵尸意图不残留', async () => {
+    setSession({
+      items: [message('10'), message('11'), message('stream-live-1')],
+      hasMore: false,
+      loadingMore: false,
+      oldestId: '10',
+      revision: 'r1',
+    });
+    render(<ChatMessageSurface sessionPath={SESSION} />);
+
+    act(() => {
+      useStore.getState().requestMessageLocate({ sessionPath: SESSION, messageIndex: 12, term: 'x' });
+    });
+    expect(reconcileMock).toHaveBeenCalledTimes(1);
+
+    // 模拟 reconcile no-op 后的下一次 items 变化（如流式追加）：revision 原地不动
+    act(() => {
+      setSession({
+        items: [message('10'), message('11'), message('stream-live-1'), message('stream-live-2')],
+        hasMore: false,
+        loadingMore: false,
+        oldestId: '10',
+        revision: 'r1',
+      });
+    });
+
+    await waitFor(() => {
+      expect(useStore.getState().pendingMessageLocate).toBeNull();
+    });
+    expect(useStore.getState().toasts.some((toast) => toast.type === 'error')).toBe(true);
+    expect(reconcileMock).toHaveBeenCalledTimes(1);
   });
 
   it('目标在 items 中但 DOM 永不注册（折叠块）→ 双帧有界等待后 give-up', async () => {

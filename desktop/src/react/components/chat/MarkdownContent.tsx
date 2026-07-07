@@ -258,6 +258,7 @@ export const MarkdownContent = memo(function MarkdownContent({ html, className, 
       <div
         ref={ref}
         className={classes}
+        data-find-markable=""
         onClick={handleClick}
         onContextMenu={handleContextMenu}
       />

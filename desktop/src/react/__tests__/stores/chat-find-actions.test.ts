@@ -39,6 +39,16 @@ describe('chat-find-actions', () => {
     expect(useStore.getState().pendingMessageLocate).toEqual({ sessionPath: PATH, messageIndex: 9, term: 'x' });
   });
 
+  it('runChatFind 不给已离开的会话种定位意图（切换窗口内 debounce 残留）', async () => {
+    useStore.getState().openChatFind(PATH, 'x');
+    hanaFetchMock.mockResolvedValue(findResponse(SAMPLE));
+    useStore.setState({ currentSessionPath: '/elsewhere.jsonl' });
+    await runChatFind(PATH, 'x');
+    // 结果照常落地（查找条状态无损），但不种陈旧意图
+    expect(useStore.getState().chatFindBySession[PATH].matches.length).toBe(2);
+    expect(useStore.getState().pendingMessageLocate).toBeNull();
+  });
+
   it('runChatFind 竞态护栏：返回时 query 已变化则丢弃结果', async () => {
     useStore.getState().openChatFind(PATH, 'x');
     let resolveFetch: (v: Response) => void;

@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useStore } from '../../stores';
 import { sessionScopedListIncludes, sessionScopedValue } from '../../stores/session-slice';
-import { loadMoreMessages } from '../../stores/session-actions';
+import { loadMoreMessages, reconcileCurrentSessionMessages } from '../../stores/session-actions';
 import { useBoxSelection } from '../../hooks/use-box-selection';
 import { useContinuousBottomScroll } from '../../hooks/use-continuous-bottom-scroll';
 import { useI18n } from '../../hooks/use-i18n';
@@ -197,8 +197,9 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
   const { t } = useI18n();
   const pendingLocate = useStore(s => s.pendingMessageLocate);
   const findState = useStore(s => sessionScopedValue(s, s.chatFindBySession, sessionPath));
-  // 定位意图的进度守卫：同一意图连续 load-more 后 oldestId 未前进 → 放弃，防无限重试
-  const locateProgressRef = useRef<{ key: string; lastOldestId: string | undefined } | null>(null);
+  // 定位意图的进度守卫：同一意图下"同种 stall 无进展"即放弃，防无限重试——
+  // load-more 后 oldestId 未前进，或 refresh（reconcile）后 revision 未前进
+  const locateProgressRef = useRef<{ key: string; lastOldestId?: string; lastRevision?: string | null } | null>(null);
   // 查找高亮：流式期间同一查询不重复标注 / 从未标注过则 clear 短路
   const markKeyRef = useRef<string | null>(null);
   const hadMarksRef = useRef(false);
@@ -236,6 +237,12 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
     const element = messageElementsRef.current.get(targetId) ?? null;
     const state = useStore.getState();
     const session = sessionScopedValue(state, state.chatSessions, sessionPath);
+    if (!session) {
+      // session 尚未 initSession：hydrate 落地（items 变化）会重触发本 effect
+      return () => {
+        for (const dispose of cleanups) dispose();
+      };
+    }
     const giveUp = () => {
       const latest = useStore.getState();
       latest.addToast(t('chat.find.locateFailed'), 'error', 4000);
@@ -266,29 +273,51 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
       useStore.getState().clearMessageLocate();
       locateProgressRef.current = null;
     };
+    // items 尾部向前第一个数字（canonical）id；全 live id（新建会话）时 null
+    let newestNumericId: number | null = null;
+    for (let i = session.items.length - 1; i >= 0; i -= 1) {
+      const it = session.items[i];
+      if (it.type !== 'message') continue;
+      const numeric = Number(it.data.id);
+      if (Number.isFinite(numeric)) {
+        newestNumericId = numeric;
+        break;
+      }
+    }
     const step = resolveLocateStep({
       targetIndex: pendingLocate.messageIndex,
       elementPresent: !!element,
-      itemPresent: !!session?.items.some(it => it.type === 'message' && it.data.id === targetId),
-      oldestId: session?.oldestId,
-      hasMore: session?.hasMore ?? false,
-      loadingMore: session?.loadingMore ?? false,
+      itemPresent: session.items.some(it => it.type === 'message' && it.data.id === targetId),
+      oldestId: session.oldestId,
+      hasMore: session.hasMore,
+      loadingMore: session.loadingMore,
+      newestNumericId,
     });
+    const progress = locateProgressRef.current?.key === intentKey ? locateProgressRef.current : null;
     if (step === 'load-more') {
-      const prev = locateProgressRef.current;
-      if (prev && prev.key === intentKey && prev.lastOldestId === session?.oldestId) {
+      if (progress && progress.lastOldestId !== undefined && progress.lastOldestId === session.oldestId) {
         // 上一轮 load-more 后 oldestId 没前进（失败或空页），停止重试
         giveUp();
       } else {
-        locateProgressRef.current = { key: intentKey, lastOldestId: session?.oldestId };
+        locateProgressRef.current = { ...progress, key: intentKey, lastOldestId: session.oldestId };
         loadMoreMessages(sessionPath);
+      }
+    } else if (step === 'refresh') {
+      const sessionRevision = session.revision ?? null;
+      if (progress && progress.lastRevision !== undefined && progress.lastRevision === sessionRevision) {
+        // 上一轮 reconcile 后 revision 未前进（流式中 no-op / 目标本就不存在），
+        // 停止重试给出反馈；流式结束后用户重新触发即可成功
+        giveUp();
+      } else {
+        locateProgressRef.current = { ...progress, key: intentKey, lastRevision: sessionRevision };
+        void reconcileCurrentSessionMessages('chat-find-locate');
       }
     } else if (step === 'give-up') {
       giveUp();
     } else if (step === 'wait-element') {
       // items 里有但 DOM 未注册。翻页在途交给 loadingMore 依赖重触发；
       // 否则有界等待：双帧后仍未注册（折叠块内 / 渲染为 null）则放弃。
-      if (!session?.loadingMore) {
+      if (!session.loadingMore) {
         let raf2 = 0;
         const raf1 = requestAnimationFrame(() => {
           raf2 = requestAnimationFrame(() => {
@@ -338,7 +367,9 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
     const terms = [findState.query.trim(), ...findState.tokens];
     // rAF 合并：items 高频变化（流式）时不在同帧重复跑 TreeWalker
     const raf = requestAnimationFrame(() => {
-      applyFindMarks(container, terms, 'chat-find-mark');
+      // scope 到消息正文（MarkdownContent 直渲根）：不碰 React 直渲文本节点
+      //（时间戳 / 按钮 / 折叠标题等），改写它们会与 React reconcile 冲突
+      applyFindMarks(container, terms, 'chat-find-mark', { scopeSelector: '[data-find-markable]' });
       markKeyRef.current = markKey;
       hadMarksRef.current = true;
     });
