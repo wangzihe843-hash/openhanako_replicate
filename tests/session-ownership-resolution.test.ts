@@ -125,6 +125,28 @@ describe("resolveSessionOwnership", () => {
     });
   });
 
+  it("isRunnableSessionPath 以 manifest 归属判定删除态", () => {
+    const sessionPath = makeSessionFile("hana", "zeta.jsonl");
+    deletedAgents.add("bob");
+    store.createForPath({ sessionPath, ownerAgentId: "bob", domain: "desktop", kind: "chat" });
+
+    const coordinator = createCoordinator();
+    expect(coordinator.isRunnableSessionPath(sessionPath)).toBe(false);
+  });
+
+  it("continueDeletedAgentSession 以 manifest 归属判定 source agent", async () => {
+    // 路径在存活 agent 目录、manifest 归属已删除 agent → 应视为可续（不再报 not deleted）
+    const sessionPath = makeSessionFile("hana", "eta.jsonl");
+    deletedAgents.add("bob");
+    store.createForPath({ sessionPath, ownerAgentId: "bob", domain: "desktop", kind: "chat" });
+
+    const coordinator = createCoordinator();
+    // 走到 source 判定之后的深层依赖（getPrefs.getPrimaryAgent 等）即可视为通过归属检查：
+    // 断言错误信息不再是 'is not deleted'
+    await expect(coordinator.continueDeletedAgentSession(sessionPath))
+      .rejects.not.toThrow(/is not deleted/);
+  });
+
   it("store 查询抛错时按路径回退且不向调用方抛错（显式契约）", () => {
     const sessionPath = makeSessionFile("hana", "corrupt.jsonl");
     const coordinator = createCoordinator();

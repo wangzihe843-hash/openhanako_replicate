@@ -686,7 +686,7 @@ export class SessionCoordinator {
    * @param {(cwd, customTools?, opts?) => object} deps.buildTools
    * @param {(event, sp) => void} deps.emitEvent
    * @param {() => string|null} deps.getHomeCwd
-   * @param {(path) => string|null} deps.agentIdFromSessionPath
+   * @param {(path) => string|null} deps.agentIdFromSessionPath（仅作 resolveSessionOwnership 的路径回退与 manifest bootstrap 推导，归属语义禁止直接调用）
    * @param {(id) => Promise} deps.switchAgentOnly - 仅切换 agent 指针
    * @param {() => object} deps.getConfig
    * @param {() => Map} deps.getAgents
@@ -1960,11 +1960,12 @@ export class SessionCoordinator {
 
   async continueDeletedAgentSession(sourceSessionPath: any) {
     this._assertActiveDesktopSessionPath(sourceSessionPath, "continueDeletedAgentSession");
-    const sourceAgentId = this._d.agentIdFromSessionPath(sourceSessionPath);
+    const ownership = this.resolveSessionOwnership(sourceSessionPath);
+    const sourceAgentId = ownership.agentId;
     if (!sourceAgentId) {
       throw new Error(`continueDeletedAgentSession: cannot resolve source agentId for ${sourceSessionPath}`);
     }
-    if (!this._d.isAgentDeleted?.(sourceAgentId)) {
+    if (!ownership.agentDeleted) {
       throw new Error(`continueDeletedAgentSession: source agent "${sourceAgentId}" is not deleted`);
     }
     try {
@@ -2409,7 +2410,7 @@ export class SessionCoordinator {
     // 切到已有 session 时清空 pendingModel（用户的临时选择不应跟到别的 session）
     this._pendingModel = null;
 
-    const targetAgentId = this._d.agentIdFromSessionPath(sessionPath);
+    const targetAgentId = this.resolveSessionOwnership(sessionPath).agentId;
     if (targetAgentId && targetAgentId !== this._d.getActiveAgentId()) {
       // Phase 1: 跨 agent 切换只切指针，不清旧 session
       await this._d.switchAgentOnly(targetAgentId);
@@ -2956,7 +2957,7 @@ export class SessionCoordinator {
         },
         attribution: {
           kind: "session",
-          agentId: this._d.agentIdFromSessionPath?.(sessionPath) || this._d.getActiveAgentId?.() || null,
+          agentId: this.resolveSessionOwnership(sessionPath).agentId || this._d.getActiveAgentId?.() || null,
           ...(sessionId ? { sessionId } : {}),
           sessionPath,
         },
@@ -3526,12 +3527,12 @@ export class SessionCoordinator {
     const paths = new Set();
     for (const [sessionKey, entry] of this._sessions) {
       const sessionPath = this._sessionPathForEntry(entry, sessionKey);
-      const entryAgentId = entry?.agentId || this._d.agentIdFromSessionPath?.(sessionPath);
+      const entryAgentId = entry?.agentId || this.resolveSessionOwnership(sessionPath).agentId;
       if (entryAgentId === agentId) paths.add(sessionPath);
     }
     for (const [sessionKey, entry] of this._hibernatedSessionMeta) {
       const sessionPath = this._sessionPathForEntry(entry, sessionKey);
-      const entryAgentId = entry?.agentId || this._d.agentIdFromSessionPath?.(sessionPath);
+      const entryAgentId = entry?.agentId || this.resolveSessionOwnership(sessionPath).agentId;
       if (entryAgentId === agentId) paths.add(sessionPath);
     }
     let discarded = 0;
@@ -3806,7 +3807,7 @@ export class SessionCoordinator {
       throw new Error("reloadSessionRuntime: session belongs to a deleted agent");
     }
     this._assertCurrentActiveSessionLocator(sessionPath, "reloadSessionRuntime");
-    const targetAgentId = this._d.agentIdFromSessionPath(sessionPath);
+    const targetAgentId = this.resolveSessionOwnership(sessionPath).agentId;
     if (!targetAgentId) {
       throw new Error(`reloadSessionRuntime: cannot resolve agentId for ${sessionPath}`);
     }
@@ -3870,7 +3871,7 @@ export class SessionCoordinator {
       return existing.session;
     }
 
-    const targetAgentId = this._d.agentIdFromSessionPath(sessionPath);
+    const targetAgentId = this.resolveSessionOwnership(sessionPath).agentId;
     if (!targetAgentId) {
       throw new Error(`ensureSessionLoaded: cannot resolve agentId for ${sessionPath}`);
     }
@@ -5149,7 +5150,7 @@ export class SessionCoordinator {
           attribution: parentSessionPath
             ? {
                 kind: "session",
-                agentId: this._d.agentIdFromSessionPath?.(parentSessionPath) || null,
+                agentId: this.resolveSessionOwnership(parentSessionPath).agentId || null,
                 ...(parentSessionId ? { sessionId: parentSessionId } : {}),
                 sessionPath: parentSessionPath,
                 childAgentId: opts.subagentContext ? targetAgent.id || null : undefined,
