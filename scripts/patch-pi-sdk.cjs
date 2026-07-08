@@ -17,10 +17,10 @@ const fs = require("fs");
 const path = require("path");
 
 const root = path.join(__dirname, "..");
-const sdkRoot = path.join(root, "node_modules", "@mariozechner", "pi-coding-agent");
-const piAiRoot = path.join(root, "node_modules", "@mariozechner", "pi-ai");
-const verifiedVersions = new Set(["0.70.2"]);
-const verifiedPiAiVersions = new Set(["0.70.5"]);
+const sdkRoot = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent");
+const piAiRoot = path.join(root, "node_modules", "@earendil-works", "pi-ai");
+const verifiedVersions = new Set(["0.80.3"]);
+const verifiedPiAiVersions = new Set(["0.80.3"]);
 
 function fail(message) {
   console.error(`[verify-pi-sdk] ${message}`);
@@ -42,7 +42,7 @@ if (!verifiedVersions.has(pkg.version)) {
 }
 
 if (!fs.existsSync(piAiRoot)) {
-  fail("@mariozechner/pi-ai is not installed");
+  fail("@earendil-works/pi-ai is not installed");
 }
 const piAiPkg = readJson(path.join(piAiRoot, "package.json"));
 if (!verifiedPiAiVersions.has(piAiPkg.version)) {
@@ -71,7 +71,7 @@ for (const marker of expectedExportMarkers) {
 
 const scanDirs = ["core", "server", "lib", "hub"].map(d => path.join(root, d));
 const adapterDir = path.join(root, "lib", "pi-sdk");
-const importPattern = /(?:from\s+["']@mariozechner\/|import\s*\(\s*["']@mariozechner\/|require\s*\(\s*["']@mariozechner\/)/;
+const importPattern = /(?:from\s+["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent)|import\s*\(\s*["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent)|require\s*\(\s*["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent))/;
 const leaks = [];
 
 function scanDir(dir) {

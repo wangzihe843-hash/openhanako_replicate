@@ -147,7 +147,7 @@ export default [
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [{
-          group: ['@mariozechner/*'],
+          group: ['@mariozechner/*', '@earendil-works/*'],
           message: '请从 lib/pi-sdk/index.js 导入，不要直接引用 PI SDK 包。',
         }],
       }],

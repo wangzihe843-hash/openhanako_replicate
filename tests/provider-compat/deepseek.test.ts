@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertMessages } from "../../node_modules/@mariozechner/pi-ai/dist/providers/openai-completions.js";
+import { convertMessages } from "../../node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js";
 import { normalizeProviderPayload } from "../../core/provider-compat.ts";
 import * as deepseek from "../../core/provider-compat/deepseek.ts";
 

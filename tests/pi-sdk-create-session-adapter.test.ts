@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@mariozechner/pi-coding-agent", async () => ({
+vi.mock("@earendil-works/pi-coding-agent", async () => ({
   createAgentSession: vi.fn(async opts => ({ session: { opts }, modelFallbackMessage: null })),
   SessionManager: { create: vi.fn(), open: vi.fn() },
   SettingsManager: { inMemory: vi.fn() },
@@ -23,15 +23,23 @@ vi.mock("@mariozechner/pi-coding-agent", async () => ({
   parseSessionEntries: vi.fn(),
   buildSessionContext: vi.fn(),
   ModelRegistry: { create: vi.fn() },
+  resizeImage: vi.fn(),
+  formatDimensionNote: vi.fn(),
+  convertToLlm: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-ai", async () => ({
+vi.mock("@earendil-works/pi-ai", async () => ({
   StringEnum: vi.fn(values => values),
   AssistantMessageEventStream: class {},
-  completeSimple: vi.fn(),
+  createAssistantMessageEventStream: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-ai/oauth", async () => ({
+vi.mock("@earendil-works/pi-ai/compat", async () => ({
+  completeSimple: vi.fn(),
+  getModel: vi.fn(),
+}));
+
+vi.mock("@earendil-works/pi-ai/oauth", async () => ({
   registerOAuthProvider: vi.fn(),
 }));
 
@@ -45,7 +53,7 @@ vi.mock("../lib/pi-sdk/session-options.js", async () => ({
 
 describe("Pi SDK createAgentSession adapter", () => {
   it("normalizes options before calling the raw SDK", async () => {
-    const sdk = await import("@mariozechner/pi-coding-agent");
+    const sdk = await import("@earendil-works/pi-coding-agent");
     const adapter = await import("../lib/pi-sdk/index.ts");
     const sessionOptions = {
       cwd: "/tmp/project",
@@ -63,7 +71,7 @@ describe("Pi SDK createAgentSession adapter", () => {
   });
 
   it("uses the resource loader agentDir as the SDK agentDir when omitted", async () => {
-    const sdk = await import("@mariozechner/pi-coding-agent");
+    const sdk = await import("@earendil-works/pi-coding-agent");
     const adapter = await import("../lib/pi-sdk/index.ts");
     const resourceLoader = { agentDir: "/hana-home/.pi/agent" };
 

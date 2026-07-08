@@ -4,12 +4,12 @@ import path from "path";
 import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import YAML from "yaml";
+import YAML from "js-yaml";
 
 vi.mock("../lib/memory/config-loader.js", () => ({
   saveConfig: vi.fn(),
   clearConfigCache: vi.fn(),
-  loadConfig: vi.fn((filePath) => YAML.parse(fs.readFileSync(filePath, "utf-8"))),
+  loadConfig: vi.fn((filePath) => YAML.load(fs.readFileSync(filePath, "utf-8"))),
 }));
 
 function expectAppEvent(emitEvent, type, payload) {

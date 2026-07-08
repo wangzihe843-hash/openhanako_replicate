@@ -35,8 +35,8 @@ function findDirectImports(modulePattern) {
 }
 
 describe("Pi SDK import boundary", () => {
-  it("keeps production @mariozechner imports inside lib/pi-sdk", () => {
-    const pattern = /(?:from\s+["']@mariozechner\/|import\s*\(\s*["']@mariozechner\/|require\s*\(\s*["']@mariozechner\/)/;
+  it("keeps production Pi SDK imports inside lib/pi-sdk", () => {
+    const pattern = /(?:from\s+["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent)|import\s*\(\s*["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent)|require\s*\(\s*["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent))/;
     expect(findDirectImports(pattern)).toEqual([]);
   });
 

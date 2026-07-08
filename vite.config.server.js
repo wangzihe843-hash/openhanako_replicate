@@ -22,6 +22,7 @@ export default defineConfig({
         // named export. Keep external — available as PI SDK transitive dep.
         "ws",
         /^@mariozechner\//,
+        /^@earendil-works\//,
         "@silvia-odwyer/photon-node",
         "@larksuiteoapi/node-sdk",
         "node-telegram-bot-api",

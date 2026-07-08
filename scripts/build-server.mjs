@@ -396,7 +396,7 @@ ensureNodePtySpawnHelperExecutable(outDir);
 
 // ── 5b. 验证所有 Vite external 在 node_modules 中可达 ──
 // 遍历 string 类型的 external，检查 node_modules 中是否存在。
-// RegExp external（如 /^@mariozechner\//）不在此检查范围内，
+// RegExp external（如 /^@mariozechner\// 与 /^@earendil-works\//）不在此检查范围内，
 // 因为匹配的包已通过派生逻辑显式安装或作为 transitive dep 存在。
 // platform-optional（fsevents）允许缺失，其余缺失说明 transitive 链断了。
 const OPTIONAL_EXTERNALS = new Set(["fsevents"]);
