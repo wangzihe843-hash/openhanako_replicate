@@ -29,6 +29,11 @@ function writeServerRuntimeSentinels(nodeModulesDir) {
   writeFile(nodeModulesDir, "qrcode/package.json", JSON.stringify({ name: "qrcode" }));
   writeFile(nodeModulesDir, "better-sqlite3/package.json", JSON.stringify({ name: "better-sqlite3" }));
   writeFile(nodeModulesDir, "better-sqlite3/build/Release/better_sqlite3.node", "native");
+  writeFile(
+    nodeModulesDir,
+    "@earendil-works/pi-agent-core/package.json",
+    JSON.stringify({ name: "@earendil-works/pi-agent-core" }),
+  );
 }
 
 afterEach(() => {
