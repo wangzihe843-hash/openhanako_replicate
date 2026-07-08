@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "tag": "v0.371.17",
-  "version": "0.371.17",
+  "tag": "v0.371.18",
+  "version": "0.371.18",
   "previousTag": "v0.358.8",
   "generatedAt": "2026-07-08T18:32:24.000Z",
   "noUserFacingChanges": false,
@@ -18,8 +18,8 @@
   "source": {
     "owner": "liliMozi",
     "repo": "openhanako",
-    "commitRange": "v0.358.8..4431b464c",
-    "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.371.17",
+    "commitRange": "v0.358.8..2fe7b7f40",
+    "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.371.18",
     "releaseNotes": ""
   },
   "items": [
