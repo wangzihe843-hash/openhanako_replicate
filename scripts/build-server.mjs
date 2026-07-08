@@ -323,8 +323,9 @@ console.log("[build-server] resource files copied");
 
 // ── 4. External dependencies ──
 // 从 vite.config.server.js 的 external 列表自动派生需要安装的包。
-// 规则：external ∩ rootPkg.dependencies = 需要安装的包。
-// 这消除了手动维护两个列表导致的遗漏（如 #242 ws 缺失）。
+// 规则：string external 必须在 rootPkg.dependencies 中显式声明；RegExp external
+// 从 root dependencies 中匹配派生。这样打包产物的根 node_modules 解析契约是显式的，
+// 不依赖上游包嵌套依赖的安装形态。
 const rootPkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf-8"));
 
 // defineConfig 是纯 identity 函数，import 安全无副作用
@@ -342,7 +343,6 @@ for (const ext of viteExternals) {
   if (typeof ext === "string") {
     if (builtinSet.has(ext)) continue;
     if (deps[ext]) externalDeps[ext] = deps[ext];
-    // 不在 dependencies 中的（如 fsevents、photon-node）由 transitive 或 optional 提供
   } else if (ext instanceof RegExp) {
     for (const dep of Object.keys(deps)) {
       if (ext.test(dep)) externalDeps[dep] = deps[dep];

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { builtinModules } from "node:module";
 import yaml from "js-yaml";
+import serverViteConfig from "../vite.config.server.js";
 
 function readJson(relativePath) {
   return JSON.parse(fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8"));
@@ -92,5 +94,22 @@ describe("quality gates", () => {
     expect(buildServer).toContain("verifyNodeRuntimeArchive");
     expect(buildServer).toContain("createHash(\"sha256\")");
     expect(buildServer).toContain("node runtime archive checksum mismatch");
+  });
+
+  it("declares every required server string external as a root production dependency", () => {
+    const packageJson = readJson("package.json");
+    const externals = serverViteConfig.build?.rollupOptions?.external;
+    const builtins = new Set(builtinModules.flatMap((moduleName) => [moduleName, `node:${moduleName}`]));
+    const platformOptional = new Set(["fsevents"]);
+
+    expect(Array.isArray(externals)).toBe(true);
+
+    const missing = externals
+      .filter((external): external is string => typeof external === "string")
+      .filter((external) => !builtins.has(external))
+      .filter((external) => !platformOptional.has(external))
+      .filter((external) => !packageJson.dependencies?.[external]);
+
+    expect(missing).toEqual([]);
   });
 });
