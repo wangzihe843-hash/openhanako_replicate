@@ -2262,6 +2262,7 @@ export function createSessionsRoute(engine, hub = null) {
       }
       const activeKey = activePathForArchivedSession(sessionPath);
       return await withSessionLifecycleLock([activeKey, sessionPath], async () => {
+        const draftSessionId = sessionId || engine.getSessionIdForPath?.(activeKey) || null;
         await cleanupSessionLifecycle([activeKey, sessionPath], "parent session deleted");
         try {
           await fs.unlink(sessionPath);
@@ -2271,6 +2272,9 @@ export function createSessionsRoute(engine, hub = null) {
             return c.json({ error: t("error.sessionNotFound") }, 404);
           }
           throw err;
+        }
+        if (draftSessionId) {
+          try { engine.deleteSessionInputDrafts?.(draftSessionId); } catch { /* 草稿清理失败不阻塞删除 */ }
         }
         // 清理 titles.json 孤儿（key = 对应的活跃路径）
         try { await engine.clearSessionTitle(activeKey); } catch {}

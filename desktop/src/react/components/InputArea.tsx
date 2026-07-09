@@ -9,6 +9,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } f
 import { useEditor, EditorContent } from '@tiptap/react';
 import type { Editor, JSONContent } from '@tiptap/core';
 import { useStore } from '../stores';
+import { HOME_DRAFT_KEY } from '../../../../shared/input-drafts.ts';
 import { selectPreviewItems, selectActiveTabId } from '../stores/preview-slice';
 import { sessionScopedListIncludes, sessionScopedValue } from '../stores/session-slice';
 import { isSessionCompacting } from '../stores/context-slice';
@@ -468,6 +469,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const setDocContextAttached = useStore(s => s.setDocContextAttached);
   const setDraft = useStore(s => s.setDraft);
   const clearDraft = useStore(s => s.clearDraft);
+  // 草稿 key：session 内用 sessionPath（store 内解析为 sessionId）；首页 pending 态用保留键
+  const draftKey = currentSessionPath ?? (pendingNewSession ? HOME_DRAFT_KEY : null);
 
   const prevWelcomeVisibleRef = useRef(welcomeVisible);
   const prevLocaleRef = useRef(locale);
@@ -1162,23 +1165,24 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       } else {
         setSlashMenuOpen(false);
       }
-      // 保存草稿到 store
-      if (currentSessionPath) {
-        setDraft(currentSessionPath, text, editorJson);
+      // 保存草稿到 store（session 内 + 首页 pending 态）
+      if (draftKey) {
+        setDraft(draftKey, text, editorJson);
       }
       // 内容超出可见区域时，自动滚动到光标位置
       requestAnimationFrame(() => editor.commands.scrollIntoView());
     };
     editor.on('update', handler);
     return () => { editor.off('update', handler); };
-  }, [editor, currentSessionPath, setDraft, slashCommands]);
+  }, [editor, draftKey, setDraft, slashCommands]);
 
-  // 切换 session 时恢复草稿
+  // 切换 session / 回到首页 / 草稿 hydrate 完成时恢复草稿
+  const draftsHydratedAt = useStore(s => s.draftsHydratedAt);
   useEffect(() => {
-    if (!editor || !currentSessionPath) return;
+    if (!editor || !draftKey) return;
     const state = useStore.getState();
-    const draft = sessionScopedValue(state, state.drafts, currentSessionPath) || '';
-    const draftDoc = sessionScopedValue(state, state.draftDocs, currentSessionPath);
+    const draft = sessionScopedValue(state, state.drafts, draftKey) || '';
+    const draftDoc = sessionScopedValue(state, state.draftDocs, draftKey);
     const currentDoc = editor.getJSON();
     const nextDoc = draft
       ? (draftDoc || plainTextToEditorDocument(draft))
@@ -1194,7 +1198,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         editor.commands.setContent(nextDoc, { emitUpdate: false });
       }
     }
-  }, [editor, currentSessionPath]);
+  }, [editor, draftKey, draftsHydratedAt]);
 
   // 点击外部关闭斜杠菜单
   useEffect(() => {
@@ -1627,7 +1631,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       if (docForRender) allFiles.push({ path: docForRender.path, name: docForRender.name });
 
       editor.commands.clearContent();
-      if (currentSessionPath) clearDraft(currentSessionPath);
+      if (draftKey) clearDraft(draftKey);
       clearAttachedFiles();
       if (useStore.getState().quotedSelections.length > 0) useStore.getState().clearQuotedSelections();
 
@@ -1698,7 +1702,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     } finally {
       setSending(false);
     }
-  }, [editor, inputLocked, attachedFiles, docContextAttached, connected, isStreaming, sending, pendingNewSession, currentDoc, clearAttachedFiles, clearDraft, currentSessionPath, setDocContextAttached, slashCommands, slashSelected, handleSlashSelect, supportsVision, currentModelInfo, loadVisionAuxiliaryConfig, modelSwitching, t]);
+  }, [editor, inputLocked, attachedFiles, docContextAttached, connected, isStreaming, sending, pendingNewSession, currentDoc, clearAttachedFiles, clearDraft, currentSessionPath, draftKey, setDocContextAttached, slashCommands, slashSelected, handleSlashSelect, supportsVision, currentModelInfo, loadVisionAuxiliaryConfig, modelSwitching, t]);
 
   const handleSend = useCallback(async () => {
     await submitEditorMessage('prompt');

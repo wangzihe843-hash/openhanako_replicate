@@ -10,6 +10,8 @@
 import { useStore } from './index';
 import { sessionScopedKey, sessionScopedListIncludes, sessionScopedValue } from './session-slice';
 import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
+import { hydrateInputDrafts } from './input-draft-persistence';
+import { HOME_DRAFT_KEY } from '../../../../shared/input-drafts.ts';
 import { buildItemsFromHistory } from '../utils/history-builder';
 import { migrateLegacyTodos } from '../utils/todo-compat';
 import { loadAvatars as loadAvatarsAction, clearChat as clearChatAction } from './agent-actions';
@@ -1018,6 +1020,9 @@ async function applyCreatedPendingSession(data: any, stateBeforeApply: Record<st
   }
 
   useStore.setState(patch);
+  // 首页草稿被创建的 session 消费掉（发送路径的 clearDraft 只覆盖发送成功场景，
+  // 这里覆盖"session 已创建"这一消费时点本身，双清幂等）
+  useStore.getState().clearDraft(HOME_DRAFT_KEY);
   if (data.thinkingLevel) {
     useStore.getState().setThinkingLevel(data.thinkingLevel);
   }
@@ -1288,6 +1293,7 @@ export async function restoreSession(target: string | Pick<ArchivedSession, 'pat
     if (restoredSession?.path) {
       await switchSession(restoredSession.path);
     }
+    void hydrateInputDrafts();
     return { status: 'ok', restoredPath, sessionId: restoredSessionId };
   } catch (err) {
     console.error('[archived] restore failed:', err);

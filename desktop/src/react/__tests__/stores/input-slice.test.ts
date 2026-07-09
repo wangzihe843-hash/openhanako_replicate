@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createInputSlice, type InputSlice } from '../../stores/input-slice';
+import { registerDraftSyncListener } from '../../stores/input-draft-sync';
 
 type SliceState = InputSlice & {
   currentSessionId?: string | null;
@@ -116,5 +117,42 @@ describe('input-slice attachedFiles session ownership', () => {
     slice.addAttachedFile({ path: '/tmp/a.txt', name: 'a.txt' });
     expect(slice.attachedFiles).toEqual([{ path: '/tmp/a.txt', name: 'a.txt' }]);
     expect(slice.attachedFilesBySession).toEqual({});
+  });
+});
+
+describe('draft sync notifications', () => {
+  afterEach(() => registerDraftSyncListener(null));
+
+  it('notifies listener with resolved key on setDraft and clearDraft', () => {
+    const onSet = vi.fn();
+    const onClear = vi.fn();
+    registerDraftSyncListener({ onSet, onClear });
+
+    const slice = makeSlice({
+      currentSessionId: 'sess-1',
+      currentSessionPath: '/agents/a/sessions/s1.jsonl',
+      sessions: [{ sessionId: 'sess-1', path: '/agents/a/sessions/s1.jsonl' }],
+      sessionLocatorsById: { 'sess-1': { path: '/agents/a/sessions/s1.jsonl' } },
+    });
+
+    slice.setDraft('/agents/a/sessions/s1.jsonl', 'hello', { type: 'doc' } as any);
+    expect(onSet).toHaveBeenCalledWith('sess-1', 'hello', { type: 'doc' });
+
+    slice.clearDraft('/agents/a/sessions/s1.jsonl');
+    expect(onClear).toHaveBeenCalledWith('sess-1');
+  });
+
+  it('passes through the home draft key untouched', () => {
+    const onSet = vi.fn();
+    registerDraftSyncListener({ onSet, onClear: vi.fn() });
+    const slice = makeSlice();
+    slice.setDraft('__home__', 'home text');
+    expect(onSet).toHaveBeenCalledWith('__home__', 'home text', null);
+    expect(slice.drafts['__home__']).toBe('home text');
+  });
+
+  it('exposes draftsHydratedAt with initial 0', () => {
+    const slice = makeSlice();
+    expect(slice.draftsHydratedAt).toBe(0);
   });
 });

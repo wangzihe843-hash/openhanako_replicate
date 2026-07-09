@@ -98,6 +98,7 @@ function resolveChannelsEnabledForToolAvailability(engine) {
 }
 
 import { PreferencesManager } from "./preferences-manager.ts";
+import { InputDraftsStore } from "./input-drafts-store.ts";
 import { ModelManager } from "./model-manager.ts";
 import { SessionProjectCatalogStore } from "./session-project-catalog-store.ts";
 import { SkillManager } from "./skill-manager.ts";
@@ -248,6 +249,7 @@ export class HanaEngine {
   declare appVersion: any;
   declare channelsDir: any;
   declare hanakoHome: any;
+  declare _inputDrafts: any;
   declare productDir: any;
   declare userDir: any;
   /**
@@ -311,6 +313,7 @@ export class HanaEngine {
 
     // ── Core managers ──
     this._prefs = new PreferencesManager({ userDir: this.userDir, agentsDir: this.agentsDir });
+    this._inputDrafts = new InputDraftsStore({ hanakoHome: this.hanakoHome });
     this._models = new ModelManager({ hanakoHome });
     this._speechRecognition = new SpeechRecognitionService({
       providerRegistry: this._models.providerRegistry,
@@ -1431,6 +1434,10 @@ export class HanaEngine {
   setBrowserPreferences(p) { return this._prefs.setBrowserPreferences(p); }
   getWorkspaceUiState(workspaceRoot, surface) { return this._prefs.getWorkspaceUiState(workspaceRoot, surface); }
   setWorkspaceUiState(workspaceRoot, surface, state) { return this._prefs.setWorkspaceUiState(workspaceRoot, surface, state); }
+  getInputDrafts(surface) { return this._inputDrafts.getAll(surface); }
+  setHomeInputDraft(surface, entry) { return this._inputDrafts.setHome(surface, entry); }
+  setSessionInputDraft(surface, sessionId, entry) { return this._inputDrafts.setSession(surface, sessionId, entry); }
+  deleteSessionInputDrafts(sessionId) { return this._inputDrafts.deleteSession(sessionId); }
   gcWorkspacePersistence( options: any = {}) {
     const configResults = options?.agentId
       ? [this._configCoord.gcWorkspaceConfig(options.agentId, options)]

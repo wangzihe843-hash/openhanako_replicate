@@ -57,6 +57,7 @@ import { createChannelsRoute } from "./routes/channels.ts";
 import { createDmRoute } from "./routes/dm.ts";
 import { createFsRoute } from "./routes/fs.ts";
 import { createPreferencesRoute } from "./routes/preferences.ts";
+import { createInputDraftsRoute } from "./routes/input-drafts.ts";
 import { createSettingsSnapshotRoute } from "./routes/settings-snapshot.ts";
 import { createExperimentsRoute } from "./routes/experiments.ts";
 import { createBridgeRoute } from "./routes/bridge.ts";
@@ -792,6 +793,7 @@ app.route("/api", createChannelsRoute(engine, hub));
 app.route("/api", createDmRoute(engine, hub));
 app.route("/api", createFsRoute(engine));
 app.route("/api", createPreferencesRoute(engine));
+app.route("/api", createInputDraftsRoute(engine));
 app.route("/api", createSettingsSnapshotRoute(engine, {
   bridgeManagerRef,
   runtimeState: serverRuntimeState,

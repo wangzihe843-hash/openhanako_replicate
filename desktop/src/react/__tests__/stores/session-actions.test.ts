@@ -43,6 +43,8 @@ const initialStateFactory = (): MockState => ({
   attachedFilesBySession: {} as Record<string, unknown>,
   drafts: {} as Record<string, string>,
   draftDocs: {} as Record<string, unknown>,
+  setDraft: vi.fn(),
+  clearDraft: vi.fn(),
   streamingSessions: [] as string[],
   unreadOutputSessionPaths: [] as string[],
   capabilityDriftBySession: {} as Record<string, unknown>,
@@ -712,6 +714,9 @@ function mockPermissionDefault(mode = 'ask') {
         }),
       );
       expect(mockState.workspaceFolders).toEqual(['/reference-a']);
+      // 首页草稿在 session 创建成功时被消费（HOME_DRAFT_KEY 契约）
+      expect((mockState as unknown as { clearDraft: ReturnType<typeof vi.fn> }).clearDraft)
+        .toHaveBeenCalledWith('__home__');
     });
 
     it('enters a pending draft without posting a new-session request', async () => {

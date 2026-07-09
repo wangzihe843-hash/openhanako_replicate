@@ -21,6 +21,7 @@ import { initErrorBusBridge } from './errors/error-bus-bridge';
 import { refreshPluginUI } from './stores/plugin-ui-actions';
 import { openSettingsModal } from './stores/settings-modal-actions';
 import { initQuotedSelectionLifecycle } from './stores/selection-actions';
+import { hydrateInputDrafts, initInputDraftPersistence } from './stores/input-draft-persistence';
 import { configureAppEventActions, handleAppEvent, readConfigCwdHistory, readConfigHomeFolder, readConfigMemoryMasterEnabled } from './services/app-event-actions';
 import { configureWsMessageHandler } from './services/ws-message-handler';
 import { applyChatLayout } from './chat/layout';
@@ -81,6 +82,7 @@ window.addEventListener('unhandledrejection', (e) => {
 export async function initApp(): Promise<void> {
   const platform = window.platform;
   initQuotedSelectionLifecycle();
+  initInputDraftPersistence();
 
   const requestContextUsage = (sessionPath: string) => {
     const ws = getWebSocket();
@@ -233,6 +235,7 @@ export async function initApp(): Promise<void> {
   await loadPendingNewSessionPermissionDefault();
   await loadAgents();
   await loadSessions();
+  void hydrateInputDrafts();
 
   // 10b. 加载项目目录（带重试）。放在 sessions 之后：此时 server 已确认可用，
   // 避免项目目录像过去那样只靠 SessionList 挂载时一次性拉取、失败即长期空白，
