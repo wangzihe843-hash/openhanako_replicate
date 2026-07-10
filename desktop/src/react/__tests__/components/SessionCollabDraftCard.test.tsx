@@ -173,11 +173,12 @@ describe('SessionCollabDraftCard', () => {
     });
   });
 
-  it('renders a create draft card with an agent selector and the first message', () => {
+  it('renders a create draft card headerless: agent selector first, no duplicated header row', () => {
     renderCard(createBlock());
 
     expect(screen.getByDisplayValue('first message body')).toBeInTheDocument();
-    expect(screen.getAllByText('Hanako').length).toBeGreaterThanOrEqual(2);
+    // 无头形态：agent 名只出现一次（选择器触发器）；改动前头部行+触发器共两次
+    expect(screen.getAllByText('Hanako')).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'sessionCollab.confirmCreate' })).toBeInTheDocument();
   });
 

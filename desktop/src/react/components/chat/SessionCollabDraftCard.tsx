@@ -201,25 +201,26 @@ export const SessionCollabDraftCard = memo(function SessionCollabDraftCard({ blo
     );
   }
 
+  // create 编辑卡走无头形态：头部行（头像+agent 名+消息预览）与下方的
+  // 助手选择器/消息输入完全重复，属无效信息（用户确认的取舍）。
+  // 字段顺序：助手 → 标题 → 首条消息。send 卡头部是目标会话信息，保留。
+  const pendingCardProps = isCreate
+    ? { headerless: true as const }
+    : {
+      icon: <AgentAvatar info={headerAgentInfo} className={styles.sessionCollabDraftAvatar} alt={headerAgentInfo.displayName} />,
+      title: displayTitle,
+      subtitle: block.description,
+      expandable: false,
+      expanded: true,
+    };
   return (
     <ChatResourceCard
-      icon={<AgentAvatar info={headerAgentInfo} className={styles.sessionCollabDraftAvatar} alt={headerAgentInfo.displayName} />}
-      title={displayTitle}
-      subtitle={block.description}
+      {...pendingCardProps}
       className={styles.sessionCollabDraftCard}
-      expandable={false}
-      expanded
     >
       <div className={styles.sessionCollabDraftBody}>
         {isCreate && (
           <>
-            <input
-              className={styles.sessionCollabDraftTitleInput}
-              value={draftTitle}
-              onChange={e => setDraftTitle(e.target.value)}
-              placeholder={window.t('automation.field.label')}
-              spellCheck={false}
-            />
             <label className={styles.automationDraftField}>
               <span>{window.t('automation.field.agent')}</span>
               <SelectWidget
@@ -258,6 +259,13 @@ export const SessionCollabDraftCard = memo(function SessionCollabDraftCard({ blo
                 }}
               />
             </label>
+            <input
+              className={styles.sessionCollabDraftTitleInput}
+              value={draftTitle}
+              onChange={e => setDraftTitle(e.target.value)}
+              placeholder={window.t('automation.field.label')}
+              spellCheck={false}
+            />
           </>
         )}
         <textarea

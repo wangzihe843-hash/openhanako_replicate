@@ -6,8 +6,10 @@ export type ChatResourceCardStatusTone = 'neutral' | 'success' | 'danger' | 'mut
 export type ChatResourceCardVariant = 'panel' | 'task';
 
 interface ChatResourceCardProps {
-  icon: ReactNode;
-  title: ReactNode;
+  /** headerless 时可省略 */
+  icon?: ReactNode;
+  /** headerless 时可省略 */
+  title?: ReactNode;
   titleMeta?: ReactNode;
   titleTail?: ReactNode;
   subtitle?: ReactNode;
@@ -22,6 +24,8 @@ interface ChatResourceCardProps {
   className?: string;
   ariaLabel?: string;
   variant?: ChatResourceCardVariant;
+  /** 无头形态：跳过头部行（icon/title/subtitle/status），只渲染卡壳 + children。编辑态表单卡用。 */
+  headerless?: boolean;
   children?: ReactNode;
 }
 
@@ -82,6 +86,7 @@ export function ChatResourceCard({
   className,
   ariaLabel,
   variant = 'panel',
+  headerless = false,
   children,
 }: ChatResourceCardProps) {
   const activate = onToggle ?? onClick;
@@ -97,6 +102,7 @@ export function ChatResourceCard({
 
   return (
     <div className={rootClass} data-chat-resource-card="" data-variant={variant}>
+      {!headerless && (
       <div className={styles.header}>
         {interactive ? (
           <button
@@ -139,7 +145,8 @@ export function ChatResourceCard({
         )}
         {actionSlot && <div className={styles.actions}>{actionSlot}</div>}
       </div>
-      {children && expanded && <div className={styles.details}>{children}</div>}
+      )}
+      {children && (headerless || expanded) && <div className={styles.details}>{children}</div>}
     </div>
   );
 }
