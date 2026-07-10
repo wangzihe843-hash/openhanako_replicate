@@ -63,6 +63,14 @@ class MockWebSocket {
   }
 }
 
+// 用例会用 defineProperty 覆盖这些 window 属性（窄视口 / 键盘视口测试），
+// 在任何用例运行前捕获原始描述符，供 afterEach 恢复，防止跨用例泄漏。
+const ORIGINAL_WINDOW_VIEWPORT_DESCRIPTORS: ReadonlyArray<[string, PropertyDescriptor | undefined]> = [
+  ['innerWidth', Object.getOwnPropertyDescriptor(window, 'innerWidth')],
+  ['innerHeight', Object.getOwnPropertyDescriptor(window, 'innerHeight')],
+  ['visualViewport', Object.getOwnPropertyDescriptor(window, 'visualViewport')],
+];
+
 describe('MobileApp', () => {
   const fetchMock = vi.fn();
   const mobileLoginTranslations: Record<string, string> = {
@@ -134,6 +142,13 @@ describe('MobileApp', () => {
       ws.onclose = null;
     }
     cleanup();
+    // 恢复被用例覆盖的 window 视口属性与 mobile platform 桩，防跨用例泄漏。
+    // 放在 cleanup() 之后：组件卸载期间仍看到用例内的环境，卸载完再还原。
+    for (const [prop, descriptor] of ORIGINAL_WINDOW_VIEWPORT_DESCRIPTORS) {
+      if (descriptor) Object.defineProperty(window, prop, descriptor);
+      else Reflect.deleteProperty(window, prop);
+    }
+    Reflect.deleteProperty(window, 'platform');
     delete window.__hanaMobileUpdateAvailable;
     vi.restoreAllMocks();
   });
