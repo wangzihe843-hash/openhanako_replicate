@@ -84,14 +84,13 @@ const OPTIONAL_TOOL_NAMES_SET = new Set(OPTIONAL_TOOL_NAMES);
  * two from drifting.
  *
  * Rationale:
- *   beautify        — aesthetic generation is new and model/provider-costly;
- *                     off by default until the feature has baked for a few versions.
  *   dm              — direct-messages between agents; off by default because
  *                     single-agent setups have no peers and it adds context.
  *   workflow        — deterministic multi-agent orchestration; a heavy fan-out
  *                     capability, opt-in per agent until it has baked.
+ *   (beautify 已于 0.375.x 毕业为默认开启。)
  */
-export const DEFAULT_DISABLED_TOOL_NAMES = ["dm", "beautify", "workflow"];
+export const DEFAULT_DISABLED_TOOL_NAMES = ["dm", "workflow"];
 
 export function uniqueToolNames(names) {
   const seen = new Set();

@@ -570,7 +570,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(appliedList).toContain("browser");
   });
 
-  it("Case C: beautify plugin tools are default-off for fresh configs", async () => {
+  it("Case C: beautify plugin tools are default-on for fresh configs (0.375.x 毕业)", async () => {
     const beautifyTool = {
       ...makeTool("beautify_create-cover"),
       _pluginId: "beautify",
@@ -585,11 +585,11 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     await coord.createSession(null, tmpDir, true);
 
     const appliedList = activeToolsSpy.mock.calls[0][0];
-    expect(appliedList).not.toContain("beautify_create-cover");
+    expect(appliedList).toContain("beautify_create-cover");
     expect(appliedList).toContain("read");
   });
 
-  it("Case C: beautify plugin tools join fresh sessions after explicit opt-in", async () => {
+  it("Case C: beautify plugin tools stay off after explicit opt-out", async () => {
     const beautifyTool = {
       ...makeTool("beautify_create-cover"),
       _pluginId: "beautify",
@@ -599,12 +599,12 @@ describe("session-coordinator tool snapshot (createSession)", () => {
       tools: SDK_BUILTIN_OBJS,
       customTools: [...HANAKO_CUSTOM_OBJS, beautifyTool],
     });
-    currentAgentConfig = { tools: { disabled: ["dm"] } };
+    currentAgentConfig = { tools: { disabled: ["dm", "beautify"] } };
 
     await coord.createSession(null, tmpDir, true);
 
     const appliedList = activeToolsSpy.mock.calls[0][0];
-    expect(appliedList).toContain("beautify_create-cover");
+    expect(appliedList).not.toContain("beautify_create-cover");
     expect(appliedList).not.toContain("dm");
   });
 
