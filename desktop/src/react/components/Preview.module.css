@@ -342,6 +342,9 @@
       collapse 下 radius 不生效，单元格已无边框 → separate 视觉零差异 ── */
 .previewPanelBody :global(.preview-markdown .markdown-table-scroll) { margin-top: 0; margin-bottom: var(--md-rhythm); }
 .previewPanelBody :global(.preview-markdown) table {
+    width: fit-content;
+    max-width: 100%;
+    table-layout: auto;
     border-collapse: separate;
     border-spacing: 0;
     border-radius: var(--radius-xs);
