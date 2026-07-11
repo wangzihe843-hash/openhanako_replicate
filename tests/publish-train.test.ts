@@ -16,6 +16,7 @@ import {
   parseServerArchiveName,
   publishChannel,
   releaseExistsFromExec,
+  SHELL_COMPAT_FLOOR,
 } from "../scripts/publish-train.mjs";
 
 const tempDirs: string[] = [];
@@ -155,12 +156,11 @@ describe("publish-train: computeMirrors", () => {
 });
 
 describe("publish-train: assembleTrainManifest (reuses buildSeedManifest, no parallel builder)", () => {
-  it("merges per-platform server entries under one manifest carrying minShell/contract from buildSeedManifest", () => {
+  it("merges per-platform server entries under one manifest carrying contract from buildSeedManifest", () => {
     const manifest = buildSampleManifest();
     expect(manifest.schema).toBe(1);
     expect(manifest.train).toBe(1);
     expect(manifest.channel).toBe("stable");
-    expect(manifest.minShell).toBe("1.2.3"); // sourced from buildSeedManifest's own `minShell: version` convention
     expect(manifest.contract).toEqual({ preload: 1, serverProtocol: 1 }); // sourced from buildSeedManifest, not invented here
     expect(manifest.rollout).toEqual({ percent: 100, salt: "test-salt" });
     expect(manifest.mirrors).toEqual(["https://github.com/liliMozi/openhanako/releases/download/train-1"]);
@@ -171,6 +171,18 @@ describe("publish-train: assembleTrainManifest (reuses buildSeedManifest, no par
     expect(manifest.artifacts.renderer).toEqual({
       version: "1.2.3", sha256: HEX_C, size: 333, path: "renderer-1.2.3.tar.gz",
     });
+  });
+
+  it("sets minShell to the hand-maintained SHELL_COMPAT_FLOOR, never the train's own version", () => {
+    // sampleServerEntries()/sampleRendererEntry() are pinned to version "1.2.3",
+    // which is deliberately not equal to SHELL_COMPAT_FLOOR: if the
+    // implementation ever regresses to `minShell: version` (buildSeedManifest's
+    // seed-only convention), this test must fail rather than pass by
+    // coincidence.
+    expect(SHELL_COMPAT_FLOOR).not.toBe("1.2.3");
+    const manifest = buildSampleManifest();
+    expect(manifest.minShell).toBe(SHELL_COMPAT_FLOOR);
+    expect(manifest.minShell).not.toBe("1.2.3");
   });
 
   it("passes manifestModule.validateManifest (self-checked before signing)", () => {
