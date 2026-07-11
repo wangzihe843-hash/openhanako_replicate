@@ -210,6 +210,25 @@ body.font-sans {
     background: rgba(128, 128, 128, 0.4);
 }
 
+/* Windows 的传统 scrollbar 常驻且视觉重量较高：保留固定宽度，只在实际滚动时显色。
+   平台初始化层通过捕获 scroll 事件给当前滚动目标短暂添加 hana-scroll-active。 */
+html[data-platform="win32"] body * {
+    scrollbar-color: transparent transparent;
+}
+
+html[data-platform="win32"] body .hana-scroll-active {
+    scrollbar-color: var(--overlay-strong) transparent;
+}
+
+html[data-platform="win32"] body *::-webkit-scrollbar-thumb {
+    background: transparent;
+    transition: background var(--duration-slow) var(--ease-out);
+}
+
+html[data-platform="win32"] body .hana-scroll-active::-webkit-scrollbar-thumb {
+    background: var(--overlay-strong);
+}
+
 html, body {
     height: 100%;
     overflow: hidden;

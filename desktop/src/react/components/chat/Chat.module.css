@@ -1946,7 +1946,7 @@
     transition: background var(--duration-slow) ease-out;
 }
 
-.sessionPanel:hover::-webkit-scrollbar-thumb,
+:global(html:not([data-platform="win32"])) .sessionPanel:hover::-webkit-scrollbar-thumb,
 .sessionPanel.is-scrolling::-webkit-scrollbar-thumb {
     background: rgba(128, 128, 128, 0.25);
 }
