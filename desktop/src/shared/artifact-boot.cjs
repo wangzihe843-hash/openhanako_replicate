@@ -213,12 +213,16 @@ async function prepareArtifactServerBoot({
     const archivePath = path.join(seedDir, serverEntry.path);
     log(`[artifact-boot] activating seed train ${manifest.train} (${serverEntry.version}) from ${archivePath}`);
     if (onProgress) onProgress();
-    // 与热更新完全相同的激活路径：一条代码路径，没有特例。
+    // 与热更新完全相同的激活路径：一条代码路径，没有特例。allowReplaceProtected:
+    // true 是安全的——这里运行的是首启/崩溃自愈的 seed 激活，此刻还没有任何进程
+    // 在用这个目标目录（server 还没 spawn），不存在"边替换边被占用"的风险；
+    // 后台 OTA 激活（artifact-ota.cjs）不传这个参数，默认走保护检查。
     await activation.activateFromArchive(archivePath, manifest, {
       homeDir,
       channel,
       kind: "server",
       platformArch,
+      allowReplaceProtected: true,
     });
     await pointerStore.promote(homeDir, channel);
     resolved = await activation.resolveBoot(channel, homeDir);
@@ -321,11 +325,16 @@ async function prepareArtifactRendererBoot({
     const archivePath = path.join(seedDir, rendererEntry.path);
     log(`[artifact-boot] activating renderer seed train ${manifest.train} (${rendererEntry.version}) from ${archivePath}`);
     if (onProgress) onProgress();
-    // 与热更新完全相同的激活路径：一条代码路径，没有特例。
+    // 与热更新完全相同的激活路径：一条代码路径，没有特例。allowReplaceProtected:
+    // true 是安全的——触发这条分支的两个场景（首启、did-fail-load/
+    // render-process-gone 之后的自愈重激活）里，上一次加载这个目录的渲染进程
+    // 要么还没起来，要么已经崩溃/关闭，不存在"边替换边被占用"的风险；后台 OTA
+    // 激活（artifact-ota.cjs）不传这个参数，默认走保护检查。
     await activation.activateFromArchive(archivePath, manifest, {
       homeDir,
       channel: pointerChannel,
       kind: "renderer",
+      allowReplaceProtected: true,
     });
     await pointerStore.promote(homeDir, pointerChannel);
     resolved = await activation.resolveBoot(pointerChannel, homeDir);

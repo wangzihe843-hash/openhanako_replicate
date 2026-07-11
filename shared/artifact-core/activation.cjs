@@ -8,9 +8,35 @@
  *
  * `activateFromArchive` is the sole path by which a downloaded (or seed)
  * archive becomes a bootable version: quarantine short-circuit -> sha256
- * verify -> extract -> `.verified` receipt -> `next` pointer write. Boot
- * itself never re-hashes trees; it trusts the `.verified` receipt plus
- * the pointer's own signed-manifest provenance (`resolveBoot`).
+ * verify -> [protection check] -> extract into a temp dir -> `.verified`
+ * receipt -> atomic swap into the versioned directory -> `next` pointer
+ * write. Boot itself never re-hashes trees; it trusts the `.verified`
+ * receipt plus the pointer's own signed-manifest provenance
+ * (`resolveBoot`).
+ *
+ * Two invariants this module exists to hold, both learned from a real
+ * incident (an update train reusing the same version-directory name as
+ * the build a user was actively running; on Windows the old code's
+ * unconditional `rm` of that directory hit a file locked by the running
+ * process and aborted mid-delete, leaving a half-installed app):
+ *
+ * 1. Build-new-before-removing-old. The archive is extracted into a
+ *    sibling temp directory first; the live/final directory is only
+ *    touched once the new content is fully staged and its `.verified`
+ *    receipt written. If extraction fails, the final directory is left
+ *    exactly as it was — there is never a state where the old content
+ *    has been removed but the new content isn't in place yet.
+ * 2. A version directory currently referenced by ANY pointer (any
+ *    channel, any slot — current/previous/next) is protected. If the
+ *    incoming archive's sha256 matches what that pointer already
+ *    recorded, the directory is claimed as-is for the new pointer write
+ *    (no filesystem writes at all — this is the "same train re-announced,
+ *    or a rollback re-announcing an old version" case). If the sha256
+ *    differs, activation is refused with a loud error instead of silently
+ *    overwriting a directory something else still depends on. Callers
+ *    that need to bypass this (first-boot seed extraction and crash
+ *    self-repair, where nothing has started running yet) opt in via
+ *    `opts.allowReplaceProtected`.
  */
 
 const fs = require("fs");
@@ -48,10 +74,131 @@ function versionDirName(kind, artifactEntry, platformArch) {
 }
 
 /**
+ * @param {string} targetPath
+ * @returns {Promise<boolean>}
+ */
+async function pathExists(targetPath) {
+  try {
+    await fsp.access(targetPath);
+    return true;
+  } catch (err) {
+    if (err.code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+/**
+ * Reads every pointer file under `pointers/` — every channel, every slot
+ * (current/previous/next), not just the one this activation is targeting
+ * — and returns the ones whose recorded `versionDir` resolves to
+ * `targetDir`. Mirrors the cross-channel pointer scan `artifact-gc.cjs`
+ * uses for its own keep-set: protection can't be scoped to "this
+ * activation's own channel", because the whole point is catching a
+ * directory-name collision with something ELSE that's using it.
+ *
+ * Conservative on read failure: if any pointer file fails to parse as
+ * JSON, throws instead of returning a partial result — an unreadable
+ * pointer could be hiding a reference to `targetDir`, so the caller must
+ * treat that as "protected, can't verify" rather than "no protection
+ * found".
+ * @param {string} homeDir
+ * @param {string} targetDir
+ * @returns {Promise<Array<{file: string, pointer: object}>>}
+ */
+async function findProtectingPointers(homeDir, targetDir) {
+  const dir = pointerStore.pointersDir(homeDir);
+  let entries;
+  try {
+    entries = await fsp.readdir(dir);
+  } catch (err) {
+    if (err.code === "ENOENT") return [];
+    throw err;
+  }
+
+  const resolvedTarget = path.resolve(targetDir);
+  const matches = [];
+  for (const name of entries) {
+    if (!name.endsWith(".json")) continue;
+    const filePath = path.join(dir, name);
+    let raw;
+    try {
+      raw = await fsp.readFile(filePath, "utf8");
+    } catch (err) {
+      if (err.code === "ENOENT") continue; // removed between readdir and read
+      throw err;
+    }
+    let pointer;
+    try {
+      pointer = JSON.parse(raw);
+    } catch {
+      throw new Error(
+        `activateFromArchive: pointer file ${filePath} failed to parse as JSON; refusing to determine `
+          + `whether ${targetDir} is safe to replace (treating it as protected rather than guessing)`,
+      );
+    }
+    if (pointer && typeof pointer.versionDir === "string" && path.resolve(pointer.versionDir) === resolvedTarget) {
+      matches.push({ file: filePath, pointer });
+    }
+  }
+  return matches;
+}
+
+/**
+ * Moves the fully-staged `tmpDir` into `versionedDir`. If `versionedDir`
+ * doesn't exist yet, this is a single atomic rename. If it does, the
+ * existing directory is renamed aside first (atomic; if this step fails,
+ * `versionedDir` is untouched) and only then is `tmpDir` renamed into the
+ * now-empty slot. If that second rename fails, the aside copy is renamed
+ * straight back — recovering the pre-activation state — and the original
+ * error is rethrown. In the vanishingly rare case where even that
+ * recovery rename fails, neither directory is deleted: the error is
+ * marked so the caller preserves both `tmpDir` and the aside copy on disk
+ * for manual recovery instead of guessing which one is safe to discard.
+ * @param {string} tmpDir
+ * @param {string} versionedDir
+ * @param {boolean} finalExists
+ * @returns {Promise<void>}
+ */
+async function swapIntoPlace(tmpDir, versionedDir, finalExists) {
+  if (!finalExists) {
+    await fsp.rename(tmpDir, versionedDir);
+    return;
+  }
+
+  const oldDir = `${versionedDir}.old-${Date.now()}`;
+  await fsp.rename(versionedDir, oldDir);
+  try {
+    await fsp.rename(tmpDir, versionedDir);
+  } catch (swapErr) {
+    try {
+      await fsp.rename(oldDir, versionedDir);
+    } catch (recoverErr) {
+      const err = new Error(
+        `activateFromArchive: failed to move new content into ${versionedDir} after moving the `
+          + `previous content aside, and moving it back also failed. Nothing was deleted: the `
+          + `previous content is at ${oldDir} and the newly extracted content is at ${tmpDir}. `
+          + `Manual recovery required. Swap error: ${swapErr.message}; recovery error: ${recoverErr.message}`,
+      );
+      err.hanaPreserveTmp = true;
+      throw err;
+    }
+    throw swapErr;
+  }
+  // No longer referenced by any pointer we're about to write; best
+  // effort only — a leftover `.old-*` dir doesn't match the GC naming
+  // pattern and isn't picked up as a valid version, so at worst it's an
+  // orphan a human can clean up by hand.
+  await fsp.rm(oldDir, { recursive: true, force: true }).catch(() => {});
+}
+
+/**
  * Activates a downloaded/seed archive: verifies its sha256 against the
- * manifest's artifact entry, extracts it into a fresh versioned directory
- * under `{homeDir}/artifacts/{kind}/...`, writes a `.verified` receipt,
- * and atomically writes the channel's `next` pointer. Does NOT touch
+ * manifest's artifact entry, then either claims, refuses, or (re)builds
+ * the versioned directory under `{homeDir}/artifacts/{kind}/...` — see
+ * the module header for the "build new before removing old" and
+ * "protect directories any pointer still references" invariants this
+ * implements. Writes a `.verified` receipt into the final directory and
+ * atomically writes the channel's `next` pointer. Does NOT touch
  * `current`/`previous` — promotion to `current` happens at boot
  * (`pointer-store.promote`), never mid-session: running sessions are not
  * hot-swapped.
@@ -61,7 +208,12 @@ function versionDirName(kind, artifactEntry, platformArch) {
  *
  * @param {string} archivePath - downloaded/seed `.tar.gz`
  * @param {object} manifest - already schema+signature-verified manifest
- * @param {{homeDir: string, channel: string, kind: "renderer"|"server", platformArch?: string}} opts
+ * @param {{homeDir: string, channel: string, kind: "renderer"|"server", platformArch?: string, allowReplaceProtected?: boolean}} opts
+ *   `allowReplaceProtected` (default false) skips the pointer-protection
+ *   check entirely and always fully replaces the target directory. Only
+ *   safe for first-boot seed extraction and crash self-repair, where the
+ *   activation runs before anything has started using the target — never
+ *   for a background/OTA activation running alongside a live process.
  * @returns {Promise<object>} the pointer value written to `next`
  */
 async function activateFromArchive(archivePath, manifest, opts) {
@@ -98,40 +250,81 @@ async function activateFromArchive(archivePath, manifest, opts) {
   const dirName = versionDirName(kind, artifactEntry, opts.platformArch);
   const kindRoot = path.join(pointerStore.artifactsRoot(homeDir), kind);
   const versionedDir = path.join(kindRoot, dirName);
+  const allowReplaceProtected = opts.allowReplaceProtected === true;
 
-  // Clean slate: never let a stale/partial prior attempt masquerade as
-  // this activation. On failure below, remove what we started so a
-  // half-extracted tree can never be mistaken for a valid version.
-  await fsp.rm(versionedDir, { recursive: true, force: true });
-  try {
-    await ustar.extract(archivePath, versionedDir);
-  } catch (err) {
-    await fsp.rm(versionedDir, { recursive: true, force: true }).catch(() => {});
-    throw err;
+  const finalExists = await pathExists(versionedDir);
+
+  if (finalExists && !allowReplaceProtected) {
+    const protectingPointers = await findProtectingPointers(homeDir, versionedDir);
+    if (protectingPointers.length > 0) {
+      const mismatched = protectingPointers.filter((entry) => entry.pointer.sha256 !== actualSha256);
+      if (mismatched.length > 0) {
+        const detail = mismatched
+          .map((entry) => `${entry.file} (recorded sha256 ${entry.pointer.sha256})`)
+          .join(", ");
+        throw new Error(
+          `activateFromArchive: refusing to replace ${versionedDir} — it is referenced by `
+            + `${mismatched.length} pointer(s) whose recorded sha256 does not match the incoming `
+            + `archive (incoming sha256 ${actualSha256}): ${detail}`,
+        );
+      }
+      // Every pointer referencing this directory already recorded the
+      // exact bytes we were about to extract (the train got
+      // re-announced, or a rollback re-announced an old version).
+      // Claim it for the new pointer slot: no rm, no rename, no
+      // re-extraction, no touching the existing `.verified` receipt.
+      const activatedAt = new Date().toISOString();
+      const pointerValue = {
+        train: manifest.train,
+        channel,
+        kind,
+        version: artifactEntry.version,
+        platformArch: opts.platformArch || null,
+        versionDir: versionedDir,
+        sha256: actualSha256,
+        activatedAt,
+      };
+      await pointerStore.writePointer(homeDir, channel, "next", pointerValue);
+      return pointerValue;
+    }
   }
 
-  const activatedAt = new Date().toISOString();
-  const receipt = {
-    sha256: actualSha256,
-    train: manifest.train,
-    version: artifactEntry.version,
-    activatedAt,
-  };
-  await pointerStore.atomicWriteJson(path.join(versionedDir, ".verified"), receipt);
+  // Build the new content in a sibling temp directory first. The
+  // live/final directory is never touched until the new tree is fully
+  // extracted and its receipt is written — a failure anywhere in this
+  // block leaves the final directory exactly as it was.
+  const tmpDir = `${versionedDir}.tmp-${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
+  try {
+    await ustar.extract(archivePath, tmpDir);
 
-  const pointerValue = {
-    train: manifest.train,
-    channel,
-    kind,
-    version: artifactEntry.version,
-    platformArch: opts.platformArch || null,
-    versionDir: versionedDir,
-    sha256: actualSha256,
-    activatedAt,
-  };
-  await pointerStore.writePointer(homeDir, channel, "next", pointerValue);
+    const activatedAt = new Date().toISOString();
+    const receipt = {
+      sha256: actualSha256,
+      train: manifest.train,
+      version: artifactEntry.version,
+      activatedAt,
+    };
+    await pointerStore.atomicWriteJson(path.join(tmpDir, ".verified"), receipt);
+    await swapIntoPlace(tmpDir, versionedDir, finalExists);
 
-  return pointerValue;
+    const pointerValue = {
+      train: manifest.train,
+      channel,
+      kind,
+      version: artifactEntry.version,
+      platformArch: opts.platformArch || null,
+      versionDir: versionedDir,
+      sha256: actualSha256,
+      activatedAt,
+    };
+    await pointerStore.writePointer(homeDir, channel, "next", pointerValue);
+    return pointerValue;
+  } catch (err) {
+    if (!err.hanaPreserveTmp) {
+      await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }
+    throw err;
+  }
 }
 
 async function isPointerActivationValid(pointer) {
