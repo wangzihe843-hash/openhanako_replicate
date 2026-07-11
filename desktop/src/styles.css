@@ -229,6 +229,12 @@ html[data-platform="win32"] body .hana-scroll-active::-webkit-scrollbar-thumb {
     background: var(--overlay-strong);
 }
 
+html[data-platform="win32"] body *::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
 html, body {
     height: 100%;
     overflow: hidden;

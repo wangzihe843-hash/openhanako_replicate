@@ -62,6 +62,7 @@ describe('Windows auto-hiding scrollbar contract', () => {
     expect(globalCss).toMatch(/html\[data-platform="win32"\][^{]*\*\s*\{[^}]*scrollbar-color:\s*transparent transparent/s);
     expect(globalCss).toMatch(/html\[data-platform="win32"\][^{]*\.hana-scroll-active\s*\{[^}]*scrollbar-color:\s*var\(--overlay-strong\) transparent/s);
     expect(globalCss).toMatch(/\.hana-scroll-active::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*var\(--overlay-strong\)/s);
+    expect(globalCss).toMatch(/html\[data-platform="win32"\][^{]*::-webkit-scrollbar-button\s*\{[^}]*(?:display:\s*none|width:\s*0)[^}]*\}/s);
     expect(globalCss).not.toMatch(/html\[data-platform="win32"\][^{]*scrollbar-width:\s*none/s);
     expect(chatCss).toContain(':global(html:not([data-platform="win32"])) .sessionPanel:hover');
   });
