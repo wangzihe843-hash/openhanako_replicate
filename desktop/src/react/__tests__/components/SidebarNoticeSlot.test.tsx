@@ -32,6 +32,8 @@ const labels: Record<string, string> = {
   'settings.about.trainStickerDownloading': '下载中 {percent}%',
   'settings.about.trainStickerApplying': '正在应用更新…',
   'settings.about.shellStickerTitleBlocking': '完成此更新后才能继续接收新版本',
+  'settings.about.fallbackStickerTitle': '版本 {fromVersion} 连续启动失败，已退回 {toVersion}。出问题的版本已被隔离，不会自动重试。',
+  'settings.about.fallbackStickerAckLabel': '知道了',
   'window.close': '关闭',
 };
 
@@ -167,6 +169,66 @@ describe('SidebarUpdateNoticeCard', () => {
     render(<SidebarUpdateNoticeCard available={null} minShellBlocked phase="idle" progress={null} />);
     expect(screen.getByText('完成此更新后才能继续接收新版本')).toBeInTheDocument();
   });
+
+  it('shows the fallback (crash-recovery) form with both versions in the message when fallbackNotice is present', () => {
+    const onAckFallback = vi.fn();
+    render(
+      <SidebarUpdateNoticeCard
+        available={null}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+        fallbackNotice={{ kind: 'server', fromVersion: '0.390.0', toVersion: '0.389.0', quarantinedTrain: 7 }}
+        onAckFallback={onAckFallback}
+      />,
+    );
+
+    const message = screen.getByText('版本 0.390.0 连续启动失败，已退回 0.389.0。出问题的版本已被隔离，不会自动重试。');
+    expect(message).toBeInTheDocument();
+
+    // Clicking the card body itself must not trigger any action (no
+    // onInstallShell/onApplyTrain call) — the fallback form has nothing to
+    // "apply", only to acknowledge.
+    fireEvent.click(message);
+    expect(onAckFallback).not.toHaveBeenCalled();
+  });
+
+  it('fallbackNotice outranks minShellBlocked and available: the crash-recovery card wins the single display slot', () => {
+    render(
+      <SidebarUpdateNoticeCard
+        available={{ version: '0.400.0' }}
+        minShellBlocked
+        phase="idle"
+        progress={null}
+        fallbackNotice={{ kind: 'renderer', fromVersion: '0.390.0', toVersion: '0.389.0', quarantinedTrain: null }}
+      />,
+    );
+
+    expect(screen.getByText('版本 0.390.0 连续启动失败，已退回 0.389.0。出问题的版本已被隔离，不会自动重试。')).toBeInTheDocument();
+    expect(screen.queryByText('完成此更新后才能继续接收新版本')).not.toBeInTheDocument();
+    expect(screen.queryByText('有新版本可用')).not.toBeInTheDocument();
+  });
+
+  it('acknowledging the fallback card calls onAckFallback (not a local dismissed-state toggle)', () => {
+    const onAckFallback = vi.fn();
+    const { container } = render(
+      <SidebarUpdateNoticeCard
+        available={null}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+        fallbackNotice={{ kind: 'server', fromVersion: '0.390.0', toVersion: '0.389.0', quarantinedTrain: null }}
+        onAckFallback={onAckFallback}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '知道了' }));
+    expect(onAckFallback).toHaveBeenCalledTimes(1);
+    // The parent (hook) owns clearing fallbackNotice; this component doesn't
+    // hide itself on its own — re-rendering without fallbackNotice is what
+    // makes it disappear, mirrored by the wired-hook test below.
+    expect(container).not.toBeEmptyDOMElement();
+  });
 });
 
 describe('SidebarNoticeSlot (wired to the real hook)', () => {
@@ -192,12 +254,15 @@ describe('SidebarNoticeSlot (wired to the real hook)', () => {
         lastError: null,
         lastCheckedAt: null,
         currentVersion: '0.388.0',
+        fallbackNotice: null,
         ...status,
       }),
       trainUpdateCheck: vi.fn(),
       trainUpdateApply: vi.fn().mockResolvedValue({ ok: true }),
       onTrainUpdateAvailable: vi.fn(() => () => {}),
       onTrainUpdateProgress: vi.fn(() => () => {}),
+      onTrainFallbackNotice: vi.fn(() => () => {}),
+      ackTrainFallbackNotice: vi.fn().mockResolvedValue({ ok: true }),
       autoUpdateInstall: vi.fn(),
     } as unknown as PlatformApi;
   }
@@ -267,5 +332,49 @@ describe('SidebarNoticeSlot (wired to the real hook)', () => {
 
     expect(await screen.findByText('有新版本可用')).toBeInTheDocument();
     expect(screen.getByText('v0.402.0')).toBeInTheDocument();
+  });
+
+  it('shows the fallback card from a cold-start status pull and outranks an available train update', async () => {
+    installHana({
+      available: { train: 9, version: '0.400.0', serverSha256: 'a'.repeat(64), rendererSha256: 'b'.repeat(64), sizes: { server: 1, renderer: 1 }, recordedAt: '2026-07-11T00:00:00.000Z' },
+      fallbackNotice: { kind: 'server', fromVersion: '0.390.0', toVersion: '0.389.0', quarantinedTrain: 7 },
+    });
+
+    render(<SidebarNoticeSlot />);
+
+    expect(await screen.findByText('版本 0.390.0 连续启动失败，已退回 0.389.0。出问题的版本已被隔离，不会自动重试。')).toBeInTheDocument();
+    expect(screen.queryByText('有新版本可用')).not.toBeInTheDocument();
+  });
+
+  it('acknowledging the fallback card via the real hook calls ackTrainFallbackNotice and the card disappears', async () => {
+    const ackTrainFallbackNotice = vi.fn().mockResolvedValue({ ok: true });
+    installHana({ fallbackNotice: { kind: 'renderer', fromVersion: '0.390.0', toVersion: '0.389.0', quarantinedTrain: null } });
+    (window.hana as unknown as { ackTrainFallbackNotice: typeof ackTrainFallbackNotice }).ackTrainFallbackNotice = ackTrainFallbackNotice;
+
+    const { container } = render(<SidebarNoticeSlot />);
+    const ackButton = await screen.findByRole('button', { name: '知道了' });
+    fireEvent.click(ackButton);
+
+    expect(ackTrainFallbackNotice).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+  });
+
+  it('reacts to a background onTrainFallbackNotice broadcast without a remount (runtime renderer crash path)', async () => {
+    type FallbackPayload = { kind: 'server' | 'renderer'; fromVersion: string | null; toVersion: string | null; quarantinedTrain: number | null };
+    const box: { deliver: ((payload: FallbackPayload) => void) | null } = { deliver: null };
+    installHana({});
+    (window.hana as unknown as { onTrainFallbackNotice: (cb: (p: FallbackPayload) => void) => () => void }).onTrainFallbackNotice = (cb) => {
+      box.deliver = cb;
+      return () => { box.deliver = null; };
+    };
+
+    render(<SidebarNoticeSlot />);
+    await waitFor(() => expect(window.hana?.trainUpdateStatus).toHaveBeenCalled());
+    expect(screen.queryByText(/连续启动失败/)).not.toBeInTheDocument();
+    await waitFor(() => expect(box.deliver).not.toBeNull());
+
+    box.deliver?.({ kind: 'renderer', fromVersion: '0.391.0', toVersion: '0.390.0', quarantinedTrain: 3 });
+
+    expect(await screen.findByText('版本 0.391.0 连续启动失败，已退回 0.390.0。出问题的版本已被隔离，不会自动重试。')).toBeInTheDocument();
   });
 });

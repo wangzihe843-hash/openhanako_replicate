@@ -150,7 +150,8 @@ function decideBootAction({ resolved, seedEntry, crashFallback }) {
  * }} opts
  * @returns {Promise<{versionDir: string, train: number, version: string,
  *                    slot: string, activatedSeed: boolean, crashFallback: boolean,
- *                    quarantinedTrain: number|null}>}
+ *                    quarantinedTrain: number|null, fromVersion: string|null,
+ *                    toVersion: string|null}>}
  */
 async function prepareArtifactServerBoot({
   homeDir,
@@ -170,9 +171,16 @@ async function prepareArtifactServerBoot({
   const failures = await activation.consecutiveFailures(homeDir, channel);
   const crashFallback = failures >= CRASH_LOOP_THRESHOLD;
   let quarantinedTrain = null; // non-null only when a quarantine.json entry was actually appended this call
+  // fromVersion/toVersion 只在 crashFallback 为真的这次调用里被填充——这是
+  // 一次性信号（只有真正执行了 demote 的那次调用才是 true），调用方
+  // （desktop/main.cjs）据此构造"版本 X 启动失败，已退回 Y"的用户可见提示；
+  // 数据来源是指针文件本来就有的 version 字段，不需要额外持久化。
+  let fromVersion = null;
+  let toVersion = null;
   if (crashFallback) {
     const current = await pointerStore.readPointer(homeDir, channel, "current");
     const failedTrain = current && Number.isInteger(current.train) ? current.train : null;
+    fromVersion = current && typeof current.version === "string" ? current.version : null;
     if (failedTrain !== null && failedTrain > 0) {
       await pointerStore.appendQuarantine(homeDir, {
         channel,
@@ -186,7 +194,8 @@ async function prepareArtifactServerBoot({
       // train 号匹配，隔离 0 会连带封死未来所有安装包的 seed。
       log(`[artifact-boot] seed train crash-looped ${failures}x; falling back without quarantine`);
     }
-    await pointerStore.demoteToPrevious(homeDir, channel);
+    const demoted = await pointerStore.demoteToPrevious(homeDir, channel);
+    toVersion = demoted && demoted.current && typeof demoted.current.version === "string" ? demoted.current.version : null;
     await activation.clearSentinel(homeDir, channel); // 降级目标从零开始计数
   }
 
@@ -240,6 +249,8 @@ async function prepareArtifactServerBoot({
     activatedSeed,
     crashFallback,
     quarantinedTrain,
+    fromVersion,
+    toVersion,
   };
 }
 
@@ -262,7 +273,8 @@ async function prepareArtifactServerBoot({
  * }} opts
  * @returns {Promise<{versionDir: string, train: number, version: string,
  *                    slot: string, activatedSeed: boolean, crashFallback: boolean,
- *                    quarantinedTrain: number|null}>}
+ *                    quarantinedTrain: number|null, fromVersion: string|null,
+ *                    toVersion: string|null}>}
  */
 async function prepareArtifactRendererBoot({
   homeDir,
@@ -284,9 +296,14 @@ async function prepareArtifactRendererBoot({
   const failures = await activation.consecutiveFailures(homeDir, pointerChannel);
   const crashFallback = failures >= CRASH_LOOP_THRESHOLD;
   let quarantinedTrain = null; // non-null only when a quarantine.json entry was actually appended this call
+  // fromVersion/toVersion：同 prepareArtifactServerBoot 一侧的一次性信号语义，
+  // 见该函数内对应注释。
+  let fromVersion = null;
+  let toVersion = null;
   if (crashFallback) {
     const current = await pointerStore.readPointer(homeDir, pointerChannel, "current");
     const failedTrain = current && Number.isInteger(current.train) ? current.train : null;
+    fromVersion = current && typeof current.version === "string" ? current.version : null;
     if (failedTrain !== null && failedTrain > 0) {
       await pointerStore.appendQuarantine(homeDir, {
         channel: pointerChannel,
@@ -299,7 +316,8 @@ async function prepareArtifactRendererBoot({
       // train 0 永不隔离：seed 是终极兜底。
       log(`[artifact-boot] renderer seed train crash-looped ${failures}x; falling back without quarantine`);
     }
-    await pointerStore.demoteToPrevious(homeDir, pointerChannel);
+    const demoted = await pointerStore.demoteToPrevious(homeDir, pointerChannel);
+    toVersion = demoted && demoted.current && typeof demoted.current.version === "string" ? demoted.current.version : null;
     await activation.clearSentinel(homeDir, pointerChannel); // 降级目标从零开始计数
   }
 
@@ -352,6 +370,8 @@ async function prepareArtifactRendererBoot({
     activatedSeed,
     crashFallback,
     quarantinedTrain,
+    fromVersion,
+    toVersion,
   };
 }
 

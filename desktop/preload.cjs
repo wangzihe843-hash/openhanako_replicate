@@ -52,6 +52,14 @@ contextBridge.exposeInMainWorld("hana", {
     ipcRenderer.on("train-update-available", handler);
     return () => ipcRenderer.removeListener("train-update-available", handler);
   },
+  // 崩溃回退的一次性用户提示：广播（运行时触发）+ ack（用户点掉后清空
+  // 主进程内存里的状态，同一次事件不重复提示）。
+  onTrainFallbackNotice: (cb) => {
+    const handler = (_, payload) => cb(payload);
+    ipcRenderer.on("train-fallback-notice", handler);
+    return () => ipcRenderer.removeListener("train-fallback-notice", handler);
+  },
+  ackTrainFallbackNotice: () => ipcRenderer.invoke("train-fallback-notice-ack"),
   onTrainUpdateProgress: (cb) => {
     const handler = (_, progress) => cb(progress);
     ipcRenderer.on("train-update-progress", handler);

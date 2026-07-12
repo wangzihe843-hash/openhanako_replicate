@@ -1239,6 +1239,8 @@
       "trainStickerApplying": "업데이트 적용 중…",
       "shellStickerTitle": "플랫폼 업데이트 사용 가능, 재시작 필요",
       "shellStickerTitleBlocking": "새 버전을 계속 받으려면 이 업데이트를 완료해야 합니다",
+      "fallbackStickerTitle": "버전 {fromVersion}이(가) 연속으로 시작에 실패하여 {toVersion}(으)로 롤백되었습니다. 문제가 있던 버전은 격리되어 자동으로 재시도되지 않습니다.",
+      "fallbackStickerAckLabel": "확인",
       "updateHistoryTitle": "업데이트 기록",
       "updateHistorySubtitle": "최근에 게시된 5개 버전",
       "updateHistoryLoading": "업데이트 기록을 불러오는 중…",

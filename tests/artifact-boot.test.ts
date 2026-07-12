@@ -358,6 +358,30 @@ describe("artifact-boot: prepareArtifactServerBoot", () => {
     expect(fallback.versionDir).toBe(seedBoot.versionDir);
     expect(fallback.quarantinedTrain).toBe(7);
     expect(await pointerStore.isQuarantined(homeDir, SEED_CHANNEL, 7)).toBe(true);
+    // Crash-fallback notice payload: the version that just failed (train 7's
+    // "2.0.0") and the version it fell back to (the seed's "1.0.0") — this is
+    // what desktop/main.cjs surfaces to the user via the sidebar notice card.
+    expect(fallback.fromVersion).toBe("2.0.0");
+    expect(fallback.toVersion).toBe("1.0.0");
+  });
+
+  it("does not populate fromVersion/toVersion when no crash fallback occurred", async () => {
+    const root = makeTempDir("hana-boot-");
+    const keys = makeKeys();
+    const seed = await makeSeedResources(root, keys, { version: "1.0.0", marker: "seedgen" });
+    const homeDir = path.join(root, "home");
+
+    const result = await prepareArtifactServerBoot({
+      homeDir,
+      resourcesPath: seed.resourcesPath,
+      platformArch: PLATFORM_ARCH,
+      keyset: keys.keyset,
+      log: () => {},
+    });
+
+    expect(result.crashFallback).toBe(false);
+    expect(result.fromVersion).toBe(null);
+    expect(result.toVersion).toBe(null);
   });
 
   it("three failures on the seed itself never quarantine train 0 (seed stays the terminal fallback)", async () => {
@@ -543,6 +567,8 @@ describe("artifact-boot: prepareArtifactRendererBoot", () => {
     expect(fallback.versionDir).toBe(seedBoot.versionDir);
     expect(fallback.quarantinedTrain).toBe(7);
     expect(await pointerStore.isQuarantined(homeDir, rendererChannel, 7)).toBe(true);
+    expect(fallback.fromVersion).toBe("2.0.0");
+    expect(fallback.toVersion).toBe("1.0.0");
   });
 
   it("three failures on the renderer seed itself never quarantine train 0", async () => {

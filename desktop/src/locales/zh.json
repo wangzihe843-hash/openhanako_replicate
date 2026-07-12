@@ -1305,6 +1305,8 @@
       "trainStickerApplying": "正在应用更新…",
       "shellStickerTitle": "平台更新可用，需重启",
       "shellStickerTitleBlocking": "完成此更新后才能继续接收新版本",
+      "fallbackStickerTitle": "版本 {fromVersion} 连续启动失败，已退回 {toVersion}。出问题的版本已被隔离，不会自动重试。",
+      "fallbackStickerAckLabel": "知道了",
       "updateHistoryTitle": "更新历史",
       "updateHistorySubtitle": "最近 5 个已发布版本",
       "updateHistoryLoading": "正在读取更新历史…",

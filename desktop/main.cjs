@@ -413,6 +413,18 @@ let _artifactBootChannel = null;
 // 不直接读这个变量。
 let _currentContentVersion = null;
 
+// 崩溃回退的一次性用户提示：只在 `prepareArtifactServerBoot`/
+// `prepareArtifactRendererBoot` 真正执行了 demote 的那次调用里被设置（见
+// artifact-boot.cjs 对 crashFallback 语义的注释——它是一次性信号，不是
+// "当前正运行在 previous 槽位"这种持续性状态），进程内存足够承载：
+// 冷启动路径（`resolvePackagedArtifactBoot`）发生在任何窗口创建之前，
+// 广播可能没有听众，靠 `train-update-status` IPC 被窗口挂载后主动拉取；
+// 运行时 renderer 崩溃重试路径（`handleRendererArtifactLoadFailure`）发生
+// 时窗口已存在，广播能立即送达。用户点击"知道了"后由
+// `train-fallback-notice-ack` handler 清空，不落盘——同一次事件只提示一次，
+// 下一次真实发生的崩溃回退会重新赋值。
+let _crashFallbackNotice = null;
+
 /**
  * 当前产品版本访问器：一切面向用户的版本显示（贴纸、设置页、升级后首启
  * 公告的书签比较）都必须经这里读，禁止再各自调用 `app.getVersion()`。
@@ -1310,6 +1322,19 @@ async function resolvePackagedArtifactBoot() {
     notifyComponentQuarantined();
   }
 
+  // 崩溃回退的明确提示（系统通知之外，侧栏卡片承载"哪个版本坏了、退到了
+  // 哪个版本"的完整信息）：server/renderer 理论上可能在同一次启动里各自
+  // 独立触发一次 demote，两者互不相干（各自的三连败计数、各自的指针命名
+  // 空间），但侧栏只有一张卡的展示位——server 侧优先，理由是 server 崩溃
+  // 对功能的影响面通常大于单纯的界面加载失败；renderer 侧不会被丢弃，只是
+  // 这次没轮到它展示，下次它自己触发时会用自己的 fromVersion/toVersion 重新
+  // announce 一次。
+  const crashFallbackNotice =
+    buildCrashFallbackNotice("server", boot.server) || buildCrashFallbackNotice("renderer", boot.renderer);
+  if (crashFallbackNotice) {
+    announceCrashFallbackNotice(crashFallbackNotice);
+  }
+
   // 拆箱目录 GC：boot 决议（含可能的 promote/demote）
   // 完成后，对两个 kind 各自的版本目录做一次"只留 current+previous"清理。
   // gcArtifactKind 内部永不抛出，这里不需要额外 try/catch。
@@ -1352,6 +1377,39 @@ function notifyComponentQuarantined() {
   } catch (err) {
     console.warn(`[desktop] failed to show quarantine notification: ${err.message}`);
   }
+}
+
+/**
+ * 崩溃回退这件事本身用户完全无感知（此前只写日志）——这是明确
+ * 禁止的品类，静默降级必须搭配一条明确提示。从 `prepareArtifactServerBoot`/
+ * `prepareArtifactRendererBoot` 的返回值里取出"这次调用是否刚执行了一次
+ * demote"（`crashFallback`），是就构造出用户可读的载荷；不是就返回 null，
+ * 调用方据此决定要不要 announce。纯函数，不碰任何模块级状态。
+ * @param {"server"|"renderer"} kind
+ * @param {{crashFallback: boolean, fromVersion: string|null, toVersion: string|null, quarantinedTrain: number|null}} result
+ * @returns {{kind: "server"|"renderer", fromVersion: string|null, toVersion: string|null, quarantinedTrain: number|null}|null}
+ */
+function buildCrashFallbackNotice(kind, result) {
+  if (!result || result.crashFallback !== true) return null;
+  return {
+    kind,
+    fromVersion: result.fromVersion ?? null,
+    toVersion: result.toVersion ?? null,
+    quarantinedTrain: result.quarantinedTrain ?? null,
+  };
+}
+
+/**
+ * 把一次崩溃回退事件记进进程内存（供 `train-update-status` 冷拉取）并广播
+ * 给所有已存在的窗口（供已经在跑的窗口实时点亮）。两条路径都需要——见
+ * `_crashFallbackNotice` 声明处的注释：冷启动时窗口通常还不存在，
+ * 广播会落空，全靠窗口挂载后的 IPC 拉取；renderer 崩溃后的重试路径窗口已
+ * 存在，广播能立即送达。
+ * @param {{kind: "server"|"renderer", fromVersion: string|null, toVersion: string|null, quarantinedTrain: number|null}} notice
+ */
+function announceCrashFallbackNotice(notice) {
+  _crashFallbackNotice = notice;
+  broadcastToAllWindows("train-fallback-notice", notice);
 }
 
 /**
@@ -1414,6 +1472,12 @@ async function handleRendererArtifactLoadFailure({ win, pageName, opts, label, r
   _currentContentVersion = resolved.version || _currentContentVersion;
   if (resolved.quarantinedTrain != null) {
     notifyComponentQuarantined();
+  }
+  // 运行时（非冷启动）触发的崩溃回退：这条路径窗口已经存在，广播能立即
+  // 送达，用户不需要等下次挂载才拉到状态。
+  const rendererFallbackNotice = buildCrashFallbackNotice("renderer", resolved);
+  if (rendererFallbackNotice) {
+    announceCrashFallbackNotice(rendererFallbackNotice);
   }
   // 登记"新的加载尝试"（同 server 侧 `_spawnServerOnce` 每次 spawn 前写一次
   // 哨兵的模式）：这样如果重试仍然失败，下一次失败事件读到的计数会继续累加。
@@ -4607,7 +4671,18 @@ wrapIpcHandler("train-update-status", async () => {
   const status = await artifactOta.readStagedTrainStatus(hanakoHome, { channel: readUpdateChannelPreference() });
   // currentVersion 是内容版本单一源的唯一 IPC 出口：渲染进程不再单独调用
   // get-app-version 来决定"我在用哪个版本"，一律从这里读。
-  return { ...status, currentVersion: getCurrentContentVersion() };
+  // fallbackNotice 并入这里：冷启动时崩溃回退发生在任何窗口创建之前，
+  // `train-fallback-notice` 广播大概率没有听众，窗口挂载后走这条冷拉取
+  // 路径才是它唯一保证能被看到的通道（见 `_crashFallbackNotice` 声明处注释）。
+  return { ...status, currentVersion: getCurrentContentVersion(), fallbackNotice: _crashFallbackNotice };
+});
+
+// 崩溃回退提示的一次性 ack：用户点掉侧栏卡片后调用，清空进程内存里的
+// 通知状态——同一次事件只提示一次，不落盘（不需要跨进程重启保留：见
+// `_crashFallbackNotice` 声明处对语义的完整解释）。
+wrapIpcHandler("train-fallback-notice-ack", () => {
+  _crashFallbackNotice = null;
+  return { ok: true };
 });
 
 // 手动检查：跟后台自动检查共用 checkOnce，同样绝不下载/写指针，只拉清单、

@@ -1239,6 +1239,8 @@
       "trainStickerApplying": "更新を適用中…",
       "shellStickerTitle": "プラットフォームの更新が利用可能です（再起動が必要）",
       "shellStickerTitleBlocking": "この更新を完了しないと新しいバージョンを受信できません",
+      "fallbackStickerTitle": "バージョン {fromVersion} が連続して起動に失敗したため、{toVersion} にロールバックしました。問題のあったバージョンは隔離され、自動的に再試行されません。",
+      "fallbackStickerAckLabel": "わかりました",
       "updateHistoryTitle": "更新履歴",
       "updateHistorySubtitle": "最近公開された5つのバージョン",
       "updateHistoryLoading": "更新履歴を読み込んでいます…",

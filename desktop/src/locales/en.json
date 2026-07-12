@@ -1305,6 +1305,8 @@
       "trainStickerApplying": "Applying update…",
       "shellStickerTitle": "Platform update available, restart needed",
       "shellStickerTitleBlocking": "This update is required to keep receiving new versions",
+      "fallbackStickerTitle": "Version {fromVersion} failed to start repeatedly and was rolled back to {toVersion}. The problematic version has been quarantined and will not retry automatically.",
+      "fallbackStickerAckLabel": "Got it",
       "updateHistoryTitle": "Update history",
       "updateHistorySubtitle": "The 5 most recent published versions",
       "updateHistoryLoading": "Loading update history…",
