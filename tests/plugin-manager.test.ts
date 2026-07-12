@@ -1526,8 +1526,16 @@ describe("hot operations", () => {
     await pm.unloadPlugin("ledger-lifecycle");
 
     expect(append.mock.calls.map(([event]) => event)).toEqual([
-      { type: "toolset_changed", payload: { pluginId: "ledger-lifecycle", action: "loaded" } },
-      { type: "toolset_changed", payload: { pluginId: "ledger-lifecycle", action: "unloaded" } },
+      {
+        type: "toolset_changed",
+        scope: { kind: "global" },
+        payload: { pluginId: "ledger-lifecycle", action: "loaded" },
+      },
+      {
+        type: "toolset_changed",
+        scope: { kind: "global" },
+        payload: { pluginId: "ledger-lifecycle", action: "unloaded" },
+      },
     ]);
   });
 
@@ -1549,7 +1557,18 @@ describe("hot operations", () => {
     const entry = await pm.installPlugin(dir, { source: "builtin" });
 
     expect(entry.status).toBe("loaded");
-    expect(append.mock.calls.map(([event]) => event.payload.action)).toEqual(["unloaded", "reloaded"]);
+    expect(append.mock.calls.map(([event]) => event)).toEqual([
+      {
+        type: "toolset_changed",
+        scope: { kind: "global" },
+        payload: { pluginId: "ledger-reload", action: "unloaded" },
+      },
+      {
+        type: "toolset_changed",
+        scope: { kind: "global" },
+        payload: { pluginId: "ledger-reload", action: "reloaded" },
+      },
+    ]);
   });
 
   it("keeps the real unload transition when a hot reload fails", async () => {
@@ -1576,7 +1595,11 @@ describe("hot operations", () => {
 
     expect(entry.status).toBe("failed");
     expect(append.mock.calls.map(([event]) => event)).toEqual([
-      { type: "toolset_changed", payload: { pluginId: "ledger-failed-reload", action: "unloaded" } },
+      {
+        type: "toolset_changed",
+        scope: { kind: "global" },
+        payload: { pluginId: "ledger-failed-reload", action: "unloaded" },
+      },
     ]);
   });
 

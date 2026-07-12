@@ -3857,9 +3857,16 @@ export class SessionCoordinator {
     if (!sessionPath || !this._envChangeLedger) return null;
     const entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) return null;
+    const recipientAgentId = typeof entry.agentId === "string" && entry.agentId.trim()
+      ? entry.agentId.trim()
+      : this.resolveSessionOwnership(sessionPath).agentId;
+    if (!recipientAgentId) {
+      throw new Error("renderSessionReminderBlock: session Agent ownership is unavailable");
+    }
     return collectReminderBlock({
       sessionEntry: entry,
       ledger: this._envChangeLedger,
+      recipientAgentId,
       now: Date.now(),
       isZh: getLocale().startsWith("zh"),
       timeZone: this._d.getPrefs?.()?.getTimezone?.(),

@@ -92,7 +92,7 @@ const DAILY_STEP_KEYS = ["compileDaily", "compileToday", "rollDailyWindow", "com
  * @param {function} [opts.getTimezone] - 返回用户配置时区
  * @param {function} [opts.getCacheSnapshotReflectionMode] - retired; runtime is hard-gated to off
  * @param {(sessionPath: string) => object|null} [opts.readMemoryReflectionSnapshot] - 返回 session 创建时冻结的记忆反思快照
- * @param {string} [opts.agentId] - 当前 agent id，用于实验观察产物归属
+ * @param {string} [opts.agentId] - 当前 agent id；启用 envChangeLedger 时也是 reminder 归属的必填项
  * @param {string} [opts.agentDir] - 当前 agent 数据目录，用于实验观察产物落盘
  * @param {import('../../core/env-change-ledger.ts').EnvChangeLedger} [opts.envChangeLedger] - 进程内环境变更台账
  */
@@ -179,8 +179,13 @@ export function createMemoryTicker(opts) {
       return true;
     }).slice(0, 5);
     if (addedLines.length === 0) return;
+    const reminderAgentId = typeof agentId === "string" ? agentId.trim() : "";
+    if (!reminderAgentId) {
+      throw new Error("memory fact reminder requires an explicit agentId");
+    }
     envChangeLedger.append({
       type: "memory_facts",
+      scope: { kind: "agent", agentId: reminderAgentId },
       payload: { addedLines },
     });
   };

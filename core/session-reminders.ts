@@ -63,6 +63,13 @@ function memoryFactsEntries(entries: EnvChangeEntry[]): EnvChangeEntry[] {
   return entries.filter((entry) => entry.type === "memory_facts");
 }
 
+function entriesVisibleToAgent(entries: EnvChangeEntry[], recipientAgentId: string): EnvChangeEntry[] {
+  return entries.filter((entry) => (
+    entry.scope.kind === "global"
+    || (entry.scope.kind === "agent" && entry.scope.agentId === recipientAgentId)
+  ));
+}
+
 function formatToolsetLine(payload: Readonly<ToolsetChangedPayload>, isZh: boolean): string {
   const actionZh = payload.action === "loaded" ? "已加载" : payload.action === "unloaded" ? "已卸载" : "已重新加载";
   const actionEn = payload.action === "loaded" ? "loaded" : payload.action === "unloaded" ? "unloaded" : "reloaded";
@@ -105,16 +112,22 @@ function formatTimestamp(now: number, timeZone: string | undefined): string {
 export function collectReminderBlock({
   sessionEntry,
   ledger,
+  recipientAgentId,
   now,
   isZh,
   timeZone,
 }: {
   sessionEntry: ReminderSessionEntry;
   ledger: EnvChangeLedger;
+  recipientAgentId: string;
   now: number;
   isZh: boolean;
   timeZone?: string;
 }): RenderedSessionReminderBlock | null {
+  const normalizedRecipientAgentId = typeof recipientAgentId === "string" ? recipientAgentId.trim() : "";
+  if (!normalizedRecipientAgentId) {
+    throw new TypeError("collectReminderBlock requires a non-empty recipientAgentId");
+  }
   const throughSeq = ledger.maxSeq();
   const compactionRevision = nonNegativeInteger(sessionEntry.reminderCompactionRevision);
   const consumedCompactionRevision = nonNegativeInteger(sessionEntry.reminderConsumedCompactionRevision);
@@ -122,7 +135,10 @@ export function collectReminderBlock({
   const envCursor = hasPendingCompaction
     ? nonNegativeInteger(sessionEntry.reminderEnvStartSeq)
     : nonNegativeInteger(sessionEntry.reminderEnvCursor);
-  const entries = ledger.entriesAfter(envCursor, throughSeq);
+  const entries = entriesVisibleToAgent(
+    ledger.entriesAfter(envCursor, throughSeq),
+    normalizedRecipientAgentId,
+  );
   const lines: string[] = [];
 
   if (hasPendingCompaction) lines.push(`- ${formatCompactionLine(isZh)}`);

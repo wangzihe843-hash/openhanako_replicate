@@ -17,17 +17,45 @@ export interface MemoryFactsPayload {
   addedLines: string[];
 }
 
+export type EnvChangeScope =
+  | { readonly kind: "global" }
+  | { readonly kind: "agent"; readonly agentId: string };
+
 export interface EnvChangeEntry {
   readonly seq: number;
   readonly type: EnvChangeEntryType;
+  readonly scope: EnvChangeScope;
   readonly payload: Readonly<ToolsetChangedPayload> | Readonly<MemoryFactsPayload>;
   readonly at: string;
 }
 
-type EnvChangeInput = {
-  type: EnvChangeEntryType;
-  payload: ToolsetChangedPayload | MemoryFactsPayload;
-};
+type EnvChangeInput =
+  | {
+    type: "toolset_changed";
+    scope: { kind: "global" };
+    payload: ToolsetChangedPayload;
+  }
+  | {
+    type: "memory_facts";
+    scope: { kind: "agent"; agentId: string };
+    payload: MemoryFactsPayload;
+  };
+
+function freezeScope(entry: EnvChangeInput): EnvChangeScope {
+  if (entry.type === "toolset_changed") {
+    if (entry.scope?.kind !== "global") {
+      throw new TypeError("toolset_changed environment changes require global scope");
+    }
+    return Object.freeze({ kind: "global" });
+  }
+  const agentId = entry.scope?.kind === "agent" && typeof entry.scope.agentId === "string"
+    ? entry.scope.agentId.trim()
+    : "";
+  if (!agentId) {
+    throw new TypeError("memory_facts environment changes require a non-empty agent scope");
+  }
+  return Object.freeze({ kind: "agent", agentId });
+}
 
 function freezePayload(entry: EnvChangeInput): EnvChangeEntry["payload"] {
   if (entry.type === "memory_facts") {
@@ -43,11 +71,14 @@ export class EnvChangeLedger {
   private _seq = 0;
 
   append(entry: EnvChangeInput): EnvChangeEntry {
+    const scope = freezeScope(entry);
+    const payload = freezePayload(entry);
     this._seq += 1;
     const recorded = Object.freeze({
       seq: this._seq,
       type: entry.type,
-      payload: freezePayload(entry),
+      scope,
+      payload,
       at: new Date().toISOString(),
     }) as EnvChangeEntry;
     this._entries.push(recorded);

@@ -619,6 +619,7 @@ export class PluginManager {
   _recordToolsetChange(pluginId, action) {
     this._envChangeLedger?.append({
       type: "toolset_changed",
+      scope: { kind: "global" },
       payload: { pluginId, action },
     });
   }

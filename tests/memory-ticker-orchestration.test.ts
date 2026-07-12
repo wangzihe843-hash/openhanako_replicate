@@ -389,13 +389,17 @@ describe("memory facts environment ledger", () => {
       ].join("\n"));
     });
     const append = vi.fn();
-    ticker = makeTicker(tmpDir, undefined, { envChangeLedger: { append } });
+    ticker = makeTicker(tmpDir, undefined, {
+      agentId: "memory-owner",
+      envChangeLedger: { append },
+    });
 
     await ticker.tick();
 
     expect(append).toHaveBeenCalledOnce();
     expect(append).toHaveBeenCalledWith({
       type: "memory_facts",
+      scope: { kind: "agent", agentId: "memory-owner" },
       payload: { addedLines: ["new one", "new two", "new three", "new four", "new five"] },
     });
   });
@@ -407,7 +411,10 @@ describe("memory facts environment ledger", () => {
       fs.writeFileSync(factsPath, "  existing fact  \n\n");
     });
     const append = vi.fn();
-    ticker = makeTicker(tmpDir, undefined, { envChangeLedger: { append } });
+    ticker = makeTicker(tmpDir, undefined, {
+      agentId: "memory-owner",
+      envChangeLedger: { append },
+    });
 
     await ticker.tick();
 
@@ -419,7 +426,10 @@ describe("memory facts environment ledger", () => {
     fs.writeFileSync(factsPath, "existing fact\n");
     (compileEditableFacts as any).mockRejectedValueOnce(new Error("compile failed"));
     const append = vi.fn();
-    ticker = makeTicker(tmpDir, undefined, { envChangeLedger: { append } });
+    ticker = makeTicker(tmpDir, undefined, {
+      agentId: "memory-owner",
+      envChangeLedger: { append },
+    });
 
     await ticker.tick();
 

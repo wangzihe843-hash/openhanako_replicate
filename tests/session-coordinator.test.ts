@@ -4888,11 +4888,11 @@ describe("SessionCoordinator session reminders", () => {
     return agent;
   }
 
-  function makeCoordinator(agent: any, envChangeLedger: EnvChangeLedger) {
+  function makeCoordinator(agent: any, envChangeLedger: EnvChangeLedger, activeAgentId = "hana") {
     return new SessionCoordinator({
       agentsDir: path.join(tempDir, "agents"),
       getAgent: () => agent,
-      getActiveAgentId: () => "hana",
+      getActiveAgentId: () => activeAgentId,
       getModels: () => ({
         currentModel: { id: "m", provider: "test" },
         authStorage: {},
@@ -4943,7 +4943,11 @@ describe("SessionCoordinator session reminders", () => {
 
   it("initializes fresh reminder state at the current ledger baseline and prompt-build time", async () => {
     const ledger = new EnvChangeLedger();
-    ledger.append({ type: "toolset_changed", payload: { pluginId: "before", action: "loaded" } });
+    ledger.append({
+      type: "toolset_changed",
+      scope: { kind: "global" },
+      payload: { pluginId: "before", action: "loaded" },
+    });
     const agent = makeAgent();
     const sessionPath = path.join(agent.sessionDir, "fresh.jsonl");
     mockSessionAt(sessionPath);
@@ -4964,6 +4968,37 @@ describe("SessionCoordinator session reminders", () => {
     expect(coordinator.renderSessionReminderBlock(sessionPath)).toBeNull();
   });
 
+  it("routes memory reminders by the session owner instead of the active agent", async () => {
+    const ledger = new EnvChangeLedger();
+    const agent = makeAgent();
+    const sessionPath = path.join(agent.sessionDir, "owned-by-hana.jsonl");
+    mockSessionAt(sessionPath);
+    const coordinator = makeCoordinator(agent, ledger, "other-agent");
+    await coordinator.createSession(null, "/tmp/workspace", false);
+    ledger.append({
+      type: "memory_facts",
+      scope: { kind: "agent", agentId: "hana" },
+      payload: { addedLines: ["hana-owned fact"] },
+    });
+    ledger.append({
+      type: "memory_facts",
+      scope: { kind: "agent", agentId: "other-agent" },
+      payload: { addedLines: ["active-agent fact"] },
+    });
+    ledger.append({
+      type: "toolset_changed",
+      scope: { kind: "global" },
+      payload: { pluginId: "shared-plugin", action: "loaded" },
+    });
+
+    const rendered = coordinator.renderSessionReminderBlock(sessionPath);
+
+    expect(coordinator._getSessionEntryByPath(sessionPath).agentId).toBe("hana");
+    expect(rendered?.block).toContain("hana-owned fact");
+    expect(rendered?.block).not.toContain("active-agent fact");
+    expect(rendered?.block).toContain("shared-plugin");
+  });
+
   it("uses a receipt without advancing state until explicit consumption", async () => {
     const ledger = new EnvChangeLedger();
     const agent = makeAgent();
@@ -4971,7 +5006,11 @@ describe("SessionCoordinator session reminders", () => {
     mockSessionAt(sessionPath);
     const coordinator = makeCoordinator(agent, ledger);
     await coordinator.createSession(null, "/tmp/workspace", false);
-    ledger.append({ type: "toolset_changed", payload: { pluginId: "demo", action: "loaded" } });
+    ledger.append({
+      type: "toolset_changed",
+      scope: { kind: "global" },
+      payload: { pluginId: "demo", action: "loaded" },
+    });
 
     const rendered = coordinator.renderSessionReminderBlock(sessionPath);
     expect(rendered?.block).toContain("demo");
