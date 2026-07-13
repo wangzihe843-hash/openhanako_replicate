@@ -46,6 +46,7 @@ function tabTitle(tab: BrowserViewerTab) {
 export function BrowserViewerApp() {
   const [canBack, setCanBack] = useState(false);
   const [canForward, setCanForward] = useState(false);
+  const [sessionPath, setSessionPath] = useState<string | null>(null);
   const [tabs, setTabs] = useState<BrowserViewerTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const tabListRef = useRef<HTMLDivElement | null>(null);
@@ -64,11 +65,13 @@ export function BrowserViewerApp() {
       if (data.activeTabId !== undefined) setActiveTabId(data.activeTabId);
       if (data.canGoBack !== undefined) setCanBack(data.canGoBack);
       if (data.canGoForward !== undefined) setCanForward(data.canGoForward);
+      if (data.sessionPath !== undefined) setSessionPath(data.sessionPath || null);
       if (data.running === false) {
         setCanBack(false);
         setCanForward(false);
         setTabs([]);
         setActiveTabId(null);
+        setSessionPath(data.sessionPath || null);
       }
     });
 
@@ -118,7 +121,7 @@ export function BrowserViewerApp() {
           <button
             className="stop-btn"
             title={tr('browser.emergencyStop', 'Stop')}
-            onClick={() => hana?.browserEmergencyStop?.()}
+            onClick={() => hana?.browserEmergencyStop?.(sessionPath)}
           >
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
               <rect x="3" y="3" width="8" height="8" rx="1" fill="currentColor" stroke="none" />
@@ -131,7 +134,7 @@ export function BrowserViewerApp() {
           <button
             className={`tb-btn${canBack ? '' : ' disabled'}`}
             title={tr('browser.back', 'Back')}
-            onClick={() => hana?.browserGoBack?.()}
+            onClick={() => hana?.browserGoBack?.(sessionPath)}
           >
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
               <path d="M8.5 2.5L4.5 7l4 4.5" />
@@ -142,7 +145,7 @@ export function BrowserViewerApp() {
           <button
             className={`tb-btn${canForward ? '' : ' disabled'}`}
             title={tr('browser.forward', 'Forward')}
-            onClick={() => hana?.browserGoForward?.()}
+            onClick={() => hana?.browserGoForward?.(sessionPath)}
           >
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
               <path d="M5.5 2.5L9.5 7l-4 4.5" />
@@ -153,7 +156,7 @@ export function BrowserViewerApp() {
           <button
             className="tb-btn"
             title={tr('browser.reload', 'Reload')}
-            onClick={() => hana?.browserReload?.()}
+            onClick={() => hana?.browserReload?.(sessionPath)}
           >
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
               <path d="M11 7a4 4 0 1 1-4-4" />
@@ -175,8 +178,8 @@ export function BrowserViewerApp() {
                   key={tab.tabId}
                   className={`browser-tab${isActive ? ' active' : ''}`}
                   title={tabTitle(tab)}
-                  onClick={() => hana?.browserSwitchTab?.(tab.tabId)}
-                  onDoubleClick={() => hana?.browserCloseTab?.(tab.tabId)}
+                  onClick={() => hana?.browserSwitchTab?.(tab.tabId, sessionPath)}
+                  onDoubleClick={() => hana?.browserCloseTab?.(tab.tabId, sessionPath)}
                 >
                   <span className="browser-tab-title">{tabTitle(tab)}</span>
                   <span
@@ -184,7 +187,7 @@ export function BrowserViewerApp() {
                     title={tr('browser.closeTab', 'Close tab')}
                     onClick={(event) => {
                       event.stopPropagation();
-                      hana?.browserCloseTab?.(tab.tabId);
+                      hana?.browserCloseTab?.(tab.tabId, sessionPath);
                     }}
                     onDoubleClick={(event) => event.stopPropagation()}
                   >
@@ -200,7 +203,7 @@ export function BrowserViewerApp() {
           <button
             className="tb-btn new-tab-btn"
             title={tr('browser.newTab', 'New Tab')}
-            onClick={() => hana?.browserNewTab?.()}
+            onClick={() => hana?.browserNewTab?.(sessionPath)}
           >
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
               <path d="M7 3v8M3 7h8" />

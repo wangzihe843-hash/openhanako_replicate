@@ -1295,7 +1295,7 @@ describe("BridgeSessionManager teardown", () => {
 
     await manager.executeExternalMessage("hello", "bridge-k-master-tools", null, { agentId: "agent-a" });
 
-    expect(agent.getToolsSnapshot).toHaveBeenCalledWith({ forceMemoryEnabled: true });
+    expect(agent.getToolsSnapshot).toHaveBeenCalledWith({ forceMemoryEnabled: true, surface: "bridge" });
     expect(buildTools.mock.calls[0][1].map((tool) => tool.name)).toEqual([
       "plain_custom",
       "search_memory",

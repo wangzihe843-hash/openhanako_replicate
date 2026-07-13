@@ -37,6 +37,7 @@ function makeFakeSession({ model = null, deltas = ["hel", "lo"], toolMediaOnEnd 
 function makeEngine(session) {
   return {
     ensureSessionLoaded: vi.fn(async () => session),
+    promptSession: vi.fn(async (_sessionPath, text, opts) => session.prompt(text, opts)),
   };
 }
 
@@ -46,6 +47,7 @@ describe("promptAttachedDesktopSession", () => {
     const engine = makeEngine(session);
     const r = await promptAttachedDesktopSession(engine, "/path/s.jsonl", "hi");
     expect(engine.ensureSessionLoaded).toHaveBeenCalledWith("/path/s.jsonl");
+    expect(engine.promptSession).toHaveBeenCalledWith("/path/s.jsonl", "hi", undefined);
     expect(session.prompt).toHaveBeenCalledWith("hi", undefined);
     expect(r.text).toBe("hello world");
     expect(r.toolMedia).toEqual([]);
@@ -107,13 +109,14 @@ describe("promptAttachedDesktopSession", () => {
     expect(session.prompt).toHaveBeenCalledWith("q", { images: [expect.objectContaining({ mimeType: "image/png" })] });
   });
 
-  it("strips images when session model does not support image input", async () => {
+  it("delegates text-only image policy to the guarded promptSession boundary", async () => {
     const session = makeFakeSession({ deltas: ["ok"], model: { input: ["text"] } });
     const engine = makeEngine(session);
+    const images = [{ type: "image", data: "AAA", mimeType: "image/png" }];
     await promptAttachedDesktopSession(engine, "/p.jsonl", "q", {
-      images: [{ type: "image", data: "AAA", mimeType: "image/png" }],
+      images,
     });
-    expect(session.prompt).toHaveBeenCalledWith("q", undefined);
+    expect(engine.promptSession).toHaveBeenCalledWith("/p.jsonl", "q", { images });
   });
 
   it("returns null text when session produced no output", async () => {
@@ -129,9 +132,17 @@ describe("promptAttachedDesktopSession", () => {
   });
 
   it("throws cleanly when ensureSessionLoaded returns null", async () => {
-    const engine = { ensureSessionLoaded: vi.fn(async () => null) };
+    const engine = { ensureSessionLoaded: vi.fn(async () => null), promptSession: vi.fn() };
     await expect(promptAttachedDesktopSession(engine, "/p.jsonl", "q"))
       .rejects.toThrow(/failed to load/);
+  });
+
+  it("refuses to bypass the guarded request boundary when promptSession is unavailable", async () => {
+    const session = makeFakeSession({ deltas: [] });
+    const engine = { ensureSessionLoaded: vi.fn(async () => session) };
+    await expect(promptAttachedDesktopSession(engine, "/p.jsonl", "q"))
+      .rejects.toThrow(/promptSession unavailable/);
+    expect(session.prompt).not.toHaveBeenCalled();
   });
 
   it("appends tool card.description into captured text", async () => {
@@ -143,13 +154,16 @@ describe("promptAttachedDesktopSession", () => {
         }, 0);
         return () => {};
       },
-      prompt: vi.fn(async () => {
+      prompt: vi.fn(async (_text?: unknown, _opts?: unknown) => {
         // 让上面 setTimeout 跑完
         await new Promise(r => setTimeout(r, 5));
       }),
       model: null,
     };
-    const engine = { ensureSessionLoaded: async () => session };
+    const engine = {
+      ensureSessionLoaded: async () => session,
+      promptSession: async (_sessionPath, text, opts) => session.prompt(text, opts),
+    };
     const r = await promptAttachedDesktopSession(engine, "/p.jsonl", "q");
     expect(r.text).toContain("text");
     expect(r.text).toContain("card note");
@@ -179,12 +193,15 @@ describe("promptAttachedDesktopSession", () => {
         }, 0);
         return () => {};
       },
-      prompt: vi.fn(async () => {
+      prompt: vi.fn(async (_text?: unknown, _opts?: unknown) => {
         await new Promise(r => setTimeout(r, 5));
       }),
       model: null,
     };
-    const engine = { ensureSessionLoaded: async () => session };
+    const engine = {
+      ensureSessionLoaded: async () => session,
+      promptSession: async (_sessionPath, text, opts) => session.prompt(text, opts),
+    };
     const r = await promptAttachedDesktopSession(engine, "/p.jsonl", "q");
     expect(r.text).toContain("Locale updated");
     expect(r.text).toContain("Locale: zh-CN -> en");

@@ -112,7 +112,23 @@ function resolveScreenshotMarkdownImageSrc(src, options = {}) {
   return `${pathToFileUrl(resolvedPath)}${suffix}`;
 }
 
+function markdownTableScrollWrapper(md) {
+  const defaultTableOpen = md.renderer.rules.table_open
+    || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+  const defaultTableClose = md.renderer.rules.table_close
+    || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+
+  md.renderer.rules.table_open = (tokens, idx, options, env, self) => (
+    `<div class="markdown-table-scroll">\n${defaultTableOpen(tokens, idx, options, env, self)}`
+  );
+
+  md.renderer.rules.table_close = (tokens, idx, options, env, self) => (
+    `${defaultTableClose(tokens, idx, options, env, self)}</div>\n`
+  );
+}
+
 function decorateScreenshotMarkdownIt(md) {
+  markdownTableScrollWrapper(md);
   const defaultImage = md.renderer.rules.image
     || ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
 

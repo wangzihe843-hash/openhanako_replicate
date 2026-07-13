@@ -7,12 +7,13 @@ import os from "os";
 import path from "path";
 import YAML from "js-yaml";
 import { runMigrations } from "../core/migrations.ts";
+import { ProviderRegistry } from "../core/provider-registry.ts";
 import { getAgentPhoneProjectionPath, safeConversationStem } from "../lib/conversations/agent-phone-projection.ts";
 import { SEARCH_CAPABILITY_PROVIDERS } from "../shared/search-providers.ts";
 
 // ── 测试工具 ────────────────────────────────────────────────────────────────
 
-const LATEST_DATA_VERSION = 43;
+const LATEST_DATA_VERSION = 44;
 
 function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-migrations-"));
@@ -509,6 +510,122 @@ describe("migration #43: Codex image generation defaults follow mode schema", ()
       },
     });
     expect(pluginConfig.global.providerDefaults.openai).toEqual({ size: "1024x1024" });
+  });
+});
+
+describe("migration #44: OAuth models converge into Provider Catalog", () => {
+  let tmpDir, agentsDir, userDir;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    agentsDir = path.join(tmpDir, "agents");
+    userDir = path.join(tmpDir, "user");
+    fs.mkdirSync(agentsDir, { recursive: true });
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("merges the legacy Codex runtime alias into the canonical provider without losing model metadata", () => {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({
+      _dataVersion: 43,
+      oauth_custom_models: {
+        "openai-codex": ["legacy-custom"],
+        "openai-codex-oauth": ["canonical-custom"],
+      },
+    });
+    writeJson(path.join(tmpDir, "provider-catalog.json"), {
+      catalogVersion: 2,
+      providers: {
+        "openai-codex": {
+          base_url: "https://legacy.example/backend-api",
+          api_key: "stale-oauth-token",
+          models: [
+            { id: "shared", name: "Legacy", context: 111000 },
+            { id: "alias-only", context: 222000 },
+          ],
+        },
+        "openai-codex-oauth": {
+          api: "openai-codex-responses",
+          models: [
+            { id: "shared", name: "Canonical", context: 333000 },
+            "canonical-only",
+          ],
+        },
+      },
+      capabilities: {},
+      meta: {},
+    });
+    const registry = new ProviderRegistry(tmpDir);
+
+    runMigrations({ hanakoHome: tmpDir, agentsDir, prefs, providerRegistry: registry, log: () => {} });
+
+    const catalog = readJson(path.join(tmpDir, "provider-catalog.json"));
+    expect(catalog.providers).not.toHaveProperty("openai-codex");
+    expect(catalog.providers["openai-codex-oauth"]).toMatchObject({
+      base_url: "https://legacy.example/backend-api",
+      api: "openai-codex-responses",
+    });
+    expect(catalog.providers["openai-codex-oauth"]).not.toHaveProperty("api_key");
+    expect(catalog.providers["openai-codex-oauth"].models).toEqual([
+      { id: "shared", name: "Canonical", context: 333000 },
+      { id: "alias-only", context: 222000 },
+      "canonical-only",
+      "legacy-custom",
+      "canonical-custom",
+    ]);
+    expect(prefs.getPreferences()).not.toHaveProperty("oauth_custom_models");
+    expect(prefs.getPreferences()._dataVersion).toBe(44);
+  });
+
+  it("turns legacy empty Codex models into Hana defaults and preserves additive custom models", () => {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({
+      _dataVersion: 43,
+      oauth_custom_models: { "openai-codex": ["my-codex-model"] },
+    });
+    writeJson(path.join(tmpDir, "provider-catalog.json"), {
+      catalogVersion: 2,
+      providers: { "openai-codex": { models: [] } },
+      capabilities: {},
+      meta: {},
+    });
+    const registry = new ProviderRegistry(tmpDir);
+
+    runMigrations({ hanakoHome: tmpDir, agentsDir, prefs, providerRegistry: registry, log: () => {} });
+
+    const catalog = readJson(path.join(tmpDir, "provider-catalog.json"));
+    const ids = catalog.providers["openai-codex-oauth"].models.map((model) => typeof model === "object" ? model.id : model);
+    expect(ids).toEqual(expect.arrayContaining([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+      "gpt-5.4",
+      "gpt-5.4-mini",
+      "gpt-5.2",
+      "my-codex-model",
+    ]));
+    expect(prefs.getPreferences()).not.toHaveProperty("oauth_custom_models");
+  });
+
+  it("deletes a legacy empty models field when there are no custom additions", () => {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 43 });
+    writeJson(path.join(tmpDir, "provider-catalog.json"), {
+      catalogVersion: 2,
+      providers: { "openai-codex-oauth": { models: [] } },
+      capabilities: {},
+      meta: {},
+    });
+    const registry = new ProviderRegistry(tmpDir);
+
+    runMigrations({ hanakoHome: tmpDir, agentsDir, prefs, providerRegistry: registry, log: () => {} });
+
+    const catalog = readJson(path.join(tmpDir, "provider-catalog.json"));
+    expect(catalog.providers["openai-codex-oauth"]).not.toHaveProperty("models");
+    registry.reload();
+    expect(registry.getChatModelIds("openai-codex-oauth")).toContain("gpt-5.6-sol");
   });
 });
 

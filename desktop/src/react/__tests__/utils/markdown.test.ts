@@ -183,7 +183,7 @@ describe('renderMarkdown', () => {
     expect(html).toContain('<h2 id="same-title-1">Same Title</h2>');
   });
 
-  it('wraps markdown tables in a constrained horizontal scroll container', () => {
+  it('wraps markdown tables in a constrained width container', () => {
     const html = renderMarkdown([
       '| 时间 | 处理方式 |',
       '| --- | --- |',
@@ -195,7 +195,7 @@ describe('renderMarkdown', () => {
     expect(html).toContain('</table>\n</div>');
   });
 
-  it('preserves markdown table scroll containers in preview mode', () => {
+  it('preserves markdown table containers in preview mode', () => {
     const html = renderMarkdownPreview([
       '| 时间 | 处理方式 |',
       '| --- | --- |',

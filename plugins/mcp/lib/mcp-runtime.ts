@@ -91,14 +91,14 @@ function normalizeConnector(connector, fallbackId = "") {
     authorizationToken,
     oauthClientId: stringOrEmpty(connector.oauthClientId || connector.clientId),
     oauthClientSecret: stringOrEmpty(connector.oauthClientSecret || connector.clientSecret),
-    // Provenance of the OAuth client id (CLAUDE.md #6 read-time migration):
+    // Provenance of the OAuth client id, including read-time compatibility:
     // "manual" = user-entered, "dcr" = obtained via RFC 7591 dynamic client
     // registration. Old connectors predate this field — default to "manual"
     // when a client id is already present, otherwise "" (unknown/unregistered).
     clientIdSource: normalizeClientIdSource(connector),
     oauth,
     autoStart: connector.autoStart === true || connector.isActive === true,
-    // Read-time compat (CLAUDE.md #7): connectors saved before auto-reconnect
+    // Read-time compatibility: connectors saved before auto-reconnect
     // existed have no `autoReconnect` field; default them to true so existing
     // users get keepalive without a migration script. Only an explicit `false`
     // opts out of automatic reconnection.
@@ -339,7 +339,7 @@ export class McpRuntime {
     const config = this.getConfig();
     if (config.enabled) {
       for (const connector of config.connectors.filter((s) => s.autoStart)) {
-        this.startConnector(connector.id).catch((err) => {
+        this.startConnector(connector.id, { retryInitialFailure: true }).catch((err) => {
           this.ctx.log.warn(`auto-start failed for ${connector.id}: ${err.message}`);
         });
       }
@@ -470,7 +470,7 @@ export class McpRuntime {
     return this.removeConnector(id);
   }
 
-  async startConnector(id) {
+  async startConnector(id, options: any = {}) {
     const config = this.getConfig();
     if (!config.enabled) throw new Error("MCP connectors are disabled globally");
     const connector = config.connectors.find((s) => s.id === id);
@@ -499,8 +499,21 @@ export class McpRuntime {
     } catch (err) {
       this.clients.delete(id);
       this.clientErrors.set(id, err.message || "MCP connector failed to start");
-      this.connectorStatus.delete(id);
       await client.stop().catch(() => {});
+      if (isAuthError(err)) {
+        this._cancelReconnect(id);
+        if (this._isDesiredLiveConnector(id)) {
+          this.connectorStatus.set(id, STATUS_NEEDS_AUTH);
+        } else {
+          this.connectorStatus.delete(id);
+        }
+        throw err;
+      }
+      if (options.retryInitialFailure === true && this._canAutoReconnect(id)) {
+        this._scheduleReconnect(id);
+      } else {
+        this.connectorStatus.delete(id);
+      }
       throw err;
     } finally {
       this.establishing.delete(id);

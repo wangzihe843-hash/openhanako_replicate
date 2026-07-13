@@ -7,6 +7,18 @@ import { QQ_MEDIA_CAPABILITIES } from "../lib/bridge/qq-adapter.ts";
 import { WECHAT_ILINK_MEDIA_CAPABILITIES } from "../lib/bridge/wechat-adapter.ts";
 
 describe("bridge media capabilities", () => {
+  it("uses public source locators for built-in capability declarations", () => {
+    expect(TELEGRAM_MEDIA_CAPABILITIES.source).toBe(
+      "lib/bridge/telegram-adapter.ts#TELEGRAM_MEDIA_CAPABILITIES",
+    );
+    expect(FEISHU_MEDIA_CAPABILITIES.source).toBe(
+      "lib/bridge/feishu-adapter.ts#FEISHU_MEDIA_CAPABILITIES",
+    );
+    expect(WECHAT_ILINK_MEDIA_CAPABILITIES.source).toBe(
+      "lib/bridge/wechat-adapter.ts#WECHAT_ILINK_MEDIA_CAPABILITIES",
+    );
+  });
+
   it("validates supported modes, kinds, and reply context requirements", () => {
     expect(() => createMediaCapabilities({
       platform: "demo",

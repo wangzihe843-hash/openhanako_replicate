@@ -82,6 +82,7 @@ export function ChannelRenameOverlay() {
 
   return (
     <Overlay
+      scope="window"
       open={!!targetChannelId}
       onClose={handleClose}
       backdrop="blur"

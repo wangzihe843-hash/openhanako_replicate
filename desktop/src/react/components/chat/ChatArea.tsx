@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../../stores';
 import { ChatMessageSurface, type ChatScrollButtonState } from './ChatMessageSurface';
+import { ChatFindBar } from './ChatFindBar';
 import styles from './Chat.module.css';
 
 const MAX_ALIVE = 5;
@@ -15,6 +16,7 @@ export function ChatArea() {
   return (
     <>
       <PanelHost />
+      <ChatFindBar />
       <ScrollToBottomBtn />
     </>
   );

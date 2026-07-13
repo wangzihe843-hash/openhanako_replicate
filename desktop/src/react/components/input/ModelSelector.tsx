@@ -179,7 +179,6 @@ export function ModelSelector({ models, sessionModel, isStreaming = false }: {
             <ProviderIcon provider={current.provider} className={styles['model-provider-icon']} />
           )}
           <span className={styles['model-pill-label']}>{label}</span>
-          <span className={styles['model-arrow']}>▾</span>
         </>
       )}
       renderGroupHeader={(g) => <ProviderGroupHeader provider={g} />}

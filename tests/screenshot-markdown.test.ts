@@ -56,6 +56,23 @@ describe('screenshot markdown renderer helpers', () => {
     expect(html).toContain('file:///vault/notes/%E6%96%87%E6%9C%AC%E9%99%84%E4%BB%B6/cover.png');
   });
 
+  it('wraps markdown tables for screenshot rendering', () => {
+    const MarkdownIt = require('markdown-it');
+    const { decorateScreenshotMarkdownIt } = require('../desktop/src/shared/screenshot-markdown.cjs');
+    const md = new MarkdownIt();
+    decorateScreenshotMarkdownIt(md);
+
+    const html = md.render([
+      '| 时间 | 处理方式 |',
+      '| --- | --- |',
+      '| 6~10s 连续叙事 | 合并成一个大分镜，内部分镜头一、镜头二 |',
+    ].join('\n'));
+
+    expect(html).toContain('<div class="markdown-table-scroll">');
+    expect(html).toContain('<table>');
+    expect(html).toContain('</table>\n</div>');
+  });
+
   it('keeps screenshot cover bleed as an explicit layout contract', () => {
     const mainSource = fs.readFileSync(path.resolve(__dirname, '../desktop/main.cjs'), 'utf-8');
 

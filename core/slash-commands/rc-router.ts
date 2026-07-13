@@ -1,6 +1,5 @@
 import { collectMediaItems } from "../../lib/tools/media-details.ts";
 import { formatSettingsUpdateText } from "../../lib/tools/settings-update-result.ts";
-import { modelSupportsDirectImageInput } from "../../shared/model-capabilities.ts";
 
 /**
  * rc-router.js — /rc 接管态的消息路由层
@@ -10,7 +9,7 @@ import { modelSupportsDirectImageInput } from "../../shared/model-capabilities.t
  *   1. ensureSessionLoaded 把目标桌面 session 加进 engine 的 session cache
  *   2. 订阅该 session 的流式事件，累积 assistant text delta
  *   3. 通过 onDelta 回调把增量送 bridge adapter（TG 端流式体验）
- *   4. session.prompt(text) 跑完后返回最终文本
+ *   4. engine.promptSession(path, text) 通过统一模型/媒体边界执行并返回最终文本
  *
  * 桌面 UI 侧的流式显示是"免费"的——session 的 message_update 事件会通过
  * engine 的 event bus 广播给前端，前端按 sessionPath 订阅，自然看到消息流式生成。
@@ -34,6 +33,9 @@ import { modelSupportsDirectImageInput } from "../../shared/model-capabilities.t
 export async function promptAttachedDesktopSession(engine, sessionPath, text, opts: { onDelta?: (delta: string, accumulated: string) => void; images?: Array<{type: string, data: string, mimeType: string}> } = {}) {
   if (!engine || typeof engine.ensureSessionLoaded !== "function") {
     throw new Error("rc-router: engine.ensureSessionLoaded unavailable");
+  }
+  if (typeof engine.promptSession !== "function") {
+    throw new Error("rc-router: engine.promptSession unavailable");
   }
 
   const session = await engine.ensureSessionLoaded(sessionPath);
@@ -66,15 +68,11 @@ export async function promptAttachedDesktopSession(engine, sessionPath, text, op
   });
 
   try {
-    // 非 image 模型剥图（防 provider 400；promptSession 内部也会剥，双保险无害）
-    const inputMods = session.model?.input;
-    let promptOpts;
-    if (opts.images?.length && Array.isArray(inputMods) && !modelSupportsDirectImageInput(session.model)) {
-      promptOpts = undefined;
-    } else if (opts.images?.length) {
-      promptOpts = { images: opts.images };
-    }
-    await session.prompt(text, promptOpts);
+    // Route through SessionCoordinator's path-aware request boundary. Besides
+    // owning media preprocessing, it revalidates this long-lived session model
+    // against Hana's current allowlist before any auxiliary/provider request.
+    const promptOpts = opts.images?.length ? { images: opts.images } : undefined;
+    await engine.promptSession(sessionPath, text, promptOpts);
   } finally {
     unsub?.();
   }

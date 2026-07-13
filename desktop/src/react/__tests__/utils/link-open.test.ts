@@ -57,4 +57,23 @@ describe('resolveLinkTarget', () => {
     expect(openBrowserViewer).not.toHaveBeenCalled();
     expect(openExternal).toHaveBeenCalledWith('https://example.com/');
   });
+
+  it('passes the current session path to the internal browser viewer on desktop', async () => {
+    const openBrowserViewer = vi.fn();
+    const openExternal = vi.fn();
+    window.platform = {
+      openBrowserViewer,
+      openExternal,
+    } as unknown as typeof window.platform;
+
+    await openInternalLink('https://example.com/', {
+      sessionPath: '/tmp/hana-session.jsonl',
+    });
+
+    expect(openBrowserViewer).toHaveBeenCalledWith({
+      url: 'https://example.com/',
+      sessionPath: '/tmp/hana-session.jsonl',
+    });
+    expect(openExternal).not.toHaveBeenCalled();
+  });
 });

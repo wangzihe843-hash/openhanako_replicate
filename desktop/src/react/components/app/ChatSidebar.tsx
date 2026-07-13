@@ -1,6 +1,5 @@
 import type { ActivePanel } from '../../types';
 import { useStore } from '../../stores';
-import { useAnyBrowserRunning } from '../../stores/browser-slice';
 import { ChannelListSidebar } from '../channels/ChannelList';
 import { RegionalErrorBoundary } from '../RegionalErrorBoundary';
 import { SessionList } from '../SessionList';
@@ -45,7 +44,6 @@ export function ChatSidebarContent({
   onOpenXingye,
 }: ChatSidebarContentProps) {
   const currentAgentId = useStore(s => s.currentAgentId);
-  const browserRunning = useAnyBrowserRunning();
   const t = window.t ?? ((p: string) => p);
 
   return (
@@ -113,14 +111,6 @@ export function ChatSidebarContent({
               <span>星野</span>
             </button>
           )}
-          <button className={`sidebar-activity-bar browser-bg-bar${browserRunning ? '' : ' hidden'}`} title={t('browser.backgroundHint')} onClick={() => window.platform?.openBrowserViewer?.()}>
-            <svg className="browser-bg-globe" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="2" y1="12" x2="22" y2="12"></line>
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
-            </svg>
-            <span>{t('browser.background')}</span>
-          </button>
         </>
       )}
 

@@ -121,6 +121,24 @@ export const BLOCK_EXTRACTORS = {
     })];
   },
 
+  session: (details) => {
+    if (!details?.suggestionId) return null;
+    if (details.kind !== "session_send_draft" && details.kind !== "session_create_draft") return null;
+    return [{
+      type: "suggestion_card",
+      kind: details.kind,
+      suggestionId: details.suggestionId,
+      status: "pending",
+      title: details.kind === "session_send_draft"
+        ? (details.target?.sessionTitle || details.target?.sessionId || "Session message")
+        : (details.target?.agentName || details.target?.agentId || "New session"),
+      description: details.draft?.message || details.draft?.firstMessage || "",
+      target: details.target || undefined,
+      detail: { kind: details.kind, draft: details.draft || {} },
+      actions: [{ id: "view", kind: "open" }],
+    }];
+  },
+
   subagent: (details) => {
     if (!details.taskId) return null;
     const executor = materializeExecutorIdentity(details, undefined);

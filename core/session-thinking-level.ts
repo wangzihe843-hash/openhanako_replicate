@@ -86,7 +86,9 @@ export function modelSupportsXhigh(model) {
   const id = lower(model?.id);
   const known = lookupKnown(model?.provider, model?.id);
   const explicitLevels = normalizeThinkingLevelChoices(model?.thinkingLevels);
-  return model?.xhigh === true
+  return typeof model?.thinkingLevelMap?.xhigh === "string"
+    || typeof known?.thinkingLevelMap?.xhigh === "string"
+    || model?.xhigh === true
     || explicitLevels?.includes("max")
     || known?.xhigh === true
     || idIncludesAny(id, OPENAI_XHIGH_MODEL_MARKERS)
@@ -102,17 +104,35 @@ export function getModelThinkingLevels(model) {
 }
 
 export function normalizeThinkingLevelForModel(level, model) {
+  if (lower(level) === "auto") {
+    return resolveModelDefaultThinkingLevel(model);
+  }
+  return normalizeCanonicalThinkingLevelForModel(level, model);
+}
+
+function normalizeCanonicalThinkingLevelForModel(level, model) {
   const normalized = normalizeSessionThinkingLevel(level);
+  const explicitLevels = normalizeThinkingLevelChoices(model?.thinkingLevels);
+  if (explicitLevels) {
+    const requestedVisible = visibleThinkingLevel(normalized);
+    if (!requestedVisible || !explicitLevels.includes(requestedVisible)) {
+      const defaultVisible = visibleThinkingLevel(model?.defaultThinkingLevel);
+      if (defaultVisible && explicitLevels.includes(defaultVisible)) return defaultVisible;
+      if (explicitLevels.includes(DEFAULT_SESSION_THINKING_LEVEL)) return DEFAULT_SESSION_THINKING_LEVEL;
+      return explicitLevels[0];
+    }
+  }
   const requestsMax = normalized === "xhigh" || normalized === "max";
   if (requestsMax && !modelSupportsXhigh(model)) return "high";
   return normalized;
 }
 
 export function resolveModelDefaultThinkingLevel(model, fallback = DEFAULT_SESSION_THINKING_LEVEL) {
-  const modelLevel = typeof model?.defaultThinkingLevel === "string"
+  const declaredLevel = typeof model?.defaultThinkingLevel === "string"
+    && lower(model.defaultThinkingLevel) !== "auto"
     ? model.defaultThinkingLevel
     : fallback;
-  return normalizeThinkingLevelForModel(modelLevel, model);
+  return normalizeCanonicalThinkingLevelForModel(declaredLevel, model);
 }
 
 export function resolveThinkingLevelForModel(level, model, resolveThinkingLevel = (value) => value) {

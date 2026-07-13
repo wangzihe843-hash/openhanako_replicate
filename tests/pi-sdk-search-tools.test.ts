@@ -17,7 +17,7 @@ vi.mock("node:child_process", () => ({
   spawnSync,
 }));
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
+vi.mock("@earendil-works/pi-coding-agent", () => ({
   createAgentSession: vi.fn(),
   ModelRegistry: class {},
   SessionManager: class {},
@@ -67,6 +67,9 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   shouldCompact: vi.fn(),
   parseSessionEntries: vi.fn(),
   buildSessionContext: vi.fn(),
+  resizeImage: vi.fn(),
+  formatDimensionNote: vi.fn(),
+  convertToLlm: vi.fn(),
   DEFAULT_MAX_BYTES: 50 * 1024,
   formatSize: (bytes) => `${(bytes / 1024).toFixed(1)}KB`,
   truncateHead: (content) => ({

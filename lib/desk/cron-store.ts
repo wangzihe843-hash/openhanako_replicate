@@ -93,6 +93,11 @@ function repairPersistedEverySchedule(schedule) {
   return { schedule: decoded, repaired: true };
 }
 
+function isValidRunAt(value) {
+  if (typeof value !== "string" || !value.trim()) return false;
+  return Number.isFinite(new Date(value).getTime());
+}
+
 export class CronStore {
   declare _idPrefix: any;
   declare _jobs: any;
@@ -159,6 +164,7 @@ export class CronStore {
 
     // 旧数据清洗
     let dirty = false;
+    const loadTime = new Date().toISOString();
     for (const job of this._jobs) {
       // model 统一规范：默认模型为空串；显式模型保留 {id, provider} 复合键。
       const normalizedModel = normalizeCronModelRef(job.model);
@@ -173,7 +179,7 @@ export class CronStore {
         if (job.schedule !== repaired.schedule) {
           job.schedule = repaired.schedule;
           if (job.enabled !== false && repaired.repaired) {
-            job.nextRunAt = this._calcNextRun(job.type, job.schedule, new Date().toISOString());
+            job.nextRunAt = this._calcNextRun(job.type, job.schedule, loadTime);
           }
           dirty = true;
         }
@@ -189,6 +195,9 @@ export class CronStore {
       dirty = true;
     }
     this._jobs = normalizedJobs;
+    for (const job of this._jobs) {
+      if (this._repairEnabledJobCursor(job, loadTime)) dirty = true;
+    }
 
     if (dirty) {
       this._save();
@@ -326,6 +335,7 @@ export class CronStore {
     this._attachAutomationFields(job, input);
 
     const normalized = normalizeAutomationJob(job);
+    this._repairEnabledJobCursor(normalized, now);
     this._jobs.push(normalized);
     this._save();
     return normalized;
@@ -473,6 +483,7 @@ export class CronStore {
     if ("schedule" in partial || "type" in partial) {
       job.nextRunAt = this._calcNextRun(job.type, job.schedule, new Date().toISOString());
     }
+    this._repairEnabledJobCursor(job, new Date().toISOString());
 
     const normalized = normalizeAutomationJob(job);
     try {
@@ -628,6 +639,16 @@ export class CronStore {
       default:
         return null;
     }
+  }
+
+  _repairEnabledJobCursor(job, fromISO = new Date().toISOString()) {
+    if (!job || job.enabled !== true) return false;
+    if (isValidRunAt(job.nextRunAt)) return false;
+    const nextRunAt = this._calcNextRun(job.type, job.schedule, fromISO);
+    const normalized = isValidRunAt(nextRunAt) ? nextRunAt : null;
+    if (job.nextRunAt === normalized) return false;
+    job.nextRunAt = normalized;
+    return true;
   }
 
   /**

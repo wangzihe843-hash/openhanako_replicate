@@ -7,13 +7,13 @@ import { SelectWidget, type SelectOption } from '@/ui';
 import styles from './InputArea.module.css';
 
 const THINKING_LEVEL_COPY: Record<ThinkingLevel, { label: string; description: string }> = {
-  off: { label: '关闭', description: '不推理' },
-  auto: { label: '中等', description: '平衡推理' },
-  low: { label: '浅思', description: '轻量推理' },
-  medium: { label: '中等', description: '平衡推理' },
-  high: { label: '深度', description: '深度推理' },
-  xhigh: { label: '极致', description: '极致推理' },
-  max: { label: '极致', description: '极致推理' },
+  off: { label: 'Off', description: 'No reasoning' },
+  auto: { label: 'Auto', description: 'Balanced reasoning' },
+  low: { label: 'Light', description: 'Light reasoning' },
+  medium: { label: 'Medium', description: 'Balanced reasoning' },
+  high: { label: 'Deep', description: 'Deep reasoning' },
+  xhigh: { label: 'Max', description: 'Maximum reasoning' },
+  max: { label: 'Max', description: 'Maximum reasoning' },
 };
 
 export function ThinkingLevelButton({ level, onChange, availableLevels }: {

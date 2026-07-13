@@ -74,7 +74,7 @@
     unwatchWorkspace: async () => false,
     onWorkspaceChanged: () => {},
     spawnViewer: async () => null,
-    onViewerLoad: () => {},
+    viewerRequestLoad: async () => null,
     viewerClose: () => {},
     onViewerClosed: () => {},
 
@@ -145,5 +145,22 @@
   if (!p?.getPlatform) return;
   const plat = await p.getPlatform();
   document.documentElement.setAttribute("data-platform", plat);
+  if (plat === "win32") {
+    const scrollIdleTimers = new WeakMap();
+    document.addEventListener("scroll", (event) => {
+      if (document.documentElement.getAttribute("data-platform") !== "win32") return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+
+      target.classList.add("hana-scroll-active");
+      const previousTimer = scrollIdleTimers.get(target);
+      if (previousTimer) clearTimeout(previousTimer);
+      const nextTimer = setTimeout(() => {
+        target.classList.remove("hana-scroll-active");
+        scrollIdleTimers.delete(target);
+      }, 800);
+      scrollIdleTimers.set(target, nextTimer);
+    }, { capture: true, passive: true });
+  }
   // Windows/Linux 窗口控制按钮已迁移到 React (App.tsx WindowControls)
 })();

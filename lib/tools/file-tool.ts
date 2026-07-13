@@ -53,7 +53,8 @@ function toMediaItem(file) {
 function statText(file) {
   const type = file.isDirectory ? "directory" : "file";
   const size = file.size === null || file.size === undefined ? "unknown size" : `${file.size} bytes`;
-  return `File stat: ${file.filename || file.label || file.filePath} (${type}, ${size}, ${file.status || "available"})`;
+  const modified = Number.isFinite(file.mtimeMs) ? new Date(file.mtimeMs).toISOString() : "unknown mtime";
+  return `File stat: ${file.filename || file.label || file.filePath} (${type}, ${size}, modified ${modified}, ${file.status || "available"})`;
 }
 
 function copyText(filePath) {

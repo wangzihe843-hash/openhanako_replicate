@@ -20,6 +20,7 @@ import {
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 const MFJS_PARENT_ANNOTATION_KEYS = new Set(["description", "default"]);
 const ROOT_ANY_OF_ARGUMENT_GUIDANCE_PREFIX = "Arguments must satisfy one of these required field sets:";
+const KIMI_FOR_CODING_UTILITY_TEMPERATURE = 0.6;
 
 export function matches(model) {
   if (!model || typeof model !== "object") return false;
@@ -31,10 +32,28 @@ function isThinkingOff(level) {
   return level === "off" || level === "none" || level === "disabled";
 }
 
-function reasoningEffortForLevel(level) {
-  if (level === "low") return "low";
-  if (level === "medium") return "medium";
-  if (level === "high" || level === "xhigh" || level === "max") return "high";
+function lower(value) {
+  return typeof value === "string" ? value.toLowerCase() : "";
+}
+
+function usesFixedKimiCodingUtilityTemperature(model, options) {
+  return options?.mode === "utility"
+    && lower(model?.provider) === "kimi-coding"
+    && lower(model?.id) === "kimi-for-coding";
+}
+
+function reasoningEffortForLevel(level, model = null) {
+  const normalized = lower(level);
+  const mapKey = normalized === "max" ? "xhigh" : normalized;
+  const levelMap = model?.thinkingLevelMap;
+  if (levelMap && typeof levelMap === "object" && hasOwn(levelMap, mapKey)) {
+    const mapped = levelMap[mapKey];
+    if (mapped === null) return null;
+    if (typeof mapped === "string" && mapped.trim()) return mapped.trim();
+  }
+  if (normalized === "low") return "low";
+  if (normalized === "medium" || normalized === "high") return "high";
+  if (normalized === "xhigh" || normalized === "max") return "max";
   return null;
 }
 
@@ -75,7 +94,7 @@ function shouldEnableThinking(payload, model, options) {
     model?.reasoning === true
     || payload.reasoning_effort
     || payload.thinking
-    || reasoningEffortForLevel(options?.reasoningLevel)
+    || reasoningEffortForLevel(options?.reasoningLevel, model)
   );
 }
 
@@ -242,6 +261,10 @@ export function apply(payload, model, options: Record<string, unknown> = {}) {
     editable().tools = normalizedTools;
   }
 
+  if (usesFixedKimiCodingUtilityTemperature(model, options)) {
+    editable().temperature = KIMI_FOR_CODING_UTILITY_TEMPERATURE;
+  }
+
   if (!Array.isArray(next.messages)) return next;
 
   if (hasOwn(payload, "max_tokens")) {
@@ -258,7 +281,7 @@ export function apply(payload, model, options: Record<string, unknown> = {}) {
   const p = editable();
   p.thinking = normalizeThinking(p.thinking);
 
-  const effort = reasoningEffortForLevel(options?.reasoningLevel);
+  const effort = reasoningEffortForLevel(options?.reasoningLevel, model);
   if (effort) {
     p.reasoning_effort = effort;
   }

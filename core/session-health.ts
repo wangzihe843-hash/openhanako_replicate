@@ -81,7 +81,7 @@ export function evaluateSessionHealth(sessionPath, opts: { lookback?: number; er
 //
 // 这里在 restore 读时检测并删除这些孤儿 toolResult entry，让坏会话不再每次重发都 400。
 // 与 core/provider-compat/tool-pairing.js 的运行时兜底是同一缺口的两端：运行时兜底防
-// 每次出站 payload，读时修复清理已落盘历史（CLAUDE.md「改持久化结构必须迁移老数据」）。
+// 每次出站 payload，读时修复则迁移并清理已经落盘的历史数据，确保老会话也能恢复。
 //
 // 删除条件（build-to-delete）：上游 Pi SDK transform-messages 丢弃 error/aborted
 // assistant 的 tool_calls 时同步删除孤儿 toolResult，届时本修复器与运行时兜底可一并删除。

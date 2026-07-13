@@ -239,7 +239,7 @@ describe("ApprovalGateway", () => {
   });
 
   it("builds a utility-model reviewer that returns a normalized JSON decision", async () => {
-    const resolveUtilityConfig = vi.fn(() => ({
+    const resolveUtilityConfig = vi.fn(async () => ({
       utility: { id: "small-reviewer", provider: "test" },
       api: "openai-completions",
       api_key: "test-key",
@@ -279,5 +279,16 @@ describe("ApprovalGateway", () => {
       reason: "workspace edit matches the user request",
       risk: "low",
     });
+  });
+
+  it("does not call the reviewer network boundary when fresh utility resolution fails", async () => {
+    const callText = vi.fn();
+    const reviewer = createModelApprovalReviewer({
+      resolveUtilityConfig: vi.fn(async () => { throw new Error("oauth refresh failed"); }),
+      callText,
+    });
+
+    await expect(reviewer({ request: request() })).rejects.toThrow("oauth refresh failed");
+    expect(callText).not.toHaveBeenCalled();
   });
 });

@@ -1,0 +1,797 @@
+{
+  "schema": 2,
+  "entries": [
+    {
+      "schemaVersion": 1,
+      "tag": "v0.391.2",
+      "version": "0.391.2",
+      "previousTag": "v0.390.0",
+      "generatedAt": "2026-07-12T06:00:00.000Z",
+      "noUserFacingChanges": false,
+      "summary": {
+        "zh": "本版把自动更新做得更稳、更可感知：Mac 上热更新后服务端不再因签名缺 JIT 权限而启动即崩；检查更新会并行比对产地与镜像并拒绝通道不符的清单；货架内容比本机更旧时不再当成可更新；连续启动失败回退时会明确提示；记忆提醒也只送达所属 Agent 的会话。",
+        "en": "This release makes updates more reliable and visible: macOS hot updates no longer crash the server at launch due to missing JIT entitlements; update checks compare the origin and mirror in parallel and reject channel-mismatched manifests; older shelf content is no longer offered as an update; crash fallbacks surface a clear notice; and memory reminders only reach sessions owned by the source Agent."
+      },
+      "counts": {
+        "feature": 1,
+        "fix": 4,
+        "improvement": 0,
+        "migration": 0
+      },
+      "source": {
+        "owner": "liliMozi",
+        "repo": "openhanako",
+        "commitRange": "v0.390.0..v0.391.2",
+        "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.391.2",
+        "releaseNotes": ""
+      },
+      "items": [
+        {
+          "id": "crash-fallback-user-notice",
+          "kind": "feature",
+          "importance": "high",
+          "title": {
+            "zh": "崩溃回退后明确提示",
+            "en": "Clear notice after a crash fallback"
+          },
+          "summary": {
+            "zh": "连续启动失败触发自动回退时，侧栏会展示一次性提示，说明哪个版本出了问题、已退回哪个版本，以及问题版本已隔离不会自动重试。",
+            "en": "When repeated launch failures trigger an automatic rollback, the sidebar shows a one-time notice explaining which version failed, which version was restored, and that the bad version is quarantined from automatic retry."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "367dd3b22",
+              "title": "feat(update): 崩溃回退后向用户明确提示"
+            }
+          ]
+        },
+        {
+          "id": "macos-server-jit-entitlement",
+          "kind": "fix",
+          "importance": "high",
+          "title": {
+            "zh": "修复 Mac 热更新服务端启动即崩",
+            "en": "Fix macOS hot-update server crashing on launch"
+          },
+          "summary": {
+            "zh": "箱内 Node 在正式签名时会附带 JIT 权限，并在装箱前做一次启动烟测，避免缺少可执行内存权限导致热更新后服务端立刻崩溃。",
+            "en": "The bundled Node binary now receives JIT entitlements during Developer ID signing, with a pre-pack launch smoke test so a missing executable-memory entitlement can no longer crash the server right after a hot update."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "fc5d17360",
+              "title": "fix(build): macOS server 箱内 node 缺 JIT entitlement 导致启动即崩"
+            }
+          ]
+        },
+        {
+          "id": "dual-source-channel-manifest-checks",
+          "kind": "fix",
+          "importance": "high",
+          "title": {
+            "zh": "更新清单双源比对与通道校验",
+            "en": "Dual-source update manifests with channel checks"
+          },
+          "summary": {
+            "zh": "检查更新会并行请求 GitHub 与 AtomGit，两边独立验签后采信车号更新的一方；清单自述通道与请求通道不符时直接拒绝，避免镜像滞后或错通道清单被照单全收。",
+            "en": "Update checks now query GitHub and AtomGit in parallel, independently verify signatures, and prefer the newer train. Manifests whose declared channel does not match the requested channel are rejected instead of being accepted blindly."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "7213d3494",
+              "title": "fix(update): 校验清单通道归属，清单获取改为双源并行、采信车号更新的一方"
+            }
+          ]
+        },
+        {
+          "id": "reject-older-shelf-content",
+          "kind": "fix",
+          "importance": "medium",
+          "title": {
+            "zh": "更旧的货架内容不再当成更新",
+            "en": "Older shelf content is no longer treated as an update"
+          },
+          "summary": {
+            "zh": "当货架内容版本低于本机已激活版本时，检查与下载都会视为已是最新，避免把实际上更旧的列车当成可更新并造成误降级。",
+            "en": "If shelf content is older than the locally active version, both check and download now treat the install as current, preventing an older train from being offered as an update and applied as a downgrade."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "82330a386",
+              "title": "fix(update): 货架内容版本低于本机时不再被当作可用更新"
+            }
+          ]
+        },
+        {
+          "id": "memory-reminder-agent-scope",
+          "kind": "fix",
+          "importance": "medium",
+          "title": {
+            "zh": "记忆提醒只送达所属 Agent",
+            "en": "Memory reminders stay on the owning Agent"
+          },
+          "summary": {
+            "zh": "记忆事实变更现在只注入来源 Agent 自己的会话，不再广播到其它 Agent 的会话。",
+            "en": "Memory fact changes are now injected only into sessions owned by the source Agent, instead of being broadcast to every Agent's sessions."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "33af92e1b",
+              "title": "fix(reminder): scope memory facts to owning agent"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "tag": "v0.390.0",
+      "version": "0.390.0",
+      "previousTag": "v0.389.0",
+      "generatedAt": "2026-07-12T03:07:07.000Z",
+      "noUserFacingChanges": false,
+      "summary": {
+        "zh": "Hana 现在能更准确地判断组件更新：同版本内容不再误报为新更新，需要新版应用本体的组件也会在下载前明确拦截并提示升级。本版同时统一四个平台使用的界面更新归档，减少同版本内容不一致。",
+        "en": "Hana now evaluates component updates more accurately: same-version content is no longer reported as a new update, while components that require a newer app shell are blocked before download with a clear upgrade prompt. This release also uses one shared renderer update archive across all four platforms to prevent same-version content drift."
+      },
+      "counts": {
+        "feature": 1,
+        "fix": 1,
+        "improvement": 0,
+        "migration": 0
+      },
+      "source": {
+        "owner": "liliMozi",
+        "repo": "openhanako",
+        "commitRange": "v0.389.0..v0.390.0",
+        "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.390.0",
+        "releaseNotes": ""
+      },
+      "items": [
+        {
+          "id": "same-version-update-detection",
+          "kind": "fix",
+          "importance": "high",
+          "title": {
+            "zh": "同版本不再误报更新",
+            "en": "Same-version content no longer appears as an update"
+          },
+          "summary": {
+            "zh": "当本地已激活内容与更新列车版本相同时，Hana 会直接判定为已是最新，不再提示一个无法应用的重复更新。四个平台现在复用同一份界面归档，从源头避免同版本归档因构建时间不同而产生哈希漂移。",
+            "en": "When the active local content already matches the update train version, Hana now treats it as current instead of offering a duplicate update that cannot be applied. All four platforms also reuse the same renderer archive, preventing build-time metadata from producing different hashes for the same version."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "e10c8afcf",
+              "title": "fix(update): 检查更新对同版本列车误报\"有新版本可用\""
+            },
+            {
+              "type": "commit",
+              "ref": "23acede2f",
+              "title": "feat(build): renderer 热更新归档改为 CI 单点构建、四平台复用同一份"
+            }
+          ]
+        },
+        {
+          "id": "component-update-contract-gates",
+          "kind": "feature",
+          "importance": "high",
+          "title": {
+            "zh": "不兼容的组件更新会提前拦截",
+            "en": "Incompatible component updates are blocked early"
+          },
+          "summary": {
+            "zh": "组件更新现在会实际检查所需的界面 API 与服务协议版本；如果当前应用本体太旧，检查和下载入口都会停止，并沿用明确的“需要更新应用本体”提示，避免下载后才失败。",
+            "en": "Component updates now enforce their required interface API and server protocol versions. If the installed app shell is too old, both update checks and downloads stop with the existing clear prompt to update the app itself, avoiding a failure after download."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "9b2a6578f",
+              "title": "feat(update): 更新契约版本落地为真实门禁与握手"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "tag": "v0.389.0",
+      "version": "0.389.0",
+      "previousTag": "v0.386.6",
+      "generatedAt": "2026-07-11T21:30:47.000Z",
+      "noUserFacingChanges": false,
+      "summary": {
+        "zh": "Hana 的组件更新现在完全由用户触发：后台只检查，不会静默下载或改写本地文件；发现更新后，用户可以从更新卡片或关于页开始下载并查看进度。本版同时保护正在使用的版本目录，并改善 Windows 滚动条体验。",
+        "en": "Hana's component updates are now fully user-initiated: background checks no longer download or modify local files, and users can start an available update from the update card or About page while following its progress. This release also protects the active version directory and improves Windows scrollbars."
+      },
+      "counts": {
+        "feature": 1,
+        "fix": 2,
+        "improvement": 1,
+        "migration": 0
+      },
+      "source": {
+        "owner": "liliMozi",
+        "repo": "openhanako",
+        "commitRange": "v0.386.6..v0.389.0",
+        "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.389.0",
+        "releaseNotes": ""
+      },
+      "items": [
+        {
+          "id": "user-initiated-component-updates",
+          "kind": "feature",
+          "importance": "high",
+          "title": {
+            "zh": "组件更新由用户决定何时开始",
+            "en": "Users decide when component updates begin"
+          },
+          "summary": {
+            "zh": "后台和手动检查只确认是否有新内容，不再静默下载或应用；发现更新后，可从更新卡片或关于页主动开始下载，并查看下载、校验和应用进度。",
+            "en": "Background and manual checks now only detect new content instead of silently downloading or applying it. When an update is available, users can start it from the update card or About page and follow download, verification, and application progress."
+          },
+          "details": [
+            {
+              "zh": "重复发布相同内容时会识别为已是最新，临时的 304 响应也不会清掉上一轮记录的更新或错误状态。",
+              "en": "Re-published identical content is recognized as already current, while a temporary 304 response no longer clears the previously recorded update or error state."
+            }
+          ],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "074584a22",
+              "title": "feat(update): 自动更新只检查不下载，下载与应用改为用户点击触发"
+            },
+            {
+              "type": "commit",
+              "ref": "v0.389.0",
+              "title": "feat(update): 更新卡片按内容更新语义呈现，版本显示统一到已激活内容"
+            }
+          ]
+        },
+        {
+          "id": "atomic-protected-update-activation",
+          "kind": "fix",
+          "importance": "high",
+          "title": {
+            "zh": "更新不再破坏正在使用的版本",
+            "en": "Updates no longer damage the active version"
+          },
+          "summary": {
+            "zh": "新内容会先在临时目录中完整解压并校验，再原子替换旧目录；仍被任一更新通道引用的版本目录会受到保护，失败时保留原有可用内容。",
+            "en": "New content is now fully extracted and verified in a temporary directory before atomically replacing the old one. Version directories still referenced by any update channel are protected, preserving the working installation when activation fails."
+          },
+          "details": [
+            {
+              "zh": "如果新列车复用相同目录名且内容一致，Hana 会直接沿用现有目录；内容不一致时会明确拒绝覆盖。",
+              "en": "If a new train reuses the same directory name with identical content, Hana reuses the existing directory; conflicting content is rejected instead of overwriting it."
+            }
+          ],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "2d765fc88",
+              "title": "fix(update): stop deleting the live version dir before the new one is ready"
+            }
+          ]
+        },
+        {
+          "id": "active-content-version-display",
+          "kind": "fix",
+          "importance": "medium",
+          "title": {
+            "zh": "版本显示与当前内容保持一致",
+            "en": "Displayed versions match the active content"
+          },
+          "summary": {
+            "zh": "更新卡片、关于页和升级公告现在统一显示当前已激活内容的版本，避免应用外壳版本与实际界面、服务内容不一致。",
+            "en": "The update card, About page, and post-update announcement now consistently show the active content version, avoiding mismatches between the application shell and the interface or server content in use."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "v0.389.0",
+              "title": "feat(update): 更新卡片按内容更新语义呈现，版本显示统一到已激活内容"
+            }
+          ]
+        },
+        {
+          "id": "windows-scrollbar-polish",
+          "kind": "improvement",
+          "importance": "medium",
+          "title": {
+            "zh": "Windows 滚动条更安静",
+            "en": "Quieter Windows scrollbars"
+          },
+          "summary": {
+            "zh": "Windows 滚动条在停止滚动后自动隐藏，并移除原生箭头按钮，让桌面界面更简洁；macOS、Linux 与网页版行为不变。",
+            "en": "Windows scrollbar thumbs now hide after scrolling stops, and native arrow buttons have been removed for a cleaner desktop interface. macOS, Linux, and web behavior is unchanged."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "ab70ee510",
+              "title": "feat(ui): auto-hide Windows scrollbars while idle"
+            },
+            {
+              "type": "commit",
+              "ref": "437230181",
+              "title": "fix(ui): remove Windows scrollbar arrow buttons"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "tag": "v0.386.6",
+      "version": "0.386.6",
+      "previousTag": "v0.386.5",
+      "generatedAt": "2026-07-11T15:05:00.000Z",
+      "noUserFacingChanges": false,
+      "summary": {
+        "zh": "修复组件热更新的壳版本门槛：新发布的更新列车不再要求壳版本与列车版本完全一致，已安装的客户端可以继续接收组件更新。",
+        "en": "Fixes the shell-version floor for component updates so new update trains no longer require the shell version to match the train version exactly, allowing already-installed clients to keep receiving component updates."
+      },
+      "counts": {
+        "feature": 0,
+        "fix": 1,
+        "improvement": 0,
+        "migration": 0
+      },
+      "source": {
+        "owner": "liliMozi",
+        "repo": "openhanako",
+        "commitRange": "v0.386.5..d7d48c2cc",
+        "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.386.6",
+        "releaseNotes": ""
+      },
+      "items": [
+        {
+          "id": "train-min-shell-compat-floor",
+          "kind": "fix",
+          "importance": "high",
+          "title": {
+            "zh": "热更新列车使用固定的壳兼容地板",
+            "en": "Update trains use a fixed shell compatibility floor"
+          },
+          "summary": {
+            "zh": "发布热更新列车时，最低壳版本改为手动维护的兼容地板，而不再等于本班列车版本号，避免每一班新列车把存量客户端挡在门外。",
+            "en": "When publishing update trains, the minimum shell version is now a manually maintained compatibility floor instead of the train version itself, so each new train no longer blocks existing clients."
+          },
+          "details": [
+            {
+              "zh": "当前兼容地板为 0.386.5，与现网列车一致；只有列车开始依赖更老壳无法运行的新能力时才需要抬高。",
+              "en": "The current floor is 0.386.5, matching the live train; raise it only when train contents start depending on capabilities older shells cannot run."
+            }
+          ],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "d7d48c2cc",
+              "title": "fix(release): use a fixed shell compatibility floor for train manifests"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "tag": "v0.386.5",
+      "version": "0.386.5",
+      "previousTag": "v0.385.11",
+      "generatedAt": "2026-07-11T13:16:00.000Z",
+      "noUserFacingChanges": false,
+      "summary": {
+        "zh": "Hana 的组件热更新现在拥有完整的签名发布链路，已安装客户端可以安全接收服务端与界面更新。本次版本同时修复了 Windows 安装校验与更新历史弹窗的显示问题。",
+        "en": "Hana now has a complete signed publishing pipeline for component updates, allowing installed clients to safely receive server and renderer updates. This release also fixes Windows installation checks and update-history dialog scrolling."
+      },
+      "counts": {
+        "feature": 1,
+        "fix": 2,
+        "improvement": 0,
+        "migration": 0
+      },
+      "source": {
+        "owner": "liliMozi",
+        "repo": "openhanako",
+        "commitRange": "v0.385.11..e837e3ac1",
+        "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.386.5",
+        "releaseNotes": ""
+      },
+      "items": [
+        {
+          "id": "signed-hot-update-publishing",
+          "kind": "feature",
+          "importance": "high",
+          "title": {
+            "zh": "签名组件更新可以正式发布",
+            "en": "Signed component updates can now be published"
+          },
+          "summary": {
+            "zh": "正式版本会同时发布服务端与界面组件归档，并生成带签名、可续做的稳定版与测试版更新列车，让已安装客户端能够安全发现和下载组件更新。",
+            "en": "Each release now publishes server and renderer archives and produces signed, resumable update trains for stable and beta channels, so installed clients can safely discover and download component updates."
+          },
+          "details": [
+            {
+              "zh": "发布任务中断后可以从已有资产继续，不会重复或倒退更新序号。",
+              "en": "Interrupted publishing can resume from existing assets without duplicating or rolling back update sequence numbers."
+            },
+            {
+              "zh": "读取远端发布状态失败时会明确中止，避免把网络或权限故障误判为首次发布。",
+              "en": "Failures while reading remote release state now stop explicitly instead of being mistaken for a first publication."
+            }
+          ],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "1c8762d9f",
+              "title": "feat(release): add hot-update train publishing pipeline"
+            },
+            {
+              "type": "commit",
+              "ref": "def20a07c",
+              "title": "fix(release): only treat gh's missing-release error as release-absent"
+            }
+          ]
+        },
+        {
+          "id": "windows-seed-install-integrity",
+          "kind": "fix",
+          "importance": "high",
+          "title": {
+            "zh": "Windows 安装校验适配新的组件归档",
+            "en": "Windows installation checks support the new component archives"
+          },
+          "summary": {
+            "zh": "Windows 安装器和启动前检查现在验证新的签名 seed 归档，不再因寻找已淘汰的散装服务端文件而错误判定安装损坏。",
+            "en": "The Windows installer and pre-launch checks now validate the new signed seed archives instead of incorrectly reporting corruption while looking for retired loose server files."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "21752a0d8",
+              "title": "fix(windows): install integrity checks use the seed archive layout"
+            }
+          ]
+        },
+        {
+          "id": "settings-update-history-scroll",
+          "kind": "fix",
+          "importance": "medium",
+          "title": {
+            "zh": "更新历史保持在设置窗口内滚动",
+            "en": "Update history scrolls correctly inside Settings"
+          },
+          "summary": {
+            "zh": "更新历史弹窗会限制在设置面板的可见高度内，较长的版本记录可以在弹窗内部平稳滚动。",
+            "en": "The update-history dialog now stays within the visible Settings panel and scrolls long release histories inside the dialog."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "3edd650fd",
+              "title": "fix(settings): constrain update history to settings panel"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "tag": "v0.385.11",
+      "version": "0.385.11",
+      "previousTag": "v0.380.10",
+      "generatedAt": "2026-07-11T10:53:36.000Z",
+      "noUserFacingChanges": false,
+      "summary": {
+        "zh": "Hana 现在可以在后台安全准备并原地应用组件更新，同时在异常时自动回退或一键修复。设置页布局、更新历史和新会话输入也得到了一轮系统性整理。",
+        "en": "Hana can now safely stage component updates in the background and apply them in place, with automatic rollback and one-click repair when needed. This release also brings a systematic cleanup to Settings, update history, and new-session composing."
+      },
+      "counts": {
+        "feature": 3,
+        "fix": 2,
+        "improvement": 3,
+        "migration": 0
+      },
+      "source": {
+        "owner": "liliMozi",
+        "repo": "openhanako",
+        "commitRange": "v0.380.10..a9df4e87e",
+        "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.385.11",
+        "releaseNotes": ""
+      },
+      "items": [
+        {
+          "id": "signed-component-trains",
+          "kind": "feature",
+          "importance": "high",
+          "title": {
+            "zh": "组件更新可以后台准备、原地应用",
+            "en": "Component updates stage quietly and apply in place"
+          },
+          "summary": {
+            "zh": "服务端与界面组件会作为同一份签名更新一起校验和准备，完成后可直接刷新应用，不再让每次组件升级都变成完整安装。",
+            "en": "Server and renderer components are verified and staged as one signed update, then applied with an in-place refresh instead of turning every component upgrade into a full reinstall."
+          },
+          "details": [
+            {
+              "zh": "后台检查只会在完整下载并验证两类组件后，才把更新标记为可应用。",
+              "en": "An update becomes available only after both component sets are fully downloaded and verified."
+            },
+            {
+              "zh": "设置页与侧栏贴纸共享同一套更新状态，稳定版和测试版通道也会保持一致。",
+              "en": "Settings and the sidebar sticker share one update state, with stable and beta channels kept in sync."
+            }
+          ],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "a9df4e87e",
+              "title": "feat(runtime): ship signed artifact trains and unify settings"
+            }
+          ]
+        },
+        {
+          "id": "component-rollback-repair",
+          "kind": "feature",
+          "importance": "high",
+          "title": {
+            "zh": "更新异常时自动回退，也可手动修复组件",
+            "en": "Automatic rollback and manual component repair"
+          },
+          "summary": {
+            "zh": "如果新组件连续启动失败，Hana 会隔离问题版本并回到上一份可用版本；托盘菜单和启动参数也提供了清理并重建组件的修复入口。",
+            "en": "If new components repeatedly fail to start, Hana quarantines the bad version and returns to the previous working set. A repair action is also available from the tray and command line."
+          },
+          "details": [
+            {
+              "zh": "服务端与界面启动都纳入崩溃计数和回退保护。",
+              "en": "Both server and renderer startup are covered by crash counting and rollback protection."
+            },
+            {
+              "zh": "组件清理只回收不再被任何更新通道引用的旧版本。",
+              "en": "Cleanup removes only old component versions that are no longer referenced by any update channel."
+            }
+          ],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "a9df4e87e",
+              "title": "feat(runtime): ship signed artifact trains and unify settings"
+            }
+          ]
+        },
+        {
+          "id": "release-history-anthology",
+          "kind": "feature",
+          "importance": "medium",
+          "title": {
+            "zh": "更新历史与跨版本公告集中呈现",
+            "en": "A clearer update history across releases"
+          },
+          "summary": {
+            "zh": "“关于”页面现在可以查看最近五个正式版本的双语更新内容；跨过多个版本升级时，首启公告也会合并展示所有尚未读过的摘要。",
+            "en": "The About page now shows bilingual notes for the five newest published releases, while first-launch announcements collect every unread digest when an upgrade spans multiple versions."
+          },
+          "details": [
+            {
+              "zh": "在线历史读取失败时，会明确回退到安装包内附带的离线历史。",
+              "en": "If online history is unavailable, Hana clearly falls back to the offline history bundled with the app."
+            }
+          ],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "a9df4e87e",
+              "title": "feat(runtime): ship signed artifact trains and unify settings"
+            }
+          ]
+        },
+        {
+          "id": "atomgit-first-update-source",
+          "kind": "improvement",
+          "importance": "medium",
+          "title": {
+            "zh": "国内更新检查优先走加速源",
+            "en": "Faster update checks for users in China"
+          },
+          "summary": {
+            "zh": "组件更新会优先尝试国内镜像，并在不可用时自动回到 GitHub；切换稳定版或测试版后，下载、激活和回退都会使用同一通道。",
+            "en": "Component updates try the domestic mirror first and automatically fall back to GitHub. Stable and beta selection now stays consistent across download, activation, and rollback."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "a9df4e87e",
+              "title": "feat(runtime): ship signed artifact trains and unify settings"
+            }
+          ]
+        },
+        {
+          "id": "settings-layout-primitives",
+          "kind": "improvement",
+          "importance": "high",
+          "title": {
+            "zh": "设置窗口和同类组件统一到一套布局纪律",
+            "en": "Settings now follows one consistent layout system"
+          },
+          "summary": {
+            "zh": "设置弹窗固定为 884px 外壳，不再随标签页内容改变宽度；卡片、行、开关和分区改用共享原语排列，同时保留原有视觉风格。",
+            "en": "The Settings window now keeps a fixed 884px shell instead of changing width between tabs. Cards, rows, toggles, and sections share consistent primitives while preserving the existing visual style."
+          },
+          "details": [
+            {
+              "zh": "浏览器、界面、Agent、媒体等标签页使用同一内容轨道和间距规则。",
+              "en": "Browser, Interface, Agent, Media, and other tabs now use the same content track and spacing rules."
+            },
+            {
+              "zh": "同类控件的标签、说明文字和右侧操作保持稳定对齐。",
+              "en": "Labels, descriptions, and trailing actions now align consistently across controls of the same type."
+            }
+          ],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "a9df4e87e",
+              "title": "feat(runtime): ship signed artifact trains and unify settings"
+            }
+          ]
+        },
+        {
+          "id": "pending-session-composer",
+          "kind": "fix",
+          "importance": "high",
+          "title": {
+            "zh": "新会话草稿、Skill 徽章和发送状态保持一致",
+            "en": "New-session drafts, skill badges, and send state stay in sync"
+          },
+          "summary": {
+            "zh": "欢迎页和待创建会话现在都有稳定的草稿身份；恢复草稿或插入 Skill 徽章后，编辑器、发送按钮与实际提交使用同一份内容判断。",
+            "en": "Welcome and pending sessions now have stable draft identities. After restoring a draft or inserting a skill badge, the editor, send button, and submit path use the same content decision."
+          },
+          "details": [
+            {
+              "zh": "纯 Skill 徽章消息不再被当作空消息静默丢弃。",
+              "en": "Skill-badge-only messages are no longer silently treated as empty."
+            },
+            {
+              "zh": "待创建会话发送失败会显示明确提示，而不是没有反应。",
+              "en": "A failed send from a pending session now shows an explicit error instead of doing nothing."
+            }
+          ],
+          "sources": [
+            {
+              "type": "issue",
+              "ref": "#2101",
+              "title": "Pending session and composer consistency"
+            },
+            {
+              "type": "commit",
+              "ref": "a9df4e87e",
+              "title": "feat(runtime): ship signed artifact trains and unify settings"
+            }
+          ]
+        },
+        {
+          "id": "cross-channel-component-gc",
+          "kind": "fix",
+          "importance": "high",
+          "title": {
+            "zh": "测试版通道不再误删刚激活的组件",
+            "en": "Beta updates no longer delete newly activated components"
+          },
+          "summary": {
+            "zh": "组件清理现在会同时保护所有通道正在引用的版本，修复了切换到测试版后，首启可能误删新组件并导致启动失败的问题。",
+            "en": "Component cleanup now protects versions referenced by every channel, fixing a beta-channel first-launch failure where newly activated components could be removed by mistake."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "a9df4e87e",
+              "title": "feat(runtime): ship signed artifact trains and unify settings"
+            }
+          ]
+        },
+        {
+          "id": "first-run-preparation-splash",
+          "kind": "improvement",
+          "importance": "medium",
+          "title": {
+            "zh": "首次启动准备过程更清楚",
+            "en": "Clearer first-run preparation"
+          },
+          "summary": {
+            "zh": "首次安装需要解压和验证组件时，独立启动页会持续显示“准备新家”状态，不再依赖尚未准备完成的主界面资源。",
+            "en": "While a fresh install extracts and verifies its components, a standalone splash screen keeps showing the preparation state without depending on renderer assets that are not ready yet."
+          },
+          "details": [],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "a9df4e87e",
+              "title": "feat(runtime): ship signed artifact trains and unify settings"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "tag": "v0.380.10",
+      "version": "0.380.10",
+      "previousTag": "v0.380.9",
+      "generatedAt": "2026-07-11T00:31:45.000Z",
+      "noUserFacingChanges": false,
+      "summary": {
+        "zh": "手动压缩上下文改为按会话身份定位，并明确反馈成功、无需压缩或失败结果。",
+        "en": "Manual context compaction now targets sessions by ID and clearly reports accepted, noop, or failed outcomes."
+      },
+      "counts": {
+        "feature": 0,
+        "fix": 1,
+        "improvement": 0,
+        "migration": 0
+      },
+      "source": {
+        "owner": "liliMozi",
+        "repo": "openhanako",
+        "commitRange": "v0.380.9..b32b5415b",
+        "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.380.10",
+        "releaseNotes": ""
+      },
+      "items": [
+        {
+          "id": "manual-compaction-session-id",
+          "kind": "fix",
+          "importance": "high",
+          "title": {
+            "zh": "手动压缩按会话 ID 生效",
+            "en": "Manual compaction is session-ID authoritative"
+          },
+          "summary": {
+            "zh": "手动压缩会准确作用在当前会话，并给出成功、无需压缩或失败的明确反馈，不再静默按路径猜测。",
+            "en": "Manual compaction now hits the focused session reliably and surfaces accepted, noop, or failure feedback instead of silent path-based guesses."
+          },
+          "details": [
+            {
+              "zh": "桌面与移动端手动压缩均改为以会话 ID 为准。",
+              "en": "Desktop and mobile manual compaction both resolve targets by session ID."
+            },
+            {
+              "zh": "旧的路径寻址仍在协议边界兼容转换，但结果会明确回传。",
+              "en": "Legacy path addressing remains converted at the protocol boundary, with explicit terminal outcomes."
+            }
+          ],
+          "sources": [
+            {
+              "type": "commit",
+              "ref": "b32b5415b",
+              "title": "fix: make manual compaction session-id authoritative"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

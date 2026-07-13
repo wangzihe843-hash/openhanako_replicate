@@ -44,7 +44,7 @@ export const TELEGRAM_MEDIA_CAPABILITIES = createMediaCapabilities({
       document: 20 * 1024 * 1024,
     },
   },
-  source: "docs/BRIDGE-MEDIA-CAPABILITIES.md#telegram",
+  source: "lib/bridge/telegram-adapter.ts#TELEGRAM_MEDIA_CAPABILITIES",
 });
 
 export const TELEGRAM_STREAMING_CAPABILITIES = createStreamingCapabilities({
@@ -89,6 +89,18 @@ function telegramMessageOptions(options: Record<string, any> = {}, format = "pla
   return Object.keys(result).length ? result : undefined;
 }
 
+function cleanTelegramString(value) {
+  const text = value == null ? "" : String(value).trim();
+  return text || null;
+}
+
+function telegramDisplayName(user: Record<string, any> = {}) {
+  const fullName = [cleanTelegramString(user.first_name), cleanTelegramString(user.last_name)]
+    .filter(Boolean)
+    .join(" ");
+  return fullName || (cleanTelegramString(user.username) ? `@${cleanTelegramString(user.username)}` : null);
+}
+
 /**
  * @param {object} opts
  * @param {string} opts.token - Telegram Bot Token（从 @BotFather 获取）
@@ -101,6 +113,31 @@ export function createTelegramAdapter({ token, agentId, onMessage, onStatus }) {
   let stopped = false;
   let consecutiveErrors = 0;
   let restartTimer = null;
+  const userProfileCache = new Map();
+
+  async function resolveUserProfile(user: Record<string, any> = {}) {
+    const userId = cleanTelegramString(user.id);
+    const cached = userId ? userProfileCache.get(userId) : null;
+    const displayName = telegramDisplayName(user) || cached?.displayName || "User";
+    let avatarUrl = cached?.avatarUrl || null;
+
+    if (userId && !avatarUrl && typeof bot.getUserProfilePhotos === "function") {
+      try {
+        const photos = await bot.getUserProfilePhotos(user.id, { limit: 1 });
+        const sizes = photos?.photos?.[0] || [];
+        const best = sizes[sizes.length - 1];
+        if (best?.file_id && typeof bot.getFileLink === "function") {
+          avatarUrl = await bot.getFileLink(best.file_id);
+        }
+      } catch {
+        avatarUrl = cached?.avatarUrl || null;
+      }
+    }
+
+    const profile = { principalId: userId, displayName, avatarUrl };
+    if (userId) userProfileCache.set(userId, profile);
+    return profile;
+  }
 
   function attachListeners(b) {
     b.on("message", async (msg) => {
@@ -155,8 +192,9 @@ export function createTelegramAdapter({ token, agentId, onMessage, onStatus }) {
         ? (log.warn(`消息过大（${text.length} chars），已截断`), text.slice(0, MAX_MSG_SIZE))
         : text;
 
+      const profile = await resolveUserProfile(msg.from || {});
       const chatId = String(msg.chat.id);
-      const userId = String(msg.from.id);
+      const userId = profile.principalId || String(msg.from?.id || msg.chat.id);
       const chatType = msg.chat.type; // "private" | "group" | "supergroup" | "channel"
       const isGroup = chatType !== "private";
       const sessionKey = isGroup ? `tg_group_${chatId}@${agentId}` : `tg_dm_${userId}@${agentId}`;
@@ -168,7 +206,10 @@ export function createTelegramAdapter({ token, agentId, onMessage, onStatus }) {
         userId,
         sessionKey,
         text: trimmed,
-        senderName: msg.from.first_name || "User",
+        senderName: profile.displayName,
+        displayName: profile.displayName,
+        avatarUrl: profile.avatarUrl || undefined,
+        principalId: profile.principalId || userId,
         isGroup,
         messageThreadId: msg.message_thread_id,
         attachments: attachments.length ? attachments : undefined,

@@ -12,18 +12,18 @@ export const PI_BUILTIN_TOOL_NAMES = Object.freeze([
 ]);
 
 function readPiCodingAgentVersion() {
-  let dir = new URL("./", import.meta.resolve("@mariozechner/pi-coding-agent"));
+  let dir = new URL("./", import.meta.resolve("@earendil-works/pi-coding-agent"));
   while (dir.href !== new URL("../", dir).href) {
     const pkgUrl = new URL("package.json", dir);
     if (fs.existsSync(pkgUrl)) {
       const pkg = JSON.parse(fs.readFileSync(pkgUrl, "utf8"));
-      if (pkg.name === "@mariozechner/pi-coding-agent" && typeof pkg.version === "string") {
+      if (pkg.name === "@earendil-works/pi-coding-agent" && typeof pkg.version === "string") {
         return pkg.version;
       }
     }
     dir = new URL("../", dir);
   }
-  throw new Error("Unable to resolve @mariozechner/pi-coding-agent package version");
+  throw new Error("Unable to resolve @earendil-works/pi-coding-agent package version");
 }
 
 export const PI_CODING_AGENT_VERSION = readPiCodingAgentVersion();
@@ -35,7 +35,7 @@ export function getPiCodingAgentVersion() {
 export function isPiSdkNameAllowlistVersion(version = getPiCodingAgentVersion()) {
   const [major, minor] = String(version).split(".").map(part => Number.parseInt(part, 10));
   if (!Number.isFinite(major) || !Number.isFinite(minor)) {
-    throw new Error(`Unsupported @mariozechner/pi-coding-agent version: ${version}`);
+    throw new Error(`Unsupported @earendil-works/pi-coding-agent version: ${version}`);
   }
   return major > 0 || (major === 0 && minor >= 68);
 }

@@ -8,6 +8,11 @@ import { useStore } from '../../stores';
 import { MobileApp } from '../../mobile/MobileApp';
 import { installMobilePlatform } from '../../mobile/mobile-platform';
 import registry from '../../../shared/theme-registry';
+// 预热 LazyWorkspaceCompanionRail 的模块树：它在用例中途才被动态 import，全量并行
+// 时 transform 队列冷且拥堵，加载耗时会吃穿 findBy 的 1s 预算（desktop-input-area
+// 用例偶发超时的主因）。静态引入把加载成本移到文件收集期，React.lazy 届时从模块
+// 缓存瞬时解析。
+import '../../components/app/WorkspaceCompanionRail';
 
 vi.mock('../../components/InputArea', async () => {
   const ReactModule = await import('react');
@@ -57,6 +62,14 @@ class MockWebSocket {
     this.onclose?.();
   }
 }
+
+// 用例会用 defineProperty 覆盖这些 window 属性（窄视口 / 键盘视口测试），
+// 在任何用例运行前捕获原始描述符，供 afterEach 恢复，防止跨用例泄漏。
+const ORIGINAL_WINDOW_VIEWPORT_DESCRIPTORS: ReadonlyArray<[string, PropertyDescriptor | undefined]> = [
+  ['innerWidth', Object.getOwnPropertyDescriptor(window, 'innerWidth')],
+  ['innerHeight', Object.getOwnPropertyDescriptor(window, 'innerHeight')],
+  ['visualViewport', Object.getOwnPropertyDescriptor(window, 'visualViewport')],
+];
 
 describe('MobileApp', () => {
   const fetchMock = vi.fn();
@@ -120,7 +133,22 @@ describe('MobileApp', () => {
   });
 
   afterEach(() => {
+    // MockWebSocket 的 onopen 挂在真实 setTimeout 上；用例结束时若还未开火，
+    // 会漂进下一个用例的时间线（向已重置的 store 写 wsState、发起 fetch）。
+    // 置空全部回调，保证任何提前收尾的用例都不向后泄漏。
+    for (const ws of MockWebSocket.instances) {
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onclose = null;
+    }
     cleanup();
+    // 恢复被用例覆盖的 window 视口属性与 mobile platform 桩，防跨用例泄漏。
+    // 放在 cleanup() 之后：组件卸载期间仍看到用例内的环境，卸载完再还原。
+    for (const [prop, descriptor] of ORIGINAL_WINDOW_VIEWPORT_DESCRIPTORS) {
+      if (descriptor) Object.defineProperty(window, prop, descriptor);
+      else Reflect.deleteProperty(window, prop);
+    }
+    Reflect.deleteProperty(window, 'platform');
     delete window.__hanaMobileUpdateAvailable;
     vi.restoreAllMocks();
   });
@@ -164,6 +192,11 @@ describe('MobileApp', () => {
       expect(body).toEqual({ username: 'hana-owner', password: 'secret-password' });
       expect(body).not.toHaveProperty('credential');
     });
+
+    // 等登录后的整条 bootstrap 链在本用例内跑完：login() → bootstrap() →
+    // initializeMobileRuntime() → connectWebSocket() 无人 await，不等到 shell
+    // 就绪就结束用例，会把 setState / fetch / WS onopen 泄漏给后续用例。
+    await waitForMobileChatReady();
   });
 
   it('returns stale browser sessions without file scopes to login', async () => {

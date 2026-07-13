@@ -47,7 +47,7 @@ export const FEISHU_MEDIA_CAPABILITIES = createMediaCapabilities({
       document: 30 * 1024 * 1024,
     },
   },
-  source: "docs/BRIDGE-MEDIA-CAPABILITIES.md#feishu",
+  source: "lib/bridge/feishu-adapter.ts#FEISHU_MEDIA_CAPABILITIES",
 });
 
 export const FEISHU_STREAMING_CAPABILITIES = createStreamingCapabilities({
@@ -77,6 +77,20 @@ const FEISHU_WS_INITIAL_MAX_CHECKS = 20;
 const FEISHU_WS_HEALTH_INTERVAL_MS = 30_000;
 const FEISHU_WS_DISCONNECTED_ERROR = "WebSocket disconnected";
 const FEISHU_STREAM_CARD_TRANSITION_TEXT = "已切换为表格卡片。";
+export const DEFAULT_FEISHU_REGION = "feishu_cn";
+
+const FEISHU_DOMAIN_BY_REGION = Object.freeze({
+  feishu_cn: {
+    region: "feishu_cn",
+    domain: "https://open.feishu.cn",
+    sdkDomain: lark.Domain.Feishu,
+  },
+  lark_global: {
+    region: "lark_global",
+    domain: "https://open.larksuite.com",
+    sdkDomain: lark.Domain.Lark,
+  },
+});
 
 type FeishuStreamState = {
   messageId?: string | null;
@@ -94,6 +108,17 @@ type FeishuCardKitStreamState = {
 function unrefTimer(timer: any) {
   if (typeof timer?.unref === "function") timer.unref();
   return timer;
+}
+
+export function normalizeFeishuRegion(region: any = DEFAULT_FEISHU_REGION) {
+  const value = typeof region === "string" ? region.trim() : region;
+  if (value === undefined || value === null || value === "") return DEFAULT_FEISHU_REGION;
+  if (value === "feishu_cn" || value === "lark_global") return value;
+  throw new Error(`unsupported Feishu region: ${value}`);
+}
+
+export function resolveFeishuDomain(region: any = DEFAULT_FEISHU_REGION) {
+  return FEISHU_DOMAIN_BY_REGION[normalizeFeishuRegion(region)];
 }
 
 function isSelfFeishuBotSender(sender: any, appId: any) {
@@ -378,8 +403,9 @@ async function bufferFromFeishuDownload(resp: any, label: any) {
  * @param {(status: string, error?: string) => void} [opts.onStatus]
  * @returns {{ sendReply, stop }}
  */
-export function createFeishuAdapter({ appId, appSecret, agentId, onMessage, onStatus }: Record<string, any>) {
-  const client = new lark.Client({ appId, appSecret });
+export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessage, onStatus }: Record<string, any>) {
+  const feishuDomain = resolveFeishuDomain(region);
+  const client = new lark.Client({ appId, appSecret, domain: feishuDomain.sdkDomain });
 
   /** 用户信息缓存 { [openId]: { name, avatarUrl } }，LRU 上限 200 */
   const userCache = new Map();
@@ -470,6 +496,7 @@ export function createFeishuAdapter({ appId, appSecret, agentId, onMessage, onSt
   const wsClient = new lark.WSClient({
     appId,
     appSecret,
+    domain: feishuDomain.sdkDomain,
     loggerLevel: lark.LoggerLevel.warn,
   });
 
@@ -678,6 +705,8 @@ export function createFeishuAdapter({ appId, appSecret, agentId, onMessage, onSt
   }
 
   return {
+    region: feishuDomain.region,
+    domain: feishuDomain.domain,
     mediaCapabilities: FEISHU_MEDIA_CAPABILITIES,
     richStreamingCapabilities: FEISHU_CARDKIT_STREAMING_CAPABILITIES,
     streamingCapabilities: FEISHU_STREAMING_CAPABILITIES,

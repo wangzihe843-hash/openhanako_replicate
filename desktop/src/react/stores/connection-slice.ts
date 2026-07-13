@@ -14,7 +14,6 @@ export interface ConnectionSlice {
   bridgeDotConnected: boolean;
   wsState: 'connected' | 'reconnecting' | 'disconnected';
   wsReconnectAttempt: number;
-  oauthSessionId: string | null;
   setServerPort: (port: string | number | null) => void;
   setServerToken: (token: string | null) => void;
   setActiveServerConnection: (connection: ServerConnection | null) => void;
@@ -22,7 +21,6 @@ export interface ConnectionSlice {
   upsertServerConnection: (connection: ServerConnection) => void;
   selectServerConnection: (connectionId: string) => void;
   setConnected: (connected: boolean) => void;
-  setOauthSessionId: (id: string | null) => void;
 }
 
 export const createConnectionSlice = (
@@ -40,7 +38,6 @@ export const createConnectionSlice = (
   bridgeDotConnected: false,
   wsState: 'disconnected',
   wsReconnectAttempt: 0,
-  oauthSessionId: null,
   setServerPort: (port) => {
     const serverPort = port === null || port === undefined ? null : String(port);
     const serverToken = get?.().serverToken ?? null;
@@ -134,5 +131,4 @@ export const createConnectionSlice = (
     });
   },
   setConnected: (connected) => set({ connected }),
-  setOauthSessionId: (id) => set({ oauthSessionId: id }),
 });

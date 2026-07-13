@@ -14,6 +14,15 @@
       "title": "小花美术馆",
       "upload": "自己上传",
       "close": "关闭小花美术馆"
+    },
+    "notice": {
+      "taskCreated": "已创建 cover 后台任务。",
+      "generateFailed": "Cover 生成失败：{error}",
+      "applySuccess": "已应用上传图片为 cover。",
+      "applySuccessGallery": "已应用「{title}」为 cover。",
+      "applyFailed": "Cover 应用失败：{error}",
+      "selectImageFile": "请选择图片文件作为 cover。",
+      "readImageFailed": "读取图片失败。"
     }
   },
   "selection": {
@@ -111,7 +120,13 @@
     "noModelsAvailable": "没有可用模型",
     "toolReadOnly": "只读",
     "toolWrite": "写入",
-    "filesUnsupported": "频道暂只支持文本消息，文件不会加入普通聊天附件"
+    "filesUnsupported": "频道暂只支持文本消息，文件不会加入普通聊天附件",
+    "unpinPluginTab": "取消固定「{label}」"
+  },
+  "announcement": {
+    "title": "更新完成 · v{version}",
+    "fallbackBody": "HanaAgent 已更新至 v{version}。",
+    "confirm": "知道了"
   },
   "skills": {
     "panel": {
@@ -235,7 +250,8 @@
       "cancelButton": "取消",
       "refreshing": "正在压缩对话并刷新工具…",
       "refreshFailed": "刷新失败"
-    }
+    },
+    "rcTakingOver": "{platform} 接管中"
   },
   "common": {
     "on": "开",
@@ -277,6 +293,10 @@
     "markAllComplete": "全部标记为已完成"
   },
   "chat": {
+    "find": {
+      "locateFailed": "未能定位到该消息",
+      "placeholder": "在会话中查找"
+    },
     "send": "发送",
     "steer": "插话",
     "stop": "停止",
@@ -314,7 +334,13 @@
       "fallbackAssistant": "助手消息"
     },
     "modelSwitching": "正在切换模型，请稍候",
-    "unknownCommand": "[未知命令] {text}"
+    "unknownCommand": "[未知命令] {text}",
+    "workflowInline": {
+      "running": "◐ 运行中",
+      "done": "✓ 已完成",
+      "failed": "✗ 失败",
+      "aborted": "⊘ 已终止"
+    }
   },
   "time": {
     "justNow": "刚刚",
@@ -389,7 +415,8 @@
       "medium": "中等",
       "high": "深度",
       "xhigh": "极致",
-      "max": "极致"
+      "max": "极致",
+      "low": "浅思"
     },
     "thinkingDesc": {
       "off": "不推理",
@@ -397,14 +424,20 @@
       "medium": "平衡推理",
       "high": "深度推理",
       "xhigh": "极致推理",
-      "max": "极致推理"
+      "max": "极致推理",
+      "low": "轻量推理"
     },
     "contextWindow": "上下文 {windowK}k",
     "tokensUsed": "已用 {tokensK}k ({pct}%)",
     "contextActions": "上下文操作",
     "refreshAndCompact": "更新并压缩",
     "refreshAndCompactTooltip": "更新到最新的记忆和工具集",
-    "compact": "压缩"
+    "compact": "压缩",
+    "noAskThisConversation": "本对话不再询问",
+    "confirmMoreOptions": "更多确认选项",
+    "attachmentDirectory": "[目录] {label}",
+    "attachmentFile": "[附件] {label}",
+    "referenceDocument": "[参考文档] {path}"
   },
   "slash": {
     "diary": "写今日日记",
@@ -887,7 +920,11 @@
       "{name} 闻到了某个下午的橘子味",
       "那些对话还带着体温"
     ],
-    "installing": "{name} 正在更新到 v{version}，请稍候……"
+    "installing": "{name} 正在更新到 v{version}，请稍候……",
+    "preparing": {
+      "named": "{name} 正在准备新家……",
+      "anonymous": "你的助手正在准备新家……"
+    }
   },
   "settings": {
     "title": "设置",
@@ -987,10 +1024,6 @@
         "summaryTitle": "Rolling Summary Preview",
         "emptyPreview": "暂无观察结果",
         "clearObservation": "清除观察结果"
-      },
-      "editableMemory": {
-        "title": "可编辑记忆",
-        "description": "打开后，当下记忆中的 Facts 会拆成可编辑区域；Agent 继续从时间线读取只读摘要。"
       },
       "compaction": {
         "title": "压缩模式",
@@ -1212,6 +1245,10 @@
             "label": "Office",
             "summary": "让 Agent 读取文档、转换 HTML 到 PDF"
           },
+          "session": {
+            "label": "跨会话协作",
+            "summary": "列出/读取其它会话，经确认卡发送消息或创建会话"
+          },
           "update_settings": {
             "label": "修改设置",
             "summary": "让 Agent 修改应用配置项"
@@ -1272,12 +1309,40 @@
       "updateInstallManualHint": "点「重启更新」后安装，直接退出不会自动安装",
       "updateInstall": "重启更新",
       "updateInstallNow": "重启立即更新",
+      "updateApply": "更新",
+      "updateApplyAutoHint": "不点击也会在下次启动时自动生效",
+      "trainStickerTitle": "有新版本可用",
+      "trainStickerDownloading": "下载中 {percent}%",
+      "trainStickerApplying": "正在应用更新…",
+      "shellStickerTitle": "平台更新可用，需重启",
+      "shellStickerTitleBlocking": "完成此更新后才能继续接收新版本",
+      "fallbackStickerTitle": "版本 {fromVersion} 连续启动失败，已退回 {toVersion}。出问题的版本已被隔离，不会自动重试。",
+      "fallbackStickerAckLabel": "知道了",
+      "updateHistoryTitle": "更新历史",
+      "updateHistorySubtitle": "最近 5 个已发布版本",
+      "updateHistoryLoading": "正在读取更新历史…",
+      "updateHistoryOffline": "暂时无法连接发布网站，当前展示随应用保存的版本。",
+      "updateHistoryPartial": "目前只找到部分带有更新说明的版本。",
+      "updateHistoryUnavailable": "暂时无法读取更新历史，请稍后再试。",
       "updateProgress": "{percent}%",
       "updateError": "检查更新失败",
       "updateLatest": "已是最新版本",
+      "updateLatestCheckedAt": "已是最新（上次检查 {time}）",
+      "updateManifestReleasedAt": "货架清单签发于 {date}",
+      "updateManifestReleasedAtViaMirror": "货架清单签发于 {date}（经备用源）",
       "updateCheckBtn": "检查更新",
+      "updateRetryBtn": "重试",
       "updateNeedInstall": "请先将 HanaAgent 移动到应用程序文件夹",
       "updateDiskSpace": "磁盘空间不足，无法下载更新",
+      "updateDigestCta": "此次更新你将获得",
+      "updateDigestTitle": "此次更新你将获得",
+      "updateDigestClose": "关闭",
+      "updateDigestKind": {
+        "feature": "新功能",
+        "fix": "修复",
+        "improvement": "改进",
+        "migration": "迁移"
+      },
       "launchAtLogin": "开机自启",
       "keepAwake": "锁屏时保持运行",
       "betaUpdates": "接收测试版更新",
@@ -1650,6 +1715,15 @@
       "saveFacts": "保存 Facts",
       "factsSaved": "Facts 已保存",
       "readonlyTimelineTitle": "时间线记忆",
+      "editEntry": "编辑",
+      "editDone": "完成",
+      "editSave": "保存",
+      "saveToday": "保存今天",
+      "todaySaved": "今天已保存",
+      "saveLongterm": "保存长期情况",
+      "longtermSaved": "长期情况已保存",
+      "saveDay": "保存这一天",
+      "daySaved": "这一天已保存",
       "sections": {
         "today": "今天",
         "week": "本周早些时候",
@@ -1769,7 +1843,14 @@
       "injectAgentsMd": "注入 AGENTS.md",
       "injectAgentsMdDesc": "开启后，新会话会读取当前工作目录到 Git 根目录之间的 AGENTS.md。",
       "injectClaudeMd": "注入 CLAUDE.md",
-      "injectClaudeMdDesc": "开启后，新会话会读取当前工作目录到 Git 根目录之间的 CLAUDE.md。"
+      "injectClaudeMdDesc": "开启后，新会话会读取当前工作目录到 Git 根目录之间的 CLAUDE.md。",
+      "projectSkillsTitle": "项目技能发现",
+      "projectSkillsDesc": "选择这个 Agent 在新会话中加载哪些项目技能目录。",
+      "discoverProjectSkills": "加载项目技能",
+      "discoverProjectSkillsDesc": "发现并加载当前项目 .agents/skills 中的技能。",
+      "discoverCompatibleProjectSkills": "加载其他工具的项目技能",
+      "discoverCompatibleProjectSkillsDesc": "同时发现项目内 Claude Code、Codex 与 OpenClaw 的技能目录。",
+      "agentDeskSection": "Agent 工作台设置"
     },
     "toolCaps": {
       "title": "技能安装权限"
@@ -1864,7 +1945,11 @@
       "dissolveBundleTitle": "打散 Bundle",
       "dissolveBundleAriaLabel": "打散 {name}",
       "removeFromBundleTitle": "移出 Bundle，变为散装 Skill",
-      "removeFromBundleAriaLabel": "将 {name} 移出 Bundle"
+      "removeFromBundleAriaLabel": "将 {name} 移出 Bundle",
+      "toggleEnable": "启用 Skill",
+      "toggleDisable": "关闭 Skill",
+      "toggleEnableNamed": "启用 {name}",
+      "toggleDisableNamed": "关闭 {name}"
     },
     "plugins": {
       "title": "插件",
@@ -2014,15 +2099,19 @@
       "telegramToken": "Bot Token",
       "telegramHint": "从 @BotFather 获取",
       "feishu": "飞书",
+      "feishuRegion": "区域",
+      "feishuRegionFeishuCn": "飞书中国",
+      "feishuRegionLarkGlobal": "Lark 海外",
       "feishuAppId": "App ID",
       "feishuAppSecret": "App Secret",
       "feishuHint": "从飞书开放平台获取；使用长连接接收事件，不需要本地回调 URL",
       "dingtalk": "钉钉",
+      "dingtalkCorpId": "Corp ID",
       "dingtalkClientId": "Client ID / AppKey",
       "dingtalkClientSecret": "Client Secret / AppSecret",
       "dingtalkRobotCode": "Robot Code",
-      "dingtalkRestBaseUrl": "REST Base URL",
-      "dingtalkHint": "企业内部应用凭证用于 token/Stream；Robot Code 用于企业机器人发送；REST Base URL 默认 https://api.dingtalk.io/v1.0",
+      "dingtalkApiBaseUrl": "API Base URL",
+      "dingtalkHint": "Corp ID 和应用凭证用于新版 token 接口；Client ID 与 Client Secret 也用于建立 Stream 长连接，Robot Code 用于发送回复。API Base URL 默认 https://api.dingtalk.com/v1.0",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",
@@ -2046,12 +2135,15 @@
       "connected": "已连接",
       "disconnected": "未连接",
       "error": "连接失败",
+      "connectionToggle": "启用或停用连接",
       "test": "测试连接",
       "testOk": "连接成功",
+      "dingtalkCredentialTestOk": "凭证验证成功；Stream 长连接和机器人回复将在启用后确认",
       "testFail": "测试失败",
+      "secretStoredPlaceholder": "已保存，输入新值以替换",
       "noToken": "请先输入 Bot Token",
       "noCredentials": "请先填写 App ID 和 App Secret",
-      "noDingtalkCredentials": "请先填写 Client ID、Client Secret、Robot Code 和 REST Base URL",
+      "noDingtalkCredentials": "请先填写 Corp ID、Client ID、Client Secret、Robot Code 和 API Base URL",
       "globalSettings": "全局设置",
       "agentSettings": "角色",
       "permissionMode": "权限模式",
@@ -2095,11 +2187,12 @@
       ],
       "tutorialDtSteps": [
         "前往 <code>open.dingtalk.com</code>，进入「开发者后台」",
+        "从企业信息中复制企业的 <code>Corp ID</code>",
         "创建「企业内部应用」，在应用凭证中复制 <code>Client ID/AppKey</code> 和 <code>Client Secret/AppSecret</code>",
         "添加「应用机器人」能力，复制机器人详情里的 <code>Robot Code</code>",
         "确认应用已开通机器人收发消息所需权限，并发布到企业可用范围",
-        "REST Base URL 保持默认 <code>https://api.dingtalk.io/v1.0</code>，除非你明确要接入钉钉兼容网关",
-        "将 Client ID、Client Secret、Robot Code 和 REST Base URL 粘贴到上方输入框，测试通过后打开开关即可"
+        "API Base URL 保持默认 <code>https://api.dingtalk.com/v1.0</code>，除非你明确要接入钉钉兼容网关",
+        "将 Corp ID、Client ID、Client Secret、Robot Code 和 API Base URL 粘贴到上方输入框。新版 token 测试与 Stream 长连接都正常后，机器人才能完整收发消息"
       ],
       "whatsappHint": "即将支持"
     },
@@ -2442,6 +2535,9 @@
     "cwdSkillsHint": "在文件夹下创建 .agents/skills/ 目录即可",
     "cwdSkillsDesc": "技能跟随工作台",
     "cwdSkillsDrop": "拖入文件夹或 .zip 安装技能",
+    "cwdSkillActive": "已加载",
+    "cwdSkillInactive": "未加载",
+    "cwdSkillShadowed": "已被覆盖",
     "deleteSkill": "删除技能",
     "openInFinder": "打开文件夹",
     "jianLabel": "笺",
@@ -2531,7 +2627,14 @@
     "resetContextTip": "下次消息将开启新对话",
     "replyInterrupted": "（回复中断，以上内容可能不完整）",
     "replyFailed": "（回复生成失败，请稍后重试）",
-    "sessionBusy": "当前桌面会话仍在回复中，请稍后再发"
+    "sessionBusy": "当前桌面会话仍在回复中，请稍后再发",
+    "platform": {
+      "telegram": "Telegram",
+      "feishu": "飞书",
+      "wechat": "微信",
+      "qq": "QQ",
+      "bridge": "Bridge"
+    }
   },
   "notification": {
     "turnCompletionBody": "这一轮已经完成"
@@ -2706,9 +2809,9 @@
     "installSkillGithubApiError": "访问 GitHub API 失败：{msg}",
     "installSkillStarTooLow": "该仓库仅有 {stars} stars（门槛 {min}），安全性无法保证，拒绝安装。",
     "installSkillNoSkillMd": "在 {owner}/{repo} 中找不到 SKILL.md（已尝试路径：{paths}）。",
-    "installSkillSafetyFailed": "[安全策略] 技能安全审查未通过，已阻止安装。\n原因：{reason}\n\n请告知用户此技能未通过安全审查，说明具体原因。用户可以在设置中关闭安全审查（不推荐）。",
+    "installSkillSafetyFailed": "[安全提醒] 技能安全审查未通过，暂未安装。\n原因：{reason}\n\n请告知用户：如果这个技能来路不明，应先检查 SKILL.md 和配套文件；如果用户确认信任此技能并明确要求继续安装，再用 risk_accepted=true 和返回的 risk_confirmation_token 重新调用 install_skill。",
     "installSkillNameInvalid": "技能名称无效{name}。名称仅允许字母、数字、下划线和短横线。",
-    "installSkillSuccess": "技能「{name}」安装成功！\n来源：{source}（⭐ {stars} stars）\n理由：{reason}",
+    "installSkillSuccess": "技能「{name}」安装成功！\n来源：{source}\n理由：{reason}",
     "installSkillNeedInput": "请提供 github_url、local_path、fileId 或 source FileRef。",
     "installSkillNeedName": "使用 skill_content 模式时，必须提供 skill_name。",
     "installSkillSuccessLocal": "技能「{name}」安装成功！\n理由：{reason}",
@@ -2716,6 +2819,7 @@
     "installSkillNoUtility": "安全审查不可用：未配置 utility 模型，请在设置中配置辅助模型",
     "installSkillUtilityIncomplete": "安全审查不可用：辅助模型配置不完整（缺少 API key 或 base URL），请在设置中补全",
     "installSkillSafetyPassed": "✓ 安全审查已通过",
+    "installSkillSafetyOverride": "⚠ 安全审查未通过；已根据用户明确确认继续安装。\n风险原因：{reason}",
     "installSkillSafetyEmpty": "安全审查返回空响应",
     "installSkillSafetyUnexpected": "安全审查返回未预期的格式: {reply}",
     "installSkillSafetyTimeout": "安全审查超时或网络错误",
@@ -2799,7 +2903,8 @@
     "tray": {
       "show": "显示 HanaAgent",
       "settings": "设置",
-      "quit": "退出"
+      "quit": "退出",
+      "repairArtifacts": "修复组件…"
     },
     "dialog": {
       "selectFolder": "选择工作文件夹",
@@ -2815,10 +2920,16 @@
       "serverFilesNotReady": "自动更新刚完成，新版本文件还在落地（缺少 {missing}），已等待 {waited}s 仍未就绪。请稍后重新启动 HanaAgent。",
       "serverModuleMissing": "Server 启动时找不到模块 {module}。\n通常是自动更新刚完成、新版本文件还在写入磁盘导致的。\n建议：等待 1-2 分钟后重新启动 HanaAgent；若反复出现，请前往 GitHub 反馈。",
       "installFailedTitle": "HanaAgent 更新",
-      "installFailedBody": "更新安装失败：\n{error}\n\n请重启 HanaAgent 后重试，或前往设置页面手动检查更新。"
+      "installFailedBody": "更新安装失败：\n{error}\n\n请重启 HanaAgent 后重试，或前往设置页面手动检查更新。",
+      "repairArtifactsTitle": "修复组件",
+      "repairArtifactsBody": "此操作会把 HanaAgent 的应用组件重置为安装包自带的版本，并重启应用。你的数据（助手、会话、设置）不受影响。",
+      "repairArtifactsConfirm": "修复并重启",
+      "repairArtifactsCancel": "取消",
+      "trainUpdateApplyFailedBody": "HanaAgent v{version}\n\n更新应用失败：\n{error}\n\n请重新启动应用。"
     },
     "notification": {
-      "ready": "通知已就绪"
+      "ready": "通知已就绪",
+      "componentQuarantined": "组件已自动回退到上一版本，功能不受影响"
     }
   },
   "devtools": {
@@ -3057,7 +3168,12 @@
       "saveImage": "保存图片",
       "regenerateWithPrompt": "自定义提示词生成图片",
       "deleteCover": "删除封面"
-    }
+    },
+    "fileMovedOrDeleted": "原稿件已移动或者删除",
+    "legacyImageUpgrade": "此图片预览已升级，点此在新查看器打开",
+    "coverLayoutSaveFailed": "Cover 布局保存失败，文件可能已被外部修改。",
+    "coverDeleted": "已删除封面。",
+    "coverDeleteFailed": "封面删除失败，文件可能已被外部修改。"
   },
   "mediaViewer": {
     "ariaLabel": "媒体预览",
@@ -3089,7 +3205,8 @@
     "update": {
       "available": "Hana 有新版本可用",
       "reload": "刷新"
-    }
+    },
+    "startupFailed": "HanaAgent 启动失败"
   },
   "approval": {
     "toolAction": {
@@ -3100,7 +3217,9 @@
     "reject": "拒绝",
     "computerApp": {
       "title": "允许 Hana 使用电脑",
-      "body": "Hana 想控制这个应用来继续当前任务。"
+      "body": "Hana 想控制这个应用来继续当前任务。",
+      "controlTitle": "是否允许 Hana 控制 {appName}",
+      "defaultAppName": "这个应用"
     },
     "sessionFolders": {
       "title": "允许 Hana 修改本对话的文件夹授权",
@@ -3146,8 +3265,36 @@
   "toolDef": {
     "updateSettings": {
       "memoryFacts": "记忆 Facts",
-      "memoryFactsDesc": "当前 Agent 的可编辑当下记忆 Facts。需要先打开「可编辑记忆」实验。",
-      "memoryFactsDisabled": "可编辑记忆实验尚未打开。"
+      "memoryFactsDesc": "当前 Agent 的可编辑当下记忆 Facts。",
+      "searchResult": "找到 {count} 个匹配设置：\n\n{results}\n\n使用 action \"apply\" 并提供 key 和 value 来修改设置。",
+      "searchNoResults": "没有匹配 \"{query}\" 的设置，请尝试更宽泛的关键词。",
+      "searchMissingQuery": "search 操作需要提供 query 参数。",
+      "applyMissingParams": "apply 操作需要同时提供 key 和 value 参数。",
+      "frontendOnly": "仅客户端",
+      "sandbox": "沙盒安全",
+      "sandboxDesc": "限制文件系统写入范围",
+      "sandboxNetwork": "沙盒网络",
+      "sandboxNetworkDesc": "允许沙盒命令访问公网；Windows 命令沙盒不支持网络隔离，始终保留当前用户的网络访问",
+      "locale": "语言",
+      "timezone": "时区",
+      "timezoneDesc": "IANA 时区（如 Asia/Shanghai）",
+      "bridgeMediaPublicBaseUrl": "Bridge 文件公网 URL",
+      "bridgeMediaPublicBaseUrlDesc": "外部平台拉取本地暂存文件时使用的公网 HTTP/HTTPS 基址，通常由反向代理或隧道提供。留空则回退到 HANA_BRIDGE_PUBLIC_BASE_URL。",
+      "computerUse": "Computer Use",
+      "computerUseDesc": "开启后，新对话会向主 Agent 暴露 computer 工具；关闭后新对话不可见，旧对话若调用会被拒绝。",
+      "thinkingBudget": "思考深度",
+      "memory": "记忆系统",
+      "memoryDesc": "开启/关闭当前 Agent 的记忆",
+      "experience": "经验库",
+      "experienceDesc": "开启/关闭当前 Agent 的经验库",
+      "agentName": "Agent 名称",
+      "userName": "用户名称",
+      "workingDir": "工作目录",
+      "workingDirDesc": "Agent 文件系统工作目录",
+      "theme": "主题",
+      "chatModel": "聊天模型",
+      "fileBackup": "文件备份",
+      "fileBackupDesc": "AI 修改文件前自动备份"
     },
     "generateImage": {
       "description": "根据文字描述生成图片。非阻塞：提交后立即返回，完成后自动显示。",
@@ -3222,6 +3369,31 @@
     "listCapabilities": {
       "description": "列出 Beautify 工具目前支持的审美增强能力。",
       "text": "Beautify 当前支持两类能力。1) Markdown cover 工作流：先读取封面风格说明，再准备一张图片，可以来自生图工具、未来的内置头图库或用户本地图片，最后把图片复制到附件文件夹并写入 cover frontmatter。2) 整页 HTML 美学规范：生成网页 / 排版页 / 报告页前，先用 beautify_get-html-style-guide 获取 Hana 默认美术方向（无参拿路由器，再按 section 逐节取规范）。"
+    },
+    "todoWrite": {
+      "summaryEmpty": "已清空待办",
+      "summaryStats": "{total} 项待办：{completed} 已完成，{in_progress} 进行中，{pending} 待处理"
     }
+  },
+  "link": {
+    "copyPath": "复制路径",
+    "copyLink": "复制链接",
+    "openInSystemBrowser": "用系统浏览器打开"
+  },
+  "sessionCollab": {
+    "messagePrefix": "[来自 Agent「{name}」的消息，非用户本人]",
+    "fromAgent": "来自 {name} 的消息",
+    "expand": "展开",
+    "collapse": "收起",
+    "confirmSend": "发送",
+    "confirmCreate": "创建并发送",
+    "ignore": "忽略",
+    "expired": "草稿已过期，请让 Agent 重新发起",
+    "inFlight": "正在执行中",
+    "halfCreated": "会话已创建（{id}），首条消息投递失败，可重试或打开该会话手动发送",
+    "createdSession": "已创建会话 {id}",
+    "sendFailed": "发送失败：{error}",
+    "rejectFailed": "忽略失败：{error}",
+    "messageField": "消息内容"
   }
 }

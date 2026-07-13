@@ -20,7 +20,7 @@ const { createAgentSessionMock, sessionManagerCreateMock } = vi.hoisted(() => ({
 
 vi.mock("../lib/pi-sdk/index.js", async () => {
   const { Type } = await import("typebox");
-  const { StringEnum } = await import("@mariozechner/pi-ai");
+  const { StringEnum } = await import("@earendil-works/pi-ai");
   return {
     createAgentSession: createAgentSessionMock,
     SessionManager: {

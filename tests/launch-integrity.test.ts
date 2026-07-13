@@ -50,25 +50,25 @@ describe("desktop launch integrity helper", () => {
       "app-exe",
       "app-asar",
       "app-update-yml",
-      "server-exe",
-      "server-bootstrap",
-      "server-bundle",
-      "better-sqlite3-native",
+      "seed-manifest",
+      "seed-manifest-signature",
+      "seed-server-archive",
+      "seed-renderer-archive",
       "bundled-git",
     ]);
     expect(result.missing.map(item => item.relativePath)).toEqual([
       "HanaAgent.exe",
       "resources/app.asar",
       "resources/app-update.yml",
-      "resources/server/hana-server.exe",
-      "resources/server/bootstrap.js",
-      "resources/server/bundle/index.js",
-      "resources/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+      "resources/seed/seed-train.json",
+      "resources/seed/seed-train.json.sig",
+      "resources/seed/server-*.tar.gz",
+      "resources/seed/renderer-*.tar.gz",
       "resources/git",
     ]);
   });
 
-  it("accepts a complete packaged Windows install surface", () => {
+  it("accepts a complete packaged Windows install surface (seed archive layout)", () => {
     const helper = loadHelper();
     if (!helper) return;
 
@@ -77,10 +77,10 @@ describe("desktop launch integrity helper", () => {
     writeFile(tmp, "HanaAgent.exe");
     writeFile(resourcesPath, "app.asar");
     writeFile(resourcesPath, "app-update.yml");
-    writeFile(resourcesPath, "server/hana-server.exe");
-    writeFile(resourcesPath, "server/bootstrap.js");
-    writeFile(resourcesPath, "server/bundle/index.js");
-    writeFile(resourcesPath, "server/node_modules/better-sqlite3/build/Release/better_sqlite3.node");
+    writeFile(resourcesPath, "seed/seed-train.json");
+    writeFile(resourcesPath, "seed/seed-train.json.sig");
+    writeFile(resourcesPath, "seed/server-1.2.3-win32-x64.tar.gz");
+    writeFile(resourcesPath, "seed/renderer-1.2.3.tar.gz");
     writeFile(resourcesPath, "git/cmd/git.exe");
     writeFile(resourcesPath, "git/usr/bin/sh.exe");
 
@@ -94,12 +94,119 @@ describe("desktop launch integrity helper", () => {
       "app-exe",
       "app-asar",
       "app-update-yml",
-      "server-exe",
-      "server-bootstrap",
-      "server-bundle",
-      "better-sqlite3-native",
+      "seed-manifest",
+      "seed-manifest-signature",
+      "seed-server-archive",
+      "seed-renderer-archive",
       "bundled-git",
     ]);
+    const serverArchiveCheck = result.checked.find(item => item.id === "seed-server-archive");
+    expect(serverArchiveCheck.paths[0]).toBe(
+      path.join(resourcesPath, "seed", "server-1.2.3-win32-x64.tar.gz").replace(/\\/g, "/"),
+    );
+  });
+
+  it("does not accept the retired resources/server tree in place of the seed archive", () => {
+    const helper = loadHelper();
+    if (!helper) return;
+
+    const tmp = makeTempDir();
+    const resourcesPath = path.join(tmp, "resources");
+    writeFile(tmp, "HanaAgent.exe");
+    writeFile(resourcesPath, "app.asar");
+    writeFile(resourcesPath, "app-update.yml");
+    // Old scattered layout only — no resources/seed/ at all.
+    writeFile(resourcesPath, "server/hana-server.exe");
+    writeFile(resourcesPath, "server/bootstrap.js");
+    writeFile(resourcesPath, "server/bundle/index.js");
+    writeFile(resourcesPath, "server/node_modules/better-sqlite3/build/Release/better_sqlite3.node");
+    writeFile(resourcesPath, "git/cmd/git.exe");
+    writeFile(resourcesPath, "git/usr/bin/sh.exe");
+
+    const result = helper.checkWindowsInstallSurface({
+      execPath: path.join(tmp, "HanaAgent.exe"),
+      resourcesPath,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.missing.map(item => item.id)).toEqual([
+      "seed-manifest",
+      "seed-manifest-signature",
+      "seed-server-archive",
+      "seed-renderer-archive",
+    ]);
+  });
+
+  it("flags a missing server archive independently of the renderer archive", () => {
+    const helper = loadHelper();
+    if (!helper) return;
+
+    const tmp = makeTempDir();
+    const resourcesPath = path.join(tmp, "resources");
+    writeFile(tmp, "HanaAgent.exe");
+    writeFile(resourcesPath, "app.asar");
+    writeFile(resourcesPath, "app-update.yml");
+    writeFile(resourcesPath, "seed/seed-train.json");
+    writeFile(resourcesPath, "seed/seed-train.json.sig");
+    writeFile(resourcesPath, "seed/renderer-1.2.3.tar.gz");
+    writeFile(resourcesPath, "git/cmd/git.exe");
+    writeFile(resourcesPath, "git/usr/bin/sh.exe");
+
+    const result = helper.checkWindowsInstallSurface({
+      execPath: path.join(tmp, "HanaAgent.exe"),
+      resourcesPath,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.missing.map(item => item.id)).toEqual(["seed-server-archive"]);
+  });
+
+  it("flags a missing renderer archive independently of the server archive", () => {
+    const helper = loadHelper();
+    if (!helper) return;
+
+    const tmp = makeTempDir();
+    const resourcesPath = path.join(tmp, "resources");
+    writeFile(tmp, "HanaAgent.exe");
+    writeFile(resourcesPath, "app.asar");
+    writeFile(resourcesPath, "app-update.yml");
+    writeFile(resourcesPath, "seed/seed-train.json");
+    writeFile(resourcesPath, "seed/seed-train.json.sig");
+    writeFile(resourcesPath, "seed/server-1.2.3-win32-x64.tar.gz");
+    writeFile(resourcesPath, "git/cmd/git.exe");
+    writeFile(resourcesPath, "git/usr/bin/sh.exe");
+
+    const result = helper.checkWindowsInstallSurface({
+      execPath: path.join(tmp, "HanaAgent.exe"),
+      resourcesPath,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.missing.map(item => item.id)).toEqual(["seed-renderer-archive"]);
+  });
+
+  it("does not mistake a manifest-only seed archive missing its signature for a complete surface", () => {
+    const helper = loadHelper();
+    if (!helper) return;
+
+    const tmp = makeTempDir();
+    const resourcesPath = path.join(tmp, "resources");
+    writeFile(tmp, "HanaAgent.exe");
+    writeFile(resourcesPath, "app.asar");
+    writeFile(resourcesPath, "app-update.yml");
+    writeFile(resourcesPath, "seed/seed-train.json");
+    writeFile(resourcesPath, "seed/server-1.2.3-win32-x64.tar.gz");
+    writeFile(resourcesPath, "seed/renderer-1.2.3.tar.gz");
+    writeFile(resourcesPath, "git/cmd/git.exe");
+    writeFile(resourcesPath, "git/usr/bin/sh.exe");
+
+    const result = helper.checkWindowsInstallSurface({
+      execPath: path.join(tmp, "HanaAgent.exe"),
+      resourcesPath,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.missing.map(item => item.id)).toEqual(["seed-manifest-signature"]);
   });
 
   it("still accepts a legacy PortableGit surface that bundles bash.exe instead of sh.exe", () => {
@@ -111,10 +218,10 @@ describe("desktop launch integrity helper", () => {
     writeFile(tmp, "HanaAgent.exe");
     writeFile(resourcesPath, "app.asar");
     writeFile(resourcesPath, "app-update.yml");
-    writeFile(resourcesPath, "server/hana-server.exe");
-    writeFile(resourcesPath, "server/bootstrap.js");
-    writeFile(resourcesPath, "server/bundle/index.js");
-    writeFile(resourcesPath, "server/node_modules/better-sqlite3/build/Release/better_sqlite3.node");
+    writeFile(resourcesPath, "seed/seed-train.json");
+    writeFile(resourcesPath, "seed/seed-train.json.sig");
+    writeFile(resourcesPath, "seed/server-1.2.3-win32-x64.tar.gz");
+    writeFile(resourcesPath, "seed/renderer-1.2.3.tar.gz");
     writeFile(resourcesPath, "git/cmd/git.exe");
     writeFile(resourcesPath, "git/usr/bin/bash.exe");
 
@@ -135,10 +242,10 @@ describe("desktop launch integrity helper", () => {
     writeFile(tmp, "HanaAgent.exe");
     writeFile(resourcesPath, "app.asar");
     writeFile(resourcesPath, "app-update.yml");
-    writeFile(resourcesPath, "server/hana-server.exe");
-    writeFile(resourcesPath, "server/bootstrap.js");
-    writeFile(resourcesPath, "server/bundle/index.js");
-    writeFile(resourcesPath, "server/node_modules/better-sqlite3/build/Release/better_sqlite3.node");
+    writeFile(resourcesPath, "seed/seed-train.json");
+    writeFile(resourcesPath, "seed/seed-train.json.sig");
+    writeFile(resourcesPath, "seed/server-1.2.3-win32-x64.tar.gz");
+    writeFile(resourcesPath, "seed/renderer-1.2.3.tar.gz");
     writeFile(resourcesPath, "git/cmd/git.exe");
 
     const result = helper.checkWindowsInstallSurface({
@@ -160,10 +267,10 @@ describe("desktop launch integrity helper", () => {
     writeFile(resourcesPath, "app/desktop/bootstrap.cjs");
     writeFile(resourcesPath, "app/package.json");
     writeFile(resourcesPath, "app-update.yml");
-    writeFile(resourcesPath, "server/hana-server.exe");
-    writeFile(resourcesPath, "server/bootstrap.js");
-    writeFile(resourcesPath, "server/bundle/index.js");
-    writeFile(resourcesPath, "server/node_modules/better-sqlite3/build/Release/better_sqlite3.node");
+    writeFile(resourcesPath, "seed/seed-train.json");
+    writeFile(resourcesPath, "seed/seed-train.json.sig");
+    writeFile(resourcesPath, "seed/server-1.2.3-win32-x64.tar.gz");
+    writeFile(resourcesPath, "seed/renderer-1.2.3.tar.gz");
     writeFile(resourcesPath, "git/cmd/git.exe");
     writeFile(resourcesPath, "git/usr/bin/sh.exe");
 
@@ -183,6 +290,11 @@ describe("desktop launch integrity helper", () => {
       "desktop",
       "package.json",
     ]);
+    expect(result.context.seedDirectory).toMatchObject({
+      relativePath: "resources/seed",
+      exists: true,
+      type: "directory",
+    });
   });
 
   it("writes a launch diagnostic file with the failed self-check payload", () => {

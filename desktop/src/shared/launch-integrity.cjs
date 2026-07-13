@@ -114,14 +114,42 @@ function buildWindowsInstallSurfaceContext({ execPath, resourcesPath } = {}) {
       listEntries: true,
       maxEntries: 80,
     }),
+    seedDirectory: inspectInstallPath({
+      filePath: path.join(resourcesRoot, "seed"),
+      relativePath: "resources/seed",
+      listEntries: true,
+      maxEntries: 40,
+    }),
   };
+}
+
+// 打包布局已从散装 resources/server/ 树改成 resources/seed/ 签名归档
+// （server-*.tar.gz + renderer-*.tar.gz + seed-train.json + .sig），首启时由
+// artifact-boot 解压到用户数据目录。这里只做"归档三件套是否落地"的浅校验，
+// 箱内文件的完整性由解压时的签名与哈希机制负责，不在这一层重复。归档文件名
+// 带版本号（server-<version>-<platform>-<arch>.tar.gz），因此用目录扫描
+// + 前缀/后缀匹配定位，不能硬编码版本号。
+function findSeedArchive(seedDir, prefix) {
+  try {
+    const entries = fs.readdirSync(seedDir, { withFileTypes: true })
+      .filter(entry => entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(".tar.gz"))
+      .map(entry => entry.name)
+      .sort();
+    return entries.length > 0 ? path.join(seedDir, entries[0]) : null;
+  } catch {
+    return null;
+  }
 }
 
 function buildWindowsInstallSurfaceChecks({ execPath, resourcesPath } = {}) {
   const executablePath = execPath || "";
   const appRoot = executablePath ? path.dirname(executablePath) : "";
   const resourcesRoot = resourcesPath || (appRoot ? path.join(appRoot, "resources") : "");
-  const serverRoot = path.join(resourcesRoot, "server");
+  const seedRoot = path.join(resourcesRoot, "seed");
+  const seedManifestPath = path.join(seedRoot, "seed-train.json");
+  const seedSignaturePath = `${seedManifestPath}.sig`;
+  const seedServerArchivePath = findSeedArchive(seedRoot, "server-");
+  const seedRendererArchivePath = findSeedArchive(seedRoot, "renderer-");
   const gitRoot = path.join(resourcesRoot, "git");
   const gitExe = path.join(gitRoot, "cmd", "git.exe");
   const appExecutableLabel = executablePath ? path.basename(executablePath) : "HanaAgent.exe";
@@ -154,28 +182,31 @@ function buildWindowsInstallSurfaceChecks({ execPath, resourcesPath } = {}) {
       paths: [path.join(resourcesRoot, "app-update.yml")],
     },
     {
-      id: "server-exe",
-      label: "resources/server/hana-server.exe",
-      relativePath: "resources/server/hana-server.exe",
-      paths: [path.join(serverRoot, "hana-server.exe")],
+      id: "seed-manifest",
+      label: "resources/seed/seed-train.json",
+      relativePath: "resources/seed/seed-train.json",
+      paths: [seedManifestPath],
     },
     {
-      id: "server-bootstrap",
-      label: "resources/server/bootstrap.js",
-      relativePath: "resources/server/bootstrap.js",
-      paths: [path.join(serverRoot, "bootstrap.js")],
+      id: "seed-manifest-signature",
+      label: "resources/seed/seed-train.json.sig",
+      relativePath: "resources/seed/seed-train.json.sig",
+      paths: [seedSignaturePath],
     },
     {
-      id: "server-bundle",
-      label: "resources/server/bundle/index.js",
-      relativePath: "resources/server/bundle/index.js",
-      paths: [path.join(serverRoot, "bundle", "index.js")],
+      id: "seed-server-archive",
+      label: "resources/seed/server-*.tar.gz",
+      relativePath: "resources/seed/server-*.tar.gz",
+      // 找不到时展示扫描目录 + 通配模式作为诊断路径，而不是空字符串
+      paths: [seedServerArchivePath || path.join(seedRoot, "server-*.tar.gz")],
+      exists: () => !!seedServerArchivePath && canRead(seedServerArchivePath),
     },
     {
-      id: "better-sqlite3-native",
-      label: "better-sqlite3 native addon",
-      relativePath: "resources/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
-      paths: [path.join(serverRoot, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node")],
+      id: "seed-renderer-archive",
+      label: "resources/seed/renderer-*.tar.gz",
+      relativePath: "resources/seed/renderer-*.tar.gz",
+      paths: [seedRendererArchivePath || path.join(seedRoot, "renderer-*.tar.gz")],
+      exists: () => !!seedRendererArchivePath && canRead(seedRendererArchivePath),
     },
     {
       id: "bundled-git",

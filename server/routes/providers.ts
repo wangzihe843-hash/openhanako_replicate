@@ -58,7 +58,7 @@ export function createProvidersRoute(engine: any) {
   // ── Provider Summary ──
 
   /**
-   * 统一概览：合并 Provider Catalog + OAuth status + SDK 模型
+   * 统一概览：合并 Provider Catalog + Hana provider defaults + OAuth status
    * 前端新 ProvidersTab 的核心数据源
    */
   route.get("/providers/summary", async (c) => {
@@ -90,9 +90,6 @@ export function createProvidersRoute(engine: any) {
       oauthLoginMap.set(p.id, { name: p.name, loggedIn: cred?.type === "oauth" });
     }
 
-    // OAuth 自定义模型
-    const oauthCustom = engine.preferences.getOAuthCustomModels();
-
     const result: Record<string, any> = {};
 
     // OAuth 登录信息查找（oauthLoginMap 用 authJsonKey 索引）
@@ -111,8 +108,7 @@ export function createProvidersRoute(engine: any) {
       const oauthInfo = getOAuthLoginInfo(name);
       // ProviderRegistry 暴露的 runtime provider 数据是模型列表入口；
       // 对本地 Provider Plugin，它已经合并了插件声明和 catalog overlay。
-      const rawModels = p.models || [];
-      const customModels = oauthCustom[name] || [];
+      const rawModels = provRegistry.getChatModelEntries?.(name) || p.models || [];
       const allowsMissingApiKey = !!p.base_url && provRegistry.allowsMissingApiKey?.(name, p.base_url);
       const hasHeaders = Object.keys(p.headers || {}).length > 0;
       const hasCredentials = !!(p.api_key || hasHeaders || (isOAuth && oauthInfo?.loggedIn) || (!isOAuth && allowsMissingApiKey));
@@ -121,7 +117,7 @@ export function createProvidersRoute(engine: any) {
         if (!p.base_url) missingFields.push("base_url");
         if (!hasCredentials) missingFields.push("api_key");
       }
-      if (rawModels.length === 0 && customModels.length === 0) missingFields.push("models");
+      if (rawModels.length === 0) missingFields.push("models");
 
       result[name] = {
         type: isOAuth ? "oauth" : "api-key",
@@ -132,7 +128,7 @@ export function createProvidersRoute(engine: any) {
         api_key: maskSecretValue(p.api_key || ""),
         headers: maskProviderHeaders(p.headers || {}),
         models: rawModels,
-        custom_models: customModels,
+        custom_models: [],
         has_credentials: hasCredentials,
         logged_in: isOAuth ? !!oauthInfo?.loggedIn : undefined,
         supports_oauth: isOAuth,
@@ -145,32 +141,31 @@ export function createProvidersRoute(engine: any) {
       };
     }
 
-    // 追加 OAuth-only provider（有 auth.json 但没在 Provider Catalog 里）
-    // 遍历已注册的 OAuth plugin，用 authJsonKey 查 oauthLoginMap
+    // 追加没有 Provider Catalog overlay 的 OAuth provider。模型仍来自 Hana plugin 默认清单。
     for (const oauthId of provRegistry.getOAuthProviderIds()) {
       if (result[oauthId]) continue;
       const authKey = provRegistry.getAuthJsonKey(oauthId);
       const loginInfo = oauthLoginMap.get(authKey);
-      if (!loginInfo) continue;
-      const customModels = oauthCustom[authKey] || oauthCustom[oauthId] || [];
+      const entry = provRegistry.get(oauthId);
+      const effectiveModels = provRegistry.getChatModelEntries?.(oauthId) || [];
       result[oauthId] = {
         type: "oauth",
         auth_type: "oauth",
-        display_name: loginInfo.name || oauthId,
-        base_url: "",
-        api: "",
+        display_name: loginInfo?.name || entry?.displayName || oauthId,
+        base_url: entry?.baseUrl || "",
+        api: entry?.api || "",
         api_key: "",
-        models: [],
-        custom_models: customModels,
-        has_credentials: !!loginInfo.loggedIn,
-        logged_in: !!loginInfo.loggedIn,
+        models: effectiveModels,
+        custom_models: [],
+        has_credentials: !!loginInfo?.loggedIn,
+        logged_in: !!loginInfo?.loggedIn,
         supports_oauth: true,
         is_coding_plan: false,
         is_configured: true,
         can_delete: false,
-        config_status: customModels.length > 0 && loginInfo.loggedIn ? "ok" : "needs_setup",
+        config_status: effectiveModels.length > 0 && loginInfo?.loggedIn ? "ok" : "needs_setup",
         config_error: null,
-        missing_fields: customModels.length > 0 ? [] : ["models"],
+        missing_fields: effectiveModels.length > 0 ? [] : ["models"],
       };
     }
 
@@ -232,7 +227,7 @@ export function createProvidersRoute(engine: any) {
       id: model.id,
       name: model.name || model.id,
       context: model.contextWindow ?? model.context ?? null,
-      maxOutput: model.maxOutputTokens ?? model.maxOutput ?? null,
+      maxOutput: model.maxTokens ?? model.maxOutputTokens ?? model.maxOutput ?? null,
     }));
   }
 
@@ -351,6 +346,36 @@ export function createProvidersRoute(engine: any) {
     return { error: `No models found for provider "${name}"`, models: [] };
   }
 
+  function hanaCatalogFallback(name: any) {
+    if (!name) return { error: "name is required for Hana model catalog", models: [] };
+    const resolved = engine.providerRegistry.resolveChatProvider?.(name);
+    if (!resolved) return { error: `Provider "${name}" is not registered`, models: [] };
+    const sourceProviderId = resolved.sourceProviderId || resolved.entry?.id || name;
+    const modelEntries = engine.providerRegistry.getChatDiscoverableModelEntries?.(sourceProviderId) || [];
+    const models = modelEntries.map((entry) => {
+      const id = typeof entry === "object" ? entry.id : entry;
+      const known = knownCatalogModel(sourceProviderId, id);
+      return typeof entry === "object"
+        ? {
+            ...known,
+            name: entry.name || known.name,
+            context: entry.context ?? entry.contextWindow ?? known.context,
+            maxOutput: entry.maxOutput ?? entry.maxTokens ?? entry.maxOutputTokens ?? known.maxOutput,
+          }
+        : known;
+    });
+    const payload = filterProviderModels(sourceProviderId, models, resolved.entry?.baseUrl || "");
+    saveToCache(sourceProviderId, payload.models);
+    if (payload.models.length === 0) {
+      return {
+        source: "hana-catalog",
+        error: `No models found in Hana catalog for provider "${sourceProviderId}"`,
+        ...payload,
+      };
+    }
+    return { source: "hana-catalog", ...payload };
+  }
+
   /**
    * 从供应商拉取模型列表
    * 统一瀑布流：凭证解析 → 远程 list models → registry fallback → defaults fallback
@@ -375,10 +400,39 @@ export function createProvidersRoute(engine: any) {
       return c.json({ error: "name or base_url is required" }, 400);
     }
 
-    // ── 1. 凭证解析：请求体 > resolveProviderCredentials（统一路径） ──
-    const saved = name ? engine.resolveProviderCredentials(name) : { api_key: "", base_url: "", api: "" };
+    const chatProvider = name ? engine.providerRegistry.resolveChatProvider?.(name) : null;
+    // Hana-owned models-json OAuth catalogs never probe ChatGPT /models. Legacy
+    // sdk-auth-alias providers intentionally keep Pi's runtime catalog behavior.
+    if (chatProvider?.projection === "models-json" && chatProvider.credentialSource === "auth-storage") {
+      return c.json(hanaCatalogFallback(name));
+    }
+    if (chatProvider?.projection === "sdk-auth-alias") {
+      return c.json(registryOrDefaultsFallback(name));
+    }
 
+    // ── 1. 凭证解析：显式请求凭证跳过 refresh；其余网络探测 fresh resolve ──
     const bodyKey = typeof api_key === "string" ? api_key.trim() : "";
+    const hasExplicitBodyCredentials = (
+      !!bodyKey && !isMaskedSecretValue(bodyKey)
+    ) || collectProviderHeaderSecretPatchPaths(body.headers, "headers").length > 0;
+    let saved = { api_key: "", base_url: "", api: "", headers: {} } as any;
+    try {
+      if (name) {
+        if (hasExplicitBodyCredentials) {
+          const entry = engine.providerRegistry.get?.(name);
+          saved = {
+            api_key: "",
+            base_url: entry?.baseUrl || "",
+            api: entry?.api || "",
+            headers: {},
+          };
+        } else {
+          saved = await engine.resolveProviderCredentialsFresh(name);
+        }
+      }
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err), models: [] });
+    }
     const effectiveKey = bodyKey
       ? (isMaskedSecretValue(bodyKey) ? saved.api_key || "" : bodyKey)
       : saved.api_key || "";
@@ -391,10 +445,6 @@ export function createProvidersRoute(engine: any) {
     const effectiveHeaders = Object.prototype.hasOwnProperty.call(body, "headers")
       ? (resolveProviderHeadersPatch as any)({ patch: body.headers, existing: saved.headers || {} })
       : saved.headers || {};
-
-    if (effectiveApi === "openai-codex-responses") {
-      return c.json(registryOrDefaultsFallback(name));
-    }
 
     // ── 2. 远程 list models（baseUrl 为空时跳过）──
     if (effectiveBaseUrl) {
@@ -487,8 +537,28 @@ export function createProvidersRoute(engine: any) {
     // 清洗 API key：去除非 ASCII 字符（防止粘贴时输入法带入中文）
     const bodyKey = (body.api_key || "").replace(/[^\x20-\x7E]/g, "").trim();
 
-    // ── 凭证解析：请求体 > resolveProviderCredentials（统一路径） ──
-    const saved = name ? engine.resolveProviderCredentials(name) : { api_key: "", base_url: "", api: "" };
+    // ── 凭证解析：显式请求凭证跳过 refresh；其余请求在真正探测前 fresh resolve ──
+    const hasExplicitBodyCredentials = (
+      !!bodyKey && !isMaskedSecretValue(bodyKey)
+    ) || collectProviderHeaderSecretPatchPaths(body.headers, "headers").length > 0;
+    let saved = { api_key: "", base_url: "", api: "" } as any;
+    try {
+      if (name) {
+        if (hasExplicitBodyCredentials) {
+          const entry = engine.providerRegistry.get?.(name);
+          saved = {
+            api_key: "",
+            base_url: entry?.baseUrl || "",
+            api: entry?.api || "",
+            headers: {},
+          };
+        } else {
+          saved = await engine.resolveProviderCredentialsFresh(name);
+        }
+      }
+    } catch (err) {
+      return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
 
     const api_key = bodyKey
       ? (isMaskedSecretValue(bodyKey) ? saved.api_key || "" : bodyKey)
@@ -502,6 +572,13 @@ export function createProvidersRoute(engine: any) {
     const headers = Object.prototype.hasOwnProperty.call(body, "headers")
       ? (resolveProviderHeadersPatch as any)({ patch: body.headers, existing: saved.headers || {} })
       : saved.headers || {};
+
+    if (name
+      && engine.providerRegistry.resolveChatProvider?.(name)?.credentialSource === "auth-storage"
+      && !hasExplicitBodyCredentials
+      && !saved.api_key) {
+      return c.json({ ok: false, error: `OAuth credentials unavailable for provider "${name}"` });
+    }
 
     if (!base_url) {
       return c.json({ error: "base_url is required" }, 400);
@@ -536,8 +613,11 @@ export function createProvidersRoute(engine: any) {
       await refreshProviderModels();
       return c.json({ ok: true });
     } catch (err) {
-      const status = err.message?.includes("not found") ? 404 : 500;
-      return c.json({ error: err.message }, status);
+      const declaredStatus = Number(err?.statusCode);
+      const status = Number.isInteger(declaredStatus) && declaredStatus >= 400 && declaredStatus <= 599
+        ? declaredStatus
+        : (err.message?.includes("not found") ? 404 : 500);
+      return c.json({ error: err.message }, status as any);
     }
   });
 

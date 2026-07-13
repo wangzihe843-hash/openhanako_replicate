@@ -431,6 +431,65 @@
     animation: hana-chat-soft-down-in 130ms var(--ease-out) both;
 }
 
+/* ── 跨 session Agent 来源消息卡（居中，对标 interludeRow） ── */
+.agentOriginRow {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    margin: var(--space-16) 0;
+    font-family: var(--font-sans);
+}
+
+.agentOriginCard {
+    background: var(--tool-bg);
+    border-radius: var(--radius-sm);
+    padding: var(--space-12) var(--space-16);
+    width: min(560px, 100%);
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.agentOriginHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    margin-bottom: var(--space-8);
+}
+
+.agentOriginAvatar {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.agentOriginName {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.agentOriginBody {
+    white-space: pre-wrap;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.agentOriginBodyCollapsed {
+    max-height: calc(1.6em * 12);
+    overflow: hidden;
+}
+
+.agentOriginToggle {
+    margin-top: var(--space-8);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+}
+
 .interludeTrigger {
     width: min(100%, 680px);
     min-width: 0;
@@ -892,6 +951,63 @@
     }
 }
 
+/* ── 跨 session 协作草稿确认卡（send / create） ── */
+
+.sessionCollabDraftAvatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.sessionCollabDraftBody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    padding: var(--space-12);
+}
+
+.sessionCollabDraftTitleInput {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--overlay-light, rgba(0, 0, 0, 0.08));
+    border-radius: var(--radius-sm);
+    outline: none;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--fs-ui);
+    padding: 5px 8px;
+}
+
+.sessionCollabDraftTextarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 72px;
+    max-height: 220px;
+    resize: vertical;
+    border: 1px solid var(--overlay-light, rgba(0, 0, 0, 0.08));
+    border-radius: var(--radius-sm);
+    outline: none;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--fs-body);
+    line-height: 1.5;
+    padding: var(--space-8);
+}
+
+.sessionCollabDraftTextarea:focus,
+.sessionCollabDraftTitleInput:focus {
+    border-color: var(--accent);
+}
+
+.sessionCollabDraftError {
+    font-size: var(--fs-hint);
+    color: var(--danger, #b45a5a);
+}
+
 /* ── 设置确认卡片 ── */
 
 .settingsConfirmCard {
@@ -1124,26 +1240,13 @@
 .toolGroup {
     position: relative;
     margin: var(--space-4) 0;
-    padding-left: 2px;
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    border-radius: var(--radius-sm);
     background: var(--tool-bg);
     overflow: hidden;
-    width: 100%;
+    width: var(--chat-task-block-width);
     max-width: 100%;
     box-sizing: border-box;
     animation: hana-chat-soft-down-in 110ms var(--ease-out) both;
-}
-
-.toolGroup::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: var(--accent);
-    transform-origin: top;
-    animation: hana-tool-bar-in 100ms var(--ease-out) 55ms both;
 }
 
 .toolGroupSummary {
@@ -1220,7 +1323,7 @@
 }
 
 .processFoldSummary:hover {
-    background: var(--tool-bg);
+    background: var(--overlay-light);
     color: var(--tool-text);
 }
 
@@ -1355,7 +1458,7 @@
     font-family: var(--font-serif);
     font-weight: 700;
     letter-spacing: 0.1em;
-    color: var(--accent);
+    color: var(--tool-text);
 }
 
 .toolDots::after {
@@ -1677,6 +1780,7 @@
 .imageOutputPreview {
     display: block;
     max-width: 100%;
+    height: auto;
     max-height: 450px;
     object-fit: contain;
     border-radius: var(--radius-chat-card-inner);
@@ -1732,7 +1836,7 @@
     gap: var(--space-8);
     margin: var(--space-4) 0;
     padding: 0.55rem 0.85rem;
-    background: var(--tool-bg);
+    background: var(--overlay-subtle);
     border: 1px solid var(--accent);
     border-radius: var(--radius-chat-card);
     max-width: 100%;
@@ -1795,7 +1899,9 @@
 }
 
 .browserScreenshot img {
+    display: block;
     max-width: 100%;
+    height: auto;
     border-radius: var(--radius-chat-card);
     border: 1px solid var(--border);
     cursor: default;
@@ -1862,7 +1968,7 @@
     transition: background var(--duration-slow) ease-out;
 }
 
-.sessionPanel:hover::-webkit-scrollbar-thumb,
+:global(html:not([data-platform="win32"])) .sessionPanel:hover::-webkit-scrollbar-thumb,
 .sessionPanel.is-scrolling::-webkit-scrollbar-thumb {
     background: rgba(128, 128, 128, 0.25);
 }
@@ -1987,6 +2093,21 @@
     --subagent-preview-height: 260px;
 }
 
+/* 连续并列的 Subagent 卡融合为一个整块：零间隙、只留外圈圆角、内部细分隔线。
+   [data-chat-resource-card] 属性提高特异性，确保盖过 ChatResourceCard.module.css 的 .card 圆角与 margin */
+.subagentResourceCard[data-chat-resource-card]:has(+ .subagentResourceCard[data-chat-resource-card]) {
+    margin-bottom: 0;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.subagentResourceCard[data-chat-resource-card] + .subagentResourceCard[data-chat-resource-card] {
+    margin-top: 0;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    border-top: 1px solid var(--overlay-light, rgba(0, 0, 0, 0.08));
+}
+
 .subagent-running .subagentAvatar {
     --pulse-lo: 1;
     --pulse-hi: 0.6;
@@ -2107,10 +2228,35 @@
     .browserScreenshot {
         animation: none;
     }
+}
 
-    .toolGroup::before {
-        animation: none;
-        opacity: 1;
-        transform: none;
-    }
+/* 查找定位：目标消息一次性强调（duration 由 token 派生：0.25s × 6.4 = 1.6s） */
+.locateFlash {
+    animation-name: locate-flash;
+    animation-duration: calc(var(--duration-slow) * 6.4);
+    animation-timing-function: var(--ease-out);
+    animation-iteration-count: 1;
+}
+
+@keyframes locate-flash {
+    0% { background-color: color-mix(in srgb, var(--accent) 28%, transparent); }
+    100% { background-color: transparent; }
+}
+
+/* 查找词高亮（JS 创建的原生 mark，走全局类；样式对齐 preview-find-mark） */
+:global(mark.chat-find-mark) {
+    border-radius: 2px;
+    background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+    color: inherit;
+    padding: 0;
+}
+
+/* ── 会话内查找条宿主 ──
+   ClassicFindBox 自带 position:absolute + top:14px/right:14px + z-index:12，
+   本宿主只需提供一个 position:relative 的锚点（不设 z-index，避免建立新的层叠
+   上下文——ClassicFindBox 的 z-index 需要直接与 sessionShell 等兄弟节点比较）。
+   挂载于 `.chat-area.has-panels`（ChatPage.tsx，`!welcomeVisible && currentSessionPath`
+   时为 position:relative，与本组件的渲染条件一致），故顶右偏移天然锚定到消息区域。 */
+.chatFindBarHost {
+    position: relative;
 }

@@ -3,6 +3,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { SERVER_PROTOCOL_VERSION } from "../shared/contract-versions.cjs";
 
 function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-server-identity-route-"));
@@ -110,6 +111,7 @@ describe("server identity route", () => {
       },
       capabilities: ["chat", "resources", "tools"],
       version: "1.2.3",
+      serverProtocol: SERVER_PROTOCOL_VERSION,
     });
   });
 
@@ -202,6 +204,7 @@ describe("server identity route", () => {
       },
       capabilities: ["chat", "resources", "tools"],
       version: "9.9.9",
+      serverProtocol: SERVER_PROTOCOL_VERSION,
     });
   });
 
@@ -238,6 +241,7 @@ describe("server identity route", () => {
       userId: "user_route",
       studioId: "studio_route",
       capabilities: ["chat", "resources.read", "resources", "files.read", "files", "files.write"],
+      serverProtocol: SERVER_PROTOCOL_VERSION,
     });
   });
 });

@@ -494,8 +494,13 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
     const timestamp = normalizeHistoryTimestamp(m.timestamp);
 
     if (m.role === 'user') {
+      // 跨 session 协作：非用户本人发出的消息带 origin，此时以 displayText（干净正文，
+      // 不含模型侧身份前缀）为准；老消息没有这两个字段，走既有 content 管道，行为不变。
+      const origin = (m as any).origin;
+      const originDisplayText = origin && typeof (m as any).displayText === 'string' ? (m as any).displayText : null;
+
       // strip steer 前缀（内部标记，不应展示给用户）
-      const rawContent = (m.content || '')
+      const rawContent = (originDisplayText ?? (m.content || ''))
         .replace(LEGACY_STEER_PREFIX_RE, '')
         .replace(/^<t>[^<]*<\/t>\s*/, '');
 
@@ -547,6 +552,7 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
         deskContext: deskContext || undefined,
         quotedText: quotedText || undefined,
         timestamp,
+        ...(origin ? { origin } : {}),
       };
       items.push({ type: 'message', data: msg });
     } else if (m.role === 'assistant') {

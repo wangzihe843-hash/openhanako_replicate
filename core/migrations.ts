@@ -146,6 +146,8 @@ const migrations = {
   42: migrateProviderCatalogV2Cutover,
   // Codex 生图参数改为 mode schema 的 resolution 后，清掉旧配置残留的 size 默认值
   43: migrateCodexImageGenerationDefaultsToResolutionSchema,
+  // OAuth 模型管理收回 Provider Catalog：合并旧 runtime alias、自定义模型偏好并清掉双数据源
+  44: migrateOAuthModelsToProviderCatalog,
 };
 
 // ── Runner ──────────────────────────────────────────────────────────────────
@@ -1366,6 +1368,113 @@ function migrateCodexImageGenerationDefaultsToResolutionSchema(ctx) {
 
   const pluginChanged = removeCodexImageSizeDefaultFromPluginConfig(hanakoHome, log);
   log?.(`[migrations] #43: Codex stale image size defaults removed (preferences=${prefsChanged}, pluginConfig=${pluginChanged})`);
+}
+
+const CODEX_OAUTH_PROVIDER_ID = "openai-codex-oauth";
+const CODEX_OAUTH_RUNTIME_ALIAS = "openai-codex";
+
+function migrationModelId(model) {
+  return typeof model === "object" && model !== null ? model.id : model;
+}
+
+function mergeMigrationModelLists(...lists) {
+  const order = [];
+  const byId = new Map();
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const rawModel of list) {
+      const id = migrationModelId(rawModel);
+      if (typeof id !== "string" || !id.trim()) continue;
+      const normalizedId = id.trim();
+      const incoming = typeof rawModel === "object" && rawModel !== null
+        ? { ...rawModel, id: normalizedId }
+        : normalizedId;
+      if (!byId.has(normalizedId)) {
+        order.push(normalizedId);
+        byId.set(normalizedId, incoming);
+        continue;
+      }
+      const current = byId.get(normalizedId);
+      if (typeof incoming === "object") {
+        byId.set(normalizedId, typeof current === "object"
+          ? { ...current, ...incoming, id: normalizedId }
+          : incoming);
+      }
+    }
+  }
+  return order.map((id) => byId.get(id));
+}
+
+function nonEmptyMigrationModels(config) {
+  return Array.isArray(config?.models) && config.models.length > 0 ? config.models : null;
+}
+
+function migrateOAuthModelsToProviderCatalog(ctx) {
+  const { hanakoHome, prefs, providerRegistry, log } = ctx;
+  const store = providerRegistry?._catalog || new ProviderCatalogStore(hanakoHome);
+  const catalog = store.load();
+  const providers = structuredClone(catalog.providers || {});
+  const preferences = prefs.getPreferences();
+  const customByProvider = preferences?.oauth_custom_models && typeof preferences.oauth_custom_models === "object"
+    ? preferences.oauth_custom_models
+    : {};
+
+  const legacyCodex = providers[CODEX_OAUTH_RUNTIME_ALIAS];
+  const canonicalCodex = providers[CODEX_OAUTH_PROVIDER_ID];
+  const codexCustom = mergeMigrationModelLists(
+    customByProvider[CODEX_OAUTH_RUNTIME_ALIAS],
+    customByProvider[CODEX_OAUTH_PROVIDER_ID],
+  );
+  if (legacyCodex || canonicalCodex || codexCustom.length > 0) {
+    const { models: _legacyModels, ...legacyScalars } = legacyCodex || {};
+    const { models: _canonicalModels, ...canonicalScalars } = canonicalCodex || {};
+    const mergedConfig = { ...legacyScalars, ...canonicalScalars };
+    delete mergedConfig.api_key;
+
+    const explicitModels = mergeMigrationModelLists(
+      nonEmptyMigrationModels(legacyCodex),
+      nonEmptyMigrationModels(canonicalCodex),
+    );
+    if (explicitModels.length > 0) {
+      mergedConfig.models = mergeMigrationModelLists(explicitModels, codexCustom);
+    } else if (codexCustom.length > 0) {
+      mergedConfig.models = mergeMigrationModelLists(
+        providerRegistry?.getDefaultModels?.(CODEX_OAUTH_PROVIDER_ID) || [],
+        codexCustom,
+      );
+    }
+    // 旧版本的 models: [] 表示“没有 allowlist，使用 SDK 目录”。迁移时删除空字段，
+    // 让它进入新的 Hana/plugin 默认语义；#44 之后新写入的 [] 才表示明确关闭。
+    providers[CODEX_OAUTH_PROVIDER_ID] = mergedConfig;
+  }
+  delete providers[CODEX_OAUTH_RUNTIME_ALIAS];
+
+  for (const [legacyProviderId, rawCustomModels] of Object.entries(customByProvider) as [string, any][]) {
+    if (legacyProviderId === CODEX_OAUTH_RUNTIME_ALIAS || legacyProviderId === CODEX_OAUTH_PROVIDER_ID) continue;
+    if (!Array.isArray(rawCustomModels) || rawCustomModels.length === 0) continue;
+    const resolved = providerRegistry?.resolveChatProvider?.(legacyProviderId);
+    const providerId = resolved?.sourceProviderId || legacyProviderId;
+    const current = providers[providerId] || {};
+    const currentModels = nonEmptyMigrationModels(current)
+      || providerRegistry?.getDefaultModels?.(providerId)
+      || [];
+    providers[providerId] = {
+      ...current,
+      models: mergeMigrationModelLists(currentModels, rawCustomModels),
+    };
+  }
+
+  store.saveProviders(providers, { oauthCustomModelsMigratedAt: new Date().toISOString() });
+  if (Object.prototype.hasOwnProperty.call(preferences, "oauth_custom_models")) {
+    delete preferences.oauth_custom_models;
+    prefs.savePreferences(preferences);
+  }
+  if (providerRegistry) {
+    providerRegistry._addedModelsCache = null;
+    providerRegistry._addedModelsMtime = 0;
+    providerRegistry._entries?.clear?.();
+  }
+  log?.(`[migrations] #44: OAuth models moved to Provider Catalog (providers=${Object.keys(customByProvider).length})`);
 }
 
 function removeCodexImageSizeDefault(providerDefaults) {

@@ -283,6 +283,8 @@ export interface ChatMessage {
   skills?: string[];
   sendStatus?: 'pending' | 'failed';
   sendError?: string;
+  /** 非用户本人发出的消息来源（如别的 Agent 经跨 session 协作投递）。老数据无此字段，按普通用户消息渲染。 */
+  origin?: { kind: 'agent'; agentId: string | null; agentName: string | null };
   // Assistant
   blocks?: ContentBlock[];
   // 通用

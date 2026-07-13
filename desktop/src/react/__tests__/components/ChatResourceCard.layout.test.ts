@@ -22,7 +22,7 @@ describe('ChatResourceCard layout', () => {
     const subtitle = cssRule(css, '.subtitle');
     const actions = cssRule(css, '.actions');
 
-    expect(card).toMatch(/--chat-resource-card-width:\s*348px/);
+    expect(card).toMatch(/--chat-resource-card-width:\s*var\(--chat-task-block-width,\s*348px\)/);
     expect(card).toMatch(/width:\s*var\(--chat-resource-card-width\)/);
     expect(card).toMatch(/max-width:\s*100%/);
     expect(title).toMatch(/text-overflow:\s*ellipsis/);
@@ -44,5 +44,20 @@ describe('ChatResourceCard layout', () => {
     const interactiveButton = cssRule(css, '.interactive button.main');
 
     expect(interactiveButton).toMatch(/cursor:\s*pointer/);
+  });
+
+  it('gives the task variant the task-family container language', () => {
+    const css = readResourceCss();
+    const task = cssRule(css, '.task');
+
+    expect(task).toMatch(/background:\s*var\(--tool-bg\)/);
+    expect(task).toMatch(/border:\s*none/);
+    expect(task).toMatch(/border-radius:\s*var\(--radius-sm\)/);
+    expect(task).toMatch(/box-shadow:\s*none/);
+  });
+
+  it('keeps the running tone neutral inside the task variant', () => {
+    const css = readResourceCss();
+    expect(css).toMatch(/\.task\s+\.status-accent\s*\{[^}]*color:\s*var\(--tool-text\)/);
   });
 });

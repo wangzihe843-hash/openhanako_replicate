@@ -19,18 +19,53 @@ function resolveTheme() {
   return themeRegistry.resolveSavedTheme(saved, isDark).concrete;
 }
 
+function normalizeBrowserViewerOpenTarget(target) {
+  if (typeof target === "string") return { url: target };
+  if (target && typeof target === "object") {
+    return {
+      url: typeof target.url === "string" ? target.url : undefined,
+      sessionPath: typeof target.sessionPath === "string" ? target.sessionPath : undefined,
+    };
+  }
+  return {};
+}
+
 contextBridge.exposeInMainWorld("hana", {
   getServerPort: () => ipcRenderer.invoke("get-server-port"),
   getServerToken: () => ipcRenderer.invoke("get-server-token"),
   runEditCommand: (command) => ipcRenderer.invoke("run-edit-command", command),
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
-  checkUpdate: () => ipcRenderer.invoke("check-update"),
+  getPendingAnnouncement: () => ipcRenderer.invoke("get-pending-announcement"),
+  ackAnnouncement: () => ipcRenderer.invoke("ack-announcement"),
   // Auto-update (Windows)
   autoUpdateCheck: () => ipcRenderer.invoke("auto-update-check"),
   autoUpdateDownload: () => ipcRenderer.invoke("auto-update-download"),
   autoUpdateInstall: () => ipcRenderer.invoke("auto-update-install"),
   autoUpdateState: () => ipcRenderer.invoke("auto-update-state"),
   autoUpdateSetChannel: (ch) => ipcRenderer.invoke("auto-update-set-channel", ch),
+  // 列车更新（OTA）：暂存状态查询 / 手动检查 / 立即应用（下载+激活+重启，仅由用户点击触发）
+  trainUpdateStatus: () => ipcRenderer.invoke("train-update-status"),
+  trainUpdateCheck: () => ipcRenderer.invoke("train-update-check"),
+  trainUpdateApply: () => ipcRenderer.invoke("train-update-apply"),
+  onTrainUpdateAvailable: (cb) => {
+    const handler = (_, payload) => cb(payload);
+    ipcRenderer.on("train-update-available", handler);
+    return () => ipcRenderer.removeListener("train-update-available", handler);
+  },
+  // 崩溃回退的一次性用户提示：广播（运行时触发）+ ack（用户点掉后清空
+  // 主进程内存里的状态，同一次事件不重复提示）。
+  onTrainFallbackNotice: (cb) => {
+    const handler = (_, payload) => cb(payload);
+    ipcRenderer.on("train-fallback-notice", handler);
+    return () => ipcRenderer.removeListener("train-fallback-notice", handler);
+  },
+  ackTrainFallbackNotice: () => ipcRenderer.invoke("train-fallback-notice-ack"),
+  onTrainUpdateProgress: (cb) => {
+    const handler = (_, progress) => cb(progress);
+    ipcRenderer.on("train-update-progress", handler);
+    return () => ipcRenderer.removeListener("train-update-progress", handler);
+  },
+  getUpdateDigestHistory: () => ipcRenderer.invoke("get-update-digest-history"),
   getAutoLaunchStatus: () => ipcRenderer.invoke("get-auto-launch-status"),
   setAutoLaunchEnabled: (enabled) => ipcRenderer.invoke("set-auto-launch-enabled", enabled),
   getKeepAwakeStatus: () => ipcRenderer.invoke("get-keep-awake-status"),
@@ -119,23 +154,23 @@ contextBridge.exposeInMainWorld("hana", {
     return () => ipcRenderer.removeListener("server-restarted", handler);
   },
   // 浏览器查看器窗口
-  openBrowserViewer: (url) => ipcRenderer.invoke("open-browser-viewer", resolveTheme(), url),
+  openBrowserViewer: (target) => ipcRenderer.invoke("open-browser-viewer", resolveTheme(), normalizeBrowserViewerOpenTarget(target)),
   onBrowserUpdate: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on("browser-update", handler);
     return () => ipcRenderer.removeListener("browser-update", handler);
   },
-  browserGoBack: () => ipcRenderer.invoke("browser-go-back"),
-  browserGoForward: () => ipcRenderer.invoke("browser-go-forward"),
-  browserReload: () => ipcRenderer.invoke("browser-reload"),
-  browserNewTab: () => ipcRenderer.invoke("browser-new-tab"),
-  browserSwitchTab: (tabId) => ipcRenderer.invoke("browser-switch-tab", tabId),
-  browserCloseTab: (tabId) => ipcRenderer.invoke("browser-close-tab", tabId),
+  browserGoBack: (sessionPath) => ipcRenderer.invoke("browser-go-back", sessionPath),
+  browserGoForward: (sessionPath) => ipcRenderer.invoke("browser-go-forward", sessionPath),
+  browserReload: (sessionPath) => ipcRenderer.invoke("browser-reload", sessionPath),
+  browserNewTab: (sessionPath) => ipcRenderer.invoke("browser-new-tab", sessionPath),
+  browserSwitchTab: (tabId, sessionPath) => ipcRenderer.invoke("browser-switch-tab", tabId, sessionPath),
+  browserCloseTab: (tabId, sessionPath) => ipcRenderer.invoke("browser-close-tab", tabId, sessionPath),
   closeBrowserViewer: () => ipcRenderer.invoke("close-browser-viewer"),
-  browserEmergencyStop: () => ipcRenderer.invoke("browser-emergency-stop"),
+  browserEmergencyStop: (sessionPath) => ipcRenderer.invoke("browser-emergency-stop", sessionPath),
   // 派生 Viewer 窗口（只读文件副本，多实例）
   spawnViewer: (data) => ipcRenderer.invoke("spawn-viewer", data),
-  onViewerLoad: (cb) => ipcRenderer.on("viewer-load", (_, data) => cb(data)),
+  viewerRequestLoad: () => ipcRenderer.invoke("viewer-request-load"),
   viewerClose: () => ipcRenderer.invoke("viewer-close"),
   onViewerClosed: (cb) => ipcRenderer.on("viewer-closed", (_, windowId) => cb(windowId)),
   // Skill 预览窗口

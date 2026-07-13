@@ -1,13 +1,13 @@
 const DEFAULT_MARKDOWN_TYPOGRAPHY = Object.freeze({
   fontPreset: "follow",
-  bodyFontSize: 15,
-  heading1FontSize: 24,
-  heading2FontSize: 20,
+  bodyFontSize: 16,
+  heading1FontSize: 28,
+  heading2FontSize: 21,
   heading3FontSize: 18,
   heading4FontSize: 16,
   heading5FontSize: 15,
   heading6FontSize: 14,
-  lineHeight: 1.72,
+  lineHeight: 1.5,
   contentPadding: 24,
   contentWidth: 720,
 });

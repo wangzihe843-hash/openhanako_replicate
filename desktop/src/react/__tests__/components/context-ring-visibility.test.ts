@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { shouldShowContextRingTokenLabel } from '../../components/input/context-ring-visibility';
 
 describe('context ring visibility', () => {
-  it('shows the numeric label only from 100k tokens', () => {
+  it('never shows the numeric label beside the ring', () => {
     expect(shouldShowContextRingTokenLabel(99_999)).toBe(false);
-    expect(shouldShowContextRingTokenLabel(100_000)).toBe(true);
+    expect(shouldShowContextRingTokenLabel(100_000)).toBe(false);
+    expect(shouldShowContextRingTokenLabel(219_000)).toBe(false);
   });
 
   it('hides the numeric label when usage is unknown or invalid', () => {

@@ -13,6 +13,27 @@ function isPlainObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function normalizeHttpsOrigin(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("OAuth HTTP runtime allowedBaseUrlOrigins entries must be non-empty HTTPS origins");
+  }
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`Invalid OAuth HTTP runtime origin "${value}"`);
+  }
+  if (parsed.protocol !== "https:"
+    || parsed.username
+    || parsed.password
+    || parsed.pathname !== "/"
+    || parsed.search
+    || parsed.hash) {
+    throw new Error(`OAuth HTTP runtime origin must be a bare HTTPS origin: "${value}"`);
+  }
+  return parsed.origin;
+}
+
 export function normalizeRuntimeKind(kind) {
   const value = String(kind || "").trim();
   if (!VALID_RUNTIME_KINDS.has(value)) {
@@ -71,7 +92,14 @@ export function validateProviderRuntime(runtime) {
   if (kind === "local-cli" || kind === "browser-cli") {
     validateCliCommandSpec(runtime.command);
   }
-  return runtime;
+  if (kind === "oauth-http") {
+    if (!Array.isArray(runtime.allowedBaseUrlOrigins) || runtime.allowedBaseUrlOrigins.length === 0) {
+      throw new Error("OAuth HTTP runtime requires non-empty allowedBaseUrlOrigins");
+    }
+    const allowedBaseUrlOrigins = [...new Set(runtime.allowedBaseUrlOrigins.map(normalizeHttpsOrigin))];
+    return { ...runtime, kind, allowedBaseUrlOrigins };
+  }
+  return { ...runtime, kind };
 }
 
 export function buildCliArgs(spec, bindings = {}) {

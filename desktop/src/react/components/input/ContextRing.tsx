@@ -21,6 +21,8 @@ export function ContextRing() {
 
   // 从 Zustand store 同步 context 数据（keyed store 优先，compat global 兜底）
   const currentSessionPath = useStore(s => s.currentSessionPath);
+  const currentSessionId = useStore(s => s.currentSessionId);
+  const addToast = useStore(s => s.addToast);
   const contextEntry = useStore(s => (
     s.currentSessionPath ? sessionScopedValue(s, s.contextBySession, s.currentSessionPath) : null
   ));
@@ -59,11 +61,17 @@ export function ContextRing() {
   const handleCompact = useCallback(() => {
     if (!currentSessionPath || busy) return;
     setMenuOpen(false);
-    const ws = getWebSocket();
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'compact', sessionPath: currentSessionPath }));
+    if (!currentSessionId) {
+      addToast(t('error.noActiveSession'), 'error', 6000);
+      return;
     }
-  }, [busy, currentSessionPath]);
+    const ws = getWebSocket();
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      addToast(t('status.disconnected'), 'error', 6000);
+      return;
+    }
+    ws.send(JSON.stringify({ type: 'compact', sessionId: currentSessionId }));
+  }, [addToast, busy, currentSessionId, currentSessionPath, t]);
 
   if (!currentSessionPath) return null;
   const displayTokens = tokens ?? 0;

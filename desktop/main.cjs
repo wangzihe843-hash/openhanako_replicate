@@ -16,7 +16,8 @@ const { spawn, execFile } = require("child_process");
 const fs = require("fs");
 const { pathToFileURL } = require("url");
 const { PNG } = require("pngjs");
-const { initAutoUpdater, checkForUpdatesAuto, setMainWindow: setUpdaterMainWindow, setUpdateChannel, installDownloadedUpdate } = require("./auto-updater.cjs");
+const { initAutoUpdater, checkForUpdatesAuto, setMainWindow: setUpdaterMainWindow, setUpdateChannel, installDownloadedUpdate, normalizeReleaseDigest } = require("./auto-updater.cjs");
+const { createUpdateDigestHistoryLoader } = require("./src/shared/update-digest-history.cjs");
 const {
   getAutoLaunchStatus,
   setAutoLaunchEnabled,
@@ -182,6 +183,21 @@ function readQuickChatPreferences() {
   const prefsPath = path.join(hanakoHome, "user", "preferences.json");
   const prefs = safeReadJSON(prefsPath, {});
   return normalizeQuickChatPreferences(prefs?.quick_chat);
+}
+
+/**
+ * 更新通道偏好（stable/beta）：同一个
+ * 设置项同时驱动壳的 `setUpdateChannel`（electron-updater `allowPrerelease`）
+ * 与列车 OTA 的 `channel` 参数（决定拉取哪个 manifest，以及暂存产物落在
+ * 哪个指针命名空间下）。持久化沿用既有 `update_channel` 字段，不新造存储。
+ * 不缓存：每次调用重新读，用户在设置页切换后对下一次调用立刻生效（同
+ * auto-updater.cjs 的 isAutoCheckEnabled() 约定）。缺失/损坏一律回落
+ * "stable"（老用户没有这个字段时的既有默认行为不变）。
+ */
+function readUpdateChannelPreference() {
+  const prefsPath = path.join(hanakoHome, "user", "preferences.json");
+  const prefs = safeReadJSON(prefsPath, {});
+  return prefs?.update_channel === "beta" ? "beta" : "stable";
 }
 
 async function applyDesktopNetworkProxy(config, { reason = "runtime" } = {}) {
@@ -359,11 +375,81 @@ const _browserViews = new Map();   // sessionPath -> BrowserWorkspace; BrowserWo
 let _currentBrowserSession = null; // 当前浏览器绑定的 sessionPath
 let _currentBrowserTabId = null;   // 当前浏览器绑定的 tabId
 let _browserAcceptCookies = true;
-let _browserCookiePolicyInstalled = false;
+const _browserCookiePolicyInstalledPartitions = new Set();
 
-/** Vite 入口页面统一加载（dev → Vite dev server，其他优先 dist-renderer，最后才回退 src） */
+/**
+ * Vite 入口页面统一加载（dev → Vite dev server，其他优先各自的 dist 目录，
+ * 最后才回退 src）。
+ *
+ * renderer 与 splash 使用不同的资源归属：
+ * - `_distRenderer`：packaged 模式下由 `resolvePackagedArtifactBoot` 解析
+ *   出 renderer 归档的激活目录后赋值（`let`，不再是常量）；dev 模式
+ *   （无 seed）永远维持默认值 `desktop/dist-renderer`（vite build:renderer
+ *   本地产物），不经过任何 artifact 解析——dev 模式逐字节不变。
+ * - `_distSplash`：splash 是壳自持的表面，永远从 asar 内的
+ *   `desktop/dist-splash` 加载，不依赖任何 artifact 是否已解压——这正是
+ *   splash 在首启解压两只箱子的过程中还能显示的原因。
+ */
 const _isDev = process.argv.includes("--dev");
-const _distRenderer = path.join(__dirname, "dist-renderer");
+let _distRenderer = path.join(__dirname, "dist-renderer");
+const _distSplash = path.join(__dirname, "dist-splash");
+
+// renderer 崩溃回退闭环的运行时状态。两者只在打包模式下
+// 被 `resolvePackagedArtifactBoot` 赋值一次；dev 模式（无 seed）永远维持
+// null，是下游所有 renderer 崩溃处理函数判断"当前是否处于 artifact 模式"
+// 的唯一依据——不从 `_isDev`/`app.isPackaged` 推导，理由同 server 侧
+// `artifactBootContext`：唯一决定因素是"这次启动是否真的走过 artifact-boot
+// 决议"，不是平台/构建模式本身。
+let _rendererBootChannel = null; // artifactBoot.rendererPointerChannel(_artifactBootChannel)，如 "stable.renderer"
+let _rendererBootTrain = null;
+
+// 本次启动实际生效的通道（"stable"/"beta"，未加
+// ".renderer" 限定），由 `resolvePackagedArtifactBoot` 读一次
+// `readUpdateChannelPreference()` 后赋值一次，此后 server 崩溃哨兵
+// （`_spawnServerOnce`）与 renderer 崩溃回退重试（`handleRendererArtifactLoadFailure`
+// 里重新调用的 `prepareArtifactRendererBoot`）都复用这同一个值，不再各自
+// 硬编码 `artifactBoot.SEED_CHANNEL` 或各自重新调用
+// `readUpdateChannelPreference()`——同一次会话内，crash-loop 计数必须落在
+// 同一个指针命名空间，用户中途切换偏好不能让同一条崩溃链的哨兵计数被
+// 撕成两半。dev 模式（无 seed）永远维持 null。
+let _artifactBootChannel = null;
+
+// 一切面向用户的版本显示的单一源："已激活内容"的产品版本（renderer/server
+// 归档在启动时实际解析出的 version），不是壳（Electron/package.json）版本——
+// 热更新后壳还是 0.386.5，但里子已经是 0.388.0，用户应该看到 0.388.0。
+// 由 `resolvePackagedArtifactBoot` 在每次成功决议后赋值一次（首次启动、
+// apply-now 触发的重启、renderer 崩溃回退重试都会重新决议一次，见
+// `handleRendererArtifactLoadFailure`），下游只读 `getCurrentContentVersion()`，
+// 不直接读这个变量。
+let _currentContentVersion = null;
+
+// 崩溃回退的一次性用户提示：只在 `prepareArtifactServerBoot`/
+// `prepareArtifactRendererBoot` 真正执行了 demote 的那次调用里被设置（见
+// artifact-boot.cjs 对 crashFallback 语义的注释——它是一次性信号，不是
+// "当前正运行在 previous 槽位"这种持续性状态），进程内存足够承载：
+// 冷启动路径（`resolvePackagedArtifactBoot`）发生在任何窗口创建之前，
+// 广播可能没有听众，靠 `train-update-status` IPC 被窗口挂载后主动拉取；
+// 运行时 renderer 崩溃重试路径（`handleRendererArtifactLoadFailure`）发生
+// 时窗口已存在，广播能立即送达。用户点击"知道了"后由
+// `train-fallback-notice-ack` handler 清空，不落盘——同一次事件只提示一次，
+// 下一次真实发生的崩溃回退会重新赋值。
+let _crashFallbackNotice = null;
+
+/**
+ * 当前产品版本访问器：一切面向用户的版本显示（贴纸、设置页、升级后首启
+ * 公告的书签比较）都必须经这里读，禁止再各自调用 `app.getVersion()`。
+ * `_currentContentVersion` 为 null 的唯二合法情形——dev 模式（没有 seed/
+ * 指针，`resolvePackagedArtifactBoot` 从未真正决议过）与"决议尚未完成前
+ * 的极早期调用"——此时壳版本本来就等于内容版本（由构造保证：dev 模式
+ * 没有独立的内容归档，最早期调用点也发生在任何指针可能偏离壳版本之前），
+ * 回落 `app.getVersion()` 不是"猜不到就兜底"，是这两种场景下唯一正确的值。
+ * 诊断专用文案（crash log、`dialog.trainUpdateApplyFailedBody` 这类"进程崩了
+ * 请重启"对话框）刻意继续读 `app.getVersion()`，不经这个访问器——那些场景
+ * 问的是"哪个壳进程崩了"，不是"用户在用哪个内容版本"。
+ */
+function getCurrentContentVersion() {
+  return _currentContentVersion || app.getVersion();
+}
 
 const QUICK_CHAT_WIDTH = 480;
 const QUICK_CHAT_COMPACT_HEIGHT = 142;
@@ -371,7 +457,7 @@ const QUICK_CHAT_CHAT_HEIGHT = 520;
 const QUICK_CHAT_MIN_WIDTH = 360;
 const QUICK_CHAT_MIN_HEIGHT = 118;
 
-function loadWindowURL(win, pageName, opts) {
+function loadPageFromDir(win, distDir, pageName, opts) {
   if (_isDev && process.env.VITE_DEV_URL) {
     let url = `${process.env.VITE_DEV_URL}/${pageName}.html`;
     if (opts?.query && Object.keys(opts.query).length > 0) {
@@ -380,13 +466,26 @@ function loadWindowURL(win, pageName, opts) {
     }
     win.loadURL(url);
   } else {
-    const built = path.join(_distRenderer, `${pageName}.html`);
+    const built = path.join(distDir, `${pageName}.html`);
     if (fs.existsSync(built)) {
       win.loadFile(built, opts);
     } else {
       win.loadFile(path.join(__dirname, "src", `${pageName}.html`), opts);
     }
   }
+}
+
+function loadWindowURL(win, pageName, opts) {
+  loadPageFromDir(win, _distRenderer, pageName, opts);
+}
+
+/**
+ * splash 专属加载：永远从 `_distSplash`（asar 内自持，双 artifact 管线）取，
+ * 不经过 `_distRenderer`（可能还没解析出来——splash 恰恰是在两只 artifact
+ * 箱子解压期间显示的那个窗口）。dev 模式（VITE_DEV_URL 分支）逐字节不变。
+ */
+function loadSplashWindowURL(win, opts) {
+  loadPageFromDir(win, _distSplash, "splash", opts);
 }
 
 function attachRendererLaunchDiagnostics(win, label) {
@@ -455,11 +554,14 @@ let reusedServerPid = null; // 复用已有 server 时记录其 PID，用 owner 
 let reusedServerOwned = false; // 仅 desktop-owned 的复用 server 才由 desktop 退出时关闭
 let isExitingServer = false; // 只有托盘"退出"时才 kill server，其余路径仅关前端
 let _isUpdating = false;  // auto-updater 正在执行 quitAndInstall，before-quit 跳过 server 清理
+let _isApplyingTrainUpdate = false; // 列车更新"立即应用"进行中：优雅停掉再重新 spawn server 期间，monitorServer 的崩溃自动重启要跳过这段窗口，同 _isUpdating/isExitingServer 的既有模式
 let _autoUpdaterInitialized = false;
+let _otaSchedulerStarted = false; // 进程级只调度一次；窗口重建（activate 等）不重复起定时器
 let forceQuitApp = false;   // 启动失败等场景需要真正退出，绕过"隐藏保持运行"拦截
 let _startHiddenAtLogin = false; // 登录项启动时不抢前台，只在托盘常驻
 const SERVER_SHUTDOWN_GRACE_MS = 17000; // server gracefulShutdown 内部 15s force timer + 余量
 const SERVER_FORCE_KILL_WAIT_MS = 5000;
+const STALE_SERVER_EXIT_GRACE_MS = 2000; // 残留 server 终止/自然退出的确认宽限
 const SERVER_SHUTDOWN_POLL_MS = 200;
 
 // ── 主进程 i18n ──
@@ -776,6 +878,28 @@ const {
   SERVER_INFO_FIRST_WAIT_MS,
   shouldKeepWaitingForServerInfo,
 } = require("./src/shared/server-readiness.cjs");
+// 打包模式 server 的版本化启动：安装包携带签名 seed 归档，
+// 首启验签解压到 HANA_HOME/artifacts 后从版本化目录 spawn。dev 模式不经过它。
+const artifactBoot = require("./src/shared/artifact-boot.cjs");
+// 后台静默 OTA 下载器：主窗口 shown 后台检查/下载/暂存
+// 新 train，只写 next 指针——真正的 promote(next→current) 仍然只发生在下次
+// 启动时的 artifact-boot 已覆盖 server 与 renderer。dev 模式默认不调度（见下方
+// createMainWindow 里的挂钩注释）。
+const artifactOta = require("./src/shared/artifact-ota.cjs");
+// 拆箱目录 GC：boot 决议完成后对 server/renderer 各自的
+// 版本目录做一次"只保留 current+previous"清理，失败静默，绝不影响启动。
+const artifactGc = require("./src/shared/artifact-gc.cjs");
+// "修复组件"逃生门：托盘菜单 + `--repair-artifacts`
+// 旗标共用同一份清理实现，只清 artifacts/ 下的已知子路径，保留 rollout-id。
+const artifactRepair = require("./src/shared/artifact-repair.cjs");
+// pinned keyset 随主进程 bundle 内联（vite.config.main.js 负责
+// HANA_SIGN_KEYSET 的构建期替换），运行时没有旁路。
+const { loadPinnedKeyset } = require("../shared/artifact-core/keyset.cjs");
+const { resolveStaleServerInfoDisposition } = require("./src/shared/stale-server-info.cjs");
+const { resolvePostUpdateAnnouncement, coerceDigestHistory, sliceDigestHistory, compareProductVersions } = require("./src/shared/post-update-announcement.cjs");
+// 列车更新"立即应用"（refresh-grade apply）的纯编排/守卫层：只提供步骤顺序 + fail-fast 语义，实际 IO（promote
+// / 停 server / 重新 spawn / 重载窗口）仍然全部走本文件已有的基础设施。
+const trainUpdateApply = require("./src/shared/train-update-apply.cjs");
 
 /**
  * 轮询 server-info.json 等待 server 就绪
@@ -1011,34 +1135,72 @@ async function startServer() {
         return; // 跳过启动
       }
 
+      let knownDead = false;
       if (verification.terminate) {
         console.log(`[desktop] 可信旧 server 不可复用（${verification.reason}），正在终止 PID ${existingInfo.pid}`);
         killPid(existingInfo.pid);
-        const deadline = Date.now() + 2000;
-        while (Date.now() < deadline) {
-          try { process.kill(existingInfo.pid, 0); } catch { break; }
-          await new Promise(r => setTimeout(r, 100));
+        knownDead = await waitForProcessExit(null, existingInfo.pid, STALE_SERVER_EXIT_GRACE_MS);
+        if (!knownDead) {
+          killPid(existingInfo.pid, true);
+          knownDead = await waitForProcessExit(null, existingInfo.pid, SERVER_FORCE_KILL_WAIT_MS);
         }
-        killPid(existingInfo.pid, true);
       } else {
         console.warn(`[desktop] server-info 不可信，拒绝复用且不自动终止 PID ${existingInfo.pid}: ${verification.reason}`);
+        // 旧 server 可能正处于 gracefulShutdown（此时 health 必然失败），给一个
+        // 短宽限观察它是否自行退出，避免误判成长期残留
+        knownDead = await waitForProcessExit(null, existingInfo.pid, STALE_SERVER_EXIT_GRACE_MS);
       }
-    }
 
-    // PID 已死或已 kill，删除脏文件
-    try { fs.unlinkSync(serverInfoPath); } catch {}
+      const desiredNetwork = readDesiredServerNetworkConfig();
+      const stalePort = Number(existingInfo.port);
+      const portConflict = desiredNetwork.config
+        ? (Number.isInteger(stalePort) && stalePort === desiredNetwork.config.listenPort)
+        : null;
+      const disposition = resolveStaleServerInfoDisposition({ pidAlive: true, knownDead, portConflict });
+
+      if (!disposition.removeInfoFile) {
+        // 残留进程还活着：server-info.json 是下次启动定位它的唯一线索，保留
+        console.warn(`[desktop] 残留 server PID ${existingInfo.pid} 仍存活，保留 server-info.json 供下次启动识别`);
+        if (disposition.failFast) {
+          const err = new Error(
+            `STALE_SERVER_UNCLEANED: residual HanaAgent server (PID ${existingInfo.pid}) is still running and holds port ${Number.isInteger(stalePort) ? stalePort : "unknown"} (${verification.reason}). ` +
+            `Quit it from Task Manager (look for hana-server.exe) or restart the computer, then launch HanaAgent again.`
+          );
+          err.code = "STALE_SERVER_UNCLEANED";
+          throw err;
+        }
+        // 端口不冲突：继续 spawn 新 server。_spawnServerOnce 会按 poll 契约删除
+        // 旧文件，新 server 就绪后重写；残留进程仍可通过任务管理器发现
+      } else {
+        try { fs.unlinkSync(serverInfoPath); } catch {}
+      }
+    } else {
+      // PID 已死，删除脏文件
+      try { fs.unlinkSync(serverInfoPath); } catch {}
+    }
   }
 
-  // ── 2. 打包模式：先校验关键 external 文件是否齐全 ──
-  // 自动更新（NSIS overlay + Defender 扫描锁）会让新版本文件落地有几秒到几分钟延迟。
-  // 这里事先做退避检查，避免后续 spawn 出 ERR_MODULE_NOT_FOUND。
-  const bundledServerRoot = path.join(process.resourcesPath || "", "server");
-  const isBundledMode =
-    fs.existsSync(path.join(bundledServerRoot, "hana-server")) ||
-    fs.existsSync(path.join(bundledServerRoot, "hana-server.exe"));
-  if (isBundledMode) {
-    const ready = await ensureServerFilesReady(bundledServerRoot);
+  // ── 2. 打包模式：解析版本化 server + renderer 目录（必要时首启解压两只箱子）──
+  // 安装包只携带签名 seed 归档（Resources/seed/），server/renderer 树在
+  // HANA_HOME/artifacts 下按版本落盘；这里经 artifact-boot 决策出可 spawn
+  // 的 server 目录，同时把 `_distRenderer` 重指向 renderer 的激活目录。
+  // dev 模式（无 seed）返回 null，走原有 source server 路径，`_distRenderer`
+  // 维持默认值不变。
+  const artifactBootContext = await resolvePackagedArtifactBoot();
+  if (artifactBootContext) {
+    // 解压产物的完整性由 .verified receipt 保证；这层退避检查沿用旧语义，
+    // 兜住"更新落地竞态/树被外部工具部分删除"这类文件级异常。
+    const ready = await ensureServerFilesReady(artifactBootContext.serverRoot);
     if (!ready.ok) {
+      // 文案（dialog.serverFilesNotReady）在 artifact 时代语境已经不准确
+      // （"自动更新还在落地"不是唯一成因，GC 误删也会走到这里），本次不改
+      // 文案 key/locale（渲染层禁区），只在日志里补上真实上下文，下次排障
+      // 不用再考古 serverRoot 到底指向哪个通道/哪个版本目录。
+      console.error(
+        `[desktop] server files not ready after backoff: serverRoot=${artifactBootContext.serverRoot} `
+          + `channel=${artifactBootContext.channel} train=${artifactBootContext.train} `
+          + `missing=[${ready.missing.join(", ")}] waitedMs=${ready.waitedMs}`,
+      );
       throw new Error(mt("dialog.serverFilesNotReady", {
         missing: ready.missing.join(", "),
         waited: Math.round(ready.waitedMs / 1000),
@@ -1053,7 +1215,7 @@ async function startServer() {
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      await _spawnServerOnce(serverInfoPath);
+      await _spawnServerOnce(serverInfoPath, artifactBootContext);
       return;
     } catch (err) {
       lastErr = err;
@@ -1078,8 +1240,8 @@ async function startServer() {
       }
       console.warn(`[desktop] Server 启动报 ERR_MODULE_NOT_FOUND (${missingModule})，疑似自动更新落地竞态，2s 后重试`);
       // 再扫一遍文件：很可能这次能补齐
-      if (isBundledMode) {
-        await ensureServerFilesReady(bundledServerRoot).catch(() => {});
+      if (artifactBootContext) {
+        await ensureServerFilesReady(artifactBootContext.serverRoot).catch(() => {});
       }
       await new Promise(r => setTimeout(r, 2000));
     }
@@ -1089,10 +1251,345 @@ async function startServer() {
 }
 
 /**
+ * 打包模式启动解析：签名 seed 同时覆盖 server 与 renderer。
+ * - Resources/seed/ 在场 → 走 artifact-boot 的双 kind 组合入口
+ *   `prepareArtifactBoot`（两个 kind 都必须在场，缺一硬报错 → server 走
+ *   promote → 三连败降级 → 验签 → resolveBoot → 必要时首启解压 seed；
+ *   renderer 走同一条链但没有三连败降级）。副作用：把 `_distRenderer`
+ *   重指向 renderer 的激活目录——packaged 模式下所有非 splash 窗口
+ *  （index/settings/quick-chat/onboarding/browser-viewer/viewer-window）
+ *   从这里往后加载的都是 artifact 目录，不是随 asar 走的旧路径。同时把
+ *   `_rendererBootChannel`/`_rendererBootTrain` 赋值——下游
+ *   renderer 崩溃回退闭环靠这两个模块级变量非 null 判断"当前是否处于
+ *   artifact 模式"。返回 {serverRoot, train}（server 半——renderer 半的
+ *   下游消费者读上面那两个模块级变量，不需要走返回值）。
+ * - seed 不在场且未打包 → dev 模式，返回 null（原有 source server 路径，
+ *   `_distRenderer` 维持默认值，逐字节不变，`_rendererBootChannel` 维持
+ *   null）。
+ * - 已打包却没有 seed → 安装损坏，硬报错（禁止静默落进 dev 分支）。
+ */
+async function resolvePackagedArtifactBoot() {
+  const resourcesPath = process.resourcesPath || "";
+  if (!artifactBoot.hasSeed(resourcesPath)) {
+    if (app.isPackaged) {
+      throw new Error(
+        `Packaged app is missing its artifact seed (expected under ${path.join(resourcesPath, "seed")}). `
+          + "The installation is broken — please reinstall HanaAgent.",
+      );
+    }
+    return null;
+  }
+  // 通道只读一次，本次启动全程复用。若各调用点硬编码
+  // `artifactBoot.SEED_CHANNEL`，beta 偏好机器的
+  // prepareArtifactBoot 用 beta 拆箱激活，GC 却拿 stable 账本清点，把刚
+  // 激活的 beta 目录当"不在保留集"删掉）。
+  const bootChannel = readUpdateChannelPreference();
+  _artifactBootChannel = bootChannel;
+  const boot = await artifactBoot.prepareArtifactBoot({
+    homeDir: hanakoHome,
+    resourcesPath,
+    platformArch: `${process.platform}-${process.arch}`,
+    keyset: loadPinnedKeyset(),
+    // 通道选择驱动的是"这台设备落在哪条列车线上"：OTA 把
+    // 产物暂存进选中通道的指针命名空间，boot 端的 promote/resolve 也必须
+    // 读同一个命名空间，否则切到 beta 后台会一直"已暂存"却永远激活不了。
+    channel: bootChannel,
+    onProgress: () => {
+      // 首启解压进度：splash 专属 preparing 模式（固定"正在准备新家"文案，
+      // 关闭轮播，不带版本号——这是新装场景，不是壳更新）。两只箱子
+      //（renderer + server）各自解压时都会触发这个回调，重复加载同一个
+      // URL 是幂等的。解压完成后 server 正常启动、主窗口就绪时 splash
+      // 会照常关闭。splash 走 `_distSplash`，不受 `_distRenderer` 尚未
+      // 就绪影响（这正是它能在解压过程中显示的原因）。
+      if (splashWindow && !splashWindow.isDestroyed()) {
+        loadSplashWindowURL(splashWindow, { query: { mode: "preparing" } });
+      }
+    },
+    log: (msg) => console.log(redactMainLogText(msg)),
+  });
+  console.log(`[desktop] server artifact resolved: train ${boot.server.train} (${boot.server.version}) slot=${boot.server.slot}${boot.server.activatedSeed ? " [seed activated]" : ""}${boot.server.crashFallback ? " [crash fallback]" : ""}`);
+  console.log(`[desktop] renderer artifact resolved: train ${boot.renderer.train} (${boot.renderer.version}) slot=${boot.renderer.slot}${boot.renderer.activatedSeed ? " [seed activated]" : ""}${boot.renderer.crashFallback ? " [crash fallback]" : ""}`);
+  _distRenderer = boot.renderer.versionDir;
+  _rendererBootChannel = artifactBoot.rendererPointerChannel(bootChannel);
+  _rendererBootTrain = boot.renderer.train;
+  // 内容版本单一源的赋值点之一：这是每次启动（含 apply-now 触发的 server
+  // 重启，见 applyTrainUpdateNow 里对 startServer 的重新调用）都会走到的
+  // 决议路径，renderer 与 server 归档按发布约定共享同一个产品版本号，
+  // renderer 优先只是两者不巧不一致时的兜底顺序，不代表 renderer 更权威。
+  _currentContentVersion = boot.renderer.version || boot.server.version || _currentContentVersion;
+
+  // 隔离事件的不阻塞提示：只在真的写入了 quarantine.json
+  // 条目时提示（train 0 的"降级但不隔离"分支不算），server/renderer 任一
+  // 侧触发都算——两者用同一条通用文案，用户不需要关心是哪个 kind。
+  if (boot.server.quarantinedTrain != null || boot.renderer.quarantinedTrain != null) {
+    notifyComponentQuarantined();
+  }
+
+  // 崩溃回退的明确提示（系统通知之外，侧栏卡片承载"哪个版本坏了、退到了
+  // 哪个版本"的完整信息）：server/renderer 理论上可能在同一次启动里各自
+  // 独立触发一次 demote，两者互不相干（各自的三连败计数、各自的指针命名
+  // 空间），但侧栏只有一张卡的展示位——server 侧优先，理由是 server 崩溃
+  // 对功能的影响面通常大于单纯的界面加载失败；renderer 侧不会被丢弃，只是
+  // 这次没轮到它展示，下次它自己触发时会用自己的 fromVersion/toVersion 重新
+  // announce 一次。
+  const crashFallbackNotice =
+    buildCrashFallbackNotice("server", boot.server) || buildCrashFallbackNotice("renderer", boot.renderer);
+  if (crashFallbackNotice) {
+    announceCrashFallbackNotice(crashFallbackNotice);
+  }
+
+  // 拆箱目录 GC：boot 决议（含可能的 promote/demote）
+  // 完成后，对两个 kind 各自的版本目录做一次"只留 current+previous"清理。
+  // gcArtifactKind 内部永不抛出，这里不需要额外 try/catch。
+  await artifactGc.gcArtifactKind({
+    homeDir: hanakoHome,
+    kind: "server",
+    channel: bootChannel,
+    log: (msg) => console.log(redactMainLogText(msg)),
+  });
+  await artifactGc.gcArtifactKind({
+    homeDir: hanakoHome,
+    kind: "renderer",
+    channel: _rendererBootChannel,
+    log: (msg) => console.log(redactMainLogText(msg)),
+  });
+
+  return { serverRoot: boot.server.versionDir, train: boot.server.train, channel: bootChannel };
+}
+
+/**
+ * 隔离事件的不阻塞提示：某 train 被 quarantine
+ * 时用系统通知告知用户，不弹对话框、不阻塞任何流程。通知点击无动作。
+ * `Notification.isSupported()` 为 false（平台不支持/
+ * 通知权限未授予）时静默跳过——这是提示性功能，不能因为它失败而影响启动
+ * 或崩溃回退本身。
+ */
+function notifyComponentQuarantined() {
+  try {
+    if (!Notification.isSupported()) return;
+    const notif = new Notification({
+      title: "HanaAgent",
+      body: mt(
+        "notification.componentQuarantined",
+        null,
+        "A component was automatically rolled back to the previous version; functionality is unaffected",
+      ),
+      silent: true,
+    });
+    notif.show();
+  } catch (err) {
+    console.warn(`[desktop] failed to show quarantine notification: ${err.message}`);
+  }
+}
+
+/**
+ * 崩溃回退这件事本身用户完全无感知（此前只写日志）——这是明确
+ * 禁止的品类，静默降级必须搭配一条明确提示。从 `prepareArtifactServerBoot`/
+ * `prepareArtifactRendererBoot` 的返回值里取出"这次调用是否刚执行了一次
+ * demote"（`crashFallback`），是就构造出用户可读的载荷；不是就返回 null，
+ * 调用方据此决定要不要 announce。纯函数，不碰任何模块级状态。
+ * @param {"server"|"renderer"} kind
+ * @param {{crashFallback: boolean, fromVersion: string|null, toVersion: string|null, quarantinedTrain: number|null}} result
+ * @returns {{kind: "server"|"renderer", fromVersion: string|null, toVersion: string|null, quarantinedTrain: number|null}|null}
+ */
+function buildCrashFallbackNotice(kind, result) {
+  if (!result || result.crashFallback !== true) return null;
+  return {
+    kind,
+    fromVersion: result.fromVersion ?? null,
+    toVersion: result.toVersion ?? null,
+    quarantinedTrain: result.quarantinedTrain ?? null,
+  };
+}
+
+/**
+ * 把一次崩溃回退事件记进进程内存（供 `train-update-status` 冷拉取）并广播
+ * 给所有已存在的窗口（供已经在跑的窗口实时点亮）。两条路径都需要——见
+ * `_crashFallbackNotice` 声明处的注释：冷启动时窗口通常还不存在，
+ * 广播会落空，全靠窗口挂载后的 IPC 拉取；renderer 崩溃后的重试路径窗口已
+ * 存在，广播能立即送达。
+ * @param {{kind: "server"|"renderer", fromVersion: string|null, toVersion: string|null, quarantinedTrain: number|null}} notice
+ */
+function announceCrashFallbackNotice(notice) {
+  _crashFallbackNotice = notice;
+  broadcastToAllWindows("train-fallback-notice", notice);
+}
+
+/**
+ * 给一次 renderer 加载尝试挂一次性"健康清除"钩子：这次
+ * 加载若成功完成（`did-finish-load`），健康标准是"再稳定 60 秒"
+ * （`scheduleHealthySentinelClear` 沿用 server 侧同一套哨兵 helper，
+ * `HEALTHY_CLEAR_DELAY_MS`）。`.once` 语义决定了每次重新加载（无论是首次
+ * 启动还是失败重试）都要重新挂一次——`handleRendererArtifactLoadFailure`
+ * 在触发重试加载前会再调用一次本函数。dev 模式（`_rendererBootChannel`
+ * 为 null）是安全 no-op。
+ */
+function armRendererHealthyClearOnce(win) {
+  if (!_rendererBootChannel || !win?.webContents || win.webContents.isDestroyed()) return;
+  win.webContents.once("did-finish-load", () => {
+    artifactBoot.scheduleHealthySentinelClear({
+      homeDir: hanakoHome,
+      channel: _rendererBootChannel,
+      log: (msg) => console.warn(redactMainLogText(msg)),
+    });
+  });
+}
+
+/**
+ * renderer 加载失败后的回退闭环核心：重新调用
+ * `prepareArtifactRendererBoot`（读取本次失败已经计入的哨兵计数，三连败
+ * 则 demote + quarantine，同 server 侧同构逻辑），更新
+ * `_distRenderer`/`_rendererBootTrain`，隔离时提示，再给这次"新的加载
+ * 尝试"重新登记哨兵，最后把触发失败的那个窗口从（可能已更新的）位置重新
+ * 加载。main.cjs 侧只做"调用模块 + 接线"，决策全部在 artifact-boot.cjs。
+ * @param {{win: Electron.BrowserWindow, pageName: string, opts?: object, label: string, reason: string}} params
+ */
+async function handleRendererArtifactLoadFailure({ win, pageName, opts, label, reason }) {
+  console.error(`[desktop] renderer artifact load failure (${label}): ${reason}`);
+  writeDesktopLaunchDiagnostic("renderer-artifact-load-failure", { label, reason });
+  if (!_rendererBootChannel) return; // dev 模式 / artifact boot 从未决议过，无事可做
+
+  let resolved;
+  try {
+    resolved = await artifactBoot.prepareArtifactRendererBoot({
+      homeDir: hanakoHome,
+      resourcesPath: process.resourcesPath || "",
+      keyset: loadPinnedKeyset(),
+      // 必须显式传入本次启动的通道。若回落到
+      // `artifactBoot.SEED_CHANNEL`（"stable"），beta 偏好机器 renderer
+      // 崩溃重试时，会用 stable 指针命名空间重新决议，跟本次会话
+      // `resolvePackagedArtifactBoot` 决议出的 beta 命名空间脱节。
+      channel: _artifactBootChannel,
+      log: (msg) => console.log(redactMainLogText(msg)),
+    });
+  } catch (err) {
+    console.error(`[desktop] renderer artifact re-resolution failed after load failure: ${err.message}`);
+    return; // 没有更安全的下一步了——保留窗口现状，不做二次尝试
+  }
+
+  _distRenderer = resolved.versionDir;
+  _rendererBootTrain = resolved.train;
+  // renderer 崩溃三连败 demote 可能把 renderer 单独换回上一个版本
+  // （不经过 server 那一半的重新决议）——内容版本单一源必须跟着这条
+  // 回退闭环一起动，否则用户看到的版本号会跟实际在跑的 renderer 对不上。
+  _currentContentVersion = resolved.version || _currentContentVersion;
+  if (resolved.quarantinedTrain != null) {
+    notifyComponentQuarantined();
+  }
+  // 运行时（非冷启动）触发的崩溃回退：这条路径窗口已经存在，广播能立即
+  // 送达，用户不需要等下次挂载才拉到状态。
+  const rendererFallbackNotice = buildCrashFallbackNotice("renderer", resolved);
+  if (rendererFallbackNotice) {
+    announceCrashFallbackNotice(rendererFallbackNotice);
+  }
+  // 登记"新的加载尝试"（同 server 侧 `_spawnServerOnce` 每次 spawn 前写一次
+  // 哨兵的模式）：这样如果重试仍然失败，下一次失败事件读到的计数会继续累加。
+  await artifactBoot.writeBootSentinel(hanakoHome, _rendererBootChannel, resolved.train).catch((err) => {
+    console.warn(`[desktop] failed to write renderer boot sentinel: ${err.message}`);
+  });
+
+  if (!win || win.isDestroyed()) return;
+  setTimeout(() => {
+    if (!win || win.isDestroyed()) return;
+    armRendererHealthyClearOnce(win);
+    try {
+      loadWindowURL(win, pageName, opts);
+    } catch (err) {
+      console.error(`[desktop] renderer artifact reload failed (${label}): ${err.message}`);
+    }
+  }, 1000);
+}
+
+/**
+ * 给一个从 artifact 目录加载的窗口接上崩溃回退闭环：`did-fail-load`/`render-process-gone` 先过两个纯过滤函数（子
+ * frame、ERR_ABORTED、`clean-exit` 一律不计），剩下的才算一次真正的加载
+ * 失败，交给 `handleRendererArtifactLoadFailure`。dev 模式
+ * （`_rendererBootChannel` 为 null）是安全 no-op——只在 artifact 加载路径
+ * 上生效，splash（走 `_distSplash`，从不调用本函数）和 dev 模式两条路径
+ * 都不受影响。
+ * @param {Electron.BrowserWindow} win
+ * @param {string} pageName - 传给 loadWindowURL 的页面名（重试加载用）
+ * @param {object} [opts] - 传给 loadWindowURL 的 opts（如 onboarding 的 query）
+ */
+function attachRendererArtifactCrashSentinel(win, pageName, opts) {
+  if (!_rendererBootChannel || !win?.webContents) return;
+  armRendererHealthyClearOnce(win);
+  const wc = win.webContents;
+  wc.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!_rendererBootChannel) return;
+    if (!artifactBoot.isRendererMainFrameLoadCrash({ errorCode, isMainFrame })) return;
+    handleRendererArtifactLoadFailure({
+      win,
+      pageName,
+      opts,
+      label: pageName,
+      reason: `did-fail-load ${errorCode} ${errorDescription} (${validatedURL})`,
+    });
+  });
+  wc.on("render-process-gone", (_event, details) => {
+    if (!_rendererBootChannel) return;
+    if (!artifactBoot.isRenderProcessGoneCrash({ reason: details.reason })) return;
+    handleRendererArtifactLoadFailure({
+      win,
+      pageName,
+      opts,
+      label: pageName,
+      reason: `render-process-gone ${details.reason} (code: ${details.exitCode})`,
+    });
+  });
+}
+
+/**
+ * 修复逃生门：托盘菜单"修复组件…"点击后的完整
+ * 流程——原生确认对话框 → 确认后清理 artifacts/ 下的已知子路径（保留
+ * rollout-id）→ `app.relaunch()` + `app.quit()`（沿用托盘"退出"已验证过的
+ * 优雅关闭路径：`isQuitting`/`isExitingServer` 置位后 `before-quit` 会先
+ * 妥善关掉 owned server 再真正退出，`app.relaunch()` 排队的重启会在退出后
+ * 触发——比裸 `app.exit()` 更安全，不会在组件被清空的同时把 server 子进程
+ * 晾成孤儿）。下次启动 `resolvePackagedArtifactBoot` 会因为 pointers/ 已清
+ * 空自然重新解压 seed，一条代码路径，没有特例。
+ */
+async function triggerArtifactRepairFlow() {
+  const result = await dialog.showMessageBox({
+    type: "warning",
+    buttons: [
+      mt("dialog.repairArtifactsConfirm", null, "Repair and Restart"),
+      mt("dialog.repairArtifactsCancel", null, "Cancel"),
+    ],
+    defaultId: 1,
+    cancelId: 1,
+    title: mt("dialog.repairArtifactsTitle", null, "Repair Components"),
+    message: mt("dialog.repairArtifactsTitle", null, "Repair Components"),
+    detail: mt(
+      "dialog.repairArtifactsBody",
+      null,
+      "This resets HanaAgent's app components to the originally installed version and restarts the app. Your data (agents, sessions, settings) is not affected.",
+    ),
+  });
+  if (result.response !== 0) return; // 取消
+
+  await artifactRepair.repairArtifacts({
+    homeDir: hanakoHome,
+    log: (msg) => console.log(redactMainLogText(msg)),
+  });
+
+  isExitingServer = true;
+  isQuitting = true;
+  app.relaunch();
+  app.quit();
+}
+
+/**
  * 实际执行 spawn + 等待 server-info.json 的内部函数。
  * 失败由 startServer 决定是否重试；本函数只负责单次启动。
+ * @param {string} serverInfoPath
+ * @param {{serverRoot: string, train: number, channel: string} | null} artifactBootContext -
+ *   打包模式的版本化 server 目录 + 本次启动生效的通道（resolvePackagedArtifactBoot
+ *   产物）；dev 为 null。`channel` 字段供 crash 哨兵读写用，必须是
+ *   resolvePackagedArtifactBoot 决议出的那个值，不能重新硬编码
+ *   `artifactBoot.SEED_CHANNEL`；原因见文件头 `_artifactBootChannel` 注释。
  */
-async function _spawnServerOnce(serverInfoPath) {
+async function _spawnServerOnce(serverInfoPath, artifactBootContext) {
   _serverLogs = [];
   _lastServerProgressAtMs = null;
   reusedServerPid = null;
@@ -1127,19 +1624,20 @@ async function _spawnServerOnce(serverInfoPath) {
 
   // 选择 server 启动方式
   let serverBin, serverArgs;
-  const bundledServerRoot = path.join(process.resourcesPath || "", "server");
-  const bundledServer = path.join(bundledServerRoot, "hana-server");
-  if (fs.existsSync(bundledServer) || fs.existsSync(bundledServer + ".exe")) {
-    // 打包模式：使用 extraResources 里的独立 server
+  if (artifactBootContext) {
+    // 打包模式：从 HANA_HOME/artifacts 的版本化目录启动（首启已由
+    // resolvePackagedArtifactBoot 解压 seed；目录布局与旧 Resources/server 一致）
     // macOS/Linux：hana-server 是 shell wrapper，内部调用 bootstrap.js，无需额外参数
     // Windows：hana-server.exe 是裸 Node 二进制（改名），需要显式传入 bootstrap.js
+    const versionedServerRoot = artifactBootContext.serverRoot;
+    const bundledServer = path.join(versionedServerRoot, "hana-server");
     const bin = process.platform === "win32" ? bundledServer + ".exe" : bundledServer;
-    const entry = path.join(bundledServerRoot, "bundle", "index.js");
+    const entry = path.join(versionedServerRoot, "bundle", "index.js");
     serverBin = bin;
     serverArgs = process.platform === "win32"
-      ? [path.join(bundledServerRoot, "bootstrap.js")]
+      ? [path.join(versionedServerRoot, "bootstrap.js")]
       : [];
-    serverEnv.HANA_ROOT = bundledServerRoot;
+    serverEnv.HANA_ROOT = versionedServerRoot;
     serverEnv.HANA_SERVER_ENTRY = entry;
     // Desktop renderer starts in pending-new-session mode; chat session warmup
     // must not block the HTTP server readiness handshake.
@@ -1160,6 +1658,12 @@ async function _spawnServerOnce(serverInfoPath) {
 
   // 删除旧 server-info.json
   try { fs.unlinkSync(serverInfoPath); } catch {}
+
+  // crash 哨兵：spawn 前登记，健康观察期满后清除；进程在观察期内
+  // 死亡则哨兵留存，同一 train 连续 3 次未清除 → 下次启动降级 previous。
+  if (artifactBootContext) {
+    await artifactBoot.writeBootSentinel(hanakoHome, artifactBootContext.channel, artifactBootContext.train);
+  }
 
   _lastServerSpawn = {
     command: serverBin,
@@ -1213,6 +1717,15 @@ async function _spawnServerOnce(serverInfoPath) {
   serverPort = info.port;
   serverToken = info.token;
   serverProcess.unref(); // 脱离 Electron 事件循环，允许 Electron 独立退出
+
+  // server 就绪：进入健康观察期，期满清除 crash 哨兵（timer 已 unref）
+  if (artifactBootContext) {
+    artifactBoot.scheduleHealthySentinelClear({
+      homeDir: hanakoHome,
+      channel: artifactBootContext.channel,
+      log: (msg) => console.warn(redactMainLogText(msg)),
+    });
+  }
 }
 
 /**
@@ -1223,10 +1736,11 @@ function monitorServer() {
   if (!serverProcess) return;
   serverProcess.on("exit", async (code, signal) => {
     // 任何"主动退出"路径都跳过：用户 quit、托盘 quit、auto-updater 安装、
-    // shutdownServer 主动 kill。否则这里会和 quitAndInstall / shutdownServer
+    // shutdownServer 主动 kill、列车更新"立即应用"正在优雅重启 server。
+    // 否则这里会和 quitAndInstall / shutdownServer / applyTrainUpdateNow
     // 抢时间去 spawn 新 server，造成 serverProcess 被并发改写成 null，
     // 后续 serverProcess.unref() 报 "Cannot read properties of null"。
-    if (isQuitting || _isUpdating || isExitingServer) return;
+    if (isQuitting || _isUpdating || isExitingServer || _isApplyingTrainUpdate) return;
     const reason = signal ? `信号 ${signal}` : `退出码 ${code}`;
     console.error(`[desktop] Server 意外退出 (${reason})`);
 
@@ -1321,6 +1835,11 @@ function createTray() {
     { label: mt("tray.show", null, "Show HanaAgent"), click: () => showPrimaryWindow() },
     { label: mt("tray.settings", null, "Settings"), click: () => createSettingsWindow() },
     { type: "separator" },
+    // 修复逃生门：本仓库没有独立的应用菜单栏基础设施
+    // （grep 全仓只有这一处 + 下面 locale 重建那一处 Menu.buildFromTemplate，
+    // 都是托盘右键菜单），因此复用这个"现有等价菜单组"，不新起一套应用菜单栏。
+    { label: mt("tray.repairArtifacts", null, "Repair Components…"), click: () => { triggerArtifactRepairFlow().catch((err) => console.error(`[desktop] repair flow failed: ${err.message}`)); } },
+    { type: "separator" },
     { label: mt("tray.quit", null, "Quit"), click: () => { isExitingServer = true; isQuitting = true; app.quit(); } },
   ]);
 
@@ -1333,11 +1852,11 @@ function createTray() {
  * 将崩溃日志写入 HANA_HOME/crash.log（默认 ~/.hanako/crash.log）并返回日志内容
  */
 function buildServerCrashDiagnostics() {
-  // production 时 server 在 resources/server/，dev 时在 __dirname/../server/
-  const isPackaged = process.resourcesPath &&
-    fs.existsSync(path.join(process.resourcesPath, "server"));
+  // production 时 server 在 HANA_HOME/artifacts 的版本化目录（以最近一次
+  // spawn 的 command 所在目录为准），dev 时在 __dirname/../server/
+  const isPackaged = app.isPackaged;
   const serverDir = isPackaged
-    ? path.join(process.resourcesPath, "server")
+    ? (_lastServerSpawn?.command ? path.dirname(_lastServerSpawn.command) : "(no spawn recorded)")
     : path.join(__dirname, "..", "server");
   const sqlitePath = path.join(serverDir, "node_modules", "better-sqlite3",
     "build", "Release", "better_sqlite3.node");
@@ -1443,7 +1962,7 @@ function createSplashWindow() {
   });
   attachRendererLaunchDiagnostics(splashWindow, "splash");
 
-  loadWindowURL(splashWindow, "splash");
+  loadSplashWindowURL(splashWindow);
 
   splashWindow.once("ready-to-show", () => {
     if (process.platform === "win32") {
@@ -1464,6 +1983,59 @@ function createSplashWindow() {
 
 // ── 窗口状态记忆 ──
 const windowStatePath = path.join(hanakoHome, "user", "window-state.json");
+
+// ── 升级后首启公告：最后看过公告的版本记录 ──
+const lastSeenVersionPath = path.join(hanakoHome, "user", "last-seen-version.json");
+
+function writeLastSeenVersion(version) {
+  fs.mkdirSync(path.dirname(lastSeenVersionPath), { recursive: true });
+  fs.writeFileSync(lastSeenVersionPath, JSON.stringify({ version }));
+}
+
+function computePendingAnnouncement() {
+  let lastSeenVersion = null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(lastSeenVersionPath, "utf-8"));
+    if (typeof parsed?.version === "string" && parsed.version) lastSeenVersion = parsed.version;
+  } catch {}
+  const { pending, seedVersion } = resolvePostUpdateAnnouncement({
+    // 书签比较用内容版本：书签本身也只在 ack/seed 时写入内容版本（见下方
+    // writeLastSeenVersion 调用点），两端必须用同一把尺子，否则热更新
+    // 上车的用户会被"壳版本没变"骗过，永远看不到该版本的公告。
+    currentVersion: getCurrentContentVersion(),
+    lastSeenVersion,
+    isPackagedLike: app.isPackaged || process.env.HANA_FORCE_ANNOUNCEMENT === "1",
+    setupComplete: isSetupComplete(),
+  });
+  if (seedVersion) {
+    writeLastSeenVersion(seedVersion);
+    return null;
+  }
+  if (!pending) return null;
+  // 合订本：随包 v2 史册优先，v1 单版文件 read-time 兜底；
+  // 按 (书签, 当前] 区间切片，新→旧。书签就是 last-seen-version.json
+  // last-seen-version 是唯一状态归属，不另设第二个书签文件。
+  let entries = [];
+  try {
+    const readJson = (name) => {
+      try {
+        return JSON.parse(fs.readFileSync(path.join(app.getAppPath(), name), "utf-8"));
+      } catch {
+        return null;
+      }
+    };
+    const rawEntries = coerceDigestHistory(readJson("release-digest.v2.json"), readJson("release-digest.v1.json"));
+    const normalized = rawEntries.map((entry) => normalizeReleaseDigest(entry, null)).filter(Boolean);
+    entries = sliceDigestHistory({
+      entries: normalized,
+      lastSeenVersion,
+      currentVersion: getCurrentContentVersion(),
+    });
+  } catch {
+    entries = [];
+  }
+  return { version: getCurrentContentVersion(), entries };
+}
 
 function loadWindowState() {
   try {
@@ -1662,6 +2234,7 @@ function createQuickChatWindow() {
     },
   });
   attachRendererLaunchDiagnostics(quickChatWindow, "quick-chat");
+  attachRendererArtifactCrashSentinel(quickChatWindow, "quick-chat");
   applyTransparentWindowBackground(quickChatWindow);
   loadWindowURL(quickChatWindow, "quick-chat");
 
@@ -1771,6 +2344,63 @@ function registerQuickChatShortcutBestEffort() {
   return result;
 }
 
+/**
+ * 把一个事件广播给所有还活着的窗口（跟 auto-updater.cjs 的 sendToRenderer
+ * 同款模式，本文件没有等价的现成帮手，就地写一份，不引入跨文件耦合）。
+ */
+function broadcastToAllWindows(channel, payload) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+    } catch {}
+  }
+}
+
+/**
+ * 后台 OTA 调度只起一次（进程级，不随窗口重建/dock 重开重复起定时器，
+ * 见 `_otaSchedulerStarted`）。触发时机固定为主窗口 shown 之后，不在更早的
+ * app-ready/server-ready 阶段启动，避免后台检查与首屏启动争抢资源。
+ *
+ * 硬约束：这条自动路径只跑 `checkOnce`——只拉清单、验签、过闸门、判断"有没有
+ * 新内容"，绝不下载任何字节、绝不解压、绝不写指针（`artifact-ota.cjs` 的文件头
+ * 注释解释了为什么：静默下载和激活可能破坏当前仍在使用的安装目录）。发现
+ * 有新列车时只广播 `train-update-available` 事件，磁盘写入永远等用户在界面上
+ * 点击后才由 `train-update-apply` 触发。全程异步：网络拉取/验签任何一步失败都
+ * 只写日志（`checkOnce` 永不 reject），绝不触碰或阻塞启动路径本身。
+ *
+ * 门槛：`app.isPackaged` 时才跑（dev 模式没有 artifact-boot 建立的版本化
+ * 目录/指针，跑这个调度器对真实用户无意义，也会给纯本地开发平白多一条
+ * 后台网络请求）；唯一的例外是显式配置了 `HANA_ARTIFACT_MANIFEST` 排练
+ * 开关时——`hasDevOverrideConfigured()` 是间接读取（本文件永远不直接引用
+ * 那个环境变量名，读取逻辑只活在唯一一处 artifact-ota-dev-bypass.cjs，
+ * 该文件在生产 bundle 里被 vite.config.main.js 无条件替换成恒返回 false
+ * 的桩，因此这一行判断在真实分发给用户的 main.bundle.cjs 里恒等于
+ * `app.isPackaged`，不会给生产用户开任何口子）。
+ */
+function startBackgroundOtaSchedulerOnce() {
+  if (_otaSchedulerStarted) return;
+  if (!app.isPackaged && !artifactOta.hasDevOverrideConfigured()) return;
+  _otaSchedulerStarted = true;
+  try {
+    artifactOta.scheduleBackgroundOtaChecks({
+      homeDir: hanakoHome,
+      keyset: loadPinnedKeyset(),
+      currentShellVersion: app.getVersion(),
+      platformArch: `${process.platform}-${process.arch}`,
+      channel: readUpdateChannelPreference(),
+      log: (msg) => console.log(redactMainLogText(msg)),
+      onAvailable: (result) => {
+        broadcastToAllWindows("train-update-available", {
+          version: result.version || null,
+          minShellBlocked: result.minShellBlocked === true,
+        });
+      },
+    });
+  } catch (err) {
+    console.warn(`[desktop] 后台 OTA 调度器启动失败（不影响启动）: ${err.message}`);
+  }
+}
+
 // ── 创建主窗口 ──
 function createMainWindow() {
   const saved = sanitizeWindowState(loadWindowState(), screen.getAllDisplays(), {
@@ -1805,6 +2435,7 @@ function createMainWindow() {
 
   mainWindow = createBrowserWindowWithDiagnostics("main", opts, { windowsMinimalRetry: true });
   attachRendererLaunchDiagnostics(mainWindow, "main");
+  attachRendererArtifactCrashSentinel(mainWindow, "index");
   applyWindowThemeColors(mainWindow, initialTheme);
 
   // auto-updater 是进程级服务：初始化只做一次，窗口重建时只更新目标 window 引用。
@@ -1842,14 +2473,20 @@ function createMainWindow() {
     // did-finish-load 只是 HTML 加载完成，JS init 可能还在跑
     console.log("[desktop] 主窗口 HTML 加载完成，等待前端 init...");
   });
-  mainWindow.once("show", () => clearTimeout(initTimeout));
+  mainWindow.once("show", () => {
+    clearTimeout(initTimeout);
+    startBackgroundOtaSchedulerOnce();
+  });
 
   if (process.argv.includes("--dev")) {
     mainWindow.webContents.openDevTools();
   }
 
-  // renderer 崩溃恢复：自动 reload
+  // renderer 崩溃恢复：自动 reload（dev 模式专属——打包模式下
+  // `attachRendererArtifactCrashSentinel` 已经接管 render-process-gone，
+  // 走三连败降级感知的回退闭环而不是无脑 reload 回同一个可能已损坏的版本）
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    if (_rendererBootChannel) return; // 打包模式：交给 attachRendererArtifactCrashSentinel
     console.error(`[desktop] renderer 崩溃: ${details.reason} (code: ${details.exitCode})`);
     if (mainWindow && !mainWindow.isDestroyed()) {
       setTimeout(() => {
@@ -1922,6 +2559,7 @@ function createMainWindow() {
       if (vw && !vw.isDestroyed()) vw.destroy();
     }
     _viewerWindows.clear();
+    _viewerPayloads.clear();
     if (_screenshotWin && !_screenshotWin.isDestroyed()) {
       _screenshotWin.destroy();
       _screenshotWin = null;
@@ -1975,6 +2613,7 @@ function createSettingsWindow(tab, theme) {
     },
   });
   attachRendererLaunchDiagnostics(settingsWindow, "settings");
+  attachRendererArtifactCrashSentinel(settingsWindow, "settings");
   applyWindowThemeColors(settingsWindow, settingsTheme);
 
   settingsWindow.once("ready-to-show", () => {
@@ -2086,6 +2725,7 @@ function createBrowserViewerWindow(opts = {}) {
     },
   });
   attachRendererLaunchDiagnostics(browserViewerWindow, "browser-viewer");
+  attachRendererArtifactCrashSentinel(browserViewerWindow, "browser-viewer");
   applyWindowThemeColors(browserViewerWindow, _browserViewerTheme);
 
   loadWindowURL(browserViewerWindow, "browser-viewer");
@@ -2312,8 +2952,21 @@ const SNAPSHOT_SCRIPT = `(function() {
 
 const DEFAULT_BROWSER_WORKSPACE_KEY = "__hana_default_browser__";
 
+function _normalizeBrowserSessionPath(sessionPath) {
+  return typeof sessionPath === "string" && sessionPath.trim() ? sessionPath : null;
+}
+
 function _browserWorkspaceKey(sessionPath) {
-  return sessionPath || DEFAULT_BROWSER_WORKSPACE_KEY;
+  return _normalizeBrowserSessionPath(sessionPath) || DEFAULT_BROWSER_WORKSPACE_KEY;
+}
+
+function _browserProfileKey(sessionPath) {
+  const key = _browserWorkspaceKey(sessionPath);
+  return crypto.createHash("sha256").update(key).digest("hex").slice(0, 32);
+}
+
+function _browserPartitionName(sessionPath) {
+  return `persist:hana-browser-${_browserProfileKey(sessionPath)}`;
 }
 
 function _newBrowserTabId() {
@@ -2322,7 +2975,7 @@ function _newBrowserTabId() {
 
 function _createBrowserWorkspace(sessionPath) {
   return {
-    sessionPath: sessionPath || null,
+    sessionPath: _normalizeBrowserSessionPath(sessionPath),
     activeTabId: null,
     tabs: new Map(),
   };
@@ -2382,9 +3035,10 @@ function _activeBrowserTabRecord(workspace) {
   return workspace.tabs.get(workspace.activeTabId) || workspace.tabs.values().next().value || null;
 }
 
-/** 按 sessionPath 查找当前 active tab view，fallback 到当前活跃 view（兼容旧调用） */
+/** 按 sessionPath 查找当前 active tab view；只有无显式 sessionPath 的旧调用才 fallback 到当前活跃 view。 */
 function _getViewForSession(sessionPath, tabId = null) {
-  const workspace = _getBrowserWorkspace(sessionPath);
+  const explicitSessionPath = _normalizeBrowserSessionPath(sessionPath);
+  const workspace = _getBrowserWorkspace(explicitSessionPath);
   if (workspace) {
     const tab = tabId ? workspace.tabs.get(tabId) : _activeBrowserTabRecord(workspace);
     if (!tab) return null;
@@ -2394,6 +3048,7 @@ function _getViewForSession(sessionPath, tabId = null) {
     }
     return tab.view;
   }
+  if (explicitSessionPath) return null;
   if (_browserWebView && _isBrowserViewDestroyed(_browserWebView)) {
     _forgetBrowserView(_browserWebView, "destroyed");
     return null;
@@ -2500,14 +3155,15 @@ function _removeBrowserTabRecord(view) {
   return null;
 }
 
-function _browserSession() {
-  return session.fromPartition("persist:hana-browser");
+function _browserSession(sessionPath = null) {
+  return session.fromPartition(_browserPartitionName(sessionPath));
 }
 
-function _installBrowserCookiePolicy() {
-  if (_browserCookiePolicyInstalled) return;
-  _browserCookiePolicyInstalled = true;
-  const ses = _browserSession();
+function _installBrowserCookiePolicy(sessionPath = null) {
+  const partitionName = _browserPartitionName(sessionPath);
+  if (_browserCookiePolicyInstalledPartitions.has(partitionName)) return;
+  _browserCookiePolicyInstalledPartitions.add(partitionName);
+  const ses = _browserSession(sessionPath);
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
     if (_browserAcceptCookies) {
       callback({ requestHeaders: details.requestHeaders });
@@ -2534,19 +3190,44 @@ function _installBrowserCookiePolicy() {
 
 function _setBrowserAcceptCookies(enabled) {
   _browserAcceptCookies = enabled !== false;
-  _installBrowserCookiePolicy();
 }
 
 async function _clearBrowserCookiesAndSiteData() {
-  const ses = _browserSession();
-  await ses.clearStorageData({
-    storages: ["cookies", "localstorage", "indexdb", "serviceworkers", "cachestorage"],
-  });
+  const partitionNames = new Set([
+    "persist:hana-browser",
+    _browserPartitionName(null),
+  ]);
+  for (const workspace of _browserViews.values()) {
+    partitionNames.add(_browserPartitionName(workspace.sessionPath));
+  }
+  await Promise.all(Array.from(partitionNames).map((partitionName) => {
+    const ses = session.fromPartition(partitionName);
+    return ses.clearStorageData({
+      storages: ["cookies", "localstorage", "indexdb", "serviceworkers", "cachestorage"],
+    });
+  }));
+}
+
+function _normalizeBrowserViewerOpenPayload(payload) {
+  if (typeof payload === "string") {
+    return { url: payload || null, sessionPath: null };
+  }
+  if (payload && typeof payload === "object") {
+    return {
+      url: typeof payload.url === "string" && payload.url ? payload.url : null,
+      sessionPath: _normalizeBrowserSessionPath(payload.sessionPath),
+    };
+  }
+  return { url: null, sessionPath: null };
+}
+
+function _resolveBrowserIpcSessionPath(sessionPath) {
+  return _normalizeBrowserSessionPath(sessionPath) || _currentBrowserSession || null;
 }
 
 function _createBrowserWebContentsView(sessionPath, tabId = null) {
-  _installBrowserCookiePolicy();
-  const ses = session.fromPartition("persist:hana-browser");
+  _installBrowserCookiePolicy(sessionPath);
+  const ses = _browserSession(sessionPath);
   const view = new WebContentsView({
     webPreferences: {
       session: ses,
@@ -3271,6 +3952,7 @@ function createOnboardingWindow(query = {}) {
     },
   });
   attachRendererLaunchDiagnostics(onboardingWindow, "onboarding");
+  attachRendererArtifactCrashSentinel(onboardingWindow, "onboarding", { query });
   applyWindowThemeColors(onboardingWindow, initialTheme);
 
   loadWindowURL(onboardingWindow, "onboarding", { query });
@@ -3845,6 +4527,195 @@ async function screenshotCapture(htmlContent, width) {
   }
 }
 
+// ── 列车更新（OTA）：暂存状态查询 / 手动检查 / 立即应用 ────────────────
+
+/**
+ * 把"立即应用"波及的所有已开窗口原地重载到（可能已更新的）`_distRenderer`
+ * 目录。该操作是 refresh-grade apply，不重启整个 Electron 进程。只覆盖长期存活的
+ * surface；onboarding（一次性向导，不会跟设置页/更新动作同时存在）与临时
+ * 截图窗口不在此列。viewer 窗口走 `_viewerWindows` 注册表逐个重载——它们
+ * 挂载后走"拉取"契约重新要一次自己的 payload（`_viewerPayloads` 未受影响，
+ * 见 spawn-viewer 处的注释），重载后自然能拿回内容。
+ */
+function reloadAllWindowsForTrainUpdate() {
+  if (mainWindow && !mainWindow.isDestroyed()) loadWindowURL(mainWindow, "index");
+  if (settingsWindow && !settingsWindow.isDestroyed()) loadWindowURL(settingsWindow, "settings");
+  if (quickChatWindow && !quickChatWindow.isDestroyed()) loadWindowURL(quickChatWindow, "quick-chat");
+  if (browserViewerWindow && !browserViewerWindow.isDestroyed()) loadWindowURL(browserViewerWindow, "browser-viewer");
+  for (const win of _viewerWindows.values()) {
+    if (win && !win.isDestroyed()) loadWindowURL(win, "viewer-window");
+  }
+}
+
+/**
+ * "立即应用"（apply-now / refresh-grade）主编排：packaged-only，唯一入口，
+ * 由用户点击触发（渲染进程发起 `train-update-apply` IPC 调用时，才第一次真正
+ * 往磁盘写字节——自动后台流程只到 `checkOnce` 为止，绝不到这里）。
+ *
+ * 两段式：
+ *   第一段——下载+激活：`artifactOta.downloadAndApplyArtifacts` 重新拉一次清单
+ *   （绕开 checkOnce 的 ETag 缓存，因为货架可能在检查之后又变了）、重新过一遍
+ *   全部闸门、下载两个箱子、依次激活 server/renderer，写好两个 kind 的 `next`
+ *   指针。下载/校验/激活各阶段的进度通过 `onProgress` 经 `train-update-progress`
+ *   事件只推给发起这次调用的窗口（`senderWebContents`）。这一段任何一步失败都
+ *   直接返回 `{ok:false, error}`，磁盘上不会留下半激活状态（由
+ *   `activateFromArchive` 自身的"先建新、后删旧"与 both-or-neither 回滚保证）。
+ *
+ *   第二段——promote+重启+重载：只有第一段成功、两个 `next` 指针确实都齐备
+ *   （`bothNextPointersReady` 守卫）才会执行。序列本身（顺序 + fail-fast）由
+ *   train-update-apply.cjs 的纯函数 `runApplyNowSequence` 保证；这里只提供每一
+ *   步真正的 IO：verifyPackaged → verifyStaged → shutdownServer（优雅停）→
+ *   startServer（复用现有 spawn/crash-sentinel/promote 全链路——
+ *   resolvePackagedArtifactBoot 内部的 prepareArtifactBoot 会把 next 提升为
+ *   current，同一条 boot 决策代码路径，没有特例）→ reloadWindows。
+ *   `_isApplyingTrainUpdate` 全程置位，防止 monitorServer 的崩溃自动重启在
+ *   shutdownServer 触发的 "exit" 事件上抢跑（同 _isUpdating/isExitingServer
+ *   既有模式）。这一段任何一步失败：绝不留下半切换状态——promote 由
+ *   prepareArtifactBoot 内部原子完成，server/renderer 起不来则由既有
+ *   crash-sentinel（下次自然启动时的三连败降级）兜底，这里只负责把失败面
+ *   记录下来并在"旧 server 已经没了、新 server 也没起来"这种没有任何页内
+ *   恢复手段的场景下弹出跟现有崩溃重启失败同款的错误对话框。
+ * @param {Electron.WebContents|null} [senderWebContents] 发起这次调用的窗口
+ *   （下载进度只推给它，不广播给所有窗口——其他窗口没有点击这个按钮）。
+ * @returns {Promise<{ok: true} | {ok: false, error: string}>}
+ */
+async function applyTrainUpdateNow(senderWebContents) {
+  const channel = readUpdateChannelPreference();
+
+  try {
+    trainUpdateApply.assertPackagedMode(app.isPackaged);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+
+  const downloadResult = await artifactOta.downloadAndApplyArtifacts({
+    homeDir: hanakoHome,
+    keyset: loadPinnedKeyset(),
+    currentShellVersion: app.getVersion(),
+    platformArch: `${process.platform}-${process.arch}`,
+    channel,
+    onProgress: (progress) => {
+      try {
+        if (senderWebContents && !senderWebContents.isDestroyed()) senderWebContents.send("train-update-progress", progress);
+      } catch {}
+    },
+    log: (msg) => console.log(redactMainLogText(msg)),
+  });
+  if (!downloadResult.ok) {
+    console.error(`[desktop] train-update-apply 下载/激活失败: ${downloadResult.error}`);
+    return { ok: false, error: downloadResult.error };
+  }
+
+  const result = await trainUpdateApply.runApplyNowSequence({
+    verifyPackaged: () => trainUpdateApply.assertPackagedMode(app.isPackaged),
+    verifyStaged: async () => {
+      const staged = await artifactOta.readStagedTrainStatus(hanakoHome, { channel });
+      const check = trainUpdateApply.checkStagedPrecondition(staged);
+      if (!check.ok) {
+        throw new Error(`train-update-apply: ${check.reason}`);
+      }
+    },
+    shutdownServer: async () => {
+      _isApplyingTrainUpdate = true;
+      await shutdownServer();
+    },
+    startServer: async () => {
+      await startServer();
+      _serverRestartAttempts = 0;
+      monitorServer(); // 新 serverProcess 需要重新挂一次崩溃监控（旧监听器绑定的是已退出的旧进程实例）
+    },
+    reloadWindows: async () => {
+      reloadAllWindowsForTrainUpdate();
+    },
+  });
+
+  _isApplyingTrainUpdate = false;
+
+  if (!result.ok) {
+    console.error(`[desktop] apply-now 在步骤 "${result.step}" 失败: ${result.error}`);
+    if (result.step === "shutdown-server" || result.step === "start-server") {
+      // 旧 server 已经停了、新 server 也没起来：没有任何页内恢复手段，
+      // 用跟现有崩溃重启失败同款的错误对话框告知用户重启应用（复用既有
+      // installFailedTitle 键——同属"更新失败"这一类对话框标题）。
+      dialog.showErrorBox(mt("dialog.installFailedTitle", null, "HanaAgent Update"), mt(
+        "dialog.trainUpdateApplyFailedBody",
+        { version: app?.getVersion?.() || "unknown", error: result.error },
+        `HanaAgent update failed to apply: ${result.error}\n\nPlease restart the app.`,
+      ));
+    }
+    return { ok: false, error: result.error };
+  }
+  return { ok: true };
+}
+
+wrapIpcHandler("train-update-status", async () => {
+  const status = await artifactOta.readStagedTrainStatus(hanakoHome, { channel: readUpdateChannelPreference() });
+  // currentVersion 是内容版本单一源的唯一 IPC 出口：渲染进程不再单独调用
+  // get-app-version 来决定"我在用哪个版本"，一律从这里读。
+  // fallbackNotice 并入这里：冷启动时崩溃回退发生在任何窗口创建之前，
+  // `train-fallback-notice` 广播大概率没有听众，窗口挂载后走这条冷拉取
+  // 路径才是它唯一保证能被看到的通道（见 `_crashFallbackNotice` 声明处注释）。
+  return { ...status, currentVersion: getCurrentContentVersion(), fallbackNotice: _crashFallbackNotice };
+});
+
+// 崩溃回退提示的一次性 ack：用户点掉侧栏卡片后调用，清空进程内存里的
+// 通知状态——同一次事件只提示一次，不落盘（不需要跨进程重启保留：见
+// `_crashFallbackNotice` 声明处对语义的完整解释）。
+wrapIpcHandler("train-fallback-notice-ack", () => {
+  _crashFallbackNotice = null;
+  return { ok: true };
+});
+
+// 手动检查：跟后台自动检查共用 checkOnce，同样绝不下载/写指针，只拉清单、
+// 验签、过闸门、把发现的结果写进 ota-state.json 并原样返回给渲染进程。
+wrapIpcHandler("train-update-check", async () => {
+  if (!app.isPackaged) return { outcome: "dev-skipped" };
+  return artifactOta.checkOnce({
+    homeDir: hanakoHome,
+    keyset: loadPinnedKeyset(),
+    currentShellVersion: app.getVersion(),
+    platformArch: `${process.platform}-${process.arch}`,
+    channel: readUpdateChannelPreference(),
+    log: (msg) => console.log(redactMainLogText(msg)),
+  });
+});
+
+// 唯一会真正下载/激活字节的入口：只在用户点击"立即应用"时，由渲染进程发起
+// 这次 IPC 调用才会触发（event.sender 用来把下载进度只推给发起这次调用的窗口）。
+wrapIpcHandler("train-update-apply", async (event) => applyTrainUpdateNow(event && event.sender));
+
+function readBundledUpdateDigestHistory() {
+  try {
+    const readJson = (name) => {
+      try {
+        return JSON.parse(fs.readFileSync(path.join(app.getAppPath(), name), "utf-8"));
+      } catch {
+        return null;
+      }
+    };
+    const rawEntries = coerceDigestHistory(readJson("release-digest.v2.json"), readJson("release-digest.v1.json"));
+    return rawEntries
+      .map((entry) => normalizeReleaseDigest(entry, null))
+      .filter(Boolean)
+      .sort((a, b) => {
+        const cmp = compareProductVersions(b.version, a.version);
+        return cmp === null ? 0 : cmp;
+      });
+  } catch {
+    return [];
+  }
+}
+
+// About 页的历史是“当前网站上最近发布的版本”，不能由安装时冻结的包内文件
+// 充当真相。包内 v2 史册只在网络不可用时显式回退，并由 renderer 标注来源。
+const loadUpdateDigestHistory = createUpdateDigestHistoryLoader({
+  normalize: normalizeReleaseDigest,
+  readBundledEntries: readBundledUpdateDigestHistory,
+  log: (message) => console.warn(`[update-history] ${redactMainLogText(message)}`),
+});
+
+wrapIpcHandler("get-update-digest-history", () => loadUpdateDigestHistory());
+
 // ── IPC ──
 wrapIpcHandler("get-server-port", () => serverPort);
 wrapIpcHandler("get-server-token", () => serverToken);
@@ -3857,14 +4728,10 @@ wrapIpcHandler("run-edit-command", (event, command) => {
   return true;
 });
 wrapIpcHandler("get-app-version", () => app.getVersion());
-// 旧版兼容：check-update 返回 auto-updater 状态中的可用版本信息
-wrapIpcHandler("check-update", () => {
-  const s = getUpdateState();
-  if (s.status === "available" || s.status === "downloaded") {
-    return { version: s.version, downloadUrl: s.downloadUrl || s.releaseUrl };
-  }
-  return null;
-});
+wrapIpcBestEffortHandler("get-pending-announcement", () => computePendingAnnouncement());
+// 书签必须写内容版本——跟 computePendingAnnouncement 读书签时用的比较基准
+// 是同一把尺子（见该函数内注释），否则热更新用户的书签会被壳版本污染。
+wrapIpcBestEffortHandler("ack-announcement", () => writeLastSeenVersion(getCurrentContentVersion()));
 wrapIpcHandler("get-auto-launch-status", () => getAutoLaunchStatus({ app }));
 wrapIpcHandler("set-auto-launch-enabled", (_event, enabled) => setAutoLaunchEnabled({ app, enabled: enabled === true }));
 wrapIpcHandler("get-keep-awake-status", () => keepAwakeManager.getStatus());
@@ -3891,60 +4758,81 @@ wrapIpcBestEffortHandler("quick-chat-open-session", (_event, sessionPath) => {
 wrapIpcBestEffortHandler("open-settings", (_event, tab, theme) => createSettingsWindow(tab, theme));
 
 // 浏览器查看器窗口
-wrapIpcBestEffortHandler("open-browser-viewer", async (_event, theme, url) => {
+wrapIpcBestEffortHandler("open-browser-viewer", async (_event, theme, payload) => {
   if (theme) _browserViewerTheme = theme;
+  const { url, sessionPath: sp } = _normalizeBrowserViewerOpenPayload(payload);
   createBrowserViewerWindow();
 
   if (url && isAllowedBrowserUrl(url)) {
-    await _openUrlInNewBrowserTab(null, url);
+    await _openUrlInNewBrowserTab(sp, url);
     return;
   }
 
-  if (!_browserWebView) {
-    const workspace = _ensureBrowserWorkspace(null);
-    const tab = _ensureBrowserTabForSession(null);
-    workspace.activeTabId = tab.tabId;
-    _switchActiveBrowserTab(null, tab.tabId);
-  } else {
+  if (!sp && _browserWebView) {
     _notifyViewerUrl(_browserWebView.webContents.getURL());
+    return;
   }
+
+  const workspace = _ensureBrowserWorkspace(sp);
+  const tab = _ensureBrowserTabForSession(sp);
+  workspace.activeTabId = tab.tabId;
+  _switchActiveBrowserTab(sp, tab.tabId);
 });
-wrapIpcBestEffortHandler("browser-go-back", () => { if (_browserWebView) _browserWebView.webContents.goBack(); });
-wrapIpcBestEffortHandler("browser-go-forward", () => { if (_browserWebView) _browserWebView.webContents.goForward(); });
-wrapIpcBestEffortHandler("browser-reload", () => { if (_browserWebView) _browserWebView.webContents.reload(); });
-wrapIpcBestEffortHandler("browser-new-tab", async () => {
-  await _openUrlInNewBrowserTab(_currentBrowserSession, null);
+wrapIpcBestEffortHandler("browser-go-back", (_event, sessionPath) => {
+  const view = _getViewForSession(_resolveBrowserIpcSessionPath(sessionPath));
+  if (view) view.webContents.goBack();
 });
-wrapIpcBestEffortHandler("browser-switch-tab", (_event, tabId) => {
+wrapIpcBestEffortHandler("browser-go-forward", (_event, sessionPath) => {
+  const view = _getViewForSession(_resolveBrowserIpcSessionPath(sessionPath));
+  if (view) view.webContents.goForward();
+});
+wrapIpcBestEffortHandler("browser-reload", (_event, sessionPath) => {
+  const view = _getViewForSession(_resolveBrowserIpcSessionPath(sessionPath));
+  if (view) view.webContents.reload();
+});
+wrapIpcBestEffortHandler("browser-new-tab", async (_event, sessionPath) => {
+  await _openUrlInNewBrowserTab(_resolveBrowserIpcSessionPath(sessionPath), null);
+});
+wrapIpcBestEffortHandler("browser-switch-tab", (_event, tabId, sessionPath) => {
   if (typeof tabId !== "string" || !tabId) return;
-  _switchActiveBrowserTab(_currentBrowserSession, tabId);
+  _switchActiveBrowserTab(_resolveBrowserIpcSessionPath(sessionPath), tabId);
 });
-wrapIpcBestEffortHandler("browser-close-tab", (_event, tabId) => {
+wrapIpcBestEffortHandler("browser-close-tab", (_event, tabId, sessionPath) => {
   if (typeof tabId !== "string" || !tabId) return;
+  const sp = _resolveBrowserIpcSessionPath(sessionPath);
   return handleBrowserCommand("closeTab", {
-    sessionPath: _currentBrowserSession,
+    sessionPath: sp,
     tabId,
   });
 });
 wrapIpcBestEffortHandler("close-browser-viewer", () => {
   if (browserViewerWindow && !browserViewerWindow.isDestroyed()) browserViewerWindow.close();
 });
-wrapIpcBestEffortHandler("browser-emergency-stop", () => {
+wrapIpcBestEffortHandler("browser-emergency-stop", (_event, sessionPath) => {
+  const sp = _resolveBrowserIpcSessionPath(sessionPath);
   // 有 session 归属时必须经过 server 的 BrowserManager，保持 UI 和运行时状态一致。
-  if (_currentBrowserSession) {
-    return closeBrowserSessionViaServer(_currentBrowserSession);
+  if (sp) {
+    return closeBrowserSessionViaServer(sp);
   }
   // 兼容无 sessionPath 的旧浏览器实例：没有 server 状态可同步，只能本地清理。
-  if (_browserWebView) {
-    _detachActiveBrowserView({ destroy: true, hideIfVisible: true, reason: "emergency-stop" });
+  const view = _getViewForSession(null);
+  if (view) {
+    _detachActiveBrowserView({ view, sessionPath: null, destroy: true, hideIfVisible: true, reason: "emergency-stop" });
   }
 });
 
 // ── 派生 Viewer 窗口（只读文件副本，多实例） ──
-// 语义：接 spawn-viewer → 开新 BrowserWindow，把文件元信息通过 `viewer-load` 推给
-// viewer-window-entry.tsx。Viewer 自己 watchFile 做 live 只读刷新，不跟主面板互通；
-// 窗口 close 时只广播一个 `viewer-closed` 给主 renderer 清 pinnedViewers store。
+// 语义：接 spawn-viewer → 开新 BrowserWindow，把文件元信息存入 _viewerPayloads；
+// viewer-window-entry.tsx 挂载后通过 `viewer-request-load` 主动拉取。Viewer 自己
+// watchFile 做 live 只读刷新，不跟主面板互通；窗口 close 时只广播一个 `viewer-closed`
+// 给主 renderer 清 pinnedViewers store。
+//
+// 显式拉取而非 did-finish-load 时机推送：推送是一次性的，若渲染侧监听器注册
+// （React useEffect，晚于 commit+paint）落在推送之后，payload 永久丢失，
+// 窗口卡死在 Loading（冷启动下 V8 首编译 + splash 抢 CPU 时必现）。拉取契约下
+// payload 常驻 Map，渲染侧任何时候发起请求都能拿到，消灭了时序假设。
 const _viewerWindows = new Map(); // windowId -> BrowserWindow
+const _viewerPayloads = new Map(); // windowId -> load payload (sans windowId key)
 
 wrapIpcBestEffortHandler("spawn-viewer", (_event, data) => {
   if (!data?.filePath || !path.isAbsolute(data.filePath)) return null;
@@ -3968,27 +4856,35 @@ wrapIpcBestEffortHandler("spawn-viewer", (_event, data) => {
       nodeIntegration: false,
     },
   });
+  attachRendererArtifactCrashSentinel(win, "viewer-window");
   applyWindowThemeColors(win, theme);
 
   const windowId = win.id;
   _viewerWindows.set(windowId, win);
+  _viewerPayloads.set(windowId, data);
 
   loadWindowURL(win, "viewer-window");
 
-  win.webContents.on("did-finish-load", () => {
-    if (!win.isDestroyed()) {
-      win.webContents.send("viewer-load", { ...data, windowId });
-    }
-  });
-
   win.on("closed", () => {
     _viewerWindows.delete(windowId);
+    _viewerPayloads.delete(windowId);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("viewer-closed", windowId);
     }
   });
 
   return windowId;
+});
+
+// viewer-request-load：viewer 窗口挂载后主动拉取自己的载荷。
+// 用 BrowserWindow.fromWebContents 从 sender 反推 windowId，不接受调用方传参，
+// 避免拿到别的 viewer 窗口的数据。窗口已关闭或压根不是已知 viewer 窗口时返回 null。
+wrapIpcHandler("viewer-request-load", (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || win.isDestroyed()) return null;
+  const data = _viewerPayloads.get(win.id);
+  if (!data) return null;
+  return { ...data, windowId: win.id };
 });
 
 wrapIpcBestEffortHandler("viewer-close", (event) => {
@@ -4047,6 +4943,8 @@ wrapIpcOn("settings-changed", (_event, type, data) => {
       const buildMenu = () => Menu.buildFromTemplate([
         { label: mt("tray.show", null, "Show HanaAgent"), click: () => showPrimaryWindow() },
         { label: mt("tray.settings", null, "Settings"), click: () => createSettingsWindow() },
+        { type: "separator" },
+        { label: mt("tray.repairArtifacts", null, "Repair Components…"), click: () => { triggerArtifactRepairFlow().catch((err) => console.error(`[desktop] repair flow failed: ${err.message}`)); } },
         { type: "separator" },
         { label: mt("tray.quit", null, "Quit"), click: () => { isExitingServer = true; isQuitting = true; app.quit(); } },
       ]);
@@ -4647,6 +5545,19 @@ wrapIpcBestEffortHandler("app-ready", (event) => {
 // ── App 生命周期 ──
 app.whenReady().then(async () => {
   try {
+    // 0. `--repair-artifacts` 命令行旗标：跟托盘
+    // "修复组件…"走同一份清理实现，但不需要确认对话框——能敲这个旗标的人
+    // 知道自己在干什么。必须在 startServer()/resolvePackagedArtifactBoot()
+    // 之前跑：先清空 artifacts/ 下的已知子路径，再让正常启动路径把 seed
+    // 重新解压出来，一条代码路径，没有特例。清理失败静默记日志，不阻塞启动。
+    if (process.argv.includes("--repair-artifacts")) {
+      console.log("[desktop] --repair-artifacts flag detected; resetting artifact components before startup");
+      await artifactRepair.repairArtifacts({
+        homeDir: hanakoHome,
+        log: (msg) => console.log(redactMainLogText(msg)),
+      });
+    }
+
     _startHiddenAtLogin = getAutoLaunchStatus({ app }).openedAtLogin === true && isSetupComplete();
 
     // 1. 立刻显示启动窗口，同时异步获取 login shell PATH。登录项后台启动时跳过 splash。
@@ -4757,14 +5668,9 @@ app.whenReady().then(async () => {
     }
 
     // 5. 后台检查更新（不阻塞启动）
-    // 从 preferences.json 同步更新通道
-    try {
-      const prefsPath = path.join(hanakoHome, "user", "preferences.json");
-      if (fs.existsSync(prefsPath)) {
-        const prefs = JSON.parse(fs.readFileSync(prefsPath, "utf-8"));
-        if (prefs.update_channel) setUpdateChannel(prefs.update_channel);
-      }
-    } catch {}
+    // 从 preferences.json 同步更新通道（同一个设置项同时驱动壳与列车，见
+    // readUpdateChannelPreference() 的契约）
+    setUpdateChannel(readUpdateChannelPreference());
     checkForUpdates().catch(() => {});
   } catch (err) {
     console.error("[desktop] 启动失败:", err.message);

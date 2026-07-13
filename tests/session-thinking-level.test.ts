@@ -10,10 +10,41 @@ import {
 } from "../core/session-thinking-level.ts";
 
 describe("session thinking level capabilities", () => {
-  it("maps legacy auto to medium at runtime boundaries", () => {
+  it("keeps model-agnostic legacy auto compatibility at medium", () => {
     expect(normalizeSessionThinkingLevel("auto")).toBe("medium");
     expect(normalizeRequestThinkingLevel("auto")).toBe("medium");
     expect(normalizeSessionThinkingLevel(undefined)).toBe("medium");
+  });
+
+  it("resolves legacy auto from the selected model default after the model is known", () => {
+    const model = {
+      id: "reasoning-model",
+      provider: "test",
+      thinkingLevels: ["off", "low", "medium", "high", "max"],
+      defaultThinkingLevel: "high",
+    };
+
+    expect(normalizeThinkingLevelForModel("auto", model)).toBe("high");
+  });
+
+  it("clamps legacy Kimi medium to high and preserves its four visible levels", () => {
+    const model = {
+      id: "kimi-for-coding",
+      provider: "kimi-coding",
+      thinkingLevels: ["off", "low", "high", "max"],
+      defaultThinkingLevel: "high",
+      thinkingLevelMap: {
+        off: null,
+        low: "low",
+        medium: "high",
+        high: "high",
+        xhigh: "max",
+      },
+    };
+
+    expect(normalizeThinkingLevelForModel("auto", model)).toBe("high");
+    expect(normalizeThinkingLevelForModel("medium", model)).toBe("high");
+    expect(normalizeThinkingLevelForModel("max", model)).toBe("max");
   });
 
   it("accepts Max as the canonical deep thinking level", () => {
@@ -30,6 +61,22 @@ describe("session thinking level capabilities", () => {
     expect(normalizePiSdkThinkingLevel("max")).toBe("xhigh");
     expect(normalizePiSdkThinkingLevel("xhigh")).toBe("xhigh");
     expect(normalizePiSdkThinkingLevel("auto")).toBe("medium");
+  });
+
+  it("clamps unsupported legacy OAuth off levels to each GPT-5.6 model default", () => {
+    const sol = {
+      id: "gpt-5.6-sol",
+      provider: "openai-codex",
+      thinkingLevels: ["low", "medium", "high", "max"],
+      thinkingLevelMap: { off: null, minimal: null, xhigh: "max" },
+      defaultThinkingLevel: "low",
+    };
+    const terra = { ...sol, id: "gpt-5.6-terra", defaultThinkingLevel: "medium" };
+
+    expect(normalizeThinkingLevelForModel("off", sol)).toBe("low");
+    expect(normalizeThinkingLevelForModel("off", terra)).toBe("medium");
+    expect(normalizeThinkingLevelForModel("max", sol)).toBe("max");
+    expect(modelSupportsXhigh(sol)).toBe(true);
   });
 
   it("shows the unified Max level for GPT-5.5", () => {

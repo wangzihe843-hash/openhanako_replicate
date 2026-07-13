@@ -166,7 +166,7 @@ export function createModelApprovalReviewer({
       ...(request.agentId ? { agentId: request.agentId } : {}),
       ...(request.sessionPath ? { sessionPath: request.sessionPath } : {}),
     };
-    const config = resolveUtilityConfig(Object.keys(utilityOptions).length ? utilityOptions : undefined);
+    const config = await resolveUtilityConfig(Object.keys(utilityOptions).length ? utilityOptions : undefined);
     const selected = configForReviewerRole(config, role);
     if (!selected.model || !selected.api || !selected.baseUrl) {
       throw new Error(`approval reviewer ${role} model config is incomplete`);

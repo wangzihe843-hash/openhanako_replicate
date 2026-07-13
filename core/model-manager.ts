@@ -9,7 +9,12 @@
  * 都在这个数组上完成，不再经过中间层。
  */
 import path from "path";
-import { AuthStorage, createModelRegistry } from "../lib/pi-sdk/index.ts";
+import {
+  AuthStorage,
+  createModelRegistry,
+  registerModelProvider,
+  unregisterModelProvider,
+} from "../lib/pi-sdk/index.ts";
 import { t } from "../lib/i18n.ts";
 import { ProviderRegistry } from "./provider-registry.ts";
 import { ExecutionRouter } from "./execution-router.ts";
@@ -17,6 +22,7 @@ import { findModel, parseModelRef } from "../shared/model-ref.ts";
 import { isLocalBaseUrl } from "../shared/net-utils.ts";
 import { syncModels } from "./model-sync.ts";
 import { enrichModelFromKnownMetadata } from "./model-known-enrichment.ts";
+import { lookupKnownProvider } from "../shared/known-models.ts";
 import { migrateLegacyApiKeyAuthToProviders } from "./provider-auth-migration.ts";
 import {
   normalizePiSdkThinkingLevel,
@@ -45,28 +51,50 @@ function providerModelDefault(rawProvider: Record<string, unknown>, modelId: str
   return typeof level === "string" ? level : undefined;
 }
 
-function buildProviderModelMetadataMap(rawProviders: unknown) {
+function buildProviderModelMetadataMap(projectionPlans: unknown) {
   const map = new Map<string, Record<string, unknown>>();
-  const providers = isRecord(rawProviders) ? rawProviders : {};
-  for (const [provider, rawProviderValue] of Object.entries(providers)) {
-    const rawProvider = isRecord(rawProviderValue) ? rawProviderValue : {};
+  const plans = Array.isArray(projectionPlans) ? projectionPlans : [];
+  for (const plan of plans) {
+    const provider = plan?.sourceProviderId;
+    const runtimeProvider = plan?.runtimeProviderId || provider;
+    if (typeof provider !== "string" || !provider) continue;
+    const rawProvider = isRecord(plan?.config) ? plan.config : {};
     const models = Array.isArray(rawProvider.models) ? rawProvider.models : [];
     for (const modelEntry of models) {
       const modelId = modelEntryId(modelEntry);
       if (typeof modelId !== "string" || !modelId) continue;
+      const known = lookupKnownProvider(provider, modelId);
       const meta: Record<string, unknown> = {};
       if (isRecord(modelEntry)) {
         if (modelEntry.xhigh !== undefined) meta.xhigh = modelEntry.xhigh === true;
         if (modelEntry.defaultThinkingLevel !== undefined) meta.defaultThinkingLevel = modelEntry.defaultThinkingLevel;
         const thinkingLevels = normalizeThinkingLevelChoices(modelEntry.thinkingLevels);
         if (thinkingLevels) meta.thinkingLevels = thinkingLevels;
+        if (modelEntry.thinkingLevelMap !== undefined && isRecord(modelEntry.thinkingLevelMap)) {
+          meta.thinkingLevelMap = structuredClone(modelEntry.thinkingLevelMap);
+        }
         if (modelEntry.toolUse !== undefined) meta.toolUse = structuredClone(modelEntry.toolUse);
         if (modelEntry.visionCapabilities !== undefined) meta.visionCapabilities = structuredClone(modelEntry.visionCapabilities);
       }
+      if (meta.defaultThinkingLevel === undefined && typeof known?.defaultThinkingLevel === "string") {
+        meta.defaultThinkingLevel = known.defaultThinkingLevel;
+      }
+      if (meta.thinkingLevels === undefined) {
+        const knownThinkingLevels = normalizeThinkingLevelChoices(known?.thinkingLevels);
+        if (knownThinkingLevels) meta.thinkingLevels = knownThinkingLevels;
+      }
+      if (meta.thinkingLevelMap === undefined && known?.thinkingLevelMap && isRecord(known.thinkingLevelMap)) {
+        meta.thinkingLevelMap = structuredClone(known.thinkingLevelMap);
+      }
+      if (typeof known?.maxContext === "number") meta.maxContext = known.maxContext;
       const defaultThinkingLevel = providerModelDefault(rawProvider, modelId);
       if (defaultThinkingLevel !== undefined) meta.defaultThinkingLevel = defaultThinkingLevel;
-      if (Array.isArray(meta.thinkingLevels) && meta.thinkingLevels.includes("max") && meta.xhigh === undefined) meta.xhigh = true;
+      if ((Array.isArray(meta.thinkingLevels) && meta.thinkingLevels.includes("max"))
+        || isRecord(meta.thinkingLevelMap) && typeof meta.thinkingLevelMap.xhigh === "string") {
+        if (meta.xhigh === undefined) meta.xhigh = true;
+      }
       if (Object.keys(meta).length > 0) {
+        map.set(modelMetadataKey(runtimeProvider, modelId), meta);
         map.set(modelMetadataKey(provider, modelId), meta);
       }
     }
@@ -97,6 +125,7 @@ export class ModelManager {
   declare _defaultModel: any;
   declare _hanakoHome: any;
   declare _modelRegistry: any;
+  declare _registeredSdkProviderIds: Set<string>;
   declare executionRouter: any;
   declare providerRegistry: any;
   /**
@@ -107,6 +136,7 @@ export class ModelManager {
     this._hanakoHome = hanakoHome;
     this._authStorage = null;
     this._modelRegistry = null;
+    this._registeredSdkProviderIds = new Set();
     this._defaultModel = null;   // 设置页面选的，持久化，bridge 用这个
     this._availableModels = [];
 
@@ -120,15 +150,22 @@ export class ModelManager {
     this._authStorage = AuthStorage.create(path.join(this._hanakoHome, "auth.json"));
     this.providerRegistry.reload();
     this._removeApiKeyProviderAuthEntries();
-    this._applyRuntimeApiKeyOverrides(this.providerRegistry.getAllProvidersRaw());
+    const projection = this._buildChatProjectionInputs();
+    this._applyRuntimeApiKeyOverrides(projection);
+    syncModels(projection.providers, {
+      modelsJsonPath: this.modelsJsonPath,
+      chatProjectionPlans: projection.planMap,
+    });
     this._modelRegistry = createModelRegistry(
       this._authStorage,
       path.join(this._hanakoHome, "models.json"),
     );
+    this._syncSdkProviderRegistrations();
 
     this.executionRouter = new ExecutionRouter(
       (ref) => this._resolveFromAvailable(ref),
       this.providerRegistry,
+      (provider) => this.resolveProviderCredentialsFresh(provider),
     );
   }
 
@@ -177,36 +214,26 @@ export class ModelManager {
     return level ? { ...model, defaultThinkingLevel: level } : model;
   }
 
-  _allowsRuntimeDiscoveredModel(model) {
-    if (!model?.provider) return false;
-    const resolved = this.providerRegistry.resolveChatProvider?.(model.provider);
-    if (resolved) return resolved.projection !== "none";
-    return !!this.providerRegistry.get?.(model.provider);
-  }
-
   /** 刷新可用模型列表，用 Provider Catalog v2 过滤 */
   async refreshAvailable() {
     const allModels = await this._modelRegistry.getAvailable();
-    // Pi SDK 返回所有有 auth 的模型（包括 OAuth 内置模型），
-    // 但用户只想看自己配置或 ProviderRegistry 明确声明的模型。
-    const rawProviders = this.providerRegistry.getAllProvidersRaw();
-    const userModelSets = new Map();
-    for (const [name, raw] of Object.entries(rawProviders) as [string, any][]) {
-      if (!raw.models?.length) continue;
-      const chatIds = typeof this.providerRegistry.getChatModelIds === "function"
-        ? this.providerRegistry.getChatModelIds(name)
-        : raw.models.map(m => typeof m === "object" ? m.id : m);
-      const ids = new Set(chatIds);
-      userModelSets.set(name, ids);
-      // OAuth provider 的 authJsonKey 可能不同于 provider ID
-      const authKey = this.providerRegistry.getAuthJsonKey(name);
-      if (authKey !== name) userModelSets.set(authKey, ids);
+    const plans = this.providerRegistry.getChatProjectionPlans();
+    const effectiveModelSets = new Map();
+    const legacyRuntimeCatalogProviders = new Set();
+    for (const plan of plans) {
+      if (plan.projection === "none") continue;
+      if (plan.projection === "sdk-auth-alias" && plan.selectionMode === "runtime-catalog") {
+        legacyRuntimeCatalogProviders.add(plan.runtimeProviderId);
+        continue;
+      }
+      const ids = new Set((plan.config?.models || []).map(modelEntryId).filter(Boolean));
+      effectiveModelSets.set(plan.runtimeProviderId, ids);
     }
-    const metadataByModel = buildProviderModelMetadataMap(rawProviders);
+    const metadataByModel = buildProviderModelMetadataMap(plans);
     this._availableModels = allModels.filter(m => {
-      const allowed = userModelSets.get(m.provider);
-      if (!allowed) return this._allowsRuntimeDiscoveredModel(m);
-      return allowed.has(m.id);
+      if (legacyRuntimeCatalogProviders.has(m.provider)) return true;
+      const allowed = effectiveModelSets.get(m.provider);
+      return !!allowed && allowed.has(m.id);
     })
       .map(m => applyProviderModelMetadata(m, metadataByModel))
       .map(enrichModelFromKnownMetadata)
@@ -226,41 +253,89 @@ export class ModelManager {
    */
   async syncAndRefresh() {
     this._removeApiKeyProviderAuthEntries();
-    const rawProviders = this.providerRegistry.getAllProvidersRaw();
-    // 合并 plugin 默认值（base_url/api），YAML 里可能只存了 api_key + models
-    const providers: any = {};
-    for (const [name, raw] of Object.entries(rawProviders) as [string, any][]) {
-      const entry = this.providerRegistry.get(name);
-      providers[name] = {
-        ...raw,
-        base_url: raw.base_url || entry?.baseUrl || "",
-        api: raw.api || entry?.api || "openai-completions",
-        headers: raw.headers || entry?.headers || {},
-        auth_type: raw.auth_type || entry?.authType || "api-key",
-      };
-    }
-    const changed = syncModels(providers, {
+    const projection = this._buildChatProjectionInputs();
+    const changed = syncModels(projection.providers, {
       modelsJsonPath: this.modelsJsonPath,
-      authJsonPath: this.authJsonPath,
-      oauthKeyMap: this._buildOAuthKeyMap(),
-      chatProjectionMap: this._buildChatProjectionMap(),
+      chatProjectionPlans: projection.planMap,
     });
-    this._applyRuntimeApiKeyOverrides(providers);
+    this._applyRuntimeApiKeyOverrides(projection);
     if (changed) {
       this._modelRegistry.refresh();
-      await this.refreshAvailable();
-      this._rebindDefaultModel();
     }
+    await this.refreshAvailable();
+    this._rebindDefaultModel();
     return changed;
   }
 
-  _applyRuntimeApiKeyOverrides(providers) {
+  /**
+   * Reconcile ProviderRegistry-owned dynamic SDK declarations with this
+   * ModelRegistry instance. The set belongs to ModelManager because dynamic
+   * registration is lifecycle state of this concrete SDK registry.
+   */
+  _syncSdkProviderRegistrations() {
+    if (!this._modelRegistry) return;
+    const registrations = this.providerRegistry.getSdkProviderRegistrations();
+    const nextIds = new Set<string>(registrations.map((registration) => registration.providerId));
+    // ModelRegistry.registerProvider is an upsert: omitted fields survive from
+    // the prior config. Remove every previously owned declaration first so a
+    // catalog/plugin reload has exact replacement semantics, including deleted
+    // oauth, headers, or hooks.
+    for (const providerId of this._registeredSdkProviderIds) {
+      unregisterModelProvider(this._modelRegistry, providerId);
+    }
+    const appliedIds: string[] = [];
+    try {
+      for (const registration of registrations) {
+        registerModelProvider(
+          this._modelRegistry,
+          registration.providerId,
+          registration.config,
+        );
+        appliedIds.push(registration.providerId);
+      }
+    } catch (error) {
+      for (const providerId of appliedIds) {
+        unregisterModelProvider(this._modelRegistry, providerId);
+      }
+      this._registeredSdkProviderIds = new Set();
+      throw error;
+    }
+    this._registeredSdkProviderIds = nextIds;
+  }
+
+  _buildChatProjectionInputs() {
+    const plans = this.providerRegistry.getChatProjectionPlans();
+    const providers: Record<string, any> = {};
+    const planMap: Record<string, any> = {};
+    for (const plan of plans) {
+      providers[plan.sourceProviderId] = plan.config;
+      planMap[plan.sourceProviderId] = {
+        sourceProviderId: plan.sourceProviderId,
+        runtimeProviderId: plan.runtimeProviderId,
+        projection: plan.projection,
+        credentialSource: plan.credentialSource,
+        selectionMode: plan.selectionMode,
+        hasExplicitModels: plan.hasExplicitModels,
+      };
+    }
+    return { plans, providers, planMap };
+  }
+
+  _applyRuntimeApiKeyOverrides(projection) {
     if (!this._authStorage?.setRuntimeApiKey) return;
-    for (const [providerId, provider] of Object.entries(providers || {}) as [string, any][]) {
-      if (typeof provider?.api_key === "string" && provider.api_key.length > 0) {
-        this._authStorage.setRuntimeApiKey(providerId, provider.api_key);
+    for (const plan of projection?.plans || []) {
+      const provider = projection.providers?.[plan.sourceProviderId] || {};
+      const runtimeProviderId = plan.runtimeProviderId || plan.sourceProviderId;
+      const cleanupIds = new Set([runtimeProviderId, plan.sourceProviderId]);
+      if (plan.credentialSource === "provider-catalog"
+        && typeof provider.api_key === "string"
+        && provider.api_key.length > 0) {
+        this._authStorage.setRuntimeApiKey(runtimeProviderId, provider.api_key);
+        for (const providerId of cleanupIds) {
+          if (providerId !== runtimeProviderId) this._authStorage.removeRuntimeApiKey?.(providerId);
+        }
       } else {
-        this._authStorage.removeRuntimeApiKey?.(providerId);
+        for (const providerId of cleanupIds) this._authStorage.removeRuntimeApiKey?.(providerId);
       }
     }
   }
@@ -281,28 +356,6 @@ export class ModelManager {
   }
 
   /**
-   * 构建 OAuth providerId → auth.json key 映射
-   * @private
-   */
-  _buildOAuthKeyMap() {
-    const map: any = {};
-    for (const id of this.providerRegistry.getOAuthProviderIds()) {
-      const authKey = this.providerRegistry.getAuthJsonKey(id);
-      if (authKey !== id) map[id] = authKey;
-    }
-    return map;
-  }
-
-  _buildChatProjectionMap() {
-    const map: any = {};
-    for (const id of Object.keys(this.providerRegistry.getAllProvidersRaw())) {
-      const projection = this.providerRegistry.getChatProjection?.(id);
-      if (projection && projection !== "models-json") map[id] = projection;
-    }
-    return map;
-  }
-
-  /**
    * Hana 的 API-key provider 凭证源是 Provider Catalog → models.json。
    * AuthStorage 只保留 OAuth 条目，避免 Pi SDK 优先读取 stale auth.json。
    * @private
@@ -315,10 +368,23 @@ export class ModelManager {
     });
     this._authStorage.reload?.();
 
-    for (const entry of this.providerRegistry.getAll().values()) {
+    const entries = [...this.providerRegistry.getAll().values()];
+    const oauthOwnedAuthKeys = new Set();
+    for (const entry of entries) {
+      if (entry.authType !== "oauth") continue;
+      if (entry.id) oauthOwnedAuthKeys.add(entry.id);
+      if (entry.authJsonKey) oauthOwnedAuthKeys.add(entry.authJsonKey);
+    }
+
+    for (const entry of entries) {
       if (entry.authType === "oauth") continue;
       const authKeys = new Set([entry.id, entry.authJsonKey]);
       for (const authKey of authKeys) {
+        // A malformed/synthetic provider may collide with an OAuth runtime alias
+        // (for example `openai-codex`). Projection validation will reject that
+        // catalog, but cleanup must never delete the OAuth owner's credentials
+        // while surfacing the collision.
+        if (oauthOwnedAuthKeys.has(authKey)) continue;
         if (!authKey || !this._authStorage.has?.(authKey)) continue;
         this._authStorage.remove(authKey);
       }
@@ -429,34 +495,117 @@ export class ModelManager {
    */
   async resolveProviderCredentialsFresh(provider) {
     if (!provider) return { api_key: "", base_url: "", api: "" };
-    const entry = this.providerRegistry.get(provider);
+    const chatProvider = this.providerRegistry.resolveChatProvider?.(provider);
+    const entry = chatProvider?.entry || this.providerRegistry.get(provider);
+    const credentialSource = chatProvider?.credentialSource
+      || (this.providerRegistry.getAuthType(provider) === "oauth" ? "auth-storage" : "provider-catalog");
+    if (!entry) return { api_key: "", base_url: "", api: "" };
     let refreshedOAuthKey = null;
-    if (entry && this.providerRegistry.getAuthType(provider) === "oauth" && this._authStorage) {
+    if (credentialSource === "auth-storage") {
+      if (!entry) {
+        throw new Error(t("error.providerMissingCreds", { provider }));
+      }
+      const rawProvider = this.providerRegistry.getAllProvidersRaw?.()[entry.id] || {};
       const authKey = this.providerRegistry.getAuthJsonKey(provider);
-      refreshedOAuthKey = await this._authStorage.getApiKey?.(authKey);
+      if (!this._authStorage || typeof this._authStorage.getApiKey !== "function") {
+        throw new Error(`${t("error.providerMissingCreds", { provider })} (auth: ${authKey})`);
+      }
+      refreshedOAuthKey = await this._authStorage.getApiKey(authKey, { includeFallback: false });
       this._authStorage.reload?.();
       this.providerRegistry.clearAuthCache?.();
+      if (!refreshedOAuthKey) {
+        throw new Error(`${t("error.providerMissingCreds", { provider })} (auth: ${authKey})`);
+      }
+      const authEntry = this._authStorage.get?.(authKey) || null;
+      const cred = this.providerRegistry.getCredentials(provider);
+      const accountId = authEntry?.accountId || authEntry?.account_id || cred?.accountId || "";
+      return {
+        // OAuth execution credentials belong exclusively to AuthStorage. In particular,
+        // never let a stale Provider Catalog api_key or Authorization/Cookie header
+        // override the token that was just refreshed under the AuthStorage lock.
+        api_key: refreshedOAuthKey || "",
+        base_url: authEntry?.resourceUrl
+          || authEntry?.resource_url
+          || rawProvider.base_url
+          || cred?.baseUrl
+          || entry.baseUrl
+          || "",
+        api: rawProvider.api || entry.api || cred?.api || "",
+        headers: {},
+        credential_source: "auth-storage",
+        ...(accountId ? { accountId } : {}),
+      };
     }
-    const cred = this.providerRegistry.getCredentials(provider);
-    if (entry && this.providerRegistry.getAuthType(provider) === "oauth" && !refreshedOAuthKey) {
+    if (credentialSource === "provider-catalog" && entry) {
+      const allRawProviders = this.providerRegistry.getAllProvidersRaw?.() || {};
+      const rawProvider = allRawProviders[entry.id] || allRawProviders[provider] || {};
+      return {
+        api_key: rawProvider.api_key || "",
+        base_url: rawProvider.base_url || entry.baseUrl || "",
+        api: rawProvider.api || entry.api || "",
+        headers: rawProvider.headers || entry.headers || {},
+        credential_source: "provider-catalog",
+      };
+    }
+    if (credentialSource === "none" && entry) {
+      const allRawProviders = this.providerRegistry.getAllProvidersRaw?.() || {};
+      const rawProvider = allRawProviders[entry.id] || allRawProviders[provider] || {};
       return {
         api_key: "",
-        base_url: cred?.baseUrl || entry.baseUrl || "",
-        api: cred?.api || entry.api || "",
-        headers: cred?.headers || entry.headers || {},
-        ...(cred?.accountId ? { accountId: cred.accountId } : {}),
+        base_url: rawProvider.base_url || entry.baseUrl || "",
+        api: rawProvider.api || entry.api || "",
+        headers: rawProvider.headers || entry.headers || {},
+        credential_source: "none",
       };
     }
-    if (cred) {
-      return {
-        api_key: refreshedOAuthKey || cred.apiKey || "",
-        base_url: cred.baseUrl || "",
-        api: cred.api || "",
-        headers: cred.headers || {},
-        ...(cred.accountId ? { accountId: cred.accountId } : {}),
-      };
+    throw new Error(`Unsupported credentialSource "${credentialSource}" for provider "${provider}"`);
+  }
+
+  _resolvedModelCredentialResult(entry, creds) {
+    const provider = entry?.provider;
+    if (!provider) {
+      throw new Error(t("error.modelNoProvider", { role: "resolve", model: String(entry?.id || "") }));
     }
-    return { api_key: "", base_url: "", api: "" };
+    const effectiveApi = entry.api || creds.api;
+    if (!effectiveApi) {
+      throw new Error(t("error.providerMissingApi", { provider }));
+    }
+    const allowsMissingApiKey = this.providerRegistry?.allowsMissingApiKey?.(provider, creds.base_url)
+      ?? isLocalBaseUrl(creds.base_url);
+    const headers = (creds as any).headers || {};
+    const hasHeaders = Object.keys(headers).length > 0;
+    if (!creds.base_url || (!creds.api_key && !hasHeaders && !allowsMissingApiKey)) {
+      throw new Error(t("error.providerMissingCreds", { provider }));
+    }
+    const authStorageOwned = creds.credential_source === "auth-storage";
+    const cleanEntry = authStorageOwned
+      ? (() => {
+          const {
+            headers: _headers,
+            accountId: _accountId,
+            account_id: _accountIdSnake,
+            accountID: _accountIdLegacy,
+            ...rest
+          } = entry as any;
+          return rest;
+        })()
+      : entry;
+    let modelWithCredentials = Object.keys(headers).length > 0
+      ? { ...cleanEntry, headers: { ...((cleanEntry as any).headers || {}), ...headers } }
+      : cleanEntry;
+    if (creds.accountId) {
+      modelWithCredentials = { ...modelWithCredentials, accountId: creds.accountId };
+    }
+    return {
+      model: modelWithCredentials,
+      provider,
+      api: effectiveApi,
+      api_key: creds.api_key,
+      base_url: creds.base_url,
+      headers,
+      ...(creds.credential_source ? { credential_source: creds.credential_source } : {}),
+      ...(creds.accountId ? { accountId: creds.accountId } : {}),
+    };
   }
 
   /**
@@ -465,6 +614,7 @@ export class ModelManager {
    */
   async reloadAndSync() {
     this.providerRegistry.reload();
+    this._syncSdkProviderRegistrations();
     await this.syncAndRefresh();
   }
 
@@ -483,39 +633,40 @@ export class ModelManager {
     if (!provider) {
       throw new Error(t("error.modelNoProvider", { role: "resolve", model: String(modelRef) }));
     }
-    const creds = this.resolveProviderCredentials(provider);
-    if (!creds.api) {
-      throw new Error(t("error.providerMissingApi", { provider }));
+    return this._resolvedModelCredentialResult(entry, this.resolveProviderCredentials(provider));
+  }
+
+  /**
+   * 请求时解析模型与凭证。模型身份始终先从 Hana availableModels 解析，
+   * OAuth 凭证随后通过 AuthStorage 在请求边界刷新；不会回退到 ProviderRegistry
+   * 缓存中的旧 access token。
+   */
+  async resolveModelWithCredentialsFresh(modelRef) {
+    const entry = this.resolveExecutionModel(modelRef);
+    const provider = entry?.provider;
+    if (!provider) {
+      throw new Error(t("error.modelNoProvider", { role: "resolve", model: String(modelRef) }));
     }
-    const allowsMissingApiKey = this.providerRegistry?.allowsMissingApiKey?.(provider, creds.base_url)
-      ?? isLocalBaseUrl(creds.base_url);
-    const headers = (creds as any).headers || {};
-    const hasHeaders = Object.keys(headers).length > 0;
-    if (!creds.base_url || (!creds.api_key && !hasHeaders && !allowsMissingApiKey)) {
-      throw new Error(t("error.providerMissingCreds", { provider }));
-    }
-    const modelWithHeaders = Object.keys(headers).length > 0
-      ? { ...entry, headers: { ...((entry as any).headers || {}), ...headers } }
-      : entry;
-    return {
-      model: modelWithHeaders,
-      provider,
-      api: creds.api,
-      api_key: creds.api_key,
-      base_url: creds.base_url,
-      headers,
-    };
+    const creds = await this.resolveProviderCredentialsFresh(provider);
+    return this._resolvedModelCredentialResult(entry, creds);
   }
 
   /**
    * 解析 utility 模型 + API 凭证完整配置
    * 委托 ExecutionRouter
    */
-  resolveUtilityConfig(agentConfig, sharedModels, utilApi) {
+  resolveUtilityConfig(agentConfig, sharedModels, utilApi, options = {}) {
     if (!this.executionRouter) {
       throw new Error(t("error.noUtilityModel"));
     }
-    return this.executionRouter.resolveUtilityConfig(agentConfig, sharedModels, utilApi);
+    return this.executionRouter.resolveUtilityConfig(agentConfig, sharedModels, utilApi, options);
+  }
+
+  async resolveUtilityConfigFresh(agentConfig, sharedModels, utilApi, options = {}) {
+    if (!this.executionRouter) {
+      throw new Error(t("error.noUtilityModel"));
+    }
+    return this.executionRouter.resolveUtilityConfigFresh(agentConfig, sharedModels, utilApi, options);
   }
 
   /**

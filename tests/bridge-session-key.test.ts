@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseSessionKey,
   collectKnownUsers,
+  resolveBridgeSessionIdentity,
   SESSION_PREFIX_MAP,
   KNOWN_PLATFORMS,
 } from "../lib/bridge/session-key.ts";
@@ -231,5 +232,28 @@ describe("collectKnownUsers", () => {
 
   it("returns empty object for empty index", () => {
     expect(collectKnownUsers({})).toEqual({});
+  });
+});
+
+describe("resolveBridgeSessionIdentity", () => {
+  it("resolves QQ display name and avatar from principal metadata", () => {
+    expect(resolveBridgeSessionIdentity({
+      userId: "principal-1",
+      chatId: "c2c-openid",
+      name: "User",
+      avatarUrl: "https://example.com/entry.png",
+      qqPrincipal: {
+        principalId: "principal-1",
+        aliases: ["c2c-openid"],
+        displayName: "Alice",
+        avatarUrl: "https://example.com/alice.png",
+      },
+    }, { sessionKey: "qq_dm_c2c-openid@hana" })).toMatchObject({
+      userId: "principal-1",
+      principalId: "principal-1",
+      aliases: ["principal-1", "c2c-openid"],
+      displayName: "Alice",
+      avatarUrl: "https://example.com/alice.png",
+    });
   });
 });

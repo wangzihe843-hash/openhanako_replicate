@@ -31,7 +31,7 @@ describe("Windows NSIS installer contract", () => {
     expect(bypass).toContain('DeleteRegKey SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}"');
   });
 
-  it("cleans the replaceable bundled server tree before overlaying new files", () => {
+  it("cleans the retired scattered server tree left behind by pre-seed installs before overlaying new files", () => {
     const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
 
     expect(source).toContain('RMDir /r "$INSTDIR\\resources\\server"');
@@ -155,14 +155,23 @@ describe("Windows NSIS installer contract", () => {
     expect(verify).toContain('$INSTDIR\\${APP_EXECUTABLE_FILENAME}');
     expect(verify).toContain('$INSTDIR\\resources\\app.asar');
     expect(verify).toContain('$INSTDIR\\resources\\app-update.yml');
-    expect(verify).toContain('$INSTDIR\\resources\\server\\hana-server.exe');
-    expect(verify).toContain('$INSTDIR\\resources\\server\\bootstrap.js');
-    expect(verify).toContain('$INSTDIR\\resources\\server\\bundle\\index.js');
-    expect(verify).toContain('$INSTDIR\\resources\\server\\node_modules\\better-sqlite3\\build\\Release\\better_sqlite3.node');
+    expect(verify).toContain('$INSTDIR\\resources\\seed\\seed-train.json');
+    expect(verify).toContain('$INSTDIR\\resources\\seed\\seed-train.json.sig');
+    expect(verify).toContain('hanakoRequireInstallSurfaceGlob "$INSTDIR\\resources\\seed" "server-*.tar.gz"');
+    expect(verify).toContain('hanakoRequireInstallSurfaceGlob "$INSTDIR\\resources\\seed" "renderer-*.tar.gz"');
     expect(verify).toContain('$INSTDIR\\resources\\git\\cmd\\git.exe');
     expect(verify).toContain('$INSTDIR\\resources\\git\\usr\\bin\\sh.exe');
     expect(verify).toContain('MessageBox MB_OK|MB_ICONSTOP');
     expect(verify).toContain('Quit');
+  });
+
+  it("resolves seed archive wildcards through FindFirst/FindClose without hardcoding a version", () => {
+    const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
+    const glob = extractMacro(source, "hanakoRequireInstallSurfaceGlob");
+
+    expect(glob).toContain("FindFirst $R3 $R4");
+    expect(glob).toContain("FindClose $R3");
+    expect(glob).not.toMatch(/\d+\.\d+\.\d+/);
   });
 
   it("verifies the MinGit install surface without requiring the retired bundled bash", () => {

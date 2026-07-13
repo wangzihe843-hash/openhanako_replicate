@@ -15,6 +15,7 @@ import { InterludeBlock } from './InterludeBlock';
 import { SettingsConfirmCard } from './SettingsConfirmCard';
 import { SettingsUpdateCard } from './SettingsUpdateCard';
 import { InteractiveCard } from './InteractiveCard';
+import { SessionCollabDraftCard } from './SessionCollabDraftCard';
 import { useMessageFooterActions } from './MessageActions';
 import { MessageFooterActions, formatMessageTime, type MessageFooterAction } from './MessageFooterActions';
 import { ChatResourceCard } from './ChatResourceCard';
@@ -35,9 +36,9 @@ import { resolveFileRefUrl } from '../../services/resource-url';
 import type { FileRef } from '../../types/file-ref';
 import { openPreview } from '../../stores/preview-actions';
 import { replayLatestUserMessage } from '../../stores/message-turn-actions';
-import { selectIsStreamingSession, selectSelectedIdsBySession } from '../../stores/session-selectors';
+import { selectSelectedIdsBySession } from '../../stores/session-selectors';
 import { extractSelectedTexts, extractTextBlockPlainText } from '../../utils/message-text';
-import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
+import { AgentAvatar, resolveAgentDisplayInfo, type AgentDisplayInfo } from '../../utils/agent-display';
 import { ScheduleEditor } from '../automation/ScheduleEditor';
 import { SelectWidget, type SelectOption } from '@/ui';
 import {
@@ -56,6 +57,9 @@ interface Props {
   sessionPath: string;
   agentId?: string | null;
   readOnly?: boolean;
+  agentDisplay: AgentDisplayInfo & { yuan: string };
+  isStreaming: boolean;
+  isSelected: boolean;
   isLatestAssistantMessage?: boolean;
   showTurnCompletionTime?: boolean;
   assistantTurnSelectionIds?: readonly string[];
@@ -73,29 +77,20 @@ export const AssistantMessage = memo(function AssistantMessage({
   sessionPath,
   agentId,
   readOnly = false,
+  agentDisplay,
+  isStreaming,
+  isSelected,
   isLatestAssistantMessage = false,
   showTurnCompletionTime = false,
   assistantTurnSelectionIds,
   retrySourceMessage = null,
   messageRef,
 }: Props) {
-  const agents = useStore(s => s.agents);
-  const globalAgentName = useStore(s => s.agentName) || 'Hanako';
-  const globalYuan = useStore(s => s.agentYuan) || 'hanako';
-  const isStreaming = useStore(s => selectIsStreamingSession(s, sessionPath));
-  const selectedIds = useStore(s => selectSelectedIdsBySession(s, sessionPath));
-  const isSelected = selectedIds.includes(message.id);
   const t = window.t ?? ((p: string) => p);
 
-  // Resolve agent identity from agentId prop; fall back to global values
-  const displayInfo = resolveAgentDisplayInfo({
-    id: agentId || null,
-    agents,
-    fallbackAgentName: globalAgentName,
-    fallbackAgentYuan: globalYuan,
-  });
-  const displayName = displayInfo.displayName;
-  const displayYuan = displayInfo.yuan || globalYuan;
+  const displayInfo = agentDisplay;
+  const displayName = agentDisplay.displayName;
+  const displayYuan = agentDisplay.yuan;
 
   const blocks = useMemo(
     () => (message.blocks || [])
@@ -799,7 +794,10 @@ const ScreenshotBlock = memo(function ScreenshotBlock({ block, sessionPath, mess
 
   return (
     <div className={styles.browserScreenshot} onClick={handleClick} style={{ cursor: 'default' }}>
-      <img src={`data:${block.mimeType};base64,${block.base64}`} alt={window.t('chat.browserScreenshot')} />
+      <img
+        src={`data:${block.mimeType};base64,${block.base64}`}
+        alt={window.t('chat.browserScreenshot')}
+      />
     </div>
   );
 });
@@ -1127,6 +1125,16 @@ const CronConfirmBlock = memo(function CronConfirmBlock({ block, sessionPath }: 
   );
 });
 
+// suggestion_card 分发：session 协作草稿（send / create）走 SessionCollabDraftCard，
+// 其余（automation_draft 等）沿用既有 CronConfirmBlock。BLOCK_RENDERERS 是「组件引用」表，
+// 保持表结构不变，只把 'suggestion_card' 注册成这个小分发器。
+const SuggestionCardDispatch = memo(function SuggestionCardDispatch({ block, sessionPath }: { block: any; sessionPath?: string }) {
+  if (block.kind === 'session_send_draft' || block.kind === 'session_create_draft') {
+    return <SessionCollabDraftCard block={block} sessionPath={sessionPath} />;
+  }
+  return <CronConfirmBlock block={block} sessionPath={sessionPath} />;
+});
+
 function AutomationDraftIcon() {
   return (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1157,7 +1165,7 @@ BLOCK_RENDERERS['artifact'] = LegacyArtifactBlock;
 BLOCK_RENDERERS['plugin_card'] = PluginCardWrapper;
 BLOCK_RENDERERS['skill'] = SkillBlock;
 BLOCK_RENDERERS['cron_confirm'] = CronConfirmBlock;
-BLOCK_RENDERERS['suggestion_card'] = CronConfirmBlock;
+BLOCK_RENDERERS['suggestion_card'] = SuggestionCardDispatch;
 BLOCK_RENDERERS['settings_confirm'] = SettingsConfirmBlock;
 BLOCK_RENDERERS['settings_update'] = SettingsUpdateBlock;
 BLOCK_RENDERERS['interactive_card'] = InteractiveCard;

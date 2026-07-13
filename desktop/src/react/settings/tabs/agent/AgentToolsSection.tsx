@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { t, autoSaveConfig } from "../../helpers";
-import { Toggle } from "../../widgets/Toggle";
+import { Toggle } from "@/ui";
 import { SettingsSection } from "../../components/SettingsSection";
 import { SettingsRow } from "../../components/SettingsRow";
 
@@ -16,6 +16,7 @@ const OPTIONAL_TOOL_NAMES = [
   "dm",
   "install_skill",
   "office",
+  "session",
   "update_settings",
   "workflow",
   "xingye_propose_draft",

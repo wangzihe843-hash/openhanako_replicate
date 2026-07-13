@@ -415,6 +415,12 @@ export class SessionManifestStore {
         SET pinned_at = @pinnedAt, updated_at = @updatedAt
         WHERE session_id = @sessionId
       `),
+      backfillOwnerAgent: this.db.prepare(`
+        UPDATE session_manifests
+        SET owner_agent_id = @ownerAgentId, updated_at = @updatedAt
+        WHERE session_id = @sessionId
+          AND (owner_agent_id IS NULL OR owner_agent_id = '')
+      `),
       setPlugin: this.db.prepare(`
         UPDATE session_manifests
         SET plugin_json = @pluginJson, updated_at = @updatedAt
@@ -685,6 +691,21 @@ export class SessionManifestStore {
       pinnedAt: pinnedAt || null,
       updatedAt,
     });
+    return this.getBySessionId(sessionId);
+  }
+
+  backfillOwnerAgentId(sessionId, ownerAgentId) {
+    const manifest = this.getBySessionId(sessionId);
+    if (!manifest) {
+      throw new SessionManifestError(
+        "session_manifest_not_found",
+        `Session manifest not found: ${sessionId}`,
+        { sessionId },
+      );
+    }
+    const next = typeof ownerAgentId === "string" ? ownerAgentId.trim() : "";
+    if (!next || manifest.ownerAgentId) return manifest;
+    this._stmts.backfillOwnerAgent.run({ sessionId, ownerAgentId: next, updatedAt: this._now() });
     return this.getBySessionId(sessionId);
   }
 

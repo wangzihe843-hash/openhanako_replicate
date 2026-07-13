@@ -15,8 +15,41 @@ import { Hono } from "hono";
 import { safeJson } from "../hono-helpers.ts";
 import { createModuleLogger } from "../../lib/debug-log.ts";
 import { t } from "../../lib/i18n.ts";
+import {
+  loginOAuthProvider,
+  type OAuthLoginCallbacks,
+} from "../../lib/pi-sdk/index.ts";
+import {
+  DEFAULT_OAUTH_LOGIN_METHOD,
+  isOAuthLoginMethod,
+} from "../../shared/oauth-login.ts";
 
 const log = createModuleLogger("auth");
+
+type OAuthFlowResult = { ok: true } | { ok: false; error: string };
+
+interface OAuthStartResponse {
+  sessionId: string;
+  url: string;
+  instructions?: string;
+  polling?: true;
+}
+
+interface PendingOAuthFlow {
+  authKey: string;
+  abortController: AbortController;
+  resolveCode: (code: string) => void;
+  rejectCode: (reason?: unknown) => void;
+  rejectUrl: (reason?: unknown) => void;
+  loginPromise: Promise<void> | null;
+  result: OAuthFlowResult | null;
+  response: OAuthStartResponse | null;
+  timeoutTimer: ReturnType<typeof setTimeout> | null;
+  urlPromise: Promise<string>;
+  authInstructions: string | null;
+  usesCallbackServer: boolean;
+  createdAt: number;
+}
 
 /** 将 OAuth 底层错误转为用户可理解的诊断信息 */
 function diagnoseOAuthError(err) {
@@ -40,19 +73,41 @@ export function createAuthRoute(engine) {
   const route = new Hono();
 
   /** 进行中的 OAuth 流程 */
-  const pendingFlows = new Map();
-  const pendingFlowByAuthKey = new Map();
+  const pendingFlows = new Map<string, PendingOAuthFlow>();
+  const pendingFlowByAuthKey = new Map<string, string>();
 
-  function deletePendingFlow(sessionId) {
+  function clearFlowTimer(flow?: PendingOAuthFlow) {
+    if (flow?.timeoutTimer) {
+      clearTimeout(flow.timeoutTimer);
+      flow.timeoutTimer = null;
+    }
+  }
+
+  function deletePendingFlow(sessionId: string) {
     const flow = pendingFlows.get(sessionId);
+    clearFlowTimer(flow);
     if (flow?.authKey && pendingFlowByAuthKey.get(flow.authKey) === sessionId) {
       pendingFlowByAuthKey.delete(flow.authKey);
     }
     pendingFlows.delete(sessionId);
   }
 
-  function buildStartResponse(sessionId, url, authInstructions, usesCallbackServer) {
-    const resp: Record<string, any> = { sessionId, url };
+  function abortPendingFlow(sessionId: string, reason: unknown) {
+    const flow = pendingFlows.get(sessionId);
+    if (!flow) return;
+    flow.abortController.abort(reason);
+    flow.rejectCode(reason);
+    flow.rejectUrl(reason);
+    deletePendingFlow(sessionId);
+  }
+
+  function buildStartResponse(
+    sessionId: string,
+    url: string,
+    authInstructions: string | null,
+    usesCallbackServer: boolean,
+  ): OAuthStartResponse {
+    const resp: OAuthStartResponse = { sessionId, url };
     if (authInstructions) resp.instructions = authInstructions;
     if (usesCallbackServer) resp.polling = true;
     return resp;
@@ -62,14 +117,16 @@ export function createAuthRoute(engine) {
   const _flowCleanupTimer = setInterval(() => {
     const cutoff = Date.now() - 10 * 60 * 1000;
     for (const [k, v] of pendingFlows) {
-      if (v.createdAt < cutoff) deletePendingFlow(k);
+      if (v.createdAt >= cutoff) continue;
+      if (v.result) deletePendingFlow(k);
+      else abortPendingFlow(k, new Error("OAuth flow timed out"));
     }
   }, 60_000);
   _flowCleanupTimer.unref();
 
   /**
    * 启动 OAuth 登录
-   * body: { provider }
+   * body: { provider, loginMethod? }
    * → { sessionId, url, instructions? }
    *   instructions 存在时为设备码流程（值为 user_code）
    */
@@ -78,6 +135,10 @@ export function createAuthRoute(engine) {
     const { provider } = body;
     if (!provider) {
       return c.json({ error: "provider is required" }, 400);
+    }
+    const loginMethod = body.loginMethod ?? DEFAULT_OAUTH_LOGIN_METHOD;
+    if (!isOAuthLoginMethod(loginMethod)) {
+      return c.json({ error: `Unsupported OAuth login method: ${String(loginMethod)}` }, 400);
     }
 
     // ProviderRegistry 的 plugin ID 可能和 Pi SDK 的 provider ID 不同（如 "openai-codex-oauth" → "openai-codex"）
@@ -106,33 +167,42 @@ export function createAuthRoute(engine) {
     const sessionId = crypto.randomUUID();
 
     // onAuth 回调会把 URL 和 instructions 交给我们
-    let resolveUrl, rejectUrl;
-    const urlPromise = new Promise((resolve, reject) => {
+    let resolveUrl: (url: string) => void;
+    let rejectUrl: (reason?: unknown) => void;
+    const urlPromise = new Promise<string>((resolve, reject) => {
       resolveUrl = resolve;
       rejectUrl = reject;
     });
 
     // onPrompt 回调等待用户粘贴授权码（仅授权码流程使用）
-    let resolveCode, rejectCode;
-    const codePromise = new Promise((resolve, reject) => {
+    let resolveCode: (code: string) => void;
+    let rejectCode: (reason?: unknown) => void;
+    const codePromise = new Promise<string>((resolve, reject) => {
       resolveCode = resolve;
       rejectCode = reject;
     });
+    // A provider may use only one waiter. Keep cancellation of the unused one
+    // from becoming an unhandled rejection while preserving rejection for SDK awaiters.
+    void urlPromise.catch(() => {});
+    void codePromise.catch(() => {});
 
-    let authInstructions = null;
+    let authInstructions: string | null = null;
     let usesCallbackServer = false;
 
     // 检查 provider 是否使用本地回调服务器（如 OpenAI Codex）
     const providerObj = engine.authStorage.getOAuthProviders().find(p => p.id === authKey);
     if (providerObj?.usesCallbackServer) usesCallbackServer = true;
 
-    const flow: Record<string, any> = {
+    const flow: PendingOAuthFlow = {
       authKey,
+      abortController: new AbortController(),
       resolveCode,
       rejectCode,
+      rejectUrl,
       loginPromise: null,
       result: null,
       response: null,
+      timeoutTimer: null,
       urlPromise,
       authInstructions,
       usesCallbackServer,
@@ -141,7 +211,7 @@ export function createAuthRoute(engine) {
     pendingFlows.set(sessionId, flow);
     pendingFlowByAuthKey.set(authKey, sessionId);
 
-    const loginOptions: Record<string, any> = {
+    const loginOptions: OAuthLoginCallbacks = {
       onAuth: (info) => {
         // callback server 流程不需要给前端显示 instructions（那只是提示文本，不是 user_code）
         // 只有设备码流程才需要（instructions 是 user_code）
@@ -153,7 +223,20 @@ export function createAuthRoute(engine) {
         flow.authInstructions = authInstructions;
         resolveUrl(info.url);
       },
+      onDeviceCode: (info) => {
+        authInstructions = info.userCode;
+        flow.authInstructions = authInstructions;
+        resolveUrl(info.verificationUri);
+      },
       onPrompt: () => codePromise,
+      onSelect: async (prompt) => {
+        const selected = prompt.options.find(option => option.id === loginMethod);
+        if (!selected) {
+          throw new Error(`OAuth provider does not support login method: ${loginMethod}`);
+        }
+        return selected.id;
+      },
+      signal: flow.abortController.signal,
     };
     if (usesCallbackServer) {
       // Pi SDK 的 callback-server provider 会把 onManualCodeInput 与浏览器回调 race。
@@ -162,7 +245,7 @@ export function createAuthRoute(engine) {
     }
 
     // 启动 OAuth（不 await，loginPromise 会异步 resolve）
-    const loginPromise = engine.authStorage.login(authKey, loginOptions).catch(err => {
+    const loginPromise = loginOAuthProvider(engine.authStorage, authKey, loginOptions).catch(err => {
       rejectUrl(err);
       throw err;
     });
@@ -171,24 +254,26 @@ export function createAuthRoute(engine) {
     // 追踪 loginPromise 的结果（供 poll 端点使用）
     loginPromise.then(() => {
       flow.result = { ok: true };
+      clearFlowTimer(flow);
     }).catch(err => {
       const cause = err.cause?.message || err.cause?.code || "";
       log.error(`OAuth login failed (${provider}): ${err.message}${cause ? ` [${cause}]` : ""}`);
       flow.result = { ok: false, error: diagnoseOAuthError(err) };
+      clearFlowTimer(flow);
     });
 
     try {
       const url = await urlPromise;
 
       // 5 分钟超时
-      const timer = setTimeout(() => {
+      flow.timeoutTimer = setTimeout(() => {
         const f = pendingFlows.get(sessionId);
         if (f) {
-          f.rejectCode(new Error("OAuth flow timed out"));
-          deletePendingFlow(sessionId);
+          abortPendingFlow(sessionId, new Error("OAuth flow timed out"));
         }
       }, 5 * 60 * 1000);
-      timer.unref();
+      flow.timeoutTimer.unref();
+      if (flow.result) clearFlowTimer(flow);
 
       const resp = buildStartResponse(sessionId, url, authInstructions, usesCallbackServer);
       flow.response = resp;
@@ -247,16 +332,16 @@ export function createAuthRoute(engine) {
 
     deletePendingFlow(sessionId);
 
-    if (flow.result.ok) {
-      try {
-        await engine.onProviderChanged();
-      } catch (err) {
-        log.error(`post-login model sync failed: ${err.message}`);
-      }
-      return c.json({ status: "done" });
+    if ("error" in flow.result) {
+      return c.json({ status: "error", error: flow.result.error });
     }
 
-    return c.json({ status: "error", error: flow.result.error });
+    try {
+      await engine.onProviderChanged();
+    } catch (err) {
+      log.error(`post-login model sync failed: ${err.message}`);
+    }
+    return c.json({ status: "done" });
   });
 
   /**
@@ -292,6 +377,8 @@ export function createAuthRoute(engine) {
     }
     const authKey = engine.providerRegistry?.getAuthJsonKey(provider) || provider;
     engine.authStorage.logout(authKey);
+    engine.providerRegistry?.clearAuthCache?.();
+    await engine.onProviderChanged?.();
     return c.json({ ok: true });
   });
 
@@ -300,8 +387,11 @@ export function createAuthRoute(engine) {
   /** 获取某个 OAuth provider 的自定义模型列表 */
   route.get("/auth/oauth/:provider/custom-models", async (c) => {
     const provider = c.req.param("provider");
-    const custom = engine.preferences.getOAuthCustomModels();
-    return c.json({ models: custom[provider] || [] });
+    const resolved = engine.providerRegistry.resolveChatProvider?.(provider);
+    if (!resolved || resolved.entry?.authType !== "oauth") {
+      return c.json({ error: `OAuth provider "${provider}" not found` }, 404);
+    }
+    return c.json({ models: engine.providerRegistry.getChatModelIds(resolved.sourceProviderId) });
   });
 
   /** 添加自定义模型到 OAuth provider */
@@ -313,24 +403,26 @@ export function createAuthRoute(engine) {
       return c.json({ error: "modelId is required" }, 400);
     }
     const id = modelId.trim();
-    const custom = engine.preferences.getOAuthCustomModels();
-    const list = custom[provider] || [];
-    if (list.includes(id)) return c.json({ ok: true, models: list });
-    list.push(id);
-    engine.preferences.setOAuthCustomModels(provider, list);
-    await engine.refreshModels();
-    return c.json({ ok: true, models: list });
+    const resolved = engine.providerRegistry.resolveChatProvider?.(provider);
+    if (!resolved || resolved.entry?.authType !== "oauth") {
+      return c.json({ error: `OAuth provider "${provider}" not found` }, 404);
+    }
+    engine.providerRegistry.addModel(resolved.sourceProviderId, id);
+    await engine.onProviderChanged();
+    return c.json({ ok: true, models: engine.providerRegistry.getChatModelIds(resolved.sourceProviderId) });
   });
 
   /** 删除 OAuth provider 的某个自定义模型 */
   route.delete("/auth/oauth/:provider/custom-models/:modelId", async (c) => {
     const provider = c.req.param("provider");
     const modelId = c.req.param("modelId");
-    const custom = engine.preferences.getOAuthCustomModels();
-    const list = (custom[provider] || []).filter(id => id !== modelId);
-    engine.preferences.setOAuthCustomModels(provider, list);
-    await engine.refreshModels();
-    return c.json({ ok: true, models: list });
+    const resolved = engine.providerRegistry.resolveChatProvider?.(provider);
+    if (!resolved || resolved.entry?.authType !== "oauth") {
+      return c.json({ error: `OAuth provider "${provider}" not found` }, 404);
+    }
+    engine.providerRegistry.removeModel(resolved.sourceProviderId, modelId);
+    await engine.onProviderChanged();
+    return c.json({ ok: true, models: engine.providerRegistry.getChatModelIds(resolved.sourceProviderId) });
   });
 
   return route;

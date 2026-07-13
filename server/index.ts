@@ -30,7 +30,13 @@ const sessionFilesLog = createModuleLogger("session-files");
 import { createOutboundProxyRuntime } from "../lib/net/outbound-proxy.ts";
 import { createServerAuthService } from "../core/server-auth.ts";
 import { createWebSocketTicketService } from "../core/ws-auth-ticket.ts";
-import { resolveServerListenOptions } from "../core/server-network-config.ts";
+import { resolveServerListenOptions, saveServerNetworkConfig } from "../core/server-network-config.ts";
+import {
+  decideLoopbackBindFallback,
+  ensureServerNetworkConfigWithPortSelection,
+  isHanaServerListeningOnPort,
+  selectLoopbackListenPort,
+} from "../core/server-port-selection.ts";
 import { isCorsOriginAllowed } from "./http/cors-policy.ts";
 import { inferHttpConnectionKind } from "./http/transport-context.ts";
 import { authorizeHttpRoute, isPublicHttpRoute } from "./http/route-security.ts";
@@ -41,6 +47,7 @@ setMaxListeners(50);
 import { loadLocale } from "../lib/i18n.ts";
 import { createChatRoute } from "./routes/chat.ts";
 import { createSessionsRoute } from "./routes/sessions.ts";
+import { createSessionCollabRoute } from "./routes/session-collab.ts";
 import { createSessionProjectsRoute } from "./routes/session-projects.ts";
 import { createModelsRoute } from "./routes/models.ts";
 import { createConfigRoute } from "./routes/config.ts";
@@ -57,6 +64,7 @@ import { createChannelsRoute } from "./routes/channels.ts";
 import { createDmRoute } from "./routes/dm.ts";
 import { createFsRoute } from "./routes/fs.ts";
 import { createPreferencesRoute } from "./routes/preferences.ts";
+import { createInputDraftsRoute } from "./routes/input-drafts.ts";
 import { createSettingsSnapshotRoute } from "./routes/settings-snapshot.ts";
 import { createExperimentsRoute } from "./routes/experiments.ts";
 import { createBridgeRoute } from "./routes/bridge.ts";
@@ -114,36 +122,82 @@ import { callText } from "../core/llm-client.ts";
 
 const productDir = fromRoot("lib");
 
-async function bindServerTransportOwnership(server: any, { host, port, listenHost, networkMode }: any) {
+const BIND_FALLBACK_CANDIDATE_CODES = new Set(["EADDRINUSE", "EACCES", "EPERM"]);
+
+function attemptListen(server: any, port: number, host: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      server.off("listening", onListening);
+      server.off("error", onError);
+    };
+    const onListening = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (err: any) => {
+      cleanup();
+      reject(err);
+    };
+    server.once("listening", onListening);
+    server.once("error", onError);
+    server.listen(port, host);
+  });
+}
+
+function failStartup(startupError: any): never {
+  if (startupError.startupPayload) {
+    log.error(`startup-error ${JSON.stringify(startupError.startupPayload)}`);
+  }
+  log.error(`启动失败: ${startupError.message}`);
+  process.exit(1);
+}
+
+async function bindServerTransportOwnership(
+  server: any,
+  { host, port, listenHost, networkMode, config, envPortPinned }: any,
+): Promise<{ boundPort: number }> {
   try {
-    await new Promise<void>((resolve, reject) => {
-      const cleanup = () => {
-        server.off("listening", onListening);
-        server.off("error", onError);
-      };
-      const onListening = () => {
-        cleanup();
-        resolve();
-      };
-      const onError = (err) => {
-        cleanup();
-        reject(err);
-      };
-      server.once("listening", onListening);
-      server.once("error", onError);
-      server.listen(port, host);
-    });
+    await attemptListen(server, port, host);
+    return { boundPort: port };
   } catch (err: any) {
+    const errCode = err?.code;
+    // 只有可能触发 fallback 的场景才发 health 探测，避免 LAN/自定义模式或
+    // 非蓝图错误码下对 /api/health 做无意义的额外网络请求。
+    const fallbackEligible =
+      BIND_FALLBACK_CANDIDATE_CODES.has(errCode) && networkMode === "loopback" && !envPortPinned;
+    const hanaOnPort = fallbackEligible ? await isHanaServerListeningOnPort({ port, host }) : false;
+    const decision = decideLoopbackBindFallback({ errCode, networkMode, envPortPinned, hanaOnPort });
+
+    if (decision === "fallback") {
+      const fallbackPort = await selectLoopbackListenPort({ host, exclude: [port] });
+      if (fallbackPort !== null) {
+        try {
+          await attemptListen(server, fallbackPort, host);
+          log.warn(
+            `loopback 端口自愈: ${port} → ${fallbackPort}（原端口 ${errCode}，已写回 server-network.json）`,
+          );
+          saveServerNetworkConfig(hanakoHome, { ...config, listenPort: fallbackPort });
+          return { boundPort: fallbackPort };
+        } catch {
+          // 二次 bind 仍失败，走下方原 startupError 路径（用最初的 err）
+        }
+      }
+    }
+
+    if (decision === "fail-other-hana") {
+      const startupError: any = createPortInUseStartupError(err, { host, port, listenHost, networkMode });
+      startupError.startupPayload.suggestions.unshift(
+        "Another HanaAgent server is already listening on this port. If you have a second HanaAgent installation or data directory, give each one a distinct port; if this is a leftover process, quit hana-server from Task Manager.",
+      );
+      failStartup(startupError);
+    }
+
     const startupError: any = isAddressInUseError(err)
       ? createPortInUseStartupError(err, { host, port, listenHost, networkMode })
       : isListenPermissionError(err)
       ? createListenPermissionStartupError(err, { host, port, listenHost, networkMode })
       : err;
-    if (startupError.startupPayload) {
-      log.error(`startup-error ${JSON.stringify(startupError.startupPayload)}`);
-    }
-    log.error(`启动失败: ${startupError.message}`);
-    process.exit(1);
+    failStartup(startupError);
   }
 }
 
@@ -214,9 +268,13 @@ try {
 } catch {}
 
 const SERVER_TOKEN = process.env.HANA_TOKEN || crypto.randomBytes(16).toString("hex");
-const serverNetwork = resolveServerListenOptions(hanakoHome);
 const envPort = Number.parseInt(process.env.HANA_PORT || "", 10);
-const port = Number.isInteger(envPort) && envPort >= 0 ? envPort : serverNetwork.port;
+const envPortPinned = Number.isInteger(envPort) && envPort >= 0;
+if (!envPortPinned) {
+  await ensureServerNetworkConfigWithPortSelection(hanakoHome, { log: (msg) => log.log(msg) });
+}
+const serverNetwork = resolveServerListenOptions(hanakoHome);
+const port = envPortPinned ? envPort : serverNetwork.port;
 const serverRuntimeState = {
   mode: serverNetwork.mode,
   listenHost: serverNetwork.host,
@@ -264,18 +322,21 @@ let server: any = createAdaptorServer({
   hostname: host,
 });
 
-await bindServerTransportOwnership(server, {
+const bindResult = await bindServerTransportOwnership(server, {
   host,
   port,
   listenHost: serverNetwork.host,
   networkMode: serverNetwork.mode,
+  config: serverNetwork.config,
+  envPortPinned,
 });
+serverRuntimeState.configuredPort = bindResult.boundPort;
 
 // ── 首次运行播种 ──
 log.log("① ensureFirstRun...");
 const firstRunReport = ensureFirstRun(hanakoHome, productDir);
 for (const invalid of firstRunReport.invalidAgentDirs) {
-  log.warn(`① 发现无效 agent 目录（已跳过启动校验）: "${invalid.id}" (${invalid.reason})`);
+  log.warn(`① 发现无效 agent 目录（已保留原目录、不会载入）: "${invalid.id}" (${invalid.reason})`);
 }
 if (firstRunReport.defaultConfigBackupPath) {
   log.warn(`① 默认助手 config.yaml 已损坏，原文件备份于: ${firstRunReport.defaultConfigBackupPath}`);
@@ -374,7 +435,7 @@ await engine.registerExtensionFactory(createCompactionGuardExtension({
       },
       attribution: sessionUsageAttribution(
         sessionPath,
-        sessionPath ? engine.agentIdFromSessionPath?.(sessionPath) || null : null,
+        sessionPath ? engine.resolveSessionOwnership?.(sessionPath)?.agentId || null : null,
       ),
     };
   },
@@ -601,8 +662,8 @@ hub.eventBus.handle("utility:call-text", async (payload: any = {}) => {
     : null;
   const agentId = typeof payload.agentId === "string" && payload.agentId.trim()
     ? payload.agentId.trim()
-    : (sessionPath ? engine.agentIdFromSessionPath?.(sessionPath) || null : null);
-  const utility = engine.resolveUtilityConfig({ agentId, sessionPath });
+    : (sessionPath ? engine.resolveSessionOwnership?.(sessionPath)?.agentId || null : null);
+  const utility = await engine.resolveUtilityConfigFresh({ agentId, sessionPath });
   const text = await callText({
     api: utility.api,
     apiKey: utility.api_key,
@@ -636,11 +697,11 @@ hub.eventBus.handle("model:sample-text", async (payload: any = {}) => {
     : null;
   const agentId = typeof payload.agentId === "string" && payload.agentId.trim()
     ? payload.agentId.trim()
-    : (sessionPath ? engine.agentIdFromSessionPath?.(sessionPath) || null : null);
+    : (sessionPath ? engine.resolveSessionOwnership?.(sessionPath)?.agentId || null : null);
   const pluginId = typeof payload.pluginId === "string" && payload.pluginId.trim()
     ? payload.pluginId.trim()
     : null;
-  const utility = engine.resolveUtilityConfig({ agentId, sessionPath });
+  const utility = await engine.resolveUtilityConfigFresh({ agentId, sessionPath });
   const text = await callText({
     api: utility.api,
     apiKey: utility.api_key,
@@ -776,6 +837,7 @@ app.route("/api", createAccessRoute({
   runtimeState: serverRuntimeState,
 } as any));
 app.route("/api", createSessionsRoute(engine, hub));
+app.route("/api", createSessionCollabRoute(engine));
 app.route("/api", createSessionProjectsRoute(engine));
 app.route("/api", createModelsRoute(engine));
 app.route("/api", createConfigRoute(engine));
@@ -794,6 +856,7 @@ app.route("/api", createChannelsRoute(engine, hub));
 app.route("/api", createDmRoute(engine, hub));
 app.route("/api", createFsRoute(engine));
 app.route("/api", createPreferencesRoute(engine));
+app.route("/api", createInputDraftsRoute(engine));
 app.route("/api", createSettingsSnapshotRoute(engine, {
   bridgeManagerRef,
   runtimeState: serverRuntimeState,

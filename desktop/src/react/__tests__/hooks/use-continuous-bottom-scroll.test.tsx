@@ -119,6 +119,29 @@ describe('useContinuousBottomScroll', () => {
     expect(metrics.scrollTop).toBeLessThan(760);
   });
 
+  it('does not force an upward snap when content shrinks during active follow', () => {
+    const metrics = { scrollHeight: 1000, clientHeight: 300, scrollTop: 700 };
+    render(<Harness onController={() => {}} />);
+    const scrollEl = document.querySelector('[data-testid="scroll"]') as HTMLElement;
+    setScrollMetrics(scrollEl, metrics);
+
+    act(() => {
+      metrics.scrollHeight = 1060;
+      MockResizeObserver.instances[0].trigger();
+      flushRaf(16);
+    });
+    expect(metrics.scrollTop).toBeGreaterThan(700);
+    const scrollTopDuringFollow = metrics.scrollTop;
+
+    act(() => {
+      metrics.scrollHeight = 920;
+      MockResizeObserver.instances[0].trigger();
+      flushRaf(32);
+    });
+
+    expect(metrics.scrollTop).toBe(scrollTopDuringFollow);
+  });
+
   it('does not follow content growth after the user scrolls away from bottom', () => {
     const metrics = { scrollHeight: 1000, clientHeight: 300, scrollTop: 700 };
     render(<Harness onController={() => {}} />);
@@ -274,5 +297,101 @@ describe('useContinuousBottomScroll', () => {
     expect(metrics.scrollTop).toBe(1100);
     act(() => { flushRaf(16); });
     expect(metrics.scrollTop).toBe(1100);
+  });
+
+  it('content shrink while sticky keeps following to the new bottom', () => {
+    let controller: ContinuousBottomScrollController | null = null;
+    // Start pinned to the bottom (scrollTop === maxScrollTop), the normal turn-end state.
+    const metrics = { scrollHeight: 1000, clientHeight: 300, scrollTop: 700 };
+    render(<Harness onController={(next) => { controller = next; }} />);
+    const scrollEl = document.querySelector('[data-testid="scroll"]') as HTMLElement;
+    setScrollMetrics(scrollEl, metrics);
+
+    // Warm-up trigger (a no-op growth) establishes lastObservedScrollHeightRef against the mocked
+    // metrics — mirrors every other test in this file, since the hook's own mount effect samples
+    // el.scrollHeight before setScrollMetrics() has replaced jsdom's real (unmocked) getters.
+    act(() => {
+      MockResizeObserver.instances[0].trigger();
+    });
+    expect((controller as unknown as ContinuousBottomScrollController).isStickyRef.current).toBe(true);
+
+    // Turn ends: process-fold collapse / typing-indicator removal shrinks the content. This
+    // leaves scrollTop (700) resting past the new maxScrollTop (860-300=560) — an overscroll the
+    // real browser clamps natively, but the important, JS-observable contract is that sticky
+    // survives the shrink instead of being dropped (old code: stopFollow(); checkSticky() would
+    // see distanceFromBottom go negative-then-still-within-threshold by luck, but for a bigger
+    // shrink it would read as "scrolled away" and cancel — this asserts sticky is preserved
+    // deliberately, not by accident of the numbers).
+    act(() => {
+      metrics.scrollHeight = 860;
+      MockResizeObserver.instances[0].trigger();
+    });
+    expect((controller as unknown as ContinuousBottomScrollController).isStickyRef.current).toBe(true);
+
+    // Prove sticky wasn't just left true in name only: the next real growth (streaming
+    // continues) must still be followed to the new bottom, exactly like normal follow behavior.
+    act(() => {
+      metrics.scrollHeight = 920; // grows again after the shrink
+      MockResizeObserver.instances[0].trigger();
+      // The follow animates exponentially toward the target; flush enough frames with
+      // monotonically increasing timestamps (like real requestAnimationFrame ticks) for it to
+      // converge within SCROLL_EPSILON_PX (matches the decay driven by FOLLOW_TIME_CONSTANT_MS).
+      for (let frameTime = 16; frameTime <= 16 * 30; frameTime += 16) flushRaf(frameTime);
+    });
+
+    expect(metrics.scrollTop).toBe(620); // new maxScrollTop = 920 - 300
+  });
+
+  it('browser-generated scroll during follow (scrollHeight changed) does not cancel follow', () => {
+    let controller: ContinuousBottomScrollController | null = null;
+    const metrics = { scrollHeight: 1000, clientHeight: 300, scrollTop: 700 };
+    render(<Harness onController={(next) => { controller = next; }} />);
+    const scrollEl = document.querySelector('[data-testid="scroll"]') as HTMLElement;
+    setScrollMetrics(scrollEl, metrics);
+
+    act(() => {
+      metrics.scrollHeight = 1060;
+      MockResizeObserver.instances[0].trigger();
+      flushRaf(16);
+    });
+    expect(metrics.scrollTop).toBeGreaterThan(700);
+
+    // Simulate a browser-generated scroll event (clamp/anchoring) accompanying a content-height
+    // change, without going through the ResizeObserver path: scrollHeight changes in the same
+    // "frame" as the scroll event, and scrollTop deviates from the expected programmatic value
+    // by more than 1px, and distanceFromBottom exceeds the sticky threshold.
+    act(() => {
+      metrics.scrollHeight = 820; // shrinks below lastObservedScrollHeightRef
+      metrics.scrollTop = 300; // far from bottom, deviates from programmatic expectation
+      fireEvent.scroll(scrollEl);
+    });
+
+    // Must remain sticky: the scrollHeight change in the same tick as the scroll event marks
+    // this as browser-generated (clamp/anchoring), not user intent, so follow must not cancel.
+    expect((controller as unknown as ContinuousBottomScrollController).isStickyRef.current).toBe(true);
+  });
+
+  it('user scrollbar drag during follow still cancels', () => {
+    let controller: ContinuousBottomScrollController | null = null;
+    const metrics = { scrollHeight: 1000, clientHeight: 300, scrollTop: 700 };
+    render(<Harness onController={(next) => { controller = next; }} />);
+    const scrollEl = document.querySelector('[data-testid="scroll"]') as HTMLElement;
+    setScrollMetrics(scrollEl, metrics);
+
+    act(() => {
+      metrics.scrollHeight = 1060;
+      MockResizeObserver.instances[0].trigger();
+      flushRaf(16);
+    });
+    expect(metrics.scrollTop).toBeGreaterThan(700);
+
+    // scrollHeight matches lastObserved (no content-size change): this is a genuine
+    // user-driven scroll (e.g. scrollbar drag), and must still cancel follow.
+    act(() => {
+      metrics.scrollTop = 300; // far from bottom
+      fireEvent.scroll(scrollEl);
+    });
+
+    expect((controller as unknown as ContinuousBottomScrollController).isStickyRef.current).toBe(false);
   });
 });

@@ -90,6 +90,7 @@ export function ArchivedSessionsModal({ open, onClose, zIndex = 1000 }: Props) {
 
   return (
     <Overlay
+      scope="inline"
       open={open}
       onClose={onClose}
       backdrop="blur"

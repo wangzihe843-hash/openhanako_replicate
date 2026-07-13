@@ -26,10 +26,12 @@ vi.mock('../../settings/tabs/bridge/BridgeAgentRow', () => ({
 }));
 
 function bridgeState(overrides = {}) {
+  const emptyDraft = { ownerId: 'hana', value: '', dirty: false, revision: 0, hasStored: false };
   return {
     status: {
       telegram: {},
       feishu: {},
+      dingtalk: {},
       qq: {},
       wechat: {},
       permissionMode: 'auto',
@@ -46,14 +48,30 @@ function bridgeState(overrides = {}) {
     setPublicIshiki: vi.fn(),
     savePublicIshiki: vi.fn(),
     tgToken: '',
+    tgTokenDraft: emptyDraft,
     setTgToken: vi.fn(),
     fsAppId: '',
     setFsAppId: vi.fn(),
     fsAppSecret: '',
+    fsAppSecretDraft: emptyDraft,
     setFsAppSecret: vi.fn(),
+    fsRegion: 'feishu_cn',
+    setFsRegion: vi.fn(),
+    dtClientId: '',
+    setDtClientId: vi.fn(),
+    dtCorpId: '',
+    setDtCorpId: vi.fn(),
+    dtClientSecret: '',
+    dtClientSecretDraft: emptyDraft,
+    setDtClientSecret: vi.fn(),
+    dtRobotCode: '',
+    setDtRobotCode: vi.fn(),
+    dtApiBaseUrl: '',
+    setDtApiBaseUrl: vi.fn(),
     qqAppId: '',
     setQqAppId: vi.fn(),
     qqAppSecret: '',
+    qqAppSecretDraft: emptyDraft,
     setQqAppSecret: vi.fn(),
     saveBridgeConfig: vi.fn(),
     testPlatform: vi.fn(),
@@ -133,5 +151,19 @@ describe('BridgeTab permission mode', () => {
     const trigger = screen.getByRole('button', { name: /common\.loading/ }) as HTMLButtonElement;
     expect(trigger.disabled).toBe(true);
     expect(screen.queryByRole('button', { name: /settings\.bridge\.permissionModeAuto/ })).toBeNull();
+  });
+
+  it('renders settings platforms in descriptor order including DingTalk', () => {
+    vi.mocked(useBridgeState).mockReturnValue(bridgeState() as never);
+
+    render(<BridgeTab />);
+
+    const ids = ['wechat', 'telegram', 'feishu', 'dingtalk', 'qq'];
+    const positions = ids.map((id) => {
+      const element = screen.getByTestId(`platform-${id}`);
+      return Array.from(document.body.querySelectorAll('[data-testid^="platform-"]')).indexOf(element);
+    });
+
+    expect(positions).toEqual([0, 1, 2, 3, 4]);
   });
 });

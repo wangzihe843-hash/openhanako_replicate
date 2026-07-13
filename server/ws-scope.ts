@@ -32,12 +32,13 @@ export function createWsClientRecord({ principal, subscriptions = [], clientId =
   });
 }
 
-export function subscribeWsClientToSession(client, { studioId, sessionPath }) {
+export function subscribeWsClientToSession(client, { studioId, sessionPath, sessionId = null }) {
   if (!client) return client;
   if (!studioId || !sessionPath) return client;
+  const normalizedSessionId = stringOrNull(sessionId);
   const next = [
     ...client.subscriptions,
-    { kind: "session", studioId, sessionPath },
+    { kind: "session", studioId, sessionPath, ...(normalizedSessionId ? { sessionId: normalizedSessionId } : {}) },
   ];
   return createWsClientRecord({
     clientId: client.clientId,
@@ -46,7 +47,12 @@ export function subscribeWsClientToSession(client, { studioId, sessionPath }) {
   });
 }
 
-export function wsClientCanReceiveEvent(client, event) {
+/**
+ * @param event 出站消息（wire payload，原样序列化发给 client，不在此函数内被修改）。
+ * @param options.resolvedSessionId 广播侧在扇出前解析出的 sessionId（当 event 本身未携带时的兜底，
+ *   由调用方对同一条 event 只解析一次，不随每个订阅者重复解析）。
+ */
+export function wsClientCanReceiveEvent(client, event, { resolvedSessionId = null }: { resolvedSessionId?: any } = {}) {
   if (!client || !event || typeof event !== "object") return false;
   const principal = normalizePrincipal(client.principal);
   if (principalOwnsLocalConnection(principal)) return true;
@@ -62,7 +68,8 @@ export function wsClientCanReceiveEvent(client, event) {
     if (!eventStudioId) return false;
     if (!principalHasScope(principal, "chat.read")) return false;
     if (!sameStudio(principal, eventStudioId)) return false;
-    return subscriptionAllows(client.subscriptions, { kind: "session", studioId: eventStudioId, sessionPath })
+    const eventSessionId = stringOrNull(event.sessionId) || stringOrNull(resolvedSessionId);
+    return subscriptionAllows(client.subscriptions, { kind: "session", studioId: eventStudioId, sessionPath, sessionId: eventSessionId })
       || subscriptionAllows(client.subscriptions, { kind: "studio", studioId: eventStudioId });
   }
 
@@ -95,17 +102,26 @@ function normalizeSubscriptions(subscriptions) {
     const kind = stringOrNull(sub.kind);
     const studioId = stringOrNull(sub.studioId);
     const sessionPath = stringOrNull(sub.sessionPath);
+    const sessionId = stringOrNull(sub.sessionId);
     const resourceId = stringOrNull(sub.resourceId);
     if (!kind || !studioId) continue;
     const normalized = {
       kind,
       studioId,
+      ...(sessionId ? { sessionId } : {}),
       ...(sessionPath ? { sessionPath } : {}),
       ...(resourceId ? { resourceId } : {}),
     };
-    const key = JSON.stringify(normalized);
-    if (!seen.has(key)) {
-      seen.add(key);
+    // 去重键用 sessionId || sessionPath 代表同一会话身份：同一 session 归档换 path 后
+    // 重新 subscribe 不会在 subscriptions 数组里滚雪球攒出多条指向同一会话的旧纪录。
+    const dedupeKey = JSON.stringify({
+      kind,
+      studioId,
+      session: sessionId || sessionPath || null,
+      resourceId: resourceId || null,
+    });
+    if (!seen.has(dedupeKey)) {
+      seen.add(dedupeKey);
       out.push(Object.freeze(normalized));
     }
   }
@@ -117,7 +133,15 @@ function subscriptionAllows(subscriptions, target) {
     if (sub.kind === "studio") return sub.studioId === target.studioId;
     if (sub.kind !== target.kind) return false;
     if (sub.studioId !== target.studioId) return false;
-    if (target.sessionPath && sub.sessionPath !== target.sessionPath) return false;
+    if (target.sessionPath) {
+      // sessionId 双方都在场时按身份比较（归档改 path 不失配）；
+      // 否则回退裸 path 相等（无 manifest 的老会话兼容路径）。
+      if (sub.sessionId && target.sessionId) {
+        if (sub.sessionId !== target.sessionId) return false;
+      } else if (sub.sessionPath !== target.sessionPath) {
+        return false;
+      }
+    }
     if (target.resourceId && sub.resourceId !== target.resourceId) return false;
     return true;
   });

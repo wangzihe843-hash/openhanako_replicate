@@ -1,4 +1,5 @@
 import { validateStudioConnectionTrust } from './studio-access';
+import { SERVER_PROTOCOL_VERSION } from '../../../../shared/contract-versions.ts';
 
 export type StudioConnectionKind = 'local' | 'lan' | 'custom_remote' | 'relay' | 'cloud';
 export type ServerTrustState = 'local' | 'lan' | 'tunnel' | 'cloud';
@@ -72,6 +73,10 @@ export interface ServerIdentity {
   executionBoundary?: ExecutionBoundary;
   capabilities?: string[];
   version?: string;
+  /** Server build's runtime protocol version (see shared/contract-versions.cjs).
+   *  Optional so an older server that predates this field is read-time
+   *  compatible: absence means "don't know", not "mismatch". */
+  serverProtocol?: number;
 }
 
 export interface ServerConnectionSource {
@@ -625,6 +630,32 @@ export function mergeServerIdentity(
   };
   validateStudioConnectionTrust(next);
   return next;
+}
+
+/**
+ * Diagnostic-only runtime handshake: this build's renderer and server are
+ * always shipped together, so a mismatch here can only mean the running
+ * install got into an inconsistent state (a botched manual copy, a
+ * self-hosted server pinned to a different release, an update that only
+ * landed on one side). It is NOT a gate — the activation-time preload
+ * contract check (shared/contract-versions.cjs, artifact-ota.cjs) is what
+ * actually keeps that from happening during normal updates; this function
+ * only makes an already-running mismatch visible instead of silent. Never
+ * call this to decide whether to block or retry anything.
+ *
+ * An identity response with no `serverProtocol` field (a server built
+ * before this handshake existed) is read-time compatible: silently skip
+ * the comparison rather than warning about an old server that was never
+ * wrong to begin with.
+ */
+export function warnIfServerProtocolMismatch(identity: ServerIdentity, log: (message: string) => void = console.error): void {
+  if (typeof identity.serverProtocol !== 'number') return;
+  if (identity.serverProtocol === SERVER_PROTOCOL_VERSION) return;
+  log(
+    `[server-identity] 界面与服务进程版本偏斜：界面期望的运行时协议版本是 ${SERVER_PROTOCOL_VERSION}，`
+      + `但当前连接的服务进程返回的是 ${identity.serverProtocol}。这通常发生在自动更新只更新了`
+      + '一侧（界面或服务进程），或者连接的是版本不同的自托管服务；仅记录该信息用于排查，不会中断当前运行。',
+  );
 }
 
 export function buildConnectionUrl(

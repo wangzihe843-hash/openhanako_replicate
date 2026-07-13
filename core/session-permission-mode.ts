@@ -60,7 +60,6 @@ const AUTO_REVIEW_TOOLS = new Set([
   "browser",
   "channel",
   "dm",
-  "install_skill",
   "notify",
   "pin_memory",
   "present_files",
@@ -80,6 +79,7 @@ const SUBAGENT_BLOCKED_TOOLS = new Set([
   // ① 扇出
   "subagent",          // 防自递归
   "workflow",          // 间接扇出
+  "session",           // 跨 session 扇出（触发别的 session 跑回合）
   // ② 长期记忆（与「subagent 不带长期记忆」原则一致：可读不可写）
   "pin_memory",
   "unpin_memory",
@@ -118,6 +118,11 @@ const BROWSER_READ_ACTIONS = new Set([
   "show",
   "stop",
 ]);
+
+// session 工具（跨 session 协作）：读侧零副作用；send/create 的 execute 只产草稿卡，
+// 真正副作用发生在用户点击确认卡之后——卡即权限关卡（spec 决策 3），
+// 故不进 AUTO_REVIEW（LLM 审查双重把关且非确定，灰测已实证会误拒）。
+const SESSION_COLLAB_READ_ACTIONS = new Set(["?", "list", "read"]);
 
 const TERMINAL_READ_ACTIONS = new Set([
   "read",
@@ -325,6 +330,12 @@ function classifyFileAction(mode, action, context) {
   return { action: "allow" };
 }
 
+function classifySessionCollabAction(mode, action, context) {
+  if (SESSION_COLLAB_READ_ACTIONS.has(action)) return { action: "allow" };
+  if (mode === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly("session", context);
+  return { action: "allow" };
+}
+
 export function classifySessionPermission({ mode, toolName, params, context }: { mode?: any; toolName?: any; params?: any; context?: any } = {}) {
   let normalized = normalizeSessionPermissionMode(mode);
   const name = typeof toolName === "string" ? toolName : "";
@@ -354,6 +365,7 @@ export function classifySessionPermission({ mode, toolName, params, context }: {
   }
   if (name === "session_folders") return classifySessionFoldersAction(normalized, params?.action, context);
   if (name === "file") return classifyFileAction(normalized, params?.action, context);
+  if (name === "session") return classifySessionCollabAction(normalized, params?.action, context);
   if (name === "computer") {
     if (normalized === SESSION_PERMISSION_MODES.READ_ONLY) return blockedByReadOnly(name, context);
     return { action: "allow" };

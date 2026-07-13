@@ -52,6 +52,13 @@ vi.mock("../core/message-utils.js", () => ({
   isActiveSessionPath: vi.fn(() => true),
   isActiveDesktopSessionPath: vi.fn(() => true),
   isArchivedDesktopSessionPath: vi.fn(() => true),
+  // 本文件的测试不构造 hana-message-origin 条目，恒等直通即等价于真实实现
+  // （annotateOriginMessages 只在遇到该 customType 时才会摘除/注释条目）。
+  annotateOriginMessages: vi.fn((messages) => messages || []),
+  // 同理：本文件的测试不构造 hana-session-collab-decision 条目，空索引 + 直通
+  // 等价于真实实现（灰测修复 C：草稿卡确认状态持久化，见 tests/session-collab-decision.test.ts）。
+  collectSessionCollabDecisions: vi.fn(() => new Map()),
+  overlaySessionCollabDecision: vi.fn((block) => block),
 }));
 
 vi.mock("../core/session-turn-actions.js", () => ({
@@ -537,8 +544,14 @@ describe("sessions route", () => {
       memoryEnabled: true,
       planMode: false,
       memoryModelUnavailableReason: null,
-      createDetachedSession: vi.fn(async () => ({ sessionPath: "/tmp/agents/hana/sessions/quick.jsonl", agentId: "hana" })),
+      createDetachedSession: vi.fn(async () => ({
+        sessionPath: "/tmp/agents/hana/sessions/quick.jsonl",
+        sessionId: "sess_quick",
+        agentId: "hana",
+      })),
       persistSessionMeta: vi.fn(),
+      setSessionProjectAssignment: vi.fn(async () => {}),
+      updateConfig: vi.fn(async () => {}),
       getAgent: vi.fn(() => ({ agentName: "Hana" })),
       getSessionWorkspaceFolders: vi.fn(() => [extra]),
       getSessionPermissionMode: vi.fn(() => "auto"),
@@ -554,6 +567,7 @@ describe("sessions route", () => {
         workspaceFolders: [extra],
         agentId: "hana",
         permissionMode: "auto",
+        projectId: "project-quick",
       }),
     });
     const data = await res.json();
@@ -567,12 +581,18 @@ describe("sessions route", () => {
       visibleInSessionList: true,
       permissionMode: "auto",
     });
+    expect(engine.setSessionProjectAssignment).toHaveBeenCalledWith({
+      sessionPath: "/tmp/agents/hana/sessions/quick.jsonl",
+      projectId: "project-quick",
+    });
     expect(data).toMatchObject({
       ok: true,
       path: "/tmp/agents/hana/sessions/quick.jsonl",
+      sessionId: "sess_quick",
       agentId: "hana",
       currentSessionPath: "/tmp/agents/hana/sessions/focused.jsonl",
       permissionMode: "auto",
+      projectId: "project-quick",
     });
     expect(hub.eventBus.emit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -986,6 +1006,7 @@ describe("sessions route", () => {
       agentsDir,
       agentIdFromSessionPath: vi.fn(() => "deleted"),
       isAgentDeleted: vi.fn(() => true),
+      isDeletedAgentSession: vi.fn(() => true),
       continueDeletedAgentSession: vi.fn(async () => ({
         sessionPath: newPath,
         agentId: "hana",
@@ -1045,6 +1066,7 @@ describe("sessions route", () => {
       agentsDir,
       agentIdFromSessionPath: vi.fn(() => "deleted"),
       isAgentDeleted: vi.fn(() => true),
+      isDeletedAgentSession: vi.fn(() => true),
       continueDeletedAgentSession: vi.fn(async () => {
         throw emptyError;
       }),
@@ -1074,6 +1096,7 @@ describe("sessions route", () => {
       agentsDir: "/tmp/agents",
       agentIdFromSessionPath: vi.fn(() => "deleted"),
       isAgentDeleted: vi.fn(() => true),
+      isDeletedAgentSession: vi.fn(() => true),
       setSessionPinned: vi.fn(),
       switchSession: vi.fn(),
       saveSessionTitle: vi.fn(),
@@ -1111,6 +1134,32 @@ describe("sessions route", () => {
     expect(engine.setSessionPinned).toHaveBeenCalledWith({ sessionPath: deletedPath }, false);
     expect(engine.saveSessionTitle).not.toHaveBeenCalled();
     expect(engine.switchSession).not.toHaveBeenCalled();
+  });
+
+  it("deleted-agent 门禁以 engine.isDeletedAgentSession 为准（manifest 归属存活时放行 pin）", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const app = new Hono();
+    // 物理路径在已删除 agent 目录（路径口径会拦），manifest 归属存活 agent（权威口径放行）
+    const movedPath = "/tmp/agents/deleted/sessions/moved.jsonl";
+    const engine = {
+      agentsDir: "/tmp/agents",
+      agentIdFromSessionPath: vi.fn(() => "deleted"),
+      isAgentDeleted: vi.fn(() => true),
+      isDeletedAgentSession: vi.fn(() => false),
+      setSessionPinned: vi.fn(async () => "2026-07-08T00:00:00.000Z"),
+      rcState: null,
+    };
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request("/api/sessions/pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: movedPath, pinned: true }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(engine.setSessionPinned).toHaveBeenCalled();
+    expect(engine.isDeletedAgentSession).toHaveBeenCalledWith(movedPath);
   });
 
   it("rejects session projection when the authenticated Studio differs from the server Studio", async () => {
@@ -1270,9 +1319,15 @@ describe("sessions route", () => {
       })),
     };
 
+    const agentIdFromSessionPath = vi.fn((_sp: any) => "hana");
     const engine = {
       agentsDir: "/tmp/agents",
-      agentIdFromSessionPath: vi.fn(() => "hana"),
+      agentIdFromSessionPath,
+      resolveSessionOwnership: vi.fn((ref) => {
+        const sp = typeof ref === "string" ? ref : ref?.sessionPath || null;
+        const agentId = sp ? agentIdFromSessionPath(sp) || null : null;
+        return { agentId, source: agentId ? "path" : "none", agentDeleted: false };
+      }),
       getAgent: vi.fn(() => ({ summaryManager })),
     };
 
@@ -1570,12 +1625,18 @@ describe("sessions route", () => {
       },
     ]);
 
+    const agentIdFromSessionPath = vi.fn((sp) => {
+      const rel = path.relative("/tmp/agents", sp);
+      return rel.split(path.sep)[0] || null;
+    });
     const engine = {
       agentsDir: "/tmp/agents",
       deferredResults: null,
-      agentIdFromSessionPath: vi.fn((sp) => {
-        const rel = path.relative("/tmp/agents", sp);
-        return rel.split(path.sep)[0] || null;
+      agentIdFromSessionPath,
+      resolveSessionOwnership: vi.fn((ref) => {
+        const sp = typeof ref === "string" ? ref : ref?.sessionPath || null;
+        const agentId = sp ? agentIdFromSessionPath(sp) || null : null;
+        return { agentId, source: agentId ? "path" : "none", agentDeleted: false };
       }),
       getAgent: vi.fn((id) => (id === "hanako" ? { agentName: "Hanako" } : null)),
     };
@@ -1684,6 +1745,7 @@ describe("sessions route", () => {
       agentsDir: "/tmp/agents",
       currentSessionPath: sessionPath,
       agentIdFromSessionPath: vi.fn(() => "hana"),
+      resolveSessionOwnership: vi.fn(() => ({ agentId: "hana", source: "path", agentDeleted: false })),
       getAgent: vi.fn((id) => (id === "hana" ? { agentName: "小花" } : null)),
       deferredResults: {
         query: vi.fn(() => ({
@@ -2255,6 +2317,32 @@ describe("sessions route", () => {
         timestamp: "2026-05-07T05:43:00.000Z",
       },
     ]);
+  });
+
+  it("strips Bridge internal time tags from loadMessages history for bridge sessions", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+    const bridgePath = "/tmp/agents/hana/sessions/bridge/owner/tg.jsonl";
+
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "<t>07-03 13:00</t> hello", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "user", content: "<t>07-03 13:00</t> hello" },
+    ]);
+
+    const engine = {
+      agentsDir: "/tmp/agents",
+      deferredResults: null,
+    };
+
+    app.route("/api", createSessionsRoute(engine));
+
+    const res = await app.request(`/api/sessions/messages?path=${encodeURIComponent(bridgePath)}`);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.messages[0].content).toBe("hello");
   });
 
   it("returns empty assistant thinking blocks from history as completed thinking", async () => {

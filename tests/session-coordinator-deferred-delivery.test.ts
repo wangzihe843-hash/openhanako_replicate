@@ -2,12 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SessionCoordinator } from "../core/session-coordinator.ts";
 
+const MODEL = { id: "gpt-5.6-sol", provider: "openai-codex" };
+
 function makeCoordinator( overrides: any = {}) {
+  const models = overrides.models || { availableModels: [MODEL] };
   return new SessionCoordinator({
     agentsDir: "/tmp/fake/agents",
     getAgent: () => ({ id: "test-agent" }),
     getActiveAgentId: () => "test-agent",
-    getModels: () => ({}),
+    getModels: () => models,
     getResourceLoader: () => ({}),
     getSkills: () => ({}),
     buildTools: () => ({ tools: [], customTools: [] }),
@@ -28,6 +31,7 @@ function makeCoordinator( overrides: any = {}) {
 function makeSession({ isStreaming }) {
   return {
     isStreaming,
+    model: MODEL,
     sendCustomMessage: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -192,6 +196,29 @@ describe("SessionCoordinator deferred custom delivery", () => {
       expect.objectContaining({ type: "turn_input_presentation" }),
       expect.anything(),
     );
+  });
+
+  it("rejects a triggered deferred turn when the live session model is no longer available", async () => {
+    const emitEvent = vi.fn();
+    const coord = makeCoordinator({ models: { availableModels: [] }, emitEvent });
+    const session = makeSession({ isStreaming: false });
+    const sessionPath = "/tmp/fake/agents/test-agent/sessions/disabled-model.jsonl";
+    coord.sessions.set(sessionPath, {
+      session,
+      agentId: "test-agent",
+      lastTouchedAt: 0,
+    });
+
+    await expect(coord.deliverCustomMessage(sessionPath, {
+      customType: "hana-background-result",
+      content: "<hana-background-result />",
+      display: false,
+    })).rejects.toMatchObject({
+      code: "MODEL_NOT_AVAILABLE",
+      modelRef: "openai-codex/gpt-5.6-sol",
+    });
+    expect(session.sendCustomMessage).not.toHaveBeenCalled();
+    expect(emitEvent).not.toHaveBeenCalled();
   });
 
   it("records non-context custom entries on a live session manager without sending a custom message", () => {

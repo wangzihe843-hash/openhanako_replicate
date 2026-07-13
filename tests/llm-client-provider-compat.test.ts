@@ -148,6 +148,40 @@ describe("callText provider-compat routing", () => {
     expect(body.temperature).toBe(0);
   });
 
+  it("normalizes kimi-for-coding utility temperature before sending the payload", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+      }),
+    } as any);
+
+    await callText({
+      api: "openai-completions",
+      baseUrl: "https://api.kimi.com/coding/v1",
+      model: {
+        id: "kimi-for-coding",
+        provider: "kimi-coding",
+        api: "openai-completions",
+        baseUrl: "https://api.kimi.com/coding/v1",
+        reasoning: true,
+        compat: {
+          thinkingFormat: "kimi",
+          reasoningProfile: "kimi-openai",
+        },
+      },
+      messages: [{ role: "user", content: "summarize" }],
+      temperature: 0.3,
+      timeoutMs: 5_000,
+    } as any);
+
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.temperature).toBe(0.6);
+    expect(body.thinking).toEqual({ type: "disabled" });
+  });
+
   it("serializes MiMo audio content to provider-visible input_audio parts", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,

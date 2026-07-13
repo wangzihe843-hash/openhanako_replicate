@@ -125,7 +125,7 @@ describe("agent appearance summary", () => {
 
   it("falls back to the current chat model when it can read images", async () => {
     const callText = vi.fn().mockResolvedValue("你的样子带着温和而专注的气质。");
-    const resolveModelWithCredentials = vi.fn(() => ({
+    const resolveModelWithCredentialsFresh = vi.fn(async () => ({
       api: "openai",
       api_key: "chat-key",
       base_url: "https://chat.example.test",
@@ -137,12 +137,12 @@ describe("agent appearance summary", () => {
       agentDir,
       agentName: "Hana",
       targetModel: { id: "chat-vision", provider: "openai", input: ["text", "image"] },
-      resolveModelWithCredentials,
+      resolveModelWithCredentialsFresh,
       callText,
     });
 
     expect(summary).toBe("你的样子带着温和而专注的气质。");
-    expect(resolveModelWithCredentials).toHaveBeenCalledWith({ id: "chat-vision", provider: "openai" });
+    expect(resolveModelWithCredentialsFresh).toHaveBeenCalledWith({ id: "chat-vision", provider: "openai" });
     expect(callText).toHaveBeenCalledOnce();
   });
 

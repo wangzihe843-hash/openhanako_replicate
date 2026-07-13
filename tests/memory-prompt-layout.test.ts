@@ -3,7 +3,6 @@ import { buildUtilityPromptLayout } from "../lib/llm/prompt-layout.ts";
 import { buildRollingSummaryPrompt } from "../lib/memory/prompts/rolling-summary.ts";
 import {
   buildCompileEditableFactsPrompt,
-  buildCompileFactsPrompt,
   buildCompileTodayPrompt,
 } from "../lib/memory/prompts/compile.ts";
 import { buildFactExtractionPrompt } from "../lib/memory/prompts/fact-extraction.ts";
@@ -43,7 +42,7 @@ describe("cache-aware prompt layout", () => {
 
   it("keeps compile and fact extraction semantics", () => {
     expect(buildCompileTodayPrompt("zh-CN").systemPrompt).toContain("最多 300 字");
-    expect(buildCompileFactsPrompt("zh-CN").systemPrompt).toContain("必须控制在 200 字以内");
+    expect(buildCompileEditableFactsPrompt("zh-CN").systemPrompt).toContain("必须控制在 200 字以内");
     expect(buildCompileEditableFactsPrompt("zh-CN").systemPrompt).toContain("当前可信 Facts");
     expect(buildFactExtractionPrompt({ locale: "zh-CN", hasPrevious: true }).systemPrompt)
       .toContain("禁止提取工作方式偏好");

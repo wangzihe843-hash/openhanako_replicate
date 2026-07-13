@@ -44,6 +44,9 @@ describe('AssistantMessage interlude-only rendering', () => {
   it('纯幕间消息不显示 Agent 身份、消息操作或完成时间', () => {
     const { container } = render(
       <AssistantMessage
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
+        isStreaming={false}
+        isSelected={false}
         showAvatar
         sessionPath="/sessions/main.jsonl"
         isLatestAssistantMessage

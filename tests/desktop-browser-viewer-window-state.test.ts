@@ -57,6 +57,28 @@ describe("desktop browser viewer window state", () => {
     expect(source).toContain("function _switchActiveBrowserTab");
   });
 
+  it("isolates browser storage with a per-session Electron partition", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+    const body = functionBody(source, "_createBrowserWebContentsView");
+
+    expect(source).toContain("function _browserPartitionName");
+    expect(source).toContain('crypto.createHash("sha256")');
+    expect(source).toContain('const _browserCookiePolicyInstalledPartitions = new Set()');
+    expect(body).toContain("_installBrowserCookiePolicy(sessionPath)");
+    expect(body).toContain("const ses = _browserSession(sessionPath)");
+    expect(body).not.toContain('session.fromPartition("persist:hana-browser")');
+  });
+
+  it("routes browser viewer toolbar IPC through explicit session paths", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+
+    expect(source).toContain("function _resolveBrowserIpcSessionPath");
+    expect(source).toContain('wrapIpcBestEffortHandler("browser-go-back", (_event, sessionPath)');
+    expect(source).toContain('wrapIpcBestEffortHandler("browser-switch-tab", (_event, tabId, sessionPath)');
+    expect(source).toContain('wrapIpcBestEffortHandler("browser-close-tab", (_event, tabId, sessionPath)');
+    expect(source).toContain('wrapIpcBestEffortHandler("browser-emergency-stop", (_event, sessionPath)');
+  });
+
   it("exposes tab and Cookie browser IPC commands", () => {
     const source = fs.readFileSync(MAIN_PATH, "utf-8");
 
@@ -85,6 +107,6 @@ describe("desktop browser viewer window state", () => {
     expect(source).toContain('_detachActiveBrowserView({ view: active.view');
     expect(source).toContain('_detachActiveBrowserView({ view, sessionPath: sp || _currentBrowserSession, hideIfVisible: true })');
     expect(source).toContain('case "destroyView"');
-    expect(source).toContain('_detachActiveBrowserView({ destroy: true, hideIfVisible: true, reason: "emergency-stop" })');
+    expect(source).toContain('_detachActiveBrowserView({ view, sessionPath: null, destroy: true, hideIfVisible: true, reason: "emergency-stop" })');
   });
 });

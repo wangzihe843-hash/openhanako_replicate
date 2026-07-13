@@ -17,8 +17,13 @@ import {
 } from "../../lib/memory/compiled-memory-state.ts";
 import {
   buildCompiledMemoryMarkdown,
+  listWeekDayEntries,
+  migrateLegacyEditableFacts,
   readCompiledMemorySections,
   writeEditableFactsSection,
+  writeLongtermSection,
+  writeTodaySection,
+  writeWeekDayEntry,
 } from "../../lib/memory/compile.ts";
 import {
   readPinnedMemoryItems,
@@ -60,10 +65,6 @@ import {
 import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.ts";
 import { recordSecurityAuditEvent } from "../http/security-audit.ts";
 import { readUserProfile, writeUserProfile } from "../../lib/user-profile-store.ts";
-import {
-  EDITABLE_MEMORY_EXPERIMENT_ID,
-  getResolvedExperimentValue,
-} from "../../lib/experiments/registry.ts";
 
 function hasOwn(value: any, key: string) {
   return !!value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, key);
@@ -73,14 +74,6 @@ function hasProviderMutationPatch(partial: any) {
   if (!partial || typeof partial !== "object") return false;
   if (hasOwn(partial, "providers")) return true;
   return ["api", "embedding_api", "utility_api"].some((key) => hasInlineProviderCredentialPatch(partial[key]));
-}
-
-function isEditableMemoryEnabled(engine: any) {
-  try {
-    return getResolvedExperimentValue(engine.preferences, EDITABLE_MEMORY_EXPERIMENT_ID) === true;
-  } catch {
-    return false;
-  }
 }
 
 function getGlobalValue(globalFields: any[], key: string) {
@@ -629,15 +622,17 @@ export function createConfigRoute(engine: any) {
   route.get("/memories/compiled", async (c) => {
     try {
       const agent = resolveAgent(engine, c);
-      const editableFactsEnabled = isEditableMemoryEnabled(engine);
-      const sections = readCompiledMemorySections(path.dirname(agent.memoryMdPath), {
-        editableFactsEnabled,
+      const memDir = path.dirname(agent.memoryMdPath);
+      // 幂等：即使该 agent 从未跑起过 memoryTicker（未配置记忆模型），
+      // 首次读取也会把遗留的 editable-facts.md 并入规范的 facts.md。
+      migrateLegacyEditableFacts(memDir);
+      const sections = readCompiledMemorySections(memDir, {
         summaryManager: agent.summaryManager,
       });
-      const content = editableFactsEnabled
-        ? buildCompiledMemoryMarkdown(sections)
-        : await fs.readFile(agent.memoryMdPath, "utf-8").catch(() => "");
-      return c.json({ content, editableFactsEnabled, sections });
+      const content = buildCompiledMemoryMarkdown(sections);
+      // editableFactsEnabled 转正后恒为 true：facts 编辑能力不再受实验开关限制，
+      // 字段保留是为了不破坏前端既有契约（CompiledMemoryViewer 仍读取此字段）。
+      return c.json({ content, editableFactsEnabled: true, sections });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
@@ -648,14 +643,12 @@ export function createConfigRoute(engine: any) {
       const denied = denyWithoutScope(c, "settings.write");
       if (denied) return denied;
       const agent = resolveAgentStrict(engine, c);
-      if (!isEditableMemoryEnabled(engine)) {
-        return c.json({ error: "editable memory experiment is disabled" }, 400);
-      }
       const body = await safeJson(c);
       if (typeof body?.facts !== "string") {
         return c.json({ error: "facts must be a string" }, 400);
       }
       const memDir = path.dirname(agent.memoryMdPath);
+      migrateLegacyEditableFacts(memDir);
       const normalizedFacts = writeEditableFactsSection(memDir, body.facts, {
         summaryManager: agent.summaryManager,
         memoryMdPath: agent.memoryMdPath,
@@ -663,6 +656,94 @@ export function createConfigRoute(engine: any) {
       debugLog()?.log("api", `PUT /api/memories/compiled/facts agent=${agent.id}`);
       await engine.updateConfig({}, { agentId: agent.id });
       return c.json({ ok: true, facts: normalizedFacts });
+    } catch (err) {
+      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.put("/memories/compiled/today", async (c) => {
+    try {
+      const denied = denyWithoutScope(c, "settings.write");
+      if (denied) return denied;
+      const agent = resolveAgentStrict(engine, c);
+      const body = await safeJson(c);
+      if (typeof body?.today !== "string") {
+        return c.json({ error: "today must be a string" }, 400);
+      }
+      const memDir = path.dirname(agent.memoryMdPath);
+      const normalizedToday = writeTodaySection(memDir, body.today, {
+        memoryMdPath: agent.memoryMdPath,
+      });
+      debugLog()?.log("api", `PUT /api/memories/compiled/today agent=${agent.id}`);
+      await engine.updateConfig({}, { agentId: agent.id });
+      return c.json({ ok: true, today: normalizedToday });
+    } catch (err) {
+      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.put("/memories/compiled/longterm", async (c) => {
+    try {
+      const denied = denyWithoutScope(c, "settings.write");
+      if (denied) return denied;
+      const agent = resolveAgentStrict(engine, c);
+      const body = await safeJson(c);
+      if (typeof body?.longterm !== "string") {
+        return c.json({ error: "longterm must be a string" }, 400);
+      }
+      const memDir = path.dirname(agent.memoryMdPath);
+      const normalizedLongterm = writeLongtermSection(memDir, body.longterm, {
+        memoryMdPath: agent.memoryMdPath,
+      });
+      debugLog()?.log("api", `PUT /api/memories/compiled/longterm agent=${agent.id}`);
+      await engine.updateConfig({}, { agentId: agent.id });
+      return c.json({ ok: true, longterm: normalizedLongterm });
+    } catch (err) {
+      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  // 读取按天的 week 日记条目，供编辑 UI 按天分行展示
+  route.get("/memories/compiled/week/days", async (c) => {
+    try {
+      const agent = resolveAgent(engine, c);
+      const memDir = path.dirname(agent.memoryMdPath);
+      const days = listWeekDayEntries(memDir);
+      return c.json({ days });
+    } catch (err) {
+      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  // 改写某一天的日记正文，重新装配 week.md 并同步 memory.md；只能改写已存在的日期
+  route.put("/memories/compiled/week/days/:date", async (c) => {
+    try {
+      const denied = denyWithoutScope(c, "settings.write");
+      if (denied) return denied;
+      const agent = resolveAgentStrict(engine, c);
+      const date = c.req.param("date");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "")) {
+        return c.json({ error: "date must be YYYY-MM-DD" }, 400);
+      }
+      const body = await safeJson(c);
+      if (typeof body?.body !== "string") {
+        return c.json({ error: "body must be a string" }, 400);
+      }
+      const memDir = path.dirname(agent.memoryMdPath);
+      const existingDates = new Set(listWeekDayEntries(memDir).map((entry) => entry.date));
+      if (!existingDates.has(date)) {
+        return c.json({ error: `no daily entry for date "${date}"` }, 404);
+      }
+      const normalizedBody = writeWeekDayEntry(memDir, date, body.body, {
+        memoryMdPath: agent.memoryMdPath,
+      });
+      debugLog()?.log("api", `PUT /api/memories/compiled/week/days/${date} agent=${agent.id}`);
+      await engine.updateConfig({}, { agentId: agent.id });
+      return c.json({ ok: true, date, body: normalizedBody });
     } catch (err) {
       if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
       return c.json({ error: err.message }, 500);

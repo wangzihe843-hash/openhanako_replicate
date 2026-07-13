@@ -23,13 +23,31 @@ import {
 } from "./llm-utils.ts";
 import { findModel, parseModelRef } from "../shared/model-ref.ts";
 import { DEFAULT_HEARTBEAT_INTERVAL_MINUTES } from "../shared/default-workspace.ts";
-import { isReservedAgentScopeId } from "../shared/reserved-agent-scopes.ts";
 import { relativePathInsideBase } from "./message-utils.ts";
 import { detachAgentFromBundles } from "../lib/skill-bundles/store.ts";
 import { assertKnownYuan, getAgentConfigRepairState } from "./yuan-registry.ts";
+import { assertValidAgentIdentityId, isValidAgentIdentityId } from "../shared/agent-id.ts";
 
 const log = createModuleLogger("agent-mgr");
 const DELETED_AGENT_TOMBSTONE = ".deleted-agent.json";
+const AGENT_AVATAR_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif"];
+
+function readAgentAvatarState(avatarDir) {
+  for (const ext of AGENT_AVATAR_EXTENSIONS) {
+    const avatarPath = path.join(avatarDir, `agent.${ext}`);
+    try {
+      const stat = fs.statSync(avatarPath);
+      if (!stat.isFile()) continue;
+      return {
+        hasAvatar: true,
+        avatarRevision: `${stat.mtimeMs}-${stat.size}`,
+      };
+    } catch {
+      continue;
+    }
+  }
+  return { hasAvatar: false, avatarRevision: null };
+}
 
 function writeStartupLog(startupLog, message) {
   if (typeof startupLog === "function") {
@@ -108,6 +126,7 @@ export class AgentManager {
   declare _memoryMaintenanceQueue: any;
   declare _memoryMaintenanceQueued: any;
   declare _memoryMaintenanceRunning: any;
+  declare _invalidAgentIdsWarned: any;
   declare _runtimeInitConcurrency: any;
   declare _runtimeInitPromises: any;
   declare _runtimeInitQueue: any;
@@ -125,6 +144,7 @@ export class AgentManager {
    * @param {() => import('./skill-manager.ts').SkillManager} deps.getSkills
    * @param {() => object} deps.getSearchConfig
    * @param {() => object} deps.resolveUtilityConfig
+   * @param {() => Promise<object>} deps.resolveUtilityConfigFresh
    * @param {() => object} deps.getSharedModels
    * @param {() => import('./channel-manager.ts').ChannelManager} deps.getChannelManager
    * @param {() => import('./session-coordinator.ts').SessionCoordinator} deps.getSessionCoordinator
@@ -145,6 +165,7 @@ export class AgentManager {
     this._memoryMaintenanceQueued = new Set();
     this._memoryMaintenanceRunning = 0;
     this._memoryMaintenanceConcurrency = 1;
+    this._invalidAgentIdsWarned = new Set();
   }
 
   /** 清除 listAgents 缓存（agent 增删改时调用） */
@@ -263,6 +284,7 @@ export class AgentManager {
   }
 
   async _loadAgentConfigOnly(agentId, { required = false } = {}) {
+    assertValidAgentIdentityId(agentId);
     if (this._agents.has(agentId)) return this._agents.get(agentId);
     if (this.isAgentDeleted(agentId)) {
       if (required) throw new Error(`agent "${agentId}" has been deleted`);
@@ -331,7 +353,9 @@ export class AgentManager {
     const sharedModels = this._d.getSharedModels?.() || {};
     const resolveModel = (bareId) =>
       this._d.getModels().resolveModelWithCredentials(bareId);
-    await ag.init(task.log, sharedModels, resolveModel);
+    const resolveModelFresh = (bareId) =>
+      this._d.getModels().resolveModelWithCredentialsFresh(bareId);
+    await ag.init(task.log, sharedModels, resolveModel, resolveModelFresh);
     this._d.getSkills()?.syncAgentSkills?.(ag);
     this._d.getHub()?.scheduler?.startAgentHeartbeat?.(task.agentId, ag);
     return ag;
@@ -456,6 +480,7 @@ export class AgentManager {
     const entries = readDirectoryLikeDirentsSync(this._d.agentsDir);
     const agents = [];
     for (const entry of entries) {
+      if (!this._acceptDiscoveredAgentId(entry.name)) continue;
       if (this.isAgentDeleted(entry.name)) continue;
       const configPath = path.join(this._d.agentsDir, entry.name, "config.yaml");
       if (!fs.existsSync(configPath)) continue;
@@ -468,12 +493,9 @@ export class AgentManager {
           const lines = renderedIdMd.split("\n").filter(l => l.trim() && !l.startsWith("#"));
           identity = lines[0]?.trim() || "";
         } catch {}
-        const avatarDir = path.join(this._d.agentsDir, entry.name, "avatars");
-        let hasAvatar = false;
-        try {
-          const avatarFiles = fs.readdirSync(avatarDir);
-          hasAvatar = avatarFiles.some(f => /\.(png|jpe?g|gif|webp)$/i.test(f));
-        } catch {}
+        const avatarState = readAgentAvatarState(
+          path.join(this._d.agentsDir, entry.name, "avatars"),
+        );
         const chatRef = cfg.models?.chat;
         const chatModel = typeof chatRef === "object"
           ? { id: chatRef.id, provider: chatRef.provider }
@@ -487,7 +509,8 @@ export class AgentManager {
           needsRepair: !!repairState,
           repairState,
           identity,
-          hasAvatar,
+          hasAvatar: avatarState.hasAvatar,
+          avatarRevision: avatarState.avatarRevision,
           chatModel,
           homeFolder: cfg.desk?.home_folder || null,
           memoryMasterEnabled: cfg.memory?.enabled !== false,
@@ -527,7 +550,7 @@ export class AgentManager {
         if (match?.[1] === hash) return; // 没变化，跳过
       } catch {} // 文件不存在，继续生成
 
-      const utilConfig = this._d.resolveUtilityConfig({ agentId });
+      const utilConfig = await this._d.resolveUtilityConfigFresh({ agentId });
       const locale = ag.config?.locale || "zh";
       const desc = await generateDescription(utilConfig, source, locale);
       if (!desc) {
@@ -558,11 +581,12 @@ export class AgentManager {
   async createAgent({ name, id, yuan, enabledSkills, initialFiles, avatarPath, initialMemory }) {
     if (!name?.trim()) throw new Error(t("error.agentNameEmpty"));
 
-    const agentId = id?.trim() || await this._generateAgentId(name);
-    if (/[\/\\]|\.\./.test(agentId)) throw new Error(t("error.agentIdInvalid"));
-    // 双下划线包裹的 id 是保留存储作用域（__user__/__shared__），真实 agent 不得占用，
-    // 否则全新安装时会先于保留目录建盘、与共享数据混居。
-    if (isReservedAgentScopeId(agentId)) throw new Error(t("error.agentIdInvalid"));
+    const hasExplicitId = id !== undefined && id !== null;
+    if (hasExplicitId) assertValidAgentIdentityId(id);
+    const agentId = hasExplicitId ? id : await this._generateAgentId(name);
+    // Generated IDs are trusted only after the same central contract check.
+    // This catches a future generator regression before any filesystem write.
+    assertValidAgentIdentityId(agentId);
     const agentDir = path.join(this._d.agentsDir, agentId);
 
     if (fs.existsSync(agentDir)) {
@@ -712,8 +736,10 @@ export class AgentManager {
     ag.setGetOwnerIds(this._makeOwnerIdsFn(ag));
     const resolveModel = (bareId) =>
       this._d.getModels().resolveModelWithCredentials(bareId);
+    const resolveModelFresh = (bareId) =>
+      this._d.getModels().resolveModelWithCredentialsFresh(bareId);
     try {
-      await ag.init(() => {}, this._d.getSharedModels(), resolveModel);
+      await ag.init(() => {}, this._d.getSharedModels(), resolveModel, resolveModelFresh);
     } catch (err) {
       // init 失败：回滚已创建的目录和频道状态，防止孤儿残留
       await this._rollbackAgentCreation(agentDir, agentId);
@@ -963,6 +989,8 @@ export class AgentManager {
   // ── Utility ──
 
   setPrimaryAgent(agentId) {
+    // Identity validation must precede path construction and preference I/O.
+    assertValidAgentIdentityId(agentId);
     const agentDir = path.join(this._d.agentsDir, agentId);
     if (this.isAgentDeleted(agentId) || !fs.existsSync(path.join(agentDir, "config.yaml"))) {
       throw new Error(t("error.agentNotExists", { id: agentId }));
@@ -1002,7 +1030,8 @@ export class AgentManager {
   _scanAgentDirs() {
     try {
       return readDirectoryLikeDirentsSync(this._d.agentsDir)
-        .filter(e => fs.existsSync(path.join(this._d.agentsDir, e.name, "config.yaml"))
+        .filter(e => this._acceptDiscoveredAgentId(e.name)
+          && fs.existsSync(path.join(this._d.agentsDir, e.name, "config.yaml"))
           && !this.isAgentDeleted(e.name));
     } catch { return []; }
   }
@@ -1010,9 +1039,22 @@ export class AgentManager {
   _scanDeletedAgentDirs() {
     try {
       return readDirectoryLikeDirentsSync(this._d.agentsDir)
-        .filter(e => fs.existsSync(path.join(this._d.agentsDir, e.name, "config.yaml"))
+        .filter(e => this._acceptDiscoveredAgentId(e.name)
+          && fs.existsSync(path.join(this._d.agentsDir, e.name, "config.yaml"))
           && fs.existsSync(this._deletedAgentTombstonePath(e.name)));
     } catch { return []; }
+  }
+
+  _acceptDiscoveredAgentId(agentId) {
+    if (isValidAgentIdentityId(agentId)) return true;
+    if (!this._invalidAgentIdsWarned.has(agentId)) {
+      this._invalidAgentIdsWarned.add(agentId);
+      log.warn(
+        `ignoring legacy agent directory with invalid ID ${JSON.stringify(agentId)}; `
+        + "the directory was preserved and must be renamed manually",
+      );
+    }
+    return false;
   }
 
   _readAgentNameFromConfig(agentDir) {
@@ -1100,7 +1142,8 @@ export class AgentManager {
       // 花名册唯一事实源：tombstone / 坏目录已在 AgentManager 层过滤
       listActiveAgents:     () => this.listActiveAgentsForRoster(),
       createChannelEntry:    (input) => getEngine()?.createChannelEntry?.(input),
-      resolveUtilityConfig: () => getEngine()?.resolveUtilityConfig?.({ agentId: ag.id }),
+      resolveUtilityConfig: (options) => getEngine()?.resolveUtilityConfig?.({ ...(options || {}), agentId: ag.id }),
+      resolveUtilityConfigFresh: (options) => getEngine()?.resolveUtilityConfigFresh?.({ ...(options || {}), agentId: ag.id }),
       getCwd:               () => getEngine()?.cwd ?? "",
       getTimezone:          () => getEngine()?.getTimezone?.() ?? "",
       scheduleMemoryMaintenance: (agentId, reason) =>
@@ -1158,7 +1201,7 @@ export class AgentManager {
   async _generateAgentId(name) {
     let utilConfig;
     try {
-      utilConfig = this._d.resolveUtilityConfig();
+      utilConfig = await this._d.resolveUtilityConfigFresh();
     } catch {
       // utility 模型未配置（新用户常见），直接走兜底 ID
       return `agent-${Date.now().toString(36)}`;

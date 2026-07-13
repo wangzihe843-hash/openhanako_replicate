@@ -61,20 +61,9 @@ const hanaFetchMock = vi.fn(async (url: string, init?: RequestInit) => {
             presentation: { type: 'toggle' },
           },
         },
-        {
-          id: 'memory.editable_facts',
-          titleKey: 'settings.experiments.editableMemory.title',
-          descriptionKey: 'settings.experiments.editableMemory.description',
-          owner: 'memory',
-          value: false,
-          status: 'alpha',
-          risk: 'medium',
-          restartPolicy: 'immediate',
-          valueSchema: {
-            type: 'boolean',
-            presentation: { type: 'toggle' },
-          },
-        },
+        // memory.editable_facts 已毕业转正（不再是实验），registry 目前没有
+        // 存活的 owner: "memory" 实验；memory.cache_snapshot_reflection 也已退休，
+        // 不会出现在 /api/experiments 里。
       ],
     }));
   }
@@ -97,15 +86,15 @@ describe('ExperimentsTab', () => {
     vi.clearAllMocks();
   });
 
-  it('renders active memory experiments without showing retired cache snapshot controls', async () => {
+  it('shows the memory section empty state now that editable facts has graduated and cache snapshot is retired', async () => {
     render(React.createElement(ExperimentsTab));
 
     expect(screen.getByText('settings.experiments.memoryTitle')).toBeTruthy();
-    expect(await screen.findByText('settings.experiments.memorySectionDescription')).toBeTruthy();
+    expect(await screen.findByText('settings.experiments.empty')).toBeTruthy();
     expect(screen.getByText('settings.computerUse.title')).toBeTruthy();
     expect(screen.queryByText('settings.experiments.description')).toBeNull();
 
-    expect(screen.getByText('settings.experiments.editableMemory.title')).toBeTruthy();
+    expect(screen.queryByText('settings.experiments.editableMemory.title')).toBeNull();
     expect(screen.queryByText('settings.experiments.cacheSnapshot.title')).toBeNull();
     expect(screen.queryByText('settings.experiments.cacheSnapshot.observeOnly')).toBeNull();
   });

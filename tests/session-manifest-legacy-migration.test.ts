@@ -101,7 +101,7 @@ describe("session manifest legacy migration", () => {
       migratedAt: "2026-06-18T03:02:00.000Z",
     });
 
-    expect(result).toEqual({ scanned: 2, created: 2, existing: 0, skipped: 0 });
+    expect(result).toEqual({ scanned: 2, created: 2, existing: 0, skipped: 0, skippedDetails: [] });
     const activeManifest = store.resolveByLocatorPath(active.sessionPath);
     const archivedManifest = store.resolveByLocatorPath(archived.sessionPath);
 
@@ -245,8 +245,8 @@ describe("session manifest legacy migration", () => {
     const first = migrateLegacySessions({ hanaHome, store, migratedAt: "2026-06-18T03:02:00.000Z" });
     const second = migrateLegacySessions({ hanaHome, store, migratedAt: "2026-06-18T03:03:00.000Z" });
 
-    expect(first).toEqual({ scanned: 1, created: 1, existing: 0, skipped: 0 });
-    expect(second).toEqual({ scanned: 1, created: 0, existing: 1, skipped: 0 });
+    expect(first).toEqual({ scanned: 1, created: 1, existing: 0, skipped: 0, skippedDetails: [] });
+    expect(second).toEqual({ scanned: 1, created: 0, existing: 1, skipped: 0, skippedDetails: [] });
     expect(store.resolveByLocatorPath(active.sessionPath)?.sessionId).toBe("sess_migrate_0001");
     expect(store.list()).toHaveLength(1);
   });
@@ -261,7 +261,7 @@ describe("session manifest legacy migration", () => {
 
     const result = migrateLegacySessions({ hanaHome, store, migratedAt: "2026-06-18T03:02:00.000Z" });
 
-    expect(result).toEqual({ scanned: 1, created: 0, existing: 1, skipped: 0 });
+    expect(result).toEqual({ scanned: 1, created: 0, existing: 1, skipped: 0, skippedDetails: [] });
     const titles = JSON.parse(fs.readFileSync(path.join(active.sessionDir, "session-titles.json"), "utf-8"));
     expect(titles[existing.sessionId]).toBe("Current title");
   });
@@ -281,7 +281,7 @@ describe("session manifest legacy migration", () => {
 
     const result = migrateLegacySessions({ hanaHome, store, migratedAt: "2026-06-18T03:02:00.000Z" });
 
-    expect(result).toEqual({ scanned: 1, created: 1, existing: 0, skipped: 0 });
+    expect(result).toEqual({ scanned: 1, created: 1, existing: 0, skipped: 0, skippedDetails: [] });
     expect(store.resolveByLocatorPath(logicalSessionPath)).toMatchObject({
       sessionId: "sess_migrate_0001",
       ownerAgentId: "hana",
@@ -300,9 +300,36 @@ describe("session manifest legacy migration", () => {
 
     const result = migrateLegacySessions({ hanaHome, store, migratedAt: "2026-06-18T03:02:00.000Z" });
 
-    expect(result).toEqual({ scanned: 2, created: 0, existing: 1, skipped: 1 });
+    expect(result).toMatchObject({ scanned: 2, created: 0, existing: 1, skipped: 1 });
+    expect(result.skippedDetails).toHaveLength(1);
+    expect(result.skippedDetails[0]).toMatchObject({ sessionPath: first.sessionPath });
+    expect(typeof result.skippedDetails[0].error).toBe("string");
     expect(store.getBySessionId(firstManifest.sessionId)?.sessionId).toBe(firstManifest.sessionId);
     expect(store.getBySessionId(secondManifest.sessionId)?.sessionId).toBe(secondManifest.sessionId);
+  });
+
+  it("rescan 回填 ownerAgentId 为空的存量 manifest（老数据读时兼容）", () => {
+    const { sessionPath } = writeSession("hana", "missing-owner.jsonl");
+    // 模拟历史缺失写入：manifest 已存在但 ownerAgentId 为 null
+    store.createForPath({ sessionPath, domain: "desktop", kind: "chat" });
+
+    const result = migrateLegacySessions({ hanaHome, store });
+
+    expect(result.existing).toBe(1);
+    expect(store.resolveByLocatorPath(sessionPath)).toMatchObject({
+      ownerAgentId: "hana",
+    });
+  });
+
+  it("rescan 不覆盖已有 ownerAgentId", () => {
+    const { sessionPath } = writeSession("hana", "owned-elsewhere.jsonl");
+    store.createForPath({ sessionPath, ownerAgentId: "bob", domain: "desktop", kind: "chat" });
+
+    migrateLegacySessions({ hanaHome, store });
+
+    expect(store.resolveByLocatorPath(sessionPath)).toMatchObject({
+      ownerAgentId: "bob",
+    });
   });
 
   it("repairs realpath locator paths back to the app-facing legacy path during rescan", () => {
@@ -322,7 +349,7 @@ describe("session manifest legacy migration", () => {
 
     const result = migrateLegacySessions({ hanaHome, store, migratedAt: "2026-06-18T03:02:00.000Z" });
 
-    expect(result).toEqual({ scanned: 1, created: 0, existing: 1, skipped: 0 });
+    expect(result).toEqual({ scanned: 1, created: 0, existing: 1, skipped: 0, skippedDetails: [] });
     expect(store.getBySessionId(existing.sessionId)?.currentLocator.path).toBe(path.resolve(logicalSessionPath));
   });
 });

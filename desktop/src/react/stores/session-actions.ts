@@ -10,14 +10,16 @@
 import { useStore } from './index';
 import { sessionScopedKey, sessionScopedListIncludes, sessionScopedValue } from './session-slice';
 import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
+import { hydrateInputDrafts } from './input-draft-persistence';
+import { HOME_DRAFT_KEY } from '../../../../shared/input-drafts.ts';
 import { buildItemsFromHistory } from '../utils/history-builder';
 import { migrateLegacyTodos } from '../utils/todo-compat';
-import { loadAvatars as loadAvatarsAction, clearChat as clearChatAction } from './agent-actions';
+import { clearChat as clearChatAction } from './agent-actions';
 import { activateWorkspaceDesk } from './desk-actions';
 import { loadModels } from '../utils/ui-helpers';
-import { snapshotStreamBuffer, clearSessionStreamMeta, type StreamBufferSnapshot } from './stream-invalidator';
 import { browserStateForPath, setBrowserStateForPath } from './browser-slice';
 import { computerOverlayForSession } from './computer-overlay-slice';
+import { snapshotStreamBuffer, clearSessionStreamMeta, type StreamBufferSnapshot } from './stream-invalidator';
 import { renderMarkdown } from '../utils/markdown';
 import type { ChatMessage, ContentBlock } from './chat-types';
 import { readMessageLiveVersion } from './message-live-version';
@@ -27,6 +29,28 @@ import type { SessionPermissionMode } from '../types';
 
 let _switchVersion = 0;
 let _switchAbortController: AbortController | null = null;
+let _pendingDraftSequence = 0;
+
+export interface SessionRef {
+  sessionId: string;
+  sessionPath: string;
+  agentId: string;
+}
+
+function nextPendingDraftId(): string {
+  _pendingDraftSequence += 1;
+  return `pending-${Date.now().toString(36)}-${_pendingDraftSequence.toString(36)}`;
+}
+
+/**
+ * pending 新会话身份补丁：任何把 store 切入 "welcome / 待建会话" 态的入口都必须
+ * 展开这个补丁，而不是裸设 `pendingNewSession: true`。currentPendingSessionDraft()
+ * 要求 pendingDraftId 非空才认这是一个有效的待建草稿；裸设会让身份残缺，
+ * submitEditorMessage 的 ensureSession 门槛就此失效，发送静默无响应（#2101）。
+ */
+export function pendingNewSessionIdentityPatch(): { pendingNewSession: true; pendingDraftId: string } {
+  return { pendingNewSession: true, pendingDraftId: nextPendingDraftId() };
+}
 
 function invalidateSessionSwitches(): void {
   _switchVersion += 1;
@@ -58,6 +82,32 @@ function sessionIdForPathFromState(state: Record<string, any>, path: string | nu
   if (!path) return null;
   const session = (state.sessions || []).find((item: any) => item?.path === path);
   return normalizeSessionId(session?.sessionId);
+}
+
+function frozenSessionRefFromState(state: Record<string, any>): Readonly<SessionRef> | null {
+  const sessionPath = typeof state.currentSessionPath === 'string' && state.currentSessionPath.trim()
+    ? state.currentSessionPath
+    : null;
+  if (!sessionPath) return null;
+  const projection = sessionByIdentityOrPath(
+    state,
+    normalizeSessionId(state.currentSessionId),
+    sessionPath,
+  );
+  const sessionId = normalizeSessionId(state.currentSessionId)
+    || normalizeSessionId(projection?.sessionId)
+    || sessionIdForPathFromState(state, sessionPath);
+  const agentId = normalizeSessionId(projection?.agentId) || normalizeSessionId(state.currentAgentId);
+  if (!sessionId || !agentId) return null;
+  return Object.freeze({ sessionId, sessionPath, agentId });
+}
+
+function frozenSessionRefFromCreateResponse(data: any): Readonly<SessionRef> | null {
+  const sessionId = normalizeSessionId(data?.sessionId);
+  const sessionPath = typeof data?.path === 'string' && data.path.trim() ? data.path : null;
+  const agentId = normalizeSessionId(data?.agentId);
+  if (!sessionId || !sessionPath || !agentId) return null;
+  return Object.freeze({ sessionId, sessionPath, agentId });
 }
 
 function sessionByIdentityOrPath(state: Record<string, any>, sessionId: string | null, sessionPath: string | null): any | null {
@@ -236,14 +286,13 @@ async function resetDeskForSessionWorkspace({
 
 function clearSessionRuntimeCaches(path: string): void {
   useStore.getState().clearSession?.(path);
-  // 归档/桥接重置是「永久退役」终点：clearSession 故意不碰 stream-resume 元数据
-  // （rebuild 复用 clearSession，清版本号会破坏版本护栏），所以在这个不参与 rebuild
-  // 的退役 funnel 里显式清掉，避免该 path 的 stream-resume 元数据泄漏。
+  // Permanent retirement must also discard stream-resume identity metadata.
   clearSessionStreamMeta(path);
   useStore.setState((s: Record<string, any>) => {
     const attachedFilesBySession = deleteSessionScopedStateValue(s, s.attachedFilesBySession || {}, path);
     const sessionRegistryFilesByPath = deleteSessionScopedStateValue(s, s.sessionRegistryFilesByPath || {}, path);
     const drafts = deleteSessionScopedStateValue(s, s.drafts || {}, path);
+    const draftDocs = deleteSessionScopedStateValue(s, s.draftDocs || {}, path);
     const activeSessionStreams = deleteSessionScopedStateValue(s, s.activeSessionStreams || {}, path);
     const computerOverlayBySession = deleteSessionScopedStateValue(s, s.computerOverlayBySession || {}, path);
     const scrollPositions = deleteSessionScopedStateValue(s, s.scrollPositions || {}, path);
@@ -263,6 +312,7 @@ function clearSessionRuntimeCaches(path: string): void {
       attachedFilesBySession,
       sessionRegistryFilesByPath,
       drafts,
+      draftDocs,
       sessionStreams,
       activeSessionStreams,
       browserBySession,
@@ -479,19 +529,156 @@ export async function loadSessions(): Promise<void> {
   try {
     const res = await hanaFetch('/api/sessions');
     const data = await res.json();
-    const sessions = data || [];
+    const serverSessions = Array.isArray(data) ? data.map(normalizeServerSessionProjection) : [];
+    const localSessions = useStore.getState().sessions || [];
+    const sessions = mergeSessionsWithOptimisticFirstMessages(serverSessions, localSessions);
 
-    const s = useStore.getState();
-    useStore.setState((state: any) => ({
-      sessions,
-      sessionLocatorsById: mergeSessionLocators(state.sessionLocatorsById || {}, sessions),
-    }));
+    useStore.setState((state: any) => {
+      const sessionLocatorsById = mergeSessionLocators(state.sessionLocatorsById || {}, sessions);
+      const currentSessionId = typeof state.currentSessionId === 'string' && state.currentSessionId.trim()
+        ? state.currentSessionId.trim()
+        : null;
+      const currentLocatorPath = currentSessionId
+        && !state.pendingNewSession
+        && !state.pendingSessionSwitchPath
+        ? sessionLocatorsById[currentSessionId]?.path || null
+        : null;
+      return {
+        sessions,
+        sessionLocatorsById,
+        ...(currentLocatorPath && currentLocatorPath !== state.currentSessionPath
+          ? { currentSessionPath: currentLocatorPath }
+          : {}),
+      };
+    });
 
-    if (sessions.length > 0 && !s.currentSessionPath && !s.pendingNewSession && !s.pendingSessionSwitchPath) {
+    const latest = useStore.getState();
+    if (
+      sessions.length > 0
+      && !latest.currentSessionPath
+      && !latest.pendingNewSession
+      && !latest.pendingSessionSwitchPath
+    ) {
       // 首次加载：走完整的 switchSession 确保后端同步 + 消息加载
       await switchSession(sessions[0].path);
     }
   } catch { /* ignore */ }
+}
+
+const EMPTY_FIRST_MESSAGE_PLACEHOLDER = '(no messages)';
+
+function nonPlaceholderText(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  return trimmed === EMPTY_FIRST_MESSAGE_PLACEHOLDER ? '' : trimmed;
+}
+
+function normalizeServerSessionProjection(session: any): any {
+  if (!session || typeof session !== 'object') return session;
+  if (session.firstMessage === EMPTY_FIRST_MESSAGE_PLACEHOLDER) {
+    return { ...session, firstMessage: '' };
+  }
+  return session;
+}
+
+function withoutOptimisticFirstMessageMarker(session: any): any {
+  if (!session || typeof session !== 'object') return session;
+  if (!session._optimisticFirstMessage) return session;
+  const { _optimisticFirstMessage, ...rest } = session;
+  return rest;
+}
+
+function isOptimisticFirstMessageProjection(session: any): boolean {
+  return !!(session && session._optimisticFirstMessage && Number(session.messageCount || 0) > 0);
+}
+
+function serverProjectionHasPersistedContent(session: any): boolean {
+  return Number(session?.messageCount || 0) > 0
+    || !!nonPlaceholderText(session?.firstMessage)
+    || !!nonPlaceholderText(session?.title);
+}
+
+function shouldKeepOptimisticFirstMessage(serverSession: any, localSession: any): boolean {
+  return isOptimisticFirstMessageProjection(localSession)
+    && !serverProjectionHasPersistedContent(serverSession);
+}
+
+function mergeSessionsWithOptimisticFirstMessages(serverSessions: any[], localSessions: any[]): any[] {
+  const localByPath = new Map<string, any>();
+  for (const session of localSessions) {
+    if (typeof session?.path === 'string' && isOptimisticFirstMessageProjection(session)) {
+      localByPath.set(session.path, session);
+    }
+  }
+  if (localByPath.size === 0) return serverSessions.map(withoutOptimisticFirstMessageMarker);
+
+  const seenPaths = new Set<string>();
+  const merged = serverSessions.map((serverSession) => {
+    const path = typeof serverSession?.path === 'string' ? serverSession.path : null;
+    if (!path) return withoutOptimisticFirstMessageMarker(serverSession);
+    seenPaths.add(path);
+    const localSession = localByPath.get(path);
+    if (!shouldKeepOptimisticFirstMessage(serverSession, localSession)) {
+      return withoutOptimisticFirstMessageMarker(serverSession);
+    }
+    return {
+      ...localSession,
+      ...serverSession,
+      firstMessage: nonPlaceholderText(localSession.firstMessage),
+      messageCount: Math.max(Number(localSession.messageCount || 0), 1),
+      modified: localSession.modified,
+      _optimisticFirstMessage: true,
+    };
+  });
+
+  const localOnly = Array.from(localByPath.values()).filter((session) => !seenPaths.has(session.path));
+  return [...localOnly, ...merged];
+}
+
+export function upsertOptimisticSessionFirstMessage(
+  sessionPath: string | null | undefined,
+  messageText: string,
+  timestamp = new Date().toISOString(),
+): void {
+  const path = typeof sessionPath === 'string' && sessionPath.trim() ? sessionPath : null;
+  if (!path) return;
+
+  useStore.setState((state: any) => {
+    const sessions = Array.isArray(state.sessions) ? state.sessions : [];
+    const existingIndex = sessions.findIndex((session: any) => session?.path === path);
+    const existing = existingIndex >= 0 ? sessions[existingIndex] : null;
+    if (existing && !isOptimisticFirstMessageProjection(existing) && serverProjectionHasPersistedContent(existing)) {
+      return {};
+    }
+    const sessionId = normalizeSessionId(existing?.sessionId)
+      || (state.currentSessionPath === path ? normalizeSessionId(state.currentSessionId) : null)
+      || sessionIdForPathFromState(state, path);
+    const firstMessage = nonPlaceholderText(existing?.firstMessage) || nonPlaceholderText(messageText);
+    const messageCount = Math.max(Number(existing?.messageCount || 0), 1);
+    const optimisticProjection = {
+      ...(existing || {}),
+      path,
+      ...(sessionId ? { sessionId } : {}),
+      agentId: existing?.agentId ?? state.currentAgentId ?? state.selectedAgentId ?? null,
+      agentName: existing?.agentName ?? state.agentName ?? '',
+      cwd: existing?.cwd ?? state.deskBasePath ?? state.selectedFolder ?? '',
+      projectId: existing?.projectId ?? state.pendingProjectId ?? null,
+      workspaceMountId: existing?.workspaceMountId ?? state.deskWorkspaceMountId ?? state.selectedWorkspaceMountId ?? null,
+      workspaceLabel: existing?.workspaceLabel ?? state.deskWorkspaceLabel ?? state.selectedWorkspaceLabel ?? null,
+      firstMessage,
+      messageCount,
+      modified: timestamp,
+      created: existing?.created ?? timestamp,
+      _optimisticFirstMessage: true,
+    };
+    const nextSessions = existingIndex >= 0
+      ? sessions.map((session: any, index: number) => (index === existingIndex ? optimisticProjection : session))
+      : [optimisticProjection, ...sessions];
+    return {
+      sessions: nextSessions,
+      sessionLocatorsById: mergeSessionLocators(state.sessionLocatorsById || {}, nextSessions),
+    };
+  });
 }
 
 // ══════════════════════════════════════════════════════
@@ -512,6 +699,7 @@ export async function switchSession(path: string): Promise<void> {
     return;
   }
 
+  useStore.getState().clearStaleMessageLocate(path);
   useStore.setState({ pendingSessionSwitchPath: path });
 
   if (isDeletedAgentSession(path)) {
@@ -607,7 +795,10 @@ export async function switchSession(path: string): Promise<void> {
       ...currentSessionIdentityPatch(prev, path, data.sessionId),
       pendingSessionSwitchPath: null,
       pendingNewSession: false,
+      pendingDraftId: null,
       pendingProjectId: null,
+      pendingNewSessionThinkingLevel: null,
+      pendingNewSessionPermissionMode: null,
       selectedFolder: null,
       selectedWorkspaceMountId: null,
       selectedWorkspaceLabel: null,
@@ -655,12 +846,10 @@ export async function switchSession(path: string): Promise<void> {
       });
     }
 
-    // 切会话时只清「锚定的浮动划词候选」（quoteCandidate 锚在上一个 session 的内容上，
-    // 换 session 后位置失效）。已 commit 的 quotedSelections（含秘密空间「去和 TA 聊聊」
-    // redeem 进来的 staged quote）应跨 session 保留，只在发送或用户手动移除（chip 上的 ✕）时消失。
-    if (useStore.getState().quoteCandidate?.anchorRect) {
-      useStore.getState().clearQuoteCandidate();
-    }
+    // Committed quotes belong to the source composer and must not leak into the
+    // destination session. Xingye cross-session handoff uses stagedChatQuote,
+    // which this cleanup deliberately does not touch.
+    useStore.getState().clearQuotedSelection();
 
     emitSessionPermissionMode(data.permissionMode || data.accessMode);
     useStore.getState().setSessionWorkMode?.(data.workMode === true);
@@ -753,6 +942,7 @@ async function switchDeletedAgentSession(path: string, version: number): Promise
     currentSessionPath: path,
     pendingSessionSwitchPath: null,
     pendingNewSession: false,
+    pendingDraftId: null,
     pendingProjectId: null,
     selectedFolder: null,
     selectedWorkspaceMountId: null,
@@ -801,6 +991,93 @@ interface CreateNewSessionOptions {
   cwd?: string | null;
 }
 
+type PendingSessionCreateBody = Record<string, any>;
+
+function buildPendingSessionCreateBody(state: Record<string, any>): PendingSessionCreateBody {
+  const body: PendingSessionCreateBody = {
+    memoryEnabled: state.memoryEnabled,
+    recordWorkspaceHistory: true,
+  };
+  if (state.selectedWorkspaceMountId) {
+    body.workspaceMountId = state.selectedWorkspaceMountId;
+  } else if (state.selectedFolder) {
+    body.cwd = state.selectedFolder;
+  }
+  if (state.workspaceFolders?.length) {
+    body.workspaceFolders = state.workspaceFolders;
+  }
+  if (state.pendingProjectId) {
+    body.projectId = state.pendingProjectId;
+  }
+  if (state.pendingNewSessionThinkingLevel) {
+    body.thinkingLevel = state.pendingNewSessionThinkingLevel;
+  }
+  if (state.pendingNewSessionPermissionMode) {
+    body.permissionMode = state.pendingNewSessionPermissionMode;
+  }
+  if (state.selectedAgentId && state.selectedAgentId !== state.currentAgentId) {
+    body.agentId = state.selectedAgentId;
+  }
+  body.currentSessionPath = state.currentSessionPath;
+  return body;
+}
+
+function pendingSessionCreateKey(body: PendingSessionCreateBody): string {
+  return JSON.stringify(body);
+}
+
+function currentPendingSessionDraft(): { body: PendingSessionCreateBody; key: string } | null {
+  const state = useStore.getState() as Record<string, any>;
+  if (state.pendingNewSession !== true || !normalizeSessionId(state.pendingDraftId)) return null;
+  const body = buildPendingSessionCreateBody(state);
+  return { body, key: `${state.pendingDraftId}:${pendingSessionCreateKey(body)}` };
+}
+
+async function postPendingSessionCreate(body: PendingSessionCreateBody): Promise<any> {
+  const res = await hanaFetch('/api/sessions/new-detached', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    throwOnHttpError: false,
+  });
+  return res.json();
+}
+
+function stageDetachedSessionForActivation(data: any, ref: Readonly<SessionRef>, state: Record<string, any>): void {
+  const existing = sessionByIdentityOrPath(state, ref.sessionId, ref.sessionPath);
+  const projection = {
+    ...(existing || {}),
+    path: ref.sessionPath,
+    sessionId: ref.sessionId,
+    agentId: ref.agentId,
+    agentName: data.agentName || existing?.agentName || ref.agentId,
+    cwd: data.cwd || existing?.cwd || null,
+    workspaceMountId: data.workspaceMountId || existing?.workspaceMountId || null,
+    workspaceLabel: data.workspaceLabel || existing?.workspaceLabel || null,
+    title: existing?.title ?? null,
+    firstMessage: existing?.firstMessage ?? '',
+    modified: existing?.modified || new Date().toISOString(),
+    messageCount: existing?.messageCount ?? 0,
+    _optimistic: true,
+  };
+  const sessions = [projection, ...(state.sessions || []).filter((item: any) => (
+    normalizeSessionId(item?.sessionId) !== ref.sessionId && item?.path !== ref.sessionPath
+  ))];
+  const targetKey = ref.sessionId;
+  useStore.setState({
+    sessions,
+    sessionLocatorsById: {
+      ...(state.sessionLocatorsById || {}),
+      [ref.sessionId]: { path: ref.sessionPath },
+    },
+    attachedFilesBySession: {
+      ...(state.attachedFilesBySession || {}),
+      [targetKey]: [...(state.attachedFiles || [])],
+    },
+  });
+  useStore.getState().initSession?.(ref.sessionPath, [], false);
+}
+
 export async function loadPendingNewSessionPermissionDefault(): Promise<SessionPermissionMode> {
   try {
     const res = await hanaFetch('/api/preferences/session-permission-default');
@@ -837,6 +1114,7 @@ export async function createNewSession(options: CreateNewSessionOptions = {}): P
   useStore.setState({
     welcomeVisible: true,
     currentSessionPath: null,
+    currentSessionId: null,
     pendingSessionSwitchPath: null,
     // 有显式 Agent home 时以 home 为准；没有绑定 workspace 的 agent
     // 以当前 session cwd 延续工作流，不从其他 agent 的 home_folder 推导。
@@ -845,10 +1123,11 @@ export async function createNewSession(options: CreateNewSessionOptions = {}): P
     selectedWorkspaceLabel: defaultWorkspaceLabel,
     workspaceFolders: [],
     selectedAgentId: null,
-    pendingNewSession: true,
+    ...pendingNewSessionIdentityPatch(),
     pendingProjectId,
     pendingNewSessionThinkingLevel: null,
     pendingNewSessionPermissionMode: null,
+    sessionWorkMode: false,
     attachedFiles: [],
     deskContextAttached: false,
     docContextAttached: false,
@@ -884,131 +1163,40 @@ export async function createNewSession(options: CreateNewSessionOptions = {}): P
 // 确保 Session 存在（首次发消息时调用）
 // ══════════════════════════════════════════════════════
 
-export async function ensureSession(): Promise<boolean> {
-  const s = useStore.getState();
-  if (!s.pendingNewSession) return true;
-
+export async function ensureSession(expectedPendingDraftId?: string | null): Promise<Readonly<SessionRef> | null> {
   try {
-    const body: Record<string, any> = { memoryEnabled: s.memoryEnabled };
-    if (s.selectedWorkspaceMountId) {
-      body.workspaceMountId = s.selectedWorkspaceMountId;
-    } else if (s.selectedFolder) {
-      body.cwd = s.selectedFolder;
+    const initialState = useStore.getState() as Record<string, any>;
+    if (initialState.pendingNewSession !== true) return frozenSessionRefFromState(initialState);
+    const draft = currentPendingSessionDraft();
+    if (!draft) throw new Error('pending session draft identity is missing');
+    const draftId = normalizeSessionId(initialState.pendingDraftId);
+    if (expectedPendingDraftId && draftId !== expectedPendingDraftId) return null;
+
+    const data = await postPendingSessionCreate(draft.body);
+    if (data?.error) throw new Error(data.error);
+    const ref = frozenSessionRefFromCreateResponse(data);
+    if (!ref) throw new Error('session creation returned an incomplete session identity');
+
+    const latestDraft = currentPendingSessionDraft();
+    const latestState = useStore.getState() as Record<string, any>;
+    const stillOwnsPendingView = latestDraft?.key === draft.key
+      && normalizeSessionId(latestState.pendingDraftId) === draftId;
+    if (!stillOwnsPendingView) return ref;
+
+    stageDetachedSessionForActivation(data, ref, latestState);
+    await switchSession(ref.sessionPath);
+    const activated = useStore.getState() as Record<string, any>;
+    if (activated.currentSessionId === ref.sessionId && activated.currentSessionPath === ref.sessionPath) {
+      activated.clearDraft?.(HOME_DRAFT_KEY);
+      activated.clearDraft?.(ref.sessionId);
+      activated.clearDraft?.(ref.sessionPath);
+      useStore.setState({ pendingDraftId: null });
     }
-    if (s.workspaceFolders?.length) {
-      body.workspaceFolders = s.workspaceFolders;
-    }
-    if (s.pendingProjectId) {
-      body.projectId = s.pendingProjectId;
-    }
-    if (s.pendingNewSessionThinkingLevel) {
-      body.thinkingLevel = s.pendingNewSessionThinkingLevel;
-    }
-    if (s.pendingNewSessionPermissionMode) {
-      body.permissionMode = s.pendingNewSessionPermissionMode;
-    }
-    if (s.selectedAgentId && s.selectedAgentId !== s.currentAgentId) {
-      body.agentId = s.selectedAgentId;
-    }
-    body.currentSessionPath = s.currentSessionPath;
-
-    const res = await hanaFetch('/api/sessions/new', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      throwOnHttpError: false,
-    });
-    const data = await res.json();
-    if (data.error) {
-      console.error('[session] create failed:', data.error);
-      showSessionCreationError(data.error);
-      useStore.setState({ pendingProjectId: null });
-      return false;
-    }
-
-    const justSelected = s.selectedFolder;
-    const justSelectedMount = s.selectedWorkspaceMountId;
-
-    // 基础状态更新
-    const patch: Record<string, any> = {
-      pendingNewSession: false,
-      pendingSessionSwitchPath: null,
-      selectedFolder: null,
-      selectedWorkspaceMountId: null,
-      selectedWorkspaceLabel: null,
-      pendingProjectId: null,
-      pendingNewSessionThinkingLevel: null,
-      pendingNewSessionPermissionMode: null,
-      workspaceFolders: Array.isArray(data.workspaceFolders) ? data.workspaceFolders : [],
-      selectedAgentId: null,
-    };
-
-    if (data.agentId) {
-      const switched = data.agentId !== s.currentAgentId;
-      patch.currentAgentId = data.agentId;
-      if (data.agentName) patch.agentName = data.agentName;
-      if (switched) {
-        const ag = s.agents.find((a: any) => a.id === data.agentId);
-        if (ag?.yuan) patch.agentYuan = ag.yuan;
-        patch.agentAvatarUrl = null;
-        window.i18n.defaultName = data.agentName || s.agentName;
-        // 异步刷新头像
-        hanaFetch('/api/health').then((r: Response) => r.json()).then((d: any) => {
-          loadAvatarsAction(d.avatars);
-        }).catch(() => {
-          loadAvatarsAction();
-        });
-      }
-    }
-
-    if (data.path) {
-      Object.assign(patch, currentSessionIdentityPatch(useStore.getState() as Record<string, any>, data.path, data.sessionId));
-      patch.sessionAuthorizedFoldersByPath = {
-        ...putSessionScopedStateValue(
-          useStore.getState() as Record<string, any>,
-          useStore.getState().sessionAuthorizedFoldersByPath || {},
-          data.path,
-          Array.isArray(data.authorizedFolders) ? data.authorizedFolders : [],
-        ),
-      };
-      // 初始化空 session，ChatArea 自动渲染
-      useStore.getState().initSession(data.path, [], false);
-    }
-
-    useStore.setState(patch);
-    if (data.thinkingLevel) {
-      useStore.getState().setThinkingLevel(data.thinkingLevel);
-    }
-
-    await resetDeskForSessionWorkspace({
-      cwd: data.cwd || null,
-      workspaceMountId: data.workspaceMountId || justSelectedMount || null,
-      workspaceLabel: data.workspaceLabel || s.selectedWorkspaceLabel || null,
-    });
-
-    emitSessionPermissionMode(data.permissionMode || data.accessMode || s.pendingNewSessionPermissionMode);
-    // 新会话默认关闭工作模式（避免上一个会话的开启态残留到新会话）。
-    useStore.getState().setSessionWorkMode?.(data.workMode === true);
-
-    await loadSessions();
-
-    // 刷新模型列表：session 创建后 activeModel 已绑定，需要同步到 UI
-    loadModels();
-
-    // 更新 cwdHistory
-    if (justSelected && !justSelectedMount) {
-      const currentState = useStore.getState();
-      let cwdHistory = currentState.cwdHistory.filter((p: string) => p !== justSelected);
-      cwdHistory = [justSelected, ...cwdHistory];
-      if (cwdHistory.length > 10) cwdHistory = cwdHistory.slice(0, 10);
-      useStore.setState({ cwdHistory });
-    }
-
-    return true;
+    return ref;
   } catch (err) {
     console.error('[session] create failed:', err);
     showSessionCreationError(errorMessage(err));
-    return false;
+    return null;
   }
 }
 
@@ -1148,6 +1336,7 @@ export async function restoreSession(target: string | Pick<ArchivedSession, 'pat
     if (restoredSession?.path) {
       await switchSession(restoredSession.path);
     }
+    void hydrateInputDrafts();
     return { status: 'ok', restoredPath, sessionId: restoredSessionId };
   } catch (err) {
     console.error('[archived] restore failed:', err);

@@ -196,6 +196,50 @@ describe('ProviderModelList', () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
+  it('writes OAuth custom models through Provider Catalog instead of the legacy preferences route', async () => {
+    const onRefresh = vi.fn(async () => {});
+    mocks.hanaFetch
+      .mockResolvedValueOnce(jsonResponse({ models: [] }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    render(
+      <ProviderModelList
+        providerId="openai-codex-oauth"
+        summary={{
+          type: 'oauth',
+          auth_type: 'oauth',
+          display_name: 'OpenAI Codex (OAuth)',
+          base_url: 'https://chatgpt.com/backend-api',
+          api: 'openai-codex-responses',
+          api_key: '',
+          models: ['gpt-5.6-sol'],
+          custom_models: [],
+          has_credentials: true,
+          supports_oauth: true,
+          is_coding_plan: false,
+          can_delete: false,
+        }}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.api.addModel' }));
+    const input = await screen.findByPlaceholderText('settings.oauth.customModelPlaceholder');
+    fireEvent.change(input, { target: { value: 'my-codex-model' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/config', expect.objectContaining({
+      method: 'PUT',
+      body: JSON.stringify({
+        providers: {
+          'openai-codex-oauth': { models: ['gpt-5.6-sol', 'my-codex-model'] },
+        },
+      }),
+    })));
+    expect(mocks.hanaFetch.mock.calls.some(([url]) => String(url).includes('/auth/oauth/'))).toBe(false);
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
   it('persists discovered model metadata when enabling a fetched model', async () => {
     const onRefresh = vi.fn(async () => {});
     mocks.hanaFetch
@@ -376,4 +420,67 @@ describe('ProviderModelList', () => {
       });
     });
   });
+
+  it.each(['maxOutput', 'maxTokens', 'maxOutputTokens'] as const)(
+    'reopens the editor with persisted user %s metadata overriding known defaults',
+    async (outputField) => {
+    mocks.hanaFetch.mockResolvedValue(jsonResponse({ models: [] }));
+    mocks.lookupModelMeta.mockReturnValue({
+      name: 'Known GPT',
+      context: 1050000,
+      maxOutput: 128000,
+      image: true,
+      reasoning: true,
+    });
+
+    render(
+      <ProviderModelList
+        providerId="openai"
+        summary={{
+          type: 'api-key',
+          auth_type: 'api-key',
+          display_name: 'OpenAI',
+          base_url: 'https://api.openai.com/v1',
+          api: 'openai-responses',
+          api_key: 'sk-test',
+          models: [{
+            id: 'gpt-5.6-sol',
+            name: 'My Sol Override',
+            contextWindow: 777000,
+            [outputField]: 64000,
+            image: false,
+            reasoning: false,
+          }],
+          custom_models: [],
+          has_credentials: true,
+          supports_oauth: false,
+          can_delete: false,
+        }}
+        onRefresh={vi.fn(async () => {})}
+      />,
+    );
+
+    expect(screen.getByText('777000')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'settings.api.editModel' }));
+
+    expect(screen.getByDisplayValue('My Sol Override')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('777000')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('64000')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'settings.api.vision' })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByRole('switch', { name: 'settings.api.reasoning' })).toHaveAttribute('aria-checked', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.api.save' }));
+    await waitFor(() => {
+      const updateCall = mocks.hanaFetch.mock.calls.find(([url, options]) => (
+        String(url).includes('/api/providers/openai/models/gpt-5.6-sol')
+        && options?.method === 'PUT'
+      ));
+      expect(JSON.parse(String(updateCall?.[1]?.body))).toEqual({
+        name: 'My Sol Override',
+        context: 777000,
+        maxOutput: 64000,
+      });
+    });
+    },
+  );
 });

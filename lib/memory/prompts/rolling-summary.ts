@@ -44,6 +44,9 @@ ${roster || "(No other agents)"}
 
 ${buildRollingSummaryFormatRequirements(locale)}
 
+## Timeline Requirements
+In the ${timelineTitle} section, record what happened in this session in chronological order. Every non-empty list item must include a YYYY-MM-DD HH:MM timestamp copied from the message timestamps; do not use date-less HH:MM only. Work-related content may only be kept at the broad-theme level.
+
 Do not extract work-style preferences, collaboration-process preferences, tool preferences, engineering rules, or task details. When in doubt, skip. Better miss than mis-record.`,
     };
   }
@@ -95,7 +98,7 @@ ${buildRollingSummaryFormatRequirements(locale)}
 - 拿不准一律不抽。宁可漏，不可错。
 
 **${timelineTitle}一节**
-按时间顺序记录本 session 发生了什么，带 YYYY-MM-DD HH:MM 时间标注，抓重点脉络。工作相关内容只允许保留到大主题层级。
+按时间顺序记录本 session 发生了什么，每个非空条目都必须从消息时间戳提取 YYYY-MM-DD HH:MM 时间标注，不要只写 HH:MM。工作相关内容只允许保留到大主题层级。
 
 ## 规则
 1. 有已有摘要时：新旧内容合并，同一件事以新信息为准，不要重复

@@ -52,7 +52,7 @@ describe('MarkdownChrome chapter rail layout', () => {
 
     const nav = screen.getByRole('navigation', { name: 'Markdown sections' });
     expect(nav.className).toContain('timelineNav');
-    expect(nav.className).toContain('timelineNavLeft');
+    expect(nav.className).toContain('timelineNavRight');
     expect(nav.className).toContain('timelineNavVisible');
     expect(screen.getByRole('button', { name: 'Jump to A' }).querySelector('[class*="timelineLine"]')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Jump to A much longer heading for marker width' }).className).toContain('timelineMarkerActive');

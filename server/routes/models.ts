@@ -219,7 +219,7 @@ export function createModelsRoute(engine) {
       if (modelRef.error) return c.json({ error: modelRef.error }, 400);
 
       // 统一凭证解析（找模型 + 拿凭证一步到位）
-      const resolved = engine.resolveModelWithCredentials(modelRef);
+      const resolved = await engine.resolveModelWithCredentialsFresh(modelRef);
 
       // Codex Responses API 无法简单探测
       if (resolved.api === "openai-codex-responses") {

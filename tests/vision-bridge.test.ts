@@ -80,6 +80,21 @@ describe("VisionBridge", () => {
     fs.rmSync(tmpSessionRoot, { recursive: true, force: true });
   });
 
+  it("awaits fresh vision credentials before any analysis request", async () => {
+    const callText = vi.fn();
+    const { bridge } = makeBridge(callText, async () => {
+      throw new Error("oauth refresh failed");
+    });
+
+    await expect(bridge.prepare({
+      sessionPath: "/tmp/session.jsonl",
+      targetModel: { id: "text-only", provider: "test", input: ["text"] },
+      text: "what is this?",
+      images: [image],
+    })).rejects.toThrow("oauth refresh failed");
+    expect(callText).not.toHaveBeenCalled();
+  });
+
   it("analyzes text-only model images and registers notes by attachment path", async () => {
     const { bridge, callText } = makeBridge();
 

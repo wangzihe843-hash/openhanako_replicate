@@ -1,0 +1,70 @@
+name: Mirror Release to AtomGit
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Mirror selection
+        type: choice
+        options:
+          - newest
+          - stable
+          - tag
+        default: newest
+      tag:
+        description: Tag to mirror when mode=tag, for example v0.425.4
+        required: false
+        type: string
+      limit:
+        description: Number of releases to mirror when mode=newest or mode=stable
+        required: true
+        default: "1"
+        type: string
+      dry_run:
+        description: Show what would be mirrored without uploading to AtomGit
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.15.0"
+
+      - name: Mirror release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+          ATOMGIT_OWNER: liliMozi
+          ATOMGIT_REPO: OpenHanako-Releases
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ARGS=()
+          if [ "${{ inputs.mode }}" = "tag" ]; then
+            if [ -z "${{ inputs.tag }}" ]; then
+              echo "::error::tag is required when mode=tag"
+              exit 1
+            fi
+            ARGS+=(--tag "${{ inputs.tag }}")
+          elif [ "${{ inputs.mode }}" = "stable" ]; then
+            ARGS+=(--stable "${{ inputs.limit }}")
+          else
+            ARGS+=(--newest "${{ inputs.limit }}")
+          fi
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+
+          node scripts/mirror-release-to-atomgit.mjs "${ARGS[@]}"

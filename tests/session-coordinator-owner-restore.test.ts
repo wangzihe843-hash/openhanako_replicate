@@ -157,6 +157,7 @@ describe("SessionCoordinator ensureSessionLoaded owner restore", () => {
       getActiveAgentId: () => "focus",
       getModels: () => ({
         currentModel: { id: "focus-model", provider: "test" },
+        availableModels: [{ id: "restored-model", provider: "test" }],
         authStorage: {},
         modelRegistry: {},
         resolveThinkingLevel: () => "medium",
@@ -249,6 +250,7 @@ describe("SessionCoordinator ensureSessionLoaded owner restore", () => {
       getActiveAgentId: () => "focus",
       getModels: () => ({
         currentModel: { id: "focus-model", provider: "test" },
+        availableModels: [{ id: "restored-model", provider: "test" }],
         authStorage: {},
         modelRegistry: {},
         resolveThinkingLevel: () => "medium",

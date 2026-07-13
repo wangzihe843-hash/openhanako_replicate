@@ -48,7 +48,14 @@ ${safeVars}
 
 /* Reset */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html { background: var(--bg-card, #FBF7EE); color: var(--text, #2A2622); }
+html {
+  background: var(--bg-card, #FBF7EE);
+  color: var(--text, #2A2622);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar { width: 0; height: 0; }
 body { padding: 12px 16px; font-family: var(--font-serif); font-size: 14px; line-height: 1.65; }
 
 /* Typography (§4) */

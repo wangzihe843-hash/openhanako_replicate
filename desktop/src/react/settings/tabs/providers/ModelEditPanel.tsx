@@ -3,21 +3,46 @@ import { useSettingsStore } from '../../store';
 import { t, lookupModelMeta, CONTEXT_PRESETS, OUTPUT_PRESETS } from '../../helpers';
 import { hanaFetch } from '../../api';
 import { ComboInput } from '../../widgets/ComboInput';
-import { Toggle } from '../../widgets/Toggle';
+import { Toggle } from '@/ui';
 import styles from '../../Settings.module.css';
 
-export function ModelEditPanel({ modelId, providerId, anchorEl, onClose, onRefresh }: {
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function firstNumber(meta: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = finiteNumber(meta[key]);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+export function ModelEditPanel({ modelId, providerId, modelMeta, anchorEl, onClose, onRefresh }: {
   modelId: string;
   providerId: string;
+  modelMeta?: Record<string, unknown>;
   anchorEl: HTMLElement | null;
   onClose: () => void;
   onRefresh?: () => Promise<void>;
 }) {
   const showToast = useSettingsStore(s => s.showToast);
-  const meta = lookupModelMeta(modelId, providerId) || {};
+  const knownMeta: Record<string, any> = lookupModelMeta(modelId, providerId) || {};
+  const userMeta: Record<string, unknown> = modelMeta || {};
+  const meta: Record<string, any> = {
+    ...knownMeta,
+    ...userMeta,
+  };
+  // Resolve aliases inside each ownership layer before falling through to the
+  // known catalog. Otherwise known `context`/`maxOutput` can mask a persisted
+  // user `contextWindow`/`maxTokens` value after the objects are merged.
+  const initialContext = firstNumber(userMeta, ['context', 'contextWindow'])
+    ?? firstNumber(knownMeta, ['context', 'contextWindow']);
+  const initialMaxOutput = firstNumber(userMeta, ['maxOutput', 'maxTokens', 'maxOutputTokens'])
+    ?? firstNumber(knownMeta, ['maxOutput', 'maxTokens', 'maxOutputTokens']);
   const [displayName, setDisplayName] = useState(meta.displayName || meta.name || '');
-  const [ctxVal, setCtxVal] = useState(String(meta.context || ''));
-  const [outVal, setOutVal] = useState(String(meta.maxOutput || ''));
+  const [ctxVal, setCtxVal] = useState(String(initialContext ?? ''));
+  const [outVal, setOutVal] = useState(String(initialMaxOutput ?? ''));
   // image 字段对应 Pi SDK Model.input 里是否包含 "image"。
   // 兼容读旧 meta.vision（未迁移到新字段的历史配置）；迁移 #7 之后此 fallback 恒不命中。
   const initialImage = meta.image === true || (meta.image === undefined && meta.vision === true);

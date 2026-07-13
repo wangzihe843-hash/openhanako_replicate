@@ -32,11 +32,23 @@ export const openaiCodexOAuthPlugin = {
   defaultBaseUrl: "https://chatgpt.com/backend-api",
   defaultApi: "openai-codex-responses",
   authJsonKey: "openai-codex",
+  // Hana owns the Codex model catalog. A missing Provider Catalog `models`
+  // field uses this list; an explicit [] remains an intentional opt-out.
+  models: [
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.2",
+  ],
   capabilities: {
     chat: {
       runtimeProviderId: "openai-codex",
       displayProviderId: "openai-codex",
-      projection: "sdk-auth-alias",
+      projection: "models-json",
+      credentialSource: "auth-storage",
       allowListSource: "provider.models",
     },
     media: {

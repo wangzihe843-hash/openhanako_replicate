@@ -1,9 +1,9 @@
 /**
- * rolling-summary-format.ts — rolling summary ⇄ compileFacts 的格式契约单一源头 (#1628)
+ * rolling-summary-format.ts — rolling summary ⇄ compileEditableFacts 的格式契约单一源头 (#1628)
  *
  * 契约内容：
  *   - 摘要必须包含 重要事实 / Key Facts 与 事情经过 / Timeline 两个标题段，
- *     facts 段必须能被 compileFacts 的标题段提取规则切出来；
+ *     facts 段必须能被 compileEditableFacts 的标题段提取规则切出来；
  *   - prompt 端的输出格式要求（buildRollingSummaryFormatRequirements）、
  *     写入前结构校验（validateRollingSummaryFormat）、格式修复指令
  *     （buildRollingSummaryRepairPrompt / buildRollingSummaryRepairInput）、
@@ -13,17 +13,17 @@
  *   - lib/memory/session-summary.ts（legacy utility 产出路径）
  *   - lib/memory/memory-reflection-runner.ts（cache snapshot reflection 产出路径）
  *   - lib/memory/memory-ticker.ts（write 模式落盘前的最终守门）
- *   - lib/memory/compile.ts（compileFacts 消费侧提取）
+ *   - lib/memory/compile.ts（compileEditableFacts 消费侧提取）
  *   - lib/memory/prompts/rolling-summary.ts（prompt 模板）
  *
  * 禁止任何调用方再各自维护一份标题名、提取规则或输出格式文案。
  *
  * 注意校验比 prompt 要求宽松是有意的：prompt 要求规范的两个三级标题，
- * 校验只拦截会破坏 compileFacts 提取假设的结构（标题缺失、facts 段空体、
+ * 校验只拦截会破坏 compileEditableFacts 提取假设的结构（标题缺失、facts 段空体、
  * facts 段无法收尾），任意标题层级（含旧 H2 摘要）都接受。
  */
 
-/** compileFacts 提取 facts 段时接受的标题（任意 1-6 级，大小写不敏感）。约定 [0] 中文、[1] 英文 */
+/** compileEditableFacts 提取 facts 段时接受的标题（任意 1-6 级，大小写不敏感）。约定 [0] 中文、[1] 英文 */
 export const FACT_SECTION_TITLES = ["重要事实", "Key Facts"];
 
 /** 事情经过段标题，用于界定 facts 段结束位置。约定 [0] 中文、[1] 英文 */
@@ -151,7 +151,7 @@ function normalizeHeadingTitle(title) {
 
 /**
  * 提取 markdown 中第一个命中标题段的正文（到下一个同级或更高级标题为止）。
- * 这是 compileFacts 的提取规则本体：标题任意层级、大小写不敏感。
+ * 这是 compileEditableFacts 的提取规则本体：标题任意层级、大小写不敏感。
  * @param {string} markdown
  * @param {string[]} titles
  * @returns {string}
@@ -233,10 +233,10 @@ function findHeading(lines, titles) {
 }
 
 /**
- * 写入前结构校验：摘要是否满足 compileFacts 的提取假设。
+ * 写入前结构校验：摘要是否满足 compileEditableFacts 的提取假设。
  *
  * 拦截四类破坏提取的结构问题：
- *   1. 缺 facts 段标题（compileFacts 抽不到任何内容）
+ *   1. 缺 facts 段标题（compileEditableFacts 抽不到任何内容）
  *   2. 缺 timeline 段标题（facts 段无法和叙事内容区分）
  *   3. timeline 标题比 facts 标题层级更深且在其后（facts 段收不了尾，
  *      叙事内容会整段灌进 facts）

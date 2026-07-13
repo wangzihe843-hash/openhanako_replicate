@@ -6,6 +6,7 @@ import path from "path";
 
 const clearConfigCache = vi.fn();
 const callText = vi.fn();
+const probeProvider = vi.fn();
 
 vi.mock("../lib/memory/config-loader.js", () => ({
   clearConfigCache,
@@ -14,6 +15,11 @@ vi.mock("../lib/memory/config-loader.js", () => ({
 
 vi.mock("../core/llm-client.js", () => ({
   callText,
+}));
+
+vi.mock("../lib/llm/provider-client.js", async (importOriginal) => ({
+  ...(await importOriginal() as Record<string, unknown>),
+  probeProvider,
 }));
 
 function expectAppEvent(emitEvent, type, payload) {
@@ -35,6 +41,7 @@ function withResolveCreds(engine) {
     if (cred) return { api_key: cred.apiKey || "", base_url: cred.baseUrl || "", api: cred.api || "", headers: cred.headers || {} };
     return { api_key: "", base_url: "", api: "" };
   };
+  engine.resolveProviderCredentialsFresh ||= vi.fn(async (provider) => engine.resolveProviderCredentials(provider));
   return engine;
 }
 
@@ -616,7 +623,7 @@ describe("model sync related routes", () => {
       availableModels: [],
       currentModel: null,
       config: {},
-      resolveModelWithCredentials: vi.fn(() => resolved),
+      resolveModelWithCredentialsFresh: vi.fn(async () => resolved),
     };
     callText.mockResolvedValue("ok");
 
@@ -633,7 +640,7 @@ describe("model sync related routes", () => {
 
     expect(healthRes.status).toBe(200);
     expect(healthData).toMatchObject({ ok: true, provider: "deepseek" });
-    expect(engine.resolveModelWithCredentials).toHaveBeenCalledWith({
+    expect(engine.resolveModelWithCredentialsFresh).toHaveBeenCalledWith({
       id: "deepseek-v4-flash",
       provider: "deepseek",
     });
@@ -666,7 +673,7 @@ describe("model sync related routes", () => {
       availableModels: [],
       currentModel: null,
       config: {},
-      resolveModelWithCredentials: vi.fn(() => resolved),
+      resolveModelWithCredentialsFresh: vi.fn(async () => resolved),
     };
     callText.mockRejectedValue(new AppError("LLM_EMPTY_RESPONSE", {
       message: "模型未回复正文，请检查思考内容或稍后重试。",
@@ -831,6 +838,138 @@ describe("model sync related routes", () => {
     expect(engine.emitEvent).toHaveBeenCalledTimes(1);
   });
 
+  it("provider model update returns a declared 400 validation error", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.ts");
+    const app = new Hono();
+    const validationError = Object.assign(new Error("Invalid thinkingLevelMap for model"), {
+      statusCode: 400,
+      code: "INVALID_PROVIDER_MODEL_METADATA",
+    });
+    const engine = {
+      providerRegistry: {
+        updateModelEntry: vi.fn(() => { throw validationError; }),
+      },
+      hanakoHome: "/tmp",
+    };
+
+    app.route("/api", createProvidersRoute(engine));
+    const res = await app.request("/api/providers/openai/models/gpt-5.6-sol", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thinkingLevelMap: { ultra: "max" } }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid thinkingLevelMap for model" });
+  });
+
+  it("provider connection test resolves fresh credentials before probing", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.ts");
+    const app = new Hono();
+    probeProvider.mockResolvedValue({ ok: true });
+    const resolveProviderCredentialsFresh = vi.fn(async () => ({
+      api_key: "fresh-token",
+      base_url: "https://fresh.example/v1",
+      api: "openai-completions",
+      headers: {},
+    }));
+    const resolveProviderCredentials = vi.fn(() => ({
+      api_key: "stale-token",
+      base_url: "https://stale.example/v1",
+      api: "openai-completions",
+      headers: { Authorization: "Bearer stale-header" },
+    }));
+    const engine = {
+      resolveProviderCredentialsFresh,
+      resolveProviderCredentials,
+      providerRegistry: {
+        get: vi.fn(() => ({ baseUrl: "https://stale.example/v1", api: "openai-completions" })),
+        isOAuth: vi.fn(() => true),
+      },
+      hanakoHome: "/tmp",
+    };
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "oauth-provider" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(resolveProviderCredentialsFresh).toHaveBeenCalledWith("oauth-provider");
+    expect(resolveProviderCredentials).not.toHaveBeenCalled();
+    expect(probeProvider).toHaveBeenCalledWith({
+      baseUrl: "https://fresh.example/v1",
+      api: "openai-completions",
+      apiKey: "fresh-token",
+      headers: {},
+    });
+  });
+
+  it("provider connection test treats explicit body headers as the only credentials", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.ts");
+    const app = new Hono();
+    probeProvider.mockResolvedValue({ ok: true });
+    const resolveProviderCredentialsFresh = vi.fn();
+    const resolveProviderCredentials = vi.fn(() => ({
+      api_key: "stale-token",
+      headers: { Cookie: "session=stale" },
+    }));
+    const engine = {
+      resolveProviderCredentialsFresh,
+      resolveProviderCredentials,
+      providerRegistry: {
+        get: vi.fn(() => ({ baseUrl: "https://entry.example/v1", api: "openai-completions" })),
+        isOAuth: vi.fn(() => true),
+      },
+      hanakoHome: "/tmp",
+    };
+    app.route("/api", createProvidersRoute(engine));
+
+    await app.request("/api/providers/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "oauth-provider",
+        headers: { Authorization: "Bearer explicit-header-token" },
+      }),
+    });
+
+    expect(resolveProviderCredentialsFresh).not.toHaveBeenCalled();
+    expect(resolveProviderCredentials).not.toHaveBeenCalled();
+    expect(probeProvider).toHaveBeenCalledWith({
+      baseUrl: "https://entry.example/v1",
+      api: "openai-completions",
+      apiKey: "",
+      headers: { Authorization: "Bearer explicit-header-token" },
+    });
+    expect(JSON.stringify(probeProvider.mock.calls[0][0])).not.toContain("stale");
+  });
+
+  it("provider connection test never probes after fresh credential resolution fails", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.ts");
+    const app = new Hono();
+    const engine = {
+      resolveProviderCredentialsFresh: vi.fn(async () => { throw new Error("refresh failed"); }),
+      providerRegistry: {
+        get: vi.fn(() => ({ baseUrl: "https://entry.example/v1", api: "openai-completions" })),
+        isOAuth: vi.fn(() => true),
+      },
+      hanakoHome: "/tmp",
+    };
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "oauth-provider" }),
+    });
+
+    expect(await res.json()).toMatchObject({ ok: false, error: "refresh failed" });
+    expect(probeProvider).not.toHaveBeenCalled();
+  });
+
   it("providers summary treats no-auth providers as credential-ready without api_key", async () => {
     const { createProvidersRoute } = await import("../server/routes/providers.ts");
     const app = new Hono();
@@ -879,6 +1018,48 @@ describe("model sync related routes", () => {
       "ollama",
       "http://192.168.1.20:11434/v1",
     );
+  });
+
+  it("providers summary exposes invalid models config while runtime models stay disabled", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.ts");
+    const app = new Hono();
+    const engine = {
+      providerRegistry: {
+        getAllProvidersRaw: vi.fn(() => ({
+          "openai-codex-oauth": { _config_error: "invalid_models_config" },
+        })),
+        get: vi.fn(() => ({
+          authType: "oauth",
+          baseUrl: "https://chatgpt.com/backend-api",
+          api: "openai-codex-responses",
+          displayName: "OpenAI Codex (OAuth)",
+        })),
+        isOAuth: vi.fn(() => true),
+        getAuthType: vi.fn(() => "oauth"),
+        getAuthJsonKey: vi.fn(() => "openai-codex"),
+        getChatModelEntries: vi.fn(() => []),
+        getOAuthProviderIds: vi.fn(() => ["openai-codex-oauth"]),
+        getAll: vi.fn(() => new Map()),
+      },
+      authStorage: {
+        getOAuthProviders: () => [{ id: "openai-codex", name: "OpenAI Codex" }],
+        get: () => ({ type: "oauth" }),
+      },
+      preferences: { getOAuthCustomModels: () => ({}) },
+      hanakoHome: "/tmp",
+    };
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/summary");
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.providers["openai-codex-oauth"]).toMatchObject({
+      config_status: "invalid",
+      config_error: "invalid_models_config",
+      models: [],
+      missing_fields: ["models"],
+    });
   });
 
   it("providers summary distinguishes configured providers from registry-only setup entries", async () => {
@@ -970,6 +1151,184 @@ describe("model sync related routes", () => {
     const data = await res.json();
     expect(data.source).toBe("builtin");
     expect(data.models.map(m => m.id)).toContain("gpt-5.4");
+  });
+
+  it("legacy sdk-auth-alias discovery stays on the Pi runtime catalog without probing remotely", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.ts");
+    const app = new Hono();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const resolveProviderCredentialsFresh = vi.fn();
+    const engine = {
+      resolveProviderCredentialsFresh,
+      getRegistryModelsForProvider: vi.fn(() => [{
+        id: "legacy-runtime-model",
+        name: "Legacy Runtime Model",
+        provider: "legacy-runtime",
+        contextWindow: 128000,
+        maxTokens: 16000,
+      }]),
+      providerRegistry: {
+        resolveChatProvider: () => ({
+          sourceProviderId: "legacy-oauth",
+          projection: "sdk-auth-alias",
+          credentialSource: "auth-storage",
+        }),
+        getAuthJsonKey: () => "legacy-runtime",
+        getDefaultModels: () => [],
+      },
+      hanakoHome: "/tmp",
+    };
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "legacy-oauth" }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data).toMatchObject({
+      source: "registry",
+      models: [expect.objectContaining({ id: "legacy-runtime-model", maxOutput: 16000 })],
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(resolveProviderCredentialsFresh).not.toHaveBeenCalled();
+  });
+
+  it("fetch-models resolves fresh saved credentials before a remote catalog request", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.ts");
+    const app = new Hono();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ id: "fresh-model" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const resolveProviderCredentialsFresh = vi.fn(async () => ({
+      api_key: "fresh-token",
+      base_url: "https://fresh.example/v1",
+      api: "openai-completions",
+      headers: { "X-Fresh": "yes" },
+    }));
+    const resolveProviderCredentials = vi.fn(() => ({
+      api_key: "stale-token",
+      base_url: "https://stale.example/v1",
+      api: "openai-completions",
+      headers: { Cookie: "stale=yes" },
+    }));
+    const engine = {
+      resolveProviderCredentialsFresh,
+      resolveProviderCredentials,
+      getRegistryModelsForProvider: vi.fn(() => []),
+      providerRegistry: {
+        resolveChatProvider: () => ({
+          sourceProviderId: "remote-provider",
+          projection: "models-json",
+          credentialSource: "provider-catalog",
+        }),
+        getAuthJsonKey: (id) => id,
+        getDefaultModels: () => [],
+      },
+      hanakoHome: "/tmp",
+    };
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "remote-provider" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(resolveProviderCredentialsFresh).toHaveBeenCalledWith("remote-provider");
+    expect(resolveProviderCredentials).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith("https://fresh.example/v1/models", expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: "Bearer fresh-token",
+        "X-Fresh": "yes",
+      }),
+    }));
+    expect(JSON.stringify(fetchMock.mock.calls[0])).not.toContain("stale");
+  });
+
+  it("fetch-models treats explicit body headers as authoritative and never mixes saved secrets", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.ts");
+    const app = new Hono();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ id: "explicit-model" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const resolveProviderCredentialsFresh = vi.fn();
+    const resolveProviderCredentials = vi.fn(() => ({
+      api_key: "stale-token",
+      headers: { Cookie: "stale=yes" },
+    }));
+    const engine = {
+      resolveProviderCredentialsFresh,
+      resolveProviderCredentials,
+      getRegistryModelsForProvider: vi.fn(() => []),
+      providerRegistry: {
+        resolveChatProvider: () => ({
+          sourceProviderId: "explicit-provider",
+          projection: "models-json",
+          credentialSource: "provider-catalog",
+        }),
+        get: () => ({ baseUrl: "https://explicit.example/v1", api: "openai-completions" }),
+        getAuthJsonKey: (id) => id,
+        getDefaultModels: () => [],
+      },
+      hanakoHome: "/tmp",
+    };
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "explicit-provider",
+        headers: { Authorization: "Bearer explicit-header" },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(resolveProviderCredentialsFresh).not.toHaveBeenCalled();
+    expect(resolveProviderCredentials).not.toHaveBeenCalled();
+    const requestHeaders = fetchMock.mock.calls[0][1].headers;
+    expect(requestHeaders).toMatchObject({ Authorization: "Bearer explicit-header" });
+    expect(JSON.stringify(requestHeaders)).not.toContain("stale");
+  });
+
+  it("fetch-models never probes after fresh credential resolution fails", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.ts");
+    const app = new Hono();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const engine = {
+      resolveProviderCredentialsFresh: vi.fn(async () => { throw new Error("fresh fetch failed"); }),
+      getRegistryModelsForProvider: vi.fn(() => []),
+      providerRegistry: {
+        resolveChatProvider: () => ({
+          sourceProviderId: "broken-provider",
+          projection: "models-json",
+          credentialSource: "provider-catalog",
+        }),
+      },
+      hanakoHome: "/tmp",
+    };
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "broken-provider" }),
+    });
+
+    expect(await res.json()).toMatchObject({ error: "fresh fetch failed", models: [] });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("provider with explicit api_key uses remote catalog", async () => {
@@ -1250,6 +1609,14 @@ describe("model sync related routes", () => {
         getCredentials: () => ({ apiKey: "oauth-token", baseUrl: "https://chatgpt.com/backend-api", api: "openai-codex-responses" }),
         getAuthJsonKey: () => "openai-codex",
         getDefaultModels: () => [],
+        isOAuth: () => true,
+        resolveChatProvider: () => ({
+          sourceProviderId: "openai-codex-oauth",
+          projection: "models-json",
+          credentialSource: "auth-storage",
+          entry: { id: "openai-codex-oauth", baseUrl: "https://chatgpt.com/backend-api" },
+        }),
+        getChatDiscoverableModelEntries: () => [{ id: "gpt-5.4", name: "GPT-5.4", contextWindow: 272000, maxOutputTokens: 96000 }],
       },
       hanakoHome: "/tmp",
     });
@@ -1265,11 +1632,13 @@ describe("model sync related routes", () => {
     expect(res.status).toBe(200);
     expect(fetchMock).not.toHaveBeenCalled();
     const data = await res.json();
-    expect(data.source).toBe("registry");
+    expect(data.source).toBe("hana-catalog");
     expect(data.models[0].id).toBe("gpt-5.4");
+    expect(data.models[0]).toMatchObject({ context: 272000, maxOutput: 96000 });
+    expect(engine.getRegistryModelsForProvider).not.toHaveBeenCalled();
   });
 
-  it("codex oauth model discovery reports an explicit empty-catalog error without remote fallback", async () => {
+  it("codex oauth discovery still exposes Hana defaults when the runtime allowlist is explicitly empty", async () => {
     const { createProvidersRoute } = await import("../server/routes/providers.ts");
     const app = new Hono();
     const fetchMock = vi.fn();
@@ -1281,6 +1650,14 @@ describe("model sync related routes", () => {
         getCredentials: () => ({ apiKey: "oauth-token", baseUrl: "https://chatgpt.com/backend-api", api: "openai-codex-responses" }),
         getAuthJsonKey: () => "openai-codex",
         getDefaultModels: () => [],
+        isOAuth: () => true,
+        resolveChatProvider: () => ({
+          sourceProviderId: "openai-codex-oauth",
+          projection: "models-json",
+          credentialSource: "auth-storage",
+          entry: { id: "openai-codex-oauth", baseUrl: "https://chatgpt.com/backend-api" },
+        }),
+        getChatDiscoverableModelEntries: () => ["gpt-5.6-sol"],
       },
       hanakoHome: "/tmp",
     });
@@ -1296,8 +1673,8 @@ describe("model sync related routes", () => {
     expect(res.status).toBe(200);
     expect(fetchMock).not.toHaveBeenCalled();
     const data = await res.json();
-    expect(data.error).toContain("No models found");
-    expect(data.models).toEqual([]);
+    expect(data.source).toBe("hana-catalog");
+    expect(data.models.map((model) => model.id)).toContain("gpt-5.6-sol");
   });
 
   it("remote 404 falls back to registry for ordinary remote catalogs", async () => {
@@ -1307,7 +1684,7 @@ describe("model sync related routes", () => {
 
     const engine = withResolveCreds({
       getRegistryModelsForProvider: vi.fn().mockReturnValue([
-        { id: "custom-chat", name: "Custom Chat", provider: "custom-provider", contextWindow: 128000, maxOutputTokens: 8192 },
+        { id: "custom-chat", name: "Custom Chat", provider: "custom-provider", contextWindow: 128000, maxTokens: 8192 },
       ]),
       providerRegistry: {
         getCredentials: () => ({ apiKey: "sk-test", baseUrl: "https://api.example.com/v1", api: "openai-completions" }),
@@ -1329,6 +1706,7 @@ describe("model sync related routes", () => {
     const data = await res.json();
     expect(data.source).toBe("registry");
     expect(data.models[0].id).toBe("custom-chat");
+    expect(data.models[0].maxOutput).toBe(8192);
   });
 
   it("remote 401 returns error without fallback", async () => {
@@ -1699,6 +2077,7 @@ describe("model sync related routes", () => {
       getRegistryModelsForProvider: vi.fn().mockReturnValue([]),
       providerRegistry: {
         getCredentials: () => ({ apiKey: "saved-key", baseUrl: "https://api.example.com/v1", api: "openai-completions" }),
+        get: () => ({ baseUrl: "https://api.example.com/v1", api: "openai-completions" }),
         getAuthJsonKey: (id) => id,
         getDefaultModels: () => [],
       },

@@ -13,8 +13,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-md);
-  padding: 48px var(--space-lg) var(--space-md);
+  gap: var(--space-16);
+  padding: 48px var(--space-24) var(--space-16);
   border-bottom: 1px solid var(--overlay-light);
 }
 
@@ -66,7 +66,7 @@
 
 .tabs {
   min-height: 0;
-  padding: var(--space-md) var(--space-sm);
+  padding: var(--space-16) var(--space-8);
   border-right: 1px solid var(--overlay-light);
   overflow-y: auto;
 }
@@ -103,7 +103,7 @@
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-xl);
+  padding: var(--space-32);
 }
 
 .panelInner {
@@ -111,13 +111,13 @@
 }
 
 .panelTitle {
-  margin: 0 0 var(--space-xs);
+  margin: 0 0 var(--space-4);
   font-size: 1.35rem;
   font-weight: 650;
 }
 
 .panelDescription {
-  margin: 0 0 var(--space-lg);
+  margin: 0 0 var(--space-24);
   color: var(--text-muted);
   line-height: 1.65;
 }
@@ -125,14 +125,14 @@
 .placeholderGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .placeholderItem {
   min-height: 88px;
   display: flex;
   align-items: center;
-  padding: var(--space-md);
+  padding: var(--space-16);
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-card, var(--overlay-subtle));
@@ -143,7 +143,7 @@
 .secretSpaceStack {
   display: flex;
   flex-direction: column;
-  gap: var(--space-lg);
+  gap: var(--space-24);
 }
 
 .secretSpaceSection {
@@ -151,7 +151,7 @@
 }
 
 .secretSpaceSectionTitle {
-  margin: 0 0 var(--space-sm);
+  margin: 0 0 var(--space-8);
   font-size: 1.05rem;
   font-weight: 650;
   color: var(--text);
@@ -159,7 +159,7 @@
 
 .secretSpacePlaceholder {
   margin: 0;
-  padding: var(--space-md);
+  padding: var(--space-16);
   border: 1px dashed var(--overlay-light);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
@@ -182,7 +182,7 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--space-4);
 }
 
 .secretSpaceRecordItem {
@@ -190,8 +190,8 @@
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-md);
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-16);
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-card, var(--overlay-subtle));
@@ -210,13 +210,13 @@
 }
 
 .secretSpaceHome {
-  margin-top: var(--space-sm);
+  margin-top: var(--space-8);
 }
 
 .secretSpaceHomeGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .secretSpaceHomeCard {
@@ -225,7 +225,7 @@
   align-items: flex-start;
   gap: 6px;
   min-height: 88px;
-  padding: var(--space-md);
+  padding: var(--space-16);
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-card, var(--overlay-subtle));
@@ -261,15 +261,15 @@
 .secretSpaceCategory {
   display: flex;
   flex-direction: column;
-  gap: var(--space-lg);
-  margin-top: var(--space-sm);
+  gap: var(--space-24);
+  margin-top: var(--space-8);
 }
 
 .secretSpaceCategoryHeader {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-md);
+  gap: var(--space-16);
 }
 
 .secretSpaceBackButton {
@@ -297,7 +297,7 @@
 }
 
 .secretSpaceCategoryTitle {
-  margin: 0 0 var(--space-xs);
+  margin: 0 0 var(--space-4);
   font-size: 1.1rem;
   font-weight: 650;
   color: var(--text);
@@ -320,7 +320,7 @@
 
 .secretSpaceEmptyState {
   margin: 0;
-  padding: var(--space-lg);
+  padding: var(--space-24);
   border: 1px dashed var(--overlay-light);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
@@ -332,7 +332,7 @@
 .secretSpaceRecordStack {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--space-4);
 }
 
 .secretSpaceRecordCard {
@@ -340,8 +340,8 @@
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-md);
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-16);
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-card, var(--overlay-subtle));
@@ -359,8 +359,8 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-md);
-  margin-bottom: var(--space-lg);
+  gap: var(--space-16);
+  margin-bottom: var(--space-24);
 }
 
 .roleCount {
@@ -376,15 +376,15 @@
 .roleGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--space-md);
+  gap: var(--space-16);
 }
 
 .roleCard {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr);
-  gap: var(--space-md);
+  gap: var(--space-16);
   min-height: 184px;
-  padding: var(--space-md);
+  padding: var(--space-16);
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-card, var(--overlay-subtle));
@@ -426,14 +426,14 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .roleHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .roleTitleBlock {
@@ -527,7 +527,7 @@
 }
 
 .detailSection {
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-16);
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-card, var(--overlay-subtle));
@@ -535,15 +535,15 @@
 
 .detailSectionTitle {
   margin: 0;
-  padding: var(--space-md) var(--space-md) 0;
+  padding: var(--space-16) var(--space-16) 0;
   font-size: 0.95rem;
   font-weight: 650;
 }
 
 .profileForm {
   display: grid;
-  gap: var(--space-sm);
-  padding: var(--space-md);
+  gap: var(--space-8);
+  padding: var(--space-16);
 }
 
 .profileField {
@@ -597,7 +597,7 @@
 
 /* OpenHanako 显示名同步 — 轻量一行设置项 */
 .syncNameSetting {
-  margin: var(--space-xs) 0 var(--space-sm);
+  margin: var(--space-4) 0 var(--space-8);
   padding: 6px 0 4px;
   border-top: 1px solid var(--overlay-light);
   background: transparent;
@@ -634,8 +634,8 @@
 
 .extractBox {
   display: grid;
-  gap: var(--space-sm);
-  padding: var(--space-sm);
+  gap: var(--space-8);
+  padding: var(--space-8);
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-elevated, var(--overlay-subtle));
@@ -655,8 +655,8 @@
 .backgroundPicker {
   display: grid;
   grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
-  gap: var(--space-md);
-  padding: var(--space-md);
+  gap: var(--space-16);
+  padding: var(--space-16);
 }
 
 .backgroundPreview {
@@ -686,7 +686,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-sm);
+  padding: var(--space-8);
   color: var(--text-muted);
   font-size: 0.78rem;
   text-align: center;
@@ -697,7 +697,7 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .backgroundPickerBody h4 {
@@ -720,7 +720,7 @@
 }
 
 .chatBackgroundPreview {
-  padding: var(--space-md);
+  padding: var(--space-16);
 }
 
 .chatBackgroundSurface {
@@ -751,7 +751,7 @@
   flex-direction: column;
   justify-content: flex-end;
   gap: 10px;
-  padding: var(--space-md);
+  padding: var(--space-16);
 }
 
 .previewBubbleLeft,
@@ -780,8 +780,8 @@
 .detailRow {
   display: grid;
   grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
-  gap: var(--space-md);
-  padding: 11px var(--space-md);
+  gap: var(--space-16);
+  padding: 11px var(--space-16);
   border-bottom: 1px solid var(--overlay-light);
 }
 
@@ -806,8 +806,8 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-md);
-  padding: 0 var(--space-md) var(--space-sm);
+  gap: var(--space-16);
+  padding: 0 var(--space-16) var(--space-8);
 }
 
 .relationshipStateHeader .detailSectionTitle {
@@ -824,8 +824,8 @@
 
 .relationshipStateBody {
   display: grid;
-  gap: var(--space-sm);
-  padding: 0 var(--space-md) var(--space-md);
+  gap: var(--space-8);
+  padding: 0 var(--space-16) var(--space-16);
 }
 
 /* "关系" 章节小标题（通过伪元素注入，避免修改 JSX） */
@@ -890,7 +890,7 @@
   display: grid;
   grid-template-columns: 1fr;
   gap: 4px;
-  margin-top: calc(-1 * var(--space-sm));
+  margin-top: calc(-1 * var(--space-8));
   padding: 4px 18px 16px;
   border: 1px solid color-mix(in srgb, #e7d2c8 60%, var(--overlay-light));
   border-top: none;
@@ -902,7 +902,7 @@
 .relationshipInfoGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .relationshipMetric {
@@ -1008,7 +1008,7 @@
 
 .relationshipSuggestion {
   display: grid;
-  gap: var(--space-sm);
+  gap: var(--space-8);
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--overlay-light));
   border-radius: var(--radius-sm);
@@ -1018,7 +1018,7 @@
 .relationshipSuggestionHeader {
   display: flex;
   justify-content: space-between;
-  gap: var(--space-sm);
+  gap: var(--space-8);
   color: var(--text-muted);
   font-size: 0.78rem;
 }
@@ -1031,7 +1031,7 @@
 .relationshipSuggestionActions {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .relationshipSuggestionActions button {
@@ -1071,7 +1071,7 @@
 .relationshipHistoryCard summary {
   display: grid;
   grid-template-columns: auto 1fr auto;
-  gap: var(--space-sm);
+  gap: var(--space-8);
   align-items: center;
   min-width: 0;
   padding: 12px 14px;
@@ -1102,7 +1102,7 @@
 
 .relationshipHistoryBody {
   display: grid;
-  gap: var(--space-sm);
+  gap: var(--space-8);
   padding: 0 12px 12px;
 }
 
@@ -1123,15 +1123,15 @@
 
 .detailCopy {
   margin: 0;
-  padding: var(--space-sm) var(--space-md) var(--space-md);
+  padding: var(--space-8) var(--space-16) var(--space-16);
   color: var(--text-muted);
   line-height: 1.65;
 }
 
 .syncPreview {
   display: grid;
-  gap: var(--space-sm);
-  padding: var(--space-md);
+  gap: var(--space-8);
+  padding: var(--space-16);
 }
 
 .syncPreview span {
@@ -1149,7 +1149,7 @@
   overflow-wrap: anywhere;
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
-  padding: var(--space-sm);
+  padding: var(--space-8);
   color: var(--text);
   background: var(--bg-elevated, var(--overlay-subtle));
   font: inherit;
@@ -1163,15 +1163,15 @@
 }
 
 .loreEditor {
-  padding: var(--space-md);
+  padding: var(--space-16);
 }
 
 .loreEditorHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-md);
-  margin-bottom: var(--space-md);
+  gap: var(--space-16);
+  margin-bottom: var(--space-16);
 }
 
 .loreEditorHeader .detailSectionTitle {
@@ -1207,14 +1207,14 @@
 
 .loreForm {
   display: grid;
-  gap: var(--space-sm);
-  margin-bottom: var(--space-md);
+  gap: var(--space-8);
+  margin-bottom: var(--space-16);
 }
 
 .loreMetaGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .primaryAction {
@@ -1232,11 +1232,11 @@
 
 .loreList {
   display: grid;
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .loreCard {
-  padding: var(--space-sm);
+  padding: var(--space-8);
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-elevated, var(--overlay-subtle));
@@ -1246,7 +1246,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .loreTitleBlock {
@@ -1270,7 +1270,7 @@
 }
 
 .loreContent {
-  margin-top: var(--space-xs);
+  margin-top: var(--space-4);
   color: var(--text);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1281,7 +1281,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: var(--space-sm);
+  margin-top: var(--space-8);
 }
 
 .loreKeywords span {
@@ -1307,21 +1307,21 @@
 }
 
 .entryNotice {
-  margin-bottom: var(--space-md);
-  padding: var(--space-md);
+  margin-bottom: var(--space-16);
+  padding: var(--space-16);
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-card, var(--overlay-subtle));
 }
 
 .entryNoticeTitle {
-  margin: 0 0 var(--space-xs);
+  margin: 0 0 var(--space-4);
   font-size: 0.98rem;
   font-weight: 650;
 }
 
 .entryNotice p {
-  margin: 0 0 var(--space-sm);
+  margin: 0 0 var(--space-8);
   color: var(--text-muted);
   line-height: 1.65;
 }
@@ -2305,11 +2305,11 @@
 
 .momentComposer {
   margin: 12px;
-  padding: var(--space-md);
+  padding: var(--space-16);
   min-width: 0;
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr);
-  gap: var(--space-md);
+  gap: var(--space-16);
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: var(--radius-sm);
   background: #fff;
@@ -2366,7 +2366,7 @@
 .momentComposerBody {
   min-width: 0;
   display: grid;
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .momentComposerHeader,
@@ -2375,7 +2375,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .momentHeader {
@@ -2425,7 +2425,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .momentComposerFooter span {
@@ -3343,7 +3343,7 @@
 .secretSpaceEmptyBlock {
   display: grid;
   gap: 8px;
-  padding: var(--space-lg);
+  padding: var(--space-24);
   border: 1px dashed var(--overlay-light);
   border-radius: var(--radius-sm);
   text-align: left;
@@ -3368,7 +3368,7 @@
 .secretSpaceRecordCardV2 {
   display: grid;
   gap: 8px;
-  padding: var(--space-md);
+  padding: var(--space-16);
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-card, var(--overlay-subtle));
@@ -3428,7 +3428,7 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-8);
 }
 
 .secretSpaceRecordIndexItem {
@@ -3439,7 +3439,7 @@
   display: grid;
   gap: 6px;
   width: 100%;
-  padding: var(--space-md);
+  padding: var(--space-16);
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-card, var(--overlay-subtle));
@@ -3513,11 +3513,11 @@
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-card, var(--overlay-subtle));
-  padding: var(--space-md);
+  padding: var(--space-16);
 }
 
 .secretSpaceRecordDetailActions {
-  margin-top: var(--space-md);
+  margin-top: var(--space-16);
   display: flex;
   justify-content: flex-start;
 }
@@ -3525,7 +3525,7 @@
 .secretSpaceRecordDetail {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: var(--space-16);
   min-width: 0;
 }
 
@@ -3596,7 +3596,7 @@
   max-height: min(60vh, 520px);
   min-height: 160px;
   overflow: auto;
-  padding: var(--space-sm) var(--space-md);
+  padding: var(--space-8) var(--space-16);
   border: 1px solid var(--overlay-light);
   border-radius: var(--radius-sm);
   background: var(--bg-elevated, var(--bg));
@@ -4068,7 +4068,7 @@
   }
 
   .panel {
-    padding: var(--space-lg);
+    padding: var(--space-24);
   }
 
   .panelHeading {
@@ -4141,7 +4141,7 @@
   .momentComposer,
   .momentCard {
     grid-template-columns: 42px minmax(0, 1fr);
-    gap: var(--space-sm);
+    gap: var(--space-8);
   }
 
   .momentComposerAvatar,
@@ -7529,7 +7529,7 @@
   display: grid;
   grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
   gap: 0;
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-16);
   border: 1px solid var(--overlay-light);
   border-radius: 10px;
   background: var(--bg-card, var(--overlay-subtle));
@@ -7668,7 +7668,7 @@
 .xyGroupChatDetailHeader {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-sm);
+  gap: var(--space-8);
   justify-content: space-between;
   align-items: flex-start;
   padding-bottom: 12px;
@@ -10066,7 +10066,7 @@
    每条候选是一张笺片，状态用左边色条 + 角章 + 小字一并标出。 */
 
 .memoryCandidatePanel {
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-16);
   padding: 22px 24px 20px;
   border: 1px solid rgba(120, 90, 60, 0.18);
   border-radius: 4px;

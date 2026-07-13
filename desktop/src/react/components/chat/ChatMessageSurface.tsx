@@ -2,9 +2,12 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useStore } from '../../stores';
 import { sessionScopedListIncludes, sessionScopedValue } from '../../stores/session-slice';
-import { loadMoreMessages } from '../../stores/session-actions';
+import { loadMoreMessages, reconcileCurrentSessionMessages } from '../../stores/session-actions';
 import { useBoxSelection } from '../../hooks/use-box-selection';
 import { useContinuousBottomScroll } from '../../hooks/use-continuous-bottom-scroll';
+import { useI18n } from '../../hooks/use-i18n';
+import { resolveLocateStep } from './locate-step';
+import { applyFindMarks, clearFindMarks } from '../../utils/find-marks';
 import type { ChatListItem } from '../../stores/chat-types';
 import { ChatTimelineNavigator } from './ChatTimelineNavigator';
 import { ChatTranscript } from './ChatTranscript';
@@ -192,6 +195,188 @@ export const ChatMessageSurface = memo(function ChatMessageSurface({
     }
     prevLen.current = items.length;
   }, [items, items.length, active, bottomScroll]);
+
+  const { t } = useI18n();
+  const pendingLocate = useStore(s => s.pendingMessageLocate);
+  const findState = useStore(s => sessionScopedValue(s, s.chatFindBySession, sessionPath));
+  // 定位意图的进度守卫：同一意图下"同种 stall 无进展"即放弃，防无限重试——
+  // load-more 后 oldestId 未前进，或 refresh（reconcile）后 revision 未前进
+  const locateProgressRef = useRef<{ key: string; lastOldestId?: string; lastRevision?: string | null } | null>(null);
+  // 查找高亮：流式期间同一查询不重复标注 / 从未标注过则 clear 短路
+  const markKeyRef = useRef<string | null>(null);
+  const hadMarksRef = useRef(false);
+
+  // —— 定位意图消费：补加载 → 滚动 → flash ——
+  // 消费侧校验 sessionPath：意图不属于本 surface 就忽略（状态归属纪律）。
+  // 卡片实例是嵌入式投影，不响应全局导航意图。
+  useEffect(() => {
+    if (variant === 'card') return;
+    if (!pendingLocate) {
+      locateProgressRef.current = null;
+      return;
+    }
+    if (!active || pendingLocate.sessionPath !== sessionPath) return;
+    const intentKey = `${pendingLocate.sessionPath}#${pendingLocate.messageIndex}#${pendingLocate.term}`;
+    if (locateProgressRef.current && locateProgressRef.current.key !== intentKey) {
+      locateProgressRef.current = null;
+    }
+    const cleanups: Array<() => void> = [];
+    // 意图存在期间用户手动干预（滚轮/触摸）即取消，不跟用户抢滚动
+    const panel = ref.current;
+    if (panel) {
+      const cancelByUser = () => {
+        useStore.getState().clearMessageLocate();
+        locateProgressRef.current = null;
+      };
+      panel.addEventListener('wheel', cancelByUser, { passive: true, once: true });
+      panel.addEventListener('touchstart', cancelByUser, { passive: true, once: true });
+      cleanups.push(() => {
+        panel.removeEventListener('wheel', cancelByUser);
+        panel.removeEventListener('touchstart', cancelByUser);
+      });
+    }
+    const targetId = String(pendingLocate.messageIndex);
+    const element = messageElementsRef.current.get(targetId) ?? null;
+    const state = useStore.getState();
+    const session = sessionScopedValue(state, state.chatSessions, sessionPath);
+    if (!session) {
+      // session 尚未 initSession：hydrate 落地（items 变化）会重触发本 effect
+      return () => {
+        for (const dispose of cleanups) dispose();
+      };
+    }
+    const giveUp = () => {
+      const latest = useStore.getState();
+      latest.addToast(t('chat.find.locateFailed'), 'error', 4000);
+      latest.clearMessageLocate();
+      locateProgressRef.current = null;
+    };
+    const finishScroll = (target: HTMLDivElement) => {
+      const scrollPanel = ref.current;
+      if (!scrollPanel) {
+        console.warn('[chat-find] locate scroll skipped: panel element missing');
+        useStore.getState().clearMessageLocate();
+        locateProgressRef.current = null;
+        return;
+      }
+      // 退出贴底跟随，防止流式 ResizeObserver 立刻把视口拽回底部
+      bottomScroll.cancelFollow();
+      const panelRect = scrollPanel.getBoundingClientRect();
+      const rect = target.getBoundingClientRect();
+      const maxScroll = Math.max(0, scrollPanel.scrollHeight - scrollPanel.clientHeight);
+      const targetTop = Math.min(maxScroll, Math.max(0, scrollPanel.scrollTop + rect.top - panelRect.top - 16));
+      const reduceMotion = typeof window.matchMedia === 'function'
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      scrollPanel.scrollTo({ top: targetTop, behavior: reduceMotion ? 'auto' : 'smooth' });
+      target.classList.remove(styles.locateFlash);
+      // 强制 reflow 重启动画（连续定位同一条消息时）
+      void target.offsetWidth;
+      target.classList.add(styles.locateFlash);
+      useStore.getState().clearMessageLocate();
+      locateProgressRef.current = null;
+    };
+    // items 尾部向前第一个数字（canonical）id；全 live id（新建会话）时 null
+    let newestNumericId: number | null = null;
+    for (let i = session.items.length - 1; i >= 0; i -= 1) {
+      const it = session.items[i];
+      if (it.type !== 'message') continue;
+      const numeric = Number(it.data.id);
+      if (Number.isFinite(numeric)) {
+        newestNumericId = numeric;
+        break;
+      }
+    }
+    const step = resolveLocateStep({
+      targetIndex: pendingLocate.messageIndex,
+      elementPresent: !!element,
+      itemPresent: session.items.some(it => it.type === 'message' && it.data.id === targetId),
+      oldestId: session.oldestId,
+      hasMore: session.hasMore,
+      loadingMore: session.loadingMore,
+      newestNumericId,
+    });
+    const progress = locateProgressRef.current?.key === intentKey ? locateProgressRef.current : null;
+    if (step === 'load-more') {
+      if (progress && progress.lastOldestId !== undefined && progress.lastOldestId === session.oldestId) {
+        // 上一轮 load-more 后 oldestId 没前进（失败或空页），停止重试
+        giveUp();
+      } else {
+        locateProgressRef.current = { ...progress, key: intentKey, lastOldestId: session.oldestId };
+        loadMoreMessages(sessionPath);
+      }
+    } else if (step === 'refresh') {
+      const sessionRevision = session.revision ?? null;
+      if (progress && progress.lastRevision !== undefined && progress.lastRevision === sessionRevision) {
+        // 上一轮 reconcile 后 revision 未前进（流式中 no-op / 目标本就不存在），
+        // 停止重试给出反馈；流式结束后用户重新触发即可成功
+        giveUp();
+      } else {
+        locateProgressRef.current = { ...progress, key: intentKey, lastRevision: sessionRevision };
+        void reconcileCurrentSessionMessages('chat-find-locate');
+      }
+    } else if (step === 'give-up') {
+      giveUp();
+    } else if (step === 'wait-element') {
+      // items 里有但 DOM 未注册。翻页在途交给 loadingMore 依赖重触发；
+      // 否则有界等待：双帧后仍未注册（折叠块内 / 渲染为 null）则放弃。
+      if (!session.loadingMore) {
+        let raf2 = 0;
+        const raf1 = requestAnimationFrame(() => {
+          raf2 = requestAnimationFrame(() => {
+            // 复核意图身份：两帧窗口内意图可能已被取消或替换，不误清新意图
+            const currentIntent = useStore.getState().pendingMessageLocate;
+            const currentKey = currentIntent
+              ? `${currentIntent.sessionPath}#${currentIntent.messageIndex}#${currentIntent.term}`
+              : null;
+            if (currentKey !== intentKey) return;
+            const settled = messageElementsRef.current.get(targetId);
+            if (settled) finishScroll(settled);
+            else giveUp();
+          });
+        });
+        cleanups.push(() => {
+          cancelAnimationFrame(raf1);
+          cancelAnimationFrame(raf2);
+        });
+      }
+    } else if (step === 'scroll' && element) {
+      finishScroll(element);
+    }
+    // step === 'wait'：items / loadingMore 变化经依赖数组重触发本 effect
+    return () => {
+      for (const dispose of cleanups) dispose();
+    };
+  }, [active, pendingLocate, items, sessionPath, loadingMore, variant, t, bottomScroll]);
+
+  // —— 查找高亮：查找条打开期间对已加载消息词级 mark ——
+  useEffect(() => {
+    if (variant === 'card') return; // 卡片投影不做查找标注
+    if (!active) return; // 非 active 实例不跑；切回 active 时依赖变化自然重跑
+    const container = contentRef.current;
+    if (!container) return;
+    if (!findState?.open || !findState.query.trim()) {
+      markKeyRef.current = null;
+      if (hadMarksRef.current) {
+        clearFindMarks(container, 'chat-find-mark');
+        hadMarksRef.current = false;
+      }
+      return;
+    }
+    const markKey = `${findState.query}|${(findState.tokens ?? []).join(',')}`;
+    // 流式期间同一查询已标注过：不重跑 TreeWalker，防与流式 reconcile 打架循环；
+    // 流式结束边沿（isSessionStreaming 翻 false）经依赖重跑补标。
+    if (isSessionStreaming && markKeyRef.current === markKey) return;
+    const terms = [findState.query.trim(), ...findState.tokens];
+    // rAF 合并：items 高频变化（流式）时不在同帧重复跑 TreeWalker
+    const raf = requestAnimationFrame(() => {
+      // scope 到消息正文（MarkdownContent 直渲根）：不碰 React 直渲文本节点
+      //（时间戳 / 按钮 / 折叠标题等），改写它们会与 React reconcile 冲突
+      applyFindMarks(container, terms, 'chat-find-mark', { scopeSelector: '[data-find-markable]' });
+      markKeyRef.current = markKey;
+      hadMarksRef.current = true;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [variant, active, findState?.open, findState?.query, findState?.tokens, items, isSessionStreaming]);
 
   const shellClassName = variant === 'card'
     ? `${styles.sessionShell} ${styles.cardSessionShell}`

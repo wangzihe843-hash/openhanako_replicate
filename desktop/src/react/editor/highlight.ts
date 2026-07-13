@@ -2,9 +2,9 @@ import { HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 
 export const markdownHighlight = HighlightStyle.define([
-  { tag: tags.heading1, fontSize: 'var(--editor-markdown-h1-font-size)', fontWeight: '700' },
-  { tag: tags.heading2, fontSize: 'var(--editor-markdown-h2-font-size)', fontWeight: '600' },
-  { tag: tags.heading3, fontSize: 'var(--editor-markdown-h3-font-size)', fontWeight: '600' },
+  { tag: tags.heading1, fontSize: 'var(--editor-markdown-h1-font-size)', fontWeight: '400' },
+  { tag: tags.heading2, fontSize: 'var(--editor-markdown-h2-font-size)', fontWeight: '500' },
+  { tag: tags.heading3, fontSize: 'var(--editor-markdown-h3-font-size)', fontWeight: '500' },
   { tag: tags.heading4, fontSize: 'var(--editor-markdown-h4-font-size)', fontWeight: '600' },
   { tag: tags.heading5, fontSize: 'var(--editor-markdown-h5-font-size)', fontWeight: '600' },
   { tag: tags.heading6, fontSize: 'var(--editor-markdown-h6-font-size)', fontWeight: '600' },

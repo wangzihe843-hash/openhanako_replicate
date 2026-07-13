@@ -163,6 +163,8 @@ describe("install_skill global skill-pool installation", () => {
     expect(fs.existsSync(path.join(userSkillsDir, "kami", "SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(userSkillsDir, "kami", "references", "design.md"))).toBe(true);
     expect(fs.existsSync(path.join(userSkillsDir, "kami", "assets", "templates", "page.html"))).toBe(true);
+    expect((result as any).details).not.toHaveProperty("stars");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("api.github.com"))).toBe(false);
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("raw.githubusercontent.com"), expect.anything());
     expect(onInstalled).toHaveBeenCalledWith("kami");
   });

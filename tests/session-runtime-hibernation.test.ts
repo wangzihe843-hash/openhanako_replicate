@@ -1,11 +1,12 @@
 import path from "path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { createAgentSessionMock, sessionManagerCreateMock, sessionManagerOpenMock, emitSessionShutdownMock } = vi.hoisted(() => ({
+const { createAgentSessionMock, sessionManagerCreateMock, sessionManagerOpenMock, emitSessionShutdownMock, refreshSessionModelFromRegistryMock } = vi.hoisted(() => ({
   createAgentSessionMock: vi.fn(),
   sessionManagerCreateMock: vi.fn(),
   sessionManagerOpenMock: vi.fn(),
   emitSessionShutdownMock: vi.fn(),
+  refreshSessionModelFromRegistryMock: vi.fn(),
 }));
 
 vi.mock("../lib/pi-sdk/index.js", () => ({
@@ -21,7 +22,7 @@ vi.mock("../lib/pi-sdk/index.js", () => ({
   estimateTokens: vi.fn(() => 0),
   findCutPoint: vi.fn(() => 0),
   generateSummary: vi.fn(),
-  refreshSessionModelFromRegistry: vi.fn(),
+  refreshSessionModelFromRegistry: refreshSessionModelFromRegistryMock,
 }));
 
 vi.mock("../lib/debug-log.js", () => ({
@@ -77,16 +78,18 @@ function makeAgent(root = "/tmp/hana-runtime-hibernation") {
 function makeCoordinator( overrides: any = {}) {
   const root = overrides.root || "/tmp/hana-runtime-hibernation";
   const agent = overrides.agent || makeAgent(root);
+  const models = overrides.models || {
+    currentModel: MODEL,
+    availableModels: [MODEL],
+    authStorage: {},
+    modelRegistry: {},
+    resolveThinkingLevel: () => "medium",
+  };
   return new SessionCoordinator({
     agentsDir: path.join(root, "agents"),
     getAgent: () => agent,
     getActiveAgentId: () => agent.id,
-    getModels: () => ({
-      currentModel: MODEL,
-      authStorage: {},
-      modelRegistry: {},
-      resolveThinkingLevel: () => "medium",
-    }),
+    getModels: () => models,
     getResourceLoader: () => ({
       getSystemPrompt: () => "BASE",
       getAppendSystemPrompt: () => [],
@@ -108,12 +111,22 @@ function makeCoordinator( overrides: any = {}) {
     listAgents: () => [agent],
     getDeferredResultStore: () => null,
     memoryPressure: overrides.memoryPressure,
+    getEngine: overrides.getEngine,
   });
 }
 
 describe("SessionCoordinator runtime hibernation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    refreshSessionModelFromRegistryMock.mockImplementation((session, allowedModel) => {
+      if (allowedModel !== undefined) {
+        if (session?.agent?.state) session.agent.state.model = allowedModel;
+        if (session && Object.prototype.hasOwnProperty.call(session, "model")) session.model = allowedModel;
+      } else {
+        session?._refreshCurrentModelFromRegistry?.();
+      }
+      return true;
+    });
     emitSessionShutdownMock.mockResolvedValue(false);
     sessionManagerCreateMock.mockReturnValue({ getCwd: () => "/tmp/workspace", getSessionFile: () => "/tmp/session.jsonl" });
   });
@@ -175,6 +188,106 @@ describe("SessionCoordinator runtime hibernation", () => {
     expect(restored.prompt).toHaveBeenCalledWith("hello", undefined);
     expect(coordinator.session).toBe(restored);
     expect(coordinator.currentSessionPath).toBe(sessionPath);
+  });
+
+  it("rejects the next live-session prompt before vision or Pi when its model was disabled", async () => {
+    const sessionPath = "/tmp/hana-runtime-hibernation/agents/hana/sessions/gpt56.jsonl";
+    const staleModel = {
+      id: "gpt-5.6-sol",
+      provider: "openai-codex",
+      input: ["text"],
+      contextWindow: 353400,
+    };
+    const models = {
+      currentModel: staleModel,
+      availableModels: [staleModel],
+      authStorage: {},
+      modelRegistry: {},
+      resolveThinkingLevel: () => "low",
+    };
+    const visionPrepare = vi.fn(async () => ({ text: "vision output", images: [] }));
+    const session = makeSession(sessionPath, { model: staleModel });
+    const coordinator = makeCoordinator({
+      models,
+      getEngine: () => ({
+        isVisionAuxiliaryEnabled: () => true,
+        getVisionBridge: () => ({ prepare: visionPrepare }),
+      }),
+    });
+    coordinator._sessions.set(sessionPath, {
+      session,
+      agentId: "hana",
+      modelId: staleModel.id,
+      modelProvider: staleModel.provider,
+      lastTouchedAt: 0,
+    });
+
+    models.availableModels = [];
+    coordinator.refreshAllSessionsModels();
+
+    const result = coordinator.promptSession(sessionPath, "describe image", {
+      images: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+    });
+    await expect(result).rejects.toMatchObject({
+      code: "MODEL_NOT_AVAILABLE",
+      modelRef: "openai-codex/gpt-5.6-sol",
+    });
+    expect(visionPrepare).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(refreshSessionModelFromRegistryMock).not.toHaveBeenCalled();
+  });
+
+  it("rebinds a live session to current Hana metadata and continues prompting", async () => {
+    const sessionPath = "/tmp/hana-runtime-hibernation/agents/hana/sessions/gpt56-metadata.jsonl";
+    const staleModel = {
+      id: "gpt-5.6-sol",
+      provider: "openai-codex",
+      api: "openai-codex-responses",
+      baseUrl: "https://stale.example",
+      contextWindow: 272000,
+      thinkingLevels: ["low", "medium", "high"],
+    };
+    const freshModel = {
+      ...staleModel,
+      baseUrl: "https://chatgpt.com/backend-api",
+      contextWindow: 353400,
+      maxTokens: 128000,
+      thinkingLevels: ["low", "medium", "high", "max"],
+      thinkingLevelMap: { xhigh: "max" },
+    };
+    const models = {
+      currentModel: freshModel,
+      availableModels: [freshModel],
+      authStorage: {},
+      modelRegistry: {},
+      resolveThinkingLevel: (level) => level,
+    };
+    const session = makeSession(sessionPath, {
+      model: staleModel,
+      agent: { state: { model: staleModel, systemPrompt: "BASE", tools: [] } },
+    });
+    const coordinator = makeCoordinator({ models });
+    coordinator._sessions.set(sessionPath, {
+      session,
+      agentId: "hana",
+      modelId: staleModel.id,
+      modelProvider: staleModel.provider,
+      lastTouchedAt: 0,
+    });
+
+    coordinator.refreshAllSessionsModels();
+
+    expect(refreshSessionModelFromRegistryMock).toHaveBeenCalledWith(session, freshModel);
+    expect(session.model).toBe(freshModel);
+    expect(session.model).toMatchObject({
+      baseUrl: "https://chatgpt.com/backend-api",
+      contextWindow: 353400,
+      maxTokens: 128000,
+      thinkingLevels: ["low", "medium", "high", "max"],
+      thinkingLevelMap: { xhigh: "max" },
+    });
+    await expect(coordinator.promptSession(sessionPath, "hello", undefined)).resolves.toBeUndefined();
+    expect(session.prompt).toHaveBeenCalledWith("hello", undefined);
   });
 
   it("hibernates only heavy idle runtimes under memory pressure", async () => {

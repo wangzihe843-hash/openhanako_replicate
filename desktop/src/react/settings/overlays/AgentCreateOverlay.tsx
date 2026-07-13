@@ -127,6 +127,7 @@ export function AgentCreateOverlay() {
   return (
     <>
     <Overlay
+      scope="inline"
       open={visible && !cardPlan}
       onClose={close}
       backdrop="blur"

@@ -25,6 +25,22 @@ function finiteNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+function layoutsEqual(
+  a: Record<string, MarkerLayout>,
+  b: Record<string, MarkerLayout>,
+): boolean {
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    const layoutA = a[key];
+    const layoutB = b[key];
+    if (!layoutB) return false;
+    if (layoutA.targetTop !== layoutB.targetTop) return false;
+  }
+  return true;
+}
+
 export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
   anchors,
   scrollRef,
@@ -36,12 +52,13 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
   const [layouts, setLayouts] = useState<Record<string, MarkerLayout>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
   const rafRef = useRef<number | null>(null);
+  const measureRafRef = useRef<number | null>(null);
   const shouldMeasure = active && anchors.length > 0;
 
   const measure = useCallback(() => {
     const panel = scrollRef.current;
     if (!panel || anchors.length === 0) {
-      setLayouts({});
+      setLayouts(prev => (Object.keys(prev).length === 0 ? prev : {}));
       setActiveId(null);
       return;
     }
@@ -62,7 +79,7 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
       };
     }
 
-    setLayouts(next);
+    setLayouts(prev => (layoutsEqual(prev, next) ? prev : next));
   }, [anchors, messageElementsRef, scrollRef]);
 
   const updateActive = useCallback(() => {
@@ -88,7 +105,7 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
 
   useLayoutEffect(() => {
     if (!shouldMeasure) {
-      setLayouts({});
+      setLayouts(prev => (Object.keys(prev).length === 0 ? prev : {}));
       setActiveId(null);
       return;
     }
@@ -99,10 +116,22 @@ export const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
     const panel = scrollRef.current;
     if (!panel || !shouldMeasure) return;
     const content = contentRef.current;
-    const observer = new ResizeObserver(() => measure());
+    const observer = new ResizeObserver(() => {
+      if (measureRafRef.current != null) return;
+      measureRafRef.current = window.requestAnimationFrame(() => {
+        measureRafRef.current = null;
+        measure();
+      });
+    });
     observer.observe(panel);
     if (content) observer.observe(content);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (measureRafRef.current != null) {
+        window.cancelAnimationFrame(measureRafRef.current);
+        measureRafRef.current = null;
+      }
+    };
   }, [contentRef, measure, scrollRef, shouldMeasure]);
 
   useEffect(() => {

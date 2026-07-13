@@ -6,6 +6,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { installWindowTestT } from '../helpers/i18n-test-strings';
 import { PreviewPanel } from '../../components/PreviewPanel';
 import { useStore, type StoreState } from '../../stores';
 import { refreshOpenPreviewDocumentsForResourceChange } from '../../utils/preview-document-refresh';
@@ -29,7 +30,7 @@ describe('PreviewPanel markdown editor status', () => {
   beforeEach(() => {
     resourceEventMocks.retainLocalFileResourceWatch.mockClear();
     resourceEventMocks.retainResourceWatch.mockClear();
-    window.t = ((key: string) => key) as typeof window.t;
+    installWindowTestT();
     Range.prototype.getClientRects = vi.fn(() => [] as unknown as DOMRectList);
     Range.prototype.getBoundingClientRect = vi.fn(() => ({
       x: 0,
@@ -159,7 +160,7 @@ describe('PreviewPanel markdown editor status', () => {
 
     render(<PreviewPanel />);
 
-    expect(screen.getByText('原文稿已移动或者删除')).toBeInTheDocument();
+    expect(screen.getByText('原稿件已移动或者删除')).toBeInTheDocument();
     expect(within(screen.getByTestId('preview-missing-target')).getByText('missing.md')).toBeInTheDocument();
     expect(screen.queryByTestId('markdown-editor-status')).not.toBeInTheDocument();
   });

@@ -162,6 +162,7 @@ export function WechatQrcodeOverlay() {
 
   return (
     <Overlay
+      scope="inline"
       open={visible}
       onClose={close}
       backdrop="blur"

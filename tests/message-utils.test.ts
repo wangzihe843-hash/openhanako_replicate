@@ -40,6 +40,9 @@ describe("TOOL_ARG_SUMMARY_KEYS", () => {
     expect(Array.isArray(TOOL_ARG_SUMMARY_KEYS)).toBe(true);
     expect(TOOL_ARG_SUMMARY_KEYS).toContain("file_path");
     expect(TOOL_ARG_SUMMARY_KEYS).toContain("command");
+    expect(TOOL_ARG_SUMMARY_KEYS).toContain("cmd");
+    expect(TOOL_ARG_SUMMARY_KEYS).toContain("chars");
+    expect(TOOL_ARG_SUMMARY_KEYS).toContain("process_id");
     expect(TOOL_ARG_SUMMARY_KEYS).toContain("url");
   });
 });
@@ -157,6 +160,25 @@ describe("extractTextContent", () => {
     expect(result.toolUses[0].id).toBe("call_read_1");
     expect(result.toolUses[0].name).toBe("read_file");
     expect(result.toolUses[0].args).toEqual({ file_path: "/tmp/test.txt" });
+  });
+
+  it("content block 数组提取 exec_command / write_stdin 命令摘要", () => {
+    const content = [
+      { type: "toolCall", id: "call_exec_1", name: "exec_command", arguments: { cmd: "npm test", secret: "nope" } },
+      { type: "tool_use", id: "call_stdin_1", name: "write_stdin", input: { process_id: "term_1", chars: "q\n", secret: "nope" } },
+    ];
+    const result = extractTextContent(content);
+    expect(result.toolUses).toHaveLength(2);
+    expect(result.toolUses[0]).toMatchObject({
+      id: "call_exec_1",
+      name: "exec_command",
+      args: { cmd: "npm test" },
+    });
+    expect(result.toolUses[1]).toMatchObject({
+      id: "call_stdin_1",
+      name: "write_stdin",
+      args: { chars: "q\n", process_id: "term_1" },
+    });
   });
 
   it("tool_use block 无摘要字段时 args 为 undefined", () => {

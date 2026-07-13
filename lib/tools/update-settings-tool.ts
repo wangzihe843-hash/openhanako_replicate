@@ -12,10 +12,7 @@ import themeRegistry from "../../desktop/src/shared/theme-registry.cjs";
 import { parseModelRef } from "../../shared/model-ref.ts";
 import { emitAppEvent } from "../../server/app-events.ts";
 import {
-  EDITABLE_MEMORY_EXPERIMENT_ID,
-  getResolvedExperimentValue,
-} from "../experiments/registry.ts";
-import {
+  migrateLegacyEditableFacts,
   readEditableFactsText,
   writeEditableFactsSection,
 } from "../memory/compile.ts";
@@ -39,7 +36,6 @@ const THEME_I18N = Object.fromEntries(
 THEME_I18N[themeRegistry.AUTO_OPTION.id] = themeRegistry.AUTO_OPTION.i18nName;
 
 const THINKING_I18N = {
-  "auto": "settings.agent.thinkingLevels.auto",
   "off": "settings.agent.thinkingLevels.off",
   "low": "settings.agent.thinkingLevels.low",
   "medium": "settings.agent.thinkingLevels.medium",
@@ -115,14 +111,6 @@ function requireAgentId(agent, key) {
   const agentId = agent?.id || null;
   if (!agentId) throw new Error(`${key} requires target agent`);
   return agentId;
-}
-
-function isEditableMemoryEnabled(engine) {
-  try {
-    return getResolvedExperimentValue(engine?.preferences, EDITABLE_MEMORY_EXPERIMENT_ID) === true;
-  } catch {
-    return false;
-  }
 }
 
 function resolveAgentMemoryPaths(agent, key) {
@@ -209,7 +197,7 @@ const SETTINGS_REGISTRY = {
   thinking_level: {
     type: "list",
     get label() { return t("toolDef.updateSettings.thinkingBudget"); },
-    options: ["auto", "off", "low", "medium", "high", "max"],
+    options: ["off", "low", "medium", "high", "max"],
     get optionLabels() { return i18nLabels(THINKING_I18N); },
     searchTerms: ["reasoning", "推理", "思考", "推論"],
     get: (engine, _agent) => {
@@ -248,9 +236,11 @@ const SETTINGS_REGISTRY = {
     searchTerms: ["facts", "editable memory", "memory facts", "记忆事实", "重要事实", "可编辑记忆"],
     get: (engine, agent) => {
       if (!agent) return null;
-      if (!isEditableMemoryEnabled(engine)) return t("toolDef.updateSettings.memoryFactsDisabled");
       try {
         const { memoryDir } = resolveAgentMemoryPaths(agent, "memory.facts");
+        // 幂等：即使该 agent 从未跑起过 memoryTicker，也要在首次读取时把
+        // 遗留的 editable-facts.md 并入规范的 facts.md。
+        migrateLegacyEditableFacts(memoryDir);
         return readEditableFactsText(memoryDir);
       } catch {
         return null;
@@ -258,10 +248,8 @@ const SETTINGS_REGISTRY = {
     },
     apply: async (engine, agent, v) => {
       if (!agent) throw new Error("no active agent");
-      if (!isEditableMemoryEnabled(engine)) {
-        throw new Error(t("toolDef.updateSettings.memoryFactsDisabled"));
-      }
       const { memoryDir, memoryMdPath } = resolveAgentMemoryPaths(agent, "memory.facts");
+      migrateLegacyEditableFacts(memoryDir);
       writeEditableFactsSection(memoryDir, v, {
         summaryManager: agent.summaryManager,
         memoryMdPath,

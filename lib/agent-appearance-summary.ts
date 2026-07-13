@@ -79,7 +79,7 @@ type RefreshAgentAppearanceSummaryOptions = {
   agentName?: string;
   visionConfig?: ResolvedAgentAppearanceModelConfig | null;
   targetModel?: AgentAppearanceModel | null;
-  resolveModelWithCredentials?: (modelRef: unknown) => ResolvedAgentAppearanceModelConfig | null;
+  resolveModelWithCredentialsFresh?: (modelRef: unknown) => Promise<ResolvedAgentAppearanceModelConfig | null>;
   callText?: (options: Record<string, unknown>) => Promise<unknown>;
   usageLedger?: unknown;
   signal?: AbortSignal;
@@ -257,7 +257,9 @@ export function hasAgentAppearanceSummaryCapability(options: {
   return !!(targetModel && modelSupportsDirectImageInput(targetModel, targetModel));
 }
 
-function selectAppearanceModelConfig(options: RefreshAgentAppearanceSummaryOptions): ResolvedAgentAppearanceModelConfig | null {
+async function selectAppearanceModelConfig(
+  options: RefreshAgentAppearanceSummaryOptions,
+): Promise<ResolvedAgentAppearanceModelConfig | null> {
   const visionConfig = options.visionConfig || null;
   if (hasAgentAppearanceSummaryCapability({ visionConfig })) {
     return visionConfig;
@@ -265,7 +267,7 @@ function selectAppearanceModelConfig(options: RefreshAgentAppearanceSummaryOptio
 
   const targetModel = options.targetModel || null;
   if (!hasAgentAppearanceSummaryCapability({ targetModel })) return null;
-  return options.resolveModelWithCredentials?.(modelRefFor(targetModel)) || null;
+  return await options.resolveModelWithCredentialsFresh?.(modelRefFor(targetModel)) || null;
 }
 
 export async function refreshAgentAppearanceSummary(
@@ -277,7 +279,7 @@ export async function refreshAgentAppearanceSummary(
   const avatar = readAgentAvatarResource(options.agentDir);
   if (!avatar) return null;
 
-  const config = selectAppearanceModelConfig(options);
+  const config = await selectAppearanceModelConfig(options);
   if (!config?.model) return null;
   if (!options.callText) {
     throw new Error("callText is required to refresh agent appearance summary");

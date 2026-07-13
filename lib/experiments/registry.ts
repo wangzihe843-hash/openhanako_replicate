@@ -9,7 +9,6 @@ import {
 } from "../../shared/compaction-mode.ts";
 
 export const CACHE_SNAPSHOT_EXPERIMENT_ID = "memory.cache_snapshot_reflection";
-export const EDITABLE_MEMORY_EXPERIMENT_ID = "memory.editable_facts";
 export const DEEPSEEK_ROLEPLAY_REASONING_PATCH_EXPERIMENT_ID = "provider.deepseek_roleplay_reasoning_patch";
 export const PROACTIVE_SUBAGENT_EXPERIMENT_ID = "subagent.proactive_delegation";
 export { COMPACTION_MODE_EXPERIMENT_ID };
@@ -84,37 +83,6 @@ const DEFINITIONS = [
     sunsetPolicy: {
       removeWhenRetired: true,
       migration: "Drop the experiment value once the patch is either promoted to a DeepSeek provider option or retired.",
-    },
-  }),
-  normalizeExperimentDefinition({
-    id: EDITABLE_MEMORY_EXPERIMENT_ID,
-    titleKey: "settings.experiments.editableMemory.title",
-    descriptionKey: "settings.experiments.editableMemory.description",
-    owner: "memory",
-    scope: "global",
-    defaultValue: false,
-    valueSchema: {
-      type: "boolean",
-      presentation: {
-        type: "toggle",
-      },
-    },
-    status: "alpha",
-    risk: "medium",
-    restartPolicy: "immediate",
-    targetHome: {
-      tab: "agent",
-      section: "memory",
-      whenStable: "Move to Agent / Memory after editable facts and incremental consolidation prove stable.",
-    },
-    exitCriteria: [
-      "Editable facts remain stable across daily memory maintenance.",
-      "Turning the experiment off restores the legacy facts path without data migration.",
-      "User and agent edits rebuild memory.md without corrupting timeline sections.",
-    ],
-    sunsetPolicy: {
-      removeWhenRetired: true,
-      migration: "Promote editable-facts.md to the canonical facts source once the experiment graduates.",
     },
   }),
   normalizeExperimentDefinition({

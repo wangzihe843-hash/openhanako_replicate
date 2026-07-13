@@ -138,19 +138,27 @@ export function executeDiary(
 }
 
 export function executeCompact(
+  t: (key: string) => string,
   setBusy: (name: string | null) => void,
   setInput: (text: string) => void,
   setMenuOpen: (open: boolean) => void,
 ): () => Promise<void> {
   return async () => {
+    const state = useStore.getState();
+    if (!state.currentSessionId) {
+      state.addToast(t('error.noActiveSession'), 'error', 6000);
+      return;
+    }
+    const ws = getWebSocket();
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      state.addToast(t('status.disconnected'), 'error', 6000);
+      return;
+    }
     setBusy('compact');
     setInput('');
     setMenuOpen(false);
     try {
-      const ws = getWebSocket();
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'compact', sessionPath: useStore.getState().currentSessionPath }));
-      }
+      ws.send(JSON.stringify({ type: 'compact', sessionId: state.currentSessionId }));
     } finally {
       setTimeout(() => setBusy(null), 1500);
     }

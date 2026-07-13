@@ -374,6 +374,7 @@ export interface HanaProviderRuntime {
 
 export interface HanaProviderChatCapability {
   projection?: 'models-json' | 'sdk-auth-alias' | 'none' | string;
+  credentialSource?: 'provider-catalog' | 'auth-storage' | 'none';
   runtimeProviderId?: string;
   displayProviderId?: string;
   allowListSource?: string;

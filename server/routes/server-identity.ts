@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createServerRuntimeContext, toServerIdentityResponse } from "../../core/server-runtime-context.ts";
 import { readAuthPrincipal } from "../http/capability-guard.ts";
+import { SERVER_PROTOCOL_VERSION } from "../../shared/contract-versions.cjs";
 
 export function createServerIdentityRoute({ hanakoHome, appVersion = "?", getRuntimeContext }: { hanakoHome?: string; appVersion?: string; getRuntimeContext?: () => any } = {}) {
   const route = new Hono();
@@ -10,10 +11,20 @@ export function createServerIdentityRoute({ hanakoHome, appVersion = "?", getRun
       const runtimeContext = typeof getRuntimeContext === "function"
         ? getRuntimeContext()
         : createServerRuntimeContext({ hanakoHome, appVersion });
-      return c.json(toServerIdentityResponse(
-        contextForPrincipal(runtimeContext, readAuthPrincipal(c)),
-        { appVersion },
-      ));
+      // Additive field, not part of toServerIdentityResponse's own shape:
+      // the protocol version is a fixed property of this server build (like
+      // its own source constant), not something derived from identity
+      // registries — see shared/contract-versions.cjs for why it exists and
+      // the renderer-side comparison this feeds (diagnostic only, never a
+      // gate; a running install's renderer and server are always supposed
+      // to match since they ship together).
+      return c.json({
+        ...toServerIdentityResponse(
+          contextForPrincipal(runtimeContext, readAuthPrincipal(c)),
+          { appVersion },
+        ),
+        serverProtocol: SERVER_PROTOCOL_VERSION,
+      });
     } catch (err: any) {
       return c.json({
         error: "invalid server identity registry",

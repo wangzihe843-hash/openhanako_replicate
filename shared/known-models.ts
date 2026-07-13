@@ -50,6 +50,52 @@ function _lookupCaseInsensitive(index, key) {
   return hasOwn(index, normalized) ? index[normalized] : null;
 }
 
+function _lookupProviderMetadata(provider, modelId) {
+  if (!provider || typeof modelId !== "string" || modelId.length === 0) return null;
+  const bare = modelId.includes("/") ? modelId.split("/").pop() : null;
+  const providerModels = _raw[provider];
+  const providerIndex = _rawCaseInsensitive[provider];
+  return _lookupExact(providerModels, modelId)
+    || (bare ? _lookupExact(providerModels, bare) : null)
+    || _lookupCaseInsensitive(providerIndex, modelId)
+    || (bare ? _lookupCaseInsensitive(providerIndex, bare) : null)
+    || null;
+}
+
+function _lookupFallbackMetadata(modelId) {
+  if (typeof modelId !== "string" || modelId.length === 0) return null;
+  const bare = modelId.includes("/") ? modelId.split("/").pop() : null;
+  return _lookupExact(_fallbacks, modelId)
+    || (bare ? _lookupExact(_fallbacks, bare) : null)
+    || _lookupCaseInsensitive(_fallbacksCaseInsensitive, modelId)
+    || (bare ? _lookupCaseInsensitive(_fallbacksCaseInsensitive, bare) : null)
+    || null;
+}
+
+/**
+ * 只查询 provider 自己的精确分区，不回退到通用词典。
+ *
+ * provider-specific 的协议字段（api / thinkingLevelMap 等）只能使用这个入口，
+ * 避免未知代理因为命中了通用 fallback 而继承 OpenAI/OpenRouter 的 wire contract。
+ */
+export function lookupKnownProvider(provider, modelId) {
+  _ensureLoaded();
+  return _lookupProviderMetadata(provider, modelId);
+}
+
+/**
+ * 查询模型元数据并显式返回命中来源。
+ * @returns {{ metadata: object, source: "provider" | "fallback" } | null}
+ */
+export function lookupKnownWithSource(provider, modelId) {
+  if (typeof modelId !== "string" || modelId.length === 0) return null;
+  _ensureLoaded();
+  const providerMetadata = _lookupProviderMetadata(provider, modelId);
+  if (providerMetadata) return { metadata: providerMetadata, source: "provider" };
+  const fallbackMetadata = _lookupFallbackMetadata(modelId);
+  return fallbackMetadata ? { metadata: fallbackMetadata, source: "fallback" } : null;
+}
+
 /**
  * 查词典：provider + modelId 二级查找，再查通用模型参考值。
  * 通用 fallback 是 best-effort baseline，不能从其他 provider 分区隐式借值。
@@ -58,21 +104,7 @@ function _lookupCaseInsensitive(index, key) {
  * @returns {object|null}
  */
 export function lookupKnown(provider, modelId) {
-  if (typeof modelId !== "string" || modelId.length === 0) return null;
-  _ensureLoaded();
-  const bare = modelId.includes("/") ? modelId.split("/").pop() : null;
-  const providerModels = provider ? _raw[provider] : null;
-  const providerIndex = provider ? _rawCaseInsensitive[provider] : null;
-
-  return _lookupExact(providerModels, modelId)
-    || (bare ? _lookupExact(providerModels, bare) : null)
-    || _lookupExact(_fallbacks, modelId)
-    || (bare ? _lookupExact(_fallbacks, bare) : null)
-    || _lookupCaseInsensitive(providerIndex, modelId)
-    || (bare ? _lookupCaseInsensitive(providerIndex, bare) : null)
-    || _lookupCaseInsensitive(_fallbacksCaseInsensitive, modelId)
-    || (bare ? _lookupCaseInsensitive(_fallbacksCaseInsensitive, bare) : null)
-    || null;
+  return lookupKnownWithSource(provider, modelId)?.metadata || null;
 }
 
 /**

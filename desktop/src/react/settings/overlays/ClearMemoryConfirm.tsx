@@ -31,7 +31,7 @@ export function ClearMemoryConfirm() {
   };
 
   return (
-    <Overlay open={visible} onClose={close} backdrop="blur" zIndex={100} className={styles['memory-confirm-card']} disableContainerAnimation>
+    <Overlay scope="inline" open={visible} onClose={close} backdrop="blur" zIndex={100} className={styles['memory-confirm-card']} disableContainerAnimation>
       <p className={styles['memory-confirm-text']}>{t('settings.memory.actions.clearConfirm')}</p>
       <div className={styles['memory-confirm-actions']}>
         <button className={styles['memory-confirm-cancel']} onClick={close}>{t('settings.memory.actions.cancel')}</button>

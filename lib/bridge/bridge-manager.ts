@@ -30,6 +30,7 @@ import { parseSessionKey } from "./session-key.ts";
 import { createModuleLogger } from "../debug-log.ts";
 import { t } from "../i18n.ts";
 import { stripToolProtocolTagsFromProse } from "../tool-protocol-sanitizer.ts";
+import { sanitizeBridgeVisibleText } from "../../shared/bridge-visible-text.ts";
 
 const log = createModuleLogger("bridge");
 const blockChunkerLog = createModuleLogger("block-chunker");
@@ -37,6 +38,19 @@ const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
 
 function normalizeIdempotencyKey(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function cleanBridgeMetadataString(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text || null;
+}
+
+function canonicalCredentialValue(cfg, canonicalKey, legacyKey) {
+  if (!cfg || typeof cfg !== "object") return "";
+  if (Object.prototype.hasOwnProperty.call(cfg, canonicalKey)) {
+    return typeof cfg[canonicalKey] === "string" ? cfg[canonicalKey] : "";
+  }
+  return typeof cfg[legacyKey] === "string" ? cfg[legacyKey] : "";
 }
 
 function normalizeProactiveBridgeDeliveryTarget(value, fallbackAgentId = null) {
@@ -106,17 +120,18 @@ const ADAPTER_REGISTRY = {
     ownerSessionKey: (userId, agentId) => `tg_dm_${userId}@${agentId}`,
   },
   feishu: {
-    create: (creds, onMessage, hooks, agentId) => createFeishuAdapter({ appId: creds.appId, appSecret: creds.appSecret, agentId, onMessage, onStatus: hooks?.onStatus }),
-    getCredentials: (cfg) => cfg?.enabled && cfg?.appId && cfg?.appSecret ? { appId: cfg.appId, appSecret: cfg.appSecret } : null,
+    create: (creds, onMessage, hooks, agentId) => createFeishuAdapter({ appId: creds.appId, appSecret: creds.appSecret, region: creds.region, agentId, onMessage, onStatus: hooks?.onStatus }),
+    getCredentials: (cfg) => cfg?.enabled && cfg?.appId && cfg?.appSecret ? { appId: cfg.appId, appSecret: cfg.appSecret, region: cfg.region || "feishu_cn" } : null,
     ownerSessionKey: (userId, agentId) => `fs_dm_${userId}@${agentId}`,
     connectsAsync: true,
   },
   dingtalk: {
     create: (creds, onMessage, hooks, agentId) => createDingTalkAdapter({
-      appKey: creds.appKey,
-      appSecret: creds.appSecret,
+      corpId: creds.corpId,
+      clientId: creds.clientId,
+      clientSecret: creds.clientSecret,
       robotCode: creds.robotCode,
-      restBaseUrl: creds.restBaseUrl,
+      apiBaseUrl: creds.apiBaseUrl,
       streamOpenUrl: creds.streamOpenUrl,
       agentId,
       onMessage,
@@ -134,7 +149,7 @@ const ADAPTER_REGISTRY = {
       onStatus: hooks?.onStatus,
     }),
     getCredentials: (cfg) => {
-      const secret = cfg?.appSecret || cfg?.token; // 兼容旧版 token 字段
+      const secret = canonicalCredentialValue(cfg, "appSecret", "token");
       return cfg?.enabled && cfg?.appID && secret
         ? { appID: cfg.appID, appSecret: secret, dmGuildMap: cfg.dmGuildMap }
         : null;
@@ -809,8 +824,10 @@ export class BridgeManager {
       platform: pending.platform,
       chatId: pending.chatId,
       senderName: pending.senderName,
+      displayName: pending.displayName,
       avatarUrl: pending.avatarUrl,
       userId: pending.userId,
+      principalId: pending.principalId,
       qqPrincipal: pending.qqPrincipal,
       isGroup: pending.isGroup,
       isOwner: pending.isOwner,
@@ -1076,7 +1093,7 @@ export class BridgeManager {
    * 私聊：debounce 聚合 → 如正在处理则 abort → 合并发送
    */
   async _handleMessage(platform, msg) {
-    const { sessionKey, text, senderName, avatarUrl, userId, isGroup, chatId, attachments, agentId: msgAgentId, messageThreadId, qqPrincipal } = msg;
+    const { sessionKey, text, senderName, displayName, avatarUrl, userId, principalId, isGroup, chatId, attachments, agentId: msgAgentId, messageThreadId, qqPrincipal } = msg;
     const identityAliases = Array.isArray(msg.aliases)
       ? msg.aliases
       : Array.isArray(qqPrincipal?.aliases) ? qqPrincipal.aliases : undefined;
@@ -1176,8 +1193,10 @@ export class BridgeManager {
         platform,
         chatId,
         senderName,
+        displayName,
         avatarUrl,
         userId,
+        principalId,
         qqPrincipal,
         isGroup: true,
         isOwner,
@@ -1199,12 +1218,12 @@ export class BridgeManager {
 
     let pending = this._pending.get(sessionKey);
     if (!pending) {
-      pending = { kind: "dm-buffer", lines: [], attachments: [], platform, chatId, senderName, avatarUrl, userId, qqPrincipal, isGroup, isOwner, bridgeRole, agentId, messageThreadId, replyContext };
+      pending = { kind: "dm-buffer", lines: [], attachments: [], platform, chatId, senderName, displayName, avatarUrl, userId, principalId, qqPrincipal, isGroup, isOwner, bridgeRole, agentId, messageThreadId, replyContext };
       this._pending.set(sessionKey, pending);
     }
     pending.lines.push(line);
     this._appendPendingAttachments(entry, pending.attachments, attachments);
-    Object.assign(pending, { platform, chatId, senderName, avatarUrl, userId, qqPrincipal, isGroup, isOwner, bridgeRole, messageThreadId, replyContext });
+    Object.assign(pending, { platform, chatId, senderName, displayName, avatarUrl, userId, principalId, qqPrincipal, isGroup, isOwner, bridgeRole, messageThreadId, replyContext });
 
     const isActive = this.engine.isBridgeSessionStreaming(sessionKey, { role: bridgeRole });
 
@@ -1415,10 +1434,10 @@ export class BridgeManager {
       return this._createRichDraftStreamDelivery({ adapter, chatId, capability, context });
     }
     if (mode === "edit_message") {
-      return this._createEditMessageStreamDelivery({ adapter, chatId, capability, context });
+      return this._createEditMessageStreamDelivery({ adapter, chatId, capability, context, platform });
     }
     if (mode === "cardkit_stream") {
-      return this._createCardKitStreamDelivery({ adapter, chatId, capability, context });
+      return this._createCardKitStreamDelivery({ adapter, chatId, capability, context, platform });
     }
     if (mode === "block") {
       return this._createBlockStreamDelivery({ adapter, chatId, context });
@@ -1607,9 +1626,29 @@ export class BridgeManager {
     };
   }
 
-  _createEditMessageStreamDelivery({ adapter, chatId, capability, context }) {
+  _recordStreamDeliveryFailure({ platform, mode, chatId, stage, err }) {
+    const message = err?.message || String(err);
+    const line = `stream delivery failed platform=${platform || "unknown"} mode=${mode || "unknown"} chatId=${chatId || "unknown"} stage=${stage || "unknown"} error=${message}`;
+    log.error(line);
+    debugLog()?.error("bridge", line);
+  }
+
+  async _sendStreamFallbackReply({ adapter, chatId, text, context, platform, mode, stage }) {
+    const fallbackText = String(text || "").trim();
+    if (!fallbackText) return false;
+    try {
+      await this._sendAdapterReply(adapter, chatId, fallbackText, context);
+      return true;
+    } catch (err) {
+      this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: `${stage || "fallback"}:fallback`, err });
+      throw err;
+    }
+  }
+
+  _createEditMessageStreamDelivery({ adapter, chatId, capability, context, platform }) {
     const minIntervalMs = Number.isFinite(capability.minIntervalMs) ? capability.minIntervalMs : 500;
     const maxChars = Number.isFinite(capability.maxChars) ? capability.maxChars : 150_000;
+    const mode = "edit_message";
     const receiptMode = capability.receiptMode || "fold_into_stream";
     let streamState = null;
     let lastSentText = "";
@@ -1639,12 +1678,18 @@ export class BridgeManager {
       lastUpdateTs = now;
       lastSentText = next;
       chain = chain.then(async () => {
-        if (!streamState) {
-          await startMessage(next);
-        } else if (!streamState.missingMessageId) {
-          await adapter.updateStreamReply(chatId, streamState, next, context);
+        const stage = !streamState ? "start" : "update";
+        try {
+          if (!streamState) {
+            await startMessage(next);
+          } else if (!streamState.missingMessageId) {
+            await adapter.updateStreamReply(chatId, streamState, next, context);
+          }
+        } catch (err) {
+          failed = true;
+          this._recordStreamDeliveryFailure({ platform, mode, chatId, stage, err });
         }
-      }).catch(() => { failed = true; });
+      });
     };
 
     return {
@@ -1659,7 +1704,14 @@ export class BridgeManager {
         receiptOnly = true;
         try {
           await startMessage(next);
-        } catch {
+        } catch (err) {
+          this._recordStreamDeliveryFailure({
+            platform,
+            mode,
+            chatId,
+            stage: "start_receipt",
+            err,
+          });
           failed = true;
         }
       },
@@ -1673,11 +1725,12 @@ export class BridgeManager {
             await adapter.finishStreamReply(chatId, streamState, failureText, context);
             receiptOnly = false;
             return;
-          } catch {
+          } catch (err) {
             failed = true;
+            this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: "fail_finish", err });
           }
         }
-        await this._sendAdapterReply(adapter, chatId, failureText, context);
+        await this._sendStreamFallbackReply({ adapter, chatId, text: failureText, context, platform, mode, stage: "fail" });
         receiptOnly = false;
       },
       finish: async (cleaned) => {
@@ -1685,14 +1738,11 @@ export class BridgeManager {
         const textOnly = text.trim();
         await chain;
         if (!textOnly) {
-          if (receiptOnly) {
-            await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), context);
-            receiptOnly = false;
-          }
+          receiptOnly = false;
           return mediaUrls;
         }
         if (createdWithoutMessageId) {
-          await this._sendAdapterReply(adapter, chatId, textOnly, context);
+          await this._sendStreamFallbackReply({ adapter, chatId, text: textOnly, context, platform, mode, stage: "missing_message_id" });
           return mediaUrls;
         }
         const finalText = this._truncateStreamText(textOnly, maxChars);
@@ -1704,19 +1754,21 @@ export class BridgeManager {
               await adapter.finishStreamReply(chatId, streamState, finalText, context);
             }
             return mediaUrls;
-          } catch {
+          } catch (err) {
             failed = true;
+            this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: !streamState ? "finish_start" : "finish", err });
           }
         }
-        await this._sendAdapterReply(adapter, chatId, textOnly, context);
+        await this._sendStreamFallbackReply({ adapter, chatId, text: textOnly, context, platform, mode, stage: "finish" });
         return mediaUrls;
       },
     };
   }
 
-  _createCardKitStreamDelivery({ adapter, chatId, capability, context }) {
+  _createCardKitStreamDelivery({ adapter, chatId, capability, context, platform }) {
     const minIntervalMs = Number.isFinite(capability.minIntervalMs) ? capability.minIntervalMs : 500;
     const maxChars = Number.isFinite(capability.maxChars) ? capability.maxChars : 150_000;
+    const mode = "cardkit_stream";
     const receiptMode = capability.receiptMode || "fold_into_stream";
     let streamState = null;
     let lastSentText = "";
@@ -1740,12 +1792,18 @@ export class BridgeManager {
       lastUpdateTs = now;
       lastSentText = next;
       chain = chain.then(async () => {
-        if (!streamState) {
-          await startMessage(next);
-        } else {
-          await adapter.updateRichStreamReply(chatId, streamState, next, context);
+        const stage = !streamState ? "start" : "update";
+        try {
+          if (!streamState) {
+            await startMessage(next);
+          } else {
+            await adapter.updateRichStreamReply(chatId, streamState, next, context);
+          }
+        } catch (err) {
+          failed = true;
+          this._recordStreamDeliveryFailure({ platform, mode, chatId, stage, err });
         }
-      }).catch(() => { failed = true; });
+      });
     };
 
     return {
@@ -1760,7 +1818,8 @@ export class BridgeManager {
         receiptOnly = true;
         try {
           await startMessage(next);
-        } catch {
+        } catch (err) {
+          this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: "start_receipt", err });
           failed = true;
         }
       },
@@ -1774,11 +1833,12 @@ export class BridgeManager {
             await adapter.finishRichStreamReply(chatId, streamState, failureText, context);
             receiptOnly = false;
             return;
-          } catch {
+          } catch (err) {
             failed = true;
+            this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: "fail_finish", err });
           }
         }
-        await this._sendAdapterReply(adapter, chatId, failureText, context);
+        await this._sendStreamFallbackReply({ adapter, chatId, text: failureText, context, platform, mode, stage: "fail" });
         receiptOnly = false;
       },
       finish: async (cleaned) => {
@@ -1786,16 +1846,16 @@ export class BridgeManager {
         const textOnly = text.trim();
         await chain;
         if (!textOnly) {
-          if (receiptOnly) {
-            await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), context);
-            receiptOnly = false;
-          } else if (!failed && streamState && lastSentText) {
+          if (!failed && streamState && lastSentText && !receiptOnly) {
             try {
               await adapter.finishRichStreamReply(chatId, streamState, lastSentText, context);
-            } catch {
+            } catch (err) {
               failed = true;
+              this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: "finish_last_sent", err });
+              await this._sendStreamFallbackReply({ adapter, chatId, text: lastSentText, context, platform, mode, stage: "finish_last_sent" });
             }
           }
+          receiptOnly = false;
           return mediaUrls;
         }
         const finalText = this._truncateStreamText(textOnly, maxChars);
@@ -1808,11 +1868,12 @@ export class BridgeManager {
               await adapter.finishRichStreamReply(chatId, streamState, finalText, context);
             }
             return mediaUrls;
-          } catch {
+          } catch (err) {
             failed = true;
+            this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: !streamState ? "finish_start" : "finish", err });
           }
         }
-        await this._sendAdapterReply(adapter, chatId, textOnly, context);
+        await this._sendStreamFallbackReply({ adapter, chatId, text: textOnly, context, platform, mode, stage: "finish" });
         return mediaUrls;
       },
     };
@@ -1846,14 +1907,23 @@ export class BridgeManager {
     let receiptDelivery = null;
 
     // 取出所有缓冲消息和附件
-    const { lines, attachments: pendingAttachments = [], platform, chatId, senderName, avatarUrl, userId, qqPrincipal, isGroup, isOwner, bridgeRole, agentId, messageThreadId, replyContext } = batch;
+    const { lines, attachments: pendingAttachments = [], platform, chatId, senderName, displayName, avatarUrl, userId, principalId, qqPrincipal, isGroup, isOwner, bridgeRole, agentId, messageThreadId, replyContext } = batch;
 
     try {
       // 解析附件
       const { images, textNotes, inboundFiles } = await this._resolveAttachments(platform, pendingAttachments, agentId);
       const prompt = textNotes ? `${lines.join("\n")}\n${textNotes}` : lines.join("\n");
       const merged = `${timeTag()} ${prompt}`;
-      const meta = { name: senderName, avatarUrl, userId, chatId, ...(qqPrincipal ? { qqPrincipal } : {}) };
+      const resolvedDisplayName = cleanBridgeMetadataString(displayName) || cleanBridgeMetadataString(senderName);
+      const meta = {
+        name: resolvedDisplayName,
+        displayName: resolvedDisplayName,
+        avatarUrl,
+        userId,
+        principalId,
+        chatId,
+        ...(qqPrincipal ? { qqPrincipal } : {}),
+      };
 
       // ── RC 接管态路由（Phase 2-C） ──
       // attachment 存在 → 消息进桌面 session 而非 bridge session
@@ -1888,7 +1958,7 @@ export class BridgeManager {
           platform,
           chatId,
           agentId,
-          text: prompt || (images.length ? "请查看图片" : ""),
+          text: sanitizeBridgeVisibleText(prompt || (images.length ? "请查看图片" : "")),
           images,
           inboundFiles,
           messageThreadId,
@@ -1930,7 +2000,7 @@ export class BridgeManager {
         images: images.length ? images : undefined,
         inboundFiles: inboundFiles.length ? inboundFiles : undefined,
         displayMessage: {
-          text: prompt || (images.length || inboundFiles.length ? "请查看附件" : ""),
+          text: sanitizeBridgeVisibleText(prompt || (images.length || inboundFiles.length ? "请查看附件" : "")),
           source: "bridge",
           bridgeSessionKey: sessionKey,
         },
@@ -2081,7 +2151,7 @@ export class BridgeManager {
         isGroup: false,
       });
       const displayMessage = {
-        text,
+        text: sanitizeBridgeVisibleText(text),
         source: "bridge_rc",
         bridgeSessionKey: sessionKey,
         attachments: inboundFiles?.length

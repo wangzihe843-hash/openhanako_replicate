@@ -71,6 +71,73 @@ describe("bridge sessions route", () => {
     });
   });
 
+  it("strips Bridge internal time tags from visible session messages", async () => {
+    const { app, sessionPath } = makeApp();
+    fs.writeFileSync(sessionPath, `${JSON.stringify({
+      type: "message",
+      timestamp: "2026-07-03T05:00:00.000Z",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "<t>07-03 13:00</t> hello" }],
+      },
+    })}\n`, "utf-8");
+
+    const res = await app.request(`/api/bridge/sessions/${encodeURIComponent("tg_dm_owner@hana")}/messages?agentId=hana`);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.messages[0]).toMatchObject({
+      role: "user",
+      content: "hello",
+    });
+  });
+
+  it("returns refreshed bridge status after owner changes", async () => {
+    const agentId = "hana";
+    const sessionDir = path.join(rootDir, "agents", agentId, "sessions");
+    const agent = {
+      id: agentId,
+      sessionDir,
+      config: { bridge: { telegram: {} } },
+      updateConfig(patch) {
+        this.config.bridge = {
+          ...this.config.bridge,
+          ...patch.bridge,
+          telegram: {
+            ...(this.config.bridge.telegram || {}),
+            ...(patch.bridge.telegram || {}),
+          },
+        };
+      },
+    };
+    const engine = {
+      currentAgentId: agentId,
+      getAgent: (id) => (id === agentId ? agent : null),
+      getBridgeIndex: () => ({
+        "tg_dm_owner@hana": {
+          file: "owner/tg-owner.jsonl",
+          userId: "owner",
+          name: "Owner",
+        },
+      }),
+      getBridgeReadOnly: () => false,
+      getBridgeReceiptEnabled: () => true,
+    };
+    const ownerApp = new Hono();
+    ownerApp.route("/api", createBridgeRoute(engine, null));
+
+    const res = await ownerApp.request("/api/bridge/owner?agentId=hana", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "telegram", userId: "owner" }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.status.owner.telegram).toBe("owner");
+  });
+
   it("marks QQ sessions as owner when configured owner matches a principal alias", async () => {
     const agentId = "hana";
     const sessionDir = path.join(rootDir, "agents", agentId, "sessions");

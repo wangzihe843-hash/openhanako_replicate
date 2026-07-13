@@ -13,6 +13,36 @@ function devWebPreviewState(): AutoUpdateState | null {
     downloadUrl: null,
     progress: null,
     error: null,
+    digest: {
+      schemaVersion: 1,
+      tag: `v${params.get('hana_update_version') || '0.237.14'}`,
+      version: params.get('hana_update_version') || '0.237.14',
+      previousTag: 'v0.237.13',
+      generatedAt: new Date().toISOString(),
+      noUserFacingChanges: false,
+      summary: {
+        zh: '这次更新整理了自动更新体验，并补上了国内镜像链路。',
+        en: 'This update improves the updater experience and adds a domestic mirror path.',
+      },
+      counts: { feature: 1, fix: 1, improvement: 1, migration: 0 },
+      items: [
+        {
+          id: 'preview-updater',
+          kind: 'improvement',
+          importance: 'high',
+          title: { zh: '更新说明更清楚', en: 'Clearer update notes' },
+          summary: {
+            zh: 'About 页会显示这次版本带来的具体变化。',
+            en: 'The About page can show what this version brings.',
+          },
+          details: [],
+          sources: [],
+        },
+      ],
+    },
+    digestUrl: null,
+    digestError: null,
+    updateSource: { provider: 'github', owner: 'liliMozi', repo: 'openhanako' },
   };
 }
 

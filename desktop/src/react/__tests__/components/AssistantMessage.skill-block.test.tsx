@@ -58,6 +58,9 @@ describe('AssistantMessage skill blocks', () => {
 
     render(
       <AssistantMessage
+        agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
+        isStreaming={false}
+        isSelected={false}
         showAvatar={false}
         sessionPath="/sessions/main.jsonl"
         message={{

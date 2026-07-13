@@ -157,7 +157,9 @@ export async function openInternalLink(href: string, context: LinkOpenContext = 
 
   if (target.kind === 'web') {
     if (hasDesktopBrowserViewer() && typeof window.platform?.openBrowserViewer === 'function') {
-      window.platform.openBrowserViewer(target.url);
+      window.platform.openBrowserViewer(context.sessionPath
+        ? { url: target.url, sessionPath: context.sessionPath }
+        : target.url);
     } else {
       window.platform?.openExternal?.(target.url);
     }

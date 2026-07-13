@@ -58,6 +58,9 @@ describe('UserMessage Codex-style actions', () => {
 
     render(
       <UserMessage
+        viewerIdentity={{ name: '小黎', avatarUrl: null }}
+        isStreaming={false}
+        isSelected={false}
         message={message}
         showAvatar={false}
         sessionPath="/session/a.jsonl"
@@ -78,6 +81,9 @@ describe('UserMessage Codex-style actions', () => {
 
     render(
       <UserMessage
+        viewerIdentity={{ name: '小黎', avatarUrl: null }}
+        isStreaming={false}
+        isSelected={false}
         message={message}
         showAvatar={false}
         sessionPath="/session/a.jsonl"
@@ -86,6 +92,7 @@ describe('UserMessage Codex-style actions', () => {
     );
 
     const footer = screen.getByTestId('user-message-footer-actions');
+    expect(footer).toHaveAttribute('data-message-actions');
     const ordered = Array.from(footer.children).map(child => (
       child.textContent?.trim() || child.getAttribute('title') || ''
     ));
@@ -106,6 +113,9 @@ describe('UserMessage Codex-style actions', () => {
 
     render(
       <UserMessage
+        viewerIdentity={{ name: '小黎', avatarUrl: null }}
+        isStreaming={false}
+        isSelected={false}
         message={message}
         showAvatar={false}
         sessionPath="/session/a.jsonl"
@@ -130,6 +140,9 @@ describe('UserMessage Codex-style actions', () => {
 
     render(
       <UserMessage
+        viewerIdentity={{ name: '小黎', avatarUrl: null }}
+        isStreaming={false}
+        isSelected={false}
         message={message}
         showAvatar={false}
         sessionPath="/session/a.jsonl"
@@ -151,6 +164,9 @@ describe('UserMessage Codex-style actions', () => {
 
     render(
       <UserMessage
+        viewerIdentity={{ name: '小黎', avatarUrl: null }}
+        isStreaming={false}
+        isSelected={false}
         message={message}
         showAvatar={false}
         sessionPath="/session/a.jsonl"

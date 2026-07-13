@@ -13,7 +13,7 @@
  *      https://help.aliyun.com/zh/model-studio/vision/
  *   Qwen 思考模式由 enable_thinking: bool 控制（非 OpenAI 标准的 reasoning_effort）。
  *   - chat 路径：Pi SDK 自动处理（compat.thinkingFormat="qwen" + reasoningEffort）
- *     见 node_modules/@mariozechner/pi-ai/dist/providers/openai-completions.js:333-334
+ *     见 node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js
  *   - utility 路径：Pi SDK 不参与（callText 直 fetch），hana 必须自己强制关思考
  *     省 token（utility 是 50~500 token 短输出，思考链耗光预算）
  *

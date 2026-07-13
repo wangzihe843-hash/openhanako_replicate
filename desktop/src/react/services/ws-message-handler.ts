@@ -61,9 +61,39 @@ function sessionIdentityFromMessage(msg: any): { sessionId: string | null; sessi
   };
 }
 
-function rememberSessionLocatorFromMessage(msg: any): void {
+function rememberSessionLocatorFromMessage(msg: any): boolean {
   const { sessionId, sessionPath } = sessionIdentityFromMessage(msg);
-  if (!sessionId || !sessionPath) return;
+  if (!sessionId || !sessionPath) return true;
+  if (
+    msg?.type === 'compaction_accepted'
+    || msg?.type === 'compaction_result'
+    || msg?.type === 'compaction_start'
+    || msg?.type === 'compaction_end'
+  ) {
+    // Compaction path is transport metadata only. Identity routing uses sessionId,
+    // and this event family must never mutate the locator truth maintained by the
+    // sessions projection / manifest boundary.
+    return true;
+  }
+  const snapshot = useStore.getState();
+  const knownLocatorPath = snapshot.sessionLocatorsById?.[sessionId]?.path || null;
+  const authoritativeLocatorUpdate = msg?.type === 'session_created';
+  if (knownLocatorPath && knownLocatorPath !== sessionPath && !authoritativeLocatorUpdate) {
+    console.warn('[ws] session locator mismatch; dropping non-authoritative event', {
+      sessionId,
+      sessionPath,
+      knownLocatorPath,
+    });
+    return false;
+  }
+  const knownPathSessionId = snapshot.sessions.find((session: any) => session?.path === sessionPath)?.sessionId
+    || (snapshot.currentSessionPath === sessionPath ? snapshot.currentSessionId : null)
+    || Object.entries(snapshot.sessionLocatorsById || {}).find(([, locator]: any) => locator?.path === sessionPath)?.[0]
+    || null;
+  if (knownPathSessionId && knownPathSessionId !== sessionId) {
+    console.warn('[ws] session identity mismatch; dropping event', { sessionId, sessionPath, knownPathSessionId });
+    return false;
+  }
   useStore.setState((state: any) => {
     const currentLocator = state.sessionLocatorsById?.[sessionId] || null;
     const patch: Record<string, any> = {};
@@ -78,12 +108,16 @@ function rememberSessionLocatorFromMessage(msg: any): void {
     }
     return Object.keys(patch).length ? patch : {};
   });
+  return true;
 }
 
 function isFocusedSessionMessage(msg: any): boolean {
   const { sessionId, sessionPath } = sessionIdentityFromMessage(msg);
   if (!sessionId && !sessionPath) return true;
   const state = useStore.getState();
+  if (sessionId && sessionPath) {
+    return state.currentSessionPath === sessionPath && state.currentSessionId === sessionId;
+  }
   return (!!sessionPath && state.currentSessionPath === sessionPath)
     || (!!sessionId && state.currentSessionId === sessionId);
 }
@@ -241,27 +275,81 @@ function requestInputFocusForCurrentSession(sessionPath: string | null): void {
   const state = useStore.getState();
   if (state.pendingNewSession) return;
   if (state.currentSessionPath !== sessionPath) return;
-  state.requestInputFocus?.();
+  state.requestInputFocus?.('restore');
 }
 
-function applyCompactionLifecycle(msg: any): void {
-  const sp = msg.sessionPath;
-  if (!sp) return;
+function applyTurnEndSideEffects(msg: any): void {
+  scheduleSessionsRefresh('turn_end');
+  const turnSp = msg.sessionPath;
+  if (turnSp) {
+    requestContextUsage(turnSp);
+  } else {
+    console.warn('[ws] turn_end missing sessionPath, skipping context_usage request');
+  }
+}
 
-  if (msg.type === 'compaction_start') {
-    useStore.getState().addCompactingSession(sp);
+function compactionIdentity(msg: any): { key: string | null; sessionId: string | null; sessionPath: string | null } {
+  const { sessionId, sessionPath } = sessionIdentityFromMessage(msg);
+  return { key: sessionId || sessionPath, sessionId, sessionPath };
+}
+
+function setCompactionBusy(msg: any, busy: boolean): void {
+  const { key, sessionId, sessionPath } = compactionIdentity(msg);
+  if (!key) return;
+  useStore.setState((state: any) => {
+    const withoutIdentity = (state.compactingSessions || []).filter((item: string) => (
+      item !== key && item !== sessionId && item !== sessionPath
+    ));
+    return { compactingSessions: busy ? [...withoutIdentity, key] : withoutIdentity };
+  });
+}
+
+function updateCompactionContext(msg: any): void {
+  const { key, sessionId, sessionPath } = compactionIdentity(msg);
+  if (!key) return;
+  useStore.setState((state: any) => {
+    const existing = state.contextBySession?.[key]
+      || (sessionPath ? sessionScopedValue(state, state.contextBySession, sessionPath) : null);
+    const value = {
+      tokens: msg.tokens ?? null,
+      window: msg.contextWindow ?? existing?.window ?? null,
+      percent: msg.percent ?? null,
+    };
+    const contextBySession = { ...(state.contextBySession || {}), [key]: value };
+    if (sessionId && sessionPath && sessionId !== sessionPath) delete contextBySession[sessionPath];
+    const focused = (sessionId && state.currentSessionId === sessionId)
+      || (!sessionId && sessionPath && state.currentSessionPath === sessionPath);
+    return {
+      contextBySession,
+      ...(focused ? {
+        contextTokens: value.tokens,
+        contextWindow: value.window,
+        contextPercent: value.percent,
+      } : {}),
+    };
+  });
+}
+
+function applyCompactionMessage(msg: any): void {
+  if (msg.type === 'compaction_accepted' || msg.type === 'compaction_start') {
+    setCompactionBusy(msg, true);
     return;
   }
+  if (msg.type === 'compaction_end') {
+    setCompactionBusy(msg, false);
+    updateCompactionContext(msg);
+    return;
+  }
+  if (msg.type !== 'compaction_result') return;
 
-  if (msg.type !== 'compaction_end') return;
-
-  useStore.getState().removeCompactingSession(sp);
-  const existingWindow = sessionScopedValue(useStore.getState(), useStore.getState().contextBySession, sp)?.window ?? null;
-  const window = msg.contextWindow ?? existingWindow;
-  updateKeyed('contextBySession', sp,
-    { tokens: msg.tokens ?? null, window, percent: msg.percent ?? null },
-    (_s, d) => ({ contextTokens: d.tokens, contextWindow: d.window, contextPercent: d.percent }),
-  );
+  setCompactionBusy(msg, false);
+  if (msg.status === 'noop' || msg.status === 'failed') {
+    const message = nonEmptyString(msg.message)
+      || (msg.status === 'noop' ? 'Nothing to compact' : 'Compaction failed');
+    useStore.getState().addToast(message, msg.status === 'noop' ? 'info' : 'error', 6000, {
+      dedupeKey: `compaction-result:${msg.sessionId || msg.sessionPath || 'unknown'}:${msg.status}`,
+    });
+  }
 }
 
 export function applyStreamingStatus(
@@ -404,7 +492,7 @@ function applyInputSessionConfirmationBlock(msg: any): void {
 // ── 消息分发（大 switch） ──
 
 export function handleServerMessage(msg: any): void {
-  rememberSessionLocatorFromMessage(msg);
+  if (!rememberSessionLocatorFromMessage(msg)) return;
   const state = useStore.getState();
 
   const rebuildingFor = isStreamResumeRebuilding();
@@ -427,8 +515,14 @@ export function handleServerMessage(msg: any): void {
     if (!updateSessionStreamMeta(msg)) return;
   }
 
-  if (msg.type === 'compaction_start' || msg.type === 'compaction_end') {
-    applyCompactionLifecycle(msg);
+  if (
+    msg.type === 'compaction_accepted'
+    || msg.type === 'compaction_result'
+    || msg.type === 'compaction_start'
+    || msg.type === 'compaction_end'
+  ) {
+    applyCompactionMessage(msg);
+    if (msg.type === 'compaction_accepted' || msg.type === 'compaction_result') return;
   }
 
   applyInputSessionConfirmationBlock(msg);
@@ -438,6 +532,9 @@ export function handleServerMessage(msg: any): void {
   if (REACT_CHAT_EVENTS.has(msg.type) && msg.sessionPath && msg.sessionPath !== state.currentSessionPath) {
     if (isKnownChatSession(msg.sessionPath, state)) {
       streamBufferManager.handle(msg);
+    }
+    if (msg.type === 'turn_end') {
+      applyTurnEndSideEffects(msg);
     }
     dispatchStreamKey(msg.sessionPath, msg);
     applyTodoToolEnd(msg);
@@ -451,19 +548,7 @@ export function handleServerMessage(msg: any): void {
     streamBufferManager.handle(msg);
     // turn_end 后仍需执行部分通用逻辑（loadSessions、context_usage）
     if (msg.type === 'turn_end') {
-      scheduleSessionsRefresh('turn_end');
-      const turnSp = msg.sessionPath;
-      if (turnSp) {
-        const wasStreaming = sessionScopedListIncludes(useStore.getState(), useStore.getState().streamingSessions, turnSp);
-        applyStreamingStatus(false, turnSp, {
-          streamId: msg.streamId ?? null,
-          turnId: msg.turnId ?? null,
-        });
-        requestContextUsage(turnSp);
-        if (!wasStreaming) requestInputFocusForCurrentSession(turnSp);
-      } else {
-        console.warn('[ws] turn_end missing sessionPath, skipping context_usage request');
-      }
+      applyTurnEndSideEffects(msg);
     }
     // tool_end 后更新 todo（兼容新旧工具名 + 新旧格式）
     applyTodoToolEnd(msg);
@@ -697,6 +782,7 @@ export function handleServerMessage(msg: any): void {
         quotedText: msg.message.quotedText,
         skills: msg.message.skills,
         deskContext: msg.message.deskContext ?? undefined,
+        origin: msg.message.origin ?? undefined,
       };
       if (clientMessageId && useStore.getState().confirmOptimisticUserMessage(sp, clientMessageId, data)) {
         bumpMessageLiveVersion(sp);
@@ -888,8 +974,15 @@ export function handleServerMessage(msg: any): void {
     }
 
     case 'error': {
-      const sp = msg.sessionPath;
-      if (!sp) { console.warn('[ws] event missing sessionPath:', msg.type); break; }
+      const { sessionPath: sp } = sessionIdentityFromMessage(msg);
+      if (!sp) {
+        if (msg.code === 'session_identity_unresolved' || msg.code === 'session_identity_mismatch') {
+          useStore.getState().addToast(msg.message || 'Unable to resolve session identity', 'error', 6000);
+        } else {
+          console.warn('[ws] event missing sessionPath:', msg.type);
+        }
+        break;
+      }
       useStore.getState().setInlineError(sp, msg.message);
       break;
     }

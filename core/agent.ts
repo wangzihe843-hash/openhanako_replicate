@@ -41,6 +41,7 @@ import { createStopTaskTool } from "../lib/tools/stop-task-tool.ts";
 import { createCurrentStatusTool } from "../lib/tools/current-status-tool.ts";
 import { createWorkflowTool } from "../lib/tools/workflow-tool.ts";
 import { createCardGuideTool } from "../lib/tools/card-guide-tool.ts";
+import { createSessionTool } from "../lib/tools/session-tool.ts";
 import { createShowCardTool } from "../lib/tools/show-card-tool.ts";
 import { runCompatChecks } from "../lib/compat/index.ts";
 import { getPlatformPromptNote } from "./platform-prompt.ts";
@@ -59,7 +60,6 @@ import { callText } from "./llm-client.ts";
 import { createModuleLogger } from "../lib/debug-log.ts";
 import {
   CACHE_SNAPSHOT_EXPERIMENT_ID,
-  EDITABLE_MEMORY_EXPERIMENT_ID,
   PROACTIVE_SUBAGENT_EXPERIMENT_ID,
   getResolvedExperimentValue,
 } from "../lib/experiments/registry.ts";
@@ -77,8 +77,10 @@ const moduleLog = createModuleLogger("agent");
 
 type AgentAppearanceEngine = {
   resolveVisionConfig?: () => ResolvedAgentAppearanceModelConfig | null;
+  resolveVisionConfigFresh?: () => Promise<ResolvedAgentAppearanceModelConfig | null>;
   currentModel?: AgentAppearanceModel | null;
   resolveModelWithCredentials?: (modelRef: unknown) => ResolvedAgentAppearanceModelConfig | null;
+  resolveModelWithCredentialsFresh?: (modelRef: unknown) => Promise<ResolvedAgentAppearanceModelConfig | null>;
   usageLedger?: unknown;
 };
 
@@ -134,9 +136,11 @@ export class Agent {
   declare _pinnedMemoryTools: any;
   declare _repairState: any;
   declare _resolveModel: any;
+  declare _resolveModelFresh: any;
   declare _runtimeInitialized: any;
   declare _searchConfigResolver: any;
   declare _sessionFoldersTool: any;
+  declare _sessionTool: any;
   declare _stageFilesTool: any;
   declare _fileTool: any;
   declare _xingyeProposeDraftTool: any;
@@ -247,6 +251,7 @@ export class Agent {
     this._subagentCloseTool = null;
     this._cardGuideTool = null;
     this._showCardTool = null;
+    this._sessionTool = null;
     this._workflowTool = null;
     this._currentStatusTool = null;
 
@@ -291,7 +296,12 @@ export class Agent {
     this._refreshRepairState();
   }
 
-  async init(log: (msg?: string) => void = () => {}, sharedModels: any = {}, resolveModel = null) {
+  async init(
+    log: (msg?: string) => void = () => {},
+    sharedModels: any = {},
+    resolveModel = null,
+    resolveModelFresh = null,
+  ) {
     if (this._runtimeInitialized) return;
 
     // 0. 兼容性检查（目录、数据库、配置文件）
@@ -376,6 +386,7 @@ export class Agent {
     // 保存解析函数：每次 tick 现场调用，拿到最新凭证。
     // 不缓存解析结果——provider key/url/api 变更后 tick 自动恢复，无需重启 agent。
     this._resolveModel = resolveModel || null;
+    this._resolveModelFresh = resolveModelFresh || null;
 
     // 启动时试探性 resolve 一次，只为打一条启动告警（运行时由 ticker 各调用点的 try/catch 处理）
     if (this._memoryModel && this._resolveModel) {
@@ -398,11 +409,16 @@ export class Agent {
         configPath: this.configPath,
         factStore: this._factStore,
         // 现场 resolve：每次 tick 拿到 yaml 最新凭证
-        getResolvedMemoryModel: () => ({
-          ...this._resolveModel(this._memoryModel, this._config),
-          usageLedger: this._cb?.getEngine?.()?.usageLedger,
-          usageAgentId: this.id,
-        }),
+        getResolvedMemoryModel: async () => {
+          if (!this._resolveModelFresh) {
+            throw new Error("fresh memory model resolver is unavailable");
+          }
+          return {
+            ...await this._resolveModelFresh(this._memoryModel, this._config),
+            usageLedger: this._cb?.getEngine?.()?.usageLedger,
+            usageAgentId: this.id,
+          };
+        },
         getMemoryMasterEnabled: () => this._memoryMasterEnabled,
         isSessionMemoryEnabled: (sessionPath) => this.isSessionMemoryEnabledFor(sessionPath),
         getTimezone: () => this._cb?.getTimezone?.() || Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -410,10 +426,6 @@ export class Agent {
           this._cb?.getPreferences?.(),
           CACHE_SNAPSHOT_EXPERIMENT_ID,
         ),
-        getEditableMemoryEnabled: () => getResolvedExperimentValue(
-          this._cb?.getPreferences?.(),
-          EDITABLE_MEMORY_EXPERIMENT_ID,
-        ) === true,
         buildSessionCacheSnapshot: (sessionPath, options) => (
           this._cb?.getEngine?.()?.buildSessionCacheSnapshot?.(sessionPath, options)
         ),
@@ -429,6 +441,7 @@ export class Agent {
         getSessionIdForPath: (sessionPath) => (
           this._cb?.getEngine?.()?.getSessionIdForPath?.(sessionPath)
         ),
+        envChangeLedger: this._cb?.getEngine?.()?.getEnvChangeLedger?.() || null,
         onCompiled: () => {
           // _systemPrompt 是非 session 路径（巡检/cron/频道/DM/bridge owner 新建）
           // 共享的 cache，必须按 master 构建，不被 per-session 开关污染。
@@ -540,6 +553,9 @@ export class Agent {
       getSessionFolderScope: (sessionPath) => this._cb?.getEngine?.()?.getSessionFolderScope?.(sessionPath) || null,
       getBridgeContext: (sessionPath) => this._cb?.getEngine?.()?.getBridgeContextForSessionPath?.(sessionPath, { agentId: this.id }) || null,
       listOpenSubagentThreads: (sessionPath) => this._cb?.getSubagentThreadStore?.()?.listOpenDirectBySession?.(sessionPath) || [],
+      onTimeObserved: (sessionPath, observedAt) => (
+        this._cb?.getEngine?.()?.noteSessionTimeObserved?.(sessionPath, observedAt)
+      ),
     });
     // 10. 设置修改工具
     this._updateSettingsTool = createUpdateSettingsTool({
@@ -597,7 +613,7 @@ export class Agent {
         cfg.capabilities = { ...cfg.capabilities, learn_skills: globalLearn };
         return cfg;
       },
-      resolveUtilityConfig: () => this._cb?.resolveUtilityConfig?.(),
+      resolveUtilityConfig: (options) => this._cb?.resolveUtilityConfigFresh?.(options),
       onInstalled: async (skillName) => {
         await this._onInstallCallback?.(skillName);
       },
@@ -680,6 +696,16 @@ export class Agent {
     // 14. Interactive Card 工具（设计手册 + 渲染工具）
     this._cardGuideTool = createCardGuideTool();
     this._showCardTool = createShowCardTool();
+
+    // 15. session 工具（跨 session 协作：list/read/send/create）。desktop-only，
+    // 见 getToolsSnapshot 的 surface 裁剪；subagent 上下文由 SUBAGENT_BLOCKED_TOOLS 拦截。
+    this._sessionTool = createSessionTool({
+      getEngine: () => this._cb?.getEngine?.() || null,
+      getDraftStore: () => this._cb?.getEngine?.()?.sessionCollabDraftStore || null,
+      listAgents: this._listAgents || null,
+      agentId: this.id,
+      getAgentName: () => this.agentName || this.id,
+    });
 
     // 12. 组装 system prompt（按 master 构建，与 per-session 开关解耦）
     log(`  [agent] 9. buildSystemPrompt...`);
@@ -801,12 +827,13 @@ export class Agent {
 
   async refreshAppearanceSummary(options: RefreshAppearanceSummaryOptions = {}) {
     const engine = this._getAppearanceEngine();
+    const freshVisionConfig = await engine?.resolveVisionConfigFresh?.() || null;
     const summary = await refreshAgentAppearanceProfileResource({
       agentDir: this.agentDir,
       agentName: this.agentName,
-      visionConfig: this._resolveAppearanceVisionConfig(engine),
+      visionConfig: freshVisionConfig,
       targetModel: options.targetModel || null,
-      resolveModelWithCredentials: (modelRef) => engine?.resolveModelWithCredentials?.(modelRef) || null,
+      resolveModelWithCredentialsFresh: (modelRef) => engine?.resolveModelWithCredentialsFresh?.(modelRef) || Promise.resolve(null),
       callText: (callOptions) => callText(callOptions as unknown as Parameters<typeof callText>[0]),
       usageLedger: engine?.usageLedger,
       signal: options.signal,
@@ -850,6 +877,7 @@ export class Agent {
   get summaryManager() { return this._summaryManager; }
   get memoryTicker() { return this._memoryTicker; }
   getToolsSnapshot( options: any = {}) {
+    const surface = options.surface === "bridge" ? "bridge" : "desktop";
     const forceMemoryEnabled = Object.prototype.hasOwnProperty.call(options, "forceMemoryEnabled")
       ? options.forceMemoryEnabled
       : null;
@@ -895,6 +923,7 @@ export class Agent {
       this._workflowTool,
       this._checkDeferredTool,
       this._currentStatusTool,
+      ...(surface === "desktop" ? [this._sessionTool] : []),
       this._cardGuideTool,
       this._showCardTool,
     ].filter(Boolean);
@@ -1684,7 +1713,7 @@ export class Agent {
       ...(tz ? { timeZone: tz } : {}),
     };
     const dateTime = new Intl.DateTimeFormat("en-US", fmtOpts as any).format(now);
-    parts.push(`\nCurrent date and time: ${dateTime}`);
+    parts.push(`\nSession start time: ${dateTime}`);
     parts.push(isZh
       ? "你的一天从 04:00 开始。04:00 之前的对话属于前一天。"
       : "Your day starts at 04:00. Conversations before 04:00 belong to the previous day.");

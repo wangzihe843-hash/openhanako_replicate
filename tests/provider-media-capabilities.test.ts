@@ -351,7 +351,7 @@ describe("ProviderRegistry media capabilities", () => {
     expect(byId.has("minimax-token-plan")).toBe(false);
   });
 
-  it("exposes OAuth GPT Image 2 as image_generation without projecting the OAuth alias into chat", () => {
+  it("exposes OAuth GPT Image 2 and projects Hana-owned chat defaults through the runtime auth alias", () => {
     const registry = new ProviderRegistry(tmpHome);
     registry.reload();
 
@@ -371,8 +371,19 @@ describe("ProviderRegistry media capabilities", () => {
     expect(registry.resolveChatProvider("openai-codex-oauth")).toMatchObject({
       originalProviderId: "openai-codex-oauth",
       providerId: "openai-codex",
-      projection: "sdk-auth-alias",
+      projection: "models-json",
+      credentialSource: "auth-storage",
     });
+    expect(registry.getChatModelIds("openai-codex-oauth")).toEqual(expect.arrayContaining([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+      "gpt-5.4",
+      "gpt-5.4-mini",
+      "gpt-5.2",
+    ]));
+    expect(registry.getChatModelIds("openai-codex-oauth")).not.toContain("gpt-5.3-codex-spark");
   });
 
   it("treats a configured Volcengine Coding Plan credential lane as usable for Volcengine image generation", () => {

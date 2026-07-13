@@ -13,6 +13,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── Mock adapter imports (避免拉真实 SDK) ──
 
+const bridgeDebugMock = vi.hoisted(() => ({
+  log: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+const bridgeModuleLoggerMock = vi.hoisted(() => ({
+  log: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
 vi.mock("../lib/bridge/telegram-adapter.js", () => ({
   createTelegramAdapter: vi.fn(),
 }));
@@ -20,8 +32,8 @@ vi.mock("../lib/bridge/feishu-adapter.js", () => ({
   createFeishuAdapter: vi.fn(),
 }));
 vi.mock("../lib/debug-log.js", () => ({
-  debugLog: () => null,
-  createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+  debugLog: () => bridgeDebugMock,
+  createModuleLogger: () => bridgeModuleLoggerMock,
 }));
 
 import os from "os";
@@ -89,6 +101,12 @@ function createMocks() {
 describe("BridgeManager._handleMessage", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    bridgeDebugMock.log.mockClear();
+    bridgeDebugMock.warn.mockClear();
+    bridgeDebugMock.error.mockClear();
+    bridgeModuleLoggerMock.log.mockClear();
+    bridgeModuleLoggerMock.warn.mockClear();
+    bridgeModuleLoggerMock.error.mockClear();
   });
 
   afterEach(() => {
@@ -1235,7 +1253,101 @@ describe("BridgeManager._handleMessage", () => {
       await vi.advanceTimersByTimeAsync(2100);
       await vi.waitFor(() => expect(feishuAdapter.sendReply).toHaveBeenCalledWith("oc_chat", "Hello"));
       expect(feishuAdapter.finishRichStreamReply).toHaveBeenCalledOnce();
+      expect(bridgeDebugMock.error).toHaveBeenCalledWith(
+        "bridge",
+        expect.stringContaining("platform=feishu mode=cardkit_stream chatId=oc_chat stage=finish error=CardKit unavailable"),
+      );
       expect(bm._processing.has("fs_dm_owner123@hana")).toBe(false);
+    });
+
+    it("logs Feishu edit-message update failures and falls back to a normal message", async () => {
+      const { bm, hub, engine } = createMocks();
+      engine.getBridgeReceiptEnabled.mockReturnValue(false);
+      const feishuAdapter = {
+        streamingCapabilities: {
+          mode: "edit_message",
+          scopes: ["dm"],
+          minIntervalMs: 0,
+          maxChars: 150_000,
+          renderer: "post",
+          receiptMode: "fold_into_stream",
+        },
+        startStreamReply: vi.fn().mockResolvedValue({ messageId: "om_stream_001" }),
+        updateStreamReply: vi.fn().mockRejectedValue(new Error("update denied")),
+        finishStreamReply: (vi.fn().mockResolvedValue as any)(),
+        sendReply: (vi.fn().mockResolvedValue as any)(),
+        sendBlockReply: (vi.fn().mockResolvedValue as any)(),
+        stop: vi.fn(),
+      };
+      bm._platforms.set("feishu:hana", { adapter: feishuAdapter, status: "connected", agentId: "hana", platform: "feishu" });
+      hub.send.mockImplementation(async (_text, opts) => {
+        opts.onDelta("Hel", "Hel");
+        opts.onDelta("lo", "Hello");
+        return bridgeReply("Hello");
+      });
+
+      bm._handleMessage("feishu", {
+        sessionKey: "fs_dm_owner123@hana",
+        text: "hi",
+        userId: "owner123",
+        chatId: "oc_chat",
+        agentId: "hana",
+      });
+
+      await vi.advanceTimersByTimeAsync(2100);
+      await vi.waitFor(() => expect(feishuAdapter.sendReply).toHaveBeenCalledWith("oc_chat", "Hello"));
+
+      expect(feishuAdapter.finishStreamReply).not.toHaveBeenCalled();
+      expect(bridgeDebugMock.error).toHaveBeenCalledWith(
+        "bridge",
+        expect.stringContaining("platform=feishu mode=edit_message chatId=oc_chat stage=update error=update denied"),
+      );
+    });
+
+    it("logs CardKit start and fallback-send failures", async () => {
+      const { bm, hub, engine } = createMocks();
+      engine.getBridgeReceiptEnabled.mockReturnValue(false);
+      const feishuAdapter = {
+        richStreamingCapabilities: {
+          mode: "cardkit_stream",
+          scopes: ["dm"],
+          minIntervalMs: 0,
+          maxChars: 150_000,
+          requiresRichStreaming: true,
+          receiptMode: "fold_into_stream",
+        },
+        startRichStreamReply: vi.fn().mockRejectedValue(new Error("CardKit start denied")),
+        updateRichStreamReply: (vi.fn().mockResolvedValue as any)(),
+        finishRichStreamReply: (vi.fn().mockResolvedValue as any)(),
+        sendReply: vi.fn().mockRejectedValue(new Error("plain send denied")),
+        sendBlockReply: (vi.fn().mockResolvedValue as any)(),
+        stop: vi.fn(),
+      };
+      bm._platforms.set("feishu:hana", { adapter: feishuAdapter, status: "connected", agentId: "hana", platform: "feishu" });
+      hub.send.mockImplementation(async (_text, opts) => {
+        opts.onDelta("Hel", "Hel");
+        return bridgeReply("Hello");
+      });
+
+      bm._handleMessage("feishu", {
+        sessionKey: "fs_dm_owner123@hana",
+        text: "hi",
+        userId: "owner123",
+        chatId: "oc_chat",
+        agentId: "hana",
+      });
+
+      await vi.advanceTimersByTimeAsync(2100);
+      await vi.waitFor(() => expect(feishuAdapter.sendReply).toHaveBeenCalledWith("oc_chat", "Hello"));
+
+      expect(bridgeDebugMock.error).toHaveBeenCalledWith(
+        "bridge",
+        expect.stringContaining("platform=feishu mode=cardkit_stream chatId=oc_chat stage=start error=CardKit start denied"),
+      );
+      expect(bridgeDebugMock.error).toHaveBeenCalledWith(
+        "bridge",
+        expect.stringContaining("platform=feishu mode=cardkit_stream chatId=oc_chat stage=finish:fallback error=plain send denied"),
+      );
     });
 
     it("folds Feishu waiting receipts into the edit-message stream lifecycle", async () => {

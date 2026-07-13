@@ -174,13 +174,7 @@ function AgentChips({ agents, selectedId }: {
       void activateWorkspaceDesk(homeFolder, { mountId: null });
     }
     // 切换到该 agent 的 chat model
-    if (agent?.chatModel?.id && agent.chatModel.provider) {
-      hanaFetch('/api/models/set', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelId: agent.chatModel.id, provider: agent.chatModel.provider }),
-      }).then(() => loadModels()).catch(() => {});
-    }
+    refreshModelsAfterAgentModelSwitch(agent);
   }, [agents]);
 
   return (
@@ -224,6 +218,19 @@ function AgentChip({ agent, isSelected, onClick }: {
       <span>{agent.name}</span>
     </button>
   );
+}
+
+function refreshModelsAfterAgentModelSwitch(agent: Agent | undefined): void {
+  if (agent?.chatModel?.id && agent.chatModel.provider) {
+    hanaFetch('/api/models/set', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelId: agent.chatModel.id, provider: agent.chatModel.provider }),
+    }).then(() => {
+      loadModels();
+    }).catch(() => {});
+    return;
+  }
 }
 
 // ── Folder Picker ──
@@ -278,7 +285,9 @@ function FolderPicker({
     const folder = await window.platform?.selectFolder?.();
     if (!folder) return;
     const workspace = await createLocalStudioWorkspaceFromFolder(folder);
-    if (workspace) await applyStudioWorkspace(workspace);
+    if (workspace) {
+      await applyStudioWorkspace(workspace);
+    }
   }, []);
 
   const handleAddWorkspaceFolder = useCallback(async () => {
@@ -317,16 +326,10 @@ function FolderPicker({
         workspaceFolders: [],
       });
       void activateWorkspaceDesk(homeFolder, { mountId: null });
-      if (agent.chatModel?.id && agent.chatModel.provider) {
-        hanaFetch('/api/models/set', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ modelId: agent.chatModel.id, provider: agent.chatModel.provider }),
-        }).then(() => loadModels()).catch(() => {});
-      }
+      refreshModelsAfterAgentModelSwitch(agent);
       return;
     }
-    applyFolder(folder);
+    void applyFolder(folder);
   }, [agents, currentAgentId]);
 
   const selectedWorkspace = selectedWorkspaceMountId
@@ -374,7 +377,9 @@ function FolderPicker({
           onAddWorkspaceFolder={handleAddWorkspaceFolder}
           onRemoveRecentWorkspace={removeRecentWorkspace}
           onRemoveStudioWorkspace={handleRemoveWorkspace}
-          onRemoveWorkspaceFolder={removeWorkspaceFolder}
+          onRemoveWorkspaceFolder={(folder) => {
+            removeWorkspaceFolder(folder);
+          }}
         />
       )}
     </div>

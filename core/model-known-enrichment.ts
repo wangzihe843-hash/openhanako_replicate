@@ -68,10 +68,14 @@ export function enrichModelFromKnownMetadata(model) {
     patch.headers = { ...piBuiltin.headers };
   }
 
-  const hasImageInput = Array.isArray(normalizedModel.input) && normalizedModel.input.includes("image");
+  const hasInputContract = Array.isArray(normalizedModel.input);
+  const hasImageInput = hasInputContract && normalizedModel.input.includes("image");
   const knownImage = known?.image ?? known?.vision;
   const inferredImage = inferOllamaModelMetadata(normalizedModel.provider, normalizedModel.id)?.image;
-  const image = hasImageInput || knownImage === true || inferredImage === true;
+  // models.json projection owns explicit user input capability, including
+  // `image:false` represented as ["text"]. Known/inferred metadata only fills
+  // runtimes that supplied no input contract at all.
+  const image = hasInputContract ? hasImageInput : (knownImage === true || inferredImage === true);
   if (image && !hasImageInput) {
     patch.input = ["text", "image"];
   } else if (normalizedModel.provider === "volcengine-coding" && !Array.isArray(normalizedModel.input)) {

@@ -432,7 +432,7 @@ export class VisionBridge {
     if (!requiresAuxiliaryVision(targetModel)) return { text, images };
     throwIfAborted(signal);
 
-    const config = this._resolveVisionConfig?.();
+    const config = await this._resolveVisionConfig?.();
     if (!config?.model) {
       throw new Error("vision auxiliary model is required for image input with the current text-only model");
     }
@@ -494,7 +494,7 @@ export class VisionBridge {
   async _summarizeResources({ sessionPath, targetModel, userRequest, resources, signal }: any = {}) {
     throwIfAborted(signal);
 
-    const config = this._resolveVisionConfig?.();
+    const config = await this._resolveVisionConfig?.();
     if (!config?.model) {
       throw new Error("vision auxiliary model is required for image input with the current text-only model");
     }

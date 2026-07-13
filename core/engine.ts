@@ -26,9 +26,14 @@ import { ResourceAccessService } from "./resource-access-service.ts";
 import { ResourceService } from "./resource-service.ts";
 import { appendSecurityAuditEvent } from "./security-audit-log.ts";
 import { findModel } from "../shared/model-ref.ts";
-import { resolveWorkspaceSkillPaths } from "../shared/workspace-skill-paths.ts";
+import {
+  resolveWorkspaceSkillCatalogPaths,
+  resolveWorkspaceSkillPaths,
+  workspaceSkillPolicyFromConfig,
+} from "../shared/workspace-skill-paths.ts";
 import { resolveHanaPiAgentDir, resolveHanaPiProjectDir } from "../shared/hana-runtime-paths.ts";
 import { PluginManager } from "./plugin-manager.ts";
+import { EnvChangeLedger } from "./env-change-ledger.ts";
 import { PluginDevService } from "./plugin-dev-service.ts";
 import { createPluginDevTools } from "./plugin-dev-tools.ts";
 import { DefaultResourceLoader, SettingsManager } from "../lib/pi-sdk/index.ts";
@@ -98,6 +103,7 @@ function resolveChannelsEnabledForToolAvailability(engine) {
 }
 
 import { PreferencesManager } from "./preferences-manager.ts";
+import { InputDraftsStore } from "./input-drafts-store.ts";
 import { ModelManager } from "./model-manager.ts";
 import { SessionProjectCatalogStore } from "./session-project-catalog-store.ts";
 import { SkillManager } from "./skill-manager.ts";
@@ -153,6 +159,7 @@ import {
 import { SessionFileRegistry } from "../lib/session-files/session-file-registry.ts";
 import { serializeSessionFile } from "../lib/session-files/session-file-response.ts";
 import { AutomationSuggestionStore } from "../lib/tools/automation-suggestion-store.ts";
+import { SessionCollabDraftStore } from "../lib/session-collab/draft-store.ts";
 import { NotificationService } from "../lib/notifications/notification-service.ts";
 import { SpeechRecognitionService } from "./speech-recognition-service.ts";
 import { UniversalMediaManager } from "./media/universal-media-manager.ts";
@@ -168,6 +175,7 @@ import {
   normalizeSessionProjectId,
   UNCATEGORIZED_PROJECT_ID,
 } from "../shared/session-projects.ts";
+import { assertValidAgentIdentityId, isValidAgentIdentityId } from "../shared/agent-id.ts";
 
 const moduleLog = createModuleLogger("engine");
 const toolAvailabilityLog = createModuleLogger("tool-availability");
@@ -187,6 +195,7 @@ export class HanaEngine {
   declare _agentMgr: any;
   declare _approvalGateway: any;
   declare _automationSuggestionStore: any;
+  declare _sessionCollabDraftStore: any;
   declare _bridge: any;
   declare _channels: any;
   declare _checkpointStore: any;
@@ -202,6 +211,7 @@ export class HanaEngine {
   declare _devLogsMax: any;
   declare _discoveredExternalPaths: any;
   declare _eventBus: any;
+  declare _envChangeLedger: EnvChangeLedger;
   declare _extensionFactories: any;
   declare _frameworkExtFactories: any;
   declare _hubCallbacks: any;
@@ -248,6 +258,7 @@ export class HanaEngine {
   declare appVersion: any;
   declare channelsDir: any;
   declare hanakoHome: any;
+  declare _inputDrafts: any;
   declare productDir: any;
   declare userDir: any;
   /**
@@ -296,21 +307,27 @@ export class HanaEngine {
     this._currentTurnNativeMedia = createCurrentTurnNativeMediaStore();
     this._pluginInstallRecords = new PluginInstallRecords({ hanakoHome });
     this._automationSuggestionStore = new AutomationSuggestionStore();
+    this._sessionCollabDraftStore = new SessionCollabDraftStore();
     this._approvalGateway = createApprovalGateway({
       smallToolModelReviewer: createModelApprovalReviewer({
         role: "utility",
-        resolveUtilityConfig: (options) => this.resolveUtilityConfig(options || {}),
+        resolveUtilityConfig: (options) => this.resolveUtilityConfigFresh(options || {}),
         callText: (options) => this._callApprovalReviewerText(options),
       }),
       largeToolModelReviewer: createModelApprovalReviewer({
         role: "utility_large",
-        resolveUtilityConfig: (options) => this.resolveUtilityConfig(options || {}),
+        resolveUtilityConfig: (options) => this.resolveUtilityConfigFresh(options || {}),
         callText: (options) => this._callApprovalReviewerText(options),
       }),
     });
 
+    // Process-local append-only environment ledger. This is created before
+    // every producer/consumer and passed by dependency injection.
+    this._envChangeLedger = new EnvChangeLedger();
+
     // ── Core managers ──
     this._prefs = new PreferencesManager({ userDir: this.userDir, agentsDir: this.agentsDir });
+    this._inputDrafts = new InputDraftsStore({ hanakoHome: this.hanakoHome });
     this._models = new ModelManager({ hanakoHome });
     this._speechRecognition = new SpeechRecognitionService({
       providerRegistry: this._models.providerRegistry,
@@ -330,7 +347,29 @@ export class HanaEngine {
     this._sessionProjects = new SessionProjectCatalogStore({ userDir: this.userDir });
 
     // 确定启动时焦点 agent
-    const startId = agentId || this._prefs.getPrimaryAgent() || this._prefs.findFirstAgent();
+    let startId;
+    if (agentId !== undefined && agentId !== null) {
+      // Explicit constructor input is an external contract: reject it rather
+      // than silently switching the caller to another identity.
+      assertValidAgentIdentityId(agentId);
+      startId = agentId;
+    } else {
+      const primaryAgentId = this._prefs.getPrimaryAgent();
+      const primaryConfig = isValidAgentIdentityId(primaryAgentId)
+        ? path.join(this.agentsDir, primaryAgentId, "config.yaml")
+        : null;
+      if (primaryConfig && fs.existsSync(primaryConfig)) {
+        startId = primaryAgentId;
+      } else {
+        if (primaryAgentId) {
+          moduleLog.warn(
+            `ignoring unavailable primary agent ID ${JSON.stringify(primaryAgentId)}; `
+            + "the saved preference was preserved",
+          );
+        }
+        startId = this._prefs.findFirstAgent();
+      }
+    }
     if (!startId) throw new Error(t("error.noAgentsFound"));
 
     // ── Channel Manager ──
@@ -354,6 +393,7 @@ export class HanaEngine {
       getSkills: () => this._skills,
       getSearchConfig: () => this.getSearchConfig(),
       resolveUtilityConfig: (options) => this.resolveUtilityConfig(options),
+      resolveUtilityConfigFresh: (options) => this.resolveUtilityConfigFresh(options),
       getSharedModels: () => this._configCoord.getSharedModels(),
       getChannelManager: () => this._channels,
       getSessionCoordinator: () => this._sessionCoord,
@@ -394,9 +434,20 @@ export class HanaEngine {
       closeTerminalsForSession: (sessionPath) => this._terminalSessions.closeForSession(sessionPath),
       closeAllTerminals: () => this._terminalSessions.closeAll(),
       onSessionRuntimeDiscarded: (sessionPath, reason) => this.clearSessionRuntimeState(sessionPath, reason),
-      onBeforeSessionCreate: async (cwd) => {
-        await this.syncWorkspaceSkillPaths(cwd, { reload: true, emitEvent: false });
+      onBeforeSessionCreate: async (cwd, { agent = null, agentId = null } = {}) => {
+        const targetAgent = agent || (agentId ? this._agentMgr.getAgent(agentId) : null) || this.agent;
+        await this.syncWorkspaceSkillPaths(cwd, {
+          reload: true,
+          emitEvent: false,
+          agent: targetAgent,
+          agentId: targetAgent?.id || agentId || null,
+        });
+        return {
+          workspacePaths: this._getWorkspaceExternalSkillPaths(cwd),
+          policy: workspaceSkillPolicyFromConfig(targetAgent?.config?.workspace_context),
+        };
       },
+      envChangeLedger: this._envChangeLedger,
     });
 
     // ── Config Coordinator ──
@@ -419,7 +470,7 @@ export class HanaEngine {
     });
 
     this._visionBridge = new VisionBridge({
-      resolveVisionConfig: () => this.resolveVisionConfig(),
+      resolveVisionConfig: () => this.resolveVisionConfigFresh(),
       getUsageLedger: () => this._usageLedger,
       getActiveAgentId: () => this._agentMgr.activeAgentId,
       getSessionIdForPath: (sessionPath) => this.getSessionIdForPath(sessionPath),
@@ -566,6 +617,7 @@ export class HanaEngine {
   get confirmStore() { return this._confirmStore; }
   get automationSuggestionStore() { return this._automationSuggestionStore; }
   getAutomationSuggestionStore() { return this._automationSuggestionStore; }
+  get sessionCollabDraftStore() { return this._sessionCollabDraftStore; }
   get approvalGateway() { return this._approvalGateway; }
   getStudioCronStore() { return this._studioCronService; }
 
@@ -909,6 +961,8 @@ export class HanaEngine {
   async deleteAgent(agentId) { return this._agentMgr.deleteAgent(agentId); }
   setPrimaryAgent(agentId) { return this._agentMgr.setPrimaryAgent(agentId); }
   agentIdFromSessionPath(p) { return this._agentMgr.agentIdFromSessionPath(p); }
+  resolveSessionOwnership(ref) { return this._sessionCoord.resolveSessionOwnership(ref); }
+  isDeletedAgentSession(ref) { return this._sessionCoord.resolveSessionOwnership(ref).agentDeleted; }
   async createSessionForAgent(agentId, cwd, mem, model, opts: any = {}) {
     return this._agentMgr.createSessionForAgent(agentId, cwd, mem, model, opts);
   }
@@ -1046,6 +1100,13 @@ export class HanaEngine {
   async promptSession(p, text, opts) { return this._sessionCoord.promptSession(p, text, opts); }
   steerSession(p, text) { return this._sessionCoord.steerSession(p, text); }
   async abortSession(p, options) { return this._sessionCoord.abortSession(p, options); }
+  getEnvChangeLedger() { return this._envChangeLedger; }
+  renderSessionReminderBlock(p) { return this._sessionCoord.renderSessionReminderBlock(p); }
+  consumeRenderedSessionReminderBlock(p, receipt) {
+    return this._sessionCoord.consumeRenderedSessionReminderBlock(p, receipt);
+  }
+  consumeSessionReminderBlock(p) { return this._sessionCoord.consumeSessionReminderBlock(p); }
+  noteSessionTimeObserved(p, observedAt) { return this._sessionCoord.noteSessionTimeObserved(p, observedAt); }
   get focusSessionPath() { return this._sessionCoord.currentSessionPath; }
   getMessages(p) { return this._sessionCoord.getSessionByPath(p)?.messages ?? []; }
   getSessionWorkspaceFolders(p = this.currentSessionPath) {
@@ -1324,17 +1385,35 @@ export class HanaEngine {
     if (!ref) return null;
     return this.resolveModelWithCredentials(ref);
   }
+  async resolveVisionConfigFresh() {
+    if (!this.isVisionAuxiliaryEnabled()) return null;
+    const ref = this.getSharedModels()?.vision || null;
+    if (!ref) return null;
+    return this.resolveModelWithCredentialsFresh(ref);
+  }
   getSearchConfig() { return this._configCoord.getSearchConfig(); }
   setSearchConfig(p) { return this._configCoord.setSearchConfig(p); }
   getUtilityApi() { return this._configCoord.getUtilityApi(); }
   setUtilityApi(p) { return this._configCoord.setUtilityApi(p); }
   resolveUtilityConfig( options: any = {}) {
+    const resolvedOptions = this._resolveUtilityOptions(options);
+    const config = this._configCoord.resolveUtilityConfig(resolvedOptions);
+    return this._withUtilityUsageAttribution(config, resolvedOptions);
+  }
+  async resolveUtilityConfigFresh( options: any = {}) {
+    const resolvedOptions = this._resolveUtilityOptions(options);
+    const config = await this._configCoord.resolveUtilityConfigFresh(resolvedOptions);
+    return this._withUtilityUsageAttribution(config, resolvedOptions);
+  }
+  _resolveUtilityOptions( options: any = {}) {
     const resolvedOptions = { ...(options || {}) };
     if (!resolvedOptions.agentId && resolvedOptions.sessionPath) {
-      const ownerAgentId = this.agentIdFromSessionPath(resolvedOptions.sessionPath);
+      const ownerAgentId = this.resolveSessionOwnership(resolvedOptions.sessionPath).agentId;
       if (ownerAgentId) resolvedOptions.agentId = ownerAgentId;
     }
-    const config = this._configCoord.resolveUtilityConfig(resolvedOptions);
+    return resolvedOptions;
+  }
+  _withUtilityUsageAttribution(config, resolvedOptions) {
     let usageSessionId = resolvedOptions.sessionId || null;
     if (!usageSessionId && resolvedOptions.sessionPath) {
       try {
@@ -1429,6 +1508,10 @@ export class HanaEngine {
   setBrowserPreferences(p) { return this._prefs.setBrowserPreferences(p); }
   getWorkspaceUiState(workspaceRoot, surface) { return this._prefs.getWorkspaceUiState(workspaceRoot, surface); }
   setWorkspaceUiState(workspaceRoot, surface, state) { return this._prefs.setWorkspaceUiState(workspaceRoot, surface, state); }
+  getInputDrafts(surface) { return this._inputDrafts.getAll(surface); }
+  setHomeInputDraft(surface, entry) { return this._inputDrafts.setHome(surface, entry); }
+  setSessionInputDraft(surface, sessionId, entry) { return this._inputDrafts.setSession(surface, sessionId, entry); }
+  deleteSessionInputDrafts(sessionId) { return this._inputDrafts.deleteSession(sessionId); }
   gcWorkspacePersistence( options: any = {}) {
     const configResults = options?.agentId
       ? [this._configCoord.gcWorkspaceConfig(options.agentId, options)]
@@ -1520,6 +1603,7 @@ export class HanaEngine {
       },
     });
     session = compacted.session;
+    this._sessionCoord._markSessionCompacted(sessionPath);
     const after = session.getContextUsage?.() ?? null;
     return {
       tokensBefore: before?.tokens ?? null,
@@ -1562,6 +1646,7 @@ export class HanaEngine {
       if (!noopReason) throw error;
     }
     const after = session.getContextUsage?.() ?? null;
+    if (!noopReason) this._sessionCoord._markSessionCompacted(sessionPath);
     // 压缩完成后整体重建 runtime：restore 路径按当前配置重算 prompt/tool 快照并写回 session-meta
     await this._sessionCoord.reloadSessionRuntime(sessionPath, { refreshCapabilitySnapshots: true });
     return {
@@ -1593,7 +1678,7 @@ export class HanaEngine {
     if (!ag) throw new Error(`agent not found: ${agentId}`);
     return this._skills.getRuntimeSkillInfos(ag);
   }
-  _getSkillsForAgent(ag) { return this._skills.getSkillsForAgent(ag); }
+  _getSkillsForAgent(ag, options = {}) { return this._skills.getSkillsForAgent(ag, options); }
   get skillsDir() { return this._skills?.skillsDir; }
   get userSkillsDir() { return this._skills?.skillsDir; }
   get modelsJsonPath() { return this._models.modelsJsonPath; }
@@ -1663,7 +1748,25 @@ export class HanaEngine {
   }
 
   _getWorkspaceExternalSkillPaths(cwd) {
-    return resolveWorkspaceSkillPaths(cwd);
+    return resolveWorkspaceSkillCatalogPaths(cwd);
+  }
+
+  getWorkspaceSkillPolicy(agentOrId = null) {
+    const agent = typeof agentOrId === "string"
+      ? this._agentMgr.getAgent(agentOrId)
+      : (agentOrId || this.agent);
+    return workspaceSkillPolicyFromConfig(agent?.config?.workspace_context);
+  }
+
+  getActiveWorkspaceSkillPaths(cwd, agentOrId = null) {
+    return resolveWorkspaceSkillPaths(cwd, this.getWorkspaceSkillPolicy(agentOrId));
+  }
+
+  syncAgentWorkspaceSkills(agentId) {
+    const agent = this._agentMgr.getAgent(agentId);
+    if (!agent || !this._skills) return false;
+    this._skills.syncAgentSkills(agent);
+    return true;
   }
 
   _getResolvedExternalSkillPaths(cwd) {
@@ -1681,7 +1784,8 @@ export class HanaEngine {
       const other = b[index];
       return entry?.dirPath === other?.dirPath
         && entry?.label === other?.label
-        && (entry?.scope || "") === (other?.scope || "");
+        && (entry?.scope || "") === (other?.scope || "")
+        && (entry?.category || "") === (other?.category || "");
     });
   }
 
@@ -1713,6 +1817,7 @@ export class HanaEngine {
   resolveProviderCredentials(p) { return this._resolveProviderCredentials(p); }
   resolveProviderCredentialsFresh(p) { return this._models.resolveProviderCredentialsFresh(p); }
   resolveModelWithCredentials(ref) { return this._models.resolveModelWithCredentials(ref); }
+  resolveModelWithCredentialsFresh(ref) { return this._models.resolveModelWithCredentialsFresh(ref); }
   async refreshAvailableModels() { return this._models.refreshAvailable(); }
   /**
    * Provider 配置变更后的统一操作序列。
@@ -2068,6 +2173,7 @@ export class HanaEngine {
       lifecycleTimeoutMs: undefined,
       logSink: (entry) => this._pluginDevService?.recordLog(entry),
       runtimeContext: this.getRuntimeContext(),
+      envChangeLedger: this._envChangeLedger,
     });
     const allowedPluginDevSourceRoots = [
       pluginDevSourcesDir,
@@ -2487,7 +2593,7 @@ export class HanaEngine {
     }
     const { writeDiary } = await import("../lib/diary/diary-writer.ts");
     const diaryModelId = this.agent.config.models?.chat || this.agent.memoryModel;
-    const resolvedModel = this._models.resolveModelWithCredentials(diaryModelId);
+    const resolvedModel = await this._models.resolveModelWithCredentialsFresh(diaryModelId);
     // 写日记是用户主动触发的「读历史」功能，必须参考记忆，
     // 跟「在对话中潜移默化带入记忆」的 master 开关无关。所以不查 memoryMasterEnabled。
     // per-session 开关只决定缺摘要时是否写回 summaries；关闭时仍可为本次日记临时压缩。
@@ -2524,14 +2630,14 @@ export class HanaEngine {
   _utilityOptionsForContext( opts: any = {}) {
     if (opts?.agentId) return { agentId: opts.agentId, sessionPath: opts.sessionPath || null };
     if (opts?.sessionPath) {
-      const agentId = this.agentIdFromSessionPath(opts.sessionPath);
+      const agentId = this.resolveSessionOwnership(opts.sessionPath).agentId;
       if (agentId) return { agentId, sessionPath: opts.sessionPath };
     }
     return undefined;
   }
 
   async summarizeTitle(ut, at, opts: any = {}) {
-    return _summarizeTitle(this.resolveUtilityConfig(this._utilityOptionsForContext(opts)), ut, at, opts);
+    return _summarizeTitle(await this.resolveUtilityConfigFresh(this._utilityOptionsForContext(opts)), ut, at, opts);
   }
 
   async translateSkillNames(names, lang, opts: any = {}) {
@@ -2543,8 +2649,8 @@ export class HanaEngine {
       skills,
       names,
       lang,
-      translateMissing: (missingNames) => _translateSkillNames(
-        this.resolveUtilityConfig(opts.agentId ? { agentId: opts.agentId } : undefined),
+      translateMissing: async (missingNames) => _translateSkillNames(
+        await this.resolveUtilityConfigFresh(opts.agentId ? { agentId: opts.agentId } : undefined),
         missingNames,
         lang,
       ),
@@ -2553,7 +2659,7 @@ export class HanaEngine {
 
   async summarizeActivity(sp, preloaded, opts: any = {}) {
     const utilityOptions = this._utilityOptionsForContext({ ...opts, sessionPath: opts.sessionPath || sp });
-    return _summarizeActivity(this.resolveUtilityConfig(utilityOptions), sp, (msg) => this.emitDevLog(msg), preloaded);
+    return _summarizeActivity(await this.resolveUtilityConfigFresh(utilityOptions), sp, (msg) => this.emitDevLog(msg), preloaded);
   }
 
   async summarizeActivityQuick(activityId) {
@@ -2565,7 +2671,7 @@ export class HanaEngine {
     }
     if (!entry?.sessionFile) return null;
     const sessionPath = path.join(this.agentsDir, foundAgentId, "activity", entry.sessionFile);
-    return _summarizeActivityQuick(this.resolveUtilityConfig({ agentId: foundAgentId }), sessionPath);
+    return _summarizeActivityQuick(await this.resolveUtilityConfigFresh({ agentId: foundAgentId }), sessionPath);
   }
 
   // ════════════════════════════

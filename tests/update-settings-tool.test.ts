@@ -301,6 +301,17 @@ describe("update-settings-tool", () => {
   });
 
   describe("thinking_level session boundary", () => {
+    it("does not expose or accept legacy auto as a new setting value", async () => {
+      const { tool, engine } = buildTool({ defaultThinkingLevel: "high" });
+
+      const search = await tool.execute("c-thinking-search", { action: "search", query: "thinking" });
+      expect(search.content[0].text).not.toMatch(/\bauto\b/i);
+
+      const apply = await tool.execute("c-thinking-auto", { action: "apply", key: "thinking_level", value: "auto" });
+      expect(apply.content[0].text).toContain("off");
+      expect(engine.setDefaultThinkingLevel).not.toHaveBeenCalled();
+    });
+
     it("reads the current session thinking level before the model default", async () => {
       const { tool } = buildTool({
         defaultThinkingLevel: "high",
@@ -443,48 +454,22 @@ describe("update-settings-tool", () => {
     });
   });
 
-  describe("memory.facts editable memory boundary", () => {
-    it("rejects Agent fact edits while the editable memory experiment is disabled", async () => {
+  describe("memory.facts (facts.md is the sole canonical path, no experiment gate)", () => {
+    it("writes facts straight to facts.md and rebuilds memory.md with no opt-in required", async () => {
       const { root, memoryDir, agent } = makeMemoryAgent("owner");
       try {
-        fs.writeFileSync(path.join(memoryDir, "facts.md"), "Legacy facts\n", "utf-8");
-        const { tool } = buildTool({
-          agent,
-          currentAgentId: "owner",
-          getAgent: (agentId) => (agentId === "owner" ? agent : null),
-        });
-
-        const result = await tool.execute("c-memory-facts-disabled", {
-          action: "apply",
-          key: "memory.facts",
-          value: "User likes clean boundaries.",
-        });
-
-        expect(result.details.settingsUpdate).toMatchObject({
-          status: "failed",
-          key: "memory.facts",
-        });
-        expect(fs.existsSync(path.join(memoryDir, "editable-facts.md"))).toBe(false);
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    });
-
-    it("writes editable facts and rebuilds memory.md when the experiment is enabled", async () => {
-      const { root, memoryDir, agent } = makeMemoryAgent("owner");
-      try {
-        fs.writeFileSync(path.join(memoryDir, "facts.md"), "Legacy facts\n", "utf-8");
+        fs.writeFileSync(path.join(memoryDir, "facts.md"), "Old facts.\n", "utf-8");
         fs.writeFileSync(path.join(memoryDir, "today.md"), "Today stays read-only.\n", "utf-8");
         fs.writeFileSync(path.join(memoryDir, "week.md"), "Week stays read-only.\n", "utf-8");
         fs.writeFileSync(path.join(memoryDir, "longterm.md"), "Long-term stays read-only.\n", "utf-8");
+        // 没有任何 experiments 配置：转正后 memory.facts 不受实验开关限制。
         const { tool } = buildTool({
           agent,
           currentAgentId: "owner",
           getAgent: (agentId) => (agentId === "owner" ? agent : null),
-          prefsData: { experiments: { "memory.editable_facts": true } },
         });
 
-        const result = await tool.execute("c-memory-facts-enabled", {
+        const result = await tool.execute("c-memory-facts", {
           action: "apply",
           key: "memory.facts",
           value: "User likes clean boundaries.",
@@ -494,13 +479,34 @@ describe("update-settings-tool", () => {
           status: "applied",
           key: "memory.facts",
         });
-        expect(fs.readFileSync(path.join(memoryDir, "editable-facts.md"), "utf-8")).toBe("User likes clean boundaries.\n");
+        expect(fs.readFileSync(path.join(memoryDir, "facts.md"), "utf-8")).toBe("User likes clean boundaries.\n");
         const compiled = fs.readFileSync(path.join(memoryDir, "memory.md"), "utf-8");
         expect(compiled).toContain("## Key facts");
         expect(compiled).toContain("User likes clean boundaries.");
         expect(compiled).toContain("Today stays read-only.");
         expect(compiled).toContain("Week stays read-only.");
         expect(compiled).toContain("Long-term stays read-only.");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("reads current facts.md content back through the get action", async () => {
+      const { root, memoryDir, agent } = makeMemoryAgent("owner");
+      try {
+        fs.writeFileSync(path.join(memoryDir, "facts.md"), "User likes clean boundaries.\n", "utf-8");
+        const { tool } = buildTool({
+          agent,
+          currentAgentId: "owner",
+          getAgent: (agentId) => (agentId === "owner" ? agent : null),
+        });
+
+        const result = await tool.execute("c-memory-facts-get", {
+          action: "search",
+          query: "memory.facts",
+        });
+
+        expect(result.content[0].text).toContain("User likes clean boundaries.");
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

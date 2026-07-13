@@ -1,8 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { useSettingsStore, type ProviderSummary } from '../../store';
-import { useStore } from '../../../stores';
 import { hanaFetch } from '../../api';
 import { t } from '../../helpers';
+import { DEFAULT_OAUTH_LOGIN_METHOD } from '../../../../../../shared/oauth-login.ts';
 import styles from '../../Settings.module.css';
 
 const platform = window.platform;
@@ -18,13 +18,17 @@ export function OAuthCredentials({ providerId, summary, onRefresh }: {
   const [deviceCode, setDeviceCode] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
   const pollingRef = useRef(false);
+  const oauthSessionIdRef = useRef<string | null>(null);
 
   const login = async () => {
     try {
       const res = await hanaFetch('/api/auth/oauth/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: providerId }),
+        body: JSON.stringify({
+          provider: providerId,
+          loginMethod: DEFAULT_OAUTH_LOGIN_METHOD,
+        }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -41,7 +45,7 @@ export function OAuthCredentials({ providerId, summary, onRefresh }: {
         pollLogin(data.sessionId);
       } else {
         setShowCodeInput(true);
-        useStore.getState().setOauthSessionId(data.sessionId);
+        oauthSessionIdRef.current = data.sessionId;
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -56,7 +60,7 @@ export function OAuthCredentials({ providerId, summary, onRefresh }: {
       const res = await hanaFetch('/api/auth/oauth/callback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: useStore.getState().oauthSessionId, code }),
+        body: JSON.stringify({ sessionId: oauthSessionIdRef.current, code }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();

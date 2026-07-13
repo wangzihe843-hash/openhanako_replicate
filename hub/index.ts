@@ -178,13 +178,14 @@ export class Hub {
       audioAttachmentPaths,
       inboundFiles,
       clientMessageId,
+      sessionId,
       sessionPath,
       agentId,
       uiContext,
       displayMessage,
       sessionFileRefs,
     } = opts;
-    const o = { sessionKey, role, ephemeral, meta, isGroup, cwd, model, persist, permissionMode, from, to, onDelta, images, imageAttachmentPaths, videos, videoAttachmentPaths, audios, audioAttachmentPaths, inboundFiles, clientMessageId, sessionPath, agentId, uiContext, displayMessage, sessionFileRefs };
+    const o = { sessionKey, role, ephemeral, meta, isGroup, cwd, model, persist, permissionMode, from, to, onDelta, images, imageAttachmentPaths, videos, videoAttachmentPaths, audios, audioAttachmentPaths, inboundFiles, clientMessageId, sessionId, sessionPath, agentId, uiContext, displayMessage, sessionFileRefs };
 
     // ── 图片预处理：持久化到磁盘 + 插入 [attached_image] 标记 ──
     // 在路由之前统一处理，所有消息路径（WS / Bridge DM / Bridge Group）共享
@@ -244,6 +245,7 @@ export class Hub {
         match: o => !o.sessionKey && !o.ephemeral && o.role === "owner",
         handle: () => o.sessionPath
           ? submitDesktopSessionMessage(this._engine, {
+            sessionId: o.sessionId,
             sessionPath: o.sessionPath,
             text,
             images: o.images,
@@ -708,12 +710,21 @@ export class Hub {
     // ── provider & agent handlers ──
 
     this._sessionHandlerCleanups.push(bus.handle("provider:credentials", async ({ providerId }) => {
-      const fresh = typeof engine.resolveProviderCredentialsFresh === "function"
-        ? await engine.resolveProviderCredentialsFresh(providerId)
-        : null;
-      const creds = fresh
-        ? { apiKey: fresh.api_key, baseUrl: fresh.base_url, api: fresh.api, accountId: fresh.accountId }
-        : engine.providerRegistry.getCredentials(providerId);
+      if (typeof engine.resolveProviderCredentialsFresh !== "function") {
+        return { error: "fresh_credentials_unavailable" };
+      }
+      let fresh;
+      try {
+        fresh = await engine.resolveProviderCredentialsFresh(providerId);
+      } catch {
+        return { error: "credential_refresh_failed" };
+      }
+      const creds = {
+        apiKey: fresh?.api_key,
+        baseUrl: fresh?.base_url,
+        api: fresh?.api,
+        accountId: fresh?.accountId,
+      };
       if (!creds?.apiKey) return { error: "no_credentials" };
       return {
         apiKey: creds.apiKey,

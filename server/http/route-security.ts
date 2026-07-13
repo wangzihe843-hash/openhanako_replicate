@@ -356,6 +356,7 @@ function isSettingsReadRoute(verb, routePath) {
     || routePath === "/api/memories"
     || routePath === "/api/memories/health"
     || routePath === "/api/memories/compiled"
+    || routePath === "/api/memories/compiled/week/days"
     || routePath === "/api/memories/export"
     || routePath === "/api/preferences/notifications"
     || routePath === "/api/preferences/computer-use"
@@ -427,6 +428,10 @@ function isSettingsWriteRoute(verb, routePath) {
     || routePath === "/api/speech-recognition/config"
     || /^\/api\/agents\/[^/]+\/(?:identity|ishiki|public-ishiki|pinned|experience)$/.test(routePath)
     || /^\/api\/agents\/[^/]+\/config$/.test(routePath)
+    || routePath === "/api/memories/compiled/facts"
+    || routePath === "/api/memories/compiled/today"
+    || routePath === "/api/memories/compiled/longterm"
+    || /^\/api\/memories\/compiled\/week\/days\/\d{4}-\d{2}-\d{2}$/.test(routePath)
   ))
     || (verb === "DELETE" && (
       routePath === "/api/memories"

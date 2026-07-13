@@ -20,6 +20,7 @@ import {
   __test_cleanStreamSnapshot,
   BridgeManager,
 } from "../lib/bridge/bridge-manager.ts";
+import { sanitizeBridgeVisibleText } from "../shared/bridge-visible-text.ts";
 
 vi.mock("../lib/debug-log.js", () => ({
   debugLog: () => null,
@@ -30,6 +31,16 @@ vi.mock("../lib/debug-log.js", () => ({
 const NS_PREFIX = "antml" + ":";
 const nsOpen = (tag, attrs = "") => `<${NS_PREFIX}${tag}${attrs}>`;
 const nsClose = (tag) => `</${NS_PREFIX}${tag}>`;
+
+describe("sanitizeBridgeVisibleText — Bridge 可见文本时间标签", () => {
+  it("剥离行首内部时间标签但保留正文", () => {
+    expect(sanitizeBridgeVisibleText("<t>05-28 17:13</t> hello")).toBe("hello");
+  });
+
+  it("只剥离真实 MM-DD HH:mm 形态，不吃普通 <t> 标签", () => {
+    expect(sanitizeBridgeVisibleText("HTML 里 <t>foo</t> 是标签")).toBe("HTML 里 <t>foo</t> 是标签");
+  });
+});
 
 // ── stripInternalTags：纯函数契约 ────────────────────────────
 

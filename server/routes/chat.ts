@@ -47,6 +47,7 @@ import { isAllowedChatImageMime, isChatImageBase64WithinLimit } from "../../shar
 import { isAllowedChatVideoMime, isChatVideoBase64WithinLimit } from "../../shared/video-mime.ts";
 import { isAllowedChatAudioMime, isChatAudioBase64WithinLimit } from "../../shared/audio-mime.ts";
 import { getAssistantTextPhase } from "../../shared/text-signature.ts";
+import { summarizeToolArgs } from "../../shared/tool-arg-summary.ts";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -60,16 +61,10 @@ import {
 const log = createModuleLogger("chat");
 const wsLog = createModuleLogger("ws");
 
-/** tool_start 事件只广播这些 arg 字段，避免传输完整文件内容（同步维护：chat-render-shim.ts extractToolDetail） */
-const TOOL_ARG_SUMMARY_KEYS = ["file_path", "path", "command", "pattern", "url", "query", "key", "value", "action", "type", "schedule", "prompt", "label"];
-
 export function summarizeToolStartArgs(toolName: any, rawArgs: any, startedAt = Date.now()) {
-  if (!rawArgs || typeof rawArgs !== "object") return undefined;
-  const args = {};
-  for (const k of TOOL_ARG_SUMMARY_KEYS) {
-    if (rawArgs[k] !== undefined) args[k] = rawArgs[k];
-  }
-  return Object.keys(args).length ? args : undefined;
+  void toolName;
+  void startedAt;
+  return summarizeToolArgs(rawArgs);
 }
 
 /**
@@ -135,11 +130,18 @@ function deferredResultFailureBlock(event: any) {
   };
 }
 
-export function toCompactionLifecycleWsMessage(event: any, sessionPath: any, getSessionByPath: any) {
+export function toCompactionLifecycleWsMessage(
+  event: any,
+  sessionPath: any,
+  getSessionByPath: any,
+  getSessionIdForPath: any,
+) {
   if (!sessionPath) return null;
+  const sessionId = getSessionIdForPath?.(sessionPath) ?? null;
   if (event.type === "compaction_start") {
     return {
       type: "compaction_start",
+      sessionId,
       sessionPath,
       reason: event.reason ?? null,
     };
@@ -149,6 +151,7 @@ export function toCompactionLifecycleWsMessage(event: any, sessionPath: any, get
   const usage = getSessionByPath?.(sessionPath)?.getContextUsage?.();
   return {
     type: "compaction_end",
+    sessionId,
     sessionPath,
     reason: event.reason ?? null,
     aborted: event.aborted ?? false,
@@ -157,6 +160,70 @@ export function toCompactionLifecycleWsMessage(event: any, sessionPath: any, get
     contextWindow: usage?.contextWindow ?? null,
     percent: usage?.percent ?? null,
   };
+}
+
+function normalizedIdentity(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function sessionIdForLegacyCompactPath(engine: any, sessionPath: string) {
+  try {
+    return normalizedIdentity(engine.getSessionIdForPath?.(sessionPath));
+  } catch {
+    return null;
+  }
+}
+
+export function resolveCompactSessionTarget(engine: any, msg: any) {
+  let sessionId = normalizedIdentity(msg?.sessionId);
+  const legacySessionPath = normalizedIdentity(msg?.sessionPath);
+
+  if (sessionId && legacySessionPath) {
+    const legacySessionId = sessionIdForLegacyCompactPath(engine, legacySessionPath);
+    if (legacySessionId && legacySessionId !== sessionId) {
+      return {
+        ok: false as const,
+        code: "session_identity_mismatch",
+        message: "sessionId and sessionPath refer to different sessions",
+        sessionId,
+      };
+    }
+  }
+
+  if (!sessionId && legacySessionPath) {
+    sessionId = sessionIdForLegacyCompactPath(engine, legacySessionPath);
+  }
+  if (!sessionId) {
+    return {
+      ok: false as const,
+      code: "session_identity_unresolved",
+      message: "Unable to resolve session identity",
+      sessionId: null,
+    };
+  }
+
+  let sessionPath = null;
+  try {
+    sessionPath = normalizedIdentity(engine.getSessionManifest?.(sessionId)?.currentLocator?.path);
+  } catch {
+    sessionPath = null;
+  }
+  if (!sessionPath) {
+    return {
+      ok: false as const,
+      code: "session_identity_unresolved",
+      message: "Unable to resolve current session locator",
+      sessionId,
+    };
+  }
+
+  return { ok: true as const, sessionId, sessionPath };
+}
+
+function compactionNoopReason(message: string) {
+  if (message.includes("Already compacted")) return "already_compacted";
+  if (message.includes("Nothing to compact")) return "nothing_to_compact";
+  return null;
 }
 
 export function toNotificationWsMessage(event: any, sessionPath: any = null) {
@@ -247,10 +314,42 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
     return null;
   }
 
+  function requireBoundSessionTarget(msg, ws) {
+    const sessionPath = requireSessionPath(msg, ws);
+    if (!sessionPath) return null;
+    const requestedSessionId = typeof msg.sessionId === "string" && msg.sessionId.trim()
+      ? msg.sessionId.trim()
+      : null;
+    const pathSessionId = sessionIdForPath(sessionPath);
+    if (requestedSessionId && pathSessionId && requestedSessionId !== pathSessionId) {
+      wsSend(ws, {
+        type: "error",
+        code: "session_identity_mismatch",
+        message: "sessionId and sessionPath refer to different sessions",
+        sessionId: requestedSessionId,
+        sessionPath,
+      });
+      return null;
+    }
+    if (requestedSessionId && typeof engine.getSessionManifest === "function") {
+      const manifestPath = engine.getSessionManifest(requestedSessionId)?.currentLocator?.path || null;
+      if (!manifestPath || manifestPath !== sessionPath) {
+        wsSend(ws, {
+          type: "error",
+          code: "session_identity_mismatch",
+          message: "sessionId and sessionPath refer to different sessions",
+          sessionId: requestedSessionId,
+          sessionPath,
+        });
+        return null;
+      }
+    }
+    return { sessionPath, sessionId: requestedSessionId || pathSessionId || null };
+  }
+
   function isDeletedAgentSessionPath(sessionPath) {
     if (!sessionPath) return false;
-    const agentId = engine.agentIdFromSessionPath?.(sessionPath) || null;
-    return !!agentId && engine.isAgentDeleted?.(agentId) === true;
+    return engine.isDeletedAgentSession?.(sessionPath) === true;
   }
 
   function rejectDeletedAgentSession(ws, sessionPath) {
@@ -384,12 +483,19 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
 
   function broadcast(msg) {
     const hardenedMsg = hardenStudio(msg);
+    // 扇出前解析一次 sessionId（不随每个订阅者重复解析）：event 本身若已带
+    // sessionId（如 createSessionStreamEventWsMessage 产出的流事件）优先用它，
+    // 否则按 sessionPath 现查一次。只用于 wsClientCanReceiveEvent 的匹配，
+    // 不写回 hardenedMsg —— 出站 wire payload 保持原样，本机桌面端行为不变。
+    const resolvedSessionId = hardenedMsg?.sessionPath && !hardenedMsg?.sessionId
+      ? sessionIdForPath(hardenedMsg.sessionPath)
+      : null;
     // 同一条消息发给 N 个 client 时只序列化一次。lazy：没有任何 client
     // 能收到时连 JSON.stringify 都省掉。
     let serialized = null;
     for (const [clientWs, client] of clients) {
       if (clientWs.readyState !== 1) continue; // OPEN
-      if (wsClientCanReceiveEvent(client, hardenedMsg)) {
+      if (wsClientCanReceiveEvent(client, hardenedMsg, { resolvedSessionId })) {
         if (serialized === null) serialized = JSON.stringify(hardenedMsg);
         wsSendSerialized(clientWs, serialized);
       }
@@ -841,6 +947,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       event,
       sessionPath,
       (sp) => engine.getSessionByPath(sp),
+      (sp) => sessionIdForPath(sp),
     );
     if (compactionMessage) {
       broadcast(compactionMessage);
@@ -1466,6 +1573,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
             client = subscribeWsClientToSession(client, {
               studioId: requestContext.studioId,
               sessionPath: msg.sessionPath,
+              sessionId: sessionIdForPath(msg.sessionPath),
             });
             clients.set(ws, client);
           }
@@ -1473,8 +1581,25 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
           // Wrap the async handler with error handling (replaces wrapWsHandler)
           (async () => {
             if (msg.type === "abort") {
-              const abortPath = requireSessionPath(msg, ws); if (!abortPath) return;
+              const abortTarget = requireBoundSessionTarget(msg, ws); if (!abortTarget) return;
+              const abortPath = abortTarget.sessionPath;
               const abortSs = getState(abortPath);
+              const requestedStreamId = typeof msg.streamId === "string" && msg.streamId.trim()
+                ? msg.streamId.trim()
+                : null;
+              const activeStreamId = typeof abortSs?.streamId === "string" && abortSs.streamId.trim()
+                ? abortSs.streamId.trim()
+                : null;
+              if (!requestedStreamId || !activeStreamId || requestedStreamId !== activeStreamId) {
+                wsSend(ws, {
+                  type: "abort_rejected",
+                  reason: "stale_stream",
+                  sessionId: abortTarget.sessionId,
+                  sessionPath: abortPath,
+                  streamId: activeStreamId,
+                });
+                return;
+              }
               const abortReason = typeof msg.reason === "string" && msg.reason.trim()
                 ? msg.reason.trim()
                 : "user_abort";
@@ -1498,7 +1623,8 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
 
             if (msg.type === "steer" && msg.text) {
               debugLog()?.log("ws", `steer (${msg.text.length} chars)`);
-              const steerPath = requireSessionPath(msg, ws); if (!steerPath) return;
+              const steerTarget = requireBoundSessionTarget(msg, ws); if (!steerTarget) return;
+              const steerPath = steerTarget.sessionPath;
               if (isDeletedAgentSessionPath(steerPath)) {
                 rejectDeletedAgentSession(ws, steerPath);
                 return;
@@ -1514,10 +1640,9 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
 
             // session 切回时，前端请求补发离屏期间的流式内容
             if (msg.type === "resume_stream") {
-              const currentPath = requireSessionPath(msg, ws); if (!currentPath) return;
-              const currentSessionId = typeof msg.sessionId === "string" && msg.sessionId.trim()
-                ? msg.sessionId.trim()
-                : engine.getSessionIdForPath?.(currentPath) || null;
+              const resumeTarget = requireBoundSessionTarget(msg, ws); if (!resumeTarget) return;
+              const currentPath = resumeTarget.sessionPath;
+              const currentSessionId = resumeTarget.sessionId;
               const ss = getExistingState(currentPath);
               const runtimeIsStreaming = typeof engine.isSessionStreaming === "function"
                 ? !!engine.isSessionStreaming(currentPath)
@@ -1604,25 +1729,47 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
             }
 
             if (msg.type === "compact") {
-              const compactPath = requireSessionPath(msg, ws); if (!compactPath) return;
+              const compactTarget = resolveCompactSessionTarget(engine, msg);
+              if (!compactTarget.ok) {
+                wsSend(ws, {
+                  type: "error",
+                  code: compactTarget.code,
+                  message: compactTarget.message,
+                  sessionId: compactTarget.sessionId,
+                });
+                return;
+              }
+              const { sessionId: compactSessionId, sessionPath: compactPath } = compactTarget;
+              const compactResult = (status, details: Record<string, any> = {}) => wsSend(ws, {
+                type: "compaction_result",
+                sessionId: compactSessionId,
+                sessionPath: compactPath,
+                status,
+                ...details,
+              });
               if (isDeletedAgentSessionPath(compactPath)) {
-                rejectDeletedAgentSession(ws, compactPath);
+                compactResult("failed", { reason: "agent_deleted", message: "agent_deleted" });
                 return;
               }
               let session = engine.getSessionByPath(compactPath)
                 || await engine.ensureSessionLoaded?.(compactPath);
               if (!session) {
-                wsSend(ws, { type: "error", message: t("error.noActiveSession"), sessionPath: compactPath });
+                compactResult("failed", { reason: "session_unavailable", message: t("error.noActiveSession") });
                 return;
               }
               if (session.isCompacting) {
-                wsSend(ws, { type: "error", message: t("error.compacting"), sessionPath: compactPath });
+                compactResult("failed", { reason: "already_compacting", message: t("error.compacting") });
                 return;
               }
               if (engine.isSessionStreaming(compactPath)) {
-                wsSend(ws, { type: "error", message: t("error.waitForReply"), sessionPath: compactPath });
+                compactResult("failed", { reason: "session_streaming", message: t("error.waitForReply") });
                 return;
               }
+              wsSend(ws, {
+                type: "compaction_accepted",
+                sessionId: compactSessionId,
+                sessionPath: compactPath,
+              });
               try {
                 const compacted = await compactSessionWithCachePreservationRecoveringRuntime({
                   session,
@@ -1631,10 +1778,17 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                   reloadSessionRuntime: (path) => engine.reloadSessionRuntime?.(path),
                 });
                 session = compacted.session;
+                compactResult("succeeded");
               } catch (err) {
                 const errMsg = err.message || "";
-                if (!errMsg.includes("Already compacted") && !errMsg.includes("Nothing to compact")) {
-                  wsSend(ws, { type: "error", message: t("error.compactFailed", { msg: errMsg }), sessionPath: compactPath });
+                const noopReason = compactionNoopReason(errMsg);
+                if (noopReason) {
+                  compactResult("noop", { reason: noopReason, message: errMsg });
+                } else {
+                  compactResult("failed", {
+                    reason: "compaction_failed",
+                    message: t("error.compactFailed", { msg: errMsg }),
+                  });
                 }
               }
               return;
@@ -1703,7 +1857,8 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
               }
               debugLog()?.log("ws", `user message (${promptText.length} chars, ${msg.images?.length || 0} images, ${msg.videos?.length || 0} videos, ${msg.audios?.length || 0} audios)`);
               // Phase 2: 客户端可指定 sessionPath，否则用焦点 session
-              const promptSessionPath = requireSessionPath(msg, ws); if (!promptSessionPath) return;
+              const promptTarget = requireBoundSessionTarget(msg, ws); if (!promptTarget) return;
+              const promptSessionPath = promptTarget.sessionPath;
               if (isDeletedAgentSessionPath(promptSessionPath)) {
                 rejectDeletedAgentSession(ws, promptSessionPath);
                 return;
@@ -1720,6 +1875,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
               if (interject && engine.isSessionStreaming(promptSessionPath)) {
                 try {
                   await submitDesktopSessionInterjection(engine, {
+                    sessionId: promptTarget.sessionId,
                     sessionPath: promptSessionPath,
                     text: promptText,
                     clientMessageId: msg.clientMessageId,
@@ -1741,6 +1897,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
               }
               try {
                 await hub.send(promptText, {
+                  sessionId: promptTarget.sessionId,
                   sessionPath: promptSessionPath,
                   clientMessageId: msg.clientMessageId,
                   images: msg.images,

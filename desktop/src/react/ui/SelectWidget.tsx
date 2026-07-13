@@ -109,7 +109,22 @@ export function SelectWidget({
   useEffect(() => {
     if (!open) return;
     const handler = (e: Event) => {
-      if (panelRef.current?.contains(e.target as Node)) return;
+      const target = e.target as Node | null;
+      if (panelRef.current?.contains(target)) return;
+      // Only a scroll that can actually move the trigger out from under the popup should close
+      // it. A scroll inside some unrelated container — e.g. a background keep-alive chat panel
+      // (visibility:hidden but still laid out) collapsing its process-fold/typing-indicator at
+      // turn end — fires a capture-phase scroll event here too, but it has no bearing on this
+      // popup's trigger position and must not close a dropdown open in another session/surface.
+      const trigger = triggerRef.current;
+      if (
+        trigger
+        && target
+        && typeof (target as Element | Document).contains === 'function'
+        && !(target as Element | Document).contains(trigger)
+      ) {
+        return;
+      }
       close();
     };
     window.addEventListener('scroll', handler, true);

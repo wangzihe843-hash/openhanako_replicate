@@ -354,7 +354,11 @@ describe("agent:list", () => {
 
 function registerProviderHandlers(bus, engine) {
   bus.handle("provider:credentials", async ({ providerId }) => {
-    const creds = engine.providerRegistry.getCredentials(providerId);
+    if (typeof engine.resolveProviderCredentialsFresh !== "function") {
+      return { error: "fresh_credentials_unavailable" };
+    }
+    const fresh = await engine.resolveProviderCredentialsFresh(providerId);
+    const creds = { apiKey: fresh?.api_key, baseUrl: fresh?.base_url, api: fresh?.api };
     if (!creds?.apiKey) return { error: "no_credentials" };
     return { apiKey: creds.apiKey, baseUrl: creds.baseUrl, api: creds.api };
   });
@@ -377,9 +381,7 @@ describe("provider:credentials", () => {
   it("returns credentials for configured provider", async () => {
     const bus = new EventBus();
     const engine = {
-      providerRegistry: {
-        getCredentials: vi.fn(() => ({ apiKey: "sk-test", baseUrl: "https://api.test.com", api: "openai-completions" })),
-      },
+      resolveProviderCredentialsFresh: vi.fn(async () => ({ api_key: "sk-test", base_url: "https://api.test.com", api: "openai-completions" })),
     };
     registerProviderHandlers(bus, engine);
 
@@ -391,7 +393,7 @@ describe("provider:credentials", () => {
   it("returns error for unconfigured provider", async () => {
     const bus = new EventBus();
     const engine = {
-      providerRegistry: { getCredentials: vi.fn(() => ({})) },
+      resolveProviderCredentialsFresh: vi.fn(async () => ({})),
     };
     registerProviderHandlers(bus, engine);
 

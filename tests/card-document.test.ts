@@ -21,6 +21,12 @@ describe("buildCardDocument", () => {
     expect(html).toContain("--font-mono:");
   });
 
+  it("hides the iframe viewport scrollbar while keeping the document scrollable", () => {
+    const html = buildCardDocument({ code: "<div>x</div>" });
+    expect(html).toMatch(/html\s*\{[^}]*scrollbar-width:\s*none;[^}]*-ms-overflow-style:\s*none;/);
+    expect(html).toMatch(/html::-webkit-scrollbar,\s*body::-webkit-scrollbar\s*\{[^}]*width:\s*0;[^}]*height:\s*0;/);
+  });
+
   it("embeds the height-report script and ping handler so scripts drive resize", () => {
     const html = buildCardDocument({ code: "<div>x</div>" });
     expect(html).toContain("hana.card-resize");

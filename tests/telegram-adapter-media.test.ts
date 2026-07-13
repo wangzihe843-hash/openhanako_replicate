@@ -6,7 +6,10 @@ vi.mock("node-telegram-bot-api", () => {
   class MockTelegramBot {
     declare _request: any;
     declare getMe: any;
+    declare getFileLink: any;
+    declare getUserProfilePhotos: any;
     declare on: any;
+    declare emit: any;
     declare removeAllListeners: any;
     declare sendAudio: any;
     declare sendDocument: any;
@@ -14,8 +17,19 @@ vi.mock("node-telegram-bot-api", () => {
     declare sendPhoto: any;
     declare sendVideo: any;
     declare stopPolling: any;
+    declare handlers: Map<string, any[]>;
     constructor() {
-      this.on = vi.fn();
+      this.handlers = new Map();
+      this.on = vi.fn((event, handler) => {
+        const handlers = this.handlers.get(event) || [];
+        handlers.push(handler);
+        this.handlers.set(event, handlers);
+      });
+      this.emit = async (event, payload) => {
+        for (const handler of this.handlers.get(event) || []) {
+          await handler(payload);
+        }
+      };
       this.removeAllListeners = vi.fn();
       this.stopPolling = vi.fn();
       this.sendMessage = vi.fn(async () => {});
@@ -25,6 +39,10 @@ vi.mock("node-telegram-bot-api", () => {
       this.sendDocument = vi.fn(async () => {});
       this._request = vi.fn(async () => {});
       this.getMe = vi.fn(async () => ({ username: "hana" }));
+      this.getUserProfilePhotos = vi.fn(async () => ({
+        photos: [[{ file_id: "avatar-small" }, { file_id: "avatar-large" }]],
+      }));
+      this.getFileLink = vi.fn(async (fileId) => `https://cdn.example.com/${fileId}.jpg`);
       botInstances.push(this);
     }
   }
@@ -44,12 +62,13 @@ describe("createTelegramAdapter media delivery", () => {
   });
 
   function makeAdapter() {
+    const onMessage = vi.fn();
     const adapter = createTelegramAdapter({
       token: "tg-token",
       agentId: "hana",
-      onMessage: vi.fn(),
+      onMessage,
     } as any);
-    return { adapter, bot: botInstances[0] };
+    return { adapter, bot: botInstances[0], onMessage };
   }
 
   it.each([
@@ -135,6 +154,28 @@ describe("createTelegramAdapter media delivery", () => {
       "- first\n- second",
       { parse_mode: "HTML" },
     );
+    adapter.stop();
+  });
+
+  it("normalizes inbound Telegram profile metadata for Bridge identity", async () => {
+    const { adapter, bot, onMessage } = makeAdapter();
+
+    await bot.emit("message", {
+      text: "hello",
+      chat: { id: 123, type: "private" },
+      from: { id: 456, first_name: "Ada", last_name: "Lovelace", username: "ada" },
+    });
+
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      platform: "telegram",
+      chatId: "123",
+      userId: "456",
+      sessionKey: "tg_dm_456@hana",
+      senderName: "Ada Lovelace",
+      displayName: "Ada Lovelace",
+      avatarUrl: "https://cdn.example.com/avatar-large.jpg",
+      principalId: "456",
+    }));
     adapter.stop();
   });
 

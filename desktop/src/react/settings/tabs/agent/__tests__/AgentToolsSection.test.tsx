@@ -70,12 +70,13 @@ describe("AgentToolsSection", () => {
         disabled={["update_settings", "dm"]}
       />
     );
-    expect(container.querySelectorAll("[data-tool-name]")).toHaveLength(9);
+    expect(container.querySelectorAll("[data-tool-name]")).toHaveLength(10);
     expect(getRow(container, "automation")).toBeTruthy();
     expect(getRow(container, "beautify")).toBeTruthy();
     expect(getRow(container, "browser")).toBeTruthy();
     expect(getRow(container, "computer")).toBeNull();
     expect(getRow(container, "office")).toBeTruthy();
+    expect(getRow(container, "session")).toBeTruthy();
     expect(getRow(container, "workflow")).toBeTruthy();
     expect(getRow(container, "xingye_propose_draft")).toBeTruthy();
   });

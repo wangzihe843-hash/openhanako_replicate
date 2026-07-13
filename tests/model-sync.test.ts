@@ -115,6 +115,15 @@ const KNOWN_MODELS = {
       maxOutput: 32768,
       image: true,
       reasoning: true,
+      thinkingLevels: ["off", "low", "high", "max"],
+      thinkingLevelMap: {
+        off: null,
+        low: "low",
+        medium: "high",
+        high: "high",
+        xhigh: "max",
+      },
+      defaultThinkingLevel: "high",
       visionCapabilities: { grounding: true, boxes: true, points: true, coordinateSpace: "norm-1000", boxOrder: "xyxy", outputFormat: "anchor", groundingMode: "prompted" },
     },
     "kimi-k2.6": {
@@ -199,6 +208,18 @@ const GENERIC_MODEL_FALLBACKS = {
 };
 
 vi.mock("../shared/known-models.js", () => ({
+  lookupKnownProvider(provider, modelId) {
+    const dict = KNOWN_MODELS[provider];
+    if (!dict || typeof modelId !== "string") return null;
+    const candidates = [modelId, ...(modelId.includes("/") ? [modelId.split("/").pop()] : [])];
+    for (const id of candidates) {
+      if (dict[id]) return dict[id];
+      const lowerId = id.toLowerCase();
+      const match = Object.entries(dict).find(([key]) => key.toLowerCase() === lowerId)?.[1];
+      if (match) return match;
+    }
+    return null;
+  },
   lookupKnown(provider, modelId) {
     const lookup = (dict, id) => {
       if (!dict || typeof id !== "string") return null;
@@ -271,6 +292,47 @@ describe("syncModels", () => {
     expect(result.providers.dashscope.apiKey).toBe("hana-runtime-api-key:dashscope");
     expect(result.providers.dashscope.models).toHaveLength(1);
     expect(result.providers.dashscope.models[0].id).toBe("qwen3.5-flash");
+  });
+
+  it("keeps auth-storage model override headers while stripping provider-level headers", async () => {
+    const syncModels = await loadSync();
+
+    const providers = {
+      "xai-oauth": {
+        base_url: "https://cli-chat-proxy.grok.com/v1",
+        api: "openai-responses",
+        headers: {
+          "x-xai-token-auth": "xai-grok-cli",
+          "x-grok-client-version": "0.2.95",
+          "x-grok-client-identifier": "hana",
+          Authorization: "Bearer should-not-project",
+        },
+        models: [{
+          id: "grok-4.5",
+          api: "openai-responses",
+        }],
+      },
+    };
+
+    syncModels(providers, {
+      modelsJsonPath,
+      chatProjectionPlans: {
+        "xai-oauth": {
+          sourceProviderId: "xai-oauth",
+          runtimeProviderId: "xai-oauth",
+          projection: "models-json",
+          credentialSource: "auth-storage",
+        },
+      },
+    });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers["xai-oauth"].headers).toBeUndefined();
+    expect(result.providers["xai-oauth"].apiKey).toBeUndefined();
+    expect(result.providers["xai-oauth"].models[0]).toMatchObject({
+      id: "grok-4.5",
+      headers: { "x-grok-model-override": "grok-4.5" },
+    });
   });
 
   it("projects user-entered api keys as runtime refs so Pi SDK does not resolve env names", async () => {
@@ -637,6 +699,14 @@ describe("syncModels", () => {
       id: "kimi-for-coding",
       name: "Kimi for Coding",
       reasoning: true,
+      defaultThinkingLevel: "high",
+      thinkingLevelMap: {
+        off: null,
+        low: "low",
+        medium: "high",
+        high: "high",
+        xhigh: "max",
+      },
       headers: { "User-Agent": "KimiCLI/1.5" },
       compat: {
         supportsDeveloperRole: false,
@@ -1107,6 +1177,36 @@ describe("syncModels", () => {
     });
   });
 
+  it("writes a custom entry when an Anthropic builtin has a model-level API override", async () => {
+    const syncModels = await loadSync();
+    const providers = {
+      anthropic: {
+        base_url: "https://compat.example/v1",
+        api: "anthropic-messages",
+        api_key: "sk-test",
+        models: [{
+          id: "claude-sonnet-4-5",
+          api: "openai-completions",
+          context: 200000,
+          maxOutput: 64000,
+          image: true,
+          reasoning: true,
+        }],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers.anthropic.models[0]).toMatchObject({
+      id: "claude-sonnet-4-5",
+      api: "openai-completions",
+      contextWindow: 200000,
+      maxTokens: 64000,
+    });
+    expect(result.providers.anthropic.modelOverrides).toBeUndefined();
+  });
+
   it("projects Claude Fable OpenRouter profile without Anthropic Messages fields", async () => {
     const syncModels = await loadSync();
 
@@ -1240,6 +1340,29 @@ describe("syncModels", () => {
     expect(model.name).toBe("My Custom Qwen");
     expect(model.contextWindow).toBe(65536);
     expect(model.maxTokens).toBe(4096);
+  });
+
+  it("projects raw maxOutputTokens metadata and preserves alias priority", async () => {
+    const syncModels = await loadSync();
+    const providers = {
+      "custom-output-alias": {
+        base_url: "https://models.example/v1",
+        api: "openai-completions",
+        api_key: "sk-test",
+        models: [
+          { id: "raw-alias-model", maxOutputTokens: 64000 },
+          { id: "priority-model", maxOutput: 111, maxTokens: 222, maxOutputTokens: 333 },
+        ],
+      },
+    };
+
+    syncModels(providers, { modelsJsonPath });
+
+    const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
+    expect(result.providers["custom-output-alias"].models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "raw-alias-model", maxTokens: 64000 }),
+      expect.objectContaining({ id: "priority-model", maxTokens: 111 }),
+    ]));
   });
 
   it("projects discovered custom provider model metadata without falling back to default context", async () => {
@@ -1489,7 +1612,7 @@ describe("syncModels", () => {
       refresh: vi.fn(),
       getAvailable: vi.fn().mockResolvedValue([
         { id: "gpt-4o", provider: "openai" },
-        { id: "gpt-5", provider: "openai" },
+        { id: "gpt-4.1", provider: "openai" },
       ]),
     };
     await mm.refreshAvailable();
@@ -1502,7 +1625,7 @@ describe("syncModels", () => {
       "gpt-4o": { thinking_level: "high" },
     });
     expect(result.thinkingLevel).toBe("high");
-    expect(mm.availableModels.map(m => m.id)).toEqual(["gpt-4o", "gpt-5"]);
+    expect(mm.availableModels.map(m => m.id)).toEqual(["gpt-4o", "gpt-4.1"]);
     expect(mm.availableModels.find(m => m.id === "gpt-4o")?.defaultThinkingLevel).toBe("high");
   });
 
@@ -1544,17 +1667,31 @@ describe("syncModels", () => {
     fs.writeFileSync(path.join(tmpDir, "added-models.yaml"), "providers: {}\n", "utf-8");
 
     const mm = new ModelManager({ hanakoHome: tmpDir });
+    mm.providerRegistry.register({
+      id: "legacy-sdk-oauth",
+      displayName: "Legacy SDK OAuth",
+      authType: "oauth",
+      authJsonKey: "legacy-sdk-runtime",
+      defaultBaseUrl: "https://legacy.example/v1",
+      defaultApi: "openai-responses",
+      capabilities: {
+        chat: {
+          projection: "sdk-auth-alias",
+          runtimeProviderId: "legacy-sdk-runtime",
+        },
+      },
+    });
     mm._modelRegistry = {
       refresh: vi.fn(),
       getAvailable: vi.fn().mockResolvedValue([
-        { id: "gpt-5-codex", provider: "openai-codex" },
+        { id: "legacy-model", provider: "legacy-sdk-runtime" },
         { id: "shadow-model", provider: "shadow-sdk-provider" },
       ]),
     };
 
     await mm.refreshAvailable();
 
-    expect(mm.availableModels).toEqual([{ id: "gpt-5-codex", provider: "openai-codex" }]);
+    expect(mm.availableModels).toEqual([{ id: "legacy-model", provider: "legacy-sdk-runtime" }]);
   });
 
   it("handles multiple providers in one call", async () => {

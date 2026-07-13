@@ -183,6 +183,8 @@ export async function statFileRef(ref, deps: any = {}) {
     mime: meta.mime,
     kind: meta.kind,
     size: meta.size,
+    mtimeMs: meta.mtimeMs,
+    version: { mtimeMs: meta.mtimeMs, size: meta.size },
     isDirectory: meta.isDirectory,
     status: sourceFile.status || "available",
   };

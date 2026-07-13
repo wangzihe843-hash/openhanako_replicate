@@ -18,6 +18,7 @@ const path = require("path");
 
 const CRITICAL_BUNDLED_EXTERNALS = [
   "ws",              // WebSocket，server 启动期立刻 import
+  "@earendil-works/pi-agent-core", // Pi SDK side-effect import，bundle 入口直接解析
   "better-sqlite3",  // SQLite native addon
   "qrcode",          // QR 渲染
 ];

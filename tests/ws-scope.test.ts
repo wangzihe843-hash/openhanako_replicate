@@ -184,4 +184,89 @@ describe("websocket scope filtering", () => {
       { kind: "session", studioId: "studio_1", sessionPath: "/s/a.jsonl" },
     ]);
   });
+
+  it("keeps receiving session events by sessionId after the session's path changes on archive (remote subscriber)", () => {
+    // A-2 判决：归档改 path 后，裸 sessionPath 相等匹配会让远程/Mobile 端静默断流。
+    // 订阅时若已知 sessionId，事件里带同一个 sessionId 就该继续放行，即使 path 已经变了。
+    const client = createWsClientRecord({
+      principal: {
+        kind: "device",
+        credentialKind: "device_credential",
+        connectionKind: "lan",
+        userId: "user_1",
+        studioId: "studio_1",
+        serverNodeId: "node_1",
+        scopes: ["chat.read"],
+      },
+    });
+    const subscribed = subscribeWsClientToSession(client, {
+      studioId: "studio_1",
+      sessionPath: "/s/active/a.jsonl",
+      sessionId: "sess_abc",
+    });
+
+    expect(wsClientCanReceiveEvent(subscribed, {
+      type: "message",
+      studioId: "studio_1",
+      sessionPath: "/s/archived/a.jsonl",
+      sessionId: "sess_abc",
+    })).toBe(true);
+  });
+
+  it("resolves sessionId once per broadcast via resolvedSessionId instead of requiring it on every event", () => {
+    // 广播侧在扇出前解析一次 sessionId 时，通过第三参数传入即可命中，
+    // 不需要每条 event 都显式带 sessionId 字段。
+    const client = createWsClientRecord({
+      principal: {
+        kind: "device",
+        credentialKind: "device_credential",
+        connectionKind: "lan",
+        userId: "user_1",
+        studioId: "studio_1",
+        serverNodeId: "node_1",
+        scopes: ["chat.read"],
+      },
+    });
+    const subscribed = subscribeWsClientToSession(client, {
+      studioId: "studio_1",
+      sessionPath: "/s/active/a.jsonl",
+      sessionId: "sess_xyz",
+    });
+
+    expect(wsClientCanReceiveEvent(subscribed, {
+      type: "message",
+      studioId: "studio_1",
+      sessionPath: "/s/archived/a.jsonl",
+    }, { resolvedSessionId: "sess_xyz" })).toBe(true);
+  });
+
+  it("still matches by path when the session has no manifest sessionId on either side", () => {
+    // 兼容路径：无 manifest 的老会话双侧都没有 sessionId 时，继续按 path 相等工作，不回归。
+    const client = createWsClientRecord({
+      principal: {
+        kind: "device",
+        credentialKind: "device_credential",
+        connectionKind: "lan",
+        userId: "user_1",
+        studioId: "studio_1",
+        serverNodeId: "node_1",
+        scopes: ["chat.read"],
+      },
+    });
+    const subscribed = subscribeWsClientToSession(client, {
+      studioId: "studio_1",
+      sessionPath: "/s/legacy/a.jsonl",
+    });
+
+    expect(wsClientCanReceiveEvent(subscribed, {
+      type: "message",
+      studioId: "studio_1",
+      sessionPath: "/s/legacy/a.jsonl",
+    })).toBe(true);
+    expect(wsClientCanReceiveEvent(subscribed, {
+      type: "message",
+      studioId: "studio_1",
+      sessionPath: "/s/legacy/b.jsonl",
+    })).toBe(false);
+  });
 });

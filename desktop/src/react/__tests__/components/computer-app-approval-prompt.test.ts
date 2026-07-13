@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
+import { installWindowTestT } from '../helpers/i18n-test-strings';
 import { InputArea } from '../../components/InputArea';
 import { AssistantMessage } from '../../components/chat/AssistantMessage';
 import { SessionConfirmationPrompt } from '../../components/input/SessionConfirmationPrompt';
@@ -59,8 +60,12 @@ vi.mock('../../components/input/extensions/skill-badge', () => ({
   SkillBadge: {},
 }));
 
+import { createTestTranslator } from '../helpers/i18n-test-strings';
+
+const testT = createTestTranslator();
+
 vi.mock('../../hooks/use-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key }),
+  useI18n: () => ({ t: testT }),
 }));
 
 vi.mock('../../hooks/use-config', () => ({
@@ -170,6 +175,7 @@ describe('computer app approval prompt', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    installWindowTestT();
     seedSession();
   });
 
@@ -483,6 +489,9 @@ describe('computer app approval prompt', () => {
       },
       showAvatar: false,
       sessionPath: '/session/a.jsonl',
+      agentDisplay: { id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false },
+      isStreaming: false,
+      isSelected: false,
     }));
 
     expect(screen.queryByText('允许 Hana 使用电脑')).toBeNull();

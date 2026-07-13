@@ -92,6 +92,31 @@ describe("ResourceIO v0", () => {
     });
   });
 
+  it("stats a local path with mtime and comparable version metadata", async () => {
+    const { workspace } = makeTree();
+    const notePath = path.join(workspace, "note.txt");
+    fs.writeFileSync(notePath, "hello", "utf-8");
+    const fsStat = fs.statSync(notePath);
+
+    const stat = await statFileRef(
+      { type: "path", path: "note.txt" },
+      { cwd: workspace },
+    );
+
+    expect(stat).toMatchObject({
+      type: "path",
+      path: notePath,
+      filePath: notePath,
+      filename: "note.txt",
+      size: fsStat.size,
+      mtimeMs: fsStat.mtimeMs,
+      version: {
+        mtimeMs: fsStat.mtimeMs,
+        size: fsStat.size,
+      },
+    });
+  });
+
   it("copies a SessionFile into an allowed local workspace and registers the copy as external", async () => {
     const { sessionPath, pluginFile, workspace } = makeTree();
     const resolveSessionFile = vi.fn(() => ({

@@ -9,15 +9,19 @@ export default [
     ignores: [
       'node_modules/',
       '**/dist/**',
-      'dist-server/**',
-      'dist-server-bundle/**',
-      'dist-computer-use/**',
-      'dist-sandbox/**',
-      'desktop/dist-renderer/**',
+      // Build scripts emit several sibling directories such as dist-server,
+      // dist-server-artifact, dist-renderer-artifact, and dist-computer-use.
+      // Keep the naming contract here instead of chasing every new output.
+      'dist-*/**',
+      // Desktop Vite builds use the same family for dist-renderer and
+      // dist-splash; both contain bundled JavaScript that must not be linted.
+      'desktop/dist-*/**',
       'desktop/native/**/.build/**',
       '.claude/**',
       '.codex_refs/**',
       '.cache/**',
+      // .docs/ 不入版本控制、CI 不可见；lint 覆盖它会造成本地/CI 语义不对称
+      '.docs/**',
       '**/*.cjs',
     ],
   },
@@ -164,7 +168,7 @@ export default [
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [{
-          group: ['@mariozechner/*'],
+          group: ['@mariozechner/*', '@earendil-works/*'],
           message: '请从 lib/pi-sdk/index.js 导入，不要直接引用 PI SDK 包。',
         }],
       }],

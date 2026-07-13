@@ -5,10 +5,19 @@
 :global(.settings-panel) {
     --settings-nav-width: 180px;
     --paper-texture-attachment: scroll;
+    position: relative;
     display: flex;
     flex-direction: column;
     overflow: hidden;
     background-color: var(--bg);
+}
+
+.settings-content-root {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
 }
 
 .settings-panel-modal {
@@ -34,6 +43,7 @@
 :global(body.paper-texture) .agent-delete-card,
 :global(body.paper-texture) .agent-name-input,
 :global(body.paper-texture) .model-capsule-input,
+:global(body.paper-texture) .model-capsule-trigger,
 :global(body.paper-texture) .settings-input,
 :global(body.paper-texture) .settings-textarea,
 :global(body.paper-texture) .settings-folder-browse,
@@ -65,15 +75,11 @@
 
 .settings-header-modal {
     display: grid;
-    grid-template-columns: calc(var(--settings-nav-width, 160px) + var(--settings-main-x-padding, var(--space-40))) minmax(0, 640px);
+    grid-template-columns: calc(var(--settings-nav-width, 160px) + var(--settings-main-x-padding, var(--space-40))) minmax(0, 1fr);
     align-items: center;
-    padding: var(--space-24) 0 var(--space-16);
+    padding: var(--space-24) var(--settings-main-x-padding, var(--space-40)) var(--space-16) 0;
     gap: 0;
     -webkit-app-region: no-drag;
-}
-
-.settings-panel-wide.settings-panel-modal .settings-header-modal {
-    grid-template-columns: calc(var(--settings-nav-width, 160px) + var(--settings-main-x-padding, var(--space-40))) minmax(0, 960px);
 }
 
 .settings-return-btn {
@@ -325,15 +331,11 @@
 
 .settings-main > .settings-tab-title,
 .settings-main > .settings-tab-heading,
-.settings-main > .settings-tab-content {
+.settings-main > [data-settings-page] {
     width: 100%;
-    max-width: 640px;
-}
-
-.settings-main-wide > .settings-tab-title,
-.settings-main-wide > .settings-tab-heading,
-.settings-main-wide > .settings-tab-content {
-    max-width: 960px;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
 }
 
 .settings-panel-modal .settings-main::before {
@@ -1754,6 +1756,131 @@
     text-align: center;
 }
 
+.settings-form-actions-center {
+    align-items: center;
+}
+
+.settings-section-inset {
+    padding: var(--space-8) var(--space-16);
+}
+
+.settings-page-primary-action {
+    display: flex;
+    justify-content: center;
+    margin-top: var(--space-16);
+}
+
+.settings-empty-inset {
+    margin: 0;
+    padding: var(--space-16);
+}
+
+.settings-section-lead {
+    margin: 0 0 var(--space-16);
+    color: var(--text-muted);
+    font-size: var(--fs-hint);
+    line-height: 1.4;
+}
+
+.settings-section-hint {
+    margin-bottom: var(--space-8);
+    color: var(--text-muted);
+    font-size: var(--fs-hint);
+    line-height: 1.5;
+    white-space: pre-line;
+}
+
+.settings-credential-status {
+    display: flex;
+    align-items: center;
+    gap: var(--space-6);
+    margin-bottom: var(--space-16);
+    color: var(--text-muted);
+    font-size: var(--fs-caption);
+}
+
+.settings-credential-dot {
+    display: inline-block;
+    width: var(--space-6);
+    height: var(--space-6);
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+.settings-credential-dot.on {
+    background: var(--success);
+}
+
+.settings-default-badge {
+    flex-shrink: 0;
+    padding: var(--border-width, 1px) var(--space-6);
+    border-radius: var(--space-4);
+    background: var(--accent-light);
+    color: var(--accent);
+    font-size: 0.6rem;
+    font-weight: 500;
+}
+
+.media-defaults {
+    margin-top: var(--space-16);
+    padding-top: var(--space-16);
+    border-top: 1px solid var(--overlay-light);
+}
+
+.media-defaults-title {
+    margin-bottom: var(--space-10);
+    color: var(--text-secondary);
+    font-size: var(--fs-caption);
+    font-weight: 600;
+}
+
+.media-defaults-stack,
+.media-config-field {
+    display: flex;
+    flex-direction: column;
+}
+
+.media-defaults-stack,
+.media-config-grid {
+    gap: var(--space-12);
+}
+
+.media-config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.media-config-grid-single {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.media-config-field {
+    gap: var(--space-4);
+    min-width: 0;
+}
+
+.media-config-label {
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.pv-list-group-label-muted {
+    color: var(--text-muted);
+}
+
+.pv-list-item-disabled {
+    opacity: 0.3;
+    pointer-events: none;
+}
+
+.pv-list-item-coming-soon {
+    font-size: var(--fs-hint);
+    font-style: italic;
+}
+
 /* 助手名字输入框 */
 .agent-name-input {
     width: 200px;
@@ -1841,9 +1968,26 @@
 }
 
 .model-capsule-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: var(--space-8) var(--space-12);
+    font-family: inherit;
+    font-size: var(--fs-body);
+    line-height: 1.5;
+    color: var(--text);
     border: none;
     border-radius: 0;
-    background: transparent;
+    background-color: var(--bg-card);
+    cursor: default;
+    text-align: left;
+    transition: color var(--duration-fast) var(--ease-out);
+}
+
+.model-capsule:has(.model-capsule-trigger:hover),
+.model-capsule:has(.model-capsule-trigger[data-open="true"]) {
+    border-color: var(--accent);
 }
 
 .model-capsule-provider-icon {
@@ -2110,6 +2254,8 @@
     outline: none;
     transition: border-color var(--duration-slow) var(--ease-out);
     width: 100%;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .settings-input:focus {
@@ -3024,9 +3170,7 @@
 
 /* Theme cards */
 .theme-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-8);
+    /* Columns and gaps are owned by SettingsGrid. */
 }
 
 .theme-card {
@@ -3245,9 +3389,7 @@
 
 /* Font cards */
 .font-options {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-8);
+    /* Columns and gaps are owned by SettingsGrid. */
 }
 
 .font-card {
@@ -3638,6 +3780,18 @@
 .about-check-update-btn:hover {
     color: var(--text-body);
     border-color: var(--text-muted);
+}
+
+.about-update-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+}
+
+.about-update-actions .about-check-update-btn {
+    margin-top: 0;
 }
 
 .about-info {
@@ -4099,6 +4253,8 @@ a.about-link:hover {
     display: flex;
     gap: 0;
     height: 420px;
+    max-width: 100%;
+    min-width: 0;
     background: var(--bg-card, var(--bg));
     border: 1px solid var(--overlay-light);
     border-radius: var(--radius-card, 8px);
@@ -4984,6 +5140,10 @@ a.about-link:hover {
     font-weight: 600;
     margin: 0;
     color: var(--text);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .pv-empty {
@@ -6180,11 +6340,20 @@ a.about-link:hover {
     border-radius: var(--radius-lg);
     width: 90%;
     max-width: 560px;
-    max-height: 100%;
+    max-height: min(760px, calc(100vh - var(--space-40) - var(--space-40)));
+    min-height: 0;
     display: flex;
     flex-direction: column;
     box-shadow: 0 8px 32px var(--shadow);
     overflow: hidden;
+}
+
+.compiled-memory-viewer-backdrop {
+    padding: var(--space-40) var(--space-24);
+}
+
+.compiled-memory-viewer {
+    max-height: 100%;
 }
 
 .memory-viewer-header {
@@ -6230,6 +6399,124 @@ a.about-link:hover {
     padding: var(--space-16);
 }
 
+/* 更新历史复用记忆浮层的窗口骨架，正文使用独立的发布文档排版。 */
+.update-history-viewer {
+    /* 百分比跟随 Overlay backdrop 的实际内容盒；在应用内设置弹窗里，
+       该内容盒由设置卡片而非主窗口决定。 */
+    max-height: 100%;
+}
+
+.update-history-subtitle {
+    margin-top: var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--fs-hint);
+    line-height: 1.4;
+}
+
+.update-history-body {
+    padding: 0;
+}
+
+.update-history-state {
+    padding: var(--space-40) var(--space-24);
+    color: var(--text-muted);
+    font-size: var(--fs-ui);
+    line-height: 1.6;
+    text-align: center;
+}
+
+.update-history-notice {
+    margin: var(--space-16) var(--space-24) 0;
+    padding: var(--space-8) var(--space-12);
+    color: var(--text-muted);
+    background: var(--overlay-subtle);
+    border: 1px solid var(--overlay-light);
+    border-radius: var(--radius-input);
+    font-size: var(--fs-hint);
+    line-height: 1.4;
+}
+
+.update-history-release {
+    padding: var(--space-24);
+    border-top: 1px solid var(--overlay-light);
+}
+
+.update-history-notice + .update-history-release,
+.update-history-release:first-child {
+    border-top: 0;
+}
+
+.update-history-release-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+}
+
+.update-history-version {
+    margin: 0;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--fs-title);
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.update-history-summary {
+    margin: var(--space-8) 0 var(--space-16);
+    color: var(--text);
+    font-size: var(--fs-body);
+    line-height: 1.6;
+}
+
+.update-history-items {
+    border-top: 1px solid var(--overlay-light);
+}
+
+.update-history-item {
+    padding: var(--space-12) 0;
+    border-top: 1px solid var(--overlay-light);
+}
+
+.update-history-item:first-child {
+    border-top: 0;
+}
+
+.update-history-item:last-child {
+    padding-bottom: 0;
+}
+
+.update-history-item-heading {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-8);
+}
+
+.update-history-kind {
+    flex-shrink: 0;
+    padding: var(--space-2) var(--space-6);
+    color: var(--text-muted);
+    background: var(--overlay-subtle);
+    border-radius: var(--radius-sm);
+    font-size: var(--fs-micro);
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.update-history-item-title {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--fs-ui);
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.update-history-item-summary {
+    margin: var(--space-6) 0 0;
+    color: var(--text-muted);
+    font-size: var(--fs-caption);
+    line-height: 1.6;
+}
+
 :global(.memory-viewer-empty) {
     text-align: center;
     color: var(--text-muted);
@@ -6260,8 +6547,30 @@ a.about-link:hover {
     opacity: 1;
 }
 
+.compiled-edit-toggle-btn {
+    font-size: var(--fs-hint);
+    color: var(--text-light);
+    background: none;
+    border: 1px solid var(--overlay-light);
+    border-radius: var(--radius-input, 6px);
+    padding: 2px 8px;
+    cursor: default;
+    opacity: 0.7;
+    transition: opacity var(--duration-fast);
+}
+
+.compiled-edit-toggle-btn:hover {
+    opacity: 1;
+}
+
+.compiled-clear-btn:disabled,
+.compiled-edit-toggle-btn:disabled {
+    opacity: 0.45;
+}
+
 .compiled-memory-body {
     font-size: var(--fs-ui);
+    min-height: 0;
 }
 
 .compiled-memory-md {
@@ -6301,6 +6610,7 @@ a.about-link:hover {
     display: flex;
     flex-direction: column;
     gap: var(--space-16);
+    min-height: 0;
 }
 
 .compiled-memory-editor-label,
@@ -6312,8 +6622,11 @@ a.about-link:hover {
 
 .compiled-memory-facts-editor {
     width: 100%;
-    min-height: 150px;
-    resize: vertical;
+    height: 150px;
+    min-height: 110px;
+    max-height: 220px;
+    resize: none;
+    overflow-y: auto;
     border: 1px solid var(--border);
     border-radius: var(--radius-input, 6px);
     background: var(--bg);
@@ -6327,25 +6640,6 @@ a.about-link:hover {
 .compiled-memory-facts-editor:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
-}
-
-.compiled-memory-editor-actions {
-    display: flex;
-    justify-content: flex-end;
-}
-
-.compiled-memory-save-btn {
-    font-size: var(--fs-caption);
-    color: var(--button-text);
-    background: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-input, 6px);
-    padding: var(--space-4) var(--space-12);
-    cursor: default;
-}
-
-.compiled-memory-save-btn:disabled {
-    opacity: 0.55;
 }
 
 .compiled-memory-readonly-list {
@@ -6368,6 +6662,61 @@ a.about-link:hover {
 
 .compiled-view-btn {
     width: 100%;
+}
+
+.compiled-memory-edit-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    border-top: 1px solid var(--overlay-light);
+    padding-top: var(--space-16);
+}
+
+.compiled-memory-edit-section:first-child {
+    border-top: none;
+    padding-top: 0;
+}
+
+.compiled-memory-week-days {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+}
+
+.compiled-memory-week-day-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    border-left: 2px solid var(--overlay-light);
+    padding-left: var(--space-8);
+}
+
+.compiled-memory-week-day-label {
+    font-size: var(--fs-hint);
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.compiled-memory-week-day-editor {
+    width: 100%;
+    height: 96px;
+    min-height: 72px;
+    max-height: 140px;
+    resize: none;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-input, 6px);
+    background: var(--bg);
+    color: var(--text);
+    padding: var(--space-8) var(--space-16);
+    font: inherit;
+    line-height: 1.65;
+    outline: none;
+}
+
+.compiled-memory-week-day-editor:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 /* 实验功能：Cache Snapshot 观察区 */
@@ -7384,8 +7733,7 @@ a.about-link:hover {
 /* 截图分享：宽度预览卡片 */
 
 .ss-layout-group {
-  display: flex;
-  gap: var(--space-16);
+  /* Columns and gaps are owned by SettingsGrid. */
 }
 
 .ss-layout-card {

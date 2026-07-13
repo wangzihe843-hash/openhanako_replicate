@@ -1,4 +1,9 @@
 export { Overlay } from './Overlay';
+export type { OverlayProps, OverlayScope } from './Overlay';
+export { ConfirmDialog } from './ConfirmDialog';
+export type { ConfirmDialogProps } from './ConfirmDialog';
+export { NoticeDialog } from './NoticeDialog';
+export type { NoticeDialogProps } from './NoticeDialog';
 export { Button } from './Button';
 export { Toggle } from './Toggle';
 export type { ToggleProps } from './Toggle';
@@ -27,3 +32,4 @@ export {
   LayoutGroup,
 } from './AnimationPrimitives';
 export type { Transition } from './AnimationPrimitives';
+export { ClassicFindBox } from './ClassicFindBox';

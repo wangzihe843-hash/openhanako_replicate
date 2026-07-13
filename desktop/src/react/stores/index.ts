@@ -10,6 +10,7 @@ import { createDeskSlice, type DeskSlice } from './desk-slice';
 import { createModelSlice, type ModelSlice } from './model-slice';
 import { createInputSlice, type InputSlice } from './input-slice';
 import { createChatSlice, type ChatSlice } from './chat-slice';
+import { createChatFindSlice, type ChatFindSlice } from './chat-find-slice';
 import { createToastSlice, type ToastSlice } from './toast-slice';
 import { createPreviewSlice, type PreviewSlice } from './preview-slice';
 import { createBrowserSlice, type BrowserSlice } from './browser-slice';
@@ -36,6 +37,7 @@ export type StoreState = ConnectionSlice &
   ModelSlice &
   InputSlice &
   ChatSlice &
+  ChatFindSlice &
   ToastSlice &
   PreviewSlice &
   BrowserSlice &
@@ -62,6 +64,7 @@ export const useStore = create<StoreState>()((set, _get, _api) => ({
   ...createModelSlice(set),
   ...createInputSlice(set),
   ...createChatSlice(set, _get),
+  ...createChatFindSlice(set, _get),
   ...createToastSlice(set, _get),
   ...createPreviewSlice(set),
   ...createBrowserSlice(set),
@@ -94,6 +97,7 @@ export type {
   ModelSlice,
   InputSlice,
   ChatSlice,
+  ChatFindSlice,
   ToastSlice,
   PreviewSlice,
   BrowserSlice,

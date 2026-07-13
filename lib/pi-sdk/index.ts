@@ -2,7 +2,7 @@
  * PI SDK Adapter — 所有 PI SDK 导入的唯一入口
  *
  * 稳定 API 直接 re-export，不稳定 API 通过适配函数封装。
- * 消费方不应直接 import "@mariozechner/..."，全部从这里导入。
+ * 消费方不应直接 import "@earendil-works/..."，全部从这里导入。
  *
  * 纪律：
  *   - 不接受 engine / agent / config 参数
@@ -12,13 +12,18 @@
  */
 
 import {
+  AuthStorage,
   createAgentSession as rawCreateAgentSession,
   ModelRegistry,
-} from "@mariozechner/pi-coding-agent";
+  resizeImage as rawResizeImage,
+  formatDimensionNote as rawFormatDimensionNote,
+  convertToLlm as rawConvertToLlm,
+} from "@earendil-works/pi-coding-agent";
+// 0.80.0 起 pi-ai 老全局 API 移到 /compat 子入口（根入口是 createModels 新 API）
 import {
   getModel as rawGetPiModel,
   completeSimple as rawCompleteSimple,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import {
   normalizeCreateAgentSessionOptions,
   PI_BUILTIN_TOOL_NAMES,
@@ -28,19 +33,13 @@ import {
   createFindTool,
   createGrepTool,
 } from "./search-tools.ts";
-import {
-  resizeImage as rawResizeImage,
-  formatDimensionNote as rawFormatDimensionNote,
-} from "../../node_modules/@mariozechner/pi-coding-agent/dist/utils/image-resize.js";
-import {
-  convertToLlm as rawConvertToLlm,
-} from "../../node_modules/@mariozechner/pi-coding-agent/dist/core/messages.js";
+// prepareCompaction 0.80.3 仍未从包根导出，深路径保留（升级时必查此文件是否存在）
 import {
   prepareCompaction as rawPrepareCompaction,
-} from "../../node_modules/@mariozechner/pi-coding-agent/dist/core/compaction/compaction.js";
+} from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js";
 
 // ── Session 管理 ──
-export { SessionManager, SettingsManager } from "@mariozechner/pi-coding-agent";
+export { SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 /**
  * Hana 侧保持稳定的 Tool[] 调用契约，适配层负责转换 Pi SDK 版本差异。
@@ -67,33 +66,55 @@ export { PI_BUILTIN_TOOL_NAMES };
 export {
   createReadTool, createWriteTool, createEditTool, createBashTool,
   createLsTool,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 export { createGrepTool, createFindTool };
 
 // ── 资源加载 ──
-export { DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
+export { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 
 // ── Utilities ──
-export { formatSkillsForPrompt, getLastAssistantUsage } from "@mariozechner/pi-coding-agent";
-export { AuthStorage } from "@mariozechner/pi-coding-agent";
+export { formatSkillsForPrompt, getLastAssistantUsage } from "@earendil-works/pi-coding-agent";
+export { AuthStorage };
+
+type OAuthProviderId = Parameters<AuthStorage["login"]>[0];
+export type OAuthLoginCallbacks = Parameters<AuthStorage["login"]>[1];
+export type SdkProviderRegistrationConfig = Parameters<ModelRegistry["registerProvider"]>[1];
+export type SdkOAuthProvider = NonNullable<SdkProviderRegistrationConfig["oauth"]>;
+
+/**
+ * OAuth login adapter.
+ *
+ * The callback contract is deliberately derived from AuthStorage.login so an
+ * SDK upgrade fails Hana's typecheck at this boundary instead of at runtime.
+ */
+export function loginOAuthProvider(
+  authStorage: AuthStorage,
+  providerId: OAuthProviderId,
+  callbacks: OAuthLoginCallbacks,
+): Promise<void> {
+  return authStorage.login(providerId, callbacks);
+}
 
 // ── Session/history utilities ──
 export {
   estimateTokens, findCutPoint,
   serializeConversation, shouldCompact,
   parseSessionEntries, buildSessionContext,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 // Diary material summarization only. Context compaction must go through core/session-compactor.js.
-export { generateSummary } from "@mariozechner/pi-coding-agent";
+export { generateSummary } from "@earendil-works/pi-coding-agent";
 
 export const completeSimple = rawCompleteSimple;
 export const convertAgentMessagesToLlm = rawConvertToLlm;
 export const prepareCompaction = rawPrepareCompaction;
 
-// ── pi-ai（直接依赖，需保持与 pi-coding-agent 内部依赖同版本，避免双实例）──
-export { StringEnum } from "@mariozechner/pi-ai";
-export { registerOAuthProvider } from "@mariozechner/pi-ai/oauth";
+// ── pi-ai（直接依赖，版本与 pi-coding-agent 锁死同版本。注意：上游发布物
+// 携带 overrides 致 npm 子树隔离，pi-coding-agent 下必然嵌套第二份 pi-ai，
+// 根级同版本挡不住这份拷贝；typebox schema 为字符串键、事件流为鸭子类型，
+// 跨实例安全，但任何"模块级单例注册表"类 API（如 pi-ai/oauth 的 provider
+// registry）都会双实例互不可见，禁止经由本门面暴露）──
+export { StringEnum } from "@earendil-works/pi-ai";
 
 export function getPiModel(provider, modelId) {
   return rawGetPiModel(provider, modelId);
@@ -103,7 +124,7 @@ export function getPiModel(provider, modelId) {
 export { Type } from "typebox";
 
 // ── 类型 re-export（供 JSDoc 引用）──
-/** @typedef {import('@mariozechner/pi-coding-agent').ToolDefinition} ToolDefinition */
+/** @typedef {import('@earendil-works/pi-coding-agent').ToolDefinition} ToolDefinition */
 
 // ── Lifecycle helpers ──
 
@@ -135,14 +156,20 @@ export async function emitSessionShutdown(session) {
 // ── 不稳定 API 适配 ──
 
 /**
- * Pi SDK 的 CLI / read tool 已经使用这套图片压缩策略，但顶层包暂未导出。
- * Hana 只在 adapter 层碰深层路径，保证调用侧不用知道 SDK 内部文件布局。
+ * 图片缩放适配。
+ *
+ * 0.80.3 起上游签名为 `resizeImage(inputBytes: Uint8Array, mimeType, options?)`
+ * （0.70.x 是 `(img: ImageContent, options?)`），且内部吞错返回 null。
+ * Hana 消费侧（core/model-image-preprocess.ts）契约保持不变：
+ * 传 `{data: base64, mimeType}` 对象，本层负责解码与拆参。
+ * 返回结构 `ResizedImage` 两版一致，null 仍表示"压不进 maxBytes / 解码失败"。
  *
  * @param {{type?: string, data: string, mimeType?: string}} image
  * @param {{maxWidth?: number, maxHeight?: number, maxBytes?: number, jpegQuality?: number}} options
  */
 export async function resizeModelImageInput(image, options) {
-  return rawResizeImage(image, options);
+  const inputBytes = Buffer.from(String(image?.data ?? ""), "base64");
+  return rawResizeImage(inputBytes, image?.mimeType, options);
 }
 
 /**
@@ -156,16 +183,38 @@ export function formatModelImageDimensionNote(result) {
  * ModelRegistry 工厂。
  * 0.64.0 将构造函数私有化，必须用静态方法。
  * 下次 SDK 改工厂签名，只改这里。
- * @param {import('@mariozechner/pi-coding-agent').AuthStorage} authStorage
+ * @param {import('@earendil-works/pi-coding-agent').AuthStorage} authStorage
  * @param {string} [modelsJsonPath]
- * @returns {import('@mariozechner/pi-coding-agent').ModelRegistry}
+ * @returns {import('@earendil-works/pi-coding-agent').ModelRegistry}
  */
 export function createModelRegistry(authStorage, modelsJsonPath) {
   return ModelRegistry.create(authStorage, modelsJsonPath);
 }
 
 /**
- * 强制 session 从 ModelRegistry 重新解析当前 model 对象。
+ * Register a provider through the ModelRegistry instance that owns Hana's
+ * AuthStorage. This is intentionally kept at the adapter boundary: importing
+ * pi-ai's module-level OAuth registry would target a different nested package
+ * instance and the login provider would be invisible to AuthStorage.
+ */
+export function registerModelProvider(
+  modelRegistry: ModelRegistry,
+  providerId: string,
+  config: SdkProviderRegistrationConfig,
+): void {
+  modelRegistry.registerProvider(providerId, config);
+}
+
+/** Remove a provider previously registered through registerModelProvider. */
+export function unregisterModelProvider(
+  modelRegistry: ModelRegistry,
+  providerId: string,
+): void {
+  modelRegistry.unregisterProvider(providerId);
+}
+
+/**
+ * 强制 session 重新绑定当前 model 对象。
  *
  * 为什么需要：Pi SDK 的 model 对象把 baseUrl 烤在字段里
  * （openai-completions.js 等 provider 直接读 model.baseUrl 构造 client），
@@ -177,8 +226,26 @@ export function createModelRegistry(authStorage, modelsJsonPath) {
  * registerProvider/unregisterProvider 时被调用，没有公开包装。
  * 这里走 adapter 纪律统一桥接，下次 SDK 升级改名只改这里。
  *
+ * 当 Hana 已经从自己的 allowlist 解析出 `allowedModel` 时，直接绑定该
+ * ModelRegistry 刷新后对象；这避免 Pi 的私有刷新方法在 Hana 已禁用模型时
+ * 找到并保留 Pi 内置目录中的同名模型。未传第二参数时保留旧 adapter 行为。
+ *
  * @param {object} session - AgentSession 实例
+ * @param {object} [allowedModel] - Hana 当前 allowlist 中、与 session 同身份的模型对象
+ * @returns {boolean} 是否完成了刷新/重绑
  */
-export function refreshSessionModelFromRegistry(session) {
+export function refreshSessionModelFromRegistry(session, allowedModel) {
+  if (allowedModel !== undefined) {
+    const currentModel = session?.model;
+    if (!currentModel || !allowedModel
+      || currentModel.id !== allowedModel.id
+      || currentModel.provider !== allowedModel.provider
+      || !session?.agent?.state) {
+      return false;
+    }
+    session.agent.state.model = allowedModel;
+    return true;
+  }
   session?._refreshCurrentModelFromRegistry?.();
+  return true;
 }

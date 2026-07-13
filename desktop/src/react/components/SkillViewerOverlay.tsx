@@ -128,6 +128,7 @@ export function SkillViewerOverlay() {
 
   return (
     <Overlay
+      scope="window"
       open
       onClose={close}
       backdrop="dim"

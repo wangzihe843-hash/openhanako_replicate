@@ -36,7 +36,7 @@ export const WECHAT_ILINK_MEDIA_CAPABILITIES = createMediaCapabilities({
     audio: "native_file",
     document: "native_file",
   },
-  source: "docs/BRIDGE-MEDIA-CAPABILITIES.md#wechat-ilink",
+  source: "lib/bridge/wechat-adapter.ts#WECHAT_ILINK_MEDIA_CAPABILITIES",
 });
 
 export const WECHAT_ILINK_RECEIPT_CAPABILITIES = createReceiptCapabilities({

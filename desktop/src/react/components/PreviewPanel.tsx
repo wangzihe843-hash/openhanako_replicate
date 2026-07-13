@@ -23,6 +23,7 @@ import { ChapterRail, ClassicFindBox, LinkDiagnosticsBadge } from './preview/Mar
 import { clearSelection, getSelectionCommitAnchorRect, isContextMenuButton, scheduleCaptureSelection } from '../stores/selection-actions';
 import type { PreviewItem } from '../types';
 import { isRemoteWorkbenchContentRef, saveRemoteWorkbenchContent } from '../utils/remote-file-preview';
+import { applyFindMarks, clearFindMarks } from '../utils/find-marks';
 import { OpenPreviewDocumentWatchBridge } from './app/OpenPreviewDocumentWatchBridge';
 import {
   extractMarkdownHeadings,
@@ -37,6 +38,22 @@ const EDITABLE_TYPES = new Set(['markdown', 'code', 'csv']);
 const CHAPTER_RAIL_HOVER_ZONE_PX = 64;
 const CHAPTER_RAIL_TOP_OFFSET_PX = 76;
 const CHAPTER_RAIL_HEIGHT_RATIO = 0.5;
+
+/** 提纲导轨悬停热区命中判定：右缘（与聊天页 ChatMessageSurface.handleShellPointerMove 一致）。
+    抽成纯函数以便单测：PreviewPanel 渲染栈重（platform/store/resource-watch 依赖），
+    直接对 pointermove 断言需要 mock 出真实 rect 尺寸，不如把几何判定单独验证。 */
+export function chapterRailHoverHit(
+  rect: { top: number; right: number; height: number },
+  clientX: number,
+  clientY: number,
+): boolean {
+  const xFromRight = rect.right - clientX;
+  const yFromTop = clientY - rect.top;
+  const inRailX = xFromRight >= 0 && xFromRight <= CHAPTER_RAIL_HOVER_ZONE_PX;
+  const inRailY = yFromTop >= CHAPTER_RAIL_TOP_OFFSET_PX
+    && yFromTop <= CHAPTER_RAIL_TOP_OFFSET_PX + rect.height * CHAPTER_RAIL_HEIGHT_RATIO;
+  return inRailX && inRailY;
+}
 
 function isEditable(previewItem: PreviewItem | null): boolean {
   if (!previewItem) return false;
@@ -80,54 +97,6 @@ function escapeCssId(id: string): string {
   const css = (globalThis as { CSS?: { escape?: (value: string) => string } }).CSS;
   if (typeof css?.escape === 'function') return css.escape(id);
   return id.replace(/["\\#.:,[\]=]/g, '\\$&');
-}
-
-function clearPreviewFindMarks(root: HTMLElement | null): void {
-  if (!root) return;
-  const marks = Array.from(root.querySelectorAll('mark.preview-find-mark'));
-  for (const mark of marks) {
-    const parent = mark.parentNode;
-    if (!parent) continue;
-    parent.replaceChild(document.createTextNode(mark.textContent || ''), mark);
-    parent.normalize();
-  }
-}
-
-function applyPreviewFindMarks(root: HTMLElement | null, query: string): HTMLElement[] {
-  if (!root || !query) return [];
-  clearPreviewFindMarks(root);
-  const needle = query.toLowerCase();
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const parent = node.parentElement;
-      if (!parent || parent.closest('mark.preview-find-mark')) return NodeFilter.FILTER_REJECT;
-      if (!node.nodeValue?.toLowerCase().includes(needle)) return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  const nodes: Text[] = [];
-  while (walker.nextNode()) nodes.push(walker.currentNode as Text);
-  const marks: HTMLElement[] = [];
-  for (const node of nodes) {
-    const text = node.nodeValue || '';
-    const fragment = document.createDocumentFragment();
-    let cursor = 0;
-    let index = text.toLowerCase().indexOf(needle);
-    while (index >= 0) {
-      if (index > cursor) fragment.append(document.createTextNode(text.slice(cursor, index)));
-      // eslint-disable-next-line no-restricted-syntax -- preview find highlights arbitrary text nodes inside rendered Markdown; JSX cannot address those ranges.
-      const mark = document.createElement('mark');
-      mark.className = 'preview-find-mark';
-      mark.textContent = text.slice(index, index + query.length);
-      fragment.append(mark);
-      marks.push(mark);
-      cursor = index + query.length;
-      index = text.toLowerCase().indexOf(needle, cursor);
-    }
-    if (cursor < text.length) fragment.append(document.createTextNode(text.slice(cursor)));
-    node.replaceWith(fragment);
-  }
-  return marks;
 }
 
 function sourceFindMatches(content: string, query: string): Array<{ from: number; to: number }> {
@@ -299,12 +268,7 @@ export function PreviewPanel() {
 
   const handleBodyShellPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
-    const xFromLeft = event.clientX - rect.left;
-    const yFromTop = event.clientY - rect.top;
-    const inRailX = xFromLeft >= 0 && xFromLeft <= CHAPTER_RAIL_HOVER_ZONE_PX;
-    const inRailY = yFromTop >= CHAPTER_RAIL_TOP_OFFSET_PX
-      && yFromTop <= CHAPTER_RAIL_TOP_OFFSET_PX + rect.height * CHAPTER_RAIL_HEIGHT_RATIO;
-    setChapterRailVisible(inRailX && inRailY);
+    setChapterRailVisible(chapterRailHoverHit(rect, event.clientX, event.clientY));
   }, []);
 
   const handleBodyShellPointerLeave = useCallback(() => {
@@ -361,7 +325,7 @@ export function PreviewPanel() {
   }, [findQuery, activeTabId, editable]);
 
   useEffect(() => {
-    clearPreviewFindMarks(previewBodyRef.current);
+    clearFindMarks(previewBodyRef.current, 'preview-find-mark');
     previewFindMarksRef.current = [];
     if (!findOpen || !findQuery || !previewItem) {
       setFindCount(0);
@@ -374,11 +338,11 @@ export function PreviewPanel() {
       if (match) editorRef.current?.scrollToOffset(match.from, match.to, { focus: false });
       return undefined;
     }
-    const marks = applyPreviewFindMarks(previewBodyRef.current, findQuery);
+    const marks = applyFindMarks(previewBodyRef.current, [findQuery], 'preview-find-mark');
     previewFindMarksRef.current = marks;
     setFindCount(marks.length);
     return () => {
-      clearPreviewFindMarks(previewBodyRef.current);
+      clearFindMarks(previewBodyRef.current, 'preview-find-mark');
       previewFindMarksRef.current = [];
     };
   }, [activeTabId, editable, findIndex, findOpen, findQuery, previewItem]);

@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installWindowTestT } from '../helpers/i18n-test-strings';
 import { useStore } from '../../stores';
 import { SkillsPanel } from '../../components/SkillsPanel';
 
@@ -25,10 +26,9 @@ async function flushMicrotasks(ticks = 3) {
 describe('SkillsPanel', () => {
   beforeEach(() => {
     fetchMock.mockReset();
-    window.t = ((key: string, vars?: Record<string, string | number>) => {
-      if (key === 'settings.skills.installSuccess') return `installed ${vars?.name || ''}`;
-      return key;
-    }) as typeof window.t;
+    installWindowTestT({
+      'settings.skills.installSuccess': 'installed {name}',
+    });
     window.platform = {
       getFilePath: vi.fn(() => '/tmp/new-skill.skill'),
       openSkillViewer: vi.fn(),

@@ -66,14 +66,14 @@ function readEditorHighlight(): string {
 describe('editor typography settings', () => {
   it('uses markdown defaults and preserves future heading controls', () => {
     expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.fontPreset).toBe('follow');
-    expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.bodyFontSize).toBe(15);
-    expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.heading1FontSize).toBe(24);
-    expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.heading2FontSize).toBe(20);
+    expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.bodyFontSize).toBe(16);
+    expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.heading1FontSize).toBe(28);
+    expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.heading2FontSize).toBe(21);
     expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.heading3FontSize).toBe(18);
     expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.heading4FontSize).toBe(16);
     expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.heading5FontSize).toBe(15);
     expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.heading6FontSize).toBe(14);
-    expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.lineHeight).toBe(1.72);
+    expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.lineHeight).toBe(1.5);
     expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.contentPadding).toBe(24);
     expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.contentWidth).toBe(720);
   });
@@ -94,9 +94,9 @@ describe('editor typography settings', () => {
     expect(normalized.markdown.fontPreset).toBe('follow');
     expect(normalized.markdown.bodyFontSize).toBe(24);
     expect(normalized.markdown.heading1FontSize).toBe(16);
-    expect(normalized.markdown.heading2FontSize).toBe(20);
+    expect(normalized.markdown.heading2FontSize).toBe(21);
     expect(normalized.markdown.heading6FontSize).toBe(24);
-    expect(normalized.markdown.lineHeight).toBe(1.72);
+    expect(normalized.markdown.lineHeight).toBe(1.5);
     expect(normalized.markdown.contentPadding).toBe(0);
     expect(normalized.markdown.contentWidth).toBe(720);
     expect(DEFAULT_EDITOR_TYPOGRAPHY.markdown.contentPadding).toBe(24);
@@ -104,6 +104,22 @@ describe('editor typography settings', () => {
     const selected = normalizeEditorTypography({ markdown: { fontPreset: 'sans', contentWidth: 'unlimited' } });
     expect(selected.markdown.fontPreset).toBe('sans');
     expect(selected.markdown.contentWidth).toBe('unlimited');
+  });
+
+  it('maps the follow preset to the text-face token with display-face fallback', () => {
+    const values = new Map<string, string>();
+    const root = {
+      style: {
+        setProperty: (name: string, value: string) => values.set(name, value),
+        getPropertyValue: (name: string) => values.get(name) || '',
+      },
+    } as unknown as HTMLElement;
+
+    applyEditorTypography({ markdown: { fontPreset: 'follow' } }, root);
+
+    expect(root.style.getPropertyValue('--editor-markdown-font-family')).toBe(
+      'var(--font-serif-text, var(--font-serif))',
+    );
   });
 
   it('applies normalized typography as document-level CSS variables', () => {
@@ -170,18 +186,33 @@ describe('editor typography settings', () => {
 
     expect(css).toMatch(/:global\(\.preview-markdown\)\s*\{[\s\S]*padding:\s*var\(--space-24\)\s+var\(--editor-markdown-content-padding-x\)\s+var\(--space-16\)/);
     expect(css).toMatch(/:global\(\.preview-markdown\)\s*\{[\s\S]*font-size:\s*var\(--editor-markdown-font-size\)/);
-    expect(css).toMatch(/:global\(\.preview-markdown\)\s*\{[\s\S]*font-family:\s*var\(--editor-markdown-font-family,\s*var\(--font-serif\)\)/);
+    expect(css).toMatch(/:global\(\.preview-markdown\)\s*\{[\s\S]*font-family:\s*var\(--editor-markdown-font-family,\s*var\(--font-serif-text\)\)/);
     expect(css).toMatch(/:global\(\.preview-markdown\)\s*\{[\s\S]*font-weight:\s*400/);
-    expect(css).toMatch(/:global\(\.preview-markdown\) h1\s*\{[\s\S]*font-size:\s*var\(--editor-markdown-h1-font-size\)[\s\S]*font-weight:\s*700/);
+    expect(css).toMatch(/:global\(\.preview-markdown\) h1\s*\{[\s\S]*font-size:\s*var\(--editor-markdown-h1-font-size\)[\s\S]*font-weight:\s*400/);
     expect(css).toMatch(/:global\(\.preview-markdown\.markdown-has-cover\) h1\s*\{[\s\S]*text-align:\s*left/);
 
-    for (const level of [2, 3, 4, 5, 6]) {
+    for (const level of [2, 3]) {
+      expect(css).toMatch(new RegExp(
+        `:global\\(\\.preview-markdown\\) h${level}\\s*\\{[\\s\\S]*font-size:\\s*var\\(--editor-markdown-h${level}-font-size\\)[\\s\\S]*font-weight:\\s*500`,
+      ));
+    }
+    for (const level of [4, 5, 6]) {
       expect(css).toMatch(new RegExp(
         `:global\\(\\.preview-markdown\\) h${level}\\s*\\{[\\s\\S]*font-size:\\s*var\\(--editor-markdown-h${level}-font-size\\)[\\s\\S]*font-weight:\\s*600`,
       ));
     }
 
     expect(css).toMatch(/:global\(\.preview-markdown\) strong\s*\{[\s\S]*font-weight:\s*700/);
+  });
+
+  it('preview markdown enforces the baseline rhythm contract', () => {
+    const css = readPreviewStyles();
+    expect(css).toMatch(/--md-rhythm:\s*calc\(var\(--editor-markdown-font-size\)\s*\*\s*var\(--editor-markdown-line-height\)\)/);
+    expect(css).toMatch(/:global\(\.preview-markdown\)\s*>\s*h1:first-child[\s\S]*?text-align:\s*center/);
+    expect(css).toMatch(/:global\(\.preview-markdown\) h1\s*\{[\s\S]*?border-bottom:\s*1px solid var\(--border\)[\s\S]*?padding-bottom:\s*calc\(var\(--md-rhythm\) - 1px\)/);
+    expect(css).toMatch(/:global\(\.preview-markdown\) hr\s*\{[\s\S]*?height:\s*var\(--md-rhythm\)/);
+    expect(css).toMatch(/:global\(\.preview-markdown\) table\s*\{[\s\S]*?border-collapse:\s*separate[\s\S]*?border-radius:\s*var\(--radius-xs\)/);
+    expect(css).toMatch(/thead th\)?\s*\{[\s\S]*?color-mix\(in srgb, var\(--text\) 9%, transparent\)/);
   });
 
   it('adds page-header space to markdown previews without a cover', () => {
@@ -213,24 +244,35 @@ describe('editor typography settings', () => {
     expect(theme).toMatch(/var\(--preview-markdown-editor-bottom-space,\s*var\(--space-16\)\)/);
   });
 
-  it('constrains markdown tables while allowing horizontal scroll', () => {
+  it('constrains markdown tables while allowing cell wrapping', () => {
     for (const css of [readGlobalStyles(), readMobileStyles()]) {
-      expect(css).toMatch(/\.md-content \.markdown-table-scroll\s*\{[\s\S]*max-width:\s*100%[\s\S]*overflow-x:\s*auto/);
-      expect(css).toMatch(/\.md-content \.markdown-table-scroll > table\s*\{[\s\S]*width:\s*100%[\s\S]*min-width:\s*max-content[\s\S]*margin:\s*0/);
-      expect(css).toMatch(/\.md-content th,\s*\.md-content td\s*\{[\s\S]*white-space:\s*nowrap/);
+      expect(css).toMatch(/\.md-content \.markdown-table-scroll\s*\{[^}]*max-width:\s*100%/);
+      expect(css).not.toMatch(/\.md-content \.markdown-table-scroll\s*\{[^}]*overflow-x:\s*auto/);
+      expect(css).toMatch(/\.md-content \.markdown-table-scroll > table\s*\{[^}]*width:\s*100%/);
+      expect(css).toMatch(/\.md-content \.markdown-table-scroll > table\s*\{[^}]*table-layout:\s*fixed/);
+      expect(css).toMatch(/\.md-content \.markdown-table-scroll > table\s*\{[^}]*margin:\s*0/);
+      expect(css).not.toMatch(/\.md-content \.markdown-table-scroll > table\s*\{[^}]*min-width:\s*max-content/);
+      expect(css).toMatch(/\.md-content th,\s*\.md-content td\s*\{[^}]*white-space:\s*normal[^}]*overflow-wrap:\s*anywhere[^}]*word-break:\s*break-word/);
     }
 
     const previewCss = readPreviewStyles();
     expect(previewCss).toMatch(/:global\(\.preview-markdown > \*\)\s*\{[\s\S]*max-width:\s*var\(--editor-markdown-content-width\)[\s\S]*margin-left:\s*auto[\s\S]*margin-right:\s*auto/);
     expect(previewCss).toMatch(/:global\(\.preview-markdown > \.markdown-table-scroll\)\s*\{[\s\S]*width:\s*100%[\s\S]*max-width:\s*var\(--editor-markdown-content-width\)[\s\S]*margin-left:\s*auto[\s\S]*margin-right:\s*auto/);
-    expect(previewCss).toMatch(/:global\(\.cm-table-widget\)\s*\{[\s\S]*max-width:\s*100%[\s\S]*overflow-x:\s*auto/);
-    expect(previewCss).toMatch(/:global\(\.cm-table-widget table\)\s*\{[\s\S]*width:\s*100%[\s\S]*min-width:\s*max-content/);
-    expect(previewCss).toMatch(/:global\(\.cm-table-widget th\),\s*:global\(\.cm-table-widget td\)\s*\{[\s\S]*white-space:\s*nowrap/);
+    expect(previewCss).toMatch(/:global\(\.preview-markdown\) table\s*\{[^}]*width:\s*fit-content[^}]*max-width:\s*100%[^}]*table-layout:\s*auto/);
+    expect(previewCss).toMatch(/:global\(\.cm-table-widget\)\s*\{[^}]*max-width:\s*100%/);
+    expect(previewCss).not.toMatch(/:global\(\.cm-table-widget\)\s*\{[^}]*overflow-x:\s*auto/);
+    expect(previewCss).toMatch(/:global\(\.cm-table-widget table\)\s*\{[^}]*width:\s*100%[^}]*table-layout:\s*fixed/);
+    expect(previewCss).not.toMatch(/:global\(\.cm-table-widget table\)\s*\{[^}]*min-width:\s*max-content/);
+    expect(previewCss).toMatch(/:global\(\.cm-table-widget th\),\s*:global\(\.cm-table-widget td\)\s*\{[^}]*white-space:\s*normal[^}]*overflow-wrap:\s*anywhere[^}]*word-break:\s*break-word/);
 
     for (const css of readScreenshotThemeStyles()) {
-      expect(css).toMatch(/\.markdown-table-scroll\s*\{[\s\S]*max-width:\s*100%[\s\S]*overflow-x:\s*auto/);
-      expect(css).toMatch(/\.markdown-table-scroll > table\s*\{[\s\S]*min-width:\s*max-content[\s\S]*margin:\s*0/);
-      expect(css).toMatch(/th,\s*td\s*\{[\s\S]*white-space:\s*nowrap/);
+      expect(css).toMatch(/\.markdown-table-scroll\s*\{[^}]*max-width:\s*100%/);
+      expect(css).not.toMatch(/\.markdown-table-scroll\s*\{[^}]*overflow-x:\s*auto/);
+      expect(css).toMatch(/table\s*\{[^}]*width:\s*100%[^}]*table-layout:\s*fixed/);
+      expect(css).toMatch(/\.markdown-table-scroll > table\s*\{[^}]*table-layout:\s*fixed/);
+      expect(css).toMatch(/\.markdown-table-scroll > table\s*\{[^}]*margin:\s*0/);
+      expect(css).not.toMatch(/\.markdown-table-scroll > table\s*\{[^}]*min-width:\s*max-content/);
+      expect(css).toMatch(/th,\s*td\s*\{[^}]*white-space:\s*normal[^}]*overflow-wrap:\s*anywhere[^}]*word-break:\s*break-word/);
     }
   });
 

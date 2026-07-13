@@ -60,12 +60,27 @@ describe("enrichModelFromKnownMetadata", () => {
       api: "openai-completions",
       provider: "ollama",
       baseUrl: "http://localhost:11434/v1",
-      input: ["text"],
     };
 
     const enriched = enrichModelFromKnownMetadata(model);
 
     expect(enriched.input).toEqual(["text", "image"]);
+  });
+
+  it("preserves an explicit text-only input contract ahead of known image metadata", () => {
+    const model = {
+      id: "kimi-for-coding",
+      name: "Kimi For Coding",
+      api: "openai-completions",
+      provider: "kimi-coding",
+      baseUrl: "https://api.kimi.com/coding/v1",
+      input: ["text"],
+    };
+
+    const enriched = enrichModelFromKnownMetadata(model);
+
+    expect(enriched.input).toEqual(["text"]);
+    expect(enriched).not.toHaveProperty("visionCapabilities");
   });
 
   it("marks runtime-discovered Volcengine coding models without image metadata as text-only", () => {

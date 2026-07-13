@@ -337,17 +337,33 @@ export class ConfigCoordinator {
   }
 
   resolveUtilityConfig( options: any = {}) {
+    const { models, resolverArgs } = this._utilityResolverArgs(options);
+    return models.resolveUtilityConfig(...resolverArgs);
+  }
+
+  async resolveUtilityConfigFresh( options: any = {}) {
+    const { models, resolverArgs } = this._utilityResolverArgs(options);
+    return models.resolveUtilityConfigFresh(...resolverArgs);
+  }
+
+  _utilityResolverArgs( options: any = {}) {
     const { agentId } = options || {};
     const agent = agentId ? this._d.getAgentById?.(agentId) : this._d.getAgent();
     if (!agent) {
       throw new Error(`resolveUtilityConfig: agent ${agentId || "(focus)"} not found`);
     }
     const models = this._d.getModels();
-    return models.resolveUtilityConfig(
+    const resolverArgs = [
       agent.config,
       this.getSharedModels(),
       this.getUtilityApi(),
-    );
+    ];
+    if (options?.requireUtilityLarge !== undefined) {
+      resolverArgs.push({
+        requireUtilityLarge: options.requireUtilityLarge,
+      });
+    }
+    return { models, resolverArgs };
   }
 
   // ── Agent Order ──

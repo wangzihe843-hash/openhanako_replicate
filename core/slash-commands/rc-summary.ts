@@ -30,7 +30,7 @@ const CONTENT_CHAR_LIMIT = 1500;
 const MAX_TURNS_FROM_TAIL = 8;
 
 /**
- * @param {object} engine  engine.resolveUtilityConfig()、engine.resolveModelWithCredentials(ref)
+ * @param {object} engine  engine.resolveUtilityConfigFresh()、engine.resolveModelWithCredentialsFresh(ref)
  * @param {object} agent   agent.config.models.chat 用于 tier 3
  * @param {string} sessionPath  桌面 session 绝对路径
  * @returns {Promise<string|null>}
@@ -48,7 +48,7 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
   // Tier 1: utility
   let utilConfig = null;
   try {
-    utilConfig = engine.resolveUtilityConfig?.(agent?.id ? { agentId: agent.id } : undefined);
+    utilConfig = await engine.resolveUtilityConfigFresh?.(agent?.id ? { agentId: agent.id } : undefined);
   } catch { /* ignore, fall through */ }
 
   if (utilConfig?.utility && utilConfig.api_key && utilConfig.base_url && utilConfig.api) {
@@ -80,7 +80,7 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
   const chatRef = agent?.config?.models?.chat;
   if (chatRef?.id && chatRef?.provider) {
     try {
-      const resolved = engine.resolveModelWithCredentials?.({ id: chatRef.id, provider: chatRef.provider });
+      const resolved = await engine.resolveModelWithCredentialsFresh?.({ id: chatRef.id, provider: chatRef.provider });
       if (resolved) {
         const text = await _safeCall({
           api: resolved.api, model: resolved.model,

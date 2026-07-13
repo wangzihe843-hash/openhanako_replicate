@@ -30,12 +30,12 @@ function makeAssistantMsg(text, tools = []) {
 
 function makeEngine({ utilConfig, chatCreds }: any = {}) {
   return {
-    resolveUtilityConfig: utilConfig === undefined
-      ? vi.fn(() => { throw new Error("not configured"); })
-      : vi.fn(() => utilConfig),
-    resolveModelWithCredentials: chatCreds === undefined
-      ? vi.fn(() => { throw new Error("chat not resolved"); })
-      : vi.fn(() => chatCreds),
+    resolveUtilityConfigFresh: utilConfig === undefined
+      ? vi.fn(async () => { throw new Error("not configured"); })
+      : vi.fn(async () => utilConfig),
+    resolveModelWithCredentialsFresh: chatCreds === undefined
+      ? vi.fn(async () => { throw new Error("chat not resolved"); })
+      : vi.fn(async () => chatCreds),
     getSessionIdForPath: vi.fn(() => "sess_rc_summary"),
   };
 }
@@ -154,7 +154,7 @@ describe("summarizeSessionForRc — 3-tier fallback", () => {
     expect(callText).toHaveBeenCalledTimes(3);
   });
 
-  it("engine.resolveUtilityConfig throws → tier 1+2 skipped, tier 3 tried", async () => {
+  it("engine.resolveUtilityConfigFresh throws → tier 1+2 skipped, tier 3 tried", async () => {
     const p = writeSessionFile([makeUserMsg("hi"), makeAssistantMsg("hello")]);
     (callText as any).mockResolvedValueOnce("chat only");
     const engine = makeEngine({

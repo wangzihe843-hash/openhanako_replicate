@@ -9,9 +9,16 @@ import {
   validateRollingSummaryFormat,
 } from "./rolling-summary-format.ts";
 
-// suffix 内容变更（补上输出格式契约）时 bump，便于在用量账本里区分模板代际
-export const MEMORY_REFLECTION_TEMPLATE_VERSION = "memory-reflection.v2";
+// suffix 内容变更（补上输出格式契约 / 时间线时间要求）时 bump，便于在用量账本里区分模板代际
+export const MEMORY_REFLECTION_TEMPLATE_VERSION = "memory-reflection.v3";
 export const MEMORY_REFLECTION_REPAIR_TEMPLATE_VERSION = "memory-reflection-repair.v1";
+
+function buildTimelineTimestampInstruction(locale = "zh-CN") {
+  if (String(locale || "").startsWith("zh")) {
+    return "事情经过每个非空列表项都必须从上方 session 消息时间戳提取 YYYY-MM-DD HH:MM 时间标注；不要只写 HH:MM。工作内容只保留到大主题层级。";
+  }
+  return "Every non-empty Timeline list item must include a YYYY-MM-DD HH:MM timestamp copied from the session message timestamps above; do not use date-less HH:MM only. Keep work content at the broad-theme level.";
+}
 
 export function buildMemoryReflectionSuffix({ previousSummary = "", timeZone = "UTC", locale = "zh-CN" } = {}) {
   return {
@@ -26,6 +33,7 @@ export function buildMemoryReflectionSuffix({ previousSummary = "", timeZone = "
         `Time zone: ${timeZone}`,
         previousSummary ? `<previous-summary>\n${previousSummary}\n</previous-summary>` : "<previous-summary>\n\n</previous-summary>",
         buildRollingSummaryFormatRequirements(locale),
+        buildTimelineTimestampInstruction(locale),
         "Return only the summary text.",
       ].join("\n\n"),
     }],
@@ -114,7 +122,7 @@ export async function runMemoryReflection({
   );
   let summary = scrub(activeTask.text.trim());
 
-  // 写入前结构校验 + 有限次数修复：摘要必须满足 compileFacts 的提取假设，
+  // 写入前结构校验 + 有限次数修复：摘要必须满足 compileEditableFacts 的提取假设，
   // 否则 facts 会在编译侧静默丢失（#1628）。空输出沿用"无变化"语义，不算违约。
   const repairUsageContext = buildRepairUsageContext(usageContext);
   let repairsUsed = 0;

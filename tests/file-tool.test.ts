@@ -98,6 +98,37 @@ describe("file tool", () => {
     });
   });
 
+  it("stats a local path with ISO mtime text and versioned details", async () => {
+    const { workspace } = makeTree();
+    const notePath = path.join(workspace, "note.txt");
+    fs.writeFileSync(notePath, "hello", "utf-8");
+    const tool = createFileTool({
+      getCwd: () => workspace,
+    });
+
+    const result = await tool.execute("file-1", {
+      action: "stat",
+      path: "note.txt",
+    });
+
+    const details = result.details as any;
+    const mtimeIso = new Date(details.file.mtimeMs).toISOString();
+    expect(result.content[0].text).toContain("note.txt");
+    expect(result.content[0].text).toContain(`modified ${mtimeIso}`);
+    expect(details.file).toMatchObject({
+      type: "path",
+      path: notePath,
+      filePath: notePath,
+      filename: "note.txt",
+      size: 5,
+      mtimeMs: expect.any(Number),
+      version: {
+        mtimeMs: details.file.mtimeMs,
+        size: 5,
+      },
+    });
+  });
+
   it("copies a SessionFile into the current workspace by fileId", async () => {
     const { workspace, source, sessionPath } = makeTree();
     const registerSessionFile = vi.fn(({ filePath, label, origin, operation, storageKind }) => ({

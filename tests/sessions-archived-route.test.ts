@@ -704,6 +704,36 @@ describe("POST /api/sessions/archived/delete", () => {
     }
   });
 
+  it("clears input drafts for the session after permanent delete", async () => {
+    const store = new SessionManifestStore({
+      dbPath: path.join(tmpDir, "session-manifest.db"),
+      idGenerator: () => "sess_drafts_cleanup",
+      now: () => "2026-06-25T01:00:00.000Z",
+    });
+    try {
+      store.createForPath({
+        sessionPath: archPath,
+        ownerAgentId: "a",
+        domain: "desktop",
+        kind: "chat",
+        lifecycle: "archived",
+      });
+      attachManifestStore(engine, store);
+      engine.deleteSessionInputDrafts = vi.fn();
+
+      const res = await app.request("/api/sessions/archived/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "sess_drafts_cleanup" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(engine.deleteSessionInputDrafts).toHaveBeenCalledWith("sess_drafts_cleanup");
+    } finally {
+      store.close();
+    }
+  });
+
   it("discards active and archived runtime state before permanent delete", async () => {
     const res = await app.request("/api/sessions/archived/delete", {
       method: "POST",

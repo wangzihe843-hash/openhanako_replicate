@@ -532,4 +532,22 @@ describe("QQ principal metadata", () => {
       fallbackName: "QQ stab…r-id",
     });
   });
+
+  it("uses QQ member card and avatar metadata when username is a placeholder", () => {
+    expect(deriveQQPrincipal({
+      id: "stable-user-id",
+      username: "User",
+      avatar: "https://example.com/fallback.png",
+    }, {
+      member_openid: "member-openid",
+      card: "Alice Card",
+      avatarUrl: "https://example.com/alice.png",
+    })).toEqual({
+      principalId: "stable-user-id",
+      aliases: ["stable-user-id", "member-openid"],
+      displayName: "Alice Card",
+      avatarUrl: "https://example.com/alice.png",
+      fallbackName: "QQ stab…r-id",
+    });
+  });
 });

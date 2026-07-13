@@ -154,10 +154,11 @@ export function ChannelTabBar() {
     // Only plugin tabs can be hidden
     if (typeof tab !== 'string' || !tab.startsWith('plugin:')) return;
     e.preventDefault();
+    e.stopPropagation();
     const label = getTabLabel(tab, pluginPages, locale);
     setMenu({
       position: { x: e.clientX, y: e.clientY },
-      items: [{ label: `取消固定「${label}」`, action: () => hidePluginTab(tab) }],
+      items: [{ label: t('channel.unpinPluginTab', { label }), action: () => hidePluginTab(tab) }],
     });
   }, [pluginPages, locale]);
 
@@ -268,10 +269,11 @@ export function ChannelTabBar() {
           onContextMenu={(e, tab) => {
             if (typeof tab !== 'string' || !tab.startsWith('plugin:')) return;
             e.preventDefault();
+            e.stopPropagation();
             const label = getTabLabel(tab, pluginPages, locale);
             setMenu({
               position: { x: e.clientX, y: e.clientY },
-              items: [{ label: `取消固定「${label}」`, action: () => hidePluginTab(tab) }],
+              items: [{ label: t('channel.unpinPluginTab', { label }), action: () => hidePluginTab(tab) }],
             });
           }}
         />

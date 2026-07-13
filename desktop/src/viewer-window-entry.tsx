@@ -8,9 +8,14 @@
  * - 仅支持可编辑文本类型（markdown / code / csv），其他类型的 tab 在主面板不提供「在新窗口查看」入口
  *
  * 生命周期：
- *   主进程 spawn BrowserWindow → did-finish-load → IPC `viewer-load` 送文件元信息
+ *   主进程 spawn BrowserWindow → 渲染侧挂载后主动 IPC `viewer-request-load` 拉取文件元信息
  *   → readFile → 渲染 PreviewEditor(readOnly)
  *   → 窗口 close → 主进程广播 `viewer-closed` 给主 renderer 清 store
+ *
+ * 拉取而非推送：主进程曾在 did-finish-load 时一次性 `send('viewer-load', ...)` 推送，
+ * 渲染侧在 useEffect 里注册监听（晚于 commit+paint）。推送早于注册会导致 payload
+ * 永久丢失，窗口卡死在 Loading（冷启动下 V8 首编译 + splash 抢 CPU 几乎必现）。
+ * 拉取契约下 payload 常驻主进程 Map，渲染侧任何时候发起请求都能拿到。
  */
 
 import { createRoot } from 'react-dom/client';
@@ -39,7 +44,7 @@ interface ViewerPlatform {
   getServerPort?(): Promise<string | number | null | undefined>;
   getServerToken?(): Promise<string | null | undefined>;
   readFile(path: string): Promise<string | null>;
-  onViewerLoad?(callback: (data: ViewerLoadPayload) => void): void;
+  viewerRequestLoad?(): Promise<ViewerLoadPayload | null>;
   viewerClose?(): void;
 }
 
@@ -52,20 +57,39 @@ function fileUnavailableError(payload: ViewerLoadPayload): Error {
   return new Error(`File is no longer available: ${payload.title || payload.filePath}`);
 }
 
-function ViewerApp() {
+export function ViewerApp() {
   const [payload, setPayload] = useState<ViewerLoadPayload | null>(null);
   const [content, setContent] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [requestFailed, setRequestFailed] = useState(false);
 
-  // 1. 等 IPC 送来文件元信息
+  // 1. 挂载后主动拉取文件元信息（显式请求，不依赖主进程推送时机）
   useEffect(() => {
+    let cancelled = false;
     const platform = getPlatform();
-    if (!platform?.onViewerLoad) return;
-    platform.onViewerLoad((data) => {
-      setPayload(data);
-      setLoadError(null);
-      document.title = data.title || 'Viewer';
-    });
+    if (!platform?.viewerRequestLoad) {
+      setRequestFailed(true);
+      return;
+    }
+    platform.viewerRequestLoad()
+      .then((data) => {
+        if (cancelled) return;
+        if (!data) {
+          setRequestFailed(true);
+          return;
+        }
+        setPayload(data);
+        setLoadError(null);
+        document.title = data.title || 'Viewer';
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('[viewer] viewer-request-load failed:', err);
+        setRequestFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // 2. 初始读取 + 后端 ResourceEvent live reload
@@ -113,6 +137,14 @@ function ViewerApp() {
   }, [payload?.filePath]);
 
   const handleClose = () => getPlatform()?.viewerClose?.();
+
+  if (requestFailed) {
+    return (
+      <div style={{ padding: 20, color: 'var(--text-muted)', fontSize: 13 }}>
+        Failed to load viewer content: no payload available for this window.
+      </div>
+    );
+  }
 
   if (!payload) {
     return (

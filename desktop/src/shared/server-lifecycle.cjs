@@ -84,7 +84,9 @@ function buildLaunchFailureDialogDetail({ err, crashInfo, serverLogs = [], extra
   const structuredPortConflict = err?.startupError?.code === "PORT_IN_USE"
     ? formatPortInUseStartupError(err.startupError)
     : null;
+  const staleServerError = err?.code === "STALE_SERVER_UNCLEANED" ? err.message : null;
   const rootServerError = structuredPortConflict
+    || staleServerError
     || (typeof extractRootServerStartupError === "function" ? extractRootServerStartupError(serverLogs) : null);
   const tail = crashInfo.length > 800 ? "...\n" + crashInfo.slice(-800) : crashInfo;
   if (!rootServerError) return tail;

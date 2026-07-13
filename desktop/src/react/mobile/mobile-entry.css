@@ -22,6 +22,7 @@
     --chat-input-column-width: calc(var(--chat-column-width) + var(--chat-input-column-extra));
     --welcome-chat-input-column-width: 40rem;
     --chat-message-font-size: 15px;
+    --radius-xs: 4px;
     --radius-sm: 6px;
     --radius-md: 10px;
     --radius-lg: 16px;
@@ -41,15 +42,16 @@
     --ease-standard: cubic-bezier(0.2, 0, 0, 1);
     --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
     --font-serif: 'EB Garamond', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', serif;
+    --font-serif-text: 'PT Serif', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', serif;
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
     --editor-markdown-font-size: 16px;
-    --editor-markdown-h1-font-size: 24px;
-    --editor-markdown-h2-font-size: 20px;
+    --editor-markdown-h1-font-size: 28px;
+    --editor-markdown-h2-font-size: 21px;
     --editor-markdown-h3-font-size: 18px;
     --editor-markdown-h4-font-size: 16px;
     --editor-markdown-h5-font-size: 15px;
     --editor-markdown-h6-font-size: 14px;
-    --editor-markdown-line-height: 1.72;
+    --editor-markdown-line-height: 1.5;
     --editor-markdown-content-padding-x: var(--space-24);
     --editor-markdown-content-width: 720px;
     --paper-texture-card-blend-mode: lighten;
@@ -68,6 +70,7 @@ html[data-theme="midnight-contrast"] {
 
 body.font-sans {
     --font-serif: var(--font-ui);
+    --font-serif-text: var(--font-ui);
 }
 
 body.paper-texture,
@@ -783,8 +786,6 @@ html[data-platform="linux"] .tb-toggle-right {
 .md-content .markdown-table-scroll {
     max-width: 100%;
     margin: var(--space-8) 0;
-    overflow-x: auto;
-    overflow-y: hidden;
 }
 
 .md-content table {
@@ -796,8 +797,8 @@ html[data-platform="linux"] .tb-toggle-right {
 
 .md-content .markdown-table-scroll > table {
     width: 100%;
-    min-width: max-content;
     margin: 0;
+    table-layout: fixed;
 }
 
 .md-content th,
@@ -805,7 +806,9 @@ html[data-platform="linux"] .tb-toggle-right {
     padding: 0.3em 0.6em;
     border: 1px solid var(--border);
     text-align: left;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .md-content th {

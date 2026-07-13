@@ -270,14 +270,47 @@ describe('ToolGroupBlock', () => {
     expect(screen.queryByText('Tea')).not.toBeInTheDocument();
   });
 
-  it('keeps the tool layout box full width within its message for selection and side controls', () => {
+  it('keeps the tool layout box aligned to the task-block width', () => {
     const css = fs.readFileSync(
       path.join(process.cwd(), 'desktop/src/react/components/chat/Chat.module.css'),
       'utf8',
     );
     const toolGroupRule = css.match(/\.toolGroup\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
 
-    expect(toolGroupRule).toContain('width: 100%');
+    expect(toolGroupRule).toContain('width: var(--chat-task-block-width)');
+    expect(toolGroupRule).toContain('max-width: 100%');
     expect(toolGroupRule).toContain('box-sizing: border-box');
+  });
+
+  it('fuses consecutive subagent cards into one rounded block', () => {
+    const css = fs.readFileSync(
+      path.join(process.cwd(), 'desktop/src/react/components/chat/Chat.module.css'),
+      'utf8',
+    );
+    const leading = css.match(/\.subagentResourceCard\[data-chat-resource-card\]:has\(\+ \.subagentResourceCard\[data-chat-resource-card\]\)\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
+    const trailing = css.match(/\.subagentResourceCard\[data-chat-resource-card\]\s*\+\s*\.subagentResourceCard\[data-chat-resource-card\]\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
+
+    expect(leading).toContain('margin-bottom: 0');
+    expect(leading).toContain('border-bottom-left-radius: 0');
+    expect(leading).toContain('border-bottom-right-radius: 0');
+    expect(trailing).toContain('margin-top: 0');
+    expect(trailing).toContain('border-top-left-radius: 0');
+    expect(trailing).toContain('border-top-right-radius: 0');
+    expect(trailing).toContain('border-top: 1px solid var(--overlay-light');
+  });
+
+  it('renders the task-family container: four-corner radius, no accent quote bar', () => {
+    const css = fs.readFileSync(
+      path.join(process.cwd(), 'desktop/src/react/components/chat/Chat.module.css'),
+      'utf8',
+    );
+    const toolGroupRule = css.match(/\.toolGroup\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
+    expect(toolGroupRule).toContain('border-radius: var(--radius-sm)');
+    expect(toolGroupRule).not.toContain('padding-left');
+    expect(css).not.toMatch(/\.toolGroup::before/);
+    expect(css).not.toContain('hana-tool-bar-in');
+
+    const toolDotsRule = css.match(/\.toolDots\s*\{(?<body>[^}]*)\}/)?.groups?.body || '';
+    expect(toolDotsRule).toContain('color: var(--tool-text)');
   });
 });

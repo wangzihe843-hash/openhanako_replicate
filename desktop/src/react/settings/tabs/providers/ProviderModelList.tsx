@@ -188,23 +188,17 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
   const addCustomModel = async () => {
     const id = customInput.trim();
     if (!id) return;
+    if (currentModelIds.includes(id)) {
+      setCustomInput('');
+      return;
+    }
     try {
-      if (summary.supports_oauth) {
-        const res = await hanaFetch(`/api/auth/oauth/${providerId}/custom-models`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ modelId: id }),
-        });
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-      } else {
-        await hanaFetch('/api/config', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ providers: { [providerId]: { models: [...rawModels, id] } } }),
-        });
-        invalidateConfigCache();
-      }
+      await hanaFetch('/api/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providers: { [providerId]: { models: [...rawModels, id] } } }),
+      });
+      invalidateConfigCache();
       setCustomInput('');
       await onRefresh();
     } catch (err: unknown) {
@@ -259,6 +253,12 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
   });
 
   const [editing, setEditing] = useState<{ id: string; anchor: HTMLElement } | null>(null);
+  const editingRawEntry = editing
+    ? rawModels.find((model: ProviderModelEntry) => modelIdOf(model) === editing.id)
+    : null;
+  const editingModelMeta = editingRawEntry && typeof editingRawEntry === 'object'
+    ? editingRawEntry
+    : undefined;
 
   return (
     <div className={styles['pv-models']}>
@@ -272,8 +272,13 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
           <div className={styles['pv-fav-list']}>
             {currentModelIds.map(mid => {
               const rawEntry = rawModels.find((m: ProviderModelEntry) => modelIdOf(m) === mid);
-              const entryMeta = rawEntry && typeof rawEntry === 'object' ? rawEntry : {};
-              const meta = { ...(lookupModelMeta(mid, providerId) || {}), ...entryMeta };
+              const entryMeta: Record<string, unknown> = rawEntry && typeof rawEntry === 'object' ? rawEntry : {};
+              const knownMeta: Record<string, any> = lookupModelMeta(mid, providerId) || {};
+              const meta = { ...knownMeta, ...entryMeta };
+              const modelContext = numberFromMeta(entryMeta.context)
+                ?? numberFromMeta(entryMeta.contextWindow)
+                ?? numberFromMeta(knownMeta.context)
+                ?? numberFromMeta(knownMeta.contextWindow);
               const displayName = meta.displayName || meta.name || mid;
               const showModelId = displayName !== mid;
               return (
@@ -284,7 +289,7 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
                   {meta.video === true && <CapabilityIcon kind="video" />}
                   {meta.audio === true && <CapabilityIcon kind="audio" />}
                   {meta.reasoning === true && <CapabilityIcon kind="reasoning" />}
-                  {meta.context && <span className={styles['pv-model-ctx']}>{formatContext(meta.context)}</span>}
+                  {modelContext !== undefined && <span className={styles['pv-model-ctx']}>{formatContext(modelContext)}</span>}
                   <div className={styles['pv-fav-item-actions']}>
                     <button
                       className={styles['pv-fav-item-edit']}
@@ -307,7 +312,14 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
             })}
           </div>
           {editing && (
-            <ModelEditPanel modelId={editing.id} providerId={providerId} anchorEl={editing.anchor} onClose={() => setEditing(null)} onRefresh={onRefresh} />
+            <ModelEditPanel
+              modelId={editing.id}
+              providerId={providerId}
+              modelMeta={editingModelMeta}
+              anchorEl={editing.anchor}
+              onClose={() => setEditing(null)}
+              onRefresh={onRefresh}
+            />
           )}
         </div>
       )}
@@ -351,9 +363,13 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
             <div className={styles['pv-model-dropdown-list']}>
               {filtered.map(mid => {
                 const isAdded = currentModelIds.includes(mid);
-                const meta = lookupModelMeta(mid, providerId) || {};
+                const meta: Record<string, any> = lookupModelMeta(mid, providerId) || {};
+                const rawEntry = rawModels.find((model: ProviderModelEntry) => modelIdOf(model) === mid);
+                const userMeta: Record<string, unknown> = rawEntry && typeof rawEntry === 'object' ? rawEntry : {};
                 const discovered = discoveredModels.find(d => d.id === mid);
-                const ctx = numberFromMeta(meta.context)
+                const ctx = numberFromMeta(userMeta.context)
+                  ?? numberFromMeta(userMeta.contextWindow)
+                  ?? numberFromMeta(meta.context)
                   ?? numberFromMeta(meta.contextWindow)
                   ?? numberFromMeta(discovered?.context)
                   ?? numberFromMeta(discovered?.contextWindow);

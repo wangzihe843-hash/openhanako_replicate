@@ -14,6 +14,15 @@
       "title": "Hana Gallery",
       "upload": "Upload your own",
       "close": "Close Hana Gallery"
+    },
+    "notice": {
+      "taskCreated": "Cover background task created.",
+      "generateFailed": "Cover generation failed: {error}",
+      "applySuccess": "Uploaded image applied as cover.",
+      "applySuccessGallery": "Applied \"{title}\" as cover.",
+      "applyFailed": "Failed to apply cover: {error}",
+      "selectImageFile": "Please choose an image file for the cover.",
+      "readImageFailed": "Failed to read the image."
     }
   },
   "selection": {
@@ -64,6 +73,7 @@
     "created": "Channel #{name} created ✿",
     "createFailed": "Create failed",
     "alreadyExists": "Channel already exists",
+    "unpinPluginTab": "Unpin \"{label}\"",
     "deleteChannel": "Delete channel",
     "deleteConfirm": "Delete channel \"{name}\"? Message history cannot be recovered.",
     "renameChannel": "Rename channel",
@@ -112,6 +122,11 @@
     "toolWrite": "Write",
     "filesUnsupported": "Channels currently support text only; files will not be attached to chat",
     "createIntroOptional": "Description"
+  },
+  "announcement": {
+    "title": "What's New · v{version}",
+    "fallbackBody": "HanaAgent has been updated to v{version}.",
+    "confirm": "Got it"
   },
   "skills": {
     "panel": {
@@ -220,6 +235,7 @@
       "deleteFailed": "Delete failed",
       "daysAgo": "Archived {days} days ago"
     },
+    "rcTakingOver": "{platform} active",
     "subagentRunStateUnrecoverable": "Historical sub-session run state is unrecoverable",
     "subagentLinkUnrecoverable": "Historical sub-session link is unrecoverable",
     "capabilityDrift": {
@@ -277,6 +293,10 @@
     "markAllComplete": "Mark all as complete"
   },
   "chat": {
+    "find": {
+      "locateFailed": "Could not locate that message",
+      "placeholder": "Find in conversation"
+    },
     "send": "Send",
     "steer": "Steer",
     "stop": "Stop",
@@ -314,7 +334,13 @@
       "fallbackAssistant": "Assistant message"
     },
     "modelSwitching": "Switching model, please wait",
-    "unknownCommand": "[Unknown command] {text}"
+    "unknownCommand": "[Unknown command] {text}",
+    "workflowInline": {
+      "running": "◐ Running",
+      "done": "✓ Done",
+      "failed": "✗ Failed",
+      "aborted": "⊘ Stopped"
+    }
   },
   "time": {
     "justNow": "Just now",
@@ -363,6 +389,11 @@
     "workMode": "Work mode",
     "workModeHint": "When on, this chat becomes a pragmatic, honest work assistant — no character setup is injected",
     "workModeNeedsSession": "Send a message to start the session first, then toggle work mode",
+    "noAskThisConversation": "Don't ask again in this conversation",
+    "confirmMoreOptions": "More confirmation options",
+    "attachmentDirectory": "[Directory] {label}",
+    "attachmentFile": "[Attachment] {label}",
+    "referenceDocument": "[Reference] {path}",
     "deskContext": "With desk context",
     "pastedImage": "Pasted image",
     "textModelImageFileOnly": "The current model cannot view images and auxiliary vision is not enabled: images are sent as files, so the model only sees the file path, not the image content.",
@@ -384,20 +415,22 @@
     "commandMenu": "Command menu",
     "docContext": "With document",
     "thinkingLevel": {
-      "off": "off",
-      "auto": "auto",
-      "medium": "medium",
-      "high": "high",
-      "xhigh": "max",
-      "max": "max"
+      "off": "Off",
+      "auto": "Auto",
+      "low": "Light",
+      "medium": "Medium",
+      "high": "Deep",
+      "xhigh": "Max",
+      "max": "Max"
     },
     "thinkingDesc": {
-      "off": "no reasoning",
-      "auto": "model decides depth",
-      "medium": "balanced reasoning",
-      "high": "deep reasoning",
-      "xhigh": "maximum reasoning",
-      "max": "maximum reasoning"
+      "off": "No reasoning",
+      "auto": "Model decides depth",
+      "low": "Light reasoning",
+      "medium": "Balanced reasoning",
+      "high": "Deep reasoning",
+      "xhigh": "Maximum reasoning",
+      "max": "Maximum reasoning"
     },
     "contextWindow": "Context {windowK}k",
     "tokensUsed": "Used {tokensK}k ({pct}%)",
@@ -887,7 +920,11 @@
       "{name} smelled oranges from an afternoon",
       "Those conversations still carry warmth"
     ],
-    "installing": "{name} is updating to v{version}, please wait…"
+    "installing": "{name} is updating to v{version}, please wait…",
+    "preparing": {
+      "named": "{name} is preparing a new home…",
+      "anonymous": "Your assistant is preparing a new home…"
+    }
   },
   "settings": {
     "title": "Settings",
@@ -987,10 +1024,6 @@
         "summaryTitle": "Rolling Summary Preview",
         "emptyPreview": "No observation yet",
         "clearObservation": "Clear observation"
-      },
-      "editableMemory": {
-        "title": "Editable Memory",
-        "description": "When enabled, Facts in current memory are split into an editable area while the agent keeps reading timeline sections from read-only summaries."
       },
       "compaction": {
         "title": "Compaction mode",
@@ -1212,6 +1245,10 @@
             "label": "Office",
             "summary": "Let the agent read documents and convert HTML to PDF"
           },
+          "session": {
+            "label": "Session collaboration",
+            "summary": "List and read other sessions; send messages or create sessions via confirmation cards"
+          },
           "update_settings": {
             "label": "Update Settings",
             "summary": "Allow the agent to modify application configuration"
@@ -1273,12 +1310,40 @@
       "updateInstallManualHint": "Install after clicking Restart to update; quitting will not install automatically",
       "updateInstall": "Restart to update",
       "updateInstallNow": "Restart and update now",
+      "updateApply": "Update",
+      "updateApplyAutoHint": "It will still apply automatically at the next launch if you skip this",
+      "trainStickerTitle": "New version available",
+      "trainStickerDownloading": "Downloading {percent}%",
+      "trainStickerApplying": "Applying update…",
+      "shellStickerTitle": "Platform update available, restart needed",
+      "shellStickerTitleBlocking": "This update is required to keep receiving new versions",
+      "fallbackStickerTitle": "Version {fromVersion} failed to start repeatedly and was rolled back to {toVersion}. The problematic version has been quarantined and will not retry automatically.",
+      "fallbackStickerAckLabel": "Got it",
+      "updateHistoryTitle": "Update history",
+      "updateHistorySubtitle": "The 5 most recent published versions",
+      "updateHistoryLoading": "Loading update history…",
+      "updateHistoryOffline": "The release site is unavailable. Showing the version saved with this app.",
+      "updateHistoryPartial": "Only some published versions currently include update notes.",
+      "updateHistoryUnavailable": "Update history is temporarily unavailable. Please try again later.",
       "updateProgress": "{percent}%",
       "updateError": "Update check failed",
       "updateLatest": "You're up to date",
+      "updateLatestCheckedAt": "Up to date (last checked {time})",
+      "updateManifestReleasedAt": "Shelf manifest issued {date}",
+      "updateManifestReleasedAtViaMirror": "Shelf manifest issued {date} (via backup source)",
       "updateCheckBtn": "Check for updates",
+      "updateRetryBtn": "Retry",
       "updateNeedInstall": "Please move HanaAgent to the Applications folder first",
       "updateDiskSpace": "Not enough disk space to download update",
+      "updateDigestCta": "What you get in this update",
+      "updateDigestTitle": "What you get in this update",
+      "updateDigestClose": "Close",
+      "updateDigestKind": {
+        "feature": "Feature",
+        "fix": "Fix",
+        "improvement": "Improvement",
+        "migration": "Migration"
+      },
       "launchAtLogin": "Launch at login",
       "keepAwake": "Keep running while locked",
       "betaUpdates": "Receive beta updates",
@@ -1651,6 +1716,15 @@
       "saveFacts": "Save Facts",
       "factsSaved": "Facts saved",
       "readonlyTimelineTitle": "Timeline Memory",
+      "editEntry": "Edit",
+      "editDone": "Done",
+      "editSave": "Save",
+      "saveToday": "Save Today",
+      "todaySaved": "Today saved",
+      "saveLongterm": "Save Long-term",
+      "longtermSaved": "Long-term context saved",
+      "saveDay": "Save this day",
+      "daySaved": "Day saved",
       "sections": {
         "today": "Today",
         "week": "Earlier this week",
@@ -1770,7 +1844,14 @@
       "injectAgentsMd": "Inject AGENTS.md",
       "injectAgentsMdDesc": "When enabled, new sessions read AGENTS.md from the current working directory up to the Git root.",
       "injectClaudeMd": "Inject CLAUDE.md",
-      "injectClaudeMdDesc": "When enabled, new sessions read CLAUDE.md from the current working directory up to the Git root."
+      "injectClaudeMdDesc": "When enabled, new sessions read CLAUDE.md from the current working directory up to the Git root.",
+      "projectSkillsTitle": "Project skill discovery",
+      "projectSkillsDesc": "Choose which project skill directories this Agent loads into new sessions.",
+      "discoverProjectSkills": "Load project skills",
+      "discoverProjectSkillsDesc": "Discover and load skills from the current project's .agents/skills directory.",
+      "discoverCompatibleProjectSkills": "Load skills from other tools",
+      "discoverCompatibleProjectSkillsDesc": "Also discover project skills from Claude Code, Codex, and OpenClaw directories.",
+      "agentDeskSection": "Agent desk settings"
     },
     "toolCaps": {
       "title": "Skill Installation Permissions"
@@ -1800,6 +1881,10 @@
       "learnHint": "Try asking your assistant: install this local skill package / find me some safe and useful skills from GitHub",
       "reloaded": "Skills reloaded",
       "reload": "Reload skills",
+      "toggleEnable": "Enable Skill",
+      "toggleDisable": "Disable Skill",
+      "toggleEnableNamed": "Enable {name}",
+      "toggleDisableNamed": "Disable {name}",
       "compatTitle": "Compatible Skills",
       "compatDesc": "Auto-discover skills installed by other AI tools",
       "compatNoSkills": "No external skills found",
@@ -2015,15 +2100,19 @@
       "telegramToken": "Bot Token",
       "telegramHint": "Get from @BotFather",
       "feishu": "Feishu",
+      "feishuRegion": "Region",
+      "feishuRegionFeishuCn": "Feishu China",
+      "feishuRegionLarkGlobal": "Lark Global",
       "feishuAppId": "App ID",
       "feishuAppSecret": "App Secret",
       "feishuHint": "Get from Feishu Open Platform; events use long connection, no local callback URL needed",
       "dingtalk": "DingTalk",
+      "dingtalkCorpId": "Corp ID",
       "dingtalkClientId": "Client ID / AppKey",
       "dingtalkClientSecret": "Client Secret / AppSecret",
       "dingtalkRobotCode": "Robot Code",
-      "dingtalkRestBaseUrl": "REST Base URL",
-      "dingtalkHint": "Internal app credentials are used for token/Stream; Robot Code is used for Enterprise bot sends; REST Base URL defaults to https://api.dingtalk.io/v1.0",
+      "dingtalkApiBaseUrl": "API Base URL",
+      "dingtalkHint": "Corp ID and app credentials use the current token API; Client ID and Client Secret also open the Stream connection. Robot Code sends replies. API Base URL defaults to https://api.dingtalk.com/v1.0",
       "whatsapp": "WhatsApp",
       "qq": "QQ",
       "qqAppId": "App ID",
@@ -2047,12 +2136,15 @@
       "connected": "Connected",
       "disconnected": "Not connected",
       "error": "Connection failed",
+      "connectionToggle": "Enable or disable connection",
       "test": "Test Connection",
       "testOk": "Connection successful",
+      "dingtalkCredentialTestOk": "Credentials verified; the Stream connection and robot replies are checked after enabling",
       "testFail": "Test failed",
+      "secretStoredPlaceholder": "Saved. Enter a new value to replace it",
       "noToken": "Please enter Bot Token first",
       "noCredentials": "Please enter App ID and App Secret first",
-      "noDingtalkCredentials": "Please enter Client ID, Client Secret, Robot Code, and REST Base URL first",
+      "noDingtalkCredentials": "Please enter Corp ID, Client ID, Client Secret, Robot Code, and API Base URL first",
       "globalSettings": "Global Settings",
       "agentSettings": "Agents",
       "permissionMode": "Permission mode",
@@ -2096,11 +2188,12 @@
       ],
       "tutorialDtSteps": [
         "Go to <code>open.dingtalk.com</code> and open the Developer Console",
+        "Copy the enterprise <code>Corp ID</code> from the organization information",
         "Create an internal enterprise app, then copy <code>Client ID/AppKey</code> and <code>Client Secret/AppSecret</code> from app credentials",
         "Add the app robot capability and copy the <code>Robot Code</code> from the robot details",
         "Make sure the app has the robot message permissions it needs and is published to the target enterprise scope",
-        "Keep REST Base URL as <code>https://api.dingtalk.io/v1.0</code> unless you intentionally use a DingTalk-compatible gateway",
-        "Paste Client ID, Client Secret, Robot Code, and REST Base URL into the fields above, test the connection, then turn on the switch"
+        "Keep API Base URL as <code>https://api.dingtalk.com/v1.0</code> unless you intentionally use a DingTalk-compatible gateway",
+        "Paste Corp ID, Client ID, Client Secret, Robot Code, and API Base URL into the fields above. The token test and Stream connection must both succeed before replies can be sent"
       ],
       "whatsappHint": "Coming soon"
     },
@@ -2443,6 +2536,9 @@
     "cwdSkillsHint": "Create a .agents/skills/ directory to get started",
     "cwdSkillsDesc": "Skills follow workspace",
     "cwdSkillsDrop": "Drop folder or .zip to install skills",
+    "cwdSkillActive": "Loaded",
+    "cwdSkillInactive": "Not loaded",
+    "cwdSkillShadowed": "Shadowed",
     "deleteSkill": "Delete Skill",
     "openInFinder": "Open Folder",
     "jianLabel": "Jian",
@@ -2532,7 +2628,19 @@
     "resetContextTip": "Next message will start a new conversation",
     "replyInterrupted": "(Reply interrupted — the content above may be incomplete)",
     "replyFailed": "(Reply generation failed. Please try again later.)",
-    "sessionBusy": "The desktop session is still responding, please try again later"
+    "sessionBusy": "The desktop session is still responding, please try again later",
+    "platform": {
+      "telegram": "Telegram",
+      "feishu": "Feishu",
+      "wechat": "WeChat",
+      "qq": "QQ",
+      "bridge": "Bridge"
+    }
+  },
+  "link": {
+    "copyPath": "Copy path",
+    "copyLink": "Copy link",
+    "openInSystemBrowser": "Open in system browser"
   },
   "notification": {
     "turnCompletionBody": "This turn is complete"
@@ -2707,9 +2815,9 @@
     "installSkillGithubApiError": "GitHub API access failed: {msg}",
     "installSkillStarTooLow": "This repo only has {stars} stars (threshold {min}), installation rejected for safety.",
     "installSkillNoSkillMd": "SKILL.md not found in {owner}/{repo} (tried paths: {paths}).",
-    "installSkillSafetyFailed": "[Security] Skill safety review failed, installation blocked.\nReason: {reason}\n\nPlease inform the user about the safety review failure and the specific reason. Users can disable safety reviews in settings (not recommended).",
+    "installSkillSafetyFailed": "[Security warning] Skill safety review failed, so the skill has not been installed yet.\nReason: {reason}\n\nTell the user that if this skill comes from an unknown source, they should inspect SKILL.md and its bundled files first. If the user explicitly confirms they trust this skill and wants to continue, call install_skill again with risk_accepted=true and the returned risk_confirmation_token.",
     "installSkillNameInvalid": "Invalid skill name{name}. Only letters, numbers, underscores, and hyphens are allowed.",
-    "installSkillSuccess": "Skill \"{name}\" installed successfully!\nSource: {source} (⭐ {stars} stars)\nReason: {reason}",
+    "installSkillSuccess": "Skill \"{name}\" installed successfully!\nSource: {source}\nReason: {reason}",
     "installSkillNeedInput": "Please provide github_url, local_path, fileId, or a source FileRef.",
     "installSkillNeedName": "skill_name is required when using skill_content mode.",
     "installSkillSuccessLocal": "Skill \"{name}\" installed successfully!\nReason: {reason}",
@@ -2717,6 +2825,7 @@
     "installSkillNoUtility": "Safety review unavailable: utility model not configured. Please configure it in settings.",
     "installSkillUtilityIncomplete": "Safety review unavailable: utility model config incomplete (missing API key or base URL). Please complete it in settings.",
     "installSkillSafetyPassed": "✓ Safety review passed",
+    "installSkillSafetyOverride": "⚠ Safety review failed; installation continued after explicit user confirmation.\nRisk reason: {reason}",
     "installSkillSafetyEmpty": "Safety review returned empty response",
     "installSkillSafetyUnexpected": "Safety review returned unexpected format: {reply}",
     "installSkillSafetyTimeout": "Safety review timeout or network error",
@@ -2800,7 +2909,8 @@
     "tray": {
       "show": "Show HanaAgent",
       "settings": "Settings",
-      "quit": "Quit"
+      "quit": "Quit",
+      "repairArtifacts": "Repair Components…"
     },
     "dialog": {
       "selectFolder": "Select Working Folder",
@@ -2816,10 +2926,16 @@
       "serverFilesNotReady": "Auto-update just completed; new version files still landing on disk (missing {missing}). Waited {waited}s without success. Please restart HanaAgent shortly.",
       "serverModuleMissing": "Server startup failed: cannot find module {module}.\nThis typically happens right after an auto-update, while new files are still being written to disk.\nRecommendation: wait 1-2 minutes and restart HanaAgent. Report on GitHub if it persists.",
       "installFailedTitle": "HanaAgent Update",
-      "installFailedBody": "Update installation failed:\n{error}\n\nPlease restart HanaAgent and try again, or check for updates manually in Settings."
+      "installFailedBody": "Update installation failed:\n{error}\n\nPlease restart HanaAgent and try again, or check for updates manually in Settings.",
+      "repairArtifactsTitle": "Repair Components",
+      "repairArtifactsBody": "This resets HanaAgent's app components to the originally installed version and restarts the app. Your data (agents, sessions, settings) is not affected.",
+      "repairArtifactsConfirm": "Repair and Restart",
+      "repairArtifactsCancel": "Cancel",
+      "trainUpdateApplyFailedBody": "HanaAgent v{version}\n\nUpdate failed to apply:\n{error}\n\nPlease restart the app."
     },
     "notification": {
-      "ready": "Notifications enabled"
+      "ready": "Notifications enabled",
+      "componentQuarantined": "A component was automatically rolled back to the previous version; functionality is unaffected"
     }
   },
   "devtools": {
@@ -2891,8 +3007,7 @@
       "memory": "Memory System",
       "memoryDesc": "Enable/disable memory for current Agent",
       "memoryFacts": "Memory Facts",
-      "memoryFactsDesc": "Editable current-memory Facts for this Agent. Requires the Editable Memory experiment.",
-      "memoryFactsDisabled": "Editable Memory experiment is disabled.",
+      "memoryFactsDesc": "Editable current-memory Facts for this Agent.",
       "experience": "Experience",
       "experienceDesc": "Enable/disable the current Agent's experience library",
       "agentName": "Agent Name",
@@ -3086,6 +3201,11 @@
   "preview.exitMarkdownPreview": "Back to editing",
   "preview.markdownEditorStatus": "Selected {selected} chars · Total {total} chars",
   "preview.markdownAttachmentInsertFailed": "Failed to insert attachment",
+  "preview.fileMovedOrDeleted": "The original draft was moved or deleted",
+  "preview.legacyImageUpgrade": "This image preview has been upgraded. Click to open in the new viewer.",
+  "preview.coverLayoutSaveFailed": "Failed to save cover layout. The file may have been modified externally.",
+  "preview.coverDeleted": "Cover removed.",
+  "preview.coverDeleteFailed": "Failed to remove cover. The file may have been modified externally.",
   "subagent": {
     "status": {
       "interrupted": "Interrupted",
@@ -3184,6 +3304,7 @@
     "retry": "Retry"
   },
   "mobile": {
+    "startupFailed": "HanaAgent failed to start",
     "auth": {
       "scopeError": "Current login lacks workspace access. Please re-enter the access key.",
       "loginFailed": "Login failed",
@@ -3215,7 +3336,9 @@
     "reject": "Deny",
     "computerApp": {
       "title": "Allow Hana to use the computer",
-      "body": "Hana wants to control this app to continue the current task."
+      "body": "Hana wants to control this app to continue the current task.",
+      "controlTitle": "Allow Hana to control {appName}",
+      "defaultAppName": "this app"
     },
     "sessionFolders": {
       "title": "Allow Hana to modify folder authorization for this conversation",
@@ -3257,5 +3380,21 @@
     "fileSummaryMore": "- {count} more files",
     "fileSummaryHeader": "Generated files:",
     "mediaNoDisplayableFiles": "Generation result has no displayable files"
+  },
+  "sessionCollab": {
+    "messagePrefix": "[Message from agent \"{name}\", not the user]",
+    "fromAgent": "Message from {name}",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "confirmSend": "Send",
+    "confirmCreate": "Create & send",
+    "ignore": "Ignore",
+    "expired": "Draft expired; ask the agent to recreate it",
+    "inFlight": "Already being applied",
+    "halfCreated": "Session created ({id}) but the first message failed; retry or open the session and send manually",
+    "createdSession": "Created session {id}",
+    "sendFailed": "Delivery failed: {error}",
+    "rejectFailed": "Failed to ignore: {error}",
+    "messageField": "Message"
   }
 }

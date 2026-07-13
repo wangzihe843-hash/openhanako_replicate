@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "tag": "v0.391.2",
+  "version": "0.391.2",
+  "previousTag": "v0.390.0",
+  "generatedAt": "2026-07-12T06:00:00.000Z",
+  "noUserFacingChanges": false,
+  "summary": {
+    "zh": "本版把自动更新做得更稳、更可感知：Mac 上热更新后服务端不再因签名缺 JIT 权限而启动即崩；检查更新会并行比对产地与镜像并拒绝通道不符的清单；货架内容比本机更旧时不再当成可更新；连续启动失败回退时会明确提示；记忆提醒也只送达所属 Agent 的会话。",
+    "en": "This release makes updates more reliable and visible: macOS hot updates no longer crash the server at launch due to missing JIT entitlements; update checks compare the origin and mirror in parallel and reject channel-mismatched manifests; older shelf content is no longer offered as an update; crash fallbacks surface a clear notice; and memory reminders only reach sessions owned by the source Agent."
+  },
+  "counts": {
+    "feature": 1,
+    "fix": 4,
+    "improvement": 0,
+    "migration": 0
+  },
+  "source": {
+    "owner": "liliMozi",
+    "repo": "openhanako",
+    "commitRange": "v0.390.0..v0.391.2",
+    "releaseUrl": "https://github.com/liliMozi/openhanako/releases/tag/v0.391.2",
+    "releaseNotes": ""
+  },
+  "items": [
+    {
+      "id": "crash-fallback-user-notice",
+      "kind": "feature",
+      "importance": "high",
+      "title": {
+        "zh": "崩溃回退后明确提示",
+        "en": "Clear notice after a crash fallback"
+      },
+      "summary": {
+        "zh": "连续启动失败触发自动回退时，侧栏会展示一次性提示，说明哪个版本出了问题、已退回哪个版本，以及问题版本已隔离不会自动重试。",
+        "en": "When repeated launch failures trigger an automatic rollback, the sidebar shows a one-time notice explaining which version failed, which version was restored, and that the bad version is quarantined from automatic retry."
+      },
+      "details": [],
+      "sources": [
+        {
+          "type": "commit",
+          "ref": "367dd3b22",
+          "title": "feat(update): 崩溃回退后向用户明确提示"
+        }
+      ]
+    },
+    {
+      "id": "macos-server-jit-entitlement",
+      "kind": "fix",
+      "importance": "high",
+      "title": {
+        "zh": "修复 Mac 热更新服务端启动即崩",
+        "en": "Fix macOS hot-update server crashing on launch"
+      },
+      "summary": {
+        "zh": "箱内 Node 在正式签名时会附带 JIT 权限，并在装箱前做一次启动烟测，避免缺少可执行内存权限导致热更新后服务端立刻崩溃。",
+        "en": "The bundled Node binary now receives JIT entitlements during Developer ID signing, with a pre-pack launch smoke test so a missing executable-memory entitlement can no longer crash the server right after a hot update."
+      },
+      "details": [],
+      "sources": [
+        {
+          "type": "commit",
+          "ref": "fc5d17360",
+          "title": "fix(build): macOS server 箱内 node 缺 JIT entitlement 导致启动即崩"
+        }
+      ]
+    },
+    {
+      "id": "dual-source-channel-manifest-checks",
+      "kind": "fix",
+      "importance": "high",
+      "title": {
+        "zh": "更新清单双源比对与通道校验",
+        "en": "Dual-source update manifests with channel checks"
+      },
+      "summary": {
+        "zh": "检查更新会并行请求 GitHub 与 AtomGit，两边独立验签后采信车号更新的一方；清单自述通道与请求通道不符时直接拒绝，避免镜像滞后或错通道清单被照单全收。",
+        "en": "Update checks now query GitHub and AtomGit in parallel, independently verify signatures, and prefer the newer train. Manifests whose declared channel does not match the requested channel are rejected instead of being accepted blindly."
+      },
+      "details": [],
+      "sources": [
+        {
+          "type": "commit",
+          "ref": "7213d3494",
+          "title": "fix(update): 校验清单通道归属，清单获取改为双源并行、采信车号更新的一方"
+        }
+      ]
+    },
+    {
+      "id": "reject-older-shelf-content",
+      "kind": "fix",
+      "importance": "medium",
+      "title": {
+        "zh": "更旧的货架内容不再当成更新",
+        "en": "Older shelf content is no longer treated as an update"
+      },
+      "summary": {
+        "zh": "当货架内容版本低于本机已激活版本时，检查与下载都会视为已是最新，避免把实际上更旧的列车当成可更新并造成误降级。",
+        "en": "If shelf content is older than the locally active version, both check and download now treat the install as current, preventing an older train from being offered as an update and applied as a downgrade."
+      },
+      "details": [],
+      "sources": [
+        {
+          "type": "commit",
+          "ref": "82330a386",
+          "title": "fix(update): 货架内容版本低于本机时不再被当作可用更新"
+        }
+      ]
+    },
+    {
+      "id": "memory-reminder-agent-scope",
+      "kind": "fix",
+      "importance": "medium",
+      "title": {
+        "zh": "记忆提醒只送达所属 Agent",
+        "en": "Memory reminders stay on the owning Agent"
+      },
+      "summary": {
+        "zh": "记忆事实变更现在只注入来源 Agent 自己的会话，不再广播到其它 Agent 的会话。",
+        "en": "Memory fact changes are now injected only into sessions owned by the source Agent, instead of being broadcast to every Agent's sessions."
+      },
+      "details": [],
+      "sources": [
+        {
+          "type": "commit",
+          "ref": "33af92e1b",
+          "title": "fix(reminder): scope memory facts to owning agent"
+        }
+      ]
+    }
+  ]
+}

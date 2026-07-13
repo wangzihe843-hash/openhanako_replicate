@@ -95,7 +95,7 @@ export function ChannelCreateOverlay() {
       setVisible(false);
     } catch (err: any) {
       const msg = String(err?.message || err || '');
-      if (msg.includes('已存在') || msg.includes('409')) {
+      if (msg.includes('409') || msg.toLowerCase().includes('already exists') || msg.includes('已存在')) {
         setNameError(true);
         setSubmitError(t('channel.nameExists'));
         nameRef.current?.focus();
@@ -112,6 +112,7 @@ export function ChannelCreateOverlay() {
 
   return (
     <Overlay
+      scope="window"
       open={visible}
       onClose={handleCancel}
       backdrop="blur"

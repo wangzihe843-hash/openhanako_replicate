@@ -209,6 +209,7 @@ describe("server startup diagnostics contract", () => {
     expect(mainSource).toContain("buildLaunchFailureDialogDetail");
     expect(mainSource).toContain("serverLogs: _serverLogs");
     expect(lifecycleSource).toContain("const rootServerError = structuredPortConflict");
+    expect(lifecycleSource).toContain('err?.code === "STALE_SERVER_UNCLEANED" ? err.message : null');
     expect(lifecycleSource).toContain("tail.trimStart().startsWith(rootServerError)");
     expect(lifecycleSource).not.toContain("tail.includes(rootServerError)");
     expect(lifecycleSource).toContain("return `${rootServerError}\\n\\n${tail}`");

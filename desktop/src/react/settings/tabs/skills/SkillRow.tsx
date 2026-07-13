@@ -89,8 +89,10 @@ export function SkillRow({
           <button
             className={`hana-toggle${skill.enabled ? ' on' : ''}`}
             type="button"
-            title={skill.enabled ? '关闭 Skill' : '启用 Skill'}
-            aria-label={skill.enabled ? `关闭 ${skill.name}` : `启用 ${skill.name}`}
+            title={skill.enabled ? t('settings.skills.toggleDisable') : t('settings.skills.toggleEnable')}
+            aria-label={skill.enabled
+              ? t('settings.skills.toggleDisableNamed', { name: skill.name })
+              : t('settings.skills.toggleEnableNamed', { name: skill.name })}
             onClick={(e) => { e.stopPropagation(); onToggle(skill.name, !skill.enabled); }}
           />
         )}

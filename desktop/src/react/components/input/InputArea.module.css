@@ -127,8 +127,11 @@
 .plan-mode-btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
-    padding: 0.2rem 0.55rem;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    padding: 0;
     font-family: inherit;
     font-size: var(--fs-hint);
     color: var(--text-muted);
@@ -138,9 +141,7 @@
     cursor: default;
     transition: all var(--duration-slow) var(--ease-out);
     -webkit-app-region: no-drag;
-    flex-shrink: 1;
-    min-width: 24px;
-    overflow: hidden;
+    flex-shrink: 0;
 }
 
 .plan-mode-btn:hover {
@@ -190,13 +191,6 @@
     background: rgba(var(--accent-rgb), 0.06);
 }
 
-.plan-mode-label {
-    letter-spacing: 0.02em;
-    overflow: hidden;
-    text-overflow: clip;
-    white-space: nowrap;
-}
-
 .input-surface-mobile .attach-btn,
 .input-surface-mobile .audio-record-btn,
 .input-surface-mobile .thinking-pill,
@@ -210,7 +204,6 @@
     flex: 0 0 30px;
 }
 
-.input-surface-mobile .plan-mode-label,
 .input-surface-mobile .send-label span {
     display: none;
 }
@@ -600,15 +593,6 @@
 .model-pill[data-open="true"] {
     color: var(--accent);
     border-color: rgba(var(--accent-rgb), 0.25);
-}
-
-.model-arrow {
-    font-size: 0.55rem;
-    transition: transform var(--duration-slow);
-}
-
-.model-pill[data-open="true"] .model-arrow {
-    transform: rotate(180deg);
 }
 
 .model-dropdown {
@@ -1698,4 +1682,15 @@
 
 .input-box p {
     margin: 0;
+}
+
+.input-box ul,
+.input-box ol {
+    margin: 0;
+    padding-left: var(--space-24);
+}
+
+.input-box li {
+    margin: 0;
+    padding-left: var(--space-4);
 }

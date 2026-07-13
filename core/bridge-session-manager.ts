@@ -1325,6 +1325,7 @@ export class BridgeSessionManager {
         ...(typeof agent.experienceEnabled === "boolean"
           ? { forceExperienceEnabled: agent.experienceEnabled === true }
           : {}),
+        surface: "bridge",
       })
       : agent.tools;
     const { tools: baseTools, customTools: baseCustomTools } = this._deps.buildTools(

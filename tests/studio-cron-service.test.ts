@@ -140,6 +140,32 @@ describe("StudioCronService", () => {
     expect(job.createdBy).toEqual({ kind: "agent", agentId: "agent-a" });
   });
 
+  it("repairs missing nextRunAt when importing enabled legacy jobs", () => {
+    const root = makeRoot();
+    roots.push(root);
+    const agentsDir = path.join(root, "agents");
+    writeLegacyJobs(root, "agent-a", [
+      {
+        id: "job_1",
+        type: "cron",
+        schedule: "30 0 * * *",
+        prompt: "legacy prompt",
+        enabled: true,
+        nextRunAt: null,
+      },
+    ]);
+
+    const service = new StudioCronService({
+      hanakoHome: root,
+      agentsDir,
+      getStudioId: () => "default",
+    });
+
+    const [job] = service.listJobs();
+    expect(typeof job.nextRunAt).toBe("string");
+    expect(Number.isNaN(new Date(job.nextRunAt).getTime())).toBe(false);
+  });
+
   it("does not duplicate imported legacy jobs on later reads or service instances", () => {
     const root = makeRoot();
     roots.push(root);

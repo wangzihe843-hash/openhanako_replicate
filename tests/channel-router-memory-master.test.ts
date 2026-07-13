@@ -90,7 +90,7 @@ function makeRouter(paths, options: any = {}) {
         agents: undefined,
         usageLedger: options.usageLedger ?? null,
         getAgent: () => null,
-        resolveUtilityConfig: () => ({
+        resolveUtilityConfigFresh: options.resolveUtilityConfigFresh || (async () => ({
           utility: "test-model",
           utility_large: "test-model-large",
           api_key: "test-key",
@@ -99,7 +99,7 @@ function makeRouter(paths, options: any = {}) {
           large_api_key: "test-key",
           large_base_url: "https://test.api",
           large_api: "openai-completions",
-        }),
+        })),
       },
       eventBus: { emit: vi.fn() },
     },
@@ -236,5 +236,17 @@ describe("ChannelRouter memory master fallback", () => {
         attribution: { kind: "memory", agentId: "hana" },
       },
     });
+  });
+
+  it("does not call the channel memory network boundary when fresh credentials fail", async () => {
+    const paths = writeAgentFixture(true);
+    const router = makeRouter(paths, {
+      resolveUtilityConfigFresh: async () => { throw new Error("oauth refresh failed"); },
+    });
+
+    await router._memorySummarize("hana", "general", "context");
+
+    expect(callTextMock).not.toHaveBeenCalled();
+    expect(factAddMock).not.toHaveBeenCalled();
   });
 });

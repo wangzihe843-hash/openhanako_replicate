@@ -13,6 +13,8 @@
  *   - autoReconnect=false 的连接器不重连
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import os from "os";
+import path from "path";
 import { McpRuntime } from "../plugins/mcp/lib/mcp-runtime.ts";
 import { McpHttpError } from "../plugins/mcp/lib/mcp-http-client.ts";
 
@@ -82,7 +84,7 @@ function makeFakeClientFactory() {
 function makeRuntime(stored, factory) {
   let current = stored;
   const runtime = new McpRuntime({
-    dataDir: "/tmp/mcp-reconnect-test",
+    dataDir: path.join(os.tmpdir(), "mcp-reconnect-test"),
     config: {
       get: vi.fn(() => current),
       set: vi.fn((_key, value) => {
@@ -343,7 +345,7 @@ describe("MCP runtime establishing-phase suppression", () => {
 
     let current = { enabled: true, connectors: [{ ...STDIO_CONNECTOR }] };
     const runtime = new McpRuntime({
-      dataDir: "/tmp/mcp-establishing-test",
+      dataDir: path.join(os.tmpdir(), "mcp-establishing-test"),
       config: { get: () => current, set: (_k, v) => { current = { ...current, ...v }; } },
       registerTool: vi.fn(() => () => {}),
       bus: { request: vi.fn() },
@@ -360,6 +362,86 @@ describe("MCP runtime establishing-phase suppression", () => {
     expect(instances).toHaveLength(1);
     expect(runtime.clients.has("local")).toBe(false);
     expect(runtime.getState().connectors[0].status).toBe("stopped");
+
+    await runtime.dispose();
+  });
+});
+
+describe("MCP runtime auto-start initial failures", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("puts an auto-start transient failure into the reconnect backoff loop", async () => {
+    const factory = makeFakeClientFactory();
+    factory.failNextStart(new Error("network unavailable"));
+    const runtime = makeRuntime({
+      enabled: true,
+      connectors: [{ ...STDIO_CONNECTOR, autoStart: true }],
+    }, factory);
+
+    await runtime.load();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(factory.instances).toHaveLength(1);
+    expect(runtime.clients.has("local")).toBe(false);
+    expect(runtime.getState().connectors[0]).toMatchObject({
+      status: "reconnecting",
+      error: "network unavailable",
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(factory.instances).toHaveLength(2);
+    expect(runtime.clients.get("local")).toBe(factory.instances[1]);
+    expect(runtime.getState().connectors[0].status).toBe("running");
+
+    await runtime.dispose();
+  });
+
+  it("marks auto-start auth failures as needs-auth without retrying", async () => {
+    const factory = makeFakeClientFactory();
+    factory.failNextStart(new McpHttpError("refresh token expired", {
+      status: 400,
+      oauthError: "invalid_grant",
+    }));
+    const runtime = makeRuntime({
+      enabled: true,
+      connectors: [{ ...STDIO_CONNECTOR, autoStart: true }],
+    }, factory);
+
+    await runtime.load();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runtime.getState().connectors[0]).toMatchObject({
+      status: "needs-auth",
+      error: "refresh token expired",
+    });
+
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(factory.instances).toHaveLength(1);
+    expect(runtime.clients.has("local")).toBe(false);
+
+    await runtime.dispose();
+  });
+
+  it("does not retry an auto-start failure when autoReconnect is false", async () => {
+    const factory = makeFakeClientFactory();
+    factory.failNextStart(new Error("network unavailable"));
+    const runtime = makeRuntime({
+      enabled: true,
+      connectors: [{ ...STDIO_CONNECTOR, autoStart: true, autoReconnect: false }],
+    }, factory);
+
+    await runtime.load();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(factory.instances).toHaveLength(1);
+    expect(runtime.clients.has("local")).toBe(false);
+    expect(runtime.getState().connectors[0]).toMatchObject({
+      status: "stopped",
+      error: "network unavailable",
+    });
 
     await runtime.dispose();
   });

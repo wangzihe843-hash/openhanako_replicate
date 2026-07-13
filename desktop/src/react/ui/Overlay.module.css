@@ -9,14 +9,18 @@
     -webkit-app-region: no-drag;
 }
 
+.contained-backdrop {
+    position: absolute;
+}
+
 /* ── backdrop 视觉变体 ── */
 
 .backdrop-dim {
-    background: rgba(0, 0, 0, 0.35);
+    background: var(--scrim-35);
 }
 
 .backdrop-blur {
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--scrim-30);
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
 }
@@ -37,6 +41,12 @@
     position: relative;
     max-height: calc(100vh - var(--space-24) - var(--space-24));
     max-width: calc(100vw - var(--space-24) - var(--space-24));
+}
+
+.contained-container {
+    max-width: 100%;
+    max-height: 100%;
+    min-height: 0;
 }
 
 .container-enter {

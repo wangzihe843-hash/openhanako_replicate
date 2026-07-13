@@ -1,14 +1,22 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { useStore } from '../stores';
 import { sessionScopedListIncludes, sessionScopedValue } from '../stores/session-slice';
 import { usePanel } from '../hooks/use-panel';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { formatSessionDate } from '../utils/format';
+import { renderMarkdown } from '../utils/markdown';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../utils/agent-display';
 import { displayInitial } from '../utils/grapheme';
+import {
+  BRIDGE_PANEL_PLATFORMS,
+  bridgePlatformLabel,
+  isBridgePlatform,
+  type BridgePlatform,
+} from '../utils/bridge-platforms';
 import { openSettingsModal } from '../stores/settings-modal-actions';
 import { loadMessages } from '../stores/session-actions';
 import { clearSessionStreamMeta } from '../stores/stream-invalidator';
+import { sanitizeBridgeVisibleText } from '../../../../shared/bridge-visible-text';
 import { useContinuousBottomScroll } from '../hooks/use-continuous-bottom-scroll';
 import type { ChatListItem } from '../stores/chat-types';
 import { ChatTranscript } from './chat/ChatTranscript';
@@ -26,9 +34,12 @@ interface BridgeSession {
 }
 
 interface StatusData {
-  telegram?: { status: string; configured?: boolean };
-  feishu?: { status: string; configured?: boolean };
   [key: string]: { status: string; configured?: boolean } | undefined;
+}
+
+function initialBridgePlatform(): BridgePlatform {
+  const saved = localStorage.getItem('hana_bridge_tab');
+  return isBridgePlatform(saved) ? saved : 'feishu';
 }
 
 function getBridgeSessionIdentity(
@@ -47,7 +58,7 @@ function getBridgeSessionIdentity(
 
 export function BridgePanel() {
 
-  const [platform, setPlatform] = useState(() => localStorage.getItem('hana_bridge_tab') || 'feishu');
+  const [platform, setPlatform] = useState<BridgePlatform>(initialBridgePlatform);
   const [sessions, setSessions] = useState<BridgeSession[]>([]);
   const [currentKey, setCurrentKey] = useState<string | null>(null);
   const [currentName, setCurrentName] = useState('');
@@ -80,7 +91,7 @@ export function BridgePanel() {
   }, [bridgeAgentId]);
 
   // 加载平台数据（按 agent 过滤，stale-guard via ref）
-  const loadPlatformData = useCallback(async (plat: string) => {
+  const loadPlatformData = useCallback(async (plat: BridgePlatform) => {
     const snapshotId = bridgeAgentId;
     try {
       const agentQuery = snapshotId ? `&agentId=${encodeURIComponent(snapshotId)}` : '';
@@ -183,7 +194,7 @@ export function BridgePanel() {
     };
   }, [bridgeLatestMessage, visible, platform, loadPlatformData]);
 
-  const switchTab = useCallback((plat: string) => {
+  const switchTab = useCallback((plat: BridgePlatform) => {
     setPlatform(plat);
     setCurrentKey(null);
     setCurrentName('');
@@ -240,12 +251,6 @@ export function BridgePanel() {
 
   if (!visible) return null;
 
-  const tgStatus = statusData.telegram?.status;
-  const fsStatus = statusData.feishu?.status;
-  const waStatus = statusData.whatsapp?.status;
-  const qqStatus = statusData.qq?.status;
-  const wxStatus = statusData.wechat?.status;
-
   return (
     <div className={`${fp.floatingPanel} ${fp.bridgePanelWide}`} id="bridgePanel">
       <div className={fp.floatingPanelInner}>
@@ -301,41 +306,16 @@ export function BridgePanel() {
             </div>
           )}
           <div className={fp.bridgeTabs} id="bridgeTabs">
-            <button
-              className={`${fp.bridgeTab}${platform === 'feishu' ? ` ${fp.bridgeTabActive}` : ''}`}
-              onClick={() => switchTab('feishu')}
-            >
-              <span className={`${fp.bridgeTabDot}${dotClass(fsStatus)}`} />
-              <span>{t('settings.bridge.feishu')}</span>
-            </button>
-            <button
-              className={`${fp.bridgeTab}${platform === 'telegram' ? ` ${fp.bridgeTabActive}` : ''}`}
-              onClick={() => switchTab('telegram')}
-            >
-              <span className={`${fp.bridgeTabDot}${dotClass(tgStatus)}`} />
-              Telegram
-            </button>
-            <button
-              className={`${fp.bridgeTab}${platform === 'whatsapp' ? ` ${fp.bridgeTabActive}` : ''}`}
-              onClick={() => switchTab('whatsapp')}
-            >
-              <span className={`${fp.bridgeTabDot}${dotClass(waStatus)}`} />
-              WhatsApp
-            </button>
-            <button
-              className={`${fp.bridgeTab}${platform === 'qq' ? ` ${fp.bridgeTabActive}` : ''}`}
-              onClick={() => switchTab('qq')}
-            >
-              <span className={`${fp.bridgeTabDot}${dotClass(qqStatus)}`} />
-              QQ
-            </button>
-            <button
-              className={`${fp.bridgeTab}${platform === 'wechat' ? ` ${fp.bridgeTabActive}` : ''}`}
-              onClick={() => switchTab('wechat')}
-            >
-              <span className={`${fp.bridgeTabDot}${dotClass(wxStatus)}`} />
-              {t('settings.bridge.wechat')}
-            </button>
+            {BRIDGE_PANEL_PLATFORMS.map((descriptor) => (
+              <button
+                key={descriptor.id}
+                className={`${fp.bridgeTab}${platform === descriptor.id ? ` ${fp.bridgeTabActive}` : ''}`}
+                onClick={() => switchTab(descriptor.id)}
+              >
+                <span className={`${fp.bridgeTabDot}${dotClass(statusData[descriptor.id]?.status)}`} />
+                <span>{bridgePlatformLabel(descriptor, t)}</span>
+              </button>
+            ))}
           </div>
           <button className={fp.floatingPanelClose} onClick={close}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -354,7 +334,7 @@ export function BridgePanel() {
                   <line x1="12" y1="17" x2="12.01" y2="17" />
                 </svg>
                 <div className={fp.bridgeOverlayText}>
-                  {t('bridge.notConfigured', { platform: platform === 'telegram' ? 'Telegram' : platform === 'whatsapp' ? 'WhatsApp' : platform === 'qq' ? 'QQ' : platform === 'wechat' ? t('settings.bridge.wechat') : t('settings.bridge.feishu') })}
+                  {t('bridge.notConfigured', { platform: bridgePlatformLabel(platform, t) })}
                 </div>
                 <button className={fp.bridgeOverlayBtn} onClick={() => openSettingsModal('bridge')}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -441,7 +421,9 @@ function dotClass(status?: string): string {
 }
 
 function updateSidebarDot(data: Record<string, { status: string } | undefined>) {
-  const anyConnected = data.telegram?.status === 'connected' || data.feishu?.status === 'connected' || data.wechat?.status === 'connected' || data.whatsapp?.status === 'connected' || data.qq?.status === 'connected';
+  const anyConnected = BRIDGE_PANEL_PLATFORMS
+    .filter((platform) => platform.statusAffectsSidebarDot !== false)
+    .some((platform) => data[platform.id]?.status === 'connected');
   useStore.setState({ bridgeDotConnected: anyConnected });
 }
 
@@ -512,6 +494,7 @@ export function BridgeChatTranscript({
   const userIdentity = useSystemUserIdentity
     ? undefined
     : { name: contactName, avatarUrl: contactAvatarUrl || null };
+  const visibleItems = useMemo(() => sanitizeBridgeVisibleItems(items), [items]);
 
   return (
     <div className={fp.bridgeChatMessages} ref={scrollRef} id="bridgeChatMessages">
@@ -520,7 +503,7 @@ export function BridgeChatTranscript({
           <div className={fp.bridgeChatNoMsg}>{emptyLabel}</div>
         ) : (
           <ChatTranscript
-            items={items}
+            items={visibleItems}
             sessionPath={sessionPath}
             agentId={agentId}
             readOnly
@@ -533,4 +516,23 @@ export function BridgeChatTranscript({
       </div>
     </div>
   );
+}
+
+function sanitizeBridgeVisibleItems(items: ChatListItem[]): ChatListItem[] {
+  let changed = false;
+  const next = items.map((item) => {
+    if (item.type !== 'message' || item.data.role !== 'user' || !item.data.text) return item;
+    const text = sanitizeBridgeVisibleText(item.data.text);
+    if (text === item.data.text) return item;
+    changed = true;
+    return {
+      ...item,
+      data: {
+        ...item.data,
+        text,
+        textHtml: text ? renderMarkdown(text) : undefined,
+      },
+    };
+  });
+  return changed ? next : items;
 }

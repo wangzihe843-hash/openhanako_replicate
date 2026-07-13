@@ -1,8 +1,9 @@
 import fs from "fs";
 import path from "path";
+import { isValidAgentIdentityId } from "../../shared/agent-id.ts";
 
 export function validateId(id) {
-  return id && !id.includes("..") && !id.includes("/") && !id.includes("\\");
+  return isValidAgentIdentityId(id);
 }
 
 export function agentExists(engine, id) {

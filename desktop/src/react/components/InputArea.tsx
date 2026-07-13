@@ -7,8 +7,9 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
-import type { Editor } from '@tiptap/core';
+import type { Editor, JSONContent } from '@tiptap/core';
 import { useStore } from '../stores';
+import { HOME_DRAFT_KEY } from '../../../../shared/input-drafts.ts';
 import { selectPreviewItems, selectActiveTabId } from '../stores/preview-slice';
 import { sessionScopedListIncludes, sessionScopedValue } from '../stores/session-slice';
 import { isSessionCompacting } from '../stores/context-slice';
@@ -16,7 +17,13 @@ import { selectSessionFiles } from '../stores/selectors/file-refs';
 import { isImageFile, isVideoFile } from '../utils/format';
 import { isAudioFileName } from '../utils/file-kind';
 import { useI18n } from '../hooks/use-i18n';
-import { continueDeletedAgentSession, ensureSession, loadSessions } from '../stores/session-actions';
+import {
+  continueDeletedAgentSession,
+  ensureSession,
+  loadSessions,
+  upsertOptimisticSessionFirstMessage,
+  type SessionRef,
+} from '../stores/session-actions';
 import { revealDeskDirectory, toggleJianSidebar } from '../stores/desk-actions';
 import { getWebSocket } from '../services/websocket';
 import { collectUiContext } from '../utils/ui-context';
@@ -270,6 +277,64 @@ function editorHasInlineNode(editor: Editor | null, nodeType: string): boolean {
   return found;
 }
 
+/**
+ * 发送按钮的可用态（hasContent）与 submitEditorMessage 的空消息拦截曾经各写一份判据，
+ * 后者不含 skills，导致纯 skillBadge 消息在按钮上可点、提交时却被当空消息静默吞掉（#2101）。
+ * 两处必须共用这一份谓词，任何新增的"内容维度"只需要改这一处。
+ */
+function composerPayloadIsEmpty(payload: {
+  hasText: boolean;
+  hasFiles: boolean;
+  hasSkills: boolean;
+  hasDocContext: boolean;
+  hasQuotes: boolean;
+}): boolean {
+  return !payload.hasText && !payload.hasFiles && !payload.hasSkills && !payload.hasDocContext && !payload.hasQuotes;
+}
+
+function plainTextToEditorDocument(text: string): JSONContent {
+  return {
+    type: 'doc',
+    content: text.split('\n').map(line => ({
+      type: 'paragraph',
+      content: line ? [{ type: 'text', text: line }] : [],
+    })),
+  };
+}
+
+/**
+ * inputText 是 TipTap 的 React 镜像，不是正文权威。
+ *
+ * 历史：TipTap 落地时 `inputText = editor.getText()` 直接派生（认 TipTap），
+ * 但 editor 变更不触发 React re-render，发送按钮会卡死（bd4844297），
+ * 于是改成 useState + update 事件同步。之后草稿恢复用 emitUpdate:false
+ * 绕开 update，镜像脱节 → #2101。
+ *
+ * 契约：正文权威永远是 editor；任何 emitUpdate:false 写入后必须回读同步镜像。
+ */
+function syncComposerMirrorFromEditor(
+  editor: Editor,
+  setInputText: (text: string) => void,
+): string {
+  const { text } = serializeEditor(editor.getJSON());
+  setInputText(text);
+  return text;
+}
+
+/** 程序性写入编辑器并回读同步镜像（禁止只 setContent 不 sync）。 */
+function applyComposerDocument(
+  editor: Editor,
+  nextDoc: JSONContent | null,
+  setInputText: (text: string) => void,
+): void {
+  if (!nextDoc) {
+    editor.commands.setContent('', { emitUpdate: false });
+  } else {
+    editor.commands.setContent(nextDoc, { emitUpdate: false });
+  }
+  syncComposerMirrorFromEditor(editor, setInputText);
+}
+
 export type { SlashItem };
 
 // ── 主组件 ──
@@ -291,6 +356,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const pendingNewSession = useStore(s => s.pendingNewSession);
   const pendingSessionSwitchPath = useStore(s => s.pendingSessionSwitchPath);
   const currentSessionPath = useStore(s => s.currentSessionPath);
+  const pendingDraftId = useStore(s => s.pendingDraftId);
   const currentAgentId = useStore(s => s.currentAgentId);
   const selectedAgentId = useStore(s => s.selectedAgentId);
   const currentSessionProjection = useStore(s => s.currentSessionPath
@@ -414,13 +480,23 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     // 只在确实兑换了一条暂存引用时触发——普通挂载（无暂存）不动开关。
     if (!hadStaged) return;
     const sp = useStore.getState().currentSessionPath;
-    useStore.getState().setSessionWorkMode(false); // 乐观；服务端 work_mode 事件会再对齐
+    const previousWorkMode = useStore.getState().sessionWorkMode === true;
+    // Already aligned: avoid a redundant request whose late failure could
+    // overwrite a newer user-initiated toggle.
+    if (!previousWorkMode) return;
+    useStore.getState().setSessionWorkMode(false); // 乐观；失败时必须回滚，避免 UI/服务端分叉
     if (sp) {
       void hanaFetch('/api/session-work-mode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionPath: sp, enabled: false }),
-      }).catch(() => {});
+      }).catch((err) => {
+        const latest = useStore.getState();
+        if (latest.currentSessionPath === sp && latest.sessionWorkMode === false) {
+          latest.setSessionWorkMode(previousWorkMode);
+        }
+        console.warn('[xingye] failed to exit work mode for staged quote:', err);
+      });
     }
   }, []);
 
@@ -475,9 +551,12 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const addAttachedFile = useStore(s => s.addAttachedFile);
   const removeAttachedFile = useStore(s => s.removeAttachedFile);
   const clearAttachedFiles = useStore(s => s.clearAttachedFiles);
+  const clearAttachedFilesForSession = useStore(s => s.clearAttachedFilesForSession);
   const setDocContextAttached = useStore(s => s.setDocContextAttached);
   const setDraft = useStore(s => s.setDraft);
   const clearDraft = useStore(s => s.clearDraft);
+  // 草稿 key：session 内用 sessionPath（store 内解析为 sessionId）；首页 pending 态用保留键
+  const draftKey = currentSessionPath ?? (pendingNewSession ? HOME_DRAFT_KEY : null);
 
   const prevWelcomeVisibleRef = useRef(welcomeVisible);
   const prevLocaleRef = useRef(locale);
@@ -624,9 +703,15 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
 
   // Focus trigger from store
   const inputFocusTrigger = useStore(s => s.inputFocusTrigger);
+  const inputFocusTriggerSource = useStore(s => s.inputFocusTriggerSource);
   useEffect(() => {
-    if (inputFocusTrigger > 0) restoreEditorFocus();
-  }, [inputFocusTrigger, restoreEditorFocus]);
+    if (inputFocusTrigger <= 0) return;
+    // 'restore' (turn-end give-the-focus-back-to-the-editor convenience) is desktop-only: on
+    // mobile/PWA it pops the on-screen keyboard every time a reply finishes (#2045 symptom 3).
+    // 'gesture' (explicit user action, e.g. quoting a selection) is never blocked.
+    if (inputFocusTriggerSource === 'restore' && surface !== 'desktop') return;
+    restoreEditorFocus();
+  }, [inputFocusTrigger, inputFocusTriggerSource, restoreEditorFocus, surface]);
 
   useEffect(() => {
     if (surface !== 'desktop') return;
@@ -659,21 +744,30 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     if (sessionScopedListIncludes(_s, _s.streamingSessions, _s.currentSessionPath)) return false;
     if (_s.pendingSessionSwitchPath) return false;
 
+    let sessionRef: Readonly<SessionRef> | null = null;
     if (pendingNewSession) {
-      const ok = await ensureSession();
-      if (!ok) return false;
+      sessionRef = await ensureSession(pendingDraftId);
+      if (!sessionRef) return false;
       loadSessions();
+    } else {
+      const state = useStore.getState();
+      const projection = state.sessions.find(session => session.path === state.currentSessionPath);
+      const sessionId = state.currentSessionId || projection?.sessionId || null;
+      const agentId = projection?.agentId || state.currentAgentId || null;
+      if (!state.currentSessionPath || !sessionId || !agentId) return false;
+      sessionRef = Object.freeze({ sessionId, sessionPath: state.currentSessionPath, agentId });
     }
 
     ws.send(JSON.stringify({
       type: 'prompt',
       text,
-      sessionPath: useStore.getState().currentSessionPath,
-      uiContext: collectUiContext(useStore.getState()),
+      sessionId: sessionRef.sessionId,
+      sessionPath: sessionRef.sessionPath,
+      uiContext: collectUiContext(_s),
       displayMessage: { text: displayText ?? text },
     }));
     return true;
-  }, [inputLocked, pendingNewSession]);
+  }, [inputLocked, pendingDraftId, pendingNewSession]);
 
   // ── 斜杠命令 ──
 
@@ -686,8 +780,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     await sendAsUser(XING_PROMPT);
   }, [sendAsUser, editor]);
   const compactFn = useCallback(async () => {
-    await executeCompact(setSlashBusy, () => { editor?.commands.clearContent(); }, setSlashMenuOpen)();
-  }, [editor]);
+    await executeCompact(t, setSlashBusy, () => { editor?.commands.clearContent(); }, setSlashMenuOpen)();
+  }, [editor, t]);
 
   const slashAgentId = pendingNewSession ? (selectedAgentId || currentAgentId) : currentAgentId;
   const skillItems = useSkillSlashItems({ enabled: surface !== 'mobile', agentId: slashAgentId });
@@ -837,17 +931,22 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     window.setTimeout(restoreEditorFocus, 0);
   }, [inputLocked, restoreEditorFocus, surface]);
 
-  const ensureVoiceSessionPath = useCallback(async (): Promise<string> => {
-    let sessionPath = useStore.getState().currentSessionPath;
-    if (sessionPath) return sessionPath;
+  const ensureVoiceSessionRef = useCallback(async (): Promise<Readonly<SessionRef>> => {
+    const state = useStore.getState();
+    const sessionPath = state.currentSessionPath;
+    if (sessionPath) {
+      const projection = state.sessions.find(session => session.path === sessionPath);
+      const sessionId = state.currentSessionId || projection?.sessionId || null;
+      const agentId = projection?.agentId || state.currentAgentId || null;
+      if (!sessionId || !agentId) throw new Error('missing session identity');
+      return Object.freeze({ sessionId, sessionPath, agentId });
+    }
     if (!pendingNewSession) throw new Error('missing session path');
-    const ok = await ensureSession();
-    if (!ok) throw new Error('failed to create session');
+    const ref = await ensureSession(pendingDraftId);
+    if (!ref) throw new Error('failed to create session');
     loadSessions();
-    sessionPath = useStore.getState().currentSessionPath;
-    if (!sessionPath) throw new Error('missing session path');
-    return sessionPath;
-  }, [pendingNewSession]);
+    return ref;
+  }, [pendingDraftId, pendingNewSession]);
 
   const sendVoiceAudioAttachment = useCallback(async (file: {
     fileId?: string;
@@ -876,7 +975,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
 
     setSending(true);
     try {
-      const sessionPath = await ensureVoiceSessionPath();
+      const sessionRef = await ensureVoiceSessionRef();
       const ws = getWebSocket();
       if (!ws || typeof ws.send !== 'function') {
         throw new Error('websocket unavailable');
@@ -885,7 +984,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       ws.send(JSON.stringify({
         type: 'prompt',
         text: '',
-        sessionPath,
+        sessionId: sessionRef.sessionId,
+        sessionPath: sessionRef.sessionPath,
         uiContext: collectUiContext(useStore.getState()),
         displayMessage: {
           text: '',
@@ -913,7 +1013,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   }, [
     connected,
     currentModelInfo,
-    ensureVoiceSessionPath,
+    ensureVoiceSessionRef,
     inputLocked,
     isStreaming,
     modelSwitching,
@@ -956,7 +1056,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       const index = audioRecordingSeqRef.current + 1;
       audioRecordingSeqRef.current = index;
       const name = t('input.recordedAudioName', { index });
-      const sessionPath = await ensureVoiceSessionPath();
+      const sessionRef = await ensureVoiceSessionRef();
       const res = await hanaFetch('/api/upload-blob', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -964,7 +1064,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
           name,
           base64Data,
           mimeType: 'audio/wav',
-          sessionPath,
+          sessionId: sessionRef.sessionId,
+          sessionPath: sessionRef.sessionPath,
           presentation: 'voice-input',
           ...(waveform ? { waveform } : {}),
         }),
@@ -997,7 +1098,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       setAudioRecordingElapsed(0);
       restoreEditorFocus();
     }
-  }, [addToast, ensureVoiceSessionPath, restoreEditorFocus, sendVoiceAudioAttachment, t]);
+  }, [addToast, ensureVoiceSessionRef, restoreEditorFocus, sendVoiceAudioAttachment, t]);
 
   const startAudioRecording = useCallback(async () => {
     if (inputLocked || !showAudioInput || !connected || isStreaming || sending || modelSwitching || pendingSessionSwitchPath) return;
@@ -1137,11 +1238,12 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     };
   }, []);
 
-  // Sync editor text to React state (drives hasInput / canSend) + slash menu detection + draft save
+  // Sync editor → React mirror (drives hasInput / canSend) + slash menu + draft save
   useEffect(() => {
     if (!editor) return;
     const handler = () => {
-      const text = editor.getText();
+      const editorJson = editor.getJSON();
+      const { text } = serializeEditor(editorJson);
       setInputText(text);
       if (slashDismissedTextRef.current && slashDismissedTextRef.current !== text.trim()) {
         slashDismissedTextRef.current = null;
@@ -1165,38 +1267,46 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       } else {
         setSlashMenuOpen(false);
       }
-      // 保存草稿到 store
-      if (currentSessionPath) {
-        setDraft(currentSessionPath, text);
+      // 保存草稿到 store（session 内 + 首页 pending 态）；setDraft 幂等，避免空转
+      if (draftKey) {
+        setDraft(draftKey, text, editorJson);
       }
       // 内容超出可见区域时，自动滚动到光标位置
       requestAnimationFrame(() => editor.commands.scrollIntoView());
     };
     editor.on('update', handler);
     return () => { editor.off('update', handler); };
-  }, [editor, currentSessionPath, setDraft, slashCommands]);
+  }, [editor, draftKey, setDraft, slashCommands]);
 
-  // 切换 session 时恢复草稿
+  // 切换 session / 回到首页 / 草稿 hydrate 完成时恢复草稿
+  const draftsHydratedAt = useStore(s => s.draftsHydratedAt);
+  const draftText = useStore(s => (
+    draftKey ? (sessionScopedValue(s, s.drafts, draftKey) || '') : ''
+  ));
+  const draftDoc = useStore(s => (
+    draftKey ? sessionScopedValue(s, s.draftDocs, draftKey) : undefined
+  ));
   useEffect(() => {
-    if (!editor || !currentSessionPath) return;
-    const state = useStore.getState();
-    const draft = sessionScopedValue(state, state.drafts, currentSessionPath) || '';
-    const current = editor.getText();
-    if (draft !== current) {
-      if (!draft) {
-        editor.commands.setContent('', { emitUpdate: false });
-      } else {
-        const doc = {
-          type: 'doc' as const,
-          content: draft.split('\n').map(line => ({
-            type: 'paragraph' as const,
-            content: line ? [{ type: 'text' as const, text: line }] : [],
-          })),
-        };
-        editor.commands.setContent(doc, { emitUpdate: false });
-      }
+    if (!editor || !draftKey) return;
+    const draft = draftText;
+    const draftDocValue = draftDoc;
+    const currentDoc = editor.getJSON();
+    // 文档存在性以 draftDoc 为准，text 仅是无 doc 时的降级；skillBadge 等 atom
+    // 节点序列化文本为空，用 text 真值判存在会把刚插入的 badge 误删（#2101 skill
+    // 消失回归，触发链 848481a69）。
+    const nextDoc = draftDocValue ?? (draft ? plainTextToEditorDocument(draft) : null);
+    const currentSerialized = serializeEditor(currentDoc).text;
+    const nextSerialized = draft;
+    const currentDocJson = JSON.stringify(currentDoc);
+    const nextDocJson = nextDoc ? JSON.stringify(nextDoc) : '';
+    if (nextSerialized !== currentSerialized || nextDocJson !== currentDocJson) {
+      // 程序性写入必须走 applyComposerDocument：写 editor 后回读同步镜像（#2101）
+      applyComposerDocument(editor, nextDoc, setInputText);
+    } else {
+      // 文档已一致时仍回读一次，修复历史 emitUpdate:false 留下的镜像脱节
+      syncComposerMirrorFromEditor(editor, setInputText);
     }
-  }, [editor, currentSessionPath]);
+  }, [editor, draftKey, draftText, draftDoc, draftsHydratedAt]);
 
   // 点击外部关闭斜杠菜单
   useEffect(() => {
@@ -1221,9 +1331,13 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   }, [fileMenuOpen]);
 
   // Can send?
-  const hasContent = inputText.trim().length > 0 || attachedFiles.length > 0 || docContextAttached || quotedSelections.length > 0
-    || editorHasInlineNode(editor, 'skillBadge')
-    || editorHasInlineNode(editor, 'fileBadge');
+  const hasContent = !composerPayloadIsEmpty({
+    hasText: inputText.trim().length > 0,
+    hasFiles: attachedFiles.length > 0 || editorHasInlineNode(editor, 'fileBadge'),
+    hasSkills: editorHasInlineNode(editor, 'skillBadge'),
+    hasDocContext: docContextAttached,
+    hasQuotes: quotedSelections.length > 0,
+  });
   // capabilityRefreshing / compacting：压缩到 reload 完成之间 session 没有可用
   // runtime，此窗口内发 prompt 会冷建第二个 runtime 与 reload 竞争（#1624 I2）。
   const canSend = hasContent && connected && !isStreaming && !modelSwitching && !pendingSessionSwitchPath && !inputLocked
@@ -1416,6 +1530,22 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     const editorJson = editor.getJSON();
     const { text: rawText, skills, fileRefs } = serializeEditor(editorJson);
     const text = rawText.trim();
+    const clickState = useStore.getState();
+    const clickedPendingDraftId = clickState.pendingNewSession ? clickState.pendingDraftId : null;
+    const clickedSessionPath = clickState.currentSessionPath;
+    const clickedProjection = clickedSessionPath
+      ? clickState.sessions.find(session => session.path === clickedSessionPath)
+      : null;
+    const clickedSessionId = clickState.currentSessionId || clickedProjection?.sessionId || null;
+    const clickedAgentId = clickedProjection?.agentId || clickState.currentAgentId || null;
+    const clickedSessionRef: Readonly<SessionRef> | null = clickedSessionPath && clickedSessionId && clickedAgentId
+      ? Object.freeze({ sessionId: clickedSessionId, sessionPath: clickedSessionPath, agentId: clickedAgentId })
+      : null;
+    const clickedAttachedFiles = attachedFiles.map(file => ({ ...file }));
+    const clickedQuotes = clickState.quotedSelections.map(quote => ({ ...quote }));
+    const clickedDocContextAttached = docContextAttached;
+    const clickedDoc = currentDoc ? { ...currentDoc } : null;
+    const clickedUiContext = collectUiContext(clickState);
 
     if (type === 'prompt') {
       const slashSelection = resolveSlashSubmitSelection({
@@ -1431,9 +1561,16 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       }
     }
 
-    const inputFiles = mergeEditorFileRefs(attachedFiles, fileRefs);
+    const inputFiles = mergeEditorFileRefs(clickedAttachedFiles, fileRefs);
     const hasFiles = inputFiles.length > 0;
-    if ((!text && !hasFiles && !docContextAttached && useStore.getState().quotedSelections.length === 0) || !connected) return;
+    // 空输入静默 return 是合理行为（不是错误），不加 toast；与按钮侧 hasContent 共用同一份谓词（#2101）。
+    if (composerPayloadIsEmpty({
+      hasText: !!text,
+      hasFiles,
+      hasSkills: skills.length > 0,
+      hasDocContext: clickedDocContextAttached,
+      hasQuotes: clickedQuotes.length > 0,
+    }) || !connected) return;
     if (type === 'prompt' && isStreaming) return;
     if (type === 'interject' && !isStreaming) return;
     if (sending) return;
@@ -1453,10 +1590,24 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     setSending(true);
 
     try {
-      if (pendingNewSession) {
-        const ok = await ensureSession();
-        if (!ok) return;
+      let sessionRef = clickedSessionRef;
+      if (clickedPendingDraftId) {
+        sessionRef = await ensureSession(clickedPendingDraftId);
+        if (!sessionRef) {
+          // ensureSession 拿不到会话身份：不能静默吞掉这次发送，否则用户会以为点了没反应（#2101）。
+          useStore.getState().addToast(t('error.noActiveSession'), 'error', 6000, {
+            dedupeKey: 'send-missing-session',
+          });
+          return;
+        }
         loadSessions();
+      }
+      if (!sessionRef) {
+        // 走到这里说明既不是 pending 新会话、也没有已激活会话身份——同样是无法发送，显式报错而非静默 return。
+        useStore.getState().addToast(t('error.noActiveSession'), 'error', 6000, {
+          dedupeKey: 'send-missing-session',
+        });
+        return;
       }
 
       // 分离原生媒体和普通附件；后端决定图片视觉桥、视频/音频原生能力或显式报错。
@@ -1506,12 +1657,12 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         )
       ) : [];
 
-      const sessionPathForSend = useStore.getState().currentSessionPath;
-      if (!sessionPathForSend) return;
+      const sessionPathForSend = sessionRef.sessionPath;
       const sessionFileRefs = otherFiles
         .filter(f => f.fileId)
         .map(f => ({
           fileId: f.fileId,
+          sessionId: sessionRef.sessionId,
           sessionPath: sessionPathForSend,
           label: f.name || f.path,
           kind: f.isDirectory ? 'directory' : 'attachment',
@@ -1521,7 +1672,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       if (otherFiles.length > 0) {
         const fileBlock = otherFiles.map(f => {
           const label = f.fileId ? (f.name || f.path) : f.path;
-          return f.isDirectory ? `[目录] ${label}` : `[附件] ${label}`;
+          return f.isDirectory
+            ? t('input.attachmentDirectory', { label })
+            : t('input.attachmentFile', { label });
         }).join('\n');
         finalText = text ? `${text}\n\n${fileBlock}` : fileBlock;
       }
@@ -1608,14 +1761,15 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
 
       // 文档上下文
       let docForRender: { path: string; name: string } | null = null;
-      if (docContextAttached && currentDoc) {
-        finalText = finalText ? `${finalText}\n\n[参考文档] ${currentDoc.path}` : `[参考文档] ${currentDoc.path}`;
-        docForRender = currentDoc;
+      if (clickedDocContextAttached && clickedDoc) {
+        finalText = finalText
+          ? `${finalText}\n\n${t('input.referenceDocument', { path: clickedDoc.path })}`
+          : t('input.referenceDocument', { path: clickedDoc.path });
+        docForRender = clickedDoc;
       }
-      if (docContextAttached) setDocContextAttached(false);
 
       // 引用片段
-      const quotes = useStore.getState().quotedSelections;
+      const quotes = clickedQuotes;
       if (quotes.length > 0) {
         const quoteStr = quotes.map(formatQuotedSelectionForPrompt).join('\n\n');
         finalText = finalText ? `${finalText}\n\n${quoteStr}` : quoteStr;
@@ -1624,10 +1778,25 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       const allFiles = [...(hasFiles ? inputFiles : [])];
       if (docForRender) allFiles.push({ path: docForRender.path, name: docForRender.name });
 
-      editor.commands.clearContent();
-      if (currentSessionPath) clearDraft(currentSessionPath);
-      clearAttachedFiles();
-      if (useStore.getState().quotedSelections.length > 0) useStore.getState().clearQuotedSelections();
+      const beforeCleanup = useStore.getState();
+      const stillOwnsPendingComposer = !!clickedPendingDraftId
+        && beforeCleanup.pendingNewSession === true
+        && beforeCleanup.pendingDraftId === clickedPendingDraftId;
+      const stillOwnsComposer = stillOwnsPendingComposer || (
+        beforeCleanup.currentSessionId === sessionRef.sessionId
+        && beforeCleanup.currentSessionPath === sessionRef.sessionPath
+      );
+      clearDraft(sessionRef.sessionPath);
+      clearAttachedFilesForSession(sessionRef.sessionPath);
+      if (clickedPendingDraftId && beforeCleanup.pendingDraftId === clickedPendingDraftId) {
+        clearDraft(HOME_DRAFT_KEY);
+      }
+      if (stillOwnsComposer) {
+        editor.commands.clearContent();
+        if (stillOwnsPendingComposer) clearAttachedFiles();
+        if (clickedDocContextAttached) setDocContextAttached(false);
+        if (clickedQuotes.length > 0) useStore.getState().clearQuotedSelections();
+      }
 
       const clientMessageId = createClientUserMessageId();
       const displayMessage = {
@@ -1668,8 +1837,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         type,
         clientMessageId,
         text: finalText,
+        sessionId: sessionRef.sessionId,
         sessionPath: sessionPathForSend,
-        uiContext: collectUiContext(useStore.getState()),
+        uiContext: clickedUiContext,
         displayMessage,
       };
       if (sessionFileRefs.length > 0) wsMsg.sessionFileRefs = sessionFileRefs;
@@ -1687,6 +1857,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       }
       try {
         ws.send(JSON.stringify(wsMsg));
+        upsertOptimisticSessionFirstMessage(sessionPathForSend, text, new Date().toISOString());
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         useStore.getState().markOptimisticUserMessageFailed(sessionPathForSend, clientMessageId, message);
@@ -1695,7 +1866,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     } finally {
       setSending(false);
     }
-  }, [editor, inputLocked, attachedFiles, docContextAttached, connected, isStreaming, sending, pendingNewSession, currentDoc, clearAttachedFiles, clearDraft, currentSessionPath, setDocContextAttached, slashCommands, slashSelected, handleSlashSelect, supportsVision, currentModelInfo, loadVisionAuxiliaryConfig, modelSwitching, t]);
+  }, [editor, inputLocked, attachedFiles, docContextAttached, connected, isStreaming, sending, currentDoc, clearAttachedFiles, clearAttachedFilesForSession, clearDraft, setDocContextAttached, slashCommands, slashSelected, handleSlashSelect, supportsVision, currentModelInfo, loadVisionAuxiliaryConfig, modelSwitching, t]);
 
   const handleSend = useCallback(async () => {
     await submitEditorMessage('prompt');
@@ -1710,7 +1881,12 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const handleStop = useCallback(() => {
     const ws = getWebSocket();
     if (!isStreaming || !ws) return;
-    ws.send(JSON.stringify({ type: 'abort', sessionPath: useStore.getState().currentSessionPath }));
+    const state = useStore.getState();
+    const path = state.currentSessionPath;
+    const sessionId = state.currentSessionId;
+    const active = path ? sessionScopedValue(state, state.activeSessionStreams, path) : null;
+    if (!path || !sessionId || !active?.streamId) return;
+    ws.send(JSON.stringify({ type: 'abort', sessionId, sessionPath: path, streamId: active.streamId }));
   }, [isStreaming]);
 
   // ── Key handler ──
@@ -1754,6 +1930,11 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       }
       if (e.key === 'Escape') { e.preventDefault(); dismissSlashMenu(); return true; }
     }
+    if (e.key === 'Enter' && e.shiftKey && !isComposing.current && !e.isComposing && editor?.isActive('listItem')) {
+      e.preventDefault();
+      editor.commands.splitListItem('listItem');
+      return true;
+    }
     if (e.key === 'Enter' && !e.shiftKey && !isComposing.current && !e.isComposing) {
       e.preventDefault();
       if (isStreaming && hasContent) handleSteer(); else handleSend();
@@ -1762,6 +1943,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     return false;
   }, [
     dismissSlashMenu,
+    editor,
     fileMentionBusy,
     fileMentionItems,
     fileMenuOpen,

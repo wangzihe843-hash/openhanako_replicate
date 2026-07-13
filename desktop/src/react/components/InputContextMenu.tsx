@@ -1,8 +1,10 @@
 /**
- * InputContextMenu — 输入框全局右键菜单
+ * InputContextMenu — 文本输入与指定区域的只读复制右键菜单
  *
- * 监听 document 级别的 contextmenu 事件，当目标是 input/textarea 时
- * 弹出剪切 / 复制 / 粘贴 / 全选菜单，复用已有 ContextMenu 组件与样式。
+ * 监听 document 级别的 contextmenu 事件：
+ * - 任意文本输入框（input / textarea / contentEditable）：剪切 / 复制 / 粘贴 / 全选
+ * - 只读文本：仅在聊天 / 频道 / 预览 / 设置区激活「复制」
+ * 侧边栏等非输入区域的只读右键不接管，避免与业务菜单叠层。
  */
 
 import { useState, useCallback, useEffect } from 'react';
@@ -15,6 +17,16 @@ const TEXT_INPUT_TYPES = new Set([
   'text', 'password', 'email', 'search', 'url', 'tel', 'number', '',
 ]);
 
+/** 允许激活全局右键菜单的区域（聊天、频道、预览、设置） */
+const INPUT_CTX_ZONE_SELECTOR = [
+  '.chat-area',
+  '.input-area',
+  '.channel-page',
+  '#previewPanel',
+  '#settingsPanel',
+  '[data-input-ctx-zone]',
+].join(', ');
+
 function isTextInput(el: EventTarget | null): el is HTMLElement {
   if (!el || !(el instanceof HTMLElement)) return false;
   if (el instanceof HTMLTextAreaElement) return true;
@@ -25,6 +37,10 @@ function isTextInput(el: EventTarget | null): el is HTMLElement {
   // 但它们的祖先 .cm-content 是 contentEditable
   if (el.closest('.cm-content')) return true;
   return false;
+}
+
+function isInInputCtxZone(el: HTMLElement): boolean {
+  return !!el.closest(INPUT_CTX_ZONE_SELECTOR);
 }
 
 interface MenuState {
@@ -136,28 +152,35 @@ export function InputContextMenu() {
       const target = e.target;
       if (!target || !(target instanceof HTMLElement)) return;
 
-      // 已有更具体的右键菜单（desk 卡片等），不拦截
+      // 已有更具体的右键菜单（业务组件已 preventDefault），不叠层
+      if (e.defaultPrevented) return;
+      // 显式排除标记（desk 卡片等）
       if (target.closest('[data-no-input-ctx]')) return;
       // CodeMirror 编辑器由 EditorContextMenu 处理
       if (target.closest('.cm-editor')) return;
 
       if (isTextInput(target)) {
+        // 任意区域的文本输入框都保留编辑菜单（含侧边栏重命名等）
         e.preventDefault();
         setMenu({
           position: { x: e.clientX, y: e.clientY },
           target,
           selectionSnapshot: captureSelection(target),
         });
-      } else {
-        e.preventDefault();
-        useStore.getState().clearQuoteCandidate?.();
-        setMenu({
-          position: { x: e.clientX, y: e.clientY },
-          target,
-          selectionSnapshot: null,
-          readOnlyText: true,
-        });
+        return;
       }
+
+      // 只读「复制」仅限聊天 / 频道 / 预览 / 设置区
+      if (!isInInputCtxZone(target)) return;
+
+      e.preventDefault();
+      useStore.getState().clearQuoteCandidate?.();
+      setMenu({
+        position: { x: e.clientX, y: e.clientY },
+        target,
+        selectionSnapshot: null,
+        readOnlyText: true,
+      });
     };
 
     document.addEventListener('contextmenu', handleContextMenu);

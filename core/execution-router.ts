@@ -26,10 +26,24 @@ const ROLE_TO_PREF_KEY = {
 };
 
 function withCredentialMetadata(model: any, cred: any) {
+  const stripsModelCredentials = cred?.credentialSource === "auth-storage"
+    || cred?.credentialSource === "explicit-utility-override";
+  const modelBase = stripsModelCredentials
+    ? (() => {
+        const {
+          headers: _headers,
+          accountId: _accountId,
+          account_id: _accountIdSnake,
+          accountID: _accountIdLegacy,
+          ...rest
+        } = model || {};
+        return rest;
+      })()
+    : model;
   const headers = cred?.headers && typeof cred.headers === "object" ? cred.headers : {};
   const next = Object.keys(headers).length > 0
-    ? { ...model, headers: { ...(model.headers || {}), ...headers } }
-    : model;
+    ? { ...modelBase, headers: { ...(modelBase.headers || {}), ...headers } }
+    : modelBase;
   return cred?.accountId ? { ...next, accountId: cred.accountId } : next;
 }
 
@@ -37,17 +51,65 @@ function hasCredentialHeaders(cred: any) {
   return !!cred?.headers && typeof cred.headers === "object" && Object.keys(cred.headers).length > 0;
 }
 
+function normalizeExecutionCredential(cred: any) {
+  if (!cred || typeof cred !== "object") return null;
+  return {
+    api: cred.api || "",
+    apiKey: cred.apiKey ?? cred.api_key ?? "",
+    baseUrl: cred.baseUrl ?? cred.base_url ?? "",
+    headers: cred.headers && typeof cred.headers === "object" ? cred.headers : {},
+    ...(cred.credentialSource || cred.credential_source
+      ? { credentialSource: cred.credentialSource || cred.credential_source }
+      : {}),
+    ...(cred.accountId ? { accountId: cred.accountId } : {}),
+  };
+}
+
+function hasUtilityApiOverride(utilApiOverride: any) {
+  return !!(
+    utilApiOverride?.provider
+    || utilApiOverride?.api_key
+    || utilApiOverride?.base_url
+  );
+}
+
 export class ExecutionRouter {
   declare _resolveModel: (ref: string) => any;
+  declare _resolveProviderCredentialsFresh: any;
   declare _providerRegistry: any;
 
   /**
    * @param {(ref: string) => object|null} resolveModel - 从 _availableModels 解析模型的函数
    * @param {import('./provider-registry.ts').ProviderRegistry} providerRegistry
    */
-  constructor(resolveModel: any, providerRegistry: any) {
+  constructor(resolveModel: any, providerRegistry: any, resolveProviderCredentialsFresh: any = null) {
     this._resolveModel = resolveModel;
     this._providerRegistry = providerRegistry;
+    this._resolveProviderCredentialsFresh = resolveProviderCredentialsFresh;
+  }
+
+  _resolveUtilityModels(agentConfig, sharedModels, options: any = {}) {
+    const cfg = agentConfig || {};
+    const requireUtilityLarge = options?.requireUtilityLarge !== false;
+    const chatModelRef = cfg.models?.chat || null;
+    const utilityModelRef = sharedModels?.utility || cfg.models?.utility || chatModelRef;
+    const largeModelRef = sharedModels?.utility_large || cfg.models?.utility_large || chatModelRef;
+
+    if (!utilityModelRef) throw new Error(t("error.noUtilityModel"));
+    if (requireUtilityLarge && !largeModelRef) throw new Error(t("error.noUtilityLargeModel"));
+
+    const utilModel = this._resolveModel(utilityModelRef);
+    if (!utilModel) throw new Error(t("error.modelNotFound", { id: utilityModelRef }));
+    const largeModel = largeModelRef ? this._resolveModel(largeModelRef) : null;
+    if (largeModelRef && !largeModel) throw new Error(t("error.modelNotFound", { id: largeModelRef }));
+    return { utilityModelRef, largeModelRef, utilModel, largeModel };
+  }
+
+  async _freshCredentials(provider) {
+    if (typeof this._resolveProviderCredentialsFresh !== "function") {
+      throw new Error(`Fresh credential resolver is required for provider "${provider}"`);
+    }
+    return normalizeExecutionCredential(await this._resolveProviderCredentialsFresh(provider));
   }
 
   /**
@@ -81,10 +143,14 @@ export class ExecutionRouter {
         throw new Error(t("error.utilityApiProviderMismatch", { model: modelRef }));
       }
       const overrideCred = this._providerRegistry.getCredentials(model.provider);
+      const effectiveApi = model.api || overrideCred?.api;
+      if (!effectiveApi) {
+        throw new Error(t("error.providerMissingApi", { provider: model.provider }));
+      }
       return {
         modelId: model.id,
         providerId: model.provider,
-        api: model.api,
+        api: effectiveApi,
         apiKey: utilApiOverride.api_key,
         baseUrl: utilApiOverride.base_url || model.baseUrl,
         headers: overrideCred?.headers || {},
@@ -95,7 +161,8 @@ export class ExecutionRouter {
     if (!cred) {
       throw new Error(t("error.providerMissingCreds", { provider: model.provider }));
     }
-    if (!cred.api) {
+    const effectiveApi = model.api || cred.api;
+    if (!effectiveApi) {
       throw new Error(t("error.providerMissingApi", { provider: model.provider }));
     }
     if (!cred.baseUrl || (!cred.apiKey && !hasCredentialHeaders(cred) && !this._allowsMissingApiKey(model.provider, cred.baseUrl))) {
@@ -105,7 +172,7 @@ export class ExecutionRouter {
     return {
       modelId: model.id,
       providerId: model.provider,
-      api: cred.api,
+      api: effectiveApi,
       apiKey: cred.apiKey,
       baseUrl: cred.baseUrl,
       headers: cred.headers || {},
@@ -124,44 +191,31 @@ export class ExecutionRouter {
    * @param {object} agentConfig
    * @param {{ utility?: string|object, utility_large?: string|object }} sharedModels
    * @param {{ provider?: string, api_key?: string, base_url?: string }} utilApiOverride
+   * @param {{ requireUtilityLarge?: boolean }} options
    * @returns {{
    *   utility: object,
-   *   utility_large: object,
+   *   utility_large: object|null,
    *   api_key: string, base_url: string, api: string,
    *   large_api_key: string, large_base_url: string, large_api: string,
    * }}
    */
-  resolveUtilityConfig(agentConfig, sharedModels, utilApiOverride) {
-    const cfg = agentConfig || {};
-    const chatModelRef = cfg.models?.chat || null;
-
-    // 用户明确配置的 utility 模型
-    const userSetUtility = sharedModels?.utility || cfg.models?.utility || null;
-    const userSetUtilityLarge = sharedModels?.utility_large || cfg.models?.utility_large || null;
-
-    // 未配置时 fallback 到聊天模型
-    const utilityModelRef = userSetUtility || chatModelRef;
-    const largeModelRef = userSetUtilityLarge || chatModelRef;
-
-    if (!utilityModelRef) throw new Error(t("error.noUtilityModel"));
-    if (!largeModelRef) throw new Error(t("error.noUtilityLargeModel"));
-
-    const utilModel = this._resolveModel(utilityModelRef);
-    if (!utilModel) throw new Error(t("error.modelNotFound", { id: utilityModelRef }));
-
-    const largeModel = this._resolveModel(largeModelRef);
-    if (!largeModel) throw new Error(t("error.modelNotFound", { id: largeModelRef }));
+  resolveUtilityConfig(agentConfig, sharedModels, utilApiOverride, options: any = {}) {
+    const { utilityModelRef, utilModel, largeModel } = this._resolveUtilityModels(
+      agentConfig,
+      sharedModels,
+      options,
+    );
 
     // utility 凭证
     let apiKey, baseUrl, api, utilCred;
-    if (utilApiOverride?.provider || utilApiOverride?.api_key || utilApiOverride?.base_url) {
+    if (hasUtilityApiOverride(utilApiOverride)) {
       // 校验 provider 一致性（与原 ModelManager.resolveUtilityConfig 行为一致）
       if (utilApiOverride.provider && utilApiOverride.provider !== utilModel.provider) {
         throw new Error(t("error.utilityApiProviderMismatch", { model: utilityModelRef }));
       }
       // utility API 覆盖（用户指定了独立的 utility api endpoint）
       utilCred = this._providerRegistry.getCredentials(utilModel.provider);
-      api = utilCred?.api || utilModel.api;
+      api = utilModel.api || utilCred?.api;
       apiKey = utilApiOverride.api_key || "";
       baseUrl = utilApiOverride.base_url || "";
       if (!api) throw new Error(t("error.providerMissingApi", { provider: utilModel.provider }));
@@ -170,31 +224,107 @@ export class ExecutionRouter {
       }
     } else {
       utilCred = this._providerRegistry.getCredentials(utilModel.provider);
-      if (!utilCred?.api) throw new Error(t("error.providerMissingApi", { provider: utilModel.provider }));
-      if (!utilCred.baseUrl || (!utilCred.apiKey && !hasCredentialHeaders(utilCred) && !this._allowsMissingApiKey(utilModel.provider, utilCred.baseUrl))) {
+      api = utilModel.api || utilCred?.api;
+      if (!api) throw new Error(t("error.providerMissingApi", { provider: utilModel.provider }));
+      if (!utilCred?.baseUrl || (!utilCred.apiKey && !hasCredentialHeaders(utilCred) && !this._allowsMissingApiKey(utilModel.provider, utilCred.baseUrl))) {
         throw new Error(t("error.providerMissingCreds", { provider: utilModel.provider }));
       }
       apiKey = utilCred.apiKey;
       baseUrl = utilCred.baseUrl;
-      api = utilCred.api;
     }
 
     // utility_large 凭证（provider 相同则复用）
-    let large_api_key = apiKey, large_base_url = baseUrl, large_api = api, largeCred = utilCred;
-    if (largeModel.provider !== utilModel.provider) {
+    let large_api_key = largeModel ? apiKey : null;
+    let large_base_url = largeModel ? baseUrl : null;
+    let large_api = largeModel ? (largeModel.api || api) : null;
+    let largeCred = largeModel ? utilCred : null;
+    if (largeModel && largeModel.provider !== utilModel.provider) {
       largeCred = this._providerRegistry.getCredentials(largeModel.provider);
-      if (!largeCred?.api) throw new Error(t("error.providerMissingApi", { provider: largeModel.provider }));
-      if (!largeCred.baseUrl || (!largeCred.apiKey && !hasCredentialHeaders(largeCred) && !this._allowsMissingApiKey(largeModel.provider, largeCred.baseUrl))) {
+      large_api = largeModel.api || largeCred?.api;
+      if (!large_api) throw new Error(t("error.providerMissingApi", { provider: largeModel.provider }));
+      if (!largeCred?.baseUrl || (!largeCred.apiKey && !hasCredentialHeaders(largeCred) && !this._allowsMissingApiKey(largeModel.provider, largeCred.baseUrl))) {
         throw new Error(t("error.providerMissingCreds", { provider: largeModel.provider }));
       }
       large_api_key = largeCred.apiKey;
       large_base_url = largeCred.baseUrl;
-      large_api = largeCred.api;
     }
 
     return {
       utility: withCredentialMetadata(utilModel, utilCred),
-      utility_large: withCredentialMetadata(largeModel, largeCred),
+      utility_large: largeModel ? withCredentialMetadata(largeModel, largeCred) : null,
+      api_key: apiKey,
+      base_url: baseUrl,
+      api,
+      large_api_key,
+      large_base_url,
+      large_api,
+    };
+  }
+
+  /**
+   * 请求边界专用的 utility 解析。模型选择仍是同步、Hana-owned；只有凭证读取
+   * 进入异步 fresh resolver。显式 utility API override 完整保留，并跳过其
+   * provider 的 OAuth refresh。
+   */
+  async resolveUtilityConfigFresh(agentConfig, sharedModels, utilApiOverride, options: any = {}) {
+    const { utilityModelRef, utilModel, largeModel } = this._resolveUtilityModels(
+      agentConfig,
+      sharedModels,
+      options,
+    );
+    const usesOverride = hasUtilityApiOverride(utilApiOverride);
+
+    let utilCred;
+    let apiKey;
+    let baseUrl;
+    let api;
+    if (usesOverride) {
+      if (utilApiOverride.provider && utilApiOverride.provider !== utilModel.provider) {
+        throw new Error(t("error.utilityApiProviderMismatch", { model: utilityModelRef }));
+      }
+      utilCred = {
+        api: this._providerRegistry.get(utilModel.provider)?.api || "",
+        apiKey: "",
+        baseUrl: "",
+        headers: {},
+        credentialSource: "explicit-utility-override",
+      };
+      api = utilModel.api || utilCred.api;
+      apiKey = utilApiOverride.api_key || "";
+      baseUrl = utilApiOverride.base_url || "";
+      if (!api) throw new Error(t("error.providerMissingApi", { provider: utilModel.provider }));
+      if (!baseUrl || (!apiKey && !hasCredentialHeaders(utilCred) && !this._allowsMissingApiKey(utilModel.provider, baseUrl))) {
+        throw new Error(t("error.utilityApiMissingCreds", { provider: utilModel.provider }));
+      }
+    } else {
+      utilCred = await this._freshCredentials(utilModel.provider);
+      api = utilModel.api || utilCred?.api;
+      if (!api) throw new Error(t("error.providerMissingApi", { provider: utilModel.provider }));
+      if (!utilCred?.baseUrl || (!utilCred.apiKey && !hasCredentialHeaders(utilCred) && !this._allowsMissingApiKey(utilModel.provider, utilCred.baseUrl))) {
+        throw new Error(t("error.providerMissingCreds", { provider: utilModel.provider }));
+      }
+      apiKey = utilCred.apiKey;
+      baseUrl = utilCred.baseUrl;
+    }
+
+    let large_api_key = largeModel ? apiKey : null;
+    let large_base_url = largeModel ? baseUrl : null;
+    let large_api = largeModel ? (largeModel.api || api) : null;
+    let largeCred = largeModel ? utilCred : null;
+    if (largeModel && largeModel.provider !== utilModel.provider) {
+      largeCred = await this._freshCredentials(largeModel.provider);
+      large_api = largeModel.api || largeCred?.api;
+      if (!large_api) throw new Error(t("error.providerMissingApi", { provider: largeModel.provider }));
+      if (!largeCred?.baseUrl || (!largeCred.apiKey && !hasCredentialHeaders(largeCred) && !this._allowsMissingApiKey(largeModel.provider, largeCred.baseUrl))) {
+        throw new Error(t("error.providerMissingCreds", { provider: largeModel.provider }));
+      }
+      large_api_key = largeCred.apiKey;
+      large_base_url = largeCred.baseUrl;
+    }
+
+    return {
+      utility: withCredentialMetadata(utilModel, utilCred),
+      utility_large: largeModel ? withCredentialMetadata(largeModel, largeCred) : null,
       api_key: apiKey,
       base_url: baseUrl,
       api,

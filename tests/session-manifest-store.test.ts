@@ -198,6 +198,17 @@ describe("SessionManifestStore", () => {
     expect(store.resolveByLocatorPath(logicalSessionPath)?.sessionId).toBe(manifest.sessionId);
   });
 
+  it("backfillOwnerAgentId 只补缺不覆盖", () => {
+    const pathA = createSessionFile("backfill-a");
+    const pathB = createSessionFile("backfill-b");
+    const a = store.createForPath({ sessionPath: pathA, domain: "desktop", kind: "chat" }); // ownerAgentId null
+    const b = store.createForPath({ sessionPath: pathB, ownerAgentId: "hana", domain: "desktop", kind: "chat" });
+
+    expect(store.backfillOwnerAgentId(a.sessionId, "carol").ownerAgentId).toBe("carol");
+    expect(store.backfillOwnerAgentId(b.sessionId, "carol").ownerAgentId).toBe("hana"); // 不覆盖
+    expect(store.backfillOwnerAgentId(a.sessionId, "").ownerAgentId).toBe("carol");     // 空值 no-op
+  });
+
   it("persists migration state in the manifest database", () => {
     expect(store.getState("legacy-session-manifest-scan-v1")).toBeNull();
 

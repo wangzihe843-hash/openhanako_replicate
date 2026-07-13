@@ -35,6 +35,8 @@ export function installMobilePlatform(): void {
     getPlatform: async () => 'web',
     showNotification: () => {},
     getAppVersion: async () => '',
+    getPendingAnnouncement: async () => null,
+    ackAnnouncement: async () => {},
   };
 
   window.platform = api as PlatformApi;

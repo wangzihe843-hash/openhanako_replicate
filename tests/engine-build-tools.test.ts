@@ -160,7 +160,7 @@ describe("HanaEngine.buildTools", () => {
       agentId: "hana",
     } as any);
     engines.push(engine);
-    engine.resolveUtilityConfig = vi.fn(() => ({
+    engine.resolveUtilityConfigFresh = vi.fn(async () => ({
       utility: { id: "small-reviewer", provider: "test" },
       utility_large: { id: "large-reviewer", provider: "test" },
       api: "openai-completions",
@@ -189,7 +189,7 @@ describe("HanaEngine.buildTools", () => {
       reversibility: "moderate",
     });
 
-    expect(engine.resolveUtilityConfig).toHaveBeenCalledWith(expect.objectContaining({
+    expect(engine.resolveUtilityConfigFresh).toHaveBeenCalledWith(expect.objectContaining({
       agentId: "hana",
     }));
     expect(engine._callApprovalReviewerText).toHaveBeenCalledWith(expect.objectContaining({
@@ -209,6 +209,11 @@ describe("HanaEngine.buildTools", () => {
     const engine = Object.create(HanaEngine.prototype);
     engine._agentMgr = { activeAgentId: "focus" };
     engine.agentIdFromSessionPath = vi.fn(() => "target");
+    engine.resolveSessionOwnership = vi.fn((ref) => {
+      const sp = typeof ref === "string" ? ref : ref?.sessionPath || null;
+      const agentId = sp ? engine.agentIdFromSessionPath?.(sp) || null : null;
+      return { agentId, source: agentId ? "path" : "none", agentDeleted: false };
+    });
     engine._configCoord = {
       resolveUtilityConfig: vi.fn(() => ({ utility: { id: "target-utility" } })),
     };

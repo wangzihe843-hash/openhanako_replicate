@@ -1,12 +1,14 @@
 import { memo, useCallback, useMemo } from 'react';
 import type { ChatListItem, ChatMessage } from '../../stores/chat-types';
 import { UserMessage } from './UserMessage';
+import { AgentOriginMessage } from './AgentOriginMessage';
 import { AssistantMessage } from './AssistantMessage';
 import { ProcessFoldBlock } from './ProcessFoldBlock';
 import { InterludeBlock } from './InterludeBlock';
 import { buildTranscriptRenderItems, type TranscriptRenderItem } from './process-fold';
 import { useStore } from '../../stores';
-import { selectIsStreamingSession } from '../../stores/session-selectors';
+import { selectIsStreamingSession, selectSelectedIdsBySession } from '../../stores/session-selectors';
+import { resolveAgentDisplayInfo, type AgentDisplayInfo } from '../../utils/agent-display';
 
 interface Props {
   items: ChatListItem[];
@@ -30,6 +32,26 @@ export const ChatTranscript = memo(function ChatTranscript({
   enableProcessFold = false,
 }: Props) {
   const isStreaming = useStore(s => selectIsStreamingSession(s, sessionPath));
+  const agents = useStore(s => s.agents);
+  const globalAgentName = useStore(s => s.agentName) || 'Hanako';
+  const globalYuan = useStore(s => s.agentYuan) || 'hanako';
+  const selectedIds = useStore(s => selectSelectedIdsBySession(s, sessionPath));
+  const userAvatarUrl = useStore(s => s.userAvatarUrl);
+  const storeUserName = useStore(s => s.userName);
+  const t = window.t ?? ((p: string) => p);
+  const agentDisplay = useMemo<AgentDisplayInfo & { yuan: string }>(() => {
+    const info = resolveAgentDisplayInfo({
+      id: agentId || null,
+      agents,
+      fallbackAgentName: globalAgentName,
+      fallbackAgentYuan: globalYuan,
+    });
+    return { ...info, yuan: info.yuan || globalYuan };
+  }, [agentId, agents, globalAgentName, globalYuan]);
+  const viewerIdentity = useMemo(() => ({
+    name: storeUserName || t('common.me'),
+    avatarUrl: userAvatarUrl,
+  }), [storeUserName, userAvatarUrl, t]);
   const renderItems = useMemo(
     () => enableProcessFold
       ? buildTranscriptRenderItems(items, { isStreaming })
@@ -56,6 +78,9 @@ export const ChatTranscript = memo(function ChatTranscript({
           turnCompletionAssistantIndexes={turnState.turnCompletionAssistantIndexes}
           assistantTurnSelectionIdsByCompletionIndex={turnState.assistantTurnSelectionIdsByCompletionIndex}
           isStreamingSession={isStreaming}
+          agentDisplay={agentDisplay}
+          viewerIdentity={viewerIdentity}
+          selectedIds={selectedIds}
           registerMessageElement={registerMessageElement}
         />
       ))}
@@ -137,6 +162,9 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
   turnCompletionAssistantIndexes,
   assistantTurnSelectionIdsByCompletionIndex,
   isStreamingSession,
+  agentDisplay,
+  viewerIdentity,
+  selectedIds,
   registerMessageElement,
 }: {
   renderItem: TranscriptRenderItem;
@@ -152,6 +180,9 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
   turnCompletionAssistantIndexes: ReadonlySet<number>;
   assistantTurnSelectionIdsByCompletionIndex: ReadonlyMap<number, readonly string[]>;
   isStreamingSession: boolean;
+  agentDisplay: AgentDisplayInfo & { yuan: string };
+  viewerIdentity: { name: string; avatarUrl: string | null };
+  selectedIds: readonly string[];
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
 }) {
   const originalIndex = renderItem.originalIndex;
@@ -174,6 +205,9 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
           && latestAssistantIndex > latestUserIndex
           && !isStreamingSession
         }
+        agentDisplay={agentDisplay}
+        isStreaming={isStreamingSession}
+        selectedIds={selectedIds}
         registerMessageElement={registerMessageElement}
       />
     );
@@ -205,6 +239,10 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
       assistantTurnSelectionIds={showTurnCompletionTime
         ? assistantTurnSelectionIdsByCompletionIndex.get(originalIndex)
         : undefined}
+      agentDisplay={agentDisplay}
+      viewerIdentity={viewerIdentity}
+      isStreaming={isStreamingSession}
+      selectedIds={selectedIds}
       registerMessageElement={registerMessageElement}
     />
   );
@@ -235,6 +273,10 @@ const TranscriptItemView = memo(function TranscriptItemView({
   isLatestAssistantMessage,
   showTurnCompletionTime,
   assistantTurnSelectionIds,
+  agentDisplay,
+  viewerIdentity,
+  isStreaming,
+  selectedIds,
   registerMessageElement,
 }: {
   item: ChatListItem;
@@ -249,6 +291,10 @@ const TranscriptItemView = memo(function TranscriptItemView({
   isLatestAssistantMessage: boolean;
   showTurnCompletionTime: boolean;
   assistantTurnSelectionIds?: readonly string[];
+  agentDisplay: AgentDisplayInfo & { yuan: string };
+  viewerIdentity: { name: string; avatarUrl: string | null };
+  isStreaming: boolean;
+  selectedIds: readonly string[];
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
 }) {
   const messageId = item.type === 'message' ? item.data.id : null;
@@ -264,7 +310,9 @@ const TranscriptItemView = memo(function TranscriptItemView({
   const showAvatar = msg.role !== prevRole;
 
   if (msg.role === 'user') {
-    return (
+    return msg.origin ? (
+      <AgentOriginMessage message={msg} />
+    ) : (
       <UserMessage
         message={msg}
         showAvatar={showAvatar}
@@ -272,6 +320,9 @@ const TranscriptItemView = memo(function TranscriptItemView({
         readOnly={readOnly}
         hideIdentity={hideUserIdentity}
         userIdentity={userIdentity}
+        viewerIdentity={viewerIdentity}
+        isStreaming={isStreaming}
+        isSelected={selectedIds.includes(msg.id)}
         isLatestUserMessage={isLatestUserMessage}
         messageRef={messageRef}
       />
@@ -285,6 +336,9 @@ const TranscriptItemView = memo(function TranscriptItemView({
       sessionPath={sessionPath}
       agentId={agentId}
       readOnly={readOnly}
+      agentDisplay={agentDisplay}
+      isStreaming={isStreaming}
+      isSelected={selectedIds.includes(msg.id)}
       isLatestAssistantMessage={isLatestAssistantMessage}
       showTurnCompletionTime={showTurnCompletionTime}
       assistantTurnSelectionIds={assistantTurnSelectionIds}

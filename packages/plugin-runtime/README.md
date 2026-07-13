@@ -414,7 +414,7 @@ export const startRun = defineTool({
 });
 ```
 
-The helper requires `sessionId` / `sessionRef`; passing only a legacy `sessionPath` throws. Hana resolves the current path through the session manifest and only renders sessions owned by the same plugin with `plugin_private` or `private` visibility. Main currently provides a thin native transcript surface; richer composer and native card composition are reserved for the Infinity Chalkboard / Card Kernel layer.
+The helper requires `sessionId` / `sessionRef`; passing only a legacy `sessionPath` throws. Hana resolves the current path through the session manifest and only renders sessions owned by the same plugin with `plugin_private` or `private` visibility. Main currently provides a thin native transcript surface; richer composer and native card composition are not part of the public runtime contract yet.
 
 ## Provider contributions
 
@@ -479,6 +479,17 @@ export const { id, displayName, authType, runtime, capabilities } = provider;
 ```
 
 Keep chat and media capabilities explicit. Media-only providers should use `chat.projection = "none"`, and CLI providers must use structured argument bindings rather than shell command strings.
+
+Chat providers may separate their Hana catalog identity from their execution identity. Use
+`runtimeProviderId` for the execution/auth key and `credentialSource` to declare ownership:
+`provider-catalog` reads API-key configuration, `auth-storage` uses the OAuth store without
+copying tokens into `models.json`, and `none` is for providers that require no credential.
+The `models` field has three states: missing uses the provider declaration defaults, `[]`
+explicitly disables chat models, and a non-empty array is the exact user allowlist.
+`sdk-auth-alias` remains a legacy compatibility mode whose model list is owned by the
+runtime SDK catalog. New OAuth providers should use `projection: "models-json"` together
+with `credentialSource: "auth-storage"` so the host owns the model catalog while the
+OAuth store owns request credentials.
 
 Legacy image-generation plugins may still use `media-gen:register-adapter` as a compatibility execution path. New plugins and Agent-generated scaffolds must not call `media-gen:*`; declare a ProviderPlugin with `capabilities.media.*` for discovery, then use the stable media helpers or the formal Adapter Plugin API when that execution surface is available.
 

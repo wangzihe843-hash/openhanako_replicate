@@ -1,14 +1,16 @@
 export function buildCompileTodayPrompt(locale = "zh-CN") {
   const isZh = String(locale || "").startsWith("zh");
   return {
-    templateVersion: "compile-today.v1",
+    templateVersion: "compile-today.v2",
     cacheGroup: "memory.compile.today",
     systemPrompt: isZh
-      ? `请把今天的对话摘要整理成一份"用户近况与大主题清单"。
+      ? `你会收到「上一版今日草稿」和「新增或修订的时间线条目（delta）」，请据此更新出一份新的"用户近况与大主题清单"草稿。
 
-提炼原则：
+处理原则：
+- 上一版草稿是今天已经沉淀的内容，默认保留；delta 里标注"取代先前相关记述"的条目，说明对应的旧内容已经过时或不准确，请用它更新/替换草稿里的相关部分，而不是并列保留新旧两种说法
+- delta 里没有标注"取代"的条目是今天新发生的事，正常并入
 - 把同一主题/项目的多次往返归并为一件事，不要逐条流水账
-- 时间标注用主时段（"上午/傍晚"或粗略 HH:MM 区间），不需精确到分钟
+- 每条输出必须保留粗时间锚点，例如"上午"、"07:20 左右"、"傍晚"；不要把时间完全删掉
 - 记忆的核心职责是维护用户模型，优先记录用户是谁、喜欢什么、在意什么、最近关注什么
 - 工作相关内容只允许保留到大主题层级：只写用户最近关注的领域/项目/主题，不写该主题里的细节
 
@@ -25,11 +27,13 @@ export function buildCompileTodayPrompt(locale = "zh-CN") {
 - 来回修改、重试、被打断又恢复这类过程波动
 
 输出 3-5 条粗颗粒事件，每条 1-2 句。最多 300 字。一天平淡就写得短。不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文列表或段落。`
-      : `Distill today's conversation summaries into a "user-current-state and broad-theme list".
+      : `You will receive the "previous today draft" and "new or revised timeline entries (delta)". Update them into a new "user-current-state and broad-theme list" draft.
 
-Principles:
+Processing principles:
+- The previous draft is what today has already settled; keep it by default. Delta entries marked "supersedes prior mention" mean the corresponding old content is outdated or inaccurate — use them to update/replace the related part of the draft rather than keeping both the old and new statements side by side
+- Delta entries without a "supersedes" marker are new things that happened today; merge them in normally
 - Merge multiple back-and-forth on the same topic/project into ONE event; do not enumerate line by line
-- Time markers use major periods ("morning/evening" or rough HH:MM range), no minute-level precision
+- Each output item must keep a coarse time anchor, such as "morning", "around 07:20", or "evening"; do not remove time entirely
 - Memory's core job is to maintain a user model: prioritize who the user is, what they like, what they care about, and what they are broadly focused on recently
 - Work-related content may only be kept at the broad-theme level: record the domain/project/theme, not details inside that theme
 
@@ -49,57 +53,48 @@ Output 3-5 coarse events, 1-2 sentences each. Max 180 words. Keep it short on qu
   };
 }
 
-export function buildCompileWeekPrompt(locale = "zh-CN") {
+export function buildCompileDailyPrompt(locale = "zh-CN") {
   const isZh = String(locale || "").startsWith("zh");
   return {
-    templateVersion: "compile-week.v1",
-    cacheGroup: "memory.compile.week",
+    templateVersion: "compile-daily.v2",
+    cacheGroup: "memory.compile.daily",
     systemPrompt: isZh
-      ? `请把过去 7 天的对话摘要整理成一份"本周用户主题概要"。
+      ? `你会收到这一天的时间线条目或最终版"今日草稿"（当天结束时对用户近况的整理稿），请把它蒸馏成两三句话的简短日记条目。
 
-关键定位：到 week 这一层，记录已经是粗线条的了。它不是"每天发生的事"的集合，而是再上一层——归纳用户这一周大致在关注什么、投入什么、发生了什么重要变化。读这份记录的人只需要知道用户近况和大主题，不需要知道任何过程细节。
+关键定位：这是给一周概览用的一条记录，不是详细日志。读的人只需要一眼看出这一天大致发生了什么、用户在关注什么。
 
-提炼层级：
-- 记忆的核心职责是维护用户模型：用户是谁、喜欢什么、在意什么、最近关注什么
-- 工作相关内容只允许保留到大主题层级：只写用户最近关注的领域/项目/主题，不写该主题里的细节
-- 持续性的关注主题（"本周持续关注 X"、"这几天主要在做 Y"）放最前
-- 够分量的个人近况、创作主题、关系变化、兴趣变化次之
-- 时间用模糊表述（"周初/前几天/这两天"），不留精确时间戳
+提炼原则：
+- 把同一主题/项目的多次往返归并为一件事，不要逐条流水账
+- 保留这一天的粗时间感，例如"上午"、"傍晚"或一个代表性 HH:MM；不要写成无时间锚点的主题标签
+- 记忆的核心职责是维护用户模型：优先记录用户是谁、喜欢什么、在意什么、这天关注什么
+- 工作相关内容只允许保留到大主题层级：只写用户这天关注的领域/项目/主题，不写该主题里的细节
 
-明确不要保留的内容：
+不要记录：
 - 不要记录执行步骤、文件名、工具、命令、检查顺序、协作偏好、工作细节
-- 某个主题里的具体子问题、具体方案、具体改法、具体测试或发布流程
-- 任务过程中的方法论、工具、格式选择
-- 单次对话内的来回修改、临时决定
-- 助手的具体产出内容
-- 不重要的杂事（普通的闲聊、查询、调试）
+- 任务过程中的方法论选择、工具偏好、格式要求、术语规则
+- 具体子问题、具体方案、具体改法、具体测试或发布流程
+- 助手具体产出的内容
+- 来回修改、重试、被打断又恢复这类过程波动
 
-只记录"用户这一周大致关注什么、发生了什么重要变化"。工作只记大主题，其他可以不写。
+只输出两三句话，最多 60 字。这天平淡就写得更短。不要输出日期抬头（调用方会自行加上日期），不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文。`
+      : `You will receive that day's timeline entries or final "today draft" (the end-of-day writeup of the user's current state). Distill it into a short two-to-three sentence diary entry.
 
-输出 3-5 条本周主题/事件。最多 400 字。不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文列表或段落。`
-      : `Distill the past 7 days' conversation summaries into a "weekly user-theme overview".
+Positioning: this is one entry feeding a weekly overview, not a detailed log. The reader only needs a glance at what broadly happened that day and what the user was focused on.
 
-Positioning: at the week layer, the record is already coarse-grained. It is NOT a collection of "what happened each day" — it is one level above: distilling what the user was broadly focused on, invested in, and what important changes happened. The reader only needs user current-state and broad themes, not any process detail.
-
-Layering:
-- Memory's core job is to maintain a user model: who the user is, what they like, what they care about, and what they are broadly focused on recently
+Principles:
+- Merge multiple back-and-forth on the same topic/project into ONE event; do not enumerate line by line
+- Preserve the day's coarse sense of time, such as "morning", "evening", or one representative HH:MM; do not turn it into timeless topic labels
+- Memory's core job is to maintain a user model: prioritize who the user is, what they like, what they care about, and what they focused on that day
 - Work-related content may only be kept at the broad-theme level: record the domain/project/theme, not details inside that theme
-- Persistent focus themes ("focused on X this week", "spent several days on Y") come first
-- Substantial personal current-state, creative themes, relationship changes, or interest changes come second
-- Time is vague ("early in the week / a few days ago / these last two days"); do NOT preserve exact timestamps
 
-Explicitly do NOT keep:
+Do NOT record:
 - Execution steps, filenames, tools, commands, validation order, collaboration preferences, or work details
+- Task-level methodology choices, tool preferences, format requirements, terminology rules
 - Specific subproblems, concrete solutions, concrete code changes, tests, or release flows
-- Task-level details (how it was done, how many revisions, interruptions and resumptions)
-- Task-level methodology, tools, format choices
-- Within-conversation revisions and temporary decisions
 - Specific content of assistant's output
-- Trivial activity (small talk, lookups, debugging)
+- Revisions, retries, interruptions and resumptions — these are process noise
 
-Record only "what the user was broadly focused on and what important changes happened this week". For work, keep only the broad theme. Skip the rest.
-
-Output 3-5 weekly themes/events. Max 240 words. Do not output Markdown headings. Do not start with #, ##, or ###; output body text only.`,
+Output only two to three sentences, max 30 words. Keep it shorter on quiet days. Do not output a date heading (the caller adds the date). Do not output Markdown headings. Do not start with #, ##, or ###; output body text only.`,
   };
 }
 
@@ -109,7 +104,7 @@ export function buildCompileLongtermPrompt(locale = "zh-CN") {
     templateVersion: "compile-longterm.v1",
     cacheGroup: "memory.compile.longterm",
     systemPrompt: isZh
-      ? `请综合「上一份长期情况」和「本周新增」，重写成一份新的长期情况。必须控制在 400 字以内。
+      ? `请综合「上一份长期情况」和「新沉淀内容」，重写成一份新的长期情况。必须控制在 400 字以内。
 
 记忆不是工作日志，也不是协作手册。到 longterm 这一层，记录已经是最稳定的用户画像核心。只保留"如果一年后回看仍然适合用来理解用户这个人"的内容：
 - 用户的身份、人格特质、审美、兴趣、价值取向
@@ -131,7 +126,7 @@ export function buildCompileLongtermPrompt(locale = "zh-CN") {
 - 如果上一份长期情况已经很长，优先概括旧内容，再吸收真正重要的新内容
 
 不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文列表或段落。`
-      : `Synthesize "Previous long-term context" and "This week's additions", then rewrite them into one new long-term context. You must keep the result under 240 words.
+      : `Synthesize "Previous long-term context" and "Newly settled content", then rewrite them into one new long-term context. You must keep the result under 240 words.
 
 Memory is not a work log or collaboration manual. At the longterm layer, the record is the most stable user-profile core. Keep only what would still help understand the user as a person "if reviewed a year from now":
 - The user's identity, personality traits, aesthetics, interests, and values
@@ -153,17 +148,6 @@ How to process:
 - If the previous long-term context is already long, summarize it first, then absorb only genuinely important new content
 
 Do not output Markdown headings. Do not start with #, ##, or ###; output body text only.`,
-  };
-}
-
-export function buildCompileFactsPrompt(locale = "zh-CN") {
-  const isZh = String(locale || "").startsWith("zh");
-  return {
-    templateVersion: "compile-facts.v1",
-    cacheGroup: "memory.compile.facts",
-    systemPrompt: isZh
-      ? "请综合「现有 Facts」和「新增候选 Facts」，重写成一份新的重要事实。必须控制在 200 字以内，宁可概括合并，也不要堆叠罗列。现有 Facts 是基础，但如果过长，必须压成更高层概括；新增候选 Facts 只在能纠正、补充或更新稳定用户画像时吸收。只保留稳定的、跨时间有效的用户画像：身份、人格特质、审美、兴趣、喜欢或讨厌的事物、长期关系、长期关注方向。矛盾时以新增候选 Facts 为准。不要追加，不要把两部分分别复述。不要保留工作方式、协作流程、工具偏好、执行细节。不要输出 Markdown 标题，不要以 #、##、### 开头；直接输出正文列表或段落。"
-      : "Synthesize \"Existing Facts\" and \"New Candidate Facts\", then rewrite them into one new Key Facts section. You must keep the result under 120 words; prefer concise abstraction and merging over stacked lists. Existing Facts are the base, but if they are too long, compress them into higher-level facts. Absorb New Candidate Facts only when they correct, supplement, or update stable user-profile information. Keep only stable, time-persistent user-profile facts: identity, personality traits, aesthetics, interests, likes/dislikes, long-term relationships, and long-term focus directions. When facts conflict, prefer New Candidate Facts. Do not append. Do not restate the two inputs separately. Do not keep work style, collaboration process, tool preferences, or execution details. Do not output Markdown headings. Do not start with #, ##, or ###; output body text only.",
   };
 }
 

@@ -348,6 +348,78 @@ describe("Automation job read model", () => {
     });
   });
 
+  it("repairs missing nextRunAt for enabled persisted jobs with valid schedules", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath, JSON.stringify({
+      jobs: [{
+        id: "job_1",
+        type: "cron",
+        schedule: "30 0 * * *",
+        prompt: "legacy",
+        enabled: true,
+        nextRunAt: null,
+        consecutiveErrors: 0,
+      }],
+      nextNum: 2,
+    }, null, 2), "utf-8");
+
+    const store = new CronStore(jobsPath, runsDir);
+    const [job] = store.listJobs();
+    const persisted = JSON.parse(fs.readFileSync(jobsPath, "utf-8")).jobs[0];
+
+    expect(typeof job.nextRunAt).toBe("string");
+    expect(Number.isNaN(new Date(job.nextRunAt).getTime())).toBe(false);
+    expect(persisted.nextRunAt).toBe(job.nextRunAt);
+  });
+
+  it("keeps disabled persisted drafts unscheduled when nextRunAt is missing", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath, JSON.stringify({
+      jobs: [{
+        id: "job_1",
+        type: "cron",
+        schedule: "30 0 * * *",
+        prompt: "",
+        label: "Draft",
+        enabled: false,
+        nextRunAt: null,
+        consecutiveErrors: 0,
+      }],
+      nextNum: 2,
+    }, null, 2), "utf-8");
+
+    const store = new CronStore(jobsPath, runsDir);
+    const [job] = store.listJobs();
+
+    expect(job.enabled).toBe(false);
+    expect(job.nextRunAt).toBeNull();
+  });
+
+  it("does not invent nextRunAt for enabled persisted jobs with invalid schedules", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath, JSON.stringify({
+      jobs: [{
+        id: "job_1",
+        type: "cron",
+        schedule: "not a cron",
+        prompt: "legacy",
+        enabled: true,
+        nextRunAt: null,
+        consecutiveErrors: 0,
+      }],
+      nextNum: 2,
+    }, null, 2), "utf-8");
+
+    const store = new CronStore(jobsPath, runsDir);
+    const [job] = store.listJobs();
+
+    expect(job.enabled).toBe(true);
+    expect(job.nextRunAt).toBeNull();
+  });
+
   it("rejects direct-action executors on new writes", () => {
     const store = makeTmpStore();
 
@@ -541,6 +613,31 @@ describe("CronStore updateJob 字段白名单", () => {
     expect(updated.schedule).toBe(7200000);
     // nextRunAt 应该被重算（基于当前时间 + 7200000），跟原来不同
     expect(updated.nextRunAt).not.toBe(origNextRunAt);
+  });
+
+  it("enabling a valid job with missing nextRunAt recomputes the schedule cursor", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath, JSON.stringify({
+      jobs: [{
+        id: "job_1",
+        type: "cron",
+        schedule: "30 0 * * *",
+        prompt: "daily",
+        label: "Daily",
+        enabled: false,
+        nextRunAt: null,
+        consecutiveErrors: 0,
+      }],
+      nextNum: 2,
+    }, null, 2), "utf-8");
+    const store = new CronStore(jobsPath, runsDir);
+
+    const updated = store.updateJob("job_1", { enabled: true });
+
+    expect(updated.enabled).toBe(true);
+    expect(typeof updated.nextRunAt).toBe("string");
+    expect(Number.isNaN(new Date(updated.nextRunAt).getTime())).toBe(false);
   });
 
   it("updateJob 允许同步变更 type 和 schedule", () => {

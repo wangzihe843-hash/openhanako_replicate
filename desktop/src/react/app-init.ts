@@ -10,7 +10,7 @@
 import { useStore } from './stores';
 import { hanaFetch } from './hooks/use-hana-fetch';
 import { applyAgentIdentity, loadAgents, loadAvatars } from './stores/agent-actions';
-import { loadPendingNewSessionPermissionDefault, loadSessions, switchSession } from './stores/session-actions';
+import { loadPendingNewSessionPermissionDefault, loadSessions, pendingNewSessionIdentityPatch, switchSession } from './stores/session-actions';
 import { initSessionProjectCatalog } from './stores/session-project-actions';
 import { connectWebSocket, getWebSocket } from './services/websocket';
 import { setStatus, loadModels } from './utils/ui-helpers';
@@ -21,6 +21,7 @@ import { initErrorBusBridge } from './errors/error-bus-bridge';
 import { refreshPluginUI } from './stores/plugin-ui-actions';
 import { openSettingsModal } from './stores/settings-modal-actions';
 import { initQuotedSelectionLifecycle } from './stores/selection-actions';
+import { hydrateInputDrafts, initInputDraftPersistence } from './stores/input-draft-persistence';
 import { configureAppEventActions, handleAppEvent, readConfigCwdHistory, readConfigHomeFolder, readConfigMemoryMasterEnabled } from './services/app-event-actions';
 import { configureWsMessageHandler } from './services/ws-message-handler';
 import { applyChatLayout } from './chat/layout';
@@ -33,6 +34,7 @@ import {
   readPersistedServerConnectionState,
   refreshLocalServerConnectionState,
   upsertServerConnection,
+  warnIfServerProtocolMismatch,
   type ServerConnection,
 } from './services/server-connection';
 import { persistAppearancePreferences } from './services/appearance-sync';
@@ -81,6 +83,7 @@ window.addEventListener('unhandledrejection', (e) => {
 export async function initApp(): Promise<void> {
   const platform = window.platform;
   initQuotedSelectionLifecycle();
+  initInputDraftPersistence();
 
   const requestContextUsage = (sessionPath: string) => {
     const ws = getWebSocket();
@@ -229,10 +232,11 @@ export async function initApp(): Promise<void> {
   await loadModels();
 
   // 10. 加载 agents + sessions
-  useStore.setState({ pendingNewSession: true });
+  useStore.setState(pendingNewSessionIdentityPatch());
   await loadPendingNewSessionPermissionDefault();
   await loadAgents();
   await loadSessions();
+  void hydrateInputDrafts();
 
   // 10b. 加载项目目录（带重试）。放在 sessions 之后：此时 server 已确认可用，
   // 避免项目目录像过去那样只靠 SessionList 挂载时一次性拉取、失败即长期空白，
@@ -306,6 +310,7 @@ export async function initApp(): Promise<void> {
 async function loadIdentityForActiveConnection(connection: ServerConnection): Promise<ServerConnection> {
   const identityRes = await hanaFetch('/api/server/identity');
   const identityData = await identityRes.json();
+  warnIfServerProtocolMismatch(identityData);
   return mergeServerIdentity(connection, identityData);
 }
 

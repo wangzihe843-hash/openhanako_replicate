@@ -36,7 +36,7 @@ export class SessionSearchTokenizerUnavailableError extends Error {
   }
 }
 
-export function normalizeSessionSearchText(value) {
+export function normalizeSessionSearchText(value): string {
   return String(value || "")
     .normalize("NFKC")
     .toLowerCase()
@@ -44,11 +44,11 @@ export function normalizeSessionSearchText(value) {
     .trim();
 }
 
-export function tokenizeSessionSearchQuery(query) {
+export function tokenizeSessionSearchQuery(query): string[] {
   const normalized = normalizeSessionSearchText(query);
   if (!normalized) return [];
 
-  const terms = new Set();
+  const terms = new Set<string>();
   addToken(terms, normalized);
 
   for (const match of normalized.matchAll(SPACED_TERM_RE)) {

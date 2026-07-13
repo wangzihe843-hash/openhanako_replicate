@@ -460,6 +460,14 @@ const APPROVED_IDENTITY_BOUNDARY_RULES = [
     ],
   },
   {
+    file: /(^|\/)lib\/bridge\/bridge-manager\.ts$/,
+    patterns: [
+      /\b_sessionIdentityKeyForPath\b/,
+      /\bthis\._rcMirrorStreams\.(?:set|get|delete)\(streamKey/,
+      /\bstreamKey\s*!==\s*sessionPath\b/,
+    ],
+  },
+  {
     file: /(^|\/)scripts\/session-path-identity-audit\.mjs$/,
     patterns: [
       /.*/,
@@ -519,10 +527,23 @@ function isLegacySessionMetaBoundaryFile(normalizedFile) {
     || /(^|\/)lib\/subagent-executor-metadata\.ts$/.test(normalizedFile);
 }
 
+// A-2 判决同族启发式：server/ 下裸 sessionPath 相等/不等过滤，是 ws-scope.ts
+// 归档断流 bug 的确切代码形状。命中不代表有 bug（可能是已理解的兼容回退），
+// 但值得单列出来供人工复核，而不是被 transport-or-ui-locator 的宽泛 server/
+// 归类悄悄吞掉。
+function isEqualityFilterReviewLine(normalizedFile, line) {
+  if (!normalizedFile.startsWith("server/")) return false;
+  return /sessionPath\s*!==/.test(line)
+    || /!==\s*target\.sessionPath/.test(line)
+    || /===\s*sessionPath\b/.test(line);
+}
+
 function classify(file, line) {
   const normalizedFile = file.split(path.sep).join("/");
   const text = line.toLowerCase();
-  const storageLike = /\b(map|set|cache|key|hash|summary|memory|pinned|pin|identity|id)\b/i.test(line)
+  // "keyed" 与 "key" 共享词干但不共享 \b 边界：\bkey\b 匹配不到 "keyed"，
+  // 会让 "keyed by sessionPath" 这类误导性注释被漏判成 uncategorized（假阴性）。
+  const storageLike = /\b(map|set|cache|key|keyed|hash|summary|memory|pinned|pin|identity|id)\b/i.test(line)
     || text.includes("sessionfilescachedir")
     || text.includes("sessionidfromfilename");
   if (
@@ -566,6 +587,9 @@ function classify(file, line) {
     || text.includes("currentsessionpath")
   ) {
     return "identity-risk";
+  }
+  if (isEqualityFilterReviewLine(normalizedFile, line)) {
+    return "equality-filter-review";
   }
   if (
     /\b(fs|path)\./.test(line)
@@ -614,6 +638,7 @@ function summarize(matches) {
     total: matches.length,
     counts,
     identityRisk: matches.filter((match) => match.category === "identity-risk"),
+    equalityFilterReview: matches.filter((match) => match.category === "equality-filter-review"),
   };
 }
 
@@ -632,6 +657,16 @@ function printText(report, matches) {
     }
     if (report.identityRisk.length > 80) {
       console.log(`... ${report.identityRisk.length - 80} more identity-risk matches`);
+    }
+  }
+  if (report.equalityFilterReview.length > 0) {
+    console.log("");
+    console.log("Equality-filter-review samples (server/ 下裸 sessionPath 相等/不等过滤，人工复核):");
+    for (const match of report.equalityFilterReview.slice(0, 40)) {
+      console.log(`${match.file}:${match.line}: ${match.text}`);
+    }
+    if (report.equalityFilterReview.length > 40) {
+      console.log(`... ${report.equalityFilterReview.length - 40} more equality-filter-review matches`);
     }
   }
   const uncategorized = matches.filter((match) => match.category === "uncategorized");

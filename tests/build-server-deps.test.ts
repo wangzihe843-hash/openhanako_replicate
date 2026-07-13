@@ -7,6 +7,7 @@ import {
   buildBetterSqliteRuntimeSmokeScript,
   buildExternalPackage,
   buildJiebaRuntimeSmokeScript,
+  collectBareImportPackageNames,
   collectInstalledOptionalDependencyDirs,
   readPackageJsonWithRetry,
   verifyExternalEntrypoints,
@@ -27,6 +28,22 @@ afterEach(() => {
 });
 
 describe("build-server external dependency packaging", () => {
+  it("collects bare static import package names from the emitted server bundle", () => {
+    const packages = collectBareImportPackageNames([
+      "import fs from 'node:fs';",
+      "import './local.js';",
+      "import { completeSimple } from '@earendil-works/pi-ai/compat';",
+      "import '@earendil-works/pi-agent-core';",
+      "import qrcode from 'qrcode';",
+    ].join("\n"));
+
+    expect(packages).toEqual([
+      "@earendil-works/pi-agent-core",
+      "@earendil-works/pi-ai",
+      "qrcode",
+    ]);
+  });
+
   it("pins server externals and selected runtime transitives to the root lock versions", () => {
     const rootPkg = {
       name: "hanako",

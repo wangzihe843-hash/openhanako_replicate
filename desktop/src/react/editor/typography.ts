@@ -50,7 +50,7 @@ export function applyEditorTypography(
     fallback: FOLLOW_READING_FONT_ID,
   });
   const fontFamily = fontSelection === FOLLOW_READING_FONT_ID
-    ? 'var(--font-serif)'
+    ? 'var(--font-serif-text, var(--font-serif))'
     : getCssVariableFontFamilyForPreset(fontSelection);
 
   root.style.setProperty('--editor-markdown-font-family', fontFamily);

@@ -135,10 +135,29 @@ function qqDisplayName(name) {
   return value;
 }
 
-export function deriveQQPrincipal(author: Record<string, any> = {}) {
+function firstQQDisplayName(...values) {
+  for (const value of values) {
+    const displayName = qqDisplayName(value);
+    if (displayName) return displayName;
+  }
+  return null;
+}
+
+function firstQQAvatarUrl(...values) {
+  for (const value of values) {
+    const avatarUrl = cleanQQString(value);
+    if (avatarUrl) return avatarUrl;
+  }
+  return null;
+}
+
+export function deriveQQPrincipal(author: Record<string, any> = {}, profile: Record<string, any> = {}) {
   const principalId = cleanQQString(author.id)
     || cleanQQString(author.user_openid)
     || cleanQQString(author.member_openid)
+    || cleanQQString(profile.id)
+    || cleanQQString(profile.user_openid)
+    || cleanQQString(profile.member_openid)
     || null;
   if (!principalId) return null;
 
@@ -146,12 +165,33 @@ export function deriveQQPrincipal(author: Record<string, any> = {}) {
   addQQAlias(aliases, principalId);
   addQQAlias(aliases, author.user_openid);
   addQQAlias(aliases, author.member_openid);
+  addQQAlias(aliases, profile.user_openid);
+  addQQAlias(aliases, profile.member_openid);
 
-  const displayName = qqDisplayName(author.username);
+  const displayName = firstQQDisplayName(
+    profile.card,
+    profile.member_card,
+    profile.nick,
+    profile.nickname,
+    profile.name,
+    author.nick,
+    author.nickname,
+    author.global_name,
+    author.username,
+  );
+  const avatarUrl = firstQQAvatarUrl(
+    profile.avatar,
+    profile.avatar_url,
+    profile.avatarUrl,
+    author.avatar,
+    author.avatar_url,
+    author.avatarUrl,
+  );
   return {
     principalId,
     aliases,
     displayName,
+    ...(avatarUrl ? { avatarUrl } : {}),
     fallbackName: `QQ ${qqShortId(principalId)}`,
   };
 }
@@ -437,7 +477,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       const attachments = extractAttachments(data);
       if (!text && !attachments.length) return;
       if (text.length > MAX_MSG_SIZE) return;
-      const principal = deriveQQPrincipal(data.author);
+      const principal = deriveQQPrincipal(data.author, data.member || data.member_info || {});
       const chatId = data.author?.user_openid || data.author?.id;
       onMessage({
         platform: "qq",
@@ -447,6 +487,9 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
         sessionKey: `qq_dm_${chatId}@${agentId}`,
         text: text.slice(0, MAX_MSG_SIZE),
         senderName: principal?.displayName || principal?.fallbackName,
+        displayName: principal?.displayName,
+        avatarUrl: principal?.avatarUrl || undefined,
+        principalId: principal?.principalId,
         qqPrincipal: principal || undefined,
         isGroup: false,
         _msgId: data.id,
@@ -460,7 +503,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       const attachments = extractAttachments(data);
       if (!text && !attachments.length) return;
       if (text.length > MAX_MSG_SIZE) return;
-      const principal = deriveQQPrincipal(data.author);
+      const principal = deriveQQPrincipal(data.author, data.member || data.member_info || {});
       onMessage({
         platform: "qq",
         agentId,
@@ -469,6 +512,9 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
         sessionKey: `qq_group_${data.group_openid}@${agentId}`,
         text: text.slice(0, MAX_MSG_SIZE),
         senderName: principal?.displayName || principal?.fallbackName,
+        displayName: principal?.displayName,
+        avatarUrl: principal?.avatarUrl || undefined,
+        principalId: principal?.principalId,
         qqPrincipal: principal || undefined,
         isGroup: true,
         _msgId: data.id,
@@ -481,7 +527,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       let text = (data.content || "").replace(/<@!?\d+>/g, "").trim();
       const attachments = extractAttachments(data);
       if (!text && !attachments.length) return;
-      const principal = deriveQQPrincipal(data.author);
+      const principal = deriveQQPrincipal(data.author, data.member || data.member_info || {});
       onMessage({
         platform: "qq",
         agentId,
@@ -490,6 +536,9 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
         sessionKey: `qq_group_${data.channel_id}@${agentId}`,
         text: text.slice(0, MAX_MSG_SIZE),
         senderName: principal?.displayName || principal?.fallbackName,
+        displayName: principal?.displayName,
+        avatarUrl: principal?.avatarUrl || undefined,
+        principalId: principal?.principalId,
         qqPrincipal: principal || undefined,
         isGroup: true,
         _msgId: data.id,
@@ -503,7 +552,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       const attachments = extractAttachments(data);
       if (!text && !attachments.length) return;
       const chatId = data.guild_id;
-      const principal = deriveQQPrincipal(data.author);
+      const principal = deriveQQPrincipal(data.author, data.member || data.member_info || {});
       if (data.author?.id && chatId) {
         if (userGuildMap.get(data.author.id) !== chatId) {
           userGuildMap.set(data.author.id, chatId);
@@ -518,6 +567,9 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
         sessionKey: `qq_dm_${data.author?.id}@${agentId}`,
         text: text.slice(0, MAX_MSG_SIZE),
         senderName: principal?.displayName || principal?.fallbackName,
+        displayName: principal?.displayName,
+        avatarUrl: principal?.avatarUrl || undefined,
+        principalId: principal?.principalId,
         qqPrincipal: principal || undefined,
         isGroup: false,
         _msgId: data.id,

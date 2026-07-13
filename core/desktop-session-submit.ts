@@ -51,11 +51,33 @@ export const MESSAGE_ORIGIN_RECORD_TYPE = "hana-message-origin";
 
 const pendingDesktopSessionSubmissions = new Set();
 
+function renderPendingReminderBlock(engine: any, sessionPath: string) {
+  if (typeof engine.renderSessionReminderBlock === "function") {
+    const rendered = engine.renderSessionReminderBlock(sessionPath);
+    if (!rendered?.block) return null;
+    return {
+      block: rendered.block,
+      receipt: rendered.receipt ?? rendered.now ?? null,
+      alreadyConsumed: false,
+    };
+  }
+
+  const legacyBlock = engine.consumeSessionReminderBlock?.(sessionPath);
+  return legacyBlock
+    ? { block: legacyBlock, receipt: null, alreadyConsumed: true }
+    : null;
+}
+
+function consumeRenderedReminderBlock(engine: any, sessionPath: string, rendered: any): void {
+  if (!rendered || rendered.alreadyConsumed || rendered.receipt == null) return;
+  engine.consumeRenderedSessionReminderBlock?.(sessionPath, rendered.receipt);
+}
+
 /**
  * 持久化非桌面来源的消息 origin。写失败只告警不阻断：来源标注是辅助
  * 元数据，不能因为它写不进去就丢掉用户消息本身。
  */
-function recordMessageOriginEntry(session: any, sessionPath: string, displayMessage: any): void {
+export function recordMessageOriginEntry(session: any, sessionPath: string, displayMessage: any): void {
   const source = displayMessage?.source;
   if (!source || source === "desktop") return;
   try {
@@ -67,6 +89,7 @@ function recordMessageOriginEntry(session: any, sessionPath: string, displayMess
       source,
       bridgeSessionKey: displayMessage?.bridgeSessionKey || null,
       timestamp: Date.now(),
+      ...(displayMessage?.origin ? { origin: displayMessage.origin, displayText: displayMessage?.text ?? null } : {}),
     });
   } catch (err) {
     console.warn(`[desktop-session-submit] message origin write failed for ${sessionPath}: ${err?.message || err}`);
@@ -74,6 +97,7 @@ function recordMessageOriginEntry(session: any, sessionPath: string, displayMess
 }
 
 export async function submitDesktopSessionMessage(engine: any, opts: {
+  sessionId?: string;
   sessionPath?: string;
   text?: string;
   images?: Array<{ type: string; data: string; mimeType: string }>;
@@ -91,7 +115,8 @@ export async function submitDesktopSessionMessage(engine: any, opts: {
   context?: any;
 } = {}) {
   const {
-    sessionPath,
+    sessionId: requestedSessionId,
+    sessionPath: requestedSessionPath,
     text,
     images,
     imageAttachmentPaths,
@@ -111,9 +136,8 @@ export async function submitDesktopSessionMessage(engine: any, opts: {
   if (!engine || typeof engine.ensureSessionLoaded !== "function" || typeof engine.promptSession !== "function") {
     throw new Error("desktop-session-submit: engine session API unavailable");
   }
-  if (!sessionPath) throw new Error("desktop-session-submit: sessionPath is required");
+  const { sessionId, sessionPath } = resolveDesktopSessionTarget(engine, requestedSessionId, requestedSessionPath);
   if (!text && !images?.length && !videos?.length && !audios?.length) throw new Error("desktop-session-submit: text, images, videos, or audios required");
-  const sessionId = resolveSessionIdForPath(engine, sessionPath);
   const submissionKey = sessionId || sessionPath;
   if (pendingDesktopSessionSubmissions.has(submissionKey)) {
     throw new Error("session_busy");
@@ -205,6 +229,7 @@ export async function submitDesktopSessionMessage(engine: any, opts: {
         deskContext: displayMessage?.deskContext ?? null,
         source: displayMessage?.source || "desktop",
         bridgeSessionKey: displayMessage?.bridgeSessionKey || null,
+        origin: displayMessage?.origin || null,
       },
     }, sessionPath);
     queueVoiceInputTranscriptions({
@@ -217,6 +242,10 @@ export async function submitDesktopSessionMessage(engine: any, opts: {
     promptText = addAttachedVideoMarkers(promptText, promptVideoAttachmentPaths);
     promptText = addAttachedAudioMarkers(promptText, promptAudioAttachmentPaths);
     promptText = addSessionFileRefMarkers(promptText, promptSessionFileRefs);
+    const reminderBlock = renderPendingReminderBlock(engine, sessionPath);
+    if (reminderBlock) {
+      promptText = `${reminderBlock.block}\n\n${promptText}`;
+    }
 
     let captured = "";
     const toolMedia = [];
@@ -254,6 +283,7 @@ export async function submitDesktopSessionMessage(engine: any, opts: {
       });
       await engine.promptSession(sessionPath, promptText, promptOpts);
       promptSucceeded = true;
+      consumeRenderedReminderBlock(engine, sessionPath, reminderBlock);
     } finally {
       try { unsub?.(); } catch {}
       engine.emitEvent?.({ type: "session_status", isStreaming: false }, sessionPath);
@@ -313,6 +343,7 @@ export async function submitDesktopSessionMessage(engine: any, opts: {
 }
 
 export async function submitDesktopSessionInterjection(engine: any, opts: {
+  sessionId?: string;
   sessionPath?: string;
   text?: string;
   images?: Array<{ type: string; data: string; mimeType: string }>;
@@ -329,7 +360,8 @@ export async function submitDesktopSessionInterjection(engine: any, opts: {
   context?: any;
 } = {}) {
   const {
-    sessionPath,
+    sessionId: requestedSessionId,
+    sessionPath: requestedSessionPath,
     text,
     images,
     imageAttachmentPaths,
@@ -348,7 +380,7 @@ export async function submitDesktopSessionInterjection(engine: any, opts: {
   if (!engine || typeof engine.ensureSessionLoaded !== "function" || typeof engine.steerSession !== "function") {
     throw new Error("desktop-session-submit: engine interjection API unavailable");
   }
-  if (!sessionPath) throw new Error("desktop-session-submit: sessionPath is required");
+  const { sessionId, sessionPath } = resolveDesktopSessionTarget(engine, requestedSessionId, requestedSessionPath);
   if (!text && !images?.length && !videos?.length && !audios?.length) throw new Error("desktop-session-submit: text, images, videos, or audios required");
 
   if (typeof engine.isSessionStreaming === "function" && !engine.isSessionStreaming(sessionPath)) {
@@ -359,8 +391,6 @@ export async function submitDesktopSessionInterjection(engine: any, opts: {
   if (!session) {
     throw new Error(`desktop-session-submit: failed to load session ${sessionPath}`);
   }
-  const sessionId = resolveSessionIdForPath(engine, sessionPath);
-
   if (uiContext !== undefined) {
     engine.setUiContext?.(sessionPath, uiContext ?? null);
   }
@@ -434,6 +464,7 @@ export async function submitDesktopSessionInterjection(engine: any, opts: {
       deskContext: displayMessage?.deskContext ?? null,
       source: displayMessage?.source || "desktop",
       bridgeSessionKey: displayMessage?.bridgeSessionKey || null,
+      origin: displayMessage?.origin || null,
     },
   }, sessionPath);
   queueVoiceInputTranscriptions({
@@ -449,9 +480,14 @@ export async function submitDesktopSessionInterjection(engine: any, opts: {
   if (context?.beforeUser) {
     promptText = `${context.beforeUser}\n\n${promptText}`;
   }
+  const reminderBlock = renderPendingReminderBlock(engine, sessionPath);
+  if (reminderBlock) {
+    promptText = `${reminderBlock.block}\n\n${promptText}`;
+  }
 
   const steered = engine.steerSession(sessionPath, promptText);
   if (!steered) throw new Error("session_busy");
+  consumeRenderedReminderBlock(engine, sessionPath, reminderBlock);
   // 来源元信息在 steer 成功后持久化，避免 steer 被拒绝时产生孤儿条目。
   // steerSession 同步返回，与 appendCustomEntry 之间无 await，紧邻性不受影响。
   // 契约：origin 条目注释其后第一条 user message（中间可能隔着在途 assistant 输出）。
@@ -616,6 +652,30 @@ function resolveSessionIdForPath(engine, sessionPath) {
   } catch {
     return null;
   }
+}
+
+function resolveDesktopSessionTarget(engine, requestedSessionId, requestedSessionPath) {
+  const sessionId = typeof requestedSessionId === "string" && requestedSessionId.trim()
+    ? requestedSessionId.trim()
+    : null;
+  const sessionPath = typeof requestedSessionPath === "string" && requestedSessionPath.trim()
+    ? requestedSessionPath
+    : null;
+
+  if (sessionId) {
+    const manifest = engine?.getSessionManifest?.(sessionId) || null;
+    const canonicalPath = manifest?.currentLocator?.path || null;
+    if (!canonicalPath) {
+      throw new Error(`desktop-session-submit: session not found for ${sessionId}`);
+    }
+    if (sessionPath && canonicalPath !== sessionPath) {
+      throw new Error("desktop-session-submit: session identity mismatch");
+    }
+    return { sessionId, sessionPath: canonicalPath };
+  }
+
+  if (!sessionPath) throw new Error("desktop-session-submit: sessionPath is required");
+  return { sessionId: resolveSessionIdForPath(engine, sessionPath), sessionPath };
 }
 
 function normalizeSessionFileRefs(refs, fallbackSessionPath, fallbackSessionId = null) {

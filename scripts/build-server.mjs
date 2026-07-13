@@ -48,6 +48,7 @@ import {
   buildBetterSqliteRuntimeSmokeScript,
   buildJiebaRuntimeSmokeScript,
   buildExternalPackage,
+  collectBareImportPackageNames,
   collectInstalledOptionalDependencyDirs,
   verifyExternalEntrypoints,
 } from "./build-server-deps.mjs";
@@ -56,6 +57,8 @@ import {
   copyBundledPluginRuntimeDependencies,
 } from "./build-server-plugin-runtime-deps.mjs";
 import { copyServerRuntimeAssets } from "./build-server-runtime-assets.mjs";
+import { pruneRuntimeDeadFiles } from "./build-server-prune.mjs";
+import { packDualKindSeed } from "./build-server-artifact.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -343,8 +346,9 @@ console.log("[build-server] resource files copied");
 
 // ── 4. External dependencies ──
 // 从 vite.config.server.js 的 external 列表自动派生需要安装的包。
-// 规则：external ∩ rootPkg.dependencies = 需要安装的包。
-// 这消除了手动维护两个列表导致的遗漏（如 #242 ws 缺失）。
+// 规则：string external 必须在 rootPkg.dependencies 中显式声明；RegExp external
+// 从 root dependencies 中匹配派生。这样打包产物的根 node_modules 解析契约是显式的，
+// 不依赖上游包嵌套依赖的安装形态。
 const rootPkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf-8"));
 
 // defineConfig 是纯 identity 函数，import 安全无副作用
@@ -362,7 +366,6 @@ for (const ext of viteExternals) {
   if (typeof ext === "string") {
     if (builtinSet.has(ext)) continue;
     if (deps[ext]) externalDeps[ext] = deps[ext];
-    // 不在 dependencies 中的（如 fsevents、photon-node）由 transitive 或 optional 提供
   } else if (ext instanceof RegExp) {
     for (const dep of Object.keys(deps)) {
       if (ext.test(dep)) externalDeps[dep] = deps[dep];
@@ -381,6 +384,20 @@ if (undeclaredPluginDeps.length > 0) {
   throw new Error(
     "[build-server] bundled plugin imports npm packages missing from root dependencies: "
       + undeclaredPluginDeps.join(", "),
+  );
+}
+
+const bundleExternalImports = collectBareImportPackageNames(
+  fs.readFileSync(path.join(bundleOutDir, "index.js"), "utf-8"),
+)
+  .filter((packageName) => !builtinSet.has(packageName));
+const missingBundleExternalDeps = bundleExternalImports
+  .filter((packageName) => !externalDeps[packageName]);
+if (missingBundleExternalDeps.length > 0) {
+  throw new Error(
+    "[build-server] server bundle imports external packages missing from packaged dependencies: "
+      + missingBundleExternalDeps.join(", ")
+      + ". Add them to root package.json dependencies.",
   );
 }
 
@@ -416,7 +433,7 @@ ensureNodePtySpawnHelperExecutable(outDir);
 
 // ── 5b. 验证所有 Vite external 在 node_modules 中可达 ──
 // 遍历 string 类型的 external，检查 node_modules 中是否存在。
-// RegExp external（如 /^@mariozechner\//）不在此检查范围内，
+// RegExp external（如 /^@mariozechner\// 与 /^@earendil-works\//）不在此检查范围内，
 // 因为匹配的包已通过派生逻辑显式安装或作为 transitive dep 存在。
 // platform-optional（fsevents）允许缺失，其余缺失说明 transitive 链断了。
 const OPTIONAL_EXTERNALS = new Set(["fsevents"]);
@@ -457,16 +474,37 @@ if (fs.existsSync(patchScript)) {
 // 符号链接指向构建机器的绝对路径，codesign 会报错
 // server 运行时不需要这些 CLI 工具
 function removeBinDirs(nmDir) {
-  const topBin = path.join(nmDir, ".bin");
-  if (fs.existsSync(topBin)) fs.rmSync(topBin, { recursive: true });
-  // 嵌套的 node_modules/.bin
-  for (const entry of fs.readdirSync(nmDir, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-    const nested = path.join(nmDir, entry.name, "node_modules", ".bin");
-    if (fs.existsSync(nested)) fs.rmSync(nested, { recursive: true });
+  let removedDirs = 0;
+
+  function walk(dir) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+
+      const full = path.join(dir, entry.name);
+      if (entry.name === ".bin" && path.basename(dir) === "node_modules") {
+        fs.rmSync(full, { recursive: true, force: true });
+        removedDirs++;
+        continue;
+      }
+
+      walk(full);
+    }
   }
+
+  walk(nmDir);
+  return removedDirs;
 }
-removeBinDirs(path.join(outDir, "node_modules"));
+const removedBinDirs = removeBinDirs(path.join(outDir, "node_modules"));
+if (removedBinDirs > 0) {
+  console.log(`[build-server] cleanup: removed ${removedBinDirs} node_modules/.bin director${removedBinDirs === 1 ? "y" : "ies"}`);
+}
 
 console.log("[build-server] dependencies installed");
 
@@ -659,6 +697,19 @@ if (fs.existsSync(exceljsDist)) {
   console.log("[build-server] cleanup: removed exceljs/dist/ (~21MB browser bundle)");
 }
 
+// ── 8e. 删除 node_modules 运行时死重文件 ──
+// nft 的 protectedDirs（Pi SDK 等 server 直接依赖）跳过了未追踪文件裁剪，
+// 其内嵌 vendored node_modules 带来数千个 .ts/.map/.md。这些扩展名在
+// node_modules 内运行时必然不读（Node 拒绝对 node_modules 做 type stripping，
+// 无 --enable-source-maps，SDK 运行时只读用户目录的 .md），按扩展名整体删除，
+// license/notice 类文件保留（第三方协议合规）。Windows NSIS 逐文件解压 +
+// Defender 逐文件扫描，文件数直接决定安装时长。
+{
+  const { removedFiles: prunedFiles, removedSize: prunedSize } = pruneRuntimeDeadFiles(nmDir);
+  const prunedMB = (prunedSize / 1024 / 1024).toFixed(1);
+  console.log(`[build-server] prune: removed ${prunedFiles} runtime-dead files from node_modules (${prunedMB}MB)`);
+}
+
 // ── 9. 更新 package.json ──
 // npm ci 之后 package.json 仍在，确保它包含 version 字段
 // fromRoot("package.json") 在运行时读取版本号
@@ -709,5 +760,27 @@ if (isWin) {
   fs.chmodSync(cliWrapper, 0o755);
 }
 console.log("[build-server] wrapper created");
+
+// ── 11. server + renderer 树 → 一份签名 seed 归档（双 artifact 管线）──
+// ⚠️ 顺序铁律：先签名，后装箱。Apple notary
+// 会递归解包 tar.gz 校验箱内每个 Mach-O，而 electron-builder 阶段的签名看
+// 不进归档内部；packDualKindSeed 在 packTree 之前对 server 树内 Mach-O 做
+// 签名（本地 ad-hoc codesign；æ­£å¼ CI 换 Developer ID 时必须保持同一顺序——
+// 把 Developer ID 签名步骤插到 packDualKindSeed 之前或替换其签名器实现，
+// 绝不允许"先装箱再签外壳"）。这一步必须是 build-server 的最后一步：server
+// 树在装箱后不允许再被任何步骤触碰。renderer 树（desktop/dist-renderer/）
+// 由 build:renderer 在本脚本之前产出（package.json 的 build:client 组合脚本
+// 保证顺序）；纯 web 静态资源，不需要签名，只做"不含 Mach-O"的断言。
+// HANA_SIGN_KEY 未设置时这里硬报错（安装包必须携带签名 seed）；本地验证用
+// artifact-keygen.mjs 生成一次性密钥对，配 HANA_SIGN_KEYSET 指向其 keyset。
+await packDualKindSeed({
+  outDir,
+  rendererDistDir: path.join(ROOT, "desktop", "dist-renderer"),
+  rendererArtifactOutDir: path.join(ROOT, "dist-renderer-artifact"),
+  artifactOutDir: path.join(ROOT, "dist-server-artifact", `${osDirName}-${arch}`),
+  version: rootPkg.version,
+  platform,
+  arch,
+});
 
 console.log("[build-server] Done!");

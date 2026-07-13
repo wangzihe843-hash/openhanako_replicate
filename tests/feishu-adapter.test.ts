@@ -13,6 +13,8 @@ const mockImageCreate = vi.fn();
 const mockFileCreate = vi.fn();
 const mockWsStart = vi.fn();
 const mockWsClose = vi.fn();
+const mockClientConstructorArgs: any[] = [];
+const mockWsConstructorArgs: any[] = [];
 
 let registeredHandlers: any = {};
 let mockWsInstances = [];
@@ -27,7 +29,8 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
 
   class MockWSClient {
     declare wsConfig: any;
-    constructor() {
+    constructor(args) {
+      mockWsConstructorArgs.push(args);
       this.wsConfig = { wsInstance: { readyState: 1 } };
       mockWsInstances.push(this);
     }
@@ -45,7 +48,8 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
     declare contact: any;
     declare cardkit: any;
     declare im: any;
-    constructor() {
+    constructor(args) {
+      mockClientConstructorArgs.push(args);
       this.contact = {
         user: {
           get: mockContactUserGet,
@@ -83,6 +87,7 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
 
   return {
     Client: MockClient,
+    Domain: { Feishu: 0, Lark: 1 },
     EventDispatcher: MockEventDispatcher,
     WSClient: MockWSClient,
     LoggerLevel: { warn: "warn" },
@@ -139,6 +144,8 @@ describe("createFeishuAdapter", () => {
     mockFileCreate.mockReset();
     mockWsStart.mockReset();
     mockWsClose.mockReset();
+    mockClientConstructorArgs.length = 0;
+    mockWsConstructorArgs.length = 0;
     moduleLoggerMock.log.mockClear();
     moduleLoggerMock.warn.mockClear();
     moduleLoggerMock.error.mockClear();
@@ -156,6 +163,55 @@ describe("createFeishuAdapter", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("uses the Feishu China domain by default for both REST and WebSocket clients", () => {
+    createFeishuAdapter({
+      appId: "app-id",
+      appSecret: "app-secret",
+      agentId: "hana",
+      onMessage: vi.fn(),
+    });
+
+    expect(mockClientConstructorArgs[0]).toMatchObject({
+      appId: "app-id",
+      appSecret: "app-secret",
+      domain: 0,
+    });
+    expect(mockWsConstructorArgs[0]).toMatchObject({
+      appId: "app-id",
+      appSecret: "app-secret",
+      domain: 0,
+    });
+  });
+
+  it("uses the Lark global domain for both REST and WebSocket clients when selected", () => {
+    const adapter = createFeishuAdapter({
+      appId: "app-id",
+      appSecret: "app-secret",
+      region: "lark_global",
+      agentId: "hana",
+      onMessage: vi.fn(),
+    });
+
+    expect(adapter).toMatchObject({
+      region: "lark_global",
+      domain: "https://open.larksuite.com",
+    });
+    expect(mockClientConstructorArgs[0]).toMatchObject({ domain: 1 });
+    expect(mockWsConstructorArgs[0]).toMatchObject({ domain: 1 });
+  });
+
+  it("rejects unsupported Feishu regions instead of falling back", () => {
+    expect(() => createFeishuAdapter({
+      appId: "app-id",
+      appSecret: "app-secret",
+      region: "unknown-region",
+      agentId: "hana",
+      onMessage: vi.fn(),
+    })).toThrow(/unsupported Feishu region/);
+    expect(mockClientConstructorArgs).toHaveLength(0);
+    expect(mockWsConstructorArgs).toHaveLength(0);
   });
 
   it("keeps monitoring the Feishu websocket after the initial connection", async () => {

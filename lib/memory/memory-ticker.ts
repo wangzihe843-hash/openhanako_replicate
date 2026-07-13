@@ -1,12 +1,30 @@
 /**
- * memory-ticker.js — 记忆调度器（v3）
+ * memory-ticker.js — 记忆调度器（v4：按天滚动记忆传送带 + today 水位线增量）
  *
  * 触发机制改为 turn-based：
  * - 每 10 轮：滚动摘要 + compileToday + assemble
  * - session 结束：final 滚动摘要 + compileToday + assemble
- * - 每天一次（日期变化时触发）：compileWeek + compileLongterm + compileFacts + assemble + deep-memory
+ * - 每天一次（日期变化时触发）：compileDaily（把昨天最终版 today 草稿蒸馏成日记）
+ *   + compileToday（今日水位线增量，日期切换后重置草稿）+ rollDailyWindow（滚出
+ *   窗口的 daily 条目 fold 进 longterm）+ compileEditableFacts + assemble（含
+ *   assembleWeekFromDaily 纯文件装配 week.md）+ deep-memory
+ *
+ * compileDaily 必须先于 compileToday 执行：compileDaily 读取的是"昨天最终版
+ * today.md 草稿"，这份草稿在日期切换前仍然躺在 todayMdPath 里；compileToday
+ * 一旦先跑，日期切换会把 today.md 重置成新一天的空白草稿，昨天的内容就再也
+ * 读不到了。
  *
  * session 关闭记忆时，整条记忆流水线都应跳过，避免被写入 summary/facts。
+ *
+ * facts.md 是唯一的 facts 产物：曾经的 `memory.editable_facts` 实验已毕业，
+ * 增量编译（compileEditableFacts）是唯一路径。创建 ticker 时会先跑一次幂等的
+ * 读时迁移，把 alpha 阶段遗留的 editable-facts.md 并入 facts.md。
+ *
+ * week 段不再是独立 LLM 编译产物：旧版 compileWeek（过去 7 天摘要整周编译）已
+ * 退役，week.md 改为从 memory/daily/ 目录纯文件装配最近 6 个已结束逻辑日的日记条目
+ * （assembleWeekFromDaily，零 LLM）。创建 ticker 时会先跑一次幂等的读时迁移
+ * （migrateLegacyWeekToLongterm），把旧版 week.md 整段 fold 进 longterm 一次，
+ * daily 传送带自迁移日起独立积累。
  */
 
 import fs from "fs";
@@ -15,16 +33,17 @@ import crypto from "crypto";
 import { debugLog, createModuleLogger } from "../debug-log.ts";
 import {
   compileToday,
-  compileWeek,
-  compileLongterm,
-  compileFacts,
+  compileDaily,
+  assembleWeekFromDaily,
+  rollDailyWindow,
   compileEditableFacts,
   assemble,
-  editableFactsPath,
   ensureEditableFactsBaseline,
+  migrateLegacyEditableFacts,
+  migrateLegacyWeekToLongterm,
 } from "./compile.ts";
 import { processDirtySessions } from "./deep-memory.ts";
-import { getLogicalDay } from "../time-utils.ts";
+import { getLogicalDay, shiftLogicalDate } from "../time-utils.ts";
 import { readCompiledResetAt } from "./compiled-memory-state.ts";
 import { listSessionFiles, readSessionMessages, sessionIdFromFilename } from "../session-jsonl.ts";
 import { isAgentPhoneSessionPath } from "../conversations/agent-phone-session.ts";
@@ -40,8 +59,16 @@ const log = createModuleLogger("memory-ticker");
 const TURNS_PER_SUMMARY = 10;   // 每隔多少轮触发一次滚动摘要
 const CACHE_SNAPSHOT_PREVIEW_LIMIT = 16_000;
 const DAILY_STATE_FILE = "daily-state.json";
-const DAILY_STATE_SCHEMA_VERSION = 1;
-const DAILY_STEP_KEYS = ["compileToday", "compileWeek", "compileLongterm", "compileFacts", "deepMemory"];
+// v3：week 段 LLM 编译（compileWeek/compileLongterm-from-week）退役，
+// 换成 compileDaily（编译昨天）+ rollDailyWindow（滚出窗口的 daily fold 进
+// longterm）。步骤名变化，版本号提升让旧 schema 的持久化状态被判定为不匹配，
+// 走一次性重算（幂等，不会重复计费）。
+// v4：compileToday 改水位线增量（今日记忆 P3），compileDaily 的输入从"当天全部
+// 摘要"改为"昨天最终版今日草稿"——两步的执行顺序也随之对调（compileDaily 必须
+// 先于 compileToday 跑，否则昨天的草稿会先被 compileToday 的日期切换重置清空）。
+// 步骤内部语义变了，版本号提升让旧 schema 的断点续跑状态失效，走一次性重算。
+const DAILY_STATE_SCHEMA_VERSION = 4;
+const DAILY_STEP_KEYS = ["compileDaily", "compileToday", "rollDailyWindow", "compileFacts", "deepMemory"];
 
 // ── 主调度器 ──
 
@@ -64,10 +91,10 @@ const DAILY_STEP_KEYS = ["compileToday", "compileWeek", "compileLongterm", "comp
  * @param {(sessionPath: string) => boolean} [opts.isSessionMemoryEnabled] - 返回指定 session 的记忆状态
  * @param {function} [opts.getTimezone] - 返回用户配置时区
  * @param {function} [opts.getCacheSnapshotReflectionMode] - retired; runtime is hard-gated to off
- * @param {function} [opts.getEditableMemoryEnabled] - 返回可编辑 Facts 实验开关
  * @param {(sessionPath: string) => object|null} [opts.readMemoryReflectionSnapshot] - 返回 session 创建时冻结的记忆反思快照
- * @param {string} [opts.agentId] - 当前 agent id，用于实验观察产物归属
+ * @param {string} [opts.agentId] - 当前 agent id；启用 envChangeLedger 时也是 reminder 归属的必填项
  * @param {string} [opts.agentDir] - 当前 agent 数据目录，用于实验观察产物落盘
+ * @param {import('../../core/env-change-ledger.ts').EnvChangeLedger} [opts.envChangeLedger] - 进程内环境变更台账
  */
 export function createMemoryTicker(opts) {
   const {
@@ -86,16 +113,24 @@ export function createMemoryTicker(opts) {
     getMemoryMasterEnabled,
     isSessionMemoryEnabled,
     getTimezone,
-    getEditableMemoryEnabled,
     readMemoryReflectionSnapshot,
     memoryReflectionRunner,
     buildSessionCacheSnapshot,
     ensureSessionLoaded,
     getSessionStreamFn,
     getSessionIdForPath,
+    envChangeLedger,
     memoryDir = path.dirname(memoryMdPath),
   } = opts;
   const _memoryReflectionRunner = memoryReflectionRunner || { runMemoryReflection: defaultRunMemoryReflection };
+
+  // 一次性、幂等的读时迁移：把 alpha 阶段遗留的 editable-facts.md 并入 facts.md。
+  // 必须早于 assemble/compileEditableFacts 首次读取 facts.md 之前跑完。
+  try {
+    migrateLegacyEditableFacts(memoryDir);
+  } catch (err) {
+    log.error(`facts.md 迁移失败: ${err.message}`);
+  }
 
   /** agent 级总开关 */
   const _isMemoryMasterOn = () => !getMemoryMasterEnabled || getMemoryMasterEnabled();
@@ -116,14 +151,45 @@ export function createMemoryTicker(opts) {
   const _getCacheSnapshotReflectionMode = () => {
     return "off";
   };
-  const _isEditableMemoryOn = () => getEditableMemoryEnabled?.() === true;
   const _factsSourcePath = () => {
-    if (!_isEditableMemoryOn()) return factsMdPath;
     ensureEditableFactsBaseline(memoryDir, summaryManager, {
-      seedFactsPath: factsMdPath,
+      outputPath: factsMdPath,
     });
-    return editableFactsPath(memoryDir);
+    return factsMdPath;
   };
+  const _readFactsLines = () => {
+    try {
+      return fs.readFileSync(factsMdPath, "utf-8")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+    } catch (err) {
+      return err?.code === "ENOENT" ? [] : null;
+    }
+  };
+  const _recordNewFactLines = (beforeLines) => {
+    if (!envChangeLedger || !Array.isArray(beforeLines)) return;
+    const afterLines = _readFactsLines();
+    if (!Array.isArray(afterLines)) return;
+    const before = new Set(beforeLines);
+    const seen = new Set();
+    const addedLines = afterLines.filter((line) => {
+      if (before.has(line) || seen.has(line)) return false;
+      seen.add(line);
+      return true;
+    }).slice(0, 5);
+    if (addedLines.length === 0) return;
+    const reminderAgentId = typeof agentId === "string" ? agentId.trim() : "";
+    if (!reminderAgentId) {
+      throw new Error("memory fact reminder requires an explicit agentId");
+    }
+    envChangeLedger.append({
+      type: "memory_facts",
+      scope: { kind: "agent", agentId: reminderAgentId },
+      payload: { addedLines },
+    });
+  };
+  const _dailyDir = () => path.join(memoryDir, "daily");
   const _createSourceTimeRangeResolver = () => {
     const filesById = new Map(
       listSessionFiles(sessionDir).map((entry) => [_sessionIdentityForPath(entry.filePath), entry.filePath]),
@@ -156,7 +222,7 @@ export function createMemoryTicker(opts) {
   let _dailyRunning = false;
   let _lastDailyJobDate = null;
   let _dailyStepsDate = null;               // 当天已完成步骤所属日期
-  let _dailyStepsContextKey = null;          // 日期 + resetAt + factsMode，防止同日配置变更误跳过
+  let _dailyStepsContextKey = null;          // 日期 + resetAt，防止同日 reset 变更误跳过
   let _dailyCompletedAt = null;
   const _dailyStepsCompleted = new Set();    // 当天已完成的步骤名（断点续跑）
   const _dailyStepCompletedAt = new Map();   // stepName → ISO timestamp
@@ -187,7 +253,7 @@ export function createMemoryTicker(opts) {
 
   // ── 步骤健康状态：每步独立记录，方便 UI 层 / healthz 接口读取 ──
   // 注意：failCount 只在连续失败时递增，一次成功立即清零
-  const _stepKeys = ["rollingSummary", "compileToday", "compileWeek", "compileLongterm", "compileFacts", "deepMemory"];
+  const _stepKeys = ["rollingSummary", "compileToday", "compileDaily", "rollDailyWindow", "compileFacts", "deepMemory"];
   const _health = {};
   for (const k of _stepKeys) {
     _health[k] = { lastSuccessAt: null, lastErrorAt: null, lastErrorMsg: null, failCount: 0 };
@@ -229,20 +295,15 @@ export function createMemoryTicker(opts) {
     return new Date(value).toISOString();
   }
 
-  function _dailyFactsMode() {
-    return _isEditableMemoryOn() ? "editable" : "legacy";
-  }
-
   function _dailyContext(logicalDate = getLogicalDay().logicalDate) {
     return {
       logicalDate,
       resetAt: _normalizeResetAt(_getCompiledResetAt()),
-      factsMode: _dailyFactsMode(),
     };
   }
 
   function _dailyContextKey(context) {
-    return [context.logicalDate, context.resetAt || "", context.factsMode].join("\n");
+    return [context.logicalDate, context.resetAt || ""].join("\n");
   }
 
   function _isValidIso(value) {
@@ -260,7 +321,6 @@ export function createMemoryTicker(opts) {
       return {
         logicalDate: typeof raw.logicalDate === "string" ? raw.logicalDate : "",
         resetAt: _normalizeResetAt(raw.resetAt),
-        factsMode: raw.factsMode === "editable" ? "editable" : "legacy",
         completedSteps,
         dailyCompletedAt: _isValidIso(raw.dailyCompletedAt) ? new Date(raw.dailyCompletedAt).toISOString() : null,
       };
@@ -275,8 +335,7 @@ export function createMemoryTicker(opts) {
   function _stateMatchesContext(state, context) {
     return Boolean(state)
       && state.logicalDate === context.logicalDate
-      && state.resetAt === context.resetAt
-      && state.factsMode === context.factsMode;
+      && state.resetAt === context.resetAt;
   }
 
   function _allDailyStepsCompleted() {
@@ -328,7 +387,6 @@ export function createMemoryTicker(opts) {
       schemaVersion: DAILY_STATE_SCHEMA_VERSION,
       logicalDate: context.logicalDate,
       resetAt: context.resetAt,
-      factsMode: context.factsMode,
       completedSteps,
       dailyCompletedAt: _dailyCompletedAt,
       updatedAt: new Date().toISOString(),
@@ -614,7 +672,7 @@ export function createMemoryTicker(opts) {
       if (memoryReflectionSnapshot) {
         rollingOptions.memoryReflectionSnapshot = memoryReflectionSnapshot;
       }
-      const resolvedModel = getResolvedMemoryModel();
+      const resolvedModel = await getResolvedMemoryModel();
       const cacheSnapshotMode = _getCacheSnapshotReflectionMode();
       if (cacheSnapshotMode === "write") {
         try {
@@ -668,7 +726,7 @@ export function createMemoryTicker(opts) {
   async function _doCompileTodayAndAssemble() {
     try {
       const resetAt = _getCompiledResetAt();
-      await compileToday(summaryManager, todayMdPath, getResolvedMemoryModel(), { since: resetAt });
+      await compileToday(summaryManager, todayMdPath, await getResolvedMemoryModel(), { since: resetAt });
       assemble(_factsSourcePath(), todayMdPath, weekMdPath, longtermMdPath, memoryMdPath);
       onCompiled?.();
       debugLog()?.log("memory", "today compiled + assembled");
@@ -693,10 +751,41 @@ export function createMemoryTicker(opts) {
       log.log(`每日任务开始 (${todayStr})`);
       let hasFailed = false;
 
-      // Step 0: compileToday（日期切换后刷新 today.md，新一天无 session 时会清空）
+      // Step -1（不计入断点续跑）：一次性迁移旧 week.md 到 longterm。幂等——
+      // week.md 迁移后被更名为 .migrated.bak，之后每次调用都会因文件不存在而 no-op，
+      // 不需要独立 checkpoint。必须早于本函数末尾的 assemble（读 weekMdPath）之前跑完。
+      try {
+        await migrateLegacyWeekToLongterm(memoryDir, longtermMdPath, await getResolvedMemoryModel());
+      } catch (err) {
+        hasFailed = true;
+        log.error(`week.md 迁移失败: ${err.message}`);
+      }
+
+      // Step 0: compileDaily——把已经翻篇的昨天蒸馏成 memory/daily/{date}.md。
+      // 必须先于 Step 1 的 compileToday 执行：compileDaily 读取的"昨天最终版今日草稿"
+      // 就是这一刻仍躺在 todayMdPath 里的内容——一旦 compileToday 先跑，日期切换会
+      // 把 today.md 重置为新一天的空白草稿，昨天的草稿就再也读不到了。
+      if (!_dailyStepsCompleted.has("compileDaily")) {
+        try {
+          const yesterday = shiftLogicalDate(todayStr, -1);
+          await compileDaily(summaryManager, _dailyDir(), yesterday, await getResolvedMemoryModel(), {
+            since: resetAt,
+            todayDraftPath: todayMdPath,
+          });
+          _markDailyStepCompleted("compileDaily", context);
+          _markSuccess("compileDaily");
+          _markStepRecovered("compileDaily");
+        } catch (err) {
+          hasFailed = true;
+          _markFailure("compileDaily", err);
+          _logStepError("compileDaily", err);
+        }
+      }
+
+      // Step 1: compileToday（日期切换后刷新 today.md，新一天无 session 时会清空）
       if (!_dailyStepsCompleted.has("compileToday")) {
         try {
-          await compileToday(summaryManager, todayMdPath, getResolvedMemoryModel(), { since: resetAt });
+          await compileToday(summaryManager, todayMdPath, await getResolvedMemoryModel(), { since: resetAt });
           _markDailyStepCompleted("compileToday", context);
           _markSuccess("compileToday");
           _markStepRecovered("compileToday(daily)");
@@ -707,45 +796,35 @@ export function createMemoryTicker(opts) {
         }
       }
 
-      // Step 1: compileWeek
-      if (!_dailyStepsCompleted.has("compileWeek")) {
+      // Step 2: rollDailyWindow——把滚出 6 日窗口的 daily 条目 fold 进 longterm 并删除源文件。
+      // 依赖 compileDaily 已经把昨天落盘，否则窗口判断会漏看最新一天（虽然滚动窗口本身
+      // 判断的是"更早"的条目，但保持与 compileWeek→compileLongterm 相同的顺序约束更安全）。
+      if (!_dailyStepsCompleted.has("rollDailyWindow") && _dailyStepsCompleted.has("compileDaily")) {
         try {
-          await compileWeek(summaryManager, weekMdPath, getResolvedMemoryModel(), { since: resetAt });
-          _markDailyStepCompleted("compileWeek", context);
-          _markSuccess("compileWeek");
-          _markStepRecovered("compileWeek");
+          const { failed } = await rollDailyWindow(_dailyDir(), longtermMdPath, await getResolvedMemoryModel(), {
+            referenceDate: todayStr,
+          });
+          if (failed.length > 0) {
+            throw new Error(`${failed.length} 份 daily 条目 fold 进 longterm 失败: ${failed.join(", ")}`);
+          }
+          _markDailyStepCompleted("rollDailyWindow", context);
+          _markSuccess("rollDailyWindow");
+          _markStepRecovered("rollDailyWindow");
         } catch (err) {
           hasFailed = true;
-          _markFailure("compileWeek", err);
-          _logStepError("compileWeek", err);
+          _markFailure("rollDailyWindow", err);
+          _logStepError("rollDailyWindow", err);
         }
       }
 
-      // Step 2: compileLongterm（依赖 compileWeek 产出的 week.md，必须等 compileWeek 完成）
-      if (!_dailyStepsCompleted.has("compileLongterm") && _dailyStepsCompleted.has("compileWeek")) {
-        try {
-          await compileLongterm(weekMdPath, longtermMdPath, getResolvedMemoryModel());
-          _markDailyStepCompleted("compileLongterm", context);
-          _markSuccess("compileLongterm");
-          _markStepRecovered("compileLongterm");
-        } catch (err) {
-          hasFailed = true;
-          _markFailure("compileLongterm", err);
-          _logStepError("compileLongterm", err);
-        }
-      }
-
-      // Step 3: compileFacts（独立于 step 1-2）
+      // Step 3: compileFacts（独立于 step 1-2）——恒走增量编译，facts.md 是唯一产物
       if (!_dailyStepsCompleted.has("compileFacts")) {
         try {
-          if (_isEditableMemoryOn()) {
-            await compileEditableFacts(summaryManager, editableFactsPath(memoryDir), getResolvedMemoryModel(), {
-              since: resetAt,
-              seedFactsPath: factsMdPath,
-            });
-          } else {
-            await compileFacts(summaryManager, factsMdPath, getResolvedMemoryModel(), { since: resetAt });
-          }
+          const factsBefore = _readFactsLines();
+          await compileEditableFacts(summaryManager, factsMdPath, await getResolvedMemoryModel(), {
+            since: resetAt,
+          });
+          _recordNewFactLines(factsBefore);
           _markDailyStepCompleted("compileFacts", context);
           _markSuccess("compileFacts");
           _markStepRecovered("compileFacts");
@@ -756,8 +835,9 @@ export function createMemoryTicker(opts) {
         }
       }
 
-      // Step 4: assemble（纯文件操作，用已有的 .md 文件组装，总是执行）
+      // Step 4: assemble（纯文件操作，先从 daily/ 目录装配 week.md 再拼 memory.md，总是执行）
       try {
+        assembleWeekFromDaily(_dailyDir(), weekMdPath);
         assemble(_factsSourcePath(), todayMdPath, weekMdPath, longtermMdPath, memoryMdPath);
         onCompiled?.();
       } catch (err) {
@@ -769,7 +849,7 @@ export function createMemoryTicker(opts) {
       if (!_dailyStepsCompleted.has("deepMemory")) {
         try {
           const { processed, factsAdded } = await processDirtySessions(
-            summaryManager, factStore, getResolvedMemoryModel(), {
+            summaryManager, factStore, await getResolvedMemoryModel(), {
               since: resetAt,
               timeZone: _getTimezone(),
               getSourceTimeRange: _createSourceTimeRangeResolver(),

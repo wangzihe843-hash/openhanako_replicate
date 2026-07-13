@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store';
 import { t, autoSaveConfig } from '../helpers';
 import { hanaFetch } from '../api';
-import { Toggle } from '../widgets/Toggle';
+import { Toggle } from '@/ui';
 import { AgentSelect } from './bridge/AgentSelect';
 import { BridgePermissionModeSelect, type BridgePermissionMode } from './bridge/BridgeWidgets';
 import { SettingsSection } from '../components/SettingsSection';
@@ -28,6 +28,8 @@ type AgentDeskConfig = {
   workspace_context: {
     inject_agents_md: boolean;
     inject_claude_md: boolean;
+    discover_project_skills: boolean;
+    discover_compatible_project_skills: boolean;
   };
 };
 
@@ -45,6 +47,8 @@ function deskFromConfig(data: Record<string, any>): AgentDeskConfig {
     workspace_context: {
       inject_agents_md: data.workspace_context?.inject_agents_md === true,
       inject_claude_md: data.workspace_context?.inject_claude_md === true,
+      discover_project_skills: data.workspace_context?.discover_project_skills !== false,
+      discover_compatible_project_skills: data.workspace_context?.discover_compatible_project_skills === true,
     },
   };
 }
@@ -278,7 +282,7 @@ export function WorkTab() {
 
       {/* ── Per-agent section（AgentSelect 作为 context，section 内所有配置针对该 agent） ── */}
       <SettingsSection
-        title="Agent 工作台设置"
+        title={t('settings.work.agentDeskSection')}
         context={<AgentSelect value={selectedAgentId} onChange={setSelectedAgentId} />}
       >
         {agentDesk && (
@@ -416,6 +420,39 @@ export function WorkTab() {
                   on={agentDesk.workspace_context.inject_claude_md}
                   onChange={(on) => toggleWorkspaceContext('inject_claude_md', on)}
                   ariaLabel={t('settings.work.injectClaudeMd')}
+                />
+              }
+            />
+          </>
+        )}
+      </SettingsSection>
+
+      <SettingsSection
+        title={t('settings.work.projectSkillsTitle')}
+        description={t('settings.work.projectSkillsDesc')}
+        context={<AgentSelect value={selectedAgentId} onChange={setSelectedAgentId} />}
+      >
+        {agentDesk && (
+          <>
+            <SettingsRow
+              label={t('settings.work.discoverProjectSkills')}
+              hint={t('settings.work.discoverProjectSkillsDesc')}
+              control={
+                <Toggle
+                  on={agentDesk.workspace_context.discover_project_skills}
+                  onChange={(on) => toggleWorkspaceContext('discover_project_skills', on)}
+                  ariaLabel={t('settings.work.discoverProjectSkills')}
+                />
+              }
+            />
+            <SettingsRow
+              label={t('settings.work.discoverCompatibleProjectSkills')}
+              hint={t('settings.work.discoverCompatibleProjectSkillsDesc')}
+              control={
+                <Toggle
+                  on={agentDesk.workspace_context.discover_compatible_project_skills}
+                  onChange={(on) => toggleWorkspaceContext('discover_compatible_project_skills', on)}
+                  ariaLabel={t('settings.work.discoverCompatibleProjectSkills')}
                 />
               }
             />

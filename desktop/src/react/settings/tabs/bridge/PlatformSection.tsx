@@ -2,10 +2,10 @@
  * Generic platform configuration section for Bridge settings.
  * Eliminates per-platform copy-paste by accepting credential fields declaratively.
  */
-import React from 'react';
+import React, { useRef } from 'react';
 import { t } from '../../helpers';
+import { SelectWidget, Toggle, type SelectOption } from '@/ui';
 import { KeyInput } from '../../widgets/KeyInput';
-import { Toggle } from '../../widgets/Toggle';
 import { BridgeStatusDot, BridgeStatusText, OwnerSelect } from './BridgeWidgets';
 import type { KnownUser } from './BridgeWidgets';
 import { SettingsSection } from '../../components/SettingsSection';
@@ -17,9 +17,11 @@ import styles from '../../Settings.module.css';
 export interface CredentialField {
   key: string;
   label: string;
-  type: 'text' | 'secret';
+  type: 'text' | 'secret' | 'select';
   value: string;
   onChange: (v: string) => void;
+  placeholder?: string;
+  options?: SelectOption[];
 }
 
 interface PlatformSectionProps {
@@ -54,6 +56,35 @@ export function PlatformSection({
   children,
 }: PlatformSectionProps) {
   const lastFieldIndex = credentialFields.length - 1;
+  const skipNextCredentialBlurRef = useRef(false);
+
+  const handleCredentialBlur = (event: React.FocusEvent<HTMLElement>) => {
+    const nextTarget = event.relatedTarget;
+    if (
+      nextTarget instanceof Element
+      && nextTarget.closest('[data-bridge-test-control="true"]')
+    ) {
+      skipNextCredentialBlurRef.current = false;
+      return;
+    }
+    if (skipNextCredentialBlurRef.current) {
+      skipNextCredentialBlurRef.current = false;
+      return;
+    }
+    onCredentialBlur?.();
+  };
+
+  const markTestIntent = () => {
+    // Pointer activation moves focus out of the input before click. Skip that
+    // one blur-save so a candidate credential is tested before it can replace
+    // the currently working saved credential.
+    skipNextCredentialBlurRef.current = true;
+  };
+
+  const handleTest = () => {
+    skipNextCredentialBlurRef.current = false;
+    onTest();
+  };
 
   // status === undefined 表示 b.status 还没加载完，Toggle 走加载态；
   // 加载完成但本平台未配置时 status.enabled 可能是 false/undefined，统一显示关。
@@ -64,7 +95,7 @@ export function PlatformSection({
     <div className="bridge-platform-header" style={{ margin: 0 }}>
       <BridgeStatusDot status={status?.status} />
       <BridgeStatusText status={status?.status} error={status?.error} />
-      <Toggle on={toggleOn} onChange={onToggle} />
+      <Toggle on={toggleOn} onChange={onToggle} ariaLabel={`${title}: ${t('settings.bridge.connectionToggle')}`} />
     </div>
   );
 
@@ -72,19 +103,29 @@ export function PlatformSection({
     <SettingsSection title={title} context={statusContext}>
       {credentialFields.map((field, idx) => {
         const isLast = idx === lastFieldIndex;
-        const input = field.type === 'secret' ? (
+        const input = field.type === 'select' ? (
+          <SelectWidget
+            value={field.value}
+            onChange={field.onChange}
+            options={field.options || []}
+          />
+        ) : field.type === 'secret' ? (
           <div className="bridge-input-row">
             <KeyInput
               value={field.value}
               onChange={field.onChange}
-              placeholder=""
-              onBlur={onCredentialBlur}
+              placeholder={field.placeholder || ''}
+              ariaLabel={field.label}
+              onBlur={handleCredentialBlur}
             />
             {isLast && (
               <button
                 className="bridge-test-btn"
                 disabled={testing}
-                onClick={onTest}
+                aria-label={`${title}: ${t('settings.bridge.test')}`}
+                data-bridge-test-control="true"
+                onPointerDown={markTestIntent}
+                onClick={handleTest}
               >
                 {testing ? '...' : t('settings.bridge.test')}
               </button>
@@ -96,13 +137,17 @@ export function PlatformSection({
               className={styles['settings-input']}
               type="text"
               value={field.value}
+              aria-label={field.label}
               onChange={(e) => field.onChange(e.target.value)}
-              onBlur={onCredentialBlur}
+              onBlur={handleCredentialBlur}
             />
             <button
               className="bridge-test-btn"
               disabled={testing}
-              onClick={onTest}
+              aria-label={`${title}: ${t('settings.bridge.test')}`}
+              data-bridge-test-control="true"
+              onPointerDown={markTestIntent}
+              onClick={handleTest}
             >
               {testing ? '...' : t('settings.bridge.test')}
             </button>
@@ -112,8 +157,9 @@ export function PlatformSection({
             className={styles['settings-input']}
             type="text"
             value={field.value}
+            aria-label={field.label}
             onChange={(e) => field.onChange(e.target.value)}
-            onBlur={onCredentialBlur}
+            onBlur={handleCredentialBlur}
           />
         );
 

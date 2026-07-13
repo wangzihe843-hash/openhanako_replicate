@@ -24,7 +24,7 @@ import {
   getAgentDir,
   truncateHead,
   truncateLine,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 const DEFAULT_GREP_LIMIT = 100;
 const DEFAULT_FIND_LIMIT = 1000;

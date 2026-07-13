@@ -147,6 +147,8 @@ describe('ws-message-handler session-scoped desktop events', () => {
   beforeEach(() => {
     useStore.setState({
       currentSessionPath: '/session/a.jsonl',
+      currentSessionId: null,
+      sessionLocatorsById: {},
       pendingNewSession: false,
       sessions: [{
         path: '/session/a.jsonl',
@@ -187,6 +189,67 @@ describe('ws-message-handler session-scoped desktop events', () => {
     expect(first.data.text).toBe('hello from bridge');
     expect(first.data.quotedText).toBe('quote');
     expect(first.data.attachments).toEqual([{ path: '/tmp/a.png', name: 'a.png', isDir: false }]);
+  });
+
+  it('drops a websocket event whose sessionId is already bound to a different known path (#2078)', () => {
+    useStore.setState({
+      currentSessionId: 'sess_a',
+      currentSessionPath: '/session/a.jsonl',
+      sessions: [
+        { path: '/session/a.jsonl', sessionId: 'sess_a', agentId: 'a1', agentName: 'Hana' },
+        { path: '/session/b.jsonl', sessionId: 'sess_b', agentId: 'a1', agentName: 'Hana' },
+      ],
+      sessionLocatorsById: {
+        sess_a: { path: '/session/a.jsonl' },
+        sess_b: { path: '/session/b.jsonl' },
+      },
+      streamingSessions: [],
+      activeSessionStreams: {},
+    } as never);
+
+    handleServerMessage({
+      type: 'status',
+      sessionId: 'sess_a',
+      sessionPath: '/session/b.jsonl',
+      streamId: 'stream-wrong',
+      isStreaming: true,
+    });
+
+    expect(useStore.getState().streamingSessions).toEqual([]);
+    expect(useStore.getState().sessionLocatorsById.sess_a).toEqual({ path: '/session/a.jsonl' });
+  });
+
+  it('session_user_message 透传 origin 到 store 里的 ChatMessage.origin', () => {
+    handleServerMessage({
+      type: 'session_user_message',
+      sessionPath: '/session/a.jsonl',
+      message: {
+        text: '干净正文',
+        origin: { kind: 'agent', agentId: 'hana', agentName: 'Hana' },
+      },
+    });
+
+    const items = useStore.getState().chatSessions['/session/a.jsonl']?.items || [];
+    const first = items[0];
+    expect(first?.type).toBe('message');
+    if (!first || first.type !== 'message') throw new Error('expected message item');
+    expect(first.data.origin).toEqual({ kind: 'agent', agentId: 'hana', agentName: 'Hana' });
+  });
+
+  it('session_user_message 无 origin 字段时不在 ChatMessage 上生成 origin', () => {
+    handleServerMessage({
+      type: 'session_user_message',
+      sessionPath: '/session/a.jsonl',
+      message: {
+        text: 'hello from bridge no origin',
+      },
+    });
+
+    const items = useStore.getState().chatSessions['/session/a.jsonl']?.items || [];
+    const first = items[0];
+    expect(first?.type).toBe('message');
+    if (!first || first.type !== 'message') throw new Error('expected message item');
+    expect(first.data.origin).toBeUndefined();
   });
 
   it('session_user_message 保存附件-only 消息时不生成 textHtml', () => {
@@ -246,7 +309,7 @@ describe('ws-message-handler session-scoped desktop events', () => {
     expect(first.data.sendStatus).toBeUndefined();
   });
 
-  it('session_user_message uses sessionId from the event when the session path moved before refresh', () => {
+  it('drops an ordinary stream event that tries to move a known sessionId to an unknown new path', () => {
     const sessionId = 'sess_ws_moved';
     const oldPath = '/session/old-a.jsonl';
     const newPath = '/session/new-a.jsonl';
@@ -285,15 +348,8 @@ describe('ws-message-handler session-scoped desktop events', () => {
     });
 
     const state = useStore.getState();
-    expect(state.sessionLocatorsById[sessionId]).toEqual({ path: newPath });
-    expect(state.chatSessions[sessionId]?.items).toHaveLength(1);
-    expect(state.chatSessions[sessionId]?.items[0]).toMatchObject({
-      type: 'message',
-      data: {
-        id: 'moved-u1',
-        text: 'moved path event',
-      },
-    });
+    expect(state.sessionLocatorsById[sessionId]).toEqual({ path: oldPath });
+    expect(state.chatSessions[sessionId]?.items).toHaveLength(0);
     expect(state.chatSessions[newPath]).toBeUndefined();
   });
 
@@ -339,6 +395,12 @@ describe('ws-message-handler session-scoped desktop events', () => {
 
   it('session_created 乐观插入后延迟刷新 session 列表，避免同一波事件重复全量拉取', async () => {
     vi.useFakeTimers();
+    useStore.setState({
+      sessionLocatorsById: {
+        ...useStore.getState().sessionLocatorsById,
+        sess_ws_created: { path: '/session/creation-reservation.jsonl' },
+      },
+    } as never);
 
     handleServerMessage({
       type: 'session_created',
@@ -849,6 +911,8 @@ describe('ws-message-handler compaction lifecycle', () => {
       contextWindow: null,
       contextPercent: null,
       contextBySession: {},
+      sessionLocatorsById: {},
+      toasts: [],
     } as never);
   });
 
@@ -881,6 +945,65 @@ describe('ws-message-handler compaction lifecycle', () => {
       window: 200_000,
       percent: null,
     });
+  });
+
+  it('routes lifecycle by sessionId without trusting stale path metadata as locator truth', () => {
+    useStore.setState({
+      sessionLocatorsById: {
+        sess_b: { path: '/session/current-b.jsonl' },
+      },
+    } as never);
+
+    handleServerMessage({
+      type: 'compaction_start',
+      sessionId: 'sess_b',
+      sessionPath: '/session/stale-a.jsonl',
+      reason: 'manual',
+    });
+
+    expect(useStore.getState().compactingSessions).toEqual(['sess_b']);
+    expect(useStore.getState().sessionLocatorsById.sess_b).toEqual({ path: '/session/current-b.jsonl' });
+
+    handleServerMessage({
+      type: 'compaction_end',
+      sessionId: 'sess_b',
+      sessionPath: '/session/stale-a.jsonl',
+      tokens: 20_000,
+      contextWindow: 200_000,
+      percent: 10,
+    });
+
+    expect(useStore.getState().compactingSessions).toEqual([]);
+    expect(useStore.getState().contextBySession.sess_b).toEqual({
+      tokens: 20_000,
+      window: 200_000,
+      percent: 10,
+    });
+    expect(useStore.getState().sessionLocatorsById.sess_b).toEqual({ path: '/session/current-b.jsonl' });
+  });
+
+  it('tracks accepted and clears succeeded results by sessionId', () => {
+    handleServerMessage({ type: 'compaction_accepted', sessionId: 'sess_a' });
+    expect(useStore.getState().compactingSessions).toEqual(['sess_a']);
+
+    handleServerMessage({ type: 'compaction_result', sessionId: 'sess_a', status: 'succeeded' });
+    expect(useStore.getState().compactingSessions).toEqual([]);
+  });
+
+  it('clears busy and surfaces noop and failed results', () => {
+    for (const [status, message] of [
+      ['noop', 'Nothing to compact'],
+      ['failed', 'Compaction failed: provider unavailable'],
+    ]) {
+      handleServerMessage({ type: 'compaction_accepted', sessionId: 'sess_a' });
+      handleServerMessage({ type: 'compaction_result', sessionId: 'sess_a', status, message });
+    }
+
+    expect(useStore.getState().compactingSessions).toEqual([]);
+    expect(useStore.getState().toasts.slice(-2)).toEqual([
+      expect.objectContaining({ text: 'Nothing to compact', type: 'info' }),
+      expect.objectContaining({ text: 'Compaction failed: provider unavailable', type: 'error' }),
+    ]);
   });
 
   it('preserves context_usage window even when tokens are unknown', () => {
@@ -985,17 +1108,21 @@ describe('ws-message-handler turn_end side effects', () => {
     } as never);
   });
 
-  it('turn_end requests input focus for the current session', () => {
+  it('turn_end for the current session does not request input focus', () => {
     handleServerMessage({
       type: 'turn_end',
       sessionPath: '/session/a.jsonl',
     });
 
-    expect(useStore.getState().inputFocusTrigger).toBe(1);
+    expect(useStore.getState().inputFocusTrigger).toBe(0);
     expect(previewRefreshMocks.refreshOpenPreviewDocumentsForResourceChange).not.toHaveBeenCalled();
   });
 
-  it('background turn_end does not request input focus', () => {
+  it('background turn_end keeps refresh and context usage but does not request input focus', async () => {
+    vi.useFakeTimers();
+    vi.mocked(loadSessions).mockClear();
+    const requestContextUsage = vi.fn();
+    configureWsMessageHandler({ requestContextUsage });
     useStore.setState({
       sessions: [
         ...useStore.getState().sessions,
@@ -1018,6 +1145,12 @@ describe('ws-message-handler turn_end side effects', () => {
     });
 
     expect(useStore.getState().inputFocusTrigger).toBe(0);
+    expect(requestContextUsage).toHaveBeenCalledWith('/session/b.jsonl');
+    expect(loadSessions).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(loadSessions).toHaveBeenCalledTimes(1);
   });
 
   it('status=false requests input focus when the focused session was streaming', () => {
@@ -1034,6 +1167,7 @@ describe('ws-message-handler turn_end side effects', () => {
 
     expect(useStore.getState().streamingSessions).toEqual([]);
     expect(useStore.getState().inputFocusTrigger).toBe(1);
+    expect(useStore.getState().inputFocusTriggerSource).toBe('restore');
   });
 
   it('stale status=false does not finish the newer local stream turn', () => {
@@ -1079,7 +1213,7 @@ describe('ws-message-handler turn_end side effects', () => {
     expect(useStore.getState().inputFocusTrigger).toBe(0);
   });
 
-  it('turn_end clears the matching stream when status=false is missing', () => {
+  it('turn_end does not clear the matching stream before status=false arrives', () => {
     useStore.setState({
       streamingSessions: ['/session/a.jsonl'],
       activeSessionStreams: {
@@ -1094,9 +1228,33 @@ describe('ws-message-handler turn_end side effects', () => {
       streamId: 'stream_done',
     });
 
-    expect(useStore.getState().streamingSessions).toEqual([]);
-    expect(useStore.getState().activeSessionStreams).toEqual({});
-    expect(useStore.getState().inputFocusTrigger).toBe(1);
+    expect(useStore.getState().streamingSessions).toEqual(['/session/a.jsonl']);
+    expect(useStore.getState().activeSessionStreams['/session/a.jsonl']?.streamId).toBe('stream_done');
+    expect(useStore.getState().inputFocusTrigger).toBe(0);
+  });
+
+  it('intermediate turn_end keeps streaming state and input focus untouched', () => {
+    useStore.setState({
+      streamingSessions: ['/session/a.jsonl'],
+      activeSessionStreams: {
+        '/session/a.jsonl': { streamId: 'stream_mid', turnId: 'turn_mid' },
+      },
+      inputFocusTrigger: 0,
+    } as never);
+
+    handleServerMessage({
+      type: 'turn_end',
+      sessionPath: '/session/a.jsonl',
+      streamId: 'stream_mid',
+      turnId: 'turn_mid',
+    });
+
+    expect(useStore.getState().streamingSessions).toEqual(['/session/a.jsonl']);
+    expect(useStore.getState().activeSessionStreams['/session/a.jsonl']).toEqual({
+      streamId: 'stream_mid',
+      turnId: 'turn_mid',
+    });
+    expect(useStore.getState().inputFocusTrigger).toBe(0);
   });
 
   it('stale turn_end does not clear a newer stream identity', () => {

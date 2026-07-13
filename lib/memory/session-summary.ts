@@ -436,7 +436,7 @@ export class SessionSummaryManager {
       };
     }
 
-    // 写入前结构校验 + 有限次数格式修复（#1628）：摘要必须满足 compileFacts
+    // 写入前结构校验 + 有限次数格式修复（#1628）：摘要必须满足 compileEditableFacts
     // 的提取假设，否则 facts 会在编译侧静默丢失。最终修不好就抛错，由调用方
     // （memory ticker / 日记回填）按既有失败通道记录，旧摘要保持不被覆盖。
     let repairsUsed = 0;
@@ -519,7 +519,7 @@ export class SessionSummaryManager {
   }
 
   /**
-   * 格式修复调用：把不满足 compileFacts 提取假设的摘要草稿重排进契约结构。
+   * 格式修复调用：把不满足 compileEditableFacts 提取假设的摘要草稿重排进契约结构。
    * 只基于草稿本身修复（不重发对话内容），信息不增删。
    * @param {string} summaryText - 待修复的摘要草稿
    * @param {string[]} issues - validateRollingSummaryFormat 给出的失败原因

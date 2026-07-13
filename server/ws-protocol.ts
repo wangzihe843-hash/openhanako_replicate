@@ -2,12 +2,13 @@
  * WebSocket 消息协议定义
  *
  * Client → Server:
- *   { type: "prompt", text: "...", sessionPath?: "...", images?: [...], videos?: [...], audios?: [...], skills?: [...],
+ *   { type: "prompt"|"interject", text: "...", sessionId: "...", sessionPath: "...", images?: [...], videos?: [...], audios?: [...], skills?: [...],
  *     uiContext?: { currentViewed?: string|null, activeFile?: string|null, activePreview?: string|null, pinnedFiles?: string[] } | null }
  *     （uiContext：用户视野元信息，供 current_status(ui_context) 按需读取；
  *      null/undefined 表示清空旧值；不进 session.entries。）
- *   { type: "abort" }
- *   { type: "resume_stream", sessionPath: "...", streamId: "...", sinceSeq: 128 }  (按事件序号续传)
+ *   { type: "abort", sessionId: "...", sessionPath: "...", streamId: "..." }  (仅中断该 session 当前同一条流；迟到请求不得中断新流)
+ *   { type: "resume_stream", sessionId: "...", sessionPath: "...", streamId: "...", sinceSeq: 128 }  (按事件序号续传)
+ *   { type: "compact", sessionId: "..." }  (新客户端只发送 sessionId；sessionPath 仅旧客户端兼容输入，服务端会在边界解析为 sessionId 后丢弃)
  *
  * Server → Client:
  *   { type: "text_delta", delta: "..." }
@@ -21,7 +22,10 @@
  *   { type: "tool_end", id?: "tool_call_id", name: "...", success: bool, details?: object }
  *   { type: "turn_end" }
  *   { type: "error", message: "..." }
- *   { type: "status", isStreaming: bool, streamId?: string|null, turnId?: string|null }
+ *   { type: "status", sessionId?: string, sessionPath: "...", isStreaming: bool, streamId?: string|null, turnId?: string|null }
+ *   { type: "abort_rejected", reason: "stale_stream", sessionId?: string|null, sessionPath: "...", streamId?: string|null }
+ *   { type: "compaction_accepted", sessionId: "...", sessionPath?: "..." }  (sessionPath 仅 locator metadata，不参与身份或状态归属)
+ *   { type: "compaction_result", sessionId: "...", sessionPath?: "...", status: "succeeded"|"noop"|"failed", reason?: "...", message?: "..." }  (sessionPath 仅 locator metadata)
  *   { type: "session_title", title: "...", path: "..." }
  *   { type: "jian_update", content: "..." }
  *   { type: "devlog", text: "...", level: "info"|"heartbeat"|"error" }

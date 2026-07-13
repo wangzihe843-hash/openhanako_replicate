@@ -1015,7 +1015,7 @@ export class ChannelRouter {
         return;
       }
 
-      const utilCfg = engine.resolveUtilityConfig({ agentId }) || {};
+      const utilCfg = await engine.resolveUtilityConfigFresh({ agentId }) || {};
       const { utility: model, api_key, base_url, api } = utilCfg;
       if (!api_key || !base_url || !api) {
         log.log(`${agentId} 无 API 配置，跳过记忆摘要`);

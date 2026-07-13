@@ -38,5 +38,11 @@ export async function regenerateMarkdownCoverWithPrompt(input: string | null | u
     ...targetInput,
     userGuidance: prompt,
   });
-  dispatchCoverNotice(result.ok ? '已提交新的 cover 生成任务。' : `Cover 生成失败：${result.error}`, result.ok ? 'success' : 'error');
+  // 显式判别收窄：tsconfig.test.json（strictNullChecks: false）的编译闭包自 viewer 入口
+  // 测试引入后覆盖到本文件，非严格模式下真值三元不收窄联合，=== false 两种模式都成立。
+  if (result.ok === false) {
+    dispatchCoverNotice(`Cover 生成失败：${result.error}`, 'error');
+    return;
+  }
+  dispatchCoverNotice('已提交新的 cover 生成任务。', 'success');
 }

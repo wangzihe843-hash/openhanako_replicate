@@ -17,8 +17,10 @@ import {
   refreshLocalServerConnectionState,
   resolveServerConnection,
   upsertServerConnection,
+  warnIfServerProtocolMismatch,
   writePersistedServerConnectionState,
 } from '../../services/server-connection';
+import { SERVER_PROTOCOL_VERSION } from '../../../../../shared/contract-versions.ts';
 
 describe('server connection helpers', () => {
   it('creates the local default ServerConnection from port and token', () => {
@@ -564,6 +566,27 @@ describe('server connection helpers', () => {
         studioId: 'studio_stable',
       },
     });
+  });
+
+  it('warnIfServerProtocolMismatch: stays silent when serverProtocol matches this build', () => {
+    const log = vi.fn();
+    warnIfServerProtocolMismatch({ serverId: 's', studioId: 'st', label: 'L', serverProtocol: SERVER_PROTOCOL_VERSION } as any, log);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('warnIfServerProtocolMismatch: stays silent when the server predates this field entirely (read-time compat, not a mismatch)', () => {
+    const log = vi.fn();
+    warnIfServerProtocolMismatch({ serverId: 's', studioId: 'st', label: 'L' } as any, log);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('warnIfServerProtocolMismatch: logs a diagnostic (does not throw) when serverProtocol disagrees with this build', () => {
+    const log = vi.fn();
+    warnIfServerProtocolMismatch({ serverId: 's', studioId: 'st', label: 'L', serverProtocol: SERVER_PROTOCOL_VERSION + 1 } as any, log);
+    expect(log).toHaveBeenCalledTimes(1);
+    const [message] = log.mock.calls[0];
+    expect(message).toContain(String(SERVER_PROTOCOL_VERSION));
+    expect(message).toContain(String(SERVER_PROTOCOL_VERSION + 1));
   });
 
   it('refreshes local transport without drifting stable server/user/space identity', () => {

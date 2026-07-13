@@ -78,6 +78,36 @@ export function buildExternalPackage(
   };
 }
 
+function packageNameFromBareSpecifier(specifier) {
+  if (
+    typeof specifier !== "string"
+    || specifier.length === 0
+    || specifier.startsWith(".")
+    || specifier.startsWith("/")
+    || specifier.startsWith("node:")
+  ) {
+    return null;
+  }
+
+  const parts = specifier.split("/");
+  if (specifier.startsWith("@")) {
+    if (parts.length < 2) return null;
+    return `${parts[0]}/${parts[1]}`;
+  }
+  return parts[0];
+}
+
+export function collectBareImportPackageNames(source) {
+  const packages = new Set();
+  const importPattern = /^\s*import\s+(?:[^'"\n]*?\s+from\s+)?["']([^"']+)["']/gm;
+  let match;
+  while ((match = importPattern.exec(source)) !== null) {
+    const packageName = packageNameFromBareSpecifier(match[1]);
+    if (packageName) packages.add(packageName);
+  }
+  return [...packages].sort();
+}
+
 export function collectInstalledOptionalDependencyDirs(nmDir, packageNames) {
   const dirs = [];
 

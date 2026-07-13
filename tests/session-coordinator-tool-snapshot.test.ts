@@ -80,7 +80,7 @@ function restoredSnapshot(names, availableNames = allNames()) {
 }
 
 describe("session-coordinator tool snapshot (createSession)", () => {
-  let tmpDir, agentDir, sessionDir, coord, fakeSessionPath, activeToolsSpy, buildSystemPromptSpy, currentAgentConfig, channelsEnabled, defaultModeSaveSpy, storedDefaultMode, storedThinkingLevel, lastSessionOptions, fakeEngine;
+  let tmpDir, agentDir, sessionDir, coord, fakeSessionPath, activeToolsSpy, buildSystemPromptSpy, currentAgentConfig, channelsEnabled, defaultModeSaveSpy, storedDefaultMode, storedThinkingLevel, lastSessionOptions, fakeEngine, focusAgent, onBeforeSessionCreateSpy;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -122,7 +122,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
       };
     });
 
-    const agent = {
+    focusAgent = {
       id: "test",
       agentDir,
       sessionDir,
@@ -132,10 +132,11 @@ describe("session-coordinator tool snapshot (createSession)", () => {
       buildSystemPrompt: buildSystemPromptSpy,
       memoryEnabled: true,
     };
+    onBeforeSessionCreateSpy = vi.fn().mockResolvedValue(undefined);
 
     coord = new SessionCoordinator({
       agentsDir: path.join(tmpDir, "agents"),
-      getAgent: () => agent,
+      getAgent: () => focusAgent,
       getActiveAgentId: () => "test",
       getModels: () => ({
         currentModel: { id: "test-model", name: "test-model" },
@@ -167,6 +168,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
       listAgents: () => [],
       getDeferredResultStore: () => null,
       getEngine: () => fakeEngine,
+      onBeforeSessionCreate: onBeforeSessionCreateSpy,
     });
   });
 
@@ -175,6 +177,39 @@ describe("session-coordinator tool snapshot (createSession)", () => {
   });
 
   // ── Case C tests ─────────────────────────────────────────────
+
+  it("selects workspace skills with the explicit non-focus Agent identity", async () => {
+    const targetAgent = {
+      ...focusAgent,
+      id: "target",
+      config: {
+        workspace_context: {
+          discover_project_skills: false,
+          discover_compatible_project_skills: true,
+        },
+      },
+    };
+    const workspacePaths = [{
+      dirPath: path.join(tmpDir, ".codex", "skills"),
+      label: "Codex",
+      scope: "workspace",
+      category: "compatible",
+    }];
+    const getSkillsForAgent = vi.fn(() => ({ skills: [], diagnostics: [] }));
+    coord._d.getSkills = () => ({ getSkillsForAgent });
+    onBeforeSessionCreateSpy.mockResolvedValueOnce({ workspacePaths });
+
+    await coord.createSession(null, tmpDir, true, null, {
+      agent: targetAgent,
+      agentId: "target",
+    });
+
+    expect(onBeforeSessionCreateSpy).toHaveBeenCalledWith(tmpDir, {
+      agent: targetAgent,
+      agentId: "target",
+    });
+    expect(getSkillsForAgent).toHaveBeenCalledWith(targetAgent, { workspacePaths });
+  });
 
   it("Case C: new session with NO tools config applies DEFAULT_DISABLED (dm off, update_settings on)", async () => {
     currentAgentConfig = {}; // fresh agent or upgrade, tools field absent
@@ -570,7 +605,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(appliedList).toContain("browser");
   });
 
-  it("Case C: beautify plugin tools are default-off for fresh configs", async () => {
+  it("Case C: beautify plugin tools are default-on for fresh configs (0.375.x 毕业)", async () => {
     const beautifyTool = {
       ...makeTool("beautify_create-cover"),
       _pluginId: "beautify",
@@ -585,11 +620,11 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     await coord.createSession(null, tmpDir, true);
 
     const appliedList = activeToolsSpy.mock.calls[0][0];
-    expect(appliedList).not.toContain("beautify_create-cover");
+    expect(appliedList).toContain("beautify_create-cover");
     expect(appliedList).toContain("read");
   });
 
-  it("Case C: beautify plugin tools join fresh sessions after explicit opt-in", async () => {
+  it("Case C: beautify plugin tools stay off after explicit opt-out", async () => {
     const beautifyTool = {
       ...makeTool("beautify_create-cover"),
       _pluginId: "beautify",
@@ -599,12 +634,12 @@ describe("session-coordinator tool snapshot (createSession)", () => {
       tools: SDK_BUILTIN_OBJS,
       customTools: [...HANAKO_CUSTOM_OBJS, beautifyTool],
     });
-    currentAgentConfig = { tools: { disabled: ["dm"] } };
+    currentAgentConfig = { tools: { disabled: ["dm", "beautify"] } };
 
     await coord.createSession(null, tmpDir, true);
 
     const appliedList = activeToolsSpy.mock.calls[0][0];
-    expect(appliedList).toContain("beautify_create-cover");
+    expect(appliedList).not.toContain("beautify_create-cover");
     expect(appliedList).not.toContain("dm");
   });
 

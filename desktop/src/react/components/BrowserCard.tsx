@@ -14,7 +14,8 @@ export function BrowserCard() {
   const { running: browserRunning, url: browserUrl, thumbnail: browserThumbnail } = useBrowserState();
 
   const handleClick = useCallback(() => {
-    window.platform?.openBrowserViewer?.();
+    const sessionPath = useStore.getState().currentSessionPath;
+    window.platform?.openBrowserViewer?.({ sessionPath });
   }, []);
 
   const handleClose = useCallback((e: React.MouseEvent) => {
@@ -23,7 +24,7 @@ export function BrowserCard() {
     if (sessionPath) {
       setBrowserStateForPath(sessionPath, { running: false, url: null, thumbnail: null });
     }
-    window.platform?.browserEmergencyStop?.();
+    window.platform?.browserEmergencyStop?.(sessionPath || undefined);
     if (sessionPath) {
       hanaFetch('/api/browser/close-session', {
         method: 'POST',
