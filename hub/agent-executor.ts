@@ -39,6 +39,9 @@ import {
   normalizeSessionPromptSnapshot,
 } from "../core/session-prompt-snapshot.ts";
 import { stripClosedInternalNarrationBlocks } from "../lib/text/internal-narration.ts";
+import { createSessionTurnContextExtension, normalizeSessionTurnContext } from "../core/session-turn-context.ts";
+
+const XINGYE_PHONE_PROMPT_VERSION = 1;
 
 function resolveAgentPhoneModel(engine, ctx, agentConfig, modelOverride) {
   if (!modelOverride) return ctx.resolveModel(agentConfig);
@@ -289,7 +292,8 @@ function storedRelativePath(agentDir, filePath) {
  * 以 Agent Phone 方式运行可复用会话。
  *
  * 每个 agent + conversation 复用同一个 session 文件；runtime sidecar 记录
- * session file。该函数不删除 session 文件。
+ * session file。该函数不删除 session 文件。round.context 通过 provider context hook
+ * 只注入当前推理请求，不写进持久 session 历史。
  */
 export async function runAgentPhoneSession(agentId, rounds, {
   engine,
@@ -320,8 +324,12 @@ export async function runAgentPhoneSession(agentId, rounds, {
   });
 
   const ctx = engine.createSessionContext();
-  const basePrompt = noMemory ? agent.personality : agent.systemPrompt;
-  const currentSystemPrompt = systemAppend ? `${basePrompt}\n\n${systemAppend}` : basePrompt;
+  const currentPhoneSystemPrompt = () => {
+    const basePrompt = noMemory
+      ? agent.personality
+      : (typeof agent.buildPhoneSystemPrompt === "function" ? agent.buildPhoneSystemPrompt() : agent.systemPrompt);
+    return systemAppend ? `${basePrompt}\n\n${systemAppend}` : basePrompt;
+  };
 
   const cwd = engine.getHomeCwd(agentId) || process.cwd();
   const sessionDir = getAgentPhoneSessionDir(agentDir, conversationId);
@@ -336,11 +344,36 @@ export async function runAgentPhoneSession(agentId, rounds, {
     sessionExists: existingSessionExists,
     now: refreshNow,
   });
-  const promptSnapshot = openedExistingSession
-    ? (normalizeSessionPromptSnapshot(runtime.promptSnapshot)
-      || buildAgentPhonePromptSnapshot(agent, ctx, currentSystemPrompt))
-    : buildAgentPhonePromptSnapshot(agent, ctx, currentSystemPrompt);
-  const tempResourceLoader = createPromptSnapshotResourceLoader(ctx.resourceLoader, promptSnapshot);
+  let promptSnapshot = openedExistingSession ? normalizeSessionPromptSnapshot(runtime.promptSnapshot) : null;
+  if (!promptSnapshot) {
+    promptSnapshot = buildAgentPhonePromptSnapshot(agent, ctx, currentPhoneSystemPrompt());
+  } else if (
+    runtime.xingyePhonePromptVersion !== XINGYE_PHONE_PROMPT_VERSION
+    || runtime.xingyePhonePromptNoMemory !== noMemory
+  ) {
+    // Legacy snapshots have an opaque base with Xingye sections mixed into persona
+    // and memory. Rebuild that base once; never delete user text by matching headings.
+    // This refreshes persona/memory once while keeping history, frozen appendices,
+    // skills and AGENTS files. Future turns reuse the resulting base unchanged.
+    promptSnapshot = { ...promptSnapshot, systemPrompt: currentPhoneSystemPrompt() };
+    delete promptSnapshot.finalSystemPrompt;
+  }
+  let activeTurnContext = null;
+  const turnContextExtension = createSessionTurnContextExtension({
+    path: "hana-agent-phone-turn-context",
+    getTurnContext: () => activeTurnContext,
+  });
+  const tempResourceLoader = createPromptSnapshotResourceLoader(ctx.resourceLoader, promptSnapshot, {
+    getExtensions: {
+      value: () => {
+        const base = ctx.resourceLoader?.getExtensions?.() ?? { extensions: [], errors: [] };
+        return {
+          ...base,
+          extensions: [turnContextExtension, ...(base.extensions || [])],
+        };
+      },
+    },
+  });
   const sessionManager = openedExistingSession && existingSessionPath
     ? SessionManager.open(existingSessionPath, sessionDir)
     : SessionManager.create(cwd, sessionDir);
@@ -399,105 +432,111 @@ export async function runAgentPhoneSession(agentId, rounds, {
     tools,
     customTools: sessionCustomTools,
   });
-  session.setActiveToolsByName?.(activeToolNames);
-
-  const sessionPath = session.sessionManager?.getSessionFile?.();
-  const usageLedger = engine.usageLedger || engine.getUsageLedger?.() || null;
-  const unregisterPhoneAbort = engine.registerAgentPhoneAbortHandler?.(
-    () => {
-      try { session.abort?.(); } catch {}
-    },
-    { agentId, conversationId, conversationType, sessionPath: sessionPath || null },
-  ) || (() => {});
-  if (sessionPath) {
-    await updateAgentPhoneRuntime({
-      agentDir,
-      agentId,
-      conversationId,
-      conversationType,
-      patch: {
-        phoneSessionFile: storedRelativePath(agentDir, sessionPath),
-        lastPhoneSessionUsedAt: refreshNow.toISOString(),
-        phoneSessionStartedAt: openedExistingSession
-          ? (runtime.phoneSessionStartedAt || refreshNow.toISOString())
-          : refreshNow.toISOString(),
-        promptSnapshot,
-        effectiveModel,
-        modelOverrideApplied,
-        ...(requestedModelOverride ? { modelOverrideRequested: requestedModelOverride } : {}),
-      },
-      timestamp: refreshNow.toISOString(),
-    });
-    await updateAgentPhoneProjectionMeta({
-      agentDir,
-      agentId,
-      conversationId,
-      conversationType,
-      patch: {
-        toolMode,
-        effectiveModel,
-        modelOverrideApplied,
-        ...(requestedModelOverride ? { modelOverrideRequested: requestedModelOverride } : {}),
-      },
-      timestamp: refreshNow.toISOString(),
-    });
-    try { await onSessionReady?.(sessionPath); } catch {}
-  }
-
-  let onAbort;
-  if (signal) {
-    onAbort = () => { try { session.abort(); } catch {} };
-    signal.addEventListener("abort", onAbort, { once: true });
-  }
-
   let capturedText = "";
   let isCapturing = false;
   let lastLiveActivity = null;
   let toolCallCount = 0;
   const toolCallNames = [];
   let lastPromptResult = null;
-  const recordLiveActivity = (key, state, summary, details = {}) => {
-    if (!isCapturing || lastLiveActivity === key) return;
-    lastLiveActivity = key;
-    Promise.resolve(onActivity?.(state, summary, details)).catch(() => {});
-  };
-  const unsub = session.subscribe((event) => {
-    recordAgentPhoneAssistantUsage({
-      ledger: usageLedger,
-      event,
-      sessionPath,
-      agentId,
-      conversationId,
-      conversationType,
-      model,
-    });
-    if (emitEvents && sessionPath && isCapturing) {
-      engine.emitEvent?.({ ...event, isolated: true }, sessionPath);
-    }
-    if (!isCapturing) return;
-    if (event.type === "message_update") {
-      const sub = event.assistantMessageEvent;
-      if (sub?.type === "thinking_delta") {
-        recordLiveActivity("thinking", "thinking", "正在思考");
-      }
-      if (sub?.type === "text_delta") {
-        recordLiveActivity("composing", "replying", "正在准备回复");
-      }
-      if (sub?.type === "text_delta") capturedText += sub.delta || "";
-    } else if (event.type === "tool_execution_start") {
-      toolCallCount++;
-      if (event.toolName) toolCallNames.push(event.toolName);
-      if (event.toolName === "channel_reply") {
-        recordLiveActivity("channel_reply", "replying", "正在发送频道消息");
-      } else if (event.toolName === "channel_pass") {
-        recordLiveActivity("channel_pass", "no_reply", "正在选择本轮不发言");
-      }
-    }
-  });
+  let onAbort;
+  let unsub;
+  let unregisterPhoneAbort = () => {};
 
-  debugLog()?.log("agent-executor", `${agentId} phone session started (${conversationType}:${conversationId}, ${rounds.length} rounds)`);
-
+  // Cover every operation after SDK session creation, including initialization failures.
   try {
+    session.setActiveToolsByName?.(activeToolNames);
+
+    const sessionPath = session.sessionManager?.getSessionFile?.();
+    const usageLedger = engine.usageLedger || engine.getUsageLedger?.() || null;
+    unregisterPhoneAbort = engine.registerAgentPhoneAbortHandler?.(
+      () => {
+        try { session.abort?.(); } catch {}
+      },
+      { agentId, conversationId, conversationType, sessionPath: sessionPath || null },
+    ) || (() => {});
+    if (sessionPath) {
+      await updateAgentPhoneRuntime({
+        agentDir,
+        agentId,
+        conversationId,
+        conversationType,
+        patch: {
+          phoneSessionFile: storedRelativePath(agentDir, sessionPath),
+          lastPhoneSessionUsedAt: refreshNow.toISOString(),
+          phoneSessionStartedAt: openedExistingSession
+            ? (runtime.phoneSessionStartedAt || refreshNow.toISOString())
+            : refreshNow.toISOString(),
+          promptSnapshot,
+          xingyePhonePromptVersion: XINGYE_PHONE_PROMPT_VERSION,
+          xingyePhonePromptNoMemory: noMemory,
+          effectiveModel,
+          modelOverrideApplied,
+          ...(requestedModelOverride ? { modelOverrideRequested: requestedModelOverride } : {}),
+        },
+        timestamp: refreshNow.toISOString(),
+      });
+      await updateAgentPhoneProjectionMeta({
+        agentDir,
+        agentId,
+        conversationId,
+        conversationType,
+        patch: {
+          toolMode,
+          effectiveModel,
+          modelOverrideApplied,
+          ...(requestedModelOverride ? { modelOverrideRequested: requestedModelOverride } : {}),
+        },
+        timestamp: refreshNow.toISOString(),
+      });
+      try { await onSessionReady?.(sessionPath); } catch {}
+    }
+
+    if (signal) {
+      onAbort = () => { try { session.abort(); } catch {} };
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    const recordLiveActivity = (key, state, summary, details = {}) => {
+      if (!isCapturing || lastLiveActivity === key) return;
+      lastLiveActivity = key;
+      Promise.resolve(onActivity?.(state, summary, details)).catch(() => {});
+    };
+    unsub = session.subscribe((event) => {
+      recordAgentPhoneAssistantUsage({
+        ledger: usageLedger,
+        event,
+        sessionPath,
+        agentId,
+        conversationId,
+        conversationType,
+        model,
+      });
+      if (emitEvents && sessionPath && isCapturing) {
+        engine.emitEvent?.({ ...event, isolated: true }, sessionPath);
+      }
+      if (!isCapturing) return;
+      if (event.type === "message_update") {
+        const sub = event.assistantMessageEvent;
+        if (sub?.type === "thinking_delta") {
+          recordLiveActivity("thinking", "thinking", "正在思考");
+        }
+        if (sub?.type === "text_delta") {
+          recordLiveActivity("composing", "replying", "正在准备回复");
+        }
+        if (sub?.type === "text_delta") capturedText += sub.delta || "";
+      } else if (event.type === "tool_execution_start") {
+        toolCallCount++;
+        if (event.toolName) toolCallNames.push(event.toolName);
+        if (event.toolName === "channel_reply") {
+          recordLiveActivity("channel_reply", "replying", "正在发送频道消息");
+        } else if (event.toolName === "channel_pass") {
+          recordLiveActivity("channel_pass", "no_reply", "正在选择本轮不发言");
+        }
+      }
+    });
+
+    debugLog()?.log("agent-executor", `${agentId} phone session started (${conversationType}:${conversationId}, ${rounds.length} rounds)`);
+
     for (const round of rounds) {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       isCapturing = !!round.capture;
@@ -505,7 +544,14 @@ export async function runAgentPhoneSession(agentId, rounds, {
         capturedText = "";
         lastLiveActivity = null;
       }
-      lastPromptResult = await session.prompt(round.text);
+      activeTurnContext = normalizeSessionTurnContext(round.context);
+      try {
+        lastPromptResult = await session.prompt(round.text);
+      } finally {
+        // The provider hook reads this during the current prompt/tool loop only. Clearing it
+        // prevents role/profile/relationship snapshots from leaking into later Phone turns.
+        activeTurnContext = null;
+      }
     }
   } finally {
     if (signal && onAbort) signal.removeEventListener("abort", onAbort);

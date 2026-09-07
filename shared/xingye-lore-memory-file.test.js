@@ -138,7 +138,7 @@ describe('xingye lore memory file helper', () => {
     expect(result).not.toContain('xingye-lore:id=remove');
   });
 
-  it('syncs only enabled canonical always stable categories for the current agent', async () => {
+  it('syncs enabled canonical always lore for the current agent', async () => {
     const result = await syncXingyeStableLoreMemoryFile({
       hanakoHome: tempRoot,
       agentId: 'agent-a',
@@ -164,7 +164,7 @@ describe('xingye lore memory file helper', () => {
     expect(file).not.toContain('Other agent summary.');
   });
 
-  it('does not sync non-stable lore categories', async () => {
+  it('syncs every category when it is canonical always lore', async () => {
     await syncXingyeStableLoreMemoryFile({
       hanakoHome: tempRoot,
       agentId: 'agent-a',
@@ -174,11 +174,11 @@ describe('xingye lore memory file helper', () => {
     });
 
     const file = await readXingyeLoreMemoryFile({ hanakoHome: tempRoot, agentId: 'agent-a' });
-    expect(file).not.toContain('worldview summary.');
-    expect(file).not.toContain('location summary.');
-    expect(file).not.toContain('organization summary.');
-    expect(file).not.toContain('rule summary.');
-    expect(file).not.toContain('event summary.');
+    expect(file).toContain('worldview summary.');
+    expect(file).toContain('location summary.');
+    expect(file).toContain('organization summary.');
+    expect(file).toContain('rule summary.');
+    expect(file).toContain('event summary.');
   });
 
   it('removes previously managed blocks that no longer qualify during sync', async () => {

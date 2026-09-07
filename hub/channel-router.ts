@@ -32,6 +32,7 @@ import {
   resolveAgentPhoneRuntimeSessionPath,
 } from "../lib/conversations/agent-phone-runtime.ts";
 import { normalizeAgentPhoneToolMode } from "../lib/conversations/agent-phone-session.ts";
+import { buildXingyeAgentPhoneTurnContext } from "../shared/xingye-phone-context.js";
 import {
   DEFAULT_AGENT_PHONE_SETTINGS,
   formatAgentPhonePromptGuidance,
@@ -487,6 +488,16 @@ export class ChannelRouter {
     const msgText = formatMessagesForLLM(newMessages);
     const isZh = getLocale().startsWith("zh");
     const lastNewMessage = newMessages[newMessages.length - 1] || null;
+    const agent = this._getAgentInstance(agentId);
+    const phoneTurnContext = buildXingyeAgentPhoneTurnContext({
+      agentId,
+      agentDir: agent?.agentDir || path.join(this._engine.agentsDir, agentId),
+      hanakoHome: path.dirname(this._engine.agentsDir),
+      agentName: agent?.agentName || this._resolveChannelMemorySenderName(agentId, isZh),
+      locale: getLocale(),
+      messageText: msgText,
+      peerRefs: this._resolveChannelSpeakerPeers(agentId, channelName, newMessages, isZh),
+    });
     await this._recordPhoneActivity(
       agentId,
       channelName,
@@ -525,6 +536,7 @@ export class ChannelRouter {
         proactive,
         mentionedAgents,
         mentionTargeted,
+        phoneTurnContext,
       });
 
       while (
@@ -555,6 +567,7 @@ export class ChannelRouter {
           proactive,
           mentionedAgents,
           mentionTargeted,
+          phoneTurnContext,
           decisionRepairAttempt: repairAttempts,
         });
       }
@@ -731,6 +744,41 @@ export class ChannelRouter {
     return [memberLine, identityLine].filter(Boolean).join("\n");
   }
 
+  /**
+   * 从结构化消息 sender 提取本轮真正发言的 peer agent。正文里只被提到、但没有发言的
+   * 成员不算 speaker；user/system/self 也不会触发 peer relationship lore。
+   */
+  _resolveChannelSpeakerPeers(agentId, channelName, messages, isZh) {
+    let members = [];
+    try {
+      const channelFile = path.join(this._engine.channelsDir || "", `${channelName}.md`);
+      members = getChannelMembers(channelFile);
+    } catch {
+      members = [];
+    }
+    const memberSet = new Set(members);
+    const seen = new Set();
+    const peers = [];
+    // Relationship context is budgeted, so prefer the most recent real speakers.
+    // `user` and `system` are protocol sender ids even if an agent happens to use
+    // the same id; they must never be reinterpreted as peer agents.
+    const orderedMessages = Array.isArray(messages) ? [...messages].reverse() : [];
+    for (const message of orderedMessages) {
+      const sender = typeof message?.sender === "string" ? message.sender.trim() : "";
+      if (
+        !sender
+        || sender === "user"
+        || sender === "system"
+        || sender === agentId
+        || !memberSet.has(sender)
+        || seen.has(sender)
+      ) continue;
+      seen.add(sender);
+      peers.push({ id: sender, name: this._resolveChannelMemorySenderName(sender, isZh) });
+    }
+    return peers;
+  }
+
   _formatDeliveryWindowGuidance(deliveryWindow, isZh) {
     const dropped = Number(deliveryWindow?.droppedUnreadCount || 0);
     if (dropped <= 0) return "";
@@ -766,6 +814,7 @@ export class ChannelRouter {
     proactive = false,
     mentionedAgents = [],
     mentionTargeted = false,
+    phoneTurnContext = "",
     decisionRepairAttempt = 0,
   }: any = {}) {
     const isZh = getLocale().startsWith("zh");
@@ -819,6 +868,12 @@ export class ChannelRouter {
                 + `- End this turn by calling exactly one of channel_reply or channel_pass\n`
                 + `- Do not write the final channel reply as ordinary text; only channel_reply.content enters the channel`,
             capture: true,
+            ...(phoneTurnContext ? {
+              context: {
+                system: phoneTurnContext,
+                metadata: { source: "xingye_phone", surface: "channel", channelName },
+              },
+            } : {}),
           },
         ],
         {

@@ -302,6 +302,7 @@ export interface ChannelTickerStatus {
 
 export type ChannelTickerStatusMap = Record<string, ChannelTickerStatus | null>;
 export type AgentPhoneToolMode = 'read_only' | 'write';
+export type SocialFallbackMode = 'auto' | 'enabled' | 'disabled';
 
 export interface AgentPhoneSettings {
   mode: AgentPhoneToolMode;
@@ -310,6 +311,8 @@ export interface AgentPhoneSettings {
   proactiveEnabled: boolean;
   reminderIntervalMinutes: number;
   guardLimit: number;
+  socialFallbackMode: SocialFallbackMode;
+  socialFallbackTurnInterval: number | null;
   modelOverrideEnabled: boolean;
   modelOverrideModel: { id: string; provider: string } | null;
 }

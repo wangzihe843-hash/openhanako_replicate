@@ -26,8 +26,8 @@ describe('buildXingyeStableLoreMemoryContext', () => {
       agentId: 'agent-a',
     });
 
-    expect(result.text).toContain('【星野核心设定】');
-    expect(result.text).toContain('以下是角色长期背景、核心关系或核心人物设定');
+    expect(result.text).toContain('【星野始终生效设定】');
+    expect(result.text).toContain('用户编辑并标记为 always');
     expect(result.text).toContain('Childhood');
     expect(result.text).toContain('Raised beside the old observatory.');
     expect(result.entries).toEqual([
@@ -53,15 +53,15 @@ describe('buildXingyeStableLoreMemoryContext', () => {
     expect(result.entries.map((entry) => entry.category)).toEqual(['relationship', 'character']);
   });
 
-  it('excludes non-stable categories even when they are canonical always lore', () => {
-    const excludedCategories = ['worldview', 'location', 'organization', 'rule', 'event'];
+  it('includes every canonical always category', () => {
+    const alwaysCategories = ['worldview', 'location', 'organization', 'rule', 'event'];
     const result = buildXingyeStableLoreMemoryContext({
-      entries: excludedCategories.map((category) => baseEntry({ id: category, category })),
+      entries: alwaysCategories.map((category) => baseEntry({ id: category, category })),
       agentId: 'agent-a',
     });
 
-    expect(result.text).toBe('');
-    expect(result.entries).toEqual([]);
+    expect(result.entries.map((entry) => entry.category).sort()).toEqual([...alwaysCategories].sort());
+    expect(result.text).toContain('Raised beside the old observatory.');
   });
 
   it('excludes disabled lore, draft/private lore, keyword/manual lore, other agents, and empty content', () => {

@@ -262,11 +262,20 @@ describe('LoreStudioDrawer', () => {
     // 新角色被带过去：世界观 + 「与「林雾」的关系」
     const stored = JSON.parse(window.localStorage.getItem(XINGYE_LORE_ENTRIES_STORAGE_KEY) ?? '{}') as Record<
       string,
-      { agentId: string; title: string; category: string }
+      { agentId: string; title: string; category: string; insertionMode: string; keywords: string[] }
     >;
     const newAgentLore = Object.values(stored).filter((e) => e.agentId === 'agent-2');
-    expect(newAgentLore.some((e) => e.title.includes('林雾') && e.category === 'relationship')).toBe(true);
+    const newAgentRelationship = newAgentLore.find((e) => e.title.includes('林雾') && e.category === 'relationship');
+    expect(newAgentRelationship).toMatchObject({ insertionMode: 'keyword', keywords: ['林雾', 'agent-1'] });
     expect(newAgentLore.some((e) => e.category === 'worldview')).toBe(true);
+
+    // 角色工坊自动生成 peer 时会直接把原角色侧也升级为可定向触发的双向关系，
+    // 不依赖用户另行打开 LoreEditor 点「插入模板」。
+    const sourceRelationship = Object.values(stored).find(
+      (e) => e.agentId === 'agent-1' && e.title === '军师·寒鸦',
+    );
+    expect(sourceRelationship).toMatchObject({ insertionMode: 'keyword' });
+    expect(sourceRelationship?.keywords).toEqual(expect.arrayContaining(['寒鸦', 'agent-2']));
   });
 
   it('peer 微调：带 peerContext 的会话首轮把已带来的世界观/关系正文喂给模型', async () => {

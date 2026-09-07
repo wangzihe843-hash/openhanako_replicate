@@ -24,7 +24,7 @@ import type { MemberInfo } from './channels/ChannelList';
 import { ChatTranscript } from './chat/ChatTranscript';
 import { ContextMenu, type ContextMenuItem } from '../ui';
 import type { ChatListItem, ChatMessage, ContentBlock } from '../stores/chat-types';
-import type { AgentPhoneActivity, Channel, ChannelTickerStatus, Model } from '../types';
+import type { AgentPhoneActivity, Channel, ChannelTickerStatus, Model, SocialFallbackMode } from '../types';
 import styles from './channels/Channels.module.css';
 import chatStyles from './chat/Chat.module.css';
 
@@ -752,6 +752,8 @@ export function ChannelAgentSettingsPanel() {
   const proactiveEnabled = useStore(s => s.channelAgentProactiveEnabled);
   const reminderIntervalMinutes = useStore(s => s.channelAgentReminderIntervalMinutes);
   const guardLimit = useStore(s => s.channelAgentGuardLimit);
+  const socialFallbackMode = useStore(s => s.channelAgentSocialFallbackMode);
+  const socialFallbackTurnInterval = useStore(s => s.channelAgentSocialFallbackTurnInterval);
   const modelOverrideEnabled = useStore(s => s.channelAgentModelOverrideEnabled);
   const modelOverrideModel = useStore(s => s.channelAgentModelOverrideModel);
   const [saving, setSaving] = useState(false);
@@ -760,6 +762,10 @@ export function ChannelAgentSettingsPanel() {
   const [draftMax, setDraftMax] = useState(replyMaxChars ? String(replyMaxChars) : '');
   const [draftReminder, setDraftReminder] = useState(String(reminderIntervalMinutes || 31));
   const [draftGuardLimit, setDraftGuardLimit] = useState(String(guardLimit || 36));
+  const [draftSocialInterval, setDraftSocialInterval] = useState(
+    socialFallbackTurnInterval ? String(socialFallbackTurnInterval) : '',
+  );
+  const suppressSocialIntervalBlurRef = useRef(false);
   const modelSelectRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -767,7 +773,8 @@ export function ChannelAgentSettingsPanel() {
     setDraftMax(replyMaxChars ? String(replyMaxChars) : '');
     setDraftReminder(String(reminderIntervalMinutes || 31));
     setDraftGuardLimit(String(guardLimit || 36));
-  }, [currentChannel, replyMinChars, replyMaxChars, reminderIntervalMinutes, guardLimit]);
+    setDraftSocialInterval(socialFallbackTurnInterval ? String(socialFallbackTurnInterval) : '');
+  }, [currentChannel, replyMinChars, replyMaxChars, reminderIntervalMinutes, guardLimit, socialFallbackTurnInterval]);
 
   useEffect(() => {
     if (models.length > 0) return;
@@ -809,13 +816,19 @@ export function ChannelAgentSettingsPanel() {
     const max = parseOptionalIntInput(draftMax);
     const reminder = parseOptionalIntInput(draftReminder) || 31;
     const guard = parseOptionalIntInput(draftGuardLimit) || 36;
+    const socialInterval = parseOptionalIntInput(draftSocialInterval);
     if (min && max && min > max) {
       alert(t('channel.replyRangeInvalid'));
+      return;
+    }
+    if (socialInterval !== null && (socialInterval < 10 || socialInterval > 5000)) {
+      alert(t('channel.socialFallbackIntervalInvalid'));
       return;
     }
     void saveSettings({
       replyMinChars: min,
       replyMaxChars: max,
+      ...(isDM ? { socialFallbackTurnInterval: socialInterval } : {}),
       ...(!isDM ? { reminderIntervalMinutes: reminder, guardLimit: guard } : {}),
     });
   };
@@ -828,6 +841,21 @@ export function ChannelAgentSettingsPanel() {
   const changeProactiveEnabled = (enabled: boolean) => {
     if (saving || enabled === proactiveEnabled) return;
     void saveSettings({ proactiveEnabled: enabled });
+  };
+
+  const changeSocialFallbackMode = (mode: SocialFallbackMode) => {
+    if (saving) return;
+    const socialInterval = parseOptionalIntInput(draftSocialInterval);
+    if (socialInterval !== null && (socialInterval < 10 || socialInterval > 5000)) {
+      alert(t('channel.socialFallbackIntervalInvalid'));
+      return;
+    }
+    // Clicking a mode button blurs the interval input first. Save both values
+    // together so two adjacent requests cannot overwrite one another.
+    void saveSettings({
+      socialFallbackMode: mode,
+      socialFallbackTurnInterval: socialInterval,
+    });
   };
 
   const changeModelOverrideEnabled = (enabled: boolean) => {
@@ -944,6 +972,53 @@ export function ChannelAgentSettingsPanel() {
                 onChange={(event) => setDraftReminder(event.target.value.replace(/[^\d]/g, ''))}
                 onBlur={commitTextSettings}
                 disabled={saving || !proactiveEnabled}
+              />
+            </div>
+          </div>
+        )}
+        {isDM && (
+          <div className={`${styles.agentSettingsInlineGrid} ${styles.agentSettingsInlineGridSpaced}`}>
+            <div className={styles.agentSettingsField}>
+              <div className={styles.agentSettingsLabel}>{t('channel.socialFallbackMode')}</div>
+              <div className={`${styles.agentToolModeToggle} ${styles.agentToolModeToggleFill}`}>
+                {(['auto', 'enabled', 'disabled'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`${styles.agentToolModeButton}${socialFallbackMode === mode ? ` ${styles.agentToolModeButtonActive}` : ''}`}
+                    disabled={saving}
+                    onPointerDown={() => { suppressSocialIntervalBlurRef.current = true; }}
+                    onClick={() => {
+                      // A mode click may not have blurred the interval input.
+                      // Never carry its suppression over to a later edit.
+                      suppressSocialIntervalBlurRef.current = false;
+                      changeSocialFallbackMode(mode);
+                    }}
+                  >
+                    {t(`channel.socialFallback${mode[0].toUpperCase()}${mode.slice(1)}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className={styles.agentSettingsField}>
+              <div className={styles.agentSettingsLabel}>{t('channel.socialFallbackInterval')}</div>
+              <input
+                className={styles.agentReplyRangeInput}
+                inputMode="numeric"
+                min={10}
+                max={5000}
+                placeholder={t('channel.socialFallbackIntervalPlaceholder')}
+                value={draftSocialInterval}
+                onFocus={() => { suppressSocialIntervalBlurRef.current = false; }}
+                onChange={(event) => setDraftSocialInterval(event.target.value.replace(/[^\d]/g, ''))}
+                onBlur={() => {
+                  if (suppressSocialIntervalBlurRef.current) {
+                    suppressSocialIntervalBlurRef.current = false;
+                    return;
+                  }
+                  commitTextSettings();
+                }}
+                disabled={saving || socialFallbackMode === 'disabled'}
               />
             </div>
           </div>

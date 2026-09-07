@@ -20,7 +20,7 @@ import {
   formatMessagesForLLM,
 } from "../lib/channels/channel-store.ts";
 import { runAgentPhoneSession } from "./agent-executor.ts";
-import { buildXingyePeerRelationshipLore } from "../shared/xingye-peer-lore.js";
+import { buildXingyeAgentPhoneTurnContext } from "../shared/xingye-phone-context.js";
 import { debugLog, createModuleLogger } from "../lib/debug-log.ts";
 import { getLocale } from "../lib/i18n.ts";
 import {
@@ -46,6 +46,7 @@ const log = createModuleLogger("dm-router");
 
 const MAX_ROUNDS = 3;
 const COOLDOWN_MS = 10_000;
+const PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
 
 export class DmRouter {
   declare _hub: any;
@@ -55,7 +56,7 @@ export class DmRouter {
   constructor({ hub }) {
     this._hub = hub;
     this._cooldowns = new Map();
-    this._processing = new Map(); // key → startTimestamp
+    this._processing = new Map(); // unordered agent pair → active worker
   }
 
   get _engine() { return this._hub.engine; }
@@ -145,49 +146,115 @@ export class DmRouter {
   async handleNewDm(fromId, toId) {
     if (!this._isPhoneEnabled()) return;
 
-    const key = `${fromId}→${toId}`;
-
-    // 清理卡住的 entry（超过 5 分钟视为异常）
-    const PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
-    const now = Date.now();
-    for (const [k, ts] of this._processing) {
-      if (now - ts > PROCESSING_TIMEOUT_MS) this._processing.delete(k);
+    const pairKey = JSON.stringify([fromId, toId].sort());
+    const current = this._processing.get(pairKey);
+    if (current && (current.closing || current.controller.signal.aborted)) {
+      // An aborted SDK prompt can still be unwinding. Never reopen its session
+      // until teardown finishes; a new notification may then start a fresh pair.
+      await current.promise;
+      return this.handleNewDm(fromId, toId);
     }
 
-    // 防重入
-    if (this._processing.has(key)) return;
-
-    // 冷却期
-    for (const [k, t] of this._cooldowns) {
-      if (now - t >= COOLDOWN_MS) this._cooldowns.delete(k);
-    }
-    if (this._cooldowns.has(key) && now - this._cooldowns.get(key) < COOLDOWN_MS) {
-      debugLog()?.log("dm-router", `cooldown hit: ${key}`);
+    const key = JSON.stringify([fromId, toId]);
+    let revision;
+    try {
+      const stat = fs.statSync(path.join(this._engine.agentsDir, toId, "dm", `${fromId}.md`));
+      revision = `${stat.size}:${stat.mtimeMs}`;
+    } catch {
       return;
     }
+    const now = Date.now();
+    for (const [k, entry] of this._cooldowns) {
+      if (now - entry.at >= COOLDOWN_MS) this._cooldowns.delete(k);
+    }
+    const previous = this._cooldowns.get(key);
+    if (previous?.revision === revision) return current?.promise;
+    // Deduplicate notifications for the same file revision, never a real new DM
+    // that happens to arrive inside the old ten-second cooldown window.
+    this._cooldowns.set(key, { at: now, revision });
+    const request = { fromId, toId, forceReply: !!current };
+    if (current) {
+      // At most one pending delivery per direction; its prompt reads the latest
+      // transcript, so a burst is handled together without losing either owner.
+      current.pending.set(key, request);
+      return current.promise;
+    }
 
-    this._processing.set(key, Date.now());
-    this._cooldowns.set(key, now);
+    const worker = {
+      pending: new Map([[key, request]]),
+      controller: new AbortController(),
+      closing: false,
+      promise: null,
+    };
+    this._processing.set(pairKey, worker);
+    worker.promise = Promise.resolve()
+      .then(() => this._drainPair(fromId, toId, worker))
+      .catch((err) => { log.error(`${fromId}→${toId} failed: ${err.message}`); })
+      .finally(() => {
+        if (this._processing.get(pairKey) === worker) this._processing.delete(pairKey);
+      });
+    return worker.promise;
+  }
 
+  async _drainPair(fromId, toId, worker) {
+    const unregister = [];
+    const cancel = (reason = "dm-cancelled") => {
+      worker.pending.clear();
+      worker.controller.abort(reason);
+    };
+    // Timeout aborts the active session instead of deleting a live lock. The
+    // worker remains the owner until its prompt and teardown actually settle.
+    const timeout = setTimeout(() => cancel("dm-timeout"), PROCESSING_TIMEOUT_MS);
+    timeout.unref?.();
     try {
-      await this._processReply(fromId, toId);
-    } catch (err) {
-      log.error(`${key} failed: ${err.message}`);
+      for (const [sender, recipient] of [[fromId, toId], [toId, fromId]]) {
+        const release = this._engine.registerAgentPhoneAbortHandler?.(cancel, {
+          agentId: recipient,
+          conversationId: `dm:${sender}`,
+          conversationType: "dm",
+        });
+        if (typeof release === "function") unregister.push(release);
+      }
+      while (worker.pending.size && !worker.controller.signal.aborted && this._isPhoneEnabled()) {
+        const [key, request] = worker.pending.entries().next().value;
+        worker.pending.delete(key);
+        try {
+          await this._processReply(request.fromId, request.toId, {
+            signal: worker.controller.signal,
+            pending: worker.pending,
+            forceReply: request.forceReply,
+          });
+        } catch (err) {
+          if (!worker.controller.signal.aborted) log.error(`${key} failed: ${err.message}`);
+        }
+      }
     } finally {
-      this._processing.delete(key);
+      // The promise's outer finally removes the map entry in a later microtask.
+      // New notifications in that gap must wait and start a fresh worker.
+      worker.closing = true;
+      clearTimeout(timeout);
+      worker.pending.clear();
+      for (const release of unregister) {
+        try { release(); } catch {}
+      }
+      if (worker.controller.signal.aborted || !this._isPhoneEnabled()) {
+        this._cooldowns.delete(JSON.stringify([fromId, toId]));
+        this._cooldowns.delete(JSON.stringify([toId, fromId]));
+      }
     }
   }
 
   /**
    * 让 toId 读取聊天记录并回复，可能触发多轮
    */
-  async _processReply(fromId, toId) {
+  async _processReply(fromId, toId, { signal, pending, forceReply = false }: any = {}) {
     if (!this._isPhoneEnabled()) return;
 
     const engine = this._engine;
     const agentsDir = engine.agentsDir;
 
     for (let round = 0; round < MAX_ROUNDS; round++) {
+      if (signal?.aborted || !this._isPhoneEnabled()) break;
       // 读取 toId 视角的聊天记录
       const dmFile = path.join(agentsDir, toId, "dm", `${fromId}.md`);
       if (!fs.existsSync(dmFile)) break;
@@ -197,7 +264,11 @@ export class DmRouter {
 
       // 最后一条不是对方发的，说明已经回复过了，不需要再回
       const lastMsg = recentMsgs[recentMsgs.length - 1];
-      if (lastMsg.sender === toId) break;
+      if (lastMsg.sender === toId && !(round === 0 && forceReply)) break;
+
+      // Notifications already queued for this direction are included in this
+      // read. A notification arriving after it remains pending for a fresh turn.
+      pending?.delete(JSON.stringify([fromId, toId]));
 
       const msgText = formatMessagesForLLM(recentMsgs);
       const lastMsgTimestamp = lastMsg.timestamp || null;
@@ -209,18 +280,20 @@ export class DmRouter {
       const toName = toAgent?.agentName || toId;
       const phoneSettings = this._resolvePhoneSettings(toId, fromId);
 
-      // 定向注入：取 toId（回复方）对 fromId（对话对象）的关系 lore（keyword 条目，
-      // 用 fromName+fromId 当 query 命中），作为 systemAppend 喂进回复 session——
-      // 让私聊贴合既定关系、不瞎编，且只带当前这一个对话对象的关系。故障返回 '' 不阻塞。
-      const peerLore = buildXingyePeerRelationshipLore({
+      // 每轮现读回复方自己的 profile、正文命中的 keyword lore，以及回复方对当前 peer 的
+      // 定向关系 lore。通过 Phone 的 ephemeral turn context 注入：既绕开 30 分钟 prompt
+      // snapshot，又不会把资料副本持久写进 DM session 历史。
+      const phoneTurnContext = buildXingyeAgentPhoneTurnContext({
         agentId: toId,
         agentDir: toAgent?.agentDir || path.join(agentsDir, toId),
         hanakoHome: path.dirname(agentsDir),
-        peerName: fromName,
-        peerId: fromId,
+        agentName: toName,
+        locale: getLocale(),
+        messageText: msgText,
+        peerRefs: [{ id: fromId, name: fromName }],
       });
 
-      debugLog()?.log("dm-router", `${toId} replying to ${fromId} (round ${round + 1}/${MAX_ROUNDS})${peerLore ? " [+lore]" : ""}`);
+      debugLog()?.log("dm-router", `${toId} replying to ${fromId} (round ${round + 1}/${MAX_ROUNDS})${phoneTurnContext ? " [+dynamic-context]" : ""}`);
 
       // 用频道模式 prompt 让 toId 回复
       const isZh = getLocale().startsWith("zh");
@@ -270,16 +343,22 @@ export class DmRouter {
                 + `If you think the conversation can end, append <done/>.\n`
                 + `If you don't want to reply, output [NO_REPLY].`,
             capture: true,
+            ...(phoneTurnContext ? {
+              context: {
+                system: phoneTurnContext,
+                metadata: { source: "xingye_phone", surface: "dm", peerId: fromId },
+              },
+            } : {}),
           },
         ],
         {
           engine,
+          signal,
           conversationId: `dm:${fromId}`,
           conversationType: "dm",
           toolMode: phoneSettings.toolMode,
           modelOverride: phoneSettings.modelOverrideEnabled ? phoneSettings.modelOverrideModel : null,
           emitEvents: true,
-          ...(peerLore ? { systemAppend: peerLore } : {}),
           onSessionReady: (sessionPath) => {
             activeSessionPath = sessionPath;
             return this._recordPhoneActivity(
@@ -303,6 +382,8 @@ export class DmRouter {
             ),
         },
       );
+
+      if (signal?.aborted || !this._isPhoneEnabled()) break;
 
       if (!replyText || (replyText as string).includes("[NO_REPLY]")) {
         debugLog()?.log("dm-router", `${toName} chose not to reply to ${fromName}`);
@@ -329,6 +410,7 @@ export class DmRouter {
       // 写入双方的 dm 文件
       const toFile = path.join(agentsDir, toId, "dm", `${fromId}.md`);
       const fromFile = path.join(agentsDir, fromId, "dm", `${toId}.md`);
+      if (!fs.existsSync(toFile)) break;
       await appendMessage(toFile, toId, cleanReply);
       if (fs.existsSync(fromFile)) {
         await appendMessage(fromFile, toId, cleanReply);
@@ -358,8 +440,6 @@ export class DmRouter {
       if (isDone) break;
 
       // 交换角色，让对方也回复
-      const swapKey = `${toId}→${fromId}`;
-      this._cooldowns.set(swapKey, Date.now());
       [fromId, toId] = [toId, fromId];
     }
   }

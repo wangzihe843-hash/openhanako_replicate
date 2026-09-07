@@ -61,7 +61,8 @@ describe('writePeerRelationshipLore', () => {
     expect(onA).toHaveLength(1);
     expect(onA[0].category).toBe('relationship');
     expect(onA[0].title).toBe('与「寒鸦」的关系');
-    expect(onA[0].keywords).toEqual(['寒鸦']);
+    expect(onA[0].insertionMode).toBe('keyword');
+    expect(onA[0].keywords).toEqual(['寒鸦', 'agent-B']);
     // 源侧不再是空模板：含 peer 链接（对方现在是独立 agent + agent id 供 dm）+ 关系起点
     expect(onA[0].content).toContain('现在是独立角色');
     expect(onA[0].content).toContain('agent-B');
@@ -71,6 +72,8 @@ describe('writePeerRelationshipLore', () => {
     const onB = listLoreEntries('agent-B', storage);
     expect(onB).toHaveLength(1);
     expect(onB[0].title).toBe('与「林雾」的关系');
+    expect(onB[0].insertionMode).toBe('keyword');
+    expect(onB[0].keywords).toEqual(['林雾', 'agent-A']);
     expect(onB[0].content).toContain('另一个 AI agent');
     expect(onB[0].content).toContain('agent-A');
   });
@@ -149,6 +152,8 @@ describe('writePeerRelationshipLore', () => {
     expect(onA[0].content).toContain('agent-B'); // 对方 agent id（供 dm）
     expect(onA[0].content).toContain('生死之交。');
     expect(onA[0].keywords).toContain('寒鸦');
+    expect(onA[0].keywords).toContain('agent-B');
+    expect(onA[0].insertionMode).toBe('keyword');
 
     // 新角色侧仍正常写一条
     expect(listLoreEntries('agent-B', storage)).toHaveLength(1);

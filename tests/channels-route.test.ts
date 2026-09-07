@@ -345,6 +345,8 @@ describe("channels route membership contract", () => {
       proactiveEnabled: false,
       reminderIntervalMinutes: 45,
       guardLimit: 7,
+      socialFallbackMode: "auto",
+      socialFallbackTurnInterval: null,
       modelOverrideEnabled: true,
       modelOverrideModel: { id: "deepseek-v4-flash", provider: "deepseek" },
     });
@@ -363,6 +365,8 @@ describe("channels route membership contract", () => {
         proactiveEnabled: false,
         reminderIntervalMinutes: 45,
         guardLimit: 5,
+        socialFallbackMode: "enabled",
+        socialFallbackTurnInterval: 120,
         modelOverrideEnabled: true,
         modelOverrideModel: { id: "deepseek-v4-flash", provider: "deepseek" },
       }),
@@ -376,6 +380,8 @@ describe("channels route membership contract", () => {
       proactiveEnabled: false,
       reminderIntervalMinutes: 45,
       guardLimit: 5,
+      socialFallbackMode: "enabled",
+      socialFallbackTurnInterval: 120,
       modelOverrideEnabled: true,
       modelOverrideModel: { id: "deepseek-v4-flash", provider: "deepseek" },
     });
@@ -389,9 +395,51 @@ describe("channels route membership contract", () => {
       proactiveEnabled: false,
       reminderIntervalMinutes: 45,
       guardLimit: 5,
+      socialFallbackMode: "enabled",
+      socialFallbackTurnInterval: 120,
       modelOverrideEnabled: true,
       modelOverrideModel: { id: "deepseek-v4-flash", provider: "deepseek" },
     });
+
+    // Partial legacy-style saves must preserve the newer per-DM social fields.
+    const partialRes = await app.request("/api/conversations/dm%3Abob/agent-phone-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ replyMaxChars: 40 }),
+    });
+    expect(await partialRes.json()).toMatchObject({
+      replyMaxChars: 40,
+      socialFallbackMode: "enabled",
+      socialFallbackTurnInterval: 120,
+    });
+
+    const clearInterval = await app.request("/api/conversations/dm%3Abob/agent-phone-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ socialFallbackTurnInterval: null }),
+    });
+    expect(await clearInterval.json()).toMatchObject({
+      socialFallbackMode: "enabled",
+      socialFallbackTurnInterval: null,
+    });
+  });
+
+  it("rejects invalid per-DM social fallback settings", async () => {
+    const badMode = await app.request("/api/conversations/dm%3Abob/agent-phone-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ socialFallbackMode: "everyone" }),
+    });
+    expect(badMode.status).toBe(400);
+    expect(await badMode.json()).toMatchObject({ error: expect.stringContaining("socialFallbackMode") });
+
+    const badInterval = await app.request("/api/conversations/dm%3Abob/agent-phone-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ socialFallbackTurnInterval: 2 }),
+    });
+    expect(badInterval.status).toBe(400);
+    expect(await badInterval.json()).toMatchObject({ error: expect.stringContaining("between 10 and 5000") });
   });
 
   it("persists channel phone settings without the removed reply-scope field", async () => {

@@ -9,7 +9,7 @@
 import { useStore } from './index';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { hasServerConnection } from '../services/server-connection';
-import type { AgentPhoneActivity, AgentPhoneSettings, AgentPhoneToolMode, Channel, ChannelAgentActivities, ChannelMessage } from '../types';
+import type { AgentPhoneActivity, AgentPhoneSettings, AgentPhoneToolMode, Channel, ChannelAgentActivities, ChannelMessage, SocialFallbackMode } from '../types';
 
 // ══════════════════════════════════════════════════════
 // 加载频道列表
@@ -119,6 +119,10 @@ function normalizeAgentPhoneToolMode(mode: unknown): AgentPhoneToolMode {
   return mode === 'write' ? 'write' : 'read_only';
 }
 
+function normalizeSocialFallbackMode(mode: unknown): SocialFallbackMode {
+  return mode === 'enabled' || mode === 'disabled' ? mode : 'auto';
+}
+
 function conversationOwnerQuery(conversationId: string): string {
   if (!conversationId.startsWith('dm:')) return '';
   const channel = useStore.getState().channels.find((ch: Channel) => ch.id === conversationId);
@@ -144,6 +148,8 @@ function normalizeAgentPhoneSettings(data: any): AgentPhoneSettings {
     proactiveEnabled: data?.proactiveEnabled !== false,
     reminderIntervalMinutes: normalizeNullablePositiveInt(data?.reminderIntervalMinutes) || 31,
     guardLimit: normalizeNullablePositiveInt(data?.guardLimit) || 36,
+    socialFallbackMode: normalizeSocialFallbackMode(data?.socialFallbackMode),
+    socialFallbackTurnInterval: normalizeNullablePositiveInt(data?.socialFallbackTurnInterval),
     modelOverrideEnabled: data?.modelOverrideEnabled === true,
     modelOverrideModel: overrideModel?.id && overrideModel?.provider
       ? { id: String(overrideModel.id), provider: String(overrideModel.provider) }
@@ -159,10 +165,14 @@ function applyAgentPhoneSettings(settings: AgentPhoneSettings): void {
     channelAgentProactiveEnabled: settings.proactiveEnabled,
     channelAgentReminderIntervalMinutes: settings.reminderIntervalMinutes,
     channelAgentGuardLimit: settings.guardLimit,
+    channelAgentSocialFallbackMode: settings.socialFallbackMode,
+    channelAgentSocialFallbackTurnInterval: settings.socialFallbackTurnInterval,
     channelAgentModelOverrideEnabled: settings.modelOverrideEnabled,
     channelAgentModelOverrideModel: settings.modelOverrideModel,
   });
 }
+
+let phoneSettingsRequestGeneration = 0;
 
 function applyChannelMembers(channelId: string, members: string[]): void {
   const state = useStore.getState();
@@ -186,9 +196,15 @@ export async function loadConversationAgentPhoneToolMode(conversationId: string)
 export async function loadConversationAgentPhoneSettings(conversationId: string): Promise<void> {
   const s = useStore.getState();
   if (!conversationId || !hasServerConnection(s)) return;
+  const requestGeneration = ++phoneSettingsRequestGeneration;
+  const currentChannelAtRequest = s.currentChannel;
+  const stillCurrentRequest = () =>
+    phoneSettingsRequestGeneration === requestGeneration
+    && useStore.getState().currentChannel === currentChannelAtRequest;
   try {
     const res = await hanaFetch(conversationPhoneSettingsUrl(conversationId));
     if (!res.ok) {
+      if (!stillCurrentRequest()) return;
       applyAgentPhoneSettings({
         mode: 'read_only',
         replyMinChars: null,
@@ -196,15 +212,19 @@ export async function loadConversationAgentPhoneSettings(conversationId: string)
         proactiveEnabled: true,
         reminderIntervalMinutes: 31,
         guardLimit: 36,
+        socialFallbackMode: 'auto',
+        socialFallbackTurnInterval: null,
         modelOverrideEnabled: false,
         modelOverrideModel: null,
       });
       return;
     }
     const data = await res.json();
+    if (!stillCurrentRequest()) return;
     applyAgentPhoneSettings(normalizeAgentPhoneSettings(data));
   } catch (err) {
     console.error('[channels] load phone settings failed:', err);
+    if (!stillCurrentRequest()) return;
     applyAgentPhoneSettings({
       mode: 'read_only',
       replyMinChars: null,
@@ -212,6 +232,8 @@ export async function loadConversationAgentPhoneSettings(conversationId: string)
       proactiveEnabled: true,
       reminderIntervalMinutes: 31,
       guardLimit: 36,
+      socialFallbackMode: 'auto',
+      socialFallbackTurnInterval: null,
       modelOverrideEnabled: false,
       modelOverrideModel: null,
     });
@@ -226,6 +248,7 @@ export async function saveConversationAgentPhoneSettings(patch: Partial<AgentPho
   const s = useStore.getState();
   const conversationId = s.currentChannel;
   if (!conversationId || !hasServerConnection(s)) return;
+  const requestGeneration = ++phoneSettingsRequestGeneration;
   const res = await hanaFetch(conversationPhoneSettingsUrl(conversationId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -236,12 +259,20 @@ export async function saveConversationAgentPhoneSettings(patch: Partial<AgentPho
       proactiveEnabled: patch.proactiveEnabled !== undefined ? patch.proactiveEnabled : s.channelAgentProactiveEnabled,
       reminderIntervalMinutes: patch.reminderIntervalMinutes !== undefined ? patch.reminderIntervalMinutes : s.channelAgentReminderIntervalMinutes,
       guardLimit: patch.guardLimit !== undefined ? patch.guardLimit : s.channelAgentGuardLimit,
+      socialFallbackMode: patch.socialFallbackMode !== undefined ? patch.socialFallbackMode : s.channelAgentSocialFallbackMode,
+      socialFallbackTurnInterval: patch.socialFallbackTurnInterval !== undefined ? patch.socialFallbackTurnInterval : s.channelAgentSocialFallbackTurnInterval,
       modelOverrideEnabled: patch.modelOverrideEnabled !== undefined ? patch.modelOverrideEnabled : s.channelAgentModelOverrideEnabled,
       modelOverrideModel: patch.modelOverrideModel !== undefined ? patch.modelOverrideModel : s.channelAgentModelOverrideModel,
     }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
+  // A slow save for the previous DM must not paint its settings onto a peer
+  // the user switched to while the request was in flight.
+  if (
+    phoneSettingsRequestGeneration !== requestGeneration
+    || useStore.getState().currentChannel !== conversationId
+  ) return;
   applyAgentPhoneSettings(normalizeAgentPhoneSettings(data));
 }
 

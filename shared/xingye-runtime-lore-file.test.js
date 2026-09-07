@@ -78,6 +78,15 @@ describe('readXingyeRuntimeLoreEntriesSync', () => {
     expect(entries.map((item) => item.id)).toEqual(['v2']);
   });
 
+  it.each([{}, null])('treats an existing empty official store as authoritative (%j)', (empty) => {
+    const root = makeRoot();
+    roots.push(root);
+    const agentDir = path.join(root, 'agents', 'agent-a');
+    writeJson(path.join(agentDir, 'xingye', 'lore', 'entries.json'), empty);
+    writeJson(path.join(agentDir, 'xingye', 'lore.json'), [entry({ id: 'deleted-old-mirror' })]);
+    expect(readXingyeRuntimeLoreEntriesSync({ hanakoHome: root, agentDir, agentId: 'agent-a' })).toEqual([]);
+  });
+
   it('falls back to workspace v1 lore entries', () => {
     const root = makeRoot();
     roots.push(root);

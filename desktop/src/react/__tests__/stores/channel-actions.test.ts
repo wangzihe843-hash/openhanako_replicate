@@ -30,6 +30,8 @@ const mockState: Record<string, unknown> = {
   channelAgentProactiveEnabled: true,
   channelAgentReminderIntervalMinutes: 31,
   channelAgentGuardLimit: 36,
+  channelAgentSocialFallbackMode: 'auto',
+  channelAgentSocialFallbackTurnInterval: null,
   channelAgentModelOverrideEnabled: false,
   channelAgentModelOverrideModel: null,
 };
@@ -70,6 +72,8 @@ describe('channel-actions', () => {
     mockState.channelAgentProactiveEnabled = true;
     mockState.channelAgentReminderIntervalMinutes = 31;
     mockState.channelAgentGuardLimit = 36;
+    mockState.channelAgentSocialFallbackMode = 'auto';
+    mockState.channelAgentSocialFallbackTurnInterval = null;
     mockState.channelAgentModelOverrideEnabled = false;
     mockState.channelAgentModelOverrideModel = null;
     mockFetch.mockReset();
@@ -199,7 +203,13 @@ describe('channel-actions', () => {
       }];
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ mode: 'write', replyMinChars: 10, replyMaxChars: 80 }),
+        json: async () => ({
+          mode: 'write',
+          replyMinChars: 10,
+          replyMaxChars: 80,
+          socialFallbackMode: 'disabled',
+          socialFallbackTurnInterval: 140,
+        }),
       } as Response);
 
       const { loadConversationAgentPhoneSettings } = await import('../../stores/channel-actions');
@@ -209,6 +219,8 @@ describe('channel-actions', () => {
       expect(mockState.channelAgentPhoneToolMode).toBe('write');
       expect(mockState.channelAgentReplyMinChars).toBe(10);
       expect(mockState.channelAgentReplyMaxChars).toBe(80);
+      expect(mockState.channelAgentSocialFallbackMode).toBe('disabled');
+      expect(mockState.channelAgentSocialFallbackTurnInterval).toBe(140);
     });
 
     it('saves DM phone settings with the stored owner agent id', async () => {
@@ -228,16 +240,66 @@ describe('channel-actions', () => {
       }];
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ mode: 'write', replyMinChars: 20, replyMaxChars: 90 }),
+        json: async () => ({
+          mode: 'write',
+          replyMinChars: 20,
+          replyMaxChars: 90,
+          socialFallbackMode: 'enabled',
+          socialFallbackTurnInterval: 60,
+        }),
       } as Response);
 
       const { saveConversationAgentPhoneSettings } = await import('../../stores/channel-actions');
-      await saveConversationAgentPhoneSettings({ mode: 'write', replyMinChars: 20, replyMaxChars: 90 });
+      await saveConversationAgentPhoneSettings({
+        mode: 'write',
+        replyMinChars: 20,
+        replyMaxChars: 90,
+        socialFallbackMode: 'enabled',
+        socialFallbackTurnInterval: 60,
+      });
 
       expect(mockFetch).toHaveBeenCalledWith('/api/conversations/dm%3Aagent1/agent-phone-settings?agentId=hana', expect.objectContaining({
         method: 'POST',
       }));
       expect(mockState.channelAgentPhoneToolMode).toBe('write');
+      const body = JSON.parse(String((mockFetch.mock.calls[0][1] as RequestInit).body));
+      expect(body).toMatchObject({
+        socialFallbackMode: 'enabled',
+        socialFallbackTurnInterval: 60,
+      });
+      expect(mockState.channelAgentSocialFallbackMode).toBe('enabled');
+      expect(mockState.channelAgentSocialFallbackTurnInterval).toBe(60);
+    });
+
+    it('does not apply a slow save response after switching to another DM', async () => {
+      mockState.currentChannel = 'dm:agent1';
+      mockState.channels = [{
+        id: 'dm:agent1',
+        name: 'Agent 1',
+        members: ['agent1'],
+        lastMessage: '',
+        lastSender: '',
+        lastTimestamp: '',
+        newMessageCount: 0,
+        isDM: true,
+        peerId: 'agent1',
+        peerName: 'Agent 1',
+        dmOwnerId: 'hana',
+      }];
+      let release: ((response: Response) => void) | undefined;
+      mockFetch.mockReturnValueOnce(new Promise<Response>((resolve) => { release = resolve; }));
+
+      const { saveConversationAgentPhoneSettings } = await import('../../stores/channel-actions');
+      const saving = saveConversationAgentPhoneSettings({ socialFallbackMode: 'disabled' });
+      mockState.currentChannel = 'dm:agent2';
+      mockState.channelAgentSocialFallbackMode = 'enabled';
+      release?.({
+        ok: true,
+        json: async () => ({ socialFallbackMode: 'disabled' }),
+      } as Response);
+      await saving;
+
+      expect(mockState.channelAgentSocialFallbackMode).toBe('enabled');
     });
   });
 

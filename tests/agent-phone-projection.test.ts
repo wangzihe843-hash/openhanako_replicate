@@ -109,6 +109,37 @@ describe("agent phone projection", () => {
     expect(projection.activities.map((activity) => activity.state)).toEqual(["viewed"]);
   });
 
+  it("serializes concurrent settings and activity writes without losing either", async () => {
+    const agentDir = path.join(tmpDir, "agents", "hana");
+    await Promise.all([
+      updateAgentPhoneProjectionMeta({
+        agentDir,
+        agentId: "hana",
+        conversationId: "dm:yui",
+        conversationType: "dm",
+        patch: { socialFallbackMode: "enabled", socialFallbackTurnInterval: 120 },
+      }),
+      recordAgentPhoneActivity({
+        agentDir,
+        agentId: "hana",
+        conversationId: "dm:yui",
+        conversationType: "dm",
+        state: "viewed",
+        summary: "read one message",
+      }),
+    ]);
+
+    const projection = readAgentPhoneProjection(getAgentPhoneProjectionPath(agentDir, "dm:yui"));
+    expect(projection.meta).toMatchObject({
+      socialFallbackMode: "enabled",
+      socialFallbackTurnInterval: "120",
+      state: "viewed",
+    });
+    expect(projection.activities).toEqual([
+      expect.objectContaining({ state: "viewed", summary: "read one message" }),
+    ]);
+  });
+
   it("resets a projection visibility boundary and clears the old phone session snapshot", async () => {
     const agentDir = path.join(tmpDir, "agents", "hana");
     await updateAgentPhoneProjectionMeta({

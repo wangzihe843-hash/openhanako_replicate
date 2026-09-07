@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const STABLE_LORE_CATEGORIES = new Set(['background', 'relationship', 'character']);
 const DEFAULT_MAX_CHARS = 4_000;
 const OMISSION_MARKER = '...';
 const FILE_TITLE = '# Xingye Lore Memory';
@@ -156,7 +155,6 @@ function isStableLoreCandidate(entry, agentId) {
   if (entry.enabled !== true) return false;
   if (entry.visibility !== 'canonical') return false;
   if (entry.insertionMode !== 'always') return false;
-  if (!STABLE_LORE_CATEGORIES.has(entry.category)) return false;
   if (!normalizeString(entry.summary) && !normalizeString(entry.content)) return false;
   if (!normalizeString(entry.id)) return false;
   return true;

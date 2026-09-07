@@ -12,6 +12,18 @@ import crypto from "crypto";
 
 const ENCODED_META_KEYS = new Set();
 const JSON_META_KEYS = new Set(["promptSnapshot", "effectiveModel", "modelOverrideRequested"]);
+const projectionFileLocks = new Map<string, Promise<unknown>>();
+
+function withProjectionFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
+  const previous = projectionFileLocks.get(filePath) || Promise.resolve();
+  const next = previous.then(fn, fn);
+  const tracked = next.catch(() => {});
+  projectionFileLocks.set(filePath, tracked);
+  tracked.finally(() => {
+    if (projectionFileLocks.get(filePath) === tracked) projectionFileLocks.delete(filePath);
+  });
+  return next;
+}
 
 export function safeConversationStem(conversationId) {
   const raw = String(conversationId || "").trim() || "conversation";
@@ -122,7 +134,7 @@ export function resolveAgentPhoneStoredSessionPath(agentDir, stored) {
   return resolved;
 }
 
-export async function ensureAgentPhoneProjection({
+async function ensureAgentPhoneProjectionUnlocked({
   agentDir,
   agentId,
   conversationId,
@@ -152,6 +164,15 @@ export async function ensureAgentPhoneProjection({
   return filePath;
 }
 
+export async function ensureAgentPhoneProjection(args: any) {
+  if (!args?.agentDir) throw new Error("agentDir is required");
+  if (!args?.agentId) throw new Error("agentId is required");
+  if (!args?.conversationId) throw new Error("conversationId is required");
+  if (!args?.conversationType) throw new Error("conversationType is required");
+  const filePath = getAgentPhoneProjectionPath(args?.agentDir, args?.conversationId);
+  return withProjectionFileLock(filePath, () => ensureAgentPhoneProjectionUnlocked(args));
+}
+
 export async function updateAgentPhoneProjectionMeta({
   agentDir,
   agentId,
@@ -160,22 +181,25 @@ export async function updateAgentPhoneProjectionMeta({
   patch,
   timestamp = new Date().toISOString(),
 }) {
-  const filePath = await ensureAgentPhoneProjection({
-    agentDir,
-    agentId,
-    conversationId,
-    conversationType,
-    timestamp,
+  const filePath = getAgentPhoneProjectionPath(agentDir, conversationId);
+  return withProjectionFileLock(filePath, async () => {
+    await ensureAgentPhoneProjectionUnlocked({
+      agentDir,
+      agentId,
+      conversationId,
+      conversationType,
+      timestamp,
+    });
+    const existing = fs.readFileSync(filePath, "utf-8");
+    const parsed = parseProjection(existing);
+    const nextMeta = {
+      ...parsed.meta,
+      ...patch,
+      updatedAt: timestamp,
+    };
+    await fsp.writeFile(filePath, serializeProjection(nextMeta, projectionBody(existing)), "utf-8");
+    return filePath;
   });
-  const existing = fs.readFileSync(filePath, "utf-8");
-  const parsed = parseProjection(existing);
-  const nextMeta = {
-    ...parsed.meta,
-    ...patch,
-    updatedAt: timestamp,
-  };
-  await fsp.writeFile(filePath, serializeProjection(nextMeta, projectionBody(existing)), "utf-8");
-  return filePath;
 }
 
 export async function resetAgentPhoneProjection({
@@ -187,33 +211,36 @@ export async function resetAgentPhoneProjection({
   resetBy = "",
   timestamp = new Date().toISOString(),
 }) {
-  const filePath = await ensureAgentPhoneProjection({
-    agentDir,
-    agentId,
-    conversationId,
-    conversationType,
-    timestamp,
+  const filePath = getAgentPhoneProjectionPath(agentDir, conversationId);
+  return withProjectionFileLock(filePath, async () => {
+    await ensureAgentPhoneProjectionUnlocked({
+      agentDir,
+      agentId,
+      conversationId,
+      conversationType,
+      timestamp,
+    });
+    const existing = fs.readFileSync(filePath, "utf-8");
+    const parsed = parseProjection(existing);
+    const nextMeta: Record<string, any> = {
+      ...parsed.meta,
+      agentId,
+      conversationId,
+      conversationType,
+      visibleAfterTimestamp,
+      resetAt: timestamp,
+      resetBy,
+      updatedAt: timestamp,
+    };
+    delete nextMeta.phoneSessionFile;
+    delete nextMeta.promptSnapshot;
+    delete nextMeta.toolNames;
+    delete nextMeta.lastRefreshedDate;
+    delete nextMeta.lastPhoneSessionUsedAt;
+    delete nextMeta.phoneSessionStartedAt;
+    await fsp.writeFile(filePath, serializeProjection(nextMeta, projectionBody(existing)), "utf-8");
+    return filePath;
   });
-  const existing = fs.readFileSync(filePath, "utf-8");
-  const parsed = parseProjection(existing);
-  const nextMeta: Record<string, any> = {
-    ...parsed.meta,
-    agentId,
-    conversationId,
-    conversationType,
-    visibleAfterTimestamp,
-    resetAt: timestamp,
-    resetBy,
-    updatedAt: timestamp,
-  };
-  delete nextMeta.phoneSessionFile;
-  delete nextMeta.promptSnapshot;
-  delete nextMeta.toolNames;
-  delete nextMeta.lastRefreshedDate;
-  delete nextMeta.lastPhoneSessionUsedAt;
-  delete nextMeta.phoneSessionStartedAt;
-  await fsp.writeFile(filePath, serializeProjection(nextMeta, projectionBody(existing)), "utf-8");
-  return filePath;
 }
 
 export async function recordAgentPhoneActivity({
@@ -225,35 +252,47 @@ export async function recordAgentPhoneActivity({
   summary,
   details,
   timestamp = new Date().toISOString(),
+}: {
+  agentDir: string;
+  agentId: string;
+  conversationId: string;
+  conversationType: string;
+  state: string;
+  summary?: string;
+  details?: Record<string, any>;
+  timestamp?: string;
 }) {
   if (!state) throw new Error("state is required");
-  const filePath = await ensureAgentPhoneProjection({
-    agentDir,
-    agentId,
-    conversationId,
-    conversationType,
-    timestamp,
+  const filePath = getAgentPhoneProjectionPath(agentDir, conversationId);
+  return withProjectionFileLock(filePath, async () => {
+    await ensureAgentPhoneProjectionUnlocked({
+      agentDir,
+      agentId,
+      conversationId,
+      conversationType,
+      timestamp,
+    });
+
+    const existing = fs.readFileSync(filePath, "utf-8");
+    const parsed = parseProjection(existing);
+    const meta: Record<string, any> = {
+      ...parsed.meta,
+      agentId,
+      conversationId,
+      conversationType,
+      state,
+      summary: summary || state,
+      updatedAt: timestamp,
+    };
+    if (details?.lastMessageTimestamp) {
+      meta.lastViewedTimestamp = details.lastMessageTimestamp;
+    }
+
+    const detailsText = details && Object.keys(details).length > 0
+      ? ` <!-- details: ${JSON.stringify(details)} -->`
+      : "";
+    const line = `- ${timestamp} [${state}] ${summary || state}${detailsText}\n`;
+    await fsp.writeFile(filePath, serializeProjection(meta, `${projectionBody(existing)}${line}`), "utf-8");
+    return { filePath, activity: { timestamp, state, summary: summary || state, details: details || null } };
   });
-
-  const existing = fs.readFileSync(filePath, "utf-8");
-  const parsed = parseProjection(existing);
-  const meta: Record<string, any> = {
-    ...parsed.meta,
-    agentId,
-    conversationId,
-    conversationType,
-    state,
-    summary: summary || state,
-    updatedAt: timestamp,
-  };
-  if (details?.lastMessageTimestamp) {
-    meta.lastViewedTimestamp = details.lastMessageTimestamp;
-  }
-
-  const detailsText = details && Object.keys(details).length > 0
-    ? ` <!-- details: ${JSON.stringify(details)} -->`
-    : "";
-  const line = `- ${timestamp} [${state}] ${summary || state}${detailsText}\n`;
-  await fsp.writeFile(filePath, serializeProjection(meta, `${projectionBody(existing)}${line}`), "utf-8");
-  return { filePath, activity: { timestamp, state, summary: summary || state, details: details || null } };
 }

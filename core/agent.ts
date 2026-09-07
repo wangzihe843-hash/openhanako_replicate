@@ -100,6 +100,7 @@ type BuildSystemPromptOptions = {
   recentMessages?: any[];
   xingyeWorkspaceRoot?: string;
   workModeEnabled?: boolean;
+  includeXingyeContext?: boolean;
 };
 
 export class Agent {
@@ -1220,6 +1221,14 @@ export class Agent {
     };
   }
 
+  /** Phone freezes its ordinary base; Xingye profile and lore arrive afresh each turn. */
+  buildPhoneSystemPrompt() {
+    return this.buildSystemPrompt({
+      forceMemoryEnabled: this.memoryMasterEnabled !== false,
+      includeXingyeContext: false,
+    });
+  }
+
   /**
    * 组装 system prompt
    * @param {object} [options]
@@ -1611,7 +1620,7 @@ export class Agent {
 
     // 工作模式：剥离全部星野角色注入（性别 / 关系 / 核心设定 / 关键词 lore），
     // 让该会话回到纯助手。yuan/ishiki 基础人格层不在此处，保持不变。
-    if (!forSubagent && !workModeEnabled) {
+    if (!forSubagent && !workModeEnabled && options.includeXingyeContext !== false) {
       /*
        * 注入位置说明：性别 preamble 必须出现在「星野核心设定」(lore-memory.md) 之前。
        * 原因：lore 里常包含其他角色姓名 / 关系描述 / 称呼习惯，LLM 在没有先吃到

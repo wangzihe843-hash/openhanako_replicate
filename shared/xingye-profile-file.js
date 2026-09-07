@@ -15,6 +15,21 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const VALID_GENDERS = new Set(['female', 'male', 'nonbinary', 'unspecified']);
+const MAX_PHONE_PROFILE_FIELD_CHARS = 360;
+const MAX_PHONE_PROFILE_CONTEXT_CHARS = 4_800;
+const PHONE_PROFILE_FIELDS = [
+  ['displayName', '姓名 / 显示名', 'Name / display name'],
+  ['shortBio', '简介', 'Short bio'],
+  ['identitySummary', '身份', 'Identity'],
+  ['backgroundSummary', '背景', 'Background'],
+  ['personalitySummary', '性格', 'Personality'],
+  ['behaviorLogic', '行事逻辑', 'Behavior logic'],
+  ['values', '价值观', 'Values'],
+  ['taboos', '边界 / 禁忌', 'Boundaries / taboos'],
+  ['speakingStyle', '说话风格', 'Speaking style'],
+  ['relationshipLabel', '与用户的关系', 'Relationship with the user'],
+  ['relationshipMode', '与用户的相处模式', 'How you relate to the user'],
+];
 
 function getReadableIdentity({ hanakoHome, agentId } = {}) {
   const home = typeof hanakoHome === 'string' ? hanakoHome.trim() : '';
@@ -62,6 +77,58 @@ function trimOrFallback(value, fallback) {
   if (typeof value !== 'string') return fallback;
   const trimmed = value.trim();
   return trimmed || fallback;
+}
+
+function normalizeProfileText(value) {
+  if (typeof value !== 'string') return '';
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= MAX_PHONE_PROFILE_FIELD_CHARS) return normalized;
+  return `${normalized.slice(0, MAX_PHONE_PROFILE_FIELD_CHARS - 1).trimEnd()}…`;
+}
+
+/**
+ * 把 profile.json 中会影响角色言行的字段渲染成 Agent Phone 每轮可动态读取的上下文。
+ *
+ * Phone session 的 system prompt 会在活跃窗口内复用快照；这段上下文通过每轮临时
+ * provider context 注入，因而 profile 刚保存后，私聊 / 群聊无需等待快照过期就能看到，
+ * 且不会写入会话历史。媒体、自动化开关和
+ * corruption 数值不属于自我叙事，不放进 prompt。
+ */
+export function buildXingyeAgentPhoneProfileContext({ profile, agentName, locale } = {}) {
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) return '';
+  const isZh = String(locale || '').startsWith('zh');
+  const lines = [];
+  for (const [key, zhLabel, enLabel] of PHONE_PROFILE_FIELDS) {
+    const value = normalizeProfileText(profile[key]);
+    if (value) lines.push(`- ${isZh ? zhLabel : enLabel}: ${value}`);
+  }
+  const gender = pickValidGender(profile);
+  if (gender) lines.push(`- ${isZh ? '性别' : 'Gender'}: ${gender}`);
+  if (lines.length === 0) return '';
+
+  const selfName = normalizeProfileText(agentName)
+    || (isZh ? '当前角色' : 'the current agent');
+  const context = [
+    isZh ? '# 你自己的最新角色资料' : '# Your Current Role Profile',
+    isZh
+      ? `以下内容是 ${selfName}（你自己）的资料，不属于聊天中的其他人。按这些资料保持身份、语气、边界与行动逻辑；不要机械复述。`
+      : `This is the current profile of ${selfName} (you), not anyone else in the conversation. Use it to keep your identity, voice, boundaries, and behavior consistent; do not recite it mechanically.`,
+    '',
+    ...lines,
+  ].join('\n');
+  return context.length <= MAX_PHONE_PROFILE_CONTEXT_CHARS
+    ? context
+    : `${context.slice(0, MAX_PHONE_PROFILE_CONTEXT_CHARS - 1).trimEnd()}…`;
+}
+
+/** 动态 Phone prompt 入口。任何缺失 / 损坏都静默返回空串。 */
+export function readXingyeAgentPhoneProfileContextSync({ hanakoHome, agentId, agentName, locale } = {}) {
+  try {
+    const profile = readXingyeProfileJsonSync({ hanakoHome, agentId });
+    return buildXingyeAgentPhoneProfileContext({ profile, agentName, locale });
+  } catch {
+    return '';
+  }
 }
 
 /**

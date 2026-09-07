@@ -1,8 +1,7 @@
-const STABLE_LORE_CATEGORIES = new Set(['background', 'relationship', 'character']);
 const DEFAULT_MAX_CHARS = 2_000;
-const STABLE_LORE_TITLE = '【星野核心设定】';
+const STABLE_LORE_TITLE = '【星野始终生效设定】';
 const STABLE_LORE_NOTICE =
-  '以下是角色长期背景、核心关系或核心人物设定，来自用户编辑的 Xingye Lore。不要把它们当作刚发生的事件；若与当前聊天事实冲突，以当前聊天事实为准。';
+  '以下是用户编辑并标记为 always 的 Xingye Lore，会始终生效。不要把它们当作刚发生的事件；若与当前聊天事实冲突，以当前聊天事实为准。';
 const RUNTIME_LORE_TITLE = '# 星野设定参考';
 const RUNTIME_LORE_NOTICE = [
   '以下内容是本轮相关世界观、地点、组织、规则、事件或人物关系参考。',
@@ -55,7 +54,6 @@ function isStableLoreCandidate(entry, agentId) {
   if (entry.enabled !== true) return false;
   if (entry.visibility !== 'canonical') return false;
   if (entry.insertionMode !== 'always') return false;
-  if (!STABLE_LORE_CATEGORIES.has(entry.category)) return false;
   if (!normalizeString(entry.content)) return false;
   return true;
 }

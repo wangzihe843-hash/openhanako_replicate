@@ -21,11 +21,11 @@ function readJsonObject(filePath) {
   return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
 }
 
-function pushUnique(candidates, seen, filePath, read) {
+function pushUnique(candidates, seen, filePath, read, authoritative = false) {
   const normalizedPath = normalizeString(filePath);
   if (!normalizedPath || seen.has(normalizedPath)) return;
   seen.add(normalizedPath);
-  candidates.push({ filePath: normalizedPath, read });
+  candidates.push({ filePath: normalizedPath, read, authoritative });
 }
 
 function getAgentDirName(agentId, safeAgentId) {
@@ -57,12 +57,12 @@ function buildRuntimeLoreSourceCandidates({
   if (normalizedHanakoHome) {
     const agentDirName = getAgentDirName(normalizedAgentId, safeAgentId);
     const entriesPath = path.join(normalizedHanakoHome, 'agents', agentDirName, 'xingye', 'lore', 'entries.json');
-    pushUnique(candidates, seen, entriesPath, readAgentLoreEntriesFile(entriesPath));
+    pushUnique(candidates, seen, entriesPath, readAgentLoreEntriesFile(entriesPath), true);
   }
 
   if (normalizedAgentDir) {
     const entriesPath = path.join(normalizedAgentDir, 'xingye', 'lore', 'entries.json');
-    pushUnique(candidates, seen, entriesPath, readAgentLoreEntriesFile(entriesPath));
+    pushUnique(candidates, seen, entriesPath, readAgentLoreEntriesFile(entriesPath), true);
   }
 
   if (normalizedWorkspaceRoot) {
@@ -112,7 +112,9 @@ export function readXingyeRuntimeLoreEntriesSync({
   for (const candidate of candidates) {
     try {
       const entries = candidate.read();
-      if (entries.length > 0) return entries;
+      // An existing official store, including {} or a null deletion tombstone,
+      // is authoritative. Falling through would resurrect deleted mirror lore.
+      if (candidate.authoritative || entries.length > 0) return entries;
     } catch {
       // Runtime lore is contextual only; unreadable sources must not block chat.
     }

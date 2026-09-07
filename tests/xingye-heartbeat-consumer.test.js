@@ -3,8 +3,10 @@ import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Scheduler } from "../hub/scheduler.js";
+import { updateAgentPhoneProjectionMeta } from "../lib/conversations/agent-phone-projection.ts";
 import {
   computeAutoDraftStaleness,
+  runXingyeHeartbeatConsumer,
   pruneConsumedEvents,
   pruneOrphanDedupeKeys,
   summarizeXingyeEventsForHeartbeatZh,
@@ -574,6 +576,106 @@ describe("summarizeXingyeEventsForHeartbeatZh: origin-aware grouping", () => {
     /** No raw event-type strings leak into the summary. */
     expect(summary).not.toContain("news.entry_appended");
     expect(summary).not.toContain("interview.");
+  });
+});
+
+describe("Xingye heartbeat social fallback integration", () => {
+  it("maps disk relationship lore into an 80-turn fallback and persists turns across pruning", async () => {
+    const root = mktemp();
+    const agentsDir = path.join(root, "agents");
+    const agentDir = path.join(agentsDir, "agent-a");
+    const lorePath = path.join(agentDir, "xingye", "lore", "entries.json");
+    fs.mkdirSync(path.dirname(lorePath), { recursive: true });
+    fs.writeFileSync(lorePath, JSON.stringify({
+      related: {
+        id: "related",
+        agentId: "agent-a",
+        title: "Agent B bond",
+        content: "Agent B is a close family friend.",
+        category: "relationship",
+        keywords: ["Agent B", "agent-b"],
+        enabled: true,
+        visibility: "canonical",
+        insertionMode: "keyword",
+        priority: 50,
+      },
+    }), "utf8");
+    const chatEvents = Array.from({ length: 80 }, (_, i) => ({
+      id: `chat-${i}`,
+      agentId: "agent-a",
+      type: "recent_chat.observed",
+      source: "desktop-session-submit",
+      createdAt: new Date(Date.parse("2026-05-17T00:00:00.000Z") + i * 60_000).toISOString(),
+      payload: { turnIndex: i },
+    }));
+    writeEventLog(agentsDir, "agent-a", chatEvents);
+
+    const first = await runXingyeHeartbeatConsumer({
+      agentId: "agent-a",
+      agentDir,
+      peers: [
+        { id: "agent-b", name: "Agent B" },
+        { id: "agent-c", name: "Agent C" },
+      ],
+    });
+    expect(first.result.socialStaleness).toMatchObject({
+      shouldSocialize: true,
+      overduePeerCount: 1,
+      relationshipPeerCount: 1,
+    });
+    expect(first.result.socialStaleness.candidatePeers.map((peer) => peer.peerId)).toEqual(["agent-b"]);
+
+    // Simulate retention having removed all old events. A new id advances the
+    // monotonic counter to 81 instead of dropping the apparent history to 1.
+    writeEventLog(agentsDir, "agent-a", [{
+      ...chatEvents[0],
+      id: "chat-after-prune",
+      createdAt: "2026-06-17T00:00:00.000Z",
+    }]);
+    const second = await runXingyeHeartbeatConsumer({
+      agentId: "agent-a",
+      agentDir,
+      peers: [{ id: "agent-b", name: "Agent B" }],
+    });
+    expect(second.result.socialStaleness.candidatePeers[0].chatTurnsSinceLastDm).toBe(81);
+    const state = readJson(path.join(agentDir, "xingye", "social", "peer-state.json"));
+    expect(state.userTurnCount).toBe(81);
+
+    await updateAgentPhoneProjectionMeta({
+      agentDir,
+      agentId: "agent-a",
+      conversationId: "dm:agent-b",
+      conversationType: "dm",
+      patch: { socialFallbackMode: "disabled" },
+    });
+    await updateAgentPhoneProjectionMeta({
+      agentDir,
+      agentId: "agent-a",
+      conversationId: "dm:agent-c",
+      conversationType: "dm",
+      patch: { socialFallbackMode: "enabled", socialFallbackTurnInterval: 10 },
+    });
+    writeEventLog(agentsDir, "agent-a", [{
+      ...chatEvents[0],
+      id: "chat-after-settings",
+      createdAt: "2026-06-17T00:01:00.000Z",
+    }]);
+    const overridden = await runXingyeHeartbeatConsumer({
+      agentId: "agent-a",
+      agentDir,
+      peers: [
+        { id: "agent-b", name: "Agent B" },
+        { id: "agent-c", name: "Agent C" },
+      ],
+    });
+    expect(overridden.result.socialStaleness.fallbackPeerCount).toBe(1);
+    expect(overridden.result.socialStaleness.relationshipPeerCount).toBe(0);
+    expect(overridden.result.socialStaleness.candidatePeers[0]).toMatchObject({
+      peerId: "agent-c",
+      socialFallbackMode: "enabled",
+      fallbackThreshold: 10,
+    });
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });
 

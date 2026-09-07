@@ -114,6 +114,29 @@ function runtimeLore(overrides = {}) {
 describe("agent Xingye lore prompt", () => {
   const roots = [];
 
+  it("builds a Phone base without generated Xingye sections while retaining ordinary memory and user-authored headings", () => {
+    const { agent, root, agentDir } = makeAgent();
+    roots.push(root);
+    fs.writeFileSync(path.join(agentDir, "identity.md"), "# 星野核心设定\nUser-authored persona text must stay.", "utf8");
+    writeProfile(agentDir, { gender: "female", relationshipLabel: "UNIQUE CURRENT RELATIONSHIP" });
+    writeManagedLore(agentDir, "UNIQUE STABLE LORE");
+    writeAgentMirrorRuntimeLore(agentDir, [runtimeLore({ content: "UNIQUE KEYWORD LORE" })]);
+    const main = agent.buildSystemPrompt({ userText: "observatory" });
+    expect(main).toContain("UNIQUE STABLE LORE");
+    expect(main).toContain("UNIQUE KEYWORD LORE");
+    expect(main).toContain("UNIQUE CURRENT RELATIONSHIP");
+    expect(main).toContain("Gender: **female**");
+    const phone = agent.buildPhoneSystemPrompt();
+    expect(phone).not.toContain("UNIQUE STABLE LORE");
+    expect(phone).not.toContain("UNIQUE KEYWORD LORE");
+    expect(phone).not.toContain("UNIQUE CURRENT RELATIONSHIP");
+    expect(phone).not.toContain("Gender: **female**");
+    expect(phone).toContain("# 星野核心设定\nUser-authored persona text must stay.");
+    expect(phone).toContain("Pinned memory stays.");
+    expect(phone).toContain("Compiled memory stays.");
+    expect(agent.buildSystemPrompt({ userText: "observatory" })).toContain("UNIQUE STABLE LORE");
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     while (roots.length) {

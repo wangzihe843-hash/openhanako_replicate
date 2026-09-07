@@ -166,6 +166,15 @@ function refValue(ref) {
   return ref ?? null;
 }
 
+/** Use the same exact system suffix in the SDK hook and the prefix-contract guard. */
+export function applySessionTurnSystemContext(systemPrompt, rawContext) {
+  const base = typeof systemPrompt === "string" ? systemPrompt : String(systemPrompt ?? "");
+  const context = normalizeSessionTurnContext(rawContext);
+  return context?.system
+    ? `${base}${appendContextBlock(FIELD_LABELS.system, context.system, context.metadata)}`
+    : base;
+}
+
 export function createSessionTurnContextExtension({
   path = "hana-session-turn-context",
   sessionPathRef,
@@ -175,19 +184,30 @@ export function createSessionTurnContextExtension({
   sessionPathRef?: any;
   getTurnContext?: any;
 } = {}) {
+  const currentContext = () => normalizeSessionTurnContext(getTurnContext?.(refValue(sessionPathRef)) || null);
   return {
     path,
     tools: new Map(),
-    handlers: new Map([
+    handlers: new Map<string, Array<(event: any) => Promise<any>>>([
+      [
+        "before_agent_start",
+        [async (event) => {
+          const context = currentContext();
+          if (!context?.system) return undefined;
+          // Pi passes systemPrompt separately. Its convertToLlm drops role:system
+          // in AgentMessage[], while this override is reset for each prompt and
+          // is never appended to persistent session history.
+          return { systemPrompt: applySessionTurnSystemContext(event.systemPrompt, context) };
+        }],
+      ],
       [
         "context",
         [
           async (event) => {
-            const sessionPath = refValue(sessionPathRef);
-            const context = getTurnContext?.(sessionPath) || null;
-            if (!context) return undefined;
+            const context = currentContext();
+            if (!context?.beforeUser && !context?.afterUser) return undefined;
             return {
-              messages: injectSessionTurnContextMessages(event?.messages, context),
+              messages: injectSessionTurnContextMessages(event?.messages, { ...context, system: null }),
             };
           },
         ],

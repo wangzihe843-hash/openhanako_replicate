@@ -7,7 +7,7 @@ import { createHeartbeat } from "../lib/desk/heartbeat.js";
  *
  * 核心约束（对应用户诉求）：
  *  - 没触发时整段不出现（绝大多数心跳零社交开销）
- *  - 触发时点名具体的人 + 明确"可选/不强制"，不能是硬命令
+ *  - global-only 触发仍可选；逐 peer 到期是严格保底，必须至少联系一个
  */
 describe("heartbeat prompt: social staleness directive", () => {
   async function runOnceAndCapturePrompt({ socialStaleness = null } = {}) {
@@ -75,8 +75,11 @@ describe("heartbeat prompt: social staleness directive", () => {
       },
     });
     expect(prompt).toContain("## 社交动态");
-    expect(prompt).toContain("很久没联系");
+    expect(prompt).toContain("到达各自的保底间隔");
     expect(prompt).toContain("明");
+    expect(prompt).toContain("本轮保底要求");
+    expect(prompt).toContain("必须");
+    expect(prompt).not.toContain("完全可选");
   });
 
   it("injects a candidate's relationship lore into the opener when present", async () => {

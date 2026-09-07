@@ -74,6 +74,7 @@ import {
 } from "./session-jsonl-file.ts";
 import { createVisionContextInjectionExtension } from "./vision-context-injector.ts";
 import {
+  applySessionTurnSystemContext,
   createSessionTurnContextExtension,
   normalizeSessionTurnContext,
 } from "./session-turn-context.ts";
@@ -4767,7 +4768,18 @@ export class SessionCoordinator {
     if (!entry?.session) return null;
     const expected = entry.cachePrefixContract
       || this._renewCachePrefixContract(sessionPath, entry, "late_init", { model, context });
-    const actual = this._buildCachePrefixContract(entry, { model, context });
+    let contractContext = context;
+    const turnContext = context && this._getRuntimeValueForPath(this._turnContextBySession, sessionPath);
+    if (turnContext?.system) {
+      const basePrompt = this._getFinalSystemPrompt(entry.session);
+      // Allow only the exact suffix authorized for this live turn. Compare the
+      // underlying base, model and tools against the original frozen contract;
+      // any unrelated mutation (including a changed base) still fails closed.
+      if (typeof basePrompt === "string" && context.systemPrompt === applySessionTurnSystemContext(basePrompt, turnContext)) {
+        contractContext = { ...context, systemPrompt: basePrompt };
+      }
+    }
+    const actual = this._buildCachePrefixContract(entry, { model, context: contractContext });
     const diffs = diffCachePrefixContracts(expected, actual);
     if (diffs.length > 0) {
       const record = {

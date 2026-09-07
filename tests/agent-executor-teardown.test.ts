@@ -31,7 +31,7 @@ vi.mock("../lib/pi-sdk/index.js", async (importOriginal) => {
 
 import { runAgentSession, runAgentPhoneSession } from "../hub/agent-executor.ts";
 import { getAgentPhoneProjectionPath, readAgentPhoneProjection, updateAgentPhoneProjectionMeta } from "../lib/conversations/agent-phone-projection.ts";
-import { readAgentPhoneRuntime, updateAgentPhoneRuntime } from "../lib/conversations/agent-phone-runtime.ts";
+import { getAgentPhoneRuntimePath, readAgentPhoneRuntime, updateAgentPhoneRuntime } from "../lib/conversations/agent-phone-runtime.ts";
 import { getAgentPhoneSessionDir } from "../lib/conversations/agent-phone-session.ts";
 
 let rootDir;
@@ -486,6 +486,37 @@ describe("runAgentSession teardown", () => {
     ]);
   });
 
+  it.each(["set-tools", "runtime-write", "subscribe"])("cleans up a phone session when %s initialization fails", async (failure) => {
+    const agent = makeAgent(rootDir);
+    const sessionFile = path.join(agent.agentDir, "phone", "sessions", "ch_crew", "initialization.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf8");
+    if (failure === "runtime-write") {
+      // A directory at the runtime file path deterministically makes its final rename fail.
+      fs.mkdirSync(getAgentPhoneRuntimePath(agent.agentDir, "ch_crew"), { recursive: true });
+    }
+    const unregister = vi.fn();
+    const engine = { ...makeEngine(agent, rootDir), registerAgentPhoneAbortHandler: vi.fn(() => unregister) };
+    const session = {
+      setActiveToolsByName: vi.fn(() => { if (failure === "set-tools") throw new Error("set tools failed"); }),
+      prompt: vi.fn(),
+      subscribe: vi.fn(() => { if (failure === "subscribe") throw new Error("subscribe failed"); return vi.fn(); }),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => sessionFile },
+      extensionRunner: { hasHandlers: vi.fn(() => false) },
+    };
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+    createAgentSessionMock.mockResolvedValue({ session });
+    await expect(runAgentPhoneSession("agent-a", [{ text: "hello" }], {
+      engine, conversationId: "ch_crew", conversationType: "channel",
+    })).rejects.toThrow();
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(emitSessionShutdownMock).toHaveBeenCalledOnce();
+    expect(session.dispose).toHaveBeenCalledOnce();
+    expect(unregister).toHaveBeenCalledTimes(failure === "set-tools" ? 0 : 1);
+    expect(fs.existsSync(sessionFile)).toBe(true);
+  });
+
   it("registers a live phone abort handler and unregisters it after teardown", async () => {
     const cwd = path.join(rootDir, "cwd");
     fs.mkdirSync(cwd, { recursive: true });
@@ -726,6 +757,61 @@ describe("runAgentSession teardown", () => {
     expect(secondCreateArgs.resourceLoader.getSystemPrompt()).toBe("system prompt");
     runtime = readAgentPhoneRuntime(agent.agentDir, "ch_crew");
     expect(runtime.promptSnapshot.systemPrompt).toBe("system prompt");
+  });
+
+  it("injects phone round context only into the current provider request, not persistent history", async () => {
+    const cwd = path.join(rootDir, "cwd");
+    fs.mkdirSync(cwd, { recursive: true });
+    const agent = makeAgent(rootDir);
+    const engine = makeEngine(agent, cwd);
+    const sessionFile = path.join(agent.agentDir, "phone", "sessions", "ch_crew", "phone-context.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+
+    const persistedUserMessages: any[] = [];
+    const providerRequests: any[] = [];
+    let contextHandler: any = null;
+    let beforeAgentStartHandler: any = null;
+    const session = {
+      prompt: vi.fn(async (text) => {
+        persistedUserMessages.push({ role: "user", content: text });
+        const messages = [...persistedUserMessages];
+        const started = await beforeAgentStartHandler({ systemPrompt: "stable system" });
+        const injected = await contextHandler({ messages });
+        providerRequests.push({ systemPrompt: started?.systemPrompt || "stable system", messages: injected?.messages || messages });
+      }),
+      subscribe: vi.fn(() => () => {}),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => sessionFile },
+      getContextUsage: vi.fn(() => ({ tokens: 10, contextWindow: 200000 })),
+      extensionRunner: { hasHandlers: vi.fn(() => false) },
+    };
+    createAgentSessionMock.mockImplementation(async (options) => {
+      const extension = options.resourceLoader.getExtensions().extensions
+        .find((item) => item.path === "hana-agent-phone-turn-context");
+      contextHandler = extension.handlers.get("context")[0];
+      beforeAgentStartHandler = extension.handlers.get("before_agent_start")[0];
+      return { session };
+    });
+
+    await runAgentPhoneSession("agent-a", [
+      { text: "first visible message", context: { system: "OLD PROFILE" }, capture: false },
+      { text: "second visible message", context: { system: "NEW PROFILE" }, capture: true },
+    ], {
+      engine,
+      conversationId: "ch_crew",
+      conversationType: "channel",
+    });
+
+    expect(persistedUserMessages).toEqual([
+      { role: "user", content: "first visible message" },
+      { role: "user", content: "second visible message" },
+    ]);
+    expect(JSON.stringify(providerRequests[0])).toContain("OLD PROFILE");
+    expect(JSON.stringify(providerRequests[0])).not.toContain("NEW PROFILE");
+    expect(JSON.stringify(providerRequests[1])).toContain("NEW PROFILE");
+    expect(JSON.stringify(providerRequests[1])).not.toContain("OLD PROFILE");
   });
 
   it("starts a new phone session with the current prompt after the active window expires", async () => {

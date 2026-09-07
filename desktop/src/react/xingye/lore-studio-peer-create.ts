@@ -101,12 +101,16 @@ export function writePeerRelationshipLore(names: PeerLinkNames, storage?: Storag
     );
 
   if (matched) {
-    const keywords = Array.from(new Set([...(matched.keywords ?? []), names.newName]));
+    const keywords = Array.from(new Set([...(matched.keywords ?? []), names.newName, names.newAgentId]));
     // 幂等：已经追加过指向这个新 agent 的链接段（重跑 / 同批多次命中同一条）就不再重复堆叠正文，至多补关键词。
     if (matched.content.includes(`id：${names.newAgentId}`)) {
-      updateLoreEntry(matched.id, { keywords }, storage ?? undefined);
+      updateLoreEntry(matched.id, { keywords, insertionMode: 'keyword' }, storage ?? undefined);
     } else {
-      updateLoreEntry(matched.id, { content: `${matched.content}${linkage}${noteBlock}`, keywords }, storage ?? undefined);
+      updateLoreEntry(
+        matched.id,
+        { content: `${matched.content}${linkage}${noteBlock}`, keywords, insertionMode: 'keyword' },
+        storage ?? undefined,
+      );
     }
   } else {
     const content = [
@@ -116,7 +120,13 @@ export function writePeerRelationshipLore(names: PeerLinkNames, storage?: Storag
     ].join('\n');
     createLoreEntry(
       names.sourceAgentId,
-      { title: `与「${names.newName}」的关系`, content, category: 'relationship', insertionMode: 'always', keywords: [names.newName] },
+      {
+        title: `与「${names.newName}」的关系`,
+        content,
+        category: 'relationship',
+        insertionMode: 'keyword',
+        keywords: [names.newName, names.newAgentId],
+      },
       storage ?? undefined,
     );
   }
@@ -130,7 +140,13 @@ export function writePeerRelationshipLore(names: PeerLinkNames, storage?: Storag
   });
   createLoreEntry(
     names.newAgentId,
-    { title: `与「${names.sourceName}」的关系`, content: onNew + noteBlock, category: 'relationship', insertionMode: 'always', keywords: [names.sourceName] },
+    {
+      title: `与「${names.sourceName}」的关系`,
+      content: onNew + noteBlock,
+      category: 'relationship',
+      insertionMode: 'keyword',
+      keywords: [names.sourceName, names.sourceAgentId],
+    },
     storage ?? undefined,
   );
 }

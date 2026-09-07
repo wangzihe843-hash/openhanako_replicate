@@ -1,4 +1,4 @@
-import type { AgentPhoneToolMode, Channel, ChannelAgentActivities, ChannelMessage, ChannelTickerStatusMap } from '../types';
+import type { AgentPhoneToolMode, Channel, ChannelAgentActivities, ChannelMessage, ChannelTickerStatusMap, SocialFallbackMode } from '../types';
 
 export interface ChannelSlice {
   channels: Channel[];
@@ -21,6 +21,8 @@ export interface ChannelSlice {
   channelAgentProactiveEnabled: boolean;
   channelAgentReminderIntervalMinutes: number;
   channelAgentGuardLimit: number;
+  channelAgentSocialFallbackMode: SocialFallbackMode;
+  channelAgentSocialFallbackTurnInterval: number | null;
   channelAgentModelOverrideEnabled: boolean;
   channelAgentModelOverrideModel: { id: string; provider: string } | null;
   setChannels: (channels: Channel[]) => void;
@@ -53,6 +55,8 @@ export const createChannelSlice = (
   channelAgentProactiveEnabled: true,
   channelAgentReminderIntervalMinutes: 31,
   channelAgentGuardLimit: 36,
+  channelAgentSocialFallbackMode: 'auto',
+  channelAgentSocialFallbackTurnInterval: null,
   channelAgentModelOverrideEnabled: false,
   channelAgentModelOverrideModel: null,
   setChannels: (channels) => set({ channels }),

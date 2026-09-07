@@ -52,6 +52,10 @@ import {
 import { resolveAgent } from "../utils/resolve-agent.ts";
 import { findModel } from "../../shared/model-ref.ts";
 import { createModuleLogger } from "../../lib/debug-log.ts";
+import {
+  SOCIAL_THRESHOLD_MIN,
+  SOCIAL_THRESHOLD_MAX,
+} from "../../shared/default-workspace-constants.ts";
 
 const log = createModuleLogger("channel");
 
@@ -69,6 +73,25 @@ function readOptionalPositiveInt(value: any) {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return null;
   return Math.floor(num);
+}
+
+function normalizeSocialFallbackMode(value: any) {
+  const mode = typeof value === "string" ? value.trim().toLowerCase() : "auto";
+  if (mode === "auto" || mode === "enabled" || mode === "disabled") return mode;
+  const err: any = new Error("socialFallbackMode must be auto, enabled, or disabled");
+  err.status = 400;
+  throw err;
+}
+
+function normalizeSocialFallbackTurnInterval(value: any) {
+  if (value === undefined || value === null || value === "") return null;
+  const num = Math.floor(Number(value));
+  if (!Number.isFinite(num) || num < SOCIAL_THRESHOLD_MIN || num > SOCIAL_THRESHOLD_MAX) {
+    const err: any = new Error(`socialFallbackTurnInterval must be between ${SOCIAL_THRESHOLD_MIN} and ${SOCIAL_THRESHOLD_MAX}`);
+    err.status = 400;
+    throw err;
+  }
+  return num;
 }
 
 function requestedAgentId(c: any) {
@@ -119,6 +142,8 @@ function normalizePhoneSettingsPayload(body: any = {}) {
     proactiveEnabled,
     reminderIntervalMinutes,
     guardLimit,
+    socialFallbackMode: normalizeSocialFallbackMode(body.socialFallbackMode),
+    socialFallbackTurnInterval: normalizeSocialFallbackTurnInterval(body.socialFallbackTurnInterval),
     modelOverrideEnabled: override.enabled,
     modelOverrideModel: override.model,
   };
@@ -166,6 +191,13 @@ function readDmPhoneSettingsFromMeta(meta: any) {
       DEFAULT_AGENT_PHONE_SETTINGS.reminderIntervalMinutes,
     ),
     guardLimit: resolveAgentPhoneGuardLimit(meta.guardLimit, 2),
+    socialFallbackMode: ["auto", "enabled", "disabled"].includes(String(meta.socialFallbackMode || "").toLowerCase())
+      ? String(meta.socialFallbackMode).toLowerCase()
+      : "auto",
+    socialFallbackTurnInterval: (() => {
+      const value = readOptionalPositiveInt(meta.socialFallbackTurnInterval);
+      return value !== null && value >= SOCIAL_THRESHOLD_MIN && value <= SOCIAL_THRESHOLD_MAX ? value : null;
+    })(),
     modelOverrideEnabled: override.enabled,
     modelOverrideModel: override.model,
   };
@@ -279,6 +311,8 @@ export function createChannelsRoute(engine: any, hub: any) {
           proactiveEnabled: settings.proactiveEnabled ? "true" : "false",
           reminderIntervalMinutes: settings.reminderIntervalMinutes,
           guardLimit,
+          socialFallbackMode: settings.socialFallbackMode,
+          socialFallbackTurnInterval: settings.socialFallbackTurnInterval ?? "",
           modelOverrideEnabled: settings.modelOverrideEnabled ? "true" : "false",
           modelOverrideId: settings.modelOverrideEnabled && settings.modelOverrideModel ? settings.modelOverrideModel.id : "",
           modelOverrideProvider: settings.modelOverrideEnabled && settings.modelOverrideModel ? settings.modelOverrideModel.provider : "",
@@ -336,7 +370,10 @@ export function createChannelsRoute(engine: any, hub: any) {
       if (disabled) return disabled;
       const id = c.req.param("id");
       const body = await safeJson(c);
-      const settings = normalizePhoneSettingsPayload(body);
+      // The endpoint historically accepts partial saves. Merge first so an old
+      // client changing tool mode cannot erase new per-DM social overrides.
+      const current = await readConversationPhoneSettings(id, c);
+      const settings = normalizePhoneSettingsPayload({ ...current, ...body });
       const saved = await writeConversationPhoneSettings(id, settings, c);
       return c.json({ ok: true, ...(saved || settings) });
     } catch (err) {

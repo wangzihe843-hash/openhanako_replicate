@@ -3,7 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  buildXingyeAgentPhoneProfileContext,
   buildXingyeAgentGenderPreamble,
+  readXingyeAgentPhoneProfileContextSync,
   readXingyeAgentGenderPreambleSync,
   readXingyeProfileJsonSync,
 } from './xingye-profile-file.js';
@@ -169,5 +171,64 @@ describe('readXingyeAgentGenderPreambleSync (integration)', () => {
         locale: 'zh',
       }),
     ).toBeNull();
+  });
+});
+
+describe('Agent Phone dynamic profile context', () => {
+  it('includes the full narrative profile and excludes operational/media fields', () => {
+    const out = buildXingyeAgentPhoneProfileContext({
+      profile: {
+        displayName: '林雾',
+        identitySummary: '北境守钟人',
+        personalitySummary: '克制，但会保护亲近的人',
+        behaviorLogic: '先观察，再行动',
+        values: '守诺',
+        taboos: '不拿朋友的秘密取乐',
+        speakingStyle: '短句，熟人面前会放松',
+        relationshipMode: '与用户互相信任',
+        allowProactiveDM: true,
+        avatarDataUrl: 'data:image/png;base64,secret',
+      },
+      agentName: '林雾',
+      locale: 'zh-CN',
+    });
+
+    expect(out).toContain('你自己的最新角色资料');
+    expect(out).toContain('北境守钟人');
+    expect(out).toContain('先观察，再行动');
+    expect(out).toContain('短句，熟人面前会放松');
+    expect(out).not.toContain('allowProactiveDM');
+    expect(out).not.toContain('base64');
+  });
+
+  it('reads the latest profile from disk for each phone turn', async () => {
+    await writeProfile('agent-phone', { displayName: '旧名', speakingStyle: '旧语气' });
+    expect(readXingyeAgentPhoneProfileContextSync({
+      hanakoHome: tempRoot,
+      agentId: 'agent-phone',
+      locale: 'zh',
+    })).toContain('旧语气');
+
+    await writeProfile('agent-phone', { displayName: '新名', speakingStyle: '新语气' });
+    const refreshed = readXingyeAgentPhoneProfileContextSync({
+      hanakoHome: tempRoot,
+      agentId: 'agent-phone',
+      locale: 'zh',
+    });
+    expect(refreshed).toContain('新语气');
+    expect(refreshed).not.toContain('旧语气');
+  });
+
+  it('caps every free-text field and the complete phone profile context', () => {
+    const huge = '超长字段'.repeat(2_000);
+    const profile = Object.fromEntries([
+      'displayName', 'shortBio', 'identitySummary', 'backgroundSummary', 'personalitySummary',
+      'behaviorLogic', 'values', 'taboos', 'speakingStyle', 'relationshipLabel', 'relationshipMode',
+    ].map((key) => [key, `${key}:${huge}`]));
+    const out = buildXingyeAgentPhoneProfileContext({ profile, agentName: huge, locale: 'zh' });
+    expect(out.length).toBeLessThanOrEqual(4_800);
+    expect(out).toContain('身份');
+    expect(out).toContain('与用户的相处模式');
+    expect(out).not.toContain(huge);
   });
 });

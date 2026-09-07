@@ -34,6 +34,82 @@ import { ChannelRouter } from "../hub/channel-router.ts";
 import { readAgentPhoneProjection, getAgentPhoneProjectionPath } from "../lib/conversations/agent-phone-projection.ts";
 
 describe("ChannelRouter reply tool boundary", () => {
+  it("injects current self profile and only real speaker relationships into each group turn", async () => {
+    runAgentPhoneSessionMock.mockReset().mockResolvedValue("OK");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-channel-peer-lore-"));
+    const channelsDir = path.join(root, "channels");
+    const agentsDir = path.join(root, "agents");
+    const aliceDir = path.join(agentsDir, "alice");
+    fs.mkdirSync(path.join(aliceDir, "xingye", "lore"), { recursive: true });
+    fs.mkdirSync(channelsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(channelsDir, "crew.md"),
+      "---\nid: crew\nmembers: [alice, bob, carol, user]\n---\n",
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(aliceDir, "xingye", "profile.json"),
+      JSON.stringify({ displayName: "Alice", speakingStyle: "对熟人会放松语气" }),
+      "utf8",
+    );
+    const entry = (id: string, peer: string, content: string) => ({
+      id,
+      agentId: "alice",
+      title: id,
+      content,
+      category: "relationship",
+      keywords: [peer, id],
+      enabled: true,
+      visibility: "canonical",
+      insertionMode: "keyword",
+      priority: 50,
+    });
+    fs.writeFileSync(
+      path.join(aliceDir, "xingye", "lore", "entries.json"),
+      JSON.stringify({
+        bob: entry("bob", "Bob", "Bob 是 Alice 的挚友。"),
+        carol: entry("carol", "Carol", "Carol 是 Alice 已发现的情敌。"),
+        user: entry("user", "user", "ID 为 user 的 agent 是 Alice 的宿敌。"),
+      }),
+      "utf8",
+    );
+
+    const agents = {
+      alice: { id: "alice", agentDir: aliceDir, agentName: "Alice", config: { agent: { yuan: "hanako" } } },
+      bob: { id: "bob", agentDir: path.join(agentsDir, "bob"), agentName: "Bob", config: { agent: {} } },
+      carol: { id: "carol", agentDir: path.join(agentsDir, "carol"), agentName: "Carol", config: { agent: {} } },
+      user: { id: "user", agentDir: path.join(agentsDir, "user"), agentName: "Reserved User Agent", config: { agent: {} } },
+    } as Record<string, any>;
+    const router = new ChannelRouter({
+      hub: {
+        engine: {
+          agentsDir,
+          channelsDir,
+          getAgent: (id: string) => agents[id] || null,
+          agents: new Map(Object.entries(agents)),
+        },
+        eventBus: { emit: vi.fn() },
+        agentPhoneActivities: { record: vi.fn() },
+      },
+    });
+
+    await router._executeCheck("alice", "crew", [
+      { sender: "bob", timestamp: "2026-07-13 12:00:00", body: "Carol 也许会来。" },
+      { sender: "user", timestamp: "2026-07-13 12:01:00", body: "你们继续聊。" },
+    ], []);
+
+    const round = (runAgentPhoneSessionMock.mock.calls as any)[0][1][0];
+    expect(round.context.system).toContain("对熟人会放松语气");
+    expect(round.context.system).toContain("profile 中“与用户的关系/相处模式”只描述你与用户");
+    expect(round.context.system).toContain("本轮 agent 发言者是：Bob（bob）");
+    expect(round.context.system).toContain("TA 们是其他独立 AI agent，不是用户，也不是你自己");
+    expect(round.context.system).toContain("Bob 是 Alice 的挚友");
+    expect(round.context.system).not.toContain("Carol 是 Alice 已发现的情敌");
+    expect(round.context.system).not.toContain("ID 为 user 的 agent 是 Alice 的宿敌");
+    expect(round.text).not.toContain("本轮动态角色上下文");
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
   it("runs channel phone delivery with channel-scoped decision tools", async () => {
     runAgentSessionMock.mockClear();
     runAgentPhoneSessionMock.mockClear();

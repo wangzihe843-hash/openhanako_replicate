@@ -15,7 +15,8 @@ import fs from "fs";
 import path from "path";
 import { appendMessage } from "../channels/channel-store.ts";
 import { resolveAgentParam } from "./agent-id-resolver.ts";
-import { recordOutboundDm } from "../desk/social-awareness.js";
+import { recordOutboundDm, syncPeerStateUserTurns } from "../desk/social-awareness.js";
+import { withXingyeAgentEventLock } from "../xingye/events.js";
 
 /**
  * 确保 DM 文件存在，不存在则创建（含 frontmatter）
@@ -37,7 +38,18 @@ function ensureDmFile(dmDir, peerId) {
  * @param {(fromId: string, toId: string) => void} [opts.onDmSent] - 发送后回调（触发 DM Router）
  * @param {() => boolean} [opts.isEnabled] - Phone/DM 总闸
  */
-export function createDmTool({ agentId, agentsDir, listAgents, onDmSent, isEnabled }) {
+export function createDmTool({ agentId, agentsDir, listAgents, onDmSent, isEnabled }: {
+  agentId: string;
+  agentsDir: string;
+  listAgents: () => Array<{
+    id: string;
+    name: string;
+    model?: string;
+    summary?: string;
+  }>;
+  onDmSent?: (fromId: string, toId: string) => void;
+  isEnabled?: () => boolean;
+}) {
   return {
     name: "dm",
     label: "Direct Message",
@@ -90,8 +102,27 @@ export function createDmTool({ agentId, agentsDir, listAgents, onDmSent, isEnabl
       await appendMessage(peerDmFile, agentId, params.message);
 
       // 记一笔「主动 dm 了谁」到 peer-state.json，供心跳 social staleness 用。
-      // 失败不阻断 dm：recordOutboundDm 内部已 try/catch 吞错，这里再兜一层防御。
-      try { recordOutboundDm({ agentDir: path.join(agentsDir, agentId), peerId: toId }); } catch {}
+      // 先在同一把 per-agent event 锁里同步最新 user-turn 序号，再写本次 baseline：
+      // 否则心跳之间积累的消息会让一条刚发出的 DM 看起来已经陈旧，也可能和心跳互相覆盖。
+      try {
+        await withXingyeAgentEventLock(agentId, async () => {
+          const agentDir = path.join(agentsDir, agentId);
+          let events = [];
+          try {
+            const log = JSON.parse(fs.readFileSync(
+              path.join(agentDir, "xingye", "events", "log.json"),
+              "utf-8",
+            ));
+            events = Array.isArray(log?.events)
+              ? log.events.filter((event) => event?.agentId === agentId)
+              : [];
+          } catch {
+            events = [];
+          }
+          syncPeerStateUserTurns({ agentDir, events });
+          recordOutboundDm({ agentDir, peerId: toId });
+        });
+      } catch {}
 
       // 通知 DM Router
       if (onDmSent) {

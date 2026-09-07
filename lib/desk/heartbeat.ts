@@ -263,14 +263,14 @@ function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, agentName
       parts.push(isZh ? "## 社交动态" : "## Social");
       if (socialStaleness.shouldSocialize) {
         parts.push(isZh
-          ? `距离你上次主动私信别人，已经过去 ${turns} 条对话了。如果你想，可以挑个人打声招呼、分享点什么、或聊个你们都会感兴趣的话题——纯粹社交，不是任务。`
-          : `It's been ${turns} chat turns since you last reached out to anyone. If you feel like it, you could say hi to someone, share something, or bring up a topic you'd both enjoy — purely social, not a task.`);
+          ? `距离你上次主动私信其他 agent，已经过去 ${turns} 条对话了。如果你想，可以从已经到达各自间隔的默认互动对象里挑一个打声招呼、分享点什么、或聊个你们都会感兴趣的话题——纯粹社交，不是任务。有明确关系的人会自动加入，私聊设置也可单独调整。`
+          : `It's been ${turns} chat turns since you last reached out to another agent. If you feel like it, choose a default interaction contact whose own interval has elapsed and say hi, share something, or bring up a topic you'd both enjoy — purely social, not a task. Established relationships join automatically, and each DM can override this.`);
       } else {
         parts.push(isZh
-          ? "有几位你已经很久没联系了。如果你想，可以挑一个简单问候一下——纯粹社交，不是任务。"
-          : "There are a few people you haven't talked to in a long time. If you feel like it, drop one of them a line — purely social, not a task.");
+          ? "有默认互动对象已经到达各自的保底间隔。本轮需要从中选择至少一位联系；这仍是角色间社交，不是给对方派任务。"
+          : "One or more default interaction contacts have reached their fallback interval. Contact at least one of them this round; this is character-to-character social contact, not task delegation.");
       }
-      parts.push(isZh ? "最久没联系的几位：" : "Longest out of touch:");
+      parts.push(isZh ? "最久没联系的默认互动对象：" : "Default interaction contacts longest out of touch:");
       parts.push(...candidateLines);
       // 定向关系 lore：若候选 peer 有「你对 TA 的关系设定」，附在这里，让你主动发的
       // 第一句也贴合既定关系（如"关系冷淡的姑妈"）、不至于瞎编。只有写了关系 lore 才出现。
@@ -287,9 +287,15 @@ function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, agentName
           : "(Below is your established relationship with some of them — let it set the tone and distance of your opener; don't ignore it, and don't invent details it doesn't state:)");
         parts.push(...loreBlocks);
       }
-      parts.push(isZh
-        ? "用 `dm` 工具，message 用你自己的口吻；对方会像收到微信一样回你。**这一条完全可选**——没心情、或这一轮有更要紧的事，直接跳过就好，不必勉强寒暄。"
-        : "Use the `dm` tool; write the message in your own voice and they'll reply like a text. **This is entirely optional** — if you're not in the mood or have something more pressing this round, just skip it. Don't force small talk.");
+      if (socialStaleness.overduePeerCount > 0) {
+        parts.push(isZh
+          ? "**本轮保底要求：必须从上述已到期对象中至少选择一位调用 `dm`。** message 用你自己的口吻；对方会像收到微信一样回复。不要把社交私信写成任务委派。其他仍到期的对象会留到后续巡检继续处理。"
+          : "**Fallback requirement for this round: call `dm` for at least one overdue contact listed above.** Write in your own voice; they will reply like a text. Do not turn the social message into task delegation. Other overdue contacts remain due for later patrols.");
+      } else {
+        parts.push(isZh
+          ? "用 `dm` 工具，message 用你自己的口吻；对方会像收到微信一样回你。**这一条完全可选**——没心情、或这一轮有更要紧的事，直接跳过就好，不必勉强寒暄。"
+          : "Use the `dm` tool; write the message in your own voice and they'll reply like a text. **This is entirely optional** — if you're not in the mood or have something more pressing this round, just skip it. Don't force small talk.");
+      }
       parts.push("");
     }
   }
