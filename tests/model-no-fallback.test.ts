@@ -20,6 +20,7 @@ const { createAgentSessionMock, emitSessionShutdownMock, sessionManagerCreateMoc
 vi.mock("../lib/pi-sdk/index.js", () => ({
   createAgentSession: createAgentSessionMock,
   emitSessionShutdown: emitSessionShutdownMock,
+  getPiModels: vi.fn(() => []),
   SessionManager: {
     create: sessionManagerCreateMock,
     open: vi.fn(),
@@ -54,10 +55,44 @@ function makeModels(list = []) {
 }
 
 function makeCoordinator(tempDir, { agentConfig = {}, models = makeModels() } = {}) {
-  sessionManagerCreateMock.mockReturnValue({ getCwd: () => tempDir });
+  const sessionPath = path.join(tempDir, "s.jsonl");
+  let manifest = null;
+  const branchHeads = new Map();
+  const sessionManifestStore = {
+    resolveByLocatorPath: vi.fn((candidate) => manifest?.currentLocator?.path === candidate ? manifest : null),
+    getBySessionId: vi.fn((sessionId) => manifest?.sessionId === sessionId ? manifest : null),
+    createForPath: vi.fn((input) => {
+      manifest = {
+        ...input,
+        sessionId: "sess_model_test",
+        lifecycle: "active",
+        currentLocator: { path: input.sessionPath },
+      };
+      return manifest;
+    }),
+    updateLocatorLifecycle: vi.fn((sessionId, nextPath, lifecycle) => {
+      manifest = { ...manifest, sessionId, lifecycle, currentLocator: { path: nextPath } };
+      return manifest;
+    }),
+    getBranchHead: vi.fn((sessionId) => branchHeads.get(sessionId) || null),
+    setBranchHead: vi.fn((sessionId, head) => {
+      const stored = { ...head, sessionId };
+      branchHeads.set(sessionId, stored);
+      return stored;
+    }),
+    setMemoryPolicy: vi.fn(),
+    setPermissionModeSnapshot: vi.fn(),
+    setThinkingLevel: vi.fn(),
+    setWorkspaceScope: vi.fn(),
+    setPlugin: vi.fn(),
+  };
+  sessionManagerCreateMock.mockReturnValue({
+    getCwd: () => tempDir,
+    getSessionFile: () => sessionPath,
+  });
   createAgentSessionMock.mockResolvedValue({
     session: {
-      sessionManager: { getSessionFile: () => path.join(tempDir, "s.jsonl") },
+      sessionManager: { getSessionFile: () => sessionPath },
       subscribe: vi.fn(() => vi.fn()),
       abort: vi.fn(),
     },
@@ -95,6 +130,7 @@ function makeCoordinator(tempDir, { agentConfig = {}, models = makeModels() } = 
       buildSystemPrompt: () => "prompt",
     }),
     listAgents: () => [],
+    sessionManifestStore,
   });
 }
 
@@ -175,16 +211,40 @@ describe("模型选择无 fallback", () => {
         .toThrow(/resolveModelNotAvailable|不在可用列表|not available/);
     });
 
-    it("rejects a disabled restored model before the SDK can fallback to an allowed model", async () => {
+    it("restores a disabled historical model as unavailable before the SDK can fallback", async () => {
       const allowedModel = { id: "allowed-model", provider: "openai" };
       const coord = makeCoordinator(tempDir, { models: makeModels([allowedModel]) });
       const sessionMgr = {
         getCwd: () => tempDir,
         getSessionFile: () => path.join(tempDir, "disabled-restore.jsonl"),
+        getEntries: () => [],
+        resetLeaf: vi.fn(),
         buildSessionContext: () => ({
           model: { provider: "openai-codex", modelId: "disabled-model" },
         }),
       };
+      createAgentSessionMock.mockImplementationOnce(async (options) => ({
+        session: {
+          sessionManager: sessionMgr,
+          model: options.model,
+          messages: [],
+          agent: {
+            state: {
+              model: options.model,
+              messages: [],
+              systemPrompt: "prompt",
+              tools: [],
+            },
+            streamFn: vi.fn(),
+          },
+          isStreaming: false,
+          isCompacting: false,
+          subscribe: vi.fn(() => vi.fn()),
+          setActiveToolsByName: vi.fn(),
+          setThinkingLevel: vi.fn(),
+          getContextUsage: vi.fn(() => null),
+        },
+      }));
 
       await expect(coord.createSession(
         sessionMgr,
@@ -192,8 +252,17 @@ describe("模型选择无 fallback", () => {
         true,
         null,
         { restore: true },
-      )).rejects.toThrow(/openai-codex\/disabled-model/);
-      expect(createAgentSessionMock).not.toHaveBeenCalled();
+      )).resolves.toBeDefined();
+      expect(createAgentSessionMock).toHaveBeenCalledOnce();
+      expect(createAgentSessionMock.mock.calls[0][0].model).toMatchObject({
+        id: "disabled-model",
+        provider: "openai-codex",
+        api: "hana-unavailable-model",
+      });
+      expect(coord.getSessionModelAvailability(sessionMgr.getSessionFile())).toMatchObject({
+        available: false,
+        modelRef: "openai-codex/disabled-model",
+      });
     });
 
     it("tears down a restored session when the SDK reports a model fallback", async () => {
@@ -207,6 +276,8 @@ describe("模型选择无 fallback", () => {
       const sessionMgr = {
         getCwd: () => tempDir,
         getSessionFile: () => path.join(tempDir, "fallback-restore.jsonl"),
+        getEntries: () => [],
+        resetLeaf: vi.fn(),
         buildSessionContext: () => ({
           model: { provider: "openai", modelId: "allowed-model" },
         }),

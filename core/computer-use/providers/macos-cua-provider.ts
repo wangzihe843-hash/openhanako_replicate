@@ -34,12 +34,13 @@ const MACOS_CUA_ALLOWED_ACTIONS = [
 const MACOS_CUA_DISABLED_PIXEL_ACTIONS = new Set(["click_point", "double_click", "drag"]);
 
 function expandHome(filePath: any, homeDir = os.homedir()) {
-  if (!filePath || !filePath.startsWith("~/")) return filePath;
-  return path.join(homeDir, filePath.slice(2));
+  const value = typeof filePath === "string" ? filePath.trim() : "";
+  if (!value || !value.startsWith("~/")) return value || null;
+  return path.posix.join(homeDir, value.slice(2));
 }
 
 function helperPath(root: any) {
-  return path.join(root, "hana-computer-use-helper");
+  return path.posix.join(root, "hana-computer-use-helper");
 }
 
 function defaultHanaComputerUseSocketPath(homeDir = os.homedir()) {
@@ -47,22 +48,87 @@ function defaultHanaComputerUseSocketPath(homeDir = os.homedir()) {
 }
 
 function commandIsBundledHanaHelper(command: any) {
-  return path.basename(String(command || "")) === "hana-computer-use-helper";
+  return path.posix.basename(String(command || "")) === "hana-computer-use-helper";
 }
 
-function bundledHelperCandidates({ env, hanaRoot, cwd, arch }: any) {
-  const roots = [];
-  if (env.HANA_COMPUTER_USE_RUNTIME_ROOT) {
-    roots.push(env.HANA_COMPUTER_USE_RUNTIME_ROOT);
+function normalizedAbsolutePosixPath(value: any) {
+  const candidate = typeof value === "string" ? value.trim() : "";
+  if (!candidate || candidate.includes("\0") || !path.posix.isAbsolute(candidate)) return null;
+  return path.posix.normalize(candidate);
+}
+
+function macAppResourcesRoot(value: any) {
+  const resourcesRoot = normalizedAbsolutePosixPath(value);
+  if (!resourcesRoot || path.posix.basename(resourcesRoot) !== "Resources") return null;
+  const contentsRoot = path.posix.dirname(resourcesRoot);
+  if (path.posix.basename(contentsRoot) !== "Contents") return null;
+  const appRoot = path.posix.dirname(contentsRoot);
+  if (!path.posix.basename(appRoot).endsWith(".app")) return null;
+  return resourcesRoot;
+}
+
+function resourcesRootFromPackagedAppPath(value: any) {
+  const appPath = normalizedAbsolutePosixPath(value);
+  if (!appPath || path.posix.basename(appPath) !== "app.asar") return null;
+  return macAppResourcesRoot(path.posix.dirname(appPath));
+}
+
+function resourcesRootFromPackagedExecPath(value: any) {
+  const execPath = normalizedAbsolutePosixPath(value);
+  if (!execPath) return null;
+  const macosRoot = path.posix.dirname(execPath);
+  if (path.posix.basename(macosRoot) !== "MacOS") return null;
+  const contentsRoot = path.posix.dirname(macosRoot);
+  if (path.posix.basename(contentsRoot) !== "Contents") return null;
+  const appRoot = path.posix.dirname(contentsRoot);
+  if (!path.posix.basename(appRoot).endsWith(".app")) return null;
+  return path.posix.join(contentsRoot, "Resources");
+}
+
+function resourcesRootFromLegacyHanaRoot(value: any) {
+  const hanaRoot = normalizedAbsolutePosixPath(value);
+  if (!hanaRoot || path.posix.basename(hanaRoot) !== "server") return null;
+  return macAppResourcesRoot(path.posix.dirname(hanaRoot));
+}
+
+function pushUniquePosixPath(out: string[], value: any) {
+  if (!value) return;
+  const normalized = path.posix.normalize(String(value));
+  if (!out.includes(normalized)) out.push(normalized);
+}
+
+function packagedHelperCandidates({ env, hanaRoot }: any) {
+  const roots: string[] = [];
+  if (env.HANA_DESKTOP_IS_PACKAGED === "1") {
+    pushUniquePosixPath(roots, macAppResourcesRoot(env.HANA_DESKTOP_RESOURCES_PATH));
+    pushUniquePosixPath(roots, resourcesRootFromPackagedAppPath(env.HANA_DESKTOP_APP_PATH));
+    pushUniquePosixPath(roots, resourcesRootFromPackagedExecPath(env.HANA_DESKTOP_EXEC_PATH));
   }
-  if (hanaRoot) {
-    roots.push(path.resolve(hanaRoot, "..", "computer-use", "macos"));
-    roots.push(path.resolve(hanaRoot, "dist-computer-use", `mac-${arch}`));
+  // Shells predating the desktop path contract launched the server directly
+  // from Contents/Resources/server. Accept only that exact app-bundle shape;
+  // an OTA artifact root must never become a source of native helper code.
+  pushUniquePosixPath(roots, resourcesRootFromLegacyHanaRoot(hanaRoot));
+  return roots.map((root) => helperPath(path.posix.join(root, "computer-use", "macos")));
+}
+
+function developmentHelperCandidates({ env, hanaRoot, cwd, arch }: any) {
+  if (env.HANA_DESKTOP_IS_PACKAGED === "1") return [];
+  const candidates: string[] = [];
+  const normalizedHanaRoot = normalizedAbsolutePosixPath(hanaRoot);
+  const normalizedCwd = normalizedAbsolutePosixPath(cwd);
+  if (normalizedHanaRoot) {
+    pushUniquePosixPath(
+      candidates,
+      helperPath(path.posix.join(normalizedHanaRoot, "dist-computer-use", `mac-${arch}`)),
+    );
   }
-  if (cwd) {
-    roots.push(path.resolve(cwd, "dist-computer-use", `mac-${arch}`));
+  if (normalizedCwd) {
+    pushUniquePosixPath(
+      candidates,
+      helperPath(path.posix.join(normalizedCwd, "dist-computer-use", `mac-${arch}`)),
+    );
   }
-  return [...new Set(roots.filter(Boolean))].map(helperPath);
+  return candidates;
 }
 
 export function resolveCuaDriverCommand({
@@ -73,9 +139,23 @@ export function resolveCuaDriverCommand({
   cwd = process.cwd(),
   arch = process.arch,
 } = {}) {
+  const explicitHelper = expandHome(env.HANA_COMPUTER_USE_HELPER_PATH, homeDir);
+  if (explicitHelper) return explicitHelper;
+
+  const explicitRuntimeRoot = expandHome(env.HANA_COMPUTER_USE_RUNTIME_ROOT, homeDir);
+  if (explicitRuntimeRoot) return helperPath(explicitRuntimeRoot);
+
+  const packagedCandidates = packagedHelperCandidates({ env, hanaRoot });
+  for (const candidate of packagedCandidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  // A valid packaged-app root is authoritative. Falling through to an
+  // unrelated external driver would hide a damaged installation and change
+  // the daemon/cursor capability contract.
+  if (packagedCandidates.length > 0) return packagedCandidates[0];
+
   const candidates = [
-    env.HANA_COMPUTER_USE_HELPER_PATH,
-    ...bundledHelperCandidates({ env, hanaRoot, cwd, arch }),
+    ...developmentHelperCandidates({ env, hanaRoot, cwd, arch }),
     env.HANA_CUA_DRIVER_PATH,
     "~/.local/bin/cua-driver",
     "/usr/local/bin/cua-driver",
@@ -524,10 +604,26 @@ export function createMacosCuaProvider({
   }
 
   async function runRaw(args: any, options: any = {}) {
-    const result: any = await runner.run(command, args, {
-      timeoutMs: options.timeoutMs || timeoutMs,
-      env: runEnv(options.env),
-    });
+    let result: any;
+    try {
+      result = await runner.run(command, args, {
+        timeoutMs: options.timeoutMs || timeoutMs,
+        env: runEnv(options.env),
+      });
+    } catch (err) {
+      if (err?.code === "ENOENT") {
+        throw computerUseError(
+          COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
+          `Computer Use helper executable was not found: ${command}`,
+          { providerId, command, launchCode: err.code },
+        );
+      }
+      throw computerUseError(
+        COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
+        `Computer Use helper could not be launched: ${err?.message || String(err)}`,
+        { providerId, command, launchCode: err?.code || null },
+      );
+    }
     if (result.exitCode !== 0) {
       const stderr = result.stderr || "";
       const parsed = parseJsonMaybe(result.stdout);
@@ -580,26 +676,58 @@ export function createMacosCuaProvider({
             { providerId, command },
           );
         }
-        spawnedDaemonChild = runner.spawn(command, ["serve", "--socket", socketPath], {
-          env: runEnv(process.env),
-          detached: true,
-          stdio: "ignore",
-        });
+        try {
+          spawnedDaemonChild = runner.spawn(command, ["serve", "--socket", socketPath], {
+            env: runEnv(process.env),
+            detached: true,
+            stdio: "ignore",
+          });
+        } catch (err) {
+          throw computerUseError(
+            COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
+            `Computer Use helper daemon could not be launched: ${err?.message || String(err)}`,
+            { providerId, command, launchCode: err?.code || null },
+          );
+        }
         const pid = Number(spawnedDaemonChild?.pid);
         spawnedDaemonPid = Number.isFinite(pid) && pid > 0 ? pid : null;
-        const deadline = Date.now() + daemonStartupTimeoutMs;
-        while (Date.now() < deadline) {
-          if (await isDaemonRunning()) {
-            managedDaemonActive = true;
-            return;
-          }
-          await sleep(120);
+        let daemonLaunchError: any = null;
+        const onDaemonLaunchError = (err: any) => {
+          daemonLaunchError = computerUseError(
+            COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
+            `Computer Use helper daemon could not be launched: ${err?.message || String(err)}`,
+            { providerId, command, launchCode: err?.code || null },
+          );
+        };
+        const observesLaunchErrors = typeof spawnedDaemonChild?.once === "function";
+        if (observesLaunchErrors) {
+          spawnedDaemonChild.once("error", onDaemonLaunchError);
         }
-        throw computerUseError(
-          COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
-          "Computer Use helper daemon did not become ready in time.",
-          { providerId, command, socketPath },
-        );
+        try {
+          const deadline = Date.now() + daemonStartupTimeoutMs;
+          while (Date.now() < deadline) {
+            if (daemonLaunchError) throw daemonLaunchError;
+            if (await isDaemonRunning()) {
+              managedDaemonActive = true;
+              return;
+            }
+            // The child may emit ENOENT while the status probe is in flight.
+            // Check again before sleeping so a failed launch cannot leave a
+            // detached readiness loop polling in the background.
+            if (daemonLaunchError) throw daemonLaunchError;
+            await sleep(120);
+          }
+          if (daemonLaunchError) throw daemonLaunchError;
+          throw computerUseError(
+            COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
+            "Computer Use helper daemon did not become ready in time.",
+            { providerId, command, socketPath },
+          );
+        } finally {
+          if (observesLaunchErrors && typeof spawnedDaemonChild?.removeListener === "function") {
+            spawnedDaemonChild.removeListener("error", onDaemonLaunchError);
+          }
+        }
       })().catch((err) => {
         daemonStartPromise = null;
         throw err;
@@ -758,7 +886,10 @@ export function createMacosCuaProvider({
         return {
           providerId,
           available: false,
-          reason: err?.code === "ENOENT" ? "binary-not-found" : "status-failed",
+          reason: err?.code === "ENOENT"
+            ? (bundledHanaHelper ? "bundled-helper-missing" : "binary-not-found")
+            : "status-failed",
+          command,
           error: err?.message || String(err),
         };
       }

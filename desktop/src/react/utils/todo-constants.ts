@@ -1,7 +1,7 @@
 /**
  * todo-constants.ts — 前端镜像
  *
- * 后端真实来源：project-hana/lib/tools/todo-constants.js
+ * 后端真实来源：lib/tools/todo-constants.ts
  * 这两个文件必须保持同步。任何改动都要改两处。
  *
  * 命名不对称说明：tool 名用 snake_case（todo_write），对齐 SDK built-in

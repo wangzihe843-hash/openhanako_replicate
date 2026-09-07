@@ -40,6 +40,9 @@ export function MeTab() {
 
       const requests: Promise<Response>[] = [];
       if (Object.keys(partial).length) {
+        // The name describes the person using Hana, not any one agent, so it is
+        // stored globally and saved through the global config route. Every agent
+        // reads the same value.
         requests.push(hanaFetch('/api/config', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },

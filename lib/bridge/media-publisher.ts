@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "fs";
 import path from "path";
+import { canonicalFilesystemPathSync, filesystemIdentityKeySync } from "../../shared/link-aware-fs.ts";
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_DOWNLOADS = 5;
@@ -113,7 +114,8 @@ export class MediaPublisher {
     if (!this.allowedRoots.length) {
       throw new Error("media file is outside allowed roots");
     }
-    const allowed = this.allowedRoots.some(root => isInsideRoot(realPath, root));
+    const targetKey = filesystemIdentityKeySync(realPath);
+    const allowed = this.allowedRoots.some(root => isInsideRoot(targetKey, filesystemIdentityKeySync(root)));
     if (!allowed) throw new Error("media file is outside allowed roots");
   }
 
@@ -138,11 +140,8 @@ function normalizeBaseUrl(baseUrl: any) {
 
 function normalizeAllowedRoots(roots: any) {
   return [...new Set((roots || []).filter(Boolean).map((root) => {
-    const resolved = path.resolve(root);
-    const realRoot = (() => {
-      try { return fs.realpathSync(resolved); }
-      catch { return resolved; }
-    })();
+    // 存下来的是真实路径，用 canonical；折大小写只在比较时做。
+    const realRoot = canonicalFilesystemPathSync(root);
     if (realRoot === path.parse(realRoot).root) {
       throw new Error(`media allowed root refuses filesystem root: ${root}`);
     }
@@ -157,10 +156,14 @@ function normalizeMaxDownloads(maxDownloads: any) {
 }
 
 function realFilePath(filePath: any) {
+  // "文件不在就抛" 是这里的契约：token 解析靠它判定源文件已经消失，
+  // 所以先真实探一次，再交给共享原语做 native 归一。
   const resolved = path.resolve(filePath);
-  return fs.realpathSync(resolved);
+  fs.realpathSync(resolved);
+  return canonicalFilesystemPathSync(resolved);
 }
 
+/** 两侧都必须是身份键。 */
 function isInsideRoot(filePath: any, root: any) {
   if (filePath === root) return true;
   const relative = path.relative(root, filePath);

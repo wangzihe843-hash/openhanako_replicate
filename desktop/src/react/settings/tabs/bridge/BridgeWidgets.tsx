@@ -99,18 +99,20 @@ export function BridgePermissionModeSelect({
 
 export function BridgeStatusDot({ status }: { status?: string }) {
   let cls = 'bridge-status-dot';
-  if (status === undefined) cls += ' bridge-dot-off bridge-dot-loading';
+  const busy = status === undefined || status === 'connecting';
+  if (busy) cls += ' bridge-dot-off bridge-dot-loading';
   else if (status === 'connected') cls += ' bridge-dot-ok';
   else if (status === 'error') cls += ' bridge-dot-err';
   else cls += ' bridge-dot-off';
-  return <span className={cls} aria-busy={status === undefined ? true : undefined} />;
+  return <span className={cls} aria-busy={busy ? true : undefined} />;
 }
 
 // ── BridgeStatusText ──
 
 export function BridgeStatusText({ status, error }: { status?: string; error?: string }) {
   let text = status === undefined ? t('common.loading') : t('settings.bridge.disconnected');
-  if (status === 'connected') text = t('settings.bridge.connected');
+  if (status === 'connecting') text = t('status.connecting');
+  else if (status === 'connected') text = t('settings.bridge.connected');
   else if (status === 'error') text = t('settings.bridge.error') + (error ? `: ${error}` : '');
   return <span className="bridge-status-text">{text}</span>;
 }

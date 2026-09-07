@@ -42,17 +42,17 @@ smokeDescribe("win32 packaged smoke", () => {
     expect(chunks.join("").length).toBeGreaterThan(0);
   });
 
-  it("2. default PowerShell route launches", async () => {
+  it("2. default cmd route launches", async () => {
     const exec = (await loadExec())();
     const chunks: string[] = [];
-    const result = await exec("Get-Date", workDir, {
+    const result = await exec("echo smoke-ok", workDir, {
       onData: (b: any) => chunks.push(String(b)),
       signal: undefined,
       timeout: 30,
       env: process.env,
     });
     expect(result.exitCode).toBe(0);
-    expect(chunks.join("").length).toBeGreaterThan(0);
+    expect(chunks.join("")).toContain("smoke-ok");
   });
 
   it("3. POSIX route launches via the resolved bash runtime", async () => {

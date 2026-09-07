@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import { atomicWriteSync } from "../shared/safe-fs.ts";
+import { writeSecretFileSync } from "../shared/secret-fs.ts";
 import { normalizeProviderAuthType } from "../shared/provider-auth.ts";
 
 export const LOCAL_PROVIDER_PLUGINS_DIR = "provider-plugins";
@@ -305,13 +305,13 @@ export class LocalProviderPluginStore {
     const storageId = assertSafeLocalProviderPluginStorageId(localProviderPluginStorageId(id));
     const plugin = normalizeLocalProviderPlugin(id, config);
     fs.mkdirSync(path.dirname(this.providerPath(id)), { recursive: true });
-    atomicWriteSync(this.manifestPath(id), JSON.stringify({
+    writeSecretFileSync(this.manifestPath(id), JSON.stringify({
       id: storageId,
       type: "provider-plugin",
       schemaVersion: LOCAL_PROVIDER_PLUGIN_SCHEMA_VERSION,
       provider: id,
     }, null, 2) + "\n");
-    atomicWriteSync(this.providerPath(id), JSON.stringify(plugin, null, 2) + "\n");
+    writeSecretFileSync(this.providerPath(id), JSON.stringify(plugin, null, 2) + "\n");
     return {
       ...plugin,
       source: { kind: LOCAL_PROVIDER_PLUGIN_SOURCE_KIND },

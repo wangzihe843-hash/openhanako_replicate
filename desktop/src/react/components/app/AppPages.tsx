@@ -6,7 +6,7 @@ import { BridgePanel } from '../BridgePanel';
 import { SkillsPanel } from '../SkillsPanel';
 import { PreviewPanel } from '../PreviewPanel';
 import { PluginPageView } from '../plugin/PluginPageView';
-import { ChannelMessages, ChannelMembers, ChannelInput, ChannelReadonly, ChannelAgentActivityPanel, ChannelAgentSettingsPanel } from '../ChannelsPanel';
+import { ChannelMessages, ChannelMembers, ChannelInput, ChannelReadonly, ChannelAgentActivityPanel, ChannelAgentSettingsPanel, ChannelExportPanel } from '../ChannelsPanel';
 import { ChannelHeader } from '../channels/ChannelHeader';
 import { MainContent } from '../../MainContent';
 import { ChatPage } from './ChatPage';
@@ -65,6 +65,7 @@ function ChannelInspectorPanel() {
           </div>
           <ChannelAgentSettingsPanel />
           <ChannelAgentActivityPanel />
+          <ChannelExportPanel />
         </div>
       </ChannelInspectorShell>
     );
@@ -87,6 +88,7 @@ function ChannelInspectorPanel() {
         </div>
         <ChannelAgentSettingsPanel />
         <ChannelAgentActivityPanel />
+        <ChannelExportPanel />
       </div>
     </ChannelInspectorShell>
   );

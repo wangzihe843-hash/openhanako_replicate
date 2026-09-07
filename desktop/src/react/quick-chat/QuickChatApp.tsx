@@ -15,6 +15,7 @@ import { useStore } from '../stores';
 import { sessionScopedListIncludes, sessionScopedValue } from '../stores/session-slice';
 import { applyAgentIdentity, loadAvatars } from '../stores/agent-actions';
 import { loadMessages } from '../stores/session-actions';
+import type { ForkedSessionRef } from '../stores/message-turn-actions';
 import { useI18n } from '../hooks/use-i18n';
 import inputStyles from '../components/input/InputArea.module.css';
 import chatStyles from '../components/chat/Chat.module.css';
@@ -336,7 +337,7 @@ export function QuickChatApp() {
           ui: { avatars: false, agents: false, welcome: true },
         });
         if (cancelled) return;
-        loadAvatars(healthData.avatars);
+        loadAvatars(healthData.avatars, healthData.agentId);
 
         const nextAgents = Array.isArray(agentsData.agents) ? agentsData.agents : [];
         const preferred = applyRuntimeAgentList(nextAgents, {
@@ -639,6 +640,28 @@ export function QuickChatApp() {
     window.hana?.quickChatOpenSession?.(sessionPathRef.current);
   }, [markHidden]);
 
+  const handleForkCreated = useCallback(async (forked: ForkedSessionRef) => {
+    sessionPathRef.current = forked.sessionPath;
+    setSessionPath(forked.sessionPath);
+    setSending(false);
+    setError(null);
+
+    const resolvedAgentId = forked.agentId || selectedAgentIdRef.current;
+    if (resolvedAgentId) {
+      selectedAgentIdRef.current = resolvedAgentId;
+      setSelectedAgentId(resolvedAgentId);
+    }
+    const agent = agentsRef.current.find(item => item.id === resolvedAgentId) || null;
+    bindQuickChatDetachedSession({
+      path: forked.sessionPath,
+      sessionId: forked.sessionId,
+      agentId: resolvedAgentId,
+      agentName: agent?.name || null,
+    });
+    await loadMessages(forked.sessionPath);
+    window.hana?.quickChatResize?.('chat');
+  }, []);
+
   const closeQuickChat = useCallback(() => {
     markHidden();
     window.hana?.quickChatHide?.();
@@ -646,7 +669,8 @@ export function QuickChatApp() {
 
   const canSend = (!!draft.trim() || attachments.length > 0) && !sending && !isStreaming && !!connection;
   const expanded = sessionItems.length > 0 || isStreaming;
-  const displayError = error || inlineError;
+  // 快捷面板只有一行的位置，显示人话正文；详情留给主窗口的错误条展开区。
+  const displayError = error || inlineError?.text || null;
   const title = sessionTitle || t('quickChat.title');
 
   useLayoutEffect(() => {
@@ -713,6 +737,7 @@ export function QuickChatApp() {
                         agentId={selectedAgentId}
                         readOnly={false}
                         enableProcessFold
+                        onForkCreated={handleForkCreated}
                       />
                     )}
                     {isStreaming && (

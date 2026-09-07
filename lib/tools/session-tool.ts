@@ -8,6 +8,8 @@ import { searchSessions } from "../search/session-search.ts";
 import { buildCompactTranscript } from "../session-collab/transcript.ts";
 import { sessionToolHandbook, sessionToolUsageError } from "../session-collab/handbook.ts";
 import { deliverAgentMessage } from "../session-collab/delivery.ts";
+import { SessionCollabPartialSuccessError } from "../session-collab/draft-store.ts";
+import { findModel, modelRefKey, requireModelRef } from "../../shared/model-ref.ts";
 
 function textResult(text: string, details: any = undefined) {
   return { content: [{ type: "text", text }], ...(details ? { details } : {}) };
@@ -54,6 +56,32 @@ async function applySessionTitleIfSupported(engine: any, sessionPath: string | n
   } catch (err: any) {
     console.warn("[session-collab] failed to set title for new session:", err?.message || err);
   }
+}
+
+function currentAgentRoster(engine: any, fallback: (() => any[]) | null): any[] {
+  const roster = typeof engine?.listAgents === "function" ? engine.listAgents() : fallback?.();
+  return Array.isArray(roster) ? roster : [];
+}
+
+function resolveAgentFromRoster(roster: any[], requested: string) {
+  const byName = roster.filter((agent: any) => (agent.name || agent.agentName) === requested);
+  return roster.find((agent: any) => agent.id === requested)
+    || (byName.length === 1 ? byName[0] : null);
+}
+
+function resolveAvailableModel(engine: any, requested: string) {
+  let ref: { provider: string; id: string };
+  try {
+    ref = requireModelRef(requested);
+  } catch {
+    throw new Error(`session_create_invalid_model: model must use provider/id (got ${JSON.stringify(requested)})`);
+  }
+  const availableModels = Array.isArray(engine?.availableModels) ? engine.availableModels : [];
+  const model = findModel(availableModels, ref.id, ref.provider);
+  if (!model) {
+    throw new Error(`session_create_invalid_model: model is not currently available: ${modelRefKey(ref)}`);
+  }
+  return { model, key: modelRefKey(ref) };
 }
 
 export function createSessionTool(deps: {
@@ -186,10 +214,8 @@ export function createSessionTool(deps: {
         const message = typeof params.message === "string" ? params.message.trim() : "";
         const agentParam = typeof params.agent === "string" ? params.agent.trim() : "";
         if (!agentParam || !message) return usageError("create", "agent and message are required for create.");
-        const roster = deps.listAgents ? deps.listAgents() : [];
-        const byName = roster.filter((a: any) => a.name === agentParam);
-        const targetAgent = roster.find((a: any) => a.id === agentParam)
-          || (byName.length === 1 ? byName[0] : null);
+        const roster = currentAgentRoster(engine, deps.listAgents);
+        const targetAgent = resolveAgentFromRoster(roster, agentParam);
         if (!targetAgent) {
           return usageError("create", `Unknown agent "${agentParam}". Available agents:\n`
             + roster.map((a: any) => `- ${a.id}${a.name && a.name !== a.id ? ` (${a.name})` : ""}`).join("\n"));
@@ -197,32 +223,59 @@ export function createSessionTool(deps: {
         const sourceSessionPath = getToolSessionPath(ctx);
         const sourceSessionId = sourceSessionPath ? engine.getSessionIdForPath?.(sourceSessionPath) || null : null;
         if (!sourceSessionId) return textResult("create requires an active desktop session context");
+        let initialModelKey: string | null = null;
+        if (typeof params.model === "string" && params.model.trim()) {
+          try {
+            initialModelKey = resolveAvailableModel(engine, params.model.trim()).key;
+          } catch (error: any) {
+            return usageError("create", error?.message || String(error));
+          }
+        }
         const from = { agentId: deps.agentId, agentName: deps.getAgentName() };
-        const draft = { agentId: targetAgent.id, model: params.model || null, title: params.title || null, firstMessage: message };
+        const draft = { agentId: targetAgent.id, model: initialModelKey, title: params.title || null, firstMessage: message };
         const entry = store.create({
           kind: "create",
           sourceSessionId,
           draft,
           apply: async (edited: any = {}) => {
-            const agentId = typeof edited.agentId === "string" && edited.agentId.trim() ? edited.agentId.trim() : targetAgent.id;
+            const requestedAgent = typeof edited.agentId === "string" && edited.agentId.trim()
+              ? edited.agentId.trim()
+              : targetAgent.id;
             const firstMessage = typeof edited.firstMessage === "string" && edited.firstMessage.trim() ? edited.firstMessage : message;
-            const model = typeof edited.model === "string" && edited.model.trim() ? edited.model.trim() : (draft.model || undefined);
+            const requestedModel = typeof edited.model === "string" && edited.model.trim()
+              ? edited.model.trim()
+              : draft.model;
+
+            // 草稿可以被编辑，且确认前 agent/model 配置可能变化。创建前以当前真实
+            // roster 和模型表重新校验；失败时不得留下 session 或其它持久副作用。
+            const finalAgent = resolveAgentFromRoster(currentAgentRoster(engine, deps.listAgents), requestedAgent);
+            if (!finalAgent) {
+              throw new Error(`session_create_invalid_agent: agent is not currently available: ${requestedAgent}`);
+            }
+            const finalModel = requestedModel ? resolveAvailableModel(engine, requestedModel).model : undefined;
             // 与 server/routes/sessions.ts 的新建路径（engine.createSessionForAgent 调用处）同参形态
             const created = await engine.createSessionForAgent(
-              agentId, undefined, true, model,
+              finalAgent.id, undefined, true, finalModel,
               { workspaceFolders: [], visibleInSessionList: true },
             );
-            engine.persistSessionMeta?.();
+            engine.persistSessionMeta?.(created?.sessionPath);
             const newSessionId = created?.sessionId
               || engine.getSessionIdForPath?.(created?.sessionPath) || null;
             if (!newSessionId) throw new Error("session_create_failed: no sessionId returned");
             await applySessionTitleIfSupported(engine, created?.sessionPath, edited.title || draft.title);
-            try {
-              await deliverAgentMessage(engine, { targetSessionId: newSessionId, message: firstMessage, from });
-            } catch (err: any) {
-              // 半成功：不回滚不删 session，把已建 sessionId 带在错误里给前端呈现
-              throw new Error(`first_message_failed:${newSessionId}:${err?.message || err}`);
-            }
+            const retryFirstMessage = async (retryDraft: any = {}) => {
+              const retryMessage = typeof retryDraft.firstMessage === "string" && retryDraft.firstMessage.trim()
+                ? retryDraft.firstMessage
+                : firstMessage;
+              try {
+                await deliverAgentMessage(engine, { targetSessionId: newSessionId, message: retryMessage, from });
+              } catch (err: any) {
+                // 半成功：保留 session，并把当前草稿切换成只重试首条消息。
+                throw new SessionCollabPartialSuccessError(newSessionId, err, retryMessage, retryFirstMessage);
+              }
+              return { sessionId: newSessionId };
+            };
+            await retryFirstMessage(edited);
             return { sessionId: newSessionId };
           },
         });

@@ -27,6 +27,12 @@ import { relativePathInsideBase } from "./message-utils.ts";
 import { detachAgentFromBundles } from "../lib/skill-bundles/store.ts";
 import { assertKnownYuan, getAgentConfigRepairState } from "./yuan-registry.ts";
 import { assertValidAgentIdentityId, isValidAgentIdentityId } from "../shared/agent-id.ts";
+import {
+  PUBLIC_PERSONA_FILE_NAME,
+  PUBLIC_PERSONA_TEMPLATE_DIR,
+  resolvePersonaLocale,
+  resolvePersonaSource,
+} from "./persona-source.ts";
 
 const log = createModuleLogger("agent-mgr");
 const DELETED_AGENT_TOMBSTONE = ".deleted-agent.json";
@@ -102,13 +108,20 @@ function agentMatchesListOptions(agent, options: any = {}) {
   return true;
 }
 
-function fallbackUserNameForLocale(locale) {
-  return String(locale || "zh").startsWith("zh") ? "用户" : "User";
+// 与 Agent.resolveLocale() 同一条链条：config.locale（显式覆盖）→ 全局 prefs
+// 的 locale → "en"。这里没有 Agent 实例，globalLocale 由调用方（_scanAgentList）
+// 传入 engine.getLocale() 的结果，读不到时按 resolveLocale 的末端语义落 "en"。
+function fallbackUserNameForLocale(locale, globalLocale = "") {
+  const effective = locale || globalLocale || "en";
+  return String(effective).startsWith("zh") ? "用户" : "User";
 }
 
-function renderIdentityTemplateForList(identityMd, cfg, agentId) {
+function renderIdentityTemplateForList(identityMd, cfg, agentId, globalLocale = "", globalUserName = "") {
   const agentName = cfg?.agent?.name || agentId;
-  const userName = cfg?.user?.name || fallbackUserNameForLocale(cfg?.locale);
+  // 与 Agent.resolveUserName() 同一条链条：全局 prefs 的 userName → 按语言兜底。
+  // 不读 agent config 的 user.name，否则列表里显示的称呼会和 agent 实际用的
+  // 那个对不上。
+  const userName = globalUserName || fallbackUserNameForLocale(cfg?.locale, globalLocale);
   return String(identityMd || "")
     .replace(/\{\{userName\}\}/g, userName)
     .replace(/\{\{agentName\}\}/g, agentName)
@@ -170,6 +183,26 @@ export class AgentManager {
 
   /** 清除 listAgents 缓存（agent 增删改时调用） */
   invalidateAgentListCache() { this._agentListCache = null; }
+
+  /**
+   * 用户改名后让所有在内存里的 agent 立刻改口（全局 userName 变更时调用）。
+   *
+   * 名字的正源在全局 preferences，但每个 Agent 实例把解析结果缓存在
+   * agent.userName 上（prompt、MOOD 模板、花名册都读它）。只写 prefs 不刷新，
+   * 已加载的 agent 会一直用旧称呼直到重启。持有显式覆盖的 agent 重新解析后
+   * 仍然拿到自己的覆盖值，不受影响。
+   */
+  refreshResolvedUserNames() {
+    for (const [id, agent] of this._agents) {
+      try {
+        agent.userName = agent.resolveUserName();
+      } catch (err) {
+        log.warn(`refresh userName for ${id} failed: ${err?.message || err}`);
+      }
+    }
+    this.invalidateAgentListCache();
+    this._rebuildAllAgentSystemPrompts();
+  }
 
   /** 重建所有已初始化 agent 的 _systemPrompt（花名册变更时调用） */
   _rebuildAllAgentSystemPrompts() {
@@ -478,6 +511,11 @@ export class AgentManager {
   /** 扫盘读取所有 agent 元数据（I/O 密集，由缓存保护） */
   _scanAgentList() {
     const entries = readDirectoryLikeDirentsSync(this._d.agentsDir);
+    // 每个 agent 都可能没有 config.locale，统一在扫描开始时读一次全局 prefs 的
+    // locale 作为兜底，而不是每个 agent 各查一次。
+    const globalLocale = this._d.getEngine?.()?.getLocale?.() || "";
+    // 用户名同理：正源在全局 prefs，扫描开始时读一次给所有 agent 兜底。
+    const globalUserName = this._d.getEngine?.()?.getUserName?.() || "";
     const agents = [];
     for (const entry of entries) {
       if (!this._acceptDiscoveredAgentId(entry.name)) continue;
@@ -488,8 +526,17 @@ export class AgentManager {
         const cfg = safeReadYAMLSync(configPath, {}, YAML);
         let identity = "";
         try {
-          const idMd = fs.readFileSync(path.join(this._d.agentsDir, entry.name, "identity.md"), "utf-8");
-          const renderedIdMd = renderIdentityTemplateForList(idMd, cfg, entry.name);
+          // identity.md 不再保证落盘（惰性材料化）：没有活跃 Agent 实例可用时，
+          // 直接用 core/persona-source.ts 的同一条回落链现读，未定制 agent 在
+          // 花名册里必须显示其实际生效的模板摘要，不能空白。
+          const { content: idMd } = resolvePersonaSource({
+            agentDir: path.join(this._d.agentsDir, entry.name),
+            productDir: this._d.productDir,
+            yuanType: cfg.agent?.yuan || "hanako",
+            locale: resolvePersonaLocale(cfg.locale, globalLocale),
+            kind: "identity",
+          });
+          const renderedIdMd = renderIdentityTemplateForList(idMd, cfg, entry.name, globalLocale, globalUserName);
           const lines = renderedIdMd.split("\n").filter(l => l.trim() && !l.startsWith("#"));
           identity = lines[0]?.trim() || "";
         } catch {}
@@ -551,7 +598,7 @@ export class AgentManager {
       } catch {} // 文件不存在，继续生成
 
       const utilConfig = await this._d.resolveUtilityConfigFresh({ agentId });
-      const locale = ag.config?.locale || "zh";
+      const locale = ag.resolveLocale();
       const desc = await generateDescription(utilConfig, source, locale);
       if (!desc) {
         log.log(`[description] ${agentId}: 生成跳过（LLM 不可用或返回空）`);
@@ -604,7 +651,6 @@ export class AgentManager {
     // 从模板复制 config.yaml
     const templateConfig = fs.readFileSync(path.join(this._d.productDir, "config.example.yaml"), "utf-8");
     const currentAgent = this.agent;
-    const userName = currentAgent?.userName || "";
     const configSeed = YAML.load(templateConfig);
     if (!configSeed || typeof configSeed !== "object" || Array.isArray(configSeed)) {
       throw new Error("Invalid config.example.yaml");
@@ -620,9 +666,9 @@ export class AgentManager {
       heartbeat_enabled: false,
       heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
     };
-    if (userName) {
-      config.user = { ...(config.user || {}), name: userName };
-    }
+    // 不往新 agent 的 config 里抄用户名：名字的正源是全局 preferences，
+    // 每个 agent 各存一份就会在用户改名后留下一堆对不上的旧副本。
+    delete config.user;
     // migration #5 之后 models.chat 的唯一合法持久化格式是 {id, provider}。
     // 新建 agent 时必须直接写完整复合键，不能再把旧字符串格式重新带回磁盘。
     const chatRef = parseModelRef(currentAgent?.config?.models?.chat);
@@ -641,52 +687,41 @@ export class AgentManager {
       "utf-8",
     );
 
-    // 与 personality/buildSystemPrompt 的 fallback 链保持一致：
-    // yuan 专属（locale 细分） → yuan 专属（通用语言） → 通用 example。
-    // 保证选不同 yuan 时写入的是该 yuan 的默认内容，而不是通用兜底。
-    const isZh = String(currentAgent?.config?.locale || "zh").startsWith("zh");
+    // identity.md / AGENTS.md 不再在创建 agent 时播种落盘（惰性材料化）：
+    // 缺失时运行时按 agent.resolveLocale() 现选 lib 模板（core/persona-source.ts
+    // 的 resolvePersonaSource，与 core/agent.ts personality getter 同一条回落
+    // 链），用户日后改语言，未定制人格自动跟着换。文件只在用户于设置页编辑
+    // 保存时才落盘。AGENTS.public.md 的消费侧（Agent._readPublicAgentsMd）本来
+    // 就有独立回落链，不受此改动影响，这里继续按原策略播种。
+    const isZh = String(
+      currentAgent?.resolveLocale?.() || this._d.getEngine?.()?.getLocale?.() || "en"
+    ).startsWith("zh");
     const langDir = isZh ? "" : "en/";
     const firstExisting = (paths) => paths.find((p) => fs.existsSync(p));
 
-    // identity.md
-    const identitySrc = firstExisting([
-      path.join(this._d.productDir, "identity-templates", `${langDir}${yuanType}.md`),
-      path.join(this._d.productDir, "identity-templates", `${yuanType}.md`),
-      path.join(this._d.productDir, "identity.example.md"),
+    // AGENTS.public.md（对外人格模板）
+    const publicAgentsSrc = firstExisting([
+      path.join(this._d.productDir, PUBLIC_PERSONA_TEMPLATE_DIR, `${langDir}${yuanType}.md`),
+      path.join(this._d.productDir, PUBLIC_PERSONA_TEMPLATE_DIR, `${yuanType}.md`),
     ]);
-    if (identitySrc) {
-      const tmpl = fs.readFileSync(identitySrc, "utf-8");
-      fs.writeFileSync(path.join(agentDir, "identity.md"), tmpl, "utf-8");
-    }
-
-    // ishiki.md
-    const ishikiSrc = firstExisting([
-      path.join(this._d.productDir, "ishiki-templates", `${langDir}${yuanType}.md`),
-      path.join(this._d.productDir, "ishiki-templates", `${yuanType}.md`),
-      path.join(this._d.productDir, "ishiki.example.md"),
-    ]);
-    if (ishikiSrc) {
-      fs.copyFileSync(ishikiSrc, path.join(agentDir, "ishiki.md"));
-    }
-
-    // public-ishiki.md（对外意识模板）
-    const publicIshikiSrc = firstExisting([
-      path.join(this._d.productDir, "public-ishiki-templates", `${langDir}${yuanType}.md`),
-      path.join(this._d.productDir, "public-ishiki-templates", `${yuanType}.md`),
-    ]);
-    if (publicIshikiSrc) {
-      fs.copyFileSync(publicIshikiSrc, path.join(agentDir, "public-ishiki.md"));
+    if (publicAgentsSrc) {
+      fs.copyFileSync(publicAgentsSrc, path.join(agentDir, PUBLIC_PERSONA_FILE_NAME));
     }
 
     if (initialFiles && typeof initialFiles === "object") {
+      const personaFiles = {
+        ...initialFiles,
+        agents: initialFiles.agents ?? initialFiles.ishiki,
+        publicAgents: initialFiles.publicAgents ?? initialFiles.publicIshiki,
+      };
       const fileMap = {
         identity: "identity.md",
-        ishiki: "ishiki.md",
-        publicIshiki: "public-ishiki.md",
+        agents: "AGENTS.md",
+        publicAgents: PUBLIC_PERSONA_FILE_NAME,
       };
       for (const [key, fileName] of Object.entries(fileMap)) {
-        if (typeof initialFiles[key] === "string") {
-          fs.writeFileSync(path.join(agentDir, fileName), initialFiles[key], "utf-8");
+        if (typeof personaFiles[key] === "string") {
+          fs.writeFileSync(path.join(agentDir, fileName), personaFiles[key], "utf-8");
         }
       }
     }
@@ -833,7 +868,14 @@ export class AgentManager {
       if (ref) {
         const model = findModel(models.availableModels, ref.id, ref.provider);
         if (!model) {
-          throw new Error(t("error.agentModelNotAvailable", { id: agentId, model: `${ref.provider}/${ref.id}` }));
+          // 带上码和状态，切换失败才能在路由边界保住语义：模型没了是用户改配置能解决的
+          // 冲突（409），不是服务端故障（500）。少了这两个字段，上层只能压平成未知错误。
+          const error: any = new Error(
+            t("error.agentModelNotAvailable", { id: agentId, model: `${ref.provider}/${ref.id}` }),
+          );
+          error.code = "agent_model_not_available";
+          error.status = 409;
+          throw error;
         }
         models.defaultModel = model;
       } else if (chatRef) {
@@ -1120,11 +1162,13 @@ export class AgentManager {
       getSessionPermissionMode: (sp) => getEngine()?.getSessionPermissionMode?.(sp) ?? null,
       getSessionCwd:        (sp) => getEngine()?.getSessionByPath?.(sp)?.sessionManager?.getCwd?.() ?? null,
       getSessionWorkspaceFolders: (sp) => getEngine()?.getSessionWorkspaceFolders?.(sp) ?? [],
+      getSessionAuthorizedFolders: (sp) => getEngine()?.getSessionAuthorizedFolders?.(sp) ?? [],
       getHomeCwd:           (agentId) => getEngine()?.getHomeCwd?.(agentId) ?? null,
       getStudioCronStore:   () => getEngine()?.getStudioCronStore?.() ?? null,
       emitEvent:            (event, sp) => getEngine()?._emitEvent?.(event, sp),
       emitSessionEvent:     (event) => getEngine()?.emitSessionEvent?.(event),
       getDeferredResults:   () => getEngine()?.deferredResults ?? null,
+      getLoopController:    () => getEngine()?.loopController ?? null,
       getSubagentRunStore:  () => getEngine()?.subagentRuns ?? null,
       getSubagentThreadStore: () => getEngine()?.subagentThreads ?? null,
       getActivityHub:       () => getEngine()?.activityHub ?? null,
@@ -1146,6 +1190,8 @@ export class AgentManager {
       resolveUtilityConfigFresh: (options) => getEngine()?.resolveUtilityConfigFresh?.({ ...(options || {}), agentId: ag.id }),
       getCwd:               () => getEngine()?.cwd ?? "",
       getTimezone:          () => getEngine()?.getTimezone?.() ?? "",
+      getLocale:            () => getEngine()?.getLocale?.() ?? "",
+      getUserName:          () => getEngine()?.getUserName?.() ?? "",
       scheduleMemoryMaintenance: (agentId, reason) =>
         this.scheduleAgentMemoryMaintenance(agentId, reason, ag),
       getEngine,  // update-settings-tool 仍需要完整 engine

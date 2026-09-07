@@ -21,7 +21,7 @@ function expectTextBefore(label, content, earlier, later) {
   const laterIndex = content.indexOf(later);
   expect(earlierIndex, `${label} must include ${earlier}`).toBeGreaterThanOrEqual(0);
   expect(laterIndex, `${label} must include ${later}`).toBeGreaterThanOrEqual(0);
-  expect(earlierIndex, `${label} must build renderer assets before server packaging`).toBeLessThan(laterIndex);
+  expect(earlierIndex, `${label} must place ${earlier} before ${later}`).toBeLessThan(laterIndex);
 }
 
 describe("package build order", () => {
@@ -42,6 +42,41 @@ describe("package build order", () => {
       workflow,
       "npm run build:client",
       "node scripts/build-server.mjs",
+    );
+  });
+
+  it("packages the Windows standalone archive only after the server tree and sandbox helper exist", () => {
+    const scripts = packageScripts();
+    const distWin = scripts["dist:win"];
+    expectTextBefore("dist:win", distWin, "npm run build:windows-sandbox-helper", "npm run pack:server:standalone");
+    expectTextBefore("dist:win", distWin, "npm run build:server", "npm run pack:server:standalone");
+    expectTextBefore("dist:win", distWin, "npm run pack:server:standalone", "npm run verify:standalone:server");
+    expectTextBefore("dist:win", distWin, "npm run verify:standalone:server", "electron-builder --win nsis");
+
+    const workflow = fs.readFileSync(path.join(rootDir, ".github", "workflows", "build.yml"), "utf-8");
+    expectTextBefore(
+      "GitHub release workflow",
+      workflow,
+      "node scripts/build-server.mjs",
+      "node scripts/build-standalone-server-artifact.mjs",
+    );
+    expectTextBefore(
+      "GitHub release workflow",
+      workflow,
+      "node scripts/build-windows-sandbox-helper.mjs",
+      "node scripts/build-standalone-server-artifact.mjs",
+    );
+    expectTextBefore(
+      "GitHub release workflow",
+      workflow,
+      "node scripts/verify-standalone-server-artifact.mjs",
+      "npx electron-builder --win nsis",
+    );
+    expectTextBefore(
+      "GitHub release workflow",
+      workflow,
+      "node scripts/build-standalone-server-artifact.mjs",
+      "node scripts/verify-standalone-server-artifact.mjs",
     );
   });
 });

@@ -6,7 +6,7 @@ import {
   isPluginBusCapabilityError,
 } from "./plugin-route-request-context.ts";
 import { freshImport } from "./fresh-import.ts";
-import { normalizePluginConfigSchema } from "./plugin-config.ts";
+import { createPluginConfigStore, normalizePluginConfigSchema } from "./plugin-config.ts";
 import { semverGte } from "../lib/plugin-versioning.ts";
 import { detectIncompatiblePluginFormat } from "../lib/plugin-format-guard.ts";
 import { createModuleLogger } from "../lib/debug-log.ts";
@@ -224,7 +224,6 @@ export class PluginManager {
   declare _commands: any;
   declare _configSchemas: any;
   declare _dataDir: any;
-  declare _envChangeLedger: any;
   declare _extensionFactories: any;
   declare _getSessionPath: any;
   declare _loadTimeoutMs: any;
@@ -270,7 +269,6 @@ export class PluginManager {
     lifecycleTimeoutMs,
     logSink,
     runtimeContext,
-    envChangeLedger,
   }) {
     this._pluginsDirs = pluginsDirs || (pluginsDir ? [pluginsDir] : []);
     this._dataDir = dataDir;
@@ -284,7 +282,6 @@ export class PluginManager {
     this._resourceWatch = resourceWatch || null;
     this._logSink = typeof logSink === "function" ? logSink : null;
     this._runtimeContext = runtimeContext || null;
-    this._envChangeLedger = envChangeLedger || null;
     this._plugins = new Map();
     this._scanned = [];
     this._opQueue = Promise.resolve();
@@ -433,7 +430,6 @@ export class PluginManager {
     const pluginId = entry.id;
     const pluginKey = entry.pluginKey;
     const source = normalizePluginSource(entry.source);
-    const wasLoaded = entry.status === "loaded";
     this._startPluginRuntimeCleanup(entry);
     this._cleanupPluginContributions(entry);
     this._plugins.delete(pluginKey);
@@ -446,7 +442,6 @@ export class PluginManager {
     }
 
     this._refreshRouteRegistryForId(pluginId);
-    if (wasLoaded) this._recordToolsetChange(pluginId, "unloaded");
   }
 
   reconcileMissingPluginDirectories(options: any = {}) {
@@ -616,15 +611,7 @@ export class PluginManager {
     }
   }
 
-  _recordToolsetChange(pluginId, action) {
-    this._envChangeLedger?.append({
-      type: "toolset_changed",
-      scope: { kind: "global" },
-      payload: { pluginId, action },
-    });
-  }
-
-  async _loadPluginWithBoundary(entry, { action = "loaded" }: any = {}) {
+  async _loadPluginWithBoundary(entry) {
     const loadToken = Symbol(entry.id);
     entry._loadToken = loadToken;
     entry._loadCancelled = false;
@@ -642,7 +629,6 @@ export class PluginManager {
         throw new Error(`Plugin "${entry.id}" load was cancelled`);
       }
       log.log(`plugin "${entry.id}" loaded (${Date.now() - start}ms)`);
-      this._recordToolsetChange(entry.id, action);
     } catch (err) {
       entry._loadCancelled = true;
       await this._cleanupPluginEntry(entry);
@@ -966,6 +952,18 @@ export class PluginManager {
   async _loadSkillPaths(entry) {
     const skillsDir = path.join(entry.pluginDir, "skills");
     if (!hasSkillSourceEntry(skillsDir)) return;
+    // 内置插件随服务端运行时一起分发，安装目录带版本号，每次服务端自更新就整体换一个新目录、
+    // 清掉旧的。skill 的绝对路径会被冻结进会话的 system prompt 快照，于是跨过一次更新的老会话
+    // 就会拿着一条指向已删除目录的路径去读盘，模型照着死路径扑空。内置插件的指南一律走工具
+    // （参考 beautify 的 style guide 工具）：工具在每次调用时解析自己的资源，路径永远不进上下文。
+    if (entry.source === "builtin") {
+      log.warn(
+        `builtin plugin "${entry.id}" contributes a skills/ directory; skipped. ` +
+        `Builtin plugins ship inside the versioned server runtime directory, so a frozen skill path ` +
+        `breaks after the next update. Expose the guidance through a tool instead.`
+      );
+      return;
+    }
     this._skillPaths.push({
       dirPath: skillsDir,
       label: `plugin:${entry.id}`,
@@ -1212,6 +1210,52 @@ export class PluginManager {
     };
   }
 
+  _uniqueSessionConfigStores() {
+    const stores = [];
+    const seenDataDirs = new Set();
+    for (const entry of this._plugins.values()) {
+      const dataDir = pluginDataDirForEntry(this._dataDir, entry);
+      const key = path.resolve(dataDir);
+      if (seenDataDirs.has(key)) continue;
+      seenDataDirs.add(key);
+      stores.push({
+        pluginId: entry.id,
+        pluginKey: entry.pluginKey,
+        store: createPluginConfigStore({ dataDir, schema: entry.configSchema }),
+      });
+    }
+    return stores;
+  }
+
+  forkSessionConfig(options: Record<string, any> = {}) {
+    const copied = [];
+    try {
+      for (const entry of this._uniqueSessionConfigStores()) {
+        const result = entry.store.forkSession(options);
+        if (result.copied) copied.push(entry);
+      }
+    } catch (error) {
+      for (const entry of copied.reverse()) {
+        try { entry.store.discardSession({ sessionId: options.targetSessionId }); } catch {}
+      }
+      throw error;
+    }
+    return {
+      copied: copied.length,
+      plugins: copied.map((entry) => ({ pluginId: entry.pluginId, pluginKey: entry.pluginKey })),
+    };
+  }
+
+  discardSessionConfig({ sessionId }: Record<string, any> = {}) {
+    const discarded = [];
+    for (const entry of this._uniqueSessionConfigStores()) {
+      if (entry.store.discardSession({ sessionId })) {
+        discarded.push({ pluginId: entry.pluginId, pluginKey: entry.pluginKey });
+      }
+    }
+    return { discarded: discarded.length, plugins: discarded };
+  }
+
   // ── Page / Widget loader ──────────────────────────────────────────────────
 
   _loadPage(entry) {
@@ -1372,7 +1416,6 @@ export class PluginManager {
         || [...this._plugins.values()].find(
           p => p.source === source && path.basename(p.pluginDir) === dirName
         );
-      const wasReload = existing?.status === "loaded";
       if (existing) {
         await this.unloadPlugin(existing.id, { pluginKey: existing.pluginKey });
         this._plugins.delete(existing.pluginKey);
@@ -1415,7 +1458,7 @@ export class PluginManager {
       }
 
       try {
-        await this._loadPluginWithBoundary(entry, { action: wasReload ? "reloaded" : "loaded" });
+        await this._loadPluginWithBoundary(entry);
         entry.status = "loaded";
         entry.error = null;
       } catch (err) {
@@ -1507,7 +1550,7 @@ export class PluginManager {
         await this.unloadPlugin(entry.id, { pluginKey: entry.pluginKey });
       }
       try {
-        await this._loadPluginWithBoundary(entry, { action: wasReload ? "reloaded" : "loaded" });
+        await this._loadPluginWithBoundary(entry);
         entry.status = "loaded";
         entry.error = null;
       } catch (err) {
@@ -1581,14 +1624,11 @@ export class PluginManager {
   async unloadPlugin(pluginId, options: any = {}) {
     const entry = this._resolvePluginEntry(pluginId, options);
     if (!entry) return;
-    const wasLoaded = entry.status === "loaded";
-
     entry._loadCancelled = true;
     await this._cleanupPluginEntry(entry);
 
     entry.status = "unloaded";
     this._refreshRouteRegistryForId(entry.id);
-    if (wasLoaded) this._recordToolsetChange(entry.id, "unloaded");
   }
 
   // ── Public getters (route 层通过这些方法访问，不穿透私有字段) ──

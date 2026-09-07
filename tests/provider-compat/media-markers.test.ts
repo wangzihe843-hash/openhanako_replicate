@@ -73,6 +73,7 @@ describe("provider-compat media attachment markers", () => {
       input: ["text", "image"],
     });
 
-    expect(result).toBe(payload);
+    expect(result).toEqual({ ...payload, max_tokens: 65_536 });
+    expect(result.messages).toEqual(payload.messages);
   });
 });

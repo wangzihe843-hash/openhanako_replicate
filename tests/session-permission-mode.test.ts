@@ -29,7 +29,7 @@ describe("session permission modes", () => {
     expect(classifySessionPermission({ mode: "operate", toolName: "write" })).toEqual({ action: "allow" });
   });
 
-  it("treats exec_command one-shot like bash but protects interactive stdin", () => {
+  it("keeps host interactive terminal actions on the review boundary", () => {
     expect(classifySessionPermission({ mode: "read_only", toolName: "exec_command", params: { cmd: "npm test" } })).toMatchObject({
       action: "deny",
       code: "ACTION_BLOCKED_BY_READ_ONLY",
@@ -38,45 +38,98 @@ describe("session permission modes", () => {
       action: "prompt",
       kind: "tool_action_approval",
     });
-    expect(classifySessionPermission({ mode: "auto", toolName: "exec_command", params: { cmd: "npm run dev", tty: true } })).toMatchObject({
-      action: "review",
-      kind: "tool_action_approval",
-    });
-    expect(classifySessionPermission({ mode: "auto", toolName: "write_stdin", params: { process_id: "term_1", chars: "q" } })).toMatchObject({
-      action: "review",
-      kind: "tool_action_approval",
-    });
+    const ttyReview = {
+      toolInvocation: {
+        action: "run",
+        kind: "review",
+        capability: "exec_command.run",
+      },
+    };
+    expect(classifySessionPermission({ mode: "auto", toolName: "exec_command", context: ttyReview }))
+      .toMatchObject({ action: "review" });
+    expect(classifySessionPermission({ mode: "ask", toolName: "exec_command", context: ttyReview }))
+      .toMatchObject({ action: "prompt", kind: "tool_action_approval" });
+    expect(classifySessionPermission({ mode: "read_only", toolName: "exec_command", context: ttyReview }))
+      .toMatchObject({ action: "deny", code: "ACTION_BLOCKED_BY_READ_ONLY" });
   });
 
-  it("treats browser information gathering separately from page actions", () => {
-    expect(classifySessionPermission({ mode: "read_only", toolName: "browser", params: { action: "screenshot" } })).toEqual({ action: "allow" });
-    expect(classifySessionPermission({ mode: "read_only", toolName: "browser", params: { action: "click" } })).toMatchObject({
+  it("classifies tool-owned read and review invocations without a host action table", () => {
+    const browserRead = {
+      toolInvocation: { action: "screenshot", kind: "read", capability: "browser.screenshot" },
+    };
+    const browserClick = {
+      toolInvocation: { action: "click", kind: "review", capability: "browser.click" },
+    };
+    expect(classifySessionPermission({ mode: "read_only", toolName: "browser", context: browserRead })).toEqual({ action: "allow" });
+    expect(classifySessionPermission({ mode: "read_only", toolName: "browser", context: browserClick })).toMatchObject({
       action: "deny",
     });
-    expect(classifySessionPermission({ mode: "ask", toolName: "browser", params: { action: "type" } })).toMatchObject({
+    expect(classifySessionPermission({ mode: "ask", toolName: "browser", context: browserClick })).toMatchObject({
       action: "prompt",
     });
-    expect(classifySessionPermission({ mode: "auto", toolName: "browser", params: { action: "type" } })).toMatchObject({
+    expect(classifySessionPermission({ mode: "auto", toolName: "browser", context: browserClick })).toMatchObject({
       action: "review",
     });
+    expect(classifySessionPermission({ mode: "operate", toolName: "browser", context: browserClick })).toEqual({ action: "allow" });
   });
 
-  it("allows terminal inspection but protects terminal mutation", () => {
-    expect(classifySessionPermission({ mode: "read_only", toolName: "terminal", params: { action: "list" } })).toEqual({ action: "allow" });
-    expect(classifySessionPermission({ mode: "read_only", toolName: "terminal", params: { action: "read" } })).toEqual({ action: "allow" });
-    expect(classifySessionPermission({ mode: "read_only", toolName: "terminal", params: { action: "start" } })).toMatchObject({
+  it("classifies terminal inspection, close, and host PTY actions by their real boundary", () => {
+    const terminalRead = {
+      toolInvocation: { action: "read", kind: "read", capability: "terminal.read" },
+    };
+    const terminalStart = {
+      toolInvocation: { action: "start", kind: "review", capability: "terminal.start" },
+    };
+    const terminalClose = {
+      toolInvocation: { action: "close", kind: "routine", capability: "terminal.close" },
+    };
+    expect(classifySessionPermission({ mode: "read_only", toolName: "terminal", context: terminalRead })).toEqual({ action: "allow" });
+    expect(classifySessionPermission({ mode: "read_only", toolName: "terminal", context: terminalStart })).toMatchObject({
       action: "deny",
       code: "ACTION_BLOCKED_BY_READ_ONLY",
     });
-    expect(classifySessionPermission({ mode: "ask", toolName: "terminal", params: { action: "write" } })).toMatchObject({
+    expect(classifySessionPermission({ mode: "ask", toolName: "terminal", context: terminalStart })).toMatchObject({
       action: "prompt",
       kind: "tool_action_approval",
     });
-    expect(classifySessionPermission({ mode: "auto", toolName: "terminal", params: { action: "start" } })).toMatchObject({
-      action: "review",
-      kind: "tool_action_approval",
-    });
-    expect(classifySessionPermission({ mode: "operate", toolName: "terminal", params: { action: "close" } })).toEqual({ action: "allow" });
+    expect(classifySessionPermission({ mode: "auto", toolName: "terminal", context: terminalStart })).toMatchObject({ action: "review" });
+    expect(classifySessionPermission({ mode: "auto", toolName: "terminal", context: terminalClose })).toEqual({ action: "allow" });
+    expect(classifySessionPermission({ mode: "operate", toolName: "terminal", context: terminalStart })).toEqual({ action: "allow" });
+  });
+
+  it("uses the same action class for unattended automation without durable tool grants", () => {
+    const routineInvocation = {
+      action: "close",
+      kind: "routine",
+      capability: "terminal.close",
+      target: { type: "terminal_process", id: "term_1" },
+    };
+    const reviewInvocation = {
+      action: "post",
+      kind: "review",
+      capability: "channel.post",
+      target: { type: "channel", id: "ch_team" },
+    };
+    expect(classifySessionPermission({
+      mode: "auto",
+      toolName: "terminal",
+      context: { surface: "automation", toolInvocation: routineInvocation },
+    })).toEqual({ action: "allow" });
+    expect(classifySessionPermission({
+      mode: "auto",
+      toolName: "channel",
+      context: { surface: "automation", toolInvocation: reviewInvocation },
+    })).toMatchObject({ action: "review" });
+    expect(classifySessionPermission({
+      mode: "read_only",
+      toolName: "terminal",
+      context: { surface: "automation", toolInvocation: routineInvocation },
+    })).toMatchObject({ action: "deny", code: "ACTION_BLOCKED_BY_READ_ONLY" });
+    expect(classifySessionPermission({
+      mode: "operate",
+      toolName: "channel",
+      context: { isSubagent: true, surface: "automation", toolInvocation: reviewInvocation },
+    })).toMatchObject({ action: "deny", code: "ACTION_BLOCKED_IN_SUBAGENT" });
   });
 
   it("allows session folder inspection while protecting folder authorization changes", () => {
@@ -91,23 +144,102 @@ describe("session permission modes", () => {
   });
 
   it("auto mode reviews only unsandboxed or long-lived boundary changes", () => {
-    for (const toolName of ["write", "edit", "bash", "exec_command", "file", "todo_write", "subagent", "workflow", "install_skill"]) {
+    for (const toolName of ["write", "edit", "bash", "exec_command", "file", "todo_write", "subagent", "workflow"]) {
       expect(classifySessionPermission({ mode: "auto", toolName, params: { action: "copy" } }), toolName)
         .toEqual({ action: "allow" });
     }
-    const reviewerBoundParams = {
-      browser: { action: "click" },
-      terminal: { action: "start" },
-      write_stdin: { process_id: "term_1" },
-    };
-    for (const toolName of ["browser", "terminal", "write_stdin", "update_settings", "dm", "channel", "notify", "present_files", "stage_files", "pin_memory", "unpin_memory", "record_experience", "automation"]) {
-      expect(classifySessionPermission({ mode: "auto", toolName, params: reviewerBoundParams[toolName] || { action: "start" } }), toolName)
+    for (const toolName of ["browser", "update_settings", "dm", "channel", "notify", "stage_files", "pin_memory", "unpin_memory", "record_experience", "automation"]) {
+      expect(classifySessionPermission({ mode: "auto", toolName, params: { action: toolName === "browser" ? "click" : "start" } }), toolName)
         .toMatchObject({ action: "review", kind: "tool_action_approval" });
+    }
+    expect(classifySessionPermission({
+      mode: "auto",
+      toolName: "terminal",
+      context: { toolInvocation: { action: "close", kind: "routine", capability: "terminal.close" } },
+    })).toEqual({ action: "allow" });
+    for (const [toolName, capability] of [
+      ["terminal", "terminal.start"],
+      ["write_stdin", "write_stdin.write"],
+      ["install_skill", "install_skill.install"],
+    ]) {
+      expect(classifySessionPermission({
+        mode: "auto",
+        toolName,
+        context: { toolInvocation: { action: "execute", kind: "review", capability } },
+      }), toolName).toMatchObject({ action: "review" });
     }
     expect(classifySessionPermission({ mode: "auto", toolName: "computer", params: { action: "start" } }))
       .toEqual({ action: "allow" });
     expect(classifySessionPermission({ mode: "read_only", toolName: "install_skill", params: { source: "github:user/skill" } }))
       .toMatchObject({ action: "deny", code: "ACTION_BLOCKED_BY_READ_ONLY" });
+  });
+
+  it("allows only host-preauthorized phone routine capabilities through read-only mode", () => {
+    const invocation = {
+      action: "post",
+      kind: "routine",
+      capability: "channel_reply.post",
+    };
+    expect(classifySessionPermission({
+      mode: "read_only",
+      toolName: "channel_reply",
+      context: {
+        toolInvocation: invocation,
+        preAuthorizedRoutineCapabilities: ["channel_reply.post"],
+      },
+    })).toEqual({ action: "allow" });
+    expect(classifySessionPermission({
+      mode: "read_only",
+      toolName: "channel_reply",
+      context: {
+        toolInvocation: invocation,
+        preAuthorizedRoutineCapabilities: ["channel_pass.decide"],
+      },
+    })).toMatchObject({ action: "deny", code: "ACTION_BLOCKED_BY_READ_ONLY" });
+  });
+
+  it("upgrades externally targeted routine declarations unless the host preauthorizes the exact capability", () => {
+    const invocation = {
+      action: "post",
+      kind: "routine",
+      capability: "channel_reply.post",
+      target: { type: "channel", id: "ch_team" },
+    };
+    expect(classifySessionPermission({
+      mode: "auto",
+      toolName: "channel_reply",
+      context: { toolInvocation: invocation },
+    })).toMatchObject({ action: "review" });
+    expect(classifySessionPermission({
+      mode: "auto",
+      toolName: "channel_reply",
+      context: {
+        toolInvocation: invocation,
+        preAuthorizedRoutineCapabilities: ["channel_reply.post"],
+      },
+    })).toEqual({ action: "allow" });
+  });
+
+  it("keeps plugin-declared routine actions on automatic review unless host-preauthorized", () => {
+    const invocation = {
+      action: "render",
+      kind: "routine",
+      capability: "plugin_render.render",
+    };
+    expect(classifySessionPermission({
+      mode: "auto",
+      toolName: "plugin_render",
+      context: { isPluginTool: true, toolInvocation: invocation },
+    })).toMatchObject({ action: "review" });
+    expect(classifySessionPermission({
+      mode: "auto",
+      toolName: "plugin_render",
+      context: {
+        isPluginTool: true,
+        toolInvocation: invocation,
+        preAuthorizedRoutineCapabilities: ["plugin_render.render"],
+      },
+    })).toEqual({ action: "allow" });
   });
 
   it("blocks subagent tool inside a subagent (anti-recursion), independent of mode", () => {
@@ -252,5 +384,101 @@ describe("session permission modes", () => {
         `subagent 上下文 ${mode} 应拦死 xingye_propose_draft`,
       ).toMatchObject({ action: "deny", code: "ACTION_BLOCKED_IN_SUBAGENT" });
     }
+  });
+
+  describe("session-scoped invocation pre-authorization", () => {
+    const reviewInvocation = {
+      action: "invoke",
+      kind: "review",
+      capability: "mcp_acme_search.invoke",
+    };
+
+    it("allows a pre-authorized capability whatever the declared kind", () => {
+      // The whole point of the session grant is that it outranks the kind:
+      // a "review" descriptor is exactly what the user was asked about.
+      for (const mode of ["auto", "ask"]) {
+        expect(classifySessionPermission({
+          mode,
+          toolName: "mcp_acme_search",
+          context: {
+            toolInvocation: reviewInvocation,
+            preAuthorizedInvocationCapabilities: ["mcp_acme_search.invoke"],
+          },
+        })).toEqual({ action: "allow" });
+      }
+
+      const routineInvocation = {
+        action: "post",
+        kind: "routine",
+        capability: "channel_reply.post",
+        target: { type: "channel", id: "ch_team" },
+      };
+      expect(classifySessionPermission({
+        mode: "auto",
+        toolName: "channel_reply",
+        context: {
+          toolInvocation: routineInvocation,
+          preAuthorizedInvocationCapabilities: ["channel_reply.post"],
+        },
+      })).toEqual({ action: "allow" });
+    });
+
+    it("leaves every existing branch untouched when the capability does not match", () => {
+      for (const preAuthorizedInvocationCapabilities of [
+        undefined,
+        [],
+        ["mcp_other_tool.invoke"],
+        // A non-array must be ignored rather than throwing or coercing.
+        "mcp_acme_search.invoke" as any,
+      ]) {
+        expect(classifySessionPermission({
+          mode: "auto",
+          toolName: "mcp_acme_search",
+          context: { toolInvocation: reviewInvocation, preAuthorizedInvocationCapabilities },
+        })).toMatchObject({ action: "review" });
+        expect(classifySessionPermission({
+          mode: "ask",
+          toolName: "mcp_acme_search",
+          context: { toolInvocation: reviewInvocation, preAuthorizedInvocationCapabilities },
+        })).toMatchObject({ action: "prompt" });
+        expect(classifySessionPermission({
+          mode: "read_only",
+          toolName: "mcp_acme_search",
+          context: { toolInvocation: reviewInvocation, preAuthorizedInvocationCapabilities },
+        })).toMatchObject({ action: "deny", code: "ACTION_BLOCKED_BY_READ_ONLY" });
+        expect(classifySessionPermission({
+          mode: "operate",
+          toolName: "mcp_acme_search",
+          context: { toolInvocation: reviewInvocation, preAuthorizedInvocationCapabilities },
+        })).toEqual({ action: "allow" });
+      }
+    });
+
+    it("keeps the routine pre-authorization list independent", () => {
+      const routineInvocation = {
+        action: "post",
+        kind: "routine",
+        capability: "channel_reply.post",
+        target: { type: "channel", id: "ch_team" },
+      };
+      // The existing routine list still works on its own,
+      expect(classifySessionPermission({
+        mode: "auto",
+        toolName: "channel_reply",
+        context: {
+          toolInvocation: routineInvocation,
+          preAuthorizedRoutineCapabilities: ["channel_reply.post"],
+        },
+      })).toEqual({ action: "allow" });
+      // and it still does not grant anything to a review-kind invocation.
+      expect(classifySessionPermission({
+        mode: "auto",
+        toolName: "mcp_acme_search",
+        context: {
+          toolInvocation: reviewInvocation,
+          preAuthorizedRoutineCapabilities: ["mcp_acme_search.invoke"],
+        },
+      })).toMatchObject({ action: "review" });
+    });
   });
 });

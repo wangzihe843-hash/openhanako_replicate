@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createSessionTool } from "../lib/tools/session-tool.ts";
 import { SessionCollabDraftStore } from "../lib/session-collab/draft-store.ts";
 
-// 实测字段名与任务书假设的差异（core/session-manifest/store.ts toRowManifest,
+// 实测字段名，容易想当然写错的两处（core/session-manifest/store.ts toRowManifest,
 // core/engine.ts getSessionManifest）：
 // - manifest 上没有 title 字段（title 只存在于 engine.listSessions() 的条目里）
 // - manifest 的归属字段是 ownerAgentId，不是 agentId

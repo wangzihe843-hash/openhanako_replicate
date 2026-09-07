@@ -19,7 +19,6 @@ import {
   sanitizeSkillName,
 } from "../../lib/skills/skill-package-installer.ts";
 import { t } from "../../lib/i18n.ts";
-import { resolveAgent } from "../utils/resolve-agent.ts";
 import { validateId, agentExists } from "../utils/validation.ts";
 import { registerSessionFileFromRequest } from "../../lib/session-files/session-file-response.ts";
 import {
@@ -106,32 +105,25 @@ export function createSkillsRoute(engine) {
     };
   }
 
+  // Every bundle reply carries a per-agent enabled flag for each skill, and the
+  // write routes check the requested skills against the same view. The request
+  // has to say which agent it means: answering for whichever agent the server
+  // was focused on showed one client the other client's switches, and let a
+  // write be validated against an agent the caller never named.
   function resolveBundleSkillView(c) {
-    const agentId = c.req.query("agentId") || engine.currentAgentId || "";
-    if (agentId) {
-      if (!validateId(agentId) || !agentExists(engine, agentId)) {
-        const err: any = new Error("agent not found");
-        err.status = 404;
-        throw err;
-      }
-      const skills = engine.getAllSkills(agentId) || [];
-      return { agentId, skills, skillByName: new Map(skills.map(skill => [skill.name, skill])) };
+    const agentId = c.req.query("agentId") || "";
+    if (!agentId) {
+      const err: any = new Error("agentId required");
+      err.status = 400;
+      throw err;
     }
-    let skills = [];
-    try {
-      skills = engine.getAllSkills?.() || [];
-    } catch {
-      skills = [];
+    if (!validateId(agentId) || !agentExists(engine, agentId)) {
+      const err: any = new Error("agent not found");
+      err.status = 404;
+      throw err;
     }
-    if (skills.length === 0) {
-      const skillsDir = engine.userSkillsDir || engine.skillsDir;
-      if (skillsDir && fs.existsSync(skillsDir)) {
-        skills = fs.readdirSync(skillsDir, { withFileTypes: true })
-          .filter(entry => entry.isDirectory() && fs.existsSync(path.join(skillsDir, entry.name, "SKILL.md")))
-          .map(entry => ({ name: entry.name, enabled: false, source: "user" }));
-      }
-    }
-    return { agentId: null, skills, skillByName: new Map(skills.map(skill => [skill.name, skill])) };
+    const skills = engine.getAllSkills(agentId) || [];
+    return { agentId, skills, skillByName: new Map(skills.map(skill => [skill.name, skill])) };
   }
 
   function assertBundleSkillsInstalled(skillNames, skillByName) {
@@ -430,10 +422,11 @@ export function createSkillsRoute(engine) {
         }
       }
 
-      // 返回 skill 详情：有 agentId 就取该 agent 视角，没有就 fallback 到焦点
-      const viewAgentId = agentId || engine.currentAgentId || "";
-      const skill = viewAgentId
-        ? engine.getAllSkills(viewAgentId).find(s => s.name === safeName)
+      // 返回 skill 详情：传了 agentId 就给该 agent 的视角（含 enabled 开关）。
+      // 全局安装没有 agent 视角可言，此时只回 skill 本身；借焦点 agent 的视角
+      // 会把"某个 agent 有没有开这个技能"当成全局安装的结果报给调用方。
+      const skill = agentId
+        ? engine.getAllSkills(agentId).find(s => s.name === safeName)
         : null;
       emitAppEvent(engine, "skills-changed", { agentId: agentId || null });
       return c.json({
@@ -492,17 +485,18 @@ export function createSkillsRoute(engine) {
         return c.json({ error: t("error.skillInvalidName") }, 400);
       }
 
+      // Deleting a skill is destructive and the target agent decides which
+      // skill is even visible, so the caller has to say which agent it means
+      // rather than letting the server pick the one it happens to be focused
+      // on.
       const queryAgentId = c.req.query("agentId");
-      let targetAgentId;
-      if (queryAgentId) {
-        if (!validateId(queryAgentId) || !agentExists(engine, queryAgentId)) {
-          return c.json({ error: "agent not found" }, 404);
-        }
-        targetAgentId = queryAgentId;
-      } else {
-        const resolved = resolveAgent(engine, c);
-        targetAgentId = resolved?.agentDir ? path.basename(resolved.agentDir) : "";
+      if (!queryAgentId) {
+        return c.json({ error: "agentId required" }, 400);
       }
+      if (!validateId(queryAgentId) || !agentExists(engine, queryAgentId)) {
+        return c.json({ error: "agent not found" }, 404);
+      }
+      const targetAgentId = queryAgentId;
 
       // 外部技能不可删除（用该 agent 的视角查 readonly 即可，与 enabled 无关）
       const allSkills = targetAgentId ? engine.getAllSkills(targetAgentId) : [];

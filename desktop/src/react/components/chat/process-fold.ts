@@ -108,26 +108,47 @@ function isShortProcessNarrationMessage(message: ChatMessage): boolean {
   return messageTextLength(message) <= PROCESS_NARRATION_TEXT_LIMIT;
 }
 
+function turnInputEntryId(message: ChatMessage): string | null {
+  return typeof message.turnInputEntryId === 'string' && message.turnInputEntryId.trim()
+    ? message.turnInputEntryId.trim()
+    : null;
+}
+
+function crossesTurnInputBoundary(current: string | null, next: string | null): boolean {
+  return current !== next && (current !== null || next !== null);
+}
+
 function protectedFinalTextIndexes(items: ChatListItem[]): Set<number> {
   const protectedIndexes = new Set<number>();
   let latestAssistantTextIndex = -1;
+  let activeTurnInputEntryId: string | null = null;
+
+  const protectLatestText = () => {
+    if (latestAssistantTextIndex >= 0) protectedIndexes.add(latestAssistantTextIndex);
+    latestAssistantTextIndex = -1;
+  };
 
   for (let i = 0; i < items.length; i += 1) {
     const item = items[i];
     if (item.type !== 'message') continue;
 
     if (item.data.role === 'user') {
-      if (latestAssistantTextIndex >= 0) protectedIndexes.add(latestAssistantTextIndex);
-      latestAssistantTextIndex = -1;
+      protectLatestText();
+      activeTurnInputEntryId = null;
       continue;
     }
 
-    if (item.data.role === 'assistant' && hasText(item.data)) {
-      latestAssistantTextIndex = i;
+    if (item.data.role === 'assistant') {
+      const nextTurnInputEntryId = turnInputEntryId(item.data);
+      if (crossesTurnInputBoundary(activeTurnInputEntryId, nextTurnInputEntryId)) {
+        protectLatestText();
+      }
+      activeTurnInputEntryId = nextTurnInputEntryId;
+      if (hasText(item.data)) latestAssistantTextIndex = i;
     }
   }
 
-  if (latestAssistantTextIndex >= 0) protectedIndexes.add(latestAssistantTextIndex);
+  protectLatestText();
   return protectedIndexes;
 }
 
@@ -194,6 +215,7 @@ export function buildTranscriptRenderItems(
 
     const segment: ProcessFoldMessage[] = [];
     let cursor = i;
+    let segmentTurnInputEntryId = turnInputEntryId(item.data);
     while (cursor < items.length) {
       const candidate = items[cursor];
       if (
@@ -202,7 +224,15 @@ export function buildTranscriptRenderItems(
       ) {
         break;
       }
+      const candidateTurnInputEntryId = turnInputEntryId(candidate.data);
+      if (
+        segment.length > 0
+        && crossesTurnInputBoundary(segmentTurnInputEntryId, candidateTurnInputEntryId)
+      ) {
+        break;
+      }
       segment.push({ item: candidate, originalIndex: cursor });
+      segmentTurnInputEntryId = candidateTurnInputEntryId;
       cursor += 1;
     }
 

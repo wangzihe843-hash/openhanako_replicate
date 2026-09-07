@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useSettingsStore } from '../store';
 import { autoSaveConfig, t } from '../helpers';
 import { Toggle } from '@/ui';
@@ -7,12 +7,13 @@ import { loadUpdateDigestHistory } from '../update-history-actions';
 import { readConfigBoolean } from '../resource-state';
 import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
+import { SettingsStack } from '../components/SettingsPrimitives';
 import { ExpandableRow } from '../components/ExpandableRow';
 import { digestLocale, digestText, kindLabel } from '../../components/shared/release-digest-text';
 import { useAutoUpdateState } from '../../hooks/use-auto-update-state';
 import { useTrainUpdateState } from '../../hooks/use-train-update-state';
-import { Overlay } from '../../ui';
-import type { UpdateDigestHistoryResult } from '../../types';
+import { ConfirmDialog, Overlay } from '../../ui';
+import type { InviteChannelStatus, UpdateDigestHistoryResult } from '../../types';
 import appIconUrl from '../../../icon.png';
 import styles from '../Settings.module.css';
 import updateStyles from '../../components/AutoUpdateStatus.module.css';
@@ -145,7 +146,6 @@ function TrainUpdateArea({
   lastError,
   lastCheckedAt,
   manifestReleasedAt,
-  originUnreachable,
   phase,
   progress,
   onApply,
@@ -156,7 +156,6 @@ function TrainUpdateArea({
   lastError: string | null;
   lastCheckedAt: string | null;
   manifestReleasedAt: string | null;
-  originUnreachable: boolean;
   phase: 'idle' | 'checking' | 'downloading' | 'applying';
   progress: { receivedBytes: number; totalBytes: number } | null;
   onApply: () => void;
@@ -173,18 +172,22 @@ function TrainUpdateArea({
   }
 
   if (phase === 'downloading') {
-    // 文字进度，不画填充条：填充条需要按百分比算内联宽度，会撞上
-    // settings/tabs 目录的内联样式 ratchet（`settings-primitives-contract.test.ts`
-    // 只允许往下迁移、不允许新增）。贴纸（SidebarNoticeSlot）同样是纯文字
-    // 进度，两处一致，不是各自将就。
     const percent = updatePercentOf(progress);
     return (
       <div className={updateStyles.root}>
-        <div className={updateStyles.row} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
-          <span className={updateStyles.message}>
-            {t('settings.about.updateDownloading', { agentName, percent })}
-          </span>
-          <span className={updateStyles.progressValue}>{t('settings.about.updateProgress', { percent })}</span>
+        <div className={updateStyles.column}>
+          <div className={updateStyles.downloadHeader}>
+            <span className={updateStyles.message}>
+              {t('settings.about.updateDownloading', { agentName })}
+            </span>
+            <span className={updateStyles.progressValue}>{t('settings.about.updateProgress', { percent })}</span>
+          </div>
+          <progress
+            className={updateStyles.nativeProgress}
+            aria-label={t('settings.about.updateDownloading', { agentName })}
+            max={100}
+            value={percent}
+          />
         </div>
       </div>
     );
@@ -236,19 +239,11 @@ function TrainUpdateArea({
             {t('settings.about.updateLatestCheckedAt', { time: formatCheckedAt(lastCheckedAt) })}
           </span>
         </div>
-        {/* 中性背景信息：货架清单本身的签发日期，不是告警——不设阈值、不
-            设颜色。仅当产地这一轮没能参与比较时才追加"经备用源"，镜像与
-            产地同车号而采信镜像不算异常，不标注（见 artifact-ota.cjs 的
-            "dual-source manifest fetch" 设计注释）。 */}
+        {/* 中性背景信息：货架清单本身的签发日期，不是告警。 */}
         {manifestReleasedAt && (
           <div className={updateStyles.row}>
             <span className={updateStyles.message}>
-              {t(
-                originUnreachable
-                  ? 'settings.about.updateManifestReleasedAtViaMirror'
-                  : 'settings.about.updateManifestReleasedAt',
-                { date: formatManifestDate(manifestReleasedAt) },
-              )}
+              {t('settings.about.updateManifestReleasedAt', { date: formatManifestDate(manifestReleasedAt) })}
             </span>
           </div>
         )}
@@ -259,6 +254,198 @@ function TrainUpdateArea({
   // 从未检查过（既没有 available，也没有 lastError/lastCheckedAt）：不渲染
   // 任何结论性文案，只留下方的"检查更新"按钮可点。
   return null;
+}
+
+/**
+ * 邀请制测试通道。三条纪律：
+ *  1. 核销服务没配置（configured=false）就整块不渲染——正式构建在服务上线前
+ *     看不到任何入口，而不是给出一个点了会报错的按钮。
+ *  2. 核销成功只是拿到一个地址，绝不顺手落盘；写通道状态必须先过确认对话框。
+ *  3. 失败文案只分两类：码本身不认（无效/用完）与够不着服务（网络/服务端），
+ *     服务端原话原样附在下面，不美化、不重试。
+ */
+function InviteChannelSection() {
+  const hana = window.hana;
+  const shell = useAutoUpdateState();
+  const [status, setStatus] = useState<InviteChannelStatus | null>(null);
+  const [code, setCode] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
+  const [errorKey, setErrorKey] = useState<string | null>(null);
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ feedUrl: string; inviteCodes: string[] } | null>(null);
+  const [activating, setActivating] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const next = await hana?.inviteStatus?.();
+        if (!cancelled && next) setStatus(next);
+      } catch (err) {
+        // 状态问不出来就不提供入口：宁可不露出一个行为不明的按钮，也不猜。
+        console.error('[invite] failed to read the update channel status', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [hana]);
+
+  const copyInviteCode = useCallback(async (value: string) => {
+    if (!value) return;
+    await navigator.clipboard?.writeText(value);
+  }, []);
+
+  const handleRedeem = useCallback(async () => {
+    const trimmed = code.trim();
+    if (!trimmed || redeeming) return;
+    setRedeeming(true);
+    setErrorKey(null);
+    setErrorDetail(null);
+    try {
+      const result = await hana?.inviteRedeem?.(trimmed);
+      if (!result) {
+        setErrorKey('settings.about.inviteErrorNetwork');
+        return;
+      }
+      if (result.ok) {
+        setPending({ feedUrl: result.feedUrl, inviteCodes: result.childCodes });
+        return;
+      }
+      // 只有"码本身不认"才归到邀请码文案；够不着服务的一律说是连接问题。
+      setErrorKey(result.reason === 'invalid'
+        ? 'settings.about.inviteErrorInvalid'
+        : 'settings.about.inviteErrorNetwork');
+      setErrorDetail(result.message || null);
+    } catch (err) {
+      setErrorKey('settings.about.inviteErrorNetwork');
+      setErrorDetail(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRedeeming(false);
+    }
+  }, [code, hana, redeeming]);
+
+  const handleConfirmActivate = useCallback(async () => {
+    if (!pending || activating) return;
+    setActivating(true);
+    try {
+      const next = await hana?.inviteActivate?.(pending);
+      if (next) setStatus(next);
+      setPending(null);
+      setCode('');
+      setErrorKey(null);
+      setErrorDetail(null);
+    } catch (err) {
+      setPending(null);
+      setErrorKey('settings.about.inviteErrorActivate');
+      setErrorDetail(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActivating(false);
+    }
+  }, [activating, hana, pending]);
+
+  if (!status?.configured) return null;
+
+  return (
+    <SettingsSection title={t('settings.about.inviteSectionTitle')}>
+      {status.active ? (
+        <>
+          <SettingsRow
+            label={t('settings.about.inviteChannelActive')}
+            control={<span />}
+          />
+          <SettingsRow
+            label={t('settings.about.platformCheckLabel')}
+            hint={shell?.status === 'checking' ? t('settings.about.updateChecking')
+              : shell?.status === 'available' || shell?.status === 'downloading'
+                ? t('settings.about.updateAvailable', { version: shell?.version ?? '' })
+                : shell?.status === 'downloaded'
+                  ? t('settings.about.updateReadyInstall', { version: shell?.version ?? '' })
+                  : shell?.status === 'error'
+                    ? t('settings.about.updateError')
+                    : undefined}
+            control={
+              <button
+                type="button"
+                className={styles['settings-btn-secondary']}
+                onClick={() => { void hana?.autoUpdateCheck?.(); }}
+                disabled={shell?.status === 'checking' || shell?.status === 'downloading'}
+              >
+                {t('settings.about.platformCheckBtn')}
+              </button>
+            }
+          />
+          {status.inviteCodes.length > 0 && (
+            <SettingsRow
+              label={t('settings.about.inviteCodesLabel')}
+              hint={t('settings.about.inviteCodesHint')}
+              layout="stacked"
+              control={
+                <SettingsStack gap="sm">
+                  {status.inviteCodes.map((inviteCode) => (
+                    <div key={inviteCode} className={styles['access-url-row']}>
+                      <input className={styles['settings-input']} value={inviteCode} readOnly />
+                      <button
+                        type="button"
+                        className={styles['settings-btn-secondary']}
+                        onClick={() => { void copyInviteCode(inviteCode); }}
+                      >
+                        {t('settings.about.inviteCopy')}
+                      </button>
+                    </div>
+                  ))}
+                </SettingsStack>
+              }
+            />
+          )}
+        </>
+      ) : (
+        <SettingsRow
+          label={t('settings.about.inviteCodeLabel')}
+          hint={errorKey ? (
+            <>
+              <span>{t(errorKey)}</span>
+              {errorDetail && <span title={errorDetail}> {errorDetail}</span>}
+            </>
+          ) : undefined}
+          hintVariant={errorKey ? 'warn' : 'default'}
+          layout="stacked"
+          control={
+            <div className={styles['access-url-row']}>
+              <input
+                className={styles['settings-input']}
+                aria-label={t('settings.about.inviteCodeLabel')}
+                placeholder={t('settings.about.inviteCodePlaceholder')}
+                value={code}
+                disabled={redeeming}
+                onChange={(event) => setCode(event.target.value)}
+              />
+              <button
+                type="button"
+                className={styles['settings-btn-primary']}
+                onClick={() => { void handleRedeem(); }}
+                disabled={redeeming || !code.trim()}
+              >
+                {redeeming ? t('settings.about.inviteRedeeming') : t('settings.about.inviteRedeemBtn')}
+              </button>
+            </div>
+          }
+        />
+      )}
+
+      <ConfirmDialog
+        open={Boolean(pending)}
+        scope="inline"
+        title={t('settings.about.inviteConfirmTitle')}
+        confirmLabel={t('settings.about.inviteConfirmOk')}
+        cancelLabel={t('settings.about.inviteConfirmCancel')}
+        confirmTone="danger"
+        busy={activating}
+        onConfirm={() => { void handleConfirmActivate(); }}
+        onCancel={() => setPending(null)}
+      >
+        {t('settings.about.inviteConfirmBody')}
+      </ConfirmDialog>
+    </SettingsSection>
+  );
 }
 
 export function AboutTab() {
@@ -275,7 +462,6 @@ export function AboutTab() {
     lastError,
     lastCheckedAt,
     manifestReleasedAt,
-    originUnreachable,
     phase,
     progress,
     checkNow: checkTrainNow,
@@ -286,8 +472,9 @@ export function AboutTab() {
   const autoCheck = readConfigBoolean(settingsConfig, cfg => cfg.auto_check_updates, true);
 
   const handleCheck = useCallback(() => {
+    void hana?.autoUpdateCheck?.();
     void checkTrainNow();
-  }, [checkTrainNow]);
+  }, [checkTrainNow, hana]);
 
   const handleApply = useCallback(() => {
     void applyTrainNow();
@@ -355,7 +542,6 @@ export function AboutTab() {
           lastError={lastError}
           lastCheckedAt={lastCheckedAt}
           manifestReleasedAt={manifestReleasedAt}
-          originUnreachable={originUnreachable}
           phase={phase}
           progress={progress}
           onApply={handleApply}
@@ -425,6 +611,8 @@ export function AboutTab() {
           />
         )}
       </SettingsSection>
+
+      <InviteChannelSection />
 
       {/* License 全文：ExpandableRow 直接作为 tab 末尾元素 */}
       <ExpandableRow label={t('settings.about.licenseToggle')}>

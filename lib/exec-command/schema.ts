@@ -1,9 +1,26 @@
 import path from "path";
 
 export const EXEC_COMMAND_DEFAULT_MAX_OUTPUT_TOKENS = 6000;
+export const EXEC_COMMAND_SANDBOX_PERMISSIONS = Object.freeze({
+  USE_DEFAULT: "use_default",
+  REQUIRE_ESCALATED: "require_escalated",
+} as const);
+
+export function normalizeExecCommandSandboxPermissions(value: unknown) {
+  if (value === undefined || value === EXEC_COMMAND_SANDBOX_PERMISSIONS.USE_DEFAULT) {
+    return { ok: true as const, value: EXEC_COMMAND_SANDBOX_PERMISSIONS.USE_DEFAULT };
+  }
+  if (value === EXEC_COMMAND_SANDBOX_PERMISSIONS.REQUIRE_ESCALATED) {
+    return { ok: true as const, value: EXEC_COMMAND_SANDBOX_PERMISSIONS.REQUIRE_ESCALATED };
+  }
+  return { ok: false as const };
+}
 
 export function textResult(text: string, details: Record<string, any> = {}) {
+  const isError = (typeof details?.errorCode === "string" && !!details.errorCode)
+    || details?.execCommand?.ok === false;
   return {
+    ...(isError ? { isError: true as const } : {}),
     content: [{ type: "text", text }],
     details,
   };
@@ -40,6 +57,28 @@ export function normalizeExecCommandParams(params: any = {}, ctx: any = {}, {
     };
   }
 
+  const sandboxPermissions = normalizeExecCommandSandboxPermissions(params.sandbox_permissions);
+  if (!sandboxPermissions.ok) {
+    return {
+      ok: false,
+      error: textResult(
+        "exec_command sandbox_permissions must be use_default or require_escalated",
+        { errorCode: "EXEC_COMMAND_INVALID_SANDBOX_PERMISSIONS" },
+      ),
+    };
+  }
+
+  const justification = typeof params.justification === "string" ? params.justification.trim() : "";
+  if (sandboxPermissions.value === EXEC_COMMAND_SANDBOX_PERMISSIONS.REQUIRE_ESCALATED && !justification) {
+    return {
+      ok: false,
+      error: textResult(
+        "sandbox_permissions=\"require_escalated\" requires a one-sentence justification phrased as a question asking the user for approval.",
+        { errorCode: "EXEC_COMMAND_JUSTIFICATION_REQUIRED" },
+      ),
+    };
+  }
+
   const workdir = typeof params.workdir === "string" && params.workdir.trim()
     ? params.workdir.trim()
     : typeof params.cwd === "string" && params.cwd.trim()
@@ -58,6 +97,8 @@ export function normalizeExecCommandParams(params: any = {}, ctx: any = {}, {
       workdir: path.resolve(workdir),
       shell: typeof params.shell === "string" ? params.shell.trim() : "",
       tty: params.tty === true,
+      sandboxPermissions: sandboxPermissions.value,
+      justification,
       maxOutputTokens,
       yieldTimeMs,
       timeout,
@@ -91,6 +132,7 @@ export function normalizeWriteStdinParams(params: any = {}) {
 export function mergeExecDetails(result: any, execDetails: Record<string, any>) {
   return {
     ...(result || {}),
+    ...(execDetails?.ok === false ? { isError: true as const } : {}),
     details: {
       ...(result?.details && typeof result.details === "object" ? result.details : {}),
       execCommand: execDetails,

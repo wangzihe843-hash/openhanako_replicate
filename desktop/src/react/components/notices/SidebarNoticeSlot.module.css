@@ -9,7 +9,7 @@
     display: flex;
     align-items: stretch;
     width: 100%;
-    /* 卡片 token，跟黑板卡片同质感，任何主题/纹理组合下都不该有区别——
+    /* 卡片 token 直接用全局 --bg-card，任何主题/纹理组合下都与其它卡片同质感——
        故意不叠加宣纸纹理覆盖规则（贴纸曾经是唯一的分歧点）。 */
     background: var(--bg-card);
     border: 1px solid var(--overlay-light);

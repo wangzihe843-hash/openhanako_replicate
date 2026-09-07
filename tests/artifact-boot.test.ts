@@ -87,8 +87,8 @@ async function makeSeedResources(root: string, keys: ReturnType<typeof makeKeys>
     mirrors: [],
   };
   const manifestBytes = Buffer.from(JSON.stringify(manifest, null, 2) + "\n", "utf8");
-  await fsp.writeFile(path.join(seedDir, "seed-train.json"), manifestBytes);
-  await fsp.writeFile(path.join(seedDir, "seed-train.json.sig"), cryptoSign(null, manifestBytes, keys.privateKey));
+  await fsp.writeFile(path.join(seedDir, `seed-train-${PLATFORM_ARCH}.json`), manifestBytes);
+  await fsp.writeFile(path.join(seedDir, `seed-train-${PLATFORM_ARCH}.json.sig`), cryptoSign(null, manifestBytes, keys.privateKey));
   return { resourcesPath, seedDir, manifest, sha256 };
 }
 
@@ -147,23 +147,23 @@ async function makeDualKindSeedResources(
     mirrors: [],
   };
   const manifestBytes = Buffer.from(JSON.stringify(manifest, null, 2) + "\n", "utf8");
-  await fsp.writeFile(path.join(seedDir, "seed-train.json"), manifestBytes);
-  await fsp.writeFile(path.join(seedDir, "seed-train.json.sig"), cryptoSign(null, manifestBytes, keys.privateKey));
+  await fsp.writeFile(path.join(seedDir, `seed-train-${PLATFORM_ARCH}.json`), manifestBytes);
+  await fsp.writeFile(path.join(seedDir, `seed-train-${PLATFORM_ARCH}.json.sig`), cryptoSign(null, manifestBytes, keys.privateKey));
   return { resourcesPath, seedDir, manifest, serverSha256, rendererSha256 };
 }
 
 describe("artifact-boot: seed presence and verification", () => {
   it("hasSeed is false when no seed dir exists", () => {
     const root = makeTempDir("hana-boot-");
-    expect(hasSeed(path.join(root, "nowhere"))).toBe(false);
+    expect(hasSeed(path.join(root, "nowhere"), PLATFORM_ARCH)).toBe(false);
   });
 
   it("hard-errors when the seed manifest lacks a server entry for the running platform", async () => {
     const root = makeTempDir("hana-boot-");
     const keys = makeKeys();
     const { seedDir } = await makeSeedResources(root, keys);
-    const manifestBytes = fs.readFileSync(path.join(seedDir, "seed-train.json"));
-    const sigBytes = fs.readFileSync(path.join(seedDir, "seed-train.json.sig"));
+    const manifestBytes = fs.readFileSync(path.join(seedDir, `seed-train-${PLATFORM_ARCH}.json`));
+    const sigBytes = fs.readFileSync(path.join(seedDir, `seed-train-${PLATFORM_ARCH}.json.sig`));
     expect(() =>
       verifySeedManifest({ manifestBytes, sigBytes, keyset: keys.keyset, platformArch: "win32-x64" }),
     ).toThrow(/win32-x64/);
@@ -173,7 +173,7 @@ describe("artifact-boot: seed presence and verification", () => {
     const root = makeTempDir("hana-boot-");
     const keys = makeKeys();
     const { resourcesPath, seedDir } = await makeSeedResources(root, keys);
-    const sigPath = path.join(seedDir, "seed-train.json.sig");
+    const sigPath = path.join(seedDir, `seed-train-${PLATFORM_ARCH}.json.sig`);
     const sig = fs.readFileSync(sigPath);
     sig[0] ^= 0xff;
     fs.writeFileSync(sigPath, sig);
@@ -192,29 +192,44 @@ describe("artifact-boot: seed presence and verification", () => {
 });
 
 describe("artifact-boot: decideBootAction (pure)", () => {
-  const seedEntry = { sha256: "a".repeat(64) };
+  const seedEntry = { sha256: "a".repeat(64), version: "2.0.0" };
 
   it("activates the seed when nothing is resolved (first run)", () => {
     expect(decideBootAction({ resolved: null, seedEntry, crashFallback: false })).toBe("activate-seed");
   });
 
   it("boots the resolved pointer when it matches the bundled seed", () => {
-    const resolved = { slot: "current", pointer: { sha256: "a".repeat(64), train: 0 } };
+    const resolved = { slot: "current", pointer: { sha256: "a".repeat(64), train: 0, version: "2.0.0" } };
     expect(decideBootAction({ resolved, seedEntry, crashFallback: false })).toBe("boot");
   });
 
-  it("re-activates the seed when a seed-era pointer mismatches the bundled seed (installer updated)", () => {
-    const resolved = { slot: "current", pointer: { sha256: "b".repeat(64), train: 0 } };
+  it("activates a strictly newer packaged seed over an older OTA train", () => {
+    const resolved = { slot: "current", pointer: { sha256: "b".repeat(64), train: 7, version: "1.9.9" } };
     expect(decideBootAction({ resolved, seedEntry, crashFallback: false })).toBe("activate-seed");
   });
 
-  it("leaves OTA-activated trains (train > 0) alone even when they mismatch the seed", () => {
-    const resolved = { slot: "current", pointer: { sha256: "b".repeat(64), train: 7 } };
+  it("keeps an equal-version current pointer even when its content and train differ", () => {
+    const resolved = { slot: "current", pointer: { sha256: "b".repeat(64), train: 0, version: "2.0.0" } };
+    expect(decideBootAction({ resolved, seedEntry, crashFallback: false })).toBe("boot");
+  });
+
+  it("never downgrades a current pointer that is newer than the packaged seed", () => {
+    const resolved = { slot: "current", pointer: { sha256: "b".repeat(64), train: 0, version: "2.0.1" } };
+    expect(decideBootAction({ resolved, seedEntry, crashFallback: false })).toBe("boot");
+  });
+
+  it("preserves the legacy train-0 sha mismatch rule when versions cannot be compared", () => {
+    const resolved = { slot: "current", pointer: { sha256: "b".repeat(64), train: 0, version: "legacy" } };
+    expect(decideBootAction({ resolved, seedEntry, crashFallback: false })).toBe("activate-seed");
+  });
+
+  it("preserves the legacy OTA-train priority when versions cannot be compared", () => {
+    const resolved = { slot: "current", pointer: { sha256: "b".repeat(64), train: 7, version: "legacy" } };
     expect(decideBootAction({ resolved, seedEntry, crashFallback: false })).toBe("boot");
   });
 
   it("never forces the seed over a crash-fallback target", () => {
-    const resolved = { slot: "current", pointer: { sha256: "b".repeat(64), train: 0 } };
+    const resolved = { slot: "current", pointer: { sha256: "b".repeat(64), train: 7, version: "1.0.0" } };
     expect(decideBootAction({ resolved, seedEntry, crashFallback: true })).toBe("boot");
   });
 });
@@ -432,8 +447,8 @@ describe("artifact-boot: verifySeedManifest requiredKinds", () => {
     const root = makeTempDir("hana-boot-");
     const keys = makeKeys();
     const { seedDir } = await makeSeedResources(root, keys); // server-only fixture
-    const manifestBytes = fs.readFileSync(path.join(seedDir, "seed-train.json"));
-    const sigBytes = fs.readFileSync(path.join(seedDir, "seed-train.json.sig"));
+    const manifestBytes = fs.readFileSync(path.join(seedDir, `seed-train-${PLATFORM_ARCH}.json`));
+    const sigBytes = fs.readFileSync(path.join(seedDir, `seed-train-${PLATFORM_ARCH}.json.sig`));
     expect(() =>
       verifySeedManifest({ manifestBytes, sigBytes, keyset: keys.keyset, requiredKinds: ["renderer"] }),
     ).toThrow(/renderer/i);
@@ -443,8 +458,8 @@ describe("artifact-boot: verifySeedManifest requiredKinds", () => {
     const root = makeTempDir("hana-boot-");
     const keys = makeKeys();
     const { seedDir } = await makeDualKindSeedResources(root, keys);
-    const manifestBytes = fs.readFileSync(path.join(seedDir, "seed-train.json"));
-    const sigBytes = fs.readFileSync(path.join(seedDir, "seed-train.json.sig"));
+    const manifestBytes = fs.readFileSync(path.join(seedDir, `seed-train-${PLATFORM_ARCH}.json`));
+    const sigBytes = fs.readFileSync(path.join(seedDir, `seed-train-${PLATFORM_ARCH}.json.sig`));
     const result = verifySeedManifest({
       manifestBytes,
       sigBytes,
@@ -468,6 +483,7 @@ describe("artifact-boot: prepareArtifactRendererBoot", () => {
     const result = await prepareArtifactRendererBoot({
       homeDir,
       resourcesPath,
+      platformArch: PLATFORM_ARCH,
       keyset: keys.keyset,
       onProgress: () => {
         progressCalls += 1;
@@ -487,7 +503,8 @@ describe("artifact-boot: prepareArtifactRendererBoot", () => {
     const keys = makeKeys();
     const { resourcesPath } = await makeDualKindSeedResources(root, keys);
     const homeDir = path.join(root, "home");
-    const boot = () => prepareArtifactRendererBoot({ homeDir, resourcesPath, keyset: keys.keyset, log: () => {} });
+    const boot = () =>
+      prepareArtifactRendererBoot({ homeDir, resourcesPath, platformArch: PLATFORM_ARCH, keyset: keys.keyset, log: () => {} });
 
     const first = await boot();
     const second = await boot();
@@ -508,7 +525,7 @@ describe("artifact-boot: prepareArtifactRendererBoot", () => {
       keyset: keys.keyset,
       log: () => {},
     });
-    const renderer = await prepareArtifactRendererBoot({ homeDir, resourcesPath, keyset: keys.keyset, log: () => {} });
+    const renderer = await prepareArtifactRendererBoot({ homeDir, resourcesPath, platformArch: PLATFORM_ARCH, keyset: keys.keyset, log: () => {} });
 
     // Distinct pointer files: server's "stable.current.json" must survive
     // renderer's own promote() untouched.
@@ -526,6 +543,7 @@ describe("artifact-boot: prepareArtifactRendererBoot", () => {
       prepareArtifactRendererBoot({
         homeDir: path.join(root, "home"),
         resourcesPath: path.join(root, "empty-resources"),
+        platformArch: PLATFORM_ARCH,
         keyset: keys.keyset,
         log: () => {},
       }),
@@ -541,7 +559,8 @@ describe("artifact-boot: prepareArtifactRendererBoot", () => {
     const keys = makeKeys();
     const seed = await makeDualKindSeedResources(root, keys, { version: "1.0.0", marker: "seedgen" });
     const homeDir = path.join(root, "home");
-    const boot = () => prepareArtifactRendererBoot({ homeDir, resourcesPath: seed.resourcesPath, keyset: keys.keyset, log: () => {} });
+    const boot = () =>
+      prepareArtifactRendererBoot({ homeDir, resourcesPath: seed.resourcesPath, platformArch: PLATFORM_ARCH, keyset: keys.keyset, log: () => {} });
 
     const seedBoot = await boot();
 
@@ -576,7 +595,8 @@ describe("artifact-boot: prepareArtifactRendererBoot", () => {
     const keys = makeKeys();
     const seed = await makeDualKindSeedResources(root, keys);
     const homeDir = path.join(root, "home");
-    const boot = () => prepareArtifactRendererBoot({ homeDir, resourcesPath: seed.resourcesPath, keyset: keys.keyset, log: () => {} });
+    const boot = () =>
+      prepareArtifactRendererBoot({ homeDir, resourcesPath: seed.resourcesPath, platformArch: PLATFORM_ARCH, keyset: keys.keyset, log: () => {} });
     const rendererChannel = rendererPointerChannel(SEED_CHANNEL);
 
     const first = await boot();
@@ -635,6 +655,47 @@ describe("artifact-boot: prepareArtifactBoot dual-kind orchestrator", () => {
     expect(fs.existsSync(path.join(result.renderer.versionDir, "index.html"))).toBe(true);
   });
 
+  it("activates a newer packaged seed over older OTA currents for both server and renderer", async () => {
+    const root = makeTempDir("hana-boot-dual-seed-upgrade-");
+    const keys = makeKeys();
+    const oldSeed = await makeDualKindSeedResources(root, keys, { version: "1.0.0", marker: "old-seed" });
+    const ota = await makeDualKindSeedResources(root, keys, { version: "1.1.0", marker: "old-ota", train: 7 });
+    const newSeed = await makeDualKindSeedResources(root, keys, { version: "2.0.0", marker: "new-seed" });
+    const homeDir = path.join(root, "home");
+
+    await prepareArtifactBoot({
+      homeDir,
+      resourcesPath: oldSeed.resourcesPath,
+      platformArch: PLATFORM_ARCH,
+      keyset: keys.keyset,
+      log: () => {},
+    });
+
+    await activation.activateFromArchive(
+      path.join(ota.seedDir, `server-1.1.0-${PLATFORM_ARCH}.tar.gz`),
+      ota.manifest,
+      { homeDir, channel: SEED_CHANNEL, kind: "server", platformArch: PLATFORM_ARCH },
+    );
+    await activation.activateFromArchive(
+      path.join(ota.seedDir, "renderer-1.1.0.tar.gz"),
+      ota.manifest,
+      { homeDir, channel: rendererPointerChannel(SEED_CHANNEL), kind: "renderer" },
+    );
+
+    const result = await prepareArtifactBoot({
+      homeDir,
+      resourcesPath: newSeed.resourcesPath,
+      platformArch: PLATFORM_ARCH,
+      keyset: keys.keyset,
+      log: () => {},
+    });
+
+    expect(result.server).toMatchObject({ activatedSeed: true, train: 0, version: "2.0.0" });
+    expect(result.renderer).toMatchObject({ activatedSeed: true, train: 0, version: "2.0.0" });
+    expect(fs.readFileSync(path.join(result.server.versionDir, "bundle", "index.js"), "utf8")).toContain("new-seed");
+    expect(fs.readFileSync(path.join(result.renderer.versionDir, "index.html"), "utf8")).toContain("new-seed");
+  });
+
   // Mutation-check target: a manifest missing the
   // renderer kind must hard-error the WHOLE boot, not just silently boot
   // server alone. Flip `omitRenderer` to false to see this test go red.
@@ -649,15 +710,48 @@ describe("artifact-boot: prepareArtifactBoot dual-kind orchestrator", () => {
     ).rejects.toThrow(/renderer/i);
   });
 
-  it("hard-errors the whole boot when the manifest is missing the server entry for the running platform", async () => {
+  it("hard-errors when the running platform has no bundled seed manifest at all (wrong-platform install)", async () => {
     const root = makeTempDir("hana-boot-dual-");
     const keys = makeKeys();
+    // Fixture only ever writes the PLATFORM_ARCH ("darwin-arm64")-named
+    // manifest — no seed-train-win32-x64.json exists in this Resources/
+    // tree at all. Before manifests were platform-qualified, every
+    // platform shared the same seed-train.json filename, so "wrong
+    // platform" and "seed exists but its content doesn't cover you" were
+    // indistinguishable at the file-lookup layer; disambiguating the
+    // filename is the whole point of this change, so the two now produce
+    // different errors (this test covers the first; the next test covers
+    // the second).
     const { resourcesPath } = await makeDualKindSeedResources(root, keys);
     const homeDir = path.join(root, "home");
 
     await expect(
       prepareArtifactBoot({ homeDir, resourcesPath, platformArch: "win32-x64", keyset: keys.keyset, log: () => {} }),
-    ).rejects.toThrow(/win32-x64/);
+    ).rejects.toThrow(/carry no seed/i);
+  });
+
+  it("hard-errors when a correctly-named manifest's signed content doesn't cover the platform it claims (build defect: filename/content platform mismatch)", async () => {
+    const root = makeTempDir("hana-boot-dual-");
+    const keys = makeKeys();
+    const { resourcesPath, seedDir } = await makeDualKindSeedResources(root, keys);
+    const homeDir = path.join(root, "home");
+
+    // Doctor the manifest IN PLACE — same file name (seed-train-<PLATFORM_ARCH>.json,
+    // so hasSeed/seedPaths still find it) — but repoint its artifacts.server
+    // key at a DIFFERENT platform-arch and re-sign with the same key.
+    // Reproduces a build defect where the filename and the signed content
+    // disagree about which platform the kit is for (exactly the ambiguity
+    // this change's per-platform naming is meant to make detectable).
+    const manifestPath = path.join(seedDir, `seed-train-${PLATFORM_ARCH}.json`);
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    manifest.artifacts.server = { "win32-x64": manifest.artifacts.server[PLATFORM_ARCH] };
+    const bytes = Buffer.from(JSON.stringify(manifest, null, 2) + "\n", "utf8");
+    fs.writeFileSync(manifestPath, bytes);
+    fs.writeFileSync(`${manifestPath}.sig`, cryptoSign(null, bytes, keys.privateKey));
+
+    await expect(
+      prepareArtifactBoot({ homeDir, resourcesPath, platformArch: PLATFORM_ARCH, keyset: keys.keyset, log: () => {} }),
+    ).rejects.toThrow(new RegExp(PLATFORM_ARCH));
   });
 
   it("hard-errors when packaged resources carry no seed at all", async () => {
@@ -702,5 +796,168 @@ describe("artifact-boot: sentinel helpers", () => {
     scheduleHealthySentinelClear({ homeDir, channel: SEED_CHANNEL, delayMs: 10, log: () => {} });
     await new Promise((r) => setTimeout(r, 120));
     expect(await activation.consecutiveFailures(homeDir, SEED_CHANNEL)).toBe(0);
+  });
+});
+
+// ── pointer mutex wiring (crash-vs-OTA-activation interleaving fix) ────────
+//
+// The bug this closes: `prepareArtifactServerBoot`/`prepareArtifactRendererBoot`
+// call `pointerStore.promote` — a multi-step "read next -> write previous ->
+// write current -> clear next" sequence — with no lock. If a concurrent
+// in-process OTA activation (artifact-ota.cjs's `downloadAndApplyArtifacts`)
+// writes a fresh `next` pointer between promote's read and its trailing
+// clear, that fresh `next` gets silently wiped. `withPointerMutex` closes
+// the window by serializing every in-process pointer mutation for a given
+// homeDir. These tests exercise the wiring at two levels: (1) the two boot
+// functions actually acquire the mutex before touching pointers, and (2) the
+// interleaving itself, with and without the mutex.
+
+describe("artifact-boot: pointer mutex wiring", () => {
+  it("prepareArtifactServerBoot waits for an in-flight pointer-mutex holder before it starts", async () => {
+    const root = makeTempDir("hana-boot-mutex-server-");
+    const keys = makeKeys();
+    const { resourcesPath } = await makeSeedResources(root, keys);
+    const homeDir = path.join(root, "home");
+
+    let releaseHold: () => void = () => {};
+    const hold = new Promise<void>((resolve) => {
+      releaseHold = resolve;
+    });
+    const held = pointerStore.withPointerMutex(homeDir, () => hold);
+
+    let completed = false;
+    const bootPromise = prepareArtifactServerBoot({
+      homeDir,
+      resourcesPath,
+      platformArch: PLATFORM_ARCH,
+      keyset: keys.keyset,
+      log: () => {},
+    }).then((result: unknown) => {
+      completed = true;
+      return result;
+    });
+
+    // Long enough that, absent the mutex, boot would already have raced
+    // ahead and started reading/writing pointers.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(completed).toBe(false);
+
+    releaseHold();
+    await held;
+    const result = await bootPromise;
+    expect(completed).toBe(true);
+    expect((result as { activatedSeed: boolean }).activatedSeed).toBe(true);
+  });
+
+  it("prepareArtifactRendererBoot waits for an in-flight pointer-mutex holder before it starts", async () => {
+    const root = makeTempDir("hana-boot-mutex-renderer-");
+    const keys = makeKeys();
+    const { resourcesPath } = await makeDualKindSeedResources(root, keys);
+    const homeDir = path.join(root, "home");
+
+    let releaseHold: () => void = () => {};
+    const hold = new Promise<void>((resolve) => {
+      releaseHold = resolve;
+    });
+    const held = pointerStore.withPointerMutex(homeDir, () => hold);
+
+    let completed = false;
+    const bootPromise = prepareArtifactRendererBoot({
+      homeDir,
+      resourcesPath,
+      platformArch: PLATFORM_ARCH,
+      keyset: keys.keyset,
+      log: () => {},
+    }).then((result: unknown) => {
+      completed = true;
+      return result;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(completed).toBe(false);
+
+    releaseHold();
+    await held;
+    const result = await bootPromise;
+    expect(completed).toBe(true);
+    expect((result as { activatedSeed: boolean }).activatedSeed).toBe(true);
+  });
+});
+
+describe("artifact-boot: pointer mutex closes the promote-vs-concurrent-write race (mutation-check target)", () => {
+  /**
+   * Replays `pointerStore.promote`'s exact steps by hand (read next ->
+   * write previous -> write current -> clear next) with an explicit hook
+   * point right after "write current" — the same window a concurrent OTA
+   * `next` write could land in before `withPointerMutex` existed. Used to
+   * both document the pre-fix bug (called unwrapped) and prove the fix
+   * (called with both sides wrapped in `withPointerMutex`).
+   */
+  async function unprotectedPromoteSequence(
+    homeDir: string,
+    channel: string,
+    onAfterWriteCurrent?: () => void | Promise<void>,
+  ) {
+    const next = await pointerStore.readPointer(homeDir, channel, "next");
+    if (!next) return { promoted: false };
+    const current = await pointerStore.readPointer(homeDir, channel, "current");
+    if (current) await pointerStore.writePointer(homeDir, channel, "previous", current);
+    await pointerStore.writePointer(homeDir, channel, "current", next);
+    if (onAfterWriteCurrent) await onAfterWriteCurrent();
+    await pointerStore.clearPointer(homeDir, channel, "next");
+    return { promoted: true, current: next };
+  }
+
+  it("documents the pre-fix race: a next-pointer write landing between promote's write-current and its trailing clear is silently dropped", async () => {
+    const root = makeTempDir("hana-boot-mutex-loss-a-");
+    const homeDir = path.join(root, "home");
+    const channel = "stable-loss-repro-a";
+    await pointerStore.writePointer(homeDir, channel, "current", { version: "1.0.0", train: 0 });
+    await pointerStore.writePointer(homeDir, channel, "next", { version: "1.5.0", train: 5 });
+
+    const freshNext = { version: "2.0.0", train: 6 };
+    await unprotectedPromoteSequence(homeDir, channel, async () => {
+      // Simulates a concurrent OTA activation writing (and fully
+      // persisting — atomicWriteJson's rename included) its freshly-staged
+      // `next` pointer right after promote wrote `current` but before it
+      // cleared `next` — exactly the interleaving window `withPointerMutex`
+      // closes. Awaited here (unlike the mutex-protected test below) since
+      // this is a same-actor simulation with no lock to queue behind.
+      await pointerStore.writePointer(homeDir, channel, "next", freshNext);
+    });
+
+    const lostNext = await pointerStore.readPointer(homeDir, channel, "next");
+    expect(lostNext).toBeNull(); // the bug: freshNext is gone — the trailing clearPointer wiped it
+    const currentAfterRace = await pointerStore.readPointer(homeDir, channel, "current");
+    expect(currentAfterRace.train).toBe(5); // promote only ever consumed the OLD next it had already read
+  });
+
+  it("withPointerMutex closes the window: the same interleaving attempt never loses the concurrently-written next pointer", async () => {
+    const root = makeTempDir("hana-boot-mutex-loss-b-");
+    const homeDir = path.join(root, "home");
+    const channel = "stable-loss-repro-b";
+    await pointerStore.writePointer(homeDir, channel, "current", { version: "1.0.0", train: 0 });
+    await pointerStore.writePointer(homeDir, channel, "next", { version: "1.5.0", train: 5 });
+
+    const freshNext = { version: "2.0.0", train: 6 };
+    let otaWrite: Promise<void> | null = null;
+
+    // Mirrors artifact-boot.cjs's usage: the whole promote sequence runs
+    // inside one mutex turn.
+    const bootTurn = pointerStore.withPointerMutex(homeDir, () =>
+      unprotectedPromoteSequence(homeDir, channel, () => {
+        // Mirrors artifact-ota.cjs's usage: a concurrent OTA activation
+        // fires its own mutex-protected write WITHOUT waiting for it here
+        // — it must queue behind this still-active turn, not run inline.
+        otaWrite = pointerStore.withPointerMutex(homeDir, () =>
+          pointerStore.writePointer(homeDir, channel, "next", freshNext),
+        );
+      }));
+    await bootTurn;
+    expect(otaWrite).not.toBeNull();
+    await otaWrite!;
+
+    const survivedNext = await pointerStore.readPointer(homeDir, channel, "next");
+    expect(survivedNext).toEqual(freshNext); // queued behind boot's turn, applied after — never lost
   });
 });

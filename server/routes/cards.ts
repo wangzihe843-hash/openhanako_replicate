@@ -19,6 +19,24 @@ const MAX_CARDS = 256;                    // LRU 容量上限
 const MAX_CODE_BYTES = 512 * 1024;        // 单卡 code 体积上限（防滥用）
 const MAX_VARS_BYTES = 16 * 1024;         // themeVars 体积上限
 const CARD_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+const CARD_CONTENT_SECURITY_POLICY = [
+  "default-src 'none'",
+  "sandbox allow-scripts",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  "img-src data: blob:",
+  "font-src data:",
+  "media-src data: blob:",
+  "connect-src 'none'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "worker-src 'none'",
+  "manifest-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+  "navigate-to 'none'",
+].join("; ");
 
 interface CardEntry {
   code: string;
@@ -59,8 +77,8 @@ export function createCardsRoute(_engine: unknown) {
   });
 
   // 提供卡片 HTML。iframe src 指向这里。
-  // 注意：刻意不设 Content-Security-Policy——沙箱 iframe 的隔离由 sandbox 属性
-  // 保证（opaque origin + 仅 allow-scripts），而内联脚本需要无 CSP 才能运行。
+  // 卡片保留内联脚本/样式能力，但 CSP 禁止联网、子框架、表单提交与导航。
+  // 因此 show_card 的影响被限制在当前会话内的沙箱渲染。
   route.get("/cards/:cardId", (c) => {
     const cardId = c.req.param("cardId");
     if (!CARD_ID_RE.test(cardId)) {
@@ -77,6 +95,7 @@ export function createCardsRoute(_engine: unknown) {
     c.header("Content-Type", "text/html; charset=utf-8");
     c.header("Cache-Control", "no-store");
     c.header("X-Content-Type-Options", "nosniff");
+    c.header("Content-Security-Policy", CARD_CONTENT_SECURITY_POLICY);
     return c.body(html);
   });
 

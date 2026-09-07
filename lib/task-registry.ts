@@ -14,6 +14,7 @@ const log = createModuleLogger("task-registry");
  */
 
 const ACTIVE_STATUSES = new Set(["pending", "running", "paused", "blocked", "recovering"]);
+export const ACTIVE_TASK_STATUSES = ACTIVE_STATUSES;
 const FINAL_STATUSES = new Set(["completed", "failed", "canceled", "aborted"]);
 const KNOWN_STATUSES = new Set([...ACTIVE_STATUSES, ...FINAL_STATUSES]);
 const MAX_TIMER_DELAY = 2_147_483_647;
@@ -320,6 +321,13 @@ export class TaskRegistry {
       return true;
     });
     return tasks.map(clone);
+  }
+
+  /** 该会话是否还有未到终态的后台任务（循环守恒检查与闹钟护栏共用）。 */
+  hasActiveForParentSession(parentSessionPath) {
+    if (!parentSessionPath) return false;
+    return this.listAll({ parentSessionPath })
+      .some((task) => ACTIVE_STATUSES.has(task.status));
   }
 
   // ── 计划任务 ──

@@ -20,6 +20,11 @@ on:
           - stable
           - beta
         default: stable
+      allow_prerelease_stable:
+        description: "Explicitly allow a prerelease source to advance stable (stable channel only)"
+        required: false
+        type: boolean
+        default: false
       dry_run:
         description: "Dry run — compute and print the plan, make no remote writes"
         required: false
@@ -53,10 +58,19 @@ jobs:
           echo "HANA_SIGN_KEY=$RUNNER_TEMP/hana-train-sign-key.pem" >> "$GITHUB_ENV"
 
       - name: Publish train
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISH_TAG: ${{ inputs.tag }}
+          PUBLISH_CHANNEL: ${{ inputs.channel }}
+          ALLOW_PRERELEASE_STABLE: ${{ inputs.allow_prerelease_stable }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          node scripts/publish-train.mjs \
-            --tag "${{ inputs.tag }}" \
-            --channel "${{ inputs.channel }}" \
-            ${{ inputs.dry_run && '--dry-run' || '' }}
+          args=(--tag "$PUBLISH_TAG" --channel "$PUBLISH_CHANNEL")
+          if [[ "$ALLOW_PRERELEASE_STABLE" == "true" ]]; then
+            args+=(--allow-prerelease-stable)
+          fi
+          if [[ "$DRY_RUN" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          node scripts/publish-train.mjs "${args[@]}"

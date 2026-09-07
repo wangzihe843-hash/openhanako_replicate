@@ -2,6 +2,33 @@ import { describe, expect, it } from 'vitest';
 import { buildItemsFromHistory } from '../../utils/history-builder';
 
 describe('buildItemsFromHistory user image restoration', () => {
+  it('restores tool outcomes by toolCallId instead of tool name', () => {
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'a1',
+        role: 'assistant',
+        content: '',
+        toolCalls: [
+          { id: 'call-ok', name: 'read', status: 'succeeded' },
+          { id: 'call-fail', name: 'read', status: 'failed', error: 'file not found' },
+          { id: 'call-missing', name: 'read', status: 'unknown' },
+        ],
+      }],
+    });
+
+    const first = items[0];
+    expect(first.type).toBe('message');
+    if (first.type !== 'message') throw new Error('expected message');
+    const group = first.data.blocks?.find((block) => block.type === 'tool_group');
+    expect(group).toMatchObject({
+      tools: [
+        { id: 'call-ok', status: 'succeeded', done: true, success: true },
+        { id: 'call-fail', status: 'failed', done: true, success: false, error: 'file not found' },
+        { id: 'call-missing', status: 'unknown', done: true, success: false },
+      ],
+    });
+  });
+
   it('把服务端 ISO timestamp 归一成前端毫秒时间', () => {
     const items = buildItemsFromHistory({
       messages: [{
@@ -33,6 +60,47 @@ describe('buildItemsFromHistory user image restoration', () => {
     if (first.type !== 'message') throw new Error('expected message');
     expect(first.data.id).toBe('0');
     expect(first.data.sourceEntryId).toBe('entry-user-1');
+  });
+
+  it('隐藏后台输入时把真实 turn 边界保留在后续 Agent 消息上', () => {
+    const items = buildItemsFromHistory({
+      messages: [
+        { id: '0', entryId: 'entry-visible-user', role: 'user', content: 'hello' },
+        {
+          id: '1',
+          entryId: 'entry-visible-assistant',
+          role: 'assistant',
+          content: 'first reply',
+          turnInputEntryId: 'entry-visible-user',
+          turnInputVisible: true,
+        },
+        {
+          id: '2',
+          entryId: 'entry-hidden-input',
+          role: 'user',
+          content: '<hana-background-result task-id="task-1">done</hana-background-result>',
+        },
+        {
+          id: '3',
+          entryId: 'entry-background-assistant',
+          role: 'assistant',
+          content: 'background reply',
+          turnInputEntryId: 'entry-hidden-input',
+          turnInputVisible: false,
+        },
+      ],
+    });
+
+    expect(items).toHaveLength(3);
+    const backgroundAssistant = items[2];
+    expect(backgroundAssistant.type).toBe('message');
+    if (backgroundAssistant.type !== 'message') throw new Error('expected assistant message');
+    expect(backgroundAssistant.data).toMatchObject({
+      role: 'assistant',
+      sourceEntryId: 'entry-background-assistant',
+      turnInputEntryId: 'entry-hidden-input',
+      turnInputVisible: false,
+    });
   });
 
   it('隐藏 bridge 写入用户消息里的内部时间标签', () => {
@@ -196,6 +264,39 @@ describe('buildItemsFromHistory user image restoration', () => {
       mimeType: 'audio/wav',
       status: 'available',
       missingAt: null,
+    }]);
+  });
+
+  it('用 Fork 文件的旧 id 和旧路径别名恢复未改写的历史附件', () => {
+    const parentPath = '/Users/test/.hanako/session-files/parent/voice.wav';
+    const childPath = '/Users/test/.hanako/session-files/child/voice.wav';
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'u-forked-file',
+        role: 'user',
+        content: `[SessionFile] ${JSON.stringify({ fileId: 'sf_parent', sessionPath: '/sessions/parent.jsonl', label: 'voice.wav', kind: 'attachment' })}\n[attached_audio: ${parentPath}]`,
+      }],
+      sessionFiles: [{
+        fileId: 'sf_child',
+        filePath: childPath,
+        displayName: 'voice.wav',
+        mime: 'audio/wav',
+        kind: 'audio',
+        status: 'available',
+        legacyFileIds: ['sf_parent'],
+        legacyFilePaths: [parentPath],
+      }],
+    });
+
+    const first = items[0];
+    if (first.type !== 'message') throw new Error('expected message');
+    expect(first.data.attachments).toEqual([{
+      fileId: 'sf_child',
+      path: childPath,
+      name: 'voice.wav',
+      isDir: false,
+      mimeType: 'audio/wav',
+      status: 'available',
     }]);
   });
 
@@ -619,5 +720,34 @@ describe('buildItemsFromHistory user image restoration', () => {
     expect(items[0]?.type).toBe('interlude');
     if (items[0]?.type !== 'interlude') throw new Error('expected interlude item');
     expect(items[0].data.text).toBe('后台回复已抵达');
+  });
+
+  it('restores a clean user message plus the independent Agent review card', () => {
+    const items = buildItemsFromHistory({
+      messages: [{
+        id: 'u-review',
+        role: 'user',
+        content: 'internal expanded prompt with review',
+        displayText: 'Please inspect this @Critic',
+        agentReview: {
+          requestId: 'review-1',
+          status: 'completed',
+          reviewedSessionId: 'sess_parent',
+          reviewerSessionId: 'sess_review',
+          reviewerAgentId: 'critic',
+          reviewerAgentName: 'Critic',
+          text: 'Independent findings',
+        },
+      }],
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.type).toBe('message');
+    if (items[0]?.type !== 'message') throw new Error('expected message');
+    expect(items[0].data.text).toBe('Please inspect this @Critic');
+    expect(items[0].data.agentReview).toMatchObject({
+      reviewerSessionId: 'sess_review',
+      text: 'Independent findings',
+    });
   });
 });

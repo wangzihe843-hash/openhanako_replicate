@@ -25,7 +25,6 @@ import { DEFAULT_DISABLED_TOOL_NAMES } from "../../shared/tool-categories.ts";
 import { applyMarkdownCoverFromGeneratedFile } from "../../plugins/beautify/lib/markdown-cover-service.ts";
 import { resolveCoverGalleryPresetImagePath } from "../../plugins/beautify/lib/cover-gallery-assets.ts";
 import { buildCoverStyleGuideForAgent } from "../../plugins/beautify/lib/cover-style-guide.ts";
-import { createSubmitContext, validateImageModelRef } from "../../plugins/image-gen/lib/image-task-runner.ts";
 import { DEFAULT_ACTIVITY_EXECUTION_TIMEOUT_MS, activityTimeoutPatch } from "../../lib/desk/activity-store.ts";
 import { t } from "../../lib/i18n.ts";
 import { realPath, isSensitivePath } from "../utils/path-security.ts";
@@ -36,6 +35,7 @@ import { createRequestContext } from "../http/boundary.ts";
 import { createApiResourceOperationContext, requestIdFromHono } from "../http/resource-operation-context.ts";
 import { MountAwareFileError, MountAwareFileService } from "../../core/mount-aware-file-service.ts";
 import { materializeUploadedSkillPackage } from "../utils/uploaded-skill-package.ts";
+import { requireAutomationExecutionContext } from "../../lib/desk/automation-execution-context.ts";
 
 /** 安全路径校验：target 必须在 baseDir 内部（解析 symlink 后比较） */
 function isInsidePath(target, baseDir) {
@@ -109,6 +109,32 @@ function deskRouteError(c, code, message, status) {
   return jsonRouteError(c, { code, message, status });
 }
 
+const SAFE_CRON_STORE_ERRORS = Object.freeze({
+  cron_store_corrupt: Object.freeze({ message: "automation task storage is corrupt", status: 500 }),
+  cron_store_unavailable: Object.freeze({ message: "automation task storage is unavailable", status: 500 }),
+  cron_store_recovery_failed: Object.freeze({ message: "automation task recovery failed", status: 500 }),
+  cron_store_reentrant_write: Object.freeze({ message: "cron store does not allow reentrant writes", status: 409 }),
+  cron_store_async_mutator_forbidden: Object.freeze({ message: "cron store mutator must be synchronous", status: 409 }),
+});
+
+function isSafeCronStoreError(err) {
+  if (!err || typeof err !== "object" || typeof err.code !== "string") return false;
+  const expected = SAFE_CRON_STORE_ERRORS[err.code];
+  return !!expected && err.message === expected.message && err.status === expected.status;
+}
+
+function cronStoreRouteFailure(c, err) {
+  if (isSafeCronStoreError(err)) {
+    return deskRouteError(c, err.code, err.message, err.status);
+  }
+  return deskRouteError(
+    c,
+    "cron_store_operation_failed",
+    "Unable to access automation tasks",
+    500,
+  );
+}
+
 function deskFileActionErrorMessage(err) {
   if (err?.code === "resource_not_found") return "not found";
   if (err?.code === "target_already_exists") return "target already exists";
@@ -116,25 +142,77 @@ function deskFileActionErrorMessage(err) {
   return err?.message || err?.code || "file action failed";
 }
 
-function getStudioCronStore(engine) {
-  return engine.getStudioCronStore?.() || null;
+function getStudioCronStore(engine, studioId = null) {
+  const service = engine.getStudioCronStore?.() || null;
+  if (!service || !studioId || typeof service.forStudio !== "function") return null;
+  return service.forStudio(studioId);
 }
 
-function normalizeRouteExecutionContext(value, actorAgentId) {
+function normalizeRouteExecutionContext(value, actorAgentId, engine) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return {
-    kind: typeof value.kind === "string" && value.kind.trim() ? value.kind.trim() : "api_request",
-    cwd: typeof value.cwd === "string" && value.cwd.trim() ? value.cwd : null,
-    workspaceFolders: Array.isArray(value.workspaceFolders)
-      ? value.workspaceFolders.filter(p => typeof p === "string" && p.trim())
-      : [],
-    sourceSessionPath: typeof value.sourceSessionPath === "string" && value.sourceSessionPath.trim()
-      ? value.sourceSessionPath
-      : null,
-    createdByAgentId: typeof value.createdByAgentId === "string" && value.createdByAgentId.trim()
-      ? value.createdByAgentId
-      : actorAgentId,
-  };
+  const input = value;
+  if (
+    (typeof input.sourceBridgeSessionKey === "string" && input.sourceBridgeSessionKey.trim())
+    || input.notificationContext != null
+  ) {
+    throw new Error("executionContext Bridge identity and notification context are host-managed");
+  }
+  const inputSessionId = typeof input.sourceSessionId === "string" && input.sourceSessionId.trim()
+    ? input.sourceSessionId.trim()
+    : null;
+  const inputSessionPath = typeof input.sourceSessionPath === "string" && input.sourceSessionPath.trim()
+    ? input.sourceSessionPath
+    : null;
+  const sourceSessionId = inputSessionId
+    || (inputSessionPath ? engine.getSessionIdForPath?.(inputSessionPath) || null : null);
+  if (inputSessionPath && !sourceSessionId) {
+    throw new Error("executionContext source session path has no stable identity");
+  }
+  if (sourceSessionId) {
+    const manifest = engine.getSessionManifest?.(sourceSessionId) || null;
+    if (
+      !manifest
+      || manifest.lifecycle === "deleted"
+      || manifest.health !== "ok"
+      || !manifest.currentLocator?.path
+    ) {
+      throw new Error("executionContext source session is unavailable");
+    }
+    if (manifest.ownerAgentId !== actorAgentId) {
+      throw new Error("executionContext source session does not belong to actorAgentId");
+    }
+    const currentPath = manifest.currentLocator.path;
+    const reverseSessionId = engine.getSessionIdForPath?.(currentPath) || null;
+    if (reverseSessionId !== sourceSessionId) {
+      throw new Error("executionContext source session identity is inconsistent");
+    }
+    const folderScope = engine.getSessionFolderScope?.(currentPath) || null;
+    return requireAutomationExecutionContext({
+      kind: typeof input.kind === "string" && input.kind.trim() ? input.kind.trim() : "session_workspace",
+      sourceSessionId,
+      sourceBridgeSessionKey: null,
+      sourceSessionPath: currentPath,
+      cwd: folderScope?.cwd ?? null,
+      workspaceFolders: Array.isArray(folderScope?.workspaceFolders) ? folderScope.workspaceFolders : [],
+      authorizedFolders: Array.isArray(folderScope?.authorizedFolders) ? folderScope.authorizedFolders : [],
+      createdByAgentId: actorAgentId,
+      notificationContext: null,
+    }, actorAgentId);
+  }
+  const actorHome = typeof engine.getHomeCwd === "function"
+    ? engine.getHomeCwd(actorAgentId)
+    : null;
+  return requireAutomationExecutionContext({
+    kind: typeof input.kind === "string" && input.kind.trim() ? input.kind.trim() : "session_workspace",
+    sourceSessionId: null,
+    sourceBridgeSessionKey: null,
+    sourceSessionPath: null,
+    cwd: actorHome || null,
+    workspaceFolders: actorHome ? [actorHome] : [],
+    authorizedFolders: [],
+    createdByAgentId: actorAgentId,
+    notificationContext: null,
+  }, actorAgentId);
 }
 
 function normalizeRouteCreatedBy(value) {
@@ -162,7 +240,24 @@ function normalizeRouteExecutor(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.kind !== "string") {
     return null;
   }
-  return JSON.parse(JSON.stringify(value));
+  const authorityFields = [
+    "permissionMode",
+    "approvalPolicy",
+    "allowHumanApproval",
+    "authorization",
+    "requestedGrants",
+  ];
+  const injectedField = authorityFields.find((key) => Object.prototype.hasOwnProperty.call(value, key));
+  if (injectedField) {
+    throw new Error(`executor field is host-managed: ${injectedField}`);
+  }
+  const normalized = { kind: value.kind.trim() };
+  for (const key of ["agentId", "prompt", "model", "executionContext", "migratedFrom"]) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      normalized[key] = JSON.parse(JSON.stringify(value[key]));
+    }
+  }
+  return normalized;
 }
 
 function validateRouteExecutor(executor) {
@@ -171,12 +266,109 @@ function validateRouteExecutor(executor) {
   return `unsupported automation executor: ${executor.kind}`;
 }
 
+const AUTOMATION_SUGGESTION_EDITABLE_FIELDS = new Set([
+  "type",
+  "schedule",
+  "label",
+  "prompt",
+  "model",
+  "targetAgentId",
+]);
+
+function normalizeSuggestionEdits(value, engine) {
+  if (value == null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw Object.assign(new Error("automation suggestion jobData must be an object"), {
+      code: "automation_suggestion_invalid",
+      status: 400,
+    });
+  }
+  const forbidden = Object.keys(value).filter((key) => !AUTOMATION_SUGGESTION_EDITABLE_FIELDS.has(key));
+  if (forbidden.length > 0) {
+    throw Object.assign(new Error(`automation suggestion field is host-managed: ${forbidden[0]}`), {
+      code: "automation_suggestion_authority_field_forbidden",
+      status: 400,
+    });
+  }
+  const edits: Record<string, unknown> = {};
+  if (Object.prototype.hasOwnProperty.call(value, "type")) {
+    if (!new Set(["at", "every", "cron"]).has(value.type)) {
+      throw new Error(`Invalid scheduleType: ${value.type}. Must be at/every/cron.`);
+    }
+    edits.type = value.type;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "schedule")) edits.schedule = value.schedule;
+  for (const key of ["label", "prompt"]) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    if (typeof value[key] !== "string") throw new Error(`${key} must be a string`);
+    edits[key] = value[key];
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "model")) {
+    edits.model = JSON.parse(JSON.stringify(value.model));
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "targetAgentId")) {
+    const targetAgentId = typeof value.targetAgentId === "string" ? value.targetAgentId.trim() : "";
+    if (!targetAgentId) throw new Error("targetAgentId must be a non-empty string");
+    if (
+      typeof engine.getAgent !== "function"
+      || !engine.getAgent(targetAgentId)
+      || engine.isAgentDeleted?.(targetAgentId) === true
+    ) {
+      throw Object.assign(new Error(`agent not found: ${targetAgentId}`), {
+        code: "automation_suggestion_target_agent_not_found",
+        status: 404,
+      });
+    }
+    edits.targetAgentId = targetAgentId;
+  }
+  return edits;
+}
+
 const WORKSPACE_SEARCH_LIMIT = 80;
 const BEAUTIFY_OPTIONAL_TOOL_NAME = "beautify";
 const MAX_COVER_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 export function createDeskRoute(engine, hub) {
   const route = new Hono();
+
+  function bindCronRequestScope(c) {
+    const requestContext = createRequestContext(c, engine);
+    const runtimeStudioId = typeof requestContext.runtimeContext?.studioId === "string"
+      && requestContext.runtimeContext.studioId.trim()
+      ? requestContext.runtimeContext.studioId.trim()
+      : null;
+    const principalStudioId = typeof requestContext.authPrincipal?.studioId === "string"
+      && requestContext.authPrincipal.studioId.trim()
+      ? requestContext.authPrincipal.studioId.trim()
+      : null;
+    if (!runtimeStudioId) {
+      return {
+        error: deskRouteError(c, "runtime_studio_unavailable", "Runtime Studio unavailable", 503),
+      };
+    }
+    if (!principalStudioId || principalStudioId !== runtimeStudioId) {
+      return {
+        error: deskRouteError(
+          c,
+          "studio_scope_mismatch",
+          "Authenticated Studio does not match this server Studio",
+          403,
+        ),
+      };
+    }
+    const store = getStudioCronStore(engine, runtimeStudioId);
+    if (!store) {
+      return {
+        error: deskRouteError(c, "cron_store_unavailable", "Desk not initialized", 503),
+      };
+    }
+    if (store.studioId !== runtimeStudioId) {
+      return {
+        error: deskRouteError(c, "studio_binding_invariant", "Cron Studio binding failed", 500),
+      };
+    }
+    return { requestContext, studioId: runtimeStudioId, store, error: null };
+  }
 
   /** 从所有 agent 的 activityStore 中按 ID 查找 entry */
   function findActivityEntry(activityId) {
@@ -224,9 +416,13 @@ export function createDeskRoute(engine, hub) {
   }
 
   function getBeautifyExecutorAgent(requestedAgentId) {
+    // Beautify runs as a named agent. Fall back to the primary agent when the
+    // caller does not name one, and report no executor at all when there is no
+    // primary: running as whichever agent the server is focused on would put
+    // the work, and its token cost, on an agent the caller never chose.
     const agentId = typeof requestedAgentId === "string" && requestedAgentId.trim()
       ? requestedAgentId.trim()
-      : (engine.getPrimaryAgentId?.() || engine.currentAgentId || null);
+      : (engine.getPrimaryAgentId?.() || null);
     const agent = agentId ? engine.getAgent?.(agentId) : null;
     return {
       agent: agent || null,
@@ -250,30 +446,14 @@ export function createDeskRoute(engine, hub) {
     return agent?.agentName || agent?.name || agentId || null;
   }
 
+  // engine.media (core/media/universal-media-manager.ts) is the sole runtime
+  // source: it is constructed unconditionally by HanaEngine, so its absence
+  // here means genuinely unavailable, never "ask the plugin manager instead".
   function getImageGenerationRuntime() {
-    if (engine.media) {
-      return {
-        config: engine.media.config,
-        resolveImageModelRef: (ref) => engine.media.resolveImageModelRef(ref),
-      };
-    }
-    const imageGenCtx = engine.pluginManager?.getPlugin?.("image-gen")?.ctx || null;
-    if (!imageGenCtx) return null;
-    const registry = imageGenCtx._mediaGen?.registry || null;
-    if (!registry) {
-      return {
-        config: imageGenCtx.config,
-        unavailableReason: "image-generation-runtime-unavailable",
-        unavailableMessage: "image generation runtime is unavailable",
-      };
-    }
+    if (!engine.media) return null;
     return {
-      config: imageGenCtx.config,
-      resolveImageModelRef: (ref) => validateImageModelRef(
-        ref,
-        registry,
-        createSubmitContext(imageGenCtx),
-      ),
+      config: engine.media.config,
+      resolveImageModelRef: (ref) => engine.media.resolveImageModelRef(ref),
     };
   }
 
@@ -283,21 +463,11 @@ export function createDeskRoute(engine, hub) {
       return {
         ok: false,
         status: 404,
-        reason: "image-gen-unavailable",
+        reason: "image-generation-unavailable",
         error: "image generation runtime is unavailable",
         settingsTarget: "media",
       };
     }
-    if (imageRuntime.unavailableReason) {
-      return {
-        ok: false,
-        status: 409,
-        reason: imageRuntime.unavailableReason,
-        error: imageRuntime.unavailableMessage || "image generation runtime is unavailable",
-        settingsTarget: "media",
-      };
-    }
-
     const defaultModel = imageRuntime.config?.get?.("defaultImageModel");
     if (!defaultModel?.provider || !defaultModel?.id) {
       return {
@@ -571,7 +741,7 @@ export function createDeskRoute(engine, hub) {
     if (!status.enabled) {
       const httpStatus = status.disabledReason === "beautify-disabled"
         ? 403
-        : status.disabledReason === "beautify-plugin-unavailable" || status.disabledReason === "image-gen-unavailable"
+        : status.disabledReason === "beautify-plugin-unavailable" || status.disabledReason === "image-generation-unavailable"
           ? 404
           : 409;
       return {
@@ -899,23 +1069,93 @@ export function createDeskRoute(engine, hub) {
 
   /** 列出 cron 任务 */
   route.get("/desk/cron", async (c) => {
-    const store = getStudioCronStore(engine);
-    if (!store) return c.json({ jobs: [] });
-    return c.json({ jobs: store.listJobs() });
+    let scope;
+    try {
+      scope = bindCronRequestScope(c);
+    } catch (err) {
+      return cronStoreRouteFailure(c, err);
+    }
+    if (scope.error) return scope.error;
+    const { store } = scope;
+    try {
+      return c.json({ jobs: store.listJobs() });
+    } catch (err) {
+      return cronStoreRouteFailure(c, err);
+    }
   });
 
   /** 操作 cron 任务 */
   route.post("/desk/cron", async (c) => {
-    const store = getStudioCronStore(engine);
-    if (!store) return deskRouteError(c, "cron_store_unavailable", "Desk not initialized", 503);
+    let scope;
+    try {
+      scope = bindCronRequestScope(c);
+    } catch (err) {
+      return cronStoreRouteFailure(c, err);
+    }
+    if (scope.error) return scope.error;
+    const { store, studioId } = scope;
 
     const body = await safeJson(c);
     const { action, ...params } = body;
 
-    switch (action) {
+    try {
+      switch (action) {
+      case "apply_suggestion": {
+        const suggestionId = typeof params.suggestionId === "string" && params.suggestionId.trim()
+          ? params.suggestionId.trim()
+          : null;
+        const sessionId = typeof params.sessionId === "string" && params.sessionId.trim()
+          ? params.sessionId.trim()
+          : null;
+        if (!suggestionId || !sessionId) {
+          return deskRouteError(c, "automation_suggestion_identity_required", "suggestionId and sessionId required", 400);
+        }
+        const suggestionStore = engine.getAutomationSuggestionStore?.() || engine.automationSuggestionStore || null;
+        if (!suggestionStore?.apply) {
+          return deskRouteError(c, "automation_suggestion_store_unavailable", "Automation suggestion store unavailable", 503);
+        }
+        try {
+          const editedJobData = normalizeSuggestionEdits(params.jobData, engine);
+          const applied = await suggestionStore.apply({
+            sessionId,
+            studioId,
+            ref: suggestionId,
+            value: { jobData: editedJobData },
+          });
+          if (!applied?.ok) {
+            const applying = applied?.reason === "already-applying";
+            const expired = applied?.reason === "expired" || applied?.reason === "not-found";
+            return deskRouteError(
+              c,
+              applying ? "automation_suggestion_applying" : "automation_suggestion_expired",
+              applying ? "Automation suggestion is already being applied" : "Automation suggestion expired or does not belong to this session and Studio",
+              applying ? 409 : expired ? 410 : 400,
+            );
+          }
+          return c.json({ ok: true, job: applied.result, jobs: store.listJobs() });
+        } catch (err) {
+          if (isSafeCronStoreError(err)) return cronStoreRouteFailure(c, err);
+          const message = err instanceof Error ? err.message : String(err);
+          const code = typeof err?.code === "string" ? err.code : "automation_suggestion_invalid";
+          const status = [400, 404, 409, 410].includes(err?.status)
+            ? err.status
+            : code === "cron_job_revision_conflict"
+              ? 409
+              : code === "automation_suggestion_receipt_expired"
+                ? 410
+                : 400;
+          return deskRouteError(c, code, message, status);
+        }
+      }
+
       case "add": {
         const type = params.scheduleType || params.type;
-        const executor = normalizeRouteExecutor(params.executor);
+        let executor;
+        try {
+          executor = normalizeRouteExecutor(params.executor);
+        } catch (err) {
+          return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+        }
         const executorError = validateRouteExecutor(executor);
         if (executorError) return c.json({ error: executorError }, 400);
         const enabled = params.enabled !== false;
@@ -937,7 +1177,12 @@ export function createDeskRoute(engine, hub) {
         const actorAgentId = typeof params.actorAgentId === "string" && params.actorAgentId.trim()
           ? params.actorAgentId.trim()
           : null;
-        const executionContext = normalizeRouteExecutionContext(params.executionContext, actorAgentId);
+        let executionContext;
+        try {
+          executionContext = normalizeRouteExecutionContext(params.executionContext, actorAgentId, engine);
+        } catch (err) {
+          return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+        }
         if (!actorAgentId || !executionContext) {
           return c.json({ error: "actorAgentId and executionContext required" }, 400);
         }
@@ -972,6 +1217,7 @@ export function createDeskRoute(engine, hub) {
         try {
           job = store.toggleJob(params.id);
         } catch (err) {
+          if (isSafeCronStoreError(err)) return cronStoreRouteFailure(c, err);
           const message = err instanceof Error ? err.message : String(err);
           return c.json({ error: message }, 400);
         }
@@ -985,7 +1231,11 @@ export function createDeskRoute(engine, hub) {
         const existingJob = store.getJob(id);
         if (!existingJob) return c.json({ error: "not found" });
         if (Object.prototype.hasOwnProperty.call(fields, "executor")) {
-          fields.executor = normalizeRouteExecutor(fields.executor);
+          try {
+            fields.executor = normalizeRouteExecutor(fields.executor);
+          } catch (err) {
+            return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+          }
           const executorError = validateRouteExecutor(fields.executor);
           if (executorError) return c.json({ error: executorError }, 400);
         }
@@ -1002,7 +1252,11 @@ export function createDeskRoute(engine, hub) {
           const actorAgentId = typeof fields.actorAgentId === "string" && fields.actorAgentId.trim()
             ? fields.actorAgentId.trim()
             : existingJob.actorAgentId;
-          fields.executionContext = normalizeRouteExecutionContext(fields.executionContext, actorAgentId);
+          try {
+            fields.executionContext = normalizeRouteExecutionContext(fields.executionContext, actorAgentId, engine);
+          } catch (err) {
+            return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+          }
           if (!fields.executionContext) return c.json({ error: "executionContext required" }, 400);
         }
         const VALID_TYPES = new Set(["at", "every", "cron"]);
@@ -1024,6 +1278,7 @@ export function createDeskRoute(engine, hub) {
         try {
           job = store.updateJob(id, fields);
         } catch (err) {
+          if (isSafeCronStoreError(err)) return cronStoreRouteFailure(c, err);
           const message = err instanceof Error ? err.message : String(err);
           return c.json({ error: message }, 400);
         }
@@ -1032,6 +1287,9 @@ export function createDeskRoute(engine, hub) {
 
       default:
         return deskRouteError(c, "unknown_cron_action", `unknown action: ${action}`, 400);
+      }
+    } catch (err) {
+      return cronStoreRouteFailure(c, err);
     }
   });
 

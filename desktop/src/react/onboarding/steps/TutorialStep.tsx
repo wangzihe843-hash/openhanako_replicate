@@ -3,6 +3,8 @@
  */
 
 import { useState, useCallback } from 'react';
+import { describeOnboardingError, verifyOnboardingPersistence } from '../onboarding-actions';
+import type { HanaFetch, OnboardingVerificationPlan } from '../onboarding-actions';
 import { StepContainer, Multiline } from '../onboarding-ui';
 
 // ── SVG Icons ──
@@ -67,23 +69,27 @@ function TutorialCard({ icon, title, desc }: {
 
 interface TutorialStepProps {
   preview: boolean;
+  hanaFetch: HanaFetch;
+  agentId: string;
+  verificationPlan: OnboardingVerificationPlan;
   showError: (msg: string) => void;
 }
 
-export function TutorialStep({ preview, showError }: TutorialStepProps) {
+export function TutorialStep({ preview, hanaFetch, agentId, verificationPlan, showError }: TutorialStepProps) {
   const [finishing, setFinishing] = useState(false);
 
   const onFinish = useCallback(async () => {
     if (preview) { window.close(); return; }
     setFinishing(true);
     try {
+      await verifyOnboardingPersistence({ hanaFetch, agentId, verificationPlan });
       await window.hana.onboardingComplete?.();
     } catch (err) {
       console.error('[onboarding] complete failed:', err);
-      showError(t('onboarding.error'));
+      showError(describeOnboardingError(err, t('onboarding.error')));
       setFinishing(false);
     }
-  }, [preview, showError]);
+  }, [preview, hanaFetch, agentId, verificationPlan, showError]);
 
   return (
     <StepContainer>

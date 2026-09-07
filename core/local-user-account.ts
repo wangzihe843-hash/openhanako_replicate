@@ -3,7 +3,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { atomicWriteSync } from "../shared/safe-fs.ts";
+import { writeSecretFileSync } from "../shared/secret-fs.ts";
 
 export const LOCAL_USER_AUTH_FILE = "local-user-auth.json";
 
@@ -38,7 +38,7 @@ export function updateLocalAccountProfile(hanakoHome, {
   user.displayName = nextDisplayName;
   user.updatedAt = now;
   users.updatedAt = now;
-  writeJsonAtomic(path.join(hanakoHome, USERS_FILE), users);
+  writeSecretJson(path.join(hanakoHome, USERS_FILE), users);
   const auth = loadLocalUserAuth(hanakoHome);
   return sanitizeAccount(user, { passwordSet: !!findCredential(auth, user.userId) });
 }
@@ -70,7 +70,7 @@ export function setLocalAccountPassword(hanakoHome, {
     auth.credentials.push(nextCredential);
   }
   auth.updatedAt = now;
-  writeJsonAtomic(path.join(hanakoHome, LOCAL_USER_AUTH_FILE), auth);
+  writeSecretJson(path.join(hanakoHome, LOCAL_USER_AUTH_FILE), auth);
   return sanitizeAccount(user, { passwordSet: true });
 }
 
@@ -81,7 +81,7 @@ export function clearLocalAccountPassword(hanakoHome, {
   const auth = loadLocalUserAuth(hanakoHome);
   auth.credentials = auth.credentials.filter((credential) => credential.userId !== user.userId);
   auth.updatedAt = now;
-  writeJsonAtomic(path.join(hanakoHome, LOCAL_USER_AUTH_FILE), auth);
+  writeSecretJson(path.join(hanakoHome, LOCAL_USER_AUTH_FILE), auth);
   return sanitizeAccount(user, { passwordSet: false });
 }
 
@@ -252,9 +252,9 @@ function readJsonIfPresent(filePath, label) {
   }
 }
 
-function writeJsonAtomic(filePath, data) {
+function writeSecretJson(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  atomicWriteSync(filePath, JSON.stringify(data, null, 2) + "\n");
+  writeSecretFileSync(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
 function isPlainObject(value) {

@@ -16,7 +16,7 @@ function makeAgent() {
   fs.mkdirSync(userDir, { recursive: true });
   fs.writeFileSync(path.join(productDir, "yuan", "hanako.md"), "yuan", "utf-8");
   fs.writeFileSync(path.join(agentDir, "identity.md"), "identity", "utf-8");
-  fs.writeFileSync(path.join(agentDir, "ishiki.md"), "ishiki", "utf-8");
+  fs.writeFileSync(path.join(agentDir, "AGENTS.md"), "Authored Xingye persona", "utf-8");
   fs.writeFileSync(path.join(agentDir, "pinned.md"), "Pinned memory stays.", "utf-8");
   fs.writeFileSync(path.join(agentDir, "memory", "memory.md"), "Compiled memory stays.", "utf-8");
 

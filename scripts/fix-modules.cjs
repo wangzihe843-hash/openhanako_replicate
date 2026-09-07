@@ -19,6 +19,33 @@ const fs = require("fs");
 const path = require("path");
 
 /**
+ * 目录内定位平台化命名的 seed manifest（seed-train-<platform>-<arch>.json，
+ * 见 scripts/build-server-artifact.mjs 的 seedManifestFileName /
+ * desktop/src/shared/artifact-boot.cjs 的同名函数）。afterPack 阶段的
+ * platform/arch 是 electron-builder 自己的命名习惯（"mac"/"windows"/"linux"），
+ * 跟 manifest 文件名里 process.platform 风格的 "darwin"/"win32"/"linux" 对不
+ * 上，与其在这里重新维护一份映射表，不如像归档文件名（带版本号，
+ * 同样不可硬编码）一样用前缀/后缀扫描定位——这里只做"文件在不在"的构建期
+ * 存在性检查，真正的平台一致性校验由 scripts/verify-seed-kit.mjs 在
+ * electron-builder 之前做。
+ * @param {string} seedDir
+ * @returns {string|null}
+ */
+function findSeedManifestPath(seedDir) {
+  let entries;
+  try {
+    entries = fs.readdirSync(seedDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const names = entries
+    .filter((entry) => entry.isFile() && entry.name.startsWith("seed-train-") && entry.name.endsWith(".json"))
+    .map((entry) => entry.name)
+    .sort();
+  return names.length > 0 ? path.join(seedDir, names[0]) : null;
+}
+
+/**
  * 校验 Resources/seed/ 携带完整 seed 四件套（renderer 归档 + server 归档 +
  * manifest + .sig，启用双 artifact 管线后安装包不再只带 server）。只做存在性
  * 与结构检查——签名校验是运行时首启的职责（同一代码路径），这里挡的是
@@ -27,14 +54,14 @@ const path = require("path");
  */
 function assertSeedResourcesReady(resourcesDir) {
   const seedDir = path.join(resourcesDir, "seed");
-  const manifestPath = path.join(seedDir, "seed-train.json");
-  const sigPath = `${manifestPath}.sig`;
-  if (!fs.existsSync(manifestPath)) {
+  const manifestPath = findSeedManifestPath(seedDir);
+  if (!manifestPath) {
     throw new Error(
-      `[fix-modules] seed manifest missing from packaged resources: ${manifestPath}. `
+      `[fix-modules] seed manifest missing from packaged resources: ${path.join(seedDir, "seed-train-<platform>-<arch>.json")}. `
         + "Run npm run build:server (with HANA_SIGN_KEY) before electron-builder.",
     );
   }
+  const sigPath = `${manifestPath}.sig`;
   if (!fs.existsSync(sigPath)) {
     throw new Error(`[fix-modules] seed manifest signature missing: ${sigPath}`);
   }
@@ -196,4 +223,5 @@ exports.default = async function (context) {
 };
 
 exports.assertSeedResourcesReady = assertSeedResourcesReady;
+exports.findSeedManifestPath = findSeedManifestPath;
 exports.removeNodeModulesBinDirs = removeNodeModulesBinDirs;

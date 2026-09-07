@@ -33,6 +33,7 @@ const OP_REQUIREMENTS = {
   read: new Set([AccessLevel.READ_ONLY, AccessLevel.READ_WRITE, AccessLevel.FULL]),
   write: new Set([AccessLevel.READ_WRITE, AccessLevel.FULL]),
   delete: new Set([AccessLevel.FULL]),
+  stage: new Set([AccessLevel.FULL]),
 };
 
 export class PathGuard {
@@ -107,7 +108,10 @@ export class PathGuard {
   getAccessLevel(rawPath) {
     const resolved = this._resolveReal(rawPath);
     if (!resolved) return AccessLevel.BLOCKED;
+    return this._getAccessLevelResolved(resolved);
+  }
 
+  _getAccessLevelResolved(resolved) {
     // 1. BLOCKED 文件（hanakoHome 根）
     for (const f of BLOCKED_FILES) {
       if (resolved === path.join(this.hanakoHome, f)) return AccessLevel.BLOCKED;
@@ -185,21 +189,36 @@ export class PathGuard {
   /**
    * 检查操作是否被允许
    * @param {string} absolutePath
-   * @param {"read"|"write"|"delete"} operation
-   * @returns {{ allowed: boolean, reason?: string }}
+   * @param {"read"|"write"|"delete"|"stage"} operation
+   * @returns {{ allowed: boolean, canonicalPath?: string, reason?: string }}
    */
   check(absolutePath, operation) {
-    if (this._fullAccess) return { allowed: true };
-    const level = this.getAccessLevel(absolutePath);
+    const canonicalPath = this._resolveReal(absolutePath);
+    if (!canonicalPath) {
+      return {
+        allowed: false,
+        reason: t("sandbox.denied", {
+          op: operation === "stage" ? "stage" : operation,
+          path: path.resolve(absolutePath),
+          level: AccessLevel.BLOCKED,
+        }),
+      };
+    }
+    if (this._fullAccess) return { allowed: true, canonicalPath };
+    const level = this._getAccessLevelResolved(canonicalPath);
     const allowed = OP_REQUIREMENTS[operation]?.has(level) ?? false;
 
-    if (allowed) return { allowed: true };
+    if (allowed) return { allowed: true, canonicalPath };
 
-    const resolved = this._resolveReal(absolutePath) || absolutePath;
-    const opLabel = { read: t("sandbox.opRead"), write: t("sandbox.opWrite"), delete: t("sandbox.opDelete") }[operation] || operation;
+    const opLabel = {
+      read: t("sandbox.opRead"),
+      write: t("sandbox.opWrite"),
+      delete: t("sandbox.opDelete"),
+      stage: "stage",
+    }[operation] || operation;
     return {
       allowed: false,
-      reason: t("sandbox.denied", { op: opLabel, path: resolved, level }),
+      reason: t("sandbox.denied", { op: opLabel, path: canonicalPath, level }),
     };
   }
 

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../onboarding-actions', () => ({
+  describeOnboardingError: (_error: unknown, fallback: string) => fallback,
   testConnection: (...args: unknown[]) => mocks.testConnection(...args),
   saveProvider: (...args: unknown[]) => mocks.saveProvider(...args),
 }));
@@ -41,6 +42,8 @@ describe('ProviderStep', () => {
       <ProviderStep
         preview={false}
         hanaFetch={vi.fn()}
+        agentId="hana-primary"
+        verificationPlan={{ agentConfig: {}, preferenceModels: {}, requiredAgentSecretPaths: [] }}
         goToStep={goToStep}
         showError={vi.fn()}
         onProviderReady={onProviderReady}

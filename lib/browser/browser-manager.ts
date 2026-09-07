@@ -47,6 +47,11 @@ const _coldStatePath = () => path.join(_hanakoHome, "user", "browser-sessions.js
 // 最大并发浏览器实例数
 const MAX_INSTANCES = 5;
 
+// 双闲置回收：agent 最后一次操作与用户最后一次相关交互都超过这个时长，才把浏览器冷保存挂起
+const IDLE_RECLAIM_MS = 30 * 60_000;
+// 闲置巡检间隔
+const IDLE_SWEEP_INTERVAL_MS = 5 * 60_000;
+
 const FATAL_BROWSER_ERROR_PATTERNS = [
   /object has been destroyed/i,
   /no browser instance/i,
@@ -152,12 +157,18 @@ export class BrowserManager {
   declare _getSessionIdForPath: any;
   declare _sessions: any;
   declare _transport: any;
+  declare _revokedSessions: any;
+  declare _userActivityAt: any;
+  declare _idleSweepTimer: any;
   constructor({ getSessionIdForPath = null }: any = {}) {
     this._getSessionIdForPath = typeof getSessionIdForPath === "function" ? getSessionIdForPath : null;
     this._sessions = new Map(); // session identity key → { sessionPath, running, url, headless }
     this._lruOrder = [];        // session identity key[], 最近使用的在末尾
     this._headless = false;     // 全局后台模式标记
     this._pending = new Map();  // id → { resolve, reject, timer }
+    this._revokedSessions = new Set(); // session identity key，用户急停后拒绝 agent 再次使用浏览器
+    this._userActivityAt = new Map();  // session identity key → 用户最后一次相关交互时间戳
+    this._idleSweepTimer = null;       // 双闲置回收巡检定时器（无 running 浏览器时自停）
     this._browserPreferences = normalizeBrowserPreferences({});
 
     // 根据环境选择 transport：fork 模式用 IPC，spawn 模式用 WS
@@ -165,6 +176,23 @@ export class BrowserManager {
 
     // 注册消息处理器（IPC 立即生效，WS 在 attach 时生效）
     this._transport.onMessage((msg) => {
+      // viewer 直连主进程的标签页增删会绕过 server，主进程把快照推回来防止状态漂移。
+      // 空 tabs 是合法状态（空标签组仍是活着的 workspace），不改 running。
+      if (msg?.type === "browser-workspace-sync" && msg.sessionPath) {
+        const entry = this._getSessionEntry(msg.sessionPath);
+        if (!entry) return;
+        const tabs = Array.isArray(msg.workspace?.tabs) ? msg.workspace.tabs : [];
+        entry.tabs = tabs.map((tab) => createBrowserTab(tab));
+        entry.activeTabId = msg.workspace?.activeTabId || entry.tabs[0]?.tabId || null;
+        // 空标签组没有 url（徽章因此隐藏），不保留上一个标签页的地址
+        entry.url = activeBrowserTab(entry)?.url || null;
+        return;
+      }
+      // 用户在 viewer 里的交互（打开窗口、聚焦、工具栏操作）：刷新用户侧闲置计时
+      if (msg?.type === "browser-user-activity" && msg.sessionPath) {
+        this._touchUserActivity(msg.sessionPath);
+        return;
+      }
       if (msg?.type === "browser-result" && this._pending.has(msg.id)) {
         const entry = this._pending.get(msg.id);
         this._pending.delete(msg.id);
@@ -391,6 +419,55 @@ export class BrowserManager {
     const idx = this._lruOrder.indexOf(key);
     if (idx !== -1) this._lruOrder.splice(idx, 1);
     this._lruOrder.push(key);
+    // agent 的每次浏览器操作都过这里：盖上 agent 侧闲置计时的时间戳
+    const entry = this._sessions.get(key);
+    if (entry) entry.lastAgentOpAt = Date.now();
+  }
+
+  /** 记录用户侧的浏览器相关交互时间（viewer 打开/聚焦/工具栏操作、切到该 session） */
+  _touchUserActivity(sessionPath) {
+    if (!sessionPath) return;
+    this._userActivityAt.set(this._sessionKeyForPath(sessionPath), Date.now());
+  }
+
+  // ════════════════════════════
+  //  双闲置回收
+  // ════════════════════════════
+
+  /** 确保闲置巡检定时器在跑（有 running 浏览器时才需要） */
+  _ensureIdleSweep() {
+    if (this._idleSweepTimer) return;
+    this._idleSweepTimer = setInterval(() => { void this._sweepIdleSessions(); }, IDLE_SWEEP_INTERVAL_MS);
+    this._idleSweepTimer.unref?.();
+  }
+
+  /**
+   * 巡检一轮：agent 与用户都超过 IDLE_RECLAIM_MS 没碰过的 running 浏览器，
+   * suspend 冷保存（写盘 + view 进程退出），不销毁标签组。
+   * viewer 当前可见展示的 session 豁免——用户可能正在读页面。
+   */
+  async _sweepIdleSessions() {
+    const running = this.runningSessions;
+    if (running.length === 0) {
+      clearInterval(this._idleSweepTimer);
+      this._idleSweepTimer = null;
+      return;
+    }
+    let viewer: any = { visible: false, sessionPath: null };
+    // 查不到 viewer 状态（无 host / 超时）按不可见处理，不因此跳过回收
+    try { viewer = await this._sendCmd("viewerVisibility", {}, 10000); } catch {}
+    const now = Date.now();
+    for (const sp of running) {
+      const key = this._sessionKeyForPath(sp);
+      const entry = this._sessions.get(key);
+      if (!entry) continue;
+      if (viewer?.visible && viewer.sessionPath && this._sessionKeyForPath(viewer.sessionPath) === key) continue;
+      const lastAgent = entry.lastAgentOpAt || 0;
+      const lastUser = this._userActivityAt.get(key) || 0;
+      if (now - Math.max(lastAgent, lastUser) < IDLE_RECLAIM_MS) continue;
+      log.log(`双闲置回收（suspend 冷保存）: ${sp}`);
+      try { await this.suspendForSession(sp); } catch (err) { log.warn(`idle suspend failed: ${_errorMessage(err)}`); }
+    }
   }
 
   /** 移除 sessionPath 从 LRU 列表 */
@@ -483,6 +560,71 @@ export class BrowserManager {
     const state = this._loadColdState();
     this._deleteColdStateKeysForSession(state, sessionPath);
     this._saveColdState(state);
+  }
+
+  /**
+   * Copy the source tab workspace into an independent cold-resume record.
+   * A live browser view/process is never shared with the child session.
+   */
+  forkSessionState({
+    sourceSessionPath,
+    targetSessionPath,
+    includeSourceState = true,
+  }: Record<string, any> = {}) {
+    if (!sourceSessionPath) throw new Error("browser session fork requires sourceSessionPath");
+    if (!targetSessionPath) throw new Error("browser session fork requires targetSessionPath");
+    if (sourceSessionPath === targetSessionPath) {
+      throw new Error("browser session fork requires distinct source and target paths");
+    }
+
+    // The browser workspace is a current-state projection, not an event-sourced
+    // snapshot. A historical fork must not copy tabs opened after its boundary.
+    if (includeSourceState !== true) {
+      return { copied: false, tabs: 0, url: null, reason: "historical_boundary" };
+    }
+
+    const state = this._loadColdState();
+    if (this._getSessionEntry(targetSessionPath) || this._coldStateRecordForSession(state, targetSessionPath)) {
+      throw new Error("browser session fork target state already exists");
+    }
+    const sourceLive = this._getSessionEntry(sourceSessionPath);
+    const sourceCold = this._coldStateRecordForSession(state, sourceSessionPath);
+    const workspace = sourceLive && Array.isArray(sourceLive.tabs) && sourceLive.tabs.length > 0
+      ? serializeColdWorkspace(sourceLive)
+      : normalizeColdWorkspace(sourceCold?.raw);
+    if (!workspaceHasRestorableUrl(workspace)) {
+      return { copied: false, tabs: 0, url: null };
+    }
+
+    const targetKey = this._sessionKeyForPath(targetSessionPath);
+    state[targetKey] = {
+      ...serializeColdWorkspace(workspace),
+      sessionPath: targetSessionPath,
+    };
+    this._deleteColdStateKeysForSession(state, targetSessionPath, targetKey);
+    this._saveColdState(state);
+    if (!this._coldStateRecordForSession(this._loadColdState(), targetSessionPath)) {
+      throw new Error("browser session fork target state could not be persisted");
+    }
+    return {
+      copied: true,
+      tabs: workspace.tabs.length,
+      url: workspace.url,
+    };
+  }
+
+  discardForkedSessionState({ sessionPath }: Record<string, any> = {}) {
+    if (!sessionPath) throw new Error("browser session fork cleanup requires sessionPath");
+    if (this.isRunning(sessionPath)) {
+      throw new Error("cannot discard a running forked browser session");
+    }
+    const state = this._loadColdState();
+    const existing = this._coldStateRecordForSession(state, sessionPath);
+    this._deleteColdStateKeysForSession(state, sessionPath);
+    if (existing) this._saveColdState(state);
+    this._deleteSessionEntry(sessionPath);
+    this._removeLru(sessionPath);
+    return { discarded: !!existing };
   }
 
   /**
@@ -701,6 +843,8 @@ export class BrowserManager {
     entry.headless = this._headless;
     this._saveColdWorkspace(sessionPath, entry);
     this._touchLru(sessionPath);
+    this._touchUserActivity(sessionPath);
+    this._ensureIdleSweep();
     log.log(`热恢复成功 ${sessionPath}`);
 
     return {
@@ -771,6 +915,7 @@ export class BrowserManager {
     this._touchLru(sessionPath);
 
     log.log(`浏览器已启动 ${sessionPath} ${this._headless ? "(headless)" : ""}`);
+    this._ensureIdleSweep();
   }
 
   async close(sessionPath) {
@@ -801,18 +946,36 @@ export class BrowserManager {
    * 挂起浏览器：从窗口上摘下来，但不销毁（页面状态完全保留）
    * 同时写入冷保存，确保重启后也能恢复
    * @param {string} sessionPath - 目标 session 路径
+   * @param {object} [options]
+   * @param {boolean} [options.keepViewerVisible] - 挂起后不隐藏 viewer 窗口。
+   *   会话切换用：窗口保持可见，由随后的 notifyViewerSession 重绘目标 session。
    */
-  async suspendForSession(sessionPath) {
+  async suspendForSession(sessionPath, { keepViewerVisible = false } = {}) {
     const entry = this._getSessionEntry(sessionPath);
     if (!entry || !this.isRunning(sessionPath)) return;
 
     this._saveColdWorkspace(sessionPath, entry);
     log.log(`挂起浏览器 ${sessionPath}`);
-    try { await this._sendCmd("suspend", { sessionPath }); } catch {}
+    try { await this._sendCmd("suspend", { sessionPath, keepViewerVisible }); } catch {}
 
     // 挂起完成，冷状态已写磁盘，从 Map 中移除避免僵尸条目累积
     this._deleteSessionEntry(sessionPath);
     this._removeLru(sessionPath);
+  }
+
+  /**
+   * 通知 viewer 现在展示哪个 session 的标签页组（不改变窗口可见性）。
+   * 没有 browser host 的环境（server / PWA）里 transport 未连接，静默跳过。
+   * @param {string} sessionPath - 目标 session 路径
+   * @param {string|null} [title] - 会话标题，显示在 viewer 工具栏
+   */
+  async notifyViewerSession(sessionPath, title = null) {
+    if (!sessionPath) return;
+    try {
+      await this._sendCmd("viewerShowSession", { sessionPath, title }, 10000);
+    } catch (err) {
+      log.warn(`viewerShowSession failed: ${_errorMessage(err)}`);
+    }
   }
 
   /**
@@ -826,6 +989,8 @@ export class BrowserManager {
     const existing = this._getSessionEntry(sessionPath);
     if (this.isRunning(sessionPath)) {
       this._touchLru(sessionPath);
+      this._touchUserActivity(sessionPath);
+      this._ensureIdleSweep();
       return;
     }
     if (existing?.health === "unhealthy") return;
@@ -848,6 +1013,8 @@ export class BrowserManager {
       entry.headless = this._headless;
       this._saveColdWorkspace(sessionPath, entry);
       this._touchLru(sessionPath);
+      this._touchUserActivity(sessionPath);
+      this._ensureIdleSweep();
       log.log(`热恢复成功 ${sessionPath}`);
       return;
     }
@@ -867,6 +1034,8 @@ export class BrowserManager {
     entry.headless = this._headless;
     this._saveColdWorkspace(sessionPath, entry);
     this._touchLru(sessionPath);
+    this._touchUserActivity(sessionPath);
+    this._ensureIdleSweep();
   }
 
   /**
@@ -890,6 +1059,30 @@ export class BrowserManager {
     // 从冷保存中移除
     this._removeColdUrl(sessionPath);
     log.log(`已关闭 session 浏览器 ${sessionPath}`);
+  }
+
+  /**
+   * 用户急停后，标记该 session 的浏览器授权已被撤销（per-session，键为 session identity）。
+   * 撤销期间 agent 的 browser 工具调用直接返回"用户已停止授权"，不再触碰浏览器。
+   * @param {string} sessionPath - 目标 session 路径
+   */
+  revokeBrowserAuthorization(sessionPath) {
+    if (!sessionPath) return;
+    this._revokedSessions.add(this._sessionKeyForPath(sessionPath));
+  }
+
+  /** 解除该 session 的浏览器授权拒绝标记 */
+  clearBrowserAuthorizationRevocation(sessionPath) {
+    if (!sessionPath) return;
+    const key = this._sessionKeyForPath(sessionPath);
+    this._revokedSessions.delete(key);
+    if (key !== sessionPath) this._revokedSessions.delete(sessionPath);
+  }
+
+  /** 该 session 的浏览器授权是否已被用户撤销 */
+  isBrowserAuthorizationRevoked(sessionPath) {
+    if (!sessionPath) return false;
+    return this._revokedSessions.has(this._sessionKeyForPath(sessionPath));
   }
 
   _applyWorkspaceResult(sessionPath, result: any = {}, options: any = {}) {
@@ -984,17 +1177,21 @@ export class BrowserManager {
     if (!tabId) throw new Error("browser closeTab requires tabId");
     const result = await this._sendSessionCmd("closeTab", { sessionPath, tabId });
     if (Array.isArray(result?.tabs) && result.tabs.length === 0) {
+      // 空标签组仍是活 workspace：保留 running 与 LRU 位置，等待新 tab；
+      // 不能走 _applyWorkspaceResult（normalizeBrowserTabs 会给空列表捏造一个空白 tab）。
       const entry = this._getSessionEntry(sessionPath);
-      this._setSessionEntry(sessionPath, {
+      const next = {
         ...(entry || {}),
-        running: false,
+        running: entry ? entry.running : true,
         url: null,
         activeTabId: null,
         tabs: [],
         headless: entry?.headless ?? this._headless,
-      });
-      this._removeColdUrl(sessionPath);
-      this._removeLru(sessionPath);
+      };
+      this._setSessionEntry(sessionPath, next);
+      // 空组没有可恢复 URL，_saveColdWorkspace 会顺带清掉冷记录
+      this._saveColdWorkspace(sessionPath, next);
+      this._touchLru(sessionPath);
       return null;
     }
     const entry = this._applyWorkspaceResult(sessionPath, result);
@@ -1083,6 +1280,8 @@ export class BrowserManager {
    */
   async thumbnail(sessionPath) {
     if (!this.isRunning(sessionPath)) return null;
+    // 空标签组没有可截图的 tab：直接返回 null，别让 "No browser instance" 把 session 标成 unhealthy
+    if (!activeBrowserTab(this._getSessionEntry(sessionPath))) return null;
     try {
       const result = await this._sendSessionCmd("thumbnail", { sessionPath });
       return assertBrowserImageBase64(result?.base64, "thumbnail");

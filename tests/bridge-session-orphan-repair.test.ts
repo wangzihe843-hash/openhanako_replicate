@@ -90,7 +90,7 @@ function makeAgent(rootDir, id = "agent-a") {
     agentDir,
     tools: [],
     yuanPrompt: "yuan",
-    publicIshiki: "public-ishiki",
+    publicAgentsMd: "public persona",
     config: {
       models: { chat: { id: "gpt-4o", provider: "openai" } },
       bridge: {},
@@ -100,6 +100,7 @@ function makeAgent(rootDir, id = "agent-a") {
 }
 
 function makeDeps(agent, rootDir) {
+  const sessionIdsByPath = new Map<string, string>();
   return {
     getHanakoHome: () => rootDir,
     getAgent: () => agent,
@@ -115,6 +116,13 @@ function makeDeps(agent, rootDir) {
     getPreferences: () => ({ thinking_level: "medium" }),
     buildTools: () => ({ tools: [], customTools: [] }),
     getHomeCwd: () => path.join(rootDir, "cwd"),
+    ensureSessionRefForPath: vi.fn((sessionPath) => {
+      const sessionId = sessionIdsByPath.get(sessionPath)
+        || `sess_${path.basename(sessionPath, path.extname(sessionPath))}`;
+      sessionIdsByPath.set(sessionPath, sessionId);
+      return { sessionId, sessionPath };
+    }),
+    getSessionIdForPath: vi.fn((sessionPath) => sessionIdsByPath.get(sessionPath) || null),
     registerSessionFile: vi.fn(({ sessionPath, filePath, label, origin, storageKind }) => ({
       id: "sf_bridge_inbound",
       fileId: "sf_bridge_inbound",

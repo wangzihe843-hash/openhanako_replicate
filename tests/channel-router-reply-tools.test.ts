@@ -32,6 +32,7 @@ vi.mock("../lib/debug-log.js", () => ({
 
 import { ChannelRouter } from "../hub/channel-router.ts";
 import { readAgentPhoneProjection, getAgentPhoneProjectionPath } from "../lib/conversations/agent-phone-projection.ts";
+import { resolveToolInvocationPermission } from "../lib/permission/tool-invocation-permission.ts";
 
 describe("ChannelRouter reply tool boundary", () => {
   it("injects current self profile and only real speaker relationships into each group turn", async () => {
@@ -142,6 +143,35 @@ describe("ChannelRouter reply tool boundary", () => {
     expect(options.extraCustomTools.map((tool: any) => tool.name)).toEqual(
       expect.arrayContaining(["channel_read_context", "channel_reply", "channel_pass"]),
     );
+    const permissions = Object.fromEntries(options.extraCustomTools.map((tool: any) => [
+      tool.name,
+      tool.sessionPermission.resolveInvocation(),
+    ]));
+    expect(permissions.channel_read_context).toEqual({
+      action: "read",
+      kind: "read",
+      capability: "channel_read_context.read",
+      target: { type: "channel", id: "ch_crew", label: "ch_crew" },
+    });
+    expect(permissions.channel_reply).toEqual({
+      action: "post",
+      kind: "routine",
+      capability: "channel_reply.post",
+      target: { type: "channel", id: "ch_crew", label: "ch_crew" },
+      sideEffect: { kind: "channel_message" },
+    });
+    expect(permissions.channel_pass).toEqual({
+      action: "decide",
+      kind: "routine",
+      capability: "channel_pass.decide",
+      target: { type: "channel", id: "ch_crew", label: "ch_crew" },
+    });
+    for (const tool of options.extraCustomTools) {
+      expect(resolveToolInvocationPermission(tool, {})).toMatchObject({
+        ok: true,
+        source: "descriptor",
+      });
+    }
     expect(callTextMock).not.toHaveBeenCalled();
   });
 

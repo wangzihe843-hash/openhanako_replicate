@@ -185,8 +185,6 @@ function normalizeSessionFile(file) {
     missingAt: nullableNumber(source.missingAt),
     createdAt: nullableNumber(source.createdAt),
     isDirectory: source.isDirectory === true,
-    filePath: nullableString(source.filePath),
-    realPath: nullableString(source.realPath),
   };
 }
 
@@ -314,8 +312,8 @@ export function createCurrentStatusRegistry(deps: Record<string, any> = {}) {
     provider(
       "time",
       "Current real time, configured timezone, local datetime, and UTC offset.",
-      async ({ now: suppliedNow }: Record<string, any> = {}) => {
-        const now = suppliedNow instanceof Date ? suppliedNow : getNow();
+      async () => {
+        const now = getNow();
         const timeZone = getTimezone();
         return {
           time: {
@@ -427,7 +425,7 @@ export function createCurrentStatusTool(deps: Record<string, any> = {}) {
   return {
     name: "current_status",
     label: "Current Status",
-    description: "Lightweight current-environment status (time, agent identity, UI context, Bridge context, etc.). The system prompt's Session start time is a frozen snapshot and may be stale; call with key=\"time\" for precise current time. Use action=list to discover available keys.",
+    description: "Lightweight current-environment status (time, agent identity, UI context, Bridge context, etc.). The system prompt's \"Session started at\" line is a frozen snapshot of when the session began; call with key=\"time\" for the precise current time. Use action=list to discover available keys.",
     parameters: Type.Object({
       action: StringEnum(["list", "get"], {
         description: "list returns available status keys; get returns one status key value.",
@@ -463,11 +461,7 @@ export function createCurrentStatusTool(deps: Record<string, any> = {}) {
       }
 
       const sessionPath = getToolSessionPath(ctx);
-      const observedNow = key === "time" ? resolveNow(deps) : null;
-      const payload = await item.get({ sessionPath, ctx, signal, now: observedNow });
-      if (key === "time" && sessionPath && observedNow && typeof deps.onTimeObserved === "function") {
-        deps.onTimeObserved(sessionPath, observedNow.getTime());
-      }
+      const payload = await item.get({ sessionPath, ctx, signal });
       if (isStatusOutput(payload)) {
         return {
           content: [

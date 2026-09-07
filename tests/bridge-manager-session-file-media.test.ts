@@ -2,6 +2,9 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+// 期望值必须与生产代码同一条规范化路径（native realpath 会展开 Windows 8.3
+// 短名，JS 版 fs.realpathSync 不会；CI runner 的 TEMP 恰好是短名形式）。
+import { canonicalFilesystemPathSync } from "../shared/link-aware-fs.ts";
 
 vi.mock("../lib/bridge/telegram-adapter.js", () => ({ createTelegramAdapter: vi.fn() }));
 vi.mock("../lib/bridge/feishu-adapter.js", () => ({ createFeishuAdapter: vi.fn() }));
@@ -93,7 +96,7 @@ describe("BridgeManager session_file media delivery", () => {
 
     await bm._sendMediaItem(adapter, "chat-1", { type: "session_file", fileId: "sf_image" }, { platform: "qq" });
 
-    expect(adapter.sendMediaFile).toHaveBeenCalledWith("chat-1", fs.realpathSync(filePath), {
+    expect(adapter.sendMediaFile).toHaveBeenCalledWith("chat-1", canonicalFilesystemPathSync(filePath), {
       kind: "image",
       mime: "image/png",
       filename: "image.png",

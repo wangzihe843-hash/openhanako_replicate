@@ -11,6 +11,14 @@ vi.mock('../../utils/screenshot', () => ({
   takeScreenshot: vi.fn(),
 }));
 
+const retryMock = vi.fn(async (..._args: unknown[]) => true);
+
+vi.mock('../../stores/message-turn-actions', () => ({
+  retrySessionTurn: (...args: unknown[]) => retryMock(...args),
+  forkSessionTurn: vi.fn(async () => null),
+  activateForkedSession: vi.fn(async () => undefined),
+}));
+
 const sessionPath = '/session/turn-time.jsonl';
 
 function user(id: string, timestamp: number, text: string): ChatListItem {
@@ -18,6 +26,7 @@ function user(id: string, timestamp: number, text: string): ChatListItem {
     type: 'message',
     data: {
       id,
+      sourceEntryId: `entry-${id}`,
       role: 'user',
       timestamp,
       text,
@@ -26,14 +35,21 @@ function user(id: string, timestamp: number, text: string): ChatListItem {
   };
 }
 
-function assistant(id: string, timestamp: number, blocks: ContentBlock[]): ChatListItem {
+function assistant(
+  id: string,
+  timestamp: number,
+  blocks: ContentBlock[],
+  turnInputEntryId?: string,
+): ChatListItem {
   return {
     type: 'message',
     data: {
       id,
+      sourceEntryId: `entry-${id}`,
       role: 'assistant',
       timestamp,
       blocks,
+      ...(turnInputEntryId ? { turnInputEntryId } : {}),
     },
   };
 }
@@ -65,6 +81,7 @@ describe('ChatTranscript turn timestamps', () => {
     window.t = ((key: string) => ({
       'thinking.done': '思考完成',
       'common.regenerate': '重新生成',
+      'common.forkSession': '分支为新会话',
       'common.copyText': '复制文本',
       'common.screenshot': '截图',
       'common.selectAllMessages': '全选消息',
@@ -88,6 +105,7 @@ describe('ChatTranscript turn timestamps', () => {
 
   afterEach(() => {
     cleanup();
+    vi.clearAllMocks();
   });
 
   it('shows assistant footer only on the final assistant message of each completed turn', () => {
@@ -154,6 +172,92 @@ describe('ChatTranscript turn timestamps', () => {
     fireEvent.click(within(footer).getByTitle('选择消息'));
 
     expect(useStore.getState().selectedIdsBySession[sessionPath]).toEqual(['a1-tool', 'a1-final']);
+  });
+
+  it('targets each historical assistant completion by its own persisted entry id', () => {
+    const items: ChatListItem[] = [
+      user('u1', new Date(2026, 4, 7, 8, 0).getTime(), '第一轮'),
+      assistant('a1-final', new Date(2026, 4, 7, 8, 2).getTime(), [textBlock('第一轮完成')]),
+      user('u2', new Date(2026, 4, 7, 9, 0).getTime(), '第二轮'),
+      assistant('a2-final', new Date(2026, 4, 7, 9, 2).getTime(), [textBlock('第二轮完成')]),
+    ];
+
+    render(<ChatTranscript items={items} sessionPath={sessionPath} />);
+
+    const footers = screen.getAllByTestId('assistant-completion-actions');
+    fireEvent.click(within(footers[0]).getByTitle('重新生成'));
+
+    expect(retryMock).toHaveBeenCalledWith(
+      sessionPath,
+      { role: 'assistant', entryId: 'entry-a1-final' },
+      { message: expect.objectContaining({ id: 'u1', sourceEntryId: 'entry-u1', text: '第一轮' }) },
+    );
+  });
+
+  it('keeps hidden-input Agent turns separate and never reuses the preceding visible user envelope', () => {
+    const items: ChatListItem[] = [
+      user('u1', new Date(2026, 4, 7, 8, 0).getTime(), '第一轮'),
+      assistant(
+        'a1-final',
+        new Date(2026, 4, 7, 8, 2).getTime(),
+        [textBlock('第一轮完成')],
+        'entry-u1',
+      ),
+      assistant(
+        'a2-background',
+        new Date(2026, 4, 7, 8, 3).getTime(),
+        [textBlock('处理后台结果一')],
+        'entry-hidden-input-1',
+      ),
+      assistant(
+        'a3-background',
+        new Date(2026, 4, 7, 8, 4).getTime(),
+        [textBlock('处理后台结果二')],
+        'entry-hidden-input-2',
+      ),
+    ];
+
+    render(<ChatTranscript items={items} sessionPath={sessionPath} />);
+
+    const footers = screen.getAllByTestId('assistant-completion-actions');
+    expect(footers).toHaveLength(3);
+    fireEvent.click(within(footers[1]).getByTitle('重新生成'));
+
+    expect(retryMock).toHaveBeenCalledWith(
+      sessionPath,
+      { role: 'assistant', entryId: 'entry-a2-background' },
+    );
+  });
+
+  it('falls back to the preceding user entry for a just-finished assistant without a persisted id', () => {
+    const freshAssistant: ChatListItem = {
+      type: 'message',
+      data: {
+        id: 'stream-a1',
+        role: 'assistant',
+        timestamp: new Date(2026, 4, 7, 8, 2).getTime(),
+        blocks: [textBlock('刚刚完成')],
+      },
+    };
+
+    render(
+      <ChatTranscript
+        items={[
+          user('u1', new Date(2026, 4, 7, 8, 0).getTime(), '第一轮'),
+          freshAssistant,
+        ]}
+        sessionPath={sessionPath}
+      />,
+    );
+
+    const assistantFooter = screen.getByTestId('assistant-completion-actions');
+    fireEvent.click(within(assistantFooter).getByTitle('重新生成'));
+
+    expect(retryMock).toHaveBeenCalledWith(
+      sessionPath,
+      { role: 'assistant_turn', turnInputEntryId: 'entry-u1' },
+      { message: expect.objectContaining({ id: 'u1', sourceEntryId: 'entry-u1', text: '第一轮' }) },
+    );
   });
 
   it('renders interlude timeline items without an assistant message wrapper', () => {

@@ -12,7 +12,7 @@
 
 import fs from "fs";
 import YAML from "js-yaml";
-import { atomicWriteSync } from "../../shared/safe-fs.ts";
+import { writeSecretFileSync } from "../../shared/secret-fs.ts";
 
 // 按路径缓存，防止跨 agent 污染
 const _cache = new Map(); // configPath → { cached, cachedRaw }
@@ -133,6 +133,7 @@ export function saveConfig(configPath, partial) {
   });
 
   // atomic write：先写临时文件再 rename，防止写到一半崩溃损坏配置
-  atomicWriteSync(configPath, yamlStr);
+  // agent 配置里带 provider 与 channel 凭证，落盘只对当前用户开放
+  writeSecretFileSync(configPath, yamlStr);
   clearConfigCache();
 }

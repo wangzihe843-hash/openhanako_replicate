@@ -11,6 +11,7 @@ import { findOpenToolIndex, toolCallFromStartEvent, toolCallIdFromEvent } from '
 import { MarkdownContent } from './chat/MarkdownContent';
 import {
   addChannelMember,
+  exportCurrentConversation,
   loadChannels,
   removeChannelMember,
   saveConversationAgentPhoneSettings,
@@ -22,7 +23,7 @@ import { useContinuousBottomScroll } from '../hooks/use-continuous-bottom-scroll
 import { resolveChannelMember, buildAgentMap, formatChannelTime, MemberAvatar } from './channels/ChannelList';
 import type { MemberInfo } from './channels/ChannelList';
 import { ChatTranscript } from './chat/ChatTranscript';
-import { ContextMenu, type ContextMenuItem } from '../ui';
+import { Button, ContextMenu, type ContextMenuItem } from '../ui';
 import type { ChatListItem, ChatMessage, ContentBlock } from '../stores/chat-types';
 import type { AgentPhoneActivity, Channel, ChannelTickerStatus, Model, SocialFallbackMode } from '../types';
 import styles from './channels/Channels.module.css';
@@ -724,6 +725,43 @@ export function ChannelAgentActivityPanel() {
             );
           })}
         </div>
+      </div>
+    </div>
+  );
+}
+
+export function ChannelExportPanel() {
+  const { t } = useI18n();
+  const addToast = useStore(s => s.addToast);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const filename = await exportCurrentConversation();
+      addToast(t('channel.exportSuccess', { filename }), 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      addToast(t('channel.exportFailed', { message }), 'error');
+    } finally {
+      setExporting(false);
+    }
+  }, [addToast, exporting, t]);
+
+  return (
+    <div className="universal-card">
+      <div className="channel-info-section">
+        <div className="channel-info-label">{t('channel.exportTitle')}</div>
+        <div className={styles.channelExportDescription}>{t('channel.exportDescription')}</div>
+        <Button
+          className={styles.channelExportButton}
+          size="md"
+          loading={exporting}
+          onClick={() => { void handleExport(); }}
+        >
+          {exporting ? t('channel.exporting') : t('channel.exportAction')}
+        </Button>
       </div>
     </div>
   );

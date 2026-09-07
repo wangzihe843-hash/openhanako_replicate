@@ -2,7 +2,10 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createStageFilesTool } from "../lib/tools/output-file-tool.ts";
+import {
+  createStageFilesTool,
+  STAGE_FILES_EXECUTION_BOUNDARY,
+} from "../lib/tools/output-file-tool.ts";
 import { loadLocale } from "../lib/i18n.ts";
 
 describe("stage_files tool", () => {
@@ -77,6 +80,36 @@ describe("stage_files tool", () => {
       kind: "document",
     })]);
     expect(result.details.media.mediaUrls).toEqual([filePath]);
+  });
+
+  it("revalidates the host-bound canonical path immediately before registration", async () => {
+    loadLocale("en");
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-stage-boundary-"));
+    const stagedPath = path.join(tmpDir, "out.txt");
+    fs.writeFileSync(stagedPath, "ok");
+    const filePath = fs.realpathSync(stagedPath);
+    const registerSessionFile = vi.fn();
+    const checkStagePath = vi.fn(() => ({
+      allowed: false,
+      canonicalPath: path.join(tmpDir, "replaced.txt"),
+      reason: "path changed",
+    }));
+    const params: any = { filepaths: [filePath] };
+    Object.defineProperty(params, STAGE_FILES_EXECUTION_BOUNDARY, {
+      value: Object.freeze({
+        canonicalPaths: Object.freeze([filePath]),
+        checkStagePath,
+      }),
+    });
+    const tool = createStageFilesTool({ registerSessionFile });
+
+    const result = await tool.execute("call-boundary", params, null, null, {
+      sessionManager: { getSessionFile: () => "/sessions/s1.jsonl" },
+    });
+
+    expect(checkStagePath).toHaveBeenCalledWith(filePath);
+    expect(registerSessionFile).not.toHaveBeenCalled();
+    expect(result.content[0].text).toContain("path changed after permission validation");
   });
 
   it("delivers existing SessionFiles by fileId through the stage_files handoff", async () => {

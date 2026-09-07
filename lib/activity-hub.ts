@@ -49,6 +49,34 @@ function sameSession(entry: any, sessionRef: any) {
   return !!sessionRef.sessionPath && entry.sessionPath === sessionRef.sessionPath;
 }
 
+function sameSessionWithLegacyLocator(entry: any, sessionRef: any) {
+  if (sessionRef.sessionId && entry.sessionId) return entry.sessionId === sessionRef.sessionId;
+  return !!sessionRef.sessionPath && entry.sessionPath === sessionRef.sessionPath;
+}
+
+function normalizeIdentityMap(value: any) {
+  const result: Record<string, string> = {};
+  for (const [source, target] of Object.entries(value || {})) {
+    if (
+      typeof source === "string"
+      && source
+      && typeof target === "string"
+      && target
+      && source !== target
+    ) {
+      result[source] = target;
+    }
+  }
+  return result;
+}
+
+function forkActivityError(message: string, code: string, status = 500) {
+  const error: any = new Error(message);
+  error.code = code;
+  error.status = status;
+  return error;
+}
+
 function normalizeEntry(entry: any, existing: any, resolveSessionIdForPath = null) {
   const sessionPath = pickStr(entry.sessionPath, existing?.sessionPath ?? null);
   const sessionId = normalizeSessionId(entry.sessionId)
@@ -77,6 +105,7 @@ function normalizeEntry(entry: any, existing: any, resolveSessionIdForPath = nul
     tokens: pickNum(entry.tokens, existing?.tokens ?? null),
     // workflow_step 专属：步骤类型（parallel / pipeline / log）。
     stepKind: pickStr(entry.stepKind, existing?.stepKind ?? null),
+    forkedFromActivityId: pickStr(entry.forkedFromActivityId, existing?.forkedFromActivityId ?? null),
     // startedAt 取首次（existing 优先），finishedAt 取最新
     startedAt: pickNum(existing?.startedAt, pickNum(entry.startedAt, null)),
     finishedAt: pickNum(entry.finishedAt, existing?.finishedAt ?? null),
@@ -167,6 +196,140 @@ export class ActivityHub {
     return out;
   }
 
+  /**
+   * Clone terminal persisted projections whose task identities were cloned by a
+   * Session Fork. Activity state is derived, but its child-session links must
+   * never keep pointing at the source Session.
+   */
+  forkSessionEntries(input: any = {}) {
+    const sourceRef = normalizeSessionRef({
+      sessionId: input.sourceSessionId,
+      sessionPath: input.sourceSessionPath,
+    }, (path) => this._resolveSessionIdForPath(path));
+    const targetRef = normalizeSessionRef({
+      sessionId: input.targetSessionId,
+      sessionPath: input.targetSessionPath,
+    }, (path) => this._resolveSessionIdForPath(path));
+    if ((!sourceRef.sessionId && !sourceRef.sessionPath) || !targetRef.sessionId || !targetRef.sessionPath) {
+      throw forkActivityError("ActivityHub: source and target Session identities are required", "activity_fork_identity_invalid", 400);
+    }
+    if (
+      (sourceRef.sessionId && sourceRef.sessionId === targetRef.sessionId)
+      || (!sourceRef.sessionId && sourceRef.sessionPath === targetRef.sessionPath)
+    ) {
+      throw forkActivityError("ActivityHub: Session Fork target must be independent", "activity_fork_identity_invalid", 400);
+    }
+
+    const activityIdMap = normalizeIdentityMap(input.activityIdMap);
+    const threadIdMap = normalizeIdentityMap(input.threadIdMap);
+    const childSessionIdMap = normalizeIdentityMap(input.childSessionIdMap);
+    const childSessionPathMap = normalizeIdentityMap(input.childSessionPathMap);
+    const targetIdFor = (entry: any) => {
+      if (activityIdMap[entry.id]) return activityIdMap[entry.id];
+      const sourceParentId = entry.parentTaskId;
+      const targetParentId = activityIdMap[sourceParentId];
+      if (
+        targetParentId
+        && typeof entry.id === "string"
+        && entry.id.startsWith(`${sourceParentId}::`)
+      ) {
+        return `${targetParentId}${entry.id.slice(sourceParentId.length)}`;
+      }
+      return null;
+    };
+
+    const candidates = [...this._entries.values()]
+      .filter((entry) => sameSessionWithLegacyLocator(entry, sourceRef))
+      .map((entry) => ({ entry, targetId: targetIdFor(entry) }))
+      .filter((candidate) => !!candidate.targetId);
+    const active = candidates.find(({ entry }) => entry.status === "running");
+    if (active) {
+      throw forkActivityError(
+        `ActivityHub: activity is still running: ${active.entry.id}`,
+        "activity_fork_busy",
+        409,
+      );
+    }
+
+    const staged = [];
+    const stagedIds = new Set<string>();
+    for (const { entry, targetId } of candidates) {
+      if (targetId === entry.id || this._entries.has(targetId) || stagedIds.has(targetId)) {
+        throw forkActivityError(`ActivityHub: forked activity id is not unique: ${targetId}`, "activity_fork_identity_conflict");
+      }
+      const sourceChildSessionId = entry.childSessionId;
+      const sourceChildSessionPath = entry.childSessionPath;
+      const mappedChildSessionId = sourceChildSessionId ? childSessionIdMap[sourceChildSessionId] : null;
+      const mappedChildSessionPath = sourceChildSessionPath ? childSessionPathMap[sourceChildSessionPath] : null;
+      if (
+        entry.kind === "subagent"
+        && ((sourceChildSessionId && !mappedChildSessionId) || (sourceChildSessionPath && !mappedChildSessionPath))
+      ) {
+        throw forkActivityError(
+          `ActivityHub: cloned subagent child SessionRef is unavailable for ${entry.id}`,
+          "activity_fork_child_identity_unavailable",
+        );
+      }
+      const targetParentTaskId = activityIdMap[entry.parentTaskId] || null;
+      const targetThreadId = entry.threadId ? (threadIdMap[entry.threadId] || null) : null;
+      const next = normalizeEntry({
+        ...entry,
+        id: targetId,
+        sessionId: targetRef.sessionId,
+        sessionPath: targetRef.sessionPath,
+        parentTaskId: targetParentTaskId,
+        threadId: targetThreadId,
+        childSessionId: mappedChildSessionId,
+        childSessionPath: mappedChildSessionPath,
+        forkedFromActivityId: entry.id,
+      }, null, (path) => this._resolveSessionIdForPath(path));
+      staged.push(next);
+      stagedIds.add(targetId);
+    }
+
+    const persistable = staged.filter((entry) => PERSISTABLE_KINDS.has(entry.kind));
+    if (persistable.length > 0 && this._store) {
+      if (typeof this._store.upsertMany === "function") this._store.upsertMany(persistable);
+      else for (const entry of persistable) this._store.upsert(entry);
+    }
+    for (const entry of staged) {
+      this._entries.set(entry.id, entry);
+      this._emit(entry);
+    }
+    return {
+      entries: staged.length,
+      activityIds: staged.map((entry) => entry.id),
+      activityIdMap: Object.fromEntries(staged.map((entry) => [entry.forkedFromActivityId, entry.id])),
+    };
+  }
+
+  /** Remove only activity entries created for one failed Session Fork. */
+  discardForkedSessionEntries(input: any = {}) {
+    const targetRef = normalizeSessionRef({
+      sessionId: input.targetSessionId,
+      sessionPath: input.targetSessionPath,
+    }, (path) => this._resolveSessionIdForPath(path));
+    if (!targetRef.sessionId || !targetRef.sessionPath) {
+      throw forkActivityError("ActivityHub: cleanup target SessionRef is required", "activity_fork_cleanup_identity_invalid", 400);
+    }
+    const requested = new Set((Array.isArray(input.activityIds) ? input.activityIds : [])
+      .filter((id) => typeof id === "string" && id));
+    const candidates = [...this._entries.values()].filter((entry) => (
+      requested.has(entry.id)
+      && sameSessionWithLegacyLocator(entry, targetRef)
+      && !!entry.forkedFromActivityId
+    ));
+    const persistableIds = candidates
+      .filter((entry) => PERSISTABLE_KINDS.has(entry.kind))
+      .map((entry) => entry.id);
+    if (persistableIds.length > 0 && this._store) {
+      if (typeof this._store.removeMany === "function") this._store.removeMany(persistableIds);
+      else for (const id of persistableIds) this._store.remove?.(id);
+    }
+    for (const entry of candidates) this._entries.delete(entry.id);
+    return { discarded: candidates.length };
+  }
+
   /** session 关闭/退场时回收其活动（内存 + 持久化背书一并清） */
   clearBySession(sessionRefInput) {
     const sessionRef = normalizeSessionRef(sessionRefInput, (path) => this._resolveSessionIdForPath(path));
@@ -178,6 +341,9 @@ export class ActivityHub {
   }
 
   remove(id) {
+    const entry = this._entries.get(id) || null;
+    if (!entry) return false;
+    if (this._store && PERSISTABLE_KINDS.has(entry.kind)) this._store.remove?.(id);
     return this._entries.delete(id);
   }
 

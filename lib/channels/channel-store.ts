@@ -31,10 +31,19 @@ function withFileLock(filePath, fn) {
   const next = prev.then(fn, fn); // 无论前一个成功失败都继续
   _fileLocks.set(filePath, next);
   // 清理已完成的锁（防止 Map 无限增长）
-  next.finally(() => {
+  const release = () => {
     if (_fileLocks.get(filePath) === next) _fileLocks.delete(filePath);
-  });
+  };
+  next.then(release, release);
   return next;
+}
+
+function withFileLocks<T>(filePaths: string[], fn: () => Promise<T>): Promise<T> {
+  // Every mirrored writer acquires the same files in the same order.
+  return [...new Set(filePaths)].sort().reduceRight<() => Promise<T>>(
+    (next, filePath) => () => withFileLock(filePath, next),
+    fn,
+  )();
 }
 
 // ═══════════════════════════════════════
@@ -235,10 +244,46 @@ export async function createChannel(
  */
 export async function appendMessage(filePath, sender, body) {
   const ts = formatTimestamp(new Date());
-  const block = `\n### ${sender} | ${ts}\n\n${body.trim()}\n\n---\n`;
+  const block = formatMessageBlock(sender, body, ts);
   return withFileLock(filePath, async () => {
     await fsp.appendFile(filePath, block, "utf-8");
     return { timestamp: ts };
+  });
+}
+
+function formatMessageBlock(sender, body, timestamp) {
+  return `\n### ${sender} | ${timestamp}\n\n${body.trim()}\n\n---\n`;
+}
+
+/** Append one DM to both transcripts without interleaving other DM writers. */
+export async function appendDmMessage({
+  agentsDir, fromId, toId, body, createMissing = true, canWrite = () => true,
+}: {
+  agentsDir: string;
+  fromId: string;
+  toId: string;
+  body: string;
+  createMissing?: boolean;
+  canWrite?: () => boolean;
+}) {
+  const senderFile = path.join(agentsDir, fromId, "dm", `${toId}.md`);
+  const recipientFile = path.join(agentsDir, toId, "dm", `${fromId}.md`);
+  return withFileLocks([senderFile, recipientFile], async () => {
+    // A queued reply must recheck cancellation after it obtains the write locks.
+    if (!canWrite() || (!createMissing && !fs.existsSync(senderFile))) return null;
+    const files = [];
+    for (const [filePath, peerId] of [[senderFile, toId], [recipientFile, fromId]]) {
+      if (!fs.existsSync(filePath)) {
+        if (!createMissing) continue;
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, `---\npeer: ${peerId}\n---\n`, "utf-8");
+      }
+      files.push(filePath);
+    }
+    const timestamp = formatTimestamp(new Date());
+    const block = formatMessageBlock(fromId, body, timestamp);
+    for (const filePath of files) await fsp.appendFile(filePath, block, "utf-8");
+    return { timestamp };
   });
 }
 

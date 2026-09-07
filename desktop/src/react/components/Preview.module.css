@@ -351,7 +351,12 @@
     overflow: hidden;
 }
 .previewPanelBody :global(.preview-markdown) th,
-.previewPanelBody :global(.preview-markdown) td { border: none; padding: 0.35em 0.8em; }
+.previewPanelBody :global(.preview-markdown) td {
+    border: none;
+    padding: 0.35em 0.8em;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
 .previewPanelBody :global(.preview-markdown) thead th {
     background: color-mix(in srgb, var(--text) 9%, transparent);
     font-weight: 600;
@@ -527,6 +532,7 @@
 
 :global(.preview-editor.mode-markdown) {
     --preview-markdown-editor-bottom-space: var(--preview-markdown-bottom-space, calc(var(--space-40) + var(--space-40) + var(--space-24) + var(--space-24)));
+    --editor-markdown-block-rail-space: 36px;
 }
 
 :global(.preview-editor .cm-editor) {
@@ -539,11 +545,212 @@
     outline: none;
 }
 
+:global(.preview-editor.mode-markdown .cm-markdown-block-rail) {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-rail-item) {
+    position: absolute;
+    width: 28px;
+    pointer-events: auto;
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-handle) {
+    position: absolute;
+    left: -2px;
+    width: 20px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: grab;
+    opacity: 0.55;
+    touch-action: none;
+    transition: opacity var(--duration-instant), background var(--duration-instant), color var(--duration-instant);
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-drag-preview) {
+    position: absolute;
+    z-index: 12;
+    overflow: visible;
+    pointer-events: none;
+    user-select: none;
+    opacity: 0.55;
+    will-change: transform;
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-drag-preview .cm-line) {
+    background: transparent;
+    box-shadow: none;
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-drag-count) {
+    position: absolute;
+    right: 0;
+    top: 0;
+    min-width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    padding: 0 var(--space-4);
+    border: 1px solid var(--overlay-medium);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: var(--fs-hint);
+    line-height: 1;
+    transform: translate(50%, -50%);
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-selection-layer) {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-selection-surface) {
+    position: absolute;
+    box-sizing: border-box;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--text) 7%, transparent);
+    pointer-events: none;
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-marquee) {
+    position: absolute;
+    box-sizing: border-box;
+    border: 1px solid color-mix(in srgb, var(--text) 20%, transparent);
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--text) 3%, transparent);
+    pointer-events: none;
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-selection-surface.is-clipped-top) {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-selection-surface.is-clipped-bottom) {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+:global(.preview-editor.mode-markdown .cm-editor.cm-markdown-block-marquee-zone .cm-content),
+:global(.preview-editor.mode-markdown .cm-editor.cm-markdown-block-marquee-zone .cm-content *) {
+    cursor: default !important;
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-handle:hover),
+:global(.preview-editor.mode-markdown .cm-markdown-block-handle:focus-visible) {
+    background: var(--overlay-subtle);
+    color: var(--text);
+    opacity: 1;
+    outline: none;
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-handle.is-dragging) {
+    cursor: grabbing;
+    background: var(--overlay-medium);
+    color: var(--text);
+    opacity: 1;
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-handle svg) {
+    width: 14px;
+    height: 14px;
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-drop-indicator) {
+    position: relative;
+    display: block;
+    z-index: 11;
+    width: 100%;
+    max-width: var(--editor-markdown-content-width);
+    height: 0;
+    margin: 0 auto;
+    box-sizing: border-box;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition:
+        opacity var(--duration-instant) var(--ease-out),
+        visibility 0s linear var(--duration-instant);
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-drop-indicator)::after {
+    content: '';
+    position: absolute;
+    left: var(--space-8);
+    right: var(--space-8);
+    top: -1px;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--accent);
+}
+
+:global(.preview-editor.mode-markdown .cm-markdown-block-drop-indicator.is-visible) {
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    :global(.preview-editor.mode-markdown .cm-markdown-block-handle) {
+        opacity: 0;
+    }
+
+    :global(.preview-editor.mode-markdown .cm-markdown-block-rail-item:hover .cm-markdown-block-handle),
+    :global(.preview-editor.mode-markdown .cm-markdown-block-handle:focus-visible),
+    :global(.preview-editor.mode-markdown .cm-markdown-block-handle.is-dragging) {
+        opacity: 1;
+    }
+}
+
+/* 触控端没有 hover，不让整条 block rail 退化成常驻按钮列。CodeMirror
+   selection 的 focus 端由插件标记为 is-caret-block；编辑器失焦后即使选区仍
+   保留，也不显示旧位置的 Grabber。隐藏项同时退出命中与可访问树，避免透明
+   按钮拦截正文旁的触控。 */
+@media (hover: none) and (pointer: coarse) {
+    :global(.preview-editor.mode-markdown .cm-markdown-block-rail-item) {
+        pointer-events: none;
+    }
+
+    :global(.preview-editor.mode-markdown .cm-markdown-block-handle) {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+    }
+
+    :global(.preview-editor.mode-markdown .cm-editor.cm-focused .cm-markdown-block-rail-item.is-caret-block) {
+        pointer-events: auto;
+    }
+
+    :global(.preview-editor.mode-markdown .cm-editor.cm-focused .cm-markdown-block-rail-item.is-caret-block .cm-markdown-block-handle) {
+        opacity: 0.55;
+        visibility: visible;
+        pointer-events: auto;
+    }
+}
+
 :global(.preview-editor.mode-markdown .cm-editor.cm-markdown-cover-rail-active::before) {
     content: "";
     position: absolute;
-    left: var(--editor-markdown-content-padding-x);
-    right: var(--editor-markdown-content-padding-x);
+    left: var(--editor-markdown-content-inset-x);
+    right: var(--editor-markdown-content-inset-x);
     top: var(--space-8);
     height: 2px;
     z-index: 12;
@@ -656,8 +863,40 @@
     background: var(--overlay-subtle);
 }
 
+:global(.cm-blockquote-line-first) {
+    border-radius: 2px 2px 0 0;
+}
+
+:global(.cm-blockquote-line-last) {
+    border-radius: 0 0 2px 2px;
+}
+
+:global(.cm-blockquote-line-first.cm-blockquote-line-last) {
+    border-radius: 2px;
+}
+
 :global(.cm-codeblock-line) {
     background: var(--overlay-light);
+}
+
+:global(.cm-codeblock-line-first) {
+    border-radius: 2px 2px 0 0;
+    min-height: 24px;
+    line-height: 24px;
+    cursor: default;
+}
+
+:global(.cm-codeblock-line-last) {
+    border-radius: 0 0 2px 2px;
+    min-height: var(--space-4);
+    line-height: var(--space-4);
+    cursor: default;
+}
+
+:global(.cm-codeblock-line-first.cm-codeblock-line-last) {
+    border-radius: 2px;
+    min-height: 24px;
+    line-height: 24px;
 }
 
 :global(.cm-codeblock-toolbar) {
@@ -760,8 +999,8 @@
 }
 
 :global(.cm-table-widget) {
-    max-width: 100%;
-    margin: var(--space-4) 0;
+    max-width: var(--editor-markdown-content-width);
+    margin: var(--space-4) auto;
 }
 
 :global(.cm-table-widget table) {

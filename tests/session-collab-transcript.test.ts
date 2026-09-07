@@ -83,4 +83,15 @@ describe("buildCompactTranscript", () => {
     expect(page.body).not.toContain("hana-message-origin");
     expect(page.body).toContain("你好");
   });
+
+  it("does not expose reminder blocks through cross-session transcripts", () => {
+    const page = buildCompactTranscript(turn(
+      "[hana_reminder at 2026-07-05 14:05]\n- Plugin demo loaded\n[/hana_reminder]\n\nhello",
+      "world",
+    ), { meta: META });
+
+    expect(page.body).toContain("hello");
+    expect(page.body).not.toContain("hana_reminder");
+    expect(page.body).not.toContain("Plugin demo");
+  });
 });

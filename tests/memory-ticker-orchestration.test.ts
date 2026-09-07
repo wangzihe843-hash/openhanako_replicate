@@ -54,6 +54,7 @@ vi.mock("../lib/debug-log.js", () => ({
 // ── Import under test ──
 
 import { createMemoryTicker } from "../lib/memory/memory-ticker.ts";
+import { SessionSummaryManager } from "../lib/memory/session-summary.ts";
 import {
   compileToday,
   compileDaily,
@@ -355,6 +356,332 @@ describe("_doDaily step orchestration", () => {
 
     const state = readDailyState(tmpDir);
     expect(state.completedSteps.rollDailyWindow).toBeUndefined();
+  });
+});
+
+describe("session-derived memory invalidation", () => {
+  let tmpDir;
+  let ticker;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-memory-invalidate-"));
+  });
+
+  afterEach(async () => {
+    await ticker?.stop();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("invalidates the summary, deep facts, and turn counter for exactly one stable session id", () => {
+    const summaryManager = {
+      rollingSummary: vi.fn(),
+      getSummary: vi.fn().mockReturnValue(null),
+      invalidateSession: vi.fn().mockReturnValue(true),
+      saveSummary: vi.fn(),
+    };
+    const factStore = {
+      deleteBySession: vi.fn().mockReturnValue(3),
+    };
+    ticker = makeTicker(tmpDir, summaryManager, {
+      factStore,
+      getSessionIdForPath: vi.fn(() => "sess-retried"),
+      getMemoryMasterEnabled: vi.fn(() => false),
+    });
+    ticker.notifyTurn("/tmp/retried.jsonl");
+
+    expect(ticker.invalidateSessionDerivedState({
+      sessionId: "sess-retried",
+      sessionPath: "/tmp/retried.jsonl",
+    })).toEqual({
+      sessionId: "sess-retried",
+      summaryInvalidated: true,
+      factsDeleted: 3,
+      aggregateHistoryPreserved: true,
+    });
+    expect(summaryManager.invalidateSession).toHaveBeenCalledWith("sess-retried");
+    expect(factStore.deleteBySession).toHaveBeenCalledWith("sess-retried");
+  });
+
+  it("restores the summary when the following atomic fact deletion fails", () => {
+    const originalSummary = {
+      session_id: "sess-retried",
+      summary: "old active summary",
+      messageCount: 4,
+    };
+    let currentSummary: any = structuredClone(originalSummary);
+    const summaryManager = {
+      rollingSummary: vi.fn(),
+      getSummary: vi.fn(() => currentSummary),
+      invalidateSession: vi.fn(() => {
+        currentSummary = null;
+        return true;
+      }),
+      saveSummary: vi.fn((_sessionId, snapshot) => {
+        currentSummary = structuredClone(snapshot);
+      }),
+    };
+    const factStore = {
+      deleteBySession: vi.fn(() => { throw new Error("facts database locked"); }),
+    };
+    ticker = makeTicker(tmpDir, summaryManager, {
+      factStore,
+      getSessionIdForPath: vi.fn(() => "sess-retried"),
+    });
+
+    expect(() => ticker.invalidateSessionDerivedState({
+      sessionId: "sess-retried",
+      sessionPath: "/tmp/retried.jsonl",
+      retainedMessageCount: 2,
+    })).toThrow("facts database locked");
+
+    expect(currentSummary).toEqual(originalSummary);
+    expect(summaryManager.saveSummary).toHaveBeenCalledWith("sess-retried", originalSummary);
+  });
+
+  it("invalidates immediately while an aggregate compile is still in flight (never blocks Retry)", async () => {
+    const sessionPath = path.join(tmpDir, "sessions", "compile-race.jsonl");
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    writeSession(sessionPath);
+    const summaryManager = {
+      rollingSummary: vi.fn().mockResolvedValue("summary"),
+      getSummary: vi.fn().mockReturnValue(null),
+      invalidateSession: vi.fn().mockReturnValue(true),
+      saveSummary: vi.fn(),
+    };
+    const factStore = {
+      deleteBySession: vi.fn().mockReturnValue(2),
+    };
+    let releaseCompile: ((value: string) => void) | null = null;
+    (compileToday as any).mockImplementationOnce(() => new Promise((resolve) => {
+      releaseCompile = resolve;
+    }));
+    ticker = makeTicker(tmpDir, summaryManager, {
+      factStore,
+      getSessionIdForPath: vi.fn(() => "sess-race"),
+    });
+
+    const flush = ticker.flushSessionAndCompile(sessionPath);
+    await vi.waitFor(() => expect(compileToday).toHaveBeenCalled());
+
+    expect(ticker.invalidateSessionDerivedState({
+      sessionId: "sess-race",
+      sessionPath,
+    })).toEqual({
+      sessionId: "sess-race",
+      summaryInvalidated: true,
+      factsDeleted: 2,
+      aggregateHistoryPreserved: true,
+    });
+    expect(summaryManager.invalidateSession).toHaveBeenCalledWith("sess-race");
+    expect(factStore.deleteBySession).toHaveBeenCalledWith("sess-race");
+
+    releaseCompile?.("compiled");
+    await flush;
+  });
+
+  it("invalidates immediately while the daily job is running (never blocks Retry)", async () => {
+    const summaryManager = {
+      rollingSummary: vi.fn().mockResolvedValue("summary"),
+      getSummary: vi.fn().mockReturnValue(null),
+      invalidateSession: vi.fn().mockReturnValue(true),
+      saveSummary: vi.fn(),
+    };
+    const factStore = {
+      deleteBySession: vi.fn().mockReturnValue(0),
+    };
+    let releaseDaily: ((value: string) => void) | null = null;
+    (compileDaily as any).mockImplementationOnce(() => new Promise((resolve) => {
+      releaseDaily = resolve;
+    }));
+    ticker = makeTicker(tmpDir, summaryManager, {
+      factStore,
+      getSessionIdForPath: vi.fn(() => "sess-daily-race"),
+    });
+
+    const tickJob = ticker.tick();
+    await vi.waitFor(() => expect(compileDaily).toHaveBeenCalled());
+
+    expect(() => ticker.invalidateSessionDerivedState({
+      sessionId: "sess-daily-race",
+      sessionPath: path.join(tmpDir, "sessions", "daily-race.jsonl"),
+    })).not.toThrow();
+    expect(summaryManager.invalidateSession).toHaveBeenCalledWith("sess-daily-race");
+
+    releaseDaily?.("compiled");
+    await tickJob;
+  });
+
+  it("does not self-lock when Retry's own branch-head rewind is still marking the session busy", () => {
+    // Retry 第一步 setSessionBranchHead 会同步调用 notifyBranchChanged，
+    // 其内部 _doRollingSummary 在第一个 await 之前就把 sessionId 记为“摘要在途”。
+    // 紧随其后（不等待这个后台任务）的 invalidate 曾经会撞上自己触发的任务而报 busy。
+    const sessionPath = path.join(tmpDir, "sessions", "self-lock.jsonl");
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    writeSession(sessionPath);
+    const summaryManager = {
+      rollingSummary: vi.fn().mockResolvedValue({}),
+      getSummary: vi.fn().mockReturnValue(null),
+      invalidateSession: vi.fn().mockReturnValue(true),
+      saveSummary: vi.fn(),
+    };
+    const factStore = {
+      deleteBySession: vi.fn().mockReturnValue(1),
+    };
+    ticker = makeTicker(tmpDir, summaryManager, {
+      factStore,
+      getSessionIdForPath: vi.fn(() => "sess-selflock"),
+    });
+
+    const branchJob = ticker.notifyBranchChanged(sessionPath);
+
+    expect(() => ticker.invalidateSessionDerivedState({
+      sessionId: "sess-selflock",
+      sessionPath,
+    })).not.toThrow();
+    expect(summaryManager.invalidateSession).toHaveBeenCalledWith("sess-selflock");
+    expect(factStore.deleteBySession).toHaveBeenCalledWith("sess-selflock");
+
+    return branchJob;
+  });
+
+  it("has an in-flight stale summary write-back overwritten by the branch-replacement rerun", async () => {
+    // 时间线：
+    // 1) 一个按旧分支启动的摘要任务在途（LLM 调用被挡住）
+    // 2) 在途期间 Retry 改写分支头（bump epoch）并 invalidate 作废当前摘要/事实
+    // 3) 放行旧任务，它把“旧分支”的摘要写回（这是被接受的语义：在途任务只是把
+    //    重试前的历史沉淀进去，不追溯改写）
+    // 4) 既有的 epoch 收尾机制自动重跑一次，覆盖掉第 3 步写回的旧摘要
+    const sessionPath = path.join(tmpDir, "sessions", "rerun-race.jsonl");
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    writeSession(sessionPath);
+
+    let currentSummary: any = null;
+    let callCount = 0;
+    const releases: Array<() => void> = [];
+    const summaryManager = {
+      rollingSummary: vi.fn(() => {
+        callCount += 1;
+        const thisCall = callCount;
+        return new Promise((resolve) => {
+          releases[thisCall] = () => {
+            currentSummary = {
+              session_id: "sess-rerun",
+              summary: thisCall === 1 ? "stale-old-branch" : "fresh-new-branch",
+              messageCount: thisCall,
+            };
+            resolve({});
+          };
+        });
+      }),
+      getSummary: vi.fn(() => currentSummary),
+      invalidateSession: vi.fn(() => { currentSummary = null; return true; }),
+      saveSummary: vi.fn((_id, snapshot) => { currentSummary = snapshot; }),
+    };
+    const factStore = {
+      deleteBySession: vi.fn().mockReturnValue(0),
+    };
+    ticker = makeTicker(tmpDir, summaryManager, {
+      factStore,
+      getSessionIdForPath: vi.fn(() => "sess-rerun"),
+    });
+
+    // 1) 旧分支摘要任务在途
+    const firstFlush = ticker.flushSession(sessionPath);
+    await vi.waitFor(() => expect(summaryManager.rollingSummary).toHaveBeenCalledTimes(1));
+
+    // 2) Retry 改写分支头 + invalidate
+    const branchJob = ticker.notifyBranchChanged(sessionPath);
+    expect(() => ticker.invalidateSessionDerivedState({
+      sessionId: "sess-rerun",
+      sessionPath,
+    })).not.toThrow();
+    expect(currentSummary).toBeNull();
+
+    // 3) 放行旧任务，写回旧分支的摘要
+    releases[1]();
+    await firstFlush;
+    expect(currentSummary?.summary).toBe("stale-old-branch");
+
+    // 4) epoch 收尾机制应已自动重跑，最终摘要是新分支的产物
+    await vi.waitFor(() => expect(summaryManager.rollingSummary).toHaveBeenCalledTimes(2));
+    releases[2]();
+    await vi.waitFor(() => expect(currentSummary?.summary).toBe("fresh-new-branch"));
+
+    await branchJob;
+  });
+});
+
+describe("fork memory reset watermark", () => {
+  let tmpDir;
+  let ticker;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-memory-fork-reset-"));
+  });
+
+  afterEach(async () => {
+    await ticker?.stop();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("summarizes the child's post-reset transcript even when the source retained many messages", async () => {
+    const sessionPath = path.join(tmpDir, "sessions", "child.jsonl");
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    writeSession(sessionPath);
+    fs.writeFileSync(path.join(tmpDir, "reset.json"), JSON.stringify({
+      compiledResetAt: "2026-04-17T10:00:05.000Z",
+    }) + "\n");
+
+    const summaryManager = new SessionSummaryManager(path.join(tmpDir, "summaries"));
+    summaryManager.initializeForkBaseline("sess-child", {
+      sourceSessionId: "sess-source",
+      throughEntryId: "source-entry-100",
+      messageCount: 100,
+      forkedAt: "2026-04-17T10:01:00.000Z",
+    });
+    const rollingLLM = vi.fn().mockResolvedValue(
+      "### 重要事实\n- 子会话继续独立工作。\n\n### 事情经过\n- [2026-04-17 10:00] 助手作出了回复。",
+    );
+    (summaryManager as any)._callRollingLLM = rollingLLM;
+    ticker = makeTicker(tmpDir, summaryManager, {
+      getSessionIdForPath: vi.fn(() => "sess-child"),
+    });
+
+    await ticker.notifyForkCreated(sessionPath);
+
+    expect(rollingLLM).toHaveBeenCalledTimes(1);
+    expect(rollingLLM.mock.calls[0][0]).toContain("hello");
+    expect(rollingLLM.mock.calls[0][0]).not.toContain("hi");
+    expect(summaryManager.getSummary("sess-child")?.messageCount).toBe(1);
+  });
+
+  it("recovers an unmaterialized blank Fork baseline after restart inside the timestamp grace window", async () => {
+    const sessionPath = path.join(tmpDir, "sessions", "child-restart.jsonl");
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    writeSession(sessionPath);
+
+    const summaryManager = new SessionSummaryManager(path.join(tmpDir, "summaries"));
+    summaryManager.initializeForkBaseline("sess-child-restart", {
+      sourceSessionId: "sess-source",
+      throughEntryId: "source-entry-2",
+      messageCount: 2,
+      forkedAt: new Date(Date.now() + 4_000).toISOString(),
+    });
+    const rollingLLM = vi.fn().mockResolvedValue(
+      "### 重要事实\n- 分叉记忆已在重启后独立物化。\n\n### 事情经过\n- 助手完成了共同前缀的摘要。",
+    );
+    (summaryManager as any)._callRollingLLM = rollingLLM;
+    ticker = makeTicker(tmpDir, summaryManager, {
+      getSessionIdForPath: vi.fn(() => "sess-child-restart"),
+    });
+
+    await ticker.tick();
+
+    expect(rollingLLM).toHaveBeenCalledTimes(1);
+    expect(summaryManager.getSummary("sess-child-restart")?.summary).toContain("分叉记忆已在重启后独立物化");
+    expect(summaryManager.getSummary("sess-child-restart")?.messageCount).toBe(2);
   });
 });
 

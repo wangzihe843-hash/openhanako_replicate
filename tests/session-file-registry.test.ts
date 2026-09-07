@@ -3,6 +3,19 @@ import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SessionFileRegistry, sessionFilesCacheDir } from "../lib/session-files/session-file-registry.ts";
+// 期望值必须与生产代码同一条规范化路径（native realpath 会展开 Windows 8.3
+// 短名，JS 版 fs.realpathSync 不会；CI runner 的 TEMP 恰好是短名形式）。
+import { canonicalFilesystemPathSync } from "../shared/link-aware-fs.ts";
+
+const FILESYSTEM_IGNORES_CASE = (() => {
+  const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-session-file-case-probe-"));
+  try {
+    fs.writeFileSync(path.join(probeDir, "probe.txt"), "probe");
+    return fs.existsSync(path.join(probeDir, "PROBE.TXT"));
+  } finally {
+    fs.rmSync(probeDir, { recursive: true, force: true });
+  }
+})();
 
 describe("SessionFileRegistry", () => {
   let tmpDir = null;
@@ -246,7 +259,7 @@ describe("SessionFileRegistry", () => {
     expect(first.sessionPath).toBe(sessionPath);
     expect(first.origin).toBe("stage_files");
     expect(first.filePath).toBe(filePath);
-    expect(first.realPath).toBe(fs.realpathSync(filePath));
+    expect(first.realPath).toBe(canonicalFilesystemPathSync(filePath));
     expect(first.displayName).toBe("Reading note");
     expect(first.filename).toBe("note.md");
     expect(first.ext).toBe("md");
@@ -256,6 +269,64 @@ describe("SessionFileRegistry", () => {
     expect(first.createdAt).toBe(1234);
     expect(registry.get(first.id)).toEqual(first);
     expect(registry.list(sessionPath)).toEqual([first]);
+  });
+
+  it.skipIf(!FILESYSTEM_IGNORES_CASE)(
+    "reuses the path-scoped entry when the same file is registered under another spelling",
+    () => {
+      const filePath = makeTempFile("case-path/Note.md", "# hello\n");
+      const variantPath = path.join(path.dirname(filePath), "NOTE.MD");
+      const sessionPath = makeSessionPath("case-path.jsonl");
+      const registry = new SessionFileRegistry({ now: () => 1234 });
+
+      const first = registry.registerFile({ sessionPath, filePath, origin: "stage_files" });
+      const second = registry.registerFile({ sessionPath, filePath: variantPath, origin: "stage_files" });
+
+      expect(second.id).toBe(first.id);
+      expect(Object.keys(readSidecar(sessionPath).files)).toEqual([first.id]);
+    },
+  );
+
+  it.skipIf(!FILESYSTEM_IGNORES_CASE)(
+    "reuses the id-scoped entry when the same file is registered under another spelling",
+    () => {
+      const filePath = makeTempFile("case-id/Note.md", "# hello\n");
+      const variantPath = path.join(path.dirname(filePath), "NOTE.MD");
+      const sessionPath = makeSessionPath("case-id.jsonl");
+      const registry = new SessionFileRegistry({ now: () => 1234 });
+
+      const first = registry.registerFile({
+        sessionId: "sess_case",
+        sessionPath,
+        filePath,
+        origin: "stage_files",
+      });
+      const second = registry.registerFile({
+        sessionId: "sess_case",
+        sessionPath,
+        filePath: variantPath,
+        origin: "stage_files",
+      });
+
+      expect(second.id).toBe(first.id);
+      expect(Object.keys(readSidecar(sessionPath).files)).toEqual([first.id]);
+    },
+  );
+
+  it("stores the natively canonicalized real path without case folding it", () => {
+    const filePath = makeTempFile("canonical-case/MixedCase.TXT", "hi");
+    const sessionPath = makeSessionPath("canonical-case.jsonl");
+    const registry = new SessionFileRegistry({ now: () => 1234 });
+
+    const entry = registry.registerFile({
+      sessionId: "sess_canonical_case",
+      sessionPath,
+      filePath,
+      origin: "stage_files",
+    });
+
+    expect(entry.realPath).toBe(canonicalFilesystemPathSync(filePath));
+    expect(readSidecar(sessionPath).files[entry.id].realPath).toBe(canonicalFilesystemPathSync(filePath));
   });
 
   it("keeps one session file for the same truth source even when cache paths differ", () => {
@@ -288,7 +359,7 @@ describe("SessionFileRegistry", () => {
 
     expect(second.id).toBe(first.id);
     expect(second.filePath).toBe(firstCachePath);
-    expect(second.realPath).toBe(fs.realpathSync(firstCachePath));
+    expect(second.realPath).toBe(canonicalFilesystemPathSync(firstCachePath));
     expect(registry.list(sessionPath)).toHaveLength(1);
     expect(readSidecar(sessionPath).files[first.id]).toMatchObject({
       id: first.id,
@@ -503,6 +574,50 @@ describe("SessionFileRegistry", () => {
     expect(raw.refs.map(ref => ref.origin)).toEqual(["agent_write", "agent_edit", "stage_files"]);
   });
 
+  it("projects the sidecar superset onto files reachable from an active branch", () => {
+    const sessionPath = makeSessionPath("active-files.jsonl");
+    const keptPath = makeTempFile("active-files/kept.txt", "kept\n");
+    const hiddenPath = makeTempFile("active-files/hidden.txt", "hidden\n");
+    const registry = new SessionFileRegistry();
+    const kept = registry.registerFile({ sessionPath, filePath: keptPath, origin: "agent_write" });
+    const hidden = registry.registerFile({ sessionPath, filePath: hiddenPath, origin: "agent_write" });
+
+    expect(registry.list(sessionPath).map(file => file.id)).toEqual([kept.id, hidden.id]);
+    expect(registry.listReachable(sessionPath, [{
+      type: "message",
+      message: { role: "assistant", content: `created [SessionFile] {\"fileId\":\"${kept.id}\"}` },
+    }])).toEqual([expect.objectContaining({ id: kept.id })]);
+    expect(registry.listReachable(sessionPath, [])).toEqual([]);
+  });
+
+  it("does not authorize hidden files through path prefixes or plain-text id mentions", () => {
+    const sessionPath = makeSessionPath("active-files-prefix.jsonl");
+    const hiddenPrefixPath = makeTempFile("active-files-prefix/report", "hidden\n");
+    const activePath = makeTempFile("active-files-prefix/report-final.pdf", "active\n");
+    const registry = new SessionFileRegistry();
+    const hidden = registry.registerFile({
+      sessionPath,
+      filePath: hiddenPrefixPath,
+      origin: "agent_write",
+    });
+    const active = registry.registerFile({
+      sessionPath,
+      filePath: activePath,
+      origin: "user_attachment",
+    });
+
+    const projected = registry.listReachable(sessionPath, [{
+      type: "message",
+      message: {
+        role: "user",
+        content: `plain text mentions ${hidden.id}\n[attached_image: ${activePath}]`,
+      },
+    }]);
+
+    expect(projected).toEqual([expect.objectContaining({ id: active.id })]);
+    expect(projected).not.toContainEqual(expect.objectContaining({ id: hidden.id }));
+  });
+
   it("unloads one session from in-memory indexes while preserving sidecar and other sessions", () => {
     const fileA = makeTempFile("unload/a.txt", "a");
     const fileB = makeTempFile("unload/b.txt", "b");
@@ -546,6 +661,335 @@ describe("SessionFileRegistry", () => {
       ...entry,
       sessionPath: oldSessionPath,
     });
+  });
+
+  it("forks only files reachable from retained entries and gives managed cache bytes an independent owner", () => {
+    const hanakoHome = path.join(ensureTempDir(), "hana-home");
+    const managedCacheRoot = path.join(hanakoHome, "session-files");
+    const sourceSessionId = "sess_files_source";
+    const targetSessionId = "sess_files_target";
+    const sourceSessionPath = makeSessionPath("fork-source.jsonl");
+    const targetSessionPath = makeSessionPath("fork-target.jsonl");
+    const sourceCacheDir = sessionFilesCacheDir(hanakoHome, {
+      sessionId: sourceSessionId,
+      sessionPath: sourceSessionPath,
+    });
+    fs.mkdirSync(sourceCacheDir, { recursive: true });
+    const managedPath = path.join(sourceCacheDir, "voice.wav");
+    fs.writeFileSync(managedPath, "voice bytes");
+    const externalPath = makeTempFile("fork-external/report.md", "report\n");
+    const unreachablePath = makeTempFile("fork-external/later.txt", "later\n");
+    const registry = new SessionFileRegistry({
+      now: () => 1234,
+      managedCacheRoot,
+      getSessionIdForPath: (sessionPath) => {
+        if (sessionPath === sourceSessionPath) return sourceSessionId;
+        if (sessionPath === targetSessionPath) return targetSessionId;
+        return null;
+      },
+    });
+    const managed = registry.registerFile({
+      sessionId: sourceSessionId,
+      sessionPath: sourceSessionPath,
+      filePath: managedPath,
+      label: "voice.wav",
+      origin: "voice_input",
+      storageKind: "managed_cache",
+      presentation: "voice-input",
+      listed: false,
+      sourceKey: "voice:source-1",
+    });
+    const external = registry.registerFile({
+      sessionId: sourceSessionId,
+      sessionPath: sourceSessionPath,
+      filePath: externalPath,
+      origin: "stage_files",
+      storageKind: "external",
+    });
+    const unreachable = registry.registerFile({
+      sessionId: sourceSessionId,
+      sessionPath: sourceSessionPath,
+      filePath: unreachablePath,
+      origin: "agent_write",
+      storageKind: "external",
+    });
+
+    const result = registry.forkSessionFiles({
+      sourceSessionId,
+      sourceSessionPath,
+      targetSessionId,
+      targetSessionPath,
+      retainedEntries: [{
+        type: "message",
+        message: {
+          role: "user",
+          content: `[SessionFile] ${JSON.stringify({ fileId: managed.id, sessionPath: sourceSessionPath })}\n[attached_image: ${externalPath}]`,
+        },
+      }],
+    });
+
+    expect(result.files).toHaveLength(2);
+    expect(result.fileIdMap).toEqual({
+      [managed.id]: expect.stringMatching(/^sf_/),
+      [external.id]: expect.stringMatching(/^sf_/),
+    });
+    expect(result.fileIdMap).not.toHaveProperty(unreachable.id);
+
+    const childManaged = registry.get(managed.id, {
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    });
+    const childExternal = registry.get(external.id, {
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    });
+    expect(childManaged).toMatchObject({
+      id: result.fileIdMap[managed.id],
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+      storageKind: "managed_cache",
+      legacyFileIds: [managed.id],
+      legacyFilePaths: expect.arrayContaining([managed.filePath, managed.realPath]),
+    });
+    expect(childManaged.filePath).not.toBe(managed.filePath);
+    expect(canonicalFilesystemPathSync(childManaged.filePath).startsWith(canonicalFilesystemPathSync(sessionFilesCacheDir(hanakoHome, {
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    })))).toBe(true);
+    expect(fs.readFileSync(childManaged.filePath, "utf-8")).toBe("voice bytes");
+    expect(childExternal).toMatchObject({
+      id: result.fileIdMap[external.id],
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+      filePath: externalPath,
+      storageKind: "external",
+      legacyFileIds: [external.id],
+    });
+    expect(registry.get(unreachable.id, {
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    })).toBeNull();
+
+    // Legacy ids and paths resolve only with the child identity. The global id
+    // remains the source record, so aliases cannot create cross-session ambiguity.
+    expect(registry.get(managed.id)).toEqual(managed);
+    expect(registry.getByFilePath(managed.filePath, { sessionPath: targetSessionPath })).toEqual(childManaged);
+    fs.rmSync(managed.filePath, { force: true });
+    expect(fs.existsSync(childManaged.filePath)).toBe(true);
+
+    const reloaded = new SessionFileRegistry({
+      now: () => 9999,
+      managedCacheRoot,
+      getSessionIdForPath: (sessionPath) => (
+        sessionPath === targetSessionPath ? targetSessionId : null
+      ),
+    });
+    expect(reloaded.get(managed.id, {
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    })).toMatchObject({
+      id: result.fileIdMap[managed.id],
+      legacyFileIds: [managed.id],
+    });
+  });
+
+  it("preserves expired managed file state when forking a retained reference", () => {
+    const hanakoHome = path.join(ensureTempDir(), "expired-home");
+    const managedCacheRoot = path.join(hanakoHome, "session-files");
+    const sourceSessionPath = makeSessionPath("fork-expired-source.jsonl");
+    const targetSessionPath = makeSessionPath("fork-expired-target.jsonl");
+    const sourceSessionId = "sess_expired_source";
+    const targetSessionId = "sess_expired_target";
+    const sourceCacheDir = sessionFilesCacheDir(hanakoHome, {
+      sessionId: sourceSessionId,
+      sessionPath: sourceSessionPath,
+    });
+    fs.mkdirSync(sourceCacheDir, { recursive: true });
+    const managedPath = path.join(sourceCacheDir, "expired.png");
+    fs.writeFileSync(managedPath, "png bytes");
+    let now = Date.now();
+    const registry = new SessionFileRegistry({
+      now: () => now,
+      managedCacheRoot,
+      getSessionIdForPath: (sessionPath) => {
+        if (sessionPath === sourceSessionPath) return sourceSessionId;
+        if (sessionPath === targetSessionPath) return targetSessionId;
+        return null;
+      },
+    });
+    const source = registry.registerFile({
+      sessionId: sourceSessionId,
+      sessionPath: sourceSessionPath,
+      filePath: managedPath,
+      origin: "user_upload",
+      storageKind: "managed_cache",
+    });
+    const old = (now - 73 * 60 * 60 * 1000) / 1000;
+    fs.utimesSync(sourceSessionPath, old, old);
+    now += 1;
+    registry.cleanupColdSessionFiles({ sessionPath: sourceSessionPath });
+    const expiredSource = registry.get(source.id, { sessionPath: sourceSessionPath });
+
+    registry.forkSessionFiles({
+      sourceSessionId,
+      sourceSessionPath,
+      targetSessionId,
+      targetSessionPath,
+      retainedReferences: [{ fileId: source.id }],
+    });
+
+    const child = registry.get(source.id, {
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    });
+    expect(child).toMatchObject({
+      status: "expired",
+      missingAt: expiredSource.missingAt,
+      storageKind: "managed_cache",
+    });
+    expect(child.filePath).not.toBe(source.filePath);
+    expect(fs.existsSync(child.filePath)).toBe(false);
+  });
+
+  it("does not partially overwrite an existing target sidecar", () => {
+    const sourceSessionPath = makeSessionPath("fork-conflict-source.jsonl");
+    const targetSessionPath = makeSessionPath("fork-conflict-target.jsonl");
+    const sourceFilePath = makeTempFile("fork-conflict/source.txt", "source");
+    const targetFilePath = makeTempFile("fork-conflict/target.txt", "target");
+    const registry = new SessionFileRegistry({ now: () => 1234 });
+    const source = registry.registerFile({
+      sessionId: "sess_conflict_source",
+      sessionPath: sourceSessionPath,
+      filePath: sourceFilePath,
+      origin: "stage_files",
+    });
+    const existingTarget = registry.registerFile({
+      sessionId: "sess_conflict_target",
+      sessionPath: targetSessionPath,
+      filePath: targetFilePath,
+      origin: "stage_files",
+    });
+    const before = fs.readFileSync(`${targetSessionPath}.files.json`, "utf-8");
+
+    expect(() => registry.forkSessionFiles({
+      sourceSessionId: "sess_conflict_source",
+      sourceSessionPath,
+      targetSessionId: "sess_conflict_target",
+      targetSessionPath,
+      retainedReferences: [{ fileId: source.id }],
+    })).toThrow(/target session file sidecar already exists/);
+
+    expect(fs.readFileSync(`${targetSessionPath}.files.json`, "utf-8")).toBe(before);
+    expect(registry.get(existingTarget.id, {
+      sessionId: "sess_conflict_target",
+      sessionPath: targetSessionPath,
+    })).toEqual(existingTarget);
+  });
+
+  it("discards forked files without deleting source bytes and is idempotent", () => {
+    const hanakoHome = path.join(ensureTempDir(), "discard-home");
+    const managedCacheRoot = path.join(hanakoHome, "session-files");
+    const sourceSessionPath = makeSessionPath("discard-source.jsonl");
+    const targetSessionPath = makeSessionPath("discard-target.jsonl");
+    const sourceSessionId = "sess_discard_source";
+    const targetSessionId = "sess_discard_target";
+    const sourceCacheDir = sessionFilesCacheDir(hanakoHome, {
+      sessionId: sourceSessionId,
+      sessionPath: sourceSessionPath,
+    });
+    fs.mkdirSync(sourceCacheDir, { recursive: true });
+    const sourceFilePath = path.join(sourceCacheDir, "voice.wav");
+    fs.writeFileSync(sourceFilePath, "source voice");
+    const registry = new SessionFileRegistry({
+      now: () => 1234,
+      managedCacheRoot,
+      getSessionIdForPath: (sessionPath) => {
+        if (sessionPath === sourceSessionPath) return sourceSessionId;
+        if (sessionPath === targetSessionPath) return targetSessionId;
+        return null;
+      },
+    });
+    const source = registry.registerFile({
+      sessionId: sourceSessionId,
+      sessionPath: sourceSessionPath,
+      filePath: sourceFilePath,
+      origin: "voice_input",
+      storageKind: "managed_cache",
+    });
+    registry.forkSessionFiles({
+      sourceSessionId,
+      sourceSessionPath,
+      targetSessionId,
+      targetSessionPath,
+      retainedReferences: [{ fileId: source.id }],
+    });
+    const child = registry.get(source.id, {
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    });
+    const targetCacheDir = path.dirname(child.filePath);
+    expect(fs.existsSync(targetCacheDir)).toBe(true);
+    expect(fs.existsSync(`${targetSessionPath}.files.json`)).toBe(true);
+
+    expect(registry.discardForkedSessionFiles({
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    })).toEqual({
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+      sidecarDeleted: true,
+      managedCacheDeleted: true,
+      unloaded: true,
+    });
+    expect(fs.existsSync(targetCacheDir)).toBe(false);
+    expect(fs.existsSync(`${targetSessionPath}.files.json`)).toBe(false);
+    expect(fs.existsSync(sourceFilePath)).toBe(true);
+    expect(fs.existsSync(`${sourceSessionPath}.files.json`)).toBe(true);
+    expect(registry.get(source.id, {
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    })).toBeNull();
+
+    expect(registry.discardForkedSessionFiles({
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    })).toEqual({
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+      sidecarDeleted: false,
+      managedCacheDeleted: false,
+      unloaded: true,
+    });
+  });
+
+  it("refuses to discard a fork sidecar owned by another session id", () => {
+    const sourceSessionPath = makeSessionPath("discard-identity-source.jsonl");
+    const targetSessionPath = makeSessionPath("discard-identity-target.jsonl");
+    const filePath = makeTempFile("discard-identity/report.md", "report");
+    const registry = new SessionFileRegistry({ now: () => 1234 });
+    const source = registry.registerFile({
+      sessionId: "sess_discard_identity_source",
+      sessionPath: sourceSessionPath,
+      filePath,
+      origin: "stage_files",
+    });
+    registry.forkSessionFiles({
+      sourceSessionId: "sess_discard_identity_source",
+      sourceSessionPath,
+      targetSessionId: "sess_discard_identity_target",
+      targetSessionPath,
+      retainedReferences: [{ fileId: source.id }],
+    });
+
+    expect(() => registry.discardForkedSessionFiles({
+      sessionId: "sess_wrong_target",
+      sessionPath: targetSessionPath,
+    })).toThrow(/sidecar identity mismatch/);
+    expect(fs.existsSync(`${targetSessionPath}.files.json`)).toBe(true);
+    expect(() => registry.discardForkedSessionFiles({
+      sessionId: "sess_discard_identity_target",
+      sessionPath: "relative.jsonl",
+    })).toThrow(/sessionPath must be an absolute path/);
   });
 
   it("rejects registration without an explicit sessionPath", () => {

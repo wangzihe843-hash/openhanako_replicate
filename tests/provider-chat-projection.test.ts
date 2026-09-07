@@ -127,6 +127,12 @@ describe("ProviderRegistry chat projection plans", () => {
       "x-grok-client-version": "0.2.95",
       "x-grok-client-identifier": "hana",
     });
+    expect(plan?.modelExecutionHeaders).toEqual({
+      "grok-4.5": { "x-grok-model-override": "grok-4.5" },
+      "grok-4.5-latest": { "x-grok-model-override": "grok-4.5-latest" },
+      "grok-build-latest": { "x-grok-model-override": "grok-build-latest" },
+      "grok-4.3": { "x-grok-model-override": "grok-4.3" },
+    });
     expect(registry.getDefaultModels("xai-oauth")).toEqual([
       "grok-4.5",
       "grok-4.5-latest",

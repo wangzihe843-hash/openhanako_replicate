@@ -1,10 +1,7 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ContentBlock } from '../../stores/chat-types';
-import { buildAssistantBlocksFromContent } from '../../utils/assistant-block-builder';
-import { MoodBlock } from './MoodBlock';
-import { PluginCardBlock } from './PluginCardBlock';
-import { StreamingMarkdownContent } from './StreamingMarkdownContent';
+import { AssistantContentPreview } from './AssistantContentPreview';
 import { SubagentSessionPreview } from './SubagentSessionPreview';
 import styles from './Chat.module.css';
 
@@ -63,26 +60,11 @@ function streamStatusFromInterlude(status: string | undefined): 'done' | 'failed
 }
 
 const InterludeDetailPreview = memo(function InterludeDetailPreview({ detailMarkdown }: { detailMarkdown: string }) {
-  const blocks = useMemo(() => buildAssistantBlocksFromContent({
-    content: detailMarkdown,
-    includeTextSource: true,
-  }), [detailMarkdown]);
-
   return (
-    <div className={styles.interludePopoverMarkdown}>
-      {blocks.map((previewBlock, index) => {
-        if (previewBlock.type === 'mood') {
-          return <MoodBlock key={`mood-${index}`} yuan={previewBlock.yuan} text={previewBlock.text} />;
-        }
-        if (previewBlock.type === 'text') {
-          return <StreamingMarkdownContent key={`text-${index}`} html={previewBlock.html} source={previewBlock.source} active={false} />;
-        }
-        if (previewBlock.type === 'plugin_card') {
-          return <PluginCardBlock key={`card-${index}`} card={previewBlock.card} />;
-        }
-        return null;
-      })}
-    </div>
+    <AssistantContentPreview
+      content={detailMarkdown}
+      className={styles.interludePopoverMarkdown}
+    />
   );
 });
 

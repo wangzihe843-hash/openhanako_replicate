@@ -118,25 +118,64 @@ describe("Scheduler heartbeat defaults", () => {
 
   // 镜像 executeIsolated 的两道过滤（core/session-coordinator.js executeIsolated +
   // core/tool-availability.js）：getProposeDraftAvailable 决定巡检里能否硬指挥 xingye_propose_draft。
-  function startSingleAgentHeartbeat(config) {
+  function startSingleAgentHeartbeat(config, { channelsEnabled = true, tools = [{ name: "dm" }] } = {}) {
     const root = "/tmp/hana-heartbeat-propose-draft";
     const agent = {
       id: "agent-pd",
       agentName: "Agent PD",
       deskDir: path.join(root, "agents", "agent-pd", "desk"),
       config,
+      getToolsSnapshot: () => tools,
     };
     const engine = {
       agents: new Map([[agent.id, agent]]),
       getHeartbeatMaster: () => true,
       getHomeCwd: () => path.join(root, "home", agent.id),
       emitDevLog: vi.fn(),
+      isChannelsEnabled: () => channelsEnabled,
+      getAgent: () => agent,
     };
     const scheduler = new Scheduler({ hub: { engine } });
     scheduler._executeActivityForAgent = vi.fn();
     scheduler.startHeartbeat();
-    return { agent, scheduler };
+    return { agent, scheduler, engine };
   }
+
+  it.each([
+    { label: "default opt-out", config: {}, channelsEnabled: true, expected: false },
+    { label: "Phone disabled", config: { tools: { disabled: [] } }, channelsEnabled: false, expected: false },
+    { label: "agent disabled", config: { tools: { disabled: ["dm"] } }, channelsEnabled: true, expected: false },
+    { label: "patrol whitelist excludes DM", config: { tools: { disabled: [] }, desk: { patrol_tools: ["notify"] } }, channelsEnabled: true, expected: false },
+    { label: "empty patrol whitelist", config: { tools: { disabled: [] }, desk: { patrol_tools: [] } }, channelsEnabled: true, expected: false },
+    { label: "enabled DM", config: { tools: { disabled: [] }, desk: { patrol_tools: ["dm"] } }, channelsEnabled: true, expected: true },
+  ])("gates social instructions using the runtime tool rules: $label", async ({ config, channelsEnabled, expected }) => {
+    startSingleAgentHeartbeat(config, { channelsEnabled });
+    expect(await heartbeatOptions[0].getDmAvailable()).toBe(expected);
+  });
+
+  it("requires a registered DM tool and refreshes agent and Phone settings for every check", async () => {
+    const { agent, engine } = startSingleAgentHeartbeat({ tools: { disabled: [] } });
+    const getAvailable = heartbeatOptions[0].getDmAvailable;
+    expect(await getAvailable()).toBe(true);
+    agent.config = { tools: { disabled: ["dm"] } };
+    expect(await getAvailable()).toBe(false);
+    agent.config = { tools: { disabled: [] } };
+    engine.isChannelsEnabled = () => false;
+    expect(await getAvailable()).toBe(false);
+    engine.isChannelsEnabled = () => true;
+    agent.getToolsSnapshot = () => [];
+    expect(await getAvailable()).toBe(false);
+  });
+
+  it("forwards both star events and the upstream patrol log tool to the primary heartbeat", async () => {
+    const { scheduler } = startSingleAgentHeartbeat({ tools: { disabled: [] } });
+    const consumed = { consumed: 1, result: { eventCount: 1, summaryZh: "one event" } };
+    const patrolLogTool = { name: "patrol_update_log", execute: vi.fn() };
+    await heartbeatOptions[0].onBeat("patrol", { xingyeConsumed: consumed, customTools: [patrolLogTool] });
+    expect(scheduler._executeActivityForAgent).toHaveBeenCalledWith("agent-pd", "patrol", "heartbeat", null, {
+      xingyeConsumed: consumed, extraCustomTools: [patrolLogTool],
+    });
+  });
 
   it("wires getProposeDraftAvailable into the createHeartbeat call", () => {
     startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true } });

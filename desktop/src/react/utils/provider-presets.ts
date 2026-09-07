@@ -15,6 +15,7 @@ export const API_PROVIDER_PRESETS: ProviderPreset[] = [
   { value: 'xai',         label: 'xAI (Grok)',           url: 'https://api.x.ai/v1', api: 'openai-completions' },
   { value: 'gemini',      label: 'Google Gemini',        url: 'https://generativelanguage.googleapis.com/v1beta', api: 'google-generative-ai' },
   { value: 'deepseek',    label: 'DeepSeek',             url: 'https://api.deepseek.com', api: 'openai-completions' },
+  { value: 'deepseek-responses', label: 'DeepSeek (Responses)', url: 'https://api.deepseek.com', api: 'openai-responses' },
   { value: 'volcengine',  label: 'Volcengine (Doubao)',  labelZh: 'Volcengine (豆包)',   url: 'https://ark.cn-beijing.volces.com/api/v3', api: 'openai-completions' },
   { value: 'moonshot',    label: 'Moonshot (Kimi)',      url: 'https://api.moonshot.cn/v1', api: 'openai-completions' },
   { value: 'kimi-coding', label: 'Kimi Coding Plan',     url: 'https://api.kimi.com/coding/', api: 'anthropic-messages' },

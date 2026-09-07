@@ -115,6 +115,17 @@ describe("HTTP route security policy", () => {
     }
   });
 
+  it("keeps legacy GPU preference cleanup local-owner only", async () => {
+    const { authorizeHttpRoute, classifyHttpRoute } = await import("../server/http/route-security.ts");
+    const path = "/api/preferences/legacy-gpu-safe-mode/hardware-acceleration";
+
+    expect(classifyHttpRoute({ method: "POST", path })).toMatchObject({ kind: "local_only" });
+    expect(authorizeHttpRoute({ method: "POST", path, principal: desktopOwnerPrincipal() }))
+      .toMatchObject({ allowed: false, error: "local_only_route" });
+    expect(authorizeHttpRoute({ method: "POST", path, principal: localPrincipal }))
+      .toMatchObject({ allowed: true });
+  });
+
   it("separates remote settings writes, provider management, bridge management, and secret mutation scopes", async () => {
     const { authorizeHttpRoute } = await import("../server/http/route-security.ts");
     const settingsWriter = devicePrincipal(["settings.write"]);
@@ -193,6 +204,7 @@ describe("HTTP route security policy", () => {
       ["GET", "/api/memories/compiled"],
       ["GET", "/api/memories/export"],
       ["GET", "/api/memories/compiled/week/days"],
+      ["GET", "/api/memories/dream/status"],
     ]) {
       expect(authorizeHttpRoute({ method, path, principal: reader }), `${method} ${path}`)
         .toMatchObject({ allowed: true });
@@ -208,6 +220,8 @@ describe("HTTP route security policy", () => {
       ["PUT", "/api/memories/compiled/today"],
       ["PUT", "/api/memories/compiled/longterm"],
       ["PUT", "/api/memories/compiled/week/days/2026-07-05"],
+      ["POST", "/api/memories/dream/runs"],
+      ["POST", "/api/memories/dream/revisions/rev-1/restore"],
     ]) {
       expect(authorizeHttpRoute({ method, path, principal: writer }), `${method} ${path}`)
         .toMatchObject({ allowed: true });
@@ -324,40 +338,82 @@ describe("HTTP route security policy", () => {
     const writer = devicePrincipal(["settings.read", "settings.write"]);
     const chatOnly = devicePrincipal(["chat"]);
 
-    expect(classifyHttpRoute({ method: "GET", path: "/api/plugins/mcp/oauth/callback" }))
-      .toMatchObject({ kind: "public" });
-    expect(authorizeHttpRoute({
-      method: "GET",
-      path: "/api/plugins/mcp/oauth/callback",
-      principal: null,
-    })).toMatchObject({ allowed: true });
+    // MCP is served at /api/mcp and at the legacy /api/plugins/mcp alias by the
+    // very same handlers, so both must be classified identically — an alias that
+    // classified more loosely would be an authentication bypass.
+    for (const prefix of ["/api/mcp", "/api/plugins/mcp"]) {
+      expect(classifyHttpRoute({ method: "GET", path: `${prefix}/oauth/callback` }))
+        .toMatchObject({ kind: "public" });
+      expect(authorizeHttpRoute({
+        method: "GET",
+        path: `${prefix}/oauth/callback`,
+        principal: null,
+      })).toMatchObject({ allowed: true });
 
-    for (const [method, path] of [
-      ["GET", "/api/plugins/mcp/state"],
-      ["GET", "/api/plugins/mcp/oauth/poll/session_1"],
-    ]) {
-      expect(authorizeHttpRoute({ method, path, principal: reader }))
-        .toMatchObject({ allowed: true });
-      expect(authorizeHttpRoute({ method, path, principal: chatOnly }))
-        .toMatchObject({ allowed: false, error: "insufficient_scope" });
-    }
+      // Granting a session-scoped tool invocation changes session permission
+      // state, not connector settings, so it travels with the session scope
+      // rather than settings.write, exactly like /api/sessions. The handler
+      // still runs the finer sessions.write capability check once it has
+      // resolved the session.
+      expect(classifyHttpRoute({ method: "POST", path: `${prefix}/session-permissions` }))
+        .toMatchObject({ kind: "scope", scope: "chat" });
+      expect(authorizeHttpRoute({
+        method: "POST",
+        path: `${prefix}/session-permissions`,
+        principal: chatOnly,
+      })).toMatchObject({ allowed: true });
+      // A settings writer with no session access must not be able to widen a
+      // session's permissions.
+      expect(authorizeHttpRoute({
+        method: "POST",
+        path: `${prefix}/session-permissions`,
+        principal: devicePrincipal(["settings.read", "settings.write"]),
+      })).toMatchObject({ allowed: false, error: "insufficient_scope" });
 
-    for (const [method, path] of [
-      ["PUT", "/api/plugins/mcp/settings/enabled"],
-      ["POST", "/api/plugins/mcp/connectors"],
-      ["PUT", "/api/plugins/mcp/connectors/github"],
-      ["DELETE", "/api/plugins/mcp/connectors/github"],
-      ["POST", "/api/plugins/mcp/connectors/github/start"],
-      ["POST", "/api/plugins/mcp/connectors/github/stop"],
-      ["POST", "/api/plugins/mcp/connectors/github/refresh-tools"],
-      ["PUT", "/api/plugins/mcp/agents/hana/connectors/github"],
-      ["POST", "/api/plugins/mcp/connectors/github/oauth/start"],
-      ["POST", "/api/plugins/mcp/connectors/github/oauth/logout"],
-    ]) {
-      expect(authorizeHttpRoute({ method, path, principal: writer }))
-        .toMatchObject({ allowed: true });
-      expect(authorizeHttpRoute({ method, path, principal: reader }))
-        .toMatchObject({ allowed: false, error: "insufficient_scope" });
+      // Invoking a connector tool for an app surface is a real third-party side
+      // effect, so it is owner-only rather than a settings scope.
+      expect(classifyHttpRoute({
+        method: "POST",
+        path: `${prefix}/connectors/acme/app-tools/board/call`,
+      })).toMatchObject({ kind: "studio_owner" });
+      expect(authorizeHttpRoute({
+        method: "POST",
+        path: `${prefix}/connectors/acme/app-tools/board/call`,
+        principal: writer,
+      })).toMatchObject({ allowed: false });
+
+      for (const [method, path] of [
+        ["GET", `${prefix}/state`],
+        ["GET", `${prefix}/apps`],
+        ["GET", `${prefix}/connectors/acme/resources`],
+        ["GET", `${prefix}/oauth/poll/session_1`],
+      ]) {
+        expect(authorizeHttpRoute({ method, path, principal: reader }))
+          .toMatchObject({ allowed: true });
+        expect(authorizeHttpRoute({ method, path, principal: chatOnly }))
+          .toMatchObject({ allowed: false, error: "insufficient_scope" });
+      }
+
+      for (const [method, path] of [
+        ["PUT", `${prefix}/settings/enabled`],
+        ["PUT", `${prefix}/enabled`],
+        ["POST", `${prefix}/connectors`],
+        ["POST", `${prefix}/servers`],
+        ["PUT", `${prefix}/connectors/github`],
+        ["DELETE", `${prefix}/connectors/github`],
+        ["POST", `${prefix}/connectors/github/start`],
+        ["POST", `${prefix}/connectors/github/stop`],
+        ["POST", `${prefix}/connectors/github/refresh-tools`],
+        ["PUT", `${prefix}/agents/hana/connectors/github`],
+        ["POST", `${prefix}/connectors/github/oauth/start`],
+        ["POST", `${prefix}/connectors/github/oauth/logout`],
+        ["POST", `${prefix}/connectors/acme/apps/board/launch`],
+      ]) {
+        expect(authorizeHttpRoute({ method, path, principal: writer }))
+          .toMatchObject({ allowed: true });
+        expect(authorizeHttpRoute({ method, path, principal: reader }))
+          .toMatchObject({ allowed: false, error: "insufficient_scope" });
+      }
     }
   });
 
@@ -387,7 +443,7 @@ describe("HTTP route security policy", () => {
       ["POST", "/api/skills/bundles/story-pack/export"],
       ["GET", "/api/plugins?source=community"],
       ["GET", "/api/plugins/marketplace"],
-      ["GET", "/api/plugins/marketplace/image-gen/readme"],
+      ["GET", "/api/plugins/marketplace/media-board/readme"],
       ["GET", "/api/plugins/diagnostics"],
       ["GET", "/api/media/image/providers"],
       ["GET", "/api/media/providers"],
@@ -403,21 +459,13 @@ describe("HTTP route security policy", () => {
       ["HEAD", "/api/media/generated/cover.png"],
       ["GET", "/api/media/tasks/batch/batch_1"],
       ["GET", "/api/media/tasks/task_1"],
-      ["GET", "/api/plugins/image-gen/providers"],
-      ["PUT", "/api/plugins/image-gen/config"],
-      ["POST", "/api/plugins/image-gen/providers/dashscope/models"],
-      ["DELETE", "/api/plugins/image-gen/providers/dashscope/models/wanx"],
-      ["POST", "/api/plugins/image-gen/tasks/task_1/retry"],
-      ["GET", "/api/plugins/image-gen/media/cover.png"],
-      ["HEAD", "/api/plugins/image-gen/media/cover.png"],
-      ["GET", "/api/plugins/image-gen/tasks/batch/batch_1"],
-      ["GET", "/api/plugins/image-gen/tasks/task_1"],
       ["GET", "/api/plugins/config-schemas"],
-      ["GET", "/api/plugins/image-gen/config-schema"],
-      ["GET", "/api/plugins/image-gen/config"],
-      ["PUT", "/api/plugins/image-gen/enabled"],
-      ["DELETE", "/api/plugins/image-gen"],
-      ["POST", "/api/plugins/marketplace/image-gen/install"],
+      ["GET", "/api/plugins/media-board/config-schema"],
+      ["GET", "/api/plugins/media-board/config"],
+      ["PUT", "/api/plugins/media-board/config"],
+      ["PUT", "/api/plugins/media-board/enabled"],
+      ["DELETE", "/api/plugins/media-board"],
+      ["POST", "/api/plugins/marketplace/media-board/install"],
       ["GET", "/api/plugins/mcp/state?agentId=hana"],
       ["PUT", "/api/plugins/mcp/enabled"],
       ["POST", "/api/plugins/mcp/servers"],
@@ -446,8 +494,7 @@ describe("HTTP route security policy", () => {
       ["GET", "/api/plugins/diagnostics"],
       ["GET", "/api/media/image/providers"],
       ["PUT", "/api/media/image/config"],
-      ["GET", "/api/plugins/image-gen/providers"],
-      ["PUT", "/api/plugins/image-gen/config"],
+      ["PUT", "/api/plugins/media-board/config"],
       ["GET", "/api/plugins/mcp/state?agentId=hana"],
       ["PUT", "/api/plugins/mcp/enabled"],
     ]) {
@@ -494,7 +541,6 @@ describe("HTTP route security policy", () => {
       ["POST", "/api/plugins/dev/install"],
       ["POST", "/api/plugins/dev/demo/reload"],
       ["POST", "/api/media/generated/open/cover.png"],
-      ["POST", "/api/plugins/image-gen/media/open/cover.png"],
     ]) {
       expect(authorizeHttpRoute({ method, path, principal: owner }), `${method} ${path}`)
         .toMatchObject({

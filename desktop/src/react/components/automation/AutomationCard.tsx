@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Collapse, SelectWidget, type SelectOption } from '@/ui';
+import {
+  Collapse,
+  ProviderGroupHeader,
+  SelectWidget,
+  selectWidgetStyles,
+  type SelectOption,
+} from '@/ui';
 import { useStore } from '../../stores';
 import { resolveAgentDisplayInfo } from '../../utils/agent-display';
 import type { CronJob, ModelOption } from './automation-types';
@@ -172,10 +178,13 @@ export function AutomationCard({
                   ...modelOptions.map((option): SelectOption => ({
                     value: `${option.provider}/${option.id}`,
                     label: option.name || option.id,
+                    group: option.provider,
                   })),
                 ]}
                 value={model}
                 onChange={setModel}
+                renderGroupHeader={provider => <ProviderGroupHeader provider={provider} />}
+                popupClassName={selectWidgetStyles.providerInset}
               />
             </label>
           ) : null}

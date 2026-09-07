@@ -8,21 +8,23 @@ import {
   normalizeImageGenerationConfig,
   normalizeVideoGenerationConfig,
 } from "../preferences-manager.ts";
-import { TaskStore } from "../../plugins/image-gen/lib/task-store.ts";
-import { Poller } from "../../plugins/image-gen/lib/poller.ts";
-import { submitImageGeneration } from "../../plugins/image-gen/lib/submit-image.ts";
+import { TaskStore } from "./task-store.ts";
+import { Poller } from "./poller.ts";
+import { submitImageGeneration } from "./submit-image.ts";
 import {
   isResponseDelivery,
   normalizeMediaDelivery,
   retryImageTask,
-} from "../../plugins/image-gen/lib/image-task-runner.ts";
+} from "./image-task-runner.ts";
 import { resolveMediaParameters } from "./media-parameters.ts";
-import { builtinImageGenAdapters } from "../../plugins/image-gen/builtin-adapters.ts";
 
 const log = createModuleLogger("media");
 const IMAGE_CAPABILITY = "image_generation";
 const VIDEO_CAPABILITY = "video_generation";
 
+// Schema id keeps the "image-gen" name for the same reason as this._dataDir
+// above (see the constructor comment): it is the persisted plugin-config
+// store's identity key on disk, not an active plugin registration.
 const IMAGE_GENERATION_CONFIG_SCHEMA = normalizePluginConfigSchema("image-gen", {
   properties: {
     defaultImageModel: {
@@ -263,6 +265,7 @@ function projectMediaProviderModel(model, adapterAvailable) {
 }
 
 export class UniversalMediaManager {
+  declare _builtinAdapters: any;
   declare _bus: any;
   declare _config: any;
   declare _dataDir: any;
@@ -289,6 +292,7 @@ export class UniversalMediaManager {
     registerSessionFile,
     onProviderChanged,
     logger = log,
+    builtinAdapters = [],
   }: any = {}) {
     if (!hanakoHome) throw new Error("UniversalMediaManager requires hanakoHome");
     if (!providerRegistry) throw new Error("UniversalMediaManager requires providerRegistry");
@@ -302,6 +306,13 @@ export class UniversalMediaManager {
     this._registerSessionFile = registerSessionFile;
     this._onProviderChanged = typeof onProviderChanged === "function" ? onProviderChanged : async () => {};
     this._log = logger;
+    // dataDir/schema id keep the "image-gen" name on purpose: SessionFile
+    // records reference generated/ bytes by absolute filePath (including
+    // media this native runtime generates every day), so renaming this
+    // directory would orphan every existing reference. This is the retired
+    // plugin's historical directory name -- core now owns it as the sole
+    // runtime, but the name itself is data-compatibility surface, not an
+    // active plugin identity.
     this._dataDir = path.join(hanakoHome, "plugin-data", "image-gen");
     this._generatedDir = path.join(this._dataDir, "generated");
     fs.mkdirSync(this._generatedDir, { recursive: true });
@@ -318,6 +329,7 @@ export class UniversalMediaManager {
     this._poller = null;
     this._bus = null;
     this._handlerCleanups = [];
+    this._builtinAdapters = Array.isArray(builtinAdapters) ? builtinAdapters : [];
     this._registerBuiltinAdapters();
   }
 
@@ -338,7 +350,13 @@ export class UniversalMediaManager {
   }
 
   _registerBuiltinAdapters() {
-    for (const adapter of builtinImageGenAdapters) {
+    // Adapter implementations are closed-content (core/media-adapters/, not
+    // in export-manifest.json) and are injected by the composition root via
+    // the `builtinAdapters` constructor option -- this module never imports
+    // them itself. No import-on-empty fallback: an open composition that
+    // doesn't supply any adapters ends up with a media runtime that has
+    // zero registered adapters, not a silently-reappearing closed import.
+    for (const adapter of this._builtinAdapters) {
       this.registerAdapter(adapter);
     }
   }
@@ -495,13 +513,6 @@ export class UniversalMediaManager {
 
   _registerBusHandlers(bus) {
     const cleanups = [
-      bus.handle("media:runtime", () => ({
-        ok: true,
-        runtime: this.runtime,
-        config: this._config,
-        dataDir: this._dataDir,
-        generatedDir: this._generatedDir,
-      })),
       bus.handle("media:generate", (payload: any = {}) => this.generateMedia(payload)),
       bus.handle("media:generate-image", (payload: any = {}) => this.generateImageFromBus(payload)),
       bus.handle("media:generate-video", (payload: any = {}) => this.generateVideoFromBus(payload)),
@@ -690,6 +701,12 @@ export class UniversalMediaManager {
     const delivery = normalizeMediaDelivery(input);
     const responseDelivery = isResponseDelivery(delivery);
     if (!sessionId && !sessionPath && !responseDelivery) throw new Error("sessionId or sessionPath is required");
+    const requestedProviderId = textOrNull(input.provider)
+      || textOrNull(this.getVideoConfig()?.defaultVideoModel?.provider);
+    await this._providers.refreshRuntimeMediaCapabilities?.({
+      ...(requestedProviderId ? { providerId: requestedProviderId } : {}),
+      capability: VIDEO_CAPABILITY,
+    });
     const target = this._resolveVideoTarget(input);
     const adapter = target?.adapter || null;
     if (!adapter) throw new Error(t("toolDef.generateVideo.noProvider"));
@@ -916,6 +933,14 @@ export class UniversalMediaManager {
     return retryImageTask({ taskId, ctx: this._toolContext() } as any);
   }
 
+  forkSessionTasks(options: Record<string, any> = {}) {
+    return this._store.forkSessionTasks(options);
+  }
+
+  discardForkedSessionTasks(options: Record<string, any> = {}) {
+    return this._store.discardForkedSessionTasks(options);
+  }
+
   listTasks({ adapterId, batchId, status, filter }: any = {}) {
     let tasks = this._store.listAll();
     if (adapterId) tasks = tasks.filter((task) => task.adapterId === adapterId);
@@ -972,6 +997,7 @@ export class UniversalMediaManager {
   }
 
   async listImageProviders() {
+    await this._providers.refreshRuntimeMediaCapabilities?.({ capability: IMAGE_CAPABILITY });
     const providers: any = {};
     for (const provider of this._providers.getMediaProviders(IMAGE_CAPABILITY) || []) {
       const credentialStatus = this._providers.getMediaProviderCredentialStatus?.(provider.providerId, IMAGE_CAPABILITY) || {};
@@ -990,13 +1016,14 @@ export class UniversalMediaManager {
           );
           return false;
         });
-      if (!models.length) continue;
+      if (!models.length && !provider.runtimeCapability) continue;
       const modelIds = new Set(models.map((model) => model.id));
       providers[provider.providerId] = {
         ...provider,
         ...credentialStatus,
         hasCredentials: credentialStatus.hasCredentials === true,
         unavailableReason: credentialStatus.unavailableReason || null,
+        unavailableMessage: credentialStatus.unavailableMessage || null,
         credentialLanes: credentialStatus.lanes,
         activeCredentialLaneId: credentialStatus.activeLaneId || null,
         activeCredentialProviderId: credentialStatus.activeProviderId || null,
@@ -1018,6 +1045,7 @@ export class UniversalMediaManager {
   }
 
   async listVideoProviders() {
+    await this._providers.refreshRuntimeMediaCapabilities?.({ capability: VIDEO_CAPABILITY });
     const providers: any = {};
     for (const provider of this._providers.getMediaProviders(VIDEO_CAPABILITY) || []) {
       const credentialStatus = this._providers.getMediaProviderCredentialStatus?.(provider.providerId, VIDEO_CAPABILITY) || {};
@@ -1036,13 +1064,14 @@ export class UniversalMediaManager {
           );
           return false;
         });
-      if (!models.length) continue;
+      if (!models.length && !provider.runtimeCapability) continue;
       const modelIds = new Set(models.map((model) => model.id));
       providers[provider.providerId] = {
         ...provider,
         ...credentialStatus,
         hasCredentials: credentialStatus.hasCredentials === true,
         unavailableReason: credentialStatus.unavailableReason || null,
+        unavailableMessage: credentialStatus.unavailableMessage || null,
         credentialLanes: credentialStatus.lanes,
         activeCredentialLaneId: credentialStatus.activeLaneId || null,
         activeCredentialProviderId: credentialStatus.activeProviderId || null,

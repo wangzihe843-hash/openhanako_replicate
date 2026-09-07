@@ -35,6 +35,7 @@ import {
   compileEditableFacts,
   assemble,
   migrateLegacyEditableFacts,
+  readCompiledMemorySections,
 } from "../lib/memory/compile.ts";
 import {
   readCompiledResetAt,
@@ -591,7 +592,11 @@ describe("compiled section formatting", () => {
     const memoryPath = path.join(tmpDir, "memory.md");
     fs.writeFileSync(factsPath, "[\"用户喜欢清晰边界\"]", "utf-8");
     fs.writeFileSync(todayPath, "# 今天概要\n\n用户关注记忆系统。", "utf-8");
-    fs.writeFileSync(weekPath, "# 本周主题概要\n\n用户持续关注 Project Hana。", "utf-8");
+    fs.writeFileSync(
+      weekPath,
+      "# 本周主题概要\n\n## 2026-07-09\n\n用户持续关注 Project Hana。\n\n## 2026-07-10\n\n用户修正了记忆日期。\n\n## 2026-99-99\n\n无效日期标题下的正文仍保留。",
+      "utf-8",
+    );
     fs.writeFileSync(longtermPath, "# 长期背景记录\n\n## 偏好\n\n用户偏好沉静 UI。", "utf-8");
 
     assemble(factsPath, todayPath, weekPath, longtermPath, memoryPath);
@@ -599,10 +604,28 @@ describe("compiled section formatting", () => {
     const output = fs.readFileSync(memoryPath, "utf-8");
     expect(output).toContain("## 重要事实\n\n- 用户喜欢清晰边界");
     expect(output).toContain("## 今天\n\n用户关注记忆系统。");
-    expect(output).toContain("## 本周早些时候\n\n用户持续关注 Project Hana。");
+    expect(output).toContain(
+      "## 本周早些时候\n\n### 2026-07-09\n\n用户持续关注 Project Hana。\n\n### 2026-07-10\n\n用户修正了记忆日期。",
+    );
+    expect(output).toContain("无效日期标题下的正文仍保留。");
     expect(output).toContain("## 长期情况\n\n用户偏好沉静 UI。");
     expect(output).not.toContain("# 本周主题概要");
+    expect(output).not.toContain("2026-99-99");
     expect(output).not.toContain("# 长期背景记录");
+  });
+
+  it("exposes the same dated week structure through compiled memory sections", () => {
+    const memoryDir = path.join(tmpDir, "memory");
+    fs.mkdirSync(memoryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(memoryDir, "week.md"),
+      "## 2026-07-09\n\n第一天。\n\n## 2026-07-10\n\n第二天。",
+      "utf-8",
+    );
+
+    const sections = readCompiledMemorySections(memoryDir);
+
+    expect(sections.week).toBe("### 2026-07-09\n\n第一天。\n\n### 2026-07-10\n\n第二天。");
   });
 });
 

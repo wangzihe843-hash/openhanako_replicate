@@ -186,6 +186,104 @@ describe("DeferredResultStore", () => {
     });
   });
 
+  describe("suppressTaskIdsForSession", () => {
+    it("fences only named tasks owned by the stable session and can restore a failed commit", () => {
+      store.defer("discarded", {
+        sessionId: "sess-a",
+        sessionPath: "/s/old-a.jsonl",
+      }, {});
+      store.defer("retained", {
+        sessionId: "sess-a",
+        sessionPath: "/s/old-a.jsonl",
+      }, {});
+      store.defer("other-session", {
+        sessionId: "sess-b",
+        sessionPath: "/s/b.jsonl",
+      }, {});
+
+      const result = store.suppressTaskIdsForSession({
+        sessionId: "sess-a",
+        sessionPath: "/s/new-a.jsonl",
+      }, ["discarded", "other-session", "missing"], "retry discarded branch");
+
+      expect(result).toMatchObject({
+        suppressedTaskIds: ["discarded"],
+        mismatchedTaskIds: ["other-session"],
+        missingTaskIds: ["missing"],
+      });
+      expect(store.query("discarded")).toMatchObject({
+        status: "aborted",
+        delivered: true,
+        deliverySuppressed: true,
+      });
+      expect(store.query("retained")).toMatchObject({ status: "pending", delivered: false });
+      expect(store.query("other-session")).toMatchObject({ status: "pending", delivered: false });
+
+      expect(store.restoreSuppressedTaskIds(result.receipt)).toBe(1);
+      expect(store.query("discarded")).toMatchObject({ status: "pending", delivered: false });
+      expect(store.query("discarded")).not.toHaveProperty("deliverySuppressed");
+    });
+  });
+
+  describe("forkTerminalTasks", () => {
+    it("clones terminal results under child-owned task and Session identities", () => {
+      const resolvingStore = new (DeferredResultStore as any)(mockBus, null, {
+        getSessionIdForPath: (sessionPath: string) => ({
+          "/s/source.jsonl": "sess-source",
+          "/s/child.jsonl": "sess-child",
+        })[sessionPath] || null,
+      });
+      resolvingStore.defer("source-task", {
+        sessionId: "sess-source",
+        sessionPath: "/s/source.jsonl",
+      }, { type: "subagent", threadId: "source-thread" });
+      resolvingStore.resolve("source-task", "done");
+
+      expect(resolvingStore.forkTerminalTasks({
+        sourceSessionId: "sess-source",
+        sourceSessionPath: "/s/source.jsonl",
+        targetSessionId: "sess-child",
+        targetSessionPath: "/s/child.jsonl",
+        taskIdMap: { "source-task": "child-task" },
+      })).toEqual({ tasks: 1, taskIds: ["child-task"] });
+      expect(resolvingStore.query("source-task")).toMatchObject({
+        sessionId: "sess-source",
+        result: "done",
+      });
+      expect(resolvingStore.query("child-task")).toMatchObject({
+        sessionId: "sess-child",
+        sessionPath: "/s/child.jsonl",
+        status: "resolved",
+        result: "done",
+        delivered: true,
+        meta: { forkedFromTaskId: "source-task" },
+      });
+      expect(resolvingStore.discardForkedTerminalTasks({
+        targetSessionId: "sess-child",
+        taskIds: ["child-task"],
+      })).toEqual({ discarded: 1 });
+      expect(resolvingStore.query("child-task")).toBeNull();
+      resolvingStore.dispose();
+    });
+
+    it("rejects active tasks without mutating either Session", () => {
+      store.defer("pending", {
+        sessionId: "sess-source",
+        sessionPath: "/s/source.jsonl",
+      }, { type: "subagent" });
+
+      expect(() => store.forkTerminalTasks({
+        sourceSessionId: "sess-source",
+        sourceSessionPath: "/s/source.jsonl",
+        targetSessionId: "sess-child",
+        targetSessionPath: "/s/child.jsonl",
+        taskIdMap: { pending: "child-pending" },
+      })).toThrow("active deferred task cannot be cloned");
+      expect(store.query("pending")).toMatchObject({ status: "pending", sessionId: "sess-source" });
+      expect(store.query("child-pending")).toBeNull();
+    });
+  });
+
   describe("unsubscribe", () => {
     it("onResult returns unsubscribe function", () => {
       const cb = vi.fn();

@@ -458,6 +458,9 @@ function TreeNode({
             },
           },
         ] : []),
+        ...(!file.isDir && nativePath ? [
+          { label: t('desk.ctx.history'), action: () => { useStore.getState().openFileHistoryForAbsolutePath(nativePath); } },
+        ] : []),
         { divider: true },
         {
           label: t('desk.ctx.rename'),

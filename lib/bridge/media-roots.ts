@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { canonicalFilesystemPathSync, filesystemIdentityKeySync } from "../../shared/link-aware-fs.ts";
 
 export function collectBridgeMediaAllowedRoots(engine, { agentId = null, agent = null } = {}) {
   const roots = [];
@@ -28,8 +29,10 @@ export function collectBridgeMediaAllowedRoots(engine, { agentId = null, agent =
 
 export function isInsideBridgeMediaRoot(candidatePath, roots) {
   if (!candidatePath) return false;
-  const candidate = normalizeExistingOrResolvedPath(candidatePath);
-  return (roots || []).some((root) => isInsideRoot(candidate, root));
+  // 包含检查是比较，两侧都走身份键：调用方传进来的 root 未必已经归一过，
+  // 大小写不敏感的平台上还得把拼写差异折平。
+  const candidate = filesystemIdentityKeySync(candidatePath);
+  return (roots || []).some((root) => root && isInsideRoot(candidate, filesystemIdentityKeySync(root)));
 }
 
 function resolveAgent(engine, agentId) {
@@ -53,7 +56,8 @@ function agentValues(raw) {
 
 function normalizeBridgeMediaRoot(root) {
   if (typeof root !== "string" || !root.trim()) return null;
-  const normalized = normalizeExistingOrResolvedPath(root);
+  // 这个值会被存进 roots 列表并当成真实路径使用，所以要 canonical、不能折大小写。
+  const normalized = canonicalFilesystemPathSync(root);
   if (!path.isAbsolute(normalized)) return null;
   if (normalized === path.parse(normalized).root) return null;
   return normalized;
@@ -67,12 +71,7 @@ function collectSystemTempRoots() {
   return roots;
 }
 
-function normalizeExistingOrResolvedPath(filePath) {
-  const resolved = path.resolve(filePath);
-  try { return fs.realpathSync(resolved); }
-  catch { return resolved; }
-}
-
+/** 两侧都必须是同一种归一形式（身份键或 canonical），否则比较没有意义。 */
 function isInsideRoot(filePath, root) {
   const rel = path.relative(root, filePath);
   return rel === "" || (!!rel && !rel.startsWith("..") && !path.isAbsolute(rel));

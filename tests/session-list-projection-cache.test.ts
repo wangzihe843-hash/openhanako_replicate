@@ -98,6 +98,25 @@ describe("session-list-projection-cache revision", () => {
     expect(projection.allMessagesText).toBe("");
   });
 
+  it("does not expose reminder text in list previews or searchable projection text", async () => {
+    writeSessionFile(tmpDir, "reminder.jsonl", [
+      HEADER,
+      {
+        ...USER_MESSAGE,
+        message: {
+          role: "user",
+          content: "[hana_reminder at 2026-07-05 14:05]\n- Plugin demo loaded\n[/hana_reminder]\n\nhello",
+        },
+      },
+    ]);
+
+    const cache = new SessionListProjectionCache();
+    const [projection] = await cache.list(tmpDir);
+
+    expect(projection.firstMessage).toBe("hello");
+    expect(projection.allMessagesText).toBe("hello");
+  });
+
   it("includes jsonl files that are reached through a filesystem link", async () => {
     const realDir = path.join(tmpDir, "real");
     fs.mkdirSync(realDir, { recursive: true });

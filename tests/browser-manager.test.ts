@@ -9,6 +9,84 @@ const SP5 = "/sessions/session-5.json";
 const SP6 = "/sessions/session-6.json";
 
 describe("BrowserManager URL tracking (per-session)", () => {
+  it("forks a live tab workspace into an independent cold child and never shares the live view", () => {
+    const sessionIds = new Map([
+      [SP1, "sess-source"],
+      [SP2, "sess-child"],
+    ]);
+    const manager = new BrowserManager({
+      getSessionIdForPath: (sessionPath) => sessionIds.get(sessionPath) || null,
+    });
+    let coldState: any = {};
+    manager._loadColdState = vi.fn(() => structuredClone(coldState));
+    manager._saveColdState = vi.fn((next) => { coldState = structuredClone(next); });
+    manager._setSessionEntry(SP1, {
+      running: true,
+      activeTabId: "tab-2",
+      tabs: [
+        { tabId: "tab-1", title: "One", url: "https://one.example.com" },
+        { tabId: "tab-2", title: "Two", url: "https://two.example.com" },
+      ],
+    });
+
+    expect(manager.forkSessionState({
+      sourceSessionPath: SP1,
+      targetSessionPath: SP2,
+    })).toEqual({
+      copied: true,
+      tabs: 2,
+      url: "https://two.example.com",
+    });
+    expect(manager.isRunning(SP1)).toBe(true);
+    expect(manager.isRunning(SP2)).toBe(false);
+    expect(coldState["sess-child"]).toMatchObject({
+      sessionPath: SP2,
+      activeTabId: "tab-2",
+      url: "https://two.example.com",
+      tabs: [
+        expect.objectContaining({ tabId: "tab-1", url: "https://one.example.com" }),
+        expect.objectContaining({ tabId: "tab-2", url: "https://two.example.com" }),
+      ],
+    });
+
+    coldState["sess-child"].tabs[0].url = "https://child.example.com";
+    expect(manager.getTabs(SP1)[0].url).toBe("https://one.example.com");
+    expect(manager.discardForkedSessionState({ sessionPath: SP2 })).toEqual({ discarded: true });
+    expect(coldState).not.toHaveProperty("sess-child");
+    expect(manager.isRunning(SP1)).toBe(true);
+  });
+
+  it("does not leak the current tab workspace into a historical fork", () => {
+    const sessionIds = new Map([
+      [SP1, "sess-source"],
+      [SP2, "sess-child"],
+    ]);
+    const manager = new BrowserManager({
+      getSessionIdForPath: (sessionPath) => sessionIds.get(sessionPath) || null,
+    });
+    let coldState: any = {};
+    manager._loadColdState = vi.fn(() => structuredClone(coldState));
+    manager._saveColdState = vi.fn((next) => { coldState = structuredClone(next); });
+    manager._setSessionEntry(SP1, {
+      running: true,
+      activeTabId: "tail-tab",
+      tabs: [{ tabId: "tail-tab", title: "Tail", url: "https://tail.example" }],
+    });
+
+    expect(manager.forkSessionState({
+      sourceSessionPath: SP1,
+      targetSessionPath: SP2,
+      includeSourceState: false,
+    })).toEqual({
+      copied: false,
+      tabs: 0,
+      url: null,
+      reason: "historical_boundary",
+    });
+    expect(coldState).not.toHaveProperty("sess-child");
+    expect(manager.isRunning(SP1)).toBe(true);
+  });
+
   it("tracks tab workspaces per session and returns the active tab URL", async () => {
     const manager = new BrowserManager();
     manager._sendCmd = vi.fn()
@@ -70,6 +148,33 @@ describe("BrowserManager URL tracking (per-session)", () => {
     ]);
     expect(manager.activeTab(SP1)?.tabId).toBe("tab-1");
     expect(manager.currentUrl(SP1)).toBe("https://one.example.com");
+  });
+
+  it("closing the last tab keeps an empty running workspace instead of stopping the browser", async () => {
+    const manager = new BrowserManager();
+    manager._sessions.set(SP1, {
+      running: true,
+      url: "https://one.example.com",
+      activeTabId: "tab-1",
+      headless: false,
+      tabs: [{ tabId: "tab-1", title: "One", url: "https://one.example.com" }],
+    });
+    manager._sendCmd = vi.fn().mockResolvedValue({ activeTabId: null, tabs: [] });
+    manager._saveColdWorkspace = vi.fn();
+    manager._removeColdUrl = vi.fn();
+
+    const result = await manager.closeTab(SP1, "tab-1");
+
+    expect(result).toBeNull();
+    // 空标签组仍是活 workspace：不置 running:false，等待用户/agent 再开新 tab
+    expect(manager.isRunning(SP1)).toBe(true);
+    expect(manager.getTabs(SP1)).toEqual([]);
+    expect(manager.currentUrl(SP1)).toBe(null);
+    // 冷保存走 _saveColdWorkspace（空组无可恢复 URL，由它负责清掉冷记录），不再直接删冷 URL
+    expect(manager._saveColdWorkspace).toHaveBeenCalledWith(SP1, expect.objectContaining({ tabs: [] }));
+    expect(manager._removeColdUrl).not.toHaveBeenCalled();
+    // 空组保留在 LRU 中，闲置回收与容量淘汰照常管理它
+    expect(manager._lruOrder).toContain(SP1);
   });
 
   it("navigate honors the Agent new-tab browser preference", async () => {
@@ -367,7 +472,14 @@ describe("BrowserManager explicit sessionPath", () => {
 
   it("does not send further commands for an unavailable browser session", async () => {
     const manager = new BrowserManager();
-    manager._sessions.set(SP1, { running: true, url: "https://example.com", headless: false });
+    // running 的 entry 在生产里必然带标签页（空标签组走 workspace-sync，见下方用例）
+    manager._sessions.set(SP1, {
+      running: true,
+      url: "https://example.com",
+      headless: false,
+      activeTabId: "tab-1",
+      tabs: [{ tabId: "tab-1", url: "https://example.com" }],
+    });
     manager._sendCmd = vi.fn().mockRejectedValue(
       new Error("Object has been destroyed"),
     );
@@ -381,7 +493,13 @@ describe("BrowserManager explicit sessionPath", () => {
 
   it("launch() clears an unavailable stale view before creating a fresh browser", async () => {
     const manager = new BrowserManager();
-    manager._sessions.set(SP1, { running: true, url: "https://example.com", headless: false });
+    manager._sessions.set(SP1, {
+      running: true,
+      url: "https://example.com",
+      headless: false,
+      activeTabId: "tab-1",
+      tabs: [{ tabId: "tab-1", url: "https://example.com" }],
+    });
     manager._sendCmd = vi.fn().mockRejectedValue(
       new Error("No browser instance for session /sessions/session-1.json"),
     );
@@ -819,5 +937,209 @@ describe("BrowserManager multi-instance", () => {
     expect(cmds).toContain("destroyView");
     expect(manager._sessions.has(SP1)).toBe(false);
     expect(manager._removeColdUrl).toHaveBeenCalledWith(SP1);
+  });
+});
+
+describe("browser authorization revocation", () => {
+  it("keys revocation by session identity and clears per session", () => {
+    const manager = new BrowserManager({
+      getSessionIdForPath: (sessionPath: string) => (sessionPath === SP1 ? "sess-1" : null),
+    });
+
+    expect(manager.isBrowserAuthorizationRevoked(SP1)).toBe(false);
+    manager.revokeBrowserAuthorization(SP1);
+    expect(manager.isBrowserAuthorizationRevoked(SP1)).toBe(true);
+    // 同一 session identity 的 legacy path 键也命中
+    expect(manager.isBrowserAuthorizationRevoked("sess-1")).toBe(true);
+    // 其它 session 不受影响
+    expect(manager.isBrowserAuthorizationRevoked(SP2)).toBe(false);
+
+    manager.clearBrowserAuthorizationRevocation(SP1);
+    expect(manager.isBrowserAuthorizationRevoked(SP1)).toBe(false);
+  });
+
+  it("revocation without sessionPath is a no-op", () => {
+    const manager = new BrowserManager({});
+    manager.revokeBrowserAuthorization(null);
+    expect(manager.isBrowserAuthorizationRevoked(null)).toBe(false);
+    manager.clearBrowserAuthorizationRevocation(null);
+    expect(manager.isBrowserAuthorizationRevoked(null)).toBe(false);
+  });
+});
+
+/** 触发 BrowserManager 在 constructor 里注册的 transport 消息处理器（IPC / WS 两种传输都覆盖）。 */
+function emitTransportMessage(manager: any, msg: any) {
+  const handler = manager._transport?._handler || manager._transport?._boundListener;
+  if (!handler) throw new Error("transport message handler not registered");
+  handler(msg);
+}
+
+describe("browser workspace sync from the desktop viewer", () => {
+  it("applies a workspace snapshot pushed by the main process", () => {
+    const manager = new BrowserManager({});
+    manager._setSessionEntry(SP1, {
+      running: true,
+      activeTabId: "tab-1",
+      url: "https://one.example.com",
+      tabs: [{ tabId: "tab-1", title: "One", url: "https://one.example.com" }],
+    });
+
+    emitTransportMessage(manager, {
+      type: "browser-workspace-sync",
+      sessionPath: SP1,
+      workspace: {
+        sessionPath: SP1,
+        activeTabId: "tab-2",
+        tabs: [
+          { tabId: "tab-1", title: "One", url: "https://one.example.com" },
+          { tabId: "tab-2", title: "Two", url: "https://two.example.com" },
+        ],
+      },
+    });
+
+    expect(manager.getTabs(SP1).map((tab: any) => tab.tabId)).toEqual(["tab-1", "tab-2"]);
+    expect(manager.activeTab(SP1)?.tabId).toBe("tab-2");
+    expect(manager.currentUrl(SP1)).toBe("https://two.example.com");
+  });
+
+  it("keeps the session running when the synced workspace has no tabs", () => {
+    const manager = new BrowserManager({});
+    manager._setSessionEntry(SP1, {
+      running: true,
+      activeTabId: "tab-1",
+      url: "https://one.example.com",
+      tabs: [{ tabId: "tab-1", title: "One", url: "https://one.example.com" }],
+    });
+
+    emitTransportMessage(manager, {
+      type: "browser-workspace-sync",
+      sessionPath: SP1,
+      workspace: { sessionPath: SP1, activeTabId: null, tabs: [] },
+    });
+
+    // 空标签组仍是活着的 workspace：running 不变，只是没有 url
+    expect(manager.isRunning(SP1)).toBe(true);
+    expect(manager.getTabs(SP1)).toEqual([]);
+    expect(manager.activeTab(SP1)).toBeNull();
+    expect(manager.currentUrl(SP1)).toBeNull();
+  });
+
+  it("ignores a sync for a session that has no live entry", () => {
+    const manager = new BrowserManager({});
+    emitTransportMessage(manager, {
+      type: "browser-workspace-sync",
+      sessionPath: SP2,
+      workspace: { sessionPath: SP2, activeTabId: "tab-9", tabs: [{ tabId: "tab-9" }] },
+    });
+    expect(manager._getSessionEntry(SP2)).toBeNull();
+  });
+
+  it("returns null from thumbnail without sending a command when the tab group is empty", async () => {
+    const manager = new BrowserManager({});
+    manager._setSessionEntry(SP1, {
+      running: true,
+      activeTabId: null,
+      url: null,
+      tabs: [],
+    });
+    manager._sendCmd = vi.fn(async () => ({ base64: "nope" }));
+
+    expect(await manager.thumbnail(SP1)).toBeNull();
+    expect(manager._sendCmd).not.toHaveBeenCalled();
+  });
+
+  it("suspend can keep the viewer visible for a follow-up session switch", async () => {
+    const manager = new BrowserManager({});
+    manager._setSessionEntry(SP1, {
+      running: true,
+      activeTabId: "t1",
+      tabs: [{ tabId: "t1", url: "https://a.example" }],
+    });
+    manager._loadColdState = vi.fn(() => ({}));
+    manager._saveColdState = vi.fn();
+    const sent: any[] = [];
+    manager._sendCmd = vi.fn(async (cmd, params) => { sent.push({ cmd, params }); return {}; });
+
+    await manager.suspendForSession(SP1, { keepViewerVisible: true });
+
+    expect(sent[0]).toMatchObject({ cmd: "suspend", params: { sessionPath: SP1, keepViewerVisible: true } });
+  });
+
+  it("suspend hides the viewer by default", async () => {
+    const manager = new BrowserManager({});
+    manager._setSessionEntry(SP1, {
+      running: true,
+      activeTabId: "t1",
+      tabs: [{ tabId: "t1", url: "https://a.example" }],
+    });
+    manager._loadColdState = vi.fn(() => ({}));
+    manager._saveColdState = vi.fn();
+    const sent: any[] = [];
+    manager._sendCmd = vi.fn(async (cmd, params) => { sent.push({ cmd, params }); return {}; });
+
+    await manager.suspendForSession(SP1);
+
+    expect(sent[0]).toMatchObject({ cmd: "suspend", params: { sessionPath: SP1, keepViewerVisible: false } });
+  });
+
+  it("notifyViewerSession sends the viewerShowSession command and swallows transport errors", async () => {
+    const manager = new BrowserManager({});
+    manager._sendCmd = vi.fn(async () => { throw new Error("not connected"); });
+
+    await expect(manager.notifyViewerSession(SP1, "标题")).resolves.toBeUndefined();
+    expect(manager._sendCmd).toHaveBeenCalledWith("viewerShowSession", { sessionPath: SP1, title: "标题" }, 10000);
+  });
+
+  it("notifyViewerSession does nothing without a session path", async () => {
+    const manager = new BrowserManager({});
+    manager._sendCmd = vi.fn(async () => ({}));
+
+    await manager.notifyViewerSession(null);
+
+    expect(manager._sendCmd).not.toHaveBeenCalled();
+  });
+});
+
+describe("browser idle reclaim", () => {
+  it("suspends a session only when both agent and user are idle past the threshold", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new BrowserManager({});
+      manager._loadColdState = vi.fn(() => ({}));
+      manager._saveColdState = vi.fn();
+      manager._sendCmd = vi.fn(async (cmd) => (cmd === "viewerVisibility" ? { visible: false, sessionPath: null } : {}));
+      manager._setSessionEntry(SP1, { running: true, activeTabId: "t1", tabs: [{ tabId: "t1", url: "https://a.example" }] });
+      manager._touchLru(SP1);
+      manager._ensureIdleSweep();
+
+      await vi.advanceTimersByTimeAsync(29 * 60_000);
+      expect(manager.isRunning(SP1)).toBe(true);        // 未到阈值
+      manager._touchUserActivity(SP1);                   // 用户活动重置
+      await vi.advanceTimersByTimeAsync(29 * 60_000);
+      expect(manager.isRunning(SP1)).toBe(true);
+      await vi.advanceTimersByTimeAsync(6 * 60_000);     // 双闲置超 30 分钟
+      expect(manager.isRunning(SP1)).toBe(false);        // 已被 suspend（entry 删除）
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("skips the session currently visible in the viewer", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new BrowserManager({});
+      manager._loadColdState = vi.fn(() => ({}));
+      manager._saveColdState = vi.fn();
+      manager._sendCmd = vi.fn(async (cmd) => (cmd === "viewerVisibility" ? { visible: true, sessionPath: SP1 } : {}));
+      manager._setSessionEntry(SP1, { running: true, activeTabId: "t1", tabs: [{ tabId: "t1", url: "https://a.example" }] });
+      manager._touchLru(SP1);
+      manager._ensureIdleSweep();
+      await vi.advanceTimersByTimeAsync(65 * 60_000);
+      expect(manager.isRunning(SP1)).toBe(true);
+      clearInterval(manager._idleSweepTimer);
+      manager._idleSweepTimer = null;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

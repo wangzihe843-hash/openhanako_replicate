@@ -171,7 +171,12 @@ export function AgentCreateOverlay() {
                   <img className="yuan-chip-avatar" src={`assets/${meta.avatar || 'Hanako.png'}`} draggable={false} />
                   <div className="yuan-chip-info">
                     <span className="yuan-chip-name">{key}</span>
-                    <span className="yuan-chip-desc">{meta.label || ''}</span>
+                    {/* kong 的 label 是为设置页那条 6:1 横幅写的整句，塞进这里 100px
+                        的方片会换行撑高整行，所以单独取一句短的；其它 yuan 的描述
+                        本来就短，继续读 label。 */}
+                    <span className="yuan-chip-desc">
+                      {(key === 'kong' ? meta.shortLabel : undefined) || meta.label || ''}
+                    </span>
                   </div>
                 </button>
               ))}

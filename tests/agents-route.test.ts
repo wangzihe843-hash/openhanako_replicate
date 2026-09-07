@@ -31,6 +31,44 @@ describe("agents route", () => {
     fs.mkdirSync(tempRoot, { recursive: true });
   });
 
+  it("returns each agent's effective home folder without replacing the explicit homeFolder field", async () => {
+    const { createAgentsRoute } = await import("../server/routes/agents.ts");
+    const app = new Hono();
+    const engine = {
+      gcWorkspacePersistence: vi.fn(),
+      listAgents: vi.fn(() => [
+        { id: "hana", name: "Hana", homeFolder: "/workspace/hana" },
+        { id: "mio", name: "Mio", homeFolder: null },
+      ]),
+      getHomeCwd: vi.fn((agentId) => agentId === "hana"
+        ? "/workspace/hana"
+        : "/home/test/Desktop/OH-WorkSpace"),
+    };
+    app.route("/api", createAgentsRoute(engine));
+
+    const res = await app.request("/api/agents");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      agents: [
+        {
+          id: "hana",
+          name: "Hana",
+          homeFolder: "/workspace/hana",
+          effectiveHomeFolder: "/workspace/hana",
+        },
+        {
+          id: "mio",
+          name: "Mio",
+          homeFolder: null,
+          effectiveHomeFolder: "/home/test/Desktop/OH-WorkSpace",
+        },
+      ],
+    });
+    expect(engine.getHomeCwd).toHaveBeenCalledWith("hana");
+    expect(engine.getHomeCwd).toHaveBeenCalledWith("mio");
+  });
+
   it("emits agent-created after creating an agent", async () => {
     const { createAgentsRoute } = await import("../server/routes/agents.ts");
     const app = new Hono();
@@ -49,6 +87,24 @@ describe("agents route", () => {
 
     expect(res.status).toBe(200);
     expectAppEvent(engine.emitEvent, "agent-created", { agentId: "hana", name: "Hana" });
+  });
+
+  it.each(["canonical", "legacy"])("normalizes %s persona creation keys before reaching AgentManager", async (format) => {
+    const { createAgentsRoute } = await import("../server/routes/agents.ts");
+    const engine = { createAgent: vi.fn().mockResolvedValue({ id: "peer", name: "Peer" }), emitEvent: vi.fn() };
+    const app = new Hono();
+    app.route("/api", createAgentsRoute(engine));
+    const initialFiles = format === "canonical"
+      ? { identity: "IDENTITY", agents: "PERSONA", publicAgents: "PUBLIC", ishiki: "OLD PERSONA", arbitrary: "IGNORED" }
+      : { identity: "IDENTITY", ishiki: "PERSONA", publicIshiki: "PUBLIC", arbitrary: "IGNORED" };
+    const response = await app.request("/api/agents", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "peer", name: "Peer", initialFiles }),
+    });
+    expect(response.status).toBe(200);
+    expect(engine.createAgent).toHaveBeenCalledWith({ id: "peer", name: "Peer", yuan: undefined,
+      initialFiles: { identity: "IDENTITY", agents: "PERSONA", publicAgents: "PUBLIC" },
+    });
   });
 
   it("does not emit agent-created when create validation fails", async () => {
@@ -236,7 +292,12 @@ describe("agents route", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.agents).toEqual([{ id: "hana", name: "Hana", isCurrent: true }]);
+    expect(data.agents).toEqual([{
+      id: "hana",
+      name: "Hana",
+      isCurrent: true,
+      effectiveHomeFolder: null,
+    }]);
     expect(engine.invalidateAgentListCache).toHaveBeenCalledTimes(1);
     expect(engine.invalidateAgentListCache.mock.invocationCallOrder[0])
       .toBeLessThan(engine.listAgents.mock.invocationCallOrder[0]);
@@ -651,6 +712,128 @@ describe("agents route", () => {
     expectAppEvent(engine.emitEvent, "agent-updated", { agentId });
   });
 
+  it("GET identity/agents-md fall back to template content with fromTemplate: true when nothing is seeded on disk", async () => {
+    const agentId = "hana";
+    const agentDir = path.join(tempRoot, agentId);
+    const productDir = path.join(tempRoot, "product");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: Hana\n  yuan: hanako\n", "utf-8");
+    fs.mkdirSync(path.join(productDir, "identity-templates"), { recursive: true });
+    fs.writeFileSync(path.join(productDir, "identity-templates", "hanako.md"), "template identity content", "utf-8");
+    fs.mkdirSync(path.join(productDir, "agents-templates"), { recursive: true });
+    fs.writeFileSync(path.join(productDir, "agents-templates", "hanako.md"), "template persona content", "utf-8");
+    // identity.md / AGENTS.md 惰性材料化：agentDir 下确实没有落盘文件
+    expect(fs.existsSync(path.join(agentDir, "identity.md"))).toBe(false);
+    expect(fs.existsSync(path.join(agentDir, "AGENTS.md"))).toBe(false);
+
+    const { createAgentsRoute } = await import("../server/routes/agents.ts");
+    const app = new Hono();
+    const engine = {
+      agentsDir: tempRoot,
+      productDir,
+      getLocale: () => "en",
+    };
+
+    app.route("/api", createAgentsRoute(engine));
+
+    const identityRes = await app.request(`/api/agents/${agentId}/identity`);
+    expect(identityRes.status).toBe(200);
+    expect(await identityRes.json()).toEqual({ content: "template identity content", fromTemplate: true });
+
+    const agentsMdRes = await app.request(`/api/agents/${agentId}/agents-md`);
+    expect(agentsMdRes.status).toBe(200);
+    expect(await agentsMdRes.json()).toEqual({ content: "template persona content", fromTemplate: true });
+  });
+
+  it("GET identity/agents-md return the on-disk file content with fromTemplate: false when the user has customized it", async () => {
+    const agentId = "hana";
+    const agentDir = path.join(tempRoot, agentId);
+    const productDir = path.join(tempRoot, "product");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: Hana\n  yuan: hanako\n", "utf-8");
+    fs.writeFileSync(path.join(agentDir, "identity.md"), "user customized identity", "utf-8");
+    fs.writeFileSync(path.join(agentDir, "AGENTS.md"), "user customized persona", "utf-8");
+    // 模板目录故意留空/不存在，证明命中的是落盘文件而不是误落到模板兜底
+    fs.mkdirSync(productDir, { recursive: true });
+
+    const { createAgentsRoute } = await import("../server/routes/agents.ts");
+    const app = new Hono();
+    const engine = {
+      agentsDir: tempRoot,
+      productDir,
+      getLocale: () => "en",
+    };
+
+    app.route("/api", createAgentsRoute(engine));
+
+    const identityRes = await app.request(`/api/agents/${agentId}/identity`);
+    expect(identityRes.status).toBe(200);
+    expect(await identityRes.json()).toEqual({ content: "user customized identity", fromTemplate: false });
+
+    const agentsMdRes = await app.request(`/api/agents/${agentId}/agents-md`);
+    expect(agentsMdRes.status).toBe(200);
+    expect(await agentsMdRes.json()).toEqual({ content: "user customized persona", fromTemplate: false });
+  });
+
+  it("serves the persona file under the pre-rename route segments so older clients keep working", async () => {
+    const agentId = "hana";
+    const agentDir = path.join(tempRoot, agentId);
+    const productDir = path.join(tempRoot, "product");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: Hana\n  yuan: hanako\n", "utf-8");
+    fs.writeFileSync(path.join(agentDir, "AGENTS.md"), "user customized persona", "utf-8");
+    fs.writeFileSync(path.join(agentDir, "AGENTS.public.md"), "public persona", "utf-8");
+    fs.mkdirSync(productDir, { recursive: true });
+
+    const { createAgentsRoute } = await import("../server/routes/agents.ts");
+    const app = new Hono();
+    const engine = {
+      agentsDir: tempRoot,
+      productDir,
+      getLocale: () => "en",
+    };
+
+    app.route("/api", createAgentsRoute(engine));
+
+    const legacyRes = await app.request(`/api/agents/${agentId}/ishiki`);
+    expect(legacyRes.status).toBe(200);
+    expect(await legacyRes.json()).toEqual({ content: "user customized persona", fromTemplate: false });
+
+    const legacyPublicRes = await app.request(`/api/agents/${agentId}/public-ishiki`);
+    expect(legacyPublicRes.status).toBe(200);
+    expect(await legacyPublicRes.json()).toEqual({ content: "public persona" });
+  });
+
+  it("writes through the pre-rename route segment to the current file name", async () => {
+    const agentId = "hana";
+    const agentDir = path.join(tempRoot, agentId);
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: Hana\n  yuan: hanako\n", "utf-8");
+
+    const { createAgentsRoute } = await import("../server/routes/agents.ts");
+    const app = new Hono();
+    const engine = {
+      agentsDir: tempRoot,
+      productDir: path.join(tempRoot, "product"),
+      getLocale: () => "en",
+      updateConfig: vi.fn(),
+      invalidateAgentListCache: vi.fn(),
+      emitEvent: vi.fn(),
+    };
+
+    app.route("/api", createAgentsRoute(engine));
+
+    const res = await app.request(`/api/agents/${agentId}/ishiki`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "written through the old segment" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(fs.readFileSync(path.join(agentDir, "AGENTS.md"), "utf-8")).toBe("written through the old segment");
+    expect(fs.existsSync(path.join(agentDir, "ishiki.md"))).toBe(false);
+  });
+
   it("rejects dangerous experience headings without overwriting agent files", async () => {
     const agentId = "hana";
     const agentDir = path.join(tempRoot, agentId);
@@ -689,5 +872,44 @@ describe("agents route", () => {
     expect(await res.json()).toEqual({ error: "invalid experience category" });
     expect(fs.readFileSync(path.join(agentDir, "identity.md"), "utf-8")).toBe("original identity\n");
     expect(engine.updateConfig).not.toHaveBeenCalled();
+  });
+  it("garbage-collects stale workspace history when reading an agent's config", async () => {
+    const agentId = "hana";
+    const agentDir = path.join(tempRoot, agentId);
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: Hana\ncwd_history:\n  - /gone\n  - /still-there\n", "utf-8");
+
+    const { createAgentsRoute } = await import("../server/routes/agents.ts");
+    const app = new Hono();
+    const engine = {
+      agentsDir: tempRoot,
+      currentAgentId: "someone-else",
+      // Stand in for the engine's real cleanup: rewrite this agent's config on disk.
+      gcWorkspacePersistence: vi.fn(() => {
+        fs.writeFileSync(
+          path.join(agentDir, "config.yaml"),
+          "agent:\n  name: Hana\ncwd_history:\n  - /still-there\n",
+          "utf-8",
+        );
+      }),
+      providerRegistry: {
+        getAllProvidersRaw: vi.fn(() => ({})),
+        get: vi.fn(() => null),
+      },
+      getAgent: vi.fn(() => ({ id: agentId, tools: [] })),
+      getComputerUseSettings: vi.fn(() => ({ enabled: false })),
+    };
+
+    app.route("/api", createAgentsRoute(engine));
+
+    const res = await app.request(`/api/agents/${agentId}/config`);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    // Workspace history that no longer exists on disk has to be dropped before
+    // answering, and the answer has to reflect the cleanup — not the file as it
+    // was a moment earlier.
+    expect(engine.gcWorkspacePersistence).toHaveBeenCalledWith({ agentId });
+    expect(data.cwd_history).toEqual(["/still-there"]);
   });
 });

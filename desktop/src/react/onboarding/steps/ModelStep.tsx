@@ -7,13 +7,15 @@ import { SelectWidget } from '@/ui';
 import type { SelectOption } from '@/ui';
 import { Toggle } from '../../settings/widgets/Toggle';
 import { lookupReferenceModelMeta } from '../../utils/model-metadata';
-import { loadModels as loadModelsAction, saveModel as saveModelAction } from '../onboarding-actions';
-import type { AddedModelEntry, AddedModelObject, DiscoveredModel, HanaFetch } from '../onboarding-actions';
+import { describeOnboardingError, loadModels as loadModelsAction, saveModel as saveModelAction } from '../onboarding-actions';
+import type { AddedModelEntry, AddedModelObject, DiscoveredModel, HanaFetch, OnboardingVerificationPlan } from '../onboarding-actions';
 import { StepContainer } from '../onboarding-ui';
 
 interface ModelStepProps {
   preview: boolean;
   hanaFetch: HanaFetch;
+  agentId: string;
+  verificationPlan: OnboardingVerificationPlan;
   providerName: string;
   providerUrl: string;
   providerApi: string;
@@ -84,7 +86,7 @@ function draftFromDiscoveredModel(model: DiscoveredModel): AddedModelDraft {
 }
 
 export function ModelStep({
-  preview, hanaFetch, providerName, providerUrl, providerApi, apiKey,
+  preview, hanaFetch, agentId, verificationPlan, providerName, providerUrl, providerApi, apiKey,
   goToStep, showError,
 }: ModelStepProps) {
   const [fetchedModels, setFetchedModels] = useState<DiscoveredModel[]>([]);
@@ -274,16 +276,17 @@ export function ModelStep({
     if (!canContinue) return;
     try {
       await saveModelAction({
-        hanaFetch, selectedModel, providerName,
+        hanaFetch, agentId, selectedModel, providerName,
         addedModels: addedModels.map(toSavedModelEntry),
         selectedUtility, selectedUtilityLarge,
+        verificationPlan,
       });
       goToStep(4);
     } catch (err) {
       console.error('[onboarding] save model failed:', err);
-      showError(t('onboarding.error'));
+      showError(describeOnboardingError(err, t('onboarding.error')));
     }
-  }, [preview, canContinue, hanaFetch, selectedModel, providerName, addedModels, selectedUtility, selectedUtilityLarge, goToStep, showError]);
+  }, [preview, canContinue, hanaFetch, agentId, selectedModel, providerName, addedModels, selectedUtility, selectedUtilityLarge, verificationPlan, goToStep, showError]);
 
   return (
     <StepContainer>
@@ -346,7 +349,7 @@ export function ModelStep({
               </label>
               <label className="ob-model-edit-field">
                 <span>{t('onboarding.model.maxOutput')}</span>
-                <input aria-label={t('onboarding.model.maxOutput')} className="ob-input" value={editMaxOutput} inputMode="numeric" placeholder="16384" onChange={e => setEditMaxOutput(e.target.value)} />
+                <input aria-label={t('onboarding.model.maxOutput')} className="ob-input" value={editMaxOutput} inputMode="numeric" placeholder="65536" onChange={e => setEditMaxOutput(e.target.value)} />
               </label>
             </div>
             <div className="ob-model-edit-checks">

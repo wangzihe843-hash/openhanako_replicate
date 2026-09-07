@@ -35,6 +35,7 @@ import {
   updateChannelMeta,
 } from "../../lib/channels/channel-store.ts";
 import { extractMentionedAgentIds } from "../../lib/channels/channel-mentions.ts";
+import { buildConversationMarkdownExport } from "../../lib/channels/conversation-export.ts";
 import { normalizeAgentPhoneToolMode } from "../../lib/conversations/agent-phone-session.ts";
 import {
   DEFAULT_AGENT_PHONE_SETTINGS,
@@ -49,7 +50,7 @@ import {
   readAgentPhoneProjection,
   updateAgentPhoneProjectionMeta,
 } from "../../lib/conversations/agent-phone-projection.ts";
-import { resolveAgent } from "../utils/resolve-agent.ts";
+import { resolveAgentStrict } from "../utils/resolve-agent.ts";
 import { findModel } from "../../shared/model-ref.ts";
 import { createModuleLogger } from "../../lib/debug-log.ts";
 import {
@@ -101,12 +102,16 @@ function requestedAgentId(c: any) {
 
 function resolveConversationOwnerAgent(engine: any, c: any) {
   if (requestedAgentId(c)) {
-    return resolveAgent(engine, c);
+    return resolveAgentStrict(engine, c);
   }
 
+  // Without an explicit agentId the conversation belongs to the primary agent.
+  // If there is no primary agent there is no owner to speak of, and picking
+  // whichever agent the server happens to be focused on would hand the caller
+  // a different agent's DM. Say so instead.
   const primaryAgentId = engine.getPrimaryAgentId?.() || null;
   if (!primaryAgentId) {
-    return resolveAgent(engine, c);
+    throw new Error("no primary agent configured");
   }
 
   const agent = engine.getAgent(primaryAgentId);
@@ -257,6 +262,49 @@ export function createChannelsRoute(engine: any, hub: any) {
     if (fs.existsSync(resolved)) return resolved;
     return null;
   }
+
+  route.get("/conversations/:id/export", async (c) => {
+    try {
+      const id = c.req.param("id");
+      let archive;
+      if (id.startsWith("dm:")) {
+        const peerId = id.slice(3);
+        if (!peerId || /[/\\]|\.\./.test(peerId)) {
+          return c.json({ error: "Invalid DM peer id" }, 400);
+        }
+        const owner = resolveConversationOwnerAgent(engine, c);
+        const filePath = path.join(owner.agentDir, "dm", `${peerId}.md`);
+        if (!fs.existsSync(filePath)) return c.json({ error: "DM not found" }, 404);
+        const peer = engine.getAgent?.(peerId);
+        archive = await buildConversationMarkdownExport({
+          filePath,
+          type: "dm",
+          conversationId: id,
+          displayName: peer?.agentName || peer?.name || peerId,
+          ownerAgentId: owner.id,
+          peerAgentId: peerId,
+        });
+      } else {
+        const filePath = safeChannelPath(id);
+        if (!filePath) return c.json({ error: "Invalid channel id" }, 400);
+        if (!fs.existsSync(filePath)) return c.json({ error: "Channel not found" }, 404);
+        const meta: any = getChannelMeta(filePath);
+        archive = await buildConversationMarkdownExport({
+          filePath,
+          type: "channel",
+          conversationId: id,
+          displayName: meta.name || id,
+        });
+      }
+      c.header("Content-Type", archive.mediaType);
+      c.header("Content-Disposition", `attachment; filename="${archive.filename}"; filename*=UTF-8''${encodeURIComponent(archive.filename)}`);
+      c.header("Cache-Control", "private, no-store");
+      return c.body(archive.markdown);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
 
   route.get("/conversations/:id/agent-activities", async (c) => {
     const disabled = requirePhoneEnabled(c);

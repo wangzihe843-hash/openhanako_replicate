@@ -19,7 +19,7 @@
 import { getReasoningProfile } from "../../shared/model-capabilities.ts";
 
 const ADAPTIVE_THINKING_DISABLED_ERROR =
-  "Claude Fable/Mythos 5 does not support disabling adaptive thinking.";
+  "The Claude 5 adaptive model family does not support disabling adaptive thinking.";
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 

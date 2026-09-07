@@ -355,7 +355,7 @@ export function RoleDetailPanel({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content: syncPayload.identity }),
         }),
-        hanaFetch(`/api/agents/${agent.id}/ishiki`, {
+        hanaFetch(`/api/agents/${agent.id}/agents-md`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content: syncPayload.ishiki }),
@@ -525,7 +525,7 @@ export function RoleDetailPanel({
             </button>
           </div>
           <p className={styles.panelDescription}>
-            星野人设保存在 OpenHanako 数据目录中各 agent 的 xingye/profile.json（通过 /api/xingye/storage 读写）。「更新核心人格摘要」仅写入 OpenHanako identity / ishiki 的短摘要，不包含设定库全文、不写入 pinned 或 memory。可选将星野昵称写入原生助手名（config.agent.name），也不改聊天生成链路。
+            星野人设保存在 OpenHanako 数据目录中各 agent 的 xingye/profile.json（通过 /api/xingye/storage 读写）。「更新核心人格摘要」仅写入 OpenHanako identity / AGENTS.md 的短摘要，不包含设定库全文、不写入 pinned 或 memory。可选将星野昵称写入原生助手名（config.agent.name），也不改聊天生成链路。
             {persistenceDiag.mode === 'agent' && (
               <span> 当前已启用 agent scope 持久化（小手机 / 设定库等业务数据）。</span>
             )}
@@ -917,7 +917,7 @@ export function RoleDetailPanel({
             <pre>{syncPayload.identity}</pre>
           </div>
           <div>
-            <span>ishiki.md</span>
+            <span>AGENTS.md</span>
             <pre>{syncPayload.ishiki}</pre>
           </div>
         </div>

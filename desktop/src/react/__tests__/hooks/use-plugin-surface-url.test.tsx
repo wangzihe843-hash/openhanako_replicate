@@ -27,8 +27,8 @@ const remoteConnection = {
   credentialKind: 'device_credential' as const,
 };
 
-function Harness({ routeUrl }: { routeUrl: string }) {
-  const surface = usePluginSurfaceUrl(routeUrl, 'butter');
+function Harness({ routeUrl, agentId = 'butter' }: { routeUrl: string; agentId?: string | null }) {
+  const surface = usePluginSurfaceUrl(routeUrl, agentId);
   return (
     <div>
       <div data-testid="status">{surface.status}</div>
@@ -66,6 +66,19 @@ describe('usePluginSurfaceUrl', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it('leaves agentId out of the URL entirely when the surface has no agent', async () => {
+    const fetchMock = vi.fn(async () => issuanceResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<Harness routeUrl="/api/plugins/demo/page" agentId={null} />);
+
+    await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('ready'));
+    const url = new URL(screen.getByTestId('src').textContent || '');
+    // An empty agentId= reads as "an agent whose id is the empty string". A
+    // surface with no agent should simply not carry the parameter.
+    expect(url.searchParams.has('agentId')).toBe(false);
   });
 
   it('builds local iframe URLs with the loopback query token plus an issued plugin surface session', async () => {

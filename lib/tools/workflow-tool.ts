@@ -1,4 +1,4 @@
-// lib/tools/workflow-tool.js
+// lib/tools/workflow-tool.ts
 import path from "node:path";
 import { Type } from "../pi-sdk/index.ts";
 import { t } from "../i18n.ts";
@@ -7,20 +7,22 @@ import { extractMeta } from "../workflow/meta.ts";
 import { createHostApi } from "../workflow/host-api.ts";
 import { createLimiter } from "../workflow/concurrency.ts";
 import { WorkflowJournal } from "../workflow/journal.ts";
+import { createIdleWatchdog, normalizeRunLimits } from "../workflow/run-limits.ts";
 import { getToolSessionPath, getToolSessionCwd } from "./tool-session.ts";
 import { toolOk, toolError } from "./tool-result.ts";
 
-const WORKFLOW_DEADLINE_MS = 10 * 60 * 1000;
-// 后台兜底超时：略大于内部 deadline，防 runWorkflowScript 在 deadline 之外卡死。
-const WORKFLOW_TIMEOUT_BACKSTOP_MS = WORKFLOW_DEADLINE_MS + 30 * 1000;
-const WORKFLOW_AGENT_MAX_CONCURRENT = 256;
 const AGENT_TOTAL_BACKSTOP = 1000;
+// 脚本 promise 的兜底 deadline 比总量 backstop 多留一分钟：正常路径由 abort 收场，
+// 这条只防 runWorkflowScript 连 abort 都没能唤醒的极端情况。
+const SCRIPT_DEADLINE_SLACK_MS = 60_000;
 const WORKFLOW_DESCRIPTION = [
   "Run a deterministic JavaScript orchestration script that delegates all real work to workflow agent() nodes.",
   "Use this for controlled fan-out, cross-verification, staged synthesis, or dynamic loops where each item must be handled.",
   "The script must start with: export const meta = { name: string, description: string }.",
   "Available globals: agent(prompt, opts), parallel(thunks), pipeline(items, ...stages), workflow(script, args), phase(title), log(message), budget, args.",
-  'agent() signature is agent(prompt, { label?, model?, agentType?, access?: "read"|"write", schema?, toolFilter? }).',
+  'agent() signature is agent(prompt, { label?, model?, agentType?, access?: "read"|"write", writeFolders?: string[], schema?, toolFilter?, retries? }).',
+  "Runtime model: per-node timeout 15min (transient node failures retry twice with backoff; override with agent() retries / limits.nodeRetries), the whole run fails only when NO node makes progress for 10min or after 4h total; on failure the message carries resumeFromRunId so a fixed re-dispatch replays completed nodes from cache. Concurrency defaults to 16 (limits.maxConcurrent, max 64).",
+  'Least-privilege rule: every node must either run read-only (access:"read") or declare writeFolders — the narrowest absolute existing folders it writes to. Write-capable nodes without writeFolders are rejected at start. writeFolders entries must stay inside the parent session folder scope; the first entry becomes the node cwd. Parallel write nodes should declare disjoint writeFolders so they cannot clobber each other. Reads keep following the sandbox global read-only contract.',
   "Always await agent(): const result = await agent('task prompt', { access: 'read', agentType: 'hanako' }); agent() does not return { result }.",
   "To choose a target agent, use opts.agentType. Do not pass task in opts; put complete task instructions in the first prompt argument.",
   "The script cannot import modules or access require/process/fs/net. To read/write files or run tools, ask an agent() node to do it.",
@@ -33,11 +35,18 @@ function buildParameters() {
     resumeFromRunId: Type.Optional(Type.String({
       description: "Previous workflow runId (taskId) to resume from — cached agent nodes with unchanged prompt+opts return instantly, first change onward re-executes.",
     })),
+    limits: Type.Optional(Type.Object({
+      nodeTimeoutMs: Type.Optional(Type.Number()),
+      idleTimeoutMs: Type.Optional(Type.Number()),
+      totalTimeoutMs: Type.Optional(Type.Number()),
+      maxConcurrent: Type.Optional(Type.Number()),
+      nodeRetries: Type.Optional(Type.Number()),
+    }, { description: "Resource limits (clamped to safe ranges). Defaults: node 15min, idle 10min, total 4h, concurrency 16, retries 2." })),
   });
 }
 
-function makeLimiter() {
-  return createLimiter({ maxConcurrent: WORKFLOW_AGENT_MAX_CONCURRENT, maxTotal: AGENT_TOTAL_BACKSTOP });
+function makeLimiter(maxConcurrent) {
+  return createLimiter({ maxConcurrent, maxTotal: AGENT_TOTAL_BACKSTOP });
 }
 
 function declarativeNodesUnsupported(meta) {
@@ -139,6 +148,7 @@ function makeBudget(ledger, taskId, budgetTotal) {
  *   getSessionPath?: () => string|null,
  *   getSessionIdForPath?: (sessionPath: string|null) => string|null,
  *   getSessionPermissionMode?: (sessionPath: string|null) => string|null,
+ *   getSessionFolderScope?: (sessionPath: string) => { cwd?: string|null, workspaceFolders?: string[], authorizedFolders?: string[], sandboxFolders?: string[] }|null,
  *   getParentCwd?: () => string|null,
  *   getAgentId?: () => string|undefined,
  *   emitEvent?: (event: object, sessionPath: string|null) => void,
@@ -165,6 +175,13 @@ export function createWorkflowTool(deps) {
       const parentPermissionMode = parentSessionPath
         ? (deps.getSessionPermissionMode?.(parentSessionPath) || null)
         : null;
+      // 父会话 folder scope：节点 writeFolders 的 attenuation 上界。
+      // 无 session（sync 兜底）时以 cwd 为唯一写根；两者皆缺则节点声明 writeFolders 会 fail-closed。
+      const sessionFolderScope = parentSessionPath
+        ? (deps.getSessionFolderScope?.(parentSessionPath) || null)
+        : null;
+      const parentFolderScope = sessionFolderScope
+        ?? (cwd ? { cwd, workspaceFolders: [], authorizedFolders: [], sandboxFolders: [cwd] } : null);
 
       // 先静态校验脚本头：非法脚本同步报错，不派后台任务
       // （禁止非用户预期 fallback：不把非法输入伪装成"已派出"）。
@@ -187,7 +204,7 @@ export function createWorkflowTool(deps) {
       // deferred 基础设施不可用（或无 parent session）→ 同步兜底执行，调用方直接拿结果。
       // 与 subagent 一致：这是基础设施缺失时的等价行为，不是静默降级。
       if (!store || !parentSessionPath) {
-        return _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath, parentPermissionMode });
+        return _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath, parentPermissionMode, parentFolderScope });
       }
 
       const taskId = `workflow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -211,18 +228,41 @@ export function createWorkflowTool(deps) {
       }
       const journal = new WorkflowJournal(journalPath(jDir, taskId));
 
-      // 后台任务独立生命周期：execute 的 signal 在返回后即失效，用自己的 AbortController；
-      // 再加一道超时兜底（正常由 runWorkflowScript 内部 deadline 先触发）。
+      // ── 三层资源模型：节点超时（host-api 内）/ 无进展 watchdog / 总量 backstop ──
+      //
+      // 后台任务独立生命周期：execute 的 signal 在返回后即失效，用自己的 AbortController。
+      // 关键时序："报什么就是什么"——判死的唯一路径是 failWith，它先 abort 再让脚本
+      // promise 收场，所以 fail 写进 store 时在飞节点已经收到中止信号。旧实现反过来：
+      // 总时长 deadline 与脚本 promise 赛跑先 reject 写 fail，收尾又把本该触发 abort 的
+      // 定时器清掉，于是"报了死却继续跑"，一路跑到 1000 节点上限才停。
+      const limits = normalizeRunLimits(params.limits);
       const controller = new AbortController();
-      const timeoutTimer = setTimeout(() => controller.abort(), WORKFLOW_TIMEOUT_BACKSTOP_MS);
-      if (timeoutTimer.unref) timeoutTimer.unref();
+      let abortReason = null;
+      const failWith = (reason) => {
+        if (abortReason) return;
+        abortReason = reason;
+        controller.abort();
+      };
+      const watchdog = createIdleWatchdog({
+        idleTimeoutMs: limits.idleTimeoutMs,
+        onIdleTimeout: () => failWith(`workflow 空转超时：${limits.idleTimeoutMs}ms 内没有任何节点进展`),
+      });
+      const totalTimer = setTimeout(
+        () => failWith(`workflow 总时长超限（${limits.totalTimeoutMs}ms）`),
+        limits.totalTimeoutMs,
+      );
+      if (totalTimer.unref) totalTimer.unref();
+      watchdog.start();
 
       // ── budget：接 UsageLedger 实时计量 ──
       const ledger = deps.getUsageLedger?.();
       const budgetTotal = params.args?.budgetTokens ?? null;
       const budget = makeBudget(ledger, taskId, budgetTotal);
 
-      const limiter = makeLimiter();
+      const limiter = makeLimiter(limits.maxConcurrent);
+      // 任何节点事件都算"有进展"：喂狗后再走原有活动上报。
+      const baseOnAgentEvent = buildAgentEventHandler({ taskId, parentSessionId, parentSessionPath, summary, hub, threadStore, deps });
+      const onAgentEvent = (evt) => { watchdog.feed(); baseOnAgentEvent(evt); };
       const nodeSessionDir = workflowSessionDir(deps, taskId);
 
       const baseIsoOpts = {
@@ -260,16 +300,19 @@ export function createWorkflowTool(deps) {
           limiter,
           signal: controller.signal,
           onProgress: (evt) => deps.emitEvent?.({ ...evt, type: "workflow_progress", taskId }, parentSessionPath),
-          onAgentEvent: buildAgentEventHandler({ taskId, parentSessionId, parentSessionPath, summary, hub, threadStore, deps }),
+          onAgentEvent,
           budget,
           args: childArgs,
           resolveAgentId: deps.resolveAgentId,
           journal: childJournal,
           replayJournal: childReplay,
+          nodeNamespace: `child-${cIdx}`,
+          parentFolderScope,
+          runLimits: limits,
         });
         return runWorkflowScript(childScript, childHostApi, {
           signal: controller.signal,
-          deadlineMs: WORKFLOW_DEADLINE_MS,
+          deadlineMs: limits.totalTimeoutMs + SCRIPT_DEADLINE_SLACK_MS,
         }).then(({ result }) => assertWorkflowResult(result));
       };
 
@@ -279,18 +322,23 @@ export function createWorkflowTool(deps) {
         limiter,
         signal: controller.signal,
         onProgress: (evt) => deps.emitEvent?.({ ...evt, type: "workflow_progress", taskId }, parentSessionPath),
-        onAgentEvent: buildAgentEventHandler({ taskId, parentSessionId, parentSessionPath, summary, hub, threadStore, deps }),
+        onAgentEvent,
         budget,
         args: params.args,
         resolveAgentId: deps.resolveAgentId,
         journal,
         replayJournal,
         runWorkflow,
+        parentFolderScope,
+        runLimits: limits,
       });
 
       // fire-and-forget：不 await。后台跑完 resolve/fail 写入 deferred store，
       // DeferredResultCoordinator 监听后以 <hana-background-result type="workflow"> steer 回灌主对话。
-      runWorkflowScript(params.script, hostApi, { signal: controller.signal, deadlineMs: WORKFLOW_DEADLINE_MS })
+      runWorkflowScript(params.script, hostApi, {
+        signal: controller.signal,
+        deadlineMs: limits.totalTimeoutMs + SCRIPT_DEADLINE_SLACK_MS,
+      })
         .then(({ result }) => {
           const text = workflowResultToText(result);
           const finishedAt = Date.now();
@@ -305,14 +353,18 @@ export function createWorkflowTool(deps) {
           }, parentSessionPath);
         })
         .catch((err) => {
-          const reason = err?.message || String(err);
+          // abortReason 优先：脚本 promise 的 reject 只是 abort 的回声，判死的真实理由在这里。
+          const cause = abortReason || err?.message || String(err);
+          const reason = `${cause}。可用 resumeFromRunId: "${taskId}" 重发修正后的 workflow，已完成节点会命中缓存瞬时返回。`;
           const finishedAt = Date.now();
           store.fail(taskId, reason);
           runStore?.fail?.(taskId, reason);
           hub?.upsert({ id: taskId, status: "failed", finishedAt });
           deps.emitEvent?.({ type: "block_update", taskId, patch: { streamStatus: "failed", finishedAt } }, parentSessionPath);
         })
-        .finally(() => clearTimeout(timeoutTimer));
+        // 这里清的是 watchdog 与总量定时器，它们唯一的职责是触发 failWith → abort。
+        // abort 必然先于 promise settle 发生，所以不存在"清掉了本该开火的 backstop"的窗口。
+        .finally(() => { watchdog.stop(); clearTimeout(totalTimer); });
 
       return toolOk(
         t("tool.workflow.dispatched", { summary, taskId }),
@@ -397,16 +449,30 @@ function buildAgentEventHandler({ taskId, parentSessionId, parentSessionPath, su
 }
 
 /** deferred 基础设施不可用时同步执行，保留原同步语义（调用方直接拿合成结果）。 */
-async function _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath, parentPermissionMode }) {
-  const limiter = makeLimiter();
+async function _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath, parentPermissionMode, parentFolderScope }) {
+  const limits = normalizeRunLimits(params.limits);
+  const limiter = makeLimiter(limits.maxConcurrent);
   const ledger = deps.getUsageLedger?.();
   const budgetTotal = params.args?.budgetTokens ?? null;
-  // 与后台路径同款超时兜底：用 AbortController + WORKFLOW_TIMEOUT_BACKSTOP_MS 定时器，
-  // 防 runWorkflowScript 在内部 deadline 之外卡死、把子 agent 留成孤儿（正常由内部 deadline 先触发）。
-  const controller = new AbortController();
-  const timeoutTimer = setTimeout(() => controller.abort(), WORKFLOW_TIMEOUT_BACKSTOP_MS);
-  if (timeoutTimer.unref) timeoutTimer.unref();
   const parentSessionId = sessionIdForPath(deps, parentSessionPath);
+  // 同步路径同样是"先 abort 再收尾"，只是没有 journal，失败消息不给 resume 指引。
+  const controller = new AbortController();
+  let abortReason = null;
+  const failWith = (reason) => {
+    if (abortReason) return;
+    abortReason = reason;
+    controller.abort();
+  };
+  const watchdog = createIdleWatchdog({
+    idleTimeoutMs: limits.idleTimeoutMs,
+    onIdleTimeout: () => failWith(`workflow 空转超时：${limits.idleTimeoutMs}ms 内没有任何节点进展`),
+  });
+  const totalTimer = setTimeout(
+    () => failWith(`workflow 总时长超限（${limits.totalTimeoutMs}ms）`),
+    limits.totalTimeoutMs,
+  );
+  if (totalTimer.unref) totalTimer.unref();
+  watchdog.start();
   const hostApi = createHostApi({
     executeIsolated: (prompt, isoOpts) => deps.executeIsolated(prompt, isoOpts),
     baseIsoOpts: {
@@ -423,20 +489,30 @@ async function _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath, p
     limiter,
     signal: controller.signal,
     onProgress: (evt) => deps.emitEvent?.({ ...evt, type: "workflow_progress" }, parentSessionPath),
+    onAgentEvent: () => watchdog.feed(),
     budget: makeBudget(ledger, null, budgetTotal),
     args: params.args,
     resolveAgentId: deps.resolveAgentId,
+    parentFolderScope,
+    runLimits: limits,
   });
   try {
-    const { result } = await runWorkflowScript(params.script, hostApi, { signal: controller.signal, deadlineMs: WORKFLOW_DEADLINE_MS });
+    const { result } = await runWorkflowScript(params.script, hostApi, {
+      signal: controller.signal,
+      deadlineMs: limits.totalTimeoutMs + SCRIPT_DEADLINE_SLACK_MS,
+    });
     const text = workflowResultToText(result);
     return toolOk(
       t("tool.workflow.syncComplete", { name: meta.name, count: limiter.totalSpawned, result: text }),
       { workflow: meta.name, agentsSpawned: limiter.totalSpawned, result },
     );
   } catch (err) {
-    return toolError(t("tool.workflow.executionFailed", { message: err.message }), { agentsSpawned: limiter.totalSpawned });
+    return toolError(
+      t("tool.workflow.executionFailed", { message: abortReason || err.message }),
+      { agentsSpawned: limiter.totalSpawned },
+    );
   } finally {
-    clearTimeout(timeoutTimer);
+    watchdog.stop();
+    clearTimeout(totalTimer);
   }
 }

@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { MASKED_SECRET } from "../shared/secret-custody.ts";
 import {
   collectProviderHeaderSecretPatchPaths,
+  mergeProviderHeaders,
   maskProviderHeaders,
   normalizeProviderHeaders,
   resolveProviderHeadersPatch,
+  stripCredentialHeaders,
 } from "../shared/provider-auth.ts";
 
 describe("provider auth helpers", () => {
@@ -51,5 +53,28 @@ describe("provider auth helpers", () => {
     }, "providers.proxy.headers")).toEqual([
       "providers.proxy.headers.X-Corp-Auth",
     ]);
+  });
+
+  it("merges header sources case-insensitively and strips credential-bearing headers", () => {
+    const merged = mergeProviderHeaders(
+      {
+        Authorization: "Bearer stale-provider",
+        Cookie: "provider=stale",
+        "X-Corp-Auth": "stale-custom-auth",
+        "X-Grok-Client-Version": "0.2.95",
+        "x-xai-token-auth": "xai-grok-cli",
+      },
+      {
+        authorization: "Bearer stale-model",
+        "X-API-Key": "stale-key",
+        "x-grok-model-override": "grok-4.5",
+      },
+    );
+
+    expect(stripCredentialHeaders(merged)).toEqual({
+      "X-Grok-Client-Version": "0.2.95",
+      "x-xai-token-auth": "xai-grok-cli",
+      "x-grok-model-override": "grok-4.5",
+    });
   });
 });

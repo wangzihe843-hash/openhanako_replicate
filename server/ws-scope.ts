@@ -63,7 +63,7 @@ export function wsClientCanReceiveEvent(client, event, { resolvedSessionId = nul
   const eventStudioId = stringOrNull(event.studioId);
   if (sessionPath) {
     // session 事件必须显式携带 studioId 才能投递给非本地 owner；
-    // publisher (server/routes/chat.js broadcast()) 已在 wrap 时注入 server
+    // publisher (server/routes/chat.ts broadcast()) 已在 wrap 时注入 server
     // runtime studioId。缺 studioId 视为来源不明，拒收 fail-closed。
     if (!eventStudioId) return false;
     if (!principalHasScope(principal, "chat.read")) return false;

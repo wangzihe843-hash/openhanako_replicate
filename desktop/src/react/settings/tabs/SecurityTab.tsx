@@ -73,7 +73,7 @@ export function SecurityTab() {
   const platformName = useSettingsStore(s => s.platformName);
   const showToast = useSettingsStore(s => s.showToast);
   // 默认开（!== false）：和后端 preferences-manager.getSandboxNetwork / engine.getSandboxNetwork 保持一致。
-  // 见 core/preferences-manager.js:86 和 commit 51ecc435。
+  // 见 core/preferences-manager.ts:86 和 commit 51ecc435。
   const sandboxEnabled = readConfigBoolean(settingsConfig, cfg => cfg.sandbox, true);
   const isWindows = platformName === 'win32';
   const sandboxNetworkEnabled = settingsConfig

@@ -635,6 +635,47 @@ describe('MobileApp', () => {
     expect(screen.getByLabelText('titlebar.currentChatTitle')).toHaveTextContent('sidebar.newChat');
   });
 
+  it('resets mobile global new chat to the primary agent effective default workspace', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/web-auth/session')) {
+        return Promise.resolve(jsonResponse({ authenticated: true, principal: principal(['chat', 'resources.read', 'files.read', 'files.write']) }));
+      }
+      return Promise.resolve(jsonResponse(jsonResponseForMobile(url, options, {
+        bootstrap: {
+          currentAgentId: 'mio',
+          agentName: 'Mio',
+          homeFolder: '/workspace/mio',
+          agents: [
+            {
+              id: 'hana',
+              name: 'Hana',
+              yuan: 'hanako',
+              isPrimary: true,
+              homeFolder: null,
+              effectiveHomeFolder: '/home/test/Desktop/OH-WorkSpace',
+            },
+            {
+              id: 'mio',
+              name: 'Mio',
+              yuan: 'hanako',
+              isPrimary: false,
+              homeFolder: '/workspace/mio',
+              effectiveHomeFolder: '/workspace/mio',
+            },
+          ],
+        },
+      })));
+    });
+
+    render(<MobileApp />);
+    await waitForMobileChatReady();
+    fireEvent.click(titlebarNewSessionButton());
+
+    expect(useStore.getState().selectedAgentId).toBe('hana');
+    expect(useStore.getState().selectedFolder).toBe('/home/test/Desktop/OH-WorkSpace');
+  });
+
   it('leaves mobile keyboard viewport handling to the browser', async () => {
     stubNarrowViewport(true);
     const viewport = installVisualViewportStub({ height: 700, offsetTop: 0 });

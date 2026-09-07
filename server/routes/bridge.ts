@@ -14,7 +14,7 @@ import { isBridgeOwner, resolveBridgeOwnerUserId } from "../../lib/bridge/owner-
 import { collectBridgeMediaAllowedRoots, isInsideBridgeMediaRoot } from "../../lib/bridge/media-roots.ts";
 import { sanitizeBridgeVisibleText } from "../../shared/bridge-visible-text.ts";
 import { t } from "../../lib/i18n.ts";
-import { resolveAgent, resolveAgentStrict } from "../utils/resolve-agent.ts";
+import { AgentNotFoundError, resolveAgentStrict } from "../utils/resolve-agent.ts";
 import { telegramBotOptions } from "../../lib/net/outbound-proxy.ts";
 import { createBridgeOutboundHttp } from "../../lib/bridge/outbound-http.ts";
 import {
@@ -128,13 +128,15 @@ function dingtalkStreamInfo() {
   };
 }
 
-function dingtalkTestInfo({ credentialOk, metadata, errorInfo }: {
+function dingtalkTestInfo({ credentialOk, authMode, metadata, errorInfo }: {
   credentialOk?: any;
+  authMode?: "current" | "legacy_app";
   metadata?: any;
   errorInfo?: any;
 } = {}) {
   return {
     credentialOk,
+    ...(authMode ? { authMode } : {}),
     ...dingtalkStreamInfo(),
     ...(metadata || {}),
     ...(errorInfo || {}),
@@ -202,6 +204,7 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
   const qqSecret = preferredQQSecret(bridge.qq);
   const dtRaw = bridge.dingtalk || {};
   let dtCorpId = cleanBridgeString(dtRaw.corpId);
+  let dtAuthMode = dtRaw.authMode === "legacy_app" ? "legacy_app" : "current";
   let dtClientId = firstBridgeString(dtRaw.clientId, dtRaw.appKey);
   let dtClientSecret = firstBridgeString(dtRaw.clientSecret, dtRaw.appSecret);
   let dtRobotCode = cleanBridgeString(dtRaw.robotCode);
@@ -209,6 +212,7 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
   const dtHasConfig = !!(
     dtRaw.enabled
     || dtCorpId
+    || dtRaw.authMode
     || dtClientId
     || dtClientSecret
     || dtRobotCode
@@ -230,6 +234,7 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
     try {
       const normalized = normalizeDingTalkBridgeCredentials(dtRaw);
       dtCorpId = normalized.corpId;
+      dtAuthMode = normalized.authMode;
       dtClientId = normalized.clientId;
       dtClientSecret = normalized.clientSecret;
       dtRobotCode = normalized.robotCode;
@@ -239,6 +244,7 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
       try {
         const canonical = canonicalizeDingTalkBridgeConfig(dtRaw);
         dtCorpId = canonical.corpId;
+        dtAuthMode = canonical.authMode === "legacy_app" ? "legacy_app" : "current";
         dtClientId = canonical.clientId;
         dtClientSecret = canonical.clientSecret;
         dtRobotCode = canonical.robotCode;
@@ -278,6 +284,7 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
     }),
     dingtalk: platformStatus("dingtalk", bridge.dingtalk, {
       configured: dtConfigured,
+      authMode: dtAuthMode,
       corpId: dtCorpId,
       clientId: dtClientId,
       clientSecret: maskSecretValue(dtClientSecret),
@@ -326,9 +333,27 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
     }
   }
 
+  /**
+   * Bridge reads answer for exactly one agent, so the request has to name it.
+   * There is no server-wide "current" agent that is the right answer for every
+   * connected client, so a request without an agentId gets a 404 rather than
+   * whichever agent the server happens to be focused on.
+   */
+  function withReadAgent(handler: (c: any, agent: any) => any) {
+    return async (c: any) => {
+      let agent;
+      try {
+        agent = resolveAgentStrict(engine, c);
+      } catch (err) {
+        if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
+        throw err;
+      }
+      return handler(c, agent);
+    };
+  }
+
   /** 获取所有平台连接状态（从 agent.config.bridge 读取） */
-  route.get("/bridge/status", async (c) => {
-    const agent = resolveAgent(engine, c);
+  route.get("/bridge/status", withReadAgent(async (c, agent) => {
     const manager = resolveBridgeManager();
     const bridgeState = bridgeRef.getState?.() || { ready: !!manager, initializing: false, error: null };
     return c.json({
@@ -337,7 +362,7 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
       bridgeInitializing: !!bridgeState.initializing,
       bridgeError: bridgeState.error || null,
     });
-  });
+  }));
 
   /** 设置 owner（哪个账号是你）— 写入 agent.config.bridge */
   route.post("/bridge/owner", async (c) => {
@@ -520,16 +545,14 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
   });
 
   /** 获取最近消息日志（实时内存缓冲） */
-  route.get("/bridge/messages", async (c) => {
+  route.get("/bridge/messages", withReadAgent(async (c, agent) => {
     const limit = parseInt(c.req.query("limit"), 10) || 50;
-    const agent = resolveAgent(engine, c);
     return c.json({ messages: resolveBridgeManager()?.getMessages(limit, agent.id) || [] });
-  });
+  }));
 
   /** 获取 bridge session 列表 */
-  route.get("/bridge/sessions", async (c) => {
+  route.get("/bridge/sessions", withReadAgent(async (c, agent) => {
     const platform = c.req.query("platform"); // optional filter
-    const agent = resolveAgent(engine, c);
     const index = engine.getBridgeIndex(agent.id);
     const bridgeDir = path.join(agent.sessionDir, "bridge");
     const sessions = [];
@@ -572,12 +595,11 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
     // 按最后活跃时间排序
     sessions.sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0));
     return c.json({ sessions });
-  });
+  }));
 
   /** 读取指定 bridge session 的消息 */
-  route.get("/bridge/sessions/:sessionKey/messages", async (c) => {
+  route.get("/bridge/sessions/:sessionKey/messages", withReadAgent(async (c, agent) => {
     const sessionKey = c.req.param("sessionKey");
-    const agent = resolveAgent(engine, c);
     const index = engine.getBridgeIndex(agent.id);
     const raw = index[sessionKey];
     const file = typeof raw === "string" ? raw : raw?.file;
@@ -630,7 +652,7 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
     } catch (err) {
       return c.json({ error: err.message, messages: [] });
     }
-  });
+  }));
 
   /** 重置 bridge session（清除上下文，下次消息新建 session） */
   route.post("/bridge/sessions/:sessionKey/reset", async (c) => {
@@ -859,7 +881,9 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
                   afterLabel: shouldUseSavedCredentials ? "effective" : "outbound",
                   after: shouldUseSavedCredentials
                     ? dingtalkCredentials.clientSecret
-                    : request.payload.client_secret,
+                    : "client_secret" in request.payload
+                      ? request.payload.client_secret
+                      : request.payload.appSecret,
                 })}`,
               );
             },
@@ -868,7 +892,11 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
             ok: true,
             info: {
               msg: t("error.tokenSuccess"),
-              ...dingtalkTestInfo({ credentialOk: true, metadata: result.metadata }),
+              ...dingtalkTestInfo({
+                credentialOk: true,
+                authMode: dingtalkCredentials.authMode,
+                metadata: result.metadata,
+              }),
             },
           });
         } catch (err: any) {
@@ -877,7 +905,11 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
           return c.json({
             ok: false,
             error: errorInfo?.dingtalkMessage || t("error.verifyFailed"),
-            info: dingtalkTestInfo({ credentialOk: false, errorInfo }),
+            info: dingtalkTestInfo({
+              credentialOk: false,
+              authMode: dingtalkCredentials.authMode,
+              errorInfo,
+            }),
           });
         }
       } else if (platform === "qq") {

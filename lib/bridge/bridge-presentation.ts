@@ -76,5 +76,9 @@ export function renderFeishuCardKitCard(input: BridgePresentation | unknown, opt
 }
 
 export function renderFeishuCardKitSettings(streamingMode: boolean) {
-  return JSON.stringify({ streaming_mode: Boolean(streamingMode) });
+  return JSON.stringify({
+    config: {
+      streaming_mode: Boolean(streamingMode),
+    },
+  });
 }

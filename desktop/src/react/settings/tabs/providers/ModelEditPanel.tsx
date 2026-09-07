@@ -117,7 +117,7 @@ export function ModelEditPanel({ modelId, providerId, modelMeta, anchorEl, onClo
         </div>
         <div className={styles['pv-model-edit-field']}>
           <label className={styles['pv-model-edit-label']}>{t('settings.api.maxOutput')}</label>
-          <ComboInput presets={OUTPUT_PRESETS} value={outVal} onChange={setOutVal} placeholder="16384" />
+          <ComboInput presets={OUTPUT_PRESETS} value={outVal} onChange={setOutVal} placeholder="65536" />
         </div>
       </div>
       <div className={`${styles['pv-model-edit-row']} ${styles['pv-model-edit-capabilities']}`}>

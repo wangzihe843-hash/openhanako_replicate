@@ -1,5 +1,5 @@
 /**
- * tests/llm-utils-error-cause.test.js
+ * tests/llm-utils-error-cause.test.ts
  *
  * TDD 覆盖 llm-utils 错误日志透传 err.cause 的改动。
  *

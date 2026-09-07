@@ -14,6 +14,13 @@ export function createStructuredOutputTool(schema) {
     name: "structured_output",
     label: "Structured Output",
     description: "返回严格符合所需 schema 的结构化结果。完成任务后必须调用一次。",
+    sessionPermission: {
+      resolveInvocation: () => ({
+        action: "record",
+        kind: "routine",
+        capability: "structured_output.record",
+      }),
+    },
     parameters: schema && typeof schema === "object" ? schema : { type: "object" },
     execute: async (_toolCallId, params) => {
       captured = params;

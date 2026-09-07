@@ -1,4 +1,4 @@
-// shared/network-proxy.js
+// shared/network-proxy.ts
 
 export const NETWORK_PROXY_MODES = ["system", "manual", "direct"];
 export const DEFAULT_NO_PROXY = "localhost, 127.0.0.1, ::1";

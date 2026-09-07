@@ -21,33 +21,73 @@ function makeApp(engine) {
 }
 
 describe("notification preferences", () => {
-  it("defaults turn completion notifications to never", () => {
+  it("defaults all completion notification categories to never", () => {
     const prefs = makePrefs();
 
     expect(prefs.getNotificationPreferences()).toEqual({
-      turnCompletion: "never",
+      chatCompletion: "never",
+      scheduledTaskCompletion: "never",
+      patrolCompletion: "never",
     });
   });
 
-  it("persists normalized turn completion preference", () => {
+  it("reads the legacy turnCompletion preference as chatCompletion", () => {
     const prefs = makePrefs();
 
-    expect(prefs.setNotificationPreferences({ turnCompletion: "when_unfocused" })).toEqual({
-      turnCompletion: "when_unfocused",
+    prefs.savePreferences({ notifications: { turnCompletion: "when_session_unfocused" } });
+
+    expect(prefs.getNotificationPreferences()).toEqual({
+      chatCompletion: "when_session_unfocused",
+      scheduledTaskCompletion: "never",
+      patrolCompletion: "never",
     });
+  });
+
+  it("accepts a legacy turnCompletion patch from an older client", () => {
+    const prefs = makePrefs();
+    prefs.setNotificationPreferences({ chatCompletion: "when_unfocused" });
+
     expect(prefs.setNotificationPreferences({ turnCompletion: "when_session_unfocused" })).toEqual({
-      turnCompletion: "when_session_unfocused",
+      chatCompletion: "when_session_unfocused",
+      scheduledTaskCompletion: "never",
+      patrolCompletion: "never",
+    });
+  });
+
+  it("persists and normalizes the three notification categories", () => {
+    const prefs = makePrefs();
+
+    expect(prefs.setNotificationPreferences({
+      chatCompletion: "when_session_unfocused",
+      scheduledTaskCompletion: "always",
+      patrolCompletion: "when_unfocused",
+    })).toEqual({
+      chatCompletion: "when_session_unfocused",
+      scheduledTaskCompletion: "always",
+      patrolCompletion: "when_unfocused",
     });
     expect(prefs.getPreferences().notifications).toEqual({
-      turnCompletion: "when_session_unfocused",
+      chatCompletion: "when_session_unfocused",
+      scheduledTaskCompletion: "always",
+      patrolCompletion: "when_unfocused",
     });
-    expect(prefs.setNotificationPreferences({ turnCompletion: "sometimes" })).toEqual({
-      turnCompletion: "never",
+    expect(prefs.setNotificationPreferences({
+      chatCompletion: "sometimes",
+      scheduledTaskCompletion: "when_session_unfocused",
+      patrolCompletion: "sometimes",
+    })).toEqual({
+      chatCompletion: "never",
+      scheduledTaskCompletion: "never",
+      patrolCompletion: "never",
     });
   });
 
   it("reads and updates notification preferences through the route", async () => {
-    let notifications = { turnCompletion: "never" };
+    let notifications = {
+      chatCompletion: "never",
+      scheduledTaskCompletion: "never",
+      patrolCompletion: "never",
+    };
     const engine = {
       getSharedModels: vi.fn(() => ({})),
       getSearchConfig: vi.fn(() => ({})),
@@ -55,9 +95,8 @@ describe("notification preferences", () => {
       getNotificationPreferences: vi.fn(() => notifications),
       setNotificationPreferences: vi.fn((patch) => {
         notifications = {
-          turnCompletion: patch.turnCompletion === "when_unfocused" || patch.turnCompletion === "when_session_unfocused"
-            ? patch.turnCompletion
-            : "never",
+          ...notifications,
+          ...patch,
         };
         return notifications;
       }),
@@ -67,22 +106,38 @@ describe("notification preferences", () => {
     const initial = await app.request("/api/preferences/notifications");
     expect(initial.status).toBe(200);
     expect(await initial.json()).toEqual({
-      notifications: { turnCompletion: "never" },
+      notifications: {
+        chatCompletion: "never",
+        scheduledTaskCompletion: "never",
+        patrolCompletion: "never",
+      },
     });
 
     const updated = await app.request("/api/preferences/notifications", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notifications: { turnCompletion: "when_session_unfocused" } }),
+      body: JSON.stringify({
+        notifications: {
+          chatCompletion: "when_session_unfocused",
+          scheduledTaskCompletion: "always",
+          patrolCompletion: "when_unfocused",
+        },
+      }),
     });
 
     expect(updated.status).toBe(200);
     expect(engine.setNotificationPreferences).toHaveBeenCalledWith({
-      turnCompletion: "when_session_unfocused",
+      chatCompletion: "when_session_unfocused",
+      scheduledTaskCompletion: "always",
+      patrolCompletion: "when_unfocused",
     });
     expect(await updated.json()).toEqual({
       ok: true,
-      notifications: { turnCompletion: "when_session_unfocused" },
+      notifications: {
+        chatCompletion: "when_session_unfocused",
+        scheduledTaskCompletion: "always",
+        patrolCompletion: "when_unfocused",
+      },
     });
   });
 });

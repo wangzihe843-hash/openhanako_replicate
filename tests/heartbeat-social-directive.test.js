@@ -10,7 +10,7 @@ import { createHeartbeat } from "../lib/desk/heartbeat.js";
  *  - global-only 触发仍可选；逐 peer 到期是严格保底，必须至少联系一个
  */
 describe("heartbeat prompt: social staleness directive", () => {
-  async function runOnceAndCapturePrompt({ socialStaleness = null } = {}) {
+  async function runOnceAndCapturePrompt({ socialStaleness = null, getDmAvailable } = {}) {
     let capturedPrompt = null;
     const hb = createHeartbeat({
       onBeat: async (prompt) => {
@@ -21,6 +21,7 @@ describe("heartbeat prompt: social staleness directive", () => {
         consumed: 0,
         result: { summaryZh: null, eventCount: 0, autoDraftStaleness: null, socialStaleness },
       }),
+      getDmAvailable,
       intervalMinutes: 31,
       locale: "zh-CN",
     });
@@ -32,6 +33,30 @@ describe("heartbeat prompt: social staleness directive", () => {
   it("does NOT add social section when socialStaleness is null", async () => {
     const prompt = await runOnceAndCapturePrompt({ socialStaleness: null });
     expect(prompt).not.toContain("## 社交动态");
+  });
+
+  it.each(["disabled", "check failed"])("preserves consumed events and social statistics when DM is %s", async (mode) => {
+    const socialStaleness = {
+      shouldSocialize: true, overduePeerCount: 1, globalChatTurnsSinceLastDm: 85,
+      candidatePeers: [{ peerId: "ming", name: "明", chatTurnsSinceLastDm: 210 }],
+    };
+    const consumed = { consumed: 3, result: { summaryZh: "最近对话 ×3", eventCount: 3, socialStaleness } };
+    let capturedPrompt;
+    const hb = createHeartbeat({
+      onBeat: async (prompt) => { capturedPrompt = prompt; },
+      getEventSummary: async () => consumed,
+      getDmAvailable: async () => {
+        if (mode === "check failed") throw new Error("runtime unavailable");
+        return false;
+      },
+      locale: "zh-CN",
+    });
+    const result = await hb.runHeartbeatOnce({ reason: "test" });
+    expect(result.status).toBe("ran");
+    expect(result.payload.xingyeConsumed).toEqual(consumed);
+    expect(capturedPrompt).toContain("最近对话 ×3");
+    expect(capturedPrompt).not.toContain("## 社交动态");
+    expect(capturedPrompt).not.toContain("本轮保底要求");
   });
 
   it("does NOT add social section when neither global nor per-peer triggers", async () => {

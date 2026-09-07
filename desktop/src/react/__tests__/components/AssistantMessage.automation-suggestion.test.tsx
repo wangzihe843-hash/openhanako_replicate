@@ -7,6 +7,8 @@ import { AssistantMessage } from '../../components/chat/AssistantMessage';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useStore } from '../../stores';
 
+const addToast = vi.fn();
+
 vi.mock('../../hooks/use-hana-fetch', () => ({
   hanaFetch: vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })),
   hanaUrl: (path: string) => `http://127.0.0.1:3210${path}`,
@@ -65,9 +67,14 @@ describe('AssistantMessage automation suggestion card', () => {
       agentName: 'Hanako',
       agentYuan: 'hanako',
       currentAgentId: 'hanako',
+      currentSessionId: 'session-main',
+      currentSessionPath: '/sessions/main.jsonl',
+      sessions: [{ sessionId: 'session-main', path: '/sessions/main.jsonl' }],
       streamingSessions: [],
       selectedMessageIdsBySession: {},
+      addToast,
     } as never);
+    addToast.mockReset();
     vi.mocked(hanaFetch).mockReset();
     vi.mocked(hanaFetch).mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
   });
@@ -90,7 +97,7 @@ describe('AssistantMessage automation suggestion card', () => {
     expect(screen.getByDisplayValue('奶茶提醒')).toBeInTheDocument();
   });
 
-  it('creates directly from a suggestion card without calling ConfirmStore', async () => {
+  it('applies a suggestion through the session-bound one-shot route without calling ConfirmStore', async () => {
     renderSuggestion('pending');
 
     fireEvent.click(screen.getByRole('button', { name: 'automation.openDraft' }));
@@ -100,6 +107,21 @@ describe('AssistantMessage automation suggestion card', () => {
       expect(hanaFetch).toHaveBeenCalledWith('/api/desk/cron', expect.objectContaining({
         method: 'POST',
       }));
+    });
+    const deskCronCall = vi.mocked(hanaFetch).mock.calls.find(([url]) => url === '/api/desk/cron');
+    const body = JSON.parse((deskCronCall?.[1] as RequestInit).body as string);
+    expect(body).toEqual({
+      action: 'apply_suggestion',
+      suggestionId: 'automation_suggestion_1',
+      sessionId: 'session-main',
+      jobData: {
+        type: 'cron',
+        schedule: '0 12 * * *',
+        label: '奶茶提醒',
+        prompt: '提醒我喝奶茶',
+        model: '',
+        targetAgentId: 'hanako',
+      },
     });
     expect(hanaFetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/confirm/'), expect.anything());
   });
@@ -124,9 +146,10 @@ describe('AssistantMessage automation suggestion card', () => {
       const deskCronCall = vi.mocked(hanaFetch).mock.calls.find(([url]) => url === '/api/desk/cron');
       expect(deskCronCall).toBeTruthy();
       const body = JSON.parse((deskCronCall?.[1] as RequestInit).body as string);
-      expect(body.actorAgentId).toBe('maomao');
-      expect(body.executor.agentId).toBe('maomao');
-      expect(body.executionContext.cwd).toBe('/home/maomao');
+      expect(body.jobData.targetAgentId).toBe('maomao');
+      expect(body.jobData.actorAgentId).toBeUndefined();
+      expect(body.jobData.executor).toBeUndefined();
+      expect(body.jobData.executionContext).toBeUndefined();
     });
   });
 
@@ -144,8 +167,41 @@ describe('AssistantMessage automation suggestion card', () => {
       const deskCronCall = vi.mocked(hanaFetch).mock.calls.find(([url]) => url === '/api/desk/cron');
       expect(deskCronCall).toBeTruthy();
       const body = JSON.parse((deskCronCall?.[1] as RequestInit).body as string);
-      expect(body.type).toBe('every');
-      expect(body.schedule).toBe(7_200_000);
+      expect(body.jobData.type).toBe('every');
+      expect(body.jobData.schedule).toBe(7_200_000);
     });
+  });
+
+  it('shows a structured create failure, keeps the draft open, and allows retry', async () => {
+    vi.mocked(hanaFetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          code: 'cron_store_corrupt',
+          message: 'automation task storage is corrupt',
+        },
+      }), { status: 500 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    renderSuggestion('pending');
+
+    fireEvent.click(screen.getByRole('button', { name: 'automation.openDraft' }));
+    fireEvent.click(screen.getByRole('button', { name: 'automation.confirmCreate' }));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith(
+        'automation.createFailed: automation task storage is corrupt',
+        'error',
+      );
+    });
+    expect(screen.getByRole('dialog', { name: 'automation.draftTitle' })).toBeInTheDocument();
+    expect(vi.mocked(hanaFetch).mock.calls[0][1]).toEqual(expect.objectContaining({
+      throwOnHttpError: false,
+    }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'automation.confirmCreate' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'automation.draftTitle' })).not.toBeInTheDocument();
+    });
+    expect(hanaFetch).toHaveBeenCalledTimes(2);
   });
 });

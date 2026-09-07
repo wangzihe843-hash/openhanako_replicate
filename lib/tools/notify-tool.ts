@@ -8,6 +8,24 @@
 import { Type, StringEnum } from "../pi-sdk/index.ts";
 import { t } from "../i18n.ts";
 
+const NOTIFY_CHANNELS = new Set(["auto", "desktop", "bridge_owner"]);
+const NOTIFY_BRIDGE_PLATFORMS = new Set(["wechat", "feishu", "dingtalk", "telegram", "qq"]);
+const NOTIFY_CONTEXT_POLICIES = new Set(["none", "record_when_delivered"]);
+
+function stableUniqueStrings(value: unknown, allowed: Set<string>) {
+  if (!Array.isArray(value)) return null;
+  const strings: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !allowed.has(item)) return null;
+    strings.push(item);
+  }
+  return [...new Set(strings)].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+}
+
+function stableRouteId(value: unknown) {
+  return Buffer.from(JSON.stringify(value), "utf-8").toString("base64url");
+}
+
 /**
  * @param {{ onNotify: (payload: object) => Promise<object|void> | object | void }} opts
  */
@@ -15,7 +33,43 @@ export function createNotifyTool({ onNotify }) {
   return {
     name: "notify",
     label: "Notification",
-    description: "Send a notification to the user. Choose desktop popup, Bridge owner chat, or the default channel according to the task; pass bridgePlatforms when delivery must go to one or more explicit Bridge platforms such as WeChat, Feishu, DingTalk, Telegram, or QQ.\nUse cases:\n- The user says 'remind me about xxx', 'notify me when...', 'don't let me forget xxx'\n- A scheduled task prompt explicitly includes notification intent or asks to send it through Bridge/WeChat\n- A monitoring/scheduled task discovers something requiring user attention\nIf everything is normal with no issues, do not call this tool. Successful Bridge notifications can be appended to that conversation context according to contextPolicy.",
+    description: "Send a notification to the user via desktop popup, Bridge owner chat, or the default channel; pass bridgePlatforms when delivery must target one or more explicit Bridge platforms such as WeChat, Feishu, DingTalk, Telegram, or QQ. Call it when the user asked to be reminded or notified, or when a scheduled or monitoring task finds something that needs their attention; if everything is normal, do not call it. Successful Bridge notifications can be appended to that conversation context according to contextPolicy.",
+    sessionPermission: {
+      resolveInvocation: (params: any = {}) => {
+        if (typeof params.title !== "string" || typeof params.body !== "string") return null;
+        const audience = params.audience === undefined ? "owner" : params.audience;
+        if (audience !== "owner") return null;
+        const hasExplicitChannels = params.channels !== undefined;
+        const declaredChannels = hasExplicitChannels
+          ? stableUniqueStrings(params.channels, NOTIFY_CHANNELS)
+          : [];
+        const channels = declaredChannels?.includes("auto")
+          ? [...new Set([...declaredChannels.filter((channel) => channel !== "auto"), "desktop"])]
+              .sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
+          : declaredChannels;
+        const bridgePlatforms = params.bridgePlatforms === undefined
+          ? []
+          : stableUniqueStrings(params.bridgePlatforms, NOTIFY_BRIDGE_PLATFORMS);
+        const contextPolicy = params.contextPolicy === undefined ? "record_when_delivered" : params.contextPolicy;
+        if (!channels || !bridgePlatforms) return null;
+        if (!NOTIFY_CONTEXT_POLICIES.has(contextPolicy)) return null;
+        return {
+          action: "send",
+          kind: "review",
+          capability: "notify.send",
+          target: {
+            type: "notification_route",
+            id: stableRouteId({
+              audience,
+              channels: hasExplicitChannels ? channels : "context_default",
+              bridgePlatforms,
+              contextPolicy,
+            }),
+            label: hasExplicitChannels ? (channels.join(", ") || "none") : "context default",
+          },
+        };
+      },
+    },
     parameters: Type.Object({
       title: Type.String({ description: "Notification title (brief)" }),
       body: Type.String({ description: "Notification content" }),

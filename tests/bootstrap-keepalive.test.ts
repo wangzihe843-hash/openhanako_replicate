@@ -1,5 +1,5 @@
 /**
- * 回归测试：验证 server/bootstrap.js 的 keepalive worker 真的能穿透主线程阻塞。
+ * 回归测试：验证 server/bootstrap.ts 的 keepalive worker 真的能穿透主线程阻塞。
  *
  * 历史 bug（commit 03d01566）：keepalive worker 用了 `process.stdout.write(...)`，
  * 但 Node Worker 的 stdout 默认走 MessagePort 转发到主线程的 writable，主线程

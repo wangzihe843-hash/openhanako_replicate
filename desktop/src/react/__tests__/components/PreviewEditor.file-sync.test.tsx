@@ -72,6 +72,7 @@ describe('PreviewEditor file sync', () => {
   afterEach(() => {
     cleanup();
     elementRectSpy.mockRestore();
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -155,6 +156,68 @@ describe('PreviewEditor file sync', () => {
 
     expect(ref.current?.getView()).toBeTruthy();
     expect(container.querySelector('.cm-content')?.getAttribute('spellcheck')).toBe('false');
+  });
+
+  it('toggles the shared block menu closed on a second handle click and keeps inline actions', () => {
+    const coordsSpy = vi.spyOn(EditorView.prototype, 'coordsAtPos').mockReturnValue({
+      left: 200,
+      right: 260,
+      top: 32,
+      bottom: 56,
+    });
+    const lineBlockSpy = vi.spyOn(EditorView.prototype, 'lineBlockAt').mockReturnValue({
+      top: 32,
+      bottom: 56,
+      height: 24,
+    } as ReturnType<EditorView['lineBlockAt']>);
+    const boundarySpy = vi.spyOn(EditorView.prototype, 'moveToLineBoundary').mockImplementation(start => start);
+    const ref = createRef<PreviewEditorHandle>();
+    const { container } = render(
+      <PreviewEditor
+        ref={ref}
+        content={'Alpha\n\nBeta'}
+        filePath="/tmp/hana-note.md"
+        mode="markdown"
+      />,
+    );
+    act(() => vi.runOnlyPendingTimers());
+    const handle = container.querySelector<HTMLButtonElement>('.cm-markdown-block-handle');
+
+    fireEvent.click(handle!);
+    expect(document.body.querySelector('.context-menu')).toBeTruthy();
+    expect(document.body.querySelector('[title="粗体"]')).toBeTruthy();
+    expect(document.body.querySelector('[title="删除线"]')).toBeTruthy();
+    act(() => vi.runOnlyPendingTimers());
+
+    fireEvent.click(handle!);
+    expect(document.body.querySelector('.context-menu')).toBeNull();
+    coordsSpy.mockRestore();
+    lineBlockSpy.mockRestore();
+    boundarySpy.mockRestore();
+  });
+
+  it('offers quote-to-chat first in the right-click menu for an explicit editor selection', () => {
+    const ref = createRef<PreviewEditorHandle>();
+    const onQuoteRange = vi.fn();
+    const { container } = render(
+      <PreviewEditor
+        ref={ref}
+        content="Alpha Beta"
+        filePath="/tmp/hana-note.md"
+        mode="markdown"
+        onQuoteRange={onQuoteRange}
+      />,
+    );
+    const view = ref.current?.getView();
+    expect(view).toBeTruthy();
+    act(() => view!.dispatch({ selection: { anchor: 0, head: 5 } }));
+
+    fireEvent.contextMenu(container.querySelector('.cm-line')!, { clientX: 24, clientY: 32 });
+    const items = document.body.querySelectorAll<HTMLElement>('.context-menu-item');
+    expect(items[0]?.textContent).toContain('引用到对话');
+
+    fireEvent.click(items[0]);
+    expect(onQuoteRange).toHaveBeenCalledWith(view, { from: 0, to: 5 });
   });
 
   it('can scroll to a match without stealing focus from the find box', () => {

@@ -90,9 +90,17 @@ export class WorkflowJournal {
 
   /**
    * 记录一个 agent() 调用的结果（缓存命中时也应调用以写入当前 run 的 journal）。
+   *
+   * extra 是归因附加字段（error 消息、attempts 重试次数）。写侧自由扩展，读侧
+   * （load / tryReplay）只认 nodeSeq/key/result/status，未知字段天然忽略——
+   * 老 journal 没有这些字段照样能 resume，新 journal 被老代码读也不会炸。
+   * @param {{ error?: string, attempts?: number }} [extra]
    */
-  record(nodeSeq, key, result, status = "ok") {
-    const entry = { nodeSeq, key, result, status, ts: Date.now() };
+  record(nodeSeq, key, result, status = "ok", extra: Record<string, any> = {}) {
+    const entry = {
+      nodeSeq, key, result, status, ts: Date.now(),
+      ...(extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {}),
+    };
     this._entries.set(nodeSeq, entry);
     this._appendLine(entry);
   }

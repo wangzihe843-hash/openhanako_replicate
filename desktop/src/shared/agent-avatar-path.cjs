@@ -6,7 +6,7 @@
  *
  * Avatar storage convention (single source of truth across the app):
  *   {hanakoHome}/agents/{agentId}/avatars/agent.{png|jpg|jpeg|webp}
- * Mirrors server/routes/agents.js (GET /agents/:id/avatar) and server/routes/avatar.js.
+ * Mirrors server/routes/agents.ts (GET /agents/:id/avatar) and server/routes/avatar.ts.
  *
  * Identity is keyed strictly by the supplied agentId. A missing or unsafe agentId
  * returns null so callers fall back to no-icon — never to a globally-focused agent
@@ -17,7 +17,7 @@ const path = require("path");
 
 const AVATAR_EXTS = ["png", "jpg", "jpeg", "webp"];
 
-// Same guard as server/utils/validation.js validateId: agentId is a directory
+// Same guard as server/utils/validation.ts validateId: agentId is a directory
 // segment, so reject traversal and separators before joining it onto a path.
 function isSafeAgentId(agentId) {
   return (

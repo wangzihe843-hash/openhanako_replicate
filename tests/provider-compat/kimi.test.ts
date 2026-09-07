@@ -65,7 +65,7 @@ describe("provider-compat/kimi", () => {
     });
 
     expect(result.reasoning_effort).toBe("max");
-    expect(result.thinking).toEqual({ type: "enabled" });
+    expect(result.thinking).toEqual({ type: "enabled", keep: "all" });
     expect(result).not.toHaveProperty("output_config");
   });
 
@@ -159,13 +159,51 @@ describe("provider-compat/kimi", () => {
     expect(result.thinking).toEqual({ type: "disabled" });
   });
 
+  it.each(["k3", "k3-256k"])(
+    "omits unsupported temperature from %s summary requests",
+    (modelId) => {
+      const result = normalizeProviderPayload({
+        model: modelId,
+        messages: [{ role: "user", content: "summarize" }],
+        temperature: 0.3,
+      }, {
+        ...kimiModel,
+        id: modelId,
+      }, { mode: "utility" });
+
+      expect(result).not.toHaveProperty("temperature");
+      expect(result.thinking).toEqual({ type: "disabled" });
+    },
+  );
+
+  it("omits unsupported K3 temperature from chat requests", () => {
+    const result = normalizeProviderPayload({
+      model: "k3",
+      messages: [{ role: "user", content: "hi" }],
+      temperature: 0.7,
+    }, {
+      ...kimiModel,
+      id: "k3",
+    }, {
+      mode: "chat",
+      reasoningLevel: "high",
+    });
+
+    expect(result).not.toHaveProperty("temperature");
+    expect(result.thinking).toEqual({ type: "enabled", keep: "all" });
+  });
+
   it("recovers reasoning_content for Kimi tool-call replay", () => {
     const payload = {
       model: "kimi-for-coding",
       messages: [
         {
           role: "assistant",
-          content: [{ type: "text", text: "I need to inspect the file." }],
+          content: [{
+            type: "thinking",
+            thinking: "I need to inspect the file.",
+            thinkingSignature: "reasoning_content",
+          }],
           tool_calls: [{
             id: "call_1",
             type: "function",
@@ -280,6 +318,7 @@ describe("provider-compat/kimi", () => {
       provider: "openai",
       api: "openai-completions",
     }, { mode: "chat" });
-    expect(nonKimiResult).toBe(payload);
+    expect(nonKimiResult).toEqual({ ...payload, max_tokens: 65_536 });
+    expect(nonKimiResult.tools).toEqual(payload.tools);
   });
 });

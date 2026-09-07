@@ -31,6 +31,12 @@ export interface ChatSlice {
   markOptimisticUserMessageFailed: (path: string, clientMessageId: string, error: string) => boolean;
   updateLastMessage: (path: string, updater: (msg: ChatMessage) => ChatMessage) => void;
   updateMessageById: (path: string, messageId: string, updater: (msg: ChatMessage) => ChatMessage) => boolean;
+  bindPersistedTurnEntries: (path: string, entries: {
+    turnInputEntryId?: string | null;
+    userEntryId?: string | null;
+    assistantEntryId?: string | null;
+    assistantMessageId?: string | null;
+  }) => boolean;
   truncateSessionFromMessage: (path: string, messageId: string) => boolean;
   appendInterludeItem: (sessionPath: string, block: Extract<ContentBlock, { type: 'interlude' }>) => boolean;
   resolveBlockByTaskId: (sessionPath: string, taskId: string, resolution: ContentBlock) => boolean;
@@ -38,6 +44,15 @@ export interface ChatSlice {
   _pendingBlockPatches: Record<string, Record<string, any>>;
   setSessionRegistryFiles: (path: string, files: SessionRegistryFile[]) => void;
   upsertSessionRegistryFile: (path: string, file: SessionRegistryFile) => void;
+  /**
+   * loadMessages 竞态期间的 SessionFile 记录（issue #2188）：hydrate 期间收到的
+   * live upsert / branch reset 会被 in-flight 的 HTTP 快照整表覆盖。用一条轻量
+   * flight 记录桥接两者：key 与 sessionRegistryFilesByPath 相同的 sessionScopedKey。
+   */
+  _sessionFilesFlightByPath: Record<string, { version: number; resetSeen: boolean; upserts: SessionRegistryFile[] }>;
+  beginSessionFilesFlight: (path: string, version: number) => void;
+  consumeSessionFilesFlight: (path: string, version: number) => { resetSeen: boolean; upserts: SessionRegistryFile[] } | null;
+  applyBranchResetSessionFiles: (path: string, files: SessionRegistryFile[] | null) => void;
 
   updateSessionModel: (path: string, model: SessionModel) => void;
   bumpLoadMessagesVersion: (path: string) => number;
@@ -88,6 +103,7 @@ export const createChatSlice = (
   sessionRegistryFilesByPath: {},
   sessionModelsByPath: {},
   _loadMessagesVersion: {},
+  _sessionFilesFlightByPath: {},
   scrollPositions: {},
 
   initSession: (path, items, hasMore, revision = null) => set((s) => {
@@ -285,13 +301,93 @@ export const createChatSlice = (
     return true;
   },
 
+  bindPersistedTurnEntries: (path, entries) => {
+    const turnInputEntryId = typeof entries?.turnInputEntryId === 'string' && entries.turnInputEntryId.trim()
+      ? entries.turnInputEntryId.trim()
+      : null;
+    const userEntryId = typeof entries?.userEntryId === 'string' && entries.userEntryId.trim()
+      ? entries.userEntryId.trim()
+      : null;
+    const assistantEntryId = typeof entries?.assistantEntryId === 'string' && entries.assistantEntryId.trim()
+      ? entries.assistantEntryId.trim()
+      : null;
+    const assistantMessageId = typeof entries?.assistantMessageId === 'string' && entries.assistantMessageId.trim()
+      ? entries.assistantMessageId.trim()
+      : null;
+    if (!turnInputEntryId && !userEntryId && !assistantEntryId) return false;
+
+    let changed = false;
+    set((s) => {
+      const session = scopedMapValue<SessionMessages>(s as any, s.chatSessions, path);
+      if (!session) return {};
+      const items = [...session.items];
+      const assistantIndex = assistantMessageId
+        ? items.findIndex((item) => (
+            item.type === 'message'
+            && item.data.role === 'assistant'
+            && item.data.id === assistantMessageId
+          ))
+        : -1;
+
+      if ((assistantEntryId || turnInputEntryId) && assistantIndex >= 0) {
+        const assistant = items[assistantIndex];
+        if (assistant.type === 'message' && (
+          (assistantEntryId && assistant.data.sourceEntryId !== assistantEntryId)
+          || (turnInputEntryId && assistant.data.turnInputEntryId !== turnInputEntryId)
+        )) {
+          items[assistantIndex] = {
+            type: 'message',
+            data: {
+              ...assistant.data,
+              ...(assistantEntryId ? { sourceEntryId: assistantEntryId } : {}),
+              ...(turnInputEntryId ? { turnInputEntryId } : {}),
+            },
+          };
+          changed = true;
+        }
+      }
+
+      if (userEntryId) {
+        const searchBefore = assistantIndex >= 0 ? assistantIndex : items.length;
+        let userIndex = -1;
+        for (let index = searchBefore - 1; index >= 0; index -= 1) {
+          const item = items[index];
+          if (item.type === 'message' && item.data.role === 'user') {
+            userIndex = index;
+            break;
+          }
+        }
+        if (userIndex >= 0) {
+          const user = items[userIndex];
+          if (user.type === 'message' && user.data.sourceEntryId !== userEntryId) {
+            items[userIndex] = {
+              type: 'message',
+              data: { ...user.data, sourceEntryId: userEntryId },
+            };
+            changed = true;
+          }
+        }
+      }
+
+      return changed
+        ? { chatSessions: putScopedMapValue(s as any, s.chatSessions, path, { ...session, items }) }
+        : {};
+    });
+    if (changed) bumpMessageLiveVersion(path);
+    return changed;
+  },
+
   truncateSessionFromMessage: (path, messageId) => {
     const session = scopedMapValue<SessionMessages>(get() as any, get().chatSessions, path);
     if (!session) return false;
 
     const targetIdx = session.items.findIndex((item) =>
       item.type === 'message' &&
-      (item.data.id === messageId || item.data.sourceEntryId === messageId),
+      (
+        item.data.id === messageId
+        || item.data.sourceEntryId === messageId
+        || item.data.turnInputEntryId === messageId
+      ),
     );
     if (targetIdx < 0) return false;
 
@@ -300,7 +396,11 @@ export const createChatSlice = (
       if (!latest) return {};
       const latestIdx = latest.items.findIndex((item) =>
         item.type === 'message' &&
-        (item.data.id === messageId || item.data.sourceEntryId === messageId),
+        (
+          item.data.id === messageId
+          || item.data.sourceEntryId === messageId
+          || item.data.turnInputEntryId === messageId
+        ),
       );
       if (latestIdx < 0) return {};
       const items = latest.items.slice(0, latestIdx);
@@ -412,8 +512,58 @@ export const createChatSlice = (
       [sessionKey]: next,
     };
     if (sessionKey !== path) delete sessionRegistryFilesByPath[path];
+    // flight 记录（issue #2188）：hydrate 竞态期间到达的 upsert 要在 flight
+    // 记录里追加一份，供 loadMessages 在快照 apply 后重放，避免被整表覆盖。
+    const flightKey = keyForSession(s as any, path);
+    const flight = s._sessionFilesFlightByPath[flightKey];
+    const _sessionFilesFlightByPath = flight
+      ? {
+          ...s._sessionFilesFlightByPath,
+          [flightKey]: { ...flight, upserts: [...flight.upserts, file] },
+        }
+      : s._sessionFilesFlightByPath;
     return {
       sessionRegistryFilesByPath,
+      _sessionFilesFlightByPath,
+    };
+  }),
+
+  beginSessionFilesFlight: (path, version) => set((s) => ({
+    _sessionFilesFlightByPath: putScopedMapValue(s as any, s._sessionFilesFlightByPath, path, {
+      version,
+      resetSeen: false,
+      upserts: [],
+    }),
+  })),
+
+  consumeSessionFilesFlight: (path, version) => {
+    const key = keyForSession(get() as any, path);
+    const flight = (get() as any)._sessionFilesFlightByPath[key];
+    if (!flight || flight.version !== version) return null;
+    set((s) => ({
+      _sessionFilesFlightByPath: deleteScopedMapValue(s as any, s._sessionFilesFlightByPath, path),
+    }));
+    return { resetSeen: flight.resetSeen, upserts: flight.upserts };
+  },
+
+  applyBranchResetSessionFiles: (path, files) => set((s) => {
+    const sessionRegistryFilesByPath = files !== null
+      ? (() => {
+          invalidateSessionCache(path);
+          const key = sessionScopedKey(s as any, path) || path;
+          const next = { ...s.sessionRegistryFilesByPath, [key]: [...files] };
+          if (key !== path) delete next[path];
+          return next;
+        })()
+      : s.sessionRegistryFilesByPath;
+    const flightKey = keyForSession(s as any, path);
+    const flight = s._sessionFilesFlightByPath[flightKey];
+    const _sessionFilesFlightByPath = flight
+      ? { ...s._sessionFilesFlightByPath, [flightKey]: { ...flight, resetSeen: true } }
+      : s._sessionFilesFlightByPath;
+    return {
+      sessionRegistryFilesByPath,
+      _sessionFilesFlightByPath,
     };
   }),
 
@@ -493,6 +643,7 @@ export const createChatSlice = (
     const registryFiles = deleteScopedMapValue(s as any, s.sessionRegistryFilesByPath, path);
     const models = deleteScopedMapValue(s as any, s.sessionModelsByPath, path);
     const versions = deleteScopedMapValue(s as any, s._loadMessagesVersion, path);
+    const sessionFilesFlight = deleteScopedMapValue(s as any, s._sessionFilesFlightByPath, path);
     const scrollPositions = deleteScopedMapValue(s as any, s.scrollPositions, path);
     const pendingConfirmations = { ...((s as any).pendingSessionConfirmationsByPath || {}) };
     const pendingSessionConfirmationsByPath = deleteScopedMapValue(s as any, pendingConfirmations, path);
@@ -514,6 +665,7 @@ export const createChatSlice = (
       sessionRegistryFilesByPath: registryFiles,
       sessionModelsByPath: models,
       _loadMessagesVersion: versions,
+      _sessionFilesFlightByPath: sessionFilesFlight,
       scrollPositions,
       pendingSessionConfirmationsByPath,
       agentActivitiesBySession,

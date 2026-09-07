@@ -168,41 +168,6 @@ function sanitizeBlobName(name, mimeType) {
   return truncateUtf8Bytes(base, MAX_FILENAME_BYTES) || fallback;
 }
 
-class UploadPathError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "UploadPathError";
-  }
-}
-
-/** 递归统计路径中的文件数量（异步） */
-export async function countFiles(p, { limit = Infinity, seen = new Set() } = {}) {
-  const stat = await fs.lstat(p);
-  if (stat.isSymbolicLink()) {
-    throw new UploadPathError("symlink not allowed");
-  }
-  if (!stat.isDirectory()) return 1;
-
-  let realDir;
-  try {
-    realDir = await fs.realpath(p);
-  } catch {
-    realDir = path.resolve(p);
-  }
-  if (seen.has(realDir)) return 0;
-  seen.add(realDir);
-
-  let count = 0;
-  const entries = await fs.readdir(p);
-  for (const entry of entries) {
-    const remaining = limit - count;
-    if (remaining <= 0) return limit + 1;
-    count += await countFiles(path.join(p, entry), { limit: remaining, seen });
-    if (count > limit) return limit + 1;
-  }
-  return count;
-}
-
 /** 清理超过 24 小时的上传临时文件（异步，后台执行） */
 async function cleanOldUploads(uploadsDir) {
   try {
@@ -347,16 +312,20 @@ export function createUploadRoute(engine) {
           continue;
         }
 
+        // 必须用 JS 版 realpathSync，与 SessionFileRegistry 的路径规范化同源。
+        // fs/promises.realpath 只有 native 语义，会把路径改写成磁盘上的真实拼写
+        // （macOS 上是大小写，Windows 上是 8.3 短名），而 registry 用 fs.realpathSync
+        // 保留调用方的拼写。两边不一致时，同一个目录经不同入口会算出两个 realPath，
+        // 去重键、SessionFile id 和沙箱路径匹配会一起失准。
         let realSrcPath;
         try {
-          realSrcPath = await fs.realpath(srcPath);
+          realSrcPath = fsSync.realpathSync(srcPath);
         } catch {
           realSrcPath = path.resolve(srcPath);
         }
 
-        // 安全检查通过后再统计文件数
-        const pathFileCount = await countFiles(srcPath, { limit: MAX_FILES - totalFiles });
-        totalFiles += pathFileCount;
+        // 每个路径计 1 个附件额度；目录走引用、不复制，因此不再递归计数
+        totalFiles += 1;
         if (totalFiles > MAX_FILES) {
           results.push({
             src: srcPath,
@@ -380,17 +349,36 @@ export function createUploadRoute(engine) {
           continue;
         }
 
-        // 统一命名：原名_时间戳（文件保留扩展名）
-        const ext = isDir ? "" : path.extname(srcPath);
-        const base = isDir ? name : path.basename(srcPath, ext);
+        if (isDir) {
+          // 目录不复制字节：登记原路径引用。external 条目不归 72h 冷清理管，
+          // 原目录删除后该附件按 status=missing 呈现（资源身份与可用性分离）。
+          const sessionFile = registerSessionFileFromRequest(engine, {
+            sessionPath,
+            filePath: realSrcPath,
+            label: name,
+            origin: "user_upload",
+            storageKind: "external",
+            presentation: undefined,
+            listed: undefined,
+            waveform: undefined,
+            sourceKey,
+          });
+          results.push({
+            src: srcPath,
+            dest: sessionFile?.filePath || realSrcPath,
+            name,
+            isDirectory: true,
+            ...(sessionFile || {}),
+          });
+          continue;
+        }
+
+        // 文件保持复制（快照语义）：原名_时间戳，保留扩展名
+        const ext = path.extname(srcPath);
+        const base = path.basename(srcPath, ext);
         const destName = uniqueUploadName(base, ext);
         const destPath = path.join(uploadsDir, destName);
-
-        if (isDir) {
-          await fs.cp(srcPath, destPath, { recursive: true });
-        } else {
-          await fs.copyFile(srcPath, destPath);
-        }
+        await fs.copyFile(srcPath, destPath);
 
         const sessionFile = registerSessionFileFromRequest(engine, {
           sessionPath,
@@ -412,10 +400,6 @@ export function createUploadRoute(engine) {
           ...(sessionFile || {}),
         });
       } catch (err) {
-        if (err instanceof UploadPathError) {
-          results.push({ src: srcPath, error: err.message });
-          continue;
-        }
         results.push({ src: srcPath, error: err.message });
       }
     }

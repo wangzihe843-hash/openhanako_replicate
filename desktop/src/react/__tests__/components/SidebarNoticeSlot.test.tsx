@@ -3,10 +3,11 @@
  */
 
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PlatformApi, TrainUpdateStatus } from '../../types';
+import type { PlatformApi, SessionMetaRecoveryStatus, TrainUpdateStatus } from '../../types';
+import { useStore } from '../../stores';
 
 // The regression test below asserts the sidebar card ignores the shell
 // auto-updater entirely: a downloaded shell update alone must not trigger the card. Stubbing
@@ -34,8 +35,12 @@ const labels: Record<string, string> = {
   'settings.about.shellStickerTitleBlocking': '完成此更新后才能继续接收新版本',
   'settings.about.fallbackStickerTitle': '版本 {fromVersion} 连续启动失败，已退回 {toVersion}。出问题的版本已被隔离，不会自动重试。',
   'settings.about.fallbackStickerAckLabel': '知道了',
+  'sidebar.metaRecoveryNoticeTitle': '部分会话待恢复',
+  'sidebar.metaRecoveryNoticeBody': '检测到会话元数据异常，历史正文仍保存在磁盘上，受影响的会话属性可能暂缺',
   'window.close': '关闭',
 };
+
+const META_RECOVERY_DISMISSED_KEY = 'hana-sidebar-meta-recovery-dismissed-key';
 
 function translate(key: string, vars?: Record<string, string | number>): string {
   let value = labels[key] ?? key;
@@ -49,12 +54,14 @@ describe('SidebarUpdateNoticeCard', () => {
   beforeEach(() => {
     window.t = translate as typeof window.t;
     window.localStorage.clear();
+    useStore.setState({ locale: 'zh-CN' });
   });
 
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
     window.localStorage.clear();
+    useStore.setState({ locale: 'zh-CN' });
   });
 
   it('stays silent when nothing is available and the shell is not blocked', () => {
@@ -81,9 +88,58 @@ describe('SidebarUpdateNoticeCard', () => {
 
     expect(screen.getByText('有新版本可用')).toBeInTheDocument();
     expect(screen.getByText('v0.400.0')).toBeInTheDocument();
+    const action = screen.getByRole('button', { name: /有新版本可用/ });
+    expect(action.firstElementChild?.querySelector('svg')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('有新版本可用'));
     expect(onApplyTrain).toHaveBeenCalledTimes(1);
+  });
+
+  it('retranslates an already-visible update when i18n finishes loading after the card mounts', () => {
+    window.t = ((key: string) => key) as typeof window.t;
+    useStore.setState({ locale: '' });
+    render(
+      <SidebarUpdateNoticeCard
+        available={{ version: '0.400.0' }}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+      />,
+    );
+
+    expect(screen.getByText('settings.about.trainStickerTitle')).toBeInTheDocument();
+
+    window.t = translate as typeof window.t;
+    act(() => useStore.setState({ locale: 'zh-CN' }));
+
+    expect(screen.getByText('有新版本可用')).toBeInTheDocument();
+    expect(screen.queryByText('settings.about.trainStickerTitle')).not.toBeInTheDocument();
+  });
+
+  it('retranslates the card when the user switches locale at runtime', () => {
+    let activeLabels: Record<string, string> = {
+      ...labels,
+      'settings.about.trainStickerTitle': 'Update available',
+      'window.close': 'Close',
+    };
+    window.t = ((key: string) => activeLabels[key] ?? key) as typeof window.t;
+    useStore.setState({ locale: 'en' });
+    render(
+      <SidebarUpdateNoticeCard
+        available={{ version: '0.400.0' }}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+      />,
+    );
+
+    expect(screen.getByText('Update available')).toBeInTheDocument();
+
+    activeLabels = labels;
+    act(() => useStore.setState({ locale: 'zh-CN' }));
+
+    expect(screen.getByText('有新版本可用')).toBeInTheDocument();
+    expect(screen.queryByText('Update available')).not.toBeInTheDocument();
   });
 
   it('renders download progress and applying phase text on the card while an apply is in flight', () => {
@@ -170,6 +226,217 @@ describe('SidebarUpdateNoticeCard', () => {
     expect(screen.getByText('完成此更新后才能继续接收新版本')).toBeInTheDocument();
   });
 
+  it('dismissing the meta-recovery card writes a signature key and survives remount', () => {
+    const metaRecovery = { degraded: true, reasons: [{ kind: 'quarantined', detail: 'a.jsonl' }] };
+    const first = render(
+      <SidebarUpdateNoticeCard
+        available={null}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+        metaRecovery={metaRecovery}
+      />,
+    );
+    expect(screen.getByText('部分会话待恢复')).toBeInTheDocument();
+
+    fireEvent.click(first.getByRole('button', { name: '关闭' }));
+    expect(first.container).toBeEmptyDOMElement();
+    expect(window.localStorage.getItem(META_RECOVERY_DISMISSED_KEY)).toBe('quarantined:a.jsonl');
+    first.unmount();
+
+    // A fresh mount is what "next launch" looks like: the ledger-driven
+    // degradation is still reported, and the card must stay silent for it.
+    render(
+      <SidebarUpdateNoticeCard
+        available={null}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+        metaRecovery={metaRecovery}
+      />,
+    );
+    expect(screen.queryByText('部分会话待恢复')).not.toBeInTheDocument();
+  });
+
+  it('a changed degradation set reappears once', () => {
+    const first = render(
+      <SidebarUpdateNoticeCard
+        available={null}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+        metaRecovery={{ degraded: true, reasons: [{ kind: 'quarantined', detail: 'a.jsonl' }] }}
+      />,
+    );
+    fireEvent.click(first.getByRole('button', { name: '关闭' }));
+    expect(first.container).toBeEmptyDOMElement();
+    first.unmount();
+
+    // One more damaged file = a new event worth interrupting for, even though
+    // the old reason is still in the set.
+    render(
+      <SidebarUpdateNoticeCard
+        available={null}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+        metaRecovery={{
+          degraded: true,
+          reasons: [{ kind: 'quarantined', detail: 'a.jsonl' }, { kind: 'quarantined', detail: 'b.jsonl' }],
+        }}
+      />,
+    );
+    expect(screen.getByText('部分会话待恢复')).toBeInTheDocument();
+  });
+
+  it('the empty degraded state still produces a stable signature', () => {
+    const metaRecovery = { degraded: true, reasons: [] };
+    const first = render(
+      <SidebarUpdateNoticeCard
+        available={null}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+        metaRecovery={metaRecovery}
+      />,
+    );
+    expect(screen.getByText('部分会话待恢复')).toBeInTheDocument();
+
+    fireEvent.click(first.getByRole('button', { name: '关闭' }));
+    // An empty reason list must not collapse into an empty key — otherwise the
+    // stored value would read as "never dismissed" and the card would return.
+    expect(window.localStorage.getItem(META_RECOVERY_DISMISSED_KEY)).toBe('degraded');
+    first.unmount();
+
+    render(
+      <SidebarUpdateNoticeCard
+        available={null}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+        metaRecovery={metaRecovery}
+      />,
+    );
+    expect(screen.queryByText('部分会话待恢复')).not.toBeInTheDocument();
+  });
+
+  it('a dismissed meta-recovery yields the slot to an available train update', () => {
+    const metaRecovery = { degraded: true, reasons: [{ kind: 'quarantined', detail: 'a.jsonl' }] };
+    const first = render(
+      <SidebarUpdateNoticeCard
+        available={{ version: '0.400.0' }}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+        metaRecovery={metaRecovery}
+      />,
+    );
+    fireEvent.click(first.getByRole('button', { name: '关闭' }));
+    first.unmount();
+
+    // The notice slot holds one card. Dismissing the recovery notice must
+    // remove it from the running for that slot, not blank the slot itself —
+    // the update sticker below it is still worth showing.
+    render(
+      <SidebarUpdateNoticeCard
+        available={{ version: '0.400.0' }}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+        metaRecovery={metaRecovery}
+      />,
+    );
+    expect(screen.queryByText('部分会话待恢复')).not.toBeInTheDocument();
+    expect(screen.getByText('有新版本可用')).toBeInTheDocument();
+  });
+
+  it('a dismissed meta-recovery yields the slot to the blocked (shell-required) card', () => {
+    const metaRecovery = { degraded: true, reasons: [{ kind: 'quarantined', detail: 'a.jsonl' }] };
+    const first = render(
+      <SidebarUpdateNoticeCard
+        available={null}
+        minShellBlocked
+        phase="idle"
+        progress={null}
+        metaRecovery={metaRecovery}
+      />,
+    );
+    fireEvent.click(first.getByRole('button', { name: '关闭' }));
+    first.unmount();
+
+    render(
+      <SidebarUpdateNoticeCard
+        available={null}
+        minShellBlocked
+        phase="idle"
+        progress={null}
+        metaRecovery={metaRecovery}
+      />,
+    );
+    expect(screen.queryByText('部分会话待恢复')).not.toBeInTheDocument();
+    expect(screen.getByText('完成此更新后才能继续接收新版本')).toBeInTheDocument();
+  });
+
+  it('the meta-recovery signature ignores the order the reasons arrive in', () => {
+    const first = render(
+      <SidebarUpdateNoticeCard
+        available={null}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+        metaRecovery={{
+          degraded: true,
+          reasons: [{ kind: 'quarantined', detail: 'a.jsonl' }, { kind: 'unreadable', detail: 'b.jsonl' }],
+        }}
+      />,
+    );
+    fireEvent.click(first.getByRole('button', { name: '关闭' }));
+    first.unmount();
+
+    // Same set, server returned it the other way around: still dismissed.
+    render(
+      <SidebarUpdateNoticeCard
+        available={null}
+        minShellBlocked={false}
+        phase="idle"
+        progress={null}
+        metaRecovery={{
+          degraded: true,
+          reasons: [{ kind: 'unreadable', detail: 'b.jsonl' }, { kind: 'quarantined', detail: 'a.jsonl' }],
+        }}
+      />,
+    );
+    expect(screen.queryByText('部分会话待恢复')).not.toBeInTheDocument();
+  });
+
+  it('malformed reasons from the health payload render the card instead of throwing', () => {
+    // /api/health's sessionStore block is forwarded verbatim, so the declared
+    // shape is a claim, not a guarantee. None of these may take down the
+    // sidebar; each must still yield a dismissible card.
+    const malformed = [
+      { degraded: true, reasons: 'nope' },
+      { degraded: true, reasons: [null] },
+      { degraded: true, reasons: ['oops'] },
+    ] as unknown as SessionMetaRecoveryStatus[];
+
+    for (const metaRecovery of malformed) {
+      const view = render(
+        <SidebarUpdateNoticeCard
+          available={null}
+          minShellBlocked={false}
+          phase="idle"
+          progress={null}
+          metaRecovery={metaRecovery}
+        />,
+      );
+      expect(screen.getByText('部分会话待恢复')).toBeInTheDocument();
+      fireEvent.click(view.getByRole('button', { name: '关闭' }));
+      expect(view.container).toBeEmptyDOMElement();
+      view.unmount();
+      window.localStorage.clear();
+    }
+  });
+
   it('shows the fallback (crash-recovery) form with both versions in the message when fallbackNotice is present', () => {
     const onAckFallback = vi.fn();
     render(
@@ -235,12 +502,14 @@ describe('SidebarNoticeSlot (wired to the real hook)', () => {
   beforeEach(() => {
     window.t = translate as typeof window.t;
     window.localStorage.clear();
+    useStore.setState({ locale: 'zh-CN' });
   });
 
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
     window.localStorage.clear();
+    useStore.setState({ locale: 'zh-CN' });
   });
 
   function installHana(status: Partial<TrainUpdateStatus>) {

@@ -6,48 +6,30 @@
  * it through dependency injection; this module intentionally has no singleton.
  */
 
-export type EnvChangeEntryType = "toolset_changed" | "memory_facts";
-
-export interface ToolsetChangedPayload {
-  pluginId: string;
-  action: "loaded" | "unloaded" | "reloaded";
-}
+export type EnvChangeEntryType = "memory_facts";
 
 export interface MemoryFactsPayload {
   addedLines: string[];
 }
 
 export type EnvChangeScope =
-  | { readonly kind: "global" }
-  | { readonly kind: "agent"; readonly agentId: string };
+  { readonly kind: "agent"; readonly agentId: string };
 
 export interface EnvChangeEntry {
   readonly seq: number;
   readonly type: EnvChangeEntryType;
   readonly scope: EnvChangeScope;
-  readonly payload: Readonly<ToolsetChangedPayload> | Readonly<MemoryFactsPayload>;
+  readonly payload: Readonly<MemoryFactsPayload>;
   readonly at: string;
 }
 
-type EnvChangeInput =
-  | {
-    type: "toolset_changed";
-    scope: { kind: "global" };
-    payload: ToolsetChangedPayload;
-  }
-  | {
+type EnvChangeInput = {
     type: "memory_facts";
     scope: { kind: "agent"; agentId: string };
     payload: MemoryFactsPayload;
   };
 
 function freezeScope(entry: EnvChangeInput): EnvChangeScope {
-  if (entry.type === "toolset_changed") {
-    if (entry.scope?.kind !== "global") {
-      throw new TypeError("toolset_changed environment changes require global scope");
-    }
-    return Object.freeze({ kind: "global" });
-  }
   const agentId = entry.scope?.kind === "agent" && typeof entry.scope.agentId === "string"
     ? entry.scope.agentId.trim()
     : "";
@@ -58,12 +40,8 @@ function freezeScope(entry: EnvChangeInput): EnvChangeScope {
 }
 
 function freezePayload(entry: EnvChangeInput): EnvChangeEntry["payload"] {
-  if (entry.type === "memory_facts") {
-    const payload = entry.payload as MemoryFactsPayload;
-    return Object.freeze({ addedLines: Object.freeze([...(payload.addedLines || [])]) }) as Readonly<MemoryFactsPayload>;
-  }
-  const payload = entry.payload as ToolsetChangedPayload;
-  return Object.freeze({ pluginId: payload.pluginId, action: payload.action });
+  const payload = entry.payload as MemoryFactsPayload;
+  return Object.freeze({ addedLines: Object.freeze([...(payload.addedLines || [])]) }) as Readonly<MemoryFactsPayload>;
 }
 
 export class EnvChangeLedger {

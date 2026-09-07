@@ -9,8 +9,8 @@
  * + splash 抢 CPU 时这个竞态几乎必现。
  *
  * 注：main.cjs 里 spawn-viewer 的窗口创建体是内联写在 wrapIpcBestEffortHandler
- * 回调里的（不像 infinity worktree 那样抽成 openViewerWindowForPayload 具名函数），
- * 所以这里直接定位 `wrapIpcBestEffortHandler("spawn-viewer"` 回调体，而不是按函数名查找。
+ * 回调里的、没有抽成具名函数，所以这里直接定位 `wrapIpcBestEffortHandler("spawn-viewer"`
+ * 回调体，而不是按函数名查找。
  */
 import { describe, expect, it } from "vitest";
 import fs from "fs";

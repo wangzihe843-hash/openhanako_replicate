@@ -42,6 +42,7 @@ vi.mock('../../components/ChannelsPanel', () => ({
   ChannelReadonly: () => <section data-testid="channel-readonly" />,
   ChannelAgentActivityPanel: () => <section data-testid="channel-agent-activity" />,
   ChannelAgentSettingsPanel: () => <section data-testid="channel-agent-settings" />,
+  ChannelExportPanel: () => <section data-testid="channel-export" />,
 }));
 
 vi.mock('../../components/channels/ChannelHeader', () => ({
@@ -116,8 +117,13 @@ describe('AppPages page ownership', () => {
     expect(screen.getByTestId('channel-members')).toBeInTheDocument();
     expect(screen.getByTestId('channel-agent-activity')).toBeInTheDocument();
     expect(screen.getByTestId('channel-agent-settings')).toBeInTheDocument();
+    expect(screen.getByTestId('channel-export')).toBeInTheDocument();
     expect(
       screen.getByTestId('channel-agent-settings').compareDocumentPosition(screen.getByTestId('channel-agent-activity'))
+        & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      screen.getByTestId('channel-agent-activity').compareDocumentPosition(screen.getByTestId('channel-export'))
         & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.queryByTestId('preview-panel')).not.toBeInTheDocument();

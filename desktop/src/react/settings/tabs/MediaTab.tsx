@@ -14,6 +14,11 @@ interface MediaProvider {
   displayName?: string;
   hasCredentials: boolean;
   unavailableReason?: string | null;
+  unavailableMessage?: string | null;
+  runtimeCapability?: {
+    status?: string;
+    error?: { code?: string; message?: string } | null;
+  } | null;
   models: { id: string; name: string; protocolId?: string; adapterAvailable?: boolean }[];
   availableModels: { id: string; name: string }[];
 }
@@ -262,6 +267,12 @@ export function MediaTab() {
     loadImageProviders();
     loadVideoProviders();
     loadSpeechProviders();
+    const refreshRuntimeMediaProviders = () => {
+      loadImageProviders();
+      loadVideoProviders();
+    };
+    window.addEventListener('focus', refreshRuntimeMediaProviders);
+    return () => window.removeEventListener('focus', refreshRuntimeMediaProviders);
   }, [loadImageProviders, loadVideoProviders, loadSpeechProviders]);
 
   const providerIds = Object.keys(providers);
@@ -369,6 +380,7 @@ export function MediaTab() {
                   key={pid}
                   className={`${styles['pv-list-item']}${selectedImageProviderId === pid ? ' ' + styles['selected'] : ''}${!p.hasCredentials ? ' ' + styles['dim'] : ''}`}
                   onClick={() => setSelected({ kind: 'imageGeneration', providerId: pid })}
+                  title={p.unavailableMessage || p.unavailableReason || undefined}
                 >
                   <span className={`${styles['pv-status-dot']}${p.hasCredentials ? ' ' + styles['on'] : ''}`} />
                   <span className={styles['pv-list-item-name']}>{p.displayName || pid}</span>
@@ -386,6 +398,7 @@ export function MediaTab() {
                   key={pid}
                   className={`${styles['pv-list-item']}${selectedVideoProviderId === pid ? ' ' + styles['selected'] : ''}${!p.hasCredentials ? ' ' + styles['dim'] : ''}`}
                   onClick={() => setSelected({ kind: 'videoGeneration', providerId: pid })}
+                  title={p.unavailableMessage || p.unavailableReason || undefined}
                 >
                   <span className={`${styles['pv-status-dot']}${p.hasCredentials ? ' ' + styles['on'] : ''}`} />
                   <span className={styles['pv-list-item-name']}>{p.displayName || pid}</span>
@@ -494,7 +507,9 @@ export function MediaTab() {
                   const adapterAvailable = m.adapterAvailable !== false;
                   const label = `${m.provider} / ${m.name || m.id}`;
                   const unavailableReason = !providerHasCredentials
-                    ? t('settings.media.credentialMissing')
+                    ? providers[m.provider]?.unavailableMessage
+                      || providers[m.provider]?.unavailableReason
+                      || t('settings.media.credentialMissing')
                     : !adapterAvailable
                       ? t('settings.media.adapterMissing')
                       : '';
@@ -537,7 +552,9 @@ export function MediaTab() {
                   const adapterAvailable = m.adapterAvailable !== false;
                   const label = `${m.provider} / ${m.name || m.id}`;
                   const unavailableReason = !providerHasCredentials
-                    ? t('settings.media.credentialMissing')
+                    ? videoProviders[m.provider]?.unavailableMessage
+                      || videoProviders[m.provider]?.unavailableReason
+                      || t('settings.media.credentialMissing')
                     : !adapterAvailable
                       ? t('settings.media.videoAdapterMissing')
                       : '';

@@ -6,6 +6,7 @@ import {
   PLUGIN_UI_PROTOCOL,
   PLUGIN_UI_PROTOCOL_VERSION,
   parsePluginUiMessage,
+  type PluginResourcePickInput,
 } from '@hana/plugin-protocol';
 
 describe('plugin UI protocol', () => {
@@ -84,5 +85,14 @@ describe('plugin UI protocol', () => {
       MATERIALIZE: 'resource.materialize',
       WATCH: 'resource.watch',
     });
+  });
+
+  it('keeps explicit single selection in the public resource.pick input contract', () => {
+    const input: PluginResourcePickInput = {
+      mode: 'file',
+      multiple: false,
+    };
+
+    expect(input).toEqual({ mode: 'file', multiple: false });
   });
 });

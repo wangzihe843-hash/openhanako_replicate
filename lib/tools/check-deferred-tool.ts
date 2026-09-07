@@ -26,6 +26,13 @@ export function createCheckDeferredTool({ getDeferredStore, getSessionPath }) {
         Type.String({ description: "Filter by status: pending / resolved / failed. Omit to return all." }),
       ),
     }),
+    sessionPermission: {
+      resolveInvocation: () => ({
+        action: "read",
+        kind: "read",
+        capability: "check_pending_tasks.read",
+      }),
+    },
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       const store = getDeferredStore();
       if (!store) {

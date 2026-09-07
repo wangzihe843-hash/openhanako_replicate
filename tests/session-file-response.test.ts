@@ -62,4 +62,22 @@ describe("serializeSessionFile", () => {
 
     expect(serialized.resource).toBeUndefined();
   });
+
+  it("exposes fork aliases so unchanged history markers can resolve the child file", async () => {
+    const { serializeSessionFile } = await import("../lib/session-files/session-file-response.ts");
+
+    const serialized = serializeSessionFile({
+      id: "sf_child",
+      filePath: "/tmp/session-files/child/report.md",
+      legacyFileIds: ["sf_parent"],
+      legacyFilePaths: ["/tmp/session-files/parent/report.md"],
+    });
+
+    expect(serialized).toMatchObject({
+      id: "sf_child",
+      fileId: "sf_child",
+      legacyFileIds: ["sf_parent"],
+      legacyFilePaths: ["/tmp/session-files/parent/report.md"],
+    });
+  });
 });

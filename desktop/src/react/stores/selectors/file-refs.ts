@@ -122,6 +122,8 @@ export function selectSessionFiles(
     const fileId = file.fileId || file.id;
     const name = file.label || file.displayName || file.filename || basenameOf(filePath);
     const ext = file.ext || extOf(name) || extOf(filePath);
+    const legacyFileIds = nonEmptyStrings(file.legacyFileIds);
+    const legacyFilePaths = nonEmptyStrings(file.legacyFilePaths);
     pushUniqueFile(result, seen, {
       id: buildFileRefId({
         source: 'session-registry',
@@ -130,6 +132,8 @@ export function selectSessionFiles(
         ...(fileId ? { messageId: fileId } : {}),
       }),
       fileId,
+      ...(legacyFileIds.length ? { legacyFileIds } : {}),
+      ...(legacyFilePaths.length ? { legacyFilePaths } : {}),
       kind: inferKindByExt(ext),
       source: 'session-registry',
       name,
@@ -285,6 +289,12 @@ function basenameOf(filePath: string): string {
   return filePath.split(/[\\/]/).pop() || filePath;
 }
 
+/** 账本里的别名列表可能缺失、含空串，或者根本不是数组（老数据）。 */
+function nonEmptyStrings(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  return values.filter((value): value is string => typeof value === 'string' && value.length > 0);
+}
+
 function versionFromDeskFile(file: DeskFile): FileVersion | undefined {
   const mtimeMs = typeof file.mtime === 'string' ? Date.parse(file.mtime) : NaN;
   if (!Number.isFinite(mtimeMs) || typeof file.size !== 'number') return undefined;
@@ -333,15 +343,21 @@ function compactResourceRef(resource: ResourceEnvelope | undefined): FileRef['re
   };
 }
 
-function fileIdentityKeys(fileId?: string, filePath?: string): string[] {
+function fileIdentityKeys(ref: FileRef): string[] {
   const keys: string[] = [];
-  if (fileId) keys.push(`id:${fileId}`);
-  if (filePath) keys.push(`path:${filePath}`);
+  if (ref.fileId) keys.push(`id:${ref.fileId}`);
+  for (const legacyId of ref.legacyFileIds || []) {
+    if (legacyId) keys.push(`id:${legacyId}`);
+  }
+  if (ref.path) keys.push(`path:${ref.path}`);
+  for (const legacyPath of ref.legacyFilePaths || []) {
+    if (legacyPath) keys.push(`path:${legacyPath}`);
+  }
   return keys;
 }
 
 function pushUniqueFile(result: FileRef[], seen: Set<string>, ref: FileRef): void {
-  const keys = fileIdentityKeys(ref.fileId, ref.path);
+  const keys = fileIdentityKeys(ref);
   if (keys.some(key => seen.has(key))) return;
   for (const key of keys) seen.add(key);
   result.push(ref);

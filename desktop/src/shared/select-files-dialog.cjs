@@ -5,9 +5,9 @@
  * 必须留在 openFile-only。该函数只负责构造 dialog options,IPC handler 调
  * showOpenDialog 后自行 unwrap result.filePaths。
  */
-function buildSelectFilesDialogOptions({ title } = {}) {
+function buildSelectFilesDialogOptions({ title, multiple } = {}) {
   return {
-    properties: ["openFile", "multiSelections"],
+    properties: multiple !== false ? ["openFile", "multiSelections"] : ["openFile"],
     title: title || "Select Files",
   };
 }

@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { atomicWriteSync } from "../shared/safe-fs.ts";
+import { writeSecretFileSync } from "../shared/secret-fs.ts";
 import { normalizePrincipal } from "./security-principal.ts";
 
 export const WEB_SESSIONS_FILE = "web-sessions.json";
@@ -18,7 +18,7 @@ export function ensureWebSessionRegistry(hanakoHome, { now = new Date().toISOStr
     validateWebSessionRegistry(existing, WEB_SESSIONS_FILE);
     return { created: [] };
   }
-  writeJsonAtomic(filePath, createEmptyRegistry(now));
+  writeSecretJson(filePath, createEmptyRegistry(now));
   return { created: [WEB_SESSIONS_FILE] };
 }
 
@@ -127,7 +127,7 @@ export function parseCookie(cookieHeader, name) {
 
 function persistWebSessionRegistry(hanakoHome, registry) {
   validateWebSessionRegistry(registry, WEB_SESSIONS_FILE);
-  writeJsonAtomic(path.join(hanakoHome, WEB_SESSIONS_FILE), registry);
+  writeSecretJson(path.join(hanakoHome, WEB_SESSIONS_FILE), registry);
 }
 
 function validateWebSessionRegistry(value, label) {
@@ -204,9 +204,9 @@ function readJsonIfPresent(filePath, label) {
   }
 }
 
-function writeJsonAtomic(filePath, data) {
+function writeSecretJson(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  atomicWriteSync(filePath, JSON.stringify(data, null, 2) + "\n");
+  writeSecretFileSync(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
 function assertRecordString(value, label, field) {

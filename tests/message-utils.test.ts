@@ -331,6 +331,59 @@ describe("loadSessionHistoryMessages", () => {
     ]);
   });
 
+  it("read-time projects only known legacy Hana tool failures", async () => {
+    const sessionPath = path.join(tmpDir, "legacy-tool-outcomes.jsonl");
+    fs.writeFileSync(sessionPath, [
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "known",
+          isError: false,
+          content: [{ type: "text", text: "context changed" }],
+          details: { errorCode: "TOOL_SESSION_CONTEXT_CHANGED_BEFORE_EXECUTION" },
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "plugin-warning",
+          isError: false,
+          content: [{ type: "text", text: "completed with diagnostics" }],
+          details: { error: "recoverable warning" },
+        },
+      }),
+      "",
+    ].join("\n"), "utf-8");
+
+    const result = await loadSessionHistoryMessages({}, sessionPath);
+
+    expect(result[0].isError).toBe(true);
+    expect(result[1].isError).toBe(false);
+  });
+
+  it("projects legacy reminder-prefixed JSONL user messages without internal reminder text", async () => {
+    const sessionPath = path.join(tmpDir, "legacy-reminder.jsonl");
+    fs.writeFileSync(sessionPath, [
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
+          content: [{
+            type: "text",
+            text: "[hana_reminder at 2026-07-05 14:05]\n- Plugin demo loaded\n[/hana_reminder]\n\nhello",
+          }],
+        },
+      }),
+      "",
+    ].join("\n"), "utf-8");
+
+    const result = await loadSessionHistoryMessages({}, sessionPath);
+
+    expect(result[0].content).toEqual([{ type: "text", text: "hello" }]);
+  });
+
   it("只恢复当前 leaf 所在分支上的消息", async () => {
     const sessionDir = path.join(tmpDir, "sessions");
     const manager = SessionManager.create(tmpDir, sessionDir);
@@ -350,6 +403,42 @@ describe("loadSessionHistoryMessages", () => {
       { id: userA, role: "user", text: "old prompt" },
       { id: expect.any(String), role: "user", text: "new prompt" },
       { id: expect.any(String), role: "assistant", text: "new answer" },
+    ]);
+  });
+
+  it("当当前分支只有隐藏提交时不回退到物理文件中的旧消息", async () => {
+    const sessionDir = path.join(tmpDir, "sessions-empty-active-branch");
+    const manager = SessionManager.create(tmpDir, sessionDir);
+    manager.appendMessage({ role: "user", content: "abandoned prompt" } as any);
+    manager.appendMessage({ role: "assistant", content: "abandoned answer" } as any);
+    manager.resetLeaf();
+    manager.appendCustomEntry("hana-session-branch-reset", { sourceEntryId: "old-user" });
+
+    const result = await loadSessionHistoryMessages({}, manager.getSessionFile());
+
+    expect(result).toEqual([]);
+  });
+
+  it("uses the persisted current branch when the physical tail is a discarded sibling", async () => {
+    const sessionDir = path.join(tmpDir, "persisted-branch-sessions");
+    const manager = SessionManager.create(tmpDir, sessionDir);
+    const userId = manager.appendMessage({ role: "user", content: [{ type: "text", text: "prompt" }] } as any);
+    const selectedAnswerId = manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "selected answer" }] } as any);
+    manager.branch(userId);
+    manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "discarded physical tail" }] } as any);
+    const sessionPath = manager.getSessionFile();
+    const openSessionManagerAtCurrentBranch = vi.fn(() => {
+      const reopened = SessionManager.open(sessionPath, sessionDir);
+      reopened.branch(selectedAnswerId);
+      return reopened;
+    });
+
+    const result = await loadSessionHistoryMessages({ openSessionManagerAtCurrentBranch }, sessionPath);
+
+    expect(openSessionManagerAtCurrentBranch).toHaveBeenCalledWith(sessionPath, path.dirname(sessionPath));
+    expect(result.map((message) => message.content?.[0]?.text)).toEqual([
+      "prompt",
+      "selected answer",
     ]);
   });
 

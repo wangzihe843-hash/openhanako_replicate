@@ -124,15 +124,19 @@ function buildWindowsInstallSurfaceContext({ execPath, resourcesPath } = {}) {
 }
 
 // 打包布局已从散装 resources/server/ 树改成 resources/seed/ 签名归档
-// （server-*.tar.gz + renderer-*.tar.gz + seed-train.json + .sig），首启时由
-// artifact-boot 解压到用户数据目录。这里只做"归档三件套是否落地"的浅校验，
-// 箱内文件的完整性由解压时的签名与哈希机制负责，不在这一层重复。归档文件名
-// 带版本号（server-<version>-<platform>-<arch>.tar.gz），因此用目录扫描
-// + 前缀/后缀匹配定位，不能硬编码版本号。
-function findSeedArchive(seedDir, prefix) {
+// （server-*.tar.gz + renderer-*.tar.gz + seed-train-<platform>-<arch>.json + .sig），
+// 首启时由 artifact-boot 解压到用户数据目录。这里只做"归档四件套是否落地"的浅
+// 校验，箱内文件的完整性由解压时的签名与哈希机制负责，不在这一层重复。归档
+// 文件名带版本号（server-<version>-<platform>-<arch>.tar.gz），manifest 文件名
+// 带平台限定（seed-train-<platform>-<arch>.json，见 build-server-artifact.mjs
+// 的 seedManifestFileName / artifact-boot.cjs 的同名函数），因此都用目录扫描
+// + 前缀/后缀匹配定位，不硬编码版本号或平台名——这个检查只关心"seed 四件套
+// 是否存在"，不关心是不是这台机器自己那份，真正的平台/内容一致性校验在
+// artifact-boot.cjs 首启解压时做。
+function findSeedFile(seedDir, prefix, suffix) {
   try {
     const entries = fs.readdirSync(seedDir, { withFileTypes: true })
-      .filter(entry => entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(".tar.gz"))
+      .filter(entry => entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(suffix))
       .map(entry => entry.name)
       .sort();
     return entries.length > 0 ? path.join(seedDir, entries[0]) : null;
@@ -141,13 +145,27 @@ function findSeedArchive(seedDir, prefix) {
   }
 }
 
+function findSeedArchive(seedDir, prefix) {
+  return findSeedFile(seedDir, prefix, ".tar.gz");
+}
+
+// manifest 文件名以 ".json" 结尾，签名文件以 ".json.sig" 结尾——两者都以
+// "seed-train-" 开头，用 endsWith(".json") 天然排除 ".json.sig"（不会误配）。
+function findSeedManifest(seedDir) {
+  return findSeedFile(seedDir, "seed-train-", ".json");
+}
+
+function findSeedManifestSignature(seedDir) {
+  return findSeedFile(seedDir, "seed-train-", ".json.sig");
+}
+
 function buildWindowsInstallSurfaceChecks({ execPath, resourcesPath } = {}) {
   const executablePath = execPath || "";
   const appRoot = executablePath ? path.dirname(executablePath) : "";
   const resourcesRoot = resourcesPath || (appRoot ? path.join(appRoot, "resources") : "");
   const seedRoot = path.join(resourcesRoot, "seed");
-  const seedManifestPath = path.join(seedRoot, "seed-train.json");
-  const seedSignaturePath = `${seedManifestPath}.sig`;
+  const seedManifestPath = findSeedManifest(seedRoot);
+  const seedSignaturePath = findSeedManifestSignature(seedRoot);
   const seedServerArchivePath = findSeedArchive(seedRoot, "server-");
   const seedRendererArchivePath = findSeedArchive(seedRoot, "renderer-");
   const gitRoot = path.join(resourcesRoot, "git");
@@ -183,15 +201,18 @@ function buildWindowsInstallSurfaceChecks({ execPath, resourcesPath } = {}) {
     },
     {
       id: "seed-manifest",
-      label: "resources/seed/seed-train.json",
-      relativePath: "resources/seed/seed-train.json",
-      paths: [seedManifestPath],
+      label: "resources/seed/seed-train-*.json",
+      relativePath: "resources/seed/seed-train-*.json",
+      // 找不到时展示扫描目录 + 通配模式作为诊断路径，而不是空字符串
+      paths: [seedManifestPath || path.join(seedRoot, "seed-train-*.json")],
+      exists: () => !!seedManifestPath && canRead(seedManifestPath),
     },
     {
       id: "seed-manifest-signature",
-      label: "resources/seed/seed-train.json.sig",
-      relativePath: "resources/seed/seed-train.json.sig",
-      paths: [seedSignaturePath],
+      label: "resources/seed/seed-train-*.json.sig",
+      relativePath: "resources/seed/seed-train-*.json.sig",
+      paths: [seedSignaturePath || path.join(seedRoot, "seed-train-*.json.sig")],
+      exists: () => !!seedSignaturePath && canRead(seedSignaturePath),
     },
     {
       id: "seed-server-archive",

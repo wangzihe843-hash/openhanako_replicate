@@ -123,9 +123,101 @@ describe("session-collab apply route：决策持久化", () => {
     const [, payload] = appendCustomEntry.mock.calls[0];
     expect(payload).toMatchObject({ status: "approved", resultSessionId: "sid-new" });
   });
+
+  it("Fork child 的独立 handle 只把 approved 决策写入 child session", async () => {
+    const sourceAppend = vi.fn();
+    const childAppend = vi.fn();
+    const engine: any = {
+      getSessionManifest: vi.fn((sessionId) => ({
+        currentLocator: {
+          path: sessionId === "sid-child"
+            ? "/agents/hana/sessions/child.jsonl"
+            : "/agents/hana/sessions/source.jsonl",
+        },
+      })),
+      ensureSessionLoaded: vi.fn(async (sessionPath) => ({
+        sessionManager: {
+          appendCustomEntry: sessionPath.endsWith("child.jsonl") ? childAppend : sourceAppend,
+        },
+      })),
+    };
+    const store = new SessionCollabDraftStore();
+    engine.sessionCollabDraftStore = store;
+    const source = store.create({
+      kind: "send",
+      sourceSessionId: "sid-source",
+      draft: { targetSessionId: "sid-a", message: "hi" },
+      apply: async () => ({ accepted: true }),
+    });
+    const forked = store.forkSessionDrafts({
+      sourceSessionId: "sid-source",
+      targetSessionId: "sid-child",
+      targetSessionPath: "/agents/hana/sessions/child.jsonl",
+      retainedEntries: [{ details: { suggestionId: source.suggestionId } }],
+    });
+    const childSuggestionId = forked.suggestionIdMap[source.suggestionId];
+
+    const app = makeApp(engine);
+    const res = await post(app, "/session-collab/apply", { suggestionId: childSuggestionId });
+
+    expect(res.status).toBe(200);
+    expect(engine.getSessionManifest).toHaveBeenCalledWith("sid-child");
+    expect(childAppend).toHaveBeenCalledWith(
+      SESSION_COLLAB_DECISION_RECORD_TYPE,
+      expect.objectContaining({ suggestionId: childSuggestionId, status: "approved" }),
+    );
+    expect(sourceAppend).not.toHaveBeenCalled();
+    expect(store.get(source.suggestionId)).toBeTruthy();
+  });
 });
 
 describe("session-collab reject route", () => {
+  it("Fork child 的独立 handle 只把 rejected 决策写入 child session", async () => {
+    const sourceAppend = vi.fn();
+    const childAppend = vi.fn();
+    const engine: any = {
+      getSessionManifest: vi.fn((sessionId) => ({
+        currentLocator: {
+          path: sessionId === "sid-child"
+            ? "/agents/hana/sessions/child.jsonl"
+            : "/agents/hana/sessions/source.jsonl",
+        },
+      })),
+      ensureSessionLoaded: vi.fn(async (sessionPath) => ({
+        sessionManager: {
+          appendCustomEntry: sessionPath.endsWith("child.jsonl") ? childAppend : sourceAppend,
+        },
+      })),
+    };
+    const store = new SessionCollabDraftStore();
+    engine.sessionCollabDraftStore = store;
+    const source = store.create({
+      kind: "send",
+      sourceSessionId: "sid-source",
+      draft: { targetSessionId: "sid-a", message: "hi" },
+      apply: vi.fn(),
+    });
+    const forked = store.forkSessionDrafts({
+      sourceSessionId: "sid-source",
+      targetSessionId: "sid-child",
+      targetSessionPath: "/agents/hana/sessions/child.jsonl",
+      retainedEntries: [{ details: { suggestionId: source.suggestionId } }],
+    });
+    const childSuggestionId = forked.suggestionIdMap[source.suggestionId];
+
+    const app = makeApp(engine);
+    const res = await post(app, "/session-collab/reject", { suggestionId: childSuggestionId });
+
+    expect(res.status).toBe(200);
+    expect(engine.getSessionManifest).toHaveBeenCalledWith("sid-child");
+    expect(childAppend).toHaveBeenCalledWith(
+      SESSION_COLLAB_DECISION_RECORD_TYPE,
+      expect.objectContaining({ suggestionId: childSuggestionId, status: "rejected" }),
+    );
+    expect(sourceAppend).not.toHaveBeenCalled();
+    expect(store.get(source.suggestionId)).toBeTruthy();
+  });
+
   it("有条目：discard 被调用，决策 rejected 落到 appendCustomEntry", async () => {
     const appendCustomEntry = vi.fn();
     const engine: any = makeEngineWithSession(appendCustomEntry);

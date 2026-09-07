@@ -109,12 +109,11 @@ describe('ThinkingLevelButton', () => {
     const { container } = render(<ThinkingLevelButton level="medium" onChange={onChange} availableLevels={['off', 'medium', 'high', 'max']} />);
     fireEvent.click(container.querySelector('button') as HTMLButtonElement);
 
-    expect(screen.getByRole('option', { name: /极致/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /Max/ })).toBeTruthy();
     expect(screen.getByText('极致推理')).toBeTruthy();
-    expect(screen.queryByRole('option', { name: /^max$/i })).toBeNull();
     expect(screen.queryByRole('option', { name: 'xhigh' })).toBeNull();
 
-    fireEvent.click(optionForText('极致'));
+    fireEvent.click(optionForText('Max'));
 
     await waitFor(() => expect(onChange).toHaveBeenCalledWith('max'));
     expect(hanaFetch).toHaveBeenCalledWith('/api/session-thinking-level', expect.objectContaining({

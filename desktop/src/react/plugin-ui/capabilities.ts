@@ -153,17 +153,28 @@ function findSessionFileRef(resource: Record<string, unknown>): { file: FileRef;
   const resourceId = typeof resource.resourceId === 'string' && resource.resourceId.trim()
     ? resource.resourceId.trim()
     : null;
+  const filePath = firstNonEmptyString(resource.filePath, resource.path);
   const paths = preferredPath
     ? [preferredPath, ...Object.keys(state.sessionRegistryFilesByPath || {}).filter(path => path !== preferredPath)]
     : Object.keys(state.sessionRegistryFilesByPath || {});
 
   for (const sessionPath of paths) {
     const files = selectSessionFiles(state, sessionPath, { includeUnlisted: true });
+    // fork 出来的 session 里，插件手上的 fileId / 路径可能还是父 session 那一份，
+    // 账本条目把它们记成了别名，所以别名也要认。
     const file = files.find(candidate => (
-      (fileId && candidate.fileId === fileId)
+      (fileId && (candidate.fileId === fileId || (candidate.legacyFileIds || []).includes(fileId)))
       || (resourceId && candidate.resource?.resourceId === resourceId)
+      || (filePath && (candidate.path === filePath || (candidate.legacyFilePaths || []).includes(filePath)))
     ));
     if (file) return { file, sessionPath };
+  }
+  return null;
+}
+
+function firstNonEmptyString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return null;
 }
@@ -245,10 +256,9 @@ async function pickResource(_ctx: PluginUiRequestContext, payload: unknown): Pro
       resources: folder ? [{ kind: 'local-file', path: folder, name: pathName(folder), isDirectory: true }] : [],
     };
   }
-  const files = await requirePlatformMethod('selectFiles')();
-  const selected = multiple ? files : files.slice(0, 1);
+  const files = await requirePlatformMethod('selectFiles')({ multiple });
   return {
-    resources: selected.map(filePath => ({
+    resources: files.map(filePath => ({
       kind: 'local-file',
       path: filePath,
       name: pathName(filePath),

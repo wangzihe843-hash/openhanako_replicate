@@ -3,7 +3,7 @@
  *
  * Obsidian 风格 markdown live preview：
  * - 衬线体渲染，无行号，无行高亮
- * - 语法标记仅在光标所在行可见（conceal）
+ * - 已成立的语法标记始终 conceal，未完成的输入保留源码
  * - H1 居中，标题/粗体/斜体等格式实时渲染
  *
  * 架构：
@@ -30,6 +30,11 @@ import { markdownHighlight, codeHighlight } from '../editor/highlight';
 import { markdownTheme, codeTheme } from '../editor/theme';
 import { markdownBlockDecoField, markdownDecoPlugin, markdownImageContextFacet } from '../editor/md-decorations';
 import { markdownCoverField } from '../editor/cover-field';
+import {
+  markdownBlockHandlePlugin,
+  type MarkdownBlockMenuRequest,
+} from '../editor/markdown-block-handles';
+import { markdownBlockSelectionPlugin } from '../editor/markdown-block-selection';
 import { mermaidDecoField } from '../editor/mermaid-field';
 import { linkClickHandler } from '../editor/link-handler';
 import { tableDecoField } from '../editor/table-field';
@@ -78,6 +83,11 @@ export interface PreviewEditorStats {
   totalChars: number;
 }
 
+export interface PreviewEditorQuoteRange {
+  from: number;
+  to: number;
+}
+
 export type PreviewEditorSaveDocument = (
   content: string,
   expectedVersion?: FileVersion | null,
@@ -93,6 +103,7 @@ export interface PreviewEditorProps {
   language?: string | null;
   onSelectionChange?: (view: EditorView) => void;
   onSelectionCommit?: (view: EditorView) => void;
+  onQuoteRange?: (view: EditorView, range: PreviewEditorQuoteRange) => void;
   onStatsChange?: (stats: PreviewEditorStats) => void;
   onContentChange?: (content: string, fileVersion?: FileVersion | null) => void;
   initialScrollSnapshot?: PreviewScrollSnapshot | null;
@@ -378,10 +389,21 @@ function isEditorCoverRailDrop(view: EditorView, event: DragEvent): boolean {
 /* ── Editor Component ── */
 
 export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>(
-  function PreviewEditor({ content, filePath, remoteContentRef, fileVersion, saveDocument, mode, language, onSelectionChange, onSelectionCommit, onStatsChange, onContentChange, initialScrollSnapshot, contentHash, onScrollSnapshotChange, readOnly = false }, ref) {
+  function PreviewEditor({ content, filePath, remoteContentRef, fileVersion, saveDocument, mode, language, onSelectionChange, onSelectionCommit, onQuoteRange, onStatsChange, onContentChange, initialScrollSnapshot, contentHash, onScrollSnapshotChange, readOnly = false }, ref) {
     const incomingFileVersionKey = fileVersionIdentity(fileVersion ?? null);
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
+    const [blockMenuRequest, setBlockMenuRequest] = useState<MarkdownBlockMenuRequest | null>(null);
+    const toggleBlockMenu = useCallback((request: MarkdownBlockMenuRequest) => {
+      setBlockMenuRequest(current => (
+        current
+        && current.target.from === request.target.from
+        && current.target.to === request.target.to
+        && current.target.source === request.target.source
+          ? null
+          : request
+      ));
+    }, []);
     const [editorHostReadySignal, setEditorHostReadySignal] = useState(0);
     const lastEditorHostReadyRef = useRef(false);
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -825,6 +847,12 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
           markdownBlockDecoField,
           mermaidDecoField,
         ] : []),
+        ...(isMd && !readOnly ? [
+          markdownBlockSelectionPlugin(),
+          markdownBlockHandlePlugin({
+            onOpenMenu: toggleBlockMenu,
+          }),
+        ] : []),
         ...(isMd ? [tableDecoField] : []),
         ...(isCsv ? [csvTableField] : []),
         c.theme.of(isMd || isCsv ? markdownTheme : codeTheme),
@@ -971,11 +999,20 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
     }, [content, incomingFileVersionKey, applyIncomingContent]);
 
     const getViewForMenu = useCallback(() => viewRef.current, []);
+    const closeBlockMenu = useCallback(() => setBlockMenuRequest(null), []);
 
     return (
       <Fragment>
         <div className={`preview-editor mode-${mode}`} ref={containerRef} />
-        <EditorContextMenu getView={getViewForMenu} containerRef={containerRef} mode={mode} readOnly={readOnly} />
+        <EditorContextMenu
+          getView={getViewForMenu}
+          containerRef={containerRef}
+          mode={mode}
+          readOnly={readOnly}
+          blockMenuRequest={blockMenuRequest}
+          onBlockMenuClose={closeBlockMenu}
+          onQuoteRange={onQuoteRange}
+        />
       </Fragment>
     );
   },

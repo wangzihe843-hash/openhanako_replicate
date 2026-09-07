@@ -72,12 +72,14 @@ describe("summarizeSessionForRc — 3-tier fallback", () => {
       utilConfig: {
         utility: "gpt-4o-mini", utility_large: "gpt-4o",
         api_key: "k", base_url: "https://x", api: "openai",
+        headers: { "X-Provider-Protocol": "utility" },
         large_api_key: "k", large_base_url: "https://x", large_api: "openai",
       },
     });
     const r = await summarizeSessionForRc(engine, makeAgent(), p);
     expect(r).toBe("utility summary");
     expect(callText).toHaveBeenCalledTimes(1);
+    expect((callText as any).mock.calls[0][0].headers).toEqual({ "X-Provider-Protocol": "utility" });
     expect((callText as any).mock.calls[0][0]).not.toHaveProperty("maxTokens");
   });
 
@@ -166,21 +168,24 @@ describe("summarizeSessionForRc — 3-tier fallback", () => {
     expect(callText).toHaveBeenCalledTimes(1);
   });
 
-  it("utility config incomplete (missing api_key) → skips tier 1 cleanly", async () => {
+  it("utility config without api_key still runs when the resolver approved it", async () => {
     const p = writeSessionFile([makeUserMsg("hi"), makeAssistantMsg("hello")]);
-    (callText as any).mockResolvedValueOnce("from large");
+    (callText as any).mockResolvedValueOnce("from header-only utility");
     const engine = makeEngine({
       utilConfig: {
         utility: "u", utility_large: "ul",
-        api_key: "",   // incomplete — tier 1 skipped
+        api_key: "",
         base_url: "https://x", api: "openai",
+        headers: { "X-Gateway-Auth": "resolved-header" },
         large_api_key: "k", large_base_url: "https://x", large_api: "openai",
       },
     });
     const r = await summarizeSessionForRc(engine, makeAgent(), p);
-    expect(r).toBe("from large");
-    // Tier 1 skipped (no api_key), Tier 2 called with large creds
+    expect(r).toBe("from header-only utility");
     expect(callText).toHaveBeenCalledTimes(1);
+    expect((callText as any).mock.calls[0][0].headers).toEqual({
+      "X-Gateway-Auth": "resolved-header",
+    });
   });
 
   it("trims whitespace on success", async () => {

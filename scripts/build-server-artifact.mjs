@@ -5,13 +5,17 @@
  * 由 build:renderer 先行产出）也已就绪后调用，产出安装包 extraResources 携带的
  * seed 四件套：
  *   dist-server-artifact/{os}-{arch}/
- *     server-<version>-<platform>-<arch>.tar.gz   ← packTree(dist-server 树) 产物
+ *     server-<version>-<platform>-<arch>.tar.gz    ← packTree(dist-server 树) 产物
  *     renderer-<version>.tar.gz                    ← packTree(dist-renderer 树) 产物（平台无关，
  *                                                       先落 dist-renderer-artifact/ 一份共享，
  *                                                       再复制进本目录跟 server 归档同箱）
- *     seed-train.json                              ← schema-1 train-0 manifest，
- *                                                       同时携带 artifacts.renderer 与 artifacts.server
- *     seed-train.json.sig                          ← 对 manifest 精确字节的 ed25519 detached 签名
+ *     seed-train-<platform>-<arch>.json            ← schema-1 train-0 manifest，
+ *                                                       同时携带 artifacts.renderer 与 artifacts.server。
+ *                                                       文件名按平台限定（seedManifestFileName）：CI 四个
+ *                                                       平台 job 各产一份内容不同的 manifest（各自的
+ *                                                       server 条目、各自的 releasedAt），同名会让人无法
+ *                                                       从文件名判断来源，平台化命名消除这个歧义
+ *     seed-train-<platform>-<arch>.json.sig        ← 对 manifest 精确字节的 ed25519 detached 签名
  *
  * 历史：签名 seed 管线 只有 server 一种 kind，manifest 由 packServerArtifact 内联生成。
  * 启用双 artifact 管线后 renderer 也拆出 asar 走同一条 artifact-core 激活代码路径
@@ -56,8 +60,27 @@ const activation = require("../shared/artifact-core/activation.cjs");
 const manifestModule = require("../shared/artifact-core/manifest.cjs");
 const { loadPinnedKeyset } = require("../shared/artifact-core/keyset.cjs");
 const { PRELOAD_API_VERSION, SERVER_PROTOCOL_VERSION } = require("../shared/contract-versions.cjs");
+const { assertOfficePdfFontAssets } = require("../desktop/src/office-pdf-fonts.cjs");
 
-export const SEED_MANIFEST_NAME = "seed-train.json";
+/**
+ * Per-platform seed manifest file name. Each CI platform-arch job produces
+ * its own seed kit under dist-server-artifact/{os}-{arch}/ with DIFFERENT
+ * manifest content (different artifacts.server entry, different
+ * releasedAt) — the file name must disambiguate which platform-arch a
+ * given seed-train-*.json/.sig actually describes. `platformArch` is the
+ * exact `${platform}-${arch}` convention already used as the
+ * `artifacts.server` object key (see buildSeedManifest below) and at boot
+ * time (`${process.platform}-${process.arch}`, desktop/main.cjs /
+ * desktop/src/shared/artifact-boot.cjs) — one naming convention, reused
+ * everywhere a platform-arch pair needs to become a string. Duplicated
+ * (not imported) in artifact-boot.cjs: this file is an ESM build-time
+ * script, that one ships inside the bundled CJS desktop app.
+ * @param {string} platformArch
+ * @returns {string}
+ */
+export function seedManifestFileName(platformArch) {
+  return `seed-train-${platformArch}.json`;
+}
 
 // Mach-O magic numbers as they appear as the first 4 bytes on disk.
 // 32/64-bit thin binaries in both byte orders, plus fat/universal headers.
@@ -374,6 +397,18 @@ export async function packRendererArtifact({ rendererDistDir, artifactOutDir, ve
     );
   }
 
+  // Office HTML→PDF helper resolves fonts from the activated renderer artifact.
+  // Refuse to create a renderer box whose CSS or referenced font files are
+  // incomplete: Chromium would otherwise silently print with fallback fonts.
+  try {
+    assertOfficePdfFontAssets({ themesDir: path.join(rendererDistDir, "themes") });
+  } catch (err) {
+    throw new Error(
+      `[build-server] renderer Office PDF font assets are invalid: ${err?.message || err}`,
+      { cause: err },
+    );
+  }
+
   // ── 装箱前断言：renderer 树不含 Mach-O（纯 web 静态资源，装箱后无法再签名）──
   const macho = findMachOFilesDep(rendererDistDir);
   if (macho.length > 0) {
@@ -588,7 +623,8 @@ export async function packDualKindSeed({
     renderer: { sha256: rendererPackShared.sha256, size: rendererPackShared.size, archiveName: rendererPackShared.archiveName },
     server: { sha256: serverPack.sha256, size: serverPack.size, archiveName: serverPack.archiveName },
   });
-  const manifestPath = path.join(artifactOutDir, SEED_MANIFEST_NAME);
+  const manifestFileName = seedManifestFileName(`${platform}-${arch}`);
+  const manifestPath = path.join(artifactOutDir, manifestFileName);
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
 
   // ── 签 manifest，并用"将被打包的 keyset"当场 verify ──
@@ -599,7 +635,7 @@ export async function packDualKindSeed({
   }
   verifyManifest(fs.readFileSync(manifestPath), fs.readFileSync(sigPath), keyset);
 
-  log(`[build-server] seed: ${serverPack.archiveName} + ${rendererPackShared.archiveName} + ${SEED_MANIFEST_NAME}(.sig) → ${artifactOutDir}`);
+  log(`[build-server] seed: ${serverPack.archiveName} + ${rendererPackShared.archiveName} + ${manifestFileName}(.sig) → ${artifactOutDir}`);
   return {
     serverArchivePath: serverPack.archivePath,
     rendererArchivePath: rendererArchiveInSeed,

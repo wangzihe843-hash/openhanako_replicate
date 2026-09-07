@@ -3,6 +3,20 @@ import {
   DEFAULT_DISABLED_TOOL_NAMES,
 } from "../shared/tool-categories.ts";
 
+export const PATROL_TOOLS_DEFAULT = "*";
+
+/** Apply the same isolated-session whitelist to execution and patrol guidance. */
+export function filterPatrolToolObjects(tools, { toolFilter, agentConfig, activityType }: {
+  toolFilter?: any;
+  agentConfig?: any;
+  activityType?: string;
+} = {}) {
+  const allowed = toolFilter || agentConfig?.desk?.patrol_tools || PATROL_TOOLS_DEFAULT;
+  const names = allowed === "*" ? null : new Set(allowed);
+  const blocked = new Set(activityType === "heartbeat" ? ["automation", "cron"] : []);
+  return (tools || []).filter((tool) => !blocked.has(tool.name) && (!names || names.has(tool.name)));
+}
+
 export function toolNamesFromObjects(tools, { includePluginTools = true } = {}) {
   return (tools || [])
     .filter((tool) => includePluginTools || !tool?._pluginId)
@@ -53,4 +67,106 @@ export function computeAvailableToolNames(tools, agentConfig, context = {}, opti
 export function filterToolObjectsByAvailability(tools, agentConfig, context = {}, options: { includeRuntimeEnablement?: any; extraDisabled?: any[]; includePluginTools?: any; warn?: any } = {}) {
   const availableNames = new Set(computeAvailableToolNames(tools, agentConfig, context, options));
   return (tools || []).filter((tool) => tool?.name && availableNames.has(tool.name));
+}
+
+function reminderLiveAvailabilityProbe(tool) {
+  if (typeof tool?.reminderLiveAvailabilityProbe === "function") {
+    return tool.reminderLiveAvailabilityProbe;
+  }
+  if (typeof tool?.metadata?.reminderLiveAvailabilityProbe === "function") {
+    return tool.metadata.reminderLiveAvailabilityProbe;
+  }
+  return null;
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function normalizedReminderProbeResult(value) {
+  if (value === true) return { available: true };
+  if (value === false) {
+    return { available: false, reason: "probe_reported_unavailable", diagnostics: {} };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("probe must return a boolean or an availability result object");
+  }
+  if (typeof value.then === "function") {
+    throw new TypeError("probe must be synchronous and read-only");
+  }
+  if (typeof value.available !== "boolean") {
+    throw new TypeError("probe result must contain an available boolean");
+  }
+  if (value.available) return { available: true };
+  return {
+    available: false,
+    reason: typeof value.reason === "string" && value.reason.trim()
+      ? value.reason.trim()
+      : "probe_reported_unavailable",
+    diagnostics: value.diagnostics && typeof value.diagnostics === "object" && !Array.isArray(value.diagnostics)
+      ? { ...value.diagnostics }
+      : {},
+  };
+}
+
+/**
+ * Computes the current tool names visible to Reminder preflight. It starts from
+ * the exact same names as a normal fresh-session availability calculation, then
+ * applies an optional synchronous, read-only probe. Explicit unavailable
+ * results are authoritative; probe errors fail open to avoid inventing an
+ * outage from missing diagnostics. Normal filtering and execution never
+ * consult this hook.
+ */
+export function computeReminderLiveToolAvailability(
+  tools,
+  agentConfig,
+  context = {},
+  options: {
+    includeRuntimeEnablement?: boolean;
+    extraDisabled?: string[];
+    includePluginTools?: boolean;
+    warn?: (message: string) => void;
+  } = {},
+) {
+  const normalAvailableToolNames = computeAvailableToolNames(tools, agentConfig, context, options);
+  const toolByName = new Map();
+  for (const tool of tools || []) {
+    if (tool?.name) toolByName.set(tool.name, tool);
+  }
+
+  const availableToolNames = [];
+  const diagnostics = [];
+  const warn = typeof options.warn === "function" ? options.warn : null;
+
+  for (const toolName of normalAvailableToolNames) {
+    const probe = reminderLiveAvailabilityProbe(toolByName.get(toolName));
+    if (!probe) {
+      availableToolNames.push(toolName);
+      continue;
+    }
+
+    try {
+      const result = normalizedReminderProbeResult(probe(agentConfig, context));
+      if (result.available) {
+        availableToolNames.push(toolName);
+        continue;
+      }
+      diagnostics.push({
+        toolName,
+        reason: result.reason,
+        diagnostics: result.diagnostics,
+      });
+    } catch (error) {
+      const message = errorMessage(error);
+      warn?.(`tool "${toolName}" Reminder live availability probe failed: ${message}`);
+      availableToolNames.push(toolName);
+      diagnostics.push({
+        toolName,
+        reason: "probe_error",
+        diagnostics: { message },
+      });
+    }
+  }
+
+  return { availableToolNames, diagnostics };
 }

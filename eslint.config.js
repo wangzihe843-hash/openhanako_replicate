@@ -59,6 +59,7 @@ export default [
       'lib/**/*.{js,ts}',
       'plugins/**/*.{js,ts}',
       'scripts/**/*.{js,mjs,ts}',
+      'tools/npm-ea/**/*.mjs',
       'server/**/*.{js,ts}',
       'shared/**/*.{js,ts}',
       'tests/**/*.{js,ts,tsx}',

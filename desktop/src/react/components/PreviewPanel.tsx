@@ -20,7 +20,13 @@ import { PreviewRenderer } from './preview/PreviewRenderer';
 import { TabBar } from './preview/TabBar';
 import { FloatingActions } from './preview/FloatingActions';
 import { ChapterRail, ClassicFindBox, LinkDiagnosticsBadge } from './preview/MarkdownChrome';
-import { clearSelection, getSelectionCommitAnchorRect, isContextMenuButton, scheduleCaptureSelection } from '../stores/selection-actions';
+import {
+  clearSelection,
+  getSelectionCommitAnchorRect,
+  isContextMenuButton,
+  quotePreviewRangeToChat,
+  scheduleCaptureSelection,
+} from '../stores/selection-actions';
 import type { PreviewItem } from '../types';
 import { isRemoteWorkbenchContentRef, saveRemoteWorkbenchContent } from '../utils/remote-file-preview';
 import { applyFindMarks, clearFindMarks } from '../utils/find-marks';
@@ -426,6 +432,9 @@ export function PreviewPanel() {
                 language={previewItem.language}
                 onSelectionCommit={(view) => {
                   if (previewItem) scheduleCaptureSelection(previewItem, view);
+                }}
+                onQuoteRange={(view, range) => {
+                  if (previewItem) quotePreviewRangeToChat(previewItem, view, range);
                 }}
                 onStatsChange={handleEditorStatsChange}
                 onContentChange={handleEditorContentChange}

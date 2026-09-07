@@ -46,14 +46,6 @@ describe('SettingsNav search', () => {
     };
     useSettingsStore.setState({
       activeTab: 'agent',
-      pluginSettingsTabs: [
-        {
-          pluginId: 'native',
-          id: 'native-settings',
-          title: { zh: '插件面板', en: 'Native Panel' },
-          nativeComponent: 'unknown-native-tab',
-        },
-      ],
     } as never);
   });
 

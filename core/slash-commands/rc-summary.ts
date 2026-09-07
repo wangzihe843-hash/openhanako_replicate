@@ -18,6 +18,10 @@
  */
 import fs from "fs";
 import { callText } from "../llm-client.ts";
+import {
+  callTextConfigFromResolvedModel,
+  callTextConfigFromUtilityConfig,
+} from "../model-execution-config.ts";
 import { callTextWithLengthContract, type OutputLengthContract } from "../output-length-contract.ts";
 import { getLocale } from "../../lib/i18n.ts";
 import { isToolCallBlock } from "../llm-utils.ts";
@@ -51,10 +55,12 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
     utilConfig = await engine.resolveUtilityConfigFresh?.(agent?.id ? { agentId: agent.id } : undefined);
   } catch { /* ignore, fall through */ }
 
-  if (utilConfig?.utility && utilConfig.api_key && utilConfig.base_url && utilConfig.api) {
+  const utilityExecution = utilConfig
+    ? callTextConfigFromUtilityConfig(utilConfig)
+    : null;
+  if (utilityExecution?.model && utilityExecution.baseUrl && utilityExecution.api) {
     const text = await _safeCall({
-      api: utilConfig.api, model: utilConfig.utility,
-      apiKey: utilConfig.api_key, baseUrl: utilConfig.base_url,
+      ...utilityExecution,
       usageLedger: utilConfig.usageLedger ?? engine.usageLedger,
       usageContext: usageContextForRc(engine, agent, sessionPath, "rc_summary_utility"),
       messages,
@@ -64,10 +70,12 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
   }
 
   // Tier 2: utility_large
-  if (utilConfig?.utility_large && utilConfig.large_api_key && utilConfig.large_base_url && utilConfig.large_api) {
+  const largeExecution = utilConfig
+    ? callTextConfigFromUtilityConfig(utilConfig, "utility_large")
+    : null;
+  if (largeExecution?.model && largeExecution.baseUrl && largeExecution.api) {
     const text = await _safeCall({
-      api: utilConfig.large_api, model: utilConfig.utility_large,
-      apiKey: utilConfig.large_api_key, baseUrl: utilConfig.large_base_url,
+      ...largeExecution,
       usageLedger: utilConfig.usageLedger ?? engine.usageLedger,
       usageContext: usageContextForRc(engine, agent, sessionPath, "rc_summary_utility_large"),
       messages,
@@ -83,8 +91,7 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
       const resolved = await engine.resolveModelWithCredentialsFresh?.({ id: chatRef.id, provider: chatRef.provider });
       if (resolved) {
         const text = await _safeCall({
-          api: resolved.api, model: resolved.model,
-          apiKey: resolved.api_key, baseUrl: resolved.base_url,
+          ...callTextConfigFromResolvedModel(resolved),
           usageLedger: engine.usageLedger,
           usageContext: usageContextForRc(engine, agent, sessionPath, "rc_summary_chat"),
           messages,
@@ -126,13 +133,12 @@ function _summaryLengthContract(isZh): OutputLengthContract {
     : { label: "/rc summary", target: 60, unit: "words", min: 1, locale: "en" };
 }
 
-async function _safeCall({ api, model, apiKey, baseUrl, messages, usageLedger, usageContext, lengthContract }, tierLabel) {
+async function _safeCall({ api, model, apiKey, baseUrl, headers, messages, usageLedger, usageContext, lengthContract }, tierLabel) {
   try {
     const { text } = await callTextWithLengthContract({
       callText,
       request: {
-        api, model, apiKey, baseUrl,
-        headers: undefined,
+        api, model, apiKey, baseUrl, headers,
         signal: undefined,
         messages,
         temperature: 0.3,

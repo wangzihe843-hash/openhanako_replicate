@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   BLOCK_EXTRACTORS,
+  dropUninstalledPluginCards,
   extractBlocks,
+  pluginInstalledPredicate,
   resolveMediaGenerationBlocks,
 } from '../server/block-extractors.ts';
 
@@ -178,7 +180,7 @@ describe('present_files', () => {
   });
 });
 
-// ─── image-gen media generation ─────────────────────────────────────────────
+// ─── media generation ────────────────────────────────────────────────────────
 
 describe('media generation blocks', () => {
   it('extracts one pending media_generation block per submitted image task', () => {
@@ -214,8 +216,18 @@ describe('media generation blocks', () => {
     ]);
   });
 
-  it('keeps historical image-gen tool names readable for old sessions', () => {
-    const blocks = (extractBlocks as any)('image-gen_generate-image', {
+  it('registers only the current media tool result names, no retired plugin-era aliases', () => {
+    // A prior COMPAT block mapped a since-retired plugin's own tool result
+    // names to the same extractor. That block is gone: only the two
+    // current media_* names should ever resolve to a media_generation
+    // extractor, and an unrecognized (e.g. historical) tool name must
+    // produce no block at all from this extractor table.
+    const generationKeys = Object.keys(BLOCK_EXTRACTORS)
+      .filter((key) => key.includes('generate-image') || key.includes('generate-video'))
+      .sort();
+    expect(generationKeys).toEqual(['media_generate-image', 'media_generate-video']);
+
+    const blocks = (extractBlocks as any)('some-retired-tool_generate-image', {
       mediaGeneration: {
         kind: 'image',
         batchId: 'legacy-batch',
@@ -223,14 +235,7 @@ describe('media generation blocks', () => {
         tasks: [{ taskId: 'legacy-task' }],
       },
     });
-
-    expect(blocks[0]).toMatchObject({
-      type: 'media_generation',
-      taskId: 'legacy-task',
-      kind: 'image',
-      batchId: 'legacy-batch',
-      status: 'pending',
-    });
+    expect(blocks).toEqual([]);
   });
 
   it('replaces historical pending media_generation blocks with completed session file blocks', () => {
@@ -984,6 +989,49 @@ describe('extractBlocks: plugin card extraction', () => {
   it('unknown tool with null details: returns empty array', () => {
     const blocks = (extractBlocks as any)('nonexistent_tool', null);
     expect(blocks).toEqual([]);
+  });
+});
+
+describe('dropUninstalledPluginCards', () => {
+  it('drops plugin_card blocks whose pluginId the predicate rejects, keeps everything else', () => {
+    const blocks = [
+      { type: 'file', filePath: '/a' },
+      { type: 'plugin_card', card: { pluginId: 'installed-plugin' } },
+      { type: 'plugin_card', card: { pluginId: 'retired-plugin' } },
+    ];
+    const result = dropUninstalledPluginCards(
+      blocks,
+      (pluginId) => pluginId === 'installed-plugin',
+    );
+    expect(result).toEqual([
+      { type: 'file', filePath: '/a' },
+      { type: 'plugin_card', card: { pluginId: 'installed-plugin' } },
+    ]);
+  });
+
+  it('is a no-op (returns blocks unchanged) when no predicate function is supplied', () => {
+    const blocks = [{ type: 'plugin_card', card: { pluginId: 'x' } }];
+    expect(dropUninstalledPluginCards(blocks)).toBe(blocks);
+  });
+});
+
+describe('pluginInstalledPredicate', () => {
+  it('reports installed when pluginManager.getPlugin resolves a truthy entry', () => {
+    const engine = { pluginManager: { getPlugin: (id) => (id === 'media' ? { id: 'media' } : null) } };
+    const predicate = pluginInstalledPredicate(engine);
+    expect(predicate('media')).toBe(true);
+  });
+
+  it('reports not-installed when pluginManager.getPlugin resolves null', () => {
+    const engine = { pluginManager: { getPlugin: () => null } };
+    const predicate = pluginInstalledPredicate(engine);
+    expect(predicate('retired-plugin')).toBe(false);
+  });
+
+  it('fails open (reports installed) when pluginManager is unavailable, so a caller without plugin-manager access never silently hides a real card', () => {
+    const predicate = pluginInstalledPredicate({});
+    expect(predicate('anything')).toBe(true);
+    expect(pluginInstalledPredicate(null)('anything')).toBe(true);
   });
 });
 

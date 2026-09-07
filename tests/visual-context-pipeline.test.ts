@@ -192,6 +192,44 @@ describe("VisualContextPipeline", () => {
     expect(result.injected).toBe(1);
   });
 
+  it("does not bypass a rejected SessionFile id by reading its raw legacy path", async () => {
+    const dir = makeTempDir();
+    const sessionPath = path.join(dir, "session.jsonl");
+    const hiddenImagePath = path.join(dir, "hidden-branch.png");
+    fs.writeFileSync(hiddenImagePath, PNG_BYTES);
+    const { bridge, callText } = makeBridge();
+    const messages = [{
+      role: "toolResult",
+      content: [{ type: "text", text: "old branch output" }],
+      details: {
+        media: {
+          items: [{
+            type: "session_file",
+            fileId: "sf-hidden",
+            sessionPath,
+            filePath: hiddenImagePath,
+            mime: "image/png",
+            kind: "image",
+          }],
+        },
+      },
+    }];
+    const resolveSessionFile = vi.fn(() => null);
+
+    const result = await adaptVisualContextMessages({
+      messages,
+      sessionPath,
+      targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
+      visionBridge: bridge,
+      isVisionAuxiliaryEnabled: () => true,
+      resolveSessionFile,
+    });
+
+    expect(resolveSessionFile).toHaveBeenCalled();
+    expect(callText).not.toHaveBeenCalled();
+    expect(result).toEqual({ messages, injected: 0 });
+  });
+
   it("leaves image-capable model context unchanged", async () => {
     const { bridge, callText } = makeBridge();
     const messages = [{

@@ -2,7 +2,10 @@ import {
   XAI_OAUTH_RESOURCE_URL,
   xaiOAuthProvider,
 } from "../auth/xai-oauth.ts";
-import { buildXaiOauthCliProviderHeaders } from "./xai-oauth-cli-headers.ts";
+import {
+  buildXaiOauthCliModelHeaders,
+  buildXaiOauthCliProviderHeaders,
+} from "./xai-oauth-cli-headers.ts";
 
 const XAI_OAUTH_CLI_PROVIDER_HEADERS = buildXaiOauthCliProviderHeaders();
 
@@ -55,6 +58,7 @@ export const xaiOAuthPlugin = {
   defaultApi: "openai-responses",
   headers: XAI_OAUTH_CLI_PROVIDER_HEADERS,
   models: GROK_OAUTH_MODELS,
+  modelExecutionHeaders: buildXaiOauthCliModelHeaders,
   capabilities: {
     chat: {
       runtimeProviderId: "xai-oauth",

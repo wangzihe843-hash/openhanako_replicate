@@ -45,18 +45,32 @@ function makeAgent(root) {
     tools: [],
     personality: "personality",
     systemPrompt: "system prompt",
-    config: { models: { chat: { id: "gpt-4o", provider: "openai" } } },
+    config: {
+      locale: "",
+      workspace_context: {},
+      models: { chat: { id: "gpt-4o", provider: "openai" } },
+    },
   };
 }
 
 function makeEngine(agent, cwd) {
+  const ensureSessionRefForPath = vi.fn((sessionPath, defaults = {}) => ({
+    sessionId: `sess_${path.basename(sessionPath, path.extname(sessionPath))}`,
+    sessionPath,
+    defaults,
+  }));
   return {
     getAgent: (id) => (id === agent.id ? agent : null),
     getHomeCwd: () => cwd,
+    ensureSessionRefForPath,
+    tombstoneSessionRef: vi.fn(),
     createSessionContext: () => ({
       resourceLoader: {},
       getSkillsForAgent: () => ({ skills: [], diagnostics: [] }),
-      buildTools: () => ({ tools: [], customTools: [] }),
+      buildTools: (_cwd, customTools = [], opts: any = {}) => ({
+        tools: [],
+        customTools: [...customTools, ...(opts.extraCustomTools || [])],
+      }),
       resolveModel: () => ({ id: "gpt-4o", provider: "openai", name: "GPT-4o" }),
       authStorage: {},
       modelRegistry: {},
@@ -103,8 +117,50 @@ describe("runAgentSession teardown", () => {
 
     await runAgentSession("agent-a", [{ text: "hello", capture: true }], { engine });
 
+    expect(engine.ensureSessionRefForPath).toHaveBeenCalledWith(
+      sessionFile,
+      expect.objectContaining({
+        ownerAgentId: "agent-a",
+        domain: "activity",
+        kind: "hub_temporary",
+      }),
+    );
+    expect(engine.tombstoneSessionRef).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "sess_s1", sessionPath: sessionFile }),
+      "hub_temporary_cleanup",
+    );
     expect(callOrder).toEqual(["emit", "unsub", "dispose"]);
     expect(emitSessionShutdownMock).toHaveBeenCalledWith(session);
+    expect(session.dispose).toHaveBeenCalledOnce();
+    expect(fs.existsSync(sessionFile)).toBe(false);
+  });
+
+  it("hub 临时 session 的 tombstone 失败仍会删除 JSONL 并显式报错", async () => {
+    const cwd = path.join(rootDir, "cwd");
+    fs.mkdirSync(cwd, { recursive: true });
+    const agent = makeAgent(rootDir);
+    const engine = makeEngine(agent, cwd);
+    engine.tombstoneSessionRef.mockImplementation(() => {
+      throw new Error("manifest tombstone failed");
+    });
+    const sessionFile = path.join(agent.agentDir, "sessions", "temp", "s-tombstone-fail.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+
+    const session = {
+      prompt: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+      dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => sessionFile },
+      extensionRunner: { hasHandlers: vi.fn(() => false) },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    await expect(
+      runAgentSession("agent-a", [{ text: "hello", capture: true }], { engine }),
+    ).rejects.toThrow("manifest tombstone failed");
+
     expect(session.dispose).toHaveBeenCalledOnce();
     expect(fs.existsSync(sessionFile)).toBe(false);
   });
@@ -157,6 +213,11 @@ describe("runAgentSession teardown", () => {
       "plain_custom",
       "search_memory",
     ]);
+    expect((buildTools.mock.calls[0] as any)[2].runtimeSessionRef).toMatchObject({
+      sessionId: "sess_s-master-tools",
+      sessionPath: sessionFile,
+    });
+    expect((buildTools.mock.calls[0] as any)[2].requireSessionIdentity).toBe(true);
     expect(createAgentSessionMock.mock.calls[0][0].customTools.map((tool) => tool.name)).toContain("search_memory");
   });
 
@@ -166,9 +227,9 @@ describe("runAgentSession teardown", () => {
     const agent = makeAgent(rootDir);
     agent.tools = [{ name: "search_memory" }, { name: "record_experience" }];
 
-    const buildTools = vi.fn((_cwd, customTools) => ({
+    const buildTools = vi.fn((_cwd, customTools, opts: any = {}) => ({
       tools: [{ name: "read" }, { name: "write" }],
-      customTools,
+      customTools: [...customTools, ...(opts.extraCustomTools || [])],
     }));
     const engine = {
       ...makeEngine(agent, cwd),
@@ -199,6 +260,11 @@ describe("runAgentSession teardown", () => {
 
     const buildOpts = (buildTools.mock.calls[0] as any)[2];
     expect(buildOpts!.getPermissionMode()).toBe("read_only");
+    expect(buildOpts!.runtimeSessionRef).toMatchObject({
+      sessionId: "sess_s-read-only-tools",
+      sessionPath: sessionFile,
+    });
+    expect(buildOpts!.requireSessionIdentity).toBe(true);
     expect(createAgentSessionMock.mock.calls[0][0].tools.map((tool) => tool.name)).toEqual([
       "read",
       "write",
@@ -253,6 +319,18 @@ describe("runAgentSession teardown", () => {
     });
 
     expect(text).toBe("hi");
+    expect(engine.ensureSessionRefForPath).toHaveBeenCalledWith(
+      sessionFile,
+      expect.objectContaining({
+        ownerAgentId: "agent-a",
+        domain: "phone",
+        kind: "phone_conversation",
+        provenance: expect.objectContaining({
+          conversationId: "ch_crew",
+          conversationType: "channel",
+        }),
+      }),
+    );
     expect(onSessionReady).toHaveBeenCalledWith(sessionFile);
     expect(emitEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -266,6 +344,76 @@ describe("runAgentSession teardown", () => {
       sessionFile,
     );
     expect(fs.existsSync(sessionFile)).toBe(true);
+  });
+
+  it("phone session locator 校验失败时仍释放已创建的 SDK session", async () => {
+    const cwd = path.join(rootDir, "cwd");
+    fs.mkdirSync(cwd, { recursive: true });
+    const agent = makeAgent(rootDir);
+    const engine = makeEngine(agent, cwd);
+    const identityFile = path.join(agent.agentDir, "phone", "sessions", "ch_locator", "identity.jsonl");
+    const runtimeFile = path.join(agent.agentDir, "phone", "sessions", "ch_locator", "runtime.jsonl");
+    fs.mkdirSync(path.dirname(identityFile), { recursive: true });
+    fs.writeFileSync(identityFile, "", "utf-8");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => identityFile });
+
+    const session = {
+      setActiveToolsByName: vi.fn(),
+      sessionManager: { getSessionFile: () => runtimeFile },
+      dispose: vi.fn(),
+      extensionRunner: { hasHandlers: vi.fn(() => false) },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+
+    await expect(
+      runAgentPhoneSession("agent-a", [{ text: "hello", capture: true }], {
+        engine,
+        conversationId: "ch_locator",
+      }),
+    ).rejects.toMatchObject({ code: "session_identity_conflict" });
+
+    expect(session.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("phone runtime metadata 写入失败时注销 abort handler 并释放 SDK session", async () => {
+    const cwd = path.join(rootDir, "cwd");
+    fs.mkdirSync(cwd, { recursive: true });
+    const agent = makeAgent(rootDir);
+    const unregisterPhoneAbort = vi.fn();
+    const registerAgentPhoneAbortHandler = vi.fn(() => unregisterPhoneAbort);
+    const engine = {
+      ...makeEngine(agent, cwd),
+      registerAgentPhoneAbortHandler,
+    };
+    const sessionFile = path.join(agent.agentDir, "phone", "sessions", "ch_metadata", "phone.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => sessionFile });
+
+    const session = {
+      setActiveToolsByName: vi.fn(),
+      sessionManager: { getSessionFile: () => sessionFile },
+      dispose: vi.fn(),
+      extensionRunner: { hasHandlers: vi.fn(() => false) },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+    const renameSpy = vi.spyOn(fs.promises, "rename")
+      .mockRejectedValueOnce(new Error("runtime metadata failed"));
+
+    try {
+      await expect(
+        runAgentPhoneSession("agent-a", [{ text: "hello", capture: true }], {
+          engine,
+          conversationId: "ch_metadata",
+        }),
+      ).rejects.toThrow("runtime metadata failed");
+    } finally {
+      renameSpy.mockRestore();
+    }
+
+    expect(registerAgentPhoneAbortHandler).toHaveBeenCalledOnce();
+    expect(unregisterPhoneAbort).toHaveBeenCalledOnce();
+    expect(session.dispose).toHaveBeenCalledOnce();
   });
 
   it("phone session can return diagnostics without changing the default text contract", async () => {
@@ -327,9 +475,9 @@ describe("runAgentSession teardown", () => {
     agent.tools = [{ name: "channel" }, { name: "search_memory" }, { name: "record_experience" }];
     (agent as any).getToolsSnapshot = vi.fn(() => agent.tools);
 
-    const buildTools = vi.fn((_cwd, customTools) => ({
+    const buildTools = vi.fn((_cwd, customTools, opts: any = {}) => ({
       tools: [{ name: "read" }, { name: "write" }],
-      customTools,
+      customTools: [...customTools, ...(opts.extraCustomTools || [])],
     }));
     const engine = {
       ...makeEngine(agent, cwd),
@@ -365,13 +513,38 @@ describe("runAgentSession teardown", () => {
       conversationType: "channel",
       toolMode: "read_only",
       extraCustomTools: [
-        { name: "channel_reply", execute: vi.fn() },
-        { name: "channel_pass", execute: vi.fn() },
+        {
+          name: "channel_reply",
+          sessionPermission: {
+            resolveInvocation: () => ({
+              action: "post",
+              kind: "routine",
+              capability: "channel_reply.post",
+            }),
+          },
+          execute: vi.fn(),
+        },
+        {
+          name: "channel_pass",
+          sessionPermission: {
+            resolveInvocation: () => ({
+              action: "decide",
+              kind: "routine",
+              capability: "channel_pass.decide",
+            }),
+          },
+          execute: vi.fn(),
+        },
       ],
     });
 
     const buildOpts = (buildTools.mock.calls[0] as any)[2];
     expect(buildOpts!.getPermissionMode()).toBe("read_only");
+    expect(buildOpts!.runtimeSessionRef).toMatchObject({
+      sessionId: "sess_phone-tools",
+      sessionPath: sessionFile,
+    });
+    expect(buildOpts!.requireSessionIdentity).toBe(true);
     expect(createAgentSessionMock.mock.calls[0][0].tools.map((tool) => tool.name)).toEqual([
       "read",
       "write",
@@ -382,6 +555,17 @@ describe("runAgentSession teardown", () => {
       "channel_reply",
       "channel_pass",
     ]);
+    const sessionCustomTools = createAgentSessionMock.mock.calls[0][0].customTools;
+    expect(sessionCustomTools.find((tool) => tool.name === "channel_reply")
+      .sessionPermission.resolveInvocation()).toMatchObject({
+      kind: "routine",
+      capability: "channel_reply.post",
+    });
+    expect(sessionCustomTools.find((tool) => tool.name === "channel_pass")
+      .sessionPermission.resolveInvocation()).toMatchObject({
+      kind: "routine",
+      capability: "channel_pass.decide",
+    });
     expect(setActiveToolsByName).toHaveBeenCalledWith([
       "read",
       "write",
@@ -399,9 +583,9 @@ describe("runAgentSession teardown", () => {
     agent.tools = [{ name: "channel" }, { name: "search_memory" }, { name: "record_experience" }, { name: "web_fetch" }];
     (agent as any).getToolsSnapshot = vi.fn(() => agent.tools);
 
-    const buildTools = vi.fn((_cwd, customTools) => ({
+    const buildTools = vi.fn((_cwd, customTools, opts: any = {}) => ({
       tools: [{ name: "read" }, { name: "write" }],
-      customTools,
+      customTools: [...customTools, ...(opts.extraCustomTools || [])],
     }));
     const engine = {
       ...makeEngine(agent, cwd),
@@ -719,6 +903,10 @@ describe("runAgentSession teardown", () => {
     const cwd = path.join(rootDir, "cwd");
     fs.mkdirSync(cwd, { recursive: true });
     const agent = makeAgent(rootDir);
+    agent.config.locale = "en-US";
+    agent.config.workspace_context = { inject_agents_md: true };
+    fs.mkdirSync(path.join(cwd, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(cwd, "AGENTS.md"), "PHONE_WORKSPACE_INSTRUCTION\n", "utf-8");
     const engine = makeEngine(agent, cwd);
     const sessionFile = path.join(agent.agentDir, "phone", "sessions", "ch_crew", "phone-snapshot.jsonl");
     fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
@@ -746,6 +934,9 @@ describe("runAgentSession teardown", () => {
     let runtime = readAgentPhoneRuntime(agent.agentDir, "ch_crew");
     const snapshot = runtime.promptSnapshot;
     expect(snapshot?.systemPrompt).toBe("system prompt");
+    expect(snapshot?.appendSystemPrompt.join("\n\n")).toContain(`Primary workbench: ${cwd}`);
+    expect(snapshot?.appendSystemPrompt.join("\n\n")).toContain("PHONE_WORKSPACE_INSTRUCTION");
+    expect(snapshot?.appendSystemPrompt.join("\n\n")).not.toContain("Current working directory");
 
     agent.systemPrompt = "system prompt v2";
     await runAgentPhoneSession("agent-a", [{ text: "hello again", capture: true }], {
@@ -755,6 +946,7 @@ describe("runAgentSession teardown", () => {
     });
     const secondCreateArgs = createAgentSessionMock.mock.calls.at(-1)[0];
     expect(secondCreateArgs.resourceLoader.getSystemPrompt()).toBe("system prompt");
+    expect(secondCreateArgs.resourceLoader.getAppendSystemPrompt()).toEqual(snapshot.appendSystemPrompt);
     runtime = readAgentPhoneRuntime(agent.agentDir, "ch_crew");
     expect(runtime.promptSnapshot.systemPrompt).toBe("system prompt");
   });

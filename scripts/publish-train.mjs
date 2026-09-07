@@ -18,7 +18,7 @@
  *      of `buildSeedManifest`'s own version-equals-minShell convention,
  *      because that convention is only correct for a seed, not a train
  *      (see the constant's comment for why).
- *   4. Signs it and either creates a new `train-<N>` release (archives +
+ *   4. Signs it and either creates a new `train-<channel>-<N>` release (archives +
  *      train.json + train.json.sig) or, if that release already exists
  *      with byte-identical artifacts (see "resumable publish" below),
  *      reuses it without re-uploading.
@@ -27,28 +27,36 @@
  *      (desktop/src/shared/artifact-ota.cjs's `channelManifestUrls`).
  *
  * Channel independence: stable and beta each keep their own train counter,
- * read from their own `<channel>.json`. A normal `vX.Y.Z` tag publishes
- * both (see the `publish-train` job in build.yml) from the SAME archives,
- * so the two channels usually land on the same train number, but the
- * counters are tracked independently and are allowed to drift (e.g. after
- * a channel-scoped manual run via the escape-hatch workflow).
+ * read from their own `<channel>.json`. A prerelease source Release may
+ * advance beta automatically, but stable advances automatically only from
+ * a non-prerelease source Release. An operator can deliberately promote a
+ * prerelease source to stable only with the explicit CLI override below
+ * (the dedicated manual workflow exposes it as a default-off confirmation).
+ * The counters are tracked independently and are therefore allowed to drift.
+ * Physical box releases carry the channel in their identity, so stable train
+ * 14 and beta train 14 can safely hold different artifacts.
  *
  * Resumable publish: this script may be re-run for a tag/channel pair that
  * already succeeded, or that failed partway through (the CI job that
  * calls it is not transactional). After computing the target train N, if a
- * `train-<N>` release already exists, its train.json is downloaded and
+ * `train-<channel>-<N>` release already exists, its train.json is downloaded and
  * compared against this run's freshly-computed artifacts (version + sha256
- * per archive — NOT full-manifest equality, since releasedAt/rollout.salt/
- * channel are expected to differ run-to-run and channel-to-channel). An
+ * + size + path per archive — NOT full-manifest equality, since releasedAt
+ * and rollout.salt are expected to differ run-to-run). An
  * exact artifact match means train N was already built by an earlier
- * (possibly interrupted, possibly other-channel) run and it is safe to
+ * interrupted run on the same channel and it is safe to
  * skip re-uploading the boxes; a mismatch is a real conflict and is a hard
  * error — never silently overwritten. Either way, THIS channel's pointer
  * (`<channel>.json`) is always its own freshly signed manifest carrying
  * this channel's name, train number, releasedAt and rollout salt — it is
- * never a byte-copy of another channel's train.json, so `beta.json` always
- * reads `channel: "beta"` even when it happens to share a train-N box
- * release with stable.
+ * never a byte-copy of the box release's train.json, so `beta.json` always
+ * reads `channel: "beta"`.
+ *
+ * Legacy migration: already-signed channel pointers may still name the old
+ * global `train-<N>` release in `mirrors`. Clients keep following that exact
+ * URL. The next publish reads only the pointer's numeric train, increments it,
+ * and writes a new pointer whose mirror names `train-<channel>-<N+1>`. No old
+ * pointer or release is rewritten, and the manifest schema does not change.
  *
  * Anti-rollback: train numbers only go up, per channel, forever. There is
  * no "delete a train" or "go back to N-1" operation. A bad release is
@@ -57,6 +65,7 @@
  *
  * Usage:
  *   node scripts/publish-train.mjs --tag vX.Y.Z --channel stable|beta [--dry-run]
+ *     [--allow-prerelease-stable]
  *
  * Env:
  *   GH_TOKEN            required (gh CLI auth)
@@ -117,20 +126,24 @@ export const SHELL_COMPAT_FLOOR = "0.386.5";
 
 /**
  * @param {string[]} argv
- * @returns {{tag: string, channel: "stable"|"beta", dryRun: boolean}}
+ * @returns {{tag: string, channel: "stable"|"beta", dryRun: boolean, allowPrereleaseStable: boolean}}
  */
 export function parseArgs(argv) {
-  const args = { tag: null, channel: null, dryRun: false };
+  const args = { tag: null, channel: null, dryRun: false, allowPrereleaseStable: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--tag") args.tag = argv[++i];
     else if (arg === "--channel") args.channel = argv[++i];
     else if (arg === "--dry-run") args.dryRun = true;
+    else if (arg === "--allow-prerelease-stable") args.allowPrereleaseStable = true;
     else throw new Error(`publish-train: unknown argument ${arg}`);
   }
   if (!args.tag) throw new Error("publish-train: --tag is required");
   if (args.channel !== "stable" && args.channel !== "beta") {
     throw new Error(`publish-train: --channel must be "stable" or "beta" (got ${JSON.stringify(args.channel)})`);
+  }
+  if (args.allowPrereleaseStable && args.channel !== "stable") {
+    throw new Error("publish-train: --allow-prerelease-stable is only valid with --channel stable");
   }
   return args;
 }
@@ -186,22 +199,34 @@ export function computeNextTrain(existingChannelManifest) {
 }
 
 /**
- * AtomGit does not mirror the `train-<N>` release tag yet — only the
+ * AtomGit does not mirror the `train-<channel>-<N>` release tag yet — only the
  * `channels` pointer tag has scheduled mirroring wired up (see the note in
  * desktop/src/shared/artifact-ota.cjs above ATOMGIT_CHANNEL_BASE). GitHub
  * is therefore the only mirror for now; add the AtomGit base here once a
- * `--tag train-<N>` mirror job exists.
- * @param {{repo: string, train: number}} opts
+ * `--tag train-<channel>-<N>` mirror job exists.
+ * @param {{channel: "stable"|"beta", train: number}} opts
+ * @returns {string}
+ */
+export function computeTrainReleaseTag({ channel, train }) {
+  if (channel !== "stable" && channel !== "beta") {
+    throw new Error(`computeTrainReleaseTag: channel must be "stable" or "beta", got ${JSON.stringify(channel)}`);
+  }
+  if (!Number.isInteger(train) || train < 1) {
+    throw new Error(`computeTrainReleaseTag: train must be a positive integer, got ${JSON.stringify(train)}`);
+  }
+  return `train-${channel}-${train}`;
+}
+
+/**
+ * @param {{repo: string, channel: "stable"|"beta", train: number}} opts
  * @returns {string[]}
  */
-export function computeMirrors({ repo, train }) {
+export function computeMirrors({ repo, channel, train }) {
   if (!repo || !repo.includes("/")) {
     throw new Error(`computeMirrors: repo must be "owner/repo", got ${JSON.stringify(repo)}`);
   }
-  if (!Number.isInteger(train) || train < 1) {
-    throw new Error(`computeMirrors: train must be a positive integer, got ${JSON.stringify(train)}`);
-  }
-  return [`https://github.com/${repo}/releases/download/train-${train}`];
+  const trainTag = computeTrainReleaseTag({ channel, train });
+  return [`https://github.com/${repo}/releases/download/${trainTag}`];
 }
 
 // ── manifest assembly (reuses buildSeedManifest, never a parallel builder) ─
@@ -287,7 +312,7 @@ export function assembleTrainManifest({
   return manifest;
 }
 
-// ── resumable-publish comparison (version + sha256 only; deliberately
+// ── resumable-publish comparison (full artifact-entry identity; deliberately
 //    ignores channel/releasedAt/rollout.salt, which differ run-to-run and
 //    channel-to-channel by design) ──────────────────────────────────────
 
@@ -300,26 +325,34 @@ export function diffManifestArtifacts(a, b) {
   const mismatches = [];
   const ar = a.artifacts && a.artifacts.renderer;
   const br = b.artifacts && b.artifacts.renderer;
-  if (!ar || !br || ar.version !== br.version || ar.sha256 !== br.sha256) {
-    mismatches.push(
-      `renderer: version(${ar ? ar.version : "missing"} vs ${br ? br.version : "missing"}) `
-        + `sha256(${ar ? ar.sha256 : "missing"} vs ${br ? br.sha256 : "missing"})`,
-    );
-  }
+  const describeEntryMismatch = (label, left, right) => {
+    if (!left || !right) return `${label}: entry(${left ? "present" : "missing"} vs ${right ? "present" : "missing"})`;
+    const fields = ["version", "sha256", "size", "path"];
+    const changed = fields.filter((field) => left[field] !== right[field]);
+    if (changed.length === 0) return null;
+    return `${label}: ${changed.map((field) => `${field}(${JSON.stringify(left[field])} vs ${JSON.stringify(right[field])})`).join(" ")}`;
+  };
+  const rendererMismatch = describeEntryMismatch("renderer", ar, br);
+  if (rendererMismatch) mismatches.push(rendererMismatch);
   const aServers = (a.artifacts && a.artifacts.server) || {};
   const bServers = (b.artifacts && b.artifacts.server) || {};
   const keys = new Set([...Object.keys(aServers), ...Object.keys(bServers)]);
   for (const key of keys) {
     const av = aServers[key];
     const bv = bServers[key];
-    if (!av || !bv || av.version !== bv.version || av.sha256 !== bv.sha256) {
-      mismatches.push(
-        `server.${key}: version(${av ? av.version : "missing"} vs ${bv ? bv.version : "missing"}) `
-          + `sha256(${av ? av.sha256 : "missing"} vs ${bv ? bv.sha256 : "missing"})`,
-      );
-    }
+    const serverMismatch = describeEntryMismatch(`server.${key}`, av, bv);
+    if (serverMismatch) mismatches.push(serverMismatch);
   }
   return { matches: mismatches.length === 0, mismatches };
+}
+
+function manifestTargetsVersion(manifest, version) {
+  const versions = [];
+  const renderer = manifest?.artifacts?.renderer;
+  if (renderer) versions.push(renderer.version);
+  const servers = manifest?.artifacts?.server || {};
+  for (const entry of Object.values(servers)) versions.push(entry.version);
+  return versions.length > 0 && versions.every((entryVersion) => entryVersion === version);
 }
 
 /**
@@ -333,7 +366,7 @@ export function assertArtifactsMatchForResume(candidateManifest, existingTrainMa
   const diff = diffManifestArtifacts(candidateManifest, existingTrainManifest);
   if (!diff.matches) {
     throw new Error(
-      `publish-train: train ${candidateManifest.train} release already exists but its artifacts differ from `
+      `publish-train: ${candidateManifest.channel} train ${candidateManifest.train} release already exists but its artifacts differ from `
         + "this run's freshly-built boxes -- this is a real conflict, not a safe resume:\n"
         + diff.mismatches.map((m) => `  - ${m}`).join("\n"),
     );
@@ -393,6 +426,71 @@ function defaultReleaseExists(tag) {
   return releaseExistsFromExec(tag, ghExec);
 }
 
+/**
+ * Reads the installer/source Release classification used only by the
+ * publisher's channel policy. Installed clients continue to trust only the
+ * signed channel pointer; this metadata is never added to their decision
+ * path.
+ * @param {string} tag
+ * @param {(args: string[]) => string} exec
+ * @returns {{tagName: string, isDraft: boolean, isPrerelease: boolean}}
+ */
+export function releaseInfoFromExec(tag, exec) {
+  let parsed;
+  try {
+    const raw = exec(["release", "view", tag, "--json", "tagName,isDraft,isPrerelease"]);
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`publish-train: could not read source release metadata for ${tag}`, { cause: err });
+  }
+
+  if (
+    !parsed
+    || parsed.tagName !== tag
+    || typeof parsed.isDraft !== "boolean"
+    || typeof parsed.isPrerelease !== "boolean"
+  ) {
+    throw new Error(`publish-train: source release metadata for ${tag} is malformed or names a different tag`);
+  }
+  return {
+    tagName: parsed.tagName,
+    isDraft: parsed.isDraft,
+    isPrerelease: parsed.isPrerelease,
+  };
+}
+
+function defaultReleaseInfo(tag) {
+  return releaseInfoFromExec(tag, ghExec);
+}
+
+/**
+ * @param {{
+ *   tag: string,
+ *   channel: "stable"|"beta",
+ *   sourceRelease: {tagName: string, isDraft: boolean, isPrerelease: boolean},
+ *   allowPrereleaseStable: boolean,
+ * }} opts
+ */
+export function assertSourceReleaseEligible({
+  tag,
+  channel,
+  sourceRelease,
+  allowPrereleaseStable,
+}) {
+  if (!sourceRelease || sourceRelease.tagName !== tag) {
+    throw new Error(`publish-train: source release metadata does not match requested tag ${tag}`);
+  }
+  if (sourceRelease.isDraft) {
+    throw new Error(`publish-train: source release ${tag} is still a draft and cannot publish an update train`);
+  }
+  if (channel === "stable" && sourceRelease.isPrerelease && !allowPrereleaseStable) {
+    throw new Error(
+      `publish-train: source release ${tag} is a prerelease; prerelease releases may advance beta automatically, `
+        + "but stable requires a non-prerelease release or an explicit manual stable publish",
+    );
+  }
+}
+
 function defaultReleaseAssetNames(tag) {
   const out = ghExec(["release", "view", tag, "--json", "assets", "--jq", ".assets[].name"]);
   return out.split("\n").map((s) => s.trim()).filter(Boolean);
@@ -418,6 +516,10 @@ function defaultSignManifest(manifestPath, signKeyPath) {
     [path.join(ROOT, "scripts", "artifact-sign.mjs"), "--key", signKeyPath, "--file", manifestPath],
     { stdio: "pipe" },
   );
+}
+
+function defaultVerifyManifest(manifestBytes, signatureBytes) {
+  return manifestModule.verifyManifest(manifestBytes, signatureBytes, loadPinnedKeyset());
 }
 
 // ── box discovery: download the tag's archives, parse + hash them ───────
@@ -494,11 +596,31 @@ export async function discoverBoxes({ tag, workDir, deps }) {
  * @param {{
  *   tag: string, channel: "stable"|"beta", dryRun: boolean, repo: string,
  *   releasedAt: string, boxes: object, env: NodeJS.ProcessEnv, deps: object,
+ *   allowPrereleaseStable?: boolean,
  *   log: (msg: string) => void,
  * }} opts
- * @returns {Promise<{action: "dry-run"|"created"|"resumed", channel: string, train: number, trainTag: string}>}
+ * @returns {Promise<{
+ *   action: "dry-run"|"created"|"resumed"|"already-published",
+ *   channel: string,
+ *   train: number,
+ *   trainTag: string|null,
+ * }>}
  */
-export async function publishChannel({ tag, channel, dryRun, repo, releasedAt, boxes, env, deps, log }) {
+export async function publishChannel({
+  tag,
+  channel,
+  dryRun,
+  repo,
+  releasedAt,
+  boxes,
+  env,
+  deps,
+  log,
+  allowPrereleaseStable = false,
+}) {
+  const sourceRelease = deps.releaseInfo(tag);
+  assertSourceReleaseEligible({ tag, channel, sourceRelease, allowPrereleaseStable });
+
   const version = tag.replace(/^v/, "");
   const keyId = loadPinnedKeyset()[0].keyId;
 
@@ -506,15 +628,35 @@ export async function publishChannel({ tag, channel, dryRun, repo, releasedAt, b
   let existingChannelManifest = null;
   if (channelsExists) {
     const assetNames = deps.releaseAssetNames("channels");
-    if (assetNames.includes(`${channel}.json`)) {
+    const pointerName = `${channel}.json`;
+    const signatureName = `${pointerName}.sig`;
+    const hasPointer = assetNames.includes(pointerName);
+    const hasSignature = assetNames.includes(signatureName);
+    if (hasPointer !== hasSignature) {
+      throw new Error(
+        `publish-train: channel pointer ${pointerName} and its signature are incomplete on the channels release; `
+          + "refusing to derive the anti-rollback train from unsigned or partial state",
+      );
+    }
+    if (hasPointer) {
       const dir = deps.mkdtemp(`hana-publish-train-pointer-read-${channel}-`);
-      deps.downloadAssets("channels", [`${channel}.json`], dir);
-      existingChannelManifest = manifestModule.parseManifest(deps.readFile(path.join(dir, `${channel}.json`)));
+      deps.downloadAssets("channels", [pointerName, signatureName], dir);
+      existingChannelManifest = deps.verifyManifest(
+        deps.readFile(path.join(dir, pointerName)),
+        deps.readFile(path.join(dir, signatureName)),
+      );
+      if (existingChannelManifest.channel !== channel) {
+        throw new Error(
+          `publish-train: signed channel pointer ${pointerName} names channel `
+            + `${JSON.stringify(existingChannelManifest.channel)}, expected ${JSON.stringify(channel)}`,
+        );
+      }
     }
   }
 
   const train = computeNextTrain(existingChannelManifest);
-  const mirrors = computeMirrors({ repo, train });
+  const trainTag = computeTrainReleaseTag({ channel, train });
+  const mirrors = computeMirrors({ repo, channel, train });
   const rolloutSalt = deps.randomSalt();
   const candidateManifest = assembleTrainManifest({
     version,
@@ -528,7 +670,29 @@ export async function publishChannel({ tag, channel, dryRun, repo, releasedAt, b
     rolloutSalt,
   });
 
-  const trainTag = `train-${train}`;
+  if (existingChannelManifest) {
+    const publishedDiff = diffManifestArtifacts(candidateManifest, existingChannelManifest);
+    if (publishedDiff.matches) {
+      log(
+        `[publish-train] channel=${channel} already points at identical source artifacts `
+          + `(train ${existingChannelManifest.train}); no publish needed`,
+      );
+      return {
+        action: "already-published",
+        channel,
+        train: existingChannelManifest.train,
+        trainTag: null,
+      };
+    }
+    if (manifestTargetsVersion(existingChannelManifest, version)) {
+      throw new Error(
+        `publish-train: channel=${channel} already publishes the same content version ${version} with different artifacts `
+          + "from the source Release. Refusing to advance the train for the same content version; "
+          + "the Release assets or channel pointer may have been mutated:\n"
+          + publishedDiff.mismatches.map((mismatch) => `  - ${mismatch}`).join("\n"),
+      );
+    }
+  }
 
   if (dryRun) {
     log(`[dry-run] channel=${channel}: would target ${trainTag} (previous train on this channel: ${existingChannelManifest ? existingChannelManifest.train : "none"})`);
@@ -542,8 +706,18 @@ export async function publishChannel({ tag, channel, dryRun, repo, releasedAt, b
 
   if (trainExists) {
     const dir = deps.mkdtemp(`hana-publish-train-existing-${trainTag}-`);
-    deps.downloadAssets(trainTag, ["train.json"], dir);
-    const existingManifest = manifestModule.parseManifest(deps.readFile(path.join(dir, "train.json")));
+    deps.downloadAssets(trainTag, ["train.json", "train.json.sig"], dir);
+    const existingManifest = deps.verifyManifest(
+      deps.readFile(path.join(dir, "train.json")),
+      deps.readFile(path.join(dir, "train.json.sig")),
+    );
+    if (existingManifest.channel !== channel || existingManifest.train !== train) {
+      throw new Error(
+        `publish-train: signed manifest on ${trainTag} identifies channel/train `
+          + `${JSON.stringify(existingManifest.channel)}/${JSON.stringify(existingManifest.train)}, `
+          + `expected ${JSON.stringify(channel)}/${train}`,
+      );
+    }
     assertArtifactsMatchForResume(candidateManifest, existingManifest); // throws on real conflict
     resumed = true;
     log(`[publish-train] ${trainTag} already carries matching artifacts; skipping box upload for channel=${channel}`);
@@ -564,8 +738,8 @@ export async function publishChannel({ tag, channel, dryRun, repo, releasedAt, b
 
   // The channel pointer is always OUR OWN freshly signed manifest — never a
   // byte-copy of another channel's train.json — so `<channel>.json` always
-  // carries the correct channel name even when it happens to share a
-  // train-N box release with another channel (see file header).
+  // carries the correct channel name independently from the physical box
+  // release (see file header).
   const pointerDir = deps.mkdtemp(`hana-publish-train-pointer-write-${channel}-`);
   const pointerManifestPath = path.join(pointerDir, `${channel}.json`);
   deps.writeFile(pointerManifestPath, JSON.stringify(candidateManifest, null, 2) + "\n");
@@ -594,12 +768,14 @@ export async function run(argv = process.argv.slice(2), env = process.env, depsO
   const repo = env.GITHUB_REPOSITORY || DEFAULT_REPO;
 
   const deps = {
+    releaseInfo: defaultReleaseInfo,
     releaseExists: defaultReleaseExists,
     releaseAssetNames: defaultReleaseAssetNames,
     downloadAssets: defaultDownloadAssets,
     createRelease: defaultCreateRelease,
     uploadAssets: defaultUploadAssets,
     signManifest: defaultSignManifest,
+    verifyManifest: defaultVerifyManifest,
     sha256File: activation.sha256File,
     statSize: (p) => fs.statSync(p).size,
     readFile: (p) => fs.readFileSync(p),
@@ -611,6 +787,7 @@ export async function run(argv = process.argv.slice(2), env = process.env, depsO
     ...depsOverride,
   };
   const log = deps.log || console.log;
+  const allowPrereleaseStable = args.allowPrereleaseStable;
 
   const boxesWorkDir = deps.mkdtemp(`hana-publish-train-boxes-${args.channel}-`);
   const boxes = await discoverBoxes({ tag: args.tag, workDir: boxesWorkDir, deps });
@@ -626,6 +803,7 @@ export async function run(argv = process.argv.slice(2), env = process.env, depsO
     env,
     deps,
     log,
+    allowPrereleaseStable,
   });
 
   log(`[publish-train] done: ${JSON.stringify(result)}`);

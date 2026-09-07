@@ -35,11 +35,31 @@ describe("install_skill safety review", () => {
       api_key: "key",
       base_url: "https://example.test",
       api: "openai",
+      headers: { "x-provider-contract": "install-skill" },
     }));
 
     expect(result).toEqual({ safe: true });
     expect(callText).toHaveBeenCalledOnce();
+    expect((callText as any).mock.calls[0][0].headers).toEqual({ "x-provider-contract": "install-skill" });
     expect((callText as any).mock.calls[0][0]).not.toHaveProperty("maxTokens");
+  });
+
+  it("allows resolver-approved header-only utility credentials", async () => {
+    (callText as any).mockResolvedValueOnce("safe");
+
+    const result = await safetyReview("---\nname: demo\n---\n# Demo\n", async () => ({
+      utility: "utility-model",
+      api_key: "",
+      base_url: "https://example.test",
+      api: "openai",
+      headers: { Authorization: "Bearer header-owned-token" },
+    }));
+
+    expect(result).toEqual({ safe: true });
+    expect(callText).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: "",
+      headers: { Authorization: "Bearer header-owned-token" },
+    }));
   });
 
   it("uses a small-utility-only resolver for install skill safety review", async () => {

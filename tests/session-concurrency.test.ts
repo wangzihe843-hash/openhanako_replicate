@@ -6,7 +6,7 @@
  * 2. subagent per-session / global 并发限制
  * 3. DeferredResultStore cleanup（7 天过期清理）
  * 4. BrowserManager per-session 隔离
- * 5. resolveAgent / resolveAgentStrict 行为
+ * 5. resolveAgentStrict 行为
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -395,9 +395,9 @@ describe("BrowserManager per-session 隔离（并发场景）", () => {
   });
 });
 
-// ── 5. resolveAgent 行为验证 ────────────────────────────
+// ── 5. resolveAgentStrict 行为验证 ────────────────────────
 
-import { resolveAgent, resolveAgentStrict, AgentNotFoundError } from "../server/utils/resolve-agent.ts";
+import { resolveAgentStrict, AgentNotFoundError } from "../server/utils/resolve-agent.ts";
 
 function mockEngine(agents) {
   return {
@@ -410,11 +410,12 @@ function mockReqCtx(agentId) {
   return { req: { query: (k) => (k === "agentId" ? agentId : null), param: () => null } };
 }
 
-describe("resolveAgent 并发安全", () => {
-  it("returns focus agent when no explicit agentId", () => {
+describe("解析 agent 并发安全", () => {
+  it("refuses to answer when no explicit agentId is given", () => {
+    // Two clients on two different agents share one server-side focus pointer,
+    // so answering an unnamed request from it is a coin flip. It refuses.
     const engine = mockEngine({ _focus: { id: "_focus", name: "Focus" } });
-    const agent = resolveAgent(engine, mockReqCtx(null));
-    expect(agent).toEqual({ id: "_focus", name: "Focus" });
+    expect(() => resolveAgentStrict(engine, mockReqCtx(null))).toThrow(AgentNotFoundError);
   });
 
   it("returns explicit agent when agentId is valid", () => {
@@ -422,14 +423,14 @@ describe("resolveAgent 并发安全", () => {
       _focus: { id: "_focus" },
       hana: { id: "hana", name: "Hana" },
     });
-    const agent = resolveAgent(engine, mockReqCtx("hana"));
+    const agent = resolveAgentStrict(engine, mockReqCtx("hana"));
     expect(agent).toEqual({ id: "hana", name: "Hana" });
   });
 
   it("throws AgentNotFoundError when explicit agentId not found", () => {
     const engine = mockEngine({ _focus: { id: "_focus" } });
-    expect(() => resolveAgent(engine, mockReqCtx("nonexistent"))).toThrow(AgentNotFoundError);
-    expect(() => resolveAgent(engine, mockReqCtx("nonexistent"))).toThrow("not found");
+    expect(() => resolveAgentStrict(engine, mockReqCtx("nonexistent"))).toThrow(AgentNotFoundError);
+    expect(() => resolveAgentStrict(engine, mockReqCtx("nonexistent"))).toThrow("not found");
   });
 
   it("resolveAgentStrict throws when no agentId provided", () => {
@@ -452,7 +453,7 @@ describe("resolveAgent 并发安全", () => {
   it("AgentNotFoundError has correct status and agentId", () => {
     try {
       const engine = mockEngine({});
-      resolveAgent(engine, mockReqCtx("missing-one"));
+      resolveAgentStrict(engine, mockReqCtx("missing-one"));
     } catch (e) {
       expect(e).toBeInstanceOf(AgentNotFoundError);
       expect(e.status).toBe(404);

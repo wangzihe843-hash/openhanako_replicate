@@ -1,13 +1,23 @@
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createAutomationTool } from "../lib/tools/automation-tool.ts";
 import { buildBridgeContext } from "../lib/bridge/bridge-context.ts";
 
+const AGENT_SESSION_PATH = path.resolve("/sessions/agent-a.jsonl");
+const LEGACY_SESSION_PATH = path.resolve("/sessions/legacy.jsonl");
+
 function makeStore(initialJobs: any[] = [], id = "studio_job_1") {
+  const jobs = initialJobs.map((job) => ({
+    studioId: "studio-a",
+    configRevision: 1,
+    ...job,
+  }));
   const store: any = {
-    addJob: vi.fn((jobData) => ({ ...jobData, id, enabled: true })),
-    updateJob: vi.fn((jobId, fields) => ({ ...initialJobs.find((job) => job.id === jobId), ...fields, id: jobId })),
-    getJob: vi.fn((jobId) => initialJobs.find((job) => job.id === jobId) || null),
-    listJobs: vi.fn(() => initialJobs),
+    studioId: "studio-a",
+    addJob: vi.fn((jobData, _options?: any) => ({ ...jobData, id, enabled: true })),
+    updateJob: vi.fn((jobId, fields, _options?: any) => ({ ...jobs.find((job) => job.id === jobId), ...fields, id: jobId })),
+    getJob: vi.fn((jobId) => jobs.find((job) => job.id === jobId) || null),
+    listJobs: vi.fn(() => jobs),
   };
   return store;
 }
@@ -51,8 +61,9 @@ describe("automation tool", () => {
       undefined,
       undefined,
       {
+        sessionId: "session-a",
         sessionManager: {
-          getSessionFile: () => "/sessions/agent-a.jsonl",
+          getSessionFile: () => AGENT_SESSION_PATH,
           getCwd: () => "/workspace/current",
         },
         bridgeContext: {
@@ -66,7 +77,8 @@ describe("automation tool", () => {
     expect(confirmStore.create).not.toHaveBeenCalled();
     expect(suggestionStore.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionPath: "/sessions/agent-a.jsonl",
+        sessionId: "session-a",
+        sessionPath: AGENT_SESSION_PATH,
         bridgeSessionKey: "wechat_dm_owner@agent-a",
         operation: "create",
         jobData: expect.objectContaining({
@@ -127,7 +139,7 @@ describe("automation tool", () => {
       undefined,
       undefined,
       {
-        sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" },
+        sessionManager: { getSessionFile: () => AGENT_SESSION_PATH },
         bridgeContext: buildBridgeContext({
           sessionKey: "wx_dm_owner@agent-a",
           role: "owner",
@@ -168,7 +180,10 @@ describe("automation tool", () => {
       },
       undefined,
       undefined,
-      { sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" } },
+      {
+        sessionId: "session-a",
+        sessionManager: { getSessionFile: () => AGENT_SESSION_PATH },
+      },
     );
 
     expect(result.content[0].text).toBe("我准备了一项自动任务建议，等你确认后再创建。");
@@ -197,7 +212,7 @@ describe("automation tool", () => {
       undefined,
       undefined,
       {
-        sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" },
+        sessionManager: { getSessionFile: () => AGENT_SESSION_PATH },
         // 手工拼的 bridgeContext（无 interactionCapabilities）：能力未声明就不输出文本协议指引
         bridgeContext: { isBridgeSession: true, platform: "wechat", sessionKey: "wechat_dm_owner@agent-a" },
       },
@@ -228,7 +243,10 @@ describe("automation tool", () => {
       },
       undefined,
       undefined,
-      { sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" } },
+      {
+        sessionId: "session-a",
+        sessionManager: { getSessionFile: () => AGENT_SESSION_PATH },
+      },
     );
 
     expect(store.addJob).not.toHaveBeenCalled();
@@ -238,13 +256,16 @@ describe("automation tool", () => {
         label: "Edited Reminder",
         schedule: "30 10 * * *",
         prompt: "edited agent run prompt",
-        actorAgentId: "agent-b",
+        targetAgentId: "agent-b",
+        actorAgentId: "forged-agent",
         executionContext: {
           kind: "session_workspace",
-          cwd: "/home/agent-b",
-          workspaceFolders: [],
-          sourceSessionPath: "/sessions/agent-a.jsonl",
-          createdByAgentId: "agent-b",
+          cwd: "/forged",
+          workspaceFolders: ["/forged"],
+          authorizedFolders: ["/forged-secret"],
+          sourceSessionId: "forged-session",
+          sourceSessionPath: "/forged/session.jsonl",
+          createdByAgentId: "forged-agent",
         },
       },
     });
@@ -257,9 +278,13 @@ describe("automation tool", () => {
       executionContext: {
         kind: "session_workspace",
         cwd: "/home/agent-b",
-        workspaceFolders: [],
-        sourceSessionPath: "/sessions/agent-a.jsonl",
+        workspaceFolders: ["/home/agent-b"],
+        authorizedFolders: [],
+        sourceSessionId: null,
+        sourceBridgeSessionKey: null,
+        sourceSessionPath: null,
         createdByAgentId: "agent-b",
+        notificationContext: null,
       },
       executor: expect.objectContaining({
         kind: "agent_session",
@@ -291,7 +316,10 @@ describe("automation tool", () => {
       },
       undefined,
       undefined,
-      { sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" } },
+      {
+        sessionId: "session-a",
+        sessionManager: { getSessionFile: () => AGENT_SESSION_PATH },
+      },
     );
 
     expect(result.details.jobData).toMatchObject({
@@ -319,7 +347,7 @@ describe("automation tool", () => {
         kind: "session_workspace",
         cwd: "/home/agent-a",
         workspaceFolders: [],
-        sourceSessionPath: "/sessions/agent-a.jsonl",
+        sourceSessionPath: AGENT_SESSION_PATH,
         createdByAgentId: "agent-a",
       },
       executor: {
@@ -331,7 +359,7 @@ describe("automation tool", () => {
           kind: "session_workspace",
           cwd: "/home/agent-a",
           workspaceFolders: [],
-          sourceSessionPath: "/sessions/agent-a.jsonl",
+          sourceSessionPath: AGENT_SESSION_PATH,
           createdByAgentId: "agent-a",
         },
       },
@@ -359,7 +387,10 @@ describe("automation tool", () => {
       },
       undefined,
       undefined,
-      { sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" } },
+      {
+        sessionId: "session-a",
+        sessionManager: { getSessionFile: () => AGENT_SESSION_PATH },
+      },
     );
 
     expect(result.details).toMatchObject({
@@ -404,7 +435,7 @@ describe("automation tool", () => {
         kind: "session_workspace",
         cwd: "/home/agent-a",
         workspaceFolders: [],
-        sourceSessionPath: "/sessions/agent-a.jsonl",
+        sourceSessionPath: AGENT_SESSION_PATH,
         createdByAgentId: "agent-a",
       },
       executor: {
@@ -416,7 +447,7 @@ describe("automation tool", () => {
           kind: "session_workspace",
           cwd: "/home/agent-a",
           workspaceFolders: [],
-          sourceSessionPath: "/sessions/agent-a.jsonl",
+          sourceSessionPath: AGENT_SESSION_PATH,
           createdByAgentId: "agent-a",
         },
       },
@@ -441,7 +472,10 @@ describe("automation tool", () => {
       },
       undefined,
       undefined,
-      { sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" } },
+      {
+        sessionId: "session-a",
+        sessionManager: { getSessionFile: () => AGENT_SESSION_PATH },
+      },
     );
 
     await created[0].apply();
@@ -472,7 +506,7 @@ describe("automation tool", () => {
       },
       undefined,
       undefined,
-      { sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" } },
+      { sessionManager: { getSessionFile: () => AGENT_SESSION_PATH } },
     );
 
     expect(result.details).toMatchObject({
@@ -481,6 +515,34 @@ describe("automation tool", () => {
       suggestionShortCode: "",
     });
     expect("confirmId" in result.details).toBe(false);
+    expect(store.addJob).not.toHaveBeenCalled();
+  });
+
+  it("does not retain an apply closure for a path-only session identity", async () => {
+    const store = makeStore();
+    const { store: suggestionStore } = makeSuggestionStore("automation_path_only", "1001");
+    const tool = createAutomationTool(store, {
+      automationSuggestionStore: suggestionStore,
+      getAgentId: () => "agent-a",
+      getSessionCwd: () => "/workspace/current",
+    });
+
+    const result = await tool.execute(
+      "call_path_only",
+      {
+        action: "create",
+        scheduleType: "cron",
+        schedule: "0 8 * * *",
+        label: "Path only",
+        prompt: "must not become confirmable by path",
+      },
+      undefined,
+      undefined,
+      { sessionManager: { getSessionFile: () => LEGACY_SESSION_PATH } },
+    );
+
+    expect(suggestionStore.create).not.toHaveBeenCalled();
+    expect(result.details).toMatchObject({ suggestionId: "", suggestionShortCode: "" });
     expect(store.addJob).not.toHaveBeenCalled();
   });
 
@@ -508,12 +570,126 @@ describe("automation tool", () => {
       },
       undefined,
       undefined,
-      { sessionManager: { getSessionFile: () => "/sessions/agent-a.jsonl" } },
+      { sessionManager: { getSessionFile: () => AGENT_SESSION_PATH } },
     );
 
     expect(confirmStore.create).not.toHaveBeenCalled();
     expect(suggestionStore.create).not.toHaveBeenCalled();
     expect(store.addJob).toHaveBeenCalledOnce();
+    expect(store.addJob.mock.calls[0]).toHaveLength(1);
+  });
+
+  it("passes the exact one-shot suggestion receipt when the suggestion is applied", async () => {
+    const store = makeStore();
+    const { store: suggestionStore, created } = makeSuggestionStore("automation_suggestion_receipt", "4412");
+    const tool = createAutomationTool(store, {
+      automationSuggestionStore: suggestionStore,
+      getAgentId: () => "agent-a",
+      getSessionCwd: () => "/workspace/current",
+      getSessionWorkspaceFolders: () => [],
+    });
+
+    const result = await tool.execute(
+      "call_receipt",
+      {
+        action: "create",
+        scheduleType: "cron",
+        schedule: "0 10 * * *",
+        label: "Scheduled task",
+        prompt: "run the task",
+      },
+      undefined,
+      undefined,
+      {
+        sessionId: "session-a",
+        sessionManager: { getSessionFile: () => AGENT_SESSION_PATH },
+      },
+    );
+
+    expect(result.details).toMatchObject({
+      suggestionId: "automation_suggestion_receipt",
+      jobData: {
+        studioId: "studio-a",
+        createdBy: { sourceSessionId: "session-a" },
+      },
+    });
+    expect(store.addJob).not.toHaveBeenCalled();
+
+    const suggestionReceipt = {};
+    await created[0].apply({
+      jobData: {
+        label: "Edited label",
+      },
+    }, {
+      suggestionId: "automation_suggestion_receipt",
+      confirmedAt: "2026-07-19T10:30:00.000Z",
+      receipt: suggestionReceipt,
+    });
+
+    expect(store.addJob).toHaveBeenCalledOnce();
+    const committed = store.addJob.mock.calls[0][0];
+    expect(committed.label).toBe("Edited label");
+    expect(store.addJob.mock.calls[0][1]).toEqual({
+      suggestionReceipt,
+    });
+  });
+
+  it("binds update suggestions to the active Studio and base config revision", async () => {
+    const existingJob = {
+      id: "studio_job_revision",
+      type: "cron",
+      schedule: "0 9 * * *",
+      prompt: "old prompt",
+      actorAgentId: "agent-a",
+      configRevision: 7,
+    };
+    const store = makeStore([existingJob]);
+    const { store: suggestionStore, created } = makeSuggestionStore("automation_suggestion_revision", "4413");
+    const tool = createAutomationTool(store, {
+      automationSuggestionStore: suggestionStore,
+      getAgentId: () => "agent-a",
+      getSessionCwd: () => "/workspace/current",
+      getSessionWorkspaceFolders: () => [],
+    });
+
+    await tool.execute(
+      "call_revision",
+      {
+        action: "update",
+        id: existingJob.id,
+        scheduleType: "cron",
+        schedule: "30 9 * * *",
+      },
+      undefined,
+      undefined,
+      {
+        sessionId: "session-a",
+        sessionManager: { getSessionFile: () => AGENT_SESSION_PATH },
+      },
+    );
+
+    expect(suggestionStore.create).toHaveBeenCalledWith(expect.objectContaining({
+      studioId: "studio-a",
+      operation: "update",
+      jobId: "studio_job_revision",
+      baseConfigRevision: 7,
+      sessionId: "session-a",
+    }));
+
+    const suggestionReceipt = {};
+    await created[0].apply(undefined, {
+      suggestionId: "automation_suggestion_revision",
+      confirmedAt: "2026-07-19T11:00:00.000Z",
+      receipt: suggestionReceipt,
+    });
+
+    expect(store.updateJob).toHaveBeenCalledOnce();
+    expect(store.updateJob.mock.calls[0][2]).toEqual({
+      suggestionReceipt,
+    });
+    expect(store.updateJob.mock.calls[0][1]).toMatchObject({
+      schedule: "30 9 * * *",
+    });
   });
 
   it("only declares create/update as deferred drafts when direct auto approve is disabled", () => {
@@ -536,6 +712,17 @@ describe("automation tool", () => {
     });
     expect(deferredTool.sessionPermission.describeSideEffect({ action: "list" })).toBeNull();
     expect(directCommitTool.sessionPermission.describeSideEffect({ action: "create" })).toBeNull();
+    expect(deferredTool.sessionPermission.resolveInvocation({ action: "create" })).toMatchObject({
+      kind: "routine",
+      sideEffect: { kind: "deferred_mutation_draft" },
+    });
+    expect(directCommitTool.sessionPermission.resolveInvocation({ action: "create" })).toMatchObject({
+      kind: "review",
+      sideEffect: {
+        kind: "automation_configuration_mutation",
+        operation: "create",
+      },
+    });
   });
 
   it("rejects unknown automation actions", async () => {

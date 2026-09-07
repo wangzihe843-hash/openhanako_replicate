@@ -9,7 +9,7 @@ import { AutoUpdateStatus } from '../../components/AutoUpdateStatus';
 import type { AutoUpdateState } from '../../types';
 
 const labels: Record<string, string> = {
-  'settings.about.updateDownloading': '{agentName}正在准备新家 {percent}%',
+  'settings.about.updateDownloading': '{agentName}正在准备新家',
   'settings.about.updateProgress': '{percent}%',
   'settings.about.updateReadyInstall': 'v{version} 已就绪',
   'settings.about.updateInstall': '重启更新',
@@ -71,8 +71,8 @@ describe('AutoUpdateStatus', () => {
       />,
     );
 
-    expect(screen.getByText('小花正在准备新家 43%')).toBeTruthy();
-    expect(screen.getByText('43%')).toBeTruthy();
+    expect(screen.getByText('小花正在准备新家')).toBeTruthy();
+    expect(screen.getAllByText('43%')).toHaveLength(1);
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('43');
   });
 

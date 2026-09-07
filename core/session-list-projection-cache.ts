@@ -3,6 +3,7 @@ import path from "path";
 import { isSessionJsonlFilename } from "../lib/session-jsonl.ts";
 import { readFileLikePaths } from "../shared/link-aware-fs.ts";
 import { createModuleLogger } from "../lib/debug-log.ts";
+import { stripSessionReminderBlocks } from "./session-reminders.ts";
 
 const log = createModuleLogger("session-list-cache");
 
@@ -107,7 +108,7 @@ async function buildSessionProjection(filePath, stat) {
       const message = entry.message;
       if (!isMessageWithContent(message)) continue;
       if (message.role !== "user" && message.role !== "assistant") continue;
-      const textContent = extractTextContent(message);
+      const textContent = stripSessionReminderBlocks(extractTextContent(message));
       if (!textContent) continue;
       allMessages.push(textContent);
       if (!firstMessage && message.role === "user") {

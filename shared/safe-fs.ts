@@ -124,10 +124,15 @@ function _copyDirRecursive(src, dst) {
     } else if (entry.isDirectory()) {
       _copyDirRecursive(s, d);
     } else {
+      // 目标已存在且只读时 copyFileSync 会失败，先移走再复制。
+      // 不能改用 chmod 放宽目标权限：这条路径也复制凭证文件，
+      // 放宽后的权限会留在副本上，等于把源文件的保护级别丢掉。
       if (fs.existsSync(d)) {
-        try { fs.chmodSync(d, 0o644); } catch { /* Windows NTFS */ }
+        try { fs.rmSync(d, { force: true }); } catch { /* 交给 copyFileSync 报错 */ }
       }
       fs.copyFileSync(s, d);
+      // copyFileSync 只在目标不存在时继承源权限，显式对齐一次更保险
+      try { fs.chmodSync(d, lstat.mode & 0o777); } catch { /* Windows NTFS */ }
     }
   }
 }

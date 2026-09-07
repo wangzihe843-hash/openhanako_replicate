@@ -4,7 +4,7 @@
  * 对标 Claude Code 的 TodoWrite：替换式协议、三态状态机、content/activeForm 双文本。
  * 完全无状态：不持有闭包变量，每次调用从参数构建返回值。
  *
- * 历史状态重建由 lib/tools/todo-compat.js 的 extractLatestTodos 负责，
+ * 历史状态重建由 lib/tools/todo-compat.ts 的 extractLatestTodos 负责，
  * session_coordinator / sessions.js route 从 session entries 里读取。
  */
 
@@ -70,6 +70,13 @@ export function createTodoTool() {
         { description: "Complete todo list; each call replaces the previous list" },
       ),
     }),
+    sessionPermission: {
+      resolveInvocation: () => ({
+        action: "replace",
+        kind: "routine",
+        capability: "todo_write.replace",
+      }),
+    },
 
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       const todos = params.todos || [];

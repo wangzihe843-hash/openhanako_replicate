@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readCompactPeerPersona, PEER_PERSONA_MAX_CHARS } from "../lib/desk/peer-persona.js";
+import { migrateAgentPersonaFileNames } from "../core/agents-md-migration.ts";
 
 let agentsDir;
 
@@ -17,10 +18,28 @@ afterEach(() => {
 function writePublicIshiki(peerId, content) {
   const dir = path.join(agentsDir, peerId);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "public-ishiki.md"), content, "utf-8");
+  fs.writeFileSync(path.join(dir, "AGENTS.public.md"), content, "utf-8");
 }
 
 describe("readCompactPeerPersona", () => {
+  it("reads the public persona after the real startup migration renames it", () => {
+    const dir = path.join(agentsDir, "ming");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "public-ishiki.md"), "我是 {{agentName}}，喜欢星空。");
+    expect(migrateAgentPersonaFileNames({ agentsDir }).failed).toEqual([]);
+    expect(readCompactPeerPersona({ agentsDir, peerId: "ming", peerName: "明" }))
+      .toBe("我是 明，喜欢星空。");
+  });
+
+  it("does not replace a cleared public persona with old or private content", () => {
+    writePublicIshiki("ming", "");
+    const dir = path.join(agentsDir, "ming");
+    fs.writeFileSync(path.join(dir, "public-ishiki.md"), "stale public content");
+    fs.writeFileSync(path.join(dir, "AGENTS.md"), "private persona");
+    migrateAgentPersonaFileNames({ agentsDir });
+    expect(readCompactPeerPersona({ agentsDir, peerId: "ming" })).toBe("");
+  });
+
   it("returns '' when file missing", () => {
     expect(readCompactPeerPersona({ agentsDir, peerId: "ghost" })).toBe("");
   });

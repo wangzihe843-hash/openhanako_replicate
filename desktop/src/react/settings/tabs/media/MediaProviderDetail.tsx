@@ -13,6 +13,12 @@ interface Props {
   provider: {
     displayName?: string;
     hasCredentials: boolean;
+    unavailableReason?: string | null;
+    unavailableMessage?: string | null;
+    runtimeCapability?: {
+      status?: string;
+      error?: { code?: string; message?: string } | null;
+    } | null;
     models: MediaModel[];
     availableModels: { id: string; name: string }[];
   };
@@ -239,6 +245,13 @@ export function MediaProviderDetail({ providerId, provider, capability = 'imageG
   const addModelLabel = capability === 'videoGeneration'
     ? t('settings.media.addVideoModel')
     : t('settings.media.addModel');
+  const runtimeDiscovered = !!provider.runtimeCapability;
+  const statusMessage = provider.hasCredentials
+    ? t('settings.media.credentialOk')
+    : provider.unavailableMessage
+      || provider.runtimeCapability?.error?.message
+      || provider.unavailableReason
+      || t('settings.media.credentialMissing');
 
   const panelStyle = useAnchoredDropdown({
     open: dropdownOpen,
@@ -257,7 +270,7 @@ export function MediaProviderDetail({ providerId, provider, capability = 'imageG
       {/* Credential status */}
       <div className={styles['settings-credential-status']}>
         <span className={`${styles['settings-credential-dot']}${provider.hasCredentials ? ' ' + styles.on : ''}`} />
-        {provider.hasCredentials ? t('settings.media.credentialOk') : t('settings.media.credentialMissing')}
+        {statusMessage}
       </div>
 
       <div className={styles['pv-models']}>
@@ -278,13 +291,15 @@ export function MediaProviderDetail({ providerId, provider, capability = 'imageG
                       {t('settings.media.default')}
                     </span>
                   )}
-                  <div className={styles['pv-fav-item-actions']}>
-                    <button className={styles['pv-fav-item-remove']} onClick={() => removeModel(m.id)} title={t('settings.api.removeModel')}>
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                      </svg>
-                    </button>
-                  </div>
+                  {!runtimeDiscovered && (
+                    <div className={styles['pv-fav-item-actions']}>
+                      <button className={styles['pv-fav-item-remove']} onClick={() => removeModel(m.id)} title={t('settings.api.removeModel')}>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -292,16 +307,18 @@ export function MediaProviderDetail({ providerId, provider, capability = 'imageG
         )}
 
         {/* Add model dropdown */}
-        <div className={styles['pv-models-action-row']}>
-          <button ref={triggerRef} className={styles['pv-model-dropdown-trigger']} onClick={() => setDropdownOpen(!dropdownOpen)}>
-            <span>{addModelLabel}</span>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-        </div>
+        {!runtimeDiscovered && (
+          <div className={styles['pv-models-action-row']}>
+            <button ref={triggerRef} className={styles['pv-model-dropdown-trigger']} onClick={() => setDropdownOpen(!dropdownOpen)}>
+              <span>{addModelLabel}</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+          </div>
+        )}
 
-        {dropdownOpen && createPortal(
+        {!runtimeDiscovered && dropdownOpen && createPortal(
           <div
             className={styles['pv-model-dropdown-panel']}
             ref={panelRef}

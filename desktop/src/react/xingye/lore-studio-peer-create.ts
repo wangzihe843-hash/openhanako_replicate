@@ -168,7 +168,7 @@ export async function createPeerAgent(input: CreatePeerAgentInput): Promise<{ ag
   if (!name) throw new Error('候选角色缺少名字');
 
   const identity = `# ${name}\n\n${candidate.roleInWorld ?? ''}`.trim();
-  const ishiki = [candidate.whyUpgrade, candidate.suggestedRelationshipToCurrent].filter(Boolean).join('\n\n');
+  const agents = [candidate.whyUpgrade, candidate.suggestedRelationshipToCurrent].filter(Boolean).join('\n\n');
 
   const res = await hanaFetch('/api/agents', {
     method: 'POST',
@@ -176,7 +176,7 @@ export async function createPeerAgent(input: CreatePeerAgentInput): Promise<{ ag
     body: JSON.stringify({
       name,
       ...(source.yuan ? { yuan: source.yuan } : {}),
-      initialFiles: { identity, ...(ishiki ? { ishiki } : {}) },
+      initialFiles: { identity, ...(agents ? { agents } : {}) },
     }),
   });
   const data = await res.json();

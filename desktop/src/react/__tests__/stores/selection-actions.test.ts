@@ -8,6 +8,7 @@ import {
   captureSelection,
   clearSelection,
   initQuotedSelectionLifecycle,
+  quotePreviewRangeToChat,
   scheduleCaptureSelection,
 } from '../../stores/selection-actions';
 import { useStore } from '../../stores';
@@ -53,6 +54,31 @@ describe('captureSelection', () => {
       selectionAnchorKind: 'codemirror',
       charCount: 4,
     });
+  });
+
+  it('commits an explicit multi-block CodeMirror range directly to the composer', () => {
+    const state = EditorState.create({ doc: 'Alpha\n\nBeta\n\nGamma' });
+    const beforeFocusTrigger = useStore.getState().inputFocusTrigger;
+
+    expect(quotePreviewRangeToChat(
+      previewItem,
+      { state } as EditorView,
+      { from: 0, to: 11 },
+    )).toBe(true);
+
+    expect(useStore.getState().quotedSelections).toEqual([
+      expect.objectContaining({
+        text: 'Alpha\n\nBeta',
+        sourceTitle: 'note.md',
+        sourceKind: 'preview',
+        sourceFilePath: '/notes/note.md',
+        lineStart: 1,
+        lineEnd: 3,
+        selectionAnchorKind: 'codemirror',
+      }),
+    ]);
+    expect(useStore.getState().quoteCandidate).toBeNull();
+    expect(useStore.getState().inputFocusTrigger).toBe(beforeFocusTrigger + 1);
   });
 
   it('sets explicit message selection per session and removes empty session entries', () => {

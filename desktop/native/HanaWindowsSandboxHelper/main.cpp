@@ -6,6 +6,7 @@
 #endif
 
 #include <windows.h>
+#include <bcrypt.h>
 #include <userenv.h>
 #include <aclapi.h>
 #include <sddl.h>
@@ -25,6 +26,9 @@
 #ifndef WRITE_RESTRICTED
 #define WRITE_RESTRICTED 0x00000008
 #endif
+#ifndef PROC_THREAD_ATTRIBUTE_JOB_LIST
+#define PROC_THREAD_ATTRIBUTE_JOB_LIST ProcThreadAttributeValue(13, FALSE, TRUE, FALSE)
+#endif
 
 struct WritableRoot {
     std::wstring path;
@@ -37,6 +41,9 @@ struct Options {
     std::wstring cwd;
     DWORD timeoutMs = 0;
     bool timeoutSpecified = false;
+    bool superviseServer = false;
+    DWORD parentPid = 0;
+    bool parentPidSpecified = false;
     std::vector<WritableRoot> writableRoots;
     std::vector<std::wstring> denyWritePaths;
     std::vector<std::wstring> hanaWriteAclCleanupPaths;
@@ -45,6 +52,8 @@ struct Options {
     std::vector<std::wstring> legacyProfileCleanupNames;
     bool cleanupLegacyAcl = false;
     bool diagnoseToken = false;
+    bool currentDesktop = false;
+    bool verbatimLastArg = false;
     std::wstring executable;
     std::vector<std::wstring> args;
 };
@@ -67,7 +76,10 @@ struct AclRestore {
 };
 
 struct SandboxDesktop {
-    std::wstring name;
+    std::wstring stationName;
+    std::wstring desktopName;
+    std::wstring qualifiedName;
+    HWINSTA station = nullptr;
     HDESK handle = nullptr;
 };
 
@@ -78,16 +90,45 @@ struct TokenDefaultDaclSnapshot {
 
 struct StartupAttributeList {
     LPPROC_THREAD_ATTRIBUTE_LIST list = nullptr;
+    std::vector<HANDLE> inheritedHandles;
+    std::vector<HANDLE> jobs;
+};
+
+struct GuardianControlWatch {
+    HANDLE input = nullptr;
+    HANDLE event = nullptr;
+    HANDLE thread = nullptr;
+    DWORD readError = ERROR_SUCCESS;
 };
 
 static const DWORD WRITE_ALLOW_MASK =
     FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | DELETE | FILE_DELETE_CHILD;
 static const DWORD WRITE_DENY_MASK =
     FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES | DELETE | FILE_DELETE_CHILD;
+// CreateProcessAsUserW requires the target token to have full access to the
+// lpDesktop pair. WinSta0 already grants the logon session access; the helper
+// only adds a full-access ACE to its per-launch private desktop. The shared
+// WinSta0 station ACL and file ACLs are unchanged. This desktop is a dedicated
+// USER32 launch surface, not an authorization boundary; the restricted token,
+// file ACLs, and kill-on-close job remain the sandbox boundaries.
+static const DWORD SANDBOX_WINDOW_STATION_ACCESS = WINSTA_ALL_ACCESS;
+static const DWORD SANDBOX_DESKTOP_ACCESS =
+    STANDARD_RIGHTS_REQUIRED |
+    DESKTOP_CREATEMENU |
+    DESKTOP_CREATEWINDOW |
+    DESKTOP_ENUMERATE |
+    DESKTOP_HOOKCONTROL |
+    DESKTOP_JOURNALPLAYBACK |
+    DESKTOP_JOURNALRECORD |
+    DESKTOP_READOBJECTS |
+    DESKTOP_SWITCHDESKTOP |
+    DESKTOP_WRITEOBJECTS;
 static const wchar_t* EVERYONE_SID = L"S-1-1-0";
 static const wchar_t* WRITE_RESTRICTED_CODE_SID = L"S-1-5-33";
 static const DWORD MAX_TIMEOUT_MS = INFINITE - 1;
 static const DWORD TERMINATION_GRACE_MS = 5000;
+static const DWORD EARLY_EXIT_DIAGNOSTIC_WINDOW_MS = 5000;
+static const DWORD STATUS_DLL_INIT_FAILED_EXIT_CODE = 0xC0000142UL;
 static const UINT TIMEOUT_PROCESS_EXIT_CODE = 124;
 static const int HELPER_TERMINATION_FAILED_EXIT_CODE = 125;
 static const int HELPER_LAUNCH_FAILED_EXIT_CODE = 126;
@@ -161,6 +202,21 @@ static DWORD parseTimeoutMs(const std::wstring& value) {
         }
         parsed = parsed * 10 + digit;
     }
+    return static_cast<DWORD>(parsed);
+}
+
+static DWORD parsePositiveDword(const std::wstring& value, const char* argumentName) {
+    if (value.empty()) throw std::runtime_error(std::string("empty ") + argumentName);
+    unsigned long long parsed = 0;
+    for (wchar_t ch : value) {
+        if (ch < L'0' || ch > L'9') throw std::runtime_error(std::string("invalid ") + argumentName);
+        const unsigned long long digit = static_cast<unsigned long long>(ch - L'0');
+        if (parsed > (static_cast<unsigned long long>(MAXDWORD) - digit) / 10) {
+            throw std::runtime_error(std::string(argumentName) + " is out of range");
+        }
+        parsed = parsed * 10 + digit;
+    }
+    if (parsed == 0) throw std::runtime_error(std::string(argumentName) + " must be positive");
     return static_cast<DWORD>(parsed);
 }
 
@@ -304,6 +360,17 @@ static Options parseArgs(int argc, wchar_t** argv) {
             opts.cwd = argv[++i];
             continue;
         }
+        if (arg == L"--supervise-server") {
+            if (opts.superviseServer) throw std::runtime_error("duplicate --supervise-server");
+            opts.superviseServer = true;
+            continue;
+        }
+        if (arg == L"--parent-pid" && i + 1 < argc) {
+            if (opts.parentPidSpecified) throw std::runtime_error("duplicate --parent-pid");
+            opts.parentPid = parsePositiveDword(argv[++i], "--parent-pid");
+            opts.parentPidSpecified = true;
+            continue;
+        }
         if (arg == L"--timeout-ms" && i + 1 < argc) {
             if (opts.timeoutSpecified) throw std::runtime_error("duplicate --timeout-ms");
             opts.timeoutMs = parseTimeoutMs(argv[++i]);
@@ -343,6 +410,16 @@ static Options parseArgs(int argc, wchar_t** argv) {
             opts.diagnoseToken = true;
             continue;
         }
+        if (arg == L"--current-desktop") {
+            if (opts.currentDesktop) throw std::runtime_error("duplicate --current-desktop");
+            opts.currentDesktop = true;
+            continue;
+        }
+        if (arg == L"--verbatim-last-arg") {
+            if (opts.verbatimLastArg) throw std::runtime_error("duplicate --verbatim-last-arg");
+            opts.verbatimLastArg = true;
+            continue;
+        }
         if (arg == L"--network" || arg == L"--grant-read" || arg == L"--grant-read-optional" ||
             arg == L"--grant-write" || arg == L"--grant-write-optional" || arg == L"--deny-read") {
             throw std::runtime_error("legacy AppContainer helper argument is no longer supported");
@@ -356,14 +433,27 @@ static Options parseArgs(int argc, wchar_t** argv) {
         !opts.legacyProfileCleanupNames.empty() ||
         opts.cleanupLegacyAcl;
     if (maintenanceMode) {
-        if (!opts.cwd.empty() || !opts.executable.empty() || !opts.writableRoots.empty() || !opts.denyWritePaths.empty() || opts.diagnoseToken || opts.timeoutSpecified) {
+        if (!opts.cwd.empty() || !opts.executable.empty() || !opts.writableRoots.empty() || !opts.denyWritePaths.empty() || opts.diagnoseToken || opts.currentDesktop || opts.verbatimLastArg || opts.timeoutSpecified || opts.superviseServer || opts.parentPidSpecified) {
             throw std::runtime_error("maintenance arguments cannot be combined with sandbox execution arguments");
         }
         return opts;
     }
+    if (opts.superviseServer) {
+        if (!opts.parentPidSpecified) throw std::runtime_error("missing --parent-pid");
+        if (opts.cwd.empty()) throw std::runtime_error("missing --cwd");
+        if (opts.executable.empty()) throw std::runtime_error("missing executable after --");
+        if (opts.timeoutSpecified || !opts.writableRoots.empty() || !opts.denyWritePaths.empty() || opts.diagnoseToken || opts.currentDesktop || opts.verbatimLastArg) {
+            throw std::runtime_error("server guardian arguments cannot be combined with sandbox execution arguments");
+        }
+        return opts;
+    }
+    if (opts.parentPidSpecified) throw std::runtime_error("--parent-pid requires --supervise-server");
     if (opts.cwd.empty()) throw std::runtime_error("missing --cwd");
     if (!opts.timeoutSpecified) throw std::runtime_error("missing --timeout-ms");
     if (opts.executable.empty()) throw std::runtime_error("missing executable after --");
+    if (opts.verbatimLastArg && opts.args.empty()) {
+        throw std::runtime_error("--verbatim-last-arg requires at least one child argument");
+    }
     if (opts.writableRoots.empty()) opts.writableRoots.push_back({ opts.cwd, true });
     return opts;
 }
@@ -397,9 +487,13 @@ static std::wstring quoteArg(const std::wstring& arg) {
 
 static std::wstring buildCommandLine(const Options& opts) {
     std::wstring command = quoteArg(opts.executable);
-    for (const auto& arg : opts.args) {
+    for (size_t i = 0; i < opts.args.size(); i++) {
         command.push_back(L' ');
-        command += quoteArg(arg);
+        if (opts.verbatimLastArg && i + 1 == opts.args.size()) {
+            command += opts.args[i];
+        } else {
+            command += quoteArg(opts.args[i]);
+        }
     }
     return command;
 }
@@ -580,29 +674,62 @@ static bool queryTokenDefaultDacl(HANDLE token, TokenDefaultDaclSnapshot& snapsh
     return true;
 }
 
-static PACL buildDaclWithRootSids(const std::vector<WritableRoot>& roots, PACL baseDefaultDacl, DWORD permissions) {
+static PACL buildTokenDefaultDacl(
+    const std::vector<WritableRoot>& roots,
+    PSID everyoneSid,
+    PSID logonSid,
+    DWORD permissions
+) {
     std::vector<EXPLICIT_ACCESSW> entries;
-    for (const auto& root : roots) {
-        if (!root.sid) continue;
+    auto appendGrant = [&](PSID sid) {
+        if (!sid || !IsValidSid(sid)) return;
         EXPLICIT_ACCESSW access = {};
         access.grfAccessPermissions = permissions;
         access.grfAccessMode = GRANT_ACCESS;
         access.grfInheritance = NO_INHERITANCE;
         access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
         access.Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
-        access.Trustee.ptstrName = reinterpret_cast<LPWSTR>(root.sid);
+        access.Trustee.ptstrName = reinterpret_cast<LPWSTR>(sid);
         entries.push_back(access);
+    };
+    appendGrant(everyoneSid);
+    appendGrant(logonSid);
+    for (const auto& root : roots) {
+        if (!root.sid) continue;
+        appendGrant(root.sid);
     }
     if (entries.empty()) return nullptr;
     PACL dacl = nullptr;
     DWORD rc = SetEntriesInAclW(
         static_cast<ULONG>(entries.size()),
         entries.data(),
-        baseDefaultDacl,
+        nullptr,
         &dacl
     );
     if (rc != ERROR_SUCCESS) {
-        debug(L"SetEntriesInAclW(root SID DACL) failed: " + win32Message(rc));
+        fail(L"SetEntriesInAclW(token default DACL) failed: " + win32Message(rc));
+        return nullptr;
+    }
+    return dacl;
+}
+
+static PACL buildDaclForSid(PSID sid, PACL baseDefaultDacl, DWORD permissions, const wchar_t* context) {
+    if (!sid || !IsValidSid(sid)) {
+        fail(std::wstring(L"cannot build ") + context + L" DACL without a valid SID");
+        return nullptr;
+    }
+    EXPLICIT_ACCESSW access = {};
+    access.grfAccessPermissions = permissions;
+    access.grfAccessMode = GRANT_ACCESS;
+    access.grfInheritance = NO_INHERITANCE;
+    access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    access.Trustee.TrusteeType = TRUSTEE_IS_GROUP;
+    access.Trustee.ptstrName = reinterpret_cast<LPWSTR>(sid);
+
+    PACL dacl = nullptr;
+    DWORD rc = SetEntriesInAclW(1, &access, baseDefaultDacl, &dacl);
+    if (rc != ERROR_SUCCESS) {
+        fail(std::wstring(L"cannot build ") + context + L" DACL: " + win32Message(rc));
         return nullptr;
     }
     return dacl;
@@ -661,56 +788,75 @@ static PSID copySidToLocalAlloc(PSID source) {
     return copy;
 }
 
-static bool appendEveryoneRestrictingSid(
-    std::vector<SID_AND_ATTRIBUTES>& sids,
-    std::vector<PSID>& ownedSids
-) {
-    return appendRestrictingSid(sids, EVERYONE_SID, ownedSids);
-}
-
-static bool appendCurrentLogonRestrictingSid(
-    std::vector<SID_AND_ATTRIBUTES>& sids,
-    HANDLE token,
-    std::vector<PSID>& ownedSids
-) {
+static PSID copyCurrentLogonSid(HANDLE token) {
     DWORD needed = 0;
     GetTokenInformation(token, TokenGroups, nullptr, 0, &needed);
     if (needed == 0 && GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
-        debug(L"GetTokenInformation(TokenGroups) size failed: " + win32Message(GetLastError()));
-        return true;
+        fail(L"GetTokenInformation(TokenGroups) size failed: " + win32Message(GetLastError()));
+        return nullptr;
     }
 
     std::vector<BYTE> buffer(needed, 0);
     if (!GetTokenInformation(token, TokenGroups, buffer.data(), needed, &needed)) {
-        debug(L"GetTokenInformation(TokenGroups) failed: " + win32Message(GetLastError()));
-        return true;
+        fail(L"GetTokenInformation(TokenGroups) failed: " + win32Message(GetLastError()));
+        return nullptr;
     }
 
     auto* groups = reinterpret_cast<TOKEN_GROUPS*>(buffer.data());
     for (DWORD i = 0; groups && i < groups->GroupCount; i++) {
         SID_AND_ATTRIBUTES& group = groups->Groups[i];
         if ((group.Attributes & SE_GROUP_LOGON_ID) != SE_GROUP_LOGON_ID) continue;
-        PSID copy = copySidToLocalAlloc(group.Sid);
-        if (!copy) {
-            fail(L"cannot copy current logon SID");
-            return false;
+        if ((group.Attributes & SE_GROUP_ENABLED) != SE_GROUP_ENABLED) {
+            fail(L"current logon SID is not enabled in TokenGroups");
+            return nullptr;
         }
-        ownedSids.push_back(copy);
-        return appendRestrictingSid(sids, copy);
+        PSID copy = copySidToLocalAlloc(group.Sid);
+        if (!copy) fail(L"cannot copy current logon SID");
+        return copy;
     }
 
-    debug(L"current logon SID was not present in TokenGroups");
-    return true;
+    fail(L"current logon SID was not present in TokenGroups");
+    return nullptr;
+}
+
+static bool appendEveryoneRestrictingSid(
+    std::vector<SID_AND_ATTRIBUTES>& sids,
+    std::vector<PSID>& ownedSids,
+    PSID& everyoneSid
+) {
+    PSID sid = nullptr;
+    if (!ConvertStringSidToSidW(EVERYONE_SID, &sid)) {
+        fail(L"cannot create Everyone restricting SID: " + win32Message(GetLastError()));
+        return false;
+    }
+    ownedSids.push_back(sid);
+    everyoneSid = sid;
+    return appendRestrictingSid(sids, sid);
+}
+
+static bool appendCurrentLogonRestrictingSid(
+    std::vector<SID_AND_ATTRIBUTES>& sids,
+    HANDLE token,
+    std::vector<PSID>& ownedSids,
+    PSID& logonSidOut
+) {
+    PSID logonSid = copyCurrentLogonSid(token);
+    if (!logonSid) return false;
+    ownedSids.push_back(logonSid);
+    logonSidOut = logonSid;
+    return appendRestrictingSid(sids, logonSid);
 }
 
 static bool buildRestrictingSids(
     const std::vector<WritableRoot>& roots,
     HANDLE baseToken,
     std::vector<SID_AND_ATTRIBUTES>& restrictingSids,
-    std::vector<PSID>& ownedRestrictingSids
+    std::vector<PSID>& ownedRestrictingSids,
+    PSID& everyoneSid,
+    PSID& logonSid
 ) {
-    if (!appendEveryoneRestrictingSid(restrictingSids, ownedRestrictingSids)) return false;
-    if (!appendCurrentLogonRestrictingSid(restrictingSids, baseToken, ownedRestrictingSids)) return false;
+    if (!appendEveryoneRestrictingSid(restrictingSids, ownedRestrictingSids, everyoneSid)) return false;
+    if (!appendCurrentLogonRestrictingSid(restrictingSids, baseToken, ownedRestrictingSids, logonSid)) return false;
     for (const auto& root : roots) {
         if (!root.sid) continue;
         appendRestrictingSid(restrictingSids, root.sid);
@@ -723,20 +869,52 @@ static bool buildRestrictingSids(
     return true;
 }
 
+static bool enableTokenPrivilege(HANDLE token, const wchar_t* privilegeName) {
+    LUID luid = {};
+    if (!LookupPrivilegeValueW(nullptr, privilegeName, &luid)) {
+        fail(std::wstring(L"LookupPrivilegeValueW(") + privilegeName + L") failed: " +
+             win32Message(GetLastError()));
+        return false;
+    }
+    TOKEN_PRIVILEGES privileges = {};
+    privileges.PrivilegeCount = 1;
+    privileges.Privileges[0].Luid = luid;
+    privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    SetLastError(ERROR_SUCCESS);
+    if (!AdjustTokenPrivileges(token, FALSE, &privileges, 0, nullptr, nullptr)) {
+        fail(std::wstring(L"AdjustTokenPrivileges(") + privilegeName + L") failed: " +
+             win32Message(GetLastError()));
+        return false;
+    }
+    const DWORD errorCode = GetLastError();
+    if (errorCode != ERROR_SUCCESS) {
+        fail(std::wstring(L"AdjustTokenPrivileges(") + privilegeName + L") was incomplete: " +
+             win32Message(errorCode));
+        return false;
+    }
+    return true;
+}
+
 static HANDLE createRestrictedWriteToken(const std::vector<WritableRoot>& roots) {
     HANDLE baseToken = nullptr;
     DWORD desired = TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_QUERY | TOKEN_IMPERSONATE |
-        TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID;
+        TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID | TOKEN_ADJUST_PRIVILEGES;
     if (!OpenProcessToken(GetCurrentProcess(), desired, &baseToken)) {
         fail(L"OpenProcessToken failed: " + win32Message(GetLastError()));
         return nullptr;
     }
-    TokenDefaultDaclSnapshot baseDefaultDacl;
-    queryTokenDefaultDacl(baseToken, baseDefaultDacl);
-
     std::vector<SID_AND_ATTRIBUTES> restrictingSids;
     std::vector<PSID> ownedRestrictingSids;
-    if (!buildRestrictingSids(roots, baseToken, restrictingSids, ownedRestrictingSids)) {
+    PSID everyoneSid = nullptr;
+    PSID logonSid = nullptr;
+    if (!buildRestrictingSids(
+        roots,
+        baseToken,
+        restrictingSids,
+        ownedRestrictingSids,
+        everyoneSid,
+        logonSid
+    )) {
         CloseHandle(baseToken);
         freeOwnedSids(ownedRestrictingSids);
         return nullptr;
@@ -756,22 +934,39 @@ static HANDLE createRestrictedWriteToken(const std::vector<WritableRoot>& roots)
         &restrictedToken
     );
     CloseHandle(baseToken);
-    freeOwnedSids(ownedRestrictingSids);
     if (!ok) {
+        freeOwnedSids(ownedRestrictingSids);
         fail(L"CreateRestrictedToken failed: " + win32Message(GetLastError()));
         return nullptr;
     }
 
-    PACL defaultDacl = buildDaclWithRootSids(roots, baseDefaultDacl.dacl, GENERIC_ALL);
-    if (defaultDacl) {
-        TOKEN_DEFAULT_DACL info = {};
-        info.DefaultDacl = defaultDacl;
-        if (!SetTokenInformation(restrictedToken, TokenDefaultDacl, &info, sizeof(info))) {
-            debug(L"SetTokenInformation(TokenDefaultDacl) failed: " + win32Message(GetLastError()));
-        }
+    PACL defaultDacl = buildTokenDefaultDacl(
+        roots,
+        everyoneSid,
+        logonSid,
+        GENERIC_ALL
+    );
+    if (!defaultDacl) {
+        freeOwnedSids(ownedRestrictingSids);
+        CloseHandle(restrictedToken);
+        return nullptr;
+    }
+    TOKEN_DEFAULT_DACL info = {};
+    info.DefaultDacl = defaultDacl;
+    if (!SetTokenInformation(restrictedToken, TokenDefaultDacl, &info, sizeof(info))) {
+        const DWORD errorCode = GetLastError();
         LocalFree(defaultDacl);
-    } else {
-        debug(L"TokenDefaultDacl left unchanged because no merged DACL was built");
+        freeOwnedSids(ownedRestrictingSids);
+        CloseHandle(restrictedToken);
+        fail(L"SetTokenInformation(TokenDefaultDacl) failed: " + win32Message(errorCode));
+        return nullptr;
+    }
+    LocalFree(defaultDacl);
+    freeOwnedSids(ownedRestrictingSids);
+
+    if (!enableTokenPrivilege(restrictedToken, SE_CHANGE_NOTIFY_NAME)) {
+        CloseHandle(restrictedToken);
+        return nullptr;
     }
 
     return restrictedToken;
@@ -817,7 +1012,34 @@ static bool waitForJobEmpty(HANDLE job, DWORD timeoutMs, DWORD* errorOut) {
     }
 }
 
-static bool createSandboxDesktop(const std::vector<WritableRoot>& roots, SandboxDesktop& desktop) {
+static bool generatePrivateDesktopName(std::wstring& name) {
+    BYTE randomBytes[16] = {};
+    const NTSTATUS status = BCryptGenRandom(
+        nullptr,
+        randomBytes,
+        static_cast<ULONG>(sizeof(randomBytes)),
+        BCRYPT_USE_SYSTEM_PREFERRED_RNG
+    );
+    if (status < 0) {
+        fail(L"BCryptGenRandom for private desktop name failed: " +
+             hexDword(static_cast<DWORD>(status)));
+        return false;
+    }
+
+    static const wchar_t HEX_DIGITS[] = L"0123456789abcdef";
+    std::wstring suffix;
+    suffix.reserve(sizeof(randomBytes) * 2);
+    for (BYTE value : randomBytes) {
+        suffix.push_back(HEX_DIGITS[value >> 4]);
+        suffix.push_back(HEX_DIGITS[value & 0x0f]);
+    }
+    name = L"hana-win-sandbox-desktop-" + suffix;
+    return true;
+}
+
+static bool createSandboxDesktop(SandboxDesktop& desktop) {
+    if (!generatePrivateDesktopName(desktop.desktopName)) return false;
+
     HANDLE processToken = nullptr;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &processToken)) {
         fail(L"OpenProcessToken for desktop DACL failed: " + win32Message(GetLastError()));
@@ -825,43 +1047,84 @@ static bool createSandboxDesktop(const std::vector<WritableRoot>& roots, Sandbox
     }
 
     TokenDefaultDaclSnapshot baseDefaultDacl;
-    queryTokenDefaultDacl(processToken, baseDefaultDacl);
-    CloseHandle(processToken);
-
-    PACL desktopDacl = buildDaclWithRootSids(roots, baseDefaultDacl.dacl, GENERIC_ALL);
-    if (!desktopDacl) {
-        fail(L"cannot build sandbox desktop ACL");
+    if (!queryTokenDefaultDacl(processToken, baseDefaultDacl)) {
+        CloseHandle(processToken);
+        fail(L"cannot preserve the token default DACL for sandbox USER objects");
         return false;
     }
+    PSID logonSid = copyCurrentLogonSid(processToken);
+    CloseHandle(processToken);
+    if (!logonSid) return false;
 
-    SECURITY_DESCRIPTOR descriptor = {};
-    if (!InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) ||
-        !SetSecurityDescriptorDacl(&descriptor, TRUE, desktopDacl, FALSE)) {
+    PACL desktopDacl = buildDaclForSid(
+        logonSid,
+        baseDefaultDacl.dacl,
+        SANDBOX_DESKTOP_ACCESS,
+        L"sandbox desktop"
+    );
+    LocalFree(logonSid);
+    if (!desktopDacl) return false;
+
+    SECURITY_DESCRIPTOR desktopDescriptor = {};
+    if (!InitializeSecurityDescriptor(&desktopDescriptor, SECURITY_DESCRIPTOR_REVISION) ||
+        !SetSecurityDescriptorDacl(&desktopDescriptor, TRUE, desktopDacl, FALSE)) {
         DWORD err = GetLastError();
         LocalFree(desktopDacl);
         fail(L"cannot initialize sandbox desktop descriptor: " + win32Message(err));
         return false;
     }
 
-    desktop.name = L"hana-win-sandbox-" +
-        std::to_wstring(GetCurrentProcessId()) + L"-" +
-        std::to_wstring(GetTickCount64());
-    SECURITY_ATTRIBUTES attributes = {};
-    attributes.nLength = sizeof(attributes);
-    attributes.lpSecurityDescriptor = &descriptor;
-    attributes.bInheritHandle = FALSE;
+    desktop.stationName = L"WinSta0";
+    desktop.qualifiedName = desktop.stationName + L"\\" + desktop.desktopName;
+    SECURITY_ATTRIBUTES desktopAttributes = {};
+    desktopAttributes.nLength = sizeof(desktopAttributes);
+    desktopAttributes.lpSecurityDescriptor = &desktopDescriptor;
+    desktopAttributes.bInheritHandle = FALSE;
+
+    desktop.station = OpenWindowStationW(
+        desktop.stationName.c_str(),
+        FALSE,
+        SANDBOX_WINDOW_STATION_ACCESS
+    );
+    if (!desktop.station) {
+        DWORD errorCode = GetLastError();
+        LocalFree(desktopDacl);
+        fail(L"OpenWindowStationW(WinSta0) failed: " + win32Message(errorCode));
+        return false;
+    }
+
+    HWINSTA originalStation = GetProcessWindowStation();
+    if (!originalStation || !SetProcessWindowStation(desktop.station)) {
+        DWORD errorCode = GetLastError();
+        CloseWindowStation(desktop.station);
+        desktop.station = nullptr;
+        LocalFree(desktopDacl);
+        fail(L"cannot enter WinSta0 for private desktop creation: " + win32Message(errorCode));
+        return false;
+    }
 
     desktop.handle = CreateDesktopW(
-        desktop.name.c_str(),
+        desktop.desktopName.c_str(),
         nullptr,
         nullptr,
         0,
-        GENERIC_ALL,
-        &attributes
+        SANDBOX_DESKTOP_ACCESS,
+        &desktopAttributes
     );
+    DWORD createDesktopError = desktop.handle ? ERROR_SUCCESS : GetLastError();
+    BOOL restoredStation = SetProcessWindowStation(originalStation);
+    DWORD restoreStationError = restoredStation ? ERROR_SUCCESS : GetLastError();
     LocalFree(desktopDacl);
     if (!desktop.handle) {
-        fail(L"CreateDesktopW failed: " + win32Message(GetLastError()));
+        CloseWindowStation(desktop.station);
+        desktop.station = nullptr;
+        fail(L"CreateDesktopW failed: " + win32Message(createDesktopError));
+        return false;
+    }
+    if (!restoredStation) {
+        CloseDesktop(desktop.handle);
+        desktop.handle = nullptr;
+        fail(L"cannot restore process window station: " + win32Message(restoreStationError));
         return false;
     }
     return true;
@@ -870,49 +1133,114 @@ static bool createSandboxDesktop(const std::vector<WritableRoot>& roots, Sandbox
 static void closeSandboxDesktop(SandboxDesktop& desktop) {
     if (desktop.handle) CloseDesktop(desktop.handle);
     desktop.handle = nullptr;
-    desktop.name.clear();
+    if (desktop.station) CloseWindowStation(desktop.station);
+    desktop.station = nullptr;
+    desktop.stationName.clear();
+    desktop.desktopName.clear();
+    desktop.qualifiedName.clear();
 }
 
 static std::wstring probeNamedObjectNamespace(HANDLE restrictedToken);
 
-static std::wstring probeRestrictedDesktopAccess(HANDLE restrictedToken, const std::wstring& desktopName) {
-    if (desktopName.empty()) return L"skipped:no-desktop";
+static void revertImpersonationOrTerminate() {
+    if (RevertToSelf()) return;
+    const DWORD rc = GetLastError();
+    std::wcerr
+        << L"hana-win-sandbox: impersonation-revert-failure-v1"
+        << L" error=\"" << rc << L"\""
+        << L" errorHex=\"" << hexDword(rc) << L"\""
+        << std::endl;
+    ExitProcess(HELPER_LAUNCH_FAILED_EXIT_CODE);
+}
+
+static std::wstring probeRestrictedDesktopAccess(HANDLE restrictedToken, const SandboxDesktop& sandbox) {
+    if (sandbox.stationName.empty() || sandbox.desktopName.empty()) return L"skipped:no-desktop";
     if (!ImpersonateLoggedOnUser(restrictedToken)) {
         DWORD rc = GetLastError();
         return L"impersonate-failed:" + std::to_wstring(rc) + L":" + win32Message(rc);
     }
 
+    HWINSTA station = OpenWindowStationW(
+        sandbox.stationName.c_str(),
+        FALSE,
+        SANDBOX_WINDOW_STATION_ACCESS
+    );
+    if (!station) {
+        DWORD rc = GetLastError();
+        revertImpersonationOrTerminate();
+        return L"station-error:" + std::to_wstring(rc) + L":" + win32Message(rc);
+    }
+    HWINSTA originalStation = GetProcessWindowStation();
+    if (!originalStation || !SetProcessWindowStation(station)) {
+        DWORD rc = GetLastError();
+        CloseWindowStation(station);
+        revertImpersonationOrTerminate();
+        return L"station-switch-error:" + std::to_wstring(rc) + L":" + win32Message(rc);
+    }
     HDESK desktop = OpenDesktopW(
-        desktopName.c_str(),
+        sandbox.desktopName.c_str(),
         0,
         FALSE,
-        DESKTOP_CREATEWINDOW | DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS
+        SANDBOX_DESKTOP_ACCESS
     );
     DWORD rc = desktop ? ERROR_SUCCESS : GetLastError();
     if (desktop) CloseDesktop(desktop);
-    RevertToSelf();
+    const BOOL restoredStation = SetProcessWindowStation(originalStation);
+    const DWORD restoreError = restoredStation ? ERROR_SUCCESS : GetLastError();
+    if (restoredStation) CloseWindowStation(station);
+    revertImpersonationOrTerminate();
 
+    if (!restoredStation) {
+        return L"restore-error:" + std::to_wstring(restoreError) + L":" + win32Message(restoreError);
+    }
     if (rc == ERROR_SUCCESS) return L"ok";
     return L"error:" + std::to_wstring(rc) + L":" + win32Message(rc);
 }
 
-static std::wstring probeProcessWindowStationName() {
-    HWINSTA station = GetProcessWindowStation();
-    if (!station) {
-        DWORD rc = GetLastError();
-        return L"error:" + std::to_wstring(rc) + L":" + win32Message(rc);
+static bool queryUserObjectName(HANDLE object, std::wstring& name) {
+    name.clear();
+    if (!object) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return false;
     }
-
     DWORD needed = 0;
-    GetUserObjectInformationW(station, UOI_NAME, nullptr, 0, &needed);
-    if (needed == 0) return L"ok";
+    GetUserObjectInformationW(object, UOI_NAME, nullptr, 0, &needed);
+    if (needed == 0) return false;
 
-    std::wstring name((needed / sizeof(wchar_t)) + 1, L'\0');
-    if (!GetUserObjectInformationW(station, UOI_NAME, name.data(), needed, &needed)) {
+    std::vector<wchar_t> buffer((needed / sizeof(wchar_t)) + 1, L'\0');
+    if (!GetUserObjectInformationW(
+        object,
+        UOI_NAME,
+        buffer.data(),
+        static_cast<DWORD>(buffer.size() * sizeof(wchar_t)),
+        &needed
+    )) {
+        return false;
+    }
+    name.assign(buffer.data());
+    if (name.empty()) {
+        SetLastError(ERROR_INVALID_NAME);
+        return false;
+    }
+    return true;
+}
+
+static bool resolveCurrentDesktop(SandboxDesktop& desktop) {
+    HWINSTA station = GetProcessWindowStation();
+    HDESK threadDesktop = GetThreadDesktop(GetCurrentThreadId());
+    if (!station || !threadDesktop) return false;
+    if (!queryUserObjectName(station, desktop.stationName)) return false;
+    if (!queryUserObjectName(threadDesktop, desktop.desktopName)) return false;
+    desktop.qualifiedName = desktop.stationName + L"\\" + desktop.desktopName;
+    return true;
+}
+
+static std::wstring probeProcessWindowStationName() {
+    std::wstring name;
+    if (!queryUserObjectName(GetProcessWindowStation(), name)) {
         DWORD rc = GetLastError();
         return L"error:" + std::to_wstring(rc) + L":" + win32Message(rc);
     }
-    while (!name.empty() && name.back() == L'\0') name.pop_back();
     return L"ok:" + name;
 }
 
@@ -935,10 +1263,13 @@ static void emitCreateProcessLaunchFailureDiagnostic(
         << std::endl;
     std::wcerr
         << L"hana-win-sandbox: launch-failure-context"
-        << L" executable=\"" << escapeDiagnosticValue(opts.executable) << L"\""
-        << L" cwd=\"" << escapeDiagnosticValue(opts.cwd) << L"\""
-        << L" commandLine=\"" << escapeDiagnosticValue(commandLine) << L"\""
-        << L" desktop=\"" << escapeDiagnosticValue(desktop.name) << L"\""
+        << L" executablePresent=\"" << boolDiagnosticValue(!opts.executable.empty()) << L"\""
+        << L" executableLength=\"" << opts.executable.size() << L"\""
+        << L" cwdPresent=\"" << boolDiagnosticValue(!opts.cwd.empty()) << L"\""
+        << L" cwdLength=\"" << opts.cwd.size() << L"\""
+        << L" argumentCount=\"" << opts.args.size() << L"\""
+        << L" commandLineLength=\"" << commandLine.size() << L"\""
+        << L" desktop=\"" << escapeDiagnosticValue(desktop.qualifiedName) << L"\""
         << L" flags=\"" << flags << L"\""
         << L" flagsHex=\"" << hexDword(flags) << L"\""
         << L" inheritHandles=\"" << boolDiagnosticValue(inheritHandles != FALSE) << L"\""
@@ -946,9 +1277,111 @@ static void emitCreateProcessLaunchFailureDiagnostic(
         << std::endl;
     std::wcerr
         << L"hana-win-sandbox: launch-failure-probes"
-        << L" desktopProbe=\"" << escapeDiagnosticValue(probeRestrictedDesktopAccess(restrictedToken, desktop.name)) << L"\""
+        << L" desktopProbe=\"" << escapeDiagnosticValue(probeRestrictedDesktopAccess(restrictedToken, desktop)) << L"\""
         << L" windowStation=\"" << escapeDiagnosticValue(probeProcessWindowStationName()) << L"\""
         << L" namedObjectsProbe=\"" << escapeDiagnosticValue(probeNamedObjectNamespace(restrictedToken)) << L"\""
+        << std::endl;
+}
+
+static void emitPrelaunchDesktopProbeDiagnostic(const std::wstring& desktopProbe) {
+    debug(
+        L"prelaunch-probe-v1 desktopProbe=\"" +
+        escapeDiagnosticValue(desktopProbe) +
+        L"\""
+    );
+}
+
+static void emitPrelaunchDesktopProbeFailureDiagnostic(const std::wstring& desktopProbe) {
+    std::wcerr
+        << L"hana-win-sandbox: prelaunch-probe-failure-v1"
+        << L" desktopProbe=\"" << escapeDiagnosticValue(desktopProbe) << L"\""
+        << std::endl;
+}
+
+static void emitPostCreateEarlyExitDiagnostic(
+    DWORD exitCode,
+    ULONGLONG elapsedMs,
+    const std::wstring& prelaunchDesktopProbe
+) {
+    if (elapsedMs > EARLY_EXIT_DIAGNOSTIC_WINDOW_MS) return;
+
+    const wchar_t* classification = nullptr;
+    if (exitCode == STATUS_DLL_INIT_FAILED_EXIT_CODE) {
+        classification = L"dll-init-failure";
+    } else if ((exitCode & 0xC0000000UL) == 0xC0000000UL) {
+        classification = L"nt-status-failure";
+    } else {
+        return;
+    }
+
+    std::wcerr
+        << L"hana-win-sandbox: post-create-exit-v1"
+        << L" exitCode=\"" << exitCode << L"\""
+        << L" exitCodeHex=\"" << hexDword(exitCode) << L"\""
+        << L" classification=\"" << classification << L"\""
+        << L" elapsedMs=\"" << elapsedMs << L"\""
+        << L" prelaunchDesktopProbe=\"" << escapeDiagnosticValue(prelaunchDesktopProbe) << L"\""
+        << std::endl;
+}
+
+static std::wstring processImageBasename(DWORD processId) {
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+    if (!process) return L"unavailable:" + std::to_wstring(GetLastError());
+
+    std::vector<wchar_t> image(32768, L'\0');
+    DWORD length = static_cast<DWORD>(image.size());
+    if (!QueryFullProcessImageNameW(process, 0, image.data(), &length)) {
+        const DWORD errorCode = GetLastError();
+        CloseHandle(process);
+        return L"unavailable:" + std::to_wstring(errorCode);
+    }
+    CloseHandle(process);
+
+    std::wstring fullPath(image.data(), length);
+    const size_t separator = fullPath.find_last_of(L"\\/");
+    return separator == std::wstring::npos ? fullPath : fullPath.substr(separator + 1);
+}
+
+static void emitTimeoutProcessSnapshot(HANDLE job) {
+    constexpr size_t MAX_REPORTED_PROCESSES = 128;
+    const DWORD bufferSize = static_cast<DWORD>(
+        sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) +
+        (MAX_REPORTED_PROCESSES - 1) * sizeof(ULONG_PTR)
+    );
+    std::vector<BYTE> buffer(bufferSize, 0);
+    auto* processes = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(buffer.data());
+    if (!QueryInformationJobObject(
+        job,
+        JobObjectBasicProcessIdList,
+        processes,
+        bufferSize,
+        nullptr
+    )) {
+        const DWORD errorCode = GetLastError();
+        std::wcerr
+            << L"hana-win-sandbox: timeout-processes-v1"
+            << L" queryError=\"" << errorCode << L"\""
+            << std::endl;
+        return;
+    }
+
+    std::wstring summary;
+    const ULONG_PTR count = std::min<ULONG_PTR>(
+        processes->NumberOfProcessIdsInList,
+        MAX_REPORTED_PROCESSES
+    );
+    for (ULONG_PTR i = 0; i < count; i++) {
+        if (!summary.empty()) summary += L",";
+        const DWORD processId = static_cast<DWORD>(processes->ProcessIdList[i]);
+        summary += std::to_wstring(processId);
+        summary += L":";
+        summary += processImageBasename(processId);
+    }
+    std::wcerr
+        << L"hana-win-sandbox: timeout-processes-v1"
+        << L" assigned=\"" << processes->NumberOfAssignedProcesses << L"\""
+        << L" listed=\"" << processes->NumberOfProcessIdsInList << L"\""
+        << L" processes=\"" << escapeDiagnosticValue(summary) << L"\""
         << std::endl;
 }
 
@@ -963,10 +1396,23 @@ static void pushUniqueHandle(std::vector<HANDLE>& handles, HANDLE handle) {
     }
 }
 
-static bool setupInheritedHandleList(const std::vector<HANDLE>& handles, StartupAttributeList& attributes) {
-    if (handles.empty()) return true;
+static bool setupStartupAttributeList(
+    const std::vector<HANDLE>& handles,
+    HANDLE job,
+    StartupAttributeList& attributes
+) {
+    for (HANDLE handle : handles) {
+        if (!SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) {
+            fail(L"SetHandleInformation(HANDLE_FLAG_INHERIT) failed: " +
+                 win32Message(GetLastError()));
+            return false;
+        }
+    }
+    const bool hasJob = isValidInheritableCandidate(job);
+    const DWORD attributeCount = (handles.empty() ? 0 : 1) + (hasJob ? 1 : 0);
+    if (attributeCount == 0) return true;
     SIZE_T size = 0;
-    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+    InitializeProcThreadAttributeList(nullptr, attributeCount, 0, &size);
     if (size == 0) {
         fail(L"InitializeProcThreadAttributeList size failed: " + win32Message(GetLastError()));
         return false;
@@ -978,23 +1424,45 @@ static bool setupInheritedHandleList(const std::vector<HANDLE>& handles, Startup
         fail(L"HeapAlloc for process attribute list failed");
         return false;
     }
-    if (!InitializeProcThreadAttributeList(attributes.list, 1, 0, &size)) {
+    if (!InitializeProcThreadAttributeList(attributes.list, attributeCount, 0, &size)) {
         fail(L"InitializeProcThreadAttributeList failed: " + win32Message(GetLastError()));
         return false;
     }
-    if (!UpdateProcThreadAttribute(
-        attributes.list,
-        0,
-        PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-        const_cast<HANDLE*>(handles.data()),
-        handles.size() * sizeof(HANDLE),
-        nullptr,
-        nullptr
-    )) {
-        fail(L"UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_HANDLE_LIST) failed: " + win32Message(GetLastError()));
-        return false;
+    if (!handles.empty()) {
+        attributes.inheritedHandles = handles;
+        if (!UpdateProcThreadAttribute(
+            attributes.list,
+            0,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            attributes.inheritedHandles.data(),
+            attributes.inheritedHandles.size() * sizeof(HANDLE),
+            nullptr,
+            nullptr
+        )) {
+            fail(L"UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_HANDLE_LIST) failed: " + win32Message(GetLastError()));
+            return false;
+        }
+    }
+    if (hasJob) {
+        attributes.jobs.push_back(job);
+        if (!UpdateProcThreadAttribute(
+            attributes.list,
+            0,
+            PROC_THREAD_ATTRIBUTE_JOB_LIST,
+            attributes.jobs.data(),
+            attributes.jobs.size() * sizeof(HANDLE),
+            nullptr,
+            nullptr
+        )) {
+            fail(L"UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_JOB_LIST) failed: " + win32Message(GetLastError()));
+            return false;
+        }
     }
     return true;
+}
+
+static bool setupInheritedHandleList(const std::vector<HANDLE>& handles, StartupAttributeList& attributes) {
+    return setupStartupAttributeList(handles, nullptr, attributes);
 }
 
 static void freeStartupAttributeList(StartupAttributeList& attributes) {
@@ -1003,12 +1471,317 @@ static void freeStartupAttributeList(StartupAttributeList& attributes) {
         HeapFree(GetProcessHeap(), 0, attributes.list);
     }
     attributes.list = nullptr;
+    attributes.inheritedHandles.clear();
+    attributes.jobs.clear();
+}
+
+static bool snapshotCurrentEnvironment(std::vector<wchar_t>& environment) {
+    LPWCH rawEnvironment = GetEnvironmentStringsW();
+    if (!rawEnvironment) {
+        const DWORD errorCode = GetLastError();
+        fail(L"GetEnvironmentStringsW failed: " + win32Message(errorCode));
+        SetLastError(errorCode);
+        return false;
+    }
+    const wchar_t* begin = rawEnvironment;
+    const wchar_t* end = begin;
+    while (*end != L'\0') {
+        end += wcslen(end) + 1;
+    }
+    ++end;
+    environment.assign(begin, end);
+    FreeEnvironmentStringsW(rawEnvironment);
+    return true;
+}
+
+static DWORD WINAPI readGuardianControl(LPVOID rawContext) {
+    auto* watch = reinterpret_cast<GuardianControlWatch*>(rawContext);
+    char buffer[64] = {};
+    DWORD bytesRead = 0;
+    if (!ReadFile(watch->input, buffer, sizeof(buffer), &bytesRead, nullptr)) {
+        watch->readError = GetLastError();
+    }
+    // Any command, EOF, or pipe error means the owner no longer wants this Job.
+    SetEvent(watch->event);
+    return 0;
+}
+
+static GuardianControlWatch* startGuardianControlWatch(HANDLE input) {
+    auto* watch = new GuardianControlWatch();
+    watch->input = input;
+    watch->event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!watch->event) {
+        const DWORD errorCode = GetLastError();
+        delete watch;
+        SetLastError(errorCode);
+        return nullptr;
+    }
+    watch->thread = CreateThread(nullptr, 0, readGuardianControl, watch, 0, nullptr);
+    if (!watch->thread) {
+        const DWORD errorCode = GetLastError();
+        CloseHandle(watch->event);
+        delete watch;
+        SetLastError(errorCode);
+        return nullptr;
+    }
+    return watch;
+}
+
+static bool stopGuardianControlWatch(GuardianControlWatch* watch) {
+    if (!watch) return true;
+    DWORD threadState = WaitForSingleObject(watch->thread, 0);
+    if (threadState == WAIT_TIMEOUT) {
+        if (!CancelSynchronousIo(watch->thread)) {
+            const DWORD errorCode = GetLastError();
+            if (errorCode != ERROR_NOT_FOUND) {
+                debug(L"guardian control ReadFile cancellation failed: " + win32Message(errorCode));
+            }
+        }
+        threadState = WaitForSingleObject(watch->thread, TERMINATION_GRACE_MS);
+    }
+    if (threadState != WAIT_OBJECT_0) {
+        // The helper process is about to exit, but the context/event must remain valid
+        // until then because the reader may still complete asynchronously.
+        fail(L"guardian control reader did not stop before helper exit");
+        return false;
+    }
+    CloseHandle(watch->thread);
+    CloseHandle(watch->event);
+    delete watch;
+    return true;
+}
+
+static void emitGuardianRecord(
+    const std::wstring& status,
+    DWORD parentPid,
+    DWORD serverPid,
+    DWORD win32Error = ERROR_SUCCESS
+) {
+    std::wcerr
+        << L"hana-win-sandbox: guardian-v1"
+        << L" status=\"" << status << L"\""
+        << L" parentPid=\"" << parentPid << L"\""
+        << L" serverPid=\"" << serverPid << L"\""
+        << L" win32Error=\"" << win32Error << L"\""
+        << std::endl;
+}
+
+static int superviseServer(const Options& opts) {
+    // Opening the parent once gives this guardian a stable kernel identity. A reused
+    // numeric PID cannot make a different process satisfy this wait.
+    HANDLE parentProcess = OpenProcess(SYNCHRONIZE, FALSE, opts.parentPid);
+    if (!parentProcess) {
+        const DWORD errorCode = GetLastError();
+        fail(L"guardian cannot open parent process: " + win32Message(errorCode));
+        emitGuardianRecord(L"parent_open_failed", opts.parentPid, 0, errorCode);
+        return HELPER_LAUNCH_FAILED_EXIT_CODE;
+    }
+
+    HANDLE controlInput = GetStdHandle(STD_INPUT_HANDLE);
+    if (!isValidInheritableCandidate(controlInput)) {
+        const DWORD errorCode = GetLastError();
+        fail(L"guardian requires a control stdin pipe");
+        CloseHandle(parentProcess);
+        emitGuardianRecord(L"control_pipe_missing", opts.parentPid, 0, errorCode);
+        return HELPER_LAUNCH_FAILED_EXIT_CODE;
+    }
+
+    SECURITY_ATTRIBUTES nulAttributes = {};
+    nulAttributes.nLength = sizeof(nulAttributes);
+    nulAttributes.bInheritHandle = TRUE;
+    HANDLE serverInput = CreateFileW(
+        L"NUL",
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &nulAttributes,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+    if (serverInput == INVALID_HANDLE_VALUE) {
+        const DWORD errorCode = GetLastError();
+        fail(L"guardian cannot open NUL for server stdin: " + win32Message(errorCode));
+        CloseHandle(parentProcess);
+        emitGuardianRecord(L"server_stdio_failed", opts.parentPid, 0, errorCode);
+        return HELPER_LAUNCH_FAILED_EXIT_CODE;
+    }
+
+    STARTUPINFOEXW startup = {};
+    startup.StartupInfo.cb = sizeof(STARTUPINFOEXW);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = serverInput;
+    startup.StartupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    startup.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+
+    std::vector<HANDLE> inheritedHandles;
+    pushUniqueHandle(inheritedHandles, startup.StartupInfo.hStdInput);
+    pushUniqueHandle(inheritedHandles, startup.StartupInfo.hStdOutput);
+    pushUniqueHandle(inheritedHandles, startup.StartupInfo.hStdError);
+    StartupAttributeList inheritedAttributes;
+    if (!setupInheritedHandleList(inheritedHandles, inheritedAttributes)) {
+        const DWORD errorCode = GetLastError();
+        freeStartupAttributeList(inheritedAttributes);
+        CloseHandle(serverInput);
+        CloseHandle(parentProcess);
+        emitGuardianRecord(L"server_stdio_failed", opts.parentPid, 0, errorCode);
+        return HELPER_LAUNCH_FAILED_EXIT_CODE;
+    }
+    startup.lpAttributeList = inheritedAttributes.list;
+
+    std::wstring commandLine = buildCommandLine(opts);
+    PROCESS_INFORMATION server = {};
+    const DWORD creationFlags = CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT;
+    BOOL launched = CreateProcessW(
+        opts.executable.c_str(),
+        commandLine.data(),
+        nullptr,
+        nullptr,
+        TRUE,
+        creationFlags,
+        nullptr,
+        opts.cwd.c_str(),
+        &startup.StartupInfo,
+        &server
+    );
+    const DWORD launchError = launched ? ERROR_SUCCESS : GetLastError();
+    freeStartupAttributeList(inheritedAttributes);
+    CloseHandle(serverInput);
+    if (!launched) {
+        fail(L"guardian CreateProcessW failed: " + win32Message(launchError));
+        CloseHandle(parentProcess);
+        emitGuardianRecord(L"server_launch_failed", opts.parentPid, 0, launchError);
+        return HELPER_LAUNCH_FAILED_EXIT_CODE;
+    }
+
+    HANDLE job = createKillOnCloseJob();
+    if (!job) {
+        const DWORD errorCode = GetLastError();
+        fail(L"guardian CreateJobObject failed: " + win32Message(errorCode));
+        TerminateProcess(server.hProcess, 1);
+        CloseHandle(server.hThread);
+        CloseHandle(server.hProcess);
+        CloseHandle(parentProcess);
+        emitGuardianRecord(L"job_create_failed", opts.parentPid, server.dwProcessId, errorCode);
+        return HELPER_LAUNCH_FAILED_EXIT_CODE;
+    }
+    if (!AssignProcessToJobObject(job, server.hProcess)) {
+        const DWORD errorCode = GetLastError();
+        fail(L"guardian AssignProcessToJobObject failed: " + win32Message(errorCode));
+        TerminateProcess(server.hProcess, 1);
+        CloseHandle(job);
+        CloseHandle(server.hThread);
+        CloseHandle(server.hProcess);
+        CloseHandle(parentProcess);
+        emitGuardianRecord(L"job_assign_failed", opts.parentPid, server.dwProcessId, errorCode);
+        return HELPER_LAUNCH_FAILED_EXIT_CODE;
+    }
+
+    GuardianControlWatch* controlWatch = startGuardianControlWatch(controlInput);
+    if (!controlWatch) {
+        const DWORD errorCode = GetLastError();
+        fail(L"guardian cannot start control reader: " + win32Message(errorCode));
+        TerminateJobObject(job, 1);
+        DWORD ignored = ERROR_SUCCESS;
+        waitForJobEmpty(job, TERMINATION_GRACE_MS, &ignored);
+        CloseHandle(server.hThread);
+        CloseHandle(server.hProcess);
+        CloseHandle(parentProcess);
+        CloseHandle(job);
+        emitGuardianRecord(L"control_reader_failed", opts.parentPid, server.dwProcessId, errorCode);
+        return HELPER_LAUNCH_FAILED_EXIT_CODE;
+    }
+    if (ResumeThread(server.hThread) == static_cast<DWORD>(-1)) {
+        const DWORD errorCode = GetLastError();
+        fail(L"guardian ResumeThread failed: " + win32Message(errorCode));
+        TerminateJobObject(job, 1);
+        DWORD ignored = ERROR_SUCCESS;
+        waitForJobEmpty(job, TERMINATION_GRACE_MS, &ignored);
+        CloseHandle(server.hThread);
+        CloseHandle(server.hProcess);
+        CloseHandle(parentProcess);
+        CloseHandle(job);
+        stopGuardianControlWatch(controlWatch);
+        emitGuardianRecord(L"server_resume_failed", opts.parentPid, server.dwProcessId, errorCode);
+        return HELPER_LAUNCH_FAILED_EXIT_CODE;
+    }
+    CloseHandle(server.hThread);
+    emitGuardianRecord(L"supervising", opts.parentPid, server.dwProcessId);
+
+    HANDLE watched[] = { parentProcess, server.hProcess, controlWatch->event };
+    const DWORD waitResult = WaitForMultipleObjects(3, watched, FALSE, INFINITE);
+    if (waitResult == WAIT_OBJECT_0 + 1) {
+        DWORD exitCode = 1;
+        const BOOL gotExitCode = GetExitCodeProcess(server.hProcess, &exitCode);
+        const DWORD errorCode = gotExitCode ? ERROR_SUCCESS : GetLastError();
+        CloseHandle(server.hProcess);
+        CloseHandle(parentProcess);
+        // The direct server has stopped. Closing the last Job handle also converges
+        // descendants that inherited the Job before the guardian exits.
+        CloseHandle(job);
+        const bool controlStopped = stopGuardianControlWatch(controlWatch);
+        if (!gotExitCode) {
+            emitGuardianRecord(L"server_exit_query_failed", opts.parentPid, server.dwProcessId, errorCode);
+            return HELPER_TERMINATION_FAILED_EXIT_CODE;
+        }
+        if (!controlStopped) {
+            emitGuardianRecord(L"control_reader_stop_failed", opts.parentPid, server.dwProcessId);
+            return HELPER_TERMINATION_FAILED_EXIT_CODE;
+        }
+        emitGuardianRecord(L"server_exited", opts.parentPid, server.dwProcessId);
+        return static_cast<int>(exitCode);
+    }
+
+    std::wstring stopReason;
+    DWORD waitError = ERROR_SUCCESS;
+    if (waitResult == WAIT_OBJECT_0) {
+        stopReason = L"parent_exited";
+    } else if (waitResult == WAIT_OBJECT_0 + 2) {
+        stopReason = L"control_requested";
+    } else {
+        stopReason = L"wait_failed";
+        waitError = waitResult == WAIT_FAILED ? GetLastError() : ERROR_INVALID_FUNCTION;
+        fail(L"guardian WaitForMultipleObjects failed: " + win32Message(waitError));
+    }
+
+    DWORD convergenceError = ERROR_SUCCESS;
+    if (!TerminateJobObject(job, 1)) {
+        convergenceError = GetLastError();
+    } else if (!waitForJobEmpty(job, TERMINATION_GRACE_MS, &convergenceError)) {
+        fail(L"guardian Job did not converge: " + win32Message(convergenceError));
+    }
+    CloseHandle(server.hProcess);
+    CloseHandle(parentProcess);
+    CloseHandle(job);
+    const bool controlStopped = stopGuardianControlWatch(controlWatch);
+    if (convergenceError != ERROR_SUCCESS) {
+        emitGuardianRecord(L"termination_failed", opts.parentPid, server.dwProcessId, convergenceError);
+        return HELPER_TERMINATION_FAILED_EXIT_CODE;
+    }
+    if (!controlStopped) {
+        emitGuardianRecord(L"control_reader_stop_failed", opts.parentPid, server.dwProcessId);
+        return HELPER_TERMINATION_FAILED_EXIT_CODE;
+    }
+    emitGuardianRecord(stopReason, opts.parentPid, server.dwProcessId, waitError);
+    return waitError == ERROR_SUCCESS ? 0 : HELPER_TERMINATION_FAILED_EXIT_CODE;
 }
 
 static int runSandboxed(const Options& opts, HANDLE restrictedToken) {
     SandboxDesktop desktop;
-    if (!createSandboxDesktop(opts.writableRoots, desktop)) {
+    const bool usesPrivateDesktop = !opts.currentDesktop;
+    const bool desktopReady = usesPrivateDesktop
+        ? createSandboxDesktop(desktop)
+        : resolveCurrentDesktop(desktop);
+    if (!desktopReady) {
         DWORD errorCode = GetLastError();
+        emitTerminalRecord(L"launch_failed", false, 0, opts.timeoutMs, errorCode);
+        return HELPER_LAUNCH_FAILED_EXIT_CODE;
+    }
+
+    HANDLE job = createKillOnCloseJob();
+    if (!job) {
+        DWORD errorCode = GetLastError();
+        fail(L"CreateJobObject failed: " + win32Message(errorCode));
+        closeSandboxDesktop(desktop);
         emitTerminalRecord(L"launch_failed", false, 0, opts.timeoutMs, errorCode);
         return HELPER_LAUNCH_FAILED_EXIT_CODE;
     }
@@ -1019,31 +1792,52 @@ static int runSandboxed(const Options& opts, HANDLE restrictedToken) {
     startup.StartupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     startup.StartupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
     startup.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-    startup.StartupInfo.lpDesktop = const_cast<LPWSTR>(desktop.name.c_str());
+    startup.StartupInfo.lpDesktop = const_cast<LPWSTR>(desktop.qualifiedName.c_str());
 
     std::vector<HANDLE> inheritedHandles;
     pushUniqueHandle(inheritedHandles, startup.StartupInfo.hStdInput);
     pushUniqueHandle(inheritedHandles, startup.StartupInfo.hStdOutput);
     pushUniqueHandle(inheritedHandles, startup.StartupInfo.hStdError);
     StartupAttributeList inheritedAttributes;
-    if (!setupInheritedHandleList(inheritedHandles, inheritedAttributes)) {
-        freeStartupAttributeList(inheritedAttributes);
-        closeSandboxDesktop(desktop);
+    if (!setupStartupAttributeList(inheritedHandles, job, inheritedAttributes)) {
         DWORD errorCode = GetLastError();
+        freeStartupAttributeList(inheritedAttributes);
+        CloseHandle(job);
+        closeSandboxDesktop(desktop);
         emitTerminalRecord(L"launch_failed", false, 0, opts.timeoutMs, errorCode);
         return HELPER_LAUNCH_FAILED_EXIT_CODE;
     }
     startup.lpAttributeList = inheritedAttributes.list;
 
     std::wstring commandLine = buildCommandLine(opts);
+    std::vector<wchar_t> environmentBlock;
+    if (!snapshotCurrentEnvironment(environmentBlock)) {
+        freeStartupAttributeList(inheritedAttributes);
+        CloseHandle(job);
+        closeSandboxDesktop(desktop);
+        DWORD errorCode = GetLastError();
+        emitTerminalRecord(L"launch_failed", false, 0, opts.timeoutMs, errorCode);
+        return HELPER_LAUNCH_FAILED_EXIT_CODE;
+    }
     PROCESS_INFORMATION process = {};
-    DWORD flags = CREATE_SUSPENDED | CREATE_NO_WINDOW;
+    DWORD flags = CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
     BOOL inheritHandles = FALSE;
     if (startup.lpAttributeList) {
         startup.StartupInfo.cb = sizeof(STARTUPINFOEXW);
         flags |= EXTENDED_STARTUPINFO_PRESENT;
         inheritHandles = TRUE;
     }
+    const std::wstring prelaunchDesktopProbe = probeRestrictedDesktopAccess(restrictedToken, desktop);
+    emitPrelaunchDesktopProbeDiagnostic(prelaunchDesktopProbe);
+    if (prelaunchDesktopProbe != L"ok") {
+        emitPrelaunchDesktopProbeFailureDiagnostic(prelaunchDesktopProbe);
+        freeStartupAttributeList(inheritedAttributes);
+        CloseHandle(job);
+        closeSandboxDesktop(desktop);
+        emitTerminalRecord(L"launch_failed", false, 0, opts.timeoutMs, ERROR_ACCESS_DENIED);
+        return HELPER_LAUNCH_FAILED_EXIT_CODE;
+    }
+    const ULONGLONG processCreatedAt = GetTickCount64();
     BOOL ok = CreateProcessAsUserW(
         restrictedToken,
         opts.executable.c_str(),
@@ -1052,7 +1846,7 @@ static int runSandboxed(const Options& opts, HANDLE restrictedToken) {
         nullptr,
         inheritHandles,
         flags,
-        nullptr,
+        environmentBlock.data(),
         opts.cwd.c_str(),
         &startup.StartupInfo,
         &process
@@ -1071,42 +1865,6 @@ static int runSandboxed(const Options& opts, HANDLE restrictedToken) {
             inheritHandles,
             inheritedHandles.size()
         );
-        closeSandboxDesktop(desktop);
-        emitTerminalRecord(L"launch_failed", false, 0, opts.timeoutMs, errorCode);
-        return HELPER_LAUNCH_FAILED_EXIT_CODE;
-    }
-
-    HANDLE job = createKillOnCloseJob();
-    if (!job) {
-        DWORD errorCode = GetLastError();
-        fail(L"CreateJobObject failed: " + win32Message(errorCode));
-        TerminateProcess(process.hProcess, 1);
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-        closeSandboxDesktop(desktop);
-        emitTerminalRecord(L"launch_failed", false, 0, opts.timeoutMs, errorCode);
-        return HELPER_LAUNCH_FAILED_EXIT_CODE;
-    }
-    if (!AssignProcessToJobObject(job, process.hProcess)) {
-        DWORD errorCode = GetLastError();
-        fail(L"AssignProcessToJobObject failed: " + win32Message(errorCode));
-        TerminateProcess(process.hProcess, 1);
-        CloseHandle(job);
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-        closeSandboxDesktop(desktop);
-        emitTerminalRecord(L"launch_failed", false, 0, opts.timeoutMs, errorCode);
-        return HELPER_LAUNCH_FAILED_EXIT_CODE;
-    }
-
-    if (ResumeThread(process.hThread) == static_cast<DWORD>(-1)) {
-        DWORD errorCode = GetLastError();
-        fail(L"ResumeThread failed: " + win32Message(errorCode));
-        TerminateJobObject(job, 1);
-        DWORD ignored = ERROR_SUCCESS;
-        waitForJobEmpty(job, TERMINATION_GRACE_MS, &ignored);
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
         CloseHandle(job);
         closeSandboxDesktop(desktop);
         emitTerminalRecord(L"launch_failed", false, 0, opts.timeoutMs, errorCode);
@@ -1126,6 +1884,11 @@ static int runSandboxed(const Options& opts, HANDLE restrictedToken) {
             emitTerminalRecord(L"termination_failed", false, 0, opts.timeoutMs, errorCode);
             return HELPER_TERMINATION_FAILED_EXIT_CODE;
         }
+        emitPostCreateEarlyExitDiagnostic(
+            exitCode,
+            GetTickCount64() - processCreatedAt,
+            prelaunchDesktopProbe
+        );
         CloseHandle(process.hThread);
         CloseHandle(process.hProcess);
         // KILL_ON_JOB_CLOSE preserves the existing contract: descendants cannot outlive
@@ -1137,6 +1900,7 @@ static int runSandboxed(const Options& opts, HANDLE restrictedToken) {
     }
 
     if (waitResult == WAIT_TIMEOUT) {
+        emitTimeoutProcessSnapshot(job);
         if (!TerminateJobObject(job, TIMEOUT_PROCESS_EXIT_CODE)) {
             DWORD errorCode = GetLastError();
             fail(L"TerminateJobObject failed: " + win32Message(errorCode));
@@ -1216,7 +1980,7 @@ static std::wstring probeNamedObjectNamespace(HANDLE restrictedToken) {
     HANDLE mutex = CreateMutexW(nullptr, FALSE, name.c_str());
     DWORD rc = mutex ? ERROR_SUCCESS : GetLastError();
     if (mutex) CloseHandle(mutex);
-    RevertToSelf();
+    revertImpersonationOrTerminate();
 
     if (rc == ERROR_SUCCESS || rc == ERROR_ALREADY_EXISTS) return L"ok";
     return L"error:" + std::to_wstring(rc) + L":" + win32Message(rc);
@@ -1233,7 +1997,16 @@ static int diagnoseRestrictedToken(const Options& opts) {
 
     std::vector<SID_AND_ATTRIBUTES> restrictingSids;
     std::vector<PSID> ownedRestrictingSids;
-    bool ok = buildRestrictingSids(opts.writableRoots, baseToken, restrictingSids, ownedRestrictingSids);
+    PSID everyoneSid = nullptr;
+    PSID logonSid = nullptr;
+    bool ok = buildRestrictingSids(
+        opts.writableRoots,
+        baseToken,
+        restrictingSids,
+        ownedRestrictingSids,
+        everyoneSid,
+        logonSid
+    );
     CloseHandle(baseToken);
     if (!ok) {
         freeOwnedSids(ownedRestrictingSids);
@@ -1583,6 +2356,10 @@ int wmain(int argc, wchar_t** argv) {
         std::wstring wide(narrow.begin(), narrow.end());
         std::wcerr << L"hana-win-sandbox: " << wide << std::endl;
         return 2;
+    }
+
+    if (opts.superviseServer) {
+        return superviseServer(opts);
     }
 
     if (!opts.hanaWriteAclCleanupPaths.empty() ||

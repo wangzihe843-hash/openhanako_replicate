@@ -41,6 +41,49 @@ const BROWSER_ACTIONS = [
   "scroll", "select", "key", "wait", "evaluate", "show",
 ];
 
+const BROWSER_READ_ACTIONS = new Set([
+  "snapshot", "screenshot", "scroll", "wait", "show",
+]);
+
+const BROWSER_ROUTINE_ACTIONS = new Set(["start", "stop"]);
+
+const BROWSER_TAB_REVIEW_ACTIONS = new Set([
+  "click", "type", "select", "key", "evaluate",
+]);
+
+const MAX_BROWSER_TAB_TARGET_LENGTH = 4096;
+const MAX_BROWSER_PERMISSION_URL_LENGTH = 4096;
+
+// This is a stable review target, not a navigation policy. The desktop host
+// still performs the authoritative protocol check immediately before loadURL().
+function normalizeBrowserPermissionUrl(value: unknown) {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    const normalized = parsed.href;
+    return normalized.length <= MAX_BROWSER_PERMISSION_URL_LENGTH ? normalized : null;
+  } catch {
+    return null;
+  }
+}
+
+function exactBrowserTabId(value: unknown) {
+  if (
+    typeof value !== "string"
+    || !value
+    || value !== value.trim()
+    || value.length > MAX_BROWSER_TAB_TARGET_LENGTH
+    || value.includes("*")
+    || value.includes("?")
+  ) return null;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return null;
+  }
+  return value;
+}
+
 /** Browser 专用错误：content 显示格式化文本，details.error 保留原始消息 */
 function browserError(rawMsg: any, details: Record<string, any> = {}) {
   return {
@@ -152,6 +195,14 @@ export function createBrowserTool(getSessionPath: any, options: {
     return getToolSessionPath(ctx) || getSessionPath?.() || null;
   }
 
+  function snapshotWithTabIdentity(snapshot: any, sessionPath: any, preferredTabId: any = null) {
+    const tabId = exactBrowserTabId(preferredTabId)
+      || exactBrowserTabId(browser.activeTab?.(sessionPath)?.tabId);
+    return tabId
+      ? `Browser tabId (copy exactly): ${JSON.stringify(tabId)}\n\n${snapshot}`
+      : snapshot;
+  }
+
   function isExplicitTextOnlyModel(model: any) {
     return Array.isArray(model?.input) && !modelSupportsDirectImageInput(model);
   }
@@ -160,10 +211,44 @@ export function createBrowserTool(getSessionPath: any, options: {
     name: "browser",
     label: "Browser",
     description: "Control a headless browser (navigate, click, type, scroll, screenshot, evaluate JS). Element [ref] ids from snapshot become stale after page changes; always use refs from the latest snapshot.",
+    sessionPermission: {
+      resolveInvocation: (input: any = {}) => {
+        const action = typeof input?.action === "string" ? input.action : "";
+        if (!actionValues.includes(action)) return null;
+        const descriptor: Record<string, any> = {
+          action,
+          kind: BROWSER_READ_ACTIONS.has(action)
+            ? "read"
+            : BROWSER_ROUTINE_ACTIONS.has(action)
+              ? "routine"
+              : "review",
+          capability: `browser.${action}`,
+        };
+
+        if (action === "navigate") {
+          const destinationUrl = normalizeBrowserPermissionUrl(input?.url);
+          if (!destinationUrl) return descriptor;
+          descriptor.target = { type: "url", id: destinationUrl };
+          descriptor.sideEffect = { destinationUrl };
+          return descriptor;
+        }
+
+        if (BROWSER_TAB_REVIEW_ACTIONS.has(action)) {
+          const tabId = exactBrowserTabId(input?.tabId);
+          if (!tabId) return null;
+          descriptor.target = {
+            type: "browser_tab",
+            id: tabId,
+          };
+        }
+
+        return descriptor;
+      },
+    },
     parameters: Type.Object({
-      action: StringEnum(actionValues, { description: "Which operation to run. Required params per action: navigate→url; click→ref; type→text (optional ref, pressEnter); scroll→direction (optional amount); select→ref+value; key→key; wait→(optional timeout, state); evaluate→expression. start, stop, snapshot, screenshot, show take no extra params." }),
+      action: StringEnum(actionValues, { description: "Which operation to run. Required params per action: navigate→url; click→tabId+ref; type→tabId+text (optional ref, pressEnter); scroll→direction (optional amount); select→tabId+ref+value; key→tabId+key; wait→(optional timeout, state); evaluate→tabId+expression. Use the exact tabId returned by the latest snapshot before click, type, select, key, or evaluate. start, stop, snapshot, screenshot, show take no extra params." }),
       url: Type.Optional(Type.String({ description: "URL (required for navigate)" })),
-      tabId: Type.Optional(Type.String({ description: "Optional browser tab id. Defaults to the active tab." })),
+      tabId: Type.Optional(Type.String({ description: "Browser tab id. Required for click, type, select, key, and evaluate; use the exact id returned by the latest snapshot. Optional for other actions, which default to the active tab." })),
       ref: Type.Optional(Type.Number({ description: "Element ref number (used for click/type/select)" })),
       text: Type.Optional(Type.String({ description: "Input text (required for type)" })),
       direction: Type.Optional(StringEnum(
@@ -182,6 +267,15 @@ export function createBrowserTool(getSessionPath: any, options: {
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       try {
         const sessionPath = resolveSessionPath(ctx);
+
+        // 用户急停后，本 session 的浏览器授权被撤销：返回正常结果告知模型停手，不再触碰浏览器。
+        if (browser.isBrowserAuthorizationRevoked?.(sessionPath)) {
+          return toolOk(t("error.browserAuthorizationRevoked"), {
+            status: "authorization_revoked",
+            running: false,
+            url: null,
+          });
+        }
 
         switch (params.action) {
 
@@ -215,14 +309,23 @@ export function createBrowserTool(getSessionPath: any, options: {
             const result = await browser.navigate(params.url, sessionPath, { tabId: params.tabId });
             logAction(sessionPath, "navigate", { url: params.url }, result.title);
             return toolOk(
-              t("error.browserNavigated", { title: result.title, url: result.url, snapshot: result.snapshot }),
+              t("error.browserNavigated", {
+                title: result.title,
+                url: result.url,
+                snapshot: snapshotWithTabIdentity(
+                  result.snapshot,
+                  sessionPath,
+                  result.tabId || params.tabId,
+                ),
+              }),
               { action: "navigate", ...await statusFields(sessionPath), title: result.title },
             );
           }
 
           // ── snapshot ──
           case "snapshot": {
-            const text = await browser.snapshot(sessionPath, params.tabId || null);
+            const snapshot = await browser.snapshot(sessionPath, params.tabId || null);
+            const text = snapshotWithTabIdentity(snapshot, sessionPath, params.tabId);
             return toolOk(text, { action: "snapshot", ...await statusFields(sessionPath) });
           }
 
@@ -265,7 +368,10 @@ export function createBrowserTool(getSessionPath: any, options: {
             if (params.ref == null) return browserError(t("error.browserClickNeedRef"));
             const snapshot = await browser.click(params.ref, sessionPath, params.tabId || null);
             logAction(sessionPath, "click", { ref: params.ref }, `clicked [${params.ref}]`);
-            return toolOk(t("error.browserClicked", { ref: params.ref, snapshot }), { action: "click", ref: params.ref, ...await statusFields(sessionPath) });
+            return toolOk(t("error.browserClicked", {
+              ref: params.ref,
+              snapshot: snapshotWithTabIdentity(snapshot, sessionPath, params.tabId),
+            }), { action: "click", ref: params.ref, ...await statusFields(sessionPath) });
           }
 
           // ── type ──
@@ -274,7 +380,10 @@ export function createBrowserTool(getSessionPath: any, options: {
             const snapshot = await browser.type(params.text, params.ref, { pressEnter: params.pressEnter ?? false }, sessionPath, params.tabId || null);
             logAction(sessionPath, "type", { ref: params.ref, text: params.text, pressEnter: params.pressEnter ?? false }, "typed");
             return toolOk(
-              t("error.browserTyped", { target: params.ref != null ? ` to [${params.ref}]` : "", snapshot }),
+              t("error.browserTyped", {
+                target: params.ref != null ? ` to [${params.ref}]` : "",
+                snapshot: snapshotWithTabIdentity(snapshot, sessionPath, params.tabId),
+              }),
               { action: "type", ref: params.ref, ...await statusFields(sessionPath) },
             );
           }
@@ -285,7 +394,10 @@ export function createBrowserTool(getSessionPath: any, options: {
             const snapshot = await browser.scroll(params.direction, params.amount ?? 3, sessionPath, params.tabId || null);
             logAction(sessionPath, "scroll", { direction: params.direction, amount: params.amount }, "scrolled");
             return toolOk(
-              t("error.browserScrolled", { dir: params.direction, snapshot }),
+              t("error.browserScrolled", {
+                dir: params.direction,
+                snapshot: snapshotWithTabIdentity(snapshot, sessionPath, params.tabId),
+              }),
               { action: "scroll", direction: params.direction, ...await statusFields(sessionPath) },
             );
           }
@@ -296,7 +408,11 @@ export function createBrowserTool(getSessionPath: any, options: {
             if (!params.value) return browserError(t("error.browserSelectNeedValue"));
             const snapshot = await browser.select(params.ref, params.value, sessionPath, params.tabId || null);
             return toolOk(
-              t("error.browserSelected", { ref: params.ref, value: params.value, snapshot }),
+              t("error.browserSelected", {
+                ref: params.ref,
+                value: params.value,
+                snapshot: snapshotWithTabIdentity(snapshot, sessionPath, params.tabId),
+              }),
               { action: "select", ref: params.ref, value: params.value, ...await statusFields(sessionPath) },
             );
           }
@@ -305,7 +421,10 @@ export function createBrowserTool(getSessionPath: any, options: {
           case "key": {
             if (!params.key) return browserError(t("error.browserKeyNeedKey"));
             const snapshot = await browser.pressKey(params.key, sessionPath, params.tabId || null);
-            return toolOk(t("error.browserKeyPressed", { key: params.key, snapshot }), { action: "key", key: params.key, ...await statusFields(sessionPath) });
+            return toolOk(t("error.browserKeyPressed", {
+              key: params.key,
+              snapshot: snapshotWithTabIdentity(snapshot, sessionPath, params.tabId),
+            }), { action: "key", key: params.key, ...await statusFields(sessionPath) });
           }
 
           // ── wait ──
@@ -314,7 +433,9 @@ export function createBrowserTool(getSessionPath: any, options: {
               timeout: params.timeout ?? 5000,
               state: params.state ?? "domcontentloaded",
             }, sessionPath, params.tabId || null);
-            return toolOk(t("error.browserWaitDone", { snapshot }), { action: "wait", ...await statusFields(sessionPath) });
+            return toolOk(t("error.browserWaitDone", {
+              snapshot: snapshotWithTabIdentity(snapshot, sessionPath, params.tabId),
+            }), { action: "wait", ...await statusFields(sessionPath) });
           }
 
           // ── evaluate ──
@@ -338,6 +459,15 @@ export function createBrowserTool(getSessionPath: any, options: {
         }
       } catch (error) {
         const sessionPath = resolveSessionPath(ctx);
+        // 用户在操作飞行途中急停：失败源于授权被撤销，返回拒绝通知而非报错，模型不应重试。
+        if (browser.isBrowserAuthorizationRevoked?.(sessionPath)) {
+          logAction(sessionPath, params.action, params, "authorization_revoked");
+          return toolOk(t("error.browserAuthorizationRevoked"), {
+            status: "authorization_revoked",
+            running: false,
+            url: null,
+          });
+        }
         logAction(sessionPath, params.action, params, null, error.message);
         return browserError(t("error.browserActionFailed", { msg: error.message }), {
           action: params.action,

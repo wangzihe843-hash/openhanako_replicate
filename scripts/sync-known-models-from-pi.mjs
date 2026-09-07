@@ -3,7 +3,7 @@
  * sync-known-models-from-pi.mjs — 用 pi-ai 携带的 models.dev 目录对表刷新
  * lib/known-models.json（Hana 策展的模型参考词典）。
  *
- * 行为（任务书 2026-07-08-pi-sdk-0.80.3-upgrade-plan Task 9 规格）：
+ * 行为：
  *   - 只做交集对表：遍历 Hana 词典每个 (provider, modelId)，在 pi 目录里找
  *     同 provider 同 id 的条目；provider key 字面比对，不做模糊映射。
  *   - 字段白名单（只碰这四项）：

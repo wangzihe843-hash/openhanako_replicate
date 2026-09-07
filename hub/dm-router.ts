@@ -15,7 +15,7 @@
 import fs from "fs";
 import path from "path";
 import {
-  appendMessage,
+  appendDmMessage,
   getRecentMessages,
   formatMessagesForLLM,
 } from "../lib/channels/channel-store.ts";
@@ -407,14 +407,13 @@ export class DmRouter {
 
       if (!cleanReply) break;
 
-      // 写入双方的 dm 文件
-      const toFile = path.join(agentsDir, toId, "dm", `${fromId}.md`);
-      const fromFile = path.join(agentsDir, fromId, "dm", `${toId}.md`);
-      if (!fs.existsSync(toFile)) break;
-      await appendMessage(toFile, toId, cleanReply);
-      if (fs.existsSync(fromFile)) {
-        await appendMessage(fromFile, toId, cleanReply);
-      }
+      // Replies and proactive sends share one mirrored write order.
+      const written = await appendDmMessage({
+        agentsDir, fromId: toId, toId: fromId, body: cleanReply,
+        createMissing: false,
+        canWrite: () => !signal?.aborted && this._isPhoneEnabled(),
+      });
+      if (!written) break;
 
       // 通知前端
       this._hub.eventBus.emit({

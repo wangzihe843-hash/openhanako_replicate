@@ -120,6 +120,7 @@ describe("LocalFsProvider", () => {
     fs.mkdirSync(outside, { recursive: true });
     fs.writeFileSync(path.join(outside, "secret.md"), "secret");
     fs.symlinkSync(outside, path.join(cwd, "linked"), process.platform === "win32" ? "junction" : "dir");
+    expect(fs.lstatSync(path.join(cwd, "linked")).isSymbolicLink()).toBe(true);
 
     await expect(provider.write({ kind: "local-file", path: "linked/secret.md" }, "overwrite"))
       .rejects.toMatchObject({

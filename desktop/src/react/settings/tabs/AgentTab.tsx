@@ -45,7 +45,7 @@ export function AgentTab() {
 
   const [agentName, setAgentName] = useState('');
   const [identity, setIdentity] = useState('');
-  const [ishiki, setIshiki] = useState('');
+  const [agentsMd, setAgentsMd] = useState('');
   const [expCategories, setExpCategories] = useState<ExpCategory[]>([]);
   const [exportPlanningAgentId, setExportPlanningAgentId] = useState<string | null>(null);
   const [exportingCharacterCard, setExportingCharacterCard] = useState(false);
@@ -56,7 +56,7 @@ export function AgentTab() {
     if (settingsConfig) {
       setAgentName(settingsConfig.agent?.name || '');
       setIdentity(settingsConfig._identity || '');
-      setIshiki(settingsConfig._ishiki || '');
+      setAgentsMd(settingsConfig._agents || '');
       setExpCategories(parseExperience(settingsConfig._experience || ''));
     }
   }, [settingsConfig]);
@@ -99,6 +99,7 @@ export function AgentTab() {
   const currentModelUnavailable = !!currentModel && !availableModels.some(m => `${m.provider}/${m.id}` === currentModel);
 
   const memoryEnabled = readConfigBoolean(settingsConfig, cfg => cfg.memory?.enabled, true);
+  const autoDreamEnabled = readConfigBoolean(settingsConfig, cfg => cfg.memory?.dream?.auto_enabled, false);
   const experienceEnabled = readConfigBoolean(settingsConfig, cfg => cfg.experience?.enabled, false);
   const hasAvailableToolsField = !!settingsConfig && Object.prototype.hasOwnProperty.call(settingsConfig, 'availableTools');
   const availableTools = hasAvailableToolsField ? settingsConfig?.availableTools : undefined;
@@ -137,9 +138,9 @@ export function AgentTab() {
     try {
       const agentId = getSettingsAgentId()!;
       const identityChanged = identity !== (settingsConfig?._identity || '');
-      const ishikiChanged = ishiki !== (settingsConfig?._ishiki || '');
+      const agentsMdChanged = agentsMd !== (settingsConfig?._agents || '');
 
-      if (!identityChanged && !ishikiChanged) {
+      if (!identityChanged && !agentsMdChanged) {
         showToast(t('settings.noChanges'), 'success');
         return;
       }
@@ -153,11 +154,11 @@ export function AgentTab() {
           body: JSON.stringify({ content: identity }),
         }));
       }
-      if (ishikiChanged) {
-        requests.push(hanaFetch(`${agentBase}/ishiki`, {
+      if (agentsMdChanged) {
+        requests.push(hanaFetch(`${agentBase}/agents-md`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: ishiki }),
+          body: JSON.stringify({ content: agentsMd }),
         }));
       }
 
@@ -373,15 +374,15 @@ export function AgentTab() {
           <span className={styles['settings-form-hint']}>{t('settings.agent.identityHint')}</span>
         </div>
         <div className={styles['settings-form-field']}>
-          <label className={styles['settings-form-label']}>{t('settings.agent.ishiki')}</label>
+          <label className={styles['settings-form-label']}>{t('settings.agent.agentsMd')}</label>
           <textarea
             className={styles['settings-textarea']}
             rows={10}
             spellCheck={false}
-            value={ishiki}
-            onChange={(e) => setIshiki(e.target.value)}
+            value={agentsMd}
+            onChange={(e) => setAgentsMd(e.target.value)}
           />
-          <span className={styles['settings-form-hint']}>{t('settings.agent.ishikiHint')}</span>
+          <span className={styles['settings-form-hint']}>{t('settings.agent.agentsMdHint')}</span>
         </div>
         <div className={`${styles['settings-form-field']} ${styles['settings-form-actions-center']}`}>
           <button className={styles['settings-save-btn-sm']} onClick={saveAgent}>
@@ -396,6 +397,7 @@ export function AgentTab() {
         agentId={selectedSettingsAgentId}
         hasUtilityModel={hasUtilityModel}
         memoryEnabled={memoryEnabled}
+        autoDreamEnabled={autoDreamEnabled === true}
         currentPins={currentPins}
       />
 

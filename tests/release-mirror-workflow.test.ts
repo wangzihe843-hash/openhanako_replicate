@@ -20,14 +20,17 @@ describe("release mirror workflows", () => {
     expect(workflow).not.toContain("node scripts/mirror-release-to-atomgit.mjs --latest");
   });
 
-  it("keeps manual mirror selection explicit for prerelease and stable releases", () => {
+  it("keeps manual selection explicit and routes GitHub release edits by exact tag", () => {
     const workflow = readWorkflow("mirror-release-to-atomgit.yml");
 
     expect(workflow).toContain("- newest");
     expect(workflow).toContain("- stable");
     expect(workflow).toContain("- tag");
     expect(workflow).toContain("ATOMGIT_REPO: OpenHanako-Releases");
-    expect(workflow).toContain("ARGS+=(--stable \"${{ inputs.limit }}\")");
-    expect(workflow).toContain("ARGS+=(--newest \"${{ inputs.limit }}\")");
+    expect(workflow).toContain("INPUT_LIMIT: ${{ inputs.limit }}");
+    expect(workflow).toContain('ARGS+=(--stable "$INPUT_LIMIT")');
+    expect(workflow).toContain('ARGS+=(--newest "$INPUT_LIMIT")');
+    expect(workflow).toContain("RELEASE_TAG: ${{ github.event.release.tag_name }}");
+    expect(workflow).toContain('ARGS+=(--tag "$RELEASE_TAG")');
   });
 });

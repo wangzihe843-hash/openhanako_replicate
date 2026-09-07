@@ -3,6 +3,7 @@ import path from "path";
 import { createHash } from "crypto";
 import { detectMime, extOfName, inferFileKind } from "../file-metadata.ts";
 import { isSessionJsonlFilename } from "../session-jsonl.ts";
+import { canonicalFilesystemPathSync, filesystemIdentityKeySync } from "../../shared/link-aware-fs.ts";
 
 export const SESSION_FILE_SIDECAR_VERSION = 1;
 export const SESSION_FILE_CACHE_INACTIVE_TTL_MS = 72 * 60 * 60 * 1000;
@@ -57,7 +58,7 @@ export class SessionFileRegistry {
   constructor({ now = () => Date.now(), managedCacheRoot = null, getSessionIdForPath = null }: any = {}) {
     this._now = now;
     this._getSessionIdForPath = typeof getSessionIdForPath === "function" ? getSessionIdForPath : null;
-    this._managedCacheRoot = managedCacheRoot ? normalizeExistingOrResolvedPath(managedCacheRoot) : null;
+    this._managedCacheRoot = managedCacheRoot ? canonicalFilesystemPathSync(managedCacheRoot) : null;
     this._byId = new Map();
     this._idsBySession = new Map();
     this._sidecarsBySession = new Map();
@@ -88,7 +89,8 @@ export class SessionFileRegistry {
 
     let incomingRealPath;
     try {
-      incomingRealPath = fs.realpathSync(filePath);
+      fs.accessSync(filePath, fs.constants.F_OK);
+      incomingRealPath = canonicalFilesystemPathSync(filePath);
     } catch {
       throw new Error(`file not found: ${filePath}`);
     }
@@ -108,7 +110,7 @@ export class SessionFileRegistry {
       && existingMaterializationExists(existing);
     const materializedFilePath = shouldKeepExistingMaterialization ? existing.filePath : filePath;
     const realPath = shouldKeepExistingMaterialization
-      ? fs.realpathSync(existing.realPath || existing.filePath)
+      ? canonicalFilesystemPathSync(existing.realPath || existing.filePath)
       : incomingRealPath;
 
     const stat = fs.statSync(realPath);
@@ -174,40 +176,50 @@ export class SessionFileRegistry {
 
   get(fileId, { sessionId = null, sessionPath = null }: any = {}) {
     if (!fileId) return null;
+    let resolvedFileId = fileId;
     if (sessionPath) {
       this._hydrateSession(sessionPath, sessionId);
-      const ids = this._idsBySession.get(this._sessionKeyForPath(sessionPath, sessionId)) || [];
-      if (!ids.includes(fileId)) return null;
+      const sessionKey = this._sessionKeyForPath(sessionPath, sessionId);
+      resolvedFileId = this._resolveScopedFileId(fileId, sessionKey);
+      if (!resolvedFileId) return null;
+    } else if (sessionId) {
+      resolvedFileId = this._resolveScopedFileId(fileId, normalizeSessionId(sessionId));
+      if (!resolvedFileId) return null;
     }
-    const entry = this._byId.get(fileId) || null;
+    const entry = this._byId.get(resolvedFileId) || null;
     if (!entry) return null;
     if (sessionId && entry.sessionId && entry.sessionId !== sessionId) return null;
     return entry;
   }
 
-  getByFilePath(filePath, { sessionPath }: any = {}) {
+  getByFilePath(filePath, { sessionId = null, sessionPath = null }: any = {}) {
     if (!filePath) return null;
-    if (sessionPath) this._hydrateSession(sessionPath);
-    const target = normalizeExistingOrResolvedPath(filePath);
+    if (sessionPath) this._hydrateSession(sessionPath, sessionId);
+    const target = filesystemIdentityKeyOrNull(filePath);
+    if (!target) return null;
     const ids = sessionPath
-      ? (this._idsBySession.get(this._sessionKeyForPath(sessionPath)) || [])
+      ? (this._idsBySession.get(this._sessionKeyForPath(sessionPath, sessionId)) || [])
       : Array.from(this._byId.keys());
     for (const id of ids) {
       const entry = this._byId.get(id);
       if (!entry) continue;
-      const candidates = [entry.filePath, entry.realPath].filter(Boolean);
-      if (candidates.some((candidate) => normalizeExistingOrResolvedPath(candidate) === target)) {
+      const candidates = [
+        entry.filePath,
+        entry.realPath,
+        ...(sessionPath ? normalizeStringList(entry.legacyFilePaths) : []),
+      ].filter(Boolean);
+      if (candidates.some((candidate) => filesystemIdentityKeyOrNull(candidate) === target)) {
         return entry;
       }
     }
     return null;
   }
 
-  getBySourceKey(sourceKey, { sessionPath }: any = {}) {
+  getBySourceKey(sourceKey, { sessionId = null, sessionPath = null }: any = {}) {
     const normalizedSourceKey = normalizeSourceKey(sourceKey);
     if (!normalizedSourceKey) return null;
-    if (sessionPath) this._hydrateSession(sessionPath);
-    return this._findSessionFileBySourceKey(sessionPath, normalizedSourceKey);
+    if (sessionPath) this._hydrateSession(sessionPath, sessionId);
+    return this._findSessionFileBySourceKey(sessionPath, normalizedSourceKey, sessionId);
   }
 
   updateTranscription(fileId, transcription, { sessionId = null, sessionPath = null }: any = {}) {
@@ -233,11 +245,220 @@ export class SessionFileRegistry {
     this._remember(next, ownerSessionPath);
     const sidecarKey = this._sessionKeyForPath(ownerSessionPath, ownerSessionId || current.sessionId || null);
     const sidecar = this._sidecarsBySession.get(sidecarKey) || emptySidecar(ownerSessionPath, now, ownerSessionId || current.sessionId || null);
-    sidecar.files[fileId] = next;
+    sidecar.files[current.id] = next;
     sidecar.updatedAt = now;
     this._sidecarsBySession.set(sidecarKey, sidecar);
     this._saveSidecar(ownerSessionPath, sessionId || current.sessionId || null);
     return next;
+  }
+
+  forkSessionFiles({
+    sourceSessionId,
+    sourceSessionPath,
+    targetSessionId,
+    targetSessionPath,
+    retainedEntries = [],
+    retainedReferences = [],
+  }: any = {}) {
+    const sourceId = requireSessionId(sourceSessionId, "sourceSessionId");
+    const targetId = requireSessionId(targetSessionId, "targetSessionId");
+    requireAbsoluteSessionPath(sourceSessionPath, "sourceSessionPath");
+    requireAbsoluteSessionPath(targetSessionPath, "targetSessionPath");
+    this._assertResolvedSessionIdentity(sourceSessionPath, sourceId, "source");
+    this._assertResolvedSessionIdentity(targetSessionPath, targetId, "target");
+    if (sourceId === targetId) throw new Error("targetSessionId must differ from sourceSessionId");
+    if (pathsReferToSameFile(sourceSessionPath, targetSessionPath)) {
+      throw new Error("targetSessionPath must differ from sourceSessionPath");
+    }
+
+    const targetSidecarPath = sessionFileSidecarPath(targetSessionPath);
+    if (fs.existsSync(targetSidecarPath)) {
+      throw new Error(`target session file sidecar already exists: ${targetSidecarPath}`);
+    }
+
+    this._hydrateSession(sourceSessionPath, sourceId);
+    const sourceKey = this._sessionKeyForPath(sourceSessionPath, sourceId);
+    const sourceSidecar = this._sidecarsBySession.get(sourceKey);
+    if (!sourceSidecar) {
+      throw new Error(`source session file sidecar identity mismatch for ${sourceSessionPath}`);
+    }
+    const sourceIds = this._idsBySession.get(sourceKey) || [];
+    const sourceFiles = sourceIds.map((id) => this._byId.get(id)).filter(Boolean);
+    const retainedIdentities = collectSessionFileReferenceIdentities([retainedEntries, retainedReferences]);
+    const selectedFiles = sourceFiles.filter((file) => sessionFileIsReachable(file, retainedIdentities));
+    if (!selectedFiles.length) {
+      return { files: [], refs: [], fileIdMap: {} };
+    }
+
+    const managedFiles = selectedFiles.filter(isManagedCache);
+    if (managedFiles.length && !this._managedCacheRoot) {
+      throw new Error("managedCacheRoot is required to fork managed session files");
+    }
+
+    const targetOwner = { sessionId: targetId, sessionPath: targetSessionPath };
+    const targetCacheDir = managedFiles.length
+      ? sessionFilesCacheDirFromRoot(this._managedCacheRoot, targetOwner)
+      : null;
+    if (targetCacheDir && fs.existsSync(targetCacheDir)) {
+      throw new Error(`target session file cache already exists: ${targetCacheDir}`);
+    }
+    const stagedCacheDir = targetCacheDir
+      ? `${targetCacheDir}.fork-${process.pid}-${Date.now()}.tmp`
+      : null;
+    const files: Record<string, any> = {};
+    const fileIdMap: Record<string, string> = {};
+    const usedManagedNames = new Set<string>();
+    let installedCacheDir = false;
+    let installedSidecar = false;
+    let targetKey: string | null = null;
+
+    try {
+      if (stagedCacheDir) fs.mkdirSync(stagedCacheDir, { recursive: true });
+
+      for (const sourceFile of selectedFiles) {
+        const sourceFileId = normalizeFileId(sourceFile.id || sourceFile.fileId);
+        if (!sourceFileId) throw new Error("source session file is missing an id");
+        let childFilePath = sourceFile.filePath;
+        let childRealPath = sourceFile.realPath || sourceFile.filePath;
+        if (isManagedCache(sourceFile)) {
+          const managedName = uniqueManagedForkName(sourceFile, usedManagedNames);
+          childFilePath = path.join(targetCacheDir, managedName);
+          childRealPath = childFilePath;
+          const sourceBytesPath = sourceFile.realPath || sourceFile.filePath;
+          if (sourceFile.status === "available" && sourceBytesPath && fs.existsSync(sourceBytesPath)) {
+            fs.cpSync(sourceBytesPath, path.join(stagedCacheDir, managedName), {
+              recursive: !!sourceFile.isDirectory,
+              force: false,
+              errorOnExist: true,
+            });
+          }
+        }
+
+        const childFileId = buildSessionFileId({
+          ownerKey: sessionFileOwnerKey(targetOwner),
+          realPath: childRealPath,
+          sourceKey: normalizeSourceKey(sourceFile.sourceKey),
+        });
+        if (files[childFileId]) {
+          throw new Error(`forked session file id collision: ${childFileId}`);
+        }
+        const legacyFileIds = uniqueStrings([
+          ...normalizeStringList(sourceFile.legacyFileIds),
+          sourceFileId,
+        ], [childFileId]);
+        const legacyFilePaths = uniqueStrings([
+          ...normalizeStringList(sourceFile.legacyFilePaths),
+          sourceFile.filePath,
+          sourceFile.realPath,
+        ], [childFilePath, childRealPath]);
+        const childFile = freezeEntry({
+          ...sourceFile,
+          id: childFileId,
+          sessionId: targetId,
+          sessionPath: targetSessionPath,
+          filePath: childFilePath,
+          realPath: childRealPath,
+          ...(legacyFileIds.length ? { legacyFileIds } : {}),
+          ...(legacyFilePaths.length ? { legacyFilePaths } : {}),
+        });
+        files[childFileId] = childFile;
+        fileIdMap[sourceFileId] = childFileId;
+      }
+
+      const refs = forkSessionFileRefs(sourceSidecar.refs, fileIdMap, files, this._now());
+      const now = this._now();
+      const targetSidecar = {
+        version: SESSION_FILE_SIDECAR_VERSION,
+        sessionId: targetId,
+        sessionPath: targetSessionPath,
+        files,
+        refs,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      if (targetCacheDir && stagedCacheDir) {
+        fs.mkdirSync(path.dirname(targetCacheDir), { recursive: true });
+        fs.renameSync(stagedCacheDir, targetCacheDir);
+        installedCacheDir = true;
+      }
+
+      targetKey = this._sessionKeyForPath(targetSessionPath, targetId);
+      this._sidecarsBySession.set(targetKey, targetSidecar);
+      try {
+        this._saveSidecar(targetSessionPath, targetId);
+      } catch (err) {
+        this._sidecarsBySession.delete(targetKey);
+        throw err;
+      }
+      installedSidecar = true;
+      this._loadedSessions.add(targetKey);
+      for (const childFile of Object.values(files)) {
+        this._remember(childFile, targetSessionPath, targetId);
+      }
+      return { files: Object.values(files), refs, fileIdMap };
+    } catch (err) {
+      if (installedSidecar) fs.rmSync(targetSidecarPath, { force: true });
+      if (targetKey) {
+        this._sidecarsBySession.delete(targetKey);
+        this._loadedSessions.delete(targetKey);
+      }
+      if (stagedCacheDir) fs.rmSync(stagedCacheDir, { recursive: true, force: true });
+      if (installedCacheDir && targetCacheDir) {
+        this._assertManagedCacheTarget(targetCacheDir);
+        fs.rmSync(targetCacheDir, { recursive: true, force: true });
+      }
+      throw err;
+    }
+  }
+
+  discardForkedSessionFiles({ sessionId, sessionPath }: any = {}) {
+    const targetId = requireSessionId(sessionId, "sessionId");
+    requireAbsoluteSessionPath(sessionPath, "sessionPath");
+    const resolvedSessionId = this._resolveSessionIdForPath(sessionPath);
+    if (resolvedSessionId && resolvedSessionId !== targetId) {
+      throw new Error(
+        `fork session file identity mismatch: ${sessionPath} belongs to ${resolvedSessionId}, not ${targetId}`,
+      );
+    }
+
+    const sidecarPath = sessionFileSidecarPath(sessionPath);
+    let sidecar = null;
+    if (fs.existsSync(sidecarPath)) {
+      try {
+        sidecar = JSON.parse(fs.readFileSync(sidecarPath, "utf-8"));
+      } catch (err) {
+        throw new Error(`failed to read fork session file sidecar: ${sidecarPath}: ${(err as any).message}`);
+      }
+      const sidecarSessionId = normalizeSessionId(sidecar?.sessionId);
+      if (sidecarSessionId !== targetId) {
+        throw new Error(
+          `fork session file sidecar identity mismatch: expected ${targetId}, found ${sidecarSessionId || "missing"}`,
+        );
+      }
+    }
+
+    const hasManagedFiles = Object.values(sidecar?.files || {}).some(isManagedCache);
+    if (hasManagedFiles && !this._managedCacheRoot) {
+      throw new Error("managedCacheRoot is required to discard managed session files");
+    }
+    const targetCacheDir = this._managedCacheRoot
+      ? sessionFilesCacheDirFromRoot(this._managedCacheRoot, { sessionId: targetId, sessionPath })
+      : null;
+    if (targetCacheDir) this._assertManagedCacheTarget(targetCacheDir);
+
+    const unloaded = this.unloadSession(sessionPath, { sessionId: targetId });
+    const sidecarDeleted = fs.existsSync(sidecarPath);
+    if (sidecarDeleted) fs.rmSync(sidecarPath, { force: true });
+    const managedCacheDeleted = !!targetCacheDir && fs.existsSync(targetCacheDir);
+    if (managedCacheDeleted) fs.rmSync(targetCacheDir, { recursive: true, force: true });
+    return {
+      sessionId: targetId,
+      sessionPath,
+      sidecarDeleted,
+      managedCacheDeleted,
+      unloaded,
+    };
   }
 
   list(sessionPath) {
@@ -246,9 +467,20 @@ export class SessionFileRegistry {
     return ids.map(id => this._byId.get(id)).filter(Boolean);
   }
 
-  unloadSession(sessionPath) {
+  /**
+   * Project the durable sidecar superset onto one explicit active branch.
+   * Hidden branches keep their sidecar records and managed bytes for recovery,
+   * while user-facing/session-scoped consumers only receive reachable files.
+   */
+  listReachable(sessionPath, references = []) {
+    const retainedIdentities = collectSessionFileReferenceIdentities(references);
+    if (retainedIdentities.size === 0) return [];
+    return this.list(sessionPath).filter((file) => sessionFileIsReachable(file, retainedIdentities));
+  }
+
+  unloadSession(sessionPath, { sessionId = null }: any = {}) {
     if (!sessionPath) throw new Error("sessionPath is required to unload session files");
-    const key = this._sessionKeyForPath(sessionPath);
+    const key = this._sessionKeyForPath(sessionPath, sessionId);
     const ids = new Set(this._idsBySession.get(key) || []);
     const sidecar = this._sidecarsBySession.get(key);
     for (const file of Object.values(sidecar?.files || {}) as any) {
@@ -359,26 +591,38 @@ export class SessionFileRegistry {
 
   _findSessionFileByRealPath(sessionPath, realPath) {
     const ids = this._idsBySession.get(this._sessionKeyForPath(sessionPath)) || [];
-    const target = normalizeExistingOrResolvedPath(realPath);
+    const target = filesystemIdentityKeyOrNull(realPath);
+    if (!target) return null;
     for (const id of ids) {
       const entry = this._byId.get(id);
       if (!entry) continue;
-      const entryRealPath = normalizeExistingOrResolvedPath(entry.realPath || entry.filePath);
-      if (entryRealPath === target) return entry;
+      const entryRealPath = filesystemIdentityKeyOrNull(entry.realPath || entry.filePath);
+      if (entryRealPath && entryRealPath === target) return entry;
     }
     return null;
   }
 
-  _findSessionFileBySourceKey(sessionPath, sourceKey) {
+  _findSessionFileBySourceKey(sessionPath, sourceKey, sessionId = null) {
     const normalizedSourceKey = normalizeSourceKey(sourceKey);
     if (!normalizedSourceKey) return null;
     const ids = sessionPath
-      ? (this._idsBySession.get(this._sessionKeyForPath(sessionPath)) || [])
+      ? (this._idsBySession.get(this._sessionKeyForPath(sessionPath, sessionId)) || [])
       : Array.from(this._byId.keys());
     for (const id of ids) {
       const entry = this._byId.get(id);
       if (!entry?.sourceKey) continue;
       if (entry.sourceKey === normalizedSourceKey) return entry;
+    }
+    return null;
+  }
+
+  _resolveScopedFileId(fileId, sessionKey) {
+    if (!sessionKey) return null;
+    const ids = this._idsBySession.get(sessionKey) || [];
+    if (ids.includes(fileId)) return fileId;
+    for (const id of ids) {
+      const entry = this._byId.get(id);
+      if (normalizeStringList(entry?.legacyFileIds).includes(fileId)) return id;
     }
     return null;
   }
@@ -432,14 +676,18 @@ export class SessionFileRegistry {
     const sidecarPath = sessionFileSidecarPath(sessionPath);
     fs.mkdirSync(path.dirname(sidecarPath), { recursive: true });
     const tmpPath = `${sidecarPath}.${process.pid}.${Date.now()}.tmp`;
-    fs.writeFileSync(tmpPath, `${JSON.stringify(sidecar, null, 2)}\n`, "utf-8");
-    fs.renameSync(tmpPath, sidecarPath);
+    try {
+      fs.writeFileSync(tmpPath, `${JSON.stringify(sidecar, null, 2)}\n`, "utf-8");
+      fs.renameSync(tmpPath, sidecarPath);
+    } finally {
+      fs.rmSync(tmpPath, { force: true });
+    }
   }
 
   _assertManagedCacheTarget(filePath) {
     if (!this._managedCacheRoot) return;
-    const realPath = normalizeExistingOrResolvedPath(filePath);
-    if (!isInsideRoot(realPath, this._managedCacheRoot)) {
+    const realPath = filesystemIdentityKeySync(filePath);
+    if (!isInsideRoot(realPath, filesystemIdentityKeySync(this._managedCacheRoot))) {
       throw new Error(`managed cache file is outside session-files root: ${filePath}`);
     }
   }
@@ -450,6 +698,15 @@ export class SessionFileRegistry {
       return normalizeSessionId(this._getSessionIdForPath(sessionPath));
     } catch {
       return null;
+    }
+  }
+
+  _assertResolvedSessionIdentity(sessionPath, sessionId, label) {
+    const resolvedSessionId = this._resolveSessionIdForPath(sessionPath);
+    if (resolvedSessionId && resolvedSessionId !== sessionId) {
+      throw new Error(
+        `${label} session file identity mismatch: ${sessionPath} belongs to ${resolvedSessionId}, not ${sessionId}`,
+      );
     }
   }
 
@@ -562,15 +819,22 @@ function collectJsonlFiles(dir, out) {
   }
 }
 
-function normalizeExistingOrResolvedPath(filePath) {
-  const resolved = path.resolve(filePath);
-  try { return fs.realpathSync(resolved); }
-  catch { return resolved; }
+/**
+ * Identity key for comparing two paths, not for storing: it canonicalizes through
+ * the OS and folds case where the platform ignores it, so the same file spelled
+ * two ways compares equal. Anything that reads or mounts the file must use the
+ * canonical path instead, which keeps the spelling the filesystem reports.
+ */
+function filesystemIdentityKeyOrNull(filePath) {
+  if (typeof filePath !== "string" || !filePath) return null;
+  return filesystemIdentityKeySync(filePath);
 }
 
 function pathsReferToSameFile(a, b) {
-  if (!a || !b) return false;
-  return normalizeExistingOrResolvedPath(a) === normalizeExistingOrResolvedPath(b);
+  const left = filesystemIdentityKeyOrNull(a);
+  const right = filesystemIdentityKeyOrNull(b);
+  if (!left || !right) return false;
+  return left === right;
 }
 
 function existingMaterializationExists(file) {
@@ -597,7 +861,7 @@ function readSample(filePath) {
 
 function buildSessionFileId({ ownerKey, realPath, sourceKey }) {
   const hash = createHash("sha256")
-    .update(JSON.stringify([ownerKey, sourceKey || realPath]))
+    .update(JSON.stringify([ownerKey, sourceKey || filesystemIdentityKeySync(realPath)]))
     .digest("hex")
     .slice(0, 16);
   return `sf_${hash}`;
@@ -628,6 +892,171 @@ function normalizeSourceKey(value) {
   if (!trimmed) return null;
   if (trimmed.length > 512) throw new Error("sourceKey is too long");
   return trimmed;
+}
+
+function requireSessionId(value, fieldName) {
+  const sessionId = normalizeSessionId(value);
+  if (!sessionId) throw new Error(`${fieldName} is required to fork session files`);
+  return sessionId;
+}
+
+function requireAbsoluteSessionPath(value, fieldName) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${fieldName} is required to fork session files`);
+  }
+  if (!path.isAbsolute(value)) throw new Error(`${fieldName} must be an absolute path`);
+}
+
+function normalizeFileId(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeStringList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => typeof item === "string" && item.trim())
+    .map((item) => item.trim());
+}
+
+function uniqueStrings(values, excluded = []) {
+  const excludedSet = new Set((excluded || []).filter(Boolean));
+  const result = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    if (typeof value !== "string" || !value.trim()) continue;
+    const normalized = value.trim();
+    if (excludedSet.has(normalized) || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function sessionFilesCacheDirFromRoot(managedCacheRoot, sessionRef) {
+  const hash = createHash("sha256")
+    .update(sessionFileOwnerKey(sessionRef))
+    .digest("hex")
+    .slice(0, 24);
+  return path.join(managedCacheRoot, hash);
+}
+
+const SESSION_FILE_MARKER_RE = /\[SessionFile\]\s+(\{[^\r\n]*\})/g;
+const ATTACHED_MEDIA_MARKER_RE = /\[attached_(?:image|video|audio):\s*([^\]]+)\]/g;
+
+function addReferenceIdentity(result, value) {
+  if (typeof value !== "string") return;
+  const normalized = value.trim();
+  if (normalized) result.add(normalized);
+}
+
+function collectSessionFileReferenceObject(value, result) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const explicitType = value.type === "session_file"
+    || value.type === "session-file"
+    || value.kind === "session_file"
+    || value.kind === "session-file";
+  const fileId = normalizeFileId(value.fileId);
+  if (fileId) result.add(fileId);
+  if (explicitType && !fileId) addReferenceIdentity(result, value.id);
+  if (fileId || explicitType || typeof value.filePath === "string" || typeof value.realPath === "string") {
+    addReferenceIdentity(result, value.filePath);
+    addReferenceIdentity(result, value.realPath);
+    if (fileId || explicitType) addReferenceIdentity(result, value.path);
+  }
+}
+
+function collectSessionFileReferenceText(value, result) {
+  SESSION_FILE_MARKER_RE.lastIndex = 0;
+  for (const match of value.matchAll(SESSION_FILE_MARKER_RE)) {
+    try {
+      collectSessionFileReferenceObject(JSON.parse(match[1]), result);
+    } catch {
+      // Malformed visible text is not an authorization-bearing file reference.
+    }
+  }
+  ATTACHED_MEDIA_MARKER_RE.lastIndex = 0;
+  for (const match of value.matchAll(ATTACHED_MEDIA_MARKER_RE)) {
+    addReferenceIdentity(result, match[1]);
+  }
+}
+
+function collectSessionFileReferenceIdentities(value, result = new Set(), visited = new WeakSet()) {
+  if (typeof value === "string") {
+    collectSessionFileReferenceText(value, result);
+    return result;
+  }
+  if (!value || typeof value !== "object") return result;
+  if (visited.has(value)) return result;
+  visited.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) collectSessionFileReferenceIdentities(item, result, visited);
+    return result;
+  }
+  collectSessionFileReferenceObject(value, result);
+  for (const item of Object.values(value)) {
+    collectSessionFileReferenceIdentities(item, result, visited);
+  }
+  return result;
+}
+
+function sessionFileIsReachable(file, retainedIdentities) {
+  const identities = uniqueStrings([
+    file?.id,
+    file?.fileId,
+    file?.filePath,
+    file?.realPath,
+    ...normalizeStringList(file?.legacyFileIds),
+    ...normalizeStringList(file?.legacyFilePaths),
+  ]);
+  return identities.some((identity) => retainedIdentities.has(identity));
+}
+
+function uniqueManagedForkName(file, usedNames) {
+  const sourceId = String(file?.id || file?.fileId || "session-file")
+    .replace(/[^a-zA-Z0-9_.-]/g, "_")
+    .slice(0, 80) || "session-file";
+  const basename = (path.basename(file?.filePath || file?.realPath || "file") || "file").slice(-160);
+  const initial = `${sourceId}-${basename}`;
+  let candidate = initial;
+  let suffix = 2;
+  while (usedNames.has(candidate)) {
+    candidate = `${sourceId}-${suffix}-${basename}`;
+    suffix += 1;
+  }
+  usedNames.add(candidate);
+  return candidate;
+}
+
+function forkSessionFileRefs(
+  sourceRefs,
+  fileIdMap: Record<string, string>,
+  files: Record<string, any>,
+  now,
+) {
+  const refs = [];
+  const mappedSourceIds = new Set();
+  for (const ref of Array.isArray(sourceRefs) ? sourceRefs : []) {
+    const sourceId = normalizeFileId(ref?.fileId);
+    const targetId = sourceId ? fileIdMap[sourceId] : null;
+    if (!targetId) continue;
+    mappedSourceIds.add(sourceId);
+    refs.push({ ...ref, fileId: targetId });
+  }
+  for (const [sourceId, targetId] of Object.entries(fileIdMap)) {
+    if (mappedSourceIds.has(sourceId)) continue;
+    const file = files[targetId];
+    refs.push({
+      fileId: targetId,
+      origin: file?.origin || "session_fork",
+      operation: Array.isArray(file?.operations) && file.operations.length
+        ? file.operations[file.operations.length - 1]
+        : inferOperation(file?.origin),
+      storageKind: file?.storageKind || "external",
+      ...(file?.sourceKey ? { sourceKey: file.sourceKey } : {}),
+      createdAt: file?.createdAt || now,
+    });
+  }
+  return refs;
 }
 
 function inferOperation(origin) {

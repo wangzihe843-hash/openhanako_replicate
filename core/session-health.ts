@@ -80,7 +80,7 @@ export function evaluateSessionHealth(sessionPath, opts: { lookback?: number; er
 // role:"tool" 而前面缺 tool_calls → OpenAI-compatible provider 返回 400。
 //
 // 这里在 restore 读时检测并删除这些孤儿 toolResult entry，让坏会话不再每次重发都 400。
-// 与 core/provider-compat/tool-pairing.js 的运行时兜底是同一缺口的两端：运行时兜底防
+// 与 core/provider-compat/tool-pairing.ts 的运行时兜底是同一缺口的两端：运行时兜底防
 // 每次出站 payload，读时修复则迁移并清理已经落盘的历史数据，确保老会话也能恢复。
 //
 // 删除条件（build-to-delete）：上游 Pi SDK transform-messages 丢弃 error/aborted

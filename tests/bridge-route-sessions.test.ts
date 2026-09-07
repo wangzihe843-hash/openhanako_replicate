@@ -71,6 +71,21 @@ describe("bridge sessions route", () => {
     });
   });
 
+  it("refuses to answer bridge reads for whichever agent the server is focused on", async () => {
+    const { app } = makeApp();
+
+    for (const url of [
+      "/api/bridge/status",
+      "/api/bridge/messages",
+      "/api/bridge/sessions?platform=telegram",
+      `/api/bridge/sessions/${encodeURIComponent("tg_dm_owner@hana")}/messages`,
+    ]) {
+      const res = await app.request(url);
+      expect(res.status, url).toBe(404);
+      expect((await res.json()).error, url).toMatch(/agentId/i);
+    }
+  });
+
   it("strips Bridge internal time tags from visible session messages", async () => {
     const { app, sessionPath } = makeApp();
     fs.writeFileSync(sessionPath, `${JSON.stringify({

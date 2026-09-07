@@ -2,11 +2,11 @@ import fs from "fs";
 import path from "path";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
 import { validateExecutionLease } from "./remote-execution-boundary.ts";
+import { SECURITY_DIR } from "./security-dir.ts";
 
 export const EXECUTION_LEASES_FILE = "execution-leases.json";
 
 const SCHEMA_VERSION = 1;
-const SECURITY_DIR = "security";
 const STATUSES = new Set(["issued", "consumed", "expired", "revoked"]);
 
 export function ensureExecutionLeaseRegistry(hanakoHome, { now = new Date().toISOString() } = {}) {

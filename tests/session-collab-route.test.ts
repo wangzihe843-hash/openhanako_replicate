@@ -1,7 +1,10 @@
 import { Hono } from "hono";
 import { describe, it, expect } from "vitest";
 import { createSessionCollabRoute } from "../server/routes/session-collab.ts";
-import { SessionCollabDraftStore } from "../lib/session-collab/draft-store.ts";
+import {
+  SessionCollabDraftStore,
+  SessionCollabPartialSuccessError,
+} from "../lib/session-collab/draft-store.ts";
 
 function makeApp(store: SessionCollabDraftStore) {
   const engine = { sessionCollabDraftStore: store };
@@ -80,6 +83,48 @@ describe("session-collab apply route", () => {
     const json = await res.json();
     expect(json.code).toBe("first_message_failed");
     expect(json.sessionId).toBe("sid-new");
+  });
+
+  it("结构化部分成功响应带新 session，并把同一草稿安全切换成消息重试", async () => {
+    const store = new SessionCollabDraftStore();
+    const retry = async () => ({ sessionId: "sid-new" });
+    const entry = store.create({
+      kind: "create",
+      sourceSessionId: "sid-src",
+      draft: { agentId: "kimi", firstMessage: "please retry" },
+      apply: async () => {
+        throw new SessionCollabPartialSuccessError(
+          "sid-new",
+          new Error("prompt preflight rejected"),
+          "please retry",
+          retry,
+        );
+      },
+    });
+    const app = makeApp(store);
+    const res = await post(app, { suggestionId: entry.suggestionId });
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      partialSuccess: true,
+      code: "first_message_failed",
+      sessionId: "sid-new",
+      result: {
+        sessionId: "sid-new",
+        sessionCreated: true,
+        firstMessageAccepted: false,
+        retryMessage: "please retry",
+        retryable: true,
+      },
+    });
+    expect(store.get(entry.suggestionId)).toMatchObject({
+      partialResult: { sessionId: "sid-new", retryable: true },
+    });
+    const retried = await post(app, { suggestionId: entry.suggestionId, draft: { firstMessage: "please retry" } });
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toMatchObject({ ok: true, result: { sessionId: "sid-new" } });
+    expect(store.get(entry.suggestionId)).toBeNull();
   });
 
   it("in-flight 并发：409 draft_in_flight", async () => {

@@ -19,9 +19,14 @@ import path from "path";
 import crypto from "crypto";
 import { DAY_BOUNDARY_HOUR, getLogicalDay, getLogicalDayForDate, shiftLogicalDate } from "../time-utils.ts";
 import { callText } from "../../core/llm-client.ts";
+import { callTextConfigFromResolvedModel } from "../../core/model-execution-config.ts";
 import { getLocale } from "../i18n.ts";
 import { atomicWriteSync, safeReadFile } from "../../shared/safe-fs.ts";
-import { normalizeCompiledLLMResult, normalizeCompiledSectionBody } from "./compiled-memory-state.ts";
+import {
+  normalizeCompiledLLMResult,
+  normalizeCompiledSectionBody,
+  stripThinkTagBlocks,
+} from "./compiled-memory-state.ts";
 import { attachPromptLayoutMetadata, buildUtilityPromptLayout } from "../llm/prompt-layout.ts";
 import {
   buildCompileDailyPrompt,
@@ -63,6 +68,7 @@ export const DAILY_WINDOW_RETENTION_DAYS = 6;
 // 与被取代的 LLM week 段体量大致相当。
 export const WEEK_ASSEMBLY_MAX_CHARS = 1200;
 const DAILY_FILE_RE = /^(\d{4}-\d{2}-\d{2})\.md$/;
+const COMPILED_WEEK_DATE_HEADING_RE = /^#{2,3} (\d{4}-\d{2}-\d{2})$/;
 const SUMMARY_EVENT_DATE_TIME_RE = /\b(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})\b/;
 const SUMMARY_EVENT_DATE_RE = /\b(\d{4}-\d{2}-\d{2})\b/;
 
@@ -483,9 +489,8 @@ export function listDailyEntries(dailyDir, opts: { maxDays?: number } = {}) {
 }
 
 /**
- * 读取单日日记正文（不含 "## {date}" 抬头——抬头由 UI 层的日期行标签承担，
- * 与 assemble() 读 week.md 时用 normalizeCompiledSectionBody 剥离标题行的
- * 处理方式一致）。文件不存在时返回空字符串。
+ * 读取单日日记正文（不含 "## {date}" 抬头——抬头由 UI 层的日期行标签承担；
+ * 最终汇编则直接从 week.md 保留日期锚点）。文件不存在时返回空字符串。
  *
  * @param {string} dailyDir
  * @param {string} date - YYYY-MM-DD
@@ -494,6 +499,42 @@ export function listDailyEntries(dailyDir, opts: { maxDays?: number } = {}) {
 export function readDailyEntryBody(dailyDir, date) {
   const filePath = path.join(dailyDir, `${date}.md`);
   return normalizeCompiledSectionBody(safeReadFile(filePath, ""));
+}
+
+function isValidIsoDate(value) {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+/**
+ * Week entries need their date anchors in the compiled prompt. Preserve only
+ * valid ISO date headings and demote them below the outer week section; all
+ * other headings keep the shared section-normalization behavior.
+ */
+function normalizeCompiledWeekSectionBody(value) {
+  const raw = stripThinkTagBlocks(String(value || "")).trim();
+  if (!raw) return "";
+
+  const parts = [];
+  let bodyLines = [];
+  const flushBody = () => {
+    const body = normalizeCompiledSectionBody(bodyLines.join("\n"));
+    if (body) parts.push(body);
+    bodyLines = [];
+  };
+
+  for (const line of raw.split(/\r?\n/)) {
+    const match = line.match(COMPILED_WEEK_DATE_HEADING_RE);
+    if (match && isValidIsoDate(match[1])) {
+      flushBody();
+      parts.push(`### ${match[1]}`);
+    } else {
+      bodyLines.push(line);
+    }
+  }
+  flushBody();
+
+  return parts.join("\n\n");
 }
 
 /**
@@ -686,7 +727,7 @@ export function readCompiledMemorySections(memoryDir, opts: Record<string, any> 
   return {
     facts: normalizeCompiledSectionBody(safeReadFile(path.join(memoryDir, "facts.md"), "")),
     today: normalizeCompiledSectionBody(safeReadFile(path.join(memoryDir, "today.md"), "")),
-    week: normalizeCompiledSectionBody(safeReadFile(path.join(memoryDir, "week.md"), "")),
+    week: normalizeCompiledWeekSectionBody(safeReadFile(path.join(memoryDir, "week.md"), "")),
     longterm: normalizeCompiledSectionBody(safeReadFile(path.join(memoryDir, "longterm.md"), "")),
   };
 }
@@ -980,7 +1021,7 @@ export function assemble(factsPath, todayPath, weekPath, longtermPath, memoryMdP
 
   const facts    = normalizeCompiledSectionBody(read(factsPath));
   const today    = normalizeCompiledSectionBody(read(todayPath));
-  const week     = normalizeCompiledSectionBody(read(weekPath));
+  const week     = normalizeCompiledWeekSectionBody(read(weekPath));
   const longterm = normalizeCompiledSectionBody(read(longtermPath));
 
   atomicWrite(memoryMdPath, buildCompiledMemoryMarkdown({ facts, today, week, longterm }));
@@ -992,11 +1033,13 @@ export function buildCompiledMemoryMarkdown({ facts = "", today = "", week = "",
   const empty = isZh ? "（暂无）" : "(none)";
   const section = (title, content) =>
     `## ${title}\n\n${normalizeCompiledSectionBody(content) || empty}`;
+  const weekSection = (title, content) =>
+    `## ${title}\n\n${normalizeCompiledWeekSectionBody(content) || empty}`;
 
   return [
     section(isZh ? "重要事实" : "Key facts", facts),
     section(isZh ? "今天" : "Today", today),
-    section(isZh ? "本周早些时候" : "Earlier this week", week),
+    weekSection(isZh ? "本周早些时候" : "Earlier this week", week),
     section(isZh ? "长期情况" : "Long-term context", longterm),
   ].join("\n\n") + "\n";
 }
@@ -1009,7 +1052,6 @@ export function buildCompiledMemoryMarkdown({ facts = "", today = "", week = "",
  * @param {number} maxTokens
  */
 async function _compactLLM(input, systemPrompt, resolvedModel, maxTokens, operation) {
-  const { model, api, api_key, base_url } = resolvedModel;
   const fallbackPromptSpec = {
     systemPrompt,
     templateVersion: `${operation || "compile"}.v1`,
@@ -1037,10 +1079,7 @@ async function _compactLLM(input, systemPrompt, resolvedModel, maxTokens, operat
     },
   }, layout.usageMetadata);
   return callText({
-    api, model,
-    apiKey: api_key,
-    baseUrl: base_url,
-    headers: undefined,
+    ...callTextConfigFromResolvedModel(resolvedModel),
     messages: layout.messages,
     systemPrompt: layout.systemPrompt,
     temperature: 0.3,

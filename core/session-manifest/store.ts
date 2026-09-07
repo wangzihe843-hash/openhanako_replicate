@@ -9,7 +9,7 @@ import {
 } from "../session-permission-mode.ts";
 
 export const SESSION_MANIFEST_SCHEMA_VERSION = 1;
-export const SESSION_MANIFEST_DB_USER_VERSION = 3;
+export const SESSION_MANIFEST_DB_USER_VERSION = 5;
 
 const require = createRequire(import.meta.url);
 let BetterSqliteDatabase = null;
@@ -61,6 +61,62 @@ function normalizeToolNames(value) {
 
 function pickString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+const LEGACY_SCAN_PROVENANCE_FIELDS = new Set([
+  "createdBy",
+  "legacyAgentId",
+  "legacyLifecycle",
+  "legacyTitle",
+  "bridgeSessionKey",
+  "bridgeRole",
+  "platform",
+  "chatType",
+  "conversationId",
+  "conversationType",
+  "activityId",
+  "activityType",
+  "parentSessionId",
+  "legacyParentSessionPath",
+  "parentRunId",
+  "subagentTaskId",
+  "threadId",
+  "threadKind",
+]);
+
+const LEGACY_SCAN_MIGRATION_FIELDS = new Set([
+  "source",
+  "legacySessionPath",
+  "legacySessionFileName",
+  "migratedAt",
+  "legacySources",
+]);
+
+const AUTHORITATIVE_LEGACY_OWNER_SOURCES = new Set([
+  "legacy_subagent_run_store",
+  "legacy_subagent_thread_store",
+]);
+
+function mergeLegacyScanFields(existing, incoming, allowedFields) {
+  const current = existing && typeof existing === "object" && !Array.isArray(existing)
+    ? { ...existing }
+    : {};
+  const candidate = incoming && typeof incoming === "object" && !Array.isArray(incoming)
+    ? incoming
+    : {};
+  for (const [key, value] of Object.entries(candidate)) {
+    if (!allowedFields.has(key) || value == null || value === "") continue;
+    if (Array.isArray(value)) {
+      const merged = new Set([
+        ...(Array.isArray(current[key]) ? current[key] : []),
+        ...value,
+      ].filter((item) => typeof item === "string" && item.trim()));
+      if (merged.size) current[key] = [...merged].sort();
+      continue;
+    }
+    if (current[key] == null || current[key] === "") current[key] = value;
+  }
+  return current;
 }
 
 function normalizeExecutorMetadata(value: any = {}) {
@@ -119,6 +175,7 @@ function toRowManifest(row) {
     ),
     thinkingLevel: row.thinking_level || null,
     pinnedAt: row.pinned_at || null,
+    pinOrder: Number.isFinite(row.pin_order) ? row.pin_order : null,
     workspaceScope: parseJson(row.workspace_scope_json, {}),
     plugin: parseJson(row.plugin_json, null),
     provenance: parseJson(row.provenance_json, {}),
@@ -161,6 +218,18 @@ function toExecutorMetadata(row) {
     executorAgentNameSnapshot: row.executor_agent_name_snapshot || null,
     executorMetaVersion: row.executor_meta_version || 1,
     source: row.source || null,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBranchHead(row) {
+  if (!row) return null;
+  return {
+    sessionId: row.session_id,
+    leafId: row.leaf_id ?? null,
+    observedTailLeafId: row.observed_tail_leaf_id ?? null,
+    revision: Number(row.revision) || 1,
+    reason: row.reason || null,
     updatedAt: row.updated_at,
   };
 }
@@ -221,6 +290,7 @@ export class SessionManifestStore {
         permission_mode_snapshot_json TEXT NOT NULL,
         thinking_level TEXT,
         pinned_at TEXT,
+        pin_order INTEGER,
         workspace_scope_json TEXT NOT NULL,
         plugin_json TEXT NOT NULL,
         provenance_json TEXT NOT NULL,
@@ -277,6 +347,16 @@ export class SessionManifestStore {
         updated_at TEXT NOT NULL,
         FOREIGN KEY(session_id) REFERENCES session_manifests(session_id) ON DELETE CASCADE
       );
+
+      CREATE TABLE IF NOT EXISTS session_branch_heads (
+        session_id TEXT PRIMARY KEY,
+        leaf_id TEXT,
+        observed_tail_leaf_id TEXT,
+        revision INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(session_id) REFERENCES session_manifests(session_id) ON DELETE CASCADE
+      );
     `);
   }
 
@@ -290,11 +370,40 @@ export class SessionManifestStore {
         switch (version) {
           case 0:
             break;
+          case 3:
+            this.db.exec(`
+              CREATE TABLE IF NOT EXISTS session_branch_heads (
+                session_id TEXT PRIMARY KEY,
+                leaf_id TEXT,
+                observed_tail_leaf_id TEXT,
+                revision INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES session_manifests(session_id) ON DELETE CASCADE
+              )
+            `);
+            break;
+          case 4:
+            this._addColumnIfMissing("session_manifests", "pin_order", "INTEGER");
+            break;
         }
         version++;
       }
       this.db.pragma(`user_version = ${SESSION_MANIFEST_DB_USER_VERSION}`);
     })();
+  }
+
+  /**
+   * SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, and a fresh
+   * database already gets every column from _initSchema before _migrate runs.
+   * Probing the current columns keeps both paths (fresh + upgraded) idempotent
+   * without ever dropping or rebuilding the table.
+   */
+  _addColumnIfMissing(table, column, definition) {
+    const columns = this.db.pragma(`table_info(${table})`);
+    if (columns.some((entry) => entry.name === column)) return false;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    return true;
   }
 
   _prepareStatements() {
@@ -317,6 +426,7 @@ export class SessionManifestStore {
           permission_mode_snapshot_json,
           thinking_level,
           pinned_at,
+          pin_order,
           workspace_scope_json,
           plugin_json,
           provenance_json,
@@ -341,6 +451,7 @@ export class SessionManifestStore {
           @permissionModeSnapshotJson,
           @thinkingLevel,
           @pinnedAt,
+          @pinOrder,
           @workspaceScopeJson,
           @pluginJson,
           @provenanceJson,
@@ -401,13 +512,16 @@ export class SessionManifestStore {
       updateLocatorLifecycle: this.db.prepare(`
         UPDATE session_manifests
         SET
+          domain = @domain,
+          kind = @kind,
           lifecycle = @lifecycle,
           current_locator_type = @currentLocatorType,
           current_locator_path = @currentLocatorPath,
           current_locator_key = @currentLocatorKey,
           current_locator_reason = @currentLocatorReason,
           locator_updated_at = @locatorUpdatedAt,
-          updated_at = @updatedAt
+          updated_at = @updatedAt,
+          deleted_at = @deletedAt
         WHERE session_id = @sessionId
       `),
       setPinnedAt: this.db.prepare(`
@@ -415,11 +529,32 @@ export class SessionManifestStore {
         SET pinned_at = @pinnedAt, updated_at = @updatedAt
         WHERE session_id = @sessionId
       `),
+      setPinOrder: this.db.prepare(`
+        UPDATE session_manifests
+        SET pin_order = @pinOrder, updated_at = @updatedAt
+        WHERE session_id = @sessionId
+      `),
+      minPinOrder: this.db.prepare(`
+        SELECT MIN(pin_order) AS value
+        FROM session_manifests
+        WHERE pinned_at IS NOT NULL
+      `),
       backfillOwnerAgent: this.db.prepare(`
         UPDATE session_manifests
         SET owner_agent_id = @ownerAgentId, updated_at = @updatedAt
         WHERE session_id = @sessionId
           AND (owner_agent_id IS NULL OR owner_agent_id = '')
+      `),
+      repairLegacyScanMetadata: this.db.prepare(`
+        UPDATE session_manifests
+        SET
+          owner_agent_id = @ownerAgentId,
+          domain = @domain,
+          kind = @kind,
+          provenance_json = @provenanceJson,
+          migration_json = @migrationJson,
+          updated_at = @updatedAt
+        WHERE session_id = @sessionId
       `),
       setPlugin: this.db.prepare(`
         UPDATE session_manifests
@@ -513,6 +648,32 @@ export class SessionManifestStore {
           source = excluded.source,
           updated_at = excluded.updated_at
       `),
+      getBranchHead: this.db.prepare(`
+        SELECT * FROM session_branch_heads WHERE session_id = ?
+      `),
+      upsertBranchHead: this.db.prepare(`
+        INSERT INTO session_branch_heads (
+          session_id,
+          leaf_id,
+          observed_tail_leaf_id,
+          revision,
+          reason,
+          updated_at
+        ) VALUES (
+          @sessionId,
+          @leafId,
+          @observedTailLeafId,
+          1,
+          @reason,
+          @updatedAt
+        )
+        ON CONFLICT(session_id) DO UPDATE SET
+          leaf_id = excluded.leaf_id,
+          observed_tail_leaf_id = excluded.observed_tail_leaf_id,
+          revision = session_branch_heads.revision + 1,
+          reason = excluded.reason,
+          updated_at = excluded.updated_at
+      `),
       list: this.db.prepare("SELECT * FROM session_manifests ORDER BY updated_at DESC"),
     };
   }
@@ -558,6 +719,7 @@ export class SessionManifestStore {
         ),
         thinkingLevel: input.thinkingLevel || null,
         pinnedAt: input.pinnedAt || null,
+        pinOrder: input.pinOrder ?? null,
         workspaceScopeJson: stringifyJson(input.workspaceScope, {}),
         pluginJson: stringifyJson(input.plugin, null),
         provenanceJson: stringifyJson(input.provenance, {}),
@@ -620,7 +782,13 @@ export class SessionManifestStore {
     })();
   }
 
-  updateLocatorLifecycle(sessionId, nextSessionPath, lifecycle, reason = "update") {
+  updateLocatorLifecycle(
+    sessionId,
+    nextSessionPath,
+    lifecycle,
+    reason = "update",
+    classification: { domain?: string; kind?: string } = {},
+  ) {
     const nextLifecycle = pickString(lifecycle);
     if (!nextLifecycle) {
       throw new SessionManifestError(
@@ -640,6 +808,9 @@ export class SessionManifestStore {
         );
       }
 
+      const domain = pickString(classification?.domain) || manifest.domain;
+      const kind = pickString(classification?.kind) || manifest.kind;
+
       if (manifest.currentLocator.key !== nextLocator.key) {
         this._assertLocatorAvailable(nextLocator.key, sessionId);
         const changedAt = this._now();
@@ -654,6 +825,8 @@ export class SessionManifestStore {
         this._stmts.deleteHistoryForLocator.run(sessionId, nextLocator.key);
         this._stmts.updateLocatorLifecycle.run({
           sessionId,
+          domain,
+          kind,
           lifecycle: nextLifecycle,
           currentLocatorType: nextLocator.type,
           currentLocatorPath: nextLocator.path,
@@ -661,6 +834,7 @@ export class SessionManifestStore {
           currentLocatorReason: reason,
           locatorUpdatedAt: changedAt,
           updatedAt: changedAt,
+          deletedAt: nextLifecycle === "deleted" ? (manifest.deletedAt || changedAt) : null,
         });
         return this.getBySessionId(sessionId);
       }
@@ -668,6 +842,8 @@ export class SessionManifestStore {
       const updatedAt = this._now();
       this._stmts.updateLocatorLifecycle.run({
         sessionId,
+        domain,
+        kind,
         lifecycle: nextLifecycle,
         currentLocatorType: nextLocator.type,
         currentLocatorPath: nextLocator.path,
@@ -675,6 +851,7 @@ export class SessionManifestStore {
         currentLocatorReason: reason,
         locatorUpdatedAt: updatedAt,
         updatedAt,
+        deletedAt: nextLifecycle === "deleted" ? (manifest.deletedAt || updatedAt) : null,
       });
       return this.getBySessionId(sessionId);
     })();
@@ -694,6 +871,26 @@ export class SessionManifestStore {
     return this.getBySessionId(sessionId);
   }
 
+  setPinOrder(sessionId, pinOrder) {
+    const updatedAt = this._now();
+    this._stmts.setPinOrder.run({
+      sessionId,
+      pinOrder: Number.isFinite(pinOrder) ? pinOrder : null,
+      updatedAt,
+    });
+    return this.getBySessionId(sessionId);
+  }
+
+  /**
+   * Smallest explicit order among pinned sessions, or null when no pinned
+   * session carries one. Callers put a new pin above everything by subtracting
+   * a step from this value.
+   */
+  minPinOrder() {
+    const value = this._stmts.minPinOrder.get()?.value;
+    return Number.isFinite(value) ? value : null;
+  }
+
   backfillOwnerAgentId(sessionId, ownerAgentId) {
     const manifest = this.getBySessionId(sessionId);
     if (!manifest) {
@@ -706,6 +903,73 @@ export class SessionManifestStore {
     const next = typeof ownerAgentId === "string" ? ownerAgentId.trim() : "";
     if (!next || manifest.ownerAgentId) return manifest;
     this._stmts.backfillOwnerAgent.run({ sessionId, ownerAgentId: next, updatedAt: this._now() });
+    return this.getBySessionId(sessionId);
+  }
+
+  /**
+   * Repairs metadata written by the legacy scanner before non-desktop sources
+   * had explicit classification. This is intentionally narrower than a
+   * general manifest patch: fresh rows and already-specific classifications
+   * are immutable here, and existing non-empty metadata always wins.
+   */
+  repairLegacyScanMetadata(sessionId, input: any = {}) {
+    const manifest = this.getBySessionId(sessionId);
+    if (!manifest) {
+      throw new SessionManifestError(
+        "session_manifest_not_found",
+        `Session manifest not found: ${sessionId}`,
+        { sessionId },
+      );
+    }
+    const migrationSource = pickString(manifest.migration?.source);
+    const migrationCreator = pickString(manifest.migration?.createdBy);
+    const legacyBoundary = migrationSource === "legacy_scan"
+      || migrationSource === "resolver_on_demand"
+      || migrationCreator === "resolver_on_demand";
+    if (!legacyBoundary) return manifest;
+
+    const expectedDomain = pickString(input.domain);
+    const expectedKind = pickString(input.kind);
+    if (!expectedDomain || !expectedKind) return manifest;
+    const alreadyExpected = manifest.domain === expectedDomain && manifest.kind === expectedKind;
+    const legacyDefault = (manifest.domain === "desktop" || manifest.domain === "home")
+      && manifest.kind === "chat";
+    if (!alreadyExpected && !legacyDefault) return manifest;
+
+    const requestedOwnerAgentId = pickString(input.ownerAgentId);
+    const ownerSource = pickString(input.ownerAgentIdSource);
+    const ownerAgentId = requestedOwnerAgentId && AUTHORITATIVE_LEGACY_OWNER_SOURCES.has(ownerSource)
+      ? requestedOwnerAgentId
+      : (manifest.ownerAgentId || requestedOwnerAgentId);
+    const domain = legacyDefault ? expectedDomain : manifest.domain;
+    const kind = legacyDefault ? expectedKind : manifest.kind;
+    const provenance = mergeLegacyScanFields(
+      manifest.provenance,
+      input.provenance,
+      LEGACY_SCAN_PROVENANCE_FIELDS,
+    );
+    const migration = mergeLegacyScanFields(
+      manifest.migration,
+      input.migration,
+      LEGACY_SCAN_MIGRATION_FIELDS,
+    );
+
+    const changed = ownerAgentId !== manifest.ownerAgentId
+      || domain !== manifest.domain
+      || kind !== manifest.kind
+      || JSON.stringify(provenance) !== JSON.stringify(manifest.provenance)
+      || JSON.stringify(migration) !== JSON.stringify(manifest.migration);
+    if (!changed) return manifest;
+
+    this._stmts.repairLegacyScanMetadata.run({
+      sessionId,
+      ownerAgentId,
+      domain,
+      kind,
+      provenanceJson: JSON.stringify(provenance),
+      migrationJson: JSON.stringify(migration),
+      updatedAt: this._now(),
+    });
     return this.getBySessionId(sessionId);
   }
 
@@ -830,6 +1094,51 @@ export class SessionManifestStore {
       updatedAt,
     });
     return this.getExecutorMetadata(sessionId);
+  }
+
+  getBranchHead(sessionId) {
+    return toBranchHead(this._stmts.getBranchHead.get(sessionId));
+  }
+
+  setBranchHead(sessionId, state: any = {}) {
+    const reason = pickString(state.reason) || "session_update";
+    const leafId = state.leafId == null ? null : pickString(state.leafId);
+    const observedTailLeafId = state.observedTailLeafId == null
+      ? null
+      : pickString(state.observedTailLeafId);
+    if (state.leafId != null && !leafId) {
+      throw new SessionManifestError(
+        "session_branch_leaf_invalid",
+        "Session branch leaf id must be a non-empty string or null.",
+        { sessionId, leafId: state.leafId },
+      );
+    }
+    if (state.observedTailLeafId != null && !observedTailLeafId) {
+      throw new SessionManifestError(
+        "session_branch_tail_invalid",
+        "Session branch observed tail id must be a non-empty string or null.",
+        { sessionId, observedTailLeafId: state.observedTailLeafId },
+      );
+    }
+
+    return this.db.transaction(() => {
+      const manifest = this.getBySessionId(sessionId);
+      if (!manifest) {
+        throw new SessionManifestError(
+          "session_manifest_not_found",
+          `Session manifest not found: ${sessionId}`,
+          { sessionId },
+        );
+      }
+      this._stmts.upsertBranchHead.run({
+        sessionId,
+        leafId,
+        observedTailLeafId,
+        reason,
+        updatedAt: this._now(),
+      });
+      return this.getBranchHead(sessionId);
+    })();
   }
 
   list() {

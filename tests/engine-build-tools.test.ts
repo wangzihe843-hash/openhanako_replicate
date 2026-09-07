@@ -3,6 +3,21 @@ import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HanaEngine } from "../core/engine.ts";
+import { SessionExecutionRegistry } from "../lib/session-execution-registry.ts";
+
+function permissionTool(name, execute = vi.fn(), kind: "read" | "routine" | "review" = "routine") {
+  return {
+    name,
+    sessionPermission: {
+      resolveInvocation: () => ({
+        action: "execute",
+        kind,
+        capability: `${name}.execute`,
+      }),
+    },
+    execute,
+  };
+}
 
 describe("HanaEngine.buildTools", () => {
   let tmpDir;
@@ -14,6 +29,18 @@ describe("HanaEngine.buildTools", () => {
     }
     if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
     tmpDir = null;
+  });
+
+  it("rejects strict tool assembly without a complete runtime SessionRef", () => {
+    const engine = Object.create(HanaEngine.prototype);
+
+    expect(() => engine.buildTools("/tmp", [], {
+      requireSessionIdentity: true,
+    })).toThrow(expect.objectContaining({ code: "session_manifest_ref_required" }));
+    expect(() => engine.buildTools("/tmp", [], {
+      runtimeSessionRef: { sessionId: "sess_missing_path" },
+      requireSessionIdentity: true,
+    })).toThrow(expect.objectContaining({ code: "session_manifest_ref_required" }));
   });
 
   it("throws when opts.agentDir points at an unknown agent instead of using focus tools", () => {
@@ -39,6 +66,67 @@ describe("HanaEngine.buildTools", () => {
       agentDir: missingAgentDir,
       workspace: tmpDir,
     })).toThrow(/agent "missing" not found/);
+  });
+
+  it("rejects a custom tool that shadows a Pi built-in tool", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-duplicate-pi-"));
+    const agentDir = path.join(tmpDir, "agents", "focus");
+    const agent = { id: "focus", agentDir, config: {}, tools: [] };
+    const engine = Object.create(HanaEngine.prototype);
+    engine.hanakoHome = tmpDir;
+    engine.getAgent = vi.fn(() => agent);
+    engine._pluginManager = null;
+    engine._prefs = { getFileBackup: () => ({ enabled: false }) };
+    engine._readPreferences = () => ({ sandbox: true });
+    engine._agentMgr = { agent };
+
+    expect(() => engine.buildTools(tmpDir, [], {
+      agentDir,
+      workspace: tmpDir,
+      extraCustomTools: [permissionTool("read")],
+    })).toThrow(/duplicate tool name "read" across Pi built-in tools and runtime custom tools/);
+  });
+
+  it("rejects duplicate names across custom, extra, plugin, and plugin development tools", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-duplicate-custom-"));
+    const agentDir = path.join(tmpDir, "agents", "focus");
+    const agent = { id: "focus", agentDir, config: {}, tools: [] };
+
+    const makeEngine = (pluginTools: any[] = [], pluginDevToolsEnabled = false) => {
+      const engine = Object.create(HanaEngine.prototype);
+      engine.hanakoHome = tmpDir;
+      engine.getAgent = vi.fn(() => agent);
+      engine._pluginManager = pluginTools.length ? { getAllTools: () => pluginTools } : null;
+      engine._pluginDevService = pluginDevToolsEnabled ? {} : null;
+      engine._prefs = {
+        getFileBackup: () => ({ enabled: false }),
+        getPluginDevToolsEnabled: () => pluginDevToolsEnabled,
+      };
+      engine._readPreferences = () => ({ sandbox: true });
+      engine._agentMgr = { agent };
+      return engine;
+    };
+
+    expect(() => makeEngine().buildTools(tmpDir, [permissionTool("duplicate")], {
+      agentDir,
+      workspace: tmpDir,
+      extraCustomTools: [permissionTool("duplicate")],
+    })).toThrow(/duplicate tool name "duplicate" across custom tools and extra custom tools/);
+
+    expect(() => makeEngine([
+      { ...permissionTool("duplicate"), _pluginId: "test_plugin" },
+    ]).buildTools(tmpDir, [permissionTool("duplicate")], {
+      agentDir,
+      workspace: tmpDir,
+    })).toThrow(/duplicate tool name "duplicate" across custom tools and plugin tools/);
+
+    expect(() => makeEngine([], true).buildTools(
+      tmpDir,
+      [permissionTool("plugin_dev_diagnostics")],
+      { agentDir, workspace: tmpDir },
+    )).toThrow(
+      /duplicate tool name "plugin_dev_diagnostics" across custom tools and plugin development tools/,
+    );
   });
 
   it("uses an explicit permission mode provider instead of the desktop session default", async () => {
@@ -71,7 +159,7 @@ describe("HanaEngine.buildTools", () => {
     };
 
     const { customTools } = engine.buildTools(tmpDir, [
-      { name: "stage_files", execute },
+      permissionTool("stage_files", execute),
     ], {
       agentDir,
       workspace: tmpDir,
@@ -122,7 +210,7 @@ describe("HanaEngine.buildTools", () => {
     };
 
     const { customTools } = engine.buildTools(tmpDir, [
-      { name: "stage_files", execute },
+      permissionTool("channel", execute, "review"),
     ], {
       agentDir,
       workspace: tmpDir,
@@ -139,7 +227,7 @@ describe("HanaEngine.buildTools", () => {
     );
 
     expect(approvalGateway.review).toHaveBeenCalledWith(
-      expect.objectContaining({ toolName: "stage_files", sessionPath, agentId: "focus" }),
+      expect.objectContaining({ toolName: "channel", sessionPath, agentId: "focus" }),
       expect.objectContaining({
         sessionPath,
         agentId: "focus",
@@ -148,6 +236,45 @@ describe("HanaEngine.buildTools", () => {
         authorizedFolders: [path.join(tmpDir, "assets-live")],
       }),
     );
+    expect(execute).toHaveBeenCalledOnce();
+    expect(result.details.executed).toBe(true);
+  });
+
+  it("wraps isolated extra custom tools in the same Auto permission gateway", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-extra-permission-"));
+    const agentDir = path.join(tmpDir, "agents", "focus");
+    const sessionPath = path.join(tmpDir, "sessions", "isolated.jsonl");
+    const execute = vi.fn(async () => ({ details: { executed: true } }));
+    const approvalGateway = { review: vi.fn() };
+    const agent = { id: "focus", agentDir, config: {}, tools: [] };
+
+    const engine = Object.create(HanaEngine.prototype);
+    engine.hanakoHome = tmpDir;
+    engine.getAgent = vi.fn(() => agent);
+    engine.getSessionIdForPath = vi.fn(() => "sess_isolated");
+    engine._pluginManager = null;
+    engine._prefs = { getFileBackup: () => ({ enabled: false }) };
+    engine._readPreferences = () => ({ sandbox: true });
+    engine._approvalGateway = approvalGateway;
+    engine._confirmStore = null;
+    engine._emitEvent = vi.fn();
+    engine._agentMgr = { agent };
+
+    const { customTools } = engine.buildTools(tmpDir, [], {
+      agentDir,
+      workspace: tmpDir,
+      runtimeSessionRef: { sessionId: "sess_isolated", sessionPath },
+      requireSessionIdentity: true,
+      getPermissionMode: () => "auto",
+      extraCustomTools: [permissionTool("structured_output", execute, "routine")],
+    });
+    const extra = customTools.find((tool) => tool.name === "structured_output");
+    const result = await extra.execute("call-extra", { value: "ok" }, null, null, {
+      sessionId: "sess_isolated",
+      sessionPath,
+    });
+
+    expect(approvalGateway.review).not.toHaveBeenCalled();
     expect(execute).toHaveBeenCalledOnce();
     expect(result.details.executed).toBe(true);
   });
@@ -261,10 +388,10 @@ describe("HanaEngine.buildTools", () => {
     };
 
     const { customTools } = engine.buildTools(tmpDir, [
-      { name: "browser", execute: vi.fn() },
-      { name: "channel", execute: vi.fn() },
-      { name: "dm", execute: vi.fn() },
-      { name: "automation", execute: vi.fn() },
+      permissionTool("browser"),
+      permissionTool("channel"),
+      permissionTool("dm"),
+      permissionTool("automation"),
     ], {
       agentDir,
       workspace: tmpDir,
@@ -272,6 +399,80 @@ describe("HanaEngine.buildTools", () => {
     });
 
     expect(customTools.map((tool) => tool.name)).toEqual(["automation"]);
+  });
+
+  it("composes MCP manager tools with the same session context as plugin tools", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-mcp-"));
+    const agentDir = path.join(tmpDir, "agents", "focus");
+    const workspace = path.join(tmpDir, "workspace");
+    const sessionPath = path.join(agentDir, "sessions", "main.jsonl");
+    const execute = vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] }));
+    const agent = { id: "focus", agentDir, config: {}, tools: [] };
+
+    const engine = Object.create(HanaEngine.prototype);
+    engine.hanakoHome = tmpDir;
+    engine.getAgent = vi.fn(() => agent);
+    engine._pluginManager = null;
+    // MCP tools come from the engine-owned manager, not the plugin registry.
+    engine._mcp = {
+      getAllTools: () => [{
+        name: "mcp_github_search",
+        _pluginId: "mcp",
+        execute,
+      }],
+    };
+    engine._prefs = { getFileBackup: () => ({ enabled: false }) };
+    engine._readPreferences = () => ({ sandbox: true });
+    engine._confirmStore = null;
+    engine._emitEvent = vi.fn();
+    engine.getSessionPermissionMode = vi.fn(() => "operate");
+    engine._agentMgr = { agent };
+
+    const { customTools } = engine.buildTools(workspace, [], {
+      agentDir,
+      workspace,
+      getSessionPath: () => sessionPath,
+      getPermissionMode: () => "operate",
+    });
+
+    const mcpTool = customTools.find((tool) => tool.name === "mcp_github_search");
+    expect(mcpTool).toBeTruthy();
+
+    await mcpTool.execute("call-1", { q: "hana" }, {
+      sessionManager: { getSessionFile: () => sessionPath },
+    });
+
+    // Same wrapper as plugin tools: the runtime context arrives as the fifth
+    // argument, carrying the resolved agent and session identity.
+    expect(execute).toHaveBeenCalledWith(
+      "call-1",
+      { q: "hana" },
+      expect.objectContaining({ sessionManager: expect.any(Object) }),
+      undefined,
+      expect.objectContaining({ agentId: "focus", sessionPath }),
+    );
+  });
+
+  it("rejects duplicate names between MCP tools and custom tools", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-mcp-duplicate-"));
+    const agentDir = path.join(tmpDir, "agents", "focus");
+    const agent = { id: "focus", agentDir, config: {}, tools: [] };
+
+    const engine = Object.create(HanaEngine.prototype);
+    engine.hanakoHome = tmpDir;
+    engine.getAgent = vi.fn(() => agent);
+    engine._pluginManager = null;
+    engine._mcp = {
+      getAllTools: () => [{ ...permissionTool("mcp_duplicate"), _pluginId: "mcp" }],
+    };
+    engine._prefs = { getFileBackup: () => ({ enabled: false }) };
+    engine._readPreferences = () => ({ sandbox: true });
+    engine._agentMgr = { agent };
+
+    expect(() => engine.buildTools(tmpDir, [permissionTool("mcp_duplicate")], {
+      agentDir,
+      workspace: tmpDir,
+    })).toThrow(/duplicate tool name "mcp_duplicate" across custom tools and mcp tools/);
   });
 
   it("passes a session workbench execution boundary into plugin tools", async () => {
@@ -298,6 +499,7 @@ describe("HanaEngine.buildTools", () => {
     engine._pluginManager = {
       getAllTools: () => [{
         name: "plugin_tool",
+        _pluginId: "test_plugin",
         execute,
       }],
     };
@@ -344,7 +546,7 @@ describe("HanaEngine.buildTools", () => {
     );
   });
 
-  it("passes the explicit buildTools session path into plugin tool runtime context", async () => {
+  it("passes the explicit buildTools SessionRef into plugin tool runtime context", async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-plugin-session-"));
     const agentDir = path.join(tmpDir, "agents", "focus");
     const workspace = path.join(tmpDir, "workspace");
@@ -368,6 +570,7 @@ describe("HanaEngine.buildTools", () => {
     engine._pluginManager = {
       getAllTools: () => [{
         name: "plugin_tool",
+        _pluginId: "test_plugin",
         execute,
       }],
     };
@@ -382,6 +585,10 @@ describe("HanaEngine.buildTools", () => {
       agentDir,
       workspace,
       getSessionPath: () => bridgeSessionPath,
+      getSessionRef: () => ({
+        sessionId: "sess_bridge_owner",
+        sessionPath: bridgeSessionPath,
+      }),
       getPermissionMode: () => "operate",
     });
     const pluginTool = customTools.find((tool) => tool.name === "plugin_tool");
@@ -394,16 +601,70 @@ describe("HanaEngine.buildTools", () => {
       {},
       undefined,
       expect.objectContaining({
+        sessionId: "sess_bridge_owner",
         sessionPath: bridgeSessionPath,
+        sessionRef: {
+          sessionId: "sess_bridge_owner",
+          sessionPath: bridgeSessionPath,
+        },
       }),
     );
   });
 
-  it("passes Pi SDK fifth-argument session ctx into plugin tools", async () => {
+  it("freezes and injects the explicit runtime SessionRef into agent tool context", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-agent-session-"));
+    const agentDir = path.join(tmpDir, "agents", "focus");
+    const workspace = path.join(tmpDir, "workspace");
+    const sessionPath = path.join(agentDir, "sessions", "phone", "chat.jsonl");
+    const execute = vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] }));
+    const agent = { id: "focus", agentDir, config: {}, tools: [] };
+
+    const engine = Object.create(HanaEngine.prototype);
+    engine.hanakoHome = tmpDir;
+    engine.getAgent = vi.fn(() => agent);
+    engine._pluginManager = null;
+    engine._prefs = { getFileBackup: () => ({ enabled: false }) };
+    engine._readPreferences = () => ({ sandbox: true });
+    engine._confirmStore = null;
+    engine._emitEvent = vi.fn();
+    engine.getSessionPermissionMode = vi.fn(() => "operate");
+    engine._agentMgr = { agent };
+
+    const sessionRef = { sessionId: "sess_phone", sessionPath };
+    const { customTools } = engine.buildTools(workspace, [permissionTool("stage_files", execute)], {
+      agentDir,
+      workspace,
+      runtimeSessionRef: sessionRef,
+      requireSessionIdentity: true,
+      getPermissionMode: () => "operate",
+    });
+    sessionRef.sessionId = "sess_mutated_after_assembly";
+    sessionRef.sessionPath = path.join(tmpDir, "mutated.jsonl");
+
+    await customTools.find((tool) => tool.name === "stage_files").execute("call-1", {}, {});
+
+    expect(execute).toHaveBeenCalledWith(
+      "call-1",
+      {},
+      {},
+      undefined,
+      expect.objectContaining({
+        sessionId: "sess_phone",
+        sessionPath,
+        sessionRef: { sessionId: "sess_phone", sessionPath },
+      }),
+    );
+    const injectedCtx = (execute.mock.calls[0] as any)[4];
+    expect(Object.isFrozen(injectedCtx.sessionRef)).toBe(true);
+  });
+
+  it("keeps Hana and Pi runtime-native identities separate across the full tool wrapper chain", async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-build-tools-plugin-pi-ctx-"));
     const agentDir = path.join(tmpDir, "agents", "focus");
     const workspace = path.join(tmpDir, "workspace");
     const desktopSessionPath = path.join(agentDir, "sessions", "desktop.jsonl");
+    const hanaSessionId = "sess_desktop";
+    const piSessionId = "019f7dca-9ff4-7031-ba7f-cdcd5f7b3198";
     const execute = vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] }));
     const agent = {
       id: "focus",
@@ -420,9 +681,14 @@ describe("HanaEngine.buildTools", () => {
       studioId: "studio_engine",
     };
     engine.getAgent = vi.fn(() => agent);
+    engine.getSessionIdForPath = vi.fn((candidatePath) => (
+      candidatePath === desktopSessionPath ? hanaSessionId : null
+    ));
+    engine._sessionExecutions = new SessionExecutionRegistry();
     engine._pluginManager = {
       getAllTools: () => [{
         name: "plugin_tool",
+        _pluginId: "test_plugin",
         execute,
       }],
     };
@@ -443,18 +709,30 @@ describe("HanaEngine.buildTools", () => {
     const onUpdate = vi.fn();
 
     await pluginTool.execute("call-1", { ok: true }, signal, onUpdate, {
-      sessionManager: { getSessionFile: () => desktopSessionPath },
+      sessionManager: {
+        getSessionFile: () => desktopSessionPath,
+        getSessionId: () => piSessionId,
+        getCwd: () => workspace,
+      },
     });
 
     expect(execute).toHaveBeenCalledWith(
       "call-1",
       { ok: true },
-      signal,
+      expect.objectContaining({ aborted: false }),
       onUpdate,
       expect.objectContaining({
+        sessionId: hanaSessionId,
         sessionPath: desktopSessionPath,
+        sessionRef: {
+          sessionId: hanaSessionId,
+          sessionPath: desktopSessionPath,
+        },
       }),
     );
+    const receivedCtx = (execute.mock.calls[0] as any)[4];
+    expect(receivedCtx.sessionManager.getSessionId()).toBe(piSessionId);
+    expect(engine._sessionExecutions.activeCount(hanaSessionId)).toBe(0);
   });
 
   it("registers files created or modified by write and edit tools in the active session", async () => {

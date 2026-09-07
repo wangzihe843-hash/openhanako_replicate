@@ -1,9 +1,17 @@
-// shared/migrate-config-scope.js
+// shared/migrate-config-scope.ts
 
 import fs from "fs";
 import path from "path";
 import YAML from "js-yaml";
 import { CONFIG_SCHEMA } from './config-schema.ts';
+import { writeSecretFileSync } from "./secret-fs.ts";
+
+/**
+ * Suffix of the one-time backup this migration keeps beside each agent config.
+ * Exported so the startup custody pass locates the same files this writes;
+ * spelling it out in both places is how the two would drift apart.
+ */
+export const CONFIG_SCOPE_BACKUP_SUFFIX = ".pre-scope-migration";
 
 /**
  * 一次性迁移：将 agent config.yaml 中的 global scope 字段
@@ -29,7 +37,8 @@ export function migrateConfigScope({ agentsDir, prefs, primaryAgentId, log = () 
   log("[migrate] config scope 迁移开始...");
 
   // 收集所有 agent 的 config.yaml
-  let agentConfigs = [];
+  const agentConfigs = [];
+  const sourceErrors: string[] = [];
   try {
     const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -39,14 +48,23 @@ export function migrateConfigScope({ agentsDir, prefs, primaryAgentId, log = () 
       try {
         const content = fs.readFileSync(cfgPath, "utf-8");
         const config = YAML.load(content) || {};
+        if (typeof config !== "object" || Array.isArray(config)) {
+          throw new Error("config root must be an object");
+        }
         agentConfigs.push({ id: entry.name, path: cfgPath, config, content });
-      } catch {}
+      } catch (err) {
+        sourceErrors.push(`${entry.name}: ${err.message}`);
+      }
     }
-  } catch {
-    return;
+  } catch (err) {
+    if (err?.code === "ENOENT") return;
+    throw new Error(`Cannot inspect agent configs for scope migration: ${err.message}`, { cause: err });
   }
 
   if (agentConfigs.length === 0) {
+    if (sourceErrors.length > 0) {
+      throw new Error(`Unreadable agent config prevents migration receipt: ${sourceErrors.join("; ")}`);
+    }
     preferences._configScopeMigrated = true;
     prefs.savePreferences(preferences);
     return;
@@ -83,7 +101,6 @@ export function migrateConfigScope({ agentsDir, prefs, primaryAgentId, log = () 
   };
 
   // Phase 1: migrate up — 将 agent config 中的全局值提升到 preferences
-  let prefsChanged = false;
   for (const [schemaPath, def] of Object.entries(CONFIG_SCHEMA) as [string, { scope: string; setter?: string; getter?: string; prefsPath?: string; defaultValue?: unknown }][]) {
     if (def.scope !== 'global') continue;
 
@@ -102,12 +119,16 @@ export function migrateConfigScope({ agentsDir, prefs, primaryAgentId, log = () 
 
       if (agentValue !== undefined && agentValue !== defaultVal) {
         writePath(preferences, prefsParts, agentValue);
-        prefsChanged = true;
         log(`[migrate] ${schemaPath}: "${JSON.stringify(agentValue)}" migrated from agent "${ac.id}" to preferences`);
         break;
       }
     }
   }
+
+  // Persist the destination before cleaning any source. If this write fails,
+  // every agent config remains untouched and the migration can retry later.
+  // The completion marker is deliberately written only after cleanup.
+  prefs.savePreferences(preferences);
 
   // Phase 2: clean — 从所有 agent config.yaml 中删除 global scope 字段
   for (const ac of agentConfigs) {
@@ -130,19 +151,27 @@ export function migrateConfigScope({ agentsDir, prefs, primaryAgentId, log = () 
 
     if (changed) {
       // 备份
-      const backupPath = ac.path + ".pre-scope-migration";
+      const backupPath = ac.path + CONFIG_SCOPE_BACKUP_SUFFIX;
       if (!fs.existsSync(backupPath)) {
-        fs.writeFileSync(backupPath, ac.content, "utf-8");
+        // 备份的是 agent 配置原文，带凭证，权限与源文件一致
+        writeSecretFileSync(backupPath, ac.content);
       }
       // 写回清理后的 config
-      fs.writeFileSync(ac.path, YAML.dump(ac.config, { lineWidth: -1 }), "utf-8");
+      writeSecretFileSync(ac.path, YAML.dump(ac.config, { lineWidth: -1 }));
       log(`[migrate] cleaned global fields from ${ac.id}/config.yaml`);
     }
   }
 
-  // 标记迁移完成并写入（无论是否有值变更，都需要持久化 _configScopeMigrated）
-  preferences._configScopeMigrated = true;
-  prefs.savePreferences(preferences);
+  if (sourceErrors.length > 0) {
+    throw new Error(`Unreadable agent config prevents migration receipt: ${sourceErrors.join("; ")}`);
+  }
+
+  // Mark complete only after every readable source has been cleaned and no
+  // source was skipped. A failed marker write is safe: the destination is
+  // already durable and a retry is idempotent.
+  const completedPreferences = prefs.getPreferences();
+  completedPreferences._configScopeMigrated = true;
+  prefs.savePreferences(completedPreferences);
 
   log("[migrate] config scope 迁移完成");
 }

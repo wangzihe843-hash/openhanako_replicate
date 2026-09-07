@@ -1,9 +1,17 @@
 import fs from "fs";
 import path from "path";
-import { atomicWriteSync } from "../shared/safe-fs.ts";
+import { writeSecretFileSync } from "../shared/secret-fs.ts";
 import { createModuleLogger } from "../lib/debug-log.ts";
 
 const log = createModuleLogger("plugin-config");
+
+/**
+ * Layout of plugin data on disk. Exported because the startup custody pass has
+ * to look in exactly the place this module writes to; naming that place twice
+ * is how the two would drift apart.
+ */
+export const PLUGIN_DATA_DIRNAME = "plugin-data";
+export const PLUGIN_CONFIG_FILENAME = "config.json";
 
 const SUPPORTED_TYPES = new Set(["string", "number", "integer", "boolean", "object", "array"]);
 const SCOPES = new Set(["global", "per-agent", "per-session"]);
@@ -39,7 +47,7 @@ export function normalizePluginConfigSchema(pluginId, rawSchema: Record<string, 
 }
 
 export function createPluginConfigStore({ dataDir, schema }) {
-  const configPath = path.join(dataDir, "config.json");
+  const configPath = path.join(dataDir, PLUGIN_CONFIG_FILENAME);
   const normalizedSchema = schema || normalizePluginConfigSchema("", {});
 
   function readState() {
@@ -57,7 +65,9 @@ export function createPluginConfigStore({ dataDir, schema }) {
       agents: state.agents || {},
       sessions: state.sessions || {},
     };
-    atomicWriteSync(configPath, `${JSON.stringify(next, null, 2)}\n`);
+    // Plugin configuration carries whatever a plugin asks its user for, which
+    // for connector-style plugins is service credentials and access tokens.
+    writeSecretFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`);
   }
 
   function resolveBucket(state, options: Record<string, any> = {}, create = false) {
@@ -128,6 +138,42 @@ export function createPluginConfigStore({ dataDir, schema }) {
             sessions: redactScopedValues(normalizedSchema, state.sessions),
           }
         : structuredClone(state);
+    },
+    forkSession({
+      sourceSessionId,
+      sourceSessionPath = null,
+      targetSessionId,
+    }: Record<string, any> = {}) {
+      const sourceId = requireScopeId("sourceSessionId", sourceSessionId);
+      const targetId = requireScopeId("targetSessionId", targetSessionId);
+      if (sourceId === targetId) {
+        throw new Error("plugin config fork requires distinct source and target session ids");
+      }
+      const state = readState();
+      if (Object.prototype.hasOwnProperty.call(state.sessions, targetId)) {
+        throw new Error(`plugin config target session already exists: ${targetId}`);
+      }
+      const sourceKeys = [sourceId, text(sourceSessionPath, "")].filter(Boolean);
+      const sourceKey = sourceKeys.find((key) => isPlainObject(state.sessions[key]));
+      if (!sourceKey) {
+        return { copied: false, sourceSessionId: sourceId, targetSessionId: targetId };
+      }
+      state.sessions[targetId] = structuredClone(state.sessions[sourceKey]);
+      writeState(state);
+      return {
+        copied: true,
+        sourceSessionId: sourceId,
+        sourceKey,
+        targetSessionId: targetId,
+      };
+    },
+    discardSession({ sessionId }: Record<string, any> = {}) {
+      const targetId = requireScopeId("sessionId", sessionId);
+      const state = readState();
+      if (!Object.prototype.hasOwnProperty.call(state.sessions, targetId)) return false;
+      delete state.sessions[targetId];
+      writeState(state);
+      return true;
     },
   };
 

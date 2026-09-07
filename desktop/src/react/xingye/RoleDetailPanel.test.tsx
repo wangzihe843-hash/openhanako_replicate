@@ -116,7 +116,7 @@ describe('RoleDetailPanel OpenHanako sync', () => {
       method: 'PUT',
       body: expect.stringContaining('星野花子'),
     }));
-    expect(hanaFetch).toHaveBeenCalledWith('/api/agents/agent-1/ishiki', expect.objectContaining({
+    expect(hanaFetch).toHaveBeenCalledWith('/api/agents/agent-1/agents-md', expect.objectContaining({
       method: 'PUT',
       body: expect.stringContaining('温柔直接，回答简短。'),
     }));
@@ -152,7 +152,7 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     expect(hanaFetch).toHaveBeenCalledWith('/api/agents/agent-1/identity', expect.objectContaining({
       method: 'PUT',
     }));
-    expect(hanaFetch).toHaveBeenCalledWith('/api/agents/agent-1/ishiki', expect.objectContaining({
+    expect(hanaFetch).toHaveBeenCalledWith('/api/agents/agent-1/agents-md', expect.objectContaining({
       method: 'PUT',
     }));
   });
@@ -202,7 +202,7 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     });
     expect(profileHoisted.profileByAgent.get('agent-1')?.behaviorLogic).toBe('先判断问题本质，再给出务实建议。');
     expect(JSON.stringify(vi.mocked(hanaFetch).mock.calls)).not.toContain('/api/agents/agent-1/identity');
-    expect(JSON.stringify(vi.mocked(hanaFetch).mock.calls)).not.toContain('/api/agents/agent-1/ishiki');
+    expect(JSON.stringify(vi.mocked(hanaFetch).mock.calls)).not.toContain('/api/agents/agent-1/agents-md');
   });
 
   it('阴暗面预设 select：默认「自动判断」，可手动切换（黑化值起点）', () => {

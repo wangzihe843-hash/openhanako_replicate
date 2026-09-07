@@ -2,6 +2,11 @@ import vm from "node:vm";
 import { extractMeta } from "./meta.ts";
 import { WORKFLOW_RUNTIME_CONTRACT } from "./host-api.ts";
 
+/**
+ * 只是兜底值。正常调用方会传 totalTimeoutMs + 一分钟余量：超时语义以 abort 为主，
+ * 资源判定（节点超时 / 无进展 / 总量）都在调用方，先 abort 再让这里的 race 收场。
+ * 这条 deadline 只覆盖"连 abort 都没能唤醒脚本 promise"的极端情况。
+ */
 const DEFAULT_DEADLINE_MS = 5 * 60 * 1000;
 
 /**

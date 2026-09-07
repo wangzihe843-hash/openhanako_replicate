@@ -5,6 +5,8 @@ import {
   LEGACY_INTERNAL_TOOL_NAMES,
   STANDARD_TOOL_NAMES,
   OPTIONAL_TOOL_NAMES,
+  BUILT_IN_PERMISSION_GATEWAY_TOOL_NAMES,
+  assertAllBuiltInToolsPermissionCovered,
   assertAllToolsCategorized,
   computeSettingsAvailableToolNames,
   computeToolSnapshot,
@@ -41,6 +43,11 @@ describe("tool-categories constants", () => {
     expect(new Set(OPTIONAL_TOOL_NAMES)).toEqual(
       new Set(["automation", "beautify", "browser", "dm", "install_skill", "office", "session", "update_settings", "workflow", "xingye_propose_draft"])
     );
+  });
+
+  it("exposes the optional Agent DM tool for configuration", () => {
+    expect(OPTIONAL_TOOL_NAMES).toContain("dm");
+    expect(computeSettingsAvailableToolNames(["current_status"], { pluginTools: [] })).toContain("dm");
   });
 
   it("does not keep the removed legacy cron Agent tool in any category", () => {
@@ -92,6 +99,53 @@ describe("assertAllToolsCategorized", () => {
       .toThrow(/tool_a/);
     expect(() => assertAllToolsCategorized(["tool_a", "tool_b"]))
       .toThrow(/tool_b/);
+  });
+});
+
+describe("assertAllBuiltInToolsPermissionCovered", () => {
+  it("accepts tool-owned resolvers and the explicit host gateway catalog", () => {
+    expect(() => assertAllBuiltInToolsPermissionCovered([
+      { name: "read" },
+      {
+        name: "todo_write",
+        sessionPermission: {
+          resolveInvocation: () => ({
+            action: "replace",
+            kind: "routine",
+            capability: "todo_write.replace",
+          }),
+        },
+      },
+    ])).not.toThrow();
+    expect(BUILT_IN_PERMISSION_GATEWAY_TOOL_NAMES).toContain("read");
+  });
+
+  it("rejects a built-in that relies on an implicit legacy fallback", () => {
+    expect(() => assertAllBuiltInToolsPermissionCovered([
+      { name: "new_builtin", sessionPermission: { readOnly: true } },
+    ])).toThrow(/new_builtin/);
+  });
+
+  it("does not force plugin declarations because undeclared plugins remain review-required", () => {
+    expect(() => assertAllBuiltInToolsPermissionCovered([
+      { name: "mcp_github_search", _pluginId: "mcp" },
+    ])).not.toThrow();
+  });
+
+  it("does not trust inherited or accessor permission metadata", () => {
+    const inherited = Object.create({
+      sessionPermission: { resolveInvocation: () => ({}) },
+    });
+    inherited.name = "inherited_permission_tool";
+    const accessor = { name: "accessor_permission_tool" };
+    Object.defineProperty(accessor, "sessionPermission", {
+      get: () => ({ resolveInvocation: () => ({}) }),
+    });
+
+    expect(() => assertAllBuiltInToolsPermissionCovered([inherited, accessor]))
+      .toThrow(/inherited_permission_tool/);
+    expect(() => assertAllBuiltInToolsPermissionCovered([inherited, accessor]))
+      .toThrow(/accessor_permission_tool/);
   });
 });
 

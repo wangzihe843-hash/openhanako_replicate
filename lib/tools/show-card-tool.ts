@@ -46,6 +46,13 @@ export function createShowCardTool() {
           "Keep background transparent. <script> executes after streaming completes.",
       }),
     }),
+    sessionPermission: {
+      resolveInvocation: () => ({
+        action: "render",
+        kind: "review",
+        capability: "show_card.render",
+      }),
+    },
     progress: "正在写写画画",
     execute: async (_toolCallId: string, params: { title: string; code: string }) => {
       const { title, code } = params;

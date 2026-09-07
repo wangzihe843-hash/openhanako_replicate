@@ -33,6 +33,15 @@ describe("skills route", () => {
     fs.mkdirSync(tempRoot, { recursive: true });
   });
 
+  // Bundle routes report per-agent enabled state, so every bundle request names
+  // the agent it is about. This puts that agent on disk for the route to find.
+  function makeBundleAgent(agentId = "hana") {
+    const agentDir = path.join(tempRoot, agentId);
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "config.yaml"), "agent:\n  name: Hana\n", "utf-8");
+    return agentId;
+  }
+
   it("runtime=1 时返回包含 workspace skills 的运行时视图，默认仍是 agent 全局技能列表", async () => {
     const agentId = "Legacy_AGENT-1";
     const agentDir = path.join(tempRoot, agentId);
@@ -370,7 +379,37 @@ describe("skills route", () => {
     expect(engine.getAllSkills).toHaveBeenCalledWith(agentId);
   });
 
+  it("refuses to answer bundle requests that do not say which agent they are about", async () => {
+    makeBundleAgent();
+    const { createSkillsRoute } = await import("../server/routes/skills.ts");
+    const app = new Hono();
+    const engine = {
+      hanakoHome: tempRoot,
+      agentsDir: tempRoot,
+      emitEvent: vi.fn(),
+      // A focused agent is available, and must not be used to answer a request
+      // that never named an agent: the enabled flags in the reply are per-agent.
+      currentAgentId: "hana",
+      getAllSkills: vi.fn(() => [{ name: "writer", enabled: true, source: "user" }]),
+    };
+
+    app.route("/api", createSkillsRoute(engine));
+
+    const listRes = await app.request("/api/skills/bundles");
+    expect(listRes.status).toBe(400);
+    expect((await listRes.json()).error).toBe("agentId required");
+
+    const createRes = await app.request("/api/skills/bundles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Writing Bundle", skillNames: ["writer"] }),
+    });
+    expect(createRes.status).toBe(400);
+    expect(engine.getAllSkills).not.toHaveBeenCalled();
+  });
+
   it("creates, updates, and deletes skill bundles through the skills route", async () => {
+    const agentId = makeBundleAgent();
     const { createSkillsRoute } = await import("../server/routes/skills.ts");
     const app = new Hono();
     const engine = {
@@ -385,7 +424,7 @@ describe("skills route", () => {
 
     app.route("/api", createSkillsRoute(engine));
 
-    const createRes = await app.request("/api/skills/bundles", {
+    const createRes = await app.request(`/api/skills/bundles?agentId=${agentId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -403,7 +442,7 @@ describe("skills route", () => {
     });
     expectAppEvent(engine.emitEvent, "skills-changed", { agentId: null });
 
-    const updateRes = await app.request("/api/skills/bundles/writing-bundle", {
+    const updateRes = await app.request(`/api/skills/bundles/writing-bundle?agentId=${agentId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -429,6 +468,7 @@ describe("skills route", () => {
   });
 
   it("persists skill bundle ordering through the skills route", async () => {
+    const agentId = makeBundleAgent();
     const { createSkillsRoute } = await import("../server/routes/skills.ts");
     const app = new Hono();
     const engine = {
@@ -443,18 +483,18 @@ describe("skills route", () => {
 
     app.route("/api", createSkillsRoute(engine));
 
-    await app.request("/api/skills/bundles", {
+    await app.request(`/api/skills/bundles?agentId=${agentId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "First Bundle", skillNames: ["writer"] }),
     });
-    await app.request("/api/skills/bundles", {
+    await app.request(`/api/skills/bundles?agentId=${agentId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "Second Bundle", skillNames: ["reader"] }),
     });
 
-    const orderRes = await app.request("/api/skills/bundles/order", {
+    const orderRes = await app.request(`/api/skills/bundles/order?agentId=${agentId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ bundleIds: ["second-bundle", "first-bundle"] }),
@@ -559,6 +599,7 @@ describe("skills route", () => {
   });
 
   it("rejects bundle membership for skills that are not installed", async () => {
+    const agentId = makeBundleAgent();
     const { createSkillsRoute } = await import("../server/routes/skills.ts");
     const app = new Hono();
     const engine = {
@@ -570,7 +611,7 @@ describe("skills route", () => {
 
     app.route("/api", createSkillsRoute(engine));
 
-    const res = await app.request("/api/skills/bundles", {
+    const res = await app.request(`/api/skills/bundles?agentId=${agentId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -779,7 +820,7 @@ describe("DELETE /skills/:name — per-agent target selection", () => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
-  it("backward-compat: 无 agentId query 时仍走 resolveAgent fallback 删除用户级 skill", async () => {
+  it("无 agentId query 时拒绝删除，而不是替调用方挑一个 agent", async () => {
     const engine = buildEngine({ agents: ["agent-a"], currentAgentId: "agent-a" });
     writeUserSkill("my-skill");
 
@@ -788,10 +829,10 @@ describe("DELETE /skills/:name — per-agent target selection", () => {
     app.route("/api", createSkillsRoute(engine));
 
     const res = await app.request("/api/skills/my-skill", { method: "DELETE" });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
-    expect(fs.existsSync(path.join(skillsDir, "my-skill"))).toBe(false);
-    expect(engine.reloadSkills).toHaveBeenCalled();
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/agentId/i);
+    expect(fs.existsSync(path.join(skillsDir, "my-skill"))).toBe(true);
+    expect(engine.reloadSkills).not.toHaveBeenCalled();
   });
 
   it("显式 agentId: legacy learned-skills 目录不再作为删除目标", async () => {

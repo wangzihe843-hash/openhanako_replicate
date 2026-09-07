@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createStructuredOutputTool } from "../lib/workflow/structured-output.ts";
+import { resolveToolInvocationPermission } from "../lib/permission/tool-invocation-permission.ts";
 
 describe("structured output tool", () => {
   it("工具形状正确，parameters 用传入的 schema", () => {
@@ -8,6 +9,20 @@ describe("structured output tool", () => {
     expect(tool.name).toBe("structured_output");
     expect(typeof tool.execute).toBe("function");
     expect(tool.parameters).toBe(schema);
+    expect(tool.sessionPermission.resolveInvocation()).toEqual({
+      action: "record",
+      kind: "routine",
+      capability: "structured_output.record",
+    });
+    expect(resolveToolInvocationPermission(tool, {})).toMatchObject({
+      ok: true,
+      source: "descriptor",
+      descriptor: {
+        action: "record",
+        kind: "routine",
+        capability: "structured_output.record",
+      },
+    });
   });
 
   it("调用前 getResult 为 undefined，调用后捕获参数", async () => {

@@ -95,6 +95,12 @@
     "noAvailableMembers": "추가할 수 있는 Agent가 없어요",
     "agentActivity": "Agent 상태",
     "agentSettings": "채팅 설정",
+    "exportTitle": "현재 채팅 저장",
+    "exportDescription": "현재 그룹 채팅 또는 DM을 Markdown 파일로 다운로드 폴더에 저장합니다.",
+    "exportAction": "현재 채팅 내보내기",
+    "exporting": "내보내는 중…",
+    "exportSuccess": "채팅 기록을 다운로드했습니다: {filename}",
+    "exportFailed": "채팅 기록을 내보내지 못했습니다: {message}",
     "toolPermission": "도구 권한",
     "agentIdle": "대기 중",
     "phoneReceivedNewMessages": "새 그룹 채팅 메시지를 받음",
@@ -164,6 +170,9 @@
     "searchingContent": "본문 검색 중…",
     "searchNoResults": "일치하는 채팅이 없습니다",
     "searchFailed": "검색 실패",
+    "metaRecoveryNoticeTitle": "일부 대화가 복구 대기 중입니다",
+    "metaRecoveryNoticeBody": "대화 메타데이터에 이상이 감지되었습니다. 본문은 디스크에 그대로 저장되어 있지만 일부 대화 속성이 일시적으로 누락될 수 있습니다",
+    "metaRecoveryEmpty": "대화 목록을 지금은 완전히 표시할 수 없습니다. 본문은 디스크에 남아 있습니다",
     "view": {
       "time": "시간순 정렬",
       "project": "프로젝트순 정렬",
@@ -206,7 +215,12 @@
     "unpin": "고정 해제",
     "pinFailed": "세션 고정 실패",
     "unpinFailed": "세션 고정 해제 실패",
+    "reorderFailed": "고정 순서 변경 실패",
     "archive": "보관",
+    "copyId": "Session ID 복사",
+    "copyIdDone": "Session ID를 복사했습니다",
+    "copyIdFailed": "Session ID를 복사하지 못했습니다",
+    "copyIdUnavailable": "이 Session에는 복사할 수 있는 ID가 없습니다",
     "deletedAgent": {
       "title": "Agent가 삭제됨",
       "description": "이 대화는 읽기 전용 기록으로 유지됩니다. 계속하면 기본 Agent에서 새 세션을 만들고 이전 컨텍스트 압축을 시도합니다.",
@@ -242,20 +256,6 @@
       "deleteFailed": "삭제 실패",
       "daysAgo": "{days}일 전 보관됨"
     },
-    "capabilityDrift": {
-      "title": "도구 구성이 업데이트되었습니다",
-      "addedTools": "새 도구 {count}개",
-      "removedTools": "도구 {count}개 사용 불가",
-      "promptUpdated": "프롬프트 업데이트됨",
-      "separator": ", ",
-      "refreshButton": "에이전트 도구 새로고침",
-      "dismissButton": "닫기",
-      "confirmText": "새로고침하면 이전 대화가 요약으로 압축되며 세부 내용이 손실될 수 있습니다. 계속할까요?",
-      "confirmButton": "새로고침",
-      "cancelButton": "취소",
-      "refreshing": "대화를 압축하고 도구를 새로고침하는 중…",
-      "refreshFailed": "새로고침 실패"
-    },
     "rcTakingOver": "{platform} 연결 중",
     "subagentRunStateUnrecoverable": "과거 하위 세션 실행 상태를 복구할 수 없어요",
     "subagentLinkUnrecoverable": "과거 하위 세션 링크를 복구할 수 없어요"
@@ -269,6 +269,7 @@
     "close": "닫기",
     "loading": "불러오는 중...",
     "regenerate": "다시 생성",
+    "forkSession": "새 세션으로 분기",
     "confirm": "확인",
     "cancel": "취소",
     "approve": "승인",
@@ -297,7 +298,8 @@
     "screenshotFailed": "스크린샷 저장 실패",
     "selectedCount": "{count}개 선택됨",
     "allDone": "모두 완료",
-    "markAllComplete": "모두 완료로 표시"
+    "markAllComplete": "모두 완료로 표시",
+    "back": "뒤로"
   },
   "chat": {
     "find": {
@@ -309,6 +311,7 @@
     "stop": "중지",
     "browserScreenshot": "브라우저 스크린샷",
     "compacting": "컨텍스트 압축 중",
+    "instantSimpleCompaction": "즉시 간이 압축",
     "visionAuxiliary": "보조 시각",
     "fileExpired": "파일 만료됨",
     "fileActions": {
@@ -437,14 +440,39 @@
     "contextWindow": "컨텍스트 {windowK}k",
     "tokensUsed": "사용 {tokensK}k ({pct}%)",
     "contextActions": "컨텍스트 작업",
-    "refreshAndCompact": "업데이트 후 압축",
-    "refreshAndCompactTooltip": "최신 메모리와 도구 세트로 업데이트",
+    "refreshAndCompact": "압축 후 업데이트",
+    "refreshAndCompactTooltip": "대화를 압축하고 최신 메모리와 도구 세트로 업데이트",
+    "refreshAndCompactBusy": "대화를 압축하고 업데이트하는 중…",
+    "refreshAndCompactFailed": "압축 및 업데이트 실패",
     "compact": "압축",
     "noAskThisConversation": "이 대화에서는 다시 묻지 않기",
     "confirmMoreOptions": "추가 확인 옵션",
     "attachmentDirectory": "[디렉터리] {label}",
     "attachmentFile": "[첨부] {label}",
-    "referenceDocument": "[참고 문서] {path}"
+    "referenceDocument": "[참고 문서] {path}",
+    "mention": {
+      "title": "멘션",
+      "tab": {
+        "files": "파일",
+        "sessions": "대화",
+        "agents": "에이전트"
+      },
+      "empty": "일치하는 항목이 없습니다",
+      "singleAgent": "한 턴에는 한 명의 Agent 리뷰어만 초대할 수 있습니다"
+    }
+  },
+  "agentReview": {
+    "running": "이 Session을 검토하는 중",
+    "completed": "다른 Agent의 검토 결과",
+    "failed": "검토에 실패했습니다. 메인 Agent는 아직 답변하지 않았습니다",
+    "cancelled": "검토를 취소했습니다",
+    "openSession": "검토 Session 열기",
+    "sessionUnavailable": "검토 Session을 찾을 수 없습니다",
+    "requestReceived": "다른 Session에서 검토 요청을 받았습니다",
+    "openReviewedSession": "검토 대상 Session 열기",
+    "reviewedSessionFallback": "원본 대화",
+    "reviewSessionFallback": "{name}의 검토 대화",
+    "interjectionUnavailable": "Agent 검토는 끼어들기로 보낼 수 없습니다. 현재 답변이 끝날 때까지 기다려 주세요"
   },
   "slash": {
     "diary": "오늘의 일기 쓰기",
@@ -454,9 +482,7 @@
     "xing": "대화에서 스킬 만들기",
     "compact": "컨텍스트 압축",
     "compactBusy": "압축 중...",
-    "stop": "현재 응답 중지",
-    "new": "새 세션 시작 (기록 보관)",
-    "reset": "세션 초기화 (기록 삭제)",
+    "loop": "이 세션에서 반복 작업 실행",
     "commandError": "[명령 오류] {message}",
     "usage": "사용법: {usage}",
     "commandTimeout": "명령 시간 초과 (>{ms}ms)"
@@ -557,7 +583,8 @@
         "avatar": "Ming.png"
       },
       "kong": {
-        "label": "기본형",
+        "label": "발산적 사고 모듈(MOOD 등)이 없는, 다른 Agent와 동일한 경험.",
+        "shortLabel": "사고 블록 없음, 바로 답변합니다.",
         "avatar": "Kong.png"
       }
     },
@@ -699,16 +726,6 @@
       "done": "✏️ {name} 고쳤어요",
       "failed": "✏️ {name} 고치다가 더 꼬였어요"
     },
-    "edit-diff": {
-      "running": "✏️ {name}이(가) 고치고 있어요",
-      "done": "✏️ {name} 고쳤어요",
-      "failed": "✏️ {name} 고치다가 더 꼬였어요"
-    },
-    "glob": {
-      "running": "🔍 {name}이(가) 파일을 찾고 있어요",
-      "done": "🔍 {name} 찾았어요",
-      "failed": "🔍 {name} 샅샅이 뒤져도 못 찾았어요"
-    },
     "grep": {
       "running": "🔍 {name}이(가) 파일 속을 뒤지고 있어요",
       "done": "🔍 {name} 찾았어요",
@@ -724,15 +741,10 @@
       "done": "📂 {name} 다 봤어요",
       "failed": "📂 {name} 이 폴더를 열 수 없어요"
     },
-    "truncate": {
-      "running": "✂️ {name}이(가) 파일을 정리하고 있어요",
-      "done": "✂️ {name} 깔끔해졌어요",
-      "failed": "✂️ {name} 정리가 안 돼요"
-    },
     "stage_files": {
-      "running": "📎 {name}이(가) 파일을 준비하고 있어요",
-      "done": "📎 여기요!",
-      "failed": "📎 파일을 건네지 못했어요"
+      "running": "📎 파일을 준비하는 중",
+      "done": "📎 파일이 준비됐어요",
+      "failed": "📎 파일이 준비되지 않았어요"
     },
     "browser": {
       "running": "🌐 {name}이(가) 브라우저를 쓰고 있어요",
@@ -740,147 +752,112 @@
       "failed": "🌐 {name} 브라우저가 말을 안 들어요"
     },
     "subagent": {
-      "running": "🧭 {name} 분신이 조사 중",
-      "done": "🧭 분신을 보냈어요",
-      "failed": "🧭 분신이 문제가 생겼어요"
+      "running": "🧭 서브에이전트가 일하는 중",
+      "done": "🧭 서브에이전트가 끝냈어요",
+      "failed": "🧭 서브에이전트가 끝내지 못했어요"
     },
     "check_pending_tasks": {
-      "running": "📋 {name}이(가) 안 끝난 일을 찾고 있어요",
-      "done": "📋 {name} 확인 끝",
-      "failed": "📋 확인할 수 없었어요"
-    },
-    "cron": {
-      "running": "⏰ {name}이(가) 예약 작업을 설정하고 있어요",
-      "done": "⏰ 설정 완료",
-      "failed": "⏰ 설정 못 했어요"
+      "running": "📋 백그라운드 작업이 됐는지 보는 중",
+      "done": "📋 백그라운드 진행 상황을 봤어요",
+      "failed": "📋 백그라운드 진행 상황을 보지 못했어요"
     },
     "notify": {
-      "running": "🔔 {name}이(가) 알림을 보내고 있어요",
-      "done": "🔔 알림 보냈어요",
-      "failed": "🔔 알림을 보내지 못했어요"
+      "running": "🔔 {name}이(가) 알림을 보내는 중",
+      "done": "🔔 {name}이(가) 알림을 보냈어요",
+      "failed": "🔔 알림이 가지 않았어요"
     },
     "create_artifact": {
-      "running": "🖼️ {name}이(가) 낙서 중이에요",
-      "done": "🖼️ 완성!",
-      "failed": "🖼️ 그리다가 실패했어요"
+      "running": "🖼️ {name}이(가) 이미지를 만드는 중",
+      "done": "🖼️ {name}이(가) 이미지를 완성했어요",
+      "failed": "🖼️ 이미지가 나오지 않았어요"
     },
     "dm": {
-      "running": "✉️ {name}이(가) 핸드폰을 들었어요",
-      "done": "✉️ 보냈어요",
-      "failed": "✉️ 보내지 못했어요"
+      "running": "✉️ {name}이(가) 쪽지를 보내는 중",
+      "done": "✉️ {name}이(가) 쪽지를 보냈어요",
+      "failed": "✉️ 쪽지가 가지 않았어요"
     },
     "channel": {
-      "running": "📢 {name}이(가) 채널에 글을 올리고 있어요",
-      "done": "📢 올렸어요",
-      "failed": "📢 올리지 못했어요",
+      "running": "📢 {name}이(가) 채널에 올리는 중",
+      "done": "📢 {name}이(가) 채널에 올렸어요",
+      "failed": "📢 메시지가 채널에 닿지 않았어요",
       "heading": "# 채널",
       "ambiguousName": "채널 이름 \"{name}\"이(가) 고유하지 않아요. 채널 ID를 사용해 주세요: {choices}"
     },
     "install_skill": {
-      "running": "📥 {name}이(가) 스킬을 설치 중이에요",
-      "done": "📥 설치 완료",
-      "failed": "📥 설치 못 했어요"
+      "running": "📥 {name}이(가) 스킬을 설치하는 중",
+      "done": "📥 {name}이(가) 스킬을 설치했어요",
+      "failed": "📥 스킬이 설치되지 않았어요"
     },
     "update_settings": {
-      "running": "⚙️ {name}이(가) 설정을 바꾸고 있어요",
-      "done": "⚙️ 변경 완료",
-      "failed": "⚙️ 변경 못 했어요"
+      "running": "⚙️ {name}이(가) 설정을 바꾸는 중",
+      "done": "⚙️ {name}이(가) 설정을 바꿨어요",
+      "failed": "⚙️ 설정이 바뀌지 않았어요"
     },
     "automation": {
-      "running": "🤖 {name}이(가) 단축어를 실행 중이에요",
-      "done": "🤖 단축어 완료",
-      "failed": "🤖 단축어 실행 실패"
+      "running": "🤖 {name}이(가) 자동화를 준비하는 중",
+      "done": "🤖 {name}이(가) 자동화를 준비했어요",
+      "failed": "🤖 자동화가 준비되지 않았어요"
     },
     "computer": {
-      "running": "🖥️ {name}이(가) 화면을 조작하고 있어요",
-      "done": "🖥️ 조작 끝",
-      "failed": "🖥️ 화면 조작 실패"
+      "running": "🖥️ {name}이(가) 컴퓨터를 다루는 중",
+      "done": "🖥️ {name}이(가) 컴퓨터를 다 다뤘어요",
+      "failed": "🖥️ 컴퓨터가 말을 듣지 않았어요"
     },
     "terminal": {
-      "running": "💻 {name}이(가) 명령어를 실행 중이에요",
-      "done": "💻 명령어 끝",
-      "failed": "💻 명령어 실행 실패"
+      "running": "💻 {name}이(가) 명령어를 치는 중",
+      "done": "💻 {name}이(가) 명령어를 다 쳤어요",
+      "failed": "💻 명령어가 돌지 않았어요"
     },
     "current_status": {
-      "running": "🕐 {name}이(가) 지금 상황을 확인 중이에요",
-      "done": "🕐 파악했어요",
-      "failed": "🕐 정보를 가져올 수 없었어요"
+      "running": "🕐 지금 상황을 보는 중",
+      "done": "🕐 지금 상황을 파악했어요",
+      "failed": "🕐 지금 상황을 파악하지 못했어요"
     },
     "pin_memory": {
-      "running": "📌 {name}이(가) 이 내용을 고정하고 있어요",
-      "done": "📌 고정했어요",
-      "failed": "📌 고정 실패"
+      "running": "📌 {name}이(가) 이걸 새겨두는 중",
+      "done": "📌 {name}이(가) 이걸 새겨뒀어요",
+      "failed": "📌 {name}이(가) 새겨두지 못했어요"
     },
     "unpin_memory": {
-      "running": "📌 {name}이(가) 고정을 해제하고 있어요",
-      "done": "📌 해제했어요",
-      "failed": "📌 고정 해제 실패"
+      "running": "📌 {name}이(가) 이걸 놓아주는 중",
+      "done": "📌 {name}이(가) 이제 이걸 따로 챙기지 않아요",
+      "failed": "📌 {name}이(가) 놓아주지 못했어요"
     },
     "recall_experience": {
-      "running": "🧠 {name}이(가) 경험 노트를 넘겨보고 있어요",
-      "done": "🧠 찾았어요",
-      "failed": "🧠 관련 경험이 없어요"
+      "running": "🧠 경험 노트를 넘기는 중",
+      "done": "🧠 관련된 경험을 찾았어요",
+      "failed": "🧠 관련된 경험이 없었어요"
     },
     "record_experience": {
-      "running": "🧠 {name}이(가) 경험을 기록하고 있어요",
-      "done": "🧠 기록했어요",
-      "failed": "🧠 기록 실패"
+      "running": "🧠 {name}이(가) 이번 경험을 적는 중",
+      "done": "🧠 {name}이(가) 이번 경험을 적었어요",
+      "failed": "🧠 경험이 남지 않았어요"
     },
     "session_folders": {
-      "running": "📁 {name}이(가) 폴더 권한을 조정 중이에요",
-      "done": "📁 조정 완료",
-      "failed": "📁 조정 실패"
+      "running": "📁 {name}이(가) 폴더 권한을 손보는 중",
+      "done": "📁 {name}이(가) 폴더 권한을 손봤어요",
+      "failed": "📁 폴더 권한이 바뀌지 않았어요"
     },
     "stop_task": {
-      "running": "🛑 {name}이(가) 백그라운드 작업을 멈추고 있어요",
-      "done": "🛑 멈췄어요",
-      "failed": "🛑 멈출 수 없었어요"
+      "running": "🛑 {name}이(가) 백그라운드 작업을 멈추는 중",
+      "done": "🛑 {name}이(가) 백그라운드 작업을 멈췄어요",
+      "failed": "🛑 백그라운드 작업이 멈추지 않았어요"
     },
     "todo_write": {
-      "running": "📝 {name}이(가) 체크리스트를 쓰고 있어요",
-      "done": "📝 다 적었어요",
-      "failed": "📝 체크리스트 작성 실패"
+      "running": "📝 {name}이(가) 목록을 쓰는 중",
+      "done": "📝 목록이 준비됐어요",
+      "failed": "📝 목록이 저장되지 않았어요"
     },
     "workflow": {
-      "running": "🔄 {name}이(가) 워크플로를 편성 중이에요",
-      "done": "🔄 편성 완료",
-      "failed": "🔄 워크플로 실행 실패",
+      "running": "🔄 {name}이(가) workflow를 짜는 중",
+      "done": "🔄 {name}이(가) workflow를 다 짰어요",
+      "failed": "🔄 workflow가 끝나지 않았어요",
       "scriptInvalid": "워크플로 스크립트가 유효하지 않아요: {message}",
       "dispatched": "워크플로 \"{summary}\"이(가) 백그라운드 실행을 위해 전달되었어요 (작업 {taskId}). 완료되면 결과가 자동으로 대화에 반환돼요.",
       "syncComplete": "워크플로 \"{name}\" 완료, {count}개 Agent 전달.\n\n결과:\n{result}",
       "executionFailed": "워크플로 실행 실패: {message}",
       "resumeFromRunIdDesc": "이전 워크플로의 runId(taskId)로, 체크포인트 재개에 사용해요: prompt+opts가 변경되지 않은 완료 Agent 노드는 캐시 결과를 즉시 반환하고, 첫 변경 위치부터 재실행을 시작해요.",
       "journalResuming": "{count}개 캐시 항목에서 재개 중"
-    },
-    "generate-image": {
-      "running": "🎨 {name}이(가) 이미지를 만들고 있어요",
-      "done": "🎨 완성",
-      "failed": "🎨 이미지 생성 실패"
-    },
-    "generate-video": {
-      "running": "🎬 {name}이(가) 영상을 생성 중이에요",
-      "done": "🎬 영상 완성",
-      "failed": "🎬 영상 생성 실패"
-    },
-    "create-cover": {
-      "running": "🎨 {name}이(가) 커버를 디자인 중이에요",
-      "done": "🎨 커버 완성",
-      "failed": "🎨 커버 생성 실패"
-    },
-    "apply-cover-candidate": {
-      "running": "🖼️ {name}이(가) 커버를 적용 중이에요",
-      "done": "🖼️ 적용했어요",
-      "failed": "🖼️ 커버 적용 실패"
-    },
-    "get-cover-style-guide": {
-      "running": "📖 {name}이(가) 스타일 가이드를 확인 중이에요",
-      "done": "📖 찾았어요",
-      "failed": "📖 스타일 가이드를 찾을 수 없어요"
-    },
-    "list-capabilities": {
-      "running": "📋 {name}이(가) 기능을 확인 중이에요",
-      "done": "📋 확인 완료",
-      "failed": "📋 기능 확인 실패"
     },
     "_fallback": {
       "running": "🔧 {name}이(가) 열심히 작업 중이에요…",
@@ -893,8 +870,146 @@
       "noTasks": "현재 대화에 백그라운드 작업이 없어요{qualifier}.",
       "noTasksQualifier": " (상태: {status})"
     },
+    "loopControl": {
+      "serviceUnavailable": "루프 서비스를 사용할 수 없습니다.",
+      "noActiveSession": "활성 세션이 없습니다.",
+      "noActiveLoop": "이 세션에 활성 루프가 없습니다. /loop <작업> 으로 시작하세요.",
+      "delayRequired": "action=schedule 에는 delay_seconds 가 필요합니다.",
+      "scheduled": "{seconds}초 후 웨이크업을 예약했습니다({wakeAt} 발동). 이전 알람은 대체됩니다.",
+      "completed": "루프를 완료하고 종료했습니다."
+    },
     "installSkill": {
       "safetyBlocked": "[보안 정책] Skill 안전 검토 실패. 설치가 차단되었어요.\n사유: {reason}\n\n이 Skill이 안전 검토를 통과하지 못했으며 구체적인 사유를 사용자에게 알려 주세요. 설정에서 안전 검토를 비활성화할 수 있어요(권장하지 않음)."
+    },
+    "file": {
+      "running": "📄 파일을 다루는 중",
+      "done": "📄 파일 정리했어요",
+      "failed": "📄 파일을 다루지 못했어요"
+    },
+    "session": {
+      "running": "💬 다른 세션을 보는 중",
+      "done": "💬 다른 세션을 봤어요",
+      "failed": "💬 그 세션을 열지 못했어요"
+    },
+    "subagent_reply": {
+      "running": "🧭 {name}이(가) 서브에이전트에 새 일을 넘기는 중",
+      "done": "🧭 {name}이(가) 서브에이전트에 새 일을 넘겼어요",
+      "failed": "🧭 일이 서브에이전트에 넘어가지 않았어요"
+    },
+    "subagent_close": {
+      "running": "🧭 {name}이(가) 서브에이전트를 정리하는 중",
+      "done": "🧭 {name}이(가) 서브에이전트를 정리했어요",
+      "failed": "🧭 서브에이전트가 닫히지 않았어요"
+    },
+    "loop_control": {
+      "running": "⏱️ {name}이(가) loop 알람을 맞추는 중",
+      "done": "⏱️ loop 알람을 맞췄어요",
+      "failed": "⏱️ loop 알람이 맞춰지지 않았어요"
+    },
+    "materialize": {
+      "running": "🧲 파일을 로컬로 가져오는 중",
+      "done": "🧲 파일이 로컬에 왔어요",
+      "failed": "🧲 파일을 가져오지 못했어요"
+    },
+    "channel_read_context": {
+      "running": "💬 채널 메시지를 보는 중",
+      "done": "💬 채널 메시지를 다 봤어요",
+      "failed": "💬 채널 메시지를 읽지 못했어요"
+    },
+    "channel_reply": {
+      "running": "💬 {name}이(가) 채널에 올리는 중",
+      "done": "💬 {name}이(가) 채널에 올렸어요",
+      "failed": "💬 메시지가 채널에 닿지 않았어요"
+    },
+    "channel_pass": {
+      "running": "⏭️ {name}이(가) 이번엔 넘어가려는 중",
+      "done": "⏭️ {name}이(가) 보긴 했지만 이번엔 말하지 않았어요",
+      "failed": "⏭️ 건너뛴 기록이 남지 않았어요"
+    },
+    "hana_card_guide": {
+      "running": "🎴 카드 만드는 법을 보는 중",
+      "done": "🎴 카드 만드는 법을 알았어요",
+      "failed": "🎴 카드 만드는 법을 찾지 못했어요"
+    },
+    "show_card": {
+      "running": "🎴 {name}이(가) 카드를 꺼내는 중",
+      "done": "🎴 {name}이(가) 카드를 꺼냈어요",
+      "failed": "🎴 카드가 나오지 않았어요"
+    },
+    "media_generate-image": {
+      "running": "🎨 {name}이(가) 이미지를 만드는 중",
+      "done": "🎨 {name}이(가) 이미지를 완성했어요",
+      "failed": "🎨 이미지가 나오지 않았어요"
+    },
+    "media_generate-video": {
+      "running": "🎬 {name}이(가) 영상을 만드는 중",
+      "done": "🎬 {name}이(가) 영상을 완성했어요",
+      "failed": "🎬 영상이 나오지 않았어요"
+    },
+    "media_describe-options": {
+      "running": "🎨 이미지 옵션을 보는 중",
+      "done": "🎨 이미지 옵션을 다 봤어요",
+      "failed": "🎨 이미지 옵션을 보지 못했어요"
+    },
+    "media_get-guide": {
+      "running": "🎨 이미지 안내를 읽는 중",
+      "done": "🎨 이미지 안내를 읽었어요",
+      "failed": "🎨 이미지 안내를 찾지 못했어요"
+    },
+    "beautify_create-cover": {
+      "running": "🖼️ {name}이(가) 글에 커버를 다는 중",
+      "done": "🖼️ {name}이(가) 글에 커버를 달았어요",
+      "failed": "🖼️ 커버가 달리지 않았어요"
+    },
+    "beautify_apply-cover-candidate": {
+      "running": "🖼️ {name}이(가) 커버를 바꾸는 중",
+      "done": "🖼️ {name}이(가) 커버를 바꿨어요",
+      "failed": "🖼️ 커버가 바뀌지 않았어요"
+    },
+    "beautify_get-cover-style-guide": {
+      "running": "🖼️ 커버를 어떻게 다는지 보는 중",
+      "done": "🖼️ 커버를 어떻게 다는지 알았어요",
+      "failed": "🖼️ 커버 안내를 찾지 못했어요"
+    },
+    "beautify_get-html-style-guide": {
+      "running": "🖼️ 편집을 어떻게 하는지 보는 중",
+      "done": "🖼️ 편집을 어떻게 하는지 알았어요",
+      "failed": "🖼️ 편집 안내를 찾지 못했어요"
+    },
+    "beautify_list-capabilities": {
+      "running": "🖼️ 어떻게 다듬을 수 있는지 보는 중",
+      "done": "🖼️ 어떻게 다듬을 수 있는지 알았어요",
+      "failed": "🖼️ 다듬는 방법을 찾지 못했어요"
+    },
+    "office_read-document": {
+      "running": "📑 이 문서를 읽는 중",
+      "done": "📑 이 문서를 다 읽었어요",
+      "failed": "📑 이 문서를 읽지 못했어요"
+    },
+    "office_html-to-pdf": {
+      "running": "📑 {name}이(가) PDF를 내보내는 중",
+      "done": "📑 {name}이(가) PDF를 뽑았어요",
+      "failed": "📑 PDF가 나오지 않았어요"
+    },
+    "office_list-capabilities": {
+      "running": "📑 어떤 문서를 다룰 수 있는지 보는 중",
+      "done": "📑 어떤 문서를 다룰 수 있는지 알았어요",
+      "failed": "📑 다룰 수 있는 문서를 찾지 못했어요"
+    },
+    "_plugin": {
+      "running": "🧩 {name}이(가) 플러그인으로 작업하는 중",
+      "done": "🧩 {name}이(가) 플러그인 작업을 끝냈어요",
+      "failed": "🧩 플러그인이 도움이 되지 않았어요"
+    },
+    "session_send": {
+      "running": "💬 다른 세션에 보낼 메시지를 쓰는 중",
+      "done": "💬 메시지 초안이 됐어요, 확인해 주세요",
+      "failed": "💬 메시지 초안을 만들지 못했어요"
+    },
+    "session_create": {
+      "running": "💬 새 세션 초안을 만드는 중",
+      "done": "💬 새 세션 초안이 됐어요, 확인해 주세요",
+      "failed": "💬 새 세션 초안을 만들지 못했어요"
     }
   },
   "file_output": {
@@ -906,6 +1021,13 @@
     "notSelected": "모델 선택",
     "noneConfigured": "설정된 모델 없음",
     "unavailable": "모델을 사용할 수 없음",
+    "removed": "모델이 삭제됨",
+    "providerNotConfigured": "Provider가 설정되지 않음",
+    "unavailableReason": {
+      "modelRemoved": "이 대화에서 사용하던 모델이 삭제되었습니다. 계속하려면 사용 가능한 모델을 선택하세요.",
+      "providerNotConfigured": "이 대화의 모델 Provider 또는 인증 정보가 설정되지 않았습니다. 설정을 완료하거나 다른 모델을 선택하세요.",
+      "temporarilyUnavailable": "이 대화의 모델을 현재 사용할 수 없습니다. Provider 상태를 확인하거나 다른 모델을 선택하세요."
+    },
     "offline": "오프라인",
     "switchFailed": "모델 전환 실패",
     "switchWhileStreaming": "응답 중에는 모델을 전환할 수 없습니다",
@@ -939,6 +1061,7 @@
     "save": "저장",
     "saved": "저장됨 ✿",
     "saveFailed": "저장 실패",
+    "refreshFailed": "새로고침 실패",
     "fileChangedOnDisk": "파일이 외부에서 변경되어 오래된 저장을 건너뛰었습니다",
     "noChanges": "저장할 내용이 없어요",
     "autoSaved": "자동 저장됨 ✿",
@@ -1004,10 +1127,13 @@
       },
       "notifications": {
         "title": "알림",
-        "turnCompletion": "턴 완료 알림",
-        "turnCompletionNever": "사용 안 함",
-        "turnCompletionWhenUnfocused": "HanaAgent에 포커스가 없을 때",
-        "turnCompletionWhenSessionUnfocused": "완료된 Session에 포커스가 없을 때"
+        "chatCompletion": "채팅 답변 완료",
+        "scheduledTaskCompletion": "예약 작업 완료",
+        "patrolCompletion": "순찰 완료",
+        "never": "사용 안 함",
+        "whenUnfocused": "HanaAgent에 포커스가 없을 때",
+        "whenSessionUnfocused": "완료된 채팅에 포커스가 없을 때",
+        "always": "항상"
       }
     },
     "computerUse": {
@@ -1144,10 +1270,10 @@
       "agentNameHint": "불리는 이름",
       "identity": "정체성",
       "identityHint": "이 에이전트가 누구이고 무엇을 잘하는지 짧게 설명해 주세요. 다른 에이전트가 이를 참고해요",
-      "ishiki": "의식",
-      "ishikiHint": "어시스턴트의 성격, 어조, 행동을 정의해요. 「元」과는 분리되어 있으며 서로 영향을 주지 않아요.",
-      "publicIshiki": "공개 의식",
-      "publicIshikiHint": "개인정보 보호를 위해, 방문자와 대화할 때 어시스턴트는 기억, 개인 정보, 컴퓨터의 파일과 도구에 접근할 수 없어요.\n방문자 대화에서의 답변 스타일과 가이드라인을 여기서 설정할 수 있어요.",
+      "agentsMd": "AGENTS.md",
+      "agentsMdHint": "어시스턴트의 성격, 어조, 행동을 정의해요. 「元」과는 분리되어 있으며 서로 영향을 주지 않아요.",
+      "publicAgentsMd": "공개 AGENTS.md",
+      "publicAgentsMdHint": "개인정보 보호를 위해, 방문자와 대화할 때 어시스턴트는 기억, 개인 정보, 컴퓨터의 파일과 도구에 접근할 수 없어요.\n방문자 대화에서의 답변 스타일과 가이드라인을 여기서 설정할 수 있어요.",
       "chatModel": "모델",
       "chatModelHint": "대화와 작업에 사용하는 모델",
       "modelUnavailable": "사용 불가: {model}",
@@ -1244,7 +1370,7 @@
       "updateAvailable": "새 버전 출시: v{version}",
       "updateDownload": "다운로드",
       "updateChecking": "업데이트 확인 중…",
-      "updateDownloading": "{agentName}이(가) 새 집을 준비하는 중 {percent}%",
+      "updateDownloading": "{agentName}이(가) 새 집을 준비하는 중",
       "updateReadyInstall": "v{version} 설치 준비 완료",
       "updateInstalling": "업데이트를 설치하는 중입니다. HanaAgent가 자동으로 다시 시작됩니다…",
       "updateInstallManualHint": "다시 시작하여 업데이트를 누른 뒤 설치합니다. 종료만으로는 자동 설치하지 않습니다",
@@ -1287,7 +1413,25 @@
       "launchAtLogin": "로그인 시 자동 실행",
       "keepAwake": "잠금 중에도 계속 실행",
       "betaUpdates": "베타 업데이트 수신",
-      "autoCheckUpdates": "업데이트 자동 확인"
+      "autoCheckUpdates": "업데이트 자동 확인",
+      "inviteSectionTitle": "베타 채널",
+      "inviteCodeLabel": "초대 코드",
+      "inviteCodePlaceholder": "초대 코드를 붙여넣으세요",
+      "inviteRedeemBtn": "사용하기",
+      "inviteRedeeming": "확인 중…",
+      "inviteErrorInvalid": "이 초대 코드는 유효하지 않거나 이미 모두 사용되었습니다.",
+      "inviteErrorNetwork": "발급 서비스에 연결할 수 없습니다. 연결을 확인한 뒤 다시 시도하세요.",
+      "inviteErrorActivate": "채널 상태를 저장하지 못했습니다.",
+      "inviteConfirmTitle": "베타 채널로 전환할까요?",
+      "inviteConfirmBody": "전환하면 앱이 테스트 버전으로 업데이트됩니다. 테스트 버전이 데이터 형식을 갱신한 뒤에는 현재 정식 버전으로 되돌릴 수 없습니다. 확인하면 즉시 적용됩니다.",
+      "inviteConfirmOk": "전환",
+      "inviteConfirmCancel": "정식 버전 유지",
+      "inviteChannelActive": "현재 채널: 베타 채널",
+      "inviteCodesLabel": "내 초대 코드",
+      "inviteCodesHint": "각 코드는 한 번, 기기 한 대에서만 사용할 수 있습니다.",
+      "inviteCopy": "복사",
+      "platformCheckLabel": "플랫폼 업데이트 확인",
+      "platformCheckBtn": "확인"
     },
     "access": {
       "networkAccess": "LAN 접근",
@@ -1665,6 +1809,46 @@
       "longtermSaved": "장기 상황이 저장됐어요",
       "saveDay": "이 날 저장",
       "daySaved": "이 날이 저장됐어요",
+      "dream": {
+        "title": "Dream 정리",
+        "hint": "중요 사실과 장기 상황을 한 줄에 하나씩 정리하고 중복을 병합해 오래된 내용을 제거해요",
+        "autoLabel": "매일 자동 Dream",
+        "autoHint": "이 Agent에만 적용돼요. 기본값은 꺼짐이며 논리일마다 최대 한 번 실행해요",
+        "run": "현재 기억 정리",
+        "running": "정리 중…",
+        "restore": "버전 복원",
+        "restoring": "복원 중…",
+        "view": "정리 결과 보기",
+        "success": "{time} 완료: {before} → {after}자, {merged}개 병합, {forgotten}개 제외.",
+        "unchanged": "{time} 확인 완료. 이번에는 다시 저장할 변경 사항이 없어요.",
+        "legacySuccess": "{time} 완료: {before} → {after}자. 이전 버전의 실행 기록이라 실제 병합 수를 확인할 수 없어요.",
+        "revisions": {
+          "title": "Dream 버전",
+          "listLabel": "복원 가능한 버전",
+          "loading": "버전을 불러오는 중…",
+          "empty": "아직 복원할 Dream 버전이 없어요",
+          "manual": "수동 정리 전",
+          "automatic": "자동 정리 전",
+          "preRestore": "복원 작업 전",
+          "characters": "자",
+          "noContent": "(내용 없음)",
+          "restoreThis": "이 버전으로 복원",
+          "confirmHint": "복원 전에 현재 버전을 저장하므로 나중에 되돌릴 수 있어요.",
+          "confirmRestore": "복원 확인",
+          "cancel": "취소",
+          "close": "닫기",
+          "restored": "선택한 버전으로 복원했고, 복원 전 현재 버전도 저장했어요."
+        },
+        "failed": "Dream에 실패했어요. 기존 기억은 변경되지 않았어요",
+        "errors": {
+          "statusLoadFailed": "Dream 상태를 일시적으로 불러올 수 없어요. 잠시 후 다시 시도하세요",
+          "startFailed": "Dream을 시작하지 못했어요. 잠시 후 다시 시도하세요",
+          "autoSaveFailed": "매일 자동 Dream 설정을 저장하지 못했어요. 잠시 후 다시 시도하세요",
+          "revisionsLoadFailed": "Dream 버전을 일시적으로 불러올 수 없어요. 잠시 후 다시 시도하세요",
+          "revisionLoadFailed": "이 Dream 버전을 불러올 수 없어요. 잠시 후 다시 시도하세요",
+          "restoreFailed": "Dream 버전을 복원하지 못했어요. 현재 기억은 변경되지 않았어요"
+        }
+      },
       "sections": {
         "today": "오늘",
         "week": "이번 주 초",
@@ -1983,6 +2167,7 @@
       "headersHint": "One KEY=value pair per line. Values are stored for connector requests and masked after saving.",
       "statusRunning": "Running",
       "statusStopped": "Stopped",
+      "statusDisabled": "Disabled",
       "statusConnecting": "Connecting",
       "statusReconnecting": "Reconnecting",
       "statusFailed": "Reconnect failed",
@@ -1995,7 +2180,6 @@
       "env": "Environment Variables",
       "envHint": "One KEY=value pair per line. Values are passed only to local stdio MCP server processes.",
       "timeout": "Timeout Seconds",
-      "autoStart": "Auto Start",
       "addConnector": "Add Connector",
       "updateConnector": "Update Connector",
       "importJson": "Import JSON",
@@ -2010,7 +2194,56 @@
       "removeConfirm": "Remove this connector? Saved per-agent switches will remain but no longer take effect.",
       "agentTitle": "Agent Configuration",
       "agentConnectorDesc": "Enable for the selected agent, just like skills.",
-      "saveError": "Save failed"
+      "saveError": "Save failed",
+      "enabledAgentsCount": "개 어시스턴트에서 사용 중",
+      "manage": "관리",
+      "removeTitle": "커넥터 제거",
+      "connectionTitle": "연결 방식",
+      "permissionTitle": "권한",
+      "toolsTitle": "도구",
+      "noTools": "아직 도구가 없습니다. 커넥터를 시작하고 한 번 새로 고치면 보입니다.",
+      "toolCollisionNotice": "{a}와(과) {b}는 정규화하면 같은 도구 이름이 되어 양쪽 모두 비활성화되었습니다. 커넥터 id를 변경하거나 서버에서 도구 이름을 바꿔 주세요.",
+      "toolCollisionSummary": "도구 {count}개가 {other}의 도구와 정규화 후 이름이 겹쳐 모두 비활성화되었습니다. 커넥터 id를 변경하세요.",
+      "toolCollisionHostNotice": "{a}은(는) 정규화하면 내장 상태 도구와 같은 이름이 되어 이 도구가 비활성화되었습니다. 이름을 변경하세요.",
+      "noToolMatches": "일치하는 도구가 없습니다",
+      "toolSearch": "도구 검색",
+      "selectAll": "전체 선택",
+      "selectNone": "선택 해제",
+      "selectInvert": "선택 반전",
+      "badgeReadOnly": "읽기 전용",
+      "badgeDestructive": "파괴적",
+      "permissionAllow": "검토 없이 허용",
+      "pinTool": "항상 로드",
+      "permissionMode": "호출 검토",
+      "permissionModeHint": "기본적으로 모든 호출을 검토합니다. 허용 목록으로 바꾸면 직접 허용한 도구만 검토를 건너뜁니다.",
+      "permissionReviewAll": "모두 검토",
+      "permissionAllowlist": "허용 목록",
+      "trustReadOnly": "읽기 전용 선언 신뢰",
+      "trustReadOnlyHint": "읽기 전용 여부는 서버가 스스로 밝힌 것이며 Hana가 확인할 수 없습니다. 켜면 읽기 전용으로 선언된 도구는 매번 검토하지 않습니다.",
+      "deferTitle": "지연 로딩",
+      "deferScopeNote": "아래 설정은 이 커넥터뿐 아니라 모든 커넥터에 함께 적용됩니다.",
+      "deferEnabled": "지연 로딩 허용",
+      "deferEnabledHint": "도구가 많을 때는 먼저 목록만 모델에 주고, 필요한 도구의 설명만 가져옵니다.",
+      "deferBuiltin": "내장 도구도 지연 로딩",
+      "deferBuiltinHint": "켜면 내장 도구도 카탈로그를 통해 필요할 때 로드됩니다. 직접 로드가 모델의 능동성에 유리하므로 컨텍스트가 부족할 때만 권장합니다.",
+      "deferThreshold": "임계값",
+      "deferThresholdHint": "사용 중인 도구가 이 수를 넘을 때만 목록을 쓰고, 그 아래면 모두 직접 로드합니다.",
+      "agentConnectorEnabled": "이 어시스턴트에서 사용",
+      "oauthWaiting": "브라우저에서 인증이 끝나기를 기다리는 중",
+      "oauthWaitingHint": "브라우저에 인증 페이지를 열었습니다. 완료되면 자동으로 반영되며, 언제든 취소할 수 있습니다.",
+      "oauthFailed": "인증에 실패했습니다",
+      "oauthTimeout": "인증 대기 시간이 초과되었습니다",
+      "importEmpty": "커넥터를 찾지 못했습니다",
+      "importPreviewHint": "가져올 항목을 확인하세요. 체크를 해제하면 그 항목은 제외됩니다.",
+      "importParse": "분석",
+      "importConfirm": "{count}개 가져오기",
+      "importItemOk": "추가됨",
+      "commandRequired": "명령이 없습니다",
+      "urlRequired": "주소를 입력하세요",
+      "urlInvalid": "이 주소를 해석할 수 없습니다. https:// 같은 스킴을 포함하세요",
+      "urlScheme": "http 또는 https 주소만 지원합니다",
+      "modeSwitchTitle": "연결 유형 변경",
+      "modeSwitchBody": "로컬과 원격은 서로 다른 설정을 씁니다. 전환하면 다른 쪽 항목이 지워지고 실행 중인 연결도 끊깁니다."
     },
     "screenshot": {
       "title": "스크린샷 공유",
@@ -2140,7 +2373,7 @@
     "experiments": {
       "title": "실험 기능",
       "compactionTitle": "컨텍스트 압축",
-      "compactionSectionDescription": "압축 시 프롬프트 캐시 보존과 넓은 기록 호환성 중 무엇을 우선할지 선택해요.",
+      "compactionSectionDescription": "자동 압축의 기본 전략과 채팅 컨텍스트 링에 실험적인 일회성 동작을 표시할지 설정해요.",
       "modelPersonaTitle": "모델 & 페르소나",
       "modelPersonaDescription": "프로바이더가 Hana의 페르소나, 분위기, 출력 계약에 어떻게 적응하는지 관찰해요.",
       "memoryTitle": "메모리 실험",
@@ -2187,10 +2420,14 @@
       },
       "compaction": {
         "title": "압축 모드",
-        "description": "자동은 캐시 보존 압축을 우선해요. 일반 압축은 Pi SDK 기본 요약기를 사용해 불안정한 기록 형식에 더 적합해요.",
+        "description": "자동은 캐시 보존 압축을 우선해요. 일반 압축은 Pi SDK 기본 요약기를 사용해요.",
         "auto": "자동",
         "cachePreserving": "캐시 보존 압축",
         "piCompatible": "일반 압축"
+      },
+      "instantSimpleCompaction": {
+        "title": "즉시 간이 압축",
+        "description": "켜면 채팅 입력창의 컨텍스트 링 메뉴에 ‘즉시 간이 압축’ 동작이 추가돼요. 직접 시작한 한 번의 압축에만 적용되며 자동 또는 일반 압축 동작은 바꾸지 않아요."
       },
       "deepseekRoleplay": {
         "title": "DeepSeek 페르소나 몰입 패치",
@@ -2212,7 +2449,7 @@
       "exporting": "내보내는 중",
       "importing": "가져오는 중",
       "noDescription": "이 캐릭터 카드에 설명이 없어요.",
-      "noIshiki": "Ishiki 없음",
+      "noAgentsMd": "AGENTS.md 없음",
       "viewDetail": "캐릭터 카드 상세 보기",
       "memoryCount": "메모리 {count}개, 선택적 {action}",
       "memoryCountExport": "내보내기",
@@ -2466,7 +2703,8 @@
     "blockquote": "인용",
     "codeBlock": "코드 블록",
     "horizontalRule": "구분선",
-    "list": "목록"
+    "list": "목록",
+    "blockActions": "블록 작업"
   },
   "rightWorkspace": {
     "activity": {
@@ -2568,7 +2806,8 @@
       "deleteSelected": "{count}개 항목 삭제",
       "deleteN": "{n}개 항목 삭제",
       "newMdFile": "새 Markdown 문서",
-      "newFolder": "새 폴더"
+      "newFolder": "새 폴더",
+      "history": "파일 기록"
     },
     "deleteConfirm": "\"{name}\"을 시스템 휴지통으로 이동할까요?",
     "deleteSelectedConfirm": "선택한 {count}개 항목을 시스템 휴지통으로 이동할까요?",
@@ -2613,12 +2852,16 @@
   "browser": {
     "using": "브라우저 사용 중",
     "close": "브라우저 닫기",
+    "open": "브라우저 열기",
+    "collapse": "접기",
+    "closeForSession": "이 세션의 브라우저 닫기",
     "closeBtn": "닫기",
     "back": "뒤로",
     "forward": "앞으로",
     "reload": "새로고침",
     "newTab": "새 탭",
     "closeTab": "탭 닫기",
+    "emptyWorkspace": "열린 탭이 없어요",
     "emergencyStop": "AI 제어 긴급 중지",
     "backgroundHint": "백그라운드 브라우저 실행 중, 클릭하여 보기",
     "background": "백그라운드 브라우저"
@@ -2644,7 +2887,11 @@
     }
   },
   "notification": {
-    "turnCompletionBody": "이번 턴이 완료됐어요"
+    "chatCompletionBody": "이번 채팅 턴이 완료됐어요",
+    "scheduledTaskCompletionBody": "예약 작업이 완료됐어요: {label}",
+    "scheduledTaskCompletionFailedBody": "예약 작업에 실패했어요: {label}",
+    "patrolCompletionBody": "순찰이 완료됐어요: {label}",
+    "patrolCompletionFailedBody": "순찰에 실패했어요: {label}"
   },
   "error": {
     "pathsRequired": "paths 배열이 필요해요",
@@ -2700,6 +2947,7 @@
     "fetchError": "가져오기 오류: {msg}",
     "browserError": "오류: {msg}",
     "browserAlreadyRunning": "브라우저가 이미 실행 중이에요",
+    "browserAuthorizationRevoked": "사용자가 브라우저 사용 권한을 중단했어요",
     "browserLaunched": "브라우저를 시작했어요",
     "browserNotRunning": "브라우저가 실행되고 있지 않아요",
     "browserClosed": "브라우저를 닫았어요",
@@ -2841,6 +3089,7 @@
     "platformTestUnsupported": "이 플랫폼은 테스트를 지원하지 않아요",
     "codexNoHealthCheck": "Codex API는 헬스 체크를 지원하지 않아요",
     "modelNotFound": "모델을 찾을 수 없어요: {id}",
+    "modelContextTooLarge": "새 모델의 컨텍스트 창이 이 대화를 담기에 너무 작습니다. 먼저 대화를 압축한 다음 모델을 다시 전환해 주세요.",
     "noUtilityModel": "utility 모델이 설정되지 않았어요. 설정에서 추가해 주세요",
     "noUtilityLargeModel": "utility_large 모델이 설정되지 않았어요. 설정에서 추가해 주세요",
     "modelNoProvider": "{role} 모델 \"{model}\"에 provider가 연결되지 않았어요",
@@ -2903,7 +3152,47 @@
     "stopTaskNotFound": "태스크 {taskId}를 찾을 수 없어요. 이미 완료됐거나 존재하지 않을 수 있어요",
     "stopTaskAlready": "태스크 {taskId}는 이미 종료됐어요",
     "stopTaskNoHandler": "태스크 {taskId}는 중단을 지원하지 않아요",
-    "stopTaskDone": "태스크 {taskId}를 종료했어요"
+    "stopTaskDone": "태스크 {taskId}를 종료했어요",
+    "detailShow": "자세히",
+    "detailHide": "접기",
+    "code": {
+      "unexpected": "작업을 완료하지 못했습니다",
+      "sessionForkActiveTask": "이 구간에 아직 실행 중인 작업이 있습니다. 끝날 때까지 기다리거나 더 앞쪽 지점에서 분기하세요",
+      "sessionForkUnavailable": "현재 버전에서는 분기 세션을 만들 수 없습니다",
+      "subagentSessionForkCycle": "서브에이전트 세션을 자신의 상위로 분기할 수 없습니다",
+      "subagentRunBusy": "서브에이전트가 아직 실행 중입니다. 끝날 때까지 기다려 주세요",
+      "subagentThreadBusy": "서브에이전트 스레드가 사용 중입니다. 잠시 후 다시 시도하세요",
+      "workflowRunBusy": "워크플로가 아직 실행 중입니다. 끝날 때까지 기다려 주세요",
+      "workflowNodeBusy": "워크플로 노드가 사용 중입니다. 잠시 후 다시 시도하세요",
+      "sessionCreateFailed": "세션 생성에 실패했습니다. 잠시 후 다시 시도하고, 계속되면 설정에서 모델과 인증 정보를 확인하세요",
+      "sessionBusy": "이 세션이 사용 중입니다. 현재 작업이 끝난 뒤 다시 시도하세요",
+      "sessionNotLoaded": "세션이 아직 다 불러와지지 않았습니다. 잠시 후 다시 시도하세요",
+      "sessionIdentityConflict": "세션 식별 정보가 맞지 않습니다. 새로 고친 뒤 다시 시도하세요",
+      "sessionIdentityUnresolved": "이 메시지가 어느 세션의 것인지 확인할 수 없습니다",
+      "sessionIdentityMismatch": "이 메시지는 현재 세션의 것이 아닙니다",
+      "sessionManifestNotFound": "이 세션의 기록을 찾을 수 없습니다. 삭제되었을 수 있으니 목록을 새로 고쳐 확인하세요",
+      "sessionManifestUnavailable": "세션 색인을 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도하고, 계속되면 앱을 재시작하세요",
+      "sessionLocatorNotActive": "이 세션은 더 이상 현재 버전이 아닙니다. 보관되었거나 이동했을 수 있으니 목록을 새로 고친 뒤 다시 시도하세요",
+      "activeSessionConflict": "이미 다른 세션이 진행 중입니다",
+      "sessionDeleteStagedConflict": "이 세션은 삭제 중이라 지금은 사용할 수 없습니다",
+      "fileTooLarge": "파일이 허용된 크기를 넘었습니다",
+      "invalidUpload": "업로드한 내용을 읽을 수 없습니다",
+      "invalidPath": "경로가 올바르지 않습니다",
+      "noAvailableModel": "사용할 수 있는 대화 모델이 없습니다. 먼저 설정에서 모델과 인증 정보를 구성하세요",
+      "agentModelNotAvailable": "이 어시스턴트에 설정된 모델을 현재 사용할 수 없습니다. 설정에서 다른 모델로 바꾸세요",
+      "workspaceNotFound": "이 작업 공간을 찾을 수 없습니다",
+      "capabilityDenied": "이 작업은 권한이 없습니다",
+      "dreamUnavailable": "이 Agent에서는 Dream 정리를 일시적으로 사용할 수 없어요",
+      "dreamMemoryDisabled": "먼저 이 Agent의 기억을 활성화하세요",
+      "dreamMemoryBusy": "백그라운드에서 기억을 정리하고 있어요. 잠시 후 다시 시도하세요",
+      "dreamAlreadyRunning": "이 기억에 대해 Dream 정리가 이미 실행 중이에요",
+      "dreamNoMemory": "아직 정리할 중요한 사실이나 장기 기억이 없어요",
+      "dreamMemoryChanged": "정리 중 기억이 변경됐어요. Dream을 다시 실행하세요",
+      "dreamRevisionNotFound": "이 Dream 버전을 찾을 수 없어요. 이미 정리되었을 수 있어요",
+      "dreamRestoreFailed": "Dream 버전을 복원하지 못했어요. 현재 기억은 변경되지 않았어요",
+      "dreamRunFailed": "Dream 정리에 실패했어요. 기존 기억은 변경되지 않았어요",
+      "internalContract": "앱 내부에서 문제가 생겼습니다. 조작 실수가 아닙니다. 자세한 내용은 기록되어 있으며 제보할 때 첨부할 수 있습니다"
+    }
   },
   "main": {
     "tray": {
@@ -3032,6 +3321,7 @@
   },
   "sandbox": {
     "blocked": "[보안] {reason}\n\n이 작업은 HanaAgent의 샌드박스 보안 정책에 의해 차단되었어요. 이는 명령이 경로나 권한 경계를 넘었다는 뜻이에요. 먼저 현재 워크스페이스, 정확한 경로 표기, 대상 파일이 허용된 워크스페이스 또는 session 경로에 있어야 하는지 확인하세요. 차단된 경로와 이유를 사용자에게 설명하고, 사용자가 명확히 결정한 경우에만 샌드박스 설정 변경을 논의하세요.",
+    "blockedNeedsEscalation": "[보안] {reason}\n\n이 명령은 샌드박스 모드에서 차단되었어요. 현재 작업에 중요하고 읽기 전용 조회라면, sandbox_permissions=\"require_escalated\"와 한 문장짜리 justification을 붙여 다시 실행해 주세요. 사용자가 검토한 뒤 샌드박스 밖에서 실행돼요.",
     "noSudo": "sudo 사용이 금지되어 있어요",
     "noSu": "su 사용자 전환이 금지되어 있어요",
     "noChmod": "파일 권한 변경이 금지되어 있어요",
@@ -3154,8 +3444,8 @@
       "imageDesc": "이미지-투-동영상용 참조 이미지. { kind: \"session_file\", fileId } 같은 현재 세션 객체를 우선 사용하세요.",
       "durationDesc": "동영상 길이 4~15초 (기본 5)",
       "ratioDesc": "종횡비: 1:1, 16:9, 9:16, 4:3, 3:4, 21:9",
-      "modelDesc": "모델 버전: seedance2.0, seedance2.0fast (기본 seedance2.0)",
-      "providerDesc": "프로바이더 지정 (선택)",
+      "modelDesc": "모델 ID 또는 짧은 이름. 일반 생성에서는 생략해 설정된 기본 모델을 사용하고, 사용자가 모델을 명시하거나 재정의를 승인한 경우에만 설정하세요",
+      "providerDesc": "프로바이더 지정 (선택). 일반 생성에서는 생략해 설정된 기본 프로바이더를 사용하고, 사용자가 프로바이더를 명시하거나 재정의를 승인한 경우에만 설정하세요",
       "notInitialized": "동영상 생성 플러그인이 초기화되지 않았어요",
       "noProvider": "사용 가능한 동영상 생성 프로바이더 없음",
       "submitFailed": "동영상 제출 실패: {error}",
@@ -3208,7 +3498,25 @@
       "text": "Beautify는 현재 두 가지 기능을 제공해요. 1) Markdown 커버 워크플로: 먼저 커버 스타일 가이드를 읽고, 이미지를 준비(Media Generation, 향후 내장 갤러리, 로컬 파일)한 뒤 attachments 폴더에 복사하고 cover frontmatter를 기록해요. 2) 전체 페이지 HTML 미학 가이드: 웹 페이지/조판 페이지/보고서 생성 전 beautify_get-html-style-guide로 Hana 기본 아트 디렉션을 받으세요(인수 없이 호출하면 라우터, 필요 시 섹션별로 가져오기)."
     }
   },
+  "fileHistory": {
+    "title": "파일 기록",
+    "searchPlaceholder": "파일 검색…",
+    "deletedGroup": "삭제된 파일",
+    "empty": "아직 기록이 없습니다",
+    "noVersions": "이 파일의 버전이 없습니다",
+    "selectVersion": "버전을 선택하여 변경 사항 보기",
+    "restore": "이 버전으로 복원",
+    "restoreDone": "복원됨",
+    "error": "작업 실패",
+    "origin": {
+      "event": "앱 내 편집",
+      "watcher": "외부 변경",
+      "sweep": "기준 스냅샷",
+      "restore": "복원"
+    }
+  },
   "preview": {
+    "fileHistory": "파일 기록",
     "fileMovedOrDeleted": "원고가 이동했거나 삭제되었어요",
     "legacyImageUpgrade": "이미지 미리보기가 업그레이드되었어요. 새 뷰어에서 열려면 클릭하세요.",
     "coverLayoutSaveFailed": "Cover 레이아웃 저장에 실패했어요. 파일이 외부에서 변경되었을 수 있어요.",
@@ -3345,6 +3653,16 @@
       "body": "확인하면 이 폴더가 현재 대화의 추가 샌드박스 디렉터리가 돼요. 작업 디렉터리나 프롬프트는 변경하지 않아요.",
       "addLabel": "권한 디렉터리 추가",
       "removeLabel": "권한 디렉터리 제거"
+    },
+    "mcpElicitation": {
+      "unsupportedField": "지원하지 않는 필드 유형",
+      "choose": "선택하세요",
+      "requiredMissing": "* 표시된 필수 항목을 입력하세요"
+    },
+    "mcpTool": {
+      "allowForSession": "이 세션에서는 다시 묻지 않기",
+      "allowAlways": "이 도구를 항상 허용",
+      "grantFailed": "이 허용을 기억하지 못했습니다"
     }
   },
   "auth": {

@@ -1,5 +1,6 @@
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import styles from './InputArea.module.css';
+import type { InlineErrorEntry } from '../../stores/streaming-slice';
 
 interface Props {
   slashBusy: string | null;
@@ -15,7 +16,8 @@ interface Props {
     currentPage: number;
     totalPages: number;
   } | null;
-  inlineError: string | null;
+  inlineError: InlineErrorEntry | null;
+  modelUnavailableMessage?: string | null;
   slashResult: { text: string; type: 'success' | 'error'; deskDir?: string; filePath?: string } | null;
   onResultClick: (() => void) | undefined;
 }
@@ -24,7 +26,7 @@ interface Props {
 export const InputStatusBars = memo(function InputStatusBars({
   slashBusy, slashBusyLabel, compacting, compactingLabel,
   screenshotBusy, screenshotLabel, screenshotPageLabel, screenshotProgress,
-  inlineError, slashResult, onResultClick,
+  inlineError, modelUnavailableMessage = null, slashResult, onResultClick,
 }: Props) {
   const completedBlocks = screenshotProgress?.completedBlocks ?? 0;
   const totalBlocks = screenshotProgress?.totalBlocks ?? 0;
@@ -33,6 +35,11 @@ export const InputStatusBars = memo(function InputStatusBars({
     : 0;
   const progressLabel = screenshotPageLabel || screenshotLabel;
   const resultClickable = !!onResultClick;
+  const t = window.t ?? ((key: string) => key);
+  // 详情默认收起；换了一条错误就重新收起，免得旧错误的展开态套在新错误上。
+  const [errorExpanded, setErrorExpanded] = useState(false);
+  useEffect(() => { setErrorExpanded(false); }, [inlineError]);
+  const errorHasDetail = !!(inlineError?.detail || inlineError?.code);
 
   return (
     <>
@@ -70,16 +77,46 @@ export const InputStatusBars = memo(function InputStatusBars({
         </div>
       )}
       {inlineError && (
-        <div className={styles['slash-error-bar']}>
-          <span className={styles['slash-error-dot']} />
-          <span>{inlineError}</span>
+        <div className={`${styles['slash-error-bar']} ${styles['slash-error-bar-stacked']}`}>
+          <div className={styles['slash-error-headline']}>
+            <span className={styles['slash-error-dot']} />
+            <span className={styles['slash-error-text']}>{inlineError.text}</span>
+            {errorHasDetail && (
+              <button
+                type="button"
+                className={styles['slash-error-toggle']}
+                onClick={() => setErrorExpanded((open) => !open)}
+                aria-expanded={errorExpanded}
+              >
+                {errorExpanded ? t('error.detailHide') : t('error.detailShow')}
+              </button>
+            )}
+          </div>
+          {errorHasDetail && errorExpanded && (
+            <div className={styles['slash-error-detail']}>
+              {inlineError.detail && <p className={styles['slash-error-detail-line']}>{inlineError.detail}</p>}
+              {inlineError.code && <p className={styles['slash-error-detail-code']}>{inlineError.code}</p>}
+            </div>
+          )}
         </div>
       )}
-      {!slashBusy && !compacting && !screenshotBusy && !inlineError && slashResult && (
+      {modelUnavailableMessage && (
+        <div className={styles['slash-error-bar']} role="status">
+          <span className={styles['slash-error-dot']} />
+          <span>{modelUnavailableMessage}</span>
+        </div>
+      )}
+      {!slashBusy && !compacting && !screenshotBusy && !inlineError && !modelUnavailableMessage && slashResult && (
         <div
           className={`${styles['slash-busy-bar']}${resultClickable ? ` ${styles['slash-busy-bar-clickable']}` : ''}`}
           onClick={onResultClick}
+          onKeyDown={resultClickable ? (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            onResultClick();
+          } : undefined}
           role={resultClickable ? 'button' : undefined}
+          tabIndex={resultClickable ? 0 : undefined}
         >
           <span className={styles[slashResult.type === 'success' ? 'slash-result-dot-ok' : 'slash-result-dot-err']} />
           <span>{slashResult.text}</span>

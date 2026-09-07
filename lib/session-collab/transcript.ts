@@ -1,6 +1,7 @@
 // 把 loadSessionHistoryMessages 的原始消息数组转成省 token 的紧凑纯文本页。
 // 回合定义：一条 user 消息开启一个回合，吸收其后所有 assistant/toolResult 直到下一条 user。
 import { extractTextContent } from "../../core/message-utils.ts";
+import { stripSessionReminderBlocks } from "../../core/session-reminders.ts";
 
 const TOOL_RESULT_MAX = 120;
 const ARG_SUMMARY_MAX = 60;
@@ -43,7 +44,8 @@ function imagePlaceholders(count: number): string {
 function renderMessage(message: any, meta: TranscriptMeta): string[] {
   if (message?.role === "user") {
     const { text, images } = extractTextContent(message.content, { stripThink: false });
-    return [`[user] ${String(text ?? "").trim()}${imagePlaceholders(images.length)}`];
+    const visibleText = stripSessionReminderBlocks(text);
+    return [`[user] ${visibleText.trim()}${imagePlaceholders(images.length)}`];
   }
   if (message?.role === "assistant") {
     const { text, toolUses, images } = extractTextContent(message.content, { stripThink: true });

@@ -137,7 +137,10 @@ export function buildPluginSurfaceUrl({
   const url = new URL(fullUrl);
   if (ticket) url.searchParams.set('pluginIframeTicket', ticket);
   if (surfaceSession) url.searchParams.set('pluginSurfaceSession', surfaceSession);
-  url.searchParams.set('agentId', agentId || '');
+  // A surface can be opened without an agent, for example a preview. Sending
+  // agentId= would claim the surface belongs to an agent whose id is empty;
+  // leaving the parameter off says there is no agent.
+  if (agentId) url.searchParams.set('agentId', agentId);
   url.searchParams.set('hana-theme', theme);
   url.searchParams.set('hana-css', cssUrl);
   return url.toString();

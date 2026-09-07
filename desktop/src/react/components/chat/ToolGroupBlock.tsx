@@ -9,6 +9,9 @@ import { extractToolDetail } from '../../utils/message-parser';
 import type { ToolDetail } from '../../utils/message-parser';
 import { openInternalLink } from '../../utils/link-open';
 import { isToolCallHiddenFromProcessUi } from '../../utils/tool-call-visibility';
+import { getToolLabel, phaseForStatus, sessionToolTargetName, sessionToolTargetPath } from '../../utils/tool-label';
+import { useStore } from '../../stores';
+import { switchSession } from '../../stores/session-actions';
 import { LinkContextMenu, type LinkContextMenuState } from '../shared/LinkContextMenu';
 
 import type { ToolCall } from '../../stores/chat-types';
@@ -17,19 +20,6 @@ interface Props {
   tools: ToolCall[];
   collapsed: boolean;
   agentName?: string;
-}
-
-function getToolLabel(name: string, phase: string, agentName: string): string {
-  const t = window.t;
-  const vars = { name: agentName };
-  const labelName = name === 'exec_command'
-    ? 'bash'
-    : name === 'write_stdin'
-      ? 'terminal'
-      : name;
-  const val = t?.(`tool.${labelName}.${phase}`, vars);
-  if (val && val !== `tool.${labelName}.${phase}`) return val;
-  return t?.(`tool._fallback.${phase}`, vars) || name;
 }
 
 export const ToolGroupBlock = memo(function ToolGroupBlock({ tools: rawTools, collapsed: initialCollapsed, agentName = 'Hanako' }: Props) {
@@ -43,8 +33,8 @@ export const ToolGroupBlock = memo(function ToolGroupBlock({ tools: rawTools, co
 
   if (tools.length === 0) return null;
 
-  const allDone = tools.every(t => t.done);
-  const failCount = tools.filter(t => t.done && !t.success).length;
+  const allDone = tools.every(t => t.status ? t.status !== 'running' : t.done);
+  const failCount = tools.filter(t => t.status === 'failed' || (!t.status && t.done && !t.success)).length;
   const isSingle = tools.length === 1;
 
   // 摘要标题
@@ -106,9 +96,18 @@ function handleDetailClick(e: React.MouseEvent, detail: ToolDetail) {
 const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: ToolCall; agentName: string }) {
   const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
 
-  const detail = extractToolDetail(tool.name, tool.args);
-  const label = getToolLabel(tool.name, tool.done ? 'done' : 'running', agentName);
+  // session 工具指向另一个会话，把它的名字显示出来并支持点过去。两个 selector 各返回
+  // 字符串或 null，引用稳定，不会让每个工具行都因为 sessions 变动而重渲染。
+  const isSessionTool = tool.name === 'session';
+  const sessionTargetName = useStore(s => (isSessionTool ? sessionToolTargetName(s, tool.args) : null));
+  const sessionTargetPath = useStore(s => (isSessionTool ? sessionToolTargetPath(s, tool.args) : null));
+
+  const rawDetail = extractToolDetail(tool.name, tool.args);
+  const detail = sessionTargetName ? { ...rawDetail, text: sessionTargetName } : rawDetail;
   const detailTitle = detail.title || detail.href;
+  const status = tool.status || (tool.done ? (tool.success ? 'succeeded' : 'failed') : 'running');
+  // 失败的工具要说失败：此前这里只传 done/running，失败的读文件会显示"翻完了 ✗"
+  const label = getToolLabel(tool.name, phaseForStatus(status), agentName, tool.args);
 
   // 如果 args 里有 tag 类型信息（如 agent 名）
   const tag = tool.args?.agentId as string | undefined;
@@ -118,7 +117,19 @@ const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: T
       <div className={styles.toolIndicator} data-tool={tool.name} data-done={String(tool.done)}>
         <span className={styles.toolDesc}>{label}</span>
         {detail.text && (
-          detail.href ? (
+          sessionTargetPath ? (
+            <span
+              className={`${styles.toolDetail} ${styles.toolDetailLink}`}
+              title={detailTitle || detail.text}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void switchSession(sessionTargetPath);
+              }}
+            >
+              {detail.text}
+            </span>
+          ) : detail.href ? (
             <span
               className={`${styles.toolDetail} ${styles.toolDetailLink}`}
               title={detailTitle}
@@ -140,10 +151,13 @@ const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: T
             <span className={styles.toolDetail} title={detailTitle}>{detail.text}</span>
           )
         )}
+        {tool.error && (
+          <span className={styles.toolDetail} title={tool.error}>{tool.error}</span>
+        )}
         {tag && <span className={styles.toolTag}>{tag}</span>}
-        {tool.done ? (
-          <span className={`${styles.toolStatus} ${tool.success ? styles.toolStatusDone : styles.toolStatusFailed}`}>
-            {tool.success ? '✓' : '✗'}
+        {status !== 'running' ? (
+          <span className={`${styles.toolStatus} ${status === 'succeeded' ? styles.toolStatusDone : styles.toolStatusFailed}`}>
+            {status === 'succeeded' ? '✓' : status === 'failed' ? '✗' : '?'}
           </span>
         ) : (
           <span className={styles.toolDots} />

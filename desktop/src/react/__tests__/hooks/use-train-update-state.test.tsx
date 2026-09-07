@@ -251,11 +251,74 @@ describe('useTrainUpdateState', () => {
     expect(screen.getByTestId('phase').textContent).toBe('downloading');
     expect(screen.getByTestId('progress').textContent).toBe('50/200');
 
+    // verifying stays in the "downloading" phase — the verify gap between
+    // the two archives must not flash the bar to "applying" and back. This
+    // event carries no overall fields (the shape an older shell that
+    // hasn't picked up the overall-bytes fix would still send), so
+    // progress falls back to the per-artifact receivedBytes/totalBytes.
+    act(() => {
+      progressListener?.({ phase: 'verifying', kind: 'server', receivedBytes: 200, totalBytes: 200 });
+    });
+    expect(screen.getByTestId('phase').textContent).toBe('downloading');
+    expect(screen.getByTestId('progress').textContent).toBe('200/200');
+
     act(() => {
       progressListener?.({ phase: 'activating', kind: 'renderer', receivedBytes: 200, totalBytes: 200 });
     });
     expect(screen.getByTestId('phase').textContent).toBe('applying');
     expect(screen.getByTestId('progress').textContent).toBe('200/200');
+  });
+
+  it('onTrainUpdateProgress uses cumulative overall bytes across both artifacts so the bar never resets to 0 at the server/renderer boundary', async () => {
+    installHana();
+    render(<Harness />);
+    await waitFor(() => expect(screen.getByTestId('phase').textContent).toBe('idle'));
+
+    // Server download in progress: overall tracks the server's own bytes
+    // against the combined total (300 = 100 server + 200 renderer), not
+    // the per-artifact total.
+    act(() => {
+      progressListener?.({
+        phase: 'downloading', kind: 'server', receivedBytes: 50, totalBytes: 100,
+        overallReceivedBytes: 50, overallTotalBytes: 300,
+      });
+    });
+    expect(screen.getByTestId('phase').textContent).toBe('downloading');
+    expect(screen.getByTestId('progress').textContent).toBe('50/300');
+
+    // Server finishes, renderer download starts at 0 bytes of its own —
+    // overallReceivedBytes must carry the server's full size forward
+    // (100/300), not drop back toward 0 the way the old per-artifact
+    // receivedBytes (0) would.
+    act(() => {
+      progressListener?.({
+        phase: 'downloading', kind: 'renderer', receivedBytes: 0, totalBytes: 200,
+        overallReceivedBytes: 100, overallTotalBytes: 300,
+      });
+    });
+    expect(screen.getByTestId('phase').textContent).toBe('downloading');
+    expect(screen.getByTestId('progress').textContent).toBe('100/300');
+
+    // Renderer partway through: overall keeps climbing past the server's
+    // own size, still one continuous sweep.
+    act(() => {
+      progressListener?.({
+        phase: 'downloading', kind: 'renderer', receivedBytes: 80, totalBytes: 200,
+        overallReceivedBytes: 180, overallTotalBytes: 300,
+      });
+    });
+    expect(screen.getByTestId('progress').textContent).toBe('180/300');
+
+    // Renderer activating: reaches the full combined total, and only
+    // "activating" flips the phase to applying.
+    act(() => {
+      progressListener?.({
+        phase: 'activating', kind: 'renderer', receivedBytes: 200, totalBytes: 200,
+        overallReceivedBytes: 300, overallTotalBytes: 300,
+      });
+    });
+    expect(screen.getByTestId('phase').textContent).toBe('applying');
+    expect(screen.getByTestId('progress').textContent).toBe('300/300');
   });
 
   it('applyNow surfaces a failed apply as lastError and returns to idle so the user can retry', async () => {

@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { callText as defaultCallText } from "./llm-client.ts";
+import { callTextConfigFromResolvedModel } from "./model-execution-config.ts";
 import {
   prepareSingleModelImageInputForPrompt,
 } from "./model-image-preprocess.ts";
@@ -102,6 +103,35 @@ function uniqueList(values: any[]) {
 
 function emptyNotesSidecar() {
   return { version: 1, sessions: {} };
+}
+
+function sessionNotesEntry(sidecar, sessionId, sessionPath) {
+  const sessions = sidecar?.sessions && typeof sidecar.sessions === "object"
+    ? sidecar.sessions
+    : {};
+  const legacyKey = sessionNotesKey(sessionPath);
+  for (const key of uniqueList([normalizeSessionId(sessionId), legacyKey])) {
+    if (sessions[key] && typeof sessions[key] === "object") return { key, entry: sessions[key] };
+  }
+  for (const [key, entry] of Object.entries(sessions) as any) {
+    if (normalizeSessionId(entry?.sessionId) === normalizeSessionId(sessionId)) return { key, entry };
+    if (!sessionId && entry?.sessionPath === sessionPath) return { key, entry };
+  }
+  return null;
+}
+
+function valueContainsReference(value, reference, seen = new Set()) {
+  if (!reference) return false;
+  if (typeof value === "string") return value.includes(reference);
+  if (!value || typeof value !== "object") return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.some((item) => valueContainsReference(item, reference, seen));
+  }
+  return Object.entries(value).some(([key, item]) => (
+    key.includes(reference) || valueContainsReference(item, reference, seen)
+  ));
 }
 
 function readNotesSidecar(filePath) {
@@ -550,6 +580,81 @@ export class VisionBridge {
     return this._lookupNote(sessionPath, imagePath);
   }
 
+  forkSessionNotes({
+    sourceSessionId,
+    sourceSessionPath,
+    targetSessionId,
+    targetSessionPath,
+    retainedEntries = [],
+  }: any = {}) {
+    const sourceId = normalizeSessionId(sourceSessionId);
+    const targetId = normalizeSessionId(targetSessionId);
+    if (!sourceId) throw new Error("sourceSessionId is required to fork vision notes");
+    if (!targetId) throw new Error("targetSessionId is required to fork vision notes");
+    if (sourceId === targetId) throw new Error("targetSessionId must differ from sourceSessionId");
+    if (!path.isAbsolute(sourceSessionPath || "")) throw new Error("sourceSessionPath must be absolute");
+    if (!path.isAbsolute(targetSessionPath || "")) throw new Error("targetSessionPath must be absolute");
+    if (path.resolve(sourceSessionPath) === path.resolve(targetSessionPath)) {
+      throw new Error("targetSessionPath must differ from sourceSessionPath");
+    }
+
+    const sourceFilePath = sessionNotesPath(sourceSessionPath);
+    const sourceSidecar = readNotesSidecar(sourceFilePath);
+    const source = sessionNotesEntry(sourceSidecar, sourceId, sourceSessionPath);
+    const sourceImages = source?.entry?.images && typeof source.entry.images === "object"
+      ? source.entry.images
+      : {};
+    const retainedImages = Object.entries(sourceImages).filter(([imagePath]) => (
+      valueContainsReference(retainedEntries, imagePath)
+    ));
+    if (!retainedImages.length) return { notes: 0, keys: [] };
+
+    const targetFilePath = sessionNotesPath(targetSessionPath);
+    const targetSidecar = targetFilePath === sourceFilePath
+      ? sourceSidecar
+      : readNotesSidecar(targetFilePath);
+    if (sessionNotesEntry(targetSidecar, targetId, targetSessionPath)) {
+      throw new Error("target session vision notes already exist");
+    }
+
+    const images = {};
+    for (const [imagePath, rawEntry] of retainedImages as any) {
+      const entry = {
+        ...rawEntry,
+        imagePath,
+        sessionId: targetId,
+        sessionPath: targetSessionPath,
+      };
+      images[imagePath] = entry;
+      this._rememberNote(targetSessionPath, imagePath, entry);
+    }
+    targetSidecar.sessions[targetId] = {
+      sessionId: targetId,
+      sessionPath: targetSessionPath,
+      images,
+    };
+    writeNotesSidecar(targetFilePath, targetSidecar);
+    return { notes: retainedImages.length, keys: retainedImages.map(([imagePath]) => imagePath) };
+  }
+
+  discardForkedSessionNotes({ sessionId, sessionPath }: any = {}) {
+    const normalizedId = normalizeSessionId(sessionId);
+    if (!normalizedId) throw new Error("sessionId is required to discard forked vision notes");
+    if (!path.isAbsolute(sessionPath || "")) throw new Error("sessionPath must be absolute");
+    const filePath = sessionNotesPath(sessionPath);
+    const sidecar = readNotesSidecar(filePath);
+    const found = sessionNotesEntry(sidecar, normalizedId, sessionPath);
+    if (!found) return false;
+    delete sidecar.sessions[found.key];
+    writeNotesSidecar(filePath, sidecar);
+    for (const [key, entry] of this._noteByPath) {
+      if (normalizeSessionId(entry?.sessionId) === normalizedId || entry?.sessionPath === sessionPath) {
+        this._noteByPath.delete(key);
+      }
+    }
+    return true;
+  }
+
   injectNotes(messages, sessionPath = null) {
     if (!Array.isArray(messages)) return { messages, injected: 0 };
     let injected = 0;
@@ -782,10 +887,7 @@ export class VisionBridge {
 
   async _analyzeImageAsNote(config, img, userRequest, signal, sessionPath = null) {
     return truncate(await this._callText({
-      api: config.api,
-      apiKey: config.api_key,
-      baseUrl: config.base_url,
-      model: config.model,
+      ...callTextConfigFromResolvedModel(config),
       systemPrompt: AUXILIARY_VISION_SYSTEM_PROMPT,
       messages: [{
         role: "user",
@@ -822,10 +924,7 @@ export class VisionBridge {
   async _analyzeImageWithPrimitives(config, img, userRequest, visionCapabilities, signal, sessionPath = null) {
     const primitiveShape = primitivePromptShape(visionCapabilities);
     const responseText = await this._callText({
-      api: config.api,
-      apiKey: config.api_key,
-      baseUrl: config.base_url,
-      model: config.model,
+      ...callTextConfigFromResolvedModel(config),
       systemPrompt: AUXILIARY_VISION_SYSTEM_PROMPT,
       messages: [{
         role: "user",

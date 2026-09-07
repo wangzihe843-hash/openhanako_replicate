@@ -90,6 +90,17 @@ function compareByModifiedDesc(a: Session, b: Session): number {
   return modifiedTime(b) - modifiedTime(a) || compareByPath(a, b);
 }
 
+/**
+ * 置顶区按手动顺序升序。还没有顺序的会话排在有顺序的之后，彼此之间仍按最近活动排——
+ * 顺序固化前的老数据因此保持原来的显示顺序。
+ */
+function comparePinned(a: Session, b: Session): number {
+  const ao = typeof a.pinOrder === 'number' ? a.pinOrder : Number.POSITIVE_INFINITY;
+  const bo = typeof b.pinOrder === 'number' ? b.pinOrder : Number.POSITIVE_INFINITY;
+  if (ao !== bo) return ao - bo;
+  return compareByModifiedDesc(a, b);
+}
+
 export function autoProjectIdForCwd(cwd: string | null | undefined): string {
   return makeAutoProjectIdForCwd(cwd);
 }
@@ -100,7 +111,7 @@ export function buildSessionSections(
 ): SessionSection[] {
   const pinned = sessions
     .filter(isPinnedSession)
-    .sort(compareByModifiedDesc);
+    .sort(comparePinned);
   const regular = sessions.filter(session => !isPinnedSession(session));
 
   const sections: SessionSection[] = [];
@@ -156,7 +167,7 @@ export function buildSessionProjectView(
   const catalogLoaded = options.catalogLoaded ?? true;
   const pinned = sessions
     .filter(isPinnedSession)
-    .sort(compareByModifiedDesc);
+    .sort(comparePinned);
   const regular = sessions.filter(session => !isPinnedSession(session));
 
   const catalogFolders = normalizeCatalogFolders(catalog.folders);

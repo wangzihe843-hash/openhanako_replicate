@@ -122,11 +122,14 @@ export class DeferredResultCoordinator {
     }
 
     try {
-      await this.sessionCoordinator.deliverCustomMessage(
+      const shouldDeliver = () => this.store.query(taskId)?.deliverySuppressed !== true;
+      if (!shouldDeliver()) return false;
+      const delivery = await this.sessionCoordinator.deliverCustomMessage(
         task.sessionPath,
         buildDeferredResultMessage(taskId, task),
-        { triggerTurn: shouldTriggerParentTurn(task) },
+        { triggerTurn: shouldTriggerParentTurn(task), shouldDeliver },
       );
+      if (delivery?.mode === "suppressed") return false;
       this.store.markDelivered(taskId);
       return true;
     } catch (err) {

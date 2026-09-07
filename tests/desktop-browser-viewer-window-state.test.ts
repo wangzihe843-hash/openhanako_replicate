@@ -18,6 +18,35 @@ function functionBody(source, name) {
   throw new Error(`unterminated function ${name}`);
 }
 
+function caseBody(source, name) {
+  const marker = `case "${name}": {`;
+  const start = source.indexOf(marker);
+  expect(start).toBeGreaterThan(-1);
+  const bodyStart = start + marker.length - 1;
+  let depth = 0;
+  for (let i = bodyStart; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    if (source[i] === "}") depth--;
+    if (depth === 0) return source.slice(bodyStart + 1, i);
+  }
+  throw new Error(`unterminated case ${name}`);
+}
+
+function ipcHandlerBody(source, channel) {
+  const marker = `wrapIpcBestEffortHandler("${channel}"`;
+  const start = source.indexOf(marker);
+  expect(start).toBeGreaterThan(-1);
+  const bodyStart = source.indexOf("=> {", start) + 3;
+  expect(bodyStart).toBeGreaterThan(start);
+  let depth = 0;
+  for (let i = bodyStart; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    if (source[i] === "}") depth--;
+    if (depth === 0) return source.slice(bodyStart + 1, i);
+  }
+  throw new Error(`unterminated ipc handler ${channel}`);
+}
+
 describe("desktop browser viewer window state", () => {
   it("does not wake secondary windows when showing the primary window", () => {
     const source = fs.readFileSync(MAIN_PATH, "utf-8");
@@ -53,8 +82,38 @@ describe("desktop browser viewer window state", () => {
 
     expect(source).toContain("sessionPath -> BrowserWorkspace");
     expect(source).toContain("tabId -> WebContentsView");
-    expect(source).toContain("function _ensureBrowserTabForSession");
+    expect(source).toContain("function _ensureBrowserWorkspace");
     expect(source).toContain("function _switchActiveBrowserTab");
+  });
+
+  it("keeps an empty workspace alive when the last tab closes", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+    const closeTab = caseBody(source, "closeTab");
+
+    expect(closeTab).not.toContain("_browserViews.delete");
+    expect(closeTab).not.toContain("running: false");
+    expect(closeTab).toContain("_serializeBrowserWorkspace(workspace)");
+
+    const removeRecord = functionBody(source, "_removeBrowserTabRecord");
+    expect(removeRecord).not.toContain("_browserViews.delete");
+  });
+
+  it("shows an empty tab group instead of auto-creating a tab when the viewer opens", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+
+    // 打开 viewer 不再替用户建标签页：有 tab 就切过去，没有就渲染空态
+    expect(source).not.toContain("_ensureBrowserTabForSession");
+  });
+
+  it("syncs the tab workspace back to the server after viewer-driven tab edits", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+
+    expect(source).toContain("let _browserCmdWs = null");
+    expect(source).toContain("function _syncWorkspaceToServer");
+    expect(source).toContain('type: "browser-workspace-sync"');
+
+    expect(ipcHandlerBody(source, "browser-new-tab")).toContain("_syncWorkspaceToServer(");
+    expect(ipcHandlerBody(source, "browser-close-tab")).toContain("_syncWorkspaceToServer(");
   });
 
   it("isolates browser storage with a per-session Electron partition", () => {
@@ -75,7 +134,7 @@ describe("desktop browser viewer window state", () => {
     expect(source).toContain("function _resolveBrowserIpcSessionPath");
     expect(source).toContain('wrapIpcBestEffortHandler("browser-go-back", (_event, sessionPath)');
     expect(source).toContain('wrapIpcBestEffortHandler("browser-switch-tab", (_event, tabId, sessionPath)');
-    expect(source).toContain('wrapIpcBestEffortHandler("browser-close-tab", (_event, tabId, sessionPath)');
+    expect(source).toContain('wrapIpcBestEffortHandler("browser-close-tab", async (_event, tabId, sessionPath)');
     expect(source).toContain('wrapIpcBestEffortHandler("browser-emergency-stop", (_event, sessionPath)');
   });
 
@@ -87,6 +146,24 @@ describe("desktop browser viewer window state", () => {
     expect(source).toContain('wrapIpcBestEffortHandler("browser-close-tab"');
     expect(source).toContain('case "setAcceptCookies"');
     expect(source).toContain('case "clearBrowserCookiesAndSiteData"');
+  });
+
+  it("reports viewer visibility and reports user activity for idle reclaim", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+    const visibility = caseBody(source, "viewerVisibility");
+
+    expect(visibility).toContain("browserViewerWindow.isVisible()");
+    expect(visibility).toContain("sessionPath: _currentBrowserSession");
+
+    expect(source).toContain("function _sendBrowserUserActivity");
+    expect(source).toContain('type: "browser-user-activity"');
+    expect(ipcHandlerBody(source, "open-browser-viewer")).toContain("_sendBrowserUserActivity(");
+    expect(ipcHandlerBody(source, "browser-go-back")).toContain("_sendBrowserUserActivity(");
+    expect(ipcHandlerBody(source, "browser-go-forward")).toContain("_sendBrowserUserActivity(");
+    expect(ipcHandlerBody(source, "browser-reload")).toContain("_sendBrowserUserActivity(");
+    expect(ipcHandlerBody(source, "browser-new-tab")).toContain("_sendBrowserUserActivity(");
+    expect(ipcHandlerBody(source, "browser-switch-tab")).toContain("_sendBrowserUserActivity(");
+    expect(ipcHandlerBody(source, "browser-close-tab")).toContain("_sendBrowserUserActivity(");
   });
 
   it("routes new-window requests into a new in-app browser tab", () => {
@@ -105,8 +182,38 @@ describe("desktop browser viewer window state", () => {
     expect(source).toContain('case "close"');
     expect(source).toContain('for (const tab of workspace.tabs.values())');
     expect(source).toContain('_detachActiveBrowserView({ view: active.view');
-    expect(source).toContain('_detachActiveBrowserView({ view, sessionPath: sp || _currentBrowserSession, hideIfVisible: true })');
     expect(source).toContain('case "destroyView"');
     expect(source).toContain('_detachActiveBrowserView({ view, sessionPath: null, destroy: true, hideIfVisible: true, reason: "emergency-stop" })');
+  });
+
+  it("lets a session switch suspend without hiding the viewer window", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+    const suspend = caseBody(source, "suspend");
+
+    // 切换会话时 viewer 保持可见，随后的 viewerShowSession 重绘目标 session
+    expect(suspend).toContain("keepViewerVisible");
+    expect(suspend).toContain("hideIfVisible: params.keepViewerVisible !== true");
+  });
+
+  it("repaints the viewer for the target session without changing window visibility", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+    const showSession = caseBody(source, "viewerShowSession");
+
+    expect(source).toContain("const _browserSessionTitles = new Map()");
+    expect(showSession).toContain("_browserSessionTitles.set(");
+    expect(showSession).toContain("_switchActiveBrowserTab(sp, activeTab.tabId)");
+    expect(showSession).toContain('webContents.send("browser-update"');
+    expect(showSession).toContain("sessionTitle");
+    // 永不自动弹窗：只重绘，不改变可见性
+    expect(showSession).not.toContain("browserViewerWindow.show()");
+    expect(showSession).not.toContain("browserViewerWindow.hide()");
+  });
+
+  it("labels every viewer update with the session title", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+    const body = functionBody(source, "_notifyViewerUrl");
+
+    expect(body).toContain("sessionTitle");
+    expect(body).toContain("_browserSessionTitles.get(");
   });
 });

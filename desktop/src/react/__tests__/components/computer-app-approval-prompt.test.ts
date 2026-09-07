@@ -299,17 +299,21 @@ describe('computer app approval prompt', () => {
       fireEvent.click(screen.getByRole('button', { name: '更多确认选项' }));
       fireEvent.click(screen.getByRole('menuitem', { name: '本对话不再询问' }));
 
+      // A tool approval also reads the MCP connector registry, to find out
+      // whether it is about an MCP tool. Match the calls that matter by path
+      // rather than by position, so that lookup does not shift the assertions.
+      const callFor = (path: string) => hanaFetchMock.mock.calls.find(call => call[0] === path);
       await waitFor(() => {
-        expect(hanaFetchMock).toHaveBeenCalledTimes(2);
+        expect(callFor('/api/confirm/confirm-tool-1')).toBeTruthy();
       });
-      expect(hanaFetchMock.mock.calls[0]).toEqual([
+      expect(callFor('/api/session-permission-mode')).toEqual([
         '/api/session-permission-mode',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ mode: 'operate', currentSessionOnly: true }),
         }),
       ]);
-      expect(hanaFetchMock.mock.calls[1]).toEqual([
+      expect(callFor('/api/confirm/confirm-tool-1')).toEqual([
         '/api/confirm/confirm-tool-1',
         expect.objectContaining({
           method: 'POST',

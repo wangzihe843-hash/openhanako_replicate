@@ -7,6 +7,7 @@ import groupStyles from './ProviderIcon.module.css';
  */
 const PROVIDER_TO_ICON: Record<string, string> = {
   deepseek: 'deepseek',
+  'deepseek-responses': 'deepseek',
   dashscope: 'qwen',
   openai: 'openai',
   gemini: 'gemini',

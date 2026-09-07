@@ -3,7 +3,7 @@
 import { cleanup, render, waitFor } from '@testing-library/react';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { InputArea } from '../../components/InputArea';
+import { InputArea, createStopRequest } from '../../components/InputArea';
 import { useStore } from '../../stores';
 
 const mocks = vi.hoisted(() => ({
@@ -223,6 +223,33 @@ describe('InputArea focus-restore surface gating (#2045 symptom 3)', () => {
 
     await waitFor(() => {
       expect(mocks.editorFocus).toHaveBeenCalled();
+    });
+  });
+});
+
+describe('InputArea Stop request contract', () => {
+  it('sends a session-scoped Stop even when active stream metadata is missing', () => {
+    expect(createStopRequest({
+      sessionId: 'sess-input',
+      sessionPath: '/session/input.jsonl',
+      streamId: null,
+    })).toEqual({
+      type: 'abort',
+      sessionId: 'sess-input',
+      sessionPath: '/session/input.jsonl',
+    });
+  });
+
+  it('includes a known stream id so the server can reject a delayed Stop safely', () => {
+    expect(createStopRequest({
+      sessionId: 'sess-input',
+      sessionPath: '/session/input.jsonl',
+      streamId: 'stream-current',
+    })).toEqual({
+      type: 'abort',
+      sessionId: 'sess-input',
+      sessionPath: '/session/input.jsonl',
+      streamId: 'stream-current',
     });
   });
 });

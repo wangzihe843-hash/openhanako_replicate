@@ -18,6 +18,10 @@ function makeEngine(overrides: any = {}) {
     getSessionIdForPath: vi.fn().mockReturnValue("sid-src"),
     isSessionStreaming: vi.fn().mockReturnValue(false),
     getAgent: vi.fn().mockReturnValue({ agentName: "Hana" }),
+    availableModels: [
+      { provider: "openai", id: "gpt-5", contextWindow: 128000 },
+      { provider: "moonshot", id: "kimi-k2", contextWindow: 128000 },
+    ],
     ...overrides,
   };
 }
@@ -120,7 +124,62 @@ describe("session tool write side", () => {
       "kimi", undefined, true, undefined, { workspaceFolders: [], visibleInSessionList: true },
     );
     expect(deliverAgentMessage).toHaveBeenCalledWith(engine, expect.objectContaining({ targetSessionId: "sid-new" }));
+    // meta 显式落到刚建出来的会话上，不依赖调用时的焦点指针
+    expect(engine.persistSessionMeta).toHaveBeenCalledWith("/tmp/new.jsonl");
     expect(applied.result).toEqual({ sessionId: "sid-new" });
+  });
+
+  it("确认时重新校验编辑后的 agent；无效值不会创建 session 或写元数据", async () => {
+    const store = new SessionCollabDraftStore();
+    const engine = makeEngine({
+      createSessionForAgent: vi.fn(),
+      persistSessionMeta: vi.fn(),
+      saveSessionTitle: vi.fn(),
+    });
+    const result = await run(makeTool(engine, store), { action: "create", agent: "kimi", message: "hi" });
+
+    await expect(store.apply(result.details.suggestionId, { agentId: "deleted-agent" }))
+      .rejects.toThrow("session_create_invalid_agent");
+
+    expect(engine.createSessionForAgent).not.toHaveBeenCalled();
+    expect(engine.persistSessionMeta).not.toHaveBeenCalled();
+    expect(engine.saveSessionTitle).not.toHaveBeenCalled();
+    expect(deliverAgentMessage).not.toHaveBeenCalled();
+  });
+
+  it("确认时重新校验 provider/id 模型；格式错误或已下线都不会创建 session", async () => {
+    const store = new SessionCollabDraftStore();
+    const engine = makeEngine({
+      createSessionForAgent: vi.fn(),
+      persistSessionMeta: vi.fn(),
+    });
+    const malformed = await run(makeTool(engine, store), { action: "create", agent: "kimi", message: "hi" });
+    await expect(store.apply(malformed.details.suggestionId, { model: "gpt-5" }))
+      .rejects.toThrow("model must use provider/id");
+    expect(engine.createSessionForAgent).not.toHaveBeenCalled();
+
+    const unavailable = await run(makeTool(engine, store), { action: "create", agent: "kimi", message: "hi" });
+    await expect(store.apply(unavailable.details.suggestionId, { model: "openai/missing" }))
+      .rejects.toThrow("model is not currently available");
+    expect(engine.createSessionForAgent).not.toHaveBeenCalled();
+  });
+
+  it("有效编辑模型按当前模型表解析成模型对象后再创建", async () => {
+    const store = new SessionCollabDraftStore();
+    const engine = makeEngine({
+      createSessionForAgent: vi.fn().mockResolvedValue({ sessionPath: "/tmp/new.jsonl", sessionId: "sid-new" }),
+      persistSessionMeta: vi.fn(),
+    });
+    const result = await run(makeTool(engine, store), { action: "create", agent: "kimi", message: "hi" });
+    await store.apply(result.details.suggestionId, { model: "moonshot/kimi-k2" });
+
+    expect(engine.createSessionForAgent).toHaveBeenCalledWith(
+      "kimi",
+      undefined,
+      true,
+      expect.objectContaining({ provider: "moonshot", id: "kimi-k2" }),
+      { workspaceFolders: [], visibleInSessionList: true },
+    );
   });
 
   it("create 半成功：首条消息投递失败", async () => {
@@ -132,6 +191,31 @@ describe("session tool write side", () => {
     vi.mocked(deliverAgentMessage).mockReset().mockRejectedValue(new Error("session_busy"));
     const result = await run(makeTool(engine, store), { action: "create", agent: "kimi", message: "hi" });
     const suggestionId = result.details.suggestionId;
-    await expect(store.apply(suggestionId)).rejects.toThrow(/^first_message_failed:sid-new:/);
+    const applying = store.apply(suggestionId);
+    await expect(applying).rejects.toMatchObject({
+      code: "first_message_failed",
+      partialSuccess: true,
+      sessionId: "sid-new",
+      result: {
+        sessionId: "sid-new",
+        sessionCreated: true,
+        firstMessageAccepted: false,
+        retryMessage: "hi",
+        retryable: true,
+      },
+    });
+    expect(store.get(suggestionId)).toMatchObject({
+      partialResult: { sessionId: "sid-new", retryable: true },
+    });
+
+    vi.mocked(deliverAgentMessage).mockResolvedValueOnce({ accepted: true, targetSessionId: "sid-new" } as any);
+    await expect(store.apply(suggestionId, { firstMessage: "retry edited" }))
+      .resolves.toMatchObject({ ok: true, result: { sessionId: "sid-new" } });
+    expect(engine.createSessionForAgent).toHaveBeenCalledTimes(1);
+    expect(deliverAgentMessage).toHaveBeenLastCalledWith(engine, expect.objectContaining({
+      targetSessionId: "sid-new",
+      message: "retry edited",
+    }));
+    expect(store.get(suggestionId)).toBeNull();
   });
 });

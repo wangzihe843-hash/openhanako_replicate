@@ -97,10 +97,21 @@ describe('OnboardingApp locale switching', () => {
     vi.stubGlobal('platform', {
       getFileUrl: vi.fn((path: string) => `file://${path}`),
     });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === 'http://127.0.0.1:62950/api/agents?fresh=1') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ agents: [{ id: 'hana-primary', isPrimary: true, isCurrent: true }] }),
+        } as Response;
+      }
+      throw new Error(`unexpected URL ${url}`);
+    }));
   });
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -123,6 +134,13 @@ describe('OnboardingApp locale switching', () => {
 
   it('lets first-run users connect to an existing LAN server from the welcome page', async () => {
     const fetchMock = vi.fn(async (url: string) => {
+      if (url === 'http://127.0.0.1:62950/api/agents?fresh=1') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ agents: [{ id: 'hana-primary', isPrimary: true, isCurrent: true }] }),
+        } as Response;
+      }
       if (url === 'http://192.168.31.75:14500/api/web-auth/login') {
         return { ok: true, json: async () => ({ ok: true }) } as Response;
       }
@@ -164,5 +182,58 @@ describe('OnboardingApp locale switching', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://192.168.31.75:14500/api/web-auth/login', expect.objectContaining({
       credentials: 'include',
     }));
+  });
+
+  it('shows an ambiguous agent error without hiding the LAN connection escape hatch', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ agents: [{ id: 'agent-a' }, { id: 'agent-b' }] }),
+    } as Response)));
+
+    render(<OnboardingApp preview={false} skipToTutorial={false} />);
+
+    expect(await screen.findByRole('heading', { name: '欢迎' })).toBeInTheDocument();
+    expect(screen.getByText('Onboarding target agent is ambiguous')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '已有服务器？使用局域网连接' })).toBeInTheDocument();
+  });
+
+  it('uses a six-step flow and moves directly from model selection to workspace selection', async () => {
+    const { container } = render(<OnboardingApp preview skipToTutorial={false} />);
+
+    expect(await screen.findByRole('heading', { name: '欢迎' })).toBeInTheDocument();
+    expect(container.querySelectorAll('.onboarding-dot')).toHaveLength(6);
+
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    expect(await screen.findByRole('heading', { name: 'onboarding.name.title' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'onboarding.name.next' }));
+    expect(await screen.findByRole('heading', { name: 'onboarding.provider.title' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'onboarding.provider.next' }));
+    expect(await screen.findByRole('heading', { name: 'onboarding.model.title' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'onboarding.model.next' }));
+    expect(await screen.findByRole('heading', { name: 'onboarding.workspace.title' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'onboarding.theme.title' })).not.toBeInTheDocument();
+    expect(container.querySelectorAll('.onboarding-dot')[4]).toHaveClass('active');
+
+    fireEvent.click(screen.getByRole('button', { name: 'onboarding.workspace.back' }));
+    expect(await screen.findByRole('heading', { name: 'onboarding.model.title' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'onboarding.model.next' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'onboarding.workspace.next' }));
+    expect(await screen.findByRole('heading', { name: 'onboarding.tutorial.title' })).toBeInTheDocument();
+    expect(container.querySelectorAll('.onboarding-dot')[5]).toHaveClass('active');
+  });
+
+  it('opens the tutorial as the sixth step when tutorial preview is requested', async () => {
+    const { container } = render(<OnboardingApp preview skipToTutorial />);
+
+    expect(await screen.findByRole('heading', { name: 'onboarding.tutorial.title' })).toBeInTheDocument();
+    expect(container.querySelectorAll('.onboarding-dot')).toHaveLength(6);
+    expect(container.querySelectorAll('.onboarding-dot')[5]).toHaveClass('active');
+    expect(screen.queryByRole('heading', { name: 'onboarding.theme.title' })).not.toBeInTheDocument();
   });
 });

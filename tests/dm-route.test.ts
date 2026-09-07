@@ -28,10 +28,12 @@ describe("dm route owner resolution", () => {
   let agents;
   let channelsEnabled;
   let abortAgentPhoneSessions;
+  let primaryAgentId;
 
   beforeEach(async () => {
     tmpDir = mktemp();
     channelsEnabled = true;
+    primaryAgentId = "alice";
     agents = new Map([
       ["alice", makeAgent(tmpDir, "alice", "Alice")],
       ["bob", makeAgent(tmpDir, "bob", "Bob")],
@@ -46,7 +48,7 @@ describe("dm route owner resolution", () => {
     const engine = {
       agentsDir: path.join(tmpDir, "agents"),
       currentAgentId: "dana",
-      getPrimaryAgentId: () => "alice",
+      getPrimaryAgentId: () => primaryAgentId,
       getAgent: (id) => agents.get(id) || null,
       listAgents: () => Array.from(agents.values()),
       isChannelsEnabled: () => channelsEnabled,
@@ -75,6 +77,23 @@ describe("dm route owner resolution", () => {
       lastMessage: "primary-owned thread",
       messageCount: 1,
     });
+  });
+
+  it("reports an error instead of guessing an owner when no primary agent is configured", async () => {
+    primaryAgentId = null;
+
+    const listRes = await app.request("/api/dm");
+    expect(listRes.status).toBe(500);
+    expect((await listRes.json()).error).toMatch(/no primary agent/i);
+
+    const detailRes = await app.request("/api/dm/bob");
+    expect(detailRes.status).toBe(500);
+    expect((await detailRes.json()).error).toMatch(/no primary agent/i);
+
+    // An explicit owner still works with no primary agent configured.
+    const explicitRes = await app.request("/api/dm/bob?agentId=dana");
+    expect(explicitRes.status).toBe(200);
+    expect((await explicitRes.json()).ownerAgentId).toBe("dana");
   });
 
   it("freezes DM routes when channels are disabled", async () => {

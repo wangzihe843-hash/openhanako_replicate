@@ -95,6 +95,12 @@
     "noAvailableMembers": "沒有可新增的 Agent",
     "agentActivity": "Agent 動態",
     "agentSettings": "群聊設定",
+    "exportTitle": "儲存目前聊天",
+    "exportDescription": "將目前群聊或私聊儲存為 Markdown 檔案，下載到系統下載資料夾。",
+    "exportAction": "匯出目前聊天",
+    "exporting": "正在匯出…",
+    "exportSuccess": "聊天記錄已下載：{filename}",
+    "exportFailed": "匯出聊天記錄失敗：{message}",
     "toolPermission": "工具權限",
     "agentIdle": "空閒",
     "phoneReceivedNewMessages": "收到新的群聊訊息",
@@ -164,6 +170,9 @@
     "searchingContent": "正在搜尋正文…",
     "searchNoResults": "沒有找到相關會話",
     "searchFailed": "搜尋失敗",
+    "metaRecoveryNoticeTitle": "部分對話待復原",
+    "metaRecoveryNoticeBody": "偵測到對話元資料異常，歷史正文仍保存在磁碟上，受影響的對話屬性可能暫缺",
+    "metaRecoveryEmpty": "對話清單暫時無法完整顯示，正文仍保存在磁碟上",
     "view": {
       "time": "按時間排序",
       "project": "按項目排序",
@@ -206,7 +215,12 @@
     "unpin": "取消置頂",
     "pinFailed": "置頂 session 失敗",
     "unpinFailed": "取消置頂失敗",
+    "reorderFailed": "調整置頂順序失敗",
     "archive": "封存",
+    "copyId": "複製 Session ID",
+    "copyIdDone": "Session ID 已複製",
+    "copyIdFailed": "複製 Session ID 失敗",
+    "copyIdUnavailable": "這個 Session 暫時沒有可複製的 ID",
     "deletedAgent": {
       "title": "Agent 已刪除",
       "description": "這段對話會保留為唯讀歷史。繼續聊天會用主 Agent 新建一個 session，並嘗試壓縮舊上下文。",
@@ -242,23 +256,9 @@
       "deleteFailed": "刪除失敗",
       "daysAgo": "封存於 {days} 天前"
     },
-    "capabilityDrift": {
-      "title": "工具能力有更新",
-      "addedTools": "新增 {count} 個工具",
-      "removedTools": "{count} 個工具已失效",
-      "promptUpdated": "提示詞有更新",
-      "separator": "、",
-      "refreshButton": "重新整理 Agent 工具",
-      "dismissButton": "忽略",
-      "confirmText": "重新整理會把舊對話壓縮成摘要，細節可能遺失。要繼續嗎？",
-      "confirmButton": "確認重新整理",
-      "cancelButton": "取消",
-      "refreshing": "正在壓縮對話並重新整理工具…",
-      "refreshFailed": "重新整理失敗"
-    },
     "rcTakingOver": "{platform} 接管中",
-    "subagentRunStateUnrecoverable": "历史子会话运行状态不可恢复",
-    "subagentLinkUnrecoverable": "历史子会话链接不可恢复"
+    "subagentRunStateUnrecoverable": "歷史 subagent 執行狀態不可恢復",
+    "subagentLinkUnrecoverable": "歷史 subagent 連結不可恢復"
   },
   "common": {
     "on": "開",
@@ -269,6 +269,7 @@
     "close": "關閉",
     "loading": "載入中...",
     "regenerate": "重新生成",
+    "forkSession": "分支為新對話",
     "confirm": "確認",
     "cancel": "取消",
     "approve": "批准",
@@ -297,7 +298,8 @@
     "screenshotFailed": "截圖儲存失敗",
     "selectedCount": "已選 {count} 則",
     "allDone": "全部完成",
-    "markAllComplete": "全部標記為已完成"
+    "markAllComplete": "全部標記為已完成",
+    "back": "返回"
   },
   "chat": {
     "find": {
@@ -309,6 +311,7 @@
     "stop": "停止",
     "browserScreenshot": "瀏覽器截圖",
     "compacting": "上下文壓縮中",
+    "instantSimpleCompaction": "瞬時簡易壓縮",
     "visionAuxiliary": "輔助視覺",
     "fileExpired": "檔案已過期",
     "fileActions": {
@@ -327,7 +330,7 @@
       "retryLabel": "重新生成{kind}"
     },
     "subagentPreview": {
-      "historyUnrecoverable": "历史子会话链接不可恢复",
+      "historyUnrecoverable": "歷史 subagent 連結不可恢復",
       "noSession": "暂无可打开的 subagent session",
       "connecting": "正在连接 subagent session...",
       "loadingSession": "正在加载会话...",
@@ -421,8 +424,8 @@
       "auto": "自動",
       "medium": "中等",
       "high": "深度",
-      "xhigh": "極致",
-      "max": "極致",
+      "xhigh": "Max",
+      "max": "Max",
       "low": "浅思"
     },
     "thinkingDesc": {
@@ -437,14 +440,39 @@
     "contextWindow": "上下文 {windowK}k",
     "tokensUsed": "已用 {tokensK}k ({pct}%)",
     "contextActions": "上下文操作",
-    "refreshAndCompact": "更新並壓縮",
-    "refreshAndCompactTooltip": "更新到最新的記憶和工具集",
+    "refreshAndCompact": "壓縮並更新",
+    "refreshAndCompactTooltip": "壓縮對話，並更新到最新的記憶和工具集",
+    "refreshAndCompactBusy": "正在壓縮並更新對話…",
+    "refreshAndCompactFailed": "壓縮並更新失敗",
     "compact": "壓縮",
     "noAskThisConversation": "本对话不再询问",
     "confirmMoreOptions": "更多确认选项",
     "attachmentDirectory": "[目录] {label}",
     "attachmentFile": "[附件] {label}",
-    "referenceDocument": "[参考文档] {path}"
+    "referenceDocument": "[参考文档] {path}",
+    "mention": {
+      "title": "引用內容",
+      "tab": {
+        "files": "檔案",
+        "sessions": "對話",
+        "agents": "助手"
+      },
+      "empty": "沒有符合項目",
+      "singleAgent": "每個回合暫時只能邀請一位助手審閱"
+    }
+  },
+  "agentReview": {
+    "running": "正在審閱目前對話",
+    "completed": "另一位助手的審閱結果",
+    "failed": "審閱失敗，主助手尚未回答",
+    "cancelled": "審閱已取消",
+    "openSession": "開啟審閱對話",
+    "sessionUnavailable": "找不到這個審閱對話",
+    "requestReceived": "已收到來自另一個對話的審閱請求",
+    "openReviewedSession": "開啟被審閱對話",
+    "reviewedSessionFallback": "來源對話",
+    "reviewSessionFallback": "{name} 的審閱對話",
+    "interjectionUnavailable": "助手審閱不能作為插話傳送，請等待目前回覆結束"
   },
   "slash": {
     "diary": "寫今日日記",
@@ -454,9 +482,7 @@
     "xing": "從對話中提煉技能",
     "compact": "壓縮上下文",
     "compactBusy": "正在壓縮...",
-    "stop": "停止當前回覆",
-    "new": "開啟新會話（歸檔歷史）",
-    "reset": "重置會話（清除歷史）",
+    "loop": "在目前會話循環執行任務",
     "commandError": "[命令错误] {message}",
     "usage": "用法：{usage}",
     "commandTimeout": "命令超时（>{ms}ms）"
@@ -512,7 +538,8 @@
         "avatar": "Ming.png"
       },
       "kong": {
-        "label": "模型原本的樣子",
+        "label": "無發散思考模組（如 MOOD），和其他 Agent 一致的體驗。",
+        "shortLabel": "無思考區塊，直接回答。",
         "avatar": "Kong.png"
       }
     },
@@ -699,16 +726,6 @@
       "done": "✏️ {name} 改好了",
       "failed": "✏️ {name} 越改越亂了"
     },
-    "edit-diff": {
-      "running": "✏️ {name} 提筆改字中",
-      "done": "✏️ {name} 改好了",
-      "failed": "✏️ {name} 越改越亂了"
-    },
-    "glob": {
-      "running": "🔍 {name} 正在找檔案",
-      "done": "🔍 {name} 找到了",
-      "failed": "🔍 {name} 翻遍了也沒找到"
-    },
     "grep": {
       "running": "🔍 {name} 正在檔案裡翻找",
       "done": "🔍 {name} 翻到了",
@@ -724,15 +741,10 @@
       "done": "📂 {name} 看完了",
       "failed": "📂 {name} 打不開這個資料夾"
     },
-    "truncate": {
-      "running": "✂️ {name} 正在整理檔案",
-      "done": "✂️ {name} 整理好了",
-      "failed": "✂️ {name} 整理不動了"
-    },
     "stage_files": {
-      "running": "📎 {name} 正在整理檔案",
-      "done": "📎 在這！",
-      "failed": "📎 檔案沒放好"
+      "running": "📎 正在準備檔案",
+      "done": "📎 檔案準備好了",
+      "failed": "📎 檔案沒準備好"
     },
     "browser": {
       "running": "🌐 {name} 正在操作瀏覽器",
@@ -740,147 +752,112 @@
       "failed": "🌐 {name} 瀏覽器不聽使喚"
     },
     "subagent": {
-      "running": "🧭 {name} 分身查探中",
-      "done": "🧭 分身出發了",
-      "failed": "🧭 分身出了岔子"
+      "running": "🧭 subagent 正在做事",
+      "done": "🧭 subagent 做完了",
+      "failed": "🧭 subagent 沒做成"
     },
     "check_pending_tasks": {
-      "running": "📋 {name} 正在找找沒做完的事兒",
-      "done": "📋 {name} 找完了",
-      "failed": "📋 找不著"
-    },
-    "cron": {
-      "running": "⏰ {name} 正在設定時任務",
-      "done": "⏰ 設好了",
-      "failed": "⏰ 沒設成"
+      "running": "📋 正在看背景任務好了沒",
+      "done": "📋 背景任務的進展看完了",
+      "failed": "📋 沒看到背景任務的進展"
     },
     "notify": {
       "running": "🔔 {name} 正在發通知",
-      "done": "🔔 通知發了",
+      "done": "🔔 {name} 把通知發出去了",
       "failed": "🔔 通知沒發出去"
     },
     "create_artifact": {
-      "running": "🖼️ {name} 正在寫寫畫畫",
-      "done": "🖼️ 畫好了",
-      "failed": "🖼️ 畫崩了"
+      "running": "🖼️ {name} 正在做圖",
+      "done": "🖼️ {name} 把圖做好了",
+      "failed": "🖼️ 圖沒做成"
     },
     "dm": {
-      "running": "✉️ {name} 打開了手機",
-      "done": "✉️ 發出去了",
-      "failed": "✉️ 沒發出去"
+      "running": "✉️ {name} 正在發私訊",
+      "done": "✉️ {name} 把私訊發出去了",
+      "failed": "✉️ 私訊沒發出去"
     },
     "channel": {
-      "running": "📢 {name} 正在頻道發言",
-      "done": "📢 發完了",
-      "failed": "📢 發不出去",
+      "running": "📢 {name} 正在往頻道發訊息",
+      "done": "📢 {name} 在頻道發了訊息",
+      "failed": "📢 訊息沒發到頻道",
       "heading": "# 频道",
       "ambiguousName": "频道名 \"{name}\" 不唯一，请改用频道 ID：{choices}"
     },
     "install_skill": {
       "running": "📥 {name} 正在裝技能",
-      "done": "📥 裝好了",
-      "failed": "📥 沒裝上"
+      "done": "📥 {name} 把技能裝上了",
+      "failed": "📥 技能沒裝上"
     },
     "update_settings": {
       "running": "⚙️ {name} 正在改設定",
-      "done": "⚙️ 改好了",
-      "failed": "⚙️ 沒改成"
+      "done": "⚙️ {name} 改好設定了",
+      "failed": "⚙️ 設定沒改成"
     },
     "automation": {
-      "running": "🤖 {name} 正在調度快捷指令",
-      "done": "🤖 指令跑完了",
-      "failed": "🤖 指令執行失敗"
+      "running": "🤖 {name} 正在安排自動化任務",
+      "done": "🤖 {name} 安排好自動化任務了",
+      "failed": "🤖 自動化任務沒安排上"
     },
     "computer": {
-      "running": "🖥️ {name} 正在操控你的螢幕",
-      "done": "🖥️ 操控完了",
-      "failed": "🖥️ 操控失敗"
+      "running": "🖥️ {name} 正在操控電腦",
+      "done": "🖥️ {name} 操控完電腦了",
+      "failed": "🖥️ 電腦沒操控成"
     },
     "terminal": {
-      "running": "💻 {name} 正在敲命令",
-      "done": "💻 敲完了",
-      "failed": "💻 命令執行失敗"
+      "running": "💻 {name} 正在敲指令",
+      "done": "💻 {name} 敲完指令了",
+      "failed": "💻 指令沒跑成"
     },
     "current_status": {
-      "running": "🕐 {name} 正在看看現在什麼情況",
-      "done": "🕐 掌握資訊了",
-      "failed": "🕐 取得資訊失敗"
+      "running": "🕐 正在看看現在什麼情況",
+      "done": "🕐 現在的情況摸清了",
+      "failed": "🕐 沒摸清現在的情況"
     },
     "pin_memory": {
-      "running": "📌 {name} 正在把這件事釘起來",
-      "done": "📌 釘好了",
-      "failed": "📌 置頂失敗"
+      "running": "📌 {name} 正在記牢這件事",
+      "done": "📌 {name} 把這件事記牢了",
+      "failed": "📌 {name} 沒記牢"
     },
     "unpin_memory": {
-      "running": "📌 {name} 正在把釘子拔下來",
-      "done": "📌 拔掉了",
-      "failed": "📌 取消置頂失敗"
+      "running": "📌 {name} 正在取消置頂",
+      "done": "📌 {name} 不再特意記著這件事了",
+      "failed": "📌 {name} 沒取消掉"
     },
     "recall_experience": {
-      "running": "🧠 {name} 正在翻經驗本",
-      "done": "🧠 翻到了",
-      "failed": "🧠 沒找到相關經驗"
+      "running": "🧠 正在翻經驗本",
+      "done": "🧠 翻到相關的經驗了",
+      "failed": "🧠 沒翻到相關的經驗"
     },
     "record_experience": {
-      "running": "🧠 {name} 正在把經驗記下來",
-      "done": "🧠 記好了",
-      "failed": "🧠 記錄失敗"
+      "running": "🧠 {name} 正在記下這次的經驗",
+      "done": "🧠 {name} 記下這次的經驗了",
+      "failed": "🧠 經驗沒記下來"
     },
     "session_folders": {
-      "running": "📁 {name} 正在調整資料夾權限",
-      "done": "📁 調好了",
-      "failed": "📁 調整失敗"
+      "running": "📁 {name} 正在調資料夾權限",
+      "done": "📁 {name} 調好資料夾權限了",
+      "failed": "📁 資料夾權限沒調成"
     },
     "stop_task": {
       "running": "🛑 {name} 正在叫停背景任務",
-      "done": "🛑 停下來了",
-      "failed": "🛑 停止失敗"
+      "done": "🛑 {name} 把背景任務停了",
+      "failed": "🛑 背景任務沒停下來"
     },
     "todo_write": {
       "running": "📝 {name} 正在寫清單",
-      "done": "📝 寫好了",
-      "failed": "📝 清單寫入失敗"
+      "done": "📝 清單寫好了",
+      "failed": "📝 清單沒寫上"
     },
     "workflow": {
-      "running": "🔄 {name} 正在編排工作流",
-      "done": "🔄 編排完了",
-      "failed": "🔄 工作流執行失敗",
+      "running": "🔄 {name} 正在編排 workflow",
+      "done": "🔄 {name} 編排完 workflow 了",
+      "failed": "🔄 workflow 沒跑成",
       "scriptInvalid": "workflow 脚本非法: {message}",
       "dispatched": "workflow \"{summary}\" 已派出后台执行（任务 {taskId}），完成后结果会自动回到对话。",
       "syncComplete": "workflow \"{name}\" 完成，派出 {count} 个 agent。\n\n结果:\n{result}",
       "executionFailed": "workflow 执行失败: {message}",
       "resumeFromRunIdDesc": "前次 workflow 的 runId（taskId），用于断点续跑：已完成且 prompt+opts 未变的 agent 节点瞬间返回缓存结果，首个变化位置起重新执行。",
       "journalResuming": "从 {count} 条缓存恢复"
-    },
-    "generate-image": {
-      "running": "🎨 {name} 正在作圖",
-      "done": "🎨 畫好了",
-      "failed": "🎨 作圖失敗"
-    },
-    "generate-video": {
-      "running": "🎬 {name} 正在生成影片",
-      "done": "🎬 影片好了",
-      "failed": "🎬 影片生成失敗"
-    },
-    "create-cover": {
-      "running": "🎨 {name} 正在設計封面",
-      "done": "🎨 封面好了",
-      "failed": "🎨 封面生成失敗"
-    },
-    "apply-cover-candidate": {
-      "running": "🖼️ {name} 正在換封面",
-      "done": "🖼️ 換好了",
-      "failed": "🖼️ 封面套用失敗"
-    },
-    "get-cover-style-guide": {
-      "running": "📖 {name} 正在翻風格手冊",
-      "done": "📖 翻到了",
-      "failed": "📖 取得風格指南失敗"
-    },
-    "list-capabilities": {
-      "running": "📋 {name} 正在清點能力",
-      "done": "📋 點完了",
-      "failed": "📋 能力清點失敗"
     },
     "_fallback": {
       "running": "🔧 {name} 正在忙碌中…",
@@ -893,8 +870,146 @@
       "noTasks": "当前对话没有后台任务{qualifier}。",
       "noTasksQualifier": "（状态: {status}）"
     },
+    "loopControl": {
+      "serviceUnavailable": "循環服務未就緒。",
+      "noActiveSession": "沒有活躍會話。",
+      "noActiveLoop": "目前會話沒有活躍循環，用 /loop <任務> 啟動。",
+      "delayRequired": "action=schedule 需要 delay_seconds。",
+      "scheduled": "已排定 {seconds} 秒後的喚醒（{wakeAt} 觸發），並取代先前的鬧鐘。",
+      "completed": "循環已完成並關閉。"
+    },
     "installSkill": {
       "safetyBlocked": "[安全策略] 技能安全审查未通过，已阻止安装。\n原因：{reason}\n\n请告知用户此技能未通过安全审查，说明具体原因。用户可以在設定中关闭安全审查（不推荐）。"
+    },
+    "file": {
+      "running": "📄 正在操作檔案",
+      "done": "📄 檔案弄好了",
+      "failed": "📄 檔案沒弄好"
+    },
+    "session": {
+      "running": "💬 正在查看別的會話",
+      "done": "💬 查看了別的會話",
+      "failed": "💬 別的會話沒打開"
+    },
+    "subagent_reply": {
+      "running": "🧭 {name} 正在給 subagent 派新任務",
+      "done": "🧭 {name} 給 subagent 派了新任務",
+      "failed": "🧭 任務沒派給 subagent"
+    },
+    "subagent_close": {
+      "running": "🧭 {name} 正在讓 subagent 收工",
+      "done": "🧭 {name} 讓 subagent 收工了",
+      "failed": "🧭 subagent 沒關掉"
+    },
+    "loop_control": {
+      "running": "⏱️ {name} 正在給 loop 上鬧鐘",
+      "done": "⏱️ loop 的鬧鐘定好了",
+      "failed": "⏱️ loop 的鬧鐘沒定上"
+    },
+    "materialize": {
+      "running": "🧲 正在把檔案取到本機",
+      "done": "🧲 檔案取到本機了",
+      "failed": "🧲 檔案沒取下來"
+    },
+    "channel_read_context": {
+      "running": "💬 正在看頻道裡的訊息",
+      "done": "💬 頻道訊息看完了",
+      "failed": "💬 頻道訊息沒讀到"
+    },
+    "channel_reply": {
+      "running": "💬 {name} 正在往頻道裡發訊息",
+      "done": "💬 {name} 在頻道發了訊息",
+      "failed": "💬 訊息沒發到頻道"
+    },
+    "channel_pass": {
+      "running": "⏭️ {name} 這輪打算不說話",
+      "done": "⏭️ {name} 看過了，這輪沒在頻道說話",
+      "failed": "⏭️ 沒記上這次跳過"
+    },
+    "hana_card_guide": {
+      "running": "🎴 正在翻卡片的做法",
+      "done": "🎴 卡片的做法弄明白了",
+      "failed": "🎴 卡片的做法沒查到"
+    },
+    "show_card": {
+      "running": "🎴 {name} 正在把卡片擺出來",
+      "done": "🎴 {name} 把卡片擺出來了",
+      "failed": "🎴 卡片沒擺出來"
+    },
+    "media_generate-image": {
+      "running": "🎨 {name} 正在作圖",
+      "done": "🎨 {name} 把圖畫好了",
+      "failed": "🎨 圖沒畫成"
+    },
+    "media_generate-video": {
+      "running": "🎬 {name} 正在生成影片",
+      "done": "🎬 {name} 把影片做好了",
+      "failed": "🎬 影片沒做成"
+    },
+    "media_describe-options": {
+      "running": "🎨 正在看出圖有哪些選項",
+      "done": "🎨 出圖的選項看完了",
+      "failed": "🎨 出圖選項沒看到"
+    },
+    "media_get-guide": {
+      "running": "🎨 正在翻畫圖的說明",
+      "done": "🎨 畫圖的說明翻完了",
+      "failed": "🎨 畫圖的說明沒翻到"
+    },
+    "beautify_create-cover": {
+      "running": "🖼️ {name} 正在給文章配封面",
+      "done": "🖼️ {name} 給文章配好封面了",
+      "failed": "🖼️ 封面沒配上"
+    },
+    "beautify_apply-cover-candidate": {
+      "running": "🖼️ {name} 正在換封面",
+      "done": "🖼️ {name} 換好封面了",
+      "failed": "🖼️ 封面沒換成"
+    },
+    "beautify_get-cover-style-guide": {
+      "running": "🖼️ 正在翻封面該怎麼配",
+      "done": "🖼️ 封面的配法弄明白了",
+      "failed": "🖼️ 封面的配法沒查到"
+    },
+    "beautify_get-html-style-guide": {
+      "running": "🖼️ 正在翻排版該怎麼弄",
+      "done": "🖼️ 排版的做法弄明白了",
+      "failed": "🖼️ 排版的做法沒查到"
+    },
+    "beautify_list-capabilities": {
+      "running": "🖼️ 正在看能怎麼美化",
+      "done": "🖼️ 看明白能怎麼美化了",
+      "failed": "🖼️ 沒查到能怎麼美化"
+    },
+    "office_read-document": {
+      "running": "📑 正在讀這份文件",
+      "done": "📑 這份文件讀完了",
+      "failed": "📑 這份文件沒讀出來"
+    },
+    "office_html-to-pdf": {
+      "running": "📑 {name} 正在匯出 PDF",
+      "done": "📑 {name} 匯好 PDF 了",
+      "failed": "📑 PDF 沒匯出來"
+    },
+    "office_list-capabilities": {
+      "running": "📑 正在看能處理哪些文件",
+      "done": "📑 看明白能處理哪些文件了",
+      "failed": "📑 沒查到能處理哪些文件"
+    },
+    "_plugin": {
+      "running": "🧩 {name} 正在用外掛做事",
+      "done": "🧩 {name} 用外掛做完了",
+      "failed": "🧩 外掛沒幫上忙"
+    },
+    "session_send": {
+      "running": "💬 正在擬給別的會話的訊息",
+      "done": "💬 訊息擬好了，等你確認",
+      "failed": "💬 訊息沒擬成"
+    },
+    "session_create": {
+      "running": "💬 正在擬一個新會話",
+      "done": "💬 新會話擬好了，等你確認",
+      "failed": "💬 新會話沒擬成"
     }
   },
   "file_output": {
@@ -906,6 +1021,13 @@
     "notSelected": "請選擇模型",
     "noneConfigured": "未配置模型",
     "unavailable": "模型不可用",
+    "removed": "模型已移除",
+    "providerNotConfigured": "Provider 未配置",
+    "unavailableReason": {
+      "modelRemoved": "此會話使用的模型已被移除。請從模型選擇器選擇一個可用模型後繼續。",
+      "providerNotConfigured": "此會話的模型 Provider 或憑證未配置。請完成設定，或選擇其他可用模型。",
+      "temporarilyUnavailable": "此會話使用的模型目前不可用。請檢查 Provider 狀態，或選擇其他可用模型。"
+    },
     "offline": "離線",
     "switchFailed": "切換模型失敗",
     "switchWhileStreaming": "回覆中不能切換模型",
@@ -939,6 +1061,7 @@
     "save": "儲存",
     "saved": "儲存成功 ✿",
     "saveFailed": "儲存失敗",
+    "refreshFailed": "重新整理失敗",
     "fileChangedOnDisk": "檔案已被外部修改，已略過舊版本儲存",
     "noChanges": "沒有需要儲存的變更",
     "autoSaved": "已自動儲存 ✿",
@@ -1004,10 +1127,13 @@
       },
       "notifications": {
         "title": "通知",
-        "turnCompletion": "輪次完成通知",
-        "turnCompletionNever": "從不",
-        "turnCompletionWhenUnfocused": "焦點不在 HanaAgent 時",
-        "turnCompletionWhenSessionUnfocused": "焦點不在完成任務的 Session 時"
+        "chatCompletion": "聊天回覆完成",
+        "scheduledTaskCompletion": "排程任務完成",
+        "patrolCompletion": "巡檢完成",
+        "never": "從不",
+        "whenUnfocused": "焦點不在 HanaAgent 時",
+        "whenSessionUnfocused": "焦點不在該聊天時",
+        "always": "總是"
       }
     },
     "computerUse": {
@@ -1144,10 +1270,10 @@
       "agentNameHint": "Ta 叫什麼",
       "identity": "身份簡介",
       "identityHint": "簡短描述助手是誰、擅長什麼。其他助手透過這段文字認識 Ta",
-      "ishiki": "意識",
-      "ishikiHint": "定義助手的性格、語氣和行為方式。跟「元」是分開的，互不影響。",
-      "publicIshiki": "對外意識",
-      "publicIshikiHint": "出於隱私考量，助手與訪客對話時無法存取記憶、你的個人資訊，以及電腦上的任何檔案與工具。\n你可以在這裡設定助手對訪客說話時的回覆風格以及注意事項。",
+      "agentsMd": "AGENTS.md",
+      "agentsMdHint": "定義助手的性格、語氣和行為方式。跟「元」是分開的，互不影響。",
+      "publicAgentsMd": "對外 AGENTS.md",
+      "publicAgentsMdHint": "出於隱私考量，助手與訪客對話時無法存取記憶、你的個人資訊，以及電腦上的任何檔案與工具。\n你可以在這裡設定助手對訪客說話時的回覆風格以及注意事項。",
       "chatModel": "Ta 的模型",
       "chatModelHint": "Ta 在對話與工作中使用的模型",
       "modelUnavailable": "目前不可用：{model}",
@@ -1244,7 +1370,7 @@
       "updateAvailable": "有新版本可用：v{version}",
       "updateDownload": "下載",
       "updateChecking": "正在檢查更新…",
-      "updateDownloading": "{agentName}正在準備新家 {percent}%",
+      "updateDownloading": "{agentName}正在準備新家",
       "updateReadyInstall": "v{version} 已就緒",
       "updateInstalling": "正在安裝更新，HanaAgent 會自動重新啟動…",
       "updateInstallManualHint": "點「重啟更新」後安裝，直接退出不會自動安裝",
@@ -1287,7 +1413,25 @@
       "launchAtLogin": "開機自啟",
       "keepAwake": "鎖定時保持執行",
       "betaUpdates": "接收測試版更新",
-      "autoCheckUpdates": "自動檢查更新"
+      "autoCheckUpdates": "自動檢查更新",
+      "inviteSectionTitle": "內測通道",
+      "inviteCodeLabel": "邀請碼",
+      "inviteCodePlaceholder": "貼上你的邀請碼",
+      "inviteRedeemBtn": "兌換",
+      "inviteRedeeming": "兌換中…",
+      "inviteErrorInvalid": "這枚邀請碼無效，或者已經用完了。",
+      "inviteErrorNetwork": "連不上兌換服務，檢查網路後再試一次。",
+      "inviteErrorActivate": "通道狀態沒能儲存下來。",
+      "inviteConfirmTitle": "切換到內測通道？",
+      "inviteConfirmBody": "切換之後，應用會更新到測試版本。測試版升級過資料格式之後，就回不到目前的正式版了。確認後立即生效。",
+      "inviteConfirmOk": "切換",
+      "inviteConfirmCancel": "留在正式版",
+      "inviteChannelActive": "目前通道：內測通道",
+      "inviteCodesLabel": "你的邀請碼",
+      "inviteCodesHint": "每枚只能用一次，綁定第一台兌換的裝置。",
+      "inviteCopy": "複製",
+      "platformCheckLabel": "檢查平台更新",
+      "platformCheckBtn": "檢查"
     },
     "access": {
       "networkAccess": "區域網路存取",
@@ -1626,8 +1770,8 @@
         "medium": "中等",
         "high": "深思",
         "auto": "自動",
-        "max": "極致",
-        "xhigh": "極致"
+        "max": "Max",
+        "xhigh": "Max"
       },
       "addedModels": "已新增的模型",
       "displayName": "顯示名稱",
@@ -1665,6 +1809,46 @@
       "longtermSaved": "長期情況已儲存",
       "saveDay": "儲存這一天",
       "daySaved": "這一天已儲存",
+      "dream": {
+        "title": "Dream 整理",
+        "hint": "將重要事實與長期情況整理成一行一條，去重合併並清理過時內容",
+        "autoLabel": "每日自動 Dream",
+        "autoHint": "僅對目前 Agent 生效；預設關閉，每個邏輯日最多執行一次",
+        "run": "整理當下記憶",
+        "running": "正在整理…",
+        "restore": "恢復版本",
+        "restoring": "正在恢復…",
+        "view": "查看整理結果",
+        "success": "{time} 完成：{before} → {after} 字元，合併 {merged} 條，篩除 {forgotten} 條。",
+        "unchanged": "{time} 檢查完成，本次沒有需要寫回的變化。",
+        "legacySuccess": "{time} 完成：{before} → {after} 字元。這是舊版執行記錄，無法核對實際合併數量。",
+        "revisions": {
+          "title": "Dream 版本",
+          "listLabel": "可恢復版本",
+          "loading": "正在讀取版本…",
+          "empty": "還沒有可恢復的 Dream 版本",
+          "manual": "手動整理前",
+          "automatic": "自動整理前",
+          "preRestore": "恢復操作前",
+          "characters": "字元",
+          "noContent": "（無內容）",
+          "restoreThis": "恢復到此版本",
+          "confirmHint": "恢復前會先儲存目前版本，之後仍可撤銷。",
+          "confirmRestore": "確認恢復",
+          "cancel": "取消",
+          "close": "關閉",
+          "restored": "已恢復到所選版本；恢復前的目前版本也已儲存。"
+        },
+        "failed": "Dream 整理失敗，原記憶未改動",
+        "errors": {
+          "statusLoadFailed": "暫時無法讀取 Dream 狀態，請稍後再試",
+          "startFailed": "暫時無法開始 Dream 整理，請稍後再試",
+          "autoSaveFailed": "無法儲存每日自動 Dream 設定，請稍後再試",
+          "revisionsLoadFailed": "暫時無法讀取 Dream 版本，請稍後再試",
+          "revisionLoadFailed": "暫時無法讀取這個 Dream 版本，請稍後再試",
+          "restoreFailed": "恢復 Dream 版本失敗，目前記憶沒有改動"
+        }
+      },
       "sections": {
         "today": "今天",
         "week": "本週早些時候",
@@ -1983,6 +2167,7 @@
       "headersHint": "每行一個 KEY=value。儲存後會脫敏顯示，請求遠端 MCP 時會帶上這些 headers。",
       "statusRunning": "執行中",
       "statusStopped": "已停止",
+      "statusDisabled": "已關閉",
       "statusConnecting": "連線中",
       "statusReconnecting": "重新連線中",
       "statusFailed": "重新連線失敗",
@@ -1995,7 +2180,6 @@
       "env": "環境變數",
       "envHint": "每行一個 KEY=value。只會傳給本地 stdio MCP server 子行程。",
       "timeout": "逾時秒數",
-      "autoStart": "自動啟動",
       "addConnector": "新增連接器",
       "updateConnector": "更新連接器",
       "importJson": "匯入 JSON",
@@ -2010,7 +2194,56 @@
       "removeConfirm": "確定移除此連接器？已儲存的 per-agent 開關會保留但不再生效。",
       "agentTitle": "助手配置",
       "agentConnectorDesc": "像技能一樣，只對選中的助手啟用。",
-      "saveError": "儲存失敗"
+      "saveError": "儲存失敗",
+      "enabledAgentsCount": "個助手已啟用",
+      "manage": "管理",
+      "removeTitle": "移除連接器",
+      "connectionTitle": "連線方式",
+      "permissionTitle": "權限",
+      "toolsTitle": "工具",
+      "noTools": "還沒有工具。啟動連接器後重新整理一次即可看到。",
+      "toolCollisionNotice": "{a} 與 {b} 正規化後為同一工具名稱，雙方皆已停用，請調整連接器 id 或請 server 端改名。",
+      "toolCollisionSummary": "{count} 個工具與 {other} 的工具正規化後重名，皆已停用，請調整連接器 id。",
+      "toolCollisionHostNotice": "{a} 與內建狀態工具正規化後同名，該工具已停用，請調整名稱。",
+      "noToolMatches": "沒有符合的工具",
+      "toolSearch": "搜尋工具",
+      "selectAll": "全選",
+      "selectNone": "全不選",
+      "selectInvert": "反選",
+      "badgeReadOnly": "唯讀",
+      "badgeDestructive": "具破壞性",
+      "permissionAllow": "直接放行",
+      "pinTool": "常駐",
+      "permissionMode": "呼叫審批",
+      "permissionModeHint": "預設每次呼叫都經過審查。改為依清單放行後，只有你逐個放行的工具才免審。",
+      "permissionReviewAll": "全部審查",
+      "permissionAllowlist": "依清單放行",
+      "trustReadOnly": "信任唯讀宣告",
+      "trustReadOnlyHint": "是否唯讀由伺服器自行宣告，Hana 無從查證。開啟後，宣告為唯讀的工具不再逐次審查。",
+      "deferTitle": "延遲載入",
+      "deferScopeNote": "以下開關對所有連接器一併生效，不只是這一個。",
+      "deferEnabled": "允許延遲載入",
+      "deferEnabledHint": "工具較多時先給模型一份目錄，用到哪個再取哪個的完整說明。",
+      "deferBuiltin": "內建工具也延遲",
+      "deferBuiltinHint": "開啟後，系統內建工具同樣進入目錄按需揭露。直接載入的內建工具讓模型更主動，上下文吃緊時再開。",
+      "deferThreshold": "啟用門檻",
+      "deferThresholdHint": "已啟用的工具數超過此值才走目錄，低於此值全部直接載入。",
+      "agentConnectorEnabled": "對此助手啟用",
+      "oauthWaiting": "等待在瀏覽器中完成授權",
+      "oauthWaitingHint": "授權頁面已在瀏覽器中開啟。完成後這裡會自動更新，也可以隨時取消。",
+      "oauthFailed": "授權失敗",
+      "oauthTimeout": "等待授權逾時",
+      "importEmpty": "沒有解析到任何連接器",
+      "importPreviewHint": "確認要匯入的連接器，取消勾選可以排除其中幾項。",
+      "importParse": "解析",
+      "importConfirm": "匯入 {count} 項",
+      "importItemOk": "已新增",
+      "commandRequired": "缺少啟動指令",
+      "urlRequired": "請填寫網址",
+      "urlInvalid": "網址無法解析，請加上 https:// 這樣的協定前綴",
+      "urlScheme": "網址只支援 http 或 https",
+      "modeSwitchTitle": "切換連線類型",
+      "modeSwitchBody": "本機與遠端用的是兩套設定。切換後另一套的欄位會被清空，正在執行的連線也會中斷。"
     },
     "screenshot": {
       "title": "截圖分享",
@@ -2140,7 +2373,7 @@
     "experiments": {
       "title": "实验",
       "compactionTitle": "上下文压缩",
-      "compactionSectionDescription": "选择 compact 时优先保护缓存，还是优先兼容历史格式。",
+      "compactionSectionDescription": "設定自動壓縮的預設策略，並決定是否在聊天的上下文圓圈中顯示實驗性的一次性壓縮入口。",
       "modelPersonaTitle": "模型与人格",
       "modelPersonaDescription": "观察不同供应商在 Hana 人格、心境和输出契约上的适配表现。",
       "memoryTitle": "记忆实验",
@@ -2187,10 +2420,14 @@
       },
       "compaction": {
         "title": "压缩模式",
-        "description": "自动会优先使用缓存保护压缩；普通压缩会放行 Pi SDK 原生摘要，更适合历史格式不稳定的会话。",
-        "auto": "自动",
-        "cachePreserving": "缓存保护压缩",
-        "piCompatible": "普通压缩"
+        "description": "自動會優先使用快取保護壓縮；普通壓縮會使用 Pi SDK 原生摘要。",
+        "auto": "自動",
+        "cachePreserving": "快取保護壓縮",
+        "piCompatible": "普通壓縮"
+      },
+      "instantSimpleCompaction": {
+        "title": "瞬時簡易壓縮",
+        "description": "開啟後，聊天輸入框的上下文圓圈選單會增加「瞬時簡易壓縮」。它只影響你主動點擊的這一次壓縮，不會改變自動壓縮或普通壓縮的行為。"
       },
       "deepseekRoleplay": {
         "title": "DeepSeek 人格沉浸补丁",
@@ -2212,7 +2449,7 @@
       "exporting": "正在导出",
       "importing": "正在导入",
       "noDescription": "这个角色卡没有写入 Description。",
-      "noIshiki": "未提供 Ishiki",
+      "noAgentsMd": "未提供 AGENTS.md",
       "viewDetail": "查看角色卡详情",
       "memoryCount": "{count} 个记忆项目，可选{action}",
       "memoryCountExport": "导出",
@@ -2466,7 +2703,8 @@
     "blockquote": "引用",
     "codeBlock": "程式碼區塊",
     "horizontalRule": "分隔線",
-    "list": "清單"
+    "list": "清單",
+    "blockActions": "區塊操作"
   },
   "rightWorkspace": {
     "activity": {
@@ -2568,7 +2806,8 @@
       "deleteSelected": "刪除 {count} 項",
       "deleteN": "刪除 {n} 項",
       "newMdFile": "新建 Markdown 文件",
-      "newFolder": "新建資料夾"
+      "newFolder": "新建資料夾",
+      "history": "歷史版本"
     },
     "deleteConfirm": "要把「{name}」移到系統垃圾桶嗎？",
     "deleteSelectedConfirm": "要把選取的 {count} 項移到系統垃圾桶嗎？",
@@ -2613,12 +2852,16 @@
   "browser": {
     "using": "正在用瀏覽器",
     "close": "關閉瀏覽器",
+    "open": "開啟瀏覽器",
+    "collapse": "收起",
+    "closeForSession": "關閉此對話的瀏覽器",
     "closeBtn": "關閉",
     "back": "後退",
     "forward": "前進",
     "reload": "重新整理",
     "newTab": "新標籤頁",
     "closeTab": "關閉標籤頁",
+    "emptyWorkspace": "沒有開啟的分頁",
     "emergencyStop": "緊急停止 AI 控制",
     "backgroundHint": "後台瀏覽器運行中，點擊查看",
     "background": "後台瀏覽器"
@@ -2644,7 +2887,11 @@
     }
   },
   "notification": {
-    "turnCompletionBody": "這一輪已經完成"
+    "chatCompletionBody": "這一輪聊天已經完成",
+    "scheduledTaskCompletionBody": "排程任務已完成：{label}",
+    "scheduledTaskCompletionFailedBody": "排程任務執行失敗：{label}",
+    "patrolCompletionBody": "巡檢已完成：{label}",
+    "patrolCompletionFailedBody": "巡檢執行失敗：{label}"
   },
   "error": {
     "pathsRequired": "需要 paths 陣列",
@@ -2700,6 +2947,7 @@
     "fetchError": "抓取出錯: {msg}",
     "browserError": "錯誤: {msg}",
     "browserAlreadyRunning": "瀏覽器已在執行中",
+    "browserAuthorizationRevoked": "使用者已停止授權使用瀏覽器",
     "browserLaunched": "瀏覽器已啟動",
     "browserNotRunning": "瀏覽器未在執行",
     "browserClosed": "瀏覽器已關閉",
@@ -2796,7 +3044,7 @@
     "settingsTimeout": "「{label}」修改確認逾時，設定未變更",
     "subagentMaxConcurrent": "目前已有 {max} 個子 agent 在執行，請等待完成後再發起。",
     "subagentParentSessionRequired": "subagent 需要活躍父會話和背景任務儲存，無法在目前上下文建立可繼續實例。",
-    "subagentWriteAccessDenied": "無法授予寫入權限：父會話處於唯讀模式，子代理權限不能超過父會話。請把會話切換到可操作模式後重試，或改用 access:\"read\" 重新派單。",
+    "subagentWriteAccessDenied": "無法授予寫入權限：父會話處於唯讀模式，subagent 權限不能超過父會話。請把會話切換到可操作模式後重試，或改用 access:\"read\" 重新派單。",
     "subagentFailed": "子 agent 執行失敗: {msg}",
     "subagentTimeout": "子 agent 執行逾時（{minutes} 分鐘）",
     "subagentAborted": "子 agent 已被終止",
@@ -2841,6 +3089,7 @@
     "platformTestUnsupported": "該平台暫不支援測試",
     "codexNoHealthCheck": "codex API 不支援健康檢測",
     "modelNotFound": "找不到模型: {id}",
+    "modelContextTooLarge": "新模型的上下文空間不足，無法容納目前會話。請先壓縮目前會話，再重新切換。",
     "noUtilityModel": "未設定 utility 模型，請在設定中新增",
     "noUtilityLargeModel": "未設定 utility_large 模型，請在設定中新增",
     "modelNoProvider": "{role} 模型 \"{model}\" 沒有 provider 歸屬",
@@ -2903,7 +3152,47 @@
     "stopTaskNotFound": "找不到任務 {taskId}，可能已完成或不存在",
     "stopTaskAlready": "任務 {taskId} 已經被終止了",
     "stopTaskNoHandler": "任務 {taskId} 的類型不支援終止",
-    "stopTaskDone": "已終止任務 {taskId}"
+    "stopTaskDone": "已終止任務 {taskId}",
+    "detailShow": "詳情",
+    "detailHide": "收合",
+    "code": {
+      "unexpected": "操作沒能完成",
+      "sessionForkActiveTask": "這段對話裡還有任務在執行，等它結束再建立分支，或者從更早的位置分支",
+      "sessionForkUnavailable": "目前版本不支援建立分支工作階段",
+      "subagentSessionForkCycle": "不能把 subagent 會話分支回它自己的上游",
+      "subagentRunBusy": "subagent 還在執行，等它結束再試",
+      "subagentThreadBusy": "subagent 執行緒正忙，稍候再試",
+      "workflowRunBusy": "工作流程還在執行，等它結束再試",
+      "workflowNodeBusy": "工作流程節點正忙，稍候再試",
+      "sessionCreateFailed": "新建工作階段沒有成功，稍後重試；反覆出現就看一下設定裡的模型與憑證",
+      "sessionBusy": "這個工作階段正忙，等目前的操作結束再試",
+      "sessionNotLoaded": "工作階段還沒載入完成，稍候再試",
+      "sessionIdentityConflict": "工作階段身分對不上，重新整理後再試",
+      "sessionIdentityUnresolved": "認不出這則訊息屬於哪個工作階段",
+      "sessionIdentityMismatch": "這則訊息不屬於目前的工作階段",
+      "sessionManifestNotFound": "找不到這個工作階段的紀錄，它可能已經被刪除，重新整理清單確認一下",
+      "sessionManifestUnavailable": "工作階段索引暫時無法使用，稍後重試；一直這樣就重新啟動應用程式",
+      "sessionLocatorNotActive": "這個工作階段已經不是目前版本，可能被封存或移動了，重新整理清單後再試",
+      "activeSessionConflict": "已經有另一個工作階段在進行中",
+      "sessionDeleteStagedConflict": "這個工作階段正在刪除中，暫時不能操作",
+      "fileTooLarge": "檔案太大，超出允許的大小",
+      "invalidUpload": "上傳的內容無法辨識",
+      "invalidPath": "路徑無效",
+      "noAvailableModel": "目前沒有可用的對話模型，先去設定裡設定模型和憑證",
+      "agentModelNotAvailable": "這個助手設定的模型目前無法使用，去設定裡幫它換一個",
+      "workspaceNotFound": "找不到這個工作台",
+      "capabilityDenied": "這個操作沒有取得授權",
+      "dreamUnavailable": "這個 Agent 暫時無法使用 Dream 整理",
+      "dreamMemoryDisabled": "請先為這個 Agent 開啟記憶",
+      "dreamMemoryBusy": "記憶正在背景整理，請稍後再試",
+      "dreamAlreadyRunning": "目前記憶正在進行 Dream 整理",
+      "dreamNoMemory": "目前還沒有重要事實或長期記憶可整理",
+      "dreamMemoryChanged": "整理期間記憶發生變化，請重新執行 Dream",
+      "dreamRevisionNotFound": "找不到這個 Dream 版本，它可能已經被清理",
+      "dreamRestoreFailed": "恢復 Dream 版本失敗，目前記憶沒有改動",
+      "dreamRunFailed": "Dream 整理失敗，原記憶沒有改動",
+      "internalContract": "應用程式內部出了點問題，這不是你的操作問題；詳情已記錄，回報時可以附上"
+    }
   },
   "main": {
     "tray": {
@@ -3032,6 +3321,7 @@
   },
   "sandbox": {
     "blocked": "[安全策略] {reason}\n\n此操作被 HanaAgent 的沙盒安全策略阻止，表示命令越過了路徑或權限邊界。先檢查目前工作台、具體路徑寫法，以及目標檔案是否本來就應該放在允許的工作台或 session 路徑內。請向使用者說明被攔截的路徑和原因；只有使用者明確決定時，再討論是否修改沙盒設定。",
+    "blockedNeedsEscalation": "[安全策略] {reason}\n\n此命令在沙盒模式下被攔截。如果它對目前任務重要且為唯讀查詢，請帶一句話 justification 用 sandbox_permissions=\"require_escalated\" 重新執行，等待使用者審批。",
     "noSudo": "禁止使用 sudo",
     "noSu": "禁止使用 su 切換使用者",
     "noChmod": "禁止修改檔案權限",
@@ -3154,8 +3444,8 @@
       "imageDesc": "图生視訊参考图。优先使用当前会话对象，例如 { kind: \"session_file\", fileId }。",
       "durationDesc": "視訊时长 4-15 秒（預設 5）",
       "ratioDesc": "长宽比：1:1, 16:9, 9:16, 4:3, 3:4, 21:9",
-      "modelDesc": "模型版本：seedance2.0, seedance2.0fast（預設 seedance2.0）",
-      "providerDesc": "指定 provider（可选）",
+      "modelDesc": "模型 ID 或簡稱。普通生成必須省略，使用已配置預設模型；只有使用者明確指定模型或授權 override 時才填寫",
+      "providerDesc": "指定 provider（可選）。普通生成必須省略，使用已配置預設 provider；只有使用者明確指定 provider 或授權 override 時才填寫",
       "notInitialized": "視訊生成插件未初始化",
       "noProvider": "没有可用的視訊生成 provider",
       "submitFailed": "視訊提交失败：{error}",
@@ -3208,7 +3498,25 @@
       "text": "Beautify 当前支持两类能力。1) Markdown cover 工作流：先读取封面风格说明，再准备一张图片，可以来自生图工具、未来的内置头图库或用户本地图片，最后把图片复制到附件文件夹并写入 cover frontmatter。2) 整页 HTML 美学规范：生成网页 / 排版页 / 报告页前，先用 beautify_get-html-style-guide 获取 Hana 預設美术方向（无参拿路由器，再按 section 逐节取规范）。"
     }
   },
+  "fileHistory": {
+    "title": "檔案歷史",
+    "searchPlaceholder": "搜尋檔案…",
+    "deletedGroup": "已刪除檔案",
+    "empty": "尚無歷史記錄",
+    "noVersions": "該檔案暫無版本",
+    "selectVersion": "選擇一個版本查看變化",
+    "restore": "還原此版本",
+    "restoreDone": "已還原",
+    "error": "操作失敗",
+    "origin": {
+      "event": "應用內修改",
+      "watcher": "外部修改",
+      "sweep": "基線快照",
+      "restore": "還原"
+    }
+  },
   "preview": {
+    "fileHistory": "歷史版本",
     "fileMovedOrDeleted": "原稿件已移动或者删除",
     "legacyImageUpgrade": "此图片预览已升级，点此在新查看器打开",
     "coverLayoutSaveFailed": "Cover 布局保存失败，文件可能已被外部修改。",
@@ -3345,6 +3653,16 @@
       "body": "确认后，这个文件夹会成为当前对话的额外沙盒目录；不会改变工作目录，也不会写入提示词。",
       "addLabel": "添加授权目录",
       "removeLabel": "移除授权目录"
+    },
+    "mcpElicitation": {
+      "unsupportedField": "暫不支援的欄位類型",
+      "choose": "請選擇",
+      "requiredMissing": "請填寫標有 * 的必填項"
+    },
+    "mcpTool": {
+      "allowForSession": "本次工作階段不再詢問此工具",
+      "allowAlways": "一律允許此工具",
+      "grantFailed": "無法記住這次授權"
     }
   },
   "auth": {

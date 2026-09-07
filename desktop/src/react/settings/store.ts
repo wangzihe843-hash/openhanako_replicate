@@ -53,20 +53,12 @@ export interface ProviderSummary {
   missing_fields?: string[];
 }
 
-export interface PluginSettingsTab {
-  pluginId: string;
-  id: string;
-  title: string | Record<string, string>;
-  icon?: string | null;
-  nativeComponent: string;
-}
-
 export interface SettingsSnapshot {
   agentId: string;
   config: Record<string, any>;
   identity: string;
-  ishiki: string;
-  publicIshiki: string;
+  agents: string;
+  publicAgents: string;
   userProfile: string;
   experience: string;
   pinned: { pins: string[] };
@@ -96,7 +88,6 @@ export interface SettingsSnapshot {
     allowFullAccess: boolean;
     devToolsEnabled: boolean;
     userDir: string;
-    settingsTabs: PluginSettingsTab[];
   };
 }
 
@@ -145,7 +136,6 @@ export interface SettingsState {
   pluginAllowFullAccess: boolean | undefined;
   pluginDevToolsEnabled: boolean | undefined;
   pluginUserDir: string;
-  pluginSettingsTabs: PluginSettingsTab[];
 
   // toast
   toastMessage: string;
@@ -208,7 +198,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
   pluginAllowFullAccess: undefined,
   pluginDevToolsEnabled: undefined,
   pluginUserDir: '',
-  pluginSettingsTabs: [],
 
   // toast
   toastMessage: '',

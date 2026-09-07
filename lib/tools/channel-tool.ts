@@ -164,6 +164,14 @@ function channelResolveErrorResult(action, requested, resolved) {
   };
 }
 
+function stableOpaqueId(value: unknown) {
+  return Buffer.from(JSON.stringify(value), "utf-8").toString("base64url");
+}
+
+function stableSort(values: string[]) {
+  return [...new Set(values)].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+}
+
 /**
  * 创建频道工具
  * @param {object} opts
@@ -182,10 +190,57 @@ export function createChannelTool({
   isEnabled,
   createChannelEntry,
 }) {
+  function resolveInvocation(params: any = {}) {
+    const action = typeof params?.action === "string" ? params.action : "";
+    if (action === "list") {
+      return { action, kind: "read", capability: "channel.list" };
+    }
+    if (action === "read" || action === "post") {
+      const resolved = resolveChannelReference({
+        channelsDir,
+        agentsDir,
+        agentId,
+        channel: params.channel,
+      });
+      if (!resolved.ok) return null;
+      return {
+        action,
+        kind: action === "read" ? "read" : "review",
+        capability: `channel.${action}`,
+        target: {
+          type: "channel",
+          id: resolved.id,
+          label: resolved.name,
+        },
+      };
+    }
+    if (action === "create") {
+      if (typeof params.name !== "string" || params.name !== params.name.trim() || !params.name) return null;
+      if (!Array.isArray(params.members)) return null;
+      try {
+        const members = stableSort(normalizeChannelMembers([agentId, ...params.members]));
+        return {
+          action,
+          kind: "review",
+          capability: "channel.create",
+          target: {
+            type: "channel_draft",
+            id: stableOpaqueId({ name: params.name, members }),
+            label: params.name,
+          },
+        };
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
   return {
     name: "channel",
     label: "Channel",
-    description: "Manage channel messages for broadcasts and group discussions. For one-on-one messaging, use the dm tool instead.",
+    description: "Manage channel messages for broadcasts and group discussions. This tool cannot read or send one-on-one Agent Phone conversations.",
+    sessionPermission: { resolveInvocation },
     parameters: Type.Object({
       action: StringEnum(
         ["read", "post", "create", "list"],

@@ -219,7 +219,69 @@ export const bridgeCommands = [
       return { silent: true };
     },
   },
+  {
+    name: "loop",
+    description: "在当前会话启动/管理循环任务",
+    usage: "/loop <任务> | /loop stop | pause | resume | status",
+    scope: "session",
+    permission: "owner",
+    source: "core",
+    handler: async (ctx) => _handleLoopCommand(ctx),
+  },
 ];
+
+const LOOP_SUBCOMMANDS = new Set(["stop", "pause", "resume", "status"]);
+
+function _renderLoopStatus(loop) {
+  if (!loop) return null;
+  const lines = [
+    `循环状态：${loop.status}${loop.pausedReason ? `（${loop.pausedReason}）` : ""}`,
+    `任务：${loop.prompt}`,
+    `轮数：${loop.turnCount}/${loop.limits?.maxTurns}`,
+  ];
+  if (loop.alarm) {
+    lines.push(`闹钟：${new Date(loop.alarm.wakeAt).toLocaleString()}（${loop.alarm.reason || "无说明"}）`);
+  } else {
+    lines.push("闹钟：无");
+  }
+  if (loop.completedSummary) lines.push(`完成摘要：${loop.completedSummary}`);
+  return lines.join("\n");
+}
+
+async function _handleLoopCommand(ctx) {
+  const controller = ctx.engine?.loopController;
+  if (!controller) return { error: "循环服务未就绪" };
+  const args = (ctx.args || "").trim();
+  const firstToken = args.split(/\s+/, 1)[0]?.toLowerCase() || "";
+  const isStart = !!args && !LOOP_SUBCOMMANDS.has(firstToken);
+  try {
+    const target = await controller.targetFromSessionRef(ctx.sessionRef, { ensure: isStart });
+    if (!target) return { error: "无法定位当前会话（会话尚未建立或已失效）" };
+    if (!args || firstToken === "status") {
+      const rendered = _renderLoopStatus(controller.statusForTarget(target));
+      if (rendered) return { reply: rendered };
+      return args
+        ? { reply: "（该会话没有循环）" }
+        : { error: "用法：/loop <任务> | /loop stop | pause | resume | status" };
+    }
+    if (firstToken === "stop") {
+      await controller.stop(target);
+      return { reply: "（循环已终止）" };
+    }
+    if (firstToken === "pause") {
+      await controller.pause(target, "user");
+      return { reply: "（循环已暂停，/loop resume 恢复）" };
+    }
+    if (firstToken === "resume") {
+      await controller.resume(target);
+      return { reply: "（循环已恢复）" };
+    }
+    await controller.start(target, args);
+    return { reply: "（循环已启动，/loop status 查看进度，/loop stop 终止）" };
+  } catch (err) {
+    return { error: err?.message || String(err) };
+  }
+}
 
 /**
  * 接管态检查：当前 bridge session 是否挂接了桌面 session。
@@ -290,17 +352,29 @@ async function _applyAutomationSuggestion(ctx) {
   const bridgeSessionKey = ctx.sessionRef?.kind === "bridge"
     ? ctx.sessionRef.sessionKey
     : null;
-  const sessionPath = ctx.sessionRef?.kind === "desktop"
-    ? ctx.sessionRef.sessionPath
+  const sessionId = ctx.sessionRef?.kind === "desktop"
+    ? ctx.sessionRef.sessionId
     : null;
-  if (!bridgeSessionKey && !sessionPath) {
+  if (!bridgeSessionKey && !sessionId) {
     return { reply: "/apply 只能在当前会话中创建自动任务建议" };
+  }
+  let studioId = null;
+  try {
+    const runtimeContext = ctx.engine?.getRuntimeContext?.();
+    studioId = typeof runtimeContext?.studioId === "string" && runtimeContext.studioId.trim()
+      ? runtimeContext.studioId.trim()
+      : null;
+  } catch {
+    studioId = null;
+  }
+  if (!studioId) {
+    return { reply: "当前 Studio 身份不可用，无法创建自动任务建议" };
   }
 
   try {
     const result = await store.apply({
-      bridgeSessionKey,
-      sessionPath,
+      studioId,
+      ...(bridgeSessionKey ? { bridgeSessionKey } : { sessionId }),
       ref,
     });
     if (!result?.ok) {

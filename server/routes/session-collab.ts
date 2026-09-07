@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { SESSION_COLLAB_DECISION_RECORD_TYPE, buildSessionCollabDecision } from "../../lib/session-collab/decision-record.ts";
+import { isSessionCollabPartialSuccessError } from "../../lib/session-collab/draft-store.ts";
 
 /**
  * 把草稿卡决策写进源 session 的 JSONL（custom entry）。决策记录失败不该让已经
@@ -59,12 +60,35 @@ export function createSessionCollabRoute(engine: any) {
       return c.json({ ok: true, result: applied.result ?? null, decisionPersisted });
     } catch (err: any) {
       const message = err?.message || String(err);
-      // create 半成功：错误里带出已建 sessionId，前端据此提示（条目已保留可重试首条投递）
+      if (isSessionCollabPartialSuccessError(err)) {
+        let decisionPersisted = false;
+        if (snapshot?.sourceSessionId) {
+          decisionPersisted = await recordDecision(engine, snapshot.sourceSessionId, buildSessionCollabDecision({
+            suggestionId,
+            status: "approved",
+            resultSessionId: err.sessionId,
+          }));
+        }
+        return c.json({
+          ok: false,
+          partialSuccess: true,
+          error: message,
+          code: err.code,
+          sessionId: err.sessionId,
+          result: err.result,
+          decisionPersisted,
+        }, 500);
+      }
+      // 兼容旧式字符串错误；新代码统一使用上面的结构化部分成功错误。
       const half = /^first_message_failed:([^:]+):/.exec(message);
       return c.json({
         error: message,
         code: half ? "first_message_failed" : "apply_failed",
-        ...(half ? { sessionId: half[1] } : {}),
+        ...(half ? {
+          partialSuccess: true,
+          sessionId: half[1],
+          result: { sessionId: half[1], sessionCreated: true, firstMessageAccepted: false },
+        } : {}),
       }, 500);
     }
   });

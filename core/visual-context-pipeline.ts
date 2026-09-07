@@ -100,7 +100,9 @@ async function resolveSessionFileRef(ref, { sessionPath, resolveSessionFile }) {
       sessionPath: ref?.sessionPath || sessionPath || null,
     });
   }
-  if (!file && ref?.filePath) file = ref;
+  // A SessionFile id is an authorization-bearing reference. If the scoped
+  // resolver rejects it, do not bypass that decision by reading its raw path.
+  if (!file && !ref?.fileId && !ref?.id && ref?.filePath) file = ref;
   return file || null;
 }
 

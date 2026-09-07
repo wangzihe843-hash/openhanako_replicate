@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
+import { securityDirPath } from "./security-dir.ts";
 
 export const PLUGIN_IFRAME_TICKET_KEY_FILE = "plugin-iframe-ticket-key";
 export const PLUGIN_IFRAME_TICKET_ACTION = "plugins.iframe";
@@ -111,7 +112,7 @@ export function verifyPluginIframeTicket({
 
 function pluginIframeTicketKeyPath(hanakoHome) {
   assertNonEmpty(hanakoHome, "hanakoHome");
-  return path.join(hanakoHome, "security", PLUGIN_IFRAME_TICKET_KEY_FILE);
+  return path.join(securityDirPath(hanakoHome), PLUGIN_IFRAME_TICKET_KEY_FILE);
 }
 
 function signBody(hanakoHome, body) {

@@ -1,7 +1,55 @@
-import { parseDeferredResultNotification } from "./deferred-result-notification.ts";
+import {
+  DEFERRED_RESULT_MESSAGE_TYPE,
+  parseDeferredResultNotification,
+} from "./deferred-result-notification.ts";
 
 export const TURN_INPUT_PRESENTATION_EVENT_TYPE = "turn_input_presentation";
 export const TURN_INPUT_CONSUMPTION_EVENT_TYPE = "turn_input_consumption";
+
+const HIDDEN_TURN_INPUT_RE = /<hana-background-result(?:\s|>)|<hana-deferred-tasks(?:\s|>)/;
+
+function messageTextContent(message) {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("");
+}
+
+/** System turn inputs can trigger an Agent reply without becoming a visible user node. */
+export function isHiddenTurnInputMessage(message) {
+  return HIDDEN_TURN_INPUT_RE.test(messageTextContent(message));
+}
+
+function isIndependentCustomTurnInput(entry) {
+  return entry?.customType === DEFERRED_RESULT_MESSAGE_TYPE
+    && !!parseDeferredResultNotification(entry.content);
+}
+
+/**
+ * Pi persists independently delivered background results as `custom_message`
+ * entries. Extension context injected beside a user prompt and notify-only
+ * custom messages stay inside their surrounding turn instead of becoming an
+ * artificial turn boundary.
+ */
+export function isSessionTurnInputEntry(entry) {
+  return (
+    entry?.type === "message" && entry.message?.role === "user"
+  ) || (
+    entry?.type === "custom_message" && isIndependentCustomTurnInput(entry)
+  );
+}
+
+/** History projection of an independently delivered custom turn input. */
+export function isCustomTurnInputHistoryMessage(message) {
+  return message?.role === "custom"
+    && typeof message.customType === "string"
+    && Object.prototype.hasOwnProperty.call(message, "content")
+    && !Object.prototype.hasOwnProperty.call(message, "data")
+    && isIndependentCustomTurnInput(message);
+}
 
 function textOrNull(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;

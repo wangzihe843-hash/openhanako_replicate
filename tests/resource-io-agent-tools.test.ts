@@ -243,4 +243,93 @@ describe("ResourceIO agent tools", () => {
     expect(result.content[0].text).toContain("read-only");
     expect(execute).not.toHaveBeenCalled();
   });
+
+  it("materializes SessionFile targets for ls, grep, and find through ResourceIO", async () => {
+    const makeExecute = () => vi.fn(async (_toolCallId, params) => ({
+      content: [{ type: "text", text: `ok:${params.path}` }],
+    }));
+    const lsExecute = makeExecute();
+    const grepExecute = makeExecute();
+    const findExecute = makeExecute();
+    const resourceIO = {
+      materialize: vi.fn(async () => ({ filePath: "/tmp/ref-dir" })),
+    };
+    const [ls, grep, find] = wrapResourceIoFileTools([
+      { name: "ls", parameters: { type: "object", required: ["path"], properties: {} }, execute: lsExecute },
+      { name: "grep", parameters: { type: "object", required: ["path", "pattern"], properties: {} }, execute: grepExecute },
+      { name: "find", parameters: { type: "object", required: ["path", "pattern"], properties: {} }, execute: findExecute },
+    ], {
+      cwd: "/workspace",
+      getSessionPath: () => "/sessions/a.jsonl",
+      resourceIO,
+    });
+
+    await ls.execute("ls-1", { fileId: "sf_dir" });
+    await grep.execute("grep-1", { fileId: "sf_dir", pattern: "x" });
+    await find.execute("find-1", { resource: { kind: "session-file", fileId: "sf_dir" }, pattern: "*" });
+
+    expect(resourceIO.materialize).toHaveBeenCalledTimes(3);
+    expect(resourceIO.materialize).toHaveBeenCalledWith({
+      kind: "session-file",
+      fileId: "sf_dir",
+      sessionPath: "/sessions/a.jsonl",
+    });
+    for (const exec of [lsExecute, grepExecute, findExecute]) {
+      const params = exec.mock.calls[0][1];
+      expect(params.path).toBe("/tmp/ref-dir");
+      expect(params.fileId).toBeUndefined();
+      expect(params.sessionPath).toBeUndefined();
+    }
+    expect(grepExecute.mock.calls[0][1].pattern).toBe("x");
+  });
+
+  it("guides read calls on directory SessionFiles toward ls/grep/find", async () => {
+    const readExecute = vi.fn();
+    const resourceIO = {
+      materialize: vi.fn(async () => ({ filePath: "/tmp/ref-dir", isDirectory: true })),
+    };
+    const [read] = wrapResourceIoFileTools([
+      { name: "read", parameters: { type: "object", required: ["path"], properties: {} }, execute: readExecute },
+    ], {
+      cwd: "/workspace",
+      getSessionPath: () => "/sessions/a.jsonl",
+      resourceIO,
+    });
+
+    const result = await read.execute("read-dir", { fileId: "sf_dir" });
+
+    expect(resourceIO.materialize).toHaveBeenCalledTimes(1);
+    expect(resourceIO.materialize).toHaveBeenCalledWith({
+      kind: "session-file",
+      fileId: "sf_dir",
+      sessionPath: "/sessions/a.jsonl",
+    });
+    expect(readExecute).not.toHaveBeenCalled();
+    expect(result.content[0].text).toContain("is a directory");
+  });
+
+  it("resolves fileId exactly once through ResourceIO and strips it from delegated params", async () => {
+    const readExecute = vi.fn(async (_toolCallId, params) => ({
+      content: [{ type: "text", text: `read:${params.path}` }],
+    }));
+    const resourceIO = {
+      materialize: vi.fn(async () => ({ filePath: "/tmp/m.txt" })),
+    };
+    const [read] = wrapResourceIoFileTools([
+      { name: "read", parameters: { type: "object", required: ["path"], properties: {} }, execute: readExecute },
+    ], {
+      cwd: "/workspace",
+      getSessionPath: () => "/sessions/a.jsonl",
+      resourceIO,
+    });
+
+    const result = await read.execute("read-1", { fileId: "sf_9", sessionPath: "/sessions/owner.jsonl" });
+
+    expect(result.content[0].text).toBe("read:/tmp/m.txt");
+    expect(resourceIO.materialize).toHaveBeenCalledTimes(1);
+    const params = readExecute.mock.calls[0][1];
+    expect(params.path).toBe("/tmp/m.txt");
+    expect(params.fileId).toBeUndefined();
+    expect(params.sessionPath).toBeUndefined();
+  });
 });

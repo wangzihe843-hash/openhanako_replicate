@@ -246,6 +246,11 @@ export function handleAppEvent(type: string, data: any = {}, options: AppEventOp
     case 'chat-layout-changed':
       applyChatLayout(data.chat ?? data);
       break;
+    case 'experiment-changed':
+      window.dispatchEvent(new CustomEvent('hana-settings', {
+        detail: { type: 'experiment-changed', id: data.id, value: data.value },
+      }));
+      break;
     case 'network-proxy-changed':
       if (options.source === 'server') {
         window.platform?.settingsChanged?.('network-proxy-changed', data);
@@ -258,6 +263,9 @@ export function handleAppEvent(type: string, data: any = {}, options: AppEventOp
       break;
     case 'paper-texture-changed':
       window.setPaperTexture(data.enabled);
+      break;
+    case 'sidebar-ui-changed':
+      useStore.getState().applySidebarUiPrefs(data);
       break;
     case 'leaves-overlay-changed':
       window.dispatchEvent(new CustomEvent('hana-settings', {

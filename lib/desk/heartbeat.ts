@@ -106,7 +106,7 @@ function markdownFenceFor(text) {
  *   所以这里在 false 时**既不出**「必须主动产出」hard directive、**也不出**软的草稿引导：工具都没有，
  *   提示它去 call 没有任何意义。默认 agent（没动过工具开关）这个值为 true，行为不变。
  */
-function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, agentName, isZh, patrolLog, activityDir, patrolLogPath, xingyeEventSummary, autoDraftStaleness, socialStaleness, proposeDraftAvailable = true }) {
+function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, agentName, isZh, patrolLog, activityDir, patrolLogPath, xingyeEventSummary, autoDraftStaleness, socialStaleness, proposeDraftAvailable = true, dmAvailable = true }) {
   const now = new Date();
   const timeStr = now.toLocaleString(isZh ? "zh-CN" : "en-US", { hour12: false });
 
@@ -256,7 +256,7 @@ function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, agentName
    * 平时整段不存在，零 token 成本。措辞刻意保持"邀请"而非"命令"：给一个具体的人
    * 当话头，但明确"不想聊就跳过"，避免变成每次心跳都硬找人寒暄的烧钱行为。
    */
-  if (socialStaleness && (socialStaleness.shouldSocialize || socialStaleness.overduePeerCount > 0)) {
+  if (dmAvailable && socialStaleness && (socialStaleness.shouldSocialize || socialStaleness.overduePeerCount > 0)) {
     const candidateLines = formatSocialCandidateLines(socialStaleness.candidatePeers, isZh);
     if (candidateLines.length > 0) {
       const turns = socialStaleness.globalChatTurnsSinceLastDm;
@@ -393,6 +393,13 @@ function createJianStatusTool({ jianPath, instructionSnapshot, isZh }) {
     description: isZh
       ? "更新当前 jian.md 的执行状态。程序会写入本轮开始时的任务快照，你只提交状态、进度和说明。"
       : "Update the current jian.md execution status. The program writes the task snapshot captured at patrol start; submit only status, progress, and note.",
+    sessionPermission: {
+      resolveInvocation: () => ({
+        action: "update",
+        kind: "routine",
+        capability: "jian_update_status.update",
+      }),
+    },
     parameters: Type.Object({
       status: StringEnum(JIAN_STATUS_VALUES, {
         description: isZh
@@ -611,6 +618,13 @@ function createPatrolLogTool({ patrolLogPath, isZh }) {
     description: isZh
       ? "写入本轮工作台巡检日志。你只提交状态和一句说明，程序负责时间戳、目录、UTF-8 编码和旧日志归一化。"
       : "Write this workspace patrol log entry. Submit only status and one note; the program owns timestamping, directory creation, UTF-8 encoding, and legacy log normalization.",
+    sessionPermission: {
+      resolveInvocation: () => ({
+        action: "update",
+        kind: "routine",
+        capability: "patrol_update_log.update",
+      }),
+    },
     parameters: Type.Object({
       status: StringEnum(PATROL_STATUS_VALUES, {
         description: isZh
@@ -754,13 +768,16 @@ function scanJianDirs(wsPath) {
  *   **缺省（未传 / 返回非 false）一律视为 true**——默认 agent 行为完全不变。
  *   注：可用性的判定逻辑（tools.disabled + desk.patrol_tools，对齐 executeIsolated 的过滤口径）
  *   归调用方（scheduler）持有，因为只有它拿得到 agent.config；本模块只消费这个布尔。
+ * @param {() => (boolean|Promise<boolean>)} [opts.getDmAvailable]
+ *   Checks the actual patrol tool set before emitting social instructions.
+ *   A failed check suppresses instructions while preserving event statistics.
  * @returns {{ start, stop, beat, triggerNow, runHeartbeatOnce }}
  */
 export function createHeartbeat({
   getDeskFiles, getWorkspacePath, getAgentName, registryPath,
   onBeat, onJianBeat, getEventSummary,
   intervalMinutes, emitDevLog,
-  overwatchPath, locale, getProposeDraftAvailable,
+  overwatchPath, locale, getProposeDraftAvailable, getDmAvailable,
 }) {
   const isZh = !locale || String(locale).startsWith("zh");
   const devlog = (text, level = "heartbeat") => {
@@ -895,6 +912,16 @@ export function createHeartbeat({
         }
       }
 
+      let dmAvailable = true;
+      if (typeof getDmAvailable === "function") {
+        try {
+          dmAvailable = (await getDmAvailable()) === true;
+        } catch (err) {
+          devlog(`getDmAvailable 失败，本轮不生成社交指令: ${err?.message || err}`, "error");
+          dmAvailable = false;
+        }
+      }
+
       let beatPayload = null;
       {
         // 读取巡检日志（截断）
@@ -916,6 +943,7 @@ export function createHeartbeat({
           autoDraftStaleness,
           socialStaleness,
           proposeDraftAvailable,
+          dmAvailable,
         });
         log.log(`Phase 1: 工作台巡检 (${prompt.length} chars, ${deskChanged ? "有变化" : "无变化"})`);
         devlog(`Phase 1: 工作台巡检执行中...${deskChanged ? "" : " (无文件变化)"}`);

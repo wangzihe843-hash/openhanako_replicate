@@ -90,6 +90,7 @@ export class SessionFileResolverProvider {
       resourceKey: resourceKeyForRef(normalized),
       resource: descriptorForEntry(normalized, entry, filePath),
       filePath,
+      isDirectory: stat.isDirectory(),
       version: versionFromStat(stat),
     };
   }

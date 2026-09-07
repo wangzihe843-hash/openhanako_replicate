@@ -6,7 +6,7 @@ import { useStore, type StoreState } from '../../stores';
 import type { DeskFile, RemoteWorkbenchContentRef } from '../../types';
 import type { FileRef } from '../../types/file-ref';
 
-const mockHanaFetch = vi.fn();
+const mockHanaFetch = vi.hoisted(() => vi.fn());
 const mockOpenFilePreview = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock('../../hooks/use-hana-fetch', () => ({

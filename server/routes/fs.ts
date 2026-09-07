@@ -11,7 +11,6 @@ import fs from "fs";
 import path from "path";
 import { Hono } from "hono";
 import { safeReadFile } from "../../shared/safe-fs.ts";
-import { resolveAgent } from "../utils/resolve-agent.ts";
 
 function isInsideRoot(candidatePath, rootPath) {
   return candidatePath === rootPath || candidatePath.startsWith(rootPath + path.sep);
@@ -65,13 +64,24 @@ export function createFsRoute(engine) {
   const route = new Hono();
   const hanakoHome = path.resolve(engine.hanakoHome);
 
-  // 收集允许的根目录
-  function getAllowedRoots(c) {
+  /**
+   * 收集允许的根目录：数据目录 + 全体 agent 的 desk 工作台（用户可能配在数据目录外面）。
+   *
+   * 这里不看请求里的 agentId。这条路由的鉴权边界只有 bearer token 一个——agentId
+   * 是查询参数，任何拿得到 token 的客户端都能随便填，从来没有把谁挡在门外过。既然
+   * 它不承担鉴权，就不该拿它去裁剪可读范围：那样只会让"没写 agentId 的请求"读不到
+   * 本来就允许读的文件，而安全性一点没变。所以根取全体 agent 的并集。
+   *
+   * 每个请求现算：agent 可以在运行时增删，缓存会把删掉的 desk 留在白名单里。
+   */
+  function getAllowedRoots() {
     const roots = [hanakoHome];
-    // desk 工作台目录（用户可能配在 ~/.hanako 外面）
-    const agent = resolveAgent(engine, c);
-    const deskHome = agent?.config?.desk?.home_folder || engine.getHomeCwd?.(agent?.id);
-    if (deskHome) roots.push(path.resolve(deskHome));
+    for (const entry of engine.listAgents?.() || []) {
+      const agent = engine.getAgent?.(entry.id);
+      if (!agent) continue;
+      const deskHome = agent.config?.desk?.home_folder || engine.getHomeCwd?.(agent.id);
+      if (deskHome) roots.push(path.resolve(deskHome));
+    }
     return roots;
   }
 
@@ -79,7 +89,7 @@ export function createFsRoute(engine) {
   route.get("/fs/read", async (c) => {
     const filePath = c.req.query("path");
     if (!filePath) return c.json({ error: "missing path" }, 400);
-    const allowedPath = resolveAllowedPath(filePath, getAllowedRoots(c));
+    const allowedPath = resolveAllowedPath(filePath, getAllowedRoots());
     if (!allowedPath) {
       return c.json({ error: "path not allowed" }, 403);
     }
@@ -92,7 +102,7 @@ export function createFsRoute(engine) {
   route.get("/fs/read-base64", async (c) => {
     const filePath = c.req.query("path");
     if (!filePath) return c.json({ error: "missing path" }, 400);
-    const allowedPath = resolveAllowedPath(filePath, getAllowedRoots(c));
+    const allowedPath = resolveAllowedPath(filePath, getAllowedRoots());
     if (!allowedPath) {
       return c.json({ error: "path not allowed" }, 403);
     }
@@ -108,7 +118,7 @@ export function createFsRoute(engine) {
   route.get("/fs/docx-html", async (c) => {
     const filePath = c.req.query("path");
     if (!filePath) return c.json({ error: "missing path" }, 400);
-    const allowedPath = resolveAllowedPath(filePath, getAllowedRoots(c));
+    const allowedPath = resolveAllowedPath(filePath, getAllowedRoots());
     if (!allowedPath) {
       return c.json({ error: "path not allowed" }, 403);
     }
@@ -129,7 +139,7 @@ export function createFsRoute(engine) {
   route.get("/fs/xlsx-html", async (c) => {
     const filePath = c.req.query("path");
     if (!filePath) return c.json({ error: "missing path" }, 400);
-    const allowedPath = resolveAllowedPath(filePath, getAllowedRoots(c));
+    const allowedPath = resolveAllowedPath(filePath, getAllowedRoots());
     if (!allowedPath) {
       return c.json({ error: "path not allowed" }, 403);
     }

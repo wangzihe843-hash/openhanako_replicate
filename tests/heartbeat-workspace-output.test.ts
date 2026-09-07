@@ -4,6 +4,7 @@ import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createHeartbeat } from "../lib/desk/heartbeat.ts";
+import { resolveToolInvocationPermission } from "../lib/permission/tool-invocation-permission.ts";
 
 let tempRoot;
 
@@ -62,6 +63,17 @@ describe("heartbeat workspace output directories", () => {
     expect(prompt).toContain("patrol_update_log");
     expect(prompt).not.toContain("追加到");
     expect(opts.customTools.map((tool) => tool.name)).toContain("patrol_update_log");
+    const patrolTool = opts.customTools.find((tool) => tool.name === "patrol_update_log");
+    expect(patrolTool.sessionPermission.resolveInvocation()).toEqual({
+      action: "update",
+      kind: "routine",
+      capability: "patrol_update_log.update",
+    });
+    expect(resolveToolInvocationPermission(patrolTool, {})).toMatchObject({
+      ok: true,
+      source: "descriptor",
+      descriptor: { kind: "routine", capability: "patrol_update_log.update" },
+    });
 
     const logPath = path.join(tempRoot, "OH-Works", "Hana的巡检", "patrol-log.md");
     const raw = fs.readFileSync(logPath);
@@ -139,6 +151,17 @@ describe("heartbeat workspace output directories", () => {
     expect(prompt).toContain("不要直接编辑 jian.md");
     expect(prompt).not.toContain("追加到 jian.md");
     expect(opts.customTools.map((tool) => tool.name)).toContain("jian_update_status");
+    const statusTool = opts.customTools.find((tool) => tool.name === "jian_update_status");
+    expect(statusTool.sessionPermission.resolveInvocation()).toEqual({
+      action: "update",
+      kind: "routine",
+      capability: "jian_update_status.update",
+    });
+    expect(resolveToolInvocationPermission(statusTool, {})).toMatchObject({
+      ok: true,
+      source: "descriptor",
+      descriptor: { kind: "routine", capability: "jian_update_status.update" },
+    });
 
     const next = fs.readFileSync(jianPath, "utf-8");
     expect(next).toContain(instructions);

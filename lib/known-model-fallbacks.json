@@ -10,6 +10,40 @@
       "toolResultFormat": "message"
     }
   },
+  "claude-opus-5": {
+    "name": "Claude Opus 5",
+    "context": 1000000,
+    "maxOutput": 128000,
+    "image": true,
+    "reasoning": true,
+    "xhigh": true,
+    "visionCapabilities": {
+      "grounding": true,
+      "boxes": true,
+      "points": true,
+      "coordinateSpace": "norm-1000",
+      "boxOrder": "xyxy",
+      "outputFormat": "anchor",
+      "groundingMode": "prompted"
+    }
+  },
+  "claude-sonnet-5": {
+    "name": "Claude Sonnet 5",
+    "context": 1000000,
+    "maxOutput": 128000,
+    "image": true,
+    "reasoning": true,
+    "xhigh": true,
+    "visionCapabilities": {
+      "grounding": true,
+      "boxes": true,
+      "points": true,
+      "coordinateSpace": "norm-1000",
+      "boxOrder": "xyxy",
+      "outputFormat": "anchor",
+      "groundingMode": "prompted"
+    }
+  },
   "claude-fable-5": {
     "name": "Claude Fable 5",
     "context": 1000000,
@@ -105,6 +139,14 @@
     "context": 1000000,
     "maxOutput": 384000,
     "image": false,
+    "reasoning": true,
+    "xhigh": true
+  },
+  "deepseek-v4-flash-vision-exp": {
+    "name": "DeepSeek V4 Flash Vision (Exp)",
+    "context": 1000000,
+    "maxOutput": 384000,
+    "image": true,
     "reasoning": true,
     "xhigh": true
   },
@@ -1626,6 +1668,10 @@
   },
   "doubao-seedream-5-0-lite-260128": {
     "name": "Seedream 5.0 Lite",
+    "type": "image"
+  },
+  "doubao-seedream-5-0-260128": {
+    "name": "Seedream 5.0",
     "type": "image"
   },
   "doubao-vision-lite-32k": {

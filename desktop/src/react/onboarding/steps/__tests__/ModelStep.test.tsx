@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../onboarding-actions', () => ({
+  describeOnboardingError: (_error: unknown, fallback: string) => fallback,
   loadModels: (...args: unknown[]) => mocks.loadModels(...args),
   saveModel: (...args: unknown[]) => mocks.saveModel(...args),
 }));
@@ -41,6 +42,8 @@ describe('ModelStep', () => {
       <ModelStep
         preview={false}
         hanaFetch={vi.fn()}
+        agentId="hana-primary"
+        verificationPlan={{ agentConfig: {}, preferenceModels: {}, requiredAgentSecretPaths: [] }}
         providerName="deepseek"
         providerUrl="https://api.deepseek.com"
         providerApi="openai-completions"
@@ -68,6 +71,8 @@ describe('ModelStep', () => {
       <ModelStep
         preview={false}
         hanaFetch={vi.fn()}
+        agentId="hana-primary"
+        verificationPlan={{ agentConfig: {}, preferenceModels: {}, requiredAgentSecretPaths: [] }}
         providerName="deepseek"
         providerUrl="https://api.deepseek.com"
         providerApi="openai-completions"
@@ -101,6 +106,8 @@ describe('ModelStep', () => {
       <ModelStep
         preview={false}
         hanaFetch={vi.fn()}
+        agentId="hana-primary"
+        verificationPlan={{ agentConfig: {}, preferenceModels: {}, requiredAgentSecretPaths: [] }}
         providerName="custom-provider"
         providerUrl="https://api.example.com/v1"
         providerApi="openai-completions"
@@ -144,6 +151,8 @@ describe('ModelStep', () => {
       <ModelStep
         preview={false}
         hanaFetch={vi.fn()}
+        agentId="hana-primary"
+        verificationPlan={{ agentConfig: {}, preferenceModels: {}, requiredAgentSecretPaths: [] }}
         providerName="custom-vllm"
         providerUrl="http://127.0.0.1:8000/v1"
         providerApi="openai-completions"

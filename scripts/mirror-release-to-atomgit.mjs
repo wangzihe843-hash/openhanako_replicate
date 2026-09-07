@@ -10,6 +10,12 @@ const DEFAULT_GITHUB_REPOSITORY = "liliMozi/openhanako";
 const DEFAULT_ATOMGIT_OWNER = "liliMozi";
 const DEFAULT_ATOMGIT_REPO = "OpenHanako-Releases";
 const ATOMGIT_API_BASE = "https://api.gitcode.com/api/v5";
+const ATOMGIT_WEB_API_BASE = "https://gitcode.com/api/v2";
+// GitCode caps this endpoint at 20 items even when a larger per_page is sent.
+// Use the effective cap so a full first page cannot be mistaken for EOF.
+const ATOMGIT_RELEASE_PAGE_SIZE = 20;
+const ATOMGIT_MAX_RELEASE_PAGES = 100;
+const ATOMGIT_PRERELEASE_LIMIT = 20;
 
 export function parseArgs(argv = process.argv.slice(2), env = process.env) {
   const [defaultGithubOwner, defaultGithubRepo] = (env.GITHUB_REPOSITORY || DEFAULT_GITHUB_REPOSITORY).split("/");
@@ -85,6 +91,20 @@ function atomgitHeaders(env, extra = {}) {
   };
 }
 
+function atomgitWebHeaders(env, extra = {}) {
+  const token = env.ATOMGIT_TOKEN || env.GITCODE_TOKEN || "";
+  return {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "X-Platform": "web",
+    "X-App-Channel": "gitcode-fe",
+    "X-Device-ID": "unknown",
+    "User-Agent": "Mozilla/5.0 (compatible; HanaReleaseMirror/1.0; +https://github.com/liliMozi/openhanako)",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...extra,
+  };
+}
+
 function atomgitUrl(pathname, env, params = {}) {
   const token = env.ATOMGIT_TOKEN || env.GITCODE_TOKEN || "";
   const url = new URL(`${ATOMGIT_API_BASE}${pathname}`);
@@ -134,7 +154,18 @@ export async function selectGithubReleases(options, { env = process.env, fetchIm
     .slice(0, options.latest);
 }
 
-export function buildAtomGitReleasePayload(githubRelease) {
+export async function getGithubLatestTag(options, { env = process.env, fetchImpl = fetch } = {}) {
+  const url = `https://api.github.com/repos/${options.githubOwner}/${options.githubRepo}/releases/latest`;
+  const response = await fetchImpl(url, { headers: githubHeaders(env) });
+  if (response.status === 404) return null;
+  const release = await expectJson(response, `GitHub API ${url}`);
+  if (!release?.tag_name || release.draft || release.prerelease) {
+    throw new Error("GitHub latest release response was not a published stable release");
+  }
+  return release.tag_name;
+}
+
+export function buildAtomGitReleasePayload(githubRelease, githubLatestTag = null) {
   return {
     tag_name: githubRelease.tag_name,
     target_commitish: githubRelease.target_commitish || "main",
@@ -142,20 +173,49 @@ export function buildAtomGitReleasePayload(githubRelease) {
     body: githubRelease.body || "",
     draft: false,
     prerelease: Boolean(githubRelease.prerelease),
-    ...(githubRelease.prerelease ? { release_status: "pre" } : {}),
+    ...(githubRelease.prerelease
+      ? { release_status: "pre" }
+      : githubRelease.tag_name === githubLatestTag
+        ? { release_status: "latest" }
+        : {}),
   };
 }
 
-async function findAtomGitRelease(options, tag, { env, fetchImpl }) {
-  const url = atomgitUrl(`/repos/${options.atomgitOwner}/${options.atomgitRepo}/releases/${encodeURIComponent(tag)}`, env);
-  const response = await fetchImpl(url, { headers: atomgitHeaders(env) });
-  if (response.status === 404 || response.status === 400) return null;
-  return expectJson(response, `AtomGit release lookup ${tag}`);
+export async function listAtomGitReleases(options, { env = process.env, fetchImpl = fetch } = {}) {
+  const releases = [];
+  const tags = new Set();
+
+  for (let page = 1; page <= ATOMGIT_MAX_RELEASE_PAGES; page += 1) {
+    const url = atomgitUrl(
+      `/repos/${options.atomgitOwner}/${options.atomgitRepo}/releases`,
+      env,
+      { direction: "desc", page, per_page: ATOMGIT_RELEASE_PAGE_SIZE },
+    );
+    const response = await fetchImpl(url, { headers: atomgitHeaders(env) });
+    const pageReleases = await expectJson(response, `AtomGit release list page ${page}`);
+    if (!Array.isArray(pageReleases)) {
+      throw new Error(`AtomGit release list page ${page} was not an array`);
+    }
+
+    for (const release of pageReleases) {
+      if (!release?.tag_name || typeof release.tag_name !== "string") {
+        throw new Error(`AtomGit release list page ${page} contained a release without a tag_name`);
+      }
+      if (tags.has(release.tag_name)) {
+        throw new Error(`AtomGit release pagination returned duplicate tag: ${release.tag_name}`);
+      }
+      tags.add(release.tag_name);
+      releases.push(release);
+    }
+
+    if (pageReleases.length < ATOMGIT_RELEASE_PAGE_SIZE) return releases;
+  }
+
+  throw new Error(`AtomGit release listing exceeded ${ATOMGIT_MAX_RELEASE_PAGES} full pages; refusing incomplete cleanup`);
 }
 
-async function upsertAtomGitRelease(options, githubRelease, { env, fetchImpl }) {
-  const payload = buildAtomGitReleasePayload(githubRelease);
-  const existing = await findAtomGitRelease(options, githubRelease.tag_name, { env, fetchImpl });
+async function upsertAtomGitRelease(options, githubRelease, existing, githubLatestTag, { env, fetchImpl }) {
+  const payload = buildAtomGitReleasePayload(githubRelease, githubLatestTag);
   const releasePath = existing
     ? `/repos/${options.atomgitOwner}/${options.atomgitRepo}/releases/${encodeURIComponent(githubRelease.tag_name)}`
     : `/repos/${options.atomgitOwner}/${options.atomgitRepo}/releases`;
@@ -168,6 +228,77 @@ async function upsertAtomGitRelease(options, githubRelease, { env, fetchImpl }) 
   const release = await expectJson(response, `AtomGit release ${method} ${githubRelease.tag_name}`);
   if (existing?.assets && !release?.assets) return { ...existing, ...release, assets: existing.assets };
   return release;
+}
+
+async function getAtomGitProjectId(options, { env, fetchImpl }) {
+  const projectPath = encodeURIComponent(`${options.atomgitOwner}/${options.atomgitRepo}`);
+  const url = `${ATOMGIT_WEB_API_BASE}/projects/${projectPath}?view=all`;
+  const releasePage = `https://gitcode.com/${options.atomgitOwner}/${options.atomgitRepo}/releases`;
+  const response = await fetchImpl(url, {
+    headers: atomgitWebHeaders(env, {
+      Referer: releasePage,
+      "page-ref": encodeURIComponent(releasePage),
+      "page-uri": encodeURIComponent(releasePage),
+    }),
+  });
+  const project = await expectJson(response, "AtomGit project lookup for release cleanup");
+  const projectId = Number(project?.id);
+  if (!Number.isSafeInteger(projectId) || projectId <= 0) {
+    throw new Error(`AtomGit project lookup did not return a valid numeric id: ${JSON.stringify(project)}`);
+  }
+  return projectId;
+}
+
+async function deleteAtomGitRelease(projectId, tag, { env, fetchImpl }) {
+  // GitCode's documented v5 Release API has no release-only DELETE operation.
+  // The first-party web UI uses this v2 endpoint, which removes the Release
+  // record while leaving its repository Tag untouched.
+  const response = await fetchImpl(
+    `${ATOMGIT_WEB_API_BASE}/projects/${projectId}/releases/${encodeURIComponent(tag)}`,
+    {
+      method: "DELETE",
+      headers: atomgitWebHeaders(env, { "page-repo-id": String(projectId) }),
+      body: JSON.stringify({ project_id: projectId, tag_name: tag }),
+    },
+  );
+  await expectJson(response, `AtomGit release delete ${tag}`);
+}
+
+function newestRelease(releases) {
+  return [...releases].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at || "");
+    const rightTime = Date.parse(right.created_at || "");
+    if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+      return rightTime - leftTime;
+    }
+    return String(right.tag_name).localeCompare(String(left.tag_name), "en", { numeric: true });
+  })[0] || null;
+}
+
+async function makePrereleaseQuotaRoom(options, projectId, githubRelease, releases, dependencies) {
+  const targetExists = releases.some(release => release.tag_name === githubRelease.tag_name);
+  const prereleaseCount = releases.filter(release => release.prerelease || release.release_status === "pre").length;
+  if (targetExists || !githubRelease.prerelease || prereleaseCount < ATOMGIT_PRERELEASE_LIMIT) return releases;
+
+  const fallback = newestRelease(releases);
+  const toDelete = releases.filter(release => release.tag_name !== fallback?.tag_name);
+  for (const release of toDelete) {
+    console.log(`Deleting old AtomGit release ${release.tag_name} to make prerelease quota room`);
+    await deleteAtomGitRelease(projectId, release.tag_name, dependencies);
+  }
+  return fallback ? [fallback] : [];
+}
+
+async function retainOnlyTargetRelease(options, projectId, targetTag, dependencies) {
+  const releases = await listAtomGitReleases(options, dependencies);
+  if (!releases.some(release => release.tag_name === targetTag)) {
+    throw new Error(`AtomGit release ${targetTag} was not visible after upload; retaining fallback releases`);
+  }
+  for (const release of releases) {
+    if (release.tag_name === targetTag) continue;
+    console.log(`Deleting superseded AtomGit release ${release.tag_name}`);
+    await deleteAtomGitRelease(projectId, release.tag_name, dependencies);
+  }
 }
 
 export function normalizeUploadUrlPayload(payload) {
@@ -292,7 +423,25 @@ export async function mirrorRelease(options, githubRelease, { env = process.env,
     };
   }
 
-  const atomgitRelease = await upsertAtomGitRelease(options, githubRelease, { env, fetchImpl });
+  const dependencies = { env, fetchImpl };
+  const githubLatestTag = await getGithubLatestTag(options, dependencies);
+  const atomgitProjectId = await getAtomGitProjectId(options, dependencies);
+  const listedReleases = await listAtomGitReleases(options, dependencies);
+  const availableReleases = await makePrereleaseQuotaRoom(
+    options,
+    atomgitProjectId,
+    githubRelease,
+    listedReleases,
+    dependencies,
+  );
+  const existingRelease = availableReleases.find(release => release.tag_name === githubRelease.tag_name) || null;
+  const atomgitRelease = await upsertAtomGitRelease(
+    options,
+    githubRelease,
+    existingRelease,
+    githubLatestTag,
+    dependencies,
+  );
   const existingAssets = buildExistingAttachAssetMap(atomgitRelease);
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), `hana-atomgit-${githubRelease.tag_name}-`));
   try {
@@ -301,12 +450,26 @@ export async function mirrorRelease(options, githubRelease, { env = process.env,
         console.log(`Skipping ${githubRelease.tag_name}/${asset.name} (already mirrored)`);
         continue;
       }
+      if (!Number.isFinite(asset.size) || asset.size < 0) {
+        throw new Error(`GitHub asset ${asset.name} does not include a verifiable size`);
+      }
       console.log(`Uploading ${githubRelease.tag_name}/${asset.name}`);
       await mirrorAsset(options, githubRelease, asset, { env, fetchImpl, tempDir });
+      const uploadedSize = await readExistingAtomGitAssetSize(
+        options,
+        githubRelease.tag_name,
+        asset.name,
+        dependencies,
+      );
+      if (uploadedSize !== asset.size) {
+        throw new Error(`AtomGit asset ${asset.name} uploaded with size ${uploadedSize}, expected ${asset.size}`);
+      }
     }
   } finally {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   }
+
+  await retainOnlyTargetRelease(options, atomgitProjectId, githubRelease.tag_name, dependencies);
 
   return {
     tag: githubRelease.tag_name,
@@ -329,11 +492,14 @@ export async function run(argv = process.argv.slice(2), { env = process.env, fet
   }
 
   const summaries = [];
-  for (const release of releases) {
+  // Retention keeps one AtomGit Release, so backfills run oldest-to-newest and leave
+  // the newest selected GitHub Release as the final mirror target.
+  for (const release of [...releases].reverse()) {
     console.log(`${args.dryRun ? "Would mirror" : "Mirroring"} ${release.tag_name} (${release.assets?.length || 0} assets)`);
     summaries.push(await mirrorRelease(args, release, { env, fetchImpl }));
   }
   console.log(JSON.stringify({ mirrored: summaries }, null, 2));
+  return summaries;
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {

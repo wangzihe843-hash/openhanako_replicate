@@ -411,10 +411,10 @@ describe("plugin management API", () => {
         const body = await c.req.json();
         return c.json({ routed: "plugin", enabled: body.enabled === true });
       });
-      engine.pluginManager.routeRegistry.set("mcp", pluginApp);
+      engine.pluginManager.routeRegistry.set("settings-plug", pluginApp);
       const app = createApp(engine);
 
-      const res = await app.request("/api/plugins/mcp/settings/enabled", {
+      const res = await app.request("/api/plugins/settings-plug/settings/enabled", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: true }),
@@ -569,6 +569,37 @@ describe("plugin management API", () => {
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ agentId: "butter", rawHeader: null });
+    });
+
+    it("tells the plugin there is no agent instead of naming the focused one", async () => {
+      // The server is focused on an agent, but this surface was opened without
+      // one. The plugin contract allows a null agent, and answering with the
+      // focused agent would tell the plugin the surface belongs to an agent the
+      // opener never chose.
+      const engine = mockEngine({ getAgent: (id) => (id ? { id } : null) });
+      const pluginApp = new Hono();
+      pluginApp.get("/identity", (c) => c.json({
+        agentId: (c.env as { pluginRouteRequest?: { agentId?: string | null } })?.pluginRouteRequest?.agentId ?? null,
+      }));
+      engine.pluginManager.routeRegistry.set("demo", pluginApp);
+      const app = createApp(engine);
+
+      const res = await app.request("/api/plugins/demo/identity");
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ agentId: null });
+    });
+
+    it("still refuses a plugin request that names an agent that does not exist", async () => {
+      const engine = mockEngine({ getAgent: () => null });
+      const pluginApp = new Hono();
+      pluginApp.get("/identity", (c) => c.json({ ok: true }));
+      engine.pluginManager.routeRegistry.set("demo", pluginApp);
+      const app = createApp(engine);
+
+      const res = await app.request("/api/plugins/demo/identity?agentId=ghost");
+
+      expect(res.status).toBe(404);
     });
 
     it("issues a path-scoped asset session from iframe pages and serves static plugin assets", async () => {
@@ -1489,21 +1520,21 @@ describe("plugin management API", () => {
 
     it("accepts legacy bare config value bodies without silently dropping them", async () => {
       const setConfig = vi.fn(() => ({
-        pluginId: "image-gen",
+        pluginId: "media-board",
         schema: { properties: { defaultImageModel: { type: "object" } } },
         values: { defaultImageModel: { provider: "volcengine", id: "seedream-5" } },
       }));
       const engine = mockEngine({ setConfig });
       const app = createApp(engine);
 
-      const res = await app.request("/api/plugins/image-gen/config", {
+      const res = await app.request("/api/plugins/media-board/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ defaultImageModel: { provider: "volcengine", id: "seedream-5" } }),
       });
 
       expect(res.status).toBe(200);
-      expect(setConfig).toHaveBeenCalledWith("image-gen", {
+      expect(setConfig).toHaveBeenCalledWith("media-board", {
         defaultImageModel: { provider: "volcengine", id: "seedream-5" },
       }, {
         scope: "global",
@@ -1581,92 +1612,6 @@ describe("plugin management API", () => {
       });
     });
 
-    it("rejects image-gen default image models whose protocol has no registered adapter", async () => {
-      const setConfig = vi.fn();
-      const engine = mockEngine({
-        setConfig,
-        providerRegistry: {
-          resolveMediaModel: vi.fn(() => ({
-            providerId: "axis",
-            capability: "image_generation",
-            provider: { authType: "api_key" },
-            model: { id: "gpt-image-2", protocolId: "axis-images" },
-          })),
-        },
-        pm: {
-          getPlugin: () => ({
-            ctx: {
-              _mediaGen: {
-                registry: {
-                  getProtocol: vi.fn(() => null),
-                  get: vi.fn(() => null),
-                },
-              },
-            },
-          }),
-        },
-      });
-      const app = createApp(engine);
-
-      const res = await app.request("/api/plugins/image-gen/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ values: { defaultImageModel: { provider: "axis", id: "gpt-image-2" } } }),
-      });
-
-      expect(res.status).toBe(400);
-      expect(await res.json()).toEqual({
-        error: 'No image generation adapter registered for protocol "axis-images"',
-      });
-      expect(setConfig).not.toHaveBeenCalled();
-    });
-
-    it("accepts image-gen default image models bound to a registered protocol adapter", async () => {
-      const setConfig = vi.fn(() => ({
-        pluginId: "image-gen",
-        schema: { properties: { defaultImageModel: { type: "object" } } },
-        values: { defaultImageModel: { provider: "axis", id: "gpt-image-2" } },
-      }));
-      const engine = mockEngine({
-        setConfig,
-        providerRegistry: {
-          resolveMediaModel: vi.fn(() => ({
-            providerId: "axis",
-            capability: "image_generation",
-            provider: { authType: "api_key" },
-            model: { id: "gpt-image-2", protocolId: "openai-images" },
-          })),
-        },
-        pm: {
-          getPlugin: () => ({
-            ctx: {
-              _mediaGen: {
-                registry: {
-                  getProtocol: vi.fn((protocolId) => protocolId === "openai-images" ? { id: "openai" } : null),
-                  get: vi.fn(() => null),
-                },
-              },
-            },
-          }),
-        },
-      });
-      const app = createApp(engine);
-
-      const res = await app.request("/api/plugins/image-gen/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ values: { defaultImageModel: { provider: "axis", id: "gpt-image-2" } } }),
-      });
-
-      expect(res.status).toBe(200);
-      expect(setConfig).toHaveBeenCalledWith("image-gen", {
-        defaultImageModel: { provider: "axis", id: "gpt-image-2" },
-      }, {
-        scope: "global",
-        agentId: undefined,
-        sessionPath: undefined,
-      });
-    });
   });
 
   describe("POST /plugins/install", () => {

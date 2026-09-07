@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   VisionBridge,
   VISUAL_PRIMITIVES_END,
@@ -14,20 +14,17 @@ const PNG_BASE64 = "iVBORw0KGgo=";
 const JPEG_BASE64 = "/9j/2wBD";
 const image = { type: "image", data: PNG_BASE64, mimeType: "image/png" };
 const pathA = "/tmp/upload-a.png";
-const tempDirs = [];
-// 会话 sidecar 会真实落盘到 path.dirname(sessionPath)；硬编码的 "/tmp/..." 在
-// Windows 上解析为不可创建的盘根 D:\tmp，导致 mkdirSync EPERM。统一改用 os.tmpdir()
-// 下的可写临时根（与本文件既有的 makeTempDir 同源），basename 保持不变以维持各测试
-// 间通过 sessionNotesKey 共享/区分 sidecar 的语义。
-const tmpSessionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-vb-sessions-"));
-const sessionMain = path.join(tmpSessionRoot, "session.jsonl");
-const sessionA = path.join(tmpSessionRoot, "a.jsonl");
-const sessionB = path.join(tmpSessionRoot, "b.jsonl");
+const tempDirs: string[] = [];
+let sessionFixtureRoot: string;
 
 function makeTempDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-vision-bridge-"));
   tempDirs.push(dir);
   return dir;
+}
+
+function sessionFixturePath(filename = "session.jsonl") {
+  return path.join(sessionFixtureRoot, filename);
 }
 
 async function passthroughResizeImage(input) {
@@ -71,13 +68,20 @@ function makeBridge(callText = vi.fn(async () => [
 }
 
 describe("VisionBridge", () => {
+  beforeEach(() => {
+    // Vision notes write real sidecars; each test owns a native, writable root.
+    sessionFixtureRoot = makeTempDir();
+  });
+
   afterEach(() => {
     while (tempDirs.length) {
-      fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+      const dir = path.resolve(tempDirs.pop());
+      if (path.dirname(dir) !== path.resolve(os.tmpdir())
+        || !path.basename(dir).startsWith("hana-vision-bridge-")) {
+        throw new Error("Refusing to remove an unowned vision test directory");
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
     }
-  });
-  afterAll(() => {
-    fs.rmSync(tmpSessionRoot, { recursive: true, force: true });
   });
 
   it("awaits fresh vision credentials before any analysis request", async () => {
@@ -87,7 +91,7 @@ describe("VisionBridge", () => {
     });
 
     await expect(bridge.prepare({
-      sessionPath: "/tmp/session.jsonl",
+      sessionPath: sessionFixturePath("session.jsonl"),
       targetModel: { id: "text-only", provider: "test", input: ["text"] },
       text: "what is this?",
       images: [image],
@@ -99,7 +103,7 @@ describe("VisionBridge", () => {
     const { bridge, callText } = makeBridge();
 
     const result = await bridge.prepare({
-      sessionPath: sessionMain,
+      sessionPath: sessionFixturePath("session.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat is this?`,
       images: [image],
@@ -116,7 +120,7 @@ describe("VisionBridge", () => {
 
     const injected = bridge.injectNotes([
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nwhat is this?` }] },
-    ], sessionMain);
+    ], sessionFixturePath("session.jsonl"));
 
     expect(injected.messages[0].content[0].text).toContain(VISION_CONTEXT_START);
     expect(injected.messages[0].content[0].text).toContain("image_overview");
@@ -124,8 +128,39 @@ describe("VisionBridge", () => {
     expect(injected.messages[0].content[0].text).toContain(VISION_CONTEXT_END);
   });
 
+  it("forwards resolved Grok OAuth provider and model headers to auxiliary vision callText", async () => {
+    const callText = vi.fn(async () => "image_overview: A screenshot.");
+    const { bridge } = makeBridge(callText, () => ({
+      model: { id: "grok-4.1", provider: "xai", input: ["text", "image"] },
+      api: "openai-completions",
+      api_key: "oauth-token",
+      base_url: "https://api.x.ai/v1",
+      headers: {
+        "x-grok-client-version": "0.1.202",
+        "x-grok-model-override": "grok-4.1",
+      },
+    }));
+
+    await bridge.prepare({
+      sessionPath: sessionFixturePath("session.jsonl"),
+      targetModel: { id: "text-only", provider: "test", input: ["text"] },
+      text: "what is this?",
+      images: [image],
+    });
+
+    expect(callText).toHaveBeenCalledWith(expect.objectContaining({
+      api: "openai-completions",
+      apiKey: "oauth-token",
+      baseUrl: "https://api.x.ai/v1",
+      headers: {
+        "x-grok-client-version": "0.1.202",
+        "x-grok-model-override": "grok-4.1",
+      },
+    }));
+  });
+
   it("records auxiliary vision usage against sessionId while keeping the path locator", async () => {
-    const sessionPath = path.join(tmpSessionRoot, "session-usage.jsonl");
+    const sessionPath = sessionFixturePath("session.jsonl");
     const sessionId = "sess_vision_usage";
     const callText = vi.fn(async () => "image_overview: A screenshot.");
     const bridge = makeVisionBridge({
@@ -286,6 +321,123 @@ describe("VisionBridge", () => {
       sessionPath: movedSessionPath,
       note: "image_overview: moved path screenshot.",
     });
+  });
+
+  it("forks only vision notes reachable from the retained session prefix", () => {
+    const dir = makeTempDir();
+    const sourceSessionPath = path.join(dir, "source.jsonl");
+    const targetSessionPath = path.join(dir, "target.jsonl");
+    const sourceSessionId = "sess_vision_source";
+    const targetSessionId = "sess_vision_target";
+    const retainedKey = "visual-resource:retained-shot";
+    const hiddenKey = "visual-resource:hidden-shot";
+    fs.writeFileSync(path.join(dir, "session-vision-notes.json"), JSON.stringify({
+      version: 1,
+      sessions: {
+        [sourceSessionId]: {
+          sessionId: sourceSessionId,
+          sessionPath: sourceSessionPath,
+          images: {
+            [retainedKey]: {
+              note: "retained note",
+              imagePath: retainedKey,
+              sessionId: sourceSessionId,
+              sessionPath: sourceSessionPath,
+              updatedAt: 10,
+            },
+            [hiddenKey]: {
+              note: "hidden note",
+              imagePath: hiddenKey,
+              sessionId: sourceSessionId,
+              sessionPath: sourceSessionPath,
+              updatedAt: 20,
+            },
+          },
+        },
+      },
+    }), "utf-8");
+
+    const bridge = makeVisionBridge({
+      getSessionIdForPath: (candidate) => {
+        if (candidate === sourceSessionPath) return sourceSessionId;
+        if (candidate === targetSessionPath) return targetSessionId;
+        return null;
+      },
+    });
+    const result = bridge.forkSessionNotes({
+      sourceSessionId,
+      sourceSessionPath,
+      targetSessionId,
+      targetSessionPath,
+      retainedEntries: [{ type: "custom", data: { resourceKey: retainedKey } }],
+    });
+
+    expect(result).toEqual({ notes: 1, keys: [retainedKey] });
+    const sidecar = JSON.parse(fs.readFileSync(path.join(dir, "session-vision-notes.json"), "utf-8"));
+    expect(sidecar.sessions[sourceSessionId].images[hiddenKey].note).toBe("hidden note");
+    expect(sidecar.sessions[targetSessionId].images).toEqual({
+      [retainedKey]: expect.objectContaining({
+        note: "retained note",
+        sessionId: targetSessionId,
+        sessionPath: targetSessionPath,
+      }),
+    });
+    expect(bridge.lookupNote(targetSessionPath, retainedKey)).toMatchObject({
+      note: "retained note",
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    });
+    expect(bridge.lookupNote(targetSessionPath, hiddenKey)).toBeNull();
+  });
+
+  it("discards forked vision notes without touching the source session", () => {
+    const dir = makeTempDir();
+    const sourceSessionPath = path.join(dir, "source.jsonl");
+    const targetSessionPath = path.join(dir, "target.jsonl");
+    const sourceSessionId = "sess_vision_source";
+    const targetSessionId = "sess_vision_target";
+    const resourceKey = "visual-resource:retained-shot";
+    fs.writeFileSync(path.join(dir, "session-vision-notes.json"), JSON.stringify({
+      version: 1,
+      sessions: {
+        [sourceSessionId]: {
+          sessionId: sourceSessionId,
+          sessionPath: sourceSessionPath,
+          images: {
+            [resourceKey]: {
+              note: "source note",
+              imagePath: resourceKey,
+              sessionId: sourceSessionId,
+              sessionPath: sourceSessionPath,
+            },
+          },
+        },
+      },
+    }), "utf-8");
+    const bridge = makeVisionBridge({
+      getSessionIdForPath: (candidate) => candidate === targetSessionPath ? targetSessionId : sourceSessionId,
+    });
+
+    bridge.forkSessionNotes({
+      sourceSessionId,
+      sourceSessionPath,
+      targetSessionId,
+      targetSessionPath,
+      retainedEntries: [{ resourceKey }],
+    });
+    expect(bridge.discardForkedSessionNotes({
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    })).toBe(true);
+    expect(bridge.discardForkedSessionNotes({
+      sessionId: targetSessionId,
+      sessionPath: targetSessionPath,
+    })).toBe(false);
+
+    const sidecar = JSON.parse(fs.readFileSync(path.join(dir, "session-vision-notes.json"), "utf-8"));
+    expect(sidecar.sessions[sourceSessionId].images[resourceKey].note).toBe("source note");
+    expect(sidecar.sessions[targetSessionId]).toBeUndefined();
+    expect(bridge.lookupNote(targetSessionPath, resourceKey)).toBeNull();
   });
 
   it("summarizes resources on explicit request without requiring a text-only target model", async () => {
@@ -507,7 +659,7 @@ describe("VisionBridge", () => {
     }));
 
     await bridge.prepare({
-      sessionPath: sessionMain,
+      sessionPath: sessionFixturePath("session.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhere is the error?`,
       images: [image],
@@ -521,7 +673,7 @@ describe("VisionBridge", () => {
 
     const injected = bridge.injectNotes([
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nwhere is the error?` }] },
-    ], sessionMain);
+    ], sessionFixturePath("session.jsonl"));
     const text = injected.messages[0].content[0].text;
     expect(text).toContain(VISUAL_PRIMITIVES_START);
     expect(text).toContain('coord="norm-1000"');
@@ -562,7 +714,7 @@ describe("VisionBridge", () => {
     }));
 
     await bridge.prepare({
-      sessionPath: sessionMain,
+      sessionPath: sessionFixturePath("session.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhere should I click to save?`,
       images: [image],
@@ -575,7 +727,7 @@ describe("VisionBridge", () => {
 
     const injected = bridge.injectNotes([
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nwhere should I click to save?` }] },
-    ], sessionMain);
+    ], sessionFixturePath("session.jsonl"));
     const text = injected.messages[0].content[0].text;
     expect(text).toContain("box: [710, 820, 930, 890]");
     expect(text).toContain("point: [320, 240]");
@@ -613,7 +765,7 @@ describe("VisionBridge", () => {
     }));
 
     await bridge.prepare({
-      sessionPath: sessionMain,
+      sessionPath: sessionFixturePath("session.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat should I interact with?`,
       images: [image],
@@ -626,7 +778,7 @@ describe("VisionBridge", () => {
 
     const injected = bridge.injectNotes([
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nwhat should I interact with?` }] },
-    ], sessionMain);
+    ], sessionFixturePath("session.jsonl"));
     const text = injected.messages[0].content[0].text;
     expect(text).toContain("point: [840, 310]");
     expect(text).toContain("box: [180, 270, 760, 350]");
@@ -661,7 +813,7 @@ describe("VisionBridge", () => {
     }));
 
     await bridge.prepare({
-      sessionPath: sessionMain,
+      sessionPath: sessionFixturePath("session.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat is on screen?`,
       images: [image],
@@ -670,7 +822,7 @@ describe("VisionBridge", () => {
 
     const injected = bridge.injectNotes([
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nwhat is on screen?` }] },
-    ], sessionMain);
+    ], sessionFixturePath("session.jsonl"));
     const text = injected.messages[0].content[0].text;
     expect(text).toContain(VISUAL_PRIMITIVES_START);
     expect(text).toContain('grounding="unavailable"');
@@ -686,7 +838,7 @@ describe("VisionBridge", () => {
     }));
 
     await bridge.prepare({
-      sessionPath: sessionMain,
+      sessionPath: sessionFixturePath("session.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat is this?`,
       images: [image],
@@ -699,7 +851,7 @@ describe("VisionBridge", () => {
 
     const injected = bridge.injectNotes([
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nwhat is this?` }] },
-    ], sessionMain);
+    ], sessionFixturePath("session.jsonl"));
     expect(injected.messages[0].content[0].text).not.toContain(VISUAL_PRIMITIVES_START);
   });
 
@@ -712,7 +864,7 @@ describe("VisionBridge", () => {
     }));
 
     await bridge.prepare({
-      sessionPath: sessionMain,
+      sessionPath: sessionFixturePath("session.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat is this?`,
       images: [image],
@@ -736,7 +888,7 @@ describe("VisionBridge", () => {
     });
 
     await bridge.prepare({
-      sessionPath: sessionMain,
+      sessionPath: sessionFixturePath("session.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat is this?`,
       images: [image],
@@ -750,7 +902,7 @@ describe("VisionBridge", () => {
     const { bridge, callText } = makeBridge();
 
     const result = await bridge.prepare({
-      sessionPath: sessionMain,
+      sessionPath: sessionFixturePath("session.jsonl"),
       targetModel: { id: "gpt-4o", provider: "openai", input: ["text", "image"] },
       text: "what is this?",
       images: [image],
@@ -768,7 +920,7 @@ describe("VisionBridge", () => {
     });
 
     await expect(bridge.prepare({
-      sessionPath: sessionMain,
+      sessionPath: sessionFixturePath("session.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: "what is this?",
       images: [image],
@@ -780,14 +932,14 @@ describe("VisionBridge", () => {
     const { bridge, callText } = makeBridge();
 
     await bridge.prepare({
-      sessionPath: sessionA,
+      sessionPath: sessionFixturePath("a.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nwhat is this?`,
       images: [image],
       imageAttachmentPaths: [pathA],
     });
     await bridge.prepare({
-      sessionPath: sessionB,
+      sessionPath: sessionFixturePath("b.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: "[attached_image: /tmp/other.png]\nwhat is this?",
       images: [image],
@@ -801,14 +953,14 @@ describe("VisionBridge", () => {
     const { bridge, callText } = makeBridge();
 
     await bridge.prepare({
-      sessionPath: sessionA,
+      sessionPath: sessionFixturePath("a.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: `[attached_image: ${pathA}]\nhow many kittens are there?`,
       images: [image],
       imageAttachmentPaths: [pathA],
     });
     await bridge.prepare({
-      sessionPath: sessionB,
+      sessionPath: sessionFixturePath("b.jsonl"),
       targetModel: { id: "deepseek-chat", provider: "deepseek", input: ["text"] },
       text: "[attached_image: /tmp/other.png]\nwhat color is the blanket?",
       images: [image],
@@ -844,7 +996,7 @@ describe("VisionBridge", () => {
       imageAttachmentPaths: [pathA],
     };
 
-    await bridge.prepare({ ...payload, sessionPath: sessionA });
+    await bridge.prepare({ ...payload, sessionPath: sessionFixturePath("a.jsonl") });
     model = {
       id: "qwen3-vl-plus",
       provider: "dashscope",
@@ -857,7 +1009,7 @@ describe("VisionBridge", () => {
         boxOrder: "xyxy",
       },
     } as any;
-    await bridge.prepare({ ...payload, sessionPath: sessionB });
+    await bridge.prepare({ ...payload, sessionPath: sessionFixturePath("b.jsonl") });
 
     expect(callText).toHaveBeenCalledTimes(2);
   });
@@ -867,7 +1019,7 @@ describe("VisionBridge", () => {
     const targetModel = { id: "deepseek-chat", provider: "deepseek", input: ["text"] };
 
     await bridge.prepare({
-      sessionPath: sessionMain,
+      sessionPath: sessionFixturePath("session.jsonl"),
       targetModel,
       text: `[attached_image: ${pathA}]\nfirst question`,
       images: [image],
@@ -878,7 +1030,7 @@ describe("VisionBridge", () => {
       { role: "user", content: [{ type: "text", text: `[attached_image: ${pathA}]\nfirst question` }] },
       { role: "assistant", content: [{ type: "text", text: "reply" }] },
       { role: "user", content: [{ type: "text", text: "follow-up" }] },
-    ], sessionMain);
+    ], sessionFixturePath("session.jsonl"));
 
     expect(result.injected).toBe(1);
     expect(result.messages[0].content[0].text).toContain(VISION_CONTEXT_START);

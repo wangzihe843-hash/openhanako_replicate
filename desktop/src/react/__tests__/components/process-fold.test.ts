@@ -10,8 +10,16 @@ function user(id: string, text = '请处理'): ChatListItem {
   return { type: 'message', data: { id, role: 'user', text } };
 }
 
-function assistant(id: string, blocks: ContentBlock[]): ChatListItem {
-  return { type: 'message', data: { id, role: 'assistant', blocks } };
+function assistant(id: string, blocks: ContentBlock[], turnInputEntryId?: string): ChatListItem {
+  return {
+    type: 'message',
+    data: {
+      id,
+      role: 'assistant',
+      blocks,
+      ...(turnInputEntryId ? { turnInputEntryId } : {}),
+    },
+  };
 }
 
 function thinking(content = '想了一下'): ContentBlock {
@@ -191,6 +199,42 @@ describe('process fold grouping', () => {
     ]);
     expect(rendered[1]).toMatchObject({ id: 'process-fold-a1-a3' });
     expect(rendered[2]).toMatchObject({ type: 'source', item: items[4] });
+  });
+
+  it('never folds process-only messages across hidden custom turn inputs', () => {
+    const items: ChatListItem[] = [
+      user('u1'),
+      assistant('a1', [thinking(), toolGroup([tool('read')])], 'hidden-input-1'),
+      assistant('a2', [thinking(), toolGroup([tool('write')])], 'hidden-input-2'),
+      assistant('a3', [thinking(), toolGroup([tool('verify')])], 'hidden-input-3'),
+    ];
+
+    const rendered = buildTranscriptRenderItems(items, { isStreaming: false });
+
+    expect(rendered).toHaveLength(4);
+    expect(rendered.every((item) => item.type === 'source')).toBe(true);
+  });
+
+  it('protects the final short narration of every hidden custom turn', () => {
+    const shortFinal = (label: string) => [
+      thinking(),
+      textBlock(`<p>${label}</p>`, label),
+      toolGroup([tool('verify')]),
+    ];
+    const items: ChatListItem[] = [
+      user('u1'),
+      assistant('a1', [thinking(), toolGroup([tool('read')])], 'hidden-input-1'),
+      assistant('a2', shortFinal('第一轮完成'), 'hidden-input-1'),
+      assistant('a3', [thinking(), toolGroup([tool('write')])], 'hidden-input-2'),
+      assistant('a4', shortFinal('第二轮完成'), 'hidden-input-2'),
+      assistant('a5', [thinking(), toolGroup([tool('grep')])], 'hidden-input-3'),
+      assistant('a6', shortFinal('第三轮完成'), 'hidden-input-3'),
+    ];
+
+    const rendered = buildTranscriptRenderItems(items, { isStreaming: false });
+
+    expect(rendered).toHaveLength(7);
+    expect(rendered.every((item) => item.type === 'source')).toBe(true);
   });
 
   it('keeps long middle text visible instead of treating it as process narration', () => {

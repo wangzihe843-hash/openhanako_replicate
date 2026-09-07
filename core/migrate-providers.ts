@@ -15,8 +15,8 @@
 import fs from "fs";
 import path from "path";
 import YAML from "js-yaml";
-import { safeReadYAMLSync } from "../shared/safe-fs.ts";
 import { fromRoot } from "../shared/hana-root.ts";
+import { writeSecretFileSync } from "../shared/secret-fs.ts";
 
 const _defaultModels = JSON.parse(
   fs.readFileSync(fromRoot("lib", "default-models.json"), "utf-8"),
@@ -40,15 +40,11 @@ function atomicWriteYAML(filePath: string, data: any, header = "") {
     quotingType: "\"",
     forceQuotes: false,
   });
-  const tmp = filePath + ".tmp";
-  fs.writeFileSync(tmp, yamlStr, "utf-8");
-  fs.renameSync(tmp, filePath);
+  writeSecretFileSync(filePath, yamlStr);
 }
 
 function atomicWriteJSON(filePath: string, data: any) {
-  const tmp = filePath + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8");
-  fs.renameSync(tmp, filePath);
+  writeSecretFileSync(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
 // ── 主迁移函数 ────────────────────────────────────────────────────────────────
@@ -72,12 +68,16 @@ export function migrateToProvidersYaml(hanakoHome: string, agentsDir: string, lo
   }
 
   // ── 快速路径：已迁移则立即返回 ──
-  const existingRaw = safeReadYAMLSync(providersPath, null, YAML);
+  const existingRaw = _readOptionalYamlStrict(providersPath, "added-models source");
   if (existingRaw?._migrated) return;
 
   // ── 检测是否有任何需要迁移的数据 ──
-  const agentConfigs = _collectAgentConfigs(agentsDir);
-  const prefs = _readPrefs(prefsPath);
+  const { configs: agentConfigs, errors: agentConfigErrors } = _collectAgentConfigs(agentsDir);
+  const { value: prefs, error: prefsError } = _readPrefs(prefsPath);
+  const sourceErrors = [
+    ...agentConfigErrors,
+    ...(prefsError ? [prefsError] : []),
+  ];
 
   const hasAgentProviders = agentConfigs.some(ac => ac.config.providers);
   const hasAgentApiKey = agentConfigs.some(ac => ac.config.api?.api_key);
@@ -85,6 +85,9 @@ export function migrateToProvidersYaml(hanakoHome: string, agentsDir: string, lo
   const hasOAuthCustom = prefs.oauth_custom_models && Object.keys(prefs.oauth_custom_models).length > 0;
 
   if (!hasAgentProviders && !hasAgentApiKey && !hasFavorites && !hasOAuthCustom) {
+    if (sourceErrors.length > 0) {
+      throw new Error(`Unreadable provider migration source: ${sourceErrors.join("; ")}`);
+    }
     // 没有需要迁移的数据，写标记后返回
     const data = existingRaw || {};
     data._migrated = true;
@@ -194,7 +197,7 @@ export function migrateToProvidersYaml(hanakoHome: string, agentsDir: string, lo
 
   // ── 写入 added-models.yaml ──
   raw.providers = providers;
-  raw._migrated = true;
+  delete raw._migrated;
   const header =
     "# HanaAgent 供应商配置（全局，跨 agent 共享）\n" +
     "# 由设置页面管理\n\n";
@@ -237,6 +240,15 @@ export function migrateToProvidersYaml(hanakoHome: string, agentsDir: string, lo
     log("[migrate-providers] 已清理 preferences.json (favorites, oauth_custom_models)");
   }
 
+  if (sourceErrors.length > 0) {
+    throw new Error(`Unreadable provider migration source: ${sourceErrors.join("; ")}`);
+  }
+
+  // Completion is a separate final write. If source cleanup fails, this
+  // marker remains absent and the copy-first migration safely retries.
+  raw._migrated = true;
+  atomicWriteYAML(providersPath, raw, header);
+
   log("[migrate-providers] 迁移完成");
 }
 
@@ -248,28 +260,56 @@ export function migrateToProvidersYaml(hanakoHome: string, agentsDir: string, lo
  */
 function _collectAgentConfigs(agentsDir: string) {
   const result = [];
+  const errors: string[] = [];
   try {
     const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const cfgPath = path.join(agentsDir, entry.name, "config.yaml");
       if (!fs.existsSync(cfgPath)) continue;
-      const config = safeReadYAMLSync(cfgPath, null, YAML);
-      if (!config) continue;
-      result.push({ id: entry.name, path: cfgPath, config });
+      try {
+        const content = fs.readFileSync(cfgPath, "utf-8");
+        const config = YAML.load(content);
+        if (!config || typeof config !== "object" || Array.isArray(config)) {
+          throw new Error("config root must be an object");
+        }
+        result.push({ id: entry.name, path: cfgPath, config });
+      } catch (err) {
+        errors.push(`${entry.name}/config.yaml: ${err.message}`);
+      }
     }
-  } catch {
+  } catch (err) {
     // agentsDir 不存在是合法的（全新安装）
+    if (err?.code !== "ENOENT") errors.push(`agents directory: ${err.message}`);
   }
-  return result;
+  return { configs: result, errors };
 }
 
 /** 安全读取 preferences.json */
 function _readPrefs(prefsPath: string) {
   try {
-    return JSON.parse(fs.readFileSync(prefsPath, "utf-8")) || {};
-  } catch {
-    return {};
+    const value = JSON.parse(fs.readFileSync(prefsPath, "utf-8")) || {};
+    if (typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("preferences root must be an object");
+    }
+    return { value, error: null };
+  } catch (err) {
+    if (err?.code === "ENOENT") return { value: {}, error: null };
+    return { value: {}, error: `preferences.json: ${err.message}` };
+  }
+}
+
+function _readOptionalYamlStrict(filePath: string, label: string) {
+  try {
+    const value = YAML.load(fs.readFileSync(filePath, "utf-8"));
+    if (value == null) return {};
+    if (typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("document root must be an object");
+    }
+    return value;
+  } catch (err) {
+    if (err?.code === "ENOENT") return null;
+    throw new Error(`Unreadable ${label}: ${err.message}`, { cause: err });
   }
 }
 

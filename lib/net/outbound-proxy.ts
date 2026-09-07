@@ -1,4 +1,4 @@
-// lib/net/outbound-proxy.js
+// lib/net/outbound-proxy.ts
 
 import {
   Agent as UndiciAgent,

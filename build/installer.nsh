@@ -100,8 +100,11 @@ CRCCheck off
   !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "HanaAgent.exe"
   !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\app.asar" "resources\app.asar"
   !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\app-update.yml" "resources\app-update.yml"
-  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\seed\seed-train.json" "resources\seed\seed-train.json"
-  !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\seed\seed-train.json.sig" "resources\seed\seed-train.json.sig"
+  ; manifest 文件名带平台限定（seed-train-<platform>-<arch>.json，见
+  ; scripts/build-server-artifact.mjs 的 seedManifestFileName），跟归档文件名
+  ; 一样无法用固定路径校验，走同一条通配存在性检查。
+  !insertmacro hanakoRequireInstallSurfaceGlob "$INSTDIR\resources\seed" "seed-train-*.json" "resources\seed\seed-train-*.json"
+  !insertmacro hanakoRequireInstallSurfaceGlob "$INSTDIR\resources\seed" "seed-train-*.json.sig" "resources\seed\seed-train-*.json.sig"
   !insertmacro hanakoRequireInstallSurfaceGlob "$INSTDIR\resources\seed" "server-*.tar.gz" "resources\seed\server-*.tar.gz"
   !insertmacro hanakoRequireInstallSurfaceGlob "$INSTDIR\resources\seed" "renderer-*.tar.gz" "resources\seed\renderer-*.tar.gz"
   !insertmacro hanakoRequireInstallSurfaceFile "$INSTDIR\resources\git\cmd\git.exe" "MinGit git.exe"
@@ -129,6 +132,24 @@ CRCCheck off
   Pop $R2
   Pop $0
   !insertmacro hanakoInstallTimingMark "installSurfaceSelfCheck" "end"
+!macroend
+
+; 根治 electron/electron#51761：安装目录 DACL 含 orphaned AppContainer SID 时
+; Chromium GPU 沙箱崩溃（0x80000003）。补 S-1-15-2-2（ALL RESTRICTED APPLICATION
+; PACKAGES）的继承 ACE 后沙箱无需降级；该 ACE 同时满足网络沙箱的要求。grant 幂等，
+; 每次安装/更新重发一次即可覆盖上层目录继承来的污染。失败不阻断安装：应用启动侧
+; 还有同一 grant 的运行时自愈兜底。
+!macro hanakoGrantSandboxAce
+  !insertmacro hanakoInstallTimingMark "grantSandboxAce" "start"
+  Push $0
+  DetailPrint "Granting the restricted-app-packages sandbox ACE on the install directory"
+  nsExec::ExecToLog `"$SYSDIR\icacls.exe" "$INSTDIR" /grant *S-1-15-2-2:(OI)(CI)(RX)`
+  Pop $0
+  ${If} $0 != 0
+    DetailPrint "Sandbox ACE grant failed (code $0); the app applies the same grant at startup."
+  ${EndIf}
+  Pop $0
+  !insertmacro hanakoInstallTimingMark "grantSandboxAce" "end"
 !macroend
 
 !macro hanakoWriteInstallDirProcessCleaner _SCRIPT
@@ -256,6 +277,7 @@ CRCCheck off
 
 !macro customInstall
   !insertmacro hanakoInstallTimingMark "customInstall" "start"
+  !insertmacro hanakoGrantSandboxAce
   !insertmacro hanakoVerifyInstallSurface
   !insertmacro hanakoInstallTimingMark "customInstall" "end"
   !insertmacro hanakoPersistInstallTiming
@@ -445,6 +467,9 @@ CRCCheck off
   ; 老版本安装面是散装 resources\server 目录；现在改成 resources\seed 归档，
   ; 这行只在升级覆盖老版本时才会真正命中，负责清掉旧安装留下的散装树。
   RMDir /r "$INSTDIR\resources\server"
+  ; seed 归档文件名包含版本号，覆盖复制不会替换旧版本；写入新安装面前必须
+  ; 清空整个安装目录下的 seed。这里仅处理 $INSTDIR，不触碰 HANA_HOME 用户数据。
+  RMDir /r "$INSTDIR\resources\seed"
   RMDir /r "$INSTDIR\resources\git"
   RMDir /r "$INSTDIR\resources\screenshot-themes"
   RMDir /r "$INSTDIR\resources\app"

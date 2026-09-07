@@ -284,6 +284,31 @@ describe('selectSessionFiles', () => {
     expect(refs[0].source).toBe('session-registry');
   });
 
+  it('registry 与 fork 前的旧 fileId / 旧路径指向同一 SessionFile 时不重复', () => {
+    const items: ChatListItem[] = [{
+      type: 'message',
+      data: {
+        id: 'm-file', role: 'assistant',
+        blocks: [
+          { type: 'file', fileId: 'sf_parent', filePath: '/parent/out.md', label: 'out.md', ext: 'md' },
+        ],
+      },
+    }];
+    const refs = selectSessionFiles(sessionState(items, '/s/fork-dedupe', [{
+      fileId: 'sf_forked',
+      legacyFileIds: ['sf_parent'],
+      legacyFilePaths: ['/parent/out.md'],
+      filePath: '/forked/out.md',
+      label: 'out.md',
+      ext: 'md',
+      origin: 'stage_files',
+    }]), '/s/fork-dedupe');
+
+    expect(refs).toHaveLength(1);
+    expect(refs[0].source).toBe('session-registry');
+    expect(refs[0].path).toBe('/forked/out.md');
+  });
+
   it('抽取 user attachments（过滤目录）', () => {
     const items: ChatListItem[] = [{
       type: 'message',

@@ -279,15 +279,13 @@ const SETTINGS_REGISTRY = {
       agent.updateConfig({ agent: { name: v } });
     },
   },
+  // 用户的名字描述的是使用者本人，不是某个 agent 的属性：改一次，所有 agent
+  // 都跟着改口。所以这里写全局 preferences，而不是当前 agent 的 config。
   "user.name": {
     type: "text",
     get label() { return t("toolDef.updateSettings.userName"); },
-    scope: "agent",
-    get: (engine, agent) => agent?.userName || null,
-    apply: (engine, agent, v) => {
-      if (!agent) throw new Error("no active agent");
-      agent.updateConfig({ user: { name: v } });
-    },
+    get: (engine, agent) => agent?.userName || engine.getUserName?.() || null,
+    apply: (engine, _agent, v) => engine.setUserName(v),
   },
   home_folder: {
     type: "text",
@@ -510,7 +508,34 @@ export function createUpdateSettingsTool(deps: Record<string, any> = {}) {
   return {
     name: "update_settings",
     userFacingName: "Settings",
-    description: "Modify HanaAgent's settings. When the user mentions changing settings without naming a specific app, assume this application. For preferences like appearance/theme, language/region, model selection, memory, personal info, working directory, or MCP connectors, use this tool, and do not search the web or edit config files directly. Sandbox and execution-boundary controls are user-only: tell the user to open Settings > Security instead of applying them. Two actions available:\n- search + query: Search settings by keyword, see current values and options\n- apply + key + value: Change a setting (requires user confirmation)\n\nIf you already know the exact key, you can apply directly. When intent is clear, apply directly and report the result in one sentence; when unsure, search first.",
+    description: "Modify HanaAgent's settings. When the user mentions changing settings without naming a specific app, assume this application. For preferences like appearance/theme, language/region, model selection, memory, personal info, working directory, or MCP connectors, use this tool, and do not search the web or edit config files directly. Sandbox and execution-boundary controls are user-only: tell the user to open Settings > Security instead of applying them. Two actions available:\n- search + query: Search settings by keyword, see current values and options\n- apply + key + value: Change a setting (Auto reviews the boundary in the background; Ask may request confirmation)\n\nIf you already know the exact key, you can apply directly. When intent is clear, apply directly and report the result in one sentence; when unsure, search first.",
+    sessionPermission: {
+      resolveInvocation: (params: any = {}) => {
+        if (params.action === "search") {
+          return {
+            action: "search",
+            kind: "read",
+            capability: "update_settings.search",
+          };
+        }
+        if (params.action === "apply") {
+          const key = typeof params.key === "string" ? params.key : "";
+          if (!key || key !== key.trim() || params.value === undefined) return null;
+          const isUserOnly = Object.hasOwn(USER_ONLY_SETTINGS, key);
+          const isMcpAction = Object.hasOwn(MCP_SETTINGS_ACTIONS, key);
+          const isRegistered = Object.hasOwn(SETTINGS_REGISTRY, key);
+          if (!isUserOnly && !isMcpAction && !isRegistered) return null;
+
+          return {
+            action: "apply",
+            kind: "review",
+            capability: "update_settings.apply",
+            target: { type: "setting", id: key, label: key },
+          };
+        }
+        return null;
+      },
+    },
     parameters: Type.Object({
       action: StringEnum(
         ["search", "apply"],

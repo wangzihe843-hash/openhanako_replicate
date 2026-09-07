@@ -4119,6 +4119,28 @@ html[data-platform="linux"] .onboarding {
     line-height: 1.2;
 }
 
+/* 思考区块标注（MOOD / PULSE / 沉思）。方角、线性、无自有色彩：
+   描边和文字都走 currentColor，因此选中态会跟着 .yuan-chip 一起变，
+   不引入第二套配色。 */
+.yuan-chip-tag {
+    align-self: center;
+    margin-top: 0.25rem;
+    padding: 0.05rem 0.28rem;
+    border: 1px solid currentColor;
+    border-radius: 0;
+    font-size: 0.55rem;
+    font-weight: 400;
+    line-height: 1.4;
+    letter-spacing: 0.06em;
+    opacity: 0.45;
+    white-space: nowrap;
+}
+
+.yuan-chip:hover .yuan-chip-tag,
+.yuan-chip.selected .yuan-chip-tag {
+    opacity: 0.7;
+}
+
 .yuan-kong-banner {
     width: 324px;
     aspect-ratio: 6 / 1;

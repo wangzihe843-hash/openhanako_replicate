@@ -25,6 +25,7 @@ import {
 import { openSettingsModal } from '../stores/settings-modal-actions';
 import type { Agent, StudioWorkspace } from '../types';
 import { AgentAvatar, refreshAgentAvatarVersion, resolveAgentDisplayInfo, type AgentDisplayInfo } from '../utils/agent-display';
+import { isSameWorkspacePath, resolveAgentWorkspace } from '../utils/agent-workspace';
 import styles from './Welcome.module.css';
 import { buildWorkspacePickerItems, normalizeWorkspacePath } from '../../../../shared/workspace-history.ts';
 
@@ -163,15 +164,18 @@ function AgentChips({ agents, selectedId }: {
   const handleClick = useCallback((agentId: string) => {
     const agent = agents.find(a => a.id === agentId) as Agent | undefined;
     useStore.setState({ selectedAgentId: agentId });
-    const homeFolder = normalizeWorkspacePath(agent?.homeFolder);
-    if (homeFolder) {
+    const targetWorkspace = resolveAgentWorkspace(agent);
+    const state = useStore.getState();
+    const workspaceUnchanged = !state.selectedWorkspaceMountId
+      && isSameWorkspacePath(state.selectedFolder || state.deskBasePath, targetWorkspace);
+    if (targetWorkspace && !workspaceUnchanged) {
       useStore.setState({
-        selectedFolder: homeFolder,
+        selectedFolder: targetWorkspace,
         selectedWorkspaceMountId: null,
         selectedWorkspaceLabel: null,
         workspaceFolders: [],
       });
-      void activateWorkspaceDesk(homeFolder, { mountId: null });
+      void activateWorkspaceDesk(targetWorkspace, { mountId: null });
     }
     // 切换到该 agent 的 chat model
     refreshModelsAfterAgentModelSwitch(agent);

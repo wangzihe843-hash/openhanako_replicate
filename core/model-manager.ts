@@ -11,15 +11,19 @@
 import path from "path";
 import {
   AuthStorage,
+  FileAuthStorageBackend,
   createModelRegistry,
   registerModelProvider,
   unregisterModelProvider,
 } from "../lib/pi-sdk/index.ts";
+import { forceRefreshOAuthApiKey } from "./oauth-force-refresh.ts";
 import { t } from "../lib/i18n.ts";
 import { ProviderRegistry } from "./provider-registry.ts";
 import { ExecutionRouter } from "./execution-router.ts";
+import { composeResolvedModelExecution } from "./model-execution-config.ts";
 import { findModel, parseModelRef } from "../shared/model-ref.ts";
 import { isLocalBaseUrl } from "../shared/net-utils.ts";
+import { normalizeProviderHeaders, stripCredentialHeaders } from "../shared/provider-auth.ts";
 import { syncModels } from "./model-sync.ts";
 import { enrichModelFromKnownMetadata } from "./model-known-enrichment.ts";
 import { lookupKnownProvider } from "../shared/known-models.ts";
@@ -76,6 +80,8 @@ function buildProviderModelMetadataMap(projectionPlans: unknown) {
         if (modelEntry.toolUse !== undefined) meta.toolUse = structuredClone(modelEntry.toolUse);
         if (modelEntry.visionCapabilities !== undefined) meta.visionCapabilities = structuredClone(modelEntry.visionCapabilities);
       }
+      const executionHeaders = normalizeProviderHeaders(plan?.modelExecutionHeaders?.[modelId]);
+      if (Object.keys(executionHeaders).length > 0) meta.headers = executionHeaders;
       if (meta.defaultThinkingLevel === undefined && typeof known?.defaultThinkingLevel === "string") {
         meta.defaultThinkingLevel = known.defaultThinkingLevel;
       }
@@ -120,6 +126,7 @@ function applyProviderModelMetadata(model, metadataByModel) {
 }
 
 export class ModelManager {
+  declare _authBackend: any;
   declare _authStorage: any;
   declare _availableModels: any;
   declare _defaultModel: any;
@@ -135,6 +142,7 @@ export class ModelManager {
   constructor({ hanakoHome }) {
     this._hanakoHome = hanakoHome;
     this._authStorage = null;
+    this._authBackend = null;
     this._modelRegistry = null;
     this._registeredSdkProviderIds = new Set();
     this._defaultModel = null;   // 设置页面选的，持久化，bridge 用这个
@@ -148,6 +156,8 @@ export class ModelManager {
   /** 初始化 AuthStorage + ModelRegistry + 新架构模块 */
   init() {
     this._authStorage = AuthStorage.create(path.join(this._hanakoHome, "auth.json"));
+    // Same file, same lock: forced OAuth rotation writes through this backend.
+    this._authBackend = new FileAuthStorageBackend(path.join(this._hanakoHome, "auth.json"));
     this.providerRegistry.reload();
     this._removeApiKeyProviderAuthEntries();
     const projection = this._buildChatProjectionInputs();
@@ -316,6 +326,7 @@ export class ModelManager {
         credentialSource: plan.credentialSource,
         selectionMode: plan.selectionMode,
         hasExplicitModels: plan.hasExplicitModels,
+        modelExecutionHeaders: plan.modelExecutionHeaders,
       };
     }
     return { plans, providers, planMap };
@@ -490,10 +501,16 @@ export class ModelManager {
    * the refresh boundary explicit without moving adapter-specific semantics into
    * ProviderRegistry.
    *
+   * `options.forceRefresh` goes one step further: it rotates the OAuth
+   * credential regardless of the locally recorded expiry, for callers whose
+   * request was just rejected by the provider. `options.staleApiKey` is the
+   * token that got rejected, so a concurrent rotation is not repeated.
+   *
    * @param {string} provider
+   * @param {{ forceRefresh?: boolean, staleApiKey?: string }} [options]
    * @returns {Promise<{ api_key: string, base_url: string, api: string, accountId?: string }>}
    */
-  async resolveProviderCredentialsFresh(provider) {
+  async resolveProviderCredentialsFresh(provider, options: { forceRefresh?: boolean, staleApiKey?: string } = {}) {
     if (!provider) return { api_key: "", base_url: "", api: "" };
     const chatProvider = this.providerRegistry.resolveChatProvider?.(provider);
     const entry = chatProvider?.entry || this.providerRegistry.get(provider);
@@ -510,7 +527,14 @@ export class ModelManager {
       if (!this._authStorage || typeof this._authStorage.getApiKey !== "function") {
         throw new Error(`${t("error.providerMissingCreds", { provider })} (auth: ${authKey})`);
       }
-      refreshedOAuthKey = await this._authStorage.getApiKey(authKey, { includeFallback: false });
+      refreshedOAuthKey = options.forceRefresh
+        ? await forceRefreshOAuthApiKey({
+            authStorage: this._authStorage,
+            backend: this._authBackend,
+            authKey,
+            staleApiKey: options.staleApiKey,
+          })
+        : await this._authStorage.getApiKey(authKey, { includeFallback: false });
       this._authStorage.reload?.();
       this.providerRegistry.clearAuthCache?.();
       if (!refreshedOAuthKey) {
@@ -531,7 +555,7 @@ export class ModelManager {
           || entry.baseUrl
           || "",
         api: rawProvider.api || entry.api || cred?.api || "",
-        headers: {},
+        headers: stripCredentialHeaders(entry.headers || {}),
         credential_source: "auth-storage",
         ...(accountId ? { accountId } : {}),
       };
@@ -566,45 +590,35 @@ export class ModelManager {
     if (!provider) {
       throw new Error(t("error.modelNoProvider", { role: "resolve", model: String(entry?.id || "") }));
     }
-    const effectiveApi = entry.api || creds.api;
-    if (!effectiveApi) {
+    const declaredCredentialSource = creds?.credential_source || creds?.credentialSource;
+    const inferredCredentialSource = declaredCredentialSource
+      || this.providerRegistry?.resolveChatProvider?.(provider)?.credentialSource
+      || (this.providerRegistry?.getAuthType?.(provider) === "oauth" ? "auth-storage" : "");
+    const execution = composeResolvedModelExecution({
+      model: entry,
+      credential: inferredCredentialSource
+        ? { ...creds, credential_source: inferredCredentialSource }
+        : creds,
+    });
+    if (!execution.api) {
       throw new Error(t("error.providerMissingApi", { provider }));
     }
-    const allowsMissingApiKey = this.providerRegistry?.allowsMissingApiKey?.(provider, creds.base_url)
-      ?? isLocalBaseUrl(creds.base_url);
-    const headers = (creds as any).headers || {};
-    const hasHeaders = Object.keys(headers).length > 0;
-    if (!creds.base_url || (!creds.api_key && !hasHeaders && !allowsMissingApiKey)) {
+    const allowsMissingApiKey = this.providerRegistry?.allowsMissingApiKey?.(provider, execution.baseUrl)
+      ?? isLocalBaseUrl(execution.baseUrl);
+    const credentialHeaders = creds?.headers && typeof creds.headers === "object" ? creds.headers : {};
+    const hasCredentialHeaders = Object.keys(credentialHeaders).length > 0;
+    if (!execution.baseUrl || (!execution.apiKey && !hasCredentialHeaders && !allowsMissingApiKey)) {
       throw new Error(t("error.providerMissingCreds", { provider }));
     }
-    const authStorageOwned = creds.credential_source === "auth-storage";
-    const cleanEntry = authStorageOwned
-      ? (() => {
-          const {
-            headers: _headers,
-            accountId: _accountId,
-            account_id: _accountIdSnake,
-            accountID: _accountIdLegacy,
-            ...rest
-          } = entry as any;
-          return rest;
-        })()
-      : entry;
-    let modelWithCredentials = Object.keys(headers).length > 0
-      ? { ...cleanEntry, headers: { ...((cleanEntry as any).headers || {}), ...headers } }
-      : cleanEntry;
-    if (creds.accountId) {
-      modelWithCredentials = { ...modelWithCredentials, accountId: creds.accountId };
-    }
     return {
-      model: modelWithCredentials,
+      model: execution.model,
       provider,
-      api: effectiveApi,
-      api_key: creds.api_key,
-      base_url: creds.base_url,
-      headers,
-      ...(creds.credential_source ? { credential_source: creds.credential_source } : {}),
-      ...(creds.accountId ? { accountId: creds.accountId } : {}),
+      api: execution.api,
+      api_key: execution.apiKey,
+      base_url: execution.baseUrl,
+      headers: execution.headers,
+      ...(execution.credentialSource ? { credential_source: execution.credentialSource } : {}),
+      ...(execution.accountId ? { accountId: execution.accountId } : {}),
     };
   }
 
@@ -638,8 +652,9 @@ export class ModelManager {
 
   /**
    * 请求时解析模型与凭证。模型身份始终先从 Hana availableModels 解析，
-   * OAuth 凭证随后通过 AuthStorage 在请求边界刷新；不会回退到 ProviderRegistry
-   * 缓存中的旧 access token。
+   * 其协议和规范化 endpoint 保持权威。凭证随后在请求边界刷新并只补充
+   * auth/account/headers；OAuth 的动态 resourceUrl 是 endpoint 唯一例外。
+   * 不会回退到 ProviderRegistry 缓存中的旧 access token。
    */
   async resolveModelWithCredentialsFresh(modelRef) {
     const entry = this.resolveExecutionModel(modelRef);

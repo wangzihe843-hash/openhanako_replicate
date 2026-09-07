@@ -47,7 +47,6 @@ describe('SettingsContent tab heading', () => {
     useSettingsStore.setState({
       activeTab: 'experiments',
       platformName: 'darwin',
-      pluginSettingsTabs: [],
       ready: true,
     } as never);
   });
@@ -72,7 +71,6 @@ describe('SettingsContent tab heading', () => {
     useSettingsStore.setState({
       activeTab: 'browser',
       platformName: 'darwin',
-      pluginSettingsTabs: [],
       ready: true,
       settingsSnapshot: {
         status: 'ready',
@@ -82,8 +80,8 @@ describe('SettingsContent tab heading', () => {
           agentId: 'hana',
           config: {},
           identity: '',
-          ishiki: '',
-          publicIshiki: '',
+          agents: '',
+          publicAgents: '',
           userProfile: '',
           experience: '',
           pinned: { pins: [] },
@@ -112,5 +110,21 @@ describe('SettingsContent tab heading', () => {
     expect(screen.getByText('settings.browser.acceptCookies')).toBeTruthy();
     expect(screen.getByText('settings.browser.clearCookies')).toBeTruthy();
     expect(screen.getByText('settings.browser.agentOpenBehavior')).toBeTruthy();
+  });
+
+  it('lists Connectors as a static tab with no plugin-contributed tabs present', () => {
+    // MCP is a core module now: its tab must appear from the static table, not
+    // from a plugin settings-tab contribution.
+    useSettingsStore.setState({
+      activeTab: 'agent',
+      platformName: 'darwin',
+      ready: true,
+    } as never);
+
+    render(React.createElement(SettingsContent, { variant: 'window' }));
+
+    const mcpNavButton = document.querySelector('button[data-tab="mcp"]');
+    expect(mcpNavButton).toBeTruthy();
+    expect(mcpNavButton?.textContent).toContain('settings.tabs.mcp');
   });
 });

@@ -34,7 +34,7 @@ export function formatContext(n: number): string {
  *
  * 契约：调用方尽可能传 provider，消除多 provider 同名歧义。
  * UI 展示场景仅有 id 可不传，接受展示层降级（取第一个命中）。
- * 运行时查找/比较**必须**用 shared/model-ref.js 的 findModel。
+ * 运行时查找/比较**必须**用 shared/model-ref.ts 的 findModel。
  */
 export function lookupModelMeta(modelId: string, provider?: string): any {
   if (!modelId) return null;
@@ -71,6 +71,24 @@ export function lookupModelMeta(modelId: string, provider?: string): any {
   };
 }
 
+/**
+ * 刷新 settingsConfig 快照，保留 _identity / _agents / _publicAgents / _userProfile / _experience。
+ * 调用方：per-agent 保存成功后同步刷新，避免下次读到 stale 快照。
+ */
+export async function refreshSettingsConfigSnapshot(): Promise<void> {
+  const ownerId = useSettingsStore.getState().getSettingsAgentId();
+  if (!ownerId) return;
+  const cfgRes = await hanaFetch(`/api/agents/${ownerId}/config`);
+  const newConfig = await cfgRes.json();
+  // 刷新期间 settings owner 可能已切换，晚到的响应不覆盖新 owner 的快照
+  if (useSettingsStore.getState().getSettingsAgentId() !== ownerId) return;
+  const prev = useSettingsStore.getState().settingsConfig || {};
+  for (const k of ['_identity', '_agents', '_publicAgents', '_userProfile', '_experience']) {
+    if (k in prev && !(k in newConfig)) newConfig[k] = (prev as any)[k];
+  }
+  useSettingsStore.setState({ settingsConfig: newConfig });
+}
+
 /** 通用 per-agent 自动保存 */
 export async function autoSaveConfig(
   partial: Record<string, any>,
@@ -87,14 +105,7 @@ export async function autoSaveConfig(
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     if (!opts.silent) store.showToast(t('settings.autoSaved'), 'success');
-    // 刷新 config 快照，保留 _identity / _ishiki / _userProfile
-    const cfgRes = await hanaFetch(`/api/agents/${agentId}/config`);
-    const newConfig = await cfgRes.json();
-    const prev = useSettingsStore.getState().settingsConfig || {};
-    for (const k of ['_identity', '_ishiki', '_publicIshiki', '_userProfile', '_experience']) {
-      if (k in prev && !(k in newConfig)) newConfig[k] = (prev as any)[k];
-    }
-    useSettingsStore.setState({ settingsConfig: newConfig });
+    await refreshSettingsConfigSnapshot();
     return true;
   } catch (err: any) {
     store.showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
@@ -178,6 +189,8 @@ export const OUTPUT_PRESETS = [
   { label: '16K', value: 16384 },
   { label: '32K', value: 32768 },
   { label: '64K', value: 65536 },
+  { label: '128K', value: 131072 },
+  { label: '256K', value: 262144 },
 ];
 
 const _ids = registry.getThemeIds();

@@ -7,6 +7,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 /** Match runtime normalizeWorkspacePath: backslash → forward slash for cross-platform persistence */
 const n = (p: string) => p.replace(/\\/g, "/");
 
+/**
+ * Workspace history lives in one agent's own config, so these routes have to be
+ * told which agent. This engine keeps two agents so a test can prove a write
+ * lands on the named one and leaves the other alone.
+ */
+function makeTwoAgentEngine(historyByAgent: Record<string, string[]>) {
+  const agents: Record<string, any> = {};
+  for (const [id, history] of Object.entries(historyByAgent)) {
+    agents[id] = { id, config: { cwd_history: [...history] } };
+  }
+  const engine = {
+    // The focused agent — nothing in these routes may fall back to it.
+    currentAgentId: "focused",
+    getAgent: vi.fn((id: string) => agents[id] || null),
+    updateConfig: vi.fn(async (patch: any, opts: any = {}) => {
+      const target = agents[opts.agentId];
+      if (!target) throw new Error(`updateConfig without a known agentId: ${JSON.stringify(opts)}`);
+      target.config = { ...target.config, ...patch };
+    }),
+    agents,
+  };
+  return engine;
+}
+
 describe("config workspace routes", () => {
   let tmpDir;
 
@@ -18,22 +42,17 @@ describe("config workspace routes", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("persists a selected workspace into the current agent workspace history", async () => {
+  it("persists a selected workspace into the named agent's workspace history", async () => {
     const { createConfigRoute } = await import("../server/routes/config.ts");
     const oldWorkspace = path.join(tmpDir, "old");
     const nextWorkspace = path.join(tmpDir, "next");
     fs.mkdirSync(oldWorkspace);
     fs.mkdirSync(nextWorkspace);
-    const engine = {
-      config: { cwd_history: [oldWorkspace] },
-      updateConfig: vi.fn(async (patch) => {
-        engine.config = { ...engine.config, ...patch };
-      }),
-    };
+    const engine = makeTwoAgentEngine({ hana: [oldWorkspace], mio: [] });
     const app = new Hono();
     app.route("/api", createConfigRoute(engine));
 
-    const res = await app.request("/api/config/workspaces/recent", {
+    const res = await app.request("/api/config/workspaces/recent?agentId=hana", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: nextWorkspace }),
@@ -42,27 +61,66 @@ describe("config workspace routes", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.cwd_history).toEqual([n(nextWorkspace), n(oldWorkspace)]);
-    expect(engine.updateConfig).toHaveBeenCalledWith({
-      cwd_history: [n(nextWorkspace), n(oldWorkspace)],
-    });
+    expect(engine.updateConfig).toHaveBeenCalledWith(
+      { cwd_history: [n(nextWorkspace), n(oldWorkspace)] },
+      { agentId: "hana" },
+    );
   });
 
-  it("removes a recent workspace entry without deleting the directory", async () => {
+  it("keeps one agent's workspace pick out of another agent's history", async () => {
+    const { createConfigRoute } = await import("../server/routes/config.ts");
+    const hanaWorkspace = path.join(tmpDir, "hana-ws");
+    const mioWorkspace = path.join(tmpDir, "mio-ws");
+    fs.mkdirSync(hanaWorkspace);
+    fs.mkdirSync(mioWorkspace);
+    const engine = makeTwoAgentEngine({ hana: [hanaWorkspace], mio: [mioWorkspace] });
+    const app = new Hono();
+    app.route("/api", createConfigRoute(engine));
+
+    const res = await app.request("/api/config/workspaces/recent?agentId=hana", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: mioWorkspace }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(engine.agents.hana.config.cwd_history).toEqual([n(mioWorkspace), n(hanaWorkspace)]);
+    // Untouched: the other agent keeps exactly the history it had.
+    expect(engine.agents.mio.config.cwd_history).toEqual([mioWorkspace]);
+  });
+
+  it("refuses to record a workspace when the request names no agent", async () => {
+    const { createConfigRoute } = await import("../server/routes/config.ts");
+    const nextWorkspace = path.join(tmpDir, "next");
+    fs.mkdirSync(nextWorkspace);
+    const engine = makeTwoAgentEngine({ hana: [], focused: [] });
+    const app = new Hono();
+    app.route("/api", createConfigRoute(engine));
+
+    const res = await app.request("/api/config/workspaces/recent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: nextWorkspace }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.error).toContain("missing agentId");
+    expect(engine.updateConfig).not.toHaveBeenCalled();
+    expect(engine.agents.focused.config.cwd_history).toEqual([]);
+  });
+
+  it("removes a recent workspace entry from the named agent without deleting the directory", async () => {
     const { createConfigRoute } = await import("../server/routes/config.ts");
     const oldWorkspace = path.join(tmpDir, "old");
     const keepWorkspace = path.join(tmpDir, "keep");
     fs.mkdirSync(oldWorkspace);
     fs.mkdirSync(keepWorkspace);
-    const engine = {
-      config: { cwd_history: [oldWorkspace, keepWorkspace] },
-      updateConfig: vi.fn(async (patch) => {
-        engine.config = { ...engine.config, ...patch };
-      }),
-    };
+    const engine = makeTwoAgentEngine({ hana: [oldWorkspace, keepWorkspace], mio: [oldWorkspace] });
     const app = new Hono();
     app.route("/api", createConfigRoute(engine));
 
-    const res = await app.request("/api/config/workspaces/recent", {
+    const res = await app.request("/api/config/workspaces/recent?agentId=hana", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: oldWorkspace }),
@@ -72,47 +130,74 @@ describe("config workspace routes", () => {
     const data = await res.json();
     expect(data.cwd_history).toEqual([n(keepWorkspace)]);
     expect(fs.existsSync(oldWorkspace)).toBe(true);
-    expect(engine.updateConfig).toHaveBeenCalledWith({ cwd_history: [n(keepWorkspace)] });
+    expect(engine.updateConfig).toHaveBeenCalledWith({ cwd_history: [n(keepWorkspace)] }, { agentId: "hana" });
+    // The same folder stays in the other agent's history.
+    expect(engine.agents.mio.config.cwd_history).toEqual([oldWorkspace]);
   });
 
-  it("clears recent workspace history without deleting directories", async () => {
+  it("refuses to remove a recent workspace when the request names no agent", async () => {
     const { createConfigRoute } = await import("../server/routes/config.ts");
     const oldWorkspace = path.join(tmpDir, "old");
     fs.mkdirSync(oldWorkspace);
-    const engine = {
-      config: { cwd_history: [oldWorkspace] },
-      updateConfig: vi.fn(async (patch) => {
-        engine.config = { ...engine.config, ...patch };
-      }),
-    };
+    const engine = makeTwoAgentEngine({ focused: [oldWorkspace] });
     const app = new Hono();
     app.route("/api", createConfigRoute(engine));
 
-    const res = await app.request("/api/config/workspaces/recent/all", { method: "DELETE" });
+    const res = await app.request("/api/config/workspaces/recent", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: oldWorkspace }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.error).toContain("missing agentId");
+    expect(engine.agents.focused.config.cwd_history).toEqual([oldWorkspace]);
+  });
+
+  it("clears the named agent's recent history without deleting directories or touching other agents", async () => {
+    const { createConfigRoute } = await import("../server/routes/config.ts");
+    const oldWorkspace = path.join(tmpDir, "old");
+    fs.mkdirSync(oldWorkspace);
+    const engine = makeTwoAgentEngine({ hana: [oldWorkspace], mio: [oldWorkspace] });
+    const app = new Hono();
+    app.route("/api", createConfigRoute(engine));
+
+    const res = await app.request("/api/config/workspaces/recent/all?agentId=hana", { method: "DELETE" });
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ ok: true, cwd_history: [] });
     expect(fs.existsSync(oldWorkspace)).toBe(true);
-    expect(engine.updateConfig).toHaveBeenCalledWith({ cwd_history: [] });
+    expect(engine.updateConfig).toHaveBeenCalledWith({ cwd_history: [] }, { agentId: "hana" });
+    expect(engine.agents.mio.config.cwd_history).toEqual([oldWorkspace]);
   });
 
-  it("persists GC for missing cwd_history and last_cwd entries when reading config", async () => {
+  it("refuses to clear recent history when the request names no agent", async () => {
     const { createConfigRoute } = await import("../server/routes/config.ts");
-    const keepWorkspace = path.join(tmpDir, "keep");
-    const missingWorkspace = path.join(tmpDir, "missing");
-    fs.mkdirSync(keepWorkspace);
+    const oldWorkspace = path.join(tmpDir, "old");
+    fs.mkdirSync(oldWorkspace);
+    const engine = makeTwoAgentEngine({ focused: [oldWorkspace] });
+    const app = new Hono();
+    app.route("/api", createConfigRoute(engine));
+
+    const res = await app.request("/api/config/workspaces/recent/all", { method: "DELETE" });
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.error).toContain("missing agentId");
+    expect(engine.agents.focused.config.cwd_history).toEqual([oldWorkspace]);
+  });
+
+  it("no longer answers the identity-free config read with any agent workspace state", async () => {
+    const { createConfigRoute } = await import("../server/routes/config.ts");
     const engine = {
-      config: {
-        last_cwd: missingWorkspace,
-        cwd_history: [missingWorkspace, keepWorkspace],
-      },
+      // engine.config is whichever agent the server happens to be focused on
+      config: { last_cwd: "/somewhere", cwd_history: ["/somewhere"] },
       providerRegistry: {
         getAllProvidersRaw: () => ({}),
         get: () => null,
       },
-      updateConfig: vi.fn(async (patch) => {
-        engine.config = { ...engine.config, ...patch };
-      }),
+      updateConfig: vi.fn(),
     };
     const app = new Hono();
     app.route("/api", createConfigRoute(engine));
@@ -121,12 +206,11 @@ describe("config workspace routes", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.cwd_history).toEqual([n(keepWorkspace)]);
-    expect(data.last_cwd).toBeNull();
-    expect(engine.updateConfig).toHaveBeenCalledWith({
-      cwd_history: [n(keepWorkspace)],
-      last_cwd: null,
-    });
+    // Workspace history belongs to one agent, so it is served (and garbage
+    // collected) by GET /api/agents/:id/config, not by this path.
+    expect(data).not.toHaveProperty("cwd_history");
+    expect(data).not.toHaveProperty("last_cwd");
+    expect(engine.updateConfig).not.toHaveBeenCalled();
   });
 
   it("exposes and creates the default onboarding workspace", async () => {

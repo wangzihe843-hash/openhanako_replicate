@@ -11,7 +11,7 @@ vi.mock("node:child_process", () => ({
 import {
   McpStdioClient,
   resolveMcpStdioSpawnSpec,
-} from "../plugins/mcp/lib/mcp-stdio-client.ts";
+} from "../core/mcp/clients/stdio-client.ts";
 
 class FakeProcess extends EventEmitter {
   declare exitCode: any;
@@ -109,6 +109,33 @@ describe("MCP stdio client", () => {
     expect(client.running).toBe(false);
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledWith(expect.objectContaining({ expected: false }));
+  });
+
+  it("answers an inbound stdio server request with method-not-found instead of dropping it", async () => {
+    const proc = new FakeProcess();
+    spawnMock.mockReturnValueOnce(proc);
+
+    const client = new McpStdioClient({
+      id: "local",
+      command: "npx",
+      args: ["-y", "mcp-server-example"],
+    }, { log: console });
+
+    await client.start();
+    proc.stdin.write.mockClear();
+
+    // The server asks us something we do not implement. Silently swallowing it
+    // leaves the server blocked on a reply that never comes.
+    proc.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: 99, method: "elicitation/create", params: {} })}\n`);
+    await vi.waitFor(() => expect(proc.stdin.write).toHaveBeenCalled());
+
+    expect(JSON.parse(String(proc.stdin.write.mock.calls[0][0]))).toEqual({
+      jsonrpc: "2.0",
+      id: 99,
+      error: { code: -32601, message: "Method not found: elicitation/create" },
+    });
+
+    await client.stop();
   });
 
   it("does not report an unexpected close when stop() terminates the child", async () => {

@@ -86,7 +86,7 @@ function jsonResponse(body: unknown): Response {
   return { json: async () => body } as Response;
 }
 
-describe('MediaTab image-gen config', () => {
+describe('MediaTab media config', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.hanaFetch.mockImplementation((path: string) => {
@@ -181,7 +181,7 @@ describe('MediaTab image-gen config', () => {
     });
   });
 
-  it('loads global image-gen config without agent scope and saves through the generic config envelope', async () => {
+  it('loads global media config without agent scope and saves through the generic config envelope', async () => {
     render(<MediaTab />);
 
     const select = await screen.findByLabelText('settings.media.defaultModel');
@@ -336,6 +336,77 @@ describe('MediaTab image-gen config', () => {
     expect(option).toBeTruthy();
     expect(option).toBeDisabled();
     expect(option?.textContent).toContain('settings.media.adapterMissing');
+  });
+
+  it('surfaces runtime CLI discovery errors on provider and model choices', async () => {
+    mocks.hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/media/image/providers') {
+        return Promise.resolve(jsonResponse({
+          providers: {
+            'jimeng-cli': {
+              providerId: 'jimeng-cli',
+              displayName: '即梦 CLI',
+              hasCredentials: false,
+              unavailableReason: 'output_unparseable',
+              unavailableMessage: 'Dreamina CLI help changed',
+              runtimeCapability: { status: 'stale' },
+              models: [{ id: 'jimeng-image-5.0', name: '即梦图片 5.0', adapterAvailable: true }],
+              availableModels: [],
+            },
+          },
+          config: {},
+        }));
+      }
+      return Promise.resolve(jsonResponse({ values: {} }));
+    });
+
+    render(<MediaTab />);
+
+    const providerButton = await screen.findByRole('button', { name: /即梦 CLI/ });
+    expect(providerButton).toHaveAttribute('title', 'Dreamina CLI help changed');
+    const select = await screen.findByLabelText('settings.media.defaultModel');
+    const option = Array.from(select.querySelectorAll('option'))
+      .find((item) => item.value === 'jimeng-cli/jimeng-image-5.0');
+    expect(option).toBeDisabled();
+    expect(option?.textContent).toContain('Dreamina CLI help changed');
+  });
+
+  it('refreshes runtime CLI model choices when the app regains focus', async () => {
+    let imageLoads = 0;
+    mocks.hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/media/image/providers') {
+        imageLoads += 1;
+        const modelId = imageLoads === 1 ? 'jimeng-image-4.7' : 'jimeng-image-5.0';
+        return Promise.resolve(jsonResponse({
+          providers: {
+            'jimeng-cli': {
+              providerId: 'jimeng-cli',
+              displayName: '即梦 CLI',
+              hasCredentials: true,
+              runtimeCapability: { status: 'ready' },
+              models: [{ id: modelId, name: modelId, adapterAvailable: true }],
+              availableModels: [],
+            },
+          },
+          config: {},
+        }));
+      }
+      return Promise.resolve(jsonResponse({ providers: {}, config: {} }));
+    });
+
+    render(<MediaTab />);
+
+    const select = await screen.findByLabelText('settings.media.defaultModel');
+    await waitFor(() => {
+      expect(Array.from(select.querySelectorAll('option')).some(option => option.value.endsWith('/jimeng-image-4.7'))).toBe(true);
+    });
+
+    window.dispatchEvent(new Event('focus'));
+
+    await waitFor(() => {
+      expect(Array.from(select.querySelectorAll('option')).some(option => option.value.endsWith('/jimeng-image-5.0'))).toBe(true);
+    });
+    expect(imageLoads).toBeGreaterThanOrEqual(2);
   });
 
   it('renders custom provider image models from the endpoint and offers them as selectable defaults (#1627)', async () => {

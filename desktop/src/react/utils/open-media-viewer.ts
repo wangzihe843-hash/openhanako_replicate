@@ -69,13 +69,23 @@ export function openMediaViewerFromContext(input: OpenInput): void {
   state.setMediaViewer({ files, currentId: startRef.id, origin });
 }
 
+// fork 出来的 session 里，历史消息的 marker 还写着父 session 的文件 id 和路径，
+// 账本条目已经换成新的并把旧值记成别名。别名不认就会误判成“序列里没有这个文件”，
+// 白白退化成 solo 序列，丢掉左右翻页和 resource link。
 function findMediaRefByStableIdentity(files: readonly FileRef[], input: OpenInput): FileRef | undefined {
-  if (input.fileId) {
-    const byFileId = files.find(f => f.fileId === input.fileId);
+  const { fileId, filePath } = input;
+  if (fileId) {
+    const byFileId = files.find(f => (
+      f.fileId === fileId
+      || (f.legacyFileIds || []).includes(fileId)
+    ));
     if (byFileId) return byFileId;
   }
-  if (input.filePath) {
-    return files.find(f => f.path === input.filePath);
+  if (filePath) {
+    return files.find(f => (
+      f.path === filePath
+      || (f.legacyFilePaths || []).includes(filePath)
+    ));
   }
   return undefined;
 }

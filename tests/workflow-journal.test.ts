@@ -169,4 +169,26 @@ describe("WorkflowJournal", () => {
     expect(replay.tryReplay(2, k2)).toEqual({ hit: true, result: "r2" });
     expect(replay.tryReplay(3, k3)).toEqual({ hit: true, result: "r3" });
   });
+
+  it("record 支持 extra 字段（error/attempts），replay 读侧忽略未知字段", () => {
+    const p = tmpJournalPath();
+    paths.push(p);
+    const j = new WorkflowJournal(p);
+    j.record(1, "k1", null, "error", { error: "agent 失败: 502", attempts: 3 });
+    j.record(2, "k2", "ok-result", "ok", { attempts: 1 });
+    const lines = fs.readFileSync(p, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    expect(lines[0]).toMatchObject({ nodeSeq: 1, status: "error", error: "agent 失败: 502", attempts: 3 });
+    expect(lines[1]).toMatchObject({ nodeSeq: 2, status: "ok", attempts: 1 });
+    const replay = WorkflowJournal.load(p);
+    expect(replay.tryReplay(2, "k2")?.result).toBe("ok-result");
+  });
+
+  it("writeFolders 参与 agent() cache key：范围变化不得命中旧缓存", () => {
+    const a = WorkflowJournal.computeKey("p", { writeFolders: ["/a"] });
+    const b = WorkflowJournal.computeKey("p", { writeFolders: ["/b"] });
+    const c = WorkflowJournal.computeKey("p", {});
+    expect(a).not.toBe(b);
+    expect(a).not.toBe(c);
+    expect(b).not.toBe(c);
+  });
 });

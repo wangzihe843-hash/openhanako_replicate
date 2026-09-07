@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import { createChannel, appendMessage } from "../lib/channels/channel-store.ts";
 import { createChannelTool } from "../lib/tools/channel-tool.ts";
+import { resolveToolInvocationPermission } from "../lib/permission/tool-invocation-permission.ts";
 
 function mktemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "hana-channel-tool-test-"));
@@ -28,6 +29,19 @@ describe("channel tool membership contract", () => {
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("does not direct the model to the removed dm tool", () => {
+    const tool = createChannelTool({
+      channelsDir,
+      agentsDir,
+      agentId: "alice",
+      listAgents: () => [],
+      isEnabled: () => true,
+    } as any);
+
+    expect(tool.description).not.toMatch(/\bdm tool\b/i);
+    expect(tool.description).toContain("cannot read or send one-on-one Agent Phone conversations");
   });
 
   it("rejects create when fewer than two unique agent members would be present", async () => {
@@ -234,5 +248,79 @@ describe("channel tool membership contract", () => {
     expect(result.content[0].text).toContain("工作群");
     expect(result.content[0].text).toContain("ch_team-a");
     expect(result.content[0].text).toContain("ch_team-b");
+  });
+
+  it("classifies list/read as read while preserving stable reviewer targets for post/create", async () => {
+    const { id } = await createChannel(channelsDir, {
+      id: "team",
+      name: "工作群",
+      members: ["alice", "bob"],
+    } as any);
+    const tool = createChannelTool({
+      channelsDir,
+      agentsDir,
+      agentId: "alice",
+      listAgents: () => [],
+      isEnabled: () => true,
+    } as any);
+
+    const list = resolveToolInvocationPermission(tool, { action: "list" });
+    const read = resolveToolInvocationPermission(tool, {
+      action: "read",
+      channel: "工作群",
+    });
+    const post = resolveToolInvocationPermission(tool, {
+      action: "post",
+      channel: "工作群",
+      content: "hello",
+    });
+    const createFirst = resolveToolInvocationPermission(tool, {
+      action: "create",
+      name: "New Team",
+      members: ["charlie", "bob"],
+    });
+    const createReordered = resolveToolInvocationPermission(tool, {
+      action: "create",
+      name: "New Team",
+      members: ["bob", "charlie"],
+    });
+
+    expect(list).toMatchObject({
+      ok: true,
+      descriptor: {
+        action: "list",
+        kind: "read",
+        capability: "channel.list",
+      },
+    });
+    expect(read).toMatchObject({
+      ok: true,
+      descriptor: {
+        action: "read",
+        kind: "read",
+        capability: "channel.read",
+        target: { type: "channel", id, label: "工作群" },
+      },
+    });
+    expect(post).toMatchObject({
+      ok: true,
+      descriptor: {
+        action: "post",
+        kind: "review",
+        capability: "channel.post",
+        target: { type: "channel", id, label: "工作群" },
+      },
+    });
+    expect(createFirst).toMatchObject({
+      ok: true,
+      descriptor: {
+        action: "create",
+        kind: "review",
+        capability: "channel.create",
+        target: { type: "channel_draft", label: "New Team" },
+      },
+    });
+    expect(createFirst.ok && createFirst.source === "descriptor" ? createFirst.targetKey : null)
+      .toBe(createReordered.ok && createReordered.source === "descriptor" ? createReordered.targetKey : null);
   });
 });

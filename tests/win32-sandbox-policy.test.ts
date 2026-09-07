@@ -7,6 +7,7 @@ import {
   buildWin32SandboxGrants,
   externalReadPathsFromSessionFiles,
 } from "../lib/sandbox/win32-policy.ts";
+import { canonicalFilesystemPathSync } from "../shared/link-aware-fs.ts";
 
 describe("Windows sandbox policy projection", () => {
   let tempRoot;
@@ -44,7 +45,9 @@ describe("Windows sandbox policy projection", () => {
     return { hanakoHome, agentDir, workspace, externalDir };
   }
 
-  const real = (p) => fs.realpathSync(p);
+  // 期望值必须与生产代码同一条规范化路径（native realpath 会展开 Windows 8.3
+  // 短名，JS 版 fs.realpathSync 不会；CI runner 的 TEMP 恰好是短名形式）。
+  const real = (p) => canonicalFilesystemPathSync(p);
 
   it("projects restricted-token write roots without external read grants", () => {
     const { hanakoHome, agentDir, workspace, externalDir } = makeTree();
@@ -97,6 +100,29 @@ describe("Windows sandbox policy projection", () => {
     expect(grants.optionalWritePaths).toContain(real(path.join(hanakoHome, ".ephemeral")));
     expect(grants.denyWritePaths).not.toContain(real(path.join(workspace, ".git")));
     expect(grants.denyReadPaths).toEqual([]);
+  });
+
+  it("does not turn a per-command working directory into a writable root", () => {
+    const { hanakoHome, agentDir, workspace, externalDir } = makeTree();
+    const policy = deriveSandboxPolicy({
+      agentDir,
+      workspace,
+      workspaceFolders: [],
+      hanakoHome,
+      mode: "standard",
+    });
+
+    const grants = buildWin32SandboxGrants({
+      policy,
+      cwd: externalDir,
+    });
+
+    expect(grants.writePaths).toEqual([real(workspace)]);
+    expect(grants.optionalWritePaths).not.toContain(real(externalDir));
+    expect([
+      ...grants.writePaths,
+      ...grants.optionalWritePaths,
+    ]).not.toContain(real(externalDir));
   });
 
   it("does not project ordinary system-readable roots into ACL work", () => {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCronScheduler, DEFAULT_CRON_EXECUTION_TIMEOUT_MS } from "../lib/desk/cron-scheduler.ts";
+import { AUTOMATION_SCHEMA_VERSION } from "../lib/desk/automation-normalizer.ts";
 
 function createStore(job) {
   const calls = {
@@ -12,6 +13,9 @@ function createStore(job) {
     store: {
       listJobs() {
         return [job];
+      },
+      getJob(id) {
+        return id === job.id ? job : null;
       },
       logRun(id, run) {
         calls.runs.push({ id, run });
@@ -73,6 +77,9 @@ describe("cron-scheduler", () => {
     const { store, calls } = createStore(job);
     const done = [];
     const executionResult = {
+      status: "forged",
+      startedAt: "forged",
+      finishedAt: "forged",
       executorKind: "direct_action",
       action: "notify",
       delivery: { ok: true, deliveries: [{ channel: "desktop", status: "sent" }] },
@@ -91,7 +98,9 @@ describe("cron-scheduler", () => {
       action: "notify",
       delivery: { ok: true, deliveries: [{ channel: "desktop", status: "sent" }] },
     });
-    expect(done).toEqual([{ id: "job_direct", result: { status: "success", ...executionResult } }]);
+    expect(calls.runs[0].run.startedAt).not.toBe("forged");
+    expect(calls.runs[0].run.finishedAt).not.toBe("forged");
+    expect(done).toEqual([{ id: "job_direct", result: { ...executionResult, status: "success" } }]);
   });
 
   it("执行抛错时记录 error 和错误信息", async () => {
@@ -185,7 +194,7 @@ describe("cron-scheduler", () => {
     await vi.advanceTimersByTimeAsync(100);
     await check;
 
-    expect(abortJob).toHaveBeenCalledWith("job_timeout");
+    expect(abortJob).toHaveBeenCalledWith(job);
     expect(calls.runs).toHaveLength(1);
     expect(calls.runs[0].run.status).toBe("error");
     expect(calls.runs[0].run.error).toBe("execution timeout (100ms)");
@@ -193,5 +202,149 @@ describe("cron-scheduler", () => {
     expect(done).toEqual([
       { id: "job_timeout", result: { status: "error", error: "execution timeout (100ms)" } },
     ]);
+  });
+
+  it("captures one Studio store for list, execute, log, and cursor updates", async () => {
+    const job = {
+      studioId: "studio-a",
+      id: "studio_job_1",
+      configRevision: 1,
+      label: "A job",
+      enabled: true,
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    };
+    const a = {
+      listJobs: vi.fn(() => [job]),
+      getJob: vi.fn(() => job),
+      logRun: vi.fn(),
+      markRun: vi.fn(() => true),
+    };
+    const b = {
+      listJobs: vi.fn(() => []),
+      getJob: vi.fn(),
+      logRun: vi.fn(),
+      markRun: vi.fn(),
+    };
+    let current = a;
+    const service = { captureCurrent: vi.fn(() => current) };
+    const scheduler = createCronScheduler({
+      cronStore: service,
+      executeJob: vi.fn(async () => {
+        current = b;
+      }),
+    } as any);
+
+    await scheduler.checkJobs();
+
+    expect(service.captureCurrent).toHaveBeenCalledOnce();
+    expect(a.logRun).toHaveBeenCalledOnce();
+    expect(a.markRun).toHaveBeenCalledWith(job.id, {
+      success: true,
+      expectedConfigRevision: 1,
+    });
+    expect(b.logRun).not.toHaveBeenCalled();
+    expect(b.markRun).not.toHaveBeenCalled();
+  });
+
+  it("re-reads queued jobs and does not execute a deleted stale snapshot", async () => {
+    const due = new Date(Date.now() - 1000).toISOString();
+    const first = { id: "job_1", configRevision: 1, label: "first", enabled: true, nextRunAt: due };
+    const second = { id: "job_2", configRevision: 1, label: "second", enabled: true, nextRunAt: due };
+    const liveJobs = new Map([[first.id, first], [second.id, second]]);
+    const executed: string[] = [];
+    const store = {
+      listJobs: vi.fn(() => [first, second]),
+      getJob: vi.fn((id) => liveJobs.get(id) || null),
+      markRun: vi.fn(() => true),
+      logRun: vi.fn(),
+    };
+    const scheduler = createCronScheduler({
+      cronStore: store,
+      executeJob: vi.fn(async (job) => {
+        executed.push(job.id);
+        if (job.id === first.id) liveJobs.delete(second.id);
+      }),
+    } as any);
+
+    await scheduler.checkJobs();
+
+    expect(executed).toEqual([first.id]);
+    expect(store.getJob).toHaveBeenCalledWith(second.id);
+  });
+
+  it("records a stale run without advancing a newer configuration revision", async () => {
+    const job = {
+      id: "job_stale",
+      configRevision: 4,
+      label: "stale",
+      enabled: true,
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    };
+    const store = {
+      listJobs: vi.fn(() => [job]),
+      getJob: vi.fn(() => job),
+      markRun: vi.fn(() => false),
+      logRun: vi.fn(),
+    };
+    const done = vi.fn();
+    const scheduler = createCronScheduler({
+      cronStore: store,
+      executeJob: vi.fn(async () => ({ status: "forged" })),
+      onJobDone: done,
+    } as any);
+
+    await scheduler.checkJobs();
+
+    expect(store.markRun).toHaveBeenCalledWith(job.id, {
+      success: true,
+      expectedConfigRevision: 4,
+    });
+    expect(store.logRun).toHaveBeenCalledWith(job.id, expect.objectContaining({
+      status: "success",
+      staleConfigRevision: true,
+    }));
+    expect(done).toHaveBeenCalledWith(job, expect.objectContaining({
+      status: "success",
+      staleConfigRevision: true,
+    }));
+  });
+
+  it("does not execute a future automation schema or advance its cursor", async () => {
+    const job = {
+      id: "job_future_schema",
+      schemaVersion: AUTOMATION_SCHEMA_VERSION + 1,
+      configRevision: 1,
+      label: "future",
+      enabled: true,
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    };
+    const store = {
+      listJobs: vi.fn(() => [job]),
+      getJob: vi.fn(() => job),
+      markRun: vi.fn(),
+      logRun: vi.fn(),
+    };
+    const executeJob = vi.fn();
+    const done = vi.fn();
+    const scheduler = createCronScheduler({
+      cronStore: store,
+      executeJob,
+      onJobDone: done,
+    } as any);
+
+    await scheduler.checkJobs();
+
+    expect(executeJob).not.toHaveBeenCalled();
+    expect(store.markRun).not.toHaveBeenCalled();
+    expect(store.logRun).toHaveBeenCalledWith(job.id, expect.objectContaining({
+      status: "skipped",
+      reason: "unsupported_automation_schema",
+      schemaVersion: AUTOMATION_SCHEMA_VERSION + 1,
+    }));
+    expect(done).toHaveBeenCalledWith(job, {
+      status: "skipped",
+      reason: "unsupported_automation_schema",
+      schemaVersion: AUTOMATION_SCHEMA_VERSION + 1,
+    });
   });
 });

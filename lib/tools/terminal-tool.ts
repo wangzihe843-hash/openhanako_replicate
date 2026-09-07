@@ -2,6 +2,7 @@ import { Type } from "../pi-sdk/index.ts";
 import { getToolSessionPath } from "./tool-session.ts";
 
 const READ_ACTIONS = new Set(["read", "list"]);
+const TARGET_ACTIONS = new Set(["read", "write", "close"]);
 
 function jsonResult(payload: any) {
   return {
@@ -37,6 +38,27 @@ export function createTerminalTool({
     name: "terminal",
     label: "Terminal",
     description: "Legacy internal terminal-session transport. The default Agent command surface is exec_command with tty=true plus write_stdin. Actions: start, write, read, close, list.",
+    sessionPermission: {
+      resolveInvocation: (params: any = {}) => {
+        const action = normalizeAction(params.action);
+        if (!action) return null;
+        const terminalId = typeof (params.terminal_id || params.terminalId) === "string"
+          ? (params.terminal_id || params.terminalId).trim()
+          : "";
+        if (TARGET_ACTIONS.has(action) && !terminalId) return null;
+        const kind = READ_ACTIONS.has(action)
+          ? "read"
+          : action === "close" ? "routine" : "review";
+        return {
+          action,
+          kind,
+          capability: `terminal.${action}`,
+          ...(TARGET_ACTIONS.has(action) ? {
+            target: { type: "terminal_process", id: terminalId, label: terminalId },
+          } : {}),
+        };
+      },
+    },
     parameters: Type.Object({
       action: Type.String({ description: "One of: start, write, read, close, list." }),
       terminal_id: Type.Optional(Type.String({ description: "Terminal id returned by action=start or action=list." })),

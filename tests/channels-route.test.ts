@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import { createChannelsRoute } from "../server/routes/channels.ts";
 import { ChannelManager } from "../core/channel-manager.ts";
-import { createChannel, getChannelMeta, readBookmarks } from "../lib/channels/channel-store.ts";
+import { appendMessage, createChannel, getChannelMeta, readBookmarks } from "../lib/channels/channel-store.ts";
 import {
   getAgentPhoneProjectionPath,
   readAgentPhoneProjection,
@@ -101,6 +101,50 @@ describe("channels route membership contract", () => {
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toMatch(/at least 2/i);
+  });
+
+  it("downloads only the selected group conversation", async () => {
+    const selected = await createChannel(engine.channelsDir, {
+      id: "family",
+      name: "Family",
+      description: "",
+      members: ["alice", "bob"],
+      intro: "",
+    });
+    const other = await createChannel(engine.channelsDir, {
+      id: "other",
+      name: "Other",
+      description: "",
+      members: ["alice", "bob"],
+      intro: "",
+    });
+    await appendMessage(selected.filePath, "alice", "selected group hello");
+    await appendMessage(other.filePath, "alice", "other group hello");
+
+    const res = await app.request("/api/conversations/ch_family/export");
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/markdown");
+    expect(res.headers.get("content-disposition")).toMatch(/^attachment; filename="hana-channel-Family-/);
+    const markdown = await res.text();
+    expect(markdown).toContain("selected group hello");
+    expect(markdown).not.toContain("other group hello");
+  });
+
+  it("downloads only the selected DM conversation", async () => {
+    const selected = path.join(engine.agentsDir, "alice", "dm", "bob.md");
+    const other = path.join(engine.agentsDir, "alice", "dm", "carol.md");
+    fs.mkdirSync(path.dirname(selected), { recursive: true });
+    await appendMessage(selected, "alice", "selected private hello");
+    await appendMessage(other, "alice", "other private hello");
+
+    const res = await app.request("/api/conversations/dm%3Abob/export?agentId=alice");
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toMatch(/^attachment; filename="hana-dm-alice-bob-/);
+    const markdown = await res.text();
+    expect(markdown).toContain("selected private hello");
+    expect(markdown).not.toContain("other private hello");
   });
 
   it("rejects creating a channel with a missing agent member before writing the channel file", async () => {
@@ -313,6 +357,20 @@ describe("channels route membership contract", () => {
       conversationId: "ch_crew",
       conversationType: "channel",
     });
+  });
+
+  it("reports an error instead of guessing a DM owner when no primary agent is configured", async () => {
+    engine.getPrimaryAgentId = () => null;
+    engine.currentAgentId = "carol";
+
+    const res = await app.request("/api/conversations/dm%3Abob/agent-phone-settings");
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/no primary agent/i);
+
+    // An explicit owner still works with no primary agent configured.
+    const explicitRes = await app.request("/api/conversations/dm%3Abob/agent-phone-settings?agentId=carol");
+    expect(explicitRes.status).toBe(200);
   });
 
   it("reads DM phone settings from the primary agent when focus is different", async () => {

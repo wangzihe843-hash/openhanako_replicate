@@ -7,7 +7,7 @@ vi.mock('../../hooks/use-hana-fetch', () => ({
 
 vi.mock('../../stores', () => ({
   useStore: {
-    getState: () => ({}),
+    getState: () => ({ setSessionMetaRecovery: vi.fn() }),
     setState: vi.fn(),
   },
 }));

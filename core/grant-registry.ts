@@ -2,8 +2,8 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
+import { SECURITY_DIR } from "./security-dir.ts";
 
-export const SECURITY_DIR = "security";
 export const GRANTS_FILE = "grants.json";
 
 const SCHEMA_VERSION = 1;

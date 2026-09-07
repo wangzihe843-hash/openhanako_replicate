@@ -1,4 +1,4 @@
-// shared/config-schema.js
+// shared/config-schema.ts
 
 /**
  * 配置字段 scope 声明 — 单一事实来源。
@@ -21,6 +21,10 @@
 /** @type {Record<string, FieldDef>} */
 export const CONFIG_SCHEMA = {
   locale:                       { scope: 'global', setter: 'setLocale',         getter: 'getLocale', defaultValue: '' },
+  // 用户名描述的是使用者本人，跨 agent 必须一致，所以唯一正源是全局
+  // preferences：这条 global scope 把带 user.name 的写请求全部引到全局设置上，
+  // 落不进任何一个 agent 的 config。读取侧同样只认全局值。
+  'user.name':                  { scope: 'global', setter: 'setUserName',       getter: 'getUserName', prefsPath: 'userName', defaultValue: '' },
   timezone:                     { scope: 'global', setter: 'setTimezone',       getter: 'getTimezone', defaultValue: '' },
   sandbox:                      { scope: 'global', setter: 'setSandbox',        getter: 'getSandbox', defaultValue: true },
   sandbox_network:              { scope: 'global', setter: 'setSandboxNetwork', getter: 'getSandboxNetwork', defaultValue: true },

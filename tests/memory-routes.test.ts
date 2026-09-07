@@ -166,6 +166,30 @@ describe("memory routes", () => {
     expect(agent.memoryTicker.getHealthStatus).not.toHaveBeenCalled();
   });
 
+  it("requires an explicit agentId to read compiled memory", async () => {
+    const agent = makeAgent(tmpDir);
+    const engine = makeEngine(agent, tmpDir);
+    const app = mountConfigRoute(engine);
+
+    const res = await app.request("/api/memories/compiled");
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.error).toContain("missing agentId");
+  });
+
+  it("requires an explicit agentId to list compiled week days", async () => {
+    const agent = makeAgent(tmpDir);
+    const engine = makeEngine(agent, tmpDir);
+    const app = mountConfigRoute(engine);
+
+    const res = await app.request("/api/memories/compiled/week/days");
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.error).toContain("missing agentId");
+  });
+
   it("returns compiled memory sections reading facts.md as the canonical facts source", async () => {
     const agent = makeAgent(tmpDir);
     const memoryDir = path.dirname(agent.memoryMdPath);

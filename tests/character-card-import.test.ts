@@ -44,14 +44,17 @@ describe("character-card import service", () => {
     packageDir = path.join(tempDir, "package");
     skillsDir = path.join(tempDir, "skills");
     agentsDir = path.join(tempDir, "agents");
+    const productDir = path.join(tempDir, "product");
     fs.mkdirSync(packageDir, { recursive: true });
     fs.mkdirSync(skillsDir, { recursive: true });
     fs.mkdirSync(agentsDir, { recursive: true });
+    fs.mkdirSync(productDir, { recursive: true });
 
     factStore = { importAll: vi.fn() };
     engine = {
       hanakoHome: tempDir,
       agentsDir,
+      productDir,
       userSkillsDir: skillsDir,
       skillsDir,
       cwd: tempDir,
@@ -266,11 +269,11 @@ describe("character-card import service", () => {
     });
   });
 
-  it("exposes identity and ishiki text in preview plans without exposing the local agent id", async () => {
+  it("exposes identity and AGENTS.md text in preview plans without exposing the local agent id", async () => {
     writeJson(path.join(packageDir, "card.json"), {
       kind: "CharacterCard",
       agent: {
-        name: "Ishiki Hana",
+        name: "Persona Hana",
         id: "local-only-id",
         yuan: "hanako",
         description: "花名册里的描述",
@@ -278,8 +281,8 @@ describe("character-card import service", () => {
       identity: { summary: "沉静的手账写作者", content: "Identity full text" },
       prompts: {
         identity: "Identity prompt text",
-        ishiki: "Ishiki prompt text",
-        publicIshiki: "Public ishiki text",
+        agents: "Persona prompt text",
+        publicAgents: "Public persona text",
       },
     });
 
@@ -287,16 +290,84 @@ describe("character-card import service", () => {
     const plan = await service.createImportPlanFromPath(packageDir);
 
     expect(plan.agent).toEqual({
-      name: "Ishiki Hana",
+      name: "Persona Hana",
       yuan: "hanako",
       description: "花名册里的描述",
       identitySummary: "沉静的手账写作者",
     });
     expect(plan.prompts).toEqual({
       identity: "Identity prompt text",
-      ishiki: "Ishiki prompt text",
-      publicIshiki: "Public ishiki text",
+      agents: "Persona prompt text",
+      publicAgents: "Public persona text",
     });
+  });
+
+  it("still reads persona text from already-published cards that use the pre-rename prompt keys", async () => {
+    // Cards published before the persona file was renamed to AGENTS.md carry
+    // prompts.ishiki / prompts.public_ishiki. Those packages are already out in
+    // the world and cannot be rewritten, so the reader keeps accepting them and
+    // normalizes them onto the current key names.
+    writeJson(path.join(packageDir, "card.json"), {
+      kind: "CharacterCard",
+      agent: { name: "Legacy Hana", id: "legacy-hana", yuan: "hanako" },
+      prompts: {
+        identity: "Identity prompt text",
+        ishiki: "Legacy persona text",
+        public_ishiki: "Legacy public persona text",
+      },
+    });
+
+    const service = createCharacterCardService(engine);
+    const plan = await service.createImportPlanFromPath(packageDir);
+
+    expect(plan.prompts).toEqual({
+      identity: "Identity prompt text",
+      agents: "Legacy persona text",
+      publicAgents: "Legacy public persona text",
+    });
+
+    // The normalized keys are what reaches agent creation as initialFiles;
+    // which file name each key lands on is pinned in the agent-manager tests.
+    await service.commitImportPlan(plan.token, {});
+    expect(engine.createAgent).toHaveBeenCalledWith(expect.objectContaining({
+      initialFiles: {
+        identity: "Identity prompt text",
+        agents: "Legacy persona text",
+        publicAgents: "Legacy public persona text",
+      },
+    }));
+  });
+
+  it("still reads the oldest published persona key, prompts.yuan, when no newer key is present", async () => {
+    writeJson(path.join(packageDir, "card.json"), {
+      kind: "CharacterCard",
+      agent: { name: "Oldest Hana", id: "oldest-hana", yuan: "hanako" },
+      prompts: { yuan: "Oldest persona text" },
+    });
+
+    const service = createCharacterCardService(engine);
+    const plan = await service.createImportPlanFromPath(packageDir);
+
+    expect(plan.prompts.agents).toBe("Oldest persona text");
+  });
+
+  it("prefers the current prompt keys over the pre-rename ones when a card carries both", async () => {
+    writeJson(path.join(packageDir, "card.json"), {
+      kind: "CharacterCard",
+      agent: { name: "Both Hana", id: "both-hana", yuan: "hanako" },
+      prompts: {
+        agents: "Current persona text",
+        ishiki: "Legacy persona text",
+        publicAgents: "Current public persona text",
+        publicIshiki: "Legacy public persona text",
+      },
+    });
+
+    const service = createCharacterCardService(engine);
+    const plan = await service.createImportPlanFromPath(packageDir);
+
+    expect(plan.prompts.agents).toBe("Current persona text");
+    expect(plan.prompts.publicAgents).toBe("Current public persona text");
   });
 
   it("imports the same character card twice by allocating a new agent id", async () => {
@@ -381,8 +452,8 @@ describe("character-card import service", () => {
       "    - writer",
     ].join("\n"), "utf-8");
     fs.writeFileSync(path.join(agentDir, "identity.md"), "Writer identity", "utf-8");
-    fs.writeFileSync(path.join(agentDir, "ishiki.md"), "Writer ishiki", "utf-8");
-    fs.writeFileSync(path.join(agentDir, "public-ishiki.md"), "Public writer", "utf-8");
+    fs.writeFileSync(path.join(agentDir, "AGENTS.md"), "Writer persona", "utf-8");
+    fs.writeFileSync(path.join(agentDir, "AGENTS.public.md"), "Public writer", "utf-8");
     fs.writeFileSync(path.join(agentDir, "description.md"), "<!-- sourceHash: abc -->\n<mood>\nVibe: 平静专注\n</mood>\n花名册描述", "utf-8");
     fs.writeFileSync(path.join(agentDir, "memory", "facts.md"), "用户喜欢短句。", "utf-8");
     fs.writeFileSync(path.join(agentDir, "memory", "today.md"), "今天写好了角色卡导出预览和技能包结构。", "utf-8");
@@ -459,8 +530,8 @@ describe("character-card import service", () => {
     expect(card.agent).toEqual({ name: "Hana", yuan: "hanako", description: "花名册描述" });
     expect(card.prompts).toMatchObject({
       identity: "Writer identity",
-      ishiki: "Writer ishiki",
-      publicIshiki: "Public writer",
+      agents: "Writer persona",
+      publicAgents: "Public writer",
     });
     expect(card.memory.facts).toEqual([
       { fact: "喜欢短句", tags: ["writing"], time: "2026-05-14", session_id: "s1" },
@@ -475,6 +546,40 @@ describe("character-card import service", () => {
     expect(fs.readFileSync(path.join(outDir, "skills/writer/SKILL.md"), "utf-8")).toContain("exported skill");
     expect(fs.existsSync(path.join(outDir, "assets/avatar.png"))).toBe(true);
     expect(fs.existsSync(path.join(outDir, "assets/card-back.png"))).toBe(true);
+  });
+
+  it("exports the template-resolved identity/AGENTS.md content when the agent has never customized them (lazy materialization)", async () => {
+    const agentDir = path.join(agentsDir, "hana");
+    fs.mkdirSync(path.join(agentDir, "memory"), { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "config.yaml"), [
+      "agent:",
+      "  name: Hana",
+      "  yuan: hanako",
+    ].join("\n"), "utf-8");
+    // identity.md / AGENTS.md 故意不写：agent 从未定制过人格，惰性材料化后
+    // agentDir 下本来就不会有这两个文件。
+    expect(fs.existsSync(path.join(agentDir, "identity.md"))).toBe(false);
+    expect(fs.existsSync(path.join(agentDir, "AGENTS.md"))).toBe(false);
+    fs.mkdirSync(path.join(engine.productDir, "identity-templates"), { recursive: true });
+    fs.writeFileSync(path.join(engine.productDir, "identity-templates", "hanako.md"), "Template identity content", "utf-8");
+    fs.mkdirSync(path.join(engine.productDir, "agents-templates"), { recursive: true });
+    fs.writeFileSync(path.join(engine.productDir, "agents-templates", "hanako.md"), "Template persona content", "utf-8");
+    engine.getAgent = vi.fn((id) => id === "hana"
+      ? { id: "hana", agentDir, factStore: { exportAll: vi.fn(() => []) } }
+      : null);
+
+    const service = createCharacterCardService(engine);
+    const exported = await service.exportAgentPackage("hana", { targetDir: tempDir });
+
+    const outDir = path.join(tempDir, "unzipped-lazy-export");
+    fs.mkdirSync(outDir);
+    await extractZip(exported.filePath, outDir);
+    const card = JSON.parse(fs.readFileSync(path.join(outDir, "card.json"), "utf-8"));
+
+    // 导出必须捕捉 agent 此刻实际生效的人格（回落到模板），空字符串会让导出
+    // 的角色卡本身失真。
+    expect(card.prompts.identity).toBe("Template identity content");
+    expect(card.prompts.agents).toBe("Template persona content");
   });
 
   it("defaults export output to the assistant desk directory and avoids overwriting existing cards", async () => {

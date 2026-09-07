@@ -34,6 +34,7 @@ export function searchSessions(sessions, query, options: { phase?: string; limit
       modelId: session.modelId || null,
       modelProvider: session.modelProvider || null,
       pinnedAt: session.pinnedAt || null,
+      pinOrder: Number.isFinite(session.pinOrder) ? session.pinOrder : null,
       matchKind: phase,
       snippet: buildSnippet(fieldText, normalizedQuery, match.token),
       score: match.score,

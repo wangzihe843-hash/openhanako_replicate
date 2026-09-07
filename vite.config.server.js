@@ -1,12 +1,26 @@
+import process from "node:process";
 import { defineConfig } from "vite";
 import { builtinModules } from "module";
 
 const nodeBuiltins = builtinModules.flatMap((m) => [m, `node:${m}`]);
 
+// HANA_SERVER_BUNDLE_ENTRY lets a caller (scripts/build-server-phases.mjs's
+// buildViteServerBundle) override which composition entry gets bundled,
+// without this config file knowing anything about "open" vs "full" —
+// scripts/build-server.mjs (full) never sets it, so the default below is
+// unchanged; scripts/build-server-open.mjs sets it to server/main-open.ts.
+const bundleEntry = process.env.HANA_SERVER_BUNDLE_ENTRY || "server/main-full.ts";
+
 export default defineConfig({
   build: {
     lib: {
-      entry: "server/index.ts",
+      // main-full.ts is the thin closed composition entry: it statically
+      // imports server/index.ts's open startServer() plus
+      // composition/full-root.ts's registerClosedRoutes hook, so the
+      // packaged bundle still ships the full product (open + closed-product
+      // routes). HANA_SERVER_BUNDLE_ENTRY overrides this for other
+      // compositions (see the comment above).
+      entry: bundleEntry,
       formats: ["es"],
       fileName: () => "index.js",
     },
@@ -17,6 +31,13 @@ export default defineConfig({
         "@node-rs/jieba",
         "better-sqlite3",
         "node-pty",
+
+        // @firecrawl/anydoc: napi native addon. Its per-platform subpackage
+        // declares the .node binary itself as "main", so bundling makes
+        // Rollup parse Mach-O/ELF bytes as JavaScript. External also means
+        // build-server installs it into the packaged server's node_modules
+        // (this list is the source of truth for that install set).
+        "@firecrawl/anydoc",
 
         // ws: CJS package, Rollup's CJS→ESM interop loses WebSocketServer
         // named export. Keep external — available as PI SDK transitive dep.

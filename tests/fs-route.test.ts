@@ -14,17 +14,20 @@ describe("fs route", () => {
     fs.mkdirSync(tempRoot, { recursive: true });
   });
 
-  function buildApp({ hanakoHome, workspace }) {
+  function buildApp({ hanakoHome, workspace, otherWorkspace = null }) {
     const app = new Hono();
+    const desks: Record<string, string> = { hana: workspace };
+    if (otherWorkspace) desks.mio = otherWorkspace;
     const engine = {
       hanakoHome,
       currentAgentId: "hana",
-      getHomeCwd: vi.fn((agentId) => agentId === "hana" ? workspace : null),
+      getHomeCwd: vi.fn((agentId) => desks[agentId] || null),
+      listAgents: () => Object.keys(desks).map((id) => ({ id })),
       getAgent(id) {
-        if (id !== "hana") return null;
+        if (!desks[id]) return null;
         return {
-          id: "hana",
-          config: { desk: { home_folder: workspace } },
+          id,
+          config: { desk: { home_folder: desks[id] } },
           deskManager: {},
         };
       },
@@ -33,8 +36,7 @@ describe("fs route", () => {
     return app;
   }
 
-  // Real fs.symlinkSync requires admin/Developer Mode on Windows; covered on POSIX runners.
-  it.skipIf(process.platform === "win32")("rejects symlink escapes from an allowed workspace", async () => {
+  it("rejects symlink escapes from an allowed workspace", async () => {
     const hanakoHome = path.join(tempRoot, "hanako");
     const workspace = path.join(tempRoot, "workspace");
     const outsideDir = path.join(tempRoot, "outside");
@@ -43,9 +45,16 @@ describe("fs route", () => {
     fs.mkdirSync(outsideDir, { recursive: true });
 
     const outsideFile = path.join(outsideDir, "secret.txt");
-    const linkedFile = path.join(workspace, "secret-link.txt");
+    const linkedFile = process.platform === "win32"
+      ? path.join(workspace, "linked", "secret.txt")
+      : path.join(workspace, "secret-link.txt");
     fs.writeFileSync(outsideFile, "top secret", "utf-8");
-    fs.symlinkSync(outsideFile, linkedFile);
+    if (process.platform === "win32") {
+      fs.symlinkSync(outsideDir, path.dirname(linkedFile), "junction");
+    } else {
+      fs.symlinkSync(outsideFile, linkedFile);
+    }
+    expect(fs.realpathSync(linkedFile)).toBe(fs.realpathSync(outsideFile));
 
     const app = buildApp({ hanakoHome, workspace });
     const res = await app.request(`/api/fs/read?path=${encodeURIComponent(linkedFile)}`);
@@ -66,6 +75,57 @@ describe("fs route", () => {
 
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "file not found" });
+  });
+
+  it("serves every agent's desk, not only the one the server is focused on", async () => {
+    const hanakoHome = path.join(tempRoot, "hanako");
+    const workspace = path.join(tempRoot, "workspace");
+    const otherWorkspace = path.join(tempRoot, "other-workspace");
+    fs.mkdirSync(path.join(hanakoHome, "user"), { recursive: true });
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(otherWorkspace, { recursive: true });
+
+    const otherFile = path.join(otherWorkspace, "notes.txt");
+    fs.writeFileSync(otherFile, "second desk", "utf-8");
+    const homeFile = path.join(hanakoHome, "user", "prefs.txt");
+    fs.writeFileSync(homeFile, "home file", "utf-8");
+
+    const app = buildApp({ hanakoHome, workspace, otherWorkspace });
+
+    // No agentId in the request, and the file belongs to the agent the server
+    // is not focused on: still served, because the token is what decides
+    // access here and it is not scoped to one agent.
+    const otherRes = await app.request(`/api/fs/read?path=${encodeURIComponent(otherFile)}`);
+    expect(otherRes.status).toBe(200);
+    expect(await otherRes.text()).toBe("second desk");
+
+    const homeRes = await app.request(`/api/fs/read?path=${encodeURIComponent(homeFile)}`);
+    expect(homeRes.status).toBe(200);
+    expect(await homeRes.text()).toBe("home file");
+  });
+
+  it("refuses paths outside every allowed root", async () => {
+    const hanakoHome = path.join(tempRoot, "hanako");
+    const workspace = path.join(tempRoot, "workspace");
+    const outsideDir = path.join(tempRoot, "outside");
+    fs.mkdirSync(path.join(hanakoHome, "user"), { recursive: true });
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(outsideDir, { recursive: true });
+
+    const outsideFile = path.join(outsideDir, "secret.txt");
+    fs.writeFileSync(outsideFile, "top secret", "utf-8");
+
+    const app = buildApp({ hanakoHome, workspace });
+
+    const plainRes = await app.request(`/api/fs/read?path=${encodeURIComponent(outsideFile)}`);
+    expect(plainRes.status).toBe(403);
+    expect(await plainRes.json()).toEqual({ error: "path not allowed" });
+
+    // Climbing out of an allowed root lands in the same place.
+    const escape = path.join(workspace, "..", "outside", "secret.txt");
+    const escapeRes = await app.request(`/api/fs/read?path=${encodeURIComponent(escape)}`);
+    expect(escapeRes.status).toBe(403);
+    expect(await escapeRes.json()).toEqual({ error: "path not allowed" });
   });
 
   it("renders allowed xlsx files as HTML for the web preview fallback", async () => {

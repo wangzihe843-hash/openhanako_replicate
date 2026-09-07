@@ -7,6 +7,7 @@
 
 import fs from "fs";
 import path from "path";
+import { canonicalFilesystemPathSync, filesystemIdentityKeySync } from "../../shared/link-aware-fs.ts";
 import { detectMime, formatSize } from "../file-metadata.ts";
 
 // ── 本地路径安全白名单（对标 OpenClaw mediaLocalRoots）────
@@ -18,18 +19,16 @@ let _allowedRoots = [];
  * 由 BridgeManager 初始化时调用，传入 HANA_HOME 和 workspace。
  */
 export function setMediaLocalRoots(roots) {
-  _allowedRoots = roots.map((r) => {
-    const resolved = path.resolve(r);
-    try { return fs.realpathSync(resolved); }
-    catch { return resolved; }
-  });
+  // 白名单存的是真实路径（canonical），比较时才折大小写。
+  _allowedRoots = roots.map((r) => canonicalFilesystemPathSync(r));
 }
 
 function isPathAllowed(filePath) {
-  const resolved = path.resolve(filePath);
-  return _allowedRoots.some(root =>
-    resolved === root || resolved.startsWith(root + path.sep)
-  );
+  const target = filesystemIdentityKeySync(filePath);
+  return _allowedRoots.some((root) => {
+    const rootKey = filesystemIdentityKeySync(root);
+    return target === rootKey || target.startsWith(rootKey + path.sep);
+  });
 }
 
 export function resolveAllowedLocalPath(filePath) {
@@ -37,9 +36,10 @@ export function resolveAllowedLocalPath(filePath) {
   if (!path.isAbsolute(localPath)) {
     throw new Error(`unsupported media source: ${String(filePath || "").slice(0, 30)}`);
   }
-  let realPath;
-  try { realPath = fs.realpathSync(localPath); }
+  // 不存在必须报错，不能悄悄回落成 resolve 后的路径，所以先真实探一次再归一。
+  try { fs.realpathSync(localPath); }
   catch { throw new Error(`file not found: ${localPath}`); }
+  const realPath = canonicalFilesystemPathSync(localPath);
   if (!isPathAllowed(realPath)) {
     throw new Error("path outside allowed roots");
   }

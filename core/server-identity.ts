@@ -3,8 +3,13 @@ import path from "path";
 import crypto from "crypto";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
 import { ensureDeviceAccessRegistries } from "./device-registry.ts";
-import { ensureExecutionLeaseRegistry } from "./execution-lease-registry.ts";
-import { ensureGrantRegistry } from "./grant-registry.ts";
+import {
+  ensureExecutionLeaseRegistry,
+  EXECUTION_LEASES_FILE,
+  executionLeaseRegistryPath,
+} from "./execution-lease-registry.ts";
+import { ensureGrantRegistry, GRANTS_FILE, grantRegistryPath } from "./grant-registry.ts";
+import { SECURITY_DIR } from "./security-dir.ts";
 import { ensureServerNetworkConfig } from "./server-network-config.ts";
 import { ensureStudioMountRegistry } from "./studio-mounts.ts";
 
@@ -133,14 +138,14 @@ export function ensureRemoteAccessFoundationRegistries(hanakoHome, { now = new D
 
 function ensureSecurityRegistries(hanakoHome, { now }) {
   const created = [];
-  const grantPath = path.join(hanakoHome, "security", "grants.json");
-  const leasePath = path.join(hanakoHome, "security", "execution-leases.json");
+  const grantPath = grantRegistryPath(hanakoHome);
+  const leasePath = executionLeaseRegistryPath(hanakoHome);
   const hadGrant = fs.existsSync(grantPath);
   const hadLease = fs.existsSync(leasePath);
   ensureGrantRegistry(hanakoHome, { now });
   ensureExecutionLeaseRegistry(hanakoHome, { now });
-  if (!hadGrant) created.push(path.join("security", "grants.json"));
-  if (!hadLease) created.push(path.join("security", "execution-leases.json"));
+  if (!hadGrant) created.push(path.join(SECURITY_DIR, GRANTS_FILE));
+  if (!hadLease) created.push(path.join(SECURITY_DIR, EXECUTION_LEASES_FILE));
   return { created };
 }
 

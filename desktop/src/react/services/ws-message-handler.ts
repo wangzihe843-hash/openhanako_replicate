@@ -22,6 +22,7 @@ import {
   upsertConversationAgentActivity as upsertConversationAgentActivityAction,
 } from '../stores/channel-actions';
 import { showError } from '../utils/ui-helpers';
+import { errorWithCode, presentError } from '../errors/error-presenter';
 import { handleAppEvent } from './app-event-actions';
 import {
   PREVIEW_DOCUMENT_CHANGE_REFRESH_OPTIONS,
@@ -297,10 +298,32 @@ function setCompactionBusy(msg: any, busy: boolean): void {
   const { key, sessionId, sessionPath } = compactionIdentity(msg);
   if (!key) return;
   useStore.setState((state: any) => {
-    const withoutIdentity = (state.compactingSessions || []).filter((item: string) => (
+    const compactingSessions = state.compactingSessions || [];
+    const wasBusy = compactingSessions.some((item: string) => (
+      item === key || item === sessionId || item === sessionPath
+    ));
+    const withoutIdentity = compactingSessions.filter((item: string) => (
       item !== key && item !== sessionId && item !== sessionPath
     ));
-    return { compactingSessions: busy ? [...withoutIdentity, key] : withoutIdentity };
+    const compactionModeBySession = { ...(state.compactionModeBySession || {}) };
+    const priorMode = wasBusy
+      ? compactionModeBySession[key]
+        || (sessionId ? compactionModeBySession[sessionId] : null)
+        || (sessionPath ? compactionModeBySession[sessionPath] : null)
+      : null;
+    const incomingMode = typeof msg.mode === 'string' && msg.mode.trim()
+      ? msg.mode.trim()
+      : null;
+    delete compactionModeBySession[key];
+    if (sessionId) delete compactionModeBySession[sessionId];
+    if (sessionPath) delete compactionModeBySession[sessionPath];
+    if (busy && (incomingMode || priorMode)) {
+      compactionModeBySession[key] = incomingMode || priorMode;
+    }
+    return {
+      compactingSessions: busy ? [...withoutIdentity, key] : withoutIdentity,
+      compactionModeBySession,
+    };
   });
 }
 
@@ -585,13 +608,28 @@ export function handleServerMessage(msg: any): void {
     }
     case 'session_branch_reset': {
       const sp = msg.sessionPath;
-      const targetId = msg.clientMessageId || msg.messageId;
-      if (!sp || !targetId) { console.warn('[ws] session_branch_reset missing sessionPath or message id'); break; }
-      const truncated = useStore.getState().truncateSessionFromMessage(sp, targetId);
+      const targetIds = [...new Set([msg.clientMessageId, msg.messageId, msg.projectionMessageId]
+        .filter((id): id is string => typeof id === 'string' && !!id))];
+      if (!sp || targetIds.length === 0) { console.warn('[ws] session_branch_reset missing sessionPath or message id'); break; }
+      let truncated = false;
+      for (const targetId of targetIds) {
+        if (useStore.getState().truncateSessionFromMessage(sp, targetId)) {
+          truncated = true;
+          break;
+        }
+      }
       bumpMessageLiveVersion(sp);
       if (!truncated) {
-        console.warn('[ws] session_branch_reset target message not found:', sp, targetId);
+        console.warn('[ws] session_branch_reset target message not found:', sp, targetIds);
       }
+      if (Array.isArray(msg.todos)) {
+        useStore.getState().setSessionTodosForPath(sp, msg.todos);
+        useStore.getState().bumpTodosLiveVersion(sp);
+      }
+      useStore.getState().applyBranchResetSessionFiles(
+        sp,
+        Array.isArray(msg.sessionFiles) ? msg.sessionFiles : null,
+      );
       break;
     }
 
@@ -633,7 +671,10 @@ export function handleServerMessage(msg: any): void {
           : prev?.thumbnailUrl ?? null
         : null;
       const thumbnailFresh = bRunning && hasFreshThumbnail;
-      setBrowserStateForPath(bsp, { running: bRunning, url: bUrl, thumbnail: bThumbnail, thumbnailCapturedAt, thumbnailUrl, thumbnailFresh });
+      // 卡片的"收起"是用户意图，状态更新不该把它抹掉；只有浏览器重新启用（running false→true）
+      // 才算新一轮会话，卡片回归。
+      const collapsed = bRunning && !prev?.running ? false : (prev?.collapsed ?? false);
+      setBrowserStateForPath(bsp, { running: bRunning, url: bUrl, thumbnail: bThumbnail, thumbnailCapturedAt, thumbnailUrl, thumbnailFresh, collapsed });
       break;
     }
 
@@ -750,6 +791,31 @@ export function handleServerMessage(msg: any): void {
       }
       break;
 
+    case 'agent_review_status': {
+      const sp = nonEmptyString(msg.sessionPath);
+      const requestId = nonEmptyString(msg.requestId);
+      if (!sp || !requestId) break;
+      const session = sessionScopedValue(useStore.getState(), useStore.getState().chatSessions, sp);
+      const item = session?.items.find((candidate: any) => (
+        candidate.type === 'message' && candidate.data.role === 'user' && candidate.data.id === requestId
+      ));
+      if (!item || item.type !== 'message') break;
+      useStore.getState().appendOptimisticUserMessage(sp, {
+        ...item.data,
+        agentReview: {
+          requestId,
+          status: msg.status,
+          reviewedSessionId: msg.reviewedSessionId ?? null,
+          reviewerSessionId: msg.reviewerSessionId ?? null,
+          reviewerAgentId: msg.reviewerAgentId,
+          reviewerAgentName: msg.reviewerAgentName,
+          text: msg.result ?? item.data.agentReview?.text ?? null,
+          error: msg.error ?? null,
+        },
+      });
+      break;
+    }
+
     case 'session_user_message': {
       const sp = msg.sessionPath;
       if (!sp || !msg.message) break;
@@ -781,6 +847,10 @@ export function handleServerMessage(msg: any): void {
         attachments: msg.message.attachments,
         quotedText: msg.message.quotedText,
         skills: msg.message.skills,
+        sessionRefs: msg.message.sessionRefs ?? undefined,
+        agentMentions: msg.message.agentMentions ?? undefined,
+        agentReview: msg.message.agentReview ?? undefined,
+        agentReviewRequest: msg.message.agentReviewRequest ?? undefined,
         deskContext: msg.message.deskContext ?? undefined,
         origin: msg.message.origin ?? undefined,
       };
@@ -841,8 +911,9 @@ export function handleServerMessage(msg: any): void {
       const metadata = msg.metadata && typeof msg.metadata === 'object' ? msg.metadata : {};
       if (!sp) { console.warn('[ws] event missing sessionPath:', msg.type); break; }
       const hasPinnedAt = Object.prototype.hasOwnProperty.call(metadata, 'pinnedAt');
+      const hasPinOrder = Object.prototype.hasOwnProperty.call(metadata, 'pinOrder');
       const hasProjectId = Object.prototype.hasOwnProperty.call(metadata, 'projectId');
-      if (hasPinnedAt || hasProjectId) {
+      if (hasPinnedAt || hasPinOrder || hasProjectId) {
         useStore.setState((s) => ({
           sessions: s.sessions.map((session) => {
             if (session.path !== sp && (!sid || session.sessionId !== sid)) return session;
@@ -850,6 +921,9 @@ export function handleServerMessage(msg: any): void {
               ...session,
               ...(hasPinnedAt
                 ? { pinnedAt: typeof metadata.pinnedAt === 'string' ? metadata.pinnedAt : null }
+                : {}),
+              ...(hasPinOrder
+                ? { pinOrder: typeof metadata.pinOrder === 'number' ? metadata.pinOrder : null }
                 : {}),
               ...(hasProjectId
                 ? { projectId: typeof metadata.projectId === 'string' && metadata.projectId.trim() ? metadata.projectId.trim() : null }
@@ -860,9 +934,6 @@ export function handleServerMessage(msg: any): void {
       }
       if (sp === useStore.getState().currentSessionPath && typeof metadata.thinkingLevel === 'string') {
         useStore.getState().setThinkingLevel(metadata.thinkingLevel);
-      }
-      if (Object.prototype.hasOwnProperty.call(metadata, 'capabilityDrift')) {
-        useStore.getState().setSessionCapabilityDrift(sp, metadata.capabilityDrift || null);
       }
       break;
     }
@@ -975,15 +1046,25 @@ export function handleServerMessage(msg: any): void {
 
     case 'error': {
       const { sessionPath: sp } = sessionIdentityFromMessage(msg);
+      const presented = presentError(errorWithCode(
+        String(msg.message ?? ''),
+        typeof msg.code === 'string' ? msg.code : null,
+      ));
       if (!sp) {
-        if (msg.code === 'session_identity_unresolved' || msg.code === 'session_identity_mismatch') {
-          useStore.getState().addToast(msg.message || 'Unable to resolve session identity', 'error', 6000);
+        // 身份类错误本身就说明没有会话可以挂靠，落不到 inline 位，只能弹 toast。
+        // internal_contract 同理：服务端认定调用方没带身份，用户看不到就等于故障消失了。
+        if (
+          msg.code === 'session_identity_unresolved'
+          || msg.code === 'session_identity_mismatch'
+          || msg.code === 'internal_contract'
+        ) {
+          useStore.getState().addToast(presented.text, 'error', 6000, { errorCode: msg.code });
         } else {
           console.warn('[ws] event missing sessionPath:', msg.type);
         }
         break;
       }
-      useStore.getState().setInlineError(sp, msg.message);
+      useStore.getState().setInlineError(sp, presented);
       break;
     }
 
@@ -1042,6 +1123,16 @@ export function handleServerMessage(msg: any): void {
         // 通知其他窗口（设置窗口等）同步主题
         window.platform?.settingsChanged?.('theme-changed', { theme: msg.value });
       }
+      break;
+    }
+
+    case 'abort_result': {
+      if (msg.status !== 'already_stopped') break;
+      const sp = msg.sessionPath || null;
+      const sid = typeof msg.sessionId === 'string' && msg.sessionId.trim() ? msg.sessionId.trim() : null;
+      const streamId = typeof msg.streamId === 'string' && msg.streamId.trim() ? msg.streamId.trim() : null;
+      const applied = applyStreamingStatus(false, sp, { streamId }, { force: !streamId });
+      if (sp && applied) streamBufferManager.finishTurn(sp, sid);
       break;
     }
 

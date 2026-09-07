@@ -1,14 +1,15 @@
 /**
- * WorkspaceStep.tsx — Step 5: Default workspace selection
+ * WorkspaceStep.tsx — Step 4: Default workspace selection
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DEFAULT_WORKSPACE_DIRNAME } from '../../../../../shared/default-workspace-constants.ts';
 import {
+  describeOnboardingError,
   loadDefaultWorkspace,
   saveWorkspace,
 } from '../onboarding-actions';
-import type { HanaFetch } from '../onboarding-actions';
+import type { HanaFetch, OnboardingVerificationPlan } from '../onboarding-actions';
 import { StepContainer, Multiline } from '../onboarding-ui';
 
 const WorkspaceIcon = () => (
@@ -22,11 +23,13 @@ const WorkspaceIcon = () => (
 interface WorkspaceStepProps {
   preview: boolean;
   hanaFetch: HanaFetch;
+  agentId: string;
+  verificationPlan: OnboardingVerificationPlan;
   goToStep: (index: number) => void;
   showError: (msg: string) => void;
 }
 
-export function WorkspaceStep({ preview, hanaFetch, goToStep, showError }: WorkspaceStepProps) {
+export function WorkspaceStep({ preview, hanaFetch, agentId, verificationPlan, goToStep, showError }: WorkspaceStepProps) {
   const previewPath = useMemo(() => `~/Desktop/${DEFAULT_WORKSPACE_DIRNAME}`, []);
   const [defaultPath, setDefaultPath] = useState(preview ? previewPath : '');
   const [selectedPath, setSelectedPath] = useState('');
@@ -45,7 +48,7 @@ export function WorkspaceStep({ preview, hanaFetch, goToStep, showError }: Works
       })
       .catch(err => {
         console.error('[onboarding] load default workspace failed:', err);
-        showError(t('onboarding.error'));
+        showError(describeOnboardingError(err, t('onboarding.error')));
       });
     return () => { cancelled = true; };
   }, [preview, hanaFetch, showError]);
@@ -60,18 +63,18 @@ export function WorkspaceStep({ preview, hanaFetch, goToStep, showError }: Works
   }, []);
 
   const onNext = useCallback(async () => {
-    if (preview) { goToStep(6); return; }
+    if (preview) { goToStep(5); return; }
     if (!defaultPath || !visiblePath) return;
     setSaving(true);
     try {
-      await saveWorkspace({ hanaFetch, workspacePath: visiblePath, defaultPath });
-      goToStep(6);
+      await saveWorkspace({ hanaFetch, agentId, workspacePath: visiblePath, defaultPath, verificationPlan });
+      goToStep(5);
     } catch (err) {
       console.error('[onboarding] save workspace failed:', err);
-      showError(t('onboarding.error'));
+      showError(describeOnboardingError(err, t('onboarding.error')));
       setSaving(false);
     }
-  }, [preview, goToStep, defaultPath, visiblePath, hanaFetch, showError]);
+  }, [preview, goToStep, defaultPath, visiblePath, hanaFetch, agentId, verificationPlan, showError]);
 
   return (
     <StepContainer>
@@ -103,7 +106,7 @@ export function WorkspaceStep({ preview, hanaFetch, goToStep, showError }: Works
       </div>
 
       <div className="onboarding-actions">
-        <button className="ob-btn ob-btn-secondary" onClick={() => goToStep(4)}>
+        <button className="ob-btn ob-btn-secondary" onClick={() => goToStep(3)}>
           {t('onboarding.workspace.back')}
         </button>
         <button

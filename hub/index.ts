@@ -28,12 +28,29 @@ import {
   isValidSessionPath,
 } from "../core/message-utils.ts";
 import { submitDesktopSessionMessage } from "../core/desktop-session-submit.ts";
+import { stripSessionReminderBlocks } from "../core/session-reminders.ts";
 import { extOfName, inferFileKind } from "../lib/file-metadata.ts";
 import { createModuleLogger } from "../lib/debug-log.ts";
 import { normalizeSessionTurnContext } from "../core/session-turn-context.ts";
 import { findModel } from "../shared/model-ref.ts";
 
 const log = createModuleLogger("hub");
+
+function assertRuntimeMediaCapabilityOwner(providerRegistry, providerId, requestContext) {
+  const caller = requestContext?.caller;
+  if (caller?.kind !== "plugin" || typeof caller.pluginId !== "string") {
+    throw new Error("Runtime media capability sources can only be managed by their provider plugin");
+  }
+  const entryPluginId = providerRegistry.get?.(providerId)?.source?.pluginId;
+  const registeredOwner = providerRegistry.getRuntimeMediaCapabilitySourceOwner?.(providerId)?.pluginId;
+  const expectedPluginId = registeredOwner || entryPluginId || providerId;
+  if (caller.pluginId !== expectedPluginId) {
+    throw new Error(
+      `Plugin "${caller.pluginId}" cannot manage runtime media capabilities for provider "${providerId}"`,
+    );
+  }
+  return { pluginId: caller.pluginId };
+}
 
 export class Hub {
   declare _agentPhoneAbortHandlers: any;
@@ -304,7 +321,7 @@ export class Hub {
 
   /**
    * 初始化所有调度器（Scheduler + ChannelRouter）
-   * 在 engine.init() 完成后由 server/index.js 调用
+   * 在 engine.init() 完成后由 server/index.ts 调用
    */
   initSchedulers() {
     const engine = this._engine;
@@ -411,7 +428,7 @@ export class Hub {
         ...(agentId ? { agentId } : {}),
         ...createOptions,
       });
-      engine.persistSessionMeta?.();
+      engine.persistSessionMeta?.(result.sessionPath);
       const sessionPath = result.sessionPath;
       const sessionId = sessionPath ? engine.getSessionIdForPath?.(sessionPath) || null : null;
       if (payload.permissionMode !== undefined && sessionPath) {
@@ -557,8 +574,9 @@ export class Hub {
         if (m.role === "user") {
           const { text, images } = extractTextContent(m.content);
           const visibleImages = filterUnreferencedInlineImages(text, images);
-          if (text || visibleImages.length) {
-            messages.push({ role: "user", content: text, images: visibleImages.length ? visibleImages : undefined });
+          const visibleText = stripSessionReminderBlocks(text);
+          if (visibleText || visibleImages.length) {
+            messages.push({ role: "user", content: visibleText, images: visibleImages.length ? visibleImages : undefined });
           }
         } else if (m.role === "assistant") {
           const { text, thinking, toolUses } = extractTextContent(m.content, { stripThink: true });
@@ -709,13 +727,16 @@ export class Hub {
 
     // ── provider & agent handlers ──
 
-    this._sessionHandlerCleanups.push(bus.handle("provider:credentials", async ({ providerId }) => {
+    this._sessionHandlerCleanups.push(bus.handle("provider:credentials", async ({ providerId, forceRefresh, staleApiKey }) => {
       if (typeof engine.resolveProviderCredentialsFresh !== "function") {
         return { error: "fresh_credentials_unavailable" };
       }
       let fresh;
       try {
-        fresh = await engine.resolveProviderCredentialsFresh(providerId);
+        fresh = await engine.resolveProviderCredentialsFresh(providerId, {
+          forceRefresh: !!forceRefresh,
+          ...(staleApiKey ? { staleApiKey } : {}),
+        });
       } catch {
         return { error: "credential_refresh_failed" };
       }
@@ -742,6 +763,28 @@ export class Hub {
     }));
 
     this._sessionHandlerCleanups.push(bus.handle("provider:media-providers", async ({ capability = "image_generation" }: any = {}) => {
+      await engine.providerRegistry.refreshRuntimeMediaCapabilities?.({ capability });
+      const mediaConfig = capability === "video_generation"
+        ? engine.media?.getVideoConfig?.()
+        : engine.media?.getImageConfig?.();
+      const defaultModel = capability === "video_generation"
+        ? mediaConfig?.defaultVideoModel
+        : mediaConfig?.defaultImageModel;
+      const defaultConfigured = Boolean(defaultModel?.provider && defaultModel?.id);
+      const selection = {
+        defaultConfigured,
+        selectionPolicy: defaultConfigured ? "configured_default" : "first_available_fallback",
+        overrideRequired: false,
+        defaultInvocation: {
+          provider: "omit",
+          model: "omit",
+          mode: "omit_unless_needed",
+          options: "omit_unless_needed",
+        },
+        instruction: defaultConfigured
+          ? "These providers and models are optional advanced overrides, not a required menu. For ordinary generation, omit provider and model so the host uses the configured default."
+          : "These providers and models are optional advanced overrides, not a required menu. For ordinary generation, omit provider and model so the host uses its first available fallback.",
+      };
       const providers: any = {};
       for (const provider of engine.providerRegistry.getMediaProviders(capability)) {
         const credentialStatus = engine.providerRegistry.getMediaProviderCredentialStatus(provider.providerId, capability);
@@ -752,6 +795,7 @@ export class Hub {
           credentialLanes: credentialStatus.lanes,
           activeCredentialLaneId: credentialStatus.activeLaneId || null,
           activeCredentialProviderId: credentialStatus.activeProviderId || null,
+          unavailableMessage: credentialStatus.unavailableMessage || null,
           models: provider.models.map((model) => {
             const name = model.displayName || model.name || model.id;
             return {
@@ -766,7 +810,7 @@ export class Hub {
           availableModels: [],
         };
       }
-      return { providers };
+      return { providers, selection };
     }));
 
     this._sessionHandlerCleanups.push(bus.handle("provider:resolve-media-model", async ({
@@ -778,6 +822,10 @@ export class Hub {
       credentialLaneId,
     }: any = {}) => {
       try {
+        await engine.providerRegistry.refreshRuntimeMediaCapabilities?.({
+          providerId: providerId || provider,
+          capability,
+        });
         const resolved = engine.providerRegistry.resolveMediaModel({
           providerId: providerId || provider,
           modelId: modelId || model,
@@ -801,6 +849,31 @@ export class Hub {
         };
       } catch (err) {
         return { error: err.message || String(err) };
+      }
+    }));
+
+    this._sessionHandlerCleanups.push(bus.handle("provider:register-runtime-media-capability-source", async ({
+      providerId,
+      source,
+    }: any = {}, requestContext: any = null) => {
+      try {
+        const owner = assertRuntimeMediaCapabilityOwner(engine.providerRegistry, providerId, requestContext);
+        engine.providerRegistry.registerRuntimeMediaCapabilitySource(providerId, source, owner);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err.message || String(err) };
+      }
+    }));
+
+    this._sessionHandlerCleanups.push(bus.handle("provider:unregister-runtime-media-capability-source", async ({
+      providerId,
+    }: any = {}, requestContext: any = null) => {
+      try {
+        const owner = assertRuntimeMediaCapabilityOwner(engine.providerRegistry, providerId, requestContext);
+        engine.providerRegistry.unregisterRuntimeMediaCapabilitySource(providerId, owner);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err.message || String(err) };
       }
     }));
 
@@ -847,16 +920,6 @@ export class Hub {
       return { config: fresh?.config || agent.config };
     }));
 
-    this._sessionHandlerCleanups.push(bus.handle("session:capability-drift:mark-stale", async (payload: any = {}) => {
-      if (typeof engine.markCapabilitySnapshotsStale !== "function") {
-        return { error: "capability_drift_unavailable" };
-      }
-      try {
-        return engine.markCapabilitySnapshotsStale(payload);
-      } catch (err) {
-        return { error: err.message || String(err) };
-      }
-    }));
   }
 
   _setupDmHandler() {

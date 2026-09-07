@@ -1,7 +1,7 @@
 /**
  * todo-compat.ts — 前端镜像
  *
- * 后端真实来源：project-hana/lib/tools/todo-compat.js
+ * 后端真实来源：lib/tools/todo-compat.ts
  * 这两个文件必须保持同步。任何改动都要改两处。
  *
  * 前端只镜像纯函数（migrateLegacyTodos / extractLatestTodos）。

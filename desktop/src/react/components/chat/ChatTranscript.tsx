@@ -9,6 +9,10 @@ import { buildTranscriptRenderItems, type TranscriptRenderItem } from './process
 import { useStore } from '../../stores';
 import { selectIsStreamingSession, selectSelectedIdsBySession } from '../../stores/session-selectors';
 import { resolveAgentDisplayInfo, type AgentDisplayInfo } from '../../utils/agent-display';
+import type {
+  ForkedSessionHandler,
+  SessionNodeTarget,
+} from '../../stores/message-turn-actions';
 
 interface Props {
   items: ChatListItem[];
@@ -19,6 +23,7 @@ interface Props {
   userIdentity?: { name?: string | null; avatarUrl?: string | null };
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
   enableProcessFold?: boolean;
+  onForkCreated?: ForkedSessionHandler;
 }
 
 export const ChatTranscript = memo(function ChatTranscript({
@@ -30,6 +35,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   userIdentity,
   registerMessageElement,
   enableProcessFold = false,
+  onForkCreated,
 }: Props) {
   const isStreaming = useStore(s => selectIsStreamingSession(s, sessionPath));
   const agents = useStore(s => s.agents);
@@ -72,16 +78,18 @@ export const ChatTranscript = memo(function ChatTranscript({
           readOnly={readOnly}
           hideUserIdentity={hideUserIdentity}
           userIdentity={userIdentity}
-          latestUserMessage={turnState.latestUserMessage}
           latestUserIndex={turnState.latestUserIndex}
           latestAssistantIndex={turnState.latestAssistantIndex}
           turnCompletionAssistantIndexes={turnState.turnCompletionAssistantIndexes}
           assistantTurnSelectionIdsByCompletionIndex={turnState.assistantTurnSelectionIdsByCompletionIndex}
+          assistantTurnTargetsByCompletionIndex={turnState.assistantTurnTargetsByCompletionIndex}
+          assistantTurnRetryMessagesByCompletionIndex={turnState.assistantTurnRetryMessagesByCompletionIndex}
           isStreamingSession={isStreaming}
           agentDisplay={agentDisplay}
           viewerIdentity={viewerIdentity}
           selectedIds={selectedIds}
           registerMessageElement={registerMessageElement}
+          onForkCreated={onForkCreated}
         />
       ))}
     </>
@@ -99,24 +107,40 @@ function renderItemKey(renderItem: TranscriptRenderItem): string {
 function buildTurnState(items: ChatListItem[]): {
   latestUserIndex: number;
   latestAssistantIndex: number;
-  latestUserMessage: ChatMessage | null;
   turnCompletionAssistantIndexes: ReadonlySet<number>;
   assistantTurnSelectionIdsByCompletionIndex: ReadonlyMap<number, readonly string[]>;
+  assistantTurnTargetsByCompletionIndex: ReadonlyMap<number, SessionNodeTarget>;
+  assistantTurnRetryMessagesByCompletionIndex: ReadonlyMap<number, ChatMessage>;
 } {
   let latestUserIndex = -1;
   let latestAssistantIndex = -1;
-  let latestUserMessage: ChatMessage | null = null;
+  let precedingUserEntryId: string | null = null;
+  let precedingUserMessage: ChatMessage | null = null;
   let pendingAssistantIndex = -1;
+  let pendingAssistantTurnInputEntryId: string | null = null;
   let pendingAssistantTurnIds: string[] = [];
+  let pendingAssistantTarget: SessionNodeTarget | null = null;
+  let pendingAssistantRetryMessage: ChatMessage | null = null;
   const turnCompletionAssistantIndexes = new Set<number>();
   const assistantTurnSelectionIdsByCompletionIndex = new Map<number, readonly string[]>();
+  const assistantTurnTargetsByCompletionIndex = new Map<number, SessionNodeTarget>();
+  const assistantTurnRetryMessagesByCompletionIndex = new Map<number, ChatMessage>();
 
   const completePendingAssistantTurn = () => {
     if (pendingAssistantIndex < 0) return;
     turnCompletionAssistantIndexes.add(pendingAssistantIndex);
     assistantTurnSelectionIdsByCompletionIndex.set(pendingAssistantIndex, pendingAssistantTurnIds);
+    if (pendingAssistantTarget) {
+      assistantTurnTargetsByCompletionIndex.set(pendingAssistantIndex, pendingAssistantTarget);
+    }
+    if (pendingAssistantRetryMessage) {
+      assistantTurnRetryMessagesByCompletionIndex.set(pendingAssistantIndex, pendingAssistantRetryMessage);
+    }
     pendingAssistantIndex = -1;
+    pendingAssistantTurnInputEntryId = null;
     pendingAssistantTurnIds = [];
+    pendingAssistantTarget = null;
+    pendingAssistantRetryMessage = null;
   };
 
   for (let i = 0; i < items.length; i += 1) {
@@ -126,13 +150,33 @@ function buildTurnState(items: ChatListItem[]): {
     if (item.data.role === 'user') {
       completePendingAssistantTurn();
       latestUserIndex = i;
-      latestUserMessage = item.data;
+      precedingUserEntryId = item.data.sourceEntryId || null;
+      precedingUserMessage = item.data;
       continue;
     }
 
     if (item.data.role === 'assistant') {
+      const turnInputEntryId = item.data.turnInputEntryId || precedingUserEntryId;
+      if (
+        pendingAssistantIndex >= 0
+        && pendingAssistantTurnInputEntryId !== turnInputEntryId
+        && (pendingAssistantTurnInputEntryId !== null || turnInputEntryId !== null)
+      ) {
+        completePendingAssistantTurn();
+      }
+      if (pendingAssistantIndex < 0) {
+        pendingAssistantTurnInputEntryId = turnInputEntryId;
+      }
       pendingAssistantIndex = i;
       pendingAssistantTurnIds = [...pendingAssistantTurnIds, item.data.id];
+      pendingAssistantTarget = item.data.sourceEntryId
+        ? { role: 'assistant', entryId: item.data.sourceEntryId }
+        : (turnInputEntryId
+            ? { role: 'assistant_turn', turnInputEntryId }
+            : null);
+      pendingAssistantRetryMessage = turnInputEntryId && turnInputEntryId === precedingUserEntryId
+        ? precedingUserMessage
+        : null;
       latestAssistantIndex = i;
     }
   }
@@ -142,9 +186,10 @@ function buildTurnState(items: ChatListItem[]): {
   return {
     latestUserIndex,
     latestAssistantIndex,
-    latestUserMessage,
     turnCompletionAssistantIndexes,
     assistantTurnSelectionIdsByCompletionIndex,
+    assistantTurnTargetsByCompletionIndex,
+    assistantTurnRetryMessagesByCompletionIndex,
   };
 }
 
@@ -156,16 +201,18 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
   readOnly,
   hideUserIdentity,
   userIdentity,
-  latestUserMessage,
   latestUserIndex,
   latestAssistantIndex,
   turnCompletionAssistantIndexes,
   assistantTurnSelectionIdsByCompletionIndex,
+  assistantTurnTargetsByCompletionIndex,
+  assistantTurnRetryMessagesByCompletionIndex,
   isStreamingSession,
   agentDisplay,
   viewerIdentity,
   selectedIds,
   registerMessageElement,
+  onForkCreated,
 }: {
   renderItem: TranscriptRenderItem;
   sourceItems: ChatListItem[];
@@ -174,16 +221,18 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
   readOnly: boolean;
   hideUserIdentity: boolean;
   userIdentity?: { name?: string | null; avatarUrl?: string | null };
-  latestUserMessage?: ChatMessage | null;
   latestUserIndex: number;
   latestAssistantIndex: number;
   turnCompletionAssistantIndexes: ReadonlySet<number>;
   assistantTurnSelectionIdsByCompletionIndex: ReadonlyMap<number, readonly string[]>;
+  assistantTurnTargetsByCompletionIndex: ReadonlyMap<number, SessionNodeTarget>;
+  assistantTurnRetryMessagesByCompletionIndex: ReadonlyMap<number, ChatMessage>;
   isStreamingSession: boolean;
   agentDisplay: AgentDisplayInfo & { yuan: string };
   viewerIdentity: { name: string; avatarUrl: string | null };
   selectedIds: readonly string[];
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
+  onForkCreated?: ForkedSessionHandler;
 }) {
   const originalIndex = renderItem.originalIndex;
   const prevMessageItem = previousMessageItem(sourceItems, originalIndex);
@@ -199,6 +248,8 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
         readOnly={readOnly}
         turnCompletionAssistantIndexes={turnCompletionAssistantIndexes}
         assistantTurnSelectionIdsByCompletionIndex={assistantTurnSelectionIdsByCompletionIndex}
+        assistantTurnTargetsByCompletionIndex={assistantTurnTargetsByCompletionIndex}
+        assistantTurnRetryMessagesByCompletionIndex={assistantTurnRetryMessagesByCompletionIndex}
         completionTimePersistent={
           turnCompletionAssistantIndexes.has(groupLastOriginalIndex(renderItem))
           && groupLastOriginalIndex(renderItem) === latestAssistantIndex
@@ -209,6 +260,7 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
         isStreaming={isStreamingSession}
         selectedIds={selectedIds}
         registerMessageElement={registerMessageElement}
+        onForkCreated={onForkCreated}
       />
     );
   }
@@ -229,7 +281,6 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
       readOnly={readOnly}
       hideUserIdentity={hideUserIdentity}
       userIdentity={userIdentity}
-      latestUserMessage={latestUserMessage}
       isLatestUserMessage={originalIndex === latestUserIndex}
       isLatestAssistantMessage={
         originalIndex === latestAssistantIndex
@@ -239,11 +290,18 @@ const TranscriptRenderItemView = memo(function TranscriptRenderItemView({
       assistantTurnSelectionIds={showTurnCompletionTime
         ? assistantTurnSelectionIdsByCompletionIndex.get(originalIndex)
         : undefined}
+      assistantTurnTarget={showTurnCompletionTime
+        ? assistantTurnTargetsByCompletionIndex.get(originalIndex) ?? null
+        : null}
+      assistantTurnRetryMessage={showTurnCompletionTime
+        ? assistantTurnRetryMessagesByCompletionIndex.get(originalIndex) ?? null
+        : null}
       agentDisplay={agentDisplay}
       viewerIdentity={viewerIdentity}
       isStreaming={isStreamingSession}
       selectedIds={selectedIds}
       registerMessageElement={registerMessageElement}
+      onForkCreated={onForkCreated}
     />
   );
 });
@@ -268,16 +326,18 @@ const TranscriptItemView = memo(function TranscriptItemView({
   readOnly,
   hideUserIdentity,
   userIdentity,
-  latestUserMessage,
   isLatestUserMessage,
   isLatestAssistantMessage,
   showTurnCompletionTime,
   assistantTurnSelectionIds,
+  assistantTurnTarget,
+  assistantTurnRetryMessage,
   agentDisplay,
   viewerIdentity,
   isStreaming,
   selectedIds,
   registerMessageElement,
+  onForkCreated,
 }: {
   item: ChatListItem;
   prevItem?: ChatListItem;
@@ -286,16 +346,18 @@ const TranscriptItemView = memo(function TranscriptItemView({
   readOnly: boolean;
   hideUserIdentity: boolean;
   userIdentity?: { name?: string | null; avatarUrl?: string | null };
-  latestUserMessage?: ChatMessage | null;
   isLatestUserMessage: boolean;
   isLatestAssistantMessage: boolean;
   showTurnCompletionTime: boolean;
   assistantTurnSelectionIds?: readonly string[];
+  assistantTurnTarget?: SessionNodeTarget | null;
+  assistantTurnRetryMessage?: ChatMessage | null;
   agentDisplay: AgentDisplayInfo & { yuan: string };
   viewerIdentity: { name: string; avatarUrl: string | null };
   isStreaming: boolean;
   selectedIds: readonly string[];
   registerMessageElement?: (messageId: string, element: HTMLDivElement | null) => void;
+  onForkCreated?: ForkedSessionHandler;
 }) {
   const messageId = item.type === 'message' ? item.data.id : null;
   const messageRef = useCallback((element: HTMLDivElement | null) => {
@@ -311,7 +373,13 @@ const TranscriptItemView = memo(function TranscriptItemView({
 
   if (msg.role === 'user') {
     return msg.origin ? (
-      <AgentOriginMessage message={msg} />
+      <AgentOriginMessage
+        message={msg}
+        sessionPath={sessionPath}
+        readOnly={readOnly}
+        isStreaming={isStreaming}
+        onForkCreated={onForkCreated}
+      />
     ) : (
       <UserMessage
         message={msg}
@@ -324,6 +392,7 @@ const TranscriptItemView = memo(function TranscriptItemView({
         isStreaming={isStreaming}
         isSelected={selectedIds.includes(msg.id)}
         isLatestUserMessage={isLatestUserMessage}
+        onForkCreated={onForkCreated}
         messageRef={messageRef}
       />
     );
@@ -342,7 +411,9 @@ const TranscriptItemView = memo(function TranscriptItemView({
       isLatestAssistantMessage={isLatestAssistantMessage}
       showTurnCompletionTime={showTurnCompletionTime}
       assistantTurnSelectionIds={assistantTurnSelectionIds}
-      retrySourceMessage={latestUserMessage}
+      turnTarget={assistantTurnTarget}
+      retrySourceMessage={assistantTurnRetryMessage}
+      onForkCreated={onForkCreated}
       messageRef={messageRef}
     />
   );

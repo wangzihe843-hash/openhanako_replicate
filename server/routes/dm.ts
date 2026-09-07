@@ -13,7 +13,7 @@ import fs from "fs";
 import path from "path";
 import { Hono } from "hono";
 import { parseChannel } from "../../lib/channels/channel-store.ts";
-import { resolveAgent } from "../utils/resolve-agent.ts";
+import { resolveAgentStrict } from "../utils/resolve-agent.ts";
 import {
   getAgentPhoneProjectionPath,
   readAgentPhoneProjection,
@@ -28,12 +28,16 @@ function requestedAgentId(c) {
 
 function resolveDmOwnerAgent(engine, c) {
   if (requestedAgentId(c)) {
-    return resolveAgent(engine, c);
+    return resolveAgentStrict(engine, c);
   }
 
+  // Without an explicit agentId the DM belongs to the primary agent. If there
+  // is no primary agent there is no owner to speak of, and picking whichever
+  // agent the server happens to be focused on would hand the caller a
+  // different agent's DM. Say so instead.
   const primaryAgentId = engine.getPrimaryAgentId?.() || null;
   if (!primaryAgentId) {
-    return resolveAgent(engine, c);
+    throw new Error("no primary agent configured");
   }
 
   const agent = engine.getAgent(primaryAgentId);

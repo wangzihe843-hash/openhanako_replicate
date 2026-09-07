@@ -1,3 +1,12 @@
+const {
+  enableWindowsSystemCaForCurrentProcess,
+} = require("./src/shared/windows-system-ca.cjs");
+
+// Must run before loading the desktop main (or any module that can create an
+// HTTPS client). In normal Electron app mode arbitrary Node CLI flags are not
+// supported, so extend this process's Node TLS defaults directly.
+enableWindowsSystemCaForCurrentProcess();
+
 const fs = require("fs");
 const os = require("os");
 const path = require("path");

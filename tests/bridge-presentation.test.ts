@@ -61,7 +61,7 @@ describe("bridge presentation renderers", () => {
         }],
       },
     });
-    expect(renderFeishuCardKitSettings(true)).toBe(JSON.stringify({ streaming_mode: true }));
-    expect(renderFeishuCardKitSettings(false)).toBe(JSON.stringify({ streaming_mode: false }));
+    expect(renderFeishuCardKitSettings(true)).toBe('{"config":{"streaming_mode":true}}');
+    expect(renderFeishuCardKitSettings(false)).toBe('{"config":{"streaming_mode":false}}');
   });
 });

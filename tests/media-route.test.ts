@@ -295,4 +295,29 @@ describe("native media route", () => {
     });
   });
 
+  it("retries the exact child-owned media task id supplied by a forked card", async () => {
+    const app = new Hono();
+    const retryImageTask = vi.fn(async (taskId) => ({
+      ok: true,
+      taskId,
+      placeholder: {
+        type: "media_generation",
+        taskId,
+        kind: "image",
+        status: "pending",
+      },
+    }));
+    app.route("/api", createMediaRoute({ media: { retryImageTask } }));
+
+    const res = await app.request("/api/media/tasks/media-child/retry", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect(retryImageTask).toHaveBeenCalledWith("media-child");
+    expect(await res.json()).toMatchObject({
+      ok: true,
+      taskId: "media-child",
+      placeholder: { taskId: "media-child", status: "pending" },
+    });
+  });
+
 });

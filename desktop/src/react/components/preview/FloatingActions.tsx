@@ -9,6 +9,7 @@ import {
 } from '../../utils/markdown-cover-generation';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useI18n } from '../../hooks/use-i18n';
+import { useStore } from '../../stores';
 import { Tooltip } from '../../ui';
 import { extOfName, inferKindByExt } from '../../utils/file-kind';
 import type { RemoteContentRef, RemoteWorkbenchContentRef } from '../../types';
@@ -63,7 +64,7 @@ function getAgentGenerateDisabledText(status: CoverGenerationStatus): string {
       return t('cover.agentGenerate.defaultModelMissing');
     case 'default-image-model-invalid':
       return t('cover.agentGenerate.defaultModelInvalid');
-    case 'image-gen-unavailable':
+    case 'image-generation-unavailable':
       return t('cover.agentGenerate.imageGenUnavailable');
     case 'agent-unavailable':
       return t('cover.agentGenerate.agentUnavailable');
@@ -535,6 +536,26 @@ export function FloatingActions({
               ))}
             </div>
           </div>
+        )}
+        {filePath && (
+          <Tooltip content={t('preview.fileHistory')} placement="top" align="end">
+            {({ ref, ...tooltipProps }) => (
+              <button
+                ref={(node) => ref(node)}
+                className={styles.actionBtn}
+                onClick={() => useStore.getState().openFileHistoryForAbsolutePath(filePath)}
+                aria-label={t('preview.fileHistory')}
+                {...tooltipProps}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                  <path d="M3 3v5h5" />
+                  <path d="M12 7v5l3 3" />
+                </svg>
+              </button>
+            )}
+          </Tooltip>
         )}
         {showMarkdownPreviewToggle && (
           <Tooltip content={t(markdownPreviewActive ? 'preview.exitMarkdownPreview' : 'preview.markdownPreview')} placement="top" align="end">

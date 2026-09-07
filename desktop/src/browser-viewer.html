@@ -54,6 +54,20 @@
             align-items: center;
             -webkit-app-region: drag;
         }
+        /* 会话标识：说明这个 viewer 正在看哪个会话的浏览器 */
+        .browser-session-label {
+            flex: 0 1 auto;
+            min-width: 0;
+            max-width: 132px;
+            margin-right: 10px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 12px;
+            line-height: 1;
+            color: var(--text-light);
+            -webkit-app-region: drag;
+        }
         .browser-tab-list {
             flex: 0 1 auto;
             min-width: 0;
@@ -158,6 +172,38 @@
             border-radius: 10px;
             box-shadow: 0 0 0 0.5px var(--border), 0 4px 16px var(--shadow), 0 1px 3px var(--shadow);
             pointer-events: none;
+        }
+        /* 空标签组：浏览器仍活着，只是没有打开的标签页 */
+        .browser-empty-state {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            pointer-events: auto;
+        }
+        .browser-empty-text {
+            font-size: 13px;
+            line-height: 1;
+            color: var(--text-light);
+        }
+        .browser-empty-action {
+            padding: 6px 16px;
+            border: 1px solid var(--border);
+            background: transparent;
+            border-radius: 2px;
+            font-size: 12.5px;
+            line-height: 1;
+            color: var(--text-muted);
+            cursor: default;
+            transition: background 0.12s, color 0.12s, border-color 0.12s;
+        }
+        .browser-empty-action:hover {
+            color: var(--text);
+            background: var(--accent-light);
+            border-color: color-mix(in srgb, var(--border) 88%, var(--text-muted));
         }
     </style>
 </head>

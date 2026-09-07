@@ -277,8 +277,10 @@ describe("office plugin tools", () => {
   it("renders HTML to PDF through the desktop helper contract and stages the output", async () => {
     let observedCommand = null;
     let observedJob = null;
-    const fakeSpawn = vi.fn((command, args) => {
+    let observedSpawnOptions = null;
+    const fakeSpawn = vi.fn((command, args, options) => {
       observedCommand = { command, args };
+      observedSpawnOptions = options;
       const child: any = new EventEmitter();
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
@@ -297,6 +299,14 @@ describe("office plugin tools", () => {
       file: { fileId: "sf_pdf", sessionPath, filePath, label },
       mediaItem: { type: "session_file", fileId: "sf_pdf", sessionPath, filePath, label },
     }));
+    const rendererDist = path.join(tempDir, "active-renderer");
+    const helperEnv = {
+      HANA_DESKTOP_EXEC_PATH: "/Applications/HanaAgent.app/Contents/MacOS/HanaAgent",
+      HANA_DESKTOP_IS_PACKAGED: "1",
+      HANA_RENDERER_DIST: rendererDist,
+      ELECTRON_RUN_AS_NODE: "1",
+      OFFICE_TEST_MARKER: "preserved",
+    };
 
     const result = await renderHtmlToPdf(
       {
@@ -309,10 +319,7 @@ describe("office plugin tools", () => {
         stageFile,
       },
       {
-        env: {
-          HANA_DESKTOP_EXEC_PATH: "/Applications/HanaAgent.app/Contents/MacOS/HanaAgent",
-          HANA_DESKTOP_IS_PACKAGED: "1",
-        },
+        env: helperEnv,
         spawn: fakeSpawn,
       },
     );
@@ -321,6 +328,16 @@ describe("office plugin tools", () => {
       command: "/Applications/HanaAgent.app/Contents/MacOS/HanaAgent",
       args: ["--hana-office-html-to-pdf", expect.stringMatching(/job\.json$/)],
     });
+    expect(observedSpawnOptions).toMatchObject({
+      env: {
+        HANA_RENDERER_DIST: rendererDist,
+        OFFICE_TEST_MARKER: "preserved",
+      },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(observedSpawnOptions.env).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
+    expect(helperEnv.ELECTRON_RUN_AS_NODE).toBe("1");
     expect(fs.readFileSync(result.outputPath, "utf-8")).toContain("%PDF-1.4");
     expect(observedJob).toMatchObject({ embedHanaFonts: true });
     expect(stageFile).toHaveBeenCalledWith({

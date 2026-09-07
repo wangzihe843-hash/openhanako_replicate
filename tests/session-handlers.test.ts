@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventBus } from "../hub/event-bus.ts";
+import { stripSessionReminderBlocks } from "../core/session-reminders.ts";
 
 // ── helpers: register handlers inline (mirrors _setupSessionHandlers logic) ──
 
@@ -68,8 +69,9 @@ function registerHandlers(bus, engine) {
     for (const m of sourceMessages) {
       if (m.role === "user") {
         const { text, images } = extractTextContent(m.content);
-        if (text || images.length) {
-          messages.push({ role: "user", content: text, images: images.length ? images : undefined });
+        const visibleText = stripSessionReminderBlocks(text);
+        if (visibleText || images.length) {
+          messages.push({ role: "user", content: visibleText, images: images.length ? images : undefined });
         }
       } else if (m.role === "assistant") {
         const { text, thinking, toolUses } = extractTextContent(m.content, { stripThink: true });
@@ -257,6 +259,19 @@ describe("session:history", () => {
     expect(result.messages).toHaveLength(2);
     expect(result.messages[0]).toEqual({ role: "user", content: "hello", images: undefined });
     expect(result.messages[1]).toMatchObject({ role: "assistant", content: "world" });
+  });
+
+  it("does not expose reminder blocks through plugin session history", async () => {
+    mockEngine._fakeMessages = [{
+      role: "user",
+      content: "[hana_reminder at 2026-07-05 14:05]\n- Plugin demo loaded\n[/hana_reminder]\n\nhello",
+    }];
+
+    const result = await bus.request("session:history", {
+      sessionPath: "/agents/agent1/sessions/s.jsonl",
+    });
+
+    expect(result.messages[0].content).toBe("hello");
   });
 
   it("respects limit parameter", async () => {

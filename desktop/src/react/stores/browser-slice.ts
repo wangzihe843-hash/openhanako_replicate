@@ -8,6 +8,8 @@ export interface BrowserSessionState {
   thumbnailCapturedAt?: number | null;
   thumbnailUrl?: string | null;
   thumbnailFresh?: boolean;
+  /** 聊天区浮动卡片被用户收起。纯前端展示状态，不影响浏览器本身是否运行。 */
+  collapsed?: boolean;
 }
 
 export interface BrowserSlice {
@@ -30,6 +32,7 @@ const DEFAULT_BROWSER_STATE = {
   thumbnailCapturedAt: null as number | null,
   thumbnailUrl: null as string | null,
   thumbnailFresh: false,
+  collapsed: false,
 };
 
 export function browserStateForPath(
@@ -48,6 +51,20 @@ export function setBrowserStateForPath(
   useStore.setState((state) => {
     const key = sessionScopedKey(state, sessionPath) || sessionPath;
     const browserBySession = { ...(state.browserBySession || {}), [key]: value };
+    if (key !== sessionPath) delete browserBySession[sessionPath];
+    return { browserBySession };
+  });
+}
+
+/**
+ * 收起 / 展开聊天区的浏览器浮动卡片。合并写：只改 collapsed，其它字段沿用当前记录，
+ * 这样"收起卡片"不会顺带擦掉 url / 缩略图等运行时状态。
+ */
+export function setBrowserCardCollapsed(sessionPath: string, collapsed: boolean): void {
+  useStore.setState((state) => {
+    const key = sessionScopedKey(state, sessionPath) || sessionPath;
+    const prev = sessionScopedValue(state, state.browserBySession, sessionPath) || DEFAULT_BROWSER_STATE;
+    const browserBySession = { ...(state.browserBySession || {}), [key]: { ...prev, collapsed } };
     if (key !== sessionPath) delete browserBySession[sessionPath];
     return { browserBySession };
   });

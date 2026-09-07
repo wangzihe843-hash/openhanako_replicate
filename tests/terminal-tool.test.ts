@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { createTerminalTool } from "../lib/tools/terminal-tool.ts";
+import { resolveToolInvocationPermission } from "../lib/permission/tool-invocation-permission.ts";
 
 function makeCtx(sessionPath = "/tmp/agents/hana/sessions/s1.jsonl") {
   return {
@@ -72,5 +73,28 @@ describe("terminal tool", () => {
     const result = await (tool.execute as any)("call_1", { action: "list" });
 
     expect(result.content[0].text).toContain("current session is required");
+  });
+
+  it("classifies reads as read, close as routine, and host PTY actions for review", () => {
+    const tool = createTerminalTool();
+
+    for (const action of ["read", "list"]) {
+      const input = action === "read" ? { action, terminal_id: "term_1" } : { action };
+      expect(resolveToolInvocationPermission(tool, input)).toMatchObject({
+        ok: true,
+        descriptor: { action, kind: "read", capability: `terminal.${action}` },
+      });
+    }
+    for (const action of ["start", "write"]) {
+      const input = action === "start" ? { action } : { action, terminal_id: "term_1" };
+      expect(resolveToolInvocationPermission(tool, input)).toMatchObject({
+        ok: true,
+        descriptor: { action, kind: "review", capability: `terminal.${action}` },
+      });
+    }
+    expect(resolveToolInvocationPermission(tool, { action: "close", terminal_id: "term_1" })).toMatchObject({
+      ok: true,
+      descriptor: { action: "close", kind: "routine", capability: "terminal.close" },
+    });
   });
 });

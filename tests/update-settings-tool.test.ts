@@ -8,6 +8,7 @@ import os from "os";
 import path from "path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { loadLocale } from "../lib/i18n.ts";
+import { resolveToolInvocationPermission } from "../lib/permission/tool-invocation-permission.ts";
 
 // ── Mock 工厂 ──
 
@@ -136,6 +137,38 @@ describe("update-settings-tool", () => {
     };
     return { root, agentDir, memoryDir, agent };
   }
+
+  it("classifies search as read and apply as a reviewed setting target", () => {
+    const { tool } = buildTool();
+
+    expect(resolveToolInvocationPermission(tool, { action: "search", query: "theme" })).toMatchObject({
+      ok: true,
+      descriptor: {
+        action: "search",
+        kind: "read",
+        capability: "update_settings.search",
+      },
+    });
+    expect(resolveToolInvocationPermission(tool, { action: "apply", key: "theme", value: "dark" })).toMatchObject({
+      ok: true,
+      descriptor: {
+        action: "apply",
+        kind: "review",
+        capability: "update_settings.apply",
+        target: { type: "setting", id: "theme" },
+      },
+    });
+
+    for (const key of ["sandbox", "mcp.global.enabled", "thinking_level", "timezone", "file_backup", "locale"]) {
+      expect(resolveToolInvocationPermission(tool, { action: "apply", key, value: "true" }), key)
+        .toMatchObject({
+          ok: true,
+          descriptor: { action: "apply", kind: "review", target: { id: key } },
+        });
+    }
+    expect(resolveToolInvocationPermission(tool, { action: "apply", key: "unknown.setting", value: "x" }))
+      .toMatchObject({ ok: false, error: { reason: "resolver_rejected" } });
+  });
 
   it("apply locale executes directly and returns a settings_update payload without confirmation", async () => {
     const emitEvent = vi.fn();

@@ -1,5 +1,5 @@
 /**
- * tests/outbound-proxy-diagnostics.test.js
+ * tests/outbound-proxy-diagnostics.test.ts
  *
  * TDD 覆盖两个诊断可见性改动：
  * 1. createOutboundProxyRuntime.apply() 在 system-env 时调用 warn() 输出明确的启动提示

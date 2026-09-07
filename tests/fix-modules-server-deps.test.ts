@@ -42,8 +42,8 @@ function writeSeedFixture(
       },
     },
   };
-  writeFile(resourcesDir, "seed/seed-train.json", JSON.stringify(manifest));
-  writeFile(resourcesDir, "seed/seed-train.json.sig", "sig-bytes");
+  writeFile(resourcesDir, "seed/seed-train-darwin-arm64.json", JSON.stringify(manifest));
+  writeFile(resourcesDir, "seed/seed-train-darwin-arm64.json.sig", "sig-bytes");
   writeFile(resourcesDir, `seed/${serverArchiveName}`, "archive-bytes");
   if (includeRenderer) {
     writeFile(resourcesDir, `seed/${rendererArchiveName}`, "archive-bytes");
@@ -66,14 +66,14 @@ describe("fix-modules dual-kind seed resources assertion", () => {
   it("fails when the seed manifest is missing", () => {
     const resourcesDir = makeTempDir();
     writeSeedFixture(resourcesDir);
-    fs.rmSync(path.join(resourcesDir, "seed", "seed-train.json"));
-    expect(() => assertSeedResourcesReady(resourcesDir)).toThrow(/seed-train\.json/);
+    fs.rmSync(path.join(resourcesDir, "seed", "seed-train-darwin-arm64.json"));
+    expect(() => assertSeedResourcesReady(resourcesDir)).toThrow(/seed-train-<platform>-<arch>\.json/);
   });
 
   it("fails when the detached signature is missing", () => {
     const resourcesDir = makeTempDir();
     writeSeedFixture(resourcesDir);
-    fs.rmSync(path.join(resourcesDir, "seed", "seed-train.json.sig"));
+    fs.rmSync(path.join(resourcesDir, "seed", "seed-train-darwin-arm64.json.sig"));
     expect(() => assertSeedResourcesReady(resourcesDir)).toThrow(/\.sig/);
   });
 
@@ -95,10 +95,10 @@ describe("fix-modules dual-kind seed resources assertion", () => {
     const resourcesDir = makeTempDir();
     writeFile(
       resourcesDir,
-      "seed/seed-train.json",
+      "seed/seed-train-darwin-arm64.json",
       JSON.stringify({ schema: 1, train: 0, channel: "stable", artifacts: {} }),
     );
-    writeFile(resourcesDir, "seed/seed-train.json.sig", "sig-bytes");
+    writeFile(resourcesDir, "seed/seed-train-darwin-arm64.json.sig", "sig-bytes");
     expect(() => assertSeedResourcesReady(resourcesDir)).toThrow(/server/i);
   });
 

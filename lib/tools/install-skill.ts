@@ -24,6 +24,7 @@ import crypto from "crypto";
 import { Type } from "../pi-sdk/index.ts";
 import { t } from "../i18n.ts";
 import { callText } from "../../core/llm-client.ts";
+import { callTextConfigFromUtilityConfig } from "../../core/model-execution-config.ts";
 import { getLocale } from "../i18n.ts";
 import { getToolSessionPath } from "./tool-session.ts";
 import { serializeSessionFile } from "../session-files/session-file-response.ts";
@@ -97,8 +98,8 @@ export async function safetyReview(skillContent: any, resolveUtilityConfig: any)
     return { safe: false, reason: t("error.installSkillNoUtility") };
   }
 
-  const { utility, api_key, base_url, api } = utilCfg;
-  if (!api_key || !base_url || !api) {
+  const execution = callTextConfigFromUtilityConfig(utilCfg);
+  if (!execution.model || !execution.baseUrl || !execution.api) {
     return { safe: false, reason: t("error.installSkillUtilityIncomplete") };
   }
 
@@ -132,10 +133,7 @@ ${skillContent}`;
 
   try {
     const reply = await callText({
-      api, model: utility,
-      apiKey: api_key,
-      baseUrl: base_url,
-      headers: undefined,
+      ...execution,
       signal: undefined,
       messages: [{ role: "user", content: prompt }],
       temperature: 0,
@@ -266,7 +264,15 @@ export function createInstallSkillTool({ getUserSkillsDir, getConfig, resolveUti
   return {
     name: "install_skill",
     label: "Install Skill",
-    description: "Install a complete skill package into the shared skill pool, enabled only for the current Agent by default. Provide github_url for a GitHub repo, local_path for a package path visible to the current Hana server, fileId for an uploaded SessionFile package, or source as a typed FileRef such as { type: 'path', path } / { type: 'session_file', fileId }. The full package directory is installed so references/scripts/assets are preserved. Do not provide raw skill_content or a single SKILL.md file. If the safety review returns requiresRiskConfirmation, explain the risk to the user and call again with risk_accepted=true plus the returned risk_confirmation_token only after explicit user confirmation.",
+    description: "Install a complete skill package into the shared skill pool, enabled only for the current Agent by default. Pass exactly one source: github_url (GitHub repo), local_path (path visible to the current Hana server), fileId (uploaded SessionFile package), or source as a typed FileRef such as { type: 'path', path } or { type: 'session_file', fileId }. The whole package directory is installed — never pass raw skill_content or a lone SKILL.md. If the safety review returns requiresRiskConfirmation, explain the risk to the user and, only after explicit confirmation, call again with risk_accepted=true plus the returned risk_confirmation_token.",
+    sessionPermission: {
+      resolveInvocation: () => ({
+        action: "install",
+        kind: "review",
+        capability: "install_skill.install",
+        sideEffect: { kind: "shared_executable_content_install" },
+      }),
+    },
     parameters: Type.Object({
       github_url: Type.Optional(
         Type.String({ description: "GitHub repo URL containing a complete skill package with SKILL.md" })

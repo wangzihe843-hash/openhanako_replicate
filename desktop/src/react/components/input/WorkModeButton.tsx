@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { useI18n } from '../../hooks/use-i18n';
 import { useStore } from '../../stores';
@@ -14,6 +14,11 @@ export function WorkModeButton({ enabled, onChange }: {
   onChange: (v: boolean) => void;
 }) {
   const { t } = useI18n();
+  const requestSequence = useRef(0);
+  useEffect(() => () => {
+    // Invalidate outstanding requests when this session's input area unmounts.
+    requestSequence.current += 1;
+  }, []);
 
   const toggle = useCallback(async () => {
     const state = useStore.getState();
@@ -25,6 +30,9 @@ export function WorkModeButton({ enabled, onChange }: {
       }));
       return;
     }
+    const requestId = ++requestSequence.current;
+    const isCurrentRequest = () => requestId === requestSequence.current
+      && useStore.getState().currentSessionPath === sessionPath;
     const next = !enabled;
     onChange(next); // 乐观更新
     try {
@@ -34,12 +42,14 @@ export function WorkModeButton({ enabled, onChange }: {
         body: JSON.stringify({ sessionPath, enabled: next }),
       });
       const data = await res.json();
+      if (!isCurrentRequest()) return;
       if (data?.ok === false) {
         onChange(enabled); // 回滚
       } else {
         onChange(data?.enabled === true);
       }
     } catch (err) {
+      if (!isCurrentRequest()) return;
       console.error('[work-mode] toggle failed:', err);
       onChange(enabled); // 回滚
     }

@@ -10,15 +10,19 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
 
-export const SUBAGENT_THREAD_STORE_VERSION = 1;
+export const SUBAGENT_THREAD_STORE_VERSION = 2;
 
 const VALID_KINDS = new Set(["direct", "workflow_node"]);
 const LEGACY_DIRECT_KINDS = new Set(["ephemeral", "reusable"]);
 const VALID_THREAD_STATUSES = new Set(["open", "closed"]);
 const VALID_RUN_STATUSES = new Set(["pending", "resolved", "failed", "aborted"]);
 const VALID_ACCESS = new Set(["read", "write"]);
+// A direct thread's first run intentionally uses taskId === threadId. Later
+// continuations carry threadId explicitly, so both structured forms are needed.
+const THREAD_REFERENCE_KEYS = new Set(["threadId", "subagentThreadId", "taskId"]);
 
 function nowIso() {
   return new Date().toISOString();
@@ -26,6 +30,77 @@ function nowIso() {
 
 function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function uniqueStrings(values) {
+  const seen = new Set();
+  const out = [];
+  for (const value of values || []) {
+    const normalized = pickString(value);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+/**
+ * Find subagent thread identities that are structurally referenced by the retained
+ * parent branch. String contents are deliberately ignored: only typed identity
+ * fields can keep a continuable thread alive across a Session Fork.
+ */
+export function collectReferencedSubagentThreadIds(entries) {
+  const ids = new Set<string>();
+  const seen = new WeakSet<object>();
+  const visit = (value) => {
+    if (!value || typeof value !== "object") return;
+    if (seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    for (const [key, nested] of Object.entries(value)) {
+      if (THREAD_REFERENCE_KEYS.has(key)) {
+        const threadId = pickString(nested);
+        if (threadId) ids.add(threadId);
+      }
+      visit(nested);
+    }
+  };
+  visit(Array.isArray(entries) ? entries : []);
+  return [...ids];
+}
+
+function collectRetainedThreadSnapshots(entries) {
+  const snapshots = new Map();
+  const seen = new WeakSet<object>();
+  const visit = (value) => {
+    if (!value || typeof value !== "object") return;
+    if (seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    const threadId = pickString(value.threadId || value.subagentThreadId);
+    const isDirectSnapshot = value.threadKind === "direct"
+      || value.kind === "direct"
+      || value.type === "subagent";
+    if (threadId && isDirectSnapshot) {
+      const previous = snapshots.get(threadId) || {};
+      const next = { ...previous };
+      for (const key of ["agentId", "agentName", "label", "access", "summary", "childSessionId", "childSessionPath"]) {
+        if (Object.prototype.hasOwnProperty.call(value, key)) next[key] = value[key];
+      }
+      if (Object.prototype.hasOwnProperty.call(value, "runCount")) next.runCount = value.runCount;
+      if (Object.prototype.hasOwnProperty.call(value, "streamStatus")) next.streamStatus = value.streamStatus;
+      snapshots.set(threadId, next);
+    }
+    for (const child of Object.values(value)) visit(child);
+  };
+  visit(Array.isArray(entries) ? entries : []);
+  return snapshots;
 }
 
 function pickString(value) {
@@ -92,8 +167,38 @@ function normalizeThread(threadId, record: any = {}, existing = null) {
     createdAt: existing?.createdAt || pickString(record.createdAt) || timestamp,
     lastRunAt: pickString(record.lastRunAt) || existing?.lastRunAt || null,
     closedAt: hasClosedAt ? pickString(record.closedAt) : (existing?.closedAt || null),
+    forkedFromThreadId: pickString(record.forkedFromThreadId) || existing?.forkedFromThreadId || null,
+    forkedAt: pickString(record.forkedAt) || existing?.forkedAt || null,
+    cleanupPending: record.cleanupPending === true || existing?.cleanupPending === true,
+    cleanupError: pickString(record.cleanupError) || existing?.cleanupError || null,
+    sourceThreadIds: uniqueStrings([
+      ...(Array.isArray(existing?.sourceThreadIds) ? existing.sourceThreadIds : []),
+      ...(Array.isArray(record.sourceThreadIds) ? record.sourceThreadIds : []),
+    ]),
     updatedAt: timestamp,
   };
+}
+
+function forkThreadId() {
+  return `subagent-fork-${randomUUID()}`;
+}
+
+function normalizedChildSessionRef(value) {
+  const sessionId = pickString(value?.sessionId || value?.childSessionId);
+  const sessionPath = pickString(value?.sessionPath || value?.childSessionPath);
+  return sessionId && sessionPath ? { sessionId, sessionPath } : null;
+}
+
+function forkCleanupError(error, clones, cleanupFailures) {
+  const forkError: any = error instanceof Error ? error : new Error(String(error));
+  forkError.subagentThreadForkCleanup = {
+    clones: clone(clones),
+    cleanupFailures: cleanupFailures.map(({ threadId, error: cleanupError }) => ({
+      threadId,
+      message: cleanupError?.message || String(cleanupError),
+    })),
+  };
+  return forkError;
 }
 
 export class SubagentThreadStore {
@@ -191,6 +296,309 @@ export class SubagentThreadStore {
     return out.sort((a, b) => String(a.lastRunAt || a.updatedAt || "").localeCompare(String(b.lastRunAt || b.updatedAt || "")));
   }
 
+  /**
+   * Resolve a direct thread inside one parent Session only. Fork aliases are
+   * scoped by the target parent identity, so the same historical threadId keeps
+   * resolving to the source thread in the source Session and to its independent
+   * clone in the forked Session.
+   */
+  resolveDirectThreadForSession(threadId, parentSessionRef) {
+    const normalized = pickString(threadId);
+    const targetKey = this._parentSessionKeyForRef(parentSessionRef);
+    if (!normalized || !targetKey) return null;
+
+    const exact = this._threads.get(normalized) || null;
+    if (
+      exact?.kind === "direct"
+      && this._parentSessionKeyForRecord(exact) === targetKey
+    ) {
+      return clone(exact);
+    }
+
+    const aliases = [];
+    for (const record of this._threads.values()) {
+      if (record.kind !== "direct") continue;
+      if (this._parentSessionKeyForRecord(record) !== targetKey) continue;
+      if (!Array.isArray(record.sourceThreadIds) || !record.sourceThreadIds.includes(normalized)) continue;
+      aliases.push(record);
+    }
+    return aliases.length === 1 ? clone(aliases[0]) : null;
+  }
+
+  /**
+   * Clone the retained, open direct threads of a parent Session. The injected
+   * callback owns child-session cloning (JSONL, manifest and related sidecars);
+   * this store owns thread identity, parent ownership and transactional records.
+   */
+  async forkOpenDirectThreads(input: any = {}) {
+    const sourceRef = {
+      sessionId: pickString(input.sourceSessionId),
+      sessionPath: pickString(input.sourceSessionPath),
+    };
+    const targetRef = {
+      sessionId: pickString(input.targetSessionId),
+      sessionPath: pickString(input.targetSessionPath),
+    };
+    const sourceKey = this._parentSessionKeyForRef(sourceRef);
+    const targetKey = this._parentSessionKeyForRef(targetRef);
+    if (!sourceKey) throw new Error("subagent thread fork requires a source Session identity");
+    if (!targetRef.sessionId || !targetRef.sessionPath || !targetKey) {
+      throw new Error("subagent thread fork requires a target SessionRef");
+    }
+    if (sourceKey === targetKey) {
+      throw new Error("subagent thread fork target must be independent from its source Session");
+    }
+
+    const referencedThreadIds = uniqueStrings(
+      Array.isArray(input.referencedThreadIds)
+        ? input.referencedThreadIds
+        : collectReferencedSubagentThreadIds(input.retainedEntries),
+    );
+    const retainedSnapshots = collectRetainedThreadSnapshots(input.retainedEntries);
+    const historicalBoundary = input.allowCurrentChildLeaf === false;
+    const sources = [];
+    const seenSources = new Set();
+    const skipped = [];
+    for (const referencedThreadId of referencedThreadIds) {
+      const source = this.resolveDirectThreadForSession(referencedThreadId, sourceRef);
+      if (!source) {
+        skipped.push({ threadId: referencedThreadId, reason: "not_open_direct" });
+        continue;
+      }
+      const retainedSnapshot = retainedSnapshots.get(source.threadId)
+        || retainedSnapshots.get(referencedThreadId)
+        || null;
+      const closedAtBoundary = retainedSnapshot?.streamStatus === "closed";
+      if (
+        (closedAtBoundary || (!historicalBoundary && source.status !== "open"))
+        && input.cloneClosedThreads !== true
+      ) {
+        skipped.push({ threadId: referencedThreadId, reason: "not_open_direct" });
+        continue;
+      }
+      if (seenSources.has(source.threadId)) continue;
+      seenSources.add(source.threadId);
+      if (!source.childSessionPath) {
+        skipped.push({ threadId: referencedThreadId, reason: "child_session_unavailable" });
+        continue;
+      }
+      sources.push(historicalBoundary ? {
+        ...source,
+        status: closedAtBoundary ? "closed" : "open",
+        lastRunStatus: retainedSnapshot?.streamStatus === "failed"
+          ? "failed"
+          : retainedSnapshot?.streamStatus === "aborted"
+            ? "aborted"
+            : "resolved",
+        label: pickString(retainedSnapshot?.label) || source.label,
+        access: normalizeAccess(retainedSnapshot?.access, null),
+        summary: pickString(retainedSnapshot?.summary),
+        runCount: pickCount(retainedSnapshot?.runCount),
+        lastRunAt: null,
+        closedAt: closedAtBoundary ? nowIso() : null,
+      } : source);
+    }
+
+    const busy = sources.find((source) => this.isBusy(source.threadId));
+    if (busy) {
+      const error: any = new Error(`subagent thread is busy: ${busy.threadId}`);
+      error.code = "subagent_thread_busy";
+      error.threadId = busy.threadId;
+      throw error;
+    }
+    if (
+      sources.length > 0
+      && (typeof input.cloneChildSession !== "function" || typeof input.discardChildSession !== "function")
+    ) {
+      throw new Error("subagent thread fork child-session clone/cleanup is unavailable");
+    }
+
+    // Reserve every source thread synchronously before the first child clone
+    // awaits. A concurrent reply will queue behind this gate and therefore
+    // cannot move the source child leaf between boundary resolution and copy.
+    const reservations = sources.map((source) => {
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      this._chains.set(source.threadId, gate);
+      return { threadId: source.threadId, gate, release };
+    });
+
+    const clones = [];
+    try {
+      for (let index = 0; index < sources.length; index += 1) {
+        const source = sources[index];
+        const newThreadId = pickString(input.createThreadId?.(source, index)) || forkThreadId();
+        if (this._threads.has(newThreadId)) {
+          throw new Error(`subagent thread fork identity already exists: ${newThreadId}`);
+        }
+        let childRef;
+        try {
+          childRef = normalizedChildSessionRef(await input.cloneChildSession({
+            sourceThread: clone(source),
+            sourceParentSession: clone(sourceRef),
+            targetParentSession: clone(targetRef),
+            newThreadId,
+            childBoundaryEntryId: pickString(input.childBoundaryEntryIds?.[source.threadId]),
+            allowCurrentChildLeaf: input.allowCurrentChildLeaf === true,
+          }));
+        } catch (error) {
+          const partialRef = normalizedChildSessionRef(
+            error?.forkedChildSession || error?.createdChildSession || error?.createdSessionRef,
+          );
+          if (partialRef) {
+            clones.push({
+              sourceThreadId: source.threadId,
+              newThreadId,
+              sourceChildSessionId: source.childSessionId || null,
+              sourceChildSessionPath: source.childSessionPath,
+              targetChildSessionId: partialRef.sessionId,
+              targetChildSessionPath: partialRef.sessionPath,
+            });
+          }
+          throw error;
+        }
+        if (!childRef) {
+          throw new Error(`subagent child SessionRef clone is invalid for ${source.threadId}`);
+        }
+        if (
+          childRef.sessionPath === source.childSessionPath
+          || (source.childSessionId && childRef.sessionId === source.childSessionId)
+        ) {
+          throw new Error(`subagent child Session clone is not independent for ${source.threadId}`);
+        }
+
+        const forkedAt = nowIso();
+        const sourceThreadIds = uniqueStrings([
+          source.threadId,
+          ...(Array.isArray(source.sourceThreadIds) ? source.sourceThreadIds : []),
+        ]);
+        const record = normalizeThread(newThreadId, {
+          kind: "direct",
+          status: source.status,
+          lastRunStatus: source.lastRunStatus,
+          parentSessionId: targetRef.sessionId,
+          parentSessionPath: targetRef.sessionPath,
+          parentTaskId: source.parentTaskId,
+          agentId: source.agentId,
+          agentName: source.agentName,
+          childSessionId: childRef.sessionId,
+          childSessionPath: childRef.sessionPath,
+          label: source.label,
+          access: source.access,
+          summary: source.summary,
+          runCount: source.runCount,
+          createdAt: source.createdAt,
+          lastRunAt: source.lastRunAt,
+          closedAt: source.status === "closed" ? (source.closedAt || forkedAt) : null,
+          forkedFromThreadId: source.threadId,
+          forkedAt,
+          sourceThreadIds,
+        });
+        this._threads.set(newThreadId, record);
+        clones.push({
+          sourceThreadId: source.threadId,
+          newThreadId,
+          sourceChildSessionId: source.childSessionId || null,
+          sourceChildSessionPath: source.childSessionPath,
+          targetChildSessionId: childRef.sessionId,
+          targetChildSessionPath: childRef.sessionPath,
+        });
+      }
+      if (clones.length > 0) this._save();
+      return {
+        clones: clone(clones),
+        skipped: clone(skipped),
+        referencedThreadIds,
+      };
+    } catch (error) {
+      const cleanupFailures = [];
+      for (const receipt of [...clones].reverse()) {
+        try {
+          await input.discardChildSession(clone(receipt));
+          this._threads.delete(receipt.newThreadId);
+        } catch (cleanupError) {
+          cleanupFailures.push({ threadId: receipt.newThreadId, error: cleanupError });
+          const existing = this._threads.get(receipt.newThreadId) || null;
+          this._threads.set(receipt.newThreadId, normalizeThread(receipt.newThreadId, {
+            ...(existing || {}),
+            kind: "direct",
+            status: "closed",
+            parentSessionId: targetRef.sessionId,
+            parentSessionPath: targetRef.sessionPath,
+            childSessionId: receipt.targetChildSessionId,
+            childSessionPath: receipt.targetChildSessionPath,
+            forkedFromThreadId: receipt.sourceThreadId,
+            sourceThreadIds: [receipt.sourceThreadId],
+            cleanupPending: true,
+            cleanupError: cleanupError?.message || String(cleanupError),
+            closedAt: nowIso(),
+          }, existing));
+        }
+      }
+      if (clones.length > 0) {
+        try {
+          this._save();
+        } catch (cleanupError) {
+          cleanupFailures.push({ threadId: "thread-store", error: cleanupError });
+        }
+      }
+      throw forkCleanupError(error, clones, cleanupFailures);
+    } finally {
+      for (const reservation of reservations) {
+        reservation.release();
+        if (this._chains.get(reservation.threadId) === reservation.gate) {
+          this._chains.delete(reservation.threadId);
+        }
+      }
+    }
+  }
+
+  /** Remove cloned direct-thread records owned by one failed target Session Fork. */
+  async discardForkedDirectThreads(targetSessionRef, opts: any = {}) {
+    const targetKey = this._parentSessionKeyForRef(targetSessionRef);
+    if (!targetKey) throw new Error("forked subagent thread cleanup requires a target Session identity");
+    const records = [...this._threads.values()].filter((record) => (
+      record.kind === "direct"
+      && !!record.forkedFromThreadId
+      && this._parentSessionKeyForRecord(record) === targetKey
+    ));
+    if (records.length > 0 && typeof opts.discardChildSession !== "function") {
+      throw new Error("forked subagent child-session cleanup is unavailable");
+    }
+    const clones = [];
+    const cleanupFailures = [];
+    let removed = 0;
+    for (const record of records.reverse()) {
+      const receipt = {
+        sourceThreadId: record.forkedFromThreadId,
+        newThreadId: record.threadId,
+        sourceChildSessionId: null,
+        sourceChildSessionPath: null,
+        targetChildSessionId: record.childSessionId || null,
+        targetChildSessionPath: record.childSessionPath || null,
+      };
+      clones.push(receipt);
+      try {
+        await opts.discardChildSession(clone(receipt));
+        this._threads.delete(record.threadId);
+        removed += 1;
+      } catch (error) {
+        cleanupFailures.push({
+          threadId: record.threadId,
+          message: error?.message || String(error),
+        });
+        this._threads.set(record.threadId, normalizeThread(record.threadId, {
+          ...record,
+          status: "closed",
+          cleanupPending: true,
+          cleanupError: error?.message || String(error),
+        }, record));
+      }
+    }
+    if (records.length > 0) this._save();
+    return { removed, clones: clone(clones), cleanupFailures };
+  }
+
   closeDirectThread(threadId, record: any = {}) {
     if (!threadId) return null;
     const existing = this._threads.get(threadId) || null;
@@ -277,6 +685,12 @@ export class SubagentThreadStore {
     return this._sessionIdForPath(parentSessionPath) || parentSessionPath;
   }
 
+  _parentSessionKeyForRef(ref) {
+    if (typeof ref === "string") return this._parentSessionKeyForPath(ref);
+    return pickString(ref?.sessionId)
+      || (pickString(ref?.sessionPath) ? this._parentSessionKeyForPath(ref.sessionPath) : null);
+  }
+
   _parentSessionKeyForRecord(record) {
     return pickString(record?.parentSessionId)
       || this._sessionIdForPath(record?.parentSessionPath)
@@ -303,7 +717,7 @@ export class SubagentThreadStore {
       return;
     }
     const threads = raw?.threads && typeof raw.threads === "object" ? raw.threads : {};
-    let repaired = false;
+    let repaired = raw?.schemaVersion !== SUBAGENT_THREAD_STORE_VERSION;
     for (const [threadId, value] of Object.entries(threads)) {
       if (!threadId || !value || typeof value !== "object") continue;
       const next = normalizeThread(threadId, value);

@@ -4,7 +4,6 @@ import path from "path";
 import os from "os";
 import crypto from "crypto";
 import { extractZip } from "../../lib/extract-zip.ts";
-import { resolveAgent } from "../utils/resolve-agent.ts";
 import { fromRoot } from "../../shared/hana-root.ts";
 import { DEFAULT_THEME } from "../../desktop/src/shared/theme-registry.cjs";
 import { registerSessionFileFromRequest } from "../../lib/session-files/session-file-response.ts";
@@ -597,44 +596,6 @@ function decodeHttpConfigBody(body: any) {
   };
 }
 
-function validateImageGenDefaultImageModel(engine: any, values: any) {
-  if (!values || typeof values !== "object" || Array.isArray(values)) return null;
-  if (!Object.prototype.hasOwnProperty.call(values, "defaultImageModel")) return null;
-  const value = values.defaultImageModel;
-  if (value === undefined || value === null) return null;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return "defaultImageModel must be an object with provider and id";
-  }
-  const providerId = typeof value.provider === "string" ? value.provider.trim() : "";
-  const modelId = typeof value.id === "string" ? value.id.trim() : "";
-  if (!providerId || !modelId) return "defaultImageModel requires provider and id";
-
-  const providerRegistry = engine?.providerRegistry;
-  if (typeof providerRegistry?.resolveMediaModel !== "function") return null;
-
-  let resolved;
-  try {
-    resolved = providerRegistry.resolveMediaModel({
-      providerId,
-      modelId,
-      capability: "image_generation",
-    });
-  } catch (err) {
-    return err?.message || String(err);
-  }
-
-  const protocolId = resolved?.model?.protocolId;
-  if (!protocolId) return `Media model "${providerId}/${modelId}" missing protocolId`;
-
-  const imageGenCtx = engine?.pluginManager?.getPlugin?.("image-gen")?.ctx;
-  const adapterRegistry = imageGenCtx?._mediaGen?.registry;
-  if (!adapterRegistry) return null;
-
-  const adapter = adapterRegistry.getProtocol?.(protocolId) || adapterRegistry.get?.(providerId);
-  if (!adapter) return `No image generation adapter registered for protocol "${protocolId}"`;
-  return null;
-}
-
 async function downloadMarketplaceRelease({ engine, plugin }: { engine: any; plugin: any }) {
   const dist = plugin?.distribution;
   if (!dist || dist.kind !== "release") {
@@ -1135,10 +1096,6 @@ export function createPluginsRoute(engine: any) {
     const body = await c.req.json();
     try {
       const { values, scope, agentId, sessionId, sessionPath, legacySessionPath } = decodeHttpConfigBody(body);
-      if (c.req.param("id") === "image-gen") {
-        const imageDefaultError = validateImageGenDefaultImageModel(engine, values);
-        if (imageDefaultError) return c.json({ error: imageDefaultError }, 400);
-      }
       const config = pm.setConfig(c.req.param("id"), values, {
         scope,
         agentId,
@@ -1376,8 +1333,16 @@ export function createPluginsRoute(engine: any) {
       ? url.pathname.slice(prefixIndex + prefix.length) || "/"
       : "/";
     await engine.pluginManager?.activatePluginRoute?.(pluginId, subPath);
-    const agent = resolveAgent(engine, c);
-    const agentId = agent?.id || null;
+    // The plugin contract lets a surface run without an agent, so an absent
+    // agentId is an answer rather than a question: pass null through instead of
+    // handing the plugin whichever agent the server happens to be focused on.
+    const requestedAgentId = c.req.query("agentId") || null;
+    let agentId: string | null = null;
+    if (requestedAgentId) {
+      const agent = engine.getAgent(requestedAgentId);
+      if (!agent) return c.json({ error: `agent "${requestedAgentId}" not found` }, 404);
+      agentId = agent.id;
+    }
     const requestPrincipal = pluginRouteRequestPrincipal(readAuthPrincipal(c), iframeTicket, pluginId);
     const response = await proxyToPlugin(c, pluginApp, pluginId, agentId, requestPrincipal);
     return appendPluginAssetSessionCookie(c, engine, pluginId, response, iframeTicket);

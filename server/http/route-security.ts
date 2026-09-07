@@ -128,8 +128,10 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
   if (isSettingsWriteRoute(verb, routePath)) return scoped("settings.write");
   if (isSkillSettingsReadRoute(verb, routePath)) return scoped("settings.read");
   if (isSkillSettingsWriteRoute(verb, routePath)) return scoped("settings.write");
+  if (isMcpSessionPermissionRoute(verb, routePath)) return scoped("chat");
   if (isMcpSettingsReadRoute(verb, routePath)) return scoped("settings.read");
   if (isMcpSettingsWriteRoute(verb, routePath)) return scoped("settings.write");
+  if (isMcpAppToolCallRoute(verb, routePath)) return STUDIO_OWNER;
   if (isMediaSubmitRoute(verb, routePath)) return scoped("chat");
   if (isImageGenerationReadRoute(verb, routePath)) return scoped("settings.read");
   if (isImageGenerationWriteRoute(verb, routePath)) return scoped("settings.write");
@@ -201,7 +203,7 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
 
 /**
  * 插件 route 代理路径：/api/plugins/:pluginId/<subPath>，排除宿主自有 id。
- * 必须在所有更具体的 /api/plugins/* 匹配器（settings / mcp / image-gen /
+ * 必须在所有更具体的 /api/plugins/* 匹配器（settings / mcp /
  * assets / dev / iframe-ticket 等）之后调用，那些路径保持原有 scope 策略。
  */
 function classifyPluginRouteProxyPath(routePath) {
@@ -312,8 +314,22 @@ function isWebAuthBootstrapRoute(verb, routePath) {
   return false;
 }
 
+// The MCP surface is mounted twice — at /api/mcp (first-class) and at
+// /api/plugins/mcp (compatibility alias for clients and OAuth redirect URIs
+// issued before MCP became a core module). Both mounts serve the identical
+// handlers, so both must classify identically: matching on the sub-path keeps
+// the two from drifting apart.
+const MCP_ROUTE_PREFIXES = ["/api/mcp", "/api/plugins/mcp"];
+
+function mcpSubPath(routePath) {
+  for (const prefix of MCP_ROUTE_PREFIXES) {
+    if (routePath.startsWith(`${prefix}/`)) return routePath.slice(prefix.length);
+  }
+  return null;
+}
+
 function isMcpOAuthCallbackRoute(verb, routePath) {
-  return verb === "GET" && routePath === "/api/plugins/mcp/oauth/callback";
+  return verb === "GET" && mcpSubPath(routePath) === "/oauth/callback";
 }
 
 function isHtmlPreviewDocumentRoute(verb, routePath) {
@@ -323,13 +339,15 @@ function isHtmlPreviewDocumentRoute(verb, routePath) {
 
 function isClientLocalOnlyRoute(verb, routePath) {
   if (routePath === "/api/shutdown") return true;
+  if (routePath === "/api/preferences/legacy-gpu-safe-mode/hardware-acceleration") {
+    return verb === "POST";
+  }
   if (routePath.startsWith("/api/access/")) return true;
   if (routePath.startsWith("/api/devices/")) return true;
   if (routePath === "/api/skills/external-paths") return true;
   if (routePath === "/api/plugins/install") return true;
   if (routePath.startsWith("/api/plugins/dev/") || routePath === "/api/plugins/dev") return true;
   if (routePath === "/api/preferences/computer-use/request-permissions") return true;
-  if (routePath.startsWith("/api/plugins/image-gen/media/open/")) return true;
   if (routePath.startsWith("/api/media/generated/open/")) return true;
   if (/^\/api\/plugins\/[^/]+\/assets\/.+$/.test(routePath) && verb !== "GET" && verb !== "HEAD") {
     return true;
@@ -357,10 +375,11 @@ function isSettingsReadRoute(verb, routePath) {
     || routePath === "/api/memories/health"
     || routePath === "/api/memories/compiled"
     || routePath === "/api/memories/compiled/week/days"
+    || routePath === "/api/memories/dream/status"
     || routePath === "/api/memories/export"
     || routePath === "/api/preferences/notifications"
     || routePath === "/api/preferences/computer-use"
-    || /^\/api\/agents\/[^/]+\/(?:identity|ishiki|public-ishiki|pinned|experience)$/.test(routePath)
+    || /^\/api\/agents\/[^/]+\/(?:identity|agents-md|public-agents-md|ishiki|public-ishiki|pinned|experience)$/.test(routePath)
     || /^\/api\/agents\/[^/]+\/config$/.test(routePath);
 }
 
@@ -426,7 +445,7 @@ function isSettingsWriteRoute(verb, routePath) {
     || routePath === "/api/preferences/notifications"
     || routePath === "/api/preferences/computer-use"
     || routePath === "/api/speech-recognition/config"
-    || /^\/api\/agents\/[^/]+\/(?:identity|ishiki|public-ishiki|pinned|experience)$/.test(routePath)
+    || /^\/api\/agents\/[^/]+\/(?:identity|agents-md|public-agents-md|ishiki|public-ishiki|pinned|experience)$/.test(routePath)
     || /^\/api\/agents\/[^/]+\/config$/.test(routePath)
     || routePath === "/api/memories/compiled/facts"
     || routePath === "/api/memories/compiled/today"
@@ -437,7 +456,11 @@ function isSettingsWriteRoute(verb, routePath) {
       routePath === "/api/memories"
       || routePath === "/api/memories/compiled"
     ))
-    || (verb === "POST" && routePath === "/api/memories/import");
+    || (verb === "POST" && (
+      routePath === "/api/memories/import"
+      || routePath === "/api/memories/dream/runs"
+      || /^\/api\/memories\/dream\/revisions\/[^/]+\/restore$/.test(routePath)
+    ));
 }
 
 function isSkillSettingsReadRoute(verb, routePath) {
@@ -495,18 +518,50 @@ function isBridgeManagementRoute(verb, routePath) {
 
 function isMcpSettingsReadRoute(verb, routePath) {
   if (verb !== "GET") return false;
-  return routePath === "/api/plugins/mcp/state"
-    || /^\/api\/plugins\/mcp\/oauth\/poll\/[^/]+$/.test(routePath);
+  const sub = mcpSubPath(routePath);
+  if (!sub) return false;
+  return sub === "/state"
+    || sub === "/apps"
+    || /^\/(?:connectors|servers)\/[^/]+\/resources$/.test(sub)
+    || /^\/oauth\/poll\/[^/]+$/.test(sub);
 }
 
 function isMcpSettingsWriteRoute(verb, routePath) {
-  if (verb === "PUT" && (routePath === "/api/plugins/mcp/settings/enabled" || routePath === "/api/plugins/mcp/enabled")) return true;
-  if (verb === "POST" && (routePath === "/api/plugins/mcp/connectors" || routePath === "/api/plugins/mcp/servers")) return true;
-  if ((verb === "PUT" || verb === "DELETE") && /^\/api\/plugins\/mcp\/(?:connectors|servers)\/[^/]+$/.test(routePath)) return true;
-  if (verb === "POST" && /^\/api\/plugins\/mcp\/(?:connectors|servers)\/[^/]+\/(?:start|stop|refresh-tools)$/.test(routePath)) return true;
-  if (verb === "PUT" && /^\/api\/plugins\/mcp\/agents\/[^/]+\/(?:connectors|servers)\/[^/]+$/.test(routePath)) return true;
-  if (verb === "POST" && /^\/api\/plugins\/mcp\/(?:connectors|servers)\/[^/]+\/oauth\/(?:start|logout)$/.test(routePath)) return true;
+  const sub = mcpSubPath(routePath);
+  if (!sub) return false;
+  if (verb === "PUT" && (sub === "/settings/enabled" || sub === "/enabled")) return true;
+  if (verb === "POST" && (sub === "/connectors" || sub === "/servers")) return true;
+  if ((verb === "PUT" || verb === "DELETE") && /^\/(?:connectors|servers)\/[^/]+$/.test(sub)) return true;
+  if (verb === "POST" && /^\/(?:connectors|servers)\/[^/]+\/(?:start|stop|refresh-tools)$/.test(sub)) return true;
+  if (verb === "PUT" && /^\/agents\/[^/]+\/(?:connectors|servers)\/[^/]+$/.test(sub)) return true;
+  if (verb === "POST" && /^\/(?:connectors|servers)\/[^/]+\/oauth\/(?:start|logout)$/.test(sub)) return true;
+  if (verb === "POST" && /^\/(?:connectors|servers)\/[^/]+\/apps\/[^/]+\/launch$/.test(sub)) return true;
   return false;
+}
+
+// Granting a tool invocation for one session changes that session's permission
+// state, not the connector's stored settings, so it rides the session scope
+// rather than settings.write.
+//
+// Classified "chat" for the same reason /api/sessions is: at this layer the
+// principal still carries its raw scopes, and the finer sessions.write is only
+// minted later by scope expansion. The handler performs the real
+// sessions.write capability check once it has resolved the session. Without an
+// entry here the route would fall through to studio-owner and shut out every
+// remote client.
+function isMcpSessionPermissionRoute(verb, routePath) {
+  if (verb !== "POST") return false;
+  return mcpSubPath(routePath) === "/session-permissions";
+}
+
+// Invoking a connector tool on behalf of an app surface is a real side effect
+// against a third-party server, so it stays owner-only rather than riding on a
+// settings scope.
+function isMcpAppToolCallRoute(verb, routePath) {
+  if (verb !== "POST") return false;
+  const sub = mcpSubPath(routePath);
+  if (!sub) return false;
+  return /^\/(?:connectors|servers)\/[^/]+\/app-tools\/[^/]+\/call$/.test(sub);
 }
 
 function isImageGenerationReadRoute(verb, routePath) {
@@ -516,12 +571,7 @@ function isImageGenerationReadRoute(verb, routePath) {
     || routePath === "/api/media/tasks"
     || /^\/api\/media\/generated\/[^/]+$/.test(routePath)
     || /^\/api\/media\/tasks\/batch\/[^/]+$/.test(routePath)
-    || /^\/api\/media\/tasks\/[^/]+$/.test(routePath)
-    || routePath === "/api/plugins/image-gen/providers"
-    || routePath === "/api/plugins/image-gen/tasks"
-    || /^\/api\/plugins\/image-gen\/media\/[^/]+$/.test(routePath)
-    || /^\/api\/plugins\/image-gen\/tasks\/batch\/[^/]+$/.test(routePath)
-    || /^\/api\/plugins\/image-gen\/tasks\/[^/]+$/.test(routePath);
+    || /^\/api\/media\/tasks\/[^/]+$/.test(routePath);
 }
 
 function isMediaSubmitRoute(verb, routePath) {
@@ -533,19 +583,13 @@ function isMediaSubmitRoute(verb, routePath) {
 }
 
 function isImageGenerationWriteRoute(verb, routePath) {
-  return verb === "PUT" && (
-    routePath === "/api/media/image/config"
-    || routePath === "/api/plugins/image-gen/config"
-  );
+  return verb === "PUT" && routePath === "/api/media/image/config";
 }
 
 function isImageGenerationProviderManagementRoute(verb, routePath) {
   return (verb === "POST" && /^\/api\/media\/image\/providers\/[^/]+\/models$/.test(routePath))
     || (verb === "DELETE" && /^\/api\/media\/image\/providers\/[^/]+\/models\/[^/]+$/.test(routePath))
-    || (verb === "POST" && /^\/api\/media\/tasks\/[^/]+\/retry$/.test(routePath))
-    || (verb === "POST" && /^\/api\/plugins\/image-gen\/providers\/[^/]+\/models$/.test(routePath))
-    || (verb === "DELETE" && /^\/api\/plugins\/image-gen\/providers\/[^/]+\/models\/[^/]+$/.test(routePath))
-    || (verb === "POST" && /^\/api\/plugins\/image-gen\/tasks\/[^/]+\/retry$/.test(routePath));
+    || (verb === "POST" && /^\/api\/media\/tasks\/[^/]+\/retry$/.test(routePath));
 }
 
 function isPluginSettingsReadRoute(verb, routePath) {

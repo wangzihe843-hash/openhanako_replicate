@@ -1,4 +1,11 @@
 import { sessionScopedKey } from './session-slice';
+import type { PresentedError } from '../errors/error-presenter';
+
+/**
+ * 一条 inline error：text 是给用户看的人话，detail 与 code 是排障用的原始信息，
+ * 由错误条的展开区呈现。形状跟 presentError() 的产物一致，两端不各自定义。
+ */
+export type InlineErrorEntry = PresentedError;
 
 export interface ActiveSessionStream {
   streamId: string | null;
@@ -22,10 +29,14 @@ export interface StreamingSlice {
   unreadOutputSessionPaths: string[];
   markSessionOutputUnread: (path: string) => void;
   clearSessionOutputUnread: (path: string) => void;
-  /** 按 session path 存储的内联错误（权威源）。text 为 null 表示无 error。 */
-  inlineErrors: Record<string, string | null>;
-  /** 写入某个 session 的 inline error；ttl>0 时 ttl 毫秒后自动清除（默认 5s）。新 error 覆盖旧 error 会取消旧定时器。 */
-  setInlineError: (path: string, text: string, ttlMs?: number) => void;
+  /** 按 session path 存储的内联错误（权威源）。null 表示无 error。 */
+  inlineErrors: Record<string, InlineErrorEntry | null>;
+  /**
+   * 写入某个 session 的 inline error；ttl>0 时 ttl 毫秒后自动清除（默认 5s）。
+   * 新 error 覆盖旧 error 会取消旧定时器。传字符串表示这句话已经是给用户看的成品，
+   * 没有额外详情；带 detail/code 的错误传 InlineErrorEntry。
+   */
+  setInlineError: (path: string, error: string | InlineErrorEntry, ttlMs?: number) => void;
   /** 清除某个 session 的 inline error（同时取消其定时器）。 */
   clearInlineError: (path: string) => void;
   /** 模型切换进行中（阻止发送） */
@@ -37,8 +48,19 @@ export interface StreamingSlice {
 // 生命周期规则：
 //   - setInlineError 覆盖写入时，先 clear 旧 timer 再起新的，避免"旧 timer 误清新 text"竞态
 //   - clearInlineError 清状态时同步 clear timer，防 timer 在 null 写入后继续 fire
-//   - timer 回调内部用 get() 取最新 text：若已被新 error 覆盖，get().inlineErrors[sp] 不等于本次写入的 text，不动它
+//   - timer 回调内部用 get() 取最新条目：若已被新 error 覆盖，引用不等于本次写入的条目，不动它。
+//     用引用而非文本比较，同一句错误连续发生两次时旧定时器才不会把新条目清掉
 const inlineErrorTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** 把字符串或部分条目归一化成完整条目。总是新建对象，让每次写入拥有独一无二的引用。 */
+function toInlineErrorEntry(error: string | InlineErrorEntry): InlineErrorEntry {
+  if (typeof error === 'string') return { text: error, detail: null, code: null };
+  return {
+    text: error.text,
+    detail: error.detail ?? null,
+    code: error.code ?? null,
+  };
+}
 
 function cancelTimer(path: string): void {
   const t = inlineErrorTimers.get(path);
@@ -179,16 +201,17 @@ export const createStreamingSlice = (
     return { unreadOutputSessionPaths: filterLegacyAndIdentity(s.unreadOutputSessionPaths, path, key) };
   }),
   inlineErrors: {},
-  setInlineError: (path, text, ttlMs = 5000) => {
+  setInlineError: (path, error, ttlMs = 5000) => {
     const key = identityKeyForPath(get, path);
+    const entry = toInlineErrorEntry(error);
     cancelTimer(key);
     if (key !== path) cancelTimer(path);
-    set((s) => ({ inlineErrors: putIdentityMapValue(s.inlineErrors, path, key, text) }));
+    set((s) => ({ inlineErrors: putIdentityMapValue(s.inlineErrors, path, key, entry) }));
     if (ttlMs > 0) {
       const timer = setTimeout(() => {
         inlineErrorTimers.delete(key);
         const current = get?.().inlineErrors[key];
-        if (current !== text) return;
+        if (current !== entry) return;
         set((s) => ({ inlineErrors: putIdentityMapValue(s.inlineErrors, path, key, null) }));
       }, ttlMs);
       inlineErrorTimers.set(key, timer);

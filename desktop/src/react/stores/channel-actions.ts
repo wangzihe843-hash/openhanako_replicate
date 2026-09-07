@@ -544,6 +544,40 @@ export async function sendChannelMessage(text: string): Promise<void> {
   }
 }
 
+function exportedArchiveFilename(disposition: string | null): string {
+  const encoded = disposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try { return decodeURIComponent(encoded); } catch { /* use fallback */ }
+  }
+  const plain = disposition?.match(/filename="([^"]+)"/i)?.[1];
+  return plain || 'hana-chat-archive.md';
+}
+
+export async function exportCurrentConversation(): Promise<string> {
+  const conversationId = useStore.getState().currentChannel;
+  if (!conversationId) throw new Error('No active conversation');
+  const ownerQuery = conversationOwnerQuery(conversationId);
+  const res = await hanaFetch(`/api/conversations/${encodeURIComponent(conversationId)}/export${ownerQuery}`);
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    throw new Error(payload?.error || `HTTP ${res.status}`);
+  }
+
+  const blob = await res.blob();
+  const filename = exportedArchiveFilename(res.headers.get('content-disposition'));
+  const downloadUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = downloadUrl;
+    anchor.download = filename;
+    anchor.rel = 'noopener';
+    anchor.click();
+  } finally {
+    URL.revokeObjectURL(downloadUrl);
+  }
+  return filename;
+}
+
 // ══════════════════════════════════════════════════════
 // 删除频道
 // ══════════════════════════════════════════════════════

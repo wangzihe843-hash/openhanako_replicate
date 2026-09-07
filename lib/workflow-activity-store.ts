@@ -55,20 +55,43 @@ export class WorkflowActivityStore {
   upsert(entry: any) {
     if (!entry || typeof entry.id !== "string" || !entry.id) return null;
     const prev = this._entries.get(entry.id);
+    // New entries and state transitions must be durable before returning.
+    // Only same-state progress updates can share the delayed write.
+    if (!prev || prev.status !== entry.status) return this.upsertMany([entry])[0] || null;
     const next = { ...entry };
     this._entries.set(next.id, next);
-    // 状态转移（新建 / status 变化，含 running→done/failed 终态）是「跑到一半被重启
-    // → 遗留 running 判孤儿 → 重启后判 failed」这条耐久契约的落盘依据，必须同步写穿，
-    // 否则崩在防抖窗口内会丢掉 running 记录、孤儿判定失效（workflow-activity-restart 覆盖）。
-    // 仅「同 id 同 status 的进度更新」（token 累计等高频 churn，大 workflow 下的 O(n²) 主因）
-    // 走防抖合并。
-    if (!prev || prev.status !== next.status) {
+    this._save();
+    return { ...next };
+  }
+
+  /** Persist a group of activity projections as one in-memory/disk transaction. */
+  upsertMany(entries: any[]) {
+    const staged = (Array.isArray(entries) ? entries : [])
+      .filter((entry) => entry && typeof entry.id === "string" && entry.id)
+      .map((entry) => ({ ...entry }));
+    if (staged.length === 0) return [];
+
+    const wasDirty = this._dirty;
+    const previous = new Map<string, any>();
+    for (const entry of staged) {
+      if (!previous.has(entry.id)) {
+        previous.set(entry.id, this._entries.has(entry.id) ? { ...this._entries.get(entry.id) } : null);
+      }
+      this._entries.set(entry.id, entry);
+    }
+    try {
       this._dirty = true;
       this.flush();
-    } else {
-      this._save();
+    } catch (error) {
+      for (const [id, value] of previous) {
+        if (value) this._entries.set(id, value);
+        else this._entries.delete(id);
+      }
+      this._dirty = wasDirty;
+      if (wasDirty) this._save();
+      throw error;
     }
-    return { ...next };
+    return staged.map((entry) => ({ ...entry }));
   }
 
   get(id: string) {
@@ -90,23 +113,46 @@ export class WorkflowActivityStore {
     return out;
   }
 
+  remove(id: string) {
+    return this.removeMany([id]).length > 0;
+  }
+
+  /** Remove a group of projections atomically so failed Session Forks leave no sidecars. */
+  removeMany(ids: string[]) {
+    const requested = [...new Set((Array.isArray(ids) ? ids : [])
+      .filter((id) => typeof id === "string" && id))];
+    const wasDirty = this._dirty;
+    const removed = [];
+    for (const id of requested) {
+      const entry = this._entries.get(id);
+      if (!entry) continue;
+      removed.push([id, { ...entry }]);
+      this._entries.delete(id);
+    }
+    if (removed.length === 0) return [];
+    try {
+      this._dirty = true;
+      this.flush();
+    } catch (error) {
+      for (const [id, entry] of removed) this._entries.set(id, entry);
+      this._dirty = wasDirty;
+      if (wasDirty) this._save();
+      throw error;
+    }
+    return removed.map(([, entry]) => ({ ...entry }));
+  }
+
   /** 会话退场（删除 / 归档 / 冷清理）时回收该 session 的活动，返回删除条数。 */
   removeBySession(sessionRefInput: any) {
     const sessionRef = normalizeSessionRef(sessionRefInput);
     if (!sessionRef.sessionId && !sessionRef.sessionPath) return 0;
-    let removed = 0;
+    const ids = [];
     for (const [id, e] of this._entries) {
       if (matchesSession(e, sessionRef)) {
-        this._entries.delete(id);
-        removed++;
+        ids.push(id);
       }
     }
-    // 会话退场是耐久关键路径：标脏后同步落盘，防防抖窗口内进程退出丢掉清理结果。
-    if (removed) {
-      this._dirty = true;
-      this.flush();
-    }
-    return removed;
+    return this.removeMany(ids).length;
   }
 
   /**
@@ -116,22 +162,16 @@ export class WorkflowActivityStore {
   prune(maxAgeMs: number, nowMs: number) {
     if (!Number.isFinite(maxAgeMs) || !Number.isFinite(nowMs)) return 0;
     const cutoff = nowMs - maxAgeMs;
-    let removed = 0;
+    const ids = [];
     for (const [id, e] of this._entries) {
       const ts = Number.isFinite(e.finishedAt)
         ? e.finishedAt
         : (Number.isFinite(e.startedAt) ? e.startedAt : null);
       if (ts != null && ts < cutoff) {
-        this._entries.delete(id);
-        removed++;
+        ids.push(id);
       }
     }
-    // prune（TTL 冷清理）是耐久关键路径：标脏后同步落盘，不留给防抖窗口。
-    if (removed) {
-      this._dirty = true;
-      this.flush();
-    }
-    return removed;
+    return this.removeMany(ids).length;
   }
 
   get size() {
@@ -162,14 +202,18 @@ export class WorkflowActivityStore {
 
   _flushToDisk() {
     this._saveTimer = null;
-    if (!this._persistPath || !this._dirty) return;
-    this._dirty = false;
+    if (!this._dirty) return;
+    if (!this._persistPath) {
+      this._dirty = false;
+      return;
+    }
     const data = {
       schemaVersion: WORKFLOW_ACTIVITY_STORE_VERSION,
       entries: Object.fromEntries(this._entries.entries()),
     };
     fs.mkdirSync(path.dirname(this._persistPath), { recursive: true });
     atomicWriteSync(this._persistPath, JSON.stringify(data, null, 2) + "\n");
+    this._dirty = false;
   }
 
   _load() {

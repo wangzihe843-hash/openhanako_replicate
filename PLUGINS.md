@@ -485,8 +485,12 @@ import { getPluginRequestContext } from "@hana/plugin-runtime";
 app.post("/create-session", async (c) => {
   const reqCtx = getPluginRequestContext(c);
   // reqCtx.principal        本次请求的来源身份（owner 设备 / 本插件 iframe surface…），测试直连时为 null
-  // reqCtx.agentId          代理层注入的当前 agent id
+  // reqCtx.agentId          本次请求属于哪个 agent；为 null 表示这个表面此刻
+  //                         不属于任何 agent（例如预览），不要当成"某个默认 agent"
   // reqCtx.capabilityGrant  { accessLevel, declaredPermissions, legacyDeclaration }
+  if (!reqCtx.agentId) {
+    return c.json({ error: "这个表面还没有关联 agent" }, 400);
+  }
   const result = await reqCtx.bus.request("session:create", { agentId: reqCtx.agentId });
   return c.json(result);
 });

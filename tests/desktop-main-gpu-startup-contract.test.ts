@@ -102,6 +102,19 @@ describe("desktop main GPU startup contract", () => {
     }
   });
 
+  it("settles legacy GPU preference cleanup only after the local server is ready", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+    const startupBlockIndex = source.indexOf('console.log("[desktop] 启动 HanaAgent Server...")');
+    const serverStartIndex = source.indexOf("await startServer();", startupBlockIndex);
+    const settleIndex = source.indexOf("await settleLegacyGpuPreferenceAfterServerStart();", serverStartIndex);
+    const serverReadyIndex = source.indexOf('phase: "server-ready"', settleIndex);
+
+    expect(startupBlockIndex).toBeGreaterThan(-1);
+    expect(serverStartIndex).toBeGreaterThan(startupBlockIndex);
+    expect(settleIndex).toBeGreaterThan(serverStartIndex);
+    expect(serverReadyIndex).toBeGreaterThan(settleIndex);
+  });
+
   it("records Windows window-starting phases before BrowserWindow creation can fail", () => {
     const source = fs.readFileSync(MAIN_PATH, "utf-8");
     const mainStartingIndex = source.indexOf('phase: "main-window-starting"');
@@ -221,5 +234,30 @@ describe("desktop main GPU startup contract", () => {
     expect(finalState.phase).toBe("server-ready");
     expect(finalState.status).toBe("pending");
     expect(finalState.startupId).toBe(startupId);
+  });
+
+  it("runs the install ACL heal before resolving the GPU startup policy", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+    const requireIndex = source.indexOf('require("./src/shared/win32-install-acl-heal.cjs")');
+    const healIndex = source.indexOf("maybeHealWin32InstallAcl({");
+    const resolveIndex = source.indexOf("const gpuStartupPolicy = resolveGpuStartupPolicy({");
+
+    expect(requireIndex).toBeGreaterThan(-1);
+    expect(healIndex).toBeGreaterThan(-1);
+    expect(resolveIndex).toBeGreaterThan(-1);
+    expect(healIndex).toBeLessThan(resolveIndex);
+
+    const healCall = source.slice(healIndex, source.indexOf("});", healIndex) + 3);
+    expect(healCall).toContain("installDir: path.dirname(process.execPath)");
+    expect(healCall).toContain("isPackaged: app.isPackaged");
+  });
+
+  it("appends install ACL heal diagnostics next to the GPU startup diagnostics", () => {
+    const source = fs.readFileSync(MAIN_PATH, "utf-8");
+    const gpuDiagIndex = source.indexOf("items.push(buildGpuStartupDiagnostics({ hanakoHome, policy: gpuStartupPolicy, app }));");
+    const healDiagIndex = source.indexOf("items.push(buildInstallAclHealDiagnostics({ hanakoHome }));");
+
+    expect(gpuDiagIndex).toBeGreaterThan(-1);
+    expect(healDiagIndex).toBeGreaterThan(gpuDiagIndex);
   });
 });

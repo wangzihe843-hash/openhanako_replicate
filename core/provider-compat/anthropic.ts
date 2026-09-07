@@ -12,7 +12,7 @@ import { getReasoningProfile, getThinkingFormat } from "../../shared/model-capab
 const CACHE_CONTROL = { type: "ephemeral" };
 const MAX_EFFORT_MIN_OUTPUT_TOKENS = 64000;
 const ADAPTIVE_THINKING_DISABLED_ERROR =
-  "Claude Fable/Mythos 5 does not support disabling adaptive thinking.";
+  "The Claude 5 adaptive model family does not support disabling adaptive thinking.";
 
 function lower(value) {
   return typeof value === "string" ? value.toLowerCase() : "";

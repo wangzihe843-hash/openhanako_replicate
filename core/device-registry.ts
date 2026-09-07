@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { atomicWriteSync } from "../shared/safe-fs.ts";
+import { writeSecretFileSync } from "../shared/secret-fs.ts";
 import { normalizePrincipal } from "./security-principal.ts";
 
 export const DEVICES_FILE = "devices.json";
@@ -27,7 +27,7 @@ export function ensureDeviceAccessRegistries(hanakoHome, { now = new Date().toIS
       validate(current, file);
       continue;
     }
-    writeJsonAtomic(filePath, emptyRegistry);
+    writeSecretJson(filePath, emptyRegistry);
     created.push(file);
   }
 
@@ -252,9 +252,9 @@ function persistDeviceAccessRegistries(hanakoHome, registries) {
   validateDevicesRegistry(registries.devices, DEVICES_FILE);
   validateCredentialsRegistry(registries.credentials, DEVICE_CREDENTIALS_FILE);
   validatePairingSessionsRegistry(registries.pairingSessions, PAIRING_SESSIONS_FILE);
-  writeJsonAtomic(path.join(hanakoHome, DEVICES_FILE), registries.devices);
-  writeJsonAtomic(path.join(hanakoHome, DEVICE_CREDENTIALS_FILE), registries.credentials);
-  writeJsonAtomic(path.join(hanakoHome, PAIRING_SESSIONS_FILE), registries.pairingSessions);
+  writeSecretJson(path.join(hanakoHome, DEVICES_FILE), registries.devices);
+  writeSecretJson(path.join(hanakoHome, DEVICE_CREDENTIALS_FILE), registries.credentials);
+  writeSecretJson(path.join(hanakoHome, PAIRING_SESSIONS_FILE), registries.pairingSessions);
 }
 
 function createEmptyDevicesRegistry(now) {
@@ -371,9 +371,9 @@ function readJsonIfPresent(filePath, label) {
   }
 }
 
-function writeJsonAtomic(filePath, data) {
+function writeSecretJson(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  atomicWriteSync(filePath, JSON.stringify(data, null, 2) + "\n");
+  writeSecretFileSync(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
 function hashSecret(secret, salt) {

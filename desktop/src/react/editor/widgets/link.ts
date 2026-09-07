@@ -6,12 +6,9 @@ const linkTextMark = Decoration.mark({ class: 'cm-link-text' });
 export function handleLink(ctx: {
   view: EditorView;
   node: { name: string; from: number; to: number };
-  activeLines: Set<number>;
   ranges: DecoRange[];
 }) {
-  const { view, node, activeLines, ranges } = ctx;
-  const line = view.state.doc.lineAt(node.from);
-  if (activeLines.has(line.number)) return;
+  const { view, node, ranges } = ctx;
 
   // Extract link text range: between first [ and first ]
   const text = view.state.doc.sliceString(node.from, node.to);

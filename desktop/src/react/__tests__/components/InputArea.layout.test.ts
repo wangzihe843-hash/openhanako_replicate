@@ -90,6 +90,25 @@ describe('InputArea layout', () => {
     expect(pillBlock).toMatch(/height:\s*30px/);
   });
 
+  it('keeps the mention menu as compact as the Skill menu and gives primary names display priority', () => {
+    const css = fs.readFileSync(
+      path.join(process.cwd(), 'desktop/src/react/components/input/InputArea.module.css'),
+      'utf8',
+    );
+    const slashMenuBlock = cssBlock(css, String.raw`\.slash-menu`);
+    const mentionMenuBlock = cssBlock(css, String.raw`\.mention-menu`);
+    const mentionNameBlock = cssBlock(css, String.raw`\.mention-name`);
+    const mentionDetailBlock = cssBlock(css, String.raw`\.mention-detail`);
+
+    expect(slashMenuBlock).toMatch(/max-width:\s*360px/);
+    expect(slashMenuBlock).toMatch(/max-height:\s*308px/);
+    expect(mentionMenuBlock).toMatch(/width:\s*min\(360px,\s*calc\(100vw - 2rem\)\)/);
+    expect(mentionMenuBlock).toMatch(/max-height:\s*308px/);
+    expect(mentionNameBlock).toMatch(/flex:\s*0 0 auto/);
+    expect(mentionNameBlock).toMatch(/max-width:\s*100%/);
+    expect(mentionDetailBlock).toMatch(/flex:\s*1 1 auto/);
+  });
+
   it('keeps one transient row free, then pushes chat when the whole input surface reaches another row', () => {
     expect(calculateInputCardBottomInset({
       cardHeight: 80,

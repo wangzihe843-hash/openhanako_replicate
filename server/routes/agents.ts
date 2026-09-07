@@ -10,10 +10,12 @@
  * POST   /api/agents/:id/avatar   — 上传指定助手的头像
  * GET    /api/agents/:id/config   — 读取指定助手的 config
  * PUT    /api/agents/:id/config   — 写入指定助手的 config
- * GET    /api/agents/:id/identity — 读取 identity.md
- * PUT    /api/agents/:id/identity — 写入 identity.md
- * GET    /api/agents/:id/ishiki   — 读取 ishiki.md
- * PUT    /api/agents/:id/ishiki   — 写入 ishiki.md
+ * GET    /api/agents/:id/identity — 读取 identity.md（缺失时回落模板，附 fromTemplate）
+ * PUT    /api/agents/:id/identity — 写入 identity.md（用户显式定制才落盘）
+ * GET    /api/agents/:id/agents-md — 读取 AGENTS.md（缺失时回落模板，附 fromTemplate）
+ * PUT    /api/agents/:id/agents-md — 写入 AGENTS.md（用户显式定制才落盘）
+ * GET/PUT /api/agents/:id/public-agents-md — 读写 AGENTS.public.md
+ *   （/ishiki 与 /public-ishiki 是改名前的旧段，过渡期保留为同一 handler 的别名）
  * GET    /api/agents/:id/pinned   — 读取 pinned.md
  * PUT    /api/agents/:id/pinned   — 写入 pinned.md
  * GET    /api/agents/:id/experience — 读取经验（合并）
@@ -27,6 +29,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { emitAppEvent } from "../app-events.ts";
 import { safeJson } from "../hono-helpers.ts";
+import { bodyFromRouteError, statusFromRouteError } from "./route-errors.ts";
 import { saveConfig, clearConfigCache } from "../../lib/memory/config-loader.ts";
 import {
   listExperienceDocuments,
@@ -67,6 +70,11 @@ function hideDisabledGlobalToolsForSettings(toolNames, engine) {
 import { assertAgentConfigPatchYuan } from "../../core/yuan-registry.ts";
 import { createModuleLogger } from "../../lib/debug-log.ts";
 import { assertValidAgentIdentityId } from "../../shared/agent-id.ts";
+import {
+  PUBLIC_PERSONA_FILE_NAME,
+  resolvePersonaLocale,
+  resolvePersonaSource,
+} from "../../core/persona-source.ts";
 
 const log = createModuleLogger("agents");
 
@@ -74,6 +82,29 @@ const log = createModuleLogger("agents");
 
 function agentDir(engine, id) {
   return path.join(engine.agentsDir, id);
+}
+
+/**
+ * 读取 identity.md / AGENTS.md 的实际生效内容（agentDir 落盘文件优先，缺失
+ * 时按 yuan + locale 回落到 lib 模板）。优先走已加载的 Agent 实例（复用
+ * agent.resolveLocale()）；非焦点 agent 可能尚未加载进 engine 内存，退化为
+ * 直接读 config.yaml + 全局 locale，与 core/agent-manager.ts _scanAgentList
+ * 的降级路径同一条链条，绝不因为 agent 未加载而抛错或返回空串。
+ */
+function readAgentPersonaSource(engine, id, kind) {
+  const agent = typeof engine.getAgent === "function" ? engine.getAgent(id) : null;
+  if (agent) {
+    return kind === "identity" ? agent.readIdentitySource() : agent.readAgentsMdSource();
+  }
+  const cfgPath = path.join(agentDir(engine, id), "config.yaml");
+  const cfg = YAML.load(fsSync.readFileSync(cfgPath, "utf-8")) || {};
+  return resolvePersonaSource({
+    agentDir: agentDir(engine, id),
+    productDir: engine.productDir,
+    yuanType: cfg.agent?.yuan || "hanako",
+    locale: resolvePersonaLocale(cfg.locale, engine.getLocale?.()),
+    kind,
+  });
 }
 
 function hasOwn(value, key) {
@@ -167,6 +198,7 @@ function emitAgentConfigAppEvents(engine, agentId, { globalFields, agentPartial,
       agentId,
       homeFolder: agentPartial.desk.home_folder || null,
     });
+    engine.refreshFileHistoryWorkspaces?.();
   }
 
   if (hasOwn(agentPartial?.memory, "enabled")) {
@@ -223,7 +255,7 @@ export function createAgentsRoute(engine) {
       if (fresh === "1" || fresh === "true") {
         engine.invalidateAgentListCache?.();
       }
-      return c.json({ agents: engine.listAgents() });
+      return c.json({ agents: withEffectiveHomeFolders(engine.listAgents(), engine) });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
@@ -237,17 +269,19 @@ export function createAgentsRoute(engine) {
         return c.json({ error: "name is required" }, 400);
       }
       if (id !== undefined && id !== null) assertValidAgentIdentityId(id);
-      // 可选：为新角色预置 identity / ishiki / public ishiki（如「设定工坊」批量建 peer 角色时）。
+      // 可选：为新角色预置 identity / AGENTS.md / AGENTS.public.md。
       // 只透传这三个字段并做长度上限，避免注入任意键或超大正文。
       let initialFiles;
       const rawFiles = body?.initialFiles;
       if (rawFiles && typeof rawFiles === "object" && !Array.isArray(rawFiles)) {
         const pick = (v) => (typeof v === "string" && v.trim() ? v.slice(0, 20000) : undefined);
         const identity = pick(rawFiles.identity);
-        const ishiki = pick(rawFiles.ishiki);
-        const publicIshiki = pick(rawFiles.publicIshiki);
-        if (identity || ishiki || publicIshiki) {
-          initialFiles = { ...(identity ? { identity } : {}), ...(ishiki ? { ishiki } : {}), ...(publicIshiki ? { publicIshiki } : {}) };
+        // Old clients may still use ishiki keys; normalize at the boundary so
+        // every caller writes the same canonical persona files.
+        const agents = pick(rawFiles.agents) ?? pick(rawFiles.ishiki);
+        const publicAgents = pick(rawFiles.publicAgents) ?? pick(rawFiles.publicIshiki);
+        if (identity || agents || publicAgents) {
+          initialFiles = { ...(identity ? { identity } : {}), ...(agents ? { agents } : {}), ...(publicAgents ? { publicAgents } : {}) };
         }
       }
       const result = await engine.createAgent({ name, id, yuan, ...(initialFiles ? { initialFiles } : {}) });
@@ -313,7 +347,10 @@ export function createAgentsRoute(engine) {
         memoryMasterEnabled,
       });
     } catch (err) {
-      return c.json({ error: err.message }, 500);
+      // 响应按语义分层后，服务端仍要留全量记录：故障可见不能只靠客户端那一句提示。
+      // stack 首行已经含 message，取不到 stack（抛的不是 Error）才退到 message。
+      log.error(`switch error: ${err?.stack || err?.message || String(err)}`);
+      return c.json(bodyFromRouteError(err), statusFromRouteError(err));
     }
   });
 
@@ -463,6 +500,11 @@ export function createAgentsRoute(engine) {
       return c.json({ error: "agent not found" }, 404);
     }
     try {
+      // Drop workspace history entries whose folders are gone before answering.
+      // The bare config route has always done this; doing it here too means a
+      // caller gets the same config whichever door it comes through, instead of
+      // depending on having hit some other route first.
+      await engine.gcWorkspacePersistence?.({ agentId: id });
       const configPath = path.join(agentDir(engine, id), "config.yaml");
       // 直接解析 YAML，不走 loadConfig 全局缓存
       const config = YAML.load(await fs.readFile(configPath, "utf-8")) || {};
@@ -573,6 +615,10 @@ export function createAgentsRoute(engine) {
       if (partial.experience?.enabled !== undefined && typeof partial.experience.enabled !== "boolean") {
         return c.json({ error: "experience.enabled must be a boolean" }, 400);
       }
+      if (partial.memory?.dream?.auto_enabled !== undefined
+        && typeof partial.memory.dream.auto_enabled !== "boolean") {
+        return c.json({ error: "memory.dream.auto_enabled must be a boolean" }, 400);
+      }
       const workspaceSkillPolicyError = validateWorkspaceSkillPolicyPatch(partial.workspace_context);
       if (workspaceSkillPolicyError) {
         return c.json({ error: workspaceSkillPolicyError }, 400);
@@ -662,6 +708,10 @@ export function createAgentsRoute(engine) {
       engine.invalidateAgentListCache();
       // 触发目标 agent 模块刷新 + prompt 重建
       await engine.updateConfig(agentPartial, { agentId: id });
+      // @ui-focus-ok: the config was already written for the agent named in the
+      // path. This only asks whether that agent is the one currently loaded, so
+      // its live skill list is refreshed to match; any other agent picks the new
+      // policy up when it next loads. The focus decides nothing about ownership.
       if (hasWorkspaceSkillPolicyPatch(agentPartial.workspace_context) && id === engine.currentAgentId) {
         engine.syncAgentWorkspaceSkills?.(id);
       }
@@ -692,10 +742,9 @@ export function createAgentsRoute(engine) {
       return c.json({ error: "agent not found" }, 404);
     }
     try {
-      const content = await fs.readFile(path.join(agentDir(engine, id), "identity.md"), "utf-8");
-      return c.json({ content });
+      const { content, fromTemplate } = readAgentPersonaSource(engine, id, "identity");
+      return c.json({ content, fromTemplate });
     } catch (err) {
-      if (err.code === "ENOENT") return c.json({ content: "" });
       return c.json({ error: err.message }, 500);
     }
   });
@@ -722,24 +771,27 @@ export function createAgentsRoute(engine) {
   });
 
   // ════════════════════════════
-  //  Ishiki（ishiki.md）
+  //  AGENTS.md
   // ════════════════════════════
 
-  route.get("/agents/:id/ishiki", async (c) => {
+  // 每个人格文件都挂两个路由段：当前段，以及改名前的旧段。旧段只是过渡期
+  // 兼容——用户可能还开着改名前版本的移动端或 Bridge 客户端，它们请求的是
+  // 旧路径。两个段是同一个 handler，写的是同一个新文件名，没有第二套行为。
+  // 计划两个版本后移除旧段。
+  const readAgentsMd = async (c) => {
     const id = c.req.param("id");
     if (!validateId(id) || !agentExists(engine, id)) {
       return c.json({ error: "agent not found" }, 404);
     }
     try {
-      const content = await fs.readFile(path.join(agentDir(engine, id), "ishiki.md"), "utf-8");
-      return c.json({ content });
+      const { content, fromTemplate } = readAgentPersonaSource(engine, id, "agents");
+      return c.json({ content, fromTemplate });
     } catch (err) {
-      if (err.code === "ENOENT") return c.json({ content: "" });
       return c.json({ error: err.message }, 500);
     }
-  });
+  };
 
-  route.put("/agents/:id/ishiki", async (c) => {
+  const writeAgentsMd = async (c) => {
     const id = c.req.param("id");
     if (!validateId(id) || !agentExists(engine, id)) {
       return c.json({ error: "agent not found" }, 404);
@@ -750,34 +802,42 @@ export function createAgentsRoute(engine) {
       if (typeof content !== "string") {
         return c.json({ error: "content must be a string" }, 400);
       }
-      await fs.writeFile(path.join(agentDir(engine, id), "ishiki.md"), content, "utf-8");
+      await fs.writeFile(path.join(agentDir(engine, id), "AGENTS.md"), content, "utf-8");
       await engine.updateConfig({}, { agentId: id, refreshDescription: true });
       emitAppEvent(engine, "agent-updated", { agentId: id });
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
-  });
+  };
+
+  route.get("/agents/:id/agents-md", readAgentsMd);
+  route.get("/agents/:id/ishiki", readAgentsMd);
+  route.put("/agents/:id/agents-md", writeAgentsMd);
+  route.put("/agents/:id/ishiki", writeAgentsMd);
 
   // ════════════════════════════
-  //  Public Ishiki（public-ishiki.md）
+  //  AGENTS.public.md
   // ════════════════════════════
 
-  route.get("/agents/:id/public-ishiki", async (c) => {
+  const readPublicAgentsMd = async (c) => {
     const id = c.req.param("id");
     if (!validateId(id) || !agentExists(engine, id)) {
       return c.json({ error: "agent not found" }, 404);
     }
     try {
-      const content = await fs.readFile(path.join(agentDir(engine, id), "public-ishiki.md"), "utf-8");
+      const content = await fs.readFile(
+        path.join(agentDir(engine, id), PUBLIC_PERSONA_FILE_NAME),
+        "utf-8",
+      );
       return c.json({ content });
     } catch (err) {
       if (err.code === "ENOENT") return c.json({ content: "" });
       return c.json({ error: err.message }, 500);
     }
-  });
+  };
 
-  route.put("/agents/:id/public-ishiki", async (c) => {
+  const writePublicAgentsMd = async (c) => {
     const id = c.req.param("id");
     if (!validateId(id) || !agentExists(engine, id)) {
       return c.json({ error: "agent not found" }, 404);
@@ -788,14 +848,23 @@ export function createAgentsRoute(engine) {
       if (typeof content !== "string") {
         return c.json({ error: "content must be a string" }, 400);
       }
-      await fs.writeFile(path.join(agentDir(engine, id), "public-ishiki.md"), content, "utf-8");
+      await fs.writeFile(
+        path.join(agentDir(engine, id), PUBLIC_PERSONA_FILE_NAME),
+        content,
+        "utf-8",
+      );
       await engine.updateConfig({}, { agentId: id });
       emitAppEvent(engine, "agent-updated", { agentId: id });
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
-  });
+  };
+
+  route.get("/agents/:id/public-agents-md", readPublicAgentsMd);
+  route.get("/agents/:id/public-ishiki", readPublicAgentsMd);
+  route.put("/agents/:id/public-agents-md", writePublicAgentsMd);
+  route.put("/agents/:id/public-ishiki", writePublicAgentsMd);
 
   // ════════════════════════════
   //  Pinned（pinned.md）
@@ -926,4 +995,11 @@ export function createAgentsRoute(engine) {
   });
 
   return route;
+}
+
+function withEffectiveHomeFolders(agents, engine) {
+  return agents.map((agent) => ({
+    ...agent,
+    effectiveHomeFolder: engine.getHomeCwd?.(agent.id) || agent.homeFolder || null,
+  }));
 }

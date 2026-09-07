@@ -98,7 +98,6 @@ describe("ModelManager AuthStorage ownership", () => {
       input: ["text", "image"],
       reasoning: true,
     });
-
     const projectionRaw = fs.readFileSync(path.join(tmpDir, "models.json"), "utf-8");
     const projection = JSON.parse(projectionRaw);
     expect(projection.providers["xai-oauth"]).not.toHaveProperty("apiKey");
@@ -108,6 +107,17 @@ describe("ModelManager AuthStorage ownership", () => {
     });
     expect(projectionRaw).not.toContain("grok-access-secret");
     expect(projectionRaw).not.toContain("grok-refresh-secret");
+
+    const execution = await manager.resolveModelWithCredentialsFresh({
+      id: "grok-4.5",
+      provider: "xai-oauth",
+    });
+    expect(execution.headers).toEqual({
+      "x-xai-token-auth": "xai-grok-cli",
+      "x-grok-client-version": "0.2.95",
+      "x-grok-client-identifier": "hana",
+      "x-grok-model-override": "grok-4.5",
+    });
 
     manager.authStorage.logout("xai-oauth");
     await manager.reloadAndSync();
@@ -335,6 +345,100 @@ describe("ModelManager AuthStorage ownership", () => {
     expect(model).toBeTruthy();
     expect(model?.input).toEqual(["text"]);
     expect(model).not.toHaveProperty("visionCapabilities");
+  });
+
+  it("loads a fetched Kimi K3 id through the real ModelRegistry without projecting it to the default model", async () => {
+    writeAddedModels({
+      "kimi-coding": {
+        base_url: "https://api.kimi.com/coding/v1",
+        api: "openai-completions",
+        api_key: "sk-kimi",
+        models: ["k3"],
+      },
+    });
+    writeAuth({});
+
+    const manager = new ModelManager({ hanakoHome: tmpDir });
+    manager.init();
+    await manager.refreshAvailable();
+
+    const projected = JSON.parse(fs.readFileSync(path.join(tmpDir, "models.json"), "utf-8"));
+    expect(projected.providers["kimi-coding"].models).toHaveLength(1);
+    expect(projected.providers["kimi-coding"].models[0]).toMatchObject({
+      id: "k3",
+      input: ["text", "image"],
+      reasoning: true,
+    });
+    expect(manager.availableModels.find((item) => (
+      item.provider === "kimi-coding" && item.id === "k3"
+    ))).toMatchObject({
+      id: "k3",
+      input: ["text", "image"],
+      reasoning: true,
+      compat: {
+        thinkingFormat: "kimi",
+        reasoningProfile: "kimi-openai",
+        reasoningReplay: {
+          carrier: "reasoning_content",
+          policy: "require-tool-call",
+        },
+      },
+    });
+    expect(projected.providers["kimi-coding"].models[0].compat).not.toHaveProperty("hanaVideoInput");
+    expect(manager.availableModels.some((item) => (
+      item.provider === "kimi-coding" && item.id === "kimi-for-coding"
+    ))).toBe(false);
+  });
+
+  it("uses the normalized Kimi model endpoint for fresh auxiliary execution credentials", async () => {
+    writeAddedModels({
+      "kimi-coding": {
+        base_url: "https://api.kimi.com/coding/",
+        api: "anthropic-messages",
+        api_key: "sk-kimi",
+        models: ["k3"],
+      },
+    });
+    writeAuth({});
+
+    const manager = new ModelManager({ hanakoHome: tmpDir });
+    manager.init();
+    await manager.refreshAvailable();
+
+    const selected = manager.availableModels.find((item) => (
+      item.provider === "kimi-coding" && item.id === "k3"
+    ));
+    expect(selected).toMatchObject({
+      api: "openai-completions",
+      baseUrl: "https://api.kimi.com/coding/v1",
+    });
+
+    expect(manager.resolveModelWithCredentials({
+      id: "k3",
+      provider: "kimi-coding",
+    })).toMatchObject({
+      api: "openai-completions",
+      api_key: "sk-kimi",
+      base_url: "https://api.kimi.com/coding/v1",
+      credential_source: "provider-catalog",
+    });
+
+    const resolved = await manager.resolveModelWithCredentialsFresh({
+      id: "k3",
+      provider: "kimi-coding",
+    });
+    expect(resolved).toMatchObject({
+      api: "openai-completions",
+      api_key: "sk-kimi",
+      base_url: "https://api.kimi.com/coding/v1",
+      credential_source: "provider-catalog",
+      model: {
+        id: "k3",
+        provider: "kimi-coding",
+        api: "openai-completions",
+        baseUrl: "https://api.kimi.com/coding/v1",
+      },
+    });
   });
 
   it("keeps provider-specific GPT-5.6 APIs ahead of an incompatible provider-wide default", async () => {
@@ -694,7 +798,7 @@ describe("ModelManager AuthStorage ownership", () => {
       .rejects.toThrow(/openai-codex/);
   });
 
-  it("builds a fresh model credential result from AuthStorage and strips stale catalog/model credential headers", async () => {
+  it("builds a fresh model credential result from AuthStorage, preserving its dynamic resource URL", async () => {
     writeAddedModels({
       "openai-codex-oauth": {
         api_key: "stale-catalog-token",
@@ -721,7 +825,7 @@ describe("ModelManager AuthStorage ownership", () => {
       id: "gpt-5.6-sol",
       provider: "openai-codex",
       api: "openai-codex-responses",
-      baseUrl: "https://chatgpt.com/backend-api",
+      baseUrl: "https://fixed-codex.example/v1",
       headers: {
         Authorization: "Bearer stale-model-header",
         Cookie: "model=stale",
@@ -750,6 +854,7 @@ describe("ModelManager AuthStorage ownership", () => {
     expect(resolved).toMatchObject({
       api: "openai-codex-responses",
       api_key: "fresh-auth-storage-token",
+      base_url: "https://chatgpt.com/backend-api",
       accountId: "acct_fresh",
       credential_source: "auth-storage",
       model: {
@@ -783,6 +888,62 @@ describe("ModelManager AuthStorage ownership", () => {
     expect(requestHeaders["chatgpt-account-id"]).toBe("acct_fresh");
     expect(requestHeaders.Cookie).toBeUndefined();
     expect(JSON.stringify(requestHeaders)).not.toContain("stale");
+  });
+
+  it("keeps Grok provider protocol and model override headers in the fresh execution config", async () => {
+    const manager = new ModelManager({ hanakoHome: tmpDir });
+    manager.providerRegistry = {
+      resolveChatProvider: vi.fn(() => ({
+        credentialSource: "auth-storage",
+        entry: {
+          id: "xai-oauth",
+          api: "openai-responses",
+          baseUrl: "https://cli-chat-proxy.grok.com/v1",
+          headers: {
+            Authorization: "Bearer stale-provider",
+            Cookie: "provider=stale",
+            "x-xai-token-auth": "xai-grok-cli",
+            "x-grok-client-version": "0.2.95",
+            "x-grok-client-identifier": "hana",
+          },
+        },
+      })),
+      getAllProvidersRaw: vi.fn(() => ({})),
+      getAuthJsonKey: vi.fn(() => "xai-oauth"),
+      getCredentials: vi.fn(() => ({ accountId: "acct_stale" })),
+      clearAuthCache: vi.fn(),
+      allowsMissingApiKey: vi.fn(() => false),
+    } as any;
+    manager._availableModels = [{
+      id: "grok-4.5",
+      provider: "xai-oauth",
+      api: "openai-responses",
+      baseUrl: "https://cli-chat-proxy.grok.com/v1",
+      headers: {
+        Authorization: "Bearer stale-model",
+        "x-api-key": "stale-model-key",
+        "x-grok-model-override": "grok-4.5",
+      },
+    }];
+    manager._authStorage = {
+      getApiKey: vi.fn(async () => "fresh-grok-token"),
+      reload: vi.fn(),
+      get: vi.fn(() => ({ access: "fresh-grok-token", accountId: "acct_fresh" })),
+    };
+
+    const resolved = await manager.resolveModelWithCredentialsFresh({
+      id: "grok-4.5",
+      provider: "xai-oauth",
+    });
+
+    expect(resolved.headers).toEqual({
+      "x-xai-token-auth": "xai-grok-cli",
+      "x-grok-client-version": "0.2.95",
+      "x-grok-client-identifier": "hana",
+      "x-grok-model-override": "grok-4.5",
+    });
+    expect(resolved.model.headers).toEqual(resolved.headers);
+    expect(JSON.stringify(resolved)).not.toContain("stale");
   });
 
   it("fails closed for auth-storage providers when AuthStorage is unavailable", async () => {

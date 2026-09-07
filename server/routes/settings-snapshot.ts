@@ -20,6 +20,11 @@ import { agentExists, validateId } from "../utils/validation.ts";
 import { readAuthPrincipal } from "../http/capability-guard.ts";
 import { isLocalOwnerPrincipal } from "../http/route-security.ts";
 import { readUserProfile } from "../../lib/user-profile-store.ts";
+import {
+  PUBLIC_PERSONA_FILE_NAME,
+  resolvePersonaLocale,
+  resolvePersonaSource,
+} from "../../core/persona-source.ts";
 
 function agentDir(engine: any, id: string) {
   return path.join(engine.agentsDir, id);
@@ -147,7 +152,12 @@ async function buildAgentConfig(engine: any, id: string) {
 }
 
 function resolveSnapshotAgentId(engine: any, rawAgentId: string | undefined) {
-  const id = rawAgentId || engine.currentAgentId || engine.getPrimaryAgent?.() || engine.listAgents?.()[0]?.id;
+  // A snapshot describes one agent's settings, so the agent has to be named.
+  // Without an explicit id the primary agent is the only defensible answer:
+  // handing back whichever agent the server is focused on, or whichever one
+  // happens to be listed first, would show the caller another agent's
+  // settings under the name they asked about. Say nothing instead.
+  const id = rawAgentId || engine.getPrimaryAgentId?.();
   if (!id || !validateId(id) || !agentExists(engine, id)) {
     throw new Error("settings snapshot agent not found");
   }
@@ -208,18 +218,28 @@ export function createSettingsSnapshotRoute(engine: any, options: Record<string,
       const snapshotAgent = runtimeAgent?.config
         ? runtimeAgent
         : { ...(runtimeAgent || {}), id: agentId, config };
-      const [identity, ishiki, publicIshiki] = await Promise.all([
-        readTextFile(path.join(baseDir, "identity.md")),
-        readTextFile(path.join(baseDir, "ishiki.md")),
-        readTextFile(path.join(baseDir, "public-ishiki.md")),
-      ]);
+      // identity.md / AGENTS.md 惰性材料化后可能没有落盘文件；快照必须反映
+      // agent 此刻实际生效的内容（回落到模板，见 core/persona-source.ts），
+      // 而不是空字符串。locale 优先走已加载 Agent 实例的 resolveLocale()，
+      // 未加载时退化为同一条链（config.locale → 全局 prefs → "en"）。
+      const configRecord = config as Record<string, any>;
+      const personaLocale = runtimeAgent?.resolveLocale?.()
+        ?? resolvePersonaLocale(configRecord.locale, engine.getLocale?.());
+      const personaYuanType = configRecord.agent?.yuan || "hanako";
+      const identity = resolvePersonaSource({
+        agentDir: baseDir, productDir: engine.productDir, yuanType: personaYuanType, locale: personaLocale, kind: "identity",
+      }).content;
+      const agents = resolvePersonaSource({
+        agentDir: baseDir, productDir: engine.productDir, yuanType: personaYuanType, locale: personaLocale, kind: "agents",
+      }).content;
+      const publicAgents = await readTextFile(path.join(baseDir, PUBLIC_PERSONA_FILE_NAME));
       const canSeeLocalPaths = isLocalOwnerPrincipal(readAuthPrincipal(c));
       return c.json({
         agentId,
         config,
         identity,
-        ishiki,
-        publicIshiki,
+        agents,
+        publicAgents,
         userProfile: await readUserProfile(engine.userDir),
         experience: readExperience(engine, agentId, config),
         pinned: { pins: readPinned(baseDir) },

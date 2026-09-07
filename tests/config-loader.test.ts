@@ -134,6 +134,15 @@ describe("saveConfig", () => {
     expect(files).toContain("config.yaml");
   });
 
+  it.skipIf(process.platform === "win32")("配置文件保存后仅所有者可读写", () => {
+    writeYaml({ api: { provider: "openai", api_key: "sk-1" } });
+    fs.chmodSync(configPath, 0o644);
+
+    saveConfig(configPath, { user: { name: "Test" } });
+
+    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+  });
+
   it("保存后缓存被清除（下次 loadConfig 读到新值）", () => {
     writeYaml({ api: { provider: "openai", api_key: "sk-1", base_url: "https://api.openai.com/v1" } });
     loadConfig(configPath);

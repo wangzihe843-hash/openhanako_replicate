@@ -132,7 +132,7 @@ describe("DeferredResultCoordinator", () => {
         display: false,
         content: expect.stringContaining("status=\"failed\""),
       }),
-      { triggerTurn: true },
+      expect.objectContaining({ triggerTurn: true, shouldDeliver: expect.any(Function) }),
     );
     expect(sessionCoordinator.deliverCustomMessage.mock.calls[0][1].content).toContain("quota exhausted");
     expect(store.query("task-img-fail")).toMatchObject({ delivered: true });
@@ -148,6 +148,40 @@ describe("DeferredResultCoordinator", () => {
     });
 
     expect(store.query("task-2")).toMatchObject({ delivered: false });
+  });
+
+  it("does not let an in-flight delivery completion remove a retry suppression fence", async () => {
+    let finishDelivery;
+    sessionCoordinator.deliverCustomMessage.mockImplementationOnce(() => new Promise((resolve) => {
+      finishDelivery = resolve;
+    }));
+    store._tasks.set("task-racing-retry", {
+      status: "resolved",
+      sessionId: "sess-a",
+      sessionPath: "/sessions/a.jsonl",
+      sessionRef: { sessionId: "sess-a", sessionPath: "/sessions/a.jsonl" },
+      meta: { type: "subagent" },
+      deferredAt: Date.now(),
+      result: "done",
+      reason: null,
+      delivered: false,
+    });
+
+    const delivery = coordinator.deliverTask("task-racing-retry");
+    await vi.waitFor(() => expect(sessionCoordinator.deliverCustomMessage).toHaveBeenCalledOnce());
+    store.suppressTaskIdsForSession(
+      { sessionId: "sess-a", sessionPath: "/sessions/a.jsonl" },
+      ["task-racing-retry"],
+      "retry discarded branch",
+    );
+    finishDelivery({ ok: true });
+    await delivery;
+
+    expect(store.query("task-racing-retry")).toMatchObject({
+      delivered: true,
+      deliverySuppressed: true,
+      suppressionReason: "retry discarded branch",
+    });
   });
 
   it("flushes old undelivered task results without waiting for a new store event", async () => {
@@ -178,7 +212,7 @@ describe("DeferredResultCoordinator", () => {
     expect(sessionCoordinator.deliverCustomMessage).toHaveBeenCalledWith(
       "/sessions/a.jsonl",
       expect.objectContaining({ customType: "hana-background-result" }),
-      { triggerTurn: false },
+      expect.objectContaining({ triggerTurn: false, shouldDeliver: expect.any(Function) }),
     );
     expect(store.query("task-4")).toMatchObject({ delivered: true });
   });

@@ -7,7 +7,7 @@
  */
 
 import { Type, StringEnum } from "../pi-sdk/index.ts";
-import { getToolSessionCwd, getToolSessionPath } from "./tool-session.ts";
+import { getToolSessionCwd, getToolSessionPath, resolveToolSessionRef } from "./tool-session.ts";
 import { createAgentSessionAutomationExecutor } from "../desk/agent-run-automation.ts";
 import { applyConfirmedAutomationDraft } from "./automation-draft.ts";
 import { parseSessionKey } from "../bridge/session-key.ts";
@@ -33,6 +33,7 @@ function contextForTool(ctx, {
   getAgentId,
   getSessionCwd,
   getSessionWorkspaceFolders,
+  getSessionAuthorizedFolders,
   getHomeCwd,
   targetAgentId,
 }: {
@@ -40,10 +41,16 @@ function contextForTool(ctx, {
   getAgentId?: any;
   getSessionCwd?: any;
   getSessionWorkspaceFolders?: any;
+  getSessionAuthorizedFolders?: any;
   getHomeCwd?: any;
   targetAgentId?: any;
 } = {}) {
-  const sessionPath = getToolSessionPath(ctx) || getSessionPath?.() || null;
+  const runtimeSessionRef = resolveToolSessionRef(ctx);
+  const sessionId = runtimeSessionRef?.sessionId || null;
+  const sessionPath = runtimeSessionRef?.sessionPath
+    || getToolSessionPath(ctx)
+    || getSessionPath?.()
+    || null;
   const sourceAgentId = getAgentId?.() || null;
   const actorAgentId = typeof targetAgentId === "string" && targetAgentId.trim()
     ? targetAgentId.trim()
@@ -59,6 +66,9 @@ function contextForTool(ctx, {
   const workspaceFolders = sessionPath
     ? (usesDifferentAgent ? [] : (getSessionWorkspaceFolders?.(sessionPath) || []))
     : [];
+  const authorizedFolders = sessionPath
+    ? (usesDifferentAgent ? [] : (getSessionAuthorizedFolders?.(sessionPath) || []))
+    : [];
   const bridgeContext = ctx?.bridgeContext?.isBridgeSession === true
     ? ctx.bridgeContext
     : null;
@@ -67,6 +77,7 @@ function contextForTool(ctx, {
     ? { bridgeDeliveryTarget }
     : null;
   return {
+    sessionId,
     sessionPath,
     bridgeContext,
     notificationContext,
@@ -75,7 +86,10 @@ function contextForTool(ctx, {
       kind: "session_workspace",
       cwd,
       workspaceFolders,
-      sourceSessionPath: sessionPath,
+      authorizedFolders,
+      sourceSessionId: usesDifferentAgent ? null : sessionId,
+      sourceBridgeSessionKey: usesDifferentAgent ? null : bridgeContext?.sessionKey || null,
+      sourceSessionPath: usesDifferentAgent ? null : sessionPath,
       createdByAgentId: actorAgentId,
       ...(notificationContext ? { notificationContext } : {}),
     },
@@ -174,48 +188,86 @@ function automationDraftSideEffect() {
   };
 }
 
+function automationDirectCommitSideEffect(operation) {
+  return {
+    kind: "automation_configuration_mutation",
+    operation,
+    summary: `Directly ${operation === "update" ? "update" : "create"} a scheduled automation.`,
+  };
+}
+
 function genericAgentRun(params, context, existing: any = null) {
   const prompt = typeof params.prompt === "string" && params.prompt.trim()
     ? params.prompt
     : (typeof existing?.prompt === "string" ? existing.prompt : "");
   if (!prompt) throw new Error("prompt is required");
   const model = params.model ?? existing?.model ?? "";
+  const existingActorAgentId = typeof existing?.actorAgentId === "string" && existing.actorAgentId.trim()
+    ? existing.actorAgentId.trim()
+    : typeof existing?.executor?.agentId === "string" && existing.executor.agentId.trim()
+      ? existing.executor.agentId.trim()
+      : null;
+  const executionContext = existing
+    && existingActorAgentId === context.actorAgentId
+    && existing.executionContext
+    ? existing.executionContext
+    : context.executionContext;
   return {
     prompt,
     executor: createAgentSessionAutomationExecutor({
       agentId: context.actorAgentId,
       prompt,
       model,
-      executionContext: context.executionContext,
+      executionContext,
     }),
   };
 }
 
 function jobDataFieldsForMutation(jobData) {
-  const {
-    id: _id,
-    createdAt: _createdAt,
-    lastRunAt: _lastRunAt,
-    nextRunAt: _nextRunAt,
-    consecutiveErrors: _consecutiveErrors,
-    legacyRef: _legacyRef,
-    ...fields
-  } = jobData || {};
+  const fields = { ...(jobData || {}) };
+  for (const key of [
+    "id",
+    "createdAt",
+    "lastRunAt",
+    "nextRunAt",
+    "consecutiveErrors",
+    "legacyRef",
+    "studioId",
+    "configRevision",
+    "authorization",
+    "requestedGrants",
+  ]) {
+    delete fields[key];
+  }
   return fields;
 }
 
-function commitAutomationDraft({ cronStore, operation, jobData, confirmationValue }: {
+function commitAutomationDraft({ cronStore, operation, jobData, confirmationValue, confirmation, getHomeCwd }: {
   cronStore: any;
   operation: "create" | "update";
   jobData: any;
   confirmationValue?: any;
+  confirmation?: { suggestionId?: string; confirmedAt?: string; receipt?: object } | null;
+  getHomeCwd?: ((agentId: string | null) => string | null) | null;
 }) {
-  const confirmedJobData = applyConfirmedAutomationDraft(jobData, confirmationValue) as any;
+  const confirmedJobData = applyConfirmedAutomationDraft(
+    jobData,
+    confirmationValue,
+    { getHomeCwd },
+  ) as any;
+  const suggestionReceipt = confirmation?.receipt || null;
+  const writeOptions = suggestionReceipt ? { suggestionReceipt } : {};
   if (operation === "update") {
     if (!confirmedJobData?.id) throw new Error("id is required");
-    return cronStore.updateJob(confirmedJobData.id, jobDataFieldsForMutation(confirmedJobData));
+    const fields = jobDataFieldsForMutation(confirmedJobData);
+    return suggestionReceipt
+      ? cronStore.updateJob(confirmedJobData.id, fields, writeOptions)
+      : cronStore.updateJob(confirmedJobData.id, fields);
   }
-  return cronStore.addJob(confirmedJobData);
+  const fields = jobDataFieldsForMutation(confirmedJobData);
+  return suggestionReceipt
+    ? cronStore.addJob(fields, writeOptions)
+    : cronStore.addJob(fields);
 }
 
 function suggestionDetails({ suggestion, operation, jobData, jobs }: {
@@ -251,6 +303,7 @@ export function createAutomationTool(cronStore, {
   getAgentId,
   getSessionCwd,
   getSessionWorkspaceFolders,
+  getSessionAuthorizedFolders,
   getHomeCwd,
 }: {
   getAutoApprove?: any;
@@ -264,6 +317,7 @@ export function createAutomationTool(cronStore, {
   getAgentId?: any;
   getSessionCwd?: any;
   getSessionWorkspaceFolders?: any;
+  getSessionAuthorizedFolders?: any;
   getHomeCwd?: any;
 } = {}) {
   return {
@@ -271,6 +325,23 @@ export function createAutomationTool(cronStore, {
     label: "Automation",
     description: "Create and update scheduled automation suggestions. The suggestion is presented to the user for confirmation — an interactive card on desktop, or a reply-with-/apply text instruction on text-only bridge platforms — and the task is written only after the user applies it. Automations run as background Agent sessions.",
     sessionPermission: {
+      resolveInvocation: (params: any = {}) => {
+        if (params.action === "list") {
+          return { action: "list", kind: "read", capability: "automation.list" };
+        }
+        if (isDraftMutationAction(params)) {
+          const directlyCommits = getAutoApprove ? getAutoApprove() === true : autoApprove === true;
+          return {
+            action: params.action,
+            kind: directlyCommits ? "review" : "routine",
+            capability: `automation.${params.action}`,
+            sideEffect: directlyCommits
+              ? automationDirectCommitSideEffect(params.action)
+              : automationDraftSideEffect(),
+          };
+        }
+        return null;
+      },
       describeSideEffect: (params) => {
         if (!isDraftMutationAction(params)) return null;
         const directlyCommits = getAutoApprove ? getAutoApprove() === true : autoApprove === true;
@@ -294,9 +365,12 @@ export function createAutomationTool(cronStore, {
       model: Type.Optional(Type.Any({ description: "Optional execution model for the background Agent run." })),
     }),
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+      const activeCronStore = typeof cronStore?.captureCurrent === "function"
+        ? cronStore.captureCurrent()
+        : cronStore;
       try {
         if (params.action === "list") {
-          const jobs = cronStore.listJobs();
+          const jobs = activeCronStore.listJobs();
           return { content: [{ type: "text", text: JSON.stringify(jobs, null, 2) }], details: { action: "list", jobs } };
         }
 
@@ -306,7 +380,7 @@ export function createAutomationTool(cronStore, {
 
         const operation = params.action === "update" ? "update" : "create";
         const existingJob = operation === "update"
-          ? cronStore.getJob?.(params.id)
+          ? activeCronStore.getJob?.(params.id)
           : null;
         if (operation === "update" && !params.id) throw new Error("id is required");
         if (operation === "update" && !existingJob) throw new Error(`Automation not found: ${params.id}`);
@@ -317,6 +391,7 @@ export function createAutomationTool(cronStore, {
           getAgentId,
           getSessionCwd,
           getSessionWorkspaceFolders,
+          getSessionAuthorizedFolders,
           getHomeCwd,
           targetAgentId,
         });
@@ -324,42 +399,58 @@ export function createAutomationTool(cronStore, {
         const run = genericAgentRun(params, context, existingJob);
         const jobData = {
           ...(existingJob || {}),
+          ...(activeCronStore?.studioId ? { studioId: activeCronStore.studioId } : {}),
           type,
           schedule,
           prompt: run.prompt,
           label: labelFor(params, run.prompt, existingJob),
           model: params.model ?? existingJob?.model ?? "",
           actorAgentId: context.actorAgentId,
-          executionContext: context.executionContext,
+          executionContext: run.executor.executionContext,
           executor: run.executor,
           createdBy: {
             kind: "agent",
             agentId: context.actorAgentId,
+            sourceSessionId: context.sessionId,
+            sourceBridgeSessionKey: context.bridgeContext?.sessionKey || null,
             sourceSessionPath: context.sessionPath,
           },
         };
+        delete jobData.authorization;
+        delete jobData.requestedGrants;
 
         if (getAutoApprove ? getAutoApprove() : autoApprove) {
-          const job = commitAutomationDraft({ cronStore, operation, jobData });
+          const job = commitAutomationDraft({ cronStore: activeCronStore, operation, jobData, getHomeCwd });
           return {
             content: [{ type: "text", text: `Automation ${operation === "update" ? "updated" : "created"}: ${job.label} (${job.id})` }],
-            details: { action: operation === "update" ? "updated" : "added", operation, job, jobs: cronStore.listJobs(), jobData, confirmed: true },
+            details: { action: operation === "update" ? "updated" : "added", operation, job, jobs: activeCronStore.listJobs(), jobData, confirmed: true },
           };
         }
 
         const runtimeSuggestionStore = getAutomationSuggestionStore?.() || automationSuggestionStore || null;
+        const bridgeSessionKey = typeof context.bridgeContext?.sessionKey === "string"
+          && context.bridgeContext.sessionKey.trim()
+          ? context.bridgeContext.sessionKey.trim()
+          : null;
         let suggestion = null;
-        if (runtimeSuggestionStore?.create && context.sessionPath) {
+        const canCreateSuggestion = !!bridgeSessionKey || !!context.sessionId;
+        if (runtimeSuggestionStore?.create && canCreateSuggestion) {
           suggestion = runtimeSuggestionStore.create({
+            sessionId: context.sessionId,
             sessionPath: context.sessionPath,
-            bridgeSessionKey: context.bridgeContext?.sessionKey || null,
+            bridgeSessionKey,
+            studioId: activeCronStore?.studioId || null,
             operation,
+            jobId: operation === "update" ? existingJob?.id || null : null,
+            baseConfigRevision: operation === "update" ? existingJob?.configRevision || null : null,
             jobData,
-            apply: (value) => commitAutomationDraft({
-              cronStore,
+            apply: (value, confirmation) => commitAutomationDraft({
+              cronStore: activeCronStore,
               operation,
               jobData,
               confirmationValue: value,
+              confirmation,
+              getHomeCwd,
             }),
           });
         }
@@ -369,14 +460,14 @@ export function createAutomationTool(cronStore, {
           details: suggestionDetails({
             suggestion,
             operation,
-            jobs: cronStore.listJobs(),
+            jobs: activeCronStore.listJobs(),
             jobData,
           }),
         };
       } catch (err) {
         return {
           content: [{ type: "text", text: err.message }],
-          details: { action: params.action, error: err.message, jobs: cronStore.listJobs() },
+          details: { action: params.action, error: err.message, jobs: activeCronStore.listJobs() },
         };
       }
     },

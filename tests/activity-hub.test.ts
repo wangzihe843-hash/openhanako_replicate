@@ -182,6 +182,20 @@ function makeFakeStore(initial = []) {
   };
   return {
     upsert: vi.fn((e) => { map.set(e.id, { ...e }); return { ...e }; }),
+    upsertMany: vi.fn((entries) => {
+      for (const e of entries) map.set(e.id, { ...e });
+      return entries.map((e) => ({ ...e }));
+    }),
+    remove: vi.fn((id) => map.delete(id)),
+    removeMany: vi.fn((ids) => {
+      const removed = [];
+      for (const id of ids) {
+        if (!map.has(id)) continue;
+        removed.push({ ...map.get(id) });
+        map.delete(id);
+      }
+      return removed;
+    }),
     removeBySession: vi.fn((ref) => {
       let n = 0;
       for (const [id, e] of map) if (matchesSession(e, ref)) { map.delete(id); n++; }
@@ -304,5 +318,84 @@ describe("ActivityHub 持久化背书", () => {
     expect(hub.upsert({ id: "wf-1", kind: "workflow", status: "running", sessionPath: "/s/a.jsonl" })).toBeTruthy();
     expect(typeof hub.rebroadcastSession).toBe("function");
     hub.rebroadcastSession("/s/a.jsonl"); // 不抛
+  });
+
+  it("Fork 会克隆终态投影、重写子 SessionRef，并可按收据回滚", () => {
+    const store = makeFakeStore();
+    const hub = new ActivityHub(null, store);
+    hub.upsert({
+      id: "sub-source", kind: "subagent", status: "done",
+      sessionId: "source-session", sessionPath: "/s/source.jsonl",
+      threadId: "thread-source", childSessionId: "child-source",
+      childSessionPath: "/s/child-source.jsonl", startedAt: 1, finishedAt: 2,
+    });
+    hub.upsert({
+      id: "workflow-source", kind: "workflow", status: "done",
+      sessionId: "source-session", sessionPath: "/s/source.jsonl",
+      startedAt: 1, finishedAt: 2,
+    });
+    hub.upsert({
+      id: "workflow-source::node", kind: "workflow_agent", status: "done",
+      sessionId: "source-session", sessionPath: "/s/source.jsonl",
+      parentTaskId: "workflow-source", threadId: "workflow-node-source",
+      childSessionId: "workflow-child-source", childSessionPath: "/s/workflow-child-source.jsonl",
+      startedAt: 1, finishedAt: 2,
+    });
+
+    const receipt = hub.forkSessionEntries({
+      sourceSessionId: "source-session",
+      sourceSessionPath: "/s/source.jsonl",
+      targetSessionId: "target-session",
+      targetSessionPath: "/s/target.jsonl",
+      activityIdMap: {
+        "sub-source": "sub-target",
+        "workflow-source": "workflow-target",
+      },
+      threadIdMap: { "thread-source": "thread-target" },
+      childSessionIdMap: { "child-source": "child-target" },
+      childSessionPathMap: { "/s/child-source.jsonl": "/s/child-target.jsonl" },
+    });
+
+    expect(receipt.activityIds.sort()).toEqual([
+      "sub-target",
+      "workflow-target",
+      "workflow-target::node",
+    ]);
+    expect(hub.get("sub-target")).toMatchObject({
+      sessionId: "target-session",
+      sessionPath: "/s/target.jsonl",
+      threadId: "thread-target",
+      childSessionId: "child-target",
+      childSessionPath: "/s/child-target.jsonl",
+      forkedFromActivityId: "sub-source",
+    });
+    expect(hub.get("workflow-target::node")).toMatchObject({
+      parentTaskId: "workflow-target",
+      threadId: null,
+      childSessionId: null,
+      childSessionPath: null,
+    });
+
+    expect(hub.discardForkedSessionEntries({
+      targetSessionId: "target-session",
+      targetSessionPath: "/s/target.jsonl",
+      activityIds: receipt.activityIds,
+    })).toEqual({ discarded: 3 });
+    expect(hub.listBySession({ sessionId: "target-session", sessionPath: "/s/target.jsonl" })).toEqual([]);
+  });
+
+  it("Fork 拒绝复制仍在运行的匹配活动", () => {
+    const hub = new ActivityHub();
+    hub.upsert({
+      id: "sub-source", kind: "subagent", status: "running",
+      sessionId: "source-session", sessionPath: "/s/source.jsonl",
+    });
+    expect(() => hub.forkSessionEntries({
+      sourceSessionId: "source-session",
+      sourceSessionPath: "/s/source.jsonl",
+      targetSessionId: "target-session",
+      targetSessionPath: "/s/target.jsonl",
+      activityIdMap: { "sub-source": "sub-target" },
+    })).toThrow(/still running/);
   });
 });

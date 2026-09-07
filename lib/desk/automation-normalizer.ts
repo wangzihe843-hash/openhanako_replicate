@@ -3,8 +3,7 @@ import {
   buildPluginActionAgentRunPrompt,
   createAgentSessionAutomationExecutor,
 } from "./agent-run-automation.ts";
-
-export const AUTOMATION_SCHEMA_VERSION = 3;
+export const AUTOMATION_SCHEMA_VERSION = 4;
 
 function clone(value: any) {
   if (value === undefined) return undefined;
@@ -22,6 +21,16 @@ function normalizeSchemaVersion(value: any) {
   return AUTOMATION_SCHEMA_VERSION;
 }
 
+function normalizeConfigRevision(value: any) {
+  return Number.isSafeInteger(value) && value > 0 ? value : 1;
+}
+
+function normalizeStudioId(job: any) {
+  return typeof job?.studioId === "string" && job.studioId.trim()
+    ? job.studioId.trim()
+    : null;
+}
+
 function normalizeActorAgentId(job: any) {
   if (typeof job?.actorAgentId === "string" && job.actorAgentId.trim()) {
     return job.actorAgentId.trim();
@@ -30,6 +39,25 @@ function normalizeActorAgentId(job: any) {
     return job.legacyRef.agentId.trim();
   }
   return null;
+}
+
+function normalizeStoredExecutionContext(value: any) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value ?? null;
+  const normalized = clone(value);
+  const sourceSessionId = typeof normalized.sourceSessionId === "string" && normalized.sourceSessionId.trim()
+    ? normalized.sourceSessionId.trim()
+    : null;
+  const sourceSessionPath = typeof normalized.sourceSessionPath === "string" && normalized.sourceSessionPath.trim()
+    ? normalized.sourceSessionPath
+    : null;
+  if (!sourceSessionId && sourceSessionPath) {
+    normalized.cwd = null;
+    normalized.workspaceFolders = [];
+    normalized.authorizedFolders = [];
+    normalized.sourceSessionId = null;
+    normalized.sourceSessionPath = null;
+  }
+  return normalized;
 }
 
 function deriveTriggerFromLegacyCronJob(job: any = {}) {
@@ -108,9 +136,7 @@ export function executorFromLegacyCronJob(job: any = {}) {
     const existingAgentId = typeof existing.agentId === "string" && existing.agentId.trim()
       ? existing.agentId.trim()
       : null;
-    return {
-      ...existing,
-      kind: "agent_session",
+    return createAgentSessionAutomationExecutor({
       agentId: actorAgentId || existingAgentId,
       prompt: typeof job.prompt === "string"
         ? job.prompt
@@ -121,7 +147,8 @@ export function executorFromLegacyCronJob(job: any = {}) {
       executionContext: hasOwn(job, "executionContext")
         ? clone(job.executionContext || null)
         : clone(existing.executionContext ?? null),
-    };
+      migratedFrom: existing.migratedFrom || null,
+    });
   }
 
   return {
@@ -142,17 +169,41 @@ export function createdByFromLegacyCronJob(job: any = {}) {
 }
 
 export function normalizeAutomationJob(job: any = {}) {
-  const trigger = triggerFromLegacyCronJob(job);
-  const executor = executorFromLegacyCronJob(job);
+  const rawExecutionContext = hasOwn(job, "executionContext")
+    ? job.executionContext
+    : job.executor?.kind === "agent_session" && hasOwn(job.executor, "executionContext")
+      ? job.executor.executionContext
+      : undefined;
+  const hasExecutionContext = rawExecutionContext !== undefined;
+  const executionContext = hasExecutionContext
+    ? normalizeStoredExecutionContext(rawExecutionContext)
+    : undefined;
+  const sourceJob = hasExecutionContext ? { ...job, executionContext } : job;
+  const trigger = triggerFromLegacyCronJob(sourceJob);
+  const executor = executorFromLegacyCronJob(sourceJob);
+  const studioId = normalizeStudioId(job);
+  const configRevision = normalizeConfigRevision(job.configRevision);
   const prompt = typeof job.prompt === "string" && job.prompt
     ? job.prompt
     : executor?.kind === "agent_session" && typeof executor.prompt === "string"
       ? executor.prompt
       : job.prompt;
+  const normalizedJob = { ...job };
+  // A short-lived development version persisted exact per-job grants. The
+  // runtime now follows the same read/routine/review boundary for interactive
+  // and scheduled sessions, so those fields are never part of a job contract.
+  delete normalizedJob.authorization;
+  delete normalizedJob.requestedGrants;
+  delete normalizedJob.permissionMode;
+  delete normalizedJob.approvalPolicy;
+  delete normalizedJob.allowHumanApproval;
   return {
-    ...job,
+    ...normalizedJob,
     prompt,
     schemaVersion: normalizeSchemaVersion(job.schemaVersion),
+    ...(studioId ? { studioId } : {}),
+    ...(hasExecutionContext ? { executionContext } : {}),
+    configRevision,
     trigger,
     executor,
     createdBy: createdByFromLegacyCronJob(job),
@@ -166,7 +217,7 @@ export function normalizeAutomationJobs(jobs: any[] = []) {
 export function patchAutomationJobForMigration(job: any = {}) {
   const normalized = normalizeAutomationJob(job);
   return {
-    ...job,
+    ...normalized,
     prompt: normalized.prompt,
     schemaVersion: normalized.schemaVersion,
     trigger: normalized.trigger,

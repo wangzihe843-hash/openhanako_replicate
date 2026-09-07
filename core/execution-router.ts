@@ -4,7 +4,7 @@
  * 职责：
  *   - 将 agent 的角色配置（chat/utility/embed 等）解析为执行所需的完整参数
  *   - 输入：role 名称 + agentConfig
- *   - 输出：{ modelId, providerId, api, apiKey, baseUrl }
+ *   - 输出：{ model, provider, api, apiKey, baseUrl, headers }
  *   - 完全不参与模型注册逻辑（这是路由层，不是管理层）
  *
  * 角色路由配置存储格式（preferences.json / config.yaml）：
@@ -18,6 +18,7 @@
 
 import { t } from "../lib/i18n.ts";
 import { isLocalBaseUrl } from "../shared/net-utils.ts";
+import { composeResolvedModelExecution } from "./model-execution-config.ts";
 
 // 角色名称 -> preferences 字段名（SHARED_MODEL_KEYS 兼容）
 const ROLE_TO_PREF_KEY = {
@@ -322,15 +323,22 @@ export class ExecutionRouter {
       large_base_url = largeCred.baseUrl;
     }
 
+    const utilExecution = composeResolvedModelExecution({ model: utilModel, credential: utilCred });
+    const largeExecution = largeModel
+      ? composeResolvedModelExecution({ model: largeModel, credential: largeCred })
+      : null;
+
     return {
-      utility: withCredentialMetadata(utilModel, utilCred),
-      utility_large: largeModel ? withCredentialMetadata(largeModel, largeCred) : null,
+      utility: utilExecution.model,
+      utility_large: largeExecution?.model || null,
       api_key: apiKey,
       base_url: baseUrl,
       api,
+      headers: utilExecution.headers,
       large_api_key,
       large_base_url,
       large_api,
+      large_headers: largeExecution?.headers || null,
     };
   }
 

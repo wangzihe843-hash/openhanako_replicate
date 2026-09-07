@@ -8,10 +8,24 @@ const clearConfigCache = vi.fn();
 const callText = vi.fn();
 const probeProvider = vi.fn();
 
+const saveConfig = vi.fn();
+
 vi.mock("../lib/memory/config-loader.js", () => ({
   clearConfigCache,
+  saveConfig,
   getRawConfig: () => ({}),
 }));
+
+/** Write a throwaway agent directory so the per-agent config route has a real file to read. */
+const agentTempRoots: string[] = [];
+function makeAgentDir(agentId: string, configYaml: string) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-model-sync-agents-"));
+  agentTempRoots.push(root);
+  const dir = path.join(root, agentId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "config.yaml"), configYaml, "utf-8");
+  return dir;
+}
 
 vi.mock("../core/llm-client.js", () => ({
   callText,
@@ -53,6 +67,9 @@ describe("model sync related routes", () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    while (agentTempRoots.length) {
+      fs.rmSync(agentTempRoots.pop() as string, { recursive: true, force: true });
+    }
   });
 
   it("provider-only config updates trigger model registry sync", async () => {
@@ -98,7 +115,9 @@ describe("model sync related routes", () => {
     expect(clearConfigCache).toHaveBeenCalledTimes(1);
     expect(engine.updateConfig).toHaveBeenCalledWith({});
     expect(engine.onProviderChanged).toHaveBeenCalledTimes(1);
-    expectAppEvent(engine.emitEvent, "models-changed", { agentId: "hana" });
+    // The provider catalog is global: every agent's model list changes, so the
+    // event names no agent rather than naming whichever one was focused.
+    expectAppEvent(engine.emitEvent, "models-changed", { agentId: null });
   });
 
   it("provider-only config updates return an error and emit no event when provider refresh fails", async () => {
@@ -170,7 +189,9 @@ describe("model sync related routes", () => {
       utility: { id: "test-model", provider: "test-provider" },
     });
     expect(engine.syncModelsAndRefresh).toHaveBeenCalledTimes(1);
-    expectAppEvent(engine.emitEvent, "models-changed", { agentId: "hana" });
+    // Shared model preferences are global: every agent's model list changes, so
+    // the event names no agent rather than naming whichever one was focused.
+    expectAppEvent(engine.emitEvent, "models-changed", { agentId: null });
   });
 
   it("auxiliary vision toggle updates shared prefs without refreshing the model registry", async () => {
@@ -207,7 +228,7 @@ describe("model sync related routes", () => {
     });
     expect(engine.resolveModelWithCredentials).not.toHaveBeenCalled();
     expect(engine.syncModelsAndRefresh).not.toHaveBeenCalled();
-    expectAppEvent(engine.emitEvent, "models-changed", { agentId: "hana" });
+    expectAppEvent(engine.emitEvent, "models-changed", { agentId: null });
   });
 
   it("shared model preference updates return an error and emit no event when model refresh fails", async () => {
@@ -320,7 +341,7 @@ describe("model sync related routes", () => {
     expect(engine.setSharedModels).toHaveBeenCalledWith({
       vision: { id: "qwen-vl", provider: "dashscope" },
     });
-    expectAppEvent(engine.emitEvent, "models-changed", { agentId: "hana" });
+    expectAppEvent(engine.emitEvent, "models-changed", { agentId: null });
   });
 
   it("shared vision model preference rejects text-only models", async () => {
@@ -362,11 +383,11 @@ describe("model sync related routes", () => {
   });
 
   it("inline 凭证缺少显式 provider 时返回 400", async () => {
-    const { createConfigRoute } = await import("../server/routes/config.ts");
+    const { createAgentsRoute } = await import("../server/routes/agents.ts");
     const app = new Hono();
+    const agentDir = makeAgentDir("hana", "agent:\n  name: Hana\n");
     const engine = {
-      config: {},
-      configPath: "/tmp/test-config.yaml",
+      agentsDir: path.dirname(agentDir),
       setHomeFolder: vi.fn(),
       updateConfig: vi.fn().mockResolvedValue(undefined),
       syncModelsAndRefresh: vi.fn().mockResolvedValue(true),
@@ -376,12 +397,14 @@ describe("model sync related routes", () => {
       getLocale: vi.fn(() => "zh-CN"),
       getTimezone: vi.fn(() => "Asia/Shanghai"),
       getLearnSkills: vi.fn(() => false),
+      invalidateAgentListCache: vi.fn(),
+      listAgents: vi.fn(() => []),
       emitEvent: vi.fn(),
     };
 
-    app.route("/api", createConfigRoute(engine));
+    app.route("/api", createAgentsRoute(engine));
 
-    const res = await app.request("/api/config", {
+    const res = await app.request("/api/agents/hana/config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -398,18 +421,19 @@ describe("model sync related routes", () => {
   });
 
   it("inline 空 api_key 也会同步到 provider 配置，用于真正清空凭证", async () => {
-    const { createConfigRoute } = await import("../server/routes/config.ts");
+    const { createAgentsRoute } = await import("../server/routes/agents.ts");
     const app = new Hono();
     const saveProvider = vi.fn();
+    const agentDir = makeAgentDir("hana", "agent:\n  name: Hana\napi:\n  provider: openai\n");
     const engine = {
-      config: {},
-      configPath: "/tmp/test-config.yaml",
+      agentsDir: path.dirname(agentDir),
       setHomeFolder: vi.fn(),
       updateConfig: vi.fn().mockResolvedValue(undefined),
       onProviderChanged: vi.fn().mockResolvedValue(undefined),
       providerRegistry: {
         saveProvider,
         removeProvider: vi.fn(),
+        getAllProvidersRaw: vi.fn(() => ({})),
       },
       getHomeFolder: vi.fn(() => null),
       getThinkingLevel: vi.fn(() => "medium"),
@@ -417,13 +441,15 @@ describe("model sync related routes", () => {
       getLocale: vi.fn(() => "zh-CN"),
       getTimezone: vi.fn(() => "Asia/Shanghai"),
       getLearnSkills: vi.fn(() => false),
+      invalidateAgentListCache: vi.fn(),
+      listAgents: vi.fn(() => []),
       currentAgentId: "hana",
       emitEvent: vi.fn(),
     };
 
-    app.route("/api", createConfigRoute(engine));
+    app.route("/api", createAgentsRoute(engine));
 
-    const res = await app.request("/api/config", {
+    const res = await app.request("/api/agents/hana/config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -437,6 +463,9 @@ describe("model sync related routes", () => {
     expect(res.status).toBe(200);
     expect(saveProvider).toHaveBeenCalledWith("openai", { api_key: "" });
     expect(engine.onProviderChanged).toHaveBeenCalledTimes(1);
+    // This event does name an agent, and correctly so: the change came from
+    // that agent's own config route, so the id is the one in the path rather
+    // than the one the server is focused on.
     expectAppEvent(engine.emitEvent, "models-changed", { agentId: "hana" });
   });
 
@@ -654,6 +683,90 @@ describe("model sync related routes", () => {
     }));
   });
 
+  it("bills the model health probe to the global utility account, not the focused agent", async () => {
+    const { createModelsRoute } = await import("../server/routes/models.ts");
+    const app = new Hono();
+    const resolved = {
+      model: { id: "probe-model", provider: "deepseek" },
+      provider: "deepseek",
+      api: "openai-completions",
+      api_key: "sk-test",
+      base_url: "https://api.deepseek.com/v1",
+    };
+    const engine = {
+      availableModels: [],
+      currentModel: null,
+      config: {},
+      // The server is focused on an agent, but a settings-panel health probe is
+      // not that agent's work and must not land on its usage account.
+      currentAgentId: "hana",
+      usageLedger: {},
+      resolveModelWithCredentialsFresh: vi.fn(async () => resolved),
+    };
+    callText.mockResolvedValue("ok");
+
+    app.route("/api", createModelsRoute(engine));
+
+    const res = await app.request("/api/models/health", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modelId: { id: "probe-model", provider: "deepseek" } }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(callText).toHaveBeenCalledWith(expect.objectContaining({
+      usageContext: expect.objectContaining({
+        attribution: { kind: "utility", agentId: null },
+      }),
+    }));
+  });
+
+  it("model health forwards resolved Grok OAuth provider and model headers to callText", async () => {
+    const { createModelsRoute } = await import("../server/routes/models.ts");
+    const app = new Hono();
+    const resolved = {
+      model: {
+        id: "grok-4.1",
+        provider: "xai",
+        reasoning: true,
+      },
+      provider: "xai",
+      api: "openai-completions",
+      api_key: "oauth-token",
+      base_url: "https://api.x.ai/v1",
+      headers: {
+        "x-grok-client-version": "0.1.202",
+        "x-grok-model-override": "grok-4.1",
+      },
+    };
+    const engine = {
+      availableModels: [],
+      currentModel: null,
+      config: {},
+      resolveModelWithCredentialsFresh: vi.fn(async () => resolved),
+    };
+    callText.mockResolvedValue("OK");
+
+    app.route("/api", createModelsRoute(engine));
+
+    const healthRes = await app.request("/api/models/health", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modelId: "grok-4.1", provider: "xai" }),
+    });
+
+    expect(healthRes.status).toBe(200);
+    expect(callText).toHaveBeenCalledWith(expect.objectContaining({
+      api: "openai-completions",
+      apiKey: "oauth-token",
+      baseUrl: "https://api.x.ai/v1",
+      headers: {
+        "x-grok-client-version": "0.1.202",
+        "x-grok-model-override": "grok-4.1",
+      },
+    }));
+  });
+
   it("model health reports empty-after-thinking as a diagnostic failure", async () => {
     const { AppError } = await import("../shared/errors.ts");
     const { createModelsRoute } = await import("../server/routes/models.ts");
@@ -709,7 +822,11 @@ describe("model sync related routes", () => {
       switchSessionModel: vi.fn()
         .mockRejectedValueOnce(new Error("Model not found: minimax-token-plan/MiniMax-M2.7"))
         .mockRejectedValueOnce(new Error("No API key configured for provider minimax-token-plan"))
-        .mockRejectedValueOnce(new Error("cannot switch model during compaction")),
+        .mockRejectedValueOnce(new Error("cannot switch model during compaction"))
+        .mockRejectedValueOnce(Object.assign(
+          new Error("新模型的上下文空间不足，无法容纳当前会话。请先压缩当前会话，再重新切换。"),
+          { code: "MODEL_CONTEXT_TOO_LARGE" },
+        )),
       getSessionByPath: vi.fn(),
     };
     app.route("/api", createModelsRoute(engine));
@@ -743,6 +860,13 @@ describe("model sync related routes", () => {
     expect(await conflict.json()).toMatchObject({
       code: "MODEL_SWITCH_CONFLICT",
       error: expect.stringContaining("compaction"),
+    });
+
+    const contextTooLarge = await request();
+    expect(contextTooLarge.status).toBe(409);
+    expect(await contextTooLarge.json()).toMatchObject({
+      code: "MODEL_CONTEXT_TOO_LARGE",
+      error: expect.stringContaining("请先压缩"),
     });
   });
 
@@ -804,7 +928,7 @@ describe("model sync related routes", () => {
     expect(removeModel).toHaveBeenCalledWith("openrouter", "openrouter/qwen/qwen-vl-plus");
     expect(clearConfigCache).toHaveBeenCalledTimes(1);
     expect(engine.onProviderChanged).toHaveBeenCalledTimes(1);
-    expectAppEvent(engine.emitEvent, "models-changed", { agentId: "hana" });
+    expectAppEvent(engine.emitEvent, "models-changed", { agentId: null });
     expect(engine.emitEvent).toHaveBeenCalledTimes(1);
   });
 
@@ -834,7 +958,7 @@ describe("model sync related routes", () => {
     });
     expect(clearConfigCache).toHaveBeenCalledTimes(1);
     expect(engine.onProviderChanged).toHaveBeenCalledTimes(1);
-    expectAppEvent(engine.emitEvent, "models-changed", { agentId: "hana" });
+    expectAppEvent(engine.emitEvent, "models-changed", { agentId: null });
     expect(engine.emitEvent).toHaveBeenCalledTimes(1);
   });
 
@@ -904,6 +1028,44 @@ describe("model sync related routes", () => {
       api: "openai-completions",
       apiKey: "fresh-token",
       headers: {},
+    });
+  });
+
+  it("provider connection test probes a configured model matching the active protocol", async () => {
+    const { createProvidersRoute } = await import("../server/routes/providers.ts");
+    const app = new Hono();
+    probeProvider.mockResolvedValue({ ok: true, status: 200 });
+    const engine = {
+      resolveProviderCredentialsFresh: vi.fn(async () => ({
+        api_key: "zen-key",
+        base_url: "https://opencode.ai/zen/v1/messages",
+        api: "anthropic-messages",
+        headers: {},
+      })),
+      providerRegistry: {
+        getChatModelEntries: vi.fn(() => [
+          { id: "gpt-5.4", api: "openai-responses" },
+          { id: "claude-sonnet-4-6", api: "anthropic-messages" },
+        ]),
+        resolveChatProvider: vi.fn(() => ({ credentialSource: "provider-catalog" })),
+      },
+      hanakoHome: "/tmp",
+    };
+    app.route("/api", createProvidersRoute(engine));
+
+    const res = await app.request("/api/providers/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "opencode" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(probeProvider).toHaveBeenCalledWith({
+      baseUrl: "https://opencode.ai/zen",
+      api: "anthropic-messages",
+      apiKey: "zen-key",
+      headers: {},
+      modelId: "claude-sonnet-4-6",
     });
   });
 

@@ -14,9 +14,15 @@ import {
   packRendererArtifact,
   packServerArchive,
   resolveBuildKeyset,
+  seedManifestFileName,
 } from "../scripts/build-server-artifact.mjs";
 
 const tempDirs: string[] = [];
+const OFFICE_FONT_FIXTURE_CSS = `
+@font-face { font-family: 'EB Garamond'; src: url('./fonts/eb.woff2') format('woff2'); }
+@font-face { font-family: 'Noto Serif SC'; src: url('./fonts/noto.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; src: url('./fonts/mono.woff2') format('woff2'); }
+`;
 
 function makeTempDir(prefix: string) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -49,11 +55,22 @@ function makeServerTree(root: string) {
   return outDir;
 }
 
+function addOfficePdfFontAssets(rendererDir: string) {
+  const themesDir = path.join(rendererDir, "themes");
+  const fontsDir = path.join(themesDir, "fonts");
+  fs.mkdirSync(fontsDir, { recursive: true });
+  fs.writeFileSync(path.join(themesDir, "new-warm-paper-fonts.css"), OFFICE_FONT_FIXTURE_CSS, "utf-8");
+  for (const fileName of ["eb.woff2", "noto.woff2", "mono.woff2"]) {
+    fs.writeFileSync(path.join(fontsDir, fileName), Buffer.from("wOF2fixture"));
+  }
+}
+
 function makeRendererTree(root: string) {
   const rendererDir = path.join(root, "dist-renderer");
   fs.mkdirSync(path.join(rendererDir, "assets"), { recursive: true });
   fs.writeFileSync(path.join(rendererDir, "index.html"), "<!doctype html><html></html>\n");
   fs.writeFileSync(path.join(rendererDir, "assets", "index.js"), "console.log('renderer');\n");
+  addOfficePdfFontAssets(rendererDir);
   return rendererDir;
 }
 
@@ -224,7 +241,7 @@ describe("build-server-artifact: packServerArchive (pack-only, no manifest)", ()
     });
     expect(fs.existsSync(result.archivePath)).toBe(true);
     expect(result.archiveName).toBe("server-0.381.0-linux-x64.tar.gz");
-    expect(fs.existsSync(path.join(artifactOutDir, "seed-train.json"))).toBe(false);
+    expect(fs.existsSync(path.join(artifactOutDir, "seed-train-linux-x64.json"))).toBe(false);
   });
 
   it("signs Mach-O binaries BEFORE the startup smoke test, and smoke-tests BEFORE packing on darwin (sign, smoke, pack)", async () => {
@@ -389,6 +406,46 @@ describe("build-server-artifact: packRendererArtifact", () => {
     ).rejects.toThrow(/renderer dist dir not found/);
   });
 
+  it("refuses to pack when the renderer is missing the Office PDF font css", async () => {
+    const root = makeTempDir("hana-pack-renderer-fonts-");
+    const rendererDistDir = makeRendererTree(root);
+    fs.unlinkSync(path.join(rendererDistDir, "themes", "new-warm-paper-fonts.css"));
+    let packCalled = false;
+
+    await expect(packRendererArtifact({
+      rendererDistDir,
+      artifactOutDir: path.join(root, "out"),
+      version: "0.381.0",
+      log: () => {},
+      deps: {
+        packTree: async () => {
+          packCalled = true;
+        },
+      },
+    })).rejects.toThrow(/renderer Office PDF font assets.*new-warm-paper-fonts\.css/i);
+    expect(packCalled).toBe(false);
+  });
+
+  it("refuses to pack when the Office PDF css references a missing font file", async () => {
+    const root = makeTempDir("hana-pack-renderer-fonts-");
+    const rendererDistDir = makeRendererTree(root);
+    fs.unlinkSync(path.join(rendererDistDir, "themes", "fonts", "noto.woff2"));
+    let packCalled = false;
+
+    await expect(packRendererArtifact({
+      rendererDistDir,
+      artifactOutDir: path.join(root, "out"),
+      version: "0.381.0",
+      log: () => {},
+      deps: {
+        packTree: async () => {
+          packCalled = true;
+        },
+      },
+    })).rejects.toThrow(/renderer Office PDF font assets.*missing font file.*noto\.woff2/i);
+    expect(packCalled).toBe(false);
+  });
+
   it("asserts the renderer tree carries no Mach-O binaries before packing (no silent inclusion)", async () => {
     const root = makeTempDir("hana-pack-renderer-");
     const rendererDistDir = makeRendererTree(root);
@@ -474,10 +531,13 @@ describe("build-server-artifact: packDualKindSeed guards and ordering", () => {
     expect(manifest.artifacts.server["linux-x64"].path).toBe(path.basename(result.serverArchivePath));
     expect(manifest.artifacts.renderer.path).toBe(path.basename(result.rendererArchivePath));
 
-    // Exactly 4 files land in the per-platform seed dir.
+    // Exactly 4 files land in the per-platform seed dir, manifest name
+    // qualified by this build's platform-arch (opts.platform/opts.arch above).
+    const manifestFileName = seedManifestFileName("linux-x64");
+    expect(path.basename(result.manifestPath)).toBe(manifestFileName);
     const files = fs.readdirSync(opts.artifactOutDir).sort();
     expect(files).toEqual(
-      [path.basename(result.serverArchivePath), path.basename(result.rendererArchivePath), "seed-train.json", "seed-train.json.sig"].sort(),
+      [path.basename(result.serverArchivePath), path.basename(result.rendererArchivePath), manifestFileName, `${manifestFileName}.sig`].sort(),
     );
   });
 
@@ -526,6 +586,7 @@ describe("build-server-artifact: packDualKindSeed prebuilt renderer archive reus
     fs.mkdirSync(path.join(sharedSourceDir, "assets"), { recursive: true });
     fs.writeFileSync(path.join(sharedSourceDir, "index.html"), "<!doctype html><html></html>\n");
     fs.writeFileSync(path.join(sharedSourceDir, "assets", "index.js"), "console.log('shared renderer');\n");
+    addOfficePdfFontAssets(sharedSourceDir);
     return packRendererArtifact({
       rendererDistDir: sharedSourceDir,
       artifactOutDir: path.join(root, "shared-renderer-box"),

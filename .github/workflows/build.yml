@@ -233,6 +233,31 @@ jobs:
         shell: pwsh
         run: node scripts/build-windows-sandbox-helper.mjs ${{ matrix.arch }}
 
+      # 独立 Server 下载包与桌面 seed/OTA 是两个发布边界。直接使用本次
+      # build-windows-sandbox-helper 的输出，不依赖 electron-builder、
+      # win-unpacked 或 Windows 代码签名。验证步骤从解包结果实际运行
+      # MinGit、根 hana-server.cmd 和 restricted-token sandbox 链。
+      - name: Build Windows standalone server archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: node scripts/build-standalone-server-artifact.mjs ${{ matrix.arch }}
+
+      - name: Verify Windows standalone server archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: node scripts/verify-standalone-server-artifact.mjs ${{ matrix.arch }} --smoke
+
+      # 装箱前 fail-closed 复核：electron-builder 是直调（不经过 package.json
+      # 的 pack/dist/dist:win/dist:linux 脚本链），scripts/verify-seed-kit.mjs
+      # 挂在那条脚本链里、这里不会自动生效，必须单独接线，否则一份陈旧/串
+      # 平台的 seed 四件套能被原样装进安装包（见脚本文件头列举的三类事故）。
+      # platform/arch 显式传参，不用脚本默认的 process.platform/process.arch——
+      # macOS 矩阵的 x64 job 仍跑在 arm64 宿主机上（cross-arch 打包），默认参数
+      # 会算错要校验的 dist-server-artifact/{os}-{arch}/ 目录。
+      - name: Verify seed kit (macOS)
+        if: runner.os == 'macOS'
+        run: node scripts/verify-seed-kit.mjs darwin ${{ matrix.arch }}
+
       # macOS 打包（签名 + 公证）
       # keychain 与 identity 已由 "Build server bundle" 之前的两个步骤就位
       # 签名步骤已前移；旧 "Pre-sign server binaries" 步骤已删除。artifact 归档启用后，
@@ -254,6 +279,11 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
+      # 同上：Windows job 直调 electron-builder，seed kit 校验必须单独接线。
+      - name: Verify seed kit (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/verify-seed-kit.mjs win32 ${{ matrix.arch }}
+
       # Windows 打包
       # --publish never：和 mac 同理，由 release job 单点上传。
       - name: Build Windows installer
@@ -265,6 +295,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      # 同上：Linux job 直调 electron-builder，seed kit 校验必须单独接线。
+      - name: Verify seed kit (Linux)
+        if: runner.os == 'Linux'
+        run: node scripts/verify-seed-kit.mjs linux ${{ matrix.arch }}
 
       # Linux Preview 打包
       # AppImage 给下载即用体验，deb 给 Ubuntu/Debian 系安装。
@@ -280,9 +315,13 @@ jobs:
       # The renderer box here is just this platform's copy of the SAME bytes downloaded from
       # the renderer-box job (packDualKindSeed reuses it via HANA_PREBUILT_RENDERER_BOX rather
       # than packing dist-renderer/ on the spot) — all four uploads are byte-identical now.
-      # seed-train.json(.sig) living next to the server box is NOT uploaded here — the
-      # release job's train manifest is generated later by scripts/publish-train.mjs, not
-      # copied from any one platform's local seed.
+      # dist-server-artifact/*/seed-train-*.json(.sig) IS uploaded here (platform-qualified
+      # filename, see seedManifestFileName in build-server-artifact.mjs — each matrix job's
+      # manifest now names the platform-arch it describes, so four same-named-but-different-
+      # content files are no longer possible). This per-platform seed manifest is still NOT
+      # what the release job publishes as the OTA train manifest — that one is generated
+      # separately by scripts/publish-train.mjs from the merged server-*.tar.gz set, not by
+      # copying any one platform's local seed manifest.
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -296,7 +335,11 @@ jobs:
             dist/*.deb
             dist/latest*.yml
             dist-server-artifact/*/server-*.tar.gz
+            dist-server-artifact/*/seed-train-*.json
+            dist-server-artifact/*/seed-train-*.json.sig
             dist-renderer-artifact/renderer-*.tar.gz
+            dist-standalone/HanaCore-*-Windows-x64.tar.gz
+            dist-standalone/HanaCore-*-Windows-x64.manifest.json
           if-no-files-found: error
 
   release:
@@ -372,6 +415,16 @@ jobs:
               gh release upload "${{ github.ref_name }}" "$f" --clobber
             done
 
+          echo "=== Uploading self-contained Windows standalone server assets ==="
+          find artifacts -type f \( \
+              -path '*/dist-standalone/HanaCore-*-Windows-x64.tar.gz' -o \
+              -path '*/dist-standalone/HanaCore-*-Windows-x64.manifest.json' \
+            \) -print0 |
+            while IFS= read -r -d '' f; do
+              echo "  $f"
+              gh release upload "${{ github.ref_name }}" "$f" --clobber
+            done
+
           # Renderer archive is platform-independent AND now byte-identical across all four
           # matrix jobs: it is built once by the renderer-box job and downloaded/reused by
           # every platform (see scripts/pack-renderer-box.mjs and packDualKindSeed's
@@ -441,6 +494,13 @@ jobs:
           echo "$ASSETS" | grep -qE '^server-.*-win32-x64\.tar\.gz$' || MISSING+=("server win32-x64 hot-update archive")
           echo "$ASSETS" | grep -qE '^server-.*-linux-x64\.tar\.gz$' || MISSING+=("server linux-x64 hot-update archive")
           echo "$ASSETS" | grep -qE '^renderer-.*\.tar\.gz$' || MISSING+=("renderer hot-update archive")
+          echo "$ASSETS" | grep -qE '^HanaCore-.*-Windows-x64\.tar\.gz$' || MISSING+=("Windows x64 standalone server archive")
+          echo "$ASSETS" | grep -qE '^HanaCore-.*-Windows-x64\.manifest\.json$' || MISSING+=("Windows x64 standalone server manifest")
+
+          if echo "$ASSETS" | grep -qE '^HanaCore-.*-Windows-x64\.manifest\.json\.sig$'; then
+            echo "::error::Obsolete standalone manifest signature leaked into the release"
+            exit 1
+          fi
 
           # 清洁性检查：不应该有 blockmap 漏进来
           if echo "$ASSETS" | grep -qE '\.blockmap$'; then
@@ -497,11 +557,28 @@ jobs:
           printf '%s\n' "$HANA_SIGN_KEY_PEM" > "$RUNNER_TEMP/hana-train-sign-key.pem"
           echo "HANA_SIGN_KEY=$RUNNER_TEMP/hana-train-sign-key.pem" >> "$GITHUB_ENV"
 
-      # Stable is the primary channel for every tagged release. Beta has no separate
-      # pre-release track yet, so it always follows stable's every publish with the SAME
-      # archives (see scripts/publish-train.mjs's file header) so beta users never go
-      # without an update path.
+      # The automatic publisher classifies the source installer Release before choosing
+      # channels. A prerelease advances beta only; stable requires a non-prerelease source
+      # here, or an explicit operator choice in the dedicated manual Publish Train workflow.
+      # publish-train.mjs independently enforces the same boundary before any remote write.
+      - name: Inspect source release
+        id: source_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          IS_PRERELEASE="$(gh release view "${{ github.ref_name }}" --json isPrerelease --jq '.isPrerelease')"
+          case "$IS_PRERELEASE" in
+            true|false) ;;
+            *)
+              echo "::error::Unexpected isPrerelease value for ${{ github.ref_name }}: $IS_PRERELEASE"
+              exit 1
+              ;;
+          esac
+          echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+
       - name: Publish stable train
+        if: steps.source_release.outputs.is_prerelease == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/publish-train.mjs --tag "${{ github.ref_name }}" --channel stable
@@ -518,14 +595,18 @@ jobs:
             echo "### Hot-update train publish — ${{ github.ref_name }}"
             echo ""
             if [ "${{ job.status }}" = "success" ]; then
-              echo "Both the stable and beta channel pointers were updated."
+              if [ "${{ steps.source_release.outputs.is_prerelease }}" = "true" ]; then
+                echo "The beta channel pointer was updated; stable was intentionally left unchanged because the source Release is a prerelease."
+              else
+                echo "Both the stable and beta channel pointers were updated from a non-prerelease source Release."
+              fi
             else
               echo "This job did not finish. The installer release for ${{ github.ref_name }} is unaffected"
               echo "(published by the separate, already-completed \`release\` job)."
               echo ""
               echo "To retry: re-run this job — the publish script detects and safely resumes a partially"
-              echo "created train release — or trigger the **Publish Train** workflow manually with"
-              echo "\`tag=${{ github.ref_name }}\` and \`channel=stable\`, then again with \`channel=beta\`."
+              echo "created train release — or trigger the **Publish Train** workflow manually for the"
+              echo "intended channel. A prerelease-to-stable publish also requires its explicit confirmation checkbox."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

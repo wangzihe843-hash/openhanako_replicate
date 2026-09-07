@@ -6,9 +6,19 @@ const require = createRequire(import.meta.url);
 const {
   APPLY_NOW_STEPS,
   assertPackagedMode,
+  assertServerShutdownConfirmed,
   checkStagedPrecondition,
   runApplyNowSequence,
 } = require("../desktop/src/shared/train-update-apply.cjs");
+
+describe("train-update-apply: confirmed server shutdown", () => {
+  it("accepts only an explicitly confirmed shutdown", () => {
+    expect(() => assertServerShutdownConfirmed({ confirmed: true })).not.toThrow();
+    expect(() => assertServerShutdownConfirmed({ confirmed: false, reason: "guardian still running" }))
+      .toThrow(/shutdown was not confirmed.*guardian still running/i);
+    expect(() => assertServerShutdownConfirmed(undefined)).toThrow(/shutdown was not confirmed/i);
+  });
+});
 
 describe("train-update-apply: assertPackagedMode (dev rejection)", () => {
   it("throws explicitly when not packaged", () => {
@@ -77,6 +87,23 @@ describe("train-update-apply: runApplyNowSequence (ordering + fail-fast, mutatio
     expect(calls).toEqual(["verifyPackaged", "verifyStaged", "shutdownServer"]);
     expect(steps.startServer).not.toHaveBeenCalled();
     expect(steps.reloadWindows).not.toHaveBeenCalled();
+  });
+
+  it("does not start the staged server when process exit remains unconfirmed", async () => {
+    const { steps, calls } = makeSteps({
+      shutdownServer: vi.fn(async () => {
+        calls.push("shutdownServer");
+        assertServerShutdownConfirmed({ confirmed: false, reason: "guardian still running" });
+      }),
+    });
+
+    await expect(runApplyNowSequence(steps)).resolves.toEqual({
+      ok: false,
+      step: "shutdown-server",
+      error: "train-update-apply: server shutdown was not confirmed (guardian still running)",
+    });
+    expect(calls).toEqual(["verifyPackaged", "verifyStaged", "shutdownServer"]);
+    expect(steps.startServer).not.toHaveBeenCalled();
   });
 
   it("reports the correct failing step name when verify-staged rejects", async () => {

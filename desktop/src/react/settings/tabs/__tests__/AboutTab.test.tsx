@@ -236,7 +236,8 @@ describe('AboutTab', () => {
   });
 
   it('lastError: shows the error text with a retry button that calls checkNow', () => {
-    installHana();
+    const autoUpdateCheck = vi.fn();
+    installHana({ autoUpdateCheck });
     useSettingsStore.setState({ settingsConfig: { auto_check_updates: true, update_channel: 'stable' } });
     trainOverride = { ...DEFAULT_TRAIN_OVERRIDE, lastError: 'network down' };
 
@@ -247,6 +248,9 @@ describe('AboutTab', () => {
 
     fireEvent.click(screen.getByText('settings.about.updateRetryBtn'));
     expect(checkTrainNow).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText('settings.about.updateRetryBtn'));
+    expect(checkTrainNow).toHaveBeenCalledTimes(2);
+    expect(autoUpdateCheck).toHaveBeenCalledTimes(2);
     // The generic check button is redundant once the retry button is showing.
     expect(screen.queryByText('settings.about.updateCheckBtn')).toBeNull();
   });
@@ -284,7 +288,7 @@ describe('AboutTab', () => {
     expect(screen.queryByText('settings.about.updateManifestReleasedAtViaMirror')).toBeNull();
   });
 
-  it('up-to-date: switches to the "via backup source" copy only when originUnreachable is true, never merely because the mirror answered', () => {
+  it('up-to-date: ignores legacy source flags and always uses the single-source manifest copy', () => {
     installHana();
     useSettingsStore.setState({ settingsConfig: { auto_check_updates: true, update_channel: 'stable' } });
     trainOverride = {
@@ -297,8 +301,8 @@ describe('AboutTab', () => {
 
     render(<AboutTab />);
 
-    expect(screen.getByText('settings.about.updateManifestReleasedAtViaMirror')).toBeTruthy();
-    expect(screen.queryByText('settings.about.updateManifestReleasedAt')).toBeNull();
+    expect(screen.getByText('settings.about.updateManifestReleasedAt')).toBeTruthy();
+    expect(screen.queryByText('settings.about.updateManifestReleasedAtViaMirror')).toBeNull();
   });
 
   it('never checked: renders no conclusion text, only the manual check button', () => {
@@ -325,7 +329,7 @@ describe('AboutTab', () => {
 
     render(<AboutTab />);
 
-    expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('25');
+    expect((screen.getByRole('progressbar') as HTMLProgressElement).value).toBe(25);
   });
 
   it('applying: shows the applying message and hides the manual check button', () => {
@@ -389,6 +393,179 @@ describe('AboutTab', () => {
     expect(await screen.findByText('v0.400.5')).toBeTruthy();
     expect(screen.getByText('v0.400.1')).toBeTruthy();
     expect(getUpdateDigestHistory).toHaveBeenCalledTimes(1);
+  });
+
+  // ── 邀请制测试通道 ──
+
+  it('renders no invite entry at all while the redemption service is unconfigured', async () => {
+    const inviteStatus = vi.fn().mockResolvedValue({
+      configured: false, active: false, inviteCodes: [], channel: 'default',
+    });
+    installHana({ inviteStatus });
+    useSettingsStore.setState({ settingsConfig: { auto_check_updates: true, update_channel: 'stable' } });
+
+    await act(async () => {
+      render(<AboutTab />);
+      await Promise.resolve();
+    });
+
+    expect(inviteStatus).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('settings.about.inviteSectionTitle')).toBeNull();
+    expect(screen.queryByText('settings.about.inviteRedeemBtn')).toBeNull();
+  });
+
+  it('offers the invite code field once the redemption service is configured', async () => {
+    installHana({
+      inviteStatus: vi.fn().mockResolvedValue({
+        configured: true, active: false, inviteCodes: [], channel: 'default',
+      }),
+    });
+    useSettingsStore.setState({ settingsConfig: { auto_check_updates: true, update_channel: 'stable' } });
+
+    await act(async () => {
+      render(<AboutTab />);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('settings.about.inviteSectionTitle')).toBeTruthy();
+    expect(screen.getByText('settings.about.inviteRedeemBtn')).toBeTruthy();
+  });
+
+  it('separates "code is invalid or used up" from a network failure in the redeem error copy', async () => {
+    const inviteRedeem = vi.fn().mockResolvedValue({ ok: false, reason: 'invalid', message: 'code not found' });
+    installHana({
+      inviteStatus: vi.fn().mockResolvedValue({
+        configured: true, active: false, inviteCodes: [], channel: 'default',
+      }),
+      inviteRedeem,
+    });
+    useSettingsStore.setState({ settingsConfig: { auto_check_updates: true, update_channel: 'stable' } });
+
+    await act(async () => {
+      render(<AboutTab />);
+      await Promise.resolve();
+    });
+
+    fireEvent.change(screen.getByLabelText('settings.about.inviteCodeLabel'), { target: { value: 'HANA-BAD' } });
+    await act(async () => {
+      fireEvent.click(screen.getByText('settings.about.inviteRedeemBtn'));
+      await Promise.resolve();
+    });
+
+    expect(inviteRedeem).toHaveBeenCalledWith('HANA-BAD');
+    expect(screen.getByText('settings.about.inviteErrorInvalid')).toBeTruthy();
+    expect(screen.queryByText('settings.about.inviteErrorNetwork')).toBeNull();
+
+    inviteRedeem.mockResolvedValue({ ok: false, reason: 'network', message: 'ENOTFOUND' });
+    await act(async () => {
+      fireEvent.click(screen.getByText('settings.about.inviteRedeemBtn'));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('settings.about.inviteErrorNetwork')).toBeTruthy();
+    expect(screen.queryByText('settings.about.inviteErrorInvalid')).toBeNull();
+  });
+
+  it('never activates the channel when the one-way-data confirmation is cancelled', async () => {
+    const inviteActivate = vi.fn();
+    installHana({
+      inviteStatus: vi.fn().mockResolvedValue({
+        configured: true, active: false, inviteCodes: [], channel: 'default',
+      }),
+      inviteRedeem: vi.fn().mockResolvedValue({
+        ok: true, feedUrl: 'https://updates.example.com/alpha', childCodes: ['CHILD-1', 'CHILD-2'],
+      }),
+      inviteActivate,
+    });
+    useSettingsStore.setState({ settingsConfig: { auto_check_updates: true, update_channel: 'stable' } });
+
+    await act(async () => {
+      render(<AboutTab />);
+      await Promise.resolve();
+    });
+
+    fireEvent.change(screen.getByLabelText('settings.about.inviteCodeLabel'), { target: { value: 'HANA-OK' } });
+    await act(async () => {
+      fireEvent.click(screen.getByText('settings.about.inviteRedeemBtn'));
+      await Promise.resolve();
+    });
+
+    // 兑换成功只开对话框，绝不先落盘。
+    expect(screen.getByText('settings.about.inviteConfirmTitle')).toBeTruthy();
+    expect(inviteActivate).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('settings.about.inviteConfirmCancel'));
+      await Promise.resolve();
+    });
+
+    expect(inviteActivate).not.toHaveBeenCalled();
+    expect(screen.queryByText('settings.about.inviteChannelActive')).toBeNull();
+  });
+
+  it('activates the channel and shows the two fission codes only after the confirmation is accepted', async () => {
+    const inviteActivate = vi.fn().mockResolvedValue({
+      configured: true, active: true, inviteCodes: ['CHILD-1', 'CHILD-2'], channel: 'alpha',
+    });
+    installHana({
+      inviteStatus: vi.fn().mockResolvedValue({
+        configured: true, active: false, inviteCodes: [], channel: 'default',
+      }),
+      inviteRedeem: vi.fn().mockResolvedValue({
+        ok: true, feedUrl: 'https://updates.example.com/alpha', childCodes: ['CHILD-1', 'CHILD-2'],
+      }),
+      inviteActivate,
+    });
+    useSettingsStore.setState({ settingsConfig: { auto_check_updates: true, update_channel: 'stable' } });
+
+    await act(async () => {
+      render(<AboutTab />);
+      await Promise.resolve();
+    });
+
+    fireEvent.change(screen.getByLabelText('settings.about.inviteCodeLabel'), { target: { value: 'HANA-OK' } });
+    await act(async () => {
+      fireEvent.click(screen.getByText('settings.about.inviteRedeemBtn'));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText('settings.about.inviteConfirmOk'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(inviteActivate).toHaveBeenCalledWith({
+      feedUrl: 'https://updates.example.com/alpha',
+      inviteCodes: ['CHILD-1', 'CHILD-2'],
+    });
+    expect(screen.getByText('settings.about.inviteChannelActive')).toBeTruthy();
+    expect((screen.getByDisplayValue('CHILD-1') as HTMLInputElement).readOnly).toBe(true);
+    expect(screen.getByDisplayValue('CHILD-2')).toBeTruthy();
+    expect(screen.getAllByText('settings.about.inviteCopy')).toHaveLength(2);
+  });
+
+  it('offers a manual platform-update check inside the active beta channel section', async () => {
+    const autoUpdateCheck = vi.fn().mockResolvedValue(null);
+    installHana({
+      inviteStatus: vi.fn().mockResolvedValue({
+        configured: true, active: true, inviteCodes: [], channel: 'alpha',
+      }),
+      autoUpdateCheck,
+    });
+    useSettingsStore.setState({ settingsConfig: { auto_check_updates: true, update_channel: 'stable' } });
+
+    await act(async () => {
+      render(<AboutTab />);
+      await Promise.resolve();
+    });
+
+    // 激活态下提供「检查平台更新」手动入口：一点即触发壳检查 IPC。
+    expect(screen.getByText('settings.about.platformCheckLabel')).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByText('settings.about.platformCheckBtn'));
+      await Promise.resolve();
+    });
+    expect(autoUpdateCheck).toHaveBeenCalledTimes(1);
   });
 
   it('shows an explicit bundled-history warning when online history is unavailable', async () => {

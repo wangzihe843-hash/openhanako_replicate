@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { canonicalFilesystemPathSync, filesystemIdentityKeySync } from "../../shared/link-aware-fs.ts";
 import { detectMime, extOfName, inferFileKind } from "../file-metadata.ts";
 
 const DEFAULT_CONFLICT_POLICY = "fail";
@@ -8,15 +9,11 @@ type PathFileRef = { type: "path"; path: string };
 type SessionFileRef = { type: "session_file"; fileId: string; sessionId?: string; sessionPath?: string };
 type FileRef = PathFileRef | SessionFileRef;
 
-function normalizeExistingOrResolvedPath(filePath) {
-  const resolved = path.resolve(filePath);
-  try { return fs.realpathSync(resolved); }
-  catch { return resolved; }
-}
-
+// 目标还不存在时（copy 的落点），把已存在的那一段祖先解析掉再把剩下的接回去。
+// 共享原语只认存在的路径，所以这个上溯逻辑留在本地，底层归一交给它。
 function normalizePossiblyMissingPath(filePath) {
   const resolved = path.resolve(filePath);
-  if (fs.existsSync(resolved)) return normalizeExistingOrResolvedPath(resolved);
+  if (fs.existsSync(resolved)) return canonicalFilesystemPathSync(resolved);
   const parts = [];
   let cursor = resolved;
   while (!fs.existsSync(cursor)) {
@@ -25,10 +22,11 @@ function normalizePossiblyMissingPath(filePath) {
     parts.unshift(path.basename(cursor));
     cursor = parent;
   }
-  const base = normalizeExistingOrResolvedPath(cursor);
+  const base = canonicalFilesystemPathSync(cursor);
   return parts.length ? path.join(base, ...parts) : base;
 }
 
+/** 两侧都必须是身份键。 */
 function isInsideRoot(filePath, root) {
   const rel = path.relative(root, filePath);
   return rel === "" || (!!rel && !rel.startsWith("..") && !path.isAbsolute(rel));
@@ -37,7 +35,7 @@ function isInsideRoot(filePath, root) {
 function normalizeRoot(root, cwd) {
   if (!root || typeof root !== "string") return null;
   const absolute = path.isAbsolute(root) ? root : path.resolve(cwd || process.cwd(), root);
-  return normalizeExistingOrResolvedPath(absolute);
+  return canonicalFilesystemPathSync(absolute);
 }
 
 function allowedRootsFor(allowedRoots, cwd) {
@@ -51,16 +49,16 @@ function allowedRootsFor(allowedRoots, cwd) {
 function assertParentInsideAllowedRoots(targetPath, allowedRoots, cwd) {
   const roots = allowedRootsFor(allowedRoots, cwd);
   if (!roots.length) throw new Error("copy target has no allowed roots");
-  const normalizedTarget = normalizePossiblyMissingPath(path.dirname(targetPath));
-  if (roots.some((root) => isInsideRoot(normalizedTarget, root))) return;
+  const targetKey = filesystemIdentityKeySync(normalizePossiblyMissingPath(path.dirname(targetPath)));
+  if (roots.some((root) => isInsideRoot(targetKey, filesystemIdentityKeySync(root)))) return;
   throw new Error(`copy target is outside allowed roots: ${targetPath}`);
 }
 
 function assertExistingPathInsideAllowedRoots(filePath, allowedRoots, cwd, label) {
   const roots = allowedRootsFor(allowedRoots, cwd);
   if (!roots.length) throw new Error(`${label} has no allowed roots`);
-  const normalizedPath = normalizeExistingOrResolvedPath(filePath);
-  if (roots.some((root) => isInsideRoot(normalizedPath, root))) return;
+  const pathKey = filesystemIdentityKeySync(filePath);
+  if (roots.some((root) => isInsideRoot(pathKey, filesystemIdentityKeySync(root)))) return;
   throw new Error(`${label} is outside allowed roots: ${filePath}`);
 }
 
@@ -190,6 +188,30 @@ export async function statFileRef(ref, deps: any = {}) {
   };
 }
 
+/**
+ * 所有"要拿到文件本体"的操作（复制源、抽取源）共用的前置：解析 FileRef、确认文件真实存在、
+ * 对裸路径做授权根校验，并把 stat 一并交回调用方判断类型。
+ *
+ * 授权校验只保留这一份实现。新增读取入口一律走这里，不要在调用侧另写一条取文件路径，
+ * 否则授权目录的约束会随着入口数量慢慢漏掉。
+ */
+export async function resolveReadableFileRef(ref, {
+  cwd = process.cwd(),
+  allowedRoots = null,
+  label = "source",
+  sessionId = null,
+  sessionPath = null,
+  resolveSessionFile,
+}: any = {}) {
+  const resolved = await resolveFileRef(ref, { cwd, resolveSessionFile, sessionId, sessionPath });
+  if (!fs.existsSync(resolved.filePath)) throw new Error(`file not found: ${resolved.filePath}`);
+  // SessionFile 的归属由 session 自己把关；只有用户直接给的裸路径需要在这里对齐授权目录。
+  if (resolved.ref.type === "path" && Array.isArray(allowedRoots)) {
+    assertExistingPathInsideAllowedRoots(resolved.filePath, allowedRoots, cwd, label);
+  }
+  return { ...resolved, stat: fs.statSync(resolved.filePath) };
+}
+
 function resolveTargetPath({ targetPath, targetDir, filename, cwd, sourceFilename: fallbackFilename }) {
   if (targetPath && targetDir) throw new Error("Pass either targetPath or targetDir, not both");
   if (targetPath) {
@@ -231,13 +253,15 @@ export async function copyFileRefToPath({
   resolveSessionFile,
   registerSessionFile,
 }: any = {}) {
-  const resolved = await resolveFileRef(from, { cwd, resolveSessionFile, sessionId, sessionPath });
-  if (!fs.existsSync(resolved.filePath)) throw new Error(`file not found: ${resolved.filePath}`);
-  if (resolved.ref.type === "path" && Array.isArray(sourceAllowedRoots)) {
-    assertExistingPathInsideAllowedRoots(resolved.filePath, sourceAllowedRoots, cwd, "copy source");
-  }
-  const sourceStat = fs.statSync(resolved.filePath);
-  if (sourceStat.isDirectory()) {
+  const resolved = await resolveReadableFileRef(from, {
+    cwd,
+    allowedRoots: sourceAllowedRoots,
+    label: "copy source",
+    sessionId,
+    sessionPath,
+    resolveSessionFile,
+  });
+  if (resolved.stat.isDirectory()) {
     throw new Error("copying directory FileRefs is not supported in v0");
   }
 

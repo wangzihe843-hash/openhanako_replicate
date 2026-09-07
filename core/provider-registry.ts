@@ -13,13 +13,14 @@
 import fs from "fs";
 import path from "path";
 import YAML from "js-yaml";
-import { atomicWriteSync, safeReadYAMLSync } from "../shared/safe-fs.ts";
+import { writeSecretFileSync } from "../shared/secret-fs.ts";
 import { fromRoot } from "../shared/hana-root.ts";
 import { lookupKnown } from "../shared/known-models.ts";
 import {
   normalizeProviderHeaders,
   normalizeProviderAuthType,
   providerCredentialAllowsMissingApiKey,
+  stripCredentialHeaders,
 } from "../shared/provider-auth.ts";
 import { validateProviderModels } from "../shared/provider-model-validation.ts";
 import {
@@ -348,6 +349,21 @@ function normalizeUserMediaModels(providerId, userConfig, capabilityName, declar
   return result;
 }
 
+function normalizeRuntimeCapabilityError(error) {
+  return {
+    code: typeof error?.code === "string" && error.code.trim()
+      ? error.code.trim()
+      : "runtime_capability_refresh_failed",
+    message: error?.message || String(error || "Runtime media capability refresh failed"),
+  };
+}
+
+function publicRuntimeCapabilityState(state) {
+  if (!state) return { status: "pending" };
+  const { media: _media, fingerprint: _fingerprint, ...publicState } = state;
+  return cloneData(publicState);
+}
+
 // ── 内置插件 ────────────────────────────────────────────────────────────────
 
 import { dashscopePlugin } from "../lib/providers/dashscope.ts";
@@ -355,8 +371,10 @@ import { agnesPlugin } from "../lib/providers/agnes.ts";
 import { openaiPlugin } from "../lib/providers/openai.ts";
 import { anthropicPlugin } from "../lib/providers/anthropic.ts";
 import { deepseekPlugin } from "../lib/providers/deepseek.ts";
+import { deepseekResponsesPlugin } from "../lib/providers/deepseek-responses.ts";
 import { geminiPlugin } from "../lib/providers/gemini.ts";
 import { openrouterPlugin } from "../lib/providers/openrouter.ts";
+import { opencodePlugin } from "../lib/providers/opencode.ts";
 import { opencodeGoPlugin } from "../lib/providers/opencode-go.ts";
 import { ollamaPlugin } from "../lib/providers/ollama.ts";
 import { minimaxPlugin } from "../lib/providers/minimax.ts";
@@ -397,8 +415,10 @@ const BUILTIN_PLUGINS = [
   openaiPlugin,
   anthropicPlugin,
   deepseekPlugin,
+  deepseekResponsesPlugin,
   geminiPlugin,
   openrouterPlugin,
+  opencodePlugin,
   opencodeGoPlugin,
   ollamaPlugin,
   minimaxPlugin,
@@ -445,6 +465,8 @@ const BUILTIN_PLUGINS = [
  * @property {string} defaultApi
  * @property {string} [authJsonKey] - OAuth provider 在 auth.json 中的 key（不同于 id 时）
  * @property {Array<string|object>} [models] - 固定 chat 模型列表（本地 Provider Plugin 可直接声明）
+ * @property {Record<string, Record<string, string>>|((modelId: string) => Record<string, string>)} [modelExecutionHeaders]
+ *   Provider-owned per-model protocol/routing headers. Credential-bearing names are filtered from this lane.
  * @property {object} [capabilities]
  * @property {object} [runtime]
  * @property {{providerId: string, config: import('../lib/pi-sdk/index.ts').SdkProviderRegistrationConfig}} [sdkProvider]
@@ -475,6 +497,9 @@ export class ProviderRegistry {
   declare _hanakoHome: any;
   declare _localProviderPlugins: LocalProviderPluginStore;
   declare _plugins: any;
+  declare _runtimeMediaCapabilities: any;
+  declare _runtimeMediaCapabilitySources: any;
+  declare _runtimeMediaRefreshes: any;
   /**
    * @param {string} hanakoHome - 用户数据根目录（如 ~/.hanako-dev）
    */
@@ -487,6 +512,12 @@ export class ProviderRegistry {
     this._builtinPlugins = new Map();
     /** @type {Map<string, ProviderEntry>} id → entry（合并后） */
     this._entries = new Map();
+    /** @type {Map<string, {owner: object, refresh: Function}>} provider id → transient discovery source */
+    this._runtimeMediaCapabilitySources = new Map();
+    /** @type {Map<string, object>} provider id → last runtime capability snapshot/status */
+    this._runtimeMediaCapabilities = new Map();
+    /** @type {Map<string, Promise<object>>} provider id → in-flight refresh */
+    this._runtimeMediaRefreshes = new Map();
 
     // mtime 缓存：避免热路径上重复读盘解析 YAML/JSON
     /** @private */ this._addedModelsCache = null;
@@ -578,6 +609,139 @@ export class ProviderRegistry {
   }
 
   /**
+   * Register a process-local media capability discovery source. Runtime facts
+   * never enter Provider Catalog; the provider plugin remains responsible for
+   * querying its own executable or service.
+   */
+  registerRuntimeMediaCapabilitySource(providerId, source, owner: any = {}) {
+    if (typeof providerId !== "string" || !providerId.trim()) {
+      throw new Error("Runtime media capability source requires providerId");
+    }
+    if (!source || typeof source.refresh !== "function") {
+      throw new Error(`Runtime media capability source for "${providerId}" requires refresh()`);
+    }
+    const normalizedProviderId = providerId.trim();
+    const existing = this._runtimeMediaCapabilitySources.get(normalizedProviderId);
+    const existingOwner = existing?.owner?.pluginId;
+    const nextOwner = owner?.pluginId;
+    if (existing && existingOwner && nextOwner && existingOwner !== nextOwner) {
+      throw new Error(
+        `Runtime media capability source for "${normalizedProviderId}" is already owned by "${existingOwner}"`,
+      );
+    }
+    this._runtimeMediaCapabilitySources.set(normalizedProviderId, {
+      owner: cloneData(owner || {}),
+      refresh: source.refresh,
+    });
+    if (existing?.refresh !== source.refresh) {
+      this._runtimeMediaCapabilities.delete(normalizedProviderId);
+    }
+  }
+
+  unregisterRuntimeMediaCapabilitySource(providerId, owner: any = {}) {
+    const existing = this._runtimeMediaCapabilitySources.get(providerId);
+    if (!existing) return false;
+    const existingOwner = existing.owner?.pluginId;
+    const requestedOwner = owner?.pluginId;
+    if (existingOwner && requestedOwner && existingOwner !== requestedOwner) {
+      throw new Error(
+        `Runtime media capability source for "${providerId}" is owned by "${existingOwner}"`,
+      );
+    }
+    this._runtimeMediaCapabilitySources.delete(providerId);
+    this._runtimeMediaCapabilities.delete(providerId);
+    this._runtimeMediaRefreshes.delete(providerId);
+    return true;
+  }
+
+  getRuntimeMediaCapabilitySourceOwner(providerId) {
+    const owner = this._runtimeMediaCapabilitySources.get(providerId)?.owner;
+    return owner ? cloneData(owner) : null;
+  }
+
+  getRuntimeMediaCapabilityState(providerId) {
+    if (!this._runtimeMediaCapabilitySources.has(providerId)) return null;
+    return publicRuntimeCapabilityState(this._runtimeMediaCapabilities.get(providerId));
+  }
+
+  async refreshRuntimeMediaCapabilities({ providerId, capability }: any = {}) {
+    const targets = providerId
+      ? [providerId]
+      : [...this._runtimeMediaCapabilitySources.keys()];
+    const results: any = {};
+    await Promise.all(targets.map(async (targetProviderId) => {
+      if (!this._runtimeMediaCapabilitySources.has(targetProviderId)) return;
+      results[targetProviderId] = await this._refreshRuntimeMediaCapability(targetProviderId, capability);
+    }));
+    return results;
+  }
+
+  async _refreshRuntimeMediaCapability(providerId, capability) {
+    const existingRefresh = this._runtimeMediaRefreshes.get(providerId);
+    if (existingRefresh) return existingRefresh;
+
+    const refreshPromise = (async () => {
+      const source = this._runtimeMediaCapabilitySources.get(providerId);
+      if (!source) return null;
+      const previous = this._runtimeMediaCapabilities.get(providerId);
+      try {
+        if (this._entries.size === 0) this.reload();
+        const entry = this._entries.get(providerId) || this.get(providerId);
+        if (!entry) throw new Error(`Runtime media provider "${providerId}" is not registered`);
+        const snapshot = await source.refresh({ providerId, capability });
+        if (this._runtimeMediaCapabilitySources.get(providerId) !== source) return null;
+        if (!isPlainObject(snapshot?.media)) {
+          throw new Error(`Runtime media capability source for "${providerId}" returned no media snapshot`);
+        }
+        const media: any = {};
+        let modelCount = 0;
+        for (const [rawKey, rawCapability] of Object.entries(snapshot.media)) {
+          const key = capabilityKey(rawKey);
+          const normalized = normalizeMediaCapability(rawCapability, entry, rawKey);
+          if (!normalized) continue;
+          if (normalized.defaultModelId && !normalized.models.some((model) => model.id === normalized.defaultModelId)) {
+            throw new Error(
+              `Runtime media default model "${normalized.defaultModelId}" is absent for "${providerId}/${key}"`,
+            );
+          }
+          media[key] = normalized;
+          modelCount += normalized.models.length;
+        }
+        if (modelCount === 0) {
+          throw new Error(`Runtime media capability source for "${providerId}" returned no models`);
+        }
+        const next = {
+          status: "ready",
+          media,
+          ...(snapshot.version !== undefined ? { version: cloneData(snapshot.version) } : {}),
+          ...(snapshot.fingerprint !== undefined ? { fingerprint: cloneData(snapshot.fingerprint) } : {}),
+          updatedAt: new Date().toISOString(),
+        };
+        this._runtimeMediaCapabilities.set(providerId, next);
+        return publicRuntimeCapabilityState(next);
+      } catch (error) {
+        if (this._runtimeMediaCapabilitySources.get(providerId) !== source) return null;
+        const next = {
+          ...(previous || {}),
+          status: previous?.media ? "stale" : "error",
+          error: normalizeRuntimeCapabilityError(error),
+          updatedAt: new Date().toISOString(),
+        };
+        this._runtimeMediaCapabilities.set(providerId, next);
+        return publicRuntimeCapabilityState(next);
+      }
+    })();
+    this._runtimeMediaRefreshes.set(providerId, refreshPromise);
+    try {
+      return await refreshPromise;
+    } finally {
+      if (this._runtimeMediaRefreshes.get(providerId) === refreshPromise) {
+        this._runtimeMediaRefreshes.delete(providerId);
+      }
+    }
+  }
+
+  /**
    * 一次性迁移：将 agent config.models.overrides 的模型能力字段迁移到 Provider Catalog
    * @param {string} agentsDir - agents 目录
    * @param {Function} [log] - 日志函数
@@ -585,17 +749,33 @@ export class ProviderRegistry {
   migrateOverridesToAddedModels(agentsDir, log: (...args: any[]) => void = () => {}) {
     // 能力字段白名单：image 是新标准名；vision 是旧名，读到时转写为 image
     const CAPABILITY_KEYS = ["context", "maxOutput", "image", "video", "reasoning"];
-    const userConfig = this._loadAddedModels();
+    // Migration code must distinguish an unreadable catalog from an empty
+    // one. Runtime reads may degrade to an empty view, but cleanup must not.
+    const userConfig = normalizeProviderUserConfigMap(this._catalog.load().providers);
     let changed = false;
+    const pendingConfigWrites = [];
+    const sourceErrors: string[] = [];
 
     // 扫描所有 agent 的 config.yaml
     let agentDirs;
     try { agentDirs = fs.readdirSync(agentsDir, { withFileTypes: true }).filter(d => d.isDirectory()); }
-    catch { return; }
+    catch (err) {
+      if (err?.code === "ENOENT") return;
+      throw err;
+    }
 
     for (const dir of agentDirs) {
       const cfgPath = path.join(agentsDir, dir.name, "config.yaml");
-      const cfg = safeReadYAMLSync(cfgPath, null, YAML);
+      let cfg;
+      try {
+        cfg = YAML.load(fs.readFileSync(cfgPath, "utf-8"));
+        if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) {
+          throw new Error("config root must be an object");
+        }
+      } catch (err) {
+        if (err?.code !== "ENOENT") sourceErrors.push(`${dir.name}/config.yaml: ${err.message}`);
+        continue;
+      }
       if (!cfg?.models?.overrides) continue;
 
       const overrides = cfg.models.overrides;
@@ -604,34 +784,36 @@ export class ProviderRegistry {
       for (const [modelId, ov] of Object.entries(overrides) as [string, any][]) {
         if (!ov || typeof ov !== "object") continue;
         const meta: any = {};
-        // 旧字段 vision 重命名为 image（兼容两个版本后可删）
-        if (ov.vision !== undefined && ov.image === undefined) {
-          ov.image = ov.vision;
-        }
-        if (ov.vision !== undefined) {
-          delete ov.vision;
-          cfgChanged = true;
-        }
         for (const key of CAPABILITY_KEYS) {
-          if (ov[key] !== undefined) {
-            meta[key] = ov[key];
-            delete ov[key];
-            cfgChanged = true;
-          }
+          const value = key === "image" && ov.image === undefined ? ov.vision : ov[key];
+          if (value !== undefined) meta[key] = value;
         }
         if (Object.keys(meta).length === 0) continue;
 
-        // 找到对应 provider 并更新条目
+        // Only clean the source after finding a durable destination. Unknown
+        // model overrides remain valid user intent and must stay untouched.
+        let target = null;
         for (const [provName, prov] of Object.entries(userConfig) as [string, any][]) {
           if (!prov.models || !Array.isArray(prov.models)) continue;
           const idx = prov.models.findIndex(m => (typeof m === "object" ? m.id : m) === modelId);
           if (idx === -1) continue;
-          const existing = typeof prov.models[idx] === "object" ? prov.models[idx] : { id: modelId };
-          prov.models[idx] = { ...existing, ...meta };
-          changed = true;
-          log(`[migrate] override ${modelId}: ${Object.keys(meta).join(",")} → Provider Catalog`);
+          target = { provName, prov, idx };
           break;
         }
+        if (!target) {
+          log(`[migrate] override ${modelId}: no provider model destination; source preserved`);
+          continue;
+        }
+
+        const existing = typeof target.prov.models[target.idx] === "object"
+          ? target.prov.models[target.idx]
+          : { id: modelId };
+        target.prov.models[target.idx] = { ...existing, ...meta };
+        changed = true;
+        delete ov.vision;
+        for (const key of CAPABILITY_KEYS) delete ov[key];
+        cfgChanged = true;
+        log(`[migrate] override ${modelId}: ${Object.keys(meta).join(",")} → Provider Catalog`);
       }
 
       // 清理空的 override 条目，保存 config.yaml
@@ -644,15 +826,23 @@ export class ProviderRegistry {
         if (Object.keys(overrides).length === 0) {
           delete cfg.models.overrides;
         }
-        const header = "# HanaAgent 助手配置\n# 由设置页面管理，手动编辑也可以\n\n";
-        const yamlStr = header + YAML.dump(cfg, { indent: 2, lineWidth: -1, sortKeys: false, quotingType: '"', forceQuotes: false });
-        atomicWriteSync(cfgPath, yamlStr);
+        pendingConfigWrites.push({ cfgPath, cfg });
       }
     }
 
     if (changed) {
+      // Copy to the destination before cleaning any agent source. A failed
+      // catalog write therefore leaves every override available for retry.
       this._saveAddedModels(userConfig);
+      const header = "# HanaAgent 助手配置\n# 由设置页面管理，手动编辑也可以\n\n";
+      for (const { cfgPath, cfg } of pendingConfigWrites) {
+        const yamlStr = header + YAML.dump(cfg, { indent: 2, lineWidth: -1, sortKeys: false, quotingType: '"', forceQuotes: false });
+        writeSecretFileSync(cfgPath, yamlStr);
+      }
       log("[migrate] model overrides migrated to Provider Catalog");
+    }
+    if (sourceErrors.length > 0) {
+      throw new Error(`Unreadable agent config prevents override migration completion: ${sourceErrors.join("; ")}`);
     }
   }
 
@@ -970,6 +1160,13 @@ export class ProviderRegistry {
       }
       runtimeOwners.set(runtimeProviderId, sourceProviderId);
       const selection = this.getChatModelSelection(configuredAs);
+      const modelExecutionHeaders = {};
+      for (const model of selection?.models || []) {
+        const modelId = getModelId(model);
+        if (!modelId) continue;
+        const headers = this.getChatModelExecutionHeaders(sourceProviderId, modelId);
+        if (Object.keys(headers).length > 0) modelExecutionHeaders[modelId] = headers;
+      }
       plans.push({
         sourceProviderId,
         configuredAs,
@@ -984,6 +1181,7 @@ export class ProviderRegistry {
           : resolved.projection === "sdk-auth-alias" && selection?.hasExplicitModels !== true
           ? "runtime-catalog"
           : (selection?.selectionMode || "disabled"),
+        modelExecutionHeaders,
         config: this.getEffectiveChatProviderConfig(configuredAs),
       });
     }
@@ -995,12 +1193,19 @@ export class ProviderRegistry {
     const entry = this._entries.get(providerId) || this.get(providerId);
     if (!entry) return [];
     const key = capabilityKey(capability);
-    const declared = entry.capabilities?.media?.[key]?.models || [];
+    const hasRuntimeSource = this._runtimeMediaCapabilitySources.has(providerId);
+    const runtimeState = this._runtimeMediaCapabilities.get(providerId);
+    const declared = hasRuntimeSource
+      ? (runtimeState?.media?.[key]?.models || [])
+      : (entry.capabilities?.media?.[key]?.models || []);
     const userConfig = this.getAllProvidersRaw()[providerId] || {};
     const userModels = normalizeUserMediaModels(providerId, userConfig, capability, declared, entry);
     const byId = new Map();
     for (const model of declared) byId.set(model.id, model);
-    for (const model of userModels) byId.set(model.id, { ...(byId.get(model.id) || {}), ...model });
+    for (const model of userModels) {
+      if (hasRuntimeSource && !byId.has(model.id)) continue;
+      byId.set(model.id, { ...(byId.get(model.id) || {}), ...model });
+    }
     return [...byId.values()];
   }
 
@@ -1034,6 +1239,17 @@ export class ProviderRegistry {
       };
     }
     const lanes = this.getMediaCredentialLanes(providerId, capability);
+    if (this._runtimeMediaCapabilitySources.has(providerId)) {
+      const runtimeState = this._runtimeMediaCapabilities.get(providerId);
+      if (runtimeState?.status !== "ready") {
+        return {
+          hasCredentials: false,
+          unavailableReason: runtimeState?.error?.code || "runtime_capability_pending",
+          unavailableMessage: runtimeState?.error?.message || "Runtime media capabilities have not been discovered yet",
+          lanes,
+        };
+      }
+    }
     for (const lane of lanes) {
       const laneProviderId = lane.providerId || providerId;
       const authType = normalizeProviderAuthType(lane.authType || this.getAuthType(laneProviderId) || entry.authType);
@@ -1067,10 +1283,14 @@ export class ProviderRegistry {
 
   getMediaProviders(capability) {
     if (this._entries.size === 0) this.reload();
+    const key = capabilityKey(capability);
     const providers = [];
     for (const entry of this._entries.values()) {
       const models = this.getMediaModels(entry.id, capability);
-      if (models.length === 0) continue;
+      const runtimeCapability = this.getRuntimeMediaCapabilityState(entry.id);
+      const runtimeMedia = this._runtimeMediaCapabilities.get(entry.id)?.media;
+      const exposesCapability = entry.capabilities?.media?.[key] !== undefined || runtimeMedia?.[key] !== undefined;
+      if (models.length === 0 && (!runtimeCapability || !exposesCapability)) continue;
       providers.push({
         providerId: entry.id,
         displayName: entry.displayName,
@@ -1078,6 +1298,7 @@ export class ProviderRegistry {
         source: entry.source,
         runtime: entry.runtime || null,
         credentialLanes: this.getMediaCredentialLanes(entry.id, capability),
+        ...(runtimeCapability ? { runtimeCapability } : {}),
         models,
       });
     }
@@ -1092,6 +1313,14 @@ export class ProviderRegistry {
     if (!modelId) throw new Error("Media model required");
     const entry = this._entries.get(providerId) || this.get(providerId);
     if (!entry) throw new Error(`Media provider "${providerId}" not found`);
+    if (this._runtimeMediaCapabilitySources.has(providerId)) {
+      const runtimeState = this._runtimeMediaCapabilities.get(providerId);
+      if (runtimeState?.status !== "ready") {
+        throw new Error(
+          runtimeState?.error?.message || `Runtime media capabilities for "${providerId}" are not ready`,
+        );
+      }
+    }
     const models = this.getMediaModels(providerId, capability);
     const model = models.find((item) => item.id === modelId || item.aliases?.includes?.(modelId));
     if (!model) throw new Error(`Media model "${providerId}/${modelId}" not found`);
@@ -1156,6 +1385,22 @@ export class ProviderRegistry {
    */
   getDefaultModels(providerId) {
     return this.getDefaultModelEntries(providerId).map(getModelId).filter(Boolean);
+  }
+
+  /**
+   * Resolve provider-owned, non-credential request metadata for one chat model.
+   * Function contributions are process-local plugin behavior; object maps also
+   * support serializable provider declarations.
+   */
+  getChatModelExecutionHeaders(providerId, modelId) {
+    const resolved = this.resolveChatProvider(providerId);
+    if (!resolved || typeof modelId !== "string" || !modelId.trim()) return {};
+    const plugin = this._plugins.get(resolved.sourceProviderId);
+    const contribution = plugin?.modelExecutionHeaders;
+    const headers = typeof contribution === "function"
+      ? contribution(modelId.trim())
+      : contribution?.[modelId.trim()];
+    return stripCredentialHeaders(headers);
   }
 
   /**
@@ -1526,7 +1771,14 @@ export class ProviderRegistry {
       || { protocolId: inferMediaProtocolId(providerId, capability, modelId, providerProtocolContext(entry)) || entry?.runtime?.protocolId };
   }
 
+  _assertMediaModelCatalogMutable(providerId) {
+    if (this._runtimeMediaCapabilitySources.has(providerId)) {
+      throw new Error(`Runtime-discovered provider "${providerId}" does not allow manual model changes`);
+    }
+  }
+
   addMediaModel(providerId, capability, model) {
+    this._assertMediaModelCatalogMutable(providerId);
     const userConfig = this._loadAddedModels();
     const modelId = getModelId(model);
     if (!modelId) throw new Error("media model id is required");
@@ -1545,6 +1797,7 @@ export class ProviderRegistry {
   }
 
   updateMediaModelEntry(providerId, capability, modelId, patch) {
+    this._assertMediaModelCatalogMutable(providerId);
     if (!modelId) throw new Error("media model id is required");
     const userConfig = this._loadAddedModels();
     const mediaConfig = this._ensureMediaConfig(userConfig, providerId, capability);
@@ -1573,6 +1826,7 @@ export class ProviderRegistry {
   }
 
   removeMediaModel(providerId, capability, modelId) {
+    this._assertMediaModelCatalogMutable(providerId);
     const userConfig = this._loadAddedModels();
     const provider = userConfig[providerId];
     const mediaKey = mediaUserConfigKey(capability);

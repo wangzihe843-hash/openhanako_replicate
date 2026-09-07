@@ -21,6 +21,7 @@ const RESOLVED_MODEL = {
   api: "openai-completions",
   api_key: "k",
   base_url: "http://x",
+  headers: { "x-provider-contract": "memory" },
 };
 
 function makeFakeSummaryManager(summaries) {
@@ -56,7 +57,9 @@ describe("memory prompt boundaries", () => {
       },
     });
 
-    const prompt = (callText as any).mock.calls[0][0].systemPrompt;
+    const request = (callText as any).mock.calls[0][0];
+    const prompt = request.systemPrompt;
+    expect(request.headers).toEqual(RESOLVED_MODEL.headers);
     expect(prompt).toContain("你是 Hana");
     expect(prompt).toContain("从自己的视角审视本次对话");
     expect(prompt).toContain("这是你在本次对话开始前已经拥有的记忆");
@@ -96,6 +99,8 @@ describe("memory prompt boundaries", () => {
 
     const todayPrompt = (callText as any).mock.calls[0][0].systemPrompt;
     const dailyPrompt = (callText as any).mock.calls[1][0].systemPrompt;
+    expect((callText as any).mock.calls[0][0].headers).toEqual(RESOLVED_MODEL.headers);
+    expect((callText as any).mock.calls[1][0].headers).toEqual(RESOLVED_MODEL.headers);
     for (const prompt of [todayPrompt, dailyPrompt]) {
       expect(prompt).toContain("工作相关内容只允许保留到大主题层级");
       expect(prompt).toContain("领域/项目/主题");
@@ -130,7 +135,9 @@ describe("memory prompt boundaries", () => {
 
     await compileLongterm("用户最近在关注记忆系统。", longtermPath, RESOLVED_MODEL);
 
-    const prompt = (callText as any).mock.calls[0][0].systemPrompt;
+    const request = (callText as any).mock.calls[0][0];
+    const prompt = request.systemPrompt;
+    expect(request.headers).toEqual(RESOLVED_MODEL.headers);
     expect(prompt).toContain("记忆不是工作日志");
     expect(prompt).toContain("用户画像");
     expect(prompt).toContain("长期关注方向");
@@ -154,7 +161,9 @@ describe("memory prompt boundaries", () => {
 
     await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
 
-    const prompt = (callText as any).mock.calls[0][0].systemPrompt;
+    const request = (callText as any).mock.calls[0][0];
+    const prompt = request.systemPrompt;
+    expect(request.headers).toEqual(RESOLVED_MODEL.headers);
     expect(prompt).toContain("只提取用户画像和粗颗粒近况");
     expect(prompt).toContain("禁止提取工作方式偏好");
     expect(prompt).toContain("如果一条事实描述的是“以后遇到类似任务应该怎么做”");
@@ -217,6 +226,158 @@ describe("memory prompt boundaries", () => {
 
     expect(factStore.addBatch).not.toHaveBeenCalled();
     expect(summaryManager.markProcessed).not.toHaveBeenCalled();
+  });
+
+  it("atomically replaces facts for a rebuilt sibling summary", async () => {
+    (callText as any).mockResolvedValue(JSON.stringify([
+      { fact: "用户当前关注新的记忆分支", tags: ["记忆", "近况"], time: null },
+    ]));
+    const summaryManager = {
+      getDirtySessions: vi.fn().mockReturnValue([
+        {
+          session_id: "branch-replacement",
+          summary: "### 重要事实\n- 用户当前关注新的记忆分支\n\n### 事情经过\n- 用户重新生成了回复。",
+          snapshot: "discarded sibling summary",
+          factReplacementRequired: true,
+          updated_at: "2026-07-16T08:00:00.000Z",
+        },
+      ]),
+      markProcessed: vi.fn(),
+    };
+    const factStore = { addBatch: vi.fn(), replaceBySession: vi.fn() };
+
+    await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
+
+    expect(factStore.addBatch).not.toHaveBeenCalled();
+    expect(factStore.replaceBySession).toHaveBeenCalledWith("branch-replacement", [
+      {
+        fact: "用户当前关注新的记忆分支",
+        tags: ["记忆", "近况"],
+        time: null,
+        session_id: "branch-replacement",
+      },
+    ]);
+    expect(summaryManager.markProcessed).toHaveBeenCalledWith("branch-replacement");
+    const requestText = (callText as any).mock.calls[0][0].messages[0].content;
+    expect(requestText).not.toContain("discarded sibling summary");
+  });
+
+  it("clears old facts for an empty replacement without calling the LLM", async () => {
+    const summaryManager = {
+      getDirtySessions: vi.fn().mockReturnValue([
+        {
+          session_id: "empty-replacement",
+          summary: "",
+          snapshot: "old summary",
+          factReplacementRequired: true,
+          updated_at: "2026-07-16T08:00:00.000Z",
+        },
+      ]),
+      markProcessed: vi.fn(),
+    };
+    const factStore = { addBatch: vi.fn(), replaceBySession: vi.fn() };
+
+    await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
+
+    expect(callText).not.toHaveBeenCalled();
+    expect(factStore.replaceBySession).toHaveBeenCalledWith("empty-replacement", []);
+    expect(summaryManager.markProcessed).toHaveBeenCalledWith("empty-replacement");
+  });
+
+  it("never marks a replacement processed after repeated extraction failures", async () => {
+    (callText as any).mockResolvedValue("not-json");
+    const summaryManager = {
+      getDirtySessions: vi.fn().mockReturnValue([
+        {
+          session_id: "replacement-retry-unique",
+          summary: "### 重要事实\n- 新分支事实",
+          snapshot: "old sibling",
+          factReplacementRequired: true,
+          updated_at: "2026-07-16T08:00:00.000Z",
+        },
+      ]),
+      markProcessed: vi.fn(),
+    };
+    const factStore = { addBatch: vi.fn(), replaceBySession: vi.fn() };
+
+    await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
+    await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
+    await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
+
+    expect(factStore.replaceBySession).not.toHaveBeenCalled();
+    expect(summaryManager.markProcessed).not.toHaveBeenCalled();
+  });
+
+  it("drops extracted facts when a newer summary revision lands during the LLM call", async () => {
+    const manager = new SessionSummaryManager(path.join(tmpDir, "summaries-race"));
+    const oldSummary = {
+      session_id: "replacement-race",
+      summary: "### 重要事实\n- 旧分支事实\n\n### 事情经过\n- 旧分支事件。",
+      snapshot: "discarded sibling",
+      cursor: { coveredLeafId: "a-old", lineageHash: "hash-old" },
+      factReplacementRequired: true,
+      created_at: "2026-07-16T08:00:00.000Z",
+      updated_at: "2026-07-16T08:00:00.000Z",
+    };
+    manager.saveSummary(oldSummary.session_id, oldSummary);
+    let resolveFacts: (value: string) => void = () => {};
+    (callText as any).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveFacts = resolve;
+    }));
+    const factStore = { addBatch: vi.fn(), replaceBySession: vi.fn() };
+
+    const processing = processDirtySessions(manager, factStore, RESOLVED_MODEL, {
+      getCurrentBranchProjection: () => ({
+        rootLineageHash: "root",
+        prefixHashes: { "a-old": "hash-old" },
+      }),
+    });
+    await vi.waitFor(() => expect(callText).toHaveBeenCalledOnce());
+    manager.saveSummary(oldSummary.session_id, {
+      ...oldSummary,
+      summary: "### 重要事实\n- 新分支事实\n\n### 事情经过\n- 新分支事件。",
+      cursor: { coveredLeafId: "a-new", lineageHash: "hash-new" },
+      updated_at: "2026-07-16T08:01:00.000Z",
+    });
+    resolveFacts(JSON.stringify([{ fact: "不应写入的旧事实", tags: [], time: null }]));
+    await processing;
+
+    expect(factStore.replaceBySession).not.toHaveBeenCalled();
+    expect(manager.getSummary(oldSummary.session_id)).toMatchObject({
+      cursor: { coveredLeafId: "a-new", lineageHash: "hash-new" },
+      factReplacementRequired: true,
+      snapshot: "discarded sibling",
+    });
+  });
+
+  it("drops extracted facts when the current branch leaves the captured summary lineage", async () => {
+    const manager = new SessionSummaryManager(path.join(tmpDir, "summaries-branch-race"));
+    manager.saveSummary("branch-race", {
+      session_id: "branch-race",
+      summary: "### 重要事实\n- 分支事实\n\n### 事情经过\n- 分支事件。",
+      snapshot: "discarded sibling",
+      cursor: { coveredLeafId: "a-old", lineageHash: "hash-old" },
+      factReplacementRequired: true,
+      created_at: "2026-07-16T08:00:00.000Z",
+      updated_at: "2026-07-16T08:00:00.000Z",
+    });
+    const factStore = { addBatch: vi.fn(), replaceBySession: vi.fn() };
+    (callText as any).mockResolvedValueOnce(JSON.stringify([
+      { fact: "不应写入的兄弟分支事实", tags: [], time: null },
+    ]));
+
+    await processDirtySessions(manager, factStore, RESOLVED_MODEL, {
+      getCurrentBranchProjection: () => ({
+        rootLineageHash: "root",
+        prefixHashes: { "a-new": "hash-new" },
+      }),
+    });
+
+    expect(factStore.replaceBySession).not.toHaveBeenCalled();
+    expect(manager.getSummary("branch-race")).toMatchObject({
+      factReplacementRequired: true,
+      snapshot: "discarded sibling",
+    });
   });
 
   it("corrects example-anchored fact dates when a legacy summary has a single source day", async () => {

@@ -1,5 +1,5 @@
 /**
- * core/provider-compat/tool-pairing.js — 孤儿 toolResult 配对兜底（provider-agnostic）
+ * core/provider-compat/tool-pairing.ts — 孤儿 toolResult 配对兜底（provider-agnostic）
  *
  * 处理对象：OpenAI-compatible 序列化 payload（role:"tool" + assistant.tool_calls），
  * 即所有走 `openai-completions` API 的 provider（DeepSeek / OpenAI / Qwen / MiMo / …）。

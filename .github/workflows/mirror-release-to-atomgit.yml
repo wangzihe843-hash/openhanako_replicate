@@ -1,6 +1,12 @@
 name: Mirror Release to AtomGit
 
 on:
+  release:
+    types:
+      - published
+      - edited
+      - prereleased
+      - released
   workflow_dispatch:
     inputs:
       mode:
@@ -26,8 +32,13 @@ on:
         default: true
         type: boolean
 
+concurrency:
+  group: atomgit-release-mirror
+  cancel-in-progress: false
+
 jobs:
   mirror:
+    if: github.event_name == 'workflow_dispatch' || github.event.sender.login != 'github-actions[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -46,24 +57,36 @@ jobs:
           ATOMGIT_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
           ATOMGIT_OWNER: liliMozi
           ATOMGIT_REPO: OpenHanako-Releases
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_LIMIT: ${{ inputs.limit }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
         shell: bash
         run: |
           set -euo pipefail
 
           ARGS=()
-          if [ "${{ inputs.mode }}" = "tag" ]; then
-            if [ -z "${{ inputs.tag }}" ]; then
+          if [ "$EVENT_NAME" = "release" ]; then
+            if [ -z "$RELEASE_TAG" ]; then
+              echo "::error::release event did not include a tag"
+              exit 1
+            fi
+            ARGS+=(--tag "$RELEASE_TAG")
+          elif [ "$INPUT_MODE" = "tag" ]; then
+            if [ -z "$INPUT_TAG" ]; then
               echo "::error::tag is required when mode=tag"
               exit 1
             fi
-            ARGS+=(--tag "${{ inputs.tag }}")
-          elif [ "${{ inputs.mode }}" = "stable" ]; then
-            ARGS+=(--stable "${{ inputs.limit }}")
+            ARGS+=(--tag "$INPUT_TAG")
+          elif [ "$INPUT_MODE" = "stable" ]; then
+            ARGS+=(--stable "$INPUT_LIMIT")
           else
-            ARGS+=(--newest "${{ inputs.limit }}")
+            ARGS+=(--newest "$INPUT_LIMIT")
           fi
 
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_DRY_RUN" = "true" ]; then
             ARGS+=(--dry-run)
           fi
 

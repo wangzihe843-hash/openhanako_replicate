@@ -55,6 +55,39 @@ export interface BridgeStatus {
 
 export type BridgePlatform = 'telegram' | 'feishu' | 'dingtalk' | 'whatsapp' | 'qq' | 'wechat';
 
+// WeChat reports `connected` only after its first long-poll succeeds. QR
+// confirmation starts that handshake, so keep the settings view reconciled for
+// a bounded minute without creating a permanent polling loop.
+const WECHAT_STATUS_RECONCILE_INTERVAL_MS = 2_000;
+const WECHAT_STATUS_RECONCILE_MAX_ATTEMPTS = 31;
+
+function shouldReconcileWechatStatus(status: BridgeStatus | null) {
+  if (!status) return true;
+  const wechat = status.wechat;
+  return wechat?.enabled === true
+    && wechat.status !== 'connected'
+    && wechat.status !== 'error';
+}
+
+function waitForWechatStatusRetry(signal: AbortSignal) {
+  return new Promise<boolean>((resolve) => {
+    if (signal.aborted) {
+      resolve(false);
+      return;
+    }
+
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      resolve(false);
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve(true);
+    }, WECHAT_STATUS_RECONCILE_INTERVAL_MS);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 function normalizeFeishuRegion(value: unknown): FeishuRegion {
   return value === 'lark_global' ? 'lark_global' : 'feishu_cn';
 }
@@ -140,6 +173,7 @@ export function useBridgeState() {
   const statusRequestIdRef = useRef(0);
   const testRequestIdRef = useRef(0);
   const liveStatusOwnersRef = useRef(new Set<string>());
+  const wechatStatusReconcileAbortRef = useRef<AbortController | null>(null);
 
   // Sync initial value when store becomes ready (only if null)
   useEffect(() => {
@@ -147,10 +181,10 @@ export function useBridgeState() {
     if (currentAgentId) setSelectedAgentId(currentAgentId);
   }, [currentAgentId, selectedAgentId]);
 
-  // Public Ishiki — keyed to selectedAgentId
-  const initialPublicIshiki = settingsSnapshot?.agentId === currentAgentId ? settingsSnapshot.publicIshiki || '' : '';
-  const [publicIshiki, setPublicIshiki] = useState(initialPublicIshiki);
-  const [publicIshikiOriginal, setPublicIshikiOriginal] = useState(initialPublicIshiki);
+  // AGENTS.public.md — keyed to selectedAgentId
+  const initialPublicAgentsMd = settingsSnapshot?.agentId === currentAgentId ? settingsSnapshot.publicAgents || '' : '';
+  const [publicAgentsMd, setPublicAgentsMd] = useState(initialPublicAgentsMd);
+  const [publicAgentsMdOriginal, setPublicAgentsMdOriginal] = useState(initialPublicAgentsMd);
 
   const {
     drafts: secretDrafts,
@@ -193,64 +227,97 @@ export function useBridgeState() {
     applyStatus(nextStatus, selectedAgentId);
   }, [applyStatus, selectedAgentId, settingsSnapshot?.agentId, settingsSnapshot?.bridgeStatus]);
 
-  // Fetch public ishiki for selected agent (abort stale requests on agent switch)
+  // Fetch AGENTS.public.md for selected agent (abort stale requests on agent switch)
   useEffect(() => {
     if (!selectedAgentId) return;
     if (settingsSnapshot?.agentId === selectedAgentId) {
-      const content = settingsSnapshot.publicIshiki || '';
-      setPublicIshiki(content);
-      setPublicIshikiOriginal(content);
+      const content = settingsSnapshot.publicAgents || '';
+      setPublicAgentsMd(content);
+      setPublicAgentsMdOriginal(content);
       return;
     }
     const ac = new AbortController();
-    hanaFetch(`/api/agents/${selectedAgentId}/public-ishiki`, { signal: ac.signal })
+    hanaFetch(`/api/agents/${selectedAgentId}/public-agents-md`, { signal: ac.signal })
       .then(r => r.json())
-      .then(data => { setPublicIshiki(data.content || ''); setPublicIshikiOriginal(data.content || ''); })
-      .catch(err => { if (err?.name !== 'AbortError') console.warn('[bridge] fetch public-ishiki failed:', err); });
+      .then(data => { setPublicAgentsMd(data.content || ''); setPublicAgentsMdOriginal(data.content || ''); })
+      .catch(err => { if (err?.name !== 'AbortError') console.warn('[bridge] fetch public-agents-md failed:', err); });
     return () => ac.abort();
   }, [selectedAgentId, settingsSnapshot]);
 
-  const savePublicIshiki = async () => {
+  const savePublicAgentsMd = async () => {
     const agentId = selectedAgentId;
-    if (!agentId || publicIshiki === publicIshikiOriginal) return;
+    if (!agentId || publicAgentsMd === publicAgentsMdOriginal) return;
     try {
-      await hanaFetch(`/api/agents/${agentId}/public-ishiki`, {
+      await hanaFetch(`/api/agents/${agentId}/public-agents-md`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: publicIshiki }),
+        body: JSON.stringify({ content: publicAgentsMd }),
       });
       updateSettingsSnapshot(snapshot => (
-        snapshot.agentId === agentId ? { ...snapshot, publicIshiki } : snapshot
+        snapshot.agentId === agentId ? { ...snapshot, publicAgents: publicAgentsMd } : snapshot
       ));
-      setPublicIshikiOriginal(publicIshiki);
+      setPublicAgentsMdOriginal(publicAgentsMd);
       showToast(t('settings.saved'), 'success');
     } catch (err: unknown) {
       showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
     }
   };
 
-  const loadStatus = useCallback(async (signal?: AbortSignal) => {
+  const fetchStatusForAgent = useCallback(async (
+    agentId: string | null,
+    signal?: AbortSignal,
+  ): Promise<BridgeStatus | null> => {
+    // The status endpoint answers for one named agent. Without an id there is
+    // no answer to ask for, so skip the request instead of sending one that
+    // would be resolved on the server's terms.
+    if (!agentId) return null;
     const requestId = ++statusRequestIdRef.current;
     try {
-      const agentId = selectedAgentIdRef.current;
-      const query = agentId ? `?agentId=${encodeURIComponent(agentId)}` : '';
-      const res = await hanaFetch(`/api/bridge/status${query}`, signal ? { signal } : undefined);
+      const res = await hanaFetch(`/api/bridge/status?agentId=${encodeURIComponent(agentId)}`, signal ? { signal } : undefined);
       const data = await res.json();
       if (
         signal?.aborted
         || requestId !== statusRequestIdRef.current
         || selectedAgentIdRef.current !== agentId
-      ) return;
+      ) return null;
+      const nextStatus = normalizeBridgeStatus(data);
+      if (agentId && nextStatus?.agentId && nextStatus.agentId !== agentId) {
+        console.warn('[bridge] ignored status owned by another agent:', nextStatus.agentId);
+        return null;
+      }
       if (agentId) liveStatusOwnersRef.current.add(agentId);
-      applyStatus(normalizeBridgeStatus(data), agentId);
+      applyStatus(nextStatus, agentId);
+      return nextStatus;
     } catch (err) {
       if (
         (err as Error)?.name === 'AbortError'
         || requestId !== statusRequestIdRef.current
-      ) return;
+      ) return null;
       console.error('[bridge] load status failed:', err);
+      return null;
     }
-  }, [applyStatus]); // stable: reads agentId from ref, all setters are stable
+  }, [applyStatus]); // explicit agentId keeps request ownership stable across selection changes
+
+  const loadStatus = useCallback(async (signal?: AbortSignal) => {
+    await fetchStatusForAgent(selectedAgentIdRef.current, signal);
+  }, [fetchStatusForAgent]);
+
+  const reconcileWechatStatus = useCallback(async (
+    agentId: string,
+    signal: AbortSignal,
+  ) => {
+    for (let attempt = 0; attempt < WECHAT_STATUS_RECONCILE_MAX_ATTEMPTS; attempt += 1) {
+      if (signal.aborted || selectedAgentIdRef.current !== agentId) return;
+      const nextStatus = await fetchStatusForAgent(agentId, signal);
+      if (
+        signal.aborted
+        || selectedAgentIdRef.current !== agentId
+        || !shouldReconcileWechatStatus(nextStatus)
+        || attempt === WECHAT_STATUS_RECONCILE_MAX_ATTEMPTS - 1
+      ) return;
+      if (!await waitForWechatStatusRetry(signal)) return;
+    }
+  }, [fetchStatusForAgent]);
 
   // Auto-fetch when selectedAgentId changes (abort stale on switch)
   useEffect(() => {
@@ -263,11 +330,30 @@ export function useBridgeState() {
     return () => ac.abort();
   }, [applyStatus, selectedAgentId, loadStatus, settingsSnapshot?.agentId]);
 
+  // Reconciliation belongs to the selected Agent. Switching Agent or unmounting
+  // cancels both the wait timer and any in-flight request.
+  useEffect(() => () => {
+    wechatStatusReconcileAbortRef.current?.abort();
+    wechatStatusReconcileAbortRef.current = null;
+  }, [selectedAgentId]);
+
   useEffect(() => {
-    const handler = () => loadStatus();
+    const handler = () => {
+      const agentId = selectedAgentIdRef.current;
+      if (!agentId) return;
+
+      wechatStatusReconcileAbortRef.current?.abort();
+      const ac = new AbortController();
+      wechatStatusReconcileAbortRef.current = ac;
+      void reconcileWechatStatus(agentId, ac.signal).finally(() => {
+        if (wechatStatusReconcileAbortRef.current === ac) {
+          wechatStatusReconcileAbortRef.current = null;
+        }
+      });
+    };
     window.addEventListener('hana-bridge-reload', handler);
     return () => window.removeEventListener('hana-bridge-reload', handler);
-  }, [loadStatus]);
+  }, [reconcileWechatStatus]);
 
   const saveBridgeConfig = async (plat: string, credentials: Record<string, string> | null, enabled?: boolean) => {
     // Snapshot agentId at call time to avoid stale closure
@@ -395,7 +481,7 @@ export function useBridgeState() {
   return {
     status, testingPlatform, globalSettingsSaving, showToast, loadStatus,
     selectedAgentId, setSelectedAgentId,
-    publicIshiki, setPublicIshiki, savePublicIshiki,
+    publicAgentsMd, setPublicAgentsMd, savePublicAgentsMd,
     tgToken: secretDrafts.telegramToken.value,
     tgTokenDraft: secretDrafts.telegramToken,
     setTgToken,

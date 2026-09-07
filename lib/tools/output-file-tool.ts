@@ -18,6 +18,9 @@ import { Type } from "../pi-sdk/index.ts";
 import { t } from "../i18n.ts";
 import { getToolSessionPath } from "./tool-session.ts";
 
+/** Host-only execution proof added after invocation input validation. */
+export const STAGE_FILES_EXECUTION_BOUNDARY = Symbol("hana.stage-files-execution-boundary");
+
 /** 修正 LLM 常见的路径问题：转义空格、URL 编码、多余引号 */
 function sanitizePath(p: any) {
   p = p.trim().replace(/^["']|["']$/g, "");
@@ -28,11 +31,88 @@ function sanitizePath(p: any) {
   return p;
 }
 
+export type StageFilesParamsNormalization =
+  | { ok: true; value: { fileIds: string[]; filepaths: string[] } }
+  | { ok: false; error: string };
+
+/** Canonical parameter contract shared by permission resolution and execution. */
+export function normalizeStageFilesParams(params: any = {}): StageFilesParamsNormalization {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return { ok: false, error: "stage_files parameters must be an object" };
+  }
+
+  let rawFileIds: unknown[];
+  let rawFilepaths: unknown[];
+  try {
+    if (params.fileIds !== undefined && !Array.isArray(params.fileIds)) {
+      return { ok: false, error: "fileIds must be an array when present" };
+    }
+    if (params.filepaths !== undefined && !Array.isArray(params.filepaths)) {
+      return { ok: false, error: "filepaths must be an array when present" };
+    }
+    rawFileIds = Array.isArray(params.fileIds) && params.fileIds.length > 0
+      ? params.fileIds
+      : params.fileId === undefined ? [] : [params.fileId];
+    rawFilepaths = Array.isArray(params.filepaths) && params.filepaths.length > 0
+      ? params.filepaths
+      : params.filePath === undefined ? [] : [params.filePath];
+  } catch {
+    return { ok: false, error: "stage_files parameters could not be read safely" };
+  }
+
+  const fileIds: string[] = [];
+  for (const rawId of rawFileIds) {
+    if (typeof rawId !== "string" || !rawId || rawId !== rawId.trim()) {
+      return { ok: false, error: "fileIds must contain non-empty exact strings" };
+    }
+    if (!fileIds.includes(rawId)) fileIds.push(rawId);
+  }
+
+  const filepaths: string[] = [];
+  for (const rawPath of rawFilepaths) {
+    if (typeof rawPath !== "string" || !rawPath.trim()) {
+      return { ok: false, error: "filepaths must contain non-empty strings" };
+    }
+    const normalizedPath = sanitizePath(rawPath);
+    if (!normalizedPath || !path.isAbsolute(normalizedPath)) {
+      return { ok: false, error: "filepaths must resolve to absolute paths" };
+    }
+    if (!filepaths.includes(normalizedPath)) filepaths.push(normalizedPath);
+  }
+
+  return { ok: true, value: { fileIds, filepaths } };
+}
+
+function resolveStageFilesInvocation(params: any = {}) {
+  const normalized = normalizeStageFilesParams(params);
+  if (!normalized.ok) return null;
+  const refs: string[] = [];
+  for (const rawId of normalized.value.fileIds) {
+    refs.push(`id:${rawId}`);
+  }
+  for (const resolvedPath of normalized.value.filepaths) {
+    refs.push(`path:${resolvedPath}`);
+  }
+  if (refs.length === 0) return null;
+  const stableRefs = [...new Set(refs)].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+  return {
+    action: "stage",
+    kind: "routine",
+    capability: "stage_files.stage",
+    target: {
+      type: "session_files",
+      id: Buffer.from(JSON.stringify(stableRefs), "utf-8").toString("base64url"),
+      label: `${stableRefs.length} file${stableRefs.length === 1 ? "" : "s"}`,
+    },
+  };
+}
+
 export function createStageFilesTool({ registerSessionFile, resolveSessionFile, getSessionPath }: { registerSessionFile?: any; resolveSessionFile?: any; getSessionPath?: any } = {}) {
   return {
     name: "stage_files",
     label: "Stage Files",
     description: "Deliver files to the user, desktop, or Bridge platforms. Accepts SessionFile ids or local absolute paths.",
+    sessionPermission: { resolveInvocation: resolveStageFilesInvocation },
     parameters: Type.Object({
       fileIds: Type.Optional(Type.Array(Type.String(), {
         minItems: 1,
@@ -48,17 +128,19 @@ export function createStageFilesTool({ registerSessionFile, resolveSessionFile, 
       label: Type.Optional(Type.String({ description: "(Compat) File name shown to the user. Usually omit this; the filename is used by default." })),
     }),
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+      const normalized = normalizeStageFilesParams(params);
+      if (normalized.ok === false) {
+        return {
+          content: [{ type: "text", text: normalized.error }],
+          details: { errorCode: "STAGE_FILES_INVALID_PARAMS" },
+        };
+      }
       const results = [];
       const errors = [];
       const sessionPath = getToolSessionPath(ctx) || ctx?.sessionPath || getSessionPath?.() || null;
 
       // 优先交付已登记 SessionFile：用 fileId 找真相源，再复用 stage_files 的交付语义。
-      let fileIds = params.fileIds;
-      if (!fileIds || fileIds.length === 0) {
-        fileIds = params.fileId ? [params.fileId] : [];
-      }
-      for (const fileId of fileIds || []) {
-        if (!fileId || typeof fileId !== "string") continue;
+      for (const fileId of normalized.value.fileIds) {
         if (typeof resolveSessionFile !== "function") {
           errors.push("stage_files requires a SessionFile resolver to deliver fileIds");
           continue;
@@ -94,22 +176,18 @@ export function createStageFilesTool({ registerSessionFile, resolveSessionFile, 
         }
       }
 
-      // 统一为路径数组：优先使用 filepaths，兼容 filePath。
-      let paths = params.filepaths;
-      if (!paths || paths.length === 0) {
-        if (params.filePath) {
-          paths = [params.filePath];
-        } else {
-          paths = [];
-        }
-      }
-
-      for (const raw of paths) {
-        const fp = sanitizePath(raw);
-
-        if (!path.isAbsolute(fp)) {
-          errors.push(t("error.outputFileNotAbsolute", { path: fp }));
-          continue;
+      for (const fp of normalized.value.filepaths) {
+        const executionBoundary = params?.[STAGE_FILES_EXECUTION_BOUNDARY];
+        if (executionBoundary) {
+          const checked = executionBoundary.checkStagePath?.(fp);
+          if (
+            !executionBoundary.canonicalPaths?.includes(fp)
+            || !checked?.allowed
+            || checked.canonicalPath !== fp
+          ) {
+            errors.push(`stage_files path changed after permission validation: ${fp}`);
+            continue;
+          }
         }
         if (!fs.existsSync(fp)) {
           errors.push(t("error.outputFileNotFound", { path: fp }));

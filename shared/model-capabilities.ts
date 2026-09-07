@@ -54,8 +54,23 @@ function normalizeBoolean(value: unknown): boolean {
   return value === true;
 }
 
-function isOfficialDeepSeekEndpoint(model: any, context: any = {}) {
-  return getProvider(model, context) === "deepseek"
+/**
+ * DeepSeek 官方 endpoint 的 provider id。一个厂商多条协议通道各占一个 provider id
+ * （同 zhipu / zhipu-coding 的先例），新增通道时显式登记，不按前缀猜。
+ */
+const OFFICIAL_DEEPSEEK_PROVIDERS = new Set([
+  "deepseek",
+  "deepseek-responses",
+]);
+
+/**
+ * 是否为 DeepSeek 官方 endpoint，不区分协议通道。
+ *
+ * 与 provider-compat 的 `isDeepSeekModel`（只认 ChatCompletions 兼容路径）互补：
+ * 需要覆盖 DeepSeek 全部通道的关注点（可观测性、成本归属）用这个。
+ */
+export function isOfficialDeepSeekEndpoint(model: any, context: any = {}) {
+  return OFFICIAL_DEEPSEEK_PROVIDERS.has(getProvider(model, context))
     || getBaseUrl(model, context).includes("api.deepseek.com");
 }
 
@@ -85,12 +100,14 @@ const MODEL_THINKING_FORMATS = new Set([
   "openrouter",
   "kimi",
   "volcengine",
+  "longcat",
 ]);
 
 const MODEL_REASONING_PROFILES = new Set([
   "anthropic-adaptive-only",
   "deepseek-v4-anthropic",
   "deepseek-v4-openai",
+  "deepseek-v4-responses",
   "mimo-openai",
   "openrouter-anthropic-adaptive",
   "zhipu-openai",
@@ -118,6 +135,33 @@ const OUTPUT_CAP_FIELDS = new Set([
   "maxOutputTokens",
 ]);
 
+const REASONING_REPLAY_POLICIES = new Set([
+  "none",
+  "preserve",
+  "require-tool-call",
+]);
+
+const REASONING_REPLAY_CARRIERS = new Set([
+  "reasoning_content",
+  "reasoning_details",
+  "thinking_blocks",
+  "reasoning_items",
+  "thought_signature",
+]);
+
+export function normalizeReasoningReplayContract(value: any): Record<string, any> | null {
+  if (!isPlainObject(value)) return null;
+  const policy = lower(value.policy);
+  if (!REASONING_REPLAY_POLICIES.has(policy)) return null;
+  if (policy === "none") return { policy: "none" };
+
+  const carrier = lower(value.carrier);
+  if (!REASONING_REPLAY_CARRIERS.has(carrier)) return null;
+  const out: Record<string, any> = { carrier, policy };
+  if (value.clearable === true) out.clearable = true;
+  return out;
+}
+
 export function normalizeModelProtocolCompat(value: any): Record<string, any> | null {
   if (!isPlainObject(value)) return null;
   const out: Record<string, any> = {};
@@ -137,6 +181,14 @@ export function normalizeModelProtocolCompat(value: any): Record<string, any> | 
   if (value.outputCapRequired === true) out.outputCapRequired = true;
   if (typeof value.outputCapField === "string" && OUTPUT_CAP_FIELDS.has(value.outputCapField)) {
     out.outputCapField = value.outputCapField;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(value, "reasoningReplay")) {
+    const reasoningReplay = normalizeReasoningReplayContract(value.reasoningReplay);
+    if (reasoningReplay) out.reasoningReplay = reasoningReplay;
+  }
+  if (typeof value.requiresReasoningContentOnAssistantMessages === "boolean") {
+    out.requiresReasoningContentOnAssistantMessages = value.requiresReasoningContentOnAssistantMessages;
   }
 
   return Object.keys(out).length > 0 ? out : null;
@@ -198,8 +250,12 @@ function isDeepSeekV4ModelId(id: string): boolean {
 }
 
 function isAnthropicAdaptiveOnlyModelId(id: string): boolean {
-  return id === "claude-fable-5"
+  return id === "claude-opus-5"
+    || id === "claude-sonnet-5"
+    || id === "claude-fable-5"
     || id === "claude-mythos-5"
+    || id === "anthropic/claude-opus-5"
+    || id === "anthropic/claude-sonnet-5"
     || id === "anthropic/claude-fable-5"
     || id === "anthropic/claude-mythos-5";
 }
@@ -225,6 +281,13 @@ function isOfficialKimiOpenAIEndpoint(model: any, context: any = {}) {
     host === "api.kimi.com"
     && baseUrl.includes("/coding/v1")
   ) || host === "api.moonshot.cn";
+}
+
+function isKimiCodingEndpoint(model: any, context: any = {}) {
+  if (!isOpenAIReasoningApi(model, context)) return false;
+  if (getProvider(model, context) === "kimi-coding") return true;
+  const host = getBaseHost(model, context);
+  return host === "api.kimi.com" && getBaseUrl(model, context).includes("/coding/v1");
 }
 
 function isOfficialVolcengineEndpoint(model: any, context: any = {}) {
@@ -322,9 +385,13 @@ export function getThinkingFormat(model: any, context: any = {}) {
     return "volcengine";
   }
 
+  // DeepSeek 的 thinking / reasoning_effort / max_tokens 字段族只存在于官方
+  // ChatCompletions 通道。Anthropic 通道在本函数更前面的分支已经返回，Responses
+  // 通道用的是 OpenAI Responses 的 reasoning item 语义，不属于这个 wire 家族。
   if (
     isOfficialDeepSeekEndpoint(model, context)
     && (model.reasoning === true || isDeepSeekThinkingModelId(modelId))
+    && (api === "openai-completions" || api === "")
   ) {
     return "deepseek";
   }
@@ -401,7 +468,8 @@ export function getReasoningProfile(model: any, context: any = {}) {
 
     const api = getApi(model, context);
     if (api === "anthropic-messages") return "deepseek-v4-anthropic";
-    if (api === "openai-completions" || api === "openai-responses" || api === "") {
+    if (api === "openai-responses") return "deepseek-v4-responses";
+    if (api === "openai-completions" || api === "") {
       return "deepseek-v4-openai";
     }
   }
@@ -409,17 +477,112 @@ export function getReasoningProfile(model: any, context: any = {}) {
   return isMimoOpenAIProtocolModel(model, context) ? "mimo-openai" : null;
 }
 
+/**
+ * Endpoint-level reasoning defaults are intentionally narrow. They are used
+ * only when a provider catalog entry did not declare `reasoning` and known
+ * model metadata has no answer. Explicit model metadata always wins.
+ */
+export function getEndpointDefaultReasoningCapability(model: any, context: any = {}) {
+  if (!isPlainObject(model)) return null;
+  return isKimiCodingEndpoint(model, context) ? true : null;
+}
+
+/**
+ * Resolve how assistant reasoning state must be replayed on the wire.
+ *
+ * The contract describes protocol semantics, not the SDK currently executing
+ * the turn. Explicit model compat is authoritative, including `policy:none`.
+ * Inference is limited to protocol/profile facts that are stable without a
+ * model-id allowlist.
+ */
+export function getReasoningReplayContract(model: any, context: any = {}) {
+  if (!isPlainObject(model)) return null;
+
+  if (isPlainObject(model.compat)
+    && Object.prototype.hasOwnProperty.call(model.compat, "reasoningReplay")) {
+    return normalizeReasoningReplayContract(model.compat.reasoningReplay);
+  }
+  if (model.reasoning === false) return null;
+
+  const api = getApi(model, context);
+  const profile = getReasoningProfile(model, context);
+  const format = getThinkingFormat(model, context);
+
+  if (profile === "deepseek-v4-anthropic") {
+    return { carrier: "thinking_blocks", policy: "preserve" };
+  }
+  // Responses 协议原生保留思考链（reasoning item），不需要 ChatCompletions 那套
+  // reasoning_content 回填与 fail-closed 校验。
+  if (profile === "deepseek-v4-responses") {
+    return { carrier: "reasoning_items", policy: "preserve" };
+  }
+  if (
+    profile === "deepseek-v4-openai"
+    || profile === "mimo-openai"
+    || profile === "kimi-openai"
+  ) {
+    return { carrier: "reasoning_content", policy: "require-tool-call" };
+  }
+  if (profile === "zhipu-openai") {
+    return { carrier: "reasoning_content", policy: "require-tool-call", clearable: true };
+  }
+
+  if (format === "anthropic") {
+    return { carrier: "thinking_blocks", policy: "preserve" };
+  }
+  if (format === "openrouter") {
+    return { carrier: "reasoning_details", policy: "preserve" };
+  }
+  if (format === "deepseek" || format === "kimi") {
+    return { carrier: "reasoning_content", policy: "require-tool-call" };
+  }
+  if (format === "zhipu") {
+    return { carrier: "reasoning_content", policy: "require-tool-call", clearable: true };
+  }
+
+  if (api === "openai-responses" || api === "openai-codex-responses") {
+    return model.reasoning === true
+      ? { carrier: "reasoning_items", policy: "preserve" }
+      : null;
+  }
+  if (api === "google-generative-ai") {
+    return model.reasoning === true
+      ? { carrier: "thought_signature", policy: "preserve" }
+      : null;
+  }
+
+  return null;
+}
+
+function sameReasoningReplayContract(left: any, right: any) {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.policy === right.policy
+    && left.carrier === right.carrier
+    && left.clearable === right.clearable;
+}
+
 export function withThinkingFormatCompat(model: any, context: any = {}) {
   if (!isPlainObject(model)) return model;
 
   const format = getThinkingFormat(model, context);
   const profile = getReasoningProfile(model, context);
-  if (!format && !profile) return model;
+  const reasoningReplay = getReasoningReplayContract(model, context);
+  if (!format && !profile && !reasoningReplay) return model;
 
   const compat = isPlainObject(model.compat) ? model.compat : {};
+  const existingReplay = Object.prototype.hasOwnProperty.call(compat, "reasoningReplay")
+    ? normalizeReasoningReplayContract(compat.reasoningReplay)
+    : null;
+  const needsKimiEmptyReplayMarker = format === "kimi"
+    && reasoningReplay?.carrier === "reasoning_content"
+    && reasoningReplay.policy !== "none"
+    && compat.requiresReasoningContentOnAssistantMessages === undefined;
   if (
     (!format || lower(compat.thinkingFormat) === format)
     && (!profile || lower(compat.reasoningProfile) === profile)
+    && (!reasoningReplay || sameReasoningReplayContract(existingReplay, reasoningReplay))
+    && !needsKimiEmptyReplayMarker
   ) {
     return model;
   }
@@ -430,6 +593,8 @@ export function withThinkingFormatCompat(model: any, context: any = {}) {
       ...compat,
       ...(format ? { thinkingFormat: format } : {}),
       ...(profile ? { reasoningProfile: profile } : {}),
+      ...(reasoningReplay ? { reasoningReplay } : {}),
+      ...(needsKimiEmptyReplayMarker ? { requiresReasoningContentOnAssistantMessages: true } : {}),
     },
   };
 }
@@ -439,7 +604,6 @@ export const MODEL_IMAGE_TRANSPORTS = Object.freeze({
   OPENAI_IMAGE_URL: "openai-image-url",
   OPENAI_INPUT_IMAGE: "openai-input-image",
   ANTHROPIC_IMAGE: "anthropic-image",
-  UNSUPPORTED: "unsupported",
 });
 
 export function modelSupportsImageInput(model: any): boolean {
@@ -447,18 +611,8 @@ export function modelSupportsImageInput(model: any): boolean {
   return Array.isArray(model.input) && model.input.includes("image");
 }
 
-function isOfficialDeepSeekImageEndpoint(model: any, context: any = {}) {
-  const host = getBaseHost(model, context);
-  if (host) return host === "api.deepseek.com";
-  return getProvider(model, context) === "deepseek";
-}
-
 export function resolveModelImageInputTransport(model: any, context: any = {}) {
   if (!modelSupportsImageInput(model)) return MODEL_IMAGE_TRANSPORTS.NONE;
-
-  if (isOfficialDeepSeekImageEndpoint(model, context)) {
-    return MODEL_IMAGE_TRANSPORTS.UNSUPPORTED;
-  }
 
   const api = getApi(model, context);
   if (api === "anthropic-messages") return MODEL_IMAGE_TRANSPORTS.ANTHROPIC_IMAGE;
@@ -471,8 +625,7 @@ export function resolveModelImageInputTransport(model: any, context: any = {}) {
 
 export function modelSupportsDirectImageInput(model: any, context: any = {}) {
   const transport = resolveModelImageInputTransport(model, context);
-  return transport !== MODEL_IMAGE_TRANSPORTS.NONE
-    && transport !== MODEL_IMAGE_TRANSPORTS.UNSUPPORTED;
+  return transport !== MODEL_IMAGE_TRANSPORTS.NONE;
 }
 
 export function modelSupportsVideoInput(model: any): boolean {

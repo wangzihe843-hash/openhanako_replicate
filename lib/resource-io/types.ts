@@ -211,6 +211,7 @@ export type MaterializeResult = {
   resource: ResourceDescriptor;
   filePath: string;
   version?: ResourceVersion;
+  isDirectory?: boolean;
 };
 
 export type SessionFileResolution = {

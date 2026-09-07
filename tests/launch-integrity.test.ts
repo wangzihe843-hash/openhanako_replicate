@@ -60,8 +60,8 @@ describe("desktop launch integrity helper", () => {
       "HanaAgent.exe",
       "resources/app.asar",
       "resources/app-update.yml",
-      "resources/seed/seed-train.json",
-      "resources/seed/seed-train.json.sig",
+      "resources/seed/seed-train-*.json",
+      "resources/seed/seed-train-*.json.sig",
       "resources/seed/server-*.tar.gz",
       "resources/seed/renderer-*.tar.gz",
       "resources/git",
@@ -77,8 +77,8 @@ describe("desktop launch integrity helper", () => {
     writeFile(tmp, "HanaAgent.exe");
     writeFile(resourcesPath, "app.asar");
     writeFile(resourcesPath, "app-update.yml");
-    writeFile(resourcesPath, "seed/seed-train.json");
-    writeFile(resourcesPath, "seed/seed-train.json.sig");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json.sig");
     writeFile(resourcesPath, "seed/server-1.2.3-win32-x64.tar.gz");
     writeFile(resourcesPath, "seed/renderer-1.2.3.tar.gz");
     writeFile(resourcesPath, "git/cmd/git.exe");
@@ -146,8 +146,8 @@ describe("desktop launch integrity helper", () => {
     writeFile(tmp, "HanaAgent.exe");
     writeFile(resourcesPath, "app.asar");
     writeFile(resourcesPath, "app-update.yml");
-    writeFile(resourcesPath, "seed/seed-train.json");
-    writeFile(resourcesPath, "seed/seed-train.json.sig");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json.sig");
     writeFile(resourcesPath, "seed/renderer-1.2.3.tar.gz");
     writeFile(resourcesPath, "git/cmd/git.exe");
     writeFile(resourcesPath, "git/usr/bin/sh.exe");
@@ -170,8 +170,8 @@ describe("desktop launch integrity helper", () => {
     writeFile(tmp, "HanaAgent.exe");
     writeFile(resourcesPath, "app.asar");
     writeFile(resourcesPath, "app-update.yml");
-    writeFile(resourcesPath, "seed/seed-train.json");
-    writeFile(resourcesPath, "seed/seed-train.json.sig");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json.sig");
     writeFile(resourcesPath, "seed/server-1.2.3-win32-x64.tar.gz");
     writeFile(resourcesPath, "git/cmd/git.exe");
     writeFile(resourcesPath, "git/usr/bin/sh.exe");
@@ -194,7 +194,7 @@ describe("desktop launch integrity helper", () => {
     writeFile(tmp, "HanaAgent.exe");
     writeFile(resourcesPath, "app.asar");
     writeFile(resourcesPath, "app-update.yml");
-    writeFile(resourcesPath, "seed/seed-train.json");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json");
     writeFile(resourcesPath, "seed/server-1.2.3-win32-x64.tar.gz");
     writeFile(resourcesPath, "seed/renderer-1.2.3.tar.gz");
     writeFile(resourcesPath, "git/cmd/git.exe");
@@ -218,8 +218,8 @@ describe("desktop launch integrity helper", () => {
     writeFile(tmp, "HanaAgent.exe");
     writeFile(resourcesPath, "app.asar");
     writeFile(resourcesPath, "app-update.yml");
-    writeFile(resourcesPath, "seed/seed-train.json");
-    writeFile(resourcesPath, "seed/seed-train.json.sig");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json.sig");
     writeFile(resourcesPath, "seed/server-1.2.3-win32-x64.tar.gz");
     writeFile(resourcesPath, "seed/renderer-1.2.3.tar.gz");
     writeFile(resourcesPath, "git/cmd/git.exe");
@@ -242,8 +242,8 @@ describe("desktop launch integrity helper", () => {
     writeFile(tmp, "HanaAgent.exe");
     writeFile(resourcesPath, "app.asar");
     writeFile(resourcesPath, "app-update.yml");
-    writeFile(resourcesPath, "seed/seed-train.json");
-    writeFile(resourcesPath, "seed/seed-train.json.sig");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json.sig");
     writeFile(resourcesPath, "seed/server-1.2.3-win32-x64.tar.gz");
     writeFile(resourcesPath, "seed/renderer-1.2.3.tar.gz");
     writeFile(resourcesPath, "git/cmd/git.exe");
@@ -267,8 +267,8 @@ describe("desktop launch integrity helper", () => {
     writeFile(resourcesPath, "app/desktop/bootstrap.cjs");
     writeFile(resourcesPath, "app/package.json");
     writeFile(resourcesPath, "app-update.yml");
-    writeFile(resourcesPath, "seed/seed-train.json");
-    writeFile(resourcesPath, "seed/seed-train.json.sig");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json");
+    writeFile(resourcesPath, "seed/seed-train-win32-x64.json.sig");
     writeFile(resourcesPath, "seed/server-1.2.3-win32-x64.tar.gz");
     writeFile(resourcesPath, "seed/renderer-1.2.3.tar.gz");
     writeFile(resourcesPath, "git/cmd/git.exe");

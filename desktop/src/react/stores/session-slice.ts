@@ -1,4 +1,10 @@
-import type { Session, SessionCapabilityDrift, SessionPermissionMode, SessionStream, TodoItem } from '../types';
+import type {
+  Session,
+  SessionMetaRecoveryStatus,
+  SessionPermissionMode,
+  SessionStream,
+  TodoItem,
+} from '../types';
 import type { SessionConfirmationBlock } from './chat-types';
 import type { ThinkingLevel } from './model-slice';
 
@@ -158,12 +164,16 @@ export interface SessionSlice {
    * 就跳过 hydrate 写入，避免旧快照覆盖更晚到达的实时状态。
    */
   todosLiveVersionBySession: Record<string, number>;
-  /** #1624：服务端下发的工具能力漂移提示，keyed by session identity（legacy path 读时兼容） */
-  capabilityDriftBySession: Record<string, SessionCapabilityDrift>;
-  /** #1624：fresh-compact 刷新进行中的 session 集合（跨切换保留 busy 态） */
+  /** fresh-compact 进行中的 session 集合（跨切换保留 busy 态） */
   capabilityRefreshingSessions: string[];
   /** 输入区确认卡片的 live pending 状态，keyed by session identity，避免后台 session 事件被焦点过滤丢失。 */
   pendingSessionConfirmationsByPath: Record<string, SessionConfirmationBlock>;
+  /**
+   * session 元数据待恢复状态：loadSessions() 并行读取 /api/health 的 sessionStore
+   * 附块后写入这里。默认 null（尚未探测过 / 探测被静默忽略），侧边栏据此在
+   * degraded 时把误导性的空列表换成"部分会话待恢复"提示。
+   */
+  metaRecovery: SessionMetaRecoveryStatus | null;
   setSessions: (sessions: Session[]) => void;
   setCurrentSessionPath: (path: string | null) => void;
   setCurrentSessionRef: (ref: { sessionId?: string | null; path?: string | null }) => void;
@@ -181,10 +191,10 @@ export interface SessionSlice {
   setSessionTodosForPath: (sessionPath: string, todos: TodoItem[]) => void;
   setSessionAuthorizedFolders: (sessionPath: string, folders: string[]) => void;
   bumpTodosLiveVersion: (sessionPath: string) => void;
-  setSessionCapabilityDrift: (sessionPath: string, drift: SessionCapabilityDrift | null) => void;
   setSessionCapabilityRefreshing: (sessionPath: string, refreshing: boolean) => void;
   setPendingSessionConfirmation: (sessionPath: string, block: SessionConfirmationBlock | null) => void;
   resolvePendingSessionConfirmation: (confirmId: string) => void;
+  setSessionMetaRecovery: (status: SessionMetaRecoveryStatus | null) => void;
 }
 
 export const createSessionSlice = (
@@ -208,9 +218,9 @@ export const createSessionSlice = (
   todosBySession: {},
   sessionAuthorizedFoldersByPath: {},
   todosLiveVersionBySession: {},
-  capabilityDriftBySession: {},
   capabilityRefreshingSessions: [],
   pendingSessionConfirmationsByPath: {},
+  metaRecovery: null,
   setSessions: (sessions) => set((s) => ({
     sessions,
     sessionLocatorsById: mergeSessionLocators(s.sessionLocatorsById, sessions),
@@ -297,20 +307,6 @@ export const createSessionSlice = (
         ),
       };
     }),
-  setSessionCapabilityDrift: (sessionPath, drift) =>
-    set((s) => {
-      if (drift) {
-        return {
-          capabilityDriftBySession: putSessionScopedValue(
-            s,
-            s.capabilityDriftBySession,
-            sessionPath,
-            drift,
-          ),
-        };
-      }
-      return { capabilityDriftBySession: deleteSessionScopedValue(s, s.capabilityDriftBySession, sessionPath) };
-    }),
   setSessionCapabilityRefreshing: (sessionPath, refreshing) =>
     set((s) => ({
       capabilityRefreshingSessions: refreshing
@@ -345,4 +341,5 @@ export const createSessionSlice = (
       }
       return changed ? { pendingSessionConfirmationsByPath: next } : {};
     }),
+  setSessionMetaRecovery: (status) => set({ metaRecovery: status }),
 });

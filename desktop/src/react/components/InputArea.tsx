@@ -12,7 +12,7 @@ import { useStore } from '../stores';
 import { HOME_DRAFT_KEY } from '../../../../shared/input-drafts.ts';
 import { selectPreviewItems, selectActiveTabId } from '../stores/preview-slice';
 import { sessionScopedListIncludes, sessionScopedValue } from '../stores/session-slice';
-import { isSessionCompacting } from '../stores/context-slice';
+import { getSessionCompactionMode, isSessionCompacting } from '../stores/context-slice';
 import { selectSessionFiles } from '../stores/selectors/file-refs';
 import { isImageFile, isVideoFile } from '../utils/format';
 import { isAudioFileName } from '../utils/file-kind';
@@ -24,26 +24,29 @@ import {
   upsertOptimisticSessionFirstMessage,
   type SessionRef,
 } from '../stores/session-actions';
-import { revealDeskDirectory, toggleJianSidebar } from '../stores/desk-actions';
 import { getWebSocket } from '../services/websocket';
 import { collectUiContext } from '../utils/ui-context';
 import { formatQuotedSelectionForPrompt } from '../utils/quoted-selection';
 import { renderMarkdown } from '../utils/markdown';
 import { getModelThinkingLevels, type ThinkingLevel } from '../stores/model-slice';
 import { SlashCommandMenu } from './input/SlashCommandMenu';
-import { FileMentionMenu } from './input/FileMentionMenu';
+import { MentionMenu, type MentionMenuItem } from './input/MentionMenu';
 import { InputStatusBars } from './input/InputStatusBars';
 import { InputContextRow } from './input/InputContextRow';
 import { InputControlBar } from './input/InputControlBar';
 import type { PermissionMode } from './input/PlanModeButton';
 import { SessionConfirmationPrompt } from './input/SessionConfirmationPrompt';
-import { CapabilityDriftNotice } from './input/CapabilityDriftNotice';
 import { serializeEditor } from '../utils/editor-serializer';
 import {
   buildFileMentionItems,
   mergeEditorFileRefs,
   type FileMentionItem,
 } from '../utils/file-mention-items';
+import {
+  buildAgentMentionItems,
+  buildSessionMentionItems,
+  type MentionTab,
+} from '../utils/mention-items';
 import { useServerSlashCommandItems, useSkillSlashItems } from '../hooks/use-slash-items';
 import { notifyPasteUploadFailure } from '../utils/paste-upload-feedback';
 import { extractPlainUrlPaste } from '../utils/plain-url-paste';
@@ -65,16 +68,23 @@ import { buildWaveformFromBlob, buildWaveformFromPcmChunks } from '../utils/audi
 import { prepareChatImageUpload } from '../utils/chat-image-upload-compression';
 import {
   XING_PROMPT, executeDiary, executeCompact, executeSlashViaWs, buildSlashCommands, getSlashMatches,
-  resolveSlashSubmitSelection,
+  resolveSlashSubmitSelection, applySlashCompletion,
   type SlashItem,
 } from './input/slash-commands';
 import { attachFilesFromPaths } from '../MainContent';
+import { searchDeskFiles } from '../stores/desk-actions';
 import { hanaFetch } from '../hooks/use-hana-fetch';
+import type { DeskSearchResult } from '../types';
 import styles from './input/InputArea.module.css';
-import type { ChatListItem, SessionConfirmationBlock } from '../stores/chat-types';
-import type { AudioWaveform } from '../stores/chat-types';
+import type { AudioWaveform, ChatListItem, SessionConfirmationBlock, SessionModel } from '../stores/chat-types';
 
 const EMPTY_FILE_REFS: readonly import('../types/file-ref').FileRef[] = Object.freeze([]);
+
+function modelUnavailableMessageKey(reason: SessionModel['unavailableReason']): string {
+  if (reason === 'model_removed') return 'model.unavailableReason.modelRemoved';
+  if (reason === 'provider_not_configured') return 'model.unavailableReason.providerNotConfigured';
+  return 'model.unavailableReason.temporarilyUnavailable';
+}
 
 function chatVideoMimeTypeForName(name: string, fallback?: string): string {
   if (fallback?.startsWith('video/')) return fallback;
@@ -123,6 +133,23 @@ function createClientUserMessageId(): string {
   const uuid = globalThis.crypto?.randomUUID?.();
   if (uuid) return `client-user-${uuid}`;
   return `client-user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+export function createStopRequest(input: {
+  sessionId: string | null | undefined;
+  sessionPath: string | null | undefined;
+  streamId: string | null | undefined;
+}): { type: 'abort'; sessionId: string; sessionPath: string; streamId?: string } | null {
+  const sessionId = input.sessionId?.trim();
+  const sessionPath = input.sessionPath?.trim();
+  const streamId = input.streamId?.trim();
+  if (!sessionId || !sessionPath) return null;
+  return {
+    type: 'abort',
+    sessionId,
+    sessionPath,
+    ...(streamId ? { streamId } : {}),
+  };
 }
 
 async function readFileAsBase64(file: File): Promise<string> {
@@ -222,6 +249,11 @@ interface FileMentionRange {
   query: string;
 }
 
+interface SlashTriggerRange {
+  from: number;
+  to: number;
+}
+
 interface InputKeyEvent {
   key: string;
   shiftKey: boolean;
@@ -264,6 +296,51 @@ function findFileMentionRange(editor: Editor | null): FileMentionRange | null {
   };
 }
 
+function findSlashTriggerRange(editor: Editor | null): SlashTriggerRange | null {
+  if (!editor?.state?.selection) return null;
+  const { selection } = editor.state;
+  if (!selection.empty) return null;
+
+  const parent = selection.$from.parent;
+  const cursorOffset = selection.$from.parentOffset;
+  const parentStart = selection.$from.start();
+  const units: Array<{ char: string | null; from: number }> = [];
+
+  parent.forEach((node, offset) => {
+    if (offset >= cursorOffset) return;
+    const sizeBeforeCursor = Math.min(node.nodeSize, cursorOffset - offset);
+    if (sizeBeforeCursor <= 0) return;
+
+    if (!node.isText || typeof node.text !== 'string') {
+      units.push({
+        char: null,
+        from: parentStart + offset,
+      });
+      return;
+    }
+
+    const textLength = Math.min(node.text.length, sizeBeforeCursor);
+    for (let index = 0; index < textLength; index += 1) {
+      const from = parentStart + offset + index;
+      units.push({ char: node.text[index], from });
+    }
+  });
+
+  let index = units.length - 1;
+  while (index >= 0) {
+    const char = units[index].char;
+    if (char === null || char === '/' || /\s/u.test(char)) break;
+    index -= 1;
+  }
+
+  const slash = units[index];
+  if (!slash || slash.char !== '/') return null;
+  const beforeSlash = units[index - 1];
+  if (beforeSlash && beforeSlash.char !== null && !/\s/u.test(beforeSlash.char)) return null;
+
+  return { from: slash.from, to: selection.from };
+}
+
 function editorHasInlineNode(editor: Editor | null, nodeType: string): boolean {
   if (!editor?.state?.doc) return false;
   let found = false;
@@ -286,10 +363,12 @@ function composerPayloadIsEmpty(payload: {
   hasText: boolean;
   hasFiles: boolean;
   hasSkills: boolean;
+  hasMentions: boolean;
   hasDocContext: boolean;
   hasQuotes: boolean;
 }): boolean {
-  return !payload.hasText && !payload.hasFiles && !payload.hasSkills && !payload.hasDocContext && !payload.hasQuotes;
+  return !payload.hasText && !payload.hasFiles && !payload.hasSkills && !payload.hasMentions
+    && !payload.hasDocContext && !payload.hasQuotes;
 }
 
 function plainTextToEditorDocument(text: string): JSONContent {
@@ -358,12 +437,15 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const currentSessionPath = useStore(s => s.currentSessionPath);
   const pendingDraftId = useStore(s => s.pendingDraftId);
   const currentAgentId = useStore(s => s.currentAgentId);
+  const agents = useStore(s => s.agents);
+  const sessions = useStore(s => s.sessions);
   const selectedAgentId = useStore(s => s.selectedAgentId);
   const currentSessionProjection = useStore(s => s.currentSessionPath
     ? s.sessions.find(session => session.path === s.currentSessionPath)
     : null);
   const deletedAgentReadOnly = currentSessionProjection?.agentDeleted === true;
   const compacting = useStore(s => isSessionCompacting(s, currentSessionPath));
+  const compactionMode = useStore(s => getSessionCompactionMode(s, currentSessionPath));
   const screenshotBusy = useStore(s => s.screenshotTaskCount > 0);
   const screenshotProgress = useStore(s => s.screenshotProgress);
   const inlineError = useStore(s => s.currentSessionPath ? (sessionScopedValue(s, s.inlineErrors, s.currentSessionPath) ?? null) : null);
@@ -391,13 +473,15 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     const full = models.find(m => m.id === sessionModel.id && m.provider === sessionModel.provider);
     return full ? { ...full, ...sessionModel } : sessionModel;
   }, [models, sessionModel]);
-  // #1624：当前 session 的工具能力漂移提示（服务端 restore 时算好，前端只消费）
-  const capabilityDrift = useStore(s => s.currentSessionPath ? (sessionScopedValue(s, s.capabilityDriftBySession, s.currentSessionPath) ?? null) : null);
+  const modelSelectionRequired = !!(currentSessionPath && sessionModel?.available === false);
+  const modelUnavailableMessage = modelSelectionRequired
+    ? t(modelUnavailableMessageKey(sessionModel?.unavailableReason))
+    : null;
   const capabilityRefreshing = useStore(s => sessionScopedListIncludes(s, s.capabilityRefreshingSessions, s.currentSessionPath));
   const compactingStatus = capabilityRefreshing || compacting;
   const compactingStatusLabel = capabilityRefreshing
-    ? t('session.capabilityDrift.refreshing')
-    : t('chat.compacting');
+    ? t('input.refreshAndCompactBusy')
+    : t(compactionMode === 'lossy_local' ? 'chat.instantSimpleCompaction' : 'chat.compacting');
   const currentModelInfo = sessionModelInfo || globalModelInfo;
   const availableThinkingLevels = useMemo(
     () => getModelThinkingLevels(currentModelInfo),
@@ -442,6 +526,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const slashBtnRef = useRef<HTMLButtonElement>(null);
   const browserFileInputRef = useRef<HTMLInputElement>(null);
   const slashDismissedTextRef = useRef<string | null>(null);
+  const fileMentionSearchSeqRef = useRef(0);
   const inputSurfaceRef = useRef<HTMLDivElement>(null);
   const inputCardRef = useRef<HTMLDivElement>(null);
   const focusFrameRef = useRef<number | null>(null);
@@ -449,10 +534,12 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const audioRecordingSeqRef = useRef(0);
   const [inputText, setInputText] = useState('');
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const [mentionTab, setMentionTab] = useState<MentionTab>('files');
   const [fileSelected, setFileSelected] = useState(0);
   const [fileMentionRange, setFileMentionRange] = useState<FileMentionRange | null>(null);
   const [fileMentionQuery, setFileMentionQuery] = useState('');
-  const [fileMentionBusy] = useState(false);
+  const [fileMentionSearchResults, setFileMentionSearchResults] = useState<DeskSearchResult[]>([]);
+  const [fileMentionBusy, setFileMentionBusy] = useState(false);
   const [continuingDeletedAgentSession, setContinuingDeletedAgentSession] = useState(false);
   const [deletedAgentContinueError, setDeletedAgentContinueError] = useState<string | null>(null);
   const [audioRecorderOpen, setAudioRecorderOpen] = useState(false);
@@ -743,6 +830,18 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     const _s = useStore.getState();
     if (sessionScopedListIncludes(_s, _s.streamingSessions, _s.currentSessionPath)) return false;
     if (_s.pendingSessionSwitchPath) return false;
+    const activeSessionModel = _s.currentSessionPath
+      ? sessionScopedValue(_s, _s.sessionModelsByPath, _s.currentSessionPath)
+      : undefined;
+    if (activeSessionModel?.available === false) {
+      _s.addToast(
+        t(modelUnavailableMessageKey(activeSessionModel.unavailableReason)),
+        'warning',
+        6000,
+        { dedupeKey: 'session-model-unavailable' },
+      );
+      return false;
+    }
 
     let sessionRef: Readonly<SessionRef> | null = null;
     if (pendingNewSession) {
@@ -767,7 +866,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       displayMessage: { text: displayText ?? text },
     }));
     return true;
-  }, [inputLocked, pendingDraftId, pendingNewSession]);
+  }, [inputLocked, pendingDraftId, pendingNewSession, t]);
 
   // ── 斜杠命令 ──
 
@@ -783,7 +882,12 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     await executeCompact(t, setSlashBusy, () => { editor?.commands.clearContent(); }, setSlashMenuOpen)();
   }, [editor, t]);
 
-  const slashAgentId = pendingNewSession ? (selectedAgentId || currentAgentId) : currentAgentId;
+  // 这个输入框归属哪个助手：已有会话以会话自己的记录为准，新会话草稿才用选中的助手。
+  // 菜单里列出谁的命令、@ 菜单把谁认作"当前助手"、以及 slash 请求发给服务端的执行身份，
+  // 三处都读这一个值——它们说的是同一件事，分头算迟早会算出不一样的答案。
+  const slashAgentId = pendingNewSession
+    ? (selectedAgentId || currentAgentId)
+    : (currentSessionProjection?.agentId || currentAgentId);
   const skillItems = useSkillSlashItems({ enabled: surface !== 'mobile', agentId: slashAgentId });
   const serverCommandItems = useServerSlashCommandItems({ enabled: surface !== 'mobile', agentId: slashAgentId });
 
@@ -810,14 +914,67 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     deskFiles,
     deskBasePath,
     deskCurrentPath: '',
-    searchResults: [],
+    searchResults: fileMentionSearchResults,
+    includeWorkspace: true,
+    limit: 20,
   }), [
     attachedFiles,
     deskBasePath,
     deskFiles,
     fileMentionQuery,
+    fileMentionSearchResults,
     sessionFiles,
   ]);
+
+  useEffect(() => {
+    if (!fileMenuOpen) {
+      setFileMentionSearchResults([]);
+      setFileMentionBusy(false);
+      return;
+    }
+
+    const query = fileMentionQuery.trim();
+    const seq = ++fileMentionSearchSeqRef.current;
+    if (!query) {
+      setFileMentionSearchResults([]);
+      setFileMentionBusy(false);
+      return;
+    }
+
+    setFileMentionBusy(true);
+    const timer = window.setTimeout(() => {
+      searchDeskFiles(query)
+        .then((results) => {
+          if (fileMentionSearchSeqRef.current === seq) setFileMentionSearchResults(results);
+        })
+        .catch((err: unknown) => {
+          if (fileMentionSearchSeqRef.current === seq) setFileMentionSearchResults([]);
+          console.warn('[file-mention] search failed', err);
+        })
+        .finally(() => {
+          if (fileMentionSearchSeqRef.current === seq) setFileMentionBusy(false);
+        });
+    }, 120);
+
+    return () => window.clearTimeout(timer);
+  }, [fileMentionQuery, fileMenuOpen]);
+
+  const sessionMentionItems = useMemo(() => buildSessionMentionItems({
+    sessions,
+    query: fileMentionQuery,
+  }), [fileMentionQuery, sessions]);
+
+  const agentMentionItems = useMemo(() => buildAgentMentionItems({
+    agents,
+    query: fileMentionQuery,
+    currentAgentId: slashAgentId,
+  }), [agents, fileMentionQuery, slashAgentId]);
+
+  const mentionItems = useMemo<MentionMenuItem[]>(() => {
+    if (mentionTab === 'sessions') return sessionMentionItems;
+    if (mentionTab === 'agents') return agentMentionItems;
+    return fileMentionItems;
+  }, [agentMentionItems, fileMentionItems, mentionTab, sessionMentionItems]);
 
   const dismissSlashMenu = useCallback(() => {
     const text = editor?.getText().trim() ?? inputText.trim();
@@ -831,9 +988,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   }, []);
 
   useEffect(() => {
-    if (fileSelected < fileMentionItems.length) return;
-    setFileSelected(Math.max(0, fileMentionItems.length - 1));
-  }, [fileMentionItems.length, fileSelected]);
+    if (fileSelected < mentionItems.length) return;
+    setFileSelected(Math.max(0, mentionItems.length - 1));
+  }, [mentionItems.length, fileSelected]);
 
   const handleSlashToggle = useCallback(() => {
     if (slashMenuOpen) dismissSlashMenu();
@@ -956,7 +1113,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     base64Data: string;
     waveform?: AudioWaveform;
   }): Promise<boolean> => {
-    if (inputLocked || !connected || isStreaming || sending || modelSwitching || useStore.getState().pendingSessionSwitchPath) {
+    if (inputLocked || modelSelectionRequired || !connected || isStreaming || sending || modelSwitching || useStore.getState().pendingSessionSwitchPath) {
       return false;
     }
 
@@ -1017,6 +1174,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     inputLocked,
     isStreaming,
     modelSwitching,
+    modelSelectionRequired,
     sending,
     t,
   ]);
@@ -1101,7 +1259,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   }, [addToast, ensureVoiceSessionRef, restoreEditorFocus, sendVoiceAudioAttachment, t]);
 
   const startAudioRecording = useCallback(async () => {
-    if (inputLocked || !showAudioInput || !connected || isStreaming || sending || modelSwitching || pendingSessionSwitchPath) return;
+    if (inputLocked || modelSelectionRequired || !showAudioInput || !connected || isStreaming || sending || modelSwitching || pendingSessionSwitchPath) return;
     if (audioRecordingState !== 'idle' || audioRecorderRef.current) return;
     const AudioContextCtor = window.AudioContext
       || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -1170,6 +1328,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     inputLocked,
     isStreaming,
     modelSwitching,
+    modelSelectionRequired,
     pendingSessionSwitchPath,
     sending,
     showAudioInput,
@@ -1189,7 +1348,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const canUseVoiceShortcut = useCallback(() => {
     if (surface !== 'desktop') return false;
     if (!showAudioInput) return false;
-    if (inputLocked || modelSwitching) return false;
+    if (inputLocked || modelSelectionRequired || modelSwitching) return false;
     if (typeof document !== 'undefined' && !document.hasFocus()) return false;
     const state = useStore.getState() as Record<string, any>;
     if (state.currentTab !== 'chat') return false;
@@ -1198,7 +1357,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       return false;
     }
     return true;
-  }, [inputLocked, modelSwitching, showAudioInput, surface]);
+  }, [inputLocked, modelSelectionRequired, modelSwitching, showAudioInput, surface]);
 
   useEffect(() => {
     if (surface !== 'desktop') return undefined;
@@ -1335,12 +1494,14 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     hasText: inputText.trim().length > 0,
     hasFiles: attachedFiles.length > 0 || editorHasInlineNode(editor, 'fileBadge'),
     hasSkills: editorHasInlineNode(editor, 'skillBadge'),
+    hasMentions: editorHasInlineNode(editor, 'sessionBadge') || editorHasInlineNode(editor, 'agentBadge'),
     hasDocContext: docContextAttached,
     hasQuotes: quotedSelections.length > 0,
   });
   // capabilityRefreshing / compacting：压缩到 reload 完成之间 session 没有可用
   // runtime，此窗口内发 prompt 会冷建第二个 runtime 与 reload 竞争（#1624 I2）。
   const canSend = hasContent && connected && !isStreaming && !modelSwitching && !pendingSessionSwitchPath && !inputLocked
+    && !modelSelectionRequired
     && !capabilityRefreshing && !compacting;
 
   const loadVisionAuxiliaryConfig = useCallback(async () => {
@@ -1484,21 +1645,25 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     if (item.type === 'server-command') {
       void executeSlashViaWs(
         item.name,
+        slashAgentId,
         setSlashBusy,
         () => { editor?.commands.clearContent(); },
         setSlashMenuOpen,
-      )(slashText);
+      )(applySlashCompletion(slashText, item));
       return;
     }
     if (!editor) return;
-    editor.chain()
-      .clearContent()
+    const slashRange = findSlashTriggerRange(editor);
+    const chain = editor.chain().focus();
+    if (slashRange) {
+      chain.deleteRange({ from: slashRange.from, to: slashRange.to });
+    }
+    chain
       .insertContent({ type: 'skillBadge', attrs: { name: item.name } })
       .insertContent(' ')
-      .focus()
       .run();
     setSlashMenuOpen(false);
-  }, [editor, inputLocked, inputText]);
+  }, [editor, inputLocked, inputText, slashAgentId]);
 
   const handleFileMentionSelect = useCallback((item: FileMentionItem) => {
     if (inputLocked) return;
@@ -1523,12 +1688,46 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     setFileMentionQuery('');
   }, [editor, fileMentionRange, inputLocked]);
 
+  const handleMentionSelect = useCallback((item: MentionMenuItem) => {
+    if ('kind' in item && item.kind === 'session') {
+      if (inputLocked || !editor || !fileMentionRange) return;
+      editor.chain()
+        .focus()
+        .deleteRange({ from: fileMentionRange.from, to: fileMentionRange.to })
+        .insertContent({ type: 'sessionBadge', attrs: { sessionId: item.sessionId, label: item.name } })
+        .insertContent(' ')
+        .run();
+      setFileMenuOpen(false);
+      setFileMentionRange(null);
+      setFileMentionQuery('');
+      return;
+    }
+    if ('kind' in item && item.kind === 'agent') {
+      if (inputLocked || !editor || !fileMentionRange) return;
+      if (editorHasInlineNode(editor, 'agentBadge')) {
+        addToast(t('input.mention.singleAgent'), 'warning', 5000);
+        return;
+      }
+      editor.chain()
+        .focus()
+        .deleteRange({ from: fileMentionRange.from, to: fileMentionRange.to })
+        .insertContent({ type: 'agentBadge', attrs: { agentId: item.agentId, label: item.name } })
+        .insertContent(' ')
+        .run();
+      setFileMenuOpen(false);
+      setFileMentionRange(null);
+      setFileMentionQuery('');
+      return;
+    }
+    handleFileMentionSelect(item as FileMentionItem);
+  }, [addToast, editor, fileMentionRange, handleFileMentionSelect, inputLocked, t]);
+
   // ── Send / interject message ──
   const submitEditorMessage = useCallback(async (type: 'prompt' | 'interject') => {
     if (inputLocked) return;
     if (!editor) return;
     const editorJson = editor.getJSON();
-    const { text: rawText, skills, fileRefs } = serializeEditor(editorJson);
+    const { text: rawText, skills, fileRefs, sessionRefs, agentMentions } = serializeEditor(editorJson);
     const text = rawText.trim();
     const clickState = useStore.getState();
     const clickedPendingDraftId = clickState.pendingNewSession ? clickState.pendingDraftId : null;
@@ -1546,6 +1745,15 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     const clickedDocContextAttached = docContextAttached;
     const clickedDoc = currentDoc ? { ...currentDoc } : null;
     const clickedUiContext = collectUiContext(clickState);
+
+    if (agentMentions.length > 1) {
+      addToast(t('input.mention.singleAgent'), 'warning', 5000);
+      return;
+    }
+    if (type === 'interject' && agentMentions.length > 0) {
+      addToast(t('agentReview.interjectionUnavailable'), 'warning', 5000);
+      return;
+    }
 
     if (type === 'prompt') {
       const slashSelection = resolveSlashSubmitSelection({
@@ -1568,6 +1776,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       hasText: !!text,
       hasFiles,
       hasSkills: skills.length > 0,
+      hasMentions: sessionRefs.length > 0 || agentMentions.length > 0,
       hasDocContext: clickedDocContextAttached,
       hasQuotes: clickedQuotes.length > 0,
     }) || !connected) return;
@@ -1576,6 +1785,19 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     if (sending) return;
     if (modelSwitching) return;
     if (useStore.getState().pendingSessionSwitchPath) return;
+    const guardState = useStore.getState();
+    const guardModel = guardState.currentSessionPath
+      ? sessionScopedValue(guardState, guardState.sessionModelsByPath, guardState.currentSessionPath)
+      : undefined;
+    if (guardModel?.available === false) {
+      guardState.addToast(
+        t(modelUnavailableMessageKey(guardModel.unavailableReason)),
+        'warning',
+        6000,
+        { dedupeKey: 'session-model-unavailable' },
+      );
+      return;
+    }
     if (type === 'prompt') {
       // 压缩 / 能力刷新（fresh compact）期间禁发 prompt：此窗口内 session 没有
       // 可用 runtime，发消息会冷建第二个 runtime 与压缩后的 reload 竞争（#1624 I2）。
@@ -1803,6 +2025,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         text,
         skills: skills.length > 0 ? skills : undefined,
         quotedText: quotes.length > 0 ? quotes.map(q => q.text).join('\n\n') : undefined,
+        sessionRefs: sessionRefs.length > 0 ? sessionRefs : undefined,
+        agentMentions: agentMentions.length > 0 ? agentMentions : undefined,
         attachments: allFiles.length > 0 ? allFiles.map(f => {
           const cached = imageBase64Map.get(f.path);
           const cachedVideo = videoBase64Map.get(f.path);
@@ -1830,6 +2054,11 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         quotedText: displayMessage.quotedText,
         skills: displayMessage.skills,
         sendStatus: 'pending',
+        agentReview: agentMentions.length === 1 ? {
+          status: 'running',
+          reviewerAgentId: agentMentions[0].agentId,
+          reviewerAgentName: agentMentions[0].label,
+        } : undefined,
       });
 
       const ws = getWebSocket();
@@ -1847,6 +2076,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       if (videos.length > 0) wsMsg.videos = videos;
       if (audios.length > 0) wsMsg.audios = audios;
       if (skills.length > 0) wsMsg.skills = skills;
+      if (sessionRefs.length > 0) wsMsg.sessionRefs = sessionRefs;
+      if (agentMentions.length > 0) wsMsg.agentReviewRequests = agentMentions;
       if (!ws) {
         useStore.getState().markOptimisticUserMessageFailed(
           sessionPathForSend,
@@ -1866,7 +2097,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     } finally {
       setSending(false);
     }
-  }, [editor, inputLocked, attachedFiles, docContextAttached, connected, isStreaming, sending, currentDoc, clearAttachedFiles, clearAttachedFilesForSession, clearDraft, setDocContextAttached, slashCommands, slashSelected, handleSlashSelect, supportsVision, currentModelInfo, loadVisionAuxiliaryConfig, modelSwitching, t]);
+  }, [addToast, editor, inputLocked, attachedFiles, docContextAttached, connected, isStreaming, sending, currentDoc, clearAttachedFiles, clearAttachedFilesForSession, clearDraft, setDocContextAttached, slashCommands, slashSelected, handleSlashSelect, supportsVision, currentModelInfo, loadVisionAuxiliaryConfig, modelSwitching, t]);
 
   const handleSend = useCallback(async () => {
     await submitEditorMessage('prompt');
@@ -1885,8 +2116,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     const path = state.currentSessionPath;
     const sessionId = state.currentSessionId;
     const active = path ? sessionScopedValue(state, state.activeSessionStreams, path) : null;
-    if (!path || !sessionId || !active?.streamId) return;
-    ws.send(JSON.stringify({ type: 'abort', sessionId, sessionPath: path, streamId: active.streamId }));
+    const request = createStopRequest({ sessionId, sessionPath: path, streamId: active?.streamId });
+    if (!request) return;
+    ws.send(JSON.stringify(request));
   }, [isStreaming]);
 
   // ── Key handler ──
@@ -1896,21 +2128,29 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       return true;
     }
     if (e.defaultPrevented) return false;
-    if (fileMenuOpen && (fileMentionItems.length > 0 || fileMentionBusy)) {
-      if (e.key === 'ArrowDown' && fileMentionItems.length > 0) {
+    if (fileMenuOpen) {
+      if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
         e.preventDefault();
-        setFileSelected(i => (i + 1) % fileMentionItems.length);
+        const tabs: MentionTab[] = ['files', 'sessions', 'agents'];
+        const direction = e.key === 'ArrowRight' ? 1 : -1;
+        setMentionTab(tabs[(tabs.indexOf(mentionTab) + direction + tabs.length) % tabs.length]);
+        setFileSelected(0);
         return true;
       }
-      if (e.key === 'ArrowUp' && fileMentionItems.length > 0) {
+      if (e.key === 'ArrowDown' && mentionItems.length > 0) {
         e.preventDefault();
-        setFileSelected(i => (i - 1 + fileMentionItems.length) % fileMentionItems.length);
+        setFileSelected(i => (i + 1) % mentionItems.length);
         return true;
       }
-      if ((e.key === 'Tab' || e.key === 'Enter') && fileMentionItems.length > 0) {
+      if (e.key === 'ArrowUp' && mentionItems.length > 0) {
         e.preventDefault();
-        const item = fileMentionItems[fileSelected];
-        if (item) handleFileMentionSelect(item);
+        setFileSelected(i => (i - 1 + mentionItems.length) % mentionItems.length);
+        return true;
+      }
+      if ((e.key === 'Tab' || e.key === 'Enter') && mentionItems.length > 0) {
+        e.preventDefault();
+        const item = mentionItems[fileSelected];
+        if (item) handleMentionSelect(item);
         return true;
       }
       if (e.key === 'Escape') {
@@ -1945,11 +2185,12 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     dismissSlashMenu,
     editor,
     fileMentionBusy,
-    fileMentionItems,
+    mentionItems,
+    mentionTab,
     fileMenuOpen,
     fileSelected,
     filteredCommands,
-    handleFileMentionSelect,
+    handleMentionSelect,
     handleSend,
     handleSteer,
     handleSlashSelect,
@@ -1976,12 +2217,11 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
 
   const handleSlashResultClick = useCallback(() => {
     if (slashResult?.filePath) {
-      window.platform?.openFile?.(slashResult.filePath);
+      window.platform?.showInFinder?.(slashResult.filePath);
       return;
     }
     if (!slashResult?.deskDir) return;
-    toggleJianSidebar(true);
-    void revealDeskDirectory(slashResult.deskDir);
+    window.platform?.openFolder?.(slashResult.deskDir);
   }, [slashResult?.deskDir, slashResult?.filePath]);
 
   const handleContinueDeletedAgentSession = useCallback(async () => {
@@ -2025,6 +2265,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
           : null}
         screenshotProgress={screenshotProgress}
         inlineError={inlineError}
+        modelUnavailableMessage={modelUnavailableMessage}
         slashResult={slashResult}
         onResultClick={(slashResult?.filePath || slashResult?.deskDir) ? handleSlashResultClick : undefined}
       />
@@ -2035,23 +2276,20 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         )}
       </div>
       <div className={styles['slash-menu-anchor']} ref={fileMenuRef}>
-        {fileMenuOpen && (fileMentionItems.length > 0 || fileMentionBusy) && (
-          <FileMentionMenu
-            items={fileMentionItems}
+        {fileMenuOpen && (
+          <MentionMenu
+            tab={mentionTab}
+            items={mentionItems}
             selected={fileSelected}
             busy={fileMentionBusy}
-            onSelect={handleFileMentionSelect}
+            agents={agents}
+            onTabChange={(tab) => { setMentionTab(tab); setFileSelected(0); }}
+            onSelect={handleMentionSelect}
             onHover={(i) => setFileSelected(i)}
           />
         )}
       </div>
       <div className={styles['input-stack']}>
-        {capabilityDrift && !capabilityRefreshing && !visibleSessionConfirmation && !deletedAgentReadOnly && currentSessionPath && (
-          <CapabilityDriftNotice
-            sessionPath={currentSessionPath}
-            drift={capabilityDrift}
-          />
-        )}
         {visibleSessionConfirmation && (
           <SessionConfirmationPrompt
             block={visibleSessionConfirmation}

@@ -96,6 +96,12 @@
     "noAvailableMembers": "没有可添加的 Agent",
     "agentActivity": "Agent 动态",
     "agentSettings": "群聊设置",
+    "exportTitle": "保存当前聊天",
+    "exportDescription": "将当前群聊或私聊保存为 Markdown 文件，下载到系统下载文件夹。",
+    "exportAction": "导出当前聊天",
+    "exporting": "正在导出…",
+    "exportSuccess": "聊天记录已下载：{filename}",
+    "exportFailed": "导出聊天记录失败：{message}",
     "toolPermission": "工具权限",
     "agentIdle": "空闲",
     "phoneReceivedNewMessages": "收到新的群聊消息",
@@ -152,9 +158,9 @@
     "empty": "还没有对话哦 ✿",
     "activity": "助手活动",
     "jian": "书桌",
-    "bridge": "接入社交平台",
+    "bridge": "社交平台",
     "toggle": "侧边栏",
-    "bridgeShort": "接入社交平台",
+    "bridgeShort": "社交平台",
     "pinned": "置顶",
     "searchPlaceholder": "搜索聊天记录",
     "searchClear": "清空搜索",
@@ -164,6 +170,9 @@
     "searchingContent": "正在搜索正文…",
     "searchNoResults": "没有找到相关会话",
     "searchFailed": "搜索失败",
+    "metaRecoveryNoticeTitle": "部分会话待恢复",
+    "metaRecoveryNoticeBody": "检测到会话元数据异常，历史正文仍保存在磁盘上，受影响的会话属性可能暂缺",
+    "metaRecoveryEmpty": "会话列表暂时无法完整显示，正文仍保存在磁盘上",
     "view": {
       "time": "按时间排序",
       "project": "按项目排序",
@@ -206,7 +215,12 @@
     "unpin": "取消置顶",
     "pinFailed": "置顶 session 失败",
     "unpinFailed": "取消置顶失败",
+    "reorderFailed": "调整置顶顺序失败",
     "archive": "归档",
+    "copyId": "复制 Session ID",
+    "copyIdDone": "Session ID 已复制",
+    "copyIdFailed": "复制 Session ID 失败",
+    "copyIdUnavailable": "这个 Session 暂时没有可复制的 ID",
     "deletedAgent": {
       "title": "Agent 已删除",
       "description": "这段对话会保留为只读历史。继续聊天会用主 Agent 新建一个 session，并尝试压缩旧上下文。",
@@ -242,22 +256,8 @@
       "deleteFailed": "删除失败",
       "daysAgo": "归档于 {days} 天前"
     },
-    "subagentRunStateUnrecoverable": "历史子会话运行状态不可恢复",
-    "subagentLinkUnrecoverable": "历史子会话链接不可恢复",
-    "capabilityDrift": {
-      "title": "工具能力有更新",
-      "addedTools": "新增 {count} 个工具",
-      "removedTools": "{count} 个工具已失效",
-      "promptUpdated": "提示词有更新",
-      "separator": "、",
-      "refreshButton": "刷新 Agent 工具",
-      "dismissButton": "忽略",
-      "confirmText": "刷新会把旧对话压缩成摘要，细节可能丢失。继续吗？",
-      "confirmButton": "确认刷新",
-      "cancelButton": "取消",
-      "refreshing": "正在压缩对话并刷新工具…",
-      "refreshFailed": "刷新失败"
-    },
+    "subagentRunStateUnrecoverable": "历史 subagent 运行状态不可恢复",
+    "subagentLinkUnrecoverable": "历史 subagent 链接不可恢复",
     "rcTakingOver": "{platform} 接管中"
   },
   "common": {
@@ -269,6 +269,7 @@
     "close": "关闭",
     "loading": "加载中...",
     "regenerate": "重新生成",
+    "forkSession": "分支为新会话",
     "confirm": "确认",
     "cancel": "取消",
     "approve": "批准",
@@ -297,7 +298,8 @@
     "screenshotFailed": "截图保存失败",
     "selectedCount": "已选 {count} 条",
     "allDone": "全部完成",
-    "markAllComplete": "全部标记为已完成"
+    "markAllComplete": "全部标记为已完成",
+    "back": "返回"
   },
   "chat": {
     "find": {
@@ -309,6 +311,7 @@
     "stop": "停止",
     "browserScreenshot": "浏览器截图",
     "compacting": "上下文压缩中",
+    "instantSimpleCompaction": "瞬时简易压缩",
     "visionAuxiliary": "辅助视觉",
     "fileExpired": "文件已过期",
     "fileActions": {
@@ -327,7 +330,7 @@
       "retryLabel": "重新生成{kind}"
     },
     "subagentPreview": {
-      "historyUnrecoverable": "历史子会话链接不可恢复",
+      "historyUnrecoverable": "历史 subagent 链接不可恢复",
       "noSession": "暂无可打开的 subagent session",
       "connecting": "正在连接 subagent session...",
       "loadingSession": "正在加载会话...",
@@ -421,8 +424,8 @@
       "auto": "自动",
       "medium": "中等",
       "high": "深度",
-      "xhigh": "极致",
-      "max": "极致",
+      "xhigh": "Max",
+      "max": "Max",
       "low": "浅思"
     },
     "thinkingDesc": {
@@ -437,14 +440,39 @@
     "contextWindow": "上下文 {windowK}k",
     "tokensUsed": "已用 {tokensK}k ({pct}%)",
     "contextActions": "上下文操作",
-    "refreshAndCompact": "更新并压缩",
-    "refreshAndCompactTooltip": "更新到最新的记忆和工具集",
+    "refreshAndCompact": "压缩并更新",
+    "refreshAndCompactTooltip": "压缩对话，并更新到最新的记忆和工具集",
+    "refreshAndCompactBusy": "正在压缩并更新对话…",
+    "refreshAndCompactFailed": "压缩并更新失败",
     "compact": "压缩",
     "noAskThisConversation": "本对话不再询问",
     "confirmMoreOptions": "更多确认选项",
     "attachmentDirectory": "[目录] {label}",
     "attachmentFile": "[附件] {label}",
-    "referenceDocument": "[参考文档] {path}"
+    "referenceDocument": "[参考文档] {path}",
+    "mention": {
+      "title": "引用内容",
+      "tab": {
+        "files": "文件",
+        "sessions": "对话",
+        "agents": "助手"
+      },
+      "empty": "没有匹配项",
+      "singleAgent": "每个回合暂时只能邀请一位助手审阅"
+    }
+  },
+  "agentReview": {
+    "running": "正在审阅当前对话",
+    "completed": "另一位助手的审阅结果",
+    "failed": "审阅失败，主助手尚未回答",
+    "cancelled": "审阅已取消",
+    "openSession": "打开审阅对话",
+    "sessionUnavailable": "找不到这个审阅对话",
+    "requestReceived": "已收到来自另一个对话的审阅请求",
+    "openReviewedSession": "打开被审阅对话",
+    "reviewedSessionFallback": "来源对话",
+    "reviewSessionFallback": "{name} 的审阅对话",
+    "interjectionUnavailable": "助手审阅不能作为插话发送，请等待当前回复结束"
   },
   "slash": {
     "diary": "写今日日记",
@@ -454,9 +482,7 @@
     "xing": "从对话中提炼技能",
     "compact": "压缩上下文",
     "compactBusy": "正在压缩...",
-    "stop": "停止当前回复",
-    "new": "开启新会话（归档历史）",
-    "reset": "重置会话（清除历史）",
+    "loop": "在当前会话循环执行任务",
     "commandError": "[命令错误] {message}",
     "usage": "用法：{usage}",
     "commandTimeout": "命令超时（>{ms}ms）"
@@ -512,7 +538,8 @@
         "avatar": "Ming.png"
       },
       "kong": {
-        "label": "模型原本的样子",
+        "label": "无发散思考模块（如 MOOD），和别的 Agent 一致体验。",
+        "shortLabel": "无思考区块，直接回答。",
         "avatar": "Kong.png"
       }
     },
@@ -699,16 +726,6 @@
       "done": "✏️ {name} 改好了",
       "failed": "✏️ {name} 越改越乱了"
     },
-    "edit-diff": {
-      "running": "✏️ {name} 提笔改字中",
-      "done": "✏️ {name} 改好了",
-      "failed": "✏️ {name} 越改越乱了"
-    },
-    "glob": {
-      "running": "🔍 {name} 正在找文件",
-      "done": "🔍 {name} 找到了",
-      "failed": "🔍 {name} 翻遍了也没找到"
-    },
     "grep": {
       "running": "🔍 {name} 正在文件里翻找",
       "done": "🔍 {name} 翻到了",
@@ -724,15 +741,10 @@
       "done": "📂 {name} 看完了",
       "failed": "📂 {name} 打不开这个目录"
     },
-    "truncate": {
-      "running": "✂️ {name} 正在整理文件",
-      "done": "✂️ {name} 整理好了",
-      "failed": "✂️ {name} 整理不动了"
-    },
     "stage_files": {
-      "running": "📎 {name} 正在整理文件",
-      "done": "📎 在这！",
-      "failed": "📎 文件没放好"
+      "running": "📎 正在准备文件",
+      "done": "📎 文件准备好了",
+      "failed": "📎 文件没准备好"
     },
     "browser": {
       "running": "🌐 {name} 正在操作浏览器",
@@ -740,136 +752,101 @@
       "failed": "🌐 {name} 浏览器不听使唤"
     },
     "subagent": {
-      "running": "🧭 子代理执行中",
-      "done": "🧭 子代理已完成",
-      "failed": "🧭 子代理执行失败"
+      "running": "🧭 subagent 正在干活",
+      "done": "🧭 subagent 干完了",
+      "failed": "🧭 subagent 没干成"
     },
     "check_pending_tasks": {
-      "running": "📋 {name} 正在找找没做完的事儿",
-      "done": "📋 {name} 找完了",
-      "failed": "📋 找不着"
-    },
-    "cron": {
-      "running": "⏰ {name} 正在设定时任务",
-      "done": "⏰ 设好了",
-      "failed": "⏰ 没设成"
+      "running": "📋 正在看后台任务好了没",
+      "done": "📋 后台任务的进展看完了",
+      "failed": "📋 没看到后台任务的进展"
     },
     "notify": {
       "running": "🔔 {name} 正在发通知",
-      "done": "🔔 通知发了",
+      "done": "🔔 {name} 把通知发出去了",
       "failed": "🔔 通知没发出去"
     },
     "create_artifact": {
-      "running": "🖼️ {name} 正在写写画画",
-      "done": "🖼️ 画好了",
-      "failed": "🖼️ 画崩了"
+      "running": "🖼️ {name} 正在做图",
+      "done": "🖼️ {name} 把图做好了",
+      "failed": "🖼️ 图没做成"
     },
     "dm": {
-      "running": "✉️ {name} 打开了手机",
-      "done": "✉️ 发出去了",
-      "failed": "✉️ 没发出去"
+      "running": "✉️ {name} 正在发私信",
+      "done": "✉️ {name} 把私信发出去了",
+      "failed": "✉️ 私信没发出去"
     },
     "channel": {
-      "running": "📢 {name} 正在频道发言",
-      "done": "📢 发完了",
-      "failed": "📢 发不出去",
+      "running": "📢 {name} 正在往频道发消息",
+      "done": "📢 {name} 在频道发了消息",
+      "failed": "📢 消息没发到频道",
       "heading": "# 频道",
       "ambiguousName": "频道名 \"{name}\" 不唯一，请改用频道 ID：{choices}"
     },
     "install_skill": {
       "running": "📥 {name} 正在装技能",
-      "done": "📥 装好了",
-      "failed": "📥 没装上"
+      "done": "📥 {name} 把技能装上了",
+      "failed": "📥 技能没装上"
     },
     "update_settings": {
       "running": "⚙️ {name} 正在改设置",
-      "done": "⚙️ 改好了",
-      "failed": "⚙️ 没改成"
+      "done": "⚙️ {name} 改好设置了",
+      "failed": "⚙️ 设置没改成"
     },
     "automation": {
-      "running": "🤖 {name} 正在调度快捷指令",
-      "done": "🤖 指令跑完了",
-      "failed": "🤖 指令执行失败"
+      "running": "🤖 {name} 正在安排自动化任务",
+      "done": "🤖 {name} 安排好自动化任务了",
+      "failed": "🤖 自动化任务没安排上"
     },
     "computer": {
-      "running": "🖥️ {name} 正在操控你的屏幕",
-      "done": "🖥️ 操控完了",
-      "failed": "🖥️ 操控失败"
+      "running": "🖥️ {name} 正在操控电脑",
+      "done": "🖥️ {name} 操控完电脑了",
+      "failed": "🖥️ 电脑没操控成"
     },
     "terminal": {
       "running": "💻 {name} 正在敲命令",
-      "done": "💻 敲完了",
-      "failed": "💻 命令执行失败"
+      "done": "💻 {name} 敲完命令了",
+      "failed": "💻 命令没跑成"
     },
     "current_status": {
-      "running": "🕐 {name} 正在看看现在什么情况",
-      "done": "🕐 掌握信息了",
-      "failed": "🕐 获取信息失败"
+      "running": "🕐 正在看看现在什么情况",
+      "done": "🕐 现在的情况摸清了",
+      "failed": "🕐 没摸清现在的情况"
     },
     "pin_memory": {
-      "running": "📌 {name} 正在把这件事钉起来",
-      "done": "📌 钉好了",
-      "failed": "📌 置顶失败"
+      "running": "📌 {name} 正在记牢这件事",
+      "done": "📌 {name} 把这件事记牢了",
+      "failed": "📌 {name} 没记牢"
     },
     "unpin_memory": {
-      "running": "📌 {name} 正在把钉子拔下来",
-      "done": "📌 拔掉了",
-      "failed": "📌 取消置顶失败"
+      "running": "📌 {name} 正在取消置顶",
+      "done": "📌 {name} 不再特意记着这件事了",
+      "failed": "📌 {name} 没取消掉"
     },
     "recall_experience": {
-      "running": "🧠 {name} 正在翻经验本",
-      "done": "🧠 翻到了",
-      "failed": "🧠 没找到相关经验"
+      "running": "🧠 正在翻经验本",
+      "done": "🧠 翻到相关的经验了",
+      "failed": "🧠 没翻到相关的经验"
     },
     "record_experience": {
-      "running": "🧠 {name} 正在把经验记下来",
-      "done": "🧠 记好了",
-      "failed": "🧠 记录失败"
+      "running": "🧠 {name} 正在记下这次的经验",
+      "done": "🧠 {name} 记下这次的经验了",
+      "failed": "🧠 经验没记下来"
     },
     "session_folders": {
-      "running": "📁 {name} 正在调整文件夹权限",
-      "done": "📁 调好了",
-      "failed": "📁 调整失败"
+      "running": "📁 {name} 正在调文件夹权限",
+      "done": "📁 {name} 调好文件夹权限了",
+      "failed": "📁 文件夹权限没调成"
     },
     "stop_task": {
       "running": "🛑 {name} 正在叫停后台任务",
-      "done": "🛑 停下来了",
-      "failed": "🛑 停止失败"
+      "done": "🛑 {name} 把后台任务停了",
+      "failed": "🛑 后台任务没停下来"
     },
     "todo_write": {
       "running": "📝 {name} 正在写清单",
-      "done": "📝 写好了",
-      "failed": "📝 清单写入失败"
-    },
-    "generate-image": {
-      "running": "🎨 {name} 正在作图",
-      "done": "🎨 画好了",
-      "failed": "🎨 作图失败"
-    },
-    "generate-video": {
-      "running": "🎬 {name} 正在生成视频",
-      "done": "🎬 视频好了",
-      "failed": "🎬 视频生成失败"
-    },
-    "create-cover": {
-      "running": "🎨 {name} 正在设计封面",
-      "done": "🎨 封面好了",
-      "failed": "🎨 封面生成失败"
-    },
-    "apply-cover-candidate": {
-      "running": "🖼️ {name} 正在换封面",
-      "done": "🖼️ 换好了",
-      "failed": "🖼️ 封面应用失败"
-    },
-    "get-cover-style-guide": {
-      "running": "📖 {name} 正在翻风格手册",
-      "done": "📖 翻到了",
-      "failed": "📖 获取风格指南失败"
-    },
-    "list-capabilities": {
-      "running": "📋 {name} 正在清点能力",
-      "done": "📋 点完了",
-      "failed": "📋 能力清点失败"
+      "done": "📝 清单写好了",
+      "failed": "📝 清单没写上"
     },
     "_fallback": {
       "running": "🔧 {name} 正在忙碌中…",
@@ -882,10 +859,18 @@
       "noTasks": "当前对话没有后台任务{qualifier}。",
       "noTasksQualifier": "（状态: {status}）"
     },
+    "loopControl": {
+      "serviceUnavailable": "循环服务未就绪。",
+      "noActiveSession": "没有活跃会话。",
+      "noActiveLoop": "当前会话没有活跃循环，用 /loop <任务> 启动。",
+      "delayRequired": "action=schedule 需要 delay_seconds。",
+      "scheduled": "已约 {seconds} 秒后的唤醒（{wakeAt} 触发），并替换了之前的闹钟。",
+      "completed": "循环已完成并关闭。"
+    },
     "workflow": {
-      "running": "🔄 {name} 正在编排工作流",
-      "done": "🔄 编排完了",
-      "failed": "🔄 工作流执行失败",
+      "running": "🔄 {name} 正在编排 workflow",
+      "done": "🔄 {name} 编排完 workflow 了",
+      "failed": "🔄 workflow 没跑成",
       "scriptInvalid": "workflow 脚本非法: {message}",
       "dispatched": "workflow \"{summary}\" 已派出后台执行（任务 {taskId}），完成后结果会自动回到对话。",
       "syncComplete": "workflow \"{name}\" 完成，派出 {count} 个 agent。\n\n结果:\n{result}",
@@ -895,6 +880,136 @@
     },
     "installSkill": {
       "safetyBlocked": "[安全策略] 技能安全审查未通过，已阻止安装。\n原因：{reason}\n\n请告知用户此技能未通过安全审查，说明具体原因。用户可以在设置中关闭安全审查（不推荐）。"
+    },
+    "file": {
+      "running": "📄 正在操作文件",
+      "done": "📄 文件弄好了",
+      "failed": "📄 文件没弄好"
+    },
+    "session": {
+      "running": "💬 正在查看别的会话",
+      "done": "💬 查看了别的会话",
+      "failed": "💬 别的会话没打开"
+    },
+    "subagent_reply": {
+      "running": "🧭 {name} 正在给 subagent 派新任务",
+      "done": "🧭 {name} 给 subagent 派了新任务",
+      "failed": "🧭 任务没派给 subagent"
+    },
+    "subagent_close": {
+      "running": "🧭 {name} 正在让 subagent 收工",
+      "done": "🧭 {name} 让 subagent 收工了",
+      "failed": "🧭 subagent 没关掉"
+    },
+    "loop_control": {
+      "running": "⏱️ {name} 正在给 loop 上闹钟",
+      "done": "⏱️ loop 的闹钟定好了",
+      "failed": "⏱️ loop 的闹钟没定上"
+    },
+    "materialize": {
+      "running": "🧲 正在把文件取到本地",
+      "done": "🧲 文件取到本地了",
+      "failed": "🧲 文件没取下来"
+    },
+    "channel_read_context": {
+      "running": "💬 正在看频道里的消息",
+      "done": "💬 频道消息看完了",
+      "failed": "💬 频道消息没读到"
+    },
+    "channel_reply": {
+      "running": "💬 {name} 正在往频道里发消息",
+      "done": "💬 {name} 在频道发了消息",
+      "failed": "💬 消息没发到频道"
+    },
+    "channel_pass": {
+      "running": "⏭️ {name} 这轮打算不说话",
+      "done": "⏭️ {name} 看过了，这轮没在频道说话",
+      "failed": "⏭️ 没记上这次跳过"
+    },
+    "hana_card_guide": {
+      "running": "🎴 正在翻卡片的做法",
+      "done": "🎴 卡片的做法弄明白了",
+      "failed": "🎴 卡片的做法没查到"
+    },
+    "show_card": {
+      "running": "🎴 {name} 正在把卡片摆出来",
+      "done": "🎴 {name} 把卡片摆出来了",
+      "failed": "🎴 卡片没摆出来"
+    },
+    "media_generate-image": {
+      "running": "🎨 {name} 正在作图",
+      "done": "🎨 {name} 把图画好了",
+      "failed": "🎨 图没画成"
+    },
+    "media_generate-video": {
+      "running": "🎬 {name} 正在生成视频",
+      "done": "🎬 {name} 把视频做好了",
+      "failed": "🎬 视频没做成"
+    },
+    "media_describe-options": {
+      "running": "🎨 正在看出图有哪些选项",
+      "done": "🎨 出图的选项看完了",
+      "failed": "🎨 出图选项没看到"
+    },
+    "media_get-guide": {
+      "running": "🎨 正在翻画图的说明",
+      "done": "🎨 画图的说明翻完了",
+      "failed": "🎨 画图的说明没翻到"
+    },
+    "beautify_create-cover": {
+      "running": "🖼️ {name} 正在给文章配封面",
+      "done": "🖼️ {name} 给文章配好封面了",
+      "failed": "🖼️ 封面没配上"
+    },
+    "beautify_apply-cover-candidate": {
+      "running": "🖼️ {name} 正在换封面",
+      "done": "🖼️ {name} 换好封面了",
+      "failed": "🖼️ 封面没换成"
+    },
+    "beautify_get-cover-style-guide": {
+      "running": "🖼️ 正在翻封面该怎么配",
+      "done": "🖼️ 封面的配法弄明白了",
+      "failed": "🖼️ 封面的配法没查到"
+    },
+    "beautify_get-html-style-guide": {
+      "running": "🖼️ 正在翻排版该怎么弄",
+      "done": "🖼️ 排版的做法弄明白了",
+      "failed": "🖼️ 排版的做法没查到"
+    },
+    "beautify_list-capabilities": {
+      "running": "🖼️ 正在看能怎么美化",
+      "done": "🖼️ 看明白能怎么美化了",
+      "failed": "🖼️ 没查到能怎么美化"
+    },
+    "office_read-document": {
+      "running": "📑 正在读这份文档",
+      "done": "📑 这份文档读完了",
+      "failed": "📑 这份文档没读出来"
+    },
+    "office_html-to-pdf": {
+      "running": "📑 {name} 正在导出 PDF",
+      "done": "📑 {name} 导好 PDF 了",
+      "failed": "📑 PDF 没导出来"
+    },
+    "office_list-capabilities": {
+      "running": "📑 正在看能处理哪些文档",
+      "done": "📑 看明白能处理哪些文档了",
+      "failed": "📑 没查到能处理哪些文档"
+    },
+    "_plugin": {
+      "running": "🧩 {name} 正在用插件干活",
+      "done": "🧩 {name} 用插件干完了",
+      "failed": "🧩 插件没帮上忙"
+    },
+    "session_send": {
+      "running": "💬 正在拟给别的会话的消息",
+      "done": "💬 消息拟好了，等你确认",
+      "failed": "💬 消息没拟成"
+    },
+    "session_create": {
+      "running": "💬 正在拟一个新会话",
+      "done": "💬 新会话拟好了，等你确认",
+      "failed": "💬 新会话没拟成"
     }
   },
   "file_output": {
@@ -906,6 +1021,13 @@
     "notSelected": "请选择模型",
     "noneConfigured": "未配置模型",
     "unavailable": "模型不可用",
+    "removed": "模型已移除",
+    "providerNotConfigured": "Provider 未配置",
+    "unavailableReason": {
+      "modelRemoved": "此会话使用的模型已被移除。请从模型选择器选择一个可用模型后继续。",
+      "providerNotConfigured": "此会话的模型 Provider 或凭证未配置。请完成配置，或选择其他可用模型。",
+      "temporarilyUnavailable": "此会话使用的模型当前不可用。请检查 Provider 状态，或选择其他可用模型。"
+    },
     "offline": "离线",
     "switchFailed": "切换模型失败",
     "switchWhileStreaming": "回复中不能切换模型",
@@ -939,6 +1061,7 @@
     "save": "保存",
     "saved": "保存成功 ✿",
     "saveFailed": "保存失败",
+    "refreshFailed": "刷新失败",
     "fileChangedOnDisk": "文件已被外部修改，已跳过旧版本保存",
     "noChanges": "没有需要保存的更改",
     "autoSaved": "已自动保存 ✿",
@@ -987,7 +1110,7 @@
     "experiments": {
       "title": "实验",
       "compactionTitle": "上下文压缩",
-      "compactionSectionDescription": "选择 compact 时优先保护缓存，还是优先兼容历史格式。",
+      "compactionSectionDescription": "设置自动压缩的默认策略，并决定是否在聊天的上下文圆圈中显示实验性的一次性压缩入口。",
       "modelPersonaTitle": "模型与人格",
       "modelPersonaDescription": "观察不同供应商在 Hana 人格、心境和输出契约上的适配表现。",
       "memoryTitle": "记忆实验",
@@ -1034,10 +1157,14 @@
       },
       "compaction": {
         "title": "压缩模式",
-        "description": "自动会优先使用缓存保护压缩；普通压缩会放行 Pi SDK 原生摘要，更适合历史格式不稳定的会话。",
+        "description": "自动会优先使用缓存保护压缩；普通压缩会放行 Pi SDK 原生摘要。",
         "auto": "自动",
         "cachePreserving": "缓存保护压缩",
         "piCompatible": "普通压缩"
+      },
+      "instantSimpleCompaction": {
+        "title": "瞬时简易压缩",
+        "description": "打开后，聊天输入框的上下文圆圈菜单会增加“瞬时简易压缩”。它只影响你主动点击的这一次压缩，不改变自动压缩或普通压缩的行为。"
       },
       "deepseekRoleplay": {
         "title": "DeepSeek 人格沉浸补丁",
@@ -1184,10 +1311,10 @@
       "agentNameHint": "Ta 叫什么",
       "identity": "身份简介",
       "identityHint": "简短描述助手是谁、擅长什么。其他助手通过这段文字认识 Ta",
-      "ishiki": "意识",
-      "ishikiHint": "定义助手的性格、语气和行为方式。跟「元」是分开的，互不影响。",
-      "publicIshiki": "对外意识",
-      "publicIshikiHint": "出于隐私考虑，助手与访客对话时无法访问记忆、你的个人信息，以及电脑上的任何文件与工具。\n你可以在这里设定助手对访客说话时的回复风格以及注意事项。",
+      "agentsMd": "AGENTS.md",
+      "agentsMdHint": "定义助手的性格、语气和行为方式。跟「元」是分开的，互不影响。",
+      "publicAgentsMd": "对外 AGENTS.md",
+      "publicAgentsMdHint": "出于隐私考虑，助手与访客对话时无法访问记忆、你的个人信息，以及电脑上的任何文件与工具。\n你可以在这里设定助手对访客说话时的回复风格以及注意事项。",
       "chatModel": "Ta 的模型",
       "chatModelHint": "Ta 在对话与工作中使用的模型",
       "modelUnavailable": "当前不可用：{model}",
@@ -1295,10 +1422,13 @@
       },
       "notifications": {
         "title": "通知",
-        "turnCompletion": "轮次完成通知",
-        "turnCompletionNever": "从不",
-        "turnCompletionWhenUnfocused": "焦点不在 HanaAgent 时",
-        "turnCompletionWhenSessionUnfocused": "焦点不在完成任务的 Session 时"
+        "chatCompletion": "聊天回复完成",
+        "scheduledTaskCompletion": "计划任务完成",
+        "patrolCompletion": "巡检完成",
+        "never": "从不",
+        "whenUnfocused": "焦点不在 HanaAgent 时",
+        "whenSessionUnfocused": "焦点不在该聊天时",
+        "always": "总是"
       }
     },
     "about": {
@@ -1310,7 +1440,7 @@
       "updateAvailable": "有新版本可用：v{version}",
       "updateDownload": "下载",
       "updateChecking": "正在检查更新…",
-      "updateDownloading": "{agentName}正在准备新家 {percent}%",
+      "updateDownloading": "{agentName}正在准备新家",
       "updateReadyInstall": "v{version} 已就绪",
       "updateInstalling": "正在安装更新，HanaAgent 会自动重启…",
       "updateInstallManualHint": "点「重启更新」后安装，直接退出不会自动安装",
@@ -1353,7 +1483,25 @@
       "launchAtLogin": "开机自启",
       "keepAwake": "锁屏时保持运行",
       "betaUpdates": "接收测试版更新",
-      "autoCheckUpdates": "自动检查更新"
+      "autoCheckUpdates": "自动检查更新",
+      "inviteSectionTitle": "内测通道",
+      "inviteCodeLabel": "邀请码",
+      "inviteCodePlaceholder": "粘贴你的邀请码",
+      "inviteRedeemBtn": "兑换",
+      "inviteRedeeming": "兑换中…",
+      "inviteErrorInvalid": "这枚邀请码无效，或者已经用完了。",
+      "inviteErrorNetwork": "连不上兑换服务，检查网络后再试一次。",
+      "inviteErrorActivate": "通道状态没能保存下来。",
+      "inviteConfirmTitle": "切换到内测通道？",
+      "inviteConfirmBody": "切换之后，应用会更新到测试版本。测试版升级过数据格式之后，就回不到当前的正式版了。确认后立即生效。",
+      "inviteConfirmOk": "切换",
+      "inviteConfirmCancel": "留在正式版",
+      "inviteChannelActive": "当前通道：内测通道",
+      "inviteCodesLabel": "你的邀请码",
+      "inviteCodesHint": "每枚只能用一次，绑定第一台兑换的设备。",
+      "inviteCopy": "复制",
+      "platformCheckLabel": "检查平台更新",
+      "platformCheckBtn": "检查"
     },
     "access": {
       "networkAccess": "局域网访问",
@@ -1692,8 +1840,8 @@
         "medium": "中等",
         "high": "深思",
         "auto": "自动",
-        "max": "极致",
-        "xhigh": "极致"
+        "max": "Max",
+        "xhigh": "Max"
       },
       "addedModels": "已添加的模型",
       "displayName": "显示名称",
@@ -1731,6 +1879,45 @@
       "longtermSaved": "长期情况已保存",
       "saveDay": "保存这一天",
       "daySaved": "这一天已保存",
+      "dream": {
+        "title": "Dream 整理",
+        "hint": "把重要事实与长期情况整理成一行一条，去重合并并清理过时内容",
+        "autoLabel": "每日自动 Dream",
+        "autoHint": "仅对当前 Agent 生效；默认关闭，每个逻辑日最多运行一次",
+        "run": "整理当下记忆",
+        "running": "正在整理…",
+        "restore": "恢复版本",
+        "view": "查看整理结果",
+        "success": "{time} 完成：{before} → {after} 字符，合并 {merged} 条，筛除 {forgotten} 条。",
+        "unchanged": "{time} 检查完成，本次没有需要写回的变化。",
+        "legacySuccess": "{time} 完成：{before} → {after} 字符。这是旧版运行记录，无法核对实际合并数量。",
+        "revisions": {
+          "title": "Dream 版本",
+          "listLabel": "可恢复版本",
+          "loading": "正在读取版本…",
+          "empty": "还没有可恢复的 Dream 版本",
+          "manual": "手动整理前",
+          "automatic": "自动整理前",
+          "preRestore": "恢复操作前",
+          "characters": "字符",
+          "noContent": "（无内容）",
+          "restoreThis": "恢复到此版本",
+          "confirmHint": "恢复前会先保存当前版本，之后仍可撤销。",
+          "confirmRestore": "确认恢复",
+          "cancel": "取消",
+          "close": "关闭",
+          "restored": "已恢复到所选版本；恢复前的当前版本也已保存。"
+        },
+        "failed": "Dream 整理失败，原记忆未改动",
+        "errors": {
+          "statusLoadFailed": "暂时无法读取 Dream 状态，请稍后重试",
+          "startFailed": "暂时无法开始 Dream 整理，请稍后重试",
+          "autoSaveFailed": "无法保存每日自动 Dream 设置，请稍后重试",
+          "revisionsLoadFailed": "暂时无法读取 Dream 版本，请稍后重试",
+          "revisionLoadFailed": "暂时无法读取这个 Dream 版本，请稍后重试",
+          "restoreFailed": "恢复 Dream 版本失败，当前记忆没有改动"
+        }
+      },
       "sections": {
         "today": "今天",
         "week": "本周早些时候",
@@ -2049,6 +2236,7 @@
       "headersHint": "每行一个 KEY=value。保存后会脱敏展示，请求远程 MCP 时会带上这些 headers。",
       "statusRunning": "运行中",
       "statusStopped": "已停止",
+      "statusDisabled": "已关闭",
       "statusConnecting": "连接中",
       "statusReconnecting": "重连中",
       "statusFailed": "重连失败",
@@ -2061,7 +2249,6 @@
       "env": "环境变量",
       "envHint": "每行一个 KEY=value。只会传给本地 stdio MCP server 子进程。",
       "timeout": "超时秒数",
-      "autoStart": "自动启动",
       "addConnector": "添加连接器",
       "updateConnector": "更新连接器",
       "importJson": "导入 JSON",
@@ -2076,7 +2263,56 @@
       "removeConfirm": "确定移除此连接器？已保存的 per-agent 开关会保留但不再生效。",
       "agentTitle": "助手配置",
       "agentConnectorDesc": "像技能一样，只对选中的助手启用。",
-      "saveError": "保存失败"
+      "saveError": "保存失败",
+      "enabledAgentsCount": "个助手已启用",
+      "manage": "管理",
+      "removeTitle": "移除连接器",
+      "connectionTitle": "连接方式",
+      "permissionTitle": "权限",
+      "toolsTitle": "工具",
+      "noTools": "还没有工具。启动连接器后刷新一次即可看到。",
+      "toolCollisionNotice": "{a} 与 {b} 规范化后为同一工具名，双方已停用，请调整连接器 id 或让 server 侧改名。",
+      "toolCollisionSummary": "{count} 个工具与 {other} 的工具归一化后重名，已全部停用，请调整连接器 id。",
+      "toolCollisionHostNotice": "{a} 与内置状态工具规范化后同名，该工具已停用，请调整名称。",
+      "noToolMatches": "没有匹配的工具",
+      "toolSearch": "搜索工具",
+      "selectAll": "全选",
+      "selectNone": "全不选",
+      "selectInvert": "反选",
+      "badgeReadOnly": "只读",
+      "badgeDestructive": "有破坏性",
+      "permissionAllow": "直接放行",
+      "pinTool": "常驻",
+      "permissionMode": "调用审批",
+      "permissionModeHint": "默认每次调用都经过审查。改为按清单放行后，只有你逐个放行的工具才免审。",
+      "permissionReviewAll": "全部审查",
+      "permissionAllowlist": "按清单放行",
+      "trustReadOnly": "信任只读声明",
+      "trustReadOnlyHint": "只读与否由服务器自己声明，Hana 无从核实。开启后，声明为只读的工具不再逐次审查。",
+      "deferTitle": "延迟加载",
+      "deferScopeNote": "以下开关对所有连接器一并生效，不只是这一个。",
+      "deferEnabled": "允许延迟加载",
+      "deferEnabledHint": "工具较多时先给模型一份目录，用到哪个再取哪个的完整说明。",
+      "deferBuiltin": "内置工具也延迟",
+      "deferBuiltinHint": "开启后，系统内置工具同样进入目录按需披露。直载的内置工具让模型更主动，上下文吃紧时再开。",
+      "deferThreshold": "启用阈值",
+      "deferThresholdHint": "已启用的工具数超过此值才走目录，低于此值全部直接加载。",
+      "agentConnectorEnabled": "对此助手启用",
+      "oauthWaiting": "等待在浏览器中完成授权",
+      "oauthWaitingHint": "授权页面已在浏览器中打开。完成后这里会自动更新，也可以随时取消。",
+      "oauthFailed": "授权失败",
+      "oauthTimeout": "等待授权超时",
+      "importEmpty": "没有解析到任何连接器",
+      "importPreviewHint": "确认要导入的连接器，取消勾选可以排除其中几项。",
+      "importParse": "解析",
+      "importConfirm": "导入 {count} 项",
+      "importItemOk": "已添加",
+      "commandRequired": "缺少启动命令",
+      "urlRequired": "请填写地址",
+      "urlInvalid": "地址无法解析，请带上 https:// 这样的协议前缀",
+      "urlScheme": "地址只支持 http 或 https",
+      "modeSwitchTitle": "切换连接类型",
+      "modeSwitchBody": "本地与远程用的是两套配置。切换后另一套的字段会被清空，正在运行的连接也会断开。"
     },
     "screenshot": {
       "title": "截图分享",
@@ -2212,7 +2448,7 @@
       "exporting": "正在导出",
       "importing": "正在导入",
       "noDescription": "这个角色卡没有写入 Description。",
-      "noIshiki": "未提供 Ishiki",
+      "noAgentsMd": "未提供 AGENTS.md",
       "viewDetail": "查看角色卡详情",
       "memoryCount": "{count} 个记忆项目，可选{action}",
       "memoryCountExport": "导出",
@@ -2466,7 +2702,8 @@
     "blockquote": "引用",
     "codeBlock": "代码块",
     "horizontalRule": "分隔线",
-    "list": "列表"
+    "list": "列表",
+    "blockActions": "块操作"
   },
   "rightWorkspace": {
     "activity": {
@@ -2568,7 +2805,8 @@
       "deleteSelected": "删除 {count} 项",
       "deleteN": "删除 {n} 项",
       "newMdFile": "新建 Markdown 文档",
-      "newFolder": "新建文件夹"
+      "newFolder": "新建文件夹",
+      "history": "历史版本"
     },
     "deleteConfirm": "要把「{name}」移到系统废纸篓吗？",
     "deleteSelectedConfirm": "要把选中的 {count} 项移到系统废纸篓吗？",
@@ -2613,12 +2851,16 @@
   "browser": {
     "using": "正在用浏览器",
     "close": "关闭浏览器",
+    "open": "打开浏览器",
+    "collapse": "收起",
+    "closeForSession": "关闭此会话的浏览器",
     "closeBtn": "关闭",
     "back": "后退",
     "forward": "前进",
     "reload": "刷新",
     "newTab": "新标签页",
     "closeTab": "关闭标签页",
+    "emptyWorkspace": "没有打开的标签页",
     "emergencyStop": "紧急停止 AI 控制",
     "backgroundHint": "后台浏览器运行中，点击查看",
     "background": "后台浏览器"
@@ -2644,7 +2886,11 @@
     }
   },
   "notification": {
-    "turnCompletionBody": "这一轮已经完成"
+    "chatCompletionBody": "这一轮聊天已经完成",
+    "scheduledTaskCompletionBody": "计划任务已完成：{label}",
+    "scheduledTaskCompletionFailedBody": "计划任务执行失败：{label}",
+    "patrolCompletionBody": "巡检已完成：{label}",
+    "patrolCompletionFailedBody": "巡检执行失败：{label}"
   },
   "error": {
     "pathsRequired": "需要 paths 数组",
@@ -2700,6 +2946,7 @@
     "fetchError": "抓取出错: {msg}",
     "browserError": "错误: {msg}",
     "browserAlreadyRunning": "浏览器已在运行中",
+    "browserAuthorizationRevoked": "用户已停止授权使用浏览器",
     "browserLaunched": "浏览器已启动",
     "browserNotRunning": "浏览器未在运行",
     "browserClosed": "浏览器已关闭",
@@ -2796,7 +3043,7 @@
     "settingsTimeout": "「{label}」修改确认超时，设置未变更",
     "subagentMaxConcurrent": "当前已有 {max} 个子 agent 在运行，请等待完成后再发起。",
     "subagentParentSessionRequired": "subagent 需要活跃父会话和后台任务存储，无法在当前上下文创建可继续实例。",
-    "subagentWriteAccessDenied": "无法授予写权限：父会话处于只读模式，子代理权限不能超过父会话。请把会话切换到可操作模式后重试，或改用 access:\"read\" 重新派单。",
+    "subagentWriteAccessDenied": "无法授予写权限：父会话处于只读模式，subagent 权限不能超过父会话。请把会话切换到可操作模式后重试，或改用 access:\"read\" 重新派单。",
     "subagentFailed": "子 agent 执行失败: {msg}",
     "subagentTimeout": "子 agent 执行超时（{minutes} 分钟）",
     "subagentAborted": "子 agent 已被终止",
@@ -2806,8 +3053,8 @@
     "subagentStopLength": "子 agent 未完整完成（stopReason: length，输出达到上限）。",
     "subagentStopReason": "子 agent 未完整完成（stopReason: {reason}）。",
     "subagentToolFailed": "子 agent 工具执行失败: {msg}",
-    "subagentDispatched": "子代理已出发 (task-id: {taskId})。完成后结果会自动送达。",
-    "subagentThreadQueued": "子代理已出发 (task-id: {taskId})。实例 {threadId} 正忙，已排队，前一个任务完成后接着跑。",
+    "subagentDispatched": "subagent 已出发 (task-id: {taskId})。完成后结果会自动送达。",
+    "subagentThreadQueued": "subagent 已出发 (task-id: {taskId})。实例 {threadId} 正忙，已排队，前一个任务完成后接着跑。",
     "subagentThreadClosed": "子 Agent 实例已关闭：{threadId}",
     "installSkillDisabled": "技能安装能力未启用。请在设置中开启「允许 Agent 自行创建/安装技能」。",
     "installSkillGithubDisabled": "GitHub 技能获取未启用。请在设置中开启「允许从 GitHub 获取技能」。",
@@ -2841,6 +3088,7 @@
     "platformTestUnsupported": "该平台暂不支持测试",
     "codexNoHealthCheck": "codex API 不支持健康检测",
     "modelNotFound": "找不到模型: {id}",
+    "modelContextTooLarge": "新模型的上下文空间不足，无法容纳当前会话。请先压缩当前会话，再重新切换。",
     "noUtilityModel": "未配置 utility 模型，请在设置中添加",
     "noUtilityLargeModel": "未配置 utility_large 模型，请在设置中添加",
     "modelNoProvider": "{role} 模型 \"{model}\" 没有 provider 归属",
@@ -2904,7 +3152,47 @@
     "stopTaskAlready": "任务 {taskId} 已经被终止过了",
     "stopTaskNoHandler": "任务 {taskId} 的类型不支持终止",
     "stopTaskDone": "已终止任务 {taskId}",
-    "regionUnavailable": "此区域暂时无法显示"
+    "regionUnavailable": "此区域暂时无法显示",
+    "detailShow": "详情",
+    "detailHide": "收起",
+    "code": {
+      "unexpected": "操作没能完成",
+      "sessionForkActiveTask": "这段对话里还有任务在运行，等它结束再创建分支，或者从更早的位置分支",
+      "sessionForkUnavailable": "当前版本不支持创建分支会话",
+      "subagentSessionForkCycle": "不能把 subagent 会话分支回它自己的上游",
+      "subagentRunBusy": "subagent 还在运行，等它结束再试",
+      "subagentThreadBusy": "subagent 线程正忙，稍候再试",
+      "workflowRunBusy": "工作流还在运行，等它结束再试",
+      "workflowNodeBusy": "工作流节点正忙，稍候再试",
+      "sessionCreateFailed": "新建会话没有成功，稍后重试；反复出现就看一下设置里的模型与凭证",
+      "sessionBusy": "这个会话正忙，等当前操作结束再试",
+      "sessionNotLoaded": "会话还没加载完成，稍候再试",
+      "sessionIdentityConflict": "会话身份对不上，刷新一下再试",
+      "sessionIdentityUnresolved": "认不出这条消息属于哪个会话",
+      "sessionIdentityMismatch": "这条消息不属于当前会话",
+      "sessionManifestNotFound": "找不到这个会话的记录，它可能已经被删除，刷新列表确认一下",
+      "sessionManifestUnavailable": "会话索引暂时不可用，稍后重试；一直这样就重启一下应用",
+      "sessionLocatorNotActive": "这个会话已经不是当前版本，可能被归档或移动了，刷新列表后再试",
+      "activeSessionConflict": "已经有另一个会话在进行中",
+      "sessionDeleteStagedConflict": "这个会话正在删除中，暂时不能操作",
+      "fileTooLarge": "文件太大，超出了允许的大小",
+      "invalidUpload": "上传的内容无法识别",
+      "invalidPath": "路径无效",
+      "noAvailableModel": "当前没有可用的对话模型，先去设置里配置模型和凭证",
+      "agentModelNotAvailable": "这个助手配置的模型当前不可用，去设置里给它换一个",
+      "workspaceNotFound": "找不到这个工作台",
+      "capabilityDenied": "这个操作没有获得授权",
+      "dreamUnavailable": "这个 Agent 暂时无法使用 Dream 整理",
+      "dreamMemoryDisabled": "请先为这个 Agent 开启记忆",
+      "dreamMemoryBusy": "记忆正在后台整理，请稍后再试",
+      "dreamAlreadyRunning": "当前记忆正在进行 Dream 整理",
+      "dreamNoMemory": "当前还没有重要事实或长期记忆可整理",
+      "dreamMemoryChanged": "整理期间记忆发生了变化，请重新运行 Dream",
+      "dreamRevisionNotFound": "找不到这个 Dream 版本，它可能已经被清理",
+      "dreamRestoreFailed": "恢复 Dream 版本失败，当前记忆没有改动",
+      "dreamRunFailed": "Dream 整理失败，原记忆没有改动",
+      "internalContract": "应用内部出了点问题，这不是你的操作问题；详情已记录，可在反馈时附上"
+    }
   },
   "main": {
     "tray": {
@@ -3033,6 +3321,7 @@
   },
   "sandbox": {
     "blocked": "[安全策略] {reason}\n\n此操作被 HanaAgent 的沙盒安全策略阻止，表示命令越过了路径或权限边界。先检查当前工作台、具体路径写法，以及目标文件是否本来就应该放在允许的工作台或 session 路径内。请向用户说明被拦截的路径和原因；只有用户明确决定时，再讨论是否修改沙盒设置。",
+    "blockedNeedsEscalation": "[安全策略] {reason}\n\n此命令在沙盒模式下被拦截。如果它对当前任务重要且为只读查询，请带一句话 justification 用 sandbox_permissions=\"require_escalated\" 重新执行，等待用户审批。",
     "noSudo": "禁止使用 sudo",
     "noSu": "禁止使用 su 切换用户",
     "noChmod": "禁止修改文件权限",
@@ -3170,7 +3459,25 @@
       "attachmentDirName": "文本附件"
     }
   },
+  "fileHistory": {
+    "title": "文件历史",
+    "searchPlaceholder": "搜索文件…",
+    "deletedGroup": "已删除文件",
+    "empty": "暂无历史记录",
+    "noVersions": "该文件暂无版本",
+    "selectVersion": "选择一个版本查看变化",
+    "restore": "还原此版本",
+    "restoreDone": "已还原",
+    "error": "操作失败",
+    "origin": {
+      "event": "应用内修改",
+      "watcher": "外部修改",
+      "sweep": "基线快照",
+      "restore": "还原"
+    }
+  },
   "preview": {
+    "fileHistory": "历史版本",
     "cover": {
       "saveImage": "保存图片",
       "regenerateWithPrompt": "自定义提示词生成图片",
@@ -3233,6 +3540,16 @@
       "body": "确认后，这个文件夹会成为当前对话的额外沙盒目录；不会改变工作目录，也不会写入提示词。",
       "addLabel": "添加授权目录",
       "removeLabel": "移除授权目录"
+    },
+    "mcpElicitation": {
+      "unsupportedField": "暂不支持的字段类型",
+      "choose": "请选择",
+      "requiredMissing": "请填写标有 * 的必填项"
+    },
+    "mcpTool": {
+      "allowForSession": "本会话不再询问此工具",
+      "allowAlways": "始终允许此工具",
+      "grantFailed": "无法记住这次授权"
     }
   },
   "auth": {
@@ -3324,8 +3641,8 @@
       "imageDesc": "图生视频参考图。优先使用当前会话对象，例如 { kind: \"session_file\", fileId }。",
       "durationDesc": "视频时长 4-15 秒（默认 5）",
       "ratioDesc": "长宽比：1:1, 16:9, 9:16, 4:3, 3:4, 21:9",
-      "modelDesc": "模型版本：seedance2.0, seedance2.0fast（默认 seedance2.0）",
-      "providerDesc": "指定 provider（可选）",
+      "modelDesc": "模型 ID 或简称。普通生成必须省略，使用已配置默认模型；只有用户明确指定模型或授权 override 时才填写",
+      "providerDesc": "指定 provider（可选）。普通生成必须省略，使用已配置默认 provider；只有用户明确指定 provider 或授权 override 时才填写",
       "notInitialized": "视频生成插件未初始化",
       "noProvider": "没有可用的视频生成 provider",
       "submitFailed": "视频提交失败：{error}",

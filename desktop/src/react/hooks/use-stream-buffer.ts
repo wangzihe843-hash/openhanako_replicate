@@ -436,6 +436,8 @@ class StreamBufferManager {
                 ...(id ? { id } : {}),
                 done: true,
                 success: !!msg.success,
+                status: msg.status || (msg.success ? 'succeeded' : 'failed'),
+                ...(typeof msg.error === 'string' && msg.error ? { error: msg.error } : {}),
                 details: msg.details,
               };
               const allDone = tools.every(t => t.done);
@@ -491,6 +493,12 @@ class StreamBufferManager {
         break;
 
       case 'turn_end':
+        useStore.getState().bindPersistedTurnEntries?.(buf.sessionPath, {
+          turnInputEntryId: msg.turnInputEntryId,
+          userEntryId: msg.userEntryId,
+          assistantEntryId: msg.assistantEntryId,
+          assistantMessageId: buf.messageId,
+        });
         this.finishBufferTurn(buf);
         break;
 

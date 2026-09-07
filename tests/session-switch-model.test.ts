@@ -1,30 +1,26 @@
+import fs from "fs";
+import os from "os";
 import path from "path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const {
-  convertAgentMessagesToLlmMock,
-  estimateTokensMock,
-  findCutPointMock,
-  prepareCompactionMock,
-} = vi.hoisted(() => ({
-  convertAgentMessagesToLlmMock: vi.fn(async (messages) => messages),
+const { estimateTokensMock } = vi.hoisted(() => ({
   estimateTokensMock: vi.fn(() => 2000),
-  findCutPointMock: vi.fn(() => ({ firstKeptEntryIndex: 1, turnStartIndex: -1, isSplitTurn: false })),
-  prepareCompactionMock: vi.fn(),
 }));
 
 vi.mock("../lib/pi-sdk/index.js", () => ({
+  buildNativeCompactionRequestShapes: vi.fn(() => ({ requests: [] })),
   completeSimple: vi.fn(),
-  convertAgentMessagesToLlm: convertAgentMessagesToLlmMock,
+  convertAgentMessagesToLlm: vi.fn(async (messages) => messages),
   createAgentSession: vi.fn(),
   SessionManager: {
     create: vi.fn(),
     open: vi.fn(),
   },
   estimateTokens: estimateTokensMock,
-  findCutPoint: findCutPointMock,
+  findCutPoint: vi.fn(),
   generateSummary: vi.fn(),
-  prepareCompaction: prepareCompactionMock,
+  prepareCompaction: vi.fn(),
+  runAgentLoop: vi.fn(),
   emitSessionShutdown: vi.fn(),
   refreshSessionModelFromRegistry: vi.fn(),
 }));
@@ -39,309 +35,228 @@ vi.mock("../lib/debug-log.js", () => ({
 
 import { SessionCoordinator } from "../core/session-coordinator.ts";
 
-const agentsDir = "/tmp/agents";
-const sessionPath = `${agentsDir}/hana/sessions/session.jsonl`;
-const missingSessionPath = `${agentsDir}/hana/sessions/missing.jsonl`;
+const tempRoots: string[] = [];
+
+function createHarness({
+  oldContextWindow = 128000,
+  currentTokens = 1000,
+  messages = [
+    { role: "system", content: "system" },
+    { role: "user", content: "question" },
+    { role: "assistant", content: "answer" },
+  ],
+  thinkingLevel = "medium",
+  modelAvailability = undefined,
+}: any = {}) {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-model-switch-"));
+  tempRoots.push(tempRoot);
+  const agentsDir = path.join(tempRoot, "agents");
+  const sessionDir = path.join(agentsDir, "hana", "sessions");
+  const sessionPath = path.join(sessionDir, "session.jsonl");
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.writeFileSync(sessionPath, '{"type":"session","id":"test-session"}\n', "utf8");
+
+  const emittedEvents: any[] = [];
+  const coord = new SessionCoordinator({
+    agentsDir,
+    getAgent: () => ({ sessionDir }),
+    getActiveAgentId: () => "hana",
+    getModels: () => null,
+    getResourceLoader: () => null,
+    getSkills: () => null,
+    buildTools: () => ({ tools: [], customTools: [] }),
+    emitEvent: (event, targetPath) => emittedEvents.push({ event, sessionPath: targetPath }),
+    getHomeCwd: () => tempRoot,
+    agentIdFromSessionPath: () => null,
+    switchAgentOnly: async () => {},
+    getConfig: () => ({}),
+    getPrefs: () => ({ getThinkingLevel: () => thinkingLevel }),
+    getAgents: () => new Map(),
+    getActivityStore: () => null,
+    getAgentById: () => null,
+    listAgents: () => [],
+  });
+  const writeSessionMeta = vi.spyOn(coord, "writeSessionMeta").mockResolvedValue(undefined);
+
+  let reportedTokens = currentTokens;
+  const session: any = {
+    model: { id: "old-model", provider: "test", contextWindow: oldContextWindow },
+    isCompacting: false,
+    getContextUsage: vi.fn(() => ({ tokens: reportedTokens })),
+    agent: { state: { messages } },
+    setThinkingLevel: vi.fn(),
+  };
+  const setModel = vi.fn(async (model) => {
+    session.model = model;
+  });
+  session.setModel = setModel;
+
+  const entry: any = {
+    session,
+    modelId: "old-model",
+    modelProvider: "test",
+    thinkingLevel,
+    ...(modelAvailability ? { modelAvailability } : {}),
+  };
+  coord.sessions.set(sessionPath, entry);
+
+  return {
+    coord,
+    emittedEvents,
+    entry,
+    messages,
+    session,
+    sessionPath,
+    setModel,
+    setReportedTokens: (tokens) => { reportedTokens = tokens; },
+    writeSessionMeta,
+  };
+}
 
 describe("SessionCoordinator.switchSessionModel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    convertAgentMessagesToLlmMock.mockImplementation(async (messages) => messages);
     estimateTokensMock.mockReturnValue(2000);
-    findCutPointMock.mockReturnValue({ firstKeptEntryIndex: 1, turnStartIndex: -1, isSplitTurn: false });
+  });
+
+  afterEach(() => {
+    for (const tempRoot of tempRoots.splice(0)) {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("reports per-session model switch state through a public query", () => {
-    const coord = new SessionCoordinator({
-      agentsDir,
-      getAgent: () => ({ sessionDir: `${agentsDir}/hana/sessions` }),
-      getActiveAgentId: () => "hana",
-      getModels: () => null,
-      getResourceLoader: () => null,
-      getSkills: () => null,
-      buildTools: () => ({ tools: [], customTools: [] }),
-      emitEvent: () => {},
-      getHomeCwd: () => "/tmp",
-      agentIdFromSessionPath: () => null,
-      switchAgentOnly: async () => {},
-      getConfig: () => ({}),
-      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
-      getAgents: () => new Map(),
-      getActivityStore: () => null,
-      getAgentById: () => null,
-      listAgents: () => [],
-    });
-
-    coord.sessions.set(sessionPath, {
-      session: {},
-      _switching: true,
-    });
+    const { coord, sessionPath } = createHarness();
+    coord.sessions.get(sessionPath)._switching = true;
 
     expect(coord.isSessionSwitching(sessionPath)).toBe(true);
-    expect(coord.isSessionSwitching(missingSessionPath)).toBe(false);
+    expect(coord.isSessionSwitching(path.join(path.dirname(sessionPath), "missing.jsonl"))).toBe(false);
   });
 
-  it("does not crash when context usage exists and adaptation is needed", async () => {
-    const coord = new SessionCoordinator({
-      agentsDir,
-      getAgent: () => ({ sessionDir: `${agentsDir}/hana/sessions` }),
-      getActiveAgentId: () => "hana",
-      getModels: () => null,
-      getResourceLoader: () => null,
-      getSkills: () => null,
-      buildTools: () => ({ tools: [], customTools: [] }),
-      emitEvent: () => {},
-      getHomeCwd: () => "/tmp",
-      agentIdFromSessionPath: () => null,
-      switchAgentOnly: async () => {},
-      getConfig: () => ({}),
-      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
-      getAgents: () => new Map(),
-      getActivityStore: () => null,
-      getAgentById: () => null,
-      listAgents: () => [],
+  it("allows a short conversation to switch from a large model to a smaller model", async () => {
+    const { coord, entry, sessionPath, setModel } = createHarness({
+      oldContextWindow: 128000,
+      currentTokens: 6000,
     });
+    const targetModel = { id: "small-model", provider: "test", contextWindow: 12000 };
 
-    const setModel = vi.fn(async () => {});
-    const entry = {
-      session: {
-        model: { id: "old-model", provider: "test", contextWindow: 64000 },
-        isCompacting: false,
-        getContextUsage: () => ({ tokens: 10000 }),
-        agent: {
-          state: {
-            messages: [
-              { role: "system", content: "sys" },
-              { role: "user", content: "question" },
-              { role: "assistant", content: "answer" },
-            ],
-          },
-        },
-        setModel,
-      },
-      modelId: "old-model",
-      modelProvider: "test",
-    };
-    coord.sessions.set(sessionPath, entry);
+    const result = await coord.switchSessionModel(sessionPath, targetModel);
 
-    const compactSpy = (vi.spyOn(coord, "_compactWithModel").mockResolvedValue as any)();
-    const truncateSpy = (vi.spyOn(coord, "_hardTruncate").mockResolvedValue as any)();
-
-    const result = await coord.switchSessionModel(sessionPath, {
-      id: "new-model",
-      provider: "test",
-      contextWindow: 12000,
-    });
-
-    expect(result).toEqual({ adaptations: ["compacted"], thinkingLevel: "medium" });
-    expect(compactSpy).toHaveBeenCalledOnce();
-    expect(truncateSpy).not.toHaveBeenCalled();
-    expect(setModel).toHaveBeenCalledWith({
-      id: "new-model",
-      provider: "test",
-      contextWindow: 12000,
-    });
-    expect(entry.modelId).toBe("new-model");
+    expect(result).toEqual({ adaptations: [], thinkingLevel: "medium" });
+    expect(setModel).toHaveBeenCalledWith(targetModel);
+    expect(entry.modelId).toBe("small-model");
     expect(entry.modelProvider).toBe("test");
   });
 
-  it("passes model-switch lifecycle options through _compactWithModel", async () => {
-    const coord = new SessionCoordinator({
-      agentsDir,
-      getAgent: () => ({ sessionDir: `${agentsDir}/hana/sessions` }),
-      getActiveAgentId: () => "hana",
-      getModels: () => null,
-      getResourceLoader: () => null,
-      getSkills: () => null,
-      buildTools: () => ({ tools: [], customTools: [] }),
-      emitEvent: () => {},
-      getHomeCwd: () => "/tmp",
-      agentIdFromSessionPath: () => null,
-      switchAgentOnly: async () => {},
-      getConfig: () => ({}),
-      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
-      getAgents: () => new Map(),
-      getActivityStore: () => null,
-      getAgentById: () => null,
-      listAgents: () => [],
+  it("rejects an oversized switch before changing the session or JSONL", async () => {
+    const {
+      coord,
+      emittedEvents,
+      entry,
+      messages,
+      sessionPath,
+      setModel,
+      writeSessionMeta,
+    } = createHarness({
+      oldContextWindow: 128000,
+      currentTokens: 10000,
+    });
+    const jsonlBefore = fs.readFileSync(sessionPath, "utf8");
+    const messagesBefore = structuredClone(messages);
+
+    await expect(coord.switchSessionModel(sessionPath, {
+      id: "small-model",
+      provider: "test",
+      contextWindow: 12000,
+    })).rejects.toMatchObject({
+      code: "MODEL_CONTEXT_TOO_LARGE",
+      status: 409,
+      currentTokens: 10000,
+      effectiveWindow: 6800,
     });
 
-    prepareCompactionMock.mockReturnValue({
-      firstKeptEntryId: "entry-keep",
-      tokensBefore: 4321,
-      settings: { reserveTokens: 4000, keepRecentTokens: 5000 },
-    });
-    const compactedMessages = [{ role: "user", content: "after compaction" }];
-    const emit = vi.fn();
-    const session = {
-      model: { id: "old-model", reasoning: false, contextWindow: 128000 },
-      _emit: emit,
-      extensionRunner: { hasHandlers: vi.fn(() => false) },
-      sessionManager: {
-        getBranch: vi.fn(() => [{ type: "message", id: "entry-old" }, { type: "message", id: "entry-keep" }]),
-        appendCompaction: vi.fn(() => "compaction-entry"),
-        buildSessionContext: vi.fn(() => ({ messages: compactedMessages })),
-      },
-      agent: {
-        state: {
-          systemPrompt: "system prompt",
-          messages: [{ role: "user", content: "before compaction" }],
-          thinkingLevel: "off",
-        },
-        streamFn: vi.fn(async () => ({
-          result: vi.fn(async () => ({
-            stopReason: "stop",
-            content: [{ type: "text", text: "cache summary" }],
-          })),
-        })),
-        convertToLlm: vi.fn(async (messages) => messages),
-        replaceMessages: vi.fn(),
-      },
-    };
-
-    const sessionPath = path.join(agentsDir, "hana", "sessions", "compact.jsonl");
-    const result = await coord._compactWithModel(sessionPath, session, 5000, session.model);
-
-    expect(result.summary).toBe("cache summary");
-    expect(emit).toHaveBeenNthCalledWith(1, { type: "compaction_start", reason: "model_switch" });
-    expect(emit).toHaveBeenLastCalledWith({
-      type: "compaction_end",
-      reason: "model_switch",
-      result: expect.objectContaining({ summary: "cache summary" }),
-      aborted: false,
-      willRetry: false,
-    });
+    expect(setModel).not.toHaveBeenCalled();
+    expect(writeSessionMeta).not.toHaveBeenCalled();
+    expect(entry.modelId).toBe("old-model");
+    expect(entry.modelProvider).toBe("test");
+    expect(entry._switching).toBe(false);
+    expect(messages).toEqual(messagesBefore);
+    expect(fs.readFileSync(sessionPath, "utf8")).toBe(jsonlBefore);
+    expect(emittedEvents).toEqual([]);
   });
 
-  it("emits lifecycle and session_compact events for model-switch hard truncation", async () => {
-    const coord = new SessionCoordinator({
-      agentsDir,
-      getAgent: () => ({ sessionDir: `${agentsDir}/hana/sessions` }),
-      getActiveAgentId: () => "hana",
-      getModels: () => null,
-      getResourceLoader: () => null,
-      getSkills: () => null,
-      buildTools: () => ({ tools: [], customTools: [] }),
-      emitEvent: () => {},
-      getHomeCwd: () => "/tmp",
-      agentIdFromSessionPath: () => null,
-      switchAgentOnly: async () => {},
-      getConfig: () => ({}),
-      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
-      getAgents: () => new Map(),
-      getActivityStore: () => null,
-      getAgentById: () => null,
-      listAgents: () => [],
+  it("allows switching from a small model to a larger model", async () => {
+    const { coord, sessionPath, setModel } = createHarness({
+      oldContextWindow: 12000,
+      currentTokens: 6000,
     });
+    const targetModel = { id: "large-model", provider: "test", contextWindow: 128000 };
 
-    const branch = [
-      { type: "message", id: "entry-old", message: { role: "user", content: "old context" } },
-      { type: "message", id: "entry-keep", message: { role: "assistant", content: "keep this" } },
-    ];
-    const compactedMessages = [{ role: "compactionSummary", summary: "truncated" }];
-    const compactionEntry = {
-      type: "compaction",
-      id: "compaction-entry",
-      summary: "[由于模型切换，早期对话历史已被截断]",
-    };
-    const emit = vi.fn();
-    const extensionEmit = vi.fn(async () => {});
-    const appendCompaction = vi.fn(() => "compaction-entry");
-    const replaceMessages = vi.fn();
-    const session = {
-      _emit: emit,
-      extensionRunner: {
-        hasHandlers: vi.fn((event) => event === "session_compact"),
-        emit: extensionEmit,
-      },
-      sessionManager: {
-        getBranch: vi.fn(() => branch),
-        appendCompaction,
-        getEntry: vi.fn(() => compactionEntry),
-        buildSessionContext: vi.fn(() => ({ messages: compactedMessages })),
-      },
-      agent: { replaceMessages },
-    };
+    const result = await coord.switchSessionModel(sessionPath, targetModel);
 
-    const sessionPath = path.join(agentsDir, "hana", "sessions", "truncate.jsonl");
-    const result = await coord._hardTruncate(sessionPath, session, 100);
+    expect(result.adaptations).toEqual([]);
+    expect(setModel).toHaveBeenCalledWith(targetModel);
+  });
 
-    expect(result.details.reason).toBe("model-switch-truncation");
-    expect(appendCompaction).toHaveBeenCalledWith(
-      "[由于模型切换，早期对话历史已被截断]",
-      "entry-keep",
-      expect.any(Number),
-      expect.objectContaining({ reason: "model-switch-truncation" }),
-      false,
-    );
-    expect(replaceMessages).toHaveBeenCalledWith(compactedMessages);
-    expect(extensionEmit).toHaveBeenCalledWith({
-      type: "session_compact",
-      compactionEntry,
-      fromExtension: false,
+  it("allows retrying the switch after the user manually compacts the conversation", async () => {
+    const { coord, messages, sessionPath, setModel, setReportedTokens } = createHarness({
+      oldContextWindow: 128000,
+      currentTokens: 10000,
     });
-    expect(emit).toHaveBeenNthCalledWith(1, { type: "compaction_start", reason: "model_switch" });
-    expect(emit).toHaveBeenLastCalledWith({
-      type: "compaction_end",
-      reason: "model_switch",
-      result: expect.objectContaining({
-        summary: "[由于模型切换，早期对话历史已被截断]",
-      }),
-      aborted: false,
-      willRetry: false,
+    const targetModel = { id: "small-model", provider: "test", contextWindow: 12000 };
+
+    await expect(coord.switchSessionModel(sessionPath, targetModel)).rejects.toMatchObject({
+      code: "MODEL_CONTEXT_TOO_LARGE",
+    });
+    expect(setModel).not.toHaveBeenCalled();
+
+    messages.splice(0, messages.length, { role: "user", content: "retained after manual compact" });
+    setReportedTokens(null);
+    const result = await coord.switchSessionModel(sessionPath, targetModel);
+
+    expect(result.adaptations).toEqual([]);
+    expect(estimateTokensMock).toHaveBeenCalledOnce();
+    expect(setModel).toHaveBeenCalledWith(targetModel);
+  });
+
+  it("can leave an unavailable old model when the conversation fits the target", async () => {
+    const { coord, entry, session, sessionPath, setModel } = createHarness({
+      oldContextWindow: 0,
+      currentTokens: 6000,
+      modelAvailability: {
+        available: false,
+        reason: "model_removed",
+        modelRef: "test/old-model",
+      },
+    });
+    session.model.api = "hana-session-model-unavailable";
+    const targetModel = { id: "small-model", provider: "test", contextWindow: 12000 };
+
+    await coord.switchSessionModel(sessionPath, targetModel);
+
+    expect(setModel).toHaveBeenCalledWith(targetModel);
+    expect(entry.modelAvailability).toEqual({
+      available: true,
+      reason: null,
+      modelRef: "test/small-model",
     });
   });
 
   it("falls back from xhigh to high when switching to a model without max thinking support", async () => {
-    const coord = new SessionCoordinator({
-      agentsDir,
-      getAgent: () => ({ sessionDir: `${agentsDir}/hana/sessions` }),
-      getActiveAgentId: () => "hana",
-      getModels: () => null,
-      getResourceLoader: () => null,
-      getSkills: () => null,
-      buildTools: () => ({ tools: [], customTools: [] }),
-      emitEvent: () => {},
-      getHomeCwd: () => "/tmp",
-      agentIdFromSessionPath: () => null,
-      switchAgentOnly: async () => {},
-      getConfig: () => ({}),
-      getPrefs: () => ({ getThinkingLevel: () => "xhigh" }),
-      getAgents: () => new Map(),
-      getActivityStore: () => null,
-      getAgentById: () => null,
-      listAgents: () => [],
-    });
-    (vi.spyOn(coord, "writeSessionMeta").mockResolvedValue as any)();
-
-    const setModel = vi.fn(async () => {});
-    const setThinkingLevel = vi.fn();
-    const entry = {
-      session: {
-        model: { id: "max-model", provider: "test", contextWindow: 64000, xhigh: true },
-        isCompacting: false,
-        getContextUsage: () => ({ tokens: 1000 }),
-        agent: { state: { messages: [] } },
-        setModel,
-        setThinkingLevel,
-      },
-      modelId: "max-model",
-      modelProvider: "test",
+    const { coord, entry, session, sessionPath, setModel, writeSessionMeta } = createHarness({
+      currentTokens: 1000,
       thinkingLevel: "xhigh",
-    };
-    coord.sessions.set(sessionPath, entry);
-
-    const result = await coord.switchSessionModel(sessionPath, {
-      id: "regular-model",
-      provider: "test",
-      contextWindow: 64000,
     });
+    session.model.xhigh = true;
+    const targetModel = { id: "regular-model", provider: "test", contextWindow: 64000 };
+
+    const result = await coord.switchSessionModel(sessionPath, targetModel);
 
     expect(result).toEqual({ adaptations: [], thinkingLevel: "high" });
     expect(setModel).toHaveBeenCalledOnce();
-    expect(setThinkingLevel).toHaveBeenCalledWith("high");
+    expect(session.setThinkingLevel).toHaveBeenCalledWith("high");
     expect(entry.thinkingLevel).toBe("high");
-    expect(coord.writeSessionMeta).toHaveBeenCalledWith(sessionPath, expect.objectContaining({
+    expect(writeSessionMeta).toHaveBeenCalledWith(sessionPath, expect.objectContaining({
       thinkingLevel: "high",
     }));
   });

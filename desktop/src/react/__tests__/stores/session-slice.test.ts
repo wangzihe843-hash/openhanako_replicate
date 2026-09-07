@@ -81,7 +81,6 @@ describe('session-slice', () => {
 
   it('已知 locator 的 session-owned map 用 sessionId 做存储 key', () => {
     const todo = { content: 'write spec', status: 'pending' } as never;
-    const drift = { version: 1, fingerprint: 'new', frozenFingerprint: 'old', hasDrift: true } as never;
     const confirmation = {
       type: 'session_confirmation',
       confirmId: 'confirm_1',
@@ -98,7 +97,6 @@ describe('session-slice', () => {
     slice.setSessionTodosForPath('/s1', [todo]);
     slice.setSessionAuthorizedFolders('/s1', ['/repo']);
     slice.bumpTodosLiveVersion('/s1');
-    slice.setSessionCapabilityDrift('/s1', drift);
     slice.setSessionCapabilityRefreshing('/s1', true);
     slice.setPendingSessionConfirmation('/s1', confirmation);
 
@@ -107,17 +105,14 @@ describe('session-slice', () => {
     expect(slice.sessionTodos).toEqual([todo]);
     expect(slice.sessionAuthorizedFoldersByPath).toEqual({ sess_1: ['/repo'] });
     expect(slice.todosLiveVersionBySession).toEqual({ sess_1: 1 });
-    expect(slice.capabilityDriftBySession).toEqual({ sess_1: drift });
     expect(slice.capabilityRefreshingSessions).toEqual(['sess_1']);
     expect(slice.pendingSessionConfirmationsByPath).toEqual({ sess_1: confirmation });
 
     slice.removeSessionStream('/s1');
-    slice.setSessionCapabilityDrift('/s1', null);
     slice.setSessionCapabilityRefreshing('/s1', false);
     slice.resolvePendingSessionConfirmation('confirm_1');
 
     expect(slice.sessionStreams).toEqual({});
-    expect(slice.capabilityDriftBySession).toEqual({});
     expect(slice.capabilityRefreshingSessions).toEqual([]);
     expect(slice.pendingSessionConfirmationsByPath).toEqual({});
   });

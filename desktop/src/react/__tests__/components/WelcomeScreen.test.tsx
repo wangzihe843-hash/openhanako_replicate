@@ -60,7 +60,7 @@ describe('WelcomeScreen workspace picker', () => {
       agentName: 'Hanako',
       agentAvatarUrl: null,
       agentYuan: 'hanako',
-      currentAgentId: null,
+      currentAgentId: 'hana',
       selectedAgentId: null,
       memoryEnabled: true,
       selectedFolder: '/workspace/Desktop',
@@ -88,6 +88,7 @@ describe('WelcomeScreen workspace picker', () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -184,7 +185,7 @@ describe('WelcomeScreen workspace picker', () => {
 
     expect(useStore.getState().selectedFolder).toBe('/workspace/Desktop');
     expect(useStore.getState().cwdHistory).toEqual([]);
-    expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/config/workspaces/recent', expect.objectContaining({
+    expect(mocks.hanaFetch).toHaveBeenCalledWith('/api/config/workspaces/recent?agentId=hana', expect.objectContaining({
       method: 'DELETE',
       body: JSON.stringify({ path: '/workspace/Desktop/project-hana' }),
     }));
@@ -294,5 +295,77 @@ describe('WelcomeScreen workspace picker', () => {
       method: 'POST',
       body: JSON.stringify({ modelId: 'gpt-5.2', provider: 'openai' }),
     }));
+  });
+
+  it('uses the target agent effective default workspace when no explicit home folder is configured', async () => {
+    useStore.setState({
+      agents: [
+        {
+          id: 'hana',
+          name: 'Hanako',
+          yuan: 'hanako',
+          isPrimary: true,
+          homeFolder: '/workspace/Hana',
+          effectiveHomeFolder: '/workspace/Hana',
+        },
+        {
+          id: 'mio',
+          name: 'Mio',
+          yuan: 'hanako',
+          isPrimary: false,
+          homeFolder: null,
+          effectiveHomeFolder: '/home/test/Desktop/OH-WorkSpace',
+        },
+      ],
+      currentAgentId: 'hana',
+      selectedAgentId: null,
+      selectedFolder: '/workspace/Hana',
+      homeFolder: '/workspace/Hana',
+    } as never);
+    const { WelcomeScreen } = await import('../../components/WelcomeScreen');
+
+    render(<WelcomeScreen />);
+    fireEvent.click(screen.getByRole('button', { name: /Mio/ }));
+
+    expect(useStore.getState().selectedAgentId).toBe('mio');
+    expect(useStore.getState().selectedFolder).toBe('/home/test/Desktop/OH-WorkSpace');
+  });
+
+  it('does not reload the visible workspace when two agents resolve to the same folder', async () => {
+    useStore.setState({
+      agents: [
+        {
+          id: 'hana',
+          name: 'Hanako',
+          yuan: 'hanako',
+          isPrimary: true,
+          homeFolder: '/home/test/Desktop/OH-WorkSpace',
+          effectiveHomeFolder: '/home/test/Desktop/OH-WorkSpace',
+        },
+        {
+          id: 'mio',
+          name: 'Mio',
+          yuan: 'hanako',
+          isPrimary: false,
+          homeFolder: '/home/test/Desktop/OH-WorkSpace',
+          effectiveHomeFolder: '/home/test/Desktop/OH-WorkSpace',
+        },
+      ],
+      currentAgentId: 'hana',
+      selectedAgentId: null,
+      selectedFolder: '/home/test/Desktop/OH-WorkSpace',
+      deskBasePath: '/home/test/Desktop/OH-WorkSpace',
+      homeFolder: '/home/test/Desktop/OH-WorkSpace',
+    } as never);
+    const deskActions = await import('../../stores/desk-actions');
+    const activateSpy = vi.spyOn(deskActions, 'activateWorkspaceDesk');
+    const { WelcomeScreen } = await import('../../components/WelcomeScreen');
+
+    render(<WelcomeScreen />);
+    fireEvent.click(screen.getByRole('button', { name: /Mio/ }));
+
+    expect(useStore.getState().selectedAgentId).toBe('mio');
+    expect(useStore.getState().selectedFolder).toBe('/home/test/Desktop/OH-WorkSpace');
+    expect(activateSpy).not.toHaveBeenCalled();
   });
 });

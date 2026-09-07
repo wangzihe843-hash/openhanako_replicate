@@ -1,4 +1,4 @@
-// shared/config-scope.js
+// shared/config-scope.ts
 
 import { CONFIG_SCHEMA } from './config-schema.ts';
 

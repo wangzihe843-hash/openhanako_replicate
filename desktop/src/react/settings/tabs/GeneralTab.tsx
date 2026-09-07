@@ -10,7 +10,8 @@ import { readConfigBoolean } from '../resource-state';
 import type { AutoLaunchStatus } from '../../types';
 import {
   normalizeNotificationPreferences as normalizeSharedNotificationPreferences,
-  normalizeTurnCompletionNotificationMode,
+  normalizeBackgroundCompletionNotificationMode,
+  normalizeChatCompletionNotificationMode,
 } from '../../../../../shared/notification-preferences.ts';
 import {
   DEFAULT_QUICK_CHAT_REUSE_TIMEOUT_MINUTES,
@@ -19,20 +20,19 @@ import {
 } from '../../../../../shared/quick-chat-preferences.ts';
 import styles from '../Settings.module.css';
 
-type TurnCompletionNotificationMode = 'never' | 'when_unfocused' | 'when_session_unfocused';
+type ChatCompletionNotificationMode = 'never' | 'when_unfocused' | 'when_session_unfocused';
+type BackgroundCompletionNotificationMode = 'never' | 'when_unfocused' | 'always';
 
 interface NotificationPreferences {
-  turnCompletion: TurnCompletionNotificationMode;
+  chatCompletion: ChatCompletionNotificationMode;
+  scheduledTaskCompletion: BackgroundCompletionNotificationMode;
+  patrolCompletion: BackgroundCompletionNotificationMode;
 }
 
 interface QuickChatPreferences {
   shortcut: string;
   reuseTimeoutMinutes: number;
 }
-
-const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
-  turnCompletion: 'never',
-};
 
 function formatShortcut(shortcut: string): string[] {
   return String(shortcut || DEFAULT_QUICK_CHAT_SHORTCUT)
@@ -167,8 +167,12 @@ function ReuseTimeoutInput({
   );
 }
 
-function normalizeTurnCompletionMode(value: unknown): TurnCompletionNotificationMode {
-  return normalizeTurnCompletionNotificationMode(value) as TurnCompletionNotificationMode;
+function normalizeChatCompletionMode(value: unknown): ChatCompletionNotificationMode {
+  return normalizeChatCompletionNotificationMode(value) as ChatCompletionNotificationMode;
+}
+
+function normalizeBackgroundCompletionMode(value: unknown): BackgroundCompletionNotificationMode {
+  return normalizeBackgroundCompletionNotificationMode(value) as BackgroundCompletionNotificationMode;
 }
 
 function normalizeNotificationPreferences(value: unknown): NotificationPreferences {
@@ -360,18 +364,25 @@ export function GeneralTab() {
     }
   }, [hana, keepAwake, showToast]);
 
-  const handleTurnCompletionChange = useCallback(async (value: string) => {
+  const saveNotificationPreference = useCallback(async (
+    key: keyof NotificationPreferences,
+    value: string,
+  ) => {
     if (!notificationPrefs) return;
-    const turnCompletion = normalizeTurnCompletionMode(value);
     const previous = notificationPrefs;
-    const next = { turnCompletion };
+    const next = {
+      ...notificationPrefs,
+      [key]: key === 'chatCompletion'
+        ? normalizeChatCompletionMode(value)
+        : normalizeBackgroundCompletionMode(value),
+    };
     setNotificationPrefs(next);
     setNotificationSaving(true);
     try {
       const res = await hanaFetch('/api/preferences/notifications', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notifications: next }),
+        body: JSON.stringify({ notifications: { [key]: next[key] } }),
       });
       const data = await res.json();
       if (data?.error) throw new Error(data.error);
@@ -448,16 +459,51 @@ export function GeneralTab() {
 
       <SettingsSection title={t('settings.general.notifications.title')}>
         <SettingsRow
-          label={t('settings.general.notifications.turnCompletion')}
+          data-testid="chat-completion-notification-row"
+          label={t('settings.general.notifications.chatCompletion')}
           control={
             <SelectWidget
               options={[
-                { value: 'never', label: t('settings.general.notifications.turnCompletionNever') },
-                { value: 'when_unfocused', label: t('settings.general.notifications.turnCompletionWhenUnfocused') },
-                { value: 'when_session_unfocused', label: t('settings.general.notifications.turnCompletionWhenSessionUnfocused') },
+                { value: 'never', label: t('settings.general.notifications.never') },
+                { value: 'when_unfocused', label: t('settings.general.notifications.whenUnfocused') },
+                { value: 'when_session_unfocused', label: t('settings.general.notifications.whenSessionUnfocused') },
               ]}
-              value={notificationPrefs?.turnCompletion || ''}
-              onChange={handleTurnCompletionChange}
+              value={notificationPrefs?.chatCompletion || ''}
+              onChange={(value) => void saveNotificationPreference('chatCompletion', value)}
+              placeholder={t('common.loading')}
+              disabled={notificationSaving || !notificationPrefs}
+            />
+          }
+        />
+        <SettingsRow
+          data-testid="scheduled-task-completion-notification-row"
+          label={t('settings.general.notifications.scheduledTaskCompletion')}
+          control={
+            <SelectWidget
+              options={[
+                { value: 'never', label: t('settings.general.notifications.never') },
+                { value: 'when_unfocused', label: t('settings.general.notifications.whenUnfocused') },
+                { value: 'always', label: t('settings.general.notifications.always') },
+              ]}
+              value={notificationPrefs?.scheduledTaskCompletion || ''}
+              onChange={(value) => void saveNotificationPreference('scheduledTaskCompletion', value)}
+              placeholder={t('common.loading')}
+              disabled={notificationSaving || !notificationPrefs}
+            />
+          }
+        />
+        <SettingsRow
+          data-testid="patrol-completion-notification-row"
+          label={t('settings.general.notifications.patrolCompletion')}
+          control={
+            <SelectWidget
+              options={[
+                { value: 'never', label: t('settings.general.notifications.never') },
+                { value: 'when_unfocused', label: t('settings.general.notifications.whenUnfocused') },
+                { value: 'always', label: t('settings.general.notifications.always') },
+              ]}
+              value={notificationPrefs?.patrolCompletion || ''}
+              onChange={(value) => void saveNotificationPreference('patrolCompletion', value)}
               placeholder={t('common.loading')}
               disabled={notificationSaving || !notificationPrefs}
             />

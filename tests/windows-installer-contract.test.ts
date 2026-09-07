@@ -37,6 +37,17 @@ describe("Windows NSIS installer contract", () => {
     expect(source).toContain('RMDir /r "$INSTDIR\\resources\\server"');
   });
 
+  it("removes all versioned seed payloads before replacing the install surface", () => {
+    const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
+    const macro = extractMacro(source, "hanakoRemoveOwnedInstallTrees");
+    const seedRemoval = 'RMDir /r "$INSTDIR\\resources\\seed"';
+    const resourcesRemoval = 'RMDir "$INSTDIR\\resources"';
+
+    expect(macro).toContain(seedRemoval);
+    expect(macro).toContain(resourcesRemoval);
+    expect(macro.indexOf(seedRemoval)).toBeLessThan(macro.indexOf(resourcesRemoval));
+  });
+
   it("removes legacy unpacked Electron app directories before overlaying new files", () => {
     const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
     const macro = extractMacro(source, "hanakoRemoveOwnedInstallTrees");
@@ -155,8 +166,8 @@ describe("Windows NSIS installer contract", () => {
     expect(verify).toContain('$INSTDIR\\${APP_EXECUTABLE_FILENAME}');
     expect(verify).toContain('$INSTDIR\\resources\\app.asar');
     expect(verify).toContain('$INSTDIR\\resources\\app-update.yml');
-    expect(verify).toContain('$INSTDIR\\resources\\seed\\seed-train.json');
-    expect(verify).toContain('$INSTDIR\\resources\\seed\\seed-train.json.sig');
+    expect(verify).toContain('hanakoRequireInstallSurfaceGlob "$INSTDIR\\resources\\seed" "seed-train-*.json"');
+    expect(verify).toContain('hanakoRequireInstallSurfaceGlob "$INSTDIR\\resources\\seed" "seed-train-*.json.sig"');
     expect(verify).toContain('hanakoRequireInstallSurfaceGlob "$INSTDIR\\resources\\seed" "server-*.tar.gz"');
     expect(verify).toContain('hanakoRequireInstallSurfaceGlob "$INSTDIR\\resources\\seed" "renderer-*.tar.gz"');
     expect(verify).toContain('$INSTDIR\\resources\\git\\cmd\\git.exe');
@@ -210,5 +221,15 @@ describe("Windows NSIS installer contract", () => {
     expect(removeTrees).toContain('hanakoInstallTimingMark "removeOwnedInstallTrees" "start"');
     expect(removeTrees).toContain('hanakoInstallTimingMark "removeOwnedInstallTrees" "end"');
     expect(verify).toContain("hanakoPersistInstallTiming");
+  });
+
+  it("grants the restricted-app-packages sandbox ACE on the install directory during install", () => {
+    const source = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf-8");
+    const macro = extractMacro(source, "hanakoGrantSandboxAce");
+    const install = extractMacro(source, "customInstall");
+
+    expect(macro).toContain('"$SYSDIR\\icacls.exe" "$INSTDIR" /grant *S-1-15-2-2:(OI)(CI)(RX)');
+    expect(macro).not.toContain("Quit");
+    expect(install).toContain("hanakoGrantSandboxAce");
   });
 });

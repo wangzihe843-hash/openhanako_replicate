@@ -9,6 +9,10 @@ import path from "path";
 import { createAgentSession, SessionManager } from "../lib/pi-sdk/index.ts";
 import { createDefaultSettings } from "./session-defaults.ts";
 import { compactSessionWithCachePreservation } from "./session-compactor.ts";
+import {
+  installDynamicCompactionReserve,
+  installMidRunCompaction,
+} from "./session-compaction-runtime.ts";
 import { repairOrphanToolResultEntriesInFile } from "./session-health.ts";
 import { debugLog, createModuleLogger } from "../lib/debug-log.ts";
 import { t, getLocale } from "../lib/i18n.ts";
@@ -38,6 +42,7 @@ import {
   bridgeContextIndexMeta,
   buildBridgeContext,
 } from "../lib/bridge/bridge-context.ts";
+import { createVisibleTextAccumulator } from "../lib/bridge/visible-text-accumulator.ts";
 import {
   buildFreshCompactMetaPatch,
   buildFreshCompactSnapshot,
@@ -55,6 +60,9 @@ import {
   resolveModelDefaultThinkingLevel,
 } from "./session-thinking-level.ts";
 import { sameToolNames } from "./tool-snapshot-repair.ts";
+import { formatWorkspaceScopePrompt } from "../shared/workspace-scope.ts";
+import { buildWorkspaceInstructionPrompt } from "./workspace-instruction-files.ts";
+import { agentPersonaFilePaths } from "./persona-source.ts";
 
 const log = createModuleLogger("bridge-session");
 const BRIDGE_OWNER_DENIED_TOOL_NAMES = Object.freeze([
@@ -208,6 +216,45 @@ function formatAutomationSuggestionText(payload, deps: any = {}) {
     "回复 /apply 创建最新这一项。",
     "也可以回复 /apply <建议ID> 精确创建。",
   ].join("\n");
+}
+
+/**
+ * Usage attribution for a compaction that fires between turns of a bridge run.
+ * Mirrors the reply attribution so compaction cost lands on the same
+ * conversation, with its own subsystem/trigger.
+ */
+function buildBridgeCompactionUsageContext({ sessionPath, agent, bridgeContext }) {
+  const conversationType = bridgeContext?.chatType === "channel" ? "channel" : "dm";
+  if (bridgeContext?.isBridgeSession) {
+    return {
+      source: {
+        subsystem: "compaction",
+        operation: "compact",
+        surface: conversationType,
+        trigger: "threshold",
+      },
+      attribution: {
+        kind: "phone_conversation",
+        agentId: agent?.id || bridgeContext?.agentId || null,
+        conversationId: bridgeContext?.sessionKey || bridgeContext?.chatId || sessionPath || "unknown",
+        conversationType,
+        sessionPath,
+      },
+    };
+  }
+  return {
+    source: {
+      subsystem: "compaction",
+      operation: "compact",
+      surface: "bridge",
+      trigger: "threshold",
+    },
+    attribution: {
+      kind: "session",
+      agentId: agent?.id || null,
+      sessionPath,
+    },
+  };
 }
 
 function recordBridgeAssistantUsage({ ledger, event, sessionPath, agent, model, bridgeContext }) {
@@ -385,6 +432,55 @@ export class BridgeSessionManager {
     return null;
   }
 
+  _ensureBridgeSessionRef(sessionPath, {
+    agent,
+    sessionKey,
+    role = "owner",
+    locatorReason = "bridge_session_open",
+  }: any = {}) {
+    if (typeof this._deps.ensureSessionRefForPath !== "function") {
+      const error: any = new Error("Bridge session identity service is unavailable");
+      error.code = "session_manifest_unavailable";
+      throw error;
+    }
+    return this._deps.ensureSessionRefForPath(sessionPath, {
+      ownerAgentId: agent?.id || null,
+      domain: "bridge",
+      kind: role === "guest" ? "bridge_guest" : "bridge_owner",
+      lifecycle: "active",
+      provenance: {
+        createdBy: "bridge",
+        bridgeSessionKey: sessionKey || null,
+        bridgeRole: role,
+      },
+      locatorReason,
+    });
+  }
+
+  _applySessionBranchHead(sessionPath, manager, reason) {
+    if (typeof this._deps.applySessionBranchHead !== "function") return null;
+    return this._deps.applySessionBranchHead(sessionPath, manager, {
+      reason,
+      domain: "bridge",
+    });
+  }
+
+  _syncSessionBranchHead(sessionPath, manager, reason) {
+    if (typeof this._deps.syncSessionBranchHead !== "function") return null;
+    return this._deps.syncSessionBranchHead(sessionPath, manager, reason);
+  }
+
+  _assertBridgeSessionRefLocator(sessionRef, sessionPath, operation) {
+    if (!sessionRef?.sessionId || !sessionRef?.sessionPath || !sessionPath) {
+      throw new Error(`${operation}: SessionRef is incomplete`);
+    }
+    if (path.resolve(sessionRef.sessionPath) !== path.resolve(sessionPath)) {
+      const error: any = new Error(`${operation}: runtime locator does not match SessionRef`);
+      error.code = "session_identity_conflict";
+      throw error;
+    }
+  }
+
   _bridgeContextLegacyPathKeys(sessionPath) {
     const keys = [];
     if (!sessionPath) return keys;
@@ -470,18 +566,22 @@ export class BridgeSessionManager {
 
   /** bridge 索引文件路径 */
   _indexPath(agent) {
-    const a = agent || this._deps.getAgent();
-    return path.join(a.sessionDir, "bridge", "bridge-sessions.json");
+    // The index lives inside one agent's session directory, so the caller has
+    // to say whose index it means. Reaching for the focused agent here read and
+    // wrote another agent's file whenever the caller had a different one.
+    if (!agent?.sessionDir) throw new Error("bridge index: agent required");
+    return path.join(agent.sessionDir, "bridge", "bridge-sessions.json");
   }
 
-  _resolveAgent( opts: any = {}, operation = "operation") {
-    if (opts.agentId) {
-      const agent = this._deps.getAgentById?.(opts.agentId) || null;
-      if (!agent) throw new Error(`bridge ${operation}: agent "${opts.agentId}" not found`);
-      return agent;
-    }
-    const agent = this._deps.getAgent?.() || null;
-    if (!agent) throw new Error(`bridge ${operation}: focus agent not available`);
+  _resolveAgent(opts: any = {}, operation = "operation") {
+    // Bridge sessions belong to an agent: the transcript, the index entry and
+    // the outbound identity are all that agent's. Callers carry that agent in
+    // the message context or the bridge index entry they looked the session up
+    // from, so a missing id means the caller lost track of it, not that the
+    // focused agent is a reasonable substitute.
+    if (!opts.agentId) throw new Error(`bridge ${operation}: agentId required`);
+    const agent = this._deps.getAgentById?.(opts.agentId) || null;
+    if (!agent) throw new Error(`bridge ${operation}: agent "${opts.agentId}" not found`);
     return agent;
   }
 
@@ -498,6 +598,11 @@ export class BridgeSessionManager {
     const all = this._deps.getAgents?.();
     if (all instanceof Map) return [...all.values()].filter(Boolean);
     if (Array.isArray(all)) return all.filter(Boolean);
+    // This is the set of agents to search, not a decision about who owns
+    // anything: callers match a session path against each agent's index and
+    // take the id from whichever index actually contains it. When the roster is
+    // unavailable, searching just the focused agent narrows the search and can
+    // only end in "not found" — it can never pin a session on the wrong agent.
     const focus = this._deps.getAgent?.();
     return focus ? [focus] : [];
   }
@@ -554,6 +659,107 @@ export class BridgeSessionManager {
     const dir = path.dirname(this._indexPath(agent));
     fs.mkdirSync(dir, { recursive: true });
     atomicWriteSync(this._indexPath(agent), JSON.stringify(index, null, 2) + "\n");
+  }
+
+  /**
+   * sessionKey → 当前会话的 sessionId。索引无条目、条目没有文件引用、
+   * 或身份服务解析不到时返回 null。只读：不创建会话、不改索引。
+   */
+  resolveSessionIdForSessionKey(sessionKey, agent) {
+    if (!sessionKey || !agent) return null;
+    const index = this.readIndex(agent);
+    const raw = index?.[sessionKey];
+    if (!raw) return null;
+    const file = typeof raw === "string" ? raw : raw.file;
+    if (!file) return null;
+    const sessionPath = path.join(agent.sessionDir, "bridge", file);
+    return this._deps.getSessionIdForPath?.(sessionPath) ?? null;
+  }
+
+  /** sessionKey → 当前 jsonl 绝对路径（索引无条目返回 null；只读，不创建）。 */
+  resolveSessionPathForSessionKey(sessionKey, agent) {
+    if (!sessionKey || !agent) return null;
+    const index = this.readIndex(agent);
+    const entry = index?.[sessionKey];
+    if (!entry) return null;
+    const file = typeof entry === "string" ? entry : entry.file;
+    if (!file) return null;
+    return path.join(agent.sessionDir, "bridge", file);
+  }
+
+  /**
+   * 确保 sessionKey 对应的会话实体存在并返回其 sessionId（不存在则创建）。
+   * 不建 agent session、不跑一轮：空聊天里第一条消息就是循环启动命令时用。
+   */
+  async ensureSessionForSessionKey(sessionKey, agent) {
+    if (!sessionKey || !agent) return null;
+    const opened = this._openOrCreateOwnerSession(sessionKey, agent, {
+      createIfMissing: true,
+      locatorReasonPrefix: "loop_ensure_session",
+      label: "ensureSessionForSessionKey",
+    });
+    if (!opened) return null;
+    const { index, raw, bridgeDir, sessionPath, sessionRef } = opened;
+    // 只写 file 引用：确保会话存在不带任何聊天元数据，已有条目的元数据原样保留。
+    const { changed } = this._syncIndexEntry(index, sessionKey, raw, { bridgeDir, sessionPath, meta: null });
+    if (changed) this.writeIndex(index, agent);
+    return sessionRef?.sessionId || null;
+  }
+
+  /**
+   * owner bridge 会话实体的"打开或创建"序列：索引查、open/create、身份 ref、branch head。
+   * 助手消息补记与循环会话确保共用同一条路径；两者都不建 agent session、不跑 prompt。
+   * 返回 null 表示会话不存在且调用方不允许创建（或新会话没拿到 locator）。
+   */
+  _openOrCreateOwnerSession(sessionKey, agent, { createIfMissing = false, locatorReasonPrefix, label }: any = {}) {
+    const index = this.readIndex(agent);
+    const raw = index[sessionKey];
+    const existingFile = typeof raw === "string" ? raw : raw?.file || null;
+    const bridgeDir = path.join(agent.sessionDir, "bridge");
+    const sessionDir = path.join(bridgeDir, "owner");
+    fs.mkdirSync(sessionDir, { recursive: true });
+
+    let mgr = null;
+    let sessionPath = null;
+    if (existingFile) {
+      sessionPath = path.join(bridgeDir, existingFile);
+      if (fs.existsSync(sessionPath)) {
+        mgr = SessionManager.open(sessionPath, path.dirname(sessionPath));
+      } else if (!createIfMissing) {
+        log.warn(`${label}: session 文件不存在: ${sessionPath}`);
+        return null;
+      }
+    } else if (!createIfMissing) {
+      log.warn(`${label}: sessionKey "${sessionKey}" 不存在`);
+      return null;
+    }
+
+    const restoredExistingSession = !!mgr;
+    if (!mgr) {
+      const homeCwd = this._deps.getHomeCwd(agent.id) || process.cwd();
+      mgr = SessionManager.create(homeCwd, sessionDir);
+      sessionPath = mgr.getSessionFile?.() || null;
+      if (!sessionPath) {
+        log.warn(`${label}: new session path unavailable for "${sessionKey}"`);
+        return null;
+      }
+    }
+
+    const sessionRef = this._ensureBridgeSessionRef(sessionPath, {
+      agent,
+      sessionKey,
+      role: "owner",
+      locatorReason: restoredExistingSession
+        ? `${locatorReasonPrefix}_restore`
+        : `${locatorReasonPrefix}_create`,
+    });
+    if (restoredExistingSession) {
+      this._applySessionBranchHead(sessionRef.sessionPath, mgr, `${locatorReasonPrefix}_restore`);
+    } else {
+      this._syncSessionBranchHead(sessionRef.sessionPath, mgr, `${locatorReasonPrefix}_create`);
+    }
+
+    return { index, raw, bridgeDir, mgr, sessionPath, sessionRef, restoredExistingSession };
   }
 
   _normalizeIndexEntry(raw) {
@@ -637,19 +843,37 @@ export class BridgeSessionManager {
 
   _buildOwnerPromptSnapshot(agent, homeCwd, bridgeContext) {
     const ownerPromptBase = agent.buildSystemPrompt({
-      cwdOverride: homeCwd,
       forceMemoryEnabled: agent.memoryMasterEnabled,
       ...(typeof agent.experienceEnabled === "boolean"
         ? { forceExperienceEnabled: agent.experienceEnabled === true }
         : {}),
     });
     const systemPrompt = appendBridgePromptLine(ownerPromptBase, bridgeContext, getLocale());
-    return this._buildPromptSnapshot(agent, systemPrompt);
+    const locale = agent.config?.locale || getLocale();
+    const baseAppend = this._deps.getResourceLoader?.()?.getAppendSystemPrompt?.() || [];
+    const workspacePrompt = formatWorkspaceScopePrompt({
+      primaryCwd: homeCwd,
+      workspaceFolders: [],
+      locale,
+    });
+    const workspaceInstructions = buildWorkspaceInstructionPrompt({
+      cwd: homeCwd,
+      workspaceContext: agent.config?.workspace_context,
+      locale,
+      excludeFiles: agentPersonaFilePaths(agent.agentDir),
+    });
+    return this._buildPromptSnapshot(agent, systemPrompt, {
+      appendSystemPrompt: [
+        ...(Array.isArray(baseAppend) ? baseAppend : []),
+        ...(workspacePrompt ? [workspacePrompt] : []),
+        ...(workspaceInstructions ? [workspaceInstructions] : []),
+      ],
+    });
   }
 
   _buildGuestPromptSnapshot(agent, bridgeContext, opts: any = {}) {
     const bridgePromptLine = appendBridgePromptLine("", bridgeContext, getLocale()).trim();
-    const parts = [agent.yuanPrompt, agent.publicIshiki, opts.contextTag, bridgePromptLine].filter(Boolean);
+    const parts = [agent.yuanPrompt, agent.publicAgentsMd, opts.contextTag, bridgePromptLine].filter(Boolean);
     return this._buildPromptSnapshot(agent, parts.join("\n\n"), {
       appendSystemPrompt: [],
       skillsResult: { skills: [], diagnostics: [] },
@@ -795,6 +1019,13 @@ export class BridgeSessionManager {
     if (!customType) throw new Error("recordCustomEntryForSessionPath: customType is required");
     const context = this.getBridgeContextForSessionPath(sessionPath, opts);
     if (context?.isBridgeSession !== true) return null;
+    const agent = this._resolveAgent({ agentId: context.agentId || opts.agentId }, "recordCustomEntryForSessionPath");
+    const sessionRef = this._ensureBridgeSessionRef(sessionPath, {
+      agent,
+      sessionKey: context.sessionKey,
+      role: context.role,
+      locatorReason: "bridge_custom_entry",
+    });
 
     const resolved = path.resolve(sessionPath);
     for (const session of this._activeSessions.values()) {
@@ -804,6 +1035,7 @@ export class BridgeSessionManager {
         throw new Error("recordCustomEntryForSessionPath: active bridge session does not support custom entries");
       }
       session.sessionManager.appendCustomEntry(customType, data);
+      this._syncSessionBranchHead(activePath, session.sessionManager, "bridge_custom_entry_live");
       return { ok: true, mode: "bridge-live" };
     }
 
@@ -811,7 +1043,9 @@ export class BridgeSessionManager {
       throw new Error(`recordCustomEntryForSessionPath: session file not found: ${sessionPath}`);
     }
     const manager = SessionManager.open(resolved, path.dirname(resolved));
+    this._applySessionBranchHead(sessionRef.sessionPath, manager, "bridge_custom_entry_file_open");
     manager.appendCustomEntry(customType, data);
+    this._syncSessionBranchHead(sessionRef.sessionPath, manager, "bridge_custom_entry_file_append");
     return { ok: true, mode: "bridge-file" };
   }
 
@@ -877,7 +1111,7 @@ export class BridgeSessionManager {
    */
   async executeExternalMessage(prompt, sessionKey, meta, opts: any = {}) {
     // 捕获状态提升到 try 外：错误路径（含 transport throw）也必须拿得到已生成内容（#1607）
-    let capturedText = "";
+    const visibleText = createVisibleTextAccumulator();
     let providerErrorMessage = null;
     // 工具 details.media 收集器（被动提取 tool_execution_end 事件）
     const toolMediaUrls = [];
@@ -931,16 +1165,31 @@ export class BridgeSessionManager {
         }
       }
       const homeCwd = this._deps.getHomeCwd(agent.id) || process.cwd();
+      const restoredExistingSession = !!mgr;
       if (!mgr) {
         mgr = SessionManager.create(homeCwd, sessionDir);
       }
 
       let sessionOpts;
-      const sessionPathRef = { current: null };
+      const identityPath = mgr.getSessionFile?.() || null;
+      if (!identityPath) throw new Error("bridge session locator unavailable before runtime assembly");
+      const sessionRef = this._ensureBridgeSessionRef(identityPath, {
+        agent,
+        sessionKey,
+        role: currentRole,
+        locatorReason: restoredExistingSession ? "bridge_session_restore" : "bridge_session_create",
+      });
+      if (restoredExistingSession) {
+        this._applySessionBranchHead(identityPath, mgr, "bridge_session_restore");
+      } else {
+        this._syncSessionBranchHead(identityPath, mgr, "bridge_session_create");
+      }
+      const sessionPathRef = { current: identityPath };
+      const sessionRefRef = { current: sessionRef };
       const targetModelRef = { current: null };
 
       if (isGuest) {
-        // guest 模式：yuan + public-ishiki + contextTag，主模型，无工具
+        // guest 模式：yuan + AGENTS.public.md + contextTag，主模型，无工具
         promptSnapshot ||= this._buildGuestPromptSnapshot(agent, bridgeContext, opts);
         const guestResourceLoaderBase = createPromptSnapshotResourceLoader(
           this._deps.getResourceLoader?.(),
@@ -988,6 +1237,7 @@ export class BridgeSessionManager {
         sessionOpts = this._buildOwnerSessionOpts(agent, mm, homeCwd, sessionPathRef, targetModelRef, {
           bridgeContext,
           promptSnapshot,
+          sessionRefRef,
         });
       }
       const activeToolNames = this._normalizeToolNames(sessionOpts.activeToolNames);
@@ -1001,7 +1251,18 @@ export class BridgeSessionManager {
         ...sessionOpts,
       });
 
+      installDynamicCompactionReserve(session);
+      installMidRunCompaction(session, {
+        usageLedger: this._deps.getUsageLedger?.() || null,
+        buildUsageContext: (s: any) => buildBridgeCompactionUsageContext({
+          sessionPath: s?.sessionManager?.getSessionFile?.() || null,
+          agent,
+          bridgeContext,
+        }),
+      });
+
       const activeSessionPath = session.sessionManager?.getSessionFile?.() || null;
+      this._assertBridgeSessionRefLocator(sessionRefRef.current, activeSessionPath, "bridge executeExternalMessage");
       sessionPathRef.current = activeSessionPath;
       targetModelRef.current = session.model || sessionOpts.model || targetModelRef.current || null;
       if (activeToolNames.length) {
@@ -1016,10 +1277,9 @@ export class BridgeSessionManager {
         throw new Error("bridge inbound files require a resolved sessionPath");
       }
       if (opts.inboundFiles?.length && activeSessionPath) {
-        const activeSessionId = this._deps.getSessionIdForPath?.(activeSessionPath) || null;
         const materialized = await materializeBridgeInboundFiles({
           hanakoHome: this._deps.getHanakoHome?.(),
-          sessionId: activeSessionId,
+          sessionId: sessionRefRef.current.sessionId,
           sessionPath: activeSessionPath,
           files: opts.inboundFiles,
           registerSessionFile: this._deps.registerSessionFile,
@@ -1053,7 +1313,7 @@ export class BridgeSessionManager {
         message: displayMessage,
       }, activeSessionPath);
 
-      // 捕获文本输出（capturedText / providerErrorMessage 声明见方法顶部）
+      // 捕获文本输出（visibleText / providerErrorMessage 声明见方法顶部）
       const unsub = session.subscribe((event) => {
         recordBridgeAssistantUsage({
           ledger: this._deps.getUsageLedger?.(),
@@ -1066,12 +1326,14 @@ export class BridgeSessionManager {
         if (event.type === "message_update") {
           const sub = event.assistantMessageEvent;
           if (sub?.type === "text_delta") {
-            const delta = sub.delta || "";
-            capturedText += delta;
-            try { opts.onDelta?.(delta, capturedText); } catch {}
+            const { emittedDelta, text } = visibleText.appendTextDelta(sub.delta || "");
+            try { opts.onDelta?.(emittedDelta, text); } catch {}
           }
+        } else if (event.type === "tool_execution_start") {
+          visibleText.markHiddenToolBoundary();
         } else if (event.type === "tool_execution_end" && !event.isError) {
           toolMediaUrls.push(...collectMediaItems(event.result?.details?.media));
+          let appendedDetail = false;
           const automationSuggestionText = formatAutomationSuggestionText(
             event.result?.details?.automationSuggestion || event.result?.details?.automationSuggestions,
             {
@@ -1080,16 +1342,20 @@ export class BridgeSessionManager {
             },
           );
           if (automationSuggestionText) {
-            capturedText += (capturedText ? "\n\n" : "") + automationSuggestionText;
+            visibleText.appendVisibleDetail(automationSuggestionText);
+            appendedDetail = true;
           }
           const card = event.result?.details?.card;
           if (card?.description) {
-            capturedText += (capturedText ? "\n\n" : "") + card.description;
+            visibleText.appendVisibleDetail(card.description);
+            appendedDetail = true;
           }
           const settingsUpdateText = formatSettingsUpdateText(event.result?.details?.settingsUpdate);
           if (settingsUpdateText) {
-            capturedText += (capturedText ? "\n\n" : "") + settingsUpdateText;
+            visibleText.appendVisibleDetail(settingsUpdateText);
+            appendedDetail = true;
           }
+          if (!appendedDetail) visibleText.markHiddenToolBoundary();
         }
         const messageEndError = getProviderMessageEndError(event);
         if (messageEndError) providerErrorMessage = messageEndError;
@@ -1134,6 +1400,9 @@ export class BridgeSessionManager {
           pruneSessionInlineMediaHistory(session);
         } catch (err) {
           log.warn(`bridge inline media prune failed (${sessionKey}): ${err?.message || err}`);
+        }
+        if (activeSessionPath) {
+          this._syncSessionBranchHead(activeSessionPath, session.sessionManager, "bridge_prompt_finally");
         }
         await teardownSessionResources({
           session,
@@ -1180,7 +1449,7 @@ export class BridgeSessionManager {
         debugLog()?.log("bridge-session", `tool media → ${toolMediaUrls.length} url(s) via details.media`);
       }
       return buildExternalMessageResult({
-        capturedText,
+        capturedText: visibleText.getText(),
         toolMedia: toolMediaUrls,
         error: providerErrorMessage,
       });
@@ -1188,7 +1457,7 @@ export class BridgeSessionManager {
       if (isAbortLikeError(err)) return null;
       log.error(`external message failed (${sessionKey}): ${err.message}`);
       return buildExternalMessageResult({
-        capturedText,
+        capturedText: visibleText.getText(),
         toolMedia: toolMediaUrls,
         // message_end 携带的 provider 错误（若有）比 transport throw 更贴近根因，优先保留
         error: providerErrorMessage || err.message || String(err),
@@ -1223,39 +1492,16 @@ export class BridgeSessionManager {
     const agent = this._resolveAgent(opts, "recordAssistantMessage");
     try {
       const bridgeContext = this._buildBridgeContext(sessionKey, opts.meta, { ...opts, guest: false }, agent);
-      const index = this.readIndex(agent);
-      const raw = index[sessionKey];
-      const existingFile = typeof raw === "string" ? raw : raw?.file || null;
-      const bridgeDir = path.join(agent.sessionDir, "bridge");
-      const sessionDir = path.join(bridgeDir, "owner");
-      fs.mkdirSync(sessionDir, { recursive: true });
-
-      let mgr = null;
-      let sessionPath = null;
-      if (existingFile) {
-        sessionPath = path.join(bridgeDir, existingFile);
-        if (fs.existsSync(sessionPath)) {
-          mgr = SessionManager.open(sessionPath, path.dirname(sessionPath));
-        } else if (!opts.createIfMissing) {
-          log.warn(`recordAssistantMessage: session 文件不存在: ${sessionPath}`);
-          return false;
-        }
-      } else if (!opts.createIfMissing) {
-        log.warn(`recordAssistantMessage: sessionKey "${sessionKey}" 不存在`);
-        return false;
-      }
-
-      if (!mgr) {
-        const homeCwd = this._deps.getHomeCwd(agent.id) || process.cwd();
-        mgr = SessionManager.create(homeCwd, sessionDir);
-        sessionPath = mgr.getSessionFile?.() || null;
-        if (!sessionPath) {
-          log.warn(`recordAssistantMessage: new session path unavailable for "${sessionKey}"`);
-          return false;
-        }
-      }
+      const opened = this._openOrCreateOwnerSession(sessionKey, agent, {
+        createIfMissing: !!opts.createIfMissing,
+        locatorReasonPrefix: "bridge_assistant_record",
+        label: "recordAssistantMessage",
+      });
+      if (!opened) return false;
+      const { index, raw, bridgeDir, mgr, sessionPath, sessionRef } = opened;
 
       mgr.appendMessage(this._buildRecordedAssistantMessage(agent, text));
+      this._syncSessionBranchHead(sessionRef.sessionPath, mgr, "bridge_assistant_record_append");
 
       if (sessionPath) {
         this._rememberBridgeContext(sessionPath, bridgeContext);
@@ -1333,7 +1579,8 @@ export class BridgeSessionManager {
       {
         workspace: homeCwd,
         agentDir: agent.agentDir,
-        getSessionPath: () => sessionPathRef.current,
+        runtimeSessionRef: opts.sessionRefRef?.current || null,
+        requireSessionIdentity: true,
         getPermissionMode: () => bridgePermissionMode,
         allowHumanApproval: false,
         bridgeContext: opts.bridgeContext || null,
@@ -1457,6 +1704,13 @@ export class BridgeSessionManager {
     }
     this._repairInlineMediaHistory(sessionFilePath, "bridge compact reopen");
     const mgr = SessionManager.open(sessionFilePath, sessionDir);
+    const sessionRef = this._ensureBridgeSessionRef(sessionFilePath, {
+      agent,
+      sessionKey,
+      role: "owner",
+      locatorReason: "bridge_compact_restore",
+    });
+    this._applySessionBranchHead(sessionRef.sessionPath, mgr, "bridge_compact_restore");
     const bridgeContext = this.getBridgeContextForSessionPath(sessionFilePath, { agentId: agent.id })
       || this._buildBridgeContext(sessionKey, entry, { guest: false }, agent);
     const freshContext = opts.fresh === true
@@ -1469,6 +1723,7 @@ export class BridgeSessionManager {
     const sessionOpts = this._buildOwnerSessionOpts(agent, mm, homeCwd, { current: sessionFilePath }, { current: null }, {
       bridgeContext,
       promptSnapshot,
+      sessionRefRef: { current: sessionRef },
     });
     const activeToolNames = this._normalizeToolNames(sessionOpts.activeToolNames);
     delete sessionOpts.activeToolNames;
@@ -1480,11 +1735,24 @@ export class BridgeSessionManager {
       modelRegistry: mm.modelRegistry,
       ...sessionOpts,
     });
-    if (activeToolNames.length) {
-      session.setActiveToolsByName?.(activeToolNames);
-    }
+
+    installDynamicCompactionReserve(session);
+    installMidRunCompaction(session, {
+      usageLedger: this._deps.getUsageLedger?.() || null,
+      buildUsageContext: (s: any) => buildBridgeCompactionUsageContext({
+        sessionPath: s?.sessionManager?.getSessionFile?.() || null,
+        agent,
+        bridgeContext,
+      }),
+    });
 
     try {
+      const activeSessionPath = session.sessionManager?.getSessionFile?.() || null;
+      this._assertBridgeSessionRefLocator(sessionRef, activeSessionPath, "bridge compactSession");
+      if (activeToolNames.length) {
+        session.setActiveToolsByName?.(activeToolNames);
+      }
+
       // 5. 读 usage → compact → 读 usage
       const before = session.getContextUsage?.() ?? null;
       if (session.isCompacting) {
@@ -1492,7 +1760,11 @@ export class BridgeSessionManager {
       }
       let after = null;
       try {
-        await compactSessionWithCachePreservation(session, undefined);
+        try {
+          await compactSessionWithCachePreservation(session, undefined);
+        } finally {
+          this._syncSessionBranchHead(sessionRef.sessionPath, session.sessionManager, "bridge_compact_finally");
+        }
         after = session.getContextUsage?.() ?? null;
       } catch (err) {
         const noopReason = freshContext ? getFreshCompactNoopReason(err) : null;
@@ -1508,7 +1780,6 @@ export class BridgeSessionManager {
           contextWindow: before?.contextWindow ?? null,
         });
       }
-
       const result = {
         tokensBefore: before?.tokens ?? null,
         tokensAfter: after?.tokens ?? null,

@@ -158,6 +158,32 @@ export function createExperienceTools(agentDir, opts: { isEnabled?: () => boolea
     name: "recall_experience",
     label: "Recall Experience",
     description: "Browse the experience library. Without parameters, returns an overview of all categories. With a category name, returns specific experiences in that category. When the user asks you to do a concrete task (write code, research, create documents, analyze problems, etc.), check this tool first for relevant experience before starting. Not needed for casual chat, Q&A, or everyday conversation.",
+    sessionPermission: {
+      resolveInvocation: (params: any = {}) => {
+        if (params.category !== undefined && typeof params.category !== "string") return null;
+        const category = typeof params.category === "string" ? params.category.trim() : "";
+        if (!category) {
+          return { action: "read", kind: "read", capability: "recall_experience.read" };
+        }
+        try {
+          const normalized = normalizeExperienceCategory(category);
+          return {
+            action: "read",
+            kind: "read",
+            capability: "recall_experience.read",
+            target: {
+              type: "experience_category",
+              id: Buffer.from(normalized, "utf-8").toString("base64url"),
+              label: normalized,
+            },
+          };
+        } catch {
+          // 无法规范化的分类名仍是本地只读查询：交给 execute 返回"分类未找到"，
+          // 权限层不制造与工具本身不同的失败面
+          return { action: "read", kind: "read", capability: "recall_experience.read" };
+        }
+      },
+    },
     parameters: Type.Object({
       category: Type.Optional(
         Type.String({ description: "Category name. Omit to get an overview of all categories" }),
@@ -207,6 +233,28 @@ export function createExperienceTools(agentDir, opts: { isEnabled?: () => boolea
     name: "record_experience",
     label: "Record Experience",
     description: "Record a lesson learned to the experience library. Use when: the user points out a mistake and explains the correct approach, the user shows frustration or repeatedly emphasizes something, you discover an effective method after trying multiple approaches, the user explicitly says 'from now on do/don't do this', or you hit a pitfall during patrol or autonomous work. Each entry should be concise and direct, one sentence.",
+    sessionPermission: {
+      resolveInvocation: (params: any = {}) => {
+        if (typeof params.category !== "string" || typeof params.content !== "string") return null;
+        const category = params.category.replace(/^#+\s*/, "").trim();
+        if (!category || !params.content.trim()) return null;
+        try {
+          const normalized = normalizeExperienceCategory(category);
+          return {
+            action: "record",
+            kind: "routine",
+            capability: "record_experience.record",
+            target: {
+              type: "experience_category",
+              id: Buffer.from(normalized, "utf-8").toString("base64url"),
+              label: normalized,
+            },
+          };
+        } catch {
+          return null;
+        }
+      },
+    },
     parameters: Type.Object({
       category: Type.String({
         description: "Category for the experience, a 2-4 word phrase, e.g. 'tool usage', 'search tips', 'response style'",

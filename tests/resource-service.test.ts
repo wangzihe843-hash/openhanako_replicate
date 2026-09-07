@@ -23,6 +23,7 @@ describe("ResourceService", () => {
     status = "available",
     fileExists = true,
     missingAt = null,
+    legacyFileIds = null,
   } = {}) {
     const root = makeTmpDir();
     const agentsDir = path.join(root, "agents");
@@ -40,6 +41,7 @@ describe("ResourceService", () => {
         [fileId]: {
           id: fileId,
           ...(sessionId ? { sessionId } : {}),
+          ...(legacyFileIds ? { legacyFileIds } : {}),
           sessionPath,
           filePath,
           realPath: filePath,
@@ -179,6 +181,50 @@ describe("ResourceService", () => {
         content: "/api/resources/res_sf_returned/content",
       },
     });
+  });
+
+  it("resolves resource ids captured before a fork through legacy file ids", async () => {
+    const { ResourceService } = await import("../core/resource-service.ts");
+    const { resourceIdForSessionFileId } = await import("../lib/resources/resource-envelope.ts");
+    const { agentsDir } = writeLegacySessionFileSidecar({
+      fileId: "sf_forked",
+      sessionId: "sess_forked_child",
+      legacyFileIds: ["sf_parent"],
+    });
+    const service = makeService(ResourceService, agentsDir);
+
+    const resource = service.getResource(resourceIdForSessionFileId("sf_parent"));
+
+    expect(resource).toMatchObject({
+      resourceId: "res_sf_forked",
+      fileId: "sf_forked",
+      displayName: "Legacy Note",
+      lifecycle: { status: "available", missingAt: null },
+    });
+    expect(service.resolveContent("res_sf_parent")).toMatchObject({
+      resourceId: "res_sf_forked",
+      mime: "text/plain",
+      filename: "note.txt",
+    });
+  });
+
+  it("scopes the by-id fallback to the owning session so legacy aliases resolve", async () => {
+    const { ResourceService } = await import("../core/resource-service.ts");
+    const { agentsDir } = writeLegacySessionFileSidecar({
+      fileId: "sf_scoped_child",
+      sessionId: "sess_scoped_child",
+      legacyFileIds: ["sf_scoped_parent"],
+    });
+    const service = makeService(ResourceService, agentsDir);
+
+    expect(service._findSessionRefForFileId("sf_scoped_parent")).toEqual({
+      sessionId: "sess_scoped_child",
+      sessionPath: expect.stringContaining("legacy.jsonl"),
+    });
+    expect(service._findSessionFileByResourceId("res_sf_scoped_parent")).toMatchObject({
+      id: "sf_scoped_child",
+    });
+    expect(service._sessionFiles.get("sf_scoped_parent")).toBeNull();
   });
 
   it("refuses content for expired legacy resources", async () => {

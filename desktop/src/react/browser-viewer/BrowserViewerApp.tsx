@@ -47,6 +47,7 @@ export function BrowserViewerApp() {
   const [canBack, setCanBack] = useState(false);
   const [canForward, setCanForward] = useState(false);
   const [sessionPath, setSessionPath] = useState<string | null>(null);
+  const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [tabs, setTabs] = useState<BrowserViewerTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const tabListRef = useRef<HTMLDivElement | null>(null);
@@ -66,12 +67,14 @@ export function BrowserViewerApp() {
       if (data.canGoBack !== undefined) setCanBack(data.canGoBack);
       if (data.canGoForward !== undefined) setCanForward(data.canGoForward);
       if (data.sessionPath !== undefined) setSessionPath(data.sessionPath || null);
+      if (data.sessionTitle !== undefined) setSessionTitle(data.sessionTitle || null);
       if (data.running === false) {
         setCanBack(false);
         setCanForward(false);
         setTabs([]);
         setActiveTabId(null);
         setSessionPath(data.sessionPath || null);
+        setSessionTitle(data.sessionTitle || null);
       }
     });
 
@@ -166,6 +169,12 @@ export function BrowserViewerApp() {
         </div>
 
         <div className="browser-tab-strip">
+          {sessionTitle && (
+            <span className="browser-session-label" title={sessionTitle}>
+              {sessionTitle}
+            </span>
+          )}
+
           <div
             ref={tabListRef}
             className="browser-tab-list"
@@ -215,7 +224,19 @@ export function BrowserViewerApp() {
       </div>
 
       {/* Card shadow frame (WebContentsView sits on top) */}
-      <div className="card-frame" />
+      <div className="card-frame">
+        {tabs.length === 0 && (
+          <div className="browser-empty-state">
+            <p className="browser-empty-text">{tr('browser.emptyWorkspace', 'No open tabs')}</p>
+            <button
+              className="browser-empty-action"
+              onClick={() => hana?.browserNewTab?.(sessionPath)}
+            >
+              {tr('browser.newTab', 'New Tab')}
+            </button>
+          </div>
+        )}
+      </div>
     </>
   );
 }

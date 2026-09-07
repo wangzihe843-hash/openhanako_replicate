@@ -95,21 +95,22 @@ export async function loadAgents(): Promise<void> {
 
 // ── 头像 ──
 
-export function loadAvatars(avatarsInfo?: Record<string, boolean>): void {
+/**
+ * 头像 URL 构造。agent 头像属于某个具体 agent，URL 必须说明是哪一个：
+ * 服务端不再替请求挑 agent，缺 agentId 的请求会被拒绝。调用方没有 agent
+ * 身份时（启动早期还没选定），显示无头像而不是发一个没有归属的请求。
+ */
+export function loadAvatars(avatarsInfo?: Record<string, boolean>, agentId?: string | null): void {
   const ts = Date.now();
   const patch: Record<string, any> = {};
+  const targetAgentId = agentId ?? useStore.getState().currentAgentId ?? null;
 
-  for (const role of ['agent', 'user'] as const) {
-    const hasAvatar = avatarsInfo?.[role] ?? false;
-    if (hasAvatar) {
-      const url = hanaUrl(`/api/avatar/${role}?t=${ts}`);
-      if (role === 'agent') patch.agentAvatarUrl = url;
-      else patch.userAvatarUrl = url;
-    } else {
-      if (role === 'agent') patch.agentAvatarUrl = null;
-      else patch.userAvatarUrl = null;
-    }
-  }
+  patch.userAvatarUrl = avatarsInfo?.user
+    ? hanaUrl(`/api/avatar/user?t=${ts}`)
+    : null;
+  patch.agentAvatarUrl = avatarsInfo?.agent && targetAgentId
+    ? hanaUrl(`/api/avatar/agent?agentId=${encodeURIComponent(targetAgentId)}&t=${ts}`)
+    : null;
 
   useStore.setState(patch);
 }

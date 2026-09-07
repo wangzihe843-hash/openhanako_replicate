@@ -24,7 +24,7 @@ describe("SafetyPolicy", () => {
     expect(decision).toBeNull();
   });
 
-  it("detects git push through global git options", () => {
+  it("leaves git push variants written with global git options to the permission mode", () => {
     expect(evaluateToolSafetyPolicy(request({
       params: { command: "git -C /repo push origin main" },
       target: { type: "command", label: "git -C /repo push origin main" },
@@ -32,34 +32,22 @@ describe("SafetyPolicy", () => {
     expect(evaluateToolSafetyPolicy(request({
       params: { command: "git --git-dir /repo/.git push origin --tags" },
       target: { type: "command", label: "git --git-dir /repo/.git push origin --tags" },
-    }))).toMatchObject({
-      action: "block",
-      ruleIds: ["push-tags-blocked"],
-    });
+    }))).toBeNull();
     expect(evaluateToolSafetyPolicy(request({
       params: { command: "git -c user.name=hana push --force-with-lease origin main" },
       target: { type: "command", label: "git -c user.name=hana push --force-with-lease origin main" },
-    }))).toMatchObject({
-      action: "block",
-      ruleIds: ["force-push-blocked"],
-    });
+    }))).toBeNull();
     expect(evaluateToolSafetyPolicy(request({
       params: { command: "git push --all origin" },
       target: { type: "command", label: "git push --all origin" },
-    }))).toMatchObject({
-      action: "block",
-      ruleIds: ["push-all-blocked"],
-    });
+    }))).toBeNull();
     expect(evaluateToolSafetyPolicy(request({
       params: { command: "git push --mirror origin" },
       target: { type: "command", label: "git push --mirror origin" },
-    }))).toMatchObject({
-      action: "block",
-      ruleIds: ["push-mirror-blocked"],
-    });
+    }))).toBeNull();
   });
 
-  it("detects git push nested inside common shell command arguments", () => {
+  it("leaves git push nested inside shell command arguments to the permission mode", () => {
     expect(evaluateToolSafetyPolicy(request({
       params: { command: "bash -lc \"cd /repo && git push origin main\"" },
       target: { type: "command", label: "bash -lc \"cd /repo && git push origin main\"" },
@@ -67,16 +55,22 @@ describe("SafetyPolicy", () => {
     expect(evaluateToolSafetyPolicy(request({
       params: { command: "pwsh -NoProfile -Command \"git.exe push --tags\"" },
       target: { type: "command", label: "pwsh -NoProfile -Command \"git.exe push --tags\"" },
-    }))).toMatchObject({
-      action: "block",
-      ruleIds: ["push-tags-blocked"],
-    });
+    }))).toBeNull();
     expect(evaluateToolSafetyPolicy(request({
       params: { command: "cmd.exe /c \"git push --force origin main\"" },
       target: { type: "command", label: "cmd.exe /c \"git push --force origin main\"" },
-    }))).toMatchObject({
+    }))).toBeNull();
+  });
+
+  it("blocks stage_files when no workspace delivery boundary is available", () => {
+    const decision = evaluateToolSafetyPolicy({
+      toolName: "stage_files",
+      params: { filepaths: ["/workspace/report.txt"] },
+    });
+
+    expect(decision).toMatchObject({
       action: "block",
-      ruleIds: ["force-push-blocked"],
+      code: "ACTION_BLOCKED_BY_WORKSPACE_BOUNDARY",
     });
   });
 

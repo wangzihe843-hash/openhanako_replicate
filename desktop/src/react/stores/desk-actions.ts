@@ -146,8 +146,13 @@ async function pruneStaleLocalDeskRoot(dir: string): Promise<void> {
 
   const s = useStore.getState();
   if (!hasServerConnection(s)) return;
+  const url = recentWorkspacesUrl(s);
+  if (!url) {
+    console.warn('[workspace] prune stale history skipped: no current agent to record it against');
+    return;
+  }
   try {
-    const res = await hanaFetch('/api/config/workspaces/recent', {
+    const res = await hanaFetch(url, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: normalized }),
@@ -170,6 +175,29 @@ function selectedDeskAgentId(s: ReturnType<typeof useStore.getState>): string | 
   return typeof s.selectedAgentId === 'string' && s.selectedAgentId.trim()
     ? s.selectedAgentId.trim()
     : null;
+}
+
+/**
+ * The agent whose recent-workspace list the desk is currently showing.
+ *
+ * `cwdHistory` in this store is never a mixed list: it is replaced wholesale
+ * with the incoming agent's history by the same agent-switch handler that sets
+ * `currentAgentId`, so the two always describe the same agent. Recording or
+ * dropping a recent workspace therefore has to name that agent — otherwise the
+ * server would pick one for us, and with two clients open on two agents it
+ * would sometimes pick the other one.
+ */
+function deskHistoryAgentId(s: ReturnType<typeof useStore.getState>): string | null {
+  return typeof s.currentAgentId === 'string' && s.currentAgentId.trim()
+    ? s.currentAgentId.trim()
+    : null;
+}
+
+/** Build a recent-workspace URL for one agent, or null when no agent is known yet. */
+function recentWorkspacesUrl(s: ReturnType<typeof useStore.getState>, suffix = ''): string | null {
+  const agentId = deskHistoryAgentId(s);
+  if (!agentId) return null;
+  return `/api/config/workspaces/recent${suffix}?agentId=${encodeURIComponent(agentId)}`;
 }
 
 function addSelectedDeskAgentParam(params: URLSearchParams, s: ReturnType<typeof useStore.getState>): void {
@@ -1311,8 +1339,13 @@ export async function applyFolder(folder: string): Promise<void> {
 async function persistWorkspaceHistory(folder: string): Promise<void> {
   const s = useStore.getState();
   if (!hasServerConnection(s)) return;
+  const url = recentWorkspacesUrl(s);
+  if (!url) {
+    console.warn('[workspace] persist history skipped: no current agent to record it against');
+    return;
+  }
   try {
-    const res = await hanaFetch('/api/config/workspaces/recent', {
+    const res = await hanaFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: folder }),
@@ -1335,8 +1368,13 @@ export async function removeRecentWorkspace(folder: string): Promise<void> {
   }));
   const s = useStore.getState();
   if (!hasServerConnection(s)) return;
+  const url = recentWorkspacesUrl(s);
+  if (!url) {
+    console.warn('[workspace] remove recent history skipped: no current agent to record it against');
+    return;
+  }
   try {
-    const res = await hanaFetch('/api/config/workspaces/recent', {
+    const res = await hanaFetch(url, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: normalized }),
@@ -1355,8 +1393,13 @@ export async function clearRecentWorkspaces(): Promise<void> {
   useStore.setState({ cwdHistory: [] });
   const s = useStore.getState();
   if (!hasServerConnection(s)) return;
+  const url = recentWorkspacesUrl(s, '/all');
+  if (!url) {
+    console.warn('[workspace] clear recent history skipped: no current agent to clear it for');
+    return;
+  }
   try {
-    const res = await hanaFetch('/api/config/workspaces/recent/all', {
+    const res = await hanaFetch(url, {
       method: 'DELETE',
     });
     const data = await res.json();

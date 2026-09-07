@@ -221,8 +221,10 @@ describe('initApp bridge indicator', () => {
 
     mockHanaFetch
       .mockResolvedValueOnce(serverIdentityResponse())
-      .mockResolvedValueOnce(jsonResponse({ agent: 'Hanako', user: 'User', avatars: {} }))
-      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN', desk: { home_folder: null }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ agentId: 'hana', agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: null }, cwd_history: [] }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -259,6 +261,9 @@ describe('initApp bridge indicator', () => {
       local: mockState.activeServerConnection,
     });
     expect(mockState.bridgeDotConnected).toBe(true);
+    // The dot describes the bootstrap agent's bridges, named in the request,
+    // rather than whichever agent the server is focused on when it arrives.
+    expect(mockHanaFetch).toHaveBeenCalledWith('/api/bridge/status?agentId=hana');
   });
 
   it('refreshes the HttpOnly device web session before opening WebSocket for a persisted LAN frontend', async () => {
@@ -306,8 +311,10 @@ describe('initApp bridge indicator', () => {
         credentialKind: 'device_credential',
         capabilities: ['chat', 'resources', 'files'],
       }))
-      .mockResolvedValueOnce(jsonResponse({ agent: 'Hanako', user: 'User', avatars: {} }))
-      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN', desk: { home_folder: null }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ agentId: 'hana', agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: null }, cwd_history: [] }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -393,9 +400,10 @@ describe('initApp bridge indicator', () => {
 
     mockHanaFetch
       .mockResolvedValueOnce(serverIdentityResponse())
-      .mockResolvedValueOnce(jsonResponse({ agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ agentId: 'hana', agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
       .mockResolvedValueOnce(jsonResponse({
-        locale: 'zh-CN',
         desk: { home_folder: '/agent-home' },
         cwd_history: ['/desktop'],
       }))
@@ -410,6 +418,10 @@ describe('initApp bridge indicator', () => {
     const { initApp } = await import('../app-init');
     await initApp();
 
+    // Desk root, workspace history and the memory switch belong to one agent,
+    // so startup must ask that agent for them by name rather than read them off
+    // a request that carries no agent identity.
+    expect(mockHanaFetch).toHaveBeenCalledWith('/api/agents/hana/config');
     expect(mockState.homeFolder).toBe('/agent-home');
     expect(mockState.selectedFolder).toBe('/agent-home');
     expect(mockState.cwdHistory).toEqual(['/desktop']);
@@ -441,8 +453,10 @@ describe('initApp bridge indicator', () => {
 
     mockHanaFetch
       .mockResolvedValueOnce(serverIdentityResponse())
-      .mockResolvedValueOnce(jsonResponse({ agent: 'Hanako', user: 'User', avatars: {} }))
-      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN', desk: { home_folder: null }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ agentId: 'hana', agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: null }, cwd_history: [] }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -488,8 +502,10 @@ describe('initApp bridge indicator', () => {
 
     mockHanaFetch
       .mockResolvedValueOnce(serverIdentityResponse())
-      .mockResolvedValueOnce(jsonResponse({ agent: 'Hanako', user: 'User', avatars: {} }))
-      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN', desk: { home_folder: '/agent-home' }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ agentId: 'hana', agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: '/agent-home' }, cwd_history: [] }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -545,8 +561,10 @@ describe('initApp bridge indicator', () => {
 
     mockHanaFetch
       .mockResolvedValueOnce(serverIdentityResponse())
-      .mockResolvedValueOnce(jsonResponse({ agent: 'Hanako', user: 'User', avatars: {} }))
-      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN', desk: { home_folder: '/agent-home' }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ agentId: 'hana', agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: '/agent-home' }, cwd_history: [] }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -615,8 +633,10 @@ describe('initApp bridge indicator', () => {
 
     mockHanaFetch
       .mockResolvedValueOnce(serverIdentityResponse())
-      .mockResolvedValueOnce(jsonResponse({ agent: 'Hanako', user: 'User', avatars: {} }))
-      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN', desk: { home_folder: '/old-home' }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ agentId: 'hana', agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: '/old-home' }, cwd_history: [] }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -675,8 +695,10 @@ describe('initApp bridge indicator', () => {
 
     mockHanaFetch
       .mockResolvedValueOnce(serverIdentityResponse())
-      .mockResolvedValueOnce(jsonResponse({ agent: 'Hanako', user: 'User', avatars: {} }))
-      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN', desk: { home_folder: '/old-home' }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ agentId: 'hana', agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: '/old-home' }, cwd_history: [] }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -735,8 +757,10 @@ describe('initApp bridge indicator', () => {
 
     mockHanaFetch
       .mockResolvedValueOnce(serverIdentityResponse())
-      .mockResolvedValueOnce(jsonResponse({ agent: 'Hanako', user: 'User', avatars: {} }))
-      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN', desk: { home_folder: '/old-home' }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ agentId: 'hana', agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: '/old-home' }, cwd_history: [] }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -799,8 +823,10 @@ describe('initApp bridge indicator', () => {
     mockGetWebSocket.mockReturnValue({ readyState: 1, send } as unknown as WebSocket);
     mockHanaFetch
       .mockResolvedValueOnce(serverIdentityResponse())
-      .mockResolvedValueOnce(jsonResponse({ agent: 'Hanako', user: 'User', avatars: {} }))
-      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN', desk: { home_folder: null }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ agentId: 'hana', agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: null }, cwd_history: [] }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -868,8 +894,10 @@ describe('initApp bridge indicator', () => {
 
     mockHanaFetch
       .mockResolvedValueOnce(serverIdentityResponse())
-      .mockResolvedValueOnce(jsonResponse({ agent: 'Hanako', user: 'User', avatars: {} }))
-      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN', desk: { home_folder: null }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ agentId: 'hana', agent: 'Hanako', user: 'User', avatars: {} }))
+      .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
+      .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
+      .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: null }, cwd_history: [] }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },

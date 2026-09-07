@@ -2807,6 +2807,131 @@
     max-width: 360px;
 }
 
+/* Removal is kept off to one side of the reversible actions, behind a hairline,
+   so it cannot be reached by aiming slightly wide of stop. */
+.mcp-list-danger-slot {
+    display: inline-flex;
+    align-items: center;
+    margin-left: var(--space-8);
+    padding-left: var(--space-8);
+    border-left: 1px solid var(--overlay-light);
+}
+
+.mcp-detail-header {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-12);
+    padding-bottom: var(--space-12);
+    margin-bottom: var(--space-16);
+    border-bottom: 1px solid var(--overlay-light);
+}
+
+.mcp-detail-heading {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.mcp-tool-zone {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+}
+
+.mcp-tool-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-12);
+    flex-wrap: wrap;
+}
+
+.mcp-tool-collapse {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-6);
+    height: 28px;
+    padding: 0 var(--space-6);
+    border: none;
+    background: none;
+    color: var(--text);
+    font-family: inherit;
+    font-size: var(--fs-caption);
+    cursor: pointer;
+}
+
+.mcp-tool-collapse svg {
+    transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.mcp-tool-collapse svg[data-expanded="true"] {
+    transform: rotate(90deg);
+}
+
+.mcp-tool-bulk {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    padding: 0 var(--space-6);
+}
+
+.mcp-tool-row {
+    align-items: flex-start;
+}
+
+.mcp-tool-check {
+    margin-right: var(--space-6);
+    accent-color: rgb(var(--accent-rgb));
+}
+
+.mcp-tool-inline-control {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-6);
+}
+
+/* Restates what the running server declares about a tool. */
+.mcp-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    margin-left: var(--space-6);
+    padding: 0 var(--space-6);
+    border: 1px solid var(--overlay-medium);
+    color: var(--text-muted);
+    font-size: var(--fs-micro);
+    letter-spacing: 0.03em;
+}
+
+.mcp-badge-danger {
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+.mcp-oauth-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-12);
+    padding: var(--space-12);
+    border: 1px solid var(--overlay-light);
+}
+
+.mcp-import-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    margin: var(--space-8) 0;
+}
+
+.mcp-import-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    flex-wrap: wrap;
+    padding: var(--space-6) 0;
+    border-bottom: 1px solid var(--overlay-light);
+}
+
 @media (max-width: 720px) {
     .mcp-list-item {
         flex-direction: column;
@@ -3107,7 +3232,7 @@
     color: var(--danger, #e74c3c);
 }
 
-/* Textarea（ishiki 人格编辑等）
+/* Textarea（AGENTS.md 人格编辑等）
  * 分层优先 border，不用 shadow（对齐 DESIGN.md 已校准规则）
  * border + radius 与 .settings-input 对齐 */
 .settings-textarea {
@@ -6150,6 +6275,45 @@ a.about-link:hover {
 .memory-action-btn:hover {
     background: var(--overlay-subtle);
     transform: translateY(-1px);
+}
+
+.memory-action-btn:disabled {
+    opacity: 0.55;
+    transform: none;
+}
+
+.memory-dream-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    margin-bottom: var(--space-24);
+}
+
+.memory-dream-status,
+.memory-dream-error {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+    font-size: var(--fs-hint);
+    line-height: 1.5;
+}
+
+.memory-dream-status {
+    color: var(--text-muted);
+}
+
+.memory-dream-error {
+    color: var(--danger);
+}
+
+.memory-dream-link {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    cursor: default;
 }
 
 .memory-action-btn.danger {

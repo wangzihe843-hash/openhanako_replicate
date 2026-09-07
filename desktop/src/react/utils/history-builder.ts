@@ -55,10 +55,25 @@ export interface HistoryApiResponse {
     role: string;
     content: string;
     thinking?: string;
-    toolCalls?: Array<{ id?: string; toolCallId?: string; name: string; args?: Record<string, unknown> }>;
+    toolCalls?: Array<{
+      id?: string;
+      toolCallId?: string;
+      name: string;
+      args?: Record<string, unknown>;
+      status?: 'succeeded' | 'failed' | 'unknown';
+      success?: boolean;
+      error?: string;
+    }>;
     images?: Array<{ data: string; mimeType: string }>;
     timestamp?: number | string | null;
     sourceIndex?: number;
+    turnInputEntryId?: string;
+    turnInputVisible?: boolean;
+    agentReview?: import('../stores/chat-types').AgentReviewContext;
+    agentReviewRequest?: import('../stores/chat-types').AgentReviewRequestContext;
+    sessionRefs?: Array<{ sessionId: string; label: string }>;
+    agentMentions?: Array<{ agentId: string; label: string }>;
+    displayText?: string;
   }>;
   sessionFiles?: SessionRegistryFile[];
   blocks?: Array<any>;
@@ -203,8 +218,10 @@ function buildSessionFileLookup(sessionFiles: unknown): Map<string, SessionRegis
     const keys = [
       sessionFileIdLookupKey(record.fileId),
       sessionFileIdLookupKey(record.id),
+      ...(record.legacyFileIds || []).map(sessionFileIdLookupKey),
       normalizePathKey(record.filePath),
       normalizePathKey(record.realPath),
+      ...(record.legacyFilePaths || []).map(normalizePathKey),
       normalizePathKey(record.resource?.links?.content),
       normalizePathKey(record.resource?.links?.self),
     ].filter((key): key is string => !!key);
@@ -497,7 +514,8 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
       // 跨 session 协作：非用户本人发出的消息带 origin，此时以 displayText（干净正文，
       // 不含模型侧身份前缀）为准；老消息没有这两个字段，走既有 content 管道，行为不变。
       const origin = (m as any).origin;
-      const originDisplayText = origin && typeof (m as any).displayText === 'string' ? (m as any).displayText : null;
+      const originDisplayText = (origin || m.agentReview || m.agentReviewRequest || m.sessionRefs?.length)
+        && typeof m.displayText === 'string' ? m.displayText : null;
 
       // strip steer 前缀（内部标记，不应展示给用户）
       const rawContent = (originDisplayText ?? (m.content || ''))
@@ -553,6 +571,10 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
         quotedText: quotedText || undefined,
         timestamp,
         ...(origin ? { origin } : {}),
+        ...(m.agentReview ? { agentReview: m.agentReview } : {}),
+        ...(m.agentReviewRequest ? { agentReviewRequest: m.agentReviewRequest } : {}),
+        ...(m.sessionRefs?.length ? { sessionRefs: m.sessionRefs } : {}),
+        ...(m.agentMentions?.length ? { agentMentions: m.agentMentions } : {}),
       };
       items.push({ type: 'message', data: msg });
     } else if (m.role === 'assistant') {
@@ -577,7 +599,14 @@ export function buildItemsFromHistory(data: HistoryApiResponse): ChatListItem[] 
         });
       }
 
-      const msg: ChatMessage = { id, sourceEntryId: m.entryId, role: 'assistant', blocks };
+      const msg: ChatMessage = {
+        id,
+        sourceEntryId: m.entryId,
+        role: 'assistant',
+        blocks,
+        ...(m.turnInputEntryId ? { turnInputEntryId: m.turnInputEntryId } : {}),
+        ...(typeof m.turnInputVisible === 'boolean' ? { turnInputVisible: m.turnInputVisible } : {}),
+      };
       if (timestamp !== undefined) msg.timestamp = timestamp;
       if (blocks.length > 0) {
         items.push({ type: 'message', data: msg });

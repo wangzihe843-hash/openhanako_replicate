@@ -1,4 +1,4 @@
-// tests/plugin-ui-contributions.test.js
+// tests/plugin-ui-contributions.test.ts
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';

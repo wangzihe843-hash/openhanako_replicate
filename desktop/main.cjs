@@ -46,10 +46,7 @@ const {
   focusExistingWindow,
 } = require("./src/shared/single-instance-lock.cjs");
 const {
-  configureProcessPiSdkEnv,
-  ensureHanaPiSdkDirs,
   resolveHanakoHome,
-  withHanaPiSdkEnv,
 } = require("../shared/hana-runtime-paths.cjs");
 const {
   buildBrowserSearchExtractionScript,
@@ -80,10 +77,25 @@ const {
   recordGpuChildProcessGone,
   recordGpuInfoUpdate,
   resolveGpuStartupPolicy,
+  settleLegacyGpuPreferenceMigration,
 } = require("./src/shared/gpu-startup-policy.cjs");
+const {
+  buildInstallAclHealDiagnostics,
+  maybeHealWin32InstallAcl,
+} = require("./src/shared/win32-install-acl-heal.cjs");
 const {
   buildWin32ServerEnv,
 } = require("./src/shared/server-process-env.cjs");
+const {
+  withWindowsSystemCaEnv,
+} = require("./src/shared/windows-system-ca.cjs");
+const {
+  buildWindowsServerGuardianArgs,
+  isWindowsServerGuardianShutdownConfirmed,
+  requestWindowsServerGuardianStop,
+  resolveBeforeQuitServerAction,
+  resolveWindowsServerGuardian,
+} = require("./src/shared/windows-server-guardian.cjs");
 const {
   createDesktopLaunchDiagnostics,
 } = require("./src/shared/desktop-launch-diagnostics.cjs");
@@ -158,8 +170,6 @@ function safeReadJSON(filePath, fallback = null) {
 
 const hanakoHome = resolveHanakoHome(process.env.HANA_HOME);
 process.env.HANA_HOME = hanakoHome;
-ensureHanaPiSdkDirs(hanakoHome);
-configureProcessPiSdkEnv(hanakoHome);
 
 const keepAwakeManager = createKeepAwakeManager({ powerSaveBlocker });
 
@@ -283,6 +293,37 @@ if (process.platform === "win32") {
   app.setAppUserModelId(APP_USER_MODEL_ID);
 }
 
+// 必须先于 resolveGpuStartupPolicy：ACL 自愈成功时会清掉 autoGpuMode / 陈旧
+// pending 标记，本次启动就能直接回到 hardware，而不是等下一次启动。
+if (process.platform === "win32") {
+  try {
+    // appVersion 取壳版本：这里是"安装面身份"（哪个安装目录里的哪个壳），与
+    // 展示层禁止消费 app.getVersion() 的产品版本规则不冲突（同 desktopLaunchDiagnostics）。
+    const healResult = maybeHealWin32InstallAcl({
+      hanakoHome,
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      installDir: path.dirname(process.execPath),
+      appVersion: app.getVersion(),
+      env: process.env,
+    });
+    if (healResult.status === "healed") {
+      console.log(
+        `[desktop] install-dir sandbox ACE granted${healResult.probed ? `; GPU recovery probe cleared mode ${healResult.clearedMode ?? "(none)"}` : ""}`,
+      );
+    } else if (healResult.status === "ineffective") {
+      console.warn(
+        "[desktop] GPU crashes continued after the sandbox ACE grant; restored the previous compatibility mode. See startup diagnostics for the manual icacls command.",
+      );
+    } else if (healResult.status === "grant-failed") {
+      console.warn(`[desktop] install-dir sandbox ACE grant failed (attempt ${healResult.failureCount}); the installer-side grant remains the fallback`);
+    }
+  } catch (err) {
+    // 自愈是启动增强，绝不能反过来挡启动；失败原因完整落日志与诊断。
+    console.warn("[desktop] install ACL heal skipped due to an unexpected error:", err.message);
+  }
+}
+
 const gpuStartupPolicy = resolveGpuStartupPolicy({
   hanakoHome,
   platform: process.platform,
@@ -294,6 +335,9 @@ if (!gpuStartupPolicy.hardwareAccelerationEnabled) {
   console.warn(`[desktop] GPU safe mode enabled (${gpuStartupPolicy.reason}); hardware acceleration disabled for this launch`);
 }
 const desktopStartupId = `${Date.now()}-${process.pid}`;
+// 壳身份用途：启动诊断记录"哪个壳进程在跑"，不是"用户在用哪个内容版本"——
+// 此处语义是壳版本，不经 getCurrentContentVersion()（该访问器此时也还没
+// 被赋值：resolvePackagedArtifactBoot 在启动流程里晚于这里执行）。
 const desktopLaunchDiagnostics = createDesktopLaunchDiagnostics({
   hanakoHome,
   startupId: desktopStartupId,
@@ -374,6 +418,7 @@ let _browserWebView = null;        // 当前活跃的 WebContentsView
 const _browserViews = new Map();   // sessionPath -> BrowserWorkspace; BrowserWorkspace.tabs: tabId -> WebContentsView
 let _currentBrowserSession = null; // 当前浏览器绑定的 sessionPath
 let _currentBrowserTabId = null;   // 当前浏览器绑定的 tabId
+const _browserSessionTitles = new Map(); // workspaceKey -> session title（viewer 工具栏显示"在看谁的浏览器"）
 let _browserAcceptCookies = true;
 const _browserCookiePolicyInstalledPartitions = new Set();
 
@@ -446,6 +491,10 @@ let _crashFallbackNotice = null;
  * 诊断专用文案（crash log、`dialog.trainUpdateApplyFailedBody` 这类"进程崩了
  * 请重启"对话框）刻意继续读 `app.getVersion()`，不经这个访问器——那些场景
  * 问的是"哪个壳进程崩了"，不是"用户在用哪个内容版本"。
+ * 该例外的适用范围收窄如下：crash.log 头部自本次起两行并写——壳行（`HanaAgent shell:`）
+ * 保留上述"哪个壳进程崩了"的例外语义，内容行（`Content:`）由本访问器提供。
+ * 原因是热更新后壳版本与内容版本会分叉，只报壳版本会把新内容里的崩溃标成
+ * 老版本，系统性误导排障；两行并写让"哪个壳崩的"和"崩的是哪份代码"都可读。
  */
 function getCurrentContentVersion() {
   return _currentContentVersion || app.getVersion();
@@ -546,6 +595,7 @@ function isAllowedBrowserUrl(url) {
 let _browserViewerTheme = themeRegistry.DEFAULT_THEME; // 当前主题（用于 backgroundColor）
 const TITLEBAR_HEIGHT = 44;        // 浏览器窗口标题栏高度（px）
 let serverProcess = null;
+const _intentionalServerStops = new WeakSet();
 let serverPort = null;
 let serverToken = null;
 let isQuitting = false;  // 区分关窗口（hide）和真正退出（quit）
@@ -555,6 +605,7 @@ let reusedServerOwned = false; // 仅 desktop-owned 的复用 server 才由 desk
 let isExitingServer = false; // 只有托盘"退出"时才 kill server，其余路径仅关前端
 let _isUpdating = false;  // auto-updater 正在执行 quitAndInstall，before-quit 跳过 server 清理
 let _isApplyingTrainUpdate = false; // 列车更新"立即应用"进行中：优雅停掉再重新 spawn server 期间，monitorServer 的崩溃自动重启要跳过这段窗口，同 _isUpdating/isExitingServer 的既有模式
+let _beforeQuitServerShutdownState = "idle";
 let _autoUpdaterInitialized = false;
 let _otaSchedulerStarted = false; // 进程级只调度一次；窗口重建（activate 等）不重复起定时器
 let forceQuitApp = false;   // 启动失败等场景需要真正退出，绕过"隐藏保持运行"拦截
@@ -617,16 +668,14 @@ function mt(dotPath, vars, fallback) {
 /** 重置 i18n 缓存（locale 变更时调用） */
 function resetMainI18n() { _mainI18nData = null; }
 
-/** 跨平台杀进程：Windows 用 taskkill，POSIX 用 signal */
-function killPid(pid, force = false) {
-  if (process.platform === "win32") {
-    try {
-      require("child_process").execFileSync("taskkill",
-        force ? ["/F", "/T", "/PID", String(pid)] : ["/PID", String(pid)],
-        { stdio: "ignore", windowsHide: true });
-    } catch {}
-  } else {
-    try { process.kill(pid, force ? "SIGKILL" : "SIGTERM"); } catch {}
+/** POSIX server lifecycle signal. Windows termination belongs to the native Job guardian. */
+function signalPidOnPosix(pid, force = false) {
+  if (process.platform === "win32") return false;
+  try {
+    process.kill(pid, force ? "SIGKILL" : "SIGTERM");
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -855,17 +904,31 @@ async function waitForProcessExit(proc, pid, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (exitObserved || hasChildExitObserved(proc)) return true;
-      if (pid && !isPidAliveForDiagnostics(pid)) return true;
+      if (!proc && pid && !isPidAliveForDiagnostics(pid)) return true;
       const waitMs = Math.min(SERVER_SHUTDOWN_POLL_MS, Math.max(0, deadline - Date.now()));
       if (waitMs <= 0) break;
       await new Promise(r => setTimeout(r, waitMs));
     }
     if (exitObserved || hasChildExitObserved(proc)) return true;
-    return !!pid && !isPidAliveForDiagnostics(pid);
+    return !proc && !!pid && !isPidAliveForDiagnostics(pid);
   } finally {
     if (proc && onExit && typeof proc.removeListener === "function") {
       proc.removeListener("exit", onExit);
     }
+  }
+}
+
+async function requestServerShutdown(port, token, timeoutMs = 5000) {
+  if (!Number.isInteger(Number(port)) || !token) return false;
+  try {
+    const response = await fetch(`http://127.0.0.1:${Number(port)}/api/shutdown`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return response.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -896,6 +959,7 @@ const artifactRepair = require("./src/shared/artifact-repair.cjs");
 // HANA_SIGN_KEYSET 的构建期替换），运行时没有旁路。
 const { loadPinnedKeyset } = require("../shared/artifact-core/keyset.cjs");
 const { resolveStaleServerInfoDisposition } = require("./src/shared/stale-server-info.cjs");
+const { probeServerInfo, isForeignServerBlocking, describeForeignServerBlock } = require("../shared/server-info-probe.cjs");
 const { resolvePostUpdateAnnouncement, coerceDigestHistory, sliceDigestHistory, compareProductVersions } = require("./src/shared/post-update-announcement.cjs");
 // 列车更新"立即应用"（refresh-grade apply）的纯编排/守卫层：只提供步骤顺序 + fail-fast 语义，实际 IO（promote
 // / 停 server / 重新 spawn / 重载窗口）仍然全部走本文件已有的基础设施。
@@ -1137,11 +1201,18 @@ async function startServer() {
 
       let knownDead = false;
       if (verification.terminate) {
-        console.log(`[desktop] 可信旧 server 不可复用（${verification.reason}），正在终止 PID ${existingInfo.pid}`);
-        killPid(existingInfo.pid);
-        knownDead = await waitForProcessExit(null, existingInfo.pid, STALE_SERVER_EXIT_GRACE_MS);
-        if (!knownDead) {
-          killPid(existingInfo.pid, true);
+        console.log(`[desktop] 可信旧 server 不可复用（${verification.reason}），正在请求认证关闭 PID ${existingInfo.pid}`);
+        await requestServerShutdown(existingInfo.port, existingInfo.token);
+        const authenticatedShutdownGraceMs = process.platform === "win32" && isDesktopOwnedServerInfo(existingInfo)
+          ? SERVER_SHUTDOWN_GRACE_MS
+          : STALE_SERVER_EXIT_GRACE_MS;
+        knownDead = await waitForProcessExit(null, existingInfo.pid, authenticatedShutdownGraceMs);
+        if (!knownDead && process.platform !== "win32") {
+          signalPidOnPosix(existingInfo.pid);
+          knownDead = await waitForProcessExit(null, existingInfo.pid, STALE_SERVER_EXIT_GRACE_MS);
+        }
+        if (!knownDead && process.platform !== "win32") {
+          signalPidOnPosix(existingInfo.pid, true);
           knownDead = await waitForProcessExit(null, existingInfo.pid, SERVER_FORCE_KILL_WAIT_MS);
         }
       } else {
@@ -1169,8 +1240,21 @@ async function startServer() {
           err.code = "STALE_SERVER_UNCLEANED";
           throw err;
         }
-        // 端口不冲突：继续 spawn 新 server。_spawnServerOnce 会按 poll 契约删除
-        // 旧文件，新 server 就绪后重写；残留进程仍可通过任务管理器发现
+        // 端口不冲突不等于"可以安全共存"：残留进程可能是同一 HANA_HOME 上
+        // 监听在别的端口的另一个内核（典型触发路径：`hana serve` 先起、桌面
+        // 后启动）。用 token 认证探测确认它是否仍然是同一个家，是则拒绝
+        // spawn 第二个内核；探测不通（not-hana / dead）才继续走原有 spawn。
+        const foreignProbe = await probeServerInfo({ info: existingInfo });
+        if (isForeignServerBlocking(foreignProbe.status)) {
+          const err = new Error(
+            `FOREIGN_SERVER_RUNNING: ${describeForeignServerBlock({ status: foreignProbe.status, info: existingInfo })}`
+          );
+          err.code = "FOREIGN_SERVER_RUNNING";
+          throw err;
+        }
+        // 端口不冲突且探测确认不是仍存活的同宅内核：继续 spawn 新 server。
+        // _spawnServerOnce 会按 poll 契约删除旧文件，新 server 就绪后重写；
+        // 残留进程仍可通过任务管理器发现
       } else {
         try { fs.unlinkSync(serverInfoPath); } catch {}
       }
@@ -1270,7 +1354,8 @@ async function startServer() {
  */
 async function resolvePackagedArtifactBoot() {
   const resourcesPath = process.resourcesPath || "";
-  if (!artifactBoot.hasSeed(resourcesPath)) {
+  const platformArch = `${process.platform}-${process.arch}`;
+  if (!artifactBoot.hasSeed(resourcesPath, platformArch)) {
     if (app.isPackaged) {
       throw new Error(
         `Packaged app is missing its artifact seed (expected under ${path.join(resourcesPath, "seed")}). `
@@ -1288,7 +1373,7 @@ async function resolvePackagedArtifactBoot() {
   const boot = await artifactBoot.prepareArtifactBoot({
     homeDir: hanakoHome,
     resourcesPath,
-    platformArch: `${process.platform}-${process.arch}`,
+    platformArch,
     keyset: loadPinnedKeyset(),
     // 通道选择驱动的是"这台设备落在哪条列车线上"：OTA 把
     // 产物暂存进选中通道的指针命名空间，boot 端的 promote/resolve 也必须
@@ -1454,6 +1539,7 @@ async function handleRendererArtifactLoadFailure({ win, pageName, opts, label, r
     resolved = await artifactBoot.prepareArtifactRendererBoot({
       homeDir: hanakoHome,
       resourcesPath: process.resourcesPath || "",
+      platformArch: `${process.platform}-${process.arch}`,
       keyset: loadPinnedKeyset(),
       // 必须显式传入本次启动的通道。若回落到
       // `artifactBoot.SEED_CHANNEL`（"stable"），beta 偏好机器 renderer
@@ -1596,7 +1682,7 @@ async function _spawnServerOnce(serverInfoPath, artifactBootContext) {
   reusedServerOwned = false;
 
   let serverEnv = {
-    ...withHanaPiSdkEnv(process.env, hanakoHome),
+    ...process.env,
     HANA_HOME: hanakoHome,
     HANA_SERVER_OWNER: "desktop",
     HANA_SERVER_OWNER_PID: String(process.pid),
@@ -1604,8 +1690,34 @@ async function _spawnServerOnce(serverInfoPath, artifactBootContext) {
     HANA_DESKTOP_APP_PATH: app.getAppPath(),
     HANA_DESKTOP_IS_PACKAGED: app.isPackaged ? "1" : "0",
   };
+  if (
+    app.isPackaged
+    && typeof process.resourcesPath === "string"
+    && path.isAbsolute(process.resourcesPath)
+  ) {
+    serverEnv.HANA_DESKTOP_RESOURCES_PATH = process.resourcesPath;
+  }
+  // The server receives every ordinary desktop environment variable, but it
+  // must not inherit Pi's global agent directory. Hana supplies all SDK paths
+  // explicitly so a host-level Pi installation cannot redirect Hana's data.
+  delete serverEnv.PI_CODING_AGENT_DIR;
+  // packaged 模式下 `_distRenderer` 已经被 `resolvePackagedArtifactBoot`
+  // （本函数调用前必然跑过一次，见调用点 :1186 附近）重指向 renderer 的
+  // 已激活版本目录；把它转交给 server，让 /mobile、/desktop 的远程网页
+  // 客户端从此供货热更新激活的 renderer，不再是 server 内容包里冗余携带、
+  // 永远滞后于热更新的那份旧拷贝。dev 模式（artifactBootContext 为 null）
+  // 不设——server 走自己的源码树开发形态，逐字节不变。
+  // 已知边界：renderer 崩溃降级会在本次 spawn 之后重新赋值
+  // `_distRenderer`（见 `handleRendererArtifactLoadFailure`），但这里已经
+  // 把当时的值复制进了 server 的 env，此后不会再变——server 进程的生命周
+  // 期内这个环境变量本就是 spawn 时定格的，跟 server 自身"只在启动时决
+  // 议一次，不逐请求判断"的语义一致，重启进程后两者自然重新对齐，不在
+  // 本次修复范围内。
+  if (artifactBootContext) {
+    serverEnv.HANA_RENDERER_DIST = _distRenderer;
+  }
   serverEnv = await serverEnvironmentForNetworkProxy(serverEnv);
-
+  serverEnv = withWindowsSystemCaEnv(serverEnv);
   // Windows: 注入 bundled Git runtime（MinGit）路径，并从注册表补齐当前系统 / 用户 PATH。
   if (process.platform === "win32") {
     // MinGit 结构：cmd/git.exe, usr/bin/*（含 sh.exe）, mingw64/bin/*；
@@ -1623,7 +1735,7 @@ async function _spawnServerOnce(serverInfoPath, artifactBootContext) {
   }
 
   // 选择 server 启动方式
-  let serverBin, serverArgs;
+  let serverBin, serverArgs, serverCwd;
   if (artifactBootContext) {
     // 打包模式：从 HANA_HOME/artifacts 的版本化目录启动（首启已由
     // resolvePackagedArtifactBoot 解压 seed；目录布局与旧 Resources/server 一致）
@@ -1634,6 +1746,7 @@ async function _spawnServerOnce(serverInfoPath, artifactBootContext) {
     const bin = process.platform === "win32" ? bundledServer + ".exe" : bundledServer;
     const entry = path.join(versionedServerRoot, "bundle", "index.js");
     serverBin = bin;
+    serverCwd = versionedServerRoot;
     serverArgs = process.platform === "win32"
       ? [path.join(versionedServerRoot, "bootstrap.js")]
       : [];
@@ -1648,9 +1761,14 @@ async function _spawnServerOnce(serverInfoPath, artifactBootContext) {
     // native addon 被 Electron 自带 Node 误加载。
     const devRoot = path.join(__dirname, "..");
     serverBin = process.env.HANA_DEV_NODE_BIN || process.env.npm_node_execpath || "node";
+    serverCwd = devRoot;
     serverArgs = [path.join(devRoot, "server", "bootstrap.ts")];
     serverEnv.HANA_ROOT = devRoot;
-    serverEnv.HANA_SERVER_ENTRY = path.join(devRoot, "server", "index.ts");
+    // server/main-full.ts is the thin closed composition entry: it
+    // statically imports server/index.ts's startServer() plus
+    // server/composition/full-root.ts's registerClosedRoutes hook.
+    // server/index.ts itself no longer boots anything on its own.
+    serverEnv.HANA_SERVER_ENTRY = path.join(devRoot, "server", "main-full.ts");
     // Keep dev and packaged startup contracts identical.
     serverEnv.HANA_CREATE_STARTUP_SESSION = "0";
     delete serverEnv.ELECTRON_RUN_AS_NODE;
@@ -1665,14 +1783,44 @@ async function _spawnServerOnce(serverInfoPath, artifactBootContext) {
     await artifactBoot.writeBootSentinel(hanakoHome, artifactBootContext.channel, artifactBootContext.train);
   }
 
+  let launcherBin = serverBin;
+  let launcherArgs = serverArgs;
+  let launcherDetached = true;
+  if (process.platform === "win32") {
+    const guardianBin = resolveWindowsServerGuardian({
+      resourcesPath: process.resourcesPath,
+      appRoot: path.join(__dirname, ".."),
+    });
+    if (!guardianBin) {
+      throw new Error(
+        "WINDOWS_SERVER_GUARDIAN_MISSING: hana-win-sandbox.exe is required to supervise the server process tree. Rebuild or reinstall HanaAgent."
+      );
+    }
+    serverEnv.HANA_WIN32_SANDBOX_HELPER = guardianBin;
+    launcherBin = guardianBin;
+    launcherArgs = buildWindowsServerGuardianArgs({
+      parentPid: process.pid,
+      cwd: serverCwd,
+      executable: serverBin,
+      args: serverArgs,
+    });
+    launcherDetached = false;
+  }
+
+  if (isQuitting) {
+    throw new Error("SERVER_START_ABORTED: application is quitting");
+  }
+
   _lastServerSpawn = {
     command: serverBin,
     args: serverArgs,
+    launcher: launcherBin,
+    launcherArgs,
     pid: null,
     startedAt: new Date().toISOString(),
   };
-  serverProcess = spawn(serverBin, serverArgs, {
-    detached: true,
+  serverProcess = spawn(launcherBin, launcherArgs, {
+    detached: launcherDetached,
     windowsHide: true,
     env: serverEnv,
     stdio: ["pipe", "pipe", "pipe"],
@@ -1714,6 +1862,9 @@ async function _spawnServerOnce(serverInfoPath, artifactBootContext) {
     process: serverProcess,
     getLastProgressAtMs: () => _lastServerProgressAtMs,
   });
+  if (_lastServerSpawn?.pid === spawnedProcess.pid) {
+    _lastServerSpawn.serverPid = info.pid || null;
+  }
   serverPort = info.port;
   serverToken = info.token;
   serverProcess.unref(); // 脱离 Electron 事件循环，允许 Electron 独立退出
@@ -1728,19 +1879,61 @@ async function _spawnServerOnce(serverInfoPath, artifactBootContext) {
   }
 }
 
+async function settleLegacyGpuPreferenceAfterServerStart() {
+  const intent = gpuStartupPolicy?.legacyPreferenceCleanup;
+  if (process.platform !== "win32" || !intent) return null;
+  if (!serverPort || !serverToken) {
+    throw new Error("Legacy GPU preference migration requires a ready local server");
+  }
+
+  const response = await fetch(
+    `http://127.0.0.1:${serverPort}/api/preferences/legacy-gpu-safe-mode/hardware-acceleration`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${serverToken}` },
+      signal: AbortSignal.timeout(5000),
+    },
+  );
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {}
+  if (!response.ok) {
+    throw new Error(
+      `Legacy GPU preference migration failed with HTTP ${response.status}` +
+      (payload?.error ? `: ${payload.error}` : ""),
+    );
+  }
+  if (
+    payload?.ok !== true ||
+    !["deleted", "already-absent", "value-changed"].includes(payload.status)
+  ) {
+    throw new Error("Legacy GPU preference migration returned an invalid response");
+  }
+
+  const result = settleLegacyGpuPreferenceMigration({
+    hanakoHome,
+    intent,
+    preferenceStatus: payload.status,
+  });
+  console.log(`[desktop] Legacy GPU preference migration ${result.status}`);
+  return result;
+}
+
 /**
  * 持久监控 server 进程：崩溃后自动重启一次，再失败则写 crash log 并通知用户
  */
 let _serverRestartAttempts = 0;
 function monitorServer() {
   if (!serverProcess) return;
-  serverProcess.on("exit", async (code, signal) => {
+  const monitoredProcess = serverProcess;
+  monitoredProcess.on("exit", async (code, signal) => {
     // 任何"主动退出"路径都跳过：用户 quit、托盘 quit、auto-updater 安装、
     // shutdownServer 主动 kill、列车更新"立即应用"正在优雅重启 server。
     // 否则这里会和 quitAndInstall / shutdownServer / applyTrainUpdateNow
     // 抢时间去 spawn 新 server，造成 serverProcess 被并发改写成 null，
     // 后续 serverProcess.unref() 报 "Cannot read properties of null"。
-    if (isQuitting || _isUpdating || isExitingServer || _isApplyingTrainUpdate) return;
+    if (_intentionalServerStops.has(monitoredProcess) || isQuitting || _isUpdating || isExitingServer || _isApplyingTrainUpdate) return;
     const reason = signal ? `信号 ${signal}` : `退出码 ${code}`;
     console.error(`[desktop] Server 意外退出 (${reason})`);
 
@@ -1762,6 +1955,8 @@ function monitorServer() {
       } catch (err) {
         console.error("[desktop] Server 重启失败:", err.message);
         writeCrashLog(`Server 重启失败: ${err.message}`);
+        // 壳身份用途：崩溃诊断对话框，问的是"哪个壳进程崩了"，见
+        // getCurrentContentVersion() 声明处对这类诊断文案的例外说明。
         dialog.showErrorBox("HanaAgent Server", mt("dialog.serverRestartFailed", {
           version: app?.getVersion?.() || "unknown",
           error: err.message,
@@ -1769,6 +1964,7 @@ function monitorServer() {
       }
     } else {
       writeCrashLog(`Server 多次崩溃 (${reason})，放弃重启`);
+      // 壳身份用途：同上。
       dialog.showErrorBox("HanaAgent Server", mt("dialog.serverMultipleCrash", {
         version: app?.getVersion?.() || "unknown",
         reason,
@@ -1877,9 +2073,11 @@ function buildServerCrashDiagnostics() {
   if (_lastServerSpawn) {
     const childAlive = isPidAliveForDiagnostics(_lastServerSpawn.pid);
     const exitObserved = _lastServerSpawn.exitCode !== undefined || _lastServerSpawn.exitSignal !== undefined;
-    items.push(`Server PID: ${_lastServerSpawn.pid || "unknown"}`);
+    items.push(`Server PID: ${_lastServerSpawn.serverPid || _lastServerSpawn.pid || "unknown"}`);
     items.push(`Server command: ${_lastServerSpawn.command || "unknown"}`);
     items.push(`Server args: ${JSON.stringify(_lastServerSpawn.args || [])}`);
+    items.push(`Server launcher: ${_lastServerSpawn.launcher || _lastServerSpawn.command || "unknown"}`);
+    items.push(`Server launcher PID: ${_lastServerSpawn.pid || "unknown"}`);
     items.push(`Server started at: ${_lastServerSpawn.startedAt || "unknown"}`);
     items.push(`Server child alive: ${childAlive}`);
     items.push(`Server exit: ${exitObserved ? `code=${_lastServerSpawn.exitCode ?? "null"} signal=${_lastServerSpawn.exitSignal ?? "null"}` : "not observed"}`);
@@ -1899,6 +2097,7 @@ function buildServerCrashDiagnostics() {
   }
 
   items.push(buildGpuStartupDiagnostics({ hanakoHome, policy: gpuStartupPolicy, app }));
+  items.push(buildInstallAclHealDiagnostics({ hanakoHome }));
 
   return items.join("\n");
 }
@@ -1907,10 +2106,20 @@ function writeCrashLog(errorMessage) {
   const logs = _serverLogs.join("");
   const timestamp = new Date().toISOString();
   const diagnostics = buildServerCrashDiagnostics();
+  // 内容版本取不到就写 unknown，不猜、也不回落到壳版本——两行必须各自独立，
+  // 否则一行出问题会污染另一行，读日志的人无从分辨。
+  const contentVersion = (() => {
+    try { return getCurrentContentVersion(); } catch { return "unknown"; }
+  })();
 
   const content = redactMainLogText([
     `=== HanaAgent Crash Log ===`,
-    `HanaAgent: v${app?.getVersion?.() || "unknown"}`,
+    // 壳身份 + 内容版本双行并写：壳行回答"哪个壳进程崩了"（见
+    // getCurrentContentVersion() 声明处对这类诊断文案的例外说明，该例外保留），
+    // 内容行回答"崩的是哪个版本的代码"——热更新后两者会分叉，只写壳版本会把
+    // 新内容里的崩溃标成老版本，误导用户与排障（已实际发生过一次）。
+    `HanaAgent shell: v${app?.getVersion?.() || "unknown"}`,
+    `Content: v${contentVersion}`,
     `Time: ${timestamp}`,
     `Error: ${errorMessage}`,
     `Platform: ${process.platform} ${process.arch}`,
@@ -1926,7 +2135,8 @@ function writeCrashLog(errorMessage) {
   // 写入文件（best effort）
   try {
     const crashLogPath = path.join(hanakoHome, "crash.log");
-    fs.mkdirSync(hanakoHome, { recursive: true });
+    // 数据目录存放凭证，只对当前用户开放（Windows 上 NTFS 忽略该位，由用户目录 ACL 兜底）
+    fs.mkdirSync(hanakoHome, { recursive: true, mode: 0o700 });
     fs.writeFileSync(crashLogPath, content, "utf-8");
   } catch (e) {
     console.error("[desktop] 写入 crash.log 失败:", e.message);
@@ -2382,6 +2592,14 @@ function startBackgroundOtaSchedulerOnce() {
   if (!app.isPackaged && !artifactOta.hasDevOverrideConfigured()) return;
   _otaSchedulerStarted = true;
   try {
+    // 壳身份用途：currentShellVersion 喂给 isShellVersionSufficient() 跟
+    // manifest.minShell 比较，问的是"这个壳二进制新不新"——这必须是壳自己
+    // 的版本，换成已激活内容版本会让 minShell 闸门失去意义（内容版本随
+    // OTA 变化，minShell 门槛检查的是壳能不能跑得动候选内容，不是内容
+    // 本身多新）。见 shared/artifact-core/ota-core.cjs 的
+    // isShellVersionSufficient() 与本函数下游 checkOnce() 对 minShell 的
+    // 处理；与之相邻的"这班车是否比已激活内容更新"判断走的是
+    // pointerStore 记录的 train/version，完全不经 app.getVersion()。
     artifactOta.scheduleBackgroundOtaChecks({
       homeDir: hanakoHome,
       keyset: loadPinnedKeyset(),
@@ -2756,6 +2974,8 @@ function createBrowserViewerWindow(opts = {}) {
 
   // 窗口获得焦点时，将输入焦点转发到 WebContentsView（否则无法滚动/打字）
   browserViewerWindow.on("focus", () => {
+    // 用户把 viewer 拉到前台 = 用户侧活动，刷新闲置回收计时
+    _sendBrowserUserActivity(_currentBrowserSession);
     if (_browserWebView) {
       _browserWebView.webContents.focus();
       console.log("[browser-viewer] window focus → view.focus(), isFocused:", _browserWebView.webContents.isFocused());
@@ -3063,17 +3283,6 @@ function _ensureBrowserForSession(sessionPath, tabId = null) {
   return view;
 }
 
-function _ensureBrowserTabForSession(sessionPath, tabId = null) {
-  const workspace = _ensureBrowserWorkspace(sessionPath);
-  let tab = tabId ? workspace.tabs.get(tabId) : _activeBrowserTabRecord(workspace);
-  if (!tab) {
-    tab = _createBrowserTabRecord(sessionPath, { tabId });
-    workspace.tabs.set(tab.tabId, tab);
-    workspace.activeTabId = tab.tabId;
-  }
-  return tab;
-}
-
 function _ensureBrowser() {
   return _ensureBrowserForSession(null);
 }
@@ -3141,14 +3350,14 @@ function _bindBrowserViewLifecycle(view, sessionPath) {
 
 function _removeBrowserTabRecord(view) {
   if (!view) return null;
-  for (const [key, workspace] of _browserViews) {
+  for (const workspace of _browserViews.values()) {
     for (const [tabId, tab] of workspace.tabs) {
       if (tab.view !== view) continue;
       workspace.tabs.delete(tabId);
       if (workspace.activeTabId === tabId) {
         workspace.activeTabId = workspace.tabs.keys().next().value || null;
       }
-      if (workspace.tabs.size === 0) _browserViews.delete(key);
+      // 空标签组保留：崩溃/销毁路径同样只摘掉 tab，session 的 workspace 继续存在。
       return { workspace, tabId };
     }
   }
@@ -3357,13 +3566,14 @@ function _notifyViewerUrl(url) {
       canGoBack: _browserWebView.webContents.canGoBack(),
       canGoForward: _browserWebView.webContents.canGoForward(),
       sessionPath: _currentBrowserSession,
+      sessionTitle: _browserSessionTitles.get(_browserWorkspaceKey(_currentBrowserSession)) || null,
       activeTabId: _currentBrowserTabId || serialized.activeTabId,
       tabs: serialized.tabs,
     });
   }
 }
 
-async function closeBrowserSessionViaServer(sessionPath) {
+async function closeBrowserSessionViaServer(sessionPath, { revoke = false } = {}) {
   if (!sessionPath) throw new Error("No active browser session");
   if (!serverPort || !serverToken) throw new Error("Server is not ready");
   const res = await fetch(`http://127.0.0.1:${serverPort}/api/browser/close-session`, {
@@ -3372,7 +3582,7 @@ async function closeBrowserSessionViaServer(sessionPath) {
       "Content-Type": "application/json",
       Authorization: `Bearer ${serverToken}`,
     },
-    body: JSON.stringify({ sessionPath }),
+    body: JSON.stringify({ sessionPath, revoke }),
     signal: AbortSignal.timeout(5000),
   });
   if (!res.ok) {
@@ -3535,11 +3745,49 @@ async function handleBrowserCommand(cmd, params) {
     }
 
     // ── suspend ──（从窗口摘下来，但不销毁，页面状态完全保留）
+    // keepViewerVisible：会话切换用。窗口保持可见，viewer 会短暂收到 running:false 清空 UI，
+    // 紧随其后的 viewerShowSession 立刻重绘目标 session 的标签页组或空态。
     case "suspend": {
       const sp = params.sessionPath;
       const view = sp ? _getViewForSession(sp) : _browserWebView;
       if (view && view === _browserWebView) {
-        _detachActiveBrowserView({ view, sessionPath: sp || _currentBrowserSession, hideIfVisible: true });
+        _detachActiveBrowserView({
+          view,
+          sessionPath: sp || _currentBrowserSession,
+          hideIfVisible: params.keepViewerVisible !== true,
+        });
+      }
+      return {};
+    }
+
+    // ── viewerVisibility ──（闲置回收巡检用：viewer 当前是否可见、正在展示哪个 session）
+    case "viewerVisibility": {
+      return {
+        visible: !!(browserViewerWindow && !browserViewerWindow.isDestroyed() && browserViewerWindow.isVisible()),
+        sessionPath: _currentBrowserSession,
+      };
+    }
+
+    // ── viewerShowSession ──（viewer 显示指定 session 的标签页组；无组则空态。不改变窗口可见性）
+    case "viewerShowSession": {
+      const sp = params.sessionPath || null;
+      if (typeof params.title === "string" && params.title.trim()) {
+        _browserSessionTitles.set(_browserWorkspaceKey(sp), params.title.trim());
+      }
+      if (!browserViewerWindow || browserViewerWindow.isDestroyed()) return {};
+      const workspace = _getBrowserWorkspace(sp);
+      const activeTab = _activeBrowserTabRecord(workspace);
+      if (activeTab) {
+        _switchActiveBrowserTab(sp, activeTab.tabId);
+      } else {
+        browserViewerWindow.webContents.send("browser-update", {
+          sessionPath: sp,
+          sessionTitle: _browserSessionTitles.get(_browserWorkspaceKey(sp)) || null,
+          activeTabId: null,
+          tabs: [],
+          canGoBack: false,
+          canGoForward: false,
+        });
       }
       return {};
     }
@@ -3618,16 +3866,19 @@ async function handleBrowserCommand(cmd, params) {
       workspace.tabs.delete(params.tabId);
       try { if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close(); } catch {}
       if (workspace.tabs.size === 0) {
-        _browserViews.delete(_browserWorkspaceKey(sp));
+        // 关掉最后一个标签页不销毁 workspace：session 的标签组保留为空组，viewer 显示空态。
+        // 「运行中」的语义以 workspace 是否存在为准，所以这里不广播 running:false。
+        workspace.activeTabId = null;
         if (browserViewerWindow && !browserViewerWindow.isDestroyed()) {
           browserViewerWindow.webContents.send("browser-update", {
-            running: false,
             sessionPath: sp,
             activeTabId: null,
             tabs: [],
+            canGoBack: false,
+            canGoForward: false,
           });
         }
-        return { activeTabId: null, tabs: [] };
+        return _serializeBrowserWorkspace(workspace);
       }
       workspace.activeTabId = nextTabId && workspace.tabs.has(nextTabId)
         ? nextTabId
@@ -3884,6 +4135,40 @@ async function handleBrowserCommand(cmd, params) {
   }
 }
 
+/** 浏览器命令通道的当前连接：viewer 直连主进程改动标签页后，用它把快照同步回 server */
+let _browserCmdWs = null;
+
+/**
+ * 把某个 session 的标签组快照推给 server 的 BrowserManager。
+ * viewer 的新建/关闭标签页走 IPC 直达主进程、绕过 server，不同步会让 server 状态漂移。
+ */
+function _syncWorkspaceToServer(sessionPath) {
+  if (!_browserCmdWs || _browserCmdWs.readyState !== 1) return;
+  const workspace = _getBrowserWorkspace(sessionPath);
+  try {
+    _browserCmdWs.send(JSON.stringify({
+      type: "browser-workspace-sync",
+      sessionPath,
+      workspace: workspace ? _serializeBrowserWorkspace(workspace) : null,
+    }));
+  } catch {}
+}
+
+/**
+ * 告诉 server 的 BrowserManager「用户刚碰过这个 session 的浏览器」。
+ * 闲置回收要求 agent 与用户双方都超时，用户侧的时间戳只有主进程知道。
+ */
+function _sendBrowserUserActivity(sessionPath) {
+  if (!sessionPath) return;
+  if (!_browserCmdWs || _browserCmdWs.readyState !== 1) return;
+  try {
+    _browserCmdWs.send(JSON.stringify({
+      type: "browser-user-activity",
+      sessionPath,
+    }));
+  } catch {}
+}
+
 /** 通过 WebSocket 监听 server 的浏览器命令 */
 function setupBrowserCommands() {
   if (!serverPort || !serverToken) return;
@@ -3894,6 +4179,7 @@ function setupBrowserCommands() {
 
   function connect() {
     ws = new WebSocket(url);
+    _browserCmdWs = ws;
     ws.on("open", () => {
       console.log("[desktop] Browser control WS connected");
     });
@@ -3922,6 +4208,7 @@ function setupBrowserCommands() {
       }
     });
     ws.on("close", () => {
+      if (_browserCmdWs === ws) _browserCmdWs = null;
       if (!isQuitting) {
         setTimeout(connect, 2000);
       }
@@ -4588,6 +4875,8 @@ async function applyTrainUpdateNow(senderWebContents) {
     return { ok: false, error: err.message };
   }
 
+  // 壳身份用途：同 startBackgroundOtaSchedulerOnce() 里的说明——minShell
+  // 闸门问的是壳二进制新不新，必须是 app.getVersion()，不是内容版本。
   const downloadResult = await artifactOta.downloadAndApplyArtifacts({
     homeDir: hanakoHome,
     keyset: loadPinnedKeyset(),
@@ -4606,6 +4895,13 @@ async function applyTrainUpdateNow(senderWebContents) {
     return { ok: false, error: downloadResult.error };
   }
 
+  if (downloadResult.alreadyCurrent) {
+    // 下载/激活层发现本机已在该列车上（后台拉取或双击竞态）：无可应用，
+    // ota-state 已被刷新为"已是最新"，promote/重启序列整体跳过。
+    console.log("[desktop] train-update-apply: already on the requested train; nothing to apply");
+    return { ok: true, alreadyCurrent: true };
+  }
+
   const result = await trainUpdateApply.runApplyNowSequence({
     verifyPackaged: () => trainUpdateApply.assertPackagedMode(app.isPackaged),
     verifyStaged: async () => {
@@ -4617,9 +4913,13 @@ async function applyTrainUpdateNow(senderWebContents) {
     },
     shutdownServer: async () => {
       _isApplyingTrainUpdate = true;
-      await shutdownServer();
+      const shutdownResult = await shutdownServer();
+      trainUpdateApply.assertServerShutdownConfirmed(shutdownResult);
     },
     startServer: async () => {
+      if (isQuitting) {
+        throw new Error("train-update-apply: server restart aborted because the application is quitting");
+      }
       await startServer();
       _serverRestartAttempts = 0;
       monitorServer(); // 新 serverProcess 需要重新挂一次崩溃监控（旧监听器绑定的是已退出的旧进程实例）
@@ -4637,6 +4937,7 @@ async function applyTrainUpdateNow(senderWebContents) {
       // 旧 server 已经停了、新 server 也没起来：没有任何页内恢复手段，
       // 用跟现有崩溃重启失败同款的错误对话框告知用户重启应用（复用既有
       // installFailedTitle 键——同属"更新失败"这一类对话框标题）。
+      // 壳身份用途：诊断对话框，见 getCurrentContentVersion() 声明处的例外说明。
       dialog.showErrorBox(mt("dialog.installFailedTitle", null, "HanaAgent Update"), mt(
         "dialog.trainUpdateApplyFailedBody",
         { version: app?.getVersion?.() || "unknown", error: result.error },
@@ -4670,6 +4971,7 @@ wrapIpcHandler("train-fallback-notice-ack", () => {
 // 验签、过闸门、把发现的结果写进 ota-state.json 并原样返回给渲染进程。
 wrapIpcHandler("train-update-check", async () => {
   if (!app.isPackaged) return { outcome: "dev-skipped" };
+  // 壳身份用途：同 startBackgroundOtaSchedulerOnce() 里的说明。
   return artifactOta.checkOnce({
     homeDir: hanakoHome,
     keyset: loadPinnedKeyset(),
@@ -4727,6 +5029,12 @@ wrapIpcHandler("run-edit-command", (event, command) => {
   event.sender[command]();
   return true;
 });
+// 壳身份用途：这个 IPC 通道字面意思是"app 版本"，容易被误认成产品版本
+// 出口，但它读的是壳的 app.getVersion()，不是已激活内容版本。渲染进程侧
+// 的 getAppVersion() 桥接方法目前也没有任何调用点会拿它做面向用户的版本
+// 展示——那类展示一律走 train-update-status 的 currentVersion 字段（见
+// desktop/src/react/types.ts 里 TrainUpdateStatus 的文档注释）。保留这个
+// handler 作为壳版本自省的通道，不删、不改语义。
 wrapIpcHandler("get-app-version", () => app.getVersion());
 wrapIpcBestEffortHandler("get-pending-announcement", () => computePendingAnnouncement());
 // 书签必须写内容版本——跟 computePendingAnnouncement 读书签时用的比较基准
@@ -4762,6 +5070,7 @@ wrapIpcBestEffortHandler("open-browser-viewer", async (_event, theme, payload) =
   if (theme) _browserViewerTheme = theme;
   const { url, sessionPath: sp } = _normalizeBrowserViewerOpenPayload(payload);
   createBrowserViewerWindow();
+  _sendBrowserUserActivity(sp);
 
   if (url && isAllowedBrowserUrl(url)) {
     await _openUrlInNewBrowserTab(sp, url);
@@ -4773,37 +5082,63 @@ wrapIpcBestEffortHandler("open-browser-viewer", async (_event, theme, payload) =
     return;
   }
 
-  const workspace = _ensureBrowserWorkspace(sp);
-  const tab = _ensureBrowserTabForSession(sp);
-  workspace.activeTabId = tab.tabId;
-  _switchActiveBrowserTab(sp, tab.tabId);
+  // 打开 viewer 不替用户建标签页：有标签就切过去，空标签组渲染空态等用户点 +。
+  const workspace = _getBrowserWorkspace(sp);
+  const activeTab = _activeBrowserTabRecord(workspace);
+  if (activeTab) {
+    _switchActiveBrowserTab(sp, activeTab.tabId);
+    return;
+  }
+  if (browserViewerWindow && !browserViewerWindow.isDestroyed()) {
+    browserViewerWindow.webContents.send("browser-update", {
+      sessionPath: sp,
+      activeTabId: null,
+      tabs: [],
+      canGoBack: false,
+      canGoForward: false,
+    });
+  }
 });
 wrapIpcBestEffortHandler("browser-go-back", (_event, sessionPath) => {
-  const view = _getViewForSession(_resolveBrowserIpcSessionPath(sessionPath));
+  const sp = _resolveBrowserIpcSessionPath(sessionPath);
+  _sendBrowserUserActivity(sp);
+  const view = _getViewForSession(sp);
   if (view) view.webContents.goBack();
 });
 wrapIpcBestEffortHandler("browser-go-forward", (_event, sessionPath) => {
-  const view = _getViewForSession(_resolveBrowserIpcSessionPath(sessionPath));
+  const sp = _resolveBrowserIpcSessionPath(sessionPath);
+  _sendBrowserUserActivity(sp);
+  const view = _getViewForSession(sp);
   if (view) view.webContents.goForward();
 });
 wrapIpcBestEffortHandler("browser-reload", (_event, sessionPath) => {
-  const view = _getViewForSession(_resolveBrowserIpcSessionPath(sessionPath));
+  const sp = _resolveBrowserIpcSessionPath(sessionPath);
+  _sendBrowserUserActivity(sp);
+  const view = _getViewForSession(sp);
   if (view) view.webContents.reload();
 });
 wrapIpcBestEffortHandler("browser-new-tab", async (_event, sessionPath) => {
-  await _openUrlInNewBrowserTab(_resolveBrowserIpcSessionPath(sessionPath), null);
+  const sp = _resolveBrowserIpcSessionPath(sessionPath);
+  _sendBrowserUserActivity(sp);
+  await _openUrlInNewBrowserTab(sp, null);
+  _syncWorkspaceToServer(sp);
 });
 wrapIpcBestEffortHandler("browser-switch-tab", (_event, tabId, sessionPath) => {
   if (typeof tabId !== "string" || !tabId) return;
-  _switchActiveBrowserTab(_resolveBrowserIpcSessionPath(sessionPath), tabId);
+  const sp = _resolveBrowserIpcSessionPath(sessionPath);
+  _sendBrowserUserActivity(sp);
+  _switchActiveBrowserTab(sp, tabId);
 });
-wrapIpcBestEffortHandler("browser-close-tab", (_event, tabId, sessionPath) => {
+wrapIpcBestEffortHandler("browser-close-tab", async (_event, tabId, sessionPath) => {
   if (typeof tabId !== "string" || !tabId) return;
   const sp = _resolveBrowserIpcSessionPath(sessionPath);
-  return handleBrowserCommand("closeTab", {
+  _sendBrowserUserActivity(sp);
+  const result = await handleBrowserCommand("closeTab", {
     sessionPath: sp,
     tabId,
   });
+  _syncWorkspaceToServer(sp);
+  return result;
 });
 wrapIpcBestEffortHandler("close-browser-viewer", () => {
   if (browserViewerWindow && !browserViewerWindow.isDestroyed()) browserViewerWindow.close();
@@ -4812,7 +5147,8 @@ wrapIpcBestEffortHandler("browser-emergency-stop", (_event, sessionPath) => {
   const sp = _resolveBrowserIpcSessionPath(sessionPath);
   // 有 session 归属时必须经过 server 的 BrowserManager，保持 UI 和运行时状态一致。
   if (sp) {
-    return closeBrowserSessionViaServer(sp);
+    // 急停语义 = 销毁浏览器 + 撤销 agent 的浏览器授权，直到用户下一条消息。
+    return closeBrowserSessionViaServer(sp, { revoke: true });
   }
   // 兼容无 sessionPath 的旧浏览器实例：没有 server 状态可同步，只能本地清理。
   const view = _getViewForSession(null);
@@ -5004,11 +5340,12 @@ wrapIpcBestEffortHandler("select-folder", async (event) => {
   return result.filePaths[0];
 });
 
-// 选择附件文件（多选文件；Windows/Linux 不支持同一 dialog 同时选文件和文件夹）
-wrapIpcBestEffortHandler("select-files", async (event) => {
+// 选择附件文件（默认多选；Windows/Linux 不支持同一 dialog 同时选文件和文件夹）
+wrapIpcBestEffortHandler("select-files", async (event, options) => {
   const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
   if (!win) return [];
   const result = await dialog.showOpenDialog(win, buildSelectFilesDialogOptions({
+    multiple: options?.multiple,
     title: mt("dialog.selectFiles", null, "Select Files"),
   }));
   if (result.canceled || !result.filePaths.length) return [];
@@ -5580,6 +5917,7 @@ app.whenReady().then(async () => {
     }
     console.log("[desktop] 启动 HanaAgent Server...");
     await startServer();
+    await settleLegacyGpuPreferenceAfterServerStart();
     if (process.platform === "win32") {
       markGpuStartupPhase({
         hanakoHome,
@@ -5692,9 +6030,12 @@ app.whenReady().then(async () => {
     const detail = buildLaunchFailureDialogDetail({
       err,
       crashInfo,
+      hanakoHome,
       serverLogs: _serverLogs,
       extractRootServerStartupError,
     });
+    // 壳身份用途：启动失败对话框，见 getCurrentContentVersion() 声明处的
+    // 例外说明——这里问的是"哪个壳进程启动失败"。
     dialog.showErrorBox(
       mt("dialog.launchFailedTitle", null, "HanaAgent Launch Failed"),
       mt("dialog.launchFailedBody", {
@@ -5739,34 +6080,48 @@ app.on("will-quit", () => {
 
 async function shutdownServer() {
   let removeServerInfo = true;
+  let shutdownReason = null;
+  if (serverProcess && hasChildExitObserved(serverProcess)) {
+    if (process.platform === "win32" && !isWindowsServerGuardianShutdownConfirmed(serverProcess, true)) {
+      removeServerInfo = false;
+      shutdownReason = "Windows server guardian reported Job convergence failure";
+    } else {
+      serverProcess = null;
+    }
+  }
   if (serverProcess && !hasChildExitObserved(serverProcess)) {
     const proc = serverProcess;
     const pid = proc.pid;
+    _intentionalServerStops.add(proc);
     console.log("[desktop] shutdownServer: 正在关闭 owned server...");
     if (process.platform === "win32") {
-      try {
-        await fetch(`http://127.0.0.1:${serverPort}/api/shutdown`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${serverToken}` },
-          signal: AbortSignal.timeout(5000),
-        });
-      } catch {}
+      await requestServerShutdown(serverPort, serverToken);
     } else {
       try { proc.kill("SIGTERM"); } catch {}
     }
 
     let exited = await waitForProcessExit(proc, pid, SERVER_SHUTDOWN_GRACE_MS);
     if (!exited && pid) {
-      console.warn(`[desktop] shutdownServer: server PID ${pid} 未在 ${SERVER_SHUTDOWN_GRACE_MS}ms 内退出，强制终止`);
-      killPid(pid, true);
-      exited = await waitForProcessExit(proc, pid, SERVER_FORCE_KILL_WAIT_MS);
-      if (!exited) {
-        console.warn(`[desktop] shutdownServer: server PID ${pid} 强制终止后仍未确认退出`);
-        removeServerInfo = false;
+      if (process.platform === "win32") {
+        console.warn(`[desktop] shutdownServer: guardian PID ${pid} 未在 ${SERVER_SHUTDOWN_GRACE_MS}ms 内退出，请求 Job 收敛`);
+        requestWindowsServerGuardianStop(proc);
+      } else {
+        console.warn(`[desktop] shutdownServer: server PID ${pid} 未在 ${SERVER_SHUTDOWN_GRACE_MS}ms 内退出，强制终止`);
+        signalPidOnPosix(pid, true);
       }
+      exited = await waitForProcessExit(proc, pid, SERVER_FORCE_KILL_WAIT_MS);
+    }
+    if (process.platform === "win32" && exited && !isWindowsServerGuardianShutdownConfirmed(proc, exited)) {
+      exited = false;
+      shutdownReason = "Windows server guardian reported Job convergence failure";
+    }
+    if (!exited) {
+      console.warn(`[desktop] shutdownServer: launcher PID ${pid || "unknown"} 终止后仍未确认退出`);
+      removeServerInfo = false;
+      shutdownReason ||= "owned server launcher exit was not confirmed";
     }
 
-    if (serverProcess === proc) serverProcess = null;
+    if (exited && serverProcess === proc) serverProcess = null;
   } else if (reusedServerPid) {
     const pid = reusedServerPid;
     if (!reusedServerOwned) {
@@ -5774,30 +6129,26 @@ async function shutdownServer() {
       reusedServerPid = null;
       reusedServerOwned = false;
       removeServerInfo = false;
-      return;
+      return { confirmed: false, reason: "external server is still running" };
     }
 
     console.log("[desktop] shutdownServer: 正在关闭 reused server...");
-    try {
-      await fetch(`http://127.0.0.1:${serverPort}/api/shutdown`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${serverToken}` },
-        signal: AbortSignal.timeout(2000),
-      });
-    } catch {
-      killPid(pid);
+    const shutdownRequested = await requestServerShutdown(serverPort, serverToken, 2000);
+    if (!shutdownRequested && process.platform !== "win32") {
+      signalPidOnPosix(pid);
     }
 
     let exited = await waitForProcessExit(null, pid, SERVER_SHUTDOWN_GRACE_MS);
-    if (!exited) {
-      killPid(pid, true);
+    if (!exited && process.platform !== "win32") {
+      signalPidOnPosix(pid, true);
       exited = await waitForProcessExit(null, pid, SERVER_FORCE_KILL_WAIT_MS);
-      if (!exited) {
-        console.warn(`[desktop] shutdownServer: reused server PID ${pid} 强制终止后仍未确认退出`);
-        removeServerInfo = false;
-      }
     }
-    if (reusedServerPid === pid) {
+    if (!exited) {
+      console.warn(`[desktop] shutdownServer: reused server PID ${pid} 未确认退出；不按裸 PID 终止`);
+      removeServerInfo = false;
+      shutdownReason = "reused server exit was not confirmed";
+    }
+    if (exited && reusedServerPid === pid) {
       reusedServerPid = null;
       reusedServerOwned = false;
     }
@@ -5808,6 +6159,9 @@ async function shutdownServer() {
   } else {
     console.warn("[desktop] shutdownServer: 保留 server-info.json，供下次启动识别残留 server");
   }
+  return removeServerInfo
+    ? { confirmed: true }
+    : { confirmed: false, reason: shutdownReason || "server-info retained" };
 }
 
 app.on("before-quit", async (event) => {
@@ -5834,10 +6188,26 @@ app.on("before-quit", async (event) => {
   _currentBrowserSession = null;
   _currentBrowserTabId = null;
 
-  // server 清理
-  if ((serverProcess && !hasChildExitObserved(serverProcess)) || (reusedServerPid && reusedServerOwned)) {
-    event.preventDefault();
+  const hasActiveOwnedServer = (serverProcess && !hasChildExitObserved(serverProcess))
+    || (reusedServerPid && reusedServerOwned);
+  const quitAction = resolveBeforeQuitServerAction({
+    state: _beforeQuitServerShutdownState,
+    hasActiveOwnedServer: !!hasActiveOwnedServer,
+  });
+  if (quitAction === "allow") return;
+
+  event.preventDefault();
+  if (quitAction === "wait") return;
+
+  _beforeQuitServerShutdownState = "running";
+  try {
     await shutdownServer();
+  } catch (err) {
+    console.error(`[desktop] before-quit server shutdown failed: ${err?.message || String(err)}`);
+  } finally {
+    // The second app.quit() is deliberately allowed through even if the guardian
+    // did not confirm convergence; parent-exit + KILL_ON_JOB_CLOSE is the final bound.
+    _beforeQuitServerShutdownState = "complete";
     app.quit();
   }
 });

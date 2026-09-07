@@ -393,6 +393,40 @@ describe("migrateConfigScope", () => {
     expect(backup.locale).toBe("zh-CN");
   });
 
+  it("does not clean agent sources when the destination preference write fails", () => {
+    const agentsDir = path.join(tmpDir, "agents");
+    writeAgentConfig(agentsDir, "agent-1", { locale: "zh-CN", name: "Alice" });
+    const prefs = {
+      getPreferences: () => ({}),
+      savePreferences: () => { throw new Error("destination unavailable"); },
+    };
+
+    expect(() => migrateConfigScope({ agentsDir, prefs, primaryAgentId: "agent-1" }))
+      .toThrow("destination unavailable");
+
+    const stored = YAML.load(fs.readFileSync(path.join(agentsDir, "agent-1", "config.yaml"), "utf-8"));
+    expect(stored).toMatchObject({ locale: "zh-CN", name: "Alice" });
+  });
+
+  it("migrates readable agents but keeps the receipt pending when another source is unreadable", () => {
+    const agentsDir = path.join(tmpDir, "agents");
+    writeAgentConfig(agentsDir, "good", { locale: "zh-CN", name: "Good" });
+    const badPath = path.join(agentsDir, "bad", "config.yaml");
+    fs.mkdirSync(path.dirname(badPath), { recursive: true });
+    const corrupt = "models: [unterminated\n";
+    fs.writeFileSync(badPath, corrupt, "utf-8");
+    const prefs = makeMockPrefs({});
+
+    expect(() => migrateConfigScope({ agentsDir, prefs, primaryAgentId: "good" }))
+      .toThrow(/unreadable agent config/i);
+
+    expect(prefs._getStore()).toMatchObject({ locale: "zh-CN" });
+    expect(prefs._getStore()._configScopeMigrated).toBeUndefined();
+    expect(YAML.load(fs.readFileSync(path.join(agentsDir, "good", "config.yaml"), "utf-8")))
+      .toEqual({ name: "Good" });
+    expect(fs.readFileSync(badPath, "utf-8")).toBe(corrupt);
+  });
+
   it("handles nested global fields (capabilities.learn_skills)", () => {
     const agentsDir = path.join(tmpDir, "agents");
     writeAgentConfig(agentsDir, "agent-1", {

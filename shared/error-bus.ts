@@ -1,4 +1,4 @@
-// shared/error-bus.js
+// shared/error-bus.ts
 import { AppError } from './errors.ts';
 import { redactLogText, redactLogValue } from './log-redactor.ts';
 

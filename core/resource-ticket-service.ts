@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
+import { securityDirPath } from "./security-dir.ts";
 
 export const RESOURCE_TICKET_KEY_FILE = "resource-ticket-key";
 export const RESOURCE_TICKET_ACTION = "resources.content";
@@ -106,7 +107,7 @@ export function verifyResourceTicket({
 
 export function resourceTicketKeyPath(hanakoHome: any) {
   assertNonEmpty(hanakoHome, "hanakoHome");
-  return path.join(hanakoHome, "security", RESOURCE_TICKET_KEY_FILE);
+  return path.join(securityDirPath(hanakoHome), RESOURCE_TICKET_KEY_FILE);
 }
 
 function signBody(hanakoHome: any, body: any) {

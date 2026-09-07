@@ -66,7 +66,27 @@ export interface AutoUpdateState {
     repo?: string;
     feedUrl?: string;
   } | null;
+  /** 当前生效的更新通道：默认公开货架，或经邀请码开通的测试通道。 */
+  updateChannel?: UpdateChannel;
+  /** 通道状态文件损坏时的原因；有值代表更新走的是默认通道且用户该被告知。 */
+  updateChannelError?: string | null;
 }
+
+export type UpdateChannel = 'default' | 'alpha';
+
+export interface InviteChannelStatus {
+  /** 核销服务是否已配置。false 时设置页不渲染任何邀请入口。 */
+  configured: boolean;
+  active: boolean;
+  inviteCodes: string[];
+  channel: UpdateChannel;
+  /** 通道状态文件读取失败的原因，正常为 null。 */
+  error?: string | null;
+}
+
+export type InviteRedeemResult =
+  | { ok: true; feedUrl: string; childCodes: string[] }
+  | { ok: false; reason: 'not-configured' | 'network' | 'invalid' | 'server' | 'storage'; message: string };
 
 /** train-update-status 里 `available` 字段的形状：检查阶段发现的、尚未下载的一班车 */
 export interface TrainUpdateAvailable {
@@ -135,6 +155,15 @@ export interface TrainUpdateProgress {
   kind: 'server' | 'renderer';
   receivedBytes: number;
   totalBytes: number;
+  /**
+   * 跨 server+renderer 两个工件的累计进度（ota-core.cjs 的
+   * downloadAndApplyArtifacts/downloadAndApplyRendererArtifact 新增字段），
+   * 用于合成一条连续 0→100 的进度条，不随第二个工件开始下载而归零。旧壳
+   * 版本（渲染进程被列车热更但主进程还没升级）发出的事件可能没有这两个
+   * 字段，消费侧需要做存在性判断，不能假设它们总是存在。
+   */
+  overallReceivedBytes?: number;
+  overallTotalBytes?: number;
 }
 
 export interface AutoLaunchStatus {
@@ -163,19 +192,13 @@ export interface DesktopNotificationOptions {
 export type SessionPermissionMode = 'auto' | 'operate' | 'ask' | 'read_only';
 
 /**
- * #1624：服务端在 session restore 时算好的"工具能力有更新"提示数据
- * （冻结快照 vs 当前 agent 配置）。前端只消费，不自行计算。
+ * session 元数据待恢复状态——/api/health 的 sessionStore 附块如实转发到前端。
+ * degraded=false 且 reasons 为空数组是唯一的"健康"态；非空 reasons 只用来
+ * 驱动侧边栏提示条文案，具体 kind 值前端不做分支展示（一条提示覆盖所有原因）。
  */
-export interface SessionCapabilityDrift {
-  version: number;
-  /** 当前 live 配置的能力 fingerprint（dismiss 时回传） */
-  fingerprint: string;
-  frozenFingerprint: string;
-  addedToolNames: string[];
-  removedToolNames: string[];
-  invalidToolNames: string[];
-  promptChanged: boolean;
-  hasDrift: boolean;
+export interface SessionMetaRecoveryStatus {
+  degraded: boolean;
+  reasons: Array<{ kind: string; detail: string }>;
 }
 
 export interface Session {
@@ -199,6 +222,8 @@ export interface Session {
   permissionMode?: SessionPermissionMode | null;
   workMode?: boolean;
   pinnedAt?: string | null;
+  // 置顶区的手动顺序（升序）。null 表示还没有固化顺序，读时退回按最近活动排。
+  pinOrder?: number | null;
   hasSummary?: boolean;
   agentDeleted?: boolean;
   readOnlyReason?: 'agent_deleted' | string | null;
@@ -220,6 +245,8 @@ export interface Agent {
   hasAvatar?: boolean;
   avatarRevision?: string | null;
   chatModel?: { id: string; provider?: string | null } | null;
+  /** 显式 homeFolder 或服务端默认工作区解析后的有效新会话目录。 */
+  effectiveHomeFolder?: string | null;
   homeFolder?: string | null;
   memoryMasterEnabled?: boolean;
 }
@@ -498,6 +525,8 @@ export interface BrowserViewerUpdate {
   running?: boolean;
   reason?: string | null;
   sessionPath?: string | null;
+  /** 当前展示的会话标题（viewer 工具栏用；null = 未知） */
+  sessionTitle?: string | null;
   activeTabId?: string | null;
   tabs?: BrowserViewerTab[];
 }
@@ -515,7 +544,7 @@ export interface PlatformApi {
   openSettings(tab?: string): void;
   openBrowserViewer(target?: string | BrowserViewerOpenTarget): void;
   selectFolder(): Promise<string | null>;
-  selectFiles(): Promise<string[]>;
+  selectFiles(options?: { multiple?: boolean }): Promise<string[]>;
   selectSkill(): Promise<string | null>;
   selectPlugin?(): Promise<string | null>;
   readFile(path: string): Promise<string | null>;
@@ -605,6 +634,13 @@ export interface PlatformApi {
   autoUpdateState?(): Promise<AutoUpdateState>;
   autoUpdateSetChannel?(channel: 'stable' | 'beta'): Promise<void>;
   onAutoUpdateState?(callback: (state: AutoUpdateState) => void): (() => void) | void;
+  // ── 邀请制测试通道 ──
+  /** 当前通道状态；configured 为 false 时设置页不渲染邀请入口。 */
+  inviteStatus?(): Promise<InviteChannelStatus>;
+  /** 向核销服务兑换一枚邀请码。成功只返回结果，不改变本机任何状态。 */
+  inviteRedeem?(code: string): Promise<InviteRedeemResult>;
+  /** 用户在确认对话框点头之后才调用：写入通道状态并切换生效的更新地址。 */
+  inviteActivate?(payload: { feedUrl: string; inviteCodes: string[] }): Promise<InviteChannelStatus>;
   // ── 列车更新（OTA） ──
   trainUpdateStatus?(): Promise<TrainUpdateStatus>;
   trainUpdateCheck?(): Promise<{ outcome: string; train?: number; version?: string; minShellBlocked?: boolean; error?: string }>;

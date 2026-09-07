@@ -239,6 +239,7 @@ export class FactStore {
       getAll: this.db.prepare(`SELECT * FROM facts ORDER BY time DESC`),
       getById: this.db.prepare(`SELECT * FROM facts WHERE id = ?`),
       getBySession: this.db.prepare(`SELECT * FROM facts WHERE session_id = ? ORDER BY time DESC`),
+      deleteBySession: this.db.prepare(`DELETE FROM facts WHERE session_id = ?`),
       count: this.db.prepare(`SELECT COUNT(*) as cnt FROM facts`),
       deleteById: this.db.prepare(`DELETE FROM facts WHERE id = ?`),
       deleteAll: this.db.prepare(`DELETE FROM facts`),
@@ -285,6 +286,31 @@ export class FactStore {
     const run = this.db.transaction(() => {
       for (const entry of entries) {
         this.add(entry);
+      }
+    });
+    run();
+    return entries.length;
+  }
+
+  /**
+   * Replace every fact owned by one stable session in a single transaction.
+   * FTS stays consistent through the existing delete/insert triggers.
+   */
+  replaceBySession(sessionId, entries) {
+    const stableSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
+    if (!stableSessionId) throw new Error("replaceBySession requires sessionId");
+    if (!Array.isArray(entries)) throw new Error("replaceBySession requires an entries array");
+
+    const run = this.db.transaction(() => {
+      this._stmts.deleteBySession.run(stableSessionId);
+      for (const entry of entries) {
+        if (typeof entry?.fact !== "string" || !entry.fact.trim()) {
+          throw new Error("replacement fact must be a non-empty string");
+        }
+        this.add({
+          ...entry,
+          session_id: stableSessionId,
+        });
       }
     });
     run();
@@ -388,6 +414,13 @@ export class FactStore {
   /** 按 session_id 查询 */
   getBySession(sessionId) {
     return this._stmts.getBySession.all(sessionId).map((row) => this._rowToFact(row));
+  }
+
+  /** 删除一个 session 派生出的全部深度记忆事实。FTS 由 facts_ad trigger 同步。 */
+  deleteBySession(sessionId) {
+    const normalized = typeof sessionId === "string" ? sessionId.trim() : "";
+    if (!normalized) throw new Error("fact invalidation requires sessionId");
+    return this._stmts.deleteBySession.run(normalized).changes;
   }
 
   /** 按 id 查询 */

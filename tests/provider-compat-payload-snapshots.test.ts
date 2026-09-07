@@ -24,7 +24,7 @@ describe("provider payload snapshots", () => {
         { role: "assistant", content: [{ type: "text", text: "middle" }] },
         { role: "user", content: "second" },
       ],
-      max_tokens: 32000,
+      max_tokens: 128000,
     }, {
       id: "claude-opus-4-7",
       provider: "anthropic",
@@ -52,7 +52,7 @@ describe("provider payload snapshots", () => {
           model: "deepseek-v4-flash",
           messages: userOnlyMessages,
           reasoning_effort: "high",
-          max_completion_tokens: 32000,
+          max_completion_tokens: 384000,
         },
         { reasoningLevel: "high" }
       ),
@@ -70,7 +70,7 @@ describe("provider payload snapshots", () => {
           model: "deepseek-v4-flash",
           messages: userOnlyMessages,
           reasoning_effort: "high",
-          max_completion_tokens: 32000,
+          max_completion_tokens: 384000,
         },
         { reasoningLevel: "high" }
       ),
@@ -86,7 +86,7 @@ describe("provider payload snapshots", () => {
           model: "claude-opus-4-7",
           system: "stable system prompt",
           messages: userOnlyMessages,
-          max_tokens: 32000,
+          max_tokens: 128000,
         }
       ),
       normalizeChatPayload(
@@ -103,7 +103,7 @@ describe("provider payload snapshots", () => {
           model: "kimi-k2.6",
           messages: userOnlyMessages,
           thinking: { type: "enabled", budget_tokens: 8192 },
-          max_tokens: 32000,
+          max_tokens: 98304,
         },
         { reasoningLevel: "high" }
       ),
@@ -112,7 +112,7 @@ describe("provider payload snapshots", () => {
     expect(payloads).toMatchInlineSnapshot(`
       {
         "anthropicCompatibleReasoning": {
-          "max_tokens": 32000,
+          "max_tokens": 65536,
           "messages": [
             {
               "content": "hi",
@@ -126,7 +126,7 @@ describe("provider payload snapshots", () => {
           },
         },
         "anthropicMessagesNative": {
-          "max_tokens": 32000,
+          "max_tokens": 65536,
           "messages": [
             {
               "content": [
@@ -153,6 +153,7 @@ describe("provider payload snapshots", () => {
           ],
         },
         "dashscopeDeepSeekV4Flash": {
+          "max_completion_tokens": 65536,
           "messages": [
             {
               "content": "hi",

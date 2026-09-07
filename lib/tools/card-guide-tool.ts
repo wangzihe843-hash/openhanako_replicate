@@ -424,6 +424,13 @@ export function createCardGuideTool() {
         ),
       ),
     }),
+    sessionPermission: {
+      resolveInvocation: () => ({
+        action: "read",
+        kind: "read",
+        capability: "hana_card_guide.read",
+      }),
+    },
     execute: async (_toolCallId: string, _params: { modules?: string[] }) => {
       // v1: always return the full handbook regardless of modules.
       // Future: modular assembly by topic.

@@ -39,7 +39,7 @@ describe("provider-compat/openai-input-audio", () => {
     });
   });
 
-  it("does not touch text-only OpenAI models", () => {
+  it("leaves text-only media parts unchanged while applying the chat output budget", () => {
     const model = {
       id: "gpt-4o",
       provider: "openai",
@@ -56,7 +56,9 @@ describe("provider-compat/openai-input-audio", () => {
       }],
     };
 
-    expect(normalizeProviderPayload(payload, model, { mode: "chat" })).toBe(payload);
+    const result = normalizeProviderPayload(payload, model, { mode: "chat" });
+    expect(result).toEqual({ ...payload, max_tokens: 65_536 });
+    expect(result.messages).toEqual(payload.messages);
   });
 
   it("fails closed for unsupported input_audio data URL formats on native audio transports", () => {

@@ -80,6 +80,14 @@ function checkStagedPrecondition(stagedStatus) {
   return { ok: true };
 }
 
+function assertServerShutdownConfirmed(result) {
+  if (result?.confirmed === true) return;
+  const reason = typeof result?.reason === "string" && result.reason
+    ? ` (${result.reason})`
+    : "";
+  throw new Error(`train-update-apply: server shutdown was not confirmed${reason}`);
+}
+
 /**
  * Runs the apply-now sequence with injected step implementations. Steps
  * run strictly in `APPLY_NOW_STEPS` order; the first step to throw/reject
@@ -116,6 +124,7 @@ module.exports = {
   APPLY_NOW_STEPS,
   STEP_IMPLEMENTATION_KEY,
   assertPackagedMode,
+  assertServerShutdownConfirmed,
   checkStagedPrecondition,
   runApplyNowSequence,
 };

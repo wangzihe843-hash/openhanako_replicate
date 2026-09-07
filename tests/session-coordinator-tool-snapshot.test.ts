@@ -37,8 +37,10 @@ vi.mock("../lib/debug-log.js", () => ({
 }));
 
 import { SessionCoordinator } from "../core/session-coordinator.ts";
+import { EnvChangeLedger } from "../core/env-change-ledger.ts";
 import { SessionManifestStore } from "../core/session-manifest/store.ts";
 import { repairRestoredToolSnapshot } from "../core/tool-snapshot-repair.ts";
+import { filterToolObjectsByAvailability } from "../core/tool-availability.ts";
 import { isBeautifyEnabledForAgentConfig } from "../plugins/beautify/lib/availability.ts";
 import { CORE_TOOL_NAMES } from "../shared/tool-categories.ts";
 
@@ -169,6 +171,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
       getDeferredResultStore: () => null,
       getEngine: () => fakeEngine,
       onBeforeSessionCreate: onBeforeSessionCreateSpy,
+      envChangeLedger: new EnvChangeLedger(),
     });
   });
 
@@ -177,6 +180,326 @@ describe("session-coordinator tool snapshot (createSession)", () => {
   });
 
   // ── Case C tests ─────────────────────────────────────────────
+
+  it("waits for the active Agent runtime before creating a session or reading capability snapshots", async () => {
+    const callOrder = [];
+    const runtimeWebSearch = makeTool("web_search");
+    const coldAgent = {
+      ...focusAgent,
+      runtimeInitialized: false,
+      buildSystemPrompt: vi.fn(() => {
+        callOrder.push("prompt");
+        return "cold prompt must not be read";
+      }),
+      tools: [],
+    };
+    const readyAgent = {
+      ...focusAgent,
+      runtimeInitialized: true,
+      buildSystemPrompt: vi.fn(() => {
+        callOrder.push("prompt");
+        return "ready prompt";
+      }),
+      getToolsSnapshot: vi.fn(() => {
+        callOrder.push("tools");
+        return [runtimeWebSearch];
+      }),
+    };
+    let resolveRuntime;
+    const runtimeReady = new Promise((resolve) => {
+      resolveRuntime = resolve;
+    });
+    const ensureAgentRuntime = vi.fn(() => {
+      callOrder.push("ensure");
+      return runtimeReady;
+    });
+    sessionManagerCreateMock.mockImplementation(() => {
+      callOrder.push("session-manager");
+      return { getCwd: () => tmpDir };
+    });
+    const buildTools = vi.fn((_cwd, customTools) => {
+      callOrder.push("build-tools");
+      return { tools: SDK_BUILTIN_OBJS, customTools };
+    });
+    coord._d.getAgent = () => coldAgent;
+    coord._d.getAgentById = (agentId) => agentId === "test" ? coldAgent : null;
+    coord._d.ensureAgentRuntime = ensureAgentRuntime;
+    coord._d.buildTools = buildTools;
+    const createManifest = vi.fn();
+    coord._sessionManifestStore = {
+      resolveByLocatorPath: vi.fn(() => null),
+      createForPath: createManifest,
+    };
+
+    const creation = coord.createSession(null, tmpDir, true);
+    await Promise.resolve();
+
+    expect(ensureAgentRuntime).toHaveBeenCalledWith("test", {
+      priority: "foreground",
+      reason: "createSession",
+    });
+    expect(onBeforeSessionCreateSpy).not.toHaveBeenCalled();
+    expect(sessionManagerCreateMock).not.toHaveBeenCalled();
+    expect(coldAgent.buildSystemPrompt).not.toHaveBeenCalled();
+    expect(readyAgent.buildSystemPrompt).not.toHaveBeenCalled();
+    expect(buildTools).not.toHaveBeenCalled();
+    expect(createAgentSessionMock).not.toHaveBeenCalled();
+    expect(createManifest).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(sessionDir, "session-meta.json"))).toBe(false);
+
+    coord._sessionManifestStore = null;
+    resolveRuntime(readyAgent);
+    const { sessionPath } = await creation;
+
+    expect(onBeforeSessionCreateSpy).toHaveBeenCalledWith(tmpDir, {
+      agent: readyAgent,
+      agentId: "test",
+    });
+    expect(coldAgent.buildSystemPrompt).not.toHaveBeenCalled();
+    expect(readyAgent.buildSystemPrompt).toHaveBeenCalledOnce();
+    expect(readyAgent.getToolsSnapshot).toHaveBeenCalledOnce();
+    expect(buildTools.mock.calls[0][1]).toEqual([runtimeWebSearch]);
+    expect(callOrder).toEqual([
+      "ensure",
+      "session-manager",
+      "prompt",
+      "tools",
+      "build-tools",
+    ]);
+    const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
+    expect(meta[path.basename(sessionPath)].toolNames).toContain("web_search");
+  });
+
+  it("fails without creating session state when active Agent runtime initialization fails", async () => {
+    const coldAgent = {
+      ...focusAgent,
+      runtimeInitialized: false,
+      buildSystemPrompt: vi.fn(() => "must not be read"),
+      getToolsSnapshot: vi.fn(() => []),
+    };
+    let rejectRuntime;
+    const runtimeReady = new Promise((_resolve, reject) => {
+      rejectRuntime = reject;
+    });
+    const ensureAgentRuntime = vi.fn(() => runtimeReady);
+    const buildTools = vi.fn(() => ({ tools: SDK_BUILTIN_OBJS, customTools: [] }));
+    coord._d.getAgent = () => coldAgent;
+    coord._d.getAgentById = (agentId) => agentId === "test" ? coldAgent : null;
+    coord._d.ensureAgentRuntime = ensureAgentRuntime;
+    coord._d.buildTools = buildTools;
+    const createManifest = vi.fn();
+    coord._sessionManifestStore = {
+      resolveByLocatorPath: vi.fn(() => null),
+      createForPath: createManifest,
+    };
+
+    const creation = coord.createSession(null, tmpDir, true);
+    const settled = creation.catch((error) => error);
+    await Promise.resolve();
+
+    expect(sessionManagerCreateMock).not.toHaveBeenCalled();
+    expect(onBeforeSessionCreateSpy).not.toHaveBeenCalled();
+    expect(coldAgent.buildSystemPrompt).not.toHaveBeenCalled();
+    expect(coldAgent.getToolsSnapshot).not.toHaveBeenCalled();
+    expect(buildTools).not.toHaveBeenCalled();
+    expect(createAgentSessionMock).not.toHaveBeenCalled();
+    expect(createManifest).not.toHaveBeenCalled();
+
+    rejectRuntime(new Error("runtime init failed"));
+    const error = await settled;
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe("runtime init failed");
+
+    expect(createManifest).not.toHaveBeenCalled();
+    expect(fs.existsSync(fakeSessionPath)).toBe(false);
+    expect(fs.existsSync(path.join(sessionDir, "session-meta.json"))).toBe(false);
+  });
+
+  it("refuses to create from a known-cold Agent when runtime activation is unavailable", async () => {
+    const coldAgent = {
+      ...focusAgent,
+      runtimeInitialized: false,
+      buildSystemPrompt: vi.fn(() => "must not be read"),
+      getToolsSnapshot: vi.fn(() => []),
+    };
+    coord._d.getAgent = () => coldAgent;
+    coord._d.getAgentById = (agentId) => agentId === "test" ? coldAgent : null;
+
+    await expect(coord.createSession(null, tmpDir, true)).rejects.toThrow(/test/);
+
+    expect(sessionManagerCreateMock).not.toHaveBeenCalled();
+    expect(onBeforeSessionCreateSpy).not.toHaveBeenCalled();
+    expect(coldAgent.buildSystemPrompt).not.toHaveBeenCalled();
+    expect(coldAgent.getToolsSnapshot).not.toHaveBeenCalled();
+    expect(createAgentSessionMock).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(sessionDir, "session-meta.json"))).toBe(false);
+  });
+
+  it("rejects a runtime instance that belongs to a different Agent", async () => {
+    const coldAgent = {
+      ...focusAgent,
+      runtimeInitialized: false,
+      buildSystemPrompt: vi.fn(() => "must not be read"),
+    };
+    const wrongAgent = {
+      ...focusAgent,
+      id: "other-agent",
+      runtimeInitialized: true,
+      buildSystemPrompt: vi.fn(() => "wrong owner prompt"),
+    };
+    coord._d.getAgent = () => coldAgent;
+    coord._d.getAgentById = (agentId) => agentId === "test" ? coldAgent : null;
+    coord._d.ensureAgentRuntime = vi.fn(async () => wrongAgent);
+
+    await expect(coord.createSession(null, tmpDir, true)).rejects.toThrow(/identity mismatch/);
+
+    expect(sessionManagerCreateMock).not.toHaveBeenCalled();
+    expect(coldAgent.buildSystemPrompt).not.toHaveBeenCalled();
+    expect(wrongAgent.buildSystemPrompt).not.toHaveBeenCalled();
+    expect(createAgentSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a mismatched supplied Agent before requesting runtime activation", async () => {
+    const wrongAgent = {
+      ...focusAgent,
+      id: "other-agent",
+      runtimeInitialized: false,
+      buildSystemPrompt: vi.fn(() => "wrong owner prompt"),
+    };
+    const ensureAgentRuntime = vi.fn(async () => focusAgent);
+    coord._d.ensureAgentRuntime = ensureAgentRuntime;
+
+    await expect(coord.createSession(null, tmpDir, true, null, {
+      agent: wrongAgent,
+      agentId: "test",
+    })).rejects.toThrow(/identity mismatch/);
+
+    expect(ensureAgentRuntime).not.toHaveBeenCalled();
+    expect(sessionManagerCreateMock).not.toHaveBeenCalled();
+    expect(wrongAgent.buildSystemPrompt).not.toHaveBeenCalled();
+    expect(createAgentSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps cached session switches as pure pointer changes without runtime activation", async () => {
+    const cachedSession = {
+      sessionManager: { getSessionFile: () => fakeSessionPath },
+    };
+    const cachedEntry = {
+      session: cachedSession,
+      sessionPath: fakeSessionPath,
+      agentId: "test",
+      memoryEnabled: true,
+      lastTouchedAt: 0,
+    };
+    coord._sessions.set(fakeSessionPath, cachedEntry);
+    focusAgent.runtimeInitialized = false;
+    coord._d.getAgentById = (agentId) => agentId === "test" ? focusAgent : null;
+    const ensureAgentRuntime = vi.fn(async () => {
+      throw new Error("cached switch must not initialize runtime");
+    });
+    coord._d.ensureAgentRuntime = ensureAgentRuntime;
+
+    const result = await coord.switchSession(fakeSessionPath);
+
+    expect(result).toBe(cachedSession);
+    expect(coord._session).toBe(cachedSession);
+    expect(coord._currentSessionPath).toBe(fakeSessionPath);
+    expect(ensureAgentRuntime).not.toHaveBeenCalled();
+    expect(sessionManagerOpenMock).not.toHaveBeenCalled();
+  });
+
+  it("preflights runtime readiness before reload tears down the existing runtime", async () => {
+    const originalJsonl = `${JSON.stringify({ type: "session", id: "reload-original", cwd: tmpDir })}\n`;
+    fs.writeFileSync(fakeSessionPath, originalJsonl, "utf-8");
+    const originalSession = {
+      sessionManager: { getSessionFile: () => fakeSessionPath },
+      isStreaming: false,
+      isCompacting: false,
+    };
+    const originalEntry = {
+      session: originalSession,
+      sessionPath: fakeSessionPath,
+      agentId: "test",
+      memoryEnabled: true,
+      unsub: vi.fn(),
+    };
+    coord._sessions.set(fakeSessionPath, originalEntry);
+    coord._session = originalSession;
+    coord._currentSessionPath = fakeSessionPath;
+    focusAgent.runtimeInitialized = false;
+    coord._d.getAgentById = (agentId) => agentId === "test" ? focusAgent : null;
+    let rejectRuntime;
+    const runtimeReady = new Promise((_resolve, reject) => {
+      rejectRuntime = reject;
+    });
+    const ensureAgentRuntime = vi.fn(() => runtimeReady);
+    coord._d.ensureAgentRuntime = ensureAgentRuntime;
+    const teardown = vi.spyOn(coord as any, "_teardownSessionEntry").mockResolvedValue(undefined);
+    const health = vi.spyOn(coord as any, "_emitSessionHealthWarning").mockImplementation(() => {});
+    const repairOrphans = vi.spyOn(coord as any, "_repairOrphanToolHistory").mockImplementation(() => {});
+    const repairMedia = vi.spyOn(coord as any, "_repairInlineMediaHistory").mockImplementation(() => {});
+
+    const reload = coord.reloadSessionRuntime(fakeSessionPath);
+    const settled = reload.catch((error) => error);
+    await vi.waitFor(() => expect(ensureAgentRuntime).toHaveBeenCalled());
+
+    expect(teardown).not.toHaveBeenCalled();
+    expect(health).not.toHaveBeenCalled();
+    expect(repairOrphans).not.toHaveBeenCalled();
+    expect(repairMedia).not.toHaveBeenCalled();
+    expect(sessionManagerOpenMock).not.toHaveBeenCalled();
+    expect(coord._sessions.get(fakeSessionPath)).toBe(originalEntry);
+    expect(coord._session).toBe(originalSession);
+    expect(fs.readFileSync(fakeSessionPath, "utf-8")).toBe(originalJsonl);
+
+    rejectRuntime(new Error("reload runtime failed"));
+    const error = await settled;
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe("reload runtime failed");
+    expect(teardown).not.toHaveBeenCalled();
+    expect(coord._sessions.get(fakeSessionPath)).toBe(originalEntry);
+    expect(coord._session).toBe(originalSession);
+    expect(fs.readFileSync(fakeSessionPath, "utf-8")).toBe(originalJsonl);
+  });
+
+  it.each([
+    ["switch restore", (coordinator, sessionPath) => coordinator.switchSession(sessionPath)],
+    ["background attach", (coordinator, sessionPath) => coordinator.ensureSessionLoaded(sessionPath)],
+  ])("preflights runtime readiness before %s repairs or opens JSONL", async (_label, restoreSession) => {
+    const originalJsonl = `${JSON.stringify({ type: "session", id: "restore-original", cwd: tmpDir })}\n`;
+    fs.writeFileSync(fakeSessionPath, originalJsonl, "utf-8");
+    focusAgent.runtimeInitialized = false;
+    coord._d.getAgentById = (agentId) => agentId === "test" ? focusAgent : null;
+    let rejectRuntime;
+    const runtimeReady = new Promise((_resolve, reject) => {
+      rejectRuntime = reject;
+    });
+    const ensureAgentRuntime = vi.fn(() => runtimeReady);
+    coord._d.ensureAgentRuntime = ensureAgentRuntime;
+    const health = vi.spyOn(coord as any, "_emitSessionHealthWarning").mockImplementation(() => {});
+    const repairOversized = vi.spyOn(coord as any, "_repairOversizedSessionHistory").mockImplementation(() => {});
+    const repairOrphans = vi.spyOn(coord as any, "_repairOrphanToolHistory").mockImplementation(() => {});
+    const repairMedia = vi.spyOn(coord as any, "_repairInlineMediaHistory").mockImplementation(() => {});
+
+    const restoring = restoreSession(coord, fakeSessionPath);
+    const settled = restoring.catch((error) => error);
+    await vi.waitFor(() => expect(ensureAgentRuntime).toHaveBeenCalled());
+
+    expect(health).not.toHaveBeenCalled();
+    expect(repairOversized).not.toHaveBeenCalled();
+    expect(repairOrphans).not.toHaveBeenCalled();
+    expect(repairMedia).not.toHaveBeenCalled();
+    expect(sessionManagerOpenMock).not.toHaveBeenCalled();
+    expect(fs.readFileSync(fakeSessionPath, "utf-8")).toBe(originalJsonl);
+
+    rejectRuntime(new Error("restore runtime failed"));
+    const error = await settled;
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe("restore runtime failed");
+    expect(sessionManagerOpenMock).not.toHaveBeenCalled();
+    expect(coord._sessions.size).toBe(0);
+    expect(fs.readFileSync(fakeSessionPath, "utf-8")).toBe(originalJsonl);
+  });
 
   it("selects workspace skills with the explicit non-focus Agent identity", async () => {
     const targetAgent = {
@@ -211,7 +534,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(getSkillsForAgent).toHaveBeenCalledWith(targetAgent, { workspacePaths });
   });
 
-  it("Case C: new session with NO tools config applies DEFAULT_DISABLED (dm off, update_settings on)", async () => {
+  it("Case C: new session with NO tools config defaults dm off and keeps update_settings on", async () => {
     currentAgentConfig = {}; // fresh agent or upgrade, tools field absent
     const { sessionPath } = await coord.createSession(null, tmpDir, true);
 
@@ -525,7 +848,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(entry.toolNames).not.toContain("dm");
   });
 
-  it("Case A: restore applies the global phone feature gate over frozen toolNames", async () => {
+  it("Case A: restore applies the global phone gate without rewriting frozen toolNames", async () => {
     channelsEnabled = false;
     currentAgentConfig = { tools: { disabled: [] } };
     const replayList = ["read", "channel", "dm", "browser"];
@@ -539,7 +862,8 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     const appliedList = activeToolsSpy.mock.calls[0][0];
     expect(appliedList).toEqual(restoredSnapshot(["read", "browser"]));
     const entry = coord._sessions.get(sessionPath);
-    expect(entry.toolNames).toEqual(restoredSnapshot(["read", "browser"]));
+    expect(entry.toolNames).toEqual(restoredSnapshot(replayList));
+    expect(entry.unavailableToolNames).toEqual(["channel", "dm"]);
   });
 
   it("Case C: snapshot includes sandbox built-ins (regression for P1 — bundle must carry command/file tools)", async () => {
@@ -584,6 +908,45 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(appliedList).not.toContain("mcp_github_search");
     expect(appliedList).toContain("read");
     expect(appliedList).toContain("browser");
+  });
+
+  it("Case C: computes fresh tools from Agent settings and the explicit session kind", async () => {
+    const availability = vi.fn((_config, context) => (
+      context?.ownerPluginId === "tavern" && context?.sessionKind === "tavern"
+    ));
+    const tavernTool = {
+      ...makeTool("tavern_scene"),
+      _pluginId: "tavern",
+      isEnabledForAgentConfig: availability,
+    };
+    coord._d.buildTools = () => ({
+      tools: SDK_BUILTIN_OBJS,
+      customTools: [...HANAKO_CUSTOM_OBJS, tavernTool],
+    });
+    currentAgentConfig = { tools: { disabled: [] } };
+
+    const { sessionPath } = await coord.createSession(null, tmpDir, true, null, {
+      ownerPluginId: "tavern",
+      sessionKind: "tavern",
+      sessionVisibility: "plugin_private",
+    });
+
+    expect(availability).toHaveBeenCalledWith(
+      currentAgentConfig,
+      expect.objectContaining({
+        agentId: "test",
+        restore: false,
+        ownerPluginId: "tavern",
+        sessionKind: "tavern",
+        sessionVisibility: "plugin_private",
+      }),
+    );
+    expect(activeToolsSpy.mock.calls[0][0]).toContain("tavern_scene");
+    expect(coord._sessions.get(sessionPath)).toMatchObject({
+      ownerPluginId: "tavern",
+      sessionKind: "tavern",
+      sessionVisibility: "plugin_private",
+    });
   });
 
   it("Case C: fresh sessions exclude computer when its global experiment gate is closed", async () => {
@@ -715,7 +1078,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(activeToolsSpy.mock.calls[0][0]).not.toContain("terminal");
   });
 
-  it("Case A: restore repairs corrupted snapshots that lost available core tools only", async () => {
+  it("Case A: restore repairs missing core tools without deleting unavailable frozen names", async () => {
     currentAgentConfig = { tools: { disabled: ["browser", "dm"] } };
     const replayList = ["todo_write", "retired_tool", "todo_write"];
     await fsp.writeFile(
@@ -733,10 +1096,11 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(activeToolsSpy.mock.calls[0][0]).not.toContain("dm");
 
     const entry = coord._sessions.get(sessionPath);
-    expect(entry.toolNames).toEqual(expected);
+    expect(entry.toolNames).toEqual(restoredSnapshot(replayList, [...allNames(), "retired_tool"]));
+    expect(entry.unavailableToolNames).toEqual(["retired_tool"]);
 
     const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
-    expect(meta[path.basename(fakeSessionPath)].toolNames).toEqual(expected);
+    expect(meta[path.basename(fakeSessionPath)].toolNames).toEqual(entry.toolNames);
   });
 
   it("Case A: restore keeps newly registered tools inactive when they are absent from the frozen snapshot", async () => {
@@ -760,7 +1124,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(activeToolsSpy.mock.calls[0][0]).not.toContain("mcp_new_dynamic_tool");
   });
 
-  it("Case A: restore replays frozen plugin tool snapshot even if MCP is currently disabled", async () => {
+  it("Case A: restore preserves a disabled MCP tool in the contract but not the active runtime", async () => {
     const mcpTool = {
       ...makeTool("mcp_github_search"),
       isEnabledForAgentConfig: () => false,
@@ -775,15 +1139,138 @@ describe("session-coordinator tool snapshot (createSession)", () => {
       JSON.stringify({ [path.basename(fakeSessionPath)]: { toolNames: replayList } }, null, 2),
     );
 
-    await coord.createSession(null, tmpDir, true, null, { restore: true });
+    const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
 
     expect(activeToolsSpy).toHaveBeenCalledTimes(1);
-    expect(activeToolsSpy.mock.calls[0][0]).toEqual(
-      restoredSnapshot(replayList, [...allNames(), "mcp_github_search"]),
-    );
+    expect(activeToolsSpy.mock.calls[0][0]).not.toContain("mcp_github_search");
+    const entry = coord._sessions.get(sessionPath);
+    expect(entry.toolNames).toContain("mcp_github_search");
+    expect(entry.unavailableToolNames).toEqual(["mcp_github_search"]);
   });
 
-  it("Case A: restore replays frozen computer snapshot even if its global gate is now closed", async () => {
+  it("reminds from the owning session frozen-minus-live inventory without activating new live tools", async () => {
+    let oldToolAvailable = false;
+    const oldMcpTool = {
+      ...makeTool("mcp_old_search"),
+      _pluginId: "mcp",
+      metadata: {
+        reminderLiveAvailabilityProbe: () => ({
+          available: oldToolAvailable,
+          reason: oldToolAvailable ? undefined : "runtime_stopped",
+        }),
+      },
+    };
+    const newlyAddedTool = { ...makeTool("mcp_new_search"), _pluginId: "mcp" };
+    focusAgent.getToolsSnapshot = () => [...HANAKO_CUSTOM_OBJS, oldMcpTool, newlyAddedTool];
+    coord._d.buildTools = (_cwd, customTools) => ({
+      tools: SDK_BUILTIN_OBJS,
+      customTools,
+    });
+    currentAgentConfig = { tools: { disabled: [] } };
+    const replayList = ["read", "mcp_old_search"];
+    await fsp.writeFile(
+      path.join(sessionDir, "session-meta.json"),
+      JSON.stringify({ [path.basename(fakeSessionPath)]: { toolNames: replayList } }, null, 2),
+    );
+
+    const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
+    const ownerAgent = focusAgent;
+    const focusedOtherAgent = {
+      id: "focused-other",
+      config: { tools: { disabled: [] } },
+      tools: [{ ...oldMcpTool, metadata: { reminderLiveAvailabilityProbe: () => true } }],
+      getToolsSnapshot() { return this.tools; },
+    };
+    coord._d.getAgent = () => focusedOtherAgent;
+    coord._d.getAgentById = (id) => (id === "test" ? ownerAgent : focusedOtherAgent);
+    const entry = coord._sessions.get(sessionPath);
+    const frozenBefore = [...entry.toolNames];
+    const activeCallCount = activeToolsSpy.mock.calls.length;
+    const renewSpy = vi.spyOn(coord as any, "_renewCachePrefixContract");
+
+    const rendered = coord.renderSessionReminderBlock(sessionPath)!;
+
+    expect(rendered.block).toContain("mcp_old_search");
+    expect(rendered.block).not.toContain("mcp_new_search");
+    expect(rendered.receipt.unavailableToolNames).toEqual(["mcp_old_search"]);
+    expect(entry.toolNames).toEqual(frozenBefore);
+    expect(activeToolsSpy).toHaveBeenCalledTimes(activeCallCount);
+    expect(renewSpy).not.toHaveBeenCalled();
+
+    coord.consumeRenderedSessionReminderBlock(sessionPath, rendered.receipt);
+    expect(coord.renderSessionReminderBlock(sessionPath)).toBeNull();
+    oldToolAvailable = true;
+    const recovered = coord.renderSessionReminderBlock(sessionPath)!;
+    expect(recovered.block).toBe("");
+    coord.consumeRenderedSessionReminderBlock(sessionPath, recovered.receipt);
+    oldToolAvailable = false;
+    expect(coord.renderSessionReminderBlock(sessionPath)?.block).toContain("mcp_old_search");
+  });
+
+  it("carries accepted unavailable-tool state through real hibernate and restore", async () => {
+    currentAgentConfig = { tools: { disabled: [] } };
+    coord._d.getAgentById = (id) => (id === "test" ? focusAgent : null);
+    const { sessionPath } = await coord.createSession(null, tmpDir, true);
+    const entry = coord._sessions.get(sessionPath);
+    entry.reminderAcceptedUnavailableToolNames = ["mcp_calendar"];
+    entry.reminderUnavailableRevision = 3;
+
+    await expect(coord.hibernateSessionRuntime(sessionPath, "test")).resolves.toBe(true);
+    expect(coord._hibernatedSessionMeta.get(sessionPath)).toMatchObject({
+      reminderAcceptedUnavailableToolNames: ["mcp_calendar"],
+      reminderUnavailableRevision: 3,
+    });
+
+    await coord.reloadSessionRuntime(sessionPath);
+    expect(coord._sessions.get(sessionPath)).toMatchObject({
+      reminderAcceptedUnavailableToolNames: ["mcp_calendar"],
+      reminderUnavailableRevision: 3,
+    });
+  });
+
+  it("Case A: a production-filtered temporary plugin outage does not rewrite the frozen contract", async () => {
+    let pluginAvailable = false;
+    const mcpTool = {
+      ...makeTool("mcp_github_search"),
+      _pluginId: "mcp",
+      isEnabledForAgentConfig: () => pluginAvailable,
+    };
+    coord._d.buildTools = () => ({
+      tools: SDK_BUILTIN_OBJS,
+      customTools: filterToolObjectsByAvailability(
+        [...HANAKO_CUSTOM_OBJS, mcpTool],
+        currentAgentConfig,
+        { agentId: "test", channelsEnabled },
+      ),
+    });
+    coord._d.getAgentById = (id) => (id === "test" ? focusAgent : null);
+    currentAgentConfig = { tools: { disabled: [] } };
+    const replayList = ["read", "mcp_github_search"];
+    await fsp.writeFile(
+      path.join(sessionDir, "session-meta.json"),
+      JSON.stringify({ [path.basename(fakeSessionPath)]: { toolNames: replayList } }, null, 2),
+    );
+
+    const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
+
+    expect(activeToolsSpy.mock.calls[0][0]).not.toContain("mcp_github_search");
+    const entry = coord._sessions.get(sessionPath);
+    expect(entry.toolNames).toContain("mcp_github_search");
+    expect(entry.unavailableToolNames).toEqual(["mcp_github_search"]);
+    expect(coord.renderSessionReminderBlock(sessionPath)?.block).toContain("mcp_github_search");
+    let meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
+    expect(meta[path.basename(fakeSessionPath)].toolNames).toContain("mcp_github_search");
+
+    pluginAvailable = true;
+    await coord.reloadSessionRuntime(sessionPath);
+
+    const restoredTools = activeToolsSpy.mock.calls.at(-1)[0];
+    expect(restoredTools).toContain("mcp_github_search");
+    meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
+    expect(meta[path.basename(fakeSessionPath)].toolNames).toContain("mcp_github_search");
+  });
+
+  it("Case A: restore preserves a gated computer tool in the contract but not the active runtime", async () => {
     const computerTool = {
       ...makeTool("computer"),
       isEnabledForAgentConfig: () => false,
@@ -798,12 +1285,13 @@ describe("session-coordinator tool snapshot (createSession)", () => {
       JSON.stringify({ [path.basename(fakeSessionPath)]: { toolNames: replayList } }, null, 2),
     );
 
-    await coord.createSession(null, tmpDir, true, null, { restore: true });
+    const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
 
     expect(activeToolsSpy).toHaveBeenCalledTimes(1);
-    expect(activeToolsSpy.mock.calls[0][0]).toEqual(
-      restoredSnapshot(replayList, [...allNames(), "computer"]),
-    );
+    expect(activeToolsSpy.mock.calls[0][0]).not.toContain("computer");
+    const entry = coord._sessions.get(sessionPath);
+    expect(entry.toolNames).toContain("computer");
+    expect(entry.unavailableToolNames).toEqual(["computer"]);
   });
 
   // ── Case B tests ─────────────────────────────────────────────
@@ -1037,20 +1525,20 @@ describe("session-coordinator tool snapshot (createSession)", () => {
     expect(coord.getAccessMode()).toBe("read_only");
   });
 
-  // ── #1624: dormant capability drift template ─────────────
+  // ── Frozen capability snapshots ──
 
-  describe("capability drift (#1624)", () => {
-    function promptSnapshotEntry(systemPrompt) {
+  describe("frozen capability snapshots", () => {
+    function promptSnapshotEntry(systemPrompt, appendSystemPrompt = []) {
       return {
         version: 1,
         systemPrompt,
-        appendSystemPrompt: [],
+        appendSystemPrompt,
         skillsResult: { skills: [], diagnostics: [] },
         agentsFilesResult: { agentsFiles: [] },
       };
     }
 
-    it("restore keeps the frozen snapshot but no longer computes or wakes capability drift", async () => {
+    it("restore keeps the frozen prompt and tool snapshots", async () => {
       sessionManagerCreateMock.mockReturnValue({
         getCwd: () => tmpDir,
         getSessionFile: () => fakeSessionPath,
@@ -1067,94 +1555,26 @@ describe("session-coordinator tool snapshot (createSession)", () => {
         JSON.stringify({
           [path.basename(fakeSessionPath)]: {
             toolNames: frozen,
-            promptSnapshot: promptSnapshotEntry("mock-prompt"),
+            promptSnapshot: promptSnapshotEntry("mock-prompt", ["legacy frozen workspace scope"]),
           },
         }, null, 2),
       );
 
       buildSystemPromptSpy.mockClear();
-      const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
+      await coord.createSession(null, tmpDir, true, null, { restore: true });
 
-      // 默认行为零变化：active 工具仍是冻结快照；但不再额外构造 live prompt / drift 提示。
+      // active 工具仍是冻结快照，restore 不额外构造 live prompt。
       expect(activeToolsSpy.mock.calls[0][0]).not.toContain("office");
-      expect(coord.getSessionCapabilityDriftNotice(sessionPath)).toBeNull();
       expect(buildSystemPromptSpy).not.toHaveBeenCalled();
+      const resourceLoader = createAgentSessionMock.mock.calls.at(-1)[0].resourceLoader;
+      expect(resourceLoader.getAppendSystemPrompt()).toEqual(["legacy frozen workspace scope"]);
     });
 
-    it("manual drift entries still use the existing notice and dismiss chain", async () => {
-      currentAgentConfig = { tools: { disabled: [] } };
-      await fsp.writeFile(
-        path.join(sessionDir, "session-meta.json"),
-        JSON.stringify({
-          [path.basename(fakeSessionPath)]: {
-            toolNames: restoredSnapshot(allNames()),
-            promptSnapshot: promptSnapshotEntry("mock-prompt"),
-          },
-        }, null, 2),
-      );
-
-      const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
-      const entry = coord._sessions.get(sessionPath);
-      entry.capabilityDrift = {
-        version: 1,
-        hasDrift: true,
-        fingerprint: "fp-live",
-        frozenFingerprint: "fp-frozen",
-        addedToolNames: ["office"],
-        removedToolNames: [],
-        invalidToolNames: [],
-        promptChanged: false,
-      };
-      const notice = coord.getSessionCapabilityDriftNotice(sessionPath);
-      expect(notice).not.toBeNull();
-      expect(notice.addedToolNames).toEqual(["office"]);
-
-      await coord.dismissSessionCapabilityDrift(sessionPath, notice.fingerprint);
-
-      // 当前 fingerprint 已被 dismiss → 不再提示
-      expect(coord.getSessionCapabilityDriftNotice(sessionPath)).toBeNull();
-      // dismiss 状态持久化在 session-meta（跟 session 走）
-      const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
-      expect(meta[path.basename(fakeSessionPath)].capabilityDriftDismissedFingerprint).toBe(notice.fingerprint);
-    });
-
-    it("marks cached sessions stale when current agent tools gain MCP tools", async () => {
-      currentAgentConfig = { tools: { disabled: [] } };
-      await fsp.writeFile(
-        path.join(sessionDir, "session-meta.json"),
-        JSON.stringify({
-          [path.basename(fakeSessionPath)]: {
-            toolNames: restoredSnapshot(allNames()),
-            promptSnapshot: promptSnapshotEntry("mock-prompt"),
-          },
-        }, null, 2),
-      );
-
-      const { sessionPath } = await coord.createSession(null, tmpDir, true, null, { restore: true });
-      expect(coord.getSessionCapabilityDriftNotice(sessionPath)).toBeNull();
-
-      const mcpTool = { ...makeTool("mcp_github_search"), _pluginId: "mcp" };
-      coord._d.buildTools = () => ({
-        tools: SDK_BUILTIN_OBJS,
-        customTools: [...HANAKO_CUSTOM_OBJS, mcpTool],
-      });
-
-      const result = coord.markCapabilitySnapshotsStale({
-        agentId: "test",
-        reason: "mcp.agent.tool.enable",
-      });
-
-      expect(result).toMatchObject({ ok: true, marked: 1 });
-      const notice = coord.getSessionCapabilityDriftNotice(sessionPath);
-      expect(notice).not.toBeNull();
-      expect(notice.addedToolNames).toEqual(["mcp_github_search"]);
-      expect(notice.promptChanged).toBe(false);
-    });
   });
 
-  // ── #1624: explicit refresh (fresh compact rebuilds both snapshots) ──
+  // ── Explicit refresh (fresh compact rebuilds both snapshots) ──
 
-  describe("refreshCapabilitySnapshots (#1624)", () => {
+  describe("refreshCapabilitySnapshots", () => {
     it("rebuilds the tool snapshot with Case C semantics (plugin tools included) and persists it", async () => {
       const pluginTool = { ...makeTool("office"), _pluginId: "office" };
       coord._d.buildTools = () => ({
@@ -1174,7 +1594,6 @@ describe("session-coordinator tool snapshot (createSession)", () => {
               skillsResult: { skills: [], diagnostics: [] },
               agentsFilesResult: { agentsFiles: [] },
             },
-            capabilityDriftDismissedFingerprint: "previously-dismissed",
           },
         }, null, 2),
       );
@@ -1189,15 +1608,18 @@ describe("session-coordinator tool snapshot (createSession)", () => {
       expect(appliedList).toContain("office");
       expect(appliedList).toContain("browser");
 
-      // session-meta 同步更新：toolNames + promptSnapshot 重建，dismiss 状态清空
-      const meta = JSON.parse(await fsp.readFile(path.join(sessionDir, "session-meta.json"), "utf-8"));
+      // session-meta 同步更新：toolNames + promptSnapshot 重建
+      // promptSnapshot 一律外置为 sidecar 引用，需经 hydrate 才能看到实际内容
+      const metaPath = path.join(sessionDir, "session-meta.json");
+      const meta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
       const entry = meta[path.basename(fakeSessionPath)];
       expect(entry.toolNames).toContain("office");
-      expect(entry.promptSnapshot.systemPrompt).toBe("mock-prompt");
-      expect(entry.capabilityDriftDismissedFingerprint).toBeNull();
-
-      // 刷新后无漂移
-      expect(coord.getSessionCapabilityDriftNotice(sessionPath)).toBeNull();
+      expect(entry.promptSnapshot).toMatchObject({
+        kind: "session-meta-payload",
+        field: "promptSnapshot",
+      });
+      const hydrated = await coord._readMetaCached(metaPath);
+      expect(hydrated[path.basename(fakeSessionPath)].promptSnapshot.systemPrompt).toBe("mock-prompt");
     });
 
     it("reloadSessionRuntime passes the refresh flag through", async () => {

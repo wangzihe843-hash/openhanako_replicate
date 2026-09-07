@@ -114,6 +114,17 @@
     display: none;
 }
 
+.channelExportDescription {
+    margin-bottom: var(--space-12);
+    color: var(--text-muted);
+    font-size: var(--fs-caption);
+    line-height: 1.6;
+}
+
+.channelExportButton {
+    width: 100%;
+}
+
 .btnDisabled {
     opacity: 0.3;
     pointer-events: none;

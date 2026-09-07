@@ -1,12 +1,12 @@
 /**
- * core/provider-compat.js — LLM HTTP payload 兼容层（唯一对外入口）
+ * core/provider-compat.ts — LLM HTTP payload 兼容层（唯一对外入口）
  *
  * 架构：dispatcher + 子模块。所有 provider-specific 补丁拆到 ./provider-compat/<name>.js。
  * 完整规范见 ./provider-compat/README.md。
  *
  * 两条调用路径共享本入口（commit f5b5d69 — chat 路径与 utility 路径合一的纪律）：
- *   - core/llm-client.js 的 callText（非流式 / utility 路径）
- *   - core/engine.js 的 Pi SDK before_provider_request 扩展（流式 / chat 路径）
+ *   - core/llm-client.ts 的 callText（非流式 / utility 路径）
+ *   - core/engine.ts 的 Pi SDK before_provider_request 扩展（流式 / chat 路径）
  *
  * 本文件只保留：
  *   1. dispatcher（按 matches 分发到子模块，first-match-wins）
@@ -19,6 +19,7 @@
  */
 
 import * as deepseek from "./provider-compat/deepseek.ts";
+import * as deepseekResponses from "./provider-compat/deepseek-responses.ts";
 import * as kimi from "./provider-compat/kimi.ts";
 import * as mimo from "./provider-compat/mimo.ts";
 import * as qwen from "./provider-compat/qwen.ts";
@@ -34,6 +35,10 @@ import * as codexResponses from "./provider-compat/codex-responses.ts";
 import { normalizeImplicitOutputBudget } from "./provider-compat/output-budget.ts";
 import { stripOrphanToolResults } from "./provider-compat/tool-pairing.ts";
 import { normalizeOpenAIInputAudioPayload } from "./provider-compat/input-audio.ts";
+import {
+  normalizeReasoningReplayContextMessages,
+  normalizeReasoningReplayPayload,
+} from "./provider-compat/reasoning-content-replay.ts";
 import {
   MODEL_AUDIO_TRANSPORTS,
   resolveModelAudioInputTransport,
@@ -58,6 +63,9 @@ interface ProviderModule {
  * 新 provider 默认加在末尾；只有当模块的 matches 是另一模块子集（更具体规则）时才前置。
  */
 const PROVIDER_MODULES: ProviderModule[] = [
+  // deepseekResponses 前置于 deepseek：同一批 DeepSeek 官方 endpoint 上，Responses
+  // 协议是更具体的子集，落到 deepseek 会被按 ChatCompletions 语义改写。
+  deepseekResponses,
   deepseek,
   kimi,
   mimo,
@@ -175,7 +183,7 @@ function normalizeProviderOptions(options: Record<string, any> = {}, model = nul
  * 孤儿 toolResult 配对兜底（issue #1285，provider-agnostic）。
  * 删除「父 tool_calls 已被 SDK transform-messages 丢弃的孤儿 role:"tool"」，
  * 使每个 role:"tool" 都有前驱带匹配 tool_calls 的 assistant，避免 OpenAI-compatible
- * provider 返回 400。逻辑与删除条件见 ./provider-compat/tool-pairing.js。
+ * provider 返回 400。逻辑与删除条件见 ./provider-compat/tool-pairing.ts。
  */
 function stripOrphanToolMessages(payload) {
   if (!Array.isArray(payload.messages)) return payload;
@@ -355,14 +363,21 @@ export function normalizeProviderPayload(payload, model, options = {}) {
   result = normalizeImplicitOutputBudget(result, model, normalizedOptions);
   result = stripNativeMediaAttachmentMarkers(result);
   result = normalizeAudioTransportPayload(result, model);
+  // 先把 SDK 尚未序列化的 signed thinking block 投影成 wire carrier。
+  // 部分 provider 模块随后会把 assistant.content 归一化为字符串。
+  result = normalizeReasoningReplayPayload(result, model, normalizedOptions);
 
-  // 2. Provider-specific 补丁（按 matches 分发，first-match-wins）
+  // 2. Provider-specific 请求控制（按 matches 分发，first-match-wins）
   for (const mod of PROVIDER_MODULES) {
     if (mod.matches(model)) {
       result = mod.apply(result, model, normalizedOptions);
       break;
     }
   }
+
+  // 3. reasoning replay 是协议级契约，不归任何单个 provider 模块所有。
+  // 子模块决定本轮 thinking 开关后，中心层再校验最终请求状态。
+  result = normalizeReasoningReplayPayload(result, model, normalizedOptions);
 
   return result;
 }
@@ -381,7 +396,8 @@ export function normalizeProviderContextMessages(messages, model, options = {}) 
   if (!Array.isArray(messages)) return messages;
 
   const normalizedOptions = normalizeProviderOptions(options, model);
-  const result = projectToolResultResourcesForModel(messages);
+  let result = projectToolResultResourcesForModel(messages);
+  result = normalizeReasoningReplayContextMessages(result, model, normalizedOptions);
   for (const mod of PROVIDER_MODULES) {
     if (mod.matches(model)) {
       if (typeof mod.normalizeContextMessages === "function") {

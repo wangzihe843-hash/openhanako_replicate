@@ -7,8 +7,7 @@ import type { ProviderPreset } from '../utils/provider-presets';
 
 export type { ProviderPreset } from '../utils/provider-presets';
 
-export const AGENT_ID = 'hanako';
-export const TOTAL_STEPS = 7;
+export const TOTAL_STEPS = 6;
 
 export const LOCALES = [
   { value: 'zh-CN', label: '简体中文' },
@@ -22,12 +21,3 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   ...API_PROVIDER_PRESETS,
   { value: '_custom',     label: '',                     url: '',  api: 'openai-completions', custom: true },
 ];
-
-export const OB_THEMES = [
-  'warm-paper', 'coral', 'midnight', 'auto', 'high-contrast', 'grass-aroma',
-  'contemplation', 'absolutely', 'delve', 'deep-think',
-] as const;
-
-export function themeKey(id: string): string {
-  return id.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
-}

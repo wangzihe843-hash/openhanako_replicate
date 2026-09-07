@@ -4,9 +4,9 @@
 
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import type { ProviderSummary } from '../../settings/store';
+import { useSettingsStore, type ProviderSummary } from '../../settings/store';
 
 const mocks = vi.hoisted(() => ({
   hanaFetch: vi.fn(),
@@ -24,6 +24,8 @@ vi.mock('../../settings/helpers', () => ({
   t: (key: string) => key,
   API_FORMAT_OPTIONS: [
     { value: 'openai-completions', label: 'OpenAI Compatible' },
+    { value: 'google-generative-ai', label: 'Google Gemini' },
+    { value: 'anthropic-messages', label: 'Anthropic Messages' },
   ],
 }));
 
@@ -54,6 +56,7 @@ describe('ApiKeyCredentials', () => {
   beforeEach(() => {
     mocks.hanaFetch.mockReset();
     mocks.hanaFetch.mockResolvedValue(jsonResponse({ ok: true }));
+    useSettingsStore.setState({ toastMessage: '', toastType: '', toastVisible: false });
   });
 
   afterEach(() => {
@@ -390,5 +393,129 @@ describe('ApiKeyCredentials', () => {
         'gemini-3-flash-preview',
       ],
     });
+  });
+
+  it('lets a registry-only provider choose its API type and includes the draft in the initial save', async () => {
+    const onRefresh = vi.fn(async () => {});
+    const { container } = render(
+      <ApiKeyCredentials
+        providerId="registry-provider"
+        summary={providerSummary({
+          display_name: 'Registry Provider',
+          base_url: 'https://registry.example.com/v1',
+          api: 'openai-completions',
+          is_configured: false,
+        })}
+        isPresetSetup
+        presetInfo={{
+          label: 'Registry Provider',
+          value: 'registry-provider',
+          url: 'https://registry.example.com/v1',
+          api: 'openai-completions',
+        }}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'OpenAI Compatible' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Anthropic Messages' }));
+
+    const input = container.querySelector('input[type="password"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'registry-key' } });
+    fireEvent.click(container.querySelector('button[title="settings.providers.verifyConnection"]') as HTMLButtonElement);
+
+    await waitFor(() => expect(mocks.hanaFetch).toHaveBeenCalledWith(
+      '/api/config',
+      expect.objectContaining({ method: 'PUT' }),
+    ));
+    const configCall = mocks.hanaFetch.mock.calls.find(([path]) => path === '/api/config');
+    expect(JSON.parse(String((configCall?.[1] as RequestInit).body))).toMatchObject({
+      providers: {
+        'registry-provider': {
+          api: 'anthropic-messages',
+          api_key: 'registry-key',
+        },
+      },
+    });
+  });
+
+  it('keeps an edited API type in local draft state while saving an existing provider', async () => {
+    let finishRefresh: (() => void) | undefined;
+    const onRefresh = vi.fn(() => new Promise<void>((resolve) => { finishRefresh = resolve; }));
+    const { rerender } = render(
+      <ApiKeyCredentials
+        providerId="deepseek"
+        summary={providerSummary({ api: 'openai-completions', has_credentials: true })}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'OpenAI Compatible' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Anthropic Messages' }));
+
+    expect(screen.getByRole('button', { name: 'Anthropic Messages' })).toBeInTheDocument();
+    await waitFor(() => expect(mocks.hanaFetch).toHaveBeenCalledWith(
+      '/api/config',
+      expect.objectContaining({ method: 'PUT' }),
+    ));
+    const configCall = mocks.hanaFetch.mock.calls.find(([path]) => path === '/api/config');
+    expect(JSON.parse(String((configCall?.[1] as RequestInit).body))).toEqual({
+      providers: { deepseek: { api: 'anthropic-messages' } },
+    });
+    expect(screen.getByRole('button', { name: 'Anthropic Messages' })).toBeInTheDocument();
+
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
+    finishRefresh?.();
+    await waitFor(() => expect(useSettingsStore.getState().toastMessage).toBe('settings.saved'));
+    expect(screen.getByRole('button', { name: 'Anthropic Messages' })).toBeInTheDocument();
+
+    rerender(
+      <ApiKeyCredentials
+        providerId="deepseek"
+        summary={providerSummary({ api: 'anthropic-messages', has_credentials: true })}
+        onRefresh={onRefresh}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Anthropic Messages' })).toBeInTheDocument();
+  });
+
+  it('shows the server rejection and preserves the API draft for retry', async () => {
+    mocks.hanaFetch.mockResolvedValueOnce(jsonResponse({ error: 'unsupported provider API type' }));
+    render(
+      <ApiKeyCredentials
+        providerId="deepseek"
+        summary={providerSummary({ api: 'openai-completions', has_credentials: true })}
+        onRefresh={vi.fn(async () => {})}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'OpenAI Compatible' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Google Gemini' }));
+
+    await waitFor(() => expect(useSettingsStore.getState().toastMessage).toBe(
+      'settings.saveFailed: unsupported provider API type',
+    ));
+    expect(screen.getByRole('button', { name: 'Google Gemini' })).toBeInTheDocument();
+  });
+
+  it('shows an actionable refresh failure after the server accepts an API type change', async () => {
+    const onRefresh = vi.fn(async () => {
+      throw new Error('provider summary is unavailable');
+    });
+    render(
+      <ApiKeyCredentials
+        providerId="deepseek"
+        summary={providerSummary({ api: 'openai-completions', has_credentials: true })}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'OpenAI Compatible' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Anthropic Messages' }));
+
+    await waitFor(() => expect(useSettingsStore.getState().toastMessage).toBe(
+      'settings.refreshFailed: provider summary is unavailable',
+    ));
+    expect(screen.getByRole('button', { name: 'Anthropic Messages' })).toBeInTheDocument();
   });
 });

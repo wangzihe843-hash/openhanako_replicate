@@ -81,6 +81,19 @@
   transition-duration: var(--settings-modal-close-dur);
 }
 
+/* Window-scoped dialogs opened from settings stay in the same window surface,
+   but sit above the settings card instead of behind its z-index layer. */
+.nestedOverlayRoot {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.nestedOverlayRoot > * {
+  pointer-events: auto;
+}
+
 @media (max-width: 760px) {
   .overlay {
     padding: var(--space-8);

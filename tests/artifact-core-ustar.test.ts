@@ -206,13 +206,22 @@ describe("ustar packTree / extract round-trip", () => {
     expect(fs.existsSync(destDir)).toBe(true);
   });
 
-  it.skipIf(process.platform === "win32")("refuses to pack a symlink in the source tree", async () => {
+  it("refuses to pack a symlink in the source tree", async () => {
     const root = makeTempDir("hana-ustar-pack-symlink-");
     const srcDir = path.join(root, "src");
     const archivePath = path.join(root, "out.tar.gz");
     await fsp.mkdir(srcDir, { recursive: true });
     await fsp.writeFile(path.join(srcDir, "real.txt"), "hi");
-    await fsp.symlink(path.join(srcDir, "real.txt"), path.join(srcDir, "link.txt"));
+    const link = path.join(srcDir, "link.txt");
+    if (process.platform === "win32") {
+      // Junctions preserve lstat link detection without requiring symlink privileges.
+      const targetDir = path.join(root, "link-target");
+      await fsp.mkdir(targetDir);
+      await fsp.symlink(targetDir, link, "junction");
+    } else {
+      await fsp.symlink(path.join(srcDir, "real.txt"), link);
+    }
+    expect((await fsp.lstat(link)).isSymbolicLink()).toBe(true);
 
     await expect(packTree(srcDir, archivePath)).rejects.toThrow(/symlink/i);
   });

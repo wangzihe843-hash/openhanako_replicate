@@ -2,7 +2,8 @@
 import fs from "fs";
 import path from "path";
 import YAML from "js-yaml";
-import { atomicWriteSync, safeReadYAMLSync } from "../shared/safe-fs.ts";
+import { safeReadYAMLSync } from "../shared/safe-fs.ts";
+import { writeSecretFileSync } from "../shared/secret-fs.ts";
 import { lookupKnown } from "../shared/known-models.ts";
 import { inferMediaProtocolId } from "./media-protocols.ts";
 
@@ -122,7 +123,7 @@ export function migrateProviderMediaConfig(hanakoHome, log: (...args: any[]) => 
     quotingType: "\"",
     forceQuotes: false,
   });
-  atomicWriteSync(ymlPath, yamlStr);
+  writeSecretFileSync(ymlPath, yamlStr);
   log("[migrate] provider image models migrated to media.image_generation");
   return true;
 }

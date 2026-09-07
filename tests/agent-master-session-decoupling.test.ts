@@ -21,6 +21,8 @@ const { memoryTickerTickMock, memoryTickerStartMock } = vi.hoisted(() => ({
   memoryTickerStartMock: vi.fn(),
 }));
 
+const AGENT_INIT_TEST_TIMEOUT_MS = 30_000;
+
 vi.mock("../lib/memory/memory-ticker.js", () => ({
   createMemoryTicker: () => ({
     start: memoryTickerStartMock,
@@ -68,7 +70,7 @@ function bootstrapAgentDir(rootDir) {
     "utf-8",
   );
   fs.writeFileSync(path.join(agentDir, "identity.md"), "I am the test agent.\n", "utf-8");
-  fs.writeFileSync(path.join(agentDir, "ishiki.md"), "ishiki body\n", "utf-8");
+  fs.writeFileSync(path.join(agentDir, "AGENTS.md"), "persona body\n", "utf-8");
   fs.writeFileSync(path.join(agentDir, "pinned.md"), "PINNED_MEMORY_BEACON\n", "utf-8");
   fs.writeFileSync(path.join(agentDir, "memory", "memory.md"), "MEMORY_MD_BEACON\n", "utf-8");
   fs.writeFileSync(path.join(rootDir, "user", "user.md"), "user profile\n", "utf-8");
@@ -98,7 +100,7 @@ function writeAgentAvatar(agentDir) {
   return resource;
 }
 
-describe("agent.systemPrompt: master / per-session 解耦", () => {
+describe("agent.systemPrompt: master / per-session 解耦", { timeout: AGENT_INIT_TEST_TIMEOUT_MS }, () => {
   let tmpDir;
   let agentsDir;
 
@@ -172,21 +174,24 @@ describe("agent.systemPrompt: master / per-session 解耦", () => {
     await agent.dispose();
   });
 
-  it("系统 prompt 用一句话把工作台定义为 cwd", async () => {
+  it("agent base prompt 不缓存具体 cwd，也不重复 Scope / CWD 语义", async () => {
     const agent = makeAgent(agentsDir, tmpDir);
     await agent.init(() => {});
     agent._config.locale = "zh-CN";
 
-    const prompt = agent.buildSystemPrompt({
-      forceMemoryEnabled: false,
-      cwdOverride: "/workspace/Desktop/project-hana",
-    });
+    const prompt = agent.buildSystemPrompt({ forceMemoryEnabled: false });
 
-    expect(prompt).toContain("## 工作台");
-    expect(prompt).toContain("用户所说的「工作台」指的是当前工作目录（cwd）。");
-    expect(prompt).toContain("当前工作目录：/workspace/Desktop/project-hana");
-    expect(prompt).not.toContain("## 书桌");
-    expect(prompt).not.toContain("系统桌面");
+    expect(prompt).not.toContain("## 工作台");
+    expect(prompt).not.toContain("## 工作区范围");
+    expect(prompt).not.toContain("当前工作目录");
+    expect(prompt).not.toContain("/workspace/Desktop/project-hana");
+
+    agent._config.locale = "en-US";
+    const enPrompt = agent.buildSystemPrompt({ forceMemoryEnabled: false });
+    expect(enPrompt).not.toContain("## Workspace");
+    expect(enPrompt).not.toContain("## Workspace Scope");
+    expect(enPrompt).not.toContain("Current working directory");
+    expect(enPrompt).not.toContain("Relative paths");
 
     await agent.dispose();
   });
@@ -195,15 +200,12 @@ describe("agent.systemPrompt: master / per-session 解耦", () => {
     const agent = makeAgent(agentsDir, tmpDir);
     await agent.init(() => {});
 
-    const prompt = agent.buildSystemPrompt({
-      forceMemoryEnabled: false,
-      cwdOverride: "/workspace/Desktop/project-hana",
-    });
+    const prompt = agent.buildSystemPrompt({ forceMemoryEnabled: false });
 
-    expect(prompt).toContain("## Tool Use For Files And Commands");
-    expect(prompt).toContain("Use read/grep/find/ls to inspect files.");
-    expect(prompt).toContain("Use edit for source-code changes and write for new complete files; do not use shell redirection to modify source files.");
-    expect(prompt).toContain("Use shell for builds, tests, package scripts, generators, and command-line tools.");
+    expect(prompt).toContain("## Tool Usage Discipline");
+    expect(prompt).toContain("Use read/grep/find/ls to inspect files and directories");
+    expect(prompt).toContain("use edit for source-code changes and write for new or fully replaced files");
+    expect(prompt).toContain("do not use shell redirection to modify source files.");
 
     await agent.dispose();
   });
@@ -239,15 +241,11 @@ describe("agent.systemPrompt: master / per-session 解耦", () => {
     await agent.init(() => {});
     agent._config.locale = "zh-CN";
 
-    const prompt = agent.buildSystemPrompt({
-      forceMemoryEnabled: false,
-      cwdOverride: "/workspace/Desktop/project-hana",
-    });
+    const prompt = agent.buildSystemPrompt({ forceMemoryEnabled: false });
 
-    expect(prompt).toContain("## 文件与命令工具使用");
-    expect(prompt).toContain("查看文件和目录时优先用 read/grep/find/ls。");
+    expect(prompt).toContain("## 工具使用纪律");
+    expect(prompt).toContain("查看文件和目录用 read/grep/find/ls");
     expect(prompt).toContain("改已有源码用 edit、新建或全量替换用 write，不要用 shell 重定向改源码。");
-    expect(prompt).toContain("运行测试、构建、包脚本、生成器和命令行工具时用 shell。");
 
     await agent.dispose();
   });
@@ -272,7 +270,7 @@ describe("agent.systemPrompt: master / per-session 解耦", () => {
     expect(prompt).toContain("你的形象是银白色短发，神情安静，穿着深色外套。");
     expect(prompt).not.toContain("来自图片分析");
     expect(prompt).not.toContain("这张头像");
-    expect(prompt.indexOf("ishiki body")).toBeLessThan(prompt.indexOf("## 你的样子"));
+    expect(prompt.indexOf("persona body")).toBeLessThan(prompt.indexOf("## 你的样子"));
 
     const subagentPrompt = agent.buildSystemPrompt({ forceMemoryEnabled: false, forSubagent: true, targetModel });
     expect(subagentPrompt).not.toContain("## 你的样子");
@@ -338,10 +336,8 @@ describe("agent.systemPrompt: master / per-session 解耦", () => {
     const agent = makeAgent(agentsDir, tmpDir);
     await agent.init(() => {});
 
-    const prompt = agent.buildSystemPrompt({
-      forceMemoryEnabled: false,
-      cwdOverride: cwd,
-    });
+    agent.setCallbacks({ getCwd: () => cwd });
+    const prompt = agent.buildSystemPrompt({ forceMemoryEnabled: false });
 
     expect(prompt).not.toContain("DEFAULT_DISABLED_AGENTS_BEACON");
     expect(prompt).not.toContain("DEFAULT_DISABLED_CLAUDE_BEACON");
@@ -349,7 +345,7 @@ describe("agent.systemPrompt: master / per-session 解耦", () => {
     await agent.dispose();
   });
 
-  it("injects enabled workspace instruction files before memory for new prompt snapshots", async () => {
+  it("keeps enabled workspace instruction files out of the agent base prompt", async () => {
     const repoRoot = path.join(tmpDir, "workspace");
     const nestedCwd = path.join(repoRoot, "packages", "app");
     fs.mkdirSync(path.join(repoRoot, ".git"), { recursive: true });
@@ -365,17 +361,13 @@ describe("agent.systemPrompt: master / per-session 解耦", () => {
       inject_claude_md: true,
     };
 
-    const prompt = agent.buildSystemPrompt({
-      forceMemoryEnabled: true,
-      cwdOverride: nestedCwd,
-    });
+    agent.setCallbacks({ getCwd: () => nestedCwd });
+    const prompt = agent.buildSystemPrompt({ forceMemoryEnabled: true });
 
-    expect(prompt).toContain("## Workspace Instructions");
-    expect(prompt).toContain("ROOT_AGENTS_BEACON");
-    expect(prompt).toContain("NESTED_CLAUDE_BEACON");
+    expect(prompt).not.toContain("## Workspace Instructions");
+    expect(prompt).not.toContain("ROOT_AGENTS_BEACON");
+    expect(prompt).not.toContain("NESTED_CLAUDE_BEACON");
     expect(prompt).not.toContain("OUTSIDE_WORKSPACE_BEACON");
-    expect(prompt.indexOf("ROOT_AGENTS_BEACON")).toBeLessThan(prompt.indexOf("NESTED_CLAUDE_BEACON"));
-    expect(prompt.indexOf("NESTED_CLAUDE_BEACON")).toBeLessThan(prompt.indexOf("MEMORY_MD_BEACON"));
 
     await agent.dispose();
   });

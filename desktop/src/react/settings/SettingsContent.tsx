@@ -21,6 +21,7 @@ import { GeneralTab } from './tabs/GeneralTab';
 import { BrowserTab } from './tabs/BrowserTab';
 import { WorkTab } from './tabs/WorkTab';
 import { SkillsTab } from './tabs/SkillsTab';
+import { McpTab } from './tabs/McpTab';
 import { BridgeTab } from './tabs/BridgeTab';
 import { ProvidersTab } from './tabs/ProvidersTab';
 import { MediaTab } from './tabs/MediaTab';
@@ -31,7 +32,6 @@ import { ExperimentsTab } from './tabs/ExperimentsTab';
 import { SecurityTab } from './tabs/SecurityTab';
 import { SharingTab } from './tabs/SharingTab';
 import { AccessTab } from './tabs/AccessTab';
-import { getNativeSettingsTabComponent } from './native-settings-tabs';
 import { CropOverlay } from './overlays/CropOverlay';
 import { AgentCreateOverlay } from './overlays/AgentCreateOverlay';
 import { AgentDeleteOverlay } from './overlays/AgentDeleteOverlay';
@@ -56,6 +56,7 @@ const TAB_COMPONENTS: Record<string, React.ComponentType> = {
   browser: BrowserTab,
   work: WorkTab,
   skills: SkillsTab,
+  mcp: McpTab,
   bridge: BridgeTab,
   providers: ProvidersTab,
   media: MediaTab,
@@ -94,6 +95,7 @@ const TAB_TITLE_KEYS: Record<string, string> = {
   work: 'settings.tabs.work',
   workflow: 'Workflow',
   skills: 'settings.tabs.skills',
+  mcp: 'settings.tabs.mcp',
   bridge: 'settings.tabs.bridge',
   providers: 'settings.tabs.providers',
   media: 'settings.tabs.media',
@@ -114,13 +116,6 @@ function normalizeSettingsTab(tab: string): string {
   return tab === 'computer' ? 'experiments' : tab;
 }
 
-function titleToLabel(title: string | Record<string, string> | undefined): string {
-  if (!title) return '';
-  if (typeof title === 'string') return title;
-  const locale = window.i18n?.locale || 'zh-CN';
-  return title[locale] || title[locale.split('-')[0]] || title.zh || title.en || Object.values(title)[0] || '';
-}
-
 interface SettingsContentProps {
   variant: 'window' | 'modal';
   onClose?: () => void;
@@ -134,8 +129,8 @@ export function SettingsContent({
   onActiveTabChange,
   listenToWindowTabSwitch = false,
 }: SettingsContentProps) {
-  const { activeTab, pluginSettingsTabs, ready } = useSettingsStore(
-    useShallow(s => ({ activeTab: s.activeTab, pluginSettingsTabs: s.pluginSettingsTabs, ready: s.ready }))
+  const { activeTab, ready } = useSettingsStore(
+    useShallow(s => ({ activeTab: s.activeTab, ready: s.ready }))
   );
   const set = useSettingsStore(s => s.set);
   const lastReportedActiveTabRef = useRef<string | null>(null);
@@ -229,15 +224,11 @@ export function SettingsContent({
     };
   }, [variant]);
 
-  const availablePluginSettingsTabs = pluginSettingsTabs || [];
   const effectiveActiveTab = normalizeSettingsTab(activeTab);
-  const dynamicTab = availablePluginSettingsTabs.find(tab => tab.id === effectiveActiveTab);
-  const ActiveTab = TAB_COMPONENTS[effectiveActiveTab]
-    || (dynamicTab ? getNativeSettingsTabComponent(dynamicTab.nativeComponent) : null)
-    || AgentTab;
+  const ActiveTab = TAB_COMPONENTS[effectiveActiveTab] || AgentTab;
   const isModal = variant === 'modal';
   const tabTitleKey = TAB_TITLE_KEYS[effectiveActiveTab];
-  const activeTabTitle = tabTitleKey ? t(tabTitleKey) : titleToLabel(dynamicTab?.title);
+  const activeTabTitle = tabTitleKey ? t(tabTitleKey) : '';
   const activeTabDescriptionKey = TAB_DESCRIPTION_KEYS[effectiveActiveTab];
   const activeTabDescription = activeTabDescriptionKey ? t(activeTabDescriptionKey) : '';
   const reportActiveTabChange = useCallback((tab: string) => {

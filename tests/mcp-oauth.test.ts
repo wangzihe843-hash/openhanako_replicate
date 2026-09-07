@@ -5,8 +5,8 @@ import {
   exchangeMcpOAuthCode,
   refreshMcpOAuthToken,
   registerMcpOAuthClient,
-} from "../plugins/mcp/lib/mcp-oauth.ts";
-import { McpHttpError } from "../plugins/mcp/lib/mcp-http-client.ts";
+} from "../core/mcp/clients/oauth.ts";
+import { McpHttpError } from "../core/mcp/clients/http-client.ts";
 
 function jsonResponse(body, { status = 200, headers = {} } = {}) {
   return new Response(JSON.stringify(body), {

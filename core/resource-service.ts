@@ -118,10 +118,9 @@ export class ResourceService {
     }
 
     const sessionRef = this._findSessionRefForFileId(fileId);
-    if (sessionRef) {
-      const file = this._sessionFiles.get(fileId, sessionRef);
-      if (file) return file;
-    }
+    // The owning session resolves ids the registry knows only as legacy aliases,
+    // so an unscoped lookup here would drop that resolution instead of adding to it.
+    if (sessionRef) return this._sessionFiles.get(fileId, sessionRef);
 
     return this._sessionFiles.get(fileId);
   }
@@ -174,6 +173,9 @@ export class ResourceService {
       return this._sessionRefByFileId.get(fileId);
     }
 
+    // A file id a session still owns outranks the same id kept as a fork's alias,
+    // so aliases only decide once the whole scan finds no current owner.
+    let aliasRef = null;
     for (const sidecarPath of collectSessionFileSidecars(this._agentsDir)) {
       let raw;
       try {
@@ -188,23 +190,38 @@ export class ResourceService {
         ? raw.sessionId.trim()
         : null;
       for (const id of Object.keys(raw.files)) {
+        const entry = raw.files[id];
+        const entrySessionId = typeof entry?.sessionId === "string" && entry.sessionId.trim()
+          ? entry.sessionId.trim()
+          : null;
+        const sessionRef = {
+          sessionId: entrySessionId || sidecarSessionId,
+          sessionPath,
+        };
         if (!this._sessionRefByFileId.has(id)) {
-          const entrySessionId = typeof raw.files[id]?.sessionId === "string" && raw.files[id].sessionId.trim()
-            ? raw.files[id].sessionId.trim()
-            : null;
-          this._sessionRefByFileId.set(id, {
-            sessionId: entrySessionId || sidecarSessionId,
-            sessionPath,
-          });
+          this._sessionRefByFileId.set(id, sessionRef);
         }
+        if (!aliasRef && legacyFileIdsOf(entry).includes(fileId)) aliasRef = sessionRef;
       }
       if (Object.prototype.hasOwnProperty.call(raw.files, fileId)) {
         return this._sessionRefByFileId.get(fileId);
       }
     }
 
+    if (aliasRef) {
+      this._sessionRefByFileId.set(fileId, aliasRef);
+      return aliasRef;
+    }
+
     return null;
   }
+}
+
+function legacyFileIdsOf(entry: any) {
+  if (!Array.isArray(entry?.legacyFileIds)) return [];
+  return entry.legacyFileIds
+    .filter((value) => typeof value === "string" && value.trim())
+    .map((value) => value.trim());
 }
 
 function collectSessionFileSidecars(rootDir: any) {

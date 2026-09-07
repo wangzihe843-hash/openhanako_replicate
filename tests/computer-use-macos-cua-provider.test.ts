@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "events";
 import { createMacosCuaProvider, resolveCuaDriverCommand } from "../core/computer-use/providers/macos-cua-provider.ts";
 import { COMPUTER_USE_ERRORS } from "../core/computer-use/errors.ts";
 
@@ -27,8 +28,6 @@ function makeRunner(handler: any) {
   };
 }
 
-const isMacOS = process.platform === "darwin";
-
 describe("macos Cua provider", () => {
   it("resolves a configured Cua Driver command before common locations", () => {
     const command = resolveCuaDriverCommand({
@@ -40,23 +39,130 @@ describe("macos Cua provider", () => {
     expect(command).toBe("/opt/cua-driver");
   });
 
-  it.skipIf(!isMacOS)("prefers a Hana-bundled Computer Use helper over an external Cua Driver install", () => {
+  it("treats an explicit Hana helper path as authoritative", () => {
+    const command = resolveCuaDriverCommand({
+      env: {
+        HANA_COMPUTER_USE_HELPER_PATH: "~/bin/custom-hana-helper",
+        HANA_COMPUTER_USE_RUNTIME_ROOT: "/opt/hana-runtime",
+        HANA_CUA_DRIVER_PATH: "/opt/cua-driver",
+      },
+      existsSync: (p) => p === "/opt/cua-driver",
+      homeDir: "/Users/hana",
+    });
+
+    expect(command).toBe("/Users/hana/bin/custom-hana-helper");
+  });
+
+  it("treats an explicit Hana runtime root as authoritative", () => {
+    const command = resolveCuaDriverCommand({
+      env: {
+        HANA_COMPUTER_USE_RUNTIME_ROOT: "/opt/hana-runtime",
+        HANA_DESKTOP_IS_PACKAGED: "1",
+        HANA_DESKTOP_RESOURCES_PATH: "/Applications/HanaAgent.app/Contents/Resources",
+      },
+      existsSync: () => false,
+      homeDir: "/Users/hana",
+    });
+
+    expect(command).toBe("/opt/hana-runtime/hana-computer-use-helper");
+  });
+
+  it("resolves the new shell resource contract instead of the OTA artifact root", () => {
+    const helper = "/Applications/HanaAgent.app/Contents/Resources/computer-use/macos/hana-computer-use-helper";
+    const command = resolveCuaDriverCommand({
+      env: {
+        HANA_DESKTOP_IS_PACKAGED: "1",
+        HANA_DESKTOP_RESOURCES_PATH: "/Applications/HanaAgent.app/Contents/Resources",
+        HANA_ROOT: "/Users/hana/.hanako/artifacts/server/0.415.9-darwin-arm64",
+        HANA_CUA_DRIVER_PATH: "/opt/cua-driver",
+      },
+      existsSync: (p) => p === helper || p === "/opt/cua-driver",
+      homeDir: "/Users/hana",
+      arch: "arm64",
+      cwd: "/Users/hana/.hanako/artifacts/server/0.415.9-darwin-arm64",
+    });
+
+    expect(command).toBe(helper);
+  });
+
+  it("recovers old packaged shells from app.asar and executable paths", () => {
+    const helper = "/Applications/HanaAgent.app/Contents/Resources/computer-use/macos/hana-computer-use-helper";
+    const baseEnv = {
+      HANA_DESKTOP_IS_PACKAGED: "1",
+      HANA_ROOT: "/Users/hana/.hanako/artifacts/server/0.412.7-darwin-arm64",
+    };
+    const fromAppPath = resolveCuaDriverCommand({
+      env: {
+        ...baseEnv,
+        HANA_DESKTOP_APP_PATH: "/Applications/HanaAgent.app/Contents/Resources/app.asar",
+      },
+      existsSync: (p) => p === helper,
+    });
+    const fromExecPath = resolveCuaDriverCommand({
+      env: {
+        ...baseEnv,
+        HANA_DESKTOP_EXEC_PATH: "/Applications/HanaAgent.app/Contents/MacOS/HanaAgent",
+      },
+      existsSync: (p) => p === helper,
+    });
+
+    expect(fromAppPath).toBe(helper);
+    expect(fromExecPath).toBe(helper);
+  });
+
+  it("keeps the exact pre-artifact Resources/server layout compatible", () => {
+    const helper = "/Applications/HanaAgent.app/Contents/Resources/computer-use/macos/hana-computer-use-helper";
     const command = resolveCuaDriverCommand({
       env: {
         HANA_ROOT: "/Applications/HanaAgent.app/Contents/Resources/server",
         HANA_CUA_DRIVER_PATH: "/opt/cua-driver",
       },
-      existsSync: (p) => p === "/Applications/HanaAgent.app/Contents/Resources/computer-use/macos/hana-computer-use-helper"
-        || p === "/opt/cua-driver",
+      existsSync: (p) => p === helper || p === "/opt/cua-driver",
       homeDir: "/Users/hana",
       arch: "arm64",
       cwd: "/Users/hana/project-hana",
     });
 
-    expect(command).toBe("/Applications/HanaAgent.app/Contents/Resources/computer-use/macos/hana-computer-use-helper");
+    expect(command).toBe(helper);
   });
 
-  it.skipIf(!isMacOS)("resolves the development helper build output before falling back to PATH", () => {
+  it("does not scan OTA or cwd development helpers in packaged mode", () => {
+    const artifactHelper = "/Users/hana/.hanako/artifacts/server/0.415.9-darwin-arm64/dist-computer-use/mac-arm64/hana-computer-use-helper";
+    const cwdHelper = "/tmp/runtime/dist-computer-use/mac-arm64/hana-computer-use-helper";
+    const command = resolveCuaDriverCommand({
+      env: {
+        HANA_DESKTOP_IS_PACKAGED: "1",
+        HANA_ROOT: "/Users/hana/.hanako/artifacts/server/0.415.9-darwin-arm64",
+        HANA_DESKTOP_RESOURCES_PATH: "relative/fake-resources",
+        HANA_DESKTOP_APP_PATH: "/tmp/app.asar",
+        HANA_DESKTOP_EXEC_PATH: "/tmp/HanaAgent",
+        HANA_CUA_DRIVER_PATH: "/opt/cua-driver",
+      },
+      existsSync: (p) => p === artifactHelper || p === cwdHelper || p === "/opt/cua-driver",
+      homeDir: "/Users/hana",
+      arch: "arm64",
+      cwd: "/tmp/runtime",
+    });
+
+    expect(command).toBe("/opt/cua-driver");
+  });
+
+  it("does not silently replace a missing packaged helper with an external driver", () => {
+    const expectedHelper = "/Applications/HanaAgent.app/Contents/Resources/computer-use/macos/hana-computer-use-helper";
+    const command = resolveCuaDriverCommand({
+      env: {
+        HANA_DESKTOP_IS_PACKAGED: "1",
+        HANA_DESKTOP_RESOURCES_PATH: "/Applications/HanaAgent.app/Contents/Resources",
+        HANA_CUA_DRIVER_PATH: "/opt/cua-driver",
+      },
+      existsSync: (p) => p === "/opt/cua-driver",
+      homeDir: "/Users/hana",
+    });
+
+    expect(command).toBe(expectedHelper);
+  });
+
+  it("resolves the development helper build output before falling back to PATH", () => {
     const command = resolveCuaDriverCommand({
       env: { HANA_ROOT: "/Users/hana/project-hana" },
       existsSync: (p) => p === "/Users/hana/project-hana/dist-computer-use/mac-arm64/hana-computer-use-helper",
@@ -672,6 +778,103 @@ describe("macos Cua provider", () => {
       action: "show_default_ui",
     });
     expect(calls.map((c) => c.args[0])).not.toContain("double_click");
+  });
+
+  it("reports an authoritative packaged helper path as missing", async () => {
+    const missing = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+    const { runner } = makeRunner(() => { throw missing; });
+    const command = "/Applications/HanaAgent.app/Contents/Resources/computer-use/macos/hana-computer-use-helper";
+    const provider = createMacosCuaProvider({
+      platform: "darwin",
+      command,
+      runner,
+      socketPath: "/tmp/hana.sock",
+    });
+
+    await expect(provider.getStatus()).resolves.toMatchObject({
+      available: false,
+      reason: "bundled-helper-missing",
+      command,
+    });
+  });
+
+  it("converts a missing helper executable into PROVIDER_UNAVAILABLE", async () => {
+    const missing = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+    const { runner } = makeRunner(() => { throw missing; });
+    const provider = createMacosCuaProvider({
+      platform: "darwin",
+      command: "/tmp/cua-driver",
+      runner,
+    });
+
+    await expect(provider.listApps()).rejects.toMatchObject({
+      code: COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
+      details: {
+        command: "/tmp/cua-driver",
+        launchCode: "ENOENT",
+      },
+    });
+  });
+
+  it("turns an asynchronous bundled daemon spawn error into PROVIDER_UNAVAILABLE", async () => {
+    const child = new EventEmitter() as EventEmitter & { pid?: number };
+    const runner = {
+      run: vi.fn(async () => ({ stdout: "", stderr: "not running", exitCode: 1 })),
+      spawn: vi.fn(() => {
+        queueMicrotask(() => {
+          child.emit("error", Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));
+        });
+        return child;
+      }),
+    } as any;
+    const provider = createMacosCuaProvider({
+      platform: "darwin",
+      command: "/tmp/hana-computer-use-helper",
+      runner,
+      socketPath: "/tmp/hana.sock",
+      daemonStartupTimeoutMs: 500,
+    });
+
+    await expect(provider.listApps()).rejects.toMatchObject({
+      code: COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
+      details: {
+        command: "/tmp/hana-computer-use-helper",
+        launchCode: "ENOENT",
+      },
+    });
+    const statusCallsAfterFailure = runner.run.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    expect(runner.run).toHaveBeenCalledTimes(statusCallsAfterFailure);
+    expect(runner.spawn).toHaveBeenCalledTimes(1);
+    expect(child.listenerCount("error")).toBe(0);
+  });
+
+  it("removes the launch-error listener after the bundled daemon becomes ready", async () => {
+    const child = new EventEmitter() as EventEmitter & { pid?: number };
+    let statusCalls = 0;
+    const runner = {
+      run: vi.fn(async (_command: any, args: any[]) => {
+        if (args[0] === "status") {
+          statusCalls += 1;
+          return statusCalls === 1
+            ? { stdout: "", stderr: "not running", exitCode: 1 }
+            : { stdout: "ready", stderr: "", exitCode: 0 };
+        }
+        return rawResult({ apps: [] });
+      }),
+      spawn: vi.fn(() => child),
+    } as any;
+    const provider = createMacosCuaProvider({
+      platform: "darwin",
+      command: "/tmp/hana-computer-use-helper",
+      runner,
+      socketPath: "/tmp/hana.sock",
+      daemonStartupTimeoutMs: 500,
+    });
+
+    await expect(provider.listApps()).resolves.toEqual([]);
+    expect(runner.spawn).toHaveBeenCalledTimes(1);
+    expect(child.listenerCount("error")).toBe(0);
   });
 
   it("converts Cua CLI failures into typed errors", async () => {

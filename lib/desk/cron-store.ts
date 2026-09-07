@@ -14,8 +14,18 @@
 
 import fs from "fs";
 import path from "path";
-import { normalizeAutomationJob, normalizeAutomationJobs } from "./automation-normalizer.ts";
+import { isDeepStrictEqual } from "node:util";
+import {
+  AUTOMATION_SCHEMA_VERSION,
+  normalizeAutomationJob,
+  normalizeAutomationJobs,
+} from "./automation-normalizer.ts";
+import {
+  finalizeAutomationSuggestionReceipt,
+  inspectAutomationSuggestionReceipt,
+} from "./automation-suggestion-receipt.ts";
 import { parseModelRef } from "../../shared/model-ref.ts";
+import { filesystemIdentityKeySync } from "../../shared/link-aware-fs.ts";
 import { atomicWriteSync } from "../../shared/safe-fs.ts";
 import { createModuleLogger } from "../debug-log.ts";
 
@@ -24,6 +34,44 @@ const MIN_EVERY_INTERVAL_MS = 60_000;
 const DOUBLE_NORMALIZED_EVERY_FACTOR = 60_000;
 const DOUBLE_NORMALIZED_EVERY_DIVISOR = MIN_EVERY_INTERVAL_MS * DOUBLE_NORMALIZED_EVERY_FACTOR;
 const MAX_COMPAT_REPAIRED_EVERY_INTERVAL_MS = 366 * 24 * 60 * 60 * 1000;
+const ACTIVE_STORE_MUTATIONS = new Set<string>();
+const CONFIG_REVISION_FIELDS = Object.freeze([
+  "type",
+  "schedule",
+  "label",
+  "prompt",
+  "model",
+  "enabled",
+  "actorAgentId",
+  "executionContext",
+  "executor",
+  "createdBy",
+]);
+
+function clonePlain(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function codedError(message, code, status = 409) {
+  return Object.assign(new Error(message), { code, status });
+}
+
+function parseCronStoreDocument(bytes) {
+  let data;
+  try {
+    data = JSON.parse(bytes.toString("utf-8"));
+  } catch {
+    throw codedError("automation task storage is corrupt", "cron_store_corrupt", 500);
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.jobs)) {
+    throw codedError("automation task storage is corrupt", "cron_store_corrupt", 500);
+  }
+  return data;
+}
+
+function configRevisionProjection(job) {
+  return Object.fromEntries(CONFIG_REVISION_FIELDS.map((key) => [key, clonePlain(job?.[key])]));
+}
 
 export function normalizeCronModelRef(model) {
   const parsed = parseModelRef(model);
@@ -104,6 +152,8 @@ export class CronStore {
   declare _jobsPath: any;
   declare _nextNum: any;
   declare _runsDir: any;
+  declare _storeRevision: number;
+  declare _studioId: string | null;
   /** 退避表（毫秒）：0/1m/5m/15m/60m */
   static BACKOFF = [0, 60_000, 300_000, 900_000, 3_600_000];
 
@@ -115,8 +165,12 @@ export class CronStore {
     this._jobsPath = jobsPath;
     this._runsDir = runsDir;
     this._idPrefix = options.idPrefix || "job";
+    this._studioId = typeof options.studioId === "string" && options.studioId.trim()
+      ? options.studioId.trim()
+      : null;
     this._jobs = [];
     this._nextNum = 1;
+    this._storeRevision = 0;
     this._load();
   }
 
@@ -124,48 +178,112 @@ export class CronStore {
   //  持久化
   // ════════════════════════════
 
-  _load() {
-    let raw;
+  _readRecoveryFile({ mainExists, mainBytes, primaryFailure }) {
+    const tmpPath = this._jobsPath + ".tmp";
+    let tmpBytes;
     try {
-      raw = fs.readFileSync(this._jobsPath, "utf-8");
+      tmpBytes = fs.readFileSync(tmpPath);
     } catch (err) {
-      if (err.code === "ENOENT") {
-        // 首次启动，文件不存在，静默处理
-        this._jobs = [];
-        this._nextNum = 1;
-        return;
+      if (err?.code === "ENOENT" && primaryFailure === "missing") {
+        return null;
       }
-      log.error(`读取 jobs 文件失败: ${err.message}`);
-      this._jobs = [];
-      this._nextNum = 1;
-      return;
+      if (err?.code === "ENOENT" && primaryFailure === "corrupt") {
+        throw codedError("automation task storage is corrupt", "cron_store_corrupt", 500);
+      }
+      throw codedError("automation task storage is unavailable", "cron_store_unavailable", 500);
     }
 
+    const data = parseCronStoreDocument(tmpBytes);
+
+    let backupPath = null;
+    try {
+      if (mainExists) {
+        backupPath = this._preservePrimaryForRecovery(mainBytes);
+      }
+      fs.renameSync(tmpPath, this._jobsPath);
+    } catch (err) {
+      log.error(`恢复 cron jobs 文件失败: ${err instanceof Error ? err.message : String(err)}`);
+      throw codedError("automation task recovery failed", "cron_store_recovery_failed", 500);
+    }
+    log.error(backupPath
+      ? "主文件 JSON 损坏或不可读，已保留备份并从 .tmp 恢复"
+      : "主文件缺失，已从 .tmp 恢复");
+    return data;
+  }
+
+  _preservePrimaryForRecovery(mainBytes) {
+    const stem = `${this._jobsPath}.corrupt-${Date.now().toString(36)}-${process.pid}`;
+    for (let attempt = 0; attempt < 10_000; attempt += 1) {
+      const backupPath = `${stem}-${attempt}.bak`;
+      try {
+        if (mainBytes) {
+          fs.writeFileSync(backupPath, mainBytes, { flag: "wx" });
+        } else {
+          fs.copyFileSync(this._jobsPath, backupPath, fs.constants.COPYFILE_EXCL);
+        }
+        return backupPath;
+      } catch (err) {
+        if (err?.code === "EEXIST") continue;
+        throw err;
+      }
+    }
+    throw new Error("unable to allocate cron store backup name");
+  }
+
+  _readState() {
+    let mainBytes;
     let data;
     try {
-      data = JSON.parse(raw);
-    } catch {
-      // JSON 损坏，尝试从 .tmp 恢复
-      const tmpPath = this._jobsPath + ".tmp";
-      try {
-        const tmpRaw = fs.readFileSync(tmpPath, "utf-8");
-        data = JSON.parse(tmpRaw);
-        log.error("主文件 JSON 损坏，已从 .tmp 恢复");
-      } catch {
-        log.error("JSON 解析失败且无可用 .tmp，重置为空");
-        this._jobs = [];
-        this._nextNum = 1;
-        return;
+      mainBytes = fs.readFileSync(this._jobsPath);
+    } catch (err) {
+      if (err?.code === "ENOENT") {
+        data = this._readRecoveryFile({
+          mainExists: false,
+          mainBytes: null,
+          primaryFailure: "missing",
+        });
+        if (data === null) {
+          return { jobs: [], nextNum: 1, storeRevision: 0, dirty: false };
+        }
+      } else {
+        log.error(`读取 jobs 文件失败: ${err instanceof Error ? err.message : String(err)}`);
+        data = this._readRecoveryFile({
+          mainExists: true,
+          mainBytes: null,
+          primaryFailure: "unavailable",
+        });
       }
     }
 
-    this._jobs = Array.isArray(data.jobs) ? data.jobs : [];
-    this._nextNum = data.nextNum ?? (this._jobs.length + 1);
+    if (mainBytes) {
+      try {
+        data = parseCronStoreDocument(mainBytes);
+      } catch (err) {
+        if (err?.code !== "cron_store_corrupt") throw err;
+        data = this._readRecoveryFile({
+          mainExists: true,
+          mainBytes,
+          primaryFailure: "corrupt",
+        });
+      }
+    }
+
+    const jobs = Array.isArray(data.jobs) ? clonePlain(data.jobs) : [];
+    const nextNum = Number.isSafeInteger(data.nextNum) && data.nextNum > 0
+      ? data.nextNum
+      : jobs.length + 1;
+    const storeRevision = Number.isSafeInteger(data.storeRevision) && data.storeRevision >= 0
+      ? data.storeRevision
+      : 0;
 
     // 旧数据清洗
     let dirty = false;
     const loadTime = new Date().toISOString();
-    for (const job of this._jobs) {
+    for (const job of jobs) {
+      if (this._studioId && job.studioId !== this._studioId) {
+        job.studioId = this._studioId;
+        dirty = true;
+      }
       // model 统一规范：默认模型为空串；显式模型保留 {id, provider} 复合键。
       const normalizedModel = normalizeCronModelRef(job.model);
       if (JSON.stringify(job.model ?? "") !== JSON.stringify(normalizedModel)) {
@@ -190,28 +308,79 @@ export class CronStore {
         dirty = true;
       }
     }
-    const normalizedJobs = normalizeAutomationJobs(this._jobs);
-    if (JSON.stringify(this._jobs) !== JSON.stringify(normalizedJobs)) {
+    const normalizedJobs = normalizeAutomationJobs(jobs);
+    if (JSON.stringify(jobs) !== JSON.stringify(normalizedJobs)) {
       dirty = true;
     }
-    this._jobs = normalizedJobs;
-    for (const job of this._jobs) {
+    for (const job of normalizedJobs) {
       if (this._repairEnabledJobCursor(job, loadTime)) dirty = true;
     }
-
-    if (dirty) {
-      this._save();
-    }
+    return { jobs: normalizedJobs, nextNum, storeRevision, dirty };
   }
 
-  _save() {
+  _adoptState(state) {
+    this._jobs = state.jobs;
+    this._nextNum = state.nextNum;
+    this._storeRevision = state.storeRevision;
+  }
+
+  _writeState(state) {
     fs.mkdirSync(path.dirname(this._jobsPath), { recursive: true });
     const data = JSON.stringify({
-      jobs: this._jobs,
-      nextNum: this._nextNum,
+      storeRevision: state.storeRevision,
+      jobs: state.jobs,
+      nextNum: state.nextNum,
     }, null, 2) + "\n";
     // atomic write: tmp + rename，防止写到一半崩溃损坏文件
     atomicWriteSync(this._jobsPath, data);
+  }
+
+  _load() {
+    const state = this._readState();
+    if (state.dirty) {
+      state.storeRevision += 1;
+      this._writeState(state);
+      state.dirty = false;
+    }
+    this._adoptState(state);
+  }
+
+  _mutationKey() {
+    return filesystemIdentityKeySync(this._jobsPath);
+  }
+
+  _mutate(mutator) {
+    const key = this._mutationKey();
+    if (ACTIVE_STORE_MUTATIONS.has(key)) {
+      throw codedError("cron store does not allow reentrant writes", "cron_store_reentrant_write");
+    }
+    ACTIVE_STORE_MUTATIONS.add(key);
+    try {
+      const base = this._readState();
+      const draft = {
+        jobs: clonePlain(base.jobs),
+        nextNum: base.nextNum,
+        storeRevision: base.storeRevision,
+        dirty: false,
+      };
+      const outcome = mutator(draft) || {};
+      if (outcome && typeof outcome.then === "function") {
+        throw codedError("cron store mutator must be synchronous", "cron_store_async_mutator_forbidden");
+      }
+      if (outcome.changed === false) {
+        this._adoptState(base);
+        outcome.afterCommit?.();
+        return clonePlain(outcome.value);
+      }
+      draft.jobs = normalizeAutomationJobs(draft.jobs);
+      draft.storeRevision = base.storeRevision + 1;
+      this._writeState(draft);
+      this._adoptState(draft);
+      outcome.afterCommit?.();
+      return clonePlain(outcome.value);
+    } finally {
+      ACTIVE_STORE_MUTATIONS.delete(key);
+    }
   }
 
   // ════════════════════════════
@@ -241,55 +410,61 @@ export class CronStore {
     legacyRef = null,
     executor = null,
     createdBy = null,
+    authorization: _untrustedAuthorization = null,
     enabled = true,
-  }) {
-    // type 枚举校验
-    const VALID_TYPES = new Set(["at", "every", "cron"]);
-    if (!VALID_TYPES.has(type)) {
-      throw new Error(`无效的 job type: "${type}"，必须是 at / every / cron`);
-    }
-
-    // every 类型最小间隔 clamp
-    if (type === "every") {
-      schedule = normalizeEveryScheduleMs(schedule);
-    }
-
-    // at 类型校验
-    if (type === "at") {
-      const target = new Date(schedule);
-      if (isNaN(target.getTime())) {
-        throw new Error(`无效的 at schedule: "${schedule}"，无法解析为日期`);
+  }, options: any = {}) {
+    return this._mutate((state) => {
+      const VALID_TYPES = new Set(["at", "every", "cron"]);
+      if (!VALID_TYPES.has(type)) {
+        throw new Error(`无效的 job type: "${type}"，必须是 at / every / cron`);
       }
-      if (target <= new Date()) {
-        throw new Error(`at schedule 已过期: "${schedule}"，必须是未来时间`);
+      const normalizedSchedule = type === "every" ? normalizeEveryScheduleMs(schedule) : schedule;
+      if (type === "at") {
+        const target = new Date(normalizedSchedule);
+        if (isNaN(target.getTime())) {
+          throw new Error(`无效的 at schedule: "${normalizedSchedule}"，无法解析为日期`);
+        }
+        if (target <= new Date()) {
+          throw new Error(`at schedule 已过期: "${normalizedSchedule}"，必须是未来时间`);
+        }
       }
-    }
-
-    const now = new Date().toISOString();
-    validateAutomationExecutorForWrite(executor);
-
-    const job = {
-      id: this._nextJobId(),
-      type,
-      schedule,
-      prompt: typeof prompt === "string" ? prompt : "",
-      mode,
-      label: deriveJobLabel({ label, prompt, executor }),
-      model: normalizeCronModelRef(model),
-      enabled: enabled !== false,
-      consecutiveErrors: 0,
-      createdAt: now,
-      lastRunAt: null,
-      nextRunAt: this._calcNextRun(type, schedule, now),
-    };
-    this._attachOwnershipFields(job, { actorAgentId, executionContext, legacyRef });
-    this._attachAutomationFields(job, { executor, createdBy });
-
-    const normalized = normalizeAutomationJob(job);
-    assertCanEnableAutomationJob(normalized);
-    this._jobs.push(normalized);
-    this._save();
-    return normalized;
+      const now = new Date().toISOString();
+      validateAutomationExecutorForWrite(executor);
+      const job = {
+        id: this._nextJobId(state),
+        schemaVersion: AUTOMATION_SCHEMA_VERSION,
+        ...(this._studioId ? { studioId: this._studioId } : {}),
+        configRevision: 1,
+        type,
+        schedule: normalizedSchedule,
+        prompt: typeof prompt === "string" ? prompt : "",
+        mode,
+        label: deriveJobLabel({ label, prompt, executor }),
+        model: normalizeCronModelRef(model),
+        enabled: enabled !== false,
+        consecutiveErrors: 0,
+        createdAt: now,
+        lastRunAt: null,
+        nextRunAt: this._calcNextRun(type, normalizedSchedule, now),
+      };
+      this._attachOwnershipFields(job, { actorAgentId, executionContext, legacyRef });
+      this._attachAutomationFields(job, { executor, createdBy });
+      const receipt = this._applySuggestionReceipt(options, {
+        operation: "create",
+        jobId: null,
+        baseConfigRevision: null,
+      });
+      const normalized = normalizeAutomationJob(job);
+      assertCanEnableAutomationJob(normalized);
+      state.jobs.push(normalized);
+      return {
+        changed: true,
+        value: normalized,
+        afterCommit: receipt
+          ? () => finalizeAutomationSuggestionReceipt(receipt)
+          : null,
+      };
+    });
   }
 
   /**
@@ -298,51 +473,55 @@ export class CronStore {
    * @returns {object}
    */
   addImportedJob(input) {
-    const VALID_TYPES = new Set(["at", "every", "cron"]);
-    const type = input?.type;
-    if (!VALID_TYPES.has(type)) {
-      throw new Error(`无效的 job type: "${type}"，必须是 at / every / cron`);
-    }
-    if (typeof input.prompt !== "string" || !input.prompt.trim()) {
-      const explicitExecutor = clonePlainObject(input.executor);
-      if (!explicitExecutor) throw new Error("cron import requires prompt");
-    }
-    validateAutomationExecutorForWrite(input.executor);
-
-    let schedule = input.schedule;
-    if (type === "every") {
-      schedule = repairPersistedEverySchedule(schedule).schedule;
-    }
-
-    const now = new Date().toISOString();
-    const job = {
-      id: this._nextJobId(),
-      type,
-      schedule,
-      prompt: typeof input.prompt === "string" ? input.prompt : "",
-      mode: input.mode || "isolated",
-      label: deriveJobLabel({ label: input.label, prompt: input.prompt, executor: input.executor }),
-      model: normalizeCronModelRef(input.model),
-      enabled: input.enabled !== false,
-      consecutiveErrors: Number.isFinite(input.consecutiveErrors) ? input.consecutiveErrors : 0,
-      createdAt: typeof input.createdAt === "string" ? input.createdAt : now,
-      lastRunAt: typeof input.lastRunAt === "string" ? input.lastRunAt : null,
-      nextRunAt: typeof input.nextRunAt === "string" || input.nextRunAt === null
-        ? input.nextRunAt
-        : this._calcNextRun(type, schedule, now),
-    };
-    this._attachOwnershipFields(job, input);
-    this._attachAutomationFields(job, input);
-
-    const normalized = normalizeAutomationJob(job);
-    this._repairEnabledJobCursor(normalized, now);
-    this._jobs.push(normalized);
-    this._save();
-    return normalized;
+    return this._mutate((state) => {
+      const VALID_TYPES = new Set(["at", "every", "cron"]);
+      const type = input?.type;
+      if (!VALID_TYPES.has(type)) {
+        throw new Error(`无效的 job type: "${type}"，必须是 at / every / cron`);
+      }
+      if (typeof input.prompt !== "string" || !input.prompt.trim()) {
+        const explicitExecutor = clonePlainObject(input.executor);
+        if (!explicitExecutor) throw new Error("cron import requires prompt");
+      }
+      validateAutomationExecutorForWrite(input.executor);
+      const schedule = type === "every"
+        ? repairPersistedEverySchedule(input.schedule).schedule
+        : input.schedule;
+      const now = new Date().toISOString();
+      const job = {
+        id: this._nextJobId(state),
+        schemaVersion: AUTOMATION_SCHEMA_VERSION,
+        ...(this._studioId ? { studioId: this._studioId } : {}),
+        configRevision: 1,
+        type,
+        schedule,
+        prompt: typeof input.prompt === "string" ? input.prompt : "",
+        mode: input.mode || "isolated",
+        label: deriveJobLabel({ label: input.label, prompt: input.prompt, executor: input.executor }),
+        model: normalizeCronModelRef(input.model),
+        enabled: input.enabled !== false,
+        consecutiveErrors: Number.isFinite(input.consecutiveErrors) ? input.consecutiveErrors : 0,
+        createdAt: typeof input.createdAt === "string" ? input.createdAt : now,
+        lastRunAt: typeof input.lastRunAt === "string" ? input.lastRunAt : null,
+        nextRunAt: typeof input.nextRunAt === "string" || input.nextRunAt === null
+          ? input.nextRunAt
+          : this._calcNextRun(type, schedule, now),
+      };
+      this._attachOwnershipFields(job, input);
+      this._attachAutomationFields(job, input);
+      const normalized = normalizeAutomationJob(job);
+      this._repairEnabledJobCursor(normalized, now);
+      state.jobs.push(normalized);
+      return { changed: true, value: normalized };
+    });
   }
 
-  _nextJobId() {
-    return `${this._idPrefix}_${this._nextNum++}`;
+  _nextJobId(state) {
+    let id;
+    do {
+      id = `${this._idPrefix}_${state.nextNum++}`;
+    } while (state.jobs.some((job) => job.id === id));
+    return id;
   }
 
   _attachOwnershipFields(job, { actorAgentId = null, executionContext = null, legacyRef = null } = {}) {
@@ -364,17 +543,28 @@ export class CronStore {
     if (normalizedCreatedBy) job.createdBy = normalizedCreatedBy;
   }
 
+  _applySuggestionReceipt(options, expected) {
+    const receipt = options?.suggestionReceipt ?? null;
+    if (!receipt) return null;
+    inspectAutomationSuggestionReceipt(receipt, {
+      studioId: this._studioId,
+      ...expected,
+    });
+    return receipt;
+  }
+
   /**
    * 删除任务
    * @param {string} id
    * @returns {boolean}
    */
   removeJob(id) {
-    const idx = this._jobs.findIndex(j => j.id === id);
-    if (idx === -1) return false;
-    this._jobs.splice(idx, 1);
-    this._save();
-    return true;
+    return this._mutate((state) => {
+      const idx = state.jobs.findIndex(j => j.id === id);
+      if (idx === -1) return { changed: false, value: false };
+      state.jobs.splice(idx, 1);
+      return { changed: true, value: true };
+    });
   }
 
   /**
@@ -383,6 +573,7 @@ export class CronStore {
    * @returns {object|null}
    */
   getJob(id) {
+    this._load();
     const job = this._jobs.find(j => j.id === id) || null;
     return job ? normalizeAutomationJob(job) : null;
   }
@@ -402,100 +593,126 @@ export class CronStore {
    * @param {object} partial
    * @returns {object|null}
    */
-  updateJob(id, partial) {
-    const job = this._jobs.find(j => j.id === id);
-    if (!job) return null;
-    const before = JSON.parse(JSON.stringify(job));
-
-    const ALLOWED = new Set([
-      "label",
-      "model",
-      "schedule",
-      "prompt",
-      "enabled",
-      "type",
-      "actorAgentId",
-      "executionContext",
-      "executor",
-      "createdBy",
-    ]);
-    const VALID_TYPES = new Set(["at", "every", "cron"]);
-    if ("type" in partial && !VALID_TYPES.has(partial.type)) {
-      throw new Error(`无效的 job type: "${partial.type}"，必须是 at / every / cron`);
-    }
-    if ("type" in partial && partial.type !== job.type && !("schedule" in partial)) {
-      throw new Error("修改 job type 时必须同时提供 schedule");
-    }
-
-    for (const key of Object.keys(partial)) {
-      if (!ALLOWED.has(key)) continue;
-      let value = partial[key];
-
-      if (key === "model") value = normalizeCronModelRef(value);
-      if (key === "type") value = String(value);
-      if (key === "actorAgentId") {
-        if (typeof value === "string" && value.trim()) job.actorAgentId = value.trim();
-        continue;
-      }
-      if (key === "executionContext") {
-        if (value && typeof value === "object" && !Array.isArray(value)) {
-          job.executionContext = JSON.parse(JSON.stringify(value));
+  updateJob(id, partial, options: any = {}) {
+    return this._mutate((state) => {
+      const currentIndex = state.jobs.findIndex(job => job.id === id);
+      if (currentIndex === -1) {
+        if (options?.suggestionReceipt) {
+          throw codedError(
+            "automation no longer exists",
+            "cron_job_revision_conflict",
+            410,
+          );
         }
-        continue;
+        return { changed: false, value: null };
       }
-      if (key === "executor") {
-        validateAutomationExecutorForWrite(value);
-        if (value && typeof value === "object" && !Array.isArray(value)) {
-          job.executor = JSON.parse(JSON.stringify(value));
-        }
-        continue;
-      }
-      if (key === "createdBy") {
-        if (value && typeof value === "object" && !Array.isArray(value)) {
-          job.createdBy = JSON.parse(JSON.stringify(value));
-        }
-        continue;
+      const current = normalizeAutomationJob(state.jobs[currentIndex]);
+      const receipt = options?.suggestionReceipt ?? null;
+      const receiptClaims = receipt
+        ? inspectAutomationSuggestionReceipt(receipt, {
+          studioId: this._studioId,
+          operation: "update",
+          jobId: id,
+        })
+        : null;
+      if (receiptClaims && receiptClaims.baseConfigRevision !== current.configRevision) {
+        throw codedError(
+          "automation changed after this suggestion was created",
+          "cron_job_revision_conflict",
+        );
       }
 
-      job[key] = value;
-    }
-
-    if ("schedule" in partial || "type" in partial) {
-      if (job.type === "every") {
-        const ms = parseEveryScheduleMs(job.schedule);
-        if (!Number.isFinite(ms) || ms <= 0) {
-          throw new Error(`无效的 every schedule: "${job.schedule}"，必须是正整数毫秒`);
-        }
-        job.schedule = Math.max(MIN_EVERY_INTERVAL_MS, ms);
+      const job = clonePlain(current);
+      const ALLOWED = new Set([
+        "label",
+        "model",
+        "schedule",
+        "prompt",
+        "enabled",
+        "type",
+        "actorAgentId",
+        "executionContext",
+        "executor",
+        "createdBy",
+      ]);
+      const VALID_TYPES = new Set(["at", "every", "cron"]);
+      if ("type" in partial && !VALID_TYPES.has(partial.type)) {
+        throw new Error(`无效的 job type: "${partial.type}"，必须是 at / every / cron`);
       }
-      if (job.type === "at") {
-        const target = new Date(job.schedule);
-        if (isNaN(target.getTime())) {
-          throw new Error(`无效的 at schedule: "${job.schedule}"，无法解析为日期`);
-        }
-        if (target <= new Date()) {
-          throw new Error(`at schedule 已过期: "${job.schedule}"，必须是未来时间`);
-        }
+      if ("type" in partial && partial.type !== job.type && !("schedule" in partial)) {
+        throw new Error("修改 job type 时必须同时提供 schedule");
       }
-    }
+      for (const key of Object.keys(partial || {})) {
+        if (!ALLOWED.has(key)) continue;
+        let value = partial[key];
+        if (key === "model") value = normalizeCronModelRef(value);
+        if (key === "type") value = String(value);
+        if (key === "actorAgentId") {
+          if (typeof value === "string" && value.trim()) job.actorAgentId = value.trim();
+          continue;
+        }
+        if (key === "executionContext") {
+          if (value && typeof value === "object" && !Array.isArray(value)) job.executionContext = clonePlain(value);
+          continue;
+        }
+        if (key === "executor") {
+          validateAutomationExecutorForWrite(value);
+          if (value && typeof value === "object" && !Array.isArray(value)) job.executor = clonePlain(value);
+          continue;
+        }
+        if (key === "createdBy") {
+          if (value && typeof value === "object" && !Array.isArray(value)) job.createdBy = clonePlain(value);
+          continue;
+        }
+        job[key] = value;
+      }
+      if ("schedule" in partial || "type" in partial) {
+        if (job.type === "every") {
+          const ms = parseEveryScheduleMs(job.schedule);
+          if (!Number.isFinite(ms) || ms <= 0) {
+            throw new Error(`无效的 every schedule: "${job.schedule}"，必须是正整数毫秒`);
+          }
+          job.schedule = Math.max(MIN_EVERY_INTERVAL_MS, ms);
+        }
+        if (job.type === "at") {
+          const target = new Date(job.schedule);
+          if (isNaN(target.getTime())) {
+            throw new Error(`无效的 at schedule: "${job.schedule}"，无法解析为日期`);
+          }
+          if (target <= new Date()) {
+            throw new Error(`at schedule 已过期: "${job.schedule}"，必须是未来时间`);
+          }
+        }
+        job.nextRunAt = this._calcNextRun(job.type, job.schedule, new Date().toISOString());
+      }
+      this._repairEnabledJobCursor(job, new Date().toISOString());
 
-    // schedule 变更时重新计算 nextRunAt
-    if ("schedule" in partial || "type" in partial) {
-      job.nextRunAt = this._calcNextRun(job.type, job.schedule, new Date().toISOString());
-    }
-    this._repairEnabledJobCursor(job, new Date().toISOString());
+      const configChanged = !isDeepStrictEqual(
+        configRevisionProjection(current),
+        configRevisionProjection(job),
+      );
+      if (configChanged) {
+        job.configRevision = current.configRevision + 1;
+      } else {
+        job.configRevision = current.configRevision;
+      }
 
-    const normalized = normalizeAutomationJob(job);
-    try {
+      const appliedReceipt = this._applySuggestionReceipt(options, {
+        operation: "update",
+        jobId: id,
+        baseConfigRevision: current.configRevision,
+      });
+      const normalized = normalizeAutomationJob(job);
       assertCanEnableAutomationJob(normalized);
-    } catch (err) {
-      Object.keys(job).forEach((key) => delete job[key]);
-      Object.assign(job, before);
-      throw err;
-    }
-    Object.assign(job, normalized);
-    this._save();
-    return normalized;
+      state.jobs[currentIndex] = normalized;
+      return {
+        changed: !isDeepStrictEqual(current, normalized),
+        value: normalized,
+        afterCommit: appliedReceipt
+          ? () => finalizeAutomationSuggestionReceipt(appliedReceipt)
+          : null,
+      };
+    });
   }
 
   /**
@@ -504,25 +721,20 @@ export class CronStore {
    * @returns {object|null}
    */
   toggleJob(id) {
-    const job = this._jobs.find(j => j.id === id);
-    if (!job) return null;
-    const before = JSON.parse(JSON.stringify(job));
-    job.enabled = !job.enabled;
-    if (job.enabled) {
-      // 重新计算下次执行时间
-      job.nextRunAt = this._calcNextRun(job.type, job.schedule, new Date().toISOString());
-    }
-    const normalized = normalizeAutomationJob(job);
-    try {
+    return this._mutate((state) => {
+      const index = state.jobs.findIndex(job => job.id === id);
+      if (index === -1) return { changed: false, value: null };
+      const job = clonePlain(state.jobs[index]);
+      job.enabled = !job.enabled;
+      job.configRevision = (Number.isSafeInteger(job.configRevision) && job.configRevision > 0
+        ? job.configRevision
+        : 1) + 1;
+      if (job.enabled) job.nextRunAt = this._calcNextRun(job.type, job.schedule, new Date().toISOString());
+      const normalized = normalizeAutomationJob(job);
       assertCanEnableAutomationJob(normalized);
-    } catch (err) {
-      Object.keys(job).forEach((key) => delete job[key]);
-      Object.assign(job, before);
-      throw err;
-    }
-    Object.assign(job, normalized);
-    this._save();
-    return normalized;
+      state.jobs[index] = normalized;
+      return { changed: true, value: normalized };
+    });
   }
 
   /**
@@ -531,30 +743,39 @@ export class CronStore {
    * @param {object} [opts]
    * @param {boolean} [opts.success=true] - 是否执行成功
    */
-  markRun(id, { success = true } = {}) {
-    const job = this._jobs.find(j => j.id === id);
-    if (!job) return;
-    const now = new Date().toISOString();
-    job.lastRunAt = now;
-
-    if (success) {
-      job.consecutiveErrors = 0;
-      job.nextRunAt = this._calcNextRun(job.type, job.schedule, now);
-    } else {
-      job.consecutiveErrors = (job.consecutiveErrors || 0) + 1;
-      const normalNext = this._calcNextRun(job.type, job.schedule, now);
-      const backoffIdx = Math.min(job.consecutiveErrors, CronStore.BACKOFF.length - 1);
-      const backoffMs = CronStore.BACKOFF[backoffIdx];
-      const backoffNext = new Date(Date.now() + backoffMs).toISOString();
-      job.nextRunAt = normalNext && normalNext > backoffNext ? normalNext : backoffNext;
-    }
-
-    // "at" 类型执行一次后自动禁用
-    if (job.type === "at") {
-      job.enabled = false;
-    }
-
-    this._save();
+  markRun(id, { success = true, expectedConfigRevision = null } = {}) {
+    return this._mutate((state) => {
+      const index = state.jobs.findIndex(job => job.id === id);
+      if (index === -1) return { changed: false, value: false };
+      const job = clonePlain(state.jobs[index]);
+      if (
+        expectedConfigRevision != null
+        && job.configRevision !== expectedConfigRevision
+      ) {
+        return { changed: false, value: false };
+      }
+      const now = new Date().toISOString();
+      job.lastRunAt = now;
+      if (success) {
+        job.consecutiveErrors = 0;
+        job.nextRunAt = this._calcNextRun(job.type, job.schedule, now);
+      } else {
+        job.consecutiveErrors = (job.consecutiveErrors || 0) + 1;
+        const normalNext = this._calcNextRun(job.type, job.schedule, now);
+        const backoffIdx = Math.min(job.consecutiveErrors, CronStore.BACKOFF.length - 1);
+        const backoffMs = CronStore.BACKOFF[backoffIdx];
+        const backoffNext = new Date(Date.now() + backoffMs).toISOString();
+        job.nextRunAt = normalNext && normalNext > backoffNext ? normalNext : backoffNext;
+      }
+      if (job.type === "at" && job.enabled !== false) {
+        job.enabled = false;
+        job.configRevision = (Number.isSafeInteger(job.configRevision) && job.configRevision > 0
+          ? job.configRevision
+          : 1) + 1;
+      }
+      state.jobs[index] = normalizeAutomationJob(job);
+      return { changed: true, value: true };
+    });
   }
 
   // ════════════════════════════

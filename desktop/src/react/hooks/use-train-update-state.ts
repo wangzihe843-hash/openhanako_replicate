@@ -144,8 +144,19 @@ export function useTrainUpdateState(): UseTrainUpdateStateResult {
   // apply-now 下载/验证/激活阶段的进度推送，只发给发起这次调用的窗口。
   useEffect(() => {
     const unsubscribe = window.hana?.onTrainUpdateProgress?.((p) => {
-      setPhase(p.phase === 'downloading' ? 'downloading' : 'applying');
-      setProgress({ receivedBytes: p.receivedBytes, totalBytes: p.totalBytes });
+      // downloading 与 verifying 都算"下载中"（进度条停在已到达的累计位置，
+      // 不因为验签间隙而闪成"应用中"）；只有 activating 才是真的 applying。
+      setPhase(p.phase === 'activating' ? 'applying' : 'downloading');
+      // overallReceivedBytes/overallTotalBytes 是 ota-core.cjs 新增字段，
+      // 跨 server+renderer 两个工件累计，让进度条合成一条连续 0→100，不再
+      // 在 renderer 工件开始下载时归零重跑一遍。这里做存在性回退到单工件
+      // 字段——不是无主 fallback，是声明式的壳版本偏斜兼容：renderer 由
+      // 列车热更走在前面，主进程（IPC 事件的真正来源）可能还没升级到会
+      // 发这两个新字段的版本，此时唯一正确的兼容动作就是退回旧的单工件
+      // 语义，而不是让进度条整体读不到数据。
+      const receivedBytes = p.overallReceivedBytes ?? p.receivedBytes;
+      const totalBytes = p.overallTotalBytes ?? p.totalBytes;
+      setProgress({ receivedBytes, totalBytes });
     });
     return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, []);
@@ -188,6 +199,11 @@ export function useTrainUpdateState(): UseTrainUpdateStateResult {
       const result = await window.hana?.trainUpdateApply?.();
       if (result && !result.ok) {
         setSnapshot((s) => ({ ...s, lastError: result.error || null }));
+      } else if (result?.ok && (result as { alreadyCurrent?: boolean }).alreadyCurrent) {
+        // 主进程发现本机其实已在最新列车上：不会有窗口重载发生，主动重拉
+        // 一次状态，把陈旧的"有新版本"清掉、回到"已是最新"。
+        const status = await queryStatus();
+        if (status) setSnapshot(snapshotFromStatus(status));
       }
       return result;
     } catch (err) {

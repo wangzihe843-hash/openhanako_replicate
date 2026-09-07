@@ -18,6 +18,10 @@ import {
 
 const log = createModuleLogger("pin_memory");
 
+function stableMemoryTargetId(value: unknown) {
+  return Buffer.from(JSON.stringify(value), "utf-8").toString("base64url");
+}
+
 /**
  * 创建 pin_memory + unpin_memory 工具
  * @param {string} agentDir - agent 数据目录（pinned.md 在这里）
@@ -47,6 +51,17 @@ export function createPinnedMemoryTools(agentDir: string, agentId?: string) {
     name: "pin_memory",
     label: "Pin Memory",
     description: "Save an item to pinned memory. Use when the user says 'remember this', 'note this down', 'don't forget this later'. Pinned memories are always kept in context.",
+    sessionPermission: {
+      resolveInvocation: (params: any = {}) => {
+        if (typeof params.content !== "string" || !params.content.trim()) return null;
+        return {
+          action: "pin",
+          kind: "routine",
+          capability: "pin_memory.pin",
+          target: { type: "memory_store", id: "pinned", label: "Pinned memory" },
+        };
+      },
+    },
     parameters: Type.Object({
       content: Type.String({ description: "Content to remember" }),
     }),
@@ -82,6 +97,31 @@ export function createPinnedMemoryTools(agentDir: string, agentId?: string) {
     name: "unpin_memory",
     label: "Unpin Memory",
     description: "Remove an item from pinned memory. Use when the user says 'forget xxx' or 'delete this memory'. Supports fuzzy matching: any line containing the keyword you provide will be removed.",
+    sessionPermission: {
+      resolveInvocation: (params: any = {}) => {
+        const id = typeof params.id === "string" ? params.id.trim() : "";
+        const keyword = typeof params.keyword === "string" ? params.keyword.trim() : "";
+        if (!id && !keyword) return null;
+        if (id && !keyword) {
+          return {
+            action: "unpin",
+            kind: "review",
+            capability: "unpin_memory.unpin",
+            target: { type: "pinned_memory_item", id, label: id },
+          };
+        }
+        return {
+          action: "unpin",
+          kind: "review",
+          capability: "unpin_memory.unpin",
+          target: {
+            type: "pinned_memory_query",
+            id: stableMemoryTargetId({ ...(id ? { id } : {}), keyword }),
+            label: keyword || id,
+          },
+        };
+      },
+    },
     parameters: Type.Object({
       id: Type.Optional(Type.String({ description: "Pinned memory entity id returned by pin_memory" })),
       keyword: Type.Optional(Type.String({ description: "Keyword of the memory to remove, matched fuzzily" })),

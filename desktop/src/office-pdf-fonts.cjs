@@ -19,11 +19,12 @@ const FONTS_CSS_FILENAME = "new-warm-paper-fonts.css";
 const HANA_PDF_FONT_FAMILIES = ["EB Garamond", "Noto Serif SC", "JetBrains Mono"];
 
 /**
- * 字体 CSS 的候选目录，按优先级排列。两种布局都与本文件的相对位置稳定：
+ * 未注入 renderer artifact 路径时，字体 CSS 的兼容候选目录：
  * - 开发：desktop/src/themes/（源文件，永远最新）
- * - 打包：asar 内 desktop/dist-renderer/themes/（copyLegacyFiles 复制的产物，
- *   主题切换机制同样依赖这条非 hash 路径，受契约保护）
- * 源目录不进打包（builder files 的 glob 不含 css/woff2），产物目录是生产唯一来源。
+ * - 旧布局：desktop/dist-renderer/themes/（保留给曾把 renderer 放在 app 树内的版本）
+ *
+ * 当前打包布局的 renderer 是独立 artifact，不在 asar 内；生产路径由 Desktop
+ * 通过 HANA_RENDERER_DIST 显式注入，不能在这里从相对位置猜测。
  */
 function defaultThemesDirCandidates() {
   return [
@@ -32,14 +33,48 @@ function defaultThemesDirCandidates() {
   ];
 }
 
+function hasFontsCss(dir) {
+  try {
+    return fs.statSync(path.join(dir, FONTS_CSS_FILENAME)).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function locateThemesDir(candidates = defaultThemesDirCandidates()) {
   for (const dir of candidates) {
-    if (fs.existsSync(path.join(dir, FONTS_CSS_FILENAME))) return dir;
+    if (hasFontsCss(dir)) return dir;
   }
   throw new Error(
     `Hana font css (${FONTS_CSS_FILENAME}) not found; looked in: ${candidates.join(", ")}. ` +
     "Run build:renderer or check the packaged resources.",
   );
+}
+
+/**
+ * 解析当前进程应该使用的 themes 目录。
+ *
+ * HANA_RENDERER_DIST 一旦注入就是生产真值源：错误指针必须显式失败，不能
+ * 静默退回源码或旧 renderer，否则 PDF 会悄悄使用与当前激活内容不一致的字体。
+ * 只有完全未注入时，才允许开发 / 旧布局候选。
+ */
+function resolveThemesDir({ env = process.env, fallbackCandidates = defaultThemesDirCandidates() } = {}) {
+  const injected = env?.HANA_RENDERER_DIST;
+  if (injected !== undefined) {
+    const rendererDist = String(injected).trim();
+    if (!rendererDist || !path.isAbsolute(rendererDist)) {
+      throw new Error(`HANA_RENDERER_DIST must be an absolute path: ${injected}`);
+    }
+    const themesDir = path.join(rendererDist, "themes");
+    const cssPath = path.join(themesDir, FONTS_CSS_FILENAME);
+    if (!hasFontsCss(themesDir)) {
+      throw new Error(
+        `HANA_RENDERER_DIST is set to ${rendererDist}, but its Hana font css is missing or not a file: ${cssPath}`,
+      );
+    }
+    return themesDir;
+  }
+  return locateThemesDir(fallbackCandidates);
 }
 
 function extractFontFaceBlocks(css) {
@@ -51,36 +86,99 @@ function familyOf(block) {
   return match ? match[2].trim() : null;
 }
 
-function rewriteFontUrls(block, fontsDirUrl) {
-  return block.replace(
-    /url\(\s*(['"]?)\.\/fonts\/([^)'"]+)\1\s*\)/g,
-    (_match, _quote, file) => `url('${fontsDirUrl}/${file}')`,
+function isPathInside(parentDir, candidatePath) {
+  const relative = path.relative(parentDir, candidatePath);
+  return relative !== "" && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function rewriteAndValidateFontUrls(block, { cssPath, fontsDir, family }) {
+  let matchedUrlCount = 0;
+  const declaredUrlCount = (block.match(/url\s*\(/gi) || []).length;
+  const rewritten = block.replace(
+    /url\(\s*(['"]?)([^)'"]+)\1\s*\)/g,
+    (_match, _quote, rawUrl) => {
+      matchedUrlCount += 1;
+      const fontUrl = String(rawUrl).trim();
+      if (!fontUrl.startsWith("./fonts/")) {
+        throw new Error(
+          `Hana font css at ${cssPath} has an unsupported font URL for ${family}: ${fontUrl}`,
+        );
+      }
+      const relativeFontPath = fontUrl.slice("./fonts/".length);
+      const fontPath = path.resolve(fontsDir, relativeFontPath);
+      if (!relativeFontPath || !isPathInside(fontsDir, fontPath)) {
+        throw new Error(
+          `Hana font css at ${cssPath} has a font URL outside themes/fonts for ${family}: ${fontUrl}`,
+        );
+      }
+
+      let stat;
+      try {
+        stat = fs.statSync(fontPath);
+      } catch {
+        throw new Error(
+          `Hana font css at ${cssPath} references a missing font file for ${family}: ${fontPath}`,
+        );
+      }
+      if (!stat.isFile() || stat.size <= 0) {
+        throw new Error(
+          `Hana font css at ${cssPath} references a font that is not a non-empty file for ${family}: ${fontPath}`,
+        );
+      }
+      return `url('${pathToFileURL(fontPath).href}')`;
+    },
   );
+  if (declaredUrlCount === 0 || matchedUrlCount !== declaredUrlCount) {
+    throw new Error(`Hana font css at ${cssPath} has an invalid font URL declaration for ${family}`);
+  }
+  return rewritten;
+}
+
+function validatedFontInjectionCss({ themesDir, families = HANA_PDF_FONT_FAMILIES }) {
+  const cssPath = path.join(themesDir, FONTS_CSS_FILENAME);
+  const css = fs.readFileSync(cssPath, "utf-8");
+  const wanted = new Set(families);
+  const selectedBlocks = extractFontFaceBlocks(css).filter((block) => wanted.has(familyOf(block)));
+  const covered = new Set(selectedBlocks.map(familyOf));
+  const missing = families.filter((family) => !covered.has(family));
+  if (missing.length > 0) {
+    throw new Error(`Hana font css at ${cssPath} is missing families: ${missing.join(", ")}`);
+  }
+
+  const fontsDir = path.join(themesDir, "fonts");
+  return selectedBlocks
+    .map((block) => rewriteAndValidateFontUrls(block, {
+      cssPath,
+      fontsDir,
+      family: familyOf(block),
+    }))
+    .join("\n");
+}
+
+/**
+ * 构建 / 装箱入口共用的 fail-closed 资产断言。返回 true 只表示完整验证通过。
+ */
+function assertOfficePdfFontAssets({ themesDir, families = HANA_PDF_FONT_FAMILIES } = {}) {
+  if (typeof themesDir !== "string" || !themesDir) {
+    throw new Error("themesDir is required to validate Hana PDF font assets");
+  }
+  validatedFontInjectionCss({ themesDir, families });
+  return true;
 }
 
 /**
  * 构建可注入的 @font-face CSS。白名单任一族缺失即抛错：宁可 PDF 转换失败，
  * 也不静默产出回退字体的 PDF。
  */
-function buildFontInjectionCss({ themesDir = locateThemesDir(), families = HANA_PDF_FONT_FAMILIES } = {}) {
-  const cssPath = path.join(themesDir, FONTS_CSS_FILENAME);
-  const css = fs.readFileSync(cssPath, "utf-8");
-  const fontsDirUrl = pathToFileURL(path.join(themesDir, "fonts")).href;
-  const wanted = new Set(families);
-  const blocks = extractFontFaceBlocks(css)
-    .filter((block) => wanted.has(familyOf(block)))
-    .map((block) => rewriteFontUrls(block, fontsDirUrl));
-  const covered = new Set(blocks.map(familyOf));
-  const missing = families.filter((family) => !covered.has(family));
-  if (missing.length > 0) {
-    throw new Error(`Hana font css at ${cssPath} is missing families: ${missing.join(", ")}`);
-  }
-  return blocks.join("\n");
+function buildFontInjectionCss({ themesDir = resolveThemesDir(), families = HANA_PDF_FONT_FAMILIES } = {}) {
+  return validatedFontInjectionCss({ themesDir, families });
 }
 
 module.exports = {
   FONTS_CSS_FILENAME,
   HANA_PDF_FONT_FAMILIES,
+  assertOfficePdfFontAssets,
   buildFontInjectionCss,
   locateThemesDir,
+  resolveThemesDir,
 };

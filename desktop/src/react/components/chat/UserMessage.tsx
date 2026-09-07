@@ -18,7 +18,14 @@ import { openFilePreview } from '../../utils/file-preview';
 import { isImageOrSvgExt, extOfName, kindOfFileName } from '../../utils/file-kind';
 import { getUserAttachmentImageSrc } from '../../utils/user-attachment-media';
 import { AgentAvatar, resolveAgentDisplayInfo } from '../../utils/agent-display';
-import { replayLatestUserMessage } from '../../stores/message-turn-actions';
+import {
+  retrySessionTurn,
+  type ForkedSessionHandler,
+  type SessionNodeTarget,
+} from '../../stores/message-turn-actions';
+import { AgentReviewCard } from './AgentReviewCard';
+import { AgentReviewRequestCard } from './AgentReviewRequestCard';
+import { useSessionNodeActions } from './SessionNodeActions';
 import styles from './Chat.module.css';
 import badgeStyles from '../input/SkillBadgeView.module.css';
 
@@ -35,6 +42,7 @@ interface Props {
   isStreaming: boolean;
   isSelected: boolean;
   isLatestUserMessage?: boolean;
+  onForkCreated?: ForkedSessionHandler;
   messageRef?: (element: HTMLDivElement | null) => void;
 }
 
@@ -49,6 +57,7 @@ export const UserMessage = memo(function UserMessage({
   isStreaming,
   isSelected,
   isLatestUserMessage = false,
+  onForkCreated,
   messageRef,
 }: Props) {
   const t = window.t ?? ((p: string) => p);
@@ -65,7 +74,7 @@ export const UserMessage = memo(function UserMessage({
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.text || '');
-  const [busy, setBusy] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
@@ -97,15 +106,20 @@ export const UserMessage = memo(function UserMessage({
     fn(message.id, sessionPath);
   }, [message.id, sessionPath]);
 
-  const handleRegenerate = useCallback(async () => {
-    if (busy || isStreaming) return;
-    setBusy(true);
-    try {
-      await replayLatestUserMessage(sessionPath, message);
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, isStreaming, message, sessionPath]);
+  const isReviewTurn = !!message.agentReview || !!message.agentReviewRequest;
+  const turnTarget = useMemo<SessionNodeTarget | null>(() => (
+    message.sourceEntryId
+      ? { role: 'user', entryId: message.sourceEntryId }
+      : null
+  ), [message.sourceEntryId]);
+  const { actions: nodeActions, busy: nodeActionBusy } = useSessionNodeActions({
+    sessionPath,
+    target: readOnly ? null : turnTarget,
+    retryMessage: message,
+    onForkCreated,
+    disabled: isStreaming,
+  });
+  const busy = editBusy || nodeActionBusy;
 
   const handleEdit = useCallback(() => {
     if (busy || isStreaming) return;
@@ -122,16 +136,23 @@ export const UserMessage = memo(function UserMessage({
   const handleConfirmEdit = useCallback(async () => {
     const nextText = editValue.trim();
     if (!nextText || busy || isStreaming) return;
-    setBusy(true);
+    setEditBusy(true);
     try {
-      const ok = await replayLatestUserMessage(sessionPath, message, nextText);
+      if (!turnTarget) return;
+      const ok = await retrySessionTurn(
+        sessionPath,
+        turnTarget,
+        { message, replacementText: nextText },
+      );
       if (ok) setEditing(false);
     } finally {
-      setBusy(false);
+      setEditBusy(false);
     }
-  }, [busy, editValue, isStreaming, message, sessionPath]);
+  }, [busy, editValue, isStreaming, message, sessionPath, turnTarget]);
 
-  const canShowLatestActions = !readOnly && isLatestUserMessage;
+  // Retry and fork preserve the recorded review envelope. Inline text editing remains
+  // unavailable because changing only its text would no longer match that snapshot.
+  const canEdit = !readOnly && !isReviewTurn && isLatestUserMessage && !!turnTarget;
   const timeText = formatMessageTime(message.timestamp);
   const editingActions: MessageFooterAction[] = useMemo(() => [
     {
@@ -158,14 +179,7 @@ export const UserMessage = memo(function UserMessage({
     isStreaming: isStreaming || busy,
   });
   const messageActions = readOnly || editing ? [] : standardMessageActions;
-  const latestActions: MessageFooterAction[] = useMemo(() => canShowLatestActions ? [
-    {
-      id: 'regenerate',
-      title: t('common.regenerate'),
-      icon: <RegenerateIcon />,
-      onClick: () => { void handleRegenerate(); },
-      disabled: isStreaming || busy,
-    },
+  const editActions: MessageFooterAction[] = useMemo(() => canEdit ? [
     {
       id: 'edit',
       title: t('common.edit'),
@@ -173,8 +187,8 @@ export const UserMessage = memo(function UserMessage({
       onClick: () => handleEdit(),
       disabled: isStreaming || busy,
     },
-  ] : [], [busy, canShowLatestActions, handleEdit, handleRegenerate, isStreaming, t]);
-  const footerActions = editing ? editingActions : latestActions;
+  ] : [], [busy, canEdit, handleEdit, isStreaming, t]);
+  const footerActions = editing ? editingActions : [...nodeActions, ...editActions];
   const hasSkillBadges = !!message.skills?.length;
   const hasTextBubble = editing || !!message.textHtml || hasSkillBadges;
 
@@ -243,6 +257,8 @@ export const UserMessage = memo(function UserMessage({
           )}
         </div>
       )}
+      {message.agentReview && <AgentReviewCard review={message.agentReview} />}
+      {message.agentReviewRequest && <AgentReviewRequestCard request={message.agentReviewRequest} />}
       {(timeText || messageActions.length > 0 || footerActions.length > 0) && (
         <MessageFooterActions
           align="right"
@@ -373,14 +389,6 @@ function GridIcon() {
       <line x1="18" y1="4" x2="18" y2="20" />
       <line x1="6" y1="8" x2="18" y2="8" />
       <line x1="6" y1="16" x2="18" y2="16" />
-    </svg>
-  );
-}
-
-function RegenerateIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 3v5m0 0h-5m5 0-3-2.708A9 9 0 1 0 20.777 14" />
     </svg>
   );
 }

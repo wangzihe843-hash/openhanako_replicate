@@ -13,22 +13,10 @@ import { Type } from "../pi-sdk/index.ts";
 import { t } from "../i18n.ts";
 import fs from "fs";
 import path from "path";
-import { appendMessage } from "../channels/channel-store.ts";
+import { appendDmMessage } from "../channels/channel-store.ts";
 import { resolveAgentParam } from "./agent-id-resolver.ts";
 import { recordOutboundDm, syncPeerStateUserTurns } from "../desk/social-awareness.js";
 import { withXingyeAgentEventLock } from "../xingye/events.js";
-
-/**
- * 确保 DM 文件存在，不存在则创建（含 frontmatter）
- */
-function ensureDmFile(dmDir, peerId) {
-  fs.mkdirSync(dmDir, { recursive: true });
-  const filePath = path.join(dmDir, `${peerId}.md`);
-  if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, `---\npeer: ${peerId}\n---\n`, "utf-8");
-  }
-  return filePath;
-}
 
 /**
  * @param {object} opts
@@ -54,6 +42,24 @@ export function createDmTool({ agentId, agentsDir, listAgents, onDmSent, isEnabl
     name: "dm",
     label: "Direct Message",
     description: "Send a single direct message to another agent to inform them of something.\nDo not use this tool to assign tasks or get results; that is subagent's job.",
+    sessionPermission: {
+      resolveInvocation: (params: any = {}) => {
+        const agents = listAgents();
+        const resolved = resolveAgentParam(agents, params.to);
+        if (!resolved.ok || !resolved.agentId || resolved.agentId === agentId) return null;
+        const target = agents.find((candidate) => candidate.id === resolved.agentId);
+        return {
+          action: "send",
+          kind: "review",
+          capability: "dm.send",
+          target: {
+            type: "agent",
+            id: resolved.agentId,
+            label: target?.name || resolved.agentId,
+          },
+        };
+      },
+    },
     parameters: Type.Object({
       to: Type.String({ description: "Target agent's id field value (the one in parentheses in the team roster, not the bold display name)" }),
       message: Type.String({ description: "Message content" }),
@@ -91,15 +97,16 @@ export function createDmTool({ agentId, agentsDir, listAgents, onDmSent, isEnabl
       }
       const target = agents.find(a => a.id === toId);
 
-      // 写入自己的 dm/{toId}.md
-      const myDmDir = path.join(agentsDir, agentId, "dm");
-      const myDmFile = ensureDmFile(myDmDir, toId);
-      await appendMessage(myDmFile, agentId, params.message);
-
-      // 写入对方的 dm/{myId}.md
-      const peerDmDir = path.join(agentsDir, toId, "dm");
-      const peerDmFile = ensureDmFile(peerDmDir, agentId);
-      await appendMessage(peerDmFile, agentId, params.message);
+      const written = await appendDmMessage({
+        agentsDir, fromId: agentId, toId, body: params.message,
+        canWrite: () => !isEnabled || isEnabled(),
+      });
+      if (!written) {
+        return {
+          content: [{ type: "text", text: t("error.channelsDisabled") }],
+          details: { action: "dm", error: "phone disabled" },
+        };
+      }
 
       // 记一笔「主动 dm 了谁」到 peer-state.json，供心跳 social staleness 用。
       // 先在同一把 per-agent event 锁里同步最新 user-turn 序号，再写本次 baseline：

@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
+import { securityDirPath } from "./security-dir.ts";
 
 export const PLUGIN_ASSET_SESSION_KEY_FILE = "plugin-asset-session-key";
 export const PLUGIN_ASSET_SESSION_ACTION = "plugins.assets";
@@ -138,7 +139,7 @@ export function verifyPluginAssetSession({
 
 function pluginAssetSessionKeyPath(hanakoHome) {
   assertNonEmpty(hanakoHome, "hanakoHome");
-  return path.join(hanakoHome, "security", PLUGIN_ASSET_SESSION_KEY_FILE);
+  return path.join(securityDirPath(hanakoHome), PLUGIN_ASSET_SESSION_KEY_FILE);
 }
 
 function signBody(hanakoHome, body) {

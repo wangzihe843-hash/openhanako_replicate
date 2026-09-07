@@ -36,20 +36,29 @@ describe("ExecutionRouter fresh credential routing", () => {
         id: "small",
         provider: "oauth-runtime",
         api: "openai-responses",
-        headers: { Authorization: "Bearer model-stale" },
+        headers: {
+          Authorization: "Bearer model-stale",
+          "x-grok-model-override": "small",
+        },
       },
       large: {
         id: "large",
         provider: "oauth-runtime",
         api: "openai-codex-responses",
-        headers: { Cookie: "model=stale" },
+        headers: {
+          Cookie: "model=stale",
+          "x-grok-model-override": "large",
+        },
       },
     };
     const fresh = vi.fn(async () => ({
       api_key: "fresh-token",
       base_url: "https://fresh.example/v1",
       api: "provider-default",
-      headers: {},
+      headers: {
+        Authorization: "Bearer provider-stale",
+        "x-grok-client-version": "0.2.95",
+      },
       accountId: "acct_fresh",
       credential_source: "auth-storage",
     }));
@@ -68,9 +77,16 @@ describe("ExecutionRouter fresh credential routing", () => {
       api_key: "fresh-token",
       large_api_key: "fresh-token",
     });
-    expect(config.utility).toMatchObject({ accountId: "acct_fresh" });
-    expect(config.utility).not.toHaveProperty("headers");
-    expect(config.utility_large).not.toHaveProperty("headers");
+    expect(config.headers).toEqual({
+      "x-grok-client-version": "0.2.95",
+      "x-grok-model-override": "small",
+    });
+    expect(config.large_headers).toEqual({
+      "x-grok-client-version": "0.2.95",
+      "x-grok-model-override": "large",
+    });
+    expect(config.utility).toMatchObject({ accountId: "acct_fresh", headers: config.headers });
+    expect(config.utility_large).toMatchObject({ headers: config.large_headers });
   });
 
   it("refreshes different utility providers independently", async () => {

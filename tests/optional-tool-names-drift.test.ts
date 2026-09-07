@@ -1,6 +1,6 @@
 /**
  * Guards against drift between:
- *   - shared/tool-categories.js OPTIONAL_TOOL_NAMES (backend source of truth)
+ *   - shared/tool-categories.ts OPTIONAL_TOOL_NAMES (backend source of truth)
  *   - desktop/src/react/settings/tabs/agent/AgentToolsSection.tsx
  *     OPTIONAL_TOOL_NAMES (frontend copy)
  *

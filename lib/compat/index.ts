@@ -1,5 +1,5 @@
 /**
- * compat/index.js — 启动兼容性检查 & 数据迁移
+ * compat/index.ts — 启动兼容性检查 & 数据迁移
  *
  * 可扩展架构：每个检查项是一个函数，注册到 checks 数组。
  * agent.init() 时调用 runCompatChecks()，按序执行所有检查。

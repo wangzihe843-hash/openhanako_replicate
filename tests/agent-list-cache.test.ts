@@ -57,12 +57,13 @@ describe("AgentManager.listAgents 缓存", () => {
     linkDirectory(realDir, linkedDir);
   }
 
-  function makeMgr() {
+  function makeMgr({ userName = "" } = {}) {
     return new AgentManager({
       agentsDir,
       productDir: tempDir,
       userDir: tempDir,
       channelsDir: tempDir,
+      getEngine: () => ({ getUserName: () => userName }),
       getPrefs: () => ({
         getPrimaryAgent: () => null,
         getPreferences: () => ({}),
@@ -140,14 +141,15 @@ describe("AgentManager.listAgents 缓存", () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(
       path.join(dir, "config.yaml"),
-      YAML.dump({ agent: { name: "Hana", yuan: "hanako" }, user: { name: "黎" } }),
+      YAML.dump({ agent: { name: "Hana", yuan: "hanako" } }),
     );
     fs.writeFileSync(
       path.join(dir, "identity.md"),
       "# {{agentName}}\n{{userName}}的个人助手",
       "utf-8",
     );
-    const mgr = makeMgr();
+    // 用户的名字只有全局这一个来源，列表预览和 agent 自己用的必须是同一个
+    const mgr = makeMgr({ userName: "黎" });
 
     const [agent] = mgr.listAgents();
 

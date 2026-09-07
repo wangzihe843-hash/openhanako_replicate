@@ -4,6 +4,9 @@ import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { MediaPublisher } from "../lib/bridge/media-publisher.ts";
+// 期望值必须与生产代码同一条规范化路径（native realpath 会展开 Windows 8.3
+// 短名，JS 版 fs.realpathSync 不会；CI runner 的 TEMP 恰好是短名形式）。
+import { canonicalFilesystemPathSync } from "../shared/link-aware-fs.ts";
 
 describe("MediaPublisher", () => {
   let tmpDir = null;
@@ -33,7 +36,7 @@ describe("MediaPublisher", () => {
     const result = publisher.publish({
       id: "sf_1",
       filePath,
-      realPath: fs.realpathSync(filePath),
+      realPath: canonicalFilesystemPathSync(filePath),
       filename: "image.png",
       mime: "image/png",
       size: 5,
@@ -43,7 +46,7 @@ describe("MediaPublisher", () => {
     expect(result.expiresAt).toBe(61_000);
     expect(publisher.resolve("token_123")).toEqual(expect.objectContaining({
       fileId: "sf_1",
-      realPath: fs.realpathSync(filePath),
+      realPath: canonicalFilesystemPathSync(filePath),
       filename: "image.png",
       mime: "image/png",
       expiresAt: 61_000,
@@ -60,7 +63,7 @@ describe("MediaPublisher", () => {
     expect(() => publisher.publish({
       id: "sf_1",
       filePath,
-      realPath: fs.realpathSync(filePath),
+      realPath: canonicalFilesystemPathSync(filePath),
       filename: "image.png",
       mime: "image/png",
     })).toThrow(/public media base URL/);
@@ -77,7 +80,7 @@ describe("MediaPublisher", () => {
     const result = publisher.publish({
       id: "sf_1",
       filePath,
-      realPath: fs.realpathSync(filePath),
+      realPath: canonicalFilesystemPathSync(filePath),
       filename: "image.png",
       mime: "image/png",
     });
@@ -96,7 +99,7 @@ describe("MediaPublisher", () => {
     expect(() => publisher.publish({
       id: "sf_1",
       filePath,
-      realPath: fs.realpathSync(filePath),
+      realPath: canonicalFilesystemPathSync(filePath),
       filename: "image.png",
       mime: "image/png",
     })).toThrow(/outside allowed roots/);
@@ -126,7 +129,7 @@ describe("MediaPublisher", () => {
     publisher.publish({
       id: "sf_1",
       filePath,
-      realPath: fs.realpathSync(filePath),
+      realPath: canonicalFilesystemPathSync(filePath),
       filename: "image.png",
       mime: "image/png",
     });
@@ -147,7 +150,7 @@ describe("MediaPublisher", () => {
     publisher.publish({
       id: "sf_1",
       filePath,
-      realPath: fs.realpathSync(filePath),
+      realPath: canonicalFilesystemPathSync(filePath),
       filename: "image.png",
       mime: "image/png",
     });

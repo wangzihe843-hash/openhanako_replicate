@@ -164,7 +164,7 @@ describe("HanaEngine extension factories", () => {
     expect(engine._resourceLoader.reload).toHaveBeenCalledTimes(1);
   });
 
-  it("reloads idle live sessions after plugin extension factories change", async () => {
+  it("does not reload live sessions after plugin extension factories change", async () => {
     const engine = makeEngine({
       pluginFactories: [makeFactory("plugin-a")],
     });
@@ -174,7 +174,7 @@ describe("HanaEngine extension factories", () => {
 
     await engine.syncPluginExtensions();
 
-    expect(engine._sessionCoord.reloadExtensionRunners).toHaveBeenCalledWith("plugin_extension_sync");
+    expect(engine._sessionCoord.reloadExtensionRunners).not.toHaveBeenCalled();
   });
 });
 

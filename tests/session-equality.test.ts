@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { getToolSessionPath } from "../lib/tools/tool-session.ts";
-import { resolveAgent, resolveAgentStrict, AgentNotFoundError } from "../server/utils/resolve-agent.ts";
+import { resolveAgentStrict, AgentNotFoundError } from "../server/utils/resolve-agent.ts";
 
 // ── getToolSessionPath ──
 
@@ -30,9 +30,9 @@ describe("session-equality: tool sessionPath 归属", () => {
   });
 });
 
-// ── resolveAgent 严格模式回归 ──
+// ── 解析 agent 一律要显式 agentId ──
 
-describe("session-equality: resolveAgent 不静默 fallback", () => {
+describe("session-equality: 解析 agent 不静默 fallback", () => {
   const mockEngine = {
     getAgent: (id) => {
       if (id === "valid") return { id: "valid", name: "Valid" };
@@ -44,16 +44,16 @@ describe("session-equality: resolveAgent 不静默 fallback", () => {
 
   it("显式传入有效 agentId 返回对应 agent", () => {
     const c = { req: { query: () => "valid", param: () => null } };
-    expect(resolveAgent(mockEngine, c).id).toBe("valid");
+    expect(resolveAgentStrict(mockEngine, c).id).toBe("valid");
   });
 
   it("显式传入无效 agentId 抛 AgentNotFoundError", () => {
     const c = { req: { query: () => "nonexistent", param: () => null } };
-    expect(() => resolveAgent(mockEngine, c)).toThrow(AgentNotFoundError);
+    expect(() => resolveAgentStrict(mockEngine, c)).toThrow(AgentNotFoundError);
   });
 
-  it("未传 agentId 时用焦点 agent（UI-layer default）", () => {
+  it("未传 agentId 时报错，不落到焦点 agent", () => {
     const c = { req: { query: () => null, param: () => null } };
-    expect(resolveAgent(mockEngine, c).id).toBe("focus");
+    expect(() => resolveAgentStrict(mockEngine, c)).toThrow(AgentNotFoundError);
   });
 });

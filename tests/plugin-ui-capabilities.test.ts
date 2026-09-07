@@ -30,7 +30,11 @@ describe('default plugin UI capabilities', () => {
       openExternal: vi.fn(),
       openFile: vi.fn(),
       showInFinder: vi.fn(),
-      selectFiles: vi.fn(async () => ['/workspace/a.md', '/workspace/b.md']),
+      selectFiles: vi.fn(async (options?: { multiple?: boolean }) => (
+        options?.multiple === false
+          ? ['/workspace/a.md']
+          : ['/workspace/a.md', '/workspace/b.md']
+      )),
       selectFolder: vi.fn(async () => '/workspace'),
     };
     Object.assign(navigator, {
@@ -110,6 +114,8 @@ describe('default plugin UI capabilities', () => {
 
   it('uses platform pickers for resource.pick', async () => {
     const cap = capability(PLUGIN_UI_CAPABILITY.RESOURCE_PICK);
+    const selectFiles = vi.mocked(window.platform.selectFiles);
+    const selectFolder = vi.mocked(window.platform.selectFolder);
 
     expect(cap.validatePayload({ multiple: false })).toEqual({
       ok: true,
@@ -118,9 +124,20 @@ describe('default plugin UI capabilities', () => {
     await expect(cap.handle(context, { mode: 'file', multiple: false })).resolves.toEqual({
       resources: [{ kind: 'local-file', path: '/workspace/a.md', name: 'a.md' }],
     });
-    await expect(cap.handle(context, { mode: 'directory', multiple: false })).resolves.toEqual({
+    expect(selectFiles).toHaveBeenLastCalledWith({ multiple: false });
+
+    await expect(cap.handle(context, { mode: 'file', multiple: true })).resolves.toEqual({
+      resources: [
+        { kind: 'local-file', path: '/workspace/a.md', name: 'a.md' },
+        { kind: 'local-file', path: '/workspace/b.md', name: 'b.md' },
+      ],
+    });
+    expect(selectFiles).toHaveBeenLastCalledWith({ multiple: true });
+
+    await expect(cap.handle(context, { mode: 'directory', multiple: true })).resolves.toEqual({
       resources: [{ kind: 'local-file', path: '/workspace', name: 'workspace', isDirectory: true }],
     });
+    expect(selectFolder).toHaveBeenCalledWith();
   });
 
   it('returns explicit denial for resource.requestAccess until a grant UI exists', async () => {

@@ -79,9 +79,10 @@ describe("AgentToolsSection", () => {
     expect(getRow(container, "session")).toBeTruthy();
     expect(getRow(container, "workflow")).toBeTruthy();
     expect(getRow(container, "xingye_propose_draft")).toBeTruthy();
+    expect(isToggleOn(getRow(container, "dm"))).toBe(false);
   });
 
-  it("hides dm row when dm is not in availableTools (single agent env)", () => {
+  it("hides dm when it is absent from availableTools", () => {
     const { container } = render(
       <AgentToolsSection
         availableTools={["beautify", "browser", "computer", "cron", "install_skill", "office", "update_settings", "read"]}

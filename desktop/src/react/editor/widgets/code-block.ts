@@ -1,7 +1,19 @@
 import { EditorView, WidgetType, Decoration } from '@codemirror/view';
 import type { DecoRange } from '../md-decorations';
 
-const codeBlockLineDeco = Decoration.line({ class: 'cm-codeblock-line' });
+const codeBlockLineDecos = {
+  middle: Decoration.line({ class: 'cm-codeblock-line' }),
+  first: Decoration.line({ class: 'cm-codeblock-line cm-codeblock-line-first' }),
+  last: Decoration.line({ class: 'cm-codeblock-line cm-codeblock-line-last' }),
+  only: Decoration.line({ class: 'cm-codeblock-line cm-codeblock-line-first cm-codeblock-line-last' }),
+};
+
+function codeBlockLineDeco(isFirst: boolean, isLast: boolean): Decoration {
+  if (isFirst && isLast) return codeBlockLineDecos.only;
+  if (isFirst) return codeBlockLineDecos.first;
+  if (isLast) return codeBlockLineDecos.last;
+  return codeBlockLineDecos.middle;
+}
 
 interface FenceInfo {
   marker: '`' | '~';
@@ -126,47 +138,41 @@ export class CodeBlockToolbarWidget extends WidgetType {
 export function handleCodeBlock(ctx: {
   view: EditorView;
   node: { name: string; from: number; to: number };
-  activeLines: Set<number>;
   ranges: DecoRange[];
 }) {
-  const { view, node, activeLines, ranges } = ctx;
+  const { view, node, ranges } = ctx;
   const startLine = view.state.doc.lineAt(node.from);
   const endLine = view.state.doc.lineAt(node.to);
   const openingFence = fenceInfo(startLine.text);
 
-  // Check if any line in the code block is active
-  let blockActive = false;
-  for (let i = startLine.number; i <= endLine.number; i++) {
-    if (activeLines.has(i)) { blockActive = true; break; }
-  }
-
-  if (!blockActive && openingFence?.language === 'mermaid') {
+  if (openingFence?.language === 'mermaid') {
     return;
   }
 
   // Add background to every line in the code block
   for (let i = startLine.number; i <= endLine.number; i++) {
     const line = view.state.doc.line(i);
-    ranges.push({ from: line.from, to: line.from, deco: codeBlockLineDeco });
+    ranges.push({
+      from: line.from,
+      to: line.from,
+      deco: codeBlockLineDeco(i === startLine.number, i === endLine.number),
+    });
   }
 
-  if (!blockActive) {
-    // Hide fence lines when not active
-    // Opening fence line
-    if (openingFence) {
-      const text = codeBlockText(view, startLine, endLine, openingFence);
-      if (startLine.from < startLine.to) {
-        ranges.push({
-          from: startLine.from,
-          to: startLine.to,
-          deco: Decoration.replace({
-            widget: new CodeBlockToolbarWidget(openingFence.language, text),
-          }),
-        });
-      }
+  if (openingFence) {
+    const text = codeBlockText(view, startLine, endLine, openingFence);
+    // 完整 fenced block 的边界始终是文档结构，不因焦点进入代码正文而显形。
+    // 尚未形成合法语法的输入仍由 CodeMirror 作为普通文本显示。
+    if (startLine.from < startLine.to) {
+      ranges.push({
+        from: startLine.from,
+        to: startLine.to,
+        deco: Decoration.replace({
+          widget: new CodeBlockToolbarWidget(openingFence.language, text),
+        }),
+      });
     }
-    // Closing fence line
-    if (openingFence && isClosingFence(endLine.text, openingFence) && endLine.from < endLine.to) {
+    if (isClosingFence(endLine.text, openingFence) && endLine.from < endLine.to) {
       ranges.push({
         from: endLine.from,
         to: endLine.to,

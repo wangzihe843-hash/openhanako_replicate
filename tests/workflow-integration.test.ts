@@ -1,4 +1,4 @@
-// tests/workflow-integration.test.js
+// tests/workflow-integration.test.ts
 import { describe, expect, it, vi } from "vitest";
 import { runWorkflowScript } from "../lib/workflow/sandbox.ts";
 import { createHostApi } from "../lib/workflow/host-api.ts";
@@ -22,7 +22,7 @@ describe("workflow end-to-end (mock executeIsolated)", () => {
     const exec = vi.fn(async () => ({ replyText: "bug", error: null }));
     const script = META + `
       const out = [];
-      while (out.length < 3) { out.push(await agent('find a bug')); }
+      while (out.length < 3) { out.push(await agent('find a bug', { access: 'read' })); }
       return out;
     `;
     const { result } = await runWorkflowScript(script, makeHost(exec));
@@ -39,7 +39,7 @@ describe("workflow end-to-end (mock executeIsolated)", () => {
     const script = META + `
       const files = ['a.js', 'b.js', 'c.js'];
       const found = await parallel(files.map((f) => () =>
-        agent('audit ' + f, { schema: { type: 'object', properties: { ok: { type: 'boolean' }, file: { type: 'string' } } } })
+        agent('audit ' + f, { access: 'read', schema: { type: 'object', properties: { ok: { type: 'boolean' }, file: { type: 'string' } } } })
       ));
       return found.filter((x) => x && x.ok).length;
     `;
@@ -57,7 +57,7 @@ describe("workflow end-to-end (mock executeIsolated)", () => {
   it("未 await 的 agent() 调用会让 workflow 失败且不会启动该节点", async () => {
     const exec = vi.fn(async () => ({ replyText: "bug", error: null }));
     const script = META + `
-      const read = agent('read README');
+      const read = agent('read README', { access: 'read' });
       return 'done';
     `;
 
@@ -81,7 +81,7 @@ describe("workflow end-to-end (mock executeIsolated)", () => {
   it("读取 agent().result 会立即失败，避免把 Promise 当结果拼进后续任务", async () => {
     const exec = vi.fn(async () => ({ replyText: "bug", error: null }));
     const script = META + `
-      const read = agent('read README');
+      const read = agent('read README', { access: 'read' });
       return read.result;
     `;
 

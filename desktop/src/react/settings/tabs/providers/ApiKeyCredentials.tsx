@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSettingsStore, type ProviderSummary } from '../../store';
 import { hanaFetch } from '../../api';
 import { invalidateConfigCache } from '../../../hooks/use-config';
@@ -15,6 +15,29 @@ interface DiscoveredProviderModel {
   name?: unknown;
   context?: unknown;
   maxOutput?: unknown;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function saveProviderConfigPatch(providerId: string, patch: Record<string, unknown>): Promise<void> {
+  const res = await hanaFetch('/api/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ providers: { [providerId]: patch } }),
+  });
+  const data: unknown = await res.json();
+  if (
+    data
+    && typeof data === 'object'
+    && 'error' in data
+    && typeof data.error === 'string'
+    && data.error.trim()
+  ) {
+    throw new Error(data.error.trim());
+  }
+  invalidateConfigCache();
 }
 
 function shouldDiscoverModelsBeforeSave(providerId: string, api: string, payload: Record<string, unknown>) {
@@ -84,7 +107,10 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig: _provid
   const [urlEdited, setUrlEdited] = useState(false);
   const [headersText, setHeadersText] = useState('');
   const [headersEdited, setHeadersEdited] = useState(false);
-  const api = summary.api || presetInfo?.api || '';
+  const derivedApi = summary.api || presetInfo?.api || '';
+  const [apiVal, setApiVal] = useState(derivedApi);
+  const [apiEdited, setApiEdited] = useState(false);
+  const apiDraftRevision = useRef(0);
 
   // 未编辑时，从 summary 同步已保存的 key 到输入框
   useEffect(() => {
@@ -101,6 +127,30 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig: _provid
   useEffect(() => {
     if (!headersEdited) setHeadersText(serializeProviderHeaders(summary.headers || {}));
   }, [summary.headers, headersEdited]);
+
+  useEffect(() => {
+    if (!apiEdited) {
+      setApiVal(derivedApi);
+      return;
+    }
+    if (summary.api === apiVal) setApiEdited(false);
+  }, [apiEdited, apiVal, derivedApi, summary.api]);
+
+  const refreshAfterSave = async (shouldReportFailure: () => boolean = () => true): Promise<boolean> => {
+    try {
+      await onRefresh();
+      return true;
+    } catch (err: unknown) {
+      if (shouldReportFailure()) {
+        showToast(t('settings.refreshFailed') + ': ' + errorMessage(err), 'error');
+      }
+      return false;
+    }
+  };
+
+  const reportSaveFailure = (err: unknown) => {
+    showToast(t('settings.saveFailed') + ': ' + errorMessage(err), 'error');
+  };
 
   const parseHeaders = (): Record<string, string> | null => {
     try {
@@ -128,7 +178,7 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig: _provid
       isPresetSetup: !!isPresetSetup,
       isLocalPreset: !!presetInfo?.local,
       seedDefaultModels: !!presetInfo && (summary.models?.length ?? 0) === 0,
-      api,
+      api: apiVal,
     });
     if (!plan.shouldSave) return;
     button?.classList.add(styles['spinning']);
@@ -149,21 +199,15 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig: _provid
         }
       }
       const payload = await resolveModelsForInitialSave(providerId, plan, headers, includeHeaders);
-      await hanaFetch('/api/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ providers: { [providerId]: payload } }),
-      });
-      invalidateConfigCache();
-      showToast(plan.shouldVerify ? t('settings.providers.verifySuccess') : t('settings.saved'), 'success');
+      await saveProviderConfigPatch(providerId, payload);
       if (isPresetSetup) useSettingsStore.setState({ selectedProviderId: providerId });
+      if (!await refreshAfterSave()) return;
+      showToast(plan.shouldVerify ? t('settings.providers.verifySuccess') : t('settings.saved'), 'success');
       setKeyEdited(false);
       if (urlEdited) setUrlEdited(false);
       if (headersEdited) setHeadersEdited(false);
-      await onRefresh();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast(t('settings.saveFailed') + ': ' + msg, 'error');
+      reportSaveFailure(err);
     } finally {
       button?.classList.remove(styles['spinning']);
     }
@@ -189,17 +233,20 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig: _provid
         body: JSON.stringify({
           name: providerId,
           base_url: urlVal.trim() || derivedBaseUrl,
-          api,
+          api: apiVal,
           api_key: isMaskedSecretValue(keyVal) ? undefined : keyVal.trim() || undefined,
           headers,
         }),
       });
       const testData = await testRes.json();
       setConnStatus(testData.ok ? 'ok' : 'fail');
-      showToast(testData.ok ? t('settings.providers.verifySuccess') : t('settings.providers.verifyFailed'), testData.ok ? 'success' : 'error');
-    } catch {
+      const detail = typeof testData.error === 'string' && testData.error.trim()
+        ? ': ' + testData.error.trim()
+        : '';
+      showToast(testData.ok ? t('settings.providers.verifySuccess') : t('settings.providers.verifyFailed') + detail, testData.ok ? 'success' : 'error');
+    } catch (err: unknown) {
       setConnStatus('fail');
-      showToast(t('settings.providers.verifyFailed'), 'error');
+      showToast(t('settings.providers.verifyFailed') + ': ' + errorMessage(err), 'error');
     } finally {
       btn.classList.remove(styles['spinning']);
     }
@@ -253,16 +300,13 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig: _provid
               const headers = parseHeaders();
               if (!headers) return;
               try {
-                await hanaFetch('/api/config', {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ providers: { [providerId]: { headers } } }),
-                });
-                invalidateConfigCache();
-                showToast(t('settings.saved'), 'success');
+                await saveProviderConfigPatch(providerId, { headers });
+                if (!await refreshAfterSave()) return;
                 setHeadersEdited(false);
-                await onRefresh();
-              } catch { /* swallow */ }
+                showToast(t('settings.saved'), 'success');
+              } catch (err: unknown) {
+                reportSaveFailure(err);
+              }
             }}
             readOnly={!!isPresetSetup}
           />
@@ -281,16 +325,13 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig: _provid
               const trimmed = urlVal.trim();
               if (trimmed === derivedBaseUrl) { setUrlEdited(false); return; }
               try {
-                await hanaFetch('/api/config', {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ providers: { [providerId]: { base_url: trimmed } } }),
-                });
-                invalidateConfigCache();
-                showToast(t('settings.saved'), 'success');
+                await saveProviderConfigPatch(providerId, { base_url: trimmed });
+                if (!await refreshAfterSave()) return;
                 setUrlEdited(false);
-                await onRefresh();
-              } catch { /* swallow */ }
+                showToast(t('settings.saved'), 'success');
+              } catch (err: unknown) {
+                reportSaveFailure(err);
+              }
             }}
             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
             placeholder="https://api.example.com/v1"
@@ -304,22 +345,26 @@ export function ApiKeyCredentials({ providerId, summary, providerConfig: _provid
           <SelectWidget
             className={styles['pv-cred-select']}
             options={API_FORMAT_OPTIONS}
-            value={api || ''}
+            value={apiVal}
             onChange={async (val) => {
+              if (val === apiVal) return;
+              const revision = apiDraftRevision.current + 1;
+              apiDraftRevision.current = revision;
+              setApiVal(val);
+              setApiEdited(true);
+              setConnStatus('idle');
               if (isPresetSetup) return;
               try {
-                await hanaFetch('/api/config', {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ providers: { [providerId]: { api: val } } }),
-                });
-                invalidateConfigCache();
-                showToast(t('settings.saved'), 'success');
-                await onRefresh();
-              } catch { /* swallow */ }
+                await saveProviderConfigPatch(providerId, { api: val });
+                if (!await refreshAfterSave(() => apiDraftRevision.current === revision)) return;
+                if (apiDraftRevision.current === revision) {
+                  showToast(t('settings.saved'), 'success');
+                }
+              } catch (err: unknown) {
+                if (apiDraftRevision.current === revision) reportSaveFailure(err);
+              }
             }}
             placeholder="API Format"
-            disabled={!!isPresetSetup}
           />
         </div>
       </div>

@@ -12,6 +12,7 @@ import { hanaFetch } from './hooks/use-hana-fetch';
 import { applyAgentIdentity, loadAgents, loadAvatars } from './stores/agent-actions';
 import { loadPendingNewSessionPermissionDefault, loadSessions, pendingNewSessionIdentityPatch, switchSession } from './stores/session-actions';
 import { initSessionProjectCatalog } from './stores/session-project-actions';
+import { loadSidebarUiPrefs } from './stores/sidebar-ui-slice';
 import { connectWebSocket, getWebSocket } from './services/websocket';
 import { setStatus, loadModels } from './utils/ui-helpers';
 import { initJian } from './stores/desk-actions';
@@ -26,6 +27,7 @@ import { configureAppEventActions, handleAppEvent, readConfigCwdHistory, readCon
 import { configureWsMessageHandler } from './services/ws-message-handler';
 import { applyChatLayout } from './chat/layout';
 import { applyEditorTypography } from './editor/typography';
+import { findPrimaryAgent } from './utils/agent-workspace';
 import {
   LOCAL_CONNECTION_ID,
   createLocalServerConnection,
@@ -186,19 +188,35 @@ export async function initApp(): Promise<void> {
     console.warn('[init] appearance preference sync skipped:', err);
   });
 
-  // 2. 并行获取 health + config
+  // 2. 并行获取 health + 全局设置 + agent 列表
+  // bootstrap 报出来的 agent 身份，后面按 agent 提问的请求都用它，免得任何一步
+  // 落到"服务端当前焦点是谁"上——两个客户端各开一个 agent 时那个答案是错的。
+  let bootstrapAgentId: string | null = null;
   try {
-    const [healthRes, configRes] = await Promise.all([
+    const [healthRes, globalConfigRes, agentsRes] = await Promise.all([
       hanaFetch('/api/health'),
       hanaFetch('/api/config'),
+      hanaFetch('/api/agents'),
     ]);
     const healthData = await healthRes.json();
-    const configData = await configRes.json();
-    applyEditorTypography(configData.editor);
-    applyChatLayout(configData.chat);
+    bootstrapAgentId = healthData.agentId || null;
+    const globalConfig = await globalConfigRes.json();
+    const agentsData = await agentsRes.json();
+
+    // 排版、语言这些是全局偏好；书桌目录、记忆开关、聊天布局、最近工作区
+    // 属于某一个 agent，必须指名道姓地问那个 agent 要，不能从一个不带 agent
+    // 身份的请求里捞。启动后落到的是主助手（见 loadAgents 的选择逻辑），
+    // 所以这里也按主助手取，两边看到的是同一个 agent。
+    const bootAgentId = findPrimaryAgent(agentsData.agents || [])?.id || null;
+    const agentConfig = bootAgentId
+      ? await hanaFetch(`/api/agents/${encodeURIComponent(bootAgentId)}/config`).then(r => r.json())
+      : {};
+
+    applyEditorTypography(globalConfig.editor);
+    applyChatLayout(agentConfig.chat);
 
     // 3. 加载 i18n
-    await i18n.load(configData.locale || 'zh-CN');
+    await i18n.load(globalConfig.locale || 'zh-CN');
     useStore.setState({ locale: i18n.locale });
 
     // 4. 应用 agent 身份
@@ -209,17 +227,17 @@ export async function initApp(): Promise<void> {
     });
 
     // 5. 设置 desk 相关状态
-    const homeFolder = readConfigHomeFolder(configData);
+    const homeFolder = readConfigHomeFolder(agentConfig);
     useStore.setState({
       homeFolder,
       selectedFolder: homeFolder,
       workspaceFolders: [],
-      memoryMasterEnabled: readConfigMemoryMasterEnabled(configData),
+      memoryMasterEnabled: readConfigMemoryMasterEnabled(agentConfig),
     });
-    useStore.setState({ cwdHistory: readConfigCwdHistory(configData) });
+    useStore.setState({ cwdHistory: readConfigCwdHistory(agentConfig) });
 
-    // 6. 加载头像
-    loadAvatars(healthData.avatars);
+    // 6. 加载头像（agent 头像按 bootstrap 给出的 agent 身份请求）
+    loadAvatars(healthData.avatars, healthData.agentId);
   } catch (err) {
     console.error('[init] i18n/health/config failed:', err);
   }
@@ -261,8 +279,10 @@ export async function initApp(): Promise<void> {
   } catch { /* ignore */ }
 
   // 15. Bridge 状态指示点（启动时就查一次，不等用户打开面板）
+  //     agent 身份用 bootstrap 给出的那个，和上面的头像同源
   try {
-    const res = await hanaFetch('/api/bridge/status');
+    if (!bootstrapAgentId) throw new Error('bridge status needs an agent id');
+    const res = await hanaFetch(`/api/bridge/status?agentId=${encodeURIComponent(bootstrapAgentId)}`);
     const data = await res.json();
     const anyConnected = data.telegram?.status === 'connected' || data.feishu?.status === 'connected' || data.qq?.status === 'connected' || data.wechat?.status === 'connected' || data.whatsapp?.status === 'connected';
     useStore.setState({ bridgeDotConnected: anyConnected });
@@ -283,6 +303,24 @@ export async function initApp(): Promise<void> {
   platform.onSettingsChanged((type: string, data: any) => {
     handleAppEvent(type, data, { source: 'desktop-ipc' });
   });
+
+  // 19b. 侧边栏 UI 偏好（session 行高 / 项目视图折叠）：store 持有，侧栏实例只读。
+  //      连接就绪后拉一次，连接对象变化后再拉；设置页保存的同窗广播走这里，
+  //      跨窗 IPC 走 handleAppEvent 的同名事件，两条路径落到同一个 action。
+  window.addEventListener('hana-settings', (event: Event) => {
+    const detail = (event as CustomEvent).detail;
+    if (!detail || detail.type !== 'sidebar-ui-changed') return;
+    useStore.getState().applySidebarUiPrefs(detail.sidebarUi || detail);
+  });
+  const syncSidebarUiPrefs = (connection: ServerConnection | null) => {
+    if (!connection) return;
+    void loadSidebarUiPrefs();
+  };
+  useStore.subscribe((state, prev) => {
+    if (state.activeServerConnection === prev.activeServerConnection) return;
+    syncSidebarUiPrefs(state.activeServerConnection);
+  });
+  syncSidebarUiPrefs(useStore.getState().activeServerConnection);
 
   // 20. 主进程请求打开设置：托盘 / 外部 IPC 统一落到主窗口 modal
   platform.onOpenSettingsModal?.((tab?: string) => {

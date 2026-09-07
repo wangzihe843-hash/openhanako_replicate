@@ -155,6 +155,7 @@
 
 .messageGroupUser:hover .messageFooterActions,
 .messageGroupAssistant:hover .messageFooterActions,
+.agentOriginCard:hover .messageFooterActions,
 .messageFooterActions:focus-within,
 .messageFooterActionsVisible {
     opacity: 0.72;
@@ -432,12 +433,42 @@
 }
 
 /* ── 跨 session Agent 来源消息卡（居中，对标 interludeRow） ── */
-.agentOriginRow {
-    width: 100%;
+.conversationEventRow {
     display: flex;
-    justify-content: center;
-    margin: var(--space-16) 0;
+    width: 100%;
+    box-sizing: border-box;
     font-family: var(--font-sans);
+}
+
+.conversationEventRow-center { justify-content: center; }
+.conversationEventRow-end { justify-content: flex-end; }
+
+.conversationEventCard {
+    box-sizing: border-box;
+    color: var(--text);
+    background: var(--tool-bg);
+    border-radius: var(--radius-sm);
+}
+
+.conversationEventCardClickable {
+    cursor: default;
+    transition: background var(--duration-fast) var(--ease-out);
+}
+
+.conversationEventCardClickable:hover {
+    background: color-mix(in srgb, var(--tool-bg), var(--text) 6%);
+}
+
+.conversationEventCardClickable:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: var(--space-2);
+}
+
+.conversationEventCard-compact { width: min(560px, 100%); }
+.conversationEventCard-expanded { width: min(680px, calc(100% - 48px)); }
+
+.agentOriginRow {
+    margin: var(--space-16) 0;
 }
 
 .agentOriginCard {
@@ -488,6 +519,47 @@
     cursor: pointer;
     font-size: 12px;
     padding: 0;
+}
+
+.agentReviewMessageCard {
+    margin: var(--space-16) 0;
+}
+
+.agentReviewMessageCard[data-event-status="failed"],
+.agentReviewMessageCard[data-event-status="cancelled"] {
+    background: color-mix(in srgb, var(--tool-bg) 92%, var(--danger) 8%);
+}
+
+.agentReviewSessionName {
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--fs-hint);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agentReviewPulse {
+    width: 6px;
+    height: 6px;
+    flex: 0 0 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    --pulse-lo: 0.35;
+    --pulse-hi: 1;
+    animation: hana-pulse var(--duration-slow) ease-in-out infinite;
+}
+
+.agentReviewBody {
+    font-size: var(--fs-ui);
+    line-height: 1.6;
+}
+
+.agentReviewError {
+    margin-top: var(--space-10);
+    color: var(--danger);
+    font-size: var(--fs-ui);
 }
 
 .interludeTrigger {

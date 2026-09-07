@@ -96,6 +96,12 @@
     "noAvailableMembers": "No agents available",
     "agentActivity": "Agent activity",
     "agentSettings": "Chat settings",
+    "exportTitle": "Save current chat",
+    "exportDescription": "Save the current group chat or direct message as a Markdown file in your Downloads folder.",
+    "exportAction": "Export current chat",
+    "exporting": "Exporting…",
+    "exportSuccess": "Chat history downloaded: {filename}",
+    "exportFailed": "Could not export chat history: {message}",
     "toolPermission": "Tool permission",
     "agentIdle": "Idle",
     "phoneReceivedNewMessages": "Received new channel messages",
@@ -164,6 +170,9 @@
     "searchingContent": "Searching content…",
     "searchNoResults": "No matching chats",
     "searchFailed": "Search failed",
+    "metaRecoveryNoticeTitle": "Some chats need recovery",
+    "metaRecoveryNoticeBody": "Session metadata looks damaged. Chat content is still saved on disk, but some session details may be temporarily missing",
+    "metaRecoveryEmpty": "The chat list can't fully load right now. Your chats are still saved on disk",
     "view": {
       "time": "Sort by time",
       "project": "Sort by project",
@@ -206,7 +215,12 @@
     "unpin": "Unpin",
     "pinFailed": "Failed to pin session",
     "unpinFailed": "Failed to unpin session",
+    "reorderFailed": "Failed to reorder pinned sessions",
     "archive": "Archive",
+    "copyId": "Copy Session ID",
+    "copyIdDone": "Session ID copied",
+    "copyIdFailed": "Failed to copy Session ID",
+    "copyIdUnavailable": "This Session does not have a copyable ID",
     "deletedAgent": {
       "title": "Agent deleted",
       "description": "This chat is kept as read-only history. Continuing will create a new session on your primary Agent and try to compact the old context.",
@@ -244,21 +258,7 @@
     },
     "rcTakingOver": "{platform} active",
     "subagentRunStateUnrecoverable": "Historical sub-session run state is unrecoverable",
-    "subagentLinkUnrecoverable": "Historical sub-session link is unrecoverable",
-    "capabilityDrift": {
-      "title": "Tool capabilities have changed",
-      "addedTools": "{count} new tools",
-      "removedTools": "{count} tools no longer available",
-      "promptUpdated": "prompt updated",
-      "separator": ", ",
-      "refreshButton": "Refresh agent tools",
-      "dismissButton": "Dismiss",
-      "confirmText": "Refreshing compacts the old conversation into a summary; details may be lost. Continue?",
-      "confirmButton": "Refresh now",
-      "cancelButton": "Cancel",
-      "refreshing": "Compacting conversation and refreshing tools…",
-      "refreshFailed": "Refresh failed"
-    }
+    "subagentLinkUnrecoverable": "Historical sub-session link is unrecoverable"
   },
   "common": {
     "on": "On",
@@ -269,6 +269,7 @@
     "close": "Close",
     "loading": "Loading...",
     "regenerate": "Regenerate",
+    "forkSession": "Fork to new session",
     "confirm": "Confirm",
     "cancel": "Cancel",
     "approve": "Approve",
@@ -297,7 +298,8 @@
     "screenshotFailed": "Screenshot save failed",
     "selectedCount": "{count} selected",
     "allDone": "All done",
-    "markAllComplete": "Mark all as complete"
+    "markAllComplete": "Mark all as complete",
+    "back": "Back"
   },
   "chat": {
     "find": {
@@ -309,6 +311,7 @@
     "stop": "Stop",
     "browserScreenshot": "Browser screenshot",
     "compacting": "Compacting context",
+    "instantSimpleCompaction": "Instant simple compaction",
     "visionAuxiliary": "Vision auxiliary",
     "fileExpired": "File expired",
     "fileActions": {
@@ -442,9 +445,34 @@
     "contextWindow": "Context {windowK}k",
     "tokensUsed": "Used {tokensK}k ({pct}%)",
     "contextActions": "Context actions",
-    "refreshAndCompact": "Update and compact",
-    "refreshAndCompactTooltip": "Update to the latest memory and tool set",
-    "compact": "Compact"
+    "refreshAndCompact": "Compact and update",
+    "refreshAndCompactTooltip": "Compact the conversation and update to the latest memory and tool set",
+    "refreshAndCompactBusy": "Compacting and updating conversation…",
+    "refreshAndCompactFailed": "Compact and update failed",
+    "compact": "Compact",
+    "mention": {
+      "title": "Mention",
+      "tab": {
+        "files": "Files",
+        "sessions": "Conversations",
+        "agents": "Agents"
+      },
+      "empty": "No matches",
+      "singleAgent": "Only one Agent reviewer can be invited per turn"
+    }
+  },
+  "agentReview": {
+    "running": "Reviewing this Session",
+    "completed": "Review from another Agent",
+    "failed": "Review failed; the main Agent has not replied",
+    "cancelled": "Review cancelled",
+    "openSession": "Open review Session",
+    "sessionUnavailable": "Review Session not found",
+    "requestReceived": "Review request received from another Session",
+    "openReviewedSession": "Open reviewed Session",
+    "reviewedSessionFallback": "Source conversation",
+    "reviewSessionFallback": "{name}'s review conversation",
+    "interjectionUnavailable": "Agent review cannot be sent as an interjection; wait for the current reply to finish"
   },
   "slash": {
     "diary": "Write today's diary",
@@ -454,9 +482,7 @@
     "xing": "Create skill from conversation",
     "compact": "Compact context",
     "compactBusy": "Compacting...",
-    "stop": "Stop current reply",
-    "new": "Start new session (archive history)",
-    "reset": "Reset session (clear history)",
+    "loop": "Run a recurring loop task in this session",
     "commandError": "[Command error] {message}",
     "usage": "Usage: {usage}",
     "commandTimeout": "Command timed out (>{ms}ms)"
@@ -557,7 +583,8 @@
         "avatar": "Ming.png"
       },
       "kong": {
-        "label": "Vanilla",
+        "label": "No divergent-thinking module (such as MOOD) — the same experience as ordinary agents.",
+        "shortLabel": "No thinking block; answers directly.",
         "avatar": "Kong.png"
       }
     },
@@ -699,16 +726,6 @@
       "done": "✏️ {name} all fixed up",
       "failed": "✏️ {name} made a bit of a mess"
     },
-    "edit-diff": {
-      "running": "✏️ {name} is making edits",
-      "done": "✏️ {name} all fixed up",
-      "failed": "✏️ {name} made a bit of a mess"
-    },
-    "glob": {
-      "running": "🔍 {name} is looking for files",
-      "done": "🔍 {name} found them",
-      "failed": "🔍 {name} searched high and low, nothing"
-    },
     "grep": {
       "running": "🔍 {name} is rummaging through files",
       "done": "🔍 {name} found something",
@@ -724,15 +741,10 @@
       "done": "📂 {name} all seen",
       "failed": "📂 {name} couldn't open this folder"
     },
-    "truncate": {
-      "running": "✂️ {name} is tidying up a file",
-      "done": "✂️ {name} all tidied up",
-      "failed": "✂️ {name} couldn't tidy up"
-    },
     "stage_files": {
-      "running": "📎 {name} is preparing the file",
-      "done": "📎 Here it is!",
-      "failed": "📎 Couldn't hand it over"
+      "running": "📎 Getting the file ready",
+      "done": "📎 File is ready",
+      "failed": "📎 The file wasn't ready"
     },
     "browser": {
       "running": "🌐 {name} is browsing the web",
@@ -740,136 +752,101 @@
       "failed": "🌐 {name}'s browser wouldn't cooperate"
     },
     "subagent": {
-      "running": "🧭 {name} is investigating",
-      "done": "🧭 Clone dispatched",
-      "failed": "🧭 Clone ran into trouble"
+      "running": "🧭 The subagent is working",
+      "done": "🧭 The subagent finished",
+      "failed": "🧭 The subagent didn't finish"
     },
     "check_pending_tasks": {
-      "running": "📋 {name} is checking unfinished business",
-      "done": "📋 {name} all caught up",
-      "failed": "📋 Couldn't check"
-    },
-    "cron": {
-      "running": "⏰ {name} is setting a scheduled task",
-      "done": "⏰ All set",
-      "failed": "⏰ Couldn't set it up"
+      "running": "📋 Checking on the background tasks",
+      "done": "📋 Caught up on the background tasks",
+      "failed": "📋 The background tasks wouldn't report"
     },
     "notify": {
       "running": "🔔 {name} is sending a notification",
-      "done": "🔔 Notification sent",
-      "failed": "🔔 Notification didn't go through"
+      "done": "🔔 {name} sent the notification",
+      "failed": "🔔 The notification didn't go through"
     },
     "create_artifact": {
-      "running": "🖼️ {name} is doodling away",
-      "done": "🖼️ Masterpiece ready",
-      "failed": "🖼️ Canvas fell apart"
+      "running": "🖼️ {name} is making an image",
+      "done": "🖼️ {name} finished the image",
+      "failed": "🖼️ The image didn't come out"
     },
     "dm": {
-      "running": "✉️ {name} picked up the phone",
-      "done": "✉️ Message sent",
-      "failed": "✉️ Message didn't go through"
+      "running": "✉️ {name} is sending a DM",
+      "done": "✉️ {name} sent the DM",
+      "failed": "✉️ The DM didn't go through"
     },
     "channel": {
-      "running": "📢 {name} is posting in a channel",
-      "done": "📢 Posted",
-      "failed": "📢 Couldn't post",
+      "running": "📢 {name} is posting to the channel",
+      "done": "📢 {name} posted to the channel",
+      "failed": "📢 The message didn't reach the channel",
       "heading": "# Channels",
       "ambiguousName": "Channel name \"{name}\" is not unique. Please use a channel ID instead: {choices}"
     },
     "install_skill": {
       "running": "📥 {name} is installing a skill",
-      "done": "📥 Installed",
-      "failed": "📥 Installation failed"
+      "done": "📥 {name} installed the skill",
+      "failed": "📥 The skill didn't install"
     },
     "update_settings": {
-      "running": "⚙️ {name} is updating settings",
-      "done": "⚙️ Settings updated",
-      "failed": "⚙️ Couldn't update"
+      "running": "⚙️ {name} is changing settings",
+      "done": "⚙️ {name} changed the settings",
+      "failed": "⚙️ The settings didn't change"
     },
     "automation": {
-      "running": "🤖 {name} is dispatching a shortcut",
-      "done": "🤖 Shortcut completed",
-      "failed": "🤖 Shortcut execution failed"
+      "running": "🤖 {name} is setting up an automation",
+      "done": "🤖 {name} set up the automation",
+      "failed": "🤖 The automation didn't get set up"
     },
     "computer": {
-      "running": "🖥️ {name} is controlling your screen",
-      "done": "🖥️ Screen control done",
-      "failed": "🖥️ Screen control failed"
+      "running": "🖥️ {name} is driving the computer",
+      "done": "🖥️ {name} finished on the computer",
+      "failed": "🖥️ The computer wouldn't cooperate"
     },
     "terminal": {
-      "running": "💻 {name} is running a command",
-      "done": "💻 Command done",
-      "failed": "💻 Command execution failed"
+      "running": "💻 {name} is typing commands",
+      "done": "💻 {name} finished typing commands",
+      "failed": "💻 The command didn't run"
     },
     "current_status": {
-      "running": "🕐 {name} is checking what's going on",
-      "done": "🕐 Got it",
-      "failed": "🕐 Couldn't get the info"
+      "running": "🕐 Checking what's going on",
+      "done": "🕐 Got the lay of the land",
+      "failed": "🕐 Couldn't tell what's going on"
     },
     "pin_memory": {
-      "running": "📌 {name} is pinning this down",
-      "done": "📌 Pinned",
-      "failed": "📌 Pinning failed"
+      "running": "📌 {name} is committing this to memory",
+      "done": "📌 {name} committed this to memory",
+      "failed": "📌 {name} couldn't hold on to it"
     },
     "unpin_memory": {
-      "running": "📌 {name} is unpinning this",
-      "done": "📌 Unpinned",
-      "failed": "📌 Unpinning failed"
+      "running": "📌 {name} is letting this go",
+      "done": "📌 {name} is no longer holding on to this",
+      "failed": "📌 {name} couldn't let it go"
     },
     "recall_experience": {
-      "running": "🧠 {name} is flipping through the experience notes",
-      "done": "🧠 Found something",
+      "running": "🧠 Flipping through past notes",
+      "done": "🧠 Found something in the notes",
       "failed": "🧠 Nothing relevant in the notes"
     },
     "record_experience": {
-      "running": "🧠 {name} is jotting this down",
-      "done": "🧠 Noted",
-      "failed": "🧠 Couldn't save the note"
+      "running": "🧠 {name} is writing this one down",
+      "done": "🧠 {name} wrote this one down",
+      "failed": "🧠 The note didn't get saved"
     },
     "session_folders": {
-      "running": "📁 {name} is adjusting folder permissions",
-      "done": "📁 Adjusted",
-      "failed": "📁 Adjustment failed"
+      "running": "📁 {name} is adjusting folder access",
+      "done": "📁 {name} adjusted folder access",
+      "failed": "📁 Folder access didn't change"
     },
     "stop_task": {
-      "running": "🛑 {name} is stopping a background task",
-      "done": "🛑 Stopped",
-      "failed": "🛑 Couldn't stop"
+      "running": "🛑 {name} is calling off a background task",
+      "done": "🛑 {name} called off the background task",
+      "failed": "🛑 The background task wouldn't stop"
     },
     "todo_write": {
       "running": "📝 {name} is writing a checklist",
-      "done": "📝 Checklist ready",
-      "failed": "📝 Checklist write failed"
-    },
-    "generate-image": {
-      "running": "🎨 {name} is creating an image",
-      "done": "🎨 Image ready",
-      "failed": "🎨 Image generation failed"
-    },
-    "generate-video": {
-      "running": "🎬 {name} is generating a video",
-      "done": "🎬 Video ready",
-      "failed": "🎬 Video generation failed"
-    },
-    "create-cover": {
-      "running": "🎨 {name} is designing a cover",
-      "done": "🎨 Cover ready",
-      "failed": "🎨 Cover generation failed"
-    },
-    "apply-cover-candidate": {
-      "running": "🖼️ {name} is applying the cover",
-      "done": "🖼️ Cover applied",
-      "failed": "🖼️ Couldn't apply the cover"
-    },
-    "get-cover-style-guide": {
-      "running": "📖 {name} is looking up the style guide",
-      "done": "📖 Found it",
-      "failed": "📖 Couldn't find the style guide"
-    },
-    "list-capabilities": {
-      "running": "📋 {name} is listing capabilities",
-      "done": "📋 All listed",
-      "failed": "📋 Listing failed"
+      "done": "📝 Checklist is ready",
+      "failed": "📝 The checklist didn't save"
     },
     "_fallback": {
       "running": "🔧 {name} is busy working…",
@@ -882,10 +859,18 @@
       "noTasks": "No background tasks in current conversation{qualifier}.",
       "noTasksQualifier": " (status: {status})"
     },
+    "loopControl": {
+      "serviceUnavailable": "Loop service is not available.",
+      "noActiveSession": "No active session.",
+      "noActiveLoop": "No active loop in this session. Start one with /loop <task>.",
+      "delayRequired": "delay_seconds is required for action=schedule.",
+      "scheduled": "Wakeup scheduled in {seconds}s (fires at {wakeAt}). It replaces any previous alarm.",
+      "completed": "Loop completed and closed."
+    },
     "workflow": {
       "running": "🔄 {name} is orchestrating a workflow",
-      "done": "🔄 Workflow complete",
-      "failed": "🔄 Workflow execution failed",
+      "done": "🔄 {name} finished orchestrating the workflow",
+      "failed": "🔄 The workflow didn't finish",
       "scriptInvalid": "Workflow script invalid: {message}",
       "dispatched": "Workflow \"{summary}\" has been dispatched for background execution (task {taskId}). Results will automatically return to the conversation when complete.",
       "syncComplete": "Workflow \"{name}\" complete, dispatched {count} agents.\n\nResult:\n{result}",
@@ -895,6 +880,136 @@
     },
     "installSkill": {
       "safetyBlocked": "[Security Policy] Skill safety review failed. Installation blocked.\nReason: {reason}\n\nPlease inform the user that this skill did not pass the safety review and explain the specific reason. The user can disable safety review in settings (not recommended)."
+    },
+    "file": {
+      "running": "📄 Working with a file",
+      "done": "📄 File sorted out",
+      "failed": "📄 Couldn't sort out the file"
+    },
+    "session": {
+      "running": "💬 Looking into another session",
+      "done": "💬 Looked into another session",
+      "failed": "💬 Couldn't open that session"
+    },
+    "subagent_reply": {
+      "running": "🧭 {name} is handing the subagent a new task",
+      "done": "🧭 {name} handed the subagent a new task",
+      "failed": "🧭 The task didn't reach the subagent"
+    },
+    "subagent_close": {
+      "running": "🧭 {name} is wrapping up the subagent",
+      "done": "🧭 {name} wrapped up the subagent",
+      "failed": "🧭 The subagent wouldn't close"
+    },
+    "loop_control": {
+      "running": "⏱️ {name} is setting the loop's alarm",
+      "done": "⏱️ The loop's alarm is set",
+      "failed": "⏱️ The loop's alarm didn't get set"
+    },
+    "materialize": {
+      "running": "🧲 Pulling the file down locally",
+      "done": "🧲 File is here locally",
+      "failed": "🧲 The file didn't come down"
+    },
+    "channel_read_context": {
+      "running": "💬 Reading the channel",
+      "done": "💬 Caught up on the channel",
+      "failed": "💬 The channel messages wouldn't load"
+    },
+    "channel_reply": {
+      "running": "💬 {name} is posting to the channel",
+      "done": "💬 {name} posted to the channel",
+      "failed": "💬 The message didn't reach the channel"
+    },
+    "channel_pass": {
+      "running": "⏭️ {name} is sitting this one out",
+      "done": "⏭️ {name} read them and stayed quiet this turn",
+      "failed": "⏭️ The pass didn't get recorded"
+    },
+    "hana_card_guide": {
+      "running": "🎴 Looking up how cards are made",
+      "done": "🎴 Got how cards are made",
+      "failed": "🎴 Couldn't find the card guide"
+    },
+    "show_card": {
+      "running": "🎴 {name} is laying out a card",
+      "done": "🎴 {name} laid out the card",
+      "failed": "🎴 The card wouldn't show"
+    },
+    "media_generate-image": {
+      "running": "🎨 {name} is drawing",
+      "done": "🎨 {name} finished the image",
+      "failed": "🎨 The image didn't come out"
+    },
+    "media_generate-video": {
+      "running": "🎬 {name} is making a video",
+      "done": "🎬 {name} finished the video",
+      "failed": "🎬 The video didn't come out"
+    },
+    "media_describe-options": {
+      "running": "🎨 Checking the image options",
+      "done": "🎨 Got the image options",
+      "failed": "🎨 The image options wouldn't load"
+    },
+    "media_get-guide": {
+      "running": "🎨 Reading up on image prompts",
+      "done": "🎨 Read up on image prompts",
+      "failed": "🎨 Couldn't find the prompt notes"
+    },
+    "beautify_create-cover": {
+      "running": "🖼️ {name} is putting a cover on the piece",
+      "done": "🖼️ {name} gave the piece a cover",
+      "failed": "🖼️ The cover wouldn't go on"
+    },
+    "beautify_apply-cover-candidate": {
+      "running": "🖼️ {name} is swapping the cover",
+      "done": "🖼️ {name} swapped the cover",
+      "failed": "🖼️ The cover wouldn't swap"
+    },
+    "beautify_get-cover-style-guide": {
+      "running": "🖼️ Looking up how covers should look",
+      "done": "🖼️ Got how covers should look",
+      "failed": "🖼️ Couldn't find the cover notes"
+    },
+    "beautify_get-html-style-guide": {
+      "running": "🖼️ Looking up how the layout should look",
+      "done": "🖼️ Got how the layout should look",
+      "failed": "🖼️ Couldn't find the layout notes"
+    },
+    "beautify_list-capabilities": {
+      "running": "🖼️ Checking what can be polished",
+      "done": "🖼️ Got what can be polished",
+      "failed": "🖼️ Couldn't find what can be polished"
+    },
+    "office_read-document": {
+      "running": "📑 Reading the document",
+      "done": "📑 Finished the document",
+      "failed": "📑 The document wouldn't open"
+    },
+    "office_html-to-pdf": {
+      "running": "📑 {name} is exporting a PDF",
+      "done": "📑 {name} got the PDF out",
+      "failed": "📑 The PDF didn't export"
+    },
+    "office_list-capabilities": {
+      "running": "📑 Checking which documents can be handled",
+      "done": "📑 Got which documents can be handled",
+      "failed": "📑 Couldn't find which documents can be handled"
+    },
+    "_plugin": {
+      "running": "🧩 {name} is working through a plugin",
+      "done": "🧩 {name} finished with the plugin",
+      "failed": "🧩 The plugin didn't help"
+    },
+    "session_send": {
+      "running": "💬 Drafting a message to another session",
+      "done": "💬 Message drafted, waiting for your OK",
+      "failed": "💬 Couldn't draft the message"
+    },
+    "session_create": {
+      "running": "💬 Drafting a new session",
+      "done": "💬 New session drafted, waiting for your OK",
+      "failed": "💬 Couldn't draft the new session"
     }
   },
   "file_output": {
@@ -906,6 +1021,13 @@
     "notSelected": "Select a model",
     "noneConfigured": "No models configured",
     "unavailable": "Model unavailable",
+    "removed": "Model removed",
+    "providerNotConfigured": "Provider not configured",
+    "unavailableReason": {
+      "modelRemoved": "This conversation's model has been removed. Choose an available model to continue.",
+      "providerNotConfigured": "This conversation's model provider or credentials are not configured. Complete the setup or choose another model.",
+      "temporarilyUnavailable": "This conversation's model is currently unavailable. Check the provider or choose another model."
+    },
     "offline": "Offline",
     "switchFailed": "Failed to switch model",
     "switchWhileStreaming": "Cannot switch models while replying",
@@ -939,6 +1061,7 @@
     "save": "Save",
     "saved": "Saved ✿",
     "saveFailed": "Failed to save",
+    "refreshFailed": "Refresh failed",
     "fileChangedOnDisk": "The file changed on disk, so the stale save was skipped",
     "noChanges": "Nothing to save",
     "autoSaved": "Auto-saved ✿",
@@ -987,7 +1110,7 @@
     "experiments": {
       "title": "Experiments",
       "compactionTitle": "Context Compaction",
-      "compactionSectionDescription": "Choose whether compact prioritizes prompt-cache preservation or broad history compatibility.",
+      "compactionSectionDescription": "Set the default automatic compaction strategy and choose whether the chat context ring exposes an experimental one-shot action.",
       "modelPersonaTitle": "Models & Persona",
       "modelPersonaDescription": "Observe how providers adapt to Hana's persona, mood, and output contracts.",
       "memoryTitle": "Memory Experiments",
@@ -1034,10 +1157,14 @@
       },
       "compaction": {
         "title": "Compaction mode",
-        "description": "Auto prefers cache-preserving compaction. Normal compaction lets Pi SDK run its native summarizer, which is better for unstable history formats.",
+        "description": "Auto prefers cache-preserving compaction. Normal compaction uses Pi SDK's native summarizer.",
         "auto": "Auto",
         "cachePreserving": "Cache-preserving compaction",
         "piCompatible": "Normal compaction"
+      },
+      "instantSimpleCompaction": {
+        "title": "Instant simple compaction",
+        "description": "When enabled, the chat input's context-ring menu adds an Instant simple compaction action. It affects only the run you explicitly start and never changes automatic or ordinary compaction behavior."
       },
       "deepseekRoleplay": {
         "title": "DeepSeek persona immersion patch",
@@ -1184,10 +1311,10 @@
       "agentNameHint": "What they go by",
       "identity": "Identity",
       "identityHint": "A short description of who this agent is and what they're good at. Other agents use this to know them",
-      "ishiki": "Ishiki",
-      "ishikiHint": "Defines the assistant's character, tone and behavior. Separate from Yuan and does not affect it.",
-      "publicIshiki": "Public Ishiki",
-      "publicIshikiHint": "For privacy, the assistant cannot access memories, your personal info, or any files and tools on your computer when talking to visitors.\nYou can set the assistant's reply style and guidelines for visitor conversations here.",
+      "agentsMd": "AGENTS.md",
+      "agentsMdHint": "Defines the assistant's character, tone and behavior. Separate from Yuan and does not affect it.",
+      "publicAgentsMd": "Public AGENTS.md",
+      "publicAgentsMdHint": "For privacy, the assistant cannot access memories, your personal info, or any files and tools on your computer when talking to visitors.\nYou can set the assistant's reply style and guidelines for visitor conversations here.",
       "chatModel": "Model",
       "chatModelHint": "The model used for conversations and tasks",
       "modelUnavailable": "Unavailable: {model}",
@@ -1296,10 +1423,13 @@
       },
       "notifications": {
         "title": "Notifications",
-        "turnCompletion": "Turn completion notification",
-        "turnCompletionNever": "Never",
-        "turnCompletionWhenUnfocused": "When HanaAgent is unfocused",
-        "turnCompletionWhenSessionUnfocused": "When not focused on the completed Session"
+        "chatCompletion": "Chat reply completion",
+        "scheduledTaskCompletion": "Scheduled task completion",
+        "patrolCompletion": "Patrol completion",
+        "never": "Never",
+        "whenUnfocused": "When HanaAgent is unfocused",
+        "whenSessionUnfocused": "When the completed chat is unfocused",
+        "always": "Always"
       }
     },
     "about": {
@@ -1311,7 +1441,7 @@
       "updateAvailable": "New version available: v{version}",
       "updateDownload": "Download",
       "updateChecking": "Checking for updates…",
-      "updateDownloading": "{agentName} is preparing a new home {percent}%",
+      "updateDownloading": "{agentName} is preparing a new home",
       "updateReadyInstall": "v{version} ready to install",
       "updateInstalling": "Installing update. HanaAgent will restart automatically…",
       "updateInstallManualHint": "Install after clicking Restart to update; quitting will not install automatically",
@@ -1354,7 +1484,25 @@
       "launchAtLogin": "Launch at login",
       "keepAwake": "Keep running while locked",
       "betaUpdates": "Receive beta updates",
-      "autoCheckUpdates": "Check for updates automatically"
+      "autoCheckUpdates": "Check for updates automatically",
+      "inviteSectionTitle": "Beta channel",
+      "inviteCodeLabel": "Invite code",
+      "inviteCodePlaceholder": "Paste your invite code",
+      "inviteRedeemBtn": "Redeem",
+      "inviteRedeeming": "Redeeming…",
+      "inviteErrorInvalid": "This invite code is not valid, or it has already been used up.",
+      "inviteErrorNetwork": "Could not reach the redemption service. Check your connection and try again.",
+      "inviteErrorActivate": "The channel could not be saved.",
+      "inviteConfirmTitle": "Switch to the beta channel?",
+      "inviteConfirmBody": "Once you switch, the app updates to test versions. After a test version upgrades your data, you cannot go back to the current stable version. Confirm to switch.",
+      "inviteConfirmOk": "Switch",
+      "inviteConfirmCancel": "Stay on stable",
+      "inviteChannelActive": "Current channel: beta channel",
+      "inviteCodesLabel": "Your invite codes",
+      "inviteCodesHint": "Each code works once, for one device.",
+      "inviteCopy": "Copy",
+      "platformCheckLabel": "Check for platform updates",
+      "platformCheckBtn": "Check"
     },
     "access": {
       "networkAccess": "LAN Access",
@@ -1732,6 +1880,45 @@
       "longtermSaved": "Long-term context saved",
       "saveDay": "Save this day",
       "daySaved": "Day saved",
+      "dream": {
+        "title": "Dream cleanup",
+        "hint": "Turn Key Facts and Long-term context into one memory per line, then merge duplicates and remove stale content",
+        "autoLabel": "Daily automatic Dream",
+        "autoHint": "Applies only to this Agent; off by default and runs at most once per logical day",
+        "run": "Organize current memory",
+        "running": "Organizing…",
+        "restore": "Restore version",
+        "view": "View result",
+        "success": "Completed {time}: {before} → {after} characters, {merged} merged, {forgotten} removed.",
+        "unchanged": "Checked {time}; there were no changes worth writing.",
+        "legacySuccess": "Completed {time}: {before} → {after} characters. This legacy run cannot verify its merge count.",
+        "revisions": {
+          "title": "Dream versions",
+          "listLabel": "Restorable versions",
+          "loading": "Loading versions…",
+          "empty": "There are no Dream versions to restore yet",
+          "manual": "Before manual cleanup",
+          "automatic": "Before automatic cleanup",
+          "preRestore": "Before restore",
+          "characters": "characters",
+          "noContent": "(No content)",
+          "restoreThis": "Restore this version",
+          "confirmHint": "The current version will be saved first, so this restore can be undone.",
+          "confirmRestore": "Confirm restore",
+          "cancel": "Cancel",
+          "close": "Close",
+          "restored": "The selected version was restored, and the previous current version was saved."
+        },
+        "failed": "Dream failed; the original memory was not changed",
+        "errors": {
+          "statusLoadFailed": "Dream status is temporarily unavailable. Try again shortly.",
+          "startFailed": "Dream could not start. Try again shortly.",
+          "autoSaveFailed": "The daily automatic Dream setting could not be saved. Try again shortly.",
+          "revisionsLoadFailed": "Dream versions are temporarily unavailable. Try again shortly.",
+          "revisionLoadFailed": "This Dream version could not be loaded. Try again shortly.",
+          "restoreFailed": "The Dream version could not be restored. Current memory was not changed."
+        }
+      },
       "sections": {
         "today": "Today",
         "week": "Earlier this week",
@@ -2050,6 +2237,7 @@
       "headersHint": "One KEY=value pair per line. Values are stored for connector requests and masked after saving.",
       "statusRunning": "Running",
       "statusStopped": "Stopped",
+      "statusDisabled": "Disabled",
       "statusConnecting": "Connecting",
       "statusReconnecting": "Reconnecting",
       "statusFailed": "Reconnect failed",
@@ -2062,7 +2250,6 @@
       "env": "Environment Variables",
       "envHint": "One KEY=value pair per line. Values are passed only to local stdio MCP server processes.",
       "timeout": "Timeout Seconds",
-      "autoStart": "Auto Start",
       "addConnector": "Add Connector",
       "updateConnector": "Update Connector",
       "importJson": "Import JSON",
@@ -2077,7 +2264,56 @@
       "removeConfirm": "Remove this connector? Saved per-agent switches will remain but no longer take effect.",
       "agentTitle": "Agent Configuration",
       "agentConnectorDesc": "Enable for the selected agent, just like skills.",
-      "saveError": "Save failed"
+      "saveError": "Save failed",
+      "enabledAgentsCount": "agent enabled",
+      "manage": "Manage",
+      "removeTitle": "Remove connector",
+      "connectionTitle": "Connection",
+      "permissionTitle": "Permissions",
+      "toolsTitle": "Tools",
+      "noTools": "No tools yet. Start the connector and refresh once to see them.",
+      "toolCollisionNotice": "{a} and {b} normalize to the same tool name, so both are disabled. Change a connector id, or have the server rename its tool.",
+      "toolCollisionSummary": "{count} tools normalize onto the same names as tools on {other}, so all of them are disabled. Change a connector id.",
+      "toolCollisionHostNotice": "{a} normalizes to the same name as the built-in status tool, so that tool is disabled. Rename it.",
+      "noToolMatches": "No matching tools",
+      "toolSearch": "Search tools",
+      "selectAll": "Select all",
+      "selectNone": "Select none",
+      "selectInvert": "Invert",
+      "badgeReadOnly": "Read-only",
+      "badgeDestructive": "Destructive",
+      "permissionAllow": "Allow without review",
+      "pinTool": "Always loaded",
+      "permissionMode": "Invocation review",
+      "permissionModeHint": "Every call is reviewed by default. Under allowlist, only the tools you allow one by one skip review.",
+      "permissionReviewAll": "Review everything",
+      "permissionAllowlist": "Allowlist",
+      "trustReadOnly": "Trust read-only declarations",
+      "trustReadOnlyHint": "Whether a tool is read-only is the server’s own claim, which Hana cannot verify. Once on, tools declared read-only stop being reviewed each time.",
+      "deferTitle": "Deferred loading",
+      "deferScopeNote": "These switches apply to every connector, not only this one.",
+      "deferEnabled": "Allow deferred loading",
+      "deferEnabledHint": "With many tools, give the model a catalog first and fetch the full description of a tool only when it is needed.",
+      "deferBuiltin": "Defer built-in tools too",
+      "deferBuiltinHint": "Built-in tools join the on-demand catalog as well. Eagerly loaded tools keep the model more proactive; turn this on only when context runs tight.",
+      "deferThreshold": "Threshold",
+      "deferThresholdHint": "The catalog is used only above this many enabled tools; below it, every tool is loaded directly.",
+      "agentConnectorEnabled": "Enabled for this agent",
+      "oauthWaiting": "Waiting for authorization in the browser",
+      "oauthWaitingHint": "The authorization page is open in your browser. This updates itself once you finish, and can be cancelled at any time.",
+      "oauthFailed": "Authorization failed",
+      "oauthTimeout": "Timed out waiting for authorization",
+      "importEmpty": "No connectors found",
+      "importPreviewHint": "Confirm what to import. Clear a checkbox to leave that entry out.",
+      "importParse": "Parse",
+      "importConfirm": "Import {count}",
+      "importItemOk": "Added",
+      "commandRequired": "Missing command",
+      "urlRequired": "Enter a URL",
+      "urlInvalid": "This URL cannot be parsed. Include the scheme, e.g. https://",
+      "urlScheme": "Only http and https URLs are supported",
+      "modeSwitchTitle": "Change connection type",
+      "modeSwitchBody": "Local and remote use separate settings. Switching clears the other set of fields, and a running connection is dropped."
     },
     "screenshot": {
       "title": "Screenshot Sharing",
@@ -2213,7 +2449,7 @@
       "exporting": "Exporting",
       "importing": "Importing",
       "noDescription": "This character card has no description.",
-      "noIshiki": "No Ishiki provided",
+      "noAgentsMd": "No AGENTS.md provided",
       "viewDetail": "View character card details",
       "memoryCount": "{count} memory items, optional {action}",
       "memoryCountExport": "export",
@@ -2467,7 +2703,8 @@
     "blockquote": "Blockquote",
     "codeBlock": "Code Block",
     "horizontalRule": "Horizontal Rule",
-    "list": "List"
+    "list": "List",
+    "blockActions": "Block actions"
   },
   "rightWorkspace": {
     "activity": {
@@ -2569,7 +2806,8 @@
       "deleteSelected": "Delete {count} items",
       "deleteN": "Delete {n} items",
       "newMdFile": "New Markdown Document",
-      "newFolder": "New Folder"
+      "newFolder": "New Folder",
+      "history": "File history"
     },
     "deleteConfirm": "Move \"{name}\" to the system Trash?",
     "deleteSelectedConfirm": "Move {count} selected items to the system Trash?",
@@ -2614,12 +2852,16 @@
   "browser": {
     "using": "Using browser",
     "close": "Close browser",
+    "open": "Open browser",
+    "collapse": "Collapse",
+    "closeForSession": "Close this session's browser",
     "closeBtn": "Close",
     "back": "Back",
     "forward": "Forward",
     "reload": "Reload",
     "newTab": "New Tab",
     "closeTab": "Close tab",
+    "emptyWorkspace": "No open tabs",
     "emergencyStop": "Emergency stop AI control",
     "backgroundHint": "Background browser running, click to view",
     "background": "Background browser"
@@ -2650,7 +2892,11 @@
     "openInSystemBrowser": "Open in system browser"
   },
   "notification": {
-    "turnCompletionBody": "This turn is complete"
+    "chatCompletionBody": "This chat turn is complete",
+    "scheduledTaskCompletionBody": "Scheduled task completed: {label}",
+    "scheduledTaskCompletionFailedBody": "Scheduled task failed: {label}",
+    "patrolCompletionBody": "Patrol completed: {label}",
+    "patrolCompletionFailedBody": "Patrol failed: {label}"
   },
   "error": {
     "pathsRequired": "paths array is required",
@@ -2706,6 +2952,7 @@
     "fetchError": "Fetch error: {msg}",
     "browserError": "Error: {msg}",
     "browserAlreadyRunning": "Browser is already running",
+    "browserAuthorizationRevoked": "The user has revoked authorization to use the browser.",
     "browserLaunched": "Browser launched",
     "browserNotRunning": "Browser is not running",
     "browserClosed": "Browser closed",
@@ -2847,6 +3094,7 @@
     "platformTestUnsupported": "Testing not supported for this platform",
     "codexNoHealthCheck": "Codex API does not support health check",
     "modelNotFound": "Model not found: {id}",
+    "modelContextTooLarge": "The new model's context window is too small for this conversation. Compact the conversation first, then switch models again.",
     "noUtilityModel": "Utility model not configured, please add one in settings",
     "noUtilityLargeModel": "utility_large model not configured, please add one in settings",
     "modelNoProvider": "{role} model \"{model}\" has no provider association",
@@ -2910,7 +3158,47 @@
     "stopTaskAlready": "Task {taskId} has already been stopped",
     "stopTaskNoHandler": "Task {taskId} does not support stopping",
     "stopTaskDone": "Task {taskId} has been stopped",
-    "regionUnavailable": "This area is temporarily unavailable"
+    "regionUnavailable": "This area is temporarily unavailable",
+    "detailShow": "Details",
+    "detailHide": "Hide",
+    "code": {
+      "unexpected": "That did not go through",
+      "sessionForkActiveTask": "A task is still running in this stretch of the conversation. Wait for it to finish, or branch from an earlier point.",
+      "sessionForkUnavailable": "This version cannot create branch sessions",
+      "subagentSessionForkCycle": "A subagent session cannot branch back into its own parent",
+      "subagentRunBusy": "The subagent is still running. Wait for it to finish.",
+      "subagentThreadBusy": "The subagent thread is busy. Try again shortly.",
+      "workflowRunBusy": "The workflow is still running. Wait for it to finish.",
+      "workflowNodeBusy": "That workflow node is busy. Try again shortly.",
+      "sessionCreateFailed": "Creating the session did not succeed. Try again shortly, and check your model and credentials in settings if it keeps happening.",
+      "sessionBusy": "This session is busy. Wait for the current operation to finish.",
+      "sessionNotLoaded": "The session has not finished loading. Try again shortly.",
+      "sessionIdentityConflict": "The session identity does not match. Refresh and try again.",
+      "sessionIdentityUnresolved": "Could not tell which session this message belongs to",
+      "sessionIdentityMismatch": "This message belongs to a different session",
+      "sessionManifestNotFound": "No record found for this session. It may have been deleted — refresh the list to check.",
+      "sessionManifestUnavailable": "The session index is temporarily unavailable. Try again shortly, and restart the app if it keeps happening.",
+      "sessionLocatorNotActive": "This session is no longer the current version. It may have been archived or moved — refresh the list and try again.",
+      "activeSessionConflict": "Another session is already in progress",
+      "sessionDeleteStagedConflict": "This session is being deleted and cannot be used right now",
+      "fileTooLarge": "The file is larger than the allowed size",
+      "invalidUpload": "The uploaded content could not be read",
+      "invalidPath": "That path is not valid",
+      "noAvailableModel": "No chat model is available. Configure a model and its credentials in settings first.",
+      "agentModelNotAvailable": "The model this assistant is set to use is unavailable. Pick a different one in settings.",
+      "workspaceNotFound": "That workspace could not be found",
+      "capabilityDenied": "This action is not authorized",
+      "dreamUnavailable": "Dream cleanup is temporarily unavailable for this Agent",
+      "dreamMemoryDisabled": "Enable memory for this Agent before running Dream",
+      "dreamMemoryBusy": "Memory maintenance is running in the background. Try again shortly.",
+      "dreamAlreadyRunning": "Dream cleanup is already running for this memory",
+      "dreamNoMemory": "There are no Key Facts or Long-term memories to organize yet",
+      "dreamMemoryChanged": "Memory changed during cleanup. Run Dream again.",
+      "dreamRevisionNotFound": "This Dream version could not be found. It may have been cleaned up.",
+      "dreamRestoreFailed": "The Dream version could not be restored. Current memory was not changed.",
+      "dreamRunFailed": "Dream cleanup failed. The original memory was not changed.",
+      "internalContract": "Something went wrong inside the app; this is not on you. The details are recorded and can be attached to a report"
+    }
   },
   "main": {
     "tray": {
@@ -3047,8 +3335,8 @@
       "imageDesc": "Reference image for image-to-video. Prefer a current-session object like { kind: \"session_file\", fileId }.",
       "durationDesc": "Video duration 4-15 seconds (default 5)",
       "ratioDesc": "Aspect ratio: 1:1, 16:9, 9:16, 4:3, 3:4, 21:9",
-      "modelDesc": "Model version: seedance2.0, seedance2.0fast (default seedance2.0)",
-      "providerDesc": "Specify provider (optional)",
+      "modelDesc": "Model ID or short name. Omit for ordinary generation so the configured default model is used; only set when the user explicitly names a model or an authorized override is needed",
+      "providerDesc": "Specify provider (optional). Omit for ordinary generation so the configured default provider is used; only set when the user explicitly names a provider or authorizes an override",
       "notInitialized": "Video generation plugin not initialized",
       "noProvider": "No available video generation provider",
       "submitFailed": "Video submission failed: {error}",
@@ -3152,6 +3440,7 @@
   },
   "sandbox": {
     "blocked": "[Security] {reason}\n\nThis operation was blocked by HanaAgent's sandbox security policy. This means the command crossed a path or permission boundary. Check the current workspace, the exact path syntax, and whether the target file belongs in an allowed workspace or session path. Explain the blocked path and reason to the user; discuss changing sandbox settings only if the user explicitly decides to do that.",
+    "blockedNeedsEscalation": "[Security] {reason}\n\nThis command was blocked in sandboxed mode. If it matters for the current task and is a read-only query, rerun it with sandbox_permissions=\"require_escalated\" and a one-sentence justification; the user will review it before it runs.",
     "noSudo": "sudo is not allowed",
     "noSu": "su user switching is not allowed",
     "noChmod": "Changing file permissions is not allowed",
@@ -3294,7 +3583,25 @@
       "attachmentDirName": "Attachments"
     }
   },
+  "fileHistory": {
+    "title": "File History",
+    "searchPlaceholder": "Search files…",
+    "deletedGroup": "Deleted files",
+    "empty": "No history yet",
+    "noVersions": "No versions for this file",
+    "selectVersion": "Select a version to see changes",
+    "restore": "Restore this version",
+    "restoreDone": "Restored",
+    "error": "Operation failed",
+    "origin": {
+      "event": "In-app edit",
+      "watcher": "External change",
+      "sweep": "Baseline snapshot",
+      "restore": "Restore"
+    }
+  },
   "preview": {
+    "fileHistory": "File history",
     "cover": {
       "saveImage": "Save image",
       "regenerateWithPrompt": "Generate image with custom prompt",
@@ -3352,6 +3659,16 @@
       "body": "Once confirmed, this folder will become an additional sandbox directory for the current conversation. It will not change the working directory or modify prompts.",
       "addLabel": "Add authorized directory",
       "removeLabel": "Remove authorized directory"
+    },
+    "mcpElicitation": {
+      "unsupportedField": "Unsupported field type",
+      "choose": "Choose…",
+      "requiredMissing": "Fill in the fields marked *"
+    },
+    "mcpTool": {
+      "allowForSession": "Don’t ask again this session",
+      "allowAlways": "Always allow this tool",
+      "grantFailed": "Could not remember this decision"
     }
   },
   "auth": {

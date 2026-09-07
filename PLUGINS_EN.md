@@ -50,6 +50,74 @@ python3 skills2set/hana-plugin-creator/scripts/create_hana_plugin.py "My Plugin"
 
 Debug order: install the local folder, inspect Settings diagnostics, finish README/manifest, then add an `OH-Plugins` marketplace entry when the plugin is ready to publish.
 
+### Agent-Assisted Dev Loop
+
+When an Agent such as Hana or Codex is building a plugin on the user's behalf,
+prefer the dev loop over copying a half-finished plugin into the real plugin
+directory:
+
+1. Keep the plugin source in the current workspace, or in `${HANA_HOME}/plugin-dev-sources/`.
+2. Call the EventBus `plugin.dev.install` or HTTP `POST /api/plugins/dev/install` to copy the source into `${HANA_HOME}/plugins-dev/<pluginId>` and load it.
+3. After editing the source, call `plugin.dev.reload` or `POST /api/plugins/dev/:id/reload`.
+4. To control the lifecycle, call `plugin.dev.disable`, `plugin.dev.enable`, `plugin.dev.reset`, `plugin.dev.uninstall`, or their HTTP counterparts: `PUT /api/plugins/dev/:id/enabled`, `POST /api/plugins/dev/:id/reset`, `DELETE /api/plugins/dev/:id`.
+5. Smoke-test tool plugins with `plugin.dev.invokeTool` or `POST /api/plugins/dev/:id/tools/:toolName/invoke`. Prefer passing `sessionId` or `sessionRef` in the call body; `sessionPath` is only a legacy locator kept for older plugins.
+6. For diagnostics, use `plugin.dev.diagnostics` or `GET /api/plugins/dev/diagnostics`.
+
+The Agent-visible dev tools are off by default. The user has to enable "allow
+Agent plugin development tools" under Settings → Plugins → Permissions. Only
+then does the Agent see `plugin_dev_install`, `plugin_dev_reload`,
+`plugin_dev_disable`, `plugin_dev_enable`, `plugin_dev_reset`,
+`plugin_dev_uninstall`, `plugin_dev_invoke_tool`, `plugin_dev_diagnostics`,
+`plugin_dev_list_surfaces`, `plugin_dev_describe_surface` and
+`plugin_dev_run_scenario`.
+
+Dev-mode permissions come from the dev slot Hana remembers, not from what the
+manifest declares for itself. `devRunId` is the run guard for one dev
+install/reload cycle; pass it to enable/disable/reset/uninstall so a stale
+context cannot act on a newer dev slot. Dev operations may only touch the
+runtime copy under `${HANA_HOME}/plugins-dev/`. They never write to
+`${HANA_HOME}/plugins/` and never pollute the disable preferences of a real
+installed plugin.
+
+A `full-access` dev plugin must pass `allowFullAccess: true` explicitly. The
+global community-plugin switch does not grant full access to dev-mode plugins.
+
+When debugging UI plugins, use `plugin.dev.listSurfaces` to find the page or
+widget, then `plugin.dev.describeSurfaceDebug` for an element-first debugging
+description. The Agent should read the accessibility tree, text, roles and
+labels and act on those semantic elements directly; screenshots are for visual
+confirmation, layout checks, or as a fallback when semantic information is
+insufficient.
+
+#### Dev Scenarios
+
+`manifest.json` may declare `dev.scenarios` for local development and Agent
+smoke tests only. The production runtime ignores this field group.
+
+```json
+{
+  "dev": {
+    "scenarios": [
+      {
+        "id": "hello-tool",
+        "steps": [
+          { "invokeTool": { "name": "hello", "input": { "name": "Hana" } } },
+          { "expectToolText": "hello Hana" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+An `invokeTool` step may carry `sessionId`, `sessionRef`, `sessionPath` and
+`agentId`. Of these, `sessionId` / `sessionRef` are the currently recommended
+session identity; `sessionPath` is kept only for legacy plugins and locator
+compatibility. The first phase supports `invokeTool`, `expectToolText` and
+`openSurface`. A scenario that mutates external state must declare
+`"destructive": true`, and the run must additionally pass
+`allowDestructive: true`.
+
 ## Installation & Management
 
 ### Installation Methods
@@ -444,8 +512,13 @@ Every HTTP request entering a plugin route gets its own request-level context, r
 app.post("/create-session", async (c) => {
   const reqCtx = c.get("pluginRequestContext");
   // reqCtx.principal        identity behind this request (owner device / this plugin's iframe surface…), null when invoked directly in tests
-  // reqCtx.agentId          current agent id injected by the proxy layer
+  // reqCtx.agentId          which agent this request belongs to; null means the
+  //                         surface belongs to no agent right now (a preview,
+  //                         for example) — it is not a stand-in for a default one
   // reqCtx.capabilityGrant  { accessLevel, declaredPermissions, legacyDeclaration }
+  if (!reqCtx.agentId) {
+    return c.json({ error: "this surface has no agent yet" }, 400);
+  }
   const result = await reqCtx.bus.request("session:create", { agentId: reqCtx.agentId });
   return c.json(result);
 });
@@ -1155,6 +1228,17 @@ The system ignores unrecognized directories and manifest fields. Old plugins alw
 - A single plugin's `onload()` failure does not block other plugins or system startup
 - A syntax error in a single tool/route/command file only affects that file
 - Failed plugins are marked `status: "failed"` and show error info on the plugins page
+
+## Diagnostics Panel
+
+The diagnostics button under Settings → Plugins reads `/api/plugins/diagnostics`
+and shows plugin load state, activation state, routes, tools, commands,
+configuration, EventBus capabilities, background tasks and scheduled tasks in
+one place. Plugin authors should look here first. If a plugin is loaded but
+`activationState` is still `inactive`, its lifecycle has not been triggered by
+the matching `activationEvents`. If a task sits in `recovering`, the host
+restored the task record after an app restart, but the plugin still has to
+re-register its handler in `onload()` and restore its own business state.
 
 ## Concurrency
 

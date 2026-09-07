@@ -285,6 +285,41 @@ export type HanaToolSessionPermissionKind =
   | 'review'
   | string;
 
+export type HanaToolInvocationKind = 'read' | 'routine' | 'review';
+
+export type HanaToolInvocationTargetType =
+  | 'url'
+  | 'browser_tab'
+  | 'background_task'
+  | 'channel'
+  | 'channel_draft'
+  | 'agent'
+  | 'notification_route'
+  | 'setting'
+  | 'memory_store'
+  | 'pinned_memory_item'
+  | 'pinned_memory_query'
+  | 'experience_category'
+  | 'session_files'
+  | 'terminal_process';
+
+export interface HanaToolInvocationTarget {
+  type: HanaToolInvocationTargetType;
+  /** Exact wildcard-free identity, limited by the host to 4096 characters. */
+  id: string;
+  /** Display-only label for reviewer context. */
+  label?: string;
+}
+
+export interface HanaToolInvocationDescriptor {
+  action: string;
+  kind: HanaToolInvocationKind;
+  /** Stable capability id in the form `<tool-name>.<action>`. */
+  capability: string;
+  target?: HanaToolInvocationTarget;
+  sideEffect?: Record<string, unknown>;
+}
+
 export interface HanaToolSessionPermission<Input = unknown> {
   /**
    * True means the tool only reads already-authorized data and may run in
@@ -303,6 +338,17 @@ export interface HanaToolSessionPermission<Input = unknown> {
   description?: string;
   sideEffect?: Record<string, unknown>;
   describeSideEffect?: (input: Input) => Record<string, unknown> | null | undefined;
+  /**
+   * Synchronously classify one concrete invocation. Return null for an
+   * unsupported action or invalid target so the host can fail closed.
+   * Promise/thenable results are consumed safely and rejected. The descriptor
+   * action is the resolver's stable permission action; the host does not infer
+   * it from an optional input.action field or require those strings to match.
+   *
+   * Actor, server, and session identity are host-owned and must not appear in
+   * the returned descriptor or sideEffect metadata.
+   */
+  resolveInvocation?: (input: Input) => HanaToolInvocationDescriptor | null;
 }
 
 export interface HanaToolDefinition<Input = unknown, Output = unknown> {

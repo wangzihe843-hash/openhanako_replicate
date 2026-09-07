@@ -12,15 +12,13 @@
  */
 
 import { getReasoningProfile, getThinkingFormat } from "../../shared/model-capabilities.ts";
-import {
-  ensureReasoningContentForToolCalls as ensureReasoningContentForToolCallsBase,
-  stripReasoningContent,
-} from "./reasoning-content-replay.ts";
+import { stripReasoningContent } from "./reasoning-content-replay.ts";
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 const MFJS_PARENT_ANNOTATION_KEYS = new Set(["description", "default"]);
 const ROOT_ANY_OF_ARGUMENT_GUIDANCE_PREFIX = "Arguments must satisfy one of these required field sets:";
 const KIMI_FOR_CODING_UTILITY_TEMPERATURE = 0.6;
+const KIMI_MODELS_WITHOUT_TEMPERATURE = new Set(["k3", "k3-256k"]);
 
 export function matches(model) {
   if (!model || typeof model !== "object") return false;
@@ -42,6 +40,10 @@ function usesFixedKimiCodingUtilityTemperature(model, options) {
     && lower(model?.id) === "kimi-for-coding";
 }
 
+function omitsTemperature(model) {
+  return KIMI_MODELS_WITHOUT_TEMPERATURE.has(lower(model?.id));
+}
+
 function reasoningEffortForLevel(level, model = null) {
   const normalized = lower(level);
   const mapKey = normalized === "max" ? "xhigh" : normalized;
@@ -58,7 +60,7 @@ function reasoningEffortForLevel(level, model = null) {
 }
 
 function normalizeThinking(thinking) {
-  const next: { type: string; keep?: unknown } = { type: "enabled" };
+  const next: { type: string; keep?: unknown } = { type: "enabled", keep: "all" };
   if (thinking && typeof thinking === "object" && !Array.isArray(thinking) && hasOwn(thinking, "keep")) {
     next.keep = thinking.keep;
   }
@@ -96,10 +98,6 @@ function shouldEnableThinking(payload, model, options) {
     || payload.thinking
     || reasoningEffortForLevel(options?.reasoningLevel, model)
   );
-}
-
-function ensureReasoningContentForToolCalls(messages) {
-  return ensureReasoningContentForToolCallsBase(messages, { providerLabel: "Kimi" });
 }
 
 function isPlainObject(value) {
@@ -261,7 +259,9 @@ export function apply(payload, model, options: Record<string, unknown> = {}) {
     editable().tools = normalizedTools;
   }
 
-  if (usesFixedKimiCodingUtilityTemperature(model, options)) {
+  if (omitsTemperature(model) && hasOwn(next, "temperature")) {
+    delete editable().temperature;
+  } else if (usesFixedKimiCodingUtilityTemperature(model, options)) {
     editable().temperature = KIMI_FOR_CODING_UTILITY_TEMPERATURE;
   }
 
@@ -285,9 +285,6 @@ export function apply(payload, model, options: Record<string, unknown> = {}) {
   if (effort) {
     p.reasoning_effort = effort;
   }
-
-  const messages = ensureReasoningContentForToolCalls(p.messages);
-  if (messages !== p.messages) p.messages = messages;
 
   return next;
 }

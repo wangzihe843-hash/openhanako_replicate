@@ -86,12 +86,27 @@ function createSchema(properties, required = []) {
   };
 }
 
-function createPluginDevTool({ name, description, parameters, service, handler }) {
+function createPluginDevTool({
+  name,
+  description,
+  parameters,
+  service,
+  handler,
+  permissionAction,
+  permissionKind = "review",
+}) {
   return {
     name,
     description,
     parameters,
     metadata: { pluginDevTool: true },
+    sessionPermission: {
+      resolveInvocation: () => ({
+        action: permissionAction,
+        kind: permissionKind,
+        capability: `${name}.${permissionAction}`,
+      }),
+    },
     execute: async (...args) => {
       const params = args[1] || {};
       const runtimeCtx = findRuntimeCtx(args);
@@ -120,6 +135,7 @@ export function createPluginDevTools({ pluginDevService, getAgentId }: { pluginD
         pluginId: { type: "string", description: "Optional expected plugin id from manifest.json." },
         allowFullAccess: { type: "boolean", description: "Temporarily allow full-access while this dev slot is loaded." },
       }, ["sourcePath"]),
+      permissionAction: "install",
       handler: ({ params, service }) => service.installFromSource({
         sourcePath: params.sourcePath,
         pluginId: params.pluginId,
@@ -135,6 +151,7 @@ export function createPluginDevTools({ pluginDevService, getAgentId }: { pluginD
         devRunId: { type: "string", description: "Optional active dev run id guard." },
         allowFullAccess: { type: "boolean" },
       }, ["pluginId"]),
+      permissionAction: "reload",
       handler: ({ params, service }) => service.reloadPlugin(params.pluginId, {
         devRunId: params.devRunId,
         allowFullAccess: params.allowFullAccess,
@@ -149,6 +166,7 @@ export function createPluginDevTools({ pluginDevService, getAgentId }: { pluginD
         devRunId: { type: "string", description: "Optional active dev run id guard." },
         allowFullAccess: { type: "boolean" },
       }, ["pluginId"]),
+      permissionAction: "enable",
       handler: ({ params, service }) => service.enablePlugin(params.pluginId, {
         devRunId: params.devRunId,
         allowFullAccess: params.allowFullAccess,
@@ -162,6 +180,7 @@ export function createPluginDevTools({ pluginDevService, getAgentId }: { pluginD
         pluginId: { type: "string" },
         devRunId: { type: "string", description: "Optional active dev run id guard." },
       }, ["pluginId"]),
+      permissionAction: "disable",
       handler: ({ params, service }) => service.disablePlugin(params.pluginId, {
         devRunId: params.devRunId,
       }),
@@ -175,6 +194,7 @@ export function createPluginDevTools({ pluginDevService, getAgentId }: { pluginD
         devRunId: { type: "string", description: "Optional active dev run id guard." },
         allowFullAccess: { type: "boolean" },
       }, ["pluginId"]),
+      permissionAction: "reset",
       handler: ({ params, service }) => service.resetPlugin(params.pluginId, {
         devRunId: params.devRunId,
         allowFullAccess: params.allowFullAccess,
@@ -188,6 +208,7 @@ export function createPluginDevTools({ pluginDevService, getAgentId }: { pluginD
         pluginId: { type: "string" },
         devRunId: { type: "string", description: "Optional active dev run id guard." },
       }, ["pluginId"]),
+      permissionAction: "uninstall",
       handler: ({ params, service }) => service.uninstallPlugin(params.pluginId, {
         devRunId: params.devRunId,
       }),
@@ -205,6 +226,7 @@ export function createPluginDevTools({ pluginDevService, getAgentId }: { pluginD
         sessionPath: { type: "string" },
         agentId: { type: "string" },
       }, ["pluginId", "toolName"]),
+      permissionAction: "invoke",
       handler: ({ params, runtimeCtx, service }) => {
         const sessionTarget = normalizeSessionTarget(params, runtimeCtx);
         return service.invokeTool({
@@ -223,6 +245,8 @@ export function createPluginDevTools({ pluginDevService, getAgentId }: { pluginD
       parameters: createSchema({
         pluginId: { type: "string" },
       }),
+      permissionAction: "diagnose",
+      permissionKind: "read",
       handler: ({ params, service }) => service.getDiagnostics(params.pluginId),
     }),
     createPluginDevTool({
@@ -232,6 +256,8 @@ export function createPluginDevTools({ pluginDevService, getAgentId }: { pluginD
       parameters: createSchema({
         pluginId: { type: "string" },
       }),
+      permissionAction: "list",
+      permissionKind: "read",
       handler: ({ params, service }) => service.listSurfaces(params.pluginId),
     }),
     createPluginDevTool({
@@ -243,6 +269,8 @@ export function createPluginDevTools({ pluginDevService, getAgentId }: { pluginD
         kind: { type: "string" },
         route: { type: "string" },
       }, ["pluginId"]),
+      permissionAction: "describe",
+      permissionKind: "read",
       handler: ({ params, service }) => service.describeSurfaceDebug(params),
     }),
     createPluginDevTool({
@@ -254,6 +282,7 @@ export function createPluginDevTools({ pluginDevService, getAgentId }: { pluginD
         scenarioId: { type: "string" },
         allowDestructive: { type: "boolean" },
       }, ["pluginId", "scenarioId"]),
+      permissionAction: "run",
       handler: ({ params, service }) => service.runScenario(params),
     }),
   ];

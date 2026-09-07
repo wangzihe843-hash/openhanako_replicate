@@ -3,13 +3,20 @@
 import '@testing-library/jest-dom/vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatTranscript } from '../../components/chat/ChatTranscript';
 import { useStore } from '../../stores';
 import type { ChatListItem, ContentBlock, ToolCall } from '../../stores/chat-types';
 
 const sessionPath = '/session/process-fold.jsonl';
+const retryMock = vi.fn(async (..._args: unknown[]) => true);
+
+vi.mock('../../stores/message-turn-actions', () => ({
+  retrySessionTurn: (...args: unknown[]) => retryMock(...args),
+  forkSessionTurn: vi.fn(async () => null),
+  activateForkedSession: vi.fn(async () => undefined),
+}));
 
 function t(key: string, vars?: Record<string, string | number>): string {
   const table: Record<string, string> = {
@@ -24,16 +31,18 @@ function t(key: string, vars?: Record<string, string | number>): string {
     'processFold.tools': '{n} 个工具',
     'processFold.thinking': '{n} 次思考',
     'processFold.unsuccessful': '{n} 次尝试未成功',
+    'common.regenerate': '重新生成',
+    'common.forkSession': '分支为新会话',
   };
   return (table[key] || key).replace(/\{(\w+)\}/g, (_, name) => String(vars?.[name] ?? ''));
 }
 
 function user(id: string): ChatListItem {
-  return { type: 'message', data: { id, role: 'user', text: '做一下' } };
+  return { type: 'message', data: { id, sourceEntryId: `entry-${id}`, role: 'user', text: '做一下' } };
 }
 
 function assistant(id: string, blocks: ContentBlock[]): ChatListItem {
-  return { type: 'message', data: { id, role: 'assistant', blocks } };
+  return { type: 'message', data: { id, sourceEntryId: `entry-${id}`, role: 'assistant', blocks } };
 }
 
 function thinking(content = '过程思考'): ContentBlock {
@@ -73,6 +82,33 @@ describe('ProcessFoldBlock', () => {
 
   afterEach(() => {
     cleanup();
+    vi.clearAllMocks();
+  });
+
+  it('exposes retry and fork on a collapsed process-only turn completion', () => {
+    render(
+      <ChatTranscript
+        items={[
+          user('u1'),
+          assistant('a1', [thinking('第一步'), toolGroup([tool('read')])]),
+          assistant('a2', [thinking('第二步'), toolGroup([tool('write')])]),
+          assistant('a3', [thinking('第三步'), toolGroup([tool('verify')])]),
+        ]}
+        sessionPath={sessionPath}
+        enableProcessFold
+      />,
+    );
+
+    const footer = screen.getByTestId('process-fold-completion-actions');
+    expect(within(footer).getByTitle('重新生成')).toBeInTheDocument();
+    expect(within(footer).getByTitle('分支为新会话')).toBeInTheDocument();
+    fireEvent.click(within(footer).getByTitle('重新生成'));
+
+    expect(retryMock).toHaveBeenCalledWith(
+      sessionPath,
+      { role: 'assistant', entryId: 'entry-a3' },
+      { message: expect.objectContaining({ id: 'u1', sourceEntryId: 'entry-u1', text: '做一下' }) },
+    );
   });
 
   it('collapses process-only assistant runs and expands original blocks in place', () => {

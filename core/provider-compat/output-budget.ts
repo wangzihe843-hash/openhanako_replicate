@@ -5,7 +5,7 @@
  * details stay in provider-compat/<provider>.js modules.
  */
 
-const SDK_IMPLICIT_MAX_TOKENS_CAP = 32000;
+export const DEFAULT_CHAT_OUTPUT_TOKENS = 65_536;
 const OUTPUT_CAP_FIELDS = [
   "max_completion_tokens",
   "max_tokens",
@@ -91,13 +91,10 @@ function hasOutputCap(payload) {
 function resolveOutputCapField(model) {
   const explicit = model?.compat?.outputCapField;
   if (typeof explicit === "string" && OUTPUT_CAP_FIELD_SET.has(explicit)) return explicit;
+  // Responses 协议的输出预算字段是 max_output_tokens；发 max_tokens 会被静默忽略。
+  const api = lower(model?.api);
+  if (api === "openai-responses" || api === "openai-codex-responses") return "max_output_tokens";
   return "max_tokens";
-}
-
-function isImplicitSdkOutputCap(value, model) {
-  const modelLimit = getModelOutputLimit(model);
-  if (!modelLimit) return false;
-  return positiveInteger(value) === Math.min(modelLimit, SDK_IMPLICIT_MAX_TOKENS_CAP);
 }
 
 function resolveOutputBudgetSource(options: Record<string, any> = {}) {
@@ -114,44 +111,66 @@ export function resolveOutputBudgetPolicy(model, options: Record<string, any> = 
   const source = resolveOutputBudgetSource(options);
   const capability = resolveOutputCapCapability(model);
   const preserveForSource = PRESERVED_OUTPUT_BUDGET_SOURCES.has(source);
-  const removeImplicitSdkDefault = mode !== "utility"
-    && !preserveForSource
-    && !capability.required
-    && !capability.preserveImplicitSdkDefault;
+  const modelLimit = getModelOutputLimit(model);
+  const defaultMaxTokens = Math.min(modelLimit ?? DEFAULT_CHAT_OUTPUT_TOKENS, DEFAULT_CHAT_OUTPUT_TOKENS);
+  const applyChatDefault = mode === "chat" && !preserveForSource;
+  // `before_provider_request` sees the final serialized payload. Most current
+  // serializers include the SDK-derived cap, but optional providers may omit
+  // it. An absent field in ordinary chat still means Hana's default policy,
+  // not an invitation to fall back to an unknown provider default.
+  const synthesizeChatDefault = applyChatDefault;
 
   return {
     mode,
     source,
     capability,
     preserveForSource,
-    removeImplicitSdkDefault,
+    modelLimit,
+    defaultMaxTokens,
+    applyChatDefault,
+    synthesizeChatDefault,
   };
 }
 
 /**
- * Remove Pi SDK's hidden default output cap from providers where the field is
- * optional. This preserves provider-native defaults while keeping required
- * providers and official DeepSeek thinking handling intact.
+ * Normalize the final serialized request budget.
+ *
+ * Pi SDK already tightens its derived maxTokens to the remaining context before
+ * this hook runs. Hana therefore only lowers an existing default-derived cap to
+ * its own 64K target; it never raises a smaller value. User/system-owned values
+ * may exceed that default target, but still cannot exceed the model's declared
+ * output capability.
  */
 export function normalizeImplicitOutputBudget(payload, model, options: Record<string, any> = {}) {
   if (!payload || typeof payload !== "object") return payload;
   const policy = resolveOutputBudgetPolicy(model, options);
   let next = payload;
 
-  if (policy.capability.required && !hasOutputCap(next)) {
-    const modelLimit = getModelOutputLimit(model);
-    if (modelLimit !== null) {
-      next = { ...next, [resolveOutputCapField(model)]: modelLimit };
+  const hasPromptInput = Array.isArray(next.messages)
+    || Array.isArray(next.input)
+    || typeof next.input === "string";
+  if (!hasOutputCap(next) && hasPromptInput) {
+    const synthesizedCap = (policy.synthesizeChatDefault || (policy.applyChatDefault && policy.capability.required))
+      ? policy.defaultMaxTokens
+      : (policy.capability.required ? policy.modelLimit : null);
+    if (synthesizedCap !== null) {
+      next = { ...next, [resolveOutputCapField(model)]: synthesizedCap };
     }
   }
 
-  if (!policy.removeImplicitSdkDefault) return next;
+  const upperBound = policy.applyChatDefault
+    ? policy.defaultMaxTokens
+    : policy.modelLimit;
+  if (upperBound === null) return next;
 
   for (const field of OUTPUT_CAP_FIELDS) {
     if (!Object.prototype.hasOwnProperty.call(next, field)) continue;
-    if (!isImplicitSdkOutputCap(next[field], model)) continue;
+    const current = positiveInteger(next[field]);
+    if (current === null) continue;
+    const bounded = Math.min(current, upperBound);
+    if (bounded === current) continue;
     if (next === payload) next = { ...payload };
-    delete next[field];
+    next[field] = bounded;
   }
 
   return next;

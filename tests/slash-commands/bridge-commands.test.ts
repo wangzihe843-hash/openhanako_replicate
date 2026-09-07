@@ -14,6 +14,9 @@ function makeCtx( overrides: any = {}) {
       compact: vi.fn(async () => {}),
       freshCompact: vi.fn(async () => {}),
     },
+    engine: {
+      getRuntimeContext: () => ({ studioId: "studio-a" }),
+    },
     reply: vi.fn(async () => {}),
     ...overrides,
   };
@@ -183,14 +186,17 @@ describe("/apply", () => {
     };
     const ctx = makeCtx({
       args: "",
-      engine: { automationSuggestionStore },
+      engine: {
+        automationSuggestionStore,
+        getRuntimeContext: () => ({ studioId: "studio-a" }),
+      },
     });
 
     const r = await apply.handler(ctx);
 
     expect(automationSuggestionStore.apply).toHaveBeenCalledWith({
+      studioId: "studio-a",
       bridgeSessionKey: "tg_dm_x@a1",
-      sessionPath: null,
       ref: null,
     });
     expect((r as any).reply).toMatch(/已创建自动任务.*Tea reminder/);
@@ -206,17 +212,80 @@ describe("/apply", () => {
     };
     const ctx = makeCtx({
       args: "3827",
-      engine: { getAutomationSuggestionStore: () => automationSuggestionStore },
+      engine: {
+        getAutomationSuggestionStore: () => automationSuggestionStore,
+        getRuntimeContext: () => ({ studioId: "studio-a" }),
+      },
     });
 
     const r = await apply.handler(ctx);
 
     expect(automationSuggestionStore.apply).toHaveBeenCalledWith({
+      studioId: "studio-a",
       bridgeSessionKey: "tg_dm_x@a1",
-      sessionPath: null,
       ref: "3827",
     });
     expect((r as any).reply).toMatch(/已创建自动任务.*Lunch reminder/);
+  });
+
+  it("applies a desktop automation suggestion by stable session id", async () => {
+    const automationSuggestionStore = {
+      apply: vi.fn(async () => ({
+        ok: true,
+        suggestion: { jobData: { label: "Desktop reminder" } },
+        result: { id: "job_desktop" },
+      })),
+    };
+    const ctx = makeCtx({
+      sessionRef: {
+        kind: "desktop",
+        agentId: "a1",
+        sessionId: "sess_desktop",
+        sessionPath: "/sessions/desktop.jsonl",
+      },
+      engine: {
+        automationSuggestionStore,
+        getRuntimeContext: () => ({ studioId: "studio-a" }),
+      },
+    });
+
+    const r = await apply.handler(ctx);
+
+    expect(automationSuggestionStore.apply).toHaveBeenCalledWith({
+      studioId: "studio-a",
+      sessionId: "sess_desktop",
+      ref: null,
+    });
+    expect((r as any).reply).toMatch(/已创建自动任务.*Desktop reminder/);
+  });
+
+  it("refuses path-only desktop apply instead of treating the locator as identity", async () => {
+    const automationSuggestionStore = { apply: vi.fn() };
+    const ctx = makeCtx({
+      sessionRef: {
+        kind: "desktop",
+        agentId: "a1",
+        sessionPath: "/sessions/legacy.jsonl",
+      },
+      engine: { automationSuggestionStore },
+    });
+
+    const r = await apply.handler(ctx);
+
+    expect(automationSuggestionStore.apply).not.toHaveBeenCalled();
+    expect((r as any).reply).toMatch(/只能在当前会话/);
+  });
+
+  it("refuses to apply when the current Studio identity is unavailable", async () => {
+    const automationSuggestionStore = { apply: vi.fn() };
+    const ctx = makeCtx({
+      engine: { automationSuggestionStore },
+    });
+
+    const r = await apply.handler(ctx);
+
+    expect(automationSuggestionStore.apply).not.toHaveBeenCalled();
+    expect((r as any).reply).toMatch(/Studio 身份不可用/);
   });
 
   it("reports when the current bridge session has no pending automation suggestions", async () => {
@@ -226,7 +295,10 @@ describe("/apply", () => {
 
     const r = await apply.handler(makeCtx({
       args: "",
-      engine: { automationSuggestionStore },
+      engine: {
+        automationSuggestionStore,
+        getRuntimeContext: () => ({ studioId: "studio-a" }),
+      },
     }));
 
     expect((r as any).reply).toMatch(/没有待创建/);

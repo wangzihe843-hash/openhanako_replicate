@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import YAML from "js-yaml";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderRegistry } from "../core/provider-registry.ts";
 
 let tmpHome;
@@ -54,8 +54,22 @@ describe("ProviderRegistry media capabilities", () => {
     expect(byId.has("minimax-token-plan")).toBe(false);
     expect(byId.get("gemini")?.models).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "gemini-2.5-flash-image", protocolId: "gemini-generate-content-image" }),
-      expect.objectContaining({ id: "gemini-3.1-flash-image-preview", protocolId: "gemini-generate-content-image" }),
+      expect.objectContaining({ id: "gemini-3.1-flash-image", protocolId: "gemini-generate-content-image" }),
+      expect.objectContaining({ id: "gemini-3-pro-image", protocolId: "gemini-generate-content-image" }),
     ]));
+    expect(byId.get("gemini")?.models.map((model) => model.id)).not.toContain("gemini-3.1-flash-image-preview");
+    expect(byId.get("gemini")?.models.map((model) => model.id)).not.toContain("gemini-3-pro-image-preview");
+    expect(byId.get("volcengine")?.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "doubao-seedream-5-0-lite-260128", displayName: "Seedream 5.0 Lite" }),
+      expect.objectContaining({ id: "doubao-seedream-5-0-260128", displayName: "Seedream 5.0" }),
+    ]));
+    expect(registry.resolveMediaModel({
+      providerId: "gemini",
+      modelId: "gemini-3.1-flash-image-preview",
+      capability: "image_generation",
+    })).toMatchObject({
+      model: expect.objectContaining({ id: "gemini-3.1-flash-image" }),
+    });
   });
 
   it("exposes media parameters and reference-image limits at model/mode granularity", () => {
@@ -120,7 +134,7 @@ describe("ProviderRegistry media capabilities", () => {
     ]);
 
     const gemini25 = gemini?.models.find((model) => model.id === "gemini-2.5-flash-image");
-    const gemini31 = gemini?.models.find((model) => model.id === "gemini-3.1-flash-image-preview");
+    const gemini31 = gemini?.models.find((model) => model.id === "gemini-3.1-flash-image");
     const gemini25ImageMode = gemini25?.modes?.find((mode) => mode.id === "image2image");
     const gemini31ImageMode = gemini31?.modes?.find((mode) => mode.id === "image2image");
     expect(gemini25?.modes?.[0]?.parameterSchema.properties).not.toHaveProperty("resolution");
@@ -183,14 +197,15 @@ describe("ProviderRegistry media capabilities", () => {
       default: "1K",
     });
 
-    expect(prop("gemini", "gemini-3.1-flash-image-preview", "text2image", "resolution")).toMatchObject({
+    expect(prop("gemini", "gemini-3.1-flash-image", "text2image", "resolution")).toMatchObject({
       enum: ["512", "1K", "2K", "4K"],
-      default: "4K",
+      default: "1K",
     });
-    expect(prop("gemini", "gemini-3.1-flash-image-preview", "text2image", "ratio")).toMatchObject({
+    expect(prop("gemini", "gemini-3.1-flash-image", "text2image", "ratio")).toMatchObject({
       default: "3:2",
     });
-    expect(defaults("gemini", "gemini-3.1-flash-image-preview")).toMatchObject({ ratio: "3:2", resolution: "4K" });
+    expect(defaults("gemini", "gemini-3.1-flash-image")).toMatchObject({ ratio: "3:2", resolution: "1K" });
+    expect(defaults("gemini", "gemini-3-pro-image")).toMatchObject({ ratio: "3:2", resolution: "1K" });
 
     expect(prop("volcengine", "doubao-seedream-3-0-t2i", "text2image", "resolution")).toMatchObject({
       enum: ["1K"],
@@ -201,6 +216,10 @@ describe("ProviderRegistry media capabilities", () => {
       default: "4K",
     });
     expect(defaults("volcengine", "doubao-seedream-5-0-lite-260128")).toMatchObject({ ratio: "3:2", resolution: "4K" });
+    expect(prop("volcengine", "doubao-seedream-5-0-260128", "text2image", "resolution")).toMatchObject({
+      enum: ["1K", "2K", "4K"],
+      default: "4K",
+    });
 
     expect(prop("minimax", "image-01", "text2image", "ratio")).toMatchObject({ default: "3:2" });
     expect(prop("minimax", "image-01", "text2image", "resolution")).toBeUndefined();
@@ -278,6 +297,22 @@ describe("ProviderRegistry media capabilities", () => {
       api: "openai-completions",
     });
     expect(registry.getDefaultModels("opencode-go")).toEqual(["glm-5.2"]);
+  });
+
+  it("exposes OpenCode Zen with model-owned wire protocols", () => {
+    const registry = new ProviderRegistry(tmpHome);
+    registry.reload();
+
+    expect(registry.get("opencode")).toMatchObject({
+      id: "opencode",
+      displayName: "OpenCode Zen",
+      baseUrl: "https://opencode.ai/zen",
+      api: "anthropic-messages",
+    });
+    expect(registry.getDefaultModelEntries("opencode")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "claude-sonnet-4-6", api: "anthropic-messages" }),
+      expect.objectContaining({ id: "gpt-5.4", api: "openai-responses" }),
+    ]));
   });
 
   it("uses MiniMax Token Plan credentials as a MiniMax image generation lane", () => {
@@ -469,6 +504,216 @@ describe("ProviderRegistry media capabilities", () => {
       providerId: "jimeng-cli",
       projection: "none",
     });
+  });
+
+  it("replaces declared CLI models with a refreshed runtime capability snapshot", async () => {
+    const registry = new ProviderRegistry(tmpHome);
+    registry.registerProviderContribution({
+      id: "runtime-cli",
+      displayName: "Runtime CLI",
+      authType: "none",
+      _pluginId: "runtime-cli",
+      capabilities: {
+        chat: { projection: "none" },
+        media: {
+          imageGeneration: {
+            models: [{ id: "declared-old", protocolId: "runtime-cli-images" }],
+          },
+        },
+      },
+    });
+    registry.reload();
+
+    const refresh = vi.fn(async () => ({
+      version: "2.0.0",
+      fingerprint: "runtime-cli:2.0.0",
+      media: {
+        imageGeneration: {
+          defaultModelId: "discovered-new",
+          models: [{
+            id: "discovered-new",
+            displayName: "Discovered New",
+            protocolId: "runtime-cli-images",
+            modes: [{ id: "text2image" }],
+          }],
+        },
+      },
+    }));
+    registry.registerRuntimeMediaCapabilitySource("runtime-cli", { refresh }, { pluginId: "runtime-cli" });
+
+    await expect(registry.refreshRuntimeMediaCapabilities({
+      providerId: "runtime-cli",
+      capability: "image_generation",
+    })).resolves.toEqual(expect.objectContaining({
+      "runtime-cli": expect.objectContaining({ status: "ready" }),
+    }));
+
+    expect(refresh).toHaveBeenCalledWith(expect.objectContaining({
+      providerId: "runtime-cli",
+      capability: "image_generation",
+    }));
+    expect(registry.getMediaModels("runtime-cli", "image_generation")).toEqual([
+      expect.objectContaining({ id: "discovered-new", protocolId: "runtime-cli-images" }),
+    ]);
+    expect(registry.getMediaProviders("image_generation")).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        providerId: "runtime-cli",
+        runtimeCapability: expect.objectContaining({
+          status: "ready",
+          version: "2.0.0",
+        }),
+      }),
+    ]));
+    expect(registry.getRuntimeMediaCapabilityState("runtime-cli")).not.toHaveProperty("fingerprint");
+    expect(() => registry.addMediaModel("runtime-cli", "image_generation", {
+      id: "manual-model",
+      protocolId: "runtime-cli-images",
+    })).toThrow(/runtime-discovered.*manual model changes/i);
+    expect(() => registry.updateMediaModelEntry(
+      "runtime-cli",
+      "image_generation",
+      "discovered-new",
+      { displayName: "Manual Rename" },
+    )).toThrow(/runtime-discovered.*manual model changes/i);
+    expect(() => registry.removeMediaModel("runtime-cli", "image_generation", "discovered-new"))
+      .toThrow(/runtime-discovered.*manual model changes/i);
+  });
+
+  it("keeps CLI discovery failures explicit instead of exposing stale declarations", async () => {
+    const registry = new ProviderRegistry(tmpHome);
+    registry.registerProviderContribution({
+      id: "runtime-cli",
+      displayName: "Runtime CLI",
+      authType: "none",
+      _pluginId: "runtime-cli",
+      capabilities: {
+        chat: { projection: "none" },
+        media: {
+          videoGeneration: {
+            models: [{ id: "declared-old", protocolId: "runtime-cli-videos" }],
+          },
+        },
+      },
+    });
+    registry.reload();
+    registry.registerRuntimeMediaCapabilitySource("runtime-cli", {
+      refresh: async () => {
+        throw Object.assign(new Error("CLI help output could not be parsed"), {
+          code: "cli_capabilities_unavailable",
+        });
+      },
+    }, { pluginId: "runtime-cli" });
+
+    await registry.refreshRuntimeMediaCapabilities({
+      providerId: "runtime-cli",
+      capability: "video_generation",
+    });
+
+    expect(registry.getMediaModels("runtime-cli", "video_generation")).toEqual([]);
+    expect(registry.getMediaProviders("video_generation")).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        providerId: "runtime-cli",
+        models: [],
+        runtimeCapability: expect.objectContaining({
+          status: "error",
+          error: expect.objectContaining({
+            code: "cli_capabilities_unavailable",
+            message: "CLI help output could not be parsed",
+          }),
+        }),
+      }),
+    ]));
+    expect(registry.getMediaProviders("speech_recognition"))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ providerId: "runtime-cli" })]));
+    expect(registry.getMediaProviderCredentialStatus("runtime-cli", "video_generation")).toMatchObject({
+      hasCredentials: false,
+      unavailableReason: "cli_capabilities_unavailable",
+    });
+    expect(() => registry.resolveMediaModel({
+      providerId: "runtime-cli",
+      modelId: "declared-old",
+      capability: "video_generation",
+    })).toThrow(/CLI help output could not be parsed/);
+  });
+
+  it("retains the last runtime snapshot as stale when a later refresh fails", async () => {
+    const registry = new ProviderRegistry(tmpHome);
+    registry.registerProviderContribution({
+      id: "runtime-cli",
+      displayName: "Runtime CLI",
+      authType: "none",
+      _pluginId: "runtime-cli",
+      capabilities: {
+        chat: { projection: "none" },
+        media: { imageGeneration: { models: [] } },
+      },
+    });
+    registry.reload();
+    let shouldFail = false;
+    registry.registerRuntimeMediaCapabilitySource("runtime-cli", {
+      refresh: async () => {
+        if (shouldFail) throw new Error("CLI was upgraded while Hana was running");
+        return {
+          media: {
+            imageGeneration: {
+              models: [{ id: "discovered", protocolId: "runtime-cli-images" }],
+            },
+          },
+        };
+      },
+    }, { pluginId: "runtime-cli" });
+
+    await registry.refreshRuntimeMediaCapabilities({ providerId: "runtime-cli" });
+    shouldFail = true;
+    await registry.refreshRuntimeMediaCapabilities({ providerId: "runtime-cli" });
+
+    expect(registry.getMediaModels("runtime-cli", "image_generation")).toEqual([
+      expect.objectContaining({ id: "discovered" }),
+    ]);
+    expect(registry.getRuntimeMediaCapabilityState("runtime-cli")).toMatchObject({
+      status: "stale",
+      error: expect.objectContaining({ message: "CLI was upgraded while Hana was running" }),
+    });
+    expect(registry.getMediaProviderCredentialStatus("runtime-cli", "image_generation")).toMatchObject({
+      hasCredentials: false,
+      unavailableReason: "runtime_capability_refresh_failed",
+    });
+  });
+
+  it("does not publish an in-flight snapshot after its plugin source is unregistered", async () => {
+    const registry = new ProviderRegistry(tmpHome);
+    registry.registerProviderContribution({
+      id: "runtime-cli",
+      displayName: "Runtime CLI",
+      authType: "none",
+      _pluginId: "runtime-cli",
+      capabilities: {
+        chat: { projection: "none" },
+        media: { imageGeneration: { models: [] } },
+      },
+    });
+    registry.reload();
+    let releaseRefresh: (snapshot: any) => void = () => {};
+    registry.registerRuntimeMediaCapabilitySource("runtime-cli", {
+      refresh: () => new Promise((resolve) => {
+        releaseRefresh = resolve;
+      }),
+    }, { pluginId: "runtime-cli" });
+
+    const pending = registry.refreshRuntimeMediaCapabilities({ providerId: "runtime-cli" });
+    registry.unregisterRuntimeMediaCapabilitySource("runtime-cli", { pluginId: "runtime-cli" });
+    releaseRefresh({
+      fingerprint: { path: "/private/runtime-cli", version: "1", mtimeMs: 1, size: 1 },
+      media: {
+        imageGeneration: {
+          models: [{ id: "late-model", protocolId: "runtime-cli-images" }],
+        },
+      },
+    });
+    await pending;
+
+    expect(registry.getRuntimeMediaCapabilityState("runtime-cli")).toBeNull();
+    expect(registry.getMediaModels("runtime-cli", "image_generation")).toEqual([]);
   });
 });
 

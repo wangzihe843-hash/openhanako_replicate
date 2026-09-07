@@ -37,11 +37,21 @@ describe("cards route", () => {
     expect(get.status).toBe(404);
   });
 
-  it("never attaches a Content-Security-Policy header (inline scripts must run)", async () => {
+  it("allows inline card code while blocking every external side-effect channel", async () => {
     const app = buildApp();
     await putCard(app, "c_csp", { code: "<div>x</div>" });
     const get = await app.request("/api/cards/c_csp");
-    expect(get.headers.get("content-security-policy")).toBeNull();
+    const csp = get.headers.get("content-security-policy");
+
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("sandbox allow-scripts");
+    expect(csp).toContain("script-src 'unsafe-inline'");
+    expect(csp).toContain("style-src 'unsafe-inline'");
+    expect(csp).toContain("connect-src 'none'");
+    expect(csp).toContain("frame-src 'none'");
+    expect(csp).toContain("form-action 'none'");
+    expect(csp).toContain("navigate-to 'none'");
+    expect(csp).not.toMatch(/https?:/);
   });
 
   it("rejects PUT without code (no silent fallback)", async () => {

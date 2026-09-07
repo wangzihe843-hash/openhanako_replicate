@@ -7,6 +7,7 @@
 import fs from "fs";
 import path from "path";
 import { callText } from "./llm-client.ts";
+import { callTextConfigFromUtilityConfig } from "./model-execution-config.ts";
 import { callTextWithLengthContract, type OutputLengthContract } from "./output-length-contract.ts";
 import { getLocale } from "../lib/i18n.ts";
 import { normalizePlainDescription } from "../lib/text/internal-narration.ts";
@@ -38,8 +39,8 @@ export const getToolArgs = (b) => b.input || b.arguments;
  * 统一的 utility LLM 调用
  * @param {object} opts
  * @param {string} opts.model
- * @param {string} opts.api_key
- * @param {string} opts.base_url
+ * @param {string} opts.apiKey
+ * @param {string} opts.baseUrl
  * @param {Array} opts.messages
  * @param {number} [opts.temperature=0.3]
  * @param {number} [opts.max_tokens] 任务级输出预算；未传时不写 output cap
@@ -49,8 +50,8 @@ export const getToolArgs = (b) => b.input || b.arguments;
 async function callLlm({
   model,
   api,
-  api_key,
-  base_url,
+  apiKey,
+  baseUrl,
   headers,
   messages,
   temperature = 0.3,
@@ -65,8 +66,8 @@ async function callLlm({
 }: {
   model: any;
   api: any;
-  api_key: any;
-  base_url: any;
+  apiKey: any;
+  baseUrl: any;
   headers?: any;
   messages: any;
   temperature?: number;
@@ -81,8 +82,8 @@ async function callLlm({
 }): Promise<string> {
   const request = {
     api, model,
-    apiKey: api_key,
-    baseUrl: base_url,
+    apiKey,
+    baseUrl,
     headers,
     messages, temperature,
     ...(max_tokens != null && { maxTokens: max_tokens, outputBudgetSource }),
@@ -217,8 +218,8 @@ export function buildLocalSummary(assistantText, toolCalls) {
 export async function summarizeTitle(utilConfig, userText, assistantText, opts: { timeoutMs?: number; signal?: AbortSignal } = {}) {
   try {
     const isZh = getLocale().startsWith("zh");
-    const { utility: model, api_key, base_url, api } = utilConfig;
-    if (!api_key || !base_url || !api) return null;
+    const execution = callTextConfigFromUtilityConfig(utilConfig);
+    if (!execution.model || !execution.baseUrl || !execution.api) return null;
 
     const systemContent = isZh
       ? `你是一个对话标题生成器。根据用户和助手的第一轮对话，用一句极短的话概括对话主题。
@@ -240,7 +241,7 @@ Rules:
     const assistantLabel = isZh ? "助手" : "Assistant";
 
     return await callLlm({
-      model, api, api_key, base_url,
+      ...execution,
       messages: [
         { role: "system", content: systemContent },
         {
@@ -278,11 +279,11 @@ export async function translateSkillNames(utilConfig, names, lang) {
   const LANG_LABEL = { zh: "中文", ja: "日本語", ko: "한국어" };
   const label = LANG_LABEL[lang] || lang;
   try {
-    const { utility: model, api_key, base_url, api } = utilConfig;
-    if (!api_key || !base_url || !api) return {};
+    const execution = callTextConfigFromUtilityConfig(utilConfig);
+    if (!execution.model || !execution.baseUrl || !execution.api) return {};
     const isZh = getLocale().startsWith("zh");
     const text = await callLlm({
-      model, api, api_key, base_url,
+      ...execution,
       messages: [
         {
           role: "system",
@@ -334,8 +335,8 @@ export async function summarizeActivity(utilConfig, sessionPath, emitDevLog, pre
           ? `\n\n调用的工具：${[...new Set(toolCalls)].join("、")}`
           : `\n\nTools used: ${[...new Set(toolCalls)].join(", ")}`)
       : "";
-    const { utility_large: model, large_api_key: api_key, large_base_url: base_url, large_api: api } = utilConfig;
-    if (!api_key || !base_url || !api) {
+    const execution = callTextConfigFromUtilityConfig(utilConfig, "utility_large");
+    if (!execution.model || !execution.baseUrl || !execution.api) {
       log("[summarize] utility_large config incomplete, skipping");
       return null;
     }
@@ -364,10 +365,7 @@ Rules:
     const { text } = await callTextWithLengthContract({
       callText,
       request: {
-        api, model,
-        apiKey: api_key,
-        baseUrl: base_url,
-        headers: undefined,
+        ...execution,
         signal: undefined,
         messages: [
           { role: "system", content: systemContent },
@@ -413,8 +411,8 @@ export async function summarizeActivityQuick(utilConfig, sessionPath) {
     });
     if (!userText && !assistantText) return null;
 
-    const { utility: model, api_key, base_url, api } = utilConfig;
-    if (!api_key || !base_url || !api) return null;
+    const execution = callTextConfigFromUtilityConfig(utilConfig);
+    if (!execution.model || !execution.baseUrl || !execution.api) return null;
 
     const systemContent = isZh
       ? `根据 Agent 的巡检上下文和执行结果，用一两句话概括它做了什么。目标约 30 字，可在 18-60 字之间自然浮动。中文，直接输出。`
@@ -426,10 +424,7 @@ export async function summarizeActivityQuick(utilConfig, sessionPath) {
     const { text } = await callTextWithLengthContract({
       callText,
       request: {
-        api, model,
-        apiKey: api_key,
-        baseUrl: base_url,
-        headers: undefined,
+        ...execution,
         signal: undefined,
         messages: [
           { role: "system", content: systemContent },
@@ -508,9 +503,9 @@ export async function generateAgentId(utilConfig, name, agentsDir) {
 
   try {
     const isZh = getLocale().startsWith("zh");
-    const { utility: model, api_key, base_url, api } = utilConfig;
+    const execution = callTextConfigFromUtilityConfig(utilConfig);
     const text = await callLlm({
-      model, api, api_key, base_url,
+      ...execution,
       messages: [
         {
           role: "system",
@@ -572,14 +567,14 @@ Examples:
 /**
  * 为 agent 生成能力描述摘要
  * @param {object} utilConfig - resolveUtilityConfig() 返回值
- * @param {string} personality - Agent.descriptionSource 全文（identity + ishiki，不含 yuan 运行协议）
+ * @param {string} personality - Agent.descriptionSource 全文（identity + AGENTS.md，不含 yuan 运行协议）
  * @param {string} locale - agent 的 config.locale（"zh" / "en" 等）
  * @returns {Promise<string|null>}
  */
 export async function generateDescription(utilConfig, personality, locale) {
   try {
-    const { utility: model, api_key, base_url, api } = utilConfig;
-    if (!api_key || !base_url || !api) return null;
+    const execution = callTextConfigFromUtilityConfig(utilConfig);
+    if (!execution.model || !execution.baseUrl || !execution.api) return null;
 
     const isZh = String(locale || "").startsWith("zh");
     const systemContent = isZh
@@ -587,7 +582,7 @@ export async function generateDescription(utilConfig, personality, locale) {
       : "You are a third-person product roster editor. Based on the public persona material below, write a public-facing description of this AI agent. Aim for about 100 characters; 60-200 characters is acceptable. Describe the assistant from the outside, not in first person. Cover personality traits, expertise, communication style, and suitable tasks. Do not output <mood>, Vibe, Sparks, Pulse, Reflect, or any internal tags. Plain text, no markdown. Output the description directly, no explanation.";
 
     const raw = await callLlm({
-      model, api, api_key, base_url,
+      ...execution,
       messages: [
         { role: "system", content: systemContent },
         { role: "user", content: personality.slice(0, 3000) },

@@ -66,14 +66,14 @@ export function formatWorkspaceScopePrompt({ primaryCwd, workspaceFolders, local
       "## 工作区范围",
       "",
       scope.primaryCwd
-        ? `当前工作目录：${scope.primaryCwd}`
-        : "当前工作目录：未设置",
-      "相对路径默认按当前工作目录解析。",
+        ? `主工作台：${scope.primaryCwd}`
+        : "主工作台：未设置",
+      "主工作台是本次会话处理项目文件时的主要工作区。",
     ];
     if (scope.workspaceFolders.length > 0) {
-      lines.push("额外文件夹：");
+      lines.push("外部工作区文件夹（同属本次会话的项目范围）：");
       for (const folder of scope.workspaceFolders) lines.push(`- ${folder}`);
-      lines.push("这些文件夹也在本次会话的沙盒授权范围内；引用它们时使用绝对路径。");
+      lines.push("这些文件夹位于主工作台之外，各自保留独立的工作区边界。");
     }
     return lines.join("\n");
   }
@@ -82,14 +82,14 @@ export function formatWorkspaceScopePrompt({ primaryCwd, workspaceFolders, local
     "## Workspace Scope",
     "",
     scope.primaryCwd
-      ? `Current working directory: ${scope.primaryCwd}`
-      : "Current working directory: not set",
-    "Relative paths resolve against the current working directory.",
+      ? `Primary workbench: ${scope.primaryCwd}`
+      : "Primary workbench: not set",
+    "The primary workbench is the main workspace for project files in this session.",
   ];
   if (scope.workspaceFolders.length > 0) {
-    lines.push("Extra folders:");
+    lines.push("External workspace folders (also part of this session's project scope):");
     for (const folder of scope.workspaceFolders) lines.push(`- ${folder}`);
-    lines.push("These folders are also authorized for this session; use absolute paths when referring to them.");
+    lines.push("These folders are outside the primary workbench and keep their own workspace boundaries.");
   }
   return lines.join("\n");
 }

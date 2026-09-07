@@ -1,5 +1,12 @@
 /**
  * @vitest-environment jsdom
+ *
+ * 注意：这个文件把 settings/api 整个 mock 掉了，假的 hanaFetch 不带 status 语义
+ * ——它对任何响应都直接把 body 交给调用方，而真的 hanaFetch 会在非 2xx 时先抛出
+ * 带错误码的异常。所以这里适合测加载编排（竞态、abort、状态清理），**不适合**测
+ * 错误路径：在这儿写的错误用例锁的是假契约，产线上根本不会那样跑（已经发生过一次）。
+ * 错误呈现的用例一律写进 switch-agent-error-boundary.test.ts，那边只 stub 全局
+ * fetch，让请求走真实边界。
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -59,7 +66,6 @@ function resetState() {
     pluginAllowFullAccess: undefined,
     pluginDevToolsEnabled: undefined,
     pluginUserDir: '',
-    pluginSettingsTabs: [],
     set: vi.fn((patch: Record<string, unknown>) => Object.assign(mockState, patch)),
     getSettingsAgentId: () => mockState.settingsAgentId || mockState.currentAgentId,
     showToast: vi.fn(),
@@ -72,10 +78,10 @@ function buildPayload(agentId: string, endpoint: string) {
       return { agent: { id: agentId, name: `${agentId}-name` }, desk: { home_folder: `/${agentId}/home` } };
     case 'identity':
       return { content: `${agentId}-identity` };
-    case 'ishiki':
-      return { content: `${agentId}-ishiki` };
-    case 'public-ishiki':
-      return { content: `${agentId}-public-ishiki` };
+    case 'agents-md':
+      return { content: `${agentId}-agents-md` };
+    case 'public-agents-md':
+      return { content: `${agentId}-public-agents-md` };
     case 'pinned':
       return { pins: [`${agentId}-pin`] };
     case 'experience':
@@ -239,15 +245,19 @@ describe('settings actions', () => {
             desk: { home_folder: '/agent-a/home' },
           },
           identity: 'agent-a-identity',
-          ishiki: 'agent-a-ishiki',
-          publicIshiki: 'agent-a-public',
+          agents: 'agent-a-agents-md',
+          publicAgents: 'agent-a-public',
           userProfile: 'user-profile',
           experience: 'agent-a-experience',
           pinned: { pins: ['agent-a-pin'] },
           globalModels: { models: { utility: { id: 'u' }, utility_large: { id: 'ul' } } },
           preferences: {
             quickChat: { shortcut: 'CommandOrControl+Shift+K', reuseTimeoutMinutes: 12 },
-            notifications: { turnCompletion: 'when_session_unfocused' },
+            notifications: {
+              chatCompletion: 'when_session_unfocused',
+              scheduledTaskCompletion: 'always',
+              patrolCompletion: 'when_unfocused',
+            },
             bridge: { permissionMode: 'operate', readOnly: false, receiptEnabled: true },
             speechRecognition: { enabled: true, defaultModel: { provider: 'dashscope', id: 'qwen3-asr' } },
             experiments: [{ id: 'provider.deepseek_roleplay_reasoning_patch', owner: 'provider', value: true }],
@@ -271,8 +281,8 @@ describe('settings actions', () => {
     expect(mockState.settingsConfig).toMatchObject({
       agent: { name: 'Agent A' },
       _identity: 'agent-a-identity',
-      _ishiki: 'agent-a-ishiki',
-      _publicIshiki: 'agent-a-public',
+      _agents: 'agent-a-agents-md',
+      _publicAgents: 'agent-a-public',
       _userProfile: 'user-profile',
       _experience: 'agent-a-experience',
     });
@@ -282,7 +292,6 @@ describe('settings actions', () => {
     expect(mockState.pluginSettingsStatus).toBe('ready');
     expect(mockState.pluginAllowFullAccess).toBe(true);
     expect(mockState.pluginDevToolsEnabled).toBe(true);
-    expect(mockState.pluginSettingsTabs).toHaveLength(1);
   });
 
   it('clears same-owner stale snapshot data while a fresh settings snapshot is loading', async () => {
@@ -297,7 +306,6 @@ describe('settings actions', () => {
     mockState.pluginAllowFullAccess = false;
     mockState.pluginDevToolsEnabled = false;
     mockState.pluginUserDir = '/old/plugins';
-    mockState.pluginSettingsTabs = [{ pluginId: 'old', id: 'old-tab', title: 'Old', nativeComponent: 'OldSettings' }];
     mockState.settingsSnapshot = {
       key: 'local:snapshot:agent-a',
       status: 'ready',
@@ -305,8 +313,8 @@ describe('settings actions', () => {
         agentId: 'agent-a',
         config: { agent: { id: 'agent-a', name: 'Stale Agent' }, keep_awake: false },
         identity: 'old-identity',
-        ishiki: '',
-        publicIshiki: '',
+        agents: '',
+        publicAgents: '',
         userProfile: '',
         experience: '',
         pinned: { pins: ['old-pin'] },
@@ -354,14 +362,13 @@ describe('settings actions', () => {
     expect(mockState.currentPins).toEqual([]);
     expect(mockState.pluginAllowFullAccess).toBeUndefined();
     expect(mockState.pluginDevToolsEnabled).toBeUndefined();
-    expect(mockState.pluginSettingsTabs).toEqual([]);
 
     resolveSnapshot(jsonResponse({
       agentId: 'agent-a',
       config: { agent: { id: 'agent-a', name: 'Fresh Agent' }, keep_awake: true },
       identity: 'fresh-identity',
-      ishiki: '',
-      publicIshiki: '',
+      agents: '',
+      publicAgents: '',
       userProfile: '',
       experience: '',
       pinned: { pins: ['fresh-pin'] },

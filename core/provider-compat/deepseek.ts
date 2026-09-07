@@ -24,6 +24,7 @@
  */
 
 import { getReasoningProfile, getThinkingFormat } from "../../shared/model-capabilities.ts";
+import { resolveMissingOutputBudget } from "./deepseek-thinking-budget.ts";
 import {
   ensureAssistantContentForToolCalls,
   ensureReasoningContentForToolCalls as ensureReasoningContentForToolCallsBase,
@@ -33,9 +34,6 @@ import {
 
 export { ensureAssistantContentForToolCalls, extractReasoningFromContent };
 
-const DEEPSEEK_HIGH_THINKING_BUDGET = 32768;
-const DEEPSEEK_HIGH_SAFE_MAX_TOKENS = 65536;
-const DEEPSEEK_MAX_SAFE_MAX_TOKENS = 131072;
 const DEEPSEEK_ROLEPLAY_MARKER_SIGNATURES = [
   "〖角色沉浸要求〗",
   "[Role immersion instruction]",
@@ -58,6 +56,9 @@ function positiveInteger(value) {
 
 export function matches(model) {
   if (!model || typeof model !== "object") return false;
+  // Responses 协议归 ./deepseek-responses.ts。这里显式排除，避免模型被显式声明
+  // compat.thinkingFormat = "deepseek" 时绕过 dispatcher 的前置顺序落回本模块。
+  if (lower(model.api) === "openai-responses") return false;
   if (getThinkingFormat(model) === "deepseek") return true;
   const provider = lower(model.provider);
   // base_url: 兼容上游 SDK 偶发的 snake_case 别名（pi-ai SDK / 用户自定 model 配置）
@@ -86,10 +87,21 @@ function isThinkingOff(level) {
   return level === "off" || level === "none" || level === "disabled";
 }
 
+/**
+ * Hana 思考档位 → DeepSeek reasoning_effort。
+ *
+ * 官方取值只有 low / high（默认）/ max，且服务端自己会把 medium 归到 high、
+ * xhigh 归到 max，所以这里只需要处理 DeepSeek 词汇表里没有的档位：minimal
+ * 归到最接近的 low。低档不再被吞成 high —— low 是官方有效档位。
+ *
+ * 注意 deepseek-v4-pro 目前把 low 当 high 处理，那是服务端的降级，不在这里预判。
+ * 文档：https://api-docs.deepseek.com/zh-cn/api/create-chat-completion
+ */
 function reasoningEffortForLevel(level) {
   if (!level) return null;
   if (level === "xhigh" || level === "max") return "max";
-  if (level === "minimal" || level === "low" || level === "medium" || level === "high") return "high";
+  if (level === "minimal" || level === "low") return "low";
+  if (level === "medium" || level === "high") return "high";
   return null;
 }
 
@@ -124,12 +136,16 @@ function shouldUseThinking(payload, model, reasoningLevel) {
   );
 }
 
+/**
+ * 把 payload 里已有的 effort 收敛到 DeepSeek 词汇表。
+ *
+ * medium / xhigh 服务端自己会映射，留着也对；只有 minimal 是 DeepSeek 完全不认
+ * 的 OpenAI 专有档位，需要归到 low。
+ */
 function normalizeReasoningEffort(payload) {
   if (!hasOwn(payload, "reasoning_effort")) return;
-  if (payload.reasoning_effort === "low" || payload.reasoning_effort === "medium") {
-    payload.reasoning_effort = "high";
-  } else if (payload.reasoning_effort === "xhigh") {
-    payload.reasoning_effort = "max";
+  if (payload.reasoning_effort === "minimal") {
+    payload.reasoning_effort = "low";
   }
 }
 
@@ -239,22 +255,17 @@ function normalizeMaxTokenField(payload) {
   delete payload.max_completion_tokens;
 }
 
-function ensureThinkingTokenBudget(payload, model) {
-  const current = positiveInteger(payload.max_tokens);
-  if (current && current > DEEPSEEK_HIGH_THINKING_BUDGET) return;
-
-  const modelLimit = positiveInteger(model?.maxTokens || model?.maxOutput);
-  const desired = payload.reasoning_effort === "max"
-    ? DEEPSEEK_MAX_SAFE_MAX_TOKENS
-    : DEEPSEEK_HIGH_SAFE_MAX_TOKENS;
-  const target = modelLimit ? Math.min(modelLimit, desired) : desired;
-
-  if (target <= DEEPSEEK_HIGH_THINKING_BUDGET) {
-    disableThinking(payload);
-    return;
+/**
+ * 请求完全没带输出预算时补一个，已有的数值不动。
+ *
+ * payload 里的 max_tokens 来自 SDK 的 clampMaxTokensToContext，已经是
+ * `min(模型输出上限, 剩余窗口 - 安全余量)`。值小只说明剩余窗口紧张，这时放大
+ * 只会把请求推过窗口边界（输入和输出共用同一个上下文窗口）。
+ */
+function ensureOutputBudget(payload, model) {
+  if (positiveInteger(payload.max_tokens) === null) {
+    payload.max_tokens = resolveMissingOutputBudget(model);
   }
-
-  payload.max_tokens = target;
 }
 
 /**
@@ -396,23 +407,13 @@ export function apply(payload, model, options: Record<string, any> = {}) {
   applyRequestedReasoningLevel(p, reasoningLevel);
   normalizeReasoningEffort(p);
   enableThinking(p);
-  ensureThinkingTokenBudget(p, model);
-  if (p.thinking?.type === "disabled") {
-    return next;
-  }
+  ensureOutputBudget(p, model);
 
   if (shouldInjectRoleplayReasoningPatch(p, model, options)) {
     const patchedMessages = injectRoleplayReasoningMarker(p.messages, options);
     if (patchedMessages !== p.messages) {
       p.messages = patchedMessages;
     }
-  }
-
-  // chat mode 思考开启：严格校验 tool_calls 历史的 reasoning_content（覆盖 transform-messages 降级）。
-  // 守卫与上方 off-path / utility-path 风格对称；此处 p 已是副本，去掉守卫直接赋值也对，但保持三处同形便于阅读。
-  const ensured = ensureReasoningContentForToolCalls(p.messages);
-  if (ensured !== p.messages) {
-    p.messages = ensured;
   }
 
   const contentEnsured = ensureAssistantContentForToolCalls(p.messages);

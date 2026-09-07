@@ -4,13 +4,15 @@
 
 import { useState, useCallback } from 'react';
 import { LOCALES } from '../constants';
-import { saveLocale } from '../onboarding-actions';
-import type { HanaFetch } from '../onboarding-actions';
+import { describeOnboardingError, saveLocale } from '../onboarding-actions';
+import type { HanaFetch, OnboardingVerificationPlan } from '../onboarding-actions';
 import { StepContainer, Multiline } from '../onboarding-ui';
 
 interface LocaleStepProps {
   preview: boolean;
   hanaFetch: HanaFetch;
+  agentId: string;
+  verificationPlan: OnboardingVerificationPlan;
   avatarSrc: string;
   initialLocale: string;
   goToStep: (index: number) => void;
@@ -20,7 +22,7 @@ interface LocaleStepProps {
 }
 
 export function LocaleStep({
-  preview, hanaFetch, avatarSrc, initialLocale,
+  preview, hanaFetch, agentId, verificationPlan, avatarSrc, initialLocale,
   goToStep, showError, onLocaleChange, onConnectLanServer,
 }: LocaleStepProps) {
   const [locale, setLocale] = useState(initialLocale);
@@ -38,13 +40,15 @@ export function LocaleStep({
   const onNext = useCallback(async () => {
     if (!preview) {
       try {
-        await saveLocale(hanaFetch, locale);
+        await saveLocale(hanaFetch, agentId, locale, verificationPlan);
       } catch (err) {
         console.error('[onboarding] save locale failed:', err);
+        showError(describeOnboardingError(err, t('onboarding.error')));
+        return;
       }
     }
     goToStep(1);
-  }, [preview, hanaFetch, locale, goToStep]);
+  }, [preview, hanaFetch, agentId, locale, verificationPlan, goToStep, showError]);
 
   const connectExistingServer = useCallback(async () => {
     if (!serverUrl.trim() || !serverKey.trim() || connecting) return;

@@ -140,6 +140,31 @@ describe("known-models dictionary", () => {
       image: true,
       reasoning: true,
     });
+    for (const [id, name] of [
+      ["claude-opus-5", "Claude Opus 5"],
+      ["claude-sonnet-5", "Claude Sonnet 5"],
+    ]) {
+      expect(lookupKnown("anthropic", id)).toMatchObject({
+        name,
+        context: 1000000,
+        maxOutput: 128000,
+        image: true,
+        reasoning: true,
+        xhigh: true,
+        compat: {
+          thinkingFormat: "anthropic",
+          reasoningProfile: "anthropic-adaptive-only",
+        },
+      });
+      expect(lookupKnown("unknown-provider", `anthropic/${id}`)).toMatchObject({
+        name,
+        context: 1000000,
+        maxOutput: 128000,
+        image: true,
+        reasoning: true,
+        xhigh: true,
+      });
+    }
     expect(lookupKnown("anthropic", "claude-fable-5")).toMatchObject({
       name: "Claude Fable 5",
       context: 1000000,
@@ -176,6 +201,23 @@ describe("known-models dictionary", () => {
         reasoningProfile: "openrouter-anthropic-adaptive",
       },
     });
+    for (const [id, name] of [
+      ["anthropic/claude-opus-5", "Anthropic/Claude Opus 5"],
+      ["anthropic/claude-sonnet-5", "Anthropic/Claude Sonnet 5"],
+    ]) {
+      expect(lookupKnown("openrouter", id)).toMatchObject({
+        name,
+        context: 1000000,
+        maxOutput: 128000,
+        image: true,
+        reasoning: true,
+        xhigh: true,
+        compat: {
+          thinkingFormat: "openrouter",
+          reasoningProfile: "openrouter-anthropic-adaptive",
+        },
+      });
+    }
     expect(lookupKnown("unknown-provider", "anthropic/claude-mythos-5")).toMatchObject({
       name: "Claude Mythos 5",
       context: 1000000,
@@ -352,6 +394,46 @@ describe("known-models dictionary", () => {
     });
   });
 
+  it("declares official Kimi K3 metadata while keeping the stable default model", () => {
+    const k3 = lookupKnownProvider("kimi-coding", "k3");
+    const k3_256k = lookupKnownProvider("kimi-coding", "k3-256k");
+    expect(k3).toMatchObject({
+      name: "Kimi K3",
+      context: 1048576,
+      image: true,
+      reasoning: true,
+      thinkingLevels: ["medium", "high", "max"],
+      thinkingLevelMap: {
+        off: null,
+        low: "low",
+        medium: "low",
+        high: "high",
+        xhigh: "max",
+      },
+      defaultThinkingLevel: "max",
+    });
+    expect(k3_256k).toMatchObject({
+      name: "Kimi K3 256K",
+      context: 262144,
+      image: true,
+      reasoning: true,
+      thinkingLevels: ["medium", "high", "max"],
+      thinkingLevelMap: {
+        off: null,
+        low: "low",
+        medium: "low",
+        high: "high",
+        xhigh: "max",
+      },
+      defaultThinkingLevel: "high",
+    });
+    expect(k3).not.toHaveProperty("video");
+    expect(k3).not.toHaveProperty("maxOutput");
+    expect(k3_256k).not.toHaveProperty("video");
+    expect(k3_256k).not.toHaveProperty("maxOutput");
+    expect(defaultModels["kimi-coding"]).toEqual(["kimi-for-coding"]);
+  });
+
   it("declares official Moonshot Kimi K2.6 video capability", () => {
     expect(lookupKnown("moonshot", "kimi-k2.6")).toMatchObject({
       name: "Kimi K2.6",
@@ -449,5 +531,39 @@ describe("known-models dictionary", () => {
 
   it("does not treat arbitrary provider-specific entries as generic fallbacks", () => {
     expect(lookupKnown("unknown-provider", "openrouter/auto")).toBeNull();
+  });
+
+  it("declares DeepSeek V4 Flash Vision (Exp) as image-capable on the official DeepSeek provider", () => {
+    expect(lookupKnown("deepseek", "deepseek-v4-flash-vision-exp")).toMatchObject({
+      name: "DeepSeek V4 Flash Vision (Exp)",
+      context: 1000000,
+      maxOutput: 384000,
+      image: true,
+      reasoning: true,
+      xhigh: true,
+    });
+  });
+
+  it("declares DeepSeek V4's official three-tier thinking ladder, dropping the unsupported medium", () => {
+    for (const id of ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"]) {
+      expect(lookupKnown("deepseek", id)).toMatchObject({
+        thinkingLevels: ["off", "low", "high", "max"],
+        defaultThinkingLevel: "high",
+      });
+    }
+  });
+
+  it("also reaches DeepSeek V4 Flash Vision (Exp) through the generic fallback table, without inheriting DeepSeek's protocol-level thinking ladder", () => {
+    expect(lookupKnownWithSource("unknown-proxy", "deepseek-v4-flash-vision-exp")).toEqual({
+      source: "fallback",
+      metadata: {
+        name: "DeepSeek V4 Flash Vision (Exp)",
+        context: 1000000,
+        maxOutput: 384000,
+        image: true,
+        reasoning: true,
+        xhigh: true,
+      },
+    });
   });
 });

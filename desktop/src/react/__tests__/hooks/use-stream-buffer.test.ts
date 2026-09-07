@@ -107,6 +107,48 @@ describe('streamBufferManager.snapshot', () => {
     invalidateStreamBuffer(PATH);
     expect(snapshotStreamBuffer(PATH)).toBeNull();
   });
+
+  it('turn_end binds persisted Pi entry ids to the live user and assistant messages', () => {
+    streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: 'reply' });
+    const assistantBefore = getAssistantMessage();
+    expect(assistantBefore?.sourceEntryId).toBeUndefined();
+
+    streamBufferManager.handle({
+      type: 'turn_end',
+      sessionPath: PATH,
+      turnInputEntryId: 'entry-user-1',
+      userEntryId: 'entry-user-1',
+      assistantEntryId: 'entry-assistant-1',
+    });
+
+    const items = getItems().filter((item) => item.type === 'message');
+    expect(items[0]?.type === 'message' ? items[0].data.sourceEntryId : null).toBe('entry-user-1');
+    expect(getAssistantMessage()?.sourceEntryId).toBe('entry-assistant-1');
+    expect(getAssistantMessage()?.turnInputEntryId).toBe('entry-user-1');
+  });
+
+  it('turn_end never overwrites a visible user with a hidden background input id', () => {
+    useStore.getState().initSession(PATH, [{
+      type: 'message',
+      data: { id: 'u1', role: 'user', text: 'hi', sourceEntryId: 'entry-visible-user' },
+    }], false);
+    streamBufferManager.handle({ type: 'text_delta', sessionPath: PATH, delta: 'background reply' });
+
+    streamBufferManager.handle({
+      type: 'turn_end',
+      sessionPath: PATH,
+      turnInputEntryId: 'entry-hidden-background-input',
+      userEntryId: null,
+      assistantEntryId: 'entry-background-assistant',
+    });
+
+    const visibleUser = getItems().find((item) => item.type === 'message' && item.data.role === 'user');
+    expect(visibleUser?.type === 'message' ? visibleUser.data.sourceEntryId : null).toBe('entry-visible-user');
+    expect(getAssistantMessage()).toMatchObject({
+      sourceEntryId: 'entry-background-assistant',
+      turnInputEntryId: 'entry-hidden-background-input',
+    });
+  });
 });
 
 describe('streamBufferManager.thinking 流式刷新', () => {
@@ -290,6 +332,30 @@ describe('streamBufferManager.ensureMessage 自愈', () => {
       expect.objectContaining({ id: 'call_a', name: 'echo', done: false }),
       expect.objectContaining({ id: 'call_b', name: 'echo', done: true, success: true }),
     ]);
+  });
+
+  it('tool_end keeps the live failure outcome and short reason', () => {
+    streamBufferManager.handle({ type: 'tool_start', sessionPath: PATH, id: 'call_failed', name: 'read' });
+    streamBufferManager.handle({
+      type: 'tool_end',
+      sessionPath: PATH,
+      id: 'call_failed',
+      name: 'read',
+      status: 'failed',
+      success: false,
+      error: 'permission denied',
+    });
+
+    const group = getAssistantMessage()?.blocks?.find((block) => block.type === 'tool_group');
+    expect(group).toBeTruthy();
+    if (!group || group.type !== 'tool_group') throw new Error('expected tool group');
+    expect(group.tools[0]).toMatchObject({
+      id: 'call_failed',
+      done: true,
+      success: false,
+      status: 'failed',
+      error: 'permission denied',
+    });
   });
 
   it('deferred 文件结果按 taskId 原地替换 media_generation 占位块', () => {

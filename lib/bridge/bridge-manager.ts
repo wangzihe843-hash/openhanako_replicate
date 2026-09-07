@@ -31,6 +31,7 @@ import { createModuleLogger } from "../debug-log.ts";
 import { t } from "../i18n.ts";
 import { stripToolProtocolTagsFromProse } from "../tool-protocol-sanitizer.ts";
 import { sanitizeBridgeVisibleText } from "../../shared/bridge-visible-text.ts";
+import { createVisibleTextAccumulator } from "./visible-text-accumulator.ts";
 
 const log = createModuleLogger("bridge");
 const blockChunkerLog = createModuleLogger("block-chunker");
@@ -127,6 +128,7 @@ const ADAPTER_REGISTRY = {
   },
   dingtalk: {
     create: (creds, onMessage, hooks, agentId) => createDingTalkAdapter({
+      authMode: creds.authMode === "legacy_app" ? creds.authMode : undefined,
       corpId: creds.corpId,
       clientId: creds.clientId,
       clientSecret: creds.clientSecret,
@@ -186,7 +188,7 @@ const MAX_INBOUND_ATTACHMENT_BYTES = 50 * 1024 * 1024;
  *   - <|...|> channel marker token-only 删
  *   - code fence / 行内 backtick code 内的字面标签一律原样保留
  *
- * 桌面 ThinkTagParser（core/events.js）是「保留并渲染」语义，与此处「删除」相反，
+ * 桌面 ThinkTagParser（core/events.ts）是「保留并渲染」语义，与此处「删除」相反，
  * 故只在 Bridge 侧共享，不并入桌面。
  */
 const STRIP_TAGS = ["mood", "pulse", "reflect", "tool_code", "think", "thinking"];
@@ -2080,6 +2082,118 @@ export class BridgeManager {
     }
   }
 
+  /**
+   * 主动外呼轮：以给定文本为输入让 bridge 会话跑一轮，回复经平台适配器送回聊天。
+   * 循环唤醒的桥接投递通道。与入站消息共用 per-sessionKey 锁；占用中返回 busy，
+   * 由调用方（闹钟层）顺延重试，绝不与用户消息并发写同一会话。
+   *
+   * 结果消费与入站 flush 保持同一套语义：底层错误只进日志，正文清洗后 finish，
+   * 媒体逐条发送，失败时只发人话提示。
+   */
+  async executeLoopTurn(sessionKey, promptText, { agentId } = {} as any) {
+    if (this._processing.has(sessionKey)) return { mode: "busy" };
+    // 缓冲区形状与 _takePendingBatch 一致：群聊排队 batches，私聊聚合 lines。
+    const pending = this._pending.get(sessionKey);
+    const hasBufferedInbound = pending
+      ? (pending.kind === "group-queue"
+        ? (pending.batches?.length ?? 0) > 0
+        : (pending.lines?.length ?? 0) > 0)
+      : false;
+    if (hasBufferedInbound) return { mode: "busy" };
+    if (this.engine?.isBridgeSessionStreaming?.(sessionKey)) return { mode: "busy" };
+
+    const platform = this._platformFromSessionKey(sessionKey);
+    const chatId = this._chatIdFromBridgeSessionKey(sessionKey);
+    const entry = this._findPlatformEntry(platform, agentId);
+    const adapter = entry?.adapter;
+    if (!adapter || !chatId) {
+      throw new Error(`loop turn: bridge platform unavailable for ${sessionKey}`);
+    }
+
+    this._processing.add(sessionKey);
+    try {
+      const delivery: any = this._createStreamDelivery({
+        adapter,
+        chatId,
+        isGroup: false,
+        platform,
+        messageThreadId: null,
+        replyContext: null,
+      });
+
+      const result = await this._hub.send(promptText, {
+        sessionKey,
+        agentId,
+        role: "owner",
+        meta: { source: "loop" },
+        onDelta: delivery.onDelta,
+      });
+
+      const reply = result?.text || null;
+      const toolMedia = Array.isArray(result?.toolMedia) ? result.toolMedia : [];
+      const replyError = result?.error || null;
+      const replyTruncated = result?.truncated === true;
+
+      // provider/transport 层错误只进诊断通道，低层错误字符串不作为聊天正文发出。
+      if (replyError) {
+        log.error(`${platform} 循环轮回复生成出错 (${sessionKey}): ${replyError}`);
+        debugLog()?.error("bridge", `${platform} loop turn reply generation error (${sessionKey}): ${replyError}`);
+      }
+
+      if (reply) {
+        const cleaned = this._cleanReplyForPlatform(reply);
+        let allMediaUrls = await delivery.finish(cleaned);
+
+        if (replyTruncated) {
+          // best-effort 说明：说明本身发送失败不影响已送达的正文。
+          try { await this._sendAdapterReply(adapter, chatId, t("bridge.replyInterrupted"), null); } catch {}
+        }
+
+        if (toolMedia.length) {
+          this._appendMediaItems(allMediaUrls, toolMedia);
+        }
+        allMediaUrls = normalizeMediaItems(allMediaUrls);
+
+        for (const item of allMediaUrls) {
+          try { await this._sendMediaItem(adapter, chatId, item, { platform, isGroup: false, agentId, replyContext: null }); }
+          catch (err) {
+            debugLog()?.warn("bridge", `loop turn media send failed: ${err.message} (${this._describeMediaSource(item)})`);
+            await this._mediaDelivery.sendFailureNotice(adapter, chatId, err, null);
+          }
+        }
+
+        debugLog()?.log("bridge", `→ ${platform} loop turn reply (${cleaned.length} chars, mode: ${delivery.mode}${allMediaUrls.length ? `, ${allMediaUrls.length} media` : ""})`);
+        const agentObj = this.engine.getAgent?.(agentId);
+        const sender = agentObj?.agentName || this.engine.agentName;
+        this._pushMessage({
+          platform, direction: "out", sessionKey,
+          sender, text: cleaned,
+          isGroup: false, ts: Date.now(),
+        });
+      } else if (replyError) {
+        // 完全没有可见正文时才发用户可理解的失败提示。
+        // best-effort 提示：提示本身发送失败时无法再通知用户，吞掉即可。
+        try {
+          if (typeof delivery.fail === "function") await delivery.fail(t("bridge.replyFailed"));
+          else await this._sendAdapterReply(adapter, chatId, t("bridge.replyFailed"), null);
+        } catch {}
+      }
+      return { mode: "triggerTurn" };
+    } finally {
+      this._processing.delete(sessionKey);
+    }
+  }
+
+  /** 循环暂停/终止/完成通知的桥接投递：发平台消息并补记会话历史，不跑轮。 */
+  async sendLoopNotice(sessionKey, agentId, text) {
+    const platform = this._platformFromSessionKey(sessionKey);
+    const chatId = this._chatIdFromBridgeSessionKey(sessionKey);
+    return this.sendProactive(text, agentId || null, {
+      contextPolicy: "record_when_delivered",
+      deliveryTarget: { kind: "bridge", platform, chatId, sessionKey, agentId },
+    });
+  }
+
   async _desktopSessionStillExists(sessionPath) {
     let hadAuthoritativeCheck = false;
 
@@ -2469,7 +2583,7 @@ export class BridgeManager {
         ...target,
         delivery,
         replyContext,
-        text: "",
+        visibleText: createVisibleTextAccumulator(),
         toolMedia: [],
       });
       return;
@@ -2483,30 +2597,38 @@ export class BridgeManager {
     if (event.type === "message_update") {
       const sub = event.assistantMessageEvent;
       if (sub?.type === "text_delta") {
-        const delta = sub.delta || "";
-        state.text += delta;
-        try { state.delivery.onDelta?.(delta, state.text); } catch (err) { log.warn(`rc mirror onDelta failed: ${err?.message}`); }
+        const { emittedDelta, text } = state.visibleText.appendTextDelta(sub.delta || "");
+        try { state.delivery.onDelta?.(emittedDelta, text); } catch (err) { log.warn(`rc mirror onDelta failed: ${err?.message}`); }
       }
+      return;
+    }
+
+    if (event.type === "tool_execution_start") {
+      state.visibleText.markHiddenToolBoundary();
       return;
     }
 
     if (event.type === "tool_execution_end" && !event.isError) {
       state.toolMedia.push(...collectMediaItems(event.result?.details?.media));
+      let appendedDetail = false;
       const card = event.result?.details?.card;
       if (card?.description) {
-        state.text += (state.text ? "\n\n" : "") + card.description;
+        state.visibleText.appendVisibleDetail(card.description);
+        appendedDetail = true;
       }
       const settingsUpdateText = formatSettingsUpdateText(event.result?.details?.settingsUpdate);
       if (settingsUpdateText) {
-        state.text += (state.text ? "\n\n" : "") + settingsUpdateText;
+        state.visibleText.appendVisibleDetail(settingsUpdateText);
+        appendedDetail = true;
       }
+      if (!appendedDetail) state.visibleText.markHiddenToolBoundary();
       return;
     }
 
     if (event.type === "session_status" && event.isStreaming === false) {
       this._rcMirrorStreams.delete(streamKey);
       if (streamKey !== sessionPath) this._rcMirrorStreams.delete(sessionPath);
-      const cleaned = this._cleanReplyForPlatform(state.text || "");
+      const cleaned = this._cleanReplyForPlatform(state.visibleText.getText() || "");
       if (!cleaned) return;
 
       let allMediaItems = await state.delivery.finish(cleaned);
@@ -2650,8 +2772,16 @@ export class BridgeManager {
    *
    * @param {string} text - 要发送的文本（会自动 clean mood/pulse 标签）
    * @param {string} [targetAgentId]
-   * @param {{ contextPolicy?: "none"|"record_when_delivered", bridgePlatforms?: string[], idempotencyKey?: string }} [opts]
-   * @returns {{ platform: string, chatId: string, sessionKey: string, recorded: boolean, deliveries?: Array<any> } | null} 发送成功返回平台信息，失败返回 null
+   * @param {{ contextPolicy?: "none"|"record_when_delivered", bridgePlatforms?: string[], deliveryTarget?: object, idempotencyKey?: string }} [opts]
+   * @returns {Promise<
+   *   | { platform: string, chatId: string, sessionKey: string, recorded: boolean, deliveries?: Array<any>, skipped?: boolean }
+   *   | { ok: false, error: "target_missing"|"disconnected"|"reply_context_unavailable"|"send_failed", deliveries: Array<any>, message?: string }
+   *   | null
+   * >}
+   *   Success: platform delivery info (optional `skipped` when an idempotency key hits a prior success).
+   *   Failure: structured `{ ok: false, error, deliveries, message? }` — `send_failed` includes `message` from the adapter throw.
+   *   `null` only when cleaned text is empty (nothing to send).
+   *   Fan-out aggregate `error` prefers `send_failed` when any platform threw, else `reply_context_unavailable`, else connectivity/target codes.
    */
   async sendProactive(text, targetAgentId, opts: any = {}) {
     const cleaned = this._cleanReplyForPlatform(text);
@@ -2681,6 +2811,11 @@ export class BridgeManager {
     }
   }
 
+  /**
+   * Single proactive attempt (caller already cleaned non-empty text).
+   * Never returns null: success object, or `{ ok: false, error, deliveries, message? }`.
+   * Fan-out aggregate prefers `send_failed` over `reply_context_unavailable` when both occur.
+   */
   async _sendProactiveOnce(cleaned, targetAgentId, opts: any = {}, idempotencyKey = null) {
     const contextPolicy = opts.contextPolicy || "record_when_delivered";
     const explicitTarget = normalizeProactiveBridgeDeliveryTarget(opts.deliveryTarget, targetAgentId);
@@ -2700,6 +2835,11 @@ export class BridgeManager {
       : platformEntries;
     const fanOut = !explicitTarget && bridgePlatforms.length > 0;
     const deliveries = [];
+    let sawBoundConnected = false;
+    let sawResolvedTarget = false;
+    let sawReplyContextUnavailable = false;
+    let sawSendFailed = false;
+    let lastSendError = null;
 
     for (const entry of deliveryEntries) {
       if (entry.status !== "connected" || !entry.adapter) continue;
@@ -2711,6 +2851,7 @@ export class BridgeManager {
         continue;
       }
 
+      sawBoundConnected = true;
       const entryAgentId = explicitTarget?.agentId || entry.agentId;
       const agent = entryAgentId ? this.engine.getAgent(entryAgentId) : null;
       const ownerTarget = explicitTarget || resolveBridgeOwnerDeliveryTarget({
@@ -2721,10 +2862,18 @@ export class BridgeManager {
       const ownerId = ownerTarget?.userId;
       if (!ownerId) continue;
 
+      sawResolvedTarget = true;
       const chatId = explicitTarget?.chatId || entry.adapter.resolveOwnerChatId?.(ownerId) || ownerTarget.chatId;
 
       if (entry.adapter.capabilities?.proactive === false && !entry.adapter.canReply?.(chatId)) {
         debugLog()?.log("bridge", `→ ${platform} skipped proactive (no reply context for ${chatId})`);
+        sawReplyContextUnavailable = true;
+        deliveries.push({
+          status: "failed",
+          platform,
+          chatId,
+          error: "reply_context_unavailable",
+        });
         continue;
       }
 
@@ -2780,14 +2929,14 @@ export class BridgeManager {
           return result;
         }
       } catch (err) {
-        if (fanOut) {
-          deliveries.push({
-            status: "failed",
-            platform,
-            chatId,
-            error: err.message,
-          });
-        }
+        sawSendFailed = true;
+        lastSendError = err.message;
+        deliveries.push({
+          status: "failed",
+          platform,
+          chatId,
+          error: err.message,
+        });
         log.error(`proactive send failed (${platform}): ${err.message}`);
         debugLog()?.error("bridge", `proactive send failed (${platform}): ${err.message}`);
       }
@@ -2814,7 +2963,27 @@ export class BridgeManager {
     }
 
     if (idempotencyKey) this._proactiveIdempotency.delete(idempotencyKey);
-    return null;
+
+    let error = "target_missing";
+    // Prefer send_failed when present: a transport throw is more actionable than a
+    // missing reply window on another fan-out platform.
+    if (sawSendFailed) {
+      error = "send_failed";
+    } else if (sawReplyContextUnavailable) {
+      error = "reply_context_unavailable";
+    } else if (!sawBoundConnected) {
+      const hasConnectedPlatform = deliveryEntries.some((entry) => entry.status === "connected" && entry.adapter);
+      error = hasConnectedPlatform ? "target_missing" : "disconnected";
+    } else if (!sawResolvedTarget) {
+      error = "target_missing";
+    }
+
+    return {
+      ok: false,
+      error,
+      deliveries,
+      ...(error === "send_failed" && lastSendError ? { message: lastSendError } : {}),
+    };
   }
 
   _readBridgeIndex(agentId, agent) {

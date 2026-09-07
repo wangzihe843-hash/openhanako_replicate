@@ -1,5 +1,5 @@
 /**
- * sandbox/index.js — 沙盒入口（无状态工厂）
+ * sandbox/index.ts — 沙盒入口（无状态工厂）
  *
  * 每次 buildTools 调用时创建 session 级的 PathGuard + OS 沙盒 exec。
  * 不持有 engine 级状态，天然支持多 agent 并发。
@@ -31,9 +31,15 @@ import {
 import { normalizeWin32ShellPath } from "./win32-path.ts";
 import { serializeSessionFile } from "../session-files/session-file-response.ts";
 import { wrapResourceIoFileTools } from "../resource-io/agent-tools.ts";
+import { createMaterializeTool } from "../resource-io/materialize-tool.ts";
 import { createResourceIoToolOperations } from "../resource-io/pi-tool-operations.ts";
 import { createSandboxResourceIO } from "../resource-io/sandbox-resource-io.ts";
 import { createExecCommandTools } from "../exec-command/tool.ts";
+import { detectWin32PowerShellFlavor } from "./win32-runtime-cache.ts";
+import {
+  resolveHanaPiSdkManagedBinDir,
+  resolveLegacyPiSdkManagedBinDir,
+} from "../../shared/hana-runtime-paths.ts";
 
 /**
  * 为一个 session 创建沙盒包装后的工具集
@@ -65,7 +71,7 @@ import { createExecCommandTools } from "../exec-command/tool.ts";
  * @param {object} [opts.resourceIO]  session 级 ResourceIO 内核；未传入时按 cwd 创建 local_fs 内核
  * @param {(event: object, sessionPath?: string|null) => void} [opts.emitEvent]  ResourceIO 事件出口
  * @param {object|null} [opts.legacyCleanupQueue] Windows 旧 ACL 清理队列
- * @returns {{ tools: object[], customTools: object[] }}
+ * @returns {{ tools: object[], customTools: object[], permissionBoundary: object }}
  */
 export function createSandboxedTools(cwd, customTools, {
   agentDir,
@@ -110,6 +116,7 @@ export function createSandboxedTools(cwd, customTools, {
   });
   const guard = {
     check: (absolutePath, operation) => new PathGuard(makePolicy()).check(absolutePath, operation),
+    getAccessLevel: (absolutePath) => new PathGuard(makePolicy()).getAccessLevel(absolutePath),
   };
 
   // 增强 readFile：xlsx 解析 + 编码检测，保留 PI SDK 默认的 image mime 判断
@@ -121,6 +128,25 @@ export function createSandboxedTools(cwd, customTools, {
   const resolveSandboxNetworkEnabled = typeof getSandboxNetworkEnabled === "function"
     ? getSandboxNetworkEnabled
     : () => true;
+  const osSandboxAvailable = platform === "win32-restricted-token"
+    ? true
+    : checkAvailability(platform);
+  const isOneShotSandboxEnforced = () => {
+    try {
+      if (typeof getSandboxEnabled === "function" && getSandboxEnabled() === false) return false;
+    } catch {
+      return false;
+    }
+    if (platform === "win32-restricted-token") return true;
+    if (platform === "seatbelt") return osSandboxAvailable;
+    // A missing bwrap executor is fail-closed below, so it never falls through
+    // to a direct host command while the sandbox preference remains enabled.
+    if (platform === "bwrap") return true;
+    return false;
+  };
+  const permissionBoundary = {
+    checkStagePath: (absolutePath) => guard.check(absolutePath, "stage"),
+  };
 
   // 无 OS 沙盒时的 bash 工具（沙盒关闭时回退用）
   const normalBashTool = isWin32
@@ -155,6 +181,10 @@ export function createSandboxedTools(cwd, customTools, {
     },
     detectImageMimeType: async (p) => IMAGE_MIMES[extname(p).toLowerCase()] || undefined,
   });
+  const searchToolPaths = {
+    managedBinDir: resolveHanaPiSdkManagedBinDir(hanakoHome),
+    legacyManagedBinDir: resolveLegacyPiSdkManagedBinDir(hanakoHome),
+  };
   const enhancedReadFile = createEnhancedReadFile();
   const readOps = {
     ...resourceOps.read,
@@ -178,7 +208,7 @@ export function createSandboxedTools(cwd, customTools, {
     getSessionPath,
     recordFileOperation,
   });
-  const readTool = wrapSessionFilePathTool(wrapReadImageWithVisionBridge(wrapReadOfficeMedia(createReadTool(cwd, { operations: readOps }), cwd, {
+  const readTool = wrapReadImageWithVisionBridge(wrapReadOfficeMedia(createReadTool(cwd, { operations: readOps }), cwd, {
     hanakoHome,
     getSessionPath,
     getSessionIdForPath,
@@ -191,7 +221,13 @@ export function createSandboxedTools(cwd, customTools, {
     recordFileOperation,
     getVisionBridge,
     isVisionAuxiliaryEnabled,
-  }), { getSessionPath, resolveSessionFile });
+  });
+  const materializeTool = createMaterializeTool({
+    resourceIO,
+    getSessionPath,
+    getSessionIdForPath,
+    cwd,
+  });
   const buildResourceIoFileTools = (tools) => wrapResourceIoFileTools(tools, {
     cwd,
     resourceIO,
@@ -200,13 +236,22 @@ export function createSandboxedTools(cwd, customTools, {
     emitEvent,
     withResourceTarget: resourceOps.withResourceTarget,
   });
-  const createExecToolsForBash = (bashTool, commandExec = null) => createExecCommandTools({
+  const createExecToolsForBash = (
     bashTool,
+    commandExec = null,
+    escalatedBashTool = null,
+    escalatedCommandExec = null,
+  ) => createExecCommandTools({
+    bashTool,
+    escalatedBashTool,
     commandExec,
+    escalatedCommandExec,
     getTerminalSessionManager,
     getAgentId,
     getCwd: () => cwd,
+    isOneShotSandboxEnforced,
     platform: process.platform,
+    detectPowerShellFlavor: isWin32 ? detectWin32PowerShellFlavor : undefined,
   });
 
   // ── Windows: PathGuard 包装 + restricted-token exec，关闭沙盒时走 direct fallback ──
@@ -231,54 +276,89 @@ export function createSandboxedTools(cwd, customTools, {
       ...bashWrapOpts,
       fallbackExec: directWin32Exec,
     });
+    // require_escalated 槽位：直接跑 directWin32Exec（无 restricted-token 沙盒），
+    // 不复用 sandboxedWin32Exec/wrappedBashTool——那两个实例仍套着 restricted-token
+    // 沙盒，PowerShell 在其中本就不可用，escalated 存在的意义就是绕开这层沙盒。
+    // 仍然经过 wrapCommandExec/wrapBashTool 的 PathGuard 与 preflight（escalated:
+    // true 只放开 SANDBOX_ONLY 分级如 wmic，HARD 分级命令任何模式都拦）。
+    const wrappedEscalatedWin32Exec = wrapCommandExec(directWin32Exec, guard, cwd, {
+      ...bashWrapOpts,
+      escalated: true,
+    });
+    const wrappedEscalatedBashTool = wrapBashTool(
+      createBashTool(cwd, { operations: { exec: directWin32Exec as any } }),
+      guard,
+      cwd,
+      { ...bashWrapOpts, escalated: true },
+    );
     return {
       tools: buildResourceIoFileTools([
         readTool,
         writeToolWithResourceIO,
         editTool,
-        ...createExecToolsForBash(wrappedBashTool, wrappedWin32Exec),
-        createGrepTool(cwd, { operations: resourceOps.grep }),
-        createFindTool(cwd, { operations: resourceOps.find }),
+        ...createExecToolsForBash(
+          wrappedBashTool,
+          wrappedWin32Exec,
+          wrappedEscalatedBashTool,
+          wrappedEscalatedWin32Exec,
+        ),
+        createGrepTool(cwd, { ...searchToolPaths, operations: resourceOps.grep }),
+        createFindTool(cwd, { ...searchToolPaths, operations: resourceOps.find }),
         createLsTool(cwd, { operations: resourceOps.ls }),
+        materializeTool,
       ]),
       customTools,
+      permissionBoundary,
     };
   }
 
   // ── macOS / Linux: PathGuard + OS 沙盒 ──
-  let sandboxedBashTool = normalBashTool;
-  if (checkAvailability(platform)) {
-    const sandboxExec = platform === "seatbelt"
+  let defaultSandboxedBashTool = normalBashTool;
+  let escalatedSandboxedBashTool = normalBashTool;
+  if (osSandboxAvailable) {
+    const makeSandboxExec = (resolveNetworkEnabled) => platform === "seatbelt"
       ? (command, execCwd, execOpts) => createSeatbeltExec(
           makePolicy(),
-          { getSandboxNetworkEnabled: resolveSandboxNetworkEnabled },
+          { getSandboxNetworkEnabled: resolveNetworkEnabled },
         )(command, execCwd, execOpts)
       : (command, execCwd, execOpts) => createBwrapExec(
           makePolicy(),
-          { getExternalReadPaths, getSandboxNetworkEnabled: resolveSandboxNetworkEnabled },
+          { getExternalReadPaths, getSandboxNetworkEnabled: resolveNetworkEnabled },
         )(command, execCwd, execOpts);
-    sandboxedBashTool = createBashTool(cwd, { operations: { exec: sandboxExec as any } });
+    const defaultSandboxExec = makeSandboxExec(() => false);
+    const escalatedSandboxExec = makeSandboxExec(resolveSandboxNetworkEnabled);
+    defaultSandboxedBashTool = createBashTool(cwd, {
+      operations: { exec: defaultSandboxExec as any },
+    });
+    escalatedSandboxedBashTool = createBashTool(cwd, {
+      operations: { exec: escalatedSandboxExec as any },
+    });
   } else if (platform === "bwrap") {
-    sandboxedBashTool = {
+    const unavailableBashTool = {
       ...normalBashTool,
       execute: async () => ({
         content: [{ type: "text" as const, text: t("sandbox.osRequired", { platform }) }],
       }) as any,
     };
+    defaultSandboxedBashTool = unavailableBashTool;
+    escalatedSandboxedBashTool = unavailableBashTool;
   }
 
-  const wrappedBashTool = wrapBashTool(sandboxedBashTool, guard, cwd, bashWrapOpts);
+  const wrappedDefaultBashTool = wrapBashTool(defaultSandboxedBashTool, guard, cwd, bashWrapOpts);
+  const wrappedEscalatedBashTool = wrapBashTool(escalatedSandboxedBashTool, guard, cwd, bashWrapOpts);
   return {
     tools: buildResourceIoFileTools([
       readTool,
       writeToolWithResourceIO,
       editTool,
-      ...createExecToolsForBash(wrappedBashTool),
-      createGrepTool(cwd, { operations: resourceOps.grep }),
-      createFindTool(cwd, { operations: resourceOps.find }),
+      ...createExecToolsForBash(wrappedDefaultBashTool, null, wrappedEscalatedBashTool),
+      createGrepTool(cwd, { ...searchToolPaths, operations: resourceOps.grep }),
+      createFindTool(cwd, { ...searchToolPaths, operations: resourceOps.find }),
       createLsTool(cwd, { operations: resourceOps.ls }),
+      materializeTool,
     ]),
     customTools,
+    permissionBoundary,
   };
 }
 
@@ -340,71 +420,6 @@ function wrapFileTouchTool(tool, cwd, {
         return appendSessionFileDetails(result, sessionFile, absolutePath);
       } catch (err) {
         return appendRegistrationWarning(result, err);
-      }
-    },
-  };
-}
-
-function addSessionFileParameters(parameters) {
-  if (!parameters || typeof parameters !== "object" || !parameters.properties) return parameters;
-  const required = Array.isArray(parameters.required)
-    ? parameters.required.filter((name) => name !== "path")
-    : parameters.required;
-  return {
-    ...parameters,
-    ...(required ? { required } : {}),
-    properties: {
-      ...parameters.properties,
-      fileId: {
-        type: "string",
-        description: "SessionFile id from current_status/session_files or attached [SessionFile] context. Use this for read/stat/copy access. Do not use fileId for write/edit; use writableLocalRef.path or an ordinary local path for modifications.",
-      },
-      sessionPath: {
-        type: "string",
-        description: "Optional session JSONL path that owns fileId. Usually omit to use the current session.",
-      },
-    },
-  };
-}
-
-function sessionFilePath(file) {
-  if (!file || typeof file !== "object") return null;
-  if (file.status === "expired") {
-    throw new Error(`SessionFile expired: ${file.fileId || file.id || "unknown"}`);
-  }
-  const filePath = file.realPath || file.filePath || file.path || null;
-  if (!filePath || !path.isAbsolute(filePath)) {
-    throw new Error(`SessionFile has no readable absolute path: ${file.fileId || file.id || "unknown"}`);
-  }
-  return filePath;
-}
-
-function wrapSessionFilePathTool(tool, { getSessionPath, resolveSessionFile }: { getSessionPath?: any; resolveSessionFile?: any } = {}) {
-  return {
-    ...tool,
-    parameters: addSessionFileParameters(tool.parameters),
-    execute: async (toolCallId, params: Record<string, any> = {}, ...rest) => {
-      const fileId = typeof params.fileId === "string" && params.fileId.trim() ? params.fileId.trim() : null;
-      if (!fileId) return tool.execute(toolCallId, params, ...rest);
-      if (typeof resolveSessionFile !== "function") {
-        return {
-          content: [{ type: "text", text: `SessionFile resolver unavailable for fileId: ${fileId}` }],
-        };
-      }
-      const lookupSessionPath = typeof params.sessionPath === "string" && params.sessionPath
-        ? params.sessionPath
-        : getSessionPath?.() || null;
-      try {
-        const file = resolveSessionFile(fileId, { sessionPath: lookupSessionPath });
-        if (!file) {
-          return { content: [{ type: "text", text: `SessionFile not found: ${fileId}` }] };
-        }
-        const resolvedPath = sessionFilePath(file);
-        return tool.execute(toolCallId, { ...params, path: resolvedPath }, ...rest);
-      } catch (err) {
-        return {
-          content: [{ type: "text", text: err?.message || String(err) }],
-        };
       }
     },
   };

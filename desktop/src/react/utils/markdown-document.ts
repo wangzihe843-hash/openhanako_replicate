@@ -37,6 +37,11 @@ export function splitMarkdownFrontMatter(markdown: string): { raw: string; body:
   };
 }
 
+export function findMarkdownFrontMatterRange(markdown: string): { from: number; to: number } | null {
+  const match = markdown.match(FRONT_MATTER_RE);
+  return match ? { from: 0, to: match[0].length } : null;
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }

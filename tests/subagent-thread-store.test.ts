@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  collectReferencedSubagentThreadIds,
   SubagentThreadStore,
   SUBAGENT_THREAD_STORE_VERSION,
 } from "../lib/subagent-thread-store.ts";
@@ -190,7 +191,7 @@ describe("SubagentThreadStore", () => {
 
   it("normalizes legacy ephemeral/reusable threads to direct and maps instance to label on read", () => {
     fs.writeFileSync(storePath, JSON.stringify({
-      schemaVersion: SUBAGENT_THREAD_STORE_VERSION,
+      schemaVersion: 1,
       threads: {
         "subagent-old": {
           threadId: "subagent-old",
@@ -224,6 +225,7 @@ describe("SubagentThreadStore", () => {
     });
     expect(store.get("reusable::/s/a.jsonl::butter::探索").instance).toBeUndefined();
     expect(store.get("reusable::/s/a.jsonl::butter::探索").reuseKey).toBeUndefined();
+    expect(JSON.parse(fs.readFileSync(storePath, "utf8")).schemaVersion).toBe(SUBAGENT_THREAD_STORE_VERSION);
   });
 
   it("lists open direct threads for one parent session and excludes workflow nodes", () => {
@@ -324,5 +326,265 @@ describe("SubagentThreadStore", () => {
 
     expect(order).toEqual(["a1-start", "b-start", "a1-end", "a2-start"]);
     expect(store.isBusy("subagent-a")).toBe(false);
+  });
+
+  it("collects only structured retained thread identities", () => {
+    expect(collectReferencedSubagentThreadIds([
+      {
+        message: {
+          content: [
+            { type: "toolResult", details: { threadId: "thread-a" } },
+            { text: "threadId: fake-text-reference" },
+          ],
+        },
+      },
+      { data: { subagentThreadId: "thread-b", nested: { threadId: "thread-a" } } },
+      { data: { taskId: "thread-c", runId: "ignored-run" } },
+    ])).toEqual(["thread-a", "thread-b", "thread-c"]);
+  });
+
+  it("forks only retained open direct threads into independent parent and child identities", async () => {
+    const sessionIds = new Map([
+      ["/parent/source.jsonl", "sess_source"],
+      ["/parent/fork.jsonl", "sess_fork"],
+    ]);
+    const store = new SubagentThreadStore(storePath, {
+      getSessionIdForPath: (sessionPath: string) => sessionIds.get(sessionPath) || null,
+    });
+    const addThread = (threadId, parentSessionPath, childSessionPath, status = "resolved") => {
+      store.beginRun(threadId, {
+        kind: "direct",
+        parentSessionPath,
+        agentId: "butter",
+        agentName: "Butter",
+        label: threadId,
+        access: "read",
+      });
+      store.attachSession(threadId, childSessionPath, { childSessionId: `sess_${threadId}` });
+      store.finishRun(threadId, { status, summary: `${threadId} summary`, close: false });
+    };
+    addThread("kept", "/parent/source.jsonl", "/children/kept.jsonl");
+    addThread("not-retained", "/parent/source.jsonl", "/children/not-retained.jsonl");
+    addThread("other-parent", "/parent/other.jsonl", "/children/other.jsonl");
+    store.beginRun("closed", { kind: "direct", parentSessionPath: "/parent/source.jsonl" });
+    store.attachSession("closed", "/children/closed.jsonl", { childSessionId: "sess_closed" });
+    store.closeDirectThread("closed");
+    store.beginRun("workflow", { kind: "workflow_node", parentSessionPath: "/parent/source.jsonl" });
+
+    const cloneChildSession = vi.fn(async ({ sourceThread, newThreadId }) => ({
+      sessionId: `child_${newThreadId}`,
+      sessionPath: `/children/fork/${sourceThread.threadId}.jsonl`,
+    }));
+    const discardChildSession = vi.fn(async () => undefined);
+    const result = await store.forkOpenDirectThreads({
+      sourceSessionId: "sess_source",
+      sourceSessionPath: "/parent/source.jsonl",
+      targetSessionId: "sess_fork",
+      targetSessionPath: "/parent/fork.jsonl",
+      retainedEntries: [{ details: { threadId: "kept" } }, { threadId: "closed" }, { threadId: "workflow" }],
+      createThreadId: () => "kept-fork",
+      cloneChildSession,
+      discardChildSession,
+    });
+
+    expect(cloneChildSession).toHaveBeenCalledOnce();
+    expect(result.clones).toEqual([{
+      sourceThreadId: "kept",
+      newThreadId: "kept-fork",
+      sourceChildSessionId: "sess_kept",
+      sourceChildSessionPath: "/children/kept.jsonl",
+      targetChildSessionId: "child_kept-fork",
+      targetChildSessionPath: "/children/fork/kept.jsonl",
+    }]);
+    expect(result.skipped).toEqual(expect.arrayContaining([
+      { threadId: "closed", reason: "not_open_direct" },
+      { threadId: "workflow", reason: "not_open_direct" },
+    ]));
+    expect(store.get("kept")).toMatchObject({
+      parentSessionId: "sess_source",
+      childSessionPath: "/children/kept.jsonl",
+      runCount: 1,
+    });
+    expect(store.get("kept-fork")).toMatchObject({
+      parentSessionId: "sess_fork",
+      parentSessionPath: "/parent/fork.jsonl",
+      childSessionId: "child_kept-fork",
+      childSessionPath: "/children/fork/kept.jsonl",
+      forkedFromThreadId: "kept",
+      sourceThreadIds: ["kept"],
+      label: "kept",
+      access: "read",
+      summary: "kept summary",
+      runCount: 1,
+      status: "open",
+    });
+    expect(store.get("not-retained")).toBeTruthy();
+    expect(store.get("other-parent")).toBeTruthy();
+  });
+
+  it("resolves a historical thread id to different records inside source and fork parent scopes", async () => {
+    const sessionIds = new Map([
+      ["/source.jsonl", "sess_source"],
+      ["/fork.jsonl", "sess_fork"],
+    ]);
+    const store = new SubagentThreadStore(storePath, {
+      getSessionIdForPath: (sessionPath: string) => sessionIds.get(sessionPath) || null,
+    });
+    store.beginRun("original", { kind: "direct", parentSessionPath: "/source.jsonl" });
+    store.attachSession("original", "/children/original.jsonl", { childSessionId: "sess_child_source" });
+    store.finishRun("original", { status: "resolved", close: false });
+
+    await store.forkOpenDirectThreads({
+      sourceSessionId: "sess_source",
+      sourceSessionPath: "/source.jsonl",
+      targetSessionId: "sess_fork",
+      targetSessionPath: "/fork.jsonl",
+      retainedEntries: [{ threadId: "original" }],
+      createThreadId: () => "fork-clone",
+      cloneChildSession: async () => ({ sessionId: "sess_child_fork", sessionPath: "/children/fork.jsonl" }),
+      discardChildSession: async () => undefined,
+    });
+
+    expect(store.resolveDirectThreadForSession("original", "/source.jsonl")).toMatchObject({
+      threadId: "original",
+      childSessionPath: "/children/original.jsonl",
+    });
+    expect(store.resolveDirectThreadForSession("original", "/fork.jsonl")).toMatchObject({
+      threadId: "fork-clone",
+      childSessionPath: "/children/fork.jsonl",
+    });
+    expect(store.resolveDirectThreadForSession("fork-clone", "/source.jsonl")).toBeNull();
+
+    const restored = new SubagentThreadStore(storePath, {
+      getSessionIdForPath: (sessionPath: string) => sessionIds.get(sessionPath) || null,
+    });
+    expect(restored.resolveDirectThreadForSession("original", "/fork.jsonl")).toMatchObject({
+      threadId: "fork-clone",
+      sourceThreadIds: ["original"],
+    });
+  });
+
+  it("rejects a retained busy thread before cloning any child state", async () => {
+    const store = new SubagentThreadStore(storePath);
+    store.beginRun("busy", { kind: "direct", parentSessionPath: "/source.jsonl" });
+    store.attachSession("busy", "/children/busy.jsonl", { childSessionId: "sess_busy" });
+    store.runSerialized("busy", () => new Promise(() => {}));
+    const cloneChildSession = vi.fn();
+
+    await expect(store.forkOpenDirectThreads({
+      sourceSessionPath: "/source.jsonl",
+      targetSessionId: "sess_fork",
+      targetSessionPath: "/fork.jsonl",
+      retainedEntries: [{ threadId: "busy" }],
+      cloneChildSession,
+      discardChildSession: vi.fn(),
+    })).rejects.toMatchObject({ code: "subagent_thread_busy", threadId: "busy" });
+    expect(cloneChildSession).not.toHaveBeenCalled();
+  });
+
+  it("rolls back earlier cloned records and child sessions when a later clone fails", async () => {
+    const store = new SubagentThreadStore(storePath);
+    for (const threadId of ["first", "second"]) {
+      store.beginRun(threadId, { kind: "direct", parentSessionPath: "/source.jsonl" });
+      store.attachSession(threadId, `/children/${threadId}.jsonl`, { childSessionId: `sess_${threadId}` });
+      store.finishRun(threadId, { status: "resolved", close: false });
+    }
+    const discardChildSession = vi.fn(async () => undefined);
+    let index = 0;
+    const forkPromise = store.forkOpenDirectThreads({
+      sourceSessionPath: "/source.jsonl",
+      targetSessionId: "sess_fork",
+      targetSessionPath: "/fork.jsonl",
+      retainedEntries: [{ threadId: "first" }, { threadId: "second" }],
+      createThreadId: (source) => `${source.threadId}-fork`,
+      cloneChildSession: async ({ sourceThread }) => {
+        index += 1;
+        if (index === 2) throw new Error("second clone failed");
+        return { sessionId: `child_${sourceThread.threadId}`, sessionPath: `/fork/${sourceThread.threadId}.jsonl` };
+      },
+      discardChildSession,
+    });
+
+    await expect(forkPromise).rejects.toMatchObject({
+      message: "second clone failed",
+      subagentThreadForkCleanup: {
+        clones: [expect.objectContaining({ newThreadId: "first-fork" })],
+        cleanupFailures: [],
+      },
+    });
+    expect(discardChildSession).toHaveBeenCalledWith(expect.objectContaining({
+      newThreadId: "first-fork",
+      targetChildSessionPath: "/fork/first.jsonl",
+    }));
+    expect(store.get("first-fork")).toBeNull();
+    expect(store.get("second-fork")).toBeNull();
+    expect(store.get("first")).toBeTruthy();
+    expect(store.get("second")).toBeTruthy();
+  });
+
+  it("cleans a callback-reported partial child SessionRef after clone failure", async () => {
+    const store = new SubagentThreadStore(storePath);
+    store.beginRun("source", { kind: "direct", parentSessionPath: "/source.jsonl" });
+    store.attachSession("source", "/children/source.jsonl", { childSessionId: "sess_child_source" });
+    store.finishRun("source", { status: "resolved", close: false });
+    const discardChildSession = vi.fn(async () => undefined);
+    const cloneError: any = new Error("sidecar clone failed");
+    cloneError.createdSessionRef = {
+      sessionId: "sess_partial_child",
+      sessionPath: "/children/partial.jsonl",
+    };
+
+    await expect(store.forkOpenDirectThreads({
+      sourceSessionPath: "/source.jsonl",
+      targetSessionId: "sess_fork",
+      targetSessionPath: "/fork.jsonl",
+      retainedEntries: [{ taskId: "source" }],
+      createThreadId: () => "partial-clone",
+      cloneChildSession: async () => { throw cloneError; },
+      discardChildSession,
+    })).rejects.toMatchObject({
+      subagentThreadForkCleanup: {
+        clones: [expect.objectContaining({
+          newThreadId: "partial-clone",
+          targetChildSessionId: "sess_partial_child",
+          targetChildSessionPath: "/children/partial.jsonl",
+        })],
+        cleanupFailures: [],
+      },
+    });
+    expect(discardChildSession).toHaveBeenCalledOnce();
+    expect(store.get("partial-clone")).toBeNull();
+    expect(store.get("source")).toBeTruthy();
+  });
+
+  it("discards only fork-owned thread records and delegates cloned child cleanup", async () => {
+    const store = new SubagentThreadStore(storePath);
+    store.beginRun("source", { kind: "direct", parentSessionPath: "/source.jsonl" });
+    store.attachSession("source", "/children/source.jsonl", { childSessionId: "sess_child_source" });
+    store.finishRun("source", { status: "resolved", close: false });
+    await store.forkOpenDirectThreads({
+      sourceSessionPath: "/source.jsonl",
+      targetSessionId: "sess_fork",
+      targetSessionPath: "/fork.jsonl",
+      retainedEntries: [{ threadId: "source" }],
+      createThreadId: () => "fork-clone",
+      cloneChildSession: async () => ({ sessionId: "sess_child_fork", sessionPath: "/children/fork.jsonl" }),
+      discardChildSession: async () => undefined,
+    });
+    const discardChildSession = vi.fn(async () => undefined);
+
+    const result = await store.discardForkedDirectThreads(
+      { sessionId: "sess_fork", sessionPath: "/fork.jsonl" },
+      { discardChildSession },
+    );
+
+    expect(result).toMatchObject({ removed: 1, cleanupFailures: [] });
+    expect(discardChildSession).toHaveBeenCalledWith(expect.objectContaining({
+      newThreadId: "fork-clone",
+      targetChildSessionId: "sess_child_fork",
+      targetChildSessionPath: "/children/fork.jsonl",
+    }));
+    expect(store.get("fork-clone")).toBeNull();
+    expect(store.get("source")).toBeTruthy();
   });
 });

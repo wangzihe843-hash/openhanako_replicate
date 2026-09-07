@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeRequestThinkingLevel,
   normalizeSessionThinkingLevel,
+  getModelThinkingLevels,
   modelSupportsAnthropicMaxEffort,
   modelSupportsXhigh,
   normalizePiSdkThinkingLevel,
@@ -93,6 +94,8 @@ describe("session thinking level capabilities", () => {
       { id: "claude-sonnet-4-6", provider: "anthropic", reasoning: true },
       { id: "claude-fable-5", provider: "anthropic", reasoning: true },
       { id: "claude-mythos-5", provider: "anthropic", reasoning: true },
+      { id: "claude-opus-5", provider: "anthropic", reasoning: true },
+      { id: "claude-sonnet-5", provider: "anthropic", reasoning: true },
       { id: "anthropic/claude-opus-4-7", provider: "vercel-ai-gateway", api: "anthropic-messages", reasoning: true },
     ];
 
@@ -125,6 +128,35 @@ describe("session thinking level capabilities", () => {
     expect(modelSupportsXhigh(model)).toBe(true);
     expect(modelSupportsAnthropicMaxEffort(model)).toBe(false);
     expect(normalizeThinkingLevelForModel("xhigh", model)).toBe("xhigh");
+  });
+
+  it.each([
+    "anthropic/claude-opus-5",
+    "anthropic/claude-sonnet-5",
+  ])("allows unified Max for OpenRouter %s through its adaptive profile", (id) => {
+    const model = {
+      id,
+      provider: "openrouter",
+      api: "openai-completions",
+      reasoning: true,
+    };
+
+    expect(modelSupportsXhigh(model)).toBe(true);
+    expect(modelSupportsAnthropicMaxEffort(model)).toBe(false);
+    expect(normalizeThinkingLevelForModel("xhigh", model)).toBe("xhigh");
+  });
+
+  it("declares DeepSeek's official three-tier ladder (off/low/high/max) for V4 models, dropping the unsupported medium", () => {
+    const model = {
+      id: "deepseek-v4-flash",
+      provider: "deepseek",
+      thinkingLevels: ["off", "low", "high", "max"],
+      defaultThinkingLevel: "high",
+    };
+
+    expect(getModelThinkingLevels(model)).toEqual(["off", "low", "high", "max"]);
+    expect(getModelThinkingLevels(model)).not.toContain("medium");
+    expect(resolveModelDefaultThinkingLevel(model)).toBe("high");
   });
 
   it("resolves model-level thinking defaults with per-model xhigh capability", () => {

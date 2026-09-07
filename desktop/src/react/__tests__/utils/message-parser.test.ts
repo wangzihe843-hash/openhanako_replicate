@@ -51,6 +51,44 @@ describe('parseMoodFromContent', () => {
     const result = parseMoodFromContent(input);
     expect(result.mood).toBe('line1\nline2');
   });
+
+  it('保留行内代码里的 mood 字面量及后文', () => {
+    for (const tag of ['mood', 'pulse', 'reflect']) {
+      const input = `\`<${tag}>\` 后半段不能消失`;
+      expect(parseMoodFromContent(input)).toEqual({ mood: null, yuan: null, text: input });
+    }
+  });
+
+  it('保留代码栅里成对的内部标签字面量', () => {
+    const input = '```xml\n<mood>literal</mood>\n```\nafter';
+    expect(parseMoodFromContent(input)).toEqual({ mood: null, yuan: null, text: input });
+  });
+
+  it('正文开始后不再把成对标签当作内部块', () => {
+    const input = 'prefix <pulse>literal</pulse> suffix';
+    expect(parseMoodFromContent(input)).toEqual({ mood: null, yuan: null, text: input });
+  });
+
+  it('允许 BOM 与空白后的完整开头块', () => {
+    expect(parseMoodFromContent('\uFEFF \n<reflect>pondering</reflect>\nContent.')).toEqual({
+      mood: 'pondering',
+      yuan: 'ming',
+      text: 'Content.',
+    });
+  });
+
+  it('拒绝不匹配的闭合标签', () => {
+    const input = '<mood>literal</pulse>\nContent.';
+    expect(parseMoodFromContent(input)).toEqual({ mood: null, yuan: null, text: input });
+  });
+
+  it('只解析第一个合法开头块，后续标签保留为正文', () => {
+    expect(parseMoodFromContent('<mood>inside</mood>\nafter <pulse>literal</pulse>')).toEqual({
+      mood: 'inside',
+      yuan: 'hanako',
+      text: 'after <pulse>literal</pulse>',
+    });
+  });
 });
 
 describe('cleanMoodText', () => {
@@ -64,8 +102,15 @@ describe('cleanMoodText', () => {
 });
 
 describe('parseUserAttachments', () => {
+  // 历史 JSONL 里的旧格式块头，剥离端必须继续认
   const reminder = [
     '[hana_reminder at 2026-07-10 09:05]',
+    '- Current time: 2026-07-10 09:05',
+    '[/hana_reminder]',
+  ].join('\n');
+  // 当前渲染出的静态块头
+  const staticReminder = [
+    '[hana_reminder]',
     '- Current time: 2026-07-10 09:05',
     '[/hana_reminder]',
   ].join('\n');
@@ -88,6 +133,20 @@ describe('parseUserAttachments', () => {
     expect(result.text).toBe('hello');
   });
 
+  it('隐藏静态块头的 reminder block', () => {
+    const result = parseUserAttachments(`${staticReminder}\n\nhello`);
+    expect(result.text).toBe('hello');
+  });
+
+  it('静态块头 reminder 后没有用户正文时返回空正文', () => {
+    expect(parseUserAttachments(staticReminder).text).toBe('');
+  });
+
+  it('不剥离正文中间出现的静态块头伪 reminder block', () => {
+    const content = `hello\n\n${staticReminder}\n\nworld`;
+    expect(parseUserAttachments(content).text).toBe(content);
+  });
+
   it('reminder 后没有用户正文时返回空正文', () => {
     const result = parseUserAttachments(reminder);
     expect(result.text).toBe('');
@@ -101,8 +160,10 @@ describe('parseUserAttachments', () => {
 
   it('未闭合或畸形 reminder 原样保留', () => {
     const unclosed = '[hana_reminder at 2026-07-10 09:05]\n- Current time: 2026-07-10 09:05\nhello';
+    const unclosedStatic = '[hana_reminder]\n- Current time: 2026-07-10 09:05\nhello';
     const malformed = '[hana_reminder sometime]\nsecret\n[/hana_reminder]\nhello';
     expect(parseUserAttachments(unclosed).text).toBe(unclosed);
+    expect(parseUserAttachments(unclosedStatic).text).toBe(unclosedStatic);
     expect(parseUserAttachments(malformed).text).toBe(malformed);
   });
 

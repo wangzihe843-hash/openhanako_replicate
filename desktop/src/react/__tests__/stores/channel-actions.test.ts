@@ -520,6 +520,59 @@ describe('channel-actions', () => {
     });
   });
 
+  describe('exportCurrentConversation', () => {
+    it('downloads the Markdown response using the server-provided filename', async () => {
+      mockState.currentChannel = 'ch_family';
+      const blob = new Blob(['# Archive'], { type: 'text/markdown' });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        blob: async () => blob,
+        headers: new Headers({
+          'content-disposition': "attachment; filename=\"archive.md\"; filename*=UTF-8''hana-chat-archive.md",
+        }),
+      } as Response);
+      const createObjectURL = vi.fn(() => 'blob:archive');
+      const revokeObjectURL = vi.fn();
+      Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+      const click = vi.fn();
+      const anchor = { href: '', download: '', rel: '', click };
+      const originalDocument = globalThis.document;
+      Object.defineProperty(globalThis, 'document', {
+        configurable: true,
+        value: { createElement: vi.fn(() => anchor) },
+      });
+
+      try {
+        const { exportCurrentConversation } = await import('../../stores/channel-actions');
+        await expect(exportCurrentConversation()).resolves.toBe('hana-chat-archive.md');
+        expect(mockFetch).toHaveBeenCalledWith('/api/conversations/ch_family/export');
+        expect(click).toHaveBeenCalledOnce();
+        expect(revokeObjectURL).toHaveBeenCalledWith('blob:archive');
+      } finally {
+        if (originalDocument) {
+          Object.defineProperty(globalThis, 'document', { configurable: true, value: originalDocument });
+        } else {
+          Reflect.deleteProperty(globalThis, 'document');
+        }
+      }
+    });
+
+    it('exports the current DM from its stored owner Agent', async () => {
+      mockState.currentChannel = 'dm:bob';
+      mockState.channels = [{ id: 'dm:bob', isDM: true, dmOwnerId: 'alice', peerId: 'bob' }];
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: 'stop after URL assertion' }),
+      } as Response);
+
+      const { exportCurrentConversation } = await import('../../stores/channel-actions');
+      await expect(exportCurrentConversation()).rejects.toThrow('stop after URL assertion');
+      expect(mockFetch).toHaveBeenCalledWith('/api/conversations/dm%3Abob/export?agentId=alice');
+    });
+  });
+
   describe('appendChannelMessage', () => {
     it('追加当前频道的新消息并刷新频道预览，不清空已有消息', async () => {
       mockState.currentTab = 'channels';

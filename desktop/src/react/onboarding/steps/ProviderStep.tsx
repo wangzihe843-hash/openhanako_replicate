@@ -6,8 +6,8 @@ import { useState, useCallback } from 'react';
 import { PROVIDER_PRESETS } from '../constants';
 import type { ProviderPreset } from '../constants';
 import { getProviderPresetLabel } from '../../utils/provider-presets';
-import { testConnection, saveProvider as saveProviderAction } from '../onboarding-actions';
-import type { HanaFetch } from '../onboarding-actions';
+import { describeOnboardingError, testConnection, saveProvider as saveProviderAction } from '../onboarding-actions';
+import type { HanaFetch, OnboardingVerificationPlan } from '../onboarding-actions';
 import { StepContainer, Multiline } from '../onboarding-ui';
 import { SelectWidget } from '@/ui';
 
@@ -30,13 +30,15 @@ const EyeOffIcon = () => (
 interface ProviderStepProps {
   preview: boolean;
   hanaFetch: HanaFetch;
+  agentId: string;
+  verificationPlan: OnboardingVerificationPlan;
   goToStep: (index: number) => void;
   showError: (msg: string) => void;
   onProviderReady: (providerName: string, providerUrl: string, providerApi: string, apiKey: string) => void;
 }
 
 export function ProviderStep({
-  preview, hanaFetch, goToStep, showError, onProviderReady,
+  preview, hanaFetch, agentId, verificationPlan, goToStep, showError, onProviderReady,
 }: ProviderStepProps) {
   // ── Provider state ──
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
@@ -149,14 +151,14 @@ export function ProviderStep({
     if (preview) { goToStep(3); return; }
     if (!connectionTested) return;
     try {
-      await saveProviderAction({ hanaFetch, providerName, providerUrl, apiKey, providerApi });
+      await saveProviderAction({ hanaFetch, agentId, providerName, providerUrl, apiKey, providerApi, verificationPlan });
       onProviderReady(providerName, providerUrl, providerApi, apiKey);
       goToStep(3);
     } catch (err) {
       console.error('[onboarding] save provider failed:', err);
-      showError(t('onboarding.provider.testFailed'));
+      showError(describeOnboardingError(err, t('onboarding.provider.testFailed')));
     }
-  }, [preview, connectionTested, hanaFetch, providerName, providerUrl, apiKey, providerApi, goToStep, showError, onProviderReady]);
+  }, [preview, connectionTested, hanaFetch, agentId, providerName, providerUrl, apiKey, providerApi, verificationPlan, goToStep, showError, onProviderReady]);
 
   return (
     <StepContainer>

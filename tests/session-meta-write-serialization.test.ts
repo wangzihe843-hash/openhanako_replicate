@@ -206,6 +206,130 @@ describe("SessionCoordinator.writeSessionMeta serialization", () => {
     expect(payloadFiles.some((name) => name.endsWith(".promptSnapshot.json"))).toBe(true);
   });
 
+  it("always externalizes small promptSnapshot payloads into a sidecar file, even well under the old inline threshold", async () => {
+    const smallPrompt = "small prompt ".repeat(60); // ~800 bytes, far below the old 256KB inline limit
+    const promptSnapshot = {
+      version: 1,
+      systemPrompt: smallPrompt,
+      appendSystemPrompt: [],
+      skillsResult: { skills: [], diagnostics: [] },
+      agentsFilesResult: { agentsFiles: [] },
+    };
+
+    await sessionCoord.writeSessionMeta(fakeSessionPath, {
+      memoryEnabled: true,
+      promptSnapshot,
+    });
+
+    const metaPath = path.join(sessionDir, "session-meta.json");
+    const rawMeta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
+    const rawEntry = rawMeta[path.basename(fakeSessionPath)];
+    expect(rawEntry.promptSnapshot).toEqual({
+      kind: "session-meta-payload",
+      version: 1,
+      field: "promptSnapshot",
+      path: expect.stringContaining("session-meta-payloads"),
+    });
+
+    const sidecarAbsPath = path.join(sessionDir, rawEntry.promptSnapshot.path);
+    const sidecarRaw = JSON.parse(await fsp.readFile(sidecarAbsPath, "utf-8"));
+    expect(sidecarRaw).toEqual(promptSnapshot);
+  });
+
+  it("always externalizes small memoryReflectionSnapshot payloads into a sidecar file", async () => {
+    const memoryReflectionSnapshot = {
+      version: 1,
+      summary: "a few hundred bytes of reflection text ".repeat(10),
+    };
+
+    await sessionCoord.writeSessionMeta(fakeSessionPath, {
+      memoryEnabled: true,
+      memoryReflectionSnapshot,
+    });
+
+    const metaPath = path.join(sessionDir, "session-meta.json");
+    const rawMeta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
+    const rawEntry = rawMeta[path.basename(fakeSessionPath)];
+    expect(rawEntry.memoryReflectionSnapshot).toMatchObject({
+      kind: "session-meta-payload",
+      field: "memoryReflectionSnapshot",
+    });
+
+    const sidecarAbsPath = path.join(sessionDir, rawEntry.memoryReflectionSnapshot.path);
+    const sidecarRaw = JSON.parse(await fsp.readFile(sidecarAbsPath, "utf-8"));
+    expect(sidecarRaw).toEqual(memoryReflectionSnapshot);
+  });
+
+  it("hydrates a small externalized promptSnapshot back to the original value via _readMetaCached", async () => {
+    const promptSnapshot = {
+      version: 1,
+      systemPrompt: "tiny prompt content",
+      appendSystemPrompt: ["extra line"],
+      skillsResult: { skills: [], diagnostics: [] },
+      agentsFilesResult: { agentsFiles: [] },
+    };
+
+    await sessionCoord.writeSessionMeta(fakeSessionPath, {
+      memoryEnabled: true,
+      promptSnapshot,
+    });
+
+    const metaPath = path.join(sessionDir, "session-meta.json");
+    const hydrated = await sessionCoord._readMetaCached(metaPath);
+    const entry = hydrated[path.basename(fakeSessionPath)];
+    expect(entry.promptSnapshot).toEqual(promptSnapshot);
+  });
+
+  it("removes the promptSnapshot sidecar file when the session meta entry is deleted", async () => {
+    const promptSnapshot = {
+      version: 1,
+      systemPrompt: "prompt to be deleted",
+      appendSystemPrompt: [],
+      skillsResult: { skills: [], diagnostics: [] },
+      agentsFilesResult: { agentsFiles: [] },
+    };
+
+    await sessionCoord.writeSessionMeta(fakeSessionPath, {
+      memoryEnabled: true,
+      promptSnapshot,
+    });
+
+    const metaPath = path.join(sessionDir, "session-meta.json");
+    const rawMeta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
+    const rawEntry = rawMeta[path.basename(fakeSessionPath)];
+    const sidecarAbsPath = path.join(sessionDir, rawEntry.promptSnapshot.path);
+    expect(fs.existsSync(sidecarAbsPath)).toBe(true);
+
+    await sessionCoord._doDeleteSessionMetaEntry(fakeSessionPath, { metaPath });
+
+    expect(fs.existsSync(sidecarAbsPath)).toBe(false);
+    const metaAfterDelete = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
+    expect(metaAfterDelete[path.basename(fakeSessionPath)]).toBeUndefined();
+  });
+
+  it("still reads a legacy inline (non-externalized) promptSnapshot entry correctly", async () => {
+    const metaPath = path.join(sessionDir, "session-meta.json");
+    const legacySessionPath = path.join(sessionDir, "legacy-inline.jsonl");
+    const inlinePromptSnapshot = {
+      version: 1,
+      systemPrompt: "hand-authored inline legacy entry",
+      appendSystemPrompt: [],
+      skillsResult: { skills: [], diagnostics: [] },
+      agentsFilesResult: { agentsFiles: [] },
+    };
+    await fsp.writeFile(metaPath, JSON.stringify({
+      [path.basename(legacySessionPath)]: {
+        memoryEnabled: true,
+        promptSnapshot: inlinePromptSnapshot,
+      },
+    }, null, 2), "utf-8");
+
+    const hydrated = await sessionCoord._readMetaCached(metaPath);
+    const entry = hydrated[path.basename(legacySessionPath)];
+    expect(entry.memoryEnabled).toBe(true);
+    expect(entry.promptSnapshot).toEqual(inlinePromptSnapshot);
+  });
+
   it("compacts an oversized legacy session-meta file instead of dropping unrelated entries (#1681)", async () => {
     const metaPath = path.join(sessionDir, "session-meta.json");
     const legacySessionPath = path.join(sessionDir, "legacy.jsonl");
@@ -262,34 +386,37 @@ describe("SessionCoordinator.writeSessionMeta serialization", () => {
     expect(hydrated[path.basename(sessionPaths[0])].promptSnapshot.systemPrompt).toBe(mediumPrompt);
   });
 
-  it("setSessionPinned writes and clears pinnedAt on the session meta entry", async () => {
-    const pinnedAt = await sessionCoord.setSessionPinned(fakeSessionPath, true);
+  it("setSessionPinned writes and clears pinnedAt and pinOrder on the session meta entry", async () => {
+    const { pinnedAt, pinOrder } = await sessionCoord.setSessionPinned(fakeSessionPath, true);
 
     const metaPath = path.join(sessionDir, "session-meta.json");
     let meta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
     expect(meta[path.basename(fakeSessionPath)].pinnedAt).toBe(pinnedAt);
+    expect(meta[path.basename(fakeSessionPath)].pinOrder).toBe(pinOrder);
+    expect(pinOrder).toBe(-1024);
     expect(new Date(pinnedAt).toString()).not.toBe("Invalid Date");
 
-    const unpinnedAt = await sessionCoord.setSessionPinned(fakeSessionPath, false);
+    const unpinned = await sessionCoord.setSessionPinned(fakeSessionPath, false);
 
     meta = JSON.parse(await fsp.readFile(metaPath, "utf-8"));
-    expect(unpinnedAt).toBeNull();
+    expect(unpinned).toEqual({ pinnedAt: null, pinOrder: null });
     expect(meta[path.basename(fakeSessionPath)].pinnedAt).toBeNull();
+    expect(meta[path.basename(fakeSessionPath)].pinOrder).toBeNull();
   });
 
   it("setSessionPinned emits a scoped session metadata update", async () => {
-    const pinnedAt = await sessionCoord.setSessionPinned(fakeSessionPath, true);
+    const { pinnedAt, pinOrder } = await sessionCoord.setSessionPinned(fakeSessionPath, true);
 
     expect(sessionCoord._d.emitEvent).toHaveBeenCalledWith({
       type: "session_metadata_updated",
-      metadata: { pinnedAt },
+      metadata: { pinnedAt, pinOrder },
     }, fakeSessionPath);
 
     await sessionCoord.setSessionPinned(fakeSessionPath, false);
 
     expect(sessionCoord._d.emitEvent).toHaveBeenLastCalledWith({
       type: "session_metadata_updated",
-      metadata: { pinnedAt: null },
+      metadata: { pinnedAt: null, pinOrder: null },
     }, fakeSessionPath);
   });
 

@@ -7,34 +7,30 @@
 
 import { useCallback } from 'react';
 import { useStore } from '../stores';
-import { hanaFetch } from '../hooks/use-hana-fetch';
-import { setBrowserStateForPath, useBrowserState } from '../stores/browser-slice';
+import { setBrowserCardCollapsed, useBrowserState } from '../stores/browser-slice';
 
 export function BrowserCard() {
-  const { running: browserRunning, url: browserUrl, thumbnail: browserThumbnail } = useBrowserState();
+  const {
+    running: browserRunning,
+    url: browserUrl,
+    thumbnail: browserThumbnail,
+    collapsed,
+  } = useBrowserState();
 
   const handleClick = useCallback(() => {
     const sessionPath = useStore.getState().currentSessionPath;
     window.platform?.openBrowserViewer?.({ sessionPath });
   }, []);
 
-  const handleClose = useCallback((e: React.MouseEvent) => {
+  // 叉只收起卡片，不碰浏览器本身：agent 的操作不能被一次视觉整理打断。
+  // 真正的急停留在 viewer 工具栏。
+  const handleCollapse = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     const sessionPath = useStore.getState().currentSessionPath;
-    if (sessionPath) {
-      setBrowserStateForPath(sessionPath, { running: false, url: null, thumbnail: null });
-    }
-    window.platform?.browserEmergencyStop?.(sessionPath || undefined);
-    if (sessionPath) {
-      hanaFetch('/api/browser/close-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionPath }),
-      }).catch(err => console.warn('[browser] close session failed:', err));
-    }
+    if (sessionPath) setBrowserCardCollapsed(sessionPath, true);
   }, []);
 
-  if (!browserRunning) return null;
+  if (!browserRunning || collapsed) return null;
 
   let displayUrl = '';
   try {
@@ -69,7 +65,7 @@ export function BrowserCard() {
             draggable={false}
           />
         )}
-        <button className="browser-floating-close" title={(window.t ?? ((p: string) => p))('browser.close')} onClick={handleClose}>
+        <button className="browser-floating-close" title={(window.t ?? ((p: string) => p))('browser.collapse')} onClick={handleCollapse}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M18 6L6 18M6 6l12 12"></path>
           </svg>

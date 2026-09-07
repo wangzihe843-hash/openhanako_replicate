@@ -22,6 +22,13 @@ export type FileSource =
 export interface FileRef {
   id: string;
   fileId?: string;
+  /**
+   * fork 出来的 session 会继承父 session 的文件 id / 路径作为别名：历史消息里的
+   * marker 仍然写着旧 id 和旧路径，账本里的当前条目已经换成新的。查找与去重都要
+   * 认这些别名，否则同一个文件会既命中不到、又按新旧身份各出现一次。
+   */
+  legacyFileIds?: string[];
+  legacyFilePaths?: string[];
   kind: FileKind;
   source: FileSource;
   name: string;

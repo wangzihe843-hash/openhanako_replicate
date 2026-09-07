@@ -1,7 +1,7 @@
 /**
  * Agent Phone session policy helpers.
  *
- * The runner lives in hub/agent-executor.js because it needs Engine session
+ * The runner lives in hub/agent-executor.ts because it needs Engine session
  * context. This module keeps the reusable policy pieces pure and testable.
  */
 

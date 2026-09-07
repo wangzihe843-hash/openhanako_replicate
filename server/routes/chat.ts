@@ -6,7 +6,7 @@
  */
 import { Hono } from "hono";
 import { MoodParser, ThinkTagParser, CardParser } from "../../core/events.ts";
-import { extractBlocks } from "../block-extractors.ts";
+import { dropUninstalledPluginCards, extractBlocks, pluginInstalledPredicate } from "../block-extractors.ts";
 import { normalizePluginChatSurfaceBlocks } from "../plugin-chat-surface.ts";
 import { toAppEventWsMessage } from "../app-events.ts";
 import { toResourceEventWsMessage } from "../resource-events-ws.ts";
@@ -20,8 +20,23 @@ import {
 import { debugLog, createModuleLogger } from "../../lib/debug-log.ts";
 import { t } from "../../lib/i18n.ts";
 import { getLastAssistantUsage } from "../../lib/pi-sdk/index.ts";
-import { compactSessionWithCachePreservationRecoveringRuntime } from "../../core/session-compactor.ts";
-import { submitDesktopSessionInterjection } from "../../core/desktop-session-submit.ts";
+import {
+  compactSessionWithCachePreservationRecoveringRuntime,
+  runLossyLocalCompactionForSession,
+} from "../../core/session-compactor.ts";
+import {
+  getResolvedCompactionMode,
+  getResolvedInstantSimpleCompactionEnabled,
+  INSTANT_SIMPLE_COMPACTION_METHOD,
+  INSTANT_SIMPLE_COMPACTION_RUNTIME_MODE,
+  normalizeCompactionLifecycleMode,
+} from "../../shared/compaction-mode.ts";
+import { submitDesktopSessionInterjection, submitDesktopSessionMessage } from "../../core/desktop-session-submit.ts";
+import {
+  AgentReviewTurnCoordinator,
+  buildSessionReferenceBlock,
+  normalizeSessionReferences,
+} from "../../lib/agent-review/turn-coordinator.ts";
 import { logLlmUsage } from "../../lib/llm/usage-observer.ts";
 import { BrowserManager } from "../../lib/browser/browser-manager.ts";
 import {
@@ -31,6 +46,8 @@ import {
   appendSessionStreamEvent,
   resumeSessionStream,
 } from "../session-stream-store.ts";
+import { resolveWsSessionContext } from "./ws-session-context.ts";
+import { visiblePromptText } from "../../core/session-reminders.ts";
 import { AppError } from "../../shared/errors.ts";
 import { errorBus } from "../../shared/error-bus.ts";
 import { createRequestContext } from "../http/boundary.ts";
@@ -41,6 +58,8 @@ import {
   TURN_INPUT_PRESENTATION_EVENT_TYPE,
   buildTurnInputConsumptionRecord,
   buildTurnInputPresentationEvent,
+  isHiddenTurnInputMessage,
+  isSessionTurnInputEntry,
 } from "../../lib/turn-input-presentation.ts";
 import { buildAutomationSuggestionBlock } from "../suggestion-blocks.ts";
 import { isAllowedChatImageMime, isChatImageBase64WithinLimit } from "../../shared/image-mime.ts";
@@ -48,6 +67,7 @@ import { isAllowedChatVideoMime, isChatVideoBase64WithinLimit } from "../../shar
 import { isAllowedChatAudioMime, isChatAudioBase64WithinLimit } from "../../shared/audio-mime.ts";
 import { getAssistantTextPhase } from "../../shared/text-signature.ts";
 import { summarizeToolArgs } from "../../shared/tool-arg-summary.ts";
+import { projectLiveToolResultOutcome } from "../../shared/tool-outcome.ts";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -77,6 +97,51 @@ function extractText(content: any) {
     .filter(b => b.type === "text" && b.text)
     .map(b => b.text)
     .join("");
+}
+
+function persistedTurnEntryIds(engine: any, sessionPath: string) {
+  const branch = engine.getSessionByPath?.(sessionPath)?.sessionManager?.getBranch?.();
+  if (!Array.isArray(branch) || branch.length === 0) {
+    return { turnInputEntryId: null, userEntryId: null, assistantEntryId: null };
+  }
+
+  let lastTurnInputIndex = -1;
+  let lastAssistantIndex = -1;
+  for (let index = branch.length - 1; index >= 0; index -= 1) {
+    const entry = branch[index];
+    if (lastTurnInputIndex < 0 && isSessionTurnInputEntry(entry)) lastTurnInputIndex = index;
+    if (
+      lastAssistantIndex < 0
+      && entry?.type === "message"
+      && entry.message?.role === "assistant"
+    ) lastAssistantIndex = index;
+    if (lastTurnInputIndex >= 0 && lastAssistantIndex >= 0) break;
+  }
+  if (lastTurnInputIndex < 0) {
+    return { turnInputEntryId: null, userEntryId: null, assistantEntryId: null };
+  }
+
+  let turnInputIndex = lastTurnInputIndex;
+  let assistantEntryId = null;
+  if (lastAssistantIndex > lastTurnInputIndex) {
+    assistantEntryId = branch[lastAssistantIndex]?.id || null;
+    for (let index = lastAssistantIndex - 1; index >= 0; index -= 1) {
+      if (isSessionTurnInputEntry(branch[index])) {
+        turnInputIndex = index;
+        break;
+      }
+    }
+  }
+  const turnInputEntry = branch[turnInputIndex];
+  const turnInputEntryId = turnInputEntry?.id || null;
+  const visibleUserEntry = turnInputEntry?.type === "message"
+    && turnInputEntry.message?.role === "user"
+    && !isHiddenTurnInputMessage(turnInputEntry.message);
+  return {
+    turnInputEntryId,
+    userEntryId: visibleUserEntry ? turnInputEntryId : null,
+    assistantEntryId,
+  };
 }
 
 function deferredResultFileBlocks(result: any, taskId: any = null) {
@@ -135,15 +200,19 @@ export function toCompactionLifecycleWsMessage(
   sessionPath: any,
   getSessionByPath: any,
   getSessionIdForPath: any,
+  getCompactionMode?: any,
 ) {
   if (!sessionPath) return null;
   const sessionId = getSessionIdForPath?.(sessionPath) ?? null;
+  const rawMode = event?.mode ?? getCompactionMode?.();
+  const mode = rawMode == null ? null : normalizeCompactionLifecycleMode(rawMode);
   if (event.type === "compaction_start") {
     return {
       type: "compaction_start",
       sessionId,
       sessionPath,
       reason: event.reason ?? null,
+      ...(mode ? { mode } : {}),
     };
   }
   if (event.type !== "compaction_end") return null;
@@ -156,6 +225,7 @@ export function toCompactionLifecycleWsMessage(
     reason: event.reason ?? null,
     aborted: event.aborted ?? false,
     willRetry: event.willRetry ?? false,
+    ...(mode ? { mode } : {}),
     tokens: usage?.tokens ?? null,
     contextWindow: usage?.contextWindow ?? null,
     percent: usage?.percent ?? null,
@@ -174,50 +244,25 @@ function sessionIdForLegacyCompactPath(engine: any, sessionPath: string) {
   }
 }
 
+export function buildDesktopSlashSessionRef(engine: any, agentId: string, sessionPath: string) {
+  const sessionId = sessionIdForLegacyCompactPath(engine, sessionPath);
+  return {
+    kind: "desktop",
+    agentId,
+    sessionPath,
+    ...(sessionId ? { sessionId } : {}),
+  };
+}
+
+// compact 只接受 manifest 当前定位器：压缩会重写 JSONL，落到过期路径上等于写错文件。
 export function resolveCompactSessionTarget(engine: any, msg: any) {
-  let sessionId = normalizedIdentity(msg?.sessionId);
-  const legacySessionPath = normalizedIdentity(msg?.sessionPath);
-
-  if (sessionId && legacySessionPath) {
-    const legacySessionId = sessionIdForLegacyCompactPath(engine, legacySessionPath);
-    if (legacySessionId && legacySessionId !== sessionId) {
-      return {
-        ok: false as const,
-        code: "session_identity_mismatch",
-        message: "sessionId and sessionPath refer to different sessions",
-        sessionId,
-      };
-    }
+  const ctx = resolveWsSessionContext(engine, msg, { requireManifestLocator: true });
+  // 显式比较 false 而不是 !ctx.ok：server 侧关掉了 strictNullChecks，此时对显式声明的
+  // 判别联合取反不会收窄到错误分支（推导出来的 as const 联合不受此限）。
+  if (ctx.ok === false) {
+    return { ok: false as const, code: ctx.code, message: ctx.message, sessionId: ctx.sessionId };
   }
-
-  if (!sessionId && legacySessionPath) {
-    sessionId = sessionIdForLegacyCompactPath(engine, legacySessionPath);
-  }
-  if (!sessionId) {
-    return {
-      ok: false as const,
-      code: "session_identity_unresolved",
-      message: "Unable to resolve session identity",
-      sessionId: null,
-    };
-  }
-
-  let sessionPath = null;
-  try {
-    sessionPath = normalizedIdentity(engine.getSessionManifest?.(sessionId)?.currentLocator?.path);
-  } catch {
-    sessionPath = null;
-  }
-  if (!sessionPath) {
-    return {
-      ok: false as const,
-      code: "session_identity_unresolved",
-      message: "Unable to resolve current session locator",
-      sessionId,
-    };
-  }
-
-  return { ok: true as const, sessionId, sessionPath };
+  return { ok: true as const, sessionId: ctx.sessionId, sessionPath: ctx.sessionPath };
 }
 
 function compactionNoopReason(message: string) {
@@ -274,7 +319,10 @@ export function resolveTurnStallAbortMs(value = process.env.HANA_TURN_STALL_ABOR
   return Math.floor(parsed);
 }
 
-export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any) {
+export function createChatRoute(engine: any, hub: any, {
+  upgradeWebSocket,
+  runInstantSimpleCompaction = runLossyLocalCompactionForSession,
+}: any) {
   const restRoute = new Hono();
   const wsRoute = new Hono();
 
@@ -308,45 +356,25 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
 
   const MAX_SESSION_STATES = 100;
 
-  function requireSessionPath(msg, ws) {
-    if (msg.sessionPath) return msg.sessionPath;
-    wsSend(ws, { type: "error", message: "sessionPath is required" });
-    return null;
-  }
-
-  function requireBoundSessionTarget(msg, ws) {
-    const sessionPath = requireSessionPath(msg, ws);
-    if (!sessionPath) return null;
-    const requestedSessionId = typeof msg.sessionId === "string" && msg.sessionId.trim()
-      ? msg.sessionId.trim()
-      : null;
-    const pathSessionId = sessionIdForPath(sessionPath);
-    if (requestedSessionId && pathSessionId && requestedSessionId !== pathSessionId) {
+  // 所有 WS 分支的身份入口：解析一次，失败就地回错，成功的结果由 handler 直接消费。
+  function requireWsSessionContext(msg, ws) {
+    const ctx = resolveWsSessionContext(engine, msg);
+    if (ctx.ok === false) {
       wsSend(ws, {
         type: "error",
-        code: "session_identity_mismatch",
-        message: "sessionId and sessionPath refer to different sessions",
-        sessionId: requestedSessionId,
-        sessionPath,
+        code: ctx.code,
+        message: ctx.message,
+        ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+        ...(ctx.sessionPath ? { sessionPath: ctx.sessionPath } : {}),
       });
       return null;
     }
-    if (requestedSessionId && typeof engine.getSessionManifest === "function") {
-      const manifestPath = engine.getSessionManifest(requestedSessionId)?.currentLocator?.path || null;
-      if (!manifestPath || manifestPath !== sessionPath) {
-        wsSend(ws, {
-          type: "error",
-          code: "session_identity_mismatch",
-          message: "sessionId and sessionPath refer to different sessions",
-          sessionId: requestedSessionId,
-          sessionPath,
-        });
-        return null;
-      }
-    }
-    return { sessionPath, sessionId: requestedSessionId || pathSessionId || null };
+    return ctx;
   }
 
+  // compact 走 resolveCompactSessionTarget（错误回包形状与前端路由绑定，不能换成通用
+  // 身份错误），拿不到解析结果里的归属标记，所以这一条分支仍单独问引擎要删除状态。
+  // 问的是同一个归属权威，不是另开身份来源。
   function isDeletedAgentSessionPath(sessionPath) {
     if (!sessionPath) return false;
     return engine.isDeletedAgentSession?.(sessionPath) === true;
@@ -402,12 +430,14 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
         hasToolCall: false,
         hasThinking: false,
         hasError: false,
+        assistantStopReason: null,
         isAborted: false,
         turnActive: false,
         titleRequested: false,
         titlePreview: "",
         pendingDeferredContentEvents: [],
         pendingTurnInputConsumptions: [],
+        consumedTurnInputsForCurrentTurn: [],
         flushedTurnInputConsumptionKeys: new Set(),
         pendingTurnCompletionNotification: null,
         pendingPhaseTextByIndex: new Map(),
@@ -502,6 +532,17 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
     }
   }
 
+  const agentReviewTurns = new AgentReviewTurnCoordinator({
+    engine,
+    submitSessionMessage: submitDesktopSessionMessage,
+    emitStatus: (status, sessionPath) => broadcast({
+      type: "agent_review_status",
+      sessionId: status.reviewedSessionId,
+      sessionPath,
+      ...status,
+    }),
+  });
+
   // 浏览器缩略图 30s 定时刷新（browser 活跃时）
   let _browserThumbTimer = null;
   function startBrowserThumbPoll() {
@@ -590,6 +631,29 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
     emitDeferredContentEvents(sessionPath, ss, pending);
   }
 
+  function deferredContentEventTaskId(event) {
+    const block = event?.block;
+    if (!block || typeof block !== "object") return null;
+    return textOrNull(block.taskId) || textOrNull(block.replacesTaskId);
+  }
+
+  function discardQueuedBranchTaskEvents(ss, taskIds) {
+    const discarded = new Set(Array.isArray(taskIds) ? taskIds.filter(Boolean) : []);
+    if (!discarded.size) return;
+    ss.pendingDeferredContentEvents = (ss.pendingDeferredContentEvents || []).filter((event) => {
+      const taskId = deferredContentEventTaskId(event);
+      return !taskId || !discarded.has(taskId);
+    });
+    ss.pendingTurnInputConsumptions = (ss.pendingTurnInputConsumptions || []).filter((item) => {
+      const taskId = textOrNull(item?.input?.taskId) || textOrNull(item?.block?.taskId);
+      return !taskId || !discarded.has(taskId);
+    });
+    ss.consumedTurnInputsForCurrentTurn = (ss.consumedTurnInputsForCurrentTurn || []).filter((item) => {
+      const taskId = textOrNull(item?.input?.taskId) || textOrNull(item?.block?.taskId);
+      return !taskId || !discarded.has(taskId);
+    });
+  }
+
   function beginStreamingTurnState(sessionPath, ss, { streamId = null, flushDeferred = false } = {}) {
     if (flushDeferred) flushPendingDeferredContentEvents(sessionPath, ss);
     ss.pendingTurnCompletionNotification = null;
@@ -606,6 +670,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
     ss.hasToolCall = false;
     ss.hasThinking = false;
     ss.hasError = false;
+    ss.assistantStopReason = null;
     ss.isAborted = false;
     ss.titleRequested = false;
     ss.titlePreview = "";
@@ -719,26 +784,68 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
     emitStreamEvent(sessionPath, ss, { type: "content_block", block });
   }
 
-  function persistTurnInputConsumption(sessionPath, item, assistantMessage = null) {
-    if (!sessionPath || typeof engine.recordCustomEntry !== "function") return;
+  function persistedConsumptionEntryIds(sessionPath, item, fallbackIds) {
+    const branch = engine.getSessionByPath?.(sessionPath)?.sessionManager?.getBranch?.();
+    const deliveryId = textOrNull(item?.deliveryId) || textOrNull(item?.input?.deliveryId);
+    const eventEntryId = textOrNull(item?.input?.entryId);
+    const inputEntry = Array.isArray(branch)
+      ? [...branch].reverse().find((entry) => (
+          entry?.type === "custom_message"
+          && (
+            (deliveryId && textOrNull(entry.details?.deliveryId) === deliveryId)
+            || (eventEntryId && entry.id === eventEntryId)
+          )
+        )) || null
+      : null;
+    const inputEntryId = inputEntry?.id || fallbackIds?.turnInputEntryId || eventEntryId || null;
+    const assistantEntryId = fallbackIds?.assistantEntryId || null;
+    const assistantEntry = Array.isArray(branch) && assistantEntryId
+      ? branch.find((entry) => entry?.id === assistantEntryId) || null
+      : null;
+    return {
+      inputEntryId,
+      assistantEntryId,
+      assistantParentId: assistantEntry?.parentId || null,
+      inputTimestamp: inputEntry?.timestamp || null,
+      assistantTimestamp: assistantEntry?.timestamp || null,
+    };
+  }
+
+  function persistTurnInputConsumption(sessionPath, item, fallbackIds) {
+    const recordCustomEntry = typeof engine.recordSessionCustomEntry === "function"
+      ? engine.recordSessionCustomEntry.bind(engine)
+      : typeof engine.recordCustomEntry === "function"
+        ? engine.recordCustomEntry.bind(engine)
+        : null;
+    if (!sessionPath || !recordCustomEntry) return;
+    const persisted = persistedConsumptionEntryIds(sessionPath, item, fallbackIds);
+    if (!persisted.assistantEntryId) return;
     const record = buildTurnInputConsumptionRecord({
-      input: item?.input,
-      assistant: assistantMessage && typeof assistantMessage === "object"
-        ? {
-            ...(textOrNull(assistantMessage.id) ? { entryId: textOrNull(assistantMessage.id) } : {}),
-            ...(textOrNull(assistantMessage.parentId) ? { parentId: textOrNull(assistantMessage.parentId) } : {}),
-            ...(textOrNull(assistantMessage.timestamp) ? { timestamp: textOrNull(assistantMessage.timestamp) } : {}),
-          }
-        : null,
+      input: {
+        ...(item?.input || {}),
+        ...(persisted.inputEntryId ? { entryId: persisted.inputEntryId } : {}),
+        ...(persisted.inputTimestamp ? { timestamp: persisted.inputTimestamp } : {}),
+      },
+      assistant: {
+        entryId: persisted.assistantEntryId,
+        ...(persisted.assistantParentId ? { parentId: persisted.assistantParentId } : {}),
+        ...(persisted.assistantTimestamp ? { timestamp: persisted.assistantTimestamp } : {}),
+      },
       presentation: item?.presentation,
       block: item?.block,
     });
     if (!record) return;
     try {
-      engine.recordCustomEntry(sessionPath, TURN_INPUT_CONSUMPTION_EVENT_TYPE, record);
+      recordCustomEntry(sessionPath, TURN_INPUT_CONSUMPTION_EVENT_TYPE, record);
     } catch (err) {
       log.warn(`turn input consumption persistence failed: ${err.message}`);
     }
+  }
+
+  function persistConsumedTurnInputs(sessionPath, ss, persistedIds) {
+    const consumed = ss.consumedTurnInputsForCurrentTurn || [];
+    ss.consumedTurnInputsForCurrentTurn = [];
+    for (const item of consumed) persistTurnInputConsumption(sessionPath, item, persistedIds);
   }
 
   function takePendingTurnInputConsumptionsForAssistant(ss, assistantMessage = null) {
@@ -762,8 +869,11 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       ss.flushedTurnInputConsumptionKeys = new Set();
     }
     for (const item of items) {
-      persistTurnInputConsumption(sessionPath, item, assistantMessage);
       emitTurnInputConsumption(sessionPath, ss, item);
+      ss.consumedTurnInputsForCurrentTurn = [
+        ...(ss.consumedTurnInputsForCurrentTurn || []),
+        item,
+      ];
       const key = turnInputConsumptionKey(item);
       if (key) ss.flushedTurnInputConsumptionKeys.add(key);
     }
@@ -845,14 +955,26 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
     });
   }
 
-  function resolveSessionNotificationIdentity(sessionPath) {
+  function resolveChatNotificationIdentity(sessionPath) {
+    const sessionId = engine.getSessionIdForPath?.(sessionPath) || null;
+    const manifest = sessionId ? engine.getSessionManifest?.(sessionId) || null : null;
+    if (!manifest) {
+      log.warn(`chat completion notification skipped: session manifest missing for ${path.basename(sessionPath || "")}`);
+      return null;
+    }
+    if (manifest.domain !== "desktop" || manifest.kind !== "chat") {
+      log.log(`chat completion notification skipped: ${manifest.domain || "unknown"}/${manifest.kind || "unknown"} session`);
+      return null;
+    }
     const session = engine.getSessionByPath?.(sessionPath) || null;
     const agent = session?.agent || null;
-    const agentId = typeof session?.agentId === "string" && session.agentId
-      ? session.agentId
-      : typeof agent?.id === "string" && agent.id
-        ? agent.id
-        : null;
+    const agentId = typeof manifest.ownerAgentId === "string" && manifest.ownerAgentId
+      ? manifest.ownerAgentId
+      : typeof session?.agentId === "string" && session.agentId
+        ? session.agentId
+        : typeof agent?.id === "string" && agent.id
+          ? agent.id
+          : null;
     const agentName = typeof session?.agentName === "string" && session.agentName
       ? session.agentName
       : typeof agent?.agentName === "string" && agent.agentName
@@ -860,23 +982,25 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
         : typeof agent?.name === "string" && agent.name
           ? agent.name
           : null;
-    return { agentId, agentName };
+    return { agentId, agentName, sessionId };
   }
 
   function maybeDeliverTurnCompletionNotification(sessionPath, { wasAborted, wasSuccessful, streamId }) {
     if (!sessionPath || wasAborted || !wasSuccessful) return;
     try {
       const prefs = engine.getNotificationPreferences?.();
-      if (prefs?.turnCompletion !== "when_unfocused" && prefs?.turnCompletion !== "when_session_unfocused") return;
+      if (prefs?.chatCompletion !== "when_unfocused" && prefs?.chatCompletion !== "when_session_unfocused") return;
       if (typeof engine.deliverNotification !== "function") return;
 
-      const { agentId, agentName } = resolveSessionNotificationIdentity(sessionPath);
-      const idempotencyKey = streamId ? `turn-completion:${sessionPath}:${streamId}` : null;
+      const identity = resolveChatNotificationIdentity(sessionPath);
+      if (!identity) return;
+      const { agentId, agentName, sessionId } = identity;
+      const idempotencyKey = streamId ? `chat-completion:${sessionId}:${streamId}` : null;
       const delivery = engine.deliverNotification({
         title: agentName || "HanaAgent",
-        body: t("notification.turnCompletionBody"),
+        body: t("notification.chatCompletionBody"),
         channels: ["desktop"],
-        desktopFocusPolicy: prefs.turnCompletion === "when_session_unfocused"
+        desktopFocusPolicy: prefs.chatCompletion === "when_session_unfocused"
           ? "when_session_unfocused"
           : "when_unfocused",
         sessionPath,
@@ -885,10 +1009,10 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
         agentId,
       });
       delivery?.catch?.((err) => {
-        log.warn(`turn completion notification failed: ${err.message}`);
+        log.warn(`chat completion notification failed: ${err.message}`);
       });
     } catch (err) {
-      log.warn(`turn completion notification skipped: ${err.message}`);
+      log.warn(`chat completion notification skipped: ${err.message}`);
     }
   }
 
@@ -948,6 +1072,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       sessionPath,
       (sp) => engine.getSessionByPath(sp),
       (sp) => sessionIdForPath(sp),
+      () => getResolvedCompactionMode(engine.preferences),
     );
     if (compactionMessage) {
       broadcast(compactionMessage);
@@ -1162,20 +1287,29 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       });
     } else if (event.type === "tool_execution_end") {
       if (!ss) return;
+      const outcome = projectLiveToolResultOutcome({
+        ...event.result,
+        isError: event.isError === true || event.result?.isError === true,
+      });
       emitStreamEvent(sessionPath, ss, {
         type: "tool_end",
         id: event.toolCallId || undefined,
         name: event.toolName || "",
-        success: !event.isError,
+        status: outcome.status,
+        success: outcome.success,
+        ...(outcome.error ? { error: outcome.error } : {}),
         details: event.result?.details,
       });
 
       // Unified content_block emission for all tool results
       const blocks = normalizePluginChatSurfaceBlocks(
-        enrichSessionFileBlocks(
-          extractBlocks(event.toolName, event.result?.details, event.result),
-          engine,
-          sessionPath,
+        dropUninstalledPluginCards(
+          enrichSessionFileBlocks(
+            extractBlocks(event.toolName, event.result?.details, event.result),
+            engine,
+            sessionPath,
+          ),
+          pluginInstalledPredicate(engine),
         ),
         engine,
       );
@@ -1307,10 +1441,17 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       broadcast({ type: "bridge_status", platform: event.platform, status: event.status, error: event.error, agentId: event.agentId || null });
     } else if (event.type === "session_branch_reset") {
       if (!ss) return;
+      discardQueuedBranchTaskEvents(ss, event.discardedTaskIds);
+      ss.pendingTurnInputConsumptions = [];
+      ss.consumedTurnInputsForCurrentTurn = [];
+      ss.flushedTurnInputConsumptionKeys?.clear?.();
       emitStreamEvent(sessionPath, ss, {
         type: "session_branch_reset",
         messageId: event.messageId || null,
+        projectionMessageId: event.projectionMessageId || null,
         clientMessageId: event.clientMessageId || null,
+        todos: Array.isArray(event.todos) ? event.todos : [],
+        sessionFiles: Array.isArray(event.sessionFiles) ? event.sessionFiles : [],
       });
     } else if (event.type === "session_user_message") {
       if (!ss) return;
@@ -1427,10 +1568,13 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       }
       if (event.message?.role === "custom" && event.message.display !== false) {
         const blocks = normalizePluginChatSurfaceBlocks(
-          enrichSessionFileBlocks(
-            extractBlocks(event.message.customType, event.message.details, event.message),
-            engine,
-            sessionPath,
+          dropUninstalledPluginCards(
+            enrichSessionFileBlocks(
+              extractBlocks(event.message.customType, event.message.details, event.message),
+              engine,
+              sessionPath,
+            ),
+            pluginInstalledPredicate(engine),
           ),
           engine,
         );
@@ -1442,46 +1586,70 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
         ss.hasError = true;
         broadcast({ type: "error", message: event.message.errorMessage || "Unknown error", sessionPath });
       }
+      if (event.message?.role === "assistant" && typeof event.message.stopReason === "string") {
+        ss.assistantStopReason = event.message.stopReason;
+      }
     } else if (event.type === "turn_end") {
       if (!ss) return;
-      const turnWasAborted = ss.isAborted === true;
+      // 合成的中止事件带 event.aborted：中止源在 WS abort 之外时（断线宽限中止、
+      // 关机 abort_all）ss.isAborted 不会被置位，只能靠事件本身识别。
+      const turnWasAborted = ss.isAborted === true || event.aborted === true;
+      const turnWasTruncated = ss.assistantStopReason === "length";
       const turnStreamId = ss.streamId || null;
       flushTerminalParsers();
 
       // 空回复检测：本轮没有文本输出也没有工具调用，提示用户检查配置
-      // 被 abort 的 turn 不弹此提示（用户主动停止 / WS 断开 / 连接超时）
-      if (!ss.hasOutput && !ss.hasToolCall && !ss.hasThinking && !ss.hasError && !ss.isAborted) {
+      // 被 abort 的 turn 不弹此提示（用户主动停止 / WS 断开 / 连接超时）；
+      // 合成中止事件同样豁免
+      const truncatedWithoutVisibleResult = turnWasTruncated && !ss.hasOutput && !ss.hasToolCall;
+      if (
+        ((!ss.hasOutput && !ss.hasToolCall && !ss.hasThinking) || truncatedWithoutVisibleResult)
+        && !ss.hasError
+        && !turnWasAborted
+      ) {
         ss.hasError = true;
         broadcast({ type: "error", message: t("error.modelNoResponse"), sessionPath });
       }
       const turnWasSuccessful = !turnWasAborted && !ss.hasError && (ss.hasOutput || ss.hasToolCall || ss.hasThinking);
 
-      // ── token usage 事件（供插件监听做用量统计）──
-      try {
-        const sess = engine.getSessionByPath(sessionPath);
-        if (sess) {
-          const usage = getLastAssistantUsage(sess.entries ?? []);
-          if (usage) {
-            const model = sess.model;
-            logLlmUsage({
-              source: "chat",
-              api: model?.api ?? null,
-              modelId: model?.id ?? null,
-              provider: model?.provider ?? null,
-              usage,
-              costRates: model?.cost,
-            } as any);
-            hub.eventBus.emit({
-              type: "token_usage",
-              usage,
-              modelId: model?.id ?? null,
-              modelProvider: model?.provider ?? null,
-            }, sessionPath);
-          }
-        }
-      } catch (_) { /* 统计失败不阻塞主流程 */ }
+      const persistedEntries = persistedTurnEntryIds(engine, sessionPath);
 
-      emitStreamEvent(sessionPath, ss, { type: "turn_end" });
+      // ── token usage 事件（供插件监听做用量统计）──
+      // 中止的 turn 没落盘任何 assistant 时跳过记账：branch 里最后一条 assistant
+      // 属于上一轮，它的 usage 在上一轮 turn_end 已经记过一次，重复记会双计。
+      const skipUsageAccounting = event.aborted === true && !persistedEntries.assistantEntryId;
+      if (!skipUsageAccounting) {
+        try {
+          const sess = engine.getSessionByPath(sessionPath);
+          if (sess) {
+            const usage = getLastAssistantUsage(sess.entries ?? []);
+            if (usage) {
+              const model = sess.model;
+              logLlmUsage({
+                source: "chat",
+                api: model?.api ?? null,
+                modelId: model?.id ?? null,
+                provider: model?.provider ?? null,
+                usage,
+                costRates: model?.cost,
+              } as any);
+              hub.eventBus.emit({
+                type: "token_usage",
+                usage,
+                modelId: model?.id ?? null,
+                modelProvider: model?.provider ?? null,
+              }, sessionPath);
+            }
+          }
+        } catch (_) { /* 统计失败不阻塞主流程 */ }
+      }
+
+      persistConsumedTurnInputs(sessionPath, ss, persistedEntries);
+      emitStreamEvent(sessionPath, ss, {
+        type: "turn_end",
+        ...persistedEntries,
+        ...(turnWasTruncated ? { truncated: true, stopReason: "length" } : {}),
+      });
       finishSessionStream(ss);
       ss.turnActive = false;
       if (!isSessionRuntimeStreaming(sessionPath)) {
@@ -1496,8 +1664,10 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       ss.hasToolCall = false;
       ss.hasThinking = false;
       ss.hasError = false;
+      ss.assistantStopReason = null;
       ss.isAborted = false;
       ss.pendingTurnInputConsumptions = [];
+      ss.consumedTurnInputsForCurrentTurn = [];
       ss.thinkTagParser.reset();
       ss.moodParser.reset();
       ss.cardParser.reset();
@@ -1510,6 +1680,10 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
       maybeGenerateFirstTurnTitle(sessionPath, ss);
     } else if (event.type === "deferred_result") {
       if (!ss) return;
+      // Retry fences discarded task IDs in DeferredResultStore before emitting
+      // session_branch_reset. Ignore any delayed bus callback that observes the
+      // old branch after that fence was installed.
+      if (engine.deferredResults?.query?.(event.taskId)?.deliverySuppressed) return;
       const delayVisibleBlocks = ss.turnActive === true;
       emitStreamEvent(sessionPath, ss, {
         type: "deferred_result",
@@ -1581,7 +1755,7 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
           // Wrap the async handler with error handling (replaces wrapWsHandler)
           (async () => {
             if (msg.type === "abort") {
-              const abortTarget = requireBoundSessionTarget(msg, ws); if (!abortTarget) return;
+              const abortTarget = requireWsSessionContext(msg, ws); if (!abortTarget) return;
               const abortPath = abortTarget.sessionPath;
               const abortSs = getState(abortPath);
               const requestedStreamId = typeof msg.streamId === "string" && msg.streamId.trim()
@@ -1590,7 +1764,16 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
               const activeStreamId = typeof abortSs?.streamId === "string" && abortSs.streamId.trim()
                 ? abortSs.streamId.trim()
                 : null;
-              if (!requestedStreamId || !activeStreamId || requestedStreamId !== activeStreamId) {
+              if (requestedStreamId && (!activeStreamId || requestedStreamId !== activeStreamId)) {
+                wsSend(ws, {
+                  type: "abort_result",
+                  status: "rejected",
+                  reason: "stale_stream",
+                  sessionId: abortTarget.sessionId,
+                  sessionPath: abortPath,
+                  streamId: activeStreamId,
+                });
+                // Keep the legacy rejection event while older clients migrate to abort_result.
                 wsSend(ws, {
                   type: "abort_rejected",
                   reason: "stale_stream",
@@ -1605,7 +1788,10 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                 : "user_abort";
               if (abortSs) abortSs.isAborted = true;
               let abortAccepted = false;
-              try { abortAccepted = !!(await hub.abort(abortPath, { reason: abortReason })); } catch {}
+              try {
+                abortAccepted = !!(await agentReviewTurns.cancelByParent(abortTarget.sessionId, abortReason));
+                if (!abortAccepted) abortAccepted = !!(await hub.abort(abortPath, { reason: abortReason }));
+              } catch {}
               if (!abortAccepted) {
                 const abortStreamId = abortSs?.streamId || null;
                 finishStreamingState(abortSs, abortPath);
@@ -1618,14 +1804,21 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                   reason: abortReason,
                 });
               }
+              wsSend(ws, {
+                type: "abort_result",
+                status: abortAccepted ? "accepted" : "already_stopped",
+                sessionId: abortTarget.sessionId,
+                sessionPath: abortPath,
+                streamId: activeStreamId,
+              });
               return;
             }
 
             if (msg.type === "steer" && msg.text) {
               debugLog()?.log("ws", `steer (${msg.text.length} chars)`);
-              const steerTarget = requireBoundSessionTarget(msg, ws); if (!steerTarget) return;
+              const steerTarget = requireWsSessionContext(msg, ws); if (!steerTarget) return;
               const steerPath = steerTarget.sessionPath;
-              if (isDeletedAgentSessionPath(steerPath)) {
+              if (steerTarget.agentDeleted) {
                 rejectDeletedAgentSession(ws, steerPath);
                 return;
               }
@@ -1633,14 +1826,15 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                 wsSend(ws, { type: "steered" });
                 return;
               }
-              // agent 已停止，降级为正常 prompt（下面的 prompt 分支会处理）
+              // agent 已停止，降级为正常 prompt（下面的 prompt 分支会处理）。
+              // prompt 分支会对同一条消息再解析一次身份，输入没变，结果与这里等价。
               debugLog()?.log("ws", `steer missed, falling back to prompt`);
               msg.type = "prompt";
             }
 
             // session 切回时，前端请求补发离屏期间的流式内容
             if (msg.type === "resume_stream") {
-              const resumeTarget = requireBoundSessionTarget(msg, ws); if (!resumeTarget) return;
+              const resumeTarget = requireWsSessionContext(msg, ws); if (!resumeTarget) return;
               const currentPath = resumeTarget.sessionPath;
               const currentSessionId = resumeTarget.sessionId;
               const ss = getExistingState(currentPath);
@@ -1682,7 +1876,8 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
             }
 
             if (msg.type === "context_usage") {
-              const usagePath = requireSessionPath(msg, ws); if (!usagePath) return;
+              const usageCtx = requireWsSessionContext(msg, ws); if (!usageCtx) return;
+              const usagePath = usageCtx.sessionPath;
               const usage = engine.getSessionContextUsage?.(usagePath)
                 || engine.getSessionByPath(usagePath)?.getContextUsage?.();
               wsSend(ws, {
@@ -1696,8 +1891,9 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
             }
 
             if (msg.type === "slash" && typeof msg.text === "string") {
-              const sp = requireSessionPath(msg, ws); if (!sp) return;
-              if (isDeletedAgentSessionPath(sp)) {
+              const slashCtx = requireWsSessionContext(msg, ws); if (!slashCtx) return;
+              const sp = slashCtx.sessionPath;
+              if (slashCtx.agentDeleted) {
                 rejectDeletedAgentSession(ws, sp);
                 return;
               }
@@ -1706,17 +1902,23 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                 wsSend(ws, { type: "error", message: "slash system not ready", sessionPath: sp });
                 return;
               }
-              const session = engine.getSessionByPath(sp);
-              const agentId = session?.agentId || msg.agentId;
+              const agentId = slashCtx.agentId;
               if (!agentId) {
-                wsSend(ws, { type: "error", message: "agentId required", sessionPath: sp });
+                // 走到这里说明服务端认不出这个会话的归属、调用方也没带身份——是内部契约被
+                // 破坏，不是用户操作错误。带上 code 让前端换成通用文案，英文原文进详情。
+                wsSend(ws, {
+                  type: "error",
+                  code: "internal_contract",
+                  message: "agent identity unresolved",
+                  sessionPath: sp,
+                });
                 return;
               }
               const sendReply = async (text) => {
                 wsSend(ws, { type: "slash_result", sessionPath: sp, text, level: "success" });
               };
               const res = await dispatcher.tryDispatch(msg.text.trim(), {
-                sessionRef: { kind: "desktop", agentId, sessionPath: sp },
+                sessionRef: buildDesktopSlashSessionRef(engine, agentId, sp),
                 source: "desktop",
                 senderId: "desktop",
                 isOwner: true,
@@ -1740,13 +1942,39 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                 return;
               }
               const { sessionId: compactSessionId, sessionPath: compactPath } = compactTarget;
+              const requestedMethod = msg.method == null ? null : String(msg.method);
+              if (requestedMethod !== null && requestedMethod !== INSTANT_SIMPLE_COMPACTION_METHOD) {
+                wsSend(ws, {
+                  type: "error",
+                  code: "invalid_compaction_method",
+                  message: "unsupported compaction method",
+                  sessionId: compactSessionId,
+                  sessionPath: compactPath,
+                });
+                return;
+              }
+              const instantSimple = requestedMethod === INSTANT_SIMPLE_COMPACTION_METHOD;
+              const compactionMode = instantSimple
+                ? INSTANT_SIMPLE_COMPACTION_RUNTIME_MODE
+                : getResolvedCompactionMode(engine.preferences);
               const compactResult = (status, details: Record<string, any> = {}) => wsSend(ws, {
                 type: "compaction_result",
                 sessionId: compactSessionId,
                 sessionPath: compactPath,
+                mode: compactionMode,
                 status,
                 ...details,
               });
+              if (
+                instantSimple
+                && getResolvedInstantSimpleCompactionEnabled(engine.preferences) !== true
+              ) {
+                compactResult("failed", {
+                  reason: "experiment_disabled",
+                  message: "Instant simple compaction is disabled in Experiments",
+                });
+                return;
+              }
               if (isDeletedAgentSessionPath(compactPath)) {
                 compactResult("failed", { reason: "agent_deleted", message: "agent_deleted" });
                 return;
@@ -1769,15 +1997,26 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                 type: "compaction_accepted",
                 sessionId: compactSessionId,
                 sessionPath: compactPath,
+                mode: compactionMode,
               });
               try {
-                const compacted = await compactSessionWithCachePreservationRecoveringRuntime({
-                  session,
-                  sessionPath: compactPath,
-                  customInstructions: undefined,
-                  reloadSessionRuntime: (path) => engine.reloadSessionRuntime?.(path),
-                });
-                session = compacted.session;
+                if (instantSimple) {
+                  if (typeof engine.getLossyLocalCompactionSummarySource !== "function") {
+                    throw new Error("Instant simple compaction summary resolver is unavailable");
+                  }
+                  await runInstantSimpleCompaction(session, {
+                    getSummarySource: () => engine.getLossyLocalCompactionSummarySource(compactPath),
+                    lifecycleReason: "manual",
+                  });
+                } else {
+                  const compacted = await compactSessionWithCachePreservationRecoveringRuntime({
+                    session,
+                    sessionPath: compactPath,
+                    customInstructions: undefined,
+                    reloadSessionRuntime: (path) => engine.reloadSessionRuntime?.(path),
+                  });
+                  session = compacted.session;
+                }
                 compactResult("succeeded");
               } catch (err) {
                 const errMsg = err.message || "";
@@ -1796,20 +2035,24 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
 
             if ((msg.type === "prompt" || msg.type === "interject") && (msg.text || msg.images?.length || msg.videos?.length || msg.audios?.length)) {
               const interject = msg.type === "interject";
+              // 身份先解析：媒体校验的错误回包也要报在解析后的会话上，而且一条没有身份的
+              // 消息不值得先把几 MB base64 量一遍再拒。
+              const promptTarget = requireWsSessionContext(msg, ws); if (!promptTarget) return;
+              const promptSessionPath = promptTarget.sessionPath;
               // 图片校验：最多 10 张，单张 ≤ 20MB，仅允许常见图片 MIME
               if (msg.images?.length) {
                 const MAX_IMAGES = 10;
                 if (msg.images.length > MAX_IMAGES) {
-                  wsSend(ws, { type: "error", message: t("error.maxImages", { max: MAX_IMAGES }), sessionPath: msg.sessionPath });
+                  wsSend(ws, { type: "error", message: t("error.maxImages", { max: MAX_IMAGES }), sessionPath: promptSessionPath });
                   return;
                 }
                 for (const img of msg.images) {
                   if (!img?.mimeType || !isAllowedChatImageMime(img.mimeType)) {
-                    wsSend(ws, { type: "error", message: t("error.unsupportedImageFormat", { mime: img?.mimeType || "unknown" }), sessionPath: msg.sessionPath });
+                    wsSend(ws, { type: "error", message: t("error.unsupportedImageFormat", { mime: img?.mimeType || "unknown" }), sessionPath: promptSessionPath });
                     return;
                   }
                   if (img.data && !isChatImageBase64WithinLimit(img.data)) {
-                    wsSend(ws, { type: "error", message: t("error.imageTooLarge"), sessionPath: msg.sessionPath });
+                    wsSend(ws, { type: "error", message: t("error.imageTooLarge"), sessionPath: promptSessionPath });
                     return;
                   }
                 }
@@ -1817,16 +2060,16 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
               if (msg.videos?.length) {
                 const MAX_VIDEOS = 3;
                 if (msg.videos.length > MAX_VIDEOS) {
-                  wsSend(ws, { type: "error", message: t("error.maxVideos", { max: MAX_VIDEOS }), sessionPath: msg.sessionPath });
+                  wsSend(ws, { type: "error", message: t("error.maxVideos", { max: MAX_VIDEOS }), sessionPath: promptSessionPath });
                   return;
                 }
                 for (const video of msg.videos) {
                   if (!video?.mimeType || !isAllowedChatVideoMime(video.mimeType)) {
-                    wsSend(ws, { type: "error", message: t("error.unsupportedVideoFormat", { mime: video?.mimeType || "unknown" }), sessionPath: msg.sessionPath });
+                    wsSend(ws, { type: "error", message: t("error.unsupportedVideoFormat", { mime: video?.mimeType || "unknown" }), sessionPath: promptSessionPath });
                     return;
                   }
                   if (video.data && !isChatVideoBase64WithinLimit(video.data)) {
-                    wsSend(ws, { type: "error", message: t("error.videoTooLarge"), sessionPath: msg.sessionPath });
+                    wsSend(ws, { type: "error", message: t("error.videoTooLarge"), sessionPath: promptSessionPath });
                     return;
                   }
                 }
@@ -1834,16 +2077,16 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
               if (msg.audios?.length) {
                 const MAX_AUDIOS = 3;
                 if (msg.audios.length > MAX_AUDIOS) {
-                  wsSend(ws, { type: "error", message: t("error.maxAudios", { max: MAX_AUDIOS }), sessionPath: msg.sessionPath });
+                  wsSend(ws, { type: "error", message: t("error.maxAudios", { max: MAX_AUDIOS }), sessionPath: promptSessionPath });
                   return;
                 }
                 for (const audio of msg.audios) {
                   if (!audio?.mimeType || !isAllowedChatAudioMime(audio.mimeType)) {
-                    wsSend(ws, { type: "error", message: t("error.unsupportedAudioFormat", { mime: audio?.mimeType || "unknown" }), sessionPath: msg.sessionPath });
+                    wsSend(ws, { type: "error", message: t("error.unsupportedAudioFormat", { mime: audio?.mimeType || "unknown" }), sessionPath: promptSessionPath });
                     return;
                   }
                   if (audio.data && !isChatAudioBase64WithinLimit(audio.data)) {
-                    wsSend(ws, { type: "error", message: t("error.audioTooLarge"), sessionPath: msg.sessionPath });
+                    wsSend(ws, { type: "error", message: t("error.audioTooLarge"), sessionPath: promptSessionPath });
                     return;
                   }
                 }
@@ -1856,20 +2099,36 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                 promptText = `${skillNote}\n${promptText}`;
               }
               debugLog()?.log("ws", `user message (${promptText.length} chars, ${msg.images?.length || 0} images, ${msg.videos?.length || 0} videos, ${msg.audios?.length || 0} audios)`);
-              // Phase 2: 客户端可指定 sessionPath，否则用焦点 session
-              const promptTarget = requireBoundSessionTarget(msg, ws); if (!promptTarget) return;
-              const promptSessionPath = promptTarget.sessionPath;
-              if (isDeletedAgentSessionPath(promptSessionPath)) {
+              // agentDeleted 门禁只挂在会写入会话的分支（steer / slash / prompt / compact）；
+              // abort、resume_stream、context_usage 是停止和只读，删除态照常放行，与改动前一致。
+              if (promptTarget.agentDeleted) {
                 rejectDeletedAgentSession(ws, promptSessionPath);
                 return;
               }
-              if (!interject && engine.isSessionStreaming(promptSessionPath)) {
+              if (!interject && (
+                engine.isSessionStreaming(promptSessionPath)
+                || agentReviewTurns.hasPendingParent(promptTarget.sessionId)
+              )) {
                 wsSend(ws, { type: "error", message: t("error.stillStreaming", { name: engine.agentName }), sessionPath: promptSessionPath });
                 return;
               }
               // Reject prompt while model switch is in progress
               if (engine.isSessionSwitching(promptSessionPath)) {
                 wsSend(ws, { type: "error", message: t("chat.modelSwitching"), sessionPath: promptSessionPath });
+                return;
+              }
+              const reviewRequests = Array.isArray(msg.agentReviewRequests)
+                ? msg.agentReviewRequests.filter(request => (
+                  request && typeof request.agentId === "string" && request.agentId.trim()
+                ))
+                : [];
+              if (interject && reviewRequests.length > 0) {
+                wsSend(ws, {
+                  type: "error",
+                  code: "agent_review_interjection_not_supported",
+                  message: "@Agent review cannot be sent as an interjection.",
+                  sessionPath: promptSessionPath,
+                });
                 return;
               }
               if (interject && engine.isSessionStreaming(promptSessionPath)) {
@@ -1895,6 +2154,65 @@ export function createChatRoute(engine: any, hub: any, { upgradeWebSocket }: any
                 }
                 return;
               }
+              const sessionRefs = normalizeSessionReferences(msg.sessionRefs);
+              if (reviewRequests.length > 1) {
+                wsSend(ws, {
+                  type: "error",
+                  code: "multiple_agent_reviews_not_supported",
+                  message: "Only one @Agent review is supported per turn.",
+                  sessionPath: promptSessionPath,
+                });
+                return;
+              }
+              if (reviewRequests.length === 1) {
+                if (!promptTarget.sessionId) {
+                  wsSend(ws, {
+                    type: "error",
+                    code: "session_id_required_for_agent_review",
+                    message: "A stable Session ID is required for @Agent review.",
+                    sessionPath: promptSessionPath,
+                  });
+                  return;
+                }
+                const reviewerAgentId = reviewRequests[0].agentId.trim();
+                // 这里刻意只认 manifest 上写着的属主，不吃路径推导、也不用上面解析出的
+                // ctx.agentId：那个为了让草稿能跑，会退到路径推导甚至客户端声明。评审的
+                // 规则是"评审者不能就是会话属主本人"，属主认错了等于让 agent 自己审自己，
+                // 所以这一处宁可在属主查不出时放行创建，也不拿宽松来源当权威。
+                const ownerAgentId = engine.getSessionManifest?.(promptTarget.sessionId)?.ownerAgentId || null;
+                if (!engine.getAgent?.(reviewerAgentId) || reviewerAgentId === ownerAgentId) {
+                  wsSend(ws, {
+                    type: "error",
+                    code: "invalid_review_agent",
+                    message: reviewerAgentId === ownerAgentId
+                      ? "The reviewing Agent must be different from the current Session Agent."
+                      : `Agent not found: ${reviewerAgentId}`,
+                    sessionPath: promptSessionPath,
+                  });
+                  return;
+                }
+                await agentReviewTurns.start({
+                  requestId: msg.clientMessageId,
+                  reviewedSessionId: promptTarget.sessionId,
+                  reviewedSessionPath: promptSessionPath,
+                  reviewer: {
+                    agentId: reviewerAgentId,
+                    label: typeof reviewRequests[0].label === "string" ? reviewRequests[0].label : reviewerAgentId,
+                  },
+                  text: promptText,
+                  displayMessage: msg.displayMessage,
+                  sessionRefs,
+                  clientMessageId: msg.clientMessageId,
+                  images: msg.images,
+                  videos: msg.videos,
+                  audios: msg.audios,
+                  uiContext: msg.uiContext ?? null,
+                  sessionFileRefs: msg.sessionFileRefs,
+                });
+                return;
+              }
+              const sessionRefBlock = buildSessionReferenceBlock(sessionRefs);
+              if (sessionRefBlock) promptText = `${promptText}\n\n${sessionRefBlock}`;
               try {
                 await hub.send(promptText, {
                   sessionId: promptTarget.sessionId,
@@ -2009,8 +2327,12 @@ function sessionFileFields(file: any) {
 /**
  * 后台生成 session 标题：从第一轮对话提取摘要
  * 只在 session 还没有自定义标题时执行
+ *
+ * 首条 user 消息在提交时会被前置注入 reminder / reference 信封和附件标记，
+ * 所以取标题素材前必须先投影回用户真正打的那段文字：既喂给摘要模型，也用于
+ * 模型不可用时的截断兜底，否则标题会变成信封字面量。
  */
-async function generateSessionTitle(engine: any, notify: any, opts: any = {}) {
+export async function generateSessionTitle(engine: any, notify: any, opts: any = {}) {
   try {
     const sessionPath = opts.sessionPath;
     if (!sessionPath) return false;
@@ -2026,8 +2348,9 @@ async function generateSessionTitle(engine: any, notify: any, opts: any = {}) {
     const assistantMsg = messages.find(m => m.role === "assistant");
     if (!userMsg && !opts.userTextHint) return false;
 
-    const userText = (opts.userTextHint || extractText(userMsg?.content)).trim();
+    const userText = visiblePromptText(opts.userTextHint || extractText(userMsg?.content));
     const assistantText = (opts.assistantTextHint || extractText(assistantMsg?.content)).trim();
+    // 纯附件消息剥完信封什么都不剩：跳过生成，侧边栏回退到同样剥离过的首条消息
     if (!userText || !assistantText) return false;
 
     // 超时由 callText 内部的 AbortSignal 统一控制：超时即取消 Pi SDK 连接，无空跑
@@ -2036,7 +2359,7 @@ async function generateSessionTitle(engine: any, notify: any, opts: any = {}) {
     // API 失败时，用用户第一条消息截取作为 fallback 标题
     if (!title) {
       const fallback = userText.replace(/\n/g, " ").trim().slice(0, 30);
-      if (!fallback) return;
+      if (!fallback) return false;
       title = fallback;
       log.log(`session 标题 API 失败，使用 fallback: ${title}`);
     }

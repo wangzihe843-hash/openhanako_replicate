@@ -1,5 +1,5 @@
 /**
- * shared/model-ref.js — 模型引用复合键工具
+ * shared/model-ref.ts — 模型引用复合键工具
  *
  * (provider, id) 是模型的唯一标识。
  * 运行时所有查找 / 比较 / 持久化**必须**用完整 {id, provider}。

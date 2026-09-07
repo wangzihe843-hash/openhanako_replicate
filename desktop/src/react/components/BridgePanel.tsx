@@ -77,11 +77,13 @@ export function BridgePanel() {
   bridgeAgentIdRef.current = bridgeAgentId;
 
   // 加载状态（按 agent 过滤，stale-guard via ref）
+  // bridgeAgentId 由 store 播种，播种前不发请求：bridge 读接口只回答指名道姓的
+  // agent，没有 id 的请求没有正确答案可给。
   const loadStatus = useCallback(async () => {
     const snapshotId = bridgeAgentId;
+    if (!snapshotId) return;
     try {
-      const query = snapshotId ? `?agentId=${encodeURIComponent(snapshotId)}` : '';
-      const res = await hanaFetch(`/api/bridge/status${query}`);
+      const res = await hanaFetch(`/api/bridge/status?agentId=${encodeURIComponent(snapshotId)}`);
       if (bridgeAgentIdRef.current !== snapshotId) return; // stale
       const data = await res.json();
       if (bridgeAgentIdRef.current !== snapshotId) return; // stale
@@ -93,10 +95,11 @@ export function BridgePanel() {
   // 加载平台数据（按 agent 过滤，stale-guard via ref）
   const loadPlatformData = useCallback(async (plat: BridgePlatform) => {
     const snapshotId = bridgeAgentId;
+    if (!snapshotId) return;
     try {
-      const agentQuery = snapshotId ? `&agentId=${encodeURIComponent(snapshotId)}` : '';
+      const agentQuery = `&agentId=${encodeURIComponent(snapshotId)}`;
       const [statusRes, sessionsRes] = await Promise.all([
-        hanaFetch(`/api/bridge/status${snapshotId ? `?agentId=${encodeURIComponent(snapshotId)}` : ''}`),
+        hanaFetch(`/api/bridge/status?agentId=${encodeURIComponent(snapshotId)}`),
         hanaFetch(`/api/bridge/sessions?platform=${plat}${agentQuery}`),
       ]);
       if (bridgeAgentIdRef.current !== snapshotId) return; // stale
@@ -228,9 +231,9 @@ export function BridgePanel() {
   const resetSession = useCallback(async () => {
     if (!currentKey) return;
     const snapshotId = bridgeAgentId;
+    if (!snapshotId) return;
     try {
-      const agentQuery = snapshotId ? `?agentId=${encodeURIComponent(snapshotId)}` : '';
-      await hanaFetch(`/api/bridge/sessions/${encodeURIComponent(currentKey)}/reset${agentQuery}`, { method: 'POST' });
+      await hanaFetch(`/api/bridge/sessions/${encodeURIComponent(currentKey)}/reset?agentId=${encodeURIComponent(snapshotId)}`, { method: 'POST' });
       if (bridgeAgentIdRef.current !== snapshotId) return; // stale
       if (currentSessionPath) {
         useStore.getState().clearSession(currentSessionPath);

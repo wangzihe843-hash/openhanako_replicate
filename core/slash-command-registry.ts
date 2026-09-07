@@ -34,7 +34,7 @@ export class SlashCommandRegistry {
   declare _bySource: Map<string, Set<string>>;
 
   // 纪律 #3：内核保留名，plugin/skill 来源禁止注册同名（防内核命令被覆盖）
-  static CORE_RESERVED_NAMES = new Set(["stop", "new", "reset", "compact", "fresh_compact", "help", "status", "rc", "exitrc", "confirm", "approve", "reject", "deny"]);
+  static CORE_RESERVED_NAMES = new Set(["stop", "new", "reset", "compact", "fresh_compact", "help", "status", "rc", "exitrc", "confirm", "approve", "reject", "deny", "loop"]);
 
   constructor() {
     this._byName = new Map();   // normalized name → def

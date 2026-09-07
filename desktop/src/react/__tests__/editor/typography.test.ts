@@ -259,7 +259,21 @@ describe('editor typography settings', () => {
     expect(previewCss).toMatch(/:global\(\.preview-markdown > \*\)\s*\{[\s\S]*max-width:\s*var\(--editor-markdown-content-width\)[\s\S]*margin-left:\s*auto[\s\S]*margin-right:\s*auto/);
     expect(previewCss).toMatch(/:global\(\.preview-markdown > \.markdown-table-scroll\)\s*\{[\s\S]*width:\s*100%[\s\S]*max-width:\s*var\(--editor-markdown-content-width\)[\s\S]*margin-left:\s*auto[\s\S]*margin-right:\s*auto/);
     expect(previewCss).toMatch(/:global\(\.preview-markdown\) table\s*\{[^}]*width:\s*fit-content[^}]*max-width:\s*100%[^}]*table-layout:\s*auto/);
-    expect(previewCss).toMatch(/:global\(\.cm-table-widget\)\s*\{[^}]*max-width:\s*100%/);
+    // Preview 表格文字必须能在容器内断行，否则不可断行的长 token（无空格的英文/数字/哈希）
+    // 会撑破 table-layout:auto 的 shrink-to-fit 算法，让 table 实际渲染宽度超出
+    // markdown-table-scroll 的 max-width（运行时用 getBoundingClientRect 复现过：
+    // 缺这条时 table 901px vs 容器 720px，补上后精确收敛到 720px）。
+    expect(previewCss).toMatch(/:global\(\.preview-markdown\) td\s*\{[^}]*overflow-wrap:\s*anywhere[^}]*word-break:\s*break-word/);
+
+    // Editor 内嵌表格 widget 是 CodeMirror 的 block:true 替换 widget，DOM 上是
+    // .cm-content 的直接子节点、不在 .cm-line 里，因此 .cm-line 的
+    // max-width:var(--editor-markdown-content-width) 约束不到它。历史上这里被写成
+    // max-width:100%（相对 .cm-content 计算，等于不限宽），必须精确断言用的是
+    // 变量而不是百分比字面量，否则测试抓不住"值写错成 100%"这种回归。
+    expect(previewCss).toMatch(/:global\(\.cm-table-widget\)\s*\{[^}]*max-width:\s*var\(--editor-markdown-content-width\)/);
+    expect(previewCss).not.toMatch(/:global\(\.cm-table-widget\)\s*\{[^}]*max-width:\s*100%/);
+    // 表格左右边界要和 .cm-line 的文字列同一套居中机制（margin auto），否则宽度对了但没居中对齐
+    expect(previewCss).toMatch(/:global\(\.cm-table-widget\)\s*\{[^}]*margin:\s*var\(--space-4\)\s+auto/);
     expect(previewCss).not.toMatch(/:global\(\.cm-table-widget\)\s*\{[^}]*overflow-x:\s*auto/);
     expect(previewCss).toMatch(/:global\(\.cm-table-widget table\)\s*\{[^}]*width:\s*100%[^}]*table-layout:\s*fixed/);
     expect(previewCss).not.toMatch(/:global\(\.cm-table-widget table\)\s*\{[^}]*min-width:\s*max-content/);
@@ -293,9 +307,14 @@ describe('editor typography settings', () => {
     expect(theme).toMatch(/'\.cm-line\.cm-markdown-cover-line':\s*\{[\s\S]*maxWidth:\s*'none'/);
     expect(theme).toMatch(/'\.cm-markdown-cover':\s*\{[\s\S]*width:\s*'100%'/);
     expect(theme).toMatch(/'\.cm-markdown-cover':\s*\{[\s\S]*maxWidth:\s*'none'/);
-    expect(theme).toMatch(/padding:\s*'0 var\(--editor-markdown-content-padding-x\)'/);
+    expect(theme).toMatch(/'--editor-markdown-content-inset-x':\s*'max\(var\(--editor-markdown-content-padding-x\), var\(--editor-markdown-block-rail-space, 0px\)\)'/);
+    expect(theme).toMatch(/padding:\s*'0 var\(--editor-markdown-content-inset-x\)'/);
+    expect(theme).toMatch(/'\.cm-markdown-cover\.cm-markdown-cover-bleed-x':\s*\{[\s\S]*marginLeft:\s*'calc\(0px - var\(--editor-markdown-content-inset-x\)\)'/);
+    expect(theme).toMatch(/width:\s*'calc\(100% \+ var\(--editor-markdown-content-inset-x\) \+ var\(--editor-markdown-content-inset-x\)\)'/);
+    expect(previewCss).toMatch(/--editor-markdown-block-rail-space:\s*36px/);
     expect(highlight).toMatch(/tags\.heading1,\s*fontSize:\s*'var\(--editor-markdown-h1-font-size\)'/);
     expect(highlight).toMatch(/tags\.heading6,\s*fontSize:\s*'var\(--editor-markdown-h6-font-size\)'/);
+    expect(theme).toMatch(/'\.cm-line\.cm-unconfirmed-heading-line \*':\s*\{[\s\S]*fontSize:\s*'var\(--editor-markdown-font-size\)'[\s\S]*fontWeight:\s*'inherit'/);
     expect(previewCss).toMatch(/font-size:\s*var\(--editor-markdown-font-size\)/);
     expect(previewCss).toMatch(/max-width:\s*var\(--editor-markdown-content-width\)/);
     expect(previewCss).toMatch(/margin-left:\s*auto/);
@@ -312,5 +331,42 @@ describe('editor typography settings', () => {
     expect(contentRule).not.toMatch(/margin:\s*0 auto/);
     expect(css).not.toMatch(/:global\(\.preview-editor \.cm-scroller\)\s*\{/);
     expect(css).not.toMatch(/:global\(\.preview-editor \.cm-content\)\s*\{/);
+  });
+
+  it('uses the original quote geometry while rounding code block outer edges', () => {
+    const css = readPreviewStyles();
+
+    expect(css).toMatch(/:global\(\.cm-blockquote-line\)\s*\{[^}]*border-left:\s*3px solid var\(--accent\)[^}]*padding-left:\s*1em[^}]*background:\s*var\(--overlay-subtle\)/);
+    expect(css).not.toMatch(/:global\(\.cm-blockquote-line\)::before/);
+    expect(css).not.toMatch(/:global\(\.cm-blockquote-line-(?:first|last)\)::before/);
+    expect(css).toMatch(/:global\(\.cm-blockquote-line-first\)\s*\{[^}]*border-radius:\s*2px 2px 0 0/);
+    expect(css).toMatch(/:global\(\.cm-blockquote-line-last\)\s*\{[^}]*border-radius:\s*0 0 2px 2px/);
+    expect(css).toMatch(/:global\(\.cm-codeblock-line-first\)\s*\{[^}]*border-radius:\s*2px 2px 0 0/);
+    expect(css).toMatch(/:global\(\.cm-codeblock-line-last\)\s*\{[^}]*border-radius:\s*0 0 2px 2px/);
+    expect(css).toMatch(/:global\(\.cm-codeblock-line-first\)\s*\{[^}]*min-height:\s*24px[^}]*line-height:\s*24px[^}]*cursor:\s*default/);
+    expect(css).toMatch(/:global\(\.cm-codeblock-line-last\)\s*\{[^}]*min-height:\s*var\(--space-4\)[^}]*line-height:\s*var\(--space-4\)[^}]*cursor:\s*default/);
+  });
+
+  it('sizes the block drop indicator from the markdown document column', () => {
+    const css = readPreviewStyles();
+
+    expect(css).toMatch(/:global\(\.preview-editor\.mode-markdown \.cm-markdown-block-drop-indicator\)\s*\{[^}]*position:\s*relative[^}]*width:\s*100%[^}]*max-width:\s*var\(--editor-markdown-content-width\)[^}]*height:\s*0[^}]*margin:\s*0 auto/);
+    expect(css).toMatch(/:global\(\.preview-editor\.mode-markdown \.cm-markdown-block-drop-indicator\)::after\s*\{[^}]*left:\s*var\(--space-8\)[^}]*right:\s*var\(--space-8\)[^}]*height:\s*2px/);
+  });
+
+  it('keeps the Markdown block Grabber two pixels clear of the content', () => {
+    const css = readPreviewStyles();
+
+    expect(css).toMatch(/:global\(\.preview-editor\.mode-markdown \.cm-markdown-block-handle\)\s*\{[^}]*left:\s*-2px/);
+  });
+
+  it('shows only the focused caret block Grabber on coarse touch surfaces', () => {
+    const css = readPreviewStyles();
+
+    expect(css).toContain('@media (hover: none) and (pointer: coarse)');
+    expect(css).toMatch(/\.cm-markdown-block-rail-item\)\s*\{[^}]*pointer-events:\s*none/);
+    expect(css).toMatch(/\.cm-editor\.cm-focused \.cm-markdown-block-rail-item\.is-caret-block\)\s*\{[^}]*pointer-events:\s*auto/);
+    expect(css).toMatch(/\.cm-markdown-block-handle\)\s*\{[^}]*opacity:\s*0[^}]*visibility:\s*hidden/);
+    expect(css).toMatch(/\.cm-markdown-block-rail-item\.is-caret-block \.cm-markdown-block-handle\)\s*\{[^}]*opacity:\s*0\.55[^}]*visibility:\s*visible/);
   });
 });

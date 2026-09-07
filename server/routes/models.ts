@@ -17,6 +17,7 @@ import {
   resolveModelVideoInputTransport,
 } from "../../shared/model-capabilities.ts";
 import { callText } from "../../core/llm-client.ts";
+import { callTextConfigFromResolvedModel } from "../../core/model-execution-config.ts";
 import { getModelThinkingLevels, modelSupportsXhigh, resolveModelDefaultThinkingLevel } from "../../core/session-thinking-level.ts";
 
 const HEALTH_CHECK_PROMPT = "Reply exactly OK.";
@@ -47,6 +48,9 @@ function parseHealthModelRef(body) {
 
 function classifyModelSwitchError(err) {
   const message = err?.message || String(err || "");
+  if (err?.code === "MODEL_CONTEXT_TOO_LARGE") {
+    return { status: 409, code: "MODEL_CONTEXT_TOO_LARGE", message };
+  }
   const lower = message.toLowerCase();
   if (lower.includes("model not found") || (lower.includes("模型") && lower.includes("不存在"))) {
     return { status: 404, code: "MODEL_NOT_FOUND", message };
@@ -227,11 +231,7 @@ export function createModelsRoute(engine) {
       }
 
       await callText({
-        api: resolved.api,
-        apiKey: resolved.api_key,
-        baseUrl: resolved.base_url,
-        model: resolved.model,
-        headers: undefined as any,
+        ...callTextConfigFromResolvedModel(resolved),
         temperature: undefined as any,
         signal: undefined as any,
         messages: [{ role: "user", content: HEALTH_CHECK_PROMPT }],
@@ -247,7 +247,11 @@ export function createModelsRoute(engine) {
           },
           attribution: {
             kind: "utility",
-            agentId: engine.currentAgentId ?? null,
+            // A health probe from the settings panel is the product checking a
+            // provider, not an agent doing work. Billing it to whichever agent
+            // the server is focused on would put a cost on that agent's usage
+            // account for something it never did, so it stays unattributed.
+            agentId: null,
           },
         },
       });

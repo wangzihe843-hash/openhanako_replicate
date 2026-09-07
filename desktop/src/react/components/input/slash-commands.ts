@@ -47,6 +47,24 @@ export interface SlashItem {
 
 export const MAX_SLASH_TRIGGER_LENGTH = 20;
 
+/**
+ * applySlashCompletion — 菜单选择 server-command 后，把编辑器原始文本改写为
+ * canonical 命令文本（`/${item.name}`），保留首个 slash token 之后的一切内容
+ * （空格、参数、多行）。非 slash 开头的文本走菜单按钮时丢弃输入，回退为纯
+ * canonical 命令（复刻既有兜底语义）。一律替换为 canonical name（不保留用户
+ * 输入的 alias），因为服务端 dispatch 的 alias 解析能力未验证。
+ */
+export function applySlashCompletion(
+  text: string,
+  item: Pick<SlashItem, 'name'>,
+): string {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('/')) return `/${item.name}`;
+  const tokenMatch = /^\/(\S*)/.exec(trimmed);
+  if (!tokenMatch) return `/${item.name}`;
+  return `/${item.name}${trimmed.slice(tokenMatch[0].length)}`;
+}
+
 export function getSlashMatches(text: string, commands: SlashItem[]): SlashItem[] {
   const normalized = text.trim();
   if (!normalized.startsWith('/')) return [];
@@ -167,16 +185,23 @@ export function executeCompact(
 
 /**
  * 通用的 WS slash 命令发送器。
- * 一期服务 /stop /new /reset 三条系统命令；未来扩展时（插件命令、skill 命令）也共用这条 WS 通道。
- * 后端在 server/routes/chat.js 接收 {type:'slash'}，走 engine.slashDispatcher.tryDispatch。
+ * 桌面端的入口是菜单里的 server-command 类命令（/loop、插件与扩展注册的命令），
+ * 以及用户直接敲出的同名 slash 文本；桌面已有 GUI 的 core 命令不从这里走。
+ * 后端在 server/routes/chat.ts 接收 {type:'slash'}，走 engine.slashDispatcher.tryDispatch。
  *
- * TODO(frontend): 服务端会通过 WS {type:'slash_result'} 回复结果（未知命令 / handler reply），
- *   目前前端没有 consumer——/new /reset 的 not-found、已归档等 distinct reply 无法显示给用户。
- *   下一步应在 ws-message-handler.ts 加 slash_result 分支，把 text 展示到 slashResult state。
- *   当前的 800ms setBusy(null) 只是视觉 hack，不等真正执行完成。
+ * agentId 由调用方显式传入，不在这里从任何全局指针推导：命令要在哪个助手身上执行，
+ * 只有渲染这个输入框的会话说了算。服务端认的是会话清单里记着的归属，跟这个会话有没有
+ * 被加载进内存无关；这个字段覆盖的是另一种情况——服务端根本不认识的草稿会话，它还没
+ * 落进清单，归属只有前端知道。身份确实未知时传 null，让"不知道"显式出现在协议上，
+ * 而不是悄悄少一个字段。
+ *
+ * 执行结果由服务端通过 WS {type:'slash_result'} 回来，ws-message-handler 的同名分支
+ * 把它送进 inline notice 显示给用户。这里的 800ms setBusy(null) 与结果无关，只是给按钮
+ * 一个防抖窗口，不代表命令已经执行完。
  */
 export function executeSlashViaWs(
   cmd: string,
+  agentId: string | null,
   setBusy: (name: string | null) => void,
   setInput: (text: string) => void,
   setMenuOpen: (open: boolean) => void,
@@ -195,6 +220,7 @@ export function executeSlashViaWs(
           type: 'slash',
           text: rawText,
           sessionPath: useStore.getState().currentSessionPath,
+          agentId: agentId || null,
         }));
       }
     } finally {
@@ -208,7 +234,6 @@ export function buildSlashCommands(
   executeDiaryFn: () => Promise<void> | void,
   executeXingFn: () => Promise<void>,
   executeCompactFn: () => Promise<void>,
-  slashViaWsFactory?: (cmd: string) => () => Promise<void>,
 ): SlashItem[] {
   const list: SlashItem[] = [
     {
@@ -238,38 +263,17 @@ export function buildSlashCommands(
       type: 'builtin',
       execute: executeCompactFn,
     },
+    // /loop 是服务端命令且必须带参数（任务描述 / 子命令），所以走 server-command 通道：
+    // 提交时由 InputArea 经 applySlashCompletion 保留参数原文，再整条发给服务端 dispatcher。
+    {
+      name: 'loop',
+      label: '/loop',
+      description: t('slash.loop'),
+      busyLabel: '',
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
+      type: 'server-command',
+      execute: () => {},
+    },
   ];
-  // slashViaWsFactory 由 InputArea 注入；没传则兼容既有调用方（如测试）
-  if (slashViaWsFactory) {
-    list.push(
-      {
-        name: 'stop',
-        label: '/stop',
-        description: t('slash.stop'),
-        busyLabel: '',
-        icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>',
-        type: 'builtin',
-        execute: slashViaWsFactory('stop'),
-      },
-      {
-        name: 'new',
-        label: '/new',
-        description: t('slash.new'),
-        busyLabel: '',
-        icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
-        type: 'builtin',
-        execute: slashViaWsFactory('new'),
-      },
-      {
-        name: 'reset',
-        label: '/reset',
-        description: t('slash.reset'),
-        busyLabel: '',
-        icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>',
-        type: 'builtin',
-        execute: slashViaWsFactory('reset'),
-      },
-    );
-  }
   return list;
 }

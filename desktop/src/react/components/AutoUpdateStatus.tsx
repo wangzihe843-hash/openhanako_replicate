@@ -108,7 +108,7 @@ export function AutoUpdateStatus({ state, agentName = 'Hanako', onInstall, varia
         <div className={styles.column}>
           <div className={styles.downloadHeader}>
             <span className={styles.message}>
-              {t('settings.about.updateDownloading', { agentName, percent })}
+              {t('settings.about.updateDownloading', { agentName })}
             </span>
             <span className={styles.progressValue}>{t('settings.about.updateProgress', { percent })}</span>
           </div>

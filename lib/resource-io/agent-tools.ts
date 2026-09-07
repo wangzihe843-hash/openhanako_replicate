@@ -5,6 +5,7 @@ import { normalizeWin32ShellPath } from "../sandbox/win32-path.ts";
 const RESOURCE_IO_FILE_TOOL_NAMES = new Set(["read", "write", "edit", "grep", "find", "ls"]);
 const WRITE_TOOL_NAMES = new Set(["write", "edit"]);
 const MATERIALIZED_TOOL_NAMES = new Set(["grep", "find"]);
+const SESSION_FILE_TOOL_NAMES = new Set(["read", "ls", "grep", "find"]);
 const SYNTHETIC_RESOURCE_ROOT = ".hana-resource-io-targets";
 
 function textResult(text) {
@@ -101,7 +102,7 @@ function parseResourceObject(resource, cwd) {
   return null;
 }
 
-function resolveToolTarget(params, cwd) {
+export function resolveToolTarget(params, cwd) {
   if (!isObject(params)) return null;
 
   const resource = params.resource ?? params.ref ?? params.target;
@@ -154,6 +155,8 @@ function stripResourceParams(params) {
     mountId: _mountId,
     rootId: _rootId,
     resourceId: _resourceId,
+    fileId: _fileId,
+    sessionPath: _sessionPath,
     ...rest
   } = params;
   return rest;
@@ -262,8 +265,8 @@ function addResourceParameters(parameters, toolName) {
       },
       fileId: {
         type: "string",
-        description: toolName === "read"
-          ? "SessionFile id to resolve for reading. SessionFile is a reference, not a writable filesystem."
+        description: SESSION_FILE_TOOL_NAMES.has(toolName)
+          ? "SessionFile id resolved through ResourceIO. Files support read; directory SessionFiles support ls/grep/find."
           : "SessionFile ids are references and cannot be written or edited directly.",
       },
       sessionPath: {
@@ -311,18 +314,21 @@ function wrapResourceIoTool(tool, options) {
       }
 
       if (target.kind === "session-file") {
-        if (toolName === "read") {
-          if (!options.resourceIO || typeof options.resourceIO.materialize !== "function") {
-            return textResult("SessionFile reads require the ResourceIO kernel.");
-          }
-          const materialized = await options.resourceIO.materialize({
-            kind: "session-file",
-            fileId: target.fileId,
-            sessionPath: target.sessionPath || options.getSessionPath?.() || null,
-          });
-          return tool.execute(toolCallId, paramsForLocalTarget(params, materialized.filePath), ...rest);
+        if (!SESSION_FILE_TOOL_NAMES.has(toolName)) {
+          return textResult(`SessionFile ${target.fileId} is a reference and cannot be written or edited directly. Resolve or materialize it to a local path first.`);
         }
-        return textResult(`SessionFile ${target.fileId} is a reference and cannot be written or edited directly. Resolve or materialize it to a local path first.`);
+        if (typeof options.resourceIO.materialize !== "function") {
+          return textResult("SessionFile access requires the ResourceIO kernel.");
+        }
+        const materialized = await options.resourceIO.materialize({
+          kind: "session-file",
+          fileId: target.fileId,
+          sessionPath: target.sessionPath || options.getSessionPath?.() || null,
+        });
+        if (toolName === "read" && materialized.isDirectory === true) {
+          return textResult(`SessionFile ${target.fileId} is a directory. Use ls, grep, or find with the same fileId to browse it.`);
+        }
+        return tool.execute(toolCallId, paramsForLocalTarget(params, materialized.filePath), ...rest);
       }
 
       if (target.kind === "mount" || target.kind === "resource") {

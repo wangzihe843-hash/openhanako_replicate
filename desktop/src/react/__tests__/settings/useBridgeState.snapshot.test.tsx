@@ -10,7 +10,7 @@ import { useBridgeState } from '../../settings/tabs/bridge/useBridgeState';
 
 interface MockSnapshot extends Record<string, unknown> {
   agentId: string;
-  publicIshiki: string;
+  publicAgents: string;
   bridgeStatus: Record<string, unknown>;
 }
 
@@ -68,7 +68,7 @@ function BridgeProbe() {
     dtClientSecretDraft,
     qqAppSecret,
     qqAppSecretDraft,
-    publicIshiki,
+    publicAgentsMd,
     loadStatus,
     selectedAgentId,
     setSelectedAgentId,
@@ -86,8 +86,9 @@ function BridgeProbe() {
       <span data-testid="dingtalk-secret-stored">{String(dtClientSecretDraft.hasStored)}</span>
       <span data-testid="qq-secret">{qqAppSecret}</span>
       <span data-testid="qq-secret-stored">{String(qqAppSecretDraft.hasStored)}</span>
-      <span data-testid="public-ishiki">{publicIshiki}</span>
+      <span data-testid="public-agents-md">{publicAgentsMd}</span>
       <span data-testid="selected-agent">{selectedAgentId || 'none'}</span>
+      <span data-testid="wechat-status">{status?.wechat?.status || 'none'}</span>
       <button type="button" onClick={() => loadStatus()}>reload status</button>
       <button type="button" onClick={() => setSelectedAgentId('mio')}>bridge probe switch to mio</button>
     </div>
@@ -214,15 +215,15 @@ function bridgeStatus(overrides: Record<string, unknown> = {}) {
 }
 
 function BridgeEditorProbe() {
-  const { publicIshiki, setPublicIshiki, savePublicIshiki } = useBridgeState();
+  const { publicAgentsMd, setPublicAgentsMd, savePublicAgentsMd } = useBridgeState();
   return (
     <div>
       <textarea
-        data-testid="public-ishiki-input"
-        value={publicIshiki}
-        onChange={(event) => setPublicIshiki(event.target.value)}
+        data-testid="public-agents-md-input"
+        value={publicAgentsMd}
+        onChange={(event) => setPublicAgentsMd(event.target.value)}
       />
-      <button type="button" onClick={savePublicIshiki}>save</button>
+      <button type="button" onClick={savePublicAgentsMd}>save</button>
     </div>
   );
 }
@@ -248,7 +249,7 @@ describe('useBridgeState snapshot hydration', () => {
         status: 'ready',
         data: {
           agentId: 'hana',
-          publicIshiki: 'snapshot-public-ishiki',
+          publicAgents: 'snapshot-public-agents-md',
           bridgeStatus: bridgeStatus(),
         },
         error: null,
@@ -268,6 +269,7 @@ describe('useBridgeState snapshot hydration', () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.clearAllMocks();
   });
 
@@ -285,24 +287,101 @@ describe('useBridgeState snapshot hydration', () => {
     expect(screen.getByTestId('dingtalk-secret-stored')).toHaveTextContent('true');
     expect(screen.getByTestId('qq-secret')).toBeEmptyDOMElement();
     expect(screen.getByTestId('qq-secret-stored')).toHaveTextContent('true');
-    expect(screen.getByTestId('public-ishiki')).toHaveTextContent('snapshot-public-ishiki');
+    expect(screen.getByTestId('public-agents-md')).toHaveTextContent('snapshot-public-agents-md');
     expect(mockHanaFetch).toHaveBeenCalledWith(
       '/api/bridge/status?agentId=hana',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
-  it('keeps saved public ishiki in the settings snapshot for remounts', async () => {
-    mockState.settingsSnapshot.data.publicIshiki = '';
+  it('keeps reconciling WeChat after QR confirmation until the selected Agent connects', async () => {
+    vi.useFakeTimers();
+    let statusRequests = 0;
+    mockHanaFetch.mockImplementation((url: string) => {
+      if (url !== '/api/bridge/status?agentId=hana') {
+        throw new Error(`unexpected request: ${url}`);
+      }
+      statusRequests += 1;
+      const wechat = statusRequests === 1
+        ? { enabled: false, status: 'disconnected', token: '', agentId: 'hana' }
+        : statusRequests === 2
+          ? { enabled: true, status: 'connecting', token: '********', agentId: 'hana' }
+          : { enabled: true, status: 'connected', token: '********', agentId: 'hana' };
+      return Promise.resolve(new Response(JSON.stringify(bridgeStatus({ wechat }))));
+    });
+
+    render(<BridgeProbe />);
+    await act(async () => { await Promise.resolve(); });
+
+    await act(async () => {
+      window.dispatchEvent(new Event('hana-bridge-reload'));
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('wechat-status')).toHaveTextContent('connecting');
+
+    await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+    expect(screen.getByTestId('wechat-status')).toHaveTextContent('connected');
+
+    const requestsAfterConnection = statusRequests;
+    await act(async () => { await vi.runAllTimersAsync(); });
+    expect(statusRequests).toBe(requestsAfterConnection);
+  });
+
+  it('cancels WeChat reconciliation when the selected Agent changes', async () => {
+    vi.useFakeTimers();
+    let hanaStatusRequests = 0;
+    mockHanaFetch.mockImplementation((url: string) => {
+      if (url === '/api/bridge/status?agentId=hana') {
+        hanaStatusRequests += 1;
+        const wechat = hanaStatusRequests === 1
+          ? { enabled: false, status: 'disconnected', token: '', agentId: 'hana' }
+          : { enabled: true, status: 'connecting', token: '********', agentId: 'hana' };
+        return Promise.resolve(new Response(JSON.stringify(bridgeStatus({ wechat }))));
+      }
+      if (url === '/api/bridge/status?agentId=mio') {
+        return Promise.resolve(new Response(JSON.stringify(bridgeStatus({
+          agentId: 'mio',
+          wechat: { enabled: false, status: 'disconnected', token: '', agentId: 'mio' },
+        }))));
+      }
+      if (url === '/api/agents/mio/public-agents-md') {
+        return Promise.resolve(new Response(JSON.stringify({ content: '' })));
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    render(<BridgeProbe />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => {
+      window.dispatchEvent(new Event('hana-bridge-reload'));
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('wechat-status')).toHaveTextContent('connecting');
+    expect(hanaStatusRequests).toBe(2);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'bridge probe switch to mio' }));
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('selected-agent')).toHaveTextContent('mio');
+    expect(screen.getByTestId('wechat-status')).toHaveTextContent('disconnected');
+
+    await act(async () => { await vi.runAllTimersAsync(); });
+    expect(hanaStatusRequests).toBe(2);
+    expect(screen.getByTestId('wechat-status')).toHaveTextContent('disconnected');
+  });
+
+  it('keeps saved public agents md in the settings snapshot for remounts', async () => {
+    mockState.settingsSnapshot.data.publicAgents = '';
     mockHanaFetch.mockImplementation((url: string, opts?: RequestInit) => {
       if (url === '/api/bridge/status?agentId=hana') {
         return new Promise<Response>(() => {});
       }
-      if (url === '/api/agents/hana/public-ishiki') {
+      if (url === '/api/agents/hana/public-agents-md') {
         expect(opts).toMatchObject({
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: 'saved public ishiki' }),
+          body: JSON.stringify({ content: 'saved public agents md' }),
         });
         return Promise.resolve(new Response(JSON.stringify({ ok: true })));
       }
@@ -311,20 +390,20 @@ describe('useBridgeState snapshot hydration', () => {
 
     const first = render(<BridgeEditorProbe />);
 
-    fireEvent.change(screen.getByTestId('public-ishiki-input'), {
-      target: { value: 'saved public ishiki' },
+    fireEvent.change(screen.getByTestId('public-agents-md-input'), {
+      target: { value: 'saved public agents md' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'save' }));
 
     await waitFor(() => {
       expect(mockState.showToast).toHaveBeenCalledWith('settings.saved', 'success');
     });
-    expect(mockState.settingsSnapshot.data.publicIshiki).toBe('saved public ishiki');
+    expect(mockState.settingsSnapshot.data.publicAgents).toBe('saved public agents md');
 
     first.unmount();
     render(<BridgeEditorProbe />);
 
-    expect(screen.getByTestId('public-ishiki-input')).toHaveValue('saved public ishiki');
+    expect(screen.getByTestId('public-agents-md-input')).toHaveValue('saved public agents md');
   });
 
   it('applies owner status returned by setOwner without waiting for a later refresh', async () => {
@@ -503,7 +582,7 @@ describe('useBridgeState snapshot hydration', () => {
     let resolveMioTest!: (response: Response) => void;
     mockHanaFetch.mockImplementation((url: string) => {
       if (url.startsWith('/api/bridge/status?agentId=')) return new Promise<Response>(() => {});
-      if (url === '/api/agents/mio/public-ishiki') return new Promise<Response>(() => {});
+      if (url === '/api/agents/mio/public-agents-md') return new Promise<Response>(() => {});
       if (url === '/api/bridge/test?agentId=hana') {
         return new Promise<Response>((resolve) => { resolveHanaTest = resolve; });
       }
@@ -581,7 +660,7 @@ describe('useBridgeState snapshot hydration', () => {
     let resolveSave!: (response: Response) => void;
     mockHanaFetch.mockImplementation((url: string) => {
       if (url.startsWith('/api/bridge/status?agentId=')) return new Promise<Response>(() => {});
-      if (url === '/api/agents/mio/public-ishiki') return new Promise<Response>(() => {});
+      if (url === '/api/agents/mio/public-agents-md') return new Promise<Response>(() => {});
       if (url === '/api/bridge/config?agentId=hana') {
         return new Promise<Response>((resolve) => { resolveSave = resolve; });
       }
@@ -656,7 +735,7 @@ describe('useBridgeState snapshot hydration', () => {
 
     mockState.settingsSnapshot.data = {
       ...mockState.settingsSnapshot.data,
-      publicIshiki: 'locally updated ishiki',
+      publicAgents: 'locally updated agents md',
       bridgeStatus: staleBridgeStatus,
     };
     view.rerender(<BridgeProbe />);
@@ -668,7 +747,7 @@ describe('useBridgeState snapshot hydration', () => {
   it('hides the previous Agent status in the same render that changes selection', () => {
     mockHanaFetch.mockImplementation((url: string) => {
       if (url.startsWith('/api/bridge/status?agentId=')) return new Promise<Response>(() => {});
-      if (url === '/api/agents/mio/public-ishiki') return new Promise<Response>(() => {});
+      if (url === '/api/agents/mio/public-agents-md') return new Promise<Response>(() => {});
       throw new Error(`unexpected request: ${url}`);
     });
 
@@ -710,7 +789,7 @@ describe('useBridgeState snapshot hydration', () => {
   it('drops plaintext drafts when the selected Agent changes', async () => {
     mockHanaFetch.mockImplementation((url: string) => {
       if (url.startsWith('/api/bridge/status?agentId=')) return new Promise<Response>(() => {});
-      if (url === '/api/agents/mio/public-ishiki') return new Promise<Response>(() => {});
+      if (url === '/api/agents/mio/public-agents-md') return new Promise<Response>(() => {});
       throw new Error(`unexpected request: ${url}`);
     });
 

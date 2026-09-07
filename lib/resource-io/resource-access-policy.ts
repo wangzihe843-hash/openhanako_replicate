@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { canonicalFilesystemPathSync, filesystemIdentityKeySync } from "../../shared/link-aware-fs.ts";
 import { createManagedConfigWriteGuard } from "../sandbox/managed-config-guard.ts";
 import { PathGuard } from "../sandbox/path-guard.ts";
 import { deriveSandboxPolicy } from "../sandbox/policy.ts";
@@ -130,10 +131,14 @@ export class ResourceAccessPolicy {
   }
 }
 
+// 本地实现保留：被检查的路径可能还不存在（写入 / 删除的目标），这里要把已存在的那
+// 一段祖先解析掉再把剩下的接回去，共享原语只认存在的路径，表达不了这个上溯。
+// 解析成功的那一段仍然交给共享原语做 native 归一。
 function normalizeExistingOrResolvedPath(filePath: string) {
   const resolved = path.resolve(filePath);
   try {
-    return fs.realpathSync(resolved);
+    fs.realpathSync(resolved);
+    return canonicalFilesystemPathSync(resolved);
   } catch (err) {
     if ((err as any)?.code !== "ENOENT") return resolved;
   }
@@ -147,7 +152,8 @@ function normalizeExistingOrResolvedPath(filePath: string) {
     }
     pending.push(path.basename(current));
     try {
-      const realParent = fs.realpathSync(parent);
+      fs.realpathSync(parent);
+      const realParent = canonicalFilesystemPathSync(parent);
       pending.reverse();
       return path.join(realParent, ...pending);
     } catch (err) {
@@ -157,26 +163,20 @@ function normalizeExistingOrResolvedPath(filePath: string) {
   }
 }
 
-function normalizeExistingPath(filePath: string) {
-  const resolved = path.resolve(filePath);
-  try {
-    return fs.realpathSync(resolved);
-  } catch {
-    return resolved;
-  }
-}
-
+/** 两侧都必须是身份键。 */
 function isInsideRoot(filePath: string, root: string) {
   const rel = path.relative(root, filePath);
   return rel === "" || (!!rel && !rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
 function externalReadGrantCovers(targetPath: string, grantPath: string) {
-  const target = normalizeExistingOrResolvedPath(targetPath);
-  const grant = normalizeExistingPath(grantPath);
+  // 判定是比较，走身份键；statSync 要落到真实路径，所以另留一份 canonical。
+  const target = filesystemIdentityKeySync(normalizeExistingOrResolvedPath(targetPath));
+  const grantCanonical = canonicalFilesystemPathSync(grantPath);
+  const grant = filesystemIdentityKeySync(grantCanonical);
   if (target === grant) return true;
   try {
-    return fs.statSync(grant).isDirectory() && isInsideRoot(target, grant);
+    return fs.statSync(grantCanonical).isDirectory() && isInsideRoot(target, grant);
   } catch {
     return false;
   }
@@ -213,9 +213,9 @@ function codeForSandboxDenial(absolutePath: string, operation: Operation, roots:
 }
 
 function isProtectedMetadataPath(filePath: string, roots: string[]): boolean {
-  const target = normalizeExistingOrResolvedPath(filePath);
+  const target = filesystemIdentityKeySync(normalizeExistingOrResolvedPath(filePath));
   for (const root of roots) {
-    const normalizedRoot = normalizeExistingOrResolvedPath(root);
+    const normalizedRoot = filesystemIdentityKeySync(normalizeExistingOrResolvedPath(root));
     if (!isInsideRoot(target, normalizedRoot)) continue;
     const relParts = path.relative(normalizedRoot, target).split(path.sep).filter(Boolean);
     if (relParts.includes(".git")) return true;

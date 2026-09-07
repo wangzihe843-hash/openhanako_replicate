@@ -42,15 +42,15 @@ function makeEngine(tmpDir, options: any = {}) {
     add: vi.fn((activity) => activity),
     update: vi.fn((id, patch) => ({ id, ...patch })),
   };
-  const imageGenCtx = options.imageGenCtx ?? {
+  // engine.media stands in for core/media/universal-media-manager.ts, the
+  // sole runtime source desk.ts's getImageGenerationRuntime() consults.
+  // Pass `media: null` explicitly to simulate the runtime being entirely
+  // unavailable (native media manager absent).
+  const media = "media" in options ? options.media : {
     config: { get: vi.fn(() => undefined) },
-    _mediaGen: {
-      registry: {
-        getProtocol: vi.fn(() => null),
-        get: vi.fn(() => null),
-      },
-    },
-    bus: { request: vi.fn(async () => ({})) },
+    resolveImageModelRef: vi.fn(async () => {
+      throw new Error("no adapter registered");
+    }),
   };
   return {
     hanakoHome,
@@ -73,13 +73,13 @@ function makeEngine(tmpDir, options: any = {}) {
     executeIsolated,
     pluginManager: {
       getAllTools: () => options.pluginTools ?? [{ _pluginId: "beautify", name: "beautify_create-cover" }],
-      getPlugin: (id) => (id === "image-gen" ? { ctx: imageGenCtx, status: "loaded" } : null),
     },
+    media,
     emitEvent,
     emitResourceChanged,
     resourceIO,
     getResourceIO: () => resourceIO,
-    _test: { executeIsolated, activityStore, imageGenCtx },
+    _test: { executeIsolated, activityStore, media },
   };
 }
 
@@ -346,6 +346,27 @@ describe("desk beautify cover apply route", () => {
     });
   });
 
+  it("reports the executor as unavailable when no primary agent is configured", async () => {
+    const { createDeskRoute } = await import("../server/routes/desk.ts");
+    const engine = makeEngine(tmpDir);
+    // The server is focused on agent-1, but no primary agent is configured.
+    // Beautify has no executor to name, and must not borrow the focus.
+    engine.getPrimaryAgentId = () => null;
+    const app = new Hono();
+    app.route("/api", createDeskRoute(engine, null));
+
+    const res = await app.request("/api/desk/beautify/status");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      agentGenerate: {
+        enabled: false,
+        executorAgentId: null,
+        disabledReason: "agent-unavailable",
+      },
+    });
+  });
+
   it("rejects Agent cover generation before creating an activity when default image model is missing", async () => {
     const notePath = path.join(tmpDir, "note.md");
     fs.writeFileSync(notePath, "# Demo\n", "utf-8");
@@ -370,21 +391,14 @@ describe("desk beautify cover apply route", () => {
     expect(engine._test.executeIsolated).not.toHaveBeenCalled();
   });
 
-  it("rejects Agent cover generation with a structured error when legacy image-gen runtime has no registry", async () => {
+  it("rejects Agent cover generation with a structured error when the native media runtime is unavailable", async () => {
     const notePath = path.join(tmpDir, "note.md");
     fs.writeFileSync(notePath, "# Demo\n", "utf-8");
 
     const { createDeskRoute } = await import("../server/routes/desk.ts");
-    const imageGenCtx = {
-      config: {
-        get: vi.fn((key) => key === "defaultImageModel"
-          ? { provider: "mock-provider", id: "mock-image" }
-          : undefined),
-      },
-      _mediaGen: {},
-      bus: { request: vi.fn(async () => ({})) },
-    };
-    const engine = makeEngine(tmpDir, { imageGenCtx });
+    // engine.media absent entirely -- there is no legacy plugin-context
+    // fallback anymore, so this is the only "unavailable" shape left.
+    const engine = makeEngine(tmpDir, { media: null });
     const app = new Hono();
     app.route("/api", createDeskRoute(engine, null));
 
@@ -394,10 +408,10 @@ describe("desk beautify cover apply route", () => {
       body: JSON.stringify({ filePath: notePath }),
     });
 
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({
       error: "image generation runtime is unavailable",
-      reason: "image-generation-runtime-unavailable",
+      reason: "image-generation-unavailable",
     });
     expect(engine._test.activityStore.add).not.toHaveBeenCalled();
     expect(engine._test.executeIsolated).not.toHaveBeenCalled();
@@ -416,27 +430,20 @@ describe("desk beautify cover apply route", () => {
       capturedSignal = opts.signal;
       return new Promise(() => {});
     });
-    const imageGenCtx = {
-      dataDir: path.join(tmpDir, "image-gen"),
+    const media = {
       config: { get: vi.fn(() => ({ provider: "mock-provider", id: "mock-image" })) },
-      _mediaGen: {
-        registry: {
-          getProtocol: vi.fn(() => ({ id: "mock-protocol" })),
-          get: vi.fn(() => null),
-        },
-      },
-      bus: {
-        request: vi.fn(async (type) => {
-          if (type === "provider:resolve-media-model") {
-            return { providerId: "mock-provider", modelId: "mock-image", protocolId: "mock-protocol" };
-          }
-          return {};
-        }),
-      },
+      resolveImageModelRef: vi.fn(async () => ({
+        providerId: "mock-provider",
+        modelId: "mock-image",
+        protocolId: "mock-protocol",
+        adapterId: "mock-protocol",
+        credentialLaneId: null,
+        credentialProviderId: "mock-provider",
+      })),
     };
 
     const { createDeskRoute } = await import("../server/routes/desk.ts");
-    const engine = makeEngine(tmpDir, { executeIsolated, activityStore, imageGenCtx });
+    const engine = makeEngine(tmpDir, { executeIsolated, activityStore, media });
     const app = new Hono();
     app.route("/api", createDeskRoute(engine, null));
 

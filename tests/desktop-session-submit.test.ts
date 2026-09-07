@@ -1,15 +1,18 @@
 import { describe, it, expect, vi } from "vitest";
 
 import {
+  AGENT_REVIEW_RECORD_TYPE,
   MESSAGE_ORIGIN_RECORD_TYPE,
+  MESSAGE_PRESENTATION_RECORD_TYPE,
   submitDesktopSessionInterjection,
   submitDesktopSessionMessage,
+  submitDesktopSessionMessageWithReceipt,
 } from "../core/desktop-session-submit.ts";
 import fs from "fs";
 import os from "os";
 import path from "path";
 
-function makeFakeSession({ replyText = "desktop reply", toolMedia = [], toolMediaDetails = null, settingsUpdate = null }: any = {}) {
+function makeFakeSession({ replyText = "desktop reply", toolMedia = [], toolMediaDetails = null, settingsUpdate = null, stopReason = "stop" }: any = {}) {
   const subs = [];
   return {
     subscribe: (fn) => {
@@ -43,6 +46,8 @@ function makeFakeSession({ replyText = "desktop reply", toolMedia = [], toolMedi
             result: { details: { settingsUpdate } },
           });
         }
+        fn({ type: "message_end", message: { role: "assistant", stopReason } });
+        fn({ type: "agent_end", messages: [{ role: "assistant", stopReason }] });
       }
     }),
     model: null,
@@ -191,6 +196,30 @@ describe("submitDesktopSessionMessage", () => {
     });
   });
 
+  it("can replay a hidden model input without emitting a visible user projection", async () => {
+    const session = makeFakeSession({ replyText: "background reply" });
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+    const hiddenInput = '<hana-background-result task-id="task-1">done</hana-background-result>';
+
+    await submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: hiddenInput,
+      projectUserMessage: false,
+    });
+
+    expect(engine.promptSession).toHaveBeenCalledWith("/tmp/desk.jsonl", hiddenInput, undefined);
+    expect(engine.emitEvent.mock.calls.some(([event]) => event?.type === "session_user_message")).toBe(false);
+    expect(engine.emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "session_status", isStreaming: true }),
+      "/tmp/desk.jsonl",
+    );
+  });
+
   it("deduplicates SessionFile refs by stable sessionId when it is available", async () => {
     const session = makeFakeSession();
     const engine = {
@@ -233,6 +262,60 @@ describe("submitDesktopSessionMessage", () => {
       })}\nopen it`,
       undefined,
     );
+  });
+
+  it("preserves an existing prompt envelope without duplicating media, SessionFile, or reminder markers", async () => {
+    const session = makeFakeSession();
+    (session as any).sessionManager = { appendCustomEntry: vi.fn() };
+    const registerSessionFile = vi.fn();
+    const engine = {
+      getSessionManifest: vi.fn(() => ({ currentLocator: { path: "/tmp/desk.jsonl" } })),
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+      registerSessionFile,
+      renderSessionReminderBlock: vi.fn(() => ({
+        block: "[hana_reminder]\nnew reminder\n[/hana_reminder]",
+        receipt: { throughSeq: 1 },
+      })),
+    };
+    const originalPrompt = [
+      '[SessionFile] {"fileId":"sf-1","sessionId":"sess-1","sessionPath":"/tmp/desk.jsonl","label":"note","kind":"attachment"}',
+      "[attached_image: /tmp/image.png]",
+      "review this",
+    ].join("\n");
+
+    await submitDesktopSessionMessage(engine, {
+      sessionId: "sess-1",
+      sessionPath: "/tmp/desk.jsonl",
+      text: originalPrompt,
+      images: [{ type: "image", data: "BASE64", mimeType: "image/png" }],
+      imageAttachmentPaths: ["/tmp/image.png"],
+      sessionFileRefs: [{
+        fileId: "sf-1",
+        sessionId: "sess-1",
+        sessionPath: "/tmp/desk.jsonl",
+        label: "note",
+        kind: "attachment",
+      }],
+      displayMessage: {
+        text: "review this",
+        attachments: [{ fileId: "sf-1", path: "/tmp/image.png", name: "image.png" }],
+      },
+      preservePromptEnvelope: true,
+    } as any);
+
+    expect(engine.promptSession).toHaveBeenCalledWith(
+      "/tmp/desk.jsonl",
+      originalPrompt,
+      {
+        images: [{ type: "image", data: "BASE64", mimeType: "image/png" }],
+        imageAttachmentPaths: ["/tmp/image.png"],
+      },
+    );
+    expect(registerSessionFile).not.toHaveBeenCalled();
+    expect(engine.renderSessionReminderBlock).not.toHaveBeenCalled();
   });
 
   it("threads clientMessageId into the session user message event", async () => {
@@ -410,6 +493,46 @@ describe("submitDesktopSessionMessage", () => {
     });
 
     expect((session as any).sessionManager.appendCustomEntry).not.toHaveBeenCalled();
+  });
+
+  it("persists review presentation and result as message-level custom entries", async () => {
+    const session = makeFakeSession();
+    const appendCustomEntry = vi.fn();
+    (session as any).sessionManager = { appendCustomEntry };
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (_sessionPath, text, opts) => session.prompt(text, opts)),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+
+    await submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "user request\n\n[另一位 Agent 的审阅结果]\nfindings",
+      displayMessage: {
+        text: "user request @Critic",
+        agentMentions: [{ agentId: "critic", label: "Critic" }],
+        agentReview: {
+          requestId: "review-1",
+          status: "completed",
+          reviewedSessionId: "sess_parent",
+          reviewerSessionId: "sess_review",
+          reviewerAgentId: "critic",
+          reviewerAgentName: "Critic",
+          text: "findings",
+        },
+      },
+    });
+
+    expect(appendCustomEntry).toHaveBeenNthCalledWith(1, MESSAGE_PRESENTATION_RECORD_TYPE, expect.objectContaining({
+      displayText: "user request @Critic",
+      agentMentions: [{ agentId: "critic", label: "Critic" }],
+    }));
+    expect(appendCustomEntry).toHaveBeenNthCalledWith(2, AGENT_REVIEW_RECORD_TYPE, expect.objectContaining({
+      reviewedSessionId: "sess_parent",
+      reviewerSessionId: "sess_review",
+      text: "findings",
+    }));
   });
 
   it("still submits the message when the origin entry write fails", async () => {
@@ -898,6 +1021,43 @@ describe("submitDesktopSessionMessage", () => {
     }
   });
 
+  it.each(["hidden", "preflight-rejected", "no-acceptance", "error", "aborted"])("does not record %s input as a recent user conversation", async (mode) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-recent-chat-boundary-"));
+    try {
+      const agentDir = path.join(tmpDir, "agents", "hanako");
+      fs.mkdirSync(agentDir, { recursive: true });
+      const session = makeFakeSession({ stopReason: mode === "error" || mode === "aborted" ? mode : "stop" });
+      const engine = {
+        preflightSessionInput: vi.fn(),
+        ensureSessionLoaded: vi.fn(async () => session),
+        promptSession: vi.fn(async (_path, text, opts, hooks) => {
+          if (mode === "preflight-rejected") throw new Error("preflight rejected");
+          if (mode === "no-acceptance") return;
+          hooks.afterCachePreflight();
+          await session.prompt(text, opts);
+        }),
+        emitEvent: vi.fn(),
+        setUiContext: vi.fn(),
+        agentIdFromSessionPath: vi.fn(() => "hanako"),
+        getAgent: vi.fn(() => ({ agentDir })),
+      };
+      const submission = submitDesktopSessionMessage(engine, {
+        sessionPath: path.join(agentDir, "sessions", "main.jsonl"),
+        text: "background result or rejected input",
+        projectUserMessage: mode !== "hidden",
+      });
+      if (mode === "preflight-rejected") {
+        await expect(submission).rejects.toThrow("preflight rejected");
+        expect(engine.emitEvent).not.toHaveBeenCalled();
+      } else {
+        await submission;
+      }
+      expect(fs.existsSync(path.join(agentDir, "xingye", "events", "log.json"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   // 回归 #8：dedupeKey 之前只用 (agentId, sessionPath, turnStartedAt)。同毫秒撞的两个 turn
   // 会被合并成一条事件，丢掉一个。修复后 dedupeKey 加了 content hash：
   //   - 同 turn 重发（text 相同）→ 同 key → 不重复（保留）
@@ -1234,7 +1394,7 @@ describe("submitDesktopSessionMessage", () => {
 });
 
 describe("session reminder block injection", () => {
-  const reminderBlock = "[hana_reminder at 2026-07-05 14:05]\n- 当前时间：2026-07-05 14:05\n[/hana_reminder]";
+  const reminderBlock = "[hana_reminder]\n- 当前时间：2026-07-05 14:05\n[/hana_reminder]";
   const receipt = Object.freeze({
     observedAt: 1783231500000,
     throughSeq: 7,
@@ -1243,6 +1403,7 @@ describe("session reminder block injection", () => {
 
   it("prepends reminders before attachment markers and consumes the exact receipt after prompt acceptance", async () => {
     const session = makeFakeSession();
+    (session as any).sessionManager = { appendCustomEntry: vi.fn() };
     const engine = {
       ensureSessionLoaded: vi.fn(async () => session),
       promptSession: vi.fn(async (sessionPath, text, opts) => session.prompt(text, opts)),
@@ -1266,6 +1427,10 @@ describe("session reminder block injection", () => {
       { imageAttachmentPaths: ["/tmp/image.png"], context: { beforeUser: "world lore" } },
     );
     expect(engine.consumeRenderedSessionReminderBlock).toHaveBeenCalledWith("/tmp/desk.jsonl", receipt);
+    expect((session as any).sessionManager.appendCustomEntry).toHaveBeenCalledWith(
+      MESSAGE_PRESENTATION_RECORD_TYPE,
+      expect.objectContaining({ displayText: "hello" }),
+    );
     expect(engine.emitEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "session_user_message",
@@ -1317,7 +1482,7 @@ describe("session reminder block injection", () => {
     expect(engine.consumeSessionReminderBlock).not.toHaveBeenCalled();
   });
 
-  it("preserves legacy consume-only and legacy numeric-render integrations", async () => {
+  it("ignores destructive consume-only reminders while preserving numeric rendered receipts", async () => {
     const legacySession = makeFakeSession();
     const consumeOnlyEngine = {
       ensureSessionLoaded: vi.fn(async () => legacySession),
@@ -1331,11 +1496,8 @@ describe("session reminder block injection", () => {
       text: "hello",
       displayMessage: { text: "hello" },
     });
-    expect(consumeOnlyEngine.promptSession).toHaveBeenCalledWith(
-      "/tmp/legacy.jsonl",
-      `${reminderBlock}\n\nhello`,
-      undefined,
-    );
+    expect(consumeOnlyEngine.promptSession).toHaveBeenCalledWith("/tmp/legacy.jsonl", "hello", undefined);
+    expect(consumeOnlyEngine.consumeSessionReminderBlock).not.toHaveBeenCalled();
 
     const numericSession = makeFakeSession();
     const numericEngine = {
@@ -1400,6 +1562,242 @@ describe("session reminder block injection", () => {
       displayMessage: { text: "interject now" },
     })).rejects.toThrow("session_busy");
 
+    expect(engine.consumeRenderedSessionReminderBlock).not.toHaveBeenCalled();
+    expect(engine.emitEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "session_user_message" }),
+      expect.anything(),
+    );
+  });
+
+  it("publishes prompt side effects only inside the synchronous post-preflight hook", async () => {
+    const session = makeFakeSession();
+    (session as any).sessionManager = { appendCustomEntry: vi.fn() };
+    const order: string[] = [];
+    const engine = {
+      preflightSessionInput: vi.fn(),
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (_sessionPath, text, opts, submitOptions) => {
+        order.push("cache-preflight");
+        expect((session as any).sessionManager.appendCustomEntry).not.toHaveBeenCalled();
+        expect(engine.emitEvent).not.toHaveBeenCalled();
+        const hookResult = submitOptions.afterCachePreflight();
+        expect(hookResult).toBeUndefined();
+        order.push("pi-prompt");
+        await session.prompt(text, opts);
+      }),
+      emitEvent: vi.fn((event) => order.push(event.type)),
+      setUiContext: vi.fn(),
+    };
+
+    await submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "hello",
+      displayMessage: { text: "visible", source: "bridge_rc" },
+      beforeInputSideEffects: () => { order.push("retry-branch-commit"); },
+    });
+
+    expect(order.slice(0, 5)).toEqual([
+      "cache-preflight",
+      "retry-branch-commit",
+      "session_status",
+      "session_user_message",
+      "pi-prompt",
+    ]);
+    expect((session as any).sessionManager.appendCustomEntry).toHaveBeenCalled();
+  });
+
+  it("leaves no prompt events, custom entries, or consumed receipt when preflight rejects", async () => {
+    const session = makeFakeSession();
+    const appendCustomEntry = vi.fn();
+    (session as any).sessionManager = { appendCustomEntry };
+    const engine = {
+      preflightSessionInput: vi.fn(),
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async () => { throw new Error("Cache prefix contract violated: tools"); }),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+      renderSessionReminderBlock: vi.fn(() => ({ block: reminderBlock, receipt })),
+      consumeRenderedSessionReminderBlock: vi.fn(),
+    };
+    const beforeInputSideEffects = vi.fn();
+
+    await expect(submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "hello",
+      displayMessage: { text: "hello", source: "bridge_rc" },
+      beforeInputSideEffects,
+    })).rejects.toThrow("Cache prefix contract violated");
+
+    expect(engine.emitEvent).not.toHaveBeenCalled();
+    expect(appendCustomEntry).not.toHaveBeenCalled();
+    expect(engine.consumeRenderedSessionReminderBlock).not.toHaveBeenCalled();
+    expect(beforeInputSideEffects).not.toHaveBeenCalled();
+  });
+
+  it("acceptance receipt rejects for an immediate preflight failure", async () => {
+    const session = makeFakeSession();
+    const engine = {
+      preflightSessionInput: vi.fn(),
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async () => { throw new Error("prompt preflight rejected"); }),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+
+    const submission = submitDesktopSessionMessageWithReceipt(engine, {
+      sessionPath: "/tmp/receipt-fast-reject.jsonl",
+      text: "hello",
+    });
+    await expect(submission.accepted).rejects.toThrow("prompt preflight rejected");
+    await expect(submission.completion).rejects.toThrow("prompt preflight rejected");
+    expect(engine.emitEvent).not.toHaveBeenCalled();
+  });
+
+  it("acceptance receipt stays pending through delayed preflight and rejects when it finally fails", async () => {
+    const session = makeFakeSession();
+    let finishPreflight!: () => void;
+    const preflightGate = new Promise<void>((resolve) => { finishPreflight = resolve; });
+    const engine = {
+      preflightSessionInput: vi.fn(),
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async () => {
+        await preflightGate;
+        throw new Error("delayed prompt preflight rejected");
+      }),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+
+    const submission = submitDesktopSessionMessageWithReceipt(engine, {
+      sessionPath: "/tmp/receipt-delayed-reject.jsonl",
+      text: "hello",
+    });
+    let acceptedSettled = false;
+    void submission.accepted.finally(() => { acceptedSettled = true; }).catch(() => {});
+    await Promise.resolve();
+    expect(acceptedSettled).toBe(false);
+    finishPreflight();
+    await expect(submission.accepted).rejects.toThrow("delayed prompt preflight rejected");
+    await expect(submission.completion).rejects.toThrow("delayed prompt preflight rejected");
+    expect(engine.emitEvent).not.toHaveBeenCalled();
+  });
+
+  it("receipt resolves after accepted side effects without waiting for the model turn", async () => {
+    const session = makeFakeSession();
+    let finishTurn!: () => void;
+    const turnGate = new Promise<void>((resolve) => { finishTurn = resolve; });
+    const engine = {
+      preflightSessionInput: vi.fn(),
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (_sessionPath, _text, _opts, submitOptions) => {
+        submitOptions.afterCachePreflight();
+        submitOptions.afterInputAccepted();
+        await turnGate;
+        throw new Error("provider failed after acceptance");
+      }),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+    };
+
+    const submission = submitDesktopSessionMessageWithReceipt(engine, {
+      sessionPath: "/tmp/receipt-accepted.jsonl",
+      text: "hello",
+      displayMessage: { text: "hello" },
+    });
+    await expect(submission.accepted).resolves.toMatchObject({
+      accepted: true,
+      sessionPath: "/tmp/receipt-accepted.jsonl",
+    });
+    expect(engine.emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "session_user_message" }),
+      "/tmp/receipt-accepted.jsonl",
+    );
+    finishTurn();
+    await expect(submission.completion).rejects.toThrow("provider failed after acceptance");
+  });
+
+  it("closes streaming status but retains the receipt when Pi prompt fails after the hook", async () => {
+    const session = makeFakeSession();
+    const engine = {
+      preflightSessionInput: vi.fn(),
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (_sessionPath, _text, _opts, submitOptions) => {
+        submitOptions.afterCachePreflight();
+        throw new Error("provider rejected prompt");
+      }),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+      renderSessionReminderBlock: vi.fn(() => ({ block: reminderBlock, receipt })),
+      consumeRenderedSessionReminderBlock: vi.fn(),
+    };
+
+    await expect(submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "hello",
+      displayMessage: { text: "hello" },
+    })).rejects.toThrow("provider rejected prompt");
+
+    expect(engine.emitEvent.mock.calls
+      .filter(([event]) => event.type === "session_status")
+      .map(([event]) => event.isStreaming)).toEqual([true, false]);
+    expect(engine.consumeRenderedSessionReminderBlock).not.toHaveBeenCalled();
+  });
+
+  it("consumes a silent recovery receipt without changing prompt or presentation", async () => {
+    const session = makeFakeSession();
+    const appendCustomEntry = vi.fn();
+    (session as any).sessionManager = { appendCustomEntry };
+    const recoveryReceipt = { ...receipt, unavailableToolNames: [] };
+    const engine = {
+      preflightSessionInput: vi.fn(),
+      ensureSessionLoaded: vi.fn(async () => session),
+      promptSession: vi.fn(async (_sessionPath, text, opts, submitOptions) => {
+        submitOptions.afterCachePreflight();
+        await session.prompt(text, opts);
+      }),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+      renderSessionReminderBlock: vi.fn(() => ({ block: "", receipt: recoveryReceipt })),
+      consumeRenderedSessionReminderBlock: vi.fn(),
+    };
+
+    await submitDesktopSessionMessage(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "hello",
+      displayMessage: { text: "hello" },
+    });
+
+    expect(engine.promptSession.mock.calls[0][1]).toBe("hello");
+    expect(appendCustomEntry).not.toHaveBeenCalledWith(
+      MESSAGE_PRESENTATION_RECORD_TYPE,
+      expect.anything(),
+    );
+    expect(engine.consumeRenderedSessionReminderBlock)
+      .toHaveBeenCalledWith("/tmp/desk.jsonl", recoveryReceipt);
+  });
+
+  it("keeps steer failures completely side-effect free when cache preflight throws", async () => {
+    const session = makeFakeSession();
+    const appendCustomEntry = vi.fn();
+    (session as any).sessionManager = { appendCustomEntry };
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => session),
+      isSessionStreaming: vi.fn(() => true),
+      steerSession: vi.fn(() => { throw new Error("Cache prefix contract violated: tools"); }),
+      emitEvent: vi.fn(),
+      setUiContext: vi.fn(),
+      renderSessionReminderBlock: vi.fn(() => ({ block: reminderBlock, receipt })),
+      consumeRenderedSessionReminderBlock: vi.fn(),
+    };
+
+    await expect(submitDesktopSessionInterjection(engine, {
+      sessionPath: "/tmp/desk.jsonl",
+      text: "interject",
+      displayMessage: { text: "interject", source: "bridge_rc" },
+    })).rejects.toThrow("Cache prefix contract violated");
+
+    expect(engine.emitEvent).not.toHaveBeenCalled();
+    expect(appendCustomEntry).not.toHaveBeenCalled();
     expect(engine.consumeRenderedSessionReminderBlock).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NameStep } from '../NameStep';
+import { createOnboardingVerificationPlan } from '../../onboarding-actions';
 import type { HanaFetch } from '../../onboarding-actions';
 
 describe('NameStep', () => {
@@ -34,7 +35,7 @@ describe('NameStep', () => {
   });
 
   it('renders user and agent placeholders with memory enabled by default', () => {
-    render(<NameStep preview hanaFetch={vi.fn<HanaFetch>()} goToStep={vi.fn()} showError={vi.fn()} />);
+    render(<NameStep preview hanaFetch={vi.fn<HanaFetch>()} agentId="hana-primary" verificationPlan={createOnboardingVerificationPlan()} goToStep={vi.fn()} showError={vi.fn()} />);
 
     expect(screen.getByPlaceholderText('你的名字')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('小花')).toBeInTheDocument();
@@ -43,10 +44,10 @@ describe('NameStep', () => {
   });
 
   it('saves identity and memory settings before moving to provider setup', async () => {
-    const hanaFetch = vi.fn<HanaFetch>(async () => ({ json: async () => ({ ok: true }) } as Response));
+    const hanaFetch = vi.fn<HanaFetch>(async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) } as Response));
     const goToStep = vi.fn();
 
-    render(<NameStep preview={false} hanaFetch={hanaFetch} goToStep={goToStep} showError={vi.fn()} />);
+    render(<NameStep preview={false} hanaFetch={hanaFetch} agentId="hana-primary" verificationPlan={createOnboardingVerificationPlan()} goToStep={goToStep} showError={vi.fn()} />);
     fireEvent.change(screen.getByPlaceholderText('你的名字'), { target: { value: '测试用户' } });
     fireEvent.change(screen.getByPlaceholderText('小花'), { target: { value: 'Hana' } });
     fireEvent.click(screen.getByRole('switch', { name: '记忆系统' }));

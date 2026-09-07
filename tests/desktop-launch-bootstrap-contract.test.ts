@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 const root = process.cwd();
+const bootstrapPath = path.join(root, "desktop", "bootstrap.cjs");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf-8"));
 
 const tmpHomesToCleanup = [];
@@ -24,6 +25,7 @@ describe("desktop launch bootstrap contract", () => {
     expect(packageJson.build?.extraMetadata?.main).toBe("desktop/bootstrap.cjs");
     expect(packageJson.build?.files).toContain("desktop/bootstrap.cjs");
     expect(packageJson.build?.files).toContain("desktop/src/shared/launch-integrity.cjs");
+    expect(packageJson.build?.files).toContain("desktop/src/shared/windows-system-ca.cjs");
     expect(packageJson.build?.files).toContain("shared/hana-runtime-paths.cjs");
     expect(packageJson.build?.files).toContain("desktop/main.bundle.cjs");
   });
@@ -66,6 +68,7 @@ setTimeout(() => process.exit(0), 100);
 
     const result = spawnSync(process.execPath, [driverPath], {
       env: { ...process.env, HANA_HOME: tmpHome },
+      windowsHide: true,
       encoding: "utf-8",
       timeout: 15000,
     });
@@ -120,5 +123,16 @@ setTimeout(() => process.exit(0), 100);
     const uncaught = JSON.parse(fs.readFileSync(uncaughtPath, "utf-8"));
     expect(uncaught.payload?.error?.message).toBe("driver-injected");
     expect(events).toContain("uncaughtException");
+  });
+
+  it("enables Windows system CAs before loading Electron or the full desktop main", () => {
+    const source = fs.readFileSync(bootstrapPath, "utf-8");
+    const enableIndex = source.indexOf("enableWindowsSystemCaForCurrentProcess();");
+    const electronIndex = source.indexOf('require("electron")');
+    const mainIndex = source.indexOf("loadDesktopMain();");
+
+    expect(enableIndex).toBeGreaterThan(-1);
+    expect(electronIndex).toBeGreaterThan(enableIndex);
+    expect(mainIndex).toBeGreaterThan(enableIndex);
   });
 });

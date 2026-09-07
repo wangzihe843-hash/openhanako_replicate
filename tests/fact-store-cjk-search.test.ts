@@ -119,6 +119,36 @@ describe("FactStore CJK full-text search", () => {
     expect(store.searchFullText("茉莉", 10)).toEqual([]);
   });
 
+  it("deletes only facts derived from the retried session and keeps the FTS index consistent", () => {
+    store.add({
+      fact: "旧分支里用户喜欢茉莉花茶",
+      tags: ["饮品"],
+      time: "2026-05-05T18:00",
+      session_id: "sess-retried",
+    });
+    store.add({
+      fact: "另一个会话里用户喜欢乌龙茶",
+      tags: ["饮品"],
+      time: "2026-05-05T18:01",
+      session_id: "sess-other",
+    });
+    store.add({
+      fact: "Fork 子会话独立保留白茶偏好",
+      tags: ["饮品"],
+      time: "2026-05-05T18:02",
+      session_id: "sess-child",
+    });
+
+    expect(store.deleteBySession("sess-retried")).toBe(1);
+    expect(store.getBySession("sess-retried")).toEqual([]);
+    expect(store.searchFullText("茉莉花茶", 10)).toEqual([]);
+    expect(store.getBySession("sess-other")).toHaveLength(1);
+    expect(store.getBySession("sess-child")).toEqual([
+      expect.objectContaining({ fact: "Fork 子会话独立保留白茶偏好" }),
+    ]);
+  });
+
+  // Windows full-suite I/O contention can make this SQLite migration substantially slower.
   it("migrates existing v1 databases into the CJK-aware search index", () => {
     store.close();
     store = null;
@@ -131,5 +161,5 @@ describe("FactStore CJK full-text search", () => {
     expect(store.searchFullText("茉莉花茶", 10).map((r) => r.fact)).toEqual([
       "用户喜欢在晚上喝茉莉花茶",
     ]);
-  });
+  }, process.platform === "win32" ? 60_000 : 10_000);
 });

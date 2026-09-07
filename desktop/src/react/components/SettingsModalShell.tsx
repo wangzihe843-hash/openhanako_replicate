@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../stores';
 import { closeSettingsModal, setSettingsModalActiveTab } from '../stores/settings-modal-actions';
 import { SettingsContent } from '../settings/SettingsContent';
 import { useSettingsStore } from '../settings/store';
 import { useAnimatePresence } from '../hooks/use-animate-presence';
+import { WindowSurfaceProvider, useWindowSurface, type WindowSurface } from '../ui/window-surface';
 import styles from './SettingsModalShell.module.css';
 
 declare function t(key: string, vars?: Record<string, string | number>): string;
@@ -17,6 +18,17 @@ export function SettingsModalShell() {
   const [shown, setShown] = useState(false);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const parentSurface = useWindowSurface();
+  const [nestedOverlayRoot, setNestedOverlayRoot] = useState<HTMLDivElement | null>(null);
+  const settingsSurface = useMemo<WindowSurface>(() => ({
+    id: `${parentSurface.id}:settings-modal`,
+    window: parentSurface.window,
+    document: parentSurface.document,
+    // During the first commit the local root does not exist yet. Falling back
+    // keeps an already-open child usable; React moves its portal into the
+    // settings-owned root as soon as the ref is available.
+    overlayRoot: nestedOverlayRoot ?? parentSurface.overlayRoot,
+  }), [nestedOverlayRoot, parentSurface]);
 
   // rAF double-buffer：先以默认（opening）状态渲染一帧，再加 .open class 触发 CSS transition
   useEffect(() => {
@@ -95,31 +107,38 @@ export function SettingsModalShell() {
   if (!mounted) return null;
 
   return (
-    <div
-      className={`${styles.overlay} ${styles[visualState]}`}
-      data-testid="settings-modal-overlay"
-      data-state={visualState}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          requestClose();
-        }
-      }}
-    >
+    <WindowSurfaceProvider surface={settingsSurface}>
       <div
-        ref={cardRef}
-        className={`${styles.card} ${styles[visualState]}`}
+        className={`${styles.overlay} ${styles[visualState]}`}
+        data-testid="settings-modal-overlay"
         data-state={visualState}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('settings.title')}
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) {
+            requestClose();
+          }
+        }}
       >
-        <SettingsContent
-          variant="modal"
-          onClose={requestClose}
-          onActiveTabChange={handleActiveTabChange}
+        <div
+          ref={cardRef}
+          className={`${styles.card} ${styles[visualState]}`}
+          data-state={visualState}
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('settings.title')}
+        >
+          <SettingsContent
+            variant="modal"
+            onClose={requestClose}
+            onActiveTabChange={handleActiveTabChange}
+          />
+        </div>
+        <div
+          ref={setNestedOverlayRoot}
+          className={styles.nestedOverlayRoot}
+          data-testid="settings-modal-overlay-root"
         />
       </div>
-    </div>
+    </WindowSurfaceProvider>
   );
 }
 

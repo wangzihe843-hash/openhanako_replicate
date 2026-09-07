@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store';
-import { t, autoSaveConfig } from '../helpers';
+import { t, autoSaveConfig, refreshSettingsConfigSnapshot } from '../helpers';
 import { hanaFetch } from '../api';
 import { Toggle } from '@/ui';
 import { AgentSelect } from './bridge/AgentSelect';
@@ -151,6 +151,13 @@ export function WorkTab() {
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      if (agentId === useSettingsStore.getState().getSettingsAgentId()) {
+        try {
+          await refreshSettingsConfigSnapshot();
+        } catch (err) {
+          console.warn('[work] refresh settings snapshot failed:', err);
+        }
+      }
       if (selectedAgentIdRef.current === agentId) {
         showToast(t('settings.autoSaved'), 'success');
       }

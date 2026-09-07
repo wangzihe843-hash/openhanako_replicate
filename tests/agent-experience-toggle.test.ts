@@ -19,7 +19,7 @@ function makeAgent({ experienceEnabled }) {
   fs.mkdirSync(userDir, { recursive: true });
   fs.writeFileSync(path.join(productDir, "yuan", "hanako.md"), "yuan", "utf-8");
   fs.writeFileSync(path.join(agentDir, "identity.md"), "identity", "utf-8");
-  fs.writeFileSync(path.join(agentDir, "ishiki.md"), "ishiki", "utf-8");
+  fs.writeFileSync(path.join(agentDir, "AGENTS.md"), "persona", "utf-8");
 
   const agent = new Agent({
     id: "hana",
@@ -108,13 +108,10 @@ describe("agent experience toggle", () => {
     roots.push(root);
 
     const prompt = agent.buildSystemPrompt();
-    expect(prompt).toContain("SessionFile means a local file related to the current session");
-    expect(prompt).toContain("After write/edit succeeds, the tool layer records the file as session-related automatically");
-    expect(prompt).toContain("use the file tool");
-    expect(prompt).toContain("use action=copy and prefer passing fileId");
-    expect(prompt).toContain("Staging promotes this session-related file");
-    expect(prompt).toContain("After write/edit creates or modifies a file, call stage_files for that changed file");
-    expect(prompt).toContain("Do not repeatedly stage the same unchanged file");
+    expect(prompt).toContain("SessionFile is the unified record of local files related to the current session");
+    expect(prompt).toContain("fileId is the machine contract; label is display-only.");
+    expect(prompt).toContain("After write/edit creates or modifies a file, call stage_files to deliver that change");
+    expect(prompt).toContain("Do not re-stage an unchanged file");
     expect(prompt).not.toContain("create_artifact");
   });
 

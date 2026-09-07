@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
+import { securityDirPath } from "./security-dir.ts";
 
 /**
  * Plugin surface session — 插件 iframe 表面的请求级入口凭证。
@@ -116,7 +117,7 @@ export function verifyPluginSurfaceSession({
 
 function pluginSurfaceSessionKeyPath(hanakoHome) {
   assertNonEmpty(hanakoHome, "hanakoHome");
-  return path.join(hanakoHome, "security", PLUGIN_SURFACE_SESSION_KEY_FILE);
+  return path.join(securityDirPath(hanakoHome), PLUGIN_SURFACE_SESSION_KEY_FILE);
 }
 
 function signBody(hanakoHome, body) {

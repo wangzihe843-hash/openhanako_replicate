@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import { resolveAgent, resolveAgentStrict } from "../server/utils/resolve-agent.ts";
+import { resolveAgentStrict } from "../server/utils/resolve-agent.ts";
 import { HttpRouteError, jsonRouteError } from "../server/http/route-errors.ts";
 
 function mockEngine(agents) {
@@ -31,25 +31,10 @@ describe("resolveAgentStrict", () => {
   });
 });
 
-describe("resolveAgent (读操作)", () => {
-  it("显式传入有效 agentId 返回对应 agent", () => {
-    const engine = mockEngine({ hana: { id: "hana" }, _focus: { id: "_focus" } });
-    expect(resolveAgent(engine, mockCtx("hana"))).toEqual({ id: "hana" });
-  });
-
-  it("显式传入无效 agentId 抛 AgentNotFoundError", () => {
-    const engine = mockEngine({ _focus: { id: "_focus" } });
-    expect(() => resolveAgent(engine, mockCtx("ghost"))).toThrow("not found");
-  });
-
-  it("未传 agentId 时用焦点 agent", () => {
-    const engine = mockEngine({ _focus: { id: "_focus" } });
-    expect(resolveAgent(engine, mockCtx(null))).toEqual({ id: "_focus" });
-  });
-
-  it("未传 agentId 且焦点 agent 不存在时抛 AgentNotFoundError", () => {
-    const engine = { getAgent: () => null, currentAgentId: "gone" };
-    expect(() => resolveAgent(engine, mockCtx(null))).toThrow('agent "gone" not found');
+describe("焦点回落解析已移除", () => {
+  it("只导出严格版，不再有猜 agent 的读取版", async () => {
+    const module = await import("../server/utils/resolve-agent.ts");
+    expect(Object.keys(module).sort()).toEqual(["AgentNotFoundError", "resolveAgentStrict"]);
   });
 });
 

@@ -6,7 +6,7 @@
  *     uiContext?: { currentViewed?: string|null, activeFile?: string|null, activePreview?: string|null, pinnedFiles?: string[] } | null }
  *     （uiContext：用户视野元信息，供 current_status(ui_context) 按需读取；
  *      null/undefined 表示清空旧值；不进 session.entries。）
- *   { type: "abort", sessionId: "...", sessionPath: "...", streamId: "..." }  (仅中断该 session 当前同一条流；迟到请求不得中断新流)
+ *   { type: "abort", sessionId: "...", sessionPath: "...", streamId?: "..." }  (有 streamId 时仅中断同一条流；缺失时由服务端绑定收到请求时的当前流)
  *   { type: "resume_stream", sessionId: "...", sessionPath: "...", streamId: "...", sinceSeq: 128 }  (按事件序号续传)
  *   { type: "compact", sessionId: "..." }  (新客户端只发送 sessionId；sessionPath 仅旧客户端兼容输入，服务端会在边界解析为 sessionId 后丢弃)
  *
@@ -24,8 +24,10 @@
  *   { type: "error", message: "..." }
  *   { type: "status", sessionId?: string, sessionPath: "...", isStreaming: bool, streamId?: string|null, turnId?: string|null }
  *   { type: "abort_rejected", reason: "stale_stream", sessionId?: string|null, sessionPath: "...", streamId?: string|null }
- *   { type: "compaction_accepted", sessionId: "...", sessionPath?: "..." }  (sessionPath 仅 locator metadata，不参与身份或状态归属)
- *   { type: "compaction_result", sessionId: "...", sessionPath?: "...", status: "succeeded"|"noop"|"failed", reason?: "...", message?: "..." }  (sessionPath 仅 locator metadata)
+ *   { type: "abort_result", status: "accepted"|"already_stopped"|"rejected", reason?: "stale_stream", sessionId?: string|null, sessionPath: "...", streamId?: string|null }  (Stop 的显式结果；streamId 是服务端收到请求时的权威当前流)
+ *   { type: "compact", sessionId: "...", method?: "instant_simple" }  (method 省略时走既有压缩模式；instant_simple 是实验开关保护的一次性动作)
+ *   { type: "compaction_accepted", sessionId: "...", sessionPath?: "...", mode?: "auto"|"cache_preserving"|"pi_compatible"|"lossy_local" }  (lossy_local 只描述一次性运行状态，不是持久化压缩模式；sessionPath 仅 locator metadata，不参与身份或状态归属)
+ *   { type: "compaction_result", sessionId: "...", sessionPath?: "...", mode?: "auto"|"cache_preserving"|"pi_compatible"|"lossy_local", status: "succeeded"|"noop"|"failed", reason?: "...", message?: "..." }  (sessionPath 仅 locator metadata)
  *   { type: "session_title", title: "...", path: "..." }
  *   { type: "jian_update", content: "..." }
  *   { type: "devlog", text: "...", level: "info"|"heartbeat"|"error" }

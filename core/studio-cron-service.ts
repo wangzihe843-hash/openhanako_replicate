@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { CronStore } from "../lib/desk/cron-store.ts";
+import { requireAutomationExecutionContext } from "../lib/desk/automation-execution-context.ts";
 import { createModuleLogger } from "../lib/debug-log.ts";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
 
@@ -19,24 +20,6 @@ function assertValidPathSegment(value, label) {
 
 function normalizeOptionalString(value) {
   return typeof value === "string" && value.trim() ? value : null;
-}
-
-function normalizeWorkspaceFolders(value) {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item) => typeof item === "string" && item.trim());
-}
-
-function normalizeExecutionContext(input, actorAgentId) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error("cron job requires executionContext");
-  }
-  return {
-    kind: normalizeOptionalString(input.kind) || "session_workspace",
-    cwd: normalizeOptionalString(input.cwd),
-    workspaceFolders: normalizeWorkspaceFolders(input.workspaceFolders),
-    sourceSessionPath: normalizeOptionalString(input.sourceSessionPath),
-    createdByAgentId: normalizeOptionalString(input.createdByAgentId) || actorAgentId,
-  };
 }
 
 function legacyRefKey(ref) {
@@ -81,12 +64,36 @@ function isSafeRunFileId(value) {
   return typeof value === "string" && value && !value.includes("/") && !value.includes("\\") && !value.includes("..");
 }
 
+class BoundStudioCronStore {
+  declare _service: StudioCronService;
+  declare studioId: string;
+
+  constructor(service, studioId) {
+    this._service = service;
+    this.studioId = studioId;
+    Object.freeze(this);
+  }
+
+  listJobs() { return this._service._listJobsForStudio(this.studioId); }
+  getJob(id) { return this._service._getJobForStudio(this.studioId, id); }
+  addJob(job, options = {}) { return this._service._addJobForStudio(this.studioId, job, options); }
+  removeJob(id) { return this._service._removeJobForStudio(this.studioId, id); }
+  updateJob(id, partial, options = {}) {
+    return this._service._updateJobForStudio(this.studioId, id, partial, options);
+  }
+  toggleJob(id) { return this._service._toggleJobForStudio(this.studioId, id); }
+  markRun(id, opts) { return this._service._markRunForStudio(this.studioId, id, opts); }
+  logRun(id, run) { return this._service._logRunForStudio(this.studioId, id, run); }
+  getRunHistory(id, limit) { return this._service._getRunHistoryForStudio(this.studioId, id, limit); }
+}
+
 export class StudioCronService {
   declare _hanakoHome: string;
   declare _agentsDir: string;
   declare _getStudioId: () => string;
-  declare _store: CronStore;
-  declare _storeStudioId: string;
+  declare _handles: Map<string, BoundStudioCronStore>;
+  declare _legacyImportedStudioIds: Set<string>;
+  declare _stores: Map<string, CronStore>;
 
   /**
    * @param {object} opts
@@ -101,67 +108,117 @@ export class StudioCronService {
     this._hanakoHome = hanakoHome;
     this._agentsDir = agentsDir;
     this._getStudioId = getStudioId;
-    this._store = null;
-    this._storeStudioId = null;
+    this._handles = new Map();
+    this._legacyImportedStudioIds = new Set();
+    this._stores = new Map();
   }
 
-  listJobs() {
-    return this._getStore().listJobs();
+  captureCurrent() {
+    return this.forStudio(this._getStudioId());
   }
 
-  getJob(id) {
-    return this._getStore().getJob(id);
+  forStudio(studioId) {
+    const normalizedStudioId = assertValidPathSegment(studioId, "studioId");
+    let handle = this._handles.get(normalizedStudioId);
+    if (!handle) {
+      handle = new BoundStudioCronStore(this, normalizedStudioId);
+      this._handles.set(normalizedStudioId, handle);
+    }
+    return handle;
   }
 
-  addJob(job) {
+  listJobs() { return this.captureCurrent().listJobs(); }
+  getJob(id) { return this.captureCurrent().getJob(id); }
+  addJob(job, options = {}) { return this.captureCurrent().addJob(job, options); }
+  removeJob(id) { return this.captureCurrent().removeJob(id); }
+  updateJob(id, partial, options = {}) { return this.captureCurrent().updateJob(id, partial, options); }
+  toggleJob(id) { return this.captureCurrent().toggleJob(id); }
+  markRun(id, opts) { return this.captureCurrent().markRun(id, opts); }
+  logRun(id, run) { return this.captureCurrent().logRun(id, run); }
+  getRunHistory(id, limit) { return this.captureCurrent().getRunHistory(id, limit); }
+
+  _listJobsForStudio(studioId) {
+    return this._getStoreForStudio(studioId).listJobs();
+  }
+
+  _getJobForStudio(studioId, id) {
+    return this._getStoreForStudio(studioId).getJob(id);
+  }
+
+  _addJobForStudio(studioId, job, options = {}) {
     const actorAgentId = normalizeOptionalString(job?.actorAgentId);
     if (!actorAgentId) throw new Error("cron job requires actorAgentId");
-    const executionContext = normalizeExecutionContext(job.executionContext, actorAgentId);
-    return this._getStore().addJob({
+    const executionContext = requireAutomationExecutionContext(job.executionContext, actorAgentId);
+    return this._getStoreForStudio(studioId).addJob({
       ...job,
+      studioId,
       actorAgentId,
       executionContext,
       legacyRef: job.legacyRef || null,
-    });
+    }, options);
   }
 
-  removeJob(id) {
-    return this._getStore().removeJob(id);
+  _removeJobForStudio(studioId, id) {
+    return this._getStoreForStudio(studioId).removeJob(id);
   }
 
-  updateJob(id, partial) {
-    return this._getStore().updateJob(id, partial);
+  _updateJobForStudio(studioId, id, partial, options = {}) {
+    const store = this._getStoreForStudio(studioId);
+    const existing = store.getJob(id);
+    if (!existing) return null;
+    const actorAgentId = normalizeOptionalString(partial?.actorAgentId)
+      || normalizeOptionalString(existing.actorAgentId);
+    if (!actorAgentId) throw new Error("cron job requires actorAgentId");
+    if (
+      normalizeOptionalString(partial?.actorAgentId)
+      && partial.actorAgentId.trim() !== existing.actorAgentId
+      && !Object.prototype.hasOwnProperty.call(partial, "executionContext")
+    ) {
+      throw new Error("changing actorAgentId requires executionContext");
+    }
+    const normalizedPartial = { ...partial };
+    if (Object.prototype.hasOwnProperty.call(partial, "executionContext")) {
+      normalizedPartial.executionContext = requireAutomationExecutionContext(
+        partial.executionContext,
+        actorAgentId,
+      );
+    }
+    return store.updateJob(id, normalizedPartial, options);
   }
 
-  toggleJob(id) {
-    return this._getStore().toggleJob(id);
+  _toggleJobForStudio(studioId, id) {
+    return this._getStoreForStudio(studioId).toggleJob(id);
   }
 
-  markRun(id, opts) {
-    return this._getStore().markRun(id, opts);
+  _markRunForStudio(studioId, id, opts) {
+    return this._getStoreForStudio(studioId).markRun(id, opts);
   }
 
-  logRun(id, run) {
-    return this._getStore().logRun(id, run);
+  _logRunForStudio(studioId, id, run) {
+    return this._getStoreForStudio(studioId).logRun(id, { ...run, studioId });
   }
 
-  getRunHistory(id, limit) {
-    return this._getStore().getRunHistory(id, limit);
+  _getRunHistoryForStudio(studioId, id, limit) {
+    return this._getStoreForStudio(studioId).getRunHistory(id, limit);
   }
 
-  _getStore() {
-    const studioId = assertValidPathSegment(this._getStudioId(), "studioId");
-    if (!this._store || this._storeStudioId !== studioId) {
-      const deskDir = path.join(this._hanakoHome, "studios", studioId, "desk");
-      this._store = new CronStore(
+  _getStoreForStudio(studioId) {
+    const normalizedStudioId = assertValidPathSegment(studioId, "studioId");
+    let store = this._stores.get(normalizedStudioId);
+    if (!store) {
+      const deskDir = path.join(this._hanakoHome, "studios", normalizedStudioId, "desk");
+      store = new CronStore(
         path.join(deskDir, "cron-jobs.json"),
         path.join(deskDir, "cron-runs"),
-        { idPrefix: "studio_job" },
+        { idPrefix: "studio_job", studioId: normalizedStudioId },
       );
-      this._storeStudioId = studioId;
+      this._stores.set(normalizedStudioId, store);
     }
-    this._importLegacyJobs(this._store, studioId);
-    return this._store;
+    if (!this._legacyImportedStudioIds.has(normalizedStudioId)) {
+      this._importLegacyJobs(store, normalizedStudioId);
+      this._legacyImportedStudioIds.add(normalizedStudioId);
+    }
+    return store;
   }
 
   _importLegacyJobs(store, studioId) {

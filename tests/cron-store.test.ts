@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CronStore } from "../lib/desk/cron-store.ts";
+import { issueAutomationSuggestionReceipt } from "../lib/desk/automation-suggestion-receipt.ts";
+import { AutomationSuggestionStore } from "../lib/tools/automation-suggestion-store.ts";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -265,14 +267,23 @@ describe("Automation job read model", () => {
       model,
     } as any);
 
-    expect(job.schemaVersion).toBe(3);
+    expect(job.schemaVersion).toBe(4);
     expect(job.trigger).toEqual({ kind: "cron", expression: "0 9 * * *" });
+    const downgradedContext = {
+      ...executionContext,
+      cwd: null,
+      workspaceFolders: [],
+      authorizedFolders: [],
+      sourceSessionId: null,
+      sourceSessionPath: null,
+    };
+    expect(job.executionContext).toEqual(downgradedContext);
     expect(job.executor).toMatchObject({
       kind: "agent_session",
       agentId: "hana",
       prompt: "summarize",
       model,
-      executionContext,
+      executionContext: downgradedContext,
     });
     expect(job.createdBy).toEqual({ kind: "agent", agentId: "hana" });
   });
@@ -325,6 +336,7 @@ describe("Automation job read model", () => {
     fs.writeFileSync(jobsPath, JSON.stringify({
       jobs: [{
         id: "job_1",
+        schemaVersion: 3,
         type: "cron",
         schedule: "0 9 * * *",
         prompt: "legacy",
@@ -332,6 +344,19 @@ describe("Automation job read model", () => {
         actorAgentId: "hana",
         model: "",
         consecutiveErrors: 0,
+        authorization: {
+          schemaVersion: 1,
+          jobId: "job_1",
+          actorAgentId: "hana",
+          grants: [{
+            toolName: "terminal",
+            action: "run",
+            capability: "process.exec",
+            target: { type: "workspace", id: "/workspace" },
+          }],
+          confirmedAt: "2026-07-19T00:00:00.000Z",
+          sourceSuggestionId: "automation_old",
+        },
       }],
       nextNum: 2,
     }, null, 2), "utf-8");
@@ -339,7 +364,9 @@ describe("Automation job read model", () => {
     new CronStore(jobsPath, runsDir);
 
     const [job] = JSON.parse(fs.readFileSync(jobsPath, "utf-8")).jobs;
-    expect(job.schemaVersion).toBe(3);
+    expect(job.schemaVersion).toBe(4);
+    expect(job.enabled).toBe(true);
+    expect(job.authorization).toBeUndefined();
     expect(job.trigger).toEqual({ kind: "cron", expression: "0 9 * * *" });
     expect(job.executor).toMatchObject({
       kind: "agent_session",
@@ -487,6 +514,388 @@ describe("Automation job read model", () => {
   });
 });
 
+describe("Automation suggestion receipts and persistence", () => {
+  const studioId = "studio-a";
+  const executionContext = {
+    kind: "session_workspace",
+    cwd: "/workspace/project",
+    workspaceFolders: ["/workspace/project"],
+    authorizedFolders: [],
+    sourceSessionId: "sess-source",
+    sourceBridgeSessionKey: null,
+    sourceSessionPath: "/sessions/source.jsonl",
+    createdByAgentId: "agent-a",
+    notificationContext: null,
+  };
+
+  function makeStudioStore(id = studioId) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cron-receipt-test-"));
+    return new CronStore(
+      path.join(dir, "cron-jobs.json"),
+      path.join(dir, "cron-runs"),
+      { studioId: id },
+    );
+  }
+
+  function baseJob() {
+    return {
+      type: "cron",
+      schedule: "0 9 * * *",
+      prompt: "run the daily task",
+      actorAgentId: "agent-a",
+      executionContext,
+    };
+  }
+
+  function receipt({
+    suggestionId = "automation_suggestion_1",
+    operation = "create" as "create" | "update",
+    jobId = null as string | null,
+    baseConfigRevision = null as number | null,
+    receiptStudioId = studioId,
+    now = () => Date.now(),
+    expiresAt = now() + 60_000,
+  } = {}) {
+    return issueAutomationSuggestionReceipt({
+      suggestionId,
+      confirmedAt: "2026-07-19T10:00:00.000Z",
+      expiresAt,
+      studioId: receiptStudioId,
+      operation,
+      jobId,
+      baseConfigRevision,
+    }, { now });
+  }
+
+  it("strips deprecated authorization fields from ordinary writes", () => {
+    const store = makeStudioStore();
+    const job = store.addJob({
+      ...baseJob(),
+      authorization: { forged: true },
+      requestedGrants: [{ forged: true }],
+    } as any);
+    expect(job.authorization).toBeUndefined();
+    expect(job.requestedGrants).toBeUndefined();
+
+    const updated = store.updateJob(job.id, {
+      authorization: { forged: true },
+      requestedGrants: [{ forged: true }],
+    } as any);
+    expect(updated.authorization).toBeUndefined();
+    expect(updated.requestedGrants).toBeUndefined();
+  });
+
+  it("increments configRevision for every user-editable suggestion field", () => {
+    const store = makeStudioStore();
+    const job = store.addJob(baseJob());
+    const renamed = store.updateJob(job.id, { label: "renamed" });
+    expect(renamed.configRevision).toBe(2);
+
+    const changed = store.updateJob(job.id, { prompt: "a changed task" });
+    expect(changed.configRevision).toBe(3);
+
+    const updateReceipt = receipt({
+      suggestionId: "automation_suggestion_2",
+      operation: "update",
+      jobId: job.id,
+      baseConfigRevision: 3,
+    });
+    const relabeled = store.updateJob(job.id, { label: "confirmed rename" }, {
+      suggestionReceipt: updateReceipt,
+    });
+    expect(relabeled.configRevision).toBe(4);
+    expect(relabeled.label).toBe("confirmed rename");
+  });
+
+  it("invalidates an update suggestion when the label changes after draft creation", () => {
+    const store = makeStudioStore();
+    const job = store.addJob(baseJob());
+    const staleAfterRename = receipt({
+      suggestionId: "automation_suggestion_before_rename",
+      operation: "update",
+      jobId: job.id,
+      baseConfigRevision: job.configRevision,
+    });
+
+    const renamed = store.updateJob(job.id, { label: "newer label" });
+    expect(renamed.configRevision).toBe(job.configRevision + 1);
+    expect(() => store.updateJob(job.id, { label: "stale label" }, {
+      suggestionReceipt: staleAfterRename,
+    })).toThrow(/changed after this suggestion/);
+    expect(store.getJob(job.id)).toMatchObject({
+      label: "newer label",
+      configRevision: renamed.configRevision,
+    });
+  });
+
+  it("invalidates an update suggestion when the job is disabled after the draft was created", () => {
+    const store = makeStudioStore();
+    const job = store.addJob(baseJob());
+    const staleAfterToggle = receipt({
+      suggestionId: "automation_suggestion_before_disable",
+      operation: "update",
+      jobId: job.id,
+      baseConfigRevision: job.configRevision,
+    });
+
+    const disabled = store.toggleJob(job.id);
+    expect(disabled.enabled).toBe(false);
+    expect(disabled.configRevision).toBe(job.configRevision + 1);
+    expect(() => store.updateJob(job.id, { enabled: true, prompt: "stale prompt" }, {
+      suggestionReceipt: staleAfterToggle,
+    })).toThrow(/changed after this suggestion/);
+    expect(store.getJob(job.id)).toMatchObject({
+      enabled: false,
+      configRevision: disabled.configRevision,
+      prompt: job.prompt,
+    });
+  });
+
+  it("invalidates an update suggestion when a one-time job runs and disables itself", () => {
+    const store = makeStudioStore();
+    const job = store.addJob({
+      ...baseJob(),
+      type: "at",
+      schedule: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const staleAfterRun = receipt({
+      suggestionId: "automation_suggestion_before_at_run",
+      operation: "update",
+      jobId: job.id,
+      baseConfigRevision: job.configRevision,
+    });
+
+    expect(store.markRun(job.id, {
+      success: true,
+      expectedConfigRevision: job.configRevision,
+    })).toBe(true);
+    const completed = store.getJob(job.id);
+    expect(completed).toMatchObject({
+      enabled: false,
+      configRevision: job.configRevision + 1,
+    });
+    expect(() => store.updateJob(job.id, { enabled: true, prompt: "stale prompt" }, {
+      suggestionReceipt: staleAfterRun,
+    })).toThrow(/changed after this suggestion/);
+    expect(store.getJob(job.id)).toMatchObject({
+      enabled: false,
+      configRevision: completed.configRevision,
+      prompt: job.prompt,
+    });
+  });
+
+  it("rejects forged, cloned, replayed, expired, cross-Studio, and stale receipts", () => {
+    const store = makeStudioStore();
+    expect(() => store.addJob(baseJob(), {
+      suggestionReceipt: {},
+    })).toThrow(/invalid or already consumed/);
+
+    const valid = receipt();
+    expect(() => store.addJob(baseJob(), {
+      suggestionReceipt: { ...valid },
+    })).toThrow(/invalid or already consumed/);
+    const created = store.addJob(baseJob(), {
+      suggestionReceipt: valid,
+    });
+    expect(() => store.addJob(baseJob(), {
+      suggestionReceipt: valid,
+    })).toThrow(/invalid or already consumed/);
+
+    const crossStudio = receipt({ receiptStudioId: "studio-b" });
+    expect(() => store.addJob(baseJob(), {
+      suggestionReceipt: crossStudio,
+    })).toThrow(/does not match/);
+
+    const nowValue = { value: 1000 };
+    const expired = receipt({ now: () => nowValue.value, expiresAt: 1001 });
+    nowValue.value = 1001;
+    expect(() => store.addJob(baseJob(), {
+      suggestionReceipt: expired,
+    })).toThrow(/expired/);
+
+    const stale = receipt({
+      operation: "update",
+      jobId: created.id,
+      baseConfigRevision: 1,
+    });
+    store.updateJob(created.id, { prompt: "new revision" });
+    expect(() => store.updateJob(created.id, {}, {
+      suggestionReceipt: stale,
+    })).toThrow(/changed after this suggestion/);
+  });
+
+  it("keeps future schemas intact while stripping deprecated authority fields", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath, JSON.stringify({
+      jobs: [{
+        id: "studio_job_future",
+        schemaVersion: 999,
+        studioId,
+        configRevision: 1,
+        ...baseJob(),
+        enabled: true,
+        createdAt: "2026-07-19T10:00:00.000Z",
+        nextRunAt: "2026-07-20T10:00:00.000Z",
+        permissionMode: "operate",
+        approvalPolicy: "allow",
+        allowHumanApproval: true,
+        executor: {
+          kind: "agent_session",
+          agentId: "agent-a",
+          prompt: "run the daily task",
+          model: "",
+          executionContext,
+          permissionMode: "operate",
+          approvalPolicy: "allow",
+        },
+        authorization: {
+          schemaVersion: 2,
+          studioId,
+          jobId: "studio_job_future",
+          actorAgentId: "agent-a",
+          configRevision: 1,
+          grants: [{ forged: true }],
+          confirmedAt: "2026-07-19T10:00:00.000Z",
+          sourceSuggestionId: "automation_future",
+        },
+        requestedGrants: [{ forged: true }],
+      }],
+      nextNum: 2,
+    }), "utf-8");
+    const futureStore = new CronStore(jobsPath, runsDir, { studioId });
+    expect(futureStore.getJob("studio_job_future").schemaVersion).toBe(999);
+    expect(futureStore.getJob("studio_job_future").authorization).toBeUndefined();
+    expect(futureStore.getJob("studio_job_future").requestedGrants).toBeUndefined();
+    expect(futureStore.getJob("studio_job_future").permissionMode).toBeUndefined();
+    expect(futureStore.getJob("studio_job_future").approvalPolicy).toBeUndefined();
+    expect(futureStore.getJob("studio_job_future").allowHumanApproval).toBeUndefined();
+    expect(futureStore.getJob("studio_job_future").executor.permissionMode).toBeUndefined();
+    expect(futureStore.getJob("studio_job_future").executor.approvalPolicy).toBeUndefined();
+  });
+
+  it("reloads before every mutation so stale instances observe the latest persisted revision", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cron-concurrency-test-"));
+    const jobsPath = path.join(dir, "cron-jobs.json");
+    const runsDir = path.join(dir, "cron-runs");
+    const first = new CronStore(jobsPath, runsDir, { studioId });
+    const second = new CronStore(jobsPath, runsDir, { studioId });
+    const created = first.addJob(baseJob());
+    const updated = second.updateJob(created.id, { prompt: "latest task" });
+    const added = first.addJob({ ...baseJob(), prompt: "another task" });
+
+    expect(added.id).not.toBe(created.id);
+    expect(first.getJob(created.id).prompt).toBe("latest task");
+    expect(first.getJob(created.id).configRevision).toBe(updated.configRevision);
+    expect(first.listJobs()).toHaveLength(2);
+  });
+
+  it("commits a suggestion inspected before expiry even if the write crosses the TTL boundary", async () => {
+    let now = 0;
+    const store = makeStudioStore();
+    const suggestions = new AutomationSuggestionStore({ now: () => now, ttlMs: 100 });
+    let committedReceipt: object | null = null;
+    const originalWriteState = store._writeState.bind(store);
+    vi.spyOn(store, "_writeState").mockImplementation((state) => {
+      originalWriteState(state);
+      now = 101;
+    });
+    const suggestion = suggestions.create({
+      sessionId: "session-a",
+      studioId,
+      jobData: baseJob(),
+      apply: (_value, confirmation) => {
+        committedReceipt = confirmation!.receipt;
+        return store.addJob(baseJob(), {
+          suggestionReceipt: confirmation!.receipt,
+        });
+      },
+    });
+
+    now = 99;
+    const result = await suggestions.apply({
+      sessionId: "session-a",
+      studioId,
+      ref: suggestion.suggestionId,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(store.listJobs()).toHaveLength(1);
+    expect(store.listJobs()[0].authorization).toBeUndefined();
+    expect(store.listJobs()[0].requestedGrants).toBeUndefined();
+    expect(() => store.addJob(baseJob(), {
+      suggestionReceipt: committedReceipt,
+    })).toThrow(/invalid or already consumed/);
+  });
+
+  it("prunes expired suggestions before allocating a new shortcode", () => {
+    let now = 0;
+    const suggestions = new AutomationSuggestionStore({
+      now: () => now,
+      ttlMs: 100,
+      generateShortCode: () => "1234",
+    });
+    const first = suggestions.create({
+      sessionId: "session-a",
+      studioId,
+      jobData: baseJob(),
+      apply: () => null,
+    });
+    now = 101;
+    const second = suggestions.create({
+      sessionId: "session-a",
+      studioId,
+      jobData: baseJob(),
+      apply: () => null,
+    });
+
+    expect(first.shortCode).toBe("1234");
+    expect(second.shortCode).toBe("1234");
+    expect(suggestions.get(first.suggestionId)).toBeNull();
+    expect(suggestions.get(second.suggestionId)?.suggestionId).toBe(second.suggestionId);
+  });
+
+  it("requires the exact Studio to consume a Studio-bound suggestion", async () => {
+    const apply = vi.fn(() => ({ id: "studio_job_1" }));
+    const suggestions = new AutomationSuggestionStore();
+    const suggestion = suggestions.create({
+      sessionId: "session-a",
+      studioId: "studio-a",
+      jobData: baseJob(),
+      apply,
+    });
+
+    await expect(suggestions.apply({
+      sessionId: "session-a",
+      ref: suggestion.suggestionId,
+    })).resolves.toEqual({ ok: false, reason: "not-found" });
+    await expect(suggestions.apply({
+      sessionId: "session-a",
+      studioId: "studio-b",
+      ref: suggestion.suggestionId,
+    })).resolves.toEqual({ ok: false, reason: "not-found" });
+    expect(apply).not.toHaveBeenCalled();
+
+    const result = await suggestions.apply({
+      sessionId: "session-a",
+      studioId: "studio-a",
+      ref: suggestion.suggestionId,
+    });
+    expect(result.ok).toBe(true);
+    expect(apply).toHaveBeenCalledOnce();
+  });
+
+  it("refuses to retain a path-only automation suggestion", () => {
+    const suggestions = new AutomationSuggestionStore();
+    expect(() => suggestions.create({
+      sessionPath: "/sessions/legacy.jsonl",
+      studioId: "studio-a",
+      jobData: baseJob(),
+      apply: () => null,
+    })).toThrow(/stable sessionId or bridgeSessionKey/);
+  });
+});
+
 // ════════════════════════════════════════════
 //  updateJob 字段白名单
 // ════════════════════════════════════════════
@@ -547,7 +956,7 @@ describe("CronStore updateJob 字段白名单", () => {
         kind: "session_workspace",
         cwd: "/home/agent-a",
         workspaceFolders: [],
-        sourceSessionPath: "/sessions/a.jsonl",
+        sourceSessionPath: null,
         createdByAgentId: "agent-a",
       },
       executor: {
@@ -559,7 +968,7 @@ describe("CronStore updateJob 字段白名单", () => {
           kind: "session_workspace",
           cwd: "/home/agent-a",
           workspaceFolders: [],
-          sourceSessionPath: "/sessions/a.jsonl",
+          sourceSessionPath: null,
           createdByAgentId: "agent-a",
         },
       },
@@ -572,7 +981,7 @@ describe("CronStore updateJob 字段白名单", () => {
         kind: "session_workspace",
         cwd: "/home/agent-b",
         workspaceFolders: [],
-        sourceSessionPath: "/sessions/a.jsonl",
+        sourceSessionPath: null,
         createdByAgentId: "agent-b",
       },
       executor: {
@@ -584,7 +993,7 @@ describe("CronStore updateJob 字段白名单", () => {
           kind: "session_workspace",
           cwd: "/home/agent-b",
           workspaceFolders: [],
-          sourceSessionPath: "/sessions/a.jsonl",
+          sourceSessionPath: null,
           createdByAgentId: "agent-b",
         },
       },
@@ -683,12 +1092,69 @@ describe("CronStore _load 错误处理", () => {
     spy.mockRestore();
   });
 
-  it("JSON 损坏 + .tmp 存在 → 从 .tmp 恢复", () => {
+  it("JSON 损坏且没有有效 .tmp 时显式失败", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath, "{ broken json !!!", "utf-8");
+
+    expect(() => new CronStore(jobsPath, runsDir)).toThrow(expect.objectContaining({
+      code: "cron_store_corrupt",
+      status: 500,
+      message: "automation task storage is corrupt",
+    }));
+    expect(fs.readFileSync(jobsPath, "utf-8")).toBe("{ broken json !!!");
+  });
+
+  it("主文件缺失但 .tmp 损坏时显式失败", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath + ".tmp", "{ broken recovery !!!", "utf-8");
+
+    expect(() => new CronStore(jobsPath, runsDir)).toThrow(expect.objectContaining({
+      code: "cron_store_corrupt",
+      status: 500,
+    }));
+    expect(fs.existsSync(jobsPath)).toBe(false);
+    expect(fs.readFileSync(jobsPath + ".tmp", "utf-8")).toBe("{ broken recovery !!!");
+  });
+
+  it.each([
+    ["null root", "null"],
+    ["array root", "[]"],
+    ["primitive root", "42"],
+    ["non-array jobs", JSON.stringify({ jobs: {} })],
+  ])("主文件拒绝无效存储结构：%s", (_label, payload) => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath, payload, "utf-8");
+
+    expect(() => new CronStore(jobsPath, runsDir)).toThrow(expect.objectContaining({
+      code: "cron_store_corrupt",
+      status: 500,
+    }));
+  });
+
+  it(".tmp 拒绝无效存储结构且不会覆盖损坏主文件", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath, "broken primary", "utf-8");
+    fs.writeFileSync(jobsPath + ".tmp", "null", "utf-8");
+
+    expect(() => new CronStore(jobsPath, runsDir)).toThrow(expect.objectContaining({
+      code: "cron_store_corrupt",
+      status: 500,
+    }));
+    expect(fs.readFileSync(jobsPath, "utf-8")).toBe("broken primary");
+    expect(fs.readFileSync(jobsPath + ".tmp", "utf-8")).toBe("null");
+  });
+
+  it("JSON 损坏 + .tmp 存在 → 保留原始字节并从 .tmp 恢复", () => {
     const { jobsPath, runsDir } = makeTmpPaths();
     fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
 
     // 写损坏的主文件
-    fs.writeFileSync(jobsPath, "{ broken json !!!", "utf-8");
+    const brokenBytes = Buffer.from([0x7b, 0x20, 0x62, 0x72, 0x6f, 0x6b, 0x65, 0x6e, 0xff]);
+    fs.writeFileSync(jobsPath, brokenBytes);
 
     // 写有效的 .tmp 文件
     const tmpData = {
@@ -703,9 +1169,108 @@ describe("CronStore _load 错误处理", () => {
     const store = new CronStore(jobsPath, runsDir);
     expect(store.size).toBe(1);
     expect(store.getJob("job_1").prompt).toBe("recovered");
+    expect(JSON.parse(fs.readFileSync(jobsPath, "utf-8")).jobs[0].prompt).toBe("recovered");
+    expect(fs.existsSync(jobsPath + ".tmp")).toBe(false);
+    const backups = fs.readdirSync(path.dirname(jobsPath))
+      .filter(name => name.startsWith("cron-jobs.json.corrupt-") && name.endsWith(".bak"));
+    expect(backups).toHaveLength(1);
+    expect(fs.readFileSync(path.join(path.dirname(jobsPath), backups[0]))).toEqual(brokenBytes);
     // 应该有恢复日志
     expect(spy).toHaveBeenCalledWith(expect.stringContaining("从 .tmp 恢复"));
     spy.mockRestore();
+  });
+
+  it("重复恢复使用唯一 backup，不覆盖已有副本", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath, "first broken payload", "utf-8");
+    fs.writeFileSync(jobsPath + ".tmp", JSON.stringify({ jobs: [], nextNum: 1 }), "utf-8");
+    new CronStore(jobsPath, runsDir);
+
+    fs.writeFileSync(jobsPath, "second broken payload", "utf-8");
+    fs.writeFileSync(jobsPath + ".tmp", JSON.stringify({ jobs: [], nextNum: 1 }), "utf-8");
+    new CronStore(jobsPath, runsDir);
+
+    const backups = fs.readdirSync(path.dirname(jobsPath))
+      .filter(name => name.startsWith("cron-jobs.json.corrupt-") && name.endsWith(".bak"));
+    expect(backups).toHaveLength(2);
+    expect(backups.map(name => fs.readFileSync(path.join(path.dirname(jobsPath), name), "utf-8")).sort())
+      .toEqual(["first broken payload", "second broken payload"]);
+  });
+
+  it("backup 写入失败时显式失败且不覆盖主文件或 .tmp", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath, "broken primary", "utf-8");
+    const recoveryPayload = JSON.stringify({ jobs: [], nextNum: 1 });
+    fs.writeFileSync(jobsPath + ".tmp", recoveryPayload, "utf-8");
+    const originalWriteFileSync = fs.writeFileSync.bind(fs);
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
+      if (String(file).includes(".corrupt-")) {
+        throw Object.assign(new Error("backup denied"), { code: "EACCES" });
+      }
+      return originalWriteFileSync(file, data, options as never);
+    });
+
+    try {
+      expect(() => new CronStore(jobsPath, runsDir)).toThrow(expect.objectContaining({
+        code: "cron_store_recovery_failed",
+        status: 500,
+      }));
+    } finally {
+      writeSpy.mockRestore();
+    }
+    expect(fs.readFileSync(jobsPath, "utf-8")).toBe("broken primary");
+    expect(fs.readFileSync(jobsPath + ".tmp", "utf-8")).toBe(recoveryPayload);
+  });
+
+  it("恢复 rename 失败时显式失败并保留主文件、.tmp 与 backup", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath, "broken primary", "utf-8");
+    const recoveryPayload = JSON.stringify({ jobs: [], nextNum: 1 });
+    fs.writeFileSync(jobsPath + ".tmp", recoveryPayload, "utf-8");
+    const originalRenameSync = fs.renameSync.bind(fs);
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+      if (source === jobsPath + ".tmp" && destination === jobsPath) {
+        throw Object.assign(new Error("rename denied"), { code: "EACCES" });
+      }
+      return originalRenameSync(source, destination);
+    });
+
+    try {
+      expect(() => new CronStore(jobsPath, runsDir)).toThrow(expect.objectContaining({
+        code: "cron_store_recovery_failed",
+        status: 500,
+      }));
+    } finally {
+      renameSpy.mockRestore();
+    }
+    expect(fs.readFileSync(jobsPath, "utf-8")).toBe("broken primary");
+    expect(fs.readFileSync(jobsPath + ".tmp", "utf-8")).toBe(recoveryPayload);
+    const backups = fs.readdirSync(path.dirname(jobsPath))
+      .filter(name => name.startsWith("cron-jobs.json.corrupt-") && name.endsWith(".bak"));
+    expect(backups).toHaveLength(1);
+    expect(fs.readFileSync(path.join(path.dirname(jobsPath), backups[0]), "utf-8"))
+      .toBe("broken primary");
+  });
+
+  it("主文件缺失但 .tmp 有效时恢复并持久化主文件", () => {
+    const { jobsPath, runsDir } = makeTmpPaths();
+    fs.mkdirSync(path.dirname(jobsPath), { recursive: true });
+    fs.writeFileSync(jobsPath + ".tmp", JSON.stringify({
+      jobs: [
+        { id: "job_1", type: "cron", schedule: "0 9 * * *", prompt: "recovered", enabled: true, model: "", consecutiveErrors: 0 },
+      ],
+      nextNum: 2,
+    }), "utf-8");
+
+    const store = new CronStore(jobsPath, runsDir);
+
+    expect(store.getJob("job_1").prompt).toBe("recovered");
+    expect(JSON.parse(fs.readFileSync(jobsPath, "utf-8")).jobs[0].prompt).toBe("recovered");
+    expect(fs.existsSync(jobsPath + ".tmp")).toBe(false);
+    expect(fs.readdirSync(path.dirname(jobsPath)).filter(name => name.includes(".corrupt-"))).toEqual([]);
   });
 
   it("every schedule < 60000 自动 clamp", () => {
@@ -784,12 +1349,9 @@ describe("CronStore _load 错误处理", () => {
     expect(store.getJob("job_1").schedule).toBe(60000);
     expect(store.getJob("job_1").consecutiveErrors).toBe(0);
 
-    // 记录清洗后文件的 mtime
-    const stat1 = fs.statSync(jobsPath);
-
     // 再次 listJobs（触发 _load），数据已干净，不应再 _save
     // 用一个小延迟确保 mtime 能区分
-    const spy = vi.spyOn(store, "_save");
+    const spy = vi.spyOn(store, "_writeState");
     store.listJobs();
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();

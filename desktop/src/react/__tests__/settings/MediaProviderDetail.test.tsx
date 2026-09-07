@@ -87,4 +87,55 @@ describe('MediaProviderDetail', () => {
     });
     expect(onRefresh).toHaveBeenCalled();
   });
+
+  it('shows runtime discovery failures and keeps CLI-owned model controls read-only', () => {
+    render(
+      <MediaProviderDetail
+        providerId="jimeng-cli"
+        provider={{
+          displayName: '即梦 CLI',
+          hasCredentials: false,
+          unavailableReason: 'output_unparseable',
+          unavailableMessage: 'Dreamina CLI help changed and could not be parsed',
+          runtimeCapability: {
+            status: 'error',
+            error: {
+              code: 'output_unparseable',
+              message: 'Dreamina CLI help changed and could not be parsed',
+            },
+          },
+          models: [],
+          availableModels: [],
+        }}
+        config={{}}
+        onSaveConfig={vi.fn(async () => {})}
+        onRefresh={vi.fn(async () => {})}
+      />,
+    );
+
+    expect(screen.getByText('Dreamina CLI help changed and could not be parsed')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /settings\.media\.addModel/ })).not.toBeInTheDocument();
+  });
+
+  it('does not offer remove controls for models discovered from a CLI', () => {
+    render(
+      <MediaProviderDetail
+        providerId="jimeng-cli"
+        provider={{
+          displayName: '即梦 CLI',
+          hasCredentials: true,
+          runtimeCapability: { status: 'ready' },
+          models: [{ id: 'jimeng-image-5.0', name: '即梦图片 5.0' }],
+          availableModels: [],
+        }}
+        config={{}}
+        onSaveConfig={vi.fn(async () => {})}
+        onRefresh={vi.fn(async () => {})}
+      />,
+    );
+
+    expect(screen.getByText('jimeng-image-5.0')).toBeInTheDocument();
+    expect(screen.queryByTitle('settings.api.removeModel')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /settings\.media\.addModel/ })).not.toBeInTheDocument();
+  });
 });

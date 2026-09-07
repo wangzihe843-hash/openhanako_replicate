@@ -9,6 +9,7 @@
  */
 
 import { debugLog, createModuleLogger } from "../debug-log.ts";
+import { AUTOMATION_SCHEMA_VERSION } from "./automation-normalizer.ts";
 
 const log = createModuleLogger("cron");
 export const DEFAULT_CRON_EXECUTION_TIMEOUT_MS = 20 * 60 * 1000;
@@ -33,7 +34,7 @@ function formatTimeoutMs(ms) {
  * @param {object} opts
  * @param {import('./cron-store.ts').CronStore} opts.cronStore
  * @param {(job: object) => Promise<void>} opts.executeJob - 执行回调（由 engine 提供）
- * @param {(jobId: string) => void} [opts.abortJob] - 超时时 abort 正在执行的任务
+ * @param {(job: object) => void} [opts.abortJob] - 超时时 abort 正在执行的任务
  * @param {(job: object, result: object) => void} [opts.onJobDone] - 执行完成通知
  * @param {number} [opts.executionTimeoutMs] - 单次任务执行超时，默认 20 分钟
  * @returns {{ start, stop, checkJobs }}
@@ -58,15 +59,51 @@ export function createCronScheduler({ cronStore, executeJob, abortJob, onJobDone
 
   async function _doCheck() {
     try {
-      const now = Date.now();
-      const jobs = cronStore.listJobs();
+      // Studio can change while a long-running check is in flight. Capture one
+      // immutable store handle and use it for the entire check so A's run state
+      // can never be recorded in B merely because focus changed mid-execution.
+      const checkStore = typeof cronStore.captureCurrent === "function"
+        ? cronStore.captureCurrent()
+        : cronStore;
+      const jobs = checkStore.listJobs();
 
-      for (const job of jobs) {
+      for (const listedJob of jobs) {
+        // A previous job can run for minutes. Re-read before dispatch so a
+        // delete, disable, reschedule, or authority-bearing edit made while the
+        // batch was in flight takes effect before this job starts.
+        const job = typeof checkStore.getJob === "function"
+          ? checkStore.getJob(listedJob.id)
+          : listedJob;
+        if (!job) continue;
         if (!job.enabled) continue;
         if (!job.nextRunAt) continue;
 
         const nextRunTime = new Date(job.nextRunAt).getTime();
-        if (now < nextRunTime) continue;
+        if (Date.now() < nextRunTime) continue;
+
+        // A newer writer may persist fields this runtime cannot understand.
+        // The store deliberately preserves that data for forward compatibility,
+        // but this runtime must not execute it under an older permission model.
+        if (Number.isInteger(job.schemaVersion) && job.schemaVersion !== AUTOMATION_SCHEMA_VERSION) {
+          const skippedAt = new Date().toISOString();
+          checkStore.logRun(job.id, {
+            status: "skipped",
+            startedAt: skippedAt,
+            finishedAt: skippedAt,
+            reason: "unsupported_automation_schema",
+            schemaVersion: job.schemaVersion,
+          });
+          debugLog()?.log(
+            "cron",
+            `job skipped ${job.id}: unsupported schema ${job.schemaVersion}`,
+          );
+          onJobDone?.(job, {
+            status: "skipped",
+            reason: "unsupported_automation_schema",
+            schemaVersion: job.schemaVersion,
+          });
+          continue;
+        }
 
         // 到期了，执行
         log.log(`执行任务: ${job.label} (${job.id})`);
@@ -82,7 +119,7 @@ export function createCronScheduler({ cronStore, executeJob, abortJob, onJobDone
                 executeJob(job),
                 new Promise((_, reject) => {
                   timer = setTimeout(() => {
-                    abortJob?.(job.id);
+                    abortJob?.(job);
                     reject(new Error(`execution timeout (${formatTimeoutMs(effectiveExecutionTimeoutMs)})`));
                   }, effectiveExecutionTimeoutMs);
                 }),
@@ -94,39 +131,57 @@ export function createCronScheduler({ cronStore, executeJob, abortJob, onJobDone
           const finishedAt = new Date().toISOString();
 
           // 记录成功
-          cronStore.logRun(job.id, {
+          const cursorAdvanced = checkStore.markRun(job.id, {
+            success: true,
+            expectedConfigRevision: job.configRevision,
+          });
+          checkStore.logRun(job.id, {
+            ...(executionResult && typeof executionResult === "object" && !Array.isArray(executionResult)
+              ? executionResult
+              : {}),
             status: "success",
             startedAt,
             finishedAt,
-            ...(executionResult && typeof executionResult === "object" && !Array.isArray(executionResult)
-              ? executionResult
-              : {}),
+            ...(cursorAdvanced === false ? { staleConfigRevision: true } : {}),
           });
-          cronStore.markRun(job.id, { success: true });
           debugLog()?.log("cron", `job success ${job.id}`);
 
           onJobDone?.(job, {
-            status: "success",
             ...(executionResult && typeof executionResult === "object" && !Array.isArray(executionResult)
               ? executionResult
               : {}),
+            status: "success",
+            ...(cursorAdvanced === false ? { staleConfigRevision: true } : {}),
           });
         } catch (err) {
           const finishedAt = new Date().toISOString();
 
           if (err.skipped) {
             // 跳过：不推进 nextRunAt，下次 check 时重试
-            cronStore.logRun(job.id, { status: "skipped", startedAt, finishedAt });
+            checkStore.logRun(job.id, { status: "skipped", startedAt, finishedAt });
             debugLog()?.log("cron", `job skipped ${job.id}: ${err.message}`);
             onJobDone?.(job, { status: "skipped" });
           } else {
             // 真正失败：记录并推进 nextRunAt（含退避）
-            cronStore.logRun(job.id, { status: "error", startedAt, finishedAt, error: err.message });
-            cronStore.markRun(job.id, { success: false });
+            const cursorAdvanced = checkStore.markRun(job.id, {
+              success: false,
+              expectedConfigRevision: job.configRevision,
+            });
+            checkStore.logRun(job.id, {
+              status: "error",
+              startedAt,
+              finishedAt,
+              error: err.message,
+              ...(cursorAdvanced === false ? { staleConfigRevision: true } : {}),
+            });
 
             log.error(`任务失败 ${job.id}: ${err.message}`);
             debugLog()?.error("cron", `job failed ${job.id}: ${err.message}`);
-            onJobDone?.(job, { status: "error", error: err.message });
+            onJobDone?.(job, {
+              status: "error",
+              error: err.message,
+              ...(cursorAdvanced === false ? { staleConfigRevision: true } : {}),
+            });
           }
         }
       }

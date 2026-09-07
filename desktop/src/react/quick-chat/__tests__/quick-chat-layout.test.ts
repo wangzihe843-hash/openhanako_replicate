@@ -30,4 +30,15 @@ describe('QuickChatApp compact layout', () => {
 
     expect(textareaBlock).toContain('spellCheck={false}');
   });
+
+  it('binds a forked child to Quick Chat local state before rendering its transcript', () => {
+    const source = fs.readFileSync(APP_PATH, 'utf8');
+    const handler = source.match(/const handleForkCreated[\s\S]*?\n {2}}, \[\]\);/)?.[0] ?? '';
+
+    expect(handler).toContain('sessionPathRef.current = forked.sessionPath');
+    expect(handler).toContain('setSessionPath(forked.sessionPath)');
+    expect(handler).toContain('bindQuickChatDetachedSession({');
+    expect(handler).toContain('await loadMessages(forked.sessionPath)');
+    expect(source).toContain('onForkCreated={handleForkCreated}');
+  });
 });

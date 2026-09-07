@@ -214,12 +214,18 @@ export class DeferredResultStore {
   markDelivered(taskId) {
     const task = this._tasks.get(taskId);
     if (task) {
+      // Retry may fence a discarded branch while a delivery coroutine is
+      // already awaiting sendCustomMessage(). That stale completion must not
+      // reopen delivery by clearing the fence afterwards.
+      if (task.deliverySuppressed) return false;
       task.delivered = true;
       delete task.deliverySuppressed;
       delete task.suppressedAt;
       delete task.suppressionReason;
       this._save();
+      return true;
     }
+    return false;
   }
 
   suppressDelivery(taskId, reason = "delivery suppressed") {
@@ -235,6 +241,147 @@ export class DeferredResultStore {
     task.suppressionReason = reason;
     this._save();
     return true;
+  }
+
+  /**
+   * Fence only the named tasks owned by one stable session. The returned
+   * receipt can be restored synchronously if the surrounding branch commit
+   * fails before any irreversible task cancellation is attempted.
+   */
+  suppressTaskIdsForSession(sessionRef, taskIds, reason = "discarded by session retry") {
+    const ids = Array.from(new Set(
+      Array.isArray(taskIds)
+        ? taskIds.map(textOrNull).filter(Boolean)
+        : [],
+    ));
+    const receipt = [];
+    const suppressedTaskIds = [];
+    const mismatchedTaskIds = [];
+    const missingTaskIds = [];
+
+    try {
+      for (const taskId of ids) {
+        const task = this._tasks.get(taskId);
+        if (!task) {
+          missingTaskIds.push(taskId);
+          continue;
+        }
+        if (!matchesSession(task, sessionRef, this._getSessionIdForPath)) {
+          mismatchedTaskIds.push(taskId);
+          continue;
+        }
+
+        receipt.push({ taskId, task: { ...task } });
+        if (task.status === "pending") {
+          task.status = "aborted";
+          task.reason = reason;
+        }
+        task.delivered = true;
+        task.deliverySuppressed = true;
+        task.suppressedAt = Date.now();
+        task.suppressionReason = reason;
+        suppressedTaskIds.push(taskId);
+      }
+      if (receipt.length) this._save();
+    } catch (error) {
+      for (const snapshot of receipt) this._tasks.set(snapshot.taskId, snapshot.task);
+      if (receipt.length) this._save();
+      throw error;
+    }
+
+    return {
+      suppressedTaskIds,
+      mismatchedTaskIds,
+      missingTaskIds,
+      receipt,
+    };
+  }
+
+  restoreSuppressedTaskIds(receipt) {
+    if (!Array.isArray(receipt) || !receipt.length) return 0;
+    let restored = 0;
+    for (const snapshot of receipt) {
+      if (!snapshot?.taskId || !snapshot.task) continue;
+      const current = this._tasks.get(snapshot.taskId);
+      if (!current?.deliverySuppressed) continue;
+      this._tasks.set(snapshot.taskId, { ...snapshot.task });
+      restored++;
+    }
+    if (restored) this._save();
+    return restored;
+  }
+
+  forkTerminalTasks({
+    sourceSessionId,
+    sourceSessionPath,
+    targetSessionId,
+    targetSessionPath,
+    taskIdMap = {},
+  }: any = {}) {
+    const sourceRef = normalizeSessionRef({ sessionId: sourceSessionId, sessionPath: sourceSessionPath }, this._getSessionIdForPath);
+    const targetRef = normalizeSessionRef({ sessionId: targetSessionId, sessionPath: targetSessionPath }, this._getSessionIdForPath);
+    if (!sourceRef.sessionId || !targetRef.sessionId || !targetRef.sessionPath) {
+      throw new Error("deferred task fork requires source and target SessionRefs");
+    }
+    if (sourceRef.sessionId === targetRef.sessionId) {
+      throw new Error("deferred task fork target must be independent");
+    }
+
+    const createdTaskIds = [];
+    try {
+      for (const [sourceTaskId, targetTaskId] of Object.entries(taskIdMap || {})) {
+        if (!textOrNull(sourceTaskId) || !textOrNull(targetTaskId) || sourceTaskId === targetTaskId) continue;
+        const source = this._tasks.get(sourceTaskId);
+        if (!source) continue;
+        if (!matchesSession(source, sourceRef, this._getSessionIdForPath)) {
+          throw new Error(`deferred task fork ownership mismatch: ${sourceTaskId}`);
+        }
+        if (source.status === "pending") {
+          const error: any = new Error(`active deferred task cannot be cloned: ${sourceTaskId}`);
+          error.code = "session_fork_active_task";
+          error.status = 409;
+          throw error;
+        }
+        if (this._tasks.has(targetTaskId)) {
+          throw new Error(`deferred task fork identity already exists: ${targetTaskId}`);
+        }
+        const clone = structuredClone(source);
+        clone.sessionId = targetRef.sessionId;
+        clone.sessionPath = targetRef.sessionPath;
+        clone.sessionRef = targetRef.sessionRef;
+        clone.delivered = true;
+        clone.meta = {
+          ...(clone.meta || {}),
+          forkedFromTaskId: sourceTaskId,
+        };
+        delete clone.deliverySuppressed;
+        delete clone.suppressedAt;
+        delete clone.suppressionReason;
+        this._tasks.set(targetTaskId, clone);
+        createdTaskIds.push(targetTaskId);
+      }
+      if (createdTaskIds.length > 0) this._save();
+      return { tasks: createdTaskIds.length, taskIds: createdTaskIds };
+    } catch (error) {
+      for (const taskId of createdTaskIds) this._tasks.delete(taskId);
+      if (createdTaskIds.length > 0) this._save();
+      throw error;
+    }
+  }
+
+  discardForkedTerminalTasks({ targetSessionId, taskIds = [] }: any = {}) {
+    const targetId = textOrNull(targetSessionId);
+    if (!targetId) throw new Error("targetSessionId is required to discard forked deferred tasks");
+    let discarded = 0;
+    for (const taskId of Array.isArray(taskIds) ? taskIds : []) {
+      const normalizedTaskId = textOrNull(taskId);
+      const task = normalizedTaskId ? this._tasks.get(normalizedTaskId) : null;
+      if (!task || task.sessionId !== targetId || !textOrNull(task.meta?.forkedFromTaskId)) continue;
+      this._tasks.delete(normalizedTaskId);
+      discarded += 1;
+    }
+    if (discarded > 0) this._save();
+    return { discarded };
   }
 
   // ── 查询 ──

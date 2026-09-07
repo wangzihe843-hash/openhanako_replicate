@@ -21,6 +21,23 @@ const FORBIDDEN_PROVIDER_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
+const CREDENTIAL_HEADER_NAMES = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "cookie2",
+  "set-cookie",
+  "api-key",
+  "x-api-key",
+  "x-auth-token",
+  "x-access-token",
+  "x-goog-api-key",
+]);
+const AUTH_STORAGE_PROTOCOL_HEADER_EXCEPTIONS = new Set([
+  // Grok CLI uses this fixed protocol marker; the bearer token still comes
+  // from AuthStorage's Authorization header at the request boundary.
+  "x-xai-token-auth",
+]);
 
 export function normalizeProviderAuthType(authType) {
   return KNOWN_AUTH_TYPES.has(authType) ? authType : "api-key";
@@ -67,6 +84,42 @@ export function normalizeProviderHeaders(headers) {
     byLowerName.set(headerKeyForName(name), { name, value });
   }
   return Object.fromEntries([...byLowerName.values()].map(({ name, value }) => [name, value]));
+}
+
+/** Merge header sources with HTTP's case-insensitive name semantics. Later sources win. */
+export function mergeProviderHeaders(...sources) {
+  const byLowerName = new Map();
+  for (const source of sources) {
+    for (const [name, value] of Object.entries(normalizeProviderHeaders(source))) {
+      byLowerName.set(headerKeyForName(name), { name, value });
+    }
+  }
+  return Object.fromEntries([...byLowerName.values()].map(({ name, value }) => [name, value]));
+}
+
+/**
+ * Remove headers that can supply or override request credentials.
+ *
+ * AuthStorage lanes call this after refreshing OAuth so protocol markers and
+ * model-routing headers survive while stale catalog/model credentials cannot
+ * replace the fresh token at the request boundary.
+ */
+export function stripCredentialHeaders(headers) {
+  const safe = {};
+  for (const [name, value] of Object.entries(normalizeProviderHeaders(headers))) {
+    const key = headerKeyForName(name);
+    const credentialLikeName = CREDENTIAL_HEADER_NAMES.has(key)
+      || key.endsWith("-subscription-key")
+      || key.endsWith("-authorization")
+      || key.endsWith("-auth")
+      || key.endsWith("-token")
+      || key.endsWith("-credential")
+      || key.endsWith("-secret")
+      || key.endsWith("-signature");
+    if (credentialLikeName && !AUTH_STORAGE_PROTOCOL_HEADER_EXCEPTIONS.has(key)) continue;
+    safe[name] = value;
+  }
+  return safe;
 }
 
 export function maskProviderHeaders(headers) {

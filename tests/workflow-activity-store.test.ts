@@ -11,6 +11,8 @@ beforeEach(() => {
   file = path.join(dir, "workflow-activity.json");
 });
 afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -55,6 +57,21 @@ describe("WorkflowActivityStore", () => {
     expect(store.size).toBe(1);
   });
 
+  it("upsertMany/removeMany 以批次持久化 Fork 投影", () => {
+    const store = new WorkflowActivityStore(file);
+    expect(store.upsertMany([
+      wfEntry({ id: "fork-parent", status: "done" }),
+      wfEntry({ id: "fork-child", kind: "workflow_agent", status: "done", parentTaskId: "fork-parent" }),
+    ])).toHaveLength(2);
+    expect(new WorkflowActivityStore(file).list().map((entry) => entry.id).sort()).toEqual([
+      "fork-child",
+      "fork-parent",
+    ]);
+
+    expect(store.removeMany(["fork-parent", "fork-child", "missing"])).toHaveLength(2);
+    expect(new WorkflowActivityStore(file).size).toBe(0);
+  });
+
   it("listBySession 只取该 session；按 path 存取不靠焦点", () => {
     const store = new WorkflowActivityStore(file);
     store.upsert(wfEntry({ id: "a1", sessionPath: "/s/a.jsonl" }));
@@ -63,6 +80,80 @@ describe("WorkflowActivityStore", () => {
     expect(store.listBySession("/s/a.jsonl").map(e => e.id).sort()).toEqual(["a1", "a2"]);
     expect(store.listBySession("/s/b.jsonl")).toHaveLength(1);
     expect(store.listBySession(null)).toEqual([]);
+  });
+
+  it("rolls back a failed batch without persisting a partial Fork projection", () => {
+    const store = new WorkflowActivityStore(file);
+    store.upsert(wfEntry({ id: "existing" }));
+    const before = fs.readFileSync(file, "utf8");
+    const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
+      throw new Error("disk unavailable");
+    });
+
+    expect(() => store.upsertMany([
+      wfEntry({ id: "existing", status: "done" }),
+      wfEntry({ id: "fork-child", parentTaskId: "existing" }),
+    ])).toThrow("disk unavailable");
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(store.get("existing").status).toBe("running");
+    expect(store.get("fork-child")).toBeNull();
+    expect(fs.readFileSync(file, "utf8")).toBe(before);
+    store.flush();
+    expect(fs.readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("re-arms pending progress after batch rollback and flushes only the surviving changes", () => {
+    vi.useFakeTimers();
+    const store = new WorkflowActivityStore(file);
+    store.upsert(wfEntry({ id: "existing", tokens: 0 }));
+    store.upsert(wfEntry({ id: "existing", tokens: 7 }));
+    vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
+      throw new Error("disk unavailable");
+    });
+
+    expect(() => store.upsertMany([
+      wfEntry({ id: "existing", status: "done", tokens: 99 }),
+      wfEntry({ id: "fork-child" }),
+    ])).toThrow("disk unavailable");
+    expect(store.get("existing")).toMatchObject({ status: "running", tokens: 7 });
+    expect(new WorkflowActivityStore(file).get("existing").tokens).toBe(0);
+    vi.advanceTimersByTime(1000);
+    const reloaded = new WorkflowActivityStore(file);
+    expect(reloaded.get("existing")).toMatchObject({ status: "running", tokens: 7 });
+    expect(reloaded.get("fork-child")).toBeNull();
+  });
+
+  it("does not publish a terminal transition when its synchronous write fails", () => {
+    const store = new WorkflowActivityStore(file);
+    store.upsert(wfEntry());
+    vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
+      throw new Error("disk unavailable");
+    });
+    expect(() => store.upsert(wfEntry({ status: "done", finishedAt: 2000 }))).toThrow("disk unavailable");
+    expect(store.get("workflow-1")).toMatchObject({ status: "running", finishedAt: null });
+    expect(new WorkflowActivityStore(file).get("workflow-1").status).toBe("running");
+  });
+
+  it.each(["batch", "session", "prune"])("rolls back failed %s deletion while preserving pending progress", (method) => {
+    vi.useFakeTimers();
+    const store = new WorkflowActivityStore(file);
+    store.upsertMany([
+      wfEntry({ id: "old", status: "done", sessionPath: "/s/old.jsonl", finishedAt: 1000 }),
+      wfEntry({ id: "live", sessionPath: "/s/live.jsonl", tokens: 0, startedAt: 9000 }),
+    ]);
+    store.upsert(wfEntry({ id: "live", sessionPath: "/s/live.jsonl", tokens: 12, startedAt: 9000 }));
+    vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
+      throw new Error("disk unavailable");
+    });
+    const remove = () => method === "batch"
+      ? store.removeMany(["old"])
+      : method === "session" ? store.removeBySession("/s/old.jsonl") : store.prune(5000, 10000);
+    expect(remove).toThrow("disk unavailable");
+    expect(store.get("old")).toBeTruthy();
+    vi.advanceTimersByTime(1000);
+    const reloaded = new WorkflowActivityStore(file);
+    expect(reloaded.get("old")).toBeTruthy();
+    expect(reloaded.get("live").tokens).toBe(12);
   });
 
   it("removeBySession 清掉该 session 并落盘", () => {

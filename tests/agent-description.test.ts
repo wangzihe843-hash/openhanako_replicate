@@ -26,13 +26,22 @@ describe("generateDescription", () => {
     expect(result.length).toBeLessThanOrEqual(100);
   });
 
-  it("returns null when api_key is missing", async () => {
+  it("uses a resolver-approved header-only execution without an api key", async () => {
     const result = await generateDescription(
-      { utility: "test-model", api_key: "", base_url: "http://test", api: "openai" },
+      {
+        utility: "test-model",
+        api_key: "",
+        base_url: "http://test",
+        api: "openai",
+        headers: { "X-Provider-Protocol": "v1" },
+      },
       "personality text",
       "en",
     );
-    expect(result).toBeNull();
+    expect(result).toBeTruthy();
+    expect((callText as any).mock.calls.at(-1)?.[0]?.headers).toEqual({
+      "X-Provider-Protocol": "v1",
+    });
   });
 
   it("strips internal mood tags from generated descriptions", async () => {
@@ -50,7 +59,7 @@ describe("generateDescription", () => {
   it("asks for a third-person roster description without internal tags", async () => {
     await generateDescription(
       { utility: "test-model", api_key: "key", base_url: "http://test", api: "openai" },
-      "identity and ishiki",
+      "identity and AGENTS.md",
       "zh",
     );
 
@@ -59,7 +68,7 @@ describe("generateDescription", () => {
     expect(prompt).toContain("第三方编辑");
     expect(prompt).toContain("第三人称简介");
     expect(prompt).toContain("不要输出 <mood>");
-    expect(call?.messages?.[1]?.content).toBe("identity and ishiki");
+    expect(call?.messages?.[1]?.content).toBe("identity and AGENTS.md");
     expect(call).not.toHaveProperty("maxTokens");
   });
 
@@ -121,6 +130,30 @@ describe("llm utility soft output budgets", () => {
     expect(result).toBe("写作协作");
     expect(callText).toHaveBeenCalledOnce();
     expect((callText as any).mock.calls[0][0]).not.toHaveProperty("maxTokens");
+  });
+
+  it("forwards resolved provider and model headers to title generation", async () => {
+    (callText as any).mockResolvedValueOnce("请求头整理");
+
+    await summarizeTitle(
+      {
+        utility: "test-model",
+        api_key: "key",
+        base_url: "http://test",
+        api: "openai",
+        headers: {
+          "x-grok-client-version": "0.2.95",
+          "x-grok-model-override": "grok-4.5",
+        },
+      },
+      "整理供应商请求头",
+      "我会统一执行配置。",
+    );
+
+    expect((callText as any).mock.calls[0][0].headers).toEqual({
+      "x-grok-client-version": "0.2.95",
+      "x-grok-model-override": "grok-4.5",
+    });
   });
 
   it("does not cap agent id generation with maxTokens", async () => {

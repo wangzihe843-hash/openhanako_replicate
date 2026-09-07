@@ -8,7 +8,7 @@ import { emitAppEvent } from "../app-events.ts";
 import { safeJson } from "../hono-helpers.ts";
 import { t } from "../../lib/i18n.ts";
 import { debugLog } from "../../lib/debug-log.ts";
-import { getRawConfig, clearConfigCache } from "../../lib/memory/config-loader.ts";
+import { clearConfigCache } from "../../lib/memory/config-loader.ts";
 import { FactStore } from "../../lib/memory/fact-store.ts";
 import {
   clearCompiledMemoryArtifacts,
@@ -26,10 +26,6 @@ import {
   writeWeekDayEntry,
 } from "../../lib/memory/compile.ts";
 import {
-  readPinnedMemoryItems,
-  replacePinnedMemoryItems,
-} from "../../lib/memory/pinned-memory-store.ts";
-import {
   ensureDefaultWorkspace,
   resolveDefaultWorkspacePath,
 } from "../../shared/default-workspace.ts";
@@ -40,21 +36,14 @@ import {
   normalizeWorkspacePath,
   removeWorkspaceHistoryEntries,
 } from "../../shared/workspace-history.ts";
-import { pruneMissingWorkspaceConfig } from "../../shared/workspace-persistence-gc.ts";
 import {
   collectProviderHeaderSecretPatchPathsFromConfig,
   maskProviderHeaders,
   resolveProviderHeadersPatch,
 } from "../../shared/provider-auth.ts";
 import { isSearchApiProvider, normalizeSearchApiKeys } from "../../shared/search-providers.ts";
-import { resolveAgent, resolveAgentStrict, AgentNotFoundError } from "../utils/resolve-agent.ts";
-import { appendXingyeEvent } from "../../lib/xingye/events.js";
-import { formatSkillsForPrompt } from "../../lib/pi-sdk/index.ts";
-import {
-  buildInlineProviderCredentialUpdate,
-  clearInlineProviderCredentialFields,
-  hasInlineProviderCredentialPatch,
-} from "./provider-credentials.ts";
+import { resolveAgentStrict, AgentNotFoundError } from "../utils/resolve-agent.ts";
+import { hasInlineProviderCredentialPatch } from "./provider-credentials.ts";
 import {
   collectSecretPatchPaths,
   isMaskedSecretValue,
@@ -80,16 +69,11 @@ function getGlobalValue(globalFields: any[], key: string) {
   return globalFields.find((field) => field.key === key)?.value;
 }
 
-function emitConfigAppEvents(engine: any, { globalFields, agentPartial, providersChanged }: any) {
-  const agentId = engine.currentAgentId || null;
-  if (
-    providersChanged
-    || hasOwn(agentPartial, "api")
-    || hasOwn(agentPartial, "embedding_api")
-    || hasOwn(agentPartial, "utility_api")
-    || hasOwn(agentPartial, "models")
-  ) {
-    emitAppEvent(engine, "models-changed", { agentId });
+function emitConfigAppEvents(engine: any, { globalFields, providersChanged }: any) {
+  if (providersChanged) {
+    // 供应商目录是全局的，改一次每个 agent 的模型列表都会跟着变，没有"属于
+    // 哪个 agent"可言，所以这里不填 agent 身份，而不是随手填上此刻聚焦的那个。
+    emitAppEvent(engine, "models-changed", { agentId: null });
   }
 
   const locale = getGlobalValue(globalFields, "locale");
@@ -199,19 +183,13 @@ function buildMemoryHealth(agent: any) {
 export function createConfigRoute(engine: any) {
   const route = new Hono();
 
-  // 读取配置（脱敏：隐藏 API key，附带 _raw 原始结构 + providers）
+  // 读取全局设置：跨 agent 共享的偏好 + 供应商目录（脱敏：隐藏 API key）。
+  //
+  // 这条路径不带 agent 身份，所以答不了"哪个 agent 的配置"——某个 agent 自己的
+  // 字段（名字、书桌目录、记忆开关、api 区块等）一律走 GET /api/agents/:id/config。
   route.get("/config", async (c) => {
     try {
-      await gcConfigWorkspacePersistence(engine);
-      const config = { ...engine.config };
-      const raw = getRawConfig(engine.configPath) || {};
-
-      // 附带原始配置结构（未经 fallback 解析，让前端知道用户显式设了什么）
-      config._raw = {
-        api: { provider: raw.api?.provider || "", base_url: raw.api?.base_url || "" },
-        embedding_api: { provider: raw.embedding_api?.provider || "", base_url: raw.embedding_api?.base_url || "" },
-        utility_api: { provider: raw.utility_api?.provider || "", base_url: raw.utility_api?.base_url || "" },
-      };
+      const config: Record<string, any> = {};
 
       // 供应商列表（附带 model_count）
       const rawProviders = engine.providerRegistry.getAllProvidersRaw();
@@ -237,44 +215,59 @@ export function createConfigRoute(engine: any) {
     }
   });
 
+  // ── 最近工作区（cwd_history）──
+  //
+  // 最近工作区列表写在某个 agent 自己的 config.yaml 里，所以这三条路由都要求
+  // 显式 agentId：读的是那个 agent 的历史，写的也是那个 agent 的历史，全程不碰
+  // 服务端此刻聚焦在谁身上。少了 agentId 就直接报错，不替调用方挑一个。
+
   route.post("/config/workspaces/recent", async (c) => {
     try {
+      const agent = resolveAgentStrict(engine, c);
       const body = await safeJson(c);
       const folder = normalizeWorkspacePath(body?.path);
       if (!folder) return c.json({ error: "path must be a non-empty string" }, 400);
       const stat = await fs.stat(folder).catch(() => null);
       if (!stat?.isDirectory()) return c.json({ error: "path must be an existing directory" }, 400);
-      const cwdHistory = mergeWorkspaceHistory(engine.config.cwd_history, [folder]);
-      await engine.updateConfig({ cwd_history: cwdHistory });
+      const cwdHistory = mergeWorkspaceHistory(agent.config?.cwd_history, [folder]);
+      await engine.updateConfig({ cwd_history: cwdHistory }, { agentId: agent.id });
       return c.json({ ok: true, cwd_history: cwdHistory });
     } catch (err) {
+      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
       return c.json({ error: err.message }, 500);
     }
   });
 
   route.delete("/config/workspaces/recent", async (c) => {
     try {
+      const agent = resolveAgentStrict(engine, c);
       const body = await safeJson(c).catch(() => ({}));
       const folder = normalizeWorkspacePath(body?.path);
       if (!folder) return c.json({ error: "path must be a non-empty string" }, 400);
-      const cwdHistory = removeWorkspaceHistoryEntries(engine.config.cwd_history, [folder]);
-      await engine.updateConfig({ cwd_history: cwdHistory });
+      const cwdHistory = removeWorkspaceHistoryEntries(agent.config?.cwd_history, [folder]);
+      await engine.updateConfig({ cwd_history: cwdHistory }, { agentId: agent.id });
       return c.json({ ok: true, cwd_history: cwdHistory });
     } catch (err) {
+      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
       return c.json({ error: err.message }, 500);
     }
   });
 
   route.delete("/config/workspaces/recent/all", async (c) => {
     try {
+      const agent = resolveAgentStrict(engine, c);
       const cwdHistory = clearWorkspaceHistory();
-      await engine.updateConfig({ cwd_history: cwdHistory });
+      await engine.updateConfig({ cwd_history: cwdHistory }, { agentId: agent.id });
       return c.json({ ok: true, cwd_history: cwdHistory });
     } catch (err) {
+      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
       return c.json({ error: err.message }, 500);
     }
   });
 
+  // 默认工作区是一台机器上的一个固定目录（用户主目录下的桌面文件夹），
+  // 跟 agent 无关：换 agent 不会换出另一个默认工作区。所以这两条路由没有
+  // agentId 参数，也不该被要求加上。
   route.get("/config/default-workspace", async (c) => {
     return c.json({ path: resolveDefaultWorkspacePath() });
   });
@@ -287,7 +280,12 @@ export function createConfigRoute(engine: any) {
     }
   });
 
-  // 更新配置
+  // 更新全局设置：跨 agent 共享的偏好 + 供应商目录。
+  //
+  // 收到某个 agent 自己的字段一律 400 退回并指路 per-agent 路由——这条路径不带
+  // agent 身份，写下去只会落到"服务端此刻碰巧聚焦的那个 agent"，桌面和手机各开
+  // 一个 agent 时就会写错人。校验放在任何写动作之前：宁可整条请求退回，也不要
+  // 出现"全局的存了、agent 的丢了"这种一半成功。
   route.put("/config", async (c) => {
     try {
       const partial = await safeJson(c);
@@ -308,6 +306,15 @@ export function createConfigRoute(engine: any) {
       if (secretDenied) return secretDenied;
       // ── schema-driven 全局字段分流 ──
       const { global: globalFields, agent: agentPartial } = splitByScope(partial) as { global: any[], agent: Record<string, any> };
+
+      const agentOwnedKeys = Object.keys(agentPartial).filter((key) => key !== "providers");
+      if (agentOwnedKeys.length > 0) {
+        return c.json({
+          error: `${agentOwnedKeys.join(", ")} belong to a specific agent; `
+            + "send them to PUT /api/agents/{agentId}/config instead",
+        }, 400);
+      }
+
       for (const { setter, value } of globalFields) {
         engine[setter](value);
       }
@@ -338,56 +345,15 @@ export function createConfigRoute(engine: any) {
         providersChanged = true;
       }
 
-      // 内联 API 凭证 → 全局 added-models.yaml 对应条目
-      const rawConfig = getRawConfig(engine.configPath) || {};
-      for (const blockName of ["api", "embedding_api", "utility_api"]) {
-        const block = agentPartial[blockName];
-        if (hasInlineProviderCredentialPatch(block)) {
-          const { provider: provName, update: provUpdate } = buildInlineProviderCredentialUpdate(
-            block,
-            rawConfig?.[blockName]?.provider || "",
-            (provider) => engine.providerRegistry?.getAllProvidersRaw?.()?.[provider] || {},
-          );
-          if (!provName) {
-            return c.json({ error: `${blockName}.provider is required when saving credentials` }, 400);
-          }
-          engine.providerRegistry.saveProvider(provName, provUpdate);
-          clearInlineProviderCredentialFields(block);
-          providersChanged = true;
-        }
-      }
-
       // providers 变更后确保运行时刷新
       if (providersChanged) {
         await engine.onProviderChanged();
         debugLog()?.log("api", `onProviderChanged OK after provider change (${engine.availableModels?.length ?? 0} models)`);
-      }
-
-      if (providersChanged && Object.keys(agentPartial).length === 0) {
         clearConfigCache(undefined as any);
         await engine.updateConfig({});
-        emitConfigAppEvents(engine, { globalFields, agentPartial, providersChanged });
-        recordSecurityAuditEvent(c, engine, {
-          action: "settings.config.update",
-          target: "config",
-          secretFields,
-        } as any);
-        return c.json({ ok: true });
       }
 
-      if (Object.keys(agentPartial).length === 0) {
-        emitConfigAppEvents(engine, { globalFields, agentPartial, providersChanged });
-        recordSecurityAuditEvent(c, engine, {
-          action: "settings.config.update",
-          target: "config",
-          secretFields,
-        } as any);
-        return c.json({ ok: true });
-      }
-      debugLog()?.log("api", `PUT /api/config keys=[${Object.keys(agentPartial).join(",")}]`);
-      if (providersChanged) clearConfigCache(undefined as any);
-      await engine.updateConfig(agentPartial);
-      emitConfigAppEvents(engine, { globalFields, agentPartial, providersChanged });
+      emitConfigAppEvents(engine, { globalFields, providersChanged });
       recordSecurityAuditEvent(c, engine, {
         action: "settings.config.update",
         target: "config",
@@ -400,93 +366,11 @@ export function createConfigRoute(engine: any) {
     }
   });
 
-  // ── System Prompt（只读，供 DevTools 查看）──
-  // 注意：agent.systemPrompt 不含 skills 块（#399 修复后由 SDK 内部统一注入），
-  // 这里手动拼接以保持开发者视图与 SDK 实际发送给 LLM 的 prompt 一致。
-
-  route.get("/system-prompt", async (c) => {
-    try {
-      const agent = resolveAgent(engine, c);
-      let content = agent.systemPrompt || "";
-      const enabledSkills = agent.enabledSkills || [];
-      if (enabledSkills.length > 0) {
-        content += formatSkillsForPrompt(enabledSkills);
-      }
-      return c.json({ content });
-    } catch (err) {
-      return c.json({ error: err.message }, 500);
-    }
-  });
-
-  // ── 人格文件（ishiki.md）──
-
-  // 读取 ishiki.md 内容
-  route.get("/ishiki", async (c) => {
-    try {
-      const ishikiPath = path.join(resolveAgent(engine, c).agentDir, "ishiki.md");
-      const content = await fs.readFile(ishikiPath, "utf-8");
-      return c.json({ content });
-    } catch (err) {
-      return c.json({ error: err.message }, 500);
-    }
-  });
-
-  // 保存 ishiki.md 内容，并触发 system prompt 重建
-  route.put("/ishiki", async (c) => {
-    try {
-      const body = await safeJson(c);
-      const { content } = body;
-      if (typeof content !== "string") {
-        return c.json({ error: "content must be a string" }, 400);
-      }
-      const agent = resolveAgentStrict(engine, c);
-      const ishikiPath = path.join(agent.agentDir, "ishiki.md");
-      await fs.writeFile(ishikiPath, content, "utf-8");
-      debugLog()?.log("api", `PUT /api/ishiki (saved, ${content.length} chars)`);
-      // 触发 system prompt 重建（updateConfig 内部会重新读取 ishiki.md）
-      await engine.updateConfig({}, { agentId: agent.id, refreshDescription: true });
-      return c.json({ ok: true });
-    } catch (err) {
-      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
-      debugLog()?.error("api", `PUT /api/ishiki failed: ${err.message}`);
-      return c.json({ error: err.message }, 500);
-    }
-  });
-
-  // ── 身份简介（identity.md）──
-
-  route.get("/identity", async (c) => {
-    try {
-      const identityPath = path.join(resolveAgent(engine, c).agentDir, "identity.md");
-      const content = await fs.readFile(identityPath, "utf-8");
-      return c.json({ content });
-    } catch (err) {
-      if (err.code === "ENOENT") return c.json({ content: "" });
-      return c.json({ error: err.message }, 500);
-    }
-  });
-
-  route.put("/identity", async (c) => {
-    try {
-      const body = await safeJson(c);
-      const { content } = body;
-      if (typeof content !== "string") {
-        return c.json({ error: "content must be a string" }, 400);
-      }
-      const agent = resolveAgentStrict(engine, c);
-      const identityPath = path.join(agent.agentDir, "identity.md");
-      await fs.writeFile(identityPath, content, "utf-8");
-      debugLog()?.log("api", `PUT /api/identity (saved, ${content.length} chars)`);
-      await engine.updateConfig({}, { agentId: agent.id, refreshDescription: true });
-      return c.json({ ok: true });
-    } catch (err) {
-      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
-      debugLog()?.error("api", `PUT /api/identity failed: ${err.message}`);
-      return c.json({ error: err.message }, 500);
-    }
-  });
-
   // ── 用户档案（user.md）──
+  //
+  // user.md 属于使用者本人，不属于任何一个 agent：它存在 engine.userDir，所有
+  // agent 共用同一份。所以这两条路由没有 agentId 参数，也不该被要求加上——
+  // 这里没有"归属哪个 agent"的问题需要回答。
 
   // 读取 user.md 内容
   route.get("/user-profile", async (c) => {
@@ -512,55 +396,6 @@ export function createConfigRoute(engine: any) {
       return c.json({ ok: true });
     } catch (err) {
       debugLog()?.error("api", `PUT /api/user-profile failed: ${err.message}`);
-      return c.json({ error: err.message }, 500);
-    }
-  });
-
-  // ── 置顶记忆（pinned.md）──
-
-  // 读取 pinned.md，解析为逐条数组
-  route.get("/pinned", async (c) => {
-    try {
-      const pins = readPinnedMemoryItems(resolveAgent(engine, c).agentDir)
-        .map(item => item.content);
-      return c.json({ pins });
-    } catch (err) {
-      return c.json({ error: err.message }, 500);
-    }
-  });
-
-  // 保存 pinned.md（覆盖写入），触发 system prompt 重建
-  route.put("/pinned", async (c) => {
-    try {
-      const body = await safeJson(c);
-      const { pins } = body;
-      if (!Array.isArray(pins)) {
-        return c.json({ error: "pins must be an array" }, 400);
-      }
-      const agent = resolveAgentStrict(engine, c);
-      replacePinnedMemoryItems(agent.agentDir, pins.filter(p => typeof p === "string"));
-      debugLog()?.log("api", `PUT /api/pinned (${pins.length} items)`);
-      // 触发 system prompt 重建（updateConfig 内部会重新读取 pinned.md）
-      await engine.updateConfig({}, { agentId: agent.id });
-      // 让 xingye.heartbeat consumer 看到这次置顶记忆变动。失败不阻断主流程。
-      try {
-        const pinsCount = pins.filter((p) => typeof p === "string" && p.trim().length > 0).length;
-        await appendXingyeEvent({
-          agentDir: agent.agentDir,
-          agentId: agent.id,
-          input: {
-            type: "pinned_memory.changed",
-            source: "legacy-pinned-route",
-            payload: { pinsCount },
-          },
-        });
-      } catch (err) {
-        debugLog()?.error("api", `PUT /api/pinned event log append failed: ${err?.message || err}`);
-      }
-      return c.json({ ok: true });
-    } catch (err) {
-      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
-      debugLog()?.error("api", `PUT /api/pinned failed: ${err.message}`);
       return c.json({ error: err.message }, 500);
     }
   });
@@ -618,10 +453,10 @@ export function createConfigRoute(engine: any) {
     }
   });
 
-  // 读取编译后的 memory.md
+  // 读取编译后的 memory.md。显式 agentId 是状态归属边界。
   route.get("/memories/compiled", async (c) => {
     try {
-      const agent = resolveAgent(engine, c);
+      const agent = resolveAgentStrict(engine, c);
       const memDir = path.dirname(agent.memoryMdPath);
       // 幂等：即使该 agent 从未跑起过 memoryTicker（未配置记忆模型），
       // 首次读取也会把遗留的 editable-facts.md 并入规范的 facts.md。
@@ -634,6 +469,7 @@ export function createConfigRoute(engine: any) {
       // 字段保留是为了不破坏前端既有契约（CompiledMemoryViewer 仍读取此字段）。
       return c.json({ content, editableFactsEnabled: true, sections });
     } catch (err) {
+      if (err instanceof AgentNotFoundError) return c.json({ error: err.message }, 404);
       return c.json({ error: err.message }, 500);
     }
   });
@@ -706,10 +542,10 @@ export function createConfigRoute(engine: any) {
     }
   });
 
-  // 读取按天的 week 日记条目，供编辑 UI 按天分行展示
+  // 读取按天的 week 日记条目，供编辑 UI 按天分行展示。显式 agentId 是状态归属边界。
   route.get("/memories/compiled/week/days", async (c) => {
     try {
-      const agent = resolveAgent(engine, c);
+      const agent = resolveAgentStrict(engine, c);
       const memDir = path.dirname(agent.memoryMdPath);
       const days = listWeekDayEntries(memDir);
       return c.json({ days });
@@ -873,15 +709,4 @@ export function createConfigRoute(engine: any) {
   });
 
   return route;
-}
-
-async function gcConfigWorkspacePersistence(engine: any) {
-  if (typeof engine.gcWorkspacePersistence === "function") {
-    await engine.gcWorkspacePersistence({ agentId: engine.currentAgentId || undefined });
-    return;
-  }
-  const result = pruneMissingWorkspaceConfig(engine.config || {});
-  if (result.changed && typeof engine.updateConfig === "function") {
-    await engine.updateConfig(result.patch);
-  }
 }

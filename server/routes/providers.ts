@@ -42,6 +42,24 @@ function writeModelsCache(engine: any, cache: any) {
   fs.renameSync(tmp, target);
 }
 
+function getProviderModelId(model: any) {
+  if (typeof model === "string") return model.trim();
+  return typeof model?.id === "string" ? model.id.trim() : "";
+}
+
+function pickProbeModelId(providerRegistry: any, providerId: any, api: any, requestedModelId: any) {
+  if (typeof requestedModelId === "string" && requestedModelId.trim()) {
+    return requestedModelId.trim();
+  }
+  if (typeof providerId !== "string" || !providerId.trim()) return "";
+  const models = providerRegistry?.getChatModelEntries?.(providerId) || [];
+  const matching = models.find((model: any) => {
+    const modelApi = typeof model === "object" && model !== null ? model.api : null;
+    return !modelApi || modelApi === api;
+  });
+  return getProviderModelId(matching);
+}
+
 export function createProvidersRoute(engine: any) {
   const route = new Hono();
 
@@ -302,7 +320,10 @@ export function createProvidersRoute(engine: any) {
   async function refreshProviderModels() {
     (clearConfigCache as any)();
     await engine.onProviderChanged();
-    emitAppEvent(engine, "models-changed", { agentId: engine.currentAgentId || null });
+    // The provider catalog is global: this refresh changes every agent's model
+    // list, so the event names no agent. Tagging it with whichever agent the
+    // server is focused on would label a global change as one agent's.
+    emitAppEvent(engine, "models-changed", { agentId: null });
   }
 
   /** Registry → defaults 两级 fallback，fetch-models 和 Anthropic 路径共用 */
@@ -588,7 +609,14 @@ export function createProvidersRoute(engine: any) {
     }
 
     try {
-      const result = await (probeProvider as any)({ baseUrl: base_url, api, apiKey: api_key, headers });
+      const modelId = pickProbeModelId(engine.providerRegistry, name, api, body.model_id);
+      const result = await (probeProvider as any)({
+        baseUrl: base_url,
+        api,
+        apiKey: api_key,
+        headers,
+        ...(modelId ? { modelId } : {}),
+      });
       return c.json(result);
     } catch (err) {
       return c.json({ ok: false, error: err.message });

@@ -73,9 +73,9 @@ describe("Agent platform prompt identity", () => {
       forceExperienceEnabled: false,
     });
 
-    expect(prompt).toContain("sessionFileRef 是读取/交付身份");
-    expect(prompt).toContain("writableLocalRef 是继续修改时使用的本机路径");
-    expect(prompt).toContain("write/edit 必须用 writableLocalRef.path");
+    expect(prompt).toContain("fileId 是机器契约，label 只是展示名");
+    expect(prompt).toContain("继续修改文件时用 writableLocalRef.path 或普通本机路径，write/edit 不接受 fileId。");
+    expect(prompt).toContain("materialize");
   });
 
   it("distinguishes SessionFile identity from writable local refs in English", () => {
@@ -84,9 +84,9 @@ describe("Agent platform prompt identity", () => {
       forceExperienceEnabled: false,
     });
 
-    expect(prompt).toContain("sessionFileRef in the tool result is the read/delivery identity");
-    expect(prompt).toContain("writableLocalRef is the local path to use for later modifications");
-    expect(prompt).toContain("write/edit must use writableLocalRef.path");
+    expect(prompt).toContain("fileId is the machine contract; label is display-only.");
+    expect(prompt).toContain("For further modifications use writableLocalRef.path or an ordinary local path; write/edit does not accept fileId.");
+    expect(prompt).toContain("materialize");
   });
 
   it("formats prompt times with an unambiguous 24-hour clock", () => {
@@ -101,7 +101,8 @@ describe("Agent platform prompt identity", () => {
       forceExperienceEnabled: false,
     });
 
-    expect(prompt).toContain("Session start time:");
+    expect(prompt).toContain("Session started at:");
+    expect(prompt).toContain("current_status");
     expect(prompt).not.toContain("Current date and time:");
     expect(prompt).toContain("15:53");
     expect(prompt).toContain("Your day starts at 04:00.");
@@ -110,7 +111,7 @@ describe("Agent platform prompt identity", () => {
 
   it("injects the configured Chinese user name as an explicit profile fact", () => {
     const agent = makeAgent("zh-CN");
-    agent._config.user = { name: "黎" };
+    agent._cb = { getTimezone: () => "Asia/Shanghai", getUserName: () => "黎" };
     agent.userName = "黎";
     writeUserProfile(agent, "喜欢安静、克制的界面。\n");
 
@@ -127,7 +128,7 @@ describe("Agent platform prompt identity", () => {
 
   it("injects the configured English user name as an explicit profile fact", () => {
     const agent = makeAgent("en");
-    agent._config.user = { name: "Li" };
+    agent._cb = { getTimezone: () => "Asia/Shanghai", getUserName: () => "Li" };
     agent.userName = "Li";
     writeUserProfile(agent, "Prefers quiet interfaces.\n");
 

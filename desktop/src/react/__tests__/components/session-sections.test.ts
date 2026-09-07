@@ -144,9 +144,100 @@ describe('buildSessionSections', () => {
     ]);
     expect(earlierSection!.items.map(i => i.path)).toEqual(['/sessions/bad-date.jsonl']);
   });
+
+  it('orders pinned sessions by their manual pin order, smallest first', () => {
+    const sections = buildSessionSections([
+      makeSession({
+        path: '/sessions/second.jsonl',
+        modified: '2026-04-29T09:00:00.000Z',
+        pinnedAt: '2026-04-28T07:00:00.000Z',
+        pinOrder: 2048,
+      }),
+      makeSession({
+        path: '/sessions/first.jsonl',
+        modified: '2026-04-28T01:00:00.000Z',
+        pinnedAt: '2026-04-28T07:00:00.000Z',
+        pinOrder: -1024,
+      }),
+      makeSession({
+        path: '/sessions/third.jsonl',
+        modified: '2026-04-29T10:00:00.000Z',
+        pinnedAt: '2026-04-28T07:00:00.000Z',
+        pinOrder: 4096,
+      }),
+    ], { mode: 'time', now: new Date('2026-04-29T12:00:00.000Z') });
+
+    expect(sections[0].items.map(item => item.path)).toEqual([
+      '/sessions/first.jsonl',
+      '/sessions/second.jsonl',
+      '/sessions/third.jsonl',
+    ]);
+  });
+
+  it('keeps sessions without a manual order below the ordered ones, newest first', () => {
+    const sections = buildSessionSections([
+      makeSession({
+        path: '/sessions/unordered-old.jsonl',
+        modified: '2026-04-28T01:00:00.000Z',
+        pinnedAt: '2026-04-28T07:00:00.000Z',
+      }),
+      makeSession({
+        path: '/sessions/ordered.jsonl',
+        modified: '2026-04-20T01:00:00.000Z',
+        pinnedAt: '2026-04-28T07:00:00.000Z',
+        pinOrder: 9999,
+      }),
+      makeSession({
+        path: '/sessions/unordered-new.jsonl',
+        modified: '2026-04-29T01:00:00.000Z',
+        pinnedAt: '2026-04-28T07:00:00.000Z',
+        pinOrder: null,
+      }),
+    ], { mode: 'time', now: new Date('2026-04-29T12:00:00.000Z') });
+
+    expect(sections[0].items.map(item => item.path)).toEqual([
+      '/sessions/ordered.jsonl',
+      '/sessions/unordered-new.jsonl',
+      '/sessions/unordered-old.jsonl',
+    ]);
+  });
 });
 
 describe('buildSessionProjectView', () => {
+  it('orders the pinned strip by manual pin order too', () => {
+    const view = buildSessionProjectView([
+      {
+        path: '/sessions/b.jsonl',
+        title: null,
+        firstMessage: '',
+        modified: '2026-04-29T09:00:00.000Z',
+        messageCount: 1,
+        agentId: 'hana',
+        agentName: 'Hana',
+        cwd: null,
+        pinnedAt: '2026-04-28T07:00:00.000Z',
+        pinOrder: 2048,
+      },
+      {
+        path: '/sessions/a.jsonl',
+        title: null,
+        firstMessage: '',
+        modified: '2026-04-28T01:00:00.000Z',
+        messageCount: 1,
+        agentId: 'hana',
+        agentName: 'Hana',
+        cwd: null,
+        pinnedAt: '2026-04-28T07:00:00.000Z',
+        pinOrder: 1024,
+      },
+    ]);
+
+    expect(view.pinned.map(session => session.path)).toEqual([
+      '/sessions/a.jsonl',
+      '/sessions/b.jsonl',
+    ]);
+  });
+
   it('excludes pinned sessions and groups unassigned sessions by derived cwd project', () => {
     const cwd = '/Users/test/Desktop/project-hana';
     const sections = buildSessionProjectView([

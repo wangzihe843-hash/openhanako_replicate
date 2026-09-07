@@ -17,6 +17,7 @@ import path from "path";
 import { atomicWriteSync } from "../../shared/safe-fs.ts";
 import { scrubPII } from "../pii-guard.ts";
 import { callText } from "../../core/llm-client.ts";
+import { callTextConfigFromResolvedModel } from "../../core/model-execution-config.ts";
 import { getToolArgs, isToolCallBlock } from "../../core/llm-utils.ts";
 import { getLocale } from "../i18n.ts";
 import { readCompiledResetAt } from "./compiled-memory-state.ts";
@@ -39,6 +40,18 @@ import {
 } from "./rolling-summary-format.ts";
 
 const log = createModuleLogger("session-summary");
+
+export function sessionSummaryRevision(data) {
+  if (!data || typeof data !== "object") return null;
+  return JSON.stringify({
+    updatedAt: data.updated_at || null,
+    summary: data.summary || "",
+    snapshot: data.snapshot || "",
+    cursor: data.cursor || null,
+    snapshotCursor: data.snapshotCursor || null,
+    factReplacementRequired: data.factReplacementRequired === true,
+  });
+}
 
 export class SessionSummaryManager {
   declare summariesDir: string;
@@ -88,6 +101,99 @@ export class SessionSummaryManager {
     this._cache.set(sessionId, data);
   }
 
+  /**
+   * A fork owns an independent memory lineage. Keep the source/boundary metadata,
+   * but start the child's rolling-summary cursor at zero so its first memory pass
+   * can derive durable state from its own active transcript. Reusing the source
+   * message count would couple the child to the source summary and also mixes count
+   * domains when compiled-memory resetAt filtering is active.
+   */
+  initializeForkBaseline(sessionId, input: Record<string, any> = {}) {
+    const normalized = typeof sessionId === "string" ? sessionId.trim() : "";
+    if (!normalized) throw new Error("fork memory baseline requires sessionId");
+    const sourceSessionId = typeof input.sourceSessionId === "string" ? input.sourceSessionId.trim() : "";
+    const throughEntryId = typeof input.throughEntryId === "string" ? input.throughEntryId.trim() : "";
+    const retainedMessageCount = Number(input.retainedMessageCount ?? input.messageCount);
+    if (!sourceSessionId) throw new Error("fork memory baseline requires sourceSessionId");
+    if (!throughEntryId) throw new Error("fork memory baseline requires throughEntryId");
+    if (!Number.isInteger(retainedMessageCount) || retainedMessageCount < 0) {
+      throw new Error("fork memory baseline retainedMessageCount must be a non-negative integer");
+    }
+    if (this.getSummary(normalized) || fs.existsSync(this._filePath(normalized))) {
+      throw new Error(`fork memory baseline already exists for ${normalized}`);
+    }
+    const forkedAt = normalizeSince(input.forkedAt) || new Date().toISOString();
+    const data = {
+      session_id: normalized,
+      created_at: forkedAt,
+      updated_at: forkedAt,
+      summary: "",
+      messageCount: 0,
+      source_time_range: null,
+      snapshot: "",
+      snapshot_at: null,
+      fork_baseline: {
+        sourceSessionId,
+        throughEntryId,
+        retainedMessageCount,
+        forkedAt,
+      },
+    };
+    this.saveSummary(normalized, data);
+    return data;
+  }
+
+  /**
+   * 作废单个 session 的派生摘要。Retry 改变 active branch 后，旧摘要不能继续
+   * 参与 today/facts/deep-memory 编译。文件与内存缓存必须作为一个操作清掉。
+   *
+   * @param {string} sessionId
+   * @returns {boolean} 是否删除了持久化摘要或缓存项
+   */
+  invalidateSession(sessionId, opts: Record<string, any> = {}) {
+    const normalized = typeof sessionId === "string" ? sessionId.trim() : "";
+    if (!normalized) throw new Error("session summary invalidation requires sessionId");
+    const existing = this.getSummary(normalized);
+    const retainedMessageCount = Number(opts.retainedMessageCount);
+    if (
+      existing?.fork_baseline
+      && Number.isInteger(retainedMessageCount)
+      && retainedMessageCount >= 0
+    ) {
+      const inheritedCount = Number(
+        existing.fork_baseline.retainedMessageCount
+        ?? existing.fork_baseline.messageCount,
+      );
+      const nextRetainedCount = Number.isInteger(inheritedCount) && inheritedCount >= 0
+        ? Math.min(inheritedCount, retainedMessageCount)
+        : retainedMessageCount;
+      const now = new Date().toISOString();
+      this.saveSummary(normalized, {
+        session_id: normalized,
+        created_at: existing.created_at || existing.fork_baseline.forkedAt || now,
+        updated_at: now,
+        summary: "",
+        messageCount: 0,
+        source_time_range: null,
+        snapshot: "",
+        snapshot_at: null,
+        fork_baseline: {
+          ...existing.fork_baseline,
+          retainedMessageCount: nextRetainedCount,
+        },
+      });
+      return true;
+    }
+    const hadCache = this._cache.delete(normalized);
+    try {
+      fs.unlinkSync(this._filePath(normalized));
+      return true;
+    } catch (err) {
+      if (err?.code === "ENOENT") return hadCache;
+      throw err;
+    }
+  }
+
   // ════════════════════════════
   //  脏 session 追踪（供深度记忆用）
   // ════════════════════════════
@@ -101,9 +207,9 @@ export class SessionSummaryManager {
     const since = normalizeSince(opts.since);
     const dirty = [];
     for (const data of this._cache.values()) {
-      if (!data?.summary) continue;
+      if (!data?.summary && data?.factReplacementRequired !== true) continue;
       if (since && !isAfter(data.updated_at || data.created_at, since)) continue;
-      if (data.summary !== (data.snapshot || "")) {
+      if (data.factReplacementRequired === true || data.summary !== (data.snapshot || "")) {
         dirty.push(data);
       }
     }
@@ -118,9 +224,25 @@ export class SessionSummaryManager {
     const data = this.getSummary(sessionId);
     if (!data) return;
 
-    data.snapshot = data.summary;
-    data.snapshot_at = new Date().toISOString();
-    this.saveSummary(sessionId, data);
+    const next = {
+      ...data,
+      snapshot: data.summary,
+      snapshotCursor: data.cursor || null,
+      snapshot_at: new Date().toISOString(),
+      factReplacementRequired: false,
+    };
+    this.saveSummary(sessionId, next);
+    return true;
+  }
+
+  isRevisionCurrent(sessionId, expectedRevision) {
+    return expectedRevision != null
+      && sessionSummaryRevision(this.getSummary(sessionId)) === expectedRevision;
+  }
+
+  markProcessedIfCurrent(sessionId, expectedRevision) {
+    if (!this.isRevisionCurrent(sessionId, expectedRevision)) return false;
+    return this.markProcessed(sessionId);
   }
 
   // ════════════════════════════
@@ -377,7 +499,7 @@ export class SessionSummaryManager {
     if (draft?.data) {
       this.saveSummary(sessionId, draft.data);
     }
-    return draft?.summary || "";
+    return opts.returnResult === true ? draft : (draft?.summary || "");
   }
 
   /**
@@ -396,21 +518,74 @@ export class SessionSummaryManager {
     const existing = resetAt && existingRaw && !isAfter(existingRaw.updated_at || existingRaw.created_at, resetAt)
       ? null
       : existingRaw;
-    const prevSummary = existing?.summary || "";
-
-    // 增量：只取上次摘要之后的新消息，避免长 session 上下文爆炸
-    const lastMessageCount = existing?.messageCount || 0;
-    const newMessages = lastMessageCount > 0 && lastMessageCount < messages.length
-      ? messages.slice(lastMessageCount)
-      : messages; // 旧数据无 messageCount 时 fallback 到全量
+    const projection = normalizeBranchProjection(opts.projection);
+    let mode = "legacy";
+    let prevSummary = existing?.summary || "";
+    let newMessages = messages;
+    if (projection) {
+      if (!existing) {
+        mode = "initial";
+        prevSummary = "";
+      } else if (isCursorAncestorOfProjection(existing.cursor, projection)) {
+        mode = "append";
+        const coveredIndex = existing.cursor?.coveredLeafId == null
+          ? -1
+          : projection.lineage.findIndex((entry) => entry.id === existing.cursor.coveredLeafId);
+        newMessages = messages.filter((message) => (
+          Number.isInteger(message?.lineageIndex)
+          && message.lineageIndex > coveredIndex
+        ));
+      } else {
+        // messageCount cannot establish branch ancestry. Legacy summaries and
+        // sibling/rewound branches must rebuild from the complete projection.
+        mode = "replace";
+        prevSummary = "";
+      }
+    } else {
+      // 旧数据无 messageCount 时 fallback 到全量；显式 0 代表尚未覆盖任何消息。
+      const hasMessageCount = Number.isInteger(existing?.messageCount) && existing.messageCount >= 0;
+      const lastMessageCount = hasMessageCount ? existing.messageCount : 0;
+      newMessages = hasMessageCount
+        ? messages.slice(Math.min(lastMessageCount, messages.length))
+        : messages;
+    }
 
     const timeZone = resolveMemoryTimeZone(opts.timeZone);
     const sourceTimeRange = buildSourceTimeRange(messages, { timeZone });
     const convText = this._buildConversationText(newMessages, { timeZone });
     if (!convText) {
+      if (projection) {
+        const now = new Date().toISOString();
+        const cursor = projectionCursor(projection);
+        const replacement = mode === "replace";
+        const summary = replacement ? "" : prevSummary;
+        const cursorChanged = !sameCursor(existing?.cursor, cursor);
+        const shouldSave = replacement || mode === "initial" || cursorChanged;
+        return {
+          summary,
+          changed: replacement,
+          mode,
+          data: shouldSave ? {
+            session_id: sessionId,
+            created_at: existing?.created_at || now,
+            updated_at: replacement ? now : (existing?.updated_at || now),
+            summary,
+            messageCount: messages.length,
+            cursor,
+            source_time_range: sourceTimeRange || (replacement ? null : existing?.source_time_range || null),
+            snapshot: existing?.snapshot || "",
+            snapshotCursor: existing?.snapshotCursor || null,
+            snapshot_at: existing?.snapshot_at || null,
+            factReplacementRequired: replacement || existing?.factReplacementRequired === true,
+          } : null,
+          usage: null,
+          reason: replacement ? "empty_branch_replacement" : "empty_conversation",
+        };
+      }
       return {
         summary: prevSummary,
         changed: false,
+        mode,
         data: null,
         usage: null,
         reason: "empty_conversation",
@@ -430,6 +605,7 @@ export class SessionSummaryManager {
       return {
         summary: prevSummary,
         changed: false,
+        mode,
         data: null,
         usage,
         reason: "empty_output",
@@ -460,11 +636,26 @@ export class SessionSummaryManager {
       throw new Error(`rolling summary format invalid after ${repairsUsed} repair attempt(s): ${validation.issues.join("; ")}`);
     }
 
+    if (projection && typeof opts.revalidateProjection === "function") {
+      const latestProjection = normalizeBranchProjection(await opts.revalidateProjection());
+      if (!latestProjection || !projectionRemainsAncestor(projection, latestProjection)) {
+        return {
+          summary: existing?.summary || "",
+          changed: false,
+          mode,
+          data: null,
+          usage,
+          reason: "branch_changed",
+        };
+      }
+    }
+
     const latestResetAt = latestSince(resetAt, readCompiledResetAt(path.dirname(this.summariesDir)));
     if (latestResetAt && !areMessagesAfter(messages, latestResetAt)) {
       return {
         summary: prevSummary,
         changed: false,
+        mode,
         data: null,
         usage,
         reason: "reset_watermark",
@@ -491,14 +682,19 @@ export class SessionSummaryManager {
       updated_at: now,
       summary: newSummary.trim(),
       messageCount: messages.length, // 记录已覆盖的消息总数
+      ...(projection ? { cursor: projectionCursor(projection) } : {}),
       source_time_range: sourceTimeRange || existing?.source_time_range || null,
       snapshot: existing?.snapshot || "",
+      snapshotCursor: existing?.snapshotCursor || null,
       snapshot_at: existing?.snapshot_at || null,
+      ...(existingRaw?.fork_baseline ? { fork_baseline: existingRaw.fork_baseline } : {}),
+      factReplacementRequired: mode === "replace" || existing?.factReplacementRequired === true,
     };
 
     return {
       summary: newSummary.trim(),
       changed: true,
+      mode,
       data,
       usage,
       reason: rollingDetected.length > 0 ? "pii_redacted" : "",
@@ -528,7 +724,6 @@ export class SessionSummaryManager {
    * @returns {Promise<string | { text: string, usage: object|null }>}
    */
   async _callRollingRepairLLM(summaryText, issues, resolvedModel, turnCount = 10, opts: Record<string, any> = {}) {
-    const { model: utilityModel, api, api_key, base_url } = resolvedModel;
     const locale = getLocale();
     const { visibleMaxTokens } = this._rollingSummaryBudget(turnCount);
     const layout = buildUtilityPromptLayout({
@@ -552,10 +747,7 @@ export class SessionSummaryManager {
     }, layout.usageMetadata);
 
     return callText({
-      api, model: utilityModel,
-      apiKey: api_key,
-      baseUrl: base_url,
-      headers: undefined,
+      ...callTextConfigFromResolvedModel(resolvedModel),
       systemPrompt: layout.systemPrompt,
       messages: layout.messages,
       temperature: 0.3,
@@ -576,8 +768,6 @@ export class SessionSummaryManager {
    * @returns {Promise<string>}
    */
   async _callRollingLLM(convText, prevSummary, resolvedModel, turnCount = 10, opts: Record<string, any> = {}) {
-    const { model: utilityModel, api, api_key, base_url } = resolvedModel;
-
     const locale = getLocale();
     const isZh = locale.startsWith("zh");
     const hasPrev = !!prevSummary;
@@ -762,10 +952,7 @@ Word limit: follow the per-run summary budget. If three sentences suffice, don't
     const maxTokens = withMemoryReasoningBuffer(visibleMaxTokens, resolvedModel);
 
     return callText({
-      api, model: utilityModel,
-      apiKey: api_key,
-      baseUrl: base_url,
-      headers: undefined,
+      ...callTextConfigFromResolvedModel(resolvedModel),
       systemPrompt: layout.systemPrompt,
       messages: layout.messages,
       temperature: 0.3,
@@ -805,6 +992,39 @@ function isAfter(value, since) {
 function areMessagesAfter(messages, since) {
   if (!since) return true;
   return messages.every((message) => isAfter(message.timestamp, since));
+}
+
+function normalizeBranchProjection(value) {
+  if (!value || typeof value !== "object" || !Array.isArray(value.lineage)) return null;
+  if (typeof value.lineageHash !== "string" || !value.lineageHash) return null;
+  return value;
+}
+
+function projectionCursor(projection) {
+  return {
+    coveredLeafId: projection.selectedLeafId ?? null,
+    lineageHash: projection.lineageHash,
+  };
+}
+
+function sameCursor(left, right) {
+  if (!left || !right) return false;
+  return (left.coveredLeafId ?? null) === (right.coveredLeafId ?? null)
+    && left.lineageHash === right.lineageHash;
+}
+
+function projectionHashAtLeaf(projection, leafId) {
+  if (leafId == null) return projection.rootLineageHash || null;
+  return projection.prefixHashes?.[leafId] || null;
+}
+
+function isCursorAncestorOfProjection(cursor, projection) {
+  if (!cursor || typeof cursor.lineageHash !== "string") return false;
+  return projectionHashAtLeaf(projection, cursor.coveredLeafId ?? null) === cursor.lineageHash;
+}
+
+function projectionRemainsAncestor(original, latest) {
+  return projectionHashAtLeaf(latest, original.selectedLeafId ?? null) === original.lineageHash;
 }
 
 function normalizeMemoryReflectionSnapshot(value) {

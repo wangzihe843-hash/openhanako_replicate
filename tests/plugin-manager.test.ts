@@ -100,11 +100,20 @@ describe("scan", () => {
 });
 
 describe("loadAll", () => {
-  it("loads real bundled media, image-gen, beautify, mcp, and office plugin contributions", async () => {
+  it("loads real bundled media, jimeng-cli, beautify, and office plugin contributions", async () => {
+    const bus = await makeBus();
+    for (const type of [
+      "provider:register-runtime-media-capability-source",
+      "provider:unregister-runtime-media-capability-source",
+      "media-gen:register-adapter",
+      "media-gen:unregister-adapter",
+    ]) {
+      bus.handle(type, async () => ({ ok: true }));
+    }
     const pm = new PluginManager({
       pluginsDirs: [path.resolve("plugins")],
       dataDir,
-      bus: await makeBus(),
+      bus,
       runtimeContext: {
         serverId: "server_builtin_smoke",
         serverNodeId: "node_builtin_smoke",
@@ -120,7 +129,11 @@ describe("loadAll", () => {
       await pm.loadAll();
 
       const diagnosticsById = new Map(pm.getDiagnostics().map((entry) => [entry.id, entry]));
-      for (const id of ["media", "image-gen", "beautify", "mcp", "office"]) {
+      // MCP is a core module owned by the engine, not a plugin: the plugin host
+      // must not discover it at all.
+      expect(diagnosticsById.has("mcp")).toBe(false);
+      expect(pm.routeRegistry.has("mcp")).toBe(false);
+      for (const id of ["media", "jimeng-cli", "beautify", "office"]) {
         expect(diagnosticsById.get(id)).toMatchObject({
           id,
           source: "builtin",
@@ -135,6 +148,7 @@ describe("loadAll", () => {
         "media_generate-image",
         "media_generate-video",
         "media_describe-options",
+        "media_get-guide",
         "beautify_create-cover",
         "beautify_apply-cover-candidate",
         "beautify_get-cover-style-guide",
@@ -144,25 +158,14 @@ describe("loadAll", () => {
         "office_read-document",
         "office_html-to-pdf",
       ]));
-      expect(toolNames.filter((name) => name.startsWith("image-gen_"))).toEqual([]);
-      expect(pm.getSkillPaths()).toEqual(expect.arrayContaining([
-        expect.objectContaining({ pluginId: "media", builtin: true }),
-      ]));
-      expect(pm.getSkillPaths()).not.toEqual(expect.arrayContaining([
-        expect.objectContaining({ pluginId: "image-gen", builtin: true }),
-      ]));
-      expect(pm.routeRegistry.has("image-gen")).toBe(true);
-      expect(pm.routeRegistry.has("mcp")).toBe(true);
-      expect(pm.getConfigSchema("image-gen")?.properties).toHaveProperty("defaultImageModel");
+      // 内置插件的指南走工具，不贡献 skill 目录：它们的安装路径带版本号，
+      // 冻结进会话快照后会在下次服务端更新时失效。
+      expect(pm.getSkillPaths()).toHaveLength(0);
       expect(pm.getConfigSchema("beautify")?.properties).toHaveProperty("coverResolution");
-      expect(pm.getSettingsTabs()).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          pluginId: "mcp",
-          nativeComponent: "mcp.settings",
-        }),
-      ]));
+      // MCP is a core module now, so it contributes no settings tab here.
+      expect(pm.getSettingsTabs().some((tab) => tab.pluginId === "mcp")).toBe(false);
     } finally {
-      for (const id of ["media", "image-gen", "beautify", "mcp", "office"]) {
+      for (const id of ["media", "jimeng-cli", "beautify", "office"]) {
         await pm.unloadPlugin(id, { source: "builtin" });
       }
     }
@@ -845,18 +848,41 @@ describe("tool loading", () => {
 });
 
 describe("skill paths", () => {
-  it("getSkillPaths returns skill directories from all plugins", async () => {
-    const dir = path.join(pluginsDir, "skill-plug");
+  /** 第一个扫描目录是 builtin，其余是 community（见 scan()）。 */
+  function makeSkillPlugin(rootDir: string, pluginId: string) {
+    const dir = path.join(rootDir, pluginId);
     fs.mkdirSync(path.join(dir, "skills", "my-skill"), { recursive: true });
     fs.writeFileSync(path.join(dir, "skills", "my-skill", "SKILL.md"),
       "---\nname: my-skill\ndescription: test\n---\n# My Skill");
-    const pm = new PluginManager({ pluginsDir, dataDir, bus: await makeBus() } as any);
+    return dir;
+  }
+
+  it("getSkillPaths returns skill directories from community plugins", async () => {
+    const builtinDir = path.join(tmpHome, "builtin-empty");
+    fs.mkdirSync(builtinDir, { recursive: true });
+    makeSkillPlugin(pluginsDir, "skill-plug");
+    const pm = new PluginManager({
+      pluginsDirs: [builtinDir, pluginsDir], dataDir, bus: await makeBus(),
+    } as any);
     pm.scan();
     await pm.loadAll();
     const paths = pm.getSkillPaths();
     expect(paths).toHaveLength(1);
     expect(paths[0].dirPath).toContain("skill-plug");
     expect(paths[0].label).toBe("plugin:skill-plug");
+  });
+
+  // 内置插件随 server artifact 分发，目录名带版本号（artifacts/server/{version}-{platformArch}/）。
+  // skill 的绝对路径会被冻结进 session 的 system prompt 快照，artifact 一换代就指向不存在的文件，
+  // 模型照着死路径读盘失败。内置插件的指南必须走工具（见 beautify_get-html-style-guide），
+  // 工具在运行时解析资源，路径永不进上下文。
+  it("rejects skill directories contributed by builtin plugins", async () => {
+    makeSkillPlugin(pluginsDir, "builtin-skill-plug");
+    const pm = new PluginManager({ pluginsDir, dataDir, bus: await makeBus() } as any);
+    const scanned = pm.scan();
+    expect(scanned[0].source).toBe("builtin");
+    await pm.loadAll();
+    expect(pm.getSkillPaths()).toHaveLength(0);
   });
 });
 
@@ -1019,6 +1045,57 @@ describe("configuration", () => {
     expect(saved.values.apiKey).toBe("********");
     expect(pm.getConfig("secret-cfg").values).toEqual({ enabled: true, apiKey: "********" });
     expect(pm.getPlugin("secret-cfg").ctx.config.get("apiKey")).toBe("secret-value");
+  });
+
+  it("forks per-session config for loaded and disabled plugins without sharing child writes", async () => {
+    for (const [id, disabled] of [["loaded-cfg", false], ["disabled-cfg", true]] as const) {
+      const dir = path.join(pluginsDir, id);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({
+        id,
+        name: id,
+        version: "0.1.0",
+        contributes: { configuration: { properties: {
+          sessionValue: { type: "object", scope: "per-session" },
+        } } },
+      }));
+      const pluginDataDir = path.join(dataDir, id);
+      fs.mkdirSync(pluginDataDir, { recursive: true });
+      fs.writeFileSync(path.join(pluginDataDir, "config.json"), JSON.stringify({
+        schemaVersion: 1,
+        global: {},
+        agents: {},
+        sessions: { "sess-source": { sessionValue: { id, disabled } } },
+      }));
+    }
+    const preferencesManager = {
+      getDisabledPlugins: () => ["disabled-cfg"],
+    };
+    const pm = new PluginManager({
+      pluginsDir,
+      dataDir,
+      bus: await makeBus(),
+      preferencesManager,
+    } as any);
+    pm.scan();
+    await pm.loadAll();
+
+    expect(pm.forkSessionConfig({
+      sourceSessionId: "sess-source",
+      targetSessionId: "sess-child",
+    })).toMatchObject({ copied: 2 });
+    for (const id of ["loaded-cfg", "disabled-cfg"]) {
+      const state = JSON.parse(fs.readFileSync(path.join(dataDir, id, "config.json"), "utf-8"));
+      expect(state.sessions["sess-child"]).toEqual(state.sessions["sess-source"]);
+    }
+
+    pm.setConfig("loaded-cfg", { sessionValue: { id: "child-write" } }, {
+      scope: "per-session",
+      sessionId: "sess-child",
+    });
+    const loadedState = JSON.parse(fs.readFileSync(path.join(dataDir, "loaded-cfg", "config.json"), "utf-8"));
+    expect(loadedState.sessions["sess-source"].sessionValue).toEqual({ id: "loaded-cfg", disabled: false });
+    expect(pm.discardSessionConfig({ sessionId: "sess-child" })).toMatchObject({ discarded: 2 });
   });
 });
 
@@ -1509,7 +1586,7 @@ function writeConfigPlugin(root, id, version = "1.0.0") {
 }
 
 describe("hot operations", () => {
-  it("records successful plugin load and unload transitions", async () => {
+  it("does not produce model Reminder ledger entries for plugin lifecycle changes", async () => {
     const dir = path.join(pluginsDir, "ledger-lifecycle");
     fs.mkdirSync(path.join(dir, "tools"), { recursive: true });
     fs.writeFileSync(path.join(dir, "tools", "echo.js"), "export const name = 'echo';");
@@ -1525,82 +1602,7 @@ describe("hot operations", () => {
     await pm.loadAll();
     await pm.unloadPlugin("ledger-lifecycle");
 
-    expect(append.mock.calls.map(([event]) => event)).toEqual([
-      {
-        type: "toolset_changed",
-        scope: { kind: "global" },
-        payload: { pluginId: "ledger-lifecycle", action: "loaded" },
-      },
-      {
-        type: "toolset_changed",
-        scope: { kind: "global" },
-        payload: { pluginId: "ledger-lifecycle", action: "unloaded" },
-      },
-    ]);
-  });
-
-  it("records unload then final reload state for a successful hot reload", async () => {
-    const dir = path.join(pluginsDir, "ledger-reload");
-    fs.mkdirSync(path.join(dir, "tools"), { recursive: true });
-    fs.writeFileSync(path.join(dir, "tools", "echo.js"), "export const name = 'echo';");
-    const append = vi.fn();
-    const pm = new PluginManager({
-      pluginsDir,
-      dataDir,
-      bus: await makeBus(),
-      envChangeLedger: { append },
-    } as any);
-    pm.scan();
-    await pm.loadAll();
-    append.mockClear();
-
-    const entry = await pm.installPlugin(dir, { source: "builtin" });
-
-    expect(entry.status).toBe("loaded");
-    expect(append.mock.calls.map(([event]) => event)).toEqual([
-      {
-        type: "toolset_changed",
-        scope: { kind: "global" },
-        payload: { pluginId: "ledger-reload", action: "unloaded" },
-      },
-      {
-        type: "toolset_changed",
-        scope: { kind: "global" },
-        payload: { pluginId: "ledger-reload", action: "reloaded" },
-      },
-    ]);
-  });
-
-  it("keeps the real unload transition when a hot reload fails", async () => {
-    const dir = path.join(pluginsDir, "ledger-failed-reload");
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, "index.js"), `
-      export default class Plugin { async onload() {} }
-    `);
-    const append = vi.fn();
-    const pm = new PluginManager({
-      pluginsDir,
-      dataDir,
-      bus: await makeBus(),
-      envChangeLedger: { append },
-    } as any);
-    pm.scan();
-    await pm.loadAll();
-    append.mockClear();
-    fs.writeFileSync(path.join(dir, "index.js"), `
-      export default class Plugin { async onload() { throw new Error("reload failed"); } }
-    `);
-
-    const entry = await pm.installPlugin(dir, { source: "builtin" });
-
-    expect(entry.status).toBe("failed");
-    expect(append.mock.calls.map(([event]) => event)).toEqual([
-      {
-        type: "toolset_changed",
-        scope: { kind: "global" },
-        payload: { pluginId: "ledger-failed-reload", action: "unloaded" },
-      },
-    ]);
+    expect(append).not.toHaveBeenCalled();
   });
 
   it("installPlugin loads a new plugin at runtime", async () => {

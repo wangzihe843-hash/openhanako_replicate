@@ -13,6 +13,8 @@ export function serializeSessionFile(file, options = {}) {
     ...(file.sessionPath ? { sessionPath: file.sessionPath } : {}),
     filePath: file.filePath,
     ...(file.realPath ? { realPath: file.realPath } : {}),
+    ...(Array.isArray(file.legacyFileIds) && file.legacyFileIds.length ? { legacyFileIds: file.legacyFileIds } : {}),
+    ...(Array.isArray(file.legacyFilePaths) && file.legacyFilePaths.length ? { legacyFilePaths: file.legacyFilePaths } : {}),
     ...(file.displayName ? { displayName: file.displayName } : {}),
     ...(file.filename ? { filename: file.filename } : {}),
     ...(file.label ? { label: file.label } : {}),
