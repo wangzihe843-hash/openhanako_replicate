@@ -1125,7 +1125,7 @@ async function startServer() {
     })();
 
     if (pidAlive) {
-      const verification = await verifyReusableServerInfo(existingInfo, { currentVersion: app.getVersion() });
+      const verification = await verifyReusableServerInfo(existingInfo);
       if (verification.reusable) {
         console.log(`[desktop] 复用已运行的 server，端口: ${existingInfo.port}, 版本: ${existingInfo.version || "unknown"}, studio: ${verification.identity.studioId}`);
         serverPort = existingInfo.port;

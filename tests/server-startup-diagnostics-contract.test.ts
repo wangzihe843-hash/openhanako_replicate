@@ -12,9 +12,31 @@ const root = process.cwd();
 const {
   buildLaunchFailureDialogDetail,
   formatPortInUseStartupError,
-  isDesktopOwnedServerInfo,
-  verifyReusableServerInfo,
 } = require("../desktop/src/shared/server-lifecycle.cjs");
+
+const mainSource = fs.readFileSync(path.join(root, "desktop", "main.cjs"), "utf-8");
+const ownershipSource = extractFunctionSource(mainSource, "isDesktopOwnedServerInfo");
+const reuseSource = extractFunctionSource(mainSource, "verifyReusableServerInfo");
+const { isDesktopOwnedServerInfo } = vm.runInNewContext(`${ownershipSource}\n({ isDesktopOwnedServerInfo })`);
+
+// Exercise the functions called by desktop startup, with only their host I/O
+// injected. The former lifecycle-module copies were never called by main.
+function verifyReusableServerInfo(existingInfo, {
+  currentVersion,
+  fetchFn = globalThis.fetch,
+  desiredNetwork = { config: {} },
+  networkMismatch = null,
+}: any = {}) {
+  const context = vm.createContext({
+    app: { getVersion: () => currentVersion },
+    fetch: fetchFn,
+    AbortSignal,
+    readDesiredServerNetworkConfig: () => desiredNetwork,
+    describeReusableServerNetworkMismatch: () => networkMismatch,
+  });
+  vm.runInContext(`${ownershipSource}\n${reuseSource}`, context);
+  return context.verifyReusableServerInfo(existingInfo);
+}
 
 describe("server startup diagnostics contract", () => {
   it("records child process identity when server startup times out without output", () => {
@@ -360,6 +382,23 @@ describe("server startup diagnostics contract", () => {
     expect(v.reusable).toBe(true);
     expect(v.trusted).toBe(true);
     expect(v.terminate).toBe(false);
+  });
+
+  it.each(["desktop", "standalone"])("checks desired network before reusing a %s server", async (ownerKind) => {
+    const fetchFn = async () => ({
+      ok: true,
+      json: async () => ({ version: "0.171.5", studioId: "studio-x" }),
+    });
+    const result = await verifyReusableServerInfo(
+      { port: 14500, token: "tok", pid: 123, ownerKind },
+      { currentVersion: "0.171.5", fetchFn, networkMismatch: "network mode mismatch" },
+    );
+    expect(result).toMatchObject({
+      reusable: false,
+      trusted: true,
+      terminate: ownerKind === "desktop",
+      reason: "network mode mismatch",
+    });
   });
 });
 
