@@ -190,6 +190,78 @@ describe("SessionCoordinator", () => {
     expect(createAgentSessionMock.mock.calls[0][0].resourceLoader.getSystemPrompt()).toBe("MEMORY OFF");
   });
 
+  it.each([
+    { requested: true, restore: false, saved: undefined, expected: true },
+    { requested: undefined, restore: false, saved: undefined, expected: false },
+    { requested: false, restore: false, saved: undefined, expected: false },
+    { requested: true, restore: true, saved: false, expected: false },
+    { requested: false, restore: true, saved: true, expected: true },
+    { requested: true, restore: true, saved: undefined, expected: false },
+  ])('initializes work mode and respects restored metadata: %j', async ({ requested, restore, saved, expected }) => {
+    const agent = {
+      id: "hana",
+      sessionDir: path.join(tempDir, "agents", "hana", "sessions"),
+      memoryMasterEnabled: true,
+      sessionMemoryEnabled: true,
+      setMemoryEnabled: vi.fn(),
+      buildSystemPrompt: ({ workModeEnabled }: { workModeEnabled?: boolean } = {}) =>
+        workModeEnabled ? "WORK ON" : "WORK OFF",
+    };
+
+    const resourceLoader = {
+      getSystemPrompt: () => "BASE",
+    };
+
+    const coordinator = new SessionCoordinator({
+      agentsDir: path.join(tempDir, "agents"),
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: { name: "test-model" },
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: () => "medium",
+      }),
+      getResourceLoader: () => resourceLoader,
+      getSkills: () => null,
+      buildTools: () => ({ tools: [], customTools: [] }),
+      emitEvent: () => {},
+      getHomeCwd: () => "/tmp/home",
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => null,
+      listAgents: () => [],
+    });
+
+    const sessionPath = path.join(agent.sessionDir, 'work.jsonl');
+    const manager = { getSessionFile: () => sessionPath, getCwd: () => tempDir };
+    createAgentSessionMock.mockResolvedValue({ session: {
+      sessionManager: manager,
+      subscribe: vi.fn(() => vi.fn()),
+      setActiveToolsByName: vi.fn(),
+    } });
+    vi.spyOn(coordinator, '_readMetaCached').mockResolvedValue({
+      'work.jsonl': saved === undefined ? {} : { workMode: saved },
+    });
+    const writeMeta = vi.spyOn(coordinator, 'writeSessionMeta').mockResolvedValue(undefined);
+    if (restore) {
+      await coordinator.createSession(manager, tempDir, false, null, { restore, workMode: requested });
+    } else {
+      await coordinator.createDetachedSession({ cwd: tempDir, memoryEnabled: false, workMode: requested });
+      expect(coordinator.currentSessionPath).toBeNull();
+      expect(writeMeta).toHaveBeenCalledWith(sessionPath, expect.objectContaining({ workMode: expected }));
+    }
+    expect(coordinator.getSessionWorkMode(sessionPath)).toBe(expected);
+
+    expect(agent.setMemoryEnabled).not.toHaveBeenCalled();
+    expect(createAgentSessionMock).toHaveBeenCalledOnce();
+    expect(createAgentSessionMock.mock.calls[0][0].resourceLoader.getSystemPrompt()).toBe(expected ? "WORK ON" : "WORK OFF");
+  });
+
   it("keeps the base prompt cwd-free and appends the fresh workspace scope and instructions", async () => {
     const newCwd = path.join(tempDir, "new-workspace");
     const oldCwd = path.join(tempDir, "old-workspace");

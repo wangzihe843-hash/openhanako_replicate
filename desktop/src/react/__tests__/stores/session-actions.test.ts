@@ -1128,6 +1128,27 @@ function mockPermissionDefault(mode = 'ask') {
       expect(mockState.sessionPermissionMode).toBe('auto');
     });
 
+    it.each([true, false])('carries pending work mode %s through creation and activation', async (workMode) => {
+      Object.assign(mockState, {
+        pendingNewSession: true,
+        pendingDraftId: 'draft-work-mode',
+        currentAgentId: 'hana',
+        sessionWorkMode: workMode,
+      });
+      const session = {
+        ok: true, path: '/session/work.jsonl', sessionId: 'sess_work',
+        agentId: 'hana', workMode,
+      };
+      mockFetch.mockResolvedValueOnce(jsonResponse(session));
+      mockFetch.mockResolvedValueOnce(jsonResponse(session));
+      await expect(ensureSession()).resolves.toMatchObject({ sessionId: 'sess_work' });
+      const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string);
+      expect(body.workMode === true).toBe(workMode);
+      expect(mockState.sessionWorkMode).toBe(workMode);
+      await createNewSession();
+      expect(mockState.sessionWorkMode).toBe(false);
+    });
+
     it('carries an explicit project id from the new-session draft into session creation', async () => {
       Object.assign(mockState, {
         agents: [

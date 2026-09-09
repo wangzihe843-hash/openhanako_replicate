@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkModeButton } from '../../components/input/WorkModeButton';
 import { ChatPage } from '../../components/app/ChatPage';
 
-const state = vi.hoisted(() => ({ currentSessionPath: 'session-a' as string | null, welcomeVisible: false }));
+const state = vi.hoisted(() => ({ currentSessionPath: 'session-a' as string | null, welcomeVisible: false, pendingNewSession: false }));
 const hanaFetch = vi.hoisted(() => vi.fn());
 const pageOnChange = vi.hoisted(() => vi.fn());
 vi.mock('../../hooks/use-hana-fetch', () => ({ hanaFetch }));
@@ -45,6 +45,7 @@ function Harness({ onChange }: { onChange: (value: boolean) => void }) {
 describe('WorkModeButton request ownership', () => {
   beforeEach(() => {
     state.currentSessionPath = 'session-a';
+    state.pendingNewSession = false;
     hanaFetch.mockReset();
     pageOnChange.mockReset();
   });
@@ -158,6 +159,20 @@ describe('WorkModeButton request ownership', () => {
     });
     expect(pageOnChange).not.toHaveBeenCalled();
     expect(screen.getByRole('button').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('preselects and cancels work mode locally before a session exists', () => {
+    state.currentSessionPath = null;
+    state.pendingNewSession = true;
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByRole('button').getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByRole('button').getAttribute('aria-pressed')).toBe('false');
+    expect(onChange.mock.calls).toEqual([[true], [false]]);
+    expect(hanaFetch).not.toHaveBeenCalled();
+    expect(state.currentSessionPath).toBeNull();
   });
 
   it('does not submit a session-less toggle', () => {

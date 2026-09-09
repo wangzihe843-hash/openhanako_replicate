@@ -23,6 +23,10 @@ export function WorkModeButton({ enabled, onChange }: {
   const toggle = useCallback(async () => {
     const state = useStore.getState();
     const sessionPath = state.currentSessionPath;
+    if (!sessionPath && state.pendingNewSession) {
+      onChange(!enabled);
+      return;
+    }
     if (!sessionPath) {
       // 新会话还没落盘，没有 sessionPath 可挂；提示用户先发一条消息。
       window.dispatchEvent(new CustomEvent('hana-inline-notice', {
@@ -59,6 +63,7 @@ export function WorkModeButton({ enabled, onChange }: {
     <button
       type="button"
       className={`${styles['plan-mode-btn']}${enabled ? ` ${styles['work-mode-on']}` : ''}`}
+      style={{ width: 'auto', flex: '0 0 auto', padding: '0 6px', gap: '4px', whiteSpace: 'nowrap' }}
       title={t('input.workModeHint')}
       aria-pressed={enabled}
       onClick={(e) => { e.stopPropagation(); void toggle(); }}

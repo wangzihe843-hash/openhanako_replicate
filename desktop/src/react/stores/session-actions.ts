@@ -1073,6 +1073,9 @@ function buildPendingSessionCreateBody(state: Record<string, any>): PendingSessi
   if (state.selectedAgentId && state.selectedAgentId !== state.currentAgentId) {
     body.agentId = state.selectedAgentId;
   }
+  if (state.sessionWorkMode === true) {
+    body.workMode = true;
+  }
   body.currentSessionPath = state.currentSessionPath;
   return body;
 }

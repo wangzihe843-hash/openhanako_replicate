@@ -614,7 +614,7 @@ describe("sessions route", () => {
     expect(data.workspaceLabel).toBe("Docs");
   });
 
-  it("creates a detached session without switching the focused session", async () => {
+  it.each([true, false, undefined, "true"])("creates a detached session with workMode=%s without switching focus", async (workMode) => {
     const { createSessionsRoute } = await import("../server/routes/sessions.ts");
     const app = new Hono();
     const cwd = path.join(tmpDir, "quick");
@@ -653,6 +653,7 @@ describe("sessions route", () => {
         agentId: "hana",
         permissionMode: "auto",
         projectId: "project-quick",
+        workMode,
       }),
     });
     const data = await res.json();
@@ -665,6 +666,7 @@ describe("sessions route", () => {
       workspaceFolders: [extra],
       visibleInSessionList: true,
       permissionMode: "auto",
+      ...(workMode === true ? { workMode: true } : {}),
     });
     expect(engine.setSessionProjectAssignment).toHaveBeenCalledWith({
       sessionPath: "/tmp/agents/hana/sessions/quick.jsonl",

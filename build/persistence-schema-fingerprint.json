@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:3ed732ebaf77b5990c5356aa5a7264ade66174b5350f1f1dd3e1b09351ca8251",
+  "payloadFingerprint": "sha256:f2152078360770ec31bbbbf613af45ad3a2dd6ac4e342a66e8843ccaf72777ee",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3223,8 +3223,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Reviewed the fork merge against upstream 1d3ef308299e9f630786384e77de45444ea59196 at DATA_EPOCH 1. No business-data epoch transition is introduced. xingye-state registers the fork-existing agents/{agentId}/xingye tree, including reserved __user__ and __shared__ scopes, rather than creating a migration or a second writer. Its JSON/JSONL, authored Markdown, media, event/dedupe records, social baselines and shared gift inventory retain their existing paths and readers. Optional legacy social fields use existing defaults/conversion, official lore entries including empty values/deletion tombstones remain authoritative over legacy mirrors, and gift read/parse errors are not treated as missing inventory. The historical channels store now names the actual Markdown channel files, mirrored DM files and agent/user bookmarks used by its one common writer. The previous YAML declaration was an inventory error; no YAML-to-Markdown conversion occurs. DM and agent bookmark paths are removed from the other descriptors so each path has one owner. The common DM lock only orders existing Markdown appends and shares a timestamp; it does not change the record grammar or claim a cross-file crash transaction. Agent Phone runtime objects still accept absent version fields and preserve existing fields on patch. Legacy Phone prompt snapshots refresh their opaque base once to remove duplicated Xingye context while retaining the reusable session history and frozen appendices. New Xingye prompt version/memory-mode fields are optional metadata. Persona changes keep the canonical AGENTS.md/AGENTS.public.md paths, use the same PUBLIC_PERSONA constants and upstream rename migration, and accept legacy initialFiles aliases without changing file contents or schema. Workflow activity stays at schemaVersion 1 with the same entries object and journal event protocol. Batched persistence and rollback alter durability behavior, while nested node namespaces remain opaque string IDs; taskId budgets and existing journal/session identities remain compatible. SDK context and successful-turn Xingye event wiring do not change the locked Pi session version or Hana JSONL reader contract. The optional workMode session metadata field defaults to false for older sessions. Other changed source hashes were reviewed: agent selection and character-card import reserve Xingye scope IDs without changing profile/preferences/card formats; skill display-name overrides bypass translation without changing cache serialization; desktop startup helper extraction retains window/version file formats; manual-heartbeat and session-work-mode/shutdown routing leave upload staging and server-info formats unchanged. Phone projection serialization is unchanged and its mutations now share a per-file lock. The Windows runtime-cache manifest becomes version 2 with a narrower standalone Node file closure. Cache keys include that manifest, old cache instances need not be interpreted as new ones, and the existing regenerable store policy excludes this cache from business-data epoch migration. Named companion readers/writers (including persona constants, session submit/coordinator, Phone runtime/executor, workflow, Xingye and runtime-cache modules) are now explicitly AST-fingerprinted. Source hashes and write-site ordinals therefore change without implying incompatible business-data storage. Real temporary-home tests create channel/DM/bookmark files and Xingye agent/reserved-scope profile, lore tombstone, draft/event, social, shared gift, history and binary media records, then capture them through the production checkpoint provider and verify all source/captured bytes and ownership. No persistence exemption, DATA_EPOCH value or guard strictness is relaxed.",
-    "payloadFingerprint": "sha256:3ed732ebaf77b5990c5356aa5a7264ade66174b5350f1f1dd3e1b09351ca8251"
+    "compatibilityReason": "New-session work mode preselection passes an optional boolean through detached creation into the existing workMode initialization. Existing session-meta.workMode shape, writers, readers, prompt snapshots, and DATA_EPOCH remain unchanged. Missing input still defaults to false; restored sessions continue to use persisted metadata regardless of the creation option. No migration or new store is introduced. Source digests change only for the session coordinator and sessions route; regression tests cover initial prompts, metadata writes, defaults, and restore precedence.",
+    "payloadFingerprint": "sha256:f2152078360770ec31bbbbf613af45ad3a2dd6ac4e342a66e8843ccaf72777ee"
   },
   "schemas": [
     {
@@ -3685,7 +3685,7 @@
         {
           "contract": "core/session-coordinator.ts Hana metadata extensions",
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:b20420608f97cf2618e246cfb2d6930acac2603fd569f8e4370b37fffc0a4ca1"
+          "sourceHash": "sha256:e6bd56e3bcde406be14285f0771b6ba67fc6e2b7044d78a4a8aca9a1267c3959"
         },
         {
           "contract": "core/session-jsonl-file.ts repair contract",
@@ -3705,7 +3705,7 @@
         },
         {
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:b20420608f97cf2618e246cfb2d6930acac2603fd569f8e4370b37fffc0a4ca1"
+          "sourceHash": "sha256:e6bd56e3bcde406be14285f0771b6ba67fc6e2b7044d78a4a8aca9a1267c3959"
         },
         {
           "module": "core/session-jsonl-file.ts",

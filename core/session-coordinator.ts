@@ -1740,6 +1740,7 @@ export class SessionCoordinator {
 
   async createSession(sessionMgr: any, cwd: any, memoryEnabled = true, model: any = null, {
     restore = false,
+    workMode = false,
     agent: explicitAgent = null,
     agentId: explicitAgentId = null,
     preserveAgentMemoryState = false,
@@ -1962,9 +1963,9 @@ export class SessionCoordinator {
         }
       }
     }
-    // 冻结工作模式：restore 以 session-meta 为准、fresh create 默认关闭。
+    // 冻结工作模式：restore 以 session-meta 为准；新建采用显式预选，默认关闭。
     // 整会话生命周期固定，供冻结快照 / 漂移对比用同一个值（避免假能力漂移）。
-    const frozenWorkMode = restore ? restoredWorkMode : false;
+    const frozenWorkMode = restore ? restoredWorkMode : workMode === true;
     const agentHasExperienceSwitch = typeof agent.experienceEnabled === "boolean";
     const frozenExperienceEnabled = restore
       ? restoredExperienceEnabled
@@ -2693,6 +2694,7 @@ export class SessionCoordinator {
     authorizedFolders = [],
     visibleInSessionList = true,
     permissionMode = null,
+    workMode = false,
     thinkingLevel = null,
     workspaceMountId = null,
     workspaceLabel = null,
@@ -2717,6 +2719,7 @@ export class SessionCoordinator {
         workspaceFolders,
         authorizedFolders,
         visibleInSessionList,
+        workMode,
         thinkingLevel,
         workspaceMountId,
         workspaceLabel,

@@ -2132,6 +2132,7 @@ export function createSessionsRoute(engine, hub = null) {
         workspaceFolders: any;
         visibleInSessionList: boolean;
         permissionMode: any;
+        workMode?: boolean;
         thinkingLevel?: any;
         workspaceMountId?: string;
         workspaceLabel?: string | null;
@@ -2151,6 +2152,9 @@ export function createSessionsRoute(engine, hub = null) {
         detachedOptions.workspaceLabel = workspaceSelection.mount.label || null;
       }
 
+      if (body.workMode === true) {
+        detachedOptions.workMode = true;
+      }
       const result = await engine.createDetachedSession(detachedOptions);
       const newSessionPath = result.sessionPath;
       const newAgentId = result.agentId;
