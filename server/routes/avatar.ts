@@ -18,6 +18,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { safeJson } from "../hono-helpers.ts";
 import { AgentNotFoundError, resolveAgentStrict } from "../utils/resolve-agent.ts";
+import { deleteAvatar, writeAvatar } from "../utils/avatar-files.ts";
 
 const VALID_ROLES = new Set(["agent", "user"]);
 
@@ -116,15 +117,7 @@ export function createAvatarRoute(engine) {
     const buf = Buffer.from(match[2], "base64");
     const { dir, notFound } = avatarDirOrNotFound(role, c);
     if (notFound) return notFound;
-    await fs.mkdir(dir, { recursive: true });
-
-    // 删除旧头像（可能是不同格式）
-    for (const oldExt of ["png", "jpg", "jpeg", "webp"]) {
-      try { await fs.unlink(path.join(dir, `${role}.${oldExt}`)); } catch {}
-    }
-
-    // 写入新头像
-    await fs.writeFile(path.join(dir, `${role}.${ext}`), buf);
+    await writeAvatar(dir, role, ext, buf);
     return c.json({ ok: true, ext });
   });
 
@@ -137,9 +130,7 @@ export function createAvatarRoute(engine) {
 
     const { dir, notFound } = avatarDirOrNotFound(role, c);
     if (notFound) return notFound;
-    for (const ext of ["png", "jpg", "jpeg", "webp"]) {
-      try { await fs.unlink(path.join(dir, `${role}.${ext}`)); } catch {}
-    }
+    await deleteAvatar(dir, role);
     return c.json({ ok: true });
   });
 

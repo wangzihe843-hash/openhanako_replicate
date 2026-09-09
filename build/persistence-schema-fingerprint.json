@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:f2152078360770ec31bbbbf613af45ad3a2dd6ac4e342a66e8843ccaf72777ee",
+  "payloadFingerprint": "sha256:f85d66cd9968743c66ab1e494084e25ad4d0b6e75f5f2edb1e6e74240639385d",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3223,8 +3223,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "New-session work mode preselection passes an optional boolean through detached creation into the existing workMode initialization. Existing session-meta.workMode shape, writers, readers, prompt snapshots, and DATA_EPOCH remain unchanged. Missing input still defaults to false; restored sessions continue to use persisted metadata regardless of the creation option. No migration or new store is introduced. Source digests change only for the session coordinator and sessions route; regression tests cover initial prompts, metadata writes, defaults, and restore precedence.",
-    "payloadFingerprint": "sha256:f2152078360770ec31bbbbf613af45ad3a2dd6ac4e342a66e8843ccaf72777ee"
+    "compatibilityReason": "Reviewed against the previous payload: only DeferredResultStore, LoopStore, PreferencesManager and the two Xingye profile/relationship modules change source digests, and avatar write sites move from route modules to the registered avatar helper. The store registry, schema contracts, SQLite introspection results, DATA_EPOCH 1, and digest compiler/method are unchanged. Deferred-result serialization retains its existing task map while failed flushes stay dirty for retry. Loop schemaVersion-1 records and corrupt-file naming stay unchanged; failed quarantine now propagates instead of permitting overwrite. Preferences retain the same JSON keys and existing corrupt-byte backup path, now protecting corruption detected after startup; bridge migration preserves its existing source keys and retry receipt when no target is available. Xingye profile and relationship record shapes, defaults, identities and serializers are unchanged; loading/error and owner-binding checks delay initialization until the correct store is available. Avatar publication uses the same role/extension filenames and existing profile directory, with request-scoped temporary files and serialized mutations. No schema addition, new store, data conversion, or epoch transition is introduced, so the existing store-local contracts remain accurate. Regression tests cover failure preservation, retry, initialization ownership and avatar replacement.",
+    "payloadFingerprint": "sha256:f85d66cd9968743c66ab1e494084e25ad4d0b6e75f5f2edb1e6e74240639385d"
   },
   "schemas": [
     {
@@ -3406,7 +3406,7 @@
       "contract": "DeferredResultStore normalization, seven-day cleanup, and atomic serializer",
       "kind": "runtime-contract",
       "module": "lib/deferred-result-store.ts",
-      "sourceHash": "sha256:43930be66cf5571a03128df9769c3ddbf01146ad8adc31bd4ae646b54b8520cc",
+      "sourceHash": "sha256:93b1b12e862e8c6e0db29b51b5a4f818c5b0e433b0fcf0bb0cfcff0a3a6a6b6d",
       "storeId": "deferred-result-state"
     },
     {
@@ -3546,7 +3546,7 @@
       "contract": "LoopStore schemaVersion-1 sessionId-keyed record shape, corrupt-file quarantine, and atomic serializer",
       "kind": "runtime-contract",
       "module": "lib/loop/loop-store.ts",
-      "sourceHash": "sha256:ecd35c3e891fd553e0a1ce992947df946fd14d28612cb522e026fe7a7ef2561d",
+      "sourceHash": "sha256:e564aa1fb36418912e3be903a517bf0bd9096b1c1d16ed921c3dac158d8a88f2",
       "storeId": "loop-state"
     },
     {
@@ -3853,7 +3853,7 @@
       "contract": "PreferencesManager defaults, coercion, and _dataVersion migration driver",
       "kind": "runtime-contract",
       "module": "core/preferences-manager.ts",
-      "sourceHash": "sha256:8928ce9ca1525fb09fc3842df69ab1b38657d20bdcd58c907960184cab47326f",
+      "sourceHash": "sha256:77297fa68814896ca9b50d3747c98f5c2f7678424d9232bfdd8aba205d61b442",
       "storeId": "user-preferences"
     },
     {
@@ -3917,11 +3917,11 @@
         },
         {
           "module": "desktop/src/react/xingye/xingye-profile-store.ts",
-          "sourceHash": "sha256:cfc32d424054252c43668b6499b45cdc11d758e28732b8d463ebbdfdd2c6203e"
+          "sourceHash": "sha256:0eda0437bec5151dab575c738586445d4ba2ed59f6c8f813b1921a1764befa8f"
         },
         {
           "module": "desktop/src/react/xingye/xingye-state-store.ts",
-          "sourceHash": "sha256:4b1807d24421d9a9d3a5987615d6926d134f30a6a6f3d563c2856fe514380277"
+          "sourceHash": "sha256:36977a49764b4a0ed285cc8737f10c963ee32717e8113b24079d8525e5f39c9e"
         },
         {
           "module": "desktop/src/react/xingye/xingye-storage-backend.ts",
@@ -9755,38 +9755,6 @@
     },
     {
       "exemptionId": null,
-      "kind": "mkdir",
-      "ordinal": 0,
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "sourceFile": "server/routes/agents.ts",
-      "storeId": "agent-profile"
-    },
-    {
-      "exemptionId": null,
-      "kind": "remove-path",
-      "ordinal": 0,
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "sourceFile": "server/routes/agents.ts",
-      "storeId": "agent-profile"
-    },
-    {
-      "exemptionId": null,
-      "kind": "remove-path",
-      "ordinal": 0,
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "sourceFile": "server/routes/agents.ts",
-      "storeId": "agent-profile"
-    },
-    {
-      "exemptionId": null,
-      "kind": "write-file",
-      "ordinal": 0,
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "sourceFile": "server/routes/agents.ts",
-      "storeId": "agent-profile"
-    },
-    {
-      "exemptionId": null,
       "kind": "write-file",
       "ordinal": 0,
       "reason": "Reads, repairs, removes, or edits agent/user profile material.",
@@ -9812,38 +9780,6 @@
     {
       "exemptionId": null,
       "kind": "mkdir",
-      "ordinal": 0,
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "sourceFile": "server/routes/avatar.ts",
-      "storeId": "agent-profile"
-    },
-    {
-      "exemptionId": null,
-      "kind": "mkdir",
-      "ordinal": 0,
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "sourceFile": "server/routes/avatar.ts",
-      "storeId": "agent-profile"
-    },
-    {
-      "exemptionId": null,
-      "kind": "remove-path",
-      "ordinal": 0,
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "sourceFile": "server/routes/avatar.ts",
-      "storeId": "agent-profile"
-    },
-    {
-      "exemptionId": null,
-      "kind": "remove-path",
-      "ordinal": 0,
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "sourceFile": "server/routes/avatar.ts",
-      "storeId": "agent-profile"
-    },
-    {
-      "exemptionId": null,
-      "kind": "write-file",
       "ordinal": 0,
       "reason": "Reads, repairs, removes, or edits agent/user profile material.",
       "sourceFile": "server/routes/avatar.ts",
@@ -10248,6 +10184,38 @@
       "reason": "Creates, updates, or removes files confined to the requested agent/reserved Xingye scope.",
       "sourceFile": "server/routes/xingye-storage.js",
       "storeId": "xingye-state"
+    },
+    {
+      "exemptionId": null,
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Atomically replaces or removes agent/user avatars, including temporary files in the same profile directory.",
+      "sourceFile": "server/utils/avatar-files.ts",
+      "storeId": "agent-profile"
+    },
+    {
+      "exemptionId": null,
+      "kind": "remove-path",
+      "ordinal": 0,
+      "reason": "Atomically replaces or removes agent/user avatars, including temporary files in the same profile directory.",
+      "sourceFile": "server/utils/avatar-files.ts",
+      "storeId": "agent-profile"
+    },
+    {
+      "exemptionId": null,
+      "kind": "rename",
+      "ordinal": 0,
+      "reason": "Atomically replaces or removes agent/user avatars, including temporary files in the same profile directory.",
+      "sourceFile": "server/utils/avatar-files.ts",
+      "storeId": "agent-profile"
+    },
+    {
+      "exemptionId": null,
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Atomically replaces or removes agent/user avatars, including temporary files in the same profile directory.",
+      "sourceFile": "server/utils/avatar-files.ts",
+      "storeId": "agent-profile"
     },
     {
       "exemptionId": null,

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { saveXingyeRoleProfile, type XingyeRoleProfile } from './xingye-profile-store';
-import { getXingyePersistenceStorage } from './xingye-persistence';
+import { assertXingyePersistenceBoundTo, getXingyePersistenceStorage } from './xingye-persistence';
 import { scaleRelationshipDeltas } from './xingye-state-curve';
 import { listLoreEntries } from './xingye-lore-store';
 import {
@@ -477,9 +477,7 @@ export function useRelationshipState(
   agentId: string | null | undefined,
   profile?: RelationshipInitProfile | null,
 ) {
-  const [state, setState] = useState<XingyeRelationshipState | null>(() => (
-    agentId ? ensureRelationshipState(agentId, profile) : null
-  ));
+  const [state, setState] = useState<XingyeRelationshipState | null>(null);
 
   useEffect(() => {
     if (!agentId) {
@@ -487,16 +485,32 @@ export function useRelationshipState(
       return undefined;
     }
 
-    setState(ensureRelationshipState(agentId, profile));
+    // The shell binds persistence asynchronously. Never seed into another
+    // owner's storage, or treat an unavailable store as a saved initial state.
+    const initialize = () => {
+      const storage = getLocalStorage();
+      if (!storage) {
+        setState(null);
+        return;
+      }
+      try {
+        assertXingyePersistenceBoundTo(agentId);
+      } catch {
+        setState(null);
+        return;
+      }
+      setState(ensureRelationshipState(agentId, profile, storage));
+    };
     const handleChange = () => setState(getRelationshipState(agentId));
-    const onPersistence = () => handleChange();
+    const onPersistence = () => initialize();
     window.addEventListener(XINGYE_RELATIONSHIP_STATES_CHANGED_EVENT, handleChange);
     window.addEventListener('xingye-persistence-changed', onPersistence);
+    initialize();
     return () => {
       window.removeEventListener(XINGYE_RELATIONSHIP_STATES_CHANGED_EVENT, handleChange);
       window.removeEventListener('xingye-persistence-changed', onPersistence);
     };
-  }, [agentId, profile?.relationshipLabel]);
+  }, [agentId, profile]);
 
-  return state;
+  return state?.agentId === agentId ? state : null;
 }

@@ -13,9 +13,14 @@
  * viewerRequestLoad），ViewerApp 也必须能正常拉取并渲染完成。
  */
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ViewerApp } from '../desktop/src/viewer-window-entry';
+
+const resourceWatch = vi.hoisted(() => ({
+  onChanged: undefined as (() => void) | undefined,
+  release: vi.fn(),
+}));
 
 vi.mock('../desktop/src/react/components/PreviewEditor', () => ({
   PreviewEditor: (props: { content: string; filePath: string }) => (
@@ -24,16 +29,83 @@ vi.mock('../desktop/src/react/components/PreviewEditor', () => ({
 }));
 
 vi.mock('../desktop/src/viewer-resource-events', () => ({
-  retainViewerLocalFileResourceWatch: () => ({
-    ready: Promise.resolve(),
-    release: () => {},
-  }),
+  retainViewerLocalFileResourceWatch: (_path: string, _platform: unknown, callbacks: { onChanged: () => void }) => {
+    resourceWatch.onChanged = callbacks.onChanged;
+    return { ready: Promise.resolve(), release: resourceWatch.release };
+  },
 }));
 
 afterEach(() => {
   cleanup();
+  resourceWatch.onChanged = undefined;
+  resourceWatch.release.mockClear();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   delete (window as any).platform;
+});
+
+function deferredRead() {
+  let resolve!: (value: string | null) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<string | null>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+describe('ViewerApp live reload ordering', () => {
+  it.each(['content', 'missing', 'failure'] as const)('ignores an older %s result after a newer read succeeds', async (outcome) => {
+    const older = deferredRead();
+    const newer = deferredRead();
+    const readFile = vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    Object.assign(window, { platform: { viewerRequestLoad: vi.fn().mockResolvedValue(PAYLOAD), readFile } });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<ViewerApp />);
+    await waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+    act(() => resourceWatch.onChanged?.());
+    await act(async () => { newer.resolve('NEW_CONTENT'); });
+    await act(async () => {
+      if (outcome === 'failure') older.reject(new Error('old failure'));
+      else older.resolve(outcome === 'missing' ? null : 'OLD_CONTENT');
+    });
+    expect(screen.getByTestId('mock-preview-editor')).toHaveTextContent('NEW_CONTENT');
+    expect(screen.queryByText(/Failed to load file/)).not.toBeInTheDocument();
+    expect(errors).not.toHaveBeenCalled();
+  });
+
+  it.each(['missing', 'failure'] as const)('keeps the latest %s error over an older success and recovers on a later change', async (outcome) => {
+    const older = deferredRead();
+    const newer = deferredRead();
+    const readFile = vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise).mockResolvedValue('RECOVERED');
+    Object.assign(window, { platform: { viewerRequestLoad: vi.fn().mockResolvedValue(PAYLOAD), readFile } });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<ViewerApp />);
+    await waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+    act(() => resourceWatch.onChanged?.());
+    await act(async () => {
+      if (outcome === 'missing') newer.resolve(null);
+      else newer.reject(new Error('Latest read failed'));
+    });
+    await act(async () => { older.resolve('OLD_CONTENT'); });
+    expect(screen.getByText(outcome === 'missing' ? /File is no longer available: chapter/ : /Latest read failed/)).toBeInTheDocument();
+    await act(async () => { resourceWatch.onChanged?.(); });
+    expect(screen.getByTestId('mock-preview-editor')).toHaveTextContent('RECOVERED');
+    expect(screen.queryByText(/Failed to load file/)).not.toBeInTheDocument();
+  });
+
+  it('releases the watch and ignores in-flight work and queued events after unmount', async () => {
+    const pending = deferredRead();
+    const readFile = vi.fn().mockReturnValue(pending.promise);
+    Object.assign(window, { platform: { viewerRequestLoad: vi.fn().mockResolvedValue(PAYLOAD), readFile } });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { unmount } = render(<ViewerApp />);
+    await waitFor(() => expect(readFile).toHaveBeenCalledTimes(1));
+    const queuedChange = resourceWatch.onChanged;
+    unmount();
+    queuedChange?.();
+    await act(async () => { pending.reject(new Error('late failure')); });
+    expect(resourceWatch.release).toHaveBeenCalledTimes(1);
+    expect(readFile).toHaveBeenCalledTimes(1);
+    expect(errors).not.toHaveBeenCalled();
+  });
 });
 
 const PAYLOAD = {

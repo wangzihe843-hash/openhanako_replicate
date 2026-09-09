@@ -14,29 +14,41 @@ export function WechatQrcodeOverlay() {
   const [qrcodeId, setQrcodeId] = useState('');
   const [status, setStatus] = useState<QrStatus>('loading');
   const [error, setError] = useState('');
-  const [refreshCount, setRefreshCount] = useState(0);
+  const refreshCountRef = useRef(0);
   const agentIdRef = useRef<string | null>(null);
-  const stoppedRef = useRef(true);
+  const generationRef = useRef(0);
+  const qrRequestRef = useRef(0);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const stopPolling = useCallback(() => { stoppedRef.current = true; }, []);
+  const invalidate = useCallback(() => {
+    generationRef.current += 1;
+    qrRequestRef.current += 1;
+    if (closeTimerRef.current !== null) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+  }, []);
 
   const close = useCallback(() => {
-    stopPolling();
+    invalidate();
     setVisible(false);
     setQrcodeUrl('');
     setQrcodeId('');
     setStatus('loading');
     setError('');
-    setRefreshCount(0);
+    refreshCountRef.current = 0;
     agentIdRef.current = null;
-  }, [stopPolling]);
+  }, [invalidate]);
 
   const fetchQrcode = useCallback(async () => {
+    const generation = generationRef.current;
+    const request = ++qrRequestRef.current;
+    const isCurrent = () => generation === generationRef.current && request === qrRequestRef.current;
     setStatus('loading');
     setError('');
     try {
       const res = await hanaFetch('/api/bridge/wechat/qrcode', { method: 'POST' });
+      if (!isCurrent()) return;
       const data = await res.json();
+      if (!isCurrent()) return;
       if (data.ok && data.qrcodeUrl) {
         setQrcodeUrl(data.qrcodeUrl);
         setQrcodeId(data.qrcodeId);
@@ -46,6 +58,7 @@ export function WechatQrcodeOverlay() {
         setError(data.error || t('settings.bridge.wechatLoginFailed'));
       }
     } catch (err: unknown) {
+      if (!isCurrent()) return;
       setStatus('error');
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -56,93 +69,109 @@ export function WechatQrcodeOverlay() {
    * 避免 setInterval 在长轮询（35s hold）期间堆叠请求。
    */
   const startPolling = useCallback((id: string) => {
-    stoppedRef.current = false;
+    const generation = generationRef.current;
+    const agentId = agentIdRef.current;
+    let cancelled = false;
+    let cancelDelay = () => {};
+    const isCurrent = () => !cancelled && generation === generationRef.current;
 
     (async () => {
-      while (!stoppedRef.current) {
+      while (isCurrent()) {
         try {
           const res = await hanaFetch('/api/bridge/wechat/qrcode-status', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ qrcodeId: id }),
           });
-          if (stoppedRef.current) return;
+          if (!isCurrent()) return;
           const data = await res.json();
+          if (!isCurrent()) return;
 
           if (data.status === 'scanned') {
             setStatus('scanned');
           } else if (data.status === 'confirmed' && data.botToken) {
-            stoppedRef.current = true;
-            setStatus('confirmed');
-            // Read agentId from ref — always current, not stale closure
-            const agentQuery = agentIdRef.current ? `?agentId=${encodeURIComponent(agentIdRef.current)}` : '';
-            await hanaFetch(`/api/bridge/config${agentQuery}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                platform: 'wechat',
-                credentials: { botToken: data.botToken },
-                enabled: true,
-              }),
-            });
-            // 微信只绑定一个账号，扫码用户即 owner
-            if (data.userId) {
-              await hanaFetch(`/api/bridge/owner${agentQuery}`, {
+            // Credentials belong to the agent that started this QR flow.
+            const agentQuery = agentId ? `?agentId=${encodeURIComponent(agentId)}` : '';
+            try {
+              await hanaFetch(`/api/bridge/config${agentQuery}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ platform: 'wechat', userId: data.userId }),
-              }).catch((err: unknown) => console.warn('[WechatQrcodeOverlay] set owner failed', err));
+                body: JSON.stringify({
+                  platform: 'wechat',
+                  credentials: { botToken: data.botToken },
+                  enabled: true,
+                }),
+              });
+              if (!isCurrent()) return;
+              // 微信只绑定一个账号，扫码用户即 owner
+              if (data.userId) {
+                await hanaFetch(`/api/bridge/owner${agentQuery}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ platform: 'wechat', userId: data.userId }),
+                });
+              }
+            } catch (err: unknown) {
+              if (isCurrent()) {
+                setStatus('error');
+                setError(err instanceof Error ? err.message : String(err));
+              }
+              return;
             }
+            if (!isCurrent()) return;
+            setStatus('confirmed');
             window.dispatchEvent(new Event('hana-bridge-reload'));
-            setTimeout(close, 1200);
+            closeTimerRef.current = setTimeout(() => { if (isCurrent()) close(); }, 1200);
             return;
           } else if (data.status === 'expired') {
-            stoppedRef.current = true;
-            setRefreshCount((prev) => {
-              const next = prev + 1;
-              if (next >= MAX_REFRESH) {
-                setStatus('error');
-                setError(t('settings.bridge.wechatExpired'));
-              } else {
-                fetchQrcode();
-              }
-              return next;
-            });
+            refreshCountRef.current += 1;
+            if (refreshCountRef.current >= MAX_REFRESH) {
+              setStatus('error');
+              setError(t('settings.bridge.wechatExpired'));
+            } else {
+              fetchQrcode();
+            }
             return;
           }
         } catch { /* 网络错误静默重试 */ }
 
         // 请求完成后等 1 秒再发下一个
-        if (!stoppedRef.current) {
-          await new Promise((r) => setTimeout(r, 1000));
+        if (isCurrent()) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 1000);
+            cancelDelay = () => { clearTimeout(timer); resolve(); };
+          });
         }
       }
     })();
+    return () => { cancelled = true; cancelDelay(); };
   }, [close, fetchQrcode]);
 
   // 监听显示事件
   useEffect(() => {
     const show = (e: Event) => {
       const detail = (e as CustomEvent<{ agentId?: string | null }>).detail;
+      invalidate();
       agentIdRef.current = detail?.agentId ?? null;
       setVisible(true);
-      setRefreshCount(0);
+      setQrcodeId('');
+      setQrcodeUrl('');
+      refreshCountRef.current = 0;
       fetchQrcode();
     };
     window.addEventListener('hana-show-wechat-qrcode', show);
     return () => {
       window.removeEventListener('hana-show-wechat-qrcode', show);
-      stopPolling();
+      invalidate();
     };
-  }, [fetchQrcode, stopPolling]);
+  }, [fetchQrcode, invalidate]);
 
   // qrcodeId 变化时开始轮询（不依赖 status，避免 scanned 状态触发 cleanup）
   useEffect(() => {
     if (qrcodeId) {
-      startPolling(qrcodeId);
+      return startPolling(qrcodeId);
     }
-    return stopPolling;
-  }, [qrcodeId, startPolling, stopPolling]);
+  }, [qrcodeId, startPolling]);
 
   const statusLabel = (() => {
     switch (status) {

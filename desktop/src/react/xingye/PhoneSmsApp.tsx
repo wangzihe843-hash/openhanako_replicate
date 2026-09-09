@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import { useXingyeRoleProfile, type XingyeRoleProfileMap } from './xingye-profile-store';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
@@ -39,7 +39,12 @@ function formatSmsTime(iso: string): string {
   return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 }
 
-export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBack }: PhoneSmsAppProps) {
+export function PhoneSmsApp(props: PhoneSmsAppProps) {
+  // A phone belongs to one owner; changing owners also drops all local editing state.
+  return <PhoneSmsAppContent key={props.ownerAgent?.id ?? ''} {...props} />;
+}
+
+function PhoneSmsAppContent({ ownerAgent, agents, profiles, initialTarget, onBack }: PhoneSmsAppProps) {
   const version = useXingyePhoneStorageVersion();
   const ownerAgentId = ownerAgent?.id ?? '';
   const ownerProfile = useXingyeRoleProfile(ownerAgentId);
@@ -77,6 +82,17 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
   >({});
   const [pendingDraftBusyId, setPendingDraftBusyId] = useState<string | null>(null);
   const [pendingDraftError, setPendingDraftError] = useState<string | null>(null);
+  const draftLifetime = useRef(0);
+  // Reads are latest-wins; handled IDs prevent stale snapshots reviving a draft
+  // without dropping unrelated new drafts returned by an in-flight refresh.
+  const draftRequest = useRef(0);
+  const handledDraftIds = useRef(new Set<string>());
+  const draftActionBusy = useRef(false);
+
+  useEffect(() => () => {
+    draftLifetime.current += 1;
+    draftRequest.current += 1;
+  }, []);
 
   useEffect(() => {
     setSelectedTarget(initialTarget ?? null);
@@ -135,6 +151,7 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
   };
 
   const reloadPendingSmsDrafts = useCallback(async () => {
+    const request = ++draftRequest.current;
     if (!ownerAgentId) {
       setPendingDrafts([]);
       setPendingDraftEdits({});
@@ -142,8 +159,10 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
     }
     try {
       const drafts = await listSmsDrafts(ownerAgentId);
-      setPendingDrafts(drafts);
+      if (request !== draftRequest.current) return;
+      setPendingDrafts(drafts.filter(draft => !handledDraftIds.current.has(draft.id)));
     } catch (err) {
+      if (request !== draftRequest.current) return;
       console.warn('[PhoneSmsApp] listSmsDrafts failed:', err);
     }
   }, [ownerAgentId]);
@@ -189,12 +208,14 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
   };
 
   const handleConfirmPendingDraft = async (d: XingyePendingSmsDraft) => {
-    if (!ownerAgentId) return;
+    if (!ownerAgentId || draftActionBusy.current) return;
     const working = pendingDraftWorkingValue(d);
     if (!working.targetId) {
       setPendingDraftError('请先为这条草稿选定收件人（通讯录里未能自动匹配）。');
       return;
     }
+    const lifetime = draftLifetime.current;
+    draftActionBusy.current = true;
     setPendingDraftBusyId(d.id);
     setPendingDraftError(null);
     try {
@@ -203,6 +224,8 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
         targetId: working.targetId,
         content: working.content,
       });
+      if (lifetime !== draftLifetime.current) return;
+      handledDraftIds.current.add(d.id);
       setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
       setPendingDraftEdits((prev) => {
         if (!(d.id in prev)) return prev;
@@ -210,22 +233,30 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
         return rest;
       });
     } catch (err) {
+      if (lifetime !== draftLifetime.current) return;
       setPendingDraftError(err instanceof Error ? err.message : String(err));
     } finally {
-      setPendingDraftBusyId(null);
+      if (lifetime === draftLifetime.current) {
+        draftActionBusy.current = false;
+        setPendingDraftBusyId(null);
+      }
     }
   };
 
   const handleDiscardPendingDraft = async (d: XingyePendingSmsDraft) => {
-    if (!ownerAgentId) return;
+    if (!ownerAgentId || draftActionBusy.current) return;
     if (!window.confirm('确定丢弃这条待确认短信草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
       return;
     }
+    const lifetime = draftLifetime.current;
+    draftActionBusy.current = true;
     setPendingDraftBusyId(d.id);
     setPendingDraftError(null);
     try {
       const ok = await discardSmsDraft(ownerAgentId, d.id);
+      if (lifetime !== draftLifetime.current) return;
       if (ok) {
+        handledDraftIds.current.add(d.id);
         setPendingDrafts((prev) => prev.filter((p) => p.id !== d.id));
         setPendingDraftEdits((prev) => {
           if (!(d.id in prev)) return prev;
@@ -236,9 +267,13 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
         await reloadPendingSmsDrafts();
       }
     } catch (err) {
+      if (lifetime !== draftLifetime.current) return;
       setPendingDraftError(err instanceof Error ? err.message : String(err));
     } finally {
-      setPendingDraftBusyId(null);
+      if (lifetime === draftLifetime.current) {
+        draftActionBusy.current = false;
+        setPendingDraftBusyId(null);
+      }
     }
   };
 
@@ -386,7 +421,7 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
                       type="button"
                       className={styles.secondaryButton}
                       onClick={() => void handleConfirmPendingDraft(d)}
-                      disabled={busy || !working.targetId || !working.content.trim()}
+                      disabled={pendingDraftBusyId !== null || !working.targetId || !working.content.trim()}
                       data-testid={`phone-sms-pending-draft-confirm-${d.id}`}
                     >
                       {busy ? '处理中…' : '确认发送'}
@@ -395,7 +430,7 @@ export function PhoneSmsApp({ ownerAgent, agents, profiles, initialTarget, onBac
                       type="button"
                       className={styles.phoneWeakAction}
                       onClick={() => void handleDiscardPendingDraft(d)}
-                      disabled={busy}
+                      disabled={pendingDraftBusyId !== null}
                       data-testid={`phone-sms-pending-draft-discard-${d.id}`}
                     >
                       丢弃

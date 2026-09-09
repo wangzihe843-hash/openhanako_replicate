@@ -111235,6 +111235,18 @@
       "reason": "Reached via esbuild source module graph, imported by server/index.ts (import-statement)."
     },
     {
+      "path": "server/utils/avatar-files.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/agents.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by server/routes/agents.ts (import-statement)."
+    },
+    {
       "path": "server/utils/path-security.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -113759,9 +113771,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 9688,
+    "totalFiles": 9689,
     "byInputType": {
-      "source-graph": 707,
+      "source-graph": 708,
       "runtime-asset": 11,
       "nft-runtime-trace": 8970
     }

@@ -198,15 +198,18 @@ export class PreferencesManager {
   /**
    * @private setupComplete 是单向完成标记。即使有旧 server cache，
    * 后续偏好写入也不能把磁盘上已完成的事实覆盖掉。
+   * Every write also checks for newly unreadable source bytes, including when
+   * the cache already has setupComplete, so replacement goes through backup.
    */
   _preserveDiskSetupComplete(prefs) {
-    if (prefs.setupComplete === true) return prefs;
     try {
       const stored = this._readFromDiskStrict();
       if (stored?.setupComplete === true) {
         return { ...prefs, setupComplete: true };
       }
-    } catch {}
+    } catch (err) {
+      if (err.code !== "ENOENT") this._sourceReadFailure = err;
+    }
     return prefs;
   }
 

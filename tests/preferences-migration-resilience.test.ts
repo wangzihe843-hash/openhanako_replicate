@@ -51,6 +51,40 @@ describe("PreferencesManager migration resilience", () => {
     expect(fs.readFileSync(path.join(dirs.userDir, backups[0]), "utf-8")).toBe(corrupt);
     expect(JSON.parse(fs.readFileSync(dirs.prefsPath, "utf-8"))).toMatchObject({ locale: "en" });
   });
+
+  it.each([false, true])("preserves corruption introduced after startup before saving (setupComplete=%s)", (setupComplete) => {
+    const dirs = makeDirs();
+    fs.mkdirSync(dirs.userDir, { recursive: true });
+    fs.writeFileSync(dirs.prefsPath, JSON.stringify({ setupComplete, locale: "zh-CN" }));
+    const prefs = new PreferencesManager(dirs);
+    const corrupt = "{ interrupted external preference edit\n";
+    fs.writeFileSync(dirs.prefsPath, corrupt);
+
+    prefs.setLocale("en");
+
+    const backups = fs.readdirSync(dirs.userDir).filter((name) => name.startsWith("preferences.json.corrupt-"));
+    expect(backups).toHaveLength(1);
+    expect(fs.readFileSync(path.join(dirs.userDir, backups[0]), "utf-8")).toBe(corrupt);
+    expect(JSON.parse(fs.readFileSync(dirs.prefsPath, "utf-8"))).toMatchObject({ setupComplete, locale: "en" });
+  });
+
+  it("leaves disk and cache unchanged if newly unreadable preferences cannot be backed up", () => {
+    const dirs = makeDirs();
+    const prefs = new PreferencesManager(dirs);
+    const previous = prefs.getPreferences();
+    const corrupt = "{ newly unreadable preferences\n";
+    fs.writeFileSync(dirs.prefsPath, corrupt);
+    const backup = vi.spyOn(fs, "copyFileSync").mockImplementation(() => {
+      throw Object.assign(new Error("backup unavailable"), { code: "EACCES" });
+    });
+    try {
+      expect(() => prefs.setLocale("en")).toThrow("cannot preserve unreadable preferences before write");
+      expect(fs.readFileSync(dirs.prefsPath, "utf-8")).toBe(corrupt);
+      expect(prefs.getPreferences()).toEqual(previous);
+    } finally {
+      backup.mockRestore();
+    }
+  });
 });
 
 describe("legacy startup migration isolation", () => {

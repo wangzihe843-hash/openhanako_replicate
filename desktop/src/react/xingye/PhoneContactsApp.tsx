@@ -69,7 +69,12 @@ interface PhoneContactsAppProps {
   onOpenGroupChatTab?: () => void;
 }
 
-export function PhoneContactsApp({
+export function PhoneContactsApp(props: PhoneContactsAppProps) {
+  // Reset owner-scoped navigation, editing buffers and async UI state together.
+  return <PhoneContactsAppContent key={props.ownerAgent?.id ?? ''} {...props} />;
+}
+
+function PhoneContactsAppContent({
   ownerAgent,
   agents,
   profiles,
@@ -139,16 +144,30 @@ export function PhoneContactsApp({
   const [pendingPhoneContactDrafts, setPendingPhoneContactDrafts] = useState<XingyePendingPhoneContactDraft[]>([]);
   const [phoneContactDraftError, setPhoneContactDraftError] = useState<string | null>(null);
   const [phoneContactDraftBusyId, setPhoneContactDraftBusyId] = useState<string | null>(null);
+  const draftLifetime = useRef(0);
+  // Reads are latest-wins; handled IDs prevent stale snapshots reviving a draft
+  // without dropping unrelated new drafts returned by an in-flight refresh.
+  const draftRequest = useRef(0);
+  const handledDraftIds = useRef(new Set<string>());
+  const draftActionBusy = useRef(false);
+
+  useEffect(() => () => {
+    draftLifetime.current += 1;
+    draftRequest.current += 1;
+  }, []);
 
   const reloadPhoneContactDrafts = useCallback(async () => {
+    const request = ++draftRequest.current;
     if (!ownerAgentId) {
       setPendingPhoneContactDrafts([]);
       return;
     }
     try {
       const drafts = await listPhoneContactDrafts(ownerAgentId);
-      setPendingPhoneContactDrafts(drafts);
+      if (request !== draftRequest.current) return;
+      setPendingPhoneContactDrafts(drafts.filter(draft => !handledDraftIds.current.has(draft.id)));
     } catch (error) {
+      if (request !== draftRequest.current) return;
       console.warn('[PhoneContactsApp] reload pending phone-contact drafts failed:', error);
     }
   }, [ownerAgentId]);
@@ -160,37 +179,53 @@ export function PhoneContactsApp({
   }, [listView, selectedContact, reloadPhoneContactDrafts, _phoneStorageVersion]);
 
   const handleConfirmPhoneContactDraft = async (draftId: string) => {
-    if (!ownerAgentId) return;
+    if (!ownerAgentId || draftActionBusy.current) return;
+    const lifetime = draftLifetime.current;
+    draftActionBusy.current = true;
     setPhoneContactDraftError(null);
     setPhoneContactDraftBusyId(draftId);
     try {
       await confirmPhoneContactDraft(ownerAgentId, draftId);
+      if (lifetime !== draftLifetime.current) return;
+      handledDraftIds.current.add(draftId);
       setPendingPhoneContactDrafts((prev) => prev.filter((d) => d.id !== draftId));
       maybeRunSmsIncrementalAfterContactChange();
     } catch (error) {
+      if (lifetime !== draftLifetime.current) return;
       setPhoneContactDraftError(error instanceof Error ? error.message : String(error));
       await reloadPhoneContactDrafts();
     } finally {
-      setPhoneContactDraftBusyId(null);
+      if (lifetime === draftLifetime.current) {
+        draftActionBusy.current = false;
+        setPhoneContactDraftBusyId(null);
+      }
     }
   };
 
   const handleDiscardPhoneContactDraft = async (draftId: string) => {
-    if (!ownerAgentId) return;
+    if (!ownerAgentId || draftActionBusy.current) return;
+    const lifetime = draftLifetime.current;
+    draftActionBusy.current = true;
     setPhoneContactDraftError(null);
     setPhoneContactDraftBusyId(draftId);
     try {
       const ok = await discardPhoneContactDraft(ownerAgentId, draftId);
+      if (lifetime !== draftLifetime.current) return;
       if (ok) {
+        handledDraftIds.current.add(draftId);
         setPendingPhoneContactDrafts((prev) => prev.filter((d) => d.id !== draftId));
       } else {
         await reloadPhoneContactDrafts();
       }
     } catch (error) {
+      if (lifetime !== draftLifetime.current) return;
       setPhoneContactDraftError(error instanceof Error ? error.message : String(error));
       await reloadPhoneContactDrafts();
     } finally {
-      setPhoneContactDraftBusyId(null);
+      if (lifetime === draftLifetime.current) {
+        draftActionBusy.current = false;
+        setPhoneContactDraftBusyId(null);
+      }
     }
   };
 
@@ -645,7 +680,7 @@ export function PhoneContactsApp({
                           type="button"
                           className={styles.secondaryButton}
                           onClick={() => void handleConfirmPhoneContactDraft(d.id)}
-                          disabled={phoneContactDraftBusyId === d.id}
+                          disabled={phoneContactDraftBusyId !== null}
                           data-testid={`phone-contact-pending-draft-confirm-${d.id}`}
                         >
                           {phoneContactDraftBusyId === d.id ? '处理中…' : draftConfirmButtonLabel(d.action)}
@@ -654,7 +689,7 @@ export function PhoneContactsApp({
                           type="button"
                           className={styles.secondaryButton}
                           onClick={() => void handleDiscardPhoneContactDraft(d.id)}
-                          disabled={phoneContactDraftBusyId === d.id}
+                          disabled={phoneContactDraftBusyId !== null}
                           data-testid={`phone-contact-pending-draft-discard-${d.id}`}
                         >
                           丢弃

@@ -287,10 +287,16 @@ function requireServerForProfile(): void {
  * Reads `HANA_HOME/agents/{agentId}/xingye/profile.json`.
  * If missing, migrates at most once from legacy `localStorage` map `xingye.roleProfiles` for that agent, then writes `profile.json`.
  */
-export async function readXingyeRoleProfile(agentId: string | null | undefined): Promise<XingyeRoleProfile | null> {
+export async function readXingyeRoleProfile(
+  agentId: string | null | undefined,
+  options: { throwOnError?: boolean } = {},
+): Promise<XingyeRoleProfile | null> {
   const id = typeof agentId === 'string' ? agentId.trim() : '';
   if (!id) return null;
-  if (!hasServerConnection(useStore.getState())) return null;
+  if (!hasServerConnection(useStore.getState())) {
+    if (options.throwOnError) requireServerForProfile();
+    return null;
+  }
 
   try {
     const raw = await profileBackend.readJson<unknown>(id, XINGYE_PROFILE_JSON_RELATIVE_PATH);
@@ -306,6 +312,7 @@ export async function readXingyeRoleProfile(agentId: string | null | undefined):
     return migrated;
   } catch (error) {
     console.warn('[xingye-profile-store] read profile failed:', error);
+    if (options.throwOnError) throw error;
     return null;
   }
 }
@@ -666,43 +673,58 @@ export function useXingyeRoleProfiles(): XingyeRoleProfileMap {
 }
 
 export function useXingyeRoleProfile(agentId: string | null | undefined): XingyeRoleProfile | null {
+  return useXingyeRoleProfileState(agentId).profile;
+}
+
+/** Distinguishes an absent profile from one still loading or unavailable. */
+export function useXingyeRoleProfileState(agentId: string | null | undefined): {
+  profile: XingyeRoleProfile | null;
+  loading: boolean;
+  error: string | null;
+} {
   const trimmed = typeof agentId === 'string' ? agentId.trim() : '';
-  const [profile, setProfile] = useState<XingyeRoleProfile | null>(null);
+  const [result, setResult] = useState<{
+    agentId: string; profile: XingyeRoleProfile | null; loading: boolean; error: string | null;
+  }>({ agentId: '', profile: null, loading: false, error: null });
 
   useEffect(() => {
     if (!trimmed) {
-      setProfile(null);
       return;
     }
 
     let cancelled = false;
-    setProfile(null);
-
-    void (async () => {
-      const loaded = await readXingyeRoleProfile(trimmed);
-      if (!cancelled) setProfile(loaded);
-    })();
-
-    return () => {
-      cancelled = true;
+    let request = 0;
+    setResult({ agentId: trimmed, profile: null, loading: true, error: null });
+    const load = async () => {
+      const current = ++request;
+      try {
+        const profile = await readXingyeRoleProfile(trimmed, { throwOnError: true });
+        if (!cancelled && current === request) {
+          setResult({ agentId: trimmed, profile, loading: false, error: null });
+        }
+      } catch (error) {
+        if (!cancelled && current === request) {
+          setResult({ agentId: trimmed, profile: null, loading: false, error: String(error) });
+        }
+      }
     };
-  }, [trimmed]);
-
-  useEffect(() => {
-    if (!trimmed) return undefined;
 
     const onChanged = (ev: Event) => {
       const detail = (ev as CustomEvent<{ agentId?: string }>).detail;
       if (detail?.agentId && detail.agentId !== trimmed) return;
-      void (async () => {
-        setProfile(await readXingyeRoleProfile(trimmed));
-      })();
+      void load();
     };
 
-    if (typeof window === 'undefined') return undefined;
     window.addEventListener(XINGYE_ROLE_PROFILES_CHANGED_EVENT, onChanged);
-    return () => window.removeEventListener(XINGYE_ROLE_PROFILES_CHANGED_EVENT, onChanged);
+    void load();
+    return () => {
+      cancelled = true;
+      window.removeEventListener(XINGYE_ROLE_PROFILES_CHANGED_EVENT, onChanged);
+    };
   }, [trimmed]);
 
-  return profile;
+  if (!trimmed || result.agentId !== trimmed) {
+    return { profile: null, loading: !!trimmed, error: null };
+  }
+  return result;
 }

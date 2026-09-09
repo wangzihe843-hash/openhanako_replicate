@@ -623,6 +623,7 @@
     "server/session-thinking-level-state.ts",
     "server/suggestion-blocks.ts",
     "server/task-bus-handlers.ts",
+    "server/utils/avatar-files.ts",
     "server/utils/path-security.ts",
     "server/utils/resolve-agent.ts",
     "server/utils/uploaded-skill-package.ts",

@@ -8,7 +8,7 @@ import {
 } from '../agent-pinned-memory';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useStore } from '../stores';
-import { getXingyeRoleProfileDisplay, useXingyeRoleProfile } from './xingye-profile-store';
+import { getXingyeRoleProfileDisplay, useXingyeRoleProfileState } from './xingye-profile-store';
 import { MemoryCandidatePanel } from './MemoryCandidatePanel';
 import { RelationshipStatePanel } from './RelationshipStatePanel';
 import {
@@ -223,7 +223,7 @@ function isSecretSpaceManualAppendDebugEnabled(): boolean {
 }
 
 export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
-  const profile = useXingyeRoleProfile(agent?.id);
+  const { profile, loading: profileLoading, error: profileError } = useXingyeRoleProfileState(agent?.id);
   const [view, setView] = useState<'home' | 'category' | 'forum'>('home');
   const [activeCategory, setActiveCategory] = useState<SecretSpaceCategoryId | null>(null);
   const [recordsByCategory, setRecordsByCategory] = useState<Record<SecretSpaceCategoryId, SecretSpaceSampleRecord[]>>(
@@ -1149,7 +1149,9 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
   const stateSection =
     activeCategory === 'state' && displayProfile ? (
       <div data-testid="secret-space-relationship-panel">
-        <RelationshipStatePanel agent={agent} profile={displayProfile} />
+        {profileLoading ? <p role="status">正在读取角色设定…</p>
+          : profileError ? <p role="alert">角色设定读取失败，请重新打开秘密空间后重试。</p>
+            : <RelationshipStatePanel key={agent.id} agent={agent} profile={displayProfile} />}
       </div>
     ) : null;
 

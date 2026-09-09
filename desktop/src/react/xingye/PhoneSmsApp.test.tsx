@@ -14,7 +14,7 @@
 
 import React from 'react';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 
@@ -76,6 +76,190 @@ const agent: Agent = {
   hasAvatar: false,
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+const raceDraft = (id: string) => ({
+  id, targetType: 'agent' as const, targetId: 'peer-1',
+  content: id,
+  source: 'xingye-heartbeat-tool', createdAt: '2026-05-17T12:00:00.000Z',
+});
+
+const otherOwner = { ...agent, id: 'owner-b', name: 'B' };
+const raceAgents = [agent, otherOwner];
+const raceProfiles = {};
+const raceBack = () => {};
+function raceApp(ownerAgent: Agent | null = agent) {
+  return <PhoneSmsApp ownerAgent={ownerAgent} agents={raceAgents} profiles={raceProfiles}
+     onBack={raceBack} />;
+}
+
+describe('PhoneSmsApp · owner and request lifetimes', () => {
+  it('drops edits immediately on owner change even when draft ids are reused', async () => {
+    const nextList = deferred<ReturnType<typeof raceDraft>[]>();
+    smsDraftsMock.listSmsDrafts.mockResolvedValueOnce([raceDraft('shared')]).mockReturnValueOnce(nextList.promise);
+    const view = render(raceApp());
+    const content = await screen.findByTestId('phone-sms-pending-draft-content-shared');
+    fireEvent.change(content, { target: { value: 'private A edit' } });
+    view.rerender(raceApp(otherOwner));
+    expect(screen.queryByTestId('phone-sms-pending-drafts')).not.toBeInTheDocument();
+    await act(async () => nextList.resolve([{ ...raceDraft('shared'), content: 'B original' }]));
+    expect(screen.getByTestId('phone-sms-pending-draft-content-shared')).toHaveValue('B original');
+  });
+
+  it('loads after StrictMode effect cleanup and ignores the first request', async () => {
+    const old = deferred<ReturnType<typeof raceDraft>[]>();
+    smsDraftsMock.listSmsDrafts.mockReturnValueOnce(old.promise).mockResolvedValueOnce([raceDraft('strict-current')]);
+    render(<React.StrictMode>{raceApp()}</React.StrictMode>);
+    await screen.findByTestId('phone-sms-pending-draft-strict-current');
+    expect(smsDraftsMock.listSmsDrafts).toHaveBeenCalledTimes(2);
+    await act(async () => old.resolve([raceDraft('strict-stale')]));
+    expect(screen.getByTestId('phone-sms-pending-draft-strict-current')).toBeInTheDocument();
+    expect(screen.queryByTestId('phone-sms-pending-draft-strict-stale')).not.toBeInTheDocument();
+  });
+
+  it.each(['resolve', 'reject'] as const)('ignores an old owner list that settles by %s', async (outcome) => {
+    const old = deferred<ReturnType<typeof raceDraft>[]>();
+    smsDraftsMock.listSmsDrafts.mockReturnValueOnce(old.promise).mockResolvedValueOnce([raceDraft('b')]);
+    const view = render(raceApp());
+    view.rerender(raceApp(otherOwner));
+    await screen.findByTestId('phone-sms-pending-draft-b');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await act(async () => {
+      if (outcome === 'resolve') old.resolve([raceDraft('a')]);
+      else old.reject(new Error('old list failure'));
+    });
+    expect(screen.getByTestId('phone-sms-pending-draft-b')).toBeInTheDocument();
+    expect(screen.queryByTestId('phone-sms-pending-draft-a')).not.toBeInTheDocument();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('does not revive the first A request after A → B → A', async () => {
+    const old = deferred<ReturnType<typeof raceDraft>[]>();
+    smsDraftsMock.listSmsDrafts.mockReturnValueOnce(old.promise)
+      .mockResolvedValueOnce([raceDraft('b')]).mockResolvedValueOnce([raceDraft('new-a')]);
+    const view = render(raceApp());
+    view.rerender(raceApp(otherOwner));
+    await screen.findByTestId('phone-sms-pending-draft-b');
+    view.rerender(raceApp());
+    expect(screen.queryByTestId('phone-sms-pending-draft-b')).not.toBeInTheDocument();
+    await screen.findByTestId('phone-sms-pending-draft-new-a');
+    await act(async () => old.resolve([raceDraft('old-a')]));
+    expect(screen.getByTestId('phone-sms-pending-draft-new-a')).toBeInTheDocument();
+    expect(screen.queryByTestId('phone-sms-pending-draft-old-a')).not.toBeInTheDocument();
+  });
+
+  it.each(['resolve', 'reject'] as const)('keeps the latest same-owner storage refresh when the older read %s settles', async (outcome) => {
+    const old = deferred<ReturnType<typeof raceDraft>[]>();
+    smsDraftsMock.listSmsDrafts.mockReturnValueOnce(old.promise).mockResolvedValueOnce([raceDraft('latest')]);
+    const view = render(raceApp());
+    const contactReads = phoneStoreMock.getPhoneContacts.mock.calls.length;
+    const dependentReads = phoneStoreMock.getSmsThreads.mock.calls.length;
+    phoneStoreMock.useXingyePhoneStorageVersion.mockReturnValue(1);
+    view.rerender(raceApp());
+    await screen.findByTestId('phone-sms-pending-draft-latest');
+    expect(phoneStoreMock.getPhoneContacts.mock.calls.length).toBeGreaterThan(contactReads);
+    expect(phoneStoreMock.getSmsThreads.mock.calls.length).toBeGreaterThan(dependentReads);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await act(async () => {
+      if (outcome === 'resolve') old.resolve([raceDraft('stale')]);
+      else old.reject(new Error('stale failure'));
+    });
+    expect(screen.getByTestId('phone-sms-pending-draft-latest')).toBeInTheDocument();
+    expect(screen.queryByTestId('phone-sms-pending-draft-stale')).not.toBeInTheDocument();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it.each([
+    ['confirm', 'success'], ['confirm', 'failure'],
+    ['discard', 'success'], ['discard', 'missing'], ['discard', 'failure'],
+  ] as const)('ignores late %s %s after returning to the same owner', async (action, outcome) => {
+    const oldAction = deferred<boolean>();
+    const currentAction = deferred<boolean>();
+    const actionMock = action === 'confirm' ? smsDraftsMock.confirmSmsDraft : smsDraftsMock.discardSmsDraft;
+    actionMock.mockReturnValueOnce(oldAction.promise).mockReturnValueOnce(currentAction.promise);
+    smsDraftsMock.listSmsDrafts.mockResolvedValue([raceDraft('shared')]);
+    const confirmDialog = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const view = render(raceApp());
+    await screen.findByTestId('phone-sms-pending-draft-shared');
+    fireEvent.click(screen.getByTestId('phone-sms-pending-draft-' + action + '-shared'));
+    view.rerender(raceApp(otherOwner));
+    await screen.findByTestId('phone-sms-pending-draft-shared');
+    view.rerender(raceApp());
+    await screen.findByTestId('phone-sms-pending-draft-shared');
+    expect(screen.getByTestId('phone-sms-pending-draft-confirm-shared')).toBeEnabled();
+    fireEvent.click(screen.getByTestId('phone-sms-pending-draft-' + action + '-shared'));
+    const reads = smsDraftsMock.listSmsDrafts.mock.calls.length;
+    const followups = phoneAiMock.generateSmsUpdatesForChangedContactsWithAI.mock.calls.length;
+    await act(async () => {
+      if (outcome === 'failure') oldAction.reject(new Error('previous owner failed'));
+      else oldAction.resolve(outcome === 'success');
+    });
+    expect(screen.getByTestId('phone-sms-pending-draft-shared')).toBeInTheDocument();
+    expect(screen.getByTestId('phone-sms-pending-draft-confirm-shared')).toBeDisabled();
+    expect(screen.queryByText('previous owner failed')).not.toBeInTheDocument();
+    expect(smsDraftsMock.listSmsDrafts).toHaveBeenCalledTimes(reads);
+    expect(phoneAiMock.generateSmsUpdatesForChangedContactsWithAI).toHaveBeenCalledTimes(followups);
+    await act(async () => currentAction.resolve(true));
+    expect(screen.queryByTestId('phone-sms-pending-draft-shared')).not.toBeInTheDocument();
+    confirmDialog.mockRestore();
+  });
+
+  it('does not reload or start follow-up actions after unmount', async () => {
+    const action = deferred<boolean>();
+    smsDraftsMock.listSmsDrafts.mockResolvedValue([raceDraft('unmount')]);
+    smsDraftsMock.discardSmsDraft.mockReturnValueOnce(action.promise);
+    const confirmDialog = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const view = render(raceApp());
+    await screen.findByTestId('phone-sms-pending-draft-unmount');
+    fireEvent.click(screen.getByTestId('phone-sms-pending-draft-discard-unmount'));
+    view.unmount();
+    await act(async () => action.resolve(false));
+    expect(smsDraftsMock.listSmsDrafts).toHaveBeenCalledTimes(1);
+    confirmDialog.mockRestore();
+  });
+
+  it.each([
+    ['confirm', 'before'], ['confirm', 'during'],
+    ['discard', 'before'], ['discard', 'during'],
+  ] as const)('keeps new drafts from a refresh started %s / %s without reviving the handled draft', async (actionName, refreshTiming) => {
+    const action = deferred<boolean>();
+    const staleRead = deferred<ReturnType<typeof raceDraft>[]>();
+    smsDraftsMock.listSmsDrafts.mockResolvedValueOnce([raceDraft('confirmed')]).mockReturnValueOnce(staleRead.promise);
+    const actionMock = actionName === 'confirm' ? smsDraftsMock.confirmSmsDraft : smsDraftsMock.discardSmsDraft;
+    actionMock.mockReturnValueOnce(action.promise);
+    const confirmDialog = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const view = render(raceApp());
+    await screen.findByTestId('phone-sms-pending-draft-confirmed');
+    const refresh = () => {
+      phoneStoreMock.useXingyePhoneStorageVersion.mockReturnValue(1);
+      view.rerender(raceApp());
+    };
+    if (refreshTiming === 'before') refresh();
+    fireEvent.click(screen.getByTestId('phone-sms-pending-draft-' + actionName + '-confirmed'));
+    if (refreshTiming === 'during') refresh();
+    await act(async () => action.resolve(true));
+    await act(async () => staleRead.resolve([raceDraft('confirmed'), raceDraft('new-independent')]));
+    expect(screen.queryByTestId('phone-sms-pending-draft-confirmed')).not.toBeInTheDocument();
+    expect(screen.getByTestId('phone-sms-pending-draft-new-independent')).toBeInTheDocument();
+    // A helper may report success even if removing the persisted draft failed.
+    // Later reads must still hide that handled ID while accepting fresh drafts.
+    smsDraftsMock.listSmsDrafts.mockResolvedValueOnce([raceDraft('confirmed'), raceDraft('another-new')]);
+    phoneStoreMock.useXingyePhoneStorageVersion.mockReturnValue(2);
+    view.rerender(raceApp());
+    await screen.findByTestId('phone-sms-pending-draft-another-new');
+    expect(screen.queryByTestId('phone-sms-pending-draft-confirmed')).not.toBeInTheDocument();
+    confirmDialog.mockRestore();
+  });
+});
+
+
 function renderSmsApp() {
   return render(
     <PhoneSmsApp
@@ -88,6 +272,8 @@ function renderSmsApp() {
 }
 
 beforeEach(() => {
+  phoneStoreMock.useXingyePhoneStorageVersion.mockReturnValue(0);
+  vi.clearAllMocks();
   smsDraftsMock.confirmSmsDraft.mockReset();
   smsDraftsMock.discardSmsDraft.mockReset();
   smsDraftsMock.listSmsDrafts.mockReset();

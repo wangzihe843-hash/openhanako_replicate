@@ -58,7 +58,8 @@ export class LoopStore {
       // 损坏文件不静默丢弃：移到 .corrupt-<ts> 保留现场并大声报错；
       // 循环状态可安全重建，因此以空态继续而不是阻断启动。
       const backup = `${this._path}.corrupt-${Date.now()}`;
-      try { fs.renameSync(this._path, backup); } catch {}
+      // 隔离失败必须停止加载，否则后续保存空态会覆盖唯一可恢复的原文件。
+      fs.renameSync(this._path, backup);
       this._log.error?.(`[loop-store] corrupt state file moved to ${backup}; starting empty`);
       return;
     }

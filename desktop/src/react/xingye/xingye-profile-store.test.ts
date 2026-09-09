@@ -2,7 +2,8 @@
  * @vitest-environment jsdom
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 import type { XingyeLoreEntry } from './xingye-lore-store';
 import {
@@ -15,6 +16,7 @@ import {
   getXingyeRoleProfileDisplay,
   readXingyeRoleProfile,
   saveXingyeRoleProfile,
+  useXingyeRoleProfileState,
 } from './xingye-profile-store';
 import { postXingyeStorage } from './xingye-storage-api';
 
@@ -60,6 +62,33 @@ vi.mock('../stores', () => ({
 }));
 
 describe('xingye-profile-store', () => {
+  afterEach(cleanup);
+
+  it('distinguishes a pending profile from a confirmed missing profile', async () => {
+    let resolve!: (value: { data: null }) => void;
+    vi.mocked(postXingyeStorage).mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const hook = renderHook(() => useXingyeRoleProfileState('pending'));
+    expect(hook.result.current).toMatchObject({ profile: null, loading: true, error: null });
+    await act(async () => resolve({ data: null }));
+    expect(hook.result.current).toMatchObject({ profile: null, loading: false, error: null });
+  });
+
+  it('ignores an old owner event read after switching away and back', async () => {
+    hoisted.fileData.set('a:profile.json', { agentId: 'a', displayName: 'first A', updatedAt: '2026-09-09T00:00:00Z' });
+    const hook = renderHook(({ id }) => useXingyeRoleProfileState(id), { initialProps: { id: 'a' } });
+    await waitFor(() => expect(hook.result.current.profile?.displayName).toBe('first A'));
+    let resolve!: (value: { data: unknown }) => void;
+    vi.mocked(postXingyeStorage).mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    act(() => window.dispatchEvent(new CustomEvent('xingye-role-profiles-changed', { detail: { agentId: 'a' } })));
+    hook.rerender({ id: 'b' });
+    expect(hook.result.current.profile).toBeNull();
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+    hoisted.fileData.set('a:profile.json', { agentId: 'a', displayName: 'current A', updatedAt: '2026-09-09T00:00:00Z' });
+    hook.rerender({ id: 'a' });
+    await waitFor(() => expect(hook.result.current.profile?.displayName).toBe('current A'));
+    await act(async () => resolve({ data: { agentId: 'a', displayName: 'stale A', updatedAt: '2026-09-09T00:00:00Z' } }));
+    expect(hook.result.current.profile?.displayName).toBe('current A');
+  });
   const agent: Agent = {
     id: 'agent-1',
     name: 'Hanako',

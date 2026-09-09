@@ -4,12 +4,13 @@
 
 import React from 'react';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 import { SecretSpacePanel } from './SecretSpacePanel';
 import { appendSecretSpaceRecord, deleteSecretSpaceRecord } from './xingye-secret-space-store';
 import { stableSecretSpaceRecordId } from './xingye-secret-space-record-id';
+import { getRelationshipState } from './xingye-state-store';
 
 type JsonlRow = Record<string, unknown>;
 
@@ -466,7 +467,30 @@ describe('SecretSpacePanel secret space navigation', () => {
     confirmSpy.mockRestore();
   });
 
-  it('shows RelationshipStatePanel content after opening the TA 的状态 category', () => {
+  it('waits for the real profile before persisting initial relationship values', async () => {
+    let resolveProfile!: (response: Response) => void;
+    const delayedProfile = new Promise<Response>(resolve => { resolveProfile = resolve; });
+    const originalFetch = hanaFetchMock.getMockImplementation()!;
+    hanaFetchMock.mockImplementation((path, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (body.action === 'readJson' && body.relativePath === 'profile.json') return delayedProfile;
+      return originalFetch(path, init);
+    });
+    try {
+      render(<SecretSpacePanel agent={agent} />);
+      fireEvent.click(screen.getByTestId('secret-space-entry-state'));
+      expect(getRelationshipState(agent.id)).toBeNull();
+      await act(async () => resolveProfile({ ok: true, json: async () => ({ ok: true, data: {
+        agentId: agent.id, updatedAt: '2026-09-09T00:00:00Z', relationshipLabel: '恋人', corruptionSeed: 75,
+      } }) } as Response));
+      await screen.findByTestId('secret-space-relationship-panel');
+      expect(getRelationshipState(agent.id)).toMatchObject({ affection: 90, corruption: 75 });
+    } finally {
+      hanaFetchMock.mockImplementation(originalFetch);
+    }
+  });
+
+  it('shows RelationshipStatePanel content after opening the TA 的状态 category', async () => {
     render(<SecretSpacePanel agent={agent} />);
 
     expect(screen.getByTestId('secret-space-entry-state')).toHaveAccessibleName(/TA 的状态/);
@@ -474,7 +498,29 @@ describe('SecretSpacePanel secret space navigation', () => {
     fireEvent.click(screen.getByTestId('secret-space-entry-state'));
 
     expect(screen.getByTestId('secret-space-state-section')).toBeInTheDocument();
-    expect(screen.getByTestId('secret-space-relationship-panel')).toBeInTheDocument();
+    expect(await screen.findByTestId('secret-space-relationship-panel')).toBeInTheDocument();
+    await waitFor(() => expect(getRelationshipState(agent.id)).toMatchObject({ affection: 0, corruption: 0 }));
+  });
+
+  it('does not persist default relationship values when profile loading fails', async () => {
+    const originalFetch = hanaFetchMock.getMockImplementation()!;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    hanaFetchMock.mockImplementation((path, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (body.action === 'readJson' && body.relativePath === 'profile.json') {
+        return Promise.reject(new Error('profile unavailable'));
+      }
+      return originalFetch(path, init);
+    });
+    try {
+      render(<SecretSpacePanel agent={agent} />);
+      fireEvent.click(screen.getByTestId('secret-space-entry-state'));
+      await screen.findByText('角色设定读取失败，请重新打开秘密空间后重试。');
+      expect(getRelationshipState(agent.id)).toBeNull();
+    } finally {
+      hanaFetchMock.mockImplementation(originalFetch);
+      warn.mockRestore();
+    }
   });
 
   it('does not show manual add form on state category', () => {

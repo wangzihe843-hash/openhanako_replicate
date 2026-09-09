@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,7 +10,10 @@ function tmpStorePath() {
   tmpDirs.push(dir);
   return path.join(dir, "loop-state.json");
 }
-afterEach(() => { for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+});
 
 const D = { kind: "desktop", sessionId: "sid-a" } as const;
 const B = { kind: "bridge", sessionId: "sid-b", sessionKey: "tg_dm_1@a1", agentId: "a1" } as const;
@@ -82,5 +85,20 @@ describe("LoopStore", () => {
     expect(warnings.some((w) => w.includes("corrupt"))).toBe(true);
     const sibling = fs.readdirSync(path.dirname(p)).find((f) => f.includes("corrupt"));
     expect(sibling).toBeTruthy();
+  });
+
+  it("does not start an empty writable store if the corrupt state cannot be preserved", () => {
+    const p = tmpStorePath();
+    const original = '{"loops":[{"key":"sid-a","prompt":"recover this"}';
+    fs.writeFileSync(p, original, "utf-8");
+    const denied = Object.assign(new Error("cannot preserve corrupt loop state"), { code: "EACCES" });
+    vi.spyOn(fs, "renameSync").mockImplementationOnce(() => { throw denied; });
+    const log = { error: vi.fn() };
+
+    // Startup must stop before create/update can replace the only recoverable copy.
+    expect(() => new LoopStore(p, { log })).toThrow(denied);
+    expect(fs.readFileSync(p, "utf-8")).toBe(original);
+    expect(fs.readdirSync(path.dirname(p))).toEqual([path.basename(p)]);
+    expect(log.error).not.toHaveBeenCalled();
   });
 });

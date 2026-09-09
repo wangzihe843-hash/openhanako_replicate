@@ -474,7 +474,10 @@ function migrateBridgeToPerAgent(ctx) {
           break;
         }
       }
-    } catch {}
+    } catch {
+      // An explicit platform agent may still be usable. Validate every target
+      // below before removing any legacy credentials from preferences.
+    }
   }
 
   for (const platform of PLATFORMS) {
@@ -492,8 +495,7 @@ function migrateBridgeToPerAgent(ctx) {
     }
     if (!targetAgentId) targetAgentId = fallbackAgentId;
     if (!targetAgentId) {
-      log(`[migrations] no agent available for bridge.${platform}, skipping`);
-      continue;
+      throw new Error(`no agent available for bridge.${platform}, legacy bridge preferences preserved`);
     }
 
     if (!agentConfigs.has(targetAgentId)) agentConfigs.set(targetAgentId, {});
@@ -515,8 +517,7 @@ function migrateBridgeToPerAgent(ctx) {
   for (const [agentId, bridgeConfig] of agentConfigs) {
     const cfgPath = path.join(agentsDir, agentId, "config.yaml");
     if (!fs.existsSync(cfgPath)) {
-      log(`[migrations] agent ${agentId} config.yaml not found, skipping`);
-      continue;
+      throw new Error(`agent ${agentId} config.yaml unavailable, legacy bridge preferences preserved`);
     }
     saveConfig(cfgPath, { bridge: { ...bridgeConfig } });
     log(`[migrations] migrated bridge config → agent ${agentId} (${Object.keys(bridgeConfig).join(", ")})`);

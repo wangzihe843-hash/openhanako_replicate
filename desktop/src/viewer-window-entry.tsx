@@ -100,25 +100,29 @@ export function ViewerApp() {
 
     let cancelled = false;
 
-    const fail = (err: unknown) => {
-      if (cancelled) return;
+    let reloadSequence = 0;
+
+    const fail = (err: unknown, sequence: number) => {
+      if (cancelled || sequence !== reloadSequence) return;
       const message = err instanceof Error ? err.message : String(err);
       console.error('[viewer] live file load failed:', err);
       setLoadError(message);
     };
 
     const reload = () => {
+      if (cancelled) return;
+      const sequence = ++reloadSequence;
       platform.readFile(payload.filePath)
         .then((c) => {
-          if (cancelled) return;
+          if (cancelled || sequence !== reloadSequence) return;
           if (c == null) {
-            fail(fileUnavailableError(payload));
+            fail(fileUnavailableError(payload), sequence);
             return;
           }
           setLoadError(null);
           setContent(c);
         })
-        .catch(fail);
+        .catch((err) => fail(err, sequence));
     };
 
     reload();
@@ -134,7 +138,7 @@ export function ViewerApp() {
       cancelled = true;
       watch.release();
     };
-  }, [payload?.filePath]);
+  }, [payload]);
 
   const handleClose = () => getPlatform()?.viewerClose?.();
 

@@ -2840,6 +2840,39 @@ describe("migration #2: migrateBridgeToPerAgent", () => {
     expect(config.bridge.telegram.agentId).toBeUndefined();
   });
 
+  it.each(["missing agent", "unreadable agents directory"])("preserves bridge credentials and retries when the target is unavailable: %s", (failure) => {
+    const prefs = makePrefs(userDir);
+    const bridge = {
+      telegram: { token: "preserved-token" },
+      owner: { telegram: "preserved-owner" },
+      readOnly: true,
+    };
+    prefs.savePreferences({ bridge });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const originalReadDir = fs.readdirSync;
+    const readDir = failure === "unreadable agents directory"
+      ? vi.spyOn(fs, "readdirSync").mockImplementation(((directory, ...args) => {
+        if (String(directory) === agentsDir) throw Object.assign(new Error("agents directory unavailable"), { code: "EACCES" });
+        return (originalReadDir as any)(directory, ...args);
+      }) as typeof fs.readdirSync)
+      : null;
+    try {
+      runMigration2(prefs);
+      expect(prefs.getPreferences().bridge).toEqual(bridge);
+      expect(getMigrationStatus(prefs).pendingIds).toContain(2);
+      expect(getMigrationStatus(prefs).lastFailedIds).toContain(2);
+    } finally {
+      readDir?.mockRestore();
+      errors.mockRestore();
+    }
+
+    writeAgentConfig(agentsDir, "hana", { api: { provider: "" } });
+    runMigrations({ hanakoHome: tmpDir, agentsDir, prefs, providerRegistry: makeRegistry([]), log: () => {} });
+    expect(readAgentConfig(agentsDir, "hana").bridge.telegram).toEqual({ token: "preserved-token", owner: "preserved-owner" });
+    expect(prefs.getPreferences().bridge).toEqual({ readOnly: true });
+    expect(getMigrationStatus(prefs).pendingIds).not.toContain(2);
+  });
+
   it("保留 bridge.readOnly 为全局偏好，不再写入 agent config", () => {
     writeAgentConfig(agentsDir, "primary", { api: { provider: "" } });
     writeAgentConfig(agentsDir, "secondary", { api: { provider: "" } });

@@ -26,6 +26,16 @@ vi.mock('../../services/stream-resume', () => ({
 const mockedLoadMessages = vi.mocked(loadMessages);
 const mockedRequestStreamResume = vi.mocked(requestStreamResume);
 
+function deferredLoad() {
+  let resolve!: () => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function makeScrollContainerRef() {
   const el = document.createElement('div');
   Object.defineProperty(el, 'scrollHeight', { configurable: true, value: 640 });
@@ -57,10 +67,13 @@ afterEach(() => {
 
 describe('SubagentSessionPreview session binding', () => {
   beforeEach(() => {
-    mockedLoadMessages.mockClear();
+    mockedLoadMessages.mockReset().mockResolvedValue(undefined);
     mockedRequestStreamResume.mockClear();
     useStore.setState({
       currentSessionPath: '/session/current',
+      currentSessionId: null,
+      sessionLocatorsById: {},
+      sessions: [],
       userName: 'USER SELF',
       userAvatarUrl: '/mock-user-avatar.png',
       agentName: 'Hanako',
@@ -316,6 +329,171 @@ describe('SubagentSessionPreview session binding', () => {
 
     expect(mockedLoadMessages).toHaveBeenCalledTimes(4);
     expect(screen.getByText('Loaded after retry')).toBeTruthy();
+  });
+
+  it.each(['done', 'failed', 'aborted'] as const)('pending empty load settles after running changes to %s', async (streamStatus) => {
+    vi.useFakeTimers();
+    const pending = deferredLoad();
+    mockedLoadMessages.mockReturnValue(pending.promise);
+    const scrollContainerRef = makeScrollContainerRef();
+    const view = render(<SubagentSessionPreview taskId="task-a" sessionPath="/session/subagent" streamStatus="running" scrollContainerRef={scrollContainerRef} />);
+
+    view.rerender(<SubagentSessionPreview taskId="task-a" sessionPath="/session/subagent" streamStatus={streamStatus} scrollContainerRef={scrollContainerRef} />);
+    expect(mockedLoadMessages).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('chat.subagentPreview.loadingSession')).toBeTruthy();
+
+    await act(async () => pending.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId['task-a']).toMatchObject({ loading: false, loadedOnce: true });
+    expect(screen.getByText('chat.subagentPreview.noContent')).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    expect(mockedLoadMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases loading when the reused pending request rejects', async () => {
+    const pending = deferredLoad();
+    mockedLoadMessages.mockReturnValue(pending.promise);
+    const scrollContainerRef = makeScrollContainerRef();
+    const view = render(<SubagentSessionPreview taskId="task-a" sessionPath="/session/subagent" streamStatus="running" scrollContainerRef={scrollContainerRef} />);
+    view.rerender(<SubagentSessionPreview taskId="task-a" sessionPath="/session/subagent" streamStatus="done" scrollContainerRef={scrollContainerRef} />);
+
+    await act(async () => pending.reject(new Error('load failed')));
+    expect(mockedLoadMessages).toHaveBeenCalledTimes(1);
+    expect(useStore.getState().subagentPreviewByTaskId['task-a']).toMatchObject({ loading: false, loadedOnce: false });
+    expect(screen.getByText('chat.subagentPreview.noContent')).toBeTruthy();
+  });
+
+  it('reopening a preview starts a new load and ignores the unmounted request', async () => {
+    const oldLoad = deferredLoad();
+    const reopenedLoad = deferredLoad();
+    mockedLoadMessages.mockReturnValueOnce(oldLoad.promise).mockReturnValueOnce(reopenedLoad.promise);
+    const props = { taskId: 'task-a', sessionPath: '/session/subagent', streamStatus: 'done' as const, scrollContainerRef: makeScrollContainerRef() };
+    const view = render(<SubagentSessionPreview {...props} />);
+    view.unmount();
+    expect(useStore.getState().subagentPreviewByTaskId['task-a'].loading).toBe(false);
+    render(<SubagentSessionPreview {...props} />);
+    expect(mockedLoadMessages).toHaveBeenCalledTimes(2);
+
+    await act(async () => oldLoad.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId['task-a']).toMatchObject({ loading: true, loadedOnce: false });
+    await act(async () => reopenedLoad.resolve());
+    expect(screen.getByText('chat.subagentPreview.noContent')).toBeTruthy();
+  });
+
+  it('StrictMode effect replay reuses the pending request and releases loading', async () => {
+    const pending = deferredLoad();
+    mockedLoadMessages.mockReturnValue(pending.promise);
+    render(
+      <React.StrictMode>
+        <SubagentSessionPreview taskId="task-a" sessionPath="/session/subagent" streamStatus="done" scrollContainerRef={makeScrollContainerRef()} />
+      </React.StrictMode>,
+    );
+    expect(mockedLoadMessages).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('chat.subagentPreview.loadingSession')).toBeTruthy();
+
+    await act(async () => pending.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId['task-a']).toMatchObject({ loading: false, loadedOnce: true });
+    expect(screen.getByText('chat.subagentPreview.noContent')).toBeTruthy();
+  });
+
+  it('unmounting one consumer keeps the same task loading for another pending consumer', async () => {
+    const firstLoad = deferredLoad();
+    const secondLoad = deferredLoad();
+    mockedLoadMessages.mockReturnValueOnce(firstLoad.promise).mockReturnValueOnce(secondLoad.promise);
+    const props = { taskId: 'task-a', sessionPath: '/session/subagent', streamStatus: 'done' as const };
+    const first = render(<SubagentSessionPreview {...props} scrollContainerRef={makeScrollContainerRef()} />);
+    render(<SubagentSessionPreview {...props} scrollContainerRef={makeScrollContainerRef()} />);
+    expect(mockedLoadMessages).toHaveBeenCalledTimes(2);
+
+    first.unmount();
+    expect(useStore.getState().subagentPreviewByTaskId['task-a'].loading).toBe(true);
+    expect(screen.getByText('chat.subagentPreview.loadingSession')).toBeTruthy();
+    await act(async () => firstLoad.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId['task-a'].loading).toBe(true);
+    await act(async () => secondLoad.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId['task-a']).toMatchObject({ loading: false, loadedOnce: true });
+    expect(screen.getByText('chat.subagentPreview.noContent')).toBeTruthy();
+  });
+
+  it('one completed empty consumer cannot clear another consumer’s pending load', async () => {
+    const firstLoad = deferredLoad();
+    const secondLoad = deferredLoad();
+    mockedLoadMessages.mockReturnValueOnce(firstLoad.promise).mockReturnValueOnce(secondLoad.promise);
+    const props = { taskId: 'task-a', sessionPath: '/session/subagent', streamStatus: 'done' as const };
+    const first = render(<SubagentSessionPreview {...props} scrollContainerRef={makeScrollContainerRef()} />);
+    render(<SubagentSessionPreview {...props} scrollContainerRef={makeScrollContainerRef()} />);
+
+    await act(async () => firstLoad.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId['task-a']).toMatchObject({ loading: true, loadedOnce: true });
+    expect(screen.getAllByText('chat.subagentPreview.loadingSession')).toHaveLength(2);
+    first.unmount();
+    expect(useStore.getState().subagentPreviewByTaskId['task-a'].loading).toBe(true);
+    await act(async () => secondLoad.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId['task-a'].loading).toBe(false);
+  });
+
+  it('invalidates outstanding loading owners when the preview store is reset', async () => {
+    const oldLoad = deferredLoad();
+    const currentLoad = deferredLoad();
+    mockedLoadMessages.mockReturnValueOnce(oldLoad.promise).mockReturnValueOnce(currentLoad.promise);
+    const props = { taskId: 'task-a', sessionPath: '/session/subagent', streamStatus: 'done' as const };
+    const old = render(<SubagentSessionPreview {...props} scrollContainerRef={makeScrollContainerRef()} />);
+    act(() => useStore.setState({ subagentPreviewByTaskId: {} }));
+    await act(async () => oldLoad.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId).toEqual({});
+    render(<SubagentSessionPreview {...props} scrollContainerRef={makeScrollContainerRef()} />);
+    old.unmount();
+    expect(useStore.getState().subagentPreviewByTaskId['task-a']).toMatchObject({ loading: true, loadedOnce: false });
+    await act(async () => currentLoad.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId['task-a']).toMatchObject({ loading: false, loadedOnce: true });
+  });
+
+  it('changing task identity releases the old task without settling the new task', async () => {
+    const oldLoad = deferredLoad();
+    const newLoad = deferredLoad();
+    mockedLoadMessages.mockReturnValueOnce(oldLoad.promise).mockReturnValueOnce(newLoad.promise);
+    const scrollContainerRef = makeScrollContainerRef();
+    const view = render(<SubagentSessionPreview taskId="task-a" sessionPath="/session/subagent" streamStatus="done" scrollContainerRef={scrollContainerRef} />);
+    view.rerender(<SubagentSessionPreview taskId="task-b" sessionPath="/session/subagent" streamStatus="done" scrollContainerRef={scrollContainerRef} />);
+    expect(mockedLoadMessages).toHaveBeenCalledTimes(2);
+    expect(useStore.getState().subagentPreviewByTaskId['task-a'].loading).toBe(false);
+
+    await act(async () => oldLoad.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId['task-b']).toMatchObject({ loading: true, loadedOnce: false });
+    await act(async () => newLoad.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId['task-b']).toMatchObject({ loading: false, loadedOnce: true });
+  });
+
+  it('a locator rebind loads the new path and an old completion cannot release its loading state', async () => {
+    const oldLoad = deferredLoad();
+    const movedLoad = deferredLoad();
+    mockedLoadMessages.mockReturnValueOnce(oldLoad.promise).mockReturnValueOnce(movedLoad.promise);
+    useStore.setState({ sessionLocatorsById: { sess_child: { path: '/session/subagent' } } } as never);
+    render(<SubagentSessionPreview taskId="task-a" sessionId="sess_child" sessionPath="/session/subagent" streamStatus="done" scrollContainerRef={makeScrollContainerRef()} />);
+
+    act(() => {
+      useStore.setState({ sessionLocatorsById: { sess_child: { path: '/session/moved-child' } } } as never);
+    });
+    expect(mockedLoadMessages).toHaveBeenNthCalledWith(2, '/session/moved-child');
+    await act(async () => oldLoad.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId['task-a']).toMatchObject({ loading: true, loadedOnce: false });
+    await act(async () => movedLoad.resolve());
+    expect(useStore.getState().subagentPreviewByTaskId['task-a']).toMatchObject({ loading: false, loadedOnce: true });
+    expect(screen.getByText('chat.subagentPreview.noContent')).toBeTruthy();
+  });
+
+  it('cancels an empty-session retry after the task stops running', async () => {
+    vi.useFakeTimers();
+    const scrollContainerRef = makeScrollContainerRef();
+    const view = render(<SubagentSessionPreview taskId="task-a" sessionPath="/session/subagent" streamStatus="running" scrollContainerRef={scrollContainerRef} />);
+    await act(async () => {});
+    expect(screen.getByText('chat.subagentPreview.waitingContent')).toBeTruthy();
+
+    view.rerender(<SubagentSessionPreview taskId="task-a" sessionPath="/session/subagent" streamStatus="done" scrollContainerRef={scrollContainerRef} />);
+    await act(async () => {});
+    expect(mockedLoadMessages).toHaveBeenCalledTimes(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(2400); });
+    expect(mockedLoadMessages).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('chat.subagentPreview.noContent')).toBeTruthy();
   });
 
   it('运行中的 subagent preview 会直接消费 child session 的流式增量，而不是等落盘后才显示', async () => {

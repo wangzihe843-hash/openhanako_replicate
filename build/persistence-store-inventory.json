@@ -9026,33 +9026,6 @@
     },
     {
       "sourceFile": "server/routes/agents.ts",
-      "kind": "mkdir",
-      "excerpt": "fs.mkdir(dir, { recursive: true })",
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "storeId": "agent-profile",
-      "exemptionId": null,
-      "ordinal": 0
-    },
-    {
-      "sourceFile": "server/routes/agents.ts",
-      "kind": "remove-path",
-      "excerpt": "fs.unlink(path.join(dir, `agent.${ext}`))",
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "storeId": "agent-profile",
-      "exemptionId": null,
-      "ordinal": 0
-    },
-    {
-      "sourceFile": "server/routes/agents.ts",
-      "kind": "remove-path",
-      "excerpt": "fs.unlink(path.join(dir, `agent.${oldExt}`))",
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "storeId": "agent-profile",
-      "exemptionId": null,
-      "ordinal": 0
-    },
-    {
-      "sourceFile": "server/routes/agents.ts",
       "kind": "write-file",
       "excerpt": "fs.writeFile( path.join(agentDir(engine, id), PUBLIC_PERSONA_FILE_NAME), content, \"utf-8\", )",
       "reason": "Reads, repairs, removes, or edits agent/user profile material.",
@@ -9079,54 +9052,9 @@
       "ordinal": 0
     },
     {
-      "sourceFile": "server/routes/agents.ts",
-      "kind": "write-file",
-      "excerpt": "fs.writeFile(path.join(dir, `agent.${ext}`), buf)",
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "storeId": "agent-profile",
-      "exemptionId": null,
-      "ordinal": 0
-    },
-    {
-      "sourceFile": "server/routes/avatar.ts",
-      "kind": "mkdir",
-      "excerpt": "fs.mkdir(dir, { recursive: true })",
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "storeId": "agent-profile",
-      "exemptionId": null,
-      "ordinal": 0
-    },
-    {
       "sourceFile": "server/routes/avatar.ts",
       "kind": "mkdir",
       "excerpt": "fsSync.mkdirSync(userAvatarDir, { recursive: true })",
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "storeId": "agent-profile",
-      "exemptionId": null,
-      "ordinal": 0
-    },
-    {
-      "sourceFile": "server/routes/avatar.ts",
-      "kind": "remove-path",
-      "excerpt": "fs.unlink(path.join(dir, `${role}.${ext}`))",
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "storeId": "agent-profile",
-      "exemptionId": null,
-      "ordinal": 0
-    },
-    {
-      "sourceFile": "server/routes/avatar.ts",
-      "kind": "remove-path",
-      "excerpt": "fs.unlink(path.join(dir, `${role}.${oldExt}`))",
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
-      "storeId": "agent-profile",
-      "exemptionId": null,
-      "ordinal": 0
-    },
-    {
-      "sourceFile": "server/routes/avatar.ts",
-      "kind": "write-file",
-      "excerpt": "fs.writeFile(path.join(dir, `${role}.${ext}`), buf)",
       "reason": "Reads, repairs, removes, or edits agent/user profile material.",
       "storeId": "agent-profile",
       "exemptionId": null,
@@ -9579,6 +9507,42 @@
       "excerpt": "fs.promises.writeFile(tmp, data)",
       "reason": "Creates, updates, or removes files confined to the requested agent/reserved Xingye scope.",
       "storeId": "xingye-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "server/utils/avatar-files.ts",
+      "kind": "mkdir",
+      "excerpt": "fs.mkdir(dir, { recursive: true })",
+      "reason": "Atomically replaces or removes agent/user avatars, including temporary files in the same profile directory.",
+      "storeId": "agent-profile",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "server/utils/avatar-files.ts",
+      "kind": "remove-path",
+      "excerpt": "fs.unlink(filePath)",
+      "reason": "Atomically replaces or removes agent/user avatars, including temporary files in the same profile directory.",
+      "storeId": "agent-profile",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "server/utils/avatar-files.ts",
+      "kind": "rename",
+      "excerpt": "fs.rename(temporary, target)",
+      "reason": "Atomically replaces or removes agent/user avatars, including temporary files in the same profile directory.",
+      "storeId": "agent-profile",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "server/utils/avatar-files.ts",
+      "kind": "write-file",
+      "excerpt": "fs.writeFile(temporary, data, { flag: \"wx\" })",
+      "reason": "Atomically replaces or removes agent/user avatars, including temporary files in the same profile directory.",
+      "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
     },

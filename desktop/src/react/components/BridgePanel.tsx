@@ -73,8 +73,20 @@ export function BridgePanel() {
 
   const agentMenuRef = useRef<HTMLDivElement>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const bridgeAgentIdRef = useRef(bridgeAgentId);
-  bridgeAgentIdRef.current = bridgeAgentId;
+  const panelActive = useStore(s => s.activePanel === 'bridge');
+  const contextRef = useRef({ agentId: bridgeAgentId, platform, visible: panelActive });
+  const platformRequestRef = useRef(0);
+  const statusRequestRef = useRef(0);
+  const selectionRequestRef = useRef(0);
+
+  // A fresh identity also invalidates A -> B -> A and close/reopen responses.
+  // Layout cleanup retires requests before passive loading effects run.
+  useLayoutEffect(() => {
+    contextRef.current = { agentId: bridgeAgentId, platform, visible: panelActive };
+    return () => {
+      contextRef.current = { ...contextRef.current, visible: false };
+    };
+  }, [bridgeAgentId, platform, panelActive]);
 
   // 加载状态（按 agent 过滤，stale-guard via ref）
   // bridgeAgentId 由 store 播种，播种前不发请求：bridge 读接口只回答指名道姓的
@@ -82,48 +94,61 @@ export function BridgePanel() {
   const loadStatus = useCallback(async () => {
     const snapshotId = bridgeAgentId;
     if (!snapshotId) return;
+    const context = contextRef.current;
+    const request = ++statusRequestRef.current;
+    const isCurrent = () => contextRef.current === context && request === statusRequestRef.current;
     try {
       const res = await hanaFetch(`/api/bridge/status?agentId=${encodeURIComponent(snapshotId)}`);
-      if (bridgeAgentIdRef.current !== snapshotId) return; // stale
+      if (!isCurrent()) return;
       const data = await res.json();
-      if (bridgeAgentIdRef.current !== snapshotId) return; // stale
+      if (!isCurrent()) return;
       setStatusData(data);
       updateSidebarDot(data);
+      if (context.visible) setShowOverlay(!data[context.platform]?.configured);
     } catch {}
   }, [bridgeAgentId]);
 
   // 加载平台数据（按 agent 过滤，stale-guard via ref）
-  const loadPlatformData = useCallback(async (plat: BridgePlatform) => {
+  const loadPlatformData = useCallback(async () => {
     const snapshotId = bridgeAgentId;
-    if (!snapshotId) return;
+    const context = contextRef.current;
+    if (!snapshotId || !context.visible || context.agentId !== snapshotId || context.platform !== platform) return;
+    const request = ++platformRequestRef.current;
+    const statusRequest = ++statusRequestRef.current;
+    const isCurrent = () => contextRef.current === context && request === platformRequestRef.current;
     try {
       const agentQuery = `&agentId=${encodeURIComponent(snapshotId)}`;
       const [statusRes, sessionsRes] = await Promise.all([
         hanaFetch(`/api/bridge/status?agentId=${encodeURIComponent(snapshotId)}`),
-        hanaFetch(`/api/bridge/sessions?platform=${plat}${agentQuery}`),
+        hanaFetch(`/api/bridge/sessions?platform=${platform}${agentQuery}`),
       ]);
-      if (bridgeAgentIdRef.current !== snapshotId) return; // stale
+      if (!isCurrent()) return;
       const sData = await statusRes.json();
       const sessData = await sessionsRes.json();
-      if (bridgeAgentIdRef.current !== snapshotId) return; // stale
-      setStatusData(sData);
-      updateSidebarDot(sData);
-      setShowOverlay(!sData[plat]?.configured);
+      if (!isCurrent()) return;
+      if (statusRequest === statusRequestRef.current) {
+        setStatusData(sData);
+        updateSidebarDot(sData);
+        setShowOverlay(!sData[platform]?.configured);
+      }
       setSessions(sessData.sessions || []);
     } catch (err) {
       console.error('[bridge] load platform data failed:', err);
     }
-  }, [bridgeAgentId]);
+  }, [bridgeAgentId, platform]);
 
   const loadData = useCallback(() => {
-    loadPlatformData(platform);
+    loadPlatformData();
+    ++selectionRequestRef.current;
+    setSessions([]);
+    setShowOverlay(false);
     setChatOpen(false);
     setCurrentKey(null);
     setCurrentName('');
     setCurrentAvatarUrl(null);
     setCurrentIsOwner(false);
     setCurrentSessionPath(null);
-  }, [loadPlatformData, platform]);
+  }, [loadPlatformData]);
 
   const currentAgentId = useStore(s => s.currentAgentId);
   const agents = useStore(s => s.agents);
@@ -136,20 +161,7 @@ export function BridgePanel() {
   // Init bridgeAgentId from store
   useEffect(() => {
     if (!bridgeAgentId && currentAgentId) setBridgeAgentId(currentAgentId);
-  }, [currentAgentId]);
-
-  // Reload when bridgeAgentId changes
-  useEffect(() => {
-    if (bridgeAgentId && visible) {
-      loadPlatformData(platform);
-      setChatOpen(false);
-      setCurrentKey(null);
-      setCurrentName('');
-      setCurrentAvatarUrl(null);
-      setCurrentIsOwner(false);
-      setCurrentSessionPath(null);
-    }
-  }, [bridgeAgentId]);
+  }, [bridgeAgentId, currentAgentId]);
 
   // Close agent menu on click outside
   useEffect(() => {
@@ -162,7 +174,7 @@ export function BridgePanel() {
     return () => document.removeEventListener('mousedown', handler);
   }, [agentMenuOpen]);
 
-  const { visible, close } = usePanel('bridge', loadData, [currentAgentId]);
+  const { visible, close } = usePanel('bridge', loadData, [currentAgentId, bridgeAgentId, platform]);
 
   // 订阅 bridge status 变化（代替 window.__hanaBridgeLoadStatus）
   const bridgeStatusTrigger = useStore(s => s.bridgeStatusTrigger);
@@ -172,7 +184,18 @@ export function BridgePanel() {
 
   // 订阅 bridge 消息（代替 window.__hanaBridgeOnMessage）— 按 agent 过滤
   const bridgeLatestMessage = useStore(s => s.bridgeLatestMessage);
+  const handledMessageRef = useRef(bridgeLatestMessage);
+  // The cooldown survives individual messages; only a new context or unmount cancels it.
+  useEffect(() => () => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+  }, [bridgeAgentId, platform, visible]);
+
   useEffect(() => {
+    if (handledMessageRef.current === bridgeLatestMessage) return;
+    handledMessageRef.current = bridgeLatestMessage;
     if (!bridgeLatestMessage || !visible) return;
     const msg = bridgeLatestMessage;
     // 只响应当前选中 agent 的消息（无 agentId 的旧消息始终通过）
@@ -180,37 +203,27 @@ export function BridgePanel() {
     // Leading + trailing debounce：第一条消息立即刷新，后续 500ms 内攒着，到期再刷一次
     if (!refreshTimerRef.current) {
       // leading：立即刷新
-      loadPlatformData(platform);
+      loadPlatformData();
     } else {
       clearTimeout(refreshTimerRef.current);
     }
     // trailing：500ms 后再刷一次（捕获期间的变化）
     refreshTimerRef.current = setTimeout(() => {
       refreshTimerRef.current = null;
-      loadPlatformData(platform);
+      loadPlatformData();
     }, 500);
-    return () => {
-      if (refreshTimerRef.current) {
-        clearTimeout(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-    };
-  }, [bridgeLatestMessage, visible, platform, loadPlatformData]);
+  }, [bridgeLatestMessage, visible, bridgeAgentId, loadPlatformData]);
 
   const switchTab = useCallback((plat: BridgePlatform) => {
-    setPlatform(plat);
-    setCurrentKey(null);
-    setCurrentName('');
-    setCurrentAvatarUrl(null);
-    setCurrentIsOwner(false);
-    setCurrentSessionPath(null);
-    setChatOpen(false);
+    if (plat === platform) loadData();
+    else setPlatform(plat);
     localStorage.setItem('hana_bridge_tab', plat);
-    loadPlatformData(plat);
-  }, [loadPlatformData]);
+  }, [loadData, platform]);
 
   const openSession = useCallback(async (session: BridgeSession) => {
-    const snapshotId = bridgeAgentId;
+    const context = contextRef.current;
+    const request = ++selectionRequestRef.current;
+    const isCurrent = () => contextRef.current === context && request === selectionRequestRef.current;
     const identity = getBridgeSessionIdentity(session, systemUserName, systemUserAvatarUrl);
     setCurrentKey(session.sessionKey);
     setCurrentName(identity.name);
@@ -220,37 +233,40 @@ export function BridgePanel() {
     try {
       if (!session.sessionPath) throw new Error('bridge sessionPath missing');
       await loadMessages(session.sessionPath);
-      if (bridgeAgentIdRef.current !== snapshotId) return; // stale
+      if (!isCurrent()) return;
       setChatOpen(true);
     } catch (err) {
       console.error('[bridge] open session failed:', err);
-      if (bridgeAgentIdRef.current === snapshotId) setChatOpen(false);
+      if (isCurrent()) setChatOpen(false);
     }
-  }, [bridgeAgentId, systemUserName, systemUserAvatarUrl]);
+  }, [systemUserName, systemUserAvatarUrl]);
 
   const resetSession = useCallback(async () => {
     if (!currentKey) return;
     const snapshotId = bridgeAgentId;
     if (!snapshotId) return;
+    const context = contextRef.current;
+    const request = ++selectionRequestRef.current;
     try {
       await hanaFetch(`/api/bridge/sessions/${encodeURIComponent(currentKey)}/reset?agentId=${encodeURIComponent(snapshotId)}`, { method: 'POST' });
-      if (bridgeAgentIdRef.current !== snapshotId) return; // stale
       if (currentSessionPath) {
+        // The server reset belongs to the captured session even if the user has moved on.
         useStore.getState().clearSession(currentSessionPath);
         // 桥接重置永久退役该 session：clearSession 不碰 stream-resume 元数据，显式清掉避免泄漏。
         clearSessionStreamMeta(currentSessionPath);
       }
+      if (contextRef.current !== context || request !== selectionRequestRef.current) return;
       setChatOpen(false);
       setCurrentKey(null);
       setCurrentName('');
       setCurrentAvatarUrl(null);
       setCurrentIsOwner(false);
       setCurrentSessionPath(null);
-      await loadPlatformData(platform);
+      await loadPlatformData();
     } catch (err) {
       console.error('[bridge] reset session failed:', err);
     }
-  }, [currentKey, currentSessionPath, loadPlatformData, platform, bridgeAgentId]);
+  }, [currentKey, currentSessionPath, loadPlatformData, bridgeAgentId]);
 
   if (!visible) return null;
 

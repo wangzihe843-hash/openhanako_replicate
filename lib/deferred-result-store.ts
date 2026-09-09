@@ -515,13 +515,13 @@ export class DeferredResultStore {
   _flushToDisk() {
     this._saveTimer = null;
     if (!this._dirty) return;
-    this._dirty = false;
     try {
       const obj: any = {};
       for (const [k, v] of this._tasks) obj[k] = v;
       fs.mkdirSync(path.dirname(this._persistPath), { recursive: true });
       atomicWriteSync(this._persistPath, JSON.stringify(obj, null, 2) + "\n");
-    } catch { /* best effort */ }
+      this._dirty = false;
+    } catch { /* Keep dirty so the next save or dispose retries the pending state. */ }
   }
 
   _load() {

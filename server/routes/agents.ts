@@ -43,6 +43,7 @@ import {
 } from "../../lib/memory/pinned-memory-store.ts";
 import { splitByScope, injectGlobalFields } from '../../shared/config-scope.ts';
 import { validateId, agentExists } from "../utils/validation.ts";
+import { deleteAvatar, writeAvatar } from "../utils/avatar-files.ts";
 import {
   OPTIONAL_TOOL_NAMES,
   computeSettingsAvailableToolNames,
@@ -466,11 +467,7 @@ export function createAgentsRoute(engine) {
     const ext = match[1] === "jpeg" ? "jpg" : match[1];
     const buf = Buffer.from(match[2], "base64");
     const dir = path.join(agentDir(engine, id), "avatars");
-    await fs.mkdir(dir, { recursive: true });
-    for (const oldExt of ["png", "jpg", "jpeg", "webp"]) {
-      try { await fs.unlink(path.join(dir, `agent.${oldExt}`)); } catch {}
-    }
-    await fs.writeFile(path.join(dir, `agent.${ext}`), buf);
+    await writeAvatar(dir, "agent", ext, buf);
     engine.invalidateAgentListCache();
     emitAppEvent(engine, "agent-updated", { agentId: id });
     return c.json({ ok: true, ext });
@@ -482,9 +479,7 @@ export function createAgentsRoute(engine) {
       return c.json({ error: "agent not found" }, 404);
     }
     const dir = path.join(agentDir(engine, id), "avatars");
-    for (const ext of ["png", "jpg", "jpeg", "webp"]) {
-      try { await fs.unlink(path.join(dir, `agent.${ext}`)); } catch {}
-    }
+    await deleteAvatar(dir, "agent");
     engine.invalidateAgentListCache();
     emitAppEvent(engine, "agent-updated", { agentId: id });
     return c.json({ ok: true });

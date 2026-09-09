@@ -89,6 +89,11 @@ export function SubagentSessionPreview({ taskId, sessionId = null, sessionPath, 
   });
   const activeStreamTurnRef = useRef(0);
   const pendingCleanupTurnRef = useRef<number | null>(null);
+  const pendingLoadRef = useRef<{
+    taskId: string;
+    sessionPath: string;
+    promise: Promise<void>;
+  } | null>(null);
 
   const beginNextStreamTurn = useCallback(() => {
     activeStreamTurnRef.current += 1;
@@ -124,48 +129,55 @@ export function SubagentSessionPreview({ taskId, sessionId = null, sessionPath, 
       useStore.getState().markSubagentPreviewLoaded(taskId);
       return;
     }
-    if (entry?.loading) return;
-
     let cancelled = false;
     let retryTimer: number | null = null;
 
-    useStore.getState().setSubagentPreviewLoading(taskId, true);
+    const finishLoading = useStore.getState().beginSubagentPreviewLoad(taskId);
 
-    void loadMessages(resolvedSessionPath)
+    // Loading is a display state, not a lock: an earlier mount/effect may have
+    // owned it. Keep the actual request across status changes, and give each
+    // effect its own completion handler so it uses the current stream status.
+    let request = pendingLoadRef.current;
+    if (!request || request.taskId !== taskId || request.sessionPath !== resolvedSessionPath) {
+      request = { taskId, sessionPath: resolvedSessionPath, promise: loadMessages(resolvedSessionPath) };
+      pendingLoadRef.current = request;
+    }
+    const releaseRequest = () => {
+      if (pendingLoadRef.current === request) pendingLoadRef.current = null;
+    };
+
+    void request.promise
       .then(() => {
+        releaseRequest();
         if (cancelled) return;
         const latestState = useStore.getState();
-        const latestEntry = latestState.subagentPreviewByTaskId[taskId];
-        if (latestEntry?.sessionPath && latestEntry.sessionPath !== resolvedSessionPath) return;
 
         const latestItems = sessionScopedValue(latestState, latestState.chatSessions, resolvedSessionPath)?.items ?? EMPTY_ITEMS;
         if (latestItems.length > 0) {
-          latestState.markSubagentPreviewLoaded(taskId);
+          finishLoading(true);
           return;
         }
 
-        latestState.setSubagentPreviewLoading(taskId, false);
         if (streamStatus === 'running') {
+          finishLoading();
           retryTimer = window.setTimeout(() => {
             if (!cancelled) setRetryNonce((n) => n + 1);
           }, EMPTY_SESSION_RETRY_DELAY_MS);
           return;
         }
 
-        const latest = useStore.getState().subagentPreviewByTaskId[taskId];
-        if (!latest?.sessionPath || latest.sessionPath === resolvedSessionPath) useStore.getState().markSubagentPreviewLoaded(taskId);
+        finishLoading(true);
       })
       .catch(() => {
+        releaseRequest();
         if (cancelled) return;
-        const latest = useStore.getState().subagentPreviewByTaskId[taskId];
-        if (!latest?.sessionPath || latest.sessionPath === resolvedSessionPath) {
-          useStore.getState().setSubagentPreviewLoading(taskId, false);
-        }
+        finishLoading();
       });
 
     return () => {
       cancelled = true;
       if (retryTimer !== null) window.clearTimeout(retryTimer);
+      finishLoading();
     };
   }, [taskId, resolvedSessionPath, items.length, retryNonce, streamStatus]);
 

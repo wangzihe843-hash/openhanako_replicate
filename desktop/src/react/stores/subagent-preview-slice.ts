@@ -3,6 +3,8 @@ export interface SubagentPreviewEntry {
   sessionPath: string | null;
   loading: boolean;
   loadedOnce: boolean;
+  /** Transient effect owners; clearing the entry also invalidates outstanding releases. */
+  loadingTokens?: symbol[];
 }
 
 export interface SubagentPreviewSlice {
@@ -10,6 +12,7 @@ export interface SubagentPreviewSlice {
   openSubagentPreview: (taskId: string, sessionPath?: string | null) => void;
   closeSubagentPreview: (taskId: string) => void;
   setSubagentPreviewLoading: (taskId: string, loading: boolean) => void;
+  beginSubagentPreviewLoad: (taskId: string) => (loaded?: boolean) => void;
   markSubagentPreviewLoaded: (taskId: string) => void;
   setSubagentPreviewSessionPath: (taskId: string, sessionPath: string | null) => void;
 }
@@ -58,12 +61,35 @@ export const createSubagentPreviewSlice = (
 
   setSubagentPreviewLoading: (taskId, loading) => set((s) => setEntry(s, taskId, current => ({
     ...current,
-    loading,
+    loading: loading || !!current.loadingTokens?.length,
   }))),
+
+  beginSubagentPreviewLoad: (taskId) => {
+    const token = Symbol(taskId);
+    set((s) => setEntry(s, taskId, current => ({
+      ...current,
+      loading: true,
+      loadingTokens: [...(current.loadingTokens ?? []), token],
+    })));
+    return (loaded = false) => {
+      set((s) => {
+        const current = s.subagentPreviewByTaskId[taskId];
+        if (!current?.loadingTokens?.includes(token)) return {};
+        const { loadingTokens, ...entry } = current;
+        const remaining = loadingTokens.filter((owner) => owner !== token);
+        return setEntry(s, taskId, () => ({
+          ...entry,
+          ...(remaining.length ? { loadingTokens: remaining } : {}),
+          loading: remaining.length > 0,
+          loadedOnce: entry.loadedOnce || loaded,
+        }));
+      });
+    };
+  },
 
   markSubagentPreviewLoaded: (taskId) => set((s) => setEntry(s, taskId, current => ({
     ...current,
-    loading: false,
+    loading: !!current.loadingTokens?.length,
     loadedOnce: true,
   }))),
 
