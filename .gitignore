@@ -12,6 +12,7 @@ user/
 # 文档 / 参考文件
 # ═══════════════════════════════════════════
 .docs/
+/output/
 CLAUDE.md
 AGENTS.md
 docs/superpowers/
