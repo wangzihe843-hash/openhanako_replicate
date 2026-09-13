@@ -113285,6 +113285,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/compat/checks/config-yaml.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "core/first-run.ts",
           "kind": "import-statement"
         },
@@ -113299,7 +113304,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by shared/migrate-config-scope.ts (import-statement); core/migrate-providers.ts (import-statement); core/provider-media-config.ts (import-statement); +12 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by shared/migrate-config-scope.ts (import-statement); core/migrate-providers.ts (import-statement); core/provider-media-config.ts (import-statement); +13 more importer(s)."
     },
     {
       "path": "shared/server-info-probe.cjs",

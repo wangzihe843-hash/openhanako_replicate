@@ -30,7 +30,7 @@ export function rebuildIndex(experienceDir, indexPath) {
   const docs = listExperienceDocuments(experienceDir);
   if (docs.length === 0) {
     // 目录不存在 → 清空索引
-    try { fs.writeFileSync(indexPath, "", "utf-8"); } catch {}
+    fs.writeFileSync(indexPath, "", "utf-8");
     return;
   }
 
@@ -117,7 +117,11 @@ export function syncExperienceCategories(experienceDir, indexPath, categories) {
 
   for (const doc of existingDocs) {
     if (!nextFiles.has(doc.file)) {
-      try { fs.unlinkSync(doc.filePath); } catch {}
+      try {
+        fs.unlinkSync(doc.filePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
     }
   }
 

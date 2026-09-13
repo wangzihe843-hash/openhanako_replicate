@@ -10,11 +10,11 @@
  *
  * 每个检查函数接收 ctx 对象：
  *   { agentDir, hanakoHome, log }
- * 返回值无要求，抛异常会被捕获并记录（不影响启动）。
+ * 一般检查失败仅记录；数据库备份回滚不完整时停止该 agent 初始化，避免重建覆盖残留数据。
  */
 
 import { checkDirs } from "./checks/dirs.ts";
-import { checkFactsDb } from "./checks/facts-db.ts";
+import { checkFactsDb, IncompleteCompatRecoveryError } from "./checks/facts-db.ts";
 import { checkConfigYaml } from "./checks/config-yaml.ts";
 import { createModuleLogger } from "../debug-log.ts";
 
@@ -48,6 +48,7 @@ export async function runCompatChecks(ctx) {
       }
       passed++;
     } catch (err) {
+      if (err instanceof IncompleteCompatRecoveryError) throw err;
       moduleLog.error(`${check.name} 检查失败（不影响启动）: ${err.message}`);
     }
   }

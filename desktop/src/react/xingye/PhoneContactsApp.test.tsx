@@ -61,7 +61,7 @@ const profileMock = vi.hoisted(() => ({
 }));
 
 const recentContextMock = vi.hoisted(() => ({
-  collectRecentContextForAgent: vi.fn(() => ({ items: [], lastEventAt: null })),
+  collectRecentContextForAgent: vi.fn(() => ({ messages: [], hasOpenHanakoMessages: false })),
 }));
 
 const storesMock = vi.hoisted(() => ({

@@ -296,9 +296,9 @@ export function createBrowserTool(getSessionPath: any, options: {
             if (!browser.isRunning(sessionPath)) {
               return toolOk(t("error.browserNotRunning"), { status: "not_running", running: false, url: null });
             }
+            await browser.close(sessionPath);
             logAction(sessionPath, "stop", null, "closed");
             const sessionLog = [...getActionLog(sessionPath)];
-            await browser.close(sessionPath);
             _actionLogs.delete(actionLogKey(sessionPath));
             return toolOk(t("error.browserClosed"), { status: "closed", running: false, url: null, actionLog: sessionLog });
           }

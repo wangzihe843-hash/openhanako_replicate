@@ -55,6 +55,7 @@ describe("agents route: experience toggle", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
@@ -84,5 +85,24 @@ describe("agents route: experience toggle", () => {
     const stored = fs.readFileSync(path.join(agentDir, "experience", "workflow.md"), "utf-8");
     expect(stored).toContain("Keep context boundaries explicit");
     expect(stored).not.toContain("overwrite");
+  });
+
+  it("returns a failure when deleting an old experience category fails", async () => {
+    engine.getAgent.mockReturnValue({ id: agentId, experienceEnabled: true, tools: [] });
+    const unlink = fs.unlinkSync;
+    const oldPath = path.join(agentDir, "experience", "workflow.md");
+    vi.spyOn(fs, "unlinkSync").mockImplementation(file => {
+      if (String(file) === oldPath) throw Object.assign(new Error("category deletion failed"), { code: "EACCES" });
+      return unlink(file);
+    });
+    const res = await app.request('/api/agents/' + agentId + '/experience', {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "" }),
+    });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "category deletion failed" });
+    expect(engine.updateConfig).not.toHaveBeenCalled();
+    expect(fs.readFileSync(oldPath, "utf8")).toContain("Keep context boundaries explicit");
   });
 });

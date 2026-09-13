@@ -1315,8 +1315,11 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
         const { BrowserManager } = await import("../lib/browser/browser-manager.ts");
         const bm = BrowserManager.instance();
         for (const sp of bm.runningSessions) {
-          await bm.suspendForSession(sp);
-          log.log(`浏览器已挂起: ${sp}`);
+          if (await bm.suspendForSession(sp)) {
+            log.log(`浏览器已挂起: ${sp}`);
+          } else {
+            log.warn(`浏览器挂起未完成: ${sp}`);
+          }
         }
       } catch (e) {
         log.error(`浏览器挂起失败: ${e.message}`);

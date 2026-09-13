@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { hanaFetch } from '../api';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSettingsAsyncScope } from '../hooks/use-settings-async-scope';
 import { t } from '../helpers';
 import { updateSettingsSnapshot } from '../actions';
 import { useSettingsStore } from '../store';
@@ -115,9 +115,10 @@ function SwitchButton({
   );
 }
 
-function ObservationPanel({ observation, onClear }: {
+function ObservationPanel({ observation, onClear, clearing }: {
   observation: CacheSnapshotObservation | null;
   onClear: () => void;
+  clearing: boolean;
 }) {
   return (
     <div className={styles['experiments-observation']}>
@@ -167,7 +168,7 @@ function ObservationPanel({ observation, onClear }: {
             </div>
           )}
 
-          <button type="button" className={styles['experiments-clear-btn']} onClick={onClear}>
+          <button type="button" className={styles['experiments-clear-btn']} onClick={onClear} disabled={clearing}>
             {t('settings.experiments.cacheSnapshot.clearObservation')}
           </button>
         </>
@@ -183,6 +184,10 @@ function CacheSnapshotExperiment({ experiment, onValueChange }: {
   const primaryAgentId = useSettingsStore(s => (
     s.agents.find((agent) => agent.isPrimary)?.id || null
   ));
+  const scope = useSettingsAsyncScope(primaryAgentId || '');
+  const requestVersion = useRef(0);
+  const clearingRef = useRef(false);
+  const [clearing, setClearing] = useState(false);
   const [observation, setObservation] = useState<CacheSnapshotObservation | null>(null);
   const [observationLoaded, setObservationLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -195,37 +200,67 @@ function CacheSnapshotExperiment({ experiment, onValueChange }: {
     return `/api/experiments/memory/cache-snapshot-reflection/observation?agentId=${encodeURIComponent(primaryAgentId)}`;
   }, [primaryAgentId]);
 
-  const loadObservation = async () => {
-    if (!observationUrl) return;
-    const res = await hanaFetch(observationUrl);
-    const data = await res.json();
-    setObservation(data.observation || null);
-    setObservationLoaded(true);
-  };
-
-  useEffect(() => {
-    loadObservation().catch(() => {
+  const loadObservation = useCallback(async () => {
+    if (!observationUrl || clearingRef.current) return;
+    const owner = scope.capture();
+    const request = ++requestVersion.current;
+    try {
+      const res = await owner.fetch(observationUrl);
+      const data = await res.json();
+      if (!owner.isCurrent() || request !== requestVersion.current) return;
+      setObservation(data.observation || null);
+      setObservationLoaded(true);
+    } catch (error) {
+      if (!owner.isCurrent() || request !== requestVersion.current) return;
       setObservation(null);
       setObservationLoaded(true);
-    });
-  }, [observationUrl]);
+      console.warn('[experiments] observation load failed:', error);
+    }
+  }, [observationUrl, scope]);
+
+  useEffect(() => {
+    setObservation(null);
+    setObservationLoaded(false);
+    clearingRef.current = false;
+    setClearing(false);
+    setSaving(false);
+    void loadObservation();
+    return () => { requestVersion.current += 1; };
+  }, [loadObservation]);
 
   const setMode = async (next: CacheSnapshotMode) => {
+    const owner = scope.capture();
     setSaving(true);
     try {
       await onValueChange(experiment.id, next);
-      if (next === 'shadow') {
-        loadObservation().catch(() => {});
-      }
+      if (owner.isCurrent() && next === 'shadow') await loadObservation();
+    } catch (error) {
+      if (owner.isCurrent()) useSettingsStore.getState().showToast(error instanceof Error ? error.message : String(error), 'error');
     } finally {
-      setSaving(false);
+      if (owner.isCurrent()) setSaving(false);
     }
   };
 
   const clearObservation = async () => {
-    if (!observationUrl) return;
-    await hanaFetch(observationUrl, { method: 'DELETE' });
-    setObservation(null);
+    if (!observationUrl || clearingRef.current) return;
+    const owner = scope.capture();
+    clearingRef.current = true;
+    setClearing(true);
+    ++requestVersion.current;
+    try {
+      await owner.fetch(observationUrl, { method: 'DELETE' });
+      if (!owner.isCurrent()) return;
+      setObservation(null);
+      setObservationLoaded(true);
+    } catch (error) {
+      if (owner.isCurrent()) useSettingsStore.getState().showToast(error instanceof Error ? error.message : String(error), 'error');
+    } finally {
+      if (owner.isCurrent()) {
+        ++requestVersion.current;
+        clearingRef.current = false;
+        setClearing(false);
+      }
+    }
   };
 
   const hint = [
@@ -244,7 +279,7 @@ function CacheSnapshotExperiment({ experiment, onValueChange }: {
         control={(
           <SwitchButton
             checked={enabled}
-            disabled={saving}
+            disabled={saving || clearing}
             label={t(experiment.titleKey)}
             onClick={() => setMode(enabled ? 'off' : 'shadow')}
           />
@@ -256,14 +291,14 @@ function CacheSnapshotExperiment({ experiment, onValueChange }: {
         control={(
           <SwitchButton
             checked={observeOnly}
-            disabled={!enabled || saving}
+            disabled={!enabled || saving || clearing}
             label={t('settings.experiments.cacheSnapshot.observeOnly')}
             onClick={() => setMode(observeOnly ? 'write' : 'shadow')}
           />
         )}
       />
       {showObservation && (
-        <ObservationPanel observation={observation} onClear={clearObservation} />
+        <ObservationPanel observation={observation} onClear={clearObservation} clearing={clearing} />
       )}
     </>
   );
@@ -355,6 +390,7 @@ function BooleanExperiment({ experiment, onValueChange }: {
 }
 
 export function ExperimentsTab() {
+  const scope = useSettingsAsyncScope('experiments');
   const showToast = useSettingsStore(s => s.showToast);
   const platformName = useSettingsStore(s => s.platformName);
   const snapshotExperiments = useSettingsStore(s => s.settingsSnapshot?.data?.preferences?.experiments);
@@ -381,21 +417,27 @@ export function ExperimentsTab() {
       setLoading(false);
       return undefined;
     }
+    const owner = scope.capture();
+    let cancelled = false;
     setLoading(true);
-    hanaFetch('/api/experiments')
+    owner.fetch('/api/experiments')
       .then((res) => res.json())
-      .then((data) => setExperiments(Array.isArray(data.experiments) ? data.experiments : []))
-      .finally(() => setLoading(false));
-  }, [snapshotExperiments]);
+      .then((data) => { if (!cancelled && owner.isCurrent()) setExperiments(Array.isArray(data.experiments) ? data.experiments : []); })
+      .catch((error: unknown) => { if (!cancelled && owner.isCurrent()) console.warn('[experiments] registry load failed:', error); })
+      .finally(() => { if (!cancelled && owner.isCurrent()) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [snapshotExperiments, scope]);
 
   const updateExperimentValue = async (id: string, value: unknown) => {
-    const res = await hanaFetch(`/api/experiments/${id}`, {
+    const owner = scope.capture();
+    const res = await owner.fetch(`/api/experiments/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value }),
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
+    if (!owner.isCurrent()) return;
     const nextValue = data.value ?? value;
     const applyNextValue = (items: ExperimentDefinition[]) => items.map((item) => (
       item.id === id ? { ...item, value: nextValue } : item

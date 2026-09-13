@@ -1611,6 +1611,23 @@ function repairCronJobModelRefs(ctx) {
   log(`[migrations] #11: cron model refs repaired (${patched})`);
 }
 
+// ENOENT from inside a scan is not proof that its optional root is absent.
+// Confirm the root itself is missing before allowing the runner to mark it done.
+function isMissingMigrationDirectory(directory: string, error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "ENOENT") {
+    return false;
+  }
+  try {
+    fs.statSync(directory);
+    return false;
+  } catch (probeError) {
+    if (typeof probeError === "object" && probeError !== null && "code" in probeError && probeError.code === "ENOENT") {
+      return true;
+    }
+    throw probeError;
+  }
+}
+
 /**
  * #30 — cron job 补齐 automation read model 字段
  *
@@ -1627,13 +1644,17 @@ function migrateCronJobsToAutomationReadModel(ctx) {
       if (!entry.isDirectory()) continue;
       paths.push(path.join(studiosDir, entry.name, "desk", "cron-jobs.json"));
     }
-  } catch {}
+  } catch (error) {
+    if (!isMissingMigrationDirectory(studiosDir, error)) throw error;
+  }
 
   try {
     for (const entry of readDirectoryLikeDirentsSync(agentsDir)) {
       paths.push(path.join(agentsDir, entry.name, "desk", "cron-jobs.json"));
     }
-  } catch {}
+  } catch (error) {
+    if (!isMissingMigrationDirectory(agentsDir, error)) throw error;
+  }
 
   let patchedFiles = 0;
   let patchedJobs = 0;
@@ -2775,13 +2796,17 @@ function migrateDirectNotifyAutomationsToAgentRuns(ctx) {
       if (!entry.isDirectory()) continue;
       paths.push(path.join(studiosDir, entry.name, "desk", "cron-jobs.json"));
     }
-  } catch {}
+  } catch (error) {
+    if (!isMissingMigrationDirectory(studiosDir, error)) throw error;
+  }
 
   try {
     for (const entry of readDirectoryLikeDirentsSync(agentsDir)) {
       paths.push(path.join(agentsDir, entry.name, "desk", "cron-jobs.json"));
     }
-  } catch {}
+  } catch (error) {
+    if (!isMissingMigrationDirectory(agentsDir, error)) throw error;
+  }
 
   let patchedFiles = 0;
   let patchedJobs = 0;
@@ -2808,7 +2833,9 @@ function repairAutomationOwnershipAfterAgentRunConsolidation(ctx) {
         fallbackAgentId: null,
       });
     }
-  } catch {}
+  } catch (error) {
+    if (!isMissingMigrationDirectory(studiosDir, error)) throw error;
+  }
 
   try {
     for (const entry of readDirectoryLikeDirentsSync(agentsDir)) {
@@ -2817,7 +2844,9 @@ function repairAutomationOwnershipAfterAgentRunConsolidation(ctx) {
         fallbackAgentId: entry.name,
       });
     }
-  } catch {}
+  } catch (error) {
+    if (!isMissingMigrationDirectory(agentsDir, error)) throw error;
+  }
 
   let patchedFiles = 0;
   let patchedJobs = 0;

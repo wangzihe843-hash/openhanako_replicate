@@ -1,5 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserManager } from "../lib/browser/browser-manager.ts";
+
+// Persistence is part of lifecycle success; exercise it in an isolated home.
+let browserTestHome: string;
+beforeEach(() => {
+  browserTestHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-browser-manager-"));
+  fs.mkdirSync(path.join(browserTestHome, "user"));
+  BrowserManager.setHanakoHome(browserTestHome);
+});
+afterEach(() => { fs.rmSync(browserTestHome, { recursive: true, force: true }); });
 
 const SP1 = "/sessions/session-1.json";
 const SP2 = "/sessions/session-2.json";
@@ -19,7 +31,7 @@ describe("BrowserManager URL tracking (per-session)", () => {
     });
     let coldState: any = {};
     manager._loadColdState = vi.fn(() => structuredClone(coldState));
-    manager._saveColdState = vi.fn((next) => { coldState = structuredClone(next); });
+    manager._saveColdState = vi.fn((next) => { coldState = structuredClone(next); return true; });
     manager._setSessionEntry(SP1, {
       running: true,
       activeTabId: "tab-2",
@@ -66,7 +78,7 @@ describe("BrowserManager URL tracking (per-session)", () => {
     });
     let coldState: any = {};
     manager._loadColdState = vi.fn(() => structuredClone(coldState));
-    manager._saveColdState = vi.fn((next) => { coldState = structuredClone(next); });
+    manager._saveColdState = vi.fn((next) => { coldState = structuredClone(next); return true; });
     manager._setSessionEntry(SP1, {
       running: true,
       activeTabId: "tail-tab",

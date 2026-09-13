@@ -510,6 +510,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
       // now only reads agent profile material directly (writes for /pinned and /user-profile go
       // through library helpers, not literal fs calls in this file).
       ...rules(["lib/agent-appearance-summary.ts", "lib/compat/checks/config-yaml.ts", "server/routes/agents.ts", "server/routes/avatar.ts"], "Reads, repairs, removes, or edits agent/user profile material.", ["write-file", "copy-file", "rename", "mkdir", "remove-path", "atomic-write"]),
+      ...rules(["lib/compat/checks/config-yaml.ts"], "Publishes a recovered profile configuration through the credential file writer after preserving the original.", ["secret-write"]),
       ...rules(["server/utils/avatar-files.ts"], "Atomically replaces or removes agent/user avatars, including temporary files in the same profile directory.", ["write-file", "rename", "mkdir", "remove-path"]),
     ],
   }),

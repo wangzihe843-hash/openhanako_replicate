@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../stores';
-import { sessionScopedValue } from '../stores/session-slice';
 import type { Agent, Channel } from '../types';
 import { PhoneContactDetail } from './PhoneContactDetail';
 import { PhoneContactSections } from './PhoneContactSections';
@@ -104,20 +103,9 @@ function PhoneContactsAppContent({
   );
   // 仅用于 UI 提示「点击更新会读到多少条最近聊天」；与真实 AI 调用同一个 helper，
   // 避免提示与实际 prompt 内容脱节。
-  const chatSessionsVersionKey = useStore(state => {
-    if (!ownerAgentId) return 0;
-    const sessionPaths = state.sessions
-      .filter(session => session.agentId === ownerAgentId)
-      .map(session => session.path);
-    return sessionPaths.reduce(
-      (acc, path) => acc + (sessionScopedValue(state, state.chatSessions, path)?.items?.length ?? 0),
-      0,
-    );
-  });
-  const recentContextPreview = useMemo(
-    () => collectRecentContextForAgent({ agentId: ownerAgentId }),
-    [ownerAgentId, chatSessionsVersionKey],
-  );
+  const recentMessageCount = useStore(state => (
+    collectRecentContextForAgent({ agentId: ownerAgentId }, state).messages.length
+  ));
   const virtualContacts = contacts.filter(item => item.targetType === 'virtual_contact');
   const generationState = getPhoneContactGenerationState(ownerAgentId);
   const contactUpdateState = getContactAiUpdateState(ownerAgentId);
@@ -742,8 +730,8 @@ function PhoneContactsAppContent({
                     更新联系人：根据最近对话更新已有联系人印象。没有明确变化时可能不会更新；如果 TA 认识了新的人，也会先进入「新的朋友」待确认。
                   </p>
                   <p className={styles.phoneAppHint}>
-                    {recentContextPreview.hasOpenHanakoMessages
-                      ? `更新时会参考最近 OpenHanako 聊天（约 ${recentContextPreview.messages.length} 条）。`
+                    {recentMessageCount > 0
+                      ? `更新时会参考最近 OpenHanako 聊天（约 ${recentMessageCount} 条）。`
                       : '未从当前前端缓存读到最近聊天。本次更新可能不会产生变化。请先在「聊天」tab 打开该角色会话并产生新消息，再返回更新。'}
                   </p>
                   <div className={styles.phoneActionRow}>

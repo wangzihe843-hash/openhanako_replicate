@@ -1,43 +1,39 @@
 /**
- * config-yaml.js — config.yaml 可解析性检查
- *
- * 尝试读取并解析 config.yaml。
- * 如果解析失败（YAML 语法错误），备份原文件并从模板重建。
+ * Check basic config structure, preserving the original before recovery.
  */
-
 import fs from "fs";
 import path from "path";
+import { randomUUID } from "node:crypto";
 import { t } from "../../i18n.ts";
+import { writeSecretFileSync } from "../../../shared/secret-fs.ts";
 
-export function checkConfigYaml({ agentDir, hanakoHome }) {
+export function checkConfigYaml({ agentDir }: { agentDir: string; hanakoHome?: string }) {
   const configPath = path.join(agentDir, "config.yaml");
-  if (!fs.existsSync(configPath)) return;
-
+  let content: string;
   try {
-    const content = fs.readFileSync(configPath, "utf-8");
-    // 简单检测：YAML 至少应该有 agent: 或 api: 这样的顶级 key
-    // 不做完整 YAML 解析（避免引入额外依赖），只检查非空且有基本结构
-    if (!content.trim()) throw new Error(t("error.compatConfigEmpty"));
-    if (!content.includes(":")) throw new Error(t("error.compatConfigInvalid"));
-  } catch (err) {
-    const backupPath = configPath + `.bak-${Date.now()}`;
-    try {
-      fs.renameSync(configPath, backupPath);
-    } catch {}
-
-    // 尝试从产品目录复制模板
-    const templateCandidates = [
-      path.join(path.dirname(path.dirname(agentDir)), "..", "lib", "config.example.yaml"),
-    ];
-    for (const tpl of templateCandidates) {
-      try {
-        if (fs.existsSync(tpl)) {
-          fs.copyFileSync(tpl, configPath);
-          return { fixed: true, message: t("error.compatConfigCorrupted", { msg: err.message }) };
-        }
-      } catch {}
-    }
-
-    return { fixed: true, message: t("error.compatConfigBackedUp", { msg: err.message, backup: path.basename(backupPath) }) };
+    content = fs.readFileSync(configPath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    // A read/permission failure is not evidence of corrupt user configuration.
+    throw error;
   }
+  if (content.trim() && content.includes(":")) return;
+
+  const message = t(content.trim() ? "error.compatConfigInvalid" : "error.compatConfigEmpty");
+  const backupPath = configPath + `.bak-${Date.now()}-${randomUUID()}`;
+  // If preservation fails, leave the original in place and report the failure.
+  fs.renameSync(configPath, backupPath);
+
+  const templatePath = path.join(path.dirname(path.dirname(agentDir)), "..", "lib", "config.example.yaml");
+  let template: string;
+  try {
+    template = fs.readFileSync(templatePath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    // The original really was moved: allow the normal missing-config fallback.
+    return { fixed: true, message: t("error.compatConfigBackedUp", { msg: message, backup: path.basename(backupPath) }) };
+  }
+  // A failed publication preserves the backup and propagates to the compat runner.
+  writeSecretFileSync(configPath, template);
+  return { fixed: true, message: t("error.compatConfigCorrupted", { msg: message }) };
 }

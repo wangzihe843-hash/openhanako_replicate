@@ -6167,8 +6167,8 @@
     },
     {
       "sourceFile": "lib/compat/checks/config-yaml.ts",
-      "kind": "copy-file",
-      "excerpt": "fs.copyFileSync(tpl, configPath)",
+      "kind": "rename",
+      "excerpt": "fs.renameSync(configPath, backupPath)",
       "reason": "Reads, repairs, removes, or edits agent/user profile material.",
       "storeId": "agent-profile",
       "exemptionId": null,
@@ -6176,9 +6176,9 @@
     },
     {
       "sourceFile": "lib/compat/checks/config-yaml.ts",
-      "kind": "rename",
-      "excerpt": "fs.renameSync(configPath, backupPath)",
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
+      "kind": "secret-write",
+      "excerpt": "writeSecretFileSync(configPath, template)",
+      "reason": "Publishes a recovered profile configuration through the credential file writer after preserving the original.",
       "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
@@ -6204,7 +6204,7 @@
     {
       "sourceFile": "lib/compat/checks/facts-db.ts",
       "kind": "rename",
-      "excerpt": "fs.renameSync(dbPath, backupPath)",
+      "excerpt": "fs.renameSync(backup, source)",
       "reason": "Opens or repairs the canonical per-agent facts database.",
       "storeId": "agent-facts-sqlite",
       "exemptionId": null,
@@ -6213,7 +6213,7 @@
     {
       "sourceFile": "lib/compat/checks/facts-db.ts",
       "kind": "rename",
-      "excerpt": "fs.renameSync(walPath, backupPath + ext)",
+      "excerpt": "fs.renameSync(source, backup)",
       "reason": "Opens or repairs the canonical per-agent facts database.",
       "storeId": "agent-facts-sqlite",
       "exemptionId": null,

@@ -333,6 +333,8 @@ export function createChatRoute(engine: any, hub: any, {
   const disconnectAbortGraceMs = resolveDisconnectAbortGraceMs();
   const turnStallAbortMs = resolveTurnStallAbortMs();
   const sessionState = new Map(); // sessionId || legacy sessionPath -> shared stream state
+  type AbortResult = { status: "accepted" | "already_stopped" | "rejected"; reason?: "cancel_failed" | "stale_stream" };
+  const pendingAborts = new Map<string, Promise<AbortResult>>();
 
   function cancelDisconnectAbort() {
     if (disconnectAbortTimer) {
@@ -1798,31 +1800,90 @@ export function createChatRoute(engine: any, hub: any, {
               const abortReason = typeof msg.reason === "string" && msg.reason.trim()
                 ? msg.reason.trim()
                 : "user_abort";
-              if (abortSs) abortSs.isAborted = true;
-              let abortAccepted = false;
+              const abortKey = JSON.stringify([abortTarget.sessionId || abortPath, activeStreamId]);
+              let pendingAbort = pendingAborts.get(abortKey);
+              if (!pendingAbort) {
+                pendingAbort = (async (): Promise<AbortResult> => {
+                  const wasAborted = abortSs?.isAborted === true;
+                  const ownsStream = () => (abortSs?.streamId || null) === activeStreamId;
+                  if (abortSs) abortSs.isAborted = true;
+                  let abortAccepted = false;
+                  let cancellationFailed = false;
+                  const reportFailure = (error: unknown, operation: string) => {
+                    cancellationFailed = true;
+                    errorBus.report(error, {
+                      dedupeKey: `chat-abort:${abortKey}:${operation}`,
+                      context: { wsMessageType: "abort", operation, sessionPath: abortPath, streamId: activeStreamId },
+                    });
+                  };
+                  try {
+                    abortAccepted = !!(await agentReviewTurns.cancelByParent(abortTarget.sessionId, abortReason));
+                  } catch (error) {
+                    reportFailure(error, "cancelByParent");
+                  }
+                  // A review failure must not skip the parent stop, but a delayed
+                  // request must never cancel a replacement stream.
+                  if (!abortAccepted && ownsStream()) {
+                    try {
+                      abortAccepted = !!(await hub.abort(abortPath, { reason: abortReason }));
+                    } catch (error) {
+                      reportFailure(error, "hub.abort");
+                    }
+                  }
+                  if (!ownsStream()) return { status: "rejected", reason: "stale_stream" };
+                  if (cancellationFailed) {
+                    // Terminal events already reset the flag; a new stream owns
+                    // its own cancellation state. Restore only our remaining marker.
+                    if (abortSs?.isAborted === true) abortSs.isAborted = wasAborted;
+                    return { status: "rejected", reason: "cancel_failed" };
+                  }
+                  if (!abortAccepted) {
+                    finishStreamingState(abortSs, abortPath);
+                    broadcast({
+                      type: "status",
+                      isStreaming: false,
+                      sessionPath: abortPath,
+                      streamId: activeStreamId,
+                      aborted: true,
+                      reason: abortReason,
+                    });
+                  }
+                  return { status: abortAccepted ? "accepted" : "already_stopped" };
+                })();
+                pendingAborts.set(abortKey, pendingAbort);
+              }
+              let abortResult: AbortResult;
               try {
-                abortAccepted = !!(await agentReviewTurns.cancelByParent(abortTarget.sessionId, abortReason));
-                if (!abortAccepted) abortAccepted = !!(await hub.abort(abortPath, { reason: abortReason }));
-              } catch {}
-              if (!abortAccepted) {
-                const abortStreamId = abortSs?.streamId || null;
-                finishStreamingState(abortSs, abortPath);
-                broadcast({
-                  type: "status",
-                  isStreaming: false,
-                  sessionPath: abortPath,
-                  streamId: abortStreamId,
-                  aborted: true,
-                  reason: abortReason,
-                });
+                abortResult = await pendingAbort;
+              } finally {
+                if (pendingAborts.get(abortKey) === pendingAbort) pendingAborts.delete(abortKey);
               }
               wsSend(ws, {
                 type: "abort_result",
-                status: abortAccepted ? "accepted" : "already_stopped",
+                ...abortResult,
                 sessionId: abortTarget.sessionId,
                 sessionPath: abortPath,
                 streamId: activeStreamId,
               });
+              if (abortResult.reason === "cancel_failed") {
+                // Existing clients display error inline without finishing the stream.
+                wsSend(ws, {
+                  type: "error",
+                  code: "abort_failed",
+                  message: "Stop could not be confirmed. Please try again.",
+                  sessionId: abortTarget.sessionId,
+                  sessionPath: abortPath,
+                  streamId: activeStreamId,
+                });
+              } else if (abortResult.reason === "stale_stream") {
+                wsSend(ws, {
+                  type: "abort_rejected",
+                  reason: "stale_stream",
+                  sessionId: abortTarget.sessionId,
+                  sessionPath: abortPath,
+                  streamId: abortSs?.streamId || null,
+                });
+              }
               return;
             }
 

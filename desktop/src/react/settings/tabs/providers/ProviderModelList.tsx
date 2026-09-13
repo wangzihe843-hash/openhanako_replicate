@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useSettingsStore, type ProviderSummary } from '../../store';
-import { hanaFetch } from '../../api';
+import { useSettingsAsyncScope } from '../../hooks/use-settings-async-scope';
 import { invalidateConfigCache } from '../../../hooks/use-config';
 import { t, formatContext, lookupModelMeta } from '../../helpers';
 import { useAnchoredDropdown } from '../../hooks/useAnchoredDropdown';
@@ -126,22 +126,30 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
   summary: ProviderSummary;
   onRefresh: () => Promise<void>;
 }) {
+  const scope = useSettingsAsyncScope(providerId);
+  const requestVersion = useRef(0);
   const showToast = useSettingsStore(s => s.showToast);
   const [search, setSearch] = useState('');
   const [customInput, setCustomInput] = useState('');
   const [discoveredModels, setDiscoveredModels] = useState<DiscoveredModel[]>([]);
 
-  const loadDiscoveredModels = async () => {
-    try {
-      const res = await hanaFetch(`/api/providers/${encodeURIComponent(providerId)}/discovered-models`);
-      const data = await res.json();
-      setDiscoveredModels(data.models || []);
-    } catch {
-      // cache miss is fine
-    }
-  };
-
-  useEffect(() => { loadDiscoveredModels(); }, [providerId]);
+  useEffect(() => {
+    const owner = scope.capture();
+    const request = ++requestVersion.current;
+    setDiscoveredModels([]);
+    setFetchHint(null);
+    setSearch('');
+    setCustomInput('');
+    setEditing(null);
+    void owner.fetch(`/api/providers/${encodeURIComponent(providerId)}/discovered-models`)
+      .then(res => res.json())
+      .then(data => { if (owner.isCurrent() && request === requestVersion.current) setDiscoveredModels(data.models || []); })
+      .catch(() => {
+        // A missing discovery cache is optional; preserve any newer manual result.
+        if (owner.isCurrent() && request === requestVersion.current) setDiscoveredModels([]);
+      });
+    return () => { requestVersion.current += 1; };
+  }, [providerId, scope]);
 
   const rawModels = summary.models || [];
   const currentModelIds = rawModels.map(modelIdOf);
@@ -153,35 +161,39 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
 
   const addModelToProvider = async (mid: string) => {
     if (currentModelIds.includes(mid)) return;
+    const owner = scope.capture();
     try {
       const discovered = discoveredModels.find(model => model.id === mid);
       const nextEntry = discovered ? compactDiscoveredModelEntry(discovered) : mid;
-      await hanaFetch('/api/config', {
+      await owner.fetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ providers: { [providerId]: { models: [...rawModels, nextEntry] } } }),
       });
+      if (!owner.isCurrent()) return;
       invalidateConfigCache();
       await onRefresh();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      showToast(msg, 'error');
+      if (owner.isCurrent()) showToast(msg, 'error');
     }
   };
 
   const removeModelFromProvider = async (mid: string) => {
+    const owner = scope.capture();
     try {
       const next = rawModels.filter((m: ProviderModelEntry) => modelIdOf(m) !== mid);
-      await hanaFetch('/api/config', {
+      await owner.fetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ providers: { [providerId]: { models: next } } }),
       });
+      if (!owner.isCurrent()) return;
       invalidateConfigCache();
       await onRefresh();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      showToast(msg, 'error');
+      if (owner.isCurrent()) showToast(msg, 'error');
     }
   };
 
@@ -192,23 +204,34 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
       setCustomInput('');
       return;
     }
+    const owner = scope.capture();
     try {
-      await hanaFetch('/api/config', {
+      await owner.fetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ providers: { [providerId]: { models: [...rawModels, id] } } }),
       });
+      if (!owner.isCurrent()) return;
       invalidateConfigCache();
       setCustomInput('');
       await onRefresh();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      showToast(msg, 'error');
+      if (owner.isCurrent()) showToast(msg, 'error');
     }
   };
 
   const [fetchHint, setFetchHint] = useState<{ msg: string; ok: boolean } | null>(null);
   const fetchHintTimer = useRef<ReturnType<typeof setTimeout>>(null);
+  const fetchButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const button = fetchButtonRef.current;
+    return () => {
+      if (fetchHintTimer.current) clearTimeout(fetchHintTimer.current);
+      button?.classList.remove(styles['spinning']);
+    };
+  }, [scope]);
 
   const showFetchHint = (msg: string, ok: boolean) => {
     if (fetchHintTimer.current) clearTimeout(fetchHintTimer.current);
@@ -217,14 +240,17 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
   };
 
   const fetchModels = async (btn: HTMLButtonElement | null) => {
+    const owner = scope.capture();
+    const request = ++requestVersion.current;
     if (btn) btn.classList.add(styles['spinning']);
     try {
-      const res = await hanaFetch('/api/providers/fetch-models', {
+      const res = await owner.fetch('/api/providers/fetch-models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: providerId, base_url: summary.base_url, api: summary.api }),
       });
       const data = await res.json();
+      if (!owner.isCurrent() || request !== requestVersion.current) return;
       if (data.error) { showFetchHint(t('settings.providers.fetchFailed'), false); return; }
       const models = (data.models || []) as DiscoveredModel[];
       if (models.length === 0) { showFetchHint(t('settings.providers.fetchFailed'), false); return; }
@@ -234,9 +260,9 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
       setDropdownOpen(true);
       showFetchHint(t('settings.providers.fetchSuccess', { name: providerId, n: models.length }), true);
     } catch {
-      showFetchHint(t('settings.providers.fetchFailed'), false);
+      if (owner.isCurrent() && request === requestVersion.current) showFetchHint(t('settings.providers.fetchFailed'), false);
     } finally {
-      if (btn) btn.classList.remove(styles['spinning']);
+      if (btn && owner.isCurrent() && request === requestVersion.current) btn.classList.remove(styles['spinning']);
     }
   };
 
@@ -333,6 +359,7 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
           </svg>
         </button>
         <button
+          ref={fetchButtonRef}
           className={styles['pv-fetch-btn-inline']}
           title={t('settings.providers.fetchModels')}
           onClick={(e) => fetchModels(e.currentTarget)}

@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:38bc85c6f08b1e2de797b8c0bf80d9bc1423b601ac7f66677a875c43c9695d8e",
+  "payloadFingerprint": "sha256:481be9d19271d9bc7d47602bd4bad296c85f711b7c862b9b5ab815bb5b3b68be",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3226,16 +3226,15 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Compatible additive audit fixes at DATA_EPOCH 1. Facts store v2 -> v3 adds only session_fact_commits(session_id, revision), retaining all existing facts/FTS objects; fact and receipt updates are transactional. Memory registry corrects existing pinned-memory path and adds existing reset/fingerprint paths; Xingye contact profiles are covered by the existing tree. JSONL CAS retains row formats/identity, Lore and editor writes publish atomically, checkpoint close ordering and bounded Windows rename retry preserve bytes/metadata, and frozen runtime ownership/cancellation changes retain session, sidecar and workflow formats. Other changed module digests are reviewed individually in docs/audits/2026-09-13-persistence-compatibility-review.md. Pi 0.80.3/session v3, manifest/file-history schemas, source digest compiler/method, exemptions and startup phases are unchanged.",
-    "documentPath": "docs/audits/2026-09-13-persistence-compatibility-review.md",
-    "payloadFingerprint": "sha256:38bc85c6f08b1e2de797b8c0bf80d9bc1423b601ac7f66677a875c43c9695d8e"
+    "compatibilityReason": "Priority warning fixes preserve DATA_EPOCH 1, SQLite schemas and existing serialized fields. Config recovery uses the credential writer after backup. UUID database backup sidecars without their same-group main file prevent retry until restored; complete historic backups remain accepted. Migration failures stay pending; browser persistence is acknowledged before lifecycle completion. See docs/audits/2026-09-13-warning-priority-fixes.md.",
+    "payloadFingerprint": "sha256:481be9d19271d9bc7d47602bd4bad296c85f711b7c862b9b5ab815bb5b3b68be"
   },
   "schemas": [
     {
       "contract": "user profile, experience index, and diary Markdown conventions",
       "kind": "directory-contract",
       "module": "lib/tools/experience.ts",
-      "sourceHash": "sha256:8b502782c72332b1ad90b6e38a1659e3ecffd3e683a33b7b02368c8b238d4400",
+      "sourceHash": "sha256:b737786e82bee0f9e5e9fd76e4dfdb3637a1b0138ab43f6034172367ea28c57d",
       "storeId": "agent-authored-records"
     },
     {
@@ -3673,7 +3672,7 @@
       "contract": "server-info writer and desktop bootstrap reader",
       "kind": "runtime-contract",
       "module": "server/index.ts",
-      "sourceHash": "sha256:a6e8245c0a31afd416372f1c58b47b2663554614c31c6a6bd734153ebb933995",
+      "sourceHash": "sha256:74a5cb5a4e83e658c9db23ffc133f173d8f624308841a87ba99f7459cea34b94",
       "storeId": "server-runtime-info"
     },
     {
@@ -7221,7 +7220,7 @@
     },
     {
       "exemptionId": null,
-      "kind": "copy-file",
+      "kind": "rename",
       "ordinal": 0,
       "reason": "Reads, repairs, removes, or edits agent/user profile material.",
       "sourceFile": "lib/compat/checks/config-yaml.ts",
@@ -7229,9 +7228,9 @@
     },
     {
       "exemptionId": null,
-      "kind": "rename",
+      "kind": "secret-write",
       "ordinal": 0,
-      "reason": "Reads, repairs, removes, or edits agent/user profile material.",
+      "reason": "Publishes a recovered profile configuration through the credential file writer after preserving the original.",
       "sourceFile": "lib/compat/checks/config-yaml.ts",
       "storeId": "agent-profile"
     },

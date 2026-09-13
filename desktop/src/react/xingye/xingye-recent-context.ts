@@ -124,12 +124,11 @@ function sessionModifiedTime(session: Session): number {
  * 取该 agentId 下被 in-memory chatSessions 缓存的最新一条 session。
  * 不触发 loadMessages，不动 store。
  */
-function pickCachedLatestSessionForAgent(agentId: string): {
+function pickCachedLatestSessionForAgent(agentId: string, state: ReturnType<typeof useStore.getState>): {
   session: Session | null;
   reason: 'cached' | 'no_session' | 'not_cached';
   totalSessionsForAgent: number;
 } {
-  const state = useStore.getState();
   const sessionsForAgent = state.sessions
     .filter(session => session.agentId === agentId)
     .sort((a, b) => sessionModifiedTime(b) - sessionModifiedTime(a));
@@ -170,7 +169,7 @@ function buildSummaryText(messages: XingyeRecentMessage[], maxTotalChars: number
  * 永远不抛错；任何失败路径都返回空 context + 带说明的 sourceNotes，
  * 调用方据此把"未读到聊天"原样写进 prompt / UI 提示。
  */
-export function collectRecentContextForAgent(args: CollectArgs): XingyeRecentContext {
+export function collectRecentContextForAgent(args: CollectArgs, state = useStore.getState()): XingyeRecentContext {
   const maxContentChars = args.maxContentChars ?? DEFAULT_MAX_CONTENT_CHARS;
   const maxMessages = args.maxMessages ?? DEFAULT_MAX_MESSAGES;
   const maxTotalChars = args.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS;
@@ -189,7 +188,7 @@ export function collectRecentContextForAgent(args: CollectArgs): XingyeRecentCon
 
   let pick: ReturnType<typeof pickCachedLatestSessionForAgent>;
   try {
-    pick = pickCachedLatestSessionForAgent(agentId);
+    pick = pickCachedLatestSessionForAgent(agentId, state);
   } catch (err) {
     return {
       ...empty,
@@ -214,8 +213,7 @@ export function collectRecentContextForAgent(args: CollectArgs): XingyeRecentCon
     };
   }
 
-  const latestState = useStore.getState();
-  const cached = sessionScopedValue(latestState, latestState.chatSessions, pick.session.path);
+  const cached = sessionScopedValue(state, state.chatSessions, pick.session.path);
   const items: ChatListItem[] = cached?.items ?? [];
   if (items.length === 0) {
     return {

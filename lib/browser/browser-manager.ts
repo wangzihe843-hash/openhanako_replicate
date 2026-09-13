@@ -382,6 +382,7 @@ export class BrowserManager {
     delete entry.health;
     delete entry.unavailableReason;
     delete entry.unavailableAt;
+    delete entry.hostClosed;
   }
 
   async _sendSessionCmd(cmd, params: any = {}, timeoutMs?): Promise<any> {
@@ -443,7 +444,7 @@ export class BrowserManager {
 
   /**
    * 巡检一轮：agent 与用户都超过 IDLE_RECLAIM_MS 没碰过的 running 浏览器，
-   * suspend 冷保存（写盘 + view 进程退出），不销毁标签组。
+   * suspend 冷保存（写盘 + 摘下 view），不销毁标签组。
    * viewer 当前可见展示的 session 豁免——用户可能正在读页面。
    */
   async _sweepIdleSessions() {
@@ -465,7 +466,7 @@ export class BrowserManager {
       const lastAgent = entry.lastAgentOpAt || 0;
       const lastUser = this._userActivityAt.get(key) || 0;
       if (now - Math.max(lastAgent, lastUser) < IDLE_RECLAIM_MS) continue;
-      log.log(`双闲置回收（suspend 冷保存）: ${sp}`);
+      log.log(`尝试双闲置回收（suspend 冷保存）: ${sp}`);
       try { await this.suspendForSession(sp); } catch (err) { log.warn(`idle suspend failed: ${_errorMessage(err)}`); }
     }
   }
@@ -483,17 +484,21 @@ export class BrowserManager {
 
   /** 淘汰最久未用的 running session（挂起它），返回是否成功 */
   async _evictLru() {
-    // 从 LRU 头部找第一个 running 的 session 淘汰
-    for (const key of this._lruOrder) {
+    // 每个候选最多尝试一次；失败保留原顺序，不能反复选择同一项。
+    for (const key of [...this._lruOrder]) {
       const entry = this._sessions.get(key);
       const sp = entry?.sessionPath || key;
       if (this.isRunning(sp)) {
-        log.log(`LRU 淘汰: ${sp}`);
-        await this.suspendForSession(sp);
-        return true;
+        log.log(`尝试 LRU 淘汰: ${sp}`);
+        try {
+          await this.suspendForSession(sp);
+          if (!this.isRunning(sp)) return true;
+        } catch (error) {
+          log.warn(`LRU suspend failed for ${sp}: ${_errorMessage(error)}`);
+        }
       }
     }
-    log.warn("LRU eviction found no running session to evict");
+    log.warn("LRU eviction could not suspend any running session");
     return false;
   }
 
@@ -509,10 +514,14 @@ export class BrowserManager {
     }
   }
 
-  _saveColdState(state) {
+  _saveColdState(state: Record<string, unknown>) {
     try {
       atomicWriteSync(_coldStatePath(), JSON.stringify(state, null, 2) + "\n");
-    } catch {}
+      return true;
+    } catch (error) {
+      log.warn(`Browser cold state could not be persisted: ${_errorMessage(error)}`);
+      return false;
+    }
   }
 
   _saveColdUrl(sessionPath, url) {
@@ -552,14 +561,16 @@ export class BrowserManager {
       state[key] = { ...workspace, sessionPath };
       this._deleteColdStateKeysForSession(state, sessionPath, key);
     }
-    this._saveColdState(state);
+    return this._saveColdState(state);
   }
 
   _removeColdUrl(sessionPath) {
     if (!sessionPath) return;
     const state = this._loadColdState();
     this._deleteColdStateKeysForSession(state, sessionPath);
-    this._saveColdState(state);
+    if (this._saveColdState(state) === false) {
+      throw new Error("Browser closed state could not be persisted");
+    }
   }
 
   /**
@@ -602,7 +613,9 @@ export class BrowserManager {
       sessionPath: targetSessionPath,
     };
     this._deleteColdStateKeysForSession(state, targetSessionPath, targetKey);
-    this._saveColdState(state);
+    if (this._saveColdState(state) === false) {
+      throw new Error("browser session fork target state could not be persisted");
+    }
     if (!this._coldStateRecordForSession(this._loadColdState(), targetSessionPath)) {
       throw new Error("browser session fork target state could not be persisted");
     }
@@ -621,7 +634,9 @@ export class BrowserManager {
     const state = this._loadColdState();
     const existing = this._coldStateRecordForSession(state, sessionPath);
     this._deleteColdStateKeysForSession(state, sessionPath);
-    if (existing) this._saveColdState(state);
+    if (existing && this._saveColdState(state) === false) {
+      throw new Error("Browser fork cleanup could not be persisted");
+    }
     this._deleteSessionEntry(sessionPath);
     this._removeLru(sessionPath);
     return { discarded: !!existing };
@@ -825,7 +840,10 @@ export class BrowserManager {
     }
 
     if (this.runningSessions.length >= MAX_INSTANCES) {
-      await this._evictLru();
+      const evicted = await this._evictLru();
+      if (!evicted && this.runningSessions.length >= MAX_INSTANCES) {
+        throw new Error(`Browser limit reached: max ${MAX_INSTANCES} concurrent instances`);
+      }
     }
 
     const result = await this._sendCmd("resume", { sessionPath });
@@ -875,7 +893,13 @@ export class BrowserManager {
         }
       }, timeoutMs);
       this._pending.set(id, { resolve, reject, timer });
-      this._transport.send({ type: "browser-cmd", id, cmd, params });
+      try {
+        this._transport.send({ type: "browser-cmd", id, cmd, params });
+      } catch (error) {
+        clearTimeout(timer);
+        this._pending.delete(id);
+        reject(error);
+      }
     });
   }
 
@@ -921,24 +945,25 @@ export class BrowserManager {
   async close(sessionPath) {
     const entry = this._getSessionEntry(sessionPath);
     if (!entry) return;
+    await this._closeTrackedSession(sessionPath, this.isRunning(sessionPath) ? "close" : "destroyView");
+  }
 
-    if (!this.isRunning(sessionPath)) {
-      try { await this._sendCmd("destroyView", { sessionPath }); } catch {}
-      this._deleteSessionEntry(sessionPath);
-      this._removeLru(sessionPath);
-      this._removeColdUrl(sessionPath);
-      log.log(`浏览器已关闭 ${sessionPath}`);
-      return;
-    }
+  async _closeTrackedSession(sessionPath: string, command: "close" | "destroyView") {
+    const entry = this._getSessionEntry(sessionPath);
+    // A disconnected transport is not proof of host shutdown. Missing host views
+    // already receive a successful {} acknowledgement from close/destroyView.
+    if (entry?.hostClosed !== true) await this._sendCmd(command, { sessionPath });
 
-    try { await this._sendCmd("close", { sessionPath }); } catch {}
-
-    // 从 Map 和 LRU 中移除
-    this._deleteSessionEntry(sessionPath);
+    this._setSessionEntry(sessionPath, { ...entry, running: false, hostClosed: true });
     this._removeLru(sessionPath);
-    // 从冷保存中移除
-    this._removeColdUrl(sessionPath);
-
+    try {
+      this._removeColdUrl(sessionPath);
+    } catch (error) {
+      // The host did close; keep a non-resumable cleanup record for a disk-only retry.
+      this._markSessionUnavailable(sessionPath, error);
+      throw error;
+    }
+    this._deleteSessionEntry(sessionPath);
     log.log(`浏览器已关闭 ${sessionPath}`);
   }
 
@@ -949,18 +974,27 @@ export class BrowserManager {
    * @param {object} [options]
    * @param {boolean} [options.keepViewerVisible] - 挂起后不隐藏 viewer 窗口。
    *   会话切换用：窗口保持可见，由随后的 notifyViewerSession 重绘目标 session。
+   * @returns {Promise<boolean>} true 表示已完成或无需挂起；false 表示失败并保留状态供重试。
    */
   async suspendForSession(sessionPath, { keepViewerVisible = false } = {}) {
     const entry = this._getSessionEntry(sessionPath);
-    if (!entry || !this.isRunning(sessionPath)) return;
+    if (!entry || !this.isRunning(sessionPath)) return true;
 
-    this._saveColdWorkspace(sessionPath, entry);
-    log.log(`挂起浏览器 ${sessionPath}`);
-    try { await this._sendCmd("suspend", { sessionPath, keepViewerVisible }); } catch {}
+    // Returning false keeps shutdown/session-switch loops progressing without
+    // discarding a failed candidate. Capacity callers verify eviction separately.
+    try {
+      if (this._saveColdWorkspace(sessionPath, entry) === false) return false;
+      await this._sendCmd("suspend", { sessionPath, keepViewerVisible });
+    } catch (error) {
+      log.warn(`Browser suspend failed for ${sessionPath}: ${_errorMessage(error)}`);
+      return false;
+    }
 
-    // 挂起完成，冷状态已写磁盘，从 Map 中移除避免僵尸条目累积
+    // Only confirmed suspension with a persisted snapshot releases tracking.
     this._deleteSessionEntry(sessionPath);
     this._removeLru(sessionPath);
+    log.log(`挂起浏览器 ${sessionPath}`);
+    return true;
   }
 
   /**
@@ -1003,7 +1037,10 @@ export class BrowserManager {
     // 并发数检查
     const runningCount = this.runningSessions.length;
     if (runningCount >= MAX_INSTANCES) {
-      await this._evictLru();
+      const evicted = await this._evictLru();
+      if (!evicted && this.runningSessions.length >= MAX_INSTANCES) {
+        throw new Error(`Browser limit reached: max ${MAX_INSTANCES} concurrent instances`);
+      }
     }
 
     // 1. 热恢复：view 还在内存中
@@ -1051,14 +1088,7 @@ export class BrowserManager {
       return;
     }
 
-    // 销毁挂起的 view
-    try { await this._sendCmd("destroyView", { sessionPath }); } catch {}
-    // 从 Map 和 LRU 中清理
-    this._deleteSessionEntry(sessionPath);
-    this._removeLru(sessionPath);
-    // 从冷保存中移除
-    this._removeColdUrl(sessionPath);
-    log.log(`已关闭 session 浏览器 ${sessionPath}`);
+    await this._closeTrackedSession(sessionPath, "destroyView");
   }
 
   /**
