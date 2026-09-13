@@ -247,28 +247,27 @@ describe('xingye-files-store', () => {
     await expect(deleteFileEntry('agent-x', 'entry-1')).resolves.toBe(true);
   });
 
-  it('updateFileEntry deletes old row and appends updated one', async () => {
+  it('updateFileEntry atomically replaces the selected row', async () => {
     postMock
       .mockResolvedValueOnce({
         ok: true,
         records: [
           {
-            id: 'e1', agentId: 'agent-x', folderId: 'f-1', title: '旧标题',
+            id: 'e1', key: 'e1', agentId: 'agent-x', folderId: 'f-1', title: '旧标题',
             body: 'old body', createdAt: '2026-05-10T10:00:00.000Z', updatedAt: '2026-05-10T10:00:00.000Z',
           },
         ],
       })
-      .mockResolvedValueOnce({ ok: true, deleted: true })
-      .mockResolvedValueOnce({ ok: true });
+      .mockImplementationOnce(async (body) => ({ ok: true, updated: true, record: body.data }));
 
     const updated = await updateFileEntry('agent-x', 'e1', { title: '新标题', body: 'new body' });
     expect(updated?.title).toBe('新标题');
     expect(updated?.body).toBe('new body');
     expect(updated?.folderId).toBe('f-1');
 
-    const del = lastCall('deleteJsonlRecord');
-    expect(del.recordId).toBe('e1');
-    const append = lastCall('appendJsonl');
+    expect(postMock.mock.calls.some(([body]) => body.action === 'deleteJsonlRecord')).toBe(false);
+    const append = lastCall('compareAndSwapJsonlRecord');
+    expect(append.recordId).toBe('e1');
     const data = append.data as { id: string; key: string; title: string };
     expect(data.id).toBe('e1');
     expect(data.key).toBe('e1');
@@ -488,10 +487,8 @@ describe('xingye-files-store', () => {
         .mockResolvedValueOnce({ ok: true, records: [draftRow] })
         // updateFileEntry → listFileEntries again
         .mockResolvedValueOnce({ ok: true, records: [TARGET_ENTRY] })
-        // updateFileEntry → deleteJsonlRecord(entries)
-        .mockResolvedValueOnce({ ok: true, deleted: true })
-        // updateFileEntry → appendJsonl(entries)
-        .mockResolvedValueOnce({ ok: true })
+        // updateFileEntry → compareAndSwapJsonlRecord(entries)
+        .mockImplementationOnce(async (body) => ({ ok: true, updated: true, record: body.data }))
         // bumpFolderUpdatedAtBestEffort → readJson(folders)
         .mockResolvedValueOnce({ ok: true, missing: true })
         // deleteJsonlRecord(drafts)
@@ -506,8 +503,8 @@ describe('xingye-files-store', () => {
       // 不应该有 from-draft-* entry append
       const entryAppends = postMock.mock.calls
         .map((c) => c[0] as Call)
-        .filter((c) => c.action === 'appendJsonl' && c.relativePath === XINGYE_FILES_ENTRIES_JSONL);
-      // 1 个 append（来自 updateFileEntry 的"删旧 + appen 新"）
+        .filter((c) => c.action === 'compareAndSwapJsonlRecord' && c.relativePath === XINGYE_FILES_ENTRIES_JSONL);
+      // Exactly one conditional replacement; no entry deletion or append.
       expect(entryAppends).toHaveLength(1);
       const data = entryAppends[0].data as { id: string; body: string };
       expect(data.id).toBe('e-target');
@@ -544,8 +541,7 @@ describe('xingye-files-store', () => {
         .mockResolvedValueOnce({ ok: true, records: [TARGET_ENTRY] })
         .mockResolvedValueOnce({ ok: true, records: [draftRow] })
         .mockResolvedValueOnce({ ok: true, records: [TARGET_ENTRY] })
-        .mockResolvedValueOnce({ ok: true, deleted: true })
-        .mockResolvedValueOnce({ ok: true })
+        .mockImplementationOnce(async (body) => ({ ok: true, updated: true, record: body.data }))
         .mockResolvedValueOnce({ ok: true, missing: true })
         .mockResolvedValue({ ok: true, deleted: true });
       const entry = await confirmFileDraft('agent-x', 'd-by-name');

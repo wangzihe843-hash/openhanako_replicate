@@ -159,7 +159,7 @@ export class ChannelRouter {
     }
   }
 
-  _createChannelPhoneTools(agentId, channelName, { setDecision }: any = {}) {
+  _createChannelPhoneTools(agentId, channelName, { setDecision, signal }: any = {}) {
     const engine = this._engine;
     const isZh = getLocale().startsWith("zh");
     const channelFile = path.join(engine.channelsDir || "", `${channelName}.md`);
@@ -284,7 +284,26 @@ export class ChannelRouter {
             return notMemberResult("reply");
           }
 
-          const { timestamp } = await appendMessage(channelFile, agentId, content);
+          let timestamp;
+          try {
+            ({ timestamp } = await appendMessage(channelFile, agentId, content, {
+              memberId: agentId,
+              signal,
+              canWrite: () => !decided && (!engine.isChannelsEnabled || engine.isChannelsEnabled()),
+            }));
+          } catch (error) {
+            if (error.code === "channel_not_member") {
+              markDecision({ type: "permission_blocked", replied: false, permissionBlocked: true, reason: "not a channel member" });
+              return notMemberResult("reply");
+            }
+            if (error.code === "channel_not_found" || error.code === "channel_write_cancelled") {
+              return {
+                content: [{ type: "text", text: error.message }],
+                details: { action: "reply", error: error.code },
+              };
+            }
+            throw error;
+          }
           const decision = {
             type: "reply",
             replied: true,
@@ -916,6 +935,7 @@ export class ChannelRouter {
           returnDiagnostics: true,
           extraCustomTools: this._createChannelPhoneTools(agentId, channelName, {
             setDecision: (next) => { if (!decision) decision = next; },
+            signal,
           }),
           onSessionReady: (sessionPath) => {
             activeSessionPath = sessionPath;

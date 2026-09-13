@@ -791,72 +791,89 @@ export async function revealDeskDirectory(directoryPath: string): Promise<boolea
   return true;
 }
 
+export function jianOwnerKey(s = useStore.getState()): string {
+  const connection = resolveServerConnection(s);
+  return JSON.stringify([connection?.connectionId, connection?.baseUrl, connection?.token,
+    activeDeskMountId(s), s.deskBasePath, selectedDeskAgentBody(s)]);
+}
+
+let jianLoadVersion = 0;
 export async function loadJianContent(): Promise<void> {
   const s = useStore.getState();
   if (!hasServerConnection(s)) return;
+  const owner = jianOwnerKey(s);
+  const version = ++jianLoadVersion;
+  const beforeContent = s.deskJianContent;
+  const isCurrent = () => version === jianLoadVersion && jianOwnerKey() === owner
+    && useStore.getState().deskJianContent === beforeContent;
   try {
     const params = new URLSearchParams();
     const mountId = activeDeskMountId(s);
     if (mountId) {
       params.set('mountId', mountId);
       params.set('name', 'jian.md');
-    } else if (s.deskBasePath) {
-      params.set('dir', s.deskBasePath);
-      addSelectedDeskAgentParam(params, s);
     } else {
+      if (s.deskBasePath) params.set('dir', s.deskBasePath);
       addSelectedDeskAgentParam(params, s);
     }
     const qs = params.toString() ? `?${params}` : '';
-    const res = await hanaFetch(`${mountId ? '/api/workbench/content' : '/api/desk/jian'}${qs}`);
-    if (mountId) {
-      if (res.status === 404) {
-        useStore.getState().setDeskJianContent(null);
-        return;
-      }
-      if (!res.ok) throw new Error(`jian.md load failed: ${res.status}`);
-      useStore.getState().setDeskJianContent(await res.text() || null);
+    const res = await hanaFetch(`${mountId ? '/api/workbench/content' : '/api/desk/jian'}${qs}`, {
+      connection: resolveServerConnection(s)!, throwOnHttpError: false,
+    });
+    if (res.status === 404 && mountId) {
+      if (isCurrent()) useStore.getState().setDeskJianContent(null);
       return;
     }
-    const data = await res.json();
-    useStore.getState().setDeskJianContent(data.content || null);
+    if (!res.ok) throw new Error(`jian.md load failed: ${res.status}`);
+    const content = mountId ? await res.text() : (await res.json()).content;
+    if (isCurrent()) useStore.getState().setDeskJianContent(content || null);
   } catch (err) {
     console.error('[jian] load jian.md failed:', err);
-    useStore.getState().setDeskJianContent(null);
+    if (isCurrent()) useStore.getState().setDeskJianContent(null);
   }
 }
 
-export async function saveJianContent(content?: string): Promise<void> {
-  const s = useStore.getState();
-  if (!hasServerConnection(s)) return;
+// Serialize writes for each document, including across editor remounts.
+const jianWrites = new Map<string, Promise<void>>();
+export function saveJianContent(content?: string, owner = useStore.getState()): Promise<void> {
+  const s = { ...owner };
+  if (!hasServerConnection(s)) return Promise.resolve();
   const text = content ?? s.deskJianContent ?? '';
-  try {
-    const mountId = activeDeskMountId(s);
-    await hanaFetch(mountId ? '/api/workbench/actions' : '/api/desk/jian', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(mountId
-        ? { action: 'writeText', mountId, subdir: '', name: 'jian.md', content: text }
-        : { ...selectedDeskAgentBody(s), dir: s.deskBasePath || undefined, subdir: '', content: text }),
-    });
-    useStore.getState().setDeskJianContent(text || null);
-    const st2 = useStore.getState();
-    const params = new URLSearchParams();
-    const activeMountId = activeDeskMountId(st2);
-    if (activeMountId) {
-      params.set('mountId', activeMountId);
-    } else if (st2.deskBasePath) {
-      params.set('dir', st2.deskBasePath);
-      addSelectedDeskAgentParam(params, st2);
+  const key = jianOwnerKey(s);
+  const connection = resolveServerConnection(s)!;
+  const previous = jianWrites.get(key) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(async () => {
+    try {
+      const mountId = activeDeskMountId(s);
+      await hanaFetch(mountId ? '/api/workbench/actions' : '/api/desk/jian', {
+        connection,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mountId
+          ? { action: 'writeText', mountId, subdir: '', name: 'jian.md', content: text }
+          : { ...selectedDeskAgentBody(s), dir: s.deskBasePath || undefined, subdir: '', content: text }),
+      });
+      if (jianOwnerKey() !== key) return;
+      const params = new URLSearchParams();
+      if (mountId) params.set('mountId', mountId);
+      else {
+        if (s.deskBasePath) params.set('dir', s.deskBasePath);
+        addSelectedDeskAgentParam(params, s);
+      }
+      const qs = params.toString() ? `?${params}` : '';
+      const res = await hanaFetch(`${mountId ? '/api/workbench/files' : '/api/desk/files'}${qs}`, { connection });
+      const data = await res.json();
+      if (jianOwnerKey() !== key) return;
+      useStore.getState().setDeskFiles(data.files || []);
+      useStore.getState().setDeskTreeFiles('', data.files || []);
+    } catch (err) {
+      console.error('[jian] save jian.md failed:', err);
+      useStore.getState().addToast?.(String(err), 'error');
     }
-    const qs = params.toString() ? `?${params}` : '';
-    const res2 = await hanaFetch(`${activeMountId ? '/api/workbench/files' : '/api/desk/files'}${qs}`);
-    const data2 = await res2.json();
-    const st = useStore.getState();
-    st.setDeskFiles(data2.files || []);
-    st.setDeskTreeFiles('', data2.files || []);
-  } catch (err) {
-    console.error('[jian] save jian.md failed:', err);
-  }
+  });
+  jianWrites.set(key, next);
+  void next.finally(() => { if (jianWrites.get(key) === next) jianWrites.delete(key); });
+  return next;
 }
 
 export async function deskUploadFiles(paths: string[]): Promise<void> {

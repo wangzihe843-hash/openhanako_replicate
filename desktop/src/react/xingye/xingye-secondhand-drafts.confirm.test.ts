@@ -5,10 +5,11 @@
  * 已有挂牌上，**保持 entryId 不变**（这正是买家聊天得以延续的前提）。
  *
  * 用一个有状态的内存 postXingyeStorage mock 模拟整套 jsonl 存储（listJsonl / appendJsonl /
- * writeJsonl / deleteJsonlRecord / readJson / writeJson），覆盖 confirm 流程里
+ * writeJsonl / compareAndSwapJsonlRecord / deleteJsonlRecord / readJson / writeJson），覆盖 confirm 流程里
  * listAppEntries → listSecondhandDrafts → updateAppEntry → 删草稿 → 事件日志 的全部调用。
  */
 
+import { isDeepStrictEqual } from 'node:util';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const postMock = vi.hoisted(() => vi.fn());
@@ -49,6 +50,20 @@ function installStatefulStore() {
       case 'writeJsonl': {
         jsonl.set(keyOf(c), (c.records ?? []).map((r: unknown) => JSON.stringify(r)));
         return { ok: true };
+      }
+      case 'compareAndSwapJsonlRecord': {
+        const arr = jsonl.get(keyOf(c)) ?? [];
+        const index = arr.findIndex((line) => {
+          const row = JSON.parse(line);
+          return row.id === c.recordId || row.key === c.recordId;
+        });
+        if (index < 0) return { ok: true, updated: false, record: null };
+        const current = JSON.parse(arr[index]);
+        if (!isDeepStrictEqual(current, c.expected)) {
+          return { ok: true, updated: false, record: current };
+        }
+        arr[index] = JSON.stringify(c.data);
+        return { ok: true, updated: true, record: JSON.parse(arr[index]) };
       }
       case 'deleteJsonlRecord': {
         const arr = jsonl.get(keyOf(c)) ?? [];

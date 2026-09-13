@@ -47,11 +47,15 @@ vi.mock('../../stores/desk-actions', async (importOriginal) => {
   };
 });
 
-vi.mock('../../services/resource-events', () => ({
-  retainLocalFileResourceWatch: mocks.retainLocalFileResourceWatch,
-  retainResourceWatch: mocks.retainResourceWatch,
-  resourceWatchKey: mocks.resourceWatchKey,
-}));
+vi.mock('../../services/resource-events', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/resource-events')>();
+  return {
+    ...actual,
+    retainLocalFileResourceWatch: mocks.retainLocalFileResourceWatch,
+    retainResourceWatch: mocks.retainResourceWatch,
+    resourceWatchKey: mocks.resourceWatchKey,
+  };
+});
 
 describe('DeskSection workspace watching', () => {
   let emitWorkspaceChanged: ((event: {

@@ -61,6 +61,18 @@ describe("FileHistoryStore", () => {
     store.close();
   });
 
+  it("promotes an identical pre-restore capture to a merge barrier", () => {
+    const store = makeStore({ mergeWindowMs: 60_000 });
+    try {
+      const original = store.recordSnapshot({ relPath: "a.md", content: Buffer.from("V2"), origin: "event", capturedAt: 1000 });
+      const preserved = store.recordSnapshot({ relPath: "a.md", content: Buffer.from("V2"), origin: "restore", opContext: "before-restore", capturedAt: 1100 });
+      expect(preserved).toEqual({ status: "unchanged", snapshotId: original.snapshotId });
+      const event = store.recordSnapshot({ relPath: "a.md", content: Buffer.from("V1"), origin: "event", capturedAt: 1200 });
+      expect(event.status).toBe("inserted");
+      expect(store.getSnapshotContent(original.snapshotId).content.toString()).toBe("V2");
+    } finally { store.close(); }
+  });
+
   it("marks deletion without dropping snapshots, and un-deletes on new capture", () => {
     const store = makeStore();
     store.recordSnapshot({ relPath: "a.md", content: Buffer.from("v1"), origin: "event", capturedAt: 1000 });

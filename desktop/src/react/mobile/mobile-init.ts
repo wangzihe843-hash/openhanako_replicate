@@ -1,3 +1,4 @@
+import { resolveServerConnection } from '../services/server-connection';
 import { useStore } from '../stores';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { sessionIdForPathFromLocatorState, sessionScopedValue } from '../stores/session-slice';
@@ -147,17 +148,28 @@ export async function initializeMobileRuntime(principal: MobilePrincipal): Promi
   return { identity, bootstrap };
 }
 
+let mobileSessionListVersion = 0;
+
 export async function loadMobileSessions({
   selectFirst = false,
 }: {
   selectFirst?: boolean;
 } = {}): Promise<Session[]> {
+  const version = ++mobileSessionListVersion;
+  const before = useStore.getState();
+  const navigationKey = (state: typeof before) => JSON.stringify([
+    state.currentSessionPath, state.currentSessionId, state.pendingDraftId, state.pendingSessionSwitchPath,
+    resolveServerConnection(state),
+  ]);
+  const navigation = navigationKey(before);
   const res = await hanaFetch('/api/sessions');
   const sessions = await res.json() as Session[];
   const next = Array.isArray(sessions) ? sessions : [];
+  if (version !== mobileSessionListVersion || navigationKey(useStore.getState()) !== navigation) return next;
   useStore.getState().setSessions(next);
 
   const state = useStore.getState();
+  if (state.pendingNewSession || state.pendingSessionSwitchPath) return next;
   const currentStillExists = !!state.currentSessionPath && next.some((session) => session.path === state.currentSessionPath);
   const target = currentStillExists
     ? state.currentSessionPath
@@ -178,6 +190,7 @@ export async function loadMobileSessions({
   } else if (!target) {
     useStore.setState({
       currentSessionPath: null,
+      currentSessionId: null,
       pendingSessionSwitchPath: null,
       ...pendingNewSessionIdentityPatch(),
       welcomeVisible: true,

@@ -206,7 +206,7 @@ export function projectShoppingEntry(entry: AppEntry): LedgerEntry {
     category: normalizeCategory(readString(meta.category)),
     counterparty: readString(meta.seller),
     realized: SHOPPING_REALIZED_STATUSES.has(status),
-    occurredAt: entry.updatedAt,
+    occurredAt: readOccurredAt(meta.occurredAt) ?? entry.updatedAt,
     note: readString(entry.content),
   };
 }
@@ -227,7 +227,7 @@ export function projectSecondhandEntry(entry: AppEntry): LedgerEntry {
     category: normalizeCategory(readString(meta.category)),
     counterparty: readString(meta.buyer),
     realized: SECONDHAND_REALIZED_STATUSES.has(status),
-    occurredAt: entry.updatedAt,
+    occurredAt: readOccurredAt(meta.occurredAt) ?? entry.updatedAt,
     note: readString(entry.content),
   };
 }

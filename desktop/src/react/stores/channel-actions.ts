@@ -280,7 +280,11 @@ export async function saveConversationAgentPhoneSettings(patch: Partial<AgentPho
 // 打开频道
 // ══════════════════════════════════════════════════════
 
+let channelOpenVersion = 0;
+
 export async function openChannel(channelId: string, isDM?: boolean): Promise<void> {
+  const version = ++channelOpenVersion;
+  const isCurrent = () => version === channelOpenVersion && useStore.getState().currentChannel === channelId;
   const s = useStore.getState();
   const ch = s.channels.find((c: Channel) => c.id === channelId);
   const isThisDM = isDM ?? ch?.isDM ?? false;
@@ -308,6 +312,7 @@ export async function openChannel(channelId: string, isDM?: boolean): Promise<vo
       const res = await hanaFetch(`/api/dm/${encodeURIComponent(peerId)}${ownerQuery}`);
       if (res.ok) {
         const data = await res.json();
+        if (!isCurrent()) return;
         const responseOwnerId = data.ownerAgentId || dmOwnerId;
         const messages = data.messages || [];
         const fresh = useStore.getState();
@@ -334,6 +339,7 @@ export async function openChannel(channelId: string, isDM?: boolean): Promise<vo
       const res = await hanaFetch(`/api/channels/${encodeURIComponent(channelId)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      if (!isCurrent()) return;
       const members = data.members || [];
       const displayMembers = [useStore.getState().userName || 'user', ...members];
       const messages = data.messages || [];
@@ -517,11 +523,11 @@ export function appendChannelMessage(
 // 发送消息
 // ══════════════════════════════════════════════════════
 
-export async function sendChannelMessage(text: string): Promise<void> {
+export async function sendChannelMessage(text: string): Promise<boolean> {
   const s = useStore.getState();
   const channelId = s.currentChannel;
   const body = text.trim();
-  if (!body || !channelId) return;
+  if (!body || !channelId) return false;
   const sender = s.userName || 'user';
 
   try {
@@ -538,9 +544,13 @@ export async function sendChannelMessage(text: string): Promise<void> {
         timestamp: data.timestamp,
         body: text,
       }, { markRead: true, countUnread: false });
+      return true;
     }
+    throw new Error(data.error || 'Message was not acknowledged');
   } catch (err) {
     console.error('[channels] send failed:', err);
+    useStore.getState().addToast?.(err instanceof Error ? err.message : String(err), 'error');
+    return false;
   }
 }
 

@@ -83,6 +83,9 @@ export function classifyHttpRoute({ method = "GET", path = "" } = {}) {
   const verb = String(method || "GET").toUpperCase();
   const routePath = normalizePath(path);
 
+  // Only the publisher's single-segment token download is public. The token
+  // handler still checks expiry, download limits and the allowed file roots.
+  if ((verb === "GET" || verb === "HEAD") && /^\/api\/bridge\/media\/[A-Za-z0-9_-]+$/.test(routePath)) return PUBLIC;
   if (isMobileStaticRoute(verb, routePath)) return PUBLIC;
   if (isWebAuthBootstrapRoute(verb, routePath)) return PUBLIC;
   if (isMcpOAuthCallbackRoute(verb, routePath)) return PUBLIC;

@@ -10,6 +10,22 @@ import { WorkflowJournal } from "../workflow/journal.ts";
 import { createIdleWatchdog, normalizeRunLimits } from "../workflow/run-limits.ts";
 import { getToolSessionPath, getToolSessionCwd } from "./tool-session.ts";
 import { toolOk, toolError } from "./tool-result.ts";
+import { createModuleLogger } from "../debug-log.ts";
+
+const log = createModuleLogger('workflow');
+// Shared registries may serve several agents; never replace another agent's controllers.
+const workflowCancellations = new WeakMap<object, Map<string, () => void>>();
+function registerCancellation(registry, taskId, cancel) {
+  if (!registry) return () => {};
+  let callbacks = workflowCancellations.get(registry);
+  if (!callbacks) {
+    callbacks = new Map();
+    workflowCancellations.set(registry, callbacks);
+    registry.registerHandler('workflow', { abort: id => callbacks.get(id)?.() });
+  }
+  callbacks.set(taskId, cancel);
+  return () => { if (callbacks.get(taskId) === cancel) callbacks.delete(taskId); };
+}
 
 const AGENT_TOTAL_BACKSTOP = 1000;
 // 脚本 promise 的兜底 deadline 比总量 backstop 多留一分钟：正常路径由 abort 收场，
@@ -260,6 +276,15 @@ export function createWorkflowTool(deps) {
       const budget = makeBudget(ledger, taskId, budgetTotal);
 
       const limiter = makeLimiter(limits.maxConcurrent);
+      controller.signal.addEventListener('abort', () => limiter.cancel(new Error(abortReason || 'workflow aborted')), { once: true });
+      const registry = deps.getTaskRegistry?.();
+      let canceled = false;
+      const unregister = registerCancellation(registry, taskId, () => {
+        canceled = true;
+        failWith('workflow aborted');
+        store.suppressDelivery?.(taskId, 'workflow aborted');
+      });
+      registry?.register(taskId, { type: 'workflow', parentSessionId, parentSessionPath, agentId, meta: { summary } });
       // 任何节点事件都算"有进展"：喂狗后再走原有活动上报。
       const baseOnAgentEvent = buildAgentEventHandler({ taskId, parentSessionId, parentSessionPath, summary, hub, threadStore, deps });
       const onAgentEvent = (evt) => { watchdog.feed(); baseOnAgentEvent(evt); };
@@ -286,6 +311,7 @@ export function createWorkflowTool(deps) {
       // 游标互相误伤。按调用序号给子 workflow 分配独立 journal 子路径（${taskId}.child-N），
       // 续跑时按同序号（脚本确定性保证调用顺序一致）回放对应子 journal。
       let childWorkflowSeq = 0;
+      const childRuns: Promise<any>[] = [];
       const childReplayJournals = [];
       const runWorkflow = (childScript, childArgs) => {
         const cIdx = ++childWorkflowSeq;
@@ -310,10 +336,13 @@ export function createWorkflowTool(deps) {
           parentFolderScope,
           runLimits: limits,
         });
-        return runWorkflowScript(childScript, childHostApi, {
+        const childRun = runWorkflowScript(childScript, childHostApi, {
           signal: controller.signal,
           deadlineMs: limits.totalTimeoutMs + SCRIPT_DEADLINE_SLACK_MS,
         }).then(({ result }) => assertWorkflowResult(result));
+        childRuns.push(childRun);
+        void childRun.catch(() => {}); // The root owns and reports child failures below.
+        return childRun;
       };
 
       const hostApi = createHostApi({
@@ -339,32 +368,43 @@ export function createWorkflowTool(deps) {
         signal: controller.signal,
         deadlineMs: limits.totalTimeoutMs + SCRIPT_DEADLINE_SLACK_MS,
       })
-        .then(({ result }) => {
+        .then(async ({ result }) => {
           const text = workflowResultToText(result);
+          // Await ownership release; the root script already decides which child errors are fatal.
+          await Promise.allSettled(childRuns);
+          await limiter.drain();
+          if (controller.signal.aborted) throw new Error(abortReason || 'workflow aborted');
           const finishedAt = Date.now();
           const replayHits = (replayJournal?.replayHits ?? 0) + (journal?.replayHits ?? 0)
             + childReplayJournals.reduce((s, j) => s + (j?.replayHits ?? 0), 0);
           store.resolve(taskId, text);
           runStore?.resolve?.(taskId, text);
+          registry?.complete(taskId, text);
           hub?.upsert({ id: taskId, status: "done", finishedAt });
           deps.emitEvent?.({
             type: "block_update", taskId,
             patch: { streamStatus: "done", finishedAt, ...(replayHits > 0 ? { journalReplayHits: replayHits } : {}) },
           }, parentSessionPath);
         })
-        .catch((err) => {
+        .catch(async (err) => {
+          failWith(err?.message || String(err));
+          await Promise.allSettled(childRuns);
+          await limiter.drain();
           // abortReason 优先：脚本 promise 的 reject 只是 abort 的回声，判死的真实理由在这里。
           const cause = abortReason || err?.message || String(err);
           const reason = `${cause}。可用 resumeFromRunId: "${taskId}" 重发修正后的 workflow，已完成节点会命中缓存瞬时返回。`;
           const finishedAt = Date.now();
-          store.fail(taskId, reason);
-          runStore?.fail?.(taskId, reason);
-          hub?.upsert({ id: taskId, status: "failed", finishedAt });
-          deps.emitEvent?.({ type: "block_update", taskId, patch: { streamStatus: "failed", finishedAt } }, parentSessionPath);
+          if (!canceled) store.fail(taskId, reason);
+          if (canceled) runStore?.abort?.(taskId, reason);
+          else runStore?.fail?.(taskId, reason);
+          if (!canceled) registry?.fail(taskId, reason);
+          hub?.upsert({ id: taskId, status: canceled ? "aborted" : "failed", finishedAt });
+          deps.emitEvent?.({ type: "block_update", taskId, patch: { streamStatus: canceled ? "aborted" : "failed", finishedAt } }, parentSessionPath);
         })
         // 这里清的是 watchdog 与总量定时器，它们唯一的职责是触发 failWith → abort。
         // abort 必然先于 promise settle 发生，所以不存在"清掉了本该开火的 backstop"的窗口。
-        .finally(() => { watchdog.stop(); clearTimeout(totalTimer); });
+        .finally(() => { unregister(); watchdog.stop(); clearTimeout(totalTimer); })
+        .catch(err => log.error(`workflow ${taskId} finalization failed: ${err?.message || err}`));
 
       return toolOk(
         t("tool.workflow.dispatched", { summary, taskId }),
@@ -457,6 +497,7 @@ async function _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath, p
   const parentSessionId = sessionIdForPath(deps, parentSessionPath);
   // 同步路径同样是"先 abort 再收尾"，只是没有 journal，失败消息不给 resume 指引。
   const controller = new AbortController();
+  controller.signal.addEventListener('abort', () => limiter.cancel(), { once: true });
   let abortReason = null;
   const failWith = (reason) => {
     if (abortReason) return;
@@ -502,11 +543,15 @@ async function _syncRun(deps, params, meta, { agentId, cwd, parentSessionPath, p
       deadlineMs: limits.totalTimeoutMs + SCRIPT_DEADLINE_SLACK_MS,
     });
     const text = workflowResultToText(result);
+    await limiter.drain();
+    if (controller.signal.aborted) throw new Error(abortReason || 'workflow aborted');
     return toolOk(
       t("tool.workflow.syncComplete", { name: meta.name, count: limiter.totalSpawned, result: text }),
       { workflow: meta.name, agentsSpawned: limiter.totalSpawned, result },
     );
   } catch (err) {
+    failWith(err?.message || String(err));
+    await limiter.drain();
     return toolError(
       t("tool.workflow.executionFailed", { message: abortReason || err.message }),
       { agentsSpawned: limiter.totalSpawned },

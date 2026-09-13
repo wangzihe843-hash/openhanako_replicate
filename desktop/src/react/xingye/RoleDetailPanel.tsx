@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type { Agent } from '../types';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useStore } from '../stores';
@@ -7,10 +7,12 @@ import { browseAgent, loadAgents } from '../settings/actions';
 import { CropOverlay } from '../settings/overlays/CropOverlay';
 import { useSettingsStore } from '../settings/store';
 import {
+  xingyeProfileConnectionKey,
   buildOpenHanakoAgentSyncPayload,
   getXingyeRoleProfileDisplay,
   saveXingyeRoleProfile,
-  useXingyeRoleProfile,
+  useXingyeRoleProfileState,
+  type XingyeRoleProfile,
   type XingyeRoleGender,
   type XingyeCorruptionTendency,
 } from './xingye-profile-store';
@@ -44,7 +46,12 @@ interface RoleDetailPanelProps {
   onAutoOpenStudioConsumed?: () => void;
 }
 
-export function RoleDetailPanel({
+export function RoleDetailPanel(props: RoleDetailPanelProps) {
+  const connectionKey = useStore(state => xingyeProfileConnectionKey(state));
+  return <OwnedRoleDetailPanel key={`${connectionKey}:${props.agent?.id ?? ''}`} {...props} />;
+}
+
+function OwnedRoleDetailPanel({
   agent,
   isOpenHanakoCurrent,
   onBack,
@@ -54,7 +61,19 @@ export function RoleDetailPanel({
   autoOpenStudioFor,
   onAutoOpenStudioConsumed,
 }: RoleDetailPanelProps) {
-  const profile = useXingyeRoleProfile(agent?.id);
+  const ownerKey = useRef(xingyeProfileConnectionKey());
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
+  const assertCurrent = () => {
+    if (!active.current || xingyeProfileConnectionKey() !== ownerKey.current) {
+      throw new Error('服务器或角色已切换，请在当前资料页重试。');
+    }
+  };
+  const { profile, loading: profileLoading, error: profileLoadError, reload: reloadProfile } = useXingyeRoleProfileState(agent?.id);
+  const hydratedProfile = useRef<{ agentId: string | undefined; profile: XingyeRoleProfile | null }>({ agentId: agent?.id, profile: null });
   const agents = useStore((state) => state.agents);
   const storeUserName = useStore((state) => state.userName);
   const [displayName, setDisplayName] = useState('');
@@ -92,22 +111,31 @@ export function RoleDetailPanel({
   const [syncOpenHanakoAgentName, setSyncOpenHanakoAgentName] = useState(false);
 
   useEffect(() => {
-    setDisplayName(profile?.displayName ?? '');
-    setShortBio(profile?.shortBio ?? '');
-    setRelationshipLabel(profile?.relationshipLabel ?? '');
-    setSpeakingStyle(profile?.speakingStyle ?? '');
-    setIdentitySummary(profile?.identitySummary ?? '');
-    setBackgroundSummary(profile?.backgroundSummary ?? '');
-    setPersonalitySummary(profile?.personalitySummary ?? '');
-    setBehaviorLogic(profile?.behaviorLogic ?? '');
-    setValues(profile?.values ?? '');
-    setTaboos(profile?.taboos ?? '');
-    setRelationshipMode(profile?.relationshipMode ?? '');
-    setGender(profile?.gender ?? 'unspecified');
-    setCorruptionTendency(profile?.corruptionTendency ?? '');
-    setCorruptionSeed(typeof profile?.corruptionSeed === 'number' ? profile.corruptionSeed : null);
-    setAllowAutoMoments(profile?.allowAutoMoments ?? false);
-    setAllowProactiveDM(profile?.allowProactiveDM ?? false);
+    const previous = hydratedProfile.current;
+    const switched = previous.agentId !== agent?.id;
+    if (!switched && (profileLoading || profileLoadError)) return;
+    const old = previous.profile;
+    // Refresh clean fields while preserving edits made since the last hydration.
+    const hydrate = <T,>(set: Dispatch<SetStateAction<T>>, before: T, next: T) => {
+      set((current) => switched || Object.is(current, before) ? next : current);
+    };
+    hydrate(setDisplayName, old?.displayName ?? '', profile?.displayName ?? '');
+    hydrate(setShortBio, old?.shortBio ?? '', profile?.shortBio ?? '');
+    hydrate(setRelationshipLabel, old?.relationshipLabel ?? '', profile?.relationshipLabel ?? '');
+    hydrate(setSpeakingStyle, old?.speakingStyle ?? '', profile?.speakingStyle ?? '');
+    hydrate(setIdentitySummary, old?.identitySummary ?? '', profile?.identitySummary ?? '');
+    hydrate(setBackgroundSummary, old?.backgroundSummary ?? '', profile?.backgroundSummary ?? '');
+    hydrate(setPersonalitySummary, old?.personalitySummary ?? '', profile?.personalitySummary ?? '');
+    hydrate(setBehaviorLogic, old?.behaviorLogic ?? '', profile?.behaviorLogic ?? '');
+    hydrate(setValues, old?.values ?? '', profile?.values ?? '');
+    hydrate(setTaboos, old?.taboos ?? '', profile?.taboos ?? '');
+    hydrate(setRelationshipMode, old?.relationshipMode ?? '', profile?.relationshipMode ?? '');
+    hydrate(setGender, old?.gender ?? 'unspecified', profile?.gender ?? 'unspecified');
+    hydrate(setCorruptionTendency, old?.corruptionTendency ?? '', profile?.corruptionTendency ?? '');
+    hydrate(setCorruptionSeed, old?.corruptionSeed ?? null, profile?.corruptionSeed ?? null);
+    hydrate(setAllowAutoMoments, old?.allowAutoMoments ?? false, profile?.allowAutoMoments ?? false);
+    hydrate(setAllowProactiveDM, old?.allowProactiveDM ?? false, profile?.allowProactiveDM ?? false);
+    hydratedProfile.current = { agentId: agent?.id, profile };
     // 从持久化的草稿恢复「待确认精确黑化值」弹层（关面板/切角色/重启后仍在）。pendingSeed 由本 effect
     // 据 profile 单一来源派生——已采用(corruptionSeed 已设)或与档位基线相同则不弹。这也避免了「保存触发
     // profile 刷新冲掉内存里 pendingSeed」的旧竞态：刷新只会按持久化值重算，不会误清。
@@ -123,7 +151,7 @@ export function RoleDetailPanel({
     } else {
       setPendingSeed(null);
     }
-  }, [agent?.id, profile]);
+  }, [agent?.id, profile, profileLoading, profileLoadError]);
 
   useEffect(() => {
     setSavedAt(null);
@@ -213,10 +241,37 @@ export function RoleDetailPanel({
 
   const resolvedProfile = getXingyeRoleProfileDisplay(agent, profile);
 
+  const acknowledgeSavedFields = (saved: XingyeRoleProfile, submitted: Partial<XingyeRoleProfile>) => {
+    const acknowledge = <T,>(key: keyof XingyeRoleProfile, set: Dispatch<SetStateAction<T>>, fallback: NoInfer<T>) => {
+      if (!Object.prototype.hasOwnProperty.call(submitted, key)) return;
+      const sent = (submitted[key] ?? fallback) as T;
+      const confirmed = (saved[key] ?? fallback) as T;
+      set(current => Object.is(current, sent) ? confirmed : current);
+    };
+    acknowledge('displayName', setDisplayName, '');
+    acknowledge('shortBio', setShortBio, '');
+    acknowledge('relationshipLabel', setRelationshipLabel, '');
+    acknowledge('speakingStyle', setSpeakingStyle, '');
+    acknowledge('identitySummary', setIdentitySummary, '');
+    acknowledge('backgroundSummary', setBackgroundSummary, '');
+    acknowledge('personalitySummary', setPersonalitySummary, '');
+    acknowledge('behaviorLogic', setBehaviorLogic, '');
+    acknowledge('values', setValues, '');
+    acknowledge('taboos', setTaboos, '');
+    acknowledge('relationshipMode', setRelationshipMode, '');
+    acknowledge('gender', setGender, 'unspecified');
+    acknowledge('corruptionTendency', setCorruptionTendency, '');
+    acknowledge('corruptionSeed', setCorruptionSeed, null);
+    acknowledge('allowAutoMoments', setAllowAutoMoments, false);
+    acknowledge('allowProactiveDM', setAllowProactiveDM, false);
+  };
+
   const handleSave = async () => {
+    if (profileLoading || profileLoadError) return;
     setProfileSaveError(null);
     try {
-      const saved = await saveXingyeRoleProfile(agent.id, {
+      assertCurrent();
+      const submitted = {
         displayName,
         shortBio,
         relationshipLabel,
@@ -235,7 +290,10 @@ export function RoleDetailPanel({
         corruptionSeedPending: pendingSeed ? pendingSeed.seed : undefined,
         allowAutoMoments,
         allowProactiveDM,
-      });
+      };
+      const saved = await saveXingyeRoleProfile(agent.id, submitted);
+      assertCurrent();
+      acknowledgeSavedFields(saved, submitted);
       setSavedAt(saved.updatedAt);
       // 注：不清 pendingSeed——它由字段初始化 effect 据回流的 profile.corruptionSeedPending 派生。
 
@@ -271,7 +329,10 @@ export function RoleDetailPanel({
   ) => {
     setProfileSaveError(null);
     try {
+      assertCurrent();
       const saved = await saveXingyeRoleProfile(agent.id, patch);
+      assertCurrent();
+      acknowledgeSavedFields(saved, patch);
       setSavedAt(saved.updatedAt);
       if (corruption) {
         try {
@@ -294,7 +355,9 @@ export function RoleDetailPanel({
   const handleChangeChatBackground = async (chatBackgroundDataUrl: string | undefined) => {
     setProfileSaveError(null);
     try {
+      assertCurrent();
       const saved = await saveXingyeRoleProfile(agent.id, { chatBackgroundDataUrl });
+      assertCurrent();
       setSavedAt(saved.updatedAt);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -316,7 +379,9 @@ export function RoleDetailPanel({
       });
     }
 
+    assertCurrent();
     await browseAgent(agent.id);
+    assertCurrent();
 
     // The native agent flow expects a programmatic file input before opening CropOverlay.
     // eslint-disable-next-line no-restricted-syntax
@@ -324,6 +389,7 @@ export function RoleDetailPanel({
     input.type = 'file';
     input.accept = 'image/png,image/jpeg,image/webp';
     input.addEventListener('change', () => {
+      if (!active.current || xingyeProfileConnectionKey() !== ownerKey.current) return;
       if (input.files?.[0]) {
         window.dispatchEvent(new CustomEvent('hana-open-cropper', {
           detail: { role: 'agent', file: input.files[0] },
@@ -334,9 +400,11 @@ export function RoleDetailPanel({
   };
 
   const handleSyncOpenHanakoAgent = async () => {
+    if (profileLoading || profileLoadError) return;
     setSyncState('syncing');
     setSyncError(null);
     try {
+      assertCurrent();
       const displayForName = getXingyeRoleProfileDisplay(agent, syncDraft).displayName.trim() || agent.name;
 
       const requests: Promise<Response>[] = [];
@@ -367,6 +435,7 @@ export function RoleDetailPanel({
         const data = await response.json();
         if (data?.error) throw new Error(data.error);
       }
+      assertCurrent();
       setSyncState('synced');
       await saveXingyeRoleProfile(agent.id, { lastOpenHanakoSyncAt: new Date().toISOString() });
     } catch (error) {
@@ -382,6 +451,7 @@ export function RoleDetailPanel({
    * yuan 建议与当前 config.agent.yuan 不同时才 PUT config 切换（用户在方案卡里已可改/保持）。
    */
   const handleStudioApplied = async (result: StudioAppliedResult) => {
+    assertCurrent();
     const p = result.profilePatch ?? {};
     const patch: Parameters<typeof saveXingyeRoleProfile>[1] = {};
     // 回填表单（即时视觉反馈）+ 收集要落库的补丁；只动补丁里出现的字段。
@@ -428,6 +498,7 @@ export function RoleDetailPanel({
     // 黑化值「没初始化才初始化」：用模型刚基于整段背景给的档位播种（缺档位才退化到关键词扫描）。
     // ensureRelationshipState 只在该角色还没有关系状态时播种；已初始化（可能已漂移）则原样返回、不动。
     // 精确值放到待确认弹层让用户拍板，所以这里只按档位基线初始化（corruptionSeed 留空）。
+    assertCurrent();
     ensureRelationshipState(agent.id, {
       relationshipLabel: relationshipLabel || profile?.relationshipLabel || undefined,
       shortBio: patch.shortBio ?? (shortBio || undefined),
@@ -463,6 +534,7 @@ export function RoleDetailPanel({
         if (data?.error) throw new Error(data.error);
         yuanPart = `思维底座已切换：${currentYuan} → ${result.yuan}。`;
         try {
+          assertCurrent();
           await loadAgents();
         } catch {
           /* 列表刷新失败不致命，下次加载会对齐 */
@@ -939,10 +1011,10 @@ export function RoleDetailPanel({
       </div>
 
       <div className={styles.detailActions}>
-        <button type="button" onClick={handleSave}>
+        <button type="button" onClick={handleSave} disabled={profileLoading || !!profileLoadError}>
           {persistenceDiag.mode === 'agent' ? '保存到 agent scope' : '保存（需 agent 持久化）'}
         </button>
-        <button type="button" onClick={handleSyncOpenHanakoAgent} disabled={syncState === 'syncing'}>
+        <button type="button" onClick={handleSyncOpenHanakoAgent} disabled={syncState === 'syncing' || profileLoading || !!profileLoadError}>
           {syncState === 'syncing' ? '更新中...' : '更新核心人格摘要'}
         </button>
         <button type="button" onClick={() => onChat(agent.id)}>进入聊天</button>
@@ -955,6 +1027,13 @@ export function RoleDetailPanel({
         )}
         {persistenceDiag.lastWorkspaceFlushError && (
           <span className={styles.syncError}>Agent scope 写入失败: {persistenceDiag.lastWorkspaceFlushError}</span>
+        )}
+        {profileLoading && <span role="status">正在读取角色资料…</span>}
+        {profileLoadError && (
+          <span role="alert" className={styles.syncError}>
+            读取角色资料失败：{profileLoadError}。重新读取成功后才能保存。
+            <button type="button" onClick={reloadProfile}>重新读取资料</button>
+          </span>
         )}
         {profileSaveError && <span className={styles.syncError}>{profileSaveError}</span>}
         {syncState === 'synced' && <span className={styles.saveStatus}>已更新 OpenHanako 核心人格摘要</span>}

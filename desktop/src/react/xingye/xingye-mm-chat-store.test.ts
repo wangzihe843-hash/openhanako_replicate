@@ -21,6 +21,12 @@ import {
 } from './xingye-mm-chat-store';
 
 describe('xingye-mm-chat-store', () => {
+  it('X2 propagates read errors and never replaces unread history during creation', async () => {
+    postMock.mockRejectedValue(new Error('disk unavailable'));
+    await expect(readMmChatPersistence('agent-x')).rejects.toThrow('disk unavailable');
+    await expect(createMmChatSession('agent-x', { title: 'new', preview: '', messages: [] })).rejects.toThrow('disk unavailable');
+    expect(postMock.mock.calls.every(([body]) => body.action === 'readJson')).toBe(true);
+  });
   beforeEach(() => {
     postMock.mockReset();
   });

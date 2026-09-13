@@ -9,7 +9,7 @@ import type { FileRef } from '../types/file-ref';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { openPreview, upsertPreviewItem } from '../stores/preview-actions';
 import { useStore } from '../stores';
-import { resolveServerConnection } from '../services/server-connection';
+import { resolveServerConnection, type ServerConnection } from '../services/server-connection';
 import {
   encodeWorkbenchContentPath,
   resolveFileRefPreviewAccess,
@@ -240,9 +240,11 @@ export async function saveRemoteWorkbenchContent(
   ref: RemoteWorkbenchContentRef,
   content: string,
   expectedVersion?: FileVersion | null,
+  connection?: ServerConnection,
 ): Promise<VersionedWriteResult> {
   const normalized = normalizeWorkbenchContentRef(ref);
   const res = await hanaFetch('/api/workbench/actions', {
+    ...(connection ? { connection } : {}),
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

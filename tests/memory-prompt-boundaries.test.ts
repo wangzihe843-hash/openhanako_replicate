@@ -24,6 +24,20 @@ const RESOLVED_MODEL = {
   headers: { "x-provider-contract": "memory" },
 };
 
+// Prompt/branch tests observe the writes behind the source-revision transaction.
+function makeFakeFactStore() {
+  const addBatch = vi.fn(), replaceBySession = vi.fn();
+  return {
+    addBatch, replaceBySession,
+    getSessionCommitRevision: vi.fn(() => null),
+    commitSessionRevision: vi.fn((sessionId, _revision, entries, { replace }) => {
+      if (replace) replaceBySession(sessionId, entries);
+      else if (entries.length) addBatch(entries);
+      return entries.length;
+    }),
+  };
+}
+
 function makeFakeSummaryManager(summaries) {
   return {
     getSummariesInRange: vi.fn().mockReturnValue(summaries),
@@ -157,7 +171,7 @@ describe("memory prompt boundaries", () => {
       ]),
       markProcessed: vi.fn(),
     };
-    const factStore = { addBatch: vi.fn() };
+    const factStore = makeFakeFactStore();
 
     await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
 
@@ -192,7 +206,7 @@ describe("memory prompt boundaries", () => {
       ]),
       markProcessed: vi.fn(),
     };
-    const factStore = { addBatch: vi.fn() };
+    const factStore = makeFakeFactStore();
 
     await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
 
@@ -220,7 +234,7 @@ describe("memory prompt boundaries", () => {
       ]),
       markProcessed: vi.fn(),
     };
-    const factStore = { addBatch: vi.fn() };
+    const factStore = makeFakeFactStore();
 
     await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
 
@@ -244,7 +258,7 @@ describe("memory prompt boundaries", () => {
       ]),
       markProcessed: vi.fn(),
     };
-    const factStore = { addBatch: vi.fn(), replaceBySession: vi.fn() };
+    const factStore = makeFakeFactStore();
 
     await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
 
@@ -275,7 +289,7 @@ describe("memory prompt boundaries", () => {
       ]),
       markProcessed: vi.fn(),
     };
-    const factStore = { addBatch: vi.fn(), replaceBySession: vi.fn() };
+    const factStore = makeFakeFactStore();
 
     await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
 
@@ -298,7 +312,7 @@ describe("memory prompt boundaries", () => {
       ]),
       markProcessed: vi.fn(),
     };
-    const factStore = { addBatch: vi.fn(), replaceBySession: vi.fn() };
+    const factStore = makeFakeFactStore();
 
     await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
     await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL);
@@ -324,7 +338,7 @@ describe("memory prompt boundaries", () => {
     (callText as any).mockImplementationOnce(() => new Promise((resolve) => {
       resolveFacts = resolve;
     }));
-    const factStore = { addBatch: vi.fn(), replaceBySession: vi.fn() };
+    const factStore = makeFakeFactStore();
 
     const processing = processDirtySessions(manager, factStore, RESOLVED_MODEL, {
       getCurrentBranchProjection: () => ({
@@ -361,7 +375,7 @@ describe("memory prompt boundaries", () => {
       created_at: "2026-07-16T08:00:00.000Z",
       updated_at: "2026-07-16T08:00:00.000Z",
     });
-    const factStore = { addBatch: vi.fn(), replaceBySession: vi.fn() };
+    const factStore = makeFakeFactStore();
     (callText as any).mockResolvedValueOnce(JSON.stringify([
       { fact: "不应写入的兄弟分支事实", tags: [], time: null },
     ]));
@@ -405,7 +419,7 @@ describe("memory prompt boundaries", () => {
       ]),
       markProcessed: vi.fn(),
     };
-    const factStore = { addBatch: vi.fn() };
+    const factStore = makeFakeFactStore();
 
     await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL, { timeZone: "Asia/Shanghai" });
 
@@ -444,7 +458,7 @@ describe("memory prompt boundaries", () => {
       ]),
       markProcessed: vi.fn(),
     };
-    const factStore = { addBatch: vi.fn() };
+    const factStore = makeFakeFactStore();
 
     await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL, { timeZone: "Asia/Shanghai" });
 
@@ -483,7 +497,7 @@ describe("memory prompt boundaries", () => {
       ]),
       markProcessed: vi.fn(),
     };
-    const factStore = { addBatch: vi.fn() };
+    const factStore = makeFakeFactStore();
 
     await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL, { timeZone: "Asia/Shanghai" });
 
@@ -522,7 +536,7 @@ describe("memory prompt boundaries", () => {
       ]),
       markProcessed: vi.fn(),
     };
-    const factStore = { addBatch: vi.fn() };
+    const factStore = makeFakeFactStore();
 
     await processDirtySessions(summaryManager, factStore, RESOLVED_MODEL, { timeZone: "Asia/Shanghai" });
 
@@ -555,7 +569,7 @@ describe("memory prompt boundaries", () => {
       ]),
       markProcessed: vi.fn(),
     };
-    const factStore = { addBatch: vi.fn() };
+    const factStore = makeFakeFactStore();
     const getSourceTimeRange = vi.fn(() => ({
       start: "2026-05-16T15:50:00.000Z",
       end: "2026-05-16T16:20:00.000Z",

@@ -1,25 +1,12 @@
 /**
- * 渲染端「待确认短信草稿」store 助手。
- *
- * SMS 主体存储与 mail 不同：SMS thread / message 走 localStorage（xingye-phone-store），
- * server 端文件系统里没有 sms messages 主体。但**草稿**仍走 server 端 jsonl：
- *
- *  - 草稿落到 `apps/sms/drafts.jsonl`（server 端追加，UI 通过 listJsonl 读）。
- *  - listSmsDrafts / appendSmsDraft / discardSmsDraft / confirmSmsDraft 四件套，
- *    发对应的 sms.draft_* 事件。
- *  - confirm 路径调用 addSmsMessage 写入 localStorage 的 SMS thread（direction='outgoing',
- *    source='ai_generated'），message.id 用 `from-draft-${draftId}` 实现幂等。
- *  - 限制 targetType 到 agent / virtual_contact 两种（**不允许 user**——与 server
- *    SMS_DRAFT_ALLOWED_TARGET_TYPES 同步；用户应该走正常对话）。
- *
- * 与 mail 的 confirm 关键差别：
- *  - mail.confirm 调 appendMailMessage 写 jsonl；sms.confirm 调 addSmsMessage 写
- *    localStorage。localStorage 是 sync 的，所以 confirm 路径里 addSmsMessage 调用
- *    本身不会失败（除非传参非法）；失败模式集中在 deleteJsonlRecord（清草稿）那一步。
- *  - 幂等保护：addSmsMessage 在 input.messageId 已存在时直接返回不重复 append，
- *    与 confirmSmsDraft 里 `from-draft-${draftId}` 配合实现 retry 安全。
+ * Agent-scoped pending SMS drafts. Confirmation adds a deterministic message
+ * (from-draft-{draftId}) to the phone persistence bridge, awaits a successful
+ * durable flush, then deletes the JSONL draft. A failed flush leaves the draft
+ * available for retry; the retry also flushes any already-cached message before
+ * deleting the draft. Only agent and virtual_contact targets are allowed.
  */
 
+import { captureXingyePersistenceBinding } from './xingye-persistence';
 import {
   appendXingyeEvent,
   type XingyeEventInput,
@@ -322,7 +309,9 @@ export async function confirmSmsDraft(
   const aid = assertAgentId(agentId, '确认短信草稿');
   const did = draftId.trim();
   if (!did) throw new Error('确认草稿失败：缺少草稿 id。');
+  const binding = captureXingyePersistenceBinding(aid);
   return withDraftConfirmLock(`sms::${aid}::${did}`, async () => {
+    binding.assertCurrent();
     const expectedMessageId = smsMessageIdFromDraftId(did);
 
     /**
@@ -341,6 +330,7 @@ export async function confirmSmsDraft(
       if (!isAllowedTargetType(thread.targetType)) continue;
       const existing = thread.messages.find((m) => m.id === expectedMessageId);
       if (existing) {
+        await binding.commit();
         try {
           await backend.deleteJsonlRecord(aid, XINGYE_SMS_DRAFTS_JSONL, did);
         } catch {
@@ -351,6 +341,7 @@ export async function confirmSmsDraft(
     }
 
     const draft = (await listSmsDrafts(aid)).find((d) => d.id === did);
+    binding.assertCurrent();
     if (!draft) {
       throw new Error('确认草稿失败：草稿不存在或已被丢弃。');
     }
@@ -382,6 +373,7 @@ export async function confirmSmsDraft(
       throw new Error('确认草稿失败：addSmsMessage 写入失败（agentId / targetId / content 不合法）。');
     }
 
+    await binding.commit();
     try {
       await backend.deleteJsonlRecord(aid, XINGYE_SMS_DRAFTS_JSONL, did);
     } catch (error) {

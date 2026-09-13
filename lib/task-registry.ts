@@ -435,6 +435,12 @@ export class TaskRegistry {
   async _runSchedule(scheduleId) {
     const schedule = this._schedules.get(scheduleId);
     if (!schedule?.enabled) return;
+    // Long waits are split at the platform timer limit; a wake-up is not
+    // necessarily the due time. Re-read the current schedule before running.
+    if (schedule.nextRunAt > Date.now()) {
+      this._armSchedule(scheduleId);
+      return;
+    }
     const handler = this._handlers.get(schedule.type);
     if (!handler?.run) {
       schedule.lastError = `No schedule runner for type "${schedule.type}"`;
@@ -466,10 +472,14 @@ export class TaskRegistry {
         schedule.nextRunAt = null;
       }
     } finally {
-      schedule.updatedAt = Date.now();
-      this._schedules.set(scheduleId, schedule);
-      this._persist();
-      this._armSchedule(scheduleId);
+      // schedule()/unschedule() may have replaced or removed this execution's
+      // configuration while its handler awaited. Its completion owns only the
+      // captured record, never a subsequent version with the same id.
+      if (this._schedules.get(scheduleId) === schedule) {
+        schedule.updatedAt = Date.now();
+        this._persist();
+        this._armSchedule(scheduleId);
+      }
     }
   }
 

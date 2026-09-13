@@ -51,6 +51,28 @@ export const SECRET_TMP_SUFFIX = ".tmp";
 
 const SUPPORTS_POSIX_MODE = process.platform !== "win32";
 
+const WINDOWS_RENAME_RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+const WINDOWS_RENAME_RETRY_DELAYS_MS = [10, 20, 40, 80, 160];
+
+/** Windows-only publication: six attempts, at most 310ms of synchronous waits. */
+function renameSecretFileOnWindowsSync(tmp: string, filePath: string): void {
+  const waitCell = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(tmp, filePath);
+      return;
+    } catch (err: any) {
+      if (!WINDOWS_RENAME_RETRY_CODES.has(err?.code) || attempt >= WINDOWS_RENAME_RETRY_DELAYS_MS.length) {
+        throw err;
+      }
+      // The write handle is closed, but a scanner can briefly deny rename.
+      // Keep the same staged bytes and destination; never unlink the target.
+      Atomics.wait(waitCell, 0, 0, WINDOWS_RENAME_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+}
+
+
 function permissionError(message: string, filePath: string, cause?: unknown) {
   return new AppError("FS_PERMISSION", { message, context: { filePath }, cause });
 }
@@ -119,7 +141,7 @@ export function writeSecretFileSync(filePath: string, content: string): void {
       throw err;
     }
     try {
-      fs.renameSync(tmp, filePath);
+      renameSecretFileOnWindowsSync(tmp, filePath);
     } catch (err) {
       try { fs.rmSync(tmp, { force: true }); } catch { /* leave the target untouched */ }
       throw err;

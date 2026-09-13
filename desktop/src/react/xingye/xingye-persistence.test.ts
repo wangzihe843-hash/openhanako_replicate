@@ -12,6 +12,7 @@ import {
   resetXingyePersistenceForTests,
 } from './xingye-persistence';
 import { postXingyeStorage } from './xingye-storage-api';
+import { initializeContactProfile, getContactProfile } from './xingye-phone-store';
 
 const hoisted = vi.hoisted(() => ({
   files: new Map<string, unknown>(),
@@ -58,6 +59,17 @@ vi.mock('../stores', () => ({
 }));
 
 describe('xingye-persistence agent scoped storage', () => {
+  it('X1 persists real contact profiles across A/B/A and restart', async () => {
+    await refreshXingyeAgentPersistence('agent-a');
+    initializeContactProfile('agent-a', 'agent', 'peer', { signature: 'durable detail' });
+    await flushXingyePersistenceNow();
+    expect(hoisted.files.get('agent-a:phone/contact-profiles.json')).toBeDefined();
+    await refreshXingyeAgentPersistence('agent-b');
+    expect(getContactProfile('agent-a', 'agent', 'peer')).toBeNull();
+    resetXingyePersistenceForTests();
+    await refreshXingyeAgentPersistence('agent-a');
+    expect(getContactProfile('agent-a', 'agent', 'peer')?.signature).toBe('durable detail');
+  });
   beforeEach(() => {
     hoisted.files.clear();
     resetXingyePersistenceForTests();

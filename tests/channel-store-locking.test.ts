@@ -6,8 +6,10 @@ import {
   addBookmarkEntry,
   addChannelMember,
   appendMessage,
+  deleteChannel,
   parseChannel,
   readBookmarks,
+  removeChannelMember,
   updateBookmark,
 } from "../lib/channels/channel-store.ts";
 
@@ -30,6 +32,61 @@ describe("channel-store write locking", () => {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
       tmpDir = null;
     }
+  });
+
+  it("does not recreate a channel when an append queued behind its deletion", async () => {
+    tmpDir = mktemp();
+    const channelPath = path.join(tmpDir, "crew.md");
+    fs.writeFileSync(channelPath, "---\nmembers: [alice, bob]\n---\n");
+    const entered = deferred(), release = deferred();
+    const unlink = fs.promises.unlink.bind(fs.promises);
+    vi.spyOn(fs.promises, "unlink").mockImplementation(async target => {
+      if (target === channelPath) { entered.resolve(); await release.promise; }
+      return unlink(target);
+    });
+    const deletion = deleteChannel(channelPath);
+    await entered.promise;
+    expect(fs.existsSync(channelPath)).toBe(true);
+    const appended = appendMessage(channelPath, "alice", "late reply").then(
+      () => null, error => error,
+    );
+    release.resolve();
+    await deletion;
+    const error = await appended;
+    expect(error).toMatchObject({ code: "channel_not_found" });
+    expect(fs.existsSync(channelPath)).toBe(false);
+  });
+
+  it.each(["member-removal", "cancellation"])("rejects queued writes after %s", async scenario => {
+    tmpDir = mktemp();
+    const channelPath = path.join(tmpDir, "crew.md");
+    fs.writeFileSync(channelPath, "---\nmembers: [alice, bob]\n---\n");
+    const entered = deferred(), release = deferred();
+    const rename = fs.promises.rename.bind(fs.promises);
+    vi.spyOn(fs.promises, "rename").mockImplementation(async (from, to) => {
+      if (to === channelPath) { entered.resolve(); await release.promise; }
+      return rename(from, to);
+    });
+    const rewrite = scenario === "member-removal"
+      ? removeChannelMember(channelPath, "alice")
+      : addChannelMember(channelPath, "carol");
+    await entered.promise;
+    const controller = new AbortController();
+    const appended = appendMessage(channelPath, "alice", "forbidden late reply", {
+      memberId: "alice", signal: controller.signal,
+    }).then(() => null, error => error);
+    if (scenario === "cancellation") controller.abort();
+    release.resolve();
+    await rewrite;
+    const error = await appended;
+    expect(error).toMatchObject({
+      code: scenario === "member-removal" ? "channel_not_member" : "channel_write_cancelled",
+    });
+    const { messages } = parseChannel(fs.readFileSync(channelPath, "utf8"));
+    expect(messages).toEqual([]);
+    // A different remaining member can still write after the failed append.
+    await appendMessage(channelPath, "bob", "allowed reply", { memberId: "bob" });
+    expect(parseChannel(fs.readFileSync(channelPath, "utf8")).messages[0].body).toBe("allowed reply");
   });
 
   it("preserves appended messages when frontmatter rewrite overlaps", async () => {

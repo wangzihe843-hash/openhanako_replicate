@@ -4,7 +4,7 @@
 
 import React from 'react';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 import { useStore } from '../stores';
@@ -58,6 +58,7 @@ vi.mock('../hooks/use-hana-fetch', () => ({
 }));
 
 const { hanaFetch } = await import('../hooks/use-hana-fetch');
+const defaultHanaFetch = vi.mocked(hanaFetch).getMockImplementation()!;
 
 describe('RoleDetailPanel OpenHanako sync', () => {
   const agent: Agent = {
@@ -73,6 +74,7 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     window.localStorage.clear();
     profileHoisted.profileByAgent.clear();
     vi.mocked(hanaFetch).mockClear();
+    vi.mocked(hanaFetch).mockImplementation(defaultHanaFetch);
     useStore.setState({ serverPort: '17333', activeServerConnection: null });
   });
 
@@ -80,6 +82,107 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     delete (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__;
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it('review X8 reloads the same agent on another server and discards the old draft', async () => {
+    profileHoisted.profileByAgent.set(agent.id, { agentId: agent.id, shortBio: 'server A', updatedAt: '2026-08-01' });
+    render(<RoleDetailPanel agent={agent} isOpenHanakoCurrent onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />);
+    await waitFor(() => expect(screen.getByLabelText('简介')).toHaveValue('server A'));
+    fireEvent.change(screen.getByLabelText('简介'), { target: { value: 'A unsaved' } });
+    profileHoisted.profileByAgent.set(agent.id, { agentId: agent.id, shortBio: 'server B', updatedAt: '2026-08-02' });
+    act(() => useStore.setState({ serverPort: '17334' }));
+    await waitFor(() => expect(screen.getByLabelText('简介')).toHaveValue('server B'));
+  });
+
+  it('review X9 preserves edits typed while a successful save is in flight', async () => {
+    profileHoisted.profileByAgent.set(agent.id, { agentId: agent.id, shortBio: 'old', updatedAt: '2026-08-01' });
+    render(<RoleDetailPanel agent={agent} isOpenHanakoCurrent onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /^保存/ })).toBeEnabled());
+    let release!: () => void;
+    let started = false;
+    vi.mocked(hanaFetch).mockImplementation(async (path, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (body.action === 'writeJson' && body.relativePath === 'profile.json') {
+        started = true;
+        await new Promise<void>(resolve => { release = resolve; });
+      }
+      return defaultHanaFetch(path, init);
+    });
+    fireEvent.change(screen.getByLabelText('简介'), { target: { value: ' submitted ' } });
+    fireEvent.click(screen.getByRole('button', { name: /^保存/ }));
+    await waitFor(() => expect(started).toBe(true));
+    fireEvent.change(screen.getByLabelText('简介'), { target: { value: 'new unsaved text' } });
+    await act(async () => release());
+    expect(screen.getByLabelText('简介')).toHaveValue('new unsaved text');
+    expect(profileHoisted.profileByAgent.get(agent.id)?.shortBio).toBe('submitted');
+  });
+
+  it('review X9 recognizes normalized saved text as clean during later profile refresh', async () => {
+    profileHoisted.profileByAgent.set(agent.id, { agentId: agent.id, shortBio: 'old', updatedAt: '2026-08-01' });
+    render(<RoleDetailPanel agent={agent} isOpenHanakoCurrent onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /^保存/ })).toBeEnabled());
+    fireEvent.change(screen.getByLabelText('简介'), { target: { value: '  saved text  ' } });
+    fireEvent.click(screen.getByRole('button', { name: /^保存/ }));
+    await waitFor(() => expect(profileHoisted.profileByAgent.get(agent.id)?.shortBio).toBe('saved text'));
+    await act(async () => {});
+    profileHoisted.profileByAgent.set(agent.id, { agentId: agent.id, shortBio: 'external refresh', updatedAt: '2026-08-02' });
+    act(() => window.dispatchEvent(new CustomEvent('xingye-role-profiles-changed', { detail: { agentId: agent.id } })));
+    await waitFor(() => expect(screen.getByLabelText('简介')).toHaveValue('external refresh'));
+  });
+
+  it('blocks saving until existing fields load and preserves edits typed during loading', async () => {
+    let resolveRead!: (value: Response) => void;
+    const read = new Promise<Response>((resolve) => { resolveRead = resolve; });
+    vi.mocked(hanaFetch).mockImplementation((path, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      return body.action === 'readJson' && body.relativePath === 'profile.json' ? read : defaultHanaFetch(path, init);
+    });
+    render(<RoleDetailPanel agent={agent} isOpenHanakoCurrent onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /^保存/ })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('星野昵称'), { target: { value: '正在编辑的昵称' } });
+    const existing = { agentId: agent.id, displayName: '旧昵称', shortBio: '已有简介', updatedAt: '2026-08-01T00:00:00.000Z' };
+    profileHoisted.profileByAgent.set(agent.id, existing);
+    await act(async () => resolveRead({ ok: true, json: async () => ({ data: existing }) } as Response));
+    expect(screen.getByLabelText('星野昵称')).toHaveValue('正在编辑的昵称');
+    expect(screen.getByLabelText('简介')).toHaveValue('已有简介');
+    expect(screen.getByRole('button', { name: /^保存/ })).toBeEnabled();
+    vi.mocked(hanaFetch).mockImplementation(defaultHanaFetch);
+    fireEvent.click(screen.getByRole('button', { name: /^保存/ }));
+    await waitFor(() => expect(profileHoisted.profileByAgent.get(agent.id)).toMatchObject({ displayName: '正在编辑的昵称', shortBio: '已有简介' }));
+  });
+
+  it('shows a load failure and requires a successful retry before saving', async () => {
+    vi.mocked(hanaFetch).mockImplementation(async (path, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (body.action === 'readJson' && body.relativePath === 'profile.json') {
+        return { ok: false, status: 500, json: async () => ({ error: 'read unavailable' }) } as Response;
+      }
+      return defaultHanaFetch(path, init);
+    });
+    render(<RoleDetailPanel agent={agent} isOpenHanakoCurrent onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('read unavailable'));
+    expect(screen.getByRole('button', { name: '更新核心人格摘要' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^保存/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /^保存/ }));
+    expect(vi.mocked(hanaFetch).mock.calls.some(([, init]) => String(init?.body).includes('writeJson'))).toBe(false);
+    profileHoisted.profileByAgent.set(agent.id, { agentId: agent.id, shortBio: '保留的简介', updatedAt: '2026-08-01T00:00:00.000Z' });
+    vi.mocked(hanaFetch).mockImplementation(defaultHanaFetch);
+    fireEvent.click(screen.getByRole('button', { name: '重新读取资料' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^保存/ })).toBeEnabled());
+    await waitFor(() => expect(screen.getByLabelText('简介')).toHaveValue('保留的简介'));
+  });
+
+  it('keeps unsaved persona text when changing the background refreshes the profile', async () => {
+    profileHoisted.profileByAgent.set(agent.id, { agentId: agent.id, shortBio: '旧简介', chatBackgroundDataUrl: 'data:image/png;base64,AA==', updatedAt: '2026-08-01T00:00:00.000Z' });
+    render(<RoleDetailPanel agent={agent} isOpenHanakoCurrent onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /^保存/ })).toBeEnabled());
+    fireEvent.change(screen.getByLabelText('简介'), { target: { value: '尚未保存的新简介' } });
+    fireEvent.click(screen.getByRole('button', { name: '清除背景' }));
+    await screen.findByText('已清除聊天背景。');
+    expect(screen.getByLabelText('简介')).toHaveValue('尚未保存的新简介');
+    expect(profileHoisted.profileByAgent.get(agent.id)?.shortBio).toBe('旧简介');
+    fireEvent.click(screen.getByRole('button', { name: /^保存/ }));
+    await waitFor(() => expect(profileHoisted.profileByAgent.get(agent.id)?.shortBio).toBe('尚未保存的新简介'));
   });
 
   it('shows a sync preview and saves text persona fields through OpenHanako agent APIs', async () => {
@@ -105,11 +208,12 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     expect(screen.getAllByText(/星野花子/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/温柔直接，回答简短。/).length).toBeGreaterThan(0);
 
+    await waitFor(() => expect(screen.getByRole('button', { name: '更新核心人格摘要' })).toBeEnabled());
     vi.mocked(hanaFetch).mockClear();
     fireEvent.click(screen.getByRole('button', { name: '更新核心人格摘要' }));
 
     await waitFor(() => {
-      expect(hanaFetch).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(hanaFetch).mock.calls.filter(([path]) => path.startsWith('/api/agents/'))).toHaveLength(2);
     });
     expect(vi.mocked(hanaFetch).mock.calls.map((c) => c[0])).not.toContain('/api/agents/agent-1/config');
     expect(hanaFetch).toHaveBeenCalledWith('/api/agents/agent-1/identity', expect.objectContaining({
@@ -139,11 +243,12 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     fireEvent.change(screen.getByLabelText('简介'), { target: { value: '会认真记住用户偏好的搭子。' } });
 
     fireEvent.click(screen.getByRole('checkbox', { name: '同步助手名称' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '更新核心人格摘要' })).toBeEnabled());
     vi.mocked(hanaFetch).mockClear();
     fireEvent.click(screen.getByRole('button', { name: '更新核心人格摘要' }));
 
     await waitFor(() => {
-      expect(hanaFetch).toHaveBeenCalledTimes(3);
+      expect(vi.mocked(hanaFetch).mock.calls.filter(([path]) => path.startsWith('/api/agents/'))).toHaveLength(3);
     });
     expect(hanaFetch).toHaveBeenCalledWith('/api/agents/agent-1/config', expect.objectContaining({
       method: 'PUT',

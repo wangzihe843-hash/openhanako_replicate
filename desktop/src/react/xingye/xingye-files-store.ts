@@ -1,5 +1,6 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+import { createXingyeStore } from './xingye-store-utils';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 import { originFromEntryId, withDraftConfirmLock } from './xingye-draft-confirm-lock';
 import { detectFilesDuplicate, normalizeTitleForDedup, type FilesDuplicateResult } from './xingye-files-dedupe';
@@ -915,32 +916,37 @@ export async function updateFileEntry(
   const aid = assertAgentId(agentId, '更新');
   const eid = entryId.trim();
   if (!eid) throw new Error('更新失败：缺少文件 id。');
-  const current = (await listFileEntries(aid)).find((entry) => entry.id === eid);
-  if (!current) return null;
-  const nextTitle = patch.title !== undefined ? patch.title.trim().slice(0, 160) : current.title;
-  if (!nextTitle) throw new Error('标题不能为空。');
-  const nextBody = patch.body !== undefined ? patch.body.slice(0, 8000) : current.body;
-  const nextFolderId = patch.folderId !== undefined ? patch.folderId.trim() : current.folderId;
-  if (!nextFolderId) throw new Error('文件夹不能为空。');
-  const updated: XingyeFileEntry = {
-    ...current,
-    title: nextTitle,
-    body: nextBody,
-    folderId: nextFolderId,
-    summary: patch.summary !== undefined ? normalizeOptionalText(patch.summary, 300) : current.summary,
-    tags: patch.tags !== undefined ? normalizeTags(patch.tags) : current.tags,
-    source: patch.source !== undefined ? normalizeOptionalText(patch.source, 80) : current.source,
-    updatedAt: new Date().toISOString(),
-  };
-  await backend.deleteJsonlRecord(aid, XINGYE_FILES_ENTRIES_JSONL, eid);
-  await backend.appendJsonl(aid, XINGYE_FILES_ENTRIES_JSONL, updated);
+  let previousFolderId = '';
+  const updated = await createXingyeStore(backend).updateJsonlRecord<XingyeFileEntry>(aid, XINGYE_FILES_ENTRIES_JSONL, eid, (raw) => {
+    const normalized = normalizeRow(raw, aid);
+    if (!normalized) return null;
+    const current = { ...raw, ...normalized, id: raw.id, key: raw.key };
+    previousFolderId = current.folderId;
+    const nextTitle = patch.title !== undefined ? patch.title.trim().slice(0, 160) : current.title;
+    if (!nextTitle) throw new Error('标题不能为空。');
+    const nextBody = patch.body !== undefined ? patch.body.slice(0, 8000) : current.body;
+    const nextFolderId = patch.folderId !== undefined ? patch.folderId.trim() : current.folderId;
+    if (!nextFolderId) throw new Error('文件夹不能为空。');
+    const updated: XingyeFileEntry = {
+      ...current,
+      title: nextTitle,
+      body: nextBody,
+      folderId: nextFolderId,
+      summary: patch.summary !== undefined ? normalizeOptionalText(patch.summary, 300) : current.summary,
+      tags: patch.tags !== undefined ? normalizeTags(patch.tags) : current.tags,
+      source: patch.source !== undefined ? normalizeOptionalText(patch.source, 80) : current.source,
+      updatedAt: new Date().toISOString(),
+    };
+    return updated;
+  });
+  if (!updated) return null;
   /**
    * folderId 没变就只 bump 当前 folder；
    * 改了 folder（move）就两个 folder 都 bump（源 folder 少了一条、目标 folder 多了一条）。
    */
   await bumpFolderUpdatedAtBestEffort(aid, updated.folderId, updated.updatedAt ?? new Date().toISOString());
-  if (current.folderId !== updated.folderId) {
-    await bumpFolderUpdatedAtBestEffort(aid, current.folderId, updated.updatedAt ?? new Date().toISOString());
+  if (previousFolderId !== updated.folderId) {
+    await bumpFolderUpdatedAtBestEffort(aid, previousFolderId, updated.updatedAt ?? new Date().toISOString());
   }
   return updated;
 }

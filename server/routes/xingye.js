@@ -1154,7 +1154,9 @@ export function createXingyeRoute(engine) {
         return c.json({ error: "agent is not a channel member" }, 403);
       }
 
-      const result = await appendChannelMessage(filePath, agentId, trimmedBody);
+      const result = await appendChannelMessage(filePath, agentId, trimmedBody, {
+        memberId: agentId, signal: c.req.raw.signal,
+      });
 
       const meta = getChannelMeta(filePath);
       return c.json({
@@ -1165,7 +1167,7 @@ export function createXingyeRoute(engine) {
         channelName: meta?.name || channelId,
       });
     } catch (err) {
-      return c.json({ ok: false, error: errorDetail(err) }, 500);
+      return c.json({ ok: false, error: errorDetail(err) }, [403, 404, 409].includes(err?.status) ? err.status : 500);
     }
   });
 

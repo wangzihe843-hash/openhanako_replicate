@@ -39,3 +39,14 @@ describe("registerLoopBusHandlers", () => {
     expect(() => bus.emit({ type: "turn_end" }, null)).not.toThrow();
   });
 });
+
+it('accepts true-idle events with legacy controllers and forwards to current ones', () => {
+  const bus = makeBus();
+  let controller: any = makeController();
+  registerLoopBusHandlers(bus, () => controller);
+  expect(() => bus.emit({ type: 'session_run_end' }, '/s/a.jsonl')).not.toThrow();
+  controller = { ...controller, onRunEnd: vi.fn() };
+  bus.emit({ type: 'session_run_end' }, '/s/a.jsonl');
+  expect(controller.onRunEnd).toHaveBeenCalledWith('/s/a.jsonl');
+  expect(controller.onTurnEnd).not.toHaveBeenCalled();
+});

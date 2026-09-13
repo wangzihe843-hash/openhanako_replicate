@@ -1,3 +1,4 @@
+import { resolveServerConnection } from '../services/server-connection';
 /**
  * Settings 共享工具函数
  */
@@ -136,31 +137,55 @@ export async function autoSaveGlobalModels(
   }
 }
 
-let _savePinsTimer: ReturnType<typeof setTimeout> | null = null;
+type PinsJob = { run: () => Promise<void>; timer: ReturnType<typeof setTimeout> | null; running: boolean; pending: boolean };
+const pinsJobs = new Map<string, PinsJob>();
 export function savePins() {
-  if (_savePinsTimer) clearTimeout(_savePinsTimer);
-  _savePinsTimer = setTimeout(async () => {
-    const store = useSettingsStore.getState();
+  const store = useSettingsStore.getState();
+  const agentId = store.getSettingsAgentId();
+  if (!agentId) return;
+  const connection = resolveServerConnection(store) ?? undefined;
+  const pins = [...store.currentPins];
+  const key = JSON.stringify([connection?.connectionId, connection?.baseUrl, connection?.token, agentId]);
+  let job = pinsJobs.get(key);
+  if (!job) {
+    job = { run: async () => {}, timer: null, running: false, pending: false };
+    pinsJobs.set(key, job);
+  }
+  job.run = async () => {
+    const res = await hanaFetch(`/api/agents/${agentId}/pinned`, {
+      connection,
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pins }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    emitAgentPinnedMemoryChanged({ agentId, source: 'settings', pinsCount: pins.length });
+    store.showToast(t('settings.autoSaved'), 'success');
+  };
+  job.pending = true;
+  if (job.timer) clearTimeout(job.timer);
+  const current = job;
+  const drain = async () => {
+    current.timer = null;
+    if (current.running) return;
+    current.running = true;
     try {
-      const agentId = store.getSettingsAgentId();
-      if (!agentId) throw new Error('no agent selected');
-      const res = await hanaFetch(`/api/agents/${agentId}/pinned`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pins: store.currentPins }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      emitAgentPinnedMemoryChanged({
-        agentId,
-        source: 'settings',
-        pinsCount: store.currentPins.length,
-      });
-      store.showToast(t('settings.autoSaved'), 'success');
-    } catch (err: any) {
-      store.showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+      while (current.pending) {
+        current.pending = false;
+        try {
+          await current.run();
+        } catch (err: any) {
+          // A newer edit may have become ready while this request was in
+          // flight. Continue that job; never replay the failed request.
+          store.showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+        }
+      }
+    } finally {
+      current.running = false;
+      if (!current.pending && !current.timer) pinsJobs.delete(key);
     }
-  }, 300);
+  };
+  current.timer = setTimeout(() => { void drain(); }, 300);
 }
 
 export const PROVIDER_PRESETS = API_PROVIDER_PRESETS.map(preset => ({

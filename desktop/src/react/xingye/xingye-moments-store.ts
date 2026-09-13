@@ -300,12 +300,6 @@ export function createXingyeMomentStore(
     );
   }
 
-  async function writePosts(agentId: string, posts: XingyeMomentPost[]): Promise<void> {
-    const aid = requireSafeXingyeAgentId(agentId);
-    await store.writeJsonl<XingyeMomentPost>(aid, XINGYE_MOMENTS_POSTS_JSONL, posts);
-    notifyXingyeMomentsChanged(aid);
-  }
-
   function normalizeActor(actor: XingyeMomentActor): XingyeMomentActor | null {
     const actorId = normalizeOptionalString(actor?.actorId);
     const actorName = normalizeOptionalString(actor?.actorName);
@@ -405,37 +399,37 @@ export function createXingyeMomentStore(
       const pid = normalizeOptionalString(postId);
       if (!pid || !normalizedActor) return null;
 
-      const posts = await listPosts(aid);
-      const index = posts.findIndex((post) => post.id === pid);
-      if (index < 0) return null;
+      const result = await store.updateJsonlRecord<XingyeMomentPost>(aid, XINGYE_MOMENTS_POSTS_JSONL, pid, (row) => {
+        const normalized = normalizePost(row, idFactory);
+        if (!normalized) return null;
+        const post = { ...row, ...normalized };
+        const existingIndex = post.likes.findIndex(
+          (like) => like.actorType === normalizedActor.actorType && like.actorId === normalizedActor.actorId,
+        );
 
-      const post = posts[index];
-      const existingIndex = post.likes.findIndex(
-        (like) => like.actorType === normalizedActor.actorType && like.actorId === normalizedActor.actorId,
-      );
+        const now = getNow();
+        const nextLikes = existingIndex >= 0
+          ? post.likes.filter((_, i) => i !== existingIndex)
+          : [
+              ...post.likes,
+              {
+                id: idFactory('like'),
+                actorType: normalizedActor.actorType,
+                actorId: normalizedActor.actorId,
+                actorName: normalizedActor.actorName,
+                createdAt: now,
+              } satisfies XingyeMomentLike,
+            ];
 
-      const now = getNow();
-      const nextLikes = existingIndex >= 0
-        ? post.likes.filter((_, i) => i !== existingIndex)
-        : [
-            ...post.likes,
-            {
-              id: idFactory('like'),
-              actorType: normalizedActor.actorType,
-              actorId: normalizedActor.actorId,
-              actorName: normalizedActor.actorName,
-              createdAt: now,
-            } satisfies XingyeMomentLike,
-          ];
-
-      const nextPost: XingyeMomentPost = {
-        ...post,
-        likes: nextLikes,
-        updatedAt: now,
-      };
-      posts[index] = nextPost;
-      await writePosts(aid, posts);
-      return nextPost;
+        const nextPost: XingyeMomentPost = {
+          ...post,
+          likes: nextLikes,
+          updatedAt: now,
+        };
+        return nextPost;
+      });
+      if (result) notifyXingyeMomentsChanged(aid);
+      return result;
     },
 
     async addComment(
@@ -450,30 +444,31 @@ export function createXingyeMomentStore(
       const normalizedBody = body.trim();
       if (!pid || !normalizedActor || !normalizedBody) return null;
 
-      const posts = await listPosts(aid);
-      const index = posts.findIndex((post) => post.id === pid);
-      if (index < 0) return null;
-
-      const now = getNow();
-      const post = posts[index];
-      const nextPost: XingyeMomentPost = {
-        ...post,
-        comments: [
-          ...post.comments,
-          {
-            id: idFactory('comment'),
-            actorType: normalizedActor.actorType,
-            actorId: normalizedActor.actorId,
-            actorName: normalizedActor.actorName,
-            body: normalizedBody,
-            createdAt: now,
-          },
-        ],
-        updatedAt: now,
-      };
-      posts[index] = nextPost;
-      await writePosts(aid, posts);
-      return nextPost;
+      const commentId = idFactory('comment');
+      const result = await store.updateJsonlRecord<XingyeMomentPost>(aid, XINGYE_MOMENTS_POSTS_JSONL, pid, (row) => {
+        const normalized = normalizePost(row, idFactory);
+        if (!normalized) return null;
+        const post = { ...row, ...normalized };
+        const now = getNow();
+        const nextPost: XingyeMomentPost = {
+          ...post,
+          comments: [
+            ...post.comments,
+            {
+              id: commentId,
+              actorType: normalizedActor.actorType,
+              actorId: normalizedActor.actorId,
+              actorName: normalizedActor.actorName,
+              body: normalizedBody,
+              createdAt: now,
+            },
+          ],
+          updatedAt: now,
+        };
+        return nextPost;
+      });
+      if (result) notifyXingyeMomentsChanged(aid);
+      return result;
     },
 
     async deletePost(agentId: string, postId: string): Promise<boolean> {

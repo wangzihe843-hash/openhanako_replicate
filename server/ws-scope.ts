@@ -10,6 +10,10 @@ const SAFE_GLOBAL_EVENTS = new Set([
   "notification",
 ]);
 
+export const STUDIO_CONVERSATION_EVENTS = new Set([
+  "channel_new_message", "channel_created", "dm_new_message", "conversation_agent_activity",
+]);
+
 const WRITE_MESSAGE_TYPES = new Set([
   "abort",
   "steer",
@@ -71,6 +75,12 @@ export function wsClientCanReceiveEvent(client, event, { resolvedSessionId = nul
     const eventSessionId = stringOrNull(event.sessionId) || stringOrNull(resolvedSessionId);
     return subscriptionAllows(client.subscriptions, { kind: "session", studioId: eventStudioId, sessionPath, sessionId: eventSessionId })
       || subscriptionAllows(client.subscriptions, { kind: "studio", studioId: eventStudioId });
+  }
+
+  if (STUDIO_CONVERSATION_EVENTS.has(event.type)) {
+    return !!eventStudioId && principalHasScope(principal, "chat.read")
+      && sameStudio(principal, eventStudioId)
+      && subscriptionAllows(client.subscriptions, { kind: "studio", studioId: eventStudioId });
   }
 
   if (SAFE_GLOBAL_EVENTS.has(event.type)) {

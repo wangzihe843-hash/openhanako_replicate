@@ -792,18 +792,6 @@ export async function switchSession(path: string): Promise<void> {
 
     // 以服务端事实对齐当前 session 的流式状态。刷新或重连后，renderer 的本地集合可能已经过期。
     const isStreaming = data.isStreaming === true;
-    const streamingSessions = reconcileStreamingSessionsForPath(state as Record<string, any>, state.streamingSessions, path, isStreaming);
-    const activeSessionStreams = { ...(state.activeSessionStreams || {}) };
-    const activeStreamKey = sessionScopedKey(state as Record<string, any>, path) || path;
-    if (isStreaming) {
-      activeSessionStreams[activeStreamKey] = activeSessionStreams[activeStreamKey]
-        || activeSessionStreams[path]
-        || { streamId: null, turnId: null };
-      if (activeStreamKey !== path) delete activeSessionStreams[path];
-    } else {
-      delete activeSessionStreams[activeStreamKey];
-      delete activeSessionStreams[path];
-    }
 
     // 同步全局 agent 上下文
     const switchedAgent = data.agentId && data.agentId !== state.currentAgentId;
@@ -845,7 +833,19 @@ export async function switchSession(path: string): Promise<void> {
     }
 
     // 批量更新 store（切 currentSessionPath 切换对话内容；可见 desk/preview 状态由 workspace 激活流程恢复）
-    useStore.setState((prev: any) => ({
+    useStore.setState((prev: any) => {
+      const streamingSessions = reconcileStreamingSessionsForPath(prev, prev.streamingSessions, path, isStreaming);
+      const activeSessionStreams = { ...(prev.activeSessionStreams || {}) };
+      const activeStreamKey = sessionScopedKey(prev, path) || path;
+      if (isStreaming) {
+        activeSessionStreams[activeStreamKey] = activeSessionStreams[activeStreamKey]
+          || activeSessionStreams[path] || { streamId: null, turnId: null };
+        if (activeStreamKey !== path) delete activeSessionStreams[path];
+      } else {
+        delete activeSessionStreams[activeStreamKey];
+        delete activeSessionStreams[path];
+      }
+      return {
       ...currentSessionIdentityPatch(prev, path, data.sessionId),
       pendingSessionSwitchPath: null,
       pendingNewSession: false,
@@ -859,8 +859,8 @@ export async function switchSession(path: string): Promise<void> {
       workspaceFolders: Array.isArray(data.workspaceFolders) ? data.workspaceFolders : [],
       sessionAuthorizedFoldersByPath: {
         ...putSessionScopedStateValue(
-          state,
-          state.sessionAuthorizedFoldersByPath || {},
+          prev,
+          prev.sessionAuthorizedFoldersByPath || {},
           path,
           Array.isArray(data.authorizedFolders) ? data.authorizedFolders : [],
         ),
@@ -870,12 +870,13 @@ export async function switchSession(path: string): Promise<void> {
       memoryEnabled: data.memoryEnabled !== false,
       streamingSessions,
       activeSessionStreams,
-      unreadOutputSessionPaths: filterSessionScopedStateList(state as Record<string, any>, state.unreadOutputSessionPaths || [], path),
-      attachedFiles: sessionScopedValue(state as Record<string, any>, state.attachedFilesBySession || {}, path) || [],
+      unreadOutputSessionPaths: filterSessionScopedStateList(prev, prev.unreadOutputSessionPaths || [], path),
+      attachedFiles: sessionScopedValue(prev, prev.attachedFilesBySession || {}, path) || [],
       deskContextAttached: false,
       docContextAttached: false,
       ...agentPatch,
-    }));
+      };
+    });
 
     // 缓存命中跳过了 loadMessages 时，校验修订点：会话在后台期间（如 Bridge /rc
     // 接管 + 本端 WS 断连）磁盘可能已前进，缓存不能直接当真相（issue #1610）。

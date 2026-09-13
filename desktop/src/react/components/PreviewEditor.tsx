@@ -95,6 +95,7 @@ export type PreviewEditorSaveDocument = (
 
 export interface PreviewEditorProps {
   content: string;
+  documentOwnerKey?: string;
   filePath?: string;
   remoteContentRef?: RemoteWorkbenchContentRef | null;
   fileVersion?: FileVersion | null;
@@ -124,6 +125,10 @@ interface SaveJob {
   text: string;
   revision: number;
 }
+
+// Serialize overlapping saves across A -> B -> A editor instances. A pending
+// acknowledgement is awaited once; it is never treated as a reason to resend.
+const documentSaveQueues = new Map<string, { tail: Promise<void>; version: FileVersion | null | undefined }>();
 
 interface PendingIncomingContent {
   content: string;
@@ -388,8 +393,23 @@ function isEditorCoverRailDrop(view: EditorView, event: DragEvent): boolean {
 
 /* ── Editor Component ── */
 
+// Each document owns its refs, save queue and in-flight writes. The retiring
+// instance must flush with its own props, even after the next document renders.
 export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>(
-  function PreviewEditor({ content, filePath, remoteContentRef, fileVersion, saveDocument, mode, language, onSelectionChange, onSelectionCommit, onQuoteRange, onStatsChange, onContentChange, initialScrollSnapshot, contentHash, onScrollSnapshotChange, readOnly = false }, ref) {
+  function PreviewEditor(props, ref) {
+    const remote = props.remoteContentRef;
+    const identity = JSON.stringify([props.documentOwnerKey, props.filePath ?? null, remote?.kind, remote?.mountId, remote?.rootId, remote?.subdir, remote?.name, remote?.contentPath]);
+    return <DocumentPreviewEditor key={identity} {...props} documentKey={identity} ref={ref} />;
+  },
+);
+
+const DocumentPreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps & { documentKey: string }>(
+  function PreviewEditor({ documentKey, content, filePath, remoteContentRef, fileVersion, saveDocument, mode, language, onSelectionChange, onSelectionCommit, onQuoteRange, onStatsChange, onContentChange, initialScrollSnapshot, contentHash, onScrollSnapshotChange, readOnly = false }, ref) {
+    const activeRef = useRef(true);
+    useLayoutEffect(() => {
+      activeRef.current = true;
+      return () => { activeRef.current = false; };
+    }, []);
     const incomingFileVersionKey = fileVersionIdentity(fileVersion ?? null);
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
@@ -613,56 +633,65 @@ export const PreviewEditor = forwardRef<PreviewEditorHandle, PreviewEditorProps>
       const saveRemoteDocument = saveDocumentRef.current;
       if (!fp && !saveRemoteDocument) return;
 
-      try {
-        if (fp) await createCheckpointIfDue(fp);
-        if (revision !== docRevisionRef.current || fp !== filePathRef.current) return;
-        const expectedVersion = diskVersionRef.current;
-        let nextVersion: FileVersion | null | undefined;
+      const queue = documentSaveQueues.get(documentKey) ?? { tail: Promise.resolve(), version: undefined };
+      const operation = queue.tail.catch(() => {}).then(async () => {
+        try {
+          if (fp) await createCheckpointIfDue(fp);
+          if (revision !== docRevisionRef.current || fp !== filePathRef.current) return;
+          const expectedVersion = queue.version === undefined ? diskVersionRef.current : queue.version;
+          let nextVersion: FileVersion | null | undefined;
 
-        if (saveRemoteDocument) {
-          const result = await saveRemoteDocument(text, expectedVersion);
-          if (!result?.ok) {
-            if (result?.conflict) {
-              const tFn = window.t ?? ((p: string) => p);
-              throw new Error(tFn('settings.fileChangedOnDisk'));
-            }
-            throw new Error('saveDocument returned false');
-          }
-          nextVersion = result.version ?? null;
-          if (result.version) diskVersionRef.current = result.version;
-        } else {
-          if (!fp) return;
-          if (window.platform?.writeFileIfUnchanged) {
-            const result = await window.platform.writeFileIfUnchanged(fp, text, expectedVersion);
+          if (saveRemoteDocument) {
+            const result = await saveRemoteDocument(text, expectedVersion);
             if (!result?.ok) {
               if (result?.conflict) {
                 const tFn = window.t ?? ((p: string) => p);
                 throw new Error(tFn('settings.fileChangedOnDisk'));
               }
-              throw new Error('write-file-if-unchanged returned false');
+              throw new Error('saveDocument returned false');
             }
             nextVersion = result.version ?? null;
             if (result.version) diskVersionRef.current = result.version;
           } else {
-            const ok = await window.platform?.writeFile(fp, text);
-            if (ok === false) throw new Error('write-file returned false');
-            nextVersion = undefined;
+            if (!fp) return;
+            if (window.platform?.writeFileIfUnchanged) {
+              const result = await window.platform.writeFileIfUnchanged(fp, text, expectedVersion);
+              if (!result?.ok) {
+                if (result?.conflict) {
+                  const tFn = window.t ?? ((p: string) => p);
+                  throw new Error(tFn('settings.fileChangedOnDisk'));
+                }
+                throw new Error('write-file-if-unchanged returned false');
+              }
+              nextVersion = result.version ?? null;
+              if (result.version) diskVersionRef.current = result.version;
+            } else {
+              const ok = await window.platform?.writeFile(fp, text);
+              if (ok === false) throw new Error('write-file returned false');
+              nextVersion = undefined;
+            }
           }
-        }
-        lastSavedContentRef.current = text;
-        if (pendingIncomingContentRef.current?.content === text) {
-          pendingIncomingContentRef.current = null;
-        }
-        rememberSelfWrite(text);
+          queue.version = nextVersion;
+          lastSavedContentRef.current = text;
+          if (pendingIncomingContentRef.current?.content === text) {
+            pendingIncomingContentRef.current = null;
+          }
+          rememberSelfWrite(text);
 
-        if (revision === docRevisionRef.current && fp === filePathRef.current && nextVersion !== undefined) {
-          contentCbRef.current?.(text, nextVersion);
+          if (activeRef.current && revision === docRevisionRef.current && fp === filePathRef.current && nextVersion !== undefined) {
+            contentCbRef.current?.(text, nextVersion);
+          }
+        } catch (err) {
+          console.warn('[PreviewEditor] write failed:', err);
+          showSaveError('settings.saveFailed', err);
         }
-      } catch (err) {
-        console.warn('[PreviewEditor] write failed:', err);
-        showSaveError('settings.saveFailed', err);
+      });
+      queue.tail = operation;
+      documentSaveQueues.set(documentKey, queue);
+      try { await operation; } finally {
+        if (queue.tail === operation) documentSaveQueues.delete(documentKey);
       }
-    }, [createCheckpointIfDue, rememberSelfWrite]);
+    }, [createCheckpointIfDue, rememberSelfWrite, documentKey]);
 
     const drainSaveQueue = useCallback(function drain() {
       if (saveInFlightRef.current) return;

@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../../stores';
-import { saveJianContent } from '../../stores/desk-actions';
+import { jianOwnerKey, saveJianContent } from '../../stores/desk-actions';
 import s from './Desk.module.css';
 
 const EXEC_LOG_START = '<!-- exec-log -->';
@@ -28,6 +28,13 @@ function combineJian(instructions: string, hiddenExecLogBlock: string) {
 }
 
 export function JianEditor({ showHeader = true }: { showHeader?: boolean }) {
+  const ownerKey = useStore(state => jianOwnerKey(state));
+  return <OwnedJianEditor key={ownerKey} showHeader={showHeader} />;
+}
+
+function OwnedJianEditor({ showHeader }: { showHeader: boolean }) {
+  const ownerRef = useRef({ ...useStore.getState() });
+  const pendingRef = useRef<string | null>(null);
   const deskJianContent = useStore(s => s.deskJianContent);
   const [localValue, setLocalValue] = useState('');
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -58,7 +65,17 @@ export function JianEditor({ showHeader = true }: { showHeader?: boolean }) {
     useStore.setState({ deskJianContent: full });
     prevContentRef.current = full;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => saveJianContent(full), 800);
+    pendingRef.current = full;
+    saveTimerRef.current = setTimeout(() => {
+      pendingRef.current = null;
+      void saveJianContent(full, ownerRef.current);
+    }, 800);
+  }, []);
+
+  useEffect(() => () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    if (pendingRef.current !== null) void saveJianContent(pendingRef.current, ownerRef.current);
+    pendingRef.current = null;
   }, []);
 
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {

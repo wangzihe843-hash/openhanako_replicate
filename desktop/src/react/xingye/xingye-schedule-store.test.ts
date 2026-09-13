@@ -112,26 +112,16 @@ describe('xingye-schedule-store', () => {
           },
         ],
       })
-      .mockResolvedValueOnce({ ok: true, deleted: true })
-      .mockResolvedValueOnce({ ok: true });
+      .mockImplementationOnce(async (body) => ({ ok: true, updated: true, record: body.data }));
 
     const updated = await updateScheduleEntryStatus('linwu', 'lin-1', 'done');
 
     expect(updated?.status).toBe('done');
-    expect(postMock).toHaveBeenNthCalledWith(2, {
-      action: 'deleteJsonlRecord',
-      agentId: 'linwu',
-      relativePath: XINGYE_SCHEDULE_ENTRIES_JSONL,
-      recordId: 'lin-1',
-    });
-    expect(postMock).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({
-        action: 'appendJsonl',
-        agentId: 'linwu',
-        relativePath: XINGYE_SCHEDULE_ENTRIES_JSONL,
-      }),
-    );
+    expect(postMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      action: 'compareAndSwapJsonlRecord', agentId: 'linwu', relativePath: XINGYE_SCHEDULE_ENTRIES_JSONL, recordId: 'lin-1',
+      expected: expect.objectContaining({ status: 'planned' }), data: expect.objectContaining({ status: 'done' }),
+    }));
+    expect(postMock.mock.calls.some(([body]) => body.action === 'deleteJsonlRecord')).toBe(false);
   });
 
   it('deletes one schedule entry by id', async () => {

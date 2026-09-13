@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createMemoryXingyeStorageBackend } from './xingye-storage-backend';
+import { projectSecondhandEntry, projectShoppingEntry } from './xingye-accounting-ledger';
+vi.mock('./xingye-event-log', () => ({ appendXingyeEvent: vi.fn(async () => {}) }));
 import {
   createDivinationEntryApi,
   createXingyeAppEntryStore,
@@ -10,6 +12,32 @@ import {
 } from './xingye-app-entry-store';
 
 describe('xingye-app-entry-store', () => {
+  it.each(['shopping', 'secondhand'] as const)('preserves %s transaction time when an editor replaces metadata', async (appId) => {
+    const backend = createMemoryXingyeStorageBackend();
+    const store = createXingyeAppEntryStore(backend, { now: () => '2026-09-10T00:00:00.000Z' });
+    const status = appId === 'shopping' ? 'received' : 'sold';
+    const existing: AppEntry = { id: 'legacy', agentId: 'agent-a', appId, title: 'item', content: '', source: 'manual',
+      metadata: { status, amount: 12 }, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z' };
+    await backend.writeJsonl('agent-a', xingyeAppEntriesPath(appId), [existing]);
+    const updated = await store.updateEntry('agent-a', appId, 'legacy', { content: 'edited note', metadata: { status, amount: 12 } });
+    const project = appId === 'shopping' ? projectShoppingEntry : projectSecondhandEntry;
+    expect(updated?.updatedAt).toBe('2026-09-10T00:00:00.000Z');
+    expect(project(updated!).occurredAt).toBe('2026-08-01T00:00:00.000Z');
+  });
+
+  it('records the first purchase time and preserves it through receipt and later edits', async () => {
+    const backend = createMemoryXingyeStorageBackend();
+    let now = '2026-08-01T00:00:00.000Z';
+    const store = createXingyeAppEntryStore(backend, { now: () => now, idFactory: () => 'purchase' });
+    await store.appendEntry('agent-a', 'shopping', { title: 'item', content: '', metadata: { status: 'wanted' } });
+    now = '2026-09-01T00:00:00.000Z';
+    const purchased = await store.updateEntry('agent-a', 'shopping', 'purchase', { metadata: { status: 'ordered' } });
+    expect(projectShoppingEntry(purchased!).occurredAt).toBe(now);
+    now = '2026-09-10T00:00:00.000Z';
+    const received = await store.updateEntry('agent-a', 'shopping', 'purchase', { metadata: { status: 'received' } });
+    expect(projectShoppingEntry(received!).occurredAt).toBe('2026-09-01T00:00:00.000Z');
+  });
+
   it('stores simple app entries at apps/{appId}/entries.jsonl', async () => {
     const backend = createMemoryXingyeStorageBackend();
     const store = createXingyeAppEntryStore(backend, {

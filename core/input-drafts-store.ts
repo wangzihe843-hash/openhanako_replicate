@@ -35,13 +35,15 @@ export class InputDraftsStore {
       try {
         raw = JSON.parse(fs.readFileSync(this._path, "utf8"));
       } catch (err) {
-        // 损坏文件重命名留证后从空重建，不静默覆盖证据，不阻塞启动
+        // Only rebuild after the original bytes have been safely quarantined.
         const quarantine = `${this._path}.corrupt-${Date.now()}`;
         try {
           fs.renameSync(this._path, quarantine);
           log.error(`input drafts file corrupt, moved aside to ${path.basename(quarantine)}: ${err?.message || err}`);
         } catch (renameErr) {
           log.error(`input drafts file corrupt and quarantine failed: ${renameErr?.message || renameErr}`);
+          // Leave the cache unloaded so every later mutation retries quarantine.
+          throw renameErr;
         }
         raw = null;
       }

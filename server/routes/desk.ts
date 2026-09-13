@@ -1512,7 +1512,12 @@ export function createDeskRoute(engine, hub) {
 
   /** 保存指定目录的 jian.md（自动创建 / 内容为空时删除） */
   route.post("/desk/jian", async (c) => {
-    const body = await safeJson(c);
+    const body = await safeJson(c, null);
+    if (!body || typeof body !== "object" || Array.isArray(body)
+      || !Object.prototype.hasOwnProperty.call(body, "content")
+      || (body.content !== null && typeof body.content !== "string")) {
+      return c.json({ error: "content must be a string or explicit null" }, 400);
+    }
     const agentId = body.agentId || null;
     const dir = body.dir ? body.dir : defaultDeskDir(engine);
     if (!dir) return c.json({ error: t("error.noWorkspace") });
@@ -1526,7 +1531,7 @@ export function createDeskRoute(engine, hub) {
     if (!isInsidePath(target, dir)) return c.json({ error: "invalid path" });
 
     try {
-      if (content === null || content === undefined || content.trim() === "") {
+      if (content === null || content.trim() === "") {
         await fileServiceForRequest(c, dir).safeDeleteIfExists("default", sub, "jian.md", { reason: "desk.jian.delete" });
         return c.json({ ok: true, content: null });
       }

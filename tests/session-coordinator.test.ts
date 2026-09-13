@@ -2029,7 +2029,7 @@ describe("SessionCoordinator", () => {
     await promptPromise;
     expect(streamingDuringPrepare).toBe(true);
     expect(listedDuringPrepare).toBe(true);
-    expect(session.prompt).toHaveBeenCalledWith("prepared image context", undefined);
+    expect(session.prompt).toHaveBeenCalledWith("prepared image context", { preflightResult: expect.any(Function) });
   });
 
   it("builds session tools with sandbox workspace pinned to the effective cwd", async () => {

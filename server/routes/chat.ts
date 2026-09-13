@@ -71,7 +71,9 @@ import { projectLiveToolResultOutcome } from "../../shared/tool-outcome.ts";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { watchDevicePrincipal } from "../../core/device-registry.ts";
 import {
+  STUDIO_CONVERSATION_EVENTS,
   createWsClientRecord,
   subscribeWsClientToSession,
   wsClientCanReceiveEvent,
@@ -505,7 +507,7 @@ export function createChatRoute(engine: any, hub: any, {
   function hardenStudio(msg) {
     if (!msg || typeof msg !== "object") return msg;
     if (msg.studioId) return msg;
-    if (!msg.sessionPath) return msg;
+    if (!msg.sessionPath && !STUDIO_CONVERSATION_EVENTS.has(msg.type)) return msg;
     const studioId = engine.getRuntimeContext?.()?.studioId;
     if (!studioId) return msg;
     return { ...msg, studioId };
@@ -1546,6 +1548,7 @@ export function createChatRoute(engine: any, hub: any, {
     } else if (event.type === "channel_new_message") {
       broadcast({
         type: "channel_new_message",
+        studioId: event.studioId,
         channelName: event.channelName,
         sender: event.sender,
         message: event.message || null,
@@ -1553,13 +1556,14 @@ export function createChatRoute(engine: any, hub: any, {
     } else if (event.type === "channel_created") {
       broadcast({
         type: "channel_created",
+        studioId: event.studioId,
         channelName: event.channelName,
         channel: event.channel || null,
       });
     } else if (event.type === "dm_new_message") {
-      broadcast({ type: "dm_new_message", from: event.from, to: event.to });
+      broadcast({ type: "dm_new_message", studioId: event.studioId, from: event.from, to: event.to });
     } else if (event.type === "conversation_agent_activity") {
-      broadcast({ type: "conversation_agent_activity", activity: event.activity });
+      broadcast({ type: "conversation_agent_activity", studioId: event.studioId, activity: event.activity });
     } else if (event.type === "message_end") {
       // Provider 级别错误（超时、连接断开等）通过 message_end 传递，不经过 message_update
       if (!ss) return;
@@ -1719,12 +1723,19 @@ export function createChatRoute(engine: any, hub: any, {
   wsRoute.get("/ws",
     upgradeWebSocket((c) => {
       let closed = false;
+      let disposeDeviceWatch = () => {};
       const requestContext = createRequestContext(c, engine);
       const isAdapterWithoutHttpRequest = !c?.req;
 
-      return {
+      const handlers = {
         onOpen(event, ws) {
+          if (closed) return;
           activeWsClients++;
+          disposeDeviceWatch = watchDevicePrincipal(engine.hanakoHome, requestContext.authPrincipal, () => {
+            handlers.onClose({}, ws);
+            try { ws.close(1008, "device credential no longer valid"); } catch { /* Already disconnected. */ }
+          });
+          if (closed) return;
           clients.set(ws, createInitialWsClientRecord(requestContext, {
             assumeLocalOwner: isAdapterWithoutHttpRequest,
           }));
@@ -1733,6 +1744,7 @@ export function createChatRoute(engine: any, hub: any, {
         },
 
         onMessage(event, ws) {
+          if (closed) return;
           // Hono @hono/node-ws delivers event.data as a string for text frames
           const msg = wsParse(event.data);
           if (!msg) return;
@@ -2259,6 +2271,7 @@ export function createChatRoute(engine: any, hub: any, {
         onClose(event, ws) {
           if (closed) return;
           closed = true;
+          disposeDeviceWatch();
           activeWsClients = Math.max(0, activeWsClients - 1);
           clients.delete(ws);
           debugLog()?.log("ws", "client disconnected");
@@ -2271,6 +2284,7 @@ export function createChatRoute(engine: any, hub: any, {
           }
         },
       };
+      return handlers;
     })
   );
 

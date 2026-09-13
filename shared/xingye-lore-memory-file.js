@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const DEFAULT_MAX_CHARS = 4_000;
 const OMISSION_MARKER = '...';
@@ -234,7 +235,13 @@ export async function readXingyeLoreMemoryFile({ hanakoHome, agentId } = {}) {
 export async function writeXingyeLoreMemoryFile({ hanakoHome, agentId, content } = {}) {
   const filePath = getXingyeLoreMemoryFilePath({ hanakoHome, agentId });
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, sanitizeMarkdownText(content), 'utf8');
+  const temporary = `${filePath}.tmp.${randomUUID()}`;
+  try {
+    await fs.writeFile(temporary, sanitizeMarkdownText(content), 'utf8');
+    await fs.rename(temporary, filePath);
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => {});
+  }
   return filePath;
 }
 

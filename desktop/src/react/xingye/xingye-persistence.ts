@@ -21,6 +21,7 @@ export const XINGYE_WORKSPACE_STORAGE_STATE_KEY = 'xingye.workspaceStorage.v1';
 
 export const XINGYE_KNOWN_STORAGE_KEYS: readonly string[] = [
   'xingye.phoneContacts',
+  'xingye.phoneContactProfiles',
   'xingye.phoneSmsThreads',
   'xingye.phoneVirtualContacts',
   'xingye.phoneContactGenerationState',
@@ -37,6 +38,7 @@ export const XINGYE_KNOWN_STORAGE_KEYS: readonly string[] = [
 
 const KEY_TO_AGENT_RELATIVE: Record<string, string> = {
   'xingye.phoneContacts': 'phone/contacts.json',
+  'xingye.phoneContactProfiles': 'phone/contact-profiles.json',
   'xingye.phoneSmsThreads': 'phone/sms-threads.json',
   'xingye.phoneVirtualContacts': 'phone/virtual-contacts.json',
   'xingye.phoneContactGenerationState': 'phone/contact-generation-state.json',
@@ -147,6 +149,16 @@ function pickAgentScopedData(key: string, agentId: string, value: unknown): unkn
 
 function wrapAgentScopedData(key: string, agentId: string, value: unknown): unknown {
   if (value == null) return null;
+
+  // Reloading invalidates the generation that owned this binding. A persisted
+  // running flag must not leave SMS controls disabled indefinitely after return.
+  if (key === 'xingye.phoneAiGenerationState' && isRecord(value)) {
+    return Object.fromEntries(Object.entries(value).map(([id, state]) => [id,
+      isRecord(state) && state.status === 'running'
+        ? { ...state, status: 'failed', error: '上次生成已中断，请手动重试。' }
+        : state,
+    ]));
+  }
 
   if (key === 'xingye.loreEntries' && Array.isArray(value)) {
     return Object.fromEntries(
@@ -496,6 +508,36 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     scheduleFlush(FLUSH_RETRY_MS);
     emitPersistenceChanged();
   }
+}
+
+/** A logical operation must retain its original binding, including A → B → A.
+ * Check before using ambient phone stores after an await. A cancelled operation
+ * cannot adopt the newly selected agent's in-memory store.
+ */
+export function captureXingyePersistenceBinding(agentId: string) {
+  const version = storageBindingVersion;
+  const local = devLocalStorageFallbackEnabled();
+  const assertCurrent = () => {
+    if (local && devLocalStorageFallbackEnabled()) return;
+    if (mode !== 'agent' || activeAgentId !== agentId || storageBindingVersion !== version) {
+      throw new XingyePersistenceBindingError(agentId, activeAgentId);
+    }
+  };
+  assertCurrent();
+  const storage = getXingyePersistenceStorage();
+  if (!storage) throw new XingyePersistenceBindingError(agentId, activeAgentId);
+  return {
+    storage,
+    assertCurrent,
+    isCurrent() { try { assertCurrent(); return true; } catch { return false; } },
+    async commit() {
+      assertCurrent();
+      if (local) return;
+      // Do not resume a queued transition here: the caller still needs to know
+      // that its own binding was durably flushed before deleting a draft.
+      if (!(await flushNow())) throw new Error(lastAgentFlushError || '星野数据保存失败，请重试。');
+    },
+  };
 }
 
 /** @deprecated Use {@link refreshXingyeAgentPersistence}; call with explicit agent id only. */

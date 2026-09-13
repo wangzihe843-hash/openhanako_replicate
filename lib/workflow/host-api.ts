@@ -377,11 +377,12 @@ export function createHostApi(deps) {
   }
 
   // ── workflow 嵌套：子 workflow 共享 limiter / signal / budget，限一层 ──
-  async function workflow(script, childArgs) {
+  function workflow(script, childArgs) {
     if (typeof deps.runWorkflow !== "function") {
       throw new Error("当前环境不支持 workflow 嵌套调用");
     }
-    return deps.runWorkflow(script, childArgs);
+    return runtimeContract.trackAgentCall({ nodeId: nodeIdFor('workflow', ++nodeSeq), promptPreview: 'nested workflow' },
+      () => deps.runWorkflow(script, childArgs));
   }
 
   function log(message) {

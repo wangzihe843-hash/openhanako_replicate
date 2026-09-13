@@ -24,6 +24,17 @@ function appEntry(
 }
 
 describe('projectShoppingEntry', () => {
+  it.each(['shopping', 'secondhand'] as const)('keeps %s historical transactions on their explicit date after an edit', (appId) => {
+    const project = appId === 'shopping' ? projectShoppingEntry : projectSecondhandEntry;
+    const row = appEntry({
+      id: 'historical', appId,
+      content: 'updated note',
+      metadata: { status: appId === 'shopping' ? 'received' : 'sold', occurredAt: '2026-08-01T00:00:00.000Z' },
+      updatedAt: '2026-09-10T00:00:00.000Z',
+    });
+    expect(project(row).occurredAt).toBe('2026-08-01T00:00:00.000Z');
+  });
+
   it('projects a bought item as a realized expense row', () => {
     const row = projectShoppingEntry(
       appEntry({

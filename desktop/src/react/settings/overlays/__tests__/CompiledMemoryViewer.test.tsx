@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CompiledMemoryViewer } from '../CompiledMemoryViewer';
 import { useSettingsStore } from '../../store';
@@ -29,11 +29,12 @@ describe('CompiledMemoryViewer editable facts', () => {
       t: ((key: string) => key) as typeof window.t,
     };
     useSettingsStore.setState({
+      settingsAgentId: null,
       currentAgentId: 'hana',
       agents: [{ id: 'hana', name: 'Hana', isPrimary: true }],
     } as never);
     vi.mocked(hanaFetch).mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === '/api/memories/compiled?agentId=hana' && !init) {
+      if (url === '/api/memories/compiled?agentId=hana' && !init?.method) {
         return new Response(JSON.stringify({
           editableFactsEnabled: true,
           sections: {
@@ -45,7 +46,7 @@ describe('CompiledMemoryViewer editable facts', () => {
           content: '',
         }));
       }
-      if (url === '/api/memories/compiled/week/days?agentId=hana' && !init) {
+      if (url === '/api/memories/compiled/week/days?agentId=hana' && !init?.method) {
         return new Response(JSON.stringify({
           days: [
             { date: '2026-07-01', body: '第一天的记录。' },
@@ -72,6 +73,43 @@ describe('CompiledMemoryViewer editable facts', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  it('F4 discards an old agent response after closing and reopening for another agent', async () => {
+    let release!: (value: Response) => void;
+    vi.mocked(hanaFetch).mockImplementation(async (url, init) => {
+      if (url.includes('/week/days')) return new Response(JSON.stringify({ days: [] }));
+      if (init?.method === 'PUT') return new Response(JSON.stringify({ ok: true }));
+      if (url.endsWith('=hana')) return new Promise<Response>(resolve => { release = resolve; });
+      return new Response(JSON.stringify({ sections: { facts: 'B facts' } }));
+    });
+    render(<CompiledMemoryViewer />);
+    act(() => { window.dispatchEvent(new Event('hana-view-compiled-memory')); });
+    fireEvent.click(screen.getByText('✕'));
+    useSettingsStore.setState({ settingsAgentId: 'B' });
+    act(() => { window.dispatchEvent(new Event('hana-view-compiled-memory')); });
+    expect(await screen.findByText('B facts')).toBeTruthy();
+    await act(async () => { release(new Response(JSON.stringify({ sections: { facts: 'A facts' } }))); });
+    expect(screen.queryByText('A facts')).toBeNull();
+    fireEvent.click(screen.getByText('settings.memory.editEntry'));
+    fireEvent.change(screen.getByLabelText('settings.memory.editableFactsLabel'), { target: { value: 'B edited' } });
+    fireEvent.click(screen.getByText('settings.memory.editSave'));
+    await waitFor(() => expect(hanaFetch).toHaveBeenCalledWith('/api/memories/compiled/facts?agentId=B', expect.objectContaining({ body: JSON.stringify({ facts: 'B edited' }) })));
+  });
+
+  it('REVIEW prevents an edit/save from racing a pending clear', async () => {
+    let finish!: (response: Response) => void;
+    const original = vi.mocked(hanaFetch).getMockImplementation()!;
+    vi.mocked(hanaFetch).mockImplementation((url, init) => init?.method === 'DELETE'
+      ? new Promise<Response>(resolve => { finish = resolve; }) : original(url, init));
+    render(<CompiledMemoryViewer />);
+    act(() => { window.dispatchEvent(new Event('hana-view-compiled-memory')); });
+    await screen.findByText('用户喜欢清晰边界。');
+    fireEvent.click(screen.getByText('settings.memory.compiledClear'));
+    expect(screen.getByText('settings.memory.editEntry')).toBeDisabled();
+    expect(screen.getByText('settings.memory.compiledClear')).toBeDisabled();
+    await act(async () => { finish(new Response(JSON.stringify({ ok: true }))); });
+    expect(screen.getByText('settings.memory.editEntry')).toBeEnabled();
   });
 
   it('renders read-only memory sections outside edit mode', async () => {

@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 
@@ -54,6 +54,29 @@ afterEach(() => {
 });
 
 describe('PhoneMmChatApp', () => {
+  it('X2 failed loading disables autosave and generation until explicit reload succeeds', async () => {
+    mmStoreMock.readMmChatPersistence.mockRejectedValueOnce(new Error('read unavailable'));
+    render(<PhoneMmChatApp ownerAgent={linwu} ownerProfile={null} displayName="林雾" onBack={vi.fn()} />);
+    expect(await screen.findByText(/read unavailable/)).toBeInTheDocument();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 500)); });
+    expect(mmStoreMock.saveMmChatPersistence).not.toHaveBeenCalled();
+    expect(mmAiMock.generateMmChatInitialBacklogWithAI).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '重新加载' }));
+    await waitFor(() => expect(mmStoreMock.readMmChatPersistence).toHaveBeenCalledTimes(2));
+  });
+
+  it('X6 failed bootstrap makes only one automatic attempt per mount', async () => {
+    mmStoreMock.readMmChatPersistence.mockResolvedValue(createEmptyMmChatPersisted());
+    let reject!: (error: Error) => void;
+    mmAiMock.generateMmChatInitialBacklogWithAI.mockImplementationOnce(() => new Promise((_resolve, rej) => { reject = rej; }))
+      .mockImplementation(() => new Promise(() => {}));
+    render(<PhoneMmChatApp ownerAgent={linwu} ownerProfile={null} displayName="林雾" onBack={vi.fn()} />);
+    await waitFor(() => expect(mmAiMock.generateMmChatInitialBacklogWithAI).toHaveBeenCalled());
+    await act(async () => reject(new Error('AI unavailable')));
+    expect(mmAiMock.generateMmChatInitialBacklogWithAI).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: '重试生成历史' }));
+    await waitFor(() => expect(mmAiMock.generateMmChatInitialBacklogWithAI).toHaveBeenCalledTimes(2));
+  });
   it('无角色：显示「未选择角色」且不读盘', () => {
     render(<PhoneMmChatApp ownerAgent={null} ownerProfile={null} displayName="TA" onBack={vi.fn()} />);
     expect(screen.getByText(/未选择角色/)).toBeInTheDocument();

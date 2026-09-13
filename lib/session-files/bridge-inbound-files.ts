@@ -26,7 +26,8 @@ export async function materializeBridgeInboundFiles({
   sessionPath,
   files,
   registerSessionFile,
-}: { hanakoHome?: any; sessionId?: any; sessionPath?: any; files?: any[]; registerSessionFile?: any } = {}) {
+  signal,
+}: { hanakoHome?: any; sessionId?: any; sessionPath?: any; files?: any[]; registerSessionFile?: any; signal?: AbortSignal } = {}) {
   if (!files?.length) {
     return { sessionFiles: [], imageAttachmentPaths: [], displayAttachments: [] };
   }
@@ -37,18 +38,31 @@ export async function materializeBridgeInboundFiles({
   }
 
   const dir = sessionFilesCacheDir(hanakoHome, { sessionId, sessionPath });
+  signal?.throwIfAborted();
   await fs.mkdir(dir, { recursive: true });
+  signal?.throwIfAborted();
 
   const sessionFiles = [];
   const imageAttachmentPaths = [];
   const displayAttachments = [];
 
   for (const file of files) {
+    signal?.throwIfAborted();
     const buffer = toBuffer(file?.buffer);
     if (!buffer?.length) continue;
     const filename = safeFilename(file.filename, file.mimeType, file.type);
     const filePath = path.join(dir, uniqueName(filename));
-    await fs.writeFile(filePath, buffer);
+    await fs.writeFile(filePath, buffer, { flag: 'wx' });
+    try {
+      signal?.throwIfAborted();
+    } catch (error) {
+      // This exclusive write succeeded and has not been registered. Only remove
+      // this invocation's file; never delete an existing cache or session sidecar.
+      try { await fs.unlink(filePath); } catch (cleanupError) {
+        if (cleanupError?.code !== 'ENOENT') console.warn(`canceled inbound cleanup failed: ${cleanupError?.message || cleanupError}`);
+      }
+      throw error;
+    }
 
     const registered = serializeSessionFile(registerSessionFile({
       ...(sessionId ? { sessionId } : {}),

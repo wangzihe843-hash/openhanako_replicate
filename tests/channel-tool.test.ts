@@ -3,7 +3,7 @@ import { vi } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { createChannel, appendMessage } from "../lib/channels/channel-store.ts";
+import { createChannel, appendMessage, removeChannelMember, deleteChannel, addChannelMember } from "../lib/channels/channel-store.ts";
 import { createChannelTool } from "../lib/tools/channel-tool.ts";
 import { resolveToolInvocationPermission } from "../lib/permission/tool-invocation-permission.ts";
 
@@ -29,6 +29,64 @@ describe("channel tool membership contract", () => {
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it.each(["member-removal", "deletion", "cancellation", "disabled"])("rejects a queued post after %s without onPost notification", async (scenario) => {
+    const { id, filePath } = await createChannel(channelsDir, {
+      id: "queued", name: "Queued", members: ["alice", "bob", "charlie"],
+    } as any);
+    const onPost = vi.fn();
+    const controller = new AbortController();
+    let enabled = true;
+    const tool = createChannelTool({ channelsDir, agentsDir, agentId: "alice", onPost, isEnabled: () => enabled } as any);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { entered = resolve; });
+    const pause = async (target) => { if (target === filePath) { entered(); await gate; } };
+    const rename = fs.promises.rename.bind(fs.promises);
+    const unlink = fs.promises.unlink.bind(fs.promises);
+    vi.spyOn(fs.promises, "rename").mockImplementation(async (from, to) => {
+      await pause(to);
+      return rename(from, to);
+    });
+    vi.spyOn(fs.promises, "unlink").mockImplementation(async (target) => {
+      await pause(target);
+      return unlink(target);
+    });
+    let mutation;
+    let pending;
+    try {
+      mutation = scenario === "deletion" ? deleteChannel(filePath)
+        : scenario === "member-removal" ? removeChannelMember(filePath, "alice") : addChannelMember(filePath, "dora");
+      await held;
+      // execute reaches append synchronously; the old member list passes its
+      // precheck, but the append is queued behind the locked mutation.
+      pending = tool.execute("queued-post", { action: "post", channel: id, content: "forbidden late post" }, controller.signal)
+        .then(() => null, (error) => error);
+      if (scenario === "cancellation") controller.abort();
+      if (scenario === "disabled") enabled = false;
+      release();
+      await mutation;
+      expect(await pending).toMatchObject({
+        code: scenario === "deletion" ? "channel_not_found" : scenario === "member-removal" ? "channel_not_member" : "channel_write_cancelled",
+        status: scenario === "deletion" ? 404 : scenario === "member-removal" ? 403 : 409,
+      });
+      expect(onPost).not.toHaveBeenCalled();
+      if (scenario === "deletion") expect(fs.existsSync(filePath)).toBe(false);
+      else {
+        expect(fs.readFileSync(filePath, "utf8")).not.toContain("forbidden late post");
+        const remaining = createChannelTool({ channelsDir, agentsDir, agentId: "bob", onPost } as any);
+        const result = await remaining.execute("allowed-post", { action: "post", channel: id, content: "allowed reply" });
+        expect(result.details).toMatchObject({ action: "post", channel: id });
+        expect(onPost).toHaveBeenCalledOnce();
+        expect(fs.readFileSync(filePath, "utf8")).toContain("allowed reply");
+      }
+    } finally {
+      release();
+      await Promise.allSettled([mutation, pending]);
+      vi.restoreAllMocks();
+    }
   });
 
   it("does not direct the model to the removed dm tool", () => {

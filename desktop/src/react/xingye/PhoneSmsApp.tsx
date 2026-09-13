@@ -101,7 +101,7 @@ function PhoneSmsAppContent({ ownerAgent, agents, profiles, initialTarget, onBac
   useEffect(() => {
     if (!ownerAgent) return;
     if (smsHistoryState?.generatedAt) return;
-    if (smsAiState?.status === 'running') return;
+    if (smsAiState?.status === 'running' || smsAiState?.status === 'failed') return;
     generateSmsHistoryWithAI({
       ownerAgent,
       ownerProfile,

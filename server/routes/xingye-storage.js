@@ -10,6 +10,8 @@
 
 import fs from "fs";
 import path from "path";
+import { isDeepStrictEqual } from "node:util";
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { syncXingyeStableLoreMemoryFile } from "../../shared/xingye-lore-memory-file.js";
 import {
@@ -55,6 +57,7 @@ const ACTIONS = new Set([
   "listJsonl",
   "writeJsonl",
   "deleteJsonlRecord",
+  "compareAndSwapJsonlRecord",
   "read",
   "write",
   "append",
@@ -161,9 +164,13 @@ async function readUtf8OrMissing(target) {
 
 async function atomicWrite(target, data) {
   await fs.promises.mkdir(path.dirname(target), { recursive: true });
-  const tmp = `${target}.tmp.${process.pid}.${Date.now()}`;
-  await fs.promises.writeFile(tmp, data);
-  await fs.promises.rename(tmp, target);
+  const tmp = `${target}.tmp.${process.pid}.${randomUUID()}`;
+  try {
+    await fs.promises.writeFile(tmp, data);
+    await fs.promises.rename(tmp, target);
+  } finally {
+    await fs.promises.rm(tmp, { force: true }).catch(() => {});
+  }
 }
 
 /** Align with desktop `normalizeRecord` / listJsonl: stable string ids for JSONL rows. */
@@ -310,6 +317,9 @@ export function createXingyeStorageRoute(engine) {
             // while treating it as an empty lore map for derived-memory cleanup.
             const dataToWrite = body.data;
             const loreEntriesForSync = loreEntriesWrite && dataToWrite == null ? {} : dataToWrite;
+            if (loreEntriesWrite && !isInput(loreEntriesForSync)) throw new Error("lore entries must be an object or null");
+            if (loreEntriesWrite && !safeResolveUnderXingye(baseReal, "lore-memory.md")) throw new Error("invalid lore memory path");
+            const previous = loreEntriesWrite ? await readUtf8OrMissing(target) : null;
             await atomicWrite(target, Buffer.from(JSON.stringify(dataToWrite, null, 2), "utf-8"));
             if (
               loreEntriesWrite
@@ -318,23 +328,20 @@ export function createXingyeStorageRoute(engine) {
               && !Array.isArray(loreEntriesForSync)
             ) {
               const hanakoHome = resolveHanakoHomeFromAgentsDir(engine.agentsDir);
-              if (!hanakoHome) {
-                console.warn(
-                  `[xingye-storage] skip stable lore-memory sync (${agentId}): engine.agentsDir missing or invalid`,
-                );
-              } else {
-                try {
+              try {
+                  if (!hanakoHome) throw new Error("engine.agentsDir missing or invalid");
                   await syncXingyeStableLoreMemoryFile({
                     hanakoHome,
                     agentId,
                     entries: loreEntriesForSync,
                   });
-                } catch (err) {
-                  console.warn(
-                    `[xingye-storage] sync stable lore-memory failed (${agentId}):`,
-                    err?.message || err,
-                  );
-                }
+              } catch (err) {
+                // The derived writer uses atomic rename, so failed writes leave
+                // its previous bytes intact. Restore canonical data and surface
+                // the failure, keeping the caller's pending change retryable.
+                if (previous.missing) await fs.promises.rm(target, { force: true });
+                else await atomicWrite(target, Buffer.from(previous.content, "utf8"));
+                throw err;
               }
             }
           });
@@ -384,6 +391,33 @@ export function createXingyeStorageRoute(engine) {
             await atomicWrite(target, Buffer.from(content, "utf-8"));
           });
           return c.json({ ok: true });
+        }
+        case "compareAndSwapJsonlRecord": {
+          const recordId = typeof body.recordId === "string" ? body.recordId.trim() : "";
+          if (!recordId || !isInput(body.expected) || !isInput(body.data)) {
+            return c.json({ error: "recordId, expected and data objects required" }, 400);
+          }
+          for (const field of ["id", "key"]) {
+            if (!isDeepStrictEqual(body.expected[field], body.data[field])) {
+              return c.json({ error: "record identity cannot change" }, 400);
+            }
+          }
+          const result = await withXingyeAgentEventLock(agentId, async () => {
+            const { missing, content } = await readUtf8OrMissing(target);
+            if (missing) return { updated: false, record: null };
+            const lines = content.split(/\r?\n/);
+            for (let i = 0; i < lines.length; i += 1) {
+              let row;
+              try { row = JSON.parse(lines[i]); } catch { continue; }
+              if (jsonlRecordFieldAsString(row?.id) !== recordId && jsonlRecordFieldAsString(row?.key) !== recordId) continue;
+              if (!isDeepStrictEqual(row, body.expected)) return { updated: false, record: row };
+              lines[i] = JSON.stringify(body.data);
+              await atomicWrite(target, Buffer.from(lines.join("\n"), "utf8"));
+              return { updated: true, record: body.data };
+            }
+            return { updated: false, record: null };
+          });
+          return c.json({ ok: true, ...result });
         }
         case "deleteJsonlRecord": {
           const recordId = typeof body?.recordId === "string" ? body.recordId.trim() : "";

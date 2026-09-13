@@ -111,7 +111,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
     if (!stateLoaded) {
       state = readDreamState(options.memoryDir);
       runtime.lastRun = state.lastRun;
-      if (state.lastRun) runtime.status = state.lastRun.status;
+      if (state.lastRun && runtime.status === "idle") runtime.status = state.lastRun.status;
       stateLoaded = true;
     }
     return state;
@@ -138,6 +138,11 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
     let before: DreamSections | null = null;
     let model = "";
     try {
+      // Startup I/O belongs to the run too: failures must reach a terminal state.
+      ensureState();
+      if (trigger === "automatic") {
+        persist({ ...state, lastAutomaticAttemptDate: logicalDate });
+      }
       if (recoverPendingDreamApply(options.memoryDir, options.memoryMdPath)) {
         options.onCompiled?.();
       }
@@ -306,8 +311,16 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
         error: err?.message || String(err),
         errorCode: persistedDreamErrorCode(err),
       };
-      const currentState = ensureState();
-      persist({ ...currentState, lastRun: report });
+      // Never overwrite an unreadable state file with an empty fallback. If a
+      // failure report cannot be persisted, retain the failure in runtime.
+      if (stateLoaded) {
+        try {
+          persist({ ...state, lastRun: report });
+        } catch (persistError: any) {
+          report.error = `${report.error}; Dream state persistence failed: ${persistError?.message || persistError}`;
+          report.errorCode = "dream_run_failed";
+        }
+      }
       return report;
     }
   };
@@ -323,11 +336,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
     const runId = crypto.randomUUID();
     const startedAt = new Date().toISOString();
     abortController = new AbortController();
-    runtime = { status: "running", runId, startedAt, lastRun: ensureState().lastRun };
-
-    if (trigger === "automatic") {
-      persist({ ...ensureState(), lastAutomaticAttemptDate: logicalDate });
-    }
+    runtime = { status: "running", runId, startedAt, lastRun: runtime.lastRun };
 
     const promise = runCore({
       runId,
@@ -337,12 +346,21 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
       signal: abortController.signal,
     });
     running = promise;
-    promise.then((report) => {
+    const finish = (report: DreamRunReport) => {
       runtime = { status: report.status, runId: null, startedAt: null, lastRun: report };
-    }).finally(() => {
       if (running === promise) running = null;
       abortController = null;
-    });
+    };
+    // Handle rejection on this chain as well as the original promise: even an
+    // unexpected error while constructing a report must not strand runtime.
+    void promise.then(finish, (error: any) => finish({
+      runId, trigger, startedAt, logicalDate,
+      finishedAt: new Date().toISOString(), status: "failed",
+      beforeChars: 0, afterChars: 0, mergedCount: 0, forgottenCount: 0,
+      reviewedCount: 0, model: "", revisionId: null, notes: [], changed: false,
+      changedSections: [], appliedOperationCount: 0,
+      error: error?.message || String(error), errorCode: "dream_run_failed",
+    }));
     return { status: "running" as const, runId, startedAt, lastRun: runtime.lastRun };
   }
 
@@ -355,7 +373,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
   }
 
   function getStatus() {
-    ensureState();
+    if (!stateLoaded && runtime.status === "idle") ensureState();
     return { ...runtime, lastRun: runtime.lastRun ? { ...runtime.lastRun } : null };
   }
 

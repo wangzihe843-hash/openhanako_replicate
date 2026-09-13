@@ -698,7 +698,7 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
       "cache-control": "no-store",
       "x-content-type-options": "nosniff",
     });
-    return new Response(fs.readFileSync(entry.realPath), { headers });
+    return new Response(c.req.method === "HEAD" ? null : fs.readFileSync(entry.realPath), { headers });
   });
 
   /** 发送媒体到 bridge 平台（桌面端推送文件） */

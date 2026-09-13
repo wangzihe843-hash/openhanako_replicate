@@ -1170,9 +1170,14 @@ export function ChannelInput() {
   const handleSend = useCallback(async () => {
     if (sending || !inputValue.trim()) return;
     setSending(true);
-    try { await sendChannelMessage(inputValue.trim()); setInputValue(''); }
+    try {
+      const sent = await sendChannelMessage(inputValue.trim());
+      if (sent && useStore.getState().currentChannel === currentChannel) {
+        setInputValue(current => current === inputValue ? '' : current);
+      }
+    }
     finally { setSending(false); }
-  }, [sending, inputValue]);
+  }, [sending, inputValue, currentChannel]);
 
   const checkMention = useCallback(() => {
     if (!inputRef.current) return;

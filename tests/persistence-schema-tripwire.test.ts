@@ -91,7 +91,7 @@ describe("persistence schema tripwire", () => {
     expect(facts).toMatchObject({
       kind: "sqlite-runtime",
       module: "lib/memory/fact-store.ts",
-      runtimeSchema: { userVersion: 2 },
+      runtimeSchema: { userVersion: 3 },
     });
     expect(facts.runtimeSchema.objects.some((entry) => entry.name === "facts_fts")).toBe(true);
     expect(facts.runtimeSchema.objects.every((entry) => !entry.name.startsWith("facts_fts_"))).toBe(true);

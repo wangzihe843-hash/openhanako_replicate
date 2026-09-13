@@ -719,6 +719,8 @@ export class Agent {
 
     // 13. workflow 工具（per-agent 工具开关，默认关；纳入与否由 tools.disabled 决定）
     this._workflowTool = createWorkflowTool({
+      getTaskRegistry: () => this._cb?.getTaskRegistry?.(),
+      getSessionIdForPath: (sp) => this._cb?.getEngine?.()?.getSessionIdForPath?.(sp) || null,
       executeIsolated: (prompt, opts) => {
         if (!this._cb?.executeIsolated) throw new Error("workflow 调用失败：engine 未初始化");
         return this._cb.executeIsolated(prompt, opts);

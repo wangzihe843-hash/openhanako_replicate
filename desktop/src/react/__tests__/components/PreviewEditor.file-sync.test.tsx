@@ -6,8 +6,9 @@ import { Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PreviewEditor, type PreviewEditorHandle } from '../../components/PreviewEditor';
+import { PreviewEditor, type PreviewEditorHandle, type PreviewEditorSaveDocument } from '../../components/PreviewEditor';
 import type { PlatformApi, VersionedWriteResult } from '../../types';
+import { requestUserEditCheckpoint } from '../../utils/checkpoints';
 
 vi.mock('../../utils/checkpoints', () => ({
   requestUserEditCheckpoint: vi.fn(async () => undefined),
@@ -74,6 +75,89 @@ describe('PreviewEditor file sync', () => {
     elementRectSpy.mockRestore();
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it('REVIEW does not publish a retired document after its save completes', async () => {
+    let release!: () => void;
+    vi.mocked(requestUserEditCheckpoint).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    const ref = createRef<PreviewEditorHandle>();
+    const publish = vi.fn();
+    const { rerender } = render(<PreviewEditor ref={ref} content="A" filePath="/tmp/retired-A.md" mode="markdown" onContentChange={publish} />);
+    await act(async () => { ref.current!.getView()!.dispatch({ changes: { from: 0, to: 1, insert: 'A edited' }, annotations: Transaction.userEvent.of('input.type') }); });
+    publish.mockClear();
+    await act(async () => { rerender(<PreviewEditor ref={ref} content="B" filePath="/tmp/retired-B.md" mode="markdown" onContentChange={publish} />); });
+    await act(async () => { release(); });
+    expect(platform.writeFileIfUnchanged).toHaveBeenCalledWith('/tmp/retired-A.md', 'A edited', null);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('REVIEW serializes saves when a document is reopened before its old checkpoint finishes', async () => {
+    let release!: () => void;
+    vi.mocked(requestUserEditCheckpoint).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    let disk = 'A';
+    vi.mocked(platform.writeFileIfUnchanged!).mockImplementation(async (_path, text) => { disk = text; return { ok: true, conflict: false, version: null }; });
+    const ref = createRef<PreviewEditorHandle>();
+    const { rerender } = render(<PreviewEditor ref={ref} content="A" filePath="/tmp/reopen-A.md" mode="markdown" />);
+    const edit = async (value: string) => { await act(async () => { const view = ref.current!.getView()!; view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value }, annotations: Transaction.userEvent.of('input.type') }); }); };
+    await edit('older A');
+    await act(async () => { rerender(<PreviewEditor ref={ref} content="B" filePath="/tmp/reopen-B.md" mode="markdown" />); });
+    await act(async () => { rerender(<PreviewEditor ref={ref} content="A" filePath="/tmp/reopen-A.md" mode="markdown" />); });
+    await edit('latest A');
+    await act(async () => { await vi.advanceTimersByTimeAsync(700); });
+    await act(async () => { release(); });
+    expect(disk).toBe('latest A');
+  });
+
+  it('REVIEW awaits an accepted save exactly once across close/reopen and forwards its acknowledged version', async () => {
+    const v1 = { mtimeMs: 1, size: 1, sha256: 'v1' };
+    const v2 = { mtimeMs: 2, size: 5, sha256: 'v2' };
+    let ack!: (result: VersionedWriteResult) => void;
+    let accepted = 'A';
+    const save = vi.fn<PreviewEditorSaveDocument>().mockImplementationOnce((text) => {
+      accepted = text; // Server committed; only the acknowledgement is delayed.
+      return new Promise<VersionedWriteResult>(resolve => { ack = resolve; });
+    }).mockImplementation(async (text) => { accepted = text; return { ok: true, conflict: false, version: { ...v2, sha256: 'v3' } }; });
+    const remote = { kind: 'workbench-file' as const, mountId: 'docs', subdir: '', name: 'ack.md', contentPath: '/api/content/ack' };
+    const ref = createRef<PreviewEditorHandle>();
+    const props = { content: 'A', documentOwnerKey: 'server-A', remoteContentRef: remote, fileVersion: v1, saveDocument: save, mode: 'markdown' as const };
+    const { rerender, unmount } = render(<PreviewEditor {...props} ref={ref} />);
+    const edit = async (text: string) => { await act(async () => { const view = ref.current!.getView()!; view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, annotations: Transaction.userEvent.of('input.type') }); }); };
+    await edit('first');
+    await act(async () => { await vi.advanceTimersByTimeAsync(700); });
+    expect(accepted).toBe('first');
+    await act(async () => { rerender(<PreviewEditor content="B" filePath="/tmp/ack-B.md" mode="markdown" />); });
+    await act(async () => { rerender(<PreviewEditor {...props} ref={ref} />); });
+    await edit('second');
+    await act(async () => { await vi.advanceTimersByTimeAsync(31000); });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(accepted).toBe('first');
+    await act(async () => { ack({ ok: true, conflict: false, version: v2 }); });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenNthCalledWith(1, 'first', v1);
+    expect(save).toHaveBeenNthCalledWith(2, 'second', v2);
+    expect(accepted).toBe('second');
+    unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(31000); });
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it('F1 flushes the previous document with its own path and version when switching files', async () => {
+    let release!: () => void;
+    vi.mocked(requestUserEditCheckpoint).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    const ref = createRef<PreviewEditorHandle>();
+    const aVersion = { mtimeMs: 1, size: 1, sha256: 'a' };
+    const bVersion = { mtimeMs: 2, size: 1, sha256: 'b' };
+    const { rerender } = render(<PreviewEditor ref={ref} content="A" filePath="/tmp/A.md" fileVersion={aVersion} mode="markdown" />);
+    await act(async () => {
+      ref.current!.getView()!.dispatch({ changes: { from: 0, to: 1, insert: 'A edited' }, annotations: Transaction.userEvent.of('input.type') });
+    });
+    await act(async () => {
+      rerender(<PreviewEditor ref={ref} content="B" filePath="/tmp/B.md" fileVersion={bVersion} mode="markdown" />);
+    });
+    await act(async () => { release(); });
+    expect(platform.writeFileIfUnchanged).toHaveBeenCalledWith('/tmp/A.md', 'A edited', aVersion);
+    expect(platform.writeFileIfUnchanged).not.toHaveBeenCalledWith('/tmp/B.md', 'A edited', expect.anything());
+    expect(ref.current!.getView()!.state.doc.toString()).toBe('B');
   });
 
   it('does not autosave content that arrived from a parent file refresh', async () => {

@@ -37,7 +37,7 @@ import {
   isHanaServerListeningOnPort,
   selectLoopbackListenPort,
 } from "../core/server-port-selection.ts";
-import { isCorsOriginAllowed } from "./http/cors-policy.ts";
+import { createCorsMiddleware } from "./http/cors-policy.ts";
 import { inferHttpConnectionKind } from "./http/transport-context.ts";
 import { authorizeHttpRoute, isPublicHttpRoute } from "./http/route-security.ts";
 
@@ -581,20 +581,8 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
 
   // CORS（默认允许 localhost 开发前端和 production Electron file:// 前端；HANA_CORS_ORIGIN 可收紧到单一来源）+ 鉴权
   const corsAllowedOrigin = process.env.HANA_CORS_ORIGIN;
+  app.use("*", createCorsMiddleware({ configuredOrigin: corsAllowedOrigin }));
   app.use("*", async (c: any, next: any) => {
-    const origin = c.req.header("origin") || "";
-    const isAllowed = isCorsOriginAllowed({
-      origin,
-      configuredOrigin: corsAllowedOrigin,
-    } as any);
-    if (origin && isAllowed) {
-      c.header("Access-Control-Allow-Origin", origin);
-      c.header("Access-Control-Allow-Credentials", "true");
-    }
-    c.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    if (c.req.method === "OPTIONS") return c.text("", 204);
-
     const transport = inferHttpConnectionKind({
       hostHeader: c.req.header("host"),
       remoteAddress: (c.env as any)?.incoming?.socket?.remoteAddress,

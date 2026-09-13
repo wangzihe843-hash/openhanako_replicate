@@ -20,6 +20,7 @@
  * scripts/export-open-tree.mjs's own default)
  */
 import path from "node:path";
+import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +28,27 @@ import { DEFAULT_EXPORT_DIR_NAME, exportOpenTree } from "./export-open-tree.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
+
+function resolveNpmCli(env) {
+  // npm sets npm_execpath when invoked through `npm run`. Ignore other
+  // package managers' entries and fall back to the Node/PATH installation.
+  const candidates = [];
+  if (env.npm_execpath && path.basename(env.npm_execpath) === "npm-cli.js") candidates.push(env.npm_execpath);
+  const pathValue = Object.entries(env).find(([key]) => key.toLowerCase() === "path")?.[1] || "";
+  for (const directory of [path.dirname(process.execPath), ...pathValue.split(path.delimiter).filter(Boolean)]) {
+    const base = directory.replace(/^"|"$/g, "");
+    candidates.push(path.join(base, "node_modules/npm/bin/npm-cli.js"));
+    candidates.push(path.resolve(base, "../lib/node_modules/npm/bin/npm-cli.js"));
+    // Unix npm launchers are commonly symlinks to npm-cli.js.
+    try {
+      const real = fs.realpathSync(path.join(base, "npm"));
+      if (path.basename(real) === "npm-cli.js") candidates.push(real);
+    } catch {}
+  }
+  const cli = candidates.find((candidate) => path.isAbsolute(candidate) && fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+  if (!cli) throw new Error("[rehearse-open-export] cannot locate npm-cli.js; run via npm or install npm alongside Node");
+  return cli;
+}
 
 /**
  * Runs one rehearsal step and hard-fails (throws) on a non-zero exit code,
@@ -38,7 +60,10 @@ const ROOT = path.resolve(__dirname, "..");
  */
 export function runRehearsalStep({ step, cmd, args, cwd, env = process.env, log = (msg) => console.log(msg) }) {
   log(`[rehearse-open-export] ${step}: ${cmd} ${args.join(" ")}`);
-  const result = spawnSync(cmd, args, { cwd, stdio: "inherit", env });
+  const isNpm = cmd === "npm" || cmd === "npm.cmd";
+  const executable = isNpm ? process.execPath : cmd;
+  const argv = isNpm ? [resolveNpmCli(env), ...args] : args;
+  const result = spawnSync(executable, argv, { cwd, stdio: "inherit", env, shell: false });
   if (result.error) {
     throw new Error(`[rehearse-open-export] ${step} failed to spawn: ${result.error.message}`);
   }

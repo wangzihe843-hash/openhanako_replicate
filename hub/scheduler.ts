@@ -186,7 +186,7 @@ export class Scheduler {
       },
       onJianBeat: (prompt, cwd, runTools: any = {}) => {
         const isZh = getLocale().startsWith("zh");
-        this._executeActivityForAgent(agentId, prompt, "heartbeat", `${isZh ? "笺" : "jian"}:${path.basename(cwd)}`, {
+        return this._executeActivityForAgent(agentId, prompt, "heartbeat", `${isZh ? "笺" : "jian"}:${path.basename(cwd)}`, {
           cwd,
           extraCustomTools: Array.isArray(runTools.customTools) ? runTools.customTools : [],
         });

@@ -35,6 +35,37 @@ vi.mock("../hub/fresh-compact-maintainer.js", () => ({
 import { Scheduler } from "../hub/scheduler.ts";
 
 describe("Scheduler heartbeat defaults", () => {
+  it.each(["resolve", "reject"])("waits for Jian execution and forwards its %s outcome", async outcome => {
+    let resolveWork: () => void;
+    let rejectWork: (error: Error) => void;
+    const work = new Promise<void>((resolve, reject) => { resolveWork = resolve; rejectWork = reject; });
+    const agent = { id: "audit-jian", agentName: "Audit", deskDir: "/mock/desk", config: { desk: {} } };
+    const scheduler = new Scheduler({ hub: { engine: {
+      agents: new Map([[agent.id, agent]]), getHeartbeatMaster: () => true,
+      getHomeCwd: () => "/mock/workspace", emitDevLog: vi.fn(),
+    } } });
+    scheduler._executeActivityForAgent = vi.fn(() => work);
+    scheduler.startHeartbeat();
+    const callback = heartbeatOptions[heartbeatOptions.length - 1].onJianBeat;
+    let completed = false;
+    let observedError: unknown = null;
+    const observed = Promise.resolve(callback("prompt", "/mock/workspace", {})).then(
+      () => { completed = true; },
+      error => { completed = true; observedError = error; },
+    );
+    // Observe whether the caller has completed before the executor does.
+    await Promise.resolve();
+    const completedEarly = completed;
+    const failure = new Error("simulated Jian execution failure");
+    // Handle the executor independently too, so the unfixed callback cannot
+    // produce an unhandled rejection when the regression is run before the fix.
+    const drainedWork = work.catch(() => {});
+    if (outcome === "resolve") resolveWork(); else rejectWork(failure);
+    await Promise.all([observed, drainedWork]);
+    expect(completedEarly).toBe(false);
+    expect(observedError).toBe(outcome === "reject" ? failure : null);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     heartbeatInstances.length = 0;

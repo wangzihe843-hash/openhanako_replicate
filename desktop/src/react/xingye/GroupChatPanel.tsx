@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { resolveServerConnection } from '../services/server-connection';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useStore } from '../stores';
 import type { Agent, ChannelMessage } from '../types';
@@ -105,6 +106,11 @@ function describeOutcome(outcome: TriggerGroupChatReplyOutcome): LastTriggerResu
 }
 
 export function GroupChatPanel({ selectedAgent }: GroupChatPanelProps) {
+  const connectionKey = useStore((state) => JSON.stringify(resolveServerConnection(state)));
+  return <ScopedGroupChatPanel key={`${connectionKey}:${selectedAgent?.id ?? ''}`} selectedAgent={selectedAgent} />;
+}
+
+function ScopedGroupChatPanel({ selectedAgent }: GroupChatPanelProps) {
   const userName = useStore((s) => s.userName) || 'user';
   const [channels, setChannels] = useState<ChannelSummary[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
@@ -114,8 +120,14 @@ export function GroupChatPanel({ selectedAgent }: GroupChatPanelProps) {
   const [triggering, setTriggering] = useState(false);
   const [lastResult, setLastResult] = useState<LastTriggerResult | null>(null);
   const [messagesExpanded, setMessagesExpanded] = useState(false);
+  const listRequest = useRef(0);
+  const detailRequest = useRef(0);
+  const triggerRequest = useRef(0);
+  const currentChannel = useRef(selectedChannelId);
+  currentChannel.current = selectedChannelId;
 
   const refreshChannelList = useCallback(async () => {
+    const request = ++listRequest.current;
     if (!selectedAgent) {
       setChannels([]);
       setSelectedChannelId(null);
@@ -124,46 +136,58 @@ export function GroupChatPanel({ selectedAgent }: GroupChatPanelProps) {
     setLoadingChannels(true);
     try {
       const list = await fetchChannelsForAgent(selectedAgent.id);
+      if (request !== listRequest.current) return;
       setChannels(list);
       setSelectedChannelId((current) => {
         if (current && list.some((c) => c.id === current)) return current;
         return list[0]?.id ?? null;
       });
     } finally {
-      setLoadingChannels(false);
+      if (request === listRequest.current) setLoadingChannels(false);
     }
   }, [selectedAgent]);
 
   useEffect(() => {
     void refreshChannelList();
+    return () => { listRequest.current += 1; };
   }, [refreshChannelList]);
 
   // Reset result + collapse messages when switching agent or channel
   useEffect(() => {
     setLastResult(null);
     setMessagesExpanded(false);
+    setTriggering(false);
+    return () => { triggerRequest.current += 1; };
   }, [selectedAgent?.id, selectedChannelId]);
 
   const refreshChannelDetail = useCallback(async () => {
+    if (currentChannel.current !== selectedChannelId) return;
+    const request = ++detailRequest.current;
     if (!selectedChannelId) {
       setChannelDetail(null);
       return;
     }
     setLoadingDetail(true);
+    setChannelDetail(null);
     try {
       const detail = await fetchChannelDetail(selectedChannelId);
-      setChannelDetail(detail);
+      if (request === detailRequest.current && currentChannel.current === selectedChannelId) {
+        setChannelDetail(detail?.id === selectedChannelId ? detail : null);
+      }
     } finally {
-      setLoadingDetail(false);
+      if (request === detailRequest.current && currentChannel.current === selectedChannelId) setLoadingDetail(false);
     }
   }, [selectedChannelId]);
 
   useEffect(() => {
     void refreshChannelDetail();
+    return () => { detailRequest.current += 1; };
   }, [refreshChannelDetail]);
 
   const onTrigger = useCallback(async () => {
-    if (!selectedAgent || !selectedChannelId) return;
+    if (!selectedAgent || !selectedChannelId || channelDetail?.id !== selectedChannelId || loadingDetail || triggering) return;
+    const request = ++triggerRequest.current;
+    const isCurrent = () => request === triggerRequest.current && currentChannel.current === selectedChannelId;
     setTriggering(true);
     setLastResult(null);
     try {
@@ -171,21 +195,24 @@ export function GroupChatPanel({ selectedAgent }: GroupChatPanelProps) {
         agent: selectedAgent,
         channelId: selectedChannelId,
       });
+      if (!isCurrent()) return;
       setLastResult(describeOutcome(outcome));
       if (outcome.status === 'replied') {
         // Refresh messages so the user sees the new reply
         await refreshChannelDetail();
+        if (!isCurrent()) return;
         await refreshChannelList();
       }
     } catch (err) {
+      if (!isCurrent()) return;
       setLastResult({
         status: 'error',
         message: `触发失败：${err instanceof Error ? err.message : String(err)}`,
       });
     } finally {
-      setTriggering(false);
+      if (isCurrent()) setTriggering(false);
     }
-  }, [refreshChannelDetail, refreshChannelList, selectedAgent, selectedChannelId]);
+  }, [refreshChannelDetail, refreshChannelList, selectedAgent, selectedChannelId, channelDetail, loadingDetail, triggering]);
 
   const headerSubtitle = useMemo(() => {
     if (!selectedAgent) return '请先在角色列表里选择当前 agent';
@@ -253,7 +280,7 @@ export function GroupChatPanel({ selectedAgent }: GroupChatPanelProps) {
             <p className={styles.xyGroupChatHint}>选择左侧群聊查看消息。</p>
           ) : loadingDetail ? (
             <p className={styles.xyGroupChatHint}>正在加载群聊消息…</p>
-          ) : channelDetail ? (
+          ) : channelDetail?.id === selectedChannelId ? (
             <>
               <div className={styles.xyGroupChatDetailHeader}>
                 <div>
@@ -384,7 +411,10 @@ export function GroupChatPanel({ selectedAgent }: GroupChatPanelProps) {
               </div>
             </>
           ) : (
-            <p className={styles.xyGroupChatHint}>读取群聊消息失败，点击刷新重试。</p>
+            <div className={styles.xyGroupChatHint}>
+              <p>读取群聊消息失败。</p>
+              <button type="button" onClick={() => void refreshChannelDetail()}>重新读取群聊消息</button>
+            </div>
           )}
         </div>
       </section>

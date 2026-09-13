@@ -4,7 +4,7 @@ import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { createDmRoute } from "../server/routes/dm.ts";
-import { appendMessage } from "../lib/channels/channel-store.ts";
+import { appendDmMessage } from "../lib/channels/channel-store.ts";
 import { getAgentPhoneRuntimePath, updateAgentPhoneRuntime } from "../lib/conversations/agent-phone-runtime.ts";
 
 function mktemp() {
@@ -18,8 +18,12 @@ function makeAgent(root, id, name = id) {
 }
 
 async function writeDm(agent, peerId, sender, body) {
-  const filePath = path.join(agent.agentDir, "dm", `${peerId}.md`);
-  await appendMessage(filePath, sender, body);
+  await appendDmMessage({
+    agentsDir: path.dirname(agent.agentDir),
+    fromId: sender,
+    toId: sender === agent.id ? peerId : agent.id,
+    body,
+  });
 }
 
 describe("dm route owner resolution", () => {

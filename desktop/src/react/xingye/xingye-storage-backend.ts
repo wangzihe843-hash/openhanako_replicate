@@ -6,10 +6,26 @@ export type XingyeStorageBackend = {
   writeJsonl<T>(agentId: string, relativePath: string, records: T[]): Promise<void>;
   /** Removes the first JSONL row whose `key` or `id` equals `recordId`; preserves order of remaining rows/lines. */
   deleteJsonlRecord(agentId: string, relativePath: string, recordId: string): Promise<boolean>;
+  compareAndSwapJsonlRecord<T>(agentId: string, relativePath: string, recordId: string, expected: T, data: T): Promise<{ updated: boolean; record: T | null }>;
 };
 
 function key(agentId: string, relativePath: string): string {
   return `${agentId}::${relativePath}`;
+}
+
+// Development backends execute the comparison and write synchronously. Production
+// performs this operation under the server's per-agent lock, across HTTP clients.
+function compareAndSwapLines<T>(lines: string[], recordId: string, expected: T, data: T) {
+  for (let i = 0; i < lines.length; i += 1) {
+    let row;
+    try { row = JSON.parse(lines[i]); } catch { continue; }
+    if (jsonlRecordFieldAsString(row?.id) !== recordId && jsonlRecordFieldAsString(row?.key) !== recordId) continue;
+    if (JSON.stringify(row) !== JSON.stringify(expected)) return { updated: false, record: row as T, lines };
+    const next = [...lines];
+    next[i] = JSON.stringify(data);
+    return { updated: true, record: data, lines: next };
+  }
+  return { updated: false, record: null as T | null, lines };
 }
 
 /** Mirror server `xingye-storage.js` JSONL delete matching (ids + synthetic `${category}-${n}`). */
@@ -44,6 +60,12 @@ export function createMemoryXingyeStorageBackend(): XingyeStorageBackend {
   const jsonl = new Map<string, string[]>();
 
   return {
+    async compareAndSwapJsonlRecord<T>(agentId: string, relativePath: string, recordId: string, expected: T, data: T) {
+      const k = key(agentId, relativePath);
+      const result = compareAndSwapLines(jsonl.get(k) ?? [], recordId, expected, data);
+      if (result.updated) jsonl.set(k, result.lines);
+      return { updated: result.updated, record: result.record };
+    },
     async readJson<T>(agentId: string, relativePath: string): Promise<T | null> {
       const raw = json.get(key(agentId, relativePath));
       if (raw == null) return null;
@@ -108,6 +130,12 @@ export function createLocalStorageXingyeBackend(
   keyForPath: (agentId: string, relativePath: string) => string,
 ): XingyeStorageBackend {
   return {
+    async compareAndSwapJsonlRecord<T>(agentId: string, relativePath: string, recordId: string, expected: T, data: T) {
+      const k = keyForPath(agentId, relativePath);
+      const result = compareAndSwapLines((storage.getItem(k) ?? '').split('\n'), recordId, expected, data);
+      if (result.updated) storage.setItem(k, result.lines.join('\n'));
+      return { updated: result.updated, record: result.record };
+    },
     async readJson<T>(agentId: string, relativePath: string): Promise<T | null> {
       const raw = storage.getItem(keyForPath(agentId, relativePath));
       if (raw == null) return null;
@@ -187,6 +215,12 @@ function requireAgentId(agentId: string): void {
 
 export function createAgentXingyeStorageBackend(post: PostFn): XingyeStorageBackend {
   return {
+    async compareAndSwapJsonlRecord<T>(agentId: string, relativePath: string, recordId: string, expected: T, data: T) {
+      requireAgentId(agentId);
+      const response = await post({ action: 'compareAndSwapJsonlRecord', agentId, relativePath, recordId, expected, data });
+      if (typeof response?.updated !== 'boolean') throw new Error('Invalid JSONL update response');
+      return { updated: response.updated, record: (response.record ?? null) as T | null };
+    },
     async readJson<T>(agentId: string, relativePath: string): Promise<T | null> {
       requireAgentId(agentId);
       const data = await post({ action: 'readJson', agentId, relativePath });

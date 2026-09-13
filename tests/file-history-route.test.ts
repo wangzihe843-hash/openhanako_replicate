@@ -11,6 +11,7 @@ function makeApp() {
     listVersions: vi.fn(() => [{ id: 7, capturedAt: 1000, origin: "event", opContext: "agent_tool", rawSize: 5 }]),
     getSnapshotContent: vi.fn(() => ({ relPath: "a.md", content: Buffer.from("hello"), capturedAt: 1000, origin: "event" })),
     captureNow: vi.fn(async () => {}),
+    captureBeforeRestore: vi.fn(async () => {}),
   };
   const resourceIO = {
     write: vi.fn(async (_ref: unknown, _content: unknown, _context: unknown) => ({})),
@@ -68,6 +69,8 @@ describe("file-history route", () => {
     });
     expect(res.status).toBe(200);
     expect(resourceIO.write).toHaveBeenCalledTimes(1);
+    expect(service.captureBeforeRestore).toHaveBeenCalledWith(root, "a.md");
+    expect(service.captureBeforeRestore.mock.invocationCallOrder[0]).toBeLessThan(resourceIO.write.mock.invocationCallOrder[0]);
     const [ref, content] = resourceIO.write.mock.calls[0];
     expect(ref).toEqual({ kind: "local-file", path: path.join(root, "a.md") });
     expect(Buffer.isBuffer(content) ? content.toString() : content).toBe("hello");

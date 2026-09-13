@@ -14,7 +14,7 @@ vi.mock('../../stores/agent-actions', () => ({
 }));
 
 function jsonResponse(body: unknown): Response {
-  return { json: async () => body } as unknown as Response;
+  return { ok: true, status: 200, json: async () => body } as unknown as Response;
 }
 
 function jsonStatusResponse(body: unknown, status: number): Response {

@@ -1251,118 +1251,140 @@ export class BridgeSessionManager {
         ...sessionOpts,
       });
 
-      installDynamicCompactionReserve(session);
-      installMidRunCompaction(session, {
-        usageLedger: this._deps.getUsageLedger?.() || null,
-        buildUsageContext: (s: any) => buildBridgeCompactionUsageContext({
-          sessionPath: s?.sessionManager?.getSessionFile?.() || null,
-          agent,
-          bridgeContext,
-        }),
-      });
-
-      const activeSessionPath = session.sessionManager?.getSessionFile?.() || null;
-      this._assertBridgeSessionRefLocator(sessionRefRef.current, activeSessionPath, "bridge executeExternalMessage");
-      sessionPathRef.current = activeSessionPath;
-      targetModelRef.current = session.model || sessionOpts.model || targetModelRef.current || null;
-      if (activeToolNames.length) {
-        session.setActiveToolsByName?.(activeToolNames);
-      }
-      this._rememberBridgeContext(activeSessionPath, bridgeContext);
-      this._activeSessions.set(sessionKey, session);
-      this._activeSessionRoles.set(sessionKey, currentRole);
-
-      let displayAttachments = [];
-      if (opts.inboundFiles?.length && !activeSessionPath) {
-        throw new Error("bridge inbound files require a resolved sessionPath");
-      }
-      if (opts.inboundFiles?.length && activeSessionPath) {
-        const materialized = await materializeBridgeInboundFiles({
-          hanakoHome: this._deps.getHanakoHome?.(),
-          sessionId: sessionRefRef.current.sessionId,
-          sessionPath: activeSessionPath,
-          files: opts.inboundFiles,
-          registerSessionFile: this._deps.registerSessionFile,
-        });
-        if (materialized.imageAttachmentPaths.length) {
-          promptText = addAttachedImageMarkers(promptText, materialized.imageAttachmentPaths);
-          opts = {
-            ...opts,
-            imageAttachmentPaths: [
-              ...(opts.imageAttachmentPaths || []),
-              ...materialized.imageAttachmentPaths,
-            ],
-          };
-        }
-        displayAttachments = materialized.displayAttachments || [];
-      }
-
-      this._emitSessionEvent({ type: "session_status", isStreaming: true }, activeSessionPath);
-      const displayMessage = {
-        timestamp: Date.now(),
-        ...(opts.displayMessage || {}),
-        text: opts.displayMessage?.text ?? promptText,
-        source: opts.displayMessage?.source || "bridge",
-        bridgeSessionKey: sessionKey,
-      };
-      if (displayAttachments.length && !displayMessage.attachments?.length) {
-        displayMessage.attachments = displayAttachments;
-      }
-      this._emitSessionEvent({
-        type: "session_user_message",
-        message: displayMessage,
-      }, activeSessionPath);
-
-      // 捕获文本输出（visibleText / providerErrorMessage 声明见方法顶部）
-      const unsub = session.subscribe((event) => {
-        recordBridgeAssistantUsage({
-          ledger: this._deps.getUsageLedger?.(),
-          event,
-          sessionPath: activeSessionPath,
-          agent,
-          model: session.model,
-          bridgeContext,
-        });
-        if (event.type === "message_update") {
-          const sub = event.assistantMessageEvent;
-          if (sub?.type === "text_delta") {
-            const { emittedDelta, text } = visibleText.appendTextDelta(sub.delta || "");
-            try { opts.onDelta?.(emittedDelta, text); } catch {}
-          }
-        } else if (event.type === "tool_execution_start") {
-          visibleText.markHiddenToolBoundary();
-        } else if (event.type === "tool_execution_end" && !event.isError) {
-          toolMediaUrls.push(...collectMediaItems(event.result?.details?.media));
-          let appendedDetail = false;
-          const automationSuggestionText = formatAutomationSuggestionText(
-            event.result?.details?.automationSuggestion || event.result?.details?.automationSuggestions,
-            {
-              getAgentById: this._deps.getAgentById,
-              bridgeContext,
-            },
-          );
-          if (automationSuggestionText) {
-            visibleText.appendVisibleDetail(automationSuggestionText);
-            appendedDetail = true;
-          }
-          const card = event.result?.details?.card;
-          if (card?.description) {
-            visibleText.appendVisibleDetail(card.description);
-            appendedDetail = true;
-          }
-          const settingsUpdateText = formatSettingsUpdateText(event.result?.details?.settingsUpdate);
-          if (settingsUpdateText) {
-            visibleText.appendVisibleDetail(settingsUpdateText);
-            appendedDetail = true;
-          }
-          if (!appendedDetail) visibleText.markHiddenToolBoundary();
-        }
-        const messageEndError = getProviderMessageEndError(event);
-        if (messageEndError) providerErrorMessage = messageEndError;
-        this._emitSessionEvent(event, activeSessionPath);
-      });
-
+      let activeSessionPath = null;
+      let locatorValidated = false;
+      let branchHeadError = null;
+      let unsub = null;
       try {
+        installDynamicCompactionReserve(session);
+        installMidRunCompaction(session, {
+          usageLedger: this._deps.getUsageLedger?.() || null,
+          buildUsageContext: (s: any) => buildBridgeCompactionUsageContext({
+            sessionPath: s?.sessionManager?.getSessionFile?.() || null,
+            agent,
+            bridgeContext,
+          }),
+        });
+
+        activeSessionPath = session.sessionManager?.getSessionFile?.() || null;
+        this._assertBridgeSessionRefLocator(sessionRefRef.current, activeSessionPath, "bridge executeExternalMessage");
+        locatorValidated = true;
+        sessionPathRef.current = activeSessionPath;
+        targetModelRef.current = session.model || sessionOpts.model || targetModelRef.current || null;
+        if (activeToolNames.length) {
+          session.setActiveToolsByName?.(activeToolNames);
+        }
+        this._rememberBridgeContext(activeSessionPath, bridgeContext);
+        this._activeSessions.set(sessionKey, session);
+        this._activeSessionRoles.set(sessionKey, currentRole);
+
+        // Persist identity before fallible attachment preparation or provider work.
+        // Re-read the index so another bridge conversation's update is preserved.
+        if (activeSessionPath) {
+          const currentIndex = this.readIndex(agent);
+          const { changed } = this._syncIndexEntry(currentIndex, sessionKey, currentIndex[sessionKey] || raw, {
+            bridgeDir,
+            sessionPath: activeSessionPath,
+            resetRoleBoundState: roleChanged,
+            meta: {
+              ...this._bridgeContextMeta(bridgeContext, meta),
+              promptSnapshot,
+              ...(activeToolNames.length ? { toolNames: activeToolNames } : {}),
+            },
+          });
+          if (changed) this.writeIndex(currentIndex, agent);
+        }
+
+        let displayAttachments = [];
+        if (opts.inboundFiles?.length && !activeSessionPath) {
+          throw new Error("bridge inbound files require a resolved sessionPath");
+        }
+        if (opts.inboundFiles?.length && activeSessionPath) {
+          const materialized = await materializeBridgeInboundFiles({
+            hanakoHome: this._deps.getHanakoHome?.(),
+            sessionId: sessionRefRef.current.sessionId,
+            sessionPath: activeSessionPath,
+            files: opts.inboundFiles,
+            registerSessionFile: this._deps.registerSessionFile,
+          });
+          if (materialized.imageAttachmentPaths.length) {
+            promptText = addAttachedImageMarkers(promptText, materialized.imageAttachmentPaths);
+            opts = {
+              ...opts,
+              imageAttachmentPaths: [
+                ...(opts.imageAttachmentPaths || []),
+                ...materialized.imageAttachmentPaths,
+              ],
+            };
+          }
+          displayAttachments = materialized.displayAttachments || [];
+        }
+
+        this._emitSessionEvent({ type: "session_status", isStreaming: true }, activeSessionPath);
+        const displayMessage = {
+          timestamp: Date.now(),
+          ...(opts.displayMessage || {}),
+          text: opts.displayMessage?.text ?? promptText,
+          source: opts.displayMessage?.source || "bridge",
+          bridgeSessionKey: sessionKey,
+        };
+        if (displayAttachments.length && !displayMessage.attachments?.length) {
+          displayMessage.attachments = displayAttachments;
+        }
+        this._emitSessionEvent({
+          type: "session_user_message",
+          message: displayMessage,
+        }, activeSessionPath);
+
+        // 捕获文本输出（visibleText / providerErrorMessage 声明见方法顶部）
+        unsub = session.subscribe((event) => {
+          recordBridgeAssistantUsage({
+            ledger: this._deps.getUsageLedger?.(),
+            event,
+            sessionPath: activeSessionPath,
+            agent,
+            model: session.model,
+            bridgeContext,
+          });
+          if (event.type === "message_update") {
+            const sub = event.assistantMessageEvent;
+            if (sub?.type === "text_delta") {
+              const { emittedDelta, text } = visibleText.appendTextDelta(sub.delta || "");
+              try { opts.onDelta?.(emittedDelta, text); } catch {}
+            }
+          } else if (event.type === "tool_execution_start") {
+            visibleText.markHiddenToolBoundary();
+          } else if (event.type === "tool_execution_end" && !event.isError) {
+            toolMediaUrls.push(...collectMediaItems(event.result?.details?.media));
+            let appendedDetail = false;
+            const automationSuggestionText = formatAutomationSuggestionText(
+              event.result?.details?.automationSuggestion || event.result?.details?.automationSuggestions,
+              {
+                getAgentById: this._deps.getAgentById,
+                bridgeContext,
+              },
+            );
+            if (automationSuggestionText) {
+              visibleText.appendVisibleDetail(automationSuggestionText);
+              appendedDetail = true;
+            }
+            const card = event.result?.details?.card;
+            if (card?.description) {
+              visibleText.appendVisibleDetail(card.description);
+              appendedDetail = true;
+            }
+            const settingsUpdateText = formatSettingsUpdateText(event.result?.details?.settingsUpdate);
+            if (settingsUpdateText) {
+              visibleText.appendVisibleDetail(settingsUpdateText);
+              appendedDetail = true;
+            }
+            if (!appendedDetail) visibleText.markHiddenToolBoundary();
+          }
+          const messageEndError = getProviderMessageEndError(event);
+          if (messageEndError) providerErrorMessage = messageEndError;
+          this._emitSessionEvent(event, activeSessionPath);
+        });
+
         const abortController = new AbortController();
         this._prePromptAbortControllers.set(sessionKey, abortController);
         ({ text: promptText, opts } = await prepareVisionInputForTextOnlyModel({
@@ -1401,8 +1423,13 @@ export class BridgeSessionManager {
         } catch (err) {
           log.warn(`bridge inline media prune failed (${sessionKey}): ${err?.message || err}`);
         }
-        if (activeSessionPath) {
-          this._syncSessionBranchHead(activeSessionPath, session.sessionManager, "bridge_prompt_finally");
+        try {
+          if (locatorValidated && activeSessionPath) {
+            this._syncSessionBranchHead(activeSessionPath, session.sessionManager, "bridge_prompt_finally");
+          }
+        } catch (err) {
+          branchHeadError = err;
+          log.warn(`bridge branch head sync failed (${sessionKey}): ${err?.message || err}`);
         }
         await teardownSessionResources({
           session,
@@ -1410,34 +1437,20 @@ export class BridgeSessionManager {
           label: `bridge.executeExternalMessage[${sessionKey}]`,
           warn: (msg) => log.warn(msg),
         });
-        this._activeSessions.delete(sessionKey);
-        this._activeSessionRoles.delete(sessionKey);
-        this._emitSessionEvent({ type: "session_status", isStreaming: false }, activeSessionPath);
-      }
-
-      // 更新索引 + 元数据
-      const sessionPath = activeSessionPath || session.sessionManager?.getSessionFile?.();
-      if (sessionPath) {
-        const { changed, file } = this._syncIndexEntry(index, sessionKey, raw, {
-          bridgeDir,
-          sessionPath,
-          resetRoleBoundState: roleChanged,
-          meta: {
-            ...this._bridgeContextMeta(bridgeContext, meta),
-            promptSnapshot,
-            ...(activeToolNames.length ? { toolNames: activeToolNames } : {}),
-          },
-        });
-        if (changed) {
-          if (existingFile && existingFile !== file) {
-            debugLog()?.log("bridge-session", `rebound ${sessionKey}: ${existingFile} -> ${file}`);
-            if (reopenError) {
-              log.log(`${sessionKey} 已自愈：${existingFile} -> ${file}`);
-            }
-          }
-          this.writeIndex(index, agent);
+        if (this._activeSessions.get(sessionKey) === session) {
+          this._activeSessions.delete(sessionKey);
+          this._activeSessionRoles.delete(sessionKey);
+        }
+        if (locatorValidated) {
+          this._emitSessionEvent({ type: "session_status", isStreaming: false }, activeSessionPath);
         }
       }
+      // An execution failure propagates through finally before reaching here,
+      // so cleanup errors only surface when the turn itself succeeded.
+      if (branchHeadError) throw branchHeadError;
+
+      // Identity and metadata were bound before the turn started.
+      const sessionPath = activeSessionPath || session.sessionManager?.getSessionFile?.();
       if (!isGuest && sessionPath) {
         try {
           agent.memoryTicker?.notifyTurn?.(sessionPath);

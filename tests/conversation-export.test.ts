@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appendMessage, createChannel } from "../lib/channels/channel-store.ts";
+import { appendDmMessage, appendMessage, createChannel } from "../lib/channels/channel-store.ts";
 import { buildConversationMarkdownExport } from "../lib/channels/conversation-export.ts";
 
 describe("current conversation Markdown export", () => {
@@ -50,11 +50,10 @@ describe("current conversation Markdown export", () => {
   });
 
   it("exports only the selected DM owner copy", async () => {
-    const selected = path.join(root, "agents", "alice", "dm", "bob.md");
-    const other = path.join(root, "agents", "alice", "dm", "carol.md");
-    fs.mkdirSync(path.dirname(selected), { recursive: true });
-    await appendMessage(selected, "alice", "private with bob");
-    await appendMessage(other, "alice", "private with carol");
+    const agentsDir = path.join(root, "agents");
+    const selected = path.join(agentsDir, "alice", "dm", "bob.md");
+    await appendDmMessage({ agentsDir, fromId: "alice", toId: "bob", body: "private with bob" });
+    await appendDmMessage({ agentsDir, fromId: "alice", toId: "carol", body: "private with carol" });
 
     const result = await buildConversationMarkdownExport({
       filePath: selected,

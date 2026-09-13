@@ -266,3 +266,33 @@ describe("recoverAtBoot", () => {
     expect(store.get(DK).alarm).not.toBeNull();
   });
 });
+
+it('R04 rechecks conservation after the real SDK finishes its awaited event listeners', async () => {
+  const { Agent } = await import('@earendil-works/pi-agent-core');
+  const { registerLoopBusHandlers } = await import('../../server/loop-bus-handlers.ts');
+  const agent = new Agent();
+  const h = makeHarness({ isTargetMidStream: () => agent.state.isStreaming });
+  let listener;
+  registerLoopBusHandlers({ subscribe: fn => { listener = fn; return () => {}; } }, () => h.controller);
+  const held = (Promise as any).withResolvers();
+  agent.subscribe(async event => {
+    listener(event, D_PATH);
+    if (event.type === 'agent_end') {
+      void agent.waitForIdle().then(() => listener({ type: 'session_run_end' }, D_PATH));
+      await held.promise;
+    }
+  });
+  await h.controller.start(D, 'idle regression');
+  const running = (agent as any).runWithLifecycle(async () => {
+    await (agent as any).processEvents({ type: 'turn_start' });
+    await (agent as any).processEvents({ type: 'turn_end', toolResults: [] });
+    await (agent as any).processEvents({ type: 'agent_end', messages: [] });
+  });
+  await vi.waitFor(() => expect(h.store.get(DK).turnCount).toBe(1));
+  expect(agent.state.isStreaming).toBe(true);
+  expect(h.store.get(DK).alarm).toBeNull();
+  held.resolve(); await running;
+  await vi.waitFor(() => expect(h.store.get(DK).alarm).toBeTruthy());
+  expect(h.store.get(DK).turnCount).toBe(1);
+  h.alarm.dispose();
+});

@@ -697,7 +697,7 @@ export function createChannelsRoute(engine: any, hub: any) {
 
       return c.json({ ok: true, timestamp: result.timestamp });
     } catch (err) {
-      return c.json({ error: err.message }, 500);
+      return c.json({ error: err.message }, err.status || 500);
     }
   });
 

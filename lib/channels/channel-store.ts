@@ -242,11 +242,41 @@ export async function createChannel(
  * @param {string} body - 消息正文
  * @returns {{ timestamp: string }} 写入的时间戳
  */
-export async function appendMessage(filePath, sender, body) {
+export async function appendMessage(filePath, sender, body, {
+  memberId = null, signal = null, canWrite = () => true,
+}: { memberId?: string | null; signal?: AbortSignal | null; canWrite?: () => boolean } = {}) {
   const ts = formatTimestamp(new Date());
   const block = formatMessageBlock(sender, body, ts);
   return withFileLock(filePath, async () => {
-    await fsp.appendFile(filePath, block, "utf-8");
+    const assertWritable = () => {
+      if (signal?.aborted || !canWrite()) {
+        throw Object.assign(new Error("Channel write cancelled"), { code: "channel_write_cancelled", status: 409 });
+      }
+    };
+    assertWritable();
+    if (!fs.existsSync(filePath)) {
+      throw Object.assign(new Error("Channel not found"), { code: "channel_not_found", status: 404 });
+    }
+    if (memberId && !getChannelMembers(filePath).includes(memberId)) {
+      throw Object.assign(new Error("Not a channel member"), { code: "channel_not_member", status: 403 });
+    }
+    // Do not use appendFile(path): its O_CREAT would resurrect a deleted
+    // channel. O_APPEND without O_CREAT also fences an external unlink.
+    let handle;
+    try {
+      handle = await fsp.open(filePath, fs.constants.O_WRONLY | fs.constants.O_APPEND);
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        throw Object.assign(new Error("Channel not found"), { code: "channel_not_found", status: 404 });
+      }
+      throw error;
+    }
+    try {
+      assertWritable();
+      await handle.writeFile(block, "utf-8");
+    } finally {
+      await handle.close();
+    }
     return { timestamp: ts };
   });
 }

@@ -132,12 +132,18 @@ function buildBacklogSessionRecord(
   };
 }
 
-export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }: PhoneMmChatAppProps) {
+export function PhoneMmChatApp(props: PhoneMmChatAppProps) {
+  return <PhoneMmChatAppForOwner key={props.ownerAgent?.id ?? ''} {...props} />;
+}
+
+function PhoneMmChatAppForOwner({ ownerAgent, ownerProfile, displayName, onBack }: PhoneMmChatAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
   const [sessions, setSessions] = useState<XingyeMmChatSession[]>(() => createEmptyMmChatPersisted().sessions);
   const [sessionId, setSessionId] = useState('');
   const [view, setView] = useState<MmChatView>('list');
   const [persistReady, setPersistReady] = useState(!ownerAgentId);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [generatePhase, setGeneratePhase] = useState<MmChatGeneratePhase>('idle');
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [followUpDraft, setFollowUpDraft] = useState('');
@@ -167,6 +173,7 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
       return;
     }
     setPersistReady(false);
+    setLoadError(null);
     initialBootstrapTriedRef.current = null;
     let cancelled = false;
     void (async () => {
@@ -182,19 +189,17 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
           setInitializedAt(null);
           await saveMmChatPersistence(ownerAgentId, empty);
         }
-      } catch {
-        if (!cancelled) {
-          setSessions(createEmptyMmChatPersisted().sessions);
-          setInitializedAt(null);
-        }
-      } finally {
         if (!cancelled) setPersistReady(true);
+      } catch (error) {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : String(error));
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [ownerAgentId]);
+  }, [ownerAgentId, loadAttempt]);
 
   useEffect(() => {
     if (!ownerAgentId || !persistReady) return;
@@ -263,8 +268,7 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
       } catch (err) {
         // 不写 initializedAt → 下次进入会重试；同时让用户能看到错误。
         setGenerateError(err instanceof Error ? err.message : String(err));
-        // 允许下次 mount 再试一次（清掉 tried 标记）。
-        initialBootstrapTriedRef.current = null;
+        // Keep the attempt consumed until an explicit retry or a fresh mount.
       } finally {
         setGeneratePhase('idle');
       }
@@ -414,6 +418,11 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
           <strong>TA 咨询 AI 助手</strong>：{roleLine}。每条记录是一次独立咨询，不是短信、不是群聊，也不是您与角色的对话。
         </p>
 
+        {loadError ? <div role="alert">
+          <p>历史记录加载失败：{loadError}</p>
+          <button type="button" onClick={() => setLoadAttempt(value => value + 1)}>重新加载</button>
+        </div> : null}
+
         {view === 'list' ? (
           <div className={styles.mmChatListRoot}>
             <button
@@ -433,6 +442,12 @@ export function PhoneMmChatApp({ ownerAgent, ownerProfile, displayName, onBack }
             {generateError ? (
               <p className={styles.mmChatComposerHint} role="alert">
                 {generateError}
+                {!generateRunning && !initializedAt && sessions.length === 0 && persistReady ? (
+                  <button type="button" onClick={() => {
+                    initialBootstrapTriedRef.current = null;
+                    setLoadAttempt(value => value + 1);
+                  }}>重试生成历史</button>
+                ) : null}
               </p>
             ) : null}
             <p className={styles.mmChatListHint}>以下为历史咨询，点按进入查看；在详情页可删除。</p>

@@ -1,5 +1,6 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+import { createXingyeStore } from './xingye-store-utils';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 import { originFromEntryId, withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
@@ -498,29 +499,30 @@ export async function updateMailMessage(
   const aid = assertAgentId(agentId, '更新邮件');
   const mid = messageId.trim();
   if (!mid) throw new Error('更新失败：缺少邮件 id。');
-  const current = (await listMailMessages(aid)).find((message) => message.id === mid);
-  if (!current) return null;
-  const nextSubject = patch.subject !== undefined ? patch.subject.trim().slice(0, 200) : current.subject;
-  const nextBody = patch.body !== undefined ? patch.body.slice(0, 8000) : current.body;
-  const nextMailbox = patch.mailbox !== undefined ? patch.mailbox : current.mailbox;
-  const nextStarred = patch.isStarred !== undefined ? Boolean(patch.isStarred) : current.isStarred;
-  const updated: XingyeMailMessage = {
-    ...current,
-    mailbox: nextMailbox,
-    subject: nextSubject || '（无主题）',
-    body: nextBody,
-    snippet: nextBody ? buildSnippet(nextBody) : current.snippet,
-    isRead: patch.isRead !== undefined ? Boolean(patch.isRead) : current.isRead,
-    isStarred: nextStarred,
-    autoStarred:
-      patch.autoStarred !== undefined ? Boolean(patch.autoStarred) : current.autoStarred,
-    labels: patch.labels !== undefined ? normalizeLabels(patch.labels) : current.labels,
-    to: patch.to !== undefined ? normalizeToArray(patch.to) : current.to,
-    updatedAt: new Date().toISOString(),
-  };
-  await backend.deleteJsonlRecord(aid, XINGYE_MAIL_MESSAGES_JSONL, mid);
-  await backend.appendJsonl(aid, XINGYE_MAIL_MESSAGES_JSONL, updated);
-  return updated;
+  return createXingyeStore(backend).updateJsonlRecord<XingyeMailMessage>(aid, XINGYE_MAIL_MESSAGES_JSONL, mid, (raw) => {
+    const normalized = normalizeMessage(raw, aid);
+    if (!normalized) return null;
+    const current = { ...raw, ...normalized, id: raw.id, key: raw.key };
+    const nextSubject = patch.subject !== undefined ? patch.subject.trim().slice(0, 200) : current.subject;
+    const nextBody = patch.body !== undefined ? patch.body.slice(0, 8000) : current.body;
+    const nextMailbox = patch.mailbox !== undefined ? patch.mailbox : current.mailbox;
+    const nextStarred = patch.isStarred !== undefined ? Boolean(patch.isStarred) : current.isStarred;
+    const updated: XingyeMailMessage = {
+      ...current,
+      mailbox: nextMailbox,
+      subject: nextSubject || '（无主题）',
+      body: nextBody,
+      snippet: nextBody ? buildSnippet(nextBody) : current.snippet,
+      isRead: patch.isRead !== undefined ? Boolean(patch.isRead) : current.isRead,
+      isStarred: nextStarred,
+      autoStarred:
+        patch.autoStarred !== undefined ? Boolean(patch.autoStarred) : current.autoStarred,
+      labels: patch.labels !== undefined ? normalizeLabels(patch.labels) : current.labels,
+      to: patch.to !== undefined ? normalizeToArray(patch.to) : current.to,
+      updatedAt: new Date().toISOString(),
+    };
+    return updated;
+  });
 }
 
 export async function setMailMessageStar(

@@ -1,3 +1,4 @@
+import { useStore } from '../stores';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 import { createMemoryXingyeStorageBackend } from './xingye-storage-backend';
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => {
     init?: RequestInit & { timeout?: number },
   ) => { ok: boolean; status?: number; json: unknown } | Promise<{ ok: boolean; status?: number; json: unknown }>;
   const fetchCalls: FetchCall[] = [];
+  const runConnections: unknown[] = [];
   let fetchHandler: FetchHandler = () => ({ ok: false, status: 500, json: { error: 'no handler' } });
   let aiHandler: () => Promise<{ decision: 'reply' | 'skip'; reply: string; reason?: string }> = async () => ({
     decision: 'skip',
@@ -18,6 +20,7 @@ const mocks = vi.hoisted(() => {
   });
   // Lazy state-backend slot; populated after the hoisted block runs.
   type AnyStorageBackend = {
+    compareAndSwapJsonlRecord<T>(agentId: string, relativePath: string, recordId: string, expected: T, data: T): Promise<{ updated: boolean; record: T | null }>;
     readJson<T>(agentId: string, relativePath: string): Promise<T | null>;
     writeJson<T>(agentId: string, relativePath: string, data: T): Promise<void>;
     appendJsonl<T>(agentId: string, relativePath: string, record: T): Promise<void>;
@@ -28,6 +31,7 @@ const mocks = vi.hoisted(() => {
   const state: { backend: AnyStorageBackend | null } = { backend: null };
   return {
     fetchCalls,
+    runConnections,
     setFetchHandler(handler: FetchHandler) {
       fetchHandler = handler;
     },
@@ -89,7 +93,7 @@ vi.mock('./xingye-group-chat-state-store', async (importOriginal) => {
   };
   return {
     ...original,
-    appendGroupChatRun: (input: Parameters<typeof original.appendGroupChatRun>[0]) => getStore().appendRun(input),
+    appendGroupChatRun: (input: Parameters<typeof original.appendGroupChatRun>[0], connection?: unknown) => { mocks.runConnections.push(connection); return getStore().appendRun(input); },
     findGroupChatRunByDedupeKey: (agentId: string, dedupeKey: string) =>
       getStore().findRunByDedupeKey(agentId, dedupeKey),
     listGroupChatRuns: (agentId: string) => getStore().listRuns(agentId),
@@ -145,9 +149,60 @@ async function listRunsForAgentA() {
 describe('xingye-group-chat-orchestrator', () => {
   beforeEach(async () => {
     mocks.fetchCalls.length = 0;
+    mocks.runConnections.length = 0;
+    useStore.setState({ serverPort: '17333', activeServerConnection: null });
     await stateBackend.writeJsonl('agent-a', XINGYE_GROUP_CHAT_RUNS_PATH, []);
     await stateBackend.writeJsonl('agent-b', XINGYE_GROUP_CHAT_RUNS_PATH, []);
     mocks.setAiHandler(async () => ({ decision: 'skip', reply: '', reason: 'default' }));
+  });
+
+  it('review X10 coalesces simultaneous reminders for the same channel', async () => {
+    setChannel([{ sender: 'user', timestamp: 'same', body: 'hello' }]);
+    let release!: (value: { decision: 'reply'; reply: string }) => void;
+    const answer = new Promise<{ decision: 'reply'; reply: string }>(resolve => { release = resolve; });
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    mocks.setAiHandler(() => { started(); return answer; });
+    const first = triggerGroupChatReply({ agent, channelId: 'ch_crew' });
+    await ready;
+    const second = triggerGroupChatReply({ agent, channelId: 'ch_crew' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    release({ decision: 'reply', reply: 'one reply' });
+    await Promise.all([first, second]);
+    expect(mocks.fetchCalls.filter(call => call.path.includes('post-as-agent'))).toHaveLength(1);
+    expect(await listRunsForAgentA()).toHaveLength(1);
+  });
+
+  it('review X10 retains the original connection for a run after posting has started', async () => {
+    mocks.setFetchHandler(path => {
+      if (path.includes('post-as-agent')) {
+        useStore.setState({ serverPort: '17334' });
+        return { ok: true, json: { ok: true, timestamp: '2026-09-13T00:00:00Z' } };
+      }
+      return { ok: true, json: { id: 'ch_crew', members: ['agent-a'], messages: [{ sender: 'user', timestamp: 't', body: 'hello' }] } };
+    });
+    mocks.setAiHandler(async () => ({ decision: 'reply', reply: 'confirmed reply' }));
+    const result = await triggerGroupChatReply({ agent, channelId: 'ch_crew' });
+    expect(result.status).toBe('error');
+    expect(await listRunsForAgentA()).toHaveLength(1);
+    expect(mocks.runConnections[0]).toMatchObject({ baseUrl: 'http://127.0.0.1:17333' });
+  });
+
+  it('review X10 cancels before posting when connection changes during generation', async () => {
+    useStore.setState({ serverPort: '17333', activeServerConnection: null });
+    setChannel([{ sender: 'user', timestamp: '2026-05-15 09:00', body: 'hello' }]);
+    let release!: (value: { decision: 'reply'; reply: string }) => void;
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    mocks.setAiHandler(() => { started(); return new Promise(resolve => { release = resolve; }); });
+    const running = triggerGroupChatReply({ agent, channelId: 'ch_crew' });
+    await ready;
+    useStore.setState({ serverPort: '17334' });
+    release({ decision: 'reply', reply: 'A private reply' });
+    const result = await running;
+    expect(result.status).toBe('error');
+    expect(mocks.fetchCalls.filter(call => call.path.includes('post-as-agent'))).toHaveLength(0);
+    expect(await listRunsForAgentA()).toHaveLength(0);
   });
 
   it('writes a reply via POST /api/xingye/group-chat/post-as-agent when AI decides to reply', async () => {
@@ -237,6 +292,40 @@ describe('xingye-group-chat-orchestrator', () => {
     if (outcome.status !== 'error') return;
     expect(outcome.error).toContain('成员');
     expect(mocks.fetchCalls.some((c) => c.path === '/api/xingye/group-chat/post-as-agent')).toBe(false);
+  });
+
+  it('retries a failed generation and still deduplicates the successful retry', async () => {
+    setChannel([{ sender: 'liyu', timestamp: '2026-05-15 09:00', body: '在吗？' }]);
+    let attempts = 0;
+    mocks.setAiHandler(async () => {
+      if (++attempts === 1) throw new Error('temporary generation failure');
+      return { decision: 'reply', reply: '在的。' };
+    });
+
+    expect((await triggerGroupChatReply({ agent, channelId: 'ch_crew' })).status).toBe('error');
+    expect((await triggerGroupChatReply({ agent, channelId: 'ch_crew' })).status).toBe('replied');
+    expect((await triggerGroupChatReply({ agent, channelId: 'ch_crew' })).status).toBe('noop');
+    expect(attempts).toBe(2);
+    expect(mocks.fetchCalls.filter(c => c.path === '/api/xingye/group-chat/post-as-agent')).toHaveLength(1);
+  });
+
+  it('does not retry an unacknowledged post after the connection recovers', async () => {
+    setChannel([{ sender: 'liyu', timestamp: '2026-05-15 09:00', body: '在吗？' }]);
+    mocks.setAiHandler(async () => ({ decision: 'reply', reply: '在的。' }));
+    const { hanaFetch } = await import('../hooks/use-hana-fetch');
+    const original = vi.mocked(hanaFetch).getMockImplementation()!;
+    vi.mocked(hanaFetch).mockImplementation(async (...args) => {
+      if (args[0] === '/api/xingye/group-chat/post-as-agent') throw new Error('response lost after submission');
+      return original(...args);
+    });
+    try {
+      expect((await triggerGroupChatReply({ agent, channelId: 'ch_crew' })).status).toBe('error');
+    } finally {
+      vi.mocked(hanaFetch).mockImplementation(original);
+    }
+    const retry = await triggerGroupChatReply({ agent, channelId: 'ch_crew' });
+    expect(retry.status).toBe('noop');
+    expect(mocks.fetchCalls.filter(c => c.path === '/api/xingye/group-chat/post-as-agent')).toHaveLength(0);
   });
 
   it('records an error run when posting to the channel fails', async () => {

@@ -1,4 +1,5 @@
 import { hanaFetch } from '../hooks/use-hana-fetch';
+import { captureXingyePersistenceBinding } from './xingye-persistence';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile, XingyeRoleProfileMap } from './xingye-profile-store';
 import type { XingyePhoneAiPayload } from './xingye-phone-ai-types';
@@ -834,6 +835,7 @@ export async function generateSmsHistoryWithAI(params: {
 }) {
   const { ownerAgent, ownerProfile, contacts, profileFingerprint } = params;
   const mode = params.mode ?? 'empty_only';
+  const binding = captureXingyePersistenceBinding(ownerAgent.id);
   const smsContacts = contacts.filter(item => item.targetType !== 'user');
   setPhoneAiGenerationState(ownerAgent.id, 'sms_history', {
     status: 'running',
@@ -845,6 +847,7 @@ export async function generateSmsHistoryWithAI(params: {
   });
   try {
     const userName = await resolveXingyeSpeakerUserName();
+    binding.assertCurrent();
     const loreContextText = buildLoreContextForPhone({
       agentId: ownerAgent.id,
       purpose: 'phone_sms',
@@ -857,6 +860,7 @@ export async function generateSmsHistoryWithAI(params: {
       ownerAgent.id,
       smsContacts.map((c) => ({ targetType: c.targetType, targetId: c.targetId, displayName: c.displayName })),
     );
+    binding.assertCurrent();
     // 联系人详情页反哺：已初始化详情的联系人带签名/IP/近期往来 + 与设定库的同一人对齐。
     const contactDetailBlock = formatContactDetailPromptBlock(
       buildContactDetailPromptHints(ownerAgent.id, smsContacts),
@@ -875,6 +879,7 @@ export async function generateSmsHistoryWithAI(params: {
       prompt,
       timeoutMs: 120_000,
     });
+    binding.assertCurrent();
     const payload = parsePayload(raw);
     const contactIndexMap = new Map<string, number>();
     smsContacts.forEach((contact, index) => {
@@ -925,6 +930,7 @@ export async function generateSmsHistoryWithAI(params: {
       version: 1,
     });
   } catch (error) {
+    if (!binding.isCurrent()) throw error;
     setPhoneAiGenerationState(ownerAgent.id, 'sms_history', {
       status: 'failed',
       finishedAt: new Date().toISOString(),

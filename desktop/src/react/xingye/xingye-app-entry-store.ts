@@ -181,6 +181,32 @@ function normalizeMetadata(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
 }
 
+function transactionMetadata(
+  appId: XingyeAppEntryAppId,
+  metadata: Record<string, unknown>,
+  timestamp: string,
+  previous?: AppEntry,
+): Record<string, unknown> {
+  if (appId !== 'shopping' && appId !== 'secondhand') return metadata;
+  const realized = (meta: Record<string, unknown>) => appId === 'shopping'
+    ? meta.status === 'ordered' || meta.status === 'received'
+    : meta.status === 'sold';
+  if (!realized(metadata)) return metadata;
+  const date = (value: unknown): string | undefined => {
+    if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) return undefined;
+    return new Date(value).toISOString();
+  };
+  const explicit = date(metadata.occurredAt);
+  const oldMetadata = normalizeMetadata(previous?.metadata);
+  const oldDate = date(oldMetadata.occurredAt);
+  // Freeze legacy realized rows at their previous projection date before an edit
+  // replaces updatedAt. A new transaction starts on the status transition date.
+  const occurredAt = previous && realized(oldMetadata)
+    ? explicit ?? oldDate ?? previous.updatedAt
+    : explicit && (!previous || explicit !== oldDate) ? explicit : timestamp;
+  return { ...metadata, occurredAt };
+}
+
 function normalizeEntry(value: unknown, agentId: string, appId: XingyeAppEntryAppId): AppEntry | null {
   if (!isRecord(value)) return null;
   const id = typeof value.id === 'string' && value.id.trim() ? value.id.trim() : '';
@@ -244,7 +270,7 @@ export function createXingyeAppEntryStore(
         appId: simpleAppId,
         title: input.title.trim(),
         content: input.content,
-        metadata: normalizeMetadata(input.metadata),
+        metadata: transactionMetadata(simpleAppId, normalizeMetadata(input.metadata), timestamp),
         source: input.source?.trim() || 'manual',
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -285,7 +311,12 @@ export function createXingyeAppEntryStore(
           ...entry,
           title: patch.title === undefined ? entry.title : patch.title.trim(),
           content: patch.content === undefined ? entry.content : patch.content,
-          metadata: patch.metadata === undefined ? entry.metadata : normalizeMetadata(patch.metadata),
+          metadata: transactionMetadata(
+            simpleAppId,
+            patch.metadata === undefined ? normalizeMetadata(entry.metadata) : normalizeMetadata(patch.metadata),
+            updatedAt,
+            entry,
+          ),
           source: patch.source === undefined ? entry.source : (patch.source.trim() || 'manual'),
           updatedAt,
         }),

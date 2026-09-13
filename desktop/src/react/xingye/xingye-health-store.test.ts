@@ -68,6 +68,7 @@ describe('xingye-health-store', () => {
     // 且绝不触发 writeJsonl。
     const writeJsonl = vi.fn(async () => {});
     const failingBackend: XingyeStorageBackend = {
+      async compareAndSwapJsonlRecord() { throw new Error('backend offline'); },
       async readJson() {
         return null;
       },

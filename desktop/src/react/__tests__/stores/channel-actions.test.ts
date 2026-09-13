@@ -116,6 +116,24 @@ describe('channel-actions', () => {
   });
 
   describe('openChannel', () => {
+    it('F5 keeps the newest opened channel visible when history arrives out of order', async () => {
+      vi.stubGlobal('window', { t: (key: string) => key });
+      let resolveA!: (value: Response) => void;
+      const a = new Promise<Response>(resolve => { resolveA = resolve; });
+      mockFetch.mockImplementation(async (url) => {
+        if (url === '/api/channels/A') return a;
+        return { ok: true, json: async () => ({ name: 'B', messages: [], activities: [], mode: 'read_only' }) } as Response;
+      });
+      const { openChannel } = await import('../../stores/channel-actions');
+      const pending = openChannel('A');
+      await openChannel('B');
+      resolveA({ ok: true, json: async () => ({ name: 'A', messages: [{ body: 'old A' }] }) } as Response);
+      await pending;
+      expect(mockState.currentChannel).toBe('B');
+      expect(mockState.channelHeaderName).toBe('# B');
+      expect(mockState.channelMessages).toEqual([]);
+    });
+
     it('opens DM history with the stored owner agent id', async () => {
       vi.stubGlobal('window', { t: (key: string) => key });
       mockState.channels = [{
@@ -418,6 +436,14 @@ describe('channel-actions', () => {
   });
 
   describe('sendChannelMessage', () => {
+    it('F6 returns a failed acknowledgement so callers retain their input', async () => {
+      mockState.currentChannel = 'ch1';
+      mockFetch.mockRejectedValueOnce(new Error('offline'));
+      const { sendChannelMessage } = await import('../../stores/channel-actions');
+      await expect(sendChannelMessage('keep this draft')).resolves.toBe(false);
+      expect(mockState.channelMessages).toEqual([]);
+    });
+
     it('空消息不发送', async () => {
       mockState.currentChannel = 'ch1';
       const { sendChannelMessage } = await import('../../stores/channel-actions');

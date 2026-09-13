@@ -727,6 +727,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "core/session-coordinator.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "server/routes/chat.ts",
           "kind": "import-statement"
         },
@@ -741,7 +746,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/message-utils.ts (import-statement); lib/session-collab/delivery.ts (import-statement); core/session-turn-actions.ts (import-statement); +3 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by core/message-utils.ts (import-statement); lib/session-collab/delivery.ts (import-statement); core/session-turn-actions.ts (import-statement); +4 more importer(s)."
     },
     {
       "path": "core/device-registry.ts",
@@ -759,6 +764,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "server/routes/chat.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "server/routes/devices.ts",
           "kind": "import-statement"
         },
@@ -768,7 +778,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/server-identity.ts (import-statement); core/server-auth.ts (import-statement); server/routes/devices.ts (import-statement); +1 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by core/server-identity.ts (import-statement); core/server-auth.ts (import-statement); server/routes/chat.ts (import-statement); +2 more importer(s)."
     },
     {
       "path": "core/engine.ts",
@@ -5012,6 +5022,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/tools/workflow-tool.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/compat/checks/facts-db.ts",
           "kind": "import-statement"
         },
@@ -5301,7 +5316,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/migrations.ts (import-statement); core/plugin-config.ts (import-statement); lib/desk/cron-store.ts (import-statement); +81 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by core/migrations.ts (import-statement); core/plugin-config.ts (import-statement); lib/desk/cron-store.ts (import-statement); +82 more importer(s)."
     },
     {
       "path": "lib/default-models.json",
@@ -111412,6 +111427,16 @@
       "inputType": "source-graph",
       "provenance": [
         {
+          "root": "cli-entry",
+          "from": "core/data-epoch-checkpoint-provider.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "core/data-epoch-checkpoint-provider.ts",
+          "kind": "import-statement"
+        },
+        {
           "root": "create-require-root:shared/artifact-core/activation.cjs",
           "from": null,
           "kind": "root"
@@ -111502,6 +111527,16 @@
       "inputType": "source-graph",
       "provenance": [
         {
+          "root": "cli-entry",
+          "from": "shared/artifact-core/activation.cjs",
+          "kind": "require-call"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "shared/artifact-core/activation.cjs",
+          "kind": "require-call"
+        },
+        {
           "root": "create-require-root:shared/artifact-core/activation.cjs",
           "from": "shared/artifact-core/activation.cjs",
           "kind": "require-call"
@@ -111533,6 +111568,16 @@
       "inputType": "source-graph",
       "provenance": [
         {
+          "root": "cli-entry",
+          "from": "shared/artifact-core/activation.cjs",
+          "kind": "require-call"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "shared/artifact-core/activation.cjs",
+          "kind": "require-call"
+        },
+        {
           "root": "create-require-root:shared/artifact-core/activation.cjs",
           "from": "shared/artifact-core/activation.cjs",
           "kind": "require-call"
@@ -111547,7 +111592,7 @@
           "kind": "nft-trace"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by shared/artifact-core/activation.cjs (require-call); shared/artifact-core/activation.cjs (require-call)."
+      "reason": "Reached via esbuild source module graph, imported by shared/artifact-core/activation.cjs (require-call); shared/artifact-core/activation.cjs (require-call); shared/artifact-core/activation.cjs (require-call); +1 more importer(s)."
     },
     {
       "path": "shared/audio-mime.ts",

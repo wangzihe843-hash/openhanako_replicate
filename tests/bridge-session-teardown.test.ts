@@ -215,6 +215,89 @@ describe("BridgeSessionManager teardown", () => {
     expect(session.steer).toHaveBeenCalledWith("guest message");
   });
 
+  it.each(["attachment", "branch-head"])("cleans up SDK resources after %s failure", async (failure) => {
+    const agent = makeAgent(rootDir);
+    const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "cleanup.jsonl");
+    const deps = makeDeps(agent);
+    if (failure === "attachment") deps.registerSessionFile.mockImplementation(() => { throw new Error("attachment failed"); });
+    if (failure === "branch-head") deps.syncSessionBranchHead.mockImplementation((_path, _manager, reason) => {
+      if (reason === "bridge_prompt_finally") throw new Error("branch head failed");
+    });
+    const manager = new BridgeSessionManager(deps);
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => mgrPath });
+    const session = {
+      model: { input: ["text"] }, prompt: vi.fn(async () => {}),
+      subscribe: vi.fn(() => vi.fn()), dispose: vi.fn(),
+      sessionManager: { getSessionFile: () => mgrPath },
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+    const result = await manager.executeExternalMessage("hello", "cleanup-key", null, {
+      agentId: agent.id,
+      ...(failure === "attachment" ? { inboundFiles: [{ type: "image", filename: "test.png", mimeType: "image/png", buffer: Buffer.from(PNG_BASE64, "base64") }] } : {}),
+    });
+    if (failure === "attachment") expect(deps.registerSessionFile).toHaveBeenCalled();
+    expect(result?.error).toContain(failure === "attachment" ? "attachment failed" : "branch head failed");
+    expect(session.dispose).toHaveBeenCalledOnce();
+    expect(manager.activeSessions.size).toBe(0);
+    expect(manager._activeSessionRoles.size).toBe(0);
+  });
+
+  it("disposes a mismatched SDK locator without syncing it or binding it in the index", async () => {
+    const agent = makeAgent(rootDir);
+    const deps = makeDeps(agent);
+    const manager = new BridgeSessionManager(deps);
+    const expected = path.join(agent.sessionDir, "bridge", "owner", "expected.jsonl");
+    const unexpected = path.join(agent.sessionDir, "bridge", "owner", "unexpected.jsonl");
+    sessionManagerCreateMock.mockReturnValue({ getSessionFile: () => expected });
+    const session = { sessionManager: { getSessionFile: () => unexpected }, model: { input: ["text"] }, dispose: vi.fn() };
+    createAgentSessionMock.mockResolvedValue({ session });
+    const result = await manager.executeExternalMessage("hello", "locator-key", null, { agentId: agent.id });
+    expect(result?.error).toBeTruthy();
+    expect(session.dispose).toHaveBeenCalledOnce();
+    expect(deps.syncSessionBranchHead.mock.calls.some(([file]) => file === unexpected)).toBe(false);
+    expect(manager.readIndex(agent)["locator-key"]).toBeUndefined();
+    expect(manager.activeSessions.size).toBe(0);
+  });
+
+  it("preserves a prompt error when branch head cleanup also fails", async () => {
+    const agent = makeAgent(rootDir);
+    const deps = makeDeps(agent);
+    deps.syncSessionBranchHead.mockImplementation((_path, _manager, reason) => {
+      if (reason === "bridge_prompt_finally") throw new Error("cleanup failed");
+    });
+    const manager = new BridgeSessionManager(deps);
+    const mgr = { getSessionFile: () => path.join(agent.sessionDir, "bridge", "owner", "both-fail.jsonl") };
+    sessionManagerCreateMock.mockReturnValue(mgr);
+    const session = {
+      sessionManager: mgr, model: { input: ["text"] }, subscribe: vi.fn(() => vi.fn()), dispose: vi.fn(),
+      prompt: vi.fn(async () => { throw new Error("primary prompt failure"); }),
+    };
+    createAgentSessionMock.mockResolvedValue({ session });
+    const result = await manager.executeExternalMessage("hello", "both-key", null, { agentId: agent.id });
+    expect(result?.error).toBe("primary prompt failure");
+    expect(session.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("reopens the first bridge session after its first prompt fails", async () => {
+    const agent = makeAgent(rootDir);
+    const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "failed-first.jsonl");
+    fs.mkdirSync(path.dirname(mgrPath), { recursive: true });
+    fs.writeFileSync(mgrPath, '{"type":"session","id":"failed-first"}\n');
+    const manager = new BridgeSessionManager(makeDeps(agent));
+    const mgr = { getSessionFile: () => mgrPath };
+    sessionManagerCreateMock.mockReturnValue(mgr);
+    sessionManagerOpenMock.mockReturnValue(mgr);
+    createAgentSessionMock.mockImplementation(async () => ({ session: {
+      model: { input: ["text"] }, prompt: vi.fn(async () => { throw new Error("transport failed"); }),
+      subscribe: vi.fn(() => vi.fn()), dispose: vi.fn(), sessionManager: mgr,
+    } }));
+    await manager.executeExternalMessage("first", "failed-key", null, { agentId: agent.id });
+    expect(manager.readIndex(agent)["failed-key"]).toBeTruthy();
+    await manager.executeExternalMessage("second", "failed-key", null, { agentId: agent.id });
+    expect(sessionManagerCreateMock).toHaveBeenCalledOnce();
+    expect(sessionManagerOpenMock).toHaveBeenCalledOnce();
+  });
+
   it("executeExternalMessage 结束后走 emit -> unsub -> dispose", async () => {
     const agent = makeAgent(rootDir);
     const mgrPath = path.join(agent.sessionDir, "bridge", "owner", "s1.jsonl");

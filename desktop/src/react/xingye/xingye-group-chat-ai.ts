@@ -8,6 +8,8 @@
  */
 
 import { hanaFetch } from '../hooks/use-hana-fetch';
+import { useStore } from '../stores';
+import { resolveServerConnection, type ServerConnection } from '../services/server-connection';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import {
@@ -40,6 +42,8 @@ export type GenerateGroupChatReplyParams = {
   channelMembers: string[];
   recentMessages: GroupChatPromptMessage[];
   timeoutMs?: number;
+  /** Shares the orchestrator operation lifetime, including earlier connection changes. */
+  assertCurrent?: () => void;
 };
 
 function truncateChars(text: string, max: number): string {
@@ -48,9 +52,10 @@ function truncateChars(text: string, max: number): string {
   return t;
 }
 
-async function readLoreMemoryMarkdown(agentId: string): Promise<string | null> {
+async function readLoreMemoryMarkdown(agentId: string, assertCurrent: () => void): Promise<string | null> {
   const aid = agentId.trim();
   if (!aid) return null;
+  assertCurrent();
   try {
     const data = (await postXingyeStorage({
       action: 'read',
@@ -58,11 +63,14 @@ async function readLoreMemoryMarkdown(agentId: string): Promise<string | null> {
       relativePath: 'lore-memory.md',
       binary: false,
     })) as { missing?: boolean; content?: unknown };
+    assertCurrent();
     if (data?.missing || typeof data?.content !== 'string') return null;
     let text = data.content.trim();
     text = text.replace(/^<!--[\s\S]*?-->\s*/m, '').trim();
     return text || null;
   } catch {
+    // An unavailable lore file can fall back; a changed owner cannot.
+    assertCurrent();
     return null;
   }
 }
@@ -86,8 +94,9 @@ function buildStableLoreFromAlwaysEntries(agentId: string, maxChars: number): st
   return lines.join('\n\n');
 }
 
-async function buildStableLoreBlock(agentId: string): Promise<string> {
-  const fromFile = await readLoreMemoryMarkdown(agentId);
+async function buildStableLoreBlock(agentId: string, assertCurrent: () => void): Promise<string> {
+  const fromFile = await readLoreMemoryMarkdown(agentId, assertCurrent);
+  assertCurrent();
   if (fromFile && fromFile.trim()) return truncateChars(fromFile, 3200);
   return buildStableLoreFromAlwaysEntries(agentId, 2800).trim();
 }
@@ -177,8 +186,11 @@ async function postPhoneGenerate(params: {
   agent: Agent;
   prompt: string;
   timeoutMs: number;
-}): Promise<unknown> {
+  connection?: ServerConnection;
+}, assertCurrent: () => void): Promise<unknown> {
+  assertCurrent();
   const response = await hanaFetch('/api/xingye/phone-generate', {
+    connection: params.connection,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     timeout: params.timeoutMs,
@@ -205,20 +217,48 @@ async function postPhoneGenerate(params: {
       : '';
     throw new Error(`${data?.error || '模型调用失败'}${details}`);
   }
+  assertCurrent();
   return data?.result;
 }
 
 export async function generateGroupChatReplyWithAI(
   params: GenerateGroupChatReplyParams,
 ): Promise<GroupChatReplyAiResult> {
+  const connection = resolveServerConnection(useStore.getState()) ?? undefined;
+  const connectionKey = JSON.stringify(connection);
+  let stale = false;
+  const unsubscribe = useStore.subscribe(() => {
+    if (JSON.stringify(resolveServerConnection(useStore.getState()) ?? undefined) !== connectionKey) stale = true;
+  });
+  const assertCurrent = () => {
+    params.assertCurrent?.();
+    if (stale || JSON.stringify(resolveServerConnection(useStore.getState()) ?? undefined) !== connectionKey) {
+      throw new Error('服务器连接已切换，本次群聊生成已取消。');
+    }
+  };
+  try {
+    assertCurrent();
+    return await generateForConnection(params, assertCurrent, connection);
+  } finally {
+    unsubscribe();
+  }
+}
+
+async function generateForConnection(
+  params: GenerateGroupChatReplyParams,
+  assertCurrent: () => void,
+  connection: ServerConnection | undefined,
+): Promise<GroupChatReplyAiResult> {
   const { agent, profile } = params;
   const timeoutMs = params.timeoutMs ?? 90_000;
 
   const userName = await resolveXingyeSpeakerUserName();
+  assertCurrent();
   const recentContext = collectRecentContextForAgent({ agentId: agent.id });
   const recentSceneBlock = describeRecentContextForPrompt(recentContext);
   const relationshipBlock = formatRelationshipBlock(agent.id);
-  const stableLoreBlock = await buildStableLoreBlock(agent.id);
+  const stableLoreBlock = await buildStableLoreBlock(agent.id, assertCurrent);
+  assertCurrent();
 
   const queryText = buildXingyeLoreRuntimeQueryText([
     ...profilePartsForQuery(profile ?? null),
@@ -259,7 +299,8 @@ export async function generateGroupChatReplyWithAI(
     ownReplyAnchorBlock,
   });
 
-  const result = await postPhoneGenerate({ agent, prompt, timeoutMs });
+  const result = await postPhoneGenerate({ agent, prompt, timeoutMs, connection }, assertCurrent);
+  assertCurrent();
   const normalized = normalizeGroupChatReplyAiResult(result);
   if (!normalized) {
     throw new Error('模型返回无效：缺少 decision/reply 字段或 JSON 解析失败');

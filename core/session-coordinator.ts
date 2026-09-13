@@ -1,3 +1,4 @@
+import { cancelDesktopSessionSubmission } from './desktop-session-submit.ts';
 /**
  * SessionCoordinator — Session 生命周期管理
  *
@@ -1057,6 +1058,8 @@ export class SessionCoordinator {
   declare _pinOrderBackfill: Promise<any> | null;
   declare _envChangeLedger: any;
   declare _ensureSessionLoadedInFlight: Map<string, Promise<any>>;
+  declare _sessionRuntimeOperations: Map<string, Promise<any>>;
+  declare _focusVersion: number;
   declare _metaQuarantines: Map<string, { metaPath: string; backupPath: string; quarantinedAt: string }>;
 
   /**
@@ -1106,6 +1109,8 @@ export class SessionCoordinator {
     this._pinOrderBackfill = null;
     this._envChangeLedger = deps.envChangeLedger || null;
     this._ensureSessionLoadedInFlight = new Map();
+    this._sessionRuntimeOperations = new Map();
+    this._focusVersion = 0;
     // 运行期 session-meta 隔离记录：key 是 metaPath，value 是隔离详情。
     // 只记内存态（不落盘）——重启后 quarantine 文件仍在磁盘上，但这份
     // "刚刚发生过隔离"的提示只需要覆盖当前进程生命周期；重启后的存量隔离
@@ -1738,7 +1743,77 @@ export class SessionCoordinator {
     return readyAgent;
   }
 
-  async createSession(sessionMgr: any, cwd: any, memoryEnabled = true, model: any = null, {
+  _runtimeOperationKey(sessionPath: string) {
+    const key = path.resolve(sessionPath);
+    return process.platform === "win32" ? key.toLowerCase() : key;
+  }
+
+  _withSessionRuntimeOperation(sessionPath: string, operation: () => Promise<any>) {
+    const key = this._runtimeOperationKey(sessionPath);
+    const previous = this._sessionRuntimeOperations.get(key);
+    // A failed operation is reported to its caller; it must not poison the
+    // next owner's opportunity to load or explicitly reload this session.
+    const pending = (previous ? previous.then(operation, operation) : Promise.resolve().then(operation));
+    this._sessionRuntimeOperations.set(key, pending);
+    const release = () => {
+      if (this._sessionRuntimeOperations.get(key) === pending) this._sessionRuntimeOperations.delete(key);
+    };
+    void pending.then(release, release);
+    return pending;
+  }
+
+  _focusSession(session: any, sessionPath: string, version: number) {
+    if (version !== this._focusVersion) return;
+    this._session = session;
+    this._currentSessionPath = sessionPath || null;
+    this._sessionStarted = false;
+  }
+
+  _notifySessionRunIdle(sessionPath: string, session: any) {
+    const entry = this._getSessionEntryByPath(sessionPath);
+    if (!entry || entry.session !== session || session.isStreaming || session.isCompacting || entry._runIdleNotified
+      || this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)) return;
+    entry._runIdleNotified = true;
+    this._d.emitEvent?.({ type: 'session_run_end', agentId: entry.agentId }, sessionPath);
+  }
+
+  _creationResultForEntry(entry: any) {
+    return { session: entry.session, sessionPath: this._sessionPathForEntry(entry),
+      sessionId: entry.sessionId || null, agentId: entry.agentId };
+  }
+
+  async createSession(sessionMgr: any, cwd: any, memoryEnabled = true, model: any = null, options: any = {}) {
+    const focus = options.focus !== false;
+    const focusVersion = focus ? ++this._focusVersion : null;
+    // Consume foreground choices before the first await. A detached session
+    // has its own options and must never borrow/reset the next UI selection.
+    const selectedModel = model || (focus ? this._pendingModel : null);
+    const permissionMode = options.permissionMode ?? (focus ? this._pendingPermissionMode : null);
+    if (focus) {
+      this._pendingModel = null;
+      this._pendingPermissionMode = null;
+    }
+    const agent = options.agent || (options.agentId ? this._d.getAgentById?.(options.agentId) : null) || this._d.getAgent();
+    const sessionPath = sessionMgr?.getSessionFile?.() || null;
+    const requestedEntry = sessionPath ? this._getSessionEntryByPath(sessionPath) : null;
+    const create = async () => {
+      const existing = sessionPath ? this._getSessionEntryByPath(sessionPath) : null;
+      if (existing && existing !== requestedEntry) return this._creationResultForEntry(existing);
+      if (existing) {
+        if (existing.session?.isStreaming || existing.session?.isCompacting || existing._switching
+          || this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)) throw new Error('session_busy');
+        existing._switching = true;
+        await this._teardownSessionEntry(existing, sessionPath, 'explicit_restore');
+        if (this._getSessionEntryByPath(sessionPath) === existing) this._deleteRuntimeValueForPath(this._sessions, sessionPath);
+      }
+      return this._createSessionRuntime(sessionMgr, cwd, memoryEnabled, selectedModel, { ...options, agent, permissionMode });
+    };
+    const result = sessionPath ? await this._withSessionRuntimeOperation(sessionPath, create) : await create();
+    if (focus) this._focusSession(result.session, result.sessionPath, focusVersion);
+    return result;
+  }
+
+  async _createSessionRuntime(sessionMgr: any, cwd: any, memoryEnabled = true, model: any = null, {
     restore = false,
     workMode = false,
     agent: explicitAgent = null,
@@ -1757,6 +1832,7 @@ export class SessionCoordinator {
     // 按当前 agent 配置重建两份快照并持久化。只在用户显式触发时为 true。
     refreshCapabilitySnapshots = false,
     reminderState = null,
+    permissionMode = null,
   }: any = {}) {
     const t0 = Date.now();
     let agent = explicitAgent
@@ -1782,8 +1858,7 @@ export class SessionCoordinator {
     const models = this._d.getModels();
     // restore 模式通常由 PI SDK 从 JSONL 恢复模型。唯一例外是历史模型当前不可用：
     // 下方会传入同 provider/id 的不可执行占位对象，阻止 SDK 静默 fallback。
-    const effectiveModel = restore ? null : (model || this._pendingModel || models.currentModel);
-    this._pendingModel = null;
+    const effectiveModel = restore ? null : (model || models.currentModel);
     log.log(`createSession cwd=${effectiveCwd} restore=${restore} (传入: ${cwd || "未指定"})`);
 
     const workspaceSkillContext = await this._d.onBeforeSessionCreate?.(effectiveCwd, {
@@ -2005,11 +2080,11 @@ export class SessionCoordinator {
     }
     let initialPermissionMode = restore
       ? normalizeSessionPermissionMode(restoredPermissionMode)
-      : normalizeSessionPermissionMode(this._pendingPermissionMode || this._getDefaultPermissionMode());
-    this._pendingPermissionMode = null;
+      : normalizeSessionPermissionMode(permissionMode || this._getDefaultPermissionMode());
     let initialAccessMode = legacyAccessModeFromPermissionMode(initialPermissionMode);
     let initialPlanMode = isReadOnlyPermissionMode(initialPermissionMode);
     const sessionEntry = {
+      _runIdleNotified: false,
       permissionMode: initialPermissionMode,
       accessMode: initialAccessMode,
       planMode: initialPlanMode,
@@ -2185,14 +2260,10 @@ export class SessionCoordinator {
       sessionOpts.model = effectiveModel || unavailableSessionModel;
     }
     const { session, modelFallbackMessage } = await createAgentSession(sessionOpts);
+    let creationUnsub: (() => void) | undefined;
+    try {
     if (modelFallbackMessage) {
       if (restore) {
-        await teardownSessionResources({
-          session,
-          unsub: null,
-          label: "restore-model-fallback-rejected",
-          warn: (message) => log.warn(message),
-        });
         throw new Error(`Session restore model fallback rejected: ${modelFallbackMessage}`);
       }
       log.warn(`session model fallback: ${modelFallbackMessage}`);
@@ -2208,12 +2279,6 @@ export class SessionCoordinator {
       && runtimeResolvedModel?.id === restoredSessionModelRef?.modelId
       && runtimeResolvedModel?.provider === restoredSessionModelRef?.provider;
     if (restore && runtimeResolvedModelHasIdentity && !catalogResolvedModel && !restoredUnavailableModelMatches) {
-      await teardownSessionResources({
-        session,
-        unsub: null,
-        label: "restore-model-rejected",
-        warn: (message) => log.warn(message),
-      });
       const ref = runtimeResolvedModel?.provider && runtimeResolvedModel?.id
         ? `${runtimeResolvedModel.provider}/${runtimeResolvedModel.id}`
         : "unknown";
@@ -2234,9 +2299,6 @@ export class SessionCoordinator {
     sessionPathRef.current = sessionPath || sessionPathRef.current || null;
     targetModelRef.current = resolvedModel || targetModelRef.current || null;
     flushSessionManagerSnapshot(session.sessionManager);
-    this._session = session;
-    this._currentSessionPath = sessionPath || null;
-    this._sessionStarted = false;
     if (restore && sessionPath && !restoredCapabilitySnapshot) {
       restoredCapabilitySnapshot = this._readSessionCapabilitySnapshot(sessionPath);
     }
@@ -2273,6 +2335,12 @@ export class SessionCoordinator {
     }
     const creatingAgentId = ownerAgentId;
     const unsub = session.subscribe((event) => {
+      if (event.type === 'agent_start' || event.type === 'turn_start') sessionEntry._runIdleNotified = false;
+      if (event.type === 'agent_end' && !event.willRetry && typeof session.agent?.waitForIdle === 'function') {
+        // Never await idle inside an awaited SDK event listener: finishRun must return first.
+        void session.agent.waitForIdle().then(() => this._notifySessionRunIdle(sessionPath, session))
+          .catch(err => log.warn(`session idle notification failed: ${err?.message || err}`));
+      }
       if (
         event?.type === "message_end"
         && event.message?.role !== "assistant"
@@ -2305,6 +2373,8 @@ export class SessionCoordinator {
         sessionPath,
       );
     });
+
+    creationUnsub = unsub;
 
     // ── Tool snapshot for session-tool-isolation (parallels session-model-isolation) ──
     // Three branches:
@@ -2561,7 +2631,9 @@ export class SessionCoordinator {
     // sessionPath remains only a locator resolved at method boundaries.
     const mapKey = manifest?.sessionId || sessionPath || `_anon_${Date.now()}`;
     const old = this._sessions.get(mapKey);
-    if (old) old.unsub();
+    if (old && old.session !== session) {
+      throw new Error("createSession: session already has a runtime owner");
+    }
     this._sessions.set(mapKey, sessionEntry);
     if (sessionPath && mapKey !== sessionPath) this._sessions.delete(sessionPath);
     this._deleteRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
@@ -2669,6 +2741,12 @@ export class SessionCoordinator {
     }
 
     return { session, sessionPath: sessionPath || mapKey, sessionId: manifest?.sessionId || null, agentId: creatingAgentId };
+    } catch (error) {
+      const failedPath = session.sessionManager?.getSessionFile?.();
+      if (failedPath && this._getSessionEntryByPath(failedPath)?.session === session) this._deleteRuntimeValueForPath(this._sessions, failedPath);
+      await teardownSessionResources({ session, unsub: creationUnsub, label: 'session-creation-failed', warn: message => log.warn(message) });
+      throw error;
+    }
   }
 
   _refreshAgentAppearanceSummaryAfterCreate(agent: any, targetModel: any) {
@@ -2702,17 +2780,9 @@ export class SessionCoordinator {
     sessionKind = null,
     sessionVisibility = null,
   }: any = {}) {
-    const prevFocus = this._session;
-    const prevCurrentSessionPath = this._currentSessionPath;
-    const prevSessionStarted = this._sessionStarted;
-    const prevPendingPermissionMode = this._pendingPermissionMode;
-
-    if (permissionMode !== null && permissionMode !== undefined) {
-      this._pendingPermissionMode = normalizeSessionPermissionMode(permissionMode);
-    }
-
-    try {
-      return await this.createSession(sessionMgr, cwd, memoryEnabled, model, {
+    return this.createSession(sessionMgr, cwd, memoryEnabled, model, {
+        focus: false,
+        permissionMode,
         agent,
         agentId,
         preserveAgentMemoryState,
@@ -2727,12 +2797,6 @@ export class SessionCoordinator {
         sessionKind,
         sessionVisibility,
       });
-    } finally {
-      this._session = prevFocus;
-      this._currentSessionPath = prevCurrentSessionPath;
-      this._sessionStarted = prevSessionStarted;
-      this._pendingPermissionMode = prevPendingPermissionMode;
-    }
   }
 
   async _discardForkedSubagentChildSession(receipt: any, cleanupState: Map<string, any>) {
@@ -4689,82 +4753,21 @@ export class SessionCoordinator {
     }
     this._assertCurrentActiveSessionLocator(sessionPath, "switchSession");
 
-    const targetAgentId = this.resolveSessionOwnership(sessionPath).agentId;
-    if (targetAgentId && targetAgentId !== this._d.getActiveAgentId()) {
-      // Phase 1: 跨 agent 切换只切指针，不清旧 session
-      await this._d.switchAgentOnly(targetAgentId);
-    }
-
-    // 切到已有 session 时清空 pendingModel（用户的临时选择不应跟到别的 session）
+    const focusVersion = ++this._focusVersion;
     this._pendingModel = null;
-
-    // 从 session-owned state 恢复记忆开关（model 由 PI SDK 从 JSONL 恢复，不在此处读取）
-    const memoryEnabled = this.getSessionMemoryEnabled(sessionPath);
-
-    // 如果已在 map 中，切指针
-    const existing = this._getSessionEntryByPath(sessionPath);
-    if (existing) {
-      if (this._session && this._session !== existing.session) {
-        const oldSp = this._session.sessionManager?.getSessionFile?.();
-        if (oldSp) {
-          const oldEntry = this._getSessionEntryByPath(oldSp);
-          const oldAgent = oldEntry ? this._d.getAgentById(oldEntry.agentId) : this._d.getAgent();
-          // fire-and-forget：memory flush 不阻塞 switch。memory.md 由 onCompiled 回调
-          // 刷到 agent._systemPrompt，只影响下次新建 session；老 session 用自己创建时的
-          // 快照，对后台异步刷新完全透明。
-          oldAgent?._memoryTicker?.notifySessionEnd(oldSp).catch((err) =>
-            log.warn(`switchSession ${path.basename(oldSp)}: notifySessionEnd failed: ${err.message}`),
-          );
-        }
-      }
-      this._session = existing.session;
-      this._currentSessionPath = sessionPath;
-      existing.lastTouchedAt = Date.now();
-      return existing.session;
+    const targetAgentId = this.resolveSessionOwnership(sessionPath).agentId;
+    if (targetAgentId && targetAgentId !== this._d.getActiveAgentId()) await this._d.switchAgentOnly(targetAgentId);
+    const oldSp = this._session?.sessionManager?.getSessionFile?.();
+    if (oldSp && oldSp !== sessionPath) {
+      const oldEntry = this._getSessionEntryByPath(oldSp);
+      const oldAgent = oldEntry ? this._d.getAgentById(oldEntry.agentId) : this._d.getAgent();
+      oldAgent?._memoryTicker?.notifySessionEnd(oldSp).catch((err) =>
+        log.warn(`switchSession ${path.basename(oldSp)}: notifySessionEnd failed: ${err.message}`));
     }
-
-    const ownerAgentId = targetAgentId || this._d.getActiveAgentId();
-    let targetAgent = this._d.getAgentById?.(ownerAgentId)
-      || (ownerAgentId === this._d.getActiveAgentId() ? this._d.getAgent() : null);
-    targetAgent = await this._ensureAgentRuntimeReady(ownerAgentId, {
-      agent: targetAgent,
-      reason: "switchSession",
-    });
-
-    // 不在 map 中，先触发旧 session 的 memory flush（后台跑），再新建
-    if (this._session) {
-      const oldSp = this._session.sessionManager?.getSessionFile?.();
-      if (oldSp) {
-        const oldEntry = this._getSessionEntryByPath(oldSp);
-        const oldAgent = oldEntry ? this._d.getAgentById(oldEntry.agentId) : this._d.getAgent();
-        oldAgent?._memoryTicker?.notifySessionEnd(oldSp).catch((err) =>
-          log.warn(`switchSession ${path.basename(oldSp)}: notifySessionEnd failed: ${err.message}`),
-        );
-      }
-    }
-    // #521: 在恢复前扫描会话尾部，若最近 N 条 assistant 大量 stopReason=error
-    // 说明用户已经撞到了"反复 empty_stream"循环，给前端发警告事件让 UI 提示用户
-    // 新建会话或修复。restore 本身仍然继续，避免破坏用户预期。
-    this._emitSessionHealthWarning(sessionPath);
-    // 在 open 前修复巨型/坏 JSONL 行，避免 SessionManager.open 整文件 parse 卡住。
-    this._repairOversizedSessionHistory(sessionPath);
-    // #1285: 在 open 前修复坏会话的孤儿 toolResult（必须早于 SessionManager.open）
-    this._repairOrphanToolHistory(sessionPath);
-    this._repairInlineMediaHistory(sessionPath);
-
-    // 冷启动恢复：model 由 PI SDK 从 session JSONL 恢复（单一数据源），不从 session-meta.json 读
-    const reminderState = this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
-    const sessionMgr = SessionManager.open(sessionPath, targetAgent.sessionDir);
-    const cwd = sessionMgr.getCwd?.() || undefined;
-    const result = await this.createSession(sessionMgr, cwd, memoryEnabled, null, {
-      restore: true,
-      agent: targetAgent,
-      agentId: ownerAgentId,
-      reminderState,
-    });
-    return result.session;
+    const session = await this.ensureSessionLoaded(sessionPath);
+    this._focusSession(session, sessionPath, focusVersion);
+    return session;
   }
-
   /** @private 检查 session 健康度并在 unhealthy 时 log + emit 事件，不抛错 */
   _emitSessionHealthWarning(sessionPath: any) {
     try {
@@ -4992,6 +4995,7 @@ export class SessionCoordinator {
     } catch (err) {
       log.warn(`abort focus session: abort failed: ${err.message}`);
     }
+    this._focusVersion++;
     this._session = null;
     this._currentSessionPath = null;
     this._sessionStarted = false;
@@ -5015,13 +5019,15 @@ export class SessionCoordinator {
   async promptSession(sessionPath: any, text: any, opts: any, submitOptions: any = {}) {
     const turnContext = normalizeSessionTurnContext(opts?.context);
     this._assertActiveDesktopSessionPath(sessionPath, "promptSession");
+    const loading = this._sessionRuntimeOperations.get(this._runtimeOperationKey(sessionPath));
+    if (loading) await loading;
     let entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) {
       await this.ensureSessionLoaded(sessionPath);
       entry = this._getSessionEntryByPath(sessionPath);
     }
     if (!entry) throw new Error(t("error.sessionNotInCache", { path: sessionPath }));
-    if (entry.session.isStreaming) throw new Error("session_busy");
+    if (entry._switching || entry.session.isStreaming || this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)) throw new Error("session_busy");
     if (sessionPath === this.currentSessionPath && this._session !== entry.session) {
       this._session = entry.session;
     }
@@ -5050,81 +5056,90 @@ export class SessionCoordinator {
         opts,
         signal: abortController.signal,
       }));
+
+      abortController.signal.throwIfAborted();
+      if (this._getSessionEntryByPath(sessionPath) !== entry) throw Object.assign(new Error("session runtime replaced"), { name: "AbortError" });
+      // A custom turn can start during media preparation. Reject before changing
+      // the active SDK prompt or storing context from this unaccepted input.
+      if (entry._switching || entry.session.isStreaming) throw new Error("session_busy");
+      assertVideoInputSupported(entry.session.model, opts?.videos);
+      assertAudioInputSupported(entry.session.model, opts?.audios);
+      const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
+      if (agent && typeof agent.buildSystemPrompt === "function" && typeof entry.runtimePromptAppendix === "string") {
+        // Diagnose previous drift before adopting the intentional per-turn base.
+        // The guard remains an audit; authorization lives at the tool boundary.
+        this._assertCachePrefixContract(sessionPath, entry, { countRequest: false });
+        const workspaceRoot = entry.session?.sessionManager?.getCwd?.()
+          || entry.session?.getCwd?.()
+          || "";
+        const runtimePrompt = agent.buildSystemPrompt({
+          forceMemoryEnabled: entry.memoryEnabled,
+          forceExperienceEnabled: entry.experienceEnabled,
+          targetModel: entry.session.model,
+          xingyeWorkspaceRoot: workspaceRoot,
+          userText: text,
+          recentMessages: recentSessionMessageTexts(entry.session?.messages),
+          workModeEnabled: entry.workMode === true,
+        });
+        if (runtimePrompt !== entry.runtimePromptBase) {
+          this._applyFinalPromptSnapshot(entry.session, runtimePrompt + entry.runtimePromptAppendix);
+          entry.runtimePromptBase = runtimePrompt;
+          this._renewCachePrefixContract(sessionPath, entry, "runtime_prompt_refresh");
+        }
+      }
+      let promptPreflightReported = false;
+      const notifyPromptPreflight = (success: boolean) => {
+        if (promptPreflightReported) return;
+        promptPreflightReported = true;
+        if (!success) return;
+        abortController.signal.throwIfAborted();
+        if (this._getSessionEntryByPath(sessionPath) !== entry || entry._switching) throw Object.assign(new Error("session runtime replaced"), { name: "AbortError" });
+        if (typeof submitOptions?.afterCachePreflight === "function") {
+          const hookResult = submitOptions.afterCachePreflight();
+          if (hookResult && typeof hookResult.then === "function") {
+            throw new TypeError("promptSession afterCachePreflight must be synchronous");
+          }
+        }
+        if (typeof submitOptions?.afterInputAccepted === "function") {
+          const hookResult = submitOptions.afterInputAccepted();
+          if (hookResult && typeof hookResult.then === "function") {
+            throw new TypeError("promptSession afterInputAccepted must be synchronous");
+          }
+        }
+      };
+      const promptOpts = buildPromptMediaOptions(opts, notifyPromptPreflight);
+      const nativeMediaTurn = engine?.beginCurrentTurnNativeMedia?.(sessionPath, opts);
+      if (turnContext) this._setRuntimeValueForPath(this._turnContextBySession, sessionPath, turnContext);
+      try {
+        // Recheck after asynchronous media preparation. A background custom turn
+        // may have started since the route-level guard; no input side effects may
+        // be committed onto a now-streaming Session.
+        if (entry._switching || entry.session.isStreaming) throw new Error("session_busy");
+        this.preflightSessionInput(sessionPath);
+        entry._sdkPromptOwner = abortController;
+        await entry.session.prompt(text, promptOpts);
+      } finally {
+        if (turnContext && this._getRuntimeValueForPath(this._turnContextBySession, sessionPath) === turnContext) this._deleteRuntimeValueForPath(this._turnContextBySession, sessionPath);
+        if (entry._sdkPromptOwner === abortController) entry._sdkPromptOwner = null;
+        engine?.endCurrentTurnNativeMedia?.(nativeMediaTurn);
+        if (this._getSessionEntryByPath(sessionPath) === entry) {
+          pruneSessionInlineMediaHistory(entry.session);
+          this._projectOversizedSessionHistory(entry.session, sessionPath);
+          this._syncSessionBranchHeadQuiet(sessionPath, entry.session.sessionManager, "prompt_session_finally");
+          this._scheduleRuntimePressureCheck(sessionPath, "prompt_session");
+        }
+      }
+      if (this._getSessionEntryByPath(sessionPath) !== entry) return;
+      const forceSummary = entry.memoryBranchReplacementPending === true;
+      entry.memoryBranchReplacementPending = false;
+      agent?._memoryTicker?.notifyTurn(sessionPath, { forceSummary });
     } finally {
       if (this._getRuntimeValueForPath(this._prePromptAbortControllers, sessionPath) === abortController) {
         this._deleteRuntimeValueForPath(this._prePromptAbortControllers, sessionPath);
       }
+      this._notifySessionRunIdle(sessionPath, entry.session);
     }
-    abortController.signal.throwIfAborted();
-    // A custom turn can start during media preparation. Reject before changing
-    // the active SDK prompt or storing context from this unaccepted input.
-    if (entry.session.isStreaming) throw new Error("session_busy");
-    assertVideoInputSupported(entry.session.model, opts?.videos);
-    assertAudioInputSupported(entry.session.model, opts?.audios);
-    const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
-    if (agent && typeof agent.buildSystemPrompt === "function" && typeof entry.runtimePromptAppendix === "string") {
-      // Diagnose previous drift before adopting the intentional per-turn base.
-      // The guard remains an audit; authorization lives at the tool boundary.
-      this._assertCachePrefixContract(sessionPath, entry, { countRequest: false });
-      const workspaceRoot = entry.session?.sessionManager?.getCwd?.()
-        || entry.session?.getCwd?.()
-        || "";
-      const runtimePrompt = agent.buildSystemPrompt({
-        forceMemoryEnabled: entry.memoryEnabled,
-        forceExperienceEnabled: entry.experienceEnabled,
-        targetModel: entry.session.model,
-        xingyeWorkspaceRoot: workspaceRoot,
-        userText: text,
-        recentMessages: recentSessionMessageTexts(entry.session?.messages),
-        workModeEnabled: entry.workMode === true,
-      });
-      if (runtimePrompt !== entry.runtimePromptBase) {
-        this._applyFinalPromptSnapshot(entry.session, runtimePrompt + entry.runtimePromptAppendix);
-        entry.runtimePromptBase = runtimePrompt;
-        this._renewCachePrefixContract(sessionPath, entry, "runtime_prompt_refresh");
-      }
-    }
-    let promptPreflightReported = false;
-    const needsPromptReceipt = typeof submitOptions?.afterCachePreflight === "function"
-      || typeof submitOptions?.afterInputAccepted === "function";
-    const notifyPromptPreflight = needsPromptReceipt ? (success: boolean) => {
-      if (promptPreflightReported) return;
-      promptPreflightReported = true;
-      if (!success) return;
-      if (typeof submitOptions?.afterCachePreflight === "function") {
-        const hookResult = submitOptions.afterCachePreflight();
-        if (hookResult && typeof hookResult.then === "function") {
-          throw new TypeError("promptSession afterCachePreflight must be synchronous");
-        }
-      }
-      if (typeof submitOptions?.afterInputAccepted === "function") {
-        const hookResult = submitOptions.afterInputAccepted();
-        if (hookResult && typeof hookResult.then === "function") {
-          throw new TypeError("promptSession afterInputAccepted must be synchronous");
-        }
-      }
-    } : undefined;
-    const promptOpts = buildPromptMediaOptions(opts, notifyPromptPreflight);
-    const nativeMediaTurn = engine?.beginCurrentTurnNativeMedia?.(sessionPath, opts);
-    if (turnContext) this._setRuntimeValueForPath(this._turnContextBySession, sessionPath, turnContext);
-    try {
-      // Recheck after asynchronous media preparation. A background custom turn
-      // may have started since the route-level guard; no input side effects may
-      // be committed onto a now-streaming Session.
-      if (entry.session.isStreaming) throw new Error("session_busy");
-      this.preflightSessionInput(sessionPath);
-      await entry.session.prompt(text, promptOpts);
-    } finally {
-      if (turnContext) this._deleteRuntimeValueForPath(this._turnContextBySession, sessionPath);
-      engine?.endCurrentTurnNativeMedia?.(nativeMediaTurn);
-      pruneSessionInlineMediaHistory(entry.session);
-      this._projectOversizedSessionHistory(entry.session, sessionPath);
-      this._syncSessionBranchHeadQuiet(sessionPath, entry.session.sessionManager, "prompt_session_finally");
-      this._scheduleRuntimePressureCheck(sessionPath, "prompt_session");
-    }
-    const forceSummary = entry.memoryBranchReplacementPending === true;
-    entry.memoryBranchReplacementPending = false;
-    agent?._memoryTicker?.notifyTurn(sessionPath, { forceSummary });
+
   }
 
   steerSession(sessionPath: any, text: any) {
@@ -5145,6 +5160,8 @@ export class SessionCoordinator {
   async deliverCustomMessage(sessionPath: any, message: any, options: any = {}) {
     if (!sessionPath) throw new Error("deliverCustomMessage: sessionPath is required");
     this._assertActiveDesktopSessionPath(sessionPath, "deliverCustomMessage");
+    const loading = this._sessionRuntimeOperations.get(this._runtimeOperationKey(sessionPath));
+    if (loading) await loading;
     let entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) {
       await this.ensureSessionLoaded(sessionPath);
@@ -5153,6 +5170,8 @@ export class SessionCoordinator {
     if (!entry?.session) {
       throw new Error(`deliverCustomMessage: session not loaded for ${sessionPath}`);
     }
+    if (entry._switching || (!entry.session.isStreaming
+      && this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath))) throw new Error("session_busy");
     if (typeof entry.session.sendCustomMessage !== "function") {
       throw new Error("deliverCustomMessage: session does not support custom messages");
     }
@@ -5184,7 +5203,8 @@ export class SessionCoordinator {
     } else {
       entry.lastTouchedAt = Date.now();
     }
-    await entry.session.sendCustomMessage(message, { triggerTurn });
+    try { await entry.session.sendCustomMessage(message, { triggerTurn }); }
+    finally { if (triggerTurn) this._notifySessionRunIdle(sessionPath, entry.session); }
     this._syncSessionBranchHeadQuiet(sessionPath, entry.session.sessionManager, "custom_message_delivery");
     return { ok: true, mode: triggerTurn ? "triggerTurn" : "notifyOnly" };
   }
@@ -5269,13 +5289,29 @@ export class SessionCoordinator {
 
   async abortSession(sessionPath: any, options: any = {}) {
     const reason = this._normalizeAbortReason(options, "abort");
+    const canceledSubmission = cancelDesktopSessionSubmission(this._d.getEngine?.(), sessionPath);
     const pending = this._getRuntimeValueForPath(this._prePromptAbortControllers, sessionPath);
-    if (pending) {
+    pending?.abort();
+    const entry = this._getSessionEntryByPath(sessionPath);
+    if (pending && !entry?.session.isStreaming) {
       // preflight 窗口的中止不补发 turn_end：promptSession 尚未运行，本轮
       // turn input 还没落入 branch，合成 turn_end 会把上一轮的 entry id
       // 错绑到本轮的乐观消息上。
-      pending.abort();
       this._deleteRuntimeValueForPath(this._prePromptAbortControllers, sessionPath);
+      if (entry?._sdkPromptOwner === pending) {
+        // The SDK extension await may ignore cancellation. Quarantine this runtime
+        // so a new input cannot share its mutable preflight state after stop.
+        entry._switching = true;
+        if (this._getSessionEntryByPath(sessionPath) === entry) this._deleteRuntimeValueForPath(this._sessions, sessionPath);
+        if (this._session === entry.session) {
+          this._focusVersion++;
+          this._session = null;
+          this._currentSessionPath = null;
+          this._sessionStarted = false;
+        }
+        void this._teardownSessionEntry(entry, sessionPath, 'canceled_sdk_preflight')
+          .catch(err => log.warn(`canceled preflight teardown failed: ${err?.message || err}`));
+      }
       this._cleanupAbortedSessionSidecars(sessionPath, reason);
       this._d.emitEvent?.({
         type: "session_status",
@@ -5286,8 +5322,7 @@ export class SessionCoordinator {
       return true;
     }
     this._cleanupAbortedSessionSidecars(sessionPath, reason);
-    const entry = this._getSessionEntryByPath(sessionPath);
-    if (!entry?.session.isStreaming) return false;
+    if (!entry?.session.isStreaming) return canceledSubmission;
     return this._forceReleaseStreamingSession(entry, sessionPath, reason);
   }
 
@@ -5758,6 +5793,9 @@ export class SessionCoordinator {
    * @private
    */
   _forceReleaseStreamingSession(entry: any, sessionPath: any, reason: any) {
+    this._getRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)?.abort();
+    this._deleteRuntimeValueForPath(this._prePromptAbortControllers, sessionPath);
+    cancelDesktopSessionSubmission(this._d.getEngine?.(), sessionPath);
     if (!entry?.session?.isStreaming) return false;
 
     const session = entry.session;
@@ -5774,6 +5812,7 @@ export class SessionCoordinator {
     this._deleteRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
     this._deleteRuntimeValueForPath(this._sessions, sessionPath);
     if (this._session === session || this.currentSessionPath === sessionPath) {
+      this._focusVersion++;
       this._session = null;
       this._currentSessionPath = null;
       this._sessionStarted = false;
@@ -5902,6 +5941,7 @@ export class SessionCoordinator {
     this._deleteRuntimeValueForPath(this._sessions, sessionPath);
     this._clearRuntimePressureTimer(sessionPath);
     if (isFocus) {
+      this._focusVersion++;
       this._session = null;
     }
     log.log(`session runtime hibernated (${reason}): ${path.basename(sessionPath)}`);
@@ -6014,6 +6054,7 @@ export class SessionCoordinator {
       }
     }
     if (sessionPath === this.currentSessionPath) {
+      this._focusVersion++;
       this._session = null;
       this._currentSessionPath = null;
       this._sessionStarted = false;
@@ -6077,6 +6118,7 @@ export class SessionCoordinator {
     }
     this._sessions.clear();
     this._hibernatedSessionMeta.clear();
+    this._focusVersion++;
     this._session = null;
     this._currentSessionPath = null;
   }
@@ -6382,151 +6424,79 @@ export class SessionCoordinator {
       throw new Error("reloadSessionRuntime: session belongs to a deleted agent");
     }
     this._assertCurrentActiveSessionLocator(sessionPath, "reloadSessionRuntime");
-    const targetAgentId = this.resolveSessionOwnership(sessionPath).agentId;
-    if (!targetAgentId) {
-      throw new Error(`reloadSessionRuntime: cannot resolve agentId for ${sessionPath}`);
-    }
-    const agent = this._d.getAgentById(targetAgentId);
-    if (!agent) {
-      throw new Error(`reloadSessionRuntime: agent "${targetAgentId}" not found`);
-    }
-
-    const oldEntry = this._getSessionEntryByPath(sessionPath);
-    if (oldEntry) {
-      if (oldEntry.session?.isStreaming || oldEntry.session?.isCompacting || oldEntry._switching) {
-        throw new Error("reloadSessionRuntime: session is busy");
+    const requestedEntry = this._getSessionEntryByPath(sessionPath);
+    const focusVersion = this._focusVersion;
+    const wasFocused = this._currentSessionPath === sessionPath;
+    return this._withSessionRuntimeOperation(sessionPath, async () => {
+      const oldEntry = this._getSessionEntryByPath(sessionPath);
+      if (oldEntry && oldEntry !== requestedEntry && !refreshCapabilitySnapshots) return oldEntry.session;
+      const targetAgentId = this.resolveSessionOwnership(sessionPath).agentId;
+      if (!targetAgentId) throw new Error(`reloadSessionRuntime: cannot resolve agentId for ${sessionPath}`);
+      const agent = this._d.getAgentById(targetAgentId);
+      if (!agent) throw new Error(`reloadSessionRuntime: agent "${targetAgentId}" not found`);
+      const readyAgent = await this._ensureAgentRuntimeReady(targetAgentId, { agent, reason: "reloadSessionRuntime" });
+      if (oldEntry?.session?.isStreaming || oldEntry?.session?.isCompacting || oldEntry?._switching
+        || this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)) throw new Error("reloadSessionRuntime: session is busy");
+      const reminderState = oldEntry || this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
+      if (oldEntry) {
+        oldEntry._switching = true;
+        try { await this._teardownSessionEntry(oldEntry, sessionPath, "reload"); }
+        catch (err) { oldEntry._switching = false; throw err; }
+        if (this._getSessionEntryByPath(sessionPath) === oldEntry) this._deleteRuntimeValueForPath(this._sessions, sessionPath);
       }
-    }
-    const readyAgent = await this._ensureAgentRuntimeReady(targetAgentId, {
-      agent,
-      reason: "reloadSessionRuntime",
-    });
-
-    const hibernatedEntry = this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
-    const reminderState = oldEntry || hibernatedEntry || null;
-    if (oldEntry) {
-      await this._teardownSessionEntry(oldEntry, sessionPath, "reload");
-      this._deleteRuntimeValueForPath(this._sessions, sessionPath);
-    }
-    this._deleteRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
-
-    const memoryEnabled = typeof oldEntry?.memoryEnabled === "boolean"
-      ? oldEntry.memoryEnabled
-      : this.getSessionMemoryEnabled(sessionPath);
-
-    this._emitSessionHealthWarning(sessionPath);
-    // #1285: 在 open 前修复坏会话的孤儿 toolResult（必须早于 SessionManager.open）
-    this._repairOrphanToolHistory(sessionPath);
-    this._repairInlineMediaHistory(sessionPath);
-    const sessionMgr = SessionManager.open(sessionPath, readyAgent.sessionDir);
-    const cwd = sessionMgr.getCwd?.() || undefined;
-    const result = await this.createSession(sessionMgr, cwd, memoryEnabled, null, {
-      restore: true,
-      agent: readyAgent,
-      agentId: targetAgentId,
-      preserveAgentMemoryState: true,
-      refreshCapabilitySnapshots,
-      reminderState,
-    });
-    return result.session;
-  }
-
-  /**
-   * 确保 sessionPath 已加载进 _sessions cache，但**不改 this._session（UI 焦点）**。
-   *
-   * 供 /rc 接管态使用：bridge 端操作桌面 session 时，该 session 可能未被
-   * UI 打开过（不在 cache 里）。switchSession 会切焦点 + flush 旧 session，
-   * 副作用太重。此方法走 createSession 的 cold-load 路径后回滚 this._session 指针，
-   * 保证 UI 焦点和内存态不受影响。
-   *
-   * 幂等：已缓存则直接返回，刷新 lastTouchedAt。
-   *
-   * @param {string} sessionPath
-   * @returns {Promise<object>} AgentSession 实例
-   */
-  async ensureSessionLoaded(sessionPath: any) {
-    this._assertActiveDesktopSessionPath(sessionPath, "ensureSessionLoaded");
-    if (this._isDeletedAgentSessionPath(sessionPath)) {
-      throw new Error("ensureSessionLoaded: session belongs to a deleted agent");
-    }
-    this._assertCurrentActiveSessionLocator(sessionPath, "ensureSessionLoaded");
-    const existing = this._getSessionEntryByPath(sessionPath);
-    if (existing) {
-      existing.lastTouchedAt = Date.now();
-      return existing.session;
-    }
-
-    // 并发去重：同一 sessionPath 的并发加载共享同一个创建 Promise。
-    // 没有这层，两个并发调用（如启动时多个 deferred-result 同时投递）会各自
-    // 走完 createSession，产生两个 AgentSession/SessionManager 同时写同一个
-    // JSONL——后注册的实例覆盖 map，先注册的变成幽灵写入者，最终在文件里留下
-    // 引用缺失父条目的孤儿分支，此后该 session 每次冷加载都因分支校验失败而 500。
-    // 键用 sessionPath：入口的 _assertCurrentActiveSessionLocator 保证同一
-    // session 同一时刻只有一个 active locator path，避免 manifest 创建过程中
-    // sessionId/path 双键漂移绕过去重。
-    const inFlight = this._ensureSessionLoadedInFlight.get(sessionPath);
-    if (inFlight) return inFlight;
-    const loadPromise = this._loadSessionForAttach(sessionPath).finally(() => {
-      this._ensureSessionLoadedInFlight.delete(sessionPath);
-    });
-    this._ensureSessionLoadedInFlight.set(sessionPath, loadPromise);
-    return loadPromise;
-  }
-
-  /** @private ensureSessionLoaded 的实际加载路径；只允许经由 in-flight 去重调用 */
-  async _loadSessionForAttach(sessionPath: any) {
-    const targetAgentId = this.resolveSessionOwnership(sessionPath).agentId;
-    if (!targetAgentId) {
-      throw new Error(`ensureSessionLoaded: cannot resolve agentId for ${sessionPath}`);
-    }
-    const agent = this._d.getAgentById(targetAgentId);
-    if (!agent) {
-      throw new Error(`ensureSessionLoaded: agent "${targetAgentId}" not found`);
-    }
-    const readyAgent = await this._ensureAgentRuntimeReady(targetAgentId, {
-      agent,
-      reason: "ensureSessionLoaded",
-    });
-
-    // memoryEnabled 从 session-owned state 恢复（跟 switchSession 同一份数据源）
-    const memoryEnabled = this.getSessionMemoryEnabled(sessionPath);
-    const reminderState = this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
-
-    // 保存焦点：createSession 副作用会设 this._session / _sessionStarted，
-    // /rc 这类纯 attach 路径结束后必须完整回滚，避免污染桌面 UI 的当前会话态。
-    const prevFocus = this._session;
-    const prevCurrentSessionPath = this._currentSessionPath;
-    const prevSessionStarted = this._sessionStarted;
-    try {
-      // #521: attach 路径同样要做健康度评估，否则 bridge / RC 自动恢复时也会反复失败
+      this._deleteRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
+      const memoryEnabled = typeof oldEntry?.memoryEnabled === "boolean" ? oldEntry.memoryEnabled : this.getSessionMemoryEnabled(sessionPath);
       this._emitSessionHealthWarning(sessionPath);
       this._repairOversizedSessionHistory(sessionPath);
-      // #1285: 在 open 前修复坏会话的孤儿 toolResult（必须早于 SessionManager.open）
       this._repairOrphanToolHistory(sessionPath);
       this._repairInlineMediaHistory(sessionPath);
       const sessionMgr = SessionManager.open(sessionPath, readyAgent.sessionDir);
-      const cwd = sessionMgr.getCwd?.() || undefined;
-      await this.createSession(sessionMgr, cwd, memoryEnabled, null, {
-        restore: true,
-        agent: readyAgent,
-        agentId: targetAgentId,
-        preserveAgentMemoryState: true,
-        reminderState,
+      const result = await this._createSessionRuntime(sessionMgr, sessionMgr.getCwd?.() || undefined, memoryEnabled, null, {
+        restore: true, agent: readyAgent, agentId: targetAgentId,
+        preserveAgentMemoryState: true, refreshCapabilitySnapshots, reminderState,
       });
-    } finally {
-      this._session = prevFocus;
-      this._currentSessionPath = prevCurrentSessionPath;
-      this._sessionStarted = prevSessionStarted;
-    }
-
-    const entry = this._getSessionEntryByPath(sessionPath);
-    if (!entry) throw new Error(`ensureSessionLoaded: session not in cache after createSession`);
-    if (entry.agentId !== targetAgentId) {
-      throw new Error(`ensureSessionLoaded: restored agentId mismatch (${entry.agentId} !== ${targetAgentId})`);
-    }
-    return entry.session;
+      if (wasFocused && this._currentSessionPath === sessionPath) this._focusSession(result.session, sessionPath, focusVersion);
+      return result.session;
+    });
   }
 
+  /** Load an owned runtime without changing foreground selection or pending UI options. */
+  async ensureSessionLoaded(sessionPath: any) {
+    this._assertActiveDesktopSessionPath(sessionPath, "ensureSessionLoaded");
+    if (this._isDeletedAgentSessionPath(sessionPath)) throw new Error("ensureSessionLoaded: session belongs to a deleted agent");
+    this._assertCurrentActiveSessionLocator(sessionPath, "ensureSessionLoaded");
+    const key = this._runtimeOperationKey(sessionPath);
+    const inFlight = this._ensureSessionLoadedInFlight.get(key);
+    if (inFlight) return inFlight;
+    const loadPromise = this._loadSessionForAttach(sessionPath).finally(() => {
+      if (this._ensureSessionLoadedInFlight.get(key) === loadPromise) this._ensureSessionLoadedInFlight.delete(key);
+    });
+    this._ensureSessionLoadedInFlight.set(key, loadPromise);
+    return loadPromise;
+  }
+
+  async _loadSessionForAttach(sessionPath: any) {
+    return this._withSessionRuntimeOperation(sessionPath, async () => {
+      const existing = this._getSessionEntryByPath(sessionPath);
+      if (existing) { existing.lastTouchedAt = Date.now(); return existing.session; }
+      const targetAgentId = this.resolveSessionOwnership(sessionPath).agentId;
+      if (!targetAgentId) throw new Error(`ensureSessionLoaded: cannot resolve agentId for ${sessionPath}`);
+      const agent = this._d.getAgentById(targetAgentId);
+      if (!agent) throw new Error(`ensureSessionLoaded: agent "${targetAgentId}" not found`);
+      const readyAgent = await this._ensureAgentRuntimeReady(targetAgentId, { agent, reason: "ensureSessionLoaded" });
+      const memoryEnabled = this.getSessionMemoryEnabled(sessionPath);
+      const reminderState = this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
+      this._emitSessionHealthWarning(sessionPath);
+      this._repairOversizedSessionHistory(sessionPath);
+      this._repairOrphanToolHistory(sessionPath);
+      this._repairInlineMediaHistory(sessionPath);
+      const sessionMgr = SessionManager.open(sessionPath, readyAgent.sessionDir);
+      const result = await this._createSessionRuntime(sessionMgr, sessionMgr.getCwd?.() || undefined, memoryEnabled, null, {
+        restore: true, agent: readyAgent, agentId: targetAgentId, preserveAgentMemoryState: true, reminderState,
+      });
+      return result.session;
+    });
+  }
   isSessionStreaming(sessionPath: any) {
     return this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)
       || !!this.getSessionByPath(sessionPath)?.isStreaming;
@@ -8148,6 +8118,7 @@ export class SessionCoordinator {
         }
       };
       const unsub = session.subscribe((event) => {
+
         if (abortRequested && !abortRedelivered) {
           abortRedelivered = true;
           deliverSessionAbort();

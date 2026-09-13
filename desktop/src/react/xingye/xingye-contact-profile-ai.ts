@@ -15,6 +15,7 @@
  */
 
 import type { Agent } from '../types';
+import { captureXingyePersistenceBinding } from './xingye-persistence';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { readXingyeRoleProfile } from './xingye-profile-store';
 import { buildLoreContextForPhone, requestPhoneAi } from './xingye-phone-ai';
@@ -359,6 +360,7 @@ export async function ensureContactProfileInitializedWithAI(params: {
   contact: XingyePhoneContactView;
 }): Promise<{ status: 'created' | 'already' }> {
   const { ownerAgent, ownerProfile, contact } = params;
+  const binding = captureXingyePersistenceBinding(ownerAgent.id);
   const key = `${ownerAgent.id}::${contact.targetType}::${contact.targetId}`;
   const existing = getContactProfile(ownerAgent.id, contact.targetType, contact.targetId);
   if (existing?.initializedAt) return { status: 'already' };
@@ -367,7 +369,9 @@ export async function ensureContactProfileInitializedWithAI(params: {
 
   const run = (async () => {
     const userName = await resolveXingyeSpeakerUserName();
+    binding.assertCurrent();
     const inputs = await collectContactProfileSourceInputs({ ownerAgentId: ownerAgent.id, contact, userName });
+    binding.assertCurrent();
     const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
     const loreContextText = buildLoreContextForPhone({
       agentId: ownerAgent.id,
@@ -386,6 +390,7 @@ export async function ensureContactProfileInitializedWithAI(params: {
       timeoutMs: 90_000,
     });
     const result = normalizeContactProfileInitResult(raw);
+    binding.assertCurrent();
     initializeContactProfile(ownerAgent.id, contact.targetType, contact.targetId, result);
     return { status: 'created' as const };
   })().finally(() => {
@@ -403,13 +408,16 @@ export async function updateContactProfileWithAI(params: {
   maxNewEntries?: number;
 }): Promise<{ appended: number; droppedAsDuplicate: number; ipChanged: boolean; signatureChanged: boolean }> {
   const { ownerAgent, ownerProfile, contact } = params;
+  const binding = captureXingyePersistenceBinding(ownerAgent.id);
   const profile = getContactProfile(ownerAgent.id, contact.targetType, contact.targetId);
   if (!profile?.initializedAt) {
     throw new Error('详情还没初始化，请先打开详情页生成。');
   }
   const maxNewEntries = Math.max(1, Math.min(params.maxNewEntries ?? 3, 5));
   const userName = await resolveXingyeSpeakerUserName();
+  binding.assertCurrent();
   const inputs = await collectContactProfileSourceInputs({ ownerAgentId: ownerAgent.id, contact, userName });
+  binding.assertCurrent();
   const recentContext = collectRecentContextForAgent({ agentId: ownerAgent.id });
   const loreContextText = buildLoreContextForPhone({
     agentId: ownerAgent.id,
@@ -437,6 +445,7 @@ export async function updateContactProfileWithAI(params: {
     timeoutMs: 90_000,
   });
   const result = normalizeContactProfileUpdateResult(raw, maxNewEntries);
+  binding.assertCurrent();
   return applyContactProfileAiUpdate(ownerAgent.id, contact.targetType, contact.targetId, {
     ipAddress: result.ipAddress,
     signature: result.signature,

@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import { createChannelsRoute } from "../server/routes/channels.ts";
 import { ChannelManager } from "../core/channel-manager.ts";
-import { appendMessage, createChannel, getChannelMeta, readBookmarks } from "../lib/channels/channel-store.ts";
+import { appendDmMessage, appendMessage, createChannel, getChannelMeta, readBookmarks } from "../lib/channels/channel-store.ts";
 import {
   getAgentPhoneProjectionPath,
   readAgentPhoneProjection,
@@ -132,11 +132,8 @@ describe("channels route membership contract", () => {
   });
 
   it("downloads only the selected DM conversation", async () => {
-    const selected = path.join(engine.agentsDir, "alice", "dm", "bob.md");
-    const other = path.join(engine.agentsDir, "alice", "dm", "carol.md");
-    fs.mkdirSync(path.dirname(selected), { recursive: true });
-    await appendMessage(selected, "alice", "selected private hello");
-    await appendMessage(other, "alice", "other private hello");
+    await appendDmMessage({ agentsDir: engine.agentsDir, fromId: "alice", toId: "bob", body: "selected private hello" });
+    await appendDmMessage({ agentsDir: engine.agentsDir, fromId: "alice", toId: "carol", body: "other private hello" });
 
     const res = await app.request("/api/conversations/dm%3Abob/export?agentId=alice");
 

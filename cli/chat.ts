@@ -110,6 +110,19 @@ export async function startChat(client, connection, opts: { session?: any; targe
   let currentMood = "";
   let thinkingTimer = null;
   let thinkingFrame = 0;
+  let ready = false;
+  let closed = false;
+  let inputEnded = false;
+  let draining = false;
+  let keypressHandler = null;
+  const inputQueue: string[] = [];
+  let queuedBytes = 0;
+  let lastCompletedStreamId = null;
+  let failedTurn = false;
+  const connectionTimer = setTimeout(() => {
+    console.error("WebSocket connection timed out.");
+    closeAndExit(1);
+  }, 30_000);
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -125,6 +138,7 @@ export async function startChat(client, connection, opts: { session?: any; targe
   }
 
   function prompt() {
+    if (closed || !ready || inputEnded) return;
     process.stdout.write(`${paint(theme, ctx.userName || "you")} ${ansi.dim}›${ansi.reset} `);
   }
 
@@ -224,20 +238,38 @@ ${paint(theme, "/quit")}              exit
   }
 
   function closeAndExit(code) {
-    try { ws.close(); } catch {}
+    if (closed) return;
+    closed = true;
+    ready = false;
+    clearTimeout(connectionTimer);
+    stopThinking();
+    if (inputQueue.length) {
+      console.error(`${inputQueue.length} queued input line(s) not sent or executed.`);
+    }
+    if (keypressHandler) process.stdin.off("keypress", keypressHandler);
     try { rl.close(); } catch {}
+    try { ws.close(); } catch {}
     if (process.stdin.isTTY) {
       try { process.stdin.setRawMode(false); } catch {}
     }
-    process.exit(code);
+    // EOF can finish a piped chat while stdout still has buffered response
+    // bytes. Flush both streams before exiting so the final answer survives.
+    process.stdout.write("", () => {
+      process.stderr.write("", () => process.exit(code));
+    });
   }
 
   ws.on("open", () => {
+    if (closed) return;
+    ready = true;
+    clearTimeout(connectionTimer);
     renderHeader();
     prompt();
+    void drainInput();
   });
 
   ws.on("message", async (data) => {
+    if (closed) return;
     const msg = safeParse(data.toString());
     if (!msg) return;
     if (msg.type === "app_event" && (
@@ -248,6 +280,12 @@ ${paint(theme, "/quit")}              exit
       return;
     }
     if (!cliChatMessageMatchesSession({ sessionId, sessionPath }, msg)) return;
+    // A turn may end with both status(false) and turn_end. Once the next
+    // prompt is sent, the previous turn's trailing packet cannot release it.
+    if (streaming && !activeStreamId && (
+      (msg.streamId && msg.streamId === lastCompletedStreamId)
+      || (msg.type === "status" && msg.isStreaming === false && !msg.streamId)
+    )) return;
     const wasStreaming = streaming;
     const tracked = reduceCliChatStreamIdentity({
       sessionId,
@@ -257,6 +295,7 @@ ${paint(theme, "/quit")}              exit
     }, msg);
     activeStreamId = tracked.streamId;
     streaming = tracked.isStreaming;
+    if (wasStreaming && !streaming) lastCompletedStreamId = nonEmptyString(msg.streamId);
     switch (msg.type) {
       case "text_delta":
         stopThinking();
@@ -299,6 +338,7 @@ ${paint(theme, "/quit")}              exit
         break;
       case "error":
         if (streaming) return;
+        failedTurn = true;
         stopThinking();
         abortRequestedStreamId = null;
         process.stdout.write(`\n${ansi.red}${msg.message || "error"}${ansi.reset}\n`);
@@ -317,56 +357,106 @@ ${paint(theme, "/quit")}              exit
       default:
         break;
     }
+    if (!streaming) void drainInput();
   });
 
   ws.on("close", () => {
-    stopThinking();
+    if (closed) return;
     console.log(`\n${ansi.dim}Disconnected.${ansi.reset}`);
-    closeAndExit(0);
+    closeAndExit(!ready || streaming || inputQueue.length || draining ? 1 : 0);
   });
 
   ws.on("error", (err) => {
-    stopThinking();
+    if (closed) return;
     console.error(`\n${ansi.red}${err.message}${ansi.reset}`);
+    closeAndExit(1);
   });
 
-  rl.on("line", async (input) => {
+  // Serialize both commands and prompts. In particular /new must finish
+  // before the next piped prompt captures its session identity.
+  async function drainInput() {
+    if (closed || !ready || draining || streaming) return;
+    draining = true;
+    try {
+      while (!closed && ready && !streaming && inputQueue.length) {
+        const line = inputQueue[0];
+        if (line.startsWith("/")) {
+          inputQueue.shift();
+          queuedBytes -= Buffer.byteLength(line);
+          try { await handleCommand(line); } catch (err) {
+            if (closed) return;
+            console.error(`${ansi.red}${err.message}${ansi.reset}`);
+            if (inputEnded || !process.stdin.isTTY) { closeAndExit(1); return; }
+            prompt();
+          }
+          continue;
+        }
+        const message = createCliChatPromptMessage({ sessionId, sessionPath }, line);
+        if (!message) throw new Error("Session identity unavailable; reconnect or choose another session.");
+        // Set busy before send, not after the server's first status packet.
+        streaming = true;
+        ws.send(JSON.stringify(message), (err) => {
+          if (!err || closed) return;
+          console.error(`${ansi.red}Message delivery failed: ${err.message}${ansi.reset}`);
+          closeAndExit(1);
+        });
+        if (closed) return;
+        inputQueue.shift();
+        queuedBytes -= Buffer.byteLength(line);
+      }
+    } catch (err) {
+      console.error(`${ansi.red}${err.message}${ansi.reset}`);
+      closeAndExit(1);
+    } finally {
+      draining = false;
+    }
+    if (!closed && inputEnded && !streaming && !inputQueue.length) closeAndExit(failedTurn ? 1 : 0);
+  }
+
+  rl.on("line", (input) => {
+    if (closed) return;
     const line = input.trim();
     if (!line) {
       prompt();
       return;
     }
-    if (streaming) return;
-    try {
-      if (line.startsWith("/")) {
-        await handleCommand(line);
-        return;
-      }
-      const message = createCliChatPromptMessage({ sessionId, sessionPath }, line);
-      if (!message) throw new Error("Session identity unavailable; reconnect or choose another session.");
-      ws.send(JSON.stringify(message));
-    } catch (err) {
-      console.log(`${ansi.red}${err.message}${ansi.reset}`);
-      prompt();
+    if (inputQueue.length >= 1024 || queuedBytes + Buffer.byteLength(line) > 1024 * 1024) {
+      console.error("Input queue limit exceeded; incoming line was not sent.");
+      closeAndExit(1);
+      return;
     }
+    inputQueue.push(line);
+    queuedBytes += Buffer.byteLength(line);
+    void drainInput();
+  });
+
+  rl.on("close", () => {
+    if (closed) return;
+    inputEnded = true;
+    void drainInput();
   });
 
   readline.emitKeypressEvents(process.stdin, rl);
   if (!plain && process.stdin.isTTY) {
     process.stdin.setRawMode(true);
     const requestAbort = () => {
+      if (closed || !ready) return false;
       const message = createCliChatAbortMessage({ sessionId, sessionPath, streamId: activeStreamId });
       if (!message) {
         process.stdout.write(`\n${ansi.yellow}Stop unavailable until the active stream identity is known.${ansi.reset}\n`);
         return false;
       }
       if (abortRequestedStreamId === message.streamId) return true;
-      ws.send(JSON.stringify(message));
+      try { ws.send(JSON.stringify(message)); } catch (err) {
+        console.error(`${ansi.red}${err.message}${ansi.reset}`);
+        closeAndExit(1);
+        return false;
+      }
       abortRequestedStreamId = message.streamId;
       process.stdout.write(`\n${ansi.dim}Stop requested…${ansi.reset}\n`);
       return true;
     };
-    process.stdin.on("keypress", (_str, key) => {
+    keypressHandler = (_str, key) => {
       if (!key) return;
       if (key.name === "escape" && streaming) {
         requestAbort();
@@ -378,7 +468,8 @@ ${paint(theme, "/quit")}              exit
           closeAndExit(0);
         }
       }
-    });
+    };
+    process.stdin.on("keypress", keypressHandler);
   }
 }
 

@@ -2,7 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDataEpochCheckpointProvider,
   expandStorePathPattern,
@@ -13,6 +13,7 @@ import type { StoreDescriptor } from "../shared/persistence/store-registry-types
 import { dataEpochJournalPath, writeDataEpochJournal } from "../shared/data-epoch.cjs";
 
 const tempDirs: string[] = [];
+const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
 
 function makeHomeDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-epoch-checkpoint-"));
@@ -21,6 +22,8 @@ function makeHomeDir() {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  Object.defineProperty(process, "platform", originalPlatform);
   while (tempDirs.length > 0) fs.rmSync(tempDirs.pop()!, { recursive: true, force: true });
 });
 
@@ -445,5 +448,84 @@ describe("pruneDataEpochCheckpoints", () => {
     const home = makeHomeDir();
     fs.writeFileSync(dataEpochJournalPath(home), "not valid json{{{");
     await expect(pruneDataEpochCheckpoints({ homeDir: home })).rejects.toThrow("corrupt");
+  });
+});
+
+
+describe("checkpoint publication busy retry", () => {
+  function fixture(platform = "win32") {
+    Object.defineProperty(process, "platform", { ...originalPlatform, value: platform });
+    const home = makeHomeDir();
+    const source = path.join(home, "source.json");
+    fs.writeFileSync(source, '{"owner":"original"}');
+    const store = testStore({ id: "retry-store", format: "json", pathKind: "file", pathPatterns: ["source.json"] });
+    const provider = createDataEpochCheckpointProvider({ stores: [store] });
+    const finalDir = path.join(home, "data-epoch-checkpoints", "publish-retry");
+    const create = () => provider.create({ homeDir: home, fromEpoch: 1, toEpoch: 2,
+      transitionId: "publish-retry", affectedStoreIds: ["retry-store"] });
+    // Keep real filesystem operations; accelerate only the helper's backoff waits.
+    const delays: number[] = [];
+    const timer = globalThis.setTimeout;
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, ms, ...args) => {
+      if ([100, 250, 500, 1000, 2000, 4000, 8000].includes(ms)) {
+        delays.push(ms); return timer(callback, 0, ...args);
+      }
+      return timer(callback, ms, ...args);
+    }) as typeof setTimeout);
+    return { home, source, provider, finalDir, create, delays };
+  }
+
+  it.each(["EPERM", "EACCES", "EBUSY"])("publishes the same staged bytes after transient Windows %s", async code => {
+    const f = fixture();
+    const rename = fs.promises.rename.bind(fs.promises);
+    const attempts: string[][] = [];
+    vi.spyOn(fs.promises, "rename").mockImplementation(async (from, to) => {
+      attempts.push([String(from), String(to)]);
+      expect(JSON.parse(fs.readFileSync(path.join(String(from), "metadata.json"), "utf8")).complete).toBe(true);
+      expect(fs.existsSync(f.finalDir)).toBe(false);
+      if (attempts.length <= 2) throw Object.assign(new Error("scanner busy"), { code });
+      return rename(from, to);
+    });
+    const receipt = await f.create();
+    expect(attempts).toHaveLength(3);
+    expect(attempts.every(pair => pair[0] === attempts[0][0] && pair[1] === f.finalDir)).toBe(true);
+    expect(f.delays).toEqual([100, 250]);
+    expect(fs.readFileSync(path.join(f.finalDir, "stores", "retry-store", "source.json"), "utf8"))
+      .toBe(fs.readFileSync(f.source, "utf8"));
+    await expect(f.provider.verify(receipt)).resolves.toBeUndefined();
+  });
+
+  it("terminates persistent Windows refusal without removing the destination or source", async () => {
+    const f = fixture();
+    const refusal = Object.assign(new Error("persistent deny"), { code: "EPERM" });
+    const attempts: string[][] = [];
+    vi.spyOn(fs.promises, "rename").mockImplementation(async (from, to) => {
+      attempts.push([String(from), String(to)]);
+      if (attempts.length === 1) {
+        // A destination arriving after initial existence check belongs to another writer.
+        fs.mkdirSync(f.finalDir);
+        fs.writeFileSync(path.join(f.finalDir, "foreign-marker"), "must survive");
+      }
+      throw refusal;
+    });
+    await expect(f.create()).rejects.toBe(refusal);
+    expect(attempts).toHaveLength(8);
+    expect(attempts.every(pair => pair[0] === attempts[0][0] && pair[1] === f.finalDir)).toBe(true);
+    expect(f.delays).toEqual([100, 250, 500, 1000, 2000, 4000, 8000]);
+    expect(fs.readFileSync(f.source, "utf8")).toBe('{"owner":"original"}');
+    expect(fs.readFileSync(path.join(f.finalDir, "foreign-marker"), "utf8")).toBe("must survive");
+    expect(fs.existsSync(path.join(f.finalDir, "metadata.json"))).toBe(false);
+    expect(fs.existsSync(attempts[0][0])).toBe(false);
+  });
+
+  it.each([["win32", "EIO"], ["linux", "EPERM"]])("does not retry platform %s error %s", async (platform, code) => {
+    const f = fixture(platform);
+    const refusal = Object.assign(new Error("not retryable"), { code });
+    const rename = vi.spyOn(fs.promises, "rename").mockRejectedValue(refusal);
+    await expect(f.create()).rejects.toBe(refusal);
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(f.delays).toEqual([]);
+    expect(fs.existsSync(f.finalDir)).toBe(false);
+    expect(fs.readFileSync(f.source, "utf8")).toBe('{"owner":"original"}');
   });
 });

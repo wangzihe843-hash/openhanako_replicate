@@ -15,6 +15,8 @@ export function registerLoopBusHandlers(bus, getController) {
         controller.onTurnStart(sessionPath);
       } else if (event.type === "message_end") {
         controller.onMessageEnd(sessionPath, event.message?.stopReason);
+      } else if (event.type === "session_run_end") {
+        controller.onRunEnd?.(sessionPath);
       } else if (event.type === "turn_end") {
         void controller.onTurnEnd(sessionPath, { aborted: event.aborted === true });
       }

@@ -1,15 +1,22 @@
 /**
  * @vitest-environment jsdom
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const hanaFetch = vi.hoisted(() => vi.fn(async (path: string) => ({
   json: async () => (path.endsWith('/subscribe') ? { ok: true, subscriptionId: 'sub-1' } : { ok: true }),
 })));
 
 vi.mock('../../hooks/use-hana-fetch', () => ({ hanaFetch }));
+vi.mock('../../stores', () => ({ useStore: { getState: () => ({}) } }));
 
 describe('resource-events', () => {
+  beforeEach(async () => {
+    const { setResourceEventConnection } = await import('../../services/resource-events');
+    const { createLocalServerConnection } = await import('../../services/server-connection');
+    setResourceEventConnection(createLocalServerConnection({ serverPort: '19101', serverToken: 'synthetic-test-token' }));
+  });
+
   afterEach(() => {
     vi.resetModules();
     hanaFetch.mockClear();

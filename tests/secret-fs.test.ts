@@ -254,3 +254,87 @@ describe("windows contract", () => {
     expect(ensureSecretFileModeSync(target)).toBe(false);
   });
 });
+
+
+describe("secret publication bounded synchronous retry", () => {
+  async function platformWriter(platform: string) {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    vi.resetModules();
+    try {
+      Object.defineProperty(process, "platform", { ...descriptor, value: platform });
+      return (await import("../shared/secret-fs.ts")).writeSecretFileSync;
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  }
+
+  it.each(["EPERM", "EACCES", "EBUSY"])("retries only the same staged Windows rename after transient %s", async code => {
+    const write = await platformWriter("win32");
+    const target = path.join(makeTmpDir(), "credential.json");
+    const tmp = target + ".tmp";
+    fs.writeFileSync(target, "old fixture");
+    const writeFile = vi.spyOn(fs, "writeFileSync");
+    const remove = vi.spyOn(fs, "rmSync");
+    const chmod = vi.spyOn(fs, "chmodSync");
+    const wait = vi.spyOn(Atomics, "wait"); // Real bounded synchronous waits.
+    const rename = fs.renameSync;
+    const attempts: string[][] = [];
+    vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      attempts.push([String(from), String(to)]);
+      expect(fs.readFileSync(tmp, "utf8")).toBe("new fixture");
+      expect(fs.readFileSync(target, "utf8")).toBe("old fixture");
+      if (attempts.length < 3) throw Object.assign(new Error("transient lock"), { code });
+      return rename(from, to);
+    });
+    expect(write(target, "new fixture")).toBeUndefined();
+    expect(attempts).toEqual([[tmp, target], [tmp, target], [tmp, target]]);
+    expect(wait.mock.calls.map(call => call[3])).toEqual([10, 20]);
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledTimes(1); // Initial stale-tmp cleanup only.
+    expect(remove.mock.calls[0][0]).toBe(tmp);
+    expect(chmod).not.toHaveBeenCalled();
+    expect(fs.readFileSync(target, "utf8")).toBe("new fixture");
+    expect(fs.existsSync(tmp)).toBe(false);
+  });
+
+  it.each(["EPERM", "EACCES", "EBUSY"])("terminates persistent Windows %s after 310ms of waits and retains old bytes", async code => {
+    const write = await platformWriter("win32");
+    const target = path.join(makeTmpDir(), "credential.json");
+    const tmp = target + ".tmp";
+    fs.writeFileSync(target, "old fixture");
+    const refusal = Object.assign(new Error("persistent lock"), { code });
+    const wait = vi.spyOn(Atomics, "wait");
+    const writeFile = vi.spyOn(fs, "writeFileSync");
+    const remove = vi.spyOn(fs, "rmSync");
+    const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      expect([from, to]).toEqual([tmp, target]);
+      expect(fs.readFileSync(tmp, "utf8")).toBe("new fixture");
+      expect(fs.readFileSync(target, "utf8")).toBe("old fixture");
+      throw refusal;
+    });
+    let failure;
+    try { write(target, "new fixture"); } catch (err) { failure = err; }
+    expect(failure).toBe(refusal);
+    expect(rename).toHaveBeenCalledTimes(6);
+    expect(wait.mock.calls.map(call => call[3])).toEqual([10, 20, 40, 80, 160]);
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(remove.mock.calls.every(call => call[0] === tmp)).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe("old fixture");
+    expect(fs.existsSync(tmp)).toBe(false);
+  });
+
+  it.each([["win32", "EIO"], ["win32", "ENOENT"], ["linux", "EPERM"]])("does not retry %s / %s", async (platform, code) => {
+    const write = await platformWriter(platform);
+    const target = path.join(makeTmpDir(), "credential.json");
+    fs.writeFileSync(target, "old fixture");
+    const refusal = Object.assign(new Error("not retryable"), { code });
+    const wait = vi.spyOn(Atomics, "wait");
+    const rename = vi.spyOn(fs, "renameSync").mockImplementation(() => { throw refusal; });
+    let failure;
+    try { write(target, "new fixture"); } catch (err) { failure = err; }
+    expect(failure).toBe(refusal);
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(wait).not.toHaveBeenCalled();
+    expect(fs.readFileSync(target, "utf8")).toBe("old fixture");
+  });
+});

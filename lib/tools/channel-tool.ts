@@ -266,7 +266,7 @@ export function createChannelTool({
       })),
     }),
 
-    execute: async (_toolCallId, params) => {
+    execute: async (_toolCallId, params, signal?: AbortSignal) => {
       if (isEnabled && !isEnabled()) {
         return {
           content: [{ type: "text", text: t("error.channelsDisabled") }],
@@ -319,7 +319,9 @@ export function createChannelTool({
           });
           if (!resolved.ok) return channelResolveErrorResult("post", params.channel, resolved);
 
-          const { timestamp } = await appendMessage(resolved.filePath, agentId, params.content);
+          const { timestamp } = await appendMessage(resolved.filePath, agentId, params.content, {
+            memberId: agentId, signal, canWrite: () => !isEnabled || isEnabled(),
+          });
 
           // 触发频道手机送达，让其他 agent 看到新消息并自行行动
           if (onPost) {

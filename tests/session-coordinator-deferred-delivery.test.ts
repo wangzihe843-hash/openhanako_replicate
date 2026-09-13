@@ -133,8 +133,8 @@ describe("SessionCoordinator deferred custom delivery", () => {
     session.sendCustomMessage.mockImplementation(async () => {
       order.push("send");
     });
-    emitEvent.mockImplementation(() => {
-      order.push("emit");
+    emitEvent.mockImplementation((event) => {
+      order.push(event.type);
     });
     const sessionPath = "/tmp/fake/agents/test-agent/sessions/a.jsonl";
     coord.sessions.set(sessionPath, {
@@ -153,7 +153,7 @@ describe("SessionCoordinator deferred custom delivery", () => {
 
     expect(result).toMatchObject({ ok: true, mode: "triggerTurn" });
     expect(coord.preflightSessionInput).toHaveBeenCalledWith(sessionPath);
-    expect(order).toEqual(["emit", "send"]);
+    expect(order).toEqual(["turn_input_presentation", "send", "session_run_end"]);
     expect(session.sendCustomMessage).toHaveBeenCalledWith(
       expect.objectContaining({ customType: "hana-background-result", display: false }),
       { triggerTurn: true },
@@ -393,7 +393,7 @@ describe("SessionCoordinator deferred custom delivery", () => {
 
   it("commits synchronous retry side effects after preflight and before custom input persistence", async () => {
     const order: string[] = [];
-    const emitEvent = vi.fn(() => order.push("presentation"));
+    const emitEvent = vi.fn((event) => order.push(event.type));
     const coord = makeCoordinator({ emitEvent });
     const session = makeSession({ isStreaming: false });
     const sessionPath = "/tmp/fake/agents/test-agent/sessions/retry-custom.jsonl";
@@ -419,7 +419,7 @@ describe("SessionCoordinator deferred custom delivery", () => {
       beforeInputSideEffects: () => order.push("commit"),
     });
 
-    expect(order).toEqual(["preflight", "commit", "presentation", "send"]);
+    expect(order).toEqual(["preflight", "commit", "turn_input_presentation", "send", "session_run_end"]);
   });
 
   it("rejects asynchronous custom-input commit hooks before presentation or persistence", async () => {
@@ -468,4 +468,19 @@ describe("SessionCoordinator deferred custom delivery", () => {
     );
     expect(session.sendCustomMessage).not.toHaveBeenCalled();
   });
+});
+
+it('does not start a custom turn over an existing SDK preflight owner', async () => {
+  const coord = makeCoordinator();
+  const sessionPath = '/tmp/fake/agents/test-agent/sessions/preflight-custom.jsonl';
+  const session = makeSession({ isStreaming: false });
+  coord.sessions.set(sessionPath, { session, agentId: 'test-agent' });
+  coord._setRuntimeValueForPath(coord._prePromptAbortControllers, sessionPath, new AbortController());
+  const commit = vi.fn();
+  await expect(coord.deliverCustomMessage(sessionPath, { customType: 'test', content: 'test' }, {
+    triggerTurn: true, beforeInputSideEffects: commit,
+  })).rejects.toThrow('session_busy');
+  expect(coord.preflightSessionInput).not.toHaveBeenCalled();
+  expect(commit).not.toHaveBeenCalled();
+  expect(session.sendCustomMessage).not.toHaveBeenCalled();
 });

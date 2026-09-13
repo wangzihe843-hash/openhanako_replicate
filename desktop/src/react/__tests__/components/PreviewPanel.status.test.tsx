@@ -20,11 +20,15 @@ const resourceEventMocks = vi.hoisted(() => ({
     : `local-file:${ref.path}`,
 }));
 
-vi.mock('../../services/resource-events', () => ({
-  retainLocalFileResourceWatch: resourceEventMocks.retainLocalFileResourceWatch,
-  retainResourceWatch: resourceEventMocks.retainResourceWatch,
-  resourceWatchKey: resourceEventMocks.resourceWatchKey,
-}));
+vi.mock('../../services/resource-events', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/resource-events')>();
+  return {
+    ...actual,
+    retainLocalFileResourceWatch: resourceEventMocks.retainLocalFileResourceWatch,
+    retainResourceWatch: resourceEventMocks.retainResourceWatch,
+    resourceWatchKey: resourceEventMocks.resourceWatchKey,
+  };
+});
 
 describe('PreviewPanel markdown editor status', () => {
   beforeEach(() => {
@@ -59,6 +63,7 @@ describe('PreviewPanel markdown editor status', () => {
       })),
     } as unknown as PlatformApi;
     useStore.setState({
+      serverPort: '3210',
       previewOpen: true,
       previewItems: [{
         id: 'note',

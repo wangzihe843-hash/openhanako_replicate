@@ -140,22 +140,38 @@ function toPosix(value) {
   return value.split(path.sep).join("/");
 }
 
-/**
- * Resolves a repo-relative path against rootDir and hard-errors if the
- * result escapes rootDir. Returns the absolute path.
- */
+function containsPath(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+/** Resolve a repo-relative input without allowing escapes or linked components. */
 function resolveWithinRoot(rootDir, relPath) {
-  const absRoot = path.resolve(rootDir);
+  if (typeof relPath !== "string" || !relPath || relPath.includes("\0")) {
+    throw new Error("[export-open-tree] invalid repository-relative input path");
+  }
+  const absRoot = fs.realpathSync(rootDir);
   const abs = path.resolve(absRoot, relPath);
-  if (abs !== absRoot && !abs.startsWith(absRoot + path.sep)) {
+  if (path.isAbsolute(relPath) || path.win32.isAbsolute(relPath) || relPath.includes(":") || !containsPath(absRoot, abs) || abs === absRoot) {
     throw new Error(`[export-open-tree] path escapes repository root: "${relPath}" resolved to ${abs}`);
+  }
+  // Reject links in every input component, including directory junctions.
+  // Lexical containment alone does not stop copying through an outside alias.
+  let current = absRoot;
+  for (const component of path.relative(absRoot, abs).split(path.sep)) {
+    if (process.platform === "win32" && /[. ]$/.test(component)) {
+      throw new Error(`[export-open-tree] ambiguous Windows input path: ${relPath}`);
+    }
+    current = path.join(current, component);
+    const stat = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (stat?.isSymbolicLink()) throw new Error(`[export-open-tree] linked input is not supported: ${relPath}`);
   }
   return abs;
 }
 
-function listGitTrackedFiles(rootDir, relDir) {
-  const output = execFileSync("git", ["ls-files", "--", relDir], { cwd: rootDir, encoding: "utf-8" });
-  return output.split("\n").map((line) => line.trim()).filter(Boolean).map(toPosix);
+function listGitTrackedFiles(rootDir, relDir = ".") {
+  const output = execFileSync("git", ["--literal-pathspecs", "ls-files", "-z", "--", relDir], { cwd: rootDir, encoding: "utf-8" });
+  return output.split("\0").filter(Boolean).map(toPosix);
 }
 
 /**
@@ -170,6 +186,7 @@ export function planExportCopies({ rootDir, manifest, skeleton }) {
   const files = new Set();
 
   function addEntry(rawEntry) {
+    if (typeof rawEntry !== "string") throw new Error("[export-open-tree] input paths must be strings");
     const declaredDir = rawEntry.endsWith("/");
     const relEntry = declaredDir ? rawEntry.slice(0, -1) : rawEntry;
     const absEntry = resolveWithinRoot(rootDir, relEntry);
@@ -177,14 +194,25 @@ export function planExportCopies({ rootDir, manifest, skeleton }) {
       throw new Error(`[export-open-tree] path does not exist in repository: "${rawEntry}"`);
     }
     const isDirOnDisk = fs.statSync(absEntry).isDirectory();
-    if (declaredDir || isDirOnDisk) {
+    if (declaredDir && !isDirOnDisk) throw new Error(`[export-open-tree] expected directory: ${rawEntry}`);
+    if (isDirOnDisk) {
       for (const trackedFile of listGitTrackedFiles(rootDir, relEntry)) {
-        resolveWithinRoot(rootDir, trackedFile);
-        files.add(trackedFile);
+        addFile(trackedFile);
       }
     } else {
-      files.add(relEntry);
+      addFile(relEntry);
     }
+  }
+
+  function addFile(relPath) {
+    const abs = resolveWithinRoot(rootDir, relPath);
+    if (!fs.existsSync(abs)) throw new Error(`[export-open-tree] path does not exist in repository: ${relPath}`);
+    if (!fs.statSync(abs).isFile()) throw new Error(`[export-open-tree] expected regular file: ${relPath}`);
+    const normalized = toPosix(path.relative(fs.realpathSync(rootDir), abs));
+    if (normalized.split("/").some((part) => part.toLowerCase() === ".git")) {
+      throw new Error(`[export-open-tree] Git metadata cannot be exported: ${relPath}`);
+    }
+    files.add(normalized);
   }
 
   for (const entry of manifest.paths) addEntry(entry);
@@ -199,10 +227,60 @@ export function planExportCopies({ rootDir, manifest, skeleton }) {
  */
 function copyFiles({ rootDir, destDir, relFiles }) {
   for (const relPath of relFiles) {
-    const src = path.join(rootDir, relPath);
+    const src = resolveWithinRoot(rootDir, relPath);
     const dest = path.join(destDir, relPath);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(src, dest);
+  }
+}
+
+// Resolve aliases even when the final destination has not been created yet.
+function canonicalDestination(destDir) {
+  if (typeof destDir !== "string" || !destDir || destDir.includes("\0")) {
+    throw new Error("[export-open-tree] invalid destination directory");
+  }
+  const absolute = path.resolve(destDir);
+  if (process.platform === "win32") {
+    const relative = absolute.slice(path.parse(absolute).root.length);
+    if (relative.split(path.sep).some((part) => /[. ]$/.test(part) || part.includes(":"))) {
+      throw new Error(`[export-open-tree] ambiguous Windows destination: ${destDir}`);
+    }
+  }
+  const tail = [];
+  let existing = absolute;
+  let stat;
+  while (!(stat = fs.lstatSync(existing, { throwIfNoEntry: false }))) {
+    tail.unshift(path.basename(existing));
+    const parent = path.dirname(existing);
+    if (parent === existing) throw new Error(`[export-open-tree] destination has no existing filesystem root: ${destDir}`);
+    existing = parent;
+  }
+  if (existing === absolute && stat.isSymbolicLink()) {
+    throw new Error(`[export-open-tree] destination must not be a link: ${destDir}`);
+  }
+  if (!fs.statSync(existing).isDirectory()) throw new Error(`[export-open-tree] destination must be a directory: ${destDir}`);
+  return path.join(fs.realpathSync(existing), ...tail);
+}
+
+function validateDestination(rootDir, destDir, inputs) {
+  if (containsPath(destDir, rootDir)) {
+    throw new Error(`[export-open-tree] destination directory must not be the repository root or its ancestor: ${destDir}`);
+  }
+  // Protect source trees, even if only one file in that tree is exported.
+  // Untracked, independent output directories inside the repo remain valid.
+  const protectedPaths = new Set([path.join(rootDir, ".git"), path.join(rootDir, "export-manifest.json")]);
+  // A worktree's .git can be a pointer file; protect the actual metadata too.
+  const gitDirectories = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], { cwd: rootDir, encoding: "utf-8" });
+  for (const directory of gitDirectories.trim().split(/\r?\n/)) protectedPaths.add(fs.realpathSync(directory));
+  for (const rel of [...inputs, ...listGitTrackedFiles(rootDir)]) {
+    const absolute = resolveWithinRoot(rootDir, rel.replace(/\/$/, ""));
+    const topLevel = path.relative(rootDir, absolute).split(path.sep)[0];
+    protectedPaths.add(path.join(rootDir, topLevel));
+  }
+  for (const source of protectedPaths) {
+    if (containsPath(destDir, source) || containsPath(source, destDir)) {
+      throw new Error(`[export-open-tree] destination overlaps repository input or metadata: ${source}`);
+    }
   }
 }
 
@@ -227,12 +305,13 @@ export function exportOpenTree({
   log = (msg) => console.log(msg),
 }) {
   if (!destDir) throw new Error("[export-open-tree] destDir is required");
-  const absRoot = path.resolve(rootDir);
-  const absDest = path.resolve(destDir);
-
-  if (absDest === absRoot) {
-    throw new Error(`[export-open-tree] destination directory must not be the repository root itself: ${absDest}`);
-  }
+  const absRoot = fs.realpathSync(rootDir);
+  const absDest = canonicalDestination(destDir);
+  resolveWithinRoot(absRoot, "export-manifest.json");
+  const manifest = readExportManifest({ rootDir: absRoot });
+  const relFiles = planExportCopies({ rootDir: absRoot, manifest, skeleton });
+  const inputs = [...manifest.paths, ...skeleton.map((item) => item.path), ...relFiles];
+  validateDestination(absRoot, absDest, inputs);
 
   if (fs.existsSync(absDest)) {
     const nonEmpty = fs.readdirSync(absDest).length > 0;
@@ -241,13 +320,37 @@ export function exportOpenTree({
         `[export-open-tree] destination directory is non-empty: ${absDest} (pass --force to wipe and re-export)`,
       );
     }
-    fs.rmSync(absDest, { recursive: true, force: true });
   }
-  fs.mkdirSync(absDest, { recursive: true });
-
-  const manifest = readExportManifest({ rootDir: absRoot });
-  const relFiles = planExportCopies({ rootDir: absRoot, manifest, skeleton });
-  copyFiles({ rootDir: absRoot, destDir: absDest, relFiles });
+  fs.mkdirSync(path.dirname(absDest), { recursive: true });
+  const staging = fs.mkdtempSync(path.join(path.dirname(absDest), ".open-export-"));
+  const tree = path.join(staging, "tree");
+  const backup = path.join(staging, "previous");
+  let preserveBackup = false;
+  try {
+    fs.mkdirSync(tree);
+    copyFiles({ rootDir: absRoot, destDir: tree, relFiles });
+    // Recheck after staging and before touching the old destination.
+    if (canonicalDestination(destDir) !== absDest) throw new Error("[export-open-tree] destination changed during export");
+    validateDestination(absRoot, absDest, inputs);
+    if (fs.existsSync(absDest)) {
+      if (!force && fs.readdirSync(absDest).length) throw new Error(`[export-open-tree] destination directory is non-empty: ${absDest}`);
+      fs.renameSync(absDest, backup);
+    }
+    try {
+      fs.renameSync(tree, absDest);
+    } catch (error) {
+      if (fs.existsSync(backup)) {
+        try { fs.renameSync(backup, absDest); } catch (restoreError) {
+          preserveBackup = true;
+          throw new Error(`[export-open-tree] replacement and rollback failed; previous export preserved at ${backup}`, { cause: new AggregateError([error, restoreError]) });
+        }
+      }
+      throw error;
+    }
+  } finally {
+    // Only remove the unique directory we created, never a caller-supplied path.
+    if (!preserveBackup) fs.rmSync(staging, { recursive: true, force: true });
+  }
 
   log(`[export-open-tree] exported ${relFiles.length} file(s) to ${absDest}`);
   return { destDir: absDest, fileCount: relFiles.length, files: relFiles };

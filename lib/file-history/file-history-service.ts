@@ -167,7 +167,16 @@ export class FileHistoryService {
   getSnapshotContent(root: string, snapshotId: number) { return this._require(root).store.getSnapshotContent(snapshotId); }
 
   async captureNow(root: string, relPath: string, origin: SnapshotOrigin, opContext: string | null = null): Promise<void> {
-    await this._capture(this._require(root), relPath, origin, opContext);
+    await this._capture(this._require(root), relPath, origin, opContext, origin === "restore");
+  }
+
+  async captureBeforeRestore(root: string, relPath: string): Promise<void> {
+    const entry = this._require(root);
+    const timer = entry.pendingTimers.get(relPath);
+    if (timer) clearTimeout(timer);
+    entry.pendingTimers.delete(relPath);
+    // Restore boundaries must not be coalesced by subsequent event captures.
+    await this._capture(entry, relPath, "restore", "before-restore", true, true);
   }
 
   hasWorkspace(root: string): boolean {
@@ -224,18 +233,28 @@ export class FileHistoryService {
     entry.pendingTimers.set(relPath, timer);
   }
 
-  async _capture(entry: WorkspaceEntry, relPath: string, origin: SnapshotOrigin, opContext: string | null): Promise<void> {
+  async _capture(entry: WorkspaceEntry, relPath: string, origin: SnapshotOrigin, opContext: string | null, required = false, allowMissing = false): Promise<void> {
     try {
       const absPath = path.join(entry.root, ...relPath.split("/"));
-      const stat = await fsp.stat(absPath).catch(() => null);
-      if (!stat || !stat.isFile()) return;
+      const stat = await fsp.stat(absPath).catch((error) => {
+        // Restoring a deleted file has no current bytes to preserve.
+        if (allowMissing && error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (!stat) return;
+      if (!stat.isFile()) {
+        if (required) throw new Error(`file-history cannot capture non-file: ${relPath}`);
+        return;
+      }
       if (stat.size > MAX_SNAPSHOT_BYTES) {
+        if (required) throw new Error(`file-history cannot preserve oversized file: ${relPath}`);
         this._log(`file-history skip oversized file: ${relPath} (${stat.size} bytes)`);
         return;
       }
       const content = await fsp.readFile(absPath);
       entry.store.recordSnapshot({ relPath, content, origin, opContext, capturedAt: this._now() });
     } catch (err) {
+      if (required) throw err;
       this._log(`file-history capture error for ${relPath}: ${(err as Error).message}`);
     }
   }

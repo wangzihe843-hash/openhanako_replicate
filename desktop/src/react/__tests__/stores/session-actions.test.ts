@@ -1930,6 +1930,24 @@ function mockPermissionDefault(mode = 'ask') {
       expect(calls.filter(u => u.startsWith('/api/sessions/messages'))).toHaveLength(0);
     });
 
+    it('F9 preserves background status and unread changes received while target history is loading', async () => {
+      let releaseHistory!: (value: Response) => void;
+      Object.assign(mockState, { streamingSessions: ['/old'], activeSessionStreams: { '/old': { streamId: 'old' } } });
+      mockFetch.mockImplementation(async (url) => {
+        if (String(url) === '/api/sessions/switch') return jsonResponse({ isStreaming: false });
+        if (String(url).startsWith('/api/sessions/messages')) return new Promise<Response>(resolve => { releaseHistory = resolve; });
+        return jsonResponse({});
+      });
+      const pending = switchSession('/target');
+      await vi.waitFor(() => expect(releaseHistory).toBeTypeOf('function'));
+      Object.assign(mockState, { streamingSessions: ['/new'], activeSessionStreams: { '/new': { streamId: 'new' } }, unreadOutputSessionPaths: ['/old'] });
+      releaseHistory(jsonResponse({ messages: [], blocks: [], todos: [], hasMore: false }));
+      await pending;
+      expect(mockState.streamingSessions).toEqual(['/new']);
+      expect(mockState.activeSessionStreams).toEqual({ '/new': { streamId: 'new' } });
+      expect(mockState.unreadOutputSessionPaths).toEqual(['/old']);
+    });
+
     it('后端确认目标 session 已结束时，清掉刷新前遗留的 streaming 标记', async () => {
       (mockState.chatSessions as Record<string, unknown>)['/a'] = {
         items: [{ type: 'message', data: { id: '0', text: 'cached' } }],

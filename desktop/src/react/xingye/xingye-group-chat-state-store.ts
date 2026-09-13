@@ -20,7 +20,9 @@ import {
   nowIso,
   requireSafeXingyeAgentId,
 } from './xingye-store-utils';
-import type { XingyeStorageBackend } from './xingye-storage-backend';
+import { createAgentXingyeStorageBackend, type XingyeStorageBackend } from './xingye-storage-backend';
+import { hanaFetch } from '../hooks/use-hana-fetch';
+import type { ServerConnection } from '../services/server-connection';
 
 export const XINGYE_GROUP_CHAT_RUNS_PATH = 'group-chat/runs.jsonl';
 
@@ -36,6 +38,8 @@ export type XingyeGroupChatRun = {
   /** `${agentId}::${channelId}::${latestMessageId}` —— 同一组合不会重复回复 */
   dedupeKey: string;
   status: XingyeGroupChatRunStatus;
+  /** Only failures known to precede message posting may be retried. */
+  retryable?: boolean;
   replyMessageId?: string;
   replyContent?: string;
   reason?: string;
@@ -48,6 +52,7 @@ export type XingyeGroupChatRunInput = {
   sourceMessageIds: string[];
   latestMessageId?: string;
   status: XingyeGroupChatRunStatus;
+  retryable?: boolean;
   replyMessageId?: string;
   replyContent?: string;
   reason?: string;
@@ -76,6 +81,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeStatus(value: unknown): XingyeGroupChatRunStatus | null {
   return value === 'replied' || value === 'skipped' || value === 'error' ? value : null;
+}
+
+export function isRetryableGroupChatRun(run: XingyeGroupChatRun): boolean {
+  // Older generation errors had no reply content; post errors retained it.
+  return run.status === 'error' && !run.replyMessageId && (run.retryable ?? !run.replyContent);
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -114,6 +124,7 @@ export function normalizeGroupChatRun(value: unknown): XingyeGroupChatRun | null
     latestMessageId,
     dedupeKey,
     status,
+    retryable: typeof value.retryable === 'boolean' ? value.retryable : undefined,
     replyMessageId,
     replyContent,
     reason,
@@ -148,13 +159,16 @@ export function createXingyeGroupChatStateStore(
       const key = String(dedupeKey ?? '').trim();
       if (!key) return null;
       const rows = await store.listJsonl<unknown>(aid, XINGYE_GROUP_CHAT_RUNS_PATH);
-      for (const row of rows) {
+      let retryable: XingyeGroupChatRun | null = null;
+      for (let index = rows.length - 1; index >= 0; index -= 1) {
+        const row = rows[index];
         const normalized = normalizeGroupChatRun(row);
         if (normalized && normalized.agentId === aid && normalized.dedupeKey === key) {
-          return normalized;
+          if (!isRetryableGroupChatRun(normalized)) return normalized;
+          retryable ??= normalized;
         }
       }
-      return null;
+      return retryable;
     },
 
     async listRunsForChannel(agentId: string, channelId: string): Promise<XingyeGroupChatRun[]> {
@@ -182,6 +196,7 @@ export function createXingyeGroupChatStateStore(
         latestMessageId: input.latestMessageId?.trim() || undefined,
         dedupeKey,
         status: input.status,
+        retryable: typeof input.retryable === 'boolean' ? input.retryable : undefined,
         replyMessageId: input.replyMessageId?.trim() || undefined,
         replyContent: typeof input.replyContent === 'string' ? input.replyContent : undefined,
         reason: input.reason?.trim() || undefined,
@@ -200,4 +215,17 @@ const defaultStore = createXingyeGroupChatStateStore();
 export const listGroupChatRuns = defaultStore.listRuns;
 export const findGroupChatRunByDedupeKey = defaultStore.findRunByDedupeKey;
 export const listGroupChatRunsForChannel = defaultStore.listRunsForChannel;
-export const appendGroupChatRun = defaultStore.appendRun;
+export function appendGroupChatRun(input: XingyeGroupChatRunInput, connection?: ServerConnection): Promise<XingyeGroupChatRun> {
+  if (!connection) return defaultStore.appendRun(input);
+  // A posted reply may finish after navigation to a different server. Its dedupe
+  // record must still be written to the server that accepted the post.
+  const backend = createAgentXingyeStorageBackend(async body => {
+    const res = await hanaFetch('/api/xingye/storage', {
+      connection, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok || data?.error) throw new Error(data?.error || `Run storage failed: ${res.status}`);
+    return data;
+  });
+  return createXingyeGroupChatStateStore(backend).appendRun(input);
+}

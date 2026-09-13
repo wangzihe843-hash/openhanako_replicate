@@ -64,6 +64,20 @@ vi.mock('../stores', () => ({
 describe('xingye-profile-store', () => {
   afterEach(cleanup);
 
+  it('review X8 cancels profile read-merge-write after a connection change', async () => {
+    let release!: (value: { data: unknown }) => void;
+    vi.mocked(postXingyeStorage).mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
+    const saving = saveXingyeRoleProfile('a', { shortBio: 'A edit' });
+    const outcome = saving.then(() => 'saved', () => 'cancelled');
+    const oldUrl = hoisted.mockConnection.baseUrl;
+    hoisted.mockConnection.baseUrl = 'http://server-b.invalid';
+    release({ data: { agentId: 'a', displayName: 'A private', updatedAt: '2026-08-01' } });
+    try {
+      expect(await outcome).toBe('cancelled');
+      expect(vi.mocked(postXingyeStorage).mock.calls.filter(([body]) => body.action === 'writeJson')).toHaveLength(0);
+    } finally { hoisted.mockConnection.baseUrl = oldUrl; }
+  });
+
   it('distinguishes a pending profile from a confirmed missing profile', async () => {
     let resolve!: (value: { data: null }) => void;
     vi.mocked(postXingyeStorage).mockReturnValueOnce(new Promise(done => { resolve = done; }));

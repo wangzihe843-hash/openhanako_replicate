@@ -89,6 +89,12 @@ export class FileHistoryStore {
     ).get(file.id);
 
     if (latest && latest.content_hash === hash) {
+      // An already captured preimage still needs a merge barrier. Otherwise a
+      // later ResourceIO event could merge the restored bytes over this version.
+      if (origin === "restore" && latest.origin !== "restore") {
+        this._db.prepare("UPDATE snapshots SET origin = ?, op_context = ? WHERE id = ?")
+          .run(origin, opContext, latest.id);
+      }
       this._clearDeleted(file.id);
       return { status: "unchanged", snapshotId: latest.id };
     }

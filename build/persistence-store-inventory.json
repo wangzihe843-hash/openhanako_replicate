@@ -134,12 +134,15 @@
         "agents/{agentId}/memory/today.md",
         "agents/{agentId}/memory/week.md",
         "agents/{agentId}/memory/longterm.md",
+        "agents/{agentId}/memory/longterm.md.fingerprint",
+        "agents/{agentId}/memory/reset.json",
         "agents/{agentId}/memory/editable-facts-state.json",
         "agents/{agentId}/memory/today-state.json",
         "agents/{agentId}/memory/daily-state.json",
-        "agents/{agentId}/memory/pinned-memory.json",
+        "agents/{agentId}/pinned-memory.json",
         "agents/{agentId}/memory/summaries/{sessionId}.json",
         "agents/{agentId}/memory/daily/{date}.md",
+        "agents/{agentId}/memory/daily/{date}.md.fingerprint",
         "agents/{agentId}/memory/dream/state.json",
         "agents/{agentId}/memory/dream/pending-apply.json",
         "agents/{agentId}/memory/dream/revisions/{revisionId}.json",
@@ -2588,12 +2591,12 @@
       "firstPossibleOpenPhase": "engine_construct",
       "firstPossibleWritePhase": "runtime_ready",
       "epochPolicy": "epoch-managed",
-      "checkpointPolicy": "Capture the complete Xingye tree for every agent, including reserved __user__ and __shared__ scopes, before any affected epoch migration. Business records, draft/history files, lore tombstones, and shared gift inventory are not regenerable caches.",
+      "checkpointPolicy": "Capture the complete Xingye tree for every agent, including reserved __user__ and __shared__ scopes, before any affected epoch migration. Business records, draft/history files, lore tombstones, and shared gift inventory are not regenerable caches. The phoneContactProfiles local key maps to agents/{agentId}/xingye/phone/contact-profiles.json and is captured by this tree descriptor, never a separate overlapping owner.",
       "restorePolicy": "Restore captured bytes to the same agent or reserved scope after reader compatibility is established; preserve authored records, record IDs, deletion tombstones, consumed-event markers, and shared inventory together.",
       "affectedByEpochMigration": true,
       "bootstrapSafety": null,
       "preCoordinatorReadProjection": null,
-      "identityContract": "agentId scopes every relative record path; __user__ and __shared__ are reserved owners. Event/draft IDs, peer IDs, and gift catalog keys remain identities inside their respective scopes.",
+      "identityContract": "agentId scopes every relative record path; __user__ and __shared__ are reserved owners. Event/draft IDs, peer IDs, contact profile IDs, and gift catalog keys remain identities inside their respective scopes.",
       "exemption": null
     }
   ],
@@ -2953,15 +2956,6 @@
       "sourceFile": "core/data-epoch-checkpoint-provider.ts",
       "kind": "rename",
       "excerpt": "fs.promises.rename(publishedDir, invalidDir)",
-      "reason": "Captures, verifies, or prunes data epoch transition checkpoints.",
-      "storeId": "data-epoch-checkpoints",
-      "exemptionId": null,
-      "ordinal": 0
-    },
-    {
-      "sourceFile": "core/data-epoch-checkpoint-provider.ts",
-      "kind": "rename",
-      "excerpt": "fs.promises.rename(tmpDir, publishedDir)",
       "reason": "Captures, verifies, or prunes data epoch transition checkpoints.",
       "storeId": "data-epoch-checkpoints",
       "exemptionId": null,
@@ -5345,8 +5339,35 @@
     },
     {
       "sourceFile": "desktop/file-text-io.cjs",
+      "kind": "remove-path",
+      "excerpt": "fs.unlinkSync(temporary)",
+      "reason": "Writes an absolute artifact/editor path explicitly selected by the caller, outside any implied HANA_HOME store.",
+      "storeId": null,
+      "exemptionId": "desktop-external-text-file",
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "desktop/file-text-io.cjs",
+      "kind": "rename",
+      "excerpt": "fs.renameSync(temporary, target)",
+      "reason": "Writes an absolute artifact/editor path explicitly selected by the caller, outside any implied HANA_HOME store.",
+      "storeId": null,
+      "exemptionId": "desktop-external-text-file",
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "desktop/file-text-io.cjs",
       "kind": "write-file",
-      "excerpt": "fs.writeFileSync(filePath, content, \"utf-8\")",
+      "excerpt": "fs.openSync(temporary, \"wx\", originalStat ? 0o600 : 0o666)",
+      "reason": "Writes an absolute artifact/editor path explicitly selected by the caller, outside any implied HANA_HOME store.",
+      "storeId": null,
+      "exemptionId": "desktop-external-text-file",
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "desktop/file-text-io.cjs",
+      "kind": "write-file",
+      "excerpt": "fs.writeFileSync(fd, content, \"utf-8\")",
       "reason": "Writes an absolute artifact/editor path explicitly selected by the caller, outside any implied HANA_HOME store.",
       "storeId": null,
       "exemptionId": "desktop-external-text-file",
@@ -5858,15 +5879,6 @@
     },
     {
       "sourceFile": "lib/channels/channel-store.ts",
-      "kind": "append-file",
-      "excerpt": "fsp.appendFile(filePath, block, \"utf-8\")",
-      "reason": "Owns the common channel/DM message writer and agent/user channel bookmarks.",
-      "storeId": "channels",
-      "exemptionId": null,
-      "ordinal": 1
-    },
-    {
-      "sourceFile": "lib/channels/channel-store.ts",
       "kind": "mkdir",
       "excerpt": "fs.mkdirSync(path.dirname(filePath), { recursive: true })",
       "reason": "Owns the common channel/DM message writer and agent/user channel bookmarks.",
@@ -5950,6 +5962,15 @@
       "sourceFile": "lib/channels/channel-store.ts",
       "kind": "write-file",
       "excerpt": "fsp.writeFile(tmpPath, newContent, \"utf-8\")",
+      "reason": "Owns the common channel/DM message writer and agent/user channel bookmarks.",
+      "storeId": "channels",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/channels/channel-store.ts",
+      "kind": "write-file",
+      "excerpt": "handle.writeFile(block, \"utf-8\")",
       "reason": "Owns the common channel/DM message writer and agent/user channel bookmarks.",
       "storeId": "channels",
       "exemptionId": null,
@@ -7730,8 +7751,17 @@
     },
     {
       "sourceFile": "lib/session-files/bridge-inbound-files.ts",
+      "kind": "remove-path",
+      "excerpt": "fs.unlink(filePath)",
+      "reason": "Stages payload bytes or updates SessionFile sidecars under the managed cache.",
+      "storeId": "session-files",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/session-files/bridge-inbound-files.ts",
       "kind": "write-file",
-      "excerpt": "fs.writeFile(filePath, buffer)",
+      "excerpt": "fs.writeFile(filePath, buffer, { flag: 'wx' })",
       "reason": "Stages payload bytes or updates SessionFile sidecars under the managed cache.",
       "storeId": "session-files",
       "exemptionId": null,
@@ -9477,7 +9507,25 @@
     {
       "sourceFile": "server/routes/xingye-storage.js",
       "kind": "remove-path",
+      "excerpt": "fs.promises.rm(target, { force: true })",
+      "reason": "Creates, updates, or removes files confined to the requested agent/reserved Xingye scope.",
+      "storeId": "xingye-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "server/routes/xingye-storage.js",
+      "kind": "remove-path",
       "excerpt": "fs.promises.rm(target, { recursive: true, force: true })",
+      "reason": "Creates, updates, or removes files confined to the requested agent/reserved Xingye scope.",
+      "storeId": "xingye-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "server/routes/xingye-storage.js",
+      "kind": "remove-path",
+      "excerpt": "fs.promises.rm(tmp, { force: true })",
       "reason": "Creates, updates, or removes files confined to the requested agent/reserved Xingye scope.",
       "storeId": "xingye-state",
       "exemptionId": null,
@@ -10279,7 +10327,25 @@
       "sourceFile": "shared/xingye-lore-memory-file.js",
       "kind": "mkdir",
       "excerpt": "fs.mkdir(path.dirname(filePath), { recursive: true })",
-      "reason": "Writes managed stable-lore Markdown within the agent's Xingye tree.",
+      "reason": "Atomically publishes managed stable-lore Markdown within the agent's Xingye tree and cleans temporary files.",
+      "storeId": "xingye-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "shared/xingye-lore-memory-file.js",
+      "kind": "remove-path",
+      "excerpt": "fs.rm(temporary, { force: true })",
+      "reason": "Atomically publishes managed stable-lore Markdown within the agent's Xingye tree and cleans temporary files.",
+      "storeId": "xingye-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "shared/xingye-lore-memory-file.js",
+      "kind": "rename",
+      "excerpt": "fs.rename(temporary, filePath)",
+      "reason": "Atomically publishes managed stable-lore Markdown within the agent's Xingye tree and cleans temporary files.",
       "storeId": "xingye-state",
       "exemptionId": null,
       "ordinal": 0
@@ -10287,8 +10353,8 @@
     {
       "sourceFile": "shared/xingye-lore-memory-file.js",
       "kind": "write-file",
-      "excerpt": "fs.writeFile(filePath, sanitizeMarkdownText(content), 'utf8')",
-      "reason": "Writes managed stable-lore Markdown within the agent's Xingye tree.",
+      "excerpt": "fs.writeFile(temporary, sanitizeMarkdownText(content), 'utf8')",
+      "reason": "Atomically publishes managed stable-lore Markdown within the agent's Xingye tree and cleans temporary files.",
       "storeId": "xingye-state",
       "exemptionId": null,
       "ordinal": 0

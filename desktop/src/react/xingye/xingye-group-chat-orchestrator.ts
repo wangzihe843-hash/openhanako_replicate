@@ -1,3 +1,5 @@
+import { useStore } from '../stores';
+import { resolveServerConnection, type ServerConnection } from '../services/server-connection';
 /**
  * xingye-group-chat-orchestrator.ts — 星野群聊「手动提醒直接回复」MVP 的编排器。
  *
@@ -27,6 +29,7 @@ import {
   appendGroupChatRun,
   buildChannelMessageId,
   findGroupChatRunByDedupeKey,
+  isRetryableGroupChatRun,
   makeGroupChatDedupeKey,
   type XingyeGroupChatRun,
 } from './xingye-group-chat-state-store';
@@ -116,8 +119,9 @@ async function postAsAgent(params: {
   channelId: string;
   agentId: string;
   body: string;
-}): Promise<{ timestamp: string }> {
+}, connection?: ServerConnection): Promise<{ timestamp: string }> {
   const res = await hanaFetch('/api/xingye/group-chat/post-as-agent', {
+    connection,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -142,7 +146,20 @@ function recentMessagesForPrompt(messages: ChannelMessage[]): ChannelMessage[] {
   return messages.slice(messages.length - RECENT_WINDOW);
 }
 
-export async function triggerGroupChatReply(
+const inFlightReplies = new Map<string, Promise<TriggerGroupChatReplyOutcome>>();
+
+export function triggerGroupChatReply(params: TriggerGroupChatReplyParams): Promise<TriggerGroupChatReplyOutcome> {
+  const key = JSON.stringify([resolveServerConnection(useStore.getState()), params.agent?.id, String(params.channelId ?? '').trim()]);
+  const existing = inFlightReplies.get(key);
+  if (existing) return existing;
+  const operation = runGroupChatReply(params);
+  inFlightReplies.set(key, operation);
+  const clear = () => { if (inFlightReplies.get(key) === operation) inFlightReplies.delete(key); };
+  void operation.then(clear, clear);
+  return operation;
+}
+
+async function runGroupChatReply(
   params: TriggerGroupChatReplyParams,
 ): Promise<TriggerGroupChatReplyOutcome> {
   const { agent } = params;
@@ -154,9 +171,27 @@ export async function triggerGroupChatReply(
     return { status: 'error', error: '缺少 channelId' };
   }
 
+  const connection = resolveServerConnection(useStore.getState()) ?? undefined;
+  const connectionKey = JSON.stringify(connection);
+  let stale = false;
+  let postStarted = false;
+  const unsubscribe = useStore.subscribe(() => {
+    if (JSON.stringify(resolveServerConnection(useStore.getState()) ?? undefined) !== connectionKey) stale = true;
+  });
+  const assertCurrent = () => {
+    if (stale || JSON.stringify(resolveServerConnection(useStore.getState()) ?? undefined) !== connectionKey) {
+      throw new Error('服务器连接已切换，本次群聊操作已取消，请在当前服务器重试。');
+    }
+  };
+  const safeAppendRun = async (input: SafeAppendRunInput) => {
+    if (!postStarted) assertCurrent();
+    return appendGroupChatRun(input, connection);
+  };
+  try {
   let channel: FetchedChannel;
   try {
     channel = await fetchChannel(channelId);
+    assertCurrent();
   } catch (err) {
     return {
       status: 'error',
@@ -184,7 +219,8 @@ export async function triggerGroupChatReply(
   });
 
   const existing = await findGroupChatRunByDedupeKey(agent.id, dedupeKey);
-  if (existing) {
+  assertCurrent();
+  if (existing && !isRetryableGroupChatRun(existing)) {
     return {
       status: 'noop',
       reason: existing.status === 'replied'
@@ -215,7 +251,9 @@ export async function triggerGroupChatReply(
   let aiResult;
   try {
     const profile = await readXingyeRoleProfile(agent.id);
+    assertCurrent();
     aiResult = await generateGroupChatReplyWithAI({
+      assertCurrent,
       agent,
       profile,
       channelId,
@@ -234,10 +272,12 @@ export async function triggerGroupChatReply(
       latestMessageId,
       status: 'error',
       reason: message,
+      retryable: true,
     });
     return { status: 'error', error: message, run, channel };
   }
 
+  assertCurrent();
   if (aiResult.decision === 'skip') {
     const run = await safeAppendRun({
       agentId: agent.id,
@@ -253,11 +293,13 @@ export async function triggerGroupChatReply(
   // decision = reply
   let replyTimestamp: string;
   try {
+    assertCurrent();
+    postStarted = true;
     const posted = await postAsAgent({
       channelId,
       agentId: agent.id,
       body: aiResult.reply,
-    });
+    }, connection);
     replyTimestamp = posted.timestamp;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -268,6 +310,7 @@ export async function triggerGroupChatReply(
       latestMessageId,
       status: 'error',
       reason: `写回群聊失败：${message}`,
+      retryable: false,
       replyContent: aiResult.reply,
     });
     return { status: 'error', error: message, run, channel };
@@ -287,6 +330,7 @@ export async function triggerGroupChatReply(
     reason: aiResult.reason,
   });
 
+  assertCurrent();
   return {
     status: 'replied',
     run,
@@ -297,10 +341,11 @@ export async function triggerGroupChatReply(
       body: aiResult.reply,
     },
   };
+  } catch (error) {
+    return { status: 'error', error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    unsubscribe();
+  }
 }
 
 type SafeAppendRunInput = Parameters<typeof appendGroupChatRun>[0];
-
-async function safeAppendRun(input: SafeAppendRunInput): Promise<XingyeGroupChatRun> {
-  return appendGroupChatRun(input);
-}

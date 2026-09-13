@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
 import { useStore } from '../stores';
-import { hasServerConnection } from '../services/server-connection';
+import { hasServerConnection, resolveServerConnection } from '../services/server-connection';
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 
@@ -118,7 +118,27 @@ export const XINGYE_ROLE_PROFILES_STORAGE_KEY = XINGYE_ROLE_PROFILES_LEGACY_STOR
 
 export const XINGYE_PROFILE_JSON_RELATIVE_PATH = 'profile.json';
 
-const profileBackend = createAgentXingyeStorageBackend(postXingyeStorage);
+export function xingyeProfileConnectionKey(state = useStore.getState()): string {
+  return JSON.stringify(resolveServerConnection(state));
+}
+
+function profileOperation() {
+  const key = xingyeProfileConnectionKey();
+  let stale = false;
+  const unsubscribe = useStore.subscribe?.(() => {
+    if (xingyeProfileConnectionKey() !== key) stale = true;
+  });
+  const assertCurrent = () => {
+    if (stale || xingyeProfileConnectionKey() !== key) throw new Error('服务器连接已切换，请重新读取角色资料后重试。');
+  };
+  const backend = createAgentXingyeStorageBackend(async body => {
+    assertCurrent();
+    const result = await postXingyeStorage(body);
+    assertCurrent();
+    return result;
+  });
+  return { backend, dispose: () => unsubscribe?.() };
+}
 
 const XINGYE_ROLE_PROFILES_CHANGED_EVENT = 'xingye-role-profiles-changed';
 const DEEPSEEK_STYLE_FALLBACK = '理性、直接、克制，有判断力，解释清楚但不过度卖萌。';
@@ -298,8 +318,9 @@ export async function readXingyeRoleProfile(
     return null;
   }
 
+  const operation = profileOperation();
   try {
-    const raw = await profileBackend.readJson<unknown>(id, XINGYE_PROFILE_JSON_RELATIVE_PATH);
+    const raw = await operation.backend.readJson<unknown>(id, XINGYE_PROFILE_JSON_RELATIVE_PATH);
     let normalized = raw != null ? normalizeProfile(raw, id) : null;
     if (normalized) return normalized;
 
@@ -307,13 +328,15 @@ export async function readXingyeRoleProfile(
     const migrated = legacy ? normalizeProfile(legacy, id) : null;
     if (!migrated) return null;
 
-    await profileBackend.writeJson(id, XINGYE_PROFILE_JSON_RELATIVE_PATH, migrated);
+    await operation.backend.writeJson(id, XINGYE_PROFILE_JSON_RELATIVE_PATH, migrated);
     notifyXingyeRoleProfilesChanged(id);
     return migrated;
   } catch (error) {
     console.warn('[xingye-profile-store] read profile failed:', error);
     if (options.throwOnError) throw error;
     return null;
+  } finally {
+    operation.dispose();
   }
 }
 
@@ -329,8 +352,9 @@ export async function saveXingyeRoleProfile(
     throw new Error('保存人设需要有效的 agentId。');
   }
   requireServerForProfile();
-
-  const existingRaw = await profileBackend.readJson<unknown>(id, XINGYE_PROFILE_JSON_RELATIVE_PATH);
+  const operation = profileOperation();
+  try {
+  const existingRaw = await operation.backend.readJson<unknown>(id, XINGYE_PROFILE_JSON_RELATIVE_PATH);
   let previous = existingRaw != null ? normalizeProfile(existingRaw, id) : null;
   if (!previous) {
     const legacy = readLegacyRoleProfilesMap()[id];
@@ -349,7 +373,7 @@ export async function saveXingyeRoleProfile(
   }
 
   try {
-    await profileBackend.writeJson(id, XINGYE_PROFILE_JSON_RELATIVE_PATH, next);
+    await operation.backend.writeJson(id, XINGYE_PROFILE_JSON_RELATIVE_PATH, next);
   } catch (error) {
     console.warn('[xingye-profile-store] failed to save role profile:', error);
     throw error instanceof Error ? error : new Error(String(error));
@@ -357,6 +381,9 @@ export async function saveXingyeRoleProfile(
 
   notifyXingyeRoleProfilesChanged(id);
   return next;
+  } finally {
+    operation.dispose();
+  }
 }
 
 export function getXingyeRoleProfileDisplay(
@@ -681,11 +708,15 @@ export function useXingyeRoleProfileState(agentId: string | null | undefined): {
   profile: XingyeRoleProfile | null;
   loading: boolean;
   error: string | null;
+  reload: () => void;
 } {
   const trimmed = typeof agentId === 'string' ? agentId.trim() : '';
+  const connectionKey = useStore(state => xingyeProfileConnectionKey(state));
+  const [revision, setRevision] = useState(0);
+  const reload = () => setRevision((value) => value + 1);
   const [result, setResult] = useState<{
-    agentId: string; profile: XingyeRoleProfile | null; loading: boolean; error: string | null;
-  }>({ agentId: '', profile: null, loading: false, error: null });
+    connectionKey: string; agentId: string; profile: XingyeRoleProfile | null; loading: boolean; error: string | null;
+  }>({ connectionKey: '', agentId: '', profile: null, loading: false, error: null });
 
   useEffect(() => {
     if (!trimmed) {
@@ -694,17 +725,17 @@ export function useXingyeRoleProfileState(agentId: string | null | undefined): {
 
     let cancelled = false;
     let request = 0;
-    setResult({ agentId: trimmed, profile: null, loading: true, error: null });
+    setResult({ connectionKey, agentId: trimmed, profile: null, loading: true, error: null });
     const load = async () => {
       const current = ++request;
       try {
         const profile = await readXingyeRoleProfile(trimmed, { throwOnError: true });
         if (!cancelled && current === request) {
-          setResult({ agentId: trimmed, profile, loading: false, error: null });
+          setResult({ connectionKey, agentId: trimmed, profile, loading: false, error: null });
         }
       } catch (error) {
         if (!cancelled && current === request) {
-          setResult({ agentId: trimmed, profile: null, loading: false, error: String(error) });
+          setResult({ connectionKey, agentId: trimmed, profile: null, loading: false, error: String(error) });
         }
       }
     };
@@ -721,10 +752,10 @@ export function useXingyeRoleProfileState(agentId: string | null | undefined): {
       cancelled = true;
       window.removeEventListener(XINGYE_ROLE_PROFILES_CHANGED_EVENT, onChanged);
     };
-  }, [trimmed]);
+  }, [trimmed, revision, connectionKey]);
 
-  if (!trimmed || result.agentId !== trimmed) {
-    return { profile: null, loading: !!trimmed, error: null };
+  if (!trimmed || result.agentId !== trimmed || result.connectionKey !== connectionKey) {
+    return { profile: null, loading: !!trimmed, error: null, reload };
   }
-  return result;
+  return { ...result, reload };
 }

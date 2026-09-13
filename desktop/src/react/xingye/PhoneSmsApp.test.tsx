@@ -285,6 +285,24 @@ afterEach(() => {
 });
 
 describe('PhoneSmsApp · pending draft section', () => {
+  it('X6 failed generation stays stopped across rerenders and retries only on request', async () => {
+    phoneStoreMock.getSmsHistoryGenerationState.mockReturnValue(null as any);
+    phoneStoreMock.getPhoneAiGenerationState.mockReturnValue({ status: 'failed', error: 'AI unavailable' } as any);
+    phoneAiMock.generateSmsHistoryWithAI.mockResolvedValue(undefined);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+      const view = renderSmsApp();
+      await screen.findByText(/生成失败，可重试/);
+      view.rerender(raceApp());
+      expect(phoneAiMock.generateSmsHistoryWithAI).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: '重试' }));
+      expect(phoneAiMock.generateSmsHistoryWithAI).toHaveBeenCalledTimes(1);
+    } finally {
+      phoneStoreMock.getSmsHistoryGenerationState.mockReturnValue({ generatedAt: '2026-05-17T00:00:00.000Z' });
+      phoneStoreMock.getPhoneAiGenerationState.mockReturnValue(null);
+      vi.restoreAllMocks();
+    }
+  });
   it('does not render the draft section when there are no pending drafts', async () => {
     renderSmsApp();
     await waitFor(() => {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useStore } from '../../stores';
-import { resourceWatchKey, retainResourceWatch, type ResourceRef } from '../../services/resource-events';
+import { resolveServerConnection } from '../../services/server-connection';
+import { resourceEventConnectionKey, resourceWatchKey, retainResourceWatch, type ResourceRef } from '../../services/resource-events';
 
 function normalizeSubdir(value: string): string {
   return value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
@@ -36,6 +37,7 @@ function workspaceWatchRefs(basePath: string, mountId: string, expandedPaths: st
 }
 
 export function WorkspaceFileChangeBridge() {
+  const connectionKey = useStore(s => resourceEventConnectionKey(resolveServerConnection(s)));
   const deskBasePath = useStore(s => s.deskBasePath);
   const deskWorkspaceMountId = useStore(s => s.deskWorkspaceMountId);
   const deskWorkspaceNativeRoot = useStore(s => s.deskWorkspaceNativeRoot);
@@ -48,18 +50,26 @@ export function WorkspaceFileChangeBridge() {
   const watchedRefsKey = watchedRefs.map(resourceWatchKey).join('\n');
 
   useEffect(() => {
-    const nextKeys = new Set(watchedRefs.map(resourceWatchKey));
+    const state = useStore.getState();
+    if (resourceEventConnectionKey(resolveServerConnection(state)) !== connectionKey) return;
+    const currentRefs = connectionKey ? workspaceWatchRefs(
+      state.deskWorkspaceMountId ? '' : state.deskBasePath,
+      state.deskWorkspaceMountId || '',
+      state.deskExpandedPaths,
+    ) : [];
+    const subscriptionKey = (ref: ResourceRef) => `${connectionKey}\n${resourceWatchKey(ref)}`;
+    const nextKeys = new Set(currentRefs.map(subscriptionKey));
     for (const [key, unsubscribe] of subscriptionsRef.current) {
       if (nextKeys.has(key)) continue;
       unsubscribe();
       subscriptionsRef.current.delete(key);
     }
-    for (const ref of watchedRefs) {
-      const key = resourceWatchKey(ref);
+    for (const ref of currentRefs) {
+      const key = subscriptionKey(ref);
       if (subscriptionsRef.current.has(key)) continue;
       subscriptionsRef.current.set(key, retainResourceWatch(ref));
     }
-  }, [watchedRefsKey]); // eslint-disable-line react-hooks/exhaustive-deps -- watchedRefsKey is the reconciled subscription identity.
+  }, [connectionKey, watchedRefsKey]);
 
   useEffect(() => () => {
     for (const unsubscribe of subscriptionsRef.current.values()) unsubscribe();

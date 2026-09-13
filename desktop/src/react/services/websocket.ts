@@ -12,6 +12,7 @@ import {
   bindResourceEventForegroundCatchUp,
   catchUpResourceEventsAfterReconnect,
   recordResourceEventCursor,
+  setResourceEventConnection,
 } from './resource-events';
 import { useStore } from '../stores';
 import { setStatus } from '../utils/ui-helpers';
@@ -27,6 +28,7 @@ import { errorBus } from '../../../../shared/error-bus.ts';
 
 // ── 模块级 WS 实例 ──
 let _ws: WebSocket | null = null;
+let _connectionAttempt = 0;
 
 // ── WS 重连状态 ──
 let _wsRetryDelay = 1000;
@@ -67,6 +69,14 @@ export function getWebSocket(): WebSocket | null {
 
 /** 发起 WebSocket 连接 */
 export function connectWebSocket(port?: string, token?: string): void {
+  const attempt = ++_connectionAttempt;
+  ++_wsResumeVersion;
+  if (_wsRetryTimer) { clearTimeout(_wsRetryTimer); _wsRetryTimer = null; }
+  if (_ws) {
+    _ws.onopen = _ws.onclose = _ws.onmessage = _ws.onerror = null;
+    _ws.close();
+    _ws = null;
+  }
   // 如果没有传参，从 Zustand store 获取
   const storeState = useStore.getState();
   const connection = port !== undefined || token !== undefined
@@ -76,10 +86,12 @@ export function connectWebSocket(port?: string, token?: string): void {
       })
     : resolveServerConnection(storeState);
 
+  setResourceEventConnection(connection);
   if (!connection) return;
-  ensureResourceForegroundCatchUp();
+  ensureResourceForegroundCatchUp(attempt);
 
-  void openConnectionWebSocket(connection).catch((err) => {
+  void openConnectionWebSocket(connection, attempt).catch((err) => {
+    if (attempt !== _connectionAttempt) return;
     console.error('[ws] connection setup failed:', err);
     errorBus.report(new AppError('WS_DISCONNECTED'));
     setStatus('status.disconnected', false);
@@ -87,13 +99,16 @@ export function connectWebSocket(port?: string, token?: string): void {
   });
 }
 
-function ensureResourceForegroundCatchUp(): void {
-  if (_resourceForegroundCatchUpCleanup) return;
-  _resourceForegroundCatchUpCleanup = bindResourceEventForegroundCatchUp((event) => handleServerMessage(event));
+function ensureResourceForegroundCatchUp(attempt: number): void {
+  _resourceForegroundCatchUpCleanup?.();
+  _resourceForegroundCatchUpCleanup = bindResourceEventForegroundCatchUp((event) => {
+    if (attempt === _connectionAttempt) handleServerMessage(event);
+  });
 }
 
-async function openConnectionWebSocket(connection: ServerConnection): Promise<void> {
+async function openConnectionWebSocket(connection: ServerConnection, attempt: number): Promise<void> {
   const wsTicket = await requestConnectionWsTicket(connection);
+  if (attempt !== _connectionAttempt) return;
 
   if (_wsRetryTimer) { clearTimeout(_wsRetryTimer); _wsRetryTimer = null; }
   if (_ws) {
@@ -101,9 +116,12 @@ async function openConnectionWebSocket(connection: ServerConnection): Promise<vo
   }
 
   const url = buildConnectionWsUrl(connection, '/ws', { wsTicket });
-  _ws = new WebSocket(url);
+  const ws = new WebSocket(url);
+  _ws = ws;
+  const isCurrent = () => attempt === _connectionAttempt && _ws === ws;
 
   _ws.onopen = () => {
+    if (!isCurrent()) return;
     _wsRetryDelay = 1000;
     _wsRetryCount = 0;
     setStatus('status.connected', true);
@@ -139,12 +157,13 @@ async function openConnectionWebSocket(connection: ServerConnection): Promise<vo
       }));
     }
 
-    void catchUpResourceEventsAfterReconnect((event) => handleServerMessage(event)).catch((err) => {
+    void catchUpResourceEventsAfterReconnect((event) => { if (isCurrent()) handleServerMessage(event); }).catch((err) => {
       console.warn('[ws] resource event catch-up failed:', err);
     });
   };
 
   _ws.onmessage = (event: MessageEvent) => {
+    if (!isCurrent()) return;
     try {
       const msg = JSON.parse(event.data);
       recordResourceEventCursor(msg);
@@ -155,11 +174,13 @@ async function openConnectionWebSocket(connection: ServerConnection): Promise<vo
   };
 
   _ws.onclose = () => {
+    if (!isCurrent()) return;
     setStatus('status.disconnected', false);
     scheduleReconnect();
   };
 
   _ws.onerror = () => {
+    if (!isCurrent()) return;
     errorBus.report(new AppError('WS_DISCONNECTED'));
   };
 }

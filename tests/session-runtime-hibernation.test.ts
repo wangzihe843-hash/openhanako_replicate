@@ -185,7 +185,7 @@ describe("SessionCoordinator runtime hibernation", () => {
     await (coordinator as any).promptSession(sessionPath, "hello");
 
     expect(sessionManagerOpenMock).toHaveBeenCalledWith(sessionPath, expect.stringContaining("sessions"));
-    expect(restored.prompt).toHaveBeenCalledWith("hello", undefined);
+    expect(restored.prompt).toHaveBeenCalledWith("hello", { preflightResult: expect.any(Function) });
     expect(coordinator.session).toBe(restored);
     expect(coordinator.currentSessionPath).toBe(sessionPath);
   });
@@ -287,7 +287,7 @@ describe("SessionCoordinator runtime hibernation", () => {
       thinkingLevelMap: { xhigh: "max" },
     });
     await expect(coordinator.promptSession(sessionPath, "hello", undefined)).resolves.toBeUndefined();
-    expect(session.prompt).toHaveBeenCalledWith("hello", undefined);
+    expect(session.prompt).toHaveBeenCalledWith("hello", { preflightResult: expect.any(Function) });
   });
 
   it("hibernates only heavy idle runtimes under memory pressure", async () => {

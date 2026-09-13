@@ -1,3 +1,4 @@
+import { resolveServerConnection } from '../../services/server-connection';
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
@@ -13,7 +14,33 @@ interface WeekDay {
 }
 
 export function CompiledMemoryViewer() {
-  const [visible, setVisible] = useState(false);
+  const [openVersion, setOpenVersion] = useState(0);
+  const [open, setOpen] = useState(false);
+  const owner = useSettingsStore(state => JSON.stringify([
+    state.getSettingsAgentId(), resolveServerConnection(state),
+  ]));
+  useEffect(() => {
+    const handler = () => { setOpen(true); setOpenVersion(value => value + 1); };
+    window.addEventListener('hana-view-compiled-memory', handler);
+    return () => window.removeEventListener('hana-view-compiled-memory', handler);
+  }, []);
+  const close = useCallback(() => setOpen(false), []);
+  return open ? <OwnedCompiledMemoryViewer key={`${owner}:${openVersion}`} onClose={close} /> : null;
+}
+
+function OwnedCompiledMemoryViewer({ onClose }: { onClose: () => void }) {
+  const ownerRef = useRef({
+    aid: useSettingsStore.getState().getSettingsAgentId(),
+    connection: resolveServerConnection(useSettingsStore.getState()) ?? undefined,
+  });
+  const activeRef = useRef(true);
+  const isCurrent = () => activeRef.current
+    && ownerRef.current.aid === useSettingsStore.getState().getSettingsAgentId()
+    && JSON.stringify(ownerRef.current.connection) === JSON.stringify(resolveServerConnection(useSettingsStore.getState()) ?? undefined);
+  const ownedFetch: typeof hanaFetch = (url, options = {}) => {
+    if (!isCurrent()) return Promise.reject(new Error('Memory viewer closed'));
+    return hanaFetch(url, { ...options, connection: ownerRef.current.connection });
+  };
   const [editing, setEditing] = useState(false);
   const [sections, setSections] = useState({ facts: '', today: '', week: '', longterm: '' });
   const [factsDraft, setFactsDraft] = useState('');
@@ -27,17 +54,18 @@ export function CompiledMemoryViewer() {
   useMermaidDiagrams(contentRef, [sections, loading, editing]);
 
   useEffect(() => {
-    const handler = () => { setVisible(true); setEditing(false); load(); };
-    window.addEventListener('hana-view-compiled-memory', handler);
-    return () => window.removeEventListener('hana-view-compiled-memory', handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- listener registered once for the component lifetime; `load` intentionally always reads the latest agent/store state when invoked, not a snapshot captured at mount
+    activeRef.current = true;
+    void load();
+    return () => { activeRef.current = false; };
+    // The keyed viewer owns one open operation and one settings owner.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const load = async () => {
     setLoading(true);
     try {
-      const aid = useSettingsStore.getState().getSettingsAgentId();
-      const res = await hanaFetch(`/api/memories/compiled?agentId=${aid}`);
+      const aid = ownerRef.current.aid;
+      const res = await ownedFetch(`/api/memories/compiled?agentId=${aid}`);
       const data = await res.json();
       const nextSections = {
         facts: data.sections?.facts || '',
@@ -45,12 +73,14 @@ export function CompiledMemoryViewer() {
         week: data.sections?.week || '',
         longterm: data.sections?.longterm || '',
       };
+      if (!isCurrent()) return;
       setSections(nextSections);
       setFactsDraft(nextSections.facts);
       setTodayDraft(nextSections.today);
       setLongtermDraft(nextSections.longterm);
       await loadWeekDays(aid);
     } catch (err: any) {
+      if (!isCurrent()) return;
       setSections({ facts: '', today: '', week: '', longterm: '' });
       setFactsDraft('');
       setTodayDraft('');
@@ -59,18 +89,20 @@ export function CompiledMemoryViewer() {
       setWeekDrafts({});
       useSettingsStore.getState().showToast(err.message, 'error');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
 
   const loadWeekDays = async (aid: string | null) => {
     try {
-      const res = await hanaFetch(`/api/memories/compiled/week/days?agentId=${aid}`);
+      const res = await ownedFetch(`/api/memories/compiled/week/days?agentId=${aid}`);
       const data = await res.json();
       const days: WeekDay[] = Array.isArray(data.days) ? data.days : [];
+      if (!isCurrent()) return;
       setWeekDays(days);
       setWeekDrafts(Object.fromEntries(days.map((d) => [d.date, d.body])));
     } catch (err: any) {
+      if (!isCurrent()) return;
       setWeekDays([]);
       setWeekDrafts({});
       useSettingsStore.getState().showToast(err.message, 'error');
@@ -78,9 +110,11 @@ export function CompiledMemoryViewer() {
   };
 
   const clearCompiled = async () => {
+    setSavingAll(true);
     try {
-      const aid = useSettingsStore.getState().getSettingsAgentId();
-      await hanaFetch(`/api/memories/compiled?agentId=${aid}`, { method: 'DELETE' });
+      const aid = ownerRef.current.aid;
+      await ownedFetch(`/api/memories/compiled?agentId=${aid}`, { method: 'DELETE' });
+      if (!isCurrent()) return;
       setSections(prev => ({ ...prev, today: '', week: '', longterm: '' }));
       setTodayDraft('');
       setLongtermDraft('');
@@ -88,7 +122,10 @@ export function CompiledMemoryViewer() {
       setWeekDrafts({});
       useSettingsStore.getState().showToast(t('settings.memory.compiledCleared'), 'success');
     } catch (err: any) {
+      if (!isCurrent()) return;
       useSettingsStore.getState().showToast(err.message, 'error');
+    } finally {
+      if (isCurrent()) setSavingAll(false);
     }
   };
 
@@ -98,7 +135,7 @@ export function CompiledMemoryViewer() {
     || weekDays.some((day) => (weekDrafts[day.date] ?? '') !== day.body);
 
   const putCompiledJson = async (url: string, body: Record<string, string>) => {
-    const res = await hanaFetch(url, {
+    const res = await ownedFetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -116,7 +153,7 @@ export function CompiledMemoryViewer() {
 
     setSavingAll(true);
     try {
-      const aid = useSettingsStore.getState().getSettingsAgentId();
+      const aid = ownerRef.current.aid;
       const nextSections = { ...sections };
       let nextFactsDraft = factsDraft;
       let nextTodayDraft = todayDraft;
@@ -164,7 +201,7 @@ export function CompiledMemoryViewer() {
       }
 
       if (changedWeekDays.length > 0) {
-        const refreshed = await hanaFetch(`/api/memories/compiled?agentId=${aid}`);
+        const refreshed = await ownedFetch(`/api/memories/compiled?agentId=${aid}`);
         const refreshedData = await refreshed.json();
         if (refreshedData.error) throw new Error(refreshedData.error);
         if (typeof refreshedData.sections?.week === 'string') {
@@ -172,22 +209,25 @@ export function CompiledMemoryViewer() {
         }
       }
 
+      if (!isCurrent()) return;
       setFactsDraft(nextFactsDraft);
       setTodayDraft(nextTodayDraft);
       setLongtermDraft(nextLongtermDraft);
       setWeekDrafts(nextWeekDrafts);
       setWeekDays(nextWeekDays);
+      if (!isCurrent()) return;
       setSections(nextSections);
       setEditing(false);
       useSettingsStore.getState().showToast(t('settings.saved'), 'success');
     } catch (err: any) {
+      if (!isCurrent()) return;
       useSettingsStore.getState().showToast(err.message, 'error');
     } finally {
-      setSavingAll(false);
+      if (isCurrent()) setSavingAll(false);
     }
   };
 
-  const close = useCallback(() => setVisible(false), []);
+  const close = () => { activeRef.current = false; onClose(); };
   const handlePrimaryAction = () => {
     if (!editing) {
       setEditing(true);
@@ -205,7 +245,7 @@ export function CompiledMemoryViewer() {
   return (
     <Overlay
       scope="inline"
-      open={visible}
+      open={true}
       onClose={close}
       backdrop="blur"
       zIndex={100}
@@ -224,7 +264,7 @@ export function CompiledMemoryViewer() {
             >
               {editing ? t('settings.memory.editSave') : t('settings.memory.editEntry')}
             </button>
-            <button className={styles['compiled-clear-btn']} onClick={clearCompiled} disabled={savingAll}>
+            <button className={styles['compiled-clear-btn']} onClick={clearCompiled} disabled={loading || savingAll}>
               {t('settings.memory.compiledClear')}
             </button>
             <button className={styles['memory-viewer-close']} onClick={close}>✕</button>

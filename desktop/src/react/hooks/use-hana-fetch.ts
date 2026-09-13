@@ -3,6 +3,7 @@ import {
   appendConnectionAuth,
   buildConnectionUrl,
   requireServerConnection,
+  type ServerConnection,
 } from '../services/server-connection';
 
 const DEFAULT_TIMEOUT = 30_000;
@@ -24,15 +25,15 @@ export function hanaUrl(path: string): string {
  */
 export async function hanaFetchAllowingErrors(
   path: string,
-  opts: RequestInit & { timeout?: number } = {},
+  opts: RequestInit & { timeout?: number; connection?: ServerConnection } = {},
 ): Promise<Response> {
-  const connection = requireServerConnection(
+  const connection = opts.connection ?? requireServerConnection(
     useStore.getState(),
     `hanaFetch ${path}: server connection not ready`,
   );
   const headers = appendConnectionAuth(connection, opts.headers);
 
-  const { timeout = DEFAULT_TIMEOUT, signal: callerSignal, ...fetchOpts } = opts;
+  const { timeout = DEFAULT_TIMEOUT, signal: callerSignal, connection: _connection, ...fetchOpts } = opts;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   if (callerSignal) {
@@ -58,7 +59,7 @@ export async function hanaFetchAllowingErrors(
  */
 export async function hanaFetch(
   path: string,
-  opts: RequestInit & { timeout?: number; throwOnHttpError?: boolean } = {},
+  opts: RequestInit & { timeout?: number; throwOnHttpError?: boolean; connection?: ServerConnection } = {},
 ): Promise<Response> {
   const { throwOnHttpError = true, ...rest } = opts;
   const res = await hanaFetchAllowingErrors(path, rest);

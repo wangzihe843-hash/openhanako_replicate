@@ -147,7 +147,7 @@ describe("historical sessions whose model is unavailable", () => {
         setActiveToolsByName: vi.fn(),
         setThinkingLevel: vi.fn(),
         getContextUsage: vi.fn(() => ({ tokens: 10, contextWindow: 128_000, percent: 0.01 })),
-        prompt: vi.fn(async () => undefined),
+        prompt: vi.fn(async (_text: string, options?: { preflightResult?: (success: boolean) => void }) => { options?.preflightResult?.(true); }),
         setModel: vi.fn(async (model) => {
           runtimeSession.model = model;
           runtimeSession.agent.state.model = model;
@@ -276,7 +276,7 @@ describe("historical sessions whose model is unavailable", () => {
       modelRef: `${NEXT_MODEL.provider}/${NEXT_MODEL.id}`,
     });
     await expect(coordinator.promptSession(sessionPath, "continue", {})).resolves.toBeUndefined();
-    expect(runtimeSession.prompt).toHaveBeenCalledWith("continue", undefined);
+    expect(runtimeSession.prompt).toHaveBeenCalledWith("continue", { preflightResult: expect.any(Function) });
   });
 
   it("does not describe an unknown provider as a deleted model", async () => {

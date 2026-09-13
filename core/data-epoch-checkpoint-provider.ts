@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import type { DataEpochCheckpointProvider } from "./data-epoch-coordinator.ts";
 import { readDataEpochJournal } from "../shared/data-epoch.cjs";
+import { renameWithBusyRetry } from "../shared/artifact-core/activation.cjs";
 import { PERSISTENT_STORES } from "../shared/persistence/store-registry.ts";
 import type { StoreDescriptor } from "../shared/persistence/store-registry-types.ts";
 
@@ -268,13 +269,20 @@ function hashAndSizeFile(filePath: string): Promise<{ bytes: number; sha256: str
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash("sha256");
     let bytes = 0;
+    let ended = false;
     const stream = fs.createReadStream(filePath);
     stream.on("error", reject);
     stream.on("data", (chunk: Buffer) => {
       bytes += chunk.length;
       hash.update(chunk);
     });
-    stream.on("end", () => resolve({ bytes, sha256: hash.digest("hex") }));
+    stream.on("end", () => { ended = true; });
+    // end only means all bytes were consumed. Windows may still hold the file
+    // open until close, preventing the containing checkpoint directory rename.
+    stream.on("close", () => {
+      if (!ended) return reject(new Error(`checkpoint hash stream closed before end: ${filePath}`));
+      resolve({ bytes, sha256: hash.digest("hex") });
+    });
   });
 }
 
@@ -549,7 +557,9 @@ export function createDataEpochCheckpointProvider(options: DataEpochCheckpointPr
       // the tmp directory; the directory only becomes visible as a
       // checkpoint via the single atomic rename below.
       await fs.promises.writeFile(path.join(tmpDir, "metadata.json"), `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
-      await fs.promises.rename(tmpDir, publishedDir);
+      // All owned file handles are closed; Windows scanners can still briefly
+      // lock the staged tree. Retry only this rename, never remove the target.
+      await renameWithBusyRetry(tmpDir, publishedDir);
     } catch (error: unknown) {
       await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
       throw error;

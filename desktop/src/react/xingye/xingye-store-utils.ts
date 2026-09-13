@@ -100,25 +100,28 @@ export function createXingyeStore(
       return backend.writeJsonl<T>(resolved.agentId, resolved.relativePath, records);
     },
 
-    async updateJsonlRecord<T extends XingyeJsonlRecord>(
+    async updateJsonlRecord<T>(
       agentId: string,
       relativePath: string,
       recordId: string,
-      updater: (record: T) => T,
+      updater: (record: T) => T | null,
     ): Promise<T | null> {
       const rid = String(recordId ?? '').trim();
       if (!rid) throw new Error('recordId is required');
       const resolved = resolveAgentScopedXingyePath(agentId, relativePath);
       const records = await backend.listJsonl<T>(resolved.agentId, resolved.relativePath);
-      let updated: T | null = null;
-      const next = records.map((record) => {
-        if (updated || !recordMatchesId(record, rid)) return record;
-        updated = updater(record);
-        return updated;
-      });
-      if (!updated) return null;
-      await backend.writeJsonl<T>(resolved.agentId, resolved.relativePath, next);
-      return updated;
+      let current: T | null = records.find((record) => recordMatchesId(record, rid)) ?? null;
+      // Reapply a pure updater to the latest row on conflict. Never retry an
+      // ambiguous transport failure: the server may already have committed it.
+      for (let attempt = 0; current !== null && attempt < 12; attempt += 1) {
+        const updated = updater(structuredClone(current));
+        if (updated === null) return null;
+        const result = await backend.compareAndSwapJsonlRecord<T>(resolved.agentId, resolved.relativePath, rid, current, updated);
+        if (result.updated) return result.record;
+        current = result.record;
+      }
+      if (current === null) return null;
+      throw new Error('更新冲突过多，请重试。');
     },
 
     deleteJsonlRecord(agentId: string, relativePath: string, recordId: string): Promise<boolean> {

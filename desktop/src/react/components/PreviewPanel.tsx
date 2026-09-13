@@ -1,3 +1,4 @@
+import { resolveServerConnection } from '../services/server-connection';
 /**
  * PreviewPanel — PreviewItem 预览/编辑面板
  *
@@ -149,12 +150,16 @@ export function PreviewPanel() {
     [previewItem?.content, previewItem?.type],
   );
   const readingPosition = previewItem ? previewReadingPositions[previewItem.id] || null : null;
+  const connectionKey = useStore(state => JSON.stringify(resolveServerConnection(state)));
+  const previewConnection = useMemo(() => resolveServerConnection(useStore.getState()), [connectionKey]);
   const saveDocument = useMemo(() => {
     const remoteRef = previewItem?.remoteContentRef;
     if (!isRemoteWorkbenchContentRef(remoteRef)) return undefined;
-    return (content: string, expectedVersion?: PreviewItem['fileVersion']) =>
-      saveRemoteWorkbenchContent(remoteRef, content, expectedVersion ?? null);
-  }, [previewItem?.remoteContentRef]);
+    return (content: string, expectedVersion?: PreviewItem['fileVersion']) => {
+      if (!previewConnection) return Promise.reject(new Error('Preview server connection unavailable'));
+      return saveRemoteWorkbenchContent(remoteRef, content, expectedVersion ?? null, previewConnection);
+    };
+  }, [previewItem?.remoteContentRef, previewConnection]);
 
   const handleToggleMarkdownPreview = useCallback(() => {
     if (!previewItem || !isMarkdownFile(previewItem)) return;
@@ -426,6 +431,7 @@ export function PreviewPanel() {
                 content={previewItem.content}
                 filePath={previewItem.filePath}
                 remoteContentRef={previewItem.remoteContentRef}
+                documentOwnerKey={previewItem.remoteContentRef ? connectionKey : undefined}
                 fileVersion={previewItem.fileVersion ?? previewItem.remoteContentRef?.version ?? null}
                 saveDocument={saveDocument}
                 mode={getEditorMode(previewItem)}

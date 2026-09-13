@@ -29,7 +29,7 @@ export function loadBetterSqliteDatabase() {
  * 当前 schema 版本。每次改表结构时递增，
  * 并在 _migrate() 里添加对应的迁移逻辑。
  */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const CJK_RUN_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
 
@@ -195,6 +195,13 @@ export class FactStore {
             // v1 → v2：补充 CJK 友好的搜索文本，并重建 FTS 表到双列 schema。
             this._migrateToSearchText();
             break;
+          case 2:
+            // One durable acknowledgement per session, committed with its facts.
+            this.db.exec(`CREATE TABLE IF NOT EXISTS session_fact_commits (
+              session_id TEXT PRIMARY KEY,
+              revision TEXT NOT NULL
+            )`);
+            break;
         }
         v++;
       }
@@ -243,6 +250,10 @@ export class FactStore {
       count: this.db.prepare(`SELECT COUNT(*) as cnt FROM facts`),
       deleteById: this.db.prepare(`DELETE FROM facts WHERE id = ?`),
       deleteAll: this.db.prepare(`DELETE FROM facts`),
+      getSessionCommit: this.db.prepare(`SELECT revision FROM session_fact_commits WHERE session_id = ?`),
+      setSessionCommit: this.db.prepare(`INSERT INTO session_fact_commits (session_id, revision) VALUES (?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET revision = excluded.revision`),
+      deleteSessionCommit: this.db.prepare(`DELETE FROM session_fact_commits WHERE session_id = ?`),
       ftsSearch: this.db.prepare(`
         SELECT f.*, rank
         FROM facts_fts fts
@@ -292,6 +303,27 @@ export class FactStore {
     return entries.length;
   }
 
+  getSessionCommitRevision(sessionId) {
+    return this._stmts.getSessionCommit.get(sessionId)?.revision ?? null;
+  }
+
+  /** Facts and their source revision commit together; text is never a dedupe key. */
+  commitSessionRevision(sessionId, revision, entries, { replace = false } = {}) {
+    const owner = typeof sessionId === "string" ? sessionId.trim() : "";
+    if (!owner || typeof revision !== "string" || !revision) throw new Error("fact commit requires sessionId and revision");
+    if (!Array.isArray(entries)) throw new Error("fact commit requires an entries array");
+    return this.db.transaction(() => {
+      if (this.getSessionCommitRevision(owner) === revision) return 0;
+      if (replace) {
+        this.replaceBySession(owner, entries);
+      } else {
+        for (const entry of entries) this.add({ ...entry, session_id: owner });
+      }
+      this._stmts.setSessionCommit.run(owner, revision);
+      return entries.length;
+    }).immediate();
+  }
+
   /**
    * Replace every fact owned by one stable session in a single transaction.
    * FTS stays consistent through the existing delete/insert triggers.
@@ -303,6 +335,7 @@ export class FactStore {
 
     const run = this.db.transaction(() => {
       this._stmts.deleteBySession.run(stableSessionId);
+      this._stmts.deleteSessionCommit.run(stableSessionId);
       for (const entry of entries) {
         if (typeof entry?.fact !== "string" || !entry.fact.trim()) {
           throw new Error("replacement fact must be a non-empty string");
@@ -420,7 +453,10 @@ export class FactStore {
   deleteBySession(sessionId) {
     const normalized = typeof sessionId === "string" ? sessionId.trim() : "";
     if (!normalized) throw new Error("fact invalidation requires sessionId");
-    return this._stmts.deleteBySession.run(normalized).changes;
+    return this.db.transaction(() => {
+      this._stmts.deleteSessionCommit.run(normalized);
+      return this._stmts.deleteBySession.run(normalized).changes;
+    })();
   }
 
   /** 按 id 查询 */
@@ -442,6 +478,7 @@ export class FactStore {
   clearAll() {
     this.db.transaction(() => {
       this._stmts.deleteAll.run();
+      this.db.exec("DELETE FROM session_fact_commits");
       // 重建 FTS 索引
       this.db.exec("INSERT INTO facts_fts(facts_fts) VALUES ('rebuild')");
     })();

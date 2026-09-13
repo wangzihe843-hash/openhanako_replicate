@@ -105,7 +105,9 @@ export function sanitizeAssistantMessage(message, state = null) {
       appendTextBlock(content, recoverInvalidToolCallText(block, getRecoveredInvalidToolCallText(state, block, index)));
       return;
     }
-    content.push(block);
+    // Recovery may append to the preceding text block. Partial and final SDK
+    // events can share that block, so the output must own its mutable text.
+    content.push(block?.type === "text" ? { ...block } : block);
   });
   return { ...message, content };
 }

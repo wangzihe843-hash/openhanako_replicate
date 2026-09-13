@@ -9,6 +9,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 import type { XingyeContactProfile, XingyePhoneContactView } from './xingye-phone-store';
 
+// This suite tests prompt/normalization with mocked stores. Real binding races
+// are covered by xingye-phone-integrity.test.ts through the persistence adapter.
+vi.mock('./xingye-persistence', () => ({
+  captureXingyePersistenceBinding: () => ({ assertCurrent() {} }),
+}));
+
 const phoneAiMock = vi.hoisted(() => ({
   requestPhoneAi: vi.fn(),
   buildLoreContextForPhone: vi.fn(() => '【星野核心设定摘录】（无）'),

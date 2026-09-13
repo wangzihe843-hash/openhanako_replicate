@@ -173,12 +173,11 @@ export function sortMmChatSessionsByUpdatedAtDesc(sessions: XingyeMmChatSession[
 export async function readMmChatPersistence(agentId: string): Promise<XingyeMmChatPersistedV1 | null> {
   const aid = agentId.trim();
   if (!aid) return null;
-  try {
-    const raw = await backend.readJson<unknown>(aid, XINGYE_MM_CHAT_SESSIONS_JSON);
-    return normalizePersisted(raw);
-  } catch {
-    return null;
-  }
+  const raw = await backend.readJson<unknown>(aid, XINGYE_MM_CHAT_SESSIONS_JSON);
+  if (raw === null) return null;
+  const normalized = normalizePersisted(raw);
+  if (!normalized) throw new Error('MM Chat 历史数据格式无效，未覆盖原文件。');
+  return normalized;
 }
 
 export async function saveMmChatPersistence(agentId: string, data: XingyeMmChatPersistedV1): Promise<void> {

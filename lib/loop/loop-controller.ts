@@ -214,8 +214,14 @@ export class LoopController {
         `（循环连续 ${fresh.consecutiveFailures} 轮失败，自动暂停。排查后可 /loop resume）`);
       return;
     }
-    // 桌面 followUp 连续轮尚未收束时不做守恒检查，留给整串的最后一个 turn_end；
-    // 桥接轮是单发外呼，无连续轮概念，注入的判定器恒 false。
+    this.onRunEnd(sessionPath);
+  }
+
+  // Idle notification only restores conservation; turn accounting remains on turn_end.
+  onRunEnd(sessionPath) {
+    const key = this._resolveKeyForSessionPath(sessionPath);
+    const fresh = key && this._store.get(key);
+    if (!fresh || fresh.status !== 'running') return;
     if (this._isTargetMidStream(fresh.target)) return;
     if (!fresh.alarm && !this._hasLiveBackgroundWork(fresh.target)) {
       // 守恒检查：运行中的循环必须"有闹钟 ∨ 有活跃后台工作"。模型忘了续约 →

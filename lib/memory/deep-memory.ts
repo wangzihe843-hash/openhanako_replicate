@@ -25,7 +25,7 @@ const log = createModuleLogger("deep-memory");
 
 const MAX_RETRIES = 3;
 const MAX_CONCURRENT = 3;
-const _failCounts = new Map(); // session → { count, lastUpdated }
+const _failCounts = new Map(); // session → { count, lastUpdated, revision }; extraction failures only
 const FAIL_COUNT_TTL_MS = 60 * 60 * 1000;
 
 function summarySupersededError(message) {
@@ -132,6 +132,7 @@ export async function processDirtySessions(summaryManager, factStore, resolvedMo
 
   const processOne = async (session) => {
     const expectedRevision = sessionSummaryRevision(session);
+    let extractionFailed = false;
     try {
       const sourceTimeRange = !session?.source_time_range && typeof opts.getSourceTimeRange === "function"
         ? await opts.getSourceTimeRange(session.session_id)
@@ -141,14 +142,31 @@ export async function processDirtySessions(summaryManager, factStore, resolvedMo
         : session;
       const timeContext = buildFactTimeContext(sessionForTime, { timeZone: opts.timeZone });
       const replacement = session.factReplacementRequired === true;
-      const facts = replacement && !session.summary?.trim()
+      const committedRevision = factStore.getSessionCommitRevision(session.session_id);
+      const alreadyCommitted = committedRevision === expectedRevision;
+      const committed = committedRevision ? JSON.parse(committedRevision) : null;
+      let previousSnapshot = session.snapshot || "";
+      // A summary may advance after the fact transaction but before its JSON
+      // acknowledgement. Continue from the committed source, not the stale diff.
+      if (!replacement && committed && committed.snapshot === previousSnapshot) {
+        const legacy = !session.cursor && !committed.cursor;
+        const projection = !legacy && typeof opts.getCurrentBranchProjection === "function"
+          ? opts.getCurrentBranchProjection(session.session_id) : null;
+        if (legacy || summaryCursorBelongsToProjection(committed, projection)) {
+          previousSnapshot = committed.summary || previousSnapshot;
+        }
+      }
+      extractionFailed = true;
+      const facts = alreadyCommitted || (replacement && !session.summary?.trim())
         ? []
         : await extractFactsFromDiff(
           session.summary,
-          replacement ? "" : (session.snapshot || ""),
+          replacement ? "" : previousSnapshot,
           resolvedModel,
           timeContext,
         );
+      extractionFailed = false;
+      _failCounts.delete(session.session_id);
 
       const factEntries = facts.map((f) => ({
         fact: f.fact,
@@ -180,17 +198,10 @@ export async function processDirtySessions(summaryManager, factStore, resolvedMo
         throw summarySupersededError("session summary changed during fact extraction");
       }
 
-      if (replacement) {
-        if (typeof factStore.replaceBySession !== "function") {
-          throw new Error("fact store does not support session replacement");
-        }
-        factStore.replaceBySession(session.session_id, factEntries);
-      } else if (factEntries.length > 0) {
-        factStore.addBatch(factEntries);
-      }
+      const added = factStore.commitSessionRevision(session.session_id, expectedRevision, factEntries, { replace: replacement });
 
       if (factEntries.length > 0) {
-        totalFacts += facts.length;
+        totalFacts += added;
         log.log(
           `${session.session_id.slice(0, 8)}...: ${facts.length} 条元事实`,
         );
@@ -208,10 +219,15 @@ export async function processDirtySessions(summaryManager, factStore, resolvedMo
         log.warn(`${session.session_id.slice(0, 8)}...: ${err.message}; keeping current summary dirty`);
         return;
       }
+      if (!extractionFailed) {
+        _failCounts.delete(session.session_id);
+        log.error(`处理失败 (${session.session_id.slice(0, 8)}... 保持 dirty): ${err.message}`);
+        return;
+      }
       cleanExpiredFailCounts();
       const prev = _failCounts.get(session.session_id);
-      const count = (prev?.count || 0) + 1;
-      _failCounts.set(session.session_id, { count, lastUpdated: Date.now() });
+      const count = (prev?.revision === expectedRevision ? prev.count : 0) + 1;
+      _failCounts.set(session.session_id, { count, lastUpdated: Date.now(), revision: expectedRevision });
 
       if (count >= MAX_RETRIES && session.factReplacementRequired !== true) {
         log.error(

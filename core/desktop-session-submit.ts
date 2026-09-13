@@ -57,7 +57,18 @@ export const MESSAGE_ORIGIN_RECORD_TYPE = "hana-message-origin";
 export const MESSAGE_PRESENTATION_RECORD_TYPE = "hana-message-presentation";
 export const AGENT_REVIEW_RECORD_TYPE = "hana-agent-review-result";
 
-const pendingDesktopSessionSubmissions = new Set();
+type Submission = { sessionPath: string; cancel: () => void };
+const pendingDesktopSessionSubmissions = new WeakMap<object, Map<string, Submission>>();
+
+export function cancelDesktopSessionSubmission(engine: any, sessionPath: string) {
+  const pending = engine && pendingDesktopSessionSubmissions.get(engine);
+  if (!pending) return false;
+  const key = engine.getSessionIdForPath?.(sessionPath) || sessionPath;
+  const record = pending.get(key) || [...pending.values()].find(value => value.sessionPath === sessionPath);
+  if (!record) return false;
+  record.cancel();
+  return true;
+}
 
 function renderPendingReminderBlock(engine: any, sessionPath: string) {
   if (typeof engine.renderSessionReminderBlock === "function") {
@@ -226,7 +237,9 @@ export async function submitDesktopSessionMessage(engine: any, opts: {
   const { sessionId, sessionPath } = resolveDesktopSessionTarget(engine, requestedSessionId, requestedSessionPath);
   if (!text && !images?.length && !videos?.length && !audios?.length) throw new Error("desktop-session-submit: text, images, videos, or audios required");
   const submissionKey = sessionId || sessionPath;
-  if (pendingDesktopSessionSubmissions.has(submissionKey)) {
+  let pending = pendingDesktopSessionSubmissions.get(engine);
+  if (!pending) { pending = new Map(); pendingDesktopSessionSubmissions.set(engine, pending); }
+  if (pending.has(submissionKey)) {
     throw new Error("session_busy");
   }
   if (typeof engine.isSessionStreaming === "function" && engine.isSessionStreaming(sessionPath)) {
@@ -235,255 +248,282 @@ export async function submitDesktopSessionMessage(engine: any, opts: {
 
   liftBrowserAuthorizationRevocation(sessionPath);
 
-  pendingDesktopSessionSubmissions.add(submissionKey);
-  try {
-    const session = await engine.ensureSessionLoaded(sessionPath);
-    if (!session) throw new Error(`desktop-session-submit: failed to load session ${sessionPath}`);
+  const controller = new AbortController();
+  let unsubscribe: (() => void) | undefined;
+  let rejectCanceled!: (reason: Error) => void;
+  const canceled = new Promise<never>((_resolve, reject) => { rejectCanceled = reject; });
+  const record: Submission = { sessionPath, cancel: () => {
+    if (controller.signal.aborted) return;
+    const error = Object.assign(new Error('desktop submission aborted'), { name: 'AbortError' });
+    controller.abort(error);
+    if (pending.get(submissionKey) === record) pending.delete(submissionKey);
+    try { unsubscribe?.(); } catch {}
+    rejectCanceled(error);
+  } };
+  const isCurrent = () => !controller.signal.aborted && pending.get(submissionKey) === record;
+  const assertCurrent = () => {
+    controller.signal.throwIfAborted();
+    if (!isCurrent()) throw Object.assign(new Error('desktop submission replaced'), { name: 'AbortError' });
+  };
+  pending.set(submissionKey, record);
+  const run = async () => {
+    try {
+      const session = await engine.ensureSessionLoaded(sessionPath);
+      assertCurrent();
+      if (!session) throw new Error(`desktop-session-submit: failed to load session ${sessionPath}`);
 
-    if (uiContext !== undefined) {
-      engine.setUiContext?.(sessionPath, uiContext ?? null);
-    }
-
-    let promptImageAttachmentPaths = imageAttachmentPaths || [];
-    let promptVideoAttachmentPaths = videoAttachmentPaths || [];
-    let promptAudioAttachmentPaths = audioAttachmentPaths || [];
-    let displayAttachments = displayMessage?.attachments;
-    let promptText = text || "";
-    const displayComparisonPromptText = promptText;
-    let promptSessionFileRefs = normalizeSessionFileRefs(sessionFileRefs, sessionPath, sessionId);
-
-    if (preservePromptEnvelope && inboundFiles?.length) {
-      throw new Error("desktop-session-submit: preservePromptEnvelope cannot materialize inboundFiles");
-    }
-
-    if (!preservePromptEnvelope && displayAttachments?.length) {
-      const registeredDisplay = registerDisplayAttachments({
-        hanakoHome: engine.hanakoHome,
-        sessionPath,
-        attachments: displayAttachments,
-        registerSessionFile: engine.registerSessionFile?.bind(engine),
-      });
-      displayAttachments = registeredDisplay.attachments;
-      promptImageAttachmentPaths = uniquePaths([
-        ...promptImageAttachmentPaths,
-        ...registeredDisplay.imageAttachmentPaths,
-      ]);
-      promptVideoAttachmentPaths = uniquePaths([
-        ...promptVideoAttachmentPaths,
-        ...registeredDisplay.videoAttachmentPaths,
-      ]);
-      if (audios?.length || promptAudioAttachmentPaths.length) {
-        promptAudioAttachmentPaths = uniquePaths([
-          ...promptAudioAttachmentPaths,
-          ...registeredDisplay.audioAttachmentPaths,
-        ]);
+      if (uiContext !== undefined) {
+        engine.setUiContext?.(sessionPath, uiContext ?? null);
       }
-      promptSessionFileRefs = mergeSessionFileRefs(
-        promptSessionFileRefs,
-        sessionFileRefsFromAttachments(displayAttachments, sessionPath, sessionId),
-      );
-    }
 
-    if (!preservePromptEnvelope && inboundFiles?.length) {
-      const materialized = await materializeBridgeInboundFiles({
-        hanakoHome: engine.hanakoHome,
-        sessionId,
-        sessionPath,
-        files: inboundFiles,
-        registerSessionFile: engine.registerSessionFile?.bind(engine),
-      });
-      promptImageAttachmentPaths = [
-        ...promptImageAttachmentPaths,
-        ...materialized.imageAttachmentPaths,
-      ];
-      promptImageAttachmentPaths = uniquePaths(promptImageAttachmentPaths);
-      displayAttachments = [
-        ...(displayAttachments || []),
-        ...materialized.displayAttachments,
-      ];
-      promptSessionFileRefs = mergeSessionFileRefs(
-        promptSessionFileRefs,
-        sessionFileRefsFromAttachments(materialized.displayAttachments, sessionPath, sessionId),
-      );
-    }
+      let promptImageAttachmentPaths = imageAttachmentPaths || [];
+      let promptVideoAttachmentPaths = videoAttachmentPaths || [];
+      let promptAudioAttachmentPaths = audioAttachmentPaths || [];
+      let displayAttachments = displayMessage?.attachments;
+      let promptText = text || "";
+      const displayComparisonPromptText = promptText;
+      let promptSessionFileRefs = normalizeSessionFileRefs(sessionFileRefs, sessionPath, sessionId);
 
-    if (!preservePromptEnvelope) {
-      promptText = addAttachedImageMarkers(promptText, promptImageAttachmentPaths);
-      promptText = addAttachedVideoMarkers(promptText, promptVideoAttachmentPaths);
-      promptText = addAttachedAudioMarkers(promptText, promptAudioAttachmentPaths);
-      promptText = addSessionFileRefMarkers(promptText, promptSessionFileRefs);
-    }
-    const reminderBlock = preservePromptEnvelope ? null : renderPendingReminderBlock(engine, sessionPath);
-    if (reminderBlock?.block) {
-      promptText = `${reminderBlock.block}\n\n${promptText}`;
-    }
-
-    let turnStartedAt = 0;
-    let inputSideEffectsStarted = false;
-    const afterCachePreflight = () => {
-      const commitResult = beforeInputSideEffects?.();
-      if (commitResult && typeof (commitResult as any).then === "function") {
-        throw new TypeError("desktop-session-submit: beforeInputSideEffects must be synchronous");
+      if (preservePromptEnvelope && inboundFiles?.length) {
+        throw new Error("desktop-session-submit: preservePromptEnvelope cannot materialize inboundFiles");
       }
-      turnStartedAt = Date.now();
-      inputSideEffectsStarted = true;
-      engine.emitEvent?.({ type: "session_status", isStreaming: true }, sessionPath);
-      if (projectUserMessage) {
-        // 展示投影与来源元信息先于 prompt 持久化，让 custom 条目注释其后的 user message。
-        // forceDisplayText 表示模型输入另含内部 Reminder；displayMessage 只保存用户可见正文。
-        recordMessagePresentationEntry(
-          session,
-          sessionPath,
-          displayComparisonPromptText,
-          displayMessage ?? { text: text ?? "" },
-          { forceDisplayText: !!reminderBlock?.block },
-        );
-        recordMessageOriginEntry(session, sessionPath, displayMessage);
-        recordAgentReviewEntry(session, sessionPath, displayMessage);
-        engine.emitEvent?.({
-          type: "session_user_message",
-          clientMessageId: clientMessageId || null,
-          message: {
-            text: displayMessage?.text ?? text ?? "",
-            timestamp: Date.now(),
-            attachments: displayAttachments,
-            quotedText: displayMessage?.quotedText,
-            skills: displayMessage?.skills,
-            deskContext: displayMessage?.deskContext ?? null,
-            source: displayMessage?.source || "desktop",
-            bridgeSessionKey: displayMessage?.bridgeSessionKey || null,
-            origin: displayMessage?.origin || null,
-            sessionRefs: displayMessage?.sessionRefs || null,
-            agentMentions: displayMessage?.agentMentions || null,
-            agentReview: displayMessage?.agentReview || null,
-            agentReviewRequest: displayMessage?.agentReviewRequest || null,
-          },
-        }, sessionPath);
-        queueVoiceInputTranscriptions({
-          speechRecognition: engine.speechRecognition,
+
+      if (!preservePromptEnvelope && displayAttachments?.length) {
+        const registeredDisplay = registerDisplayAttachments({
+          hanakoHome: engine.hanakoHome,
           sessionPath,
           attachments: displayAttachments,
+          registerSessionFile: engine.registerSessionFile?.bind(engine),
         });
+        displayAttachments = registeredDisplay.attachments;
+        promptImageAttachmentPaths = uniquePaths([
+          ...promptImageAttachmentPaths,
+          ...registeredDisplay.imageAttachmentPaths,
+        ]);
+        promptVideoAttachmentPaths = uniquePaths([
+          ...promptVideoAttachmentPaths,
+          ...registeredDisplay.videoAttachmentPaths,
+        ]);
+        if (audios?.length || promptAudioAttachmentPaths.length) {
+          promptAudioAttachmentPaths = uniquePaths([
+            ...promptAudioAttachmentPaths,
+            ...registeredDisplay.audioAttachmentPaths,
+          ]);
+        }
+        promptSessionFileRefs = mergeSessionFileRefs(
+          promptSessionFileRefs,
+          sessionFileRefsFromAttachments(displayAttachments, sessionPath, sessionId),
+        );
       }
-    };
 
-    const visibleText = createVisibleTextAccumulator();
-    const toolMedia = [];
-    let assistantFailed = false;
-    const unsub = session.subscribe?.((event) => {
-      const completedAssistant = event.type === "message_end" ? event.message
-        : event.type === "agent_end" && Array.isArray(event.messages)
-          ? event.messages.findLast((message) => message?.role === "assistant") : null;
-      if (completedAssistant?.role === "assistant") {
-        // The SDK resolves prompt() after provider errors and aborts as well.
-        assistantFailed = ["error", "aborted"].includes(completedAssistant.stopReason);
-      }
-      if (event.type === "message_update") {
-        const sub = event.assistantMessageEvent;
-        if (sub?.type === "text_delta") {
-          const { emittedDelta, text } = visibleText.appendTextDelta(sub.delta || "");
-          try { onDelta?.(emittedDelta, text); } catch {}
-        }
-      } else if (event.type === "tool_execution_start") {
-        visibleText.markHiddenToolBoundary();
-      } else if (event.type === "tool_execution_end" && !event.isError) {
-        toolMedia.push(...collectMediaItems(event.result?.details?.media));
-        let appendedDetail = false;
-        const card = event.result?.details?.card;
-        if (card?.description) {
-          visibleText.appendVisibleDetail(card.description);
-          appendedDetail = true;
-        }
-        const settingsUpdateText = formatSettingsUpdateText(event.result?.details?.settingsUpdate);
-        if (settingsUpdateText) {
-          visibleText.appendVisibleDetail(settingsUpdateText);
-          appendedDetail = true;
-        }
-        if (!appendedDetail) visibleText.markHiddenToolBoundary();
-      }
-    });
-
-    let promptSucceeded = false;
-    try {
-      const promptOpts = buildPromptOptions({
-        images,
-        videos,
-        audios,
-        promptImageAttachmentPaths,
-        promptVideoAttachmentPaths,
-        promptAudioAttachmentPaths,
-        context,
-      });
-      if (typeof engine.preflightSessionInput === "function") {
-        await engine.promptSession(sessionPath, promptText, promptOpts, {
-          afterCachePreflight,
-          afterInputAccepted: onInputAccepted,
+      if (!preservePromptEnvelope && inboundFiles?.length) {
+        const materialized = await materializeBridgeInboundFiles({
+          hanakoHome: engine.hanakoHome,
+          sessionId,
+          sessionPath,
+          files: inboundFiles,
+          signal: controller.signal,
+          registerSessionFile: engine.registerSessionFile ? entry => { assertCurrent(); return engine.registerSessionFile(entry); } : undefined,
         });
-      } else {
-        // Compatibility for older embedders. HanaEngine always takes the guarded path above.
-        afterCachePreflight();
-        await engine.promptSession(sessionPath, promptText, promptOpts);
+        assertCurrent();
+        promptImageAttachmentPaths = [
+          ...promptImageAttachmentPaths,
+          ...materialized.imageAttachmentPaths,
+        ];
+        promptImageAttachmentPaths = uniquePaths(promptImageAttachmentPaths);
+        displayAttachments = [
+          ...(displayAttachments || []),
+          ...materialized.displayAttachments,
+        ];
+        promptSessionFileRefs = mergeSessionFileRefs(
+          promptSessionFileRefs,
+          sessionFileRefsFromAttachments(materialized.displayAttachments, sessionPath, sessionId),
+        );
       }
-      promptSucceeded = true;
-      consumeRenderedReminderBlock(engine, sessionPath, reminderBlock);
-    } finally {
-      try { unsub?.(); } catch {}
-      if (inputSideEffectsStarted) {
-        engine.emitEvent?.({ type: "session_status", isStreaming: false }, sessionPath);
+
+      if (!preservePromptEnvelope) {
+        promptText = addAttachedImageMarkers(promptText, promptImageAttachmentPaths);
+        promptText = addAttachedVideoMarkers(promptText, promptVideoAttachmentPaths);
+        promptText = addAttachedAudioMarkers(promptText, promptAudioAttachmentPaths);
+        promptText = addSessionFileRefMarkers(promptText, promptSessionFileRefs);
       }
-      // 一轮用户↔agent 对话流式成功结束才打 recent_chat.observed。
-      // 失败的 turn 不入事件流：patrol consumer 把它聚合成「最近对话×N」只是噪声，
-      // 还会污染 agent 的事件感知。streaming:false 仍然在 finally 里照常发，保证 UI 状态收敛。
-      // 用 (agentId, sessionPath, turnStartedAt) 作 dedupeKey，重连/重复触发不会刷出新事件。
-      if (promptSucceeded && inputSideEffectsStarted && !assistantFailed && projectUserMessage) {
-        try {
-          const agentId = engine.agentIdFromSessionPath?.(sessionPath) || null;
-          const agent = agentId ? engine.getAgent?.(agentId) : null;
-          const agentDir = agent?.agentDir || null;
-          if (agentId && agentDir) {
-            // userPreview 会被持久化到 events/log.json，跟 pinned-memory 一样过一遍 scrubPII，
-            // 避免 API key / 身份证 / 信用卡号等敏感串原样落盘。
-            const previewSource = (displayMessage?.text ?? text ?? "").trim();
-            const scrubbed = previewSource ? scrubPII(previewSource).cleaned : "";
-            const userPreview = scrubbed ? scrubbed.slice(0, 200) : "";
-            // dedupeKey 加 8 字符的 content hash：
-            //  - 同 (agentId, sessionPath, turnStartedAt) 重复触发（桥接重连重发）→ text 相同 → 同 key → 不重复
-            //  - 不同 turn 恰好同毫秒撞车 → text 不同 → 不同 key → 都被记录（修复同毫秒丢事件）
-            // 用 cleaned text 哈希，避免重发时因 PII 脱敏前后差异破坏 dedupe。
-            const contentHash = createHash("md5")
-              .update(scrubbed || previewSource || "")
-              .digest("hex")
-              .slice(0, 8);
-            await appendXingyeEventOnce({
-              agentDir,
-              agentId,
-              input: {
-                type: "recent_chat.observed",
-                source: "desktop-session-submit",
-                subjectId: sessionPath,
-                payload: {
-                  sessionPath,
-                  turnStartedAt: new Date(turnStartedAt).toISOString(),
-                  hasReply: Boolean(visibleText.getText().trim()),
-                  userPreview,
-                },
-              },
-              dedupeKey: `recent_chat.observed:${agentId}:${sessionPath}:${turnStartedAt}:${contentHash}`,
-            });
+      const reminderBlock = preservePromptEnvelope ? null : renderPendingReminderBlock(engine, sessionPath);
+      if (reminderBlock?.block) {
+        promptText = `${reminderBlock.block}\n\n${promptText}`;
+      }
+
+      let turnStartedAt = 0;
+      let inputSideEffectsStarted = false;
+      const afterCachePreflight = () => {
+        assertCurrent();
+        const commitResult = beforeInputSideEffects?.();
+        if (commitResult && typeof (commitResult as any).then === "function") {
+          throw new TypeError("desktop-session-submit: beforeInputSideEffects must be synchronous");
+        }
+        turnStartedAt = Date.now();
+        inputSideEffectsStarted = true;
+        engine.emitEvent?.({ type: "session_status", isStreaming: true }, sessionPath);
+        if (projectUserMessage) {
+          // 展示投影与来源元信息先于 prompt 持久化，让 custom 条目注释其后的 user message。
+          // forceDisplayText 表示模型输入另含内部 Reminder；displayMessage 只保存用户可见正文。
+          recordMessagePresentationEntry(
+            session,
+            sessionPath,
+            displayComparisonPromptText,
+            displayMessage ?? { text: text ?? "" },
+            { forceDisplayText: !!reminderBlock?.block },
+          );
+          recordMessageOriginEntry(session, sessionPath, displayMessage);
+          recordAgentReviewEntry(session, sessionPath, displayMessage);
+          engine.emitEvent?.({
+            type: "session_user_message",
+            clientMessageId: clientMessageId || null,
+            message: {
+              text: displayMessage?.text ?? text ?? "",
+              timestamp: Date.now(),
+              attachments: displayAttachments,
+              quotedText: displayMessage?.quotedText,
+              skills: displayMessage?.skills,
+              deskContext: displayMessage?.deskContext ?? null,
+              source: displayMessage?.source || "desktop",
+              bridgeSessionKey: displayMessage?.bridgeSessionKey || null,
+              origin: displayMessage?.origin || null,
+              sessionRefs: displayMessage?.sessionRefs || null,
+              agentMentions: displayMessage?.agentMentions || null,
+              agentReview: displayMessage?.agentReview || null,
+              agentReviewRequest: displayMessage?.agentReviewRequest || null,
+            },
+          }, sessionPath);
+          queueVoiceInputTranscriptions({
+            speechRecognition: engine.speechRecognition,
+            sessionPath,
+            attachments: displayAttachments,
+          });
+        }
+      };
+
+      const visibleText = createVisibleTextAccumulator();
+      const toolMedia = [];
+      let assistantFailed = false;
+      const unsub = session.subscribe?.((event) => {
+        if (!isCurrent()) return;
+        const completedAssistant = event.type === "message_end" ? event.message
+          : event.type === "agent_end" && Array.isArray(event.messages)
+            ? event.messages.findLast((message) => message?.role === "assistant") : null;
+        if (completedAssistant?.role === "assistant") {
+          // The SDK resolves prompt() after provider errors and aborts as well.
+          assistantFailed = ["error", "aborted"].includes(completedAssistant.stopReason);
+        }
+        if (event.type === "message_update") {
+          const sub = event.assistantMessageEvent;
+          if (sub?.type === "text_delta") {
+            const { emittedDelta, text } = visibleText.appendTextDelta(sub.delta || "");
+            try { onDelta?.(emittedDelta, text); } catch {}
           }
-        } catch (err) {
-          console.warn(`[desktop-session-submit] recent_chat.observed append failed: ${err?.message || err}`);
+        } else if (event.type === "tool_execution_start") {
+          visibleText.markHiddenToolBoundary();
+        } else if (event.type === "tool_execution_end" && !event.isError) {
+          toolMedia.push(...collectMediaItems(event.result?.details?.media));
+          let appendedDetail = false;
+          const card = event.result?.details?.card;
+          if (card?.description) {
+            visibleText.appendVisibleDetail(card.description);
+            appendedDetail = true;
+          }
+          const settingsUpdateText = formatSettingsUpdateText(event.result?.details?.settingsUpdate);
+          if (settingsUpdateText) {
+            visibleText.appendVisibleDetail(settingsUpdateText);
+            appendedDetail = true;
+          }
+          if (!appendedDetail) visibleText.markHiddenToolBoundary();
+        }
+      });
+
+      unsubscribe = unsub;
+      let promptSucceeded = false;
+      try {
+        const promptOpts = buildPromptOptions({
+          images,
+          videos,
+          audios,
+          promptImageAttachmentPaths,
+          promptVideoAttachmentPaths,
+          promptAudioAttachmentPaths,
+          context,
+        });
+        if (typeof engine.preflightSessionInput === "function") {
+          await engine.promptSession(sessionPath, promptText, promptOpts, {
+            afterCachePreflight,
+            afterInputAccepted: () => { assertCurrent(); return onInputAccepted?.(); },
+          });
+        } else {
+          // Compatibility for older embedders. HanaEngine always takes the guarded path above.
+          afterCachePreflight();
+          await engine.promptSession(sessionPath, promptText, promptOpts);
+        }
+        assertCurrent();
+        promptSucceeded = true;
+        consumeRenderedReminderBlock(engine, sessionPath, reminderBlock);
+      } finally {
+        try { unsub?.(); } catch {}
+        if (isCurrent() && inputSideEffectsStarted) {
+          engine.emitEvent?.({ type: "session_status", isStreaming: false }, sessionPath);
+        }
+        // 一轮用户↔agent 对话流式成功结束才打 recent_chat.observed。
+        // 失败的 turn 不入事件流：patrol consumer 把它聚合成「最近对话×N」只是噪声，
+        // 还会污染 agent 的事件感知。streaming:false 仍然在 finally 里照常发，保证 UI 状态收敛。
+        // 用 (agentId, sessionPath, turnStartedAt) 作 dedupeKey，重连/重复触发不会刷出新事件。
+        if (isCurrent() && promptSucceeded && inputSideEffectsStarted && !assistantFailed && projectUserMessage) {
+          try {
+            const agentId = engine.agentIdFromSessionPath?.(sessionPath) || null;
+            const agent = agentId ? engine.getAgent?.(agentId) : null;
+            const agentDir = agent?.agentDir || null;
+            if (agentId && agentDir) {
+              // userPreview 会被持久化到 events/log.json，跟 pinned-memory 一样过一遍 scrubPII，
+              // 避免 API key / 身份证 / 信用卡号等敏感串原样落盘。
+              const previewSource = (displayMessage?.text ?? text ?? "").trim();
+              const scrubbed = previewSource ? scrubPII(previewSource).cleaned : "";
+              const userPreview = scrubbed ? scrubbed.slice(0, 200) : "";
+              // dedupeKey 加 8 字符的 content hash：
+              //  - 同 (agentId, sessionPath, turnStartedAt) 重复触发（桥接重连重发）→ text 相同 → 同 key → 不重复
+              //  - 不同 turn 恰好同毫秒撞车 → text 不同 → 不同 key → 都被记录（修复同毫秒丢事件）
+              // 用 cleaned text 哈希，避免重发时因 PII 脱敏前后差异破坏 dedupe。
+              const contentHash = createHash("md5")
+                .update(scrubbed || previewSource || "")
+                .digest("hex")
+                .slice(0, 8);
+              await appendXingyeEventOnce({
+                agentDir,
+                agentId,
+                input: {
+                  type: "recent_chat.observed",
+                  source: "desktop-session-submit",
+                  subjectId: sessionPath,
+                  payload: {
+                    sessionPath,
+                    turnStartedAt: new Date(turnStartedAt).toISOString(),
+                    hasReply: Boolean(visibleText.getText().trim()),
+                    userPreview,
+                  },
+                },
+                dedupeKey: `recent_chat.observed:${agentId}:${sessionPath}:${turnStartedAt}:${contentHash}`,
+              });
+            }
+          } catch (err) {
+            console.warn(`[desktop-session-submit] recent_chat.observed append failed: ${err?.message || err}`);
+          }
         }
       }
-    }
 
-    return {
-      text: visibleText.getText().trim() || null,
-      toolMedia,
-    };
-  } finally {
-    pendingDesktopSessionSubmissions.delete(submissionKey);
-  }
+      return {
+        text: visibleText.getText().trim() || null,
+        toolMedia,
+      };
+    } finally {
+      if (pending.get(submissionKey) === record) pending.delete(submissionKey);
+    }
+  };
+  return Promise.race([run(), canceled]);
 }
 
 /**

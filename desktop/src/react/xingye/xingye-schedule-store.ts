@@ -1,5 +1,6 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+import { createXingyeStore } from './xingye-store-utils';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 import { originFromEntryId, withDraftConfirmLock } from './xingye-draft-confirm-lock';
 
@@ -245,16 +246,17 @@ export async function updateScheduleEntryStatus(
   const aid = assertAgentId(agentId, '更新');
   const eid = entryId.trim();
   if (!eid) throw new Error('更新失败：缺少日程 id。');
-  const current = (await listScheduleEntries(aid)).find((entry) => entry.id === eid);
-  if (!current) return null;
-  const updated: XingyeScheduleEntry = {
-    ...current,
-    status,
-    updatedAt: new Date().toISOString(),
-  };
-  await backend.deleteJsonlRecord(aid, XINGYE_SCHEDULE_ENTRIES_JSONL, eid);
-  await backend.appendJsonl(aid, XINGYE_SCHEDULE_ENTRIES_JSONL, { ...updated, key: updated.id });
-  return updated;
+  return createXingyeStore(backend).updateJsonlRecord<XingyeScheduleEntry>(aid, XINGYE_SCHEDULE_ENTRIES_JSONL, eid, (raw) => {
+    const normalized = normalizeRow(raw, aid);
+    if (!normalized) return null;
+    const current = { ...raw, ...normalized, id: raw.id, key: (raw as { key?: string }).key };
+    const updated: XingyeScheduleEntry = {
+      ...current,
+      status,
+      updatedAt: new Date().toISOString(),
+    };
+    return updated;
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────

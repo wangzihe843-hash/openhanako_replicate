@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:f85d66cd9968743c66ab1e494084e25ad4d0b6e75f5f2edb1e6e74240639385d",
+  "payloadFingerprint": "sha256:38bc85c6f08b1e2de797b8c0bf80d9bc1423b601ac7f66677a875c43c9695d8e",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -777,12 +777,15 @@
         "agents/{agentId}/memory/today.md",
         "agents/{agentId}/memory/week.md",
         "agents/{agentId}/memory/longterm.md",
+        "agents/{agentId}/memory/longterm.md.fingerprint",
+        "agents/{agentId}/memory/reset.json",
         "agents/{agentId}/memory/editable-facts-state.json",
         "agents/{agentId}/memory/today-state.json",
         "agents/{agentId}/memory/daily-state.json",
-        "agents/{agentId}/memory/pinned-memory.json",
+        "agents/{agentId}/pinned-memory.json",
         "agents/{agentId}/memory/summaries/{sessionId}.json",
         "agents/{agentId}/memory/daily/{date}.md",
+        "agents/{agentId}/memory/daily/{date}.md.fingerprint",
         "agents/{agentId}/memory/dream/state.json",
         "agents/{agentId}/memory/dream/pending-apply.json",
         "agents/{agentId}/memory/dream/revisions/{revisionId}.json",
@@ -3146,14 +3149,14 @@
     {
       "affectedByEpochMigration": true,
       "bootstrapSafety": null,
-      "checkpointPolicy": "Capture the complete Xingye tree for every agent, including reserved __user__ and __shared__ scopes, before any affected epoch migration. Business records, draft/history files, lore tombstones, and shared gift inventory are not regenerable caches.",
+      "checkpointPolicy": "Capture the complete Xingye tree for every agent, including reserved __user__ and __shared__ scopes, before any affected epoch migration. Business records, draft/history files, lore tombstones, and shared gift inventory are not regenerable caches. The phoneContactProfiles local key maps to agents/{agentId}/xingye/phone/contact-profiles.json and is captured by this tree descriptor, never a separate overlapping owner.",
       "epochPolicy": "epoch-managed",
       "exemption": null,
       "firstPossibleOpenPhase": "engine_construct",
       "firstPossibleWritePhase": "runtime_ready",
       "format": "mixed-directory",
       "id": "xingye-state",
-      "identityContract": "agentId scopes every relative record path; __user__ and __shared__ are reserved owners. Event/draft IDs, peer IDs, and gift catalog keys remain identities inside their respective scopes.",
+      "identityContract": "agentId scopes every relative record path; __user__ and __shared__ are reserved owners. Event/draft IDs, peer IDs, contact profile IDs, and gift catalog keys remain identities inside their respective scopes.",
       "migrationEntry": [
         "readXingyeRuntimeLoreEntriesSync legacy lore fallback",
         "syncPeerStateUserTurns legacy social baseline",
@@ -3223,8 +3226,9 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Reviewed against the previous payload: only DeferredResultStore, LoopStore, PreferencesManager and the two Xingye profile/relationship modules change source digests, and avatar write sites move from route modules to the registered avatar helper. The store registry, schema contracts, SQLite introspection results, DATA_EPOCH 1, and digest compiler/method are unchanged. Deferred-result serialization retains its existing task map while failed flushes stay dirty for retry. Loop schemaVersion-1 records and corrupt-file naming stay unchanged; failed quarantine now propagates instead of permitting overwrite. Preferences retain the same JSON keys and existing corrupt-byte backup path, now protecting corruption detected after startup; bridge migration preserves its existing source keys and retry receipt when no target is available. Xingye profile and relationship record shapes, defaults, identities and serializers are unchanged; loading/error and owner-binding checks delay initialization until the correct store is available. Avatar publication uses the same role/extension filenames and existing profile directory, with request-scoped temporary files and serialized mutations. No schema addition, new store, data conversion, or epoch transition is introduced, so the existing store-local contracts remain accurate. Regression tests cover failure preservation, retry, initialization ownership and avatar replacement.",
-    "payloadFingerprint": "sha256:f85d66cd9968743c66ab1e494084e25ad4d0b6e75f5f2edb1e6e74240639385d"
+    "compatibilityReason": "Compatible additive audit fixes at DATA_EPOCH 1. Facts store v2 -> v3 adds only session_fact_commits(session_id, revision), retaining all existing facts/FTS objects; fact and receipt updates are transactional. Memory registry corrects existing pinned-memory path and adds existing reset/fingerprint paths; Xingye contact profiles are covered by the existing tree. JSONL CAS retains row formats/identity, Lore and editor writes publish atomically, checkpoint close ordering and bounded Windows rename retry preserve bytes/metadata, and frozen runtime ownership/cancellation changes retain session, sidecar and workflow formats. Other changed module digests are reviewed individually in docs/audits/2026-09-13-persistence-compatibility-review.md. Pi 0.80.3/session v3, manifest/file-history schemas, source digest compiler/method, exemptions and startup phases are unchanged.",
+    "documentPath": "docs/audits/2026-09-13-persistence-compatibility-review.md",
+    "payloadFingerprint": "sha256:38bc85c6f08b1e2de797b8c0bf80d9bc1423b601ac7f66677a875c43c9695d8e"
   },
   "schemas": [
     {
@@ -3265,6 +3269,12 @@
             "type": "table"
           },
           {
+            "name": "session_fact_commits",
+            "sql": "CREATE TABLE session_fact_commits ( session_id TEXT PRIMARY KEY, revision TEXT NOT NULL )",
+            "tableName": "session_fact_commits",
+            "type": "table"
+          },
+          {
             "name": "facts_ad",
             "sql": "CREATE TRIGGER facts_ad AFTER DELETE ON facts BEGIN INSERT INTO facts_fts(facts_fts, rowid, fact, search_text) VALUES ('delete', old.id, old.fact, old.search_text); END",
             "tableName": "facts",
@@ -3283,9 +3293,9 @@
             "type": "trigger"
           }
         ],
-        "userVersion": 2
+        "userVersion": 3
       },
-      "sourceHash": "sha256:c10e82386c2099edde0193af8669681a9b9b79b6657b1087dd9f5e386e8ff889",
+      "sourceHash": "sha256:b78a77f39c39402c64a0f1113be3298d0dbdcfc47371748ca51ebcace073bfbd",
       "storeId": "agent-facts-sqlite"
     },
     {
@@ -3319,7 +3329,7 @@
       "protocolModules": [
         {
           "module": "core/agent.ts",
-          "sourceHash": "sha256:89b7184f298b0eaf7507f713b6d9db57fe57876c83e0dd75143489ab25fdd3a9"
+          "sourceHash": "sha256:4ad10618cc2d17e08c4271e18e58b5f6bc8d5cf43f253956e5383f24c4b15b7b"
         },
         {
           "module": "core/agents-md-migration.ts",
@@ -3347,7 +3357,7 @@
           "sourceHash": "sha256:a94be8f88e0340cd7268e3f192a76d64a10647f78d9440098ed8a74492aea067"
         }
       ],
-      "sourceHash": "sha256:7e736924060f1e5594bd7e85eff9ff2b44038624664d1f450070d63391b6991c",
+      "sourceHash": "sha256:598cee82d851adc516c0d4bcf711807e0288551b6e2eba0d32a10b3372efc1c6",
       "storeId": "channels"
     },
     {
@@ -3368,7 +3378,7 @@
       "contract": "checkpoint metadata.json layout, per-store capture strategy, and verify byte/sha256 reconciliation",
       "kind": "runtime-contract",
       "module": "core/data-epoch-checkpoint-provider.ts",
-      "sourceHash": "sha256:b25c625a800c508a28e9f7bf69b7ab74fe7c4308bd9fd09601f688d13abfd92c",
+      "sourceHash": "sha256:4714ee74b01638b26cfd2c38cd6ad2be741bb6e2fd36650b85c85b939c73ddc2",
       "storeId": "data-epoch-checkpoints"
     },
     {
@@ -3420,7 +3430,7 @@
       "contract": "bounded base64 cover upload temporary-directory lifecycle",
       "kind": "directory-contract",
       "module": "server/routes/desk.ts",
-      "sourceHash": "sha256:80fb2bceade1c767005a069d2e218db6491d3d0ef334424b1bd5d3ff69eae351",
+      "sourceHash": "sha256:bd2cc08135ec7a4bd8f1047982027eda9f697d1adbc94dd2353416b3d5ba0d3d",
       "storeId": "desk-cover-upload-staging"
     },
     {
@@ -3462,7 +3472,7 @@
       "contract": "device, credential, and pairing-session validators/serializers",
       "kind": "runtime-contract",
       "module": "core/device-registry.ts",
-      "sourceHash": "sha256:5e2db8e7b1de0b05eca16bb028fa9d972f1f7ea9f0a9f6417b0961c853d4a43f",
+      "sourceHash": "sha256:b1365f96a054c96c5ddbd3014147529da16fa64b1e4d2ba5c8c2a322378ee5e3",
       "storeId": "device-access-registries"
     },
     {
@@ -3511,7 +3521,7 @@
         ],
         "userVersion": 0
       },
-      "sourceHash": "sha256:d06b4e7e0f6f4bc7040bad4d517fe77c220a1f680a5f51d42086bae66622683d",
+      "sourceHash": "sha256:f6913395cdfcbe8219edd13d57c3b8974b85474d685fc587a5f5b9512e83b394",
       "storeId": "file-history-sqlite"
     },
     {
@@ -3607,7 +3617,7 @@
       "contract": "TaskRegistry task/schedule normalization and persistence serializer",
       "kind": "runtime-contract",
       "module": "lib/task-registry.ts",
-      "sourceHash": "sha256:c61d9b6038a8f21aa4d8c66a1efd2d4c5830b2fb9a3c74115780923387e9d971",
+      "sourceHash": "sha256:36d53b1c4f32be410353a9285eaa68aebf07dc63717e9d9e354b2c2231b41025",
       "storeId": "plugin-task-registry"
     },
     {
@@ -3663,14 +3673,14 @@
       "contract": "server-info writer and desktop bootstrap reader",
       "kind": "runtime-contract",
       "module": "server/index.ts",
-      "sourceHash": "sha256:ab1441fa45b5c6472eacd5defb186bff78327a36aa5ac4b44bd20910c8b98d10",
+      "sourceHash": "sha256:a6e8245c0a31afd416372f1c58b47b2663554614c31c6a6bd734153ebb933995",
       "storeId": "server-runtime-info"
     },
     {
       "contract": "InputDraftsStore and SessionProjectCatalogStore normalizers",
       "kind": "runtime-contract",
       "module": "core/input-drafts-store.ts",
-      "sourceHash": "sha256:d8b80b579bd4e2d6ab1f686fe96eee5dba2235bbb13c92329928c5dcf4f4cdfa",
+      "sourceHash": "sha256:bb84e331d4380d9ffb1a5e9b382e4c571f8c521e840b175a9ae6a5c4eb795f1d",
       "storeId": "session-drafts-and-projects"
     },
     {
@@ -3685,7 +3695,7 @@
         {
           "contract": "core/session-coordinator.ts Hana metadata extensions",
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:e6bd56e3bcde406be14285f0771b6ba67fc6e2b7044d78a4a8aca9a1267c3959"
+          "sourceHash": "sha256:6c6c222343691dac10abdf3df61d80473b95b18b2bb0e5abc698c41769bbdcf8"
         },
         {
           "contract": "core/session-jsonl-file.ts repair contract",
@@ -3701,11 +3711,11 @@
       "protocolModules": [
         {
           "module": "core/desktop-session-submit.ts",
-          "sourceHash": "sha256:3838e2f270ce167a04400e084d690934c49570d01169a747c4f303477c8254e4"
+          "sourceHash": "sha256:5736acb7e53b82c44242d512aa48ad9a29576a78265e7cb9c920302258254941"
         },
         {
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:e6bd56e3bcde406be14285f0771b6ba67fc6e2b7044d78a4a8aca9a1267c3959"
+          "sourceHash": "sha256:6c6c222343691dac10abdf3df61d80473b95b18b2bb0e5abc698c41769bbdcf8"
         },
         {
           "module": "core/session-jsonl-file.ts",
@@ -3797,7 +3807,7 @@
       "contract": "bridge index, legacy session metadata, title, and vision sidecar readers",
       "kind": "runtime-contract",
       "module": "core/bridge-session-manager.ts",
-      "sourceHash": "sha256:7ed05febd0506adb3cdc38c86a652f1c47a4e1a499f9308a7e940faaae1297ef",
+      "sourceHash": "sha256:b84e1a20f5c0a26d336555c6050161f64e21b64a0d411b3c4af99d8f2705cafb",
       "storeId": "session-sidecars"
     },
     {
@@ -3884,7 +3894,7 @@
       "protocolModules": [
         {
           "module": "lib/tools/workflow-tool.ts",
-          "sourceHash": "sha256:ec666c677da01e72c9d81c2fdebd670b95567a929aa61dd3df1830458b8193a3"
+          "sourceHash": "sha256:c8a35128253d3acb37a262156ecef845a19d17130c65795e8ba50775c390e1eb"
         },
         {
           "module": "lib/workflow-activity-store.ts",
@@ -3892,7 +3902,7 @@
         },
         {
           "module": "lib/workflow/host-api.ts",
-          "sourceHash": "sha256:15cf709440589e9ee9d3581a1281e320bd87422372249453ec40615a50c7fc77"
+          "sourceHash": "sha256:1c4addee2bb97302d3b372db7ca2ebee1cfb21c7c1ba11fc4b3afa7235c08912"
         }
       ],
       "sourceHash": "sha256:cefd7c33820bc4e2a757e27040cc290b88ecabba8239ea6d3a3b9c1a452b876f",
@@ -3913,11 +3923,11 @@
         },
         {
           "module": "desktop/src/react/xingye/xingye-persistence.ts",
-          "sourceHash": "sha256:97b9e4a2f58388e18050eecdbce2257714cc3e4ed712714ad091706bc3786cbb"
+          "sourceHash": "sha256:2f7d452d963f8f99f52451df01af524b3cd41fe4da18c3436b9a758ad011110d"
         },
         {
           "module": "desktop/src/react/xingye/xingye-profile-store.ts",
-          "sourceHash": "sha256:0eda0437bec5151dab575c738586445d4ba2ed59f6c8f813b1921a1764befa8f"
+          "sourceHash": "sha256:cde519b14696401bc4a58bcd6f698c6361c5dccebc027096be343dc2302f20f4"
         },
         {
           "module": "desktop/src/react/xingye/xingye-state-store.ts",
@@ -3925,7 +3935,7 @@
         },
         {
           "module": "desktop/src/react/xingye/xingye-storage-backend.ts",
-          "sourceHash": "sha256:dfbfbc28f7ae774de40f8a77c1e1e837829d22ded89ef3efc6b66239d39a6569"
+          "sourceHash": "sha256:4c8a3c4ac23af2e0245bf4980979b9f44ea5db59689dfa4253da1f4d396820df"
         },
         {
           "module": "lib/desk/social-awareness.js",
@@ -4021,7 +4031,7 @@
         },
         {
           "module": "shared/xingye-lore-memory-file.js",
-          "sourceHash": "sha256:45f557ba44a647082362ad76dfb9dc6b9442adf2372d2938264c36b88bd2dbe3"
+          "sourceHash": "sha256:2db7a57859e4e4763927e0ce5a773569d4d1563b88c1ba0d4a7847acd6f24b1c"
         },
         {
           "module": "shared/xingye-profile-file.js",
@@ -4036,7 +4046,7 @@
           "sourceHash": "sha256:1111778f4d8841667645ae387cbed7626e678e36d670a0ef034c7b6c71e6f3bf"
         }
       ],
-      "sourceHash": "sha256:a7824274ac92494a18d80e8e5732edaf1b7d3e1b0c5acfacae80b8fd82e6ed1d",
+      "sourceHash": "sha256:d0146bc6eab5a4c57a760ca86f4126abcf86f834e6f1de1c985157b4a38b45ec",
       "storeId": "xingye-state"
     }
   ],
@@ -4348,14 +4358,6 @@
     {
       "exemptionId": null,
       "kind": "remove-path",
-      "ordinal": 0,
-      "reason": "Captures, verifies, or prunes data epoch transition checkpoints.",
-      "sourceFile": "core/data-epoch-checkpoint-provider.ts",
-      "storeId": "data-epoch-checkpoints"
-    },
-    {
-      "exemptionId": null,
-      "kind": "rename",
       "ordinal": 0,
       "reason": "Captures, verifies, or prunes data epoch transition checkpoints.",
       "sourceFile": "core/data-epoch-checkpoint-provider.ts",
@@ -6483,6 +6485,30 @@
     },
     {
       "exemptionId": "desktop-external-text-file",
+      "kind": "remove-path",
+      "ordinal": 0,
+      "reason": "Writes an absolute artifact/editor path explicitly selected by the caller, outside any implied HANA_HOME store.",
+      "sourceFile": "desktop/file-text-io.cjs",
+      "storeId": null
+    },
+    {
+      "exemptionId": "desktop-external-text-file",
+      "kind": "rename",
+      "ordinal": 0,
+      "reason": "Writes an absolute artifact/editor path explicitly selected by the caller, outside any implied HANA_HOME store.",
+      "sourceFile": "desktop/file-text-io.cjs",
+      "storeId": null
+    },
+    {
+      "exemptionId": "desktop-external-text-file",
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Writes an absolute artifact/editor path explicitly selected by the caller, outside any implied HANA_HOME store.",
+      "sourceFile": "desktop/file-text-io.cjs",
+      "storeId": null
+    },
+    {
+      "exemptionId": "desktop-external-text-file",
       "kind": "write-file",
       "ordinal": 0,
       "reason": "Writes an absolute artifact/editor path explicitly selected by the caller, outside any implied HANA_HOME store.",
@@ -6939,14 +6965,6 @@
     },
     {
       "exemptionId": null,
-      "kind": "append-file",
-      "ordinal": 1,
-      "reason": "Owns the common channel/DM message writer and agent/user channel bookmarks.",
-      "sourceFile": "lib/channels/channel-store.ts",
-      "storeId": "channels"
-    },
-    {
-      "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
       "reason": "Owns the common channel/DM message writer and agent/user channel bookmarks.",
@@ -6988,6 +7006,14 @@
     {
       "exemptionId": null,
       "kind": "rename",
+      "ordinal": 0,
+      "reason": "Owns the common channel/DM message writer and agent/user channel bookmarks.",
+      "sourceFile": "lib/channels/channel-store.ts",
+      "storeId": "channels"
+    },
+    {
+      "exemptionId": null,
+      "kind": "write-file",
       "ordinal": 0,
       "reason": "Owns the common channel/DM message writer and agent/user channel bookmarks.",
       "sourceFile": "lib/channels/channel-store.ts",
@@ -8603,6 +8629,14 @@
     },
     {
       "exemptionId": null,
+      "kind": "remove-path",
+      "ordinal": 0,
+      "reason": "Stages payload bytes or updates SessionFile sidecars under the managed cache.",
+      "sourceFile": "lib/session-files/bridge-inbound-files.ts",
+      "storeId": "session-files"
+    },
+    {
+      "exemptionId": null,
       "kind": "write-file",
       "ordinal": 0,
       "reason": "Stages payload bytes or updates SessionFile sidecars under the managed cache.",
@@ -10171,6 +10205,22 @@
     },
     {
       "exemptionId": null,
+      "kind": "remove-path",
+      "ordinal": 0,
+      "reason": "Creates, updates, or removes files confined to the requested agent/reserved Xingye scope.",
+      "sourceFile": "server/routes/xingye-storage.js",
+      "storeId": "xingye-state"
+    },
+    {
+      "exemptionId": null,
+      "kind": "remove-path",
+      "ordinal": 0,
+      "reason": "Creates, updates, or removes files confined to the requested agent/reserved Xingye scope.",
+      "sourceFile": "server/routes/xingye-storage.js",
+      "storeId": "xingye-state"
+    },
+    {
+      "exemptionId": null,
       "kind": "rename",
       "ordinal": 0,
       "reason": "Creates, updates, or removes files confined to the requested agent/reserved Xingye scope.",
@@ -10869,7 +10919,23 @@
       "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "Writes managed stable-lore Markdown within the agent's Xingye tree.",
+      "reason": "Atomically publishes managed stable-lore Markdown within the agent's Xingye tree and cleans temporary files.",
+      "sourceFile": "shared/xingye-lore-memory-file.js",
+      "storeId": "xingye-state"
+    },
+    {
+      "exemptionId": null,
+      "kind": "remove-path",
+      "ordinal": 0,
+      "reason": "Atomically publishes managed stable-lore Markdown within the agent's Xingye tree and cleans temporary files.",
+      "sourceFile": "shared/xingye-lore-memory-file.js",
+      "storeId": "xingye-state"
+    },
+    {
+      "exemptionId": null,
+      "kind": "rename",
+      "ordinal": 0,
+      "reason": "Atomically publishes managed stable-lore Markdown within the agent's Xingye tree and cleans temporary files.",
       "sourceFile": "shared/xingye-lore-memory-file.js",
       "storeId": "xingye-state"
     },
@@ -10877,7 +10943,7 @@
       "exemptionId": null,
       "kind": "write-file",
       "ordinal": 0,
-      "reason": "Writes managed stable-lore Markdown within the agent's Xingye tree.",
+      "reason": "Atomically publishes managed stable-lore Markdown within the agent's Xingye tree and cleans temporary files.",
       "sourceFile": "shared/xingye-lore-memory-file.js",
       "storeId": "xingye-state"
     }

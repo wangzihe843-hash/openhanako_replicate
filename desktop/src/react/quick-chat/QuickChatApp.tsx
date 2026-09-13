@@ -24,6 +24,7 @@ import {
   normalizeQuickChatPreferences,
 } from '../../../../shared/quick-chat-preferences.ts';
 import { shouldResetQuickChatSessionAfterIdle } from './quick-chat-lifecycle';
+import { waitForSocketOpen } from './wait-for-socket';
 import {
   pickQuickChatRuntimeAgent,
   resolveQuickChatPermissionMode,
@@ -169,6 +170,10 @@ export function QuickChatApp() {
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
   const transcriptContentRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const lifecycleRef = useRef(0);
+  const runtimeRequestRef = useRef(0);
+  const draftRevisionRef = useRef(0);
+  const sendAttemptRef = useRef<AbortController | null>(null);
   const sessionPathRef = useRef<string | null>(null);
   const connectionRef = useRef<ServerConnection | null>(null);
   const agentsRef = useRef<AgentOption[]>([]);
@@ -231,10 +236,12 @@ export function QuickChatApp() {
   }, []);
 
   const refreshQuickChatRuntimeState = useCallback(async (
-    options: { adoptAgent?: boolean } = {},
+    options: { adoptAgent?: boolean; signal?: AbortSignal } = {},
   ) => {
     const conn = connectionRef.current || connection;
     if (!conn) return null;
+    const lifecycle = lifecycleRef.current;
+    const request = ++runtimeRequestRef.current;
     try {
       const [prefsRes, agentsRes, permissionRes] = await Promise.all([
         fetch(buildConnectionUrl(conn, '/api/preferences/quick-chat'), {
@@ -257,6 +264,8 @@ export function QuickChatApp() {
         permissionRes.json(),
       ]);
 
+      options.signal?.throwIfAborted();
+      if (lifecycle !== lifecycleRef.current || request !== runtimeRequestRef.current) return null;
       const quickChatPrefs = normalizeQuickChatPreferences(prefsData?.quickChat);
       reuseTimeoutMinutesRef.current = quickChatPrefs.reuseTimeoutMinutes;
       setReuseTimeoutMinutes(quickChatPrefs.reuseTimeoutMinutes);
@@ -359,7 +368,14 @@ export function QuickChatApp() {
     bootstrap();
     return () => {
       cancelled = true;
-      wsRef.current?.close();
+      lifecycleRef.current += 1;
+      sendAttemptRef.current?.abort();
+      sendAttemptRef.current = null;
+      sendingRef.current = false;
+      setSending(false);
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close();
     };
   }, [applyRuntimeAgentList, applyRuntimePermissionMode, t]);
 
@@ -469,6 +485,7 @@ export function QuickChatApp() {
     const ws = new WebSocket(buildConnectionWsUrl(conn, '/ws'));
     wsRef.current = ws;
     ws.onmessage = (event) => {
+      if (wsRef.current !== ws) return;
       try {
         const msg = JSON.parse(String(event.data || '{}'));
         const activeSessionPath = sessionPathRef.current;
@@ -489,7 +506,11 @@ export function QuickChatApp() {
       }
     };
     ws.onclose = () => {
-      if (wsRef.current === ws) wsRef.current = null;
+      if (wsRef.current !== ws) return;
+      wsRef.current = null;
+      sendingRef.current = false;
+      setSending(false);
+      setError(t('quickChat.sendFailed'));
     };
     return ws;
   }, [connection, t]);
@@ -524,18 +545,22 @@ export function QuickChatApp() {
     setAttachments((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
-  const ensureDetachedSession = useCallback(async () => {
+  const ensureDetachedSession = useCallback(async (signal: AbortSignal) => {
+    signal.throwIfAborted();
     if (sessionPathRef.current) return sessionPathRef.current;
-    const runtime = await refreshQuickChatRuntimeState({ adoptAgent: true });
+    const runtime = await refreshQuickChatRuntimeState({ adoptAgent: true, signal });
+    signal.throwIfAborted();
     let mode = runtime?.permissionMode || permissionModeRef.current;
     if (!runtime?.permissionMode) {
-      const modeRes = await apiFetch('/api/preferences/session-permission-default');
+      const modeRes = await apiFetch('/api/preferences/session-permission-default', { signal });
       const modeData = await modeRes.json();
+      signal.throwIfAborted();
       mode = resolveQuickChatPermissionMode(modeData);
       applyRuntimePermissionMode(mode);
     }
     const nextAgentId = runtime?.agent?.id || selectedAgentIdRef.current;
     const res = await apiFetch('/api/sessions/new-detached', {
+      signal,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -546,6 +571,7 @@ export function QuickChatApp() {
       }),
     });
     const data = await res.json() as DetachedSessionResponse;
+    signal.throwIfAborted();
     if (!data.path) throw new Error(data.error || t('quickChat.createSessionFailed'));
     setSessionPath(data.path);
     sessionPathRef.current = data.path;
@@ -570,11 +596,16 @@ export function QuickChatApp() {
 
   const send = useCallback(async () => {
     const text = draft.trim();
-    if ((!text && attachments.length === 0) || sending) return;
+    const draftRevision = draftRevisionRef.current;
+    if ((!text && attachments.length === 0) || sendingRef.current || isStreamingRef.current || sendAttemptRef.current) return;
+    const attempt = new AbortController();
+    sendAttemptRef.current = attempt;
+    sendingRef.current = true;
+    let ws: WebSocket | null = null;
     setSending(true);
     setError(null);
     try {
-      const nextSessionPath = await ensureDetachedSession();
+      const nextSessionPath = await ensureDetachedSession(attempt.signal);
       const outgoingAttachments = attachments;
       const encodedAttachments = await Promise.all(outgoingAttachments.map(async (item) => ({
         item,
@@ -585,12 +616,13 @@ export function QuickChatApp() {
         data,
         mimeType: item.mimeType,
       }));
-      setDraft('');
-      setAttachments([]);
-      window.hana?.quickChatResize?.('chat');
-
-      const ws = ensureSocket();
-      const sendPayload = () => ws.send(JSON.stringify({
+      if (attempt.signal.aborted) return;
+      ws = ensureSocket();
+      await waitForSocketOpen(ws, attempt.signal);
+      if (attempt.signal.aborted || wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) {
+        throw new Error(t('quickChat.sendFailed'));
+      }
+      ws.send(JSON.stringify({
         type: 'prompt',
         text,
         sessionPath: nextSessionPath,
@@ -606,15 +638,22 @@ export function QuickChatApp() {
           })),
         },
       }));
-      if (ws.readyState === WebSocket.OPEN) {
-        sendPayload();
-      } else {
-        ws.addEventListener('open', sendPayload, { once: true });
-      }
+      setDraft(current => draftRevisionRef.current === draftRevision && current === draft ? '' : current);
+      const sentIds = new Set(outgoingAttachments.map(item => item.id));
+      setAttachments(current => current.filter(item => !sentIds.has(item.id)));
+      window.hana?.quickChatResize?.('chat');
     } catch (err) {
+      if (ws && wsRef.current === ws) { wsRef.current = null; ws.close(); }
+      if (attempt.signal.aborted) return;
       const text = err instanceof Error ? err.message : t('quickChat.sendFailed');
       setError(text);
+      sendingRef.current = false;
       setSending(false);
+    } finally {
+      if (sendAttemptRef.current === attempt) {
+        sendAttemptRef.current = null;
+        if (attempt.signal.aborted) { sendingRef.current = false; setSending(false); }
+      }
     }
   }, [attachments, draft, ensureDetachedSession, ensureSocket, sending, t]);
 
@@ -772,7 +811,7 @@ export function QuickChatApp() {
             className={classNames(inputStyles['input-box'], styles.textarea)}
             ref={textareaRef}
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => { draftRevisionRef.current += 1; setDraft(event.target.value); }}
             onPaste={handlePaste}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey && !isComposingRef.current && !event.nativeEvent.isComposing) {

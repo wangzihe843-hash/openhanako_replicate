@@ -222,7 +222,7 @@ describe('xingye-mail-store', () => {
     expect(ts1).toBeGreaterThan(ts0);
   });
 
-  it('setMailMessageStar updates the message by deleting and re-appending it', async () => {
+  it('setMailMessageStar updates the message using an atomic row replacement', async () => {
     postMock
       // listJsonl
       .mockResolvedValueOnce({
@@ -237,15 +237,12 @@ describe('xingye-mail-store', () => {
           },
         ],
       })
-      // deleteJsonlRecord
-      .mockResolvedValueOnce({ ok: true, deleted: true })
-      // appendJsonl
-      .mockResolvedValueOnce({ ok: true });
+      .mockImplementationOnce(async (body) => ({ ok: true, updated: true, record: body.data }));
     const updated = await setMailMessageStar('linwu', 'm1', true);
     expect(updated?.isStarred).toBe(true);
-    const del = lastCall('deleteJsonlRecord');
-    expect(del.recordId).toBe('m1');
-    const append = lastCall('appendJsonl');
+    expect(postMock.mock.calls.some(([body]) => body.action === 'deleteJsonlRecord')).toBe(false);
+    const append = lastCall('compareAndSwapJsonlRecord');
+    expect(append.recordId).toBe('m1');
     const data = append.data as { id: string; isStarred: boolean };
     expect(data.id).toBe('m1');
     expect(data.isStarred).toBe(true);

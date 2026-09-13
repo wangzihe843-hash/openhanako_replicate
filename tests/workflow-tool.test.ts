@@ -435,7 +435,7 @@ describe("workflow tool", () => {
     const store = makeStore();
     const tool = createWorkflowTool({
       getSessionPermissionMode: () => "read_only",
-      executeIsolated: async () => new Promise(() => {}),
+      executeIsolated: async (_p, options) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })),
       emitEvent: () => {},
       getDeferredStore: () => store,
       getSubagentRunStore: () => makeRunStore(),

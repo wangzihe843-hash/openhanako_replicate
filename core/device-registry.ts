@@ -12,6 +12,59 @@ const SCHEMA_VERSION = 1;
 const SECRET_PREFIX_LENGTH = 18;
 const DEFAULT_PAIRING_TTL_MS = 10 * 60 * 1000;
 
+const deviceAccessListeners = new Map<string, Set<() => void>>();
+
+// Keep live transports in sync with revocation; each transport owns its listener
+// and expiry timer and removes both when it closes.
+export function watchDevicePrincipal(hanakoHome, principal, onInvalid) {
+  if (principal?.kind !== "device" || principal?.credentialKind !== "device_credential") return () => {};
+  if (!hanakoHome) { onInvalid(); return () => {}; }
+  const key = path.resolve(hanakoHome);
+  const listeners = deviceAccessListeners.get(key) || new Set<() => void>();
+  deviceAccessListeners.set(key, listeners);
+  let timer = null;
+  let disposed = false;
+  const dispose = () => {
+    disposed = true;
+    if (timer) clearTimeout(timer);
+    listeners.delete(check);
+    if (!listeners.size) deviceAccessListeners.delete(key);
+  };
+  const check = () => {
+    if (disposed) return;
+    if (timer) clearTimeout(timer);
+    let valid = false;
+    let expiresAt = null;
+    try {
+      const devices = readJsonRequired(path.join(hanakoHome, DEVICES_FILE), DEVICES_FILE);
+      const credentials = readJsonRequired(path.join(hanakoHome, DEVICE_CREDENTIALS_FILE), DEVICE_CREDENTIALS_FILE);
+      const credential = credentials.credentials.find((item) => item.credentialId === principal.credentialId);
+      const device = devices.devices.find((item) => item.deviceId === principal.deviceId);
+      expiresAt = credential?.expiresAt ? Date.parse(credential.expiresAt) : null;
+      valid = device?.status === "active" && credential?.status === "active"
+        && credential.deviceId === principal.deviceId
+        && credential.userId === principal.userId
+        && credential.serverNodeId === principal.serverNodeId
+        && (!principal.studioId || credential.studioIds.includes(principal.studioId))
+        && (principal.studioIds || []).every((id) => credential.studioIds.includes(id))
+        && (principal.scopes || []).every((scope) => credential.scopes.includes(scope))
+        && (expiresAt === null || (Number.isFinite(expiresAt) && expiresAt > Date.now()));
+    } catch { /* Invalid or missing registry fails closed. */ }
+    if (!valid) { dispose(); onInvalid(); return; }
+    if (expiresAt !== null) {
+      timer = setTimeout(check, Math.min(expiresAt - Date.now(), 2_147_483_647));
+      timer.unref?.();
+    }
+  };
+  listeners.add(check);
+  check();
+  return dispose;
+}
+
+function notifyDeviceAccessChanged(hanakoHome) {
+  for (const check of [...(deviceAccessListeners.get(path.resolve(hanakoHome)) || [])]) check();
+}
+
 export function ensureDeviceAccessRegistries(hanakoHome, { now = new Date().toISOString() } = {}) {
   const created = [];
   const registries: [string, any, (value: any, label: any) => void][] = [
@@ -97,6 +150,7 @@ export function revokeDeviceCredential(hanakoHome, credentialId, { now = new Dat
   credential.revokedAt = now;
   registries.credentials.updatedAt = now;
   persistDeviceAccessRegistries(hanakoHome, registries);
+  notifyDeviceAccessChanged(hanakoHome);
   return clonePlain(credential);
 }
 
@@ -117,6 +171,7 @@ export function revokeDevice(hanakoHome, deviceId, { now = new Date().toISOStrin
   registries.devices.updatedAt = now;
   registries.credentials.updatedAt = now;
   persistDeviceAccessRegistries(hanakoHome, registries);
+  notifyDeviceAccessChanged(hanakoHome);
   return clonePlain(device);
 }
 

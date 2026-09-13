@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { createLocalServerConnection } from '../services/server-connection';
+import { useStore } from '../stores';
+import { describe, expect, it, vi } from 'vitest';
 import { createMemoryXingyeStorageBackend } from './xingye-storage-backend';
 import {
+  appendGroupChatRun,
   buildChannelMessageId,
   createXingyeGroupChatStateStore,
   makeGroupChatDedupeKey,
@@ -20,6 +23,21 @@ function makeStore(seedTimes: string[] = [], seedIds: string[] = []) {
 }
 
 describe('xingye-group-chat-state-store', () => {
+  it('review X10 persists a posted reply run to the captured server after switching', async () => {
+    const original = createLocalServerConnection({ serverPort: 17333, serverToken: 'original' })!;
+    useStore.setState({ activeServerConnection: null, serverPort: '17334', serverToken: 'new' });
+    const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal('fetch', fetch);
+    try {
+      await appendGroupChatRun({ agentId: 'a', channelId: 'c', sourceMessageIds: [], status: 'replied', replyContent: 'reply' }, original);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fetch.mock.calls[0][0]).toBe('http://127.0.0.1:17333/api/xingye/storage');
+      const init = fetch.mock.calls[0][1] as RequestInit;
+      expect(new Headers(init.headers).get('Authorization')).toBe('Bearer original');
+      expect(JSON.parse(String(init.body))).toMatchObject({ action: 'appendJsonl', agentId: 'a', relativePath: 'group-chat/runs.jsonl' });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('uses agent-scoped path group-chat/runs.jsonl', () => {
     expect(XINGYE_GROUP_CHAT_RUNS_PATH).toBe('group-chat/runs.jsonl');
   });

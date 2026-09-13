@@ -83,7 +83,9 @@ export function createFileHistoryRoute(engine: any) {
       if (!relPath) return c.json({ error: "corrupt snapshot path" }, 500);
       const absPath = path.join(root, ...relPath.split("/"));
 
-      // 还原走 ResourceIO：工作区树/编辑器沿既有事件链路刷新，还原动作本身也进历史（可反悔）
+      // Preserve the preimage before ResourceIO can overwrite it. Failure must
+      // abort the restore, even when a debounced watcher capture is pending.
+      await service.captureBeforeRestore(root, relPath);
       await engine.getResourceIO().write({ kind: "local-file", path: absPath }, snapshot.content, {});
       await service.captureNow(root, relPath, "restore");
       return c.json({ ok: true, relPath });

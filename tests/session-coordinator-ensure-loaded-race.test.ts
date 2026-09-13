@@ -138,7 +138,7 @@ describe("SessionCoordinator ensureSessionLoaded concurrency", () => {
       JSON.stringify({ [path.basename(sessionPath)]: { memoryEnabled: true } }, null, 2),
     );
     ownerAgent = makeAgent({ id: "owner", sessionDir: ownerSessionDir });
-    sessionManagerOpenMock.mockImplementation(() => ({ getCwd: () => tempDir }));
+    sessionManagerOpenMock.mockImplementation((sp) => ({ getSessionFile: () => sp, getCwd: () => tempDir }));
   });
 
   afterEach(() => {
@@ -197,4 +197,105 @@ describe("SessionCoordinator ensureSessionLoaded concurrency", () => {
     expect(second).toBe(first);
     expect(createAgentSessionMock).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["switch", "reload", "direct"])("R01 shares ownership between background loading and %s", async (peer) => {
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    createAgentSessionMock.mockImplementation(async () => {
+      entered.resolve();
+      await gate.promise;
+      return { session: makeRestoredSession(sessionPath) };
+    });
+    const coordinator = makeCoordinator({ agentsDir, ownerAgent, tempDir });
+    const first = coordinator.ensureSessionLoaded(sessionPath);
+    await entered.promise;
+    const second = peer === "switch" ? coordinator.switchSession(sessionPath)
+      : peer === "reload" ? coordinator.reloadSessionRuntime(sessionPath)
+        : coordinator.createSession(sessionManagerOpenMock(sessionPath), tempDir, true, null, { restore: true });
+    gate.resolve();
+    const [loaded, other] = await Promise.all([first, second]);
+    expect(createAgentSessionMock).toHaveBeenCalledTimes(1);
+    expect(peer === "direct" ? other.session : other).toBe(loaded);
+    expect(coordinator.getSessionByPath(sessionPath)).toBe(loaded);
+  });
+
+  it.each(["attach", "detached", "foreground"])("R06 keeps a newer focus while %s creation completes", async (entry) => {
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    createAgentSessionMock.mockImplementation(async () => {
+      entered.resolve();
+      await gate.promise;
+      return { session: makeRestoredSession(sessionPath) };
+    });
+    const coordinator = makeCoordinator({ agentsDir, ownerAgent, tempDir });
+    const oldPath = path.join(ownerSessionDir, "old.jsonl");
+    coordinator._session = makeRestoredSession(oldPath);
+    const newerPath = path.join(ownerSessionDir, "newer.jsonl");
+    const newer = makeRestoredSession(newerPath);
+    coordinator._sessions.set(newerPath, { session: newer, agentId: "owner" });
+    const pending = entry === "attach" ? coordinator.ensureSessionLoaded(sessionPath)
+      : entry === "foreground" ? coordinator.switchSession(sessionPath)
+        : coordinator.createDetachedSession({ sessionMgr: sessionManagerOpenMock(sessionPath),
+          agent: ownerAgent, model: { id: "restored-model", provider: "test" }, permissionMode: "read_only" });
+    await entered.promise;
+    await coordinator.switchSession(newerPath);
+    coordinator._pendingPermissionMode = "auto";
+    gate.resolve();
+    await pending;
+    expect(coordinator.currentSessionPath).toBe(newerPath);
+    expect(coordinator.session).toBe(newer);
+    expect(coordinator._pendingPermissionMode).toBe("auto");
+  });
+  it('R01 releases a partially initialized SDK owner after snapshot setup fails', async () => {
+    const coordinator = makeCoordinator({ agentsDir, ownerAgent, tempDir });
+    const broken = { ...makeRestoredSession(sessionPath), dispose: vi.fn() };
+    broken.setActiveToolsByName.mockImplementation(() => { throw new Error('snapshot setup failed'); });
+    createAgentSessionMock.mockResolvedValueOnce({ session: broken });
+    await expect(coordinator.ensureSessionLoaded(sessionPath)).rejects.toThrow('snapshot setup failed');
+    expect(broken.dispose).toHaveBeenCalled();
+    expect(coordinator.getSessionByPath(sessionPath)).toBeNull();
+    const fresh = makeRestoredSession(sessionPath);
+    createAgentSessionMock.mockResolvedValueOnce({ session: fresh });
+    expect(await coordinator.ensureSessionLoaded(sessionPath)).toBe(fresh);
+  });
+
+  it('R04 coordinator emits run completion only after actual SDK idle', async () => {
+    const { Agent } = await import('@earendil-works/pi-agent-core');
+    const actualAgent = new Agent();
+    const session = { ...makeRestoredSession(sessionPath), agent: actualAgent,
+      get isStreaming() { return actualAgent.state.isStreaming; },
+      subscribe: fn => actualAgent.subscribe(fn),
+    };
+    createAgentSessionMock.mockResolvedValueOnce({ session });
+    const coordinator = makeCoordinator({ agentsDir, ownerAgent, tempDir });
+    await coordinator.ensureSessionLoaded(sessionPath);
+    const held = (Promise as any).withResolvers();
+    actualAgent.subscribe(async event => { if (event.type === 'agent_end') await held.promise; });
+    const emit = (coordinator as any)._d.emitEvent;
+    const running = (actualAgent as any).runWithLifecycle(async () => {
+      await (actualAgent as any).processEvents({ type: 'turn_start' });
+      await (actualAgent as any).processEvents({ type: 'turn_end', toolResults: [] });
+      await (actualAgent as any).processEvents({ type: 'agent_end', messages: [] });
+    });
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent_end' }), sessionPath));
+    expect(emit.mock.calls.filter(([e]) => e.type === 'session_run_end')).toHaveLength(0);
+    held.resolve(); await running;
+    await vi.waitFor(() => expect(emit.mock.calls.filter(([e]) => e.type === 'session_run_end')).toHaveLength(1));
+    coordinator._notifySessionRunIdle(sessionPath, session);
+    expect(emit.mock.calls.filter(([e]) => e.type === 'session_run_end')).toHaveLength(1);
+  });
+});
+
+it('R05 coordinator stop cancels a desktop submission before loading completes', async () => {
+  const { submitDesktopSessionMessage } = await import('../core/desktop-session-submit.ts');
+  const loading = (Promise as any).withResolvers();
+  const engine = { ensureSessionLoaded: vi.fn(() => loading.promise), promptSession: vi.fn() };
+  const coordinator = new SessionCoordinator({ getEngine: () => engine } as any);
+  vi.spyOn(coordinator as any, '_cleanupAbortedSessionSidecars').mockImplementation(() => {});
+  const observed = submitDesktopSessionMessage(engine, { sessionPath: '/stopped.jsonl', text: 'old' }).catch(e => e);
+  const stopped = await coordinator.abortSession('/stopped.jsonl');
+  loading.resolve({});
+  expect(stopped).toBe(true);
+  expect(await observed).toMatchObject({ name: 'AbortError' });
+  expect(engine.promptSession).not.toHaveBeenCalled();
 });
