@@ -406,7 +406,7 @@ export function syncModels(providers, opts: Record<string, any> = {}) {
     if (!p.models || p.models.length === 0) continue;
     validateProviderModels(provider, p.models, { baseUrl: p.base_url });
 
-    let apiKey = credentialSource === "provider-catalog" ? (p.api_key || "") : "";
+    const apiKey = credentialSource === "provider-catalog" ? (p.api_key || "") : "";
     const hasLiteralApiKey = credentialSource === "provider-catalog"
       && typeof p.api_key === "string"
       && p.api_key.length > 0;

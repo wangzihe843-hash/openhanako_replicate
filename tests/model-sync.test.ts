@@ -8,7 +8,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import YAML from "js-yaml";
 
 // mock known-models 词典查询：provider + model 二级结构，未命中时再查通用 fallback
 const KNOWN_MODELS = {
@@ -314,12 +313,10 @@ vi.mock("../shared/known-models.js", () => ({
 
 const tmpDir = path.join(os.tmpdir(), "hana-test-model-sync-" + Date.now());
 let modelsJsonPath;
-let authJsonPath;
 
 beforeEach(() => {
   fs.mkdirSync(tmpDir, { recursive: true });
   modelsJsonPath = path.join(tmpDir, "models.json");
-  authJsonPath = path.join(tmpDir, "auth.json");
 });
 
 afterEach(() => {

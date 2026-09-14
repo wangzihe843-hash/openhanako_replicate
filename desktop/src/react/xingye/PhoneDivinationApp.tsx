@@ -94,6 +94,7 @@ function excerptReason(text: string, max = 160): string {
 
 export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBack }: PhoneDivinationAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
+  const resolverInputJson = JSON.stringify({ agent: ownerAgent, profile: ownerProfile ?? null });
   const ta = displayName || ownerAgent?.name || 'TA';
 
   const [ctxAgentLike, setCtxAgentLike] = useState<XingyeDivinationAgentLike | null>(null);
@@ -157,9 +158,10 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
       setCtxBusy(false);
       return;
     }
+    const { agent, profile } = JSON.parse(resolverInputJson) as { agent: Agent | null; profile: XingyeRoleProfile | null };
     let cancelled = false;
     setCtxBusy(true);
-    void buildDivinationResolverContext(ownerAgentId, ownerAgent, ownerProfile ?? null, {
+    void buildDivinationResolverContext(ownerAgentId, agent, profile, {
       divinationQuestion: debouncedThemeHint,
     }).then((built) => {
       if (cancelled) return;
@@ -173,7 +175,7 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
           profileOnlyNoEnabledLore: built.profileOnlyNoEnabledLore,
         });
       } else {
-        setCtxAgentLike({ name: ownerAgent?.name, yuan: ownerAgent?.yuan });
+        setCtxAgentLike({ name: agent?.name, yuan: agent?.yuan });
         setCtxHint({
           contextLength: 0,
           contextSources: ['(build_failed)'],
@@ -189,11 +191,7 @@ export function PhoneDivinationApp({ ownerAgent, ownerProfile, displayName, onBa
     };
   }, [
     ownerAgentId,
-    ownerAgent?.id,
-    ownerAgent?.name,
-    ownerAgent?.yuan,
-    ownerProfile?.updatedAt,
-    ownerProfile?.agentId,
+    resolverInputJson,
     debouncedThemeHint,
     loreRefreshTick,
   ]);

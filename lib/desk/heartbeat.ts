@@ -106,7 +106,7 @@ function markdownFenceFor(text) {
  *   所以这里在 false 时**既不出**「必须主动产出」hard directive、**也不出**软的草稿引导：工具都没有，
  *   提示它去 call 没有任何意义。默认 agent（没动过工具开关）这个值为 true，行为不变。
  */
-function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, agentName, isZh, patrolLog, activityDir, patrolLogPath, xingyeEventSummary, autoDraftStaleness, socialStaleness, proposeDraftAvailable = true, dmAvailable = true }) {
+function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, isZh, patrolLog, activityDir, patrolLogPath, xingyeEventSummary, autoDraftStaleness, socialStaleness, proposeDraftAvailable = true, dmAvailable = true }) {
   const now = new Date();
   const timeStr = now.toLocaleString(isZh ? "zh-CN" : "en-US", { hour12: false });
 
@@ -420,11 +420,10 @@ function createJianStatusTool({ jianPath, instructionSnapshot, isZh }) {
     }),
     execute: async (_toolCallId, params) => {
       const status = JIAN_STATUS_VALUES.includes(params?.status) ? params.status : "in_progress";
-      let currentRaw = "";
-      try {
-        currentRaw = fs.readFileSync(jianPath, "utf-8");
-      } catch {}
-      const { instructions } = splitJianContent(currentRaw || instructionSnapshot || "");
+      // A missing or unreadable Jian must not be recreated from the patrol snapshot.
+      // A successfully read empty body is also a current user edit.
+      const currentRaw = fs.readFileSync(jianPath, "utf-8");
+      const { instructions } = splitJianContent(currentRaw);
       const execLog = formatJianStatusBlock({
         snapshot: instructionSnapshot,
         status,
@@ -545,7 +544,6 @@ const PATROL_LOG_MAX_ENTRIES = 50;
 
 function isValidUtf8(buffer) {
   if (!buffer || buffer.length === 0) return true;
-  if (buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) return true;
   try {
     new TextDecoder("utf-8", { fatal: true }).decode(buffer);
     return true;
@@ -556,15 +554,13 @@ function isValidUtf8(buffer) {
 
 function decodeTextBuffer(buffer) {
   if (!buffer || buffer.length === 0) return "";
-  if (isValidUtf8(buffer)) {
-    const offset = buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF ? 3 : 0;
-    return new TextDecoder("utf-8").decode(buffer.subarray(offset));
+  const hasBom = buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF;
+  if (hasBom || isValidUtf8(buffer)) {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(hasBom ? 3 : 0));
   }
-  try {
-    return new TextDecoder("gbk").decode(buffer);
-  } catch {
-    return buffer.toString("utf-8");
-  }
+  // Preserve the per-line cp936 compatibility path, but never publish replacement
+  // characters over history whose bytes could not be decoded reliably.
+  return new TextDecoder("gbk", { fatal: true }).decode(buffer);
 }
 
 function decodePatrolLogBuffer(buffer) {
@@ -581,20 +577,37 @@ function decodePatrolLogBuffer(buffer) {
 }
 
 function readPatrolLogText(filePath) {
+  let buffer: Buffer;
   try {
-    return decodePatrolLogBuffer(fs.readFileSync(filePath));
-  } catch {
-    return "";
+    buffer = fs.readFileSync(filePath);
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+    // Confirm absence: a dangling symlink or a target that appeared after the
+    // failed read must not be treated as a brand-new empty log.
+    try {
+      fs.lstatSync(filePath);
+    } catch (statError) {
+      if (statError.code === "ENOENT") return "";
+      throw statError;
+    }
+    throw err;
   }
+  return decodePatrolLogBuffer(buffer);
 }
 
 /**
  * 读取并截断 patrol-log.md，保留最近 N 条
  * @param {string} filePath
- * @returns {string|null} 截断后的内容（null = 文件不存在或为空）
+ * @returns {string|null} 截断后的内容（null = 文件不存在、为空或读取失败）
  */
 function readAndTruncatePatrolLog(filePath) {
-  const raw = readPatrolLogText(filePath);
+  let raw: string;
+  try {
+    raw = readPatrolLogText(filePath);
+  } catch (err) {
+    log.warn(`Patrol log unavailable; skipping history preview: ${err.message}`);
+    return null;
+  }
   if (!raw.trim()) return null;
 
   const lines = raw.split("\n");
@@ -605,7 +618,9 @@ function readAndTruncatePatrolLog(filePath) {
     const kept = entries.slice(-PATROL_LOG_MAX_ENTRIES);
     try {
       atomicWriteSync(filePath, kept.join("\n") + "\n");
-    } catch {}
+    } catch (err) {
+      log.warn(`Patrol log truncation failed; using recent entries in memory: ${err.message}`);
+    }
     return kept.join("\n");
   }
   return entries.join("\n");
@@ -934,7 +949,6 @@ export function createHeartbeat({
           deskChanged,
           changedFiles,
           overwatch,
-          agentName,
           isZh,
           patrolLog,
           activityDir: relativeOutputDirs.activityDir,

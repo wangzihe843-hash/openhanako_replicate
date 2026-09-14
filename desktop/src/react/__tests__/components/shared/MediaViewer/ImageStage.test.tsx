@@ -124,4 +124,19 @@ describe('ImageStage', () => {
       expect((window as any).platform.getFileUrl).toHaveBeenCalledWith('/next.png');
     });
   });
+
+  it('preloads a changed neighbor version without reloading equal snapshots or non-image neighbors', async () => {
+    const previous: FileRef = { ...file, id: 'neighbor', path: '/neighbor.png', version: { mtimeMs: 1, size: 10 } };
+    const next: FileRef = { ...file, id: 'video', kind: 'video', path: '/video.mp4' };
+    const page = render(<ImageStage file={file} viewport={{ width: 800, height: 600 }} neighbors={{ prev: previous, next }} />);
+    await waitFor(() => expect(window.platform.getFileUrl).toHaveBeenCalledWith('/neighbor.png'));
+    const urls = vi.mocked(window.platform.getFileUrl!);
+    const initialCalls = urls.mock.calls.length;
+    page.rerender(<ImageStage file={file} viewport={{ width: 800, height: 600 }} neighbors={{ prev: { ...previous }, next: { ...next } }} />);
+    expect(urls.mock.calls.length).toBe(initialCalls);
+    page.rerender(<ImageStage file={file} viewport={{ width: 800, height: 600 }} neighbors={{ prev: { ...previous, version: { mtimeMs: 2, size: 10 } }, next }} />);
+    await waitFor(() => expect(urls.mock.calls.filter(([path]) => path === '/neighbor.png')).toHaveLength(2));
+    expect(urls).not.toHaveBeenCalledWith('/video.mp4');
+  });
+
 });

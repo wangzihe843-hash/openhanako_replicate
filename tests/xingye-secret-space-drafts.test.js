@@ -35,7 +35,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  try { fs.rmSync(tempRoot, { recursive: true, force: true }); } catch {}
+  fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 describe("SECRET_SPACE_DRAFT_ALLOWED_CATEGORIES", () => {

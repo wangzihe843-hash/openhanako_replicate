@@ -13,7 +13,6 @@ import { ChatResourceCard } from './ChatResourceCard';
 import type { ChatResourceCardStatusTone } from './ChatResourceCard';
 import styles from './Chat.module.css';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 interface SubagentCardProps {
   block: {

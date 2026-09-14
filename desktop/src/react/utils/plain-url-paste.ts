@@ -24,7 +24,7 @@ function firstUriListUrl(uriList: string): string | null {
   return null;
 }
 
-function singleRichLinkUrl(html: string, plainText: string): string | null {
+function singleRichLinkUrl(html: string): string | null {
   if (!html.trim() || typeof DOMParser === 'undefined') return null;
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const anchors = Array.from(doc.querySelectorAll<HTMLAnchorElement>('a[href]'))
@@ -54,5 +54,5 @@ export function extractPlainUrlPaste(clipboardData: Pick<DataTransfer, 'getData'
   const uriListUrl = firstUriListUrl(clipboardData.getData('text/uri-list') || '');
   if (uriListUrl) return uriListUrl;
 
-  return singleRichLinkUrl(clipboardData.getData('text/html') || '', plainText);
+  return singleRichLinkUrl(clipboardData.getData('text/html') || '');
 }

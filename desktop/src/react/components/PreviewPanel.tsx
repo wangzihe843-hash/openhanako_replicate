@@ -1,4 +1,4 @@
-import { resolveServerConnection } from '../services/server-connection';
+import { resolveServerConnection, type ServerConnection } from '../services/server-connection';
 /**
  * PreviewPanel — PreviewItem 预览/编辑面板
  *
@@ -151,7 +151,7 @@ export function PreviewPanel() {
   );
   const readingPosition = previewItem ? previewReadingPositions[previewItem.id] || null : null;
   const connectionKey = useStore(state => JSON.stringify(resolveServerConnection(state)));
-  const previewConnection = useMemo(() => resolveServerConnection(useStore.getState()), [connectionKey]);
+  const previewConnection = useMemo(() => JSON.parse(connectionKey) as ServerConnection | null, [connectionKey]);
   const saveDocument = useMemo(() => {
     const remoteRef = previewItem?.remoteContentRef;
     if (!isRemoteWorkbenchContentRef(remoteRef)) return undefined;
@@ -336,7 +336,8 @@ export function PreviewPanel() {
   }, [findQuery, activeTabId, editable]);
 
   useEffect(() => {
-    clearFindMarks(previewBodyRef.current, 'preview-find-mark');
+    const body = previewBodyRef.current;
+    clearFindMarks(body, 'preview-find-mark');
     previewFindMarksRef.current = [];
     if (!findOpen || !findQuery || !previewItem) {
       setFindCount(0);
@@ -349,11 +350,11 @@ export function PreviewPanel() {
       if (match) editorRef.current?.scrollToOffset(match.from, match.to, { focus: false });
       return undefined;
     }
-    const marks = applyFindMarks(previewBodyRef.current, [findQuery], 'preview-find-mark');
+    const marks = applyFindMarks(body, [findQuery], 'preview-find-mark');
     previewFindMarksRef.current = marks;
     setFindCount(marks.length);
     return () => {
-      clearFindMarks(previewBodyRef.current, 'preview-find-mark');
+      clearFindMarks(body, 'preview-find-mark');
       previewFindMarksRef.current = [];
     };
   }, [activeTabId, editable, findIndex, findOpen, findQuery, previewItem]);

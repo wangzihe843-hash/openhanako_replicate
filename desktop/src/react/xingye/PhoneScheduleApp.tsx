@@ -150,7 +150,7 @@ function emptyDraft(dateLabel: string) {
   };
 }
 
-export function PhoneScheduleApp({ ownerAgent, ownerProfile, displayName, onBack }: PhoneScheduleAppProps) {
+export function PhoneScheduleApp({ ownerAgent, ownerProfile, onBack }: PhoneScheduleAppProps) {
   const ownerAgentId = ownerAgent?.id ?? '';
   const [entries, setEntries] = useState<XingyeScheduleEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);

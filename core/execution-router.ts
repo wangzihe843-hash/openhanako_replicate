@@ -20,12 +20,6 @@ import { t } from "../lib/i18n.ts";
 import { isLocalBaseUrl } from "../shared/net-utils.ts";
 import { composeResolvedModelExecution } from "./model-execution-config.ts";
 
-// 角色名称 -> preferences 字段名（SHARED_MODEL_KEYS 兼容）
-const ROLE_TO_PREF_KEY = {
-  utility: "utility_model",
-  utility_large: "utility_large_model",
-};
-
 function withCredentialMetadata(model: any, cred: any) {
   const stripsModelCredentials = cred?.credentialSource === "auth-storage"
     || cred?.credentialSource === "explicit-utility-override";

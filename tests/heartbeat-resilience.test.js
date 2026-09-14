@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { createHeartbeat } from "../lib/desk/heartbeat.js";
 
 // 回归 #3：_doBeat catch 分支会做 `err.xingyeConsumed = xingyeConsumed` 的属性挂载，

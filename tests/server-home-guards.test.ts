@@ -59,8 +59,6 @@ async function waitForStartupProgress(child: ReturnType<typeof spawn>, marker = 
   child.stderr?.on("data", (chunk) => { stderr += chunk; });
 
   await new Promise<void>((resolve) => {
-    let check: ReturnType<typeof setInterval>;
-    let timeout: ReturnType<typeof setTimeout>;
     let settled = false;
     const finish = () => {
       if (settled) return;
@@ -69,10 +67,10 @@ async function waitForStartupProgress(child: ReturnType<typeof spawn>, marker = 
       clearTimeout(timeout);
       resolve();
     };
-    check = setInterval(() => {
+    const check = setInterval(() => {
       if (stdout.includes(marker)) finish();
     }, 50);
-    timeout = setTimeout(finish, timeoutMs);
+    const timeout = setTimeout(finish, timeoutMs);
     void childClosed.then(finish);
   });
 
@@ -464,8 +462,6 @@ describe("server home guards — real spawn behavior (fast failure paths, before
       child.stderr?.on("data", (chunk) => { stderr += chunk; });
 
       await new Promise<void>((resolve) => {
-        let check: ReturnType<typeof setInterval>;
-        let timeout: ReturnType<typeof setTimeout>;
         let settled = false;
         const finish = () => {
           if (settled) return;
@@ -474,7 +470,7 @@ describe("server home guards — real spawn behavior (fast failure paths, before
           clearTimeout(timeout);
           resolve();
         };
-        check = setInterval(() => {
+        const check = setInterval(() => {
           if (stdout.includes("ensureFirstRun")) {
             finish();
           }
@@ -484,7 +480,7 @@ describe("server home guards — real spawn behavior (fast failure paths, before
         // ensureFirstRun can take noticeably longer than in an isolated
         // run. This only affects how long the test waits before asserting
         // — it does not affect gate latency in production.
-        timeout = setTimeout(finish, 25000);
+        const timeout = setTimeout(finish, 25000);
         void childClosed.then(finish);
       });
 

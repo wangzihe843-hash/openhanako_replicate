@@ -103,7 +103,7 @@ export function AutomationPanel() {
     }
   }, []);
 
-  const { visible, close } = usePanel('automation', loadData, [currentAgentId]);
+  const { visible, close } = usePanel('automation', loadData, currentAgentId);
 
   const toggleJob = useCallback(async (jobId: string) => {
     await hanaFetch('/api/desk/cron', {

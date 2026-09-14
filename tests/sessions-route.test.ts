@@ -118,7 +118,7 @@ describe("sessions route", () => {
       switchSession: vi.fn(async (sessionPath) => {
         engine.currentSessionPath = sessionPath;
       }),
-      getSessionByPath: vi.fn((sp) => ({
+      getSessionByPath: vi.fn(() => ({
         messages: [{ role: "assistant", content: "ok" }],
       })),
       getSessionMemoryEnabled: vi.fn(() => false),

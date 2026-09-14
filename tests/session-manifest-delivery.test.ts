@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { SessionCoordinator } from "../core/session-coordinator.ts";
 import { EnvChangeLedger } from "../core/env-change-ledger.ts";
 import { REFERENCE_BLOCK_PREFIX } from "../core/session-reminders.ts";

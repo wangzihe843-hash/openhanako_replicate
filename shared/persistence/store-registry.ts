@@ -243,7 +243,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     },
     identityContract: "At most one current server discovery record per HANA_HOME.",
     siteRules: [
-      ...rules(["server/index.ts"], "Writes or deletes live server discovery state.", ["write-file", "remove-path"], "serverInfoPath|server-info[.]json"),
+      ...rules(["server/index.ts"], "Writes or deletes live server discovery state.", ["secret-write", "remove-path"], "serverInfoPath|server-info[.]json"),
       ...rules(["desktop/main.cjs"], "Deletes stale desktop server discovery state before or after a server lifecycle.", ["remove-path"], "server-info[.]json|serverInfoPath"),
     ],
   }),

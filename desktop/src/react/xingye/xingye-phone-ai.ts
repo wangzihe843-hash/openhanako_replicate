@@ -39,7 +39,6 @@ import {
   type XingyeAiContactUpdate,
   type XingyeAiGeneratedContact,
   type XingyeContactChangeLogItem,
-  type XingyeContactGenerationMode,
   type XingyeContactUpdateMode,
   type XingyeContactTargetType,
   type XingyePhoneContactView,

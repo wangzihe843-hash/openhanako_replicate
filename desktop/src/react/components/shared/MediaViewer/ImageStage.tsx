@@ -35,6 +35,9 @@ export function ImageStage({ file, viewport, neighbors, zoomCmd, onReady, onErro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file.id, fileVersionToken]);
 
+  const previousNeighborSnapshot = neighbors?.prev ? JSON.stringify(neighbors.prev) : null;
+  const nextNeighborSnapshot = neighbors?.next ? JSON.stringify(neighbors.next) : null;
+
   // 邻近预加载（触发浏览器缓存）
   // 仅对 image/svg 预加载：loadMediaSource 只支持这两类，其他 kind 会抛 "unsupported media kind"。
   useEffect(() => {
@@ -46,16 +49,9 @@ export function ImageStage({ file, viewport, neighbors, zoomCmd, onReady, onErro
         img.src = s.url;
       } catch { /* ignore */ }
     };
-    preload(neighbors?.prev);
-    preload(neighbors?.next);
-    // 依赖稳定 id + version；邻居切换或覆盖更新时才需要重新预加载。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    neighbors?.prev?.id,
-    neighbors?.prev ? fileRefVersionToken(neighbors.prev) : null,
-    neighbors?.next?.id,
-    neighbors?.next ? fileRefVersionToken(neighbors.next) : null,
-  ]);
+    preload(previousNeighborSnapshot ? JSON.parse(previousNeighborSnapshot) as FileRef : undefined);
+    preload(nextNeighborSnapshot ? JSON.parse(nextNeighborSnapshot) as FileRef : undefined);
+  }, [previousNeighborSnapshot, nextNeighborSnapshot]);
 
   const transformApi = useMediaTransform({
     natural,

@@ -35,7 +35,7 @@ export type ParsedDivinationReading = {
   lead?: string;
 };
 
-const HEADER_RE = /^[【\[]\s*(.+?)\s*[:：]?\s*[】\]]\s*[:：]?\s*$/;
+const HEADER_RE = /^[【[]\s*(.+?)\s*[:：]?\s*[】\]]\s*[:：]?\s*$/;
 
 const TITLE_KEYS = new Set(['标题', 'title']);
 const SIGN_KEYS = new Set(['卦象', '牌面', '签象', '行动签象', 'sign']);

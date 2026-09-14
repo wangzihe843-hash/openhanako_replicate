@@ -1,3 +1,4 @@
+import { usePhoneStorageSnapshot } from './use-phone-storage-snapshot';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../stores';
 import type { Agent, Channel } from '../types';
@@ -40,7 +41,6 @@ import {
   shouldAutoSkipVirtualContactGeneration,
   unlinkVirtualContactFromAgent,
   type XingyePhoneContactView,
-  useXingyePhoneStorageVersion,
 } from './xingye-phone-store';
 import { collectRecentContextForAgent } from './xingye-recent-context';
 import {
@@ -82,24 +82,24 @@ function PhoneContactsAppContent({
   onOpenSms,
   onOpenGroupChatTab,
 }: PhoneContactsAppProps) {
-  const _phoneStorageVersion = useXingyePhoneStorageVersion();
+  const { storage: phoneStorage, version: phoneStorageVersion, ready: phoneStorageReady } = usePhoneStorageSnapshot(ownerAgent?.id ?? '');
   const ownerAgentId = ownerAgent?.id ?? '';
   const ownerProfile = useXingyeRoleProfile(ownerAgentId);
   const userName = useStore(state => state.userName);
   const profileFingerprint = getPhoneProfileFingerprint(ownerAgent, ownerProfile);
-  const agentIdsKey = useMemo(() => agents.map(a => a.id).sort().join(','), [agents]);
+  const sortedAgentIds = useMemo(() => agents.map(a => a.id).sort(), [agents]);
   const contactGenInputHash = useMemo(
-    () => computePhoneContactGenerationInputHash(profileFingerprint, agents.map(a => a.id).sort()),
-    [profileFingerprint, agentIdsKey],
+    () => computePhoneContactGenerationInputHash(profileFingerprint, sortedAgentIds),
+    [profileFingerprint, sortedAgentIds],
   );
   const contacts = useMemo(
-    () => getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }),
-    [ownerAgentId, agents, profiles, _phoneStorageVersion],
+    () => getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true, readOnly: true }, phoneStorage),
+    [ownerAgentId, agents, profiles, phoneStorage],
   );
   // 「新的朋友」待确认队列；contacts 默认不含这些条目，数量单独取用于入口角标。
   const pendingNewFriendCount = useMemo(
-    () => getPendingNewContacts(ownerAgentId, agents, profiles).length,
-    [ownerAgentId, agents, profiles, _phoneStorageVersion],
+    () => getPendingNewContacts(ownerAgentId, agents, profiles, phoneStorage, { readOnly: true }).length,
+    [ownerAgentId, agents, profiles, phoneStorage],
   );
   // 仅用于 UI 提示「点击更新会读到多少条最近聊天」；与真实 AI 调用同一个 helper，
   // 避免提示与实际 prompt 内容脱节。
@@ -164,7 +164,7 @@ function PhoneContactsAppContent({
     if (listView === 'home' && !selectedContact) {
       void reloadPhoneContactDrafts();
     }
-  }, [listView, selectedContact, reloadPhoneContactDrafts, _phoneStorageVersion]);
+  }, [listView, selectedContact, reloadPhoneContactDrafts, phoneStorageVersion]);
 
   const handleConfirmPhoneContactDraft = async (draftId: string) => {
     if (!ownerAgentId || draftActionBusy.current) return;
@@ -286,6 +286,7 @@ function PhoneContactsAppContent({
 
   const maybeRunSmsIncrementalAfterContactChange = () => {
     if (!ownerAgent) return;
+    // This follows a synchronous mutation; the render snapshot still contains the old contact.
     const fresh = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true });
     void generateSmsUpdatesForChangedContactsWithAI({
       ownerAgent,
@@ -340,13 +341,13 @@ function PhoneContactsAppContent({
     } as const)[listView];
 
   useEffect(() => {
-    if (!ownerAgentId || !ownerAgent) return;
+    if (!ownerAgentId || !ownerAgent || !phoneStorageReady) return;
     if (virtualContacts.length > 0) return;
     // virtualContacts 来自默认过滤后的视图（不含待确认条目）；用原始实体表再守一道，
     // 避免「全部还在新的朋友里待确认」时被误判为空通讯录而重跑初始化。
     if (getVirtualContacts(ownerAgentId).length > 0) return;
     if (shouldAutoSkipVirtualContactGeneration(ownerAgentId, profileFingerprint, contactGenInputHash)) return;
-    const contactsNow = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true });
+    const contactsNow = getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true, readOnly: true }, phoneStorage);
     let cancelled = false;
     void generateVirtualContactsWithAI({
       ownerAgent,
@@ -370,7 +371,7 @@ function PhoneContactsAppContent({
     return () => {
       cancelled = true;
     };
-  }, [ownerAgentId, ownerAgent, ownerProfile, virtualContacts.length, profileFingerprint, contactGenInputHash, agentIdsKey, _phoneStorageVersion, agents, profiles]);
+  }, [ownerAgentId, ownerAgent, ownerProfile, virtualContacts.length, profileFingerprint, contactGenInputHash, phoneStorage, phoneStorageVersion, phoneStorageReady, agents, profiles]);
 
   const openContact = (contact: XingyePhoneContactView) => {
     setSelectedContactKey(`${contact.targetType}:${contact.targetId}`);

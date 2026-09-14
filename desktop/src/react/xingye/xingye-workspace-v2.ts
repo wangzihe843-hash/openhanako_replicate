@@ -12,7 +12,7 @@ const WORKSPACE_V2_DISABLED_ERROR = 'workspace v2 storage is disabled; use agent
  * Typed as `boolean` (not `false` const) so the implementation body is not collapsed
  * to unreachable `never` by control-flow analysis.
  */
-let workspaceV2LegacyImplReachable: boolean = false;
+const workspaceV2LegacyImplReachable: boolean = false;
 
 function throwIfWorkspaceV2Disabled(): void {
   if (!workspaceV2LegacyImplReachable) {

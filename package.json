@@ -60,6 +60,7 @@
     "export:open": "node scripts/export-open-tree.mjs",
     "rehearse:open": "node scripts/rehearse-open-export.mjs",
     "lint": "eslint .",
+    "lint:warnings": "node scripts/lint-warning-ratchet.mjs",
     "lint:boundary": "node scripts/lint-open-boundary.mjs",
     "test:watch": "vitest --exclude '**/.claude/**' --exclude '**/.cache/**' --exclude '**/dist/**' --exclude '**/dist-server/**' --exclude '**/dist-computer-use/**' --exclude '**/dist-sandbox/**'",
     "postinstall": "node scripts/patch-pi-sdk.cjs"

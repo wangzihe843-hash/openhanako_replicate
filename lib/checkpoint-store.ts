@@ -1,4 +1,5 @@
 import fs from "fs";
+import { reportNonfatalError } from "./nonfatal-error.ts";
 import path from "path";
 import { randomBytes } from "crypto";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
@@ -27,8 +28,9 @@ export class CheckpointStore {
     let stat;
     try {
       stat = fs.statSync(filePath);
-    } catch {
-      return null;
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
     }
 
     if (stat.size > maxSizeKb * 1024) return null;
@@ -109,7 +111,9 @@ export class CheckpointStore {
     const filePath = path.join(this._dir, `${id}.json`);
     try {
       fs.unlinkSync(filePath);
-    } catch {}
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
   }
 
   async cleanup(retentionDays: number) {
@@ -127,7 +131,9 @@ export class CheckpointStore {
       if (!isNaN(ts) && ts < cutoff) {
         try {
           fs.unlinkSync(path.join(this._dir, name));
-        } catch {}
+        } catch (error) {
+          if (error.code !== "ENOENT") reportNonfatalError(`expired checkpoint cleanup failed (${name})`, error);
+        }
       }
     }
   }

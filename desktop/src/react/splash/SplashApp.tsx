@@ -79,7 +79,9 @@ export function SplashApp() {
         const visual = getYuanVisual(yuan);
         setSymbol(visual.symbol);
         setAccentColor(visual.accent);
-      } catch {}
+      } catch {
+        // Optional host identity is unavailable; continue with the initialized name/locale/theme.
+      }
 
       // 安装模式：固定文案，不进轮播（壳更新场景，走 electron-updater 安装）
       if (mode === 'installing') {

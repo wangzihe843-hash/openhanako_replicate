@@ -11,13 +11,13 @@ import { stripSessionReminderBlocks } from "../core/session-reminders.ts";
 // ── helpers: register handlers inline (mirrors _setupSessionHandlers logic) ──
 
 vi.mock("../core/message-utils.js", () => ({
-  extractTextContent: (content, opts: any = {}) => {
+  extractTextContent: (content) => {
     if (typeof content === "string") return { text: content, thinking: "", toolUses: [], images: [] };
     if (!Array.isArray(content)) return { text: "", thinking: "", toolUses: [], images: [] };
     const text = content.filter(b => b.type === "text").map(b => b.text).join("");
     return { text, thinking: "", toolUses: [], images: [] };
   },
-  loadSessionHistoryMessages: vi.fn(async (engine, sessionPath) => {
+  loadSessionHistoryMessages: vi.fn(async (engine) => {
     return engine._fakeMessages || [];
   }),
   isValidSessionPath: vi.fn((sessionPath, agentsDir) => {

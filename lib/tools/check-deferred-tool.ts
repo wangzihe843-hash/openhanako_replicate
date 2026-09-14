@@ -16,7 +16,7 @@ import { t } from "../i18n.ts";
  *   getSessionPath: () => string | null,
  * }} opts
  */
-export function createCheckDeferredTool({ getDeferredStore, getSessionPath }) {
+export function createCheckDeferredTool({ getDeferredStore, getSessionPath: _getSessionPath }) {
   return {
     name: "check_pending_tasks",
     label: "Check Pending Tasks",

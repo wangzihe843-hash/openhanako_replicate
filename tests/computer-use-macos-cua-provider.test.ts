@@ -671,7 +671,7 @@ describe("macos Cua provider", () => {
   });
 
   it("passes Hana cursor runtime config to each bundled helper process", async () => {
-    const { runner, calls } = makeRunner((_command, args) => {
+    const { runner, calls } = makeRunner(() => {
       return rawResult({ ok: true });
     });
     const provider = createMacosCuaProvider({

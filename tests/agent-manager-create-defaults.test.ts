@@ -152,7 +152,7 @@ describe("AgentManager.createAgent default skills.enabled", () => {
   });
 
   afterEach(() => {
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+    fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it("writes snapshot of installed user skills to new agent config.yaml", async () => {

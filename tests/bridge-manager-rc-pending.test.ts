@@ -155,7 +155,7 @@ describe("BridgeManager RC pending-selection interception", () => {
     // pending 按 sessionKey 隔离，但非 owner 在同一 sessionKey 打数字时不应触发
     // （guest 模式 sessionKey 不同，owner 模式 sessionKey 一致但 isOwner=false 不应被当作选择）
     // 此测试用"DM from 非 owner userId" 模拟——实际这种 key 不会出现，但防御性确认逻辑
-    const { bm, hub, adapter, engine, rcState } = createMocks();
+    const { bm, engine, rcState } = createMocks();
     primeRcPending({
       rcState,
       engine,

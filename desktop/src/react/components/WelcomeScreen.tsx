@@ -29,7 +29,6 @@ import { isSameWorkspacePath, resolveAgentWorkspace } from '../utils/agent-works
 import styles from './Welcome.module.css';
 import { buildWorkspacePickerItems, normalizeWorkspacePath } from '../../../../shared/workspace-history.ts';
 
-/* eslint-disable @typescript-eslint/no-explicit-any -- store setState 回调 (s: any) */
 
 export function refreshAvatarTs() { refreshAgentAvatarVersion(); }
 

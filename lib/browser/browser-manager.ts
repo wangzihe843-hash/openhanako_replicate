@@ -23,7 +23,6 @@
  * 给交互元素注入 data-hana-ref 属性。
  */
 import crypto from "crypto";
-import os from "os";
 import path from "path";
 import fs from "fs";
 import { atomicWriteSync } from "../../shared/safe-fs.ts";

@@ -1,3 +1,4 @@
+import { useI18n } from '../../hooks/use-i18n';
 import { memo, useCallback, useMemo } from 'react';
 import type { ChatListItem, ChatMessage } from '../../stores/chat-types';
 import { UserMessage } from './UserMessage';
@@ -44,7 +45,7 @@ export const ChatTranscript = memo(function ChatTranscript({
   const selectedIds = useStore(s => selectSelectedIdsBySession(s, sessionPath));
   const userAvatarUrl = useStore(s => s.userAvatarUrl);
   const storeUserName = useStore(s => s.userName);
-  const t = window.t ?? ((p: string) => p);
+  const { t } = useI18n();
   const agentDisplay = useMemo<AgentDisplayInfo & { yuan: string }>(() => {
     const info = resolveAgentDisplayInfo({
       id: agentId || null,

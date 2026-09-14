@@ -3,7 +3,6 @@ import { sessionScopedValue } from '../stores/session-slice';
 import type { ContentBlock } from '../stores/chat-types';
 
 function textFromHtml(html: string): string {
-  // eslint-disable-next-line no-restricted-syntax
   const tmp = document.createElement('div');
   tmp.innerHTML = html;
   return (tmp.innerText ?? tmp.textContent ?? '').trim();

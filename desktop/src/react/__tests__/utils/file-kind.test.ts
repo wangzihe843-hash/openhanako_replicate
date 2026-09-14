@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inferKindByExt, isMediaKind, EXT_TO_KIND, buildFileRefId, kindOfFileName, isAudioFileName } from '../../utils/file-kind';
+import { inferKindByExt, isMediaKind, buildFileRefId, kindOfFileName, isAudioFileName } from '../../utils/file-kind';
 
 describe('inferKindByExt', () => {
   it.each([

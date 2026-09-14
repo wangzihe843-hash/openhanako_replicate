@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { EventBus } from "../hub/event-bus.ts";
 
 describe("plugin route → session bus integration", () => {
@@ -8,7 +8,7 @@ describe("plugin route → session bus integration", () => {
     bus = new EventBus();
 
     // Register a mock session:send handler that simulates agent behavior
-    bus.handle("session:send", async ({ text, sessionPath }) => {
+    bus.handle("session:send", async ({ sessionPath }) => {
       const sp = sessionPath || "/default.jsonl";
       // Simulate async events (like the real engine would emit)
       setTimeout(() => {

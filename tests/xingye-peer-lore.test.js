@@ -15,7 +15,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  try { fs.rmSync(hanakoHome, { recursive: true, force: true }); } catch {}
+  fs.rmSync(hanakoHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 /** 写 keyword 类 lore 条目到 agentDir/xingye/lore/entries.json（对象 map 形态）。 */

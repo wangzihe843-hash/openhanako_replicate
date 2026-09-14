@@ -1,3 +1,4 @@
+import { createPluginToolContext } from './helpers/plugin-tool-context.ts';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createMediaDetails,
@@ -55,7 +56,7 @@ describe('plugin runtime SDK', () => {
       description: 'Search things',
       parameters: { type: 'object', properties: {} },
     });
-    await expect(tool.execute({ query: 'hana' }, {} as any)).resolves.toBe('search:hana');
+    await expect(tool.execute({ query: 'hana' }, createPluginToolContext())).resolves.toBe('search:hana');
   });
 
   it('preserves tool sessionPermission metadata for host approval policy', async () => {
@@ -81,7 +82,7 @@ describe('plugin runtime SDK', () => {
       kind: 'session_file_output',
       ruleId: 'plugin-output-session-file',
     });
-    await expect(tool.execute({}, {} as any)).resolves.toBe('ok');
+    await expect(tool.execute({}, createPluginToolContext())).resolves.toBe('ok');
   });
 
   it('defines commands with stable slash fields', async () => {
@@ -102,7 +103,7 @@ describe('plugin runtime SDK', () => {
       permission: 'anyone',
       scope: 'session',
     });
-    await expect(command.handler?.({} as any)).resolves.toEqual({ reply: 'pong' });
+    await expect(command.handler?.({})).resolves.toEqual({ reply: 'pong' });
   });
 
   it('defines providers without altering provider metadata', () => {
@@ -513,7 +514,8 @@ describe('plugin runtime SDK', () => {
       entries: [{ requestId: 'req-1', schemaVersion: 1 }],
       nextCursor: null,
     }));
-    const subscribe = vi.fn((callback: (event: unknown, sessionPath?: string | null) => void, filter?: unknown) => {
+    // Match the subscription API even though this fixture emits a single fixed event.
+    const subscribe = vi.fn((callback: (event: unknown, sessionPath?: string | null) => void, _filter?: unknown) => {
       callback({
         type: 'llm_usage',
         entry: {

@@ -13,9 +13,7 @@ const tmpHomesToCleanup = [];
 afterEach(() => {
   while (tmpHomesToCleanup.length > 0) {
     const dir = tmpHomesToCleanup.pop();
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch {}
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 

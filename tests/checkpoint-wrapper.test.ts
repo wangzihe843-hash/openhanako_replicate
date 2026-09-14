@@ -126,6 +126,7 @@ describe("wrapWithCheckpoint", () => {
     });
 
     const result = await wrapped.execute("t6", { path: "src/foo.js" });
+    expect(result.details.checkpointWarning.status).toBe("failed");
     expect(writeTool.execute).toHaveBeenCalled();
   });
 });

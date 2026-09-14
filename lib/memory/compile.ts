@@ -17,7 +17,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import { DAY_BOUNDARY_HOUR, getLogicalDay, getLogicalDayForDate, shiftLogicalDate } from "../time-utils.ts";
+import { DAY_BOUNDARY_HOUR, getLogicalDay, shiftLogicalDate } from "../time-utils.ts";
 import { callText } from "../../core/llm-client.ts";
 import { callTextConfigFromResolvedModel } from "../../core/model-execution-config.ts";
 import { getLocale } from "../i18n.ts";
@@ -430,7 +430,7 @@ export async function compileDaily(summaryManager, dailyDir, logicalDate, resolv
     if (legacyEvents.length === 0) {
       // 零占位：当天确实没有草稿也没有摘要，不落文件；同时清掉可能存在的旧指纹，
       // 避免之后补齐时被过期指纹挡住（理由同 compileToday 的空 sessions 分支）。
-      try { fs.unlinkSync(fpPath); } catch {}
+      try { fs.unlinkSync(fpPath); } catch (error) { if (error.code !== "ENOENT") throw error; }
       return "skipped";
     }
     log.warn(`compileDaily: ${logicalDate} 的今日草稿不可用，回落到按当天 session 摘要编译`);
@@ -441,7 +441,7 @@ export async function compileDaily(summaryManager, dailyDir, logicalDate, resolv
   const fp = computeFingerprint(fpKeys);
   try {
     if (fs.readFileSync(fpPath, "utf-8").trim() === fp && fs.existsSync(outputPath)) return "skipped";
-  } catch {}
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
 
   const promptSpec = buildCompileDailyPrompt(getLocale());
   const result = await _compactLLM(
@@ -658,9 +658,15 @@ export async function compileLongterm(content, longtermPath, resolvedModel) {
   const fpPath = longtermPath + ".fingerprint";
   try {
     if (fs.readFileSync(fpPath, "utf-8").trim() === fp && fs.existsSync(longtermPath)) return "skipped";
-  } catch {}
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
 
-  const prevLongterm = safeReadFile(longtermPath, "").trim();
+  // Read failures must not replace existing memory with only the newest input.
+  let prevLongterm = "";
+  try {
+    prevLongterm = fs.readFileSync(longtermPath, "utf-8").trim();
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
 
   const isZh = _isZh();
   const input = prevLongterm
@@ -703,7 +709,7 @@ export async function migrateLegacyWeekToLongterm(memoryDir, longtermPath, resol
   const weekPath = path.join(memoryDir, "week.md");
   if (!fs.existsSync(weekPath)) return { migrated: false };
 
-  const weekContent = safeReadFile(weekPath, "").trim();
+  const weekContent = fs.readFileSync(weekPath, "utf-8").trim();
   if (weekContent) {
     await compileLongterm(weekContent, longtermPath, resolvedModel);
   }

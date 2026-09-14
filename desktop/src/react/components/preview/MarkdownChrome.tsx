@@ -31,13 +31,6 @@ function normalizePath(value: string): string {
   return value.replace(/\\/g, '/').replace(/\/+$/g, '');
 }
 
-function dirnamePortable(value: string): string {
-  const normalized = normalizePath(value);
-  const slash = normalized.lastIndexOf('/');
-  if (slash < 0) return '';
-  if (slash === 0) return '/';
-  return normalized.slice(0, slash);
-}
 
 function joinPath(root: string, subdir: string, name: string): string {
   return [normalizePath(root), subdir.replace(/^\/+|\/+$/g, ''), name]

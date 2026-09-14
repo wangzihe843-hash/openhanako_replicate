@@ -82,6 +82,7 @@ const ATOMIC_HELPERS = new Set([
 // guard test can tell a credential write apart from an ordinary one.
 const SECRET_HELPERS = new Set([
   "writeSecretFileSync",
+  "writeSecretFileStrictSync",
   "writeSecretJson",
 ]);
 const PERSISTENT_CONSTRUCTORS = new Set([

@@ -8,6 +8,9 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import crypto from "crypto";
+import { createModuleLogger } from "../debug-log.ts";
+
+const log = createModuleLogger("sandbox/script");
 
 const PREFIX = ".hana-sandbox-";
 
@@ -38,10 +41,12 @@ export function writeProfile(profileContent) {
 }
 
 /**
- * 清理临时文件（静默忽略错误）
+ * 清理临时文件；已删除文件视为成功，其余错误记录但不遮蔽执行结果
  */
 export function cleanup(...paths) {
   for (const p of paths) {
-    try { fs.unlinkSync(p); } catch {}
+    try { fs.unlinkSync(p); } catch (error) {
+      if (error.code !== "ENOENT") log.warn(`Sandbox temporary file cleanup failed: ${p}: ${error.message}`);
+    }
   }
 }

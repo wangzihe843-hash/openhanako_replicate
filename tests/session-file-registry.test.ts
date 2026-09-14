@@ -585,7 +585,7 @@ describe("SessionFileRegistry", () => {
     expect(registry.list(sessionPath).map(file => file.id)).toEqual([kept.id, hidden.id]);
     expect(registry.listReachable(sessionPath, [{
       type: "message",
-      message: { role: "assistant", content: `created [SessionFile] {\"fileId\":\"${kept.id}\"}` },
+      message: { role: "assistant", content: `created [SessionFile] {"fileId":"${kept.id}"}` },
     }])).toEqual([expect.objectContaining({ id: kept.id })]);
     expect(registry.listReachable(sessionPath, [])).toEqual([]);
   });

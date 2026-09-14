@@ -17,6 +17,7 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
+import type { XingyePhoneContactView } from './xingye-phone-store';
 
 const contactDraftsMock = vi.hoisted(() => ({
   confirmPhoneContactDraft: vi.fn(),
@@ -30,7 +31,7 @@ const phoneStoreMock = vi.hoisted(() => ({
   getContactAiUpdateState: vi.fn(() => null),
   getPendingNewContacts: vi.fn(() => []),
   getPhoneContactGenerationState: vi.fn(() => null),
-  getPhoneContacts: vi.fn(() => []),
+  getPhoneContacts: vi.fn<typeof import('./xingye-phone-store').getPhoneContacts>(() => []),
   getVirtualContacts: vi.fn(() => []),
   getPhoneAiGenerationState: vi.fn(() => null),
   getPhoneProfileFingerprint: vi.fn(() => 'fp-1'),
@@ -69,7 +70,13 @@ const storesMock = vi.hoisted(() => ({
 }));
 
 vi.mock('./xingye-phone-contact-drafts', () => contactDraftsMock);
-vi.mock('./xingye-phone-store', () => phoneStoreMock);
+vi.mock('./xingye-phone-store', () => ({ ...phoneStoreMock,
+  ensureDefaultUserContact: vi.fn(),
+  getPhoneContactMeta: vi.fn(() => ({ status: 'active' })),
+  XINGYE_PHONE_CONTACTS_STORAGE_KEY: 'xingye.phoneContacts',
+  XINGYE_PHONE_VIRTUAL_CONTACTS_STORAGE_KEY: 'xingye.phoneVirtualContacts',
+  XINGYE_PHONE_SMS_THREADS_STORAGE_KEY: 'xingye.phoneSmsThreads',
+}));
 vi.mock('./xingye-phone-ai', () => phoneAiMock);
 vi.mock('./xingye-profile-store', () => profileMock);
 vi.mock('./xingye-recent-context', () => recentContextMock);
@@ -85,8 +92,19 @@ vi.mock('./PhoneContactsSectionView', () => ({
   PhoneContactsTagDetailView: () => null,
   PhoneContactsTagsHomeView: () => null,
 }));
-vi.mock('./PhoneContactDetail', () => ({ PhoneContactDetail: () => null }));
-vi.mock('./PhoneContactSections', () => ({ PhoneContactSections: () => null }));
+vi.mock('./PhoneContactDetail', () => ({
+  PhoneContactDetail: (props: React.ComponentProps<typeof import('./PhoneContactDetail').PhoneContactDetail>) => <>
+    <input aria-label="test-contact-remark" value={props.remarkDraft} onChange={event => props.onChange('remark', event.currentTarget.value)} />
+    <button onClick={props.onSave}>test-save-contact</button>
+    <button onClick={props.onBlockToggle}>test-block-contact</button>
+    <button onClick={props.onDeleteToggle}>test-delete-contact</button>
+  </>,
+}));
+vi.mock('./PhoneContactSections', () => ({
+  PhoneContactSections: ({ contacts, onSelect }: React.ComponentProps<typeof import('./PhoneContactSections').PhoneContactSections>) => <>
+    {contacts.map(contact => <button key={contact.targetId} onClick={() => onSelect(contact)}>test-open-contact</button>)}
+  </>,
+}));
 
 import { PhoneContactsApp } from './PhoneContactsApp';
 
@@ -285,6 +303,11 @@ function renderContactsApp() {
 
 beforeEach(() => {
   phoneStoreMock.useXingyePhoneStorageVersion.mockReturnValue(0);
+  phoneStoreMock.getPhoneContacts.mockReset().mockReturnValue([]);
+  phoneStoreMock.savePhoneContactMeta.mockReset();
+  phoneStoreMock.blockPhoneContact.mockReset();
+  phoneStoreMock.deletePhoneContact.mockReset();
+  phoneStoreMock.restorePhoneContact.mockReset();
   vi.clearAllMocks();
   contactDraftsMock.confirmPhoneContactDraft.mockReset();
   contactDraftsMock.discardPhoneContactDraft.mockReset();
@@ -399,5 +422,31 @@ describe('PhoneContactsApp · pending draft section', () => {
     expect(screen.getByTestId('phone-contact-pending-draft-confirm-d-pc-bl')).toHaveTextContent('采纳拉黑');
     expect(screen.getByTestId('phone-contact-pending-draft-confirm-d-pc-del')).toHaveTextContent('采纳删除');
     expect(screen.getByTestId('phone-contact-pending-draft-confirm-d-pc-res')).toHaveTextContent('采纳恢复');
+  });
+});
+
+
+describe('PhoneContactsApp post-mutation SMS generation', () => {
+  it.each(['save', 'block', 'delete', 'restore'] as const)('uses fresh contact state immediately after %s', async action => {
+    const old: XingyePhoneContactView = {
+      ownerAgentId: 'linwu', targetType: 'virtual_contact', targetId: 'contact-1',
+      displayName: 'Contact', originalName: 'Contact', remark: 'old remark', impression: '', tags: [],
+      status: action === 'restore' ? 'blocked' : 'active',
+    };
+    let persisted = { ...old };
+    phoneStoreMock.getPhoneContacts.mockImplementation((_owner, _agents, _profiles, _options, storage) => [storage ? old : persisted]);
+    phoneStoreMock.savePhoneContactMeta.mockImplementation(() => { persisted = { ...persisted, remark: 'new remark' }; });
+    phoneStoreMock.blockPhoneContact.mockImplementation(() => { persisted = { ...persisted, status: 'blocked' }; });
+    phoneStoreMock.deletePhoneContact.mockImplementation(() => { persisted = { ...persisted, status: 'deleted' }; });
+    phoneStoreMock.restorePhoneContact.mockImplementation(() => { persisted = { ...persisted, status: 'active' }; });
+    renderContactsApp();
+    fireEvent.click(await screen.findByText('test-open-contact'));
+    if (action === 'save') {
+      fireEvent.change(screen.getByLabelText('test-contact-remark'), { target: { value: 'new remark' } });
+    }
+    fireEvent.click(screen.getByText(action === 'save' ? 'test-save-contact' : action === 'delete' ? 'test-delete-contact' : 'test-block-contact'));
+    await waitFor(() => expect(phoneAiMock.generateSmsUpdatesForChangedContactsWithAI).toHaveBeenCalledWith(expect.objectContaining({ contacts: [persisted] })));
+    expect(phoneStoreMock.getPhoneContacts).toHaveBeenLastCalledWith('linwu', [agent], {}, { includeDeleted: true });
+    expect(persisted).not.toEqual(old);
   });
 });

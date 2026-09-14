@@ -17,6 +17,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { WebSocketServer } from "ws";
 import { AppError } from "../shared/errors.ts";
 import { errorBus } from "../shared/error-bus.ts";
+import { writeSecretFileStrictSync } from "../shared/secret-fs.ts";
 import { HanaEngine } from "../core/engine.ts";
 import { ensureFirstRun } from "../core/first-run.ts";
 import { initDebugLog, createModuleLogger } from "../lib/debug-log.ts";
@@ -258,7 +259,9 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
   try {
     const pkg = JSON.parse(fs.readFileSync(fromRoot("package.json"), "utf-8"));
     appVersion = pkg.version || "?";
-  } catch {}
+  } catch (error) {
+    log.warn(`Package version unavailable: ${error.message}`);
+  }
 
   // ── 同宅互斥闸（同一 HANA_HOME 的内核互斥）──
   // 必须在任何端口监听、任何 store 打开之前跑：一台机器上的同一 HANA_HOME
@@ -287,7 +290,9 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
         process.exit(1);
       }
       // not-hana / dead：残留锁已确认失效（自清，不需要用户手删）
-      try { fs.unlinkSync(serverInfoPath); } catch {}
+      try { fs.unlinkSync(serverInfoPath); } catch (error) {
+        if (error.code !== "ENOENT") log.warn(`Stale server discovery cleanup failed: ${error.message}`);
+      }
     }
   }
 
@@ -399,7 +404,7 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
     return Response.json({ error: "server_starting" }, { status: 503 });
   };
 
-  let server: any = createAdaptorServer({
+  const server = createAdaptorServer({
     fetch: (...args: any[]) => activeFetch(...args),
     hostname: host,
   });
@@ -975,7 +980,9 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
       try {
         const files = fs.readdirSync(dir);
         avatars[role] = files.some(f => /\.(png|jpe?g|webp)$/i.test(f));
-      } catch {}
+      } catch (error) {
+        if (error.code !== "ENOENT") log.warn(`Avatar availability check failed for ${role}: ${error.message}`);
+      }
     }
     return c.json({
       status: "ok",
@@ -1238,7 +1245,7 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
     const serverInfoPath = path.join(hanakoHome, "server-info.json");
     try {
       const runtimeContext = engine.getRuntimeContext?.() || {};
-      fs.writeFileSync(serverInfoPath, JSON.stringify({
+      writeSecretFileStrictSync(serverInfoPath, JSON.stringify({
         pid: process.pid,
         port: actualPort,
         host,
@@ -1256,11 +1263,9 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
         serverNodeId: runtimeContext.serverNodeId || runtimeContext.serverId || null,
         studioId: runtimeContext.studioId || null,
         userId: runtimeContext.userId || null,
-      }), { mode: 0o600 });
-      // mode-on-create 在某些 fs 上不可靠（已有文件不会重置 mode），显式 chmod 兜底
-      try { fs.chmodSync(serverInfoPath, 0o600); } catch {}
+      }));
     } catch (e) {
-      log.error(`写入 server-info.json 失败: ${e.message}`);
+      throw new Error(`写入 server-info.json 失败: ${e.message}`, { cause: e });
     }
 
     // 通知就绪（server-info.json 已在上方写入，无需额外动作）
@@ -1344,7 +1349,9 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
     }
 
     clearTimeout(forceTimer);
-    try { fs.unlinkSync(path.join(hanakoHome, "server-info.json")); } catch {}
+    try { fs.unlinkSync(path.join(hanakoHome, "server-info.json")); } catch (error) {
+      if (error.code !== "ENOENT") log.error(`Server discovery cleanup failed during shutdown: ${error.message}`);
+    }
     process.exit(0);
   }
 

@@ -99,12 +99,6 @@ function snippetFor(message: XingyeMailMessage, max = 80): string {
   return `${body.slice(0, Math.max(1, max - 1))}…`;
 }
 
-function countUnread(messages: XingyeMailMessage[], mailbox: XingyeMailMailbox): number {
-  return messages.reduce(
-    (acc, m) => (m.mailbox === mailbox && !m.isRead ? acc + 1 : acc),
-    0,
-  );
-}
 
 const DEFAULT_AVATAR_INITIAL = '@';
 

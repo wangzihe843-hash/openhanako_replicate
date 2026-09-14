@@ -125,4 +125,34 @@ describe('archived-session actions', () => {
       expect.objectContaining({ method: 'POST' }),
     );
   });
+
+  it('preserves HTTP 200 partial cleanup failures and the confirmed deletion count', async () => {
+    const failures = [{ path: '/x/b.jsonl', operation: 'delete', error: 'EACCES' }];
+    hanaFetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ok: false, deleted: 2, failures }) });
+    const { cleanupArchivedSessions } = await import('../../stores/session-actions');
+    expect(await cleanupArchivedSessions(30)).toEqual({
+      ok: false, deleted: 2, failures,
+      error: expect.stringContaining('2 deleted, 1 failures'),
+    });
+    expect(hanaFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['network', 'HTTP', 'malformed'])('reports %s failure with an unknown deletion count, never confirmed zero', async kind => {
+    if (kind === 'network') hanaFetchMock.mockRejectedValueOnce(new Error('connection lost'));
+    else hanaFetchMock.mockResolvedValueOnce({
+      ok: kind !== 'HTTP', status: kind === 'HTTP' ? 500 : 200,
+      json: async () => kind === 'HTTP' ? { error: 'EIO' } : { ok: true },
+    });
+    const { cleanupArchivedSessions } = await import('../../stores/session-actions');
+    const result = await cleanupArchivedSessions(90);
+    expect(result).toMatchObject({ ok: false, deleted: null, failures: [] });
+    expect(hanaFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts the legacy success envelope only when its count is confirmed', async () => {
+    hanaFetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ deleted: 0 }) });
+    const { cleanupArchivedSessions } = await import('../../stores/session-actions');
+    expect(await cleanupArchivedSessions(30)).toEqual({ ok: true, deleted: 0, failures: [] });
+  });
+
 });

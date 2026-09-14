@@ -60,8 +60,9 @@ function waitForChild(child, timeoutMs) {
     const timer = setTimeout(() => {
       if (done) return;
       done = true;
-      try { child.kill?.("SIGTERM"); } catch {}
-      reject(new Error(`Chromium PDF helper timed out after ${timeoutMs}ms`));
+      let terminationError: unknown;
+      try { child.kill?.("SIGTERM"); } catch (error) { terminationError = error; }
+      reject(new Error(`Chromium PDF helper timed out after ${timeoutMs}ms`, { cause: terminationError }));
     }, timeoutMs);
     timer.unref?.();
 

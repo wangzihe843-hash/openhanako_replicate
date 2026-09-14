@@ -21,7 +21,7 @@ describe("experience tools", () => {
 
   afterEach(() => {
     if (tmpDir) {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       tmpDir = null;
     }
   });

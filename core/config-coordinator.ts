@@ -567,7 +567,7 @@ export class ConfigCoordinator {
   async setChannelsEnabled(enabled) {
     const next = !!enabled;
     const prefs = this._d.getPrefs();
-    const prev = prefs.getChannelsEnabled();
+    prefs.getChannelsEnabled();
     prefs.setChannelsEnabled(next);
     log.log(`setChannelsEnabled: ${next}`);
 

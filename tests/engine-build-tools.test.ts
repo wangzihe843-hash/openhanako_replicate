@@ -21,7 +21,7 @@ function permissionTool(name, execute = vi.fn(), kind: "read" | "routine" | "rev
 
 describe("HanaEngine.buildTools", () => {
   let tmpDir;
-  let engines: HanaEngine[] = [];
+  const engines: HanaEngine[] = [];
 
   afterEach(async () => {
     for (const engine of engines.splice(0).reverse()) {

@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:481be9d19271d9bc7d47602bd4bad296c85f711b7c862b9b5ab815bb5b3b68be",
+  "payloadFingerprint": "sha256:0ebd3a777ee36f8fdf3965b94916d6bacb2e575ab1204dda350d3c3882ec8fb2",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3226,8 +3226,9 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Priority warning fixes preserve DATA_EPOCH 1, SQLite schemas and existing serialized fields. Config recovery uses the credential writer after backup. UUID database backup sidecars without their same-group main file prevent retry until restored; complete historic backups remain accepted. Migration failures stay pending; browser persistence is acknowledged before lifecycle completion. See docs/audits/2026-09-13-warning-priority-fixes.md.",
-    "payloadFingerprint": "sha256:481be9d19271d9bc7d47602bd4bad296c85f711b7c862b9b5ab815bb5b3b68be"
+    "compatibilityReason": "Warning follow-up changes error and observation contracts while preserving persisted JSON/Markdown formats, stable store paths, DDL and DATA_EPOCH 1.",
+    "payloadFingerprint": "sha256:0ebd3a777ee36f8fdf3965b94916d6bacb2e575ab1204dda350d3c3882ec8fb2",
+    "reviewDocument": "docs/audits/2026-09-14-warning-fixes-compatibility-review.md"
   },
   "schemas": [
     {
@@ -3328,7 +3329,7 @@
       "protocolModules": [
         {
           "module": "core/agent.ts",
-          "sourceHash": "sha256:4ad10618cc2d17e08c4271e18e58b5f6bc8d5cf43f253956e5383f24c4b15b7b"
+          "sourceHash": "sha256:e9f0f6bef18895822947ebbd37013a45064e01d25d063ca48a9288212393e4ff"
         },
         {
           "module": "core/agents-md-migration.ts",
@@ -3343,7 +3344,7 @@
           "sourceHash": "sha256:65d2a9c931cddced01d501197c4c394dbbde254e1292f64bc33514f5079026ef"
         }
       ],
-      "sourceHash": "sha256:2d728b6db483102302c061864835755fd2d6687ff137aa9895a1b6a23eae6626",
+      "sourceHash": "sha256:3791218b5d47e78e2f5695b8940330bc37867904e4519f469ea2eb1d2ad81294",
       "storeId": "agent-profile"
     },
     {
@@ -3356,7 +3357,7 @@
           "sourceHash": "sha256:a94be8f88e0340cd7268e3f192a76d64a10647f78d9440098ed8a74492aea067"
         }
       ],
-      "sourceHash": "sha256:598cee82d851adc516c0d4bcf711807e0288551b6e2eba0d32a10b3372efc1c6",
+      "sourceHash": "sha256:6e23269ddda6411529088196cb27532174938fdc3963bd5a739bedacc05503d8",
       "storeId": "channels"
     },
     {
@@ -3429,7 +3430,7 @@
       "contract": "bounded base64 cover upload temporary-directory lifecycle",
       "kind": "directory-contract",
       "module": "server/routes/desk.ts",
-      "sourceHash": "sha256:bd2cc08135ec7a4bd8f1047982027eda9f697d1adbc94dd2353416b3d5ba0d3d",
+      "sourceHash": "sha256:5de78b7a1e54d5bf74b9468d874de585fed6b8c1b2d579dbac01a9f5a9e41541",
       "storeId": "desk-cover-upload-staging"
     },
     {
@@ -3541,7 +3542,7 @@
       "contract": "sessionless upload naming and age-based cleanup protocol",
       "kind": "directory-contract",
       "module": "server/routes/upload.ts",
-      "sourceHash": "sha256:8c07b613a588bdc0ab2c2410ee1c0298188e3142ae188d52ee9880fbe947381c",
+      "sourceHash": "sha256:af5551e953b3f2d4a78c8ef7810d22e49f6503dc06ad2df7fb2efeac6ce56495",
       "storeId": "legacy-upload-cache"
     },
     {
@@ -3575,21 +3576,21 @@
       "contract": "normalizeMcpConfig read-time normalization (servers/connectors alias, auth and OAuth field defaults, per-connector permission policy defaults, deferred-loading defaults)",
       "kind": "runtime-contract",
       "module": "core/mcp/manager.ts",
-      "sourceHash": "sha256:cbd5857f080b687f62e61aa43f046cc9d2b8122e40f1d9711237738ec237304c",
+      "sourceHash": "sha256:cb2791118d777d23c8a82921238b134bad0c76c6e966a8b732a8337d243f8ed4",
       "storeId": "mcp-config"
     },
     {
       "contract": "job.json/input.html request contract and generated PDF output lifecycle",
       "kind": "directory-contract",
       "module": "plugins/office/lib/html-to-pdf.ts",
-      "sourceHash": "sha256:096a7dc9eac668a6803c0f6cd5ce93316294e48405fb0e908c602b7cf33d0bef",
+      "sourceHash": "sha256:368c3f6023a8af1dcf433cad55ab089728274491ca7095b7ed1a7138096099b9",
       "storeId": "office-render-jobs"
     },
     {
       "contract": "file-copy checkpoint manifest and session-manifest SQLite checkpoint protocol",
       "kind": "directory-contract",
       "module": "lib/checkpoint-store.ts",
-      "sourceHash": "sha256:350a4563a6592825ce7ed0e7d703408da318d2fd9b334b951dfb5b5e5b2a8d09",
+      "sourceHash": "sha256:585c2af1cee2da1b83f488967f853aefd0d4a76a7fd0f2c1aa970563fc78eff8",
       "storeId": "operational-checkpoints"
     },
     {
@@ -3603,7 +3604,7 @@
       "contract": "verified plugin release ZIP naming by pluginId/version and expected sha256",
       "kind": "directory-contract",
       "module": "server/routes/plugins.ts",
-      "sourceHash": "sha256:7aca9bf305209962b8db0710cd36df12ff761c41715c85b0965b5088a6a97bac",
+      "sourceHash": "sha256:be11f033d0b88f0c528cf84e27f875106dfa7ff615bfe5bcfe3c10d3fd895258",
       "storeId": "plugin-download-cache"
     },
     {
@@ -3672,7 +3673,7 @@
       "contract": "server-info writer and desktop bootstrap reader",
       "kind": "runtime-contract",
       "module": "server/index.ts",
-      "sourceHash": "sha256:74a5cb5a4e83e658c9db23ffc133f173d8f624308841a87ba99f7459cea34b94",
+      "sourceHash": "sha256:fc930d5d999c40d10812123b45ca5a0f99e3cc39bd9ca919d68b006816ce8ac2",
       "storeId": "server-runtime-info"
     },
     {
@@ -3694,7 +3695,7 @@
         {
           "contract": "core/session-coordinator.ts Hana metadata extensions",
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:6c6c222343691dac10abdf3df61d80473b95b18b2bb0e5abc698c41769bbdcf8"
+          "sourceHash": "sha256:de42f2d7983cc0a1eede7c8a7dc41142651483234b637d1834a180883399494f"
         },
         {
           "contract": "core/session-jsonl-file.ts repair contract",
@@ -3710,11 +3711,11 @@
       "protocolModules": [
         {
           "module": "core/desktop-session-submit.ts",
-          "sourceHash": "sha256:5736acb7e53b82c44242d512aa48ad9a29576a78265e7cb9c920302258254941"
+          "sourceHash": "sha256:d97fe4269d0b4bec39b19dff1d26895c8b79d3204b3ba8dd575ede26e66a4ef3"
         },
         {
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:6c6c222343691dac10abdf3df61d80473b95b18b2bb0e5abc698c41769bbdcf8"
+          "sourceHash": "sha256:de42f2d7983cc0a1eede7c8a7dc41142651483234b637d1834a180883399494f"
         },
         {
           "module": "core/session-jsonl-file.ts",
@@ -3806,7 +3807,7 @@
       "contract": "bridge index, legacy session metadata, title, and vision sidecar readers",
       "kind": "runtime-contract",
       "module": "core/bridge-session-manager.ts",
-      "sourceHash": "sha256:b84e1a20f5c0a26d336555c6050161f64e21b64a0d411b3c4af99d8f2705cafb",
+      "sourceHash": "sha256:bf3c9797114a3fbe2e6fe600066c665540c24a35a1c8d5a9171cdf93767320cd",
       "storeId": "session-sidecars"
     },
     {
@@ -3876,14 +3877,14 @@
       "contract": "web session registry validator, expiry, and serializer",
       "kind": "runtime-contract",
       "module": "core/web-session-store.ts",
-      "sourceHash": "sha256:1aa9e95917becfdaa38dbe6930110426a34679310e43c13b6460e1b89bd43f04",
+      "sourceHash": "sha256:e7bfd8664f269ae65b5b19c9d884e8939122ce22a9f79bc23e804836db6d86c3",
       "storeId": "web-session-registry"
     },
     {
       "contract": "Windows sandbox migration marker readers",
       "kind": "runtime-contract",
       "module": "lib/sandbox/win32-legacy-migration.ts",
-      "sourceHash": "sha256:46672032c7ec242c4395e29556066864ee36d3dec59183a8ddf7bbef4d1c56ec",
+      "sourceHash": "sha256:97059f5343e3c1b858cad2d3d37683694e3c07ae16e46e9fa55d13b6587e6b17",
       "storeId": "windows-sandbox-migration-state"
     },
     {
@@ -3926,7 +3927,7 @@
         },
         {
           "module": "desktop/src/react/xingye/xingye-profile-store.ts",
-          "sourceHash": "sha256:cde519b14696401bc4a58bcd6f698c6361c5dccebc027096be343dc2302f20f4"
+          "sourceHash": "sha256:7f23e26ef25825c17581b23c882b92df77060b4c5aa57e86304fd62f6b37c2a9"
         },
         {
           "module": "desktop/src/react/xingye/xingye-state-store.ts",
@@ -3962,7 +3963,7 @@
         },
         {
           "module": "lib/xingye/heartbeat-consumer.js",
-          "sourceHash": "sha256:dd2ca7ca26e8a3665c542112445fdf0e71eda0aa8e00b2eaec7ea0c4ea59b4d2"
+          "sourceHash": "sha256:e920dd23a55a7baf04ce2924b78bdd249cc328810d71f06e2c93c686da197092"
         },
         {
           "module": "lib/xingye/interview-drafts.js",
@@ -9780,7 +9781,7 @@
     },
     {
       "exemptionId": null,
-      "kind": "write-file",
+      "kind": "secret-write",
       "ordinal": 0,
       "reason": "Writes or deletes live server discovery state.",
       "sourceFile": "server/index.ts",
@@ -10884,6 +10885,14 @@
     },
     {
       "exemptionId": "generic-secret-fs-primitives",
+      "kind": "remove-path",
+      "ordinal": 5,
+      "reason": "Shared owner-only write primitives have no store ownership; callers are scanned and assigned to concrete descriptors.",
+      "sourceFile": "shared/secret-fs.ts",
+      "storeId": null
+    },
+    {
+      "exemptionId": "generic-secret-fs-primitives",
       "kind": "rename",
       "ordinal": 0,
       "reason": "Shared owner-only write primitives have no store ownership; callers are scanned and assigned to concrete descriptors.",
@@ -10894,6 +10903,30 @@
       "exemptionId": "generic-secret-fs-primitives",
       "kind": "rename",
       "ordinal": 1,
+      "reason": "Shared owner-only write primitives have no store ownership; callers are scanned and assigned to concrete descriptors.",
+      "sourceFile": "shared/secret-fs.ts",
+      "storeId": null
+    },
+    {
+      "exemptionId": "generic-secret-fs-primitives",
+      "kind": "rename",
+      "ordinal": 2,
+      "reason": "Shared owner-only write primitives have no store ownership; callers are scanned and assigned to concrete descriptors.",
+      "sourceFile": "shared/secret-fs.ts",
+      "storeId": null
+    },
+    {
+      "exemptionId": "generic-secret-fs-primitives",
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Shared owner-only write primitives have no store ownership; callers are scanned and assigned to concrete descriptors.",
+      "sourceFile": "shared/secret-fs.ts",
+      "storeId": null
+    },
+    {
+      "exemptionId": "generic-secret-fs-primitives",
+      "kind": "write-file",
+      "ordinal": 0,
       "reason": "Shared owner-only write primitives have no store ownership; callers are scanned and assigned to concrete descriptors.",
       "sourceFile": "shared/secret-fs.ts",
       "storeId": null

@@ -102,8 +102,6 @@ export function startCLI({ port, token, agentName, userName }) {
   let isStreaming = false;
   let hasPrintedTurnOutput = false;
   let currentMood = "";
-  let inMood = false;
-  let inThinking = false;
   let sessionId = null;
   let sessionPath = null;
   let activeStreamId = null;
@@ -183,7 +181,6 @@ ${c.dim}${t("cli.disconnected")}${c.reset}`);
         break;
 
       case "mood_start":
-        inMood = true;
         currentMood = "";
         break;
 
@@ -192,7 +189,6 @@ ${c.dim}${t("cli.disconnected")}${c.reset}`);
         break;
 
       case "mood_end":
-        inMood = false;
         // 灰色显示 mood
         if (currentMood.trim()) {
           process.stdout.write(`${c.gray}${c.italic}`);
@@ -205,7 +201,6 @@ ${c.dim}${t("cli.disconnected")}${c.reset}`);
         break;
 
       case "thinking_start":
-        inThinking = true;
         process.stdout.write(`${c.dim}  thinking...${c.reset}`);
         break;
 
@@ -214,7 +209,6 @@ ${c.dim}${t("cli.disconnected")}${c.reset}`);
         break;
 
       case "thinking_end":
-        inThinking = false;
         // 清除 "thinking..." 行
         process.stdout.write("\r\x1b[K");
         break;
@@ -292,7 +286,6 @@ ${c.red}${t("cli.error", { msg: msg.message })}${c.reset}
 ${c.dim}${t("cli.interrupted")}${c.reset}
 `);
         isStreaming = false;
-        inThinking = false;
         hasPrintedTurnOutput = false;
         showPrompt();
         return;
@@ -303,7 +296,6 @@ ${c.dim}${t("cli.interrupted")}${c.reset}
         if (isStreaming) {
           if (!abortActiveStream()) return;
           isStreaming = false;
-          inThinking = false;
           hasPrintedTurnOutput = false;
           process.stdout.write(`
 ${c.dim}${t("cli.interrupted")}${c.reset}

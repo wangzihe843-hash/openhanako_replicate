@@ -172,7 +172,7 @@ describe('buildMarkdownBlockMove', () => {
 describe('buildMarkdownBlockRangeMove', () => {
   it('moves a contiguous block range in one source-preserving replacement', () => {
     const state = createState('Alpha\n\nBeta\n\nGamma\n\nDelta');
-    const [alpha, beta, gamma, delta] = collectMarkdownBlocks(state);
+    const [alpha, beta, gamma] = collectMarkdownBlocks(state);
     const move = buildMarkdownBlockRangeMove(state, [beta, gamma], alpha, 'before');
 
     expect(move).not.toBeNull();

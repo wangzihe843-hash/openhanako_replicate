@@ -279,7 +279,7 @@ export class SkillManager {
    * @param {object} resourceLoader
    * @param {Map} agents
    */
-  async reload(resourceLoader, agents) {
+  async reload(resourceLoader, _agents) {
     // 暂时恢复原始 getSkills 以便 reload() 正确扫描
     delete resourceLoader.getSkills;
     await resourceLoader.reload();

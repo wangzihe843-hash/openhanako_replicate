@@ -165,19 +165,15 @@ function sanitizeDevice(device) {
 }
 
 function sanitizeCredential(credential) {
-  const {
-    secretHash,
-    secretSalt,
-    ...safe
-  } = credential || {};
+  const safe = { ...(credential || {}) };
+  delete safe.secretHash;
+  delete safe.secretSalt;
   return safe;
 }
 
 function sanitizePairingSession(session) {
-  const {
-    userCodeHash,
-    userCodeSalt,
-    ...safe
-  } = session || {};
+  const safe = { ...(session || {}) };
+  delete safe.userCodeHash;
+  delete safe.userCodeSalt;
   return safe;
 }

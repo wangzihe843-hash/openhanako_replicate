@@ -69,7 +69,9 @@ export async function loadAvatars() {
         ? hanaUrl(`/api/avatar/agent?agentId=${encodeURIComponent(agentId)}&t=${ts}`)
         : null,
     });
-  } catch {}
+  } catch (error) {
+    console.warn('[settings] avatar availability refresh failed:', error);
+  }
 }
 
 export async function loadSettingsConfig() {

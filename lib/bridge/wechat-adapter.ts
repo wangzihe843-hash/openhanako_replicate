@@ -274,12 +274,6 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
 
   // ── 定时器管理 ──
 
-  function addTimer(fn, delay) {
-    const id = setTimeout(() => { timers.delete(id); fn(); }, delay);
-    timers.add(id);
-    return id;
-  }
-
   function guardedSleep(ms, myGen) {
     return new Promise((resolve) => {
       const id = setTimeout(() => { timers.delete(id); resolve(myGen === generation); }, ms);

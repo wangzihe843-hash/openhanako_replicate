@@ -157,7 +157,7 @@ describe('ArchivedSessionsModal', () => {
         agentName: 'Hana',
       },
     ]);
-    cleanupMock.mockResolvedValue({ deleted: 1 });
+    cleanupMock.mockResolvedValue({ ok: true, deleted: 1, failures: [] });
     window.confirm = vi.fn(() => true);
     render(<ArchivedSessionsModal open={true} onClose={() => {}} />);
     await waitFor(() => screen.getByText('A'));
@@ -207,4 +207,27 @@ describe('ArchivedSessionsModal', () => {
       sessionId: 'sess_archived_delete',
     })));
   });
+
+  it.each([
+    { label: 'partial', deleted: 1, error: 'Archive cleanup incomplete (1 deleted, 1 failures): EACCES' },
+    { label: 'network', deleted: null, error: 'connection lost' },
+    { label: 'HTTP', deleted: null, error: 'HTTP 500' },
+  ])('shows $label cleanup failure and refreshes the list without replaying deletion', async ({ deleted, error }) => {
+    const remaining = {
+      path: '/x/remaining.jsonl', title: 'Remaining archive', archivedAt: '2000-01-01T00:00:00.000Z',
+      sizeBytes: 100, agentId: 'agent-a', agentName: 'Agent',
+    };
+    listMock.mockResolvedValue([remaining]);
+    cleanupMock.mockResolvedValue({ ok: false, deleted, failures: [], error });
+    window.confirm = vi.fn(() => true);
+    render(<ArchivedSessionsModal open={true} onClose={() => {}} />);
+    await screen.findByText('Remaining archive');
+    fireEvent.click(screen.getByText('session.archived.cleanup30'));
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith('session.archived.deleteFailed: ' + error));
+    await waitFor(() => expect(listMock).toHaveBeenCalledTimes(2));
+    expect(cleanupMock).toHaveBeenCalledTimes(1);
+    expect(toastMock).not.toHaveBeenCalledWith(expect.stringContaining('cleanupDone'));
+    expect(screen.getByText('Remaining archive')).toBeInTheDocument();
+  });
+
 });

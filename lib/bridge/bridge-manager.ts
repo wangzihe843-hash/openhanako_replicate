@@ -387,7 +387,6 @@ class StreamCleaner {
     this._buf += delta;
     let out = "";
 
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       if (this._inTag) {
         const close = `</${this._tagName}>`;
@@ -1658,7 +1657,6 @@ export class BridgeManager {
     let failed = false;
     let chain = Promise.resolve();
     let createdWithoutMessageId = false;
-    let receiptOnly = false;
 
     const rememberState = (state) => {
       streamState = state || null;
@@ -1674,7 +1672,6 @@ export class BridgeManager {
       const { text } = this._cleanStreamSnapshot(accumulated);
       const next = this._truncateStreamText(text.trim(), maxChars);
       if (!next || next === lastSentText) return;
-      receiptOnly = false;
       const now = Date.now();
       if (!force && lastUpdateTs && now - lastUpdateTs < minIntervalMs) return;
       lastUpdateTs = now;
@@ -1703,7 +1700,6 @@ export class BridgeManager {
         if (!next) return;
         lastSentText = next;
         lastUpdateTs = Date.now();
-        receiptOnly = true;
         try {
           await startMessage(next);
         } catch (err) {
@@ -1725,7 +1721,6 @@ export class BridgeManager {
         if (!failed && streamState && !createdWithoutMessageId) {
           try {
             await adapter.finishStreamReply(chatId, streamState, failureText, context);
-            receiptOnly = false;
             return;
           } catch (err) {
             failed = true;
@@ -1733,14 +1728,12 @@ export class BridgeManager {
           }
         }
         await this._sendStreamFallbackReply({ adapter, chatId, text: failureText, context, platform, mode, stage: "fail" });
-        receiptOnly = false;
       },
       finish: async (cleaned) => {
         const { text, mediaUrls } = this._cleanStreamSnapshot(cleaned);
         const textOnly = text.trim();
         await chain;
         if (!textOnly) {
-          receiptOnly = false;
           return mediaUrls;
         }
         if (createdWithoutMessageId) {

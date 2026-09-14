@@ -516,8 +516,7 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
         }
       }
       return info;
-    } catch (err) {
-      const detail = err?.response?.data || err?.data || err.message;
+    } catch {
       log.error("getUserInfo failed");
       return { name: null, avatarUrl: null };
     }

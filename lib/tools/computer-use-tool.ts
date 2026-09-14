@@ -484,7 +484,7 @@ function formatElementSummary(elements = [], { limit = 60 } = {}) {
   if (!rows.length) return "No labeled UI elements were exposed by this app snapshot.";
   const lines = rows.map((element) => {
     const disabled = element.enabled ? "" : " disabled";
-    const label = element.text ? ` \"${element.text}\"` : "";
+    const label = element.text ? ` "${element.text}"` : "";
     return `- ${element.elementId}: ${element.role}${label}${disabled}`;
   });
   if (Array.isArray(elements) && elements.length > rows.length) {

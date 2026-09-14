@@ -11,7 +11,6 @@ import {
 } from "./win32-legacy-maintenance.ts";
 import { resolveWin32SandboxHelper } from "./win32-sandbox-helper.ts";
 
-const LEGACY_PROFILE_PREFIX = "com.hanako.sandbox.";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024;
 const MIGRATION_MARKER_VERSION = 3;

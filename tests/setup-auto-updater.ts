@@ -101,7 +101,7 @@ beforeEach(async () => {
       }
       require.cache[electronUpdaterPath].exports = exports;
     }
-  } catch (e) {
+  } catch {
     // If no vi.mock is registered for this test, keep the placeholder stub.
   }
 
@@ -115,7 +115,7 @@ beforeEach(async () => {
       }
       require.cache[electronPath].exports = exports;
     }
-  } catch (e) {
+  } catch {
     // Keep placeholder.
   }
 });

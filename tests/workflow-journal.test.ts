@@ -9,7 +9,7 @@ function tmpJournalPath() {
 }
 
 function cleanup(p) {
-  try { if (p) fs.unlinkSync(p); } catch {}
+  if (p) fs.rmSync(p, { force: true });
 }
 
 describe("WorkflowJournal", () => {

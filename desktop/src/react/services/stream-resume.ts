@@ -127,9 +127,6 @@ function isStillCurrentStreamSession(target: ResolvedStreamSession): boolean {
   return !!target.sessionPath && state.currentSessionPath === target.sessionPath;
 }
 
-function streamIdentityKey(input?: StreamSessionInput): string | null {
-  return resolveStreamSession(input).key;
-}
 
 export function invalidateSessionStreamMeta(sessionRef?: StreamSessionInput): void {
   if (sessionRef == null) {

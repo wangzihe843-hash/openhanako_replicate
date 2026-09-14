@@ -42,9 +42,7 @@ function makeTask( overrides: any = {}) {
 afterEach(() => {
   // Clean up all temp dirs created during each test
   for (const dir of tmpDirs.splice(0)) {
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch {}
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 

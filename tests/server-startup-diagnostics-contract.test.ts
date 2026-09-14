@@ -523,10 +523,10 @@ describe("server startup diagnostics contract", () => {
     const serverSource = fs.readFileSync(path.join(root, "server", "index.ts"), "utf-8");
     const bridgeRouteSource = fs.readFileSync(path.join(root, "server", "routes", "bridge.ts"), "utf-8");
 
-    expect(serverSource).not.toMatch(/^import\s+\{\s*BridgeManager\s*\}\s+from\s+["']\.\.\/lib\/bridge\/bridge-manager\.js["'];/m);
+    expect(serverSource).not.toMatch(/^import\s+\{\s*BridgeManager\s*\}\s+from\s+["']\.\.\/lib\/bridge\/bridge-manager\.(?:js|ts)["'];/m);
     expect(serverSource).toContain('await import("../lib/bridge/bridge-manager.ts")');
 
-    const readyWriteIndex = serverSource.indexOf("fs.writeFileSync(serverInfoPath");
+    const readyWriteIndex = serverSource.indexOf("writeSecretFileStrictSync(serverInfoPath");
     const bridgeDeferIndex = serverSource.indexOf("setImmediate(() => {");
     const bridgeStartIndex = serverSource.indexOf("startBridgeManager({ autoStart: true })");
     const startupTryEndIndex = serverSource.indexOf("\n  } catch (err)", bridgeStartIndex);

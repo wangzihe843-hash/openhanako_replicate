@@ -145,7 +145,7 @@ describe("CheckpointStore", () => {
 
     fs.rmSync(srcDir, { recursive: true, force: true });
 
-    const result = await store.restore(id);
+    await store.restore(id);
     expect(fs.readFileSync(srcFile, "utf-8")).toBe("nested content");
   });
 

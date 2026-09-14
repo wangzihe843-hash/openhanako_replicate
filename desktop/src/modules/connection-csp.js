@@ -16,7 +16,9 @@
       var url = new URL(value);
       if (!/^(http|https|ws|wss):$/.test(url.protocol)) return;
       out[url.protocol + "//" + url.host] = true;
-    } catch {}
+    } catch {
+      // An invalid origin adds no CSP permission; the restrictive baseline remains.
+    }
   }
 
   function readPersistedConnectionSources() {
@@ -37,7 +39,9 @@
           addOrigin(out, (base.protocol === "https:" ? "wss:" : "ws:") + "//" + base.host);
         }
       });
-    } catch {}
+    } catch {
+      console.warn("Could not load saved connection origins; keeping the restrictive connection policy.");
+    }
     return out;
   }
 
@@ -49,7 +53,9 @@
       out["http://" + host] = true;
       out["ws://" + host] = true;
       BASE_CSP["script-src"].push("'unsafe-inline'");
-    } catch {}
+    } catch {
+      // A denied location probe must not grant development script permissions.
+    }
   }
 
   var scopedSources = readPersistedConnectionSources();

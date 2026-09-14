@@ -1,3 +1,4 @@
+import { useI18n } from '../hooks/use-i18n';
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { AppTitlebar } from '../components/app/AppTitlebar';
@@ -173,7 +174,7 @@ function MobileDesktopShell({
   const isNarrow = useNarrowMobileViewport();
   const edgeGestureRef = useRef<MobileEdgeGesture | null>(null);
   const previousWsStateRef = useRef(wsState);
-  const t = window.t ?? ((p: string) => p);
+  const { t } = useI18n();
 
   const titlebarTitle = useMemo(() => {
     if (pendingNewSession) return t('sidebar.newChat');
@@ -392,7 +393,7 @@ function WorkspaceCompanionRailFallback({ open }: { open: boolean }) {
 }
 
 function MobileLoadingScreen() {
-  const t = window.t ?? ((p: string) => p);
+  const { t } = useI18n();
   return (
     <main className="onboarding">
       <section className="onboarding-step active">
@@ -427,7 +428,7 @@ function MobileLoginScreen({
   onPasswordChange: (value: string) => void;
   onSubmit: (event: React.FormEvent) => void;
 }) {
-  const t = window.t ?? ((p: string) => p);
+  const { t } = useI18n();
   const loginDisabled = mode === 'device'
     ? !secret.trim()
     : !username.trim() || !password;
@@ -558,7 +559,9 @@ async function apiJson<T = unknown>(path: string, options: RequestInit = {}): Pr
     try {
       const data = await res.json();
       detail = data.detail || data.error || detail;
-    } catch {}
+    } catch {
+      // Non-JSON error bodies retain the original HTTP status failure.
+    }
     throw new Error(detail);
   }
   return await res.json() as T;

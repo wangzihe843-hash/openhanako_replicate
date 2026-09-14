@@ -66,7 +66,7 @@ describe("BridgeManager RC attached-session routing", () => {
   afterEach(() => { vi.useRealTimers(); });
 
   it("with active attachment → routes DM to desktop session, NOT hub.send", async () => {
-    const { bm, adapter, engine, hub, rcState } = createMocks();
+    const { bm, adapter, hub, rcState } = createMocks();
     rcState.attach("tg_dm_owner123@hana", "/path/to/desk.jsonl");
 
     bm._handleMessage("telegram", {
@@ -92,7 +92,7 @@ describe("BridgeManager RC attached-session routing", () => {
   });
 
   it("without attachment → falls back to hub.send (normal bridge path)", async () => {
-    const { bm, adapter, engine, hub } = createMocks();
+    const { bm, engine, hub } = createMocks();
     // 不设 attachment
 
     bm._handleMessage("telegram", {
@@ -111,7 +111,7 @@ describe("BridgeManager RC attached-session routing", () => {
   });
 
   it("non-owner message with attachment set → does NOT route (防御性 isOwner 检查)", async () => {
-    const { bm, hub, engine, rcState } = createMocks();
+    const { bm, engine, rcState } = createMocks();
     // 某种异常情况：attachment 存在但消息来自非 owner
     rcState.attach("tg_dm_owner123@hana", "/path/to/desk.jsonl");
 

@@ -321,7 +321,7 @@ export async function readXingyeRoleProfile(
   const operation = profileOperation();
   try {
     const raw = await operation.backend.readJson<unknown>(id, XINGYE_PROFILE_JSON_RELATIVE_PATH);
-    let normalized = raw != null ? normalizeProfile(raw, id) : null;
+    const normalized = raw != null ? normalizeProfile(raw, id) : null;
     if (normalized) return normalized;
 
     const legacy = readLegacyRoleProfilesMap()[id];

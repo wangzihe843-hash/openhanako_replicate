@@ -247,7 +247,7 @@ describe("repairOrphanToolResultEntriesInFile — 落盘修复", () => {
   });
 
   afterEach(() => {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   function writeEntries(entries) {

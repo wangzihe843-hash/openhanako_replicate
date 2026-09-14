@@ -59,7 +59,9 @@ export function createAvatarRoute(engine) {
       try {
         await fs.access(p);
         return { path: p, ext };
-      } catch {}
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
     }
     return null;
   }

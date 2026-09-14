@@ -202,7 +202,7 @@ export function useContinuousBottomScroll({
     lastFrameTimeRef.current = null;
     followingRef.current = true;
     rafRef.current = window.requestAnimationFrame(runFrame);
-  }, [checkSticky, runFrame, scrollRef, stopFollow]);
+  }, [checkSticky, runFrame, scrollRef, setProgrammaticScrollTop, stopFollow]);
 
   const scrollToBottom = useCallback((options: ScrollToBottomOptions = {}) => {
     const el = scrollRef.current;

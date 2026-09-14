@@ -232,11 +232,11 @@ interface AudioRecorderRuntime {
 }
 
 function disposeAudioRecorderRuntime(runtime: AudioRecorderRuntime): void {
-  try { runtime.processor.disconnect(); } catch {}
-  try { runtime.source.disconnect(); } catch {}
-  try { runtime.silentGain.disconnect(); } catch {}
+  try { runtime.processor.disconnect(); } catch { /* Already detached; continue releasing the other audio resources. */ }
+  try { runtime.source.disconnect(); } catch { /* Already detached; tracks and context still need release. */ }
+  try { runtime.silentGain.disconnect(); } catch { /* Already detached; do not interrupt track cleanup. */ }
   for (const track of runtime.stream.getTracks()) {
-    try { track.stop(); } catch {}
+    try { track.stop(); } catch { /* A stopped/unavailable track must not prevent releasing the remaining tracks. */ }
   }
   if (runtime.audioContext.state !== 'closed') {
     void runtime.audioContext.close().catch(() => {});
@@ -1311,7 +1311,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     } catch (err) {
       if (stream) {
         for (const track of stream.getTracks()) {
-          try { track.stop(); } catch {}
+          try { track.stop(); } catch { /* A stopped/unavailable track must not prevent releasing the remaining tracks. */ }
         }
       }
       const message = t('input.audioRecordingFailed');
@@ -2184,7 +2184,6 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   }, [
     dismissSlashMenu,
     editor,
-    fileMentionBusy,
     mentionItems,
     mentionTab,
     fileMenuOpen,

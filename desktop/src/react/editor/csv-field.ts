@@ -8,7 +8,6 @@ function buildCsvDecoration(state: EditorState): DecorationSet {
 
   // 光标在文档中时不渲染 widget（允许原始编辑）
   const hasSelection = state.selection.ranges.some(r => r.from !== r.to);
-  const cursorAt = state.selection.main.head;
   const docLen = state.doc.length;
 
   // 只要光标聚焦在编辑器中且有实际选区，就保持原始文本模式

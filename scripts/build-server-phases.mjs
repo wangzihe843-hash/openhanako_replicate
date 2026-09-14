@@ -607,7 +607,12 @@ export async function pruneServerNodeModulesViaNft({
           try {
             const remaining = fs.readdirSync(full);
             if (remaining.length === 0) fs.rmdirSync(full);
-          } catch {}
+          } catch (error) {
+            // Empty-directory pruning is optional; never hide why it was skipped.
+            if (error.code !== "ENOENT" && error.code !== "ENOTEMPTY") {
+              console.warn(`Could not prune build directory ${full}: ${error.message}`);
+            }
+          }
         } else if (entry.isFile() || entry.isSymbolicLink()) {
           if (!tracedFiles.has(full)) {
             const size = entry.isFile() ? (fs.statSync(full).size || 0) : 0;

@@ -4516,7 +4516,7 @@ Continue the restored transcript.
 
   it("emits a synthetic turn_end before releasing an aborted streaming session", async () => {
     const sessionFile = path.join(tempDir, "aborted-turn-end.jsonl");
-    let coordinator: any;
+    const coordinatorRef: { current?: SessionCoordinator } = {};
     const events: any[] = [];
     const emitEvent = vi.fn((event: any, sp: any) => {
       events.push({
@@ -4524,7 +4524,7 @@ Continue the restored transcript.
         aborted: event.aborted,
         isStreaming: event.isStreaming,
         sp,
-        sessionAlive: coordinator?.getSessionByPath(sessionFile) != null,
+        sessionAlive: coordinatorRef.current?.getSessionByPath(sessionFile) != null,
       });
     });
     const unsubscribe = vi.fn();
@@ -4536,7 +4536,7 @@ Continue the restored transcript.
       extensionRunner: null,
     };
 
-    coordinator = new SessionCoordinator({
+    const coordinator = new SessionCoordinator({
       agentsDir: tempDir,
       getAgent: () => ({
         id: "hana",
@@ -4560,6 +4560,7 @@ Continue the restored transcript.
       getAgentById: () => null,
       listAgents: () => [],
     });
+    coordinatorRef.current = coordinator;
     coordinator.sessions.set(sessionFile, {
       session: stuckSession,
       agentId: "hana",

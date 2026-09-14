@@ -879,7 +879,6 @@ export function createDeskRoute(engine, hub) {
     const userGuidance = typeof body?.userGuidance === "string" ? body.userGuidance.trim() : "";
     const abortController = new AbortController();
     let finalized = false;
-    let timeoutTimer;
     const finishActivity = (patch, sessionPath = null) => {
       if (finalized) return null;
       finalized = true;
@@ -888,7 +887,7 @@ export function createDeskRoute(engine, hub) {
       if (updated) emitActivityUpdate(updated, sessionPath);
       return updated;
     };
-    timeoutTimer = setTimeout(() => {
+    const timeoutTimer = setTimeout(() => {
       abortController.abort();
       finishActivity(activityTimeoutPatch(activity, Date.now(), DEFAULT_ACTIVITY_EXECUTION_TIMEOUT_MS));
     }, DEFAULT_ACTIVITY_EXECUTION_TIMEOUT_MS);

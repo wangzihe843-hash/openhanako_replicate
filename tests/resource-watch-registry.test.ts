@@ -347,7 +347,6 @@ describe("ResourceWatchRegistry", () => {
   it("uses provider watch targets and emits canonical provider resources", async () => {
     vi.useFakeTimers();
     const mountRoot = path.join("/mnt", "docs");
-    const resolvedMountRoot = path.resolve(mountRoot);
     const changedPath = path.join(mountRoot, "notes", "a.md");
     const resolvedChangedPath = path.resolve(changedPath);
     const close = vi.fn();

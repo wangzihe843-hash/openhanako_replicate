@@ -1,3 +1,4 @@
+import { useI18n } from '../../hooks/use-i18n';
 /**
  * AssistantMessage — 助手消息，遍历 ContentBlock 按类型渲染
  */
@@ -22,7 +23,7 @@ import { ChatResourceCard } from './ChatResourceCard';
 import { FileResourceIcon, SkillResourceIcon } from './ChatResourceIcons';
 import { BLOCK_RENDERERS } from './block-renderers';
 import { FileOutputActions } from './FileOutputActions';
-const lazyScreenshot = () => import('../../utils/screenshot').then(m => m.takeScreenshot);
+import { takeScreenshot } from '../../utils/screenshot';
 import type { ChatMessage, ContentBlock } from '../../stores/chat-types';
 import { useStore } from '../../stores';
 import { selectSessionFiles } from '../../stores/selectors/file-refs';
@@ -127,8 +128,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   }, [blocks, sessionPath]);
 
   const handleScreenshot = useCallback(async () => {
-    const fn = await lazyScreenshot();
-    fn(message.id, sessionPath);
+    await takeScreenshot(message.id, sessionPath);
   }, [message.id, sessionPath]);
 
   const { actions: nodeActions, busy: nodeActionBusy } = useSessionNodeActions({
@@ -309,7 +309,7 @@ const MediaGenerationBlock = memo(function MediaGenerationBlock({ block, session
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState('');
   const [localBlock, setLocalBlock] = useState<any | null>(null);
-  const t = window.t ?? ((k: string) => k);
+  const { t } = useI18n();
   const viewBlock = localBlock?.taskId === block.taskId ? { ...block, ...localBlock } : block;
   const failed = viewBlock.status === 'failed' || viewBlock.status === 'aborted';
   const kindLabel = viewBlock.kind === 'video' ? t('chat.media.kindVideo') : t('chat.media.kindImage');
@@ -348,7 +348,7 @@ const MediaGenerationBlock = memo(function MediaGenerationBlock({ block, session
       setRetryError(err instanceof Error ? err.message : t('chat.media.retryFailed'));
       setRetrying(false);
     }
-  }, [canRetry, prompt, retrying, sessionPath, viewBlock.taskId]);
+  }, [canRetry, prompt, retrying, sessionPath, t, viewBlock.taskId]);
 
   return (
     <div className={`${styles.mediaGenerationCard}${failed ? ` ${styles.mediaGenerationCardFailed}` : ''}`}>

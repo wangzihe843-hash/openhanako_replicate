@@ -247,10 +247,10 @@ ${paint(theme, "/quit")}              exit
       console.error(`${inputQueue.length} queued input line(s) not sent or executed.`);
     }
     if (keypressHandler) process.stdin.off("keypress", keypressHandler);
-    try { rl.close(); } catch {}
-    try { ws.close(); } catch {}
+    try { rl.close(); } catch (error) { console.error("Failed to close chat input:", error.message); }
+    try { ws.close(); } catch (error) { console.error("Failed to close chat connection:", error.message); }
     if (process.stdin.isTTY) {
-      try { process.stdin.setRawMode(false); } catch {}
+      try { process.stdin.setRawMode(false); } catch (error) { console.error("Failed to restore terminal input mode:", error.message); }
     }
     // EOF can finish a piped chat while stdout still has buffered response
     // bytes. Flush both streams before exiting so the final answer survives.

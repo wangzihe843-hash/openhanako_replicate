@@ -22,16 +22,16 @@ import { writeScript, cleanup } from "./script.ts";
 export function createBwrapExec(policy, { getExternalReadPaths, getSandboxNetworkEnabled }: { getExternalReadPaths?: () => string[]; getSandboxNetworkEnabled?: () => boolean } = {}) {
   return async (command, cwd, { onData, signal, timeout, env }) => {
     const { scriptPath } = writeScript(command, cwd);
-    const args = buildBwrapArgs(policy, {
-      cwd,
-      env,
-      allowNetwork: typeof getSandboxNetworkEnabled === "function"
-        ? getSandboxNetworkEnabled()
-        : true,
-      externalReadPaths: typeof getExternalReadPaths === "function" ? getExternalReadPaths() : [],
-      runtimeReadPaths: [scriptPath],
-    });
     try {
+      const args = buildBwrapArgs(policy, {
+        cwd,
+        env,
+        allowNetwork: typeof getSandboxNetworkEnabled === "function"
+          ? getSandboxNetworkEnabled()
+          : true,
+        externalReadPaths: typeof getExternalReadPaths === "function" ? getExternalReadPaths() : [],
+        runtimeReadPaths: [scriptPath],
+      });
       return await spawnAndStream(
         "bwrap",
         [...args, "--", "/bin/bash", scriptPath],
@@ -172,15 +172,25 @@ export function buildBwrapArgs(policy, {
 
   // 读取拒绝：文件绑 /dev/null，目录绑 tmpfs
   for (const p of policy.denyReadPaths || []) {
-    if (!fs.existsSync(p)) continue;
+    let stat: fs.Stats;
     try {
-      if (fs.statSync(p).isDirectory()) {
-        addParentDirs(args, p, createdDirs, mountOpts);
-        args.push("--tmpfs", p);
-      } else {
-        addMount(args, "--ro-bind", "/dev/null", p, createdDirs, mountOpts);
+      stat = fs.statSync(p);
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        // A dangling symlink is not an absent denied path.
+        try { fs.lstatSync(p); } catch (linkError) {
+          if (linkError.code === "ENOENT") continue;
+          throw new Error(`Cannot enforce sandbox read denial for ${p}`, { cause: linkError });
+        }
       }
-    } catch {}
+      throw new Error(`Cannot enforce sandbox read denial for ${p}`, { cause: error });
+    }
+    if (stat.isDirectory()) {
+      addParentDirs(args, p, createdDirs, mountOpts);
+      args.push("--tmpfs", p);
+    } else {
+      addMount(args, "--ro-bind", "/dev/null", p, createdDirs, mountOpts);
+    }
   }
 
   // 兼容少数程序直接读取原 HOME 下的缓存路径：如果路径已存在且未被授予写入，

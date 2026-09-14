@@ -89,7 +89,7 @@ it('RR02 canceled materialization must not register or process later attachments
   const pending = submitDesktopSessionMessage(engine, { sessionPath: sp, text: 'fixture',
     inboundFiles: [{ type: 'file', filename: 'review-attachment.txt', buffer: Buffer.from('synthetic fixture') }, { type: 'file', filename: 'later.txt', buffer: Buffer.from('later') }] }).catch(e => e);
   await entered.promise;
-  const canceled = cancelDesktopSessionSubmission(engine, sp);
+  cancelDesktopSessionSubmission(engine, sp);
   const result = await pending;
   trace.push('outer-rejected:' + result.name);
   held.resolve();

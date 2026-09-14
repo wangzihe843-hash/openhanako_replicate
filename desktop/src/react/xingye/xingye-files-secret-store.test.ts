@@ -48,7 +48,9 @@ vi.mock('./xingye-storage-backend', () => ({
             deleted = true;
             continue;
           }
-        } catch {}
+        } catch {
+          // Preserve malformed fixture rows verbatim while removing only the matching valid row.
+        }
         next.push(line);
       }
       memJsonl.set(k, next);

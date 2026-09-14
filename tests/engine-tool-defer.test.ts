@@ -4,7 +4,6 @@ import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HanaEngine } from "../core/engine.ts";
 import { toMcpToolId } from "../core/mcp/manager.ts";
-import { resolveToolInvocationPermission } from "../lib/permission/tool-invocation-permission.ts";
 
 const BRIDGE_NAMES = ["mcp_search_tools", "mcp_describe_tool", "mcp_call"];
 

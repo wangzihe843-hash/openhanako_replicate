@@ -1,3 +1,4 @@
+import { takeArticleScreenshot } from '../../utils/screenshot';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import styles from './FloatingActions.module.css';
 import { COVER_GALLERY_ITEMS, type CoverGalleryItem } from './cover-gallery-assets';
@@ -240,7 +241,6 @@ export function FloatingActions({
   }, [content]);
 
   const handleScreenshot = useCallback(async () => {
-    const { takeArticleScreenshot } = await import('../../utils/screenshot');
     await takeArticleScreenshot(content, {
       filePath,
       articleType: contentType,

@@ -1,3 +1,4 @@
+import type { CompactionRuntime, SessionAbortRequest, SessionCancellation } from "./runtime-contracts.ts";
 /**
  * HanaEngine — Hanako 的核心引擎（Thin Facade）
  *
@@ -257,7 +258,7 @@ function sessionBelongsToProject(projectId) {
   };
 }
 
-export class HanaEngine {
+export class HanaEngine implements SessionCancellation {
   declare _activityHub: any;
   declare _agentMgr: any;
   declare _approvalGateway: any;
@@ -1593,7 +1594,7 @@ export class HanaEngine {
   /** @deprecated Phase 2: 使用 promptSession(path, text, opts) */
   async prompt(text, opts) { return this._sessionCoord.prompt(text, opts); }
   /** @deprecated Phase 2: 使用 abortSession(path) */
-  async abort(options) { return this._sessionCoord.abort(options); }
+  async abort(options: SessionAbortRequest = {}): Promise<boolean> { return this._sessionCoord.abort(options); }
   /** @deprecated Phase 2: 使用 steerSession(path, text) */
   steer(text) { return this._sessionCoord.steer(text); }
 
@@ -1602,7 +1603,7 @@ export class HanaEngine {
     return this._sessionCoord.promptSession(p, text, opts, submitOptions);
   }
   steerSession(p, text) { return this._sessionCoord.steerSession(p, text); }
-  async abortSession(p, options) { return this._sessionCoord.abortSession(p, options); }
+  async abortSession(p: string, options: SessionAbortRequest = {}): Promise<boolean> { return this._sessionCoord.abortSession(p, options); }
   async deliverCustomMessage(p, message, options) {
     return this._sessionCoord.deliverCustomMessage(p, message, options);
   }
@@ -1649,7 +1650,7 @@ export class HanaEngine {
     return this._sessionCoord.removeSessionAuthorizedFolder(p, folder);
   }
 
-  async abortAllStreaming() { return this._sessionCoord.abortAllStreaming(); }
+  async abortAllStreaming(): Promise<number> { return this._sessionCoord.abortAllStreaming(); }
   isBridgeSessionStreaming(key, opts) { return this._bridge?.isSessionStreaming(key, opts) ?? false; }
   async abortBridgeSession(key) { return this._bridge?.abortSession(key) ?? false; }
   steerBridgeSession(key, text, opts) { return this._bridge?.steerSession(key, text, opts) ?? false; }
@@ -1682,7 +1683,7 @@ export class HanaEngine {
   }
   isSessionStreaming(p) { return this._sessionCoord.isSessionStreaming(p); }
   isSessionSwitching(p) { return this._sessionCoord.isSessionSwitching(p); }
-  async abortSessionByPath(p, options) { return this._sessionCoord.abortSessionByPath(p, options); }
+  async abortSessionByPath(p: string, options: SessionAbortRequest = {}): Promise<boolean> { return this._sessionCoord.abortSessionByPath(p, options); }
   async listSessions(options = {}) { return this._sessionCoord.listSessions(options); }
   async continueDeletedAgentSession(p) { return this._sessionCoord.continueDeletedAgentSession(p); }
   getSessionProjectCatalog() { return this._sessionProjects.getCatalog(); }
@@ -2122,8 +2123,8 @@ export class HanaEngine {
    * 对桌面 session 做上下文压缩；返回 { tokensBefore, tokensAfter, contextWindow }
    * 供 /compact 在 /rc 接管态下给出 token delta 反馈（Phase 2-E）
    */
-  async compactDesktopSession(sessionPath) {
-    let session = this.getSessionByPath(sessionPath);
+  async compactDesktopSession(sessionPath: string) {
+    let session: CompactionRuntime | null = this.getSessionByPath(sessionPath);
     if (!session) throw new Error("compactDesktopSession: session not found");
     if (session.isCompacting) throw new Error("compactDesktopSession: already compacting");
     let before = session.getContextUsage?.() ?? null;
@@ -2155,8 +2156,8 @@ export class HanaEngine {
    * "Already compacted / Nothing to compact" 视为 noop（快照仍然刷新），
    * 与 bridge fresh compact 的 markFreshCompactSatisfied 语义一致。
    */
-  async freshCompactDesktopSession(sessionPath) {
-    let session = this.getSessionByPath(sessionPath) || await this.ensureSessionLoaded(sessionPath);
+  async freshCompactDesktopSession(sessionPath: string) {
+    let session: CompactionRuntime | null = this.getSessionByPath(sessionPath) || await this.ensureSessionLoaded(sessionPath);
     if (!session) throw new Error("freshCompactDesktopSession: session not found");
     if (session.isCompacting) throw new Error("freshCompactDesktopSession: already compacting");
     if (this.isSessionStreaming(sessionPath)) {

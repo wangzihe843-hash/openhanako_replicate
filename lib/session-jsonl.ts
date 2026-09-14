@@ -2,8 +2,6 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 
-const TAIL_READ_THRESHOLD = 256 * 1024;
-
 export class SessionBranchError extends Error {
   declare code: string;
   declare details: any;

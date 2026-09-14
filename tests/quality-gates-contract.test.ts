@@ -64,7 +64,8 @@ describe("quality gates", () => {
       .map((step) => step.run)
       .filter(Boolean);
 
-    const lintIndex = runSteps.indexOf("npm run lint");
+    const lintIndex = runSteps.indexOf("npm run lint:warnings");
+    expect(readJson("package.json").scripts["lint:warnings"]).toBe("node scripts/lint-warning-ratchet.mjs");
     const buildIndex = runSteps.indexOf("npm run build:renderer");
     const testIndex = runSteps.indexOf("npm test");
 

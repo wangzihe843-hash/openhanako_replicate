@@ -38,7 +38,15 @@ jobs:
         run: npm run typecheck
 
       - name: Lint
-        run: npm run lint
+        run: npm run lint:warnings
+
+      - name: Preserve lint diagnostics and warning comparison
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-warnings-${{ matrix.os }}
+          path: output/lint-warning-ratchet/
+          if-no-files-found: ignore
 
       - name: Build packages
         run: npm run build:packages

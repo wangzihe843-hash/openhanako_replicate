@@ -23,6 +23,8 @@ interface ConnectorToolListProps {
  * stays loaded up front. Selection is batched — forty tools used to mean forty
  * requests, one per switch.
  */
+const EMPTY_TOOLS: McpTool[] = [];
+
 export function ConnectorToolList({
   connector,
   enabledTools,
@@ -36,7 +38,7 @@ export function ConnectorToolList({
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState(true);
 
-  const tools = connector.tools || [];
+  const tools = connector.tools || EMPTY_TOOLS;
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return tools;

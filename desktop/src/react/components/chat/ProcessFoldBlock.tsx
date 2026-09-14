@@ -1,3 +1,4 @@
+import { useI18n } from '../../hooks/use-i18n';
 import { memo, useCallback, useId, useMemo, useState } from 'react';
 import { Collapse } from '@/ui';
 import { AgentAvatar, type AgentDisplayInfo } from '../../utils/agent-display';
@@ -49,7 +50,7 @@ export const ProcessFoldBlock = memo(function ProcessFoldBlock({
 }: Props) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
-  const t = window.t ?? ((p: string) => p);
+  const { t } = useI18n();
 
   const displayName = agentDisplay.displayName;
   const displayInfo = agentDisplay;

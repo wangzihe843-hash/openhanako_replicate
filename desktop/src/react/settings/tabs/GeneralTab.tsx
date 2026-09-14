@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { useSettingsStore } from '../store';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useSettingsStore, type SettingsStore } from '../store';
+import { requireServerConnection, resolveServerConnection } from '../../services/server-connection';
 import { hanaFetch } from '../api';
 import { autoSaveConfig, t } from '../helpers';
 import { loadSettingsConfig, updateSettingsSnapshot } from '../actions';
@@ -14,7 +15,6 @@ import {
   normalizeChatCompletionNotificationMode,
 } from '../../../../../shared/notification-preferences.ts';
 import {
-  DEFAULT_QUICK_CHAT_REUSE_TIMEOUT_MINUTES,
   DEFAULT_QUICK_CHAT_SHORTCUT,
   normalizeQuickChatPreferences,
 } from '../../../../../shared/quick-chat-preferences.ts';
@@ -32,6 +32,19 @@ interface NotificationPreferences {
 interface QuickChatPreferences {
   shortcut: string;
   reuseTimeoutMinutes: number;
+}
+
+// Settings snapshots are agent-owned even though quick-chat preferences are server-wide.
+function quickChatOwnerKey(state: SettingsStore): string {
+  const connection = resolveServerConnection(state);
+  return JSON.stringify([
+    state.getSettingsAgentId(), state.settingsSnapshot.key,
+    connection?.connectionId, connection?.baseUrl, connection?.token,
+  ]);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function formatShortcut(shortcut: string): string[] {
@@ -182,6 +195,10 @@ function normalizeNotificationPreferences(value: unknown): NotificationPreferenc
 export function GeneralTab() {
   const hana = window.hana;
   const settingsConfig = useSettingsStore(s => s.settingsConfig);
+  const quickChatOwner = useSettingsStore(quickChatOwnerKey);
+  const quickChatGeneration = useRef(0);
+  const quickChatPending = useRef(false);
+  const quickChatReloadOnRetry = useRef(false);
   const snapshotQuickChat = useSettingsStore(s => s.settingsSnapshot.data?.preferences?.quickChat);
   const snapshotNotifications = useSettingsStore(s => s.settingsSnapshot.data?.preferences?.notifications);
   const showToast = useSettingsStore(s => s.showToast);
@@ -193,6 +210,7 @@ export function GeneralTab() {
     return snapshot ? normalizeQuickChatPreferences(snapshot) : null;
   });
   const [quickChatSaving, setQuickChatSaving] = useState(false);
+  const [quickChatLoadError, setQuickChatLoadError] = useState<string | null>(null);
   const [quickChatRecording, setQuickChatRecording] = useState(false);
   const [notificationSaving, setNotificationSaving] = useState(false);
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences | null>(() => {
@@ -216,25 +234,55 @@ export function GeneralTab() {
   }, [hana]);
 
   useEffect(() => {
+    quickChatGeneration.current += 1;
+    quickChatPending.current = false;
+    quickChatReloadOnRetry.current = false;
+    setQuickChatSaving(false);
+    setQuickChatLoadError(null);
+    setQuickChatRecording(false);
+    return () => { quickChatGeneration.current += 1; };
+  }, [quickChatOwner]);
+
+  useEffect(() => {
+    if (quickChatLoadError) return;
     if (snapshotQuickChat) {
       setQuickChatPrefs(normalizeQuickChatPreferences(snapshotQuickChat));
       return undefined;
     }
+    setQuickChatPrefs(null);
     let alive = true;
     hanaFetch('/api/preferences/quick-chat')
       .then(res => res.json())
-      .then((data) => {
-        if (!alive) return;
-        setQuickChatPrefs(normalizeQuickChatPreferences(data?.quickChat));
+      .then(async (data) => {
+        if (!alive || quickChatOwnerKey(useSettingsStore.getState()) !== quickChatOwner) return;
+        if (data?.error) throw new Error(data.error);
+        if (!data?.quickChat || typeof data.quickChat !== 'object') {
+          throw new Error('Quick chat preferences missing from server response');
+        }
+        setQuickChatPrefs(normalizeQuickChatPreferences(data.quickChat));
+        if (quickChatReloadOnRetry.current) {
+          try {
+            const registration = await hana?.quickChatReloadShortcut?.();
+            if (!alive || quickChatOwnerKey(useSettingsStore.getState()) !== quickChatOwner) return;
+            if (registration?.ok === false) {
+              throw new Error(registration.error || t('settings.general.quickChat.registrationFailed'));
+            }
+            quickChatReloadOnRetry.current = false;
+          } catch (error) {
+            if (!alive || quickChatOwnerKey(useSettingsStore.getState()) !== quickChatOwner) return;
+            showToast(t('settings.general.quickChat.registrationFailed') + ': ' + errorMessage(error), 'error');
+          }
+        }
       })
       .catch((err) => {
-        if (!alive) return;
-        showToast(t('settings.saveFailed') + ': ' + (err?.message || String(err)), 'error');
+        if (!alive || quickChatOwnerKey(useSettingsStore.getState()) !== quickChatOwner) return;
+        setQuickChatLoadError(t('settings.refreshFailed') + ': ' + errorMessage(err));
+        showToast(t('settings.saveFailed') + ': ' + errorMessage(err), 'error');
       });
     return () => {
       alive = false;
     };
-  }, [showToast, snapshotQuickChat]);
+  }, [hana, quickChatLoadError, quickChatOwner, showToast, snapshotQuickChat]);
 
   useEffect(() => {
     if (snapshotNotifications) {
@@ -261,47 +309,121 @@ export function GeneralTab() {
     patch: Partial<QuickChatPreferences>,
     options: { reloadShortcut?: boolean; eventName?: string } = {},
   ) => {
-    if (!quickChatPrefs) return;
+    if (!quickChatPrefs || quickChatPending.current) return;
+    const generation = quickChatGeneration.current;
+    const isCurrent = () => generation === quickChatGeneration.current
+      && quickChatOwnerKey(useSettingsStore.getState()) === quickChatOwner;
     const previous = quickChatPrefs;
-    const next = normalizeQuickChatPreferences({ ...quickChatPrefs, ...patch });
-    setQuickChatPrefs(next);
+    const next = normalizeQuickChatPreferences({ ...previous, ...patch });
+    const publish = (preferences: QuickChatPreferences) => {
+      if (!isCurrent()) return;
+      setQuickChatPrefs(preferences);
+      updateSettingsSnapshot(snapshot => ({
+        ...snapshot,
+        preferences: { ...snapshot.preferences, quickChat: preferences },
+      }));
+    };
+    const reloadShortcut = async () => {
+      if (!options.reloadShortcut) return;
+      const registration = await hana?.quickChatReloadShortcut?.();
+      if (registration?.ok === false) {
+        throw new Error(registration.error || t('settings.general.quickChat.registrationFailed'));
+      }
+    };
+    quickChatPending.current = true;
     setQuickChatSaving(true);
+    // Capture the transport once: compensation must never write to a newly selected server.
+    let connection: ReturnType<typeof requireServerConnection>;
     try {
+      connection = requireServerConnection(useSettingsStore.getState(), 'Server connection not ready');
+    } catch (error) {
+      quickChatPending.current = false;
+      setQuickChatSaving(false);
+      showToast(t('settings.saveFailed') + ': ' + errorMessage(error), 'error');
+      return;
+    }
+    const readPreferences = async (method: 'GET' | 'PUT', preferences?: QuickChatPreferences) => {
       const res = await hanaFetch('/api/preferences/quick-chat', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quickChat: next }),
+        connection,
+        method,
+        ...(preferences ? {
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quickChat: preferences }),
+        } : {}),
       });
       const data = await res.json();
       if (data?.error) throw new Error(data.error);
-      const saved = normalizeQuickChatPreferences(data?.quickChat);
-      setQuickChatPrefs(saved);
-      updateSettingsSnapshot(snapshot => ({
-        ...snapshot,
-        preferences: { ...snapshot.preferences, quickChat: saved },
-      }));
-      if (options.reloadShortcut) {
-        const registration = await hana?.quickChatReloadShortcut?.();
-        if (registration && registration.ok === false) {
-          throw new Error(registration.error || t('settings.general.quickChat.registrationFailed'));
+      if (!data?.quickChat || typeof data.quickChat !== 'object') {
+        throw new Error('Quick chat preferences missing from server response');
+      }
+      return normalizeQuickChatPreferences(data.quickChat);
+    };
+    let saved = false;
+    try {
+      const preferences = await readPreferences('PUT', next);
+      if (!isCurrent()) return;
+      saved = true;
+      publish(preferences);
+      await reloadShortcut();
+      if (!isCurrent()) return;
+      if (options.eventName) hana?.settingsChanged?.(options.eventName, { quickChat: preferences });
+    } catch (error) {
+      if (!isCurrent()) return;
+      const errors = [t('settings.saveFailed') + ': ' + errorMessage(error)];
+      let reconciled = false;
+      // Only a confirmed save followed by registration failure needs compensation.
+      // An uncertain first write is read back instead of issuing another write.
+      if (saved) {
+        try {
+          const restored = await readPreferences('PUT', previous);
+          if (!isCurrent()) return;
+          publish(restored);
+          reconciled = true;
+          await reloadShortcut();
+          if (!isCurrent()) return;
+        } catch (restoreError) {
+          if (!isCurrent()) return;
+          errors.push(t('settings.security.restoreFailed') + ': ' + errorMessage(restoreError));
         }
       }
-      if (options.eventName) hana?.settingsChanged?.(options.eventName, { quickChat: saved });
-    } catch (err: any) {
-      setQuickChatPrefs(previous);
-      try {
-        await hanaFetch('/api/preferences/quick-chat', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ quickChat: previous }),
-        });
-        if (options.reloadShortcut) await hana?.quickChatReloadShortcut?.();
-      } catch {}
-      showToast(t('settings.saveFailed') + ': ' + (err?.message || String(err)), 'error');
+      if (!reconciled) {
+        try {
+          const actual = await readPreferences('GET');
+          if (!isCurrent()) return;
+          publish(actual);
+          reconciled = true;
+        } catch (refreshError) {
+          if (!isCurrent()) return;
+          setQuickChatPrefs(null);
+          quickChatReloadOnRetry.current = options.reloadShortcut === true;
+          setQuickChatLoadError(t('settings.refreshFailed') + ': ' + errorMessage(refreshError));
+          // Do not let re-entering this tab turn an unconfirmed cached value into success.
+          const store = useSettingsStore.getState();
+          store.set({ settingsSnapshot: {
+            ...store.settingsSnapshot, data: null, status: 'error',
+            error: errorMessage(refreshError), updatedAt: null,
+          } });
+          errors.push(t('settings.refreshFailed') + ': ' + errorMessage(refreshError));
+        }
+        if (reconciled) {
+          // Read-back confirms persisted settings, not whether the host applied them.
+          try {
+            await reloadShortcut();
+            if (!isCurrent()) return;
+          } catch (registrationError) {
+            if (!isCurrent()) return;
+            errors.push(t('settings.general.quickChat.registrationFailed') + ': ' + errorMessage(registrationError));
+          }
+        }
+      }
+      showToast(errors.join('; '), 'error');
     } finally {
-      setQuickChatSaving(false);
+      if (isCurrent()) {
+        quickChatPending.current = false;
+        setQuickChatSaving(false);
+      }
     }
-  }, [hana, quickChatPrefs, showToast]);
+  }, [hana, quickChatOwner, quickChatPrefs, showToast]);
 
   const saveQuickChatShortcut = useCallback((shortcut: string) => saveQuickChatPreferences(
     { shortcut },
@@ -430,6 +552,12 @@ export function GeneralTab() {
       </SettingsSection>
 
       <SettingsSection title={t('settings.general.quickChat.title')}>
+        {quickChatLoadError && (
+          <div role="alert">
+            {quickChatLoadError}
+            <button type="button" onClick={() => setQuickChatLoadError(null)}>{t('action.retry')}</button>
+          </div>
+        )}
         <SettingsRow
           label={t('settings.general.quickChat.shortcut')}
           hint={t('settings.general.quickChat.shortcutHint')}

@@ -92,7 +92,10 @@
     // OS 集成 → 静默降级
     openFolder: () => {},
     openFile: () => {},
-    openExternal: (url) => { try { window.open(url, "_blank"); } catch {} },
+    openExternal: (url) => {
+      try { window.open(url, "_blank"); }
+      catch { console.warn("The browser could not open the external link."); }
+    },
     showInFinder: () => {},
     startDrag: () => {},
 

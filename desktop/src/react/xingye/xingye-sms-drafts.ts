@@ -13,7 +13,7 @@ import {
 } from './xingye-event-log';
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
-import { addSmsMessage, getSmsThreads, type XingyeContactTargetType } from './xingye-phone-store';
+import { addSmsMessage, getSmsThreads } from './xingye-phone-store';
 import { FROM_DRAFT_ID_PREFIX, withDraftConfirmLock } from './xingye-draft-confirm-lock';
 import { detectSmsDraftDuplicate, type SmsDraftDuplicateResult } from './xingye-sms-dedupe';
 

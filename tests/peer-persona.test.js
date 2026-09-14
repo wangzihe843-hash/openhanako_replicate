@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  try { fs.rmSync(agentsDir, { recursive: true, force: true }); } catch {}
+  fs.rmSync(agentsDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 function writePublicIshiki(peerId, content) {

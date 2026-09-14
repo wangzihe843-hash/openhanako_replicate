@@ -124,7 +124,7 @@ describe("bootstrap keepalive worker", () => {
         `keepalives clustered at one moment (spread=${spread}ms) → Worker stdio was blocked by main thread; check that the worker uses fs.writeSync(1, ...) and NOT process.stdout.write`,
       ).toBeGreaterThanOrEqual(300);
     } finally {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   }, 10000);
 });

@@ -59,7 +59,7 @@ export function createDmRoute(engine, hub = null) {
   }
 
   function invalidPeerId(peerId) {
-    return !peerId || /[\/\\]|\.\./.test(peerId);
+    return !peerId || /[/\\]|\.\./.test(peerId);
   }
 
   function dmProjectionMeta(agent, peerId): Record<string, any> {

@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 /** 造 recent_chat.observed 事件流，时间戳从 base 起每条 +1 分钟。 */

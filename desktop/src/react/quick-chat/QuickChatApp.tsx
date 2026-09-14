@@ -655,7 +655,7 @@ export function QuickChatApp() {
         if (attempt.signal.aborted) { sendingRef.current = false; setSending(false); }
       }
     }
-  }, [attachments, draft, ensureDetachedSession, ensureSocket, sending, t]);
+  }, [attachments, draft, ensureDetachedSession, ensureSocket, t]);
 
   const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files: File[] = [];

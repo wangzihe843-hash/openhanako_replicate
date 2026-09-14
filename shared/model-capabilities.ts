@@ -1,3 +1,23 @@
+export type ReasoningReplayContract = { policy: string; carrier?: string; clearable?: boolean };
+export type ModelProtocolCompat = {
+  thinkingFormat?: string;
+  reasoningProfile?: string;
+  hanaVideoInput?: boolean;
+  hanaAudioInput?: boolean;
+  outputCapRequired?: boolean;
+  outputCapField?: string;
+  reasoningReplay?: ReasoningReplayContract;
+  requiresReasoningContentOnAssistantMessages?: boolean;
+};
+export type ToolUseContract = {
+  supportsTools: boolean;
+  dialect: string;
+  toolResultFormat: string;
+  supportsParallelToolCalls?: boolean;
+  supportsForcedToolChoice?: boolean;
+  supportsServerTools?: boolean;
+};
+
 function lower(value: unknown): string {
   return typeof value === "string" ? value.toLowerCase() : "";
 }
@@ -149,73 +169,76 @@ const REASONING_REPLAY_CARRIERS = new Set([
   "thought_signature",
 ]);
 
-export function normalizeReasoningReplayContract(value: any): Record<string, any> | null {
-  if (!isPlainObject(value)) return null;
-  const policy = lower(value.policy);
+export function normalizeReasoningReplayContract(value: unknown): ReasoningReplayContract | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input: Record<string, unknown> = value as Record<string, unknown>;
+  const policy = lower(input.policy);
   if (!REASONING_REPLAY_POLICIES.has(policy)) return null;
   if (policy === "none") return { policy: "none" };
 
-  const carrier = lower(value.carrier);
+  const carrier = lower(input.carrier);
   if (!REASONING_REPLAY_CARRIERS.has(carrier)) return null;
-  const out: Record<string, any> = { carrier, policy };
-  if (value.clearable === true) out.clearable = true;
+  const out: ReasoningReplayContract = { carrier, policy };
+  if (input.clearable === true) out.clearable = true;
   return out;
 }
 
-export function normalizeModelProtocolCompat(value: any): Record<string, any> | null {
-  if (!isPlainObject(value)) return null;
-  const out: Record<string, any> = {};
+export function normalizeModelProtocolCompat(value: unknown): ModelProtocolCompat | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input: Record<string, unknown> = value as Record<string, unknown>;
+  const out: ModelProtocolCompat = {};
 
-  const thinkingFormat = lower(value.thinkingFormat);
+  const thinkingFormat = lower(input.thinkingFormat);
   if (MODEL_THINKING_FORMATS.has(thinkingFormat)) {
     out.thinkingFormat = thinkingFormat;
   }
 
-  const reasoningProfile = lower(value.reasoningProfile || value.thinkingProfile);
+  const reasoningProfile = lower(input.reasoningProfile || input.thinkingProfile);
   if (MODEL_REASONING_PROFILES.has(reasoningProfile)) {
     out.reasoningProfile = reasoningProfile;
   }
 
-  if (value.hanaVideoInput === true) out.hanaVideoInput = true;
-  if (value.hanaAudioInput === true) out.hanaAudioInput = true;
-  if (value.outputCapRequired === true) out.outputCapRequired = true;
-  if (typeof value.outputCapField === "string" && OUTPUT_CAP_FIELDS.has(value.outputCapField)) {
-    out.outputCapField = value.outputCapField;
+  if (input.hanaVideoInput === true) out.hanaVideoInput = true;
+  if (input.hanaAudioInput === true) out.hanaAudioInput = true;
+  if (input.outputCapRequired === true) out.outputCapRequired = true;
+  if (typeof input.outputCapField === "string" && OUTPUT_CAP_FIELDS.has(input.outputCapField)) {
+    out.outputCapField = input.outputCapField;
   }
 
-  if (Object.prototype.hasOwnProperty.call(value, "reasoningReplay")) {
-    const reasoningReplay = normalizeReasoningReplayContract(value.reasoningReplay);
+  if (Object.prototype.hasOwnProperty.call(input, "reasoningReplay")) {
+    const reasoningReplay = normalizeReasoningReplayContract(input.reasoningReplay);
     if (reasoningReplay) out.reasoningReplay = reasoningReplay;
   }
-  if (typeof value.requiresReasoningContentOnAssistantMessages === "boolean") {
-    out.requiresReasoningContentOnAssistantMessages = value.requiresReasoningContentOnAssistantMessages;
+  if (typeof input.requiresReasoningContentOnAssistantMessages === "boolean") {
+    out.requiresReasoningContentOnAssistantMessages = input.requiresReasoningContentOnAssistantMessages;
   }
 
   return Object.keys(out).length > 0 ? out : null;
 }
 
-export function normalizeToolUseContract(value: any): Record<string, any> | null {
-  if (!isPlainObject(value)) return null;
-  if (typeof value.supportsTools !== "boolean") return null;
+export function normalizeToolUseContract(value: unknown): ToolUseContract | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input: Record<string, unknown> = value as Record<string, unknown>;
+  if (typeof input.supportsTools !== "boolean") return null;
 
-  const dialect = lower(value.dialect);
+  const dialect = lower(input.dialect);
   if (!TOOL_USE_DIALECTS.has(dialect)) return null;
-  const toolResultFormat = lower(value.toolResultFormat);
+  const toolResultFormat = lower(input.toolResultFormat);
   if (!TOOL_RESULT_FORMATS.has(toolResultFormat)) return null;
 
-  const out: Record<string, any> = {
-    supportsTools: value.supportsTools,
+  const out: ToolUseContract = {
+    supportsTools: input.supportsTools,
     dialect,
     toolResultFormat,
   };
-  if (typeof value.supportsParallelToolCalls === "boolean") {
-    out.supportsParallelToolCalls = value.supportsParallelToolCalls;
+  if (typeof input.supportsParallelToolCalls === "boolean") {
+    out.supportsParallelToolCalls = input.supportsParallelToolCalls;
   }
-  if (typeof value.supportsForcedToolChoice === "boolean") {
-    out.supportsForcedToolChoice = value.supportsForcedToolChoice;
+  if (typeof input.supportsForcedToolChoice === "boolean") {
+    out.supportsForcedToolChoice = input.supportsForcedToolChoice;
   }
-  if (typeof value.supportsServerTools === "boolean") {
-    out.supportsServerTools = value.supportsServerTools;
+  if (typeof input.supportsServerTools === "boolean") {
+    out.supportsServerTools = input.supportsServerTools;
   }
   return out;
 }

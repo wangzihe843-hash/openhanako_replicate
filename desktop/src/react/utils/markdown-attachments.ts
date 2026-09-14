@@ -114,7 +114,7 @@ function markdownDestination(relativePath: string): string {
 }
 
 function markdownLabel(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/([\[\]])/g, '\\$1');
+  return value.replace(/\\/g, '\\\\').replace(/([[\]])/g, '\\$1');
 }
 
 export function buildMarkdownAttachmentPlan(input: MarkdownAttachmentPlanInput): MarkdownAttachmentPlan {

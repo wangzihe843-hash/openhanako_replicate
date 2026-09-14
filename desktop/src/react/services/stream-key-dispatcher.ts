@@ -25,7 +25,9 @@ export function subscribeStreamKey(streamKey: string, cb: Callback): () => void 
 
 export function dispatchStreamKey(streamKey: string, event: any): void {
   listeners.get(streamKey)?.forEach(cb => {
-    try { cb(event); } catch {}
+    try { cb(event); } catch (error) {
+      console.warn('[stream-key] listener failed:', error);
+    }
   });
 }
 

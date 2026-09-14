@@ -43,7 +43,12 @@ function resolveNpmCli(env) {
     try {
       const real = fs.realpathSync(path.join(base, "npm"));
       if (path.basename(real) === "npm-cli.js") candidates.push(real);
-    } catch {}
+    } catch (error) {
+      // Missing npm candidates are normal; unexpected lookup failures aid diagnosis.
+      if (error.code !== "ENOENT" && error.code !== "ENOTDIR") {
+        console.warn(`[rehearse-open-export] npm candidate unavailable: ${error.message}`);
+      }
+    }
   }
   const cli = candidates.find((candidate) => path.isAbsolute(candidate) && fs.existsSync(candidate) && fs.statSync(candidate).isFile());
   if (!cli) throw new Error("[rehearse-open-export] cannot locate npm-cli.js; run via npm or install npm alongside Node");

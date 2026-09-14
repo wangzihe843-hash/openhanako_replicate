@@ -1,3 +1,4 @@
+import { usePhoneStorageSnapshot } from './use-phone-storage-snapshot';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import { useXingyeRoleProfile, type XingyeRoleProfileMap } from './xingye-profile-store';
@@ -13,7 +14,6 @@ import {
   getSmsThread,
   getSmsThreads,
   type XingyeContactTargetType,
-  useXingyePhoneStorageVersion,
 } from './xingye-phone-store';
 import {
   confirmSmsDraft,
@@ -45,13 +45,13 @@ export function PhoneSmsApp(props: PhoneSmsAppProps) {
 }
 
 function PhoneSmsAppContent({ ownerAgent, agents, profiles, initialTarget, onBack }: PhoneSmsAppProps) {
-  const version = useXingyePhoneStorageVersion();
+  const { storage: phoneStorage, version: phoneStorageVersion, ready: phoneStorageReady } = usePhoneStorageSnapshot(ownerAgent?.id ?? '');
   const ownerAgentId = ownerAgent?.id ?? '';
   const ownerProfile = useXingyeRoleProfile(ownerAgentId);
   const profileFingerprint = getPhoneProfileFingerprint(ownerAgent, ownerProfile);
   const contacts = useMemo(
-    () => getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true }),
-    [ownerAgentId, agents, profiles, version],
+    () => getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true, readOnly: true }, phoneStorage),
+    [ownerAgentId, agents, profiles, phoneStorage],
   );
   const contactsForSms = useMemo(
     () => contacts.filter(item => item.targetType !== 'user'),
@@ -99,7 +99,7 @@ function PhoneSmsAppContent({ ownerAgent, agents, profiles, initialTarget, onBac
   }, [initialTarget]);
 
   useEffect(() => {
-    if (!ownerAgent) return;
+    if (!ownerAgent || !phoneStorageReady) return;
     if (smsHistoryState?.generatedAt) return;
     if (smsAiState?.status === 'running' || smsAiState?.status === 'failed') return;
     generateSmsHistoryWithAI({
@@ -109,9 +109,9 @@ function PhoneSmsAppContent({ ownerAgent, agents, profiles, initialTarget, onBac
       profileFingerprint,
       mode: 'empty_only',
     }).catch(() => {});
-  }, [ownerAgentId, ownerAgent, ownerProfile, contactsForSms, profileFingerprint, smsHistoryState?.generatedAt, smsAiState?.status]);
+  }, [ownerAgentId, ownerAgent, ownerProfile, contactsForSms, profileFingerprint, smsHistoryState?.generatedAt, smsAiState?.status, phoneStorageReady]);
 
-  const threads = useMemo(() => getSmsThreads(ownerAgentId), [ownerAgentId, version]);
+  const threads = useMemo(() => getSmsThreads(ownerAgentId, phoneStorage), [ownerAgentId, phoneStorage]);
   const visibleThreads = useMemo(
     () => threads.filter(thread => thread.targetType !== 'user'),
     [threads],
@@ -169,7 +169,7 @@ function PhoneSmsAppContent({ ownerAgent, agents, profiles, initialTarget, onBac
 
   useEffect(() => {
     void reloadPendingSmsDrafts();
-  }, [reloadPendingSmsDrafts, version]);
+  }, [reloadPendingSmsDrafts, phoneStorageVersion]);
 
   /**
    * 草稿正文与收件人的"working value"。

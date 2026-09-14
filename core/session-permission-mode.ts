@@ -354,7 +354,7 @@ function classifySessionCollabAction(mode, action, context) {
 }
 
 export function classifySessionPermission({ mode, toolName, params, context }: { mode?: any; toolName?: any; params?: any; context?: any } = {}) {
-  let normalized = normalizeSessionPermissionMode(mode);
+  const normalized = normalizeSessionPermissionMode(mode);
   const name = typeof toolName === "string" ? toolName : "";
   if (!name) return { action: "allow" };
   // subagent 上下文固定边界（与 mode 无关，优先于其它判定）：防自递归 + 禁越权工具。

@@ -40,12 +40,11 @@ export function WorkspaceFileChangeBridge() {
   const connectionKey = useStore(s => resourceEventConnectionKey(resolveServerConnection(s)));
   const deskBasePath = useStore(s => s.deskBasePath);
   const deskWorkspaceMountId = useStore(s => s.deskWorkspaceMountId);
-  const deskWorkspaceNativeRoot = useStore(s => s.deskWorkspaceNativeRoot);
   const deskExpandedPaths = useStore(s => s.deskExpandedPaths);
   const subscriptionsRef = useRef<Map<string, () => void>>(new Map());
   const watchedRefs = useMemo(
     () => workspaceWatchRefs(deskWorkspaceMountId ? '' : deskBasePath, deskWorkspaceMountId || '', deskExpandedPaths),
-    [deskBasePath, deskExpandedPaths, deskWorkspaceMountId, deskWorkspaceNativeRoot],
+    [deskBasePath, deskExpandedPaths, deskWorkspaceMountId],
   );
   const watchedRefsKey = watchedRefs.map(resourceWatchKey).join('\n');
 

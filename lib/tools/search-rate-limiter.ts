@@ -180,23 +180,23 @@ export class SearchRateLimiter {
     return positiveConcurrency(this._policy(provider, sourceType).maxConcurrent);
   }
 
-  _nextStartDelay(provider: any, sourceType: any) {
+  _nextStartDelay(provider: any) {
     const state = this._stateFor(provider);
     const now = Date.now();
     const waitUntil = Math.max(state.nextStartAt || 0, state.cooldownUntil || 0);
     return Math.max(0, waitUntil - now);
   }
 
-  _schedulePump(provider: any, sourceType: any, delayMs: any) {
+  _schedulePump(provider: any, delayMs: any) {
     const state = this._stateFor(provider);
     if (state.pumpTimer) return;
     state.pumpTimer = setTimeout(() => {
       state.pumpTimer = null;
-      this._pump(provider, sourceType);
+      this._pump(provider);
     }, delayMs);
   }
 
-  _pump(provider: any, sourceType?: any) {
+  _pump(provider: any) {
     const state = this._stateFor(provider);
     if (state.queue.length === 0) return;
 
@@ -205,9 +205,9 @@ export class SearchRateLimiter {
       const sourceType = task.sourceType;
       if (state.activeCount >= this._maxConcurrent(provider, sourceType)) return;
 
-      const delayMs = this._nextStartDelay(provider, sourceType);
+      const delayMs = this._nextStartDelay(provider);
       if (delayMs > 0) {
-        this._schedulePump(provider, sourceType, delayMs);
+        this._schedulePump(provider, delayMs);
         return;
       }
 

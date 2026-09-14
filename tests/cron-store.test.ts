@@ -1398,7 +1398,6 @@ describe("CronStore markRun 错误退避", () => {
     // 首次失败：consecutiveErrors=1 → 退避 1 分钟
     store.markRun(job.id, { success: false });
     const nextRun = new Date(store.getJob(job.id).nextRunAt);
-    const expectedBackoff = new Date(Date.now() + 60_000);
     // nextRunAt 应该 >= 退避时间（退避 1 min vs 正常 1 hour，正常间隔更大则取正常）
     // every 3600000 的 normalNext = now + 1h，远大于退避 1 min，所以 nextRunAt = normalNext
     const normalNext = new Date(Date.now() + 3600000);

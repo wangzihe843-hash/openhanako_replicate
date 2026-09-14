@@ -10,6 +10,9 @@
 
 import { spawn } from "child_process";
 import { existsSync } from "fs";
+import { createModuleLogger } from "../debug-log.ts";
+
+const terminationLog = createModuleLogger("sandbox/termination");
 
 const EXIT_STDIO_GRACE_MS = 100;
 
@@ -62,6 +65,11 @@ export function spawnAndStream(cmd, args, {
     child.stderr.on("data", onStderr);
 
     let timedOut = false;
+    let terminationFailure: unknown;
+    const onTerminationFailure = (error: unknown) => {
+      terminationFailure = error;
+      finalize(null);
+    };
     let settled = false;
     let exited = false;
     let exitCode = null;
@@ -74,19 +82,12 @@ export function spawnAndStream(cmd, args, {
     if (timeout != null && timeout > 0) {
       timer = setTimeout(() => {
         timedOut = true;
-        killSpawnedProcess(child, killMode);
+        killSpawnedProcess(child, killMode, onTerminationFailure);
       }, timeout * 1000);
     }
 
     // abort signal：杀进程，close 里再 reject
-    const onAbort = () => killSpawnedProcess(child, killMode);
-    if (signal) {
-      if (signal.aborted) {
-        onAbort();
-      } else {
-        signal.addEventListener("abort", onAbort, { once: true });
-      }
-    }
+    const onAbort = () => killSpawnedProcess(child, killMode, onTerminationFailure);
 
     const cleanup = () => {
       clearTimeout(timer);
@@ -110,11 +111,11 @@ export function spawnAndStream(cmd, args, {
 
       // 匹配 Pi SDK 契约：abort 和 timeout 必须 reject
       if (signal?.aborted) {
-        reject(new Error("aborted"));
+        reject(new Error("aborted", { cause: terminationFailure }));
         return;
       }
       if (timedOut) {
-        reject(new Error(`timeout:${timeoutErrorValue}`));
+        reject(new Error(`timeout:${timeoutErrorValue}`, { cause: terminationFailure }));
         return;
       }
       resolve({ exitCode: code });
@@ -154,6 +155,12 @@ export function spawnAndStream(cmd, args, {
 
     const onError = (err) => {
       if (settled) return;
+      // Node can emit kill failures on the child instead of throwing from kill().
+      if (signal?.aborted || timedOut) {
+        terminationLog.warn(`Could not stop sandbox process ${child.pid}: ${err.message}`);
+        onTerminationFailure(err);
+        return;
+      }
       settled = true;
       cleanup();
       reject(enrichSpawnError(err, cwd));
@@ -164,33 +171,67 @@ export function spawnAndStream(cmd, args, {
     child.once("exit", onExit);
     child.once("close", onClose);
     child.once("error", onError);
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+
   });
 }
 
-function killSpawnedProcess(child, killMode) {
+function killSpawnedProcess(child, killMode, onFailure) {
   if (!child?.pid) return;
   if (killMode === "process") {
-    try { child.kill("SIGKILL"); } catch {}
+    try { child.kill("SIGKILL"); } catch (error) {
+      if (error.code !== "ESRCH") {
+        terminationLog.warn(`Could not stop sandbox process ${child.pid}: ${error.message}`);
+        onFailure(error);
+      }
+    }
     return;
   }
-  killTree(child.pid);
+  killTree(child.pid, onFailure);
 }
 
-function killTree(pid) {
+function killTree(pid, onFailure) {
   if (!pid) return;
   if (process.platform === "win32") {
     try {
-      spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
+      const killer = spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
         stdio: "ignore",
         windowsHide: true,
       });
-    } catch {}
+      // spawn failures are usually asynchronous; consume them without crashing
+      // the server while the original abort/timeout result is being delivered.
+      killer.once("error", error => {
+        terminationLog.warn(`Could not launch taskkill for ${pid}: ${error.message}`);
+        onFailure(error);
+      });
+      killer.once("exit", code => {
+        if (code !== 0) {
+          const error = new Error(`taskkill for ${pid} exited with ${code}`);
+          terminationLog.warn(error.message);
+          onFailure(error);
+        }
+      });
+    } catch (error) {
+      terminationLog.warn(`Could not launch taskkill for ${pid}: ${error.message}`);
+      onFailure(error);
+    }
     return;
   }
   try {
     process.kill(-pid, "SIGKILL");
   } catch {
-    try { process.kill(pid, "SIGKILL"); } catch {}
+    try { process.kill(pid, "SIGKILL"); } catch (error) {
+      if (error.code !== "ESRCH") {
+        terminationLog.warn(`Could not stop sandbox process ${pid}: ${error.message}`);
+        onFailure(error);
+      }
+    }
   }
 }
 

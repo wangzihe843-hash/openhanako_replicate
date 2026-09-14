@@ -173,11 +173,11 @@ describe("session projects route", () => {
 
   it("deletes projects and folders through the engine facade", async () => {
     const engine = {
-      deleteSessionProject: vi.fn(async (id) => ({
+      deleteSessionProject: vi.fn(async () => ({
         catalog: { folders: [], projects: [] },
         assignment: { projectId: "cwd:", sessionPaths: ["/tmp/agents/hana/sessions/a.jsonl"] },
       })),
-      deleteSessionProjectFolder: vi.fn((id) => ({
+      deleteSessionProjectFolder: vi.fn(() => ({
         folders: [],
         projects: [{ id: "project-a", name: "A", folderId: null, order: 0 }],
       })),

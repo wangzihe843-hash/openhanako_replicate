@@ -1,3 +1,5 @@
+import type { RuntimeAgentIdentity } from "./runtime-contracts.ts";
+import type { AgentMessage } from "../lib/pi-sdk/index.ts";
 /**
  * Agent — 一个助手实例
  *
@@ -7,7 +9,7 @@
 import fs from "fs";
 import path from "path";
 import { loadConfig, saveConfig } from "../lib/memory/config-loader.ts";
-import { safeReadFile, safeReadJSON } from "../shared/safe-fs.ts";
+import { safeReadFile } from "../shared/safe-fs.ts";
 import {
   PUBLIC_PERSONA_FILE_NAME,
   PUBLIC_PERSONA_TEMPLATE_DIR,
@@ -98,13 +100,13 @@ type BuildSystemPromptOptions = {
   forceExperienceEnabled?: boolean;
   targetModel?: AgentAppearanceModel | null;
   userText?: string;
-  recentMessages?: any[];
+  recentMessages?: AgentMessage[];
   xingyeWorkspaceRoot?: string;
   workModeEnabled?: boolean;
   includeXingyeContext?: boolean;
 };
 
-export class Agent {
+export class Agent implements RuntimeAgentIdentity {
   declare _automationTool: any;
   declare _browserTool: any;
   declare _cb: any;
@@ -140,7 +142,7 @@ export class Agent {
   declare _repairState: any;
   declare _resolveModel: any;
   declare _resolveModelFresh: any;
-  declare _runtimeInitialized: any;
+  declare _runtimeInitialized: boolean;
   declare _searchConfigResolver: any;
   declare _sessionFoldersTool: any;
   declare _sessionTool: any;
@@ -161,24 +163,24 @@ export class Agent {
   declare _cardGuideTool: any;
   declare _showCardTool: any;
   declare _workflowTool: any;
-  declare agentDir: any;
-  declare agentName: any;
-  declare agentsDir: any;
-  declare channelsDir: any;
-  declare configPath: any;
-  declare deskDir: any;
-  declare factsDbPath: any;
-  declare factsMdPath: any;
-  declare id: any;
-  declare longtermMdPath: any;
-  declare memoryMdPath: any;
-  declare productDir: any;
-  declare sessionDir: any;
-  declare summariesDir: any;
-  declare todayMdPath: any;
-  declare userDir: any;
-  declare userName: any;
-  declare weekMdPath: any;
+  declare agentDir: string;
+  declare agentName: string;
+  declare agentsDir: string;
+  declare channelsDir: string | null;
+  declare configPath: string;
+  declare deskDir: string;
+  declare factsDbPath: string;
+  declare factsMdPath: string;
+  declare id: string;
+  declare longtermMdPath: string;
+  declare memoryMdPath: string;
+  declare productDir: string;
+  declare sessionDir: string;
+  declare summariesDir: string;
+  declare todayMdPath: string;
+  declare userDir: string;
+  declare userName: string;
+  declare weekMdPath: string;
   /**
    * @param {object} opts
    * @param {string} opts.id         - 助手 ID（唯一信源，等于数据目录名）

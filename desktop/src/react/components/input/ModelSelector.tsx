@@ -19,9 +19,9 @@ export function ModelSelector({ models, sessionModel, isStreaming = false }: {
   const matchedSessionModel = sessionModel
     ? models.find(m => m.id === sessionModel.id && m.provider === sessionModel.provider)
     : undefined;
-  const current = sessionModel
+  const current = useMemo(() => sessionModel
     ? (matchedSessionModel ? { ...matchedSessionModel, ...sessionModel } : sessionModel)
-    : models.find(m => m.isCurrent);
+    : models.find(m => m.isCurrent), [matchedSessionModel, models, sessionModel]);
   const inferredUnavailable = !!(
     sessionModel?.id
     && sessionModel.provider

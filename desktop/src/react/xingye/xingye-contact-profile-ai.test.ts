@@ -98,7 +98,7 @@ function vcContact(overrides: Partial<XingyePhoneContactView> = {}): XingyePhone
   };
 }
 
-function initializedProfile(overrides: Partial<XingyeContactProfile> = {}): XingyeContactProfile {
+function initializedProfile(): XingyeContactProfile {
   return {
     ownerAgentId: 'linwu',
     targetType: 'virtual_contact',

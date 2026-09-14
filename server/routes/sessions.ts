@@ -550,7 +550,9 @@ export function createSessionsRoute(engine, hub = null) {
           sessionKey: attachment.sessionKey,
           sessionPath: attachment.desktopSessionPath,
         }, attachment.desktopSessionPath);
-      } catch {}
+      } catch (error) {
+        lifecycleLog.warn(`RC detach notification failed for ${attachment.sessionKey}: ${error.message}`);
+      }
     }
   }
 
@@ -2465,14 +2467,18 @@ export function createSessionsRoute(engine, hub = null) {
       const { maxAgeDays = 90 } = body;
       const cutoff = Date.now() - maxAgeDays * 86400000;
       let deleted = 0;
+      const failures: { path: string; operation: string; error: string }[] = [];
 
       // 遍历所有 agent 的 sessions/archived/ 目录
       const agentsDir = engine.agentsDir;
-      const agents = await fs.readdir(agentsDir).catch(() => []);
+      const agents = await fs.readdir(agentsDir);
       for (const agentId of agents) {
         const archiveDir = path.join(agentsDir, agentId, "sessions", "archived");
         let files;
-        try { files = await fs.readdir(archiveDir); } catch { continue; }
+        try { files = await fs.readdir(archiveDir); } catch (error) {
+          if (error.code !== "ENOENT") failures.push({ path: archiveDir, operation: "list", error: error.message });
+          continue;
+        }
         for (const f of files) {
           if (!isSessionJsonlFilename(f)) continue;
           const fp = path.join(archiveDir, f);
@@ -2484,13 +2490,19 @@ export function createSessionsRoute(engine, hub = null) {
               await permanentlyDeleteArchivedFile(fp, "session_cleanup");
               deleted++;
               // 清理 titles.json 孤儿（key = 对应的活跃路径）
-              try { await engine.clearSessionTitle(activeKey); } catch {}
+              try { await engine.clearSessionTitle(activeKey); } catch (error) {
+                failures.push({ path: activeKey, operation: "clear-title", error: error.message });
+                lifecycleLog.warn(`Archived session title cleanup failed: ${activeKey}: ${error.message}`);
+              }
             }
-          } catch {}
+          } catch (error) {
+            failures.push({ path: fp, operation: "delete", error: error.message });
+            lifecycleLog.warn(`Archived session cleanup failed: ${fp}: ${error.message}`);
+          }
         }
       }
 
-      return c.json({ ok: true, deleted, maxAgeDays });
+      return c.json({ ok: failures.length === 0, deleted, maxAgeDays, ...(failures.length ? { failures } : {}) });
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
@@ -2675,7 +2687,9 @@ export function createSessionsRoute(engine, hub = null) {
           try { engine.deleteSessionInputDrafts?.(draftSessionId); } catch { /* 草稿清理失败不阻塞删除 */ }
         }
         // 清理 titles.json 孤儿（key = 对应的活跃路径）
-        try { await engine.clearSessionTitle(activeKey); } catch {}
+        try { await engine.clearSessionTitle(activeKey); } catch (error) {
+          lifecycleLog.warn(`Deleted session title cleanup failed: ${activeKey}: ${error.message}`);
+        }
         return c.json({ ok: true, sessionId: deletedManifest?.sessionId || sessionId || null });
       });
     } catch (err) {
@@ -2707,7 +2721,9 @@ function patchSessionFileLifecycleBlocks(blocks, engine, sessionPath) {
         });
         file = engine.getSessionFileByPath(filePath, { sessionPath });
         if (file) block.type = "file";
-      } catch {}
+      } catch (error) {
+        log.warn(`Could not register legacy session attachment: ${error.message}`);
+      }
     }
     if (!file) continue;
     const patch = sessionFileLifecycleFields(file, engine);

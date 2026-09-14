@@ -41,6 +41,8 @@ export function usePluginIframe(routeUrl: string | null, options: UsePluginIfram
     capabilities = DEFAULT_PLUGIN_UI_CAPABILITIES,
     capabilityGrants = EMPTY_CAPABILITY_GRANTS,
   } = options;
+  const initialWidth = initialSize?.width;
+  const initialHeight = initialSize?.height;
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [status, setStatus] = useState<PluginIframeStatus>('loading');
   const [size, setSize] = useState<PluginIframeSize>(() => initialSize ?? {});
@@ -58,7 +60,7 @@ export function usePluginIframe(routeUrl: string | null, options: UsePluginIfram
   useEffect(() => {
     if (!routeUrl) return;
     setStatus('loading');
-    setSize(initialSize ?? {});
+    setSize({ width: initialWidth, height: initialHeight });
 
     const onMessage = (event: MessageEvent) => {
       if (!isTrustedPluginIframeMessage(event, iframeRef.current?.contentWindow, expectedOrigin)) return;
@@ -120,8 +122,8 @@ export function usePluginIframe(routeUrl: string | null, options: UsePluginIfram
     agentId,
     capabilities,
     capabilityGrants,
-    initialSize?.width,
-    initialSize?.height,
+    initialWidth,
+    initialHeight,
     resetHandshakeTimeout,
   ]);
 
@@ -136,13 +138,13 @@ export function usePluginIframe(routeUrl: string | null, options: UsePluginIfram
   const retry = useCallback(() => {
     clearTimeout(timeoutRef.current);
     setStatus('loading');
-    setSize(initialSize ?? {});
+    setSize({ width: initialWidth, height: initialHeight });
     const iframe = iframeRef.current;
     if (iframe && routeUrl) {
       iframe.src = routeUrl;
     }
     resetHandshakeTimeout();
-  }, [routeUrl, initialSize?.width, initialSize?.height, resetHandshakeTimeout]);
+  }, [routeUrl, initialWidth, initialHeight, resetHandshakeTimeout]);
 
   return { iframeRef, status, size, postToIframe, retry };
 }

@@ -33,7 +33,9 @@ export function normalizeOpenAIVideoUrlPayload(payload) {
       const url = getDataVideoUrl(part);
       if (!url) return part;
 
-      const { image_url, imageUrl, video_url, ...rest } = part;
+      const { video_url, ...rest } = part;
+      delete rest.image_url;
+      delete rest.imageUrl;
       contentChanged = true;
       return {
         ...rest,

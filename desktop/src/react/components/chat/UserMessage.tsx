@@ -1,3 +1,4 @@
+import { useI18n } from '../../hooks/use-i18n';
 /**
  * UserMessage — 用户消息气泡
  */
@@ -29,7 +30,7 @@ import { useSessionNodeActions } from './SessionNodeActions';
 import styles from './Chat.module.css';
 import badgeStyles from '../input/SkillBadgeView.module.css';
 
-const lazyScreenshot = () => import('../../utils/screenshot').then(m => m.takeScreenshot);
+import { takeScreenshot } from '../../utils/screenshot';
 
 interface Props {
   message: ChatMessage;
@@ -60,7 +61,7 @@ export const UserMessage = memo(function UserMessage({
   onForkCreated,
   messageRef,
 }: Props) {
-  const t = window.t ?? ((p: string) => p);
+  const { t } = useI18n();
   const storeUserName = viewerIdentity.name;
   const userName = userIdentity?.name || storeUserName;
   const displayAvatarUrl = userIdentity ? (userIdentity.avatarUrl || null) : viewerIdentity.avatarUrl;
@@ -102,8 +103,7 @@ export const UserMessage = memo(function UserMessage({
   }, [message.text, sessionPath]);
 
   const handleScreenshot = useCallback(async () => {
-    const fn = await lazyScreenshot();
-    fn(message.id, sessionPath);
+    await takeScreenshot(message.id, sessionPath);
   }, [message.id, sessionPath]);
 
   const isReviewTurn = !!message.agentReview || !!message.agentReviewRequest;
@@ -286,7 +286,7 @@ const UserAttachmentsView = memo(function UserAttachmentsView({ attachments, des
     return isImageOrSvgExt(extOfName(att.name));
   }, []);
 
-  const t = window.t ?? ((p: string) => p);
+  const { t } = useI18n();
 
   return (
     <div className={styles.userAttachments}>

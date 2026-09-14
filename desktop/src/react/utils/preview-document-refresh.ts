@@ -150,7 +150,7 @@ export function openPreviewDocumentTargets(): PreviewDocumentTarget[] {
   return targets;
 }
 
-export function filePathForPreviewDocumentTarget(target: PreviewDocumentTarget, state: ReturnType<typeof useStore.getState>): string | null {
+export function filePathForPreviewDocumentTarget(target: PreviewDocumentTarget, state: Pick<StoreState, 'deskBasePath' | 'deskWorkspaceMountId' | 'deskWorkspaceNativeRoot' | 'studioWorkspaces'>): string | null {
   if (target.kind === 'local-file') return target.filePath;
 
   const normalized = normalizeWorkbenchContentRef(target.target);
@@ -180,7 +180,7 @@ function nativeRootForWorkbenchMount(state: Pick<StoreState, 'studioWorkspaces'>
 
 function resourceRefForPreviewDocumentTarget(
   target: PreviewDocumentTarget,
-  state: ReturnType<typeof useStore.getState>,
+  state: Pick<StoreState, 'deskBasePath' | 'deskWorkspaceMountId' | 'deskWorkspaceNativeRoot' | 'studioWorkspaces'>,
 ): ResourceRef | null {
   if (target.kind === 'local-file') return { kind: 'local-file', path: target.filePath };
 
@@ -230,9 +230,11 @@ export function openPreviewDocumentWatchFilePaths(): string[] {
   return filePaths.sort((a, b) => normalizeComparablePath(a).localeCompare(normalizeComparablePath(b)));
 }
 
-export function openPreviewDocumentWatchResources(): PreviewDocumentWatchResource[] {
-  const state = useStore.getState();
-  const targets = openPreviewDocumentTargets();
+export function openPreviewDocumentWatchResources(
+  state: Pick<StoreState, 'previewItems' | 'openTabs' | 'deskBasePath' | 'deskWorkspaceMountId' | 'deskWorkspaceNativeRoot' | 'studioWorkspaces'> = useStore.getState(),
+): PreviewDocumentWatchResource[] {
+  const itemsById = new Map(state.previewItems.map(item => [item.id, item]));
+  const targets = state.openTabs.map(id => previewDocumentTargetFromItem(itemsById.get(id))).filter((target): target is PreviewDocumentTarget => target !== null);
   const resources: PreviewDocumentWatchResource[] = [];
   const seen = new Set<string>();
 

@@ -19,7 +19,6 @@ interface DevWebClientConfig {
  * 做法：在 HTML 处理前把旧 CSS link 替换成占位符，build 后再还原。
  */
 function preserveLegacyCss(): Plugin {
-  const CSS_PLACEHOLDER_RE = /<!--HANA_CSS:(.*?)-->/g;
   return {
     name: 'hana-preserve-legacy-css',
     enforce: 'pre',

@@ -24,7 +24,8 @@ function tool(name, description = "desc", extra = {}) {
 }
 
 function stripOriginals(contract) {
-  const { systemPrompt, tools, ...rest } = contract;
+  // Deliberately omit original payloads; compare only derived cache metadata.
+  const { systemPrompt: _systemPrompt, tools: _tools, ...rest } = contract;
   return rest;
 }
 

@@ -499,7 +499,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     }
     // 群聊消息
     else if (type === "GROUP_AT_MESSAGE_CREATE") {
-      let text = (data.content || "").replace(/<@!?\d+>/g, "").trim();
+      const text = (data.content || "").replace(/<@!?\d+>/g, "").trim();
       const attachments = extractAttachments(data);
       if (!text && !attachments.length) return;
       if (text.length > MAX_MSG_SIZE) return;
@@ -524,7 +524,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     }
     // 频道公域消息（兼容旧的频道机器人）
     else if (type === "AT_MESSAGE_CREATE") {
-      let text = (data.content || "").replace(/<@!?\d+>/g, "").trim();
+      const text = (data.content || "").replace(/<@!?\d+>/g, "").trim();
       const attachments = extractAttachments(data);
       if (!text && !attachments.length) return;
       const principal = deriveQQPrincipal(data.author, data.member || data.member_info || {});

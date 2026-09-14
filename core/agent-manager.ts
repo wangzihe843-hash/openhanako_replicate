@@ -1,3 +1,4 @@
+import { reportNonfatalError } from "../lib/nonfatal-error.ts";
 /**
  * AgentManager — 多 Agent 生命周期管理
  *
@@ -240,7 +241,7 @@ export class AgentManager {
     let tombstone: any = {};
     try {
       tombstone = JSON.parse(fs.readFileSync(tombstonePath, "utf-8"));
-    } catch {}
+    } catch (error) { reportNonfatalError(`deleted-agent tombstone unreadable (${agentId}); using display fallback`, error); }
     let cfg: any = {};
     try {
       cfg = safeReadYAMLSync(path.join(agentDir, "config.yaml"), {}, YAML);
@@ -562,7 +563,7 @@ export class AgentManager {
           homeFolder: cfg.desk?.home_folder || null,
           memoryMasterEnabled: cfg.memory?.enabled !== false,
         });
-      } catch {}
+      } catch (error) { reportNonfatalError(`agent listing skipped invalid entry (${entry.name})`, error); }
     }
     return agents;
   }
@@ -595,7 +596,7 @@ export class AgentManager {
         const firstLine = fs.readFileSync(descPath, "utf-8").split("\n")[0].trim();
         const match = firstLine.match(/^<!--\s*sourceHash:\s*(\S+)\s*-->$/);
         if (match?.[1] === hash) return; // 没变化，跳过
-      } catch {} // 文件不存在，继续生成
+      } catch (error) { if (error.code !== "ENOENT") throw error; } // 文件不存在，继续生成
 
       const utilConfig = await this._d.resolveUtilityConfigFresh({ agentId });
       const locale = ag.resolveLocale();
@@ -621,8 +622,8 @@ export class AgentManager {
    * the original error.
    */
   async _rollbackAgentCreation(agentDir, agentId) {
-    try { fs.rmSync(agentDir, { recursive: true, force: true }); } catch {}
-    try { await this._d.getChannelManager().cleanupAgentFromChannels(agentId); } catch {}
+    try { fs.rmSync(agentDir, { recursive: true, force: true }); } catch (error) { reportNonfatalError(`agent creation rollback directory cleanup failed (${agentId})`, error); }
+    try { await this._d.getChannelManager().cleanupAgentFromChannels(agentId); } catch (error) { reportNonfatalError(`agent creation rollback channel cleanup failed (${agentId})`, error); }
   }
 
   async createAgent({ name, id, yuan, enabledSkills, initialFiles, avatarPath, initialMemory }) {

@@ -1441,19 +1441,56 @@ export async function deleteArchivedSession(target: string | Pick<ArchivedSessio
   }
 }
 
-export async function cleanupArchivedSessions(maxAgeDays: 30 | 90): Promise<{ deleted: number }> {
+export interface ArchivedCleanupFailure {
+  path: string;
+  operation: string;
+  error: string;
+}
+
+export type ArchivedCleanupResult =
+  | { ok: true; deleted: number; failures: ArchivedCleanupFailure[] }
+  | { ok: false; deleted: number | null; failures: ArchivedCleanupFailure[]; error: string };
+
+export async function cleanupArchivedSessions(maxAgeDays: 30 | 90): Promise<ArchivedCleanupResult> {
   try {
     const res = await hanaFetch('/api/sessions/cleanup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ maxAgeDays }),
+      throwOnHttpError: false,
     });
-    if (!res.ok) return { deleted: 0 };
-    const data = await res.json();
-    return { deleted: data.deleted ?? 0 };
+    const body: unknown = await res.json().catch(() => null);
+    const data = body && typeof body === 'object'
+      ? body as { ok?: unknown; deleted?: unknown; failures?: unknown; error?: unknown }
+      : {};
+    const deleted = typeof data.deleted === 'number' && Number.isInteger(data.deleted) && data.deleted >= 0
+      ? data.deleted : null;
+    const failures: ArchivedCleanupFailure[] = Array.isArray(data.failures)
+      ? data.failures.map((failure: unknown) => {
+        const entry = failure && typeof failure === 'object'
+          ? failure as { path?: unknown; operation?: unknown; error?: unknown } : {};
+        return {
+          path: typeof entry.path === 'string' ? entry.path : '',
+          operation: typeof entry.operation === 'string' ? entry.operation : '',
+          error: typeof entry.error === 'string' ? entry.error : 'Archive cleanup failed',
+        };
+      }) : [];
+    // Older successful servers may omit ok, but a missing count is never confirmed zero.
+    if (res.ok && data.ok !== false && !data.error && failures.length === 0 && deleted !== null) {
+      return { ok: true, deleted, failures };
+    }
+    const detail = normalizeSessionRouteError(body).message
+      || failures.map(failure => `${failure.operation}: ${failure.error}`).join('; ')
+      || (res.ok ? 'Invalid archive cleanup result' : `HTTP ${res.status} ${res.statusText || ''}`.trim());
+    return {
+      ok: false,
+      deleted,
+      failures,
+      error: deleted === null ? detail : `Archive cleanup incomplete (${deleted} deleted, ${failures.length} failures): ${detail}`,
+    };
   } catch (err) {
     console.error('[archived] cleanup failed:', err);
-    return { deleted: 0 };
+    return { ok: false, deleted: null, failures: [], error: errorMessage(err) };
   }
 }
 

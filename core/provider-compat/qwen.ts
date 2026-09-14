@@ -47,7 +47,7 @@ export function matches(model) {
 }
 
 export function apply(payload, model, options = {}) {
-  let result = normalizeDashScopeVideoPayload(payload, model);
+  const result = normalizeDashScopeVideoPayload(payload, model);
   // chat 路径默认让 Pi SDK 自己处理（compat.thinkingFormat="qwen" 路径），不动 payload。
   // 当用户明确选择 off，或模型默认声明 reasoning=false 时，Pi SDK 没有 Qwen-style 的
   // "关闭 thinking" 语义，必须按 DashScope/OpenAI-compatible 协议显式发送 enable_thinking=false。

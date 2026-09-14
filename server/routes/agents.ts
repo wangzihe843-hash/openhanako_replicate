@@ -445,7 +445,9 @@ export function createAgentsRoute(engine) {
         c.header("Content-Type", mimeMap[ext]);
         c.header("Cache-Control", "no-cache");
         return c.body(buf);
-      } catch {}
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
     }
     return c.json({ error: "no avatar" }, 404);
   });

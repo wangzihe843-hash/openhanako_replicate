@@ -19,7 +19,12 @@ export function normalizeOpenAIInputAudioPayload(payload) {
       const audio = getDataAudio(part);
       if (!audio) return part;
 
-      const { image_url, imageUrl, data, mimeType, mime, ...rest } = part;
+      const rest = { ...part };
+      delete rest.image_url;
+      delete rest.imageUrl;
+      delete rest.data;
+      delete rest.mimeType;
+      delete rest.mime;
       contentChanged = true;
       return {
         ...rest,

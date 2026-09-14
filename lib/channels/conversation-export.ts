@@ -1,5 +1,4 @@
 import { promises as fsp } from "fs";
-import path from "path";
 import { parseChannel } from "./channel-store.ts";
 
 export type ConversationExportOptions = {

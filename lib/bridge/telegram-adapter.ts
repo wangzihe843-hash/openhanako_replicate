@@ -267,7 +267,7 @@ export function createTelegramAdapter({ token, agentId, onMessage, onStatus }) {
     streamingCapabilities: TELEGRAM_STREAMING_CAPABILITIES,
     receiptCapabilities: TELEGRAM_RECEIPT_CAPABILITIES,
 
-    async sendTypingIndicator(chatId, options = {}) {
+    async sendTypingIndicator(chatId, _options = {}) {
       try { await bot.sendChatAction(chatId, "typing"); } catch {}
     },
 

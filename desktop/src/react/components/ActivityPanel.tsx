@@ -137,7 +137,7 @@ export function ActivityPanel() {
       .catch(err => console.warn('[activity] fetch config failed:', err));
   }, [setActivities]);
 
-  const { visible, close: closePanel } = usePanel('activity', loadData, [currentAgentId]);
+  const { visible, close: closePanel } = usePanel('activity', loadData, currentAgentId);
   const close = useCallback(() => { closePanel(); }, [closePanel]);
 
   const toggleHeartbeat = useCallback(async () => {

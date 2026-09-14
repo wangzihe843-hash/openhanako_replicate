@@ -58,12 +58,6 @@ vi.mock('../../services/resource-events', async (importOriginal) => {
 });
 
 describe('DeskSection workspace watching', () => {
-  let emitWorkspaceChanged: ((event: {
-    rootPath: string;
-    changedPath: string;
-    affectedDir: string;
-    eventType: string;
-  }) => void) | null;
   let watchFile: ReturnType<typeof vi.fn>;
   let unwatchFile: ReturnType<typeof vi.fn>;
   let watchWorkspace: ReturnType<typeof vi.fn>;
@@ -87,7 +81,6 @@ describe('DeskSection workspace watching', () => {
         localStorageData = {};
       }),
     });
-    emitWorkspaceChanged = null;
     watchFile = vi.fn(async () => true);
     unwatchFile = vi.fn(async () => true);
     watchWorkspace = vi.fn(async () => true);
@@ -99,14 +92,7 @@ describe('DeskSection workspace watching', () => {
       onFileChanged: vi.fn(),
       watchWorkspace,
       unwatchWorkspace,
-      onWorkspaceChanged: vi.fn((callback: (event: {
-        rootPath: string;
-        changedPath: string;
-        affectedDir: string;
-        eventType: string;
-      }) => void) => {
-        emitWorkspaceChanged = callback;
-      }),
+      onWorkspaceChanged: vi.fn(),
       startDrag: vi.fn(),
       trashItem: vi.fn(async () => true),
     } as unknown as typeof window.platform;

@@ -4967,6 +4967,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/nonfatal-error.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/memory/fact-store.ts",
           "kind": "import-statement"
         },
@@ -5072,6 +5077,16 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/sandbox/exec-helper.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/sandbox/script.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/sandbox/win32-exec.ts",
           "kind": "import-statement"
         },
@@ -5133,6 +5148,11 @@
         {
           "root": "server-bootstrap",
           "from": "server/routes/config.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/upload.ts",
           "kind": "import-statement"
         },
         {
@@ -5316,7 +5336,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/migrations.ts (import-statement); core/plugin-config.ts (import-statement); lib/desk/cron-store.ts (import-statement); +82 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by core/migrations.ts (import-statement); core/plugin-config.ts (import-statement); lib/desk/cron-store.ts (import-statement); +86 more importer(s)."
     },
     {
       "path": "lib/default-models.json",
@@ -6612,6 +6632,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/nonfatal-error.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/tools/browser-action-log.ts",
           "kind": "import-statement"
         },
@@ -6631,7 +6656,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/debug-log.ts (import-statement); lib/tools/browser-action-log.ts (import-statement); lib/tools/browser-tool.ts (import-statement); +2 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by lib/debug-log.ts (import-statement); lib/nonfatal-error.ts (import-statement); lib/tools/browser-action-log.ts (import-statement); +3 more importer(s)."
     },
     {
       "path": "lib/loop/alarm-service.ts",
@@ -7210,6 +7235,33 @@
         }
       ],
       "reason": "Reached via esbuild source module graph, imported by core/mcp/clients/http-client.ts (import-statement); lib/bridge/outbound-http.ts (import-statement); server/routes/bridge.ts (import-statement); +4 more importer(s)."
+    },
+    {
+      "path": "lib/nonfatal-error.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "core/agent-manager.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "core/session-coordinator.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/checkpoint-store.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/checkpoint-wrapper.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by core/agent-manager.ts (import-statement); core/session-coordinator.ts (import-statement); lib/checkpoint-store.ts (import-statement); +1 more importer(s)."
     },
     {
       "path": "lib/notifications/notification-service.ts",
@@ -113302,9 +113354,14 @@
           "root": "server-bootstrap",
           "from": "core/local-user-account.ts",
           "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/index.ts",
+          "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by shared/migrate-config-scope.ts (import-statement); core/migrate-providers.ts (import-statement); core/provider-media-config.ts (import-statement); +13 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by shared/migrate-config-scope.ts (import-statement); core/migrate-providers.ts (import-statement); core/provider-media-config.ts (import-statement); +14 more importer(s)."
     },
     {
       "path": "shared/server-info-probe.cjs",
@@ -113821,9 +113878,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 9689,
+    "totalFiles": 9690,
     "byInputType": {
-      "source-graph": 708,
+      "source-graph": 709,
       "runtime-asset": 11,
       "nft-runtime-trace": 8970
     }

@@ -3,7 +3,7 @@ import path from "path";
 const MSYS_DRIVE_RE = /^\/([a-zA-Z])(?:\/(.*))?$/;
 const CYGDRIVE_RE = /^\/cygdrive\/([a-zA-Z])(?:\/(.*))?$/i;
 const WIN32_DRIVE_ABS_RE = /^[a-zA-Z]:[\\/]/;
-const WIN32_UNC_RE = /^\\\\[^\\\/]+[\\\/][^\\\/]+/;
+const WIN32_UNC_RE = /^\\\\[^\\/]+[\\/][^\\/]+/;
 const POSIX_UNC_RE = /^\/\/[^/\\]+[/\\][^/\\]+/;
 
 function trimQuotes(value) {

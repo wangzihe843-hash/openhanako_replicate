@@ -415,7 +415,7 @@ export function createConfigRoute(engine: any) {
     if (agent?.factStore) {
       return { store: agent.factStore, isTemp: false };
     }
-    if (/[\/\\.]/.test(resolvedId)) throw new Error("Invalid agent ID");
+    if (/[/\\.]/.test(resolvedId)) throw new Error("Invalid agent ID");
     const dbPath = path.join(engine.agentsDir, resolvedId, "memory", "facts.db");
     try {
       const store = new FactStore(dbPath);

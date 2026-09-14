@@ -68,7 +68,6 @@ import { isAllowedChatAudioMime, isChatAudioBase64WithinLimit } from "../../shar
 import { getAssistantTextPhase } from "../../shared/text-signature.ts";
 import { summarizeToolArgs } from "../../shared/tool-arg-summary.ts";
 import { projectLiveToolResultOutcome } from "../../shared/tool-outcome.ts";
-import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { watchDevicePrincipal } from "../../core/device-registry.ts";
@@ -2322,7 +2321,7 @@ export function createChatRoute(engine: any, hub: any, {
           });
         },
 
-        onError(event, ws) {
+        onError(event) {
           const err = event.error || event;
           wsLog.error(`error: ${err.message || err}`);
           debugLog()?.error("ws", err.message || String(err));

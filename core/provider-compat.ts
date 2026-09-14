@@ -123,7 +123,8 @@ export function getReasoningProfile(model) {
 
 function stripEmptyTools(payload) {
   if (Array.isArray(payload.tools) && payload.tools.length === 0) {
-    const { tools, ...rest } = payload;
+    const rest = { ...payload };
+    delete rest.tools;
     return rest;
   }
   return payload;
@@ -144,7 +145,8 @@ function stripIncompatibleThinking(payload, model) {
     || thinkingFormat === "volcengine"
     || thinkingFormat === "longcat"
   ) return payload;
-  const { thinking, ...rest } = payload;
+  const rest = { ...payload };
+  delete rest.thinking;
   return rest;
 }
 
@@ -157,7 +159,8 @@ function isDisabledReasoningEffort(value) {
 function stripDisabledReasoningEffort(payload) {
   if (!Object.prototype.hasOwnProperty.call(payload, "reasoning_effort")) return payload;
   if (!isDisabledReasoningEffort(payload.reasoning_effort)) return payload;
-  const { reasoning_effort, ...rest } = payload;
+  const rest = { ...payload };
+  delete rest.reasoning_effort;
   return rest;
 }
 

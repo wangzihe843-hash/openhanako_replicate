@@ -285,7 +285,7 @@ async function readSessionTailUtf8(filePath, maxBytes = SESSION_TAIL_READ_THRESH
     const length = stat.size - start;
     const buf = Buffer.alloc(length);
     await fh.read(buf, 0, length, start);
-    let raw = buf.toString("utf-8");
+    const raw = buf.toString("utf-8");
     const firstNewline = raw.indexOf("\n");
     if (firstNewline === -1) return "";
     return raw.slice(firstNewline + 1);

@@ -172,7 +172,7 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function coverLayout(cover: MarkdownCover): Required<MarkdownCoverLayoutPatch> {
+function coverLayout(cover: Pick<MarkdownCover, 'displayHeight' | 'displayWidth' | 'positionX' | 'positionY'>): Required<MarkdownCoverLayoutPatch> {
   return {
     displayWidth: clamp(cover.displayWidth ?? 100, 40, 100),
     displayHeight: clamp(cover.displayHeight ?? 320, 160, 720),
@@ -233,7 +233,7 @@ function MarkdownCoverView({ previewItem, cover }: { previewItem: PreviewItem; c
   }>(null);
 
   useEffect(() => {
-    setLayout(coverLayout(cover));
+    setLayout(coverLayout({ displayHeight: cover.displayHeight, displayWidth: cover.displayWidth, positionX: cover.positionX, positionY: cover.positionY }));
   }, [cover.displayHeight, cover.displayWidth, cover.positionX, cover.positionY, cover.image]);
 
   useEffect(() => {

@@ -1701,7 +1701,8 @@ describe("MCP runtime OAuth persistence", () => {
             ...current,
             ...value,
             connectors: (value.connectors || []).map((connector: any) => {
-              const { oauth, ...rest } = connector;
+              // Emulate the public connector DTO, which must not expose OAuth state.
+              const { oauth: _oauth, ...rest } = connector;
               return rest;
             }),
           };

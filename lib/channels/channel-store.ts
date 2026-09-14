@@ -358,7 +358,7 @@ export function getRecentMessages(filePath, count = 10, selfName) {
   const content = fs.readFileSync(filePath, "utf-8");
   const { messages } = parseChannel(content);
 
-  let filtered = selfName
+  const filtered = selfName
     ? messages.filter(m => m.sender !== selfName)
     : messages;
 

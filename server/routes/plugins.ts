@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -62,7 +62,7 @@ const PLUGIN_IFRAME_HOST_QUERY_PARAMS = new Set([
  * @param {string} [agentId] - 当前 agent id，仅通过请求级 Hono env 传递
  * @param {object|null} [requestPrincipal] - 本次请求的来源身份描述
  */
-async function proxyToPlugin(c: any, pluginApp: any, pluginId: string, agentId?: string, requestPrincipal: any = null) {
+async function proxyToPlugin(c: Context, pluginApp: Pick<Hono, "fetch">, pluginId: string, agentId?: string, requestPrincipal: unknown = null) {
   const url = new URL(c.req.url);
   const prefix = `/plugins/${pluginId}`;
   const prefixIndex = url.pathname.indexOf(prefix);
@@ -99,7 +99,7 @@ async function proxyToPlugin(c: any, pluginApp: any, pluginId: string, agentId?:
  * Standalone route proxy (for tests).
  * @param {Map<string, import("hono").Hono>} routeRegistry
  */
-export function createPluginProxyRoute(routeRegistry: any) {
+export function createPluginProxyRoute(routeRegistry: ReadonlyMap<string, Hono>) {
   const route = new Hono();
   route.all("/plugins/:pluginId/*", async (c) => {
     const pluginId = c.req.param("pluginId");
@@ -110,7 +110,7 @@ export function createPluginProxyRoute(routeRegistry: any) {
   return route;
 }
 
-function safePathSegment(value: any, fallback: string) {
+function safePathSegment(value: unknown, fallback: string) {
   const text = String(value || "").trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return text || fallback;
 }
@@ -122,7 +122,7 @@ function createPluginRouteError(message: string, status = 400, code = "PLUGIN_ER
   return err;
 }
 
-export function parsePluginIframeSurfaceRoute(routeUrl: any) {
+export function parsePluginIframeSurfaceRoute(routeUrl: unknown) {
   const parsed = new URL(String(routeUrl || ""), "http://hana.local");
   const match = /^\/api\/plugins\/([^/]+)(\/.*)?$/.exec(parsed.pathname);
   if (!match) {
@@ -151,7 +151,7 @@ function canonicalPluginIframeSurfacePath(pathname: string, searchParams: URLSea
   return search ? `${safePath}?${search}` : safePath;
 }
 
-function pluginIframeSurfaceRouteFromRequest(c: any) {
+function pluginIframeSurfaceRouteFromRequest(c: Context) {
   return parsePluginIframeSurfaceRoute(new URL(c.req.url).pathname + new URL(c.req.url).search);
 }
 
@@ -563,7 +563,7 @@ async function installPluginFromPath({
   }
 }
 
-function decodeHttpConfigValues(values: any) {
+function decodeHttpConfigValues(values: unknown): Record<string, unknown> {
   if (!values || typeof values !== "object" || Array.isArray(values)) return {};
   return Object.fromEntries(
     Object.entries(values).map(([key, value]) => [key, value === null ? undefined : value]),

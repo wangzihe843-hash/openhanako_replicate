@@ -212,11 +212,11 @@ describe("executeExternalMessage — 冷恢复 open 前调 repairOrphanToolResul
     const manager = new BridgeSessionManager(makeDeps(agent, rootDir));
 
     const callOrder = [];
-    (repairMock.mockImplementation as any)((p: any) => {
+    (repairMock.mockImplementation as any)(() => {
       callOrder.push("orphan-repair");
       return { repaired: false, removed: 0 };
     });
-    (repairInlineMediaMock.mockImplementation as any)((p: any) => {
+    (repairInlineMediaMock.mockImplementation as any)(() => {
       callOrder.push("inline-media-repair");
       return { repaired: false, stripped: 0, strippedImages: 0, strippedVideos: 0, strippedAudios: 0 };
     });

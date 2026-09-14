@@ -51,9 +51,7 @@ function readStartupState(hanakoHome) {
 describe("desktop main GPU startup contract", () => {
   afterEach(() => {
     if (tmpHome) {
-      try {
-        fs.rmSync(tmpHome, { recursive: true, force: true });
-      } catch {}
+      fs.rmSync(tmpHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       tmpHome = null;
     }
   });

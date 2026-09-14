@@ -368,7 +368,9 @@ function sanitizeDevice(device) {
 }
 
 function sanitizeCredential(credential) {
-  const { secretHash, secretSalt, ...safe } = credential || {};
+  const safe = { ...(credential || {}) };
+  delete safe.secretHash;
+  delete safe.secretSalt;
   return safe;
 }
 

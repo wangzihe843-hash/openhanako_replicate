@@ -48,7 +48,9 @@ export function resolveShellAbsolutePath(commandName) {
         .map((line) => line.trim())
         .find(Boolean) || null;
     }
-  } catch {}
+  } catch {
+    // PATH discovery is optional; a failed probe is reported as an unavailable executable.
+  }
   return null;
 }
 
@@ -159,7 +161,7 @@ export async function runMatrix({ helperPath, cwd = process.cwd() } = {}) {
             results.push({ cell, status: "shell-not-found" });
             continue;
           }
-          // eslint-disable-next-line no-await-in-loop -- 矩阵格必须串行跑，避免互相争抢私有桌面/受限令牌资源
+          // 矩阵格必须串行跑，避免互相争抢私有桌面/受限令牌资源
           const result = await runCell({ helperPath, writableRoot, cwd, cell });
           results.push(result);
         }

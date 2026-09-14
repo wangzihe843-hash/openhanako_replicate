@@ -9,7 +9,7 @@
  * - Idempotency: same input produces same output (no hidden state)
  * - Tool metadata: name === "todo_write"
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Value } from "typebox/value";
 import { loadLocale } from "../lib/i18n.ts";
 import { createTodoTool } from "../lib/tools/todo.ts";

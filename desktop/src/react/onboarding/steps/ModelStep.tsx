@@ -2,7 +2,7 @@
  * ModelStep.tsx — Step 3: Model selection
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { SelectWidget } from '@/ui';
 import type { SelectOption } from '@/ui';
 import { Toggle } from '../../settings/widgets/Toggle';
@@ -140,7 +140,7 @@ export function ModelStep({
     doLoad();
   }, [preview, hanaFetch, providerName, providerUrl, providerApi, apiKey]);
 
-  const addedModelIds = new Set(addedModels.map(model => model.id));
+  const addedModelIds = useMemo(() => new Set(addedModels.map(model => model.id)), [addedModels]);
   const availableModels = fetchedModels.filter(model => !addedModelIds.has(model.id));
   const filteredModels = modelSearch.trim()
     ? availableModels.filter(m => m.id.toLowerCase().includes(modelSearch.trim().toLowerCase()))

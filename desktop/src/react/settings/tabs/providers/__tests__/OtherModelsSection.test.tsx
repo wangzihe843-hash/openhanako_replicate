@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useSettingsStore } from '../../../store';
 
 const mocks = vi.hoisted(() => ({
@@ -48,7 +48,7 @@ vi.mock('@/ui', () => ({
 }));
 
 vi.mock('../../../widgets/KeyInput', () => ({
-  KeyInput: () => <input data-testid="key-input" />,
+  KeyInput: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => <input data-testid="key-input" value={value} onChange={event => onChange(event.currentTarget.value)} />,
 }));
 
 import { OtherModelsSection } from '../OtherModelsSection';
@@ -90,4 +90,25 @@ describe('OtherModelsSection', () => {
       models: { vision_enabled: true },
     });
   });
+
+  it('updates saved search keys by content while preserving an edited draft', () => {
+    const setSavedKey = (value: string) => useSettingsStore.setState({
+      globalModelsConfig: {
+        ...useSettingsStore.getState().globalModelsConfig,
+        search: { provider: 'tavily', api_keys: { tavily: value } },
+      },
+    });
+    setSavedKey('test-saved-a');
+    render(<OtherModelsSection providers={{}} />);
+    const input = screen.getByTestId('key-input') as HTMLInputElement;
+    expect(input.value).toBe('test-saved-a');
+    act(() => setSavedKey('test-saved-b'));
+    expect(input.value).toBe('test-saved-b');
+    fireEvent.change(input, { target: { value: 'test-edited-draft' } });
+    act(() => setSavedKey('test-saved-c'));
+    expect(input.value).toBe('test-edited-draft');
+    act(() => setSavedKey('test-saved-c'));
+    expect(input.value).toBe('test-edited-draft');
+  });
+
 });

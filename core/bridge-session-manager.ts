@@ -1139,7 +1139,6 @@ export class BridgeSessionManager {
       const existingPath = existingFile ? path.join(bridgeDir, existingFile) : null;
 
       let mgr;
-      let reopenError = null;
       if (existingPath && !roleChanged) {
         // #1285 读时结构修复：在 open 之前清理已落盘 bridge session 里的孤儿 toolResult entry。
         // 失败不阻塞 restore（运行时 provider-compat 兜底仍会防 400）。
@@ -1158,7 +1157,6 @@ export class BridgeSessionManager {
         try {
           mgr = SessionManager.open(existingPath, sessionDir);
         } catch (err) {
-          reopenError = err;
           mgr = null;
           log.warn(`existing session open failed (${sessionKey}): ${err.message}; creating a new session and rebinding index`);
           debugLog()?.log("bridge-session", `open failed for ${sessionKey}: ${err.message}`);

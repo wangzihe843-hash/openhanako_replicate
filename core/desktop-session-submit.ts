@@ -802,7 +802,8 @@ function registerDisplayAttachments({ hanakoHome, sessionPath, attachments, regi
     }
 
     if (next.path && path.isAbsolute(next.path) && next.base64Data) {
-      const { base64Data, ...withoutInlineBytes } = next;
+      const withoutInlineBytes = { ...next };
+      delete withoutInlineBytes.base64Data;
       next = withoutInlineBytes;
     }
 
@@ -853,7 +854,7 @@ function displayAttachmentStorageKind(hanakoHome, filePath) {
 }
 
 function addAttachedImageMarkers(text, imageAttachmentPaths) {
-  let promptText = text || "";
+  const promptText = text || "";
   const missing = uniquePaths(imageAttachmentPaths)
     .filter((filePath) => filePath && !promptText.includes(`[attached_image: ${filePath}]`));
   if (!missing.length) return promptText;
@@ -862,7 +863,7 @@ function addAttachedImageMarkers(text, imageAttachmentPaths) {
 }
 
 function addAttachedVideoMarkers(text, videoAttachmentPaths) {
-  let promptText = text || "";
+  const promptText = text || "";
   const missing = uniquePaths(videoAttachmentPaths)
     .filter((filePath) => filePath && !promptText.includes(`[attached_video: ${filePath}]`));
   if (!missing.length) return promptText;
@@ -871,7 +872,7 @@ function addAttachedVideoMarkers(text, videoAttachmentPaths) {
 }
 
 function addAttachedAudioMarkers(text, audioAttachmentPaths) {
-  let promptText = text || "";
+  const promptText = text || "";
   const missing = uniquePaths(audioAttachmentPaths)
     .filter((filePath) => filePath && !promptText.includes(`[attached_audio: ${filePath}]`));
   if (!missing.length) return promptText;

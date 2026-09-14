@@ -1,3 +1,5 @@
+import { reportNonfatalError } from "../lib/nonfatal-error.ts";
+import type { SessionAbortRequest, SessionCancellation } from "./runtime-contracts.ts";
 import { cancelDesktopSessionSubmission } from './desktop-session-submit.ts';
 /**
  * SessionCoordinator — Session 生命周期管理
@@ -1035,7 +1037,7 @@ function rewriteForkedSessionDraftReferences(sessionManager: any, suggestionIdMa
   return true;
 }
 
-export class SessionCoordinator {
+export class SessionCoordinator implements SessionCancellation {
   declare _d: any;
   declare _pendingModel: any;
   declare _session: any;
@@ -1818,7 +1820,6 @@ export class SessionCoordinator {
     workMode = false,
     agent: explicitAgent = null,
     agentId: explicitAgentId = null,
-    preserveAgentMemoryState = false,
     workspaceFolders = [],
     authorizedFolders = [],
     visibleInSessionList = false,
@@ -3306,7 +3307,7 @@ export class SessionCoordinator {
           (error as any).cleanupError = cleanupError;
         }
       } else if (targetSessionPath) {
-        try { await fsp.rm(targetSessionPath, { force: true }); } catch {}
+        try { await fsp.rm(targetSessionPath, { force: true }); } catch (error) { reportNonfatalError(`session creation rollback file cleanup failed (${targetSessionPath})`, error); }
       }
       throw error;
     }
@@ -4125,7 +4126,7 @@ export class SessionCoordinator {
     } catch (error) {
       if (childSessionPath) this._deleteRuntimeValueForPath(this._hibernatedSessionMeta, childSessionPath);
       if (childSessionPath) {
-        try { await this.discardSessionRuntime(childSessionPath, "session fork failed", { skipMemory: true }); } catch {}
+        try { await this.discardSessionRuntime(childSessionPath, "session fork failed", { skipMemory: true }); } catch (error) { reportNonfatalError(`fork rollback runtime cleanup failed (${childSessionPath})`, error); }
       }
       if (childActivityIds.length > 0 && childSessionId && childSessionPath) {
         try {
@@ -4272,10 +4273,10 @@ export class SessionCoordinator {
         }
       }
       if (childTitleWritten && childSessionPath) {
-        try { await this.clearSessionTitle(childSessionPath); } catch {}
+        try { await this.clearSessionTitle(childSessionPath); } catch (error) { reportNonfatalError(`fork rollback title cleanup failed (${childSessionPath})`, error); }
       }
       if (childMetaWritten && childSessionPath) {
-        try { await this._deleteSessionMetaEntry(childSessionPath); } catch {}
+        try { await this._deleteSessionMetaEntry(childSessionPath); } catch (error) { reportNonfatalError(`fork rollback metadata cleanup failed (${childSessionPath})`, error); }
       }
       if (childManifest?.sessionId && childSessionPath) {
         try {
@@ -4290,7 +4291,7 @@ export class SessionCoordinator {
         }
       }
       if (childSessionPath) {
-        try { await fsp.rm(childSessionPath, { force: true }); } catch {}
+        try { await fsp.rm(childSessionPath, { force: true }); } catch (error) { reportNonfatalError(`fork rollback file cleanup failed (${childSessionPath})`, error); }
       }
       throw error;
     }
@@ -4390,8 +4391,8 @@ export class SessionCoordinator {
       };
     } catch (err) {
       if (createdSessionPath) {
-        try { await this.discardSessionRuntime(createdSessionPath, "deleted agent continuation failed"); } catch {}
-        try { await fsp.rm(createdSessionPath, { force: true }); } catch {}
+        try { await this.discardSessionRuntime(createdSessionPath, "deleted agent continuation failed"); } catch (error) { reportNonfatalError(`continuation rollback runtime cleanup failed (${createdSessionPath})`, error); }
+        try { await fsp.rm(createdSessionPath, { force: true }); } catch (error) { reportNonfatalError(`continuation rollback file cleanup failed (${createdSessionPath})`, error); }
       }
       throw err;
     }
@@ -4977,12 +4978,12 @@ export class SessionCoordinator {
     }
   }
 
-  _normalizeAbortReason(options: any, fallback = "abort") {
+  _normalizeAbortReason(options: SessionAbortRequest | undefined, fallback = "abort") {
     const raw = typeof options === "string" ? options : options?.reason;
     return typeof raw === "string" && raw.trim() ? raw.trim() : fallback;
   }
 
-  async abort(options: any = {}) {
+  async abort(options: SessionAbortRequest = {}): Promise<boolean> {
     const reason = this._normalizeAbortReason(options, "abort");
     const sessionPath = this.currentSessionPath;
     if (sessionPath) return this.abortSession(sessionPath, { reason });
@@ -5287,7 +5288,7 @@ export class SessionCoordinator {
     }
   }
 
-  async abortSession(sessionPath: any, options: any = {}) {
+  async abortSession(sessionPath: string, options: SessionAbortRequest = {}): Promise<boolean> {
     const reason = this._normalizeAbortReason(options, "abort");
     const canceledSubmission = cancelDesktopSessionSubmission(this._d.getEngine?.(), sessionPath);
     const pending = this._getRuntimeValueForPath(this._prePromptAbortControllers, sessionPath);
@@ -5764,7 +5765,7 @@ export class SessionCoordinator {
   }
 
   /** 中断所有正在 streaming 的 session */
-  async abortAllStreaming() {
+  async abortAllStreaming(): Promise<number> {
     let count = 0;
     for (const [sessionKey, entry] of this._sessions) {
       const sp = this._sessionPathForEntry(entry, sessionKey);
@@ -6506,7 +6507,7 @@ export class SessionCoordinator {
     return !!this._getSessionEntryByPath(sessionPath)?._switching;
   }
 
-  async abortSessionByPath(sessionPath: any, options: any = {}) {
+  async abortSessionByPath(sessionPath: string, options: SessionAbortRequest = {}): Promise<boolean> {
     return this.abortSession(sessionPath, options);
   }
 
@@ -7272,7 +7273,7 @@ export class SessionCoordinator {
       if (path.normalize(ref.path) !== path.normalize(expected)) continue;
       try {
         await fsp.rm(this._sessionMetaPayloadAbsolutePath(metaPath, ref.path), { force: true });
-      } catch {}
+      } catch (error) { reportNonfatalError(`session metadata payload cleanup failed (${sessKey}, ${field})`, error); }
     }
     return true;
   }
@@ -7746,7 +7747,7 @@ export class SessionCoordinator {
       const sp = tempSessionMgr?.getSessionFile?.();
       if (sp) {
         // 临时 session 文件清理 best-effort：删不掉（如已被删/权限）不应让 isolated 执行失败。
-        try { fs.unlinkSync(sp); } catch {}
+        try { fs.unlinkSync(sp); } catch (error) { if (error.code !== "ENOENT") reportNonfatalError(`ephemeral session cleanup failed (${sp})`, error); }
       }
     };
     const rollbackFreshIsolatedInitialization = () => {
@@ -7757,7 +7758,7 @@ export class SessionCoordinator {
         isolatedIdentityPath,
         tempSessionMgr?.getSessionFile?.(),
       ].filter(Boolean))) {
-        try { fs.unlinkSync(candidate); } catch {}
+        try { fs.unlinkSync(candidate); } catch (error) { if (error.code !== "ENOENT") reportNonfatalError(`isolated initialization rollback cleanup failed (${candidate})`, error); }
       }
     };
     try {
@@ -8296,7 +8297,7 @@ export class SessionCoordinator {
   }
 
   /** 创建 session 专用 settings（控制 compaction + max_completion_tokens） */
-  _createSettings(model: any) {
+  _createSettings(_model: unknown) {
     return createDefaultSettings();
   }
 }

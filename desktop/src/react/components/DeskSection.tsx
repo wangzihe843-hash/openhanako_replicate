@@ -1,3 +1,4 @@
+import { useI18n } from '../hooks/use-i18n';
 /**
  * DeskSection — 笺侧栏的工作台内容区（编排层）
  *
@@ -104,7 +105,7 @@ export function DeskSection({
   );
   const [typeFilters, setTypeFilters] = useState<FileTypeFilter[]>(getInitialTypeFilters);
   const [inlineEdit, setInlineEdit] = useState<InlineTreeEdit>(null);
-  const t = window.t ?? ((p: string) => p);
+  const { t } = useI18n();
 
   useEffect(() => {
     if (!deskBasePath || deskDirtyTreePaths.length === 0) return;

@@ -55,7 +55,7 @@ describe('AttachedFilesBar media chips', () => {
       getFileUrl: vi.fn((path: string) => `file://${path}`),
     } as unknown as typeof window.platform;
 
-    const { container } = render(<AttachedFilesBar
+    render(<AttachedFilesBar
       files={[{ path: '/tmp/clip.wav', name: 'clip.wav', mimeType: 'audio/wav' }]}
       onRemove={onRemove}
     />);

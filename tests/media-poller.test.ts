@@ -830,7 +830,7 @@ describe("Poller", () => {
   // ── recover pending from store on start ───────────────────────────────────
 
   it("recovers pending tasks from the store on start", () => {
-    const { poller, mockStore, mockBus } = makePoller({
+    const { poller, mockBus } = makePoller({
       store: {
         listPending: vi.fn(() => [
           {

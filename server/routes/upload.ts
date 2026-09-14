@@ -12,6 +12,9 @@
  * - 有 sessionPath：{hanakoHome}/session-files/<session-hash>/，跟随 session 冷却清理
  */
 import fsSync from "fs";
+import { createModuleLogger } from "../../lib/debug-log.ts";
+
+const log = createModuleLogger("upload");
 import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
@@ -180,9 +183,13 @@ async function cleanOldUploads(uploadsDir) {
         if (stat.mtimeMs < cutoff) {
           await fs.rm(fullPath, { recursive: true, force: true });
         }
-      } catch {}
+      } catch (error) {
+        if (error.code !== "ENOENT") log.warn(`Expired upload cleanup failed: ${fullPath}: ${error.message}`);
+      }
     }
-  } catch {}
+  } catch (error) {
+    if (error.code !== "ENOENT") log.warn(`Could not list expired uploads: ${error.message}`);
+  }
 }
 
 function normalizeSessionPath(value) {
@@ -245,9 +252,7 @@ function existingSessionFileForSourceKey(engine, sessionPath, sourceKey) {
 }
 
 function safeRuntimeContext(engine) {
-  try {
-    if (typeof engine?.getRuntimeContext === "function") return engine.getRuntimeContext();
-  } catch {}
+  if (typeof engine?.getRuntimeContext === "function") return engine.getRuntimeContext();
   return engine?.runtimeContext || null;
 }
 

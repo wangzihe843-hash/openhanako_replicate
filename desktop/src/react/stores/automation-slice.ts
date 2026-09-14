@@ -3,9 +3,7 @@ export interface AutomationSlice {
   automationCount: number;
 }
 
-export const createAutomationSlice = (
-  set: (partial: Partial<AutomationSlice>) => void
-): AutomationSlice => ({
+export const createAutomationSlice = (): AutomationSlice => ({
   automationCount: 0,
 });
 

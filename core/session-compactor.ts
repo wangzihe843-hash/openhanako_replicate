@@ -1,3 +1,4 @@
+import type { CompactionRuntime, CompactionRecoveryDependencies, CompactionRecoveryOutcome } from "./runtime-contracts.ts";
 import { randomUUID } from "node:crypto";
 import {
   buildNativeCompactionRequestShapes,
@@ -1988,21 +1989,25 @@ export async function runLossyLocalCompactionForSession(session: any, {
   }
 }
 
-export async function compactSessionWithCachePreservation(session, customInstructions) {
-  session?.extensionRunner?.assertActive?.();
-  if (!session?.extensionRunner?.hasHandlers?.("session_before_compact")) {
+export async function compactSessionWithCachePreservation<Result>(session: CompactionRuntime<Result>, customInstructions?: string): Promise<Result> {
+  const runner = session?.extensionRunner;
+  // assertActive is an SDK-private compatibility probe; narrow it at this boundary.
+  if (runner && "assertActive" in runner && typeof runner.assertActive === "function") {
+    runner.assertActive();
+  }
+  if (!runner?.hasHandlers?.("session_before_compact")) {
     throw new Error(CACHE_PRESERVING_COMPACTION_EXTENSION_MISSING_MESSAGE);
   }
   return await session.compact(customInstructions);
 }
 
-export async function compactSessionWithCachePreservationRecoveringRuntime({
+export async function compactSessionWithCachePreservationRecoveringRuntime<Result>({
   session,
   sessionPath,
   customInstructions,
   reloadSessionRuntime,
   onRuntimeReload,
-}: any) {
+}: CompactionRecoveryDependencies<Result>): Promise<CompactionRecoveryOutcome<Result>> {
   try {
     const result = await compactSessionWithCachePreservation(session, customInstructions);
     return { result, session, recovered: false };

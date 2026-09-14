@@ -59,7 +59,13 @@ const profileMock = vi.hoisted(() => ({
 }));
 
 vi.mock('./xingye-sms-drafts', () => smsDraftsMock);
-vi.mock('./xingye-phone-store', () => phoneStoreMock);
+vi.mock('./xingye-phone-store', () => ({ ...phoneStoreMock,
+  ensureDefaultUserContact: vi.fn(),
+  getPhoneContactMeta: vi.fn(() => ({ status: 'active' })),
+  XINGYE_PHONE_CONTACTS_STORAGE_KEY: 'xingye.phoneContacts',
+  XINGYE_PHONE_VIRTUAL_CONTACTS_STORAGE_KEY: 'xingye.phoneVirtualContacts',
+  XINGYE_PHONE_SMS_THREADS_STORAGE_KEY: 'xingye.phoneSmsThreads',
+}));
 vi.mock('./xingye-phone-ai', () => phoneAiMock);
 vi.mock('./xingye-profile-store', () => profileMock);
 vi.mock('./XingyeAgentAvatar', () => ({

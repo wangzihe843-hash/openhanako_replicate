@@ -16,7 +16,7 @@ function removeTempDir(directory, prefix = "hana-upload-route-") {
     || !path.basename(dir).startsWith(prefix)) {
     throw new Error("Refusing to remove an unowned upload test directory");
   }
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 }
 
 // 大小写不敏感的文件系统（macOS / Windows）上，同一个目录有多种拼写。

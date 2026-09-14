@@ -113,6 +113,44 @@ describe("archive route: mtime semantics", () => {
     app.route("/api", createSessionsRoute(engine));
   });
 
+  it("reports archive enumeration failures without claiming successful cleanup", async () => {
+    const read = fsp.readdir;
+    const deniedDir = path.join(engine.agentsDir, "a", "sessions", "archived");
+    const spy = vi.spyOn(fsp, "readdir").mockImplementation(async (target, options) => {
+      if (target === deniedDir) throw Object.assign(new Error("archive unavailable"), { code: "EACCES" });
+      return read(target, options);
+    });
+    try {
+      const response = await app.request("/api/sessions/cleanup", {
+        method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        ok: false, deleted: 0,
+        failures: [{ path: deniedDir, operation: "list", error: "archive unavailable" }],
+      });
+    } finally { spy.mockRestore(); }
+  });
+
+  it("reports title cleanup failure after deleting the archived session", async () => {
+    const archiveDir = path.join(engine.agentsDir, "a", "sessions", "archived");
+    fs.mkdirSync(archiveDir, { recursive: true });
+    const archivedPath = path.join(archiveDir, "old.jsonl");
+    fs.writeFileSync(archivedPath, "{}\n");
+    const expired = new Date(Date.now() - 180 * 86400_000);
+    fs.utimesSync(archivedPath, expired, expired);
+    engine.clearSessionTitle.mockRejectedValueOnce(new Error("title store unavailable"));
+    const response = await app.request("/api/sessions/cleanup", {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: false, deleted: 1,
+      failures: [{ operation: "clear-title", error: "title store unavailable" }],
+    });
+    expect(fs.existsSync(archivedPath)).toBe(false);
+  });
+
   it("sets archived file mtime to now (not the old activity time)", async () => {
     const src = path.join(tmpDir, "agents", "a", "sessions", "s1.jsonl");
     const res = await app.request("/api/sessions/archive", {

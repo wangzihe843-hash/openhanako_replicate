@@ -34,6 +34,7 @@
  * and dropping the healer; nothing else depends on it.
  */
 import fs from "fs";
+import { randomUUID } from "node:crypto";
 
 import { AppError } from "./errors.ts";
 import { errorBus } from "./error-bus.ts";
@@ -171,6 +172,46 @@ export function writeSecretFileSync(filePath: string, content: string): void {
   } catch (err) {
     try { fs.rmSync(tmp, { force: true }); } catch { /* leave the target untouched */ }
     throw err;
+  }
+}
+
+/**
+ * Publish a runtime credential only after verifying its staged POSIX mode.
+ * Unlike durable settings, a fresh server token may safely fail publication.
+ * Windows retains the inherited-ACL contract documented at the top of this file.
+ */
+export function writeSecretFileStrictSync(filePath: string, content: string): void {
+  const tmp = `${filePath}${SECRET_TMP_SUFFIX}-${randomUUID()}`;
+  let fd: number | undefined;
+  let created = false;
+  try {
+    // Exclusive creation avoids following or overwriting a leftover staging file.
+    fd = fs.openSync(tmp, "wx", SECRET_FILE_MODE);
+    created = true;
+    if (SUPPORTS_POSIX_MODE) {
+      fs.fchmodSync(fd, SECRET_FILE_MODE);
+      if ((fs.fstatSync(fd).mode & 0o777) !== SECRET_FILE_MODE) {
+        throw permissionError("credential file could not be restricted to its owner", tmp);
+      }
+    }
+    // No credential bytes are written until the permission check succeeds.
+    fs.writeFileSync(fd, content, "utf-8");
+    fs.closeSync(fd);
+    fd = undefined;
+    if (SUPPORTS_POSIX_MODE) fs.renameSync(tmp, filePath);
+    else renameSecretFileOnWindowsSync(tmp, filePath);
+  } catch (error) {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* preserve the publication failure */ }
+    }
+    if (created) {
+      try { fs.rmSync(tmp, { force: true }); } catch (cleanupError) {
+        try {
+          errorBus.report(permissionError("failed to remove unpublished credential file", tmp, cleanupError), { route: "silent" });
+        } catch { /* A diagnostic listener cannot replace the original publication error. */ }
+      }
+    }
+    throw error;
   }
 }
 

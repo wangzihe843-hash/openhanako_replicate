@@ -352,17 +352,7 @@ describe("readPackageJsonWithRetry errno contract", () => {
     const outDir = makeTempDir();
     const missingPath = path.join(outDir, "nonexistent.json");
 
-    let callCount = 0;
-    const spy = vi.spyOn(fs, "readFileSync");
-    spy.mockImplementation((...args) => {
-      callCount++;
-      // Let the real implementation run — it will throw ENOENT
-      return (fs.readFileSync as any).wrappedImplementation?.(...args)
-        ?? (() => { throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); })();
-    });
-
-    // Use real fs (no mock) to get genuine ENOENT — spy just counts calls.
-    vi.restoreAllMocks();
+    // Use the real filesystem for the missing-file error.
     let thrown;
     try {
       readPackageJsonWithRetry(missingPath, { maxRetries: 5, baseDelayMs: 1 });

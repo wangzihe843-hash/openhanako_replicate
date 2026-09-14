@@ -1,8 +1,9 @@
 import fs from "fs";
+import fsp from "node:fs/promises";
 import os from "os";
 import path from "path";
 import { Hono } from "hono";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAvatarRoute } from "../server/routes/avatar.ts";
 
 /**
@@ -15,6 +16,7 @@ describe("avatar route", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-avatar-route-"));
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.mkdirSync(tempRoot, { recursive: true });
   });
@@ -42,6 +44,14 @@ describe("avatar route", () => {
     app.route("/api", createAvatarRoute(engine));
     return { app, userDir, hanaDir, otherDir };
   }
+
+  it.each(["EACCES", "EIO"])("reports an unreadable avatar as a server error rather than absence: %s", async code => {
+    const { app } = buildApp();
+    app.onError((_error, context) => context.json({ error: "avatar read failed" }, 500));
+    vi.spyOn(fsp, "access").mockRejectedValueOnce(Object.assign(new Error("read failed"), { code }));
+    const response = await app.request("/api/avatar/user");
+    expect(response.status).toBe(500);
+  });
 
   const PNG_DATA_URL = "data:image/png;base64,aGVsbG8=";
 

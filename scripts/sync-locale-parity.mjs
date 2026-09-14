@@ -94,7 +94,7 @@ function translateValue(locale, key, enValue, sources) {
   return enValue;
 }
 
-function syncTarget(locale, enLeaves, en) {
+function syncTarget(locale, enLeaves) {
   const targetPath = path.join(LOCALES_DIR, `${locale}.json`);
   const target = loadJson(targetPath);
   const zh = locale === 'zh-TW' ? loadJson(path.join(LOCALES_DIR, 'zh.json')) : null;
@@ -121,7 +121,7 @@ function main() {
   const enLeaves = collectLeaves(en);
   console.log(`[sync-locale-parity] en leaf keys: ${enLeaves.size}`);
   for (const locale of TARGETS) {
-    const { added, englishFallback } = syncTarget(locale, enLeaves, en);
+    const { added, englishFallback } = syncTarget(locale, enLeaves);
     console.log(`[sync-locale-parity] ${locale}: added ${added}, english-fallback ${englishFallback}`);
   }
 }

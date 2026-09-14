@@ -88,13 +88,14 @@ function ToolModelTestBtn({ modelRef }: { modelRef: unknown }) {
 export function OtherModelsSection({ providers }: { providers: Record<string, { models?: string[]; base_url?: string }> }) {
   const globalModelsConfig = useSettingsStore(s => s.globalModelsConfig);
   const showToast = useSettingsStore(s => s.showToast);
-  const savedSearchApiKeys = normalizeSearchApiKeys(globalModelsConfig?.search?.api_keys || {});
+  const savedSearchApiKeysJson = JSON.stringify(normalizeSearchApiKeys(globalModelsConfig?.search?.api_keys || {}));
   const savedLegacySearchKey = globalModelsConfig?.search?.api_key || '';
   const [searchApiKeys, setSearchApiKeys] = useState<Record<string, string>>({});
   const [searchKeyEdited, setSearchKeyEdited] = useState<Record<string, boolean>>({});
 
   // 从后端同步已保存的 key
   useEffect(() => {
+    const savedSearchApiKeys: Record<string, string> = JSON.parse(savedSearchApiKeysJson);
     setSearchApiKeys((prev) => {
       const next = { ...prev };
       for (const provider of SEARCH_API_PROVIDER_IDS) {
@@ -104,7 +105,7 @@ export function OtherModelsSection({ providers }: { providers: Record<string, { 
       }
       return next;
     });
-  }, [globalModelsConfig?.search?.provider, savedLegacySearchKey, JSON.stringify(savedSearchApiKeys), searchKeyEdited]);
+  }, [globalModelsConfig?.search?.provider, savedLegacySearchKey, savedSearchApiKeysJson, searchKeyEdited]);
 
   const searchProvider = globalModelsConfig?.search?.provider || AUTO_SEARCH_PROVIDER;
   const searchIsAutoProvider = searchProvider === AUTO_SEARCH_PROVIDER;

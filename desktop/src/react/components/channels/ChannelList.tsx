@@ -2,12 +2,10 @@
  * ChannelList — 频道列表渲染（DM + Group 分区）
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useStore } from '../../stores';
 import { useI18n } from '../../hooks/use-i18n';
-import { hanaFetch } from '../../hooks/use-hana-fetch';
 import {
-  loadChannels,
   openChannel,
   deleteChannel,
   toggleChannelsEnabled,

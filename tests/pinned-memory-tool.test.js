@@ -21,7 +21,7 @@ describe("pinned-memory tool", () => {
 
   afterEach(() => {
     if (agentDir) {
-      try { fs.rmSync(agentDir, { recursive: true, force: true }); } catch {}
+      fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       agentDir = null;
     }
   });

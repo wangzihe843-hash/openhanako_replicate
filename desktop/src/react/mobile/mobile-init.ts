@@ -354,7 +354,9 @@ async function rawJson<T>(path: string, options: RequestInit = {}): Promise<T> {
     try {
       const data = await res.json();
       detail = data.detail || data.error || detail;
-    } catch {}
+    } catch {
+      // Non-JSON error bodies retain the original HTTP status failure.
+    }
     throw new Error(detail);
   }
   return await res.json() as T;

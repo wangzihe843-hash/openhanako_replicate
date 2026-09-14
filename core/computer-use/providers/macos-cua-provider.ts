@@ -878,7 +878,7 @@ export function createMacosCuaProvider({
         try {
           const perms = await runTool("check_permissions", { prompt: false });
           permissions = normalizePermissions(perms);
-        } catch (err) {
+        } catch {
           permissions = [{ name: "accessibility", granted: false }, { name: "screen-recording", granted: false }];
         }
         return { providerId, available: true, command, daemon: status.stdout.trim(), permissions };

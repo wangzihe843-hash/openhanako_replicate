@@ -1225,7 +1225,7 @@ function ensureFactionVariety(contacts: XingyeAiGeneratedContact[]): void {
     .filter(({ c }) => (canonicalizeFaction(c.faction) ?? '未知') === '未知');
   const ratio = unknownIdx.length / contacts.length;
   if (ratio <= 0.45) return;
-  unknownIdx.forEach(({ c, i }, n) => {
+  unknownIdx.forEach(({ c }, n) => {
     if (n % 2 === 1) return;
     const k = c.kind;
     if (k === 'enemy' || k === 'rival') c.faction = '对立';
@@ -1372,7 +1372,7 @@ export function normalizeAiGeneratedContact(contact: XingyeAiGeneratedContact): 
   };
   if (!tags.length) tags = inferTagsForContact(inferBase);
 
-  let faction = canonicalizeFaction(
+  const faction = canonicalizeFaction(
     contact.faction?.trim() ? truncateGraphemes(contact.faction.trim(), 20) : undefined,
   ) ?? inferFactionForContact({
     kind: contact.kind,
@@ -1569,6 +1569,11 @@ export function ensureDefaultUserContact(ownerAgentId: string, storage: StorageL
 
 export function getDefaultUserContact(ownerAgentId: string, storage: StorageLike | null = getLocalStorage()): XingyePhoneContactView {
   ensureDefaultUserContact(ownerAgentId, storage);
+  return readDefaultUserContact(ownerAgentId, storage);
+}
+
+/** Pure view for render snapshots; initialization belongs to the writable-store effect. */
+function readDefaultUserContact(ownerAgentId: string, storage: StorageLike | null): XingyePhoneContactView {
   const meta = getPhoneContactMeta(ownerAgentId, 'user', '__user__', storage);
   return {
     ownerAgentId,
@@ -1581,7 +1586,7 @@ export function getDefaultUserContact(ownerAgentId: string, storage: StorageLike
     relationshipHint: meta?.relationshipHint,
     tags: meta?.tags ?? [],
     faction: meta?.faction,
-    status: meta?.status ?? 'active',
+    status: 'active',
     linkedAgentId: meta?.linkedAgentId,
     source: meta?.source ?? 'system',
     updatedAt: meta?.updatedAt,
@@ -1853,7 +1858,7 @@ export function normalizeContactNameForDedupe(value: string | null | undefined):
   s = s.replace(/\u3000/g, ' ');
   s = s.toLowerCase();
   s = s.replace(/\s+/g, ' ');
-  const edgeJunk = /^[\s\-_·•●．。、!！?？:：;；'"`*【】\[\](){}<>《》「」『』~～#@&^|/\\.,，]+|[\s\-_·•●．。、!！?？:：;；'"`*【】\[\](){}<>《》「」『』~～#@&^|/\\.,，]+$/g;
+  const edgeJunk = /^[\s\-_·•●．。、!！?？:：;；'"`*【】[\](){}<>《》「」『』~～#@&^|/\\.,，]+|[\s\-_·•●．。、!！?？:：;；'"`*【】[\](){}<>《》「」『』~～#@&^|/\\.,，]+$/g;
   s = s.replace(edgeJunk, '');
   return s.trim();
 }
@@ -1938,15 +1943,6 @@ function findVirtualContactForBatchAiMerge(
     if (d !== 0) return d;
     return a.id.localeCompare(b.id);
   })[0];
-}
-
-/** 「重新生成全部」：同名时合并到 active 优先，否则 blocked/deleted 也可被 AI 刷新（避免整表留在已删除）。 */
-function findVirtualContactForRegenerateMerge(
-  ownerAgentId: string,
-  displayName: string,
-  storage: StorageLike | null,
-): XingyeVirtualContact | null {
-  return findVirtualContactForBatchAiMerge(ownerAgentId, displayName, storage);
 }
 
 function resolveVirtualContactIdByStrictMatchName(
@@ -2748,6 +2744,8 @@ export function getPhoneContacts(
   profiles: XingyeRoleProfileMap,
   options?: {
     includeDeleted?: boolean;
+    /** Use pure views when reading an immutable render snapshot. */
+    readOnly?: boolean;
     /**
      * 默认排除「新的朋友」待确认条目（pendingApproval）——通讯录列表、短信、
      * 标签/阵营、各 AI 上下文都不应看到尚未被用户通过的联系人。
@@ -2761,7 +2759,9 @@ export function getPhoneContacts(
   const includeDeleted = options?.includeDeleted ?? false;
   const includePendingApproval = options?.includePendingApproval ?? false;
   const views: XingyePhoneContactView[] = [];
-  views.push(getDefaultUserContact(ownerAgentId, storage));
+  views.push(options?.readOnly
+    ? readDefaultUserContact(ownerAgentId, storage)
+    : getDefaultUserContact(ownerAgentId, storage));
   const virtualContacts = getVirtualContacts(ownerAgentId, storage);
   for (const vc of virtualContacts) {
     const meta = getPhoneContactMeta(ownerAgentId, 'virtual_contact', vc.id, storage);
@@ -2928,8 +2928,9 @@ export function getPendingNewContacts(
   agents: Agent[],
   profiles: XingyeRoleProfileMap,
   storage?: StorageLike | null,
+  options?: { readOnly?: boolean },
 ): XingyePhoneContactView[] {
-  return getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true, includePendingApproval: true }, storage)
+  return getPhoneContacts(ownerAgentId, agents, profiles, { includeDeleted: true, includePendingApproval: true, readOnly: options?.readOnly }, storage)
     .filter(item => item.targetType === 'virtual_contact' && item.pendingApproval);
 }
 

@@ -105,7 +105,9 @@ export function BridgePanel() {
       setStatusData(data);
       updateSidebarDot(data);
       if (context.visible) setShowOverlay(!data[context.platform]?.configured);
-    } catch {}
+    } catch (error) {
+      if (isCurrent()) console.warn('[bridge] refresh status failed:', error);
+    }
   }, [bridgeAgentId]);
 
   // 加载平台数据（按 agent 过滤，stale-guard via ref）
@@ -174,7 +176,7 @@ export function BridgePanel() {
     return () => document.removeEventListener('mousedown', handler);
   }, [agentMenuOpen]);
 
-  const { visible, close } = usePanel('bridge', loadData, [currentAgentId, bridgeAgentId, platform]);
+  const { visible, close } = usePanel('bridge', loadData, JSON.stringify([currentAgentId, bridgeAgentId, platform]));
 
   // 订阅 bridge status 变化（代替 window.__hanaBridgeLoadStatus）
   const bridgeStatusTrigger = useStore(s => s.bridgeStatusTrigger);

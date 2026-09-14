@@ -163,12 +163,10 @@ function sanitizePrincipal(principal) {
 }
 
 function sanitizeSession(session) {
-  const {
-    secretHash,
-    secretSalt,
-    secretPrefix,
-    ...safe
-  } = session;
+  const safe = { ...session };
+  delete safe.secretHash;
+  delete safe.secretSalt;
+  delete safe.secretPrefix;
   return clonePlain(safe);
 }
 
@@ -215,10 +213,6 @@ function assertRecordString(value, label, field) {
 
 function assertNonEmptyString(value, label) {
   if (!isNonEmptyString(value)) throw new Error(`${label} required`);
-}
-
-function stringOrNull(value) {
-  return isNonEmptyString(value) ? value.trim() : null;
 }
 
 function isPlainObject(value) {

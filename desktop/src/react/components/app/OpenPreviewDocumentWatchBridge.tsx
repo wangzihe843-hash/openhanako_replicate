@@ -18,7 +18,7 @@ export function OpenPreviewDocumentWatchBridge() {
   const studioWorkspaces = useStore(s => s.studioWorkspaces);
   const subscriptionsRef = useRef<Map<string, () => void>>(new Map());
   const watchResources = useMemo(
-    () => openPreviewDocumentWatchResources(),
+    () => openPreviewDocumentWatchResources({ previewItems, openTabs, deskBasePath, deskWorkspaceMountId, deskWorkspaceNativeRoot, studioWorkspaces }),
     [previewItems, openTabs, deskBasePath, deskWorkspaceMountId, deskWorkspaceNativeRoot, studioWorkspaces],
   );
   const watchResourcesKey = watchResources.map(item => resourceWatchKey(item.ref)).join('\n');

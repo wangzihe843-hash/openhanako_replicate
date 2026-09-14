@@ -1598,7 +1598,7 @@ describe("session-coordinator tool snapshot (createSession)", () => {
         }, null, 2),
       );
 
-      const { sessionPath } = await coord.createSession(null, tmpDir, true, null, {
+      await coord.createSession(null, tmpDir, true, null, {
         restore: true,
         refreshCapabilitySnapshots: true,
       });

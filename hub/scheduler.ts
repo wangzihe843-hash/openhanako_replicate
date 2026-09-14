@@ -81,7 +81,7 @@ export class Scheduler {
   }
 
   /** 暴露 Studio cronScheduler（agentId 参数仅为兼容旧调用方） */
-  getCronScheduler(agentId) {
+  getCronScheduler(_agentId) {
     return this._cronScheduler ?? null;
   }
 
@@ -103,7 +103,7 @@ export class Scheduler {
   }
 
   /** 兼容旧 agent 生命周期调用：Studio cron 只有一个 scheduler */
-  startAgentCron(agentId) { this._startStudioCron(); }
+  startAgentCron(_agentId) { this._startStudioCron(); }
 
   /** 为指定 agent 启动 heartbeat（公共 API，供 createAgent 等场景使用） */
   startAgentHeartbeat(agentId, agent) {
@@ -111,7 +111,7 @@ export class Scheduler {
   }
 
   /** 兼容旧 agent 生命周期调用：删除 agent 不停止 Studio cron scheduler */
-  async removeAgentCron(agentId) {
+  async removeAgentCron(_agentId) {
     return undefined;
   }
 
@@ -406,7 +406,7 @@ export class Scheduler {
     };
   }
 
-  _cronExecutionOptions(job, executor = getAutomationExecutor(job)) {
+  _cronExecutionOptions(job, _executor = getAutomationExecutor(job)) {
     const actorAgentId = job.actorAgentId;
     const ctx = normalizeAutomationExecutionContext(
       job.executionContext,

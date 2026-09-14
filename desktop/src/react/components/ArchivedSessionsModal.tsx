@@ -83,8 +83,10 @@ export function ArchivedSessionsModal({ open, onClose, zIndex = 1000 }: Props) {
       size: formatBytes(size),
     });
     if (!window.confirm(msg)) return;
-    const { deleted } = await cleanupArchivedSessions(days);
-    showSidebarToast(t('session.archived.cleanupDone', { count: deleted }));
+    const result = await cleanupArchivedSessions(days);
+    if (result.ok) showSidebarToast(t('session.archived.cleanupDone', { count: result.deleted }));
+    else showSidebarToast(t('session.archived.deleteFailed') + ': ' + result.error);
+    // Failure can follow accepted deletions; refresh once without repeating the write.
     await refresh();
   };
 

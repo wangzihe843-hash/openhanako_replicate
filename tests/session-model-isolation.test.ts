@@ -16,12 +16,16 @@ const MODEL_A = { id: "minimax", name: "MiniMax", provider: "minimax" };
 const MODEL_B = { id: "mimo", name: "Mimo", provider: "minimax" };
 const MODEL_DEFAULT = MODEL_A;
 
+type FixtureModel = typeof MODEL_A;
+interface FixtureSession { model: FixtureModel; setModel: ReturnType<typeof vi.fn> }
+interface FixtureEntry { session: FixtureSession; modelId: string | null; modelProvider: string | null }
+
 function makeMockModels() {
   return {
     _defaultModel: MODEL_DEFAULT,
     get currentModel() { return this._defaultModel; },
     get availableModels() { return [MODEL_A, MODEL_B]; },
-    setDefaultModel(id, provider) {
+    setDefaultModel(id: string, provider: string) {
       const m = findModel(this.availableModels, id, provider);
       if (!m) throw new Error("not found");
       this._defaultModel = m;
@@ -31,22 +35,23 @@ function makeMockModels() {
   };
 }
 
-function makeMockSessionCoordinator(models) {
-  const sessions = new Map();
-  let currentSession = null;
-  let pendingModel = null;
+function makeMockSessionCoordinator(models: ReturnType<typeof makeMockModels>) {
+  const sessions = new Map<string, FixtureEntry>();
+  let currentSession: FixtureSession | null = null;
+  let pendingModel: FixtureModel | null = null;
 
   return {
     _sessions: sessions,
     get session() { return currentSession; },
     get pendingModel() { return pendingModel; },
-    setPendingModel(m) { pendingModel = m; },
+    setPendingModel(m: FixtureModel | null) { pendingModel = m; },
     get currentSessionPath() {
       if (!currentSession) return null;
       for (const [k, v] of sessions) { if (v.session === currentSession) return k; }
       return null;
     },
-    createSession(mgr, cwd, memEnabled, model) {
+    // Retain the production call shape; only model selection is simulated here.
+    createSession(_mgr: null, _cwd: string | null, _memEnabled: boolean, model?: FixtureModel) {
       const effectiveModel = model || pendingModel || models.currentModel;
       pendingModel = null;
       const session = { model: effectiveModel, setModel: vi.fn() };
@@ -59,13 +64,13 @@ function makeMockSessionCoordinator(models) {
       currentSession = session;
       return { session, sessionPath: path, agentId: null };
     },
-    switchSession(path) {
+    switchSession(path: string) {
       const entry = sessions.get(path);
       if (!entry) throw new Error("session not found");
       currentSession = entry.session;
       return entry.session;
     },
-    switchSessionModel(sessionPath, newModel) {
+    switchSessionModel(sessionPath: string, newModel: FixtureModel) {
       const entry = sessions.get(sessionPath);
       if (!entry) throw new Error("session not found");
       entry.session.model = newModel;
@@ -84,14 +89,14 @@ describe("Session model isolation", () => {
   it("新 session 无指定模型时用 agent 默认", () => {
     const models = makeMockModels();
     const coord = makeMockSessionCoordinator(models);
-    (coord.createSession as any)(null, null, true);
+    coord.createSession(null, null, true);
     expect(coord.session.model).toBe(MODEL_DEFAULT);
   });
 
   it("新 session 指定模型时用指定的", () => {
     const models = makeMockModels();
     const coord = makeMockSessionCoordinator(models);
-    coord.createSession(null, null, true, MODEL_B as any);
+    coord.createSession(null, null, true, MODEL_B);
     expect(coord.session.model).toBe(MODEL_B);
   });
 
@@ -109,7 +114,7 @@ describe("Session model isolation", () => {
     const models = makeMockModels();
     const coord = makeMockSessionCoordinator(models);
 
-    const { session: sessionA } = coord.createSession(null, null, true, MODEL_A);
+    coord.createSession(null, null, true, MODEL_A);
     const pathA = coord.currentSessionPath;
 
     const { session: sessionB } = coord.createSession(null, null, true, MODEL_B);
