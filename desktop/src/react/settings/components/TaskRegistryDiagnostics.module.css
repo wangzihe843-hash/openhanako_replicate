@@ -1,0 +1,9 @@
+.tasks { margin-top: var(--space-12); }
+.title { margin: 0 0 var(--space-8); font-size: 0.875rem; }
+.note { color: var(--text-muted); font-size: 0.75rem; }
+.list { list-style: none; padding: 0; margin: var(--space-8) 0 0; }
+.task { border-top: 1px solid var(--border); padding: var(--space-12) 0; overflow-wrap: anywhere; }
+.task p { margin: var(--space-4) 0 0; white-space: pre-wrap; }
+.heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-8); font-size: 0.8125rem; }
+.status { color: var(--text-light); font-size: 0.75rem; }
+.status[data-status='failed'], .error { color: var(--danger); }

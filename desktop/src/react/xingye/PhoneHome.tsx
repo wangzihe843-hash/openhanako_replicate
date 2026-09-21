@@ -33,6 +33,18 @@ interface PhoneHomeProps {
   onOpenTrips?: () => void;
 }
 
+function heartbeatSkipLabel(reason: unknown): string {
+  switch (reason) {
+    case 'paused': return '巡检已暂停';
+    case 'timeout': return '巡检超时，已停止';
+    case 'quiet-hours': return '安静时段，巡检已暂停';
+    case 'invalid-quiet-hours': return '安静时段配置无效，请检查设置';
+    case 'policy-unavailable': return '暂时无法检查巡检策略，巡检已暂停';
+    case 'cooldown': return '冷却中，请稍后再试';
+    default: return '本次巡检已跳过';
+  }
+}
+
 const phoneIcons = {
   notebook: (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -245,6 +257,7 @@ export function PhoneHome({
    * id 比较只依赖服务端自身有序性，与两端时钟差无关；loopback 默认场景行为不变。
    */
   const awaitingResultRef = useRef(false);
+  const heartbeatRequestRef = useRef(0);
   const baselineHeartbeatIdRef = useRef<string | null>(null);
   const clearBusyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 订阅 activities store 里本 agent 最新的一条 heartbeat 活动（beat 完成时 scheduler 经
@@ -335,6 +348,7 @@ export function PhoneHome({
   const handleHeartbeatTrigger = async () => {
     if (!agent?.id || heartbeatBusy) return;
     const agentId = agent.id;
+    const requestId = ++heartbeatRequestRef.current;
     setHeartbeatBusy(true);
     setHeartbeatStatus('巡检触发中...');
     // 触发即快照当前最新 heartbeat 活动 id 作为基线；真实巡检完成由下方 effect 在出现
@@ -347,12 +361,13 @@ export function PhoneHome({
         method: 'POST',
       });
       const data = await res.json().catch(() => ({}));
+      if (requestId !== heartbeatRequestRef.current || !awaitingResultRef.current) return;
       if (!res.ok || data?.error) {
         throw new Error(typeof data?.error === 'string' ? data.error : res.statusText || 'heartbeat failed');
       }
       if (data?.cooldown || !data?.triggered) {
         // 冷却中：没有新 beat、不会有 activity_update，直接结束等待。
-        const line = '冷却中，请稍后再试';
+        const line = heartbeatSkipLabel(data?.reason || (data?.cooldown ? 'cooldown' : null));
         setHeartbeatStatus(line);
         rememberDeskHeartbeatUiOutcome(agentId, line);
         awaitingResultRef.current = false;
@@ -369,6 +384,7 @@ export function PhoneHome({
         setHeartbeatStatus((prev) => (prev === '巡检触发中...' ? '巡检仍在后台进行，稍后回来查看' : prev));
       }, 6 * 60 * 1000);
     } catch (error) {
+      if (requestId !== heartbeatRequestRef.current || !awaitingResultRef.current) return;
       const fail = `巡检失败：${error instanceof Error ? error.message : String(error)}`;
       setHeartbeatStatus(fail);
       rememberDeskHeartbeatUiOutcome(agentId, fail);
@@ -384,11 +400,28 @@ export function PhoneHome({
   // 旧的客户端时钟水位线方案天然免疫这点（已存在 beat 的 finishedAt < 触发水位），id 比对
   // 方案需在角色切换时显式复位。
   useEffect(() => {
+    heartbeatRequestRef.current += 1;
     awaitingResultRef.current = false;
     baselineHeartbeatIdRef.current = null;
     if (clearBusyTimerRef.current) { clearTimeout(clearBusyTimerRef.current); clearBusyTimerRef.current = null; }
     setHeartbeatBusy(false);
     setHeartbeatStatus('等待手动巡检');
+  }, [agent?.id]);
+
+  // A cancelled patrol has no successful activity. End its pending UI independently.
+  useEffect(() => {
+    const onSkipped = (event: Event) => {
+      const detail = (event as CustomEvent<{ agentId?: string; reason?: string }>).detail;
+      if (!agent?.id || detail?.agentId !== agent.id || !awaitingResultRef.current) return;
+      const line = heartbeatSkipLabel(detail.reason);
+      awaitingResultRef.current = false;
+      if (clearBusyTimerRef.current) { clearTimeout(clearBusyTimerRef.current); clearBusyTimerRef.current = null; }
+      setHeartbeatBusy(false);
+      setHeartbeatStatus(line);
+      rememberDeskHeartbeatUiOutcome(agent.id, line);
+    };
+    window.addEventListener('hana-heartbeat-skipped', onSkipped);
+    return () => window.removeEventListener('hana-heartbeat-skipped', onSkipped);
   }, [agent?.id]);
 
   // 巡检完成：本次触发后出现一条 id 不同于触发基线的本 agent heartbeat 活动时收尾，
@@ -421,6 +454,8 @@ export function PhoneHome({
 
   // 卸载时清掉兜底定时器，避免泄漏 / unmount 后 setState。
   useEffect(() => () => {
+    heartbeatRequestRef.current += 1;
+    awaitingResultRef.current = false;
     if (clearBusyTimerRef.current) clearTimeout(clearBusyTimerRef.current);
   }, []);
 

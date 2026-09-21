@@ -23,6 +23,7 @@ import {
 } from './xingye-memory-candidate-store';
 import { resolveXingyeLoreTemplateUserNameSync } from './xingye-speaker-context';
 import { LoreEntryCard } from './LoreEntryCard';
+import { LoreDiagnostics } from './LoreDiagnostics';
 import styles from './XingyeShell.module.css';
 
 // 会原样显示在「重要记忆候选」卡片的「理由：」处——用 TA 第一人称、带心意的口吻，
@@ -46,7 +47,7 @@ const CATEGORY_OPTIONS: Array<{ value: XingyeLoreCategory; label: string }> = XI
 
 const INSERTION_OPTIONS: Array<{ value: XingyeLoreInsertionMode; label: string }> = [
   { value: 'manual', label: '手动（不自动注入）' },
-  { value: 'keyword', label: '关键词（命中后整段正文）' },
+  { value: 'keyword', label: '关键词（命中后按预算引用）' },
   { value: 'always', label: '始终（默认可引用，宜短）' },
 ];
 
@@ -323,10 +324,10 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
           <h3 className={styles.detailSectionTitle}>背景故事 / 设定库</h3>
           <div className={styles.loreHintStack}>
             <p className={styles.loreHint}>
-              完整背景、世界观、事件、地点和组织保存在星野设定库。每一条设定<strong>条目</strong>是自动注入时的<strong>最小单位</strong>：被选中后，该条目的正文会<strong>整块</strong>交给模型，不会只抽取其中某一句、某一行或某个列表项。设定库条目仅保存在 workspace，不会自动写入 OpenHanako identity / ishiki。
+              完整背景、世界观、事件、地点和组织保存在星野设定库。每一条设定<strong>条目</strong>是自动注入时的<strong>最小单位</strong>：命中后按所在链路的预算引用正文；共享聊天路径可能截断，桌面通用路径可能跳过过大的条目。可在下方诊断中查看原因。设定库条目仅保存在 workspace，不会自动写入 OpenHanako identity / ishiki。
             </p>
             <p className={styles.loreHint}>
-              <strong>关键词</strong>模式：任一关键词命中时，会注入该条目的<strong>全部</strong>「条目正文」字段内容，而不是仅匹配到的那一句、那一段或某个要点。
+              <strong>关键词</strong>模式：任一关键词命中时，该条目进入候选；是否完整选入、截断或排除，还取决于优先级与字符预算。
             </p>
             <p className={styles.loreHint}>
               <strong>始终</strong>模式：在「小手机」「秘密空间」等生成任务中，会<strong>默认引用</strong>已启用且设为「始终」的条目。请勿把过长的全文世界观「圣经」塞进「始终」；长文请拆成多条或改用关键词按需注入。
@@ -342,6 +343,8 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
         {editingEntry && <button type="button" onClick={resetDraft}>取消编辑</button>}
       </div>
 
+      <LoreDiagnostics key={agentId} agentId={agentId} entries={entries} />
+
       <div className={styles.loreForm} key={editingId ?? '__create__'}>
         <label className={styles.profileField}>
           <span>标题</span>
@@ -353,7 +356,7 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
           />
         </label>
         <label className={styles.profileField}>
-          <span title="关键词命中或条目被选中时，本框全文会整块注入，不会只摘匹配片段。">条目正文（命中后整段注入）</span>
+          <span title="候选以本框正文为单位，实际引用可能因所在链路的预算而截断或跳过。">条目正文（按预算引用）</span>
           <textarea
             value={draft.content}
             placeholder="写入本条目的全部正文。需要拆分时，可把身份核心、关系核心、地点、组织、事件、规则等分到不同条目。"
@@ -385,10 +388,10 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
             </select>
           </label>
           <label className={styles.profileField}>
-            <span title="「始终」会在小手机、秘密空间等任务中默认引用；「关键词」命中后注入整条目正文；「手动」不自动注入。">插入模式</span>
+            <span title="「始终」会在小手机、秘密空间等任务中默认引用；「关键词」命中后按预算引用正文；「手动」不自动注入。">插入模式</span>
             <select
               value={draft.insertionMode}
-              title="始终：默认可引用，条目宜短。关键词：命中后注入该条目全部正文。手动：不自动注入。"
+              title="始终：默认可引用，条目宜短。关键词：命中后按所在链路预算引用。手动：不自动注入。"
               onChange={(event) => setDraft((current) => ({ ...current, insertionMode: event.target.value as XingyeLoreInsertionMode }))}
             >
               {INSERTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -415,7 +418,7 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
           </label>
         </div>
         <label className={styles.profileField}>
-          <span title="仅在「关键词」模式下用于匹配；任一命中即注入本条目的全部「条目正文」，不是只摘命中句。">关键词</span>
+          <span title="仅在「关键词」模式下用于匹配；任一命中即可进入候选，再按优先级与字符预算选择。">关键词</span>
           <input
             type="text"
             value={draft.keywords}

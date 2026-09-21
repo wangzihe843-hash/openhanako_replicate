@@ -72,6 +72,7 @@ skills:
 # 工作书桌
 desk:
   heartbeat_enabled: false           # 巡检默认关闭，用户明确开启后才会自动巡检
+  heartbeat_quiet_hours: { enabled: false, start: "23:00", end: "08:00" } # 服务端本地时间
   heartbeat_interval: 31             # 巡检间隔（分钟）
 
 # 工作区上下文（per-agent）

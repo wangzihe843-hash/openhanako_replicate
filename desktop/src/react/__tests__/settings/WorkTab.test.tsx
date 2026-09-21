@@ -92,6 +92,23 @@ describe('WorkTab workspace persistence', () => {
     cleanup();
   });
 
+  it('saves quiet hours for the selected agent and rejects equal endpoints', async () => {
+    const { WorkTab } = await import('../../settings/tabs/WorkTab');
+    render(<WorkTab />);
+    await screen.findByDisplayValue('/old-home');
+    fireEvent.click(screen.getByRole('switch', { name: 'settings.work.quietHours' }));
+    fireEvent.change(screen.getByLabelText('settings.work.quietHoursStart'), { target: { value: '22:30' } });
+    fireEvent.change(screen.getByLabelText('settings.work.quietHoursEnd'), { target: { value: '22:30' } });
+    fireEvent.click(screen.getByText('settings.work.quietHoursSave'));
+    expect(mockState.showToast).toHaveBeenCalledWith('settings.work.quietHoursInvalid', 'error');
+    expect(mockHanaFetch.mock.calls.filter(([, options]) => options?.method === 'PUT')).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText('settings.work.quietHoursEnd'), { target: { value: '07:00' } });
+    fireEvent.click(screen.getByText('settings.work.quietHoursSave'));
+    await waitFor(() => expect(mockHanaFetch).toHaveBeenCalledWith('/api/agents/agent-a/config', expect.objectContaining({
+      method: 'PUT', body: JSON.stringify({ desk: { heartbeat_quiet_hours: { enabled: true, start: '22:30', end: '07:00' } } }),
+    })));
+  });
+
   it('renders the current agent desk settings from settingsConfig on the first paint', async () => {
     mockState.settingsConfig = {
       desk: {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { Hono } from "hono";
+import { TaskRegistry } from "../lib/task-registry.ts";
 import crypto from "crypto";
 import fs from "fs";
 import os from "os";
@@ -898,6 +899,27 @@ describe("plugin management API", () => {
   });
 
   describe("GET /plugins/diagnostics", () => {
+    it("preserves real task states and reasons through the diagnostics endpoint", async () => {
+      const registry = new TaskRegistry();
+      registry.registerHandler("workflow", { abort: vi.fn() });
+      for (const taskId of ["blocked", "failed", "canceled", "completed"]) {
+        registry.register(taskId, { type: "workflow" });
+      }
+      registry.update("blocked", { status: "blocked", progress: { message: "Waiting for input" } });
+      registry.fail("failed", "Validation failed");
+      registry.cancel("canceled", "User canceled");
+      registry.complete("completed", "Unverified artifact produced");
+      const engine = mockEngine();
+      Object.assign(engine, { taskRegistry: registry });
+      const response = await createApp(engine).request("/api/plugins/diagnostics");
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.tasks).toEqual(registry.listAll());
+      expect(body.tasks.find(task => task.taskId === "failed").error).toBe("Validation failed");
+      expect(body.tasks.find(task => task.taskId === "blocked").status).toBe("blocked");
+      expect(body.tasks.find(task => task.taskId === "canceled").status).toBe("canceled");
+    });
+
     it("returns plugin, bus, task, and schedule diagnostics", async () => {
       const engine = mockEngine({
         diagnostics: [

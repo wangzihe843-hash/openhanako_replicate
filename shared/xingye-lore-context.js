@@ -165,13 +165,41 @@ function getMatchedKeywords(entry, queryText) {
   );
 }
 
+// Diagnostics are opt-in and never include another agent's entries or lore content.
+function reportDecision(onDecision, entry, reason, matchedKeywords = [], blockChars = 0) {
+  if (typeof onDecision !== 'function') return;
+  onDecision({
+    id: normalizeString(entry.id), title: getEntryTitle(entry), reason,
+    matchedKeywords, blockChars,
+  });
+}
+
+function reportExclusions(entries, agentId, mode, queryText, maxChars, onDecision) {
+  if (typeof onDecision !== 'function' || !agentId) return;
+  for (const entry of toEntryArray(entries)) {
+    if (!entry || typeof entry !== 'object' || normalizeString(entry.agentId) !== agentId) continue;
+    let reason;
+    if (entry.enabled !== true) reason = 'disabled';
+    else if (entry.visibility !== 'canonical') reason = 'visibility';
+    else if (entry.insertionMode !== mode) reason = 'mode';
+    else if (!normalizeString(entry.content)) reason = 'empty';
+    else if (mode === 'keyword' && !normalizeKeywords(entry.keywords).length) reason = 'no-keywords';
+    else if (mode === 'keyword' && !queryText) reason = 'no-query';
+    else if (mode === 'keyword' && !getMatchedKeywords(entry, queryText).length) reason = 'no-match';
+    else if (maxChars <= 0) reason = 'budget';
+    if (reason) reportDecision(onDecision, entry, reason);
+  }
+}
+
 export function buildXingyeStableLoreMemoryContext({
   entries,
   agentId,
   maxChars = DEFAULT_MAX_CHARS,
+  onDecision,
 } = {}) {
   const normalizedAgentId = normalizeString(agentId);
   const normalizedMaxChars = normalizeMaxChars(maxChars);
+  reportExclusions(entries, normalizedAgentId, 'always', '', normalizedMaxChars, onDecision);
   if (!normalizedAgentId || normalizedMaxChars <= 0) {
     return { text: '', entries: [] };
   }
@@ -189,6 +217,7 @@ export function buildXingyeStableLoreMemoryContext({
     if (fullText.length <= normalizedMaxChars) {
       blocks.push(fullBlock);
       selectedEntries.push(toMetadata(entry));
+      reportDecision(onDecision, entry, 'selected', [], fullBlock.length);
       continue;
     }
 
@@ -196,6 +225,9 @@ export function buildXingyeStableLoreMemoryContext({
     if (truncatedBlock) {
       blocks.push(truncatedBlock);
       selectedEntries.push(toMetadata(entry));
+      reportDecision(onDecision, entry, 'truncated', [], truncatedBlock.length);
+    } else {
+      reportDecision(onDecision, entry, 'budget');
     }
   }
 
@@ -215,10 +247,12 @@ export function buildXingyeRuntimeLoreContext({
   userText,
   recentMessages,
   maxChars = DEFAULT_MAX_CHARS,
+  onDecision,
 } = {}) {
   const normalizedAgentId = normalizeString(agentId);
   const normalizedMaxChars = normalizeMaxChars(maxChars);
   const queryText = buildQueryText(userText, recentMessages);
+  reportExclusions(entries, normalizedAgentId, 'keyword', queryText, normalizedMaxChars, onDecision);
   if (!normalizedAgentId || normalizedMaxChars <= 0 || !queryText) {
     return { text: '', entries: [] };
   }
@@ -238,6 +272,7 @@ export function buildXingyeRuntimeLoreContext({
     if (fullText.length <= normalizedMaxChars) {
       blocks.push(fullBlock);
       selectedEntries.push(toRuntimeMetadata(entry, matchedKeywords));
+      reportDecision(onDecision, entry, 'selected', matchedKeywords, fullBlock.length);
       continue;
     }
 
@@ -250,6 +285,9 @@ export function buildXingyeRuntimeLoreContext({
     if (truncatedBlock) {
       blocks.push(truncatedBlock);
       selectedEntries.push(toRuntimeMetadata(entry, matchedKeywords));
+      reportDecision(onDecision, entry, 'truncated', matchedKeywords, truncatedBlock.length);
+    } else {
+      reportDecision(onDecision, entry, 'budget', matchedKeywords);
     }
   }
 

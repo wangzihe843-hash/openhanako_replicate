@@ -1052,13 +1052,16 @@ export function createDeskRoute(engine, hub) {
     const hb = hub?.scheduler?.getHeartbeat(agentId);
     if (!hb) return deskRouteError(c, "heartbeat_unavailable", "Heartbeat not initialized", 503);
 
-    // triggerNow() 同步返回：true=已启动一轮 beat，false=冷却窗口内未触发。
-    const triggered = hb.triggerNow();
+    // Keep the legacy boolean contract, but do not mislabel policy skips as cooldown.
+    const blocked = hb.getSkipReason?.() || null;
+    const triggered = blocked ? false : hb.triggerNow();
+    const reason = triggered ? null : (blocked || hb.getSkipReason?.() || 'cooldown');
     return c.json({
       ok: true,
       triggered,
-      cooldown: !triggered,
-      message: triggered ? t("error.heartbeatTriggered") : "Heartbeat trigger cooldown",
+      cooldown: reason === 'cooldown',
+      reason,
+      message: triggered ? t("error.heartbeatTriggered") : `Heartbeat skipped: ${reason}`,
     });
   });
 

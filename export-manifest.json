@@ -737,6 +737,8 @@
     "shared/xingye-expression-presets.ts",
     "shared/xingye-gift-catalog-data.ts",
     "shared/xingye-lore-context.js",
+    "shared/xingye-lore-context.d.ts",
+    "shared/heartbeat-policy.ts",
     "shared/xingye-lore-memory-file.js",
     "shared/xingye-peer-lore.js",
     "shared/xingye-phone-context.js",

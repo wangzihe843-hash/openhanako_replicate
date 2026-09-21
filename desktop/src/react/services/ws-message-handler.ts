@@ -724,6 +724,14 @@ export function handleServerMessage(msg: any): void {
       break;
     }
 
+    case 'heartbeat_skipped':
+      if (typeof msg.agentId === 'string' && typeof msg.reason === 'string') {
+        window.dispatchEvent(new CustomEvent('hana-heartbeat-skipped', {
+          detail: { agentId: msg.agentId, reason: msg.reason },
+        }));
+      }
+      break;
+
     case 'activity_update':
       if (msg.activity) {
         const incoming = msg.activity;

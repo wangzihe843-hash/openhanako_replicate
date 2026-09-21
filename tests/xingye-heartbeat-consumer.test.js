@@ -85,7 +85,7 @@ function createSchedulerFixture() {
     agents,
     getAgent: (agentId) => agents.get(agentId) || null,
     getHomeCwd: () => workspaceDir,
-    getHeartbeatMaster: () => false,
+    getHeartbeatMaster: () => true,
     executeIsolated: vi.fn(async () => ({ sessionPath: null })),
     summarizeActivity: vi.fn(),
     getActivityStore: () => ({ add: (entry) => activities.push(entry) }),
@@ -113,6 +113,26 @@ describe("Xingye heartbeat event consumer", () => {
     if (fixture?.scheduler) await fixture.scheduler.stopHeartbeat();
     if (fixture?.tempRoot) fs.rmSync(fixture.tempRoot, { recursive: true, force: true });
     fixture = null;
+  });
+
+  it("persists consumption across concurrent consumers and scheduler recreation", async () => {
+    const now = () => new Date("2026-09-21T00:00:00.000Z");
+    const agentDir = path.join(fixture.agentsDir, "agent-a");
+    const logPath = writeEventLog(fixture.agentsDir, "agent-a", [{
+      id: "completed-work-1", agentId: "agent-a", type: "schedule.entry_appended",
+      source: "work", createdAt: now().toISOString(), payload: { taskId: "done-task" },
+    }]);
+    const options = { agentId: "agent-a", agentDir, now };
+    const results = await Promise.all([
+      runXingyeHeartbeatConsumer(options), runXingyeHeartbeatConsumer(options),
+    ]);
+    expect(results.map(result => result.consumed).sort()).toEqual([0, 1]);
+    expect(readJson(logPath).events[0].consumedBy[XINGYE_HEARTBEAT_CONSUMER_ID]).toBe(now().toISOString());
+    await fixture.scheduler.stopHeartbeat("agent-a");
+    fixture.scheduler.startAgentHeartbeat("agent-a", fixture.scheduler._engine.getAgent("agent-a"));
+    // Consumption belongs to the agent/event, independent of a new patrol or story branch.
+    expect(await runXingyeHeartbeatConsumer({ ...options })).toMatchObject({ consumed: 0, skipped: true });
+    expect(fs.readFileSync(path.join(agentDir, "xingye", "heartbeat", "history.jsonl"), "utf8").trim().split(/\r?\n/)).toHaveLength(1);
   });
 
   it("manual heartbeat trigger consumes only current agent Xingye events once and records suggestions", async () => {

@@ -91,8 +91,7 @@ function markdownFenceFor(text) {
  * @param {string} opts.patrolLogPath - 巡检日志路径（工作区相对路径，POSIX 风格）
  * @param {string|null} opts.xingyeEventSummary - 小手机事件聚合摘要（如 "自上次巡检以来：短信×3、读书批注×5（共 8 条）"）
  * @param {{chatTurnsSinceLastDraft:number, mustPropose:boolean, lastAutoDraftAt:string|null}|null} [opts.autoDraftStaleness]
- *   距离上次主动产出草稿的对话条数（heartbeat-consumer 提供）。mustPropose=true 时
- *   prompt 里会追加一条强约束「本轮必须至少调用一次 xingye_propose_draft」。
+ *   距离上次草稿的对话条数。mustPropose 是保留的旧字段名，仅追加可选评估提示。
  * @param {{shouldSocialize:boolean, overduePeerCount:number, globalChatTurnsSinceLastDm:number, candidatePeers:Array}|null} [opts.socialStaleness]
  *   距离上次主动私信其他 agent 的对话条数（heartbeat-consumer 提供）。shouldSocialize=true
  *   或 overduePeerCount>0 时，追加一段**软**社交提示（点名最久没联系的人，但不强制）。
@@ -101,12 +100,9 @@ function markdownFenceFor(text) {
  *   `xingye_propose_draft` 这个 OPTIONAL dispatch tool 在本轮巡检 session 里是否真的可用。
  *   它默认开，但用户可以从「设置 → 助手 → 工具」关掉（tools.disabled），或用 `desk.patrol_tools`
  *   设一个不含它的限定白名单——这两种情况下 executeIsolated 构建出来的 session **不带**这个 tool。
- *   此时若仍 hard-command「本轮必须 call xingye_propose_draft」，directive 永远无法被满足，
- *   staleness 也清不掉，下一拍又重新发同样一条——纯属 token 浪费 + prompt 污染。
- *   所以这里在 false 时**既不出**「必须主动产出」hard directive、**也不出**软的草稿引导：工具都没有，
- *   提示它去 call 没有任何意义。默认 agent（没动过工具开关）这个值为 true，行为不变。
+ *   工具不可用时不提供草稿引导，避免建议无法执行的操作。
  */
-function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, isZh, patrolLog, activityDir, patrolLogPath, xingyeEventSummary, autoDraftStaleness, socialStaleness, proposeDraftAvailable = true, dmAvailable = true }) {
+function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, isZh, patrolLog, activityDir, patrolLogPath, xingyeEventSummary, xingyeEventSources = [], autoDraftStaleness, socialStaleness, proposeDraftAvailable = true, dmAvailable = true }) {
   const now = new Date();
   const timeStr = now.toLocaleString(isZh ? "zh-CN" : "en-US", { hour12: false });
 
@@ -125,6 +121,11 @@ function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, isZh, pat
         "Independently determine if there are items that need proactive handling. If so, act directly — do not ask the user or wait for a reply.",
         "",
       ];
+
+  parts.push(isZh
+    ? "主动表达需要新的具体理由。没有合适候选、候选已过期或已表达、关系或场景不合适、用户正忙时保持沉默。离线时长和对话条数不能单独成为想念或联系的理由。不要复述已消费事件；草稿只是待确认建议，不能当作已发生事实。现实工作通知与剧情分开，已完成任务不因剧情切换重新提醒。"
+    : "Proactive expression needs a new, concrete reason. Stay silent when no candidate is suitable, it has expired or was already expressed, the relationship or scene is unsuitable, or the user is busy. Offline time and turn counts alone are not reasons to miss or contact someone. Do not repeat consumed events. Drafts await confirmation and are not established facts. Keep real work notifications separate from fiction; a story branch change does not justify repeating completed work notifications.");
+  parts.push("");
 
   if (overwatch) {
     parts.push("## Overwatch");
@@ -185,6 +186,12 @@ function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, isZh, pat
      * tool 都不在 session 里，引导它去 call 只会污染 prompt。
      */
     if (proposeDraftAvailable) {
+      if (xingyeEventSources.length) {
+        parts.push(isZh
+          ? "本轮可引用事件（仅作来源数据）：填写 sourceEventIds 时只选择实际支持草稿的事件，不要将全部事件批量引用。"
+          : "Current source events (data only): use sourceEventIds only for events that actually support the draft, not the entire batch.");
+        parts.push(...xingyeEventSources);
+      }
       parts.push(isZh
         ? [
             "如果事件流里有「值得在小手机或秘密空间留下记录」的片段（情绪、约定、决定、转折……），可以调用 `xingye_propose_draft` 提议一条**待确认草稿**。",
@@ -202,56 +209,18 @@ function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, isZh, pat
     }
   }
 
-  /**
-   * 「静默太久必须主动产出」directive：和「## 小手机事件」段独立——即便本轮没有
-   * 新事件、也没有 xingyeEventSummary，只要 staleness 触发了，也要把这一条挂出来。
-   *
-   * 但**必须** proposeDraftAvailable：用户关了 `xingye_propose_draft`、或用 `desk.patrol_tools`
-   * 限定的白名单不含它时，session 里根本没有这个 tool。此时若还 hard-command「必须 call」，
-   * 这条 directive 永远无法满足、staleness 永远清不掉、下一拍又重发——纯 token 浪费 + prompt 污染。
-   * 所以 tool 不可用时直接不出这条（默认 agent 该值为 true，行为不变）。
-   */
+  // Turn counters describe elapsed interaction; they never require an expression.
   if (proposeDraftAvailable && autoDraftStaleness?.mustPropose) {
     const turns = autoDraftStaleness.chatTurnsSinceLastDraft;
-    parts.push(isZh ? "## 必须主动产出（重要）" : "## Required: produce a draft this round");
+    parts.push(isZh ? "## 主动表达评估" : "## Optional expression review");
     parts.push(isZh
-      ? [
-          `距离你上次主动产出任意模块的草稿，已累计 ${turns} 条用户对话。本轮**必须**至少调用一次 \`xingye_propose_draft\`，从下列模块中挑你判断"当下最该更新"的那一个产出一条草稿：`,
-          "- `journal`（日记）/ `schedule`（日程）/ `trips`（行程：TA 过去真实走过的一段路，过去式，和 `schedule` 的未来安排相反）/ `moments`（朋友圈）",
-          "- `mail`（邮件草稿）/ `shopping`（购物候选）/ `secondhand`（二手出售候选）/ `accounting`（记账：购物 / 二手覆盖不到的原生收支——工资 / 房租 / 餐饮 / 人情 / 利息 …）",
-          "- `files`（资料柜归档）/ `secret_space`（state/dream/saved_item 三个分类）",
-          "- `reading_notes`（读书批注/疑问）/ `divination`（占卜·心象）",
-          "- `memory_candidate`（私藏回忆草稿，确认后写入 memory_fragment；是否再推到 pinned 由用户自定）/ `relationship_state`（关系状态变化建议：5 个 delta + mood）",
-          "- `phone_contact`（通讯录草稿：默认 `action='update'`（对**现有联系人**的 remark/impression/relationshipHint/tags/faction 小步更新）；触发明确且只针对**单个** virtual_contact 时，也可 add/block/delete/restore——**批量**造联系人请走通讯录手动 AI 路径，不要用本工具凑数）",
-          "- `sms`（短信草稿：拟一条草稿短信由用户确认后发出；可选 contact 引用，长度≤240 字符，仍应短）",
-          "- `news`（报纸：提议「出一期多板块小报」的意图——只写一个 angle，整期报纸在用户确认时才生成）/ `interview`（独家专访：提议「录一期 5 题专访」的意图，userQuestion 可空）",
-          "  注：`news` / `interview` 是慢节奏模块，没有积累到值得成篇的素材时别硬挑它们；优先选真正最久没更新、且确有内容的模块。",
-          "",
-          "选择依据是上方「近期巡检记录」+「小手机事件」+ 你对最近聊天的记忆：哪个模块最久没更新、且当前确实有可写的内容？",
-          "调用要点照常：先看 system prompt 里对应的 `xingye-{module}-draft` skill 段落（没启用就按默认 fallback 写，`reason` 必填）。**写得短没关系**，宁可短不要硬凑——但本轮**至少要有一条**。",
-          "（这是系统层面的健康度约束，不是用户在催。如果你今天确实什么都没观察到，也请挑一个最能反映角色当下状态的模块写一条——例如 `journal` 写「今天没什么特别的事」也合法。）",
-        ].join("\n")
-      : [
-          `${turns} user chat turns have passed since your last self-initiated draft in any module. This round you **MUST** call \`xingye_propose_draft\` at least once. Pick the module you judge "most overdue for an update right now":`,
-          "- `journal` / `schedule` / `trips` (a past trip the character actually took — past tense, the mirror of `schedule`'s future plans) / `moments`",
-          "- `mail` (draft mail) / `shopping` (wishlist candidate) / `secondhand` (resale candidate) / `accounting` (ledger for native cash-flow outside shopping/secondhand — salary / rent / meals / favors / interest …)",
-          "- `files` (archive note) / `secret_space` (state / dream / saved_item)",
-          "- `reading_notes` (book annotation / question) / `divination` (heart-image reading)",
-          "- `memory_candidate` (private memory_fragment draft; whether to also push to pinned is user's choice) / `relationship_state` (5 deltas + mood suggestion)",
-          "- `phone_contact` (contact draft: default `action='update'` — small patches to an **existing contact**'s remark/impression/relationshipHint/tags/faction; with a clear trigger you may also add/block/delete/restore for **a single** virtual_contact — **batch** contact creation should still go through the manual AI flow in the contacts panel, don't use this tool to bulk-fabricate)",
-          "- `sms` (text-message draft for the user to confirm before sending; optional contact ref, ≤240 chars, still keep it short)",
-          "- `news` (newspaper: propose the intent to publish a multi-section tabloid issue — you write only an `angle`; the full issue is generated when the user confirms) / `interview` (exclusive interview: propose the intent to record a 5-question interview, `userQuestion` optional)",
-          "  Note: `news` / `interview` are slow-cadence modules — don't force them unless there is genuinely enough material worth a full issue; prefer whichever module is actually most overdue and has real content.",
-          "",
-          "Decide based on the patrol log above + phone events + your memory of recent chats: which module has gone longest without an update AND actually has something worth recording right now?",
-          "Calling rules unchanged: follow the corresponding `xingye-{module}-draft` skill block in your system prompt if present (default fallback otherwise, `reason` required). **Short is fine** — prefer brief over forced. But there **must be at least one** this round.",
-          "(This is a system-level liveness constraint, not the user nagging. If you genuinely have nothing to write today, pick the module that best reflects the character's current state and write a short one — e.g. a `journal` entry saying \"nothing particular today\" is valid.)",
-        ].join("\n"));
+      ? `距离上次草稿已过 ${turns} 条用户对话。这个计数不是表达理由；没有新的、有效且符合角色关系和当前场景的素材时保持沉默，不要为了填数编写日记。`
+      : `${turns} user chat turns have passed since the last draft. This count is not a reason to speak. Stay silent without new, valid material suited to the relationship and scene; do not invent a diary entry to fill a quota.`);
     parts.push("");
   }
 
   /**
-   * 社交软提示：和上面的「必须产出」directive 性质完全不同——这一段是**软**的，
+   * 社交软提示：和草稿评估一样，只提供候选，不要求表达，
    * 只在 staleness 触发的那一次心跳出现（shouldSocialize 或 overduePeerCount>0），
    * 平时整段不存在，零 token 成本。措辞刻意保持"邀请"而非"命令"：给一个具体的人
    * 当话头，但明确"不想聊就跳过"，避免变成每次心跳都硬找人寒暄的烧钱行为。
@@ -267,8 +236,8 @@ function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, isZh, pat
           : `It's been ${turns} chat turns since you last reached out to another agent. If you feel like it, choose a default interaction contact whose own interval has elapsed and say hi, share something, or bring up a topic you'd both enjoy — purely social, not a task. Established relationships join automatically, and each DM can override this.`);
       } else {
         parts.push(isZh
-          ? "有默认互动对象已经到达各自的保底间隔。本轮需要从中选择至少一位联系；这仍是角色间社交，不是给对方派任务。"
-          : "One or more default interaction contacts have reached their fallback interval. Contact at least one of them this round; this is character-to-character social contact, not task delegation.");
+          ? "有默认互动对象已经到达各自的参考间隔。仅在有合适话题、关系和时机时考虑联系；这仍是角色间社交，不是给对方派任务。"
+          : "One or more default interaction contacts have reached their reference interval. Consider contact only with a suitable topic, relationship and timing; this is character-to-character social contact, not task delegation.");
       }
       parts.push(isZh ? "最久没联系的默认互动对象：" : "Default interaction contacts longest out of touch:");
       parts.push(...candidateLines);
@@ -287,15 +256,9 @@ function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, isZh, pat
           : "(Below is your established relationship with some of them — let it set the tone and distance of your opener; don't ignore it, and don't invent details it doesn't state:)");
         parts.push(...loreBlocks);
       }
-      if (socialStaleness.overduePeerCount > 0) {
-        parts.push(isZh
-          ? "**本轮保底要求：必须从上述已到期对象中至少选择一位调用 `dm`。** message 用你自己的口吻；对方会像收到微信一样回复。不要把社交私信写成任务委派。其他仍到期的对象会留到后续巡检继续处理。"
-          : "**Fallback requirement for this round: call `dm` for at least one overdue contact listed above.** Write in your own voice; they will reply like a text. Do not turn the social message into task delegation. Other overdue contacts remain due for later patrols.");
-      } else {
-        parts.push(isZh
-          ? "用 `dm` 工具，message 用你自己的口吻；对方会像收到微信一样回你。**这一条完全可选**——没心情、或这一轮有更要紧的事，直接跳过就好，不必勉强寒暄。"
-          : "Use the `dm` tool; write the message in your own voice and they'll reply like a text. **This is entirely optional** — if you're not in the mood or have something more pressing this round, just skip it. Don't force small talk.");
-      }
+      parts.push(isZh
+        ? "用 `dm` 工具，message 用你自己的口吻。**这一条完全可选**——没有新话题、关系不合适、用户正忙或已有表达时保持沉默，不必勉强寒暄。"
+        : "Use `dm` in your own voice. **This is entirely optional** — stay silent without a new topic, when the relationship or timing is unsuitable, the user is busy, or the event has already been expressed.");
       parts.push("");
     }
   }
@@ -778,7 +741,7 @@ function scanJianDirs(wsPath) {
  *   （配置可能在两拍之间被用户改掉）。它默认开，但用户从「设置 → 助手 → 工具」关掉
  *   （`tools.disabled`）、或用 `desk.patrol_tools` 设一个不含它的限定白名单时，executeIsolated
  *   构建出来的 session **不带**这个 tool。返回 false 时 buildHeartbeatContext 不再发
- *   「必须主动产出」hard directive、也不出软草稿引导，避免对没有该 tool 的 session 反复
+ *   草稿评估提示及草稿引导，避免对没有该 tool 的 session 反复
  *   下达永远无法满足的指令（token 浪费 + prompt 污染 + staleness 永不清零）。
  *   **缺省（未传 / 返回非 false）一律视为 true**——默认 agent 行为完全不变。
  *   注：可用性的判定逻辑（tools.disabled + desk.patrol_tools，对齐 executeIsolated 的过滤口径）
@@ -792,7 +755,7 @@ export function createHeartbeat({
   getDeskFiles, getWorkspacePath, getAgentName, registryPath,
   onBeat, onJianBeat, getEventSummary,
   intervalMinutes, emitDevLog,
-  overwatchPath, locale, getProposeDraftAvailable, getDmAvailable,
+  overwatchPath, locale, getProposeDraftAvailable, getDmAvailable, getSkipReason = null, onSkipped = null,
 }) {
   const isZh = !locale || String(locale).startsWith("zh");
   const devlog = (text, level = "heartbeat") => {
@@ -806,6 +769,7 @@ export function createHeartbeat({
   let _stopped = false;
   let _running = false;
   let _beatPromise = null;
+  let _beatAbort = null;
   let _lastTrigger = 0;
   /** @type {Map<string, number>} name → mtime */
   let _lastDeskSnapshot = new Map();
@@ -833,16 +797,42 @@ export function createHeartbeat({
 
   // ── 心跳执行 ──
 
-  async function beat() {
+  async function beat({ manual = false } = {}) {
+    if (_stopped && !manual) return { ok: true, skipped: "paused" };
     if (_running) return null;
     _running = true;
-    const p = _doBeat();
+    const controller = new AbortController();
+    _beatAbort = controller;
+    const policyTimer = getSkipReason ? setInterval(() => {
+      try {
+        const reason = getSkipReason();
+        if (reason) controller.abort(reason);
+      } catch { controller.abort("policy-unavailable"); }
+    }, 1000) : null;
+    policyTimer?.unref?.();
+    const p = _doBeat().then(result => {
+      if (result?.skipped) onSkipped?.(result.skipped);
+      else if (result?.ok === false && controller.signal.aborted) onSkipped?.("timeout");
+      return result;
+    }).finally(() => {
+      if (policyTimer) clearInterval(policyTimer);
+      if (_beatAbort === controller) _beatAbort = null;
+    });
     _beatPromise = p;
     return await p;
   }
 
+  function skipReason() {
+    const policyReason = getSkipReason?.();
+    if (policyReason) return policyReason;
+    return _beatAbort?.signal.aborted && typeof _beatAbort.signal.reason === "string"
+      ? _beatAbort.signal.reason : null;
+  }
+
   async function _doBeat() {
     try {
+      const initialSkip = skipReason();
+      if (initialSkip) return { ok: true, skipped: initialSkip };
       log.log(`── 心跳开始 ──`);
       debugLog()?.log("heartbeat", "beat start");
       devlog("── 心跳开始 ──");
@@ -891,6 +881,7 @@ export function createHeartbeat({
 
       // ── Phase 1: 工作台巡检（始终执行，让 agent 结合记忆判断） ──
       // 先跑 getEventSummary：要把事件 summary 塞进 prompt，必须在 buildHeartbeatContext 之前拿到。
+      if (skipReason()) return { ok: true, skipped: skipReason() };
       let xingyeConsumed = null;
       if (getEventSummary) {
         try {
@@ -900,6 +891,14 @@ export function createHeartbeat({
         }
       }
       const xingyeEventSummary = xingyeConsumed?.result?.summaryZh || null;
+      // Bound source attribution to this freshly consumed batch; never replay history.
+      const sourceIds = xingyeConsumed?.result?.consumedEventIds;
+      const observations = xingyeConsumed?.result?.observations;
+      const xingyeEventSources = Array.isArray(sourceIds) ? sourceIds.slice(0, 12)
+        .map((eventId, index) => ({ eventId, observation: observations?.[index] }))
+        .filter(source => typeof source.eventId === "string" && source.eventId.length <= 200)
+        .map(source => JSON.stringify({ eventId: source.eventId,
+          observation: typeof source.observation === "string" ? source.observation.slice(0, 240) : "" })) : [];
       /**
        * staleness 既可能挂在 result（有新事件，走主路径）也可能挂在顶层（skipped:true
        * 也带回来）——两边都看。null 时 buildHeartbeatContext 不追加 directive。
@@ -937,6 +936,7 @@ export function createHeartbeat({
         }
       }
 
+      if (skipReason()) return { ok: true, skipped: skipReason() };
       let beatPayload = null;
       {
         // 读取巡检日志（截断）
@@ -954,6 +954,7 @@ export function createHeartbeat({
           activityDir: relativeOutputDirs.activityDir,
           patrolLogPath: relativeOutputDirs.patrolLog,
           xingyeEventSummary,
+          xingyeEventSources,
           autoDraftStaleness,
           socialStaleness,
           proposeDraftAvailable,
@@ -970,9 +971,14 @@ export function createHeartbeat({
               // 同时把 upstream 的 patrol_update_log 工具透传给 executeIsolated。
               onBeat(prompt, {
                 xingyeConsumed,
+                signal: _beatAbort.signal,
                 customTools: patrolLogTool ? [patrolLogTool] : [],
               }),
-              new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(isZh ? "心跳执行超时 (5min)" : "Heartbeat timed out (5min)")), BEAT_TIMEOUT); }),
+              new Promise((_, reject) => { timer = setTimeout(() => {
+                const error = new Error(isZh ? "心跳执行超时 (5min)" : "Heartbeat timed out (5min)");
+                _beatAbort?.abort(error);
+                reject(error);
+              }, BEAT_TIMEOUT); }),
             ]);
           } catch (err) {
             // consumer 已成功跑过；把它绑到 err 上，让 catch 分支 salvage 出来（兼容旧路径）。
@@ -988,10 +994,13 @@ export function createHeartbeat({
         }
       }
 
+      if (skipReason()) return { ok: true, skipped: skipReason() };
       // ── Phase 2: 笺目录执行 ──
       if (jianChanges.length > 0) {
         await _processJianChanges(jianChanges);
       }
+      if (skipReason()) return { ok: true, skipped: skipReason() };
+      if (_beatAbort?.signal.aborted) throw _beatAbort.signal.reason;
 
       log.log(`── 心跳完成 ──`);
       debugLog()?.log("heartbeat", "beat done");
@@ -1004,6 +1013,7 @@ export function createHeartbeat({
         : null;
       return { ok: true, payload: mergedPayload };
     } catch (err) {
+      if (skipReason()) return { ok: true, skipped: skipReason() };
       // err 不一定是 Error：onBeat 可能 throw "string" / throw null。所有 err.message 访问都要 ?.
       const msg = (err && typeof err === "object" && err.message) ? err.message : String(err);
       log.error(`beat error: ${msg}`);
@@ -1052,6 +1062,7 @@ export function createHeartbeat({
     const registry = loadRegistry();
 
     for (const dir of changes) {
+      if (skipReason() || _beatAbort?.signal.aborted) return;
       const label = dir.name === "." ? (isZh ? "根目录" : "root") : dir.name;
       log.log(`Phase 2: 笺 [${label}] 有变化，执行中...`);
       devlog(`笺 [${label}] 有变化，执行中...`);
@@ -1076,14 +1087,19 @@ export function createHeartbeat({
           let timer;
           try {
             await Promise.race([
-              onJianBeat(prompt, dir.absPath, { customTools: [jianStatusTool] }),
-              new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(isZh ? `笺 [${label}] 执行超时 (5min)` : `Jian [${label}] timed out (5min)`)), BEAT_TIMEOUT); }),
+              onJianBeat(prompt, dir.absPath, { customTools: [jianStatusTool], signal: _beatAbort.signal }),
+              new Promise((_, reject) => { timer = setTimeout(() => {
+                const error = new Error(isZh ? `笺 [${label}] 执行超时 (5min)` : `Jian [${label}] timed out (5min)`);
+                _beatAbort?.abort(error);
+                reject(error);
+              }, BEAT_TIMEOUT); }),
             ]);
           } finally {
             clearTimeout(timer);
           }
         }
 
+        if (skipReason() || _beatAbort?.signal.aborted) return;
         // 执行成功 → 重新扫描目录，用执行后的指纹存入 registry
         // 避免任务自身修改文件导致下次心跳重复触发（自激振荡）
         const postFiles = listDirFiles(dir.absPath);
@@ -1103,6 +1119,8 @@ export function createHeartbeat({
 
         devlog(`笺 [${label}] 执行完成`);
       } catch (err) {
+        if (skipReason()) return;
+        if (_beatAbort?.signal.aborted) throw _beatAbort.signal.reason;
         devlog(`笺 [${label}] 执行失败: ${err.message}`, "error");
       }
     }
@@ -1113,6 +1131,7 @@ export function createHeartbeat({
   function start() {
     if (_timer) return;
     _stopped = false;
+    if (!_running) _beatAbort = null;
     const now = Date.now();
     const msIntoSlot = now % INTERVAL;
     const delay = INTERVAL - msIntoSlot;
@@ -1133,6 +1152,7 @@ export function createHeartbeat({
 
   async function stop() {
     _stopped = true;
+    _beatAbort?.abort("paused");
     if (_timer) {
       clearTimeout(_timer);
       clearInterval(_timer);
@@ -1147,6 +1167,7 @@ export function createHeartbeat({
   }
 
   function triggerNow() {
+    if (skipReason()) return false;
     const now = Date.now();
     if (now - _lastTrigger < COOLDOWN) {
       devlog("手动触发冷却中，跳过");
@@ -1154,7 +1175,7 @@ export function createHeartbeat({
     }
     _lastTrigger = now;
     devlog("手动触发心跳");
-    beat();
+    beat({ manual: true });
     return true;
   }
 
@@ -1173,6 +1194,8 @@ export function createHeartbeat({
    * 同步对外暴露 `triggerNow()` 给只要 fire-and-forget 的旧调用方；新代码统一走这条。
    */
   async function runHeartbeatOnce(opts: any = {}) {
+    const blocked = skipReason();
+    if (blocked) return { status: "skipped", reason: blocked };
     const reasonTag = opts.reason ? ` (${opts.reason})` : "";
     const now = Date.now();
     if (now - _lastTrigger < COOLDOWN) {
@@ -1186,6 +1209,7 @@ export function createHeartbeat({
       const inflight = _beatPromise;
       const startedAt = Date.now();
       const res = await inflight.catch((err) => ({ ok: false, error: err }));
+      if (res?.skipped) return { status: "skipped", reason: res.skipped };
       if (res?.ok) {
         return {
           status: "ran",
@@ -1203,11 +1227,12 @@ export function createHeartbeat({
 
     devlog(`runHeartbeatOnce 启动新 beat${reasonTag}`);
     const startedAt = Date.now();
-    const res = await beat();
+    const res = await beat({ manual: true });
     if (!res) {
       // beat() 在 _running 检查时 short-circuit 返回 null（极少见 race 窗口）。
       return { status: "skipped", reason: "raced-existing-beat" };
     }
+    if (res.skipped) return { status: "skipped", reason: res.skipped };
     if (res.ok) {
       return {
         status: "ran",
@@ -1222,5 +1247,5 @@ export function createHeartbeat({
     };
   }
 
-  return { start, stop, beat, triggerNow, runHeartbeatOnce };
+  return { start, stop, beat, triggerNow, runHeartbeatOnce, getSkipReason: skipReason };
 }

@@ -113,6 +113,49 @@ describe('PhoneHome heartbeat trigger', () => {
     useStore.setState({ activities: [] });
   });
 
+  it.each([
+    ['paused', '巡检已暂停'], ['quiet-hours', '安静时段，巡检已暂停'],
+    ['invalid-quiet-hours', '安静时段配置无效，请检查设置'],
+  ])('shows the actual initial skip reason %s', async (reason, label) => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ triggered: false, cooldown: false, reason }) });
+    renderPhoneHome();
+    fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(label));
+    expect(screen.getByRole('button', { name: '立即巡检' })).toBeEnabled();
+    expect(heartbeatSideEffects.appendContactLog).not.toHaveBeenCalled();
+    expect(heartbeatSideEffects.appendForum).not.toHaveBeenCalled();
+  });
+
+  it.each([['quiet-hours', '安静时段，巡检已暂停'], ['timeout', '巡检超时，已停止']])('ends an in-flight %s without successful side effects', async (reason, label) => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ triggered: true }) });
+    renderPhoneHome();
+    fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '巡检中...' })).toBeDisabled());
+    window.dispatchEvent(new CustomEvent('hana-heartbeat-skipped', { detail: { agentId: 'other-agent', reason } }));
+    expect(screen.getByRole('button', { name: '巡检中...' })).toBeDisabled();
+    window.dispatchEvent(new CustomEvent('hana-heartbeat-skipped', { detail: { agentId: agent.id, reason } }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(label));
+    expect(screen.getByRole('button', { name: '立即巡检' })).toBeEnabled();
+    // A late success message must not revive cancellation or trigger success-only work.
+    pushHeartbeatActivity();
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(label));
+    expect(heartbeatSideEffects.appendContactLog).not.toHaveBeenCalled();
+    expect(heartbeatSideEffects.appendForum).not.toHaveBeenCalled();
+  });
+
+  it('does not re-arm waiting when trigger response arrives after cancellation', async () => {
+    let release!: (response: unknown) => void;
+    fetchMock.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    renderPhoneHome();
+    fireEvent.click(screen.getByRole('button', { name: '立即巡检' }));
+    window.dispatchEvent(new CustomEvent('hana-heartbeat-skipped', { detail: { agentId: agent.id, reason: 'paused' } }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('巡检已暂停'));
+    release({ ok: true, json: async () => ({ triggered: true }) });
+    await waitFor(() => expect(screen.getByRole('button', { name: '立即巡检' })).toBeEnabled());
+    expect(screen.getByRole('status')).toHaveTextContent('巡检已暂停');
+    expect(heartbeatSideEffects.appendContactLog).not.toHaveBeenCalled();
+  });
+
   it('fire-and-forget 触发后等 activity_update 经 store 回填 summaryZh，并处理 cooldown / 失败', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     fetchMock

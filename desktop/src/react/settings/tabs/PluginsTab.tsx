@@ -6,6 +6,7 @@ import { t } from '../helpers';
 import styles from '../Settings.module.css';
 import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
+import { TaskRegistryDiagnostics, type RegistryTaskSnapshot } from '../components/TaskRegistryDiagnostics';
 import { SelectWidget, Toggle, type SelectOption } from '@/ui';
 
 const platform = window.platform;
@@ -70,7 +71,7 @@ interface PluginDiagnostics {
 interface PluginDiagnosticsResponse {
   plugins: PluginDiagnostics[];
   eventBus: { type: string; available?: boolean }[];
-  tasks: { taskId: string; type: string; status?: string }[];
+  tasks: RegistryTaskSnapshot[];
   schedules: { scheduleId: string; type: string; enabled?: boolean }[];
 }
 
@@ -173,6 +174,8 @@ export function PluginsTab() {
   const [configSaving, setConfigSaving] = useState(false);
   const [diagnostics, setDiagnostics] = useState<PluginDiagnosticsResponse | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [diagnosticsFetchedAt, setDiagnosticsFetchedAt] = useState<number | null>(null);
+  const [diagnosticsRefreshFailed, setDiagnosticsRefreshFailed] = useState(false);
 
   /* ── data fetchers ── */
 
@@ -206,15 +209,20 @@ export function PluginsTab() {
     setDiagnosticsLoading(true);
     try {
       const res = await hanaFetch('/api/plugins/diagnostics');
+      if (res.ok === false) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      if (!Array.isArray(data.tasks)) throw new Error(t('settings.plugins.diagnosticsLoadError'));
       setDiagnostics({
         plugins: Array.isArray(data.plugins) ? data.plugins : [],
         eventBus: Array.isArray(data.eventBus) ? data.eventBus : [],
         tasks: Array.isArray(data.tasks) ? data.tasks : [],
         schedules: Array.isArray(data.schedules) ? data.schedules : [],
       });
+      setDiagnosticsFetchedAt(Date.now());
+      setDiagnosticsRefreshFailed(false);
     } catch (err: unknown) {
+      setDiagnosticsRefreshFailed(true);
       showToast(t('settings.plugins.diagnosticsLoadError') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
     } finally {
       setDiagnosticsLoading(false);
@@ -658,6 +666,7 @@ export function PluginsTab() {
               })}
             </div>
           )}
+          <TaskRegistryDiagnostics tasks={diagnostics.tasks} fetchedAt={diagnosticsFetchedAt} refreshFailed={diagnosticsRefreshFailed} />
         </SettingsSection>
       )}
 

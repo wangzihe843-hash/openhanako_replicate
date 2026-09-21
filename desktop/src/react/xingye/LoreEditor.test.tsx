@@ -53,6 +53,15 @@ describe('LoreEditor — save lore as memory candidate', () => {
     cleanup();
   });
 
+  it('opens the selection diagnostic from the saved-lore editor', () => {
+    seedLoreEntry({ title: '诊断条目', insertionMode: 'keyword' });
+    render(<LoreEditor agentId={agentId} />);
+    fireEvent.click(screen.getByText('设定选择诊断（模拟预览）'));
+    fireEvent.change(screen.getByLabelText('诊断查询文本'), { target: { value: '王国' } });
+    expect(screen.getByRole('region', { name: '共享关键词选择器' })).toHaveTextContent('诊断条目：完整选入');
+    expect(screen.getByRole('region', { name: '桌面通用选择器' })).toHaveTextContent('诊断条目：完整选入');
+  });
+
   it('renders a "保存为候选重要记忆" button for each lore entry', () => {
     const a = seedLoreEntry({ title: '条目 A' });
     const b = seedLoreEntry({ title: '条目 B', content: '另一段设定。' });
@@ -144,8 +153,7 @@ describe('LoreEditor — relationship template', () => {
   });
 
   function getDraftContentTextarea() {
-    const boxes = screen.getAllByRole('textbox');
-    return boxes[1] as HTMLTextAreaElement;
+    return screen.getByRole('textbox', { name: '条目正文（按预算引用）' }) as HTMLTextAreaElement;
   }
 
   it('does not auto-fill template when selecting relationship; inserts template and defaults only after clicking insert', () => {

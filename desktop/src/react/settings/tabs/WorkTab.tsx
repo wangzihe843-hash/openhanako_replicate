@@ -11,6 +11,7 @@ import { SettingsRow } from '../components/SettingsRow';
 import { NumberInput } from '../components/NumberInput';
 import { readConfigBoolean } from '../resource-state';
 import styles from '../Settings.module.css';
+import { isHeartbeatTime, type HeartbeatQuietHours } from '../../../../../shared/heartbeat-policy.ts';
 import {
   DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
   DEFAULT_SOCIAL_GLOBAL_THRESHOLD,
@@ -23,6 +24,7 @@ type AgentDeskConfig = {
   home_folder: string;
   heartbeat_enabled: boolean;
   heartbeat_interval: number;
+  heartbeat_quiet_hours: HeartbeatQuietHours;
   social_global_threshold: number;
   social_per_peer_threshold: number;
   workspace_context: {
@@ -42,6 +44,11 @@ function deskFromConfig(data: Record<string, any>): AgentDeskConfig {
     home_folder: data.desk?.home_folder || '',
     heartbeat_enabled: data.desk?.heartbeat_enabled === true,
     heartbeat_interval: data.desk?.heartbeat_interval ?? DEFAULT_HEARTBEAT_INTERVAL_MINUTES,
+    heartbeat_quiet_hours: {
+      enabled: data.desk?.heartbeat_quiet_hours?.enabled === true,
+      start: data.desk?.heartbeat_quiet_hours?.start ?? '23:00',
+      end: data.desk?.heartbeat_quiet_hours?.end ?? '08:00',
+    },
     social_global_threshold: data.desk?.social_global_threshold ?? DEFAULT_SOCIAL_GLOBAL_THRESHOLD,
     social_per_peer_threshold: data.desk?.social_per_peer_threshold ?? DEFAULT_SOCIAL_PER_PEER_THRESHOLD,
     workspace_context: {
@@ -97,6 +104,8 @@ export function WorkTab() {
   const [agentDesk, setAgentDesk] = useState<AgentDeskConfig | null>(() => agentDeskFromStoreForAgent(initialAgentId));
   // hbInterval 是 draft：用户编辑后点"保存"才落盘，必须独立于 agentDesk
   const [hbIntervalDraft, setHbIntervalDraft] = useState<number | null>(() => agentDeskFromStoreForAgent(initialAgentId)?.heartbeat_interval ?? null);
+  const [quietDraft, setQuietDraft] = useState<HeartbeatQuietHours | null>(() => agentDeskFromStoreForAgent(initialAgentId)?.heartbeat_quiet_hours ?? null);
+  const [quietSaving, setQuietSaving] = useState(false);
   // 社交阈值同样是 draft（编辑后点"保存"才落盘）
   const [socialGlobalDraft, setSocialGlobalDraft] = useState<number | null>(null);
   const [socialPerPeerDraft, setSocialPerPeerDraft] = useState<number | null>(null);
@@ -110,10 +119,12 @@ export function WorkTab() {
       const desk = deskFromConfig(settingsConfig);
       setAgentDesk(desk);
       setHbIntervalDraft(desk.heartbeat_interval);
+      setQuietDraft(desk.heartbeat_quiet_hours);
       return;
     }
     setAgentDesk(null);
     setHbIntervalDraft(null);
+    setQuietDraft(null);
     setSocialGlobalDraft(null);
     setSocialPerPeerDraft(null);
     const ac = new AbortController();
@@ -124,6 +135,7 @@ export function WorkTab() {
         const desk = deskFromConfig(data);
         setAgentDesk(desk);
         setHbIntervalDraft(desk.heartbeat_interval);
+        setQuietDraft(desk.heartbeat_quiet_hours);
         setSocialGlobalDraft(desk.social_global_threshold);
         setSocialPerPeerDraft(desk.social_per_peer_threshold);
       })
@@ -178,6 +190,22 @@ export function WorkTab() {
     if (!saved && selectedAgentIdRef.current === agentId) {
       setAgentDesk(previous);
     }
+  };
+
+  const saveQuietHours = async () => {
+    const agentId = selectedAgentIdRef.current;
+    if (!agentId || !quietDraft || quietSaving) return;
+    if (quietDraft.enabled && (!isHeartbeatTime(quietDraft.start) || !isHeartbeatTime(quietDraft.end) || quietDraft.start === quietDraft.end)) {
+      showToast(t('settings.work.quietHoursInvalid'), 'error');
+      return;
+    }
+    setQuietSaving(true);
+    try {
+      const saved = await saveAgentConfig(agentId, { desk: { heartbeat_quiet_hours: quietDraft } });
+      if (saved && selectedAgentIdRef.current === agentId) {
+        setAgentDesk(current => current ? { ...current, heartbeat_quiet_hours: quietDraft } : current);
+      }
+    } finally { setQuietSaving(false); }
   };
 
   const toggleWorkspaceContext = async (
@@ -299,6 +327,17 @@ export function WorkTab() {
               hint={t('settings.work.heartbeatOperationalNotice')}
               control={<Toggle on={agentDesk.heartbeat_enabled} onChange={togglePerAgentHeartbeat} />}
             />
+            {quietDraft && <SettingsRow
+              label={t('settings.work.quietHours')}
+              hint={t('settings.work.quietHoursDesc')}
+              layout="stacked"
+              control={<>
+                <Toggle ariaLabel={t('settings.work.quietHours')} on={quietDraft.enabled} disabled={quietSaving} onChange={enabled => setQuietDraft({ ...quietDraft, enabled })} />
+                <input className={styles['settings-input']} type="time" aria-label={t('settings.work.quietHoursStart')} value={quietDraft.start} disabled={quietSaving} onChange={event => setQuietDraft({ ...quietDraft, start: event.target.value })} />
+                <input className={styles['settings-input']} type="time" aria-label={t('settings.work.quietHoursEnd')} value={quietDraft.end} disabled={quietSaving} onChange={event => setQuietDraft({ ...quietDraft, end: event.target.value })} />
+                <button className={styles['settings-save-btn-ghost']} disabled={quietSaving} onClick={saveQuietHours}>{t('settings.work.quietHoursSave')}</button>
+              </>}
+            />}
             <SettingsRow
               label={t('settings.work.homeFolder')}
               hint={t('settings.work.homeFolderDesc')}

@@ -58,6 +58,17 @@ describe("desk route", () => {
     expect(triggerNow).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['paused', 'quiet-hours', 'invalid-quiet-hours'])('reports %s without claiming cooldown or starting work', async reason => {
+    const triggerNow = vi.fn();
+    const hub = { scheduler: { getHeartbeat: () => ({ triggerNow, getSkipReason: () => reason }) } };
+    const { createDeskRoute } = await import('../server/routes/desk.ts');
+    const app = new Hono();
+    app.route('/api', createDeskRoute({}, hub));
+    const response = await app.request('/api/desk/heartbeat?agentId=agent-a', { method: 'POST' });
+    expect(await response.json()).toMatchObject({ ok: true, triggered: false, cooldown: false, reason });
+    expect(triggerNow).not.toHaveBeenCalled();
+  });
+
   it("lists all known project skill sources while marking policy-active and shadowed candidates", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hana-desk-route-skills-"));
     try {

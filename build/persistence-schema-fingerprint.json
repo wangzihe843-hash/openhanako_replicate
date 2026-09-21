@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:64cd41f8f1b21fb517639e0c6a57a016bb9e70afd75f0dca5d6cb719fedf82c9",
+  "payloadFingerprint": "sha256:2f9c095557b855487b561bef34df5fe1d769915eca4ceee558380c4d48a8e84e",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3226,8 +3226,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Reviewed in docs/audits/2026-09-21-xingye-expression-compatibility.md: only the session-jsonl desktop-session-submit executable source digest changes. Expression settings and TTL remain process-local; persisted JSONL fields, Pi protocol, SQLite schemas, registry, write sites and startup receipts are unchanged. DATA_EPOCH remains 1; no migration is required.",
-    "payloadFingerprint": "sha256:64cd41f8f1b21fb517639e0c6a57a016bb9e70afd75f0dca5d6cb719fedf82c9"
+    "compatibilityReason": "S4/S5/S8/S9 review: only desk-cover-upload-staging sourceHash changes because the heartbeat trigger response now exposes skip reasons in server/routes/desk.ts. Cover upload bounds, temporary-directory lifecycle, persistence formats, SQLite schemas, 62 stores, 866 sites and DATA_EPOCH 1 remain unchanged. See docs/audits/2026-09-21-s4-s5-s8-s9-review.md.",
+    "payloadFingerprint": "sha256:2f9c095557b855487b561bef34df5fe1d769915eca4ceee558380c4d48a8e84e"
   },
   "schemas": [
     {
@@ -3429,7 +3429,7 @@
       "contract": "bounded base64 cover upload temporary-directory lifecycle",
       "kind": "directory-contract",
       "module": "server/routes/desk.ts",
-      "sourceHash": "sha256:5de78b7a1e54d5bf74b9468d874de585fed6b8c1b2d579dbac01a9f5a9e41541",
+      "sourceHash": "sha256:acbcbf88f9108f49caa475368b03cb31a49c06e80b5a454b1c225e99aeae9455",
       "storeId": "desk-cover-upload-staging"
     },
     {

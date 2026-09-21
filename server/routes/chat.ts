@@ -1432,6 +1432,10 @@ export function createChatRoute(engine: any, hub: any, {
         todos: Array.isArray(event.todos) ? event.todos : [],
         sessionPath,
       });
+    } else if (event.type === "heartbeat_skipped") {
+      if (typeof event.agentId === "string" && typeof event.reason === "string") {
+        broadcast({ type: "heartbeat_skipped", agentId: event.agentId, reason: event.reason });
+      }
     } else if (event.type === "activity_update") {
       broadcast({ type: "activity_update", activity: event.activity });
     } else if (event.type === "agent_activity") {

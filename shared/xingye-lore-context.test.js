@@ -370,3 +370,49 @@ describe('buildXingyeRuntimeLoreContext', () => {
     expect(result.text).toContain('匹配关键词：observatory, Moon Library');
   });
 });
+
+
+describe('opt-in selection diagnostics', () => {
+  it('explains exclusions without changing output or exposing another agent', () => {
+    const rows = [];
+    const options = { agentId: 'agent-a', entries: [
+      baseEntry({ id: 'selected' }), baseEntry({ id: 'disabled', enabled: false }),
+      baseEntry({ id: 'private', visibility: 'private' }), baseEntry({ id: 'manual', insertionMode: 'manual' }),
+      baseEntry({ id: 'empty', content: ' ' }), baseEntry({ id: 'secret', agentId: 'agent-b' }),
+    ] };
+    const result = buildXingyeStableLoreMemoryContext({ ...options, onDecision: (row) => rows.push(row) });
+    expect(result).toEqual(buildXingyeStableLoreMemoryContext(options));
+    expect(Object.fromEntries(rows.map((row) => [row.id, row.reason]))).toEqual({
+      selected: 'selected', disabled: 'disabled', private: 'visibility', manual: 'mode', empty: 'empty',
+    });
+    expect(rows.every((row) => !('content' in row))).toBe(true);
+  });
+
+  it('reports shared truncation and later budget exclusion at exact budget boundaries', () => {
+    const entries = [baseEntry({ id: 'long', priority: 100, content: '长'.repeat(500) }), baseEntry({ id: 'short' })];
+    const rows = [];
+    const result = buildXingyeStableLoreMemoryContext({ entries, agentId: 'agent-a', maxChars: 200, onDecision: (row) => rows.push(row) });
+    expect(result.text).toHaveLength(200);
+    expect(rows.map((row) => row.reason)).toEqual(['truncated', 'budget']);
+    expect(result.entries.map((entry) => entry.id)).toEqual(['long']);
+    const zeroRows = [];
+    expect(buildXingyeStableLoreMemoryContext({ entries, agentId: 'agent-a', maxChars: 0, onDecision: (row) => zeroRows.push(row) })).toEqual({ text: '', entries: [] });
+    expect(zeroRows.map((row) => row.reason)).toEqual(['budget', 'budget']);
+  });
+
+  it('explains missing query, missing keywords, misses and matched keyword truncation', () => {
+    const rows = [];
+    const entries = [
+      baseEntry({ id: 'hit', insertionMode: 'keyword', keywords: ['灯塔'], content: '光'.repeat(500), priority: 100 }),
+      baseEntry({ id: 'miss', insertionMode: 'keyword', keywords: ['港口'] }),
+      baseEntry({ id: 'no-keys', insertionMode: 'keyword' }),
+    ];
+    const result = buildXingyeRuntimeLoreContext({ entries, agentId: 'agent-a', userText: '去灯塔', maxChars: 200, onDecision: (row) => rows.push(row) });
+    expect(result.text).toHaveLength(200);
+    expect(Object.fromEntries(rows.map((row) => [row.id, row.reason]))).toEqual({ hit: 'truncated', miss: 'no-match', 'no-keys': 'no-keywords' });
+    expect(rows.find((row) => row.id === 'hit').matchedKeywords).toEqual(['灯塔']);
+    const noQuery = [];
+    buildXingyeRuntimeLoreContext({ entries, agentId: 'agent-a', onDecision: (row) => noQuery.push(row) });
+    expect(noQuery.find((row) => row.id === 'hit').reason).toBe('no-query');
+  });
+});

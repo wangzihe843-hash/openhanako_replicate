@@ -17,6 +17,7 @@
  * - `purpose` 仅做记录/调试用途，不做复杂分支。
  */
 
+import type { XingyeLoreDecision } from '../../../../shared/xingye-lore-context.js';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
   XINGYE_LORE_CATEGORY_LABELS,
@@ -60,6 +61,8 @@ export type XingyeLoreRuntimeContextPurpose =
 
 export type XingyeLoreRuntimeContextOptions = {
   purpose?: XingyeLoreRuntimeContextPurpose;
+  /** Optional selection preview; receives only this agent’s entries, never content. */
+  onDecision?: (decision: XingyeLoreDecision) => void;
   queryText?: string;
   keywords?: string[];
   maxChars?: number;
@@ -221,21 +224,27 @@ export function collectXingyeLoreRuntimeContext(
   const all = listLoreEntries(agentId, storage);
   if (!all.length) return result;
 
+  const report = (entry: XingyeLoreEntry | XingyeLoreRuntimeContextEntry, reason: XingyeLoreDecision['reason'], matchedKeywords: string[] = [], blockChars = 0) => {
+    options.onDecision?.({ id: entry.id, title: entry.title, reason, matchedKeywords, blockChars });
+  };
   const candidates: XingyeLoreRuntimeContextEntry[] = [];
   for (const entry of all) {
-    if (!entry.enabled) continue;
-    if (entry.visibility !== 'canonical') continue;
-    if (entry.insertionMode === 'manual') continue;
+    if (!entry.enabled) { report(entry, 'disabled'); continue; }
+    if (entry.visibility !== 'canonical') { report(entry, 'visibility'); continue; }
+    if (entry.insertionMode === 'manual') { report(entry, 'mode'); continue; }
 
     if (entry.insertionMode === 'always') {
-      if (!includeAlways) continue;
+      if (!includeAlways) { report(entry, 'mode'); continue; }
       candidates.push(toCandidate(entry, 'always', []));
       continue;
     }
     if (entry.insertionMode === 'keyword') {
-      if (!includeKeyword) continue;
+      if (!includeKeyword) { report(entry, 'mode'); continue; }
       const matched = collectMatchedKeywords(entry.keywords, queryText, explicitKeywords);
-      if (!matched.length) continue;
+      if (!matched.length) {
+        report(entry, !entry.keywords.length ? 'no-keywords' : (!queryText && !explicitKeywords.length ? 'no-query' : 'no-match'));
+        continue;
+      }
       candidates.push(toCandidate(entry, 'keyword', matched));
     }
   }
@@ -254,9 +263,11 @@ export function collectXingyeLoreRuntimeContext(
     const blockLength = blockText.length;
     if (total + blockLength > maxChars) {
       result.truncated = true;
+      report(candidate, 'budget', candidate.matchedKeywords);
       continue;
     }
     result.entries.push(candidate);
+    report(candidate, 'selected', candidate.matchedKeywords, blockLength);
     total += blockLength;
   }
   result.totalChars = total;

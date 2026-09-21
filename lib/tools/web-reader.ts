@@ -198,6 +198,8 @@ export async function htmlToMarkdownDocument(html, url) {
   const dom = new JSDOM(String(html || ""), { url });
   try {
     const { document } = dom.window;
+    const hasPasswordForm = Boolean(document.querySelector("input[type='password']"));
+    const hasScripts = Boolean(document.querySelector("script"));
     removePageChrome(document);
     const root = chooseContentRoot(document);
     const title = titleFrom(document, root);
@@ -209,6 +211,12 @@ export async function htmlToMarkdownDocument(html, url) {
       title,
       content,
       format: "markdown",
+      coverage: {
+        textCharacters: cleanWhitespace(root.textContent).length,
+        mediaReferences: root.querySelectorAll("img,video,audio,iframe,object,embed,canvas").length,
+        hasPasswordForm,
+        hasScripts,
+      },
       metadata: {
         reader: "html-reader",
         ...Object.fromEntries(Object.entries(metadata).filter(([, value]) => value)),

@@ -1,18 +1,8 @@
 /**
- * 不变量：xingye_propose_draft 的 SUPPORTED_MODULES 与两个隐性 sink 保持同步——
- *
- *  1. lib/desk/heartbeat.js 里 mustPropose=true 时给 agent 的 directive 菜单。
- *     菜单是硬编码的中/英文 bullet 列表；模块加进 enum、忘了补菜单 → agent 永远
- *     不会从这个模块挑（默认它"不在备选"），但既有测试只手写了一个 `toContain`
- *     列表，会跟 enum 漂移。
- *
- *  2. desktop/src/react/xingye/Phone{Module}App.test.tsx（或对应 Panel）里的
- *     「待确认草稿区」UI 集成测试。doc/xingye-propose-draft.md 标了「容易忘」，
- *     2026-05 接入六个模块时全跳过过——本测试逼着开发者主动登记。
- *
- * 两个方向（enum→sink、sink→enum）都校验：
- *  - enum 多了项 → directive / UI 测试缺 → 红。
- *  - sink 多了项 → MODULE_UI_FIXTURES 没登记 → 红。
+ * Invariant: every supported draft module has a registered UI and integration
+ * coverage for confirmation and discard. Check enum/fixture coverage in both
+ * directions so new modules cannot silently omit the user-confirmation boundary.
+ * Optional heartbeat expression policy is tested separately; it has no module menu.
  */
 
 import fs from "node:fs";
@@ -21,7 +11,6 @@ import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 
 import { XINGYE_PROPOSE_DRAFT_SUPPORTED_MODULES } from "../lib/tools/xingye-propose-draft-tool.js";
-import { createHeartbeat } from "../lib/desk/heartbeat.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -68,55 +57,6 @@ const MODULE_UI_FIXTURES = {
   news:               { src: "desktop/src/react/xingye/PhoneNewsApp.tsx",          test: "desktop/src/react/xingye/PhoneNewsApp.test.tsx",          confirmVerb: "confirmNewsDraftWithEntry",      discardVerb: "discardNewsDraft" },
   interview:          { src: "desktop/src/react/xingye/SecretSpacePanel.tsx",       test: "desktop/src/react/xingye/SecretSpacePanel.test.tsx",      confirmVerb: "confirmInterviewDraftWithEntry", discardVerb: "discardInterviewDraft" },
 };
-
-/**
- * 用 createHeartbeat 接 onBeat 拿到完整 prompt——比直接 import buildHeartbeatContext
- * 干净（那个是模块内部函数）。staleness mustPropose=true 触发 directive 段。
- */
-async function renderMustProposeDirective(locale) {
-  let captured = null;
-  const hb = createHeartbeat({
-    onBeat: async (p) => {
-      captured = p;
-      return { ok: true };
-    },
-    getEventSummary: async () => ({
-      consumed: 0,
-      skipped: true,
-      autoDraftStaleness: {
-        lastAutoDraftAt: null,
-        chatTurnsSinceLastDraft: 60,
-        mustPropose: true,
-      },
-    }),
-    intervalMinutes: 31,
-    locale,
-  });
-  await hb.runHeartbeatOnce({ reason: "coverage-test" });
-  return captured;
-}
-
-describe("heartbeat directive ↔ SUPPORTED_MODULES (zh)", () => {
-  it.each(XINGYE_PROPOSE_DRAFT_SUPPORTED_MODULES)(
-    "must-propose directive (zh) mentions `%s`",
-    async (moduleName) => {
-      const prompt = await renderMustProposeDirective("zh-CN");
-      expect(prompt, `zh directive missing module "${moduleName}" — add it to lib/desk/heartbeat.js mustPropose bullet list`)
-        .toMatch(new RegExp("`" + moduleName + "`"));
-    },
-  );
-});
-
-describe("heartbeat directive ↔ SUPPORTED_MODULES (en)", () => {
-  it.each(XINGYE_PROPOSE_DRAFT_SUPPORTED_MODULES)(
-    "must-propose directive (en) mentions `%s`",
-    async (moduleName) => {
-      const prompt = await renderMustProposeDirective("en-US");
-      expect(prompt, `en directive missing module "${moduleName}" — add it to lib/desk/heartbeat.js mustPropose bullet list`)
-        .toMatch(new RegExp("`" + moduleName + "`"));
-    },
-  );
-});
 
 describe("UI fixtures ↔ SUPPORTED_MODULES", () => {
   it("MODULE_UI_FIXTURES keys equal SUPPORTED_MODULES (bi-directional)", () => {

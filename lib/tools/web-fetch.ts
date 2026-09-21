@@ -7,6 +7,7 @@
  * 支持：HTML 页面、JSON API、纯文本
  */
 
+import { createHash } from "node:crypto";
 import { Type } from "../pi-sdk/index.ts";
 import { lookup } from "dns/promises";
 import { isIP } from "net";
@@ -71,56 +72,88 @@ function htmlToText(html) {
   return text.trim();
 }
 
+type ReadEvidence = {
+  status: "complete" | "partial" | "failed";
+  scope: "single_response_text";
+  sourceUrl: string;
+  resolvedUrl?: string;
+  processorVersion: "web-fetch/1";
+  httpStatus?: number;
+  contentType?: string;
+  responseTextHash?: string;
+  outputTextHash?: string;
+  extractedCharacters?: number;
+  returnedCharacters?: number;
+  mediaReferences?: number;
+  missingReasons: string[];
+};
+
+function textHash(text: string): string {
+  return `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`;
+}
+
 export function createWebFetchTool() {
   return {
     name: "web_fetch",
     label: "Fetch Web Page",
-    description: "Fetch the content of a given URL and extract text. Useful for reading articles, docs, API responses, etc. Pair with web_search: first search to find a URL, then use web_fetch to read the full content.",
+    description: "Fetch a URL and extract text with explicit read evidence. Check complete/partial/failed and missingReasons before claiming full content. Coverage is one response's text only; HTML extraction, dynamic content, linked pages and images are not verified as complete.",
     parameters: Type.Object({
       url: Type.String({ description: "Full URL to fetch (including https://)" }),
       maxLength: Type.Optional(
-        Type.Number({ description: `Maximum characters to return, default ${MAX_CONTENT_LENGTH}`, default: MAX_CONTENT_LENGTH })
+        Type.Number({ description: `Maximum characters to return, default ${MAX_CONTENT_LENGTH}`, default: MAX_CONTENT_LENGTH, minimum: 1 })
       ),
     }),
-    execute: async (_toolCallId, params) => {
-      const url = params.url?.trim();
-      if (!url) {
+    execute: async (_toolCallId, params, signal?: AbortSignal) => {
+      const url = typeof params.url === "string" ? params.url.trim() : "";
+      const evidence: ReadEvidence = {
+        status: "failed",
+        scope: "single_response_text",
+        sourceUrl: url,
+        processorVersion: "web-fetch/1",
+        missingReasons: [],
+      };
+      // Include the same evidence in model-visible text and structured details.
+      // A successful HTTP request is not a claim that the source was fully read.
+      const result = (body: string, reason?: string) => {
+        if (reason) evidence.missingReasons.push(reason);
         return {
-          content: [{ type: "text", text: t("error.fetchEmptyUrl") }],
-          details: {},
+          ...(evidence.status === "failed" ? { isError: true as const } : {}),
+          content: [{ type: "text" as const, text: `${body}\n\n[Read evidence: ${JSON.stringify(evidence)}]` }],
+          details: { readEvidence: { ...evidence, missingReasons: [...evidence.missingReasons] } },
         };
-      }
-
-      // 基本 URL 校验
-      let parsedUrl;
+      };
+      if (!url) return result(t("error.fetchEmptyUrl"), "empty_url");
       try {
-        parsedUrl = new URL(url);
-        if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-          return {
-            content: [{ type: "text", text: t("error.fetchHttpOnly") }],
-            details: {},
-          };
+        const parsed = new URL(url);
+        if (!["http:", "https:"].includes(parsed.protocol)) {
+          return result(t("error.fetchHttpOnly"), "unsupported_protocol");
         }
       } catch {
-        return {
-          content: [{ type: "text", text: t("error.fetchInvalidUrl", { url }) }],
-          details: {},
-        };
+        return result(t("error.fetchInvalidUrl", { url }), "invalid_url");
       }
-
+      const requestedLength = params.maxLength ?? MAX_CONTENT_LENGTH;
+      if (!Number.isFinite(requestedLength) || requestedLength < 1) {
+        return result("maxLength must be a positive finite number.", "invalid_max_length");
+      }
+      const maxLen = Math.floor(requestedLength);
+      const requestSignal = signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT)])
+        : AbortSignal.timeout(FETCH_TIMEOUT);
       try {
-        // SSRF 防护：逐跳校验 hostname
         let currentUrl = url;
-        let res;
+        let res: Response | undefined;
         for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+          requestSignal.throwIfAborted();
           const hopParsed = new URL(currentUrl);
-          if (await isPrivateHost(hopParsed.hostname)) {
-            return {
-              content: [{ type: "text", text: t("error.fetchSsrf", { host: hopParsed.hostname }) }],
-              details: {},
-            };
+          evidence.resolvedUrl = currentUrl;
+          if (!["http:", "https:"].includes(hopParsed.protocol)) {
+            return result(t("error.fetchHttpOnly"), "unsupported_redirect_protocol");
           }
-
+          // Preserve per-hop SSRF checks, including redirects.
+          if (await isPrivateHost(hopParsed.hostname)) {
+            return result(t("error.fetchSsrf", { host: hopParsed.hostname }), "private_or_unresolved_host");
+          }
+          requestSignal.throwIfAborted();
           res = await fetch(currentUrl, {
             headers: {
               "User-Agent": "Mozilla/5.0 (compatible; HanaAgentBot/1.0)",
@@ -128,81 +161,81 @@ export function createWebFetchTool() {
               "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             },
             redirect: "manual",
-            signal: AbortSignal.timeout(FETCH_TIMEOUT),
+            signal: requestSignal,
           });
-
-          if ([301, 302, 307, 308].includes(res.status)) {
+          evidence.httpStatus = res.status;
+          if ([301, 302, 303, 307, 308].includes(res.status)) {
             const location = res.headers.get("location");
-            if (!location) break;
+            await res.body?.cancel();
+            if (!location) return result("Redirect response has no location.", "redirect_without_location");
             currentUrl = new URL(location, currentUrl).href;
             continue;
           }
           break;
         }
-
-        if (!res || [301, 302, 307, 308].includes(res.status)) {
-          return {
-            content: [{ type: "text", text: t("error.fetchRedirectLimit", { max: MAX_REDIRECTS }) }],
-            details: {},
-          };
+        if (!res || [301, 302, 303, 307, 308].includes(res.status)) {
+          return result(t("error.fetchRedirectLimit", { max: MAX_REDIRECTS }), "redirect_limit");
         }
-
         if (!res.ok) {
-          return {
-            content: [{ type: "text", text: t("error.fetchHttpError", { status: res.status, statusText: res.statusText }) }],
-            details: {},
-          };
+          await res.body?.cancel();
+          return result(t("error.fetchHttpError", { status: res.status, statusText: res.statusText }), "http_error");
         }
-
-        const contentType = res.headers.get("content-type") || "";
+        if (res.status === 206 || res.headers.has("content-range")) {
+          evidence.missingReasons.push("partial_response");
+        }
+        const contentType = (res.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+        evidence.contentType = contentType;
+        const isJson = contentType === "application/json" || contentType.endsWith("+json");
+        const isHtml = contentType === "text/html" || contentType === "application/xhtml+xml";
+        if (!isJson && !isHtml && !contentType.startsWith("text/")) {
+          await res.body?.cancel();
+          return result("The response is not a supported text document.", "unsupported_or_missing_content_type");
+        }
         const raw = await res.text();
-        const maxLen = params.maxLength ?? MAX_CONTENT_LENGTH;
-
-        let text;
-        let format;
-
-        if (contentType.includes("application/json")) {
-          try {
-            const obj = JSON.parse(raw);
-            text = JSON.stringify(obj, null, 2);
-          } catch {
-            text = raw;
-          }
+        requestSignal.throwIfAborted();
+        // Hash decoded response text, not HTTP bytes or the truncated output.
+        evidence.responseTextHash = textHash(raw);
+        let text = raw;
+        let format = "text";
+        if (isJson) {
           format = "json";
-        } else if (contentType.includes("text/html")) {
+          try { text = JSON.stringify(JSON.parse(raw), null, 2); }
+          catch { evidence.missingReasons.push("invalid_json"); }
+        } else if (isHtml) {
+          evidence.missingReasons.push("html_coverage_unverified");
           try {
             const doc = await htmlToMarkdownDocument(raw, currentUrl);
-            text = doc.content || htmlToText(raw);
+            text = doc.content;
             format = "markdown";
+            evidence.mediaReferences = doc.coverage.mediaReferences;
+            if (doc.coverage.mediaReferences > 0) evidence.missingReasons.push("media_not_read");
+            if (doc.coverage.hasPasswordForm) evidence.missingReasons.push("login_form_detected");
+            if (doc.coverage.hasScripts) evidence.missingReasons.push("script_content_not_executed");
           } catch {
             text = htmlToText(raw);
             format = "html→text";
+            evidence.missingReasons.push("html_parser_failed_fallback");
           }
-        } else {
-          text = raw;
-          format = "text";
         }
-
+        requestSignal.throwIfAborted();
+        evidence.extractedCharacters = text.length;
+        if (!text.trim()) return result("No readable response body was obtained.", "empty_body");
         const truncated = text.length > maxLen;
-        if (truncated) {
-          text = text.slice(0, maxLen) + t("error.fetchTruncated", { len: text.length });
-        }
-
+        const output = text.slice(0, maxLen);
+        evidence.returnedCharacters = output.length;
+        evidence.outputTextHash = textHash(output);
+        if (truncated) evidence.missingReasons.push("output_truncated");
+        evidence.status = evidence.missingReasons.length > 0 ? "partial" : "complete";
         const finalUrl = new URL(currentUrl);
         const header = t("error.fetchSource", { host: finalUrl.hostname, path: finalUrl.pathname, format });
-
-        return {
-          content: [{ type: "text", text: header + text }],
-          details: {},
-        };
+        return result(header + output + (truncated ? t("error.fetchTruncated", { len: text.length }) : ""));
       } catch (err) {
-        const msg = err.name === "TimeoutError"
+        const reason = signal?.aborted ? "cancelled"
+          : requestSignal.aborted || err.name === "TimeoutError" ? "timeout" : "transport_or_read_error";
+        const msg = reason === "timeout"
           ? t("error.fetchTimeout", { sec: FETCH_TIMEOUT / 1000, url })
-          : t("error.fetchError", { msg: err.message });
-        return {
-          content: [{ type: "text", text: msg }],
-          details: {},
-        };
+          : t("error.fetchError", { msg: reason === "cancelled" ? "cancelled" : err.message });
+        return result(msg, reason);
       }
     },
   };

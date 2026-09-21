@@ -10,6 +10,7 @@
 
 import fs from "fs";
 import path from "path";
+import { heartbeatQuietReason } from "../shared/heartbeat-policy.ts";
 import { createHeartbeat } from "../lib/desk/heartbeat.ts";
 import { createCronScheduler } from "../lib/desk/cron-scheduler.ts";
 import { getAutomationExecutor } from "../lib/desk/automation-executors.ts";
@@ -175,12 +176,18 @@ export class Scheduler {
       // 这样 agent 能基于事件主动判断是否要 notify。heartbeat.js 会把消费结果合并进 payload，
       // desk 路由还是能拿到 summaryZh。
       getEventSummary: () => this._runXingyeHeartbeatConsumer(agentId, agent),
+      // The master pauses every entry point. Per-agent opt-out only stops the timer;
+      // explicit manual patrols remain available, including after reload/restart.
+      getSkipReason: () => engine.getHeartbeatMaster() === false
+        ? "paused" : heartbeatQuietReason(agent.config?.desk?.heartbeat_quiet_hours),
+      onSkipped: reason => this._hub.eventBus?.emit({ type: "heartbeat_skipped", agentId, reason }, null),
       onBeat: async (prompt, extra: any = {}) => {
         // extra.xingyeConsumed：consumer 结果（含 summaryZh / eventCount），挂到 activity_update 负载，
         // 让前端 activities store 拿到本次巡检的小手机事件聚合（手动 + 自动统一走这条）。
         // extra.customTools：upstream 的 patrol_update_log 工具，透传给 executeIsolated（与 onJianBeat 一致）。
         await this._executeActivityForAgent(agentId, prompt, "heartbeat", null, {
           xingyeConsumed: extra?.xingyeConsumed || null,
+          ...(extra?.signal ? { signal: extra.signal } : {}),
           extraCustomTools: Array.isArray(extra?.customTools) ? extra.customTools : [],
         });
       },
@@ -188,6 +195,7 @@ export class Scheduler {
         const isZh = getLocale().startsWith("zh");
         return this._executeActivityForAgent(agentId, prompt, "heartbeat", `${isZh ? "笺" : "jian"}:${path.basename(cwd)}`, {
           cwd,
+          ...(runTools.signal ? { signal: runTools.signal } : {}),
           extraCustomTools: Array.isArray(runTools.customTools) ? runTools.customTools : [],
         });
       },
@@ -207,7 +215,7 @@ export class Scheduler {
         return filterPatrolToolObjects(available, { agentConfig: target.config, activityType: "heartbeat" })
           .some((tool) => tool.name === "dm");
       },
-      // 是否在巡检里硬指挥 xingye_propose_draft：必须镜像 executeIsolated 真正的两道过滤——
+      // 是否在巡检里提供 xingye_propose_draft 引导：必须镜像 executeIsolated 真正的两道过滤——
       // (a) tools.disabled 含该工具 → filterToolObjectsByAvailability 已把它从 customTools 删掉；
       // (b) desk.patrol_tools 是有限白名单（truthy 且非 '*'）且不含该工具 → patrol 过滤删掉。
       // 二者皆不命中才算可用。每个 beat 现读 agent.config（配置可能在两次 beat 之间变化），不要快照。
@@ -487,6 +495,7 @@ export class Scheduler {
       priority: "background",
       reason: type,
     });
+    if (opts.signal?.aborted) return;
     const agentDir = path.join(engine.agentsDir, agentId);
     const activityDir = path.join(agentDir, "activity");
     const startedAt = Date.now();
@@ -505,6 +514,7 @@ export class Scheduler {
         ...restOpts,
       });
     } catch (error) {
+      if (signal?.aborted) return;
       const ag = engine.getAgent(agentId);
       await this._deliverActivityCompletionNotification({
         entry: {
@@ -520,6 +530,7 @@ export class Scheduler {
       });
       throw error;
     }
+    if (signal?.aborted) return;
     const { sessionPath, error } = result;
 
     const finishedAt = Date.now();
@@ -537,6 +548,7 @@ export class Scheduler {
       } catch {}
     }
 
+    if (signal?.aborted) return;
     const entry = {
       id,
       type,
@@ -583,6 +595,7 @@ export class Scheduler {
       }
     }
 
+    if (signal?.aborted) return;
     // 写入对应 agent 的 ActivityStore
     engine.getActivityStore(agentId).add(entry);
 

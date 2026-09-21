@@ -1760,3 +1760,18 @@ describe('ws-message-handler error presentation', () => {
     warn.mockRestore();
   });
 });
+
+
+describe('ws-message-handler heartbeat cancellation', () => {
+  it('dispatches a scoped skip event without recording a successful activity', () => {
+    const target = new EventTarget();
+    vi.stubGlobal('window', target);
+    const received: unknown[] = [];
+    target.addEventListener('hana-heartbeat-skipped', event => received.push((event as CustomEvent).detail));
+    useStore.setState({ activities: [] });
+    handleServerMessage({ type: 'heartbeat_skipped', agentId: 'agent-a', reason: 'quiet-hours' });
+    handleServerMessage({ type: 'heartbeat_skipped', reason: 'quiet-hours' });
+    expect(received).toEqual([{ agentId: 'agent-a', reason: 'quiet-hours' }]);
+    expect(useStore.getState().activities).toEqual([]);
+  });
+});

@@ -208,6 +208,67 @@ describe("Scheduler heartbeat defaults", () => {
     });
   });
 
+  it("forwards cancellation to both patrol execution paths", async () => {
+    const { scheduler } = startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true } });
+    const signal = new AbortController().signal;
+    await heartbeatOptions[0].onBeat("main", { signal });
+    await heartbeatOptions[0].onJianBeat("jian", "/workspace/jian", { signal });
+    expect(vi.mocked(scheduler._executeActivityForAgent).mock.calls).toHaveLength(2);
+    for (const call of vi.mocked(scheduler._executeActivityForAgent).mock.calls) expect(call[4].signal).toBe(signal);
+  });
+
+  it("reads quiet-hour configuration on every check", () => {
+    const { agent } = startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true } });
+    const check = heartbeatOptions[0].getSkipReason;
+    expect(check()).toBeNull();
+    agent.config.desk.heartbeat_quiet_hours = { enabled: true, start: "invalid", end: "08:00" };
+    expect(check()).toBe("invalid-quiet-hours");
+    agent.config.desk.heartbeat_quiet_hours.enabled = false;
+    expect(check()).toBeNull();
+  });
+
+  it.each(["execution", "summary"])("suppresses completion publication after cancellation during %s", async stage => {
+    let release!: () => void;
+    let reached!: () => void;
+    const ready = new Promise<void>(resolve => { reached = resolve; });
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const controller = new AbortController();
+    const engine = {
+      agentsDir: "/tmp/heartbeat-cancel", agents: new Map(),
+      getAgent: () => ({ agentName: "Agent A" }),
+      executeIsolated: vi.fn(async () => {
+        if (stage === "execution") { reached(); await pending; }
+        return { sessionPath: "/tmp/heartbeat-cancel/session.jsonl" };
+      }),
+      summarizeActivity: vi.fn(async () => { reached(); await pending; return "late summary"; }),
+      getActivityStore: vi.fn(), deliverNotification: vi.fn(), emitDevLog: vi.fn(),
+      getNotificationPreferences: () => ({ patrolCompletion: "always" }),
+    };
+    const eventBus = { emit: vi.fn() };
+    const scheduler = new Scheduler({ hub: { engine, eventBus } });
+    const run = scheduler._executeActivityForAgent("agent-a", "patrol", "heartbeat", null, { signal: controller.signal });
+    await ready;
+    controller.abort();
+    release();
+    await run;
+    expect(engine.getActivityStore).not.toHaveBeenCalled();
+    expect(engine.deliverNotification).not.toHaveBeenCalled();
+    expect(eventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it("keeps master pause strict and per-agent automatic opt-out compatible with manual patrols", () => {
+    const { engine, scheduler } = startSingleAgentHeartbeat({ desk: { heartbeat_enabled: false } });
+    const check = heartbeatOptions[0].getSkipReason;
+    expect(check()).toBeNull();
+    engine.getHeartbeatMaster = () => false;
+    expect(check()).toBe("paused");
+    engine.getHeartbeatMaster = () => true;
+    expect(check()).toBeNull();
+    scheduler._hub.eventBus = { emit: vi.fn() };
+    heartbeatOptions[0].onSkipped("quiet-hours");
+    expect(scheduler._hub.eventBus.emit).toHaveBeenCalledWith({ type: "heartbeat_skipped", agentId: "agent-pd", reason: "quiet-hours" }, null);
+  });
+
   it("wires getProposeDraftAvailable into the createHeartbeat call", () => {
     startSingleAgentHeartbeat({ desk: { heartbeat_enabled: true } });
     expect(typeof heartbeatOptions[0].getProposeDraftAvailable).toBe("function");
