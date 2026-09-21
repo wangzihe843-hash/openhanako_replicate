@@ -161,6 +161,11 @@ export function LoreStudioDrawer({
   }, [session.messages.length, loading]);
 
   const started = session.backgroundStory.trim() !== '' || session.messages.length > 0;
+  const canApplyDraft = !!session.draftPlan && (
+    session.draftPlan.loreEntries.some((entry) => entry.title.trim() && entry.content.trim())
+    || Object.keys(flattenProfilePatch(session.draftPlan.profilePatch)).length > 0
+    || !!session.draftPlan.yuan
+  );
 
   const lastMessage = session.messages[session.messages.length - 1];
   const activeQuestions: StudioQuestionsTurn | null =
@@ -287,7 +292,7 @@ export function LoreStudioDrawer({
 
   async function handleConfirm() {
     const plan = session.draftPlan;
-    if (!plan) return;
+    if (!plan || !canApplyDraft) return;
     const res = applyLoreEntries(agent.id, plan.loreEntries);
     onApplied({
       loreCreated: res.created.length,
@@ -440,8 +445,7 @@ export function LoreStudioDrawer({
             />
           ))}
 
-          {session.draftPlan &&
-            session.draftPlan.loreEntries.length + (session.draftPlan.profilePatch?.length ?? 0) + (session.draftPlan.yuan ? 1 : 0) > 0 && (
+          {session.draftPlan && canApplyDraft && (
             <PlanCard
               plan={session.draftPlan}
               currentYuan={agent.yuan}
@@ -549,10 +553,12 @@ export function LoreStudioDrawer({
                 </div>
               )}
 
-              {session.draftPlan && session.draftPlan.loreEntries.length > 0 && (
+              {session.draftPlan && canApplyDraft && (
                 <div className={styles.actions}>
                   <button type="button" className={styles.primaryBtn} disabled={loading} onClick={() => void handleConfirm()}>
-                    确认写入（{session.draftPlan.loreEntries.length} 条设定）
+                    {session.draftPlan.loreEntries.length > 0
+                      ? `确认写入（${session.draftPlan.loreEntries.length} 条设定）`
+                      : '确认写入人设调整'}
                   </button>
                 </div>
               )}

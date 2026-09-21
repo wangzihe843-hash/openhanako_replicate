@@ -1,0 +1,13 @@
+.panel { font-size: var(--fs-caption); margin: 0 var(--space-4) var(--space-8); color: var(--text-light); }
+.panel summary { cursor: pointer; padding: var(--space-6) 0; }
+.body { padding: var(--space-10); border: 1px solid var(--border); border-radius: var(--radius-lg); max-height: 45vh; overflow-y: auto; }
+.body p { margin: var(--space-6) 0; }
+.fields { display: flex; flex-wrap: wrap; gap: var(--space-8); margin: var(--space-8) 0; }
+.fields label { display: flex; flex-direction: column; gap: var(--space-4); flex: 1; min-width: 100px; }
+.fields select, .body textarea, .body select { color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-6); font: inherit; }
+.body textarea { display: block; width: 100%; resize: vertical; box-sizing: border-box; margin: var(--space-6) 0; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-8); margin-top: var(--space-8); }
+.actions button { padding: var(--space-6) var(--space-10); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); background: var(--bg-card); cursor: pointer; font: inherit; }
+.actions button:disabled { opacity: .5; cursor: default; }
+.effective { padding-left: var(--space-16); margin: var(--space-6) 0; }
+.error { color: var(--danger); }

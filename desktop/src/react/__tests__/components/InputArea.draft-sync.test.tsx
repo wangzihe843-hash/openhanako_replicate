@@ -271,6 +271,19 @@ function setContentCallsWithText(text: string) {
   });
 }
 
+function defaultFetchResponse(path: string): Response {
+  if (path.startsWith('/api/sessions/expression-controls?')) {
+    const state = useStore.getState();
+    return new Response(JSON.stringify({
+      sessionId: new URL(path, 'http://localhost').searchParams.get('sessionId'),
+      agentId: state.currentAgentId,
+      presets: {},
+      scene: null,
+    }), { status: 200 });
+  }
+  return new Response(JSON.stringify({ models: {} }), { status: 200 });
+}
+
 describe('InputArea draft sync', () => {
   afterEach(() => {
     cleanup();
@@ -279,6 +292,7 @@ describe('InputArea draft sync', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(hanaFetch).mockReset().mockImplementation(async path => defaultFetchResponse(path));
     editorState.doc = paragraphDoc('');
     window.platform = {} as typeof window.platform;
     delete (window as unknown as { hana?: unknown }).hana;
@@ -537,7 +551,10 @@ describe('InputArea draft sync', () => {
   it('rolls work mode back when exiting it for a staged Xingye quote fails', async () => {
     seedSessionComposer();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.mocked(hanaFetch).mockRejectedValueOnce(new Error('network down'));
+    vi.mocked(hanaFetch).mockImplementation(async path => {
+      if (path === '/api/session-work-mode') throw new Error('network down');
+      return defaultFetchResponse(path);
+    });
     useStore.setState({ sessionWorkMode: true } as never);
     useStore.getState().stageChatQuote({
       text: '带去聊天的内容',
@@ -560,9 +577,12 @@ describe('InputArea draft sync', () => {
     seedSessionComposer();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     let rejectExit!: (reason?: unknown) => void;
-    vi.mocked(hanaFetch).mockImplementationOnce(() => new Promise<Response>((_resolve, reject) => {
-      rejectExit = reject;
-    }));
+    vi.mocked(hanaFetch).mockImplementation(async path => {
+      if (path === '/api/session-work-mode') return new Promise<Response>((_resolve, reject) => {
+        rejectExit = reject;
+      });
+      return defaultFetchResponse(path);
+    });
     useStore.setState({ sessionWorkMode: true } as never);
     useStore.getState().stageChatQuote({
       text: '竞态引用',

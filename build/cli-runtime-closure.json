@@ -3308,6 +3308,11 @@
       "provenance": [
         {
           "root": "server-bootstrap",
+          "from": "core/xingye-expression-controls.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "core/session-coordinator.ts",
           "kind": "import-statement"
         },
@@ -3322,7 +3327,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/session-coordinator.ts (import-statement); hub/agent-executor.ts (import-statement); hub/index.ts (import-statement)."
+      "reason": "Reached via esbuild source module graph, imported by core/xingye-expression-controls.ts (import-statement); core/session-coordinator.ts (import-statement); hub/agent-executor.ts (import-statement); +1 more importer(s)."
     },
     {
       "path": "core/skill-manager.ts",
@@ -3725,6 +3730,23 @@
         }
       ],
       "reason": "Reached via esbuild source module graph, imported by server/index.ts (import-statement)."
+    },
+    {
+      "path": "core/xingye-expression-controls.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "core/desktop-session-submit.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/sessions.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by core/desktop-session-submit.ts (import-statement); server/routes/sessions.ts (import-statement)."
     },
     {
       "path": "core/yuan-registry.ts",
@@ -113719,6 +113741,18 @@
       "reason": "Reached via esbuild source module graph, imported by shared/workspace-persistence-gc.ts (import-statement); core/preferences-manager.ts (import-statement); server/routes/preferences.ts (import-statement)."
     },
     {
+      "path": "shared/xingye-expression-presets.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "core/xingye-expression-controls.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by core/xingye-expression-controls.ts (import-statement)."
+    },
+    {
       "path": "shared/xingye-gift-catalog-data.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -113878,9 +113912,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 9690,
+    "totalFiles": 9692,
     "byInputType": {
-      "source-graph": 709,
+      "source-graph": 711,
       "runtime-asset": 11,
       "nft-runtime-trace": 8970
     }

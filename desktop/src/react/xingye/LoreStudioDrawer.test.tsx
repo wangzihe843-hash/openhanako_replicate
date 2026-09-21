@@ -67,6 +67,48 @@ function renderDrawer(onApplied = vi.fn()) {
 }
 
 describe('LoreStudioDrawer', () => {
+  it('纯人设补丁可审阅，确认前不写入，确认后通过既有回调采纳', async () => {
+    turnHoisted.queue = [{
+      type: 'plan', summary: '目标与边界已足够。', loreEntries: [],
+      profilePatch: [{ field: 'behaviorLogic', value: '想获得信任，但不拿朋友的秘密交换。', rationale: '守诺优先。' }],
+    }];
+    const onApplied = renderDrawer();
+    fireEvent.change(await screen.findByPlaceholderText('粘贴完整背景故事…'), { target: { value: '林雾想获得信任，但守诺优先。' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始整理' }));
+    const confirm = await screen.findByRole('button', { name: '确认写入人设调整' });
+    expect(screen.getByText('理由：守诺优先。')).toBeInTheDocument();
+    expect(onApplied).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(XINGYE_LORE_ENTRIES_STORAGE_KEY)).toBeNull();
+    fireEvent.click(confirm);
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1));
+    expect(onApplied).toHaveBeenCalledWith(expect.objectContaining({
+      loreCreated: 0, loreUpdated: 0,
+      profilePatch: { behaviorLogic: '想获得信任，但不拿朋友的秘密交换。' },
+    }));
+    expect(window.localStorage.getItem(XINGYE_LORE_ENTRIES_STORAGE_KEY)).toBeNull();
+  });
+
+  it('关闭未采纳的人设草稿不会触发写入', async () => {
+    turnHoisted.queue = [{ type: 'plan', loreEntries: [], profilePatch: [{ field: 'values', value: '珍视自由。' }] }];
+    const onApplied = renderDrawer();
+    fireEvent.change(await screen.findByPlaceholderText('粘贴完整背景故事…'), { target: { value: '珍视自由。' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始整理' }));
+    await screen.findByRole('button', { name: '确认写入人设调整' });
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    expect(onApplied).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(XINGYE_LORE_ENTRIES_STORAGE_KEY)).toBeNull();
+  });
+
+  it.each([{ profilePatch: [] }, { profilePatch: [{ field: 'values', value: '   ' }] }])('空人设补丁不显示确认入口 %#', async ({ profilePatch }) => {
+    turnHoisted.queue = [{ type: 'plan', summary: '没有可写入的变更。', loreEntries: [], profilePatch }];
+    const onApplied = renderDrawer();
+    fireEvent.change(await screen.findByPlaceholderText('粘贴完整背景故事…'), { target: { value: '暂不确定。' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始整理' }));
+    await screen.findByText('没有可写入的变更。');
+    expect(screen.queryByRole('button', { name: /确认写入/ })).not.toBeInTheDocument();
+    expect(onApplied).not.toHaveBeenCalled();
+  });
+
   it('提问 → 选项作答 → 方案 → 确认写入：lore 入库且回调带补丁', async () => {
     turnHoisted.queue = [
       {

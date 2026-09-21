@@ -50,7 +50,9 @@ import {
   AGENT_REVIEW_RECORD_TYPE,
   MESSAGE_ORIGIN_RECORD_TYPE,
   MESSAGE_PRESENTATION_RECORD_TYPE,
+  isDesktopSessionSubmissionPending,
 } from "../../core/desktop-session-submit.ts";
+import { clearXingyeExpressionControls, readXingyeExpressionControls, updateXingyeExpressionControls } from "../../core/xingye-expression-controls.ts";
 import { stripSessionReminderBlocks } from "../../core/session-reminders.ts";
 import { sessionFileRevision } from "../../core/session-list-projection-cache.ts";
 import {
@@ -1768,6 +1770,34 @@ export function createSessionsRoute(engine, hub = null) {
     }
   });
 
+  for (const method of ['get', 'put'] as const) {
+    route[method]("/sessions/expression-controls", async (c) => {
+      try {
+        const input = method === 'get' ? { sessionId: c.req.query('sessionId') } : await safeJson(c);
+        if (!input?.sessionId) return c.json({ error: 'sessionId is required' }, 400);
+        const ref = resolveSessionLocatorFromBody(input, 'expressionControls');
+        assertManifestLifecycle(ref, 'active', 'expressionControls');
+        const requestContext = createRequestContext(c, engine);
+        const auth = authorizeSessionRoute(requestContext, method === 'get' ? 'sessions.read' : 'sessions.write', {
+          kind: 'session', studioId: requestContext.studioId, sessionPath: ref.sessionPath,
+        });
+        if (!auth.allowed) return c.json({ error: 'insufficient_scope', reason: auth.reason }, 403);
+        if (!isActiveDesktopSessionPath(ref.sessionPath, engine.agentsDir)) return c.json({ error: 'Invalid session path' }, 403);
+        if (isDeletedAgentSessionPath(ref.sessionPath)) return rejectDeletedAgentSession(c);
+        if (method === 'get') return c.json(readXingyeExpressionControls(engine, ref.sessionId));
+        if (typeof input.agentId !== 'string' || input.agentId !== ref.manifest?.ownerAgentId) {
+          return c.json({ error: 'expression controls owner mismatch' }, 409);
+        }
+        if (engine.isSessionStreaming?.(ref.sessionPath) || isDesktopSessionSubmissionPending(engine, ref.sessionPath)) {
+          return c.json({ error: 'session_busy' }, 409);
+        }
+        return c.json(updateXingyeExpressionControls(engine, ref.sessionId, input.agentId, input));
+      } catch (err) {
+        return c.json(bodyFromRouteError(err), statusFromRouteError(err, 400));
+      }
+    });
+  }
+
   route.post("/sessions/latest-user-message/replay", async (c) => {
     try {
       const requestContext = createRequestContext(c, engine);
@@ -2582,6 +2612,7 @@ export function createSessionsRoute(engine, hub = null) {
         // 将 mtime 置为归档瞬间，使 cleanup 按"归档时间"而非"最后活动时间"判断
         const nowSec = Date.now() / 1000;
         await fs.utimes(destPath, nowSec, nowSec);
+        clearXingyeExpressionControls(engine, sessionId);
 
         return c.json({ ok: true, sessionId: manifest.sessionId || sessionId || null, archivedPath: destPath });
       });
@@ -2684,6 +2715,7 @@ export function createSessionsRoute(engine, hub = null) {
           throw err;
         }
         if (draftSessionId) {
+          clearXingyeExpressionControls(engine, draftSessionId);
           try { engine.deleteSessionInputDrafts?.(draftSessionId); } catch { /* 草稿清理失败不阻塞删除 */ }
         }
         // 清理 titles.json 孤儿（key = 对应的活跃路径）

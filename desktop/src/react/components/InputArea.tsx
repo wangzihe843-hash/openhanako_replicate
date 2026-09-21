@@ -9,6 +9,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } f
 import { useEditor, EditorContent } from '@tiptap/react';
 import type { Editor, JSONContent } from '@tiptap/core';
 import { useStore } from '../stores';
+import { XingyeExpressionControls } from '../xingye/XingyeExpressionControls';
 import { HOME_DRAFT_KEY } from '../../../../shared/input-drafts.ts';
 import { selectPreviewItems, selectActiveTabId } from '../stores/preview-slice';
 import { sessionScopedListIncludes, sessionScopedValue } from '../stores/session-slice';
@@ -435,6 +436,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const pendingNewSession = useStore(s => s.pendingNewSession);
   const pendingSessionSwitchPath = useStore(s => s.pendingSessionSwitchPath);
   const currentSessionPath = useStore(s => s.currentSessionPath);
+  const currentSessionId = useStore(s => s.currentSessionId);
   const pendingDraftId = useStore(s => s.pendingDraftId);
   const currentAgentId = useStore(s => s.currentAgentId);
   const agents = useStore(s => s.agents);
@@ -444,6 +446,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     ? s.sessions.find(session => session.path === s.currentSessionPath)
     : null);
   const deletedAgentReadOnly = currentSessionProjection?.agentDeleted === true;
+  const expressionSessionId = currentSessionProjection?.sessionId || currentSessionId;
+  const expressionAgentId = currentSessionProjection?.agentId || currentAgentId;
   const compacting = useStore(s => isSessionCompacting(s, currentSessionPath));
   const compactionMode = useStore(s => getSessionCompactionMode(s, currentSessionPath));
   const screenshotBusy = useStore(s => s.screenshotTaskCount > 0);
@@ -2289,6 +2293,10 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         )}
       </div>
       <div className={styles['input-stack']}>
+        {expressionSessionId && expressionAgentId && currentSessionPath && !pendingNewSession && !deletedAgentReadOnly && (
+          <XingyeExpressionControls sessionId={expressionSessionId} agentId={expressionAgentId}
+            busy={!connected || isStreaming || sending || inputLocked || !!pendingSessionSwitchPath} />
+        )}
         {visibleSessionConfirmation && (
           <SessionConfirmationPrompt
             block={visibleSessionConfirmation}

@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:660bd9fe30c878dd1647c36d8a78152e19181f2334970a617de3018c86973afd",
+  "payloadFingerprint": "sha256:64cd41f8f1b21fb517639e0c6a57a016bb9e70afd75f0dca5d6cb719fedf82c9",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3226,8 +3226,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Reviewed docs/audits/2026-09-21-warning-fixes-compatibility-review.md and docs/audits/2026-09-21-warning-followup.md: directory and disk formats unchanged; plugin lazy activation cleanup, Lore budget selection, and renderer-local role save ordering only. Existing optional event counter fields remain compatible; DATA_EPOCH stays 1 with unchanged registry, site mappings, and startup receipt.",
-    "payloadFingerprint": "sha256:660bd9fe30c878dd1647c36d8a78152e19181f2334970a617de3018c86973afd"
+    "compatibilityReason": "Reviewed in docs/audits/2026-09-21-xingye-expression-compatibility.md: only the session-jsonl desktop-session-submit executable source digest changes. Expression settings and TTL remain process-local; persisted JSONL fields, Pi protocol, SQLite schemas, registry, write sites and startup receipts are unchanged. DATA_EPOCH remains 1; no migration is required.",
+    "payloadFingerprint": "sha256:64cd41f8f1b21fb517639e0c6a57a016bb9e70afd75f0dca5d6cb719fedf82c9"
   },
   "schemas": [
     {
@@ -3710,7 +3710,7 @@
       "protocolModules": [
         {
           "module": "core/desktop-session-submit.ts",
-          "sourceHash": "sha256:d97fe4269d0b4bec39b19dff1d26895c8b79d3204b3ba8dd575ede26e66a4ef3"
+          "sourceHash": "sha256:f191955d4526929c1e9391bc13cdc625d98366ca7d0860b20b0504a60c16bf31"
         },
         {
           "module": "core/session-coordinator.ts",

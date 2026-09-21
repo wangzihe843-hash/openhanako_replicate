@@ -38,6 +38,7 @@ import { createVisibleTextAccumulator } from "../lib/bridge/visible-text-accumul
 import { materializeBridgeInboundFiles } from "../lib/session-files/bridge-inbound-files.ts";
 import { serializeSessionFile } from "../lib/session-files/session-file-response.ts";
 import { BrowserManager } from "../lib/browser/browser-manager.ts";
+import { prepareXingyeExpressionTurn } from "./xingye-expression-controls.ts";
 
 /**
  * 非桌面来源（bridge /rc 等）用户消息的来源元信息持久化条目类型。
@@ -59,6 +60,12 @@ export const AGENT_REVIEW_RECORD_TYPE = "hana-agent-review-result";
 
 type Submission = { sessionPath: string; cancel: () => void };
 const pendingDesktopSessionSubmissions = new WeakMap<object, Map<string, Submission>>();
+
+export function isDesktopSessionSubmissionPending(engine: { getSessionIdForPath?: (path: string) => string | null }, sessionPath: string): boolean {
+  const pending = pendingDesktopSessionSubmissions.get(engine);
+  const key = engine.getSessionIdForPath?.(sessionPath) || sessionPath;
+  return !!pending && (pending.has(key) || [...pending.values()].some(value => value.sessionPath === sessionPath));
+}
 
 export function cancelDesktopSessionSubmission(engine: any, sessionPath: string) {
   const pending = engine && pendingDesktopSessionSubmissions.get(engine);
@@ -442,6 +449,7 @@ export async function submitDesktopSessionMessage(engine: any, opts: {
       unsubscribe = unsub;
       let promptSucceeded = false;
       try {
+        const expressionTurn = prepareXingyeExpressionTurn(engine, sessionId, sessionPath, context);
         const promptOpts = buildPromptOptions({
           images,
           videos,
@@ -449,17 +457,22 @@ export async function submitDesktopSessionMessage(engine: any, opts: {
           promptImageAttachmentPaths,
           promptVideoAttachmentPaths,
           promptAudioAttachmentPaths,
-          context,
+          context: expressionTurn.context,
         });
         if (typeof engine.preflightSessionInput === "function") {
           await engine.promptSession(sessionPath, promptText, promptOpts, {
             afterCachePreflight,
-            afterInputAccepted: () => { assertCurrent(); return onInputAccepted?.(); },
+            afterInputAccepted: () => {
+              assertCurrent();
+              expressionTurn.accept();
+              return onInputAccepted?.();
+            },
           });
         } else {
           // Compatibility for older embedders. HanaEngine always takes the guarded path above.
           afterCachePreflight();
           await engine.promptSession(sessionPath, promptText, promptOpts);
+          expressionTurn.accept();
         }
         assertCurrent();
         promptSucceeded = true;

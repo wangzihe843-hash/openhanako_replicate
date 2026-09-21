@@ -263,6 +263,16 @@ function installAudioCaptureMocks() {
   };
 }
 
+function expressionControlsResponse(path: string): Response | null {
+  if (!path.startsWith('/api/sessions/expression-controls?')) return null;
+  return new Response(JSON.stringify({
+    sessionId: new URL(path, 'http://localhost').searchParams.get('sessionId'),
+    agentId: useStore.getState().currentAgentId,
+    presets: {},
+    scene: null,
+  }), { status: 200 });
+}
+
 describe('InputArea media send', () => {
   afterEach(() => {
     cleanup();
@@ -277,7 +287,7 @@ describe('InputArea media send', () => {
       agentId: 'hana',
     });
     seedSession();
-    mocks.hanaFetch.mockResolvedValue(new Response(JSON.stringify({
+    mocks.hanaFetch.mockImplementation(async (path: string) => expressionControlsResponse(path) ?? new Response(JSON.stringify({
       models: {
         vision_enabled: true,
         vision: { id: 'qwen-vl', provider: 'dashscope', input: ['text', 'image'] },
@@ -372,7 +382,7 @@ describe('InputArea media send', () => {
   });
 
   it('keeps the send alive as file-only when the text model has no auxiliary vision (#1647)', async () => {
-    mocks.hanaFetch.mockResolvedValue(new Response(JSON.stringify({
+    mocks.hanaFetch.mockImplementation(async (path: string) => expressionControlsResponse(path) ?? new Response(JSON.stringify({
       models: { vision_enabled: false, vision: null },
     }), { status: 200 }));
 
@@ -419,6 +429,8 @@ describe('InputArea media send', () => {
 
   it('uses the chat-scoped auxiliary vision route for mobile image preflight', async () => {
     mocks.hanaFetch.mockImplementation(async (path: string) => {
+      const controls = expressionControlsResponse(path);
+      if (controls) return controls;
       if (path === '/api/models/auxiliary-vision') {
         return new Response(JSON.stringify({
           auxiliaryVision: {
@@ -567,6 +579,8 @@ describe('InputArea media send', () => {
   it('sends recorded audio immediately after saving the recording', async () => {
     const audioMocks = installAudioCaptureMocks();
     mocks.hanaFetch.mockImplementation(async (path: string) => {
+      const controls = expressionControlsResponse(path);
+      if (controls) return controls;
       if (path === '/api/upload-blob') {
         return new Response(JSON.stringify({
           uploads: [{
@@ -622,7 +636,9 @@ describe('InputArea media send', () => {
       }));
       expect(mocks.wsSend).toHaveBeenCalledTimes(1);
     });
-    const uploadBody = JSON.parse(String(mocks.hanaFetch.mock.calls[0][1]?.body));
+    const uploadCall = mocks.hanaFetch.mock.calls.find(([path]) => path === '/api/upload-blob');
+    expect(uploadCall).toBeDefined();
+    const uploadBody = JSON.parse(String(uploadCall?.[1]?.body));
     expect(uploadBody.waveform).toMatchObject({
       version: 1,
       durationMs: expect.any(Number),
