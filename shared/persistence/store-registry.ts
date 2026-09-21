@@ -500,7 +500,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     firstPossibleWritePhase: "first_run_seed",
     identityContract: "agentId owns the profile; each filename has a fixed semantic role.",
     siteRules: [
-      ...rules(["core/agent-manager.ts"], "Creates, rolls back, or edits agent profile material.", ["write-file", "copy-file", "mkdir", "remove-path"]),
+      ...rules(["core/agent-manager.ts"], "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.", ["write-file", "copy-file", "mkdir", "remove-path"], "^(?!.*xingyeDir)"),
       // Startup pass that moves each agent's persona file from its former name
       // onto AGENTS.md / AGENTS.public.md. It only ever renames within one
       // agent directory, which is why "rename" is the single kind it may use.
@@ -627,7 +627,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
       versionSource: "Pi CURRENT_SESSION_VERSION",
       extensions: ["core/session-jsonl-file.ts repair contract", "core/session-coordinator.ts Hana metadata extensions"],
     },
-    protocolModules: ["core/session-jsonl-file.ts", "core/session-coordinator.ts", "core/desktop-session-submit.ts"],
+    protocolModules: ["core/session-jsonl-file.ts", "core/session-coordinator.ts", "core/desktop-session-submit.ts", "core/xingye-session-greeting.ts"],
     openEntry: ["SessionCoordinator create/restore", "Pi SessionManager"],
     migrationEntry: ["core/session-jsonl-file.ts", "core/migrations.ts session JSONL migrations"],
     compatibility: "The locked Pi package schema/version plus Hana repair and extension readers are canonical; Hana does not duplicate Pi's session schema.",
@@ -784,6 +784,11 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
       "lib/xingye/gift-inventory.ts",
       "lib/xingye/heartbeat-consumer.js",
       "shared/xingye-gift-catalog-data.ts",
+      "shared/xingye-character-card.ts",
+      "lib/character-cards/sillytavern-v2.ts",
+      "desktop/src/react/xingye/lore-studio-session.ts",
+      "desktop/src/react/xingye/lore-studio-types.ts",
+      "desktop/src/react/xingye/rehearsal-workshop-state.ts",
       "shared/xingye-lore-memory-file.js",
       "shared/xingye-profile-file.js",
       "shared/xingye-relationship-preamble.js",
@@ -802,6 +807,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     identityContract: "agentId scopes every relative record path; __user__ and __shared__ are reserved owners. Event/draft IDs, peer IDs, contact profile IDs, and gift catalog keys remain identities inside their respective scopes.",
     compatibility: "This is an additive namespace relative to upstream DATA_EPOCH 1. Existing local files keep their layouts and permissive readers: absent optional fields use defaults, authoritative lore entries (including empty/deletion values) supersede legacy mirrors, and missing gift inventory is distinct from read/parse failure. Registration does not migrate or rewrite data.",
     siteRules: [
+      ...rules(["core/agent-manager.ts"], "Initializes an imported role profile and canonical lore before Agent.init; creation rollback removes the enclosing agent tree.", ["mkdir", "write-file"], "xingyeDir"),
       ...rules(XINGYE_DRAFT_MODULES, "Appends a domain draft JSONL record beneath the owning agent's Xingye tree.", ["mkdir", "append-file"]),
       ...rules(["lib/desk/social-awareness.js"], "Atomically writes the agent's Xingye social peer baseline.", ["mkdir", "write-file", "rename"]),
       ...rules(["lib/xingye/gift-inventory.ts"], "Atomically writes shared gift inventory under agents/__shared__/xingye.", ["mkdir", "write-file", "rename"]),
@@ -1354,6 +1360,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     pathKind: "tree",
     format: "mixed-directory",
     schemaSource: directorySource("lib/character-cards/service.ts", "token-scoped import plan/package and export package protocol"),
+    protocolModules: ["lib/character-cards/sillytavern-v2.ts"],
     openEntry: ["character card upload, import planning, or export"],
     firstPossibleOpenPhase: "runtime_ready",
     firstPossibleWritePhase: "runtime_ready",

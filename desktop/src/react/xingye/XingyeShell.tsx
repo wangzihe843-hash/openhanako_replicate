@@ -75,6 +75,13 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
     setStudioAutoOpenAgentId(agentId);
   };
 
+  const handleChatCreated = (agentId: string) => {
+    // The launcher has already switched to the server-returned path. Do not pick a latest session again.
+    setSelectedXingyeAgentId(agentId);
+    setActiveTabId('chat');
+    setEnterChatError(null);
+    setEnteringAgentId(null);
+  };
   const handleEnterChat = async (agentId: string) => {
     setSelectedXingyeAgentId(agentId);
     setActiveTabId('chat');
@@ -127,6 +134,7 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
               isOpenHanakoCurrent={selectedAgent?.id === currentAgentId}
               onBack={() => setCharacterPanelMode('list')}
               onChat={handleEnterChat}
+              onChatCreated={handleChatCreated}
               onPhone={() => handleNavigate('phone')}
               onOpenAgentStudio={handleOpenAgentStudio}
               autoOpenStudioFor={studioAutoOpenAgentId}

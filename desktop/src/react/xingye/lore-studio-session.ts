@@ -17,12 +17,15 @@ import {
   type StudioPlanTurn,
   type StudioSession,
 } from './lore-studio-types';
-import type { XingyeCorruptionTendency } from './xingye-profile-store';
+import { xingyeProfileConnectionKey, type XingyeCorruptionTendency } from './xingye-profile-store';
+import { normalizeRehearsalDraft } from './rehearsal-workshop-state';
 
 const INSERTION_MODES: XingyeLoreInsertionMode[] = ['always', 'keyword', 'manual'];
 const CORRUPTION_TENDENCIES: XingyeCorruptionTendency[] = ['none', 'latent', 'marked'];
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
+// Keep queued snapshots ordered across close/reopen and both studio surfaces.
+const pendingWrites = new Map<string, Promise<void>>();
 
 const PHASES: StudioPhase[] = ['intro', 'questioning', 'planning', 'done'];
 
@@ -111,6 +114,7 @@ function normalizeSession(raw: unknown, agentId: string): StudioSession {
     phase: PHASES.includes(r.phase as StudioPhase) ? (r.phase as StudioPhase) : 'intro',
     messages: Array.isArray(r.messages) ? (r.messages.filter(isValidMessage) as StudioMessage[]) : [],
     draftPlan: normalizeDraftPlan(r.draftPlan),
+    ...(r.rehearsal ? { rehearsal: normalizeRehearsalDraft(r.rehearsal) } : {}),
     peerContext:
       pc && typeof pc.sourceAgentId === 'string' && typeof pc.sourceName === 'string'
         ? { sourceAgentId: pc.sourceAgentId, sourceName: pc.sourceName }
@@ -126,22 +130,53 @@ export async function loadStudioSession(agentId: string): Promise<StudioSession 
   // 「从未初始化」起一个空会话，用户一编辑就 saveStudioSession 把磁盘上真实存在的 transcript/草案
   // 整表覆写掉（项目硬约束「读失败别吞成空再覆写」，参照 loadHistoryState）。只有**缺文件**时
   // backend.readJson 返回 null —— 那才是安全地起新会话。
+  const connectionKey = xingyeProfileConnectionKey();
+  await pendingWrites.get(`${connectionKey}:${id}`)?.catch(() => undefined);
+  if (xingyeProfileConnectionKey() !== connectionKey) throw new Error('服务器连接已切换，请重新打开工坊。');
   const raw = await backend.readJson<unknown>(id, STUDIO_SESSION_RELATIVE_PATH);
+  if (xingyeProfileConnectionKey() !== connectionKey) throw new Error('服务器连接已切换，请重新打开工坊。');
   if (raw == null) return null;
   return normalizeSession(raw, id);
 }
 
-export async function saveStudioSession(session: StudioSession): Promise<void> {
+export async function saveStudioSession(
+  session: StudioSession,
+  options: { strict?: boolean; expectedConnectionKey?: string } = {},
+): Promise<void> {
   const id = typeof session?.agentId === 'string' ? session.agentId.trim() : '';
-  if (!id || !hasServerConnection(useStore.getState())) return;
-  try {
-    await backend.writeJson(id, STUDIO_SESSION_RELATIVE_PATH, {
-      ...session,
-      version: 1,
-      agentId: id,
-      updatedAt: new Date().toISOString(),
+  if (!id || !hasServerConnection(useStore.getState())) {
+    if (options.strict) throw new Error('存储连接不可用，草稿尚未保存。');
+    return;
+  }
+  const connectionKey = options.expectedConnectionKey ?? xingyeProfileConnectionKey();
+  const queueKey = `${connectionKey}:${id}`;
+  const checkConnection = () => {
+    if (xingyeProfileConnectionKey() !== connectionKey) {
+      throw new Error('服务器连接已切换，草稿保存已停止。');
+    }
+  };
+  const write = async () => {
+    const target = connectionKey
+      ? createAgentXingyeStorageBackend(async body => {
+        checkConnection();
+        const result = await postXingyeStorage(body);
+        checkConnection();
+        return result;
+      }) : backend;
+    checkConnection();
+    await target.writeJson(id, STUDIO_SESSION_RELATIVE_PATH, {
+      ...session, version: 1, agentId: id, updatedAt: new Date().toISOString(),
     });
+    checkConnection();
+  };
+  const pending = (pendingWrites.get(queueKey) ?? Promise.resolve()).catch(() => undefined).then(write);
+  pendingWrites.set(queueKey, pending);
+  try {
+    await pending;
   } catch (err) {
+    if (options.strict) throw err;
     console.warn('[lore-studio-session] save failed:', err);
+  } finally {
+    if (pendingWrites.get(queueKey) === pending) pendingWrites.delete(queueKey);
   }
 }

@@ -1,0 +1,29 @@
+.editor {
+  padding: var(--space-12);
+  background: var(--bg-card);
+  color: var(--text);
+  border-radius: var(--radius-md);
+}
+
+.editor fieldset {
+  display: grid;
+  gap: var(--space-8);
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.editor label,
+.alternate {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.editor textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 6em;
+  resize: vertical;
+  color: var(--text);
+  background: var(--bg);
+}

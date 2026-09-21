@@ -3,6 +3,8 @@ import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 import YAML from "js-yaml";
+import { adaptSillyTavernV2Card, exportSillyTavernV2Card, normalizePackagedXingye } from "./sillytavern-v2.ts";
+import { readXingyeRuntimeLoreEntriesSync } from "../../shared/xingye-runtime-lore-file.js";
 import { extractZip } from "../extract-zip.ts";
 import { FactStore } from "../memory/fact-store.ts";
 import {
@@ -85,10 +87,12 @@ function isStructuredCardPath(filePath) {
 
 function parseStructuredFile(filePath) {
   const raw = fs.readFileSync(filePath, "utf-8");
-  if (path.extname(filePath).toLowerCase() === ".json") {
-    return JSON.parse(raw);
+  try {
+    if (path.extname(filePath).toLowerCase() === ".json") return JSON.parse(raw);
+    return YAML.load(raw);
+  } catch (error) {
+    throw new CharacterCardError(`Invalid character-card document: ${error.message}`);
   }
-  return YAML.load(raw);
 }
 
 function safeResolve(root, relativePath, label = "file") {
@@ -362,6 +366,7 @@ function serializePlan(plan) {
   );
   return {
     token: plan.token,
+    ...(plan.importReport ? { importReport: plan.importReport } : {}),
     mode: plan.mode || "import",
     packageName: plan.packageName,
     agent: agentForPreview,
@@ -631,18 +636,24 @@ export function createCharacterCardService(engine) {
       await extractZip(sourcePath, packageRoot);
       ensureNoSymlinks(packageRoot);
     } else if (isStructuredCardPath(sourcePath)) {
-      fs.copyFileSync(sourcePath, path.join(packageRoot, path.basename(sourcePath)));
+      fs.copyFileSync(sourcePath, path.join(packageRoot, `card${path.extname(sourcePath).toLowerCase()}`));
     } else {
-      throw new CharacterCardError("unsupported character-card package type");
+      throw new CharacterCardError("unsupported character-card package type; use Hana ZIP/JSON/YAML or SillyTavern V2 JSON. PNG/V3 are not supported yet.");
     }
 
-    const { data: card, manifest } = findCardDescriptor(packageRoot);
+    const { data: sourceCard, manifest } = findCardDescriptor(packageRoot);
+    let adapted;
+    try { adapted = adaptSillyTavernV2Card(sourceCard); }
+    catch (error) { throw new CharacterCardError(error.message); }
+    const card = adapted?.card || sourceCard;
     const plan = {
       token,
       packageRoot,
       sourceName: opts.originalName || path.basename(sourcePath),
       packageName: normalizePackageName(card, manifest, opts.originalName || path.basename(sourcePath)),
       agent: normalizeAgent(card),
+      xingye: normalizePackagedXingye(card?.xingye),
+      importReport: adapted?.report,
       prompts: normalizeTextFiles(card),
       memoryFacts: normalizeFacts(card),
       memoryCompiled: normalizeMemoryCompiled(card),
@@ -718,14 +729,36 @@ export function createCharacterCardService(engine) {
     const description = readOptionalDescription(agentDir);
     const memoryFacts = exportMemoryFactsForAgent(agent, agentDir);
     const memoryCompiled = readCompiledMemorySnapshot(path.join(agentDir, "memory"));
+    const readExportJson = (relativePath) => {
+      try { return { exists: true, data: JSON.parse(fs.readFileSync(path.join(agentDir, "xingye", relativePath), "utf-8")) }; }
+      catch (error) {
+        if (error.code === "ENOENT") return { exists: false, data: null };
+        throw new CharacterCardError(`Cannot export unreadable Xingye ${relativePath}: ${error.message}`);
+      }
+    };
+    const profileFile = readExportJson("profile.json");
+    if (profileFile.exists && (!profileFile.data || typeof profileFile.data !== "object" || Array.isArray(profileFile.data))) {
+      throw new CharacterCardError("Cannot export invalid Xingye profile.json");
+    }
+    const loreFile = readExportJson(path.join("lore", "entries.json"));
+    if (loreFile.data !== null && (typeof loreFile.data !== "object" || Array.isArray(loreFile.data))) {
+      throw new CharacterCardError("Cannot export invalid Xingye lore/entries.json");
+    }
+    const lore = loreFile.exists
+      ? Object.values(loreFile.data || {}).filter((entry: { agentId?: string } | null) => entry?.agentId === agentId)
+      : readXingyeRuntimeLoreEntriesSync({ hanakoHome: engine.hanakoHome, agentDir, agentId });
+    const xingye = normalizePackagedXingye({ profile: profileFile.data || (lore.length ? {} : null), lore });
     return {
       agent,
       agentDir,
       config,
+      xingye,
       name,
       yuan,
-      identity,
-      agents,
+      identity: xingye?.profile.characterCardCompatibility
+        ? [xingye.profile.displayName || name, xingye.profile.identitySummary || ""].filter(Boolean).join("\n\n") : identity,
+      agents: xingye?.profile.characterCardCompatibility
+        ? (xingye.profile.personalitySummary ? `Character personality (writing reference only):\n${xingye.profile.personalitySummary}` : "") : agents,
       publicAgents,
       description,
       identitySummary: firstNonEmptyLine(identity),
@@ -867,6 +900,7 @@ export function createCharacterCardService(engine) {
         Object.entries(plan.assets).map(([key, asset]: [string, any]) => [key, asset.rel]),
       ),
     } as Record<string, any>;
+    if (plan.xingye) card.xingye = plan.xingye;
     if (plan.skills.length > 0) {
       card.skills = { bundles: skillBundlesForCard(plan.skills) };
     }
@@ -892,6 +926,7 @@ export function createCharacterCardService(engine) {
     const plan = {
       mode: "export",
       packageRoot,
+      xingye: source.xingye,
       sourceName: exportFileNameForAgent(source.name || agentId),
       packageName: exportFileNameForAgent(source.name || agentId),
       agent: {
@@ -933,6 +968,8 @@ export function createCharacterCardService(engine) {
       writeJsonFile(path.join(plan.packageRoot, "card.json"), buildExportCard(plan, {
         exportMemory: options.exportMemory === true,
       }));
+      const stCard = exportSillyTavernV2Card(plan.xingye?.profile || null, plan.xingye?.lore || [], plan.agent.name);
+      if (stCard) writeJsonFile(path.join(plan.packageRoot, "sillytavern-v2.json"), stCard);
       const fileName = plan.packageName.endsWith(".zip") ? plan.packageName : `${plan.packageName}.zip`;
       const filePath = resolveUniqueExportPath(targetDir, fileName);
       await writeZipFromDirectory(plan.packageRoot, filePath);
@@ -980,6 +1017,7 @@ export function createCharacterCardService(engine) {
       yuan: plan.agent.yuan,
       enabledSkills: installedSkills.map(skill => skill.name),
       initialFiles: plan.prompts,
+      ...(plan.xingye ? { initialXingye: plan.xingye } : {}),
       avatarPath: normalizeAvatarPath(plan),
       initialMemory: shouldImportCompiledMemory
         ? {

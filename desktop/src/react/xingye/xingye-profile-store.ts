@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Agent } from '../types';
+import type { CharacterCardCompatibility } from '../../../../shared/xingye-character-card';
 import { useStore } from '../stores';
 import { hasServerConnection, resolveServerConnection } from '../services/server-connection';
 import { postXingyeStorage } from './xingye-storage-api';
@@ -45,6 +46,8 @@ export const XINGYE_CORRUPTION_TENDENCIES: readonly XingyeCorruptionTendency[] =
 
 export type XingyeRoleProfile = {
   agentId: string;
+  /** Inert ST source metadata, preserved for export; never interpreted as runtime rules. */
+  characterCardCompatibility?: CharacterCardCompatibility;
   displayName?: string;
   shortBio?: string;
   relationshipLabel?: string;
@@ -56,6 +59,10 @@ export type XingyeRoleProfile = {
   values?: string;
   taboos?: string;
   relationshipMode?: string;
+  scenario?: string;
+  firstMessage?: string;
+  alternateGreetings?: string[];
+  messageExample?: string;
   /**
    * 角色性别。仅用于代词约束（不在 UI 上当作"个人信息"展示给用户）。
    * 缺省视为 'unspecified'——不强制代词。
@@ -100,6 +107,10 @@ export type XingyeRoleProfileDisplay = {
   values?: string;
   taboos?: string;
   relationshipMode?: string;
+  scenario?: string;
+  firstMessage?: string;
+  alternateGreetings?: string[];
+  messageExample?: string;
   gender?: XingyeRoleGender;
   corruptionTendency?: XingyeCorruptionTendency;
   corruptionSeed?: number;
@@ -223,6 +234,22 @@ function normalizeProfile(value: unknown, fallbackAgentId?: string): XingyeRoleP
   for (const field of STRING_FIELDS) {
     const normalized = normalizeOptionalString(value[field]);
     if (normalized) profile[field] = normalized;
+  }
+
+  // Empty strings/arrays are explicit clears; never fall back to the imported source.
+  for (const field of ['scenario', 'firstMessage', 'messageExample'] as const) {
+    if (typeof value[field] === 'string') profile[field] = value[field];
+  }
+  if (Array.isArray(value.alternateGreetings)) {
+    profile.alternateGreetings = value.alternateGreetings.filter((item): item is string => typeof item === 'string');
+  }
+  const compatibility = value.characterCardCompatibility;
+  if (isRecord(compatibility) && compatibility.format === 'sillytavern-v2'
+      && isRecord(compatibility.sourceCard) && Array.isArray(compatibility.loreEntryIds)) {
+    profile.characterCardCompatibility = {
+      format: 'sillytavern-v2', sourceCard: compatibility.sourceCard,
+      loreEntryIds: compatibility.loreEntryIds.filter((item): item is string => typeof item === 'string'),
+    };
   }
 
   // gender 是 enum；非法值（含旧数据 / 拼写错误）直接丢弃，回退到 undefined（语义 = unspecified）
@@ -415,6 +442,10 @@ export function getXingyeRoleProfileDisplay(
     values: profile?.values,
     taboos: profile?.taboos,
     relationshipMode: profile?.relationshipMode,
+    scenario: profile?.scenario,
+    firstMessage: profile?.firstMessage,
+    alternateGreetings: profile?.alternateGreetings,
+    messageExample: profile?.messageExample,
     gender: profile?.gender,
     corruptionTendency: profile?.corruptionTendency,
     corruptionSeed: profile?.corruptionSeed,

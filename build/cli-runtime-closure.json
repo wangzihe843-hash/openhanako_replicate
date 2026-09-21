@@ -3749,6 +3749,23 @@
       "reason": "Reached via esbuild source module graph, imported by core/desktop-session-submit.ts (import-statement); server/routes/sessions.ts (import-statement)."
     },
     {
+      "path": "core/xingye-session-greeting.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "core/session-coordinator.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/sessions.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by core/session-coordinator.ts (import-statement); server/routes/sessions.ts (import-statement)."
+    },
+    {
       "path": "core/yuan-registry.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -113753,6 +113770,28 @@
       "reason": "Reached via esbuild source module graph, imported by shared/workspace-persistence-gc.ts (import-statement); core/preferences-manager.ts (import-statement); server/routes/preferences.ts (import-statement)."
     },
     {
+      "path": "shared/xingye-character-card.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "shared/xingye-profile-file.js",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "core/agent.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "core/xingye-session-greeting.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by shared/xingye-profile-file.js (import-statement); core/agent.ts (import-statement); core/xingye-session-greeting.ts (import-statement)."
+    },
+    {
       "path": "shared/xingye-expression-presets.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -113811,9 +113850,14 @@
           "root": "server-bootstrap",
           "from": "core/agent.ts",
           "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "core/agent-manager.ts",
+          "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/agent.ts (import-statement)."
+      "reason": "Reached via esbuild source module graph, imported by core/agent.ts (import-statement); core/agent-manager.ts (import-statement)."
     },
     {
       "path": "shared/xingye-peer-lore.js",
@@ -113865,11 +113909,16 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "server/routes/sessions.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "shared/xingye-phone-context.js",
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by shared/xingye-relationship-preamble.js (import-statement); core/agent.ts (import-statement); shared/xingye-phone-context.js (import-statement)."
+      "reason": "Reached via esbuild source module graph, imported by shared/xingye-relationship-preamble.js (import-statement); core/agent.ts (import-statement); server/routes/sessions.ts (import-statement); +1 more importer(s)."
     },
     {
       "path": "shared/xingye-relationship-preamble.js",
@@ -113924,9 +113973,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 9693,
+    "totalFiles": 9695,
     "byInputType": {
-      "source-graph": 712,
+      "source-graph": 714,
       "runtime-asset": 11,
       "nft-runtime-trace": 8970
     }

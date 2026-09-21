@@ -13,6 +13,7 @@
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { buildCharacterCardContext } from './xingye-character-card.ts';
 
 const VALID_GENDERS = new Set(['female', 'male', 'nonbinary', 'unspecified']);
 const MAX_PHONE_PROFILE_FIELD_CHARS = 360;
@@ -104,7 +105,8 @@ export function buildXingyeAgentPhoneProfileContext({ profile, agentName, locale
   }
   const gender = pickValidGender(profile);
   if (gender) lines.push(`- ${isZh ? '性别' : 'Gender'}: ${gender}`);
-  if (lines.length === 0) return '';
+  const cardContext = buildCharacterCardContext({ profile, character: agentName });
+  if (lines.length === 0 && !cardContext) return '';
 
   const selfName = normalizeProfileText(agentName)
     || (isZh ? '当前角色' : 'the current agent');
@@ -116,9 +118,10 @@ export function buildXingyeAgentPhoneProfileContext({ profile, agentName, locale
     '',
     ...lines,
   ].join('\n');
-  return context.length <= MAX_PHONE_PROFILE_CONTEXT_CHARS
+  const bounded = context.length <= MAX_PHONE_PROFILE_CONTEXT_CHARS
     ? context
     : `${context.slice(0, MAX_PHONE_PROFILE_CONTEXT_CHARS - 1).trimEnd()}…`;
+  return [bounded, cardContext].filter(Boolean).join('\n\n');
 }
 
 /** 动态 Phone prompt 入口。任何缺失 / 损坏都静默返回空串。 */

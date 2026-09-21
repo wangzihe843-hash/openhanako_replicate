@@ -1,0 +1,8 @@
+.panel { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-12); color: var(--text); }
+.panel h4 { margin: 0 0 var(--space-8); }
+.panel p { color: var(--text-light); margin: var(--space-8) 0; }
+.panel label { display: flex; flex-direction: column; gap: var(--space-6); }
+.panel select, .panel button { color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-8); font: inherit; }
+.panel button { margin-top: var(--space-8); cursor: pointer; }
+.panel button:disabled { cursor: default; opacity: .6; }
+.preview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; font: inherit; margin: var(--space-8) 0; }

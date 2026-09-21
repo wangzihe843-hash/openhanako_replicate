@@ -11,6 +11,7 @@
  */
 import type { XingyeLoreCategory, XingyeLoreInsertionMode } from './xingye-lore-store';
 import type { XingyeCorruptionTendency } from './xingye-profile-store';
+import type { RehearsalDraft } from './rehearsal-workshop-state';
 
 /** profile 补丁里允许被模型改动的字段（与 server PROFILE_FIELDS 对齐）。 */
 export const STUDIO_PROFILE_FIELDS = [
@@ -212,6 +213,8 @@ export interface StudioSession {
   messages: StudioMessage[];
   /** 最近一份（含用户编辑的）方案快照，供「确认写入」用。 */
   draftPlan?: StudioPlanTurn | null;
+  /** Isolated rehearsal drafts; never formal chat history. */
+  rehearsal?: RehearsalDraft;
   /** 该角色刚从某源角色分出来时的上下文；首次确认后清空。 */
   peerContext?: StudioPeerContext;
   updatedAt: string;

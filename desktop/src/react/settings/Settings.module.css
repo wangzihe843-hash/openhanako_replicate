@@ -8066,3 +8066,31 @@ a.about-link:hover {
 .settings-toast {
     -webkit-app-region: no-drag;
 }
+
+.character-card-preview-overlay[data-card-report="true"] {
+  align-items: flex-start;
+}
+
+.character-card-import-report {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 80vw;
+  max-height: 36vh;
+  overflow: auto;
+  padding: var(--space-4);
+  background: var(--bg-card);
+  color: var(--text);
+  border-radius: var(--radius-md);
+}
+
+.character-card-import-report h3,
+.character-card-import-report h4,
+.character-card-import-report p,
+.character-card-import-report ul {
+  margin-block: var(--space-2);
+}
+
+.character-card-import-report pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

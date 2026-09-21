@@ -15,6 +15,7 @@ import { createModuleLogger } from "../lib/debug-log.ts";
 import { clearConfigCache } from "../lib/memory/config-loader.ts";
 import { hasCompiledMemory, writeCompiledMemorySnapshot } from "../lib/memory/compiled-memory-snapshot.ts";
 import { t } from "../lib/i18n.ts";
+import { syncXingyeStableLoreMemoryFile } from "../shared/xingye-lore-memory-file.js";
 import { ActivityStore } from "../lib/desk/activity-store.ts";
 import { createHash } from "crypto";
 import { readDirectoryLikeDirentsSync } from "../shared/link-aware-fs.ts";
@@ -626,7 +627,7 @@ export class AgentManager {
     try { await this._d.getChannelManager().cleanupAgentFromChannels(agentId); } catch (error) { reportNonfatalError(`agent creation rollback channel cleanup failed (${agentId})`, error); }
   }
 
-  async createAgent({ name, id, yuan, enabledSkills, initialFiles, avatarPath, initialMemory }) {
+  async createAgent({ name, id, yuan, enabledSkills, initialFiles, avatarPath, initialMemory, initialXingye = null }) {
     if (!name?.trim()) throw new Error(t("error.agentNameEmpty"));
 
     const hasExplicitId = id !== undefined && id !== null;
@@ -753,6 +754,25 @@ export class AgentManager {
           sourceId: initialMemory.sourceId || `agent-create-${agentId}`,
           sourcePackage: initialMemory.sourcePackage || null,
         });
+      } catch (err) {
+        await this._rollbackAgentCreation(agentDir, agentId);
+        throw err;
+      }
+    }
+
+    // Card role state must exist before Agent.init creates prompt/background snapshots.
+    if (initialXingye?.profile) {
+      try {
+        const xingyeDir = path.join(agentDir, "xingye");
+        const now = new Date().toISOString();
+        const profile = { ...initialXingye.profile, agentId, updatedAt: now };
+        const entries = Object.fromEntries((initialXingye.lore || []).map(entry => [entry.id, {
+          ...entry, agentId, createdAt: now, updatedAt: now,
+        }]));
+        fs.mkdirSync(path.join(xingyeDir, "lore"), { recursive: true });
+        fs.writeFileSync(path.join(xingyeDir, "profile.json"), JSON.stringify(profile, null, 2), "utf-8");
+        fs.writeFileSync(path.join(xingyeDir, "lore", "entries.json"), JSON.stringify(entries, null, 2), "utf-8");
+        await syncXingyeStableLoreMemoryFile({ hanakoHome: path.dirname(this._d.agentsDir), agentId, entries });
       } catch (err) {
         await this._rollbackAgentCreation(agentDir, agentId);
         throw err;

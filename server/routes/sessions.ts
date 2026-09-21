@@ -53,6 +53,8 @@ import {
   isDesktopSessionSubmissionPending,
 } from "../../core/desktop-session-submit.ts";
 import { clearXingyeExpressionControls, readXingyeExpressionControls, updateXingyeExpressionControls } from "../../core/xingye-expression-controls.ts";
+import { resolveXingyeSessionGreeting, type InitialXingyeGreeting } from "../../core/xingye-session-greeting.ts";
+import { readXingyeProfileJsonSync } from "../../shared/xingye-profile-file.js";
 import { stripSessionReminderBlocks } from "../../core/session-reminders.ts";
 import { sessionFileRevision } from "../../core/session-list-projection-cache.ts";
 import {
@@ -2143,6 +2145,25 @@ export function createSessionsRoute(engine, hub = null) {
 
       const body = await safeJson(c);
       const { memoryEnabled, agentId, permissionMode, thinkingLevel } = body;
+      let initialXingyeGreeting: InitialXingyeGreeting | null = null;
+      if (Object.prototype.hasOwnProperty.call(body, 'xingyeGreetingIndex')) {
+        const id = typeof agentId === 'string' ? agentId.trim() : '';
+        const owner = id && engine.getAgent?.(id);
+        if (!owner || !id || id.includes('/') || id.includes('\\')) {
+          throw routeError('请选择有效角色后新建开场聊天。', 'xingye_greeting_agent_required', 400);
+        }
+        if (body.workMode === true) throw routeError('工作模式不能使用角色开场白。', 'xingye_greeting_work_mode', 400);
+        const profile = readXingyeProfileJsonSync({ hanakoHome: engine.hanakoHome || path.dirname(engine.agentsDir), agentId: id });
+        initialXingyeGreeting = resolveXingyeSessionGreeting({
+          agentId: id, index: body.xingyeGreetingIndex, expectedText: body.xingyeGreetingExpectedText,
+          profile, character: typeof profile?.displayName === 'string' && profile.displayName ? profile.displayName : owner.agentName || id,
+          user: owner.userName || engine.userName || 'User',
+        });
+        if (typeof body.xingyeGreetingExpectedRenderedText === 'string'
+          && body.xingyeGreetingExpectedRenderedText !== initialXingyeGreeting.text) {
+          throw routeError('角色或用户名称已更新，请重新预览开场白。', 'xingye_greeting_names_changed', 409);
+        }
+      }
       const workspaceSelection = resolveSessionWorkspaceSelection(engine, requestContext, body);
       const cwd = workspaceSelection.cwd;
       const workspaceFolders = Array.isArray(body.workspaceFolders)
@@ -2165,6 +2186,7 @@ export function createSessionsRoute(engine, hub = null) {
         visibleInSessionList: boolean;
         permissionMode: any;
         workMode?: boolean;
+        initialXingyeGreeting?: InitialXingyeGreeting;
         thinkingLevel?: any;
         workspaceMountId?: string;
         workspaceLabel?: string | null;
@@ -2187,6 +2209,7 @@ export function createSessionsRoute(engine, hub = null) {
       if (body.workMode === true) {
         detachedOptions.workMode = true;
       }
+      if (initialXingyeGreeting !== null) detachedOptions.initialXingyeGreeting = initialXingyeGreeting;
       const result = await engine.createDetachedSession(detachedOptions);
       const newSessionPath = result.sessionPath;
       const newAgentId = result.agentId;

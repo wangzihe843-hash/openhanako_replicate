@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:2f9c095557b855487b561bef34df5fe1d769915eca4ceee558380c4d48a8e84e",
+  "payloadFingerprint": "sha256:9e293ad5e59031246ce133a42eb3610a64f6c46b864a8de27a75be9a0c5b0f0c",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -972,7 +972,9 @@
         ".ephemeral/character-card-exports/{token}"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "lib/character-cards/sillytavern-v2.ts"
+      ],
       "restorePolicy": "Discard incomplete tokens and restart import/export from the original package.",
       "schemaContract": {
         "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs.",
@@ -2558,7 +2560,8 @@
       "protocolModules": [
         "core/session-jsonl-file.ts",
         "core/session-coordinator.ts",
-        "core/desktop-session-submit.ts"
+        "core/desktop-session-submit.ts",
+        "core/xingye-session-greeting.ts"
       ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
@@ -3200,6 +3203,11 @@
         "lib/xingye/gift-inventory.ts",
         "lib/xingye/heartbeat-consumer.js",
         "shared/xingye-gift-catalog-data.ts",
+        "shared/xingye-character-card.ts",
+        "lib/character-cards/sillytavern-v2.ts",
+        "desktop/src/react/xingye/lore-studio-session.ts",
+        "desktop/src/react/xingye/lore-studio-types.ts",
+        "desktop/src/react/xingye/rehearsal-workshop-state.ts",
         "shared/xingye-lore-memory-file.js",
         "shared/xingye-profile-file.js",
         "shared/xingye-relationship-preamble.js",
@@ -3226,8 +3234,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "S4/S5/S8/S9 review: only desk-cover-upload-staging sourceHash changes because the heartbeat trigger response now exposes skip reasons in server/routes/desk.ts. Cover upload bounds, temporary-directory lifecycle, persistence formats, SQLite schemas, 62 stores, 866 sites and DATA_EPOCH 1 remain unchanged. See docs/audits/2026-09-21-s4-s5-s8-s9-review.md.",
-    "payloadFingerprint": "sha256:2f9c095557b855487b561bef34df5fe1d769915eca4ceee558380c4d48a8e84e"
+    "compatibilityReason": "Reviewed additive M1/M2 optional Xingye draft/card fields, standard Pi assistant greetings, token-scoped exports and precise writer ownership. The final existing-session guard moves rejection before teardown without changing persisted formats. See docs/audits/2026-09-21-m1-m2-review.md.",
+    "payloadFingerprint": "sha256:9e293ad5e59031246ce133a42eb3610a64f6c46b864a8de27a75be9a0c5b0f0c"
   },
   "schemas": [
     {
@@ -3328,7 +3336,7 @@
       "protocolModules": [
         {
           "module": "core/agent.ts",
-          "sourceHash": "sha256:e9f0f6bef18895822947ebbd37013a45064e01d25d063ca48a9288212393e4ff"
+          "sourceHash": "sha256:72cee20a05e34dfc117294e83c51242d442fea7e8725b7173159ab8b2561475a"
         },
         {
           "module": "core/agents-md-migration.ts",
@@ -3343,7 +3351,7 @@
           "sourceHash": "sha256:65d2a9c931cddced01d501197c4c394dbbde254e1292f64bc33514f5079026ef"
         }
       ],
-      "sourceHash": "sha256:3791218b5d47e78e2f5695b8940330bc37867904e4519f469ea2eb1d2ad81294",
+      "sourceHash": "sha256:c4383799eb291cc42ac1ec62ac23ae5be52e81791c28c4d0a99ec6db7d667e47",
       "storeId": "agent-profile"
     },
     {
@@ -3363,7 +3371,13 @@
       "contract": "token-scoped import plan/package and export package protocol",
       "kind": "directory-contract",
       "module": "lib/character-cards/service.ts",
-      "sourceHash": "sha256:ab318f92c719d4b62e1a4538ebe003ea02f0d3006fc3cfc97945b2f84f1a242c",
+      "protocolModules": [
+        {
+          "module": "lib/character-cards/sillytavern-v2.ts",
+          "sourceHash": "sha256:8b3e3796d920a5942ec835119bc4d2445e5fcbe6046bd360f05ab5f3880ffa05"
+        }
+      ],
+      "sourceHash": "sha256:e81203b6a3cc637e82b4761787e91fa858de389110682cdcf05e0fd22c84ca9a",
       "storeId": "character-card-staging"
     },
     {
@@ -3694,7 +3708,7 @@
         {
           "contract": "core/session-coordinator.ts Hana metadata extensions",
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:de42f2d7983cc0a1eede7c8a7dc41142651483234b637d1834a180883399494f"
+          "sourceHash": "sha256:2756d87ac4dbef529624d926675862afb5112f02739a157172ba8d23cce0bcc9"
         },
         {
           "contract": "core/session-jsonl-file.ts repair contract",
@@ -3714,11 +3728,15 @@
         },
         {
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:de42f2d7983cc0a1eede7c8a7dc41142651483234b637d1834a180883399494f"
+          "sourceHash": "sha256:2756d87ac4dbef529624d926675862afb5112f02739a157172ba8d23cce0bcc9"
         },
         {
           "module": "core/session-jsonl-file.ts",
           "sourceHash": "sha256:6a311935b1a95c7b6af0c3f2980869de4923fdb9b307cecb8475e400b389af12"
+        },
+        {
+          "module": "core/xingye-session-greeting.ts",
+          "sourceHash": "sha256:ac6b573817bb8082c0a6c0239f4e42e28dbf87d98bc1ade0a887e24b76fd928e"
         }
       ],
       "requestedVersion": "0.80.3",
@@ -3913,6 +3931,18 @@
       "module": "server/routes/xingye-storage.js",
       "protocolModules": [
         {
+          "module": "desktop/src/react/xingye/lore-studio-session.ts",
+          "sourceHash": "sha256:8b396232598b311b0d794f1e2db7979af146984b6cc24c40c2896ab8251d1ebe"
+        },
+        {
+          "module": "desktop/src/react/xingye/lore-studio-types.ts",
+          "sourceHash": "sha256:73b3d6bd3d82206bbb1234711ddbfff30ccedda73835cb4e30378fc21b131128"
+        },
+        {
+          "module": "desktop/src/react/xingye/rehearsal-workshop-state.ts",
+          "sourceHash": "sha256:bd319b5e653474789bc0d3f0bb0b583c92e705b01c1badf1633946a539a53056"
+        },
+        {
           "module": "desktop/src/react/xingye/xingye-event-log.ts",
           "sourceHash": "sha256:f3fc920e73c481721007a0e10c33d0af67aa2f588c7d0ece04320a3b05cd8942"
         },
@@ -3926,7 +3956,7 @@
         },
         {
           "module": "desktop/src/react/xingye/xingye-profile-store.ts",
-          "sourceHash": "sha256:03d7a69f819806ac862f77b68deb431607af640cd0527dc5d019aef391f5fbf0"
+          "sourceHash": "sha256:c921116325f956a4152f4fdb5f94708e18181cfd975e6c7e359c656060a24e68"
         },
         {
           "module": "desktop/src/react/xingye/xingye-state-store.ts",
@@ -3935,6 +3965,10 @@
         {
           "module": "desktop/src/react/xingye/xingye-storage-backend.ts",
           "sourceHash": "sha256:4c8a3c4ac23af2e0245bf4980979b9f44ea5db59689dfa4253da1f4d396820df"
+        },
+        {
+          "module": "lib/character-cards/sillytavern-v2.ts",
+          "sourceHash": "sha256:8b3e3796d920a5942ec835119bc4d2445e5fcbe6046bd360f05ab5f3880ffa05"
         },
         {
           "module": "lib/desk/social-awareness.js",
@@ -4025,6 +4059,10 @@
           "sourceHash": "sha256:947467304b4399d7a71f979d25884e8e7f3386618c3e3823a69b52acb7c84eb0"
         },
         {
+          "module": "shared/xingye-character-card.ts",
+          "sourceHash": "sha256:c4f9b354f0349ed340057cb2065735a7ad5ed1e7004fee355276618e1f2dbe8e"
+        },
+        {
           "module": "shared/xingye-gift-catalog-data.ts",
           "sourceHash": "sha256:a0ed13d81532d2936622429e4fb3febfb9a3f3092807da6191bf1014a735027e"
         },
@@ -4034,7 +4072,7 @@
         },
         {
           "module": "shared/xingye-profile-file.js",
-          "sourceHash": "sha256:12871300d653446a89ae556ee020236e24f3e995b0c5023d1133b3aab53baed3"
+          "sourceHash": "sha256:524ed5a8fe1812127919a04b81a3f42720a20c0e428573ad733317d2ed76d07f"
         },
         {
           "module": "shared/xingye-relationship-preamble.js",
@@ -4054,7 +4092,7 @@
       "exemptionId": null,
       "kind": "copy-file",
       "ordinal": 0,
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "sourceFile": "core/agent-manager.ts",
       "storeId": "agent-profile"
     },
@@ -4062,7 +4100,7 @@
       "exemptionId": null,
       "kind": "copy-file",
       "ordinal": 0,
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "sourceFile": "core/agent-manager.ts",
       "storeId": "agent-profile"
     },
@@ -4070,7 +4108,7 @@
       "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "sourceFile": "core/agent-manager.ts",
       "storeId": "agent-profile"
     },
@@ -4078,7 +4116,7 @@
       "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "sourceFile": "core/agent-manager.ts",
       "storeId": "agent-profile"
     },
@@ -4086,7 +4124,7 @@
       "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "sourceFile": "core/agent-manager.ts",
       "storeId": "agent-profile"
     },
@@ -4094,9 +4132,17 @@
       "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "sourceFile": "core/agent-manager.ts",
       "storeId": "agent-profile"
+    },
+    {
+      "exemptionId": null,
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Initializes an imported role profile and canonical lore before Agent.init; creation rollback removes the enclosing agent tree.",
+      "sourceFile": "core/agent-manager.ts",
+      "storeId": "xingye-state"
     },
     {
       "exemptionId": null,
@@ -4110,7 +4156,7 @@
       "exemptionId": null,
       "kind": "remove-path",
       "ordinal": 0,
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "sourceFile": "core/agent-manager.ts",
       "storeId": "agent-profile"
     },
@@ -4118,7 +4164,7 @@
       "exemptionId": null,
       "kind": "write-file",
       "ordinal": 0,
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "sourceFile": "core/agent-manager.ts",
       "storeId": "agent-profile"
     },
@@ -4126,7 +4172,7 @@
       "exemptionId": null,
       "kind": "write-file",
       "ordinal": 0,
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "sourceFile": "core/agent-manager.ts",
       "storeId": "agent-profile"
     },
@@ -4134,7 +4180,7 @@
       "exemptionId": null,
       "kind": "write-file",
       "ordinal": 0,
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "sourceFile": "core/agent-manager.ts",
       "storeId": "agent-profile"
     },
@@ -4142,7 +4188,7 @@
       "exemptionId": null,
       "kind": "write-file",
       "ordinal": 0,
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "sourceFile": "core/agent-manager.ts",
       "storeId": "agent-profile"
     },
@@ -4150,7 +4196,23 @@
       "exemptionId": null,
       "kind": "write-file",
       "ordinal": 0,
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Initializes an imported role profile and canonical lore before Agent.init; creation rollback removes the enclosing agent tree.",
+      "sourceFile": "core/agent-manager.ts",
+      "storeId": "xingye-state"
+    },
+    {
+      "exemptionId": null,
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Initializes an imported role profile and canonical lore before Agent.init; creation rollback removes the enclosing agent tree.",
+      "sourceFile": "core/agent-manager.ts",
+      "storeId": "xingye-state"
+    },
+    {
+      "exemptionId": null,
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "sourceFile": "core/agent-manager.ts",
       "storeId": "agent-profile"
     },
@@ -7049,6 +7111,14 @@
       "reason": "Owns the common channel/DM message writer and agent/user channel bookmarks.",
       "sourceFile": "lib/channels/channel-store.ts",
       "storeId": "channels"
+    },
+    {
+      "exemptionId": null,
+      "kind": "atomic-write",
+      "ordinal": 0,
+      "reason": "Writes or removes a token-scoped character-card import/export plan or package.",
+      "sourceFile": "lib/character-cards/service.ts",
+      "storeId": "character-card-staging"
     },
     {
       "exemptionId": null,

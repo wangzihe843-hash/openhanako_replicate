@@ -491,6 +491,141 @@ describe("SessionCoordinator", () => {
     expect(order).toEqual(["prompt", "create", "refresh"]);
   });
 
+  it.each(["hello", ""])("seeds explicit greeting %s before publication without refreshing appearance", async (text) => {
+    const order: string[] = [];
+    const persisted: unknown[] = [];
+    let branchHead: { leafId: string | null; observedTailLeafId: string | null } | null = null;
+    const manifestStore = {
+      ...createTestSessionManifestStore(),
+      getBranchHead: () => branchHead,
+      setBranchHead: (_id, head) => { branchHead = head; return head; },
+    };
+    const agent = {
+      sessionDir: "/tmp/agent-sessions",
+      memoryMasterEnabled: true,
+      sessionMemoryEnabled: true,
+      setMemoryEnabled: vi.fn(),
+      refreshAppearanceSummary: vi.fn(async () => {
+        order.push("refresh");
+        return "你的形象安静而专注。";
+      }),
+      buildSystemPrompt: vi.fn(() => {
+        order.push("prompt");
+        return "BASE";
+      }),
+    };
+
+    createAgentSessionMock.mockImplementationOnce(async (opts) => {
+      order.push("create");
+      return {
+        session: {
+          agent: { state: { messages: [] } },
+          sessionManager: {
+            getSessionFile: () => "/tmp/session.jsonl",
+            buildSessionContext: () => ({ messages: persisted }),
+            getEntries: () => persisted.map(message => ({ id: "greeting", parentId: null, type: "message", message })),
+            getLeafId: () => persisted.length ? "greeting" : null,
+            getEntry: id => persisted.length && id === "greeting" ? { id } : null,
+            appendMessage: (message) => { persisted.push(message); return "greeting"; },
+          },
+          prompt: vi.fn(),
+          subscribe: vi.fn(() => vi.fn()),
+          setActiveToolsByName: vi.fn(),
+          model: opts.model,
+        },
+      };
+    });
+
+    const model = { id: "vision-chat", provider: "test", input: ["text", "image"] };
+    const coordinator = new SessionCoordinator({
+      agentsDir: "/tmp/agents",
+      sessionManifestStore: manifestStore,
+      getAgent: () => agent,
+      getActiveAgentId: () => "hana",
+      getModels: () => ({
+        currentModel: model,
+        availableModels: [model],
+        authStorage: {},
+        modelRegistry: {},
+        resolveThinkingLevel: () => "medium",
+      }),
+      getResourceLoader: () => ({
+        getSystemPrompt: () => "BASE",
+        getAppendSystemPrompt: () => [],
+        getExtensions: () => ({ extensions: [], errors: [] }),
+        getSkills: () => ({ skills: [], diagnostics: [] }),
+        getAgentsFiles: () => ({ agentsFiles: [] }),
+      }),
+      getSkills: () => null,
+      buildTools: () => ({ tools: [], customTools: [] }),
+      emitEvent: vi.fn(),
+      getHomeCwd: () => "/tmp/home",
+      agentIdFromSessionPath: () => "hana",
+      switchAgentOnly: async () => {},
+      getConfig: () => ({}),
+      getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(),
+      getActivityStore: () => null,
+      getAgentById: () => agent,
+      listAgents: () => [],
+    });
+
+    const result = await coordinator.createDetachedSession({ cwd: "/tmp/workspace", agentId: "hana", initialXingyeGreeting: { agentId: "hana", text } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(agent.refreshAppearanceSummary).not.toHaveBeenCalled();
+    expect(result.session.prompt).not.toHaveBeenCalled();
+    expect(result.session.agent.state.messages).toEqual(persisted);
+    expect(persisted).toHaveLength(text ? 1 : 0);
+    expect(order).toEqual(["prompt", "create"]);
+    expect(branchHead).toMatchObject({ leafId: text ? "greeting" : null, observedTailLeafId: text ? "greeting" : null });
+    expect(coordinator.getSessionByPath(result.sessionPath)).toBe(result.session);
+  });
+
+  it("rejects initial greetings on restores or supplied managers before creating a runtime", async () => {
+    const coordinator = Object.create(SessionCoordinator.prototype);
+    await expect(coordinator._createSessionRuntime(null, undefined, true, null, {
+      restore: true, initialXingyeGreeting: { agentId: "hana", text: "hello" },
+    })).rejects.toMatchObject({ code: "xingye_greeting_requires_new_session" });
+    await expect(coordinator._createSessionRuntime({}, undefined, true, null, {
+      initialXingyeGreeting: { agentId: "hana", text: "hello" },
+    })).rejects.toMatchObject({ code: "xingye_greeting_requires_new_session" });
+    expect(createAgentSessionMock).not.toHaveBeenCalled();
+  });
+  it("rejects a greeting on an existing manager before touching its runtime or foreground choices", async () => {
+    const coordinator = Object.create(SessionCoordinator.prototype);
+    const sessionPath = path.join(tempDir, "agents", "hana", "sessions", "existing.jsonl");
+    const sessionMgr = { getSessionFile: () => sessionPath };
+    const existingSession = { sessionManager: sessionMgr, isStreaming: false };
+    const existingEntry = { session: existingSession, sessionPath, agentId: "hana", _switching: false };
+    const selectedModel = { id: "chosen-model", provider: "test" };
+    coordinator._sessions = new Map([[sessionPath, existingEntry]]);
+    coordinator._session = existingSession;
+    coordinator._currentSessionPath = sessionPath;
+    coordinator._focusVersion = 7;
+    coordinator._pendingModel = selectedModel;
+    coordinator._pendingPermissionMode = "read_only";
+    coordinator._getSessionEntryByPath = vi.fn(() => existingEntry);
+    coordinator._teardownSessionEntry = vi.fn();
+    coordinator._createSessionRuntime = vi.fn();
+    coordinator._focusSession = vi.fn();
+
+    await expect(coordinator.createSession(sessionMgr, tempDir, true, null, {
+      initialXingyeGreeting: { agentId: "hana", text: "hello" },
+    })).rejects.toMatchObject({ code: "xingye_greeting_requires_new_session", status: 409 });
+
+    expect(coordinator._sessions.get(sessionPath)).toBe(existingEntry);
+    expect(existingEntry._switching).toBe(false);
+    expect(coordinator._session).toBe(existingSession);
+    expect(coordinator._currentSessionPath).toBe(sessionPath);
+    expect(coordinator._focusVersion).toBe(7);
+    expect(coordinator._pendingModel).toBe(selectedModel);
+    expect(coordinator._pendingPermissionMode).toBe("read_only");
+    expect(coordinator._getSessionEntryByPath).not.toHaveBeenCalled();
+    expect(coordinator._teardownSessionEntry).not.toHaveBeenCalled();
+    expect(coordinator._createSessionRuntime).not.toHaveBeenCalled();
+    expect(coordinator._focusSession).not.toHaveBeenCalled();
+  });
   it("keeps different cached session memory flags without mutating the agent session flag on switch", async () => {
     const agentDir = path.join(tempDir, "agents", "hana");
     const sessionDir = path.join(agentDir, "sessions");

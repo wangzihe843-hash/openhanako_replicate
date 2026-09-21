@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { CharacterCardImportReport } from '../../../../../shared/xingye-character-card';
 import { createPortal } from 'react-dom';
 import { hanaUrl } from '../api';
 import { t } from '../helpers';
@@ -7,6 +8,7 @@ import styles from '../Settings.module.css';
 
 export type CharacterCardPlan = {
   token?: string;
+  importReport?: CharacterCardImportReport;
   agentId?: string;
   mode?: 'import' | 'export';
   packageName: string;
@@ -97,7 +99,7 @@ export function CharacterCardPreviewOverlay({
   const yuanIconUrl = assetUrl('yuanIcon') || backUrl;
 
   const overlay = (
-    <div className={styles['character-card-preview-overlay']} data-yuan={yuanKey} role="dialog" aria-modal="true">
+    <div className={styles['character-card-preview-overlay']} data-yuan={yuanKey} data-card-report={plan.importReport ? "true" : undefined} role="dialog" aria-modal="true">
       {detailOpen ? (
         <section className={styles['character-card-detail-panel']}>
           <button
@@ -235,6 +237,24 @@ export function CharacterCardPreviewOverlay({
               {backUrl ? <img src={backUrl} draggable={false} /> : <span>{plan.agent.yuan}</span>}
             </article>
           </div>
+          {plan.importReport && (
+            <section aria-label="角色卡导入兼容报告" className={styles['character-card-import-report']}>
+              <h3>SillyTavern V2 JSON · 字段子集</h3>
+              <p>导入为新角色；原角色和聊天不受影响。开场需要在角色详情页选择后开始新聊天。</p>
+              {([
+                ['mapped', '将映射并生效'],
+                ['retained', '仅保留，未生效'],
+                ['manual', '需人工处理'],
+              ] as const).map(([key, title]) => (
+                <div key={key}>
+                  <h4>{title}</h4>
+                  <ul>{plan.importReport?.[key].map((item, index) => <li key={`${key}-${index}`}>{item}</li>)}</ul>
+                  {plan.importReport?.[key].length === 0 && <p>无</p>}
+                </div>
+              ))}
+              {plan.importReport.creatorNotes && <div><h4>作者说明（不进入提示）</h4><pre>{plan.importReport.creatorNotes}</pre></div>}
+            </section>
+          )}
           <div className={styles['character-card-preview-actions']}>
             <button
               className={styles['character-card-primary-action']}

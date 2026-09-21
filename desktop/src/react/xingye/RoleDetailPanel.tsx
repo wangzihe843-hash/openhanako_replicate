@@ -26,6 +26,9 @@ import {
   type RelationshipInitProfile,
 } from './xingye-state-store';
 import { LoreStudioDrawer } from './LoreStudioDrawer';
+import { RehearsalWorkshop } from './RehearsalWorkshop';
+import { XingyeGreetingLauncher } from './XingyeGreetingLauncher';
+import { XingyeCharacterCardEditor } from './XingyeCharacterCardEditor';
 import type { StudioAppliedResult } from './lore-studio-types';
 import { BackgroundPicker } from './BackgroundPicker';
 import { LoreEditor } from './LoreEditor';
@@ -37,6 +40,8 @@ interface RoleDetailPanelProps {
   isOpenHanakoCurrent: boolean;
   onBack: () => void;
   onChat: (agentId: string) => void;
+  /** The launcher already activated the exact newly created session. Navigate only. */
+  onChatCreated?: (agentId: string) => void;
   onPhone: () => void;
   /** Phase 2：工坊批量生成 peer 角色后请求跳转到某个新角色（由 shell 选中并展开其工坊）。 */
   onOpenAgentStudio?: (agentId: string) => void;
@@ -66,6 +71,7 @@ function OwnedRoleDetailPanel({
   isOpenHanakoCurrent,
   onBack,
   onChat,
+  onChatCreated,
   onPhone,
   onOpenAgentStudio,
   autoOpenStudioFor,
@@ -124,6 +130,7 @@ function OwnedRoleDetailPanel({
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   /** 设定工坊抽屉开关 + 写入后的状态条文案。 */
   const [studioOpen, setStudioOpen] = useState(false);
+  const [rehearsalOpen, setRehearsalOpen] = useState(false);
   const [studioStatus, setStudioStatus] = useState<string | null>(null);
   /** 勾选后同步时用 PUT /api/agents/:id/config 写入 agent.name（与设置页助手名一致）；默认不勾选避免误改 OpenHanako 名称。 */
   const [syncOpenHanakoAgentName, setSyncOpenHanakoAgentName] = useState(false);
@@ -880,6 +887,9 @@ function OwnedRoleDetailPanel({
               >
                 AI 整理设定
               </button>
+              <button type="button" className={styles.secondaryButton} disabled={profileLoading || !!profileLoadError} onClick={() => setRehearsalOpen(true)}>
+                试演与开场白工坊
+              </button>
               {studioStatus && <span className={styles.saveStatus}>{studioStatus}</span>}
             </div>
             <p className={styles.loreHint}>
@@ -1063,6 +1073,19 @@ function OwnedRoleDetailPanel({
         {syncState === 'error' && <span className={styles.syncError}>更新失败: {syncError}</span>}
       </div>
 
+      {!profileLoading && !profileLoadError && <XingyeCharacterCardEditor key={agent.id} agentId={agent.id} profile={profile} />}
+      {!profileLoading && !profileLoadError && <XingyeGreetingLauncher agentId={agent.id} profile={profile} onCreated={() => (onChatCreated ?? onChat)(agent.id)} />}
+      {rehearsalOpen && <RehearsalWorkshop
+        agentId={agent.id}
+        profile={{ ...profile, displayName, relationshipLabel, shortBio, identitySummary, backgroundSummary, personalitySummary, behaviorLogic, values, taboos, relationshipMode, speakingStyle }}
+        onClose={() => setRehearsalOpen(false)}
+        onAdopted={(patch) => {
+          const setters = { shortBio: setShortBio, identitySummary: setIdentitySummary, backgroundSummary: setBackgroundSummary, personalitySummary: setPersonalitySummary, behaviorLogic: setBehaviorLogic, values: setValues, taboos: setTaboos, relationshipMode: setRelationshipMode, speakingStyle: setSpeakingStyle };
+          for (const field of Object.keys(setters) as (keyof typeof setters)[]) {
+            if (typeof patch[field] === 'string') setters[field](patch[field]);
+          }
+        }}
+      />}
       <LoreStudioDrawer
         agent={agent}
         open={studioOpen}

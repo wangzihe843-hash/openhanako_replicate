@@ -55,7 +55,8 @@ import { runCompatChecks } from "../lib/compat/index.ts";
 import { getPlatformPromptNote } from "./platform-prompt.ts";
 import { readCompactPeerPersona } from "../lib/desk/peer-persona.js";
 import { readXingyeStableLoreMemoryForPromptSync } from "../shared/xingye-lore-memory-file.js";
-import { readXingyeAgentGenderPreambleSync } from "../shared/xingye-profile-file.js";
+import { readXingyeAgentGenderPreambleSync, readXingyeProfileJsonSync } from "../shared/xingye-profile-file.js";
+import { buildCharacterCardContext } from "../shared/xingye-character-card.ts";
 import { readXingyeAgentRelationshipPreambleSync } from "../shared/xingye-relationship-preamble.js";
 import { buildXingyeRuntimeLoreContext } from "../shared/xingye-lore-context.js";
 import { readXingyeRuntimeLoreEntriesSync } from "../shared/xingye-runtime-lore-file.js";
@@ -1676,6 +1677,19 @@ export class Agent implements RuntimeAgentIdentity {
         }
       } catch (error) {
         moduleLog.warn(`[xingye] skip relationship preamble: ${error?.message || error}`);
+      }
+
+      try {
+        const cardContext = buildCharacterCardContext({
+          profile: readXingyeProfileJsonSync({
+            hanakoHome: path.dirname(path.dirname(this.agentDir)), agentId: this.id,
+          }),
+          character: this.agentName,
+          user: this.userName,
+        });
+        if (cardContext) parts.push(cardContext);
+      } catch (error) {
+        moduleLog.warn(`[xingye] skip character card context: ${error?.message || error}`);
       }
 
       try {

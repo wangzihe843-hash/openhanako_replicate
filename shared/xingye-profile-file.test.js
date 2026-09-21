@@ -175,6 +175,16 @@ describe('readXingyeAgentGenderPreambleSync (integration)', () => {
 });
 
 describe('Agent Phone dynamic profile context', () => {
+  it('injects bounded current card scene/examples without archived metadata or greetings', async () => {
+    await writeProfile('card-role', { scenario: '{{char}} meets the moon', messageExample: '{{char}}: Sample', firstMessage: 'GREETING_NOT_HISTORY', characterCardCompatibility: { sourceCard: { data: { system_prompt: 'INERT_CONTROL', creator_notes: 'INERT_NOTES' } } } });
+    const read = () => readXingyeAgentPhoneProfileContextSync({ hanakoHome: tempRoot, agentId: 'card-role', agentName: 'Luna', locale: 'en' });
+    expect(read()).toContain('Luna meets the moon');
+    expect(read()).toContain('Luna: Sample');
+    expect(read()).not.toMatch(/INERT_|GREETING_NOT_HISTORY/);
+    await writeProfile('card-role', { scenario: '', messageExample: '' });
+    expect(read()).not.toContain('meets the moon');
+  });
+
   it('includes the full narrative profile and excludes operational/media fields', () => {
     const out = buildXingyeAgentPhoneProfileContext({
       profile: {

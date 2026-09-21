@@ -349,7 +349,9 @@
         "character card upload, import planning, or export"
       ],
       "migrationEntry": [],
-      "protocolModules": [],
+      "protocolModules": [
+        "lib/character-cards/sillytavern-v2.ts"
+      ],
       "firstPossibleOpenPhase": "runtime_ready",
       "firstPossibleWritePhase": "runtime_ready",
       "epochPolicy": "regenerable",
@@ -1940,7 +1942,8 @@
       "protocolModules": [
         "core/session-jsonl-file.ts",
         "core/session-coordinator.ts",
-        "core/desktop-session-submit.ts"
+        "core/desktop-session-submit.ts",
+        "core/xingye-session-greeting.ts"
       ],
       "firstPossibleOpenPhase": "engine_construct",
       "firstPossibleWritePhase": "runtime_ready",
@@ -2577,6 +2580,11 @@
         "lib/xingye/gift-inventory.ts",
         "lib/xingye/heartbeat-consumer.js",
         "shared/xingye-gift-catalog-data.ts",
+        "shared/xingye-character-card.ts",
+        "lib/character-cards/sillytavern-v2.ts",
+        "desktop/src/react/xingye/lore-studio-session.ts",
+        "desktop/src/react/xingye/lore-studio-types.ts",
+        "desktop/src/react/xingye/rehearsal-workshop-state.ts",
         "shared/xingye-lore-memory-file.js",
         "shared/xingye-profile-file.js",
         "shared/xingye-relationship-preamble.js",
@@ -2605,7 +2613,7 @@
       "sourceFile": "core/agent-manager.ts",
       "kind": "copy-file",
       "excerpt": "fs.copyFileSync(avatarPath, path.join(agentDir, \"avatars\", `agent${avatarExt}`))",
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
@@ -2614,7 +2622,7 @@
       "sourceFile": "core/agent-manager.ts",
       "kind": "copy-file",
       "excerpt": "fs.copyFileSync(publicAgentsSrc, path.join(agentDir, PUBLIC_PERSONA_FILE_NAME))",
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
@@ -2623,7 +2631,7 @@
       "sourceFile": "core/agent-manager.ts",
       "kind": "mkdir",
       "excerpt": "fs.mkdirSync(agentDir, { recursive: true })",
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
@@ -2632,7 +2640,7 @@
       "sourceFile": "core/agent-manager.ts",
       "kind": "mkdir",
       "excerpt": "fs.mkdirSync(path.join(agentDir, \"avatars\"), { recursive: true })",
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
@@ -2641,7 +2649,7 @@
       "sourceFile": "core/agent-manager.ts",
       "kind": "mkdir",
       "excerpt": "fs.mkdirSync(path.join(agentDir, \"memory\"), { recursive: true })",
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
@@ -2650,8 +2658,17 @@
       "sourceFile": "core/agent-manager.ts",
       "kind": "mkdir",
       "excerpt": "fs.mkdirSync(path.join(agentDir, \"sessions\"), { recursive: true })",
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "storeId": "agent-profile",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "core/agent-manager.ts",
+      "kind": "mkdir",
+      "excerpt": "fs.mkdirSync(path.join(xingyeDir, \"lore\"), { recursive: true })",
+      "reason": "Initializes an imported role profile and canonical lore before Agent.init; creation rollback removes the enclosing agent tree.",
+      "storeId": "xingye-state",
       "exemptionId": null,
       "ordinal": 0
     },
@@ -2668,7 +2685,7 @@
       "sourceFile": "core/agent-manager.ts",
       "kind": "remove-path",
       "excerpt": "fs.rmSync(agentDir, { recursive: true, force: true })",
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
@@ -2677,7 +2694,7 @@
       "sourceFile": "core/agent-manager.ts",
       "kind": "write-file",
       "excerpt": "fs.writeFileSync( path.join(agentDir, \"config.yaml\"), YAML.dump(config, { indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' }), \"utf-8\", )",
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
@@ -2686,7 +2703,7 @@
       "sourceFile": "core/agent-manager.ts",
       "kind": "write-file",
       "excerpt": "fs.writeFileSync(descPath, `<!-- sourceHash: ${hash} -->\\n${desc}`, \"utf-8\")",
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
@@ -2695,7 +2712,7 @@
       "sourceFile": "core/agent-manager.ts",
       "kind": "write-file",
       "excerpt": "fs.writeFileSync(p, '', 'utf-8')",
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
@@ -2704,7 +2721,7 @@
       "sourceFile": "core/agent-manager.ts",
       "kind": "write-file",
       "excerpt": "fs.writeFileSync(path.join(agentDir, fileName), personaFiles[key], \"utf-8\")",
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
@@ -2712,8 +2729,26 @@
     {
       "sourceFile": "core/agent-manager.ts",
       "kind": "write-file",
+      "excerpt": "fs.writeFileSync(path.join(xingyeDir, \"lore\", \"entries.json\"), JSON.stringify(entries, null, 2), \"utf-8\")",
+      "reason": "Initializes an imported role profile and canonical lore before Agent.init; creation rollback removes the enclosing agent tree.",
+      "storeId": "xingye-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "core/agent-manager.ts",
+      "kind": "write-file",
+      "excerpt": "fs.writeFileSync(path.join(xingyeDir, \"profile.json\"), JSON.stringify(profile, null, 2), \"utf-8\")",
+      "reason": "Initializes an imported role profile and canonical lore before Agent.init; creation rollback removes the enclosing agent tree.",
+      "storeId": "xingye-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "core/agent-manager.ts",
+      "kind": "write-file",
       "excerpt": "fsp.writeFile( this._deletedAgentTombstonePath(agentId), JSON.stringify(tombstone, null, 2), \"utf-8\", )",
-      "reason": "Creates, rolls back, or edits agent profile material.",
+      "reason": "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.",
       "storeId": "agent-profile",
       "exemptionId": null,
       "ordinal": 0
@@ -5987,6 +6022,15 @@
     },
     {
       "sourceFile": "lib/character-cards/service.ts",
+      "kind": "atomic-write",
+      "excerpt": "writeJsonFile(path.join(plan.packageRoot, \"sillytavern-v2.json\"), stCard)",
+      "reason": "Writes or removes a token-scoped character-card import/export plan or package.",
+      "storeId": "character-card-staging",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/character-cards/service.ts",
       "kind": "copy-file",
       "excerpt": "fs.copyFileSync(sourcePath, dst)",
       "reason": "The file-local copy helper is flow-dependent: callers target either token-scoped card staging or an explicitly registered skill destination.",
@@ -5997,7 +6041,7 @@
     {
       "sourceFile": "lib/character-cards/service.ts",
       "kind": "copy-file",
-      "excerpt": "fs.copyFileSync(sourcePath, path.join(packageRoot, path.basename(sourcePath)))",
+      "excerpt": "fs.copyFileSync(sourcePath, path.join(packageRoot, `card${path.extname(sourcePath).toLowerCase()}`))",
       "reason": "Writes or removes a token-scoped character-card import/export plan or package.",
       "storeId": "character-card-staging",
       "exemptionId": null,

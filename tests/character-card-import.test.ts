@@ -548,6 +548,70 @@ describe("character-card import service", () => {
     expect(fs.existsSync(path.join(outDir, "assets/card-back.png"))).toBe(true);
   });
 
+  it("imports arbitrarily named ST JSON and exports current profile/lore with inert metadata intact", async () => {
+    const cardPath = path.join(tempDir, 'my-luna-download.json');
+    writeJson(cardPath, {
+      spec: 'chara_card_v2', spec_version: '2.0', vendorTopLevel: { keep: true },
+      data: { name: 'Luna', description: 'Old identity', personality: 'Old personality', scenario: 'Old scene', first_mes: 'Old greeting', alternate_greetings: ['Other'], mes_example: 'Old sample', extensions: { opaque: ['keep'] }, creator_notes: 'Read me',
+        system_prompt: 'DO NOT ACTIVATE', character_book: { extensions: {}, entries: [{ keys: ['stars'], content: 'Old lore', enabled: true, insertion_order: 1, extensions: {} }] } },
+    });
+    const service = createCharacterCardService(engine);
+    const preview = await service.createImportPlanFromPath(cardPath);
+    expect(preview.importReport).toMatchObject({ format: 'sillytavern-v2', creatorNotes: 'Read me' });
+    expect(preview.prompts.identity).toBe('Luna\n\nOld identity');
+    engine.createAgent.mockImplementationOnce(async (options) => ({ id: 'luna', name: options.name }));
+    await service.commitImportPlan(preview.token);
+    const args = engine.createAgent.mock.calls.at(-1)[0];
+    expect(args.initialXingye.profile).toMatchObject({ scenario: 'Old scene', firstMessage: 'Old greeting' });
+    expect(args.enabledSkills).toEqual([]);
+    expect(JSON.stringify(args.initialFiles)).not.toContain('DO NOT ACTIVATE');
+
+    const agentDir = path.join(agentsDir, 'luna');
+    fs.mkdirSync(path.join(agentDir, 'xingye', 'lore'), { recursive: true });
+    fs.mkdirSync(path.join(agentDir, 'memory'), { recursive: true });
+    fs.writeFileSync(path.join(agentDir, 'config.yaml'), 'agent:\n  name: Luna\n  yuan: hanako\n');
+    fs.writeFileSync(path.join(agentDir, 'identity.md'), 'Old identity');
+    fs.writeFileSync(path.join(agentDir, 'AGENTS.md'), 'Old personality');
+    writeJson(path.join(agentDir, 'xingye', 'profile.json'), { ...args.initialXingye.profile, agentId: 'luna', identitySummary: 'Edited identity', personalitySummary: '', scenario: '', firstMessage: '', alternateGreetings: [], messageExample: '' });
+    writeJson(path.join(agentDir, 'xingye', 'lore', 'entries.json'), {});
+    engine.getAgent = vi.fn(() => ({ agentDir, factStore: { exportAll: () => [] } }));
+    // A fresh service reads current disk state, not the old import plan or in-memory adapter.
+    const exported = await createCharacterCardService(engine).exportAgentPackage('luna', { targetDir: tempDir });
+    const out = path.join(tempDir, 'st-export');
+    fs.mkdirSync(out);
+    await extractZip(exported.filePath, out);
+    const st = JSON.parse(fs.readFileSync(path.join(out, 'sillytavern-v2.json'), 'utf-8'));
+    expect(st).toMatchObject({ vendorTopLevel: { keep: true }, data: { description: 'Edited identity', personality: '', scenario: '', first_mes: '', alternate_greetings: [], mes_example: '', extensions: { opaque: ['keep'] }, character_book: { entries: [] } } });
+    const native = JSON.parse(fs.readFileSync(path.join(out, 'card.json'), 'utf-8'));
+    expect(native.prompts.identity).toBe('Luna\n\nEdited identity');
+    expect(native.prompts.agents).toBe('');
+    expect(native.xingye.lore).toEqual([]);
+    const nativePreview = await service.createImportPlanFromPath(exported.filePath);
+    expect(nativePreview.prompts.identity).not.toContain('Old identity');
+    const stPreview = await service.createImportPlanFromPath(path.join(out, 'sillytavern-v2.json'));
+    expect(stPreview.prompts.identity).toBe('Luna\n\nEdited identity');
+  });
+
+  it("refuses corrupt canonical export data instead of resurrecting a stale lore mirror", async () => {
+    const agentDir = path.join(agentsDir, 'strict-export');
+    fs.mkdirSync(path.join(agentDir, 'xingye', 'lore'), { recursive: true });
+    fs.mkdirSync(path.join(agentDir, 'memory'), { recursive: true });
+    fs.writeFileSync(path.join(agentDir, 'config.yaml'), 'agent:\n  name: Strict\n  yuan: hanako\n');
+    fs.writeFileSync(path.join(agentDir, 'identity.md'), 'Identity');
+    writeJson(path.join(agentDir, 'xingye', 'profile.json'), { agentId: 'strict-export', firstMessage: 'Hi' });
+    writeJson(path.join(agentDir, 'xingye', 'lore.json'), [{ id: 'stale', agentId: 'strict-export', content: 'Must not resurrect' }]);
+    fs.writeFileSync(path.join(agentDir, 'xingye', 'lore', 'entries.json'), '{broken');
+    engine.getAgent = vi.fn(() => ({ agentDir, factStore: { exportAll: () => [] } }));
+    const service = createCharacterCardService(engine);
+    await expect(service.createExportPreview('strict-export')).rejects.toThrow('Cannot export unreadable Xingye');
+    writeJson(path.join(agentDir, 'xingye', 'lore', 'entries.json'), null);
+    await expect(service.createExportPreview('strict-export')).resolves.toMatchObject({ agent: { name: 'Strict' } });
+    writeJson(path.join(agentDir, 'xingye', 'profile.json'), null);
+    await expect(service.createExportPreview('strict-export')).rejects.toThrow('invalid Xingye profile.json');
+    fs.writeFileSync(path.join(agentDir, 'xingye', 'profile.json'), '{broken');
+    await expect(service.createExportPreview('strict-export')).rejects.toThrow('profile.json');
+  });
+
   it("exports the template-resolved identity/AGENTS.md content when the agent has never customized them (lazy materialization)", async () => {
     const agentDir = path.join(agentsDir, "hana");
     fs.mkdirSync(path.join(agentDir, "memory"), { recursive: true });

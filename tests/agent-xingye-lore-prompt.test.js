@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { adaptSillyTavernV2Card } from "../lib/character-cards/sillytavern-v2.ts";
 import { Agent } from "../core/agent.js";
 
 function makeAgent() {
@@ -113,6 +114,33 @@ function runtimeLore(overrides = {}) {
 
 describe("agent Xingye lore prompt", () => {
   const roots = [];
+
+  it("activates imported card content once at the existing RP boundary, leaving metadata inert", () => {
+    const { agent, root, agentDir } = makeAgent();
+    roots.push(root);
+    const adapted = adaptSillyTavernV2Card({ spec: 'chara_card_v2', spec_version: '2.0', data: {
+      name: 'Hana', description: 'UNIQUE_IMPORTED_IDENTITY', personality: 'UNIQUE_IMPORTED_PERSONALITY',
+      scenario: '{{char}} enters UNIQUE_CARD_SCENE', mes_example: '{{user}}: UNIQUE_CARD_EXAMPLE',
+      first_mes: 'DO_NOT_INJECT_GREETING', creator_notes: 'INERT_AUTHOR_NOTES', creator: 'INERT_CREATOR', extensions: { script: 'INERT_SCRIPT' }, system_prompt: 'INERT_SYSTEM_OVERRIDE',
+    } });
+    fs.writeFileSync(path.join(agentDir, 'identity.md'), adapted.card.prompts.identity);
+    fs.writeFileSync(path.join(agentDir, 'AGENTS.md'), adapted.card.prompts.agents);
+    writeProfile(agentDir, adapted.card.xingye.profile);
+    const main = agent.buildSystemPrompt();
+    for (const marker of ['UNIQUE_IMPORTED_IDENTITY', 'UNIQUE_IMPORTED_PERSONALITY', 'UNIQUE_CARD_SCENE', 'UNIQUE_CARD_EXAMPLE']) {
+      expect(main.split(marker)).toHaveLength(2);
+    }
+    expect(main).toContain('Hana enters UNIQUE_CARD_SCENE');
+    expect(main).toContain('User: UNIQUE_CARD_EXAMPLE');
+    expect(main).not.toMatch(/INERT_|DO_NOT_INJECT_GREETING/);
+    for (const context of [agent.buildSystemPrompt({ workModeEnabled: true }), agent.buildSystemPrompt({ forSubagent: true }), agent.buildPhoneSystemPrompt()]) {
+      expect(context).not.toContain('UNIQUE_CARD_SCENE');
+      expect(context).not.toContain('UNIQUE_CARD_EXAMPLE');
+    }
+    writeProfile(agentDir, { ...adapted.card.xingye.profile, scenario: '', messageExample: '' });
+    expect(agent.buildSystemPrompt()).not.toContain('UNIQUE_CARD_SCENE');
+    expect(agent.buildSystemPrompt()).not.toContain('UNIQUE_CARD_EXAMPLE');
+  });
 
   it("builds a Phone base without generated Xingye sections while retaining ordinary memory and user-authored headings", () => {
     const { agent, root, agentDir } = makeAgent();

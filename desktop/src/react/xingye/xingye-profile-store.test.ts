@@ -64,6 +64,16 @@ vi.mock('../stores', () => ({
 describe('xingye-profile-store', () => {
   afterEach(cleanup);
 
+  it('keeps card source metadata and explicit cleared fields across profile save and reload', async () => {
+    const metadata = { format: 'sillytavern-v2' as const, sourceCard: { data: { first_mes: 'old', extensions: { vendor: 1 } } }, loreEntryIds: ['st-v2-0'] };
+    await saveXingyeRoleProfile('card-role', { scenario: 'old scene', firstMessage: 'old', messageExample: 'old example', alternateGreetings: ['alternate'], characterCardCompatibility: metadata });
+    await saveXingyeRoleProfile('card-role', { scenario: '', firstMessage: '', messageExample: '', alternateGreetings: [], shortBio: 'edited' });
+    expect(await readXingyeRoleProfile('card-role')).toMatchObject({ scenario: '', firstMessage: '', messageExample: '', alternateGreetings: [], characterCardCompatibility: metadata, shortBio: 'edited' });
+    hoisted.fileData.set('malformed-card:profile.json', { agentId: 'malformed-card', displayName: 'Still valid', characterCardCompatibility: 'invalid' });
+    expect(await readXingyeRoleProfile('malformed-card')).toMatchObject({ displayName: 'Still valid' });
+    expect(await readXingyeRoleProfile('malformed-card')).not.toHaveProperty('characterCardCompatibility');
+  });
+
   it('preserves both patches when saves for one role overlap', async () => {
     await Promise.all([
       saveXingyeRoleProfile('parallel-role', { shortBio: 'saved biography' }),

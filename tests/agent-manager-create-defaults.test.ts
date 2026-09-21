@@ -62,6 +62,9 @@ vi.mock("../core/llm-utils.js", () => ({
 
 // Import AFTER vi.mock calls so the mocks take effect.
 import { AgentManager } from "../core/agent-manager.ts";
+import { readXingyeRuntimeLoreEntriesSync } from "../shared/xingye-runtime-lore-file.js";
+import { readXingyeStableLoreMemoryForPromptSync } from "../shared/xingye-lore-memory-file.js";
+import { readXingyeProfileJsonSync } from "../shared/xingye-profile-file.js";
 import { resolvePersonaSource } from "../core/persona-source.ts";
 
 // ── Test suite ─────────────────────────────────────────────────
@@ -153,6 +156,44 @@ describe("AgentManager.createAgent default skills.enabled", () => {
 
   afterEach(() => {
     fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  it("makes imported profile and both lore paths readable before Agent.init", async () => {
+    let observed;
+    const originalCreate = mgr._createAgentInstance.bind(mgr);
+    vi.spyOn(mgr, '_createAgentInstance').mockImplementation((...args) => {
+      const agent = originalCreate(...args);
+      const originalInit = agent.init.bind(agent);
+      agent.init = async (...initArgs) => {
+        const readArgs = { hanakoHome: tempDir, agentId: agent.id };
+        observed = {
+          profile: readXingyeProfileJsonSync(readArgs),
+          lore: readXingyeRuntimeLoreEntriesSync(readArgs),
+          stable: readXingyeStableLoreMemoryForPromptSync(readArgs),
+        };
+        await originalInit(...initArgs);
+      };
+      return agent;
+    });
+    await mgr.createAgent({ name: 'Imported', id: 'imported', initialXingye: {
+      profile: { agentId: '../wrong', scenario: 'Observatory', firstMessage: 'Welcome' },
+      lore: [{ id: 'sky', title: 'Sky', content: 'Violet sky', category: 'worldview', keywords: [], insertionMode: 'always', enabled: true, visibility: 'canonical', priority: 100 }],
+    } });
+    expect(observed).toMatchObject({ profile: { agentId: 'imported', scenario: 'Observatory' }, lore: [{ agentId: 'imported', content: 'Violet sky' }] });
+    expect(observed.stable).toContain('Violet sky');
+    expect(readXingyeProfileJsonSync({ hanakoHome: tempDir, agentId: 'imported' })).toMatchObject({ firstMessage: 'Welcome' });
+  });
+
+  it("rolls back the new agent when imported role files cannot be written", async () => {
+    const realWrite = fs.writeFileSync;
+    const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation((file, ...args) => {
+      if (String(file).endsWith(path.join('xingye', 'lore', 'entries.json'))) throw new Error('card lore write failed');
+      return realWrite(file, ...args);
+    });
+    try {
+      await expect(mgr.createAgent({ name: 'Broken', id: 'broken-card', initialXingye: { profile: { scenario: 'Scene' }, lore: [] } })).rejects.toThrow('card lore write failed');
+      expect(fs.existsSync(path.join(agentsDir, 'broken-card'))).toBe(false);
+    } finally { spy.mockRestore(); }
   });
 
   it("writes snapshot of installed user skills to new agent config.yaml", async () => {

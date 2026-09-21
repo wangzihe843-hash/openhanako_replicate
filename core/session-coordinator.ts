@@ -12,6 +12,7 @@ import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 import { createAgentSession, SessionManager, estimateTokens, refreshSessionModelFromRegistry } from "../lib/pi-sdk/index.ts";
+import { seedXingyeSessionGreeting, type InitialXingyeGreeting } from "./xingye-session-greeting.ts";
 import { isSessionJsonlFilename } from "../lib/session-jsonl.ts";
 import { createDefaultSettings } from "./session-defaults.ts";
 import { isDefaultWorkspacePath, restoreDefaultWorkspaceIfMissing } from "../shared/default-workspace.ts";
@@ -1037,6 +1038,31 @@ function rewriteForkedSessionDraftReferences(sessionManager: any, suggestionIdMa
   return true;
 }
 
+type SessionConstructionOptions = {
+  sessionMgr?: unknown;
+  cwd?: string;
+  memoryEnabled?: boolean;
+  model?: unknown;
+  agent?: unknown;
+  agentId?: string | null;
+  restore?: boolean;
+  focus?: boolean;
+  preserveAgentMemoryState?: boolean;
+  workspaceFolders?: string[];
+  authorizedFolders?: string[];
+  visibleInSessionList?: boolean;
+  permissionMode?: string | null;
+  workMode?: boolean;
+  thinkingLevel?: string | null;
+  workspaceMountId?: string | null;
+  workspaceLabel?: string | null;
+  ownerPluginId?: string | null;
+  sessionKind?: string | null;
+  sessionVisibility?: string | null;
+  refreshCapabilitySnapshots?: boolean;
+  reminderState?: Record<string, unknown> | null;
+  initialXingyeGreeting?: InitialXingyeGreeting | null;
+};
 export class SessionCoordinator implements SessionCancellation {
   declare _d: any;
   declare _pendingModel: any;
@@ -1785,6 +1811,9 @@ export class SessionCoordinator implements SessionCancellation {
   }
 
   async createSession(sessionMgr: any, cwd: any, memoryEnabled = true, model: any = null, options: any = {}) {
+    if (options.initialXingyeGreeting !== undefined && options.initialXingyeGreeting !== null && (options.restore || sessionMgr)) {
+      throw Object.assign(new Error('A character greeting requires a newly created session.'), { status: 409, code: 'xingye_greeting_requires_new_session' });
+    }
     const focus = options.focus !== false;
     const focusVersion = focus ? ++this._focusVersion : null;
     // Consume foreground choices before the first await. A detached session
@@ -1834,7 +1863,11 @@ export class SessionCoordinator implements SessionCancellation {
     refreshCapabilitySnapshots = false,
     reminderState = null,
     permissionMode = null,
-  }: any = {}) {
+    initialXingyeGreeting = null,
+  }: SessionConstructionOptions = {}) {
+    if (initialXingyeGreeting !== null && (restore || sessionMgr)) {
+      throw Object.assign(new Error('A character greeting requires a newly created session.'), { status: 409, code: 'xingye_greeting_requires_new_session' });
+    }
     const t0 = Date.now();
     let agent = explicitAgent
       || (explicitAgentId ? this._d.getAgentById?.(explicitAgentId) : null)
@@ -2299,6 +2332,9 @@ export class SessionCoordinator implements SessionCancellation {
     const sessionPath = session.sessionManager?.getSessionFile?.();
     sessionPathRef.current = sessionPath || sessionPathRef.current || null;
     targetModelRef.current = resolvedModel || targetModelRef.current || null;
+    if (initialXingyeGreeting !== null) {
+      seedXingyeSessionGreeting(session, initialXingyeGreeting, ownerAgentId);
+    }
     flushSessionManagerSnapshot(session.sessionManager);
     if (restore && sessionPath && !restoredCapabilitySnapshot) {
       restoredCapabilitySnapshot = this._readSessionCapabilitySnapshot(sessionPath);
@@ -2737,7 +2773,7 @@ export class SessionCoordinator implements SessionCancellation {
       }
     }
 
-    if (!restore) {
+    if (!restore && initialXingyeGreeting === null) {
       this._refreshAgentAppearanceSummaryAfterCreate(agent, resolvedModel || effectiveModel || null);
     }
 
@@ -2780,7 +2816,8 @@ export class SessionCoordinator implements SessionCancellation {
     ownerPluginId = null,
     sessionKind = null,
     sessionVisibility = null,
-  }: any = {}) {
+    initialXingyeGreeting = null,
+  }: SessionConstructionOptions = {}) {
     return this.createSession(sessionMgr, cwd, memoryEnabled, model, {
         focus: false,
         permissionMode,
@@ -2797,6 +2834,7 @@ export class SessionCoordinator implements SessionCancellation {
         ownerPluginId,
         sessionKind,
         sessionVisibility,
+        initialXingyeGreeting,
       });
   }
 
