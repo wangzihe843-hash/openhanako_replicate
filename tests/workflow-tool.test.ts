@@ -456,7 +456,7 @@ describe("workflow tool", () => {
     });
   });
 
-  it("僵尸回归：无进展超时 → store.fail 一次且 abort 真正传播（后续节点被拒、消息带 resume 指引）", async () => {
+  it("僵尸回归：无进展超时 → store.fail 一次且 abort 真正传播（后续节点被拒、无持久日志时不承诺 resume）", async () => {
     vi.useFakeTimers();
     const store = makeStore();
     const seenSignals: AbortSignal[] = [];
@@ -473,7 +473,7 @@ describe("workflow tool", () => {
       "c1",
       { script: META + `return await agent('x', { access: 'read', retries: 0 })`, limits: { idleTimeoutMs: 60_000, nodeTimeoutMs: 3_600_000 } },
       undefined, undefined, makeCtx(),
-    ) as any;
+    ) as { details: { taskId: string } };
     // 只推到 idle 阈值，绝不 runOnlyPendingTimers：节点超时是 1h，此刻唯一能中止
     // 在飞节点的只有 watchdog → failWith → controller.abort() 这一条链路。
     await vi.advanceTimersByTimeAsync(61_000);
@@ -482,8 +482,9 @@ describe("workflow tool", () => {
     expect(store.fail).toHaveBeenCalledTimes(1);
     const reason = String(store.fail.mock.calls[0][1]);
     expect(reason).toMatch(/空转|无进展/);
-    expect(reason).toContain(res.details.taskId);   // resume 指引引用本次 runId
-    expect(reason).toContain("resumeFromRunId");
+    expect(reason).toContain(res.details.taskId);
+    expect(reason).toContain("无法保证续跑跳过已执行节点");
+    expect(reason).not.toContain("可用 resumeFromRunId");
     expect(seenSignals[0]?.aborted).toBe(true);      // abort 真正传播到在飞节点
     expect(store.resolve).not.toHaveBeenCalled();
   });

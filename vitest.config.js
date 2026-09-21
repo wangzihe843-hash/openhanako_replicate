@@ -20,6 +20,8 @@ export default defineConfig({
       ".cache/**",
       // Local references and worktree copies contain duplicate test snapshots.
       ".codex_refs/**",
+      // Review output can contain old reproductions and nested test fixtures.
+      "output/**",
       ".claude/**",
       "desktop/native/**/.build/**",
       "dist/**",

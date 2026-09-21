@@ -67,7 +67,8 @@ function isPlainObject(value: any): value is Record<string, any> {
 }
 
 function modeDefaultsForProvider(defaults: Record<string, any>, modelId: string, modeId: string) {
-  return defaults?.models?.[modelId]?.modes?.[modeId] || {};
+  const modeDefaults = defaults?.models?.[modelId]?.modes?.[modeId] || {};
+  return { ...modeDefaults, ...(isPlainObject(modeDefaults.options) ? modeDefaults.options : {}) };
 }
 
 function clearEmptyObject(value: any) {
@@ -126,7 +127,7 @@ export function MediaProviderDetail({ providerId, provider, capability = 'imageG
     if (nextModeId !== defaultsModeId) setDefaultsModeId(nextModeId);
   }, [modelModes, defaultsModeId]);
 
-  const updateModeDefault = (key: string, value: any) => {
+  const updateModeDefault = (key: string, value: unknown) => {
     if (!defaultsModel || !defaultsMode) return;
     const current = config.providerDefaults || {};
     const providerDefaults = { ...(current[providerId] || {}) };
@@ -134,6 +135,12 @@ export function MediaProviderDetail({ providerId, provider, capability = 'imageG
     const modelDefaults = { ...(models[defaultsModel.id] || {}) };
     const modes = { ...(modelDefaults.modes || {}) };
     const modeDefaults = { ...(modes[defaultsMode.id] || {}) };
+    // Nested options are also accepted on disk and take precedence at runtime.
+    // Editing one field must replace that value without changing sibling options.
+    if (isPlainObject(modeDefaults.options)) {
+      modeDefaults.options = { ...modeDefaults.options };
+      delete modeDefaults.options[key];
+    }
     if (value === undefined || value === null || value === '') delete modeDefaults[key];
     else modeDefaults[key] = value;
     modes[defaultsMode.id] = modeDefaults;
@@ -148,18 +155,23 @@ export function MediaProviderDetail({ providerId, provider, capability = 'imageG
     const value = savedModeDefaults[key] ?? '';
     const label = property.title || key;
     const description = property.description || label;
-    if (Array.isArray(property.enum)) {
+    const isBoolean = property.type === 'boolean'
+      || (Array.isArray(property.type) && property.type.includes('boolean'));
+    const choices = Array.isArray(property.enum) ? property.enum : isBoolean ? [true, false] : null;
+    if (choices) {
+      // Option ids stay strings, but saved values must keep their schema types.
+      const selectedIndex = choices.findIndex(item => item === value);
       return (
         <div key={key} className={styles['media-config-field']}>
           <span className={styles['media-config-label']} title={description}>
             {label}
           </span>
           <SelectWidget
-            value={value === undefined || value === null ? '' : String(value)}
-            onChange={(v) => updateModeDefault(key, v || undefined)}
+            value={selectedIndex < 0 ? '' : String(selectedIndex)}
+            onChange={(v) => updateModeDefault(key, v === '' ? undefined : choices[Number(v)])}
             options={[
               { value: '', label: t('settings.media.defaultOption') },
-              ...property.enum.map(item => ({ value: String(item), label: String(item) })),
+              ...choices.map((item, index) => ({ value: String(index), label: String(item) })),
             ]}
           />
         </div>

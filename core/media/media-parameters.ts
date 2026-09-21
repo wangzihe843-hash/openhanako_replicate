@@ -77,16 +77,21 @@ function providerDefaultsForMode(providerDefaults: any = {}, modelId, modeId) {
   const modelDefaults = isObject(providerDefaults.models?.[modelId])
     ? providerDefaults.models[modelId]
     : {};
+  const providerModeDefaults = isObject(providerDefaults.modes?.[modeId])
+    ? providerDefaults.modes[modeId]
+    : {};
   const modeDefaults = isObject(modelDefaults.modes?.[modeId])
     ? modelDefaults.modes[modeId]
-    : isObject(providerDefaults.modes?.[modeId])
-      ? providerDefaults.modes[modeId]
-      : {};
+    : {};
   return {
     ...withoutNestedDefaults(providerDefaults),
     ...(isObject(providerDefaults.options) ? providerDefaults.options : {}),
     ...withoutNestedDefaults(modelDefaults),
     ...(isObject(modelDefaults.options) ? modelDefaults.options : {}),
+    // A model mode overrides individual parameters, preserving the remaining
+    // provider mode defaults and their existing precedence over model globals.
+    ...withoutNestedDefaults(providerModeDefaults),
+    ...(isObject(providerModeDefaults.options) ? providerModeDefaults.options : {}),
     ...withoutNestedDefaults(modeDefaults),
     ...(isObject(modeDefaults.options) ? modeDefaults.options : {}),
   };
@@ -155,6 +160,88 @@ export function validateMediaParameters(parameters: any = {}, schema: any = {}) 
     const propertySchema = schema.properties[key];
     if (!propertySchema) continue;
     validateSchemaValue(key, value, propertySchema);
+  }
+}
+
+interface DefaultsModel {
+  id: string;
+  parameterSchema?: unknown;
+  modes?: readonly { id: string; parameterSchema?: unknown }[];
+}
+
+interface DefaultsProvider {
+  providerId: string;
+  models: readonly DefaultsModel[];
+}
+
+function defaultsRecord(value: unknown): Record<string, unknown> {
+  return isObject(value) ? value as Record<string, unknown> : {};
+}
+
+function scopedDefaultParameters(value: unknown): Record<string, unknown> {
+  const defaults = defaultsRecord(value);
+  const parameters: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(defaults)) {
+    if (key !== "models" && key !== "modes" && key !== "options") parameters[key] = item;
+  }
+  return Object.assign(parameters, defaultsRecord(defaults.options));
+}
+
+function validateScopedDefaults(value: unknown, schemas: readonly unknown[], previous: unknown): void {
+  const previousParameters = scopedDefaultParameters(previous);
+  for (const [key, item] of Object.entries(scopedDefaultParameters(value))) {
+    if (item === undefined || item === null || item === "") continue;
+    // Older UI versions saved strings for booleans/enums. Keep unchanged legacy
+    // values repairable one field at a time; reject every newly invalid value.
+    if (Object.prototype.hasOwnProperty.call(previousParameters, key) && Object.is(previousParameters[key], item)) continue;
+    const properties = schemas
+      .map(schema => defaultsRecord(defaultsRecord(schema).properties)[key])
+      .filter(isObject);
+    let firstError: unknown;
+    // Shared defaults predate model/mode scopes. A shared enum may legitimately
+    // target only one model (e.g. GPT Image quality=high vs DALL-E quality=hd).
+    const accepted = properties.some(property => {
+      try {
+        validateSchemaValue(key, item, property);
+        return true;
+      } catch (error) {
+        firstError ??= error;
+        return false;
+      }
+    });
+    if (properties.length > 0 && !accepted) throw firstError;
+  }
+}
+
+/** Validate known config scopes without requiring generation inputs or credentials. */
+export function validateMediaProviderDefaults(value: unknown, providers: readonly DefaultsProvider[], previous: unknown = undefined): void {
+  const providerDefaults = defaultsRecord(value);
+  const previousProviderDefaults = defaultsRecord(previous);
+  for (const provider of providers) {
+    const defaults = defaultsRecord(providerDefaults[provider.providerId]);
+    const previousDefaults = defaultsRecord(previousProviderDefaults[provider.providerId]);
+    const scopes = provider.models.flatMap<{ modelId: string; modeId: string | null; schema: unknown }>(model => (
+      model.modes?.length
+        ? model.modes.map(mode => ({ modelId: model.id, modeId: mode.id, schema: mode.parameterSchema || model.parameterSchema }))
+        : [{ modelId: model.id, modeId: null, schema: model.parameterSchema }]
+    ));
+    validateScopedDefaults(defaults, scopes.map(scope => scope.schema), previousDefaults);
+    for (const [modeId, modeDefaults] of Object.entries(defaultsRecord(defaults.modes))) {
+      validateScopedDefaults(modeDefaults, scopes
+        .filter(scope => scope.modeId === null || scope.modeId === modeId)
+        .map(scope => scope.schema), defaultsRecord(previousDefaults.modes)[modeId]);
+    }
+    for (const model of provider.models) {
+      const modelDefaults = defaultsRecord(defaultsRecord(defaults.models)[model.id]);
+      const modelScopes = scopes.filter(scope => scope.modelId === model.id);
+      const previousModelDefaults = defaultsRecord(defaultsRecord(previousDefaults.models)[model.id]);
+      validateScopedDefaults(modelDefaults, modelScopes.map(scope => scope.schema), previousModelDefaults);
+      for (const [modeId, modeDefaults] of Object.entries(defaultsRecord(modelDefaults.modes))) {
+        validateScopedDefaults(modeDefaults, modelScopes
+          .filter(scope => scope.modeId === null || scope.modeId === modeId)
+          .map(scope => scope.schema), defaultsRecord(previousModelDefaults.modes)[modeId]);
+      }
+    }
   }
 }
 

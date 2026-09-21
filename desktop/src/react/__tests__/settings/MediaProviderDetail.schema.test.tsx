@@ -3,8 +3,8 @@
  */
 
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
 vi.mock('../../settings/api', () => ({
@@ -16,7 +16,7 @@ vi.mock('../../../hooks/use-config', () => ({
 }));
 
 vi.mock('../../settings/store', () => ({
-  useSettingsStore: (selector: any) => selector({ showToast: vi.fn() }),
+  useSettingsStore: (selector: (state: { showToast: ReturnType<typeof vi.fn> }) => unknown) => selector({ showToast: vi.fn() }),
 }));
 
 vi.mock('../../settings/helpers', () => ({
@@ -40,6 +40,7 @@ vi.mock('@/ui', () => ({
 import { MediaProviderDetail } from '../../settings/tabs/media/MediaProviderDetail';
 
 describe('MediaProviderDetail schema-driven defaults', () => {
+  afterEach(cleanup);
   it('saves provider mode defaults under provider/model/mode', () => {
     const onSaveConfig = vi.fn();
 
@@ -79,7 +80,8 @@ describe('MediaProviderDetail schema-driven defaults', () => {
 
     expect(screen.getByText('video_resolution')).toBeInTheDocument();
     const selects = screen.getAllByRole('combobox');
-    fireEvent.change(selects[1], { target: { value: '1080p' } });
+    const option = screen.getByRole('option', { name: '1080p' }) as HTMLOptionElement;
+    fireEvent.change(selects[1], { target: { value: option.value } });
 
     expect(onSaveConfig).toHaveBeenCalledWith({
       providerDefaults: {
@@ -95,6 +97,63 @@ describe('MediaProviderDetail schema-driven defaults', () => {
           },
         },
       },
+    });
+  });
+});
+
+function renderParameter(property: { type: string | string[]; enum?: Array<string | number | boolean> }, initial?: string | number | boolean) {
+  const onSaveConfig = vi.fn(async (_updates: Record<string, unknown>) => {});
+  const config = (value: string | number | boolean | undefined) => ({
+    providerDefaults: { provider: { models: { model: { modes: { text2image: value === undefined ? {} : { option: value } } } } } },
+  });
+  const props = {
+    providerId: 'provider',
+    provider: {
+      hasCredentials: true,
+      availableModels: [],
+      models: [{ id: 'model', name: 'Model', modes: [{
+        id: 'text2image', parameterSchema: { properties: { option: property } },
+      }] }],
+    },
+    onSaveConfig,
+    onRefresh: vi.fn(async () => {}),
+  };
+  const view = render(<MediaProviderDetail {...props} config={config(initial)} />);
+  return {
+    onSaveConfig,
+    control: screen.getAllByRole('combobox')[1] as HTMLSelectElement,
+    expected: config,
+    rerender: (value: string | number | boolean | undefined) => view.rerender(<MediaProviderDetail {...props} config={config(value)} />),
+  };
+}
+
+describe('MediaProviderDetail typed parameter values', () => {
+  afterEach(cleanup);
+
+  it.each([true, false])('saves and displays boolean %s, and can restore the default', (value) => {
+    const { onSaveConfig, control, expected, rerender } = renderParameter({ type: 'boolean' });
+    expect(control.value).toBe('');
+    const option = Array.from(control.options).find(item => item.text === String(value));
+    expect(option).toBeDefined();
+    fireEvent.change(control, { target: { value: option?.value } });
+    expect(onSaveConfig).toHaveBeenLastCalledWith(expected(value));
+
+    rerender(value);
+    expect(control.selectedOptions[0].text).toBe(String(value));
+    fireEvent.change(control, { target: { value: '' } });
+    expect(onSaveConfig).toHaveBeenLastCalledWith({ providerDefaults: { provider: {} } });
+  });
+
+  it('preserves enum scalar types even when values have identical display text', () => {
+    const values = [0, '0', false, 'false'];
+    const { onSaveConfig, control, expected, rerender } = renderParameter({ type: ['number', 'string', 'boolean'], enum: values });
+    const options = Array.from(control.options).slice(1);
+    expect(new Set(options.map(option => option.value)).size).toBe(values.length);
+    values.forEach((value, index) => {
+      fireEvent.change(control, { target: { value: options[index].value } });
+      expect(onSaveConfig).toHaveBeenLastCalledWith(expected(value));
+      rerender(value);
+      expect(control.value).toBe(options[index].value);
     });
   });
 });

@@ -59,7 +59,9 @@ describe("media-gen poller completion event", () => {
       registerSessionFile: vi.fn(() => ({ fileId: "sf1", filePath: path.join(generatedDir, "cover.png") })),
     } as any);
 
-    await poller._checkTask(taskId, store.get(taskId));
+    poller.add(taskId);
+    await poller.checkNow(taskId);
+    store.destroy();
 
     expect(events).toEqual([
       expect.objectContaining({

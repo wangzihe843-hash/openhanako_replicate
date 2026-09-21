@@ -1393,6 +1393,7 @@ export async function restoreSession(target: string | Pick<ArchivedSession, 'pat
   try {
     const res = await hanaFetch('/api/sessions/restore', {
       method: 'POST',
+      throwOnHttpError: false,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         path: sessionPath,

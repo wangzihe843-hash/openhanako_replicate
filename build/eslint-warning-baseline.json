@@ -5480,13 +5480,6 @@
       "file": "core/media/poller.ts",
       "rule": "@typescript-eslint/no-explicit-any",
       "message": "Unexpected any. Specify a different type.",
-      "anchor": "048fe9a0aa3af69314ea69b691c994f990fc88f524e234493a929e62d703e00f",
-      "count": 1
-    },
-    {
-      "file": "core/media/poller.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "message": "Unexpected any. Specify a different type.",
       "anchor": "0d688926eb9845bb4a2e711643e0736d069ceb351a3603b19e1425f36609c2fd",
       "count": 1
     },
@@ -15585,13 +15578,6 @@
       "count": 1
     },
     {
-      "file": "desktop/src/react/__tests__/settings/MediaProviderDetail.schema.test.tsx",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "message": "Unexpected any. Specify a different type.",
-      "anchor": "5042603d7e6001a9769a24ca69f574211e04d726b06847a422ccc00d18709cc2",
-      "count": 1
-    },
-    {
       "file": "desktop/src/react/__tests__/settings/MediaTab.test.tsx",
       "rule": "@typescript-eslint/no-explicit-any",
       "message": "Unexpected any. Specify a different type.",
@@ -15785,13 +15771,6 @@
       "rule": "@typescript-eslint/no-explicit-any",
       "message": "Unexpected any. Specify a different type.",
       "anchor": "c2440fe207afc2522b3140ea8f8e498f31cc8ff74026336887219806af388c69",
-      "count": 1
-    },
-    {
-      "file": "desktop/src/react/__tests__/stores/input-draft-persistence.test.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "message": "Unexpected any. Specify a different type.",
-      "anchor": "c9147a6002d2ae145d9a66efbbf373943fa720e57c75c4fca6121cf28762c64d",
       "count": 1
     },
     {
@@ -17289,13 +17268,6 @@
       "file": "desktop/src/react/settings/tabs/media/MediaProviderDetail.tsx",
       "rule": "@typescript-eslint/no-explicit-any",
       "message": "Unexpected any. Specify a different type.",
-      "anchor": "58fa40dadb51252316b0d58b8d633ddabfa9d1a7098d1a9ea68b88c8e0b007d8",
-      "count": 1
-    },
-    {
-      "file": "desktop/src/react/settings/tabs/media/MediaProviderDetail.tsx",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "message": "Unexpected any. Specify a different type.",
       "anchor": "6b84c76c33059c9b5129bcd8ae0b58fac4b1670c5170273eef93b105a91a2930",
       "count": 1
     },
@@ -18025,20 +17997,6 @@
       "rule": "@typescript-eslint/no-explicit-any",
       "message": "Unexpected any. Specify a different type.",
       "anchor": "bea9fce01ee71761c7316bf01f367bdb26118db47ed456063afdee208b72a57c",
-      "count": 1
-    },
-    {
-      "file": "desktop/src/react/stores/input-draft-persistence.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "message": "Unexpected any. Specify a different type.",
-      "anchor": "62615d876e2e4772540da16fbc67e2698051fe5d25a31a99197aa0b0f865b8af",
-      "count": 1
-    },
-    {
-      "file": "desktop/src/react/stores/input-draft-persistence.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "message": "Unexpected any. Specify a different type.",
-      "anchor": "8d83538a93069f73873543a597191f8b6b48611b01b908a5fd5d4fd9013225d0",
       "count": 1
     },
     {
@@ -54236,13 +54194,6 @@
       "rule": "@typescript-eslint/no-explicit-any",
       "message": "Unexpected any. Specify a different type.",
       "anchor": "5d89abb3a24fecf62f9b2e85616edb0b832f1508b0b54a42040caabd81d22abf",
-      "count": 1
-    },
-    {
-      "file": "tests/workflow-tool.test.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "message": "Unexpected any. Specify a different type.",
-      "anchor": "6c6d3899480bf4b8c2bfbb060daf716b062d504d02c22b2d7511b17346990c7b",
       "count": 1
     },
     {

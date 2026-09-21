@@ -64,6 +64,41 @@ vi.mock('../stores', () => ({
 describe('xingye-profile-store', () => {
   afterEach(cleanup);
 
+  it('preserves both patches when saves for one role overlap', async () => {
+    await Promise.all([
+      saveXingyeRoleProfile('parallel-role', { shortBio: 'saved biography' }),
+      saveXingyeRoleProfile('parallel-role', { displayName: 'saved name' }),
+    ]);
+    expect(hoisted.fileData.get('parallel-role:profile.json')).toMatchObject({
+      shortBio: 'saved biography', displayName: 'saved name',
+    });
+  });
+
+  it('continues a queued save after failure without blocking another role', async () => {
+    const original = vi.mocked(postXingyeStorage).getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let first = true;
+    vi.mocked(postXingyeStorage).mockImplementation(async body => {
+      if (body.agentId === 'queue-role' && body.action === 'writeJson' && first) {
+        first = false;
+        await gate;
+        throw new Error('first save failed');
+      }
+      return original(body);
+    });
+    const failed = saveXingyeRoleProfile('queue-role', { shortBio: 'failed' }).catch(error => error.message);
+    const queued = saveXingyeRoleProfile('queue-role', { displayName: 'queued name' });
+    try {
+      await saveXingyeRoleProfile('independent-role', { shortBio: 'independent' });
+      expect(hoisted.fileData.get('independent-role:profile.json')).toMatchObject({ shortBio: 'independent' });
+    } finally { release(); }
+    expect(await failed).toBe('first save failed');
+    await queued;
+    expect(hoisted.fileData.get('queue-role:profile.json')).toMatchObject({ displayName: 'queued name' });
+    expect(hoisted.fileData.get('queue-role:profile.json')).not.toHaveProperty('shortBio');
+  });
+
   it('review X8 cancels profile read-merge-write after a connection change', async () => {
     let release!: (value: { data: unknown }) => void;
     vi.mocked(postXingyeStorage).mockReturnValueOnce(new Promise(resolve => { release = resolve; }));

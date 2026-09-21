@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getXingyeLoreMemoryFilePath,
   readXingyeLoreMemoryFile,
@@ -10,6 +10,7 @@ import {
   removeXingyeLoreMemoryBlock,
   syncXingyeStableLoreMemoryFile,
   readXingyeStableLoreMemoryForPrompt,
+  readXingyeStableLoreMemoryForPromptSync,
 } from './xingye-lore-memory-file.js';
 
 let tempRoot;
@@ -236,12 +237,153 @@ describe('xingye lore memory file helper', () => {
       entries: [
         baseLore({ id: 'long', title: 'Long', summary: 'A'.repeat(200), content: 'B'.repeat(200) }),
       ],
-      maxChars: 120,
+      maxChars: 300,
     });
 
     const file = await readXingyeLoreMemoryFile({ hanakoHome: tempRoot, agentId: 'agent-a' });
     expect(file).toContain('...');
     expect(file).not.toContain('A'.repeat(200));
+  });
+
+
+  it('keeps high priority lore first and fits complete managed blocks within the default prompt budget', async () => {
+    const entries = [
+      baseLore({ id: 'low', title: 'Low', priority: 1, summary: 'L'.repeat(3919) }),
+      baseLore({ id: 'high', title: 'High', priority: 100, summary: 'Essential high priority fact.' }),
+    ];
+    await syncXingyeStableLoreMemoryFile({ hanakoHome: tempRoot, agentId: 'agent-a', entries });
+    const prompt = await readXingyeStableLoreMemoryForPrompt({ hanakoHome: tempRoot, agentId: 'agent-a' });
+    expect(prompt.length).toBeLessThanOrEqual(4000);
+    expect(prompt).toContain('Essential high priority fact.');
+    expect(prompt.indexOf('id=high')).toBeLessThan(prompt.indexOf('id=low'));
+    expect(prompt).toMatch(/<!-- \/xingye-lore:id=low -->$/);
+    expect(prompt).toContain('...');
+    const shorter = readXingyeStableLoreMemoryForPromptSync({ hanakoHome: tempRoot, agentId: 'agent-a', maxChars: 240 });
+    expect(shorter.length).toBeLessThanOrEqual(240);
+    expect(shorter).toMatch(/<!-- \/xingye-lore:id=high -->$/);
+  });
+
+  it('keeps later entries when an earlier title cannot fit the prompt budget', async () => {
+    const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
+    const entries = [
+      baseLore({ id: 'oversized', title: 'H'.repeat(4000), priority: 100 }),
+      baseLore({ id: 'normal', title: 'Normal', priority: 1, summary: 'Keep this stable fact.' }),
+    ];
+    await syncXingyeStableLoreMemoryFile({ ...options, entries });
+    const prompt = await readXingyeStableLoreMemoryForPrompt(options);
+    expect(prompt).toContain('Keep this stable fact.');
+    expect(prompt).not.toContain('id=oversized');
+    expect(prompt).toMatch(/<!-- \/xingye-lore:id=normal -->$/);
+    expect(prompt.length).toBeLessThanOrEqual(4000);
+    expect(readXingyeStableLoreMemoryForPromptSync(options)).toBe(prompt);
+    const before = await readXingyeLoreMemoryFile(options);
+    await syncXingyeStableLoreMemoryFile({ ...options, entries });
+    expect(await readXingyeLoreMemoryFile(options)).toBe(before);
+  });
+
+  it('skips an oversized legacy block without hiding later saved text or rewriting it', async () => {
+    const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
+    await upsertXingyeLoreMemoryBlock({
+      ...options,
+      lore: baseLore({ id: 'normal', title: 'Normal' }),
+      content: 'Keep this saved fact.',
+    });
+    await upsertXingyeLoreMemoryBlock({
+      ...options,
+      lore: baseLore({ id: 'oversized', title: 'H'.repeat(4000) }),
+      content: 'Cannot fit with this title.',
+    });
+    const before = await readXingyeLoreMemoryFile(options);
+    expect(before.indexOf('id=oversized')).toBeLessThan(before.indexOf('id=normal'));
+    const prompt = await readXingyeStableLoreMemoryForPrompt(options);
+    expect(prompt).toContain('Keep this saved fact.');
+    expect(prompt).not.toContain('id=oversized');
+    expect(prompt).toMatch(/<!-- \/xingye-lore:id=normal -->$/);
+    expect(prompt.length).toBeLessThanOrEqual(4000);
+    expect(readXingyeStableLoreMemoryForPromptSync(options)).toBe(prompt);
+    expect(await readXingyeLoreMemoryFile(options)).toBe(before);
+  });
+
+  it('reorders retained blocks after priority-only edits and resolves ties by updatedAt', async () => {
+    const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
+    const first = baseLore({ id: 'first', title: 'First', priority: 80, summary: 'First fact.' });
+    const second = baseLore({ id: 'second', title: 'Second', priority: 30, summary: 'Second fact.' });
+    await syncXingyeStableLoreMemoryFile({ ...options, entries: [first, second] });
+    const result = await syncXingyeStableLoreMemoryFile({ ...options, entries: [first, { ...second, priority: 90 }] });
+    expect(result).toMatchObject({ retained: 2, upserted: 0 });
+    const reordered = await readXingyeLoreMemoryFile(options);
+    expect(reordered.indexOf('id=second')).toBeLessThan(reordered.indexOf('id=first'));
+    await syncXingyeStableLoreMemoryFile({ ...options, entries: [first, { ...second, priority: 90 }] });
+    expect(await readXingyeLoreMemoryFile(options)).toBe(reordered);
+
+    await syncXingyeStableLoreMemoryFile({
+      ...options,
+      entries: [{ ...first, updatedAt: '2026-03-01T00:00:00.000Z' }, { ...second, priority: 80 }],
+    });
+    const updated = await readXingyeLoreMemoryFile(options);
+    expect(updated.indexOf('id=first')).toBeLessThan(updated.indexOf('id=second'));
+  });
+
+  it('uses canonical metadata to order old blocks without replacing their text or rewriting the file', async () => {
+    const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
+    const high = baseLore({ id: 'high', title: 'High', priority: 100 });
+    const low = baseLore({ id: 'low', title: 'Low', priority: 1 });
+    await upsertXingyeLoreMemoryBlock({ ...options, lore: high, content: 'Saved high summary.' });
+    await upsertXingyeLoreMemoryBlock({ ...options, lore: low, content: 'L'.repeat(3919) });
+    const before = await readXingyeLoreMemoryFile(options);
+    expect(before.indexOf('id=low')).toBeLessThan(before.indexOf('id=high'));
+    const entriesPath = path.join(tempRoot, 'agents', 'agent-a', 'xingye', 'lore', 'entries.json');
+    await fs.mkdir(path.dirname(entriesPath), { recursive: true });
+    await fs.writeFile(entriesPath, JSON.stringify(Object.fromEntries([
+      { ...high, summary: 'Canonical source must not replace derived text.' },
+      low,
+      baseLore({ id: 'only-in-source', priority: 200, summary: 'Do not add this body.' }),
+    ].map(entry => [entry.id, entry]))));
+    const prompt = await readXingyeStableLoreMemoryForPrompt(options);
+    expect(prompt).toContain('Saved high summary.');
+    expect(prompt.indexOf('id=high')).toBeLessThan(prompt.indexOf('id=low'));
+    expect(prompt).not.toContain('Canonical source');
+    expect(prompt).not.toContain('Do not add this body.');
+    expect(readXingyeStableLoreMemoryForPromptSync(options)).toBe(prompt);
+    expect(await readXingyeLoreMemoryFile(options)).toBe(before);
+  });
+
+  it('preserves handwritten notes between blocks during a complete reorder', async () => {
+    const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
+    const entries = [baseLore({ id: 'one' }), baseLore({ id: 'two' })];
+    await syncXingyeStableLoreMemoryFile({ ...options, entries });
+    const content = await readXingyeLoreMemoryFile(options);
+    const manual = 'Manual note with intentional spacing.\n\n\n\nKeep this paragraph.';
+    await writeXingyeLoreMemoryFile({
+      ...options,
+      content: content.replace('<!-- /xingye-lore:id=one -->', '<!-- /xingye-lore:id=one -->\n\n' + manual),
+    });
+    await syncXingyeStableLoreMemoryFile({ ...options, entries: entries.map(entry => ({ ...entry, priority: entry.id === 'two' ? 100 : 1 })) });
+    expect(await readXingyeLoreMemoryFile(options)).toContain(manual);
+  });
+
+  it('omits blocks when the complete marker overhead cannot fit', async () => {
+    const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
+    await syncXingyeStableLoreMemoryFile({ ...options, entries: [baseLore()], maxChars: 80 });
+    expect(await readXingyeStableLoreMemoryForPrompt(options)).toBe('');
+    await upsertXingyeLoreMemoryBlock({ ...options, lore: baseLore(), content: 'Body' });
+    expect(readXingyeStableLoreMemoryForPromptSync({ ...options, maxChars: 80 })).toBe('');
+  });
+
+  it('leaves the last good file intact if atomic replacement fails', async () => {
+    const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
+    await syncXingyeStableLoreMemoryFile({ ...options, entries: [baseLore()] });
+    const before = await readXingyeLoreMemoryFile(options);
+    const failRename = vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('simulated rename failure'));
+    try {
+      await expect(syncXingyeStableLoreMemoryFile({
+        ...options, entries: [baseLore({ summary: 'New text' })],
+      })).rejects.toThrow('simulated rename failure');
+    } finally {
+      failRename.mockRestore();
+    }
+    expect(await readXingyeLoreMemoryFile(options)).toBe(before);
+    expect(await fs.readdir(path.dirname(getXingyeLoreMemoryFilePath(options)))).toEqual(['lore-memory.md']);
   });
 
   it('does not emit undefined, null, or object fragments', async () => {

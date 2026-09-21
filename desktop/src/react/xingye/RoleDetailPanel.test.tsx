@@ -78,9 +78,10 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     useStore.setState({ serverPort: '17333', activeServerConnection: null });
   });
 
-  afterEach(() => {
-    delete (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__;
+  afterEach(async () => {
     cleanup();
+    await act(async () => {});
+    delete (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__;
     vi.restoreAllMocks();
   });
 
@@ -388,7 +389,7 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     });
 
     // 保存 → corruptionSeed 进 profile 落库（收紧到主保存键，避开 LoreEditor 的「保存设定条目」）
-    fireEvent.click(screen.getByRole('button', { name: /^保存[到（]/ }));
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: /^保存[到（]/ })));
     await waitFor(() => {
       expect(profileHoisted.profileByAgent.get('agent-1')?.corruptionSeed).toBe(20);
     });
@@ -409,10 +410,104 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     const confirmBtn = await openStudioToPlan();
     fireEvent.click(confirmBtn);
     await screen.findByTestId('xingye-corruption-seed-confirm');
-    fireEvent.click(screen.getByTestId('xingye-corruption-seed-reject'));
+    await act(async () => fireEvent.click(screen.getByTestId('xingye-corruption-seed-reject')));
 
     expect(screen.queryByTestId('xingye-corruption-seed-confirm')).not.toBeInTheDocument();
     expect(screen.queryByTestId('xingye-corruption-seed-applied')).not.toBeInTheDocument();
+    expect(profileHoisted.profileByAgent.get(agent.id)).not.toHaveProperty('corruptionSeedPending');
+    expect(profileHoisted.profileByAgent.get(agent.id)).not.toHaveProperty('corruptionSeed');
+    expect(getRelationshipState(agent.id)?.corruption).toBe(12);
+  });
+
+  it('keeps a baseline decision when an older profile refresh resolves before the save', async () => {
+    const stored = { agentId: agent.id, corruptionTendency: 'latent', corruptionSeedPending: 20, updatedAt: '2026-09-01' };
+    profileHoisted.profileByAgent.set(agent.id, stored);
+    render(<RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />);
+    await screen.findByTestId('xingye-corruption-seed-confirm');
+    await act(async () => {});
+    let releaseRead!: () => void;
+    let releaseWrite!: () => void;
+    const oldRead = new Promise<void>(resolve => { releaseRead = resolve; });
+    const delayedWrite = new Promise<void>(resolve => { releaseWrite = resolve; });
+    let reads = 0;
+    let writes = 0;
+    vi.mocked(hanaFetch).mockImplementation(async (path, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (path === '/api/xingye/storage' && body.relativePath === 'profile.json') {
+        if (body.action === 'readJson' && ++reads === 1) {
+          await oldRead;
+          return { ok: true, json: async () => ({ data: stored }) } as Response;
+        }
+        if (body.action === 'writeJson') {
+          writes++;
+          await delayedWrite;
+        }
+      }
+      return defaultHanaFetch(path, init);
+    });
+    act(() => window.dispatchEvent(new CustomEvent('xingye-role-profiles-changed', { detail: { agentId: agent.id } })));
+    await waitFor(() => expect(reads).toBe(1));
+    fireEvent.click(screen.getByTestId('xingye-corruption-seed-reject'));
+    await waitFor(() => expect(writes).toBe(1));
+    try {
+      await act(async () => releaseRead());
+      expect(screen.queryByTestId('xingye-corruption-seed-confirm')).not.toBeInTheDocument();
+    } finally {
+      await act(async () => releaseWrite());
+    }
+    await waitFor(() => expect(profileHoisted.profileByAgent.get(agent.id)).not.toHaveProperty('corruptionSeedPending'));
+    expect(profileHoisted.profileByAgent.get(agent.id)).not.toHaveProperty('corruptionSeed');
+    expect(getRelationshipState(agent.id)?.corruption).toBe(12);
+    // Once the save is acknowledged, a new persisted proposal must still load.
+    profileHoisted.profileByAgent.set(agent.id, { ...stored, corruptionSeedPending: 28, updatedAt: '2026-09-22' });
+    act(() => window.dispatchEvent(new CustomEvent('xingye-role-profiles-changed', { detail: { agentId: agent.id } })));
+    await waitFor(() => expect(screen.getByTestId('xingye-corruption-seed-confirm')).toHaveTextContent('28'));
+  });
+
+  it.each(['accept', 'reject'] as const)('keeps %s when a workshop save finishes after the decision', async decision => {
+    mockStudioPlan({ type: 'plan', loreEntries: [{ title: '青梅', content: '青梅竹马。', category: 'background', insertionMode: 'always', keywords: [] }], corruptionTendency: 'latent', corruptionSeed: 20 });
+    const mockRequest = vi.mocked(hanaFetch).getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let writes = 0;
+    vi.mocked(hanaFetch).mockImplementation(async (path, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (path === '/api/xingye/storage' && body.action === 'writeJson' && body.relativePath === 'profile.json' && ++writes === 1) await gate;
+      return mockRequest(path, init);
+    });
+    render(<RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />);
+    fireEvent.click(await openStudioToPlan());
+    await waitFor(() => expect(writes).toBe(1));
+    try {
+      fireEvent.click(await screen.findByTestId('xingye-corruption-seed-' + decision));
+    } finally { await act(async () => release()); }
+    await waitFor(() => expect(writes).toBe(2));
+    await act(async () => {});
+    expect(screen.queryByTestId('xingye-corruption-seed-confirm')).not.toBeInTheDocument();
+    expect(profileHoisted.profileByAgent.get(agent.id)).not.toHaveProperty('corruptionSeedPending');
+    expect(profileHoisted.profileByAgent.get(agent.id)?.corruptionSeed).toBe(decision === 'accept' ? 20 : undefined);
+    expect(getRelationshipState(agent.id)?.corruption).toBe(decision === 'accept' ? 20 : 12);
+  });
+
+  it.each(['accept', 'reject'] as const)('restores the pending proposal after a failed %s save', async decision => {
+    profileHoisted.profileByAgent.set(agent.id, { agentId: agent.id, corruptionTendency: 'latent', corruptionSeedPending: 20, updatedAt: '2026-09-01' });
+    render(<RoleDetailPanel agent={agent} isOpenHanakoCurrent={false} onBack={vi.fn()} onChat={vi.fn()} onPhone={vi.fn()} />);
+    await screen.findByTestId('xingye-corruption-seed-confirm');
+    vi.mocked(hanaFetch).mockImplementation(async (path, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (path === '/api/xingye/storage' && body.action === 'writeJson' && body.relativePath === 'profile.json') {
+        throw new Error('profile write unavailable');
+      }
+      return defaultHanaFetch(path, init);
+    });
+    await act(async () => fireEvent.click(screen.getByTestId('xingye-corruption-seed-' + decision)));
+    expect(await screen.findByTestId('xingye-corruption-seed-confirm')).toHaveTextContent('20');
+    expect(screen.getByText(/保存失败.*profile write unavailable/)).toBeInTheDocument();
+    expect(profileHoisted.profileByAgent.get(agent.id)?.corruptionSeedPending).toBe(20);
+    vi.mocked(hanaFetch).mockImplementation(defaultHanaFetch);
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: /^保存[到（]/ })));
+    expect(profileHoisted.profileByAgent.get(agent.id)?.corruptionSeedPending).toBe(20);
+    expect(profileHoisted.profileByAgent.get(agent.id)).not.toHaveProperty('corruptionSeed');
   });
 
   it('待确认精确黑化值持久化为草稿：关掉详情页再打开，待确认条仍在（无需重跑工坊）', async () => {

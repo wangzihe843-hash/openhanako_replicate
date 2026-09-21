@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:0ebd3a777ee36f8fdf3965b94916d6bacb2e575ab1204dda350d3c3882ec8fb2",
+  "payloadFingerprint": "sha256:660bd9fe30c878dd1647c36d8a78152e19181f2334970a617de3018c86973afd",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3226,9 +3226,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Warning follow-up changes error and observation contracts while preserving persisted JSON/Markdown formats, stable store paths, DDL and DATA_EPOCH 1.",
-    "payloadFingerprint": "sha256:0ebd3a777ee36f8fdf3965b94916d6bacb2e575ab1204dda350d3c3882ec8fb2",
-    "reviewDocument": "docs/audits/2026-09-14-warning-fixes-compatibility-review.md"
+    "compatibilityReason": "Reviewed docs/audits/2026-09-21-warning-fixes-compatibility-review.md and docs/audits/2026-09-21-warning-followup.md: directory and disk formats unchanged; plugin lazy activation cleanup, Lore budget selection, and renderer-local role save ordering only. Existing optional event counter fields remain compatible; DATA_EPOCH stays 1 with unchanged registry, site mappings, and startup receipt.",
+    "payloadFingerprint": "sha256:660bd9fe30c878dd1647c36d8a78152e19181f2334970a617de3018c86973afd"
   },
   "schemas": [
     {
@@ -3528,7 +3527,7 @@
       "contract": "installed manifest, install receipt, backup, and source-package directory protocols",
       "kind": "directory-contract",
       "module": "core/plugin-manager.ts",
-      "sourceHash": "sha256:78098ac67519299dd169da7eab6abef5f960141551fb63a5266c3d36210d9497",
+      "sourceHash": "sha256:15577f0f551effaf9ae919a24c8adf176c3ebbd8b26c2263822dc4740a8110ad",
       "storeId": "installed-plugins"
     },
     {
@@ -3894,7 +3893,7 @@
       "protocolModules": [
         {
           "module": "lib/tools/workflow-tool.ts",
-          "sourceHash": "sha256:c8a35128253d3acb37a262156ecef845a19d17130c65795e8ba50775c390e1eb"
+          "sourceHash": "sha256:0c1e138b518a04aa94a5d83c006123c70f63c64c9ccbe4ec7b1d14ea04350c54"
         },
         {
           "module": "lib/workflow-activity-store.ts",
@@ -3902,10 +3901,10 @@
         },
         {
           "module": "lib/workflow/host-api.ts",
-          "sourceHash": "sha256:1c4addee2bb97302d3b372db7ca2ebee1cfb21c7c1ba11fc4b3afa7235c08912"
+          "sourceHash": "sha256:78c1c87b786a1f8a42dfa29022a3f8eed355e9288b02c3e8098b76f43f4bb2ac"
         }
       ],
-      "sourceHash": "sha256:cefd7c33820bc4e2a757e27040cc290b88ecabba8239ea6d3a3b9c1a452b876f",
+      "sourceHash": "sha256:284d47d24345e57b37bb6824f42fbe38a0f73aea69970ab4bebb731be8a241c5",
       "storeId": "workflow-state"
     },
     {
@@ -3927,7 +3926,7 @@
         },
         {
           "module": "desktop/src/react/xingye/xingye-profile-store.ts",
-          "sourceHash": "sha256:7f23e26ef25825c17581b23c882b92df77060b4c5aa57e86304fd62f6b37c2a9"
+          "sourceHash": "sha256:03d7a69f819806ac862f77b68deb431607af640cd0527dc5d019aef391f5fbf0"
         },
         {
           "module": "desktop/src/react/xingye/xingye-state-store.ts",
@@ -3951,7 +3950,7 @@
         },
         {
           "module": "lib/xingye/events.js",
-          "sourceHash": "sha256:a96f1611c98ca6267e382125640f192660a9c42a260cb5948f8cd683b31ecc17"
+          "sourceHash": "sha256:22a8c72a459288db5fe9f8e5ae43f8000b646511e6b16ece0e56cc0d67787102"
         },
         {
           "module": "lib/xingye/files-drafts.js",
@@ -3963,7 +3962,7 @@
         },
         {
           "module": "lib/xingye/heartbeat-consumer.js",
-          "sourceHash": "sha256:e920dd23a55a7baf04ce2924b78bdd249cc328810d71f06e2c93c686da197092"
+          "sourceHash": "sha256:b75e8f0311acadbe791d6373766709dbc454002f9b819b2dbb0f20d346b4db05"
         },
         {
           "module": "lib/xingye/interview-drafts.js",
@@ -4031,7 +4030,7 @@
         },
         {
           "module": "shared/xingye-lore-memory-file.js",
-          "sourceHash": "sha256:2db7a57859e4e4763927e0ce5a773569d4d1563b88c1ba0d4a7847acd6f24b1c"
+          "sourceHash": "sha256:17b87254af81945acb1a32754b7bc9b977d7aadb4b09f66a6ce9d93c77fe9ea6"
         },
         {
           "module": "shared/xingye-profile-file.js",

@@ -227,6 +227,7 @@ export class PluginManager {
   declare _extensionFactories: any;
   declare _getSessionPath: any;
   declare _loadTimeoutMs: any;
+  declare _cleanupTimeoutMs: number;
   declare _logSink: any;
   declare _opQueue: any;
   declare _pages: any;
@@ -267,6 +268,7 @@ export class PluginManager {
     slashRegistry,
     loadTimeoutMs,
     lifecycleTimeoutMs,
+    cleanupTimeoutMs = 0,
     logSink,
     runtimeContext,
   }) {
@@ -307,6 +309,10 @@ export class PluginManager {
     this._loadTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
       ? timeoutMs
       : DEFAULT_PLUGIN_LOAD_TIMEOUT_MS;
+    const cleanupMs = Number(cleanupTimeoutMs);
+    this._cleanupTimeoutMs = Number.isFinite(cleanupMs) && cleanupMs > 0
+      ? cleanupMs
+      : this._loadTimeoutMs;
   }
 
   _entryFromDescriptor(desc, overrides: any = {}) {
@@ -402,6 +408,30 @@ export class PluginManager {
   }
 
   _startPluginRuntimeCleanup(entry) {
+    void this._cleanupPluginRuntime(entry);
+  }
+
+  async _runCleanupCallback(entry, stage, callback: () => unknown, deadline: number) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.resolve().then(callback),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error(`cleanup timed out after ${this._cleanupTimeoutMs}ms`));
+          }, Math.max(0, deadline - Date.now()));
+          timer.unref?.();
+        }),
+      ]);
+    } catch (err) {
+      log.error(`"${entry.id}" ${stage} error: ${err?.message || err}`);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  _cleanupPluginRuntime(entry) {
+    if (entry._cleanupPromise) return entry._cleanupPromise;
     entry._loadCancelled = true;
     const instance = entry.instance || null;
     const disposables = Array.isArray(entry._disposables)
@@ -410,20 +440,25 @@ export class PluginManager {
     entry._disposables = [];
     entry.instance = null;
     entry.activationState = entry.hasLifecycle ? "inactive" : "none";
+    entry._activationPromise = null;
 
+    // One deadline bounds the entire cleanup. Even after it expires, invoke
+    // every disposable and observe its promise so a stuck callback cannot
+    // prevent the remaining listeners/tools from being released.
+    const deadline = Date.now() + this._cleanupTimeoutMs;
     const run = async () => {
       if (instance && typeof instance.onunload === "function") {
-        try { await instance.onunload(); } catch (err) {
-          log.error(`"${entry.id}" onunload error: ${err.message}`);
-        }
+        await this._runCleanupCallback(entry, "onunload", () => instance.onunload(), deadline);
       }
-      for (const d of disposables) {
-        try { d(); } catch (err) {
-          log.error(`"${entry.id}" disposable error: ${err.message}`);
-        }
+      for (const dispose of disposables) {
+        await this._runCleanupCallback(entry, "disposable", dispose, deadline);
       }
     };
-    void run();
+    const cleanup = run().finally(() => {
+      if (entry._cleanupPromise === cleanup) entry._cleanupPromise = null;
+    });
+    entry._cleanupPromise = cleanup;
+    return cleanup;
   }
 
   _forgetPluginEntry(entry, options: any = {}) {
@@ -612,6 +647,7 @@ export class PluginManager {
   }
 
   async _loadPluginWithBoundary(entry) {
+    if (entry._cleanupPromise) await entry._cleanupPromise;
     const loadToken = Symbol(entry.id);
     entry._loadToken = loadToken;
     entry._loadCancelled = false;
@@ -637,13 +673,14 @@ export class PluginManager {
   }
 
   async _withLoadTimeout(entry, promise, stage) {
+    const loadToken = entry._loadToken;
     let timer = null;
     try {
       return await Promise.race([
         promise,
         new Promise((_, reject) => {
           timer = setTimeout(() => {
-            entry._loadCancelled = true;
+            if (entry._loadToken === loadToken) entry._loadCancelled = true;
             reject(new PluginLoadTimeoutError(entry.id, entry._loadStage || stage, this._loadTimeoutMs));
           }, this._loadTimeoutMs);
           timer.unref?.();
@@ -754,6 +791,7 @@ export class PluginManager {
       try {
         const indexPath = resolvePluginEntry(entry.pluginDir);
         const mod = await this._runLoadStage(entry, "lifecycle import", () => freshImport(indexPath));
+        this._assertActiveLoad(entry, loadToken);
         const PluginClass = mod.default;
         if (PluginClass && typeof PluginClass === "function") {
           const instance = new PluginClass();
@@ -762,37 +800,32 @@ export class PluginManager {
           instance.register = (disposable) => {
             if (typeof disposable !== "function") return;
             if (entry._loadToken !== loadToken || entry._loadCancelled) {
-              try { disposable(); } catch (err) {
-                log.error(`"${entry.id}" late disposable error: ${err.message}`);
-              }
+              void this._runCleanupCallback(entry, "late disposable", disposable, Date.now() + this._cleanupTimeoutMs);
               return;
             }
             entry._disposables.push(disposable);
           };
           instance.ctx.registerTool = (toolDef) => {
-            const dispose = this.addTool(entry.id, toolDef, { pluginKey: entry.pluginKey, source: entry.source });
-            if (entry._loadToken !== loadToken || entry._loadCancelled) {
-              try { dispose(); } catch (err) {
-                log.error(`"${entry.id}" late dynamic tool cleanup error: ${err.message}`);
-              }
-              return () => {};
-            }
-            return dispose;
+            if (entry._loadToken !== loadToken || entry._loadCancelled) return () => {};
+            return this.addTool(entry.id, toolDef, { pluginKey: entry.pluginKey, source: entry.source });
           };
           if (typeof instance.onload === "function") {
             this._assertActiveLoad(entry, loadToken);
             await this._runLoadStage(entry, "lifecycle onload", () => instance.onload());
           }
         }
+        this._assertActiveLoad(entry, loadToken);
         entry.activationState = "activated";
         entry.activationError = null;
         return entry;
       } catch (err) {
-        entry.activationState = "failed";
-        entry.activationError = err.message;
+        if (entry._loadToken === loadToken && !entry._loadCancelled) {
+          entry.activationState = "failed";
+          entry.activationError = err.message;
+        }
         throw err;
       } finally {
-        entry._activationPromise = null;
+        if (entry._loadToken === loadToken) entry._activationPromise = null;
       }
     };
 
@@ -804,7 +837,25 @@ export class PluginManager {
     const entry = this._resolvePluginEntry(pluginId, options);
     if (!entry) throw new Error(`Plugin "${pluginId}" not found`);
     if (!activationMatches(entry.activationEvents, reason)) return entry;
-    return this._activatePluginEntry(entry, reason);
+    const loadToken = entry._loadToken;
+    try {
+      return await this._activatePluginEntry(entry, reason, loadToken);
+    } catch (error) {
+      // Lazy activation runs after the startup load boundary has finished. It
+      // owns the same cleanup duties, but never a replacement load's runtime.
+      if (entry._loadToken === loadToken && entry.status === "loaded") {
+        entry.status = "failed";
+        entry.error = error?.message || String(error);
+        await this._cleanupPluginEntry(entry);
+        if (entry._loadToken === loadToken && entry.status === "failed") {
+          entry.activationState = "failed";
+          entry.activationError = entry.error;
+          this._refreshRouteRegistryForId(entry.id);
+          this._bus?.emit({ type: "plugin_ui_changed" });
+        }
+      }
+      throw error;
+    }
   }
 
   async activatePluginRoute(pluginId, routePath) {
@@ -820,6 +871,7 @@ export class PluginManager {
   // ── Task 5: Tool loader ──────────────────────────────────────────────────
 
   async _loadTools(entry) {
+    const loadToken = entry._loadToken;
     const toolsDir = path.join(entry.pluginDir, "tools");
     if (!fs.existsSync(toolsDir)) return;
     const files = fs.readdirSync(toolsDir).filter(isPluginSourceFile);
@@ -828,6 +880,7 @@ export class PluginManager {
       const filePath = path.join(toolsDir, file);
       try {
         const mod = await freshImport(filePath);
+        this._assertActiveLoad(entry, loadToken);
         if (!mod.name || !mod.description || typeof mod.execute !== "function") continue;
         const origExecute = mod.execute;
         this._tools.push({
@@ -983,6 +1036,7 @@ export class PluginManager {
   }
 
   async _loadCommands(entry) {
+    const loadToken = entry._loadToken;
     const cmdsDir = path.join(entry.pluginDir, "commands");
     if (!fs.existsSync(cmdsDir)) return;
     const files = fs.readdirSync(cmdsDir).filter(isPluginSourceFile);
@@ -990,6 +1044,7 @@ export class PluginManager {
       const filePath = path.join(cmdsDir, file);
       try {
         const mod = await freshImport(filePath);
+        this._assertActiveLoad(entry, loadToken);
         if (!mod.name) continue;
         const hasHandler = typeof mod.handler === "function";
         const hasExecute = typeof mod.execute === "function";
@@ -1048,9 +1103,11 @@ export class PluginManager {
   // ── Task 7: Route loader ─────────────────────────────────────────────────
 
   async _loadRoutes(entry) {
+    const loadToken = entry._loadToken;
     const routesDir = path.join(entry.pluginDir, "routes");
     if (!fs.existsSync(routesDir)) return;
     const { Hono } = await import("hono");
+    this._assertActiveLoad(entry, loadToken);
     const app = new Hono();
     const ctx = entry.ctx;
 
@@ -1102,6 +1159,7 @@ export class PluginManager {
       const filePath = path.join(routesDir, file);
       try {
         const mod = await freshImport(filePath);
+        this._assertActiveLoad(entry, loadToken);
         if (typeof mod.default === "function") {
           const sub = mod.default;
           if (sub && typeof sub.fetch === "function") {
@@ -1124,6 +1182,7 @@ export class PluginManager {
         log.error(`route "${file}" in "${entry.id}" failed to load: ${err.message}`);
       }
     }
+    this._assertActiveLoad(entry, loadToken);
     this._routeApps.set(entry.pluginKey, {
       pluginId: entry.id,
       pluginKey: entry.pluginKey,
@@ -1140,6 +1199,7 @@ export class PluginManager {
    * 每个 .ts/.js 文件导出 (pi: ExtensionAPI) => void，在 session 创建时被 Pi SDK 调用。
    */
   async _loadExtensions(entry) {
+    const loadToken = entry._loadToken;
     const extDir = path.join(entry.pluginDir, "extensions");
     if (!fs.existsSync(extDir)) return;
     const files = fs.readdirSync(extDir).filter(isPluginSourceFile);
@@ -1147,6 +1207,7 @@ export class PluginManager {
       const filePath = path.join(extDir, file);
       try {
         const mod = await freshImport(filePath);
+        this._assertActiveLoad(entry, loadToken);
         const factory = mod.default ?? mod;
         if (typeof factory !== "function") {
           log.warn(`extension "${file}" in "${entry.id}" does not export a function, skipped`);
@@ -1359,6 +1420,7 @@ export class PluginManager {
   }
 
   async _loadProviders(entry) {
+    const loadToken = entry._loadToken;
     const providersDir = path.join(entry.pluginDir, "providers");
     if (!fs.existsSync(providersDir)) return;
     const files = fs.readdirSync(providersDir).filter(isPluginSourceFile);
@@ -1366,6 +1428,7 @@ export class PluginManager {
       const filePath = path.join(providersDir, file);
       try {
         const mod = await freshImport(filePath);
+        this._assertActiveLoad(entry, loadToken);
         if (!mod.id) continue;
         this._providerPlugins.push({ ...mod, _pluginId: entry.id, _pluginKey: entry.pluginKey, _pluginSource: entry.source });
       } catch (err) {
@@ -1598,27 +1661,11 @@ export class PluginManager {
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   async _cleanupPluginEntry(entry) {
-    const pluginId = entry.id;
-
-    // 1. 生命周期清理（onunload + disposables）
-    if (entry.instance) {
-      if (typeof entry.instance.onunload === "function") {
-        try { await entry.instance.onunload(); } catch (err) {
-          log.error(`"${pluginId}" onunload error: ${err.message}`);
-        }
-      }
-      for (const d of entry._disposables.reverse()) {
-        try { d(); } catch (err) {
-          log.error(`"${pluginId}" disposable error: ${err.message}`);
-        }
-      }
-      entry._disposables = [];
+    try {
+      await this._cleanupPluginRuntime(entry);
+    } finally {
+      this._cleanupPluginContributions(entry);
     }
-    entry.instance = null;
-    entry.activationState = entry.hasLifecycle ? "inactive" : "none";
-
-    // 2. 清理静态贡献（文件约定加载的 tools、commands 等）
-    this._cleanupPluginContributions(entry);
   }
 
   async unloadPlugin(pluginId, options: any = {}) {

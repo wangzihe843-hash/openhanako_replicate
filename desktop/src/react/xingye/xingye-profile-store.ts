@@ -340,6 +340,9 @@ export async function readXingyeRoleProfile(
   }
 }
 
+// Serialize read-merge-write operations within this renderer and connection.
+const profileSaveQueues = new Map<string, Promise<void>>();
+
 /**
  * Persists merged profile to `profile.json` for the agent via `/api/xingye/storage` (`writeJson`).
  */
@@ -353,36 +356,46 @@ export async function saveXingyeRoleProfile(
   }
   requireServerForProfile();
   const operation = profileOperation();
+  const key = JSON.stringify([xingyeProfileConnectionKey(), id]);
+  const previousSave = profileSaveQueues.get(key);
+  const submitted = { ...patch };
+  const save = (async () => {
+    if (previousSave) await previousSave;
+    const existingRaw = await operation.backend.readJson<unknown>(id, XINGYE_PROFILE_JSON_RELATIVE_PATH);
+    let previous = existingRaw != null ? normalizeProfile(existingRaw, id) : null;
+    if (!previous) {
+      const legacy = readLegacyRoleProfilesMap()[id];
+      previous = legacy
+        ? normalizeProfile(legacy, id)
+        : { agentId: id, updatedAt: new Date(0).toISOString() };
+    }
+    if (!previous) {
+      throw new Error('Unable to save Xingye role profile without agentId.');
+    }
+
+    const merged: Record<string, unknown> = { ...previous, ...submitted, agentId: id, updatedAt: new Date().toISOString() };
+    const next = normalizeProfile(merged, id);
+    if (!next) {
+      throw new Error('Unable to save Xingye role profile without agentId.');
+    }
+
+    try {
+      await operation.backend.writeJson(id, XINGYE_PROFILE_JSON_RELATIVE_PATH, next);
+    } catch (error) {
+      console.warn('[xingye-profile-store] failed to save role profile:', error);
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+
+    notifyXingyeRoleProfilesChanged(id);
+    return next;
+  })();
+  const settled = save.then(() => undefined, () => undefined);
+  profileSaveQueues.set(key, settled);
   try {
-  const existingRaw = await operation.backend.readJson<unknown>(id, XINGYE_PROFILE_JSON_RELATIVE_PATH);
-  let previous = existingRaw != null ? normalizeProfile(existingRaw, id) : null;
-  if (!previous) {
-    const legacy = readLegacyRoleProfilesMap()[id];
-    previous = legacy
-      ? normalizeProfile(legacy, id)
-      : { agentId: id, updatedAt: new Date(0).toISOString() };
-  }
-  if (!previous) {
-    throw new Error('Unable to save Xingye role profile without agentId.');
-  }
-
-  const merged: Record<string, unknown> = { ...previous, ...patch, agentId: id, updatedAt: new Date().toISOString() };
-  const next = normalizeProfile(merged, id);
-  if (!next) {
-    throw new Error('Unable to save Xingye role profile without agentId.');
-  }
-
-  try {
-    await operation.backend.writeJson(id, XINGYE_PROFILE_JSON_RELATIVE_PATH, next);
-  } catch (error) {
-    console.warn('[xingye-profile-store] failed to save role profile:', error);
-    throw error instanceof Error ? error : new Error(String(error));
-  }
-
-  notifyXingyeRoleProfilesChanged(id);
-  return next;
+    return await save;
   } finally {
     operation.dispose();
+    if (profileSaveQueues.get(key) === settled) profileSaveQueues.delete(key);
   }
 }
 

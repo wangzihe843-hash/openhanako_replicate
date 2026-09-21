@@ -85,7 +85,8 @@ function taskSessionTarget(task) {
 export class Poller {
   declare _active: any;
   declare _bus: any;
-  declare _cancelled: any;
+  declare _attempts: Map<string, object>;
+  declare _checks: Map<string, { attempt: object; promise: Promise<void> }>;
   declare _dataDir: any;
   declare _errorCounts: any;
   declare _generatedDir: any;
@@ -121,8 +122,9 @@ export class Poller {
     this._tickCount = 0;
     /** @type {Map<string, number>} consecutive query error counts per taskId */
     this._errorCounts = new Map();
-    /** @type {Set<string>} taskIds cancelled — fence against in-flight queries */
-    this._cancelled = new Set();
+    // Tokens belong to one submission/retry, never just a reusable taskId.
+    this._attempts = new Map();
+    this._checks = new Map();
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -136,9 +138,21 @@ export class Poller {
    * @param {string} taskId
    */
   add(taskId) {
-    this._cancelled.delete(taskId);
+    const attempt = {};
+    this._attempts.set(taskId, attempt);
+    this._checks.delete(taskId);
     this._errorCounts.delete(taskId);
     this._active.add(taskId);
+    return attempt;
+  }
+
+  getAttempt(taskId: string): object | null {
+    return this._attempts.get(taskId) || null;
+  }
+
+  isCurrentAttempt(taskId: string, attempt: object | null): boolean {
+    return !!attempt && this._attempts.get(taskId) === attempt
+      && this._active.has(taskId) && this._store.get(taskId)?.status === "pending";
   }
 
   /**
@@ -157,7 +171,8 @@ export class Poller {
   cancel(taskId) {
     if (!this._active.has(taskId)) return;
     const task = this._store.get(taskId);
-    this._cancelled.add(taskId);
+    this._attempts.delete(taskId);
+    this._checks.delete(taskId);
     this._active.delete(taskId);
     this._errorCounts.delete(taskId);
     this._store.update(taskId, {
@@ -176,6 +191,7 @@ export class Poller {
    * Recover pending tasks from the store and start the polling interval.
    */
   start() {
+    if (this._timer !== null) return;
     const pending = this._store.listPending();
     for (const task of pending) {
       if (task.submitState === "submitting" && !task.adapterTaskId && !(task.files?.length)) {
@@ -190,7 +206,7 @@ export class Poller {
         this._bus.request("task:remove", { taskId: task.taskId }).catch(() => {});
         continue;
       }
-      this._active.add(task.taskId);
+      this.add(task.taskId);
       if (isResponseDelivery(task)) continue;
       const target = taskSessionTarget(task);
       // Re-register in DeferredResultStore so resolve/fail notifications work after restart
@@ -239,6 +255,10 @@ export class Poller {
       clearInterval(this._timer);
       this._timer = null;
     }
+    this._attempts.clear();
+    this._checks.clear();
+    this._active.clear();
+    this._errorCounts.clear();
   }
 
   /**
@@ -248,14 +268,20 @@ export class Poller {
    * @param {string} taskId
    */
   async checkNow(taskId) {
-    if (!this._active.has(taskId)) return;
+    const attempt = this.getAttempt(taskId);
+    if (!this.isCurrentAttempt(taskId, attempt)) return;
+    const current = this._checks.get(taskId);
+    if (current?.attempt === attempt) return current.promise;
     const task = this._store.get(taskId);
-    if (!task || task.status !== "pending") return;
-    try {
-      await this._checkTask(taskId, task);
-    } catch (err) {
-      this._log.error(`[media] checkNow unexpected error for ${taskId}:`, err);
-    }
+    // Install ownership before querying, including synchronously reentrant adapters.
+    const checking = Promise.resolve().then(() => this._checkTask(taskId, task, attempt))
+      .catch(err => { this._log.error(`[media] checkNow unexpected error for ${taskId}:`, err); })
+      .finally(() => {
+        if (this._checks.get(taskId)?.promise === checking) this._checks.delete(taskId);
+        if (!this._active.has(taskId) && this.getAttempt(taskId) === attempt) this._attempts.delete(taskId);
+      });
+    this._checks.set(taskId, { attempt, promise: checking });
+    return checking;
   }
 
   // ── Private ────────────────────────────────────────────────────────────────
@@ -326,6 +352,7 @@ export class Poller {
       // Task disappeared from store or was already resolved — drop it.
       if (!task || task.status !== "pending") {
         this._active.delete(taskId);
+        this._attempts.delete(taskId);
         this._errorCounts.delete(taskId);
         continue;
       }
@@ -333,10 +360,8 @@ export class Poller {
       const ageMs = Date.now() - new Date(task.createdAt).getTime();
       if (!shouldCheckThisTick(ageMs, tick)) continue;
 
-      // Fire-and-forget; errors are caught inside _checkTask.
-      this._checkTask(taskId, task).catch((err) => {
-        this._log.error(`[media] _checkTask unexpected error for ${taskId}:`, err);
-      });
+      // Interval and immediate checks share the same in-flight query per attempt.
+      void this.checkNow(taskId);
     }
   }
 
@@ -348,13 +373,14 @@ export class Poller {
    * @param {string} taskId
    * @param {object} task   Shallow copy from store.get()
    */
-  async _checkTask(taskId, task) {
-    // Cancellation fence: if cancel() was called while a query was in-flight, bail out.
-    if (this._cancelled.has(taskId)) return;
+  async _checkTask(taskId, task, attempt: object) {
+    const isCurrent = () => this.isCurrentAttempt(taskId, attempt);
+    if (!isCurrent()) return;
 
     // Fake-async: adapter populated files synchronously during submit.
     if (task.files && task.files.length > 0) {
       const dims = await this._readImageDimensions(task.files);
+      if (!isCurrent()) return;
       const sessionFiles = this._registerGeneratedFiles(task, task.files);
       this._store.update(taskId, {
         status: "done",
@@ -371,7 +397,9 @@ export class Poller {
           ...(sessionFiles.length ? { sessionFiles } : {}),
         });
       }
-      this._emitTaskDone(task, task.files, dims, sessionFiles);
+      if (this.getAttempt(taskId) === attempt && this._store.get(taskId)) {
+        this._emitTaskDone(task, task.files, dims, sessionFiles);
+      }
       return;
     }
 
@@ -410,9 +438,9 @@ export class Poller {
     let result;
     try {
       result = await adapter.query(task.adapterTaskId || taskId, ctx);
-      // Re-check cancellation fence after await — cancel() may have fired while query was in-flight
-      if (this._cancelled.has(taskId)) return;
+      if (!isCurrent()) return;
     } catch (err) {
+      if (!isCurrent()) return;
       const count = (this._errorCounts.get(taskId) || 0) + 1;
       this._errorCounts.set(taskId, count);
       if (count < MAX_CONSECUTIVE_ERRORS) {
@@ -440,6 +468,7 @@ export class Poller {
     if (status === "success" || status === "done") {
       const files = result.files ?? [];
       const dims = await this._readImageDimensions(files);
+      if (!isCurrent()) return;
       const sessionFiles = this._registerGeneratedFiles(task, files);
       this._store.update(taskId, {
         status: "done",
@@ -457,7 +486,9 @@ export class Poller {
           ...(sessionFiles.length ? { sessionFiles } : {}),
         });
       }
-      this._emitTaskDone(task, files, dims, sessionFiles);
+      if (this.getAttempt(taskId) === attempt && this._store.get(taskId)) {
+        this._emitTaskDone(task, files, dims, sessionFiles);
+      }
       return;
     }
 

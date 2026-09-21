@@ -8436,7 +8436,7 @@
     {
       "sourceFile": "lib/xingye/events.js",
       "kind": "atomic-write",
-      "excerpt": "atomicWriteJson(file, { version: 1, events: log.events, dedupeKeys: log.dedupeKeys })",
+      "excerpt": "atomicWriteJson(file, { ...log, version: 1 })",
       "reason": "Appends or updates the agent's Xingye event log and deduplication state.",
       "storeId": "xingye-state",
       "exemptionId": null,
@@ -8445,7 +8445,7 @@
     {
       "sourceFile": "lib/xingye/events.js",
       "kind": "atomic-write",
-      "excerpt": "atomicWriteJson(file, { version: 1, events: log.events, dedupeKeys: log.dedupeKeys })",
+      "excerpt": "atomicWriteJson(file, { ...log, version: 1 })",
       "reason": "Appends or updates the agent's Xingye event log and deduplication state.",
       "storeId": "xingye-state",
       "exemptionId": null,
@@ -8535,7 +8535,7 @@
     {
       "sourceFile": "lib/xingye/heartbeat-consumer.js",
       "kind": "atomic-write",
-      "excerpt": "atomicWriteJson(logPath, { ...log, events: prunedEvents, dedupeKeys: prunedDedupeKeys })",
+      "excerpt": "atomicWriteJson(logPath, { ...log, autoDraftState: { ...autoDraftState, lastPrunedChatAt }, events: prunedEvents, dedupeKeys: prunedDedupeKeys, })",
       "reason": "Writes consumed-event state and Xingye heartbeat result/history files.",
       "storeId": "xingye-state",
       "exemptionId": null,

@@ -16,6 +16,27 @@ const AGENT_OPTION_KEYS = new Set(["label", "model", "agentType", "toolFilter", 
 /** 节点重试次数硬上限：脚本写多少都不允许超过，避免一个坏节点把整条 run 拖死。 */
 const MAX_NODE_RETRIES = 5;
 
+export class WorkflowNodeCompletionError extends Error {
+  readonly code = "WORKFLOW_NODE_COMPLETION_FAILED";
+  readonly completedResult: unknown;
+
+  constructor(nodeId: string, result: unknown, cause: unknown) {
+    let resultText: string;
+    try {
+      resultText = typeof result === "string" ? result : (JSON.stringify(result) ?? String(result));
+    } catch {
+      resultText = "结果无法序列化，请检查该节点的子会话";
+    }
+    const preview = resultText.length > 2000
+      ? `${resultText.slice(0, 2000)}…（预览已截断，完整结果请查看节点子会话）`
+      : resultText;
+    const reason = (cause instanceof Error ? cause.message : String(cause)).slice(0, 1000);
+    super(`节点 ${nodeId} 执行已成功，但完成结果记录失败：${reason}。本轮不会重新执行该节点。已完成结果：${preview}`, { cause });
+    this.name = "WorkflowNodeCompletionError";
+    this.completedResult = result;
+  }
+}
+
 function normalizeAgentOptions(rawOpts) {
   if (rawOpts == null) return {};
   if (typeof rawOpts !== "object" || Array.isArray(rawOpts)) {
@@ -69,6 +90,7 @@ function normalizeAgentPrompt(prompt) {
 
 function createWorkflowRuntimeContract() {
   const calls = [];
+  let completionFailure: WorkflowNodeCompletionError | null = null;
 
   function trackAgentCall(meta, start) {
     const record = { ...meta, consumed: false };
@@ -103,6 +125,9 @@ function createWorkflowRuntimeContract() {
   }
 
   function assertNoUnawaitedAgentCalls() {
+    // Script-level error recovery may handle execution failures, but must not
+    // hide lost completion records by returning null from parallel/pipeline.
+    if (completionFailure) throw completionFailure;
     const unawaited = calls.filter((call) => !call.consumed);
     if (!unawaited.length) return;
     const first = unawaited[0];
@@ -113,7 +138,11 @@ function createWorkflowRuntimeContract() {
     );
   }
 
-  return { trackAgentCall, assertNoUnawaitedAgentCalls };
+  return {
+    trackAgentCall,
+    assertNoUnawaitedAgentCalls,
+    recordCompletionFailure(error: WorkflowNodeCompletionError) { completionFailure ||= error; },
+  };
 }
 
 /**
@@ -124,6 +153,7 @@ function createWorkflowRuntimeContract() {
  *   limiter: { run: (thunk: () => Promise<any>) => Promise<any> },
  *   signal?: AbortSignal,
  *   onProgress?: (evt: object) => void,
+ *   onCompletionFailure?: (error: WorkflowNodeCompletionError) => void,
  *   onAgentEvent?: (evt: { phase: 'start'|'session'|'done'|'fail', nodeId: string, threadId?: string|null, threadKind?: string|null, label?: string|null, agentId?: string|null, phaseLabel?: string|null, childSessionId?: string|null, childSessionPath?: string|null }) => void,
  *   budget?: { total: number|null, spent: () => number, remaining: () => number },
  *   args?: any,
@@ -175,6 +205,21 @@ export function createHostApi(deps) {
       label,
     });
 
+    const completeAgentNode = (result, key, extra = {}) => {
+      // Execution has already succeeded. Persist its result before publishing
+      // metadata so a publication failure cannot turn it into a retryable run.
+      try {
+        if (journal) journal.record(seq, key, result, "ok", extra);
+        onAgentEvent({ phase: "done", nodeId, threadId, threadKind });
+      } catch (error) {
+        const failure = new WorkflowNodeCompletionError(nodeId, result, error);
+        runtimeContract.recordCompletionFailure(failure);
+        deps.onCompletionFailure?.(failure);
+        throw failure;
+      }
+      return result;
+    };
+
     const startAgentNode = async () => {
       // ── journal 回放：cache hit 不消耗 limiter slot，瞬间返回 ──
       if (replayJournal) {
@@ -182,9 +227,7 @@ export function createHostApi(deps) {
         const cached = replayJournal.tryReplay(seq, replayKey);
         if (cached) {
           onAgentEvent({ phase: "start", nodeId, threadId, threadKind, label, agentId: baseIsoOpts.agentId ?? null, phaseLabel: currentPhase });
-          onAgentEvent({ phase: "done", nodeId, threadId, threadKind });
-          journal?.record(seq, replayKey, cached.result, "ok");
-          return cached.result;
+          return completeAgentNode(cached.result, replayKey);
         }
       }
 
@@ -305,11 +348,9 @@ export function createHostApi(deps) {
         let lastErr = null;
         for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
           if (signal?.aborted) throw lastErr ?? new Error("workflow 已中止");
+          let result;
           try {
-            const result = await attemptOnce();
-            onAgentEvent({ phase: "done", nodeId, threadId, threadKind });
-            if (journalKey) journal.record(seq, journalKey, result, "ok", { attempts: attempt });
-            return result;
+            result = await attemptOnce();
           } catch (err) {
             lastErr = err;
             const retryable = !signal?.aborted && attempt <= maxRetries && isRetryableNodeError(err);
@@ -327,7 +368,9 @@ export function createHostApi(deps) {
               const t = setTimeout(r, delay);
               if (typeof (t as any).unref === "function") (t as any).unref();
             });
+            continue;
           }
+          return completeAgentNode(result, journalKey, { attempts: attempt });
         }
         throw lastErr;
       });

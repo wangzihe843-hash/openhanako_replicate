@@ -379,6 +379,7 @@ export async function resolveImageAdapter(input, registry, submitCtx) {
 export function markSubmitFailed({ taskId, err, store, ctx }) {
   const message = errorMessage(err);
   const task = store.get?.(taskId);
+  if (!task || task.status !== "pending") return;
   store.update(taskId, {
     status: "failed",
     failReason: message,
@@ -392,9 +393,26 @@ export function markSubmitFailed({ taskId, err, store, ctx }) {
   ctx.log?.error?.(`[media] submit failed for ${taskId}:`, message);
 }
 
+function currentSubmissionGuard(store, poller, taskId) {
+  const attempt = poller.getAttempt?.(taskId);
+  const task = store.get(taskId);
+  const createdAt = task?.createdAt;
+  const retryCount = Number(task?.retryCount || 0);
+  return () => {
+    if (typeof poller.isCurrentAttempt === "function") return poller.isCurrentAttempt(taskId, attempt);
+    // Compatibility for embedders that provide the legacy minimal poller API.
+    const current = store.get(taskId);
+    return current?.status === "pending" && current.createdAt === createdAt
+      && Number(current.retryCount || 0) === retryCount;
+  };
+}
+
 export async function runSubmitInBackground({ taskId, adapter, params, submitCtx, store, poller, ctx }) {
+  const isCurrent = currentSubmissionGuard(store, poller, taskId);
+  if (!isCurrent()) return;
   try {
     const result = await adapter.submit(params, submitCtx);
+    if (!isCurrent()) return;
     const hasProviderTaskId = typeof result?.taskId === "string" && result.taskId.trim();
     const adapterTaskId = hasProviderTaskId ? result.taskId : taskId;
     const files = Array.isArray(result?.files) ? result.files.filter(Boolean) : [];
@@ -413,7 +431,7 @@ export async function runSubmitInBackground({ taskId, adapter, params, submitCtx
       void poller.checkNow(taskId);
     }
   } catch (err) {
-    markSubmitFailed({ taskId, err, store, ctx });
+    if (isCurrent()) markSubmitFailed({ taskId, err, store, ctx });
   }
 }
 
@@ -435,7 +453,24 @@ function normalizeRetryParams(task) {
   return null;
 }
 
+const pendingRetries = new WeakMap<object, Set<string>>();
+
 export async function retryImageTask({ taskId, ctx }) {
+  const store = ctx?._mediaGen?.store;
+  if (!store) return retryImageTaskInternal({ taskId, ctx });
+  let pending = pendingRetries.get(store);
+  if (!pending) { pending = new Set(); pendingRetries.set(store, pending); }
+  if (pending.has(taskId)) return retryError(409, "task retry is already in progress");
+  pending.add(taskId);
+  try {
+    return await retryImageTaskInternal({ taskId, ctx });
+  } finally {
+    pending.delete(taskId);
+    if (!pending.size) pendingRetries.delete(store);
+  }
+}
+
+async function retryImageTaskInternal({ taskId, ctx }) {
   const { registry, store, poller } = ctx?._mediaGen || {};
   if (!registry || !store || !poller) {
     return retryError(503, t("plugin.imageGen.notInitialized"));
@@ -475,6 +510,13 @@ export async function retryImageTask({ taskId, ctx }) {
     await ctx.bus.request("deferred:retry", { taskId, sessionId, sessionPath, sessionRef, meta });
   }
 
+  // The deferred registration awaited above must not revive a removed or
+  // independently replaced task. No provider request has started yet.
+  const current = store.get(taskId);
+  if (!current || current.status !== task.status || current.createdAt !== task.createdAt
+    || Number(current.retryCount || 0) !== Number(task.retryCount || 0)) {
+    return retryError(409, "task changed while retry was being prepared");
+  }
   const now = new Date().toISOString();
   store.update(taskId, {
     status: "pending",
@@ -490,6 +532,10 @@ export async function retryImageTask({ taskId, ctx }) {
     retriedAt: now,
     retryCount: Number(task.retryCount || 0) + 1,
   });
+  // Acquire the new attempt before the next await, so cancellation during
+  // registry registration cannot be undone by a later add().
+  poller.add(taskId);
+  const isCurrent = currentSubmissionGuard(store, poller, taskId);
 
   if (!responseDelivery) {
     try {
@@ -506,7 +552,7 @@ export async function retryImageTask({ taskId, ctx }) {
     }
   }
 
-  poller.add(taskId);
+  if (!isCurrent()) return retryError(409, "task retry was canceled or replaced");
 
   const submitCtx = createSubmitContext(ctx);
   const adapterSubmitCtx = submitContextForAdapter(registry, adapter, submitCtx);

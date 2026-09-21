@@ -4,7 +4,7 @@ import { Type } from "../pi-sdk/index.ts";
 import { t } from "../i18n.ts";
 import { runWorkflowScript } from "../workflow/sandbox.ts";
 import { extractMeta } from "../workflow/meta.ts";
-import { createHostApi } from "../workflow/host-api.ts";
+import { createHostApi, WorkflowNodeCompletionError } from "../workflow/host-api.ts";
 import { createLimiter } from "../workflow/concurrency.ts";
 import { WorkflowJournal } from "../workflow/journal.ts";
 import { createIdleWatchdog, normalizeRunLimits } from "../workflow/run-limits.ts";
@@ -313,9 +313,16 @@ export function createWorkflowTool(deps) {
       let childWorkflowSeq = 0;
       const childRuns: Promise<any>[] = [];
       const childReplayJournals = [];
+      const childJournals: WorkflowJournal[] = [];
+      let completionFailure: WorkflowNodeCompletionError | null = null;
+      const onCompletionFailure = (error: WorkflowNodeCompletionError) => {
+        completionFailure ||= error;
+        failWith(error.message);
+      };
       const runWorkflow = (childScript, childArgs) => {
         const cIdx = ++childWorkflowSeq;
         const childJournal = new WorkflowJournal(journalPath(jDir, `${taskId}.child-${cIdx}`));
+        childJournals.push(childJournal);
         const childReplay = (params.resumeFromRunId && jDir)
           ? WorkflowJournal.load(journalPath(jDir, `${params.resumeFromRunId}.child-${cIdx}`))
           : null;
@@ -327,6 +334,7 @@ export function createWorkflowTool(deps) {
           signal: controller.signal,
           onProgress: (evt) => deps.emitEvent?.({ ...evt, type: "workflow_progress", taskId }, parentSessionPath),
           onAgentEvent,
+          onCompletionFailure,
           budget,
           args: childArgs,
           resolveAgentId: deps.resolveAgentId,
@@ -341,7 +349,7 @@ export function createWorkflowTool(deps) {
           deadlineMs: limits.totalTimeoutMs + SCRIPT_DEADLINE_SLACK_MS,
         }).then(({ result }) => assertWorkflowResult(result));
         childRuns.push(childRun);
-        void childRun.catch(() => {}); // The root owns and reports child failures below.
+        void childRun.catch(() => {}); // Ordinary child execution errors remain under script control.
         return childRun;
       };
 
@@ -352,6 +360,7 @@ export function createWorkflowTool(deps) {
         signal: controller.signal,
         onProgress: (evt) => deps.emitEvent?.({ ...evt, type: "workflow_progress", taskId }, parentSessionPath),
         onAgentEvent,
+        onCompletionFailure,
         budget,
         args: params.args,
         resolveAgentId: deps.resolveAgentId,
@@ -391,8 +400,11 @@ export function createWorkflowTool(deps) {
           await Promise.allSettled(childRuns);
           await limiter.drain();
           // abortReason 优先：脚本 promise 的 reject 只是 abort 的回声，判死的真实理由在这里。
-          const cause = abortReason || err?.message || String(err);
-          const reason = `${cause}。可用 resumeFromRunId: "${taskId}" 重发修正后的 workflow，已完成节点会命中缓存瞬时返回。`;
+          const cause = completionFailure?.message || abortReason || err?.message || String(err);
+          const resumeHint = journal.isDurable && childJournals.every(child => child.isDurable)
+            ? `可用 resumeFromRunId: "${taskId}" 续跑；仅已持久化且位置与输入未变的节点会命中缓存，修改节点或先前缺失的记录仍会重新执行。`
+            : `runId: "${taskId}" 的完成记录未可靠持久化，无法保证续跑跳过已执行节点；请先核对已完成结果和副作用。`;
+          const reason = `${cause}。${resumeHint}`;
           const finishedAt = Date.now();
           if (!canceled) store.fail(taskId, reason);
           if (canceled) runStore?.abort?.(taskId, reason);

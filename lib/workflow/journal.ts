@@ -16,6 +16,7 @@ export class WorkflowJournal {
   declare _entries: Map<number, { key: string; result: any; status: string; ts: number }>;
   declare _invalidatedAfter: number;
   declare _replayHits: number;
+  declare _writeFailed: boolean;
 
   /**
    * @param {string|null} journalPath  JSONL 文件路径；null = 纯内存（不持久化）
@@ -26,6 +27,7 @@ export class WorkflowJournal {
     this._entries = new Map();
     this._invalidatedAfter = Infinity;
     this._replayHits = 0;
+    this._writeFailed = false;
   }
 
   /**
@@ -110,9 +112,15 @@ export class WorkflowJournal {
     try {
       fs.mkdirSync(path.dirname(this._path), { recursive: true });
       fs.appendFileSync(this._path, JSON.stringify(entry) + "\n");
-    } catch { /* best effort */ }
+    } catch (error) {
+      // Retain the successful result in memory, but never promise that a later
+      // run can replay a journal whose append did not complete.
+      this._writeFailed = true;
+      throw error;
+    }
   }
 
+  get isDurable() { return !!this._path && !this._writeFailed; }
   get replayHits() { return this._replayHits; }
   get totalEntries() { return this._entries.size; }
   get hasEntries() { return this._entries.size > 0; }

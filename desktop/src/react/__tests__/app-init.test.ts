@@ -210,6 +210,7 @@ describe('initApp bridge indicator', () => {
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).document = {
+      documentElement: { getAttribute: vi.fn(() => null) },
       addEventListener: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {
@@ -225,6 +226,7 @@ describe('initApp bridge indicator', () => {
       .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
       .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
       .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: null }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ home: { text: 'Restored startup draft' }, sessions: {} }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -261,6 +263,10 @@ describe('initApp bridge indicator', () => {
       local: mockState.activeServerConnection,
     });
     expect(mockState.bridgeDotConnected).toBe(true);
+    expect(mockHanaFetch).toHaveBeenCalledWith('/api/input-drafts?surface=electron', {
+      connection: mockState.activeServerConnection,
+    });
+    expect(mockState.drafts).toEqual({ __home__: 'Restored startup draft' });
     // The dot describes the bootstrap agent's bridges, named in the request,
     // rather than whichever agent the server is focused on when it arrives.
     expect(mockHanaFetch).toHaveBeenCalledWith('/api/bridge/status?agentId=hana');
@@ -288,6 +294,7 @@ describe('initApp bridge indicator', () => {
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).document = {
+      documentElement: { getAttribute: vi.fn(() => null) },
       addEventListener: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {
@@ -311,10 +318,12 @@ describe('initApp bridge indicator', () => {
         credentialKind: 'device_credential',
         capabilities: ['chat', 'resources', 'files'],
       }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
       .mockResolvedValueOnce(jsonResponse({ agentId: 'hana', agent: 'Hanako', user: 'User', avatars: {} }))
       .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
       .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
       .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: null }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ home: null, sessions: {} }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -355,6 +364,7 @@ describe('initApp bridge indicator', () => {
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).document = {
+      documentElement: { getAttribute: vi.fn(() => null) },
       addEventListener: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {
@@ -389,6 +399,7 @@ describe('initApp bridge indicator', () => {
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).document = {
+      documentElement: { getAttribute: vi.fn(() => null) },
       addEventListener: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {
@@ -407,6 +418,7 @@ describe('initApp bridge indicator', () => {
         desk: { home_folder: '/agent-home' },
         cwd_history: ['/desktop'],
       }))
+      .mockResolvedValueOnce(jsonResponse({ home: null, sessions: {} }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -442,6 +454,7 @@ describe('initApp bridge indicator', () => {
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).document = {
+      documentElement: { getAttribute: vi.fn(() => null) },
       addEventListener: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {
@@ -457,6 +470,7 @@ describe('initApp bridge indicator', () => {
       .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
       .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
       .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: null }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ home: null, sessions: {} }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -491,6 +505,7 @@ describe('initApp bridge indicator', () => {
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).document = {
+      documentElement: { getAttribute: vi.fn(() => null) },
       addEventListener: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {
@@ -506,6 +521,7 @@ describe('initApp bridge indicator', () => {
       .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
       .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
       .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: '/agent-home' }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ home: null, sessions: {} }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -550,6 +566,7 @@ describe('initApp bridge indicator', () => {
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).document = {
+      documentElement: { getAttribute: vi.fn(() => null) },
       addEventListener: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {
@@ -565,6 +582,7 @@ describe('initApp bridge indicator', () => {
       .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
       .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
       .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: '/agent-home' }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ home: null, sessions: {} }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -622,6 +640,7 @@ describe('initApp bridge indicator', () => {
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).document = {
+      documentElement: { getAttribute: vi.fn(() => null) },
       addEventListener: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {
@@ -637,6 +656,7 @@ describe('initApp bridge indicator', () => {
       .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
       .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
       .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: '/old-home' }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ home: null, sessions: {} }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -684,6 +704,7 @@ describe('initApp bridge indicator', () => {
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).document = {
+      documentElement: { getAttribute: vi.fn(() => null) },
       addEventListener: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {
@@ -699,6 +720,7 @@ describe('initApp bridge indicator', () => {
       .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
       .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
       .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: '/old-home' }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ home: null, sessions: {} }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -746,6 +768,7 @@ describe('initApp bridge indicator', () => {
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).document = {
+      documentElement: { getAttribute: vi.fn(() => null) },
       addEventListener: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {
@@ -761,6 +784,7 @@ describe('initApp bridge indicator', () => {
       .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
       .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
       .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: '/old-home' }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ home: null, sessions: {} }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -810,6 +834,7 @@ describe('initApp bridge indicator', () => {
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).document = {
+      documentElement: { getAttribute: vi.fn(() => null) },
       addEventListener: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {
@@ -827,6 +852,7 @@ describe('initApp bridge indicator', () => {
       .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
       .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
       .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: null }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ home: null, sessions: {} }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },
@@ -883,6 +909,7 @@ describe('initApp bridge indicator', () => {
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).document = {
+      documentElement: { getAttribute: vi.fn(() => null) },
       addEventListener: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {
@@ -898,6 +925,7 @@ describe('initApp bridge indicator', () => {
       .mockResolvedValueOnce(jsonResponse({ locale: 'zh-CN' }))
       .mockResolvedValueOnce(jsonResponse({ agents: [{ id: 'hana', isPrimary: true }] }))
       .mockResolvedValueOnce(jsonResponse({ desk: { home_folder: null }, cwd_history: [] }))
+      .mockResolvedValueOnce(jsonResponse({ home: null, sessions: {} }))
       .mockResolvedValueOnce(jsonResponse({ jobs: [] }))
       .mockResolvedValueOnce(jsonResponse({
         telegram: { status: 'disconnected' },

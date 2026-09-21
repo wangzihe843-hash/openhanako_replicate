@@ -16,7 +16,7 @@ import {
   normalizeMediaDelivery,
   retryImageTask,
 } from "./image-task-runner.ts";
-import { resolveMediaParameters } from "./media-parameters.ts";
+import { resolveMediaParameters, validateMediaProviderDefaults } from "./media-parameters.ts";
 
 const log = createModuleLogger("media");
 const IMAGE_CAPABILITY = "image_generation";
@@ -446,6 +446,9 @@ export class UniversalMediaManager {
   }
 
   _validateVideoConfigPatch(updates) {
+    if (updates.providerDefaults) {
+      validateMediaProviderDefaults(updates.providerDefaults, this._providers.getMediaProviders(VIDEO_CAPABILITY), this.getVideoConfig().providerDefaults);
+    }
     if (!Object.prototype.hasOwnProperty.call(updates, "defaultVideoModel")) return;
     const value = updates.defaultVideoModel;
     if (value === undefined || value === null) return;
@@ -459,6 +462,9 @@ export class UniversalMediaManager {
   }
 
   _validateImageConfigPatch(updates) {
+    if (updates.providerDefaults) {
+      validateMediaProviderDefaults(updates.providerDefaults, this._providers.getMediaProviders(IMAGE_CAPABILITY), this.getImageConfig().providerDefaults);
+    }
     if (!Object.prototype.hasOwnProperty.call(updates, "defaultImageModel")) return;
     const value = updates.defaultImageModel;
     if (value === undefined || value === null) return;

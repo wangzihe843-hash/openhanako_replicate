@@ -46,6 +46,16 @@ interface RoleDetailPanelProps {
   onAutoOpenStudioConsumed?: () => void;
 }
 
+type CorruptionDraft = Pick<XingyeRoleProfile, 'corruptionTendency' | 'corruptionSeed' | 'corruptionSeedPending'>;
+const corruptionFields = ['corruptionTendency', 'corruptionSeed', 'corruptionSeedPending'] as const;
+
+function pendingCorruption(draft: CorruptionDraft | null) {
+  const tier = draft?.corruptionTendency;
+  const seed = draft?.corruptionSeedPending;
+  return tier && typeof seed === 'number' && seed !== CORRUPTION_SEED_BY_TENDENCY[tier] && typeof draft?.corruptionSeed !== 'number'
+    ? { seed, baseline: CORRUPTION_SEED_BY_TENDENCY[tier], tier } : null;
+}
+
 export function RoleDetailPanel(props: RoleDetailPanelProps) {
   const connectionKey = useStore(state => xingyeProfileConnectionKey(state));
   return <OwnedRoleDetailPanel key={`${connectionKey}:${props.agent?.id ?? ''}`} {...props} />;
@@ -94,6 +104,14 @@ function OwnedRoleDetailPanel({
   const [corruptionSeed, setCorruptionSeed] = useState<number | null>(null);
   /** AI 给出的「非基线」精确值待确认提案；null = 无待确认。确认才会落到 corruptionSeed。 */
   const [pendingSeed, setPendingSeed] = useState<{ seed: number; baseline: number; tier: XingyeCorruptionTendency } | null>(null);
+  const corruptionDraft = useRef<{ value: CorruptionDraft; acknowledged?: boolean } | null>(null);
+  const [corruptionReceipt, setCorruptionReceipt] = useState(0);
+  const editCorruption = (value: CorruptionDraft) => {
+    corruptionDraft.current = { value };
+    setCorruptionTendency(value.corruptionTendency ?? '');
+    setCorruptionSeed(value.corruptionSeed ?? null);
+    setPendingSeed(pendingCorruption(value));
+  };
   /** 「重置黑化起点」确认条是否展开；目标/当前值在展开时实时算（避免陈旧）。 */
   const [corruptionResetOpen, setCorruptionResetOpen] = useState(false);
   /** 重置后的反馈文案；null = 无。 */
@@ -131,27 +149,22 @@ function OwnedRoleDetailPanel({
     hydrate(setTaboos, old?.taboos ?? '', profile?.taboos ?? '');
     hydrate(setRelationshipMode, old?.relationshipMode ?? '', profile?.relationshipMode ?? '');
     hydrate(setGender, old?.gender ?? 'unspecified', profile?.gender ?? 'unspecified');
-    hydrate(setCorruptionTendency, old?.corruptionTendency ?? '', profile?.corruptionTendency ?? '');
-    hydrate(setCorruptionSeed, old?.corruptionSeed ?? null, profile?.corruptionSeed ?? null);
+    const draft = corruptionDraft.current;
+    // An earlier refresh cannot undo a local decision. Retire its protection only
+    // when the matching successful save has returned through profile hydration.
+    if (draft?.acknowledged
+      && corruptionFields.every(key => Object.is(draft.value[key], profile?.[key]))) {
+      corruptionDraft.current = null;
+    }
+    if (!corruptionDraft.current) {
+      hydrate(setCorruptionTendency, old?.corruptionTendency ?? '', profile?.corruptionTendency ?? '');
+      hydrate(setCorruptionSeed, old?.corruptionSeed ?? null, profile?.corruptionSeed ?? null);
+      setPendingSeed(pendingCorruption(profile));
+    }
     hydrate(setAllowAutoMoments, old?.allowAutoMoments ?? false, profile?.allowAutoMoments ?? false);
     hydrate(setAllowProactiveDM, old?.allowProactiveDM ?? false, profile?.allowProactiveDM ?? false);
     hydratedProfile.current = { agentId: agent?.id, profile };
-    // 从持久化的草稿恢复「待确认精确黑化值」弹层（关面板/切角色/重启后仍在）。pendingSeed 由本 effect
-    // 据 profile 单一来源派生——已采用(corruptionSeed 已设)或与档位基线相同则不弹。这也避免了「保存触发
-    // profile 刷新冲掉内存里 pendingSeed」的旧竞态：刷新只会按持久化值重算，不会误清。
-    const tierForPending = profile?.corruptionTendency;
-    const pendingPersisted = typeof profile?.corruptionSeedPending === 'number' ? profile.corruptionSeedPending : null;
-    if (
-      tierForPending &&
-      pendingPersisted !== null &&
-      pendingPersisted !== CORRUPTION_SEED_BY_TENDENCY[tierForPending] &&
-      typeof profile?.corruptionSeed !== 'number'
-    ) {
-      setPendingSeed({ seed: pendingPersisted, baseline: CORRUPTION_SEED_BY_TENDENCY[tierForPending], tier: tierForPending });
-    } else {
-      setPendingSeed(null);
-    }
-  }, [agent?.id, profile, profileLoading, profileLoadError]);
+  }, [agent?.id, profile, profileLoading, profileLoadError, corruptionReceipt]);
 
   useEffect(() => {
     setSavedAt(null);
@@ -241,7 +254,16 @@ function OwnedRoleDetailPanel({
 
   const resolvedProfile = getXingyeRoleProfileDisplay(agent, profile);
 
-  const acknowledgeSavedFields = (saved: XingyeRoleProfile, submitted: Partial<XingyeRoleProfile>) => {
+  const acknowledgeSavedFields = (
+    saved: XingyeRoleProfile,
+    submitted: Partial<XingyeRoleProfile>,
+    draftAtSave: typeof corruptionDraft.current,
+  ) => {
+    if (draftAtSave && corruptionDraft.current === draftAtSave
+      && corruptionFields.every(key => Object.prototype.hasOwnProperty.call(submitted, key) && Object.is(saved[key], draftAtSave.value[key]))) {
+      draftAtSave.acknowledged = true;
+      setCorruptionReceipt(value => value + 1);
+    }
     const acknowledge = <T,>(key: keyof XingyeRoleProfile, set: Dispatch<SetStateAction<T>>, fallback: NoInfer<T>) => {
       if (!Object.prototype.hasOwnProperty.call(submitted, key)) return;
       const sent = (submitted[key] ?? fallback) as T;
@@ -291,9 +313,10 @@ function OwnedRoleDetailPanel({
         allowAutoMoments,
         allowProactiveDM,
       };
+      const draftAtSave = corruptionDraft.current;
       const saved = await saveXingyeRoleProfile(agent.id, submitted);
       assertCurrent();
-      acknowledgeSavedFields(saved, submitted);
+      acknowledgeSavedFields(saved, submitted, draftAtSave);
       setSavedAt(saved.updatedAt);
       // 注：不清 pendingSeed——它由字段初始化 effect 据回流的 profile.corruptionSeedPending 派生。
 
@@ -328,11 +351,12 @@ function OwnedRoleDetailPanel({
     corruption?: { tendency: XingyeCorruptionTendency | undefined; seed: number | undefined },
   ) => {
     setProfileSaveError(null);
+    const draftAtSave = corruptionDraft.current;
     try {
       assertCurrent();
       const saved = await saveXingyeRoleProfile(agent.id, patch);
       assertCurrent();
-      acknowledgeSavedFields(saved, patch);
+      acknowledgeSavedFields(saved, patch, draftAtSave);
       setSavedAt(saved.updatedAt);
       if (corruption) {
         try {
@@ -349,6 +373,14 @@ function OwnedRoleDetailPanel({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setProfileSaveError(`保存失败：${message}`);
+      if (corruption && corruptionDraft.current === draftAtSave) {
+        corruptionDraft.current = null;
+        const confirmed = hydratedProfile.current.profile;
+        setCorruptionTendency(confirmed?.corruptionTendency ?? '');
+        setCorruptionSeed(confirmed?.corruptionSeed ?? null);
+        setPendingSeed(pendingCorruption(confirmed));
+        reloadProfile();
+      }
     }
   };
 
@@ -474,7 +506,6 @@ function OwnedRoleDetailPanel({
 
     const tier = result.corruptionTendency;
     if (tier) {
-      setCorruptionTendency(tier);
       patch.corruptionTendency = tier;
     }
 
@@ -488,7 +519,9 @@ function OwnedRoleDetailPanel({
       if (seedNum !== null && seedNum !== CORRUPTION_SEED_BY_TENDENCY[tier]) {
         pending = { seed: seedNum, baseline: CORRUPTION_SEED_BY_TENDENCY[tier], tier };
       }
-      patch.corruptionSeedPending = pending ? pending.seed : undefined; // 非基线 → 存草稿；基线 → 清掉残留草稿
+      patch.corruptionSeed = undefined;
+      patch.corruptionSeedPending = pending ? pending.seed : undefined;
+      editCorruption({ corruptionTendency: tier, corruptionSeed: undefined, corruptionSeedPending: pending?.seed });
     }
 
     // 确认即存：直接持久化人设（文本字段 + 黑化档位 + 待确认精确值草稿）。不覆盖关系状态里的黑化值，保护互动漂移。
@@ -512,12 +545,6 @@ function OwnedRoleDetailPanel({
       corruptionTendency: tier ?? (corruptionTendency || undefined),
       corruptionSeed: undefined,
     });
-
-    // 即时反馈（field-init effect 会在 profile 落库回流后按持久化值重新对齐，两者一致）。
-    if (tier) {
-      setCorruptionSeed(null);
-      setPendingSeed(pending);
-    }
 
     // 思维底座：与当前不同才切换。走与「同步助手名称」相同的 PUT config 通道（服务端会校验模板存在），
     // 失败只提示、不阻断其余回填——lore / 人设此时都已各自落盘。
@@ -665,9 +692,7 @@ function OwnedRoleDetailPanel({
               value={corruptionTendency}
               onChange={(event) => {
                 // 用户手动选档位 = 选定粗粒度基线，清掉残留的精确值与待确认提案，免得状态打架。
-                setCorruptionTendency(event.target.value as XingyeCorruptionTendency | '');
-                setCorruptionSeed(null);
-                setPendingSeed(null);
+                editCorruption({ corruptionTendency: (event.target.value as XingyeCorruptionTendency) || undefined, corruptionSeed: undefined, corruptionSeedPending: undefined });
               }}
               data-testid="xingye-role-corruption-tendency-select"
             >
@@ -717,8 +742,7 @@ function OwnedRoleDetailPanel({
                   data-testid="xingye-corruption-seed-accept"
                   onClick={() => {
                     const { seed, tier } = pendingSeed;
-                    setCorruptionSeed(seed);
-                    setPendingSeed(null);
+                    editCorruption({ corruptionTendency: tier, corruptionSeed: seed, corruptionSeedPending: undefined });
                     void persistPersonaPatch({ corruptionSeed: seed, corruptionSeedPending: undefined, corruptionTendency: tier }, { tendency: tier, seed });
                   }}
                 >
@@ -729,8 +753,7 @@ function OwnedRoleDetailPanel({
                   data-testid="xingye-corruption-seed-reject"
                   onClick={() => {
                     const { tier } = pendingSeed;
-                    setCorruptionSeed(null);
-                    setPendingSeed(null);
+                    editCorruption({ corruptionTendency: tier, corruptionSeed: undefined, corruptionSeedPending: undefined });
                     void persistPersonaPatch({ corruptionSeed: undefined, corruptionSeedPending: undefined, corruptionTendency: tier }, { tendency: tier, seed: undefined });
                   }}
                 >
@@ -749,7 +772,7 @@ function OwnedRoleDetailPanel({
               <button
                 type="button"
                 data-testid="xingye-corruption-seed-clear"
-                onClick={() => setCorruptionSeed(null)}
+                onClick={() => editCorruption({ corruptionTendency: corruptionTendency || undefined, corruptionSeed: undefined, corruptionSeedPending: undefined })}
                 style={{ background: 'none', border: 'none', textDecoration: 'underline', cursor: 'pointer', padding: 0, color: 'inherit' }}
               >
                 清除
