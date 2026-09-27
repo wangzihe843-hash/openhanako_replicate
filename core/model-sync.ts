@@ -61,7 +61,7 @@ function resolveModelApi(modelEntry, provider, providerApi) {
   return explicitApi || lookupKnownProvider(provider, getModelId(modelEntry))?.api || providerApi;
 }
 
-const THINKING_LEVEL_MAP_KEYS = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const THINKING_LEVEL_MAP_KEYS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 function normalizeThinkingLevelMap(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;

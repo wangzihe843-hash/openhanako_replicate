@@ -157,7 +157,7 @@ describe("xAI OAuth driver", () => {
       refresh: "refresh-old",
       expires: 0,
       tokenEndpoint: "https://auth.x.ai/oauth2/token",
-    })).resolves.toMatchObject({
+    }, new AbortController().signal)).resolves.toMatchObject({
       access: "access-new",
       refresh: "refresh-new",
       expires: 61_000,
@@ -175,7 +175,7 @@ describe("xAI OAuth driver", () => {
       refresh: "refresh-keep",
       expires: 0,
       tokenEndpoint: "https://auth.x.ai/oauth2/token",
-    })).resolves.toMatchObject({
+    }, new AbortController().signal)).resolves.toMatchObject({
       access: "access-newer",
       refresh: "refresh-keep",
       expires: 122_000,
@@ -191,7 +191,7 @@ describe("xAI OAuth driver", () => {
       refresh: "refresh-secret",
       expires: 0,
       tokenEndpoint: "https://evil.example/oauth2/token",
-    })).rejects.toThrow(/untrusted cached token_endpoint/i);
+    }, new AbortController().signal)).rejects.toThrow(/untrusted cached token_endpoint/i);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -226,7 +226,24 @@ describe("xAI OAuth driver", () => {
       refresh: "old-refresh",
       expires: 0,
       tokenEndpoint: "https://auth.x.ai/oauth2/token",
-    })).resolves.toMatchObject({ expires: 1_234_000 });
+    }, new AbortController().signal)).resolves.toMatchObject({ expires: 1_234_000 });
+  });
+
+  it("propagates SDK cancellation while rotating a refresh token", async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      })
+    ));
+    const provider = createXaiOAuthProvider({ fetchImpl: fetchImpl as typeof fetch });
+    const result = provider.refreshToken({
+      access: "old", refresh: "refresh-secret", expires: 0,
+      tokenEndpoint: "https://auth.x.ai/oauth2/token",
+    }, controller.signal);
+    controller.abort(new Error("cancel token rotation"));
+    await expect(result).rejects.toThrow("cancel token rotation");
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
   it("honors AbortSignal while waiting for device authorization", async () => {

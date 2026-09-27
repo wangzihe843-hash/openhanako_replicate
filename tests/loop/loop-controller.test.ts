@@ -270,7 +270,7 @@ describe("recoverAtBoot", () => {
 it('R04 rechecks conservation after the real SDK finishes its awaited event listeners', async () => {
   const { Agent } = await import('@earendil-works/pi-agent-core');
   const { registerLoopBusHandlers } = await import('../../server/loop-bus-handlers.ts');
-  const agent = new Agent();
+  const agent = new Agent({ streamFn: async () => { throw new Error('No provider request expected'); } });
   const h = makeHarness({ isTargetMidStream: () => agent.state.isStreaming });
   let listener;
   registerLoopBusHandlers({ subscribe: fn => { listener = fn; return () => {}; } }, () => h.controller);

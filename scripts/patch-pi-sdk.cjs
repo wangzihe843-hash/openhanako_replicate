@@ -19,8 +19,8 @@ const path = require("path");
 const root = path.join(__dirname, "..");
 const sdkRoot = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent");
 const piAiRoot = path.join(root, "node_modules", "@earendil-works", "pi-ai");
-const verifiedVersions = new Set(["0.80.3"]);
-const verifiedPiAiVersions = new Set(["0.80.3"]);
+const verifiedVersions = new Set(["0.87.1"]);
+const verifiedPiAiVersions = new Set(["0.87.1"]);
 
 function fail(message) {
   console.error(`[verify-pi-sdk] ${message}`);
@@ -49,9 +49,31 @@ if (!verifiedPiAiVersions.has(piAiPkg.version)) {
   fail(`pi-ai version ${piAiPkg.version} is not verified. Verified versions: ${[...verifiedPiAiVersions].join(", ")}`);
 }
 
+const agentPkg = readJson(path.join(root, "node_modules", "@earendil-works", "pi-agent-core", "package.json"));
+if (agentPkg.version !== pkg.version || piAiPkg.version !== pkg.version) {
+  fail("pi-agent-core, pi-ai and pi-coding-agent must use the same verified version");
+}
+const lock = readJson(path.join(root, "package-lock.json"));
+for (const [location, dependency] of Object.entries(lock.packages || {})) {
+  if (/node_modules\/@earendil-works\/(pi-agent-core|pi-ai|pi-coding-agent)$/.test(location)
+    && dependency.version !== pkg.version) {
+    fail(`mixed Pi version at ${location}: ${dependency.version}`);
+  }
+}
+for (const [file, markers] of [
+  ["core/auth-storage.js", ["AuthStorage", "FileAuthStorageBackend", "InMemoryAuthStorageBackend"]],
+  ["core/compaction/compaction.js", ["prepareCompaction"]],
+]) {
+  const source = fs.readFileSync(path.join(sdkRoot, "dist", file), "utf8");
+  for (const marker of markers) {
+    if (!source.includes(marker)) fail(`required SDK internal ${marker} missing from ${file}`);
+  }
+}
+
 const sdkIndex = fs.readFileSync(path.join(sdkRoot, "dist", "index.js"), "utf8");
 const expectedExportMarkers = [
   "createAgentSession",
+  "ModelRuntime",
   "createReadTool",
   "createWriteTool",
   "createEditTool",
@@ -71,7 +93,7 @@ for (const marker of expectedExportMarkers) {
 
 const scanDirs = ["core", "server", "lib", "hub"].map(d => path.join(root, d));
 const adapterDir = path.join(root, "lib", "pi-sdk");
-const importPattern = /(?:from\s+["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent)|import\s*\(\s*["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent)|require\s*\(\s*["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent))/;
+const importPattern = /(?:from\s+["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent|pi-agent-core)|import\s*\(\s*["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent|pi-agent-core)|require\s*\(\s*["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent|pi-agent-core))/;
 const leaks = [];
 
 function scanDir(dir) {

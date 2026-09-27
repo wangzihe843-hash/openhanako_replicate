@@ -7,7 +7,7 @@ import {
 } from "../lib/pi-sdk/index.ts";
 
 describe("Pi SDK OAuth login adapter", () => {
-  it("satisfies the real 0.80.3 selector contract before browser I/O starts", async () => {
+  it("satisfies the real 0.87.1 selector contract before browser I/O starts", async () => {
     const authStorage = AuthStorage.inMemory();
     const sentinel = new Error("__hana_stop_before_io__");
     const onAuth = vi.fn();

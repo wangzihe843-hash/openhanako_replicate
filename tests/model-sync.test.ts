@@ -768,7 +768,6 @@ describe("syncModels", () => {
       maxTokens: 98304,
       input: ["text", "image"],
       reasoning: true,
-      headers: { "User-Agent": "KimiCLI/1.5" },
       compat: {
         supportsDeveloperRole: false,
         thinkingFormat: "kimi",
@@ -848,7 +847,6 @@ describe("syncModels", () => {
       maxTokens: 12345,
       input: ["text"],
       reasoning: false,
-      headers: { "User-Agent": "KimiCLI/1.5" },
     });
   });
 
@@ -882,7 +880,6 @@ describe("syncModels", () => {
         high: "high",
         xhigh: "max",
       },
-      headers: { "User-Agent": "KimiCLI/1.5" },
     });
     expect(models[1]).toMatchObject({
       id: "k3-256k",
@@ -898,7 +895,6 @@ describe("syncModels", () => {
         high: "high",
         xhigh: "max",
       },
-      headers: { "User-Agent": "KimiCLI/1.5" },
     });
     for (const model of models) {
       expect(model).not.toHaveProperty("maxTokens");
@@ -926,7 +922,6 @@ describe("syncModels", () => {
       id: "future-kimi-code-model",
       reasoning: true,
       input: ["text"],
-      headers: { "User-Agent": "KimiCLI/1.5" },
       compat: {
         thinkingFormat: "kimi",
         reasoningProfile: "kimi-openai",
@@ -939,7 +934,7 @@ describe("syncModels", () => {
     expect(model).not.toHaveProperty("maxTokens");
   });
 
-  it("keeps Kimi OpenAI-compatible configs custom while reusing Pi request headers", async () => {
+  it("keeps Kimi OpenAI-compatible configs custom without restoring the removed Pi client identity", async () => {
     const syncModels = await loadSync();
 
     const providers = {
@@ -956,7 +951,7 @@ describe("syncModels", () => {
     const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
     const model = result.providers["kimi-coding"].models[0];
     expect(model.id).toBe("kimi-for-coding");
-    expect(model.headers).toEqual({ "User-Agent": "KimiCLI/1.5" });
+    expect(model.headers).toBeUndefined();
     expect(model.compat).toMatchObject({
       supportsDeveloperRole: false,
       thinkingFormat: "kimi",
@@ -1457,7 +1452,7 @@ describe("syncModels", () => {
 
     syncModels(providers, { modelsJsonPath });
 
-    const registry = createModelRegistry(new (AuthStorage as any)(tmpDir), modelsJsonPath);
+    const registry = await createModelRegistry(AuthStorage.inMemory(), modelsJsonPath);
     const available = await registry.getAvailable();
     const model = available.find((item) => (
       item.id === "qwen3-vl-plus" && item.provider === "dashscope"
@@ -2112,10 +2107,10 @@ describe("syncModels", () => {
       reasoning: true,
       thinkingLevelMap: {
         minimal: null,
-        low: null,
+        low: "low",
         medium: null,
         high: "high",
-        xhigh: "max",
+        max: "max",
       },
       compat: {
         supportsDeveloperRole: false,

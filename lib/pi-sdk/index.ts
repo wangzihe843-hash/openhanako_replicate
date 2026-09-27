@@ -12,13 +12,13 @@
  */
 
 import {
-  AuthStorage,
   createAgentSession as rawCreateAgentSession,
   ModelRegistry,
   resizeImage as rawResizeImage,
   formatDimensionNote as rawFormatDimensionNote,
   convertToLlm as rawConvertToLlm,
 } from "@earendil-works/pi-coding-agent";
+import { AuthStorage, getModelRuntime } from "./model-runtime.ts";
 // 0.80.0 起 pi-ai 老全局 API 移到 /compat 子入口（根入口是 createModels 新 API）
 import {
   getModel as rawGetPiModel,
@@ -31,11 +31,12 @@ import {
 } from "./session-options.ts";
 import { installAssistantStreamGuard } from "./stream-guard.ts";
 import { installToolOutcomeAdapter } from "./tool-outcome-adapter.ts";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
 import {
   createFindTool,
   createGrepTool,
 } from "./search-tools.ts";
-// prepareCompaction 0.80.3 仍未从包根导出，深路径保留（升级时必查此文件是否存在）
+// prepareCompaction 0.87.1 仍未从包根导出，深路径保留（升级时必查此文件是否存在）
 import {
   prepareCompaction as rawPrepareCompaction,
 } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js";
@@ -67,10 +68,28 @@ export async function createAgentSession(options) {
   const sessionOptions = !options?.agentDir && typeof resourceLoaderAgentDir === "string" && resourceLoaderAgentDir
     ? { ...options, agentDir: resourceLoaderAgentDir }
     : options;
-  const result = await rawCreateAgentSession(normalizeCreateAgentSessionOptions(sessionOptions));
+  const { authStorage, modelRegistry, ...normalized } = normalizeCreateAgentSessionOptions(sessionOptions);
+  if (!normalized.modelRuntime && (modelRegistry || authStorage)) {
+    normalized.modelRuntime = modelRegistry
+      ? getModelRuntime(modelRegistry)
+      : await authStorage.getRuntime();
+  }
+  const result = await rawCreateAgentSession(normalized);
+  // Preserve the base separately from Pi's per-run getter, which includes the
+  // temporary before_agent_start projection while a turn is running.
+  setSessionSystemPrompt(result.session, result.session.systemPrompt);
+  // Hana's stable streamFn hook must intercept the field the new Agent executes.
+  const agent = result?.session?.agent;
+  if (agent && typeof agent.streamFunction === "function") {
+    Object.defineProperty(agent, "streamFn", {
+      configurable: true,
+      get: () => agent.streamFunction,
+      set: (stream: StreamFn) => { agent.streamFunction = stream; },
+    });
+  }
   installToolOutcomeAdapter(result?.session);
   installAssistantStreamGuard(result?.session);
-  return result;
+  return result as typeof result & { session: { agent: { streamFn: StreamFn } } };
 }
 
 // ── 内置工具名常量 ──
@@ -91,7 +110,7 @@ export { formatSkillsForPrompt, getLastAssistantUsage } from "@earendil-works/pi
 export { AuthStorage };
 // The file-backed store is exported alongside AuthStorage because forcing a
 // credential rotation has to take the same auth.json lock the SDK takes.
-export { FileAuthStorageBackend } from "@earendil-works/pi-coding-agent";
+export { FileAuthStorageBackend, InMemoryAuthStorageBackend, createModelRegistry, getAvailableModels } from "./model-runtime.ts";
 
 type OAuthProviderId = Parameters<AuthStorage["login"]>[0];
 export type OAuthLoginCallbacks = Parameters<AuthStorage["login"]>[1];
@@ -137,6 +156,25 @@ export const prepareCompaction = rawPrepareCompaction;
 // 跨实例安全，但任何"模块级单例注册表"类 API（如 pi-ai/oauth 的 provider
 // registry）都会双实例互不可见，禁止经由本门面暴露）──
 export { StringEnum } from "@earendil-works/pi-ai";
+export { normalizeContext, getCurrentSystemPrompt, getCurrentTools, toToolDeclaration } from "@earendil-works/pi-ai";
+
+/** Freeze Hana's already-rendered prompt through Pi's prompt-options boundary. */
+export function setSessionSystemPrompt(value: object, systemPrompt: string) {
+  const session = value as {
+    _baseSystemPrompt?: string;
+    _baseSystemPromptOptions?: { forceSystemPrompt?: string };
+    agent?: { state?: { systemPrompt?: string } };
+  };
+  session._baseSystemPrompt = systemPrompt;
+  if (session?._baseSystemPromptOptions) {
+    session._baseSystemPromptOptions.forceSystemPrompt = systemPrompt;
+    return;
+  }
+  // Test doubles and sessions constructed outside this adapter retain the old shape.
+  const state = session?.agent?.state;
+  const descriptor = state && Object.getOwnPropertyDescriptor(state, "systemPrompt");
+  if (state && (!descriptor?.get || descriptor.set)) state.systemPrompt = systemPrompt;
+}
 
 export function getPiModel(provider, modelId) {
   return rawGetPiModel(provider, modelId);
@@ -203,18 +241,6 @@ export async function resizeModelImageInput(image, options) {
  */
 export function formatModelImageDimensionNote(result) {
   return rawFormatDimensionNote(result);
-}
-
-/**
- * ModelRegistry 工厂。
- * 0.64.0 将构造函数私有化，必须用静态方法。
- * 下次 SDK 改工厂签名，只改这里。
- * @param {import('@earendil-works/pi-coding-agent').AuthStorage} authStorage
- * @param {string} [modelsJsonPath]
- * @returns {import('@earendil-works/pi-coding-agent').ModelRegistry}
- */
-export function createModelRegistry(authStorage, modelsJsonPath) {
-  return ModelRegistry.create(authStorage, modelsJsonPath);
 }
 
 /**

@@ -179,8 +179,8 @@ async function maybeCompactMidRun(session: any, turn: any, signal: any, deps: {
       MIDRUN_COMPACTION_NOTICE,
       false,
     );
-    const context = session.sessionManager.buildSessionContext();
-    session.agent.state.messages = context.messages;
+    if (typeof session.refreshContext === "function") session.refreshContext();
+    else session.agent.state.messages = session.sessionManager.buildSessionContext().messages;
     return true;
   } catch (err: any) {
     if (err?.name === "AbortError" || signal?.aborted) {

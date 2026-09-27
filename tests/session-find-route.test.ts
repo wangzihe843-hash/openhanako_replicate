@@ -61,7 +61,7 @@ describe("sessions find route", () => {
       jsonlLine("m3", "t1", "user", "<hana-background-result task=\"x\"> 隐藏系统消息 lighthouse </hana-background-result>"),
       jsonlLine("m4", "m3", "user", "第二个话题：搜索定位怎么做"),
       jsonlLine("m5", "m4", "assistant", "用 displayable 序号做锚点"),
-    ].join("\n"), "utf8");
+    ].join("\n") + "\n", "utf8");
   });
 
   it("find 返回消息级命中，序号与 messages 接口一致", async () => {
@@ -158,5 +158,18 @@ describe("sessions find route", () => {
     const app = await buildApp(agentsDir);
     const res = await app.request(`/api/sessions/find?sessionId=unknown&q=x`);
     expect(res.status).toBe(404);
+  });
+
+  it("Pi repairs a missing final newline once and the revision cache then stabilizes", async () => {
+    fs.writeFileSync(sessionPath, fs.readFileSync(sessionPath, "utf8").trimEnd(), "utf8");
+    const app = await buildApp(agentsDir);
+    const url = `/api/sessions/find?path=${encodeURIComponent(sessionPath)}&q=lighthouse`;
+    const first = await (await app.request(url)).json();
+    const second = await (await app.request(url)).json();
+    const third = await (await app.request(url)).json();
+    expect(fs.readFileSync(sessionPath, "utf8").endsWith("\n")).toBe(true);
+    expect(second.matches).toEqual(first.matches);
+    expect(second.revision).not.toBe(first.revision);
+    expect(third).toEqual(second);
   });
 });

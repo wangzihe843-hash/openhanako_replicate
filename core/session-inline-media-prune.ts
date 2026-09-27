@@ -125,5 +125,6 @@ export function pruneSessionInlineMediaHistory(session) {
   const result = emptyResult();
   addCounts(result, pruneSessionManagerEntries(session?.sessionManager));
   addCounts(result, pruneAgentStateMessages(session?.agent));
+  if (result.stripped > 0) session?.refreshContext?.();
   return result;
 }

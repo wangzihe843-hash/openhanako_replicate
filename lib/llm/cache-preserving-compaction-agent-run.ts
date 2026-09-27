@@ -1,5 +1,7 @@
 import {
   runAgentLoop,
+  normalizeContext,
+  toToolDeclaration,
   type AgentContext,
   type AgentEvent,
   type AgentLoopConfig,
@@ -104,7 +106,10 @@ interface BuildLoopConfigOptions {
   convertToLlm: AgentLoopConfig["convertToLlm"];
   transformContext?: AgentLoopConfig["transformContext"];
   streamOptions: Record<string, unknown>;
-  shouldStopAfterTurn: NonNullable<AgentLoopConfig["shouldStopAfterTurn"]>;
+  shouldStopAfterTurn: (
+    turn: Parameters<NonNullable<AgentLoopConfig["finishTurn"]>>[0],
+    signal?: AbortSignal,
+  ) => boolean | Promise<boolean>;
 }
 
 function textContent(text: string) {
@@ -282,6 +287,8 @@ function buildLoopConfig({
   delete options.beforeToolCall;
   delete options.afterToolCall;
   delete options.prepareNextTurn;
+  delete options.prepareRequest;
+  delete options.finishTurn;
   delete options.shouldStopAfterTurn;
   delete options.getSteeringMessages;
   delete options.getFollowUpMessages;
@@ -300,7 +307,10 @@ function buildLoopConfig({
     model,
     convertToLlm,
     toolExecution: "sequential",
-    shouldStopAfterTurn,
+    finishTurn: async (turn, signal) => {
+      if (turn.message.stopReason === "error" || turn.message.stopReason === "aborted") return;
+      return await shouldStopAfterTurn(turn, signal) ? { action: "end" } : undefined;
+    },
     getSteeringMessages: async () => [],
     getFollowUpMessages: async () => [],
   };
@@ -342,9 +352,12 @@ export async function runCachePreservingCompactionAgentRun({
   if (signal?.aborted) throw abortError("Cache-preserving compaction AgentRun aborted", diagnostics);
 
   const placeholderTools = clonePlaceholderTools(Array.isArray(tools) ? tools : []);
+  const messages = [...(Array.isArray(liveMessages) ? liveMessages : [])];
   const context: AgentContext = {
-    systemPrompt,
-    messages: [...(Array.isArray(liveMessages) ? liveMessages : [])],
+    messages: messages.some(message => message.role === "system") ? messages : [
+      ...normalizeContext({ systemPrompt, tools: placeholderTools.map(toToolDeclaration), messages: [] }).messages,
+      ...messages,
+    ],
     tools: placeholderTools,
   };
   const pendingUsage: Array<{ requestId?: string; settled: boolean }> = [];

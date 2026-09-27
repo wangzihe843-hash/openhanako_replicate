@@ -1,3 +1,4 @@
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import {
   Type,
@@ -212,7 +213,7 @@ describe("cache-preserving compaction AgentRun", () => {
     const result = await runCachePreservingCompactionAgentRun({
       ...fixture,
       streamFn: async (_model: any, context: any) => {
-        requests.push({ ...context, messages: [...context.messages] });
+        requests.push({ systemPrompt: getCurrentSystemPrompt(context.messages), tools: getCurrentTools(context.messages), messages: context.messages.filter((message: { role: string }) => message.role !== "system") });
         return streamOf(textResponse(VALID_SUMMARY));
       },
     });
@@ -245,7 +246,7 @@ describe("cache-preserving compaction AgentRun", () => {
     await runCachePreservingCompactionAgentRun({
       ...fixture,
       streamFn: async (_model: any, context: any) => {
-        requestMessages = [...context.messages];
+        requestMessages = context.messages.filter((message: { role: string }) => message.role !== "system");
         return streamOf(textResponse(VALID_SUMMARY));
       },
     });
@@ -263,7 +264,7 @@ describe("cache-preserving compaction AgentRun", () => {
     await runCachePreservingCompactionAgentRun({
       ...fixture,
       streamFn: async (_model: any, context: any) => {
-        providerTools = context.tools;
+        providerTools = getCurrentTools(context.messages);
         return streamOf(textResponse(VALID_SUMMARY));
       },
     });
@@ -296,13 +297,13 @@ describe("cache-preserving compaction AgentRun", () => {
     const result = await runCachePreservingCompactionAgentRun({
       ...fixture,
       streamFn: async (_model: any, context: any) => {
-        requests.push({ ...context, messages: [...context.messages] });
+        requests.push({ systemPrompt: getCurrentSystemPrompt(context.messages), tools: getCurrentTools(context.messages), messages: context.messages.filter((message: { role: string }) => message.role !== "system") });
         return streamOf(responses.shift());
       },
     });
 
     expect(prepareArguments).toHaveBeenCalledWith({ inputPath: "notes.md" });
-    expect(requests[0].tools[0].prepareArguments).toBe(prepareArguments);
+    expect(requests[0].tools[0]).not.toHaveProperty("prepareArguments");
     expect(requests[1].messages.at(-1)).toMatchObject({
       role: "toolResult",
       toolCallId: "call-prepare",
@@ -341,7 +342,7 @@ describe("cache-preserving compaction AgentRun", () => {
       ...fixture,
       usageLedger: ledger,
       streamFn: async (_model: any, context: any) => {
-        requests.push({ ...context, messages: [...context.messages] });
+        requests.push({ systemPrompt: getCurrentSystemPrompt(context.messages), tools: getCurrentTools(context.messages), messages: context.messages.filter((message: { role: string }) => message.role !== "system") });
         return streamOf(responses.shift());
       },
     });

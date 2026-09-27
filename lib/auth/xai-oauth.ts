@@ -328,18 +328,19 @@ export function createXaiOAuthProvider(options: XaiOAuthDriverOptions = {}): Sdk
       throw new Error("xAI OAuth device code expired");
     },
 
-    async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
+    async refreshToken(credentials: OAuthCredentials, signal: AbortSignal): Promise<OAuthCredentials> {
+      throwIfAborted(signal);
       if (typeof credentials.refresh !== "string" || !credentials.refresh) {
         throw new Error("xAI OAuth credentials missing refresh token");
       }
       const tokenEndpoint = credentials.tokenEndpoint === undefined
-        ? (await discover()).tokenEndpoint
+        ? (await discover(signal)).tokenEndpoint
         : trustedXaiAuthEndpoint(credentials.tokenEndpoint, "cached token_endpoint");
       const { response, payload } = await postToken(tokenEndpoint, {
         grant_type: "refresh_token",
         refresh_token: credentials.refresh,
         client_id: XAI_OAUTH_CLIENT_ID,
-      });
+      }, signal);
       if (!response.ok || payload.error) {
         throw new Error(`xAI OAuth token refresh failed: ${oauthErrorMessage(payload, `HTTP ${response.status}`)}`);
       }

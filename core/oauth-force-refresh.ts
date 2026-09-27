@@ -64,13 +64,13 @@ export async function forceRefreshOAuthApiKey({
     // 存储里的 token 已经不是调用方手上那个了，说明别的执行流刚换过。
     // 直接用新的，不再发一次刷新请求（那会把刚换来的 refresh token 作废）。
     if (staleApiKey && cred.access !== staleApiKey) {
-      return { result: provider.getApiKey(cred) };
+      return { result: await provider.getApiKey(cred) };
     }
 
     const refreshed = await provider.refreshToken(cred);
     const nextCred = { type: "oauth", ...refreshed };
     return {
-      result: provider.getApiKey(nextCred),
+      result: await provider.getApiKey(nextCred),
       next: JSON.stringify({ ...data, [authKey]: nextCred }, null, 2),
     };
   });

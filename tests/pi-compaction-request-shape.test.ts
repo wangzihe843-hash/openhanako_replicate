@@ -86,11 +86,11 @@ describe("Pi native compaction request shape adapter", () => {
     expect(adapterRequests).toHaveLength(2);
     for (const adapterRequest of adapterRequests) {
       const actualRequest = actualRequests.find(({ context }) => (
-        context.messages[0].content[0].text === adapterRequest.promptText
+        context.messages.find((message: { role: string }) => message.role === "user")?.content[0].text === adapterRequest.promptText
       ));
       expect(actualRequest).toBeDefined();
-      expect(actualRequest?.context.systemPrompt).toBe(adapterRequest.systemPrompt);
-      expect(actualRequest?.context.messages[0]).toMatchObject({
+      expect(piSdk.getCurrentSystemPrompt(actualRequest!.context.messages)).toBe(adapterRequest.systemPrompt);
+      expect(actualRequest?.context.messages.find((message: { role: string }) => message.role === "user")).toMatchObject({
         role: "user",
         content: [{ type: "text", text: adapterRequest.promptText }],
       });
@@ -163,7 +163,7 @@ describe("Pi native compaction request shape adapter", () => {
     expect(result.requests[1]).toMatchObject({
       kind: "turn-prefix",
       maxTokens: 2_000,
-      promptText: expect.stringContaining("This is the PREFIX of a turn that was too large to keep"),
+      promptText: expect.stringContaining("The messages above are earlier context from an ongoing conversation"),
     });
     expect(result.requests[1].promptText).toContain("[User]: split request prefix");
   });

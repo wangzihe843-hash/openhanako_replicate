@@ -13,6 +13,7 @@ import {
   AuthStorage,
   FileAuthStorageBackend,
   createModelRegistry,
+  getAvailableModels,
   registerModelProvider,
   unregisterModelProvider,
 } from "../lib/pi-sdk/index.ts";
@@ -154,19 +155,19 @@ export class ModelManager {
   }
 
   /** 初始化 AuthStorage + ModelRegistry + 新架构模块 */
-  init() {
+  async init() {
     this._authStorage = AuthStorage.create(path.join(this._hanakoHome, "auth.json"));
     // Same file, same lock: forced OAuth rotation writes through this backend.
     this._authBackend = new FileAuthStorageBackend(path.join(this._hanakoHome, "auth.json"));
     this.providerRegistry.reload();
     this._removeApiKeyProviderAuthEntries();
     const projection = this._buildChatProjectionInputs();
-    this._applyRuntimeApiKeyOverrides(projection);
+    await this._applyRuntimeApiKeyOverrides(projection);
     syncModels(projection.providers, {
       modelsJsonPath: this.modelsJsonPath,
       chatProjectionPlans: projection.planMap,
     });
-    this._modelRegistry = createModelRegistry(
+    this._modelRegistry = await createModelRegistry(
       this._authStorage,
       path.join(this._hanakoHome, "models.json"),
     );
@@ -226,7 +227,7 @@ export class ModelManager {
 
   /** 刷新可用模型列表，用 Provider Catalog v2 过滤 */
   async refreshAvailable() {
-    const allModels = await this._modelRegistry.getAvailable();
+    const allModels = await getAvailableModels(this._modelRegistry);
     const plans = this.providerRegistry.getChatProjectionPlans();
     const effectiveModelSets = new Map();
     const legacyRuntimeCatalogProviders = new Set();
@@ -268,9 +269,9 @@ export class ModelManager {
       modelsJsonPath: this.modelsJsonPath,
       chatProjectionPlans: projection.planMap,
     });
-    this._applyRuntimeApiKeyOverrides(projection);
+    await this._applyRuntimeApiKeyOverrides(projection);
     if (changed) {
-      this._modelRegistry.refresh();
+      await this._modelRegistry.refresh({ allowNetwork: false });
     }
     await this.refreshAvailable();
     this._rebindDefaultModel();
@@ -332,7 +333,7 @@ export class ModelManager {
     return { plans, providers, planMap };
   }
 
-  _applyRuntimeApiKeyOverrides(projection) {
+  async _applyRuntimeApiKeyOverrides(projection) {
     if (!this._authStorage?.setRuntimeApiKey) return;
     for (const plan of projection?.plans || []) {
       const provider = projection.providers?.[plan.sourceProviderId] || {};
@@ -341,12 +342,12 @@ export class ModelManager {
       if (plan.credentialSource === "provider-catalog"
         && typeof provider.api_key === "string"
         && provider.api_key.length > 0) {
-        this._authStorage.setRuntimeApiKey(runtimeProviderId, provider.api_key);
+        await this._authStorage.setRuntimeApiKey(runtimeProviderId, provider.api_key);
         for (const providerId of cleanupIds) {
-          if (providerId !== runtimeProviderId) this._authStorage.removeRuntimeApiKey?.(providerId);
+          if (providerId !== runtimeProviderId) await this._authStorage.removeRuntimeApiKey?.(providerId);
         }
       } else {
-        for (const providerId of cleanupIds) this._authStorage.removeRuntimeApiKey?.(providerId);
+        for (const providerId of cleanupIds) await this._authStorage.removeRuntimeApiKey?.(providerId);
       }
     }
   }

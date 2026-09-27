@@ -13,7 +13,7 @@ function walk(dir, files = []) {
     if (entry.isDirectory()) {
       if (entry.name === "node_modules") continue;
       walk(full, files);
-    } else if (/\.(js|mjs|cjs)$/.test(entry.name)) {
+    } else if (/\.(js|mjs|cjs|ts)$/.test(entry.name)) {
       files.push(full);
     }
   }
@@ -36,7 +36,7 @@ function findDirectImports(modulePattern) {
 
 describe("Pi SDK import boundary", () => {
   it("keeps production Pi SDK imports inside lib/pi-sdk", () => {
-    const pattern = /(?:from\s+["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent)|import\s*\(\s*["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent)|require\s*\(\s*["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent))/;
+    const pattern = /(?:from\s+["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent|pi-agent-core)|import\s*\(\s*["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent|pi-agent-core)|require\s*\(\s*["']@(?:mariozechner|earendil-works)\/(?:pi-ai|pi-coding-agent|pi-agent-core))/;
     expect(findDirectImports(pattern)).toEqual([]);
   });
 

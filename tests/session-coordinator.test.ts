@@ -1,3 +1,4 @@
+import { getCurrentTools } from "../lib/pi-sdk/index.ts";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -27,7 +28,8 @@ const {
   },
 }));
 
-vi.mock("../lib/pi-sdk/index.js", () => ({
+vi.mock("../lib/pi-sdk/index.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../lib/pi-sdk/index.ts")>(),
   createAgentSession: createAgentSessionMock,
   emitSessionShutdown: emitSessionShutdownMock,
   estimateTokens: estimateTokensMock,
@@ -4085,8 +4087,8 @@ Continue the restored transcript.
       firstKeptEntryId: null,
     });
     expect(providerContexts).toHaveLength(1);
-    expect(providerContexts[0].messages.slice(0, -1)).toEqual(transcriptMessages);
-    expect(providerContexts[0].tools).toEqual([]);
+    expect(providerContexts[0].messages.filter((message: { role: string }) => message.role !== "system").slice(0, -1)).toEqual(transcriptMessages);
+    expect(getCurrentTools(providerContexts[0].messages)).toEqual([]);
     expect(appendCompaction).toHaveBeenCalledWith(
       summary,
       null,

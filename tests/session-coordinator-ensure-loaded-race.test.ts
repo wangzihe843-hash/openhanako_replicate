@@ -261,7 +261,7 @@ describe("SessionCoordinator ensureSessionLoaded concurrency", () => {
 
   it('R04 coordinator emits run completion only after actual SDK idle', async () => {
     const { Agent } = await import('@earendil-works/pi-agent-core');
-    const actualAgent = new Agent();
+    const actualAgent = new Agent({ streamFn: async () => { throw new Error('No provider request expected'); } });
     const session = { ...makeRestoredSession(sessionPath), agent: actualAgent,
       get isStreaming() { return actualAgent.state.isStreaming; },
       subscribe: fn => actualAgent.subscribe(fn),

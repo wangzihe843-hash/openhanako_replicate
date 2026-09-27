@@ -11,7 +11,7 @@ import { cancelDesktopSessionSubmission } from './desktop-session-submit.ts';
 import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
-import { createAgentSession, SessionManager, estimateTokens, refreshSessionModelFromRegistry } from "../lib/pi-sdk/index.ts";
+import { createAgentSession, SessionManager, estimateTokens, refreshSessionModelFromRegistry, setSessionSystemPrompt, getCurrentSystemPrompt, getCurrentTools } from "../lib/pi-sdk/index.ts";
 import { seedXingyeSessionGreeting, type InitialXingyeGreeting } from "./xingye-session-greeting.ts";
 import { isSessionJsonlFilename } from "../lib/session-jsonl.ts";
 import { createDefaultSettings } from "./session-defaults.ts";
@@ -7101,6 +7101,11 @@ export class SessionCoordinator implements SessionCancellation {
     if (typeof session?._baseSystemPrompt === "string") {
       return session._baseSystemPrompt;
     }
+    // Pi's agent transcript is empty before the first turn. The session getter
+    // already renders the loaded prompt, including frozen workspace/skill text.
+    if (typeof session?.systemPrompt === "string") {
+      return session.systemPrompt;
+    }
     if (typeof session?.agent?.state?.systemPrompt === "string") {
       return session.agent.state.systemPrompt;
     }
@@ -7111,10 +7116,13 @@ export class SessionCoordinator implements SessionCancellation {
     const session = entry?.session;
     const state = session?.agent?.state;
     const hasContextPrompt = context && Object.prototype.hasOwnProperty.call(context, "systemPrompt");
+    const hasTranscriptPrompt = context?.messages?.some((message: { role?: string }) => message?.role === "system");
     return buildLlmContextCachePrefixContract({
       model: model || session?.model || state?.model || null,
-      systemPrompt: hasContextPrompt ? context.systemPrompt : (this._getFinalSystemPrompt(session) ?? ""),
-      tools: Array.isArray(context?.tools) ? context.tools : (Array.isArray(state?.tools) ? state.tools : []),
+      systemPrompt: hasContextPrompt ? context.systemPrompt : hasTranscriptPrompt
+        ? getCurrentSystemPrompt(context.messages) : (this._getFinalSystemPrompt(session) ?? ""),
+      tools: Array.isArray(context?.tools) ? context.tools : hasTranscriptPrompt
+        ? getCurrentTools(context.messages) : (Array.isArray(state?.tools) ? state.tools : []),
     });
   }
 
@@ -7153,7 +7161,8 @@ export class SessionCoordinator implements SessionCancellation {
       // Allow only the exact suffix authorized for this live turn. Compare the
       // underlying base, model and tools against the original frozen contract;
       // any unrelated mutation (including a changed base) still produces a diagnostic diff.
-      if (typeof basePrompt === "string" && context.systemPrompt === applySessionTurnSystemContext(basePrompt, turnContext)) {
+      const requestPrompt = context.systemPrompt ?? getCurrentSystemPrompt(context.messages ?? []);
+      if (typeof basePrompt === "string" && requestPrompt === applySessionTurnSystemContext(basePrompt, turnContext)) {
         contractContext = { ...context, systemPrompt: basePrompt };
       }
     }
@@ -7234,15 +7243,7 @@ export class SessionCoordinator implements SessionCancellation {
 
   _applyFinalPromptSnapshot(session: any, finalSystemPrompt: any) {
     if (typeof finalSystemPrompt !== "string") return;
-    try {
-      session._baseSystemPrompt = finalSystemPrompt;
-    } catch {
-      // session 对象理论上可能 frozen 或 _baseSystemPrompt 带抛错 setter；
-      // 容错即可，下面 agent.state.systemPrompt 仍独立尝试写入。
-    }
-    if (session?.agent?.state && typeof session.agent.state === "object") {
-      session.agent.state.systemPrompt = finalSystemPrompt;
-    }
+    setSessionSystemPrompt(session, finalSystemPrompt);
   }
 
   /** session-meta 写入后清除对应缓存 */

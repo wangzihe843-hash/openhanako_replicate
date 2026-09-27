@@ -1,3 +1,4 @@
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 
@@ -238,7 +239,7 @@ describe("session-compactor", () => {
     const signal = new AbortController().signal;
     let providerContext: any;
     const streamFn = vi.fn(async (_model, context) => {
-      providerContext = { ...context, messages: [...context.messages], tools: [...context.tools] };
+      providerContext = { systemPrompt: getCurrentSystemPrompt(context.messages), tools: getCurrentTools(context.messages), messages: context.messages.filter((message: { role: string }) => message.role !== "system") };
       return agentStreamOf();
     });
     const convertToLlm = vi.fn(async (messages) => messages);
@@ -516,7 +517,7 @@ describe("session-compactor", () => {
     const cacheReads = [undefined, 73];
     let requestIndex = 0;
     const streamFn = vi.fn(async (_model, context) => {
-      capturedRequests.push(structuredClone(context.messages));
+      capturedRequests.push(structuredClone(context.messages.filter((message: { role: string }) => message.role !== "system")));
       const index = requestIndex++;
       return agentStreamOf(summaries[index], {
         input: 100 + index,
@@ -654,8 +655,8 @@ describe("session-compactor", () => {
       piAssistant("old deleted-agent response", 2),
     ];
     const streamFn = vi.fn(async (_model, context) => {
-      expect(context.tools).toEqual([]);
-      expect(context.messages.slice(0, -1)).toEqual(transcriptMessages);
+      expect(getCurrentTools(context.messages)).toEqual([]);
+      expect(context.messages.filter((message: { role: string }) => message.role !== "system").slice(0, -1)).toEqual(transcriptMessages);
       return agentStreamOf();
     });
 
@@ -1950,7 +1951,7 @@ describe("session-compactor", () => {
     } as any);
 
     const [, context] = streamFn.mock.calls[0] as any;
-    const projected = context.messages[0].content[0];
+    const projected = context.messages.find((message: { role: string }) => message.role !== "system").content[0];
     expect(projected.type).toBe("text");
     expect(projected.text).toContain("uri: file:///workspace/spec.md");
     expect(projected.text).toContain("name: spec.md");

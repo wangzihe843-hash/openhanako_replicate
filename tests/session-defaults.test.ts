@@ -8,6 +8,7 @@ describe("default session settings", () => {
 
     expect(settings.getSteeringMode()).toBe("all");
     expect(settings.getFollowUpMode()).toBe("one-at-a-time");
+    expect(settings.getCacheWarmingMode()).toBe("off");
     expect(settings.getCompactionSettings()).toEqual({
       enabled: true,
       reserveTokens: 16384,

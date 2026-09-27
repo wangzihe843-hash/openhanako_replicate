@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:9e293ad5e59031246ce133a42eb3610a64f6c46b864a8de27a75be9a0c5b0f0c",
+  "payloadFingerprint": "sha256:845f29329e3ff939186945bdfe0d1aab2e5c39352dc5e007a1ac3f33955ed948",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3234,8 +3234,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Reviewed additive M1/M2 optional Xingye draft/card fields, standard Pi assistant greetings, token-scoped exports and precise writer ownership. The final existing-session guard moves rejection before teardown without changing persisted formats. See docs/audits/2026-09-21-m1-m2-review.md.",
-    "payloadFingerprint": "sha256:9e293ad5e59031246ce133a42eb3610a64f6c46b864a8de27a75be9a0c5b0f0c"
+    "compatibilityReason": "Pi 0.80.3 to 0.87.1 updates the external session package and Hana prompt adapter hashes. CURRENT_SESSION_VERSION remains 3 and the SDK retains v1/v2 migration plus v3 branch loading. Existing Hana SQLite schemas, store mappings, checkpoint policy and auth JSON credential fields are unchanged. New system/context entries are additive SDK transcript records; rollback after running the new SDK must restore the pre-upgrade data snapshot together with code and lockfile.",
+    "payloadFingerprint": "sha256:845f29329e3ff939186945bdfe0d1aab2e5c39352dc5e007a1ac3f33955ed948"
   },
   "schemas": [
     {
@@ -3708,7 +3708,7 @@
         {
           "contract": "core/session-coordinator.ts Hana metadata extensions",
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:2756d87ac4dbef529624d926675862afb5112f02739a157172ba8d23cce0bcc9"
+          "sourceHash": "sha256:54cc5ead0857992b49dfe6d508003bc6c8695c486b7f5b10a738fc515baf3dba"
         },
         {
           "contract": "core/session-jsonl-file.ts repair contract",
@@ -3718,9 +3718,9 @@
       ],
       "kind": "external-versioned",
       "lockfile": "package-lock.json",
-      "packageIntegrity": "sha512-TIggw9gCXpA+Ph7OjdTA7ka2NPwTVuPmy39KDSyUzaKq8VvHfMGR7vtRz4JB7Um/RMRblmzhu4p9tUCk6MTgGA==",
+      "packageIntegrity": "sha512-m8ArJUtVcQMSe1lLE/Ei7vX/JV7O39sWmWBsXV2NOU70F0qCp8GubA24pT3LnwTmM6LL2xV80/h6sQg85n69ew==",
       "packageName": "@earendil-works/pi-coding-agent",
-      "packageVersion": "0.80.3",
+      "packageVersion": "0.87.1",
       "protocolModules": [
         {
           "module": "core/desktop-session-submit.ts",
@@ -3728,7 +3728,7 @@
         },
         {
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:2756d87ac4dbef529624d926675862afb5112f02739a157172ba8d23cce0bcc9"
+          "sourceHash": "sha256:54cc5ead0857992b49dfe6d508003bc6c8695c486b7f5b10a738fc515baf3dba"
         },
         {
           "module": "core/session-jsonl-file.ts",
@@ -3736,10 +3736,10 @@
         },
         {
           "module": "core/xingye-session-greeting.ts",
-          "sourceHash": "sha256:ac6b573817bb8082c0a6c0239f4e42e28dbf87d98bc1ade0a887e24b76fd928e"
+          "sourceHash": "sha256:8c3c35dc53b3bf397842dbdddc2d231dcfed7d09e88e60d467827e4d3404dd61"
         }
       ],
-      "requestedVersion": "0.80.3",
+      "requestedVersion": "0.87.1",
       "storeId": "session-jsonl",
       "versionSource": {
         "currentSessionVersion": 3,

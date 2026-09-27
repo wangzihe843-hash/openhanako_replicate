@@ -211,7 +211,11 @@ export async function deriveCachePreservingCompactionBoundary({
     ? preparation.turnPrefixMessages
     : [];
   const hasPreviousSummary = typeof preparation.previousSummary === "string";
-  const firstLiveMessage = liveMessages[0];
+  // Pi 0.87 persists system/tool declarations but excludes them from the
+  // summary preparation. Prove the narrative prefix, then retain the original
+  // transcript positions (including every system declaration) for the request.
+  const narrativeMessages = liveMessages.filter(message => message?.role !== "system");
+  const firstLiveMessage = narrativeMessages[0];
   const previousSummaryRepresented = hasPreviousSummary
     && firstLiveMessage?.role === "compactionSummary"
     && firstLiveMessage?.summary === preparation.previousSummary;
@@ -225,21 +229,24 @@ export async function deriveCachePreservingCompactionBoundary({
     ...messagesToSummarize,
     ...turnPrefixMessages,
   ];
-  if (expectedOldRegion.length > liveMessages.length) {
+  if (expectedOldRegion.length > narrativeMessages.length) {
     throw prefixContractError("Pi preparation extends beyond the live context", {
       expectedOldRegionLength: expectedOldRegion.length,
       liveMessageCount: liveMessages.length,
     });
   }
-  const actualOldRegion = liveMessages.slice(0, expectedOldRegion.length);
-  if (stableSerialize(actualOldRegion) !== stableSerialize(expectedOldRegion)) {
+  const actualNarrativePrefix = narrativeMessages.slice(0, expectedOldRegion.length);
+  if (stableSerialize(actualNarrativePrefix) !== stableSerialize(expectedOldRegion)) {
     throw prefixContractError("Pi preparation does not match the live context prefix", {
       expectedOldRegionLength: expectedOldRegion.length,
       liveMessageCount: liveMessages.length,
     });
   }
 
-  const retainedRawMessages = liveMessages.slice(expectedOldRegion.length);
+  const firstRetainedMessage = narrativeMessages[expectedOldRegion.length];
+  const rawBoundaryIndex = firstRetainedMessage ? liveMessages.indexOf(firstRetainedMessage) : liveMessages.length;
+  const actualOldRegion = liveMessages.slice(0, rawBoundaryIndex);
+  const retainedRawMessages = liveMessages.slice(rawBoundaryIndex);
   const providerOldMessages = await convertMessagePartition(
     convertToLlm,
     actualOldRegion,
@@ -267,7 +274,7 @@ export async function deriveCachePreservingCompactionBoundary({
   }
 
   return {
-    rawBoundaryIndex: expectedOldRegion.length,
+    rawBoundaryIndex,
     oldMessageCount: providerOldMessages.length,
     retainedMessageCount: providerRetainedMessages.length,
     previousSummaryRepresented,
@@ -1707,6 +1714,10 @@ export async function createColdUtilitySummaryResult({
 }
 
 function replaceSessionMessages(session) {
+  if (typeof session.refreshContext === "function") {
+    session.refreshContext();
+    return;
+  }
   const context = session.sessionManager.buildSessionContext();
   if (session.agent?.replaceMessages) {
     session.agent.replaceMessages(context.messages);
@@ -1758,7 +1769,7 @@ export async function runCachePreservingCompactionForSession(session: any, {
       throw new Error("Nothing to compact (session too small)");
     }
 
-    const systemPrompt = session.agent.state?.systemPrompt ?? session.systemPrompt;
+    const systemPrompt = session.systemPrompt ?? session.agent.state?.systemPrompt;
     const rawLiveMessages = session.sessionManager.buildSessionContext()?.messages;
     const convertToLlm = session.agent.convertToLlm || convertAgentMessagesToLlm;
     const thinkingLevel = session.thinkingLevel ?? session.agent.state?.thinkingLevel ?? "off";

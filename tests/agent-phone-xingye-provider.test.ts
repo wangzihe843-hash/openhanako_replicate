@@ -1,3 +1,5 @@
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
+import { createExtensionRuntime } from "@earendil-works/pi-coding-agent";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,7 +20,7 @@ vi.mock("../lib/pi-sdk/index.js", async (importOriginal) => {
       const result = await actual.createAgentSession(options);
       probe.sessions.push(result.session);
       result.session.agent.streamFn = async (model: any, context: any) => {
-        probe.requests.push(JSON.parse(JSON.stringify(context)));
+        probe.requests.push(JSON.parse(JSON.stringify({ systemPrompt: getCurrentSystemPrompt(context.messages), tools: getCurrentTools(context.messages), messages: context.messages.filter((message: { role: string }) => message.role !== "system") })));
         const barrier = probe.streamBarrier;
         const message = {
           role: "assistant", content: [{ type: "text", text: "reply" }],
@@ -44,7 +46,7 @@ import { runAgentPhoneSession } from "../hub/agent-executor.ts";
 import { buildXingyeAgentPhoneTurnContext } from "../shared/xingye-phone-context.js";
 import { readAgentPhoneRuntime, updateAgentPhoneRuntime } from "../lib/conversations/agent-phone-runtime.ts";
 import { SessionCoordinator } from "../core/session-coordinator.ts";
-import { SessionManager } from "../lib/pi-sdk/index.ts";
+import { SessionManager, AuthStorage, createModelRegistry, registerModelProvider } from "../lib/pi-sdk/index.ts";
 import { applySessionTurnSystemContext } from "../core/session-turn-context.ts";
 
 const roots: string[] = [];
@@ -56,7 +58,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(conversationType = "dm") {
+async function fixture(conversationType = "dm") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "phone-xingye-provider-"));
   roots.push(root);
   const agentDir = path.join(root, "agents", "alice");
@@ -66,6 +68,8 @@ function fixture(conversationType = "dm") {
     baseUrl: "http://127.0.0.1:1", reasoning: false, input: ["text"], contextWindow: 128000,
     maxTokens: 1000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   };
+  const registry = await createModelRegistry(AuthStorage.inMemory());
+  registerModelProvider(registry, "local-test", { api: "openai-completions", baseUrl: model.baseUrl, apiKey: "test-only", models: [{ ...model, input: ["text"] }] });
   const agent = {
     id: "alice", agentDir, agentName: "Alice", tools: [], personality: "PERSONALITY ONLY",
     systemPrompt: "LEGACY GENERAL BASE", config: {},
@@ -77,18 +81,12 @@ function fixture(conversationType = "dm") {
     ensureSessionRefForPath: (sessionPath: string) => ({ sessionId: `probe_${path.basename(sessionPath)}`, sessionPath }),
     createSessionContext: () => ({
       authStorage: {},
-      modelRegistry: {
-        getApiKeyAndHeaders: async () => ({ apiKey: "local-test-placeholder" }),
-        hasConfiguredAuth: () => true,
-        find: () => model,
-      },
+      modelRegistry: registry,
       resolveModel: () => model,
       buildTools: () => ({ tools: [], customTools: [] }),
       getSkillsForAgent: () => ({ skills: [], diagnostics: [] }),
       resourceLoader: {
-        getExtensions: () => ({ extensions: [], errors: [], runtime: {
-          flagValues: new Map(), pendingProviderRegistrations: [], invalidate: () => {},
-        } }),
+        getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
         getPrompts: () => ({ prompts: [], diagnostics: [] }),
         getAppendSystemPrompt: () => ["FROZEN APPENDIX"],
         getAgentsFiles: () => ({ agentsFiles: [] }),
@@ -120,7 +118,7 @@ function fixture(conversationType = "dm") {
 
 describe("Phone Xingye context at the installed SDK provider boundary", () => {
   it.each(["dm", "channel"])("%s sends current role context once and respects edits, disabling and deletion", async (surface) => {
-    const f = fixture(surface);
+    const f = await fixture(surface);
     f.write("profile.json", { displayName: "Alice", gender: "female", relationshipLabel: "OLD RELATIONSHIP" });
     f.write("lore/entries.json", {
       tower: f.entry("tower", "OLD ALWAYS"),
@@ -169,7 +167,7 @@ describe("Phone Xingye context at the installed SDK provider boundary", () => {
   });
 
   it("migrates the unversioned base once without resetting history or other frozen snapshot fields", async () => {
-    const f = fixture();
+    const f = await fixture();
     await f.deliver("history before migration");
     const oldRuntime = readAgentPhoneRuntime(f.agentDir, f.options.conversationId);
     const legacySnapshot = {
@@ -203,7 +201,7 @@ describe("Phone Xingye context at the installed SDK provider boundary", () => {
   });
 
   it("noMemory keeps the personality base during migration and accepts only explicit turn context", async () => {
-    const f = fixture();
+    const f = await fixture();
     f.write("profile.json", { displayName: "Alice", shortBio: "CURRENT ROLE" });
     const first = await f.deliver("plain", { noMemory: true });
     expect(first.systemPrompt).toContain("PERSONALITY ONLY");
@@ -223,7 +221,7 @@ describe("Phone Xingye context at the installed SDK provider boundary", () => {
 
 describe("ordinary session turn context at the installed SDK provider boundary", () => {
   it("keeps an active provider turn unchanged when a second prompt is rejected as busy", async () => {
-    const f = fixture();
+    const f = await fixture();
     const ctx = f.options.engine.createSessionContext();
     const agent: any = {
       ...f.agent, sessionDir: path.join(f.agentDir, "sessions"), sessionMemoryEnabled: true,
@@ -282,7 +280,7 @@ describe("ordinary session turn context at the installed SDK provider boundary",
   });
 
   it("uses the shared system hook, resets between turns and keeps cache guards active", async () => {
-    const f = fixture();
+    const f = await fixture();
     const ctx = f.options.engine.createSessionContext();
     const skillDir = path.join(f.root, "frozen-skill");
     fs.mkdirSync(skillDir);

@@ -854,6 +854,10 @@ function restoreBranchLeaf(session, leafId) {
 }
 
 function replaceAgentMessagesFromBranch(session) {
+  if (typeof session.refreshContext === "function") {
+    session.refreshContext();
+    return;
+  }
   const context = session.sessionManager.buildSessionContext();
   if (session.agent?.replaceMessages) {
     session.agent.replaceMessages(context.messages);

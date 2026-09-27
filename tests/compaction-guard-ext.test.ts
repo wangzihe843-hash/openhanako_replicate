@@ -1,3 +1,4 @@
+import { getCurrentTools } from "../lib/pi-sdk/index.ts";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { clampMaxTokensToContext } from "@earendil-works/pi-ai/api/simple-options";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
@@ -19,6 +20,7 @@ import {
 } from "../core/compaction-utils.ts";
 import {
   convertAgentMessagesToLlm,
+  normalizeContext,
   Type,
   type AgentMessage,
 } from "../lib/pi-sdk/index.ts";
@@ -214,7 +216,8 @@ describe("CompactionGuardExtension", () => {
         tools: [],
         messages: await convertAgentMessagesToLlm(messages),
       };
-      expect(clampMaxTokensToContext(model, providerContextBefore, 32_000)).toBe(1);
+      // Pi 0.87 also ignores usage older than a prefix inserted by compaction.
+      expect(clampMaxTokensToContext(model, normalizeContext(providerContextBefore), 32_000)).toBe(32_000);
 
       const result = await pi.trigger("context", { messages });
       const providerContextAfter = {
@@ -225,7 +228,7 @@ describe("CompactionGuardExtension", () => {
 
       expect(result.messages[1].usage.totalTokens).toBe(0);
       expect(retainedAssistant.usage.totalTokens).toBe(127_000);
-      expect(clampMaxTokensToContext(model, providerContextAfter, 32_000)).toBe(32_000);
+      expect(clampMaxTokensToContext(model, normalizeContext(providerContextAfter), 32_000)).toBe(32_000);
     });
 
     it("does not project ordinary non-compacted conversations", async () => {
@@ -747,7 +750,7 @@ describe("CompactionGuardExtension", () => {
       const streamFn = vi.fn(async (_model, providerContext, options) => {
         providerContexts.push({
           messages: [...providerContext.messages],
-          tools: providerContext.tools,
+          tools: getCurrentTools(providerContext.messages),
           options,
         });
         return assistantStream(responses.shift());
@@ -810,8 +813,8 @@ describe("CompactionGuardExtension", () => {
       expect(providerContexts).toHaveLength(2);
       expect(providerContexts[0].tools[0]).toMatchObject({
         name: "read",
-        label: "Read",
-        prepareArguments,
+        description: expect.any(String),
+        parameters: expect.any(Object),
       });
       expect(providerContexts[1].messages.at(-1)).toMatchObject({
         role: "toolResult",
@@ -1670,11 +1673,9 @@ describe("CompactionGuardExtension", () => {
         reasoning: true,
         contextWindow: 128_000,
       };
-      const glmHistory = {
-        role: "assistant",
-        content: "",
-        tool_calls: [{ id: "call_1", type: "function", function: { name: "read", arguments: "{}" } }],
-      };
+      const glmHistory = assistantMessage([
+        { type: "toolCall", id: "call_1", name: "read", arguments: {} },
+      ], "toolUse");
       const res = await pi.trigger(
         "session_before_compact",
         {

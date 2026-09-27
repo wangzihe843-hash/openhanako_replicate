@@ -34,6 +34,7 @@ export function resolveXingyeSessionGreeting({
 }
 
 type GreetingSession = {
+  refreshContext?: () => void;
   isStreaming?: boolean;
   isCompacting?: boolean;
   agent: { state: { messages: unknown[] } };
@@ -60,7 +61,8 @@ export function seedXingyeSessionGreeting(session: GreetingSession, greeting: In
   // No prompt, lifecycle event, tool execution, usage charge or memory notification runs here.
   const message = greetingMessage(greeting.text);
   session.sessionManager.appendMessage(message);
-  session.agent.state.messages = session.sessionManager.buildSessionContext().messages;
+  if (typeof session.refreshContext === "function") session.refreshContext();
+  else session.agent.state.messages = session.sessionManager.buildSessionContext().messages;
 }
 
 function greetingMessage(text: string) {

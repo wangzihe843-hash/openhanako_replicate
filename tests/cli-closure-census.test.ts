@@ -245,7 +245,18 @@ describe("compute-cli-closure: full generation (real esbuild + nft, slow)", () =
     const generatedClosure = await computeCliRuntimeClosure({ rootDir: REPOSITORY_ROOT, includeNftTrace: true });
     const committedClosure = JSON.parse(fs.readFileSync(CLOSURE_PATH, "utf-8"));
     expect(generatedClosure).toEqual(committedClosure);
-    expect(JSON.stringify(generatedClosure)).not.toMatch(/(?:\/Users\/|\/home\/|[A-Za-z]:\\)/);
+    // Pi's reviewed Windows cleanup expression contains a portable OS fallback
+    // literal. Exempt that exact expression only; machine-specific paths in any
+    // other field or call site must still fail the portability check.
+    const portableClosure = structuredClone(generatedClosure);
+    for (const site of portableClosure.dynamicCallSites) {
+      if (site.file === "node_modules/@earendil-works/pi-coding-agent/dist/utils/shell.js"
+        && site.callee === "spawn"
+        && site.argText === 'join(process.env.SystemRoot ?? "C:\\\\Windows", "System32", "taskkill.exe")') {
+        site.argText = "reviewed System32 taskkill expression";
+      }
+    }
+    expect(JSON.stringify(portableClosure)).not.toMatch(/(?:\/Users\/|\/home\/|[A-Za-z]:\\)/);
 
     const generatedBaseline = computeOpenBoundaryBaseline({ closure: generatedClosure });
     const committedBaseline = JSON.parse(fs.readFileSync(BASELINE_PATH, "utf-8"));

@@ -6,7 +6,7 @@ import {
   AuthStorage,
   FileAuthStorageBackend,
   InMemoryAuthStorageBackend,
-} from "@earendil-works/pi-coding-agent";
+} from "../lib/pi-sdk/index.ts";
 import { forceRefreshOAuthApiKey } from "../core/oauth-force-refresh.ts";
 
 const TOKEN_URL = "https://auth.openai.com/oauth/token";

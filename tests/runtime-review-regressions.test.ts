@@ -18,13 +18,20 @@ it.each(['restore', 'reload', 'stop'])('RR01 %s respects real SDK preflight owne
   const model = { id: 'fixture', provider: 'fixture', input: ['text'] };
   const sdk: any = Object.create(AgentSession.prototype);
   Object.assign(sdk, {
-    agent: { state: { model, messages: [], isStreaming: false } },
+    agent: { state: { model, messages: [], isStreaming: false }, isStreaming: false },
+    _isAgentRunActive: false,
     sessionManager: { getSessionFile: () => sp },
     _resourceLoader: { getPrompts: () => ({ prompts: [] }) },
-    _modelRegistry: { hasConfiguredAuth: () => true },
-    _flushPendingBashMessages() {}, _findLastAssistantMessage() { return null; },
+    _modelRuntime: { hasConfiguredAuth: () => true },
+    _baseSystemPrompt: 'fixture prompt',
+    _baseSystemPromptOptions: { selectedTools: [], forceSystemPrompt: 'fixture prompt' },
+    _flushPendingBashMessages() {}, _flushPendingCustomMessages() {}, _findLastAssistantMessage() { return null; },
+    getActiveToolNames() { return []; }, _preparePromptAndToolLoadout() {},
     _expandSkillCommand(t) { return t; }, _pendingNextTurnMessages: [],
-    _extensionRunner: { hasHandlers: () => false, async emitBeforeAgentStart() { trace.push('sdk-preflight-entered'); entered.resolve(); await held.promise; trace.push('sdk-preflight-released'); } },
+    _extensionRunner: { hasHandlers: () => false, async emitBeforeAgentStart() {
+      trace.push('sdk-preflight-entered'); entered.resolve(); await held.promise; trace.push('sdk-preflight-released');
+      return { messages: [], systemPromptOptions: { selectedTools: [] } };
+    } },
     _runAgentPrompt: vi.fn(async () => { trace.push('old-sdk-run-started'); }),
   });
   const agent = { id: 'fixture' };
@@ -44,7 +51,7 @@ it.each(['restore', 'reload', 'stop'])('RR01 %s respects real SDK preflight owne
   });
   // Real /rc router calls promptSession without submission receipt callbacks.
   const prompted = c.promptSession(sp, 'fixture text', undefined).catch(e => { trace.push('prompt-error:' + e.message); return e; });
-  await entered.promise;
+  await Promise.race([entered.promise, prompted.then(error => { throw error; })]);
   expect(sdk.isStreaming).toBe(false);
   try {
     if (mode === 'stop') {

@@ -217,6 +217,32 @@ export const NFT_TRACE_ROOTS = CLOSURE_ROOTS.filter((root) => root.inputType ===
 
 export const DYNAMIC_CALL_ALLOWLIST = Object.freeze([
   {
+    file: "node_modules/@earendil-works/pi-coding-agent/dist/utils/shell.js",
+    callee: "spawn",
+    argText: 'join(process.env.SystemRoot ?? "C:\\\\Windows", "System32", "taskkill.exe")',
+    reason:
+      "Pi 0.87.1 stops a tracked Windows child process tree using the absolute "
+      + "System32 taskkill executable. This is OS process cleanup, not a repo module.",
+  },
+  {
+    file: "node_modules/@earendil-works/pi-coding-agent/dist/core/resolve-config-value.js",
+    callee: "spawnSync",
+    argText: "shell",
+    reason:
+      "Pi resolves explicitly configured !command credential/header values through "
+      + "the configured Windows shell with a timeout. The command comes from user "
+      + "configuration, not a hidden repo dependency or an agent tool invocation.",
+  },
+  {
+    file: "node_modules/@earendil-works/pi-coding-agent/dist/core/resolve-config-value.js",
+    callee: "execSync",
+    argText: "command",
+    reason:
+      "Pi's !command config-value resolver uses the default shell on Unix or when "
+      + "a configured Windows shell cannot start. This is the same explicit "
+      + "user-configured credential/header command boundary, with a timeout.",
+  },
+  {
     file: "server/bootstrap.ts",
     callee: "import",
     argText: "pathToFileURL(serverEntry).href",

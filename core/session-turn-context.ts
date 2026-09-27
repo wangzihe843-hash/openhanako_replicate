@@ -194,9 +194,8 @@ export function createSessionTurnContextExtension({
         [async (event) => {
           const context = currentContext();
           if (!context?.system) return undefined;
-          // Pi passes systemPrompt separately. Its convertToLlm drops role:system
-          // in AgentMessage[], while this override is reset for each prompt and
-          // is never appended to persistent session history.
+          // Pi 0.87 projects this forced prompt into the provider transcript,
+          // resets it for each prompt, and never persists the temporary text.
           return { systemPrompt: applySessionTurnSystemContext(event.systemPrompt, context) };
         }],
       ],

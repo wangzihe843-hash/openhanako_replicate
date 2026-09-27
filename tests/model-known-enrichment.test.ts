@@ -32,7 +32,7 @@ describe("enrichModelFromKnownMetadata", () => {
     expect(enriched.baseUrl).toBe("https://api.kimi.com/coding/v1");
   });
 
-  it("normalizes Kimi transport and reuses request headers without replacing user model metadata", () => {
+  it("normalizes Kimi transport without inventing a removed client identity or replacing user metadata", () => {
     const model = {
       id: "k3",
       name: "User-defined K3",
@@ -66,7 +66,7 @@ describe("enrichModelFromKnownMetadata", () => {
         cacheWrite: 6,
       },
     });
-    expect(enriched.headers).toEqual({ "User-Agent": "KimiCLI/1.5" });
+    expect(enriched.headers).toBeUndefined();
     expect(enriched.api).toBe("openai-completions");
     expect(enriched.baseUrl).toBe("https://api.kimi.com/coding/v1");
     expect(enriched.compat).toMatchObject({
