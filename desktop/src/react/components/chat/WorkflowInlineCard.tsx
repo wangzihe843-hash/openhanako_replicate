@@ -11,6 +11,8 @@ import { formatElapsed } from '../../utils/format-duration';
 import { ChatResourceCard } from './ChatResourceCard';
 import { WorkflowResourceIcon } from './ChatResourceIcons';
 import { WorkflowProgressDots } from '../shared/WorkflowProgressDots';
+import { taskOutcomeGoalLabel } from './TaskOutcomeCard';
+import type { TaskOutcome } from '../../../../../lib/task-outcome/task-outcome';
 
 interface WorkflowInlineCardProps {
   block: {
@@ -20,6 +22,7 @@ interface WorkflowInlineCardProps {
     summary?: string;
     startedAt?: number | null;
     finishedAt?: number | null;
+    taskOutcome?: TaskOutcome | null;
   };
 }
 
@@ -78,6 +81,16 @@ export const WorkflowInlineCard = memo(function WorkflowInlineCard({ block }: Wo
   if (agentCount > 0) metaParts.push(t('rightWorkspace.workflow.agents', { n: agentCount }));
   if (duration) metaParts.push(duration);
   const titleMeta = metaParts.join(' · ') || undefined;
+  const recordedStatus = block.taskOutcome?.lifecycle;
+  const status = recordedStatus === 'completed' ? 'done'
+    : recordedStatus === 'failed' ? 'failed'
+    : recordedStatus === 'aborted' || recordedStatus === 'canceled' ? 'aborted'
+    : block.streamStatus;
+  const terminal = status !== 'running';
+  const goalResult = recordedStatus === 'completed' || recordedStatus === 'failed'
+    ? block.taskOutcome!.goalResult
+    : status === 'failed' ? 'failed' : 'unverified';
+  const goalPrefix = t('taskOutcome.goal') === 'taskOutcome.goal' ? 'Goal' : t('taskOutcome.goal');
 
   return (
     <ChatResourceCard
@@ -85,12 +98,13 @@ export const WorkflowInlineCard = memo(function WorkflowInlineCard({ block }: Wo
       icon={<WorkflowResourceIcon />}
       title={block.taskTitle || t('rightWorkspace.workflow.title')}
       titleMeta={titleMeta}
+      titleTail={terminal ? `${goalPrefix}: ${taskOutcomeGoalLabel(goalResult)}` : undefined}
       subtitle={childNodes.length > 0
         ? <WorkflowProgressDots nodes={childNodes} agents={agents} size="sm" />
         : (block.summary || undefined)
       }
-      statusLabel={statusLabel(block.streamStatus)}
-      statusTone={statusTone(block.streamStatus)}
+      statusLabel={statusLabel(status)}
+      statusTone={statusTone(status)}
     />
   );
 });

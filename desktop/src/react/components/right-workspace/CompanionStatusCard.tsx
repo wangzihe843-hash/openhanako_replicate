@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../../stores';
 import { sessionScopedListIncludes, sessionScopedValue } from '../../stores/session-slice';
 import { hanaFetch } from '../../hooks/use-hana-fetch';
 import { XingyeAgentAvatar } from '../../xingye/XingyeAgentAvatar';
+import { PixelRoom } from '../../companion/PixelRoom';
+import { useI18n } from '../../hooks/use-i18n';
+import type { PetOptions, PetWindowState } from '../../companion/pet-types';
 import {
   latestCompanionTerminalChange,
   resolveCompanionState,
@@ -23,17 +26,6 @@ interface RegistryView {
   unavailable: boolean;
 }
 
-const STATE_LABELS = {
-  idle: '待机中',
-  busy: '正在忙碌',
-  waiting: '等待你的回应',
-  blocked: '任务遇到阻塞',
-  completed: '任务已完成',
-  failed: '任务失败',
-  canceled: '任务已取消',
-  unavailable: '状态暂不可用',
-} as const;
-
 const STATE_SYMBOLS = {
   idle: '·', busy: '◌', waiting: '…', blocked: '!',
   completed: '✓', failed: '×', canceled: '–', unavailable: '?',
@@ -41,6 +33,7 @@ const STATE_SYMBOLS = {
 
 /** A display-only character: runtime facts determine status; animation never starts an agent turn. */
 export function CompanionStatusCard() {
+  const { t } = useI18n();
   const sessionPath = useStore((state) => state.currentSessionPath);
   const sessionId = useStore((state) => state.currentSessionId);
   const agentId = useStore((state) => state.currentAgentId);
@@ -59,6 +52,41 @@ export function CompanionStatusCard() {
     return !!path && !!sessionScopedValue(state, state.inlineErrors, path);
   });
   const [registryView, setRegistryView] = useState<RegistryView | null>(null);
+  const [roomOpen, setRoomOpen] = useState(false);
+  const [petWindowState, setPetWindowState] = useState<PetWindowState | null>(null);
+  const [petError, setPetError] = useState('');
+  const mounted = useRef(false);
+  const petStateEventVersion = useRef(0);
+  const petOperationVersion = useRef(0);
+
+  useEffect(() => {
+    mounted.current = true;
+    let disposed = false;
+    let receivedState = false;
+    const off = window.platform?.onPetState?.((value) => {
+      petStateEventVersion.current += 1;
+      receivedState = true;
+      setPetWindowState(value);
+    });
+    void window.platform?.petState?.().then((value) => {
+      if (!disposed && !receivedState) setPetWindowState(value);
+    }).catch(() => {});
+    return () => { disposed = true; mounted.current = false; if (typeof off === 'function') off(); };
+  }, []);
+
+  const changePet = async (operation: () => Promise<PetWindowState | null> | undefined) => {
+    const operationVersion = ++petOperationVersion.current;
+    const eventVersion = petStateEventVersion.current;
+    const isCurrent = () => mounted.current && petOperationVersion.current === operationVersion
+      && petStateEventVersion.current === eventVersion;
+    try {
+      const next = await operation();
+      if (!isCurrent()) return;
+      if (next) { setPetWindowState(next); setPetError(''); }
+      else setPetError(t('companion.card.petUnavailable'));
+    } catch { if (isCurrent()) setPetError(t('companion.card.petUnavailable')); }
+  };
+  const setPetOptions = (options: PetOptions) => changePet(() => window.platform?.petSetOptions?.(options));
 
   const scopeKey = agentId && sessionPath ? `${agentId}\u0000${sessionId || sessionPath}` : null;
   useEffect(() => {
@@ -124,7 +152,7 @@ export function CompanionStatusCard() {
     };
   }, [connected, scopeKey, sessionId, sessionPath]);
 
-  if (!agent || !scopeKey) return null;
+  if (!agent || !scopeKey || !sessionPath) return null;
   const current = registryView?.scopeKey === scopeKey ? registryView : null;
   const state = resolveCompanionState({
     tasks: current?.tasks ?? [],
@@ -135,16 +163,39 @@ export function CompanionStatusCard() {
     unavailable: !connected || !current || current.unavailable,
   });
   return (
-    <section className={`universal-card ${styles.card}`} aria-label={`${agent.name}的小角色状态`} data-state={state}>
-      <div className={styles.stage} aria-hidden="true">
-        <div className={styles.halo} />
-        <XingyeAgentAvatar agent={agent} className={styles.character} alt="" />
-        <span className={styles.symbol}>{STATE_SYMBOLS[state]}</span>
+    <section className={`universal-card ${styles.card}`} aria-label={t('companion.card.ariaLabel', { name: agent.name })} data-state={state}>
+      <div className={styles.summary}>
+        <div className={styles.stage} aria-hidden="true">
+          <div className={styles.halo} />
+          <XingyeAgentAvatar agent={agent} className={styles.character} alt="" />
+          <span className={styles.symbol}>{STATE_SYMBOLS[state]}</span>
+        </div>
+        <div className={styles.copy}>
+          <strong className={styles.name}>{agent.name}</strong>
+          <span className={styles.status} role="status" aria-live="polite">{t(`companion.status.${state}`)}</span>
+        </div>
       </div>
-      <div className={styles.copy}>
-        <strong className={styles.name}>{agent.name}</strong>
-        <span className={styles.status} role="status" aria-live="polite">{STATE_LABELS[state]}</span>
+      <div className={styles.actions}>
+        <button type="button" aria-expanded={roomOpen} onClick={() => setRoomOpen((open) => !open)}>{t(roomOpen ? 'companion.card.closeRoom' : 'companion.card.openRoom')}</button>
+        {petWindowState?.supported && (
+          <>
+            <button type="button" onClick={() => void changePet(() => petWindowState.visible ? window.platform?.petHide?.() : window.platform?.petShow?.())}>
+              {t(petWindowState.visible ? 'companion.card.hidePet' : 'companion.card.showPet')}
+            </button>
+            {petWindowState.visible && (
+              <>
+                <button type="button" aria-pressed={petWindowState.paused} onClick={() => void setPetOptions({ paused: !petWindowState.paused })}>{t(petWindowState.paused ? 'companion.card.resume' : 'companion.card.pause')}</button>
+                <button type="button" aria-pressed={petWindowState.alwaysOnTop} onClick={() => void setPetOptions({ alwaysOnTop: !petWindowState.alwaysOnTop })}>{t(petWindowState.alwaysOnTop ? 'companion.card.unpin' : 'companion.card.pin')}</button>
+                <button type="button" aria-pressed={petWindowState.clickThrough} onClick={() => void setPetOptions({ clickThrough: !petWindowState.clickThrough })}>
+                  {t(petWindowState.clickThrough ? 'companion.card.restoreClick' : 'companion.card.clickThrough')}
+                </button>
+              </>
+            )}
+          </>
+        )}
       </div>
+      {petError && <span className={styles.petError} role="alert">{petError}</span>}
+      {roomOpen && <PixelRoom key={scopeKey} scopeKey={scopeKey} sessionPath={sessionPath} agentName={agent.name} companionState={state} />}
     </section>
   );
 }

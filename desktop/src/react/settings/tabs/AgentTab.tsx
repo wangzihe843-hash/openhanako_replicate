@@ -10,6 +10,8 @@ import { AgentCardStack } from './agent/AgentCardStack';
 import { YuanSelector } from './agent/YuanSelector';
 import { MemorySection } from './agent/AgentMemory';
 import { AgentToolsSection } from './agent/AgentToolsSection';
+import { AgentTopicCandidates } from './agent/AgentTopicCandidates';
+import { AgentExperienceVersions } from './agent/AgentExperienceVersions';
 import { CharacterCardPreviewOverlay, type CharacterCardPlan } from '../overlays/CharacterCardPreviewOverlay';
 import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
@@ -439,6 +441,15 @@ export function AgentTab() {
               ))}
             </div>
           )}
+          </div>
+          <div className={styles['settings-section-inset']}>
+            <AgentExperienceVersions agentId={selectedSettingsAgentId} enabled={experienceEnabled === true} />
+          </div>
+        </SettingsSection>
+
+        <SettingsSection title={t('settings.topicCandidates.title')}>
+        <div className={styles['settings-section-inset']}>
+          <AgentTopicCandidates agentId={selectedSettingsAgentId} />
         </div>
       </SettingsSection>
 

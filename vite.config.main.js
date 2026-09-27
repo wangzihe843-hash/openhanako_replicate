@@ -72,10 +72,9 @@ export default defineConfig({
         // Keep external — Electron runtime resolves from node_modules.
         "ws",
 
-        // mammoth / exceljs: large CJS deps with deep dependency trees.
-        // Kept external — electron-builder includes them from node_modules.
-        "mammoth",
-        "exceljs",
+        // read-docx-html/read-xlsx-html lazily require mammoth/exceljs in
+        // desktop/main.cjs. Keep them bundled: the asar deliberately excludes
+        // node_modules except ws, so externalizing either breaks previews.
       ],
     },
     target: "node24",

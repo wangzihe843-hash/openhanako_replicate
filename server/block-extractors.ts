@@ -11,6 +11,7 @@ import path from "path";
 import { t } from "../lib/i18n.ts";
 import { materializeExecutorIdentity } from "../lib/subagent-executor-metadata.ts";
 import { buildAutomationSuggestionBlock } from "./suggestion-blocks.ts";
+import { projectChannelPostOutcome, projectRegistryTaskOutcome, projectWebReadOutcome } from "../lib/task-outcome/task-outcome.ts";
 
 export const BLOCK_EXTRACTORS = {
   // COMPAT(present_files, remove no earlier than v0.133):
@@ -163,6 +164,9 @@ export const BLOCK_EXTRACTORS = {
   // 不设 streamKey —— 概览块不展开实时流，区别于 subagent。
   workflow: (details) => {
     if (!details.taskId) return null;
+    const status = details.streamStatus === "done" ? "completed"
+      : details.streamStatus === "failed" ? "failed"
+      : details.streamStatus === "aborted" ? "aborted" : "running";
     return [{
       type: "workflow",
       taskId: details.taskId,
@@ -171,6 +175,7 @@ export const BLOCK_EXTRACTORS = {
       summary: details.summary || null,
       startedAt: details.startedAt ?? null,
       finishedAt: details.finishedAt ?? null,
+      taskOutcome: projectRegistryTaskOutcome({ taskId: details.taskId, type: "workflow", status }),
     }];
   },
 
@@ -418,7 +423,7 @@ function extractPluginCard(details) {
   return { type: "plugin_card", card: { ...safeCard, type: safeCard.type || "iframe" } };
 }
 
-export function extractBlocks(toolName, details, toolResult) {
+export function extractBlocks(toolName, details, toolResult, toolCallId = toolResult?.toolCallId) {
   const blocks = [];
   const extractor = BLOCK_EXTRACTORS[toolName];
   if (extractor) {
@@ -427,6 +432,12 @@ export function extractBlocks(toolName, details, toolResult) {
   }
   const card = extractPluginCard(details);
   if (card) blocks.push(card);
+  const outcome = toolName === "channel" && details?.action === "post"
+    ? projectChannelPostOutcome(details.effect)
+    : toolName === "web_fetch"
+      ? projectWebReadOutcome(toolCallId, details?.readEvidence)
+      : null;
+  if (outcome) blocks.push({ type: "task_outcome", outcome });
   return blocks;
 }
 

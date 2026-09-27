@@ -3,7 +3,7 @@ import { useI18n } from '../../hooks/use-i18n';
  * AssistantMessage — 助手消息，遍历 ContentBlock 按类型渲染
  */
 
-import { Component, memo, useCallback, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
+import { Component, memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { StreamingMarkdownContent } from './StreamingMarkdownContent';
 import { MoodBlock } from './MoodBlock';
@@ -12,6 +12,7 @@ import { ToolGroupBlock } from './ToolGroupBlock';
 import { PluginCardBlock } from './PluginCardBlock';
 import { SubagentCard } from './SubagentCard';
 import { WorkflowInlineCard } from './WorkflowInlineCard';
+import { TaskOutcomeCard } from './TaskOutcomeCard';
 import { InterludeBlock } from './InterludeBlock';
 import { SettingsConfirmCard } from './SettingsConfirmCard';
 import { SettingsUpdateCard } from './SettingsUpdateCard';
@@ -41,6 +42,7 @@ import type { ForkedSessionHandler, SessionNodeTarget } from '../../stores/messa
 import { selectSelectedIdsBySession } from '../../stores/session-selectors';
 import { normalizeSessionRouteError } from '../../../../../shared/error-user-messages.ts';
 import { extractSelectedTexts, extractTextBlockPlainText } from '../../utils/message-text';
+import { voiceTurns } from '../../services/voice-turn';
 import { AgentAvatar, resolveAgentDisplayInfo, type AgentDisplayInfo } from '../../utils/agent-display';
 import { ScheduleEditor } from '../automation/ScheduleEditor';
 import { SelectWidget, type SelectOption } from '@/ui';
@@ -106,6 +108,13 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
   const isInterludeOnly = blocks.length > 0 && blocks.every(block => block.type === 'interlude');
   const hasWideBlock = blocks.some(b => b.type === 'interactive_card');
+  const { t } = useI18n();
+  const isFocusedSession = useStore(state => state.currentSessionPath === sessionPath);
+  const speakText = useMemo(() => extractTextBlockPlainText(blocks), [blocks]);
+  const voiceTurn = useSyncExternalStore(
+    voiceTurns.subscribe,
+    () => voiceTurns.getTurn(sessionPath, message.id),
+  );
 
   const [copied, setCopied] = useState(false);
   const handleCopy = useCallback(() => {
@@ -150,7 +159,17 @@ export const AssistantMessage = memo(function AssistantMessage({
     copied,
     isStreaming: isStreaming || nodeActionBusy,
   });
-  const messageActions = readOnly || !showTurnCompletionTime || isStreaming ? [] : standardMessageActions;
+  const voiceAction = speakText && isFocusedSession && !isStreaming && voiceTurns.isAvailable() ? [{
+    id: 'voice-playback',
+    title: voiceTurn?.status === 'speaking' ? t('chat.stopReading') : t('chat.readAloud'),
+    icon: <span aria-hidden="true">{voiceTurn?.status === 'speaking' ? '■' : '▶'}</span>,
+    onClick: () => {
+      if (voiceTurn?.status === 'speaking') voiceTurns.interrupt(sessionPath);
+      else voiceTurns.start(sessionPath, message.id, speakText);
+    },
+    pressed: voiceTurn?.status === 'speaking',
+  }] : [];
+  const messageActions = readOnly || !showTurnCompletionTime || isStreaming ? [] : [...voiceAction, ...standardMessageActions];
   const footerActions = canShowNodeActions ? nodeActions : [];
 
   return (
@@ -198,6 +217,17 @@ export const AssistantMessage = memo(function AssistantMessage({
           actions={messageActions}
           testId="assistant-completion-actions"
         />
+      )}
+      {voiceTurn && (
+        <span role="status" aria-live="polite" style={{ fontSize: 12, opacity: 0.72 }} data-testid={`voice-turn-${message.id}`}>
+          {voiceTurn.status === 'speaking'
+            ? t('chat.readingProgress').replace('{done}', String(voiceTurn.completedSegments)).replace('{total}', String(voiceTurn.totalSegments))
+            : voiceTurn.status === 'completed'
+              ? t('chat.readingCompleted')
+              : voiceTurn.status === 'failed'
+                ? `${t('chat.readingFailed')} ${voiceTurn.error || ''}`
+                : t('chat.readingInterrupted').replace('{done}', String(voiceTurn.completedSegments)).replace('{total}', String(voiceTurn.totalSegments))}
+        </span>
       )}
     </div>
   );
@@ -283,6 +313,8 @@ const ContentBlockView = memo(function ContentBlockView({ block, agentName, agen
       );
     case 'media_generation':
       return <MediaGenerationBlock block={block} sessionPath={sessionPath} readOnly={readOnly} />;
+    case 'task_outcome':
+      return <TaskOutcomeCard block={block} />;
     case 'interlude':
       return <InterludeBlock block={block} />;
     default: {

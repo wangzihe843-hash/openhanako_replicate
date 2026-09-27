@@ -45,6 +45,37 @@ describe("heartbeat quiet hours", () => {
     expect(getEventSummary).not.toHaveBeenCalled();
     expect(onBeat).not.toHaveBeenCalled();
   });
+  it("releases a topic offer when quiet hours start after event collection but before execution", async () => {
+    let quiet = false;
+    const onBeat = vi.fn();
+    const onTopicAbort = vi.fn(async () => {});
+    const hb = testHeartbeat({
+      getEventSummary: async () => { quiet = true; return { topicCandidates: [{ id: 'topic-1', title: '展览', reason: '用户选择', sourceType: 'reality_source', source: {}, expiresAt: '2026-09-22T00:00:00Z' }] }; },
+      getSkipReason: () => quiet ? 'quiet-hours' : null,
+      onBeat,
+      onTopicAbort,
+    });
+    expect(await hb.beat()).toMatchObject({ skipped: 'quiet-hours' });
+    expect(onBeat).not.toHaveBeenCalled();
+    expect(onTopicAbort).toHaveBeenCalledWith({ ids: ['topic-1'], status: 'pending' });
+  });
+  it("holds a topic for review when execution fails and cannot confirm delivery", async () => {
+    const onTopicAbort = vi.fn(async () => {});
+    const hb = testHeartbeat({
+      getEventSummary: async () => ({ topicCandidates: [{ id: 'topic-1', title: '展览', reason: '用户选择', sourceType: 'reality_source', source: {}, expiresAt: '2026-09-22T00:00:00Z' }] }),
+      onBeat: async (_prompt, extra) => {
+        expect(_prompt).toContain('正文未读取或验证');
+        const tool = extra.customTools.find((item: { name: string }) => item.name === 'xingye_topic_candidate_result');
+        expect(tool).toBeTruthy();
+        await expect(tool.execute('call', { id: 'topic-1', status: 'used' })).rejects.toThrow('not offered');
+        throw new Error('model failed after possible delivery');
+      },
+      onTopicDecision: vi.fn(),
+      onTopicAbort,
+    });
+    expect(await hb.beat()).toMatchObject({ ok: false });
+    expect(onTopicAbort).toHaveBeenCalledWith({ ids: ['topic-1'], status: 'indeterminate' });
+  });
   it("rechecks pause after async file collection and before consuming events", async () => {
     let release!: () => void;
     const files = new Promise<void>(resolve => { release = resolve; });

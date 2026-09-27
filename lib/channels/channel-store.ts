@@ -58,7 +58,7 @@ const MSG_HEADER_RE = /^### (.+?) \| (\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?)$
  * @param {string} content - 频道 MD 文件的全文
  * @returns {{ meta: object, messages: Array<{sender: string, timestamp: string, body: string}> }}
  */
-export function parseChannel(content) {
+export function parseChannel(content, { includeReceiptMetadata = false } = {}) {
   const lines = content.split("\n");
   let meta: Record<string, any> = {};
   let bodyStart = 0;
@@ -81,7 +81,7 @@ export function parseChannel(content) {
 
   // 解析消息流
   const messages = [];
-  let current = null;
+  let current: { sender: string; timestamp: string; body: string; effectId?: string; receiptToken?: string } | null = null;
   const bodyLines = [];
 
   for (let i = bodyStart; i < lines.length; i++) {
@@ -97,8 +97,21 @@ export function parseChannel(content) {
       }
       current = { sender: match[1], timestamp: match[2], body: "" };
     } else if (current) {
-      // 跳过分隔线 ---
-      if (line.trim() === "---") continue;
+      // Only the block's trailing separator is metadata. A horizontal rule in
+      // message content must remain available for receipt-body comparison.
+      if (line.trim() === "---") {
+        let next = i + 1;
+        while (next < lines.length && !lines[next].trim()) next++;
+        if (next === lines.length || MSG_HEADER_RE.test(lines[next])) continue;
+      }
+      const marker = line.match(/^<!-- hana-effect:([a-f0-9]{64}):([a-f0-9]{32}) -->$/);
+      let next = i + 1;
+      while (next < lines.length && !lines[next].trim()) next++;
+      if (marker && lines[next]?.trim() === "---") {
+        current.effectId = marker[1];
+        current.receiptToken = marker[2];
+        continue;
+      }
       bodyLines.push(line);
     }
   }
@@ -109,6 +122,9 @@ export function parseChannel(content) {
     messages.push(current);
   }
 
+  if (!includeReceiptMetadata) {
+    return { meta, messages: messages.map(({ effectId: _effectId, receiptToken: _receiptToken, ...message }) => message) };
+  }
   return { meta, messages };
 }
 
@@ -243,10 +259,12 @@ export async function createChannel(
  * @returns {{ timestamp: string }} 写入的时间戳
  */
 export async function appendMessage(filePath, sender, body, {
-  memberId = null, signal = null, canWrite = () => true,
-}: { memberId?: string | null; signal?: AbortSignal | null; canWrite?: () => boolean } = {}) {
+  memberId = null, signal = null, canWrite = () => true, effectId = null, receiptToken = null,
+}: { memberId?: string | null; signal?: AbortSignal | null; canWrite?: () => boolean; effectId?: string | null; receiptToken?: string | null } = {}) {
+  if (effectId && !/^[a-f0-9]{64}$/.test(effectId)) throw new Error("Invalid channel effect ID");
+  if (effectId && !/^[a-f0-9]{32}$/.test(receiptToken || "")) throw new Error("Invalid channel receipt token");
   const ts = formatTimestamp(new Date());
-  const block = formatMessageBlock(sender, body, ts);
+  const block = formatMessageBlock(sender, body, ts, effectId, receiptToken);
   return withFileLock(filePath, async () => {
     const assertWritable = () => {
       if (signal?.aborted || !canWrite()) {
@@ -259,6 +277,15 @@ export async function appendMessage(filePath, sender, body, {
     }
     if (memberId && !getChannelMembers(filePath).includes(memberId)) {
       throw Object.assign(new Error("Not a channel member"), { code: "channel_not_member", status: 403 });
+    }
+    if (effectId) {
+      const existing = parseChannel(await fsp.readFile(filePath, "utf-8"), { includeReceiptMetadata: true }).messages.find((message) => message.effectId === effectId);
+      if (existing) {
+        if (existing.receiptToken !== receiptToken || existing.sender !== sender || existing.body !== body.trim()) {
+          throw Object.assign(new Error("Channel effect receipt does not match this post"), { code: "effect_identity_conflict" });
+        }
+        return { timestamp: existing.timestamp, replayed: true };
+      }
     }
     // Do not use appendFile(path): its O_CREAT would resurrect a deleted
     // channel. O_APPEND without O_CREAT also fences an external unlink.
@@ -277,12 +304,22 @@ export async function appendMessage(filePath, sender, body, {
     } finally {
       await handle.close();
     }
-    return { timestamp: ts };
+    return { timestamp: ts, replayed: false };
   });
 }
 
-function formatMessageBlock(sender, body, timestamp) {
-  return `\n### ${sender} | ${timestamp}\n\n${body.trim()}\n\n---\n`;
+export function getChannelMessageReceipt(filePath: string, effectId: string, receiptToken: string, sender: string, body: string) {
+  if (!fs.existsSync(filePath)) return null;
+  const message = parseChannel(fs.readFileSync(filePath, "utf-8"), { includeReceiptMetadata: true }).messages.find((entry) => entry.effectId === effectId);
+  if (!message) return null;
+  if (message.receiptToken !== receiptToken || message.sender !== sender || message.body !== body.trim()) {
+    throw Object.assign(new Error("Channel effect receipt does not match this post"), { code: "effect_identity_conflict" });
+  }
+  return { timestamp: message.timestamp, sender: message.sender };
+}
+
+function formatMessageBlock(sender, body, timestamp, effectId: string | null = null, receiptToken: string | null = null) {
+  return `\n### ${sender} | ${timestamp}\n\n${body.trim()}\n\n${effectId ? `<!-- hana-effect:${effectId}:${receiptToken} -->\n` : ""}---\n`;
 }
 
 /** Append one DM to both transcripts without interleaving other DM writers. */

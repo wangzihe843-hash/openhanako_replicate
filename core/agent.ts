@@ -528,6 +528,8 @@ export class Agent implements RuntimeAgentIdentity {
     this._pinnedMemoryTools = createPinnedMemoryTools(this.agentDir, this.id);
     this._experienceTools = createExperienceTools(this.agentDir, {
       isEnabled: () => this._experienceEnabled === true,
+      getSessionCwd: (sessionPath) => this._cb?.getSessionCwd?.(sessionPath) || null,
+      getWorkspacePath: () => this._cb?.getHomeCwd?.(this.id) || null,
     });
     this._xingyeProposeDraftTool = createProposeDraftTool({
       agentDir: this.agentDir,

@@ -64,6 +64,17 @@ describe("shell-surface-manifest.json: forward (declared sources exist)", () => 
     });
   }
 
+  it('bundles main-process document preview dependencies instead of leaving unresolved asar imports', async () => {
+    const mainConfig = (await import('../vite.config.main.js')).default;
+    const externals = mainConfig.build.rollupOptions.external as string[];
+    const mainSource = fs.readFileSync(path.join(ROOT, 'desktop/main.cjs'), 'utf8');
+    for (const dep of manifest.shellBundledDependencies as Array<{ name: string; declaredVersion: string }>) {
+      expect(pkg.dependencies[dep.name]).toBe(dep.declaredVersion);
+      expect(mainSource).toContain(`require("${dep.name}")`);
+      expect(externals).not.toContain(dep.name);
+    }
+  });
+
   for (const entry of manifest.asarFiles) {
     if (!Array.isArray(entry.sourcePaths) && !entry.sourceGlob) continue; // exclusions have neither
     it(`asarFiles["${entry.builderEntry}"] source path(s) exist`, () => {

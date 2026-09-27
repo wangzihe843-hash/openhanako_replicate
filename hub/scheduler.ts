@@ -12,6 +12,7 @@ import fs from "fs";
 import path from "path";
 import { heartbeatQuietReason } from "../shared/heartbeat-policy.ts";
 import { createHeartbeat } from "../lib/desk/heartbeat.ts";
+import { setTopicCandidateStatus, settleTopicOffers } from "../lib/xingye/topic-candidates.js";
 import { createCronScheduler } from "../lib/desk/cron-scheduler.ts";
 import { getAutomationExecutor } from "../lib/desk/automation-executors.ts";
 import { runXingyeHeartbeatConsumer } from "../lib/xingye/heartbeat-consumer.js";
@@ -176,6 +177,12 @@ export class Scheduler {
       // 这样 agent 能基于事件主动判断是否要 notify。heartbeat.js 会把消费结果合并进 payload，
       // desk 路由还是能拿到 summaryZh。
       getEventSummary: () => this._runXingyeHeartbeatConsumer(agentId, agent),
+      onTopicDecision: ({ id, status }) => setTopicCandidateStatus({
+        agentDir: path.join(engine.agentsDir, agentId), agentId, id, status,
+      }),
+      onTopicAbort: ({ ids, status }) => settleTopicOffers({
+        agentDir: path.join(engine.agentsDir, agentId), agentId, ids, status,
+      }),
       // The master pauses every entry point. Per-agent opt-out only stops the timer;
       // explicit manual patrols remain available, including after reload/restart.
       getSkipReason: () => engine.getHeartbeatMaster() === false

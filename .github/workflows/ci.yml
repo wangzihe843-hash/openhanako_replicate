@@ -51,8 +51,12 @@ jobs:
       - name: Build packages
         run: npm run build:packages
 
-      - name: Build renderer
-        run: npm run build:renderer
+      - name: Build desktop client entries
+        run: npm run build:client
+
+      - name: Smoke-test real Windows desktop startup and pet lifecycle
+        if: runner.os == 'Windows'
+        run: node scripts/smoke-desktop-main-pet.cjs
 
       # The tag-only Build workflow verifies the extracted Windows standalone
       # package by launching its real hana-server.cmd and exercising exec_command.
@@ -81,6 +85,10 @@ jobs:
       - name: Build Windows server bundle for standalone smoke
         if: runner.os == 'Windows'
         run: node scripts/build-server.mjs win32 x64
+
+      - name: Smoke-test packaged Windows server APIs and restart
+        if: runner.os == 'Windows'
+        run: node scripts/smoke-full-server.mjs
 
       - name: Build Windows standalone server archive in CI
         if: runner.os == 'Windows'

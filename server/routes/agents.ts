@@ -36,7 +36,14 @@ import {
   normalizeExperienceCategory,
   syncExperienceCategories,
 } from "../../lib/tools/experience.ts";
+import { listExperienceVersions, reviewExperienceVersion } from "../../lib/tools/experience-versions.ts";
 import { appendXingyeEvent } from "../../lib/xingye/events.js";
+import {
+  addRealityTopicCandidate,
+  addSharedMemoryTopicCandidate,
+  listTopicCandidates,
+  setTopicCandidateStatus,
+} from "../../lib/xingye/topic-candidates.js";
 import {
   readPinnedMemoryItems,
   replacePinnedMemoryItems,
@@ -920,6 +927,48 @@ export function createAgentsRoute(engine) {
   //  Experience（experience/ 目录）
   // ════════════════════════════
 
+  route.get("/agents/:id/topic-candidates", async (c) => {
+    const id = c.req.param("id");
+    if (!validateId(id) || !agentExists(engine, id)) return c.json({ error: "agent not found" }, 404);
+    try {
+      return c.json({ candidates: await listTopicCandidates({ agentDir: agentDir(engine, id), agentId: id }) });
+    } catch (error) { return c.json({ error: error.message }, 500); }
+  });
+
+  route.post("/agents/:id/topic-candidates", async (c) => {
+    const id = c.req.param("id");
+    if (!validateId(id) || !agentExists(engine, id)) return c.json({ error: "agent not found" }, 404);
+    try {
+      const body = await safeJson(c);
+      const candidate = body?.sourceType === "shared_memory"
+        ? await addSharedMemoryTopicCandidate({ agentDir: agentDir(engine, id), agentId: id,
+          pinContent: body?.pinContent, reason: body?.reason, expiresAt: body?.expiresAt })
+        : body?.sourceType === "reality_source"
+          ? await addRealityTopicCandidate({ agentDir: agentDir(engine, id), agentId: id,
+            title: body?.title, sourceUrl: body?.sourceUrl, reason: body?.reason, expiresAt: body?.expiresAt })
+          : null;
+      if (!candidate) return c.json({ error: "sourceType must be shared_memory or reality_source" }, 400);
+      return c.json({ candidate }, 201);
+    } catch (error) {
+      return c.json({ error: error.message }, /required|sourceUrl|not found/.test(error.message) ? 400 : 500);
+    }
+  });
+
+  route.patch("/agents/:id/topic-candidates/:candidateId", async (c) => {
+    const id = c.req.param("id");
+    if (!validateId(id) || !agentExists(engine, id)) return c.json({ error: "agent not found" }, 404);
+    try {
+      const body = await safeJson(c);
+      const candidate = await setTopicCandidateStatus({
+        agentDir: agentDir(engine, id), agentId: id,
+        id: c.req.param("candidateId"), status: body?.status,
+      });
+      return c.json({ candidate });
+    } catch (error) {
+      return c.json({ error: error.message }, /not found/.test(error.message) ? 404 : /invalid|expired|cannot make/.test(error.message) ? 400 : 500);
+    }
+  });
+
   route.get("/agents/:id/experience", async (c) => {
     const id = c.req.param("id");
     if (!validateId(id) || !agentExists(engine, id)) {
@@ -941,6 +990,29 @@ export function createAgentsRoute(engine) {
     } catch (err) {
       if (err.code === "ENOENT") return c.json({ content: "" });
       return c.json({ error: err.message }, 500);
+    }
+  });
+
+  route.get("/agents/:id/experience-versions", async (c) => {
+    const id = c.req.param("id");
+    if (!validateId(id) || !agentExists(engine, id)) return c.json({ error: "agent not found" }, 404);
+    if (!isExperienceEnabled(engine, id)) return c.json({ error: "experience is paused" }, 403);
+    try { return c.json({ versions: listExperienceVersions(agentDir(engine, id)) }); }
+    catch (error) { return c.json({ error: error.message }, 500); }
+  });
+
+  route.patch("/agents/:id/experience-versions/:versionId", async (c) => {
+    const id = c.req.param("id");
+    if (!validateId(id) || !agentExists(engine, id)) return c.json({ error: "agent not found" }, 404);
+    if (!isExperienceEnabled(engine, id)) return c.json({ error: "experience is paused" }, 403);
+    try {
+      const body = await safeJson(c);
+      const result = reviewExperienceVersion(agentDir(engine, id), c.req.param("versionId"), body?.action, body?.evidence);
+      emitAppEvent(engine, "agent-updated", { agentId: id });
+      return c.json(result);
+    } catch (error) {
+      const status = /not found/.test(error.message) ? 404 : /invalid|only |inactive|required|no longer/.test(error.message) ? 400 : 500;
+      return c.json({ error: error.message }, status);
     }
   });
 

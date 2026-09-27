@@ -13,6 +13,15 @@ import { t } from "../i18n.ts";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { activeExperienceVersions, proposeExperienceVersion } from "./experience-versions.ts";
+import { getToolSessionCwd, getToolSessionPath, normalizeToolRuntimeContext } from "./tool-session.ts";
+
+type ExperienceRuntimeContext = {
+  sessionRef?: { sessionPath?: string | null } | null;
+  sessionPath?: string | null;
+  sessionId?: string | null;
+  sessionManager?: object | null;
+};
 
 const TITLE_META_RE = /^<!--\s*experience-title:\s*([A-Za-z0-9_-]+)\s*-->$/;
 
@@ -151,19 +160,46 @@ function pausedResult() {
  * @param {string} agentDir - agent 数据目录
  * @param {object} [opts]
  * @param {() => boolean} [opts.isEnabled] - 当前 agent 是否启用经验能力
+ * @param {() => string | null} [opts.getWorkspacePath] - 无会话上下文时的兼容工作区
+ * @param {(sessionPath: string) => string | null} [opts.getSessionCwd] - 从本次调用的会话路径查找工作区
  * @returns {import('../pi-sdk/index.ts').ToolDefinition[]}
  */
-export function createExperienceTools(agentDir, opts: { isEnabled?: () => boolean } = {}) {
+export function createExperienceTools(agentDir, opts: {
+  isEnabled?: () => boolean;
+  getWorkspacePath?: () => string | null;
+  getSessionCwd?: (sessionPath: string) => string | null;
+} = {}) {
   const experienceDir = path.join(agentDir, "experience");
   const indexPath = path.join(agentDir, "experience.md");
-  const { isEnabled } = opts;
+  const { isEnabled, getWorkspacePath, getSessionCwd } = opts;
+
+  const workspaceForInvocation = (ctx: ExperienceRuntimeContext) => {
+    const sessionCwd = getToolSessionCwd(ctx);
+    if (typeof sessionCwd === "string" && sessionCwd.trim()) return sessionCwd;
+    const sessionPath = ctx?.sessionRef?.sessionPath || ctx?.sessionPath || getToolSessionPath(ctx);
+    if (sessionPath) return getSessionCwd?.(sessionPath) || null;
+    if (ctx?.sessionRef || ctx?.sessionId || ctx?.sessionManager || ctx?.sessionPath !== undefined) return null;
+    // Older direct tool callers have no runtime context. Keep their fallback,
+    // but never use it when a real invocation has unresolved session identity.
+    return getWorkspacePath?.() || null;
+  };
+
+  const matchingWorkLessons = (category?: string, ctx?: ExperienceRuntimeContext) => {
+    try {
+      const workspace = workspaceForInvocation(ctx);
+      return workspace ? activeExperienceVersions(agentDir, workspace, category) : [];
+    } catch (error) {
+      if (error?.message === 'absolute workspace path is required') return [];
+      throw error;
+    }
+  };
 
   const recallTool = {
     name: "recall_experience",
     label: "Recall Experience",
     description: "Browse the experience library. Without parameters, returns an overview of all categories. With a category name, returns specific experiences in that category. When the user asks you to do a concrete task (write code, research, create documents, analyze problems, etc.), check this tool first for relevant experience before starting. Not needed for casual chat, Q&A, or everyday conversation.",
     sessionPermission: {
-      resolveInvocation: (params: any = {}) => {
+      resolveInvocation: (params: Record<string, unknown> = {}) => {
         if (params.category !== undefined && typeof params.category !== "string") return null;
         const category = typeof params.category === "string" ? params.category.trim() : "";
         if (!category) {
@@ -193,22 +229,28 @@ export function createExperienceTools(agentDir, opts: { isEnabled?: () => boolea
         Type.String({ description: "Category name. Omit to get an overview of all categories" }),
       ),
     }),
-    execute: async (_toolCallId, params) => {
+    execute: async (_toolCallId, params, signalOrRuntimeCtx?: unknown, _onUpdate?: unknown, piCtx?: unknown) => {
       if (!isExperienceEnabled(isEnabled)) return pausedResult();
+
+      const { ctx } = normalizeToolRuntimeContext(signalOrRuntimeCtx, piCtx);
 
       const category = params.category?.trim();
 
       if (!category) {
         // 返回索引
         const index = readFile(indexPath);
-        if (!index.trim()) {
+        const scoped = matchingWorkLessons(undefined, ctx);
+        const scopedIndex = scoped.length
+          ? `# ${t('error.expScopedIndex')}\n${[...new Set(scoped.map(row => row.category))].map(name => `→ ${name}`).join("\n")}\n`
+          : "";
+        if (!index.trim() && !scopedIndex) {
           return {
             content: [{ type: "text", text: t("error.expEmpty") }],
             details: {},
           };
         }
         return {
-          content: [{ type: "text", text: index }],
+          content: [{ type: "text", text: [index.trim(), scopedIndex.trim()].filter(Boolean).join("\n\n") + "\n" }],
           details: {},
         };
       }
@@ -217,8 +259,11 @@ export function createExperienceTools(agentDir, opts: { isEnabled?: () => boolea
       let doc = null;
       try {
         doc = findExperienceDocument(experienceDir, category);
-      } catch {}
-      if (!doc || !doc.body.trim()) {
+      } catch {
+        // An invalid legacy category simply has no matching document.
+      }
+      const scoped = matchingWorkLessons(category, ctx);
+      if ((!doc || !doc.body.trim()) && scoped.length === 0) {
         return {
           content: [
             { type: "text", text: t("error.expCategoryNotFound", { category }) },
@@ -226,9 +271,15 @@ export function createExperienceTools(agentDir, opts: { isEnabled?: () => boolea
           details: {},
         };
       }
+      const scopedText = scoped.length
+        ? `${t('error.expScopedSection')}\n${scoped.map((row, index) => t('error.expScopedEntry', {
+          number: index + 1, content: row.content, version: row.version, reference: row.source.reference,
+        })).join("\n")}`
+        : "";
+      const title = doc?.title || category;
       return {
-        content: [{ type: "text", text: `# ${doc.title}\n\n${doc.body}` }],
-        details: { category: doc.title },
+        content: [{ type: "text", text: [`# ${title}`, doc?.body, scopedText].filter(Boolean).join("\n\n") }],
+        details: { category: title, scopedVersionIds: scoped.map(row => row.id) },
       };
     },
   };
@@ -236,12 +287,16 @@ export function createExperienceTools(agentDir, opts: { isEnabled?: () => boolea
   const recordTool = {
     name: "record_experience",
     label: "Record Experience",
-    description: "Record a lesson learned to the experience library. Use when: the user points out a mistake and explains the correct approach, the user shows frustration or repeatedly emphasizes something, you discover an effective method after trying multiple approaches, the user explicitly says 'from now on do/don't do this', or you hit a pitfall during patrol or autonomous work. Each entry should be concise and direct, one sentence.",
+    description: "Propose a work lesson for the current workspace. Give the concrete task result that triggered it and a way to verify it. This only creates a candidate: a user must verify and activate it before recall can use it. Do not record role personality or expression preferences here.",
     sessionPermission: {
-      resolveInvocation: (params: any = {}) => {
-        if (typeof params.category !== "string" || typeof params.content !== "string") return null;
+      resolveInvocation: (params: Record<string, unknown> = {}) => {
+        if (typeof params.category !== "string" || typeof params.content !== "string"
+          || typeof params.sourceReference !== "string" || typeof params.verificationMethod !== "string"
+          || typeof params.sourceResult !== "string"
+          || !["success", "failure", "partial", "unknown"].includes(params.sourceResult)
+          || (params.replacesId !== undefined && typeof params.replacesId !== "string")) return null;
         const category = params.category.replace(/^#+\s*/, "").trim();
-        if (!category || !params.content.trim()) return null;
+        if (!category || !params.content.trim() || !params.sourceReference.trim() || !params.verificationMethod.trim()) return null;
         try {
           const normalized = normalizeExperienceCategory(category);
           return {
@@ -266,9 +321,15 @@ export function createExperienceTools(agentDir, opts: { isEnabled?: () => boolea
       content: Type.String({
         description: "The specific experience content, concise and direct, one sentence",
       }),
+      sourceReference: Type.String({ description: "A concrete task, artifact, or result identifier that motivated this proposal" }),
+      sourceResult: Type.Union([Type.Literal("success"), Type.Literal("failure"), Type.Literal("partial"), Type.Literal("unknown")]),
+      verificationMethod: Type.String({ description: "A check a user can perform before activating this lesson" }),
+      replacesId: Type.Optional(Type.String({ description: "ID of an active version in this workspace to replace" })),
     }),
-    execute: async (_toolCallId, params) => {
+    execute: async (_toolCallId, params, signalOrRuntimeCtx?: unknown, _onUpdate?: unknown, piCtx?: unknown) => {
       if (!isExperienceEnabled(isEnabled)) return pausedResult();
+
+      const { ctx } = normalizeToolRuntimeContext(signalOrRuntimeCtx, piCtx);
 
       const category = params.category.replace(/^#+\s*/, "").trim();
       const content = params.content.trim();
@@ -282,9 +343,14 @@ export function createExperienceTools(agentDir, opts: { isEnabled?: () => boolea
 
       let result;
       try {
-        result = recordEntry(experienceDir, indexPath, category, content);
+        const workspacePath = workspaceForInvocation(ctx);
+        result = proposeExperienceVersion(agentDir, {
+          category, content, workspacePath: workspacePath || "",
+          sourceReference: params.sourceReference, sourceResult: params.sourceResult,
+          verificationMethod: params.verificationMethod, replacesId: params.replacesId,
+        });
       } catch (err) {
-        if (err.message === "invalid experience category") {
+        if (/invalid experience category|is required|invalid sourceResult|replacement/.test(err.message)) {
           return {
             content: [{ type: "text", text: err.message }],
             details: {},
@@ -293,18 +359,11 @@ export function createExperienceTools(agentDir, opts: { isEnabled?: () => boolea
         throw err;
       }
 
-      if (!result.added) {
-        return {
-          content: [{ type: "text", text: t("error.expDuplicate") }],
-          details: {},
-        };
-      }
-
       return {
         content: [
-          { type: "text", text: t("error.expRecorded", { category, content }) },
+          { type: "text", text: t('error.expProposed', { id: result.id, category }) },
         ],
-        details: { category, content },
+        details: { category, content, proposalId: result.id, status: result.status, scope: result.scope },
       };
     },
   };

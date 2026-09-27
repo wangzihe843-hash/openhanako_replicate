@@ -102,7 +102,7 @@ function markdownFenceFor(text) {
  *   设一个不含它的限定白名单——这两种情况下 executeIsolated 构建出来的 session **不带**这个 tool。
  *   工具不可用时不提供草稿引导，避免建议无法执行的操作。
  */
-function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, isZh, patrolLog, activityDir, patrolLogPath, xingyeEventSummary, xingyeEventSources = [], autoDraftStaleness, socialStaleness, proposeDraftAvailable = true, dmAvailable = true }) {
+function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, isZh, patrolLog, activityDir, patrolLogPath, xingyeEventSummary, xingyeEventSources = [], autoDraftStaleness, socialStaleness, topicCandidates = [], proposeDraftAvailable = true, dmAvailable = true }) {
   const now = new Date();
   const timeStr = now.toLocaleString(isZh ? "zh-CN" : "en-US", { hour12: false });
 
@@ -207,6 +207,19 @@ function buildHeartbeatContext({ deskChanged, changedFiles, overwatch, isZh, pat
           ].join("\n"));
       parts.push("");
     }
+  }
+
+  if (topicCandidates.length > 0) {
+    parts.push(isZh ? "## 可选话题候选" : "## Optional topic candidates");
+    parts.push(isZh
+      ? "以下候选只在本轮展示一次。先判断关系、场景和用户状态；可保持沉默。现实来源和虚构世界事件目前仅有题目与来源，正文未读取或验证，不能据题目编造细节；需要详情时使用现有有证据的读取工具。草稿不算已表达；不合适时可调用 xingye_topic_candidate_result 跳过。用户可在设置中核对实际投递后标记已表达。"
+      : "These candidates are offered once. Check the relationship, scene and user state; silence is fine. Real sources and fictional world events currently provide only a title and source; their body has not been read or verified. Do not invent details from the title. Use an existing evidence-backed reader for details. Drafts are not delivery; dismiss an unsuitable candidate. The user can confirm an actual delivery in settings.");
+    for (const candidate of topicCandidates.slice(0, 3)) {
+      parts.push(JSON.stringify({ id: candidate.id, sourceType: candidate.sourceType,
+        title: candidate.title, reason: candidate.reason, expiresAt: candidate.expiresAt,
+        source: candidate.source?.url || candidate.source?.eventId || null }));
+    }
+    parts.push("");
   }
 
   // Turn counters describe elapsed interaction; they never require an expression.
@@ -642,6 +655,34 @@ function createPatrolLogTool({ patrolLogPath, isZh }) {
   };
 }
 
+function createTopicCandidateResultTool(candidates, onTopicDecision, isZh) {
+  const offeredIds = new Set(candidates.map((candidate) => candidate.id));
+  return {
+    name: "xingye_topic_candidate_result",
+    label: isZh ? "记录话题候选结果" : "Record Topic Candidate Result",
+    description: isZh
+      ? "仅将本轮不合适的话题候选标记为 dismissed。已表达状态由用户核对实际投递后确认；草稿不算投递。"
+      : "Dismiss an unsuitable topic offered in this patrol. The user confirms actual delivery; a draft is not delivery.",
+    sessionPermission: {
+      resolveInvocation: (params) => offeredIds.has(params?.id)
+        ? { action: "update", kind: "routine", capability: "xingye_topic_candidate_result.update" }
+        : null,
+    },
+    parameters: Type.Object({
+      id: Type.String({ description: "Candidate ID offered in this patrol" }),
+      status: StringEnum(["dismissed"]),
+    }),
+    execute: async (_toolCallId, params) => {
+      if (!offeredIds.has(params?.id) || params?.status !== "dismissed") {
+        throw new Error("topic candidate was not offered in this patrol");
+      }
+      const row = await onTopicDecision({ id: params.id, status: params.status });
+      return { content: [{ type: "text", text: isZh ? "话题候选状态已记录。" : "Topic candidate status recorded." }],
+        details: { id: row.id, status: row.status, lastUsedAt: row.lastUsedAt } };
+    },
+  };
+}
+
 // ═══════════════════════════════════════
 //  笺目录扫描
 // ═══════════════════════════════════════
@@ -755,7 +796,7 @@ export function createHeartbeat({
   getDeskFiles, getWorkspacePath, getAgentName, registryPath,
   onBeat, onJianBeat, getEventSummary,
   intervalMinutes, emitDevLog,
-  overwatchPath, locale, getProposeDraftAvailable, getDmAvailable, getSkipReason = null, onSkipped = null,
+  overwatchPath, locale, getProposeDraftAvailable, getDmAvailable, onTopicDecision = null, onTopicAbort = null, getSkipReason = null, onSkipped = null,
 }) {
   const isZh = !locale || String(locale).startsWith("zh");
   const devlog = (text, level = "heartbeat") => {
@@ -830,6 +871,9 @@ export function createHeartbeat({
   }
 
   async function _doBeat() {
+    let offeredTopicIds = [];
+    let topicExecutionStarted = false;
+    let beatCompleted = false;
     try {
       const initialSkip = skipReason();
       if (initialSkip) return { ok: true, skipped: initialSkip };
@@ -910,6 +954,8 @@ export function createHeartbeat({
       const socialStaleness = xingyeConsumed?.result?.socialStaleness
         || xingyeConsumed?.socialStaleness
         || null;
+      const topicCandidates = Array.isArray(xingyeConsumed?.topicCandidates) ? xingyeConsumed.topicCandidates : [];
+      offeredTopicIds = topicCandidates.map((candidate) => candidate.id);
 
       /**
        * `xingye_propose_draft` 在本轮 session 里是否可用——每拍现算（配置可能两拍间被改）。
@@ -957,6 +1003,7 @@ export function createHeartbeat({
           xingyeEventSources,
           autoDraftStaleness,
           socialStaleness,
+          topicCandidates,
           proposeDraftAvailable,
           dmAvailable,
         });
@@ -965,6 +1012,7 @@ export function createHeartbeat({
         {
           let timer;
           try {
+            topicExecutionStarted = true;
             beatPayload = await Promise.race([
               // 把 consumer 结果顺给 onBeat，让 scheduler 能把 summaryZh 挂到 activity_update
               // 负载上（仅主巡检；笺子巡检走 onJianBeat，天然拿不到 xingyeConsumed）。
@@ -972,7 +1020,10 @@ export function createHeartbeat({
               onBeat(prompt, {
                 xingyeConsumed,
                 signal: _beatAbort.signal,
-                customTools: patrolLogTool ? [patrolLogTool] : [],
+                customTools: [
+                  ...(patrolLogTool ? [patrolLogTool] : []),
+                  ...(topicCandidates.length && onTopicDecision ? [createTopicCandidateResultTool(topicCandidates, onTopicDecision, isZh)] : []),
+                ],
               }),
               new Promise((_, reject) => { timer = setTimeout(() => {
                 const error = new Error(isZh ? "心跳执行超时 (5min)" : "Heartbeat timed out (5min)");
@@ -1011,6 +1062,7 @@ export function createHeartbeat({
       const mergedPayload = (xingyeConsumed || beatPayload)
         ? { ...(beatPayload || {}), ...(xingyeConsumed ? { xingyeConsumed } : {}) }
         : null;
+      beatCompleted = true;
       return { ok: true, payload: mergedPayload };
     } catch (err) {
       if (skipReason()) return { ok: true, skipped: skipReason() };
@@ -1026,6 +1078,14 @@ export function createHeartbeat({
         : null;
       return { ok: false, error: err, payload: salvagedPayload };
     } finally {
+      if (!beatCompleted && offeredTopicIds.length && onTopicAbort) {
+        try {
+          await onTopicAbort({ ids: offeredTopicIds,
+            status: topicExecutionStarted ? "indeterminate" : "pending" });
+        } catch (error) {
+          devlog(`话题候选状态收尾失败: ${error?.message || error}`, "error");
+        }
+      }
       _running = false;
     }
   }

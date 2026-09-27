@@ -20,6 +20,7 @@ import {
   isConfirmedJournalExportEntry,
   type XingyeJournalExport,
 } from './xingye-journal-export';
+import { downloadJournalImagePage, renderJournalImagePages } from './xingye-journal-image';
 import { useXingyeRoleProfile } from './xingye-profile-store';
 
 export interface PhoneJournalAppProps {
@@ -117,6 +118,35 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [exportPreview, setExportPreview] = useState<XingyeJournalExport | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [imagePages, setImagePages] = useState<{ entryId: string; blobs: Blob[]; urls: string[] } | null>(null);
+  const [imageBusy, setImageBusy] = useState(false);
+  const imageRenderSeqRef = useRef(0);
+  const imageOwnerRef = useRef(ownerAgentId);
+  const ownerEpochRef = useRef(0);
+  if (imageOwnerRef.current !== ownerAgentId) {
+    imageOwnerRef.current = ownerAgentId;
+    ownerEpochRef.current += 1;
+  }
+  const ownerEpoch = ownerEpochRef.current;
+  const mountedRef = useRef(true);
+  const ownerCurrent = useCallback(() => mountedRef.current
+    && imageOwnerRef.current === ownerAgentId && ownerEpochRef.current === ownerEpoch,
+  [ownerAgentId, ownerEpoch]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      imageRenderSeqRef.current += 1;
+    };
+  }, []);
+  useEffect(() => () => {
+    imagePages?.urls.forEach(url => URL.revokeObjectURL(url));
+  }, [imagePages]);
+  useEffect(() => {
+    imageRenderSeqRef.current += 1;
+    setImagePages(null);
+    setImageBusy(false);
+  }, [ownerAgentId]);
   const [composeOpen, setComposeOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState('');
   const [draftBody, setDraftBody] = useState('');
@@ -124,6 +154,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [draftAiBusy, setDraftAiBusy] = useState(false);
   const [draftAiError, setDraftAiError] = useState<string | null>(null);
   /**
@@ -173,15 +204,15 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
         listJournalEntries(ownerAgentId),
         listJournalDrafts(ownerAgentId),
       ]);
-      if (seq !== reloadSeqRef.current) return; // 被更晚一轮 reload 取代，丢弃本次结果
+      if (seq !== reloadSeqRef.current || !mountedRef.current || imageOwnerRef.current !== ownerAgentId) return; // 被换角色或更晚一轮 reload 取代
       setEntries(rows);
       setPendingDrafts(drafts);
       setLoadedOwnerAgentId(ownerAgentId);
     } catch (e) {
-      if (seq !== reloadSeqRef.current) return;
+      if (seq !== reloadSeqRef.current || !mountedRef.current || imageOwnerRef.current !== ownerAgentId) return;
       setListError(e instanceof Error ? e.message : String(e));
     } finally {
-      if (seq === reloadSeqRef.current) setListLoading(false);
+      if (seq === reloadSeqRef.current && mountedRef.current && imageOwnerRef.current === ownerAgentId) setListLoading(false);
     }
   }, [ownerAgentId]);
 
@@ -194,6 +225,14 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     setListError(null);
     setDraftError(null);
     setDraftEdits({});
+    setDraftBusyId(null);
+    setDraftAiBusy(false);
+    setDraftAiError(null);
+    setSaveBusy(false);
+    setDeleteBusy(false);
+    setDeleteError(null);
+    setInitBusy(false);
+    setSharedToChatId(null);
     initialBootstrapTriedRef.current = null;
     setInitError(null);
     setInitNotice(null);
@@ -246,14 +285,16 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
       await saveHistoryState(ownerAgentId, 'journal', {
         initializedAt: new Date().toISOString(),
       });
-      setInitNotice(`已为 TA 整理出 ${drafts.length} 篇过去的日记`);
-      await reloadEntries();
+      if (ownerCurrent()) {
+        setInitNotice(`已为 TA 整理出 ${drafts.length} 篇过去的日记`);
+        await reloadEntries();
+      }
     } catch (e) {
-      setInitError(e instanceof Error ? e.message : String(e));
+      if (ownerCurrent()) setInitError(e instanceof Error ? e.message : String(e));
     } finally {
-      setInitBusy(false);
+      if (ownerCurrent()) setInitBusy(false);
     }
-  }, [ownerAgent, ownerAgentId, ownerProfile, reloadEntries]);
+  }, [ownerAgent, ownerAgentId, ownerProfile, ownerCurrent, reloadEntries]);
 
   useEffect(() => {
     if (!ownerAgent || !ownerAgentId) return;
@@ -285,7 +326,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
           });
           return;
         }
-        await runInitialBootstrap();
+        if (ownerCurrent()) await runInitialBootstrap();
       } catch (err) {
         console.warn('[PhoneJournalApp] init bootstrap failed:', err);
       }
@@ -298,6 +339,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     entries.length,
     pendingDrafts.length,
     ownerDataCurrent,
+    ownerCurrent,
     runInitialBootstrap,
   ]);
 
@@ -336,6 +378,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
         dayKey: draft.dayKey,
         mood: moodTrim ? moodTrim : null,
       });
+      if (!ownerCurrent()) return;
       setEntries((prev) => {
         const next = [entry, ...prev.filter((p) => p.id !== entry.id)];
         next.sort((a, b) => {
@@ -353,9 +396,9 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
         return rest;
       });
     } catch (e) {
-      setDraftError(e instanceof Error ? e.message : String(e));
+      if (ownerCurrent()) setDraftError(e instanceof Error ? e.message : String(e));
     } finally {
-      setDraftBusyId(null);
+      if (ownerCurrent()) setDraftBusyId(null);
     }
   };
 
@@ -368,6 +411,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     setDraftError(null);
     try {
       const ok = await discardJournalDraft(ownerAgentId, draft.id);
+      if (!ownerCurrent()) return;
       if (ok) {
         setPendingDrafts((prev) => prev.filter((d) => d.id !== draft.id));
         setDraftEdits((prev) => {
@@ -379,9 +423,9 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
         await reloadEntries();
       }
     } catch (e) {
-      setDraftError(e instanceof Error ? e.message : String(e));
+      if (ownerCurrent()) setDraftError(e instanceof Error ? e.message : String(e));
     } finally {
-      setDraftBusyId(null);
+      if (ownerCurrent()) setDraftBusyId(null);
     }
   };
 
@@ -408,6 +452,9 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
 
   const openExportPreview = (entry: XingyeJournalEntry) => {
     if (!ownerDataCurrent || !entries.some((row) => row.id === entry.id)) return;
+    imageRenderSeqRef.current += 1;
+    setImagePages(null);
+    setImageBusy(false);
     setExportError(null);
     try {
       // Snapshot the confirmed entry once. Preview and both downloads use these same bytes.
@@ -422,6 +469,46 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     setExportError(null);
     try {
       downloadJournalExport(activeExportPreview, format);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const closeExportPreview = () => {
+    imageRenderSeqRef.current += 1;
+    setImagePages(null);
+    setImageBusy(false);
+    setExportPreview(null);
+  };
+
+  const previewImages = async () => {
+    if (!activeExportPreview || imageBusy) return;
+    const snapshot = activeExportPreview;
+    const seq = ++imageRenderSeqRef.current;
+    setImageBusy(true);
+    setExportError(null);
+    try {
+      const blobs = await renderJournalImagePages(snapshot);
+      if (imageRenderSeqRef.current !== seq || !ownerCurrent()) return;
+      const urls: string[] = [];
+      try {
+        for (const blob of blobs) urls.push(URL.createObjectURL(blob));
+      } catch (error) {
+        urls.forEach(url => URL.revokeObjectURL(url));
+        throw error;
+      }
+      setImagePages({ entryId: snapshot.entry.id, blobs, urls });
+    } catch (error) {
+      if (imageRenderSeqRef.current === seq && ownerCurrent()) setExportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (imageRenderSeqRef.current === seq && ownerCurrent()) setImageBusy(false);
+    }
+  };
+
+  const saveImagePage = (blob: Blob, snapshot: XingyeJournalExport, index: number, count: number) => {
+    setExportError(null);
+    try {
+      downloadJournalImagePage(blob, snapshot, index, count);
     } catch (error) {
       setExportError(error instanceof Error ? error.message : String(error));
     }
@@ -442,13 +529,14 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     setDraftAiError(null);
     try {
       const r = await generateJournalDraftWithAI({ agent: ownerAgent, ownerProfile });
+      if (!ownerCurrent()) return;
       setDraftTitle(r.title);
       setDraftBody(r.body);
       if (r.mood) setDraftMood(r.mood);
     } catch (e) {
-      setDraftAiError(e instanceof Error ? e.message : String(e));
+      if (ownerCurrent()) setDraftAiError(e instanceof Error ? e.message : String(e));
     } finally {
-      setDraftAiBusy(false);
+      if (ownerCurrent()) setDraftAiBusy(false);
     }
   };
 
@@ -463,6 +551,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     try {
       const mood = draftMood.trim() || undefined;
       const row = await appendJournalEntry(ownerAgentId, { title, body, mood });
+      if (!ownerCurrent()) return;
       setEntries((prev) => {
         const next = [row, ...prev.filter((p) => p.id !== row.id)];
         next.sort((a, b) => {
@@ -476,9 +565,9 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
       setComposeOpen(false);
       setSelectedId(row.id);
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : String(e));
+      if (ownerCurrent()) setSaveError(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaveBusy(false);
+      if (ownerCurrent()) setSaveBusy(false);
     }
   };
 
@@ -514,16 +603,20 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     if (!selected || !ownerAgentId) return;
     if (!window.confirm('确定删除这条日记？此操作不可恢复。')) return;
     setDeleteBusy(true);
+    setDeleteError(null);
     try {
       const ok = await deleteJournalEntry(ownerAgentId, selected.id);
+      if (!ownerCurrent()) return;
       if (ok) {
         setEntries((prev) => prev.filter((e) => e.id !== selected.id));
         setSelectedId(null);
       } else {
         await reloadEntries();
       }
+    } catch (error) {
+      if (ownerCurrent()) setDeleteError(error instanceof Error ? error.message : String(error));
     } finally {
-      setDeleteBusy(false);
+      if (ownerCurrent()) setDeleteBusy(false);
     }
   };
 
@@ -838,6 +931,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
               {exportError && !activeExportPreview ? (
                 <p className={styles.phoneAppHint} role="alert">{exportError}</p>
               ) : null}
+              {deleteError ? <p className={styles.phoneAppHint} role="alert">删除失败：{deleteError}</p> : null}
               {sharedToChatId === selected.id ? (
                 <p
                   className={styles.phoneAppHint}
@@ -921,13 +1015,13 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
           className={styles.phoneModalOverlay}
           role="presentation"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setExportPreview(null);
+            if (event.target === event.currentTarget) closeExportPreview();
           }}
         >
           <div className={styles.phoneModalSheet} role="dialog" aria-modal="true" aria-labelledby="phone-journal-export-title">
             <h3 id="phone-journal-export-title" className={styles.phoneModalTitle}>预览已确认日记</h3>
             <div className={styles.phoneModalBody}>
-              <p className={styles.phoneAppHint}>导出的是你已确认的日记原文。JSON 和 HTML 都只保存在本地。</p>
+              <p className={styles.phoneAppHint}>导出的是你已确认的日记原文。JSON、HTML 和 PNG 都只保存在本地。独立成行的内嵌图片会尝试绘制；远程图片或加载失败时显示来源和占位说明。</p>
               <div
                 style={{ maxHeight: 260, overflowY: 'auto', padding: 16, border: '1px solid #d9c8b7', background: '#fffdf8' }}
                 data-testid="phone-journal-export-preview"
@@ -938,12 +1032,25 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
                 </p>
                 <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{activeExportPreview.entry.body}</p>
               </div>
+              {imagePages?.entryId === activeExportPreview.entry.id ? (
+                <div data-testid="phone-journal-image-preview" style={{ maxHeight: 300, overflowY: 'auto', display: 'grid', gap: 10, marginTop: 12 }}>
+                  {imagePages.urls.map((url, index) => (
+                    <div key={url}>
+                      <img src={url} alt={`日记长图第 ${index + 1} 页，共 ${imagePages.urls.length} 页`} style={{ display: 'block', width: '100%', height: 'auto' }} />
+                      <button type="button" className={styles.phoneModalGhostButton} onClick={() => saveImagePage(imagePages.blobs[index], activeExportPreview, index, imagePages.blobs.length)}>
+                        保存 PNG 第 {index + 1} 页
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               {exportError ? <p className={styles.phoneAppHint} role="alert">{exportError}</p> : null}
             </div>
             <div className={styles.phoneModalActions}>
-              <button type="button" className={styles.phoneModalGhostButton} onClick={() => setExportPreview(null)}>关闭</button>
+              <button type="button" className={styles.phoneModalGhostButton} onClick={closeExportPreview}>关闭</button>
               <button type="button" className={styles.phoneModalGhostButton} onClick={() => saveExport('json')} data-testid="phone-journal-export-json">保存 JSON</button>
               <button type="button" className={styles.phoneJournalPrimaryButton} onClick={() => saveExport('html')} data-testid="phone-journal-export-html">保存 HTML</button>
+              <button type="button" className={styles.phoneModalGhostButton} onClick={() => { void previewImages(); }} disabled={imageBusy} data-testid="phone-journal-export-png-preview">{imageBusy ? '生成长图中…' : '预览 PNG 长图'}</button>
             </div>
           </div>
         </div>

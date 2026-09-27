@@ -36,6 +36,7 @@ import {
 } from "../../lib/channels/channel-store.ts";
 import { extractMentionedAgentIds } from "../../lib/channels/channel-mentions.ts";
 import { buildConversationMarkdownExport } from "../../lib/channels/conversation-export.ts";
+import { EffectLedger, verifyChannelPostReceipt } from "../../lib/task-outcome/effect-ledger.ts";
 import { normalizeAgentPhoneToolMode } from "../../lib/conversations/agent-phone-session.ts";
 import {
   DEFAULT_AGENT_PHONE_SETTINGS,
@@ -559,6 +560,21 @@ export function createChannelsRoute(engine: any, hub: any) {
   });
 
   // ── 获取频道消息 ──
+  route.get("/channels/:name/effects/:effectId/receipt", async (c) => {
+    const disabled = requirePhoneEnabled(c);
+    if (disabled) return disabled;
+    const channelId = c.req.param("name");
+    const effectId = c.req.param("effectId");
+    const filePath = safeChannelPath(channelId);
+    if (!filePath || !/^[a-f0-9]{64}$/.test(effectId)) return c.json({ error: "Invalid receipt reference" }, 400);
+    try {
+      const receipt = verifyChannelPostReceipt(new EffectLedger(engine.channelsDir), filePath, channelId, effectId);
+      return receipt ? c.json({ status: "confirmed", receipt }) : c.json({ status: "unverified" }, 404);
+    } catch {
+      return c.json({ status: "unverified" }, 409);
+    }
+  });
+
   route.get("/channels/:name", async (c) => {
     try {
       const disabled = requirePhoneEnabled(c);

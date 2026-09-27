@@ -27,6 +27,16 @@
       "breakingMigrationRequiresAccessMove": false
     },
     {
+      "id": "agent-experience-versions",
+      "firstPossibleOpenPhase": "engine_construct",
+      "firstPossibleWritePhase": "runtime_ready",
+      "opensBeforeFutureCoordinator": false,
+      "writesBeforeFutureCoordinator": false,
+      "bootstrapSafety": null,
+      "preCoordinatorReadProjection": null,
+      "breakingMigrationRequiresAccessMove": false
+    },
+    {
       "id": "agent-facts-sqlite",
       "firstPossibleOpenPhase": "engine_construct",
       "firstPossibleWritePhase": "runtime_ready",
@@ -60,6 +70,16 @@
       "id": "agent-profile",
       "firstPossibleOpenPhase": "first_run_seed",
       "firstPossibleWritePhase": "first_run_seed",
+      "opensBeforeFutureCoordinator": false,
+      "writesBeforeFutureCoordinator": false,
+      "bootstrapSafety": null,
+      "preCoordinatorReadProjection": null,
+      "breakingMigrationRequiresAccessMove": false
+    },
+    {
+      "id": "channel-post-effects",
+      "firstPossibleOpenPhase": "engine_construct",
+      "firstPossibleWritePhase": "runtime_ready",
       "opensBeforeFutureCoordinator": false,
       "writesBeforeFutureCoordinator": false,
       "bootstrapSafety": null,

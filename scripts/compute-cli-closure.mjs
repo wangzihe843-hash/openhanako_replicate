@@ -95,6 +95,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { build as esbuildBuild } from "esbuild";
@@ -814,7 +815,10 @@ export function normalizeNftTraceFiles({ fileList, scratchRel }) {
   const kept = [...fileList]
     .map(toPosix)
     .filter((relPath) => {
-      if (relPath === scratchRel || relPath === "package.json") return false;
+      // A concurrent trace may encounter another run's temporary bundle.
+      // Neither its random name nor its contents belongs in the census.
+      if (relPath === scratchRel || /^(?:build|\.cache)\/\.cli-closure-nft-scratch-[^/]+\.mjs$/.test(relPath)
+        || relPath === "package.json") return false;
       // Native addon bytes are produced for a specific OS, architecture, and
       // Node ABI. The packaged server installs them with its target runtime;
       // including a locally rebuilt copy here would make this source closure
@@ -857,25 +861,26 @@ export function normalizeNftTraceFiles({ fileList, scratchRel }) {
   return [...new Set(folded)].sort();
 }
 
-export async function traceNftRoot({ rootDir, root }) {
+export async function traceNftRoot({ rootDir, root, deps = {} }) {
   const entryAbs = path.join(rootDir, root.path);
   if (!fs.existsSync(entryAbs)) {
     throw new Error(
       `[compute-cli-closure] nft root "${root.id}" source entry does not exist on disk: ${root.path}.`,
     );
   }
-  const buildDir = path.join(rootDir, "build");
-  fs.mkdirSync(buildDir, { recursive: true });
+  const scratchDir = path.join(rootDir, ".cache");
+  fs.mkdirSync(scratchDir, { recursive: true });
   // The scratch bundle must live inside the repo tree (not os.tmpdir())
   // so Node's ordinary node_modules ancestor-walk resolution finds this
-  // repo's real node_modules -- see the module docstring's nft safety
-  // note for what goes wrong otherwise. Always cleaned up in `finally`,
-  // and proactively removed first in case a previous run crashed before
-  // its own cleanup ran.
-  const scratchPath = path.join(buildDir, `.cli-closure-nft-scratch-${root.id}.mjs`);
-  fs.rmSync(scratchPath, { force: true });
+  // repo's real node_modules. .cache is already excluded from lint and nft's
+  // directory search; the bundle is always cleaned up in `finally`.
+  // Use a unique path for each invocation. A fixed root-id path let one
+  // concurrent census remove the bundle while another was tracing it.
+  // Crashed-run leftovers have the same ignored prefix and cannot affect
+  // the deterministic closure.
+  const scratchPath = path.join(scratchDir, `.cli-closure-nft-scratch-${root.id}-${process.pid}-${randomUUID()}.mjs`);
   try {
-    const built = await esbuildBuild({
+    const built = await (deps.esbuildBuild || esbuildBuild)({
       entryPoints: [entryAbs],
       bundle: true,
       write: true,
@@ -894,7 +899,7 @@ export async function traceNftRoot({ rootDir, root }) {
         + `fail-closed:\n${text}`,
       );
     }
-    const { nodeFileTrace } = await import("@vercel/nft");
+    const nodeFileTrace = deps.nodeFileTrace || (await import("@vercel/nft")).nodeFileTrace;
     const { fileList, warnings } = await nodeFileTrace([scratchPath], {
       base: rootDir,
       conditions: ["node", "import"],

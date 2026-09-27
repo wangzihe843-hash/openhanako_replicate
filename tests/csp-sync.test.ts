@@ -47,8 +47,12 @@ describe('CSP sync', () => {
   const profiles = extractCspProfiles();
   const htmlDir = path.resolve(__dirname, '..', 'desktop', 'src');
 
-  it('should have extracted all 8 profiles', () => {
-    expect(Object.keys(profiles)).toHaveLength(8);
+  it('has exactly the declared window profiles, including the desktop pet', () => {
+    expect(Object.keys(profiles).sort()).toEqual([
+      'index.html', 'settings.html', 'quick-chat.html', 'pet.html',
+      'onboarding.html', 'splash.html', 'browser-viewer.html',
+      'viewer-window.html', 'mobile.html',
+    ].sort());
   });
 
   for (const [filename, profileCsp] of Object.entries(profiles)) {

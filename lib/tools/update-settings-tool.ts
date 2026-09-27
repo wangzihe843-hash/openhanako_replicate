@@ -21,6 +21,7 @@ import {
   createSettingsUpdate,
   formatSettingsValue,
 } from "./settings-update-result.ts";
+import { getToolSessionPath, normalizeToolRuntimeContext } from "./tool-session.ts";
 
 /**
  * i18n key → 本地化标签 批量转换
@@ -200,16 +201,16 @@ const SETTINGS_REGISTRY = {
     options: ["off", "low", "medium", "high", "max"],
     get optionLabels() { return i18nLabels(THINKING_I18N); },
     searchTerms: ["reasoning", "推理", "思考", "推論"],
-    get: (engine, _agent) => {
-      if (engine.currentSessionPath && typeof engine.getSessionThinkingLevel === "function") {
-        const sessionLevel = engine.getSessionThinkingLevel(engine.currentSessionPath);
+    get: (engine, _agent, sessionPath) => {
+      if (sessionPath && typeof engine.getSessionThinkingLevel === "function") {
+        const sessionLevel = engine.getSessionThinkingLevel(sessionPath);
         if (sessionLevel) return sessionLevel;
       }
       return engine.getDefaultThinkingLevel?.() || engine.preferences.getThinkingLevel() || "medium";
     },
-    apply: (engine, _agent, v) => {
-      if (engine.currentSessionPath && typeof engine.setSessionThinkingLevel === "function") {
-        return engine.setSessionThinkingLevel(engine.currentSessionPath, v);
+    apply: (engine, _agent, v, sessionPath) => {
+      if (sessionPath && typeof engine.setSessionThinkingLevel === "function") {
+        return engine.setSessionThinkingLevel(sessionPath, v);
       }
       if (typeof engine.setDefaultThinkingLevel === "function") {
         return engine.setDefaultThinkingLevel(v);
@@ -394,14 +395,14 @@ function formatOptionList(options, labels, maxShow = 12) {
   return parts.join(" / ");
 }
 
-function formatSearchResults(results, engine, agent) {
+function formatSearchResults(results, engine, agent, sessionPath) {
   return results.map((r, i) => {
     const { key, reg, options } = r;
     const ol = resolveOptionLabels(reg, engine);
     const lines = [`[${i + 1}] ${key} — ${reg.label} (${reg.type})`];
 
     if (typeof reg.get === "function") {
-      const cv = reg.get(engine, agent);
+      const cv = reg.get(engine, agent, sessionPath);
       if (cv === null) {
         lines.push(`    → (N/A)`);
       } else {
@@ -546,8 +547,11 @@ export function createUpdateSettingsTool(deps: Record<string, any> = {}) {
       value: Type.Optional(Type.String({ description: "Proposed new value" })),
     }),
     isUserFacing: true,
-    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+    execute: async (_toolCallId, params, signalOrRuntimeCtx, _onUpdate, piCtx) => {
       const engine = getEngine?.();
+      const { ctx, hasExplicitCtx } = normalizeToolRuntimeContext(signalOrRuntimeCtx, piCtx);
+      const invocationSessionPath = getToolSessionPath(ctx) || ctx?.sessionRef?.sessionPath || ctx?.sessionPath || null;
+      const sessionPath = invocationSessionPath || (hasExplicitCtx ? null : engine?.currentSessionPath || null);
       const initialAgent = getAgent?.() || engine?.agent;
       const { agentId: targetAgentId, agent: targetAgent } = resolveTargetAgent(engine, initialAgent);
 
@@ -565,7 +569,7 @@ export function createUpdateSettingsTool(deps: Record<string, any> = {}) {
           if (results.length === 0) {
             return { content: [{ type: "text", text: t("toolDef.updateSettings.searchNoResults", { query }) }] };
           }
-          const body = formatSearchResults(results, engine, targetAgent);
+          const body = formatSearchResults(results, engine, targetAgent, sessionPath);
           return { content: [{ type: "text", text: t("toolDef.updateSettings.searchResult", { count: String(results.length), results: body }) }] };
         }
 
@@ -596,6 +600,13 @@ export function createUpdateSettingsTool(deps: Record<string, any> = {}) {
           if (!reg) {
             return { content: [{ type: "text", text: t("error.settingsUnknownKey", { key }) }] };
           }
+          if (key === "thinking_level" && hasExplicitCtx && !invocationSessionPath) {
+            return {
+              content: [{ type: "text", text: "thinking_level requires the invoking session path" }],
+              details: { error: "session_identity_required" },
+              isError: true,
+            };
+          }
 
           // scope: "agent" 的设置在无 agent 时拒绝操作
           if (reg.scope === "agent" && !targetAgent) {
@@ -603,7 +614,7 @@ export function createUpdateSettingsTool(deps: Record<string, any> = {}) {
           }
 
           // 读取当前值
-          const currentValue = reg.get(engine, targetAgent);
+          const currentValue = reg.get(engine, targetAgent, sessionPath);
 
           // 动态选项
           const options = resolveOptions(reg, engine);
@@ -624,9 +635,9 @@ export function createUpdateSettingsTool(deps: Record<string, any> = {}) {
             if (typeof reg.apply === "function") {
               const parsed = reg.type === "toggle" ? (value === "true") : value;
               const { agent: applyAgent } = resolveTargetAgent(engine, targetAgent);
-              await reg.apply(engine, applyAgent, parsed);
+              await reg.apply(engine, applyAgent, parsed, sessionPath);
             }
-            let afterValue = typeof reg.get === "function" ? reg.get(engine, targetAgent) : value;
+            let afterValue = typeof reg.get === "function" ? reg.get(engine, targetAgent, sessionPath) : value;
             if (String(afterValue ?? "") === String(currentValue ?? "") && String(value) !== String(currentValue ?? "")) {
               afterValue = value;
             }

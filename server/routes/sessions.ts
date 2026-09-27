@@ -90,11 +90,22 @@ import { SessionSearchTokenizerUnavailableError } from "../../lib/search/session
 import { MountAwareFileError, MountAwareFileService } from "../../core/mount-aware-file-service.ts";
 import { isAssistantCommentaryTextBlock } from "../../shared/text-signature.ts";
 import { collectToolOutcomesByCallId } from "../../shared/tool-outcome.ts";
+import { projectRegistryTaskOutcome, type RegistryTaskRecord } from "../../lib/task-outcome/task-outcome.ts";
 
 const log = createModuleLogger("sessions");
 const lifecycleLog = createModuleLogger("sessions/lifecycle");
 const switchLog = createModuleLogger("sessions/switch");
 const SESSION_SEARCH_QUERY_MAX_LENGTH = 512;
+
+function belongsToParentSession(record, sessionPath, sessionId) {
+  if (!record || !sessionPath) return false;
+  const recordId = record.parentSessionId || record.sessionId
+    || record.parentSessionRef?.sessionId || record.sessionRef?.sessionId;
+  if (sessionId && recordId) return recordId === sessionId;
+  const recordPath = record.parentSessionPath || record.sessionPath
+    || record.parentSessionRef?.sessionPath || record.sessionRef?.sessionPath;
+  return recordPath === sessionPath;
+}
 
 function rcPlatformFromSessionKey(sessionKey) {
   const match = /^([a-z]+)_/i.exec(sessionKey || "");
@@ -1616,7 +1627,7 @@ export function createSessionsRoute(engine, hub = null) {
         } else if (m.role === "toolResult") {
           const afterIndex = displayIdx - 1;
           if (afterIndex >= pageBounds.startIdx && afterIndex < pageBounds.endIdx) {
-            const extracted = extractBlocks(m.toolName, m.details, m);
+            const extracted = extractBlocks(m.toolName, m.details, m, m.toolCallId);
             for (const b of extracted) {
               const overlaid = overlaySessionCollabDecision(b, sessionCollabDecisions);
               blocks.push({ ...overlaid, afterIndex, sourceIndex });
@@ -1681,6 +1692,8 @@ export function createSessionsRoute(engine, hub = null) {
           .filter(b => b.afterIndex >= pageBounds.startIdx && b.afterIndex < pageBounds.endIdx)
           .map(b => ({ ...b, afterIndex: b.afterIndex - pageBounds.startIdx }));
       const hasMore = pageBounds.hasMore;
+      const parentSessionId = resolvedSessionPath
+        ? engine.getSessionIdForPath?.(resolvedSessionPath) || null : null;
 
       // 修正 subagent blocks 的状态：优先从 durable run registry 读长期映射，
       // 再用 deferred store 作为实时投递队列。deferred 会清理，不再承担历史事实源。
@@ -1691,8 +1704,10 @@ export function createSessionsRoute(engine, hub = null) {
         const readSessionSummary = createSubagentSummaryCache();
         for (const b of slicedBlocks) {
           if (b.type !== "subagent" || !b.taskId) continue;
-          const task = deferredStore?.query?.(b.taskId) || null;
-          const run = runStore?.query?.(b.taskId) || null;
+          const storedTask = deferredStore?.query?.(b.taskId) || null;
+          const storedRun = runStore?.query?.(b.taskId) || null;
+          const task = belongsToParentSession(storedTask, resolvedSessionPath, parentSessionId) ? storedTask : null;
+          const run = belongsToParentSession(storedRun, resolvedSessionPath, parentSessionId) ? storedRun : null;
           const runTask = taskFromSubagentRun(run);
           const metadataTask = mergeSubagentTaskMetadata(runTask, task);
           const durableSessionId = run?.childSessionId || null;
@@ -1771,8 +1786,10 @@ export function createSessionsRoute(engine, hub = null) {
         for (const b of slicedBlocks) {
           if (b.type !== "workflow" || !b.taskId) continue;
           if (b.streamStatus !== "running") continue;
-          const run = wfRunStore?.query?.(b.taskId) || null;
-          const task = wfDeferredStore?.query?.(b.taskId) || null;
+          const storedRun = wfRunStore?.query?.(b.taskId) || null;
+          const storedTask = wfDeferredStore?.query?.(b.taskId) || null;
+          const run = belongsToParentSession(storedRun, resolvedSessionPath, parentSessionId) ? storedRun : null;
+          const task = belongsToParentSession(storedTask, resolvedSessionPath, parentSessionId) ? storedTask : null;
           const status = run?.status || task?.status || null;
           if (status === "resolved" || status === "done") b.streamStatus = "done";
           else if (status === "failed") b.streamStatus = "failed";
@@ -1784,6 +1801,29 @@ export function createSessionsRoute(engine, hub = null) {
           }
           if (!b.summary && typeof run?.summary === "string") b.summary = run.summary;
         }
+      }
+
+      // TaskRegistry is persisted independently of the transient block_update
+      // stream. Its terminal status proves execution lifecycle, not the goal.
+      // This store is global too; only records owned by this session may
+      // update its historical cards, even when a taskId is reused elsewhere.
+      const registryTasks = resolvedSessionPath
+        ? engine.taskRegistry?.listAll?.({ parentSessionPath: resolvedSessionPath }) || [] : [];
+      const registryTasksById = new Map<string, RegistryTaskRecord>(
+        registryTasks.map((task: RegistryTaskRecord): [string, RegistryTaskRecord] => [task.taskId, task]),
+      );
+      for (const b of slicedBlocks) {
+        if (b.type !== "workflow" || !b.taskId) continue;
+        const task = registryTasksById.get(b.taskId) || null;
+        if (task?.status === "completed") b.streamStatus = "done";
+        else if (task?.status === "failed") b.streamStatus = "failed";
+        else if (task?.status === "aborted" || task?.status === "canceled") b.streamStatus = "aborted";
+        const fallbackStatus = b.streamStatus === "done" ? "completed"
+          : b.streamStatus === "failed" ? "failed"
+          : b.streamStatus === "aborted" ? "aborted" : "running";
+        b.taskOutcome = projectRegistryTaskOutcome(task || {
+          taskId: b.taskId, type: "workflow", status: fallbackStatus,
+        });
       }
 
       patchSessionFileLifecycleBlocks(slicedBlocks, engine, resolvedSessionPath);

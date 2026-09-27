@@ -422,7 +422,8 @@ describe("action-level tool descriptors", () => {
       capability: "unpin_memory.unpin",
       target: { type: "pinned_memory_query" },
     });
-    expect(resolveDescriptor(record, { category: "Tool usage", content: "Use exact ids" }).descriptor).toMatchObject({
+    expect(resolveDescriptor(record, { category: "Tool usage", content: "Use exact ids",
+      sourceReference: "task-1", sourceResult: "success", verificationMethod: "Compare result IDs" }).descriptor).toMatchObject({
       action: "record",
       capability: "record_experience.record",
       target: { type: "experience_category", label: "Tool usage" },

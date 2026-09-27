@@ -8,7 +8,7 @@
  * 4. 关闭 splash，显示主窗口
  * 5. 优雅关闭
  */
-const { app, BrowserWindow, WebContentsView, globalShortcut, ipcMain, dialog, session, shell, nativeTheme, Tray, Menu, nativeImage, systemPreferences, Notification, webContents, screen, powerSaveBlocker } = require("electron");
+const { app, BrowserWindow, WebContentsView, globalShortcut, ipcMain, dialog, session, shell, nativeTheme, Tray, Menu, nativeImage, systemPreferences, Notification, webContents, screen, powerMonitor, powerSaveBlocker } = require("electron");
 const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
@@ -36,6 +36,7 @@ const {
 } = require("./src/shared/onboarding-completion.cjs");
 const { resolveTrashItemPath } = require("./src/shared/trash-item-path.cjs");
 const { resolveAgentAvatarPath } = require("./src/shared/agent-avatar-path.cjs");
+const { clampPetBounds, normalizePetOptions } = require("./src/shared/pet-window-state.cjs");
 const {
   normalizeDesktopNotificationOptions,
   shouldSuppressDesktopNotification,
@@ -408,6 +409,7 @@ let splashWindow = null;
 let mainWindow = null;
 let onboardingWindow = null;
 let quickChatWindow = null;
+let petWindow = null;
 let quickChatMode = "compact";
 let registeredQuickChatShortcut = null;
 
@@ -570,13 +572,13 @@ function attachRendererLaunchDiagnostics(win, label) {
       details,
     });
   });
-  wc.on("console-message", (_event, level, message, line, sourceId) => {
+  wc.on("console-message", (event) => {
     writeDesktopLaunchDiagnostic("console-message", {
       ...windowDetails(),
-      level,
-      message,
-      line,
-      sourceId,
+      level: event.level,
+      message: event.message,
+      line: event.lineNumber,
+      sourceId: event.sourceId,
     });
   });
   win.on("closed", () => {
@@ -2515,6 +2517,216 @@ function toggleQuickChatWindow() {
   showQuickChatWindow();
 }
 
+// ── Windows desktop pet: presentation only; the main renderer owns the active session. ──
+const petWindowStatePath = path.join(hanakoHome, "user", "pet-window-state.json");
+function readPetWindowState() {
+  try { return JSON.parse(fs.readFileSync(petWindowStatePath, "utf8")); }
+  catch { return {}; }
+}
+const savedPetWindowState = readPetWindowState();
+let petOptions = normalizePetOptions(savedPetWindowState);
+let petSavedBounds = savedPetWindowState.bounds || null;
+let petContext = null;
+let petSaveTimer = null;
+// A tiny local state file is written synchronously so quit cannot race a delayed write.
+
+function flushPetWindowState() {
+  if (process.platform !== "win32") return;
+  if (petSaveTimer) clearTimeout(petSaveTimer);
+  petSaveTimer = null;
+  const tempPath = `${petWindowStatePath}.${process.pid}.tmp`;
+  try {
+    const snapshot = { version: 1, bounds: petSavedBounds, ...petOptions };
+    fs.mkdirSync(path.dirname(petWindowStatePath), { recursive: true });
+    fs.writeFileSync(tempPath, JSON.stringify(snapshot, null, 2) + "\n");
+    fs.renameSync(tempPath, petWindowStatePath);
+  } catch (error) {
+    try { fs.unlinkSync(tempPath); } catch {}
+    console.warn("[desktop] pet window state save failed:", redactMainLogText(error.message));
+  }
+}
+
+function savePetWindowState() {
+  if (process.platform !== "win32") return;
+  if (petSaveTimer) clearTimeout(petSaveTimer);
+  petSaveTimer = setTimeout(flushPetWindowState, 250);
+}
+
+function getPetWindowState() {
+  return {
+    supported: process.platform === "win32",
+    visible: !!petWindow && !petWindow.isDestroyed() && petWindow.isVisible(),
+    paused: petOptions.paused,
+    clickThrough: petOptions.clickThrough,
+    alwaysOnTop: petOptions.alwaysOnTop,
+    context: petContext,
+  };
+}
+
+function sendPetState() {
+  const state = getPetWindowState();
+  for (const win of [mainWindow, petWindow]) {
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send("pet-state-changed", state);
+    }
+  }
+}
+
+function clampVisiblePetWindow() {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const bounds = clampPetBounds(
+    petWindow.getBounds(),
+    screen.getAllDisplays(),
+    screen.getDisplayNearestPoint(screen.getCursorScreenPoint())?.id,
+  );
+  petSavedBounds = bounds;
+  const current = petWindow.getBounds();
+  if (current.x !== bounds.x || current.y !== bounds.y || current.width !== bounds.width || current.height !== bounds.height) {
+    petWindow.setBounds(bounds);
+  }
+  savePetWindowState();
+}
+
+function createPetWindow() {
+  if (process.platform !== "win32") return null;
+  if (petWindow && !petWindow.isDestroyed()) return petWindow;
+  const bounds = clampPetBounds(
+    petSavedBounds,
+    screen.getAllDisplays(),
+    screen.getDisplayNearestPoint(screen.getCursorScreenPoint())?.id,
+  );
+  petSavedBounds = bounds;
+  petWindow = new BrowserWindow({
+    ...bounds,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    hasShadow: false,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: petOptions.alwaysOnTop,
+    title: "Hana Desktop Pet",
+    webPreferences: {
+      preload: path.join(__dirname, "src", "pet-preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  attachRendererLaunchDiagnostics(petWindow, "pet");
+  attachRendererArtifactCrashSentinel(petWindow, "pet");
+  applyTransparentWindowBackground(petWindow);
+  const petContents = petWindow.webContents;
+  petContents.on("will-navigate", (event, deprecatedUrl) => {
+    // loadWindowURL() updates are main-process navigations and do not emit this
+    // event. A renderer redirect must never carry this token-bearing preload to
+    // another page, including a different local file in the renderer bundle.
+    const targetUrl = event.url || deprecatedUrl;
+    if (targetUrl !== petContents.getURL()) event.preventDefault();
+  });
+  petContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  petWindow.setIgnoreMouseEvents(petOptions.clickThrough, { forward: true });
+  loadWindowURL(petWindow, "pet");
+  petWindow.webContents.on("did-finish-load", () => {
+    if (!petWindow || petWindow.isDestroyed()) return;
+    petWindow.webContents.send("pet-context-changed", petContext);
+    sendPetState();
+  });
+  petWindow.on("move", () => {
+    if (!petWindow || petWindow.isDestroyed()) return;
+    petSavedBounds = petWindow.getBounds();
+    savePetWindowState();
+  });
+  petWindow.on("moved", clampVisiblePetWindow);
+  petWindow.on("close", (event) => {
+    if (!isQuitting && !_isUpdating && !forceQuitApp) {
+      event.preventDefault();
+      hidePetWindow();
+    }
+  });
+  petWindow.on("closed", () => { petWindow = null; sendPetState(); });
+  return petWindow;
+}
+
+function showPetWindow() {
+  const win = createPetWindow();
+  if (!win) return getPetWindowState();
+  petOptions.visible = true;
+  win.setAlwaysOnTop(petOptions.alwaysOnTop, "floating");
+  win.showInactive();
+  savePetWindowState();
+  sendPetState();
+  return getPetWindowState();
+}
+
+function hidePetWindow() {
+  petOptions.visible = false;
+  if (petWindow && !petWindow.isDestroyed()) petWindow.hide();
+  savePetWindowState();
+  sendPetState();
+  return getPetWindowState();
+}
+
+function setPetOptions(update) {
+  if (!update || typeof update !== "object" || Array.isArray(update)) return getPetWindowState();
+  for (const key of ["paused", "clickThrough", "alwaysOnTop"]) {
+    if (typeof update[key] === "boolean") petOptions[key] = update[key];
+  }
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.setAlwaysOnTop(petOptions.alwaysOnTop, "floating");
+    petWindow.setIgnoreMouseEvents(petOptions.clickThrough, { forward: true });
+  }
+  savePetWindowState();
+  sendPetState();
+  return getPetWindowState();
+}
+
+function normalizePetContext(value) {
+  if (!value || typeof value !== "object") return null;
+  const string = (candidate, max) => typeof candidate === "string" ? candidate.slice(0, max) : null;
+  const agentId = string(value.agentId, 128);
+  const sessionPath = string(value.sessionPath, 4096);
+  if (!agentId || !sessionPath) return null;
+  return {
+    agentId,
+    agentName: string(value.agentName, 200) || "伙伴",
+    sessionPath,
+    sessionId: string(value.sessionId, 128),
+    connected: value.connected === true,
+    streaming: value.streaming === true,
+    awaitingApproval: value.awaitingApproval === true,
+    inlineError: value.inlineError === true,
+  };
+}
+
+function syncPetContext(value) {
+  petContext = normalizePetContext(value);
+  if (petWindow && !petWindow.isDestroyed()) petWindow.webContents.send("pet-context-changed", petContext);
+  return true;
+}
+
+function openPetSessionInMain() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  if (petContext?.sessionPath) mainWindow.webContents.send("quick-chat-open-session", { sessionPath: petContext.sessionPath });
+}
+
+function registerPetDisplayObservers() {
+  if (process.platform !== "win32") return;
+  for (const event of ["display-added", "display-removed", "display-metrics-changed"]) {
+    screen.on(event, clampVisiblePetWindow);
+  }
+  powerMonitor.on("resume", () => {
+    clampVisiblePetWindow();
+    if (petWindow && !petWindow.isDestroyed()) petWindow.webContents.send("pet-resumed");
+  });
+}
+
 function registerQuickChatShortcut(shortcut = readQuickChatPreferences().shortcut) {
   if (registeredQuickChatShortcut && registeredQuickChatShortcut !== shortcut) {
     globalShortcut.unregister(registeredQuickChatShortcut);
@@ -2772,6 +2984,10 @@ function createMainWindow() {
       quickChatWindow.destroy();
       quickChatWindow = null;
     }
+    if (petWindow && !petWindow.isDestroyed()) {
+      petWindow.destroy();
+      petWindow = null;
+    }
     // 销毁所有派生 viewer
     for (const [, vw] of _viewerWindows) {
       if (vw && !vw.isDestroyed()) vw.destroy();
@@ -2783,6 +2999,9 @@ function createMainWindow() {
       _screenshotWin = null;
     }
   });
+  if (process.platform === "win32" && petOptions.visible) {
+    setTimeout(() => { if (mainWindow && !mainWindow.isDestroyed()) showPetWindow(); }, 0);
+  }
 }
 
 
@@ -4828,6 +5047,7 @@ function reloadAllWindowsForTrainUpdate() {
   if (mainWindow && !mainWindow.isDestroyed()) loadWindowURL(mainWindow, "index");
   if (settingsWindow && !settingsWindow.isDestroyed()) loadWindowURL(settingsWindow, "settings");
   if (quickChatWindow && !quickChatWindow.isDestroyed()) loadWindowURL(quickChatWindow, "quick-chat");
+  if (petWindow && !petWindow.isDestroyed()) loadWindowURL(petWindow, "pet");
   if (browserViewerWindow && !browserViewerWindow.isDestroyed()) loadWindowURL(browserViewerWindow, "browser-viewer");
   for (const win of _viewerWindows.values()) {
     if (win && !win.isDestroyed()) loadWindowURL(win, "viewer-window");
@@ -5062,6 +5282,24 @@ wrapIpcBestEffortHandler("quick-chat-open-session", (_event, sessionPath) => {
   }
   hideQuickChatWindow();
 });
+
+function isPetMainSender(event) {
+  return !!mainWindow && !mainWindow.isDestroyed()
+    && event.sender === mainWindow.webContents
+    && event.senderFrame === mainWindow.webContents.mainFrame;
+}
+function isPetWindowSender(event) {
+  return !!petWindow && !petWindow.isDestroyed()
+    && event.sender === petWindow.webContents
+    && event.senderFrame === petWindow.webContents.mainFrame;
+}
+wrapIpcHandler("pet-state", (event) => isPetMainSender(event) || isPetWindowSender(event) ? getPetWindowState() : null);
+wrapIpcHandler("pet-connection", (event) => isPetWindowSender(event) ? { port: serverPort, token: serverToken } : null);
+wrapIpcHandler("pet-show", (event) => isPetMainSender(event) ? showPetWindow() : null);
+wrapIpcHandler("pet-hide", (event) => isPetMainSender(event) || isPetWindowSender(event) ? hidePetWindow() : null);
+wrapIpcHandler("pet-set-options", (event, update) => isPetMainSender(event) || isPetWindowSender(event) ? setPetOptions(update) : null);
+wrapIpcHandler("pet-sync-context", (event, value) => isPetMainSender(event) ? syncPetContext(value) : false);
+wrapIpcHandler("pet-open-main", (event) => { if (isPetWindowSender(event)) openPetSessionInMain(); });
 
 wrapIpcBestEffortHandler("open-settings", (_event, tab, theme) => createSettingsWindow(tab, theme));
 
@@ -5882,6 +6120,7 @@ wrapIpcBestEffortHandler("app-ready", (event) => {
 // ── App 生命周期 ──
 app.whenReady().then(async () => {
   try {
+    registerPetDisplayObservers();
     // 0. `--repair-artifacts` 命令行旗标：跟托盘
     // "修复组件…"走同一份清理实现，但不需要确认对话框——能敲这个旗标的人
     // 知道自己在干什么。必须在 startServer()/resolvePackagedArtifactBoot()
@@ -6166,6 +6405,8 @@ async function shutdownServer() {
 
 app.on("before-quit", async (event) => {
   isQuitting = true;
+  if (petWindow && !petWindow.isDestroyed()) petSavedBounds = petWindow.getBounds();
+  flushPetWindowState();
 
   // auto-updater 已完成 server 清理，直接放行
   if (_isUpdating) return;

@@ -86,6 +86,43 @@
       "exemption": null
     },
     {
+      "id": "agent-experience-versions",
+      "ownerModule": "lib/tools/experience-versions.ts",
+      "pathPattern": "agents/{agentId}/experience/versions.json",
+      "pathPatterns": [
+        "agents/{agentId}/experience/versions.json"
+      ],
+      "pathExclusions": [],
+      "pathKind": "file",
+      "format": "json",
+      "schemaSource": {
+        "kind": "directory-contract",
+        "module": "lib/tools/experience-versions.ts",
+        "contract": "agent-scoped, workspace-scoped work lesson proposal and review versions"
+      },
+      "schemaContract": {
+        "kind": "protocol",
+        "source": "lib/tools/experience-versions.ts",
+        "compatibility": "A missing versions.json reads as an empty version-1 ledger. New proposal and review records live beside the existing experience Markdown files; those older files are neither migrated nor rewritten by this store."
+      },
+      "openEntry": [
+        "createExperienceTools",
+        "agents experience-versions routes"
+      ],
+      "migrationEntry": [],
+      "protocolModules": [],
+      "firstPossibleOpenPhase": "engine_construct",
+      "firstPossibleWritePhase": "runtime_ready",
+      "epochPolicy": "epoch-managed",
+      "checkpointPolicy": "Included in a future epoch checkpoint unless the coordinator explicitly classifies it otherwise.",
+      "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
+      "affectedByEpochMigration": true,
+      "bootstrapSafety": null,
+      "preCoordinatorReadProjection": null,
+      "identityContract": "agentId owns each ledger; each immutable version ID belongs to one workspace scope and replacement group.",
+      "exemption": null
+    },
+    {
       "id": "agent-facts-sqlite",
       "ownerModule": "lib/memory/fact-store.ts",
       "pathPattern": "agents/{agentId}/memory/facts.db",
@@ -277,6 +314,46 @@
       "exemption": null
     },
     {
+      "id": "channel-post-effects",
+      "ownerModule": "lib/task-outcome/effect-ledger.ts",
+      "pathPattern": "channels/.effects/channel-post/{effectId}.json",
+      "pathPatterns": [
+        "channels/.effects/channel-post/{effectId}.json"
+      ],
+      "pathExclusions": [],
+      "pathKind": "file",
+      "format": "json",
+      "schemaSource": {
+        "kind": "runtime-contract",
+        "module": "lib/task-outcome/effect-ledger.ts",
+        "contract": "channel.post per-effect JSON record: stable operation identity, prepared/committed/failed/unknown status, attempt, persisted-body digest, and channel receipt"
+      },
+      "schemaContract": {
+        "kind": "runtime-source",
+        "source": "lib/task-outcome/effect-ledger.ts",
+        "compatibility": "The separate effects tree is absent in older homes and leaves existing channel files untouched until a new post. A legacy unscoped key blocks a newly scoped action with the same toolCallId as ambiguous instead of risking a duplicate. Unreadable or inconsistent effect records block replay. A prepared or unknown record without a matching channel receipt is never resent automatically."
+      },
+      "openEntry": [
+        "createChannelTool",
+        "runChannelPostEffect"
+      ],
+      "migrationEntry": [],
+      "protocolModules": [
+        "lib/channels/channel-store.ts",
+        "lib/tools/channel-tool.ts"
+      ],
+      "firstPossibleOpenPhase": "engine_construct",
+      "firstPossibleWritePhase": "runtime_ready",
+      "epochPolicy": "epoch-managed",
+      "checkpointPolicy": "Included in a future epoch checkpoint unless the coordinator explicitly classifies it otherwise.",
+      "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
+      "affectedByEpochMigration": true,
+      "bootstrapSafety": null,
+      "preCoordinatorReadProjection": null,
+      "identityContract": "effectId digests agentId, stable session ID (or session path), and session-local toolCallId; direct callers without context retain the old agentId/toolCallId key. A changed argsDigest under one identity is rejected. The channel Markdown marker is the receipt source.",
+      "exemption": null
+    },
+    {
       "id": "channels",
       "ownerModule": "lib/channels/channel-store.ts",
       "pathPattern": "channels/{channelId}.md",
@@ -292,12 +369,12 @@
       "schemaSource": {
         "kind": "runtime-contract",
         "module": "lib/channels/channel-store.ts",
-        "contract": "channel and mirrored DM Markdown frontmatter/message protocol and channel read bookmarks"
+        "contract": "channel and mirrored DM Markdown frontmatter/message protocol, optional channel.post receipt marker, and channel read bookmarks"
       },
       "schemaContract": {
         "kind": "runtime-source",
         "source": "lib/channels/channel-store.ts",
-        "compatibility": "Existing Markdown and frontmatter readers remain canonical. This corrects the inventory's former YAML path and unifies existing channel, DM, and bookmark ownership without moving or rewriting records."
+        "compatibility": "Existing Markdown and frontmatter readers remain canonical. The optional channel.post receipt marker is written only for new posts and hidden from normal parsed message bodies; older messages and DM records are not rewritten. This corrects the inventory's former YAML path and unifies existing channel, DM, and bookmark ownership without moving records."
       },
       "openEntry": [
         "ChannelManager",
@@ -866,6 +943,7 @@
       "pathPatterns": [
         "user/window-state.json",
         "user/quick-chat-window-state.json",
+        "user/pet-window-state.json",
         "user/last-seen-version.json",
         "last-update-version"
       ],
@@ -875,7 +953,7 @@
       "schemaSource": {
         "kind": "directory-contract",
         "module": "desktop/main.cjs",
-        "contract": "desktop window bounds, release announcement bookmark, and update cache version marker readers"
+        "contract": "desktop window bounds, pet window options, release announcement bookmark, and update cache version marker readers"
       },
       "schemaContract": {
         "kind": "protocol",
@@ -2543,7 +2621,7 @@
       "schemaContract": {
         "kind": "protocol",
         "source": "server/routes/xingye-storage.js",
-        "compatibility": "This is an additive namespace relative to upstream DATA_EPOCH 1. Existing local files keep their layouts and permissive readers: absent optional fields use defaults, authoritative lore entries (including empty/deletion values) supersede legacy mirrors, and missing gift inventory is distinct from read/parse failure. Registration does not migrate or rewrite data."
+        "compatibility": "This is an additive namespace relative to upstream DATA_EPOCH 1. The new heartbeat/topic-candidates.json version-1 file is optional and does not replace the existing heartbeat or event logs. Existing local files keep their layouts and permissive readers: absent optional fields use defaults, authoritative lore entries (including empty/deletion values) supersede legacy mirrors, and missing gift inventory is distinct from read/parse failure. Registration does not migrate or rewrite data."
       },
       "openEntry": [
         "xingye storage route",
@@ -2579,6 +2657,7 @@
         "lib/xingye/events.js",
         "lib/xingye/gift-inventory.ts",
         "lib/xingye/heartbeat-consumer.js",
+        "lib/xingye/topic-candidates.js",
         "shared/xingye-gift-catalog-data.ts",
         "shared/xingye-character-card.ts",
         "lib/character-cards/sillytavern-v2.ts",
@@ -5465,6 +5544,15 @@
     {
       "sourceFile": "desktop/main.cjs",
       "kind": "mkdir",
+      "excerpt": "fs.mkdirSync(path.dirname(petWindowStatePath), { recursive: true })",
+      "reason": "Atomically writes Windows pet window bounds and options, removing a failed temporary file.",
+      "storeId": "desktop-window-version-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "desktop/main.cjs",
+      "kind": "mkdir",
       "excerpt": "fs.mkdirSync(path.dirname(resolved), { recursive: true })",
       "reason": "Writes an absolute path selected by the renderer or a screenshot directory selected by the user; no HANA_HOME store is implied.",
       "storeId": null,
@@ -5528,10 +5616,28 @@
     {
       "sourceFile": "desktop/main.cjs",
       "kind": "remove-path",
+      "excerpt": "fs.unlinkSync(tempPath)",
+      "reason": "Atomically writes Windows pet window bounds and options, removing a failed temporary file.",
+      "storeId": "desktop-window-version-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "desktop/main.cjs",
+      "kind": "remove-path",
       "excerpt": "fs.unlinkSync(tmpHtml)",
       "reason": "Writes and removes one request-scoped screenshot HTML file under the operating-system temporary directory.",
       "storeId": null,
       "exemptionId": "desktop-screenshot-html-temp",
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "desktop/main.cjs",
+      "kind": "rename",
+      "excerpt": "fs.renameSync(tempPath, petWindowStatePath)",
+      "reason": "Atomically writes Windows pet window bounds and options, removing a failed temporary file.",
+      "storeId": "desktop-window-version-state",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -5595,6 +5701,15 @@
       "reason": "Writes an absolute path selected by the renderer or a screenshot directory selected by the user; no HANA_HOME store is implied.",
       "storeId": null,
       "exemptionId": "desktop-caller-selected-output",
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "desktop/main.cjs",
+      "kind": "write-file",
+      "excerpt": "fs.writeFileSync(tempPath, JSON.stringify(snapshot, null, 2) + \"\\n\")",
+      "reason": "Atomically writes Windows pet window bounds and options, removing a failed temporary file.",
+      "storeId": "desktop-window-version-state",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -8253,6 +8368,42 @@
       "ordinal": 0
     },
     {
+      "sourceFile": "lib/task-outcome/effect-ledger.ts",
+      "kind": "mkdir",
+      "excerpt": "fs.mkdirSync(this.directory, { recursive: true })",
+      "reason": "Writes a channel post effect record through a same-directory temporary file and rename.",
+      "storeId": "channel-post-effects",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/task-outcome/effect-ledger.ts",
+      "kind": "remove-path",
+      "excerpt": "fs.unlinkSync(temporary)",
+      "reason": "Writes a channel post effect record through a same-directory temporary file and rename.",
+      "storeId": "channel-post-effects",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/task-outcome/effect-ledger.ts",
+      "kind": "rename",
+      "excerpt": "fs.renameSync(temporary, filePath)",
+      "reason": "Writes a channel post effect record through a same-directory temporary file and rename.",
+      "storeId": "channel-post-effects",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/task-outcome/effect-ledger.ts",
+      "kind": "write-file",
+      "excerpt": "fs.writeFileSync(temporary, JSON.stringify(record, null, 2) + \"\\n\", { encoding: \"utf8\", mode: 0o600 })",
+      "reason": "Writes a channel post effect record through a same-directory temporary file and rename.",
+      "storeId": "channel-post-effects",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
       "sourceFile": "lib/task-registry.ts",
       "kind": "atomic-write",
       "excerpt": "atomicWriteSync(this._persistencePath, JSON.stringify({ tasks, schedules }, null, 2))",
@@ -8314,6 +8465,42 @@
       "storeId": "terminal-session-state",
       "exemptionId": null,
       "ordinal": 1
+    },
+    {
+      "sourceFile": "lib/tools/experience-versions.ts",
+      "kind": "mkdir",
+      "excerpt": "fs.mkdirSync(path.dirname(file), { recursive: true })",
+      "reason": "Atomically writes experience proposals, verification, activation, and revocation.",
+      "storeId": "agent-experience-versions",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/tools/experience-versions.ts",
+      "kind": "remove-path",
+      "excerpt": "fs.rmSync(temporary, { force: true })",
+      "reason": "Atomically writes experience proposals, verification, activation, and revocation.",
+      "storeId": "agent-experience-versions",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/tools/experience-versions.ts",
+      "kind": "rename",
+      "excerpt": "fs.renameSync(temporary, file)",
+      "reason": "Atomically writes experience proposals, verification, activation, and revocation.",
+      "storeId": "agent-experience-versions",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/tools/experience-versions.ts",
+      "kind": "write-file",
+      "excerpt": "fs.writeFileSync(temporary, `${JSON.stringify({ version: 1, versions }, null, 2)}\\n`, 'utf8')",
+      "reason": "Atomically writes experience proposals, verification, activation, and revocation.",
+      "storeId": "agent-experience-versions",
+      "exemptionId": null,
+      "ordinal": 0
     },
     {
       "sourceFile": "lib/tools/experience.ts",
@@ -8914,6 +9101,42 @@
       "kind": "mkdir",
       "excerpt": "fs.promises.mkdir(path.dirname(file), { recursive: true })",
       "reason": "Appends a domain draft JSONL record beneath the owning agent's Xingye tree.",
+      "storeId": "xingye-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/xingye/topic-candidates.js",
+      "kind": "mkdir",
+      "excerpt": "fs.promises.mkdir(path.dirname(file), { recursive: true })",
+      "reason": "Atomically writes agent-scoped proactive topic candidates and their offer status.",
+      "storeId": "xingye-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/xingye/topic-candidates.js",
+      "kind": "remove-path",
+      "excerpt": "fs.promises.rm(tmp, { force: true })",
+      "reason": "Atomically writes agent-scoped proactive topic candidates and their offer status.",
+      "storeId": "xingye-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/xingye/topic-candidates.js",
+      "kind": "rename",
+      "excerpt": "fs.promises.rename(tmp, file)",
+      "reason": "Atomically writes agent-scoped proactive topic candidates and their offer status.",
+      "storeId": "xingye-state",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/xingye/topic-candidates.js",
+      "kind": "write-file",
+      "excerpt": "fs.promises.writeFile(tmp, `${JSON.stringify({ version: 1, agentId, candidates: rows }, null, 2)}\\n`, \"utf8\")",
+      "reason": "Atomically writes agent-scoped proactive topic candidates and their offer status.",
       "storeId": "xingye-state",
       "exemptionId": null,
       "ordinal": 0

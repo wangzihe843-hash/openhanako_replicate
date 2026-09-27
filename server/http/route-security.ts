@@ -382,7 +382,7 @@ function isSettingsReadRoute(verb, routePath) {
     || routePath === "/api/memories/export"
     || routePath === "/api/preferences/notifications"
     || routePath === "/api/preferences/computer-use"
-    || /^\/api\/agents\/[^/]+\/(?:identity|agents-md|public-agents-md|ishiki|public-ishiki|pinned|experience)$/.test(routePath)
+    || /^\/api\/agents\/[^/]+\/(?:identity|agents-md|public-agents-md|ishiki|public-ishiki|pinned|experience|topic-candidates|experience-versions)$/.test(routePath)
     || /^\/api\/agents\/[^/]+\/config$/.test(routePath);
 }
 
@@ -436,6 +436,8 @@ function isDeskFileWriteRoute(verb, routePath) {
 }
 
 function isSettingsWriteRoute(verb, routePath) {
+  if (verb === "POST" && /^\/api\/agents\/[^/]+\/topic-candidates$/.test(routePath)) return true;
+  if (verb === "PATCH" && /^\/api\/agents\/[^/]+\/(?:topic-candidates|experience-versions)\/[^/]+$/.test(routePath)) return true;
   if (verb === "POST" && routePath === "/api/preferences/setup-complete") return true;
   if (verb === "PATCH" && /^\/api\/experiments\/[^/]+$/.test(routePath)) return true;
   if (verb === "DELETE" && routePath === "/api/experiments/memory/cache-snapshot-reflection/observation") return true;

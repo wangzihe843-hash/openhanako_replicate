@@ -1308,7 +1308,7 @@ export function createChatRoute(engine: any, hub: any, {
       const blocks = normalizePluginChatSurfaceBlocks(
         dropUninstalledPluginCards(
           enrichSessionFileBlocks(
-            extractBlocks(event.toolName, event.result?.details, event.result),
+            extractBlocks(event.toolName, event.result?.details, event.result, event.toolCallId),
             engine,
             sessionPath,
           ),

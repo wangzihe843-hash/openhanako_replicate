@@ -6,6 +6,8 @@ import path from "path";
 import { createChannelsRoute } from "../server/routes/channels.ts";
 import { ChannelManager } from "../core/channel-manager.ts";
 import { appendDmMessage, appendMessage, createChannel, getChannelMeta, readBookmarks } from "../lib/channels/channel-store.ts";
+import { createChannelTool } from "../lib/tools/channel-tool.ts";
+import { channelPostOperationKey } from "../lib/task-outcome/effect-ledger.ts";
 import {
   getAgentPhoneProjectionPath,
   readAgentPhoneProjection,
@@ -101,6 +103,37 @@ describe("channels route membership contract", () => {
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toMatch(/at least 2/i);
+  });
+
+  it("verifies a posted receipt through the existing channel API without exposing its token", async () => {
+    const channel = await createChannel(engine.channelsDir, { id: "receipt", members: ["alice", "bob"] });
+    const tool = createChannelTool({
+      channelsDir: engine.channelsDir, agentsDir: engine.agentsDir, agentId: "alice", isEnabled: () => true,
+    } as Parameters<typeof createChannelTool>[0]);
+    const result = await tool.execute("route-receipt", { action: "post", channel: channel.id, content: "message with receipt" });
+    expect(result).toHaveProperty("details.effect");
+    expect(result).not.toHaveProperty("details.effect.receiptToken");
+    const effectId = channelPostOperationKey("alice", "route-receipt");
+    const receiptResponse = await app.request(`/api/channels/${channel.id}/effects/${effectId}/receipt`);
+    expect(receiptResponse.status).toBe(200);
+    expect(await receiptResponse.json()).toMatchObject({ status: "confirmed", receipt: { channel: channel.id, sender: "alice" } });
+    const channelResponse = await app.request(`/api/channels/${channel.id}`);
+    const publicChannel = await channelResponse.json();
+    expect(publicChannel.messages[0]).not.toHaveProperty("receiptToken");
+    expect(publicChannel.messages[0]).not.toHaveProperty("effectId");
+
+    const original = fs.readFileSync(channel.filePath, "utf8");
+    const forgedMarker = original.replace(/(hana-effect:[a-f0-9]{64}:)[a-f0-9]{32}/, (_match, prefix) => `${prefix}${"0".repeat(32)}`);
+    fs.writeFileSync(channel.filePath, forgedMarker);
+    const forged = await app.request(`/api/channels/${channel.id}/effects/${effectId}/receipt`);
+    expect(forged.status).toBe(404);
+
+    fs.writeFileSync(channel.filePath, original.replace("message with receipt", "tampered message"));
+    const tampered = await app.request(`/api/channels/${channel.id}/effects/${effectId}/receipt`);
+    expect(tampered.status).toBe(404);
+    fs.unlinkSync(channel.filePath);
+    const deleted = await app.request(`/api/channels/${channel.id}/effects/${effectId}/receipt`);
+    expect(deleted.status).toBe(404);
   });
 
   it("downloads only the selected group conversation", async () => {

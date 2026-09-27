@@ -336,6 +336,7 @@ export default defineConfig({
         mobile: path.resolve(__dirname, 'desktop/src/mobile.html'),
         settings: path.resolve(__dirname, 'desktop/src/settings.html'),
         'quick-chat': path.resolve(__dirname, 'desktop/src/quick-chat.html'),
+        pet: path.resolve(__dirname, 'desktop/src/pet.html'),
         onboarding: path.resolve(__dirname, 'desktop/src/onboarding.html'),
         // splash 不在这里：启用双 artifact 管线后它是壳自持表面，独立构建进
         // desktop/dist-splash/（见 vite.config.splash.ts），不随 dist-renderer

@@ -61,6 +61,8 @@ describe('channel-actions', () => {
     setStateCalls.length = 0;
     mockState.channels = [];
     mockState.currentChannel = null;
+    mockState.currentAgentId = 'agent-a';
+    mockState.currentSessionPath = '/session-a';
     mockState.channelMessages = [];
     mockState.channelMessageCache = {};
     mockState.channelMessageCacheDirty = {};
@@ -116,6 +118,29 @@ describe('channel-actions', () => {
   });
 
   describe('openChannel', () => {
+    it('drops a receipt-card channel response after its source session changes, without marking it read', async () => {
+      vi.stubGlobal('window', { t: (key: string) => key });
+      let finishHistory!: (value: Response) => void;
+      mockFetch.mockImplementation((url) => url === '/api/channels/A'
+        ? new Promise<Response>(resolve => { finishHistory = resolve; })
+        : Promise.resolve({ ok: true, json: async () => ({}) } as Response));
+      const { openChannel } = await import('../../stores/channel-actions');
+      const stillCurrent = () => mockState.currentAgentId === 'agent-a'
+        && mockState.currentSessionPath === '/session-a';
+      const pending = openChannel('A', false, { stillCurrent });
+      mockState.currentSessionPath = '/session-b';
+      finishHistory({
+        ok: true,
+        json: async () => ({ name: 'A', members: [], messages: [
+          { sender: 'agent-a', body: 'old receipt', timestamp: '2026-09-27T12:00:00Z' },
+        ] }),
+      } as Response);
+      expect(await pending).toBe(false);
+      expect(mockState.channelMessages).toEqual([]);
+      expect(mockFetch).not.toHaveBeenCalledWith('/api/channels/A/read', expect.anything());
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
     it('F5 keeps the newest opened channel visible when history arrives out of order', async () => {
       vi.stubGlobal('window', { t: (key: string) => key });
       let resolveA!: (value: Response) => void;

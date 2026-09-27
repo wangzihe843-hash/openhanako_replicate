@@ -906,10 +906,12 @@ describe('workflow', () => {
 
   it('从 details 提取 workflow 概览 block（名/状态/时长，无 streamKey）', () => {
     const result = extractor({ taskId: 'workflow-1', workflow: '三行晨诗', streamStatus: 'running', startedAt: 1000 });
-    expect(result).toEqual([{
+    expect(result).toMatchObject([{
       type: 'workflow', taskId: 'workflow-1', taskTitle: '三行晨诗',
       streamStatus: 'running', summary: null, startedAt: 1000, finishedAt: null,
+      taskOutcome: { taskId: 'workflow-1', lifecycle: 'running', goalResult: 'unverified' },
     }]);
+    expect(result[0]).not.toHaveProperty('streamKey');
   });
 
   it('无 taskId 返回 null', () => {

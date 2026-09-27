@@ -1,15 +1,24 @@
 .card {
-  display: flex;
-  align-items: center;
-  gap: var(--space-12);
+  display: grid;
+  gap: var(--space-8);
   min-height: 92px;
   padding: var(--space-10) var(--space-12);
   overflow: hidden;
   --accent: #8a7566;
+  --companion-space-3: 3px;
+  --companion-space-4: 4px;
+  --companion-space-6: 6px;
+  --companion-error: #ad4f42;
   --companion-idle-duration: 3.5s;
   --companion-working-duration: 1.1s;
   --companion-waiting-duration: 2.2s;
 }
+
+.summary { display: flex; align-items: center; gap: var(--space-12); min-width: 0; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--companion-space-4); }
+.actions button { border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 5px; padding: var(--companion-space-3) var(--companion-space-6); background: transparent; color: var(--accent); cursor: pointer; font-size: 11px; }
+.actions button:hover, .actions button[aria-pressed='true'] { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.petError { color: var(--companion-error); font-size: 11px; }
 
 .card[data-state='busy'] { --accent: #5384a4; }
 .card[data-state='waiting'] { --accent: #a9823b; }

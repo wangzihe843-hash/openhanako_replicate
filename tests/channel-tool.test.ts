@@ -63,14 +63,17 @@ describe("channel tool membership contract", () => {
       // execute reaches append synchronously; the old member list passes its
       // precheck, but the append is queued behind the locked mutation.
       pending = tool.execute("queued-post", { action: "post", channel: id, content: "forbidden late post" }, controller.signal)
-        .then(() => null, (error) => error);
+        .then((result) => result, (error) => error);
       if (scenario === "cancellation") controller.abort();
       if (scenario === "disabled") enabled = false;
       release();
       await mutation;
       expect(await pending).toMatchObject({
-        code: scenario === "deletion" ? "channel_not_found" : scenario === "member-removal" ? "channel_not_member" : "channel_write_cancelled",
-        status: scenario === "deletion" ? 404 : scenario === "member-removal" ? 403 : 409,
+        isError: true,
+        details: { effect: {
+          status: "failed",
+          errorCode: scenario === "deletion" ? "channel_not_found" : scenario === "member-removal" ? "channel_not_member" : "channel_write_cancelled",
+        } },
       });
       expect(onPost).not.toHaveBeenCalled();
       if (scenario === "deletion") expect(fs.existsSync(filePath)).toBe(false);

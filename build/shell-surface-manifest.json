@@ -14,6 +14,18 @@
       "reason": "vite.config.main.js keeps \"ws\" external from main.bundle.cjs (comment: \"CJS native addon (bufferutil/utf-8-validate) breaks when bundled\") — the module is required at runtime from node_modules, not inlined. package.json build.files re-includes \"node_modules/ws/**\" after the blanket \"!**/node_modules/**\" exclusion so it lands in the asar."
     }
   ],
+  "shellBundledDependencies": [
+    {
+      "name": "mammoth",
+      "declaredVersion": "^1.11.0",
+      "reason": "desktop/main.cjs read-docx-html uses mammoth; vite.config.main.js bundles it because the asar excludes node_modules except ws."
+    },
+    {
+      "name": "exceljs",
+      "declaredVersion": "^4.4.0",
+      "reason": "desktop/main.cjs read-xlsx-html uses exceljs; vite.config.main.js bundles it because the asar excludes node_modules except ws."
+    }
+  ],
   "asarFiles": [
     {
       "builderEntry": "desktop/main.bundle.cjs",
@@ -46,6 +58,18 @@
       "kind": "static",
       "producedBy": "static",
       "sourcePaths": ["desktop/src/shared/launch-integrity.cjs"]
+    },
+    {
+      "builderEntry": "desktop/src/pet-preload.cjs",
+      "kind": "static",
+      "producedBy": "static (dedicated Windows pet preload)",
+      "sourcePaths": ["desktop/src/pet-preload.cjs"]
+    },
+    {
+      "builderEntry": "desktop/src/shared/pet-window-state.cjs",
+      "kind": "static",
+      "producedBy": "static (Windows pet work-area and option helpers)",
+      "sourcePaths": ["desktop/src/shared/pet-window-state.cjs"]
     },
     {
       "builderEntry": "desktop/src/shared/windows-system-ca.cjs",
@@ -211,7 +235,7 @@
     "reason": "build:theme's own outDir is literally under dist-renderer/ (desktop/dist-renderer/lib/theme.js). Its only consumers are <script src=\"lib/theme.js\"> tags in index.html, mobile.html, settings.html, quick-chat.html, onboarding.html, and browser-viewer.html — all six are vite.config.ts renderer build inputs (rollupOptions.input), none of which ship in the asar or as extraResources. desktop/src/splash.html — the one shell-owned HTML surface — has its own inline <style> block and does not reference lib/theme.js at all. Conclusion: build:theme's product belongs entirely to the renderer artifact pipeline; build:shell must not run it.",
     "evidence": [
       "grep 'lib/theme.js' desktop/src/*.html -> matches index.html, mobile.html, browser-viewer.html, onboarding.html, settings.html, quick-chat.html; no match in splash.html",
-      "vite.config.ts rollupOptions.input lists exactly those six HTML files as renderer entries"
+      "vite.config.ts rollupOptions.input lists those six theme-consuming HTML files plus the independent pet.html renderer entry"
     ]
   },
   "excludedFromShell": [

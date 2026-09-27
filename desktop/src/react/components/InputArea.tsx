@@ -5,7 +5,7 @@
  * 斜杠命令逻辑在 ./input/slash-commands.ts。
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, type ChangeEvent } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import type { Editor, JSONContent } from '@tiptap/core';
 import { useStore } from '../stores';
@@ -26,6 +26,7 @@ import {
   type SessionRef,
 } from '../stores/session-actions';
 import { getWebSocket } from '../services/websocket';
+import { voiceTurns } from '../services/voice-turn';
 import { collectUiContext } from '../utils/ui-context';
 import { formatQuotedSelectionForPrompt } from '../utils/quoted-selection';
 import { renderMarkdown } from '../utils/markdown';
@@ -436,6 +437,11 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const pendingNewSession = useStore(s => s.pendingNewSession);
   const pendingSessionSwitchPath = useStore(s => s.pendingSessionSwitchPath);
   const currentSessionPath = useStore(s => s.currentSessionPath);
+  const activeVoiceTurn = useSyncExternalStore(voiceTurns.subscribe, voiceTurns.getActive);
+  useEffect(() => {
+    voiceTurns.interruptExceptSession(currentSessionPath);
+    return () => { if (currentSessionPath) voiceTurns.interrupt(currentSessionPath); };
+  }, [currentSessionPath]);
   const currentSessionId = useStore(s => s.currentSessionId);
   const pendingDraftId = useStore(s => s.pendingDraftId);
   const currentAgentId = useStore(s => s.currentAgentId);
@@ -1265,6 +1271,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const startAudioRecording = useCallback(async () => {
     if (inputLocked || modelSelectionRequired || !showAudioInput || !connected || isStreaming || sending || modelSwitching || pendingSessionSwitchPath) return;
     if (audioRecordingState !== 'idle' || audioRecorderRef.current) return;
+    voiceTurns.interrupt();
     const AudioContextCtor = window.AudioContext
       || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!navigator.mediaDevices?.getUserMedia || !AudioContextCtor) {
@@ -1813,6 +1820,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         || isSessionCompacting(guardState, guardPath)
       )) return;
     }
+    voiceTurns.interrupt();
     setSending(true);
 
     try {
@@ -2114,6 +2122,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
 
   // ── Stop ──
   const handleStop = useCallback(() => {
+    voiceTurns.interrupt();
     const ws = getWebSocket();
     if (!isStreaming || !ws) return;
     const state = useStore.getState();
@@ -2344,7 +2353,9 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             showAudioInput={showAudioInput}
             audioRecordingActive={audioRecordingState === 'recording'}
             audioRecordingBusy={audioRecordingState === 'starting' || audioRecordingState === 'stopping'}
+            voicePlaying={activeVoiceTurn?.sessionPath === currentSessionPath && activeVoiceTurn.status === 'speaking'}
             onAudioToggle={handleAudioRecordToggle}
+            onStopVoice={handleStop}
             onSend={handleSend}
             onSteer={handleSteer}
             onStop={handleStop}

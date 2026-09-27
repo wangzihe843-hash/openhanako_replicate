@@ -12,6 +12,7 @@ import { Type, StringEnum } from "../pi-sdk/index.ts";
 import { t } from "../i18n.ts";
 import {
   appendMessage,
+  getChannelMessageReceipt,
   createChannel,
   addBookmarkEntry,
   getRecentMessages,
@@ -20,6 +21,8 @@ import {
   normalizeChannelMembers,
   readBookmarks,
 } from "../channels/channel-store.ts";
+import { EffectLedger, publicEffectRecord, runChannelPostEffect } from "../task-outcome/effect-ledger.ts";
+import { getToolSessionPath, normalizeToolRuntimeContext, resolveToolSessionRef } from "./tool-session.ts";
 import fs from "fs";
 import path from "path";
 
@@ -172,6 +175,16 @@ function stableSort(values: string[]) {
   return [...new Set(values)].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
 }
 
+function channelPostSessionIdentity(signalOrRuntimeCtx: unknown, piCtx: unknown): string | null {
+  const { ctx } = normalizeToolRuntimeContext(signalOrRuntimeCtx, piCtx);
+  const ref = resolveToolSessionRef(ctx);
+  if (ref?.sessionId) return `session-id:${ref.sessionId}`;
+  const locator = ctx?.sessionRef?.sessionPath || ctx?.sessionPath || getToolSessionPath(ctx);
+  if (typeof locator !== "string" || !locator.trim()) return null;
+  const normalized = path.resolve(locator);
+  return `session-path:${process.platform === "win32" ? normalized.toLowerCase() : normalized}`;
+}
+
 /**
  * 创建频道工具
  * @param {object} opts
@@ -189,7 +202,9 @@ export function createChannelTool({
   onPost,
   isEnabled,
   createChannelEntry,
+  postMessage = appendMessage,
 }) {
+  const effectLedger = new EffectLedger(channelsDir);
   function resolveInvocation(params: any = {}) {
     const action = typeof params?.action === "string" ? params.action : "";
     if (action === "list") {
@@ -266,7 +281,7 @@ export function createChannelTool({
       })),
     }),
 
-    execute: async (_toolCallId, params, signal?: AbortSignal) => {
+    execute: async (_toolCallId, params, signal?: AbortSignal, _onUpdate?: unknown, piCtx?: unknown) => {
       if (isEnabled && !isEnabled()) {
         return {
           content: [{ type: "text", text: t("error.channelsDisabled") }],
@@ -319,12 +334,31 @@ export function createChannelTool({
           });
           if (!resolved.ok) return channelResolveErrorResult("post", params.channel, resolved);
 
-          const { timestamp } = await appendMessage(resolved.filePath, agentId, params.content, {
-            memberId: agentId, signal, canWrite: () => !isEnabled || isEnabled(),
+          const { record, sentNow } = await runChannelPostEffect({
+            ledger: effectLedger,
+            agentId,
+            toolCallId: _toolCallId,
+            sessionIdentity: channelPostSessionIdentity(signal, piCtx),
+            channelId: resolved.id,
+            content: params.content,
+            lookupReceipt: (effectId, receiptToken) => getChannelMessageReceipt(resolved.filePath, effectId, receiptToken, agentId, params.content),
+            send: (effectId, receiptToken) => postMessage(resolved.filePath, agentId, params.content, {
+              memberId: agentId, signal, canWrite: () => !isEnabled || isEnabled(), effectId, receiptToken,
+            }),
           });
+          if (record.status !== "committed" || !record.receipt) {
+            return {
+              content: [{ type: "text", text: record.status === "failed"
+                ? "Channel post failed before the message was written. The same logical action may be retried after fixing the cause."
+                : "Channel post outcome is unknown. Inspect the channel receipt before retrying this logical action." }],
+              details: { action: "post", channel: resolved.id, name: resolved.name, effect: publicEffectRecord(record) },
+              isError: true as const,
+            };
+          }
+          const timestamp = record.receipt.timestamp;
 
           // 触发频道手机送达，让其他 agent 看到新消息并自行行动
-          if (onPost) {
+          if (sentNow && onPost) {
             try {
               onPost(resolved.id, agentId, {
                 sender: agentId,
@@ -338,7 +372,7 @@ export function createChannelTool({
 
           return {
             content: [{ type: "text", text: t("error.channelPosted", { channel: resolved.name }) }],
-            details: { action: "post", channel: resolved.id, name: resolved.name, timestamp },
+            details: { action: "post", channel: resolved.id, name: resolved.name, timestamp, effect: publicEffectRecord(record) },
           };
         }
 

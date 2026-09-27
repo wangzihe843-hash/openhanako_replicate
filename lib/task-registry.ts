@@ -20,6 +20,33 @@ const KNOWN_STATUSES = new Set([...ACTIVE_STATUSES, ...FINAL_STATUSES]);
 const MAX_TIMER_DELAY = 2_147_483_647;
 const MAX_PRESENTATION_STATUS_CHANGES = 512;
 
+type TaskSessionRef = {
+  sessionId?: string | null;
+  sessionPath?: string | null;
+  legacySessionPath?: string | null;
+  path?: string | null;
+};
+
+type PresentationSessionSelector = string | {
+  parentSessionId?: string | null;
+  parentSessionPath?: string | null;
+  parentSessionRef?: TaskSessionRef | null;
+  sessionId?: string | null;
+  sessionPath?: string | null;
+  sessionRef?: TaskSessionRef | null;
+  legacySessionPath?: string | null;
+};
+
+type PresentationStatusChange = {
+  sequence: number;
+  taskId: string;
+  status: string;
+  updatedAt: number;
+  parentSessionId: string | null;
+  parentSessionPath: string | null;
+  parentSessionRef: TaskSessionRef | null;
+};
+
 function textOrNull(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -79,7 +106,7 @@ export class TaskRegistry {
   declare _schedules: any;
   declare _tasks: any;
   declare _presentationStatusSequence: number;
-  declare _presentationStatusChanges: any[];
+  declare _presentationStatusChanges: PresentationStatusChange[];
   constructor( options: any = {}) {
     this._persistencePath = typeof options.persistencePath === "string" ? options.persistencePath : null;
     this._getSessionIdForPath = typeof options.getSessionIdForPath === "function" ? options.getSessionIdForPath : () => null;
@@ -337,7 +364,7 @@ export class TaskRegistry {
   }
 
   /** Read-only session projection for small UI status displays. No task metadata or error text crosses this boundary. */
-  presentationStatusForSession(input: any, afterSequence = 0) {
+  presentationStatusForSession(input: PresentationSessionSelector, afterSequence = 0) {
     const scope = normalizeParentSessionRef(input, this._getSessionIdForPath);
     if (!scope.parentSessionId && !scope.parentSessionPath) {
       return { sequence: this._presentationStatusSequence, serverTime: Date.now(), tasks: [], changes: [] };

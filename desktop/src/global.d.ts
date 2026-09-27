@@ -5,6 +5,7 @@
  */
 
 import type { DesktopNotificationOptions, PlatformApi } from './react/types';
+import type { PetBridge } from './react/companion/pet-types';
 
 declare global {
   interface Window {
@@ -14,6 +15,7 @@ declare global {
     // ── Platform bridge（preload 注入） ──
     platform: PlatformApi;
     hana: PlatformApi;
+    hanaPet?: PetBridge;
 
     // ── 日志上报 ──
     __hanaLog: (level: string, module: string, message: string) => void;

@@ -4,7 +4,7 @@
 
 import React from 'react';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../types';
 
@@ -30,14 +30,22 @@ const historyStateMock = vi.hoisted(() => ({
   loadHistoryState: vi.fn(),
   saveHistoryState: vi.fn(),
 }));
+const imageMock = vi.hoisted(() => ({
+  renderJournalImagePages: vi.fn(),
+  downloadJournalImagePage: vi.fn(),
+}));
 
 vi.mock('./xingye-journal-store', () => journalStoreMock);
 vi.mock('./xingye-journal-ai', () => journalAiMock);
 vi.mock('./xingye-profile-store', () => profileMock);
 vi.mock('./xingye-app-history-state', () => historyStateMock);
+vi.mock('./xingye-journal-image', () => imageMock);
 
 import { PhoneJournalApp } from './PhoneJournalApp';
 import { useStore } from '../stores';
+
+const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
 
 const agent: Agent = {
   id: 'linwu',
@@ -81,9 +89,101 @@ beforeEach(() => {
     initializedAt: '2026-05-01T00:00:00.000Z',
   });
   historyStateMock.saveHistoryState.mockResolvedValue({ version: 1 });
+  imageMock.renderJournalImagePages.mockReset();
+  imageMock.downloadJournalImagePage.mockReset();
+  imageMock.renderJournalImagePages.mockResolvedValue([new Blob(['png'], { type: 'image/png' })]);
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:journal-preview') });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
 });
 
 describe('PhoneJournalApp · confirmed export', () => {
+  it('keeps the selected journal visible and reports a failed delete', async () => {
+    journalStoreMock.listJournalEntries.mockResolvedValue([{
+      id: 'entry-delete', dayKey: '2026-05-17', title: '保留的日记', body: '不能丢失',
+      createdAt: '2026-05-17T12:30:00.000Z',
+    }]);
+    journalStoreMock.deleteJournalEntry.mockRejectedValue(new Error('storage denied'));
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+      renderJournalApp();
+      fireEvent.click(await screen.findByText('保留的日记'));
+      fireEvent.click(screen.getByRole('button', { name: '删除这条日记' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('删除失败：storage denied');
+      expect(screen.getByText('不能丢失')).toBeInTheDocument();
+    } finally { confirm.mockRestore(); }
+  });
+
+  it('releases already-created image URLs if a later page URL fails', async () => {
+    journalStoreMock.listJournalEntries.mockResolvedValue([{
+      id: 'from-draft-png', dayKey: '2026-05-17', title: 'PNG 日记', body: '原文',
+      createdAt: '2026-05-17T12:30:00.000Z',
+    }]);
+    imageMock.renderJournalImagePages.mockResolvedValue([
+      new Blob(['one'], { type: 'image/png' }), new Blob(['two'], { type: 'image/png' }),
+    ]);
+    const createUrl = vi.fn().mockReturnValueOnce('blob:first').mockImplementationOnce(() => { throw new Error('URL allocation failed'); });
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createUrl });
+    renderJournalApp();
+    fireEvent.click(await screen.findByText('PNG 日记'));
+    fireEvent.click(screen.getByTestId('phone-journal-export-preview-from-draft-png'));
+    fireEvent.click(screen.getByTestId('phone-journal-export-png-preview'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('URL allocation failed');
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:first');
+    expect(screen.queryByTestId('phone-journal-image-preview')).not.toBeInTheDocument();
+  });
+
+  it('does not allocate preview URLs after the journal closes during rendering', async () => {
+    journalStoreMock.listJournalEntries.mockResolvedValue([{
+      id: 'from-draft-png', dayKey: '2026-05-17', title: 'PNG 日记', body: '原文',
+      createdAt: '2026-05-17T12:30:00.000Z',
+    }]);
+    let finishRender!: (blobs: Blob[]) => void;
+    imageMock.renderJournalImagePages.mockImplementation(() => new Promise(resolve => { finishRender = resolve; }));
+    const view = renderJournalApp();
+    fireEvent.click(await screen.findByText('PNG 日记'));
+    fireEvent.click(screen.getByTestId('phone-journal-export-preview-from-draft-png'));
+    fireEvent.click(screen.getByTestId('phone-journal-export-png-preview'));
+    expect(imageMock.renderJournalImagePages).toHaveBeenCalled();
+    view.unmount();
+    await act(async () => { finishRender([new Blob(['png'], { type: 'image/png' })]); });
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('shows a PNG save error without dismissing the preview', async () => {
+    journalStoreMock.listJournalEntries.mockResolvedValue([{
+      id: 'from-draft-png', dayKey: '2026-05-17', title: 'PNG 日记', body: '原文',
+      createdAt: '2026-05-17T12:30:00.000Z',
+    }]);
+    imageMock.downloadJournalImagePage.mockImplementation(() => { throw new Error('Download blocked'); });
+    renderJournalApp();
+    fireEvent.click(await screen.findByText('PNG 日记'));
+    fireEvent.click(screen.getByTestId('phone-journal-export-preview-from-draft-png'));
+    fireEvent.click(screen.getByTestId('phone-journal-export-png-preview'));
+    await screen.findByAltText('日记长图第 1 页，共 1 页');
+    fireEvent.click(screen.getByRole('button', { name: '保存 PNG 第 1 页' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Download blocked');
+    expect(screen.getByTestId('phone-journal-image-preview')).toBeInTheDocument();
+  });
+
+  it('previews and saves PNG pages from the same confirmed snapshot without editing or publishing', async () => {
+    journalStoreMock.listJournalEntries.mockResolvedValue([{
+      id: 'from-draft-png', dayKey: '2026-05-17', title: 'PNG 日记', body: '原文和 ![图](missing.png)',
+      createdAt: '2026-05-17T12:30:00.000Z',
+    }]);
+    renderJournalApp();
+    fireEvent.click(await screen.findByText('PNG 日记'));
+    fireEvent.click(screen.getByTestId('phone-journal-export-preview-from-draft-png'));
+    fireEvent.click(screen.getByTestId('phone-journal-export-png-preview'));
+    const image = await screen.findByAltText('日记长图第 1 页，共 1 页');
+    expect(image).toHaveAttribute('src', 'blob:journal-preview');
+    const snapshot = imageMock.renderJournalImagePages.mock.calls[0][0];
+    expect(snapshot.entry.body).toBe('原文和 ![图](missing.png)');
+    fireEvent.click(screen.getByRole('button', { name: '保存 PNG 第 1 页' }));
+    expect(imageMock.downloadJournalImagePage).toHaveBeenCalledWith(expect.any(Blob), snapshot, 0, 1);
+    expect(journalStoreMock.appendJournalEntry).not.toHaveBeenCalled();
+    expect(journalStoreMock.confirmJournalDraft).not.toHaveBeenCalled();
+  });
+
   it('offers preview only for a confirmed journal entry, never an initialized entry', async () => {
     journalStoreMock.listJournalEntries.mockResolvedValue([
       {
@@ -132,9 +232,71 @@ describe('PhoneJournalApp · confirmed export', () => {
 
 afterEach(() => {
   cleanup();
+  if (originalCreateObjectURL) Object.defineProperty(URL, 'createObjectURL', originalCreateObjectURL);
+  else Reflect.deleteProperty(URL, 'createObjectURL');
+  if (originalRevokeObjectURL) Object.defineProperty(URL, 'revokeObjectURL', originalRevokeObjectURL);
+  else Reflect.deleteProperty(URL, 'revokeObjectURL');
 });
 
 describe('PhoneJournalApp · pending draft section', () => {
+  it('does not write a previous owner confirmation into the next owner journal', async () => {
+    const oldDraft = {
+      id: 'old-draft', dayKey: '2026-05-17', title: 'A 草稿', body: 'A 正文',
+      createdAt: '2026-05-17T12:00:00.000Z', source: 'xingye-heartbeat-tool',
+    };
+    const nextEntry = {
+      id: 'next-entry', dayKey: '2026-05-18', title: 'B 已有日记', body: 'B 正文',
+      createdAt: '2026-05-18T12:00:00.000Z',
+    };
+    let finishConfirm!: (entry: typeof nextEntry) => void;
+    journalStoreMock.listJournalEntries.mockImplementation((id: string) => Promise.resolve(id === 'linwu' ? [] : [nextEntry]));
+    journalStoreMock.listJournalDrafts.mockImplementation((id: string) => Promise.resolve(id === 'linwu' ? [oldDraft] : []));
+    journalStoreMock.confirmJournalDraft.mockImplementation(() => new Promise(resolve => { finishConfirm = resolve; }));
+    const view = renderJournalApp();
+    fireEvent.click(await screen.findByTestId('phone-journal-draft-confirm-old-draft'));
+    const nextAgent = { ...agent, id: 'next-agent', name: '新角色' };
+    view.rerender(<PhoneJournalApp ownerAgent={nextAgent} displayName="新角色" onBack={vi.fn()} />);
+    await screen.findByText('B 已有日记');
+    await act(async () => {
+      finishConfirm({ ...nextEntry, id: 'old-confirmed', title: 'A 已确认日记' });
+    });
+    expect(journalStoreMock.confirmJournalDraft).toHaveBeenCalledWith('linwu', 'old-draft', expect.any(Object));
+    expect(screen.getByText('B 已有日记')).toBeInTheDocument();
+    expect(screen.queryByText('A 已确认日记')).not.toBeInTheDocument();
+  });
+
+  it('rejects an old confirmation even after switching A to B and back to A', async () => {
+    const oldDraft = {
+      id: 'old-draft', dayKey: '2026-05-17', title: 'A 草稿', body: 'A 正文',
+      createdAt: '2026-05-17T12:00:00.000Z', source: 'xingye-heartbeat-tool',
+    };
+    const freshA = {
+      id: 'fresh-a', dayKey: '2026-05-18', title: 'A 新列表', body: '新正文',
+      createdAt: '2026-05-18T12:00:00.000Z',
+    };
+    let oldLoads = 0;
+    journalStoreMock.listJournalEntries.mockImplementation((id: string) => Promise.resolve(
+      id === 'linwu' && ++oldLoads > 1 ? [freshA] : [],
+    ));
+    let oldDraftLoads = 0;
+    journalStoreMock.listJournalDrafts.mockImplementation((id: string) => Promise.resolve(
+      id === 'linwu' && ++oldDraftLoads === 1 ? [oldDraft] : [],
+    ));
+    let finishConfirm!: (entry: typeof freshA) => void;
+    journalStoreMock.confirmJournalDraft.mockImplementation(() => new Promise(resolve => { finishConfirm = resolve; }));
+    const view = renderJournalApp();
+    fireEvent.click(await screen.findByTestId('phone-journal-draft-confirm-old-draft'));
+    const nextAgent = { ...agent, id: 'next-agent', name: '新角色' };
+    view.rerender(<PhoneJournalApp ownerAgent={nextAgent} displayName="新角色" onBack={vi.fn()} />);
+    view.rerender(<PhoneJournalApp ownerAgent={agent} displayName="林雾" onBack={vi.fn()} />);
+    await screen.findByText('A 新列表');
+    await act(async () => {
+      finishConfirm({ ...freshA, id: 'old-confirmed', title: 'A 旧确认' });
+    });
+    expect(screen.getByText('A 新列表')).toBeInTheDocument();
+    expect(screen.queryByText('A 旧确认')).not.toBeInTheDocument();
+  });
+
   it('does not render the draft section when there are no pending drafts', async () => {
     renderJournalApp();
     await waitFor(() => {

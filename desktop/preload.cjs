@@ -90,6 +90,16 @@ contextBridge.exposeInMainWorld("hana", {
     ipcRenderer.on("quick-chat-shown", handler);
     return () => ipcRenderer.removeListener("quick-chat-shown", handler);
   },
+  petState: () => ipcRenderer.invoke("pet-state"),
+  petShow: () => ipcRenderer.invoke("pet-show"),
+  petHide: () => ipcRenderer.invoke("pet-hide"),
+  petSetOptions: (options) => ipcRenderer.invoke("pet-set-options", options),
+  petSyncContext: (context) => ipcRenderer.invoke("pet-sync-context", context),
+  onPetState: (cb) => {
+    const handler = (_, state) => cb(state);
+    ipcRenderer.on("pet-state-changed", handler);
+    return () => ipcRenderer.removeListener("pet-state-changed", handler);
+  },
   onAutoUpdateState: (cb) => {
     const handler = (_, state) => cb(state);
     ipcRenderer.on("auto-update-state", handler);

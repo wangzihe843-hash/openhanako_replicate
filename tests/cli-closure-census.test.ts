@@ -13,6 +13,7 @@ import {
   normalizeNftTraceFiles,
   scanAndValidateDynamicCallSites,
   scanDynamicCallSites,
+  traceNftRoot,
   traceSourceGraph,
   validateRuntimeAssets,
   writeCliRuntimeClosure,
@@ -29,6 +30,62 @@ function makeTempFile(contents: string, extension = ".ts") {
   fs.writeFileSync(filePath, contents, "utf-8");
   return { dir, filePath, relPath: path.relative(dir, filePath) };
 }
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => { resolve = complete; });
+  return { promise, resolve };
+}
+
+describe("compute-cli-closure: concurrent nft scratch isolation", () => {
+  it("keeps a second trace's bundle alive when the first finishes and normalizes both temporary paths", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-closure-concurrent-"));
+    try {
+      fs.writeFileSync(path.join(rootDir, "entry.ts"), "export const value = 1;\n");
+      const root = { id: "same-root", path: "entry.ts", inputType: "nft-runtime-trace", reason: "test" };
+      const firstEntered = deferred();
+      const secondEntered = deferred();
+      const firstFinished = deferred();
+      const scratchPaths: string[] = [];
+      const deps = {
+        esbuildBuild: async ({ outfile }: { outfile: string }) => {
+          fs.writeFileSync(outfile, "export {};\n");
+          return { warnings: [] };
+        },
+        nodeFileTrace: async ([scratchPath]: string[]) => {
+          scratchPaths.push(scratchPath);
+          if (scratchPaths.length === 1) {
+            firstEntered.resolve();
+            await secondEntered.promise;
+          } else {
+            secondEntered.resolve();
+            await firstFinished.promise;
+            expect(fs.existsSync(scratchPath)).toBe(true);
+          }
+          return {
+            fileList: new Set([
+              ...scratchPaths.map((filePath) => path.relative(rootDir, filePath).split(path.sep).join("/")),
+              "node_modules/example/index.js", "package.json",
+            ]),
+            warnings: [],
+          };
+        },
+      };
+      const first = traceNftRoot({ rootDir, root, deps }).finally(firstFinished.resolve);
+      await firstEntered.promise;
+      const second = traceNftRoot({ rootDir, root, deps });
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      expect(scratchPaths).toHaveLength(2);
+      expect(scratchPaths[0]).not.toBe(scratchPaths[1]);
+      expect(firstResult.files).toEqual(["node_modules/example/index.js"]);
+      expect(secondResult).toEqual(firstResult);
+      expect(scratchPaths.every((filePath) => !fs.existsSync(filePath))).toBe(true);
+    } finally {
+      expect(path.dirname(fs.realpathSync(rootDir))).toBe(fs.realpathSync(os.tmpdir()));
+      fs.rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("compute-cli-closure: fail-closed validation", () => {
   it("throws when a declared root does not exist on disk", async () => {

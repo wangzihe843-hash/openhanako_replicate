@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssistantMessage } from '../../components/chat/AssistantMessage';
 import { useStore } from '../../stores';
 import type { ChatMessage } from '../../stores/chat-types';
+import { voiceTurns } from '../../services/voice-turn';
 
 const retryMock = vi.fn(async (_sessionPath: string, _target: unknown, _options?: unknown) => true);
 const forkMock = vi.fn(async (_sessionPath: string, _target: unknown) => ({
@@ -61,7 +62,9 @@ describe('AssistantMessage completion actions', () => {
   };
 
   afterEach(() => {
+    voiceTurns.interrupt();
     cleanup();
+    vi.unstubAllGlobals();
   });
 
   beforeEach(() => {
@@ -76,6 +79,7 @@ describe('AssistantMessage completion actions', () => {
       clipboard: { writeText: vi.fn(async () => undefined) },
     });
     useStore.setState({
+      currentSessionPath: sessionPath,
       agents: [],
       agentName: 'Hana',
       agentYuan: 'hana',
@@ -140,6 +144,44 @@ describe('AssistantMessage completion actions', () => {
       { role: 'assistant', entryId: 'entry-a1' },
       { message: userMessage },
     );
+  });
+
+  it('starts a completed reply on explicit click and shows interrupted playback separately from generated text', () => {
+    const utterances: SpeechSynthesisUtterance[] = [];
+    const synth = {
+      speak: vi.fn((utterance: SpeechSynthesisUtterance) => { utterances.push(utterance); }),
+      cancel: vi.fn(),
+    };
+    vi.stubGlobal('speechSynthesis', synth);
+    vi.stubGlobal('SpeechSynthesisUtterance', class {
+      text: string;
+      onend: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(text: string) { this.text = text; }
+    });
+    const voiceMessage: ChatMessage = {
+      ...assistantMessage,
+      id: 'voice-a1',
+      blocks: [{ type: 'text', source: '第一句。第二句。', html: '<p>第一句。第二句。</p>' }],
+    };
+    render(<AssistantMessage
+      agentDisplay={{ id: 'hana', displayName: 'Hana', avatarUrl: null, fallbackAvatar: null, yuan: 'hana', isUser: false }}
+      isStreaming={false}
+      isSelected={false}
+      message={voiceMessage}
+      showAvatar={false}
+      sessionPath={sessionPath}
+      showTurnCompletionTime
+    />);
+    expect(synth.speak).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTitle('chat.readAloud'));
+    expect(synth.speak).toHaveBeenCalledTimes(1);
+    act(() => { utterances[0].onend?.(undefined as never); });
+    expect(voiceTurns.getTurn(sessionPath, 'voice-a1')).toMatchObject({ completedSegments: 1, generatedText: '第一句。第二句。' });
+    fireEvent.click(screen.getByTitle('chat.stopReading'));
+    expect(synth.cancel).toHaveBeenCalledTimes(1);
+    expect(voiceTurns.getTurn(sessionPath, 'voice-a1')).toMatchObject({ status: 'interrupted', completedPlaybackText: '第一句。' });
+    expect(screen.getByTestId('voice-turn-voice-a1')).toHaveTextContent('chat.readingInterrupted');
   });
 
   it('does not render a footer unless the caller marks the assistant message as turn completion', () => {

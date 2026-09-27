@@ -8,6 +8,7 @@
 
 import type { FileVersion } from '../types';
 import type { ThinkingLevel } from './model-slice';
+import type { TaskOutcome } from '../../../../lib/task-outcome/task-outcome';
 
 // ── 工具调用 ──
 
@@ -285,7 +286,9 @@ export type RichBlock =
     summary?: string;
     startedAt?: number | null;
     finishedAt?: number | null;
+    taskOutcome?: TaskOutcome | null;
   }
+  | { type: 'task_outcome'; outcome: TaskOutcome }
   | { type: 'plugin_card'; card: import('../types').PluginCardDetails }
   | { type: 'interactive_card'; cardId: string; title: string; code: string };
 

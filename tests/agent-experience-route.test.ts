@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { proposeExperienceVersion } from "../lib/tools/experience-versions.ts";
 
 describe("agents route: experience toggle", () => {
   let tempRoot;
@@ -104,5 +105,51 @@ describe("agents route: experience toggle", () => {
     expect(await res.json()).toEqual({ error: "category deletion failed" });
     expect(engine.updateConfig).not.toHaveBeenCalled();
     expect(fs.readFileSync(oldPath, "utf8")).toContain("Keep context boundaries explicit");
+  });
+
+  it("gates version review by the experience toggle and requires explicit verification", async () => {
+    const proposal = proposeExperienceVersion(agentDir, {
+      category: "review", content: "Verify the output file before completion.",
+      workspacePath: path.join(tempRoot, "work"), sourceReference: "task-123",
+      sourceResult: "partial", verificationMethod: "Open the output and compare task criteria",
+    });
+    expect((await app.request(`/api/agents/${agentId}/experience-versions`)).status).toBe(403);
+    engine.getAgent.mockReturnValue({ id: agentId, experienceEnabled: true, tools: [] });
+    const listed = await app.request(`/api/agents/${agentId}/experience-versions`);
+    expect((await listed.json()).versions[0].id).toBe(proposal.id);
+    const endpoint = `/api/agents/${agentId}/experience-versions/${proposal.id}`;
+    const change = (action: string, evidence?: string) => app.request(endpoint, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, evidence }),
+    });
+    expect((await change("activate")).status).toBe(400);
+    expect((await change("verify", "")).status).toBe(400);
+    expect((await change("verify", "Opened artifact and checked every criterion")).status).toBe(200);
+    expect((await change("activate")).status).toBe(200);
+    expect((await change("revoke")).status).toBe(200);
+    expect((await (await app.request(`/api/agents/${agentId}/experience-versions`)).json()).versions[0].status).toBe("revoked");
+  });
+
+  it("rejects topic and experience reads and writes for a tombstoned agent with retained config", async () => {
+    engine.getAgent.mockReturnValue({ id: agentId, experienceEnabled: true, tools: [] });
+    fs.writeFileSync(path.join(agentDir, ".deleted-agent.json"), JSON.stringify({ version: 1, agentId }));
+    const requests = [
+      app.request(`/api/agents/${agentId}/topic-candidates`),
+      app.request(`/api/agents/${agentId}/topic-candidates`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceType: "reality_source", title: "Retained data", reason: "test",
+          sourceUrl: "https://example.com", expiresAt: "2099-01-01T00:00:00Z" }),
+      }),
+      app.request(`/api/agents/${agentId}/experience-versions`),
+      app.request(`/api/agents/${agentId}/experience`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "# review\n1. Must not write\n" }),
+      }),
+    ];
+    const responses = await Promise.all(requests);
+    expect(responses.map(response => response.status)).toEqual([404, 404, 404, 404]);
+    expect(fs.existsSync(path.join(agentDir, "xingye", "heartbeat", "topic-candidates.json"))).toBe(false);
+    expect(fs.readFileSync(path.join(agentDir, "experience", "workflow.md"), "utf8"))
+      .toContain("Keep context boundaries explicit");
   });
 });

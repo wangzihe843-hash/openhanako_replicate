@@ -34,7 +34,9 @@ interface Props {
   showAudioInput: boolean;
   audioRecordingActive: boolean;
   audioRecordingBusy: boolean;
+  voicePlaying?: boolean;
   onAudioToggle: () => void;
+  onStopVoice?: () => void;
   onSend: () => void;
   onSteer: () => void;
   onStop: () => void;
@@ -48,7 +50,7 @@ export const InputControlBar = memo(function InputControlBar(props: Props) {
     workMode, onWorkModeChange,
     showThinking, thinkingLevel, onThinkingChange, availableThinkingLevels,
     models, sessionModel, isStreaming, hasInput, canSend,
-    showAudioInput, audioRecordingActive, audioRecordingBusy, onAudioToggle,
+    showAudioInput, audioRecordingActive, audioRecordingBusy, voicePlaying, onAudioToggle, onStopVoice,
     onSend, onSteer, onStop,
   } = props;
 
@@ -109,6 +111,32 @@ export const InputControlBar = memo(function InputControlBar(props: Props) {
                 <path d="M12 19v3" />
               </svg>
             )}
+          </button>
+        )}
+        {voicePlaying && (
+          <button
+            type="button"
+            className={styles['audio-record-btn']}
+            title={t('chat.stopReading')}
+            aria-label={t('chat.stopReading')}
+            onClick={onStopVoice || onStop}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <rect x="7" y="7" width="10" height="10" rx="2" />
+            </svg>
+          </button>
+        )}
+        {isStreaming && hasInput && (
+          <button
+            type="button"
+            className={styles['audio-record-btn']}
+            title={t('chat.stop')}
+            aria-label={t('chat.stop')}
+            onClick={onStop}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <rect x="7" y="7" width="10" height="10" rx="2" />
+            </svg>
           </button>
         )}
         <SendButton isStreaming={isStreaming} hasInput={hasInput}

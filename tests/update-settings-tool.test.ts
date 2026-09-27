@@ -369,6 +369,35 @@ describe("update-settings-tool", () => {
       expect(engine.setDefaultThinkingLevel).not.toHaveBeenCalled();
     });
 
+    it("reads and changes the invoking background session instead of the focused session", async () => {
+      const { tool, engine } = buildTool({
+        defaultThinkingLevel: "high",
+        sessionThinkingLevels: { "/sessions/test": "high", "/sessions/background": "low" },
+      });
+      const runtimeCtx = { sessionPath: "/sessions/background" };
+
+      const search = await tool.execute("background-search", { action: "search", query: "thinking" },
+        undefined, undefined, runtimeCtx);
+      expect(search.content[0].text).toContain("low");
+      const applied = await tool.execute("background-apply", {
+        action: "apply", key: "thinking_level", value: "off",
+      }, undefined, undefined, runtimeCtx);
+      expect(applied).not.toMatchObject({ isError: true });
+      expect(engine.setSessionThinkingLevel).toHaveBeenCalledWith("/sessions/background", "off");
+      expect(engine.setSessionThinkingLevel).not.toHaveBeenCalledWith("/sessions/test", "off");
+      expect(engine.setDefaultThinkingLevel).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when an explicit invocation cannot resolve its session", async () => {
+      const { tool, engine } = buildTool();
+      const result = await tool.execute("unknown-session", {
+        action: "apply", key: "thinking_level", value: "low",
+      }, undefined, undefined, { sessionId: "unresolved" });
+      expect(result).toMatchObject({ isError: true, details: { error: "session_identity_required" } });
+      expect(engine.setSessionThinkingLevel).not.toHaveBeenCalled();
+      expect(engine.setDefaultThinkingLevel).not.toHaveBeenCalled();
+    });
+
     it("falls back to the model default when there is no active session", async () => {
       const { tool, engine } = buildTool({ defaultThinkingLevel: "medium" });
       engine.currentSessionPath = null;

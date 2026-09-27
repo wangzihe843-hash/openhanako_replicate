@@ -2799,10 +2799,12 @@ describe("sessions route", () => {
 
     const engine = {
       agentsDir: "/tmp/agents",
+      currentSessionPath: "/tmp/agents/hanako/sessions/parent.jsonl",
       deferredResults: null,
       subagentRuns: {
         query: vi.fn((id) => id === "workflow-1"
-          ? { taskId: "workflow-1", status: "resolved", summary: "诗", completedAt: "2026-05-31T08:26:49.160Z" }
+          ? { taskId: "workflow-1", parentSessionPath: "/tmp/agents/hanako/sessions/parent.jsonl",
+            status: "resolved", summary: "诗", completedAt: "2026-05-31T08:26:49.160Z" }
           : null),
       },
     };
@@ -2844,6 +2846,58 @@ describe("sessions route", () => {
     const data = await res.json();
     const wf = data.blocks.find((b) => b.type === "workflow");
     expect(wf.streamStatus).toBe("running");
+  });
+
+  it("does not hydrate workflow or subagent cards from another session's task records", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const { TaskRegistry } = await import("../lib/task-registry.ts");
+    const msgUtils = await import("../core/message-utils.ts");
+    const app = new Hono();
+    const sessionA = "/tmp/agents/hanako/sessions/a.jsonl";
+    const sessionB = "/tmp/agents/hanako/sessions/b.jsonl";
+    const childA = "/tmp/agents/hanako/subagent-sessions/a-child.jsonl";
+    const childB = "/tmp/agents/hanako/subagent-sessions/b-child.jsonl";
+    const registry = new TaskRegistry();
+    registry.registerHandler("workflow", { abort: () => {} });
+    registry.register("own-workflow", { type: "workflow", parentSessionPath: sessionA });
+    registry.complete("own-workflow");
+    registry.register("foreign-workflow", { type: "workflow", parentSessionPath: sessionB });
+    registry.complete("foreign-workflow");
+    vi.mocked(msgUtils.extractTextContent)
+      .mockReturnValueOnce({ text: "hi", images: [], thinking: "", toolUses: [] });
+    vi.mocked(msgUtils.loadSessionHistoryMessages).mockResolvedValueOnce([
+      { role: "assistant", content: "hi" },
+      { role: "toolResult", toolName: "workflow",
+        details: { taskId: "own-workflow", streamStatus: "running" } },
+      { role: "toolResult", toolName: "workflow",
+        details: { taskId: "foreign-workflow", streamStatus: "running" } },
+      { role: "toolResult", toolName: "subagent",
+        details: { taskId: "foreign-subagent", sessionPath: childA, streamStatus: "running" } },
+    ]);
+    const engine = {
+      agentsDir: "/tmp/agents",
+      currentSessionPath: sessionA,
+      taskRegistry: registry,
+      subagentRuns: { query: vi.fn((id) => id === "foreign-subagent"
+        ? { taskId: id, parentSessionPath: sessionB, childSessionPath: childB,
+          status: "resolved", summary: "private result from B" } : null) },
+      deferredResults: { query: vi.fn((id) => id === "foreign-subagent"
+        ? { taskId: id, sessionPath: sessionB, status: "resolved",
+          meta: { sessionPath: childB }, result: "private delivery from B" } : null) },
+    };
+    app.route("/api", createSessionsRoute(engine));
+
+    const response = await app.request("/api/sessions/messages");
+    const data = await response.json();
+    expect(response.status).toBe(200);
+    const owned = data.blocks.find(block => block.taskId === "own-workflow");
+    const foreign = data.blocks.find(block => block.taskId === "foreign-workflow");
+    const subagent = data.blocks.find(block => block.taskId === "foreign-subagent");
+    expect(owned).toMatchObject({ streamStatus: "done", taskOutcome: { lifecycle: "completed" } });
+    expect(foreign).toMatchObject({ streamStatus: "running", taskOutcome: { lifecycle: "running" } });
+    expect(subagent).toMatchObject({ streamStatus: "running", streamKey: childA });
+    expect(JSON.stringify(subagent)).not.toContain("private result from B");
+    expect(JSON.stringify(subagent)).not.toContain(childB);
   });
 
   it("首屏载入重发该会话的 workflow 活动（重启后右侧卡复原）", async () => {
@@ -4070,9 +4124,11 @@ describe("sessions route", () => {
 
     const engine = {
       agentsDir: "/tmp/agents",
+      currentSessionPath: "/tmp/agents/hanako/sessions/parent.jsonl",
       deferredResults: {
         query: vi.fn(() => ({
           status: "resolved",
+          sessionPath: "/tmp/agents/hanako/sessions/parent.jsonl",
           result: "deferred result",
           meta: {
             sessionPath: "/tmp/agents/hanako/subagent-sessions/child.jsonl",
@@ -4138,9 +4194,11 @@ describe("sessions route", () => {
 
     const engine = {
       agentsDir: "/tmp/agents",
+      currentSessionPath: "/tmp/agents/hanako/sessions/parent.jsonl",
       deferredResults: {
         query: vi.fn((taskId) => ({
           status: "resolved",
+          sessionPath: "/tmp/agents/hanako/sessions/parent.jsonl",
           result: "deferred result",
           meta: {
             sessionPath: taskId === "subagent-stale" ? staleChildPath : currentChildPath,
@@ -4200,6 +4258,7 @@ describe("sessions route", () => {
 
     const engine = {
       agentsDir: "/tmp/agents",
+      currentSessionPath: "/tmp/agents/hanako/sessions/parent.jsonl",
       deferredResults: {
         query: vi.fn(() => null),
       },
@@ -4315,6 +4374,7 @@ describe("sessions route", () => {
 
     const engine = {
       agentsDir: "/tmp/agents",
+      currentSessionPath: "/tmp/agents/hanako/sessions/parent.jsonl",
       deferredResults: {
         query: vi.fn(() => null),
       },

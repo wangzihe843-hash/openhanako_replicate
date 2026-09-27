@@ -1,4 +1,5 @@
 import type { ThinkingLevel } from './stores/model-slice';
+import type { PetContext, PetOptions, PetWindowState } from './companion/pet-types';
 
 // ── Auto-update ──
 
@@ -667,6 +668,12 @@ export interface PlatformApi {
   quickChatOpenSession?(sessionPath: string): void;
   onQuickChatOpenSession?(callback: (payload: { sessionPath?: string }) => void): (() => void) | void;
   onQuickChatShown?(callback: () => void): (() => void) | void;
+  petState?(): Promise<PetWindowState | null>;
+  petShow?(): Promise<PetWindowState | null>;
+  petHide?(): Promise<PetWindowState | null>;
+  petSetOptions?(options: PetOptions): Promise<PetWindowState | null>;
+  petSyncContext?(context: PetContext | null): Promise<boolean>;
+  onPetState?(callback: (state: PetWindowState) => void): (() => void) | void;
 
   // ── Skill viewer overlay ──
   onShowSkillViewer?(callback: (data: unknown) => void): void;

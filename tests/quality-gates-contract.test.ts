@@ -66,12 +66,32 @@ describe("quality gates", () => {
 
     const lintIndex = runSteps.indexOf("npm run lint:warnings");
     expect(readJson("package.json").scripts["lint:warnings"]).toBe("node scripts/lint-warning-ratchet.mjs");
-    const buildIndex = runSteps.indexOf("npm run build:renderer");
+    const buildIndex = runSteps.indexOf("npm run build:client");
     const testIndex = runSteps.indexOf("npm test");
 
     expect(lintIndex).toBeGreaterThan(-1);
     expect(lintIndex).toBeLessThan(buildIndex);
     expect(lintIndex).toBeLessThan(testIndex);
+  });
+
+  it("CI exercises real desktop startup and full-server APIs after building their entries", () => {
+    const ci = readYaml(".github/workflows/ci.yml");
+    const steps = ci.jobs.test.steps;
+    const runs = steps.map((step) => step.run);
+    const clientScripts = readJson("package.json").scripts["build:client"];
+    for (const entry of ["main", "preload", "renderer", "splash", "theme"]) {
+      expect(clientScripts).toContain(`npm run build:${entry}`);
+    }
+    for (const [build, smoke] of [
+      ["npm run build:client", "node scripts/smoke-desktop-main-pet.cjs"],
+      ["node scripts/build-server.mjs win32 x64", "node scripts/smoke-full-server.mjs"],
+    ]) {
+      const buildIndex = runs.indexOf(build);
+      const smokeIndex = runs.indexOf(smoke);
+      expect(buildIndex).toBeGreaterThan(-1);
+      expect(smokeIndex).toBeGreaterThan(buildIndex);
+      expect(steps[smokeIndex].if).toBe("runner.os == 'Windows'");
+    }
   });
 
   it("keeps build host, bundled server runtime, and bundle targets aligned on Node 24", () => {

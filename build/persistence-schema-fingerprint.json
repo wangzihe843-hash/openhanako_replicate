@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:907b9feee525edb564617b0b3086ddfa6810623528108e59a8966aa322be84eb",
+  "payloadFingerprint": "sha256:71b3f15a04e3b11aec9ffe16e9507151be27c797fc6a01111a100a8a9f3bcac3",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -707,6 +707,43 @@
         "contract": "user profile, experience index, and diary Markdown conventions",
         "kind": "directory-contract",
         "module": "lib/tools/experience.ts"
+      }
+    },
+    {
+      "affectedByEpochMigration": true,
+      "bootstrapSafety": null,
+      "checkpointPolicy": "Included in a future epoch checkpoint unless the coordinator explicitly classifies it otherwise.",
+      "epochPolicy": "epoch-managed",
+      "exemption": null,
+      "firstPossibleOpenPhase": "engine_construct",
+      "firstPossibleWritePhase": "runtime_ready",
+      "format": "json",
+      "id": "agent-experience-versions",
+      "identityContract": "agentId owns each ledger; each immutable version ID belongs to one workspace scope and replacement group.",
+      "migrationEntry": [],
+      "openEntry": [
+        "createExperienceTools",
+        "agents experience-versions routes"
+      ],
+      "ownerModule": "lib/tools/experience-versions.ts",
+      "pathExclusions": [],
+      "pathKind": "file",
+      "pathPattern": "agents/{agentId}/experience/versions.json",
+      "pathPatterns": [
+        "agents/{agentId}/experience/versions.json"
+      ],
+      "preCoordinatorReadProjection": null,
+      "protocolModules": [],
+      "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
+      "schemaContract": {
+        "compatibility": "A missing versions.json reads as an empty version-1 ledger. New proposal and review records live beside the existing experience Markdown files; those older files are neither migrated nor rewritten by this store.",
+        "kind": "protocol",
+        "source": "lib/tools/experience-versions.ts"
+      },
+      "schemaSource": {
+        "contract": "agent-scoped, workspace-scoped work lesson proposal and review versions",
+        "kind": "directory-contract",
+        "module": "lib/tools/experience-versions.ts"
       }
     },
     {
@@ -907,6 +944,46 @@
       "epochPolicy": "epoch-managed",
       "exemption": null,
       "firstPossibleOpenPhase": "engine_construct",
+      "firstPossibleWritePhase": "runtime_ready",
+      "format": "json",
+      "id": "channel-post-effects",
+      "identityContract": "effectId digests agentId, stable session ID (or session path), and session-local toolCallId; direct callers without context retain the old agentId/toolCallId key. A changed argsDigest under one identity is rejected. The channel Markdown marker is the receipt source.",
+      "migrationEntry": [],
+      "openEntry": [
+        "createChannelTool",
+        "runChannelPostEffect"
+      ],
+      "ownerModule": "lib/task-outcome/effect-ledger.ts",
+      "pathExclusions": [],
+      "pathKind": "file",
+      "pathPattern": "channels/.effects/channel-post/{effectId}.json",
+      "pathPatterns": [
+        "channels/.effects/channel-post/{effectId}.json"
+      ],
+      "preCoordinatorReadProjection": null,
+      "protocolModules": [
+        "lib/channels/channel-store.ts",
+        "lib/tools/channel-tool.ts"
+      ],
+      "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
+      "schemaContract": {
+        "compatibility": "The separate effects tree is absent in older homes and leaves existing channel files untouched until a new post. A legacy unscoped key blocks a newly scoped action with the same toolCallId as ambiguous instead of risking a duplicate. Unreadable or inconsistent effect records block replay. A prepared or unknown record without a matching channel receipt is never resent automatically.",
+        "kind": "runtime-source",
+        "source": "lib/task-outcome/effect-ledger.ts"
+      },
+      "schemaSource": {
+        "contract": "channel.post per-effect JSON record: stable operation identity, prepared/committed/failed/unknown status, attempt, persisted-body digest, and channel receipt",
+        "kind": "runtime-contract",
+        "module": "lib/task-outcome/effect-ledger.ts"
+      }
+    },
+    {
+      "affectedByEpochMigration": true,
+      "bootstrapSafety": null,
+      "checkpointPolicy": "Included in a future epoch checkpoint unless the coordinator explicitly classifies it otherwise.",
+      "epochPolicy": "epoch-managed",
+      "exemption": null,
+      "firstPossibleOpenPhase": "engine_construct",
       "firstPossibleWritePhase": "engine_construct",
       "format": "markdown",
       "id": "channels",
@@ -937,12 +1014,12 @@
       ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
-        "compatibility": "Existing Markdown and frontmatter readers remain canonical. This corrects the inventory's former YAML path and unifies existing channel, DM, and bookmark ownership without moving or rewriting records.",
+        "compatibility": "Existing Markdown and frontmatter readers remain canonical. The optional channel.post receipt marker is written only for new posts and hidden from normal parsed message bodies; older messages and DM records are not rewritten. This corrects the inventory's former YAML path and unifies existing channel, DM, and bookmark ownership without moving records.",
         "kind": "runtime-source",
         "source": "lib/channels/channel-store.ts"
       },
       "schemaSource": {
-        "contract": "channel and mirrored DM Markdown frontmatter/message protocol and channel read bookmarks",
+        "contract": "channel and mirrored DM Markdown frontmatter/message protocol, optional channel.post receipt marker, and channel read bookmarks",
         "kind": "runtime-contract",
         "module": "lib/channels/channel-store.ts"
       }
@@ -1507,6 +1584,7 @@
       "pathPatterns": [
         "user/window-state.json",
         "user/quick-chat-window-state.json",
+        "user/pet-window-state.json",
         "user/last-seen-version.json",
         "last-update-version"
       ],
@@ -1519,7 +1597,7 @@
         "source": "desktop/main.cjs"
       },
       "schemaSource": {
-        "contract": "desktop window bounds, release announcement bookmark, and update cache version marker readers",
+        "contract": "desktop window bounds, pet window options, release announcement bookmark, and update cache version marker readers",
         "kind": "directory-contract",
         "module": "desktop/main.cjs"
       }
@@ -3202,6 +3280,7 @@
         "lib/xingye/events.js",
         "lib/xingye/gift-inventory.ts",
         "lib/xingye/heartbeat-consumer.js",
+        "lib/xingye/topic-candidates.js",
         "shared/xingye-gift-catalog-data.ts",
         "shared/xingye-character-card.ts",
         "lib/character-cards/sillytavern-v2.ts",
@@ -3221,7 +3300,7 @@
       ],
       "restorePolicy": "Restore captured bytes to the same agent or reserved scope after reader compatibility is established; preserve authored records, record IDs, deletion tombstones, consumed-event markers, and shared inventory together.",
       "schemaContract": {
-        "compatibility": "This is an additive namespace relative to upstream DATA_EPOCH 1. Existing local files keep their layouts and permissive readers: absent optional fields use defaults, authoritative lore entries (including empty/deletion values) supersede legacy mirrors, and missing gift inventory is distinct from read/parse failure. Registration does not migrate or rewrite data.",
+        "compatibility": "This is an additive namespace relative to upstream DATA_EPOCH 1. The new heartbeat/topic-candidates.json version-1 file is optional and does not replace the existing heartbeat or event logs. Existing local files keep their layouts and permissive readers: absent optional fields use defaults, authoritative lore entries (including empty/deletion values) supersede legacy mirrors, and missing gift inventory is distinct from read/parse failure. Registration does not migrate or rewrite data.",
         "kind": "protocol",
         "source": "server/routes/xingye-storage.js"
       },
@@ -3234,16 +3313,23 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Reviewed in docs/audits/2026-09-27-companion-milestones-persistence-compatibility.md: five schema-source hashes and two registered character-card staging writes changed; all SQLite runtime schemas, serialized task records, existing profile/card formats, store registry, and DATA_EPOCH remain compatible.",
-    "payloadFingerprint": "sha256:907b9feee525edb564617b0b3086ddfa6810623528108e59a8966aa322be84eb"
+    "compatibilityReason": "Reviewed compatible M7-M14 additions and repository audit fixes; existing stores remain readable, pet startup and IPC guards do not change serialized shapes, and session ownership fixes retain existing formats. See docs/audits/2026-09-27-companion-m7-m14-persistence-compatibility.md and docs/audits/2026-09-27-repository-regression-review.md. DATA_EPOCH remains 1.",
+    "payloadFingerprint": "sha256:71b3f15a04e3b11aec9ffe16e9507151be27c797fc6a01111a100a8a9f3bcac3"
   },
   "schemas": [
     {
       "contract": "user profile, experience index, and diary Markdown conventions",
       "kind": "directory-contract",
       "module": "lib/tools/experience.ts",
-      "sourceHash": "sha256:b737786e82bee0f9e5e9fd76e4dfdb3637a1b0138ab43f6034172367ea28c57d",
+      "sourceHash": "sha256:7f093c5c2f22e9aaaf1268b2382f8067016fac3e294d9f460912e2c566a1b354",
       "storeId": "agent-authored-records"
+    },
+    {
+      "contract": "agent-scoped, workspace-scoped work lesson proposal and review versions",
+      "kind": "directory-contract",
+      "module": "lib/tools/experience-versions.ts",
+      "sourceHash": "sha256:ec4a621da62f56a6e4c8c0724107d2942605f86ef57dae9bb1001d6c8119b28e",
+      "storeId": "agent-experience-versions"
     },
     {
       "contract": "FactStore runtime DDL, PRAGMA user_version, and introspection",
@@ -3336,7 +3422,7 @@
       "protocolModules": [
         {
           "module": "core/agent.ts",
-          "sourceHash": "sha256:553544d7e05452694f7cb388d74f88b467b7f3848b35a705e743bb2dbbcb1b49"
+          "sourceHash": "sha256:3230ecfac177df960b7f43acc0b54e95f8dba3ff88b11c7e8a2f304a844c0a6e"
         },
         {
           "module": "core/agents-md-migration.ts",
@@ -3355,7 +3441,24 @@
       "storeId": "agent-profile"
     },
     {
-      "contract": "channel and mirrored DM Markdown frontmatter/message protocol and channel read bookmarks",
+      "contract": "channel.post per-effect JSON record: stable operation identity, prepared/committed/failed/unknown status, attempt, persisted-body digest, and channel receipt",
+      "kind": "runtime-contract",
+      "module": "lib/task-outcome/effect-ledger.ts",
+      "protocolModules": [
+        {
+          "module": "lib/channels/channel-store.ts",
+          "sourceHash": "sha256:02347524fa418b9e177a54faab9c3043dcd9748463b0180ad04f7143f7cd184c"
+        },
+        {
+          "module": "lib/tools/channel-tool.ts",
+          "sourceHash": "sha256:6771ee9cb6e461d4c1c801502b23b396c0fb3ec4e9d2c16e0a400f56a1566161"
+        }
+      ],
+      "sourceHash": "sha256:c658da1b8b1db7daacf85a619b1d61a7ffde2ada45c73a3fce23934e16eafd38",
+      "storeId": "channel-post-effects"
+    },
+    {
+      "contract": "channel and mirrored DM Markdown frontmatter/message protocol, optional channel.post receipt marker, and channel read bookmarks",
       "kind": "runtime-contract",
       "module": "lib/channels/channel-store.ts",
       "protocolModules": [
@@ -3364,7 +3467,7 @@
           "sourceHash": "sha256:a94be8f88e0340cd7268e3f192a76d64a10647f78d9440098ed8a74492aea067"
         }
       ],
-      "sourceHash": "sha256:6e23269ddda6411529088196cb27532174938fdc3963bd5a739bedacc05503d8",
+      "sourceHash": "sha256:02347524fa418b9e177a54faab9c3043dcd9748463b0180ad04f7143f7cd184c",
       "storeId": "channels"
     },
     {
@@ -3475,10 +3578,10 @@
       "storeId": "desktop-win32-install-acl-heal-state"
     },
     {
-      "contract": "desktop window bounds, release announcement bookmark, and update cache version marker readers",
+      "contract": "desktop window bounds, pet window options, release announcement bookmark, and update cache version marker readers",
       "kind": "directory-contract",
       "module": "desktop/main.cjs",
-      "sourceHash": "sha256:9a47f18ada0a22d4e0e56ec38e1e30d5f2c5fdfd193b6021f0b721aecebace3c",
+      "sourceHash": "sha256:fdfb01b61320ea81e40d5e5bb35ec0fb2d6de346581834cf159e43be8a69286e",
       "storeId": "desktop-window-version-state"
     },
     {
@@ -3630,7 +3733,7 @@
       "contract": "TaskRegistry task/schedule normalization and persistence serializer",
       "kind": "runtime-contract",
       "module": "lib/task-registry.ts",
-      "sourceHash": "sha256:2c3a4396bf430acfd9e9d9b7077b2b97c970bfdb08715f618e981c2caee65edc",
+      "sourceHash": "sha256:3bdd5cdfcb0c2c6edf7a420191da125f759ffd775778fa71f0befe5c8d244871",
       "storeId": "plugin-task-registry"
     },
     {
@@ -3996,7 +4099,7 @@
         },
         {
           "module": "lib/xingye/heartbeat-consumer.js",
-          "sourceHash": "sha256:b75e8f0311acadbe791d6373766709dbc454002f9b819b2dbb0f20d346b4db05"
+          "sourceHash": "sha256:7b87faf583c48514bbbbe23b5b6d345f6bb8ffb6dcd45fbd70578954f81407b3"
         },
         {
           "module": "lib/xingye/interview-drafts.js",
@@ -4053,6 +4156,10 @@
         {
           "module": "lib/xingye/sms-drafts.js",
           "sourceHash": "sha256:060b0461ae4ebbedffcb4bc9f585633d19a6ed34217444df201d9a203fde0520"
+        },
+        {
+          "module": "lib/xingye/topic-candidates.js",
+          "sourceHash": "sha256:2e99a45456191f3df34ce718a0f8f43d4bbbf06ac99d0ffe3b515f31a9af6f1c"
         },
         {
           "module": "lib/xingye/trips-drafts.js",
@@ -6625,6 +6732,14 @@
       "storeId": "desktop-window-version-state"
     },
     {
+      "exemptionId": null,
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Atomically writes Windows pet window bounds and options, removing a failed temporary file.",
+      "sourceFile": "desktop/main.cjs",
+      "storeId": "desktop-window-version-state"
+    },
+    {
       "exemptionId": "desktop-caller-selected-output",
       "kind": "mkdir",
       "ordinal": 0,
@@ -6665,6 +6780,14 @@
       "storeId": "server-runtime-info"
     },
     {
+      "exemptionId": null,
+      "kind": "remove-path",
+      "ordinal": 0,
+      "reason": "Atomically writes Windows pet window bounds and options, removing a failed temporary file.",
+      "sourceFile": "desktop/main.cjs",
+      "storeId": "desktop-window-version-state"
+    },
+    {
       "exemptionId": "desktop-screenshot-html-temp",
       "kind": "remove-path",
       "ordinal": 0,
@@ -6687,6 +6810,14 @@
       "reason": "Deletes stale desktop server discovery state before or after a server lifecycle.",
       "sourceFile": "desktop/main.cjs",
       "storeId": "server-runtime-info"
+    },
+    {
+      "exemptionId": null,
+      "kind": "rename",
+      "ordinal": 0,
+      "reason": "Atomically writes Windows pet window bounds and options, removing a failed temporary file.",
+      "sourceFile": "desktop/main.cjs",
+      "storeId": "desktop-window-version-state"
     },
     {
       "exemptionId": null,
@@ -6743,6 +6874,14 @@
       "reason": "Writes an absolute path selected by the renderer or a screenshot directory selected by the user; no HANA_HOME store is implied.",
       "sourceFile": "desktop/main.cjs",
       "storeId": null
+    },
+    {
+      "exemptionId": null,
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Atomically writes Windows pet window bounds and options, removing a failed temporary file.",
+      "sourceFile": "desktop/main.cjs",
+      "storeId": "desktop-window-version-state"
     },
     {
       "exemptionId": "desktop-screenshot-html-temp",
@@ -9106,6 +9245,38 @@
     },
     {
       "exemptionId": null,
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Writes a channel post effect record through a same-directory temporary file and rename.",
+      "sourceFile": "lib/task-outcome/effect-ledger.ts",
+      "storeId": "channel-post-effects"
+    },
+    {
+      "exemptionId": null,
+      "kind": "remove-path",
+      "ordinal": 0,
+      "reason": "Writes a channel post effect record through a same-directory temporary file and rename.",
+      "sourceFile": "lib/task-outcome/effect-ledger.ts",
+      "storeId": "channel-post-effects"
+    },
+    {
+      "exemptionId": null,
+      "kind": "rename",
+      "ordinal": 0,
+      "reason": "Writes a channel post effect record through a same-directory temporary file and rename.",
+      "sourceFile": "lib/task-outcome/effect-ledger.ts",
+      "storeId": "channel-post-effects"
+    },
+    {
+      "exemptionId": null,
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Writes a channel post effect record through a same-directory temporary file and rename.",
+      "sourceFile": "lib/task-outcome/effect-ledger.ts",
+      "storeId": "channel-post-effects"
+    },
+    {
+      "exemptionId": null,
       "kind": "atomic-write",
       "ordinal": 0,
       "reason": "Persists plugin task and schedule metadata.",
@@ -9159,6 +9330,38 @@
       "reason": "Writes terminal metadata or appends ordered transcript chunks.",
       "sourceFile": "lib/terminal/terminal-session-manager.ts",
       "storeId": "terminal-session-state"
+    },
+    {
+      "exemptionId": null,
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Atomically writes experience proposals, verification, activation, and revocation.",
+      "sourceFile": "lib/tools/experience-versions.ts",
+      "storeId": "agent-experience-versions"
+    },
+    {
+      "exemptionId": null,
+      "kind": "remove-path",
+      "ordinal": 0,
+      "reason": "Atomically writes experience proposals, verification, activation, and revocation.",
+      "sourceFile": "lib/tools/experience-versions.ts",
+      "storeId": "agent-experience-versions"
+    },
+    {
+      "exemptionId": null,
+      "kind": "rename",
+      "ordinal": 0,
+      "reason": "Atomically writes experience proposals, verification, activation, and revocation.",
+      "sourceFile": "lib/tools/experience-versions.ts",
+      "storeId": "agent-experience-versions"
+    },
+    {
+      "exemptionId": null,
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Atomically writes experience proposals, verification, activation, and revocation.",
+      "sourceFile": "lib/tools/experience-versions.ts",
+      "storeId": "agent-experience-versions"
     },
     {
       "exemptionId": null,
@@ -9694,6 +9897,38 @@
       "ordinal": 0,
       "reason": "Appends a domain draft JSONL record beneath the owning agent's Xingye tree.",
       "sourceFile": "lib/xingye/sms-drafts.js",
+      "storeId": "xingye-state"
+    },
+    {
+      "exemptionId": null,
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Atomically writes agent-scoped proactive topic candidates and their offer status.",
+      "sourceFile": "lib/xingye/topic-candidates.js",
+      "storeId": "xingye-state"
+    },
+    {
+      "exemptionId": null,
+      "kind": "remove-path",
+      "ordinal": 0,
+      "reason": "Atomically writes agent-scoped proactive topic candidates and their offer status.",
+      "sourceFile": "lib/xingye/topic-candidates.js",
+      "storeId": "xingye-state"
+    },
+    {
+      "exemptionId": null,
+      "kind": "rename",
+      "ordinal": 0,
+      "reason": "Atomically writes agent-scoped proactive topic candidates and their offer status.",
+      "sourceFile": "lib/xingye/topic-candidates.js",
+      "storeId": "xingye-state"
+    },
+    {
+      "exemptionId": null,
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Atomically writes agent-scoped proactive topic candidates and their offer status.",
+      "sourceFile": "lib/xingye/topic-candidates.js",
       "storeId": "xingye-state"
     },
     {

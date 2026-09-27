@@ -84,4 +84,18 @@ describe('InputControlBar audio button', () => {
 
     expect(screen.getByLabelText('input.stopRecording')).toBeTruthy();
   });
+
+  it('offers a separate stop control during reply playback even without microphone input', () => {
+    const onStopVoice = vi.fn();
+    renderBar({ showAudioInput: false, voicePlaying: true, onStopVoice });
+    fireEvent.click(screen.getByLabelText('chat.stopReading'));
+    expect(onStopVoice).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a stop-generation button available while a draft is present during streaming', () => {
+    const onStop = vi.fn();
+    renderBar({ isStreaming: true, hasInput: true, onStop });
+    fireEvent.click(screen.getByLabelText('chat.stop'));
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
 });

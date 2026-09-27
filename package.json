@@ -160,6 +160,8 @@
       "desktop/src/office-pdf-helper.cjs",
       "desktop/src/office-pdf-fonts.cjs",
       "desktop/src/shared/launch-integrity.cjs",
+      "desktop/src/pet-preload.cjs",
+      "desktop/src/shared/pet-window-state.cjs",
       "desktop/src/shared/windows-system-ca.cjs",
       "shared/hana-runtime-paths.cjs",
       "desktop/preload.bundle.cjs",

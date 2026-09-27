@@ -42,6 +42,35 @@ function desktopOwnerPrincipal(extraScopes = []) {
 }
 
 describe("HTTP route security policy", () => {
+  it("applies the existing settings scopes to companion topics and experience versions", async () => {
+    const { authorizeHttpRoute, classifyHttpRoute } = await import("../server/http/route-security.ts");
+    const reader = devicePrincipal(["settings.read"]);
+    const writer = devicePrincipal(["settings.read", "settings.write"]);
+    const chatOnly = devicePrincipal(["chat"]);
+    for (const path of [
+      "/api/agents/hana/topic-candidates",
+      "/api/agents/hana/experience-versions",
+    ]) {
+      expect(classifyHttpRoute({ method: "GET", path })).toEqual({ kind: "scope", scope: "settings.read" });
+      expect(authorizeHttpRoute({ method: "GET", path, principal: reader })).toMatchObject({ allowed: true });
+      expect(authorizeHttpRoute({ method: "GET", path, principal: chatOnly })).toMatchObject({ allowed: false });
+    }
+    for (const [method, path] of [
+      ["POST", "/api/agents/hana/topic-candidates"],
+      ["PATCH", "/api/agents/hana/topic-candidates/candidate-1"],
+      ["PATCH", "/api/agents/hana/experience-versions/version-1"],
+    ]) {
+      expect(classifyHttpRoute({ method, path })).toEqual({ kind: "scope", scope: "settings.write" });
+      expect(authorizeHttpRoute({ method, path, principal: writer })).toMatchObject({ allowed: true });
+      expect(authorizeHttpRoute({ method, path, principal: reader })).toMatchObject({ allowed: false });
+      expect(authorizeHttpRoute({ method, path, principal: chatOnly })).toMatchObject({ allowed: false });
+      expect(authorizeHttpRoute({ method, path, principal: null })).toMatchObject({ allowed: false });
+    }
+    // A newly added deeper action must receive its own reviewed classification.
+    expect(classifyHttpRoute({ method: "POST", path: "/api/agents/hana/experience-versions/v1/execute" }))
+      .toEqual({ kind: "studio_owner" });
+  });
+
   it("keeps local owner access unrestricted", async () => {
     const { authorizeHttpRoute } = await import("../server/http/route-security.ts");
 

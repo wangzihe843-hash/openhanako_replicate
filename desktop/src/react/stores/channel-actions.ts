@@ -282,9 +282,16 @@ export async function saveConversationAgentPhoneSettings(patch: Partial<AgentPho
 
 let channelOpenVersion = 0;
 
-export async function openChannel(channelId: string, isDM?: boolean): Promise<void> {
+export async function openChannel(
+  channelId: string,
+  isDM?: boolean,
+  options: { stillCurrent?: () => boolean } = {},
+): Promise<boolean> {
+  if (options.stillCurrent?.() === false) return false;
   const version = ++channelOpenVersion;
-  const isCurrent = () => version === channelOpenVersion && useStore.getState().currentChannel === channelId;
+  const isCurrent = () => version === channelOpenVersion
+    && useStore.getState().currentChannel === channelId
+    && options.stillCurrent?.() !== false;
   const s = useStore.getState();
   const ch = s.channels.find((c: Channel) => c.id === channelId);
   const isThisDM = isDM ?? ch?.isDM ?? false;
@@ -312,7 +319,7 @@ export async function openChannel(channelId: string, isDM?: boolean): Promise<vo
       const res = await hanaFetch(`/api/dm/${encodeURIComponent(peerId)}${ownerQuery}`);
       if (res.ok) {
         const data = await res.json();
-        if (!isCurrent()) return;
+        if (!isCurrent()) return false;
         const responseOwnerId = data.ownerAgentId || dmOwnerId;
         const messages = data.messages || [];
         const fresh = useStore.getState();
@@ -339,7 +346,7 @@ export async function openChannel(channelId: string, isDM?: boolean): Promise<vo
       const res = await hanaFetch(`/api/channels/${encodeURIComponent(channelId)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       const members = data.members || [];
       const displayMembers = [useStore.getState().userName || 'user', ...members];
       const messages = data.messages || [];
@@ -360,6 +367,8 @@ export async function openChannel(channelId: string, isDM?: boolean): Promise<vo
         channelIsDM: false,
         channelInfoName: data.name || channelId,
       });
+
+      if (!isCurrent()) return false;
 
       // Mark as read
       const msgs = messages;
@@ -383,12 +392,15 @@ export async function openChannel(channelId: string, isDM?: boolean): Promise<vo
         }
       }
     }
+    if (!isCurrent()) return false;
     loadConversationAgentActivities(channelId).catch((err: unknown) =>
       console.warn('[channel-actions] load agent activities failed', err));
     loadConversationAgentPhoneToolMode(channelId).catch((err: unknown) =>
       console.warn('[channel-actions] load phone tool mode failed', err));
+    return true;
   } catch (err) {
     console.error('[channels] open failed:', err);
+    return false;
   }
 }
 
