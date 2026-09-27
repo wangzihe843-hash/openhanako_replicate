@@ -88,7 +88,7 @@ describe("deepseek-responses provider plugin", () => {
     });
     expect(deepseekResponsesPlugin.models).toContainEqual(
       expect.objectContaining({
-        id: "deepseek-v4-flash",
+        id: "deepseek-flash",
         api: "openai-responses",
         context: 1_000_000,
         maxOutput: 384_000,
@@ -97,11 +97,10 @@ describe("deepseek-responses provider plugin", () => {
     );
   });
 
-  it("登记 V4 全系（含视觉模型），三者走同一套协议元数据与官方三档思考", () => {
+  it("登记当前 Flash 与 Pro，保留官方三档思考并声明 Flash 的图片输入", () => {
     expect(deepseekResponsesPlugin.models.map((m) => m.id)).toEqual([
-      "deepseek-v4-flash",
+      "deepseek-flash",
       "deepseek-v4-pro",
-      "deepseek-v4-flash-vision-exp",
     ]);
     for (const model of deepseekResponsesPlugin.models) {
       expect(model).toMatchObject({
@@ -111,12 +110,10 @@ describe("deepseek-responses provider plugin", () => {
         defaultThinkingLevel: "high",
       });
     }
-    expect(deepseekResponsesPlugin.models.find((m) => m.id === "deepseek-v4-flash-vision-exp")).toMatchObject({
+    expect(deepseekResponsesPlugin.models.find((m) => m.id === "deepseek-flash")).toMatchObject({
       image: true,
     });
-    for (const id of ["deepseek-v4-flash", "deepseek-v4-pro"]) {
-      expect(deepseekResponsesPlugin.models.find((m) => m.id === id)).toMatchObject({ image: false });
-    }
+    expect(deepseekResponsesPlugin.models.find((m) => m.id === "deepseek-v4-pro")).toMatchObject({ image: false });
   });
 
   it("不进 default-models.json，否则带协议元数据的 plugin.models 会被裸 id 覆盖", () => {

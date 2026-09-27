@@ -4137,7 +4137,7 @@ function defaultDeepSeekModelsForMigration(ctx, providerId) {
   if (Array.isArray(direct) && direct.length > 0) return [...direct];
   const official = ctx.providerRegistry?.getDefaultModels?.("deepseek");
   if (Array.isArray(official) && official.length > 0) return [...official];
-  return ["deepseek-v4-pro", "deepseek-v4-flash"];
+  return ["deepseek-flash", "deepseek-v4-pro"];
 }
 
 function repairLegacyDeepSeekProviderModelIds(ctx) {

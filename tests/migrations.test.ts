@@ -711,13 +711,13 @@ describe("migration #44: OAuth models converge into Provider Catalog", () => {
     const catalog = readJson(path.join(tmpDir, "provider-catalog.json"));
     const ids = catalog.providers["openai-codex-oauth"].models.map((model) => typeof model === "object" ? model.id : model);
     expect(ids).toEqual(expect.arrayContaining([
+      "gpt-6-sol",
+      "gpt-6-luna",
+      "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
-      "gpt-5.4",
-      "gpt-5.4-mini",
-      "gpt-5.2",
       "my-codex-model",
     ]));
     expect(prefs.getPreferences()).not.toHaveProperty("oauth_custom_models");

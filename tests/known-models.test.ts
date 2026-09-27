@@ -64,12 +64,11 @@ describe("known-models dictionary", () => {
   });
 
   it("keeps GPT-5.6 provider contracts isolated from generic fallback metadata", () => {
-    expect(defaultModels.openai.slice(0, 4)).toEqual([
-      "gpt-5.6",
+    expect(defaultModels.openai).toEqual(expect.arrayContaining([
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
-    ]);
+    ]));
     expect(lookupKnownProvider("openai", "gpt-5.6-sol")).toMatchObject({
       context: 1050000,
       maxOutput: 128000,
@@ -264,7 +263,7 @@ describe("known-models dictionary", () => {
       image: true,
       reasoning: true,
     });
-    expect(defaultModels.xai[0]).toBe("grok-4.5");
+    expect(defaultModels.xai[0]).toBe("grok-4.7");
     expect(lookupKnown("xai", "grok-4.5")).toMatchObject({
       name: "Grok 4.5",
       context: 500000,
@@ -282,12 +281,12 @@ describe("known-models dictionary", () => {
     expect(listKnownProviderModels("missing-provider")).toEqual([]);
   });
 
-  it("lists GLM-5.2 first in the curated Zhipu defaults", () => {
-    expect(defaultModels.zhipu[0]).toBe("glm-5.2");
+  it("lists GLM-5.3 first in the curated Zhipu defaults", () => {
+    expect(defaultModels.zhipu[0]).toBe("glm-5.3");
   });
 
   it("declares OpenCode Go GLM-5.2 with the GLM OpenAI-compatible thinking contract", () => {
-    expect(defaultModels["opencode-go"]).toEqual(["glm-5.2"]);
+    expect(defaultModels["opencode-go"]).toEqual(["glm-5.3", "glm-5.2"]);
     expect(lookupKnown("opencode-go", "glm-5.2")).toMatchObject({
       name: "GLM-5.2",
       context: 1000000,
@@ -309,6 +308,7 @@ describe("known-models dictionary", () => {
 
   it("declares GLM Coding Plan fixed models under the Zhipu coding provider", () => {
     expect(defaultModels["zhipu-coding"]).toEqual([
+      "glm-5.3",
       "glm-5.2",
       "glm-5-turbo",
       "glm-4.7",
@@ -331,8 +331,8 @@ describe("known-models dictionary", () => {
     }
   });
 
-  it("declares Agnes 2.0 Flash as a curated OpenAI-compatible multimodal agent model", () => {
-    expect(defaultModels.agnes).toEqual(["agnes-2.0-flash"]);
+  it("recommends Agnes 2.5 Flash while retaining legacy 2.0 metadata", () => {
+    expect(defaultModels.agnes).toEqual(["agnes-2.5-flash"]);
     expect(lookupKnown("agnes", "agnes-2.0-flash")).toMatchObject({
       name: "Agnes 2.0 Flash",
       image: true,

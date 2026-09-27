@@ -21,6 +21,7 @@
  *     and unsupported OpenAI-only request fields for GLM OpenAI-compatible APIs.
  */
 
+import { isAlwaysOnThinkingModel } from "../../shared/model-capabilities.ts";
 import {
   ensureAssistantContentForToolCalls,
   stripReasoningContent,
@@ -136,12 +137,14 @@ function resolveReasoningReplay(payload, options) {
 }
 
 function normalizeThinking(payload, model, options) {
-  const off = options?.mode === "utility"
+  const alwaysOn = isAlwaysOnThinkingModel(model);
+  const requestedOff = options?.mode === "utility"
     || isThinkingOff(options?.reasoningLevel)
     || payload.thinking?.type === "disabled"
     || payload.enable_thinking === false;
+  const off = requestedOff && !alwaysOn;
   const wantsThinking = !off && (
-    hasOwn(payload, "reasoning_effort")
+    alwaysOn || hasOwn(payload, "reasoning_effort")
     || payload.enable_thinking === true
     || model?.reasoning === true
     || payload.thinking?.type === "enabled"
@@ -151,6 +154,13 @@ function normalizeThinking(payload, model, options) {
   const next = { ...payload };
   delete next.reasoning_effort;
   delete next.enable_thinking;
+
+  if (alwaysOn) {
+    const level = lower(options?.reasoningLevel || payload.reasoning_effort);
+    next.reasoning_effort = requestedOff || level === "low" || level === "minimal"
+      ? "low"
+      : level === "medium" || level === "high" ? "high" : "max";
+  }
 
   if (off) {
     next.thinking = { type: "disabled" };

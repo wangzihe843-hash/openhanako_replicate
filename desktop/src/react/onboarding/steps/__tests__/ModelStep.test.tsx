@@ -91,7 +91,8 @@ describe('ModelStep', () => {
     expect(screen.getByLabelText('onboarding.model.displayName')).toHaveValue('DeepSeek V4 Flash');
     expect(screen.getByLabelText('onboarding.model.contextLength')).toHaveValue('1000000');
     expect(screen.getByLabelText('onboarding.model.maxOutput')).toHaveValue('384000');
-    expect(screen.getByLabelText('onboarding.model.imageInput')).not.toBeChecked();
+    // The legacy Flash ID now routes to the vision-capable V4.1 Flash backend.
+    expect(screen.getByLabelText('onboarding.model.imageInput')).toBeChecked();
     expect(screen.getByLabelText('onboarding.model.audioInput')).not.toBeChecked();
     expect(screen.getByLabelText('onboarding.model.reasoning')).toBeChecked();
   });

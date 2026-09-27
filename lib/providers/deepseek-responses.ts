@@ -8,10 +8,10 @@
  * 字段、思考链回放载体都不同，混在一个 provider 里只能靠用户手改 api 字段，切错
  * 协议时供应商静默忽略参数而不报错。
  *
- * 覆盖范围：V4-Flash、V4-Pro、V4-Flash-Vision-Exp 三个模型均原生支持 Responses
- * 通道（V4-Pro 官方 2026-08-13 更新日志确认已原生支持）。
+ * 当前默认：deepseek-flash（V4.1 Flash，支持图片）和 deepseek-v4-pro。
+ * 旧 V4-Flash / Vision-Exp 已退役，官方仍接收旧 ID 并路由至 V4.1 Flash。
  *
- * 思考档位：三个模型官方声明档位一致，均为 low / high（默认）/ max 三档；
+ * 思考档位：两个模型官方声明档位一致，均为 low / high（默认）/ max 三档；
  * medium 与 xhigh 是兼容值，服务端会折算成 high。客户端照常发用户选的档位即可，
  * 服务端具体如何折算不在客户端预判。
  *
@@ -21,12 +21,12 @@
 
 const DEEPSEEK_RESPONSES_MODELS = [
   {
-    id: "deepseek-v4-flash",
-    name: "DeepSeek V4 Flash",
+    id: "deepseek-flash",
+    name: "DeepSeek V4.1 Flash",
     api: "openai-responses",
     context: 1_000_000,
     maxOutput: 384_000,
-    image: false,
+    image: true,
     reasoning: true,
     xhigh: true,
     thinkingLevels: ["off", "low", "high", "max"],
@@ -39,18 +39,6 @@ const DEEPSEEK_RESPONSES_MODELS = [
     context: 1_000_000,
     maxOutput: 384_000,
     image: false,
-    reasoning: true,
-    xhigh: true,
-    thinkingLevels: ["off", "low", "high", "max"],
-    defaultThinkingLevel: "high",
-  },
-  {
-    id: "deepseek-v4-flash-vision-exp",
-    name: "DeepSeek V4 Flash Vision (Exp)",
-    api: "openai-responses",
-    context: 1_000_000,
-    maxOutput: 384_000,
-    image: true,
     reasoning: true,
     xhigh: true,
     thinkingLevels: ["off", "low", "high", "max"],

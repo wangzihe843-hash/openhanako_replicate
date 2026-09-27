@@ -167,6 +167,7 @@ describe("getCredentials", () => {
       isBuiltin: true,
     });
     expect(reg.getDefaultModels("zhipu-coding")).toEqual([
+      "glm-5.3",
       "glm-5.2",
       "glm-5-turbo",
       "glm-4.7",
@@ -465,13 +466,13 @@ describe("builtin default models", () => {
     expect(reg.getDefaultModels("kimi-coding")[0]).toBe("kimi-for-coding");
   });
 
-  it("keeps DeepSeek defaults aligned with the V4 API endpoint and model family", () => {
+  it("uses the current DeepSeek Flash alias and keeps the active Pro model", () => {
     writeAddedModels({});
     const reg = new ProviderRegistry(tmpDir);
     expect(reg.get("deepseek").baseUrl).toBe("https://api.deepseek.com");
     expect(reg.getDefaultModels("deepseek")).toEqual([
+      "deepseek-flash",
       "deepseek-v4-pro",
-      "deepseek-v4-flash",
     ]);
   });
 
@@ -481,7 +482,9 @@ describe("builtin default models", () => {
     expect(reg.get("gemini").baseUrl).toBe("https://generativelanguage.googleapis.com/v1beta");
     expect(reg.get("gemini").api).toBe("google-generative-ai");
     expect(reg.getDefaultModels("gemini")).toEqual([
-      "gemini-3-pro-preview",
+      "gemini-3.8-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-pro-preview",
       "gemini-3-flash-preview",
     ]);
   });
@@ -1137,8 +1140,8 @@ describe("saveProvider", () => {
     const persisted = readAddedModels();
     expect(persisted.mimo.models).toEqual(reg.getDefaultModels("mimo"));
     expect(persisted.mimo.models).toEqual(expect.arrayContaining([
-      "mimo-v2.5-pro",
-      "mimo-v2.5",
+      "mimo-v2.6-pro",
+      "mimo-v2.6-flash",
       "mimo-v2.5-tts",
       "mimo-v2.5-tts-voicedesign",
       "mimo-v2.5-tts-voiceclone",
@@ -1160,8 +1163,8 @@ describe("saveProvider", () => {
     const persisted = readAddedModels();
     expect(persisted["mimo-token-plan"].models).toEqual(reg.getDefaultModels("mimo-token-plan"));
     expect(persisted["mimo-token-plan"].models).toEqual(expect.arrayContaining([
-      "mimo-v2.5-pro",
-      "mimo-v2.5",
+      "mimo-v2.6-pro",
+      "mimo-v2.6-flash",
       "mimo-v2.5-tts",
     ]));
     expect(persisted["mimo-token-plan"].seed_default_models).toBeUndefined();

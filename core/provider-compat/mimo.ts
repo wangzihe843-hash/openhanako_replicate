@@ -7,7 +7,7 @@
  *   - baseUrl hostname 属于 "xiaomimimo.com"
  *
  * 解决的协议问题：
- *   1. 思考模式开关通过 chat_template_kwargs.enable_thinking 控制
+ *   1. V2.6 使用顶层 thinking.type；旧模型保留 chat_template_kwargs.enable_thinking
  *   2. 思考模式工具调用历史需要回传 reasoning_content
  *   3. utility mode 主动关思考，避免短输出被思考链吃掉可见文本预算
  *      官方文档：https://github.com/XiaomiMiMo/MiMo
@@ -52,10 +52,12 @@ function isThinkingOff(level) {
 }
 
 function shouldUseThinking(payload, model, reasoningLevel) {
+  if (payload.thinking?.type === "disabled") return false;
   if (payload.chat_template_kwargs?.enable_thinking === false) return false;
   if (isThinkingOff(reasoningLevel)) return false;
   return Boolean(
     payload.reasoning_effort
+    || payload.thinking?.type === "enabled"
     || payload.chat_template_kwargs?.enable_thinking === true
     || model?.reasoning === true
   );
@@ -93,6 +95,27 @@ function enableThinking(payload) {
   };
 }
 
+function usesTopLevelThinking(model) {
+  return /^mimo-v2\.6-(pro|flash)(-ultraspeed)?$/i.test(model?.id || "");
+}
+
+function setCurrentThinking(payload, enabled) {
+  payload.thinking = { type: enabled ? "enabled" : "disabled" };
+  delete payload.reasoning_effort;
+  if (isPlainObject(payload.chat_template_kwargs)) {
+    const kwargs = { ...payload.chat_template_kwargs };
+    delete kwargs.enable_thinking;
+    delete kwargs.preserve_thinking;
+    if (Object.keys(kwargs).length) payload.chat_template_kwargs = kwargs;
+    else delete payload.chat_template_kwargs;
+  }
+  if (hasOwn(payload, "max_tokens")) {
+    if (!hasOwn(payload, "max_completion_tokens")) payload.max_completion_tokens = payload.max_tokens;
+    delete payload.max_tokens;
+  }
+  if (!enabled) payload.messages = stripReasoningContent(payload.messages);
+}
+
 export function apply(payload, model, options: { mode?: string; reasoningLevel?: string } = {}) {
   if (!Array.isArray(payload.messages)) return payload;
   const mode = options.mode || "chat";
@@ -110,6 +133,14 @@ export function apply(payload, model, options: { mode?: string; reasoningLevel?:
     if (next === base) next = { ...base };
     return next;
   };
+
+  if (usesTopLevelThinking(model)) {
+    const enabled = mode !== "utility" && shouldUseThinking(next, model, reasoningLevel);
+    const p = editable();
+    setCurrentThinking(p, enabled);
+    if (enabled) p.messages = ensureAssistantContentForToolCalls(p.messages);
+    return next;
+  }
 
   if (isThinkingOff(reasoningLevel) || payload.chat_template_kwargs?.enable_thinking === false) {
     disableThinking(editable());

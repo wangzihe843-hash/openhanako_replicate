@@ -269,11 +269,13 @@ function isOfficialZhipuEndpoint(model: any, context: any = {}) {
 }
 
 function isDeepSeekV4ModelId(id: string): boolean {
-  return id === "deepseek-v4" || id.startsWith("deepseek-v4-") || id.startsWith("deepseek-v4.");
+  return id === "deepseek-flash" || id === "deepseek-v4" || id.startsWith("deepseek-v4-") || id.startsWith("deepseek-v4.");
 }
 
 function isAnthropicAdaptiveOnlyModelId(id: string): boolean {
-  return id === "claude-opus-5"
+  const bareId = id.replace(/^anthropic\//, "");
+  return ["claude-opus-5-5", "claude-fable-5-1", "claude-mythos-5-1"].includes(bareId)
+    || id === "claude-opus-5"
     || id === "claude-sonnet-5"
     || id === "claude-fable-5"
     || id === "claude-mythos-5"
@@ -500,10 +502,18 @@ export function getReasoningProfile(model: any, context: any = {}) {
   return isMimoOpenAIProtocolModel(model, context) ? "mimo-openai" : null;
 }
 
+/** Chat Completions models whose documented thinking mode cannot be disabled. */
+export function isAlwaysOnThinkingModel(model: unknown, context: Record<string, unknown> = {}): boolean {
+  const id = getModelId(model, context);
+  const profile = getReasoningProfile(model, context);
+  return (profile === "kimi-openai"
+    && ["kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code-highspeed"].includes(id))
+    || (profile === "zhipu-openai" && id === "glm-5.3");
+}
+
 /**
- * Endpoint-level reasoning defaults are intentionally narrow. They are used
- * only when a provider catalog entry did not declare `reasoning` and known
- * model metadata has no answer. Explicit model metadata always wins.
+ * Endpoint-level defaults apply only when model metadata did not declare reasoning.
+ * Explicit model metadata always wins.
  */
 export function getEndpointDefaultReasoningCapability(model: any, context: any = {}) {
   if (!isPlainObject(model)) return null;
@@ -710,7 +720,8 @@ export function modelSupportsDirectAudioInput(model: any, context: any = {}) {
 function isOfficialMimoAudioInputModel(model: any, context: any = {}) {
   if (!isOfficialMimoEndpoint(model, context)) return false;
   const id = getModelId(model, context);
-  return id === "mimo-v2.5" || id === "mimo-v2-omni";
+  return id === "mimo-v2.5" || id === "mimo-v2-omni"
+    || id === "mimo-v2.6-pro" || id === "mimo-v2.6-flash" || id === "mimo-v2.6-pro-ultraspeed";
 }
 
 export const MODEL_VIDEO_TRANSPORTS = Object.freeze({

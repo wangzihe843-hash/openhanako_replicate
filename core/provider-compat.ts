@@ -41,6 +41,7 @@ import {
 } from "./provider-compat/reasoning-content-replay.ts";
 import {
   MODEL_AUDIO_TRANSPORTS,
+  isAlwaysOnThinkingModel,
   resolveModelAudioInputTransport,
 } from "../shared/model-capabilities.ts";
 import {
@@ -144,6 +145,7 @@ function stripIncompatibleThinking(payload, model) {
     || thinkingFormat === "kimi"
     || thinkingFormat === "volcengine"
     || thinkingFormat === "longcat"
+    || getReasoningProfile(model) === "mimo-openai"
   ) return payload;
   const rest = { ...payload };
   delete rest.thinking;
@@ -173,6 +175,10 @@ function normalizeAutoReasoningEffort(payload, model) {
 function normalizeProviderOptions(options: Record<string, any> = {}, model = null) {
   if (!Object.prototype.hasOwnProperty.call(options, "reasoningLevel")) return options;
   const rawLevel = options.reasoningLevel;
+  // Always-on models use their lowest supported effort for a stale off choice.
+  if (isAlwaysOnThinkingModel(model) && isDisabledReasoningEffort(rawLevel)) {
+    return { ...options, reasoningLevel: "low" };
+  }
   const normalizedLevel = lower(rawLevel) === "auto"
     ? normalizeThinkingLevelForModel("auto", model)
     : normalizeThinkingLevelForModel(normalizeRequestThinkingLevel(rawLevel, "off"), model);

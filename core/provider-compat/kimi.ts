@@ -11,7 +11,7 @@
  * fields.
  */
 
-import { getReasoningProfile, getThinkingFormat } from "../../shared/model-capabilities.ts";
+import { getReasoningProfile, getThinkingFormat, isAlwaysOnThinkingModel } from "../../shared/model-capabilities.ts";
 import { stripReasoningContent } from "./reasoning-content-replay.ts";
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -85,6 +85,7 @@ function disableThinking(payload) {
 }
 
 function shouldDisableThinking(payload, model, options) {
+  if (isAlwaysOnThinkingModel(model)) return false;
   if (options?.mode === "utility") return true;
   if (isThinkingOff(options?.reasoningLevel)) return true;
   if (model?.reasoning === false) return true;
@@ -93,7 +94,8 @@ function shouldDisableThinking(payload, model, options) {
 
 function shouldEnableThinking(payload, model, options) {
   return Boolean(
-    model?.reasoning === true
+    isAlwaysOnThinkingModel(model)
+    || model?.reasoning === true
     || payload.reasoning_effort
     || payload.thinking
     || reasoningEffortForLevel(options?.reasoningLevel, model)
@@ -259,7 +261,14 @@ export function apply(payload, model, options: Record<string, unknown> = {}) {
     editable().tools = normalizedTools;
   }
 
-  if (omitsTemperature(model) && hasOwn(next, "temperature")) {
+  const alwaysOn = isAlwaysOnThinkingModel(model);
+  const code27 = alwaysOn && lower(model?.id).startsWith("kimi-k2.7-code");
+  if (alwaysOn) {
+    // K3 / K2.7 Code fix these sampling parameters; custom values can be rejected.
+    for (const key of ["temperature", "top_p", "n", "presence_penalty", "frequency_penalty"]) {
+      if (hasOwn(next, key)) delete editable()[key];
+    }
+  } else if (omitsTemperature(model) && hasOwn(next, "temperature")) {
     delete editable().temperature;
   } else if (usesFixedKimiCodingUtilityTemperature(model, options)) {
     editable().temperature = KIMI_FOR_CODING_UTILITY_TEMPERATURE;
@@ -267,7 +276,11 @@ export function apply(payload, model, options: Record<string, unknown> = {}) {
 
   if (!Array.isArray(next.messages)) return next;
 
-  if (hasOwn(payload, "max_tokens")) {
+  if (code27 && hasOwn(next, "max_completion_tokens")) {
+    const p = editable();
+    if (!hasOwn(p, "max_tokens")) p.max_tokens = p.max_completion_tokens;
+    delete p.max_completion_tokens;
+  } else if (!code27 && hasOwn(payload, "max_tokens")) {
     normalizeMaxCompletionTokenField(editable());
   }
 
@@ -279,11 +292,26 @@ export function apply(payload, model, options: Record<string, unknown> = {}) {
   if (!shouldEnableThinking(next, model, options)) return next;
 
   const p = editable();
-  p.thinking = normalizeThinking(p.thinking);
+  const requestedOff = options?.mode === "utility"
+    || isThinkingOff(options?.reasoningLevel)
+    || p.thinking?.type === "disabled";
+  if (alwaysOn && !code27) {
+    // K3 documents reasoning_effort only; thinking is always on server-side.
+    delete p.thinking;
+  } else {
+    p.thinking = code27 ? { type: "enabled" } : normalizeThinking(p.thinking);
+  }
 
-  const effort = reasoningEffortForLevel(options?.reasoningLevel, model);
+  if (code27) {
+    delete p.reasoning_effort;
+    return next;
+  }
+
+  const effort = reasoningEffortForLevel(alwaysOn && requestedOff ? "low" : options?.reasoningLevel, model);
   if (effort) {
     p.reasoning_effort = effort;
+  } else if (alwaysOn && !["low", "high", "max"].includes(p.reasoning_effort)) {
+    p.reasoning_effort = "max";
   }
 
   return next;

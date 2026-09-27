@@ -60,7 +60,7 @@ export class ProviderModelValidationError extends Error {
   constructor(providerId, modelId) {
     super(
       `Invalid model id "${modelId}" for provider "${providerId}": ` +
-      `"${modelId}" is a provider id, not a model id. Use a concrete model id such as deepseek-v4-pro or deepseek-v4-flash.`,
+      `"${modelId}" is a provider id, not a model id. Use a concrete model id such as deepseek-flash or deepseek-v4-pro.`,
     );
     this.name = "ProviderModelValidationError";
     this.code = "INVALID_PROVIDER_MODEL_ID";

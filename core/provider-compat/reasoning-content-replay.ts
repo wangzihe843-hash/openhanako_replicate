@@ -2,6 +2,7 @@ import {
   getReasoningProfile,
   getReasoningReplayContract,
   getThinkingFormat,
+  isAlwaysOnThinkingModel,
 } from "../../shared/model-capabilities.ts";
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -66,6 +67,8 @@ function isThinkingOff(value) {
 }
 
 function requestUsesReasoning(payload, model, options) {
+  // Utility calls also need authentic tool-call history when thinking cannot be disabled.
+  if (isAlwaysOnThinkingModel(model)) return true;
   if (options?.mode === "utility") return false;
   if (isThinkingOff(options?.reasoningLevel)) return false;
   if (model?.reasoning === false) return false;

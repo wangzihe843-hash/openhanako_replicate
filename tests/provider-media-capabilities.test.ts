@@ -241,7 +241,7 @@ describe("ProviderRegistry media capabilities", () => {
       baseUrl: "https://apihub.agnes-ai.com/v1",
       api: "openai-completions",
     });
-    expect(registry.getDefaultModels("agnes")).toEqual(["agnes-2.0-flash"]);
+    expect(registry.getDefaultModels("agnes")).toEqual(["agnes-2.5-flash"]);
     expect(registry.resolveMediaModel({
       providerId: "agnes",
       modelId: "agnes-image-2.1-flash",
@@ -296,7 +296,7 @@ describe("ProviderRegistry media capabilities", () => {
       baseUrl: "https://opencode.ai/zen/go/v1",
       api: "openai-completions",
     });
-    expect(registry.getDefaultModels("opencode-go")).toEqual(["glm-5.2"]);
+    expect(registry.getDefaultModels("opencode-go")).toEqual(["glm-5.3", "glm-5.2"]);
   });
 
   it("exposes OpenCode Zen with model-owned wire protocols", () => {
@@ -410,13 +410,13 @@ describe("ProviderRegistry media capabilities", () => {
       credentialSource: "auth-storage",
     });
     expect(registry.getChatModelIds("openai-codex-oauth")).toEqual(expect.arrayContaining([
+      "gpt-6-sol",
+      "gpt-6-luna",
+      "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
-      "gpt-5.4",
-      "gpt-5.4-mini",
-      "gpt-5.2",
     ]));
     expect(registry.getChatModelIds("openai-codex-oauth")).not.toContain("gpt-5.3-codex-spark");
   });

@@ -100267,6 +100267,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "core/provider-compat/zhipu.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "core/provider-compat/openai-input-audio.ts",
           "kind": "import-statement"
         },
@@ -100376,7 +100381,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/message-sanitizer.ts (import-statement); core/provider-compat/reasoning-content-replay.ts (import-statement); core/provider-compat/deepseek.ts (import-statement); +26 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by core/message-sanitizer.ts (import-statement); core/provider-compat/reasoning-content-replay.ts (import-statement); core/provider-compat/deepseek.ts (import-statement); +27 more importer(s)."
     },
     {
       "path": "shared/model-ref.ts",

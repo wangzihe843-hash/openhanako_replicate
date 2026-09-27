@@ -68,12 +68,13 @@ export function matches(model) {
 
 function isKnownThinkingModelId(id) {
   const normalized = lower(id);
-  return normalized === "deepseek-reasoner" || normalized.startsWith("deepseek-v4-");
+  return normalized === "deepseek-reasoner" || isDeepSeekV4ModelId(normalized);
 }
 
 function isDeepSeekV4ModelId(id) {
   const normalized = lower(id);
-  return normalized === "deepseek-v4"
+  return normalized === "deepseek-flash"
+    || normalized === "deepseek-v4"
     || normalized.startsWith("deepseek-v4-")
     || normalized.startsWith("deepseek-v4.");
 }
