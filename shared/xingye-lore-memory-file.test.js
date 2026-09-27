@@ -324,7 +324,7 @@ describe('xingye lore memory file helper', () => {
     expect(updated.indexOf('id=first')).toBeLessThan(updated.indexOf('id=second'));
   });
 
-  it('uses canonical metadata to order old blocks without replacing their text or rewriting the file', async () => {
+  it('uses current canonical entries over stale managed blocks without rewriting the file', async () => {
     const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
     const high = baseLore({ id: 'high', title: 'High', priority: 100 });
     const low = baseLore({ id: 'low', title: 'Low', priority: 1 });
@@ -335,17 +335,80 @@ describe('xingye lore memory file helper', () => {
     const entriesPath = path.join(tempRoot, 'agents', 'agent-a', 'xingye', 'lore', 'entries.json');
     await fs.mkdir(path.dirname(entriesPath), { recursive: true });
     await fs.writeFile(entriesPath, JSON.stringify(Object.fromEntries([
-      { ...high, summary: 'Canonical source must not replace derived text.' },
+      { ...high, summary: 'Current canonical summary.' },
       low,
-      baseLore({ id: 'only-in-source', priority: 200, summary: 'Do not add this body.' }),
+      baseLore({ id: 'only-in-source', priority: 200, summary: 'New canonical fact.' }),
     ].map(entry => [entry.id, entry]))));
     const prompt = await readXingyeStableLoreMemoryForPrompt(options);
-    expect(prompt).toContain('Saved high summary.');
+    expect(prompt).toContain('Current canonical summary.');
+    expect(prompt).toContain('New canonical fact.');
+    expect(prompt).not.toContain('Saved high summary.');
     expect(prompt.indexOf('id=high')).toBeLessThan(prompt.indexOf('id=low'));
-    expect(prompt).not.toContain('Canonical source');
-    expect(prompt).not.toContain('Do not add this body.');
+    expect(prompt.indexOf('id=only-in-source')).toBeLessThan(prompt.indexOf('id=high'));
     expect(readXingyeStableLoreMemoryForPromptSync(options)).toBe(prompt);
     expect(await readXingyeLoreMemoryFile(options)).toBe(before);
+  });
+
+  it('drops stale disabled, private, manual, and removed mirror entries while retaining hand-written file text', async () => {
+    const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
+    for (const id of ['current', 'disabled', 'private', 'manual', 'removed']) {
+      await upsertXingyeLoreMemoryBlock({ ...options, lore: baseLore({ id }), content: `OLD_${id}` });
+    }
+    const original = await readXingyeLoreMemoryFile(options);
+    await writeXingyeLoreMemoryFile({ ...options, content: `${original}\n\nHand-written text outside managed blocks.` });
+    const beforeRead = await readXingyeLoreMemoryFile(options);
+    const entriesPath = path.join(tempRoot, 'agents', 'agent-a', 'xingye', 'lore', 'entries.json');
+    await fs.mkdir(path.dirname(entriesPath), { recursive: true });
+    await fs.writeFile(entriesPath, JSON.stringify({
+      current: baseLore({ id: 'current', content: 'CURRENT_CONTENT' }),
+      disabled: baseLore({ id: 'disabled', enabled: false, content: 'DISABLED_CONTENT' }),
+      private: baseLore({ id: 'private', visibility: 'private', content: 'PRIVATE_CONTENT' }),
+      manual: baseLore({ id: 'manual', insertionMode: 'manual', content: 'MANUAL_CONTENT' }),
+      fresh: baseLore({ id: 'fresh', content: 'NEW_CONTENT' }),
+      foreign: baseLore({ id: 'foreign', agentId: 'agent-b', content: 'FOREIGN_CONTENT' }),
+    }));
+    const prompt = await readXingyeStableLoreMemoryForPrompt(options);
+    expect(prompt).toContain('CURRENT_CONTENT');
+    expect(prompt).toContain('NEW_CONTENT');
+    for (const marker of ['OLD_', 'DISABLED_CONTENT', 'PRIVATE_CONTENT', 'MANUAL_CONTENT', 'FOREIGN_CONTENT']) {
+      expect(prompt).not.toContain(marker);
+    }
+    expect(readXingyeStableLoreMemoryForPromptSync(options)).toBe(prompt);
+    expect(await readXingyeLoreMemoryFile(options)).toBe(beforeRead);
+    expect(beforeRead).toContain('Hand-written text outside managed blocks.');
+  });
+
+  it('reads canonical always lore without a mirror and fails closed on malformed canonical JSON', async () => {
+    const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
+    const entriesPath = path.join(tempRoot, 'agents', 'agent-a', 'xingye', 'lore', 'entries.json');
+    await fs.mkdir(path.dirname(entriesPath), { recursive: true });
+    await fs.writeFile(entriesPath, JSON.stringify({ new: baseLore({ id: 'new', content: 'NO_MIRROR_FACT' }) }));
+    expect(await readXingyeStableLoreMemoryForPrompt(options)).toContain('NO_MIRROR_FACT');
+    expect(readXingyeStableLoreMemoryForPromptSync(options)).toContain('NO_MIRROR_FACT');
+    await upsertXingyeLoreMemoryBlock({ ...options, lore: baseLore({ id: 'new' }), content: 'STALE_MIRROR_FACT' });
+    await fs.writeFile(entriesPath, '{broken json');
+    expect(await readXingyeStableLoreMemoryForPrompt(options)).toBe('');
+    expect(readXingyeStableLoreMemoryForPromptSync(options)).toBe('');
+  });
+
+  it('keeps a later complete block when an earlier managed block is oversized', async () => {
+    const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
+    const long = baseLore({ id: 'long', priority: 100, content: 'L'.repeat(5_000) });
+    const short = baseLore({ id: 'short', priority: 10, content: 'KEEP_LATER_FACT' });
+    await upsertXingyeLoreMemoryBlock({
+      ...options, lore: long, content: 'L'.repeat(5_000),
+    });
+    await upsertXingyeLoreMemoryBlock({
+      ...options, lore: short, content: 'KEEP_LATER_FACT',
+    });
+    const entriesPath = path.join(tempRoot, 'agents', 'agent-a', 'xingye', 'lore', 'entries.json');
+    await fs.mkdir(path.dirname(entriesPath), { recursive: true });
+    await fs.writeFile(entriesPath, JSON.stringify({ long, short }));
+    const prompt = await readXingyeStableLoreMemoryForPrompt({ ...options, maxChars: 600 });
+    expect(prompt).toContain('KEEP_LATER_FACT');
+    expect(prompt).toContain('<!-- /xingye-lore:id=long -->');
+    expect(prompt.indexOf('id=long')).toBeLessThan(prompt.indexOf('id=short'));
+    expect(prompt.length).toBeLessThanOrEqual(600);
   });
 
   it('preserves handwritten notes between blocks during a complete reorder', async () => {

@@ -191,6 +191,35 @@ describe("agent Xingye lore prompt", () => {
     expect(xingyeIndex).toBeGreaterThan(memoryIndex);
   });
 
+  it("bounds an oversized pinned memory without crowding out the selected world entry", () => {
+    const { agent, root, agentDir } = makeAgent();
+    roots.push(root);
+    fs.writeFileSync(path.join(agentDir, 'pinned.md'), 'P'.repeat(20_000), 'utf-8');
+    writeManagedLore(agentDir);
+    writeWorkspaceRuntimeLore(root, [runtimeLore({ content: 'SELECTED_WORLD_FACT' })]);
+    const prompt = agent.buildSystemPrompt({ xingyeWorkspaceRoot: root, userText: 'observatory' });
+    expect(prompt).toContain('SELECTED_WORLD_FACT');
+    expect(prompt).toContain('Stable Xingye lore summary.');
+    expect(prompt).toContain('（本段超出上下文预算，后续内容未选入）');
+    expect(prompt).not.toContain('P'.repeat(20_000));
+  });
+
+  it("keeps the end of a valid full-size scene and example even with memory sections", () => {
+    const { agent, root, agentDir } = makeAgent();
+    roots.push(root);
+    fs.writeFileSync(path.join(agentDir, 'pinned.md'), 'P'.repeat(7_900), 'utf-8');
+    fs.writeFileSync(path.join(agentDir, 'memory', 'memory.md'), 'M'.repeat(3_900), 'utf-8');
+    writeProfile(agentDir, {
+      scenario: `${'S'.repeat(1_986)}SCENE_TAIL`,
+      messageExample: `${'E'.repeat(3_988)}EXAMPLE_TAIL`,
+    });
+    const prompt = agent.buildSystemPrompt();
+    expect(prompt).toContain('SCENE_TAIL');
+    expect(prompt).toContain('EXAMPLE_TAIL');
+    expect(prompt).toContain('P'.repeat(100));
+    expect(prompt).toContain('M'.repeat(100));
+  });
+
   it("work mode <-> 角色扮演 双向对称：profile(性别/关系) + lore 与工作向 clause 互斥", () => {
     const { agent, root, agentDir } = makeAgent();
     roots.push(root);
@@ -359,7 +388,7 @@ describe("agent Xingye lore prompt", () => {
     expect(runtimeIndex).toBeGreaterThan(stableIndex);
   });
 
-  it("injects a single stable heading from lore-memory only; no bracket stable title; lore/entries.json always is not merged into chat stable", () => {
+  it("injects a single stable heading from current canonical entries without a stale mirror duplicate", () => {
     const { agent, root, agentDir } = makeAgent();
     roots.push(root);
     writeManagedLore(agentDir, "Stable from lore-memory only.");
@@ -386,8 +415,8 @@ describe("agent Xingye lore prompt", () => {
 
     expect((prompt.match(/# 星野核心设定/g) || []).length).toBe(1);
     expect(prompt).not.toContain("【星野核心设定】");
-    expect(prompt).toContain("Stable from lore-memory only.");
-    expect(prompt).not.toContain("DUPLICATE_MARKER_FROM_ENTRIES_JSON");
+    expect(prompt).not.toContain("Stable from lore-memory only.");
+    expect(prompt.split("DUPLICATE_MARKER_FROM_ENTRIES_JSON")).toHaveLength(2);
     expect(prompt).toContain("# 星野设定参考");
     expect(prompt).toContain("The moon observatory opens only during silver rain.");
     expect(prompt).not.toContain("should not be read when entries.json wins");

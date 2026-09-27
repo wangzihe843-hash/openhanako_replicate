@@ -4,6 +4,16 @@ import { Hono } from "hono";
 import { safeJson } from "../hono-helpers.ts";
 import { callText } from "../../core/llm-client.ts";
 import { isLocalBaseUrl } from "../../shared/net-utils.ts";
+import { createRequestContext } from '../http/boundary.ts';
+import {
+  readSceneSources,
+  sceneSourcePage,
+  selectSceneRange,
+  buildLocalSceneSections,
+  buildSceneModelPrompt,
+  normalizeSceneSections,
+  validateSceneCandidate,
+} from './xingye-scene-summary.js';
 import {
   appendMessage as appendChannelMessage,
   getChannelMembers,
@@ -662,7 +672,100 @@ function resolveChatCallOpts(engine, ref) {
 export function createXingyeRoute(engine) {
   const route = new Hono();
 
-  async function callWithModelFallback({ prompt, agentId, timeoutMs = 60_000, signal }) {
+  function sceneSourcesForRequest(c, agentId, sessionId) {
+    const manifest = engine.getSessionManifest?.(sessionId);
+    if (!manifest?.currentLocator?.path) throw new Error('session not found');
+    if (manifest.ownerAgentId !== agentId) throw new Error('session agent mismatch');
+    const requestContext = createRequestContext(c, engine);
+    const auth = requestContext.authPrincipal?.kind === 'unknown'
+      ? { allowed: true }
+      : requestContext.authorize('sessions.read', {
+        kind: 'session', studioId: requestContext.studioId, sessionPath: manifest.currentLocator.path,
+      });
+    if (!auth.allowed) throw Object.assign(new Error('insufficient_scope'), { status: 403 });
+    return readSceneSources(engine, agentId, sessionId);
+  }
+
+  route.get('/xingye/scene-summary/sources', (c) => {
+    try {
+      const agentId = cleanString(c.req.query('agentId'), 120);
+      const sessionId = cleanString(c.req.query('sessionId'), 180);
+      const beforeRaw = c.req.query('before');
+      const before = beforeRaw == null ? null : Number(beforeRaw);
+      if (beforeRaw != null && (!Number.isInteger(before) || before < 0)) return c.json({ error: 'invalid before cursor' }, 400);
+      const snapshot = sceneSourcesForRequest(c, agentId, sessionId);
+      return c.json({ ok: true, sessionId, branchHeadId: snapshot.branchHeadId, ...sceneSourcePage(snapshot.sources, before) });
+    } catch (err) {
+      return c.json({ error: errorDetail(err) }, err.status || 400);
+    }
+  });
+
+  route.post('/xingye/scene-summary/validate', async (c) => {
+    try {
+      const body = await safeJson(c);
+      const agentId = cleanString(body?.agentId, 120);
+      const sessionId = cleanString(body?.sessionId, 180);
+      const snapshot = sceneSourcesForRequest(c, agentId, sessionId);
+      const validation = validateSceneCandidate(snapshot.sources, body?.sourceRefs, body?.sections);
+      return c.json({ ok: true, ...validation, branchHeadId: snapshot.branchHeadId });
+    } catch (err) {
+      return c.json({ ok: false, valid: false, error: errorDetail(err) }, err.status || 400);
+    }
+  });
+
+  route.post('/xingye/scene-summary/generate', async (c) => {
+    try {
+      const body = await safeJson(c);
+      const generator = body?.generator ?? 'local';
+      if (generator !== 'local' && generator !== 'model') return c.json({ error: 'invalid scene generator' }, 400);
+      if (generator === 'model' && body?.providerConsent !== true) {
+        return c.json({ error: 'explicit provider consent is required for selected messages' }, 400);
+      }
+      const agentId = cleanString(body?.agentId, 120);
+      const sessionId = cleanString(body?.sessionId, 180);
+      const snapshot = sceneSourcesForRequest(c, agentId, sessionId);
+      const selected = selectSceneRange(snapshot.sources, body?.startEntryId, body?.endEntryId);
+      const sourceRefs = selected.map(({ entryId, hash, role }) => ({ entryId, hash, role }));
+      let sections;
+      let modelTier;
+      if (generator === 'model') {
+        try {
+          const model = await callWithModelFallback({
+            prompt: buildSceneModelPrompt(selected),
+            agentId,
+            timeoutMs: 90_000,
+            singleProvider: true,
+          });
+          modelTier = model.tier;
+          sections = normalizeSceneSections(parseModelJson(model.text)?.sections, selected);
+          if (sections.length === 0) throw new Error('model returned no reviewable scene sections');
+        } catch (err) {
+          return c.json({ ok: false, error: errorDetail(err) }, 502);
+        }
+        let current;
+        try { current = sceneSourcesForRequest(c, agentId, sessionId); }
+        catch (err) { return c.json({ ok: false, error: `scene source changed during generation: ${errorDetail(err)}` }, 409); }
+        const validation = validateSceneCandidate(current.sources, sourceRefs, sections);
+        if (!validation.valid) return c.json({ ok: false, error: validation.reason }, 409);
+      } else {
+        sections = buildLocalSceneSections(selected);
+        if (sections.length === 0) return c.json({ error: '所选消息没有可提取的完整短句，请调整范围或手工整理' }, 422);
+      }
+      return c.json({
+        ok: true,
+        generator: generator === 'model' ? 'configured-model' : 'local-evidence-extract',
+        ...(modelTier ? { modelTier } : {}),
+        sessionId,
+        branchHeadId: snapshot.branchHeadId,
+        sourceRefs,
+        sections,
+      });
+    } catch (err) {
+      return c.json({ ok: false, error: errorDetail(err) }, err.status || 400);
+    }
+  });
+
+  async function callWithModelFallback({ prompt, agentId, timeoutMs = 60_000, signal, singleProvider = false }) {
     const details = [];
     const messages = [{ role: "user", content: prompt }];
     const checkCancelled = (error) => {
@@ -672,7 +775,7 @@ export function createXingyeRoute(engine) {
     };
     checkCancelled();
 
-    const tryCall = async (opts) => callText({
+    const tryCall = (opts) => callText({
       api: opts.api,
       model: opts.model,
       apiKey: opts.apiKey,
@@ -689,7 +792,7 @@ export function createXingyeRoute(engine) {
     catch (err) { checkCancelled(err); details.push({ tier: "utility", message: errorDetail(err) }); }
     if (utilOpts) {
       try { return { tier: "utility", text: await tryCall(utilOpts), details }; }
-      catch (err) { checkCancelled(err); details.push({ tier: "utility", message: errorDetail(err) }); }
+      catch (err) { checkCancelled(err); details.push({ tier: "utility", message: errorDetail(err) }); if (singleProvider) throw err; }
     }
 
     const agent = agentId ? engine.getAgent?.(agentId) : null;
@@ -699,7 +802,7 @@ export function createXingyeRoute(engine) {
       catch (err) { checkCancelled(err); details.push({ tier: "agent-chat", message: errorDetail(err) }); }
       if (agentOpts) {
         try { return { tier: "agent-chat", text: await tryCall(agentOpts), details }; }
-        catch (err) { checkCancelled(err); details.push({ tier: "agent-chat", message: errorDetail(err) }); }
+        catch (err) { checkCancelled(err); details.push({ tier: "agent-chat", message: errorDetail(err) }); if (singleProvider) throw err; }
       }
     }
 
@@ -709,7 +812,7 @@ export function createXingyeRoute(engine) {
     catch (err) { checkCancelled(err); details.push({ tier: "current-chat", message: errorDetail(err) }); }
     if (currentOpts) {
       try { return { tier: "current-chat", text: await tryCall(currentOpts), details }; }
-      catch (err) { checkCancelled(err); details.push({ tier: "current-chat", message: errorDetail(err) }); }
+      catch (err) { checkCancelled(err); details.push({ tier: "current-chat", message: errorDetail(err) }); if (singleProvider) throw err; }
     }
 
     throw new Error(JSON.stringify(details));

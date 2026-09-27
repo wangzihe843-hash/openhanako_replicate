@@ -388,13 +388,13 @@ describe('opt-in selection diagnostics', () => {
     expect(rows.every((row) => !('content' in row))).toBe(true);
   });
 
-  it('reports shared truncation and later budget exclusion at exact budget boundaries', () => {
+  it('lets a later short entry fit before spending leftover budget on a long entry', () => {
     const entries = [baseEntry({ id: 'long', priority: 100, content: '长'.repeat(500) }), baseEntry({ id: 'short' })];
     const rows = [];
     const result = buildXingyeStableLoreMemoryContext({ entries, agentId: 'agent-a', maxChars: 200, onDecision: (row) => rows.push(row) });
     expect(result.text).toHaveLength(200);
-    expect(rows.map((row) => row.reason)).toEqual(['truncated', 'budget']);
-    expect(result.entries.map((entry) => entry.id)).toEqual(['long']);
+    expect(rows.map((row) => row.reason)).toEqual(['truncated', 'selected']);
+    expect(result.entries.map((entry) => entry.id)).toEqual(['long', 'short']);
     const zeroRows = [];
     expect(buildXingyeStableLoreMemoryContext({ entries, agentId: 'agent-a', maxChars: 0, onDecision: (row) => zeroRows.push(row) })).toEqual({ text: '', entries: [] });
     expect(zeroRows.map((row) => row.reason)).toEqual(['budget', 'budget']);

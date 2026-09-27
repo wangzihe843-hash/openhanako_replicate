@@ -74,6 +74,13 @@ describe('xingye-profile-store', () => {
     expect(await readXingyeRoleProfile('malformed-card')).not.toHaveProperty('characterCardCompatibility');
   });
 
+  it('keeps V3 source metadata and edits across a profile save and reload', async () => {
+    const metadata = { format: 'sillytavern-v3' as const, sourceCard: { spec: 'chara_card_v3', data: { nickname: 'Only archive' } }, loreEntryIds: ['st-v3-0'] };
+    await saveXingyeRoleProfile('v3-role', { scenario: 'Original', characterCardCompatibility: metadata });
+    await saveXingyeRoleProfile('v3-role', { scenario: '' });
+    expect(await readXingyeRoleProfile('v3-role')).toMatchObject({ scenario: '', characterCardCompatibility: metadata });
+  });
+
   it('preserves both patches when saves for one role overlap', async () => {
     await Promise.all([
       saveXingyeRoleProfile('parallel-role', { shortBio: 'saved biography' }),

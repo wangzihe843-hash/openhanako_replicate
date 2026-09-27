@@ -14,6 +14,12 @@ import {
   type XingyeJournalDraft,
   type XingyeJournalEntry,
 } from './xingye-journal-store';
+import {
+  createConfirmedJournalExport,
+  downloadJournalExport,
+  isConfirmedJournalExportEntry,
+  type XingyeJournalExport,
+} from './xingye-journal-export';
 import { useXingyeRoleProfile } from './xingye-profile-store';
 
 export interface PhoneJournalAppProps {
@@ -103,9 +109,14 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   const ownerProfile = useXingyeRoleProfile(ownerAgentId);
   const [entries, setEntries] = useState<XingyeJournalEntry[]>([]);
   const [pendingDrafts, setPendingDrafts] = useState<XingyeJournalDraft[]>([]);
+  const [loadedOwnerAgentId, setLoadedOwnerAgentId] = useState<string | null>(null);
+  const ownerDataCurrent = !!ownerAgentId && loadedOwnerAgentId === ownerAgentId;
+  const visiblePendingDrafts = ownerDataCurrent ? pendingDrafts : [];
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [exportPreview, setExportPreview] = useState<XingyeJournalExport | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState('');
   const [draftBody, setDraftBody] = useState('');
@@ -151,6 +162,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     if (!ownerAgentId) {
       setEntries([]);
       setPendingDrafts([]);
+      setLoadedOwnerAgentId(null);
       setDraftEdits({});
       return;
     }
@@ -164,6 +176,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
       if (seq !== reloadSeqRef.current) return; // 被更晚一轮 reload 取代，丢弃本次结果
       setEntries(rows);
       setPendingDrafts(drafts);
+      setLoadedOwnerAgentId(ownerAgentId);
     } catch (e) {
       if (seq !== reloadSeqRef.current) return;
       setListError(e instanceof Error ? e.message : String(e));
@@ -174,6 +187,8 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
 
   useEffect(() => {
     setSelectedId(null);
+    setExportPreview(null);
+    setExportError(null);
     setComposeOpen(false);
     setSaveError(null);
     setListError(null);
@@ -246,7 +261,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     if (initBusy) return;
     if (initialBootstrapTriedRef.current === ownerAgentId) return;
     // 已经有 entries 或 pendingDrafts → 视为已初始化过（或 agent 心跳已经垫了草稿），跳过。
-    if (entries.length > 0 || pendingDrafts.length > 0) {
+    if (ownerDataCurrent && (entries.length > 0 || pendingDrafts.length > 0)) {
       initialBootstrapTriedRef.current = ownerAgentId;
       return;
     }
@@ -282,6 +297,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
     initBusy,
     entries.length,
     pendingDrafts.length,
+    ownerDataCurrent,
     runInitialBootstrap,
   ]);
 
@@ -300,7 +316,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   ) => {
     setDraftEdits((prev) => {
       const base = prev[draftId] ?? null;
-      const draft = pendingDrafts.find((d) => d.id === draftId);
+      const draft = visiblePendingDrafts.find((d) => d.id === draftId);
       if (!draft) return prev;
       const current = base ?? { title: draft.title, body: draft.body, mood: draft.mood ?? '' };
       return { ...prev, [draftId]: { ...current, ...patch } };
@@ -308,7 +324,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   };
 
   const handleConfirmDraft = async (draft: XingyeJournalDraft) => {
-    if (!ownerAgentId) return;
+    if (!ownerDataCurrent) return;
     setDraftBusyId(draft.id);
     setDraftError(null);
     try {
@@ -344,7 +360,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   };
 
   const handleDiscardDraft = async (draft: XingyeJournalDraft) => {
-    if (!ownerAgentId) return;
+    if (!ownerDataCurrent) return;
     if (!window.confirm('确定丢弃这条待确认草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
       return;
     }
@@ -370,22 +386,46 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
   };
 
   const selected = useMemo(
-    () => (selectedId ? entries.find((e) => e.id === selectedId) ?? null : null),
-    [entries, selectedId],
+    () => (ownerDataCurrent && selectedId ? entries.find((e) => e.id === selectedId) ?? null : null),
+    [entries, ownerDataCurrent, selectedId],
   );
 
   const grouped = useMemo(() => {
     const map = new Map<string, XingyeJournalEntry[]>();
-    const sorted = [...entries].sort((a, b) => (a.dayKey < b.dayKey ? 1 : a.dayKey > b.dayKey ? -1 : 0));
+    const sorted = ownerDataCurrent ? [...entries].sort((a, b) => (a.dayKey < b.dayKey ? 1 : a.dayKey > b.dayKey ? -1 : 0)) : [];
     for (const e of sorted) {
       const list = map.get(e.dayKey) ?? [];
       list.push(e);
       map.set(e.dayKey, list);
     }
     return Array.from(map.entries());
-  }, [entries]);
+  }, [entries, ownerDataCurrent]);
 
   const ta = displayName || ownerAgent?.name || 'TA';
+  // AgentPhonePanel may switch owner in place. Never show or save the previous
+  // role's snapshot during the render before the owner-change effect clears it.
+  const activeExportPreview = exportPreview?.agent.id === ownerAgentId ? exportPreview : null;
+
+  const openExportPreview = (entry: XingyeJournalEntry) => {
+    if (!ownerDataCurrent || !entries.some((row) => row.id === entry.id)) return;
+    setExportError(null);
+    try {
+      // Snapshot the confirmed entry once. Preview and both downloads use these same bytes.
+      setExportPreview(createConfirmedJournalExport(entry, { id: ownerAgentId, displayName: ta }));
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const saveExport = (format: 'json' | 'html') => {
+    if (!activeExportPreview) return;
+    setExportError(null);
+    try {
+      downloadJournalExport(activeExportPreview, format);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : String(error));
+    }
+  };
 
   const openCompose = () => {
     setDraftTitle('');
@@ -530,7 +570,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
             加载失败：{listError}
           </p>
         ) : null}
-        {listLoading && entries.length === 0 ? <p className={styles.phoneAppHint}>加载中…</p> : null}
+        {listLoading && (!ownerDataCurrent || entries.length === 0) ? <p className={styles.phoneAppHint}>加载中…</p> : null}
         {initBusy ? (
           <p
             className={styles.phoneAppHint}
@@ -567,7 +607,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
               <h2 className={styles.phoneJournalPageTitle}>{ta} 的日记</h2>
             </header>
 
-            {pendingDrafts.length > 0 ? (
+            {visiblePendingDrafts.length > 0 ? (
               <section
                 className={styles.phoneJournalGroup}
                 aria-label="待确认日记草稿"
@@ -587,7 +627,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
                   </p>
                 ) : null}
                 <div className={styles.phoneJournalGroupCards}>
-                  {pendingDrafts.map((draft) => {
+                  {visiblePendingDrafts.map((draft) => {
                     const working = draftWorkingValue(draft);
                     const busy = draftBusyId === draft.id;
                     return (
@@ -666,7 +706,7 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
               </section>
             ) : null}
 
-            {grouped.length === 0 && pendingDrafts.length === 0 && !listLoading ? (
+            {grouped.length === 0 && visiblePendingDrafts.length === 0 && !listLoading ? (
               <p className={styles.phoneJournalEmpty} data-testid="phone-journal-empty">
                 还没有日记。点右下角「记」添加一条记录（写入当前角色目录，刷新或重启后仍在）。
               </p>
@@ -776,6 +816,16 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
                 >
                   去和 {ta} 聊聊这条
                 </button>
+                {isConfirmedJournalExportEntry(selected) ? (
+                  <button
+                    type="button"
+                    className={styles.phoneModalGhostButton}
+                    onClick={() => openExportPreview(selected)}
+                    data-testid={`phone-journal-export-preview-${selected.id}`}
+                  >
+                    预览并导出
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className={styles.phoneModalGhostButton}
@@ -785,6 +835,9 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
                   {deleteBusy ? '删除中…' : '删除这条日记'}
                 </button>
               </div>
+              {exportError && !activeExportPreview ? (
+                <p className={styles.phoneAppHint} role="alert">{exportError}</p>
+              ) : null}
               {sharedToChatId === selected.id ? (
                 <p
                   className={styles.phoneAppHint}
@@ -859,6 +912,38 @@ export function PhoneJournalApp({ ownerAgent, displayName, onBack }: PhoneJourna
               <button type="button" className={styles.phoneJournalPrimaryButton} onClick={() => void saveCompose()} disabled={saveBusy || draftAiBusy}>
                 {saveBusy ? '保存中…' : '保存'}
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {activeExportPreview ? (
+        <div
+          className={styles.phoneModalOverlay}
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setExportPreview(null);
+          }}
+        >
+          <div className={styles.phoneModalSheet} role="dialog" aria-modal="true" aria-labelledby="phone-journal-export-title">
+            <h3 id="phone-journal-export-title" className={styles.phoneModalTitle}>预览已确认日记</h3>
+            <div className={styles.phoneModalBody}>
+              <p className={styles.phoneAppHint}>导出的是你已确认的日记原文。JSON 和 HTML 都只保存在本地。</p>
+              <div
+                style={{ maxHeight: 260, overflowY: 'auto', padding: 16, border: '1px solid #d9c8b7', background: '#fffdf8' }}
+                data-testid="phone-journal-export-preview"
+              >
+                <strong>{activeExportPreview.entry.title}</strong>
+                <p className={styles.phoneAppHint}>
+                  {activeExportPreview.agent.displayName} · {activeExportPreview.entry.dateSmudged ? '日记日期不详' : activeExportPreview.entry.dayKey}
+                </p>
+                <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{activeExportPreview.entry.body}</p>
+              </div>
+              {exportError ? <p className={styles.phoneAppHint} role="alert">{exportError}</p> : null}
+            </div>
+            <div className={styles.phoneModalActions}>
+              <button type="button" className={styles.phoneModalGhostButton} onClick={() => setExportPreview(null)}>关闭</button>
+              <button type="button" className={styles.phoneModalGhostButton} onClick={() => saveExport('json')} data-testid="phone-journal-export-json">保存 JSON</button>
+              <button type="button" className={styles.phoneJournalPrimaryButton} onClick={() => saveExport('html')} data-testid="phone-journal-export-html">保存 HTML</button>
             </div>
           </div>
         </div>

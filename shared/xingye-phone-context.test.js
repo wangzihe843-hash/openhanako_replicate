@@ -147,6 +147,26 @@ describe('buildXingyeAgentPhoneTurnContext', () => {
     expect(out).toContain('Bob 是 Alice 多年的挚友');
   });
 
+  it('keeps a full-size card scene and dialogue example after a large profile', () => {
+    const profile = Object.fromEntries([
+      'displayName', 'shortBio', 'identitySummary', 'backgroundSummary', 'personalitySummary',
+      'behaviorLogic', 'values', 'taboos', 'speakingStyle', 'relationshipLabel', 'relationshipMode',
+    ].map((key) => [key, `${key}:${'资料'.repeat(174)}`]));
+    profile.scenario = `SCENE_START${'场景'.repeat(970)}SCENE_END`;
+    profile.messageExample = `EXAMPLE_START${'示例'.repeat(1_970)}EXAMPLE_END`;
+    writeJson('xingye/profile.json', profile);
+    const out = buildXingyeAgentPhoneTurnContext({
+      agentId: 'alice', agentDir, hanakoHome, agentName: 'Alice', locale: 'zh',
+      messageText: '[now] bob: 我刚从旧城区回来。', peerRefs: [{ id: 'bob', name: 'Bob' }],
+    });
+    expect(out).toContain('SCENE_START');
+    expect(out).toContain('SCENE_END');
+    expect(out).toContain('EXAMPLE_START');
+    expect(out).toContain('EXAMPLE_END');
+    expect(out).toContain('Bob 是 Alice 多年的挚友');
+    expect(out.length).toBeLessThanOrEqual(14_400);
+  });
+
   it('renders a legacy always peer relationship only once', () => {
     writeJson('xingye/lore/entries.json', {
       bob: { ...loreEntry('bob', 'relationship', ['bob'], 'UNIQUE LEGACY PEER RELATION'), insertionMode: 'always' },

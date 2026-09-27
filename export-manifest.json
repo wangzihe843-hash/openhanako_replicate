@@ -743,6 +743,8 @@
     "shared/reserved-agent-scopes.ts",
     "shared/xingye-expression-presets.ts",
     "shared/xingye-character-card.ts",
+    "shared/xingye-context-selection.js",
+    "shared/xingye-context-selection.d.ts",
     "shared/xingye-gift-catalog-data.ts",
     "shared/xingye-lore-context.js",
     "shared/xingye-lore-context.d.ts",

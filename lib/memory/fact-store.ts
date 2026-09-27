@@ -98,6 +98,7 @@ function hasCjk(text) {
 export class FactStore {
   declare _stmts: any;
   declare _tagSearchCache: any;
+  declare _ftsSearchCache: Map<string, { all: (params: Record<string, string | number>) => unknown[] }>;
   declare db: any;
   /**
    * @param {string} dbPath - facts.db 的路径
@@ -115,7 +116,8 @@ export class FactStore {
     this._migrate();
     this._createFtsTriggers();
     this._prepareStatements();
-    this._tagSearchCache = new Map();          // tag 数量 → prepared statement
+    this._tagSearchCache = new Map();          // tag 数量、日期条件、作用域 → prepared statement
+    this._ftsSearchCache = new Map();
   }
 
   _initSchema() {
@@ -358,12 +360,13 @@ export class FactStore {
    * @param {string[]} queryTags - 查询标签
    * @param {{ from?: string, to?: string }} [dateRange] - 可选日期范围（YYYY-MM-DD 或 YYYY-MM-DDTHH:MM）
    * @param {number} [limit=20] - 最大返回数
+   * @param {{ kind: 'channel', channelId: string } | null} [scope] - SQL LIMIT 前过滤频道作用域
    * @returns {Array<{ id, fact, tags, time, session_id, created_at, matchCount }>}
    */
-  searchByTags(queryTags, dateRange, limit = 20) {
+  searchByTags(queryTags, dateRange, limit = 20, scope: { kind: 'channel'; channelId: string } | null = null) {
     if (!queryTags || queryTags.length === 0) return [];
 
-    const stmt = this._getTagSearchStmt(queryTags.length, dateRange);
+    const stmt = this._getTagSearchStmt(queryTags.length, dateRange, scope);
 
     const params: any = { limit };
     for (let i = 0; i < queryTags.length; i++) {
@@ -371,29 +374,34 @@ export class FactStore {
     }
     if (dateRange?.from) params.dateFrom = dateRange.from;
     if (dateRange?.to) params.dateTo = dateRange.to;
+    if (scope?.kind === "channel" && scope.channelId) params.channelSession = `channel-${scope.channelId}`;
 
     const rows = stmt.all(params);
     return rows.map((row) => this._rowToFact(row));
   }
 
-  /** 按 (tagCount, dateRangeType) 缓存 prepared statement */
-  _getTagSearchStmt(tagCount, dateRange) {
+  /** 按 (tagCount, dateRangeType, scoped) 缓存 prepared statement */
+  _getTagSearchStmt(tagCount, dateRange, scope: { kind: 'channel'; channelId: string } | null = null) {
     // dateRange 类型编码：0=无, 1=from, 2=to, 3=both
     const dateKey = (dateRange?.from ? 1 : 0) | (dateRange?.to ? 2 : 0);
-    const cacheKey = `${tagCount}:${dateKey}`;
+    const scoped = scope?.kind === "channel" && !!scope.channelId;
+    const cacheKey = `${tagCount}:${dateKey}:${scoped ? 1 : 0}`;
 
     let stmt = this._tagSearchCache.get(cacheKey);
     if (stmt) return stmt;
 
     const placeholders = Array.from({ length: tagCount }, (_, i) => `@tag${i}`).join(", ");
     let dateWhere = "";
-    if (dateKey & 1) dateWhere += ` AND f.time >= @dateFrom`;
-    if (dateKey & 2) dateWhere += ` AND f.time <= @dateTo`;
+    if (dateKey & 1) dateWhere += ` AND (f.time IS NULL OR f.time >= @dateFrom)`;
+    if (dateKey & 2) dateWhere += ` AND (f.time IS NULL OR f.time <= @dateTo)`;
+    const scopeWhere = scoped
+      ? " AND (f.session_id IS NULL OR substr(f.session_id, 1, 8) <> 'channel-' OR f.session_id = @channelSession)"
+      : "";
 
     const sql = `
       SELECT f.*, COUNT(DISTINCT je.value) as matchCount
       FROM facts f, json_each(f.tags) je
-      WHERE je.value IN (${placeholders})${dateWhere}
+      WHERE je.value IN (${placeholders})${dateWhere}${scopeWhere}
       GROUP BY f.id
       ORDER BY matchCount DESC, f.time DESC
       LIMIT @limit
@@ -409,33 +417,83 @@ export class FactStore {
    *
    * @param {string} query - 搜索查询
    * @param {number} [limit=20]
+   * @param {{scope?: {kind:'channel', channelId:string}, dateRange?: {from?:string, to?:string}}} [opts]
    * @returns {Array<{ id, fact, tags, time, session_id, created_at }>}
    */
-  searchFullText(query, limit = 20) {
+  searchFullText(query, limit = 20, opts: { scope?: { kind: 'channel'; channelId: string } | null; dateRange?: { from?: string; to?: string } } = {}) {
     if (!query || !query.trim()) return [];
 
     try {
       const ftsQuery = buildFtsQuery(query);
       if (!ftsQuery) return [];
 
-      const rows = this._stmts.ftsSearch.all(ftsQuery, limit);
+      const scope = opts?.scope;
+      const dateRange = opts?.dateRange;
+      const scoped = scope?.kind === "channel" && !!scope.channelId;
+      const where = ["facts_fts MATCH @query"];
+      const params: Record<string, string | number> = { query: ftsQuery, limit };
+      if (scoped) {
+        where.push("(f.session_id IS NULL OR substr(f.session_id, 1, 8) <> 'channel-' OR f.session_id = @channelSession)");
+        params.channelSession = `channel-${scope.channelId}`;
+      }
+      if (dateRange?.from) {
+        where.push("(f.time IS NULL OR f.time >= @dateFrom)");
+        params.dateFrom = dateRange.from;
+      }
+      if (dateRange?.to) {
+        where.push("(f.time IS NULL OR f.time <= @dateTo)");
+        params.dateTo = dateRange.to;
+      }
+      let rows;
+      if (!scoped && !dateRange?.from && !dateRange?.to) {
+        rows = this._stmts.ftsSearch.all(ftsQuery, limit);
+      } else {
+        const cacheKey = `${scoped ? 1 : 0}:${dateRange?.from ? 1 : 0}:${dateRange?.to ? 1 : 0}`;
+        let stmt = this._ftsSearchCache.get(cacheKey);
+        if (!stmt) {
+          stmt = this.db.prepare(`
+            SELECT f.*, rank FROM facts_fts fts
+            JOIN facts f ON f.id = fts.rowid
+            WHERE ${where.join(" AND ")}
+            ORDER BY rank LIMIT @limit
+          `);
+          this._ftsSearchCache.set(cacheKey, stmt);
+        }
+        rows = stmt.all(params);
+      }
       if (rows.length === 0 && hasCjk(query)) {
-        return this._likeFallback(query, limit);
+        return this._likeFallback(query, limit, opts);
       }
       return rows.map((row) => this._rowToFact(row));
     } catch {
       // FTS 查询语法错误时降级为 LIKE
-      return this._likeFallback(query, limit);
+      return this._likeFallback(query, limit, opts);
     }
   }
 
   /**
    * LIKE 降级搜索（FTS 失败时使用）
    */
-  _likeFallback(query, limit) {
+  _likeFallback(query, limit, opts: { scope?: { kind: 'channel'; channelId: string } | null; dateRange?: { from?: string; to?: string } } = {}) {
+    const scope = opts?.scope;
+    const dateRange = opts?.dateRange;
+    const where = ["fact LIKE '%' || @query || '%'"];
+    const params: Record<string, string | number> = { query, limit };
+    if (scope?.kind === "channel" && scope.channelId) {
+      where.push("(session_id IS NULL OR substr(session_id, 1, 8) <> 'channel-' OR session_id = @channelSession)");
+      params.channelSession = `channel-${scope.channelId}`;
+    }
+    if (dateRange?.from) {
+      where.push("(time IS NULL OR time >= @dateFrom)");
+      params.dateFrom = dateRange.from;
+    }
+    if (dateRange?.to) {
+      where.push("(time IS NULL OR time <= @dateTo)");
+      params.dateTo = dateRange.to;
+    }
     const rows = this.db
-      .prepare(`SELECT * FROM facts WHERE fact LIKE '%' || ? || '%' ORDER BY time DESC LIMIT ?`)
-      .all(query, limit);
+      .prepare(`SELECT * FROM facts WHERE ${where.join(" AND ")} ORDER BY time DESC LIMIT @limit`)
+      .all(params);
     return rows.map((row) => this._rowToFact(row));
   }
 

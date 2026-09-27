@@ -244,10 +244,10 @@ function normalizeProfile(value: unknown, fallbackAgentId?: string): XingyeRoleP
     profile.alternateGreetings = value.alternateGreetings.filter((item): item is string => typeof item === 'string');
   }
   const compatibility = value.characterCardCompatibility;
-  if (isRecord(compatibility) && compatibility.format === 'sillytavern-v2'
+  if (isRecord(compatibility) && (compatibility.format === 'sillytavern-v2' || compatibility.format === 'sillytavern-v3')
       && isRecord(compatibility.sourceCard) && Array.isArray(compatibility.loreEntryIds)) {
     profile.characterCardCompatibility = {
-      format: 'sillytavern-v2', sourceCard: compatibility.sourceCard,
+      format: compatibility.format, sourceCard: compatibility.sourceCard,
       loreEntryIds: compatibility.loreEntryIds.filter((item): item is string => typeof item === 'string'),
     };
   }

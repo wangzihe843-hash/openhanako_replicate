@@ -70,6 +70,7 @@ import {
 import styles from './XingyeShell.module.css';
 
 interface SecretSpacePanelProps {
+  onNavigateSceneSource?: (sessionId: string, entryId: string) => Promise<void>;
   agent: Agent | null;
 }
 
@@ -222,7 +223,7 @@ function isSecretSpaceManualAppendDebugEnabled(): boolean {
   return typeof process !== 'undefined' && process.env.NODE_ENV === 'development';
 }
 
-export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
+export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePanelProps) {
   const { profile, loading: profileLoading, error: profileError } = useXingyeRoleProfileState(agent?.id);
   const [view, setView] = useState<'home' | 'category' | 'forum'>('home');
   const [activeCategory, setActiveCategory] = useState<SecretSpaceCategoryId | null>(null);
@@ -1015,7 +1016,7 @@ export function SecretSpacePanel({ agent }: SecretSpacePanelProps) {
             {pushPinnedFlash}
           </p>
         ) : null}
-        <MemoryCandidatePanel agentId={agent.id} agentName={agent.name} />
+        <MemoryCandidatePanel agentId={agent.id} agentName={agent.name} onNavigateSceneSource={onNavigateSceneSource} />
       </div>
     ) : null;
 

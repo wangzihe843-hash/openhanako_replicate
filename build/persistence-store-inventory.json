@@ -6023,7 +6023,7 @@
     {
       "sourceFile": "lib/character-cards/service.ts",
       "kind": "atomic-write",
-      "excerpt": "writeJsonFile(path.join(plan.packageRoot, \"sillytavern-v2.json\"), stCard)",
+      "excerpt": "writeJsonFile(path.join(plan.packageRoot, sillyTavern.format === 'sillytavern-v3' ? 'sillytavern-v3.json' : 'sillytavern-v2.json'), sillyTavern.card)",
       "reason": "Writes or removes a token-scoped character-card import/export plan or package.",
       "storeId": "character-card-staging",
       "exemptionId": null,
@@ -6042,6 +6042,15 @@
       "sourceFile": "lib/character-cards/service.ts",
       "kind": "copy-file",
       "excerpt": "fs.copyFileSync(sourcePath, path.join(packageRoot, `card${path.extname(sourcePath).toLowerCase()}`))",
+      "reason": "Writes or removes a token-scoped character-card import/export plan or package.",
+      "storeId": "character-card-staging",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/character-cards/service.ts",
+      "kind": "copy-file",
+      "excerpt": "fs.copyFileSync(sourcePath, pngPath)",
       "reason": "Writes or removes a token-scoped character-card import/export plan or package.",
       "storeId": "character-card-staging",
       "exemptionId": null,
@@ -6123,6 +6132,15 @@
       "sourceFile": "lib/character-cards/service.ts",
       "kind": "remove-path",
       "excerpt": "fsp.rm(exportRoot, { recursive: true, force: true })",
+      "reason": "Writes or removes a token-scoped character-card import/export plan or package.",
+      "storeId": "character-card-staging",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/character-cards/service.ts",
+      "kind": "write-file",
+      "excerpt": "fs.writeFileSync(dst, stripSillyTavernPngCharacterMetadata(fs.readFileSync(sourcePath)))",
       "reason": "Writes or removes a token-scoped character-card import/export plan or package.",
       "storeId": "character-card-staging",
       "exemptionId": null,

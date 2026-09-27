@@ -1371,7 +1371,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     identityContract: "Random token owns one staging subtree; staged paths never become agent or skill identities.",
     siteRules: [
       ...rules(["server/routes/character-cards.ts"], "Writes a bounded character-card upload package."),
-      ...rules(["lib/character-cards/service.ts"], "Writes or removes a token-scoped character-card import/export plan or package.", ["mkdir", "write-file", "copy-file", "remove-path", "atomic-write"], "(?:filePath, JSON[.]stringify|packageRoot|stageDir|exportRoot)"),
+      ...rules(["lib/character-cards/service.ts"], "Writes or removes a token-scoped character-card import/export plan or package.", ["mkdir", "write-file", "copy-file", "remove-path", "atomic-write"], "(?:filePath, JSON[.]stringify|packageRoot|pngPath|stripSillyTavernPngCharacterMetadata|stageDir|exportRoot)"),
     ],
   }),
   defineStore({

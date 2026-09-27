@@ -91,6 +91,34 @@ describe("sessions route", () => {
     retrySessionTurnMock.mockResolvedValue({ text: null, toolMedia: [] });
   });
 
+  it("returns only the scoped task presentation projection for an existing session", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const app = new Hono();
+    const presentationStatusForSession = vi.fn(() => ({
+      sequence: 8,
+      serverTime: 500,
+      tasks: [{ taskId: "task-a", status: "blocked", updatedAt: 123 }],
+      changes: [],
+    }));
+    app.route("/api", createSessionsRoute({
+      agentsDir: "/tmp/agents",
+      getSessionManifest: vi.fn(() => ({ currentLocator: { path: "/tmp/agents/a/sessions/a.jsonl" } })),
+      taskRegistry: { presentationStatusForSession },
+    }));
+
+    const response = await app.request("/api/sessions/presentation-status?sessionId=sess_a&afterSequence=4");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      sequence: 8,
+      serverTime: 500,
+      tasks: [{ taskId: "task-a", status: "blocked", updatedAt: 123 }],
+      changes: [],
+    });
+    expect(presentationStatusForSession).toHaveBeenCalledWith({
+      parentSessionId: "sess_a", parentSessionPath: "/tmp/agents/a/sessions/a.jsonl",
+    }, 4);
+  });
+
   it("restores browser state for the target session after switch", async () => {
     const { createSessionsRoute } = await import("../server/routes/sessions.ts");
     const app = new Hono();

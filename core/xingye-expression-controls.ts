@@ -1,4 +1,5 @@
 import { normalizeSessionTurnContext } from './session-turn-context.ts';
+import { selectXingyeContextSections } from '../shared/xingye-context-selection.js';
 import {
   normalizeXingyeExpressionPresets,
   formatXingyeExpressionPresets,
@@ -97,9 +98,17 @@ export function prepareXingyeExpressionTurn(engine: ExpressionEngine, sessionId:
   if (engine.getSessionManifest?.(state.sessionId)?.currentLocator?.path !== sessionPath) {
     throw new Error('expression controls session locator mismatch');
   }
-  const lines = [formatXingyeExpressionPresets(state.presets, state.scene?.presets)];
-  if (state.scene?.text) lines.push(`【临时场景指令】\n${state.scene.text}`);
-  const content = lines.filter(Boolean).join('\n\n');
+  const scope = { agentId: state.agentId, sessionId };
+  const presetsText = formatXingyeExpressionPresets(state.presets, state.scene?.presets);
+  const content = selectXingyeContextSections({
+    context: scope,
+    maxChars: 2_800,
+    sourceBudgets: { 'expression-presets': 800, 'scene-instruction': 2_100 },
+    sections: [
+      { id: 'expression-presets', source: 'expression-presets', scope, priority: 100, text: presetsText },
+      { id: 'scene-instruction', source: 'scene-instruction', scope, priority: 90, text: state.scene?.text ? `【临时场景指令】\n${state.scene.text}` : '' },
+    ],
+  }).text;
   const system = content ? [base?.system, '以下表达控制仅适用于当前角色的本次执行，不作为永久人格或长期记忆。不要替用户决定行动、心理或回应。', content].filter(Boolean).join('\n\n') : base?.system;
   let accepted = false;
   return {

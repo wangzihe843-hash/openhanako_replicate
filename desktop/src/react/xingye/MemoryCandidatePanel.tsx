@@ -13,9 +13,12 @@ import {
   importanceLevelFromNumber,
   importanceNumberFromLevel,
   rejectXingyeMemoryCandidate,
+  sceneSummaryContent,
+  setXingyeSceneCandidateValidity,
   type XingyeMemoryCandidate,
   type XingyeMemoryCandidateImportanceLevel,
   type XingyeMemoryCandidateStatus,
+  type XingyeSceneSection,
   updateXingyeMemoryCandidate,
   useXingyeMemoryCandidates,
   XINGYE_MEMORY_CANDIDATE_IMPORTANCE_UI_OPTIONS,
@@ -62,9 +65,10 @@ interface MemoryCandidatePanelProps {
   agentId: string | null;
   /** 写入目标助手展示名（与 agentId 对应） */
   agentName?: string | null;
+  onNavigateSceneSource?: (sessionId: string, entryId: string) => Promise<void>;
 }
 
-export function MemoryCandidatePanel({ agentId, agentName }: MemoryCandidatePanelProps) {
+export function MemoryCandidatePanel({ agentId, agentName, onNavigateSceneSource }: MemoryCandidatePanelProps) {
   const candidates = useXingyeMemoryCandidates(agentId);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [flash, setFlash] = useState<string | null>(null);
@@ -78,9 +82,10 @@ export function MemoryCandidatePanel({ agentId, agentName }: MemoryCandidatePane
   const settingsReady = useSettingsStore(s => s.ready);
 
   const writeTargetLabel = agentName?.trim() ? `${agentName.trim()} / ${agentId}` : (agentId ?? '');
+  const hasPinnedCandidates = candidates.some(candidate => candidate.target === 'pinned');
 
   const reloadRemotePins = useCallback(async () => {
-    if (!agentId) return;
+    if (!agentId || !hasPinnedCandidates) return;
     setRemotePinsError(null);
     try {
       const pins = await loadAgentPinnedMemory(agentId, hanaFetch);
@@ -89,7 +94,7 @@ export function MemoryCandidatePanel({ agentId, agentName }: MemoryCandidatePane
       setRemotePins(null);
       setRemotePinsError(e instanceof Error ? e.message : String(e));
     }
-  }, [agentId]);
+  }, [agentId, hasPinnedCandidates]);
 
   useEffect(() => {
     if (!agentId) {
@@ -144,23 +149,23 @@ export function MemoryCandidatePanel({ agentId, agentName }: MemoryCandidatePane
   return (
     <section className={styles.memoryCandidatePanel} data-testid="memory-candidate-panel">
       <header className={styles.memoryCandidateHeader}>
-        <p className={styles.memoryCandidateKicker}>OPENHANAKO · PINNED MEMORY</p>
-        <h4 className={styles.memoryCandidateTitle}>重要记忆候选</h4>
+        <p className={styles.memoryCandidateKicker}>OPENHANAKO · REVIEW</p>
+        <h4 className={styles.memoryCandidateTitle}>重要记忆与场景候选</h4>
         <p className={styles.memoryCandidateWriteTarget} data-testid="memory-candidate-write-target">
-          <span className={styles.memoryCandidateWriteTargetArrow}>↳ 将写入</span>
+          <span className={styles.memoryCandidateWriteTargetArrow}>↳ 当前角色</span>
           <span className={styles.memoryCandidateWriteTargetChip}>{writeTargetLabel}</span>
         </p>
-        {chatMismatch ? (
+        {hasPinnedCandidates && chatMismatch ? (
           <p className={styles.memoryCandidateNotice} role="status">
             当前 OpenHanako 聊天助手为「{currentChatAgentName}」；与上述写入目标不同。设置页默认展示当前助手时，请切换到写入目标对应的助手卡片后再查看「置顶记忆」。
           </p>
         ) : null}
-        {settingsMismatch ? (
+        {hasPinnedCandidates && settingsMismatch ? (
           <p className={styles.memoryCandidateNotice} role="status">
             若设置页正在浏览其他助手，需切换到与写入目标相同的助手后才能看到这条置顶记忆。
           </p>
         ) : null}
-        {remotePinsError ? (
+        {hasPinnedCandidates && remotePinsError ? (
           <p className={styles.memoryCandidateError} role="alert">
             无法与服务器对账 pinned：{remotePinsError}
           </p>
@@ -214,6 +219,7 @@ export function MemoryCandidatePanel({ agentId, agentName }: MemoryCandidatePane
               remotePins={remotePins}
               onBusy={(id) => setBusyId(id)}
               onFlash={showFlash}
+              onNavigateSceneSource={onNavigateSceneSource}
             />
           ))}
         </ul>
@@ -230,6 +236,7 @@ function MemoryCandidateCard({
   remotePins,
   onBusy,
   onFlash,
+  onNavigateSceneSource,
 }: {
   agentId: string;
   writeTargetLabel: string;
@@ -238,27 +245,72 @@ function MemoryCandidateCard({
   remotePins: string[] | null;
   onBusy: (id: string | null) => void;
   onFlash: (msg: string) => void;
+  onNavigateSceneSource?: (sessionId: string, entryId: string) => Promise<void>;
 }) {
   const [draftContent, setDraftContent] = useState(c.content);
   const [draftReason, setDraftReason] = useState(c.reason ?? '');
   const [draftLevel, setDraftLevel] = useState<XingyeMemoryCandidateImportanceLevel>(() =>
     importanceLevelFromNumber(c.importance),
   );
+  const [draftSections, setDraftSections] = useState<XingyeSceneSection[]>(c.sceneSummary?.sections ?? []);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [validating, setValidating] = useState(false);
+  const sceneSectionsSignature = JSON.stringify(c.sceneSummary?.sections ?? []);
+  const sceneSourcesSignature = JSON.stringify(c.sceneSummary?.sourceRefs ?? []);
+  const sceneSessionId = c.sceneSummary?.sessionId;
 
   useEffect(() => {
     setDraftContent(c.content);
     setDraftReason(c.reason ?? '');
     setDraftLevel(importanceLevelFromNumber(c.importance));
-  }, [c.id, c.content, c.reason, c.importance, c.updatedAt]);
+    setDraftSections(JSON.parse(sceneSectionsSignature) as XingyeSceneSection[]);
+  }, [c.id, c.content, c.reason, c.importance, sceneSectionsSignature]);
+
+  useEffect(() => {
+    if (!sceneSessionId) return;
+    let active = true;
+    setValidating(true);
+    setValidationError(null);
+    void (async () => {
+      try {
+        const response = await hanaFetch('/api/xingye/scene-summary/validate', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId,
+            sessionId: sceneSessionId,
+            sourceRefs: JSON.parse(sceneSourcesSignature),
+            sections: JSON.parse(sceneSectionsSignature),
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          if (active && response.status === 400 && /session|source|branch/i.test(String(data?.error || ''))) {
+            setXingyeSceneCandidateValidity(agentId, c.id, 'stale');
+          }
+          throw new Error(data?.error || '无法复核场景来源');
+        }
+        if (!active) return;
+        setXingyeSceneCandidateValidity(agentId, c.id, data.valid === true ? 'valid' : 'stale');
+        if (!data.valid) setValidationError(data.reason || '原消息已变化');
+      } catch (error) {
+        if (active) setValidationError(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (active) setValidating(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [agentId, c.id, sceneSessionId, sceneSourcesSignature, sceneSectionsSignature]);
 
   const canEdit = c.status === 'pending';
   const targetWritable = isXingyeMemoryTargetWritable(c.target);
-  const canConfirm = c.status === 'pending' && targetWritable;
+  const sceneEditsDirty = !!c.sceneSummary && JSON.stringify(draftSections) !== JSON.stringify(c.sceneSummary.sections);
+  const canConfirm = c.status === 'pending' && targetWritable
+    && (!c.sceneSummary || (!sceneEditsDirty && !validating && !validationError && c.sceneSummary.validity === 'valid'));
   const confirmBlockedReason =
     c.status === 'pending' && !targetWritable ? getXingyeMemoryCandidateConfirmBlockedReason(c.target) : '';
 
   const writtenButMissingFromPinned =
-    c.status === 'written' &&
+    c.target === 'pinned' && c.status === 'written' &&
     remotePins !== null &&
     !pinnedListContainsNormalizedContent(remotePins, c.content);
 
@@ -267,6 +319,17 @@ function MemoryCandidateCard({
   const handleSaveEdits = () => {
     if (!canEdit) return;
     try {
+      if (c.sceneSummary) {
+        if (draftSections.length === 0) throw new Error('请保留至少一条场景条目');
+        const sections = draftSections.filter(section => section.text.trim()).map(section => ({ ...section, text: section.text.trim() }));
+        if (sections.length === 0) throw new Error('场景条目不能为空');
+        updateXingyeMemoryCandidate(agentId, c.id, {
+          content: sceneSummaryContent(sections),
+          sceneSummary: { ...c.sceneSummary, sections, validity: 'unknown' },
+        });
+        onFlash('已保存场景修改，正在重新核对原消息。');
+        return;
+      }
       updateXingyeMemoryCandidate(agentId, c.id, {
         content: draftContent,
         reason: draftReason.trim() || undefined,
@@ -297,7 +360,9 @@ function MemoryCandidateCard({
     try {
       const { alreadyInPinned } = await confirmXingyeMemoryCandidate(agentId, c.id);
       onFlash(
-        alreadyInPinned
+        c.target === 'scene_archive'
+          ? '场景摘要已采纳并保存在当前角色档案；不会自动进入对话上下文。'
+          : alreadyInPinned
           ? `pinned 中已有相同内容；已标记为已写入。（目标：${writeTargetLabel}）`
           : `已成功写入 OpenHanako pinned。（目标：${writeTargetLabel}）`,
       );
@@ -323,7 +388,7 @@ function MemoryCandidateCard({
           className={styles.memoryCandidateStatusText}
           data-testid={`memory-candidate-status-${c.id}`}
         >
-          {statusLabel(c.status)}
+          {c.target === 'scene_archive' && c.status === 'written' ? '已采纳' : statusLabel(c.status)}
         </strong>
         {writtenButMissingFromPinned ? (
           <span
@@ -341,9 +406,9 @@ function MemoryCandidateCard({
           目标 · {getXingyeMemoryTargetLabel(c.target)}
         </span>
         {c.sourceDomain ? (
-          <span className={styles.memoryCandidateChip}>来源 · {c.sourceDomain}</span>
+          <span className={styles.memoryCandidateChip}>来源 · {c.sourceDomain === 'scene_summary' ? '场景摘要' : c.sourceDomain}</span>
         ) : null}
-        <span className={styles.memoryCandidateImportance} title={`重要度：${formatMemoryCandidateImportanceLabel(c.importance)}`}>
+        {!c.sceneSummary ? <span className={styles.memoryCandidateImportance} title={`重要度：${formatMemoryCandidateImportanceLabel(c.importance)}`}>
           <span className={styles.memoryCandidateImportanceLabel}>重要度</span>
           <span className={styles.memoryCandidateImportanceTrack} data-level={importanceLevel}>
             <span /><span /><span />
@@ -351,7 +416,7 @@ function MemoryCandidateCard({
           <span className={styles.memoryCandidateImportanceText}>
             {formatMemoryCandidateImportanceLabel(c.importance)}
           </span>
-        </span>
+        </span> : null}
       </div>
 
       {writtenButMissingFromPinned ? (
@@ -371,7 +436,36 @@ function MemoryCandidateCard({
         </p>
       ) : null}
 
-      {canEdit ? (
+      {c.sceneSummary ? (
+        <div className={styles.memoryCandidateForm} data-testid={`scene-summary-${c.id}`}>
+          <p className={styles.memoryCandidateNotice}>原消息 {c.sceneSummary.sourceRefs.length} 条 · {validating ? '正在复核来源' : c.sceneSummary.validity === 'stale' ? '来源已失效' : c.sceneSummary.validity === 'valid' ? '来源已核对' : '待复核'}</p>
+          {validationError ? <p role="alert" className={styles.memoryCandidateBlocked}>{validationError}</p> : null}
+          {(canEdit ? draftSections : c.sceneSummary.sections).map((section, index) => (
+            <div key={`${c.id}-${index}`} className={styles.memoryCandidateField}>
+              <strong>{section.inference ? '推断 / 归纳' : '原文直证'}</strong>
+              {canEdit ? (
+                <>
+                  <select aria-label={`场景条目 ${index + 1} 类别`} value={section.kind} onChange={event => setDraftSections(prev => prev.map((item, i) => i === index ? { ...item, kind: event.target.value as XingyeSceneSection['kind'], inference: true, evidence: [] } : item))}>
+                    <option value="role">角色</option><option value="location">地点</option><option value="event">关键事件</option><option value="open_thread">未决事项</option>
+                  </select>
+                  <textarea aria-label={`场景条目 ${index + 1} 内容`} rows={2} value={section.text} onChange={event => setDraftSections(prev => prev.map((item, i) => i === index ? { ...item, text: event.target.value, inference: true, evidence: [] } : item))} />
+                  <button type="button" onClick={() => setDraftSections(prev => prev.filter((_, i) => i !== index))}>移除条目</button>
+                </>
+              ) : <p>{section.text}</p>}
+              {section.evidence.map(evidence => (
+                <button key={`${evidence.entryId}-${evidence.quote}`} type="button" onClick={() => {
+                  if (onNavigateSceneSource) void onNavigateSceneSource(c.sceneSummary!.sessionId, evidence.entryId).catch(error => onFlash(error instanceof Error ? error.message : String(error)));
+                }} disabled={!onNavigateSceneSource} title="跳转到当前分支的原消息">
+                  原文：{evidence.quote.slice(0, 120)} ↗
+                </button>
+              ))}
+            </div>
+          ))}
+          {canEdit ? <button type="button" onClick={() => setDraftSections(prev => [...prev, { kind: 'event', text: '', inference: true, evidence: [] }])}>新增推断 / 归纳</button> : null}
+        </div>
+      ) : null}
+
+      {canEdit && !c.sceneSummary ? (
         <div className={styles.memoryCandidateForm}>
           <label className={styles.memoryCandidateField}>
             <span>内容</span>
@@ -434,12 +528,18 @@ function MemoryCandidateCard({
             ) : null}
           </div>
         </div>
-      ) : (
+      ) : !c.sceneSummary ? (
         <div className={styles.memoryCandidateBodyRead}>
           <p className={styles.memoryCandidateBody}>{c.content}</p>
           {c.reason ? <aside className={styles.memoryCandidateReason}>{c.reason}</aside> : null}
         </div>
-      )}
+      ) : c.status === 'pending' ? (
+        <div className={styles.memoryCandidateActions}>
+          <button type="button" className={styles.memoryCandidateAction} onClick={handleSaveEdits} disabled={busy}>保存场景修改</button>
+          <button type="button" className={styles.memoryCandidateAction} onClick={() => void handleReject()} disabled={busy}>放弃</button>
+          <button type="button" className={styles.memoryCandidateActionPrimary} onClick={() => void handleConfirm()} disabled={busy || !canConfirm}>采纳场景</button>
+        </div>
+      ) : null}
 
       <div className={styles.memoryCandidateFooter}>
         <span>创建 {formatTs(c.createdAt)}</span>
@@ -448,7 +548,7 @@ function MemoryCandidateCard({
         {c.writtenAt ? (
           <>
             <span className={styles.memoryCandidateFooterSep}>·</span>
-            <span>写入 {formatTs(c.writtenAt)}</span>
+            <span>{c.target === 'scene_archive' ? '采纳' : '写入'} {formatTs(c.writtenAt)}</span>
           </>
         ) : null}
       </div>

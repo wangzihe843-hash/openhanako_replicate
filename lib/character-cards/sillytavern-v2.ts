@@ -6,17 +6,22 @@ const text = (value: unknown): string => typeof value === 'string' ? value : '';
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
-export function adaptSillyTavernV2Card(input: unknown) {
+export function adaptSillyTavernV2Card(input: unknown, { allowV3 = false }: { allowV3?: boolean } = {}) {
   if (!record(input) || !('spec' in input)) return null;
-  if (input.spec !== 'chara_card_v2' || input.spec_version !== '2.0' || !record(input.data)) {
-    throw new Error('Only SillyTavern V2 JSON (chara_card_v2, version 2.0) is supported. PNG/V3 are not supported yet.');
+  const isV3 = allowV3 && input.spec === 'chara_card_v3' && input.spec_version === '3.0';
+  if ((!isV3 && (input.spec !== 'chara_card_v2' || input.spec_version !== '2.0')) || !record(input.data)) {
+    throw new Error(allowV3
+      ? 'Only SillyTavern V2/V3 cards (chara_card_v2 2.0 or chara_card_v3 3.0) are supported.'
+      : 'Only SillyTavern V2 JSON (chara_card_v2, version 2.0) is supported. PNG/V3 are not supported yet.');
   }
   const data = input.data;
   if (!text(data.name).trim()) throw new Error('SillyTavern data.name is required');
+  const format: CharacterCardCompatibility['format'] = isV3 ? 'sillytavern-v3' : 'sillytavern-v2';
+  const loreIdPrefix = isV3 ? 'st-v3' : 'st-v2';
   const report: CharacterCardImportReport = {
-    format: 'sillytavern-v2',
+    format,
     mapped: ['name → 角色名', 'description / personality → 人设', 'scenario → 默认场景（2000 字符预算）', 'first_mes / alternate_greetings → 可选开场', 'mes_example → 表达示例（4000 字符预算）'],
-    retained: ['原始 JSON、作者/标签/版本、未知字段与 extensions 保留；导出包含更新后的 SillyTavern V2 JSON', '这是字段子集适配，不等同完整 V2 前端语义；场景/开场/示例仅替换 {{char}} / {{user}}'],
+    retained: [`原始 JSON、作者/标签/版本、未知字段与 extensions 保留；导出包含更新后的 SillyTavern ${isV3 ? 'V3' : 'V2'} JSON`, `这是字段子集适配，不等同完整 ${isV3 ? 'V3' : 'V2'} 前端语义；场景/开场/示例仅替换 {{char}} / {{user}}`],
     manual: [],
     creatorNotes: text(data.creator_notes),
   };
@@ -30,12 +35,20 @@ export function adaptSillyTavernV2Card(input: unknown) {
     if (data[field]) report.retained.push(`${field}：仅保留，不替换平台提示或授权`);
   }
   if (record(data.extensions) && Object.keys(data.extensions).length) report.retained.push('卡片扩展、正则、脚本、资源引用不执行');
+  if (isV3) {
+    report.retained.push('V3 原始元数据保留；只映射与 V2 相同的角色字段，不执行 V3 扩展语义');
+    if (data.nickname !== undefined) report.manual.push('V3 nickname 保留；不改变 {{char}} 替换或角色名');
+    if (data.group_only_greetings !== undefined) report.retained.push('V3 group_only_greetings 保留；不作为普通开场启用');
+    if (data.creator_notes_multilingual !== undefined) report.retained.push('V3 多语言作者说明保留；预览显示原始 creator_notes');
+    if (data.assets !== undefined) report.retained.push('V3 assets 引用保留；仅 PNG 自身画像作为头像，不获取外部或嵌入资源');
+  }
   const promptValues = ['description', 'personality', 'scenario', 'first_mes', 'mes_example'].map(key => text(data[key]));
   promptValues.push(...strings(data.alternate_greetings));
   if (promptValues.some(value => /\{\{(?!char\}\}|user\}\})[^}]+\}\}|<%/i.test(value))) report.manual.push('仅替换 {{char}} / {{user}}；其它宏和模板保持文本，请人工调整');
   if ([text(data.first_mes), ...strings(data.alternate_greetings)].some(value => value.length > 16_000)) report.manual.push('开场超过 16000 字符：保留原文，开始新聊天前需缩短');
   if ([text(data.description), text(data.personality)].some(value => /\{\{|<%/.test(value))) report.manual.push('人格文本中的宏保持原文，请人工替换；不会执行模板');
   const lore: JsonRecord[] = [];
+  const loreSourceIndices: Record<string, number> = {};
   const book = data.character_book;
   if (book !== undefined && (!record(book) || !Array.isArray(book.entries))) report.manual.push('character_book 结构无效：仅保留原始数据');
   if (record(book) && Array.isArray(book.entries)) {
@@ -47,13 +60,19 @@ export function adaptSillyTavernV2Card(input: unknown) {
         return;
       }
       if (/\{\{|<%/.test(text(raw.content))) report.manual.push(`世界书条目 ${index + 1} 的宏保持原文，请人工替换`);
-      const unsupported = raw.selective === true || raw.case_sensitive === true
-        || (record(raw.extensions) && Object.keys(raw.extensions).length > 0);
+      // CCv3 decorators can override activation (including @@dont_activate and
+      // @@activate). Until those semantics are implemented, never auto-enable
+      // an entry that contains a decorator line.
+      const hasV3Decorator = isV3 && /(?:^|\r?\n)[ \t]*@{2,3}[A-Za-z_]+(?:[ \t]|\r?\n|$)/.test(text(raw.content));
+      const unsupported = raw.selective === true || raw.case_sensitive === true || (isV3 && raw.use_regex !== undefined && raw.use_regex !== false)
+        || hasV3Decorator || (record(raw.extensions) && Object.keys(raw.extensions).length > 0);
       const keywords = strings(raw.keys).map(item => item.trim()).filter(Boolean);
       const validMode = raw.constant === true || keywords.length > 0;
-      if (unsupported || !validMode) report.manual.push(`世界书条目 ${index + 1}：${unsupported ? '选择/大小写/扩展规则尚未适配' : '没有激活关键词'}，以禁用的手动条目导入`);
+      if (unsupported || !validMode) report.manual.push(`世界书条目 ${index + 1}：${unsupported ? '选择/大小写/正则/装饰器/扩展规则尚未适配' : '没有激活关键词'}，以禁用的手动条目导入`);
+      const id = `${loreIdPrefix}-${index}`;
+      loreSourceIndices[id] = index;
       lore.push({
-        id: `st-v2-${index}`, title: text(raw.name) || text(raw.comment) || `Worldbook ${index + 1}`,
+        id, title: text(raw.name) || text(raw.comment) || `Worldbook ${index + 1}`,
         content: text(raw.content), category: 'worldview', keywords,
         enabled: raw.enabled === true && !unsupported && validMode,
         priority: typeof raw.priority === 'number' && Number.isFinite(raw.priority) ? Math.max(0, Math.min(100, Math.round(raw.priority))) : 100,
@@ -64,7 +83,9 @@ export function adaptSillyTavernV2Card(input: unknown) {
     report.mapped.push(`character_book → ${lore.length} 条角色设定（constant / keys / enabled；使用现有 canonical 可见性和优先级）`);
     report.retained.push('世界书 insertion_order / position 保留，不复刻酒馆插入位置；priority 限定为现有 0–100');
   }
-  const metadata: CharacterCardCompatibility = { format: 'sillytavern-v2', sourceCard: copy(input), loreEntryIds: lore.map(entry => String(entry.id)) };
+  const metadata: CharacterCardCompatibility = {
+    format, sourceCard: copy(input), loreEntryIds: lore.map(entry => String(entry.id)), loreSourceIndices,
+  };
   return {
     card: {
       kind: 'CharacterCard',
@@ -87,9 +108,9 @@ export function adaptSillyTavernV2Card(input: unknown) {
 }
 
 /** Export current normalized values over source data; empty/deleted values never resurrect. */
-export function exportSillyTavernV2Card(profile: JsonRecord | null, lore: JsonRecord[], name: string): JsonRecord | null {
+function exportSillyTavernCard(profile: JsonRecord | null, lore: JsonRecord[], name: string, format: CharacterCardCompatibility['format']) {
   const metadata = profile?.characterCardCompatibility;
-  if (!record(metadata) || metadata.format !== 'sillytavern-v2' || !record(metadata.sourceCard)) return null;
+  if (!record(metadata) || metadata.format !== format || !record(metadata.sourceCard)) return null;
   const card = copy(metadata.sourceCard);
   const data = record(card.data) ? card.data : {};
   card.data = data;
@@ -102,26 +123,74 @@ export function exportSillyTavernV2Card(profile: JsonRecord | null, lore: JsonRe
   data.mes_example = text(profile?.messageExample);
   const book = record(data.character_book) ? data.character_book : {};
   const originals = Array.isArray(book.entries) ? book.entries : [];
-  const mappedIds = new Set(strings(metadata.loreEntryIds));
-  const currentIds = new Set(lore.map(entry => text(entry.id)));
-  const entries: unknown[] = originals.filter((_entry, index) => !mappedIds.has(`st-v2-${index}`));
+  const mappedIds = strings(metadata.loreEntryIds);
+  const loreIdPrefix = format === 'sillytavern-v3' ? 'st-v3' : 'st-v2';
+  const sourceIndices = record(metadata.loreSourceIndices) ? metadata.loreSourceIndices : null;
+  const originalIndexById = new Map<string, number>();
+  const mappedOriginalIndices = new Set<number>();
+  const oldIdPattern = new RegExp(`^${loreIdPrefix}-(\\d+)$`);
+  for (const id of mappedIds) {
+    // Older profiles only have IDs whose numeric suffix is the original index.
+    // New native exports carry explicit indices because deletion/reordering and
+    // newly created lore make that suffix stale after the first export.
+    const oldSuffix = oldIdPattern.exec(id);
+    const index = sourceIndices ? sourceIndices[id] : oldSuffix ? Number(oldSuffix[1]) : -1;
+    if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0 || index >= originals.length || mappedOriginalIndices.has(index)) {
+      throw new Error(`Invalid SillyTavern lore source index for ${id}`);
+    }
+    originalIndexById.set(id, index);
+    mappedOriginalIndices.add(index);
+  }
+  const entries: unknown[] = originals.filter((_entry, index) => !mappedOriginalIndices.has(index));
+  const nextSourceIndices = new Map<string, number>();
+  const nextMappedIds: string[] = [];
   for (const entry of lore) {
     const id = text(entry.id);
-    const index = /^st-v2-(\d+)$/.exec(id);
-    const raw = index && mappedIds.has(id) ? originals[Number(index[1])] : null;
+    if (!id || nextSourceIndices.has(id)) throw new Error('Character card lore IDs must be unique and nonempty');
+    const raw = originalIndexById.has(id) ? originals[originalIndexById.get(id)!] : null;
     const original = record(raw) ? copy(raw) : {};
+    const enabled = entry.enabled === true && entry.visibility === 'canonical' && entry.insertionMode !== 'manual';
+    const nextIndex = entries.length;
     entries.push({
       ...original,
       name: text(entry.title), content: text(entry.content), keys: strings(entry.keywords),
-      enabled: entry.enabled === true && entry.visibility === 'canonical' && entry.insertionMode !== 'manual',
+      enabled,
       constant: entry.insertionMode === 'always', priority: entry.priority,
-      insertion_order: typeof original.insertion_order === 'number' ? original.insertion_order : entries.length,
+      ...(format === 'sillytavern-v3' && enabled ? { use_regex: false } : {}),
+      insertion_order: typeof original.insertion_order === 'number' ? original.insertion_order : nextIndex,
       extensions: record(original.extensions) ? original.extensions : {},
     });
+    nextMappedIds.push(id);
+    nextSourceIndices.set(id, nextIndex);
   }
   // The source list is archival; only still-present mapped entries enter the exported book.
-  if (record(data.character_book) || entries.length || currentIds.size) data.character_book = { ...book, extensions: record(book.extensions) ? book.extensions : {}, entries };
-  return card;
+  if (record(data.character_book) || entries.length) data.character_book = { ...book, extensions: record(book.extensions) ? book.extensions : {}, entries };
+  const compatibility: CharacterCardCompatibility = {
+    format, sourceCard: copy(card), loreEntryIds: nextMappedIds, loreSourceIndices: Object.fromEntries(nextSourceIndices),
+  };
+  return { card, compatibility };
+}
+
+export function exportSillyTavernV2Card(profile: JsonRecord | null, lore: JsonRecord[], name: string): JsonRecord | null {
+  return exportSillyTavernCard(profile, lore, name, 'sillytavern-v2')?.card ?? null;
+}
+
+export function exportSillyTavernV3Card(profile: JsonRecord | null, lore: JsonRecord[], name: string): JsonRecord | null {
+  return exportSillyTavernCard(profile, lore, name, 'sillytavern-v3')?.card ?? null;
+}
+
+/** Keep the native ZIP's compatibility source in lockstep with its sidecar. */
+export function synchronizeSillyTavernCompatibility(profile: JsonRecord | null, lore: JsonRecord[], name: string) {
+  if (!record(profile) || !record(profile.characterCardCompatibility)) return null;
+  const format = profile.characterCardCompatibility.format;
+  if (format !== 'sillytavern-v2' && format !== 'sillytavern-v3') return null;
+  const exported = exportSillyTavernCard(profile, lore, name, format);
+  if (!exported) return null;
+  return {
+    format,
+    card: exported.card,
+    profile: { ...profile, characterCardCompatibility: exported.compatibility },
+  };
 }
 /** Accept the declared native package subset without trusting source-owned paths/agent IDs. */
 export function normalizePackagedXingye(value: unknown) {
@@ -136,8 +205,15 @@ export function normalizePackagedXingye(value: unknown) {
   if (['none', 'latent', 'marked'].includes(text(input.corruptionTendency))) profile.corruptionTendency = input.corruptionTendency;
   if (typeof input.corruptionSeed === 'number' && Number.isFinite(input.corruptionSeed)) profile.corruptionSeed = Math.max(0, Math.min(100, input.corruptionSeed));
   const metadata = input.characterCardCompatibility;
-  if (record(metadata) && metadata.format === 'sillytavern-v2' && record(metadata.sourceCard)) {
-    profile.characterCardCompatibility = { format: 'sillytavern-v2', sourceCard: copy(metadata.sourceCard), loreEntryIds: strings(metadata.loreEntryIds) };
+  if (record(metadata) && (metadata.format === 'sillytavern-v2' || metadata.format === 'sillytavern-v3') && record(metadata.sourceCard)) {
+    const sourceIndices = record(metadata.loreSourceIndices) ? metadata.loreSourceIndices : null;
+    profile.characterCardCompatibility = {
+      format: metadata.format,
+      sourceCard: copy(metadata.sourceCard),
+      loreEntryIds: strings(metadata.loreEntryIds),
+      ...(sourceIndices ? { loreSourceIndices: Object.fromEntries(Object.entries(sourceIndices)
+        .filter(([id, index]) => !!id && Number.isSafeInteger(index) && (index as number) >= 0)) } : {}),
+    };
   }
   const categories = ['background', 'worldview', 'relationship', 'event', 'location', 'organization', 'character', 'rule'];
   const seen = new Set<string>();

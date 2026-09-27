@@ -83,6 +83,53 @@ beforeEach(() => {
   historyStateMock.saveHistoryState.mockResolvedValue({ version: 1 });
 });
 
+describe('PhoneJournalApp · confirmed export', () => {
+  it('offers preview only for a confirmed journal entry, never an initialized entry', async () => {
+    journalStoreMock.listJournalEntries.mockResolvedValue([
+      {
+        id: 'from-draft-d-1', dayKey: '2026-05-17', title: '确认页', body: '原样正文。',
+        createdAt: '2026-05-17T12:30:00.000Z',
+      },
+      {
+        id: 'journal-init-1', dayKey: '2026-05-16', title: '初始化页', body: '未逐篇确认。',
+        createdAt: '2026-05-16T12:30:00.000Z',
+      },
+    ]);
+
+    renderJournalApp();
+    fireEvent.click(await screen.findByText('初始化页'));
+    expect(screen.queryByText('预览并导出')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '返回列表' }));
+
+    fireEvent.click(screen.getByText('确认页'));
+    fireEvent.click(screen.getByTestId('phone-journal-export-preview-from-draft-d-1'));
+    const preview = screen.getByTestId('phone-journal-export-preview');
+    expect(preview).toHaveTextContent('原样正文。');
+    expect(screen.getByTestId('phone-journal-export-json')).toBeInTheDocument();
+    expect(screen.getByTestId('phone-journal-export-html')).toBeInTheDocument();
+    expect(journalStoreMock.appendJournalEntry).not.toHaveBeenCalled();
+    expect(journalStoreMock.confirmJournalDraft).not.toHaveBeenCalled();
+    expect(journalAiMock.generateJournalDraftWithAI).not.toHaveBeenCalled();
+  });
+
+  it('does not expose the previous owner journal while the next owner is loading', async () => {
+    const oldEntry = {
+      id: 'from-draft-old', dayKey: '2026-05-17', title: '旧角色日记', body: '旧角色私有正文。',
+      createdAt: '2026-05-17T12:30:00.000Z',
+    };
+    journalStoreMock.listJournalEntries.mockImplementation((id: string) =>
+      id === 'linwu' ? Promise.resolve([oldEntry]) : new Promise(() => {}),
+    );
+    const view = renderJournalApp();
+    fireEvent.click(await screen.findByText('旧角色日记'));
+    const nextAgent = { ...agent, id: 'new-agent', name: '新角色' };
+    view.rerender(<PhoneJournalApp ownerAgent={nextAgent} displayName="新角色" onBack={vi.fn()} />);
+    expect(screen.queryByTestId('phone-journal-export-preview-from-draft-old')).not.toBeInTheDocument();
+    expect(screen.queryByText('旧角色私有正文。')).not.toBeInTheDocument();
+    expect(screen.queryByText('旧角色日记')).not.toBeInTheDocument();
+  });
+});
+
 afterEach(() => {
   cleanup();
 });

@@ -12,6 +12,7 @@ it('shows actionable compatibility and author notes before import confirmation',
   const confirm = vi.fn();
   render(<CharacterCardPreviewOverlay plan={plan} mode="import" memoryChecked={false} processing={false} onMemoryChange={vi.fn()} onConfirm={confirm} onCancel={vi.fn()} />);
   expect(screen.getByRole('region', { name: '角色卡导入兼容报告' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'SillyTavern V2 JSON · 字段子集' })).toBeVisible();
   expect(screen.getByText('scenario becomes default scene')).toBeVisible();
   expect(screen.getByText('system_prompt not activated')).toBeVisible();
   expect(screen.getByText('selective lore disabled')).toBeVisible();
@@ -19,4 +20,18 @@ it('shows actionable compatibility and author notes before import confirmation',
   expect(confirm).not.toHaveBeenCalled();
   fireEvent.click(screen.getByText('settings.characterCard.confirm'));
   expect(confirm).toHaveBeenCalledOnce();
+});
+
+it.each([
+  { format: 'sillytavern-v2', mapped: ['PNG 画像 → 当前角色头像与角色卡封面'], heading: 'SillyTavern V2 PNG · 字段子集' },
+  { format: 'sillytavern-v3', mapped: [], heading: 'SillyTavern V3 JSON · 字段子集' },
+  { format: 'sillytavern-v3', mapped: ['PNG 画像 → 当前角色头像与角色卡封面'], heading: 'SillyTavern V3 PNG · 字段子集' },
+] as const)('labels $format import source in the compatibility report', ({ format, mapped, heading }) => {
+  const plan: CharacterCardPlan = {
+    token: 'token', packageName: 'Luna', agent: { name: 'Luna', yuan: 'hanako' },
+    memory: { available: false, count: 0 }, skills: { count: 0, bundles: [] }, assets: {},
+    importReport: { format, mapped: [...mapped], retained: [], manual: [], creatorNotes: '' },
+  };
+  render(<CharacterCardPreviewOverlay plan={plan} mode="import" memoryChecked={false} processing={false} onMemoryChange={vi.fn()} onConfirm={vi.fn()} onCancel={vi.fn()} />);
+  expect(screen.getByRole('heading', { name: heading })).toBeVisible();
 });

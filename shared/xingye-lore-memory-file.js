@@ -221,39 +221,49 @@ function fitManagedBlock(block, maxChars) {
 }
 
 function extractManagedPromptContent(content, { entries, agentId, maxChars }) {
-  const blocks = [];
-  const pattern = /<!-- xingye-lore:id=[^\s>]+\b[^>]*-->[\s\S]*?<!-- \/xingye-lore:id=[^\s>]+ -->/g;
-  let match;
-  while ((match = pattern.exec(content)) !== null) {
-    blocks.push(match[0]);
+  let ranked;
+  if (entries !== undefined) {
+    // The canonical store decides eligibility and current content. The managed
+    // Markdown is a derived mirror and may lag behind an edit or failed sync.
+    ranked = toEntryArray(entries)
+      .filter((entry) => isStableLoreCandidate(entry, agentId))
+      .sort(compareStableLoreEntries)
+      .flatMap((entry, index) => {
+        try {
+          return [{ block: buildLoreBlock({ agentId, lore: entry, content: getLoreSummaryContent(entry) }), rank: index }];
+        } catch {
+          return [];
+        }
+      });
+  } else {
+    // Older installs can have a managed mirror without entries.json. Keep that
+    // read-only fallback, including its saved summaries and original order.
+    const pattern = /<!-- xingye-lore:id=[^\s>]+\b[^>]*-->[\s\S]*?<!-- \/xingye-lore:id=[^\s>]+ -->/g;
+    ranked = [...content.matchAll(pattern)].map((match, rank) => ({ block: match[0], rank }));
   }
-  // Old derived files did not encode priority and may be in reverse order.
-  // Use canonical metadata only to rank existing blocks: their text still comes
-  // exclusively from lore-memory.md, never from the entries file.
-  const byId = new Map(toEntryArray(entries)
-    .filter((entry) => normalizeString(entry?.agentId) === agentId)
-    .map((entry) => [sanitizeMarkerValue(entry.id), entry]));
-  const ranked = blocks.map((block, index) => ({
-    block,
-    index,
-    entry: byId.get(/^<!-- xingye-lore:id=([^\s>]+)/.exec(block)?.[1]),
-  })).sort((a, b) => {
-    // Known entries form a consistent ordered group; unknown legacy blocks keep
-    // their relative order rather than guessing their missing priority.
-    if (a.entry && b.entry) return compareStableLoreEntries(a.entry, b.entry) || a.index - b.index;
-    if (!!a.entry !== !!b.entry) return a.entry ? -1 : 1;
-    return a.index - b.index;
-  });
   const selected = [];
+  const deferred = [];
   let remaining = normalizeMaxChars(maxChars) - managedPromptHeader().length;
-  for (const { block } of ranked) {
+  for (const { block, rank } of ranked) {
+    const separator = selected.length ? 2 : 0;
+    if (block.length > remaining - separator) {
+      deferred.push({ block, rank });
+      continue;
+    }
+    selected.push({ block, rank });
+    remaining -= block.length + separator;
+  }
+  // A large high-priority block may use only the space left after complete
+  // later blocks have had a chance, preserving the managed closing marker.
+  for (const { block, rank } of deferred) {
     const separator = selected.length ? 2 : 0;
     const fitted = fitManagedBlock(block, remaining - separator);
     if (!fitted) continue;
-    selected.push(fitted);
-    remaining -= fitted.length + separator;
+    selected.push({ block: fitted, rank });
+    break;
   }
-  return selected.length ? `${managedPromptHeader()}${selected.join('\n\n')}` : '';
+  selected.sort((a, b) => a.rank - b.rank);
+  return selected.length ? `${managedPromptHeader()}${selected.map((item) => item.block).join('\n\n')}` : '';
 }
 
 function loreEntriesPath({ hanakoHome, agentId }) {
@@ -359,14 +369,15 @@ export async function readXingyeStableLoreMemoryForPrompt({
   const identity = getReadableIdentity({ hanakoHome, agentId });
   if (!identity) return '';
   const normalized = { hanakoHome: identity.normalizedHanakoHome, agentId: identity.normalizedAgentId };
-  const content = await readXingyeLoreMemoryFile(normalized);
-  if (!content) return '';
   let entries;
   try {
     entries = JSON.parse(await fs.readFile(loreEntriesPath(normalized), 'utf8'));
-  } catch {
-    // Optional legacy ordering metadata must not hide the last good derived text.
+  } catch (error) {
+    if (error?.code !== 'ENOENT') return '';
   }
+  if (entries !== undefined) return extractManagedPromptContent('', { entries, agentId: normalized.agentId, maxChars });
+  const content = await readXingyeLoreMemoryFile(normalized);
+  if (!content) return '';
   return extractManagedPromptContent(content, { entries, agentId: normalized.agentId, maxChars });
 }
 
@@ -377,8 +388,14 @@ export function readXingyeStableLoreMemoryForPromptSync({
 } = {}) {
   const identity = getReadableIdentity({ hanakoHome, agentId });
   if (!identity) return '';
+  let entries;
+  try {
+    entries = JSON.parse(readFileSync(loreEntriesPath({ hanakoHome: identity.normalizedHanakoHome, agentId: identity.normalizedAgentId }), 'utf8'));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') return '';
+  }
+  if (entries !== undefined) return extractManagedPromptContent('', { entries, agentId: identity.normalizedAgentId, maxChars });
   const filePath = path.join(identity.normalizedHanakoHome, 'agents', identity.normalizedAgentId, 'xingye', 'lore-memory.md');
-
   let content = '';
   try {
     content = readFileSync(filePath, 'utf8');
@@ -386,13 +403,6 @@ export function readXingyeStableLoreMemoryForPromptSync({
     if (error?.code === 'ENOENT') return '';
     throw error;
   }
-
   if (!content) return '';
-  let entries;
-  try {
-    entries = JSON.parse(readFileSync(loreEntriesPath({ hanakoHome: identity.normalizedHanakoHome, agentId: identity.normalizedAgentId }), 'utf8'));
-  } catch {
-    // Legacy files without canonical metadata retain their existing block order.
-  }
   return extractManagedPromptContent(content, { entries, agentId: identity.normalizedAgentId, maxChars });
 }

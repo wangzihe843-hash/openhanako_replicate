@@ -1,0 +1,87 @@
+.card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: 92px;
+  padding: var(--space-10) var(--space-12);
+  overflow: hidden;
+  --accent: #8a7566;
+  --companion-idle-duration: 3.5s;
+  --companion-working-duration: 1.1s;
+  --companion-waiting-duration: 2.2s;
+}
+
+.card[data-state='busy'] { --accent: #5384a4; }
+.card[data-state='waiting'] { --accent: #a9823b; }
+.card[data-state='blocked'] { --accent: #ad6b33; }
+.card[data-state='completed'] { --accent: #4c926f; }
+.card[data-state='failed'] { --accent: #bf5d61; }
+.card[data-state='canceled'] { --accent: #8a8180; }
+
+.stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 72px;
+  width: 72px;
+  height: 72px;
+}
+
+.halo {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 17%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.character {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--accent) 25%, transparent);
+  animation: breathe var(--companion-idle-duration) ease-in-out infinite;
+}
+
+.symbol {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: white;
+  background: var(--accent);
+  border: 2px solid var(--card-bg, white);
+  border-radius: 50%;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.copy { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.status { color: var(--accent); font-size: 12px; }
+
+.card[data-state='busy'] .character { animation: working var(--companion-working-duration) ease-in-out infinite; }
+.card[data-state='busy'] .symbol { animation: pulse var(--companion-working-duration) ease-in-out infinite; }
+.card[data-state='waiting'] .character,
+.card[data-state='blocked'] .character { animation: waiting var(--companion-waiting-duration) ease-in-out infinite; }
+.card[data-state='completed'] .character { animation: pop var(--duration-slow) ease-out 1; }
+.card[data-state='failed'] .character { animation: shake var(--duration-slow) ease-in-out 1; }
+.card[data-state='canceled'] .character { animation: fadeIn var(--duration-slow) ease-out 1; }
+
+@keyframes breathe { 50% { transform: translateY(-2px) scale(1.03); } }
+@keyframes working { 50% { transform: translateY(-4px); } }
+@keyframes waiting { 50% { transform: rotate(4deg); } }
+@keyframes pop { 45% { transform: scale(1.18); } }
+@keyframes shake { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+@keyframes fadeIn { from { opacity: .55; } to { opacity: 1; } }
+@keyframes pulse { 50% { opacity: .55; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .character, .symbol { animation: none !important; }
+}

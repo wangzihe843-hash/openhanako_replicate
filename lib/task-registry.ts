@@ -18,6 +18,7 @@ export const ACTIVE_TASK_STATUSES = ACTIVE_STATUSES;
 const FINAL_STATUSES = new Set(["completed", "failed", "canceled", "aborted"]);
 const KNOWN_STATUSES = new Set([...ACTIVE_STATUSES, ...FINAL_STATUSES]);
 const MAX_TIMER_DELAY = 2_147_483_647;
+const MAX_PRESENTATION_STATUS_CHANGES = 512;
 
 function textOrNull(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -77,6 +78,8 @@ export class TaskRegistry {
   declare _scheduleTimers: any;
   declare _schedules: any;
   declare _tasks: any;
+  declare _presentationStatusSequence: number;
+  declare _presentationStatusChanges: any[];
   constructor( options: any = {}) {
     this._persistencePath = typeof options.persistencePath === "string" ? options.persistencePath : null;
     this._getSessionIdForPath = typeof options.getSessionIdForPath === "function" ? options.getSessionIdForPath : () => null;
@@ -84,6 +87,9 @@ export class TaskRegistry {
     this._handlers = new Map();
     /** @type {Map<string, object>} */
     this._tasks = new Map();
+    /** In-memory, bounded changes let a visible UI catch short-lived tasks removed between polls. */
+    this._presentationStatusSequence = 0;
+    this._presentationStatusChanges = [];
     /** @type {Map<string, object>} */
     this._schedules = new Map();
     /** @type {Map<string, NodeJS.Timeout>} */
@@ -153,6 +159,7 @@ export class TaskRegistry {
     }
     this._tasks.set(id, task);
     this._persist();
+    this._recordPresentationStatus(task);
     return clone(task);
   }
 
@@ -180,6 +187,7 @@ export class TaskRegistry {
     if (patch.pluginId !== undefined) next.pluginId = patch.pluginId || null;
     this._tasks.set(task.taskId, next);
     this._persist();
+    if (next.status !== task.status) this._recordPresentationStatus(next);
     return clone(next);
   }
 
@@ -196,6 +204,7 @@ export class TaskRegistry {
     delete next.error;
     this._tasks.set(task.taskId, next);
     this._persist();
+    this._recordPresentationStatus(next);
     return clone(next);
   }
 
@@ -211,6 +220,7 @@ export class TaskRegistry {
     };
     this._tasks.set(task.taskId, next);
     this._persist();
+    this._recordPresentationStatus(next);
     return clone(next);
   }
 
@@ -229,6 +239,7 @@ export class TaskRegistry {
       };
       this._tasks.set(task.taskId, next);
       this._persist();
+      this._recordPresentationStatus(next);
       return { result, canceled: true };
     }
     return { result, canceled: false };
@@ -251,6 +262,7 @@ export class TaskRegistry {
       log.error(`abort handler error for ${taskId}: ${err.message}`);
     }
     this._persist();
+    this._recordPresentationStatus(task);
     return "aborted";
   }
 
@@ -286,6 +298,7 @@ export class TaskRegistry {
         task.updatedAt = Date.now();
         task.completedAt = task.updatedAt;
         task.error = normalizeError(reason);
+        this._recordPresentationStatus(task);
         summary.noHandler++;
       }
     }
@@ -321,6 +334,44 @@ export class TaskRegistry {
       return true;
     });
     return tasks.map(clone);
+  }
+
+  /** Read-only session projection for small UI status displays. No task metadata or error text crosses this boundary. */
+  presentationStatusForSession(input: any, afterSequence = 0) {
+    const scope = normalizeParentSessionRef(input, this._getSessionIdForPath);
+    if (!scope.parentSessionId && !scope.parentSessionPath) {
+      return { sequence: this._presentationStatusSequence, serverTime: Date.now(), tasks: [], changes: [] };
+    }
+    const since = Number.isSafeInteger(afterSequence) && afterSequence >= 0 ? afterSequence : 0;
+    const project = (task) => ({
+      taskId: task.taskId,
+      status: task.status,
+      updatedAt: task.updatedAt,
+    });
+    return {
+      sequence: this._presentationStatusSequence,
+      serverTime: Date.now(),
+      tasks: this.listAll(scope).map(project),
+      changes: this._presentationStatusChanges
+        .filter((change) => change.sequence > since && matchesParentSession(change, scope, this._getSessionIdForPath))
+        .map(({ sequence, taskId, status, updatedAt }) => ({ sequence, taskId, status, updatedAt })),
+    };
+  }
+
+  _recordPresentationStatus(task) {
+    const sequence = ++this._presentationStatusSequence;
+    this._presentationStatusChanges.push({
+      sequence,
+      taskId: task.taskId,
+      status: task.status,
+      updatedAt: task.updatedAt,
+      parentSessionId: task.parentSessionId,
+      parentSessionPath: task.parentSessionPath,
+      parentSessionRef: task.parentSessionRef,
+    });
+    if (this._presentationStatusChanges.length > MAX_PRESENTATION_STATUS_CHANGES) {
+      this._presentationStatusChanges.splice(0, this._presentationStatusChanges.length - MAX_PRESENTATION_STATUS_CHANGES);
+    }
   }
 
   /** 该会话是否还有未到终态的后台任务（循环守恒检查与闹钟护栏共用）。 */

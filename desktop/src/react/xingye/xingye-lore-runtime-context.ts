@@ -17,7 +17,7 @@
  * - `purpose` 仅做记录/调试用途，不做复杂分支。
  */
 
-import type { XingyeLoreDecision } from '../../../../shared/xingye-lore-context.js';
+import { selectXingyeLoreEntries, type XingyeLoreDecision } from '../../../../shared/xingye-lore-context.js';
 import { getXingyePersistenceStorage } from './xingye-persistence';
 import {
   XINGYE_LORE_CATEGORY_LABELS,
@@ -95,6 +95,8 @@ export type XingyeLoreRuntimeContext = {
   entries: XingyeLoreRuntimeContextEntry[];
   /** 已选入 entries 的总字符数（仅算 formatted block 主体） */
   totalChars: number;
+  /** 统一选择规则计算的条目预算用量，含诊断用字段。 */
+  selectionChars: number;
   /** 是否因 maxChars 超限而丢弃了至少一条候选 */
   truncated: boolean;
   /** 候选总数（在 maxChars 截断之前，符合规则的全部条目数） */
@@ -164,6 +166,18 @@ function formatEntryBlock(entry: XingyeLoreRuntimeContextEntry): string {
   return `- 标题：${entry.title}\n  分类：${label}\n  内容：${entry.content}`;
 }
 
+/** Budget against the exact body rendered for desktop prompts. */
+export function formatXingyeLoreRuntimeBudgetBlock(
+  entry: XingyeLoreEntry,
+  matchedKeywords: string[],
+  content: string,
+): string {
+  return formatEntryBlock({
+    ...toCandidate(entry, entry.insertionMode === 'always' ? 'always' : 'keyword', matchedKeywords),
+    content,
+  });
+}
+
 function toCandidate(entry: XingyeLoreEntry, reason: 'always' | 'keyword', matchedKeywords: string[]): XingyeLoreRuntimeContextEntry {
   return {
     id: entry.id,
@@ -214,6 +228,7 @@ export function collectXingyeLoreRuntimeContext(
     purpose,
     entries: [],
     totalChars: 0,
+    selectionChars: 0,
     truncated: false,
     candidateCount: 0,
   };
@@ -224,53 +239,28 @@ export function collectXingyeLoreRuntimeContext(
   const all = listLoreEntries(agentId, storage);
   if (!all.length) return result;
 
-  const report = (entry: XingyeLoreEntry | XingyeLoreRuntimeContextEntry, reason: XingyeLoreDecision['reason'], matchedKeywords: string[] = [], blockChars = 0) => {
-    options.onDecision?.({ id: entry.id, title: entry.title, reason, matchedKeywords, blockChars });
-  };
-  const candidates: XingyeLoreRuntimeContextEntry[] = [];
-  for (const entry of all) {
-    if (!entry.enabled) { report(entry, 'disabled'); continue; }
-    if (entry.visibility !== 'canonical') { report(entry, 'visibility'); continue; }
-    if (entry.insertionMode === 'manual') { report(entry, 'mode'); continue; }
-
-    if (entry.insertionMode === 'always') {
-      if (!includeAlways) { report(entry, 'mode'); continue; }
-      candidates.push(toCandidate(entry, 'always', []));
-      continue;
-    }
-    if (entry.insertionMode === 'keyword') {
-      if (!includeKeyword) { report(entry, 'mode'); continue; }
-      const matched = collectMatchedKeywords(entry.keywords, queryText, explicitKeywords);
-      if (!matched.length) {
-        report(entry, !entry.keywords.length ? 'no-keywords' : (!queryText && !explicitKeywords.length ? 'no-query' : 'no-match'));
-        continue;
-      }
-      candidates.push(toCandidate(entry, 'keyword', matched));
-    }
-  }
-
-  result.candidateCount = candidates.length;
-
-  // boost 分类置顶后再按预算截断；不传 priorityBoostCategories 时顺序不变。
-  const ordered = applyCategoryBoostOrder(
-    candidates,
-    Array.isArray(options.priorityBoostCategories) ? options.priorityBoostCategories : [],
-  );
-
-  let total = 0;
-  for (const candidate of ordered) {
-    const blockText = formatEntryBlock(candidate);
-    const blockLength = blockText.length;
-    if (total + blockLength > maxChars) {
-      result.truncated = true;
-      report(candidate, 'budget', candidate.matchedKeywords);
-      continue;
-    }
-    result.entries.push(candidate);
-    report(candidate, 'selected', candidate.matchedKeywords, blockLength);
-    total += blockLength;
-  }
-  result.totalChars = total;
+  const mode = includeAlways && includeKeyword ? 'all'
+    : includeAlways ? 'always' : includeKeyword ? 'keyword' : 'none';
+  const selected = selectXingyeLoreEntries({
+    entries: all,
+    agentId,
+    mode,
+    queryText,
+    explicitKeywords,
+    maxChars,
+    formatBlock: formatXingyeLoreRuntimeBudgetBlock,
+    compose: (blocks) => blocks.join('\n'),
+    priorityBoostCategories: options.priorityBoostCategories ?? [],
+    onDecision: options.onDecision,
+  });
+  result.candidateCount = selected.candidateCount;
+  result.entries = selected.selected.map(({ entry, matchedKeywords, content }) => ({
+    ...toCandidate(entry, entry.insertionMode === 'always' ? 'always' : 'keyword', matchedKeywords),
+    content,
+  }));
+  result.totalChars = result.entries.map(formatEntryBlock).join('\n').length;
+  result.selectionChars = selected.usedChars;
+  result.truncated = selected.truncated;
   return result;
 }
 

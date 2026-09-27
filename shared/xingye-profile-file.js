@@ -94,8 +94,9 @@ function normalizeProfileText(value) {
  * provider context 注入，因而 profile 刚保存后，私聊 / 群聊无需等待快照过期就能看到，
  * 且不会写入会话历史。媒体、自动化开关和
  * corruption 数值不属于自我叙事，不放进 prompt。
+ * Phone 组合器可传 includeCharacterCard=false，把卡片场景/示例单独预算。
  */
-export function buildXingyeAgentPhoneProfileContext({ profile, agentName, locale } = {}) {
+export function buildXingyeAgentPhoneProfileContext({ profile, agentName, locale, includeCharacterCard = true } = {}) {
   if (!profile || typeof profile !== 'object' || Array.isArray(profile)) return '';
   const isZh = String(locale || '').startsWith('zh');
   const lines = [];
@@ -105,7 +106,7 @@ export function buildXingyeAgentPhoneProfileContext({ profile, agentName, locale
   }
   const gender = pickValidGender(profile);
   if (gender) lines.push(`- ${isZh ? '性别' : 'Gender'}: ${gender}`);
-  const cardContext = buildCharacterCardContext({ profile, character: agentName });
+  const cardContext = includeCharacterCard ? buildCharacterCardContext({ profile, character: agentName }) : '';
   if (lines.length === 0 && !cardContext) return '';
 
   const selfName = normalizeProfileText(agentName)

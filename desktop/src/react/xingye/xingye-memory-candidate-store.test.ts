@@ -17,6 +17,7 @@ import {
   XINGYE_MEMORY_CANDIDATES_STORAGE_KEY,
   XINGYE_MEMORY_CANDIDATE_IMPORTANCE_HIGH,
   XINGYE_MEMORY_CANDIDATE_IMPORTANCE_MEDIUM,
+  type XingyeSceneSummary,
 } from './xingye-memory-candidate-store';
 import { listXingyeEvents } from './xingye-event-log';
 
@@ -451,5 +452,41 @@ describe('xingye-memory-candidate-store CRUD', () => {
   it('update throws on agent mismatch', () => {
     const c = createXingyeMemoryCandidate('a1', { content: 'x' }, storage);
     expect(() => updateXingyeMemoryCandidate('other', c.id, { content: 'y' }, storage)).toThrow(/agent mismatch/);
+  });
+});
+
+describe('scene archive candidates', () => {
+  const scene: XingyeSceneSummary = {
+    sessionId: 'session-a',
+    sourceRefs: [{ entryId: 'message-1', hash: 'a'.repeat(64), role: 'user' }],
+    sections: [{ kind: 'event', text: '在月台见面', inference: false, evidence: [{ entryId: 'message-1', quote: '月台见面' }] }],
+    validity: 'unknown',
+  };
+
+  it('accepts only scene_archive and revalidates before marking written without touching pinned', async () => {
+    const storage = new MemoryStorage();
+    expect(() => createXingyeMemoryCandidate('a1', {
+      content: 'scene', sourceDomain: 'scene_summary', sceneSummary: scene, target: 'pinned',
+    }, storage)).toThrow(/scene_archive/);
+    const candidate = createXingyeMemoryCandidate('a1', {
+      content: 'scene', sourceDomain: 'scene_summary', sceneSummary: scene, target: 'scene_archive',
+    }, storage);
+    const fetchImpl = vi.fn(async (_path: string, _init?: RequestInit) => ({ ok: true, json: async () => ({ valid: true }) } as Response));
+    const result = await confirmXingyeMemoryCandidate('a1', candidate.id, { storage, fetchImpl });
+    expect(result.candidate.status).toBe('written');
+    expect(result.candidate.sceneSummary?.validity).toBe('valid');
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/xingye/scene-summary/validate');
+    expect(JSON.stringify(fetchImpl.mock.calls[0])).not.toContain('/pinned');
+  });
+
+  it('marks a changed source stale and blocks adoption', async () => {
+    const storage = new MemoryStorage();
+    const candidate = createXingyeMemoryCandidate('a1', {
+      content: 'scene', sourceDomain: 'scene_summary', sceneSummary: scene, target: 'scene_archive',
+    }, storage);
+    const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ valid: false, reason: 'source message was edited' }) } as Response));
+    await expect(confirmXingyeMemoryCandidate('a1', candidate.id, { storage, fetchImpl })).rejects.toThrow(/edited/);
+    expect(getXingyeMemoryCandidate(candidate.id, storage)).toMatchObject({ status: 'pending', sceneSummary: { validity: 'stale' } });
   });
 });

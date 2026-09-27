@@ -2,15 +2,38 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { Hono } from "hono";
+import pngjs from "pngjs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCharacterCardService } from "../lib/character-cards/service.ts";
+import { parseSillyTavernPng } from "../lib/character-cards/sillytavern-png.ts";
 import { createCharacterCardsRoute } from "../server/routes/character-cards.ts";
 import { extractZip } from "../lib/extract-zip.ts";
 import { writeCompiledMemorySnapshot } from "../lib/memory/compiled-memory-snapshot.ts";
 
 function writeJson(filePath, value) {
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
+}
+
+function writePngCard(filePath, card) {
+  const png = new pngjs.PNG({ width: 1, height: 1 });
+  png.data.set([20, 40, 60, 255]);
+  const image = pngjs.PNG.sync.write(png);
+  const payload = Buffer.concat([
+    Buffer.from("ccv3\0", "ascii"),
+    Buffer.from(Buffer.from(JSON.stringify(card), "utf-8").toString("base64"), "ascii"),
+  ]);
+  let crc = 0xffffffff;
+  const checked = Buffer.concat([Buffer.from("tEXt", "ascii"), payload]);
+  for (const byte of checked) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
+  }
+  const header = Buffer.alloc(4);
+  header.writeUInt32BE(payload.length);
+  const footer = Buffer.alloc(4);
+  footer.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+  fs.writeFileSync(filePath, Buffer.concat([image.subarray(0, -12), header, checked, footer, image.subarray(-12)]));
 }
 
 function writeSkill(root, relativeDir, name, body = "# Skill\n") {
@@ -586,10 +609,136 @@ describe("character-card import service", () => {
     expect(native.prompts.identity).toBe('Luna\n\nEdited identity');
     expect(native.prompts.agents).toBe('');
     expect(native.xingye.lore).toEqual([]);
+    expect(native.xingye.profile.characterCardCompatibility.sourceCard).toEqual(st);
+    expect(native.xingye.profile.characterCardCompatibility.loreEntryIds).toEqual([]);
+    expect(JSON.stringify(native.xingye.profile.characterCardCompatibility.sourceCard)).not.toMatch(/Old identity|Old personality|Old scene|Old greeting|Old sample|Old lore/);
     const nativePreview = await service.createImportPlanFromPath(exported.filePath);
     expect(nativePreview.prompts.identity).not.toContain('Old identity');
     const stPreview = await service.createImportPlanFromPath(path.join(out, 'sillytavern-v2.json'));
     expect(stPreview.prompts.identity).toBe('Luna\n\nEdited identity');
+  });
+
+  it("imports a V3 PNG portrait, keeps inert V3 fields, and exports current persisted content", async () => {
+    const sourcePath = path.join(tempDir, 'luna-v3.png');
+    writePngCard(sourcePath, {
+      spec: 'chara_card_v3', spec_version: '3.0', vendorTopLevel: { keep: true },
+      data: {
+        name: 'Luna', nickname: 'Moon', description: 'Old identity', personality: 'Old style',
+        scenario: 'Old scene', first_mes: 'Old greeting', alternate_greetings: ['Second greeting'],
+        mes_example: 'Old sample', creator_notes: 'Read me', assets: [{ type: 'icon', uri: 'https://example.invalid/icon.png' }],
+        character_book: { entries: [
+          { name: 'Regex rule', keys: ['star.*'], content: 'Regex lore', enabled: true, use_regex: true },
+          { name: 'Plain rule', keys: ['moon'], content: 'Old plain lore', enabled: true, use_regex: false },
+        ] },
+      },
+    });
+    const image = fs.readFileSync(sourcePath);
+    const service = createCharacterCardService(engine);
+    const preview = await service.createImportPlanFromPath(sourcePath);
+    expect(preview.importReport).toMatchObject({ format: 'sillytavern-v3', creatorNotes: 'Read me' });
+    expect(preview.importReport.manual.join(' ')).toContain('nickname');
+    expect(preview.importReport.retained.join(' ')).toContain('assets');
+    expect(preview.assets).toMatchObject({ avatar: true, cardFront: true });
+    expect(fs.readFileSync(service.resolvePlanAsset(preview.token, 'avatar').filePath)).toEqual(image);
+
+    engine.createAgent.mockImplementationOnce(async (options) => {
+      fs.mkdirSync(path.join(agentsDir, 'luna-v3', 'memory'), { recursive: true });
+      return { id: 'luna-v3', name: options.name };
+    });
+    const result = await service.commitImportPlan(preview.token);
+    const options = engine.createAgent.mock.calls.at(-1)[0];
+    expect(options.avatarPath).toBe(service.resolvePlanAsset(preview.token, 'avatar').filePath);
+    expect(options.initialXingye.profile.characterCardCompatibility).toMatchObject({ format: 'sillytavern-v3' });
+    expect(options.initialXingye.lore[0]).toMatchObject({ enabled: false, insertionMode: 'manual' });
+    expect(options.initialXingye.lore[1]).toMatchObject({ enabled: true, insertionMode: 'keyword' });
+    const agentDir = path.join(agentsDir, result.agent.id);
+    fs.mkdirSync(path.join(agentDir, 'avatars'), { recursive: true });
+    fs.mkdirSync(path.join(agentDir, 'xingye', 'lore'), { recursive: true });
+    fs.copyFileSync(options.avatarPath, path.join(agentDir, 'avatars', 'agent.png'));
+    fs.writeFileSync(path.join(agentDir, 'config.yaml'), 'agent:\n  name: Luna\n  yuan: hanako\n');
+    fs.writeFileSync(path.join(agentDir, 'identity.md'), 'Old identity');
+    fs.writeFileSync(path.join(agentDir, 'AGENTS.md'), 'Old style');
+    writeJson(path.join(agentDir, 'xingye', 'profile.json'), {
+      ...options.initialXingye.profile, agentId: result.agent.id,
+      identitySummary: 'Edited identity', scenario: '', firstMessage: '', alternateGreetings: [],
+    });
+    const plainLore = { ...options.initialXingye.lore[1], agentId: result.agent.id, content: 'Edited plain lore' };
+    writeJson(path.join(agentDir, 'xingye', 'lore', 'entries.json'), { [plainLore.id]: plainLore });
+    engine.getAgent = vi.fn(() => ({ agentDir, factStore: { exportAll: () => [] } }));
+
+    const freshService = createCharacterCardService(engine);
+    const exported = await freshService.exportAgentPackage(result.agent.id, { targetDir: tempDir });
+    const out = path.join(tempDir, 'v3-export');
+    fs.mkdirSync(out);
+    await extractZip(exported.filePath, out);
+    const v3 = JSON.parse(fs.readFileSync(path.join(out, 'sillytavern-v3.json'), 'utf-8'));
+    expect(v3).toMatchObject({
+      vendorTopLevel: { keep: true },
+      data: { nickname: 'Moon', assets: [{ type: 'icon', uri: 'https://example.invalid/icon.png' }],
+        description: 'Edited identity', scenario: '', first_mes: '', alternate_greetings: [],
+        character_book: { entries: [{ name: 'Plain rule', content: 'Edited plain lore', use_regex: false }] } },
+    });
+    const exportedAvatarPath = path.join(out, 'assets', 'avatar.png');
+    const exportedAvatar = fs.readFileSync(exportedAvatarPath);
+    const exportedFront = fs.readFileSync(path.join(out, 'assets', 'card-front.png'));
+    expect(pngjs.PNG.sync.read(exportedAvatar).data).toEqual(pngjs.PNG.sync.read(image).data);
+    expect(pngjs.PNG.sync.read(exportedFront).data).toEqual(pngjs.PNG.sync.read(image).data);
+    expect(() => parseSillyTavernPng(exportedAvatar)).toThrow('no chara or ccv3');
+    expect(() => parseSillyTavernPng(exportedFront)).toThrow('no chara or ccv3');
+    await expect(freshService.createImportPlanFromPath(exportedAvatarPath)).rejects.toThrow('no chara or ccv3');
+    const native = JSON.parse(fs.readFileSync(path.join(out, 'card.json'), 'utf-8'));
+    expect(native.xingye.profile.identitySummary).toBe('Edited identity');
+    expect(native.xingye.lore).toHaveLength(1);
+    expect(native.xingye.profile.characterCardCompatibility.sourceCard).toEqual(v3);
+    expect(native.xingye.profile.characterCardCompatibility.loreEntryIds).toEqual(['st-v3-1']);
+    expect(native.xingye.profile.characterCardCompatibility.loreSourceIndices).toEqual({ 'st-v3-1': 0 });
+    expect(JSON.stringify(native.xingye.profile.characterCardCompatibility.sourceCard)).not.toMatch(/Old identity|Old scene|Old greeting|Regex lore|Old plain lore/);
+    const nativePreview = await freshService.createImportPlanFromPath(exported.filePath);
+    expect(nativePreview.prompts.identity).toContain('Edited identity');
+    engine.createAgent.mockImplementationOnce(async options => ({ id: 'luna-native-reimport', name: options.name }));
+    await freshService.commitImportPlan(nativePreview.token);
+    const nativeOptions = engine.createAgent.mock.calls.at(-1)[0];
+    expect(nativeOptions.initialXingye.lore).toHaveLength(1);
+    const nativeAgentDir = path.join(agentsDir, 'luna-native-reimport');
+    fs.mkdirSync(path.join(nativeAgentDir, 'xingye', 'lore'), { recursive: true });
+    fs.mkdirSync(path.join(nativeAgentDir, 'memory'), { recursive: true });
+    fs.writeFileSync(path.join(nativeAgentDir, 'config.yaml'), 'agent:\n  name: Luna\n  yuan: hanako\n');
+    fs.writeFileSync(path.join(nativeAgentDir, 'identity.md'), 'Edited identity');
+    writeJson(path.join(nativeAgentDir, 'xingye', 'profile.json'), {
+      ...nativeOptions.initialXingye.profile, agentId: 'luna-native-reimport', scenario: 'Second scene',
+    });
+    const nextLore = { ...nativeOptions.initialXingye.lore[0], agentId: 'luna-native-reimport', content: 'Second plain lore' };
+    writeJson(path.join(nativeAgentDir, 'xingye', 'lore', 'entries.json'), { [nextLore.id]: nextLore });
+    engine.getAgent = vi.fn(() => ({ agentDir: nativeAgentDir, factStore: { exportAll: () => [] } }));
+    const secondExport = await createCharacterCardService(engine).exportAgentPackage('luna-native-reimport', { targetDir: tempDir });
+    const secondOut = path.join(tempDir, 'v3-second-export');
+    fs.mkdirSync(secondOut);
+    await extractZip(secondExport.filePath, secondOut);
+    const secondNative = JSON.parse(fs.readFileSync(path.join(secondOut, 'card.json'), 'utf-8'));
+    const secondV3 = JSON.parse(fs.readFileSync(path.join(secondOut, 'sillytavern-v3.json'), 'utf-8'));
+    expect(secondNative.xingye.profile.characterCardCompatibility.sourceCard).toEqual(secondV3);
+    expect(secondV3.data).toMatchObject({ scenario: 'Second scene', character_book: {
+      entries: [{ name: 'Plain rule', content: 'Second plain lore', use_regex: false }],
+    } });
+    expect(secondV3.data.character_book.entries).toHaveLength(1);
+    expect(JSON.stringify(secondNative.xingye.profile.characterCardCompatibility.sourceCard)).not.toMatch(/Old scene|Regex lore|Old plain lore|Edited plain lore/);
+    const v3Preview = await freshService.createImportPlanFromPath(path.join(out, 'sillytavern-v3.json'));
+    expect(v3Preview.importReport).toMatchObject({ format: 'sillytavern-v3' });
+    engine.createAgent.mockImplementationOnce(async (options) => ({ id: 'luna-v3-reimport', name: options.name }));
+    await freshService.commitImportPlan(v3Preview.token);
+    const v3Options = engine.createAgent.mock.calls.at(-1)[0];
+    expect(v3Options.initialXingye.lore).toHaveLength(1);
+    expect(v3Options.initialXingye.lore[0].content).toBe('Edited plain lore');
+  });
+
+  it("rejects a damaged PNG during preview before creating a role", async () => {
+    const sourcePath = path.join(tempDir, 'damaged.png');
+    fs.writeFileSync(sourcePath, Buffer.from('not a PNG card'));
+    await expect(createCharacterCardService(engine).createImportPlanFromPath(sourcePath)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('PNG signature'),
+    });
+    expect(engine.createAgent).not.toHaveBeenCalled();
   });
 
   it("refuses corrupt canonical export data instead of resurrecting a stale lore mirror", async () => {

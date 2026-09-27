@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adaptSillyTavernV2Card, exportSillyTavernV2Card, normalizePackagedXingye } from '../lib/character-cards/sillytavern-v2.ts';
+import { adaptSillyTavernV2Card, exportSillyTavernV2Card, exportSillyTavernV3Card, normalizePackagedXingye, synchronizeSillyTavernCompatibility } from '../lib/character-cards/sillytavern-v2.ts';
 import { buildCharacterCardContext, renderCharacterCardText } from '../shared/xingye-character-card.ts';
 
 function fixture() {
@@ -58,10 +58,111 @@ describe('SillyTavern V2 declared subset', () => {
     expect(source).toEqual(fixture());
   });
 
+  it('remaps source lore indices across native exports after deletion, reordering, and a new entry', () => {
+    const source = fixture();
+    const withEntries = { ...source, data: { ...source.data, character_book: { ...source.data.character_book, entries: [
+      { name: 'A', content: 'OLD_A', keys: ['a'], enabled: true, insertion_order: 5, extensions: { forA: true } },
+      { name: 'Unmapped', content: '', keys: [], enabled: false, insertion_order: 6, extensions: { opaque: true } },
+      { name: 'B', content: 'OLD_B', keys: ['b'], enabled: true, insertion_order: 7, extensions: { forB: true } },
+      { name: 'C', content: 'OLD_C', keys: ['c'], enabled: true, insertion_order: 8, extensions: { forC: true } },
+    ] } } };
+    const adapted = adaptSillyTavernV2Card(withEntries)!;
+    expect(adapted.card.xingye.lore.map(entry => entry.id)).toEqual(['st-v2-0', 'st-v2-2', 'st-v2-3']);
+    const [a, , c] = adapted.card.xingye.lore;
+    const current = [
+      { ...c, content: 'CURRENT_C' },
+      { ...a, content: 'CURRENT_A' },
+      { ...a, id: 'new-lore', title: 'New', content: 'CURRENT_NEW' },
+    ];
+    const first = synchronizeSillyTavernCompatibility(
+      { ...adapted.card.xingye.profile, scenario: 'CURRENT_SCENE' }, current, 'Luna',
+    )!;
+    expect(first.profile.characterCardCompatibility.sourceCard).toEqual(first.card);
+    expect(first.profile.characterCardCompatibility.loreSourceIndices).toEqual({ 'st-v2-3': 1, 'st-v2-0': 2, 'new-lore': 3 });
+    const firstData = first.card.data as { character_book: { entries: unknown[] } };
+    expect(firstData.character_book.entries).toMatchObject([
+      { name: 'Unmapped', extensions: { opaque: true } },
+      { name: 'C', content: 'CURRENT_C', extensions: { forC: true } },
+      { name: 'A', content: 'CURRENT_A', extensions: { forA: true } },
+      { name: 'New', content: 'CURRENT_NEW' },
+    ]);
+    expect(JSON.stringify(first.profile.characterCardCompatibility.sourceCard)).not.toMatch(/OLD_A|OLD_B|OLD_C/);
+
+    const native = normalizePackagedXingye({ profile: first.profile, lore: current })!;
+    const second = synchronizeSillyTavernCompatibility(
+      { ...native.profile, scenario: '' }, [
+        { ...native.lore[2], content: 'NEXT_NEW' },
+        { ...native.lore[0], content: 'NEXT_C' },
+      ], 'Luna',
+    )!;
+    expect(second.profile.characterCardCompatibility.sourceCard).toEqual(second.card);
+    expect(second.profile.characterCardCompatibility.loreSourceIndices).toEqual({ 'new-lore': 1, 'st-v2-3': 2 });
+    const secondData = second.card.data as { scenario: string; character_book: { entries: unknown[] } };
+    expect(secondData.scenario).toBe('');
+    expect(secondData.character_book.entries).toMatchObject([
+      { name: 'Unmapped', extensions: { opaque: true } },
+      { name: 'New', content: 'NEXT_NEW' },
+      { name: 'C', content: 'NEXT_C', extensions: { forC: true } },
+    ]);
+    expect(JSON.stringify(second.card)).not.toMatch(/OLD_A|OLD_B|OLD_C|CURRENT_A|CURRENT_NEW|CURRENT_C/);
+  });
+
   it('rejects unsupported spec versions without pretending V3 is a native Hana card', () => {
     expect(() => adaptSillyTavernV2Card({ ...fixture(), spec: 'chara_card_v3' })).toThrow('V2 JSON');
     expect(() => adaptSillyTavernV2Card({ ...fixture(), spec_version: '2.1' })).toThrow('version 2.0');
     expect(adaptSillyTavernV2Card({ kind: 'CharacterCard', agent: { name: 'Hana' } })).toBeNull();
+  });
+
+  it('maps only V3 common fields, disables regex lore, and round-trips inert V3 metadata', () => {
+    const source = {
+      ...fixture(), spec: 'chara_card_v3', spec_version: '3.0',
+      data: {
+        ...fixture().data, nickname: 'Luna the Seer', group_only_greetings: ['Group only'],
+        assets: [{ type: 'icon', uri: 'https://example.invalid/icon.png', name: 'main', ext: 'png' }],
+        character_book: { extensions: {}, entries: [
+          { name: 'Regex', content: 'Dangerous regex lore', keys: ['s.*r'], use_regex: true, enabled: true, extensions: {} },
+          { name: 'Plain', content: 'Ordinary lore', keys: ['stars'], use_regex: false, enabled: true, extensions: {} },
+        ] },
+      },
+    };
+    const adapted = adaptSillyTavernV2Card(source, { allowV3: true })!;
+    expect(adapted.report.format).toBe('sillytavern-v3');
+    expect(adapted.report.manual.join('\n')).toMatch(/nickname|正则/);
+    expect(adapted.report.retained.join('\n')).toMatch(/group_only_greetings|assets/);
+    expect(adapted.card.xingye.lore).toMatchObject([
+      { id: 'st-v3-0', insertionMode: 'manual', enabled: false },
+      { id: 'st-v3-1', insertionMode: 'keyword', enabled: true },
+    ]);
+    const profile = { ...adapted.card.xingye.profile, scenario: 'Edited scene' };
+    const packaged = normalizePackagedXingye({ profile, lore: adapted.card.xingye.lore })!;
+    const exported = exportSillyTavernV3Card(packaged.profile, packaged.lore, 'Luna')!;
+    expect(exported).toMatchObject({ spec: 'chara_card_v3', spec_version: '3.0', data: {
+      scenario: 'Edited scene', nickname: source.data.nickname,
+      assets: source.data.assets, group_only_greetings: source.data.group_only_greetings,
+      character_book: { entries: [
+        { enabled: false, use_regex: true }, { enabled: true, use_regex: false },
+      ] },
+    } });
+    expect(exportSillyTavernV2Card(packaged.profile, packaged.lore, 'Luna')).toBeNull();
+  });
+
+  it('does not auto-activate V3 lore with decorator-controlled matching', () => {
+    const source = {
+      ...fixture(), spec: 'chara_card_v3', spec_version: '3.0',
+      data: { ...fixture().data, character_book: { entries: [
+        { name: 'Never', content: '@@dont_activate\nSecret', keys: ['secret'], enabled: true },
+        { name: 'Excluded', content: '@@exclude_keys stop\nOnly sometimes', keys: ['secret'], enabled: true },
+        { name: 'Plain', content: 'Ordinary text', keys: ['secret'], enabled: true },
+      ] } },
+    };
+    const adapted = adaptSillyTavernV2Card(source, { allowV3: true })!;
+    expect(adapted.card.xingye.lore).toMatchObject([
+      { enabled: false, insertionMode: 'manual' },
+      { enabled: false, insertionMode: 'manual' },
+      { enabled: true, insertionMode: 'keyword' },
+    ]);
+    expect(adapted.report.manual.join('\n')).toContain('装饰器');
+    expect(adapted.card.xingye.lore[0].content).toContain('@@dont_activate');
   });
 
   it('keeps empty and malformed optional fields explicit in the import report', () => {

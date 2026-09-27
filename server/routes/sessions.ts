@@ -1265,6 +1265,40 @@ export function createSessionsRoute(engine, hub = null) {
     }
   });
 
+  // Current-session task status for the in-app companion. Keep the response to
+  // status facts; plugin metadata and task errors are not presentation data.
+  route.get("/sessions/presentation-status", (c) => {
+    const requestContext = createRequestContext(c, engine);
+    const sessionId = c.req.query("sessionId")?.trim() || null;
+    let sessionPath = c.req.query("path")?.trim() || null;
+    if (sessionId) {
+      const manifest = engine.getSessionManifest?.(sessionId) || null;
+      if (!manifest?.currentLocator?.path) {
+        return c.json({ error: "Session manifest not found", code: "session_manifest_not_found" }, 404);
+      }
+      sessionPath = manifest.currentLocator.path;
+    }
+    if (!sessionPath || !isValidSessionPath(sessionPath, engine.agentsDir)) {
+      return c.json({ error: "Invalid session path" }, 403);
+    }
+    const auth = authorizeSessionRoute(requestContext, "sessions.read", {
+      kind: "session",
+      studioId: requestContext.studioId,
+      sessionPath,
+    });
+    if (!auth.allowed) return c.json({ error: "insufficient_scope", reason: auth.reason }, 403);
+    const rawAfter = c.req.query("afterSequence") || "0";
+    const afterSequence = Number(rawAfter);
+    if (!Number.isSafeInteger(afterSequence) || afterSequence < 0) {
+      return c.json({ error: "Invalid afterSequence" }, 400);
+    }
+    const registry = engine.taskRegistry;
+    if (typeof registry?.presentationStatusForSession !== "function") {
+      return c.json({ error: "Task status unavailable" }, 503);
+    }
+    return c.json(registry.presentationStatusForSession({ parentSessionId: sessionId, parentSessionPath: sessionPath }, afterSequence));
+  });
+
   // 获取 session 的消息（支持 ?path= 指定 session，否则读焦点 session）
   route.get("/sessions/messages", async (c) => {
     try {

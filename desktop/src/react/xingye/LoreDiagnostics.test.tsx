@@ -21,12 +21,12 @@ describe('lore diagnostics', () => {
     fireEvent.click(screen.getByText('设定选择诊断（模拟预览）'));
     expect(screen.getByText(/不是最后一次模型请求记录/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('诊断查询文本'), { target: { value: '灯塔' } });
-    fireEvent.change(screen.getByLabelText('各路径字符预算'), { target: { value: '200' } });
+    fireEvent.change(screen.getByLabelText('各路径条目字符预算'), { target: { value: '200' } });
     const shared = within(screen.getByRole('region', { name: '共享关键词选择器' }));
     const desktop = within(screen.getByRole('region', { name: '桌面通用选择器' }));
     expect(shared.getByText('长设定').closest('li')).toHaveTextContent('截断选入：预算不足');
-    expect(shared.getByText('短设定').closest('li')).toHaveTextContent('排除：预算不足');
-    expect(desktop.getByText('长设定').closest('li')).toHaveTextContent('排除：预算不足');
+    expect(shared.getByText('短设定').closest('li')).toHaveTextContent('完整选入');
+    expect(desktop.getByText('长设定').closest('li')).toHaveTextContent('截断选入：预算不足');
     expect(desktop.getByText('短设定').closest('li')).toHaveTextContent('完整选入');
     expect(desktop.getByText('关停设定').closest('li')).toHaveTextContent('未启用');
     expect(desktop.getByText('私有备注').closest('li')).toHaveTextContent('私有备注或草稿');

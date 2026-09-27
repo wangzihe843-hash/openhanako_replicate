@@ -93,6 +93,40 @@ describe("TaskRegistry", () => {
     expect(reg.listAll()).toHaveLength(2);
   });
 
+  it("projects scoped status transitions even after a task is removed", () => {
+    const reg = new TaskRegistry({ getSessionIdForPath: (sessionPath: string) => (
+      sessionPath === "/s/a" ? "sess_a" : sessionPath === "/s/b" ? "sess_b" : null
+    ) });
+    reg.registerHandler("test", { abort: vi.fn() });
+    reg.register("a", { type: "test", parentSessionPath: "/s/a", meta: { secret: "private" } });
+    reg.register("b", { type: "test", parentSessionPath: "/s/b" });
+    const baseline = reg.presentationStatusForSession({ parentSessionId: "sess_a" });
+    expect(baseline.tasks).toEqual([expect.objectContaining({ taskId: "a", status: "running" })]);
+    expect(JSON.stringify(baseline)).not.toContain("private");
+
+    reg.complete("a", "done");
+    reg.remove("a");
+    reg.fail("b", "failed");
+    const after = reg.presentationStatusForSession({ parentSessionId: "sess_a" }, baseline.sequence);
+    expect(after.tasks).toEqual([]);
+    expect(after.changes).toEqual([expect.objectContaining({ taskId: "a", status: "completed" })]);
+    expect(JSON.stringify(after)).not.toContain("done");
+    expect(JSON.stringify(after)).not.toContain("failed");
+  });
+
+  it("records canceled as the last transition and bulk aborts without a handler", () => {
+    const reg = new TaskRegistry();
+    reg.registerHandler("test", { abort: vi.fn() });
+    reg.register("cancel-me", { type: "test", parentSessionPath: "/s/a" });
+    reg.register("bulk-me", { type: "unhandled", parentSessionPath: "/s/a" });
+    const baseline = reg.presentationStatusForSession({ parentSessionPath: "/s/a" });
+    reg.cancel("cancel-me");
+    reg.abortByParentSession("/s/a");
+    const changes = reg.presentationStatusForSession({ parentSessionPath: "/s/a" }, baseline.sequence).changes;
+    expect(changes.filter((change) => change.taskId === "cancel-me").at(-1)?.status).toBe("canceled");
+    expect(changes.find((change) => change.taskId === "bulk-me")?.status).toBe("aborted");
+  });
+
   it("aborts active tasks registered under a parent session path", () => {
     const reg = new TaskRegistry();
     const abortFn = vi.fn();

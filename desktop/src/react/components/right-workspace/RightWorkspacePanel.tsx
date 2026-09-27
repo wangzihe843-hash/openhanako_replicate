@@ -7,6 +7,7 @@ import { JianEditor } from '../desk/DeskEditor';
 import { PluginWidgetView } from '../plugin/PluginWidgetView';
 import { SessionRegistryFilesPanel } from './SessionRegistryFilesPanel';
 import { SessionTodoCard } from './SessionTodoCard';
+import { CompanionStatusCard } from './CompanionStatusCard';
 import { WorkflowCard } from './WorkflowCard';
 import { AgentActivityCard } from './AgentActivityCard';
 import { SessionStatusCard } from './SessionStatusCard';
@@ -124,6 +125,7 @@ export function RightWorkspacePanel({ compact = false }: { compact?: boolean }) 
 
   return (
     <div className={styles.shell}>
+      {!compact && <CompanionStatusCard />}
       {!compact && <SessionTodoCard />}
       <div
         className={`universal-card ${styles.workspaceCard}`}

@@ -1,12 +1,14 @@
 /** Portable card metadata is inert; only the normalized profile/lore fields run. */
 export type CharacterCardCompatibility = {
-  format: 'sillytavern-v2';
+  format: 'sillytavern-v2' | 'sillytavern-v3';
   sourceCard: Record<string, unknown>;
   loreEntryIds: string[];
+  /** Current lore ID to index in sourceCard.data.character_book.entries. */
+  loreSourceIndices?: Record<string, number>;
 };
 
 export type CharacterCardImportReport = {
-  format: 'sillytavern-v2';
+  format: 'sillytavern-v2' | 'sillytavern-v3';
   mapped: string[];
   retained: string[];
   manual: string[];

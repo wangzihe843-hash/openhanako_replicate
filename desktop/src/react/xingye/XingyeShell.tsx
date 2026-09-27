@@ -11,6 +11,7 @@ import { RoleDetailPanel } from './RoleDetailPanel';
 import { RoleListPanel } from './RoleListPanel';
 import { enterXingyeAgentChat } from './xingye-chat-actions';
 import { refreshXingyeAgentPersistence } from './xingye-persistence';
+import { navigateXingyeSceneSource } from './xingye-scene-navigation';
 import styles from './XingyeShell.module.css';
 import { xingyeTabs, type XingyeTabId } from './xingye-tabs';
 
@@ -174,7 +175,11 @@ export function XingyeShell({ onExit }: XingyeShellProps) {
               selectedXingyeAgentId={selectedXingyeAgentId}
             />
           ) : activeTab.id === 'secret-space' ? (
-            <SecretSpacePanel agent={selectedAgent} />
+            <SecretSpacePanel
+              agent={selectedAgent}
+              onNavigateSceneSource={selectedAgent ? (sessionId, entryId) =>
+                navigateXingyeSceneSource(selectedAgent.id, sessionId, entryId, onExit) : undefined}
+            />
           ) : activeTab.id === 'gifts' ? (
             <GiftPanel agent={selectedAgent} />
           ) : (

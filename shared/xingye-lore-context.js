@@ -48,27 +48,6 @@ function compareStableLoreEntries(a, b) {
   return normalizeString(a.id).localeCompare(normalizeString(b.id));
 }
 
-function isStableLoreCandidate(entry, agentId) {
-  if (!entry || typeof entry !== 'object') return false;
-  if (normalizeString(entry.agentId) !== agentId) return false;
-  if (entry.enabled !== true) return false;
-  if (entry.visibility !== 'canonical') return false;
-  if (entry.insertionMode !== 'always') return false;
-  if (!normalizeString(entry.content)) return false;
-  return true;
-}
-
-function isRuntimeLoreCandidate(entry, agentId) {
-  if (!entry || typeof entry !== 'object') return false;
-  if (normalizeString(entry.agentId) !== agentId) return false;
-  if (entry.enabled !== true) return false;
-  if (entry.visibility !== 'canonical') return false;
-  if (entry.insertionMode !== 'keyword') return false;
-  if (!normalizeString(entry.content)) return false;
-  if (!normalizeKeywords(entry.keywords).length) return false;
-  return true;
-}
-
 function toMetadata(entry) {
   return {
     id: normalizeString(entry.id),
@@ -114,34 +93,6 @@ function composeRuntimeText(blocks) {
   return `${RUNTIME_LORE_TITLE}\n${RUNTIME_LORE_NOTICE}\n\n${blocks.join('\n\n')}`;
 }
 
-function truncateContentForBudget(entry, existingBlocks, maxChars) {
-  const fullContent = normalizeString(entry.content);
-  const title = getEntryTitle(entry);
-  const prefix = `- 标题：${title}\n  内容：`;
-  const textWithoutContent = composeText([...existingBlocks, `${prefix}${OMISSION_MARKER}`]);
-  const availableContentChars = maxChars - textWithoutContent.length;
-
-  if (availableContentChars <= 0) return null;
-  const truncatedContent = `${fullContent.slice(0, availableContentChars)}${OMISSION_MARKER}`;
-  return `${prefix}${truncatedContent}`;
-}
-
-function truncateRuntimeContentForBudget(entry, matchedKeywords, existingBlocks, maxChars) {
-  const fullContent = normalizeString(entry.content);
-  const prefix = [
-    `- 标题：${getEntryTitle(entry)}`,
-    `  分类：${normalizeString(entry.category)}`,
-    `  匹配关键词：${matchedKeywords.join(', ')}`,
-    '  内容：',
-  ].join('\n');
-  const textWithoutContent = composeRuntimeText([...existingBlocks, `${prefix}${OMISSION_MARKER}`]);
-  const availableContentChars = maxChars - textWithoutContent.length;
-
-  if (availableContentChars <= 0) return null;
-  const truncatedContent = `${fullContent.slice(0, availableContentChars)}${OMISSION_MARKER}`;
-  return `${prefix}${truncatedContent}`;
-}
-
 function normalizeKeywords(keywords) {
   return toStringArray(keywords).map(normalizeString).filter(Boolean);
 }
@@ -158,11 +109,113 @@ function buildQueryText(userText, recentMessages) {
     .join('\n');
 }
 
-function getMatchedKeywords(entry, queryText) {
+function getMatchedKeywords(entry, queryText, explicitKeywords = []) {
   const normalizedQuery = queryText.toLocaleLowerCase();
+  const explicit = new Set(toStringArray(explicitKeywords).map(normalizeString).filter(Boolean)
+    .map((keyword) => keyword.toLocaleLowerCase()));
   return normalizeKeywords(entry.keywords).filter((keyword) =>
-    normalizedQuery.includes(keyword.toLocaleLowerCase()),
+    explicit.has(keyword.toLocaleLowerCase()) || normalizedQuery.includes(keyword.toLocaleLowerCase()),
   );
+}
+
+/**
+ * The same eligibility, ordering and bounded fit policy is used by chat, Phone
+ * and renderer-generated Xingye content. A large entry is deferred while
+ * smaller entries are considered; only unused space may hold a shortened one.
+ * The caller supplies the exact block formatter so its heading is counted.
+ */
+export function selectXingyeLoreEntries({
+  entries,
+  agentId,
+  mode = 'keyword',
+  queryText = '',
+  explicitKeywords = [],
+  maxChars = DEFAULT_MAX_CHARS,
+  formatBlock,
+  compose = (blocks) => blocks.join('\n\n'),
+  priorityBoostCategories = [],
+  onDecision,
+} = {}) {
+  const aid = normalizeString(agentId);
+  const budget = normalizeMaxChars(maxChars);
+  const query = normalizeString(queryText);
+  const hasExplicitKeywords = toStringArray(explicitKeywords).some((keyword) => normalizeString(keyword));
+  const allowedModes = mode === 'all' ? new Set(['always', 'keyword']) : new Set([mode]);
+  const candidates = [];
+  for (const entry of toEntryArray(entries)) {
+    if (!entry || typeof entry !== 'object' || normalizeString(entry.agentId) !== aid || !aid) continue;
+    let reason = '';
+    if (entry.enabled !== true) reason = 'disabled';
+    else if (entry.visibility !== 'canonical') reason = 'visibility';
+    else if (!allowedModes.has(entry.insertionMode)) reason = 'mode';
+    else if (!normalizeString(entry.content)) reason = 'empty';
+    else if (entry.insertionMode === 'keyword' && !normalizeKeywords(entry.keywords).length) reason = 'no-keywords';
+    else if (entry.insertionMode === 'keyword' && !query && !hasExplicitKeywords) reason = 'no-query';
+    const matchedKeywords = entry.insertionMode === 'keyword' && !reason
+      ? getMatchedKeywords(entry, query, explicitKeywords) : [];
+    if (!reason && entry.insertionMode === 'keyword' && !matchedKeywords.length) reason = 'no-match';
+    if (reason) { reportDecision(onDecision, entry, reason); continue; }
+    candidates.push({ entry, matchedKeywords });
+  }
+  const boosts = new Set(toStringArray(priorityBoostCategories).map(normalizeString));
+  candidates.sort((a, b) => {
+    const boosted = Number(boosts.has(normalizeString(b.entry.category))) - Number(boosts.has(normalizeString(a.entry.category)));
+    return boosted || compareStableLoreEntries(a.entry, b.entry);
+  });
+  const formatter = typeof formatBlock === 'function'
+    ? formatBlock : (entry, matched) => formatRuntimeEntryBlock(entry, matched);
+  const fitted = [];
+  const deferred = [];
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    const block = formatter(candidate.entry, candidate.matchedKeywords, normalizeString(candidate.entry.content));
+    if (compose([...fitted.map((item) => item.block), block]).length <= budget) {
+      fitted.push({ ...candidate, block, content: normalizeString(candidate.entry.content), index, truncated: false });
+    } else {
+      deferred.push({ ...candidate, index });
+    }
+  }
+  // A shortened entry is useful only after full later entries had their chance.
+  for (const candidate of deferred) {
+    const content = normalizeString(candidate.entry.content);
+    let low = 0;
+    let high = content.length - 1;
+    let shortened = '';
+    let shortenedContent = '';
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const attempt = formatter(candidate.entry, candidate.matchedKeywords, `${content.slice(0, mid)}${OMISSION_MARKER}`);
+      const ordered = [...fitted, { ...candidate, block: attempt, truncated: true }]
+        .sort((a, b) => a.index - b.index);
+      if (compose(ordered.map((item) => item.block)).length <= budget) {
+        shortened = attempt;
+        shortenedContent = `${content.slice(0, mid)}${OMISSION_MARKER}`;
+        low = mid + 1;
+      } else high = mid - 1;
+    }
+    if (shortened && low > 24) {
+      fitted.push({ ...candidate, block: shortened, content: shortenedContent, truncated: true });
+      break;
+    }
+  }
+  fitted.sort((a, b) => a.index - b.index);
+  const selectedIndexes = new Set(fitted.map((item) => item.index));
+  const selected = fitted.map(({ entry, matchedKeywords, block, content, truncated }) => ({
+    entry, matchedKeywords, block, content, truncated,
+  }));
+  for (let index = 0; index < candidates.length; index += 1) {
+    const { entry, matchedKeywords } = candidates[index];
+    const selectedItem = fitted.find((item) => item.index === index);
+    reportDecision(onDecision, entry,
+      selectedItem ? (selectedItem.truncated ? 'truncated' : 'selected') : 'budget',
+      matchedKeywords, selectedItem?.block.length ?? 0);
+  }
+  return {
+    selected,
+    candidateCount: candidates.length,
+    usedChars: selected.length ? compose(selected.map((item) => item.block)).length : 0,
+    truncated: deferred.some((item) => !selectedIndexes.has(item.index)) || selected.some((item) => item.truncated),
+  };
 }
 
 // Diagnostics are opt-in and never include another agent's entries or lore content.
@@ -174,71 +227,21 @@ function reportDecision(onDecision, entry, reason, matchedKeywords = [], blockCh
   });
 }
 
-function reportExclusions(entries, agentId, mode, queryText, maxChars, onDecision) {
-  if (typeof onDecision !== 'function' || !agentId) return;
-  for (const entry of toEntryArray(entries)) {
-    if (!entry || typeof entry !== 'object' || normalizeString(entry.agentId) !== agentId) continue;
-    let reason;
-    if (entry.enabled !== true) reason = 'disabled';
-    else if (entry.visibility !== 'canonical') reason = 'visibility';
-    else if (entry.insertionMode !== mode) reason = 'mode';
-    else if (!normalizeString(entry.content)) reason = 'empty';
-    else if (mode === 'keyword' && !normalizeKeywords(entry.keywords).length) reason = 'no-keywords';
-    else if (mode === 'keyword' && !queryText) reason = 'no-query';
-    else if (mode === 'keyword' && !getMatchedKeywords(entry, queryText).length) reason = 'no-match';
-    else if (maxChars <= 0) reason = 'budget';
-    if (reason) reportDecision(onDecision, entry, reason);
-  }
-}
-
 export function buildXingyeStableLoreMemoryContext({
   entries,
   agentId,
   maxChars = DEFAULT_MAX_CHARS,
   onDecision,
 } = {}) {
-  const normalizedAgentId = normalizeString(agentId);
-  const normalizedMaxChars = normalizeMaxChars(maxChars);
-  reportExclusions(entries, normalizedAgentId, 'always', '', normalizedMaxChars, onDecision);
-  if (!normalizedAgentId || normalizedMaxChars <= 0) {
-    return { text: '', entries: [] };
-  }
-
-  const candidates = toEntryArray(entries)
-    .filter((entry) => isStableLoreCandidate(entry, normalizedAgentId))
-    .sort(compareStableLoreEntries);
-
-  const blocks = [];
-  const selectedEntries = [];
-
-  for (const entry of candidates) {
-    const fullBlock = formatEntryBlock(entry);
-    const fullText = composeText([...blocks, fullBlock]);
-    if (fullText.length <= normalizedMaxChars) {
-      blocks.push(fullBlock);
-      selectedEntries.push(toMetadata(entry));
-      reportDecision(onDecision, entry, 'selected', [], fullBlock.length);
-      continue;
-    }
-
-    const truncatedBlock = truncateContentForBudget(entry, blocks, normalizedMaxChars);
-    if (truncatedBlock) {
-      blocks.push(truncatedBlock);
-      selectedEntries.push(toMetadata(entry));
-      reportDecision(onDecision, entry, 'truncated', [], truncatedBlock.length);
-    } else {
-      reportDecision(onDecision, entry, 'budget');
-    }
-  }
-
-  if (!selectedEntries.length) {
-    return { text: '', entries: [] };
-  }
-
-  return {
-    text: composeText(blocks),
-    entries: selectedEntries,
-  };
+  const result = selectXingyeLoreEntries({
+    entries, agentId, mode: 'always', maxChars,
+    formatBlock: (entry, _matched, content) => formatEntryBlock(entry, content),
+    compose: composeText,
+    onDecision,
+  });
+  return result.selected.length
+    ? { text: composeText(result.selected.map((item) => item.block)), entries: result.selected.map((item) => toMetadata(item.entry)) }
+    : { text: '', entries: [] };
 }
 
 export function buildXingyeRuntimeLoreContext({
@@ -249,54 +252,17 @@ export function buildXingyeRuntimeLoreContext({
   maxChars = DEFAULT_MAX_CHARS,
   onDecision,
 } = {}) {
-  const normalizedAgentId = normalizeString(agentId);
-  const normalizedMaxChars = normalizeMaxChars(maxChars);
   const queryText = buildQueryText(userText, recentMessages);
-  reportExclusions(entries, normalizedAgentId, 'keyword', queryText, normalizedMaxChars, onDecision);
-  if (!normalizedAgentId || normalizedMaxChars <= 0 || !queryText) {
-    return { text: '', entries: [] };
-  }
-
-  const candidates = toEntryArray(entries)
-    .filter((entry) => isRuntimeLoreCandidate(entry, normalizedAgentId))
-    .map((entry) => ({ entry, matchedKeywords: getMatchedKeywords(entry, queryText) }))
-    .filter(({ matchedKeywords }) => matchedKeywords.length > 0)
-    .sort((a, b) => compareStableLoreEntries(a.entry, b.entry));
-
-  const blocks = [];
-  const selectedEntries = [];
-
-  for (const { entry, matchedKeywords } of candidates) {
-    const fullBlock = formatRuntimeEntryBlock(entry, matchedKeywords);
-    const fullText = composeRuntimeText([...blocks, fullBlock]);
-    if (fullText.length <= normalizedMaxChars) {
-      blocks.push(fullBlock);
-      selectedEntries.push(toRuntimeMetadata(entry, matchedKeywords));
-      reportDecision(onDecision, entry, 'selected', matchedKeywords, fullBlock.length);
-      continue;
+  const result = selectXingyeLoreEntries({
+    entries, agentId, mode: 'keyword', queryText, maxChars,
+    formatBlock: formatRuntimeEntryBlock,
+    compose: composeRuntimeText,
+    onDecision,
+  });
+  return result.selected.length
+    ? {
+      text: composeRuntimeText(result.selected.map((item) => item.block)),
+      entries: result.selected.map((item) => toRuntimeMetadata(item.entry, item.matchedKeywords)),
     }
-
-    const truncatedBlock = truncateRuntimeContentForBudget(
-      entry,
-      matchedKeywords,
-      blocks,
-      normalizedMaxChars,
-    );
-    if (truncatedBlock) {
-      blocks.push(truncatedBlock);
-      selectedEntries.push(toRuntimeMetadata(entry, matchedKeywords));
-      reportDecision(onDecision, entry, 'truncated', matchedKeywords, truncatedBlock.length);
-    } else {
-      reportDecision(onDecision, entry, 'budget', matchedKeywords);
-    }
-  }
-
-  if (!selectedEntries.length) {
-    return { text: '', entries: [] };
-  }
-
-  return {
-    text: composeRuntimeText(blocks),
-    entries: selectedEntries,
-  };
+    : { text: '', entries: [] };
 }

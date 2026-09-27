@@ -173,7 +173,7 @@ describe('RightWorkspacePanel', () => {
     const { container } = render(<RightWorkspacePanel />);
 
     const tabList = screen.getByRole('tablist', { name: 'rightWorkspace.tabs.label' });
-    expect(tabList.closest('.universal-card')).toBe(container.querySelector('.universal-card'));
+    expect(tabList.closest('.universal-card')).toBe(container.querySelector('[data-right-workspace-card]'));
     expect(within(tabList).getByRole('tab', { name: '对话文件' })).toBeInTheDocument();
     expect(within(tabList).getByRole('tab', { name: '工作台' })).toHaveAttribute('aria-selected', 'true');
     expect(container.querySelector('[data-right-workspace-tab-slider]')).toBeInTheDocument();

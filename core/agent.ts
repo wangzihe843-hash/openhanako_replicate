@@ -59,6 +59,7 @@ import { readXingyeAgentGenderPreambleSync, readXingyeProfileJsonSync } from "..
 import { buildCharacterCardContext } from "../shared/xingye-character-card.ts";
 import { readXingyeAgentRelationshipPreambleSync } from "../shared/xingye-relationship-preamble.js";
 import { buildXingyeRuntimeLoreContext } from "../shared/xingye-lore-context.js";
+import { selectXingyeContextSections, type XingyeContextSection } from "../shared/xingye-context-selection.js";
 import { readXingyeRuntimeLoreEntriesSync } from "../shared/xingye-runtime-lore-file.js";
 import { assertAgentConfigPatchYuan, getAgentConfigRepairState } from "./yuan-registry.ts";
 import { callText } from "./llm-client.ts";
@@ -1413,7 +1414,8 @@ export class Agent implements RuntimeAgentIdentity {
     // 记忆整体开关：master && session 都开启才注入记忆相关 prompt
     // Subagent 场景下整块跳过（无记忆工具 = 规则和 pinned 也是孤儿噪音）
     // 注意：记忆块本身已下移到 prompt 末尾（见下方），这里只是预先准备好规则文本
-    let memoryBlock = null;
+    const dynamicContextSections: XingyeContextSection[] = [];
+    const dynamicContextScope = { agentId: this.id };
     if (memoryEnabled && !forSubagent) {
       const memoryRule = isZh ? [
         "",
@@ -1441,24 +1443,25 @@ export class Agent implements RuntimeAgentIdentity {
       const hasMemory = trimmedMemory && trimmedMemory !== "（暂无记忆）" && trimmedMemory !== "(No memory yet)";
 
       if (hasPinned || hasMemory) {
-        const memParts = [memoryRule];
-        if (hasPinned) {
-          memParts.push(...section(
+        dynamicContextSections.push({ id: 'memory-rules', source: 'memory-rules', scope: dynamicContextScope, priority: 130, text: memoryRule });
+        if (hasPinned) dynamicContextSections.push({
+          id: 'memory-pinned', source: 'memory-pinned', scope: dynamicContextScope, priority: 125,
+          text: section(
             isZh ? "# 置顶记忆" : "# Pinned Memories",
             isZh
               ? "用户主动要求你记住的内容，始终保留。你可以读写这些记忆。\n\n" + pinnedMd
               : "Content the user explicitly asked you to remember. Always retained. You can read and write these memories.\n\n" + pinnedMd
-          ));
-        }
-        if (hasMemory) {
-          memParts.push(...section(
+          ).join('\n'),
+        });
+        if (hasMemory) dynamicContextSections.push({
+          id: 'memory-compiled', source: 'memory-compiled', scope: dynamicContextScope, priority: 120,
+          text: section(
             isZh ? "# 记忆" : "# Memory",
             isZh
               ? "以下这些是从过往对话积累的记忆。\n\n" + memory
               : "The following are memories accumulated from past conversations.\n\n" + memory
-          ));
-        }
-        memoryBlock = memParts;
+          ).join('\n'),
+        });
       }
     }
 
@@ -1624,9 +1627,8 @@ export class Agent implements RuntimeAgentIdentity {
     // 统一放在 prompt 末尾以保护前面静态前缀的 cache 命中率。
 
     // 记忆规则 + 置顶记忆 + 记忆（动态，后台 compile 会更新；按 session 快照）
-    if (memoryBlock) {
-      parts.push(...memoryBlock);
-    }
+    // Memory and role sections are selected together below. Source budgets
+    // reserve room for the role and matched world facts even with long memory.
 
     // 工作模式：剥离全部星野角色注入（性别 / 关系 / 核心设定 / 关键词 lore），
     // 让该会话回到纯助手。yuan/AGENTS.md 基础人格层不在此处，保持不变。
@@ -1649,7 +1651,10 @@ export class Agent implements RuntimeAgentIdentity {
           locale: this.resolveLocale(),
         });
         if (genderPreamble) {
-          parts.push(...section(genderPreamble.title, genderPreamble.body));
+          dynamicContextSections.push({
+            id: 'role-gender', source: 'role-gender', scope: dynamicContextScope, priority: 110,
+            text: section(genderPreamble.title, genderPreamble.body).join('\n'),
+          });
         }
       } catch (error) {
         moduleLog.warn(`[xingye] skip gender preamble: ${error?.message || error}`);
@@ -1673,7 +1678,10 @@ export class Agent implements RuntimeAgentIdentity {
           locale: this.resolveLocale(),
         });
         if (relationshipPreamble) {
-          parts.push(...section(relationshipPreamble.title, relationshipPreamble.body));
+          dynamicContextSections.push({
+            id: 'role-relationship', source: 'role-relationship', scope: dynamicContextScope, priority: 105,
+            text: section(relationshipPreamble.title, relationshipPreamble.body).join('\n'),
+          });
         }
       } catch (error) {
         moduleLog.warn(`[xingye] skip relationship preamble: ${error?.message || error}`);
@@ -1687,7 +1695,10 @@ export class Agent implements RuntimeAgentIdentity {
           character: this.agentName,
           user: this.userName,
         });
-        if (cardContext) parts.push(cardContext);
+        if (cardContext) dynamicContextSections.push({
+          id: 'role-card', source: 'role-card', scope: dynamicContextScope, priority: 100,
+          text: cardContext,
+        });
       } catch (error) {
         moduleLog.warn(`[xingye] skip character card context: ${error?.message || error}`);
       }
@@ -1696,18 +1707,21 @@ export class Agent implements RuntimeAgentIdentity {
         const xingyeStableLore = readXingyeStableLoreMemoryForPromptSync({
           hanakoHome: path.dirname(path.dirname(this.agentDir)),
           agentId: this.id,
-          maxChars: 4000,
+          maxChars: 2400,
         }).trim();
         if (xingyeStableLore) {
-          parts.push(...section(
-            "# 星野核心设定",
-            [
-              "这是角色长期背景、核心关系、核心人物设定。",
-              "它不是刚发生的事件。如果与当前对话事实冲突，以当前对话事实为准。",
-              "",
-              xingyeStableLore,
-            ].join("\n")
-          ));
+          dynamicContextSections.push({
+            id: 'lore-stable', source: 'lore-stable', scope: dynamicContextScope, priority: 90,
+            text: section(
+              "# 星野核心设定",
+              [
+                "这是角色长期背景、核心关系、核心人物设定。",
+                "它不是刚发生的事件。如果与当前对话事实冲突，以当前对话事实为准。",
+                "",
+                xingyeStableLore,
+              ].join("\n")
+            ).join('\n'),
+          });
         }
       } catch (error) {
         moduleLog.warn(`[xingye] skip stable lore prompt section: ${error?.message || error}`);
@@ -1728,12 +1742,34 @@ export class Agent implements RuntimeAgentIdentity {
           maxChars: 2000,
         }).text.trim();
         if (runtimeLore) {
-          parts.push("", "---", "", runtimeLore);
+          dynamicContextSections.push({
+            id: 'lore-keyword', source: 'lore-keyword', scope: dynamicContextScope, priority: 80,
+            text: ['', '---', '', runtimeLore].join('\n'),
+          });
         }
       } catch (error) {
         moduleLog.warn(`[xingye] skip runtime lore prompt section: ${error?.message || error}`);
       }
     }
+
+    const chosenDynamicContext = selectXingyeContextSections({
+      sections: dynamicContextSections,
+      context: dynamicContextScope,
+      // The independent source caps sum to less than this total. A full valid
+      // 2k scene plus 4k example must not be cut by earlier memory sections.
+      maxChars: 27_000,
+      sourceBudgets: {
+        'memory-rules': 1_800,
+        'memory-pinned': 8_000,
+        'memory-compiled': 4_000,
+        'role-gender': 500,
+        'role-relationship': 1_400,
+        'role-card': 6_400,
+        'lore-stable': 2_600,
+        'lore-keyword': 2_200,
+      },
+    });
+    if (chosenDynamicContext.text) parts.push(chosenDynamicContext.text);
 
     // 日期时间（尊重用户时区偏好，fallback 到系统时区）
     const tz = this._cb?.getTimezone?.() || Intl.DateTimeFormat().resolvedOptions().timeZone;

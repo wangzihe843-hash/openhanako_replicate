@@ -9,7 +9,8 @@
  * - 被本轮聊天正文命中的其它 keyword lore。
  */
 
-import { readXingyeAgentPhoneProfileContextSync } from './xingye-profile-file.js';
+import { buildXingyeAgentPhoneProfileContext, readXingyeProfileJsonSync } from './xingye-profile-file.js';
+import { buildCharacterCardContext } from './xingye-character-card.ts';
 import { readXingyeRuntimeLoreEntriesSync } from './xingye-runtime-lore-file.js';
 import {
   buildXingyeRuntimeLoreContext,
@@ -19,10 +20,11 @@ import {
   buildXingyePeerRelationshipLore,
   isXingyePeerRelationshipLoreEntry,
 } from './xingye-peer-lore.js';
+import { selectXingyeContextSections } from './xingye-context-selection.js';
 
 const MAX_PEER_RELATIONSHIP_CHARS = 4_800;
 const MAX_LATEST_ALWAYS_LORE_CHARS = 2_400;
-const MAX_TOPICAL_LORE_CHARS = 2_400;
+const MAX_TOPICAL_LORE_CHARS = 2_000;
 const MAX_PHONE_TURN_CONTEXT_CHARS = 14_400;
 
 function normalizeString(value) {
@@ -58,12 +60,16 @@ export function buildXingyeAgentPhoneTurnContext({
   if (!aid || !dir) return '';
   const isZh = String(locale || '').startsWith('zh');
   const parts = [];
+  const scope = { agentId: aid };
+  const add = (id, source, priority, value) => {
+    if (value) parts.push({ id, source, scope, priority, text: value });
+  };
   const peers = normalizePeerRefs(peerRefs, aid);
 
   if (peers.length > 0) {
     const selfLabel = normalizeString(agentName) || aid;
     const peerLabels = peers.map((peer) => peer.name !== peer.id ? `${peer.name}（${peer.id}）` : peer.id);
-    parts.push(isZh
+    add('entity-boundary', 'entity-boundary', 120, isZh
       ? [
         '# 实体与关系边界',
         `- 你自己是 ${selfLabel}（agent id：${aid}）。`,
@@ -87,13 +93,20 @@ export function buildXingyeAgentPhoneTurnContext({
     loreEntries = [];
   }
 
-  const profile = readXingyeAgentPhoneProfileContextSync({
-    hanakoHome,
-    agentId: aid,
-    agentName,
-    locale,
-  });
-  if (profile) parts.push(profile);
+  // Read the profile once, then budget its ordinary fields and card references
+  // separately. The card can carry 2k of scene plus 4k of examples; appending
+  // it to a near-full profile before selection would silently cut it away.
+  try {
+    const currentProfile = readXingyeProfileJsonSync({ hanakoHome, agentId: aid });
+    add('role-profile', 'role-profile', 110, buildXingyeAgentPhoneProfileContext({
+      profile: currentProfile, agentName, locale, includeCharacterCard: false,
+    }));
+    add('role-card', 'role-card', 105, buildCharacterCardContext({
+      profile: currentProfile, character: agentName,
+    }));
+  } catch {
+    // Optional role context must never block phone delivery.
+  }
 
   // Phone's frozen base excludes Xingye sections. This is the sole source of
   // always lore, so removals and disabling take effect on the next turn too.
@@ -107,7 +120,7 @@ export function buildXingyeAgentPhoneTurnContext({
     const latestAlwaysLore = latestAlways.text.trim();
     if (latestAlwaysLore) {
       for (const entry of latestAlways.entries) includedAlwaysIds.add(entry.id);
-      parts.push([
+      add('lore-always', 'lore-always', 100, [
         isZh
           ? '## 当前 always Lore'
           : '## Current Always Lore',
@@ -141,7 +154,7 @@ export function buildXingyeAgentPhoneTurnContext({
     relationshipChars += block.length;
   }
   if (relationships.length > 0) {
-    parts.push([
+    add('peer-relationships', 'peer-relationships', 90, [
       isZh
         ? '以下关系按真实 sender 身份定向命中。用它决定语气、距离与分寸，不要把它当成用户关系，也不要编造未写明的细节。'
         : 'These relationships were selected from the real sender identities. Let them shape tone, distance, and boundaries; do not confuse them with the user relationship or invent unstated details.',
@@ -164,7 +177,8 @@ export function buildXingyeAgentPhoneTurnContext({
         maxChars: MAX_TOPICAL_LORE_CHARS,
       }).text.trim();
       if (topical) {
-        parts.push(`${isZh ? '## 本轮聊天正文命中的其它设定' : '## Other Lore Matched by This Phone Turn'}\n${topical}`);
+        add('lore-keyword', 'lore-keyword', 80,
+          `${isZh ? '## 本轮聊天正文命中的其它设定' : '## Other Lore Matched by This Phone Turn'}\n${topical}`);
       }
     } catch {
       // Phone delivery must keep working when optional Xingye files are missing/corrupt.
@@ -172,11 +186,19 @@ export function buildXingyeAgentPhoneTurnContext({
   }
 
   if (parts.length === 0) return '';
-  const context = [
-    isZh ? '# 本轮动态角色上下文（内部）' : '# Dynamic Role Context for This Turn (Internal)',
-    ...parts,
-  ].join('\n\n');
-  return context.length <= MAX_PHONE_TURN_CONTEXT_CHARS
-    ? context
-    : `${context.slice(0, MAX_PHONE_TURN_CONTEXT_CHARS - 1).trimEnd()}…`;
+  const heading = isZh ? '# 本轮动态角色上下文（内部）' : '# Dynamic Role Context for This Turn (Internal)';
+  const selected = selectXingyeContextSections({
+    sections: parts,
+    context: scope,
+    maxChars: MAX_PHONE_TURN_CONTEXT_CHARS - heading.length - 2,
+    sourceBudgets: {
+      'entity-boundary': 1_000,
+      'role-profile': 4_800,
+      'role-card': 6_400,
+      'lore-always': MAX_LATEST_ALWAYS_LORE_CHARS + 100,
+      'peer-relationships': MAX_PEER_RELATIONSHIP_CHARS + 200,
+      'lore-keyword': MAX_TOPICAL_LORE_CHARS + 100,
+    },
+  });
+  return selected.text ? `${heading}\n\n${selected.text}` : '';
 }

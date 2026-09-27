@@ -22,6 +22,21 @@ export const XINGYE_MEMORY_CANDIDATE_IMPORTANCE_HIGH = 3;
 
 export type XingyeMemoryCandidateImportanceLevel = 'low' | 'medium' | 'high';
 
+export type XingyeSceneSection = {
+  kind: 'role' | 'location' | 'event' | 'open_thread';
+  text: string;
+  inference: boolean;
+  evidence: Array<{ entryId: string; quote: string }>;
+};
+
+export type XingyeSceneSummary = {
+  sessionId: string;
+  branchHeadId?: string;
+  sourceRefs: Array<{ entryId: string; hash: string; role: string }>;
+  sections: XingyeSceneSection[];
+  validity: 'unknown' | 'valid' | 'stale';
+};
+
 export type XingyeMemoryCandidate = {
   id: string;
   agentId: string;
@@ -35,6 +50,7 @@ export type XingyeMemoryCandidate = {
   createdAt: string;
   updatedAt: string;
   writtenAt?: string;
+  sceneSummary?: XingyeSceneSummary;
 };
 
 export type XingyeMemoryCandidateMap = Record<string, XingyeMemoryCandidate>;
@@ -66,13 +82,51 @@ function createId(): string {
   return `mc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function normalizeSceneSummary(value: unknown): XingyeSceneSummary | undefined {
+  if (!isRecord(value)) return undefined;
+  const sessionId = normalizeOptionalString(value.sessionId);
+  if (!sessionId || !Array.isArray(value.sourceRefs) || !Array.isArray(value.sections)) return undefined;
+  const sourceRefs = value.sourceRefs.slice(0, 30).flatMap((ref) => {
+    if (!isRecord(ref)) return [];
+    const entryId = normalizeOptionalString(ref.entryId);
+    const hash = normalizeOptionalString(ref.hash);
+    if (!entryId || !/^[a-f0-9]{64}$/.test(hash ?? '')) return [];
+    return [{ entryId, hash: hash!, role: ref.role === 'assistant' ? 'assistant' : 'user' }];
+  });
+  const sections = value.sections.slice(0, 16).flatMap((section) => {
+    if (!isRecord(section)) return [];
+    const text = normalizeOptionalString(section.text)?.slice(0, 500);
+    if (!text) return [];
+    const kind: XingyeSceneSection['kind'] = section.kind === 'role' || section.kind === 'location' || section.kind === 'open_thread'
+      ? section.kind : 'event';
+    const evidence = (Array.isArray(section.evidence) ? section.evidence : []).slice(0, 4).flatMap((item) => {
+      if (!isRecord(item)) return [];
+      const entryId = normalizeOptionalString(item.entryId);
+      const quote = normalizeOptionalString(item.quote)?.slice(0, 500);
+      return entryId && quote ? [{ entryId, quote }] : [];
+    });
+    return [{ kind, text, inference: section.inference === true || evidence.length === 0, evidence }];
+  });
+  if (sourceRefs.length === 0 || sections.length === 0) return undefined;
+  const validity = value.validity === 'valid' || value.validity === 'stale' ? value.validity : 'unknown';
+  return { sessionId, branchHeadId: normalizeOptionalString(value.branchHeadId), sourceRefs, sections, validity };
+}
+
+export function sceneSummaryContent(sections: XingyeSceneSection[]): string {
+  const labels = { role: '角色', location: '地点', event: '关键事件', open_thread: '未决事项' };
+  return sections.map((section) => `${labels[section.kind]}：${section.text}`).join('\n');
+}
+
 function normalizeCandidate(value: unknown, fallbackId?: string): XingyeMemoryCandidate | null {
   if (!isRecord(value)) return null;
   const id = normalizeOptionalString(value.id) ?? fallbackId;
   const agentId = normalizeOptionalString(value.agentId);
   const content = normalizeOptionalString(value.content);
   if (!id || !agentId || !content) return null;
-  const target = normalizeXingyeMemoryCandidateTarget(value.target);
+  let target = normalizeXingyeMemoryCandidateTarget(value.target);
+  const sceneSummary = normalizeSceneSummary(value.sceneSummary);
+  if ((sceneSummary || value.sourceDomain === 'scene_summary') && target !== 'scene_archive') target = 'unknown';
+  if (target === 'scene_archive' && !sceneSummary) target = 'unknown';
   const status = typeof value.status === 'string' && STATUSES.includes(value.status as XingyeMemoryCandidateStatus)
     ? (value.status as XingyeMemoryCandidateStatus)
     : 'pending';
@@ -94,6 +148,7 @@ function normalizeCandidate(value: unknown, fallbackId?: string): XingyeMemoryCa
     reason: normalizeOptionalString(value.reason),
     importance,
   };
+  if (sceneSummary) c.sceneSummary = sceneSummary;
   if (writtenAt) c.writtenAt = writtenAt;
   return c;
 }
@@ -186,12 +241,16 @@ export function createXingyeMemoryCandidate(
     sourceId?: string;
     reason?: string;
     importance?: number;
+    sceneSummary?: XingyeSceneSummary;
   },
   storage: StorageLike | null = getLocalStorage(),
 ): XingyeMemoryCandidate {
   const now = new Date().toISOString();
   const id = createId();
   const target = normalizeXingyeMemoryCandidateTarget(input.target ?? 'pinned');
+  if ((input.sourceDomain === 'scene_summary' || input.sceneSummary || target === 'scene_archive') && (target !== 'scene_archive' || !input.sceneSummary)) {
+    throw new Error('scene summary candidates must target scene_archive');
+  }
   const candidate = normalizeCandidate({
     id,
     agentId,
@@ -202,6 +261,7 @@ export function createXingyeMemoryCandidate(
     sourceId: input.sourceId,
     reason: input.reason,
     importance: input.importance,
+    sceneSummary: input.sceneSummary,
     createdAt: now,
     updatedAt: now,
   });
@@ -277,7 +337,7 @@ async function appendMemoryCandidateWrittenEvent(
 export function updateXingyeMemoryCandidate(
   agentId: string,
   candidateId: string,
-  patch: Partial<Pick<XingyeMemoryCandidate, 'content' | 'reason' | 'importance'>>,
+  patch: Partial<Pick<XingyeMemoryCandidate, 'content' | 'reason' | 'importance' | 'sceneSummary'>>,
   storage: StorageLike | null = getLocalStorage(),
 ): XingyeMemoryCandidate {
   const prev = getXingyeMemoryCandidate(candidateId, storage);
@@ -286,6 +346,22 @@ export function updateXingyeMemoryCandidate(
   if (prev.status !== 'pending') throw new Error('candidate is not pending');
   const next = patchXingyeMemoryCandidateForAgent(agentId, candidateId, patch, storage);
   if (!next) throw new Error('failed to update memory candidate');
+  return next;
+}
+
+export function setXingyeSceneCandidateValidity(
+  agentId: string,
+  candidateId: string,
+  validity: XingyeSceneSummary['validity'],
+  storage: StorageLike | null = getLocalStorage(),
+): XingyeMemoryCandidate {
+  const prev = getXingyeMemoryCandidate(candidateId, storage);
+  if (!prev?.sceneSummary || prev.agentId !== agentId) throw new Error('scene candidate not found for agent');
+  if (prev.sceneSummary.validity === validity) return prev;
+  const next = patchXingyeMemoryCandidateForAgent(agentId, candidateId, {
+    sceneSummary: { ...prev.sceneSummary, validity },
+  }, storage);
+  if (!next) throw new Error('failed to update scene validity');
   return next;
 }
 
@@ -359,6 +435,32 @@ export async function confirmXingyeMemoryCandidate(
   if (!c) throw new Error('memory candidate not found');
   if (c.agentId !== agentId) throw new Error('memory candidate agent mismatch');
   if (c.status !== 'pending') throw new Error('candidate is not pending');
+  if (c.target === 'scene_archive') {
+    if (!c.sceneSummary) throw new Error('scene candidate metadata is missing');
+    const fetchImpl = options?.fetchImpl ?? hanaFetch;
+    const response = await fetchImpl('/api/xingye/scene-summary/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentId,
+        sessionId: c.sceneSummary.sessionId,
+        sourceRefs: c.sceneSummary.sourceRefs,
+        sections: c.sceneSummary.sections,
+      }),
+    });
+    const result: unknown = await response.json().catch(() => ({}));
+    if (!response.ok || !isRecord(result) || result.valid !== true) {
+      setXingyeSceneCandidateValidity(agentId, candidateId, 'stale', storage);
+      throw new Error(isRecord(result) && typeof result.reason === 'string' ? result.reason : 'scene source could not be verified');
+    }
+    const updated = patchXingyeMemoryCandidateForAgent(agentId, candidateId, {
+      status: 'written',
+      writtenAt: new Date().toISOString(),
+      sceneSummary: { ...c.sceneSummary, validity: 'valid' },
+    }, storage);
+    if (!updated) throw new Error('failed to archive scene candidate');
+    return { candidate: updated, alreadyInPinned: false };
+  }
   assertXingyeMemoryTargetWritable(c.target);
   return confirmXingyeMemoryCandidateToPinned(agentId, candidateId, options);
 }

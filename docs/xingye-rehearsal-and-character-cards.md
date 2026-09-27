@@ -1,6 +1,6 @@
-# 设定试演与 ST V2 JSON 角色卡
+# 设定试演与 ST 角色卡
 
-本页对应陪伴型 Agent 实施计划的 M1、M2。实现沿用既有角色资料、世界书、Pi 会话和模型调用入口。
+本页对应陪伴型 Agent 实施计划的 M1、M2、M3。实现沿用既有角色资料、世界书、Pi 会话和模型调用入口。
 
 ## 设定试演与开场白工坊
 
@@ -29,16 +29,24 @@
 | creator_notes、作者、标签、版本 | 保留；作者注释在导入报告可见，不作为提示指令 |
 | system_prompt、post_history_instructions、未知扩展/脚本/正则 | 仅保留，不替换平台提示、权限或执行规则 |
 | 宏 | 场景、示例、开场仅替换 `{{char}}` / `{{user}}`；其它宏及人格/世界书中的宏保留为文本并报告 |
-| PNG、V3 | 不在 M2 范围，明确拒绝；PNG 属于后续 M3 |
 
 导入在 Agent.init 前落盘角色资料和世界书，失败沿角色创建回滚处理。同名卡片遵守既有唯一角色 ID 规则。
 
 导出仍走既有角色卡 ZIP：原生 `card.json` 包含当前可移植人设和世界书；ST 来源角色另附 `sillytavern-v2.json`。原始卡片保存在资料中的独立兼容命名空间，未知字段得以保留；当前已编辑、清空或删除的受支持字段覆盖原始值，不能因归档原文而复活。损坏的权威资料不能静默当作空值或旧镜像导出。
 
+## ST PNG 与 V3 支持范围
+
+角色卡导入入口也接受带 `chara` 或 `ccv3` 文本元数据的 PNG。两者同时存在时优先读取 `ccv3`；选中的元数据必须是有效的 Base64、UTF-8、JSON 和 V2/V3 角色卡。损坏的 PNG 签名、块校验、压缩画像、缺失结束块、重复角色元数据以及超出大小或像素限制的文件会在预览前拒绝。画像作为角色头像和角色卡封面复制到角色自己的资源目录，重启后仍可用于角色详情和导出。
+
+V3 的 `name`、`description`、`personality`、`scenario`、`first_mes`、`alternate_greetings`、`mes_example` 与内嵌世界书中和 V2 相同的简单字段按上表映射。V3 世界书条目的 `use_regex: true` 没有对应的匹配语义，以禁用的手动条目导入。`nickname`、`group_only_greetings`、多语言作者说明、`assets` 引用及其他扩展保留在原始元数据中，导入报告说明其不生效；不会抓取远程资源或执行脚本。
+
+导出的 ZIP 同时包含当前原生 `card.json` 和 V3 来源角色的 `sillytavern-v3.json`。编辑或删除的已映射字段以当前保存的资料和世界书为准。导出的 `assets/avatar.png` 保留导入画像的原始 PNG 元数据，因此单独重新导入这张 PNG 会读到原始卡片；如需带上后续编辑，请导入 ZIP 或其中的 `sillytavern-v3.json`。
+
 ## 设计依据
 
 - [Greeting Workshop 固定版本源码](https://github.com/BlueprintCoding/SillyTavern-Character-Tag-Manager/blob/c15d6d7b2989d163128f7c93e5003899b5ad6995/stcm_custom_greetings.js)：参考分角色草稿、反馈与候选对比；不采用覆盖现有首条消息的接入方式。
 - [Character Card V2 原始规范](https://github.com/malfoyslastname/character-card-spec-v2/blob/main/spec_v2.md)：核对字段形状、作者注释与未知扩展保留要求；不宣称未实现的系统提示替换等完整语义。
+- [Character Card V3 原始规范](https://github.com/kwaroran/character-card-spec-v3/blob/main/SPEC_V3.md)：核对 `ccv3` 优先级、V3 数据形状和新增字段的保留边界。
 - [SillyTavern 固定版本](https://github.com/SillyTavern/SillyTavern/blob/8172dcd0ee672d3cd9a5e5f7af134f91a45cd2b8/src/endpoints/characters.js) 与 [Nora 固定版本兼容矩阵](https://github.com/LoveMaker-art/noras-tavern/blob/7ad4ad83c0235f44a84d37188ed362afb50da1a6/docs/architecture/COMPLEX-CARD-COMPATIBILITY-MATRIX.md)、[Story Profile](https://github.com/LoveMaker-art/noras-tavern/blob/7ad4ad83c0235f44a84d37188ed362afb50da1a6/story-profile/README.md)：参考原始字段优先级、兼容矩阵和 Story Profile 边界，具体审查记录见本轮 audit。
 
 测试验证存储、路由、运行时与 UI 行为；模型回复的角色表达质量仍取决于实际使用的模型。

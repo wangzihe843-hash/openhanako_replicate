@@ -78,6 +78,10 @@ export function CharacterCardPreviewOverlay({
   const memoryInputId = `character-card-memory-${plan.token || plan.agentId || 'preview'}`;
   const memoryAvailable = plan.memory.available;
   const memoryPreviewText = plan.memory.preview || t('settings.characterCard.noMemory');
+  // The import plan's packageName comes from card metadata, not the uploaded
+  // filename. The PNG mapping is added only when the service decoded a PNG.
+  const importVersion = plan.importReport?.format === 'sillytavern-v3' ? 'V3' : 'V2';
+  const importContainer = plan.importReport?.mapped.some(item => item.startsWith('PNG 画像')) ? 'PNG' : 'JSON';
   const memoryDetailBlocks = [
     { key: 'facts', title: t('settings.characterCard.factsSectionTitle'), value: plan.memory.compiled?.facts || '' },
     { key: 'today', title: t('settings.characterCard.todaySectionTitle'), value: plan.memory.compiled?.today || '' },
@@ -239,7 +243,7 @@ export function CharacterCardPreviewOverlay({
           </div>
           {plan.importReport && (
             <section aria-label="角色卡导入兼容报告" className={styles['character-card-import-report']}>
-              <h3>SillyTavern V2 JSON · 字段子集</h3>
+              <h3>SillyTavern {importVersion} {importContainer} · 字段子集</h3>
               <p>导入为新角色；原角色和聊天不受影响。开场需要在角色详情页选择后开始新聊天。</p>
               {([
                 ['mapped', '将映射并生效'],

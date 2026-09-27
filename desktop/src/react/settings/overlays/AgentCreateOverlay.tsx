@@ -188,7 +188,7 @@ export function AgentCreateOverlay() {
             ref={fileRef}
             className={styles['character-card-file-input']}
             type="file"
-            accept=".zip,.hana-package,.json,.yaml,.yml"
+            accept=".zip,.hana-package,.json,.yaml,.yml,.png"
             onChange={(event) => planCardFile(event.target.files?.[0])}
           />
           <button

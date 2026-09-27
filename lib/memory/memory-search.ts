@@ -14,19 +14,19 @@ import { createModuleLogger } from "../debug-log.ts";
 
 const log = createModuleLogger("memory-search");
 
-const CHANNEL_SESSION_PREFIX = "channel-";
+const TAG_LIMIT = 12;
+const FTS_LIMIT = 8;
+const RESULT_LIMIT = 15;
+const OUTPUT_CHAR_LIMIT = 12000;
+const FACT_EXCERPT_LIMIT = 450;
 
-/**
- * 会话作用域过滤：频道 phone 会话默认看不到「其它频道」的事实。
- * 通用事实（session_id 为空或非频道）和当前频道的事实始终可见，
- * 跨频道检索必须显式传 cross_channel: true（#1670 群聊记忆混淆）。
- */
-function factVisibleInConversationScope(row, scope, crossChannel) {
-  if (!scope || scope.kind !== "channel") return true;
-  const sessionId = typeof row?.session_id === "string" ? row.session_id : "";
-  if (!sessionId.startsWith(CHANNEL_SESSION_PREFIX)) return true;
-  if (sessionId === `${CHANNEL_SESSION_PREFIX}${scope.channelId}`) return true;
-  return crossChannel === true;
+function factExcerpt(fact: string, query: string, source: string): string {
+  if (fact.length <= FACT_EXCERPT_LIMIT) return fact;
+  const needle = source === 'fts' ? query.trim().toLocaleLowerCase() : '';
+  const hit = needle ? fact.toLocaleLowerCase().indexOf(needle) : -1;
+  const start = hit > 100 ? hit - 100 : 0;
+  const excerpt = fact.slice(start, start + FACT_EXCERPT_LIMIT);
+  return `${start > 0 ? '…' : ''}${excerpt}${start + FACT_EXCERPT_LIMIT < fact.length ? '…' : ''}`;
 }
 
 /**
@@ -81,46 +81,43 @@ export function createMemorySearchTool(factStore, opts: any = {}) {
         if (params.date_from) dateRange.from = params.date_from;
         if (params.date_to) dateRange.to = params.date_to + "T23:59";
 
-        let results = [];
-        const seenIds = new Set();
+        const results: Array<{ id: string | number; fact: string; tags: string[]; time?: string | null; source: 'tag' | 'fts' }> = [];
+        const seenIds = new Set<string | number>();
 
-        const crossChannel = conversationScope ? params.cross_channel === true : false;
-        const visibleInScope = (row) => factVisibleInConversationScope(row, conversationScope, crossChannel);
+        const searchScope = conversationScope && params.cross_channel !== true ? conversationScope : null;
+        const searchDateRange = Object.keys(dateRange).length > 0 ? dateRange : undefined;
 
         // 策略 1：标签匹配（优先）
         if (params.tags && params.tags.length > 0) {
           const tagResults = factStore.searchByTags(
             params.tags,
-            Object.keys(dateRange).length > 0 ? dateRange : undefined,
-            15,
+            searchDateRange,
+            TAG_LIMIT,
+            searchScope,
           );
           for (const r of tagResults) {
-            if (!visibleInScope(r)) continue;
             seenIds.add(r.id);
             results.push({ ...r, source: "tag" });
           }
         }
 
-        // 策略 2：全文搜索补充（标签结果不足 3 条时）
-        if (results.length < 3 && params.query) {
-          const ftsResults = factStore.searchFullText(params.query, 10);
+        // 即使宽泛标签已命中，仍为原查询保留 FTS 名额。
+        if (params.query?.trim()) {
+          const ftsResults = factStore.searchFullText(params.query, FTS_LIMIT, {
+            scope: searchScope,
+            dateRange: searchDateRange,
+          });
           for (const r of ftsResults) {
-            if (seenIds.has(r.id)) continue;
-            if (!visibleInScope(r)) continue;
+            if (seenIds.has(r.id)) {
+              const existing = results.find((row) => row.id === r.id);
+              if (existing) existing.source = 'fts';
+              continue;
+            }
             seenIds.add(r.id);
             results.push({ ...r, source: "fts" });
           }
         }
-
-        // 日期过滤（对 FTS 结果也应用）
-        if (dateRange.from || dateRange.to) {
-          results = results.filter((r) => {
-            if (!r.time) return true; // 无时间的不过滤
-            if (dateRange.from && r.time < dateRange.from) return false;
-            if (dateRange.to && r.time > dateRange.to) return false;
-            return true;
-          });
-        }
+        results.splice(RESULT_LIMIT);
 
         const elapsed = performance.now() - t0;
         log.log(
@@ -137,15 +134,25 @@ export function createMemorySearchTool(factStore, opts: any = {}) {
         }
 
         // 格式化输出
-        const lines = results.map((r, i) => {
-          const tagsStr = r.tags.length > 0 ? ` (${r.tags.join(", ")})` : "";
-          const timeStr = r.time ? ` — ${r.time}` : "";
-          return `${i + 1}. ${r.fact}${tagsStr}${timeStr}`;
-        });
+        let remaining = OUTPUT_CHAR_LIMIT;
+        const lines: string[] = [];
+        for (const r of results) {
+          const rawTags = r.tags.length > 0 ? r.tags.join(", ") : "";
+          const tagsStr = rawTags ? ` (${rawTags.slice(0, 150)}${rawTags.length > 150 ? '…' : ''})` : "";
+          const timeStr = r.time ? ` — ${String(r.time).slice(0, 50)}` : "";
+          const line = `${lines.length + 1}. ${factExcerpt(String(r.fact), params.query || '', r.source)}${tagsStr}${timeStr}`;
+          if (line.length > remaining) continue;
+          lines.push(line);
+          remaining -= line.length + 1;
+        }
+
+        if (lines.length === 0) {
+          return { content: [{ type: 'text', text: t('error.memorySearchEmpty') }], details: { resultCount: 0 } };
+        }
 
         return {
           content: [{ type: "text", text: lines.join("\n") }],
-          details: { resultCount: results.length },
+          details: { resultCount: lines.length },
         };
       } catch (err) {
         return {

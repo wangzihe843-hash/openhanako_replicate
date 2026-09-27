@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:845f29329e3ff939186945bdfe0d1aab2e5c39352dc5e007a1ac3f33955ed948",
+  "payloadFingerprint": "sha256:907b9feee525edb564617b0b3086ddfa6810623528108e59a8966aa322be84eb",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3234,8 +3234,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Pi 0.80.3 to 0.87.1 updates the external session package and Hana prompt adapter hashes. CURRENT_SESSION_VERSION remains 3 and the SDK retains v1/v2 migration plus v3 branch loading. Existing Hana SQLite schemas, store mappings, checkpoint policy and auth JSON credential fields are unchanged. New system/context entries are additive SDK transcript records; rollback after running the new SDK must restore the pre-upgrade data snapshot together with code and lockfile.",
-    "payloadFingerprint": "sha256:845f29329e3ff939186945bdfe0d1aab2e5c39352dc5e007a1ac3f33955ed948"
+    "compatibilityReason": "Reviewed in docs/audits/2026-09-27-companion-milestones-persistence-compatibility.md: five schema-source hashes and two registered character-card staging writes changed; all SQLite runtime schemas, serialized task records, existing profile/card formats, store registry, and DATA_EPOCH remain compatible.",
+    "payloadFingerprint": "sha256:907b9feee525edb564617b0b3086ddfa6810623528108e59a8966aa322be84eb"
   },
   "schemas": [
     {
@@ -3302,7 +3302,7 @@
         ],
         "userVersion": 3
       },
-      "sourceHash": "sha256:b78a77f39c39402c64a0f1113be3298d0dbdcfc47371748ca51ebcace073bfbd",
+      "sourceHash": "sha256:08c7a6cab4318eb79a5861388f63c597370069e10d4928085cb7b6967bea2903",
       "storeId": "agent-facts-sqlite"
     },
     {
@@ -3336,7 +3336,7 @@
       "protocolModules": [
         {
           "module": "core/agent.ts",
-          "sourceHash": "sha256:72cee20a05e34dfc117294e83c51242d442fea7e8725b7173159ab8b2561475a"
+          "sourceHash": "sha256:553544d7e05452694f7cb388d74f88b467b7f3848b35a705e743bb2dbbcb1b49"
         },
         {
           "module": "core/agents-md-migration.ts",
@@ -3374,10 +3374,10 @@
       "protocolModules": [
         {
           "module": "lib/character-cards/sillytavern-v2.ts",
-          "sourceHash": "sha256:8b3e3796d920a5942ec835119bc4d2445e5fcbe6046bd360f05ab5f3880ffa05"
+          "sourceHash": "sha256:a8bde41cbdab98ddb3047810ad48e000a09b0516476075d6219b0916fa90cbdb"
         }
       ],
-      "sourceHash": "sha256:e81203b6a3cc637e82b4761787e91fa858de389110682cdcf05e0fd22c84ca9a",
+      "sourceHash": "sha256:52ead8dd88eae72eb12ed332e3f7e81a16effe56853ca7fe52a4bcf016a1d28b",
       "storeId": "character-card-staging"
     },
     {
@@ -3630,7 +3630,7 @@
       "contract": "TaskRegistry task/schedule normalization and persistence serializer",
       "kind": "runtime-contract",
       "module": "lib/task-registry.ts",
-      "sourceHash": "sha256:36d53b1c4f32be410353a9285eaa68aebf07dc63717e9d9e354b2c2231b41025",
+      "sourceHash": "sha256:2c3a4396bf430acfd9e9d9b7077b2b97c970bfdb08715f618e981c2caee65edc",
       "storeId": "plugin-task-registry"
     },
     {
@@ -3956,7 +3956,7 @@
         },
         {
           "module": "desktop/src/react/xingye/xingye-profile-store.ts",
-          "sourceHash": "sha256:c921116325f956a4152f4fdb5f94708e18181cfd975e6c7e359c656060a24e68"
+          "sourceHash": "sha256:cdb561544c5a0e056435a012dcdd30c3b26ae857cdabb29f6b5b8ac91a7d81a2"
         },
         {
           "module": "desktop/src/react/xingye/xingye-state-store.ts",
@@ -3968,7 +3968,7 @@
         },
         {
           "module": "lib/character-cards/sillytavern-v2.ts",
-          "sourceHash": "sha256:8b3e3796d920a5942ec835119bc4d2445e5fcbe6046bd360f05ab5f3880ffa05"
+          "sourceHash": "sha256:a8bde41cbdab98ddb3047810ad48e000a09b0516476075d6219b0916fa90cbdb"
         },
         {
           "module": "lib/desk/social-awareness.js",
@@ -4060,7 +4060,7 @@
         },
         {
           "module": "shared/xingye-character-card.ts",
-          "sourceHash": "sha256:c4f9b354f0349ed340057cb2065735a7ad5ed1e7004fee355276618e1f2dbe8e"
+          "sourceHash": "sha256:703c994a278a6f6c716a82cbdabc3a8b139d54b9a903e6c2b0b11ce443ec3daa"
         },
         {
           "module": "shared/xingye-gift-catalog-data.ts",
@@ -4068,11 +4068,11 @@
         },
         {
           "module": "shared/xingye-lore-memory-file.js",
-          "sourceHash": "sha256:17b87254af81945acb1a32754b7bc9b977d7aadb4b09f66a6ce9d93c77fe9ea6"
+          "sourceHash": "sha256:15a32fab4abd0fe6e587ef88e84872196249d44df9f0976cb51b0742dd36d01c"
         },
         {
           "module": "shared/xingye-profile-file.js",
-          "sourceHash": "sha256:524ed5a8fe1812127919a04b81a3f42720a20c0e428573ad733317d2ed76d07f"
+          "sourceHash": "sha256:217750e30b03e3a239772ac9263944a0ca0efc07467e2d64855b15cb67115aec"
         },
         {
           "module": "shared/xingye-relationship-preamble.js",
@@ -7154,6 +7154,14 @@
     },
     {
       "exemptionId": null,
+      "kind": "copy-file",
+      "ordinal": 0,
+      "reason": "Writes or removes a token-scoped character-card import/export plan or package.",
+      "sourceFile": "lib/character-cards/service.ts",
+      "storeId": "character-card-staging"
+    },
+    {
+      "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
       "reason": "Installs, rolls back, or renames a skill imported from a character card.",
@@ -7211,6 +7219,14 @@
     {
       "exemptionId": null,
       "kind": "remove-path",
+      "ordinal": 0,
+      "reason": "Writes or removes a token-scoped character-card import/export plan or package.",
+      "sourceFile": "lib/character-cards/service.ts",
+      "storeId": "character-card-staging"
+    },
+    {
+      "exemptionId": null,
+      "kind": "write-file",
       "ordinal": 0,
       "reason": "Writes or removes a token-scoped character-card import/export plan or package.",
       "sourceFile": "lib/character-cards/service.ts",

@@ -3,7 +3,8 @@ import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 import YAML from "js-yaml";
-import { adaptSillyTavernV2Card, exportSillyTavernV2Card, normalizePackagedXingye } from "./sillytavern-v2.ts";
+import { adaptSillyTavernV2Card, normalizePackagedXingye, synchronizeSillyTavernCompatibility } from "./sillytavern-v2.ts";
+import { readSillyTavernPng, stripSillyTavernPngCharacterMetadata } from "./sillytavern-png.ts";
 import { readXingyeRuntimeLoreEntriesSync } from "../../shared/xingye-runtime-lore-file.js";
 import { extractZip } from "../extract-zip.ts";
 import { FactStore } from "../memory/fact-store.ts";
@@ -473,7 +474,13 @@ function copyPlanAsset(plan, sourcePath, key, targetBaseName) {
     dst = path.join(plan.packageRoot, rel);
   }
   fs.mkdirSync(path.dirname(dst), { recursive: true });
-  fs.copyFileSync(sourcePath, dst);
+  // The avatar may itself be the originally imported card. Export the pixels,
+  // but do not let stale embedded chara/ccv3 text contradict the current JSON.
+  if (ext === ".png") {
+    fs.writeFileSync(dst, stripSillyTavernPngCharacterMetadata(fs.readFileSync(sourcePath)));
+  } else {
+    fs.copyFileSync(sourcePath, dst);
+  }
   plan.assets[key] = {
     rel,
     mime: IMAGE_EXT_TO_MIME[ext === ".jpg" ? ".jpg" : ext] || "image/png",
@@ -629,6 +636,7 @@ export function createCharacterCardService(engine) {
 
     const stat = fs.lstatSync(sourcePath);
     if (stat.isSymbolicLink()) throw new CharacterCardError("symlink source is not allowed");
+    let pngPath: string | null = null;
     if (stat.isDirectory()) {
       ensureNoSymlinks(sourcePath);
       fs.cpSync(sourcePath, packageRoot, { recursive: true });
@@ -637,14 +645,38 @@ export function createCharacterCardService(engine) {
       ensureNoSymlinks(packageRoot);
     } else if (isStructuredCardPath(sourcePath)) {
       fs.copyFileSync(sourcePath, path.join(packageRoot, `card${path.extname(sourcePath).toLowerCase()}`));
+    } else if (path.extname(sourcePath).toLowerCase() === ".png") {
+      if (stat.size > 80 * 1024 * 1024) throw new CharacterCardError("PNG card is too large");
+      pngPath = path.join(packageRoot, "card.png");
+      fs.copyFileSync(sourcePath, pngPath);
     } else {
-      throw new CharacterCardError("unsupported character-card package type; use Hana ZIP/JSON/YAML or SillyTavern V2 JSON. PNG/V3 are not supported yet.");
+      throw new CharacterCardError("unsupported character-card package type; use Hana ZIP/JSON/YAML, SillyTavern V2/V3 JSON, or SillyTavern PNG.");
     }
 
-    const { data: sourceCard, manifest } = findCardDescriptor(packageRoot);
+    let sourceCard;
+    let manifest;
+    let pngKeyword: 'chara' | 'ccv3' | null = null;
+    if (pngPath) {
+      try {
+        const parsed = readSillyTavernPng(pngPath);
+        sourceCard = parsed.card;
+        manifest = parsed.card;
+        pngKeyword = parsed.keyword;
+      } catch (error) {
+        throw new CharacterCardError(error.message);
+      }
+    } else {
+      ({ data: sourceCard, manifest } = findCardDescriptor(packageRoot));
+    }
     let adapted;
-    try { adapted = adaptSillyTavernV2Card(sourceCard); }
+    try { adapted = adaptSillyTavernV2Card(sourceCard, { allowV3: true }); }
     catch (error) { throw new CharacterCardError(error.message); }
+    if (pngPath && !adapted) throw new CharacterCardError("PNG character metadata is not a supported V2 or V3 card");
+    if (pngPath && adapted) {
+      adapted.card.assets = { avatar: "card.png", cardFront: "card.png" };
+      adapted.report.mapped.push("PNG 画像 → 当前角色头像与角色卡封面");
+      adapted.report.retained.push(`PNG ${pngKeyword} 元数据保留在兼容资料中；导出 ZIP 的画像移除内嵌角色卡元数据，当前字段写入 V2/V3 JSON`);
+    }
     const card = adapted?.card || sourceCard;
     const plan = {
       token,
@@ -965,11 +997,15 @@ export function createCharacterCardService(engine) {
     try {
       await fsp.mkdir(packageRoot, { recursive: true });
       const { plan, source } = await createExportPackagePlan(agentId, packageRoot);
+      const sillyTavern = synchronizeSillyTavernCompatibility(
+        plan.xingye?.profile || null, plan.xingye?.lore || [], plan.agent.name,
+      );
+      if (sillyTavern && plan.xingye) plan.xingye.profile = sillyTavern.profile;
       writeJsonFile(path.join(plan.packageRoot, "card.json"), buildExportCard(plan, {
         exportMemory: options.exportMemory === true,
       }));
-      const stCard = exportSillyTavernV2Card(plan.xingye?.profile || null, plan.xingye?.lore || [], plan.agent.name);
-      if (stCard) writeJsonFile(path.join(plan.packageRoot, "sillytavern-v2.json"), stCard);
+      if (sillyTavern) writeJsonFile(path.join(plan.packageRoot,
+        sillyTavern.format === 'sillytavern-v3' ? 'sillytavern-v3.json' : 'sillytavern-v2.json'), sillyTavern.card);
       const fileName = plan.packageName.endsWith(".zip") ? plan.packageName : `${plan.packageName}.zip`;
       const filePath = resolveUniqueExportPath(targetDir, fileName);
       await writeZipFromDirectory(plan.packageRoot, filePath);

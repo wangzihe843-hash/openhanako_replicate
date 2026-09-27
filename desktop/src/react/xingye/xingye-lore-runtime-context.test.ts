@@ -214,6 +214,23 @@ describe('collectXingyeLoreRuntimeContext — selection rules', () => {
     expect(loose.truncated).toBe(false);
   });
 
+  it('budgets the exact rendered desktop blocks including separators', () => {
+    makeEntry({ title: 'A', content: 'B', category: 'background', insertionMode: 'always' });
+    const single = collectXingyeLoreRuntimeContext('agent-1', { maxChars: 30 }, storage);
+    expect(single.entries.map((entry) => entry.title)).toEqual(['A']);
+    expect(single.totalChars).toBeLessThanOrEqual(30);
+    expect(single.selectionChars).toBe(single.totalChars);
+
+    makeEntry({ title: 'C', content: 'D', category: 'background', insertionMode: 'always' });
+    const all = collectXingyeLoreRuntimeContext('agent-1', { maxChars: 100 }, storage);
+    const exactBody = formatXingyeLoreRuntimeContextBlock(all).replace(/^【星野设定参考】\n/, '');
+    expect(all.totalChars).toBe(exactBody.length);
+    expect(all.selectionChars).toBe(exactBody.length);
+    const exactFit = collectXingyeLoreRuntimeContext('agent-1', { maxChars: exactBody.length }, storage);
+    expect(exactFit.entries).toHaveLength(2);
+    expect(exactFit.selectionChars).toBe(exactBody.length);
+  });
+
   it('priorityBoostCategories lifts the named category ahead in the maxChars budget', () => {
     const long = '关系内容'.repeat(50); // ~200 chars，单条就接近预算上限
     // 背景类 priority 更高：默认会先占预算、把关系挤掉。
