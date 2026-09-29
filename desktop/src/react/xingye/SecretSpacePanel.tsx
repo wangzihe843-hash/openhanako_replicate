@@ -580,10 +580,7 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
    * 不修改 memory_fragment.jsonl 本身——条目仍在私藏回忆列表里。pinned 是另一份独立存储,
    * 由 OpenHanako 内置 memory 维护；本动作让两者就这一条记录形成"也固化进 pinned"的并集。
    *
-   * KNOWN（lost-update race）：GET → 本地拼 nextPins → PUT 之间没有 etag/lock。如果同一窗口
-   * Settings panel / pin_memory 工具 / MemoryCandidatePanel 并发写一次，最后那一次 PUT 会覆盖
-   * 本次添加。3 个 panel 都订阅 OPENHANAKO_AGENT_PINNED_MEMORY_CHANGED，状态最终一致——但
-   * 用户加的这条可能无声丢失，需要重点。要彻底治需要 server 端加 etag 或 append-only 端点。
+   * PUT 携带读取时的 expectedPins；期间若有其它操作更新，服务端拒绝本次写入并提示重试。
    */
   const handlePushRecordToPinned = async (record: SecretSpaceSampleRecord) => {
     if (!agent?.id) return;
@@ -606,7 +603,7 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
       const putRes = await hanaFetch(`/api/agents/${agent.id}/pinned`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pins: nextPins }),
+        body: JSON.stringify({ pins: nextPins, expectedPins: pins }),
       });
       const putJson: unknown = await putRes.json().catch(() => ({}));
       if (!putRes.ok) {
@@ -698,9 +695,7 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
     /**
      * pinned 来源：从 pinned.md 移除（保持兼容旧行为）。
      *
-     * KNOWN（lost-update race）：与 handlePushRecordToPinned 同款——GET→PUT 之间无 etag/lock,
-     * 并发写有概率让本次删除"被重新写回"或让其它新加 pin 丢失。最终一致由
-     * OPENHANAKO_AGENT_PINNED_MEMORY_CHANGED 兜底，但单次删除/新增意图可能无声丢失。
+     * expectedPins 保证删除基于当前快照；并发更新时保留原条目并提示用户重试。
      */
     const target = normalizePinBulletForMatch(selected.body);
     if (!target) {
@@ -719,7 +714,7 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
       const putRes = await hanaFetch(`/api/agents/${agent.id}/pinned`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pins: nextPins }),
+        body: JSON.stringify({ pins: nextPins, expectedPins: pins }),
       });
       const putJson: unknown = await putRes.json().catch(() => ({}));
       if (!putRes.ok) {
@@ -1010,11 +1005,6 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
               </div>
             ))}
           </section>
-        ) : null}
-        {pushPinnedFlash ? (
-          <p className={styles.saveStatus} role="status" data-testid="memory-fragment-push-pinned-flash">
-            {pushPinnedFlash}
-          </p>
         ) : null}
         <MemoryCandidatePanel agentId={agent.id} agentName={agent.name} onNavigateSceneSource={onNavigateSceneSource} />
       </div>
@@ -1565,6 +1555,11 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
               }
               deleteError={secretSpaceDeleteError}
             />
+            {pushPinnedFlash ? (
+              <p className={styles.saveStatus} role="status" data-testid="memory-fragment-push-pinned-flash">
+                {pushPinnedFlash}
+              </p>
+            ) : null}
             {agent?.id ? (
               <button
                 type="button"

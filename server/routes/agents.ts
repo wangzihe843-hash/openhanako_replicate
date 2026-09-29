@@ -899,6 +899,20 @@ export function createAgentsRoute(engine) {
         return c.json({ error: "pins must be an array" }, 400);
       }
       const targetAgentDir = agentDir(engine, id);
+      if (Object.hasOwn(body, "expectedPins")) {
+        if (!Array.isArray(body.expectedPins) || body.expectedPins.some(pin => typeof pin !== "string")) {
+          return c.json({ error: "expectedPins must be an array of strings" }, 400);
+        }
+        const currentPins = readPinnedMemoryItems(targetAgentDir).map(item => item.content);
+        if (currentPins.length !== body.expectedPins.length
+          || currentPins.some((pin, index) => pin !== body.expectedPins[index])) {
+          return c.json({
+            error: "置顶记忆已被其他操作更新，本次修改未保存，请重试。",
+            code: "pinned_memory_conflict",
+          }, 409);
+        }
+      }
+      // Compare and replace synchronously: a pin_memory call cannot slip between them.
       replacePinnedMemoryItems(targetAgentDir, pins.filter(p => typeof p === "string"));
       const pinsCount = pins.filter(p => typeof p === "string" && p.trim().length > 0).length;
       await engine.updateConfig({}, { agentId: id });

@@ -21,6 +21,7 @@ function storeKey(agentId: string, relativePath: string): string {
 const jsonlStore = vi.hoisted(() => new Map<string, JsonlRow[]>());
 const jsonStore = vi.hoisted(() => new Map<string, unknown>());
 const pinnedStore = vi.hoisted(() => new Map<string, string[]>());
+const pinnedBeforePut = vi.hoisted(() => ({ run: null as null | ((agentId: string) => void) }));
 
 const hanaFetchMock = vi.hoisted(() => vi.fn(async (path: string, init?: RequestInit) => {
   if (typeof path === 'string' && path.includes('/pinned')) {
@@ -29,6 +30,12 @@ const hanaFetchMock = vi.hoisted(() => vi.fn(async (path: string, init?: Request
     if (!agentId) return { ok: false, status: 404, json: async () => ({ error: 'bad pinned path' }) } as Response;
     if (init?.method === 'PUT') {
       const body = init?.body ? JSON.parse(String(init.body)) : {};
+      const beforePut = pinnedBeforePut.run;
+      pinnedBeforePut.run = null;
+      beforePut?.(agentId);
+      if (Object.hasOwn(body, 'expectedPins') && JSON.stringify(body.expectedPins) !== JSON.stringify(pinnedStore.get(agentId) ?? [])) {
+        return { ok: false, status: 409, json: async () => ({ error: '置顶记忆已被其他操作更新，本次修改未保存，请重试。' }) } as Response;
+      }
       const pins = Array.isArray(body.pins) ? body.pins.filter((p: unknown): p is string => typeof p === 'string') : [];
       pinnedStore.set(agentId, pins);
       return { ok: true, json: async () => ({ ok: true }) } as Response;
@@ -906,6 +913,43 @@ describe('SecretSpacePanel memory candidate manual entry', () => {
     });
     expect(pinnedStore.get('agent-secret-1')).toEqual(['keep this pinned']);
     confirmSpy.mockRestore();
+  });
+
+  it.each(['append', 'delete'] as const)('preserves concurrent pins and offers a safe retry after a %s conflict', async (operation) => {
+    pinnedStore.set('agent-secret-1', ['existing memory']);
+    if (operation === 'append') {
+      await appendSecretSpaceRecord('agent-secret-1', 'memory_fragment', {
+        key: 'private-memory', title: 'Private memory', body: 'new private memory',
+      });
+    }
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+      render(<SecretSpacePanel agent={agent} />);
+      fireEvent.click(screen.getByTestId('secret-space-entry-memory_fragment'));
+      const recordKey = operation === 'append' ? 'private-memory' : 'memory-fragment-pinned-0';
+      const row = await screen.findByTestId(`secret-space-record-row-${recordKey}`);
+      fireEvent.click(row);
+      const actionButton = operation === 'append'
+        ? screen.getByRole('button', { name: '推到 OpenHanako pinned' })
+        : screen.getByTestId(`secret-space-delete-${recordKey}`);
+      pinnedBeforePut.run = (agentId) => {
+        pinnedStore.set(agentId, [...(pinnedStore.get(agentId) ?? []), 'concurrent tool memory']);
+      };
+      fireEvent.click(actionButton);
+      await screen.findByText('置顶记忆已被其他操作更新，本次修改未保存，请重试。');
+      expect(pinnedStore.get('agent-secret-1')).toEqual(['existing memory', 'concurrent tool memory']);
+      expect(screen.getByTestId(`secret-space-record-detail-${recordKey}`)).toBeInTheDocument();
+      fireEvent.click(actionButton);
+      await waitFor(() => expect(pinnedStore.get('agent-secret-1')).toEqual(operation === 'append'
+        ? ['existing memory', 'concurrent tool memory', 'new private memory']
+        : ['concurrent tool memory']));
+      if (operation === 'append') {
+        expect(jsonlStore.get(storeKey('agent-secret-1', 'secret-space/memory_fragment.jsonl'))).toHaveLength(1);
+      }
+    } finally {
+      pinnedBeforePut.run = null;
+      confirmSpy.mockRestore();
+    }
   });
 
   it('does not show agent A pinned memory for agent B', async () => {

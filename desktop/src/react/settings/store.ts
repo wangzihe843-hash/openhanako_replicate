@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import type { ServerConnection, ServerConnectionRegistry } from '../services/server-connection';
 import { createRemoteResource, type RemoteResource, type RemoteResourceStatus } from './resource-state';
+import type { SettingsPinsSnapshot } from './pinned-state';
 
 export interface Agent {
   id: string;
@@ -125,6 +126,7 @@ export interface SettingsState {
 
   // pins
   currentPins: string[];
+  pinsSnapshot: SettingsPinsSnapshot | null;
 
   // providers (unified)
   providersSummary: Record<string, ProviderSummary>;
@@ -187,6 +189,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 
   // pins
   currentPins: [],
+  pinsSnapshot: null,
 
   // providers (unified)
   providersSummary: {},

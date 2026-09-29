@@ -1,4 +1,5 @@
 import { computeSessionLineageMetadata } from "../lib/session-jsonl.ts";
+import { buildSessionProjection, type SessionEntry } from "../lib/pi-sdk/index.ts";
 
 export type LossyLocalCompactionSummarySource = {
   summary?: string | null;
@@ -135,6 +136,22 @@ export function createLossyLocalCompactionResult({
     throw new Error("Instant local compaction could not prove the retained-tail boundary");
   }
 
+  // Pi 0.87 retains raw attempts and edits separately. Reconstruct only the
+  // canonical projection, or omitted/replaced attempts and history covered by
+  // an earlier compaction would become visible again inside this checkpoint.
+  const projection = buildSessionProjection(entries);
+  const keptProjectionIndex = projection.entries.findIndex(({ sourceEntry }) => sourceEntry.id === firstKeptEntryId);
+  if (keptProjectionIndex < 0) {
+    throw new Error("Instant local compaction could not prove the projected retained-tail boundary");
+  }
+  const olderContext = projection.entries.slice(0, keptProjectionIndex).flatMap<SessionEntry>(({ sourceEntry, messages }) => {
+    if (sourceEntry.type === "message") {
+      return messages.map((message) => ({ ...sourceEntry, message }));
+    }
+    return sourceEntry.type === "compaction" && messages.length > 0 ? [sourceEntry] : [];
+  });
+  const rawIndexById = new Map(entries.map((entry, index) => [entry.id, index]));
+
   const omitted: OmissionCounts = {
     toolResults: 0,
     toolCalls: 0,
@@ -150,10 +167,20 @@ export function createLossyLocalCompactionResult({
   const summaryUpdatedAt = parseTimestamp(summarySource?.updatedAt ?? summarySource?.createdAt);
   const summaryIsAfterReset = resetAt === null
     || (summaryUpdatedAt !== null && summaryUpdatedAt > resetAt);
+  // The rolling summary is derived from the full transcript, so its lineage
+  // cursor cannot prove that model-only edits have been applied. Nor can it
+  // replace an existing canonical compaction checkpoint without reviving text.
+  const summaryContainsEditedContext = cursorIndex !== null && entries.some((entry) => (
+    entry.type === "context_edit"
+    && rawIndexById.has(entry.targetId)
+    && rawIndexById.get(entry.targetId)! <= cursorIndex
+  ));
   const useRollingSummary = !!sourceSummary
     && cursorIndex !== null
     && cursorIndex < keptIndex
-    && summaryIsAfterReset;
+    && summaryIsAfterReset
+    && !summaryContainsEditedContext
+    && !projection.entries.some(({ sourceEntry }) => sourceEntry.type === "compaction");
 
   const sections = [
     "# Instant Simple Compaction Checkpoint",
@@ -161,10 +188,10 @@ export function createLossyLocalCompactionResult({
   ];
 
   if (useRollingSummary && resetAt !== null) {
-    const beforeReset = entries
-      .slice(0, (cursorIndex as number) + 1)
+    const beforeReset = olderContext
+      .filter((entry) => rawIndexById.get(entry.id)! <= (cursorIndex as number))
       .filter((entry) => {
-        const timestamp = parseTimestamp(entry?.timestamp ?? entry?.message?.timestamp);
+        const timestamp = parseTimestamp(entry.timestamp ?? (entry.type === "message" ? entry.message.timestamp : null));
         return timestamp === null || timestamp <= resetAt;
       });
     const earlierTranscript = renderTranscript(beforeReset, omitted);
@@ -178,7 +205,9 @@ export function createLossyLocalCompactionResult({
   }
 
   const continuationStart = useRollingSummary ? (cursorIndex as number) + 1 : 0;
-  const continuation = renderTranscript(entries.slice(continuationStart, keptIndex), omitted);
+  const continuation = renderTranscript(olderContext.filter((entry) => (
+    !useRollingSummary || rawIndexById.get(entry.id)! >= continuationStart
+  )), omitted);
   if (continuation) {
     sections.push(
       useRollingSummary ? "## Verbatim Text After the Rolling Summary" : "## Reconstructed Verbatim Text",

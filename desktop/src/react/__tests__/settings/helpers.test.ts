@@ -34,6 +34,7 @@ function resetState() {
     settingsAgentId: null,
     currentAgentId: 'agent-a',
     settingsConfig: null,
+    pinsSnapshot: { key: JSON.stringify([null, null, null, 'agent-a']), pins: [] },
     getSettingsAgentId: () => mockState.settingsAgentId || mockState.currentAgentId,
     showToast: vi.fn(),
   });
@@ -72,8 +73,50 @@ describe('refreshSettingsConfigSnapshot', () => {
     mockState.settingsAgentId = 'agent-b';
     mockState.currentPins = [];
     await vi.advanceTimersByTimeAsync(300);
-    expect(mockFetch).toHaveBeenCalledWith('/api/agents/agent-a/pinned', expect.objectContaining({ body: JSON.stringify({ pins: ['A edited'] }) }));
+    expect(mockFetch).toHaveBeenCalledWith('/api/agents/agent-a/pinned', expect.objectContaining({ body: JSON.stringify({ pins: ['A edited'], expectedPins: [] }) }));
     expect(mockFetch.mock.calls.some(([url]) => String(url).includes('agent-b/pinned'))).toBe(false);
+  });
+
+  it('advances the saved baseline before draining a newer edit from the same queue', async () => {
+    vi.useFakeTimers();
+    let resolveFirst!: (response: Response) => void;
+    mockFetch.mockReturnValueOnce(new Promise<Response>(resolve => { resolveFirst = resolve; }))
+      .mockResolvedValue(jsonResponse({ ok: true }));
+    const { savePins } = await import('../../settings/helpers');
+    mockState.currentPins = ['first']; savePins();
+    await vi.advanceTimersByTimeAsync(300);
+    mockState.currentPins = ['first', 'second']; savePins();
+    await vi.advanceTimersByTimeAsync(300);
+    resolveFirst(jsonResponse({ ok: true }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ pins: ['first'], expectedPins: [] });
+    expect(JSON.parse(mockFetch.mock.calls[1][1].body)).toEqual({ pins: ['first', 'second'], expectedPins: ['first'] });
+    expect(mockState.pinsSnapshot.pins).toEqual(['first', 'second']);
+  });
+
+  it('keeps edited pins and the old baseline after a conflict instead of retrying over new server data', async () => {
+    vi.useFakeTimers();
+    mockState.pinsSnapshot.pins = ['original'];
+    mockState.currentPins = ['user edit'];
+    mockFetch.mockRejectedValue(Object.assign(new Error('conflict'), { code: 'pinned_memory_conflict' }));
+    const { savePins } = await import('../../settings/helpers');
+    savePins();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockState.currentPins).toEqual(['user edit']);
+    expect(mockState.pinsSnapshot.pins).toEqual(['original']);
+    expect(mockState.showToast).toHaveBeenCalledWith(expect.stringContaining('本次编辑仍保留'), 'error');
+  });
+
+  it('refuses a save before the newly selected agent has loaded its own baseline', async () => {
+    vi.useFakeTimers();
+    mockState.settingsAgentId = 'agent-b';
+    mockState.currentPins = ['A edited'];
+    const { savePins } = await import('../../settings/helpers');
+    savePins();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockState.showToast).toHaveBeenCalledWith(expect.stringContaining('读取当前角色'), 'error');
   });
 
   it('保留 _identity/_agents/_publicAgents/_userProfile/_experience 下划线键', async () => {

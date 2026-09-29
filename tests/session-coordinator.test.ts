@@ -3905,6 +3905,170 @@ describe("SessionCoordinator", () => {
     expect(fs.existsSync(sessionFile)).toBe(false);
   });
 
+  describe("deleted-agent continuation with Pi context edits", () => {
+    function assistantMessage(text: string) {
+      return {
+        role: "assistant" as const,
+        content: [{ type: "text" as const, text }],
+        api: "openai-completions" as const,
+        provider: "test",
+        model: "test-model",
+        usage: {
+          input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop" as const,
+        timestamp: 2,
+      };
+    }
+
+    async function fixture() {
+      const sdk = await vi.importActual<typeof import("../lib/pi-sdk/index.ts")>("../lib/pi-sdk/index.ts");
+      const source = sdk.SessionManager.inMemory(tempDir);
+      const target = sdk.SessionManager.inMemory(tempDir);
+      const sourcePath = path.join(tempDir, "agents", "deleted", "sessions", "source.jsonl");
+      const createdPath = path.join(tempDir, "agents", "hana", "sessions", "continued.jsonl");
+      fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+      vi.mocked(SessionManager.open).mockImplementationOnce(sdk.SessionManager.open);
+
+      const targetAgent = { id: "hana", agentName: "Hana" };
+      const session = { sessionManager: target, model: null };
+      const coordinator = Object.create(SessionCoordinator.prototype);
+      coordinator._assertActiveDesktopSessionPath = vi.fn();
+      coordinator._d = {
+        agentIdFromSessionPath: () => "deleted",
+        isAgentDeleted: (agentId) => agentId === "deleted",
+        getPrefs: () => ({ getPrimaryAgent: () => "hana" }),
+        getAgentById: () => targetAgent,
+        getHomeCwd: () => tempDir,
+      };
+      coordinator.createSession = vi.fn(async () => ({ sessionPath: createdPath, session }));
+      coordinator.writeSessionMeta = vi.fn(async () => {});
+      coordinator._freshCompactDeletedAgentContinuation = vi.fn(async () => {});
+      coordinator.setSessionPinned = vi.fn(async () => null);
+      coordinator.getSessionWorkspaceFolders = vi.fn(() => []);
+      coordinator.applySessionBranchHead = vi.fn();
+      coordinator._syncSessionBranchHeadQuiet = vi.fn();
+      coordinator._sessionIdForPath = vi.fn(() => "continued");
+
+      async function continueSession(leafId?: string) {
+        const raw = [source.getHeader(), ...source.getEntries()]
+          .map(entry => JSON.stringify(entry)).join("\n") + "\n";
+        fs.writeFileSync(sourcePath, raw, "utf-8");
+        if (leafId) {
+          coordinator.applySessionBranchHead.mockImplementation((_path, manager) => manager.branch(leafId));
+        }
+        try {
+          return await coordinator.continueDeletedAgentSession(sourcePath);
+        } finally {
+          expect(fs.readFileSync(sourcePath, "utf-8")).toBe(raw);
+        }
+      }
+
+      function expectTranscript(expected: Array<{ role: string; content: Array<{ type: string; text: string }> }>) {
+        const copied = target.buildSessionContext().messages;
+        expect(copied).toMatchObject(expected);
+        expect(copied).toHaveLength(expected.length);
+        expect(coordinator._freshCompactDeletedAgentContinuation).toHaveBeenCalledWith(
+          session, copied, { sourceSessionPath: sourcePath, sourceAgentId: "deleted" },
+        );
+      }
+
+      return { source, target, coordinator, continueSession, expectTranscript };
+    }
+
+    it("omits abandoned attempts from the copied history and continuation summary", async () => {
+      const { source, continueSession, expectTranscript } = await fixture();
+      source.appendMessage({ role: "user", content: "hello", timestamp: 1 });
+      const abandonedId = source.appendMessage({
+        ...assistantMessage("abandoned partial answer"), stopReason: "error", errorMessage: "context overflow",
+      });
+      source.appendContextEdit(abandonedId, null);
+      source.appendMessage(assistantMessage("accepted answer"));
+
+      await continueSession();
+
+      expectTranscript([
+        { role: "user", content: [{ type: "text", text: "hello" }] },
+        { role: "assistant", content: [{ type: "text", text: "accepted answer" }] },
+      ]);
+    });
+
+    it.each([
+      { content: "corrected answer" },
+      { content: [{ type: "text" as const, text: "corrected answer" }] },
+    ])("uses the latest replacement content: %j", async (replacement) => {
+      const { source, continueSession, expectTranscript } = await fixture();
+      const userId = source.appendMessage({ role: "user", content: "old question", timestamp: 1 });
+      const assistantId = source.appendMessage(assistantMessage("old answer"));
+      source.appendContextEdit(userId, { content: "corrected question" });
+      source.appendContextEdit(assistantId, { content: "superseded correction" });
+      source.appendContextEdit(assistantId, replacement);
+
+      await continueSession();
+
+      expectTranscript([
+        { role: "user", content: [{ type: "text", text: "corrected question" }] },
+        { role: "assistant", content: [{ type: "text", text: "corrected answer" }] },
+      ]);
+    });
+
+    it("applies edits after compaction without reviving summarized history or technical messages", async () => {
+      const { source, continueSession, expectTranscript } = await fixture();
+      source.appendMessage({ role: "system", content: "old persona", timestamp: 0 });
+      source.appendMessage({ role: "user", content: "already summarized", timestamp: 1 });
+      source.appendMessage(assistantMessage("already summarized answer"));
+      source.appendCompaction("older summary", null, 100);
+      const keptId = source.appendMessage({ role: "user", content: "kept question", timestamp: 3 });
+      const omittedId = source.appendMessage(assistantMessage("omitted retained answer"));
+      const replacedId = source.appendMessage(assistantMessage("obsolete retained answer"));
+      source.appendCompaction("current summary", keptId, 80);
+      source.appendContextEdit(omittedId, null);
+      source.appendContextEdit(replacedId, { content: "<think>private</think>corrected retained answer" });
+      source.appendCustomMessageEntry("technical-notice", "internal notice", false);
+      source.appendMessage({
+        role: "toolResult", toolCallId: "tool-1", toolName: "read",
+        content: [{ type: "text", text: "technical output" }], isError: false, timestamp: 4,
+      });
+
+      await continueSession();
+
+      expectTranscript([
+        { role: "assistant", content: [{ type: "text", text: "[历史压缩摘要]\ncurrent summary" }] },
+        { role: "user", content: [{ type: "text", text: "kept question" }] },
+        { role: "assistant", content: [{ type: "text", text: "corrected retained answer" }] },
+      ]);
+    });
+
+    it("uses the stored branch head without importing edits from a sibling branch", async () => {
+      const { source, continueSession, expectTranscript } = await fixture();
+      source.appendMessage({ role: "user", content: "shared question", timestamp: 1 });
+      const answerId = source.appendMessage(assistantMessage("original answer"));
+      const selectedLeafId = source.appendContextEdit(answerId, { content: "selected answer" });
+      source.branch(answerId);
+      source.appendContextEdit(answerId, { content: "sibling answer" });
+
+      await continueSession(selectedLeafId);
+
+      expectTranscript([
+        { role: "user", content: [{ type: "text", text: "shared question" }] },
+        { role: "assistant", content: [{ type: "text", text: "selected answer" }] },
+      ]);
+    });
+
+    it("rejects a fully omitted transcript before creating a continuation session", async () => {
+      const { source, coordinator, continueSession } = await fixture();
+      const userId = source.appendMessage({ role: "user", content: "omitted question", timestamp: 1 });
+      const answerId = source.appendMessage(assistantMessage("omitted answer"));
+      source.appendContextEdit(userId, null);
+      source.appendContextEdit(answerId, null);
+
+      await expect(continueSession()).rejects.toMatchObject({ code: "SESSION_TRANSCRIPT_EMPTY", status: 422 });
+      expect(coordinator.createSession).not.toHaveBeenCalled();
+      expect(coordinator._freshCompactDeletedAgentContinuation).not.toHaveBeenCalled();
+    });
+  });
+
   it("keeps a deleted-agent continuation session when fresh compact fails", async () => {
     const agentsDir = path.join(tempDir, "agents");
     const sourcePath = path.join(agentsDir, "deleted", "sessions", "old.jsonl");
@@ -3916,10 +4080,9 @@ describe("SessionCoordinator", () => {
 
     (SessionManager.open as any).mockReturnValue({
       getCwd: () => tempDir,
-      getBranch: () => [{
-        type: "message",
-        message: { role: "user", content: "old hello", timestamp: "2026-06-17T00:00:00.000Z" },
-      }],
+      buildSessionContext: () => ({ messages: [
+        { role: "user", content: "old hello", timestamp: "2026-06-17T00:00:00.000Z" },
+      ] }),
     });
 
     const targetAgent = { id: "hana", agentName: "Hana" };
@@ -4131,11 +4294,11 @@ Continue the restored transcript.
 
     (SessionManager.open as any).mockReturnValue({
       getCwd: () => tempDir,
-      getBranch: () => [{
-        type: "compaction",
+      buildSessionContext: () => ({ messages: [{
+        role: "compactionSummary",
         summary: "old compacted context",
         timestamp: "2026-06-17T00:00:00.000Z",
-      }],
+      }] }),
     });
 
     const manager = {
@@ -4182,7 +4345,7 @@ Continue the restored transcript.
 
     (SessionManager.open as any).mockReturnValue({
       getCwd: () => tempDir,
-      getBranch: () => [{ type: "message", message: { role: "assistant", content: "<think>private</think>" } }],
+      buildSessionContext: () => ({ messages: [{ role: "assistant", content: "<think>private</think>" }] }),
     });
 
     const coordinator = Object.create(SessionCoordinator.prototype);

@@ -13,7 +13,56 @@ describe("sandbox workspace roots", () => {
   });
 
   afterEach(() => {
+    const resolved = path.resolve(tempRoot);
+    if (path.dirname(resolved) !== path.resolve(os.tmpdir())
+      || !path.basename(resolved).startsWith("hana-sandbox-roots-")) {
+      throw new Error("Refusing to remove an unowned sandbox fixture");
+    }
     fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it.runIf(process.platform === "win32")("keeps policy permissions stable across Windows case aliases", () => {
+    const hanakoHome = path.join(tempRoot, "HanaHome");
+    const agentDir = path.join(hanakoHome, "agents", "hana");
+    const workspace = path.join(tempRoot, "Workspace");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.mkdirSync(workspace);
+    fs.writeFileSync(path.join(hanakoHome, "auth.json"), "{}");
+    fs.writeFileSync(path.join(agentDir, "pinned.md"), "synthetic fixture");
+    const guard = new PathGuard(deriveSandboxPolicy({
+      agentDir, hanakoHome, workspace, mode: "standard",
+    }));
+
+    expect(guard.check(path.join(hanakoHome, "AUTH.JSON"), "read").allowed).toBe(false);
+    expect(guard.check(path.join(tempRoot, "hanahome", "auth.json"), "read").allowed).toBe(false);
+    expect(guard.getAccessLevel(path.join(agentDir, "PINNED.MD"))).toBe(AccessLevel.READ_WRITE);
+    expect(guard.check(path.join(tempRoot, "workspace", "new", "file.txt"), "write").allowed).toBe(true);
+  });
+
+  it("keeps blocked and read-only directories protected when linked into a workspace", () => {
+    const hanakoHome = path.join(tempRoot, "home");
+    const agentDir = path.join(hanakoHome, "agents", "hana");
+    const workspace = path.join(tempRoot, "workspace");
+    const browserTarget = path.join(workspace, "browser-fixture");
+    const sessionFilesTarget = path.join(workspace, "session-fixture");
+    for (const dir of [agentDir, browserTarget, sessionFilesTarget]) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const linkType = process.platform === "win32" ? "junction" : "dir";
+    fs.symlinkSync(browserTarget, path.join(hanakoHome, "browser-data"), linkType);
+    fs.symlinkSync(sessionFilesTarget, path.join(hanakoHome, "session-files"), linkType);
+    fs.writeFileSync(path.join(browserTarget, "synthetic.txt"), "synthetic fixture");
+    fs.writeFileSync(path.join(sessionFilesTarget, "synthetic.txt"), "synthetic fixture");
+    const guard = new PathGuard(deriveSandboxPolicy({
+      agentDir, hanakoHome, workspace, mode: "standard",
+    }));
+
+    expect(guard.check(path.join(browserTarget, "synthetic.txt"), "read").allowed).toBe(false);
+    expect(guard.check(path.join(hanakoHome, "browser-data", "synthetic.txt"), "read").allowed).toBe(false);
+    expect(guard.check(path.join(sessionFilesTarget, "synthetic.txt"), "read").allowed).toBe(true);
+    expect(guard.check(path.join(sessionFilesTarget, "synthetic.txt"), "write").allowed).toBe(false);
+    expect(guard.check(path.join(sessionFilesTarget, "new.txt"), "write").allowed).toBe(false);
+    expect(guard.check(path.join(workspace, "ordinary.txt"), "write").allowed).toBe(true);
   });
 
   it("grants full access to explicit extra workspace folders and read-only access to ordinary external paths", () => {

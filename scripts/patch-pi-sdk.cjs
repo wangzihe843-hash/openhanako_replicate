@@ -83,6 +83,7 @@ const expectedExportMarkers = [
   "createLsTool",
   "parseSessionEntries",
   "buildSessionContext",
+  "buildSessionProjection",
 ];
 
 for (const marker of expectedExportMarkers) {

@@ -136,7 +136,7 @@ export {
   calculateContextTokens,
   estimateTokens, findCutPoint,
   serializeConversation, shouldCompact,
-  parseSessionEntries, buildSessionContext,
+  parseSessionEntries, buildSessionContext, buildSessionProjection, type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 
 // Diary material summarization only. Context compaction must go through core/session-compactor.ts.

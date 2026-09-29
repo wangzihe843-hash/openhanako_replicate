@@ -488,13 +488,8 @@ export async function confirmXingyeMemoryCandidateToPinned(
   const bullet = normalizePinBulletText(c.content);
   if (!bullet) throw new Error('empty candidate content');
 
-  /**
-   * KNOWN（lost-update race）：与 SecretSpacePanel handlePushRecordToPinned 同款——
-   * GET→拼 nextPins→PUT 之间无 etag/lock，并发写（settings savePins / pin_memory 工具 /
-   * SecretSpacePanel）有概率让本次 confirm 把另一边新加的 pin 覆盖掉。最终一致由
-   * OPENHANAKO_AGENT_PINNED_MEMORY_CHANGED 兜底，但单条 pin 可能无声丢失。
-   * 要彻底治需要 server 端 etag/If-Match 或 append-only 端点。
-   */
+  // The server compares this snapshot before replacing pins. A concurrent edit
+  // returns a conflict and leaves this candidate pending for an explicit retry.
   const getRes = await fetchImpl(`/api/agents/${agentId}/pinned`);
   const getJson: unknown = await getRes.json().catch(() => ({}));
   if (!getRes.ok) {
@@ -513,7 +508,7 @@ export async function confirmXingyeMemoryCandidateToPinned(
     const putRes = await fetchImpl(`/api/agents/${agentId}/pinned`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pins: nextPins }),
+      body: JSON.stringify({ pins: nextPins, expectedPins: existing }),
     });
     const putJson: unknown = await putRes.json().catch(() => ({}));
     if (!putRes.ok) {

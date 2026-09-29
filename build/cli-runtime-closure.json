@@ -7421,6 +7421,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "core/lossy-local-compaction.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "core/session-compactor.ts",
           "kind": "import-statement"
         },
@@ -7690,7 +7695,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/compaction-utils.ts (import-statement); lib/llm/cache-preserving-compaction-agent-run.ts (import-statement); core/session-compactor.ts (import-statement); +53 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by core/compaction-utils.ts (import-statement); lib/llm/cache-preserving-compaction-agent-run.ts (import-statement); core/lossy-local-compaction.ts (import-statement); +54 more importer(s)."
     },
     {
       "path": "lib/pi-sdk/model-runtime.ts",
@@ -100254,6 +100259,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/sandbox/path-guard.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/sandbox/win32-policy.ts",
           "kind": "import-statement"
         },
@@ -100265,6 +100275,11 @@
         {
           "root": "server-bootstrap",
           "from": "lib/resource-io/resource-access-policy.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/utils/path-security.ts",
           "kind": "import-statement"
         },
         {
@@ -100283,7 +100298,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/session-files/session-file-registry.ts (import-statement); core/migrations.ts (import-statement); lib/desk/cron-store.ts (import-statement); +11 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by lib/session-files/session-file-registry.ts (import-statement); core/migrations.ts (import-statement); lib/desk/cron-store.ts (import-statement); +13 more importer(s)."
     },
     {
       "path": "shared/log-redactor.ts",

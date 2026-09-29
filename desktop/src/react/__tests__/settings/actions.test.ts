@@ -61,6 +61,7 @@ function resetState() {
     globalModelsConfig: null,
     homeFolder: null,
     currentPins: [],
+    pinsSnapshot: null,
     pluginSettingsStatus: 'idle',
     pluginSettingsError: null,
     pluginAllowFullAccess: undefined,
@@ -188,6 +189,7 @@ describe('settings actions', () => {
     expect(mockState.settingsConfig).toBeNull();
     expect(mockState.globalModelsConfig).toBeNull();
     expect(mockState.currentPins).toEqual([]);
+    expect(mockState.pinsSnapshot).toBeNull();
 
     for (const [endpoint, resolve] of deferred.entries()) {
       resolve(jsonResponse(buildPayload('agent-b', endpoint)));
@@ -196,6 +198,22 @@ describe('settings actions', () => {
 
     expect(mockState.settingsConfigStatus).toBe('ready');
     expect(mockState.settingsConfig.agent.name).toBe('agent-b-name');
+    expect(mockState.pinsSnapshot).toEqual({ key: JSON.stringify([null, null, null, 'agent-b']), pins: ['agent-b-pin'] });
+  });
+
+  it('keeps unsaved pinned edits and their baseline across automatic settings refreshes', async () => {
+    mockFetch.mockImplementation((url: string) => {
+      const { agentId, endpoint } = parseEndpoint(url);
+      return Promise.resolve(jsonResponse(buildPayload(agentId, endpoint)));
+    });
+    const { loadSettingsConfig } = await import('../../settings/actions');
+    await loadSettingsConfig();
+    const baseline = mockState.pinsSnapshot;
+    mockState.currentPins = ['my unsaved edit'];
+    await loadSettingsConfig();
+    expect(mockState.currentPins).toEqual(['my unsaved edit']);
+    expect(mockState.pinsSnapshot).toBe(baseline);
+    expect(baseline.pins).toEqual(['agent-a-pin']);
   });
 
   it('新请求会 abort 旧的 loadSettingsConfig，且 abort 不记成加载错误', async () => {
@@ -292,6 +310,21 @@ describe('settings actions', () => {
     expect(mockState.pluginSettingsStatus).toBe('ready');
     expect(mockState.pluginAllowFullAccess).toBe(true);
     expect(mockState.pluginDevToolsEnabled).toBe(true);
+  });
+
+  it('does not bind an old server snapshot to a replacement connection with the same id', async () => {
+    mockState.activeServerConnectionId = 'remote';
+    mockState.activeServerConnection = { connectionId: 'remote', baseUrl: 'https://old.example', token: 'old' };
+    let resolveSnapshot!: (value: Response) => void;
+    mockFetch.mockReturnValue(new Promise<Response>(resolve => { resolveSnapshot = resolve; }));
+    const { loadSettingsSnapshot } = await import('../../settings/actions');
+    const loading = loadSettingsSnapshot();
+    mockState.activeServerConnection = { connectionId: 'remote', baseUrl: 'https://new.example', token: 'new' };
+    resolveSnapshot(jsonResponse({ agentId: 'agent-a', config: {}, pinned: { pins: ['old server memory'] } }));
+    await loading;
+    expect(mockState.currentPins).toEqual([]);
+    expect(mockState.pinsSnapshot).toBeNull();
+    expect(mockState.settingsConfig).toBeNull();
   });
 
   it('clears same-owner stale snapshot data while a fresh settings snapshot is loading', async () => {

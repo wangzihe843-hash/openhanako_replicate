@@ -2,14 +2,15 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SessionManager } from "../lib/pi-sdk/index.ts";
 import {
   pruneSessionInlineMediaHistory,
   repairSessionInlineMediaEntriesInFile,
 } from "../core/session-inline-media-prune.ts";
 
-const IMG_BLOCK = { type: "image", data: "BASE64DATA", mimeType: "image/png" };
+const IMG_BLOCK = { type: "image", data: "BASE64DATA", mimeType: "image/png" } as const;
 const AUDIO_BLOCK = { type: "audio", data: "BASE64AUDIO", mimeType: "audio/wav" };
-const TEXT_BLOCK = (text) => ({ type: "text", text });
+const TEXT_BLOCK = (text: string) => ({ type: "text" as const, text });
 
 function sessionHeader() {
   return { type: "session", version: 3, id: "sess-media", timestamp: "2026-06-04T00:00:00.000Z" };
@@ -28,6 +29,26 @@ function readJsonl(file) {
 }
 
 describe("pruneSessionInlineMediaHistory", () => {
+  it("does not restore inline media from a context edit when Pi refreshes the live context", () => {
+    const manager = SessionManager.inMemory();
+    const userId = manager.appendMessage({ role: "user", content: "original", timestamp: Date.now() });
+    manager.appendContextEdit(userId, { content: [TEXT_BLOCK("[attached_image: /tmp/a.png]"), IMG_BLOCK] });
+    const session = {
+      sessionManager: manager,
+      agent: { state: { messages: manager.buildSessionContext().messages } },
+      refreshContext() { this.agent.state.messages = manager.buildSessionContext().messages; },
+    };
+
+    const result = pruneSessionInlineMediaHistory(session);
+
+    expect(result.strippedImages).toBeGreaterThan(0);
+    expect(JSON.stringify(session.agent.state.messages)).not.toContain("BASE64DATA");
+    expect(JSON.stringify(manager.getBranch())).not.toContain("BASE64DATA");
+    expect(manager.buildSessionContext().messages[0]).toMatchObject({
+      role: "user", content: [TEXT_BLOCK("[attached_image: /tmp/a.png]")],
+    });
+  });
+
   it("从 session JSONL entries 和 agent runtime state 中移除 inline image base64", () => {
     const rewriteFile = vi.fn();
     const manager = {
@@ -101,6 +122,37 @@ describe("repairSessionInlineMediaEntriesInFile", () => {
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("repairs persisted context-edit replacements while preserving omission edits", () => {
+    const manager = SessionManager.inMemory();
+    const userId = manager.appendMessage({ role: "user", content: "original", timestamp: Date.now() });
+    const omittedId = manager.appendMessage({ role: "user", content: "omitted", timestamp: Date.now() });
+    manager.appendContextEdit(userId, { content: [TEXT_BLOCK("[attached_image: /tmp/a.png]"), IMG_BLOCK] });
+    manager.appendContextEdit(omittedId, null);
+    writeJsonl(sessionPath, [sessionHeader(), ...manager.getBranch()]);
+
+    const result = repairSessionInlineMediaEntriesInFile(sessionPath);
+
+    expect(result).toMatchObject({ repaired: true, strippedImages: 1 });
+    expect(fs.readFileSync(sessionPath, "utf-8")).not.toContain("BASE64DATA");
+    expect(readJsonl(sessionPath).at(-1).replacement).toBeNull();
+    expect(SessionManager.open(sessionPath).buildSessionContext().messages[0]).toMatchObject({
+      role: "user", content: [TEXT_BLOCK("[attached_image: /tmp/a.png]")],
+    });
+  });
+
+  it("preserves null JSONL rows while repairing surrounding media", () => {
+    writeJsonl(sessionPath, [
+      sessionHeader(),
+      null,
+      { type: "message", id: "u1", message: { role: "user", content: [IMG_BLOCK] } },
+    ]);
+
+    expect(repairSessionInlineMediaEntriesInFile(sessionPath))
+      .toMatchObject({ repaired: true, strippedImages: 1 });
+    expect(readJsonl(sessionPath)[1]).toBeNull();
+    expect(fs.readFileSync(sessionPath, "utf-8")).not.toContain("BASE64DATA");
   });
 
   it("落盘修复 user/toolResult 里的 inline media，只保留轻量引用或占位", () => {

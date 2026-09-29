@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createLossyLocalCompactionResult } from "../core/lossy-local-compaction.ts";
 import { computeSessionLineageMetadata } from "../lib/session-jsonl.ts";
+import { SessionManager } from "../lib/pi-sdk/index.ts";
 
 function entry(id: string, parentId: string | null, role: string, content: any, timestamp: string) {
   return { id, parentId, type: "message", timestamp, message: { role, content, timestamp } };
@@ -13,6 +14,58 @@ function cursorThrough(entries: any[], coveredLeafId: string) {
 }
 
 describe("createLossyLocalCompactionResult", () => {
+  it.each([false, true])("uses Pi's edited context with a stale rolling summary present: %s", (withSummary) => {
+    const manager = SessionManager.inMemory();
+    const addUser = (content: string) => manager.appendMessage({ role: "user", content, timestamp: Date.now() });
+    addUser("old question");
+    const omitted = addUser("OMITTED ORIGINAL");
+    const replaced = addUser("REPLACED ORIGINAL");
+    const summarizedEntries = manager.getBranch();
+    manager.appendContextEdit(omitted, null);
+    manager.appendContextEdit(replaced, { content: "corrected context" });
+    const kept = addUser("retained request");
+    const originalEntries = JSON.stringify(manager.getBranch());
+
+    const result = createLossyLocalCompactionResult({
+      branchEntries: manager.getBranch(),
+      preparation: { firstKeptEntryId: kept, tokensBefore: 100 },
+      summarySource: withSummary ? {
+        summary: "STALE SUMMARY OF OMITTED ORIGINAL",
+        cursor: cursorThrough(summarizedEntries, replaced),
+      } : null,
+    });
+
+    expect(result.summary).toContain("old question");
+    expect(result.summary).toContain("corrected context");
+    expect(result.summary).not.toContain("OMITTED ORIGINAL");
+    expect(result.summary).not.toContain("REPLACED ORIGINAL");
+    expect(result.summary).not.toContain("STALE SUMMARY");
+    expect(result.summary).not.toContain("retained request");
+    expect(result.details.source).toBe("branch_text");
+    expect(JSON.stringify(manager.getBranch())).toBe(originalEntries);
+  });
+
+  it("carries the active compaction checkpoint without reviving its discarded raw history", () => {
+    const manager = SessionManager.inMemory();
+    const addUser = (content: string) => manager.appendMessage({ role: "user", content, timestamp: Date.now() });
+    addUser("ALREADY SUMMARIZED RAW HISTORY");
+    const priorKept = addUser("previous retained question");
+    manager.appendCompaction("ACTIVE PREVIOUS CHECKPOINT", priorKept, 100);
+    manager.appendContextEdit(priorKept, { content: "edited retained question" });
+    const kept = addUser("new retained request");
+
+    const result = createLossyLocalCompactionResult({
+      branchEntries: manager.getBranch(),
+      preparation: { firstKeptEntryId: kept, tokensBefore: 100 },
+    });
+
+    expect(result.summary).toContain("ACTIVE PREVIOUS CHECKPOINT");
+    expect(result.summary).toContain("edited retained question");
+    expect(result.summary).not.toContain("ALREADY SUMMARIZED RAW HISTORY");
+    expect(result.summary).not.toContain("previous retained question");
+    expect(result.summary).not.toContain("new retained request");
+  });
+
   it("reuses an ancestral rolling summary, strips complete tool transactions, and keeps Pi's tail boundary", () => {
     const entries = [
       entry("u1", null, "user", [{ type: "text", text: "first question" }], "2026-08-07T00:00:00.000Z"),

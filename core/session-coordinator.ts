@@ -496,29 +496,6 @@ function normalizeDeletedAgentTranscriptMessage(message: any) {
   };
 }
 
-function readSessionBranchMessages(sessionManager: any) {
-  const manager = sessionManager;
-  const branch = manager.getBranch();
-  const messages: any[] = [];
-  for (const entry of branch) {
-    if (entry?.type === "message" && (entry as any).message) {
-      messages.push({
-        ...(entry as any).message,
-        timestamp: (entry as any).message.timestamp ?? entry.timestamp ?? null,
-      });
-      continue;
-    }
-    if (entry?.type === "compaction" && textOrNull((entry as any).summary)) {
-      messages.push({
-        role: "compactionSummary",
-        summary: (entry as any).summary,
-        timestamp: (entry as any).timestamp ?? null,
-      });
-    }
-  }
-  return messages;
-}
-
 function textOrNull(value: any) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -4364,7 +4341,9 @@ export class SessionCoordinator implements SessionCancellation {
     this.applySessionBranchHead(sourceSessionPath, sourceManager, { reason: "deleted_agent_continue" });
     const sourceCwd = sourceManager.getCwd?.() || null;
     const targetCwd = sourceCwd || this._d.getHomeCwd(targetAgent.id) || process.cwd();
-    const sourceMessages = readSessionBranchMessages(sourceManager);
+    // Continue from Pi's model-visible context: raw branch entries still contain
+    // omitted/replaced attempts and history superseded by compaction.
+    const sourceMessages = sourceManager.buildSessionContext().messages;
     const transcriptMessages = sourceMessages
       .map(normalizeDeletedAgentTranscriptMessage)
       .filter(Boolean);

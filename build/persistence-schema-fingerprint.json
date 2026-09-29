@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:71b3f15a04e3b11aec9ffe16e9507151be27c797fc6a01111a100a8a9f3bcac3",
+  "payloadFingerprint": "sha256:02d6fef47b327d073db85b2abbc8449bf2889371a05986a2ec9e040927f52946",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3313,8 +3313,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Reviewed compatible M7-M14 additions and repository audit fixes; existing stores remain readable, pet startup and IPC guards do not change serialized shapes, and session ownership fixes retain existing formats. See docs/audits/2026-09-27-companion-m7-m14-persistence-compatibility.md and docs/audits/2026-09-27-repository-regression-review.md. DATA_EPOCH remains 1.",
-    "payloadFingerprint": "sha256:71b3f15a04e3b11aec9ffe16e9507151be27c797fc6a01111a100a8a9f3bcac3"
+    "compatibilityReason": "Canonical Pi context projection for deleted-agent continuation changes session-coordinator executable hashes without changing JSONL v3, store paths, SQLite schemas, Pi 0.87.1 or DATA_EPOCH 1. See docs/audits/2026-09-29-repository-review.md for compatibility review.",
+    "payloadFingerprint": "sha256:02d6fef47b327d073db85b2abbc8449bf2889371a05986a2ec9e040927f52946"
   },
   "schemas": [
     {
@@ -3811,7 +3811,7 @@
         {
           "contract": "core/session-coordinator.ts Hana metadata extensions",
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:54cc5ead0857992b49dfe6d508003bc6c8695c486b7f5b10a738fc515baf3dba"
+          "sourceHash": "sha256:206c6aa082db81b8252f361a174045f667a3d1cd2f7d8565d9915e6ac35d802c"
         },
         {
           "contract": "core/session-jsonl-file.ts repair contract",
@@ -3831,7 +3831,7 @@
         },
         {
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:54cc5ead0857992b49dfe6d508003bc6c8695c486b7f5b10a738fc515baf3dba"
+          "sourceHash": "sha256:206c6aa082db81b8252f361a174045f667a3d1cd2f7d8565d9915e6ac35d802c"
         },
         {
           "module": "core/session-jsonl-file.ts",

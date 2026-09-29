@@ -6,6 +6,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { filesystemIdentityKeySync } from "../../shared/link-aware-fs.ts";
 
 /** 解析真实路径（跟踪 symlink），失败返回 null */
 export function realPath(p) {
@@ -26,14 +27,20 @@ export function isSensitivePath(srcPath, hanakoHome) {
   if (!path.isAbsolute(srcPath)) return true; // fail-closed on relative input
   const resolved = realPath(srcPath);
   if (!resolved) return true; // fail-closed
+  const candidate = filesystemIdentityKeySync(resolved);
   const home = os.homedir();
   for (const d of SENSITIVE_DIRS) {
-    const sensitive = path.join(home, d);
-    if (resolved === sensitive || resolved.startsWith(sensitive + path.sep)) return true;
+    // Both sides must use filesystem identity: sensitive directories may be
+    // links, and Windows accepts differently cased spellings of the same path.
+    const sensitive = filesystemIdentityKeySync(path.join(home, d));
+    if (candidate === sensitive || candidate.startsWith(sensitive + path.sep)) return true;
   }
   if (hanakoHome) {
     const realHome = realPath(hanakoHome);
-    if (realHome && (resolved === realHome || resolved.startsWith(realHome + path.sep))) return true;
+    if (realHome) {
+      const sensitive = filesystemIdentityKeySync(realHome);
+      if (candidate === sensitive || candidate.startsWith(sensitive + path.sep)) return true;
+    }
   }
   return false;
 }

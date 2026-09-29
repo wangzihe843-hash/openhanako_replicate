@@ -8,6 +8,7 @@ import { hanaFetch } from './api';
 import registry from '../../shared/theme-registry';
 import { lookupReferenceModelMeta } from '../utils/model-metadata';
 import { API_PROVIDER_PRESETS, getProviderPresetLabel } from '../utils/provider-presets';
+import { settingsPinsKey } from './pinned-state';
 
 export function t(key: string, params?: Record<string, any>): any {
   return window.t?.(key, params) ?? key;
@@ -137,7 +138,7 @@ export async function autoSaveGlobalModels(
   }
 }
 
-type PinsJob = { run: () => Promise<void>; timer: ReturnType<typeof setTimeout> | null; running: boolean; pending: boolean };
+type PinsJob = { run: () => Promise<void>; timer: ReturnType<typeof setTimeout> | null; running: boolean; pending: boolean; expectedPins: string[] };
 const pinsJobs = new Map<string, PinsJob>();
 export function savePins() {
   const store = useSettingsStore.getState();
@@ -145,26 +146,37 @@ export function savePins() {
   if (!agentId) return;
   const connection = resolveServerConnection(store) ?? undefined;
   const pins = [...store.currentPins];
-  const key = JSON.stringify([connection?.connectionId, connection?.baseUrl, connection?.token, agentId]);
+  const key = settingsPinsKey(connection, agentId);
+  if (store.pinsSnapshot?.key !== key) {
+    store.showToast(t('settings.saveFailed') + ': 请重新打开设置，读取当前角色的置顶记忆后再修改。', 'error');
+    return;
+  }
   let job = pinsJobs.get(key);
   if (!job) {
-    job = { run: async () => {}, timer: null, running: false, pending: false };
+    job = { run: async () => {}, timer: null, running: false, pending: false, expectedPins: [...store.pinsSnapshot.pins] };
     pinsJobs.set(key, job);
   }
+  const current = job;
   job.run = async () => {
+    const expectedPins = [...current.expectedPins];
     const res = await hanaFetch(`/api/agents/${agentId}/pinned`, {
       connection,
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pins }),
+      body: JSON.stringify({ pins, expectedPins }),
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
+    current.expectedPins = [...pins];
+    const latest = useSettingsStore.getState();
+    if (latest.pinsSnapshot?.key === key
+      && JSON.stringify(latest.pinsSnapshot.pins) === JSON.stringify(expectedPins)) {
+      useSettingsStore.setState({ pinsSnapshot: { key, pins: [...pins] } });
+    }
     emitAgentPinnedMemoryChanged({ agentId, source: 'settings', pinsCount: pins.length });
     store.showToast(t('settings.autoSaved'), 'success');
   };
   job.pending = true;
   if (job.timer) clearTimeout(job.timer);
-  const current = job;
   const drain = async () => {
     current.timer = null;
     if (current.running) return;
@@ -177,7 +189,10 @@ export function savePins() {
         } catch (err: any) {
           // A newer edit may have become ready while this request was in
           // flight. Continue that job; never replay the failed request.
-          store.showToast(t('settings.saveFailed') + ': ' + err.message, 'error');
+          const message = err?.code === 'pinned_memory_conflict'
+            ? '置顶记忆已更新，本次编辑仍保留在页面中。请重新打开设置，核对最新记忆后再修改。'
+            : err.message;
+          store.showToast(t('settings.saveFailed') + ': ' + message, 'error');
         }
       }
     } finally {

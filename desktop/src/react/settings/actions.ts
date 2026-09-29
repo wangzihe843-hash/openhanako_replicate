@@ -14,6 +14,8 @@ import {
   startRemoteLoad,
 } from './resource-state';
 import type { SettingsSnapshot } from './store';
+import { resolveServerConnection } from '../services/server-connection';
+import { settingsPinsKey } from './pinned-state';
 
 let _settingsConfigLoadVersion = 0;
 let _settingsConfigAbortController: AbortController | null = null;
@@ -83,6 +85,8 @@ export async function loadSettingsConfig() {
   const controller = new AbortController();
   _settingsConfigAbortController = controller;
   const agentId = store.getSettingsAgentId();
+  const pinsKey = agentId ? settingsPinsKey(resolveServerConnection(store), agentId) : null;
+  const initialPinsSnapshot = store.pinsSnapshot;
   const resourceKey = makeSettingsResourceKey('config', agentId, store.activeServerConnectionId);
   const keepSameOwnerData = store.settingsConfigKey === resourceKey;
   store.set({
@@ -94,6 +98,7 @@ export async function loadSettingsConfig() {
       globalModelsConfig: null,
       homeFolder: null,
       currentPins: [],
+      pinsSnapshot: null,
     }),
   });
   if (!agentId || !resourceKey) {
@@ -104,6 +109,7 @@ export async function loadSettingsConfig() {
       globalModelsConfig: null,
       homeFolder: null,
       currentPins: [],
+      pinsSnapshot: null,
     });
     return;
   }
@@ -147,6 +153,12 @@ export async function loadSettingsConfig() {
     if (_settingsConfigAbortController !== controller) return;
     const latest = useSettingsStore.getState();
     if (latest.settingsConfigKey !== resourceKey) return;
+    if (settingsPinsKey(resolveServerConnection(latest), agentId) !== pinsKey) return;
+    // Background refreshes must not replace unsaved edits or a newer save's
+    // baseline with the older response captured by this request.
+    const preservePins = latest.pinsSnapshot?.key === pinsKey
+      && (JSON.stringify(latest.currentPins) !== JSON.stringify(latest.pinsSnapshot.pins)
+        || latest.pinsSnapshot !== initialPinsSnapshot);
 
     store.set({
       settingsConfigKey: resourceKey,
@@ -155,7 +167,10 @@ export async function loadSettingsConfig() {
       settingsConfig: config,
       globalModelsConfig: globalModels,
       homeFolder: config.desk?.home_folder || null,
-      currentPins: pinsArr,
+      ...(preservePins ? {} : {
+        currentPins: pinsArr,
+        pinsSnapshot: { key: pinsKey!, pins: [...pinsArr] },
+      }),
     });
   } catch (err) {
     if (isAbortError(err)) return;
@@ -185,9 +200,10 @@ function configFromSnapshot(snapshot: SettingsSnapshot): Record<string, any> {
   };
 }
 
-function applySettingsSnapshot(snapshot: SettingsSnapshot, resourceKey: string, requestId: number) {
+function applySettingsSnapshot(snapshot: SettingsSnapshot, resourceKey: string, requestId: number, pinsKey: string) {
   const latest = useSettingsStore.getState();
   if (latest.settingsSnapshot.key !== resourceKey || latest.settingsSnapshot.requestId !== requestId) return;
+  if (settingsPinsKey(resolveServerConnection(latest), snapshot.agentId) !== pinsKey) return;
   const config = configFromSnapshot(snapshot);
   const configKey = makeSettingsResourceKey('config', snapshot.agentId, latest.activeServerConnectionId);
   latest.set({
@@ -199,6 +215,10 @@ function applySettingsSnapshot(snapshot: SettingsSnapshot, resourceKey: string, 
     globalModelsConfig: snapshot.globalModels || {},
     homeFolder: config.desk?.home_folder || null,
     currentPins: Array.isArray(snapshot.pinned?.pins) ? snapshot.pinned.pins : [],
+    pinsSnapshot: {
+      key: pinsKey,
+      pins: Array.isArray(snapshot.pinned?.pins) ? [...snapshot.pinned.pins] : [],
+    },
     pluginSettingsStatus: 'ready',
     pluginSettingsError: null,
     pluginAllowFullAccess: snapshot.plugins?.allowFullAccess === true,
@@ -230,6 +250,7 @@ export async function loadSettingsSnapshot(options: { retainSameKeyData?: boolea
   const controller = new AbortController();
   _settingsSnapshotAbortController = controller;
   const agentId = store.getSettingsAgentId();
+  const pinsKey = agentId ? settingsPinsKey(resolveServerConnection(store), agentId) : null;
   const resourceKey = makeSettingsResourceKey('snapshot', agentId, store.activeServerConnectionId);
   const currentResource = store.settingsSnapshot || createRemoteResource<SettingsSnapshot>();
   const requestId = currentResource.requestId + 1;
@@ -249,6 +270,7 @@ export async function loadSettingsSnapshot(options: { retainSameKeyData?: boolea
       globalModelsConfig: null,
       homeFolder: null,
       currentPins: [],
+      pinsSnapshot: null,
       pluginAllowFullAccess: undefined,
       pluginDevToolsEnabled: undefined,
       pluginUserDir: '',
@@ -265,6 +287,7 @@ export async function loadSettingsSnapshot(options: { retainSameKeyData?: boolea
       globalModelsConfig: null,
       homeFolder: null,
       currentPins: [],
+      pinsSnapshot: null,
       pluginSettingsStatus: 'error',
       pluginSettingsError: 'No settings agent selected',
     });
@@ -279,7 +302,7 @@ export async function loadSettingsSnapshot(options: { retainSameKeyData?: boolea
     if (snapshot.error) throw new Error(snapshot.error);
     if (myVersion !== _settingsSnapshotLoadVersion) return;
     if (_settingsSnapshotAbortController !== controller) return;
-    applySettingsSnapshot(snapshot as SettingsSnapshot, resourceKey, requestId);
+    applySettingsSnapshot(snapshot as SettingsSnapshot, resourceKey, requestId, pinsKey!);
   } catch (err) {
     if (isAbortError(err)) return;
     console.error('[settings] snapshot load failed:', err);

@@ -16,6 +16,7 @@
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
+import { postXingyeStorage } from './xingye-storage-api';
 import { getRelationshipState, type XingyeRelationshipStage } from './xingye-state-store';
 import { generateXingyeMomentCommentForUserPostWithAI } from './xingye-moments-ai';
 import {
@@ -76,10 +77,21 @@ export function decideXingyeUserPostReaction(
 }
 
 /** 读取某角色对 user 的关系档位；无记录或读取失败时返回 null（调用方会回退到默认档位）。 */
-export function resolveAgentRelationshipStage(agentId: string): XingyeRelationshipStage | null {
+export async function resolveAgentRelationshipStage(agentId: string): Promise<XingyeRelationshipStage | null> {
   try {
     const storage = getXingyePersistenceStorage();
-    return getRelationshipState(agentId, storage)?.relationshipKey ?? null;
+    const cached = getRelationshipState(agentId, storage);
+    if (cached) return cached.relationshipKey;
+    // The ambient cache contains only the selected role. Fanout also includes
+    // other roles: read their own file without rebinding the selected role.
+    const result = await postXingyeStorage({ action: 'readJson', agentId, relativePath: 'relationship-state.json' });
+    const raw = JSON.stringify(result?.data ?? null);
+    const rejectWrite = () => { throw new Error('Relationship snapshot is read-only'); };
+    return getRelationshipState(agentId, {
+      getItem: () => raw,
+      setItem: rejectWrite,
+      removeItem: rejectWrite,
+    })?.relationshipKey ?? null;
   } catch {
     return null;
   }
@@ -127,7 +139,7 @@ export async function fanOutAgentReactionsToUserPost(
   if (!pid || !agents.length) return;
 
   for (const entry of agents) {
-    const stage = resolveAgentRelationshipStage(entry.agent.id);
+    const stage = await resolveAgentRelationshipStage(entry.agent.id);
     const decision = decideXingyeUserPostReaction(stage, rand);
     if (!decision.like && decision.comment === 'none') continue;
 

@@ -10,6 +10,7 @@
 import fs from "fs";
 import path from "path";
 import { t } from "../i18n.ts";
+import { filesystemIdentityKeySync } from "../../shared/link-aware-fs.ts";
 import {
   BLOCKED_FILES,
   BLOCKED_DIRS,
@@ -97,7 +98,14 @@ export class PathGuard {
 
   /** 判断 target 是否在 base 内部（含相等） */
   _isInside(target, base) {
-    return target === base || target.startsWith(base + path.sep);
+    const targetKey = filesystemIdentityKeySync(target);
+    const baseKey = filesystemIdentityKeySync(base);
+    const relative = path.relative(baseKey, targetKey);
+    return relative === "" || (relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative));
+  }
+
+  _isSamePath(target, expected) {
+    return filesystemIdentityKeySync(target) === filesystemIdentityKeySync(expected);
   }
 
   /**
@@ -114,7 +122,7 @@ export class PathGuard {
   _getAccessLevelResolved(resolved) {
     // 1. BLOCKED 文件（hanakoHome 根）
     for (const f of BLOCKED_FILES) {
-      if (resolved === path.join(this.hanakoHome, f)) return AccessLevel.BLOCKED;
+      if (this._isSamePath(resolved, path.join(this.hanakoHome, f))) return AccessLevel.BLOCKED;
     }
 
     // 2. BLOCKED 目录
@@ -126,7 +134,7 @@ export class PathGuard {
 
     // 3. READ_ONLY agent 文件
     for (const f of READ_ONLY_AGENT_FILES) {
-      if (resolved === path.join(this.agentDir, f)) return AccessLevel.READ_ONLY;
+      if (this._isSamePath(resolved, path.join(this.agentDir, f))) return AccessLevel.READ_ONLY;
     }
 
     // 4. READ_ONLY agent 目录（通用机制，当前为空）
@@ -152,7 +160,7 @@ export class PathGuard {
 
     // 6. READ_WRITE agent 文件
     for (const f of READ_WRITE_AGENT_FILES) {
-      if (resolved === path.join(this.agentDir, f)) return AccessLevel.READ_WRITE;
+      if (this._isSamePath(resolved, path.join(this.agentDir, f))) return AccessLevel.READ_WRITE;
     }
 
     // 7. READ_WRITE 全局目录

@@ -7,6 +7,7 @@
 
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "node:url";
 import { canonicalFilesystemPathSync, filesystemIdentityKeySync } from "../../shared/link-aware-fs.ts";
 import { detectMime, formatSize } from "../file-metadata.ts";
 
@@ -85,12 +86,7 @@ export async function downloadMedia(url) {
 
 /** file:// URI → 本地路径（跨平台：Windows 上 new URL().pathname 会多一个前导 /） */
 function fileUrlToPath(fileUrl) {
-  try {
-    const u = new URL(fileUrl);
-    // Windows: pathname = "/C:/Users/..." → 去掉前导 /
-    const p = u.pathname;
-    return /^\/[A-Za-z]:/.test(p) ? p.slice(1) : p;
-  } catch { return fileUrl.replace(/^file:\/\//, ""); }
+  return fileURLToPath(fileUrl);
 }
 
 /**

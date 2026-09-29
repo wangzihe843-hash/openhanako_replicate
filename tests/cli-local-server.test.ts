@@ -53,4 +53,19 @@ describe("CLI local server discovery", () => {
       queryTokenAllowed: false,
     });
   });
+
+  it.each([
+    null,
+    { port: 65536, token: "hana_token" },
+    { port: 14500, token: 123 },
+    { port: 14500, token: "   " },
+  ])("rejects unusable server metadata without crashing discovery: %j", (info) => {
+    tmpDir = makeTmpDir();
+    fs.writeFileSync(path.join(tmpDir, "server-info.json"), JSON.stringify(info), "utf-8");
+
+    expect(resolveConnection({ hanaHome: tmpDir })).toMatchObject({
+      ok: false,
+      reason: "incomplete_server_info",
+    });
+  });
 });

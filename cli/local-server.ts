@@ -39,12 +39,14 @@ export function readLocalServerInfo({ hanaHome = resolveCliHanaHome(), checkProc
     };
   }
 
-  if (!Number.isInteger(info.port) || info.port <= 0 || !info.token) {
+  if (!info || typeof info !== "object" || Array.isArray(info)
+    || !Number.isInteger(info.port) || info.port <= 0 || info.port > 65535
+    || typeof info.token !== "string" || !info.token.trim()) {
     return {
       ok: false,
       reason: "incomplete_server_info",
       filePath,
-      message: `${filePath} is missing port or token`,
+      message: `${filePath} has a missing or invalid port or token`,
     };
   }
 
