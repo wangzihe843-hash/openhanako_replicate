@@ -113,6 +113,17 @@ describe("server runtime assets", () => {
     expect(copied).toContain(path.join("desktop", "dist-renderer") + path.sep);
   });
 
+  it("rejects a missing theme runtime before replacing the previous mobile renderer", () => {
+    fs.unlinkSync(path.join(rootDir, "desktop", "dist-renderer", "lib", "theme.js"));
+    const previousRenderer = path.join(outDir, "desktop", "dist-renderer");
+    fs.mkdirSync(previousRenderer, { recursive: true });
+    fs.writeFileSync(path.join(previousRenderer, "mobile.html"), "previous build");
+
+    expect(() => copyServerRuntimeAssets({ rootDir, outDir }))
+      .toThrow(/required runtime asset missing: .*theme\.js/);
+    expect(fs.readFileSync(path.join(previousRenderer, "mobile.html"), "utf8")).toBe("previous build");
+  });
+
   it("excludes source maps and desktop-only renderer files from the server runtime", () => {
     copyServerRuntimeAssets({ rootDir, outDir });
 

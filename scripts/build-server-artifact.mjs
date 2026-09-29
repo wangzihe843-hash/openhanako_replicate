@@ -393,7 +393,16 @@ export async function packRendererArtifact({ rendererDistDir, artifactOutDir, ve
   if (!fs.existsSync(rendererDistDir)) {
     throw new Error(
       `[build-server] renderer dist dir not found: ${rendererDistDir}. `
-        + "Run npm run build:renderer (or build:client) before packing the renderer artifact.",
+        + "Run npm run build:client (or build:renderer followed by build:theme) before packing the renderer artifact.",
+    );
+  }
+
+  // build:renderer clears this separately generated runtime. Do not replace a
+  // working artifact with a renderer tree whose HTML points at a missing script.
+  if (!fs.existsSync(path.join(rendererDistDir, "lib", "theme.js"))) {
+    throw new Error(
+      "[build-server] renderer runtime asset missing: lib/theme.js. "
+        + "Run npm run build:theme after build:renderer before packing the renderer artifact.",
     );
   }
 

@@ -1,6 +1,6 @@
 /**
  * Isolated Windows smoke for the real desktop main and pet windows.
- * Run after build:renderer: node scripts/smoke-desktop-main-pet.cjs
+ * Run after build:client: node scripts/smoke-desktop-main-pet.cjs
  * The worker imports the production bootstrap, but runs with a temporary data
  * home and appData path. No provider credentials or model requests are used.
  */
@@ -12,10 +12,15 @@ const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { spawn } = require("node:child_process");
+const { SERVER_INFO_MAX_WAIT_MS } = require("../desktop/src/shared/server-readiness.cjs");
 
 const root = path.resolve(__dirname, "..");
 const home = process.env.HANA_HOME;
 const rendererErrors = [];
+// A source-mode Windows cold start can spend longer than a UI action timeout
+// reading modules. Allow the same bounded startup budget as the application.
+const UI_TIMEOUT_MS = 45000;
+const STARTUP_TIMEOUT_MS = SERVER_INFO_MAX_WAIT_MS + UI_TIMEOUT_MS;
 
 function assertOwnedSmokeHome(directory) {
   const resolved = fs.realpathSync(directory);
@@ -27,7 +32,7 @@ function assertOwnedSmokeHome(directory) {
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-async function waitFor(label, probe, timeoutMs = 45000) {
+async function waitFor(label, probe, timeoutMs = UI_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -79,21 +84,23 @@ async function runWorker() {
   const failSafe = setTimeout(() => {
     process.stderr.write("desktop main/pet smoke: graceful quit timed out\n");
     app.exit(1);
-  }, 90000);
+  }, STARTUP_TIMEOUT_MS + 90000);
   failSafe.unref();
 
   require(path.join(root, "desktop/bootstrap.cjs"));
   await app.whenReady();
   const windowFor = (page) => BrowserWindow.getAllWindows().find((win) =>
     !win.isDestroyed() && win.webContents.getURL().split("?")[0].endsWith(`/${page}.html`));
-  const readyWindow = (page, bridge) => waitFor(`${page} window and ${bridge} preload`, async () => {
+  const readyWindow = (page, bridge, timeoutMs = UI_TIMEOUT_MS) => waitFor(`${page} window and ${bridge} preload`, async () => {
     const win = windowFor(page);
     if (!win || win.webContents.isLoadingMainFrame()) return null;
     return await win.webContents.executeJavaScript(`typeof window.${bridge} === 'object'`) ? win : null;
-  });
+  }, timeoutMs);
 
-  const main = await readyWindow("index", "hana");
+  const main = await readyWindow("index", "hana", STARTUP_TIMEOUT_MS);
   const pet = await readyWindow("pet", "hanaPet");
+  assert.equal(await main.webContents.executeJavaScript("typeof window.applyTheme"), "function",
+    "the main window must load the built theme runtime");
   await waitFor("main React app shell", () => main.webContents.executeJavaScript(
     "Boolean(document.querySelector('#react-root .app-shell .app'))",
   ));
@@ -176,9 +183,15 @@ async function runWorker() {
 
 async function runController() {
   assert.equal(process.platform, "win32", "this smoke is Windows-only");
-  for (const page of ["index", "pet"]) {
-    assert.ok(fs.existsSync(path.join(root, `desktop/dist-renderer/${page}.html`)),
-      `missing built ${page}.html; run npm run build:renderer first`);
+  for (const artifact of [
+    "desktop/preload.bundle.cjs",
+    "desktop/dist-splash/splash.html",
+    "desktop/dist-renderer/index.html",
+    "desktop/dist-renderer/pet.html",
+    "desktop/dist-renderer/lib/theme.js",
+  ]) {
+    assert.ok(fs.existsSync(path.join(root, artifact)),
+      `missing built ${artifact}; run npm run build:client first`);
   }
   const smokeHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-main-pet-smoke-"));
   assertOwnedSmokeHome(smokeHome);
@@ -201,7 +214,7 @@ async function runController() {
     stream.on("data", (chunk) => { output = (output + String(chunk)).slice(-16000); });
   }
   let timedOut = false;
-  const timeout = setTimeout(() => { timedOut = true; child.kill(); }, 105000);
+  const timeout = setTimeout(() => { timedOut = true; child.kill(); }, STARTUP_TIMEOUT_MS + 105000);
   try {
     const exitCode = await new Promise((resolve, reject) => {
       child.once("error", reject);
@@ -212,7 +225,7 @@ async function runController() {
     assert.match(output, /desktop main\/pet smoke: startup, preload, IPC, close\/reopen passed/);
     assert.equal(fs.existsSync(path.join(smokeHome, "server-info.json")), false,
       "graceful Electron quit should remove its isolated server discovery file");
-    process.stdout.write("desktop main/pet smoke: isolated process exited cleanly\n");
+    process.stdout.write("desktop main/pet smoke: startup, theme, preload, IPC, close/reopen and isolated shutdown passed\n");
   } finally {
     clearTimeout(timeout);
     if (child.exitCode === null) child.kill();

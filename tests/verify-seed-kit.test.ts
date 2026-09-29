@@ -49,8 +49,10 @@ function makeServerTree(root: string, marker = "server") {
 function makeRendererTree(root: string) {
   const rendererDir = path.join(root, "dist-renderer");
   fs.mkdirSync(path.join(rendererDir, "assets"), { recursive: true });
+  fs.mkdirSync(path.join(rendererDir, "lib"), { recursive: true });
   fs.writeFileSync(path.join(rendererDir, "index.html"), "<!doctype html><html></html>\n");
   fs.writeFileSync(path.join(rendererDir, "assets", "index.js"), "console.log('renderer');\n");
+  fs.writeFileSync(path.join(rendererDir, "lib", "theme.js"), "window.applyTheme = () => {};\n");
   const themesDir = path.join(rendererDir, "themes");
   const fontsDir = path.join(themesDir, "fonts");
   fs.mkdirSync(fontsDir, { recursive: true });

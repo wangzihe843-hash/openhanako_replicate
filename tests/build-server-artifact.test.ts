@@ -68,8 +68,10 @@ function addOfficePdfFontAssets(rendererDir: string) {
 function makeRendererTree(root: string) {
   const rendererDir = path.join(root, "dist-renderer");
   fs.mkdirSync(path.join(rendererDir, "assets"), { recursive: true });
+  fs.mkdirSync(path.join(rendererDir, "lib"), { recursive: true });
   fs.writeFileSync(path.join(rendererDir, "index.html"), "<!doctype html><html></html>\n");
   fs.writeFileSync(path.join(rendererDir, "assets", "index.js"), "console.log('renderer');\n");
+  fs.writeFileSync(path.join(rendererDir, "lib", "theme.js"), "window.applyTheme = () => {};\n");
   addOfficePdfFontAssets(rendererDir);
   return rendererDir;
 }
@@ -426,6 +428,24 @@ describe("build-server-artifact: packRendererArtifact", () => {
     expect(packCalled).toBe(false);
   });
 
+  it("rejects a renderer rebuilt without theme before replacing the existing artifact", async () => {
+    const root = makeTempDir("hana-pack-renderer-theme-");
+    const rendererDistDir = makeRendererTree(root);
+    fs.unlinkSync(path.join(rendererDistDir, "lib", "theme.js"));
+    const artifactOutDir = path.join(root, "out");
+    fs.mkdirSync(artifactOutDir);
+    const previousArtifact = path.join(artifactOutDir, "previous.tar.gz");
+    fs.writeFileSync(previousArtifact, "previous build");
+
+    await expect(packRendererArtifact({
+      rendererDistDir,
+      artifactOutDir,
+      version: "0.381.0",
+      log: () => {},
+    })).rejects.toThrow(/theme\.js.*build:theme/);
+    expect(fs.readFileSync(previousArtifact, "utf8")).toBe("previous build");
+  });
+
   it("refuses to pack when the Office PDF css references a missing font file", async () => {
     const root = makeTempDir("hana-pack-renderer-fonts-");
     const rendererDistDir = makeRendererTree(root);
@@ -584,8 +604,10 @@ describe("build-server-artifact: packDualKindSeed prebuilt renderer archive reus
   async function packSharedRendererBox(root: string, version = "0.381.0") {
     const sharedSourceDir = path.join(root, "shared-source-renderer");
     fs.mkdirSync(path.join(sharedSourceDir, "assets"), { recursive: true });
+    fs.mkdirSync(path.join(sharedSourceDir, "lib"), { recursive: true });
     fs.writeFileSync(path.join(sharedSourceDir, "index.html"), "<!doctype html><html></html>\n");
     fs.writeFileSync(path.join(sharedSourceDir, "assets", "index.js"), "console.log('shared renderer');\n");
+    fs.writeFileSync(path.join(sharedSourceDir, "lib", "theme.js"), "window.applyTheme = () => {};\n");
     addOfficePdfFontAssets(sharedSourceDir);
     return packRendererArtifact({
       rendererDistDir: sharedSourceDir,

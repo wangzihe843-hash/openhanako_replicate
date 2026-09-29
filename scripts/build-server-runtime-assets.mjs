@@ -18,6 +18,8 @@ export const SERVER_RUNTIME_RENDERER_REQUIRED_FILES = [
   "manifest.webmanifest",
   "sw.js",
   "icon.png",
+  // Generated after build:renderer; checking only the lib directory misses it.
+  "lib/theme.js",
 ];
 
 export const SERVER_RUNTIME_RENDERER_DIRS = [
