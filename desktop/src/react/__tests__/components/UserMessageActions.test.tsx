@@ -35,7 +35,8 @@ describe('UserMessage Codex-style actions', () => {
         'common.screenshot': '截图',
         'common.selectMessage': '选择消息',
         'common.selectAllMessages': '全选消息',
-        'common.regenerate': '重新生成',
+        'common.taskRetry': '重试任务',
+        'common.dialogueVariant': '换个说法',
         'common.forkSession': '分支为新会话',
         'common.edit': '编辑',
         'common.cancel': '取消',
@@ -80,7 +81,7 @@ describe('UserMessage Codex-style actions', () => {
     expect(screen.getAllByTitle('复制文本')).toHaveLength(1);
     expect(screen.getByTitle('选择消息')).toBeInTheDocument();
     expect(screen.getByTitle('全选消息')).toBeInTheDocument();
-    expect(screen.getByTitle('重新生成')).toBeInTheDocument();
+    expect(screen.getByTitle('重试任务')).toBeInTheDocument();
     expect(screen.getByTitle('分支为新会话')).toBeInTheDocument();
     expect(screen.getByTitle('编辑')).toBeInTheDocument();
     expect(screen.getByText('05:42')).toBeInTheDocument();
@@ -109,7 +110,7 @@ describe('UserMessage Codex-style actions', () => {
 
     expect(ordered).toEqual([
       '05:42',
-      '重新生成',
+      '重试任务',
       '分支为新会话',
       '编辑',
       '复制文本',
@@ -166,7 +167,7 @@ describe('UserMessage Codex-style actions', () => {
     expect(screen.getByTitle('截图')).toBeInTheDocument();
     expect(screen.getByTitle('全选消息')).toBeInTheDocument();
     expect(screen.getByTitle('选择消息')).toBeInTheDocument();
-    expect(screen.getByTitle('重新生成')).toBeInTheDocument();
+    expect(screen.getByTitle('重试任务')).toBeInTheDocument();
     expect(screen.getByTitle('分支为新会话')).toBeInTheDocument();
     expect(screen.queryByTitle('编辑')).not.toBeInTheDocument();
   });
@@ -200,7 +201,7 @@ describe('UserMessage Codex-style actions', () => {
       />,
     );
 
-    expect(screen.getByTitle('重新生成')).toBeInTheDocument();
+    expect(screen.getByTitle('重试任务')).toBeInTheDocument();
     expect(screen.getByTitle('分支为新会话')).toBeInTheDocument();
     expect(screen.queryByTitle('编辑')).not.toBeInTheDocument();
   });

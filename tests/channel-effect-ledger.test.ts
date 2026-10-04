@@ -4,7 +4,11 @@ import os from "os";
 import path from "path";
 import { addBookmarkEntry, appendMessage, createChannel, parseChannel } from "../lib/channels/channel-store.ts";
 import { createChannelTool } from "../lib/tools/channel-tool.ts";
-import { channelPostOperationKey, EffectLedger, publicEffectRecord, verifyChannelPostReceipt } from "../lib/task-outcome/effect-ledger.ts";
+import {
+  channelPostOperationKey, digestEffectInput, EffectLedger, getChannelPostRetryContext,
+  publicEffectRecord, runChannelPostEffect, runWithChannelPostRetryContext,
+  verifyChannelPostReceipt,
+} from "../lib/task-outcome/effect-ledger.ts";
 
 function postedEffect(result: { details?: unknown }): ReturnType<typeof publicEffectRecord> {
   expect(result).toHaveProperty("details.effect");
@@ -162,5 +166,151 @@ describe("channel.post effect receipt", () => {
     expect(messages()[0].body).toBe("hello team");
     expect(verifyChannelPostReceipt(new EffectLedger(channelsDir), filePath, "ch_team", effectId))
       .toMatchObject({ channel: "ch_team", sender: "alice" });
+  });
+
+  it("reuses a committed logical post when a task retry generates a fresh tool call ID", async () => {
+    const first = await tool().execute("original-call", args);
+    const postMessage = vi.fn(appendMessage);
+    const replay = await runWithChannelPostRetryContext({
+      agentId: "alice", sessionIdentity: null,
+      actions: [{ toolCallId: "original-call", effectId: postedEffect(first).effectId }],
+    }, () => tool({ postMessage }).execute("retry-call", args));
+    expect(postedEffect(replay)).toEqual(postedEffect(first));
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(effect("retry-call")).toBeNull();
+    expect(messages()).toHaveLength(1);
+    expect(getChannelPostRetryContext()).toBeNull();
+  });
+
+  it("retries a failed logical post across new tool IDs and preserves its identity on later retries", async () => {
+    const failure = await tool({ postMessage: async () => {
+      throw Object.assign(new Error("cancelled"), { code: "channel_write_cancelled" });
+    } }).execute("failed-original", args);
+    const retry = await runWithChannelPostRetryContext({
+      agentId: "alice", sessionIdentity: null,
+      actions: [{ toolCallId: "failed-original" }],
+    }, () => tool().execute("fresh-retry", args));
+    expect(postedEffect(retry)).toMatchObject({ effectId: postedEffect(failure).effectId, status: "committed", attempts: 2 });
+    expect(effect("failed-original")?.taskId).toBe("tool:failed-original");
+    const secondRetry = await runWithChannelPostRetryContext({
+      agentId: "alice", sessionIdentity: null,
+      actions: [{ toolCallId: "fresh-retry", effectId: postedEffect(retry).effectId }],
+    }, () => tool().execute("another-retry", args));
+    expect(postedEffect(secondRetry)).toEqual(postedEffect(retry));
+    expect(messages()).toHaveLength(1);
+  });
+
+  it.each(["prepared", "unknown"] as const)("never blindly resends a %s logical effect on a new task attempt", async (status) => {
+    await tool({ postMessage: async () => { throw new Error("uncertain"); } }).execute("uncertain-original", args);
+    const ledger = new EffectLedger(channelsDir);
+    ledger.write({ ...effect("uncertain-original")!, status });
+    const postMessage = vi.fn(appendMessage);
+    const replay = await runWithChannelPostRetryContext({
+      agentId: "alice", sessionIdentity: null,
+      actions: [{ toolCallId: "uncertain-original" }],
+    }, () => tool({ postMessage }).execute("uncertain-retry", args));
+    expect(postedEffect(replay)).toMatchObject({ status: "unknown", attempts: 1 });
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(messages()).toHaveLength(0);
+  });
+
+  it("reconciles an interrupted prepared effect from its durable marker under a fresh call ID", async () => {
+    await tool().execute("interrupted-original", args);
+    const ledger = new EffectLedger(channelsDir);
+    ledger.write({ ...effect("interrupted-original")!, status: "prepared", receipt: undefined });
+    const postMessage = vi.fn(appendMessage);
+    const replay = await runWithChannelPostRetryContext({
+      agentId: "alice", sessionIdentity: null,
+      actions: [{ toolCallId: "interrupted-original" }],
+    }, () => tool({ postMessage }).execute("interrupted-retry", args));
+    expect(postedEffect(replay)).toMatchObject({ status: "committed", attempts: 1 });
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(messages()).toHaveLength(1);
+  });
+
+  it("fails closed on changed, reordered, missing, or extra retry actions", async () => {
+    await tool().execute("ordered-first", args);
+    await tool().execute("ordered-second", { ...args, content: "second message" });
+    const context = {
+      agentId: "alice", sessionIdentity: null,
+      actions: [{ toolCallId: "ordered-first" }, { toolCallId: "ordered-second" }],
+    };
+    await runWithChannelPostRetryContext(context, async () => {
+      await expect(tool().execute("wrong-order", { ...args, content: "second message" }))
+        .rejects.toMatchObject({ code: "effect_identity_conflict" });
+      await expect(tool().execute("changed", { ...args, content: "edited content" }))
+        .rejects.toMatchObject({ code: "effect_identity_conflict" });
+      await tool().execute("first-retry", args);
+      await tool().execute("second-retry", { ...args, content: "second message" });
+      await expect(tool().execute("extra-retry", args)).rejects.toMatchObject({ code: "effect_retry_unbound" });
+    });
+    await expect(runWithChannelPostRetryContext({ ...context, actions: [] }, () => tool().execute("no-original", args)))
+      .rejects.toMatchObject({ code: "effect_retry_unbound" });
+    await expect(runWithChannelPostRetryContext({ ...context, actions: [{ toolCallId: "absent-record" }] }, () => tool().execute("missing", args)))
+      .rejects.toMatchObject({ code: "effect_retry_record_missing" });
+    expect(messages()).toHaveLength(2);
+  });
+
+  it("scopes retry bindings to the trusted session and keeps legacy receipt identities usable", async () => {
+    const first = await tool().execute("legacy-original", args);
+    const context = {
+      agentId: "alice", sessionIdentity: "session-id:retry-session",
+      actions: [{ toolCallId: "legacy-original", effectId: postedEffect(first).effectId }],
+    };
+    const session = { sessionRef: { sessionId: "retry-session" } };
+    const replay = await runWithChannelPostRetryContext(context,
+      () => tool().execute("session-retry", args, undefined, undefined, session));
+    expect(postedEffect(replay).effectId).toBe(postedEffect(first).effectId);
+    await expect(runWithChannelPostRetryContext(context, () => tool().execute("wrong-session", args)))
+      .rejects.toMatchObject({ code: "effect_retry_scope_mismatch" });
+    expect(messages()).toHaveLength(1);
+  });
+
+  it("keeps separate identical-content operations distinct and ignores model-provided identity arguments", async () => {
+    const first = await tool().execute("intentional-first", args);
+    const second = await tool().execute("intentional-second", {
+      ...args, effectId: postedEffect(first).effectId, logicalActionId: "intentional-first",
+    } as typeof args);
+    expect(postedEffect(second).effectId).not.toBe(postedEffect(first).effectId);
+    expect(messages()).toHaveLength(2);
+  });
+
+  it("supports an engine-authored logical identity without deriving identity from content", async () => {
+    const send = vi.fn(async () => ({ timestamp: "2026-01-01T00:00:00Z" }));
+    const input = {
+      ledger: new EffectLedger(channelsDir), agentId: "alice", sessionIdentity: "session-id:engine",
+      channelId: "ch_team", content: args.content, lookupReceipt: () => null, send,
+    };
+    const first = await runChannelPostEffect({ ...input, toolCallId: "attempt-1", logicalActionId: "task-123:action-1" });
+    const retry = await runChannelPostEffect({ ...input, toolCallId: "attempt-2", logicalActionId: "task-123:action-1" });
+    const distinct = await runChannelPostEffect({ ...input, toolCallId: "attempt-3", logicalActionId: "task-123:action-2" });
+    expect(retry.record.effectId).toBe(first.record.effectId);
+    expect(retry.sentNow).toBe(false);
+    expect(distinct.record.effectId).not.toBe(first.record.effectId);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(publicEffectRecord(first.record)).toMatchObject({ logicalActionId: "task-123:action-1" });
+  });
+
+  it("does not let callers mutate a retry context or leak bindings between retry attempts", async () => {
+    await tool().execute("immutable-original", args);
+    const context = {
+      agentId: "alice", sessionIdentity: null,
+      actions: [{ toolCallId: "immutable-original", argsDigest: digestEffectInput(["ch_team", "alice", args.content]) }],
+    };
+    for (let index = 0; index < 2; index += 1) {
+      await runWithChannelPostRetryContext(context, async () => {
+        expect(Object.isFrozen(getChannelPostRetryContext())).toBe(true);
+        expect(Object.isFrozen(getChannelPostRetryContext()!.actions)).toBe(true);
+        expect(Object.isFrozen(getChannelPostRetryContext()!.actions[0])).toBe(true);
+        const results = await Promise.all([
+          tool().execute(`replay-${index}`, args),
+          tool().execute(`replay-${index}`, args),
+        ]);
+        expect(results.map((result) => postedEffect(result).status)).toEqual(["committed", "committed"]);
+      });
+    }
+    expect(context.actions[0].toolCallId).toBe("immutable-original");
+    expect(messages()).toHaveLength(1);
+    expect(getChannelPostRetryContext()).toBeNull();
   });
 });

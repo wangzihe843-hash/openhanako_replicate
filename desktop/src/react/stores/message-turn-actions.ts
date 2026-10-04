@@ -3,7 +3,7 @@ import {
   sessionIdForPathFromLocatorState,
   sessionScopedListIncludes,
 } from './session-slice';
-import { loadSessions, switchSession } from './session-actions';
+import { loadMessages, loadSessions, switchSession } from './session-actions';
 import type { ChatMessage } from './chat-types';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { collectUiContext } from '../utils/ui-context';
@@ -29,6 +29,7 @@ const SESSION_NODE_ACTION_TIMEOUT_MS = 30 * 60 * 1000;
 interface RetrySessionTurnOptions {
   message?: ChatMessage;
   replacementText?: string;
+  mode?: 'task_retry';
 }
 
 function resolveSessionIdentity(sessionPath: string): { sessionId: string; sessionPath: string } {
@@ -94,6 +95,7 @@ export async function retrySessionTurn(
       body: JSON.stringify({
         ...identity,
         target,
+        ...(options.mode ? { mode: options.mode } : {}),
         ...(message?.id ? { clientMessageId: message.id } : {}),
         ...(replacementText !== undefined ? { text: replacementText } : {}),
         uiContext: collectUiContext(state),
@@ -111,6 +113,7 @@ export async function retrySessionTurn(
 export async function forkSessionTurn(
   sessionPath: string,
   target: SessionNodeTarget,
+  mode?: 'narrative_branch',
 ): Promise<ForkedSessionRef | null> {
   if (!sessionPath) return null;
 
@@ -123,7 +126,7 @@ export async function forkSessionTurn(
       headers: { 'content-type': 'application/json' },
       timeout: SESSION_NODE_ACTION_TIMEOUT_MS,
       throwOnHttpError: false,
-      body: JSON.stringify({ ...identity, target }),
+      body: JSON.stringify({ ...identity, target, ...(mode ? { mode } : {}) }),
     });
     const data = await readSessionActionResponse(response, 'Fork failed');
     const sessionId = typeof data?.sessionId === 'string' && data.sessionId.trim()
@@ -179,4 +182,70 @@ export async function activateForkedSession(forked: ForkedSessionRef): Promise<v
   });
   await loadSessions();
   await switchSession(forked.sessionPath);
+}
+
+
+export interface DialogueVariantCandidate {
+  candidateId: string;
+  requestId: string;
+  sourceEntryId: string;
+  turnInputEntryId: string;
+  status: 'generating' | 'ready' | 'adopted' | 'discarded' | 'cancelled' | 'failed';
+  text?: string;
+}
+
+const dialogueVariantRequests = new Set<string>();
+
+export async function generateDialogueVariant(
+  sessionPath: string,
+  target: SessionNodeTarget,
+  requestId: string,
+): Promise<DialogueVariantCandidate | null> {
+  if (!sessionPath || dialogueVariantRequests.has(sessionPath)) return null;
+  dialogueVariantRequests.add(sessionPath);
+  try {
+    const state = useStore.getState();
+    if (sessionScopedListIncludes(state, state.streamingSessions, sessionPath)) return null;
+    const response = await hanaFetch('/api/sessions/turns/dialogue-variants', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      timeout: SESSION_NODE_ACTION_TIMEOUT_MS, throwOnHttpError: false,
+      body: JSON.stringify({ ...resolveSessionIdentity(sessionPath), target, requestId }),
+    });
+    const data = await readSessionActionResponse(response, 'Expression variant failed');
+    return data.candidate || null;
+  } catch (error) {
+    reportActionError(sessionPath, error);
+    return null;
+  } finally { dialogueVariantRequests.delete(sessionPath); }
+}
+
+export async function listDialogueVariants(sessionPath: string): Promise<DialogueVariantCandidate[]> {
+  try {
+    const identity = resolveSessionIdentity(sessionPath);
+    const response = await hanaFetch(`/api/sessions/turns/dialogue-variants?sessionId=${encodeURIComponent(identity.sessionId)}`, { throwOnHttpError: false });
+    const data = await readSessionActionResponse(response, 'Could not load expression variants');
+    return Array.isArray(data.candidates) ? data.candidates : [];
+  } catch (error) {
+    reportActionError(sessionPath, error);
+    return [];
+  }
+}
+
+export async function updateDialogueVariant(
+  sessionPath: string,
+  action: 'adopt' | 'discard' | 'cancel',
+  ref: { candidateId?: string; requestId?: string },
+): Promise<boolean> {
+  try {
+    const response = await hanaFetch(`/api/sessions/turns/dialogue-variants/${action}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, throwOnHttpError: false,
+      body: JSON.stringify({ ...resolveSessionIdentity(sessionPath), ...ref }),
+    });
+    await readSessionActionResponse(response, `Could not ${action} expression variant`);
+    if (action === 'adopt') await loadMessages(sessionPath);
+    return true;
+  } catch (error) {
+    reportActionError(sessionPath, error);
+    return false;
+  }
 }

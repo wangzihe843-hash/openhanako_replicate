@@ -14,6 +14,8 @@
 
 import fs from "fs";
 import path from "path";
+import { normalizeMemoryScope, sameMemoryScope } from "../../shared/memory-scope.ts";
+import { ScopedDerivationStore } from "./scoped-derivation-store.ts";
 import { atomicWriteSync } from "../../shared/safe-fs.ts";
 import { scrubPII } from "../pii-guard.ts";
 import { callText } from "../../core/llm-client.ts";
@@ -50,6 +52,9 @@ export function sessionSummaryRevision(data) {
     cursor: data.cursor || null,
     snapshotCursor: data.snapshotCursor || null,
     factReplacementRequired: data.factReplacementRequired === true,
+    memoryScope: data.memoryScope || null,
+    sourceDependencies: data.sourceDependencies || null,
+    snapshotSourceDependencies: data.snapshotSourceDependencies || null,
   });
 }
 
@@ -57,11 +62,15 @@ export class SessionSummaryManager {
   declare summariesDir: string;
   declare _cache: Map<string, any>;
   declare _cachePopulated: boolean;
+  declare scopedDerivationStore: ScopedDerivationStore;
+  declare agentId: string;
 
   /**
    * @param {string} summariesDir - summaries/ 目录的绝对路径
    */
-  constructor(summariesDir) {
+  constructor(summariesDir, opts: { agentId?: string; scopedDerivationStore?: ScopedDerivationStore } = {}) {
+    this.agentId = opts.agentId || "__legacy__";
+    this.scopedDerivationStore = opts.scopedDerivationStore || new ScopedDerivationStore(path.dirname(summariesDir), { agentId: this.agentId });
     this.summariesDir = summariesDir;
     fs.mkdirSync(summariesDir, { recursive: true });
     this._cache = new Map();          // sessionId → summary data
@@ -95,10 +104,19 @@ export class SessionSummaryManager {
    * @param {object} data
    */
   saveSummary(sessionId, data) {
+    const scope = normalizeMemoryScope(data?.memoryScope, this.agentId);
+    if (scope.realm !== "legacy" && !(data?.fork_baseline && !data?.summary && !data?.snapshot) && !this.scopedDerivationStore.areDependenciesCurrent(data?.sourceDependencies, scope)) {
+      throw Object.assign(new Error("scoped summary source changed before commit"), { code: "session_summary_superseded" });
+    }
     const fp = this._filePath(sessionId);
     fs.mkdirSync(path.dirname(fp), { recursive: true });
     atomicWriteSync(fp, JSON.stringify(data, null, 2) + "\n");
     this._cache.set(sessionId, data);
+    if (scope.realm !== "legacy" && data?.sourceDependencies?.length) {
+      this.scopedDerivationStore.commitArtifact({
+        kind: "summary", slot: sessionId, memoryScope: scope, body: data.summary || "", dependencies: data.sourceDependencies,
+      });
+    }
   }
 
   /**
@@ -125,6 +143,7 @@ export class SessionSummaryManager {
     const forkedAt = normalizeSince(input.forkedAt) || new Date().toISOString();
     const data = {
       session_id: normalized,
+      ...(input.memoryScope ? { memoryScope: normalizeMemoryScope(input.memoryScope, this.agentId) } : {}),
       created_at: forkedAt,
       updated_at: forkedAt,
       summary: "",
@@ -154,6 +173,9 @@ export class SessionSummaryManager {
     const normalized = typeof sessionId === "string" ? sessionId.trim() : "";
     if (!normalized) throw new Error("session summary invalidation requires sessionId");
     const existing = this.getSummary(normalized);
+    if (opts.skipScopedInvalidation !== true) {
+      this.scopedDerivationStore.invalidateSource(normalized, { reason: opts.reason || "session invalidated", preserveEntries: opts.preserveSourceEntries === true });
+    }
     const retainedMessageCount = Number(opts.retainedMessageCount);
     if (
       existing?.fork_baseline
@@ -170,6 +192,7 @@ export class SessionSummaryManager {
       const now = new Date().toISOString();
       this.saveSummary(normalized, {
         session_id: normalized,
+        ...(existing.memoryScope ? { memoryScope: existing.memoryScope } : {}),
         created_at: existing.created_at || existing.fork_baseline.forkedAt || now,
         updated_at: now,
         summary: "",
@@ -208,8 +231,11 @@ export class SessionSummaryManager {
     const dirty = [];
     for (const data of this._cache.values()) {
       if (!data?.summary && data?.factReplacementRequired !== true) continue;
+      if (!this.isSourceCurrent(data)) continue;
       if (since && !isAfter(data.updated_at || data.created_at, since)) continue;
-      if (data.factReplacementRequired === true || data.summary !== (data.snapshot || "")) {
+      if (data.factReplacementRequired === true || data.summary !== (data.snapshot || "")
+        || (data.memoryScope?.realm !== "legacy" && data.sourceDependencies
+          && JSON.stringify(data.sourceDependencies) !== JSON.stringify(data.snapshotSourceDependencies))) {
         dirty.push(data);
       }
     }
@@ -228,6 +254,7 @@ export class SessionSummaryManager {
       ...data,
       snapshot: data.summary,
       snapshotCursor: data.cursor || null,
+      ...(data.sourceDependencies ? { snapshotSourceDependencies: data.sourceDependencies } : {}),
       snapshot_at: new Date().toISOString(),
       factReplacementRequired: false,
     };
@@ -235,8 +262,13 @@ export class SessionSummaryManager {
     return true;
   }
 
+  isSourceCurrent(data) {
+    const scope = normalizeMemoryScope(data?.memoryScope, this.agentId);
+    return scope.realm === "legacy" || this.scopedDerivationStore.areDependenciesCurrent(data?.sourceDependencies, scope);
+  }
+
   isRevisionCurrent(sessionId, expectedRevision) {
-    return expectedRevision != null
+    return this.isSourceCurrent(this.getSummary(sessionId)) && expectedRevision != null
       && sessionSummaryRevision(this.getSummary(sessionId)) === expectedRevision;
   }
 
@@ -257,7 +289,7 @@ export class SessionSummaryManager {
     this._ensureCachePopulated();
     const summaries = [];
     for (const data of this._cache.values()) {
-      if (data?.summary) summaries.push(data);
+      if (data?.summary && this.isSourceCurrent(data)) summaries.push(data);
     }
     summaries.sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
     return summaries;
@@ -301,6 +333,7 @@ export class SessionSummaryManager {
   }
 
   clearAll() {
+    this.scopedDerivationStore.invalidateAll("session summaries reset");
     fs.mkdirSync(this.summariesDir, { recursive: true });
     for (const file of this._listFiles()) {
       try { fs.unlinkSync(file); } catch (err) {
@@ -497,6 +530,10 @@ export class SessionSummaryManager {
   async rollingSummary(sessionId, messages, resolvedModel, opts: Record<string, any> = {}) {
     const draft = await this.createRollingSummaryDraft(sessionId, messages, resolvedModel, opts);
     if (draft?.data) {
+      if (!this.isSourceCurrent(draft.data)) {
+        const rejected = { ...draft, data: null, changed: false, reason: "source_changed" };
+        return opts.returnResult === true ? rejected : "";
+      }
       this.saveSummary(sessionId, draft.data);
     }
     return opts.returnResult === true ? draft : (draft?.summary || "");
@@ -514,7 +551,16 @@ export class SessionSummaryManager {
    */
   async createRollingSummaryDraft(sessionId, messages, resolvedModel, opts: Record<string, any> = {}) {
     const resetAt = latestSince(opts.resetAt, readCompiledResetAt(path.dirname(this.summariesDir)));
+    const memoryScope = normalizeMemoryScope(opts.memoryScope, this.agentId);
+    // Scope comes only from the trusted caller, never summary/model output.
+    const sourceDependencies = memoryScope.realm === "legacy" ? null : [
+      this.scopedDerivationStore.syncSessionSourceSnapshot(sessionId, memoryScope, messages),
+    ];
+    const scopedFields = sourceDependencies ? { memoryScope, sourceDependencies, sourceStatus: "active" } : {};
     const existingRaw = this.getSummary(sessionId);
+    if (existingRaw?.memoryScope && !sameMemoryScope(existingRaw.memoryScope, memoryScope)) {
+      throw new Error("cannot reuse a summary across memory scopes");
+    }
     const existing = resetAt && existingRaw && !isAfter(existingRaw.updated_at || existingRaw.created_at, resetAt)
       ? null
       : existingRaw;
@@ -567,6 +613,7 @@ export class SessionSummaryManager {
           mode,
           data: shouldSave ? {
             session_id: sessionId,
+            ...scopedFields,
             created_at: existing?.created_at || now,
             updated_at: replacement ? now : (existing?.updated_at || now),
             summary,
@@ -575,6 +622,7 @@ export class SessionSummaryManager {
             source_time_range: sourceTimeRange || (replacement ? null : existing?.source_time_range || null),
             snapshot: existing?.snapshot || "",
             snapshotCursor: existing?.snapshotCursor || null,
+            ...(existing?.snapshotSourceDependencies ? { snapshotSourceDependencies: existing.snapshotSourceDependencies } : {}),
             snapshot_at: existing?.snapshot_at || null,
             factReplacementRequired: replacement || existing?.factReplacementRequired === true,
           } : null,
@@ -595,7 +643,7 @@ export class SessionSummaryManager {
     // 按全量用户轮数计算摘要配额（预算反映对话整体体量，输入只传增量）
     const turnCount = messages.filter((m) => m.role === "user").length;
     const llmResult = await this._callRollingLLM(convText, prevSummary, resolvedModel, turnCount, {
-      memoryReflectionSnapshot: opts.memoryReflectionSnapshot,
+      memoryReflectionSnapshot: memoryScope.realm === "legacy" ? opts.memoryReflectionSnapshot : undefined,
       returnUsage: opts.returnUsage,
       usageTrigger: opts.usageTrigger,
     });
@@ -678,6 +726,7 @@ export class SessionSummaryManager {
     const now = new Date().toISOString();
     const data = {
       session_id: sessionId,
+      ...scopedFields,
       created_at: existing?.created_at || now,
       updated_at: now,
       summary: newSummary.trim(),
@@ -686,6 +735,7 @@ export class SessionSummaryManager {
       source_time_range: sourceTimeRange || existing?.source_time_range || null,
       snapshot: existing?.snapshot || "",
       snapshotCursor: existing?.snapshotCursor || null,
+      ...(existing?.snapshotSourceDependencies ? { snapshotSourceDependencies: existing.snapshotSourceDependencies } : {}),
       snapshot_at: existing?.snapshot_at || null,
       ...(existingRaw?.fork_baseline ? { fork_baseline: existingRaw.fork_baseline } : {}),
       factReplacementRequired: mode === "replace" || existing?.factReplacementRequired === true,

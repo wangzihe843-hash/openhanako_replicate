@@ -80,7 +80,7 @@ describe('ChatTranscript turn timestamps', () => {
   beforeEach(() => {
     window.t = ((key: string) => ({
       'thinking.done': '思考完成',
-      'common.regenerate': '重新生成',
+      'common.taskRetry': '重试任务',
       'common.forkSession': '分支为新会话',
       'common.copyText': '复制文本',
       'common.screenshot': '截图',
@@ -185,12 +185,12 @@ describe('ChatTranscript turn timestamps', () => {
     render(<ChatTranscript items={items} sessionPath={sessionPath} />);
 
     const footers = screen.getAllByTestId('assistant-completion-actions');
-    fireEvent.click(within(footers[0]).getByTitle('重新生成'));
+    fireEvent.click(within(footers[0]).getByTitle('重试任务'));
 
     expect(retryMock).toHaveBeenCalledWith(
       sessionPath,
       { role: 'assistant', entryId: 'entry-a1-final' },
-      { message: expect.objectContaining({ id: 'u1', sourceEntryId: 'entry-u1', text: '第一轮' }) },
+      { message: expect.objectContaining({ id: 'u1', sourceEntryId: 'entry-u1', text: '第一轮' }), mode: 'task_retry' },
     );
   });
 
@@ -221,11 +221,12 @@ describe('ChatTranscript turn timestamps', () => {
 
     const footers = screen.getAllByTestId('assistant-completion-actions');
     expect(footers).toHaveLength(3);
-    fireEvent.click(within(footers[1]).getByTitle('重新生成'));
+    fireEvent.click(within(footers[1]).getByTitle('重试任务'));
 
     expect(retryMock).toHaveBeenCalledWith(
       sessionPath,
       { role: 'assistant', entryId: 'entry-a2-background' },
+      { mode: 'task_retry' },
     );
   });
 
@@ -251,12 +252,12 @@ describe('ChatTranscript turn timestamps', () => {
     );
 
     const assistantFooter = screen.getByTestId('assistant-completion-actions');
-    fireEvent.click(within(assistantFooter).getByTitle('重新生成'));
+    fireEvent.click(within(assistantFooter).getByTitle('重试任务'));
 
     expect(retryMock).toHaveBeenCalledWith(
       sessionPath,
       { role: 'assistant_turn', turnInputEntryId: 'entry-u1' },
-      { message: expect.objectContaining({ id: 'u1', sourceEntryId: 'entry-u1', text: '第一轮' }) },
+      { message: expect.objectContaining({ id: 'u1', sourceEntryId: 'entry-u1', text: '第一轮' }), mode: 'task_retry' },
     );
   });
 

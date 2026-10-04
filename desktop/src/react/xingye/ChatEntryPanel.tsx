@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { normalizeMemoryScope, normalizeMemoryScopeContext, sameMemoryScope, type MemoryScopeContext } from '../../../../shared/memory-scope';
+import { MemoryScopePicker } from './MemoryScopePicker';
 import type { Agent } from '../types';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { useStore } from '../stores';
@@ -60,6 +62,9 @@ export function ChatEntryPanel({
     [sessions, selectedAgentId],
   );
   const [sceneSessionId, setSceneSessionId] = useState('');
+  const selectedSessionRevision = agentSessions.find(session => session.sessionId === sceneSessionId)?.revision;
+  const [scopeEpoch, setScopeEpoch] = useState(0);
+  const [sceneSnapshot, setSceneSnapshot] = useState<{ memoryScope: MemoryScopeContext; sourceRevision?: string } | null>(null);
   const [sources, setSources] = useState<SceneSourceRow[]>([]);
   const [nextBefore, setNextBefore] = useState<number | null>(null);
   const [startEntryId, setStartEntryId] = useState('');
@@ -68,8 +73,8 @@ export function ChatEntryPanel({
   const [sceneError, setSceneError] = useState<string | null>(null);
   const [sceneFlash, setSceneFlash] = useState<string | null>(null);
   const sceneRequestVersion = useRef(0);
-  const currentSceneSelection = useRef({ agentId: selectedAgentId, sessionId: sceneSessionId });
-  currentSceneSelection.current = { agentId: selectedAgentId, sessionId: sceneSessionId };
+  const currentSceneSelection = useRef({ agentId: selectedAgentId, sessionId: sceneSessionId, startEntryId, endEntryId });
+  currentSceneSelection.current = { agentId: selectedAgentId, sessionId: sceneSessionId, startEntryId, endEntryId };
   const startOrdinal = sources.find(row => row.entryId === startEntryId)?.ordinal ?? -1;
   const endOrdinal = sources.find(row => row.entryId === endEntryId)?.ordinal ?? -1;
   const rangeCount = startOrdinal >= 0 && endOrdinal >= startOrdinal ? endOrdinal - startOrdinal + 1 : 0;
@@ -85,6 +90,7 @@ export function ChatEntryPanel({
     const version = ++sceneRequestVersion.current;
     setSceneBusy(false);
     setSceneFlash(null);
+    setSceneSnapshot(null);
     if (!selectedAgentId || !sceneSessionId) {
       setSources([]);
       setNextBefore(null);
@@ -102,6 +108,9 @@ export function ChatEntryPanel({
         if (!response.ok) throw new Error(data?.error || '无法读取场景原文');
         if (!active || version !== sceneRequestVersion.current) return;
         const rows = Array.isArray(data.rows) ? data.rows as SceneSourceRow[] : [];
+        const memoryScope = normalizeMemoryScopeContext(data.memoryContext ?? data.memoryScope, selectedAgentId);
+        if (memoryScope.agentId !== selectedAgentId) throw new Error('场景角色范围不一致');
+        setSceneSnapshot({ memoryScope, sourceRevision: data.sourceRevision });
         setSources(rows);
         setNextBefore(typeof data.nextBefore === 'number' ? data.nextBefore : null);
         setStartEntryId(rows[Math.max(0, rows.length - 10)]?.entryId ?? '');
@@ -111,7 +120,7 @@ export function ChatEntryPanel({
       }
     })();
     return () => { active = false; };
-  }, [selectedAgentId, sceneSessionId]);
+  }, [selectedAgentId, sceneSessionId, scopeEpoch, selectedSessionRevision]);
 
   const loadEarlierSources = async () => {
     if (!selectedAgentId || !sceneSessionId || nextBefore === null) return;
@@ -123,6 +132,10 @@ export function ChatEntryPanel({
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || '无法读取更早消息');
       if (version !== sceneRequestVersion.current) return;
+      if (sceneSnapshot?.sourceRevision && data.sourceRevision !== sceneSnapshot.sourceRevision) {
+        setScopeEpoch(value => value + 1);
+        throw new Error('场景来源已变化，请重新选择消息');
+      }
       setSources(prev => [...(Array.isArray(data.rows) ? data.rows as SceneSourceRow[] : []), ...prev]);
       setNextBefore(typeof data.nextBefore === 'number' ? data.nextBefore : null);
     } catch (error) {
@@ -137,7 +150,9 @@ export function ChatEntryPanel({
     const version = sceneRequestVersion.current;
     const isCurrentSelection = () => version === sceneRequestVersion.current
       && currentSceneSelection.current.agentId === selectedAgentId
-      && currentSceneSelection.current.sessionId === sceneSessionId;
+      && currentSceneSelection.current.sessionId === sceneSessionId
+      && currentSceneSelection.current.startEntryId === startEntryId
+      && currentSceneSelection.current.endEntryId === endEntryId;
     setSceneBusy(true);
     setSceneError(null);
     setSceneFlash(null);
@@ -147,6 +162,7 @@ export function ChatEntryPanel({
         body: JSON.stringify({
           agentId: selectedAgentId,
           sessionId: sceneSessionId,
+          sourceRevision: sceneSnapshot?.sourceRevision,
           startEntryId,
           endEntryId,
           generator,
@@ -156,15 +172,24 @@ export function ChatEntryPanel({
       const data = await response.json();
       if (!isCurrentSelection()) return;
       if (!response.ok || !data?.ok) throw new Error(data?.error || '生成场景草稿失败');
+      const memoryScope = normalizeMemoryScope(data.memoryScope, selectedAgentId);
+      if (memoryScope.agentId !== selectedAgentId || (sceneSnapshot && !sameMemoryScope(memoryScope, sceneSnapshot.memoryScope))) {
+        throw new Error('场景范围已变化，请重新生成');
+      }
       const sceneSummary: XingyeSceneSummary = {
         sessionId: sceneSessionId,
         branchHeadId: data.branchHeadId ?? undefined,
+        sourceRevision: data.sourceRevision,
         sourceRefs: data.sourceRefs,
         sections: data.sections as XingyeSceneSection[],
         validity: 'unknown',
       };
       createXingyeMemoryCandidate(selectedAgentId, {
         sourceDomain: 'scene_summary',
+        memoryScope,
+        sourceDependencies: data.sourceDependencies ?? [{ sessionId: sceneSessionId, revision: data.sourceRevision, sourceRefs: data.sourceRefs }],
+        sourceStatus: 'unknown',
+        origin: 'derived',
         sourceId: sceneSessionId,
         target: 'scene_archive',
         content: sceneSummaryContent(sceneSummary.sections),
@@ -304,6 +329,16 @@ export function ChatEntryPanel({
             ))}
           </select>
         </label>
+        {selectedAgentId && sceneSessionId ? <MemoryScopePicker agentId={selectedAgentId} sessionId={sceneSessionId} onChange={() => {
+          sceneRequestVersion.current++;
+          setSources([]);
+          setSceneFlash(null);
+          setScopeEpoch(value => value + 1);
+        }} /> : null}
+        {sceneSessionId ? <button type="button" onClick={() => {
+          sceneRequestVersion.current++;
+          setScopeEpoch(value => value + 1);
+        }}>刷新场景来源</button> : null}
         {agentSessions.length === 0 ? <p>当前角色还没有可选的会话。</p> : null}
         {sources.length > 0 ? (
           <>
@@ -329,7 +364,7 @@ export function ChatEntryPanel({
         {sceneError ? <p role="alert" className={styles.syncError}>{sceneError}</p> : null}
         {sceneFlash ? <p role="status">{sceneFlash}</p> : null}
       </section>
-      <MemoryCandidatePanel agentId={selectedAgentId} agentName={selectedAgent?.name} onNavigateSceneSource={navigateSceneSource} />
+      <MemoryCandidatePanel agentId={selectedAgentId} memoryScope={sceneSnapshot?.memoryScope} sessionId={sceneSessionId} agentName={selectedAgent?.name} onNavigateSceneSource={navigateSceneSource} />
     </div>
   );
 }

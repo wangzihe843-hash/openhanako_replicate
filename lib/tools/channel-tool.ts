@@ -338,6 +338,8 @@ export function createChannelTool({
             ledger: effectLedger,
             agentId,
             toolCallId: _toolCallId,
+            // Retry identities are injected by the engine's async execution
+            // context. Model arguments never choose an effect/logical-action ID.
             sessionIdentity: channelPostSessionIdentity(signal, piCtx),
             channelId: resolved.id,
             content: params.content,

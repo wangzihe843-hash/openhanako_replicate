@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { ScopedDerivationStore } from "./scoped-derivation-store.ts";
 import { atomicWriteSync } from "../../shared/safe-fs.ts";
 
 const COMPILED_FILES = ["memory.md", "facts.md", "today.md", "week.md", "longterm.md"];
@@ -33,6 +34,7 @@ export function writeCompiledResetMarker(memoryDir, resetAt = new Date().toISOSt
 }
 
 export function clearCompiledMemoryArtifacts(memoryDir) {
+  new ScopedDerivationStore(memoryDir).invalidateAll();
   fs.mkdirSync(memoryDir, { recursive: true });
   for (const name of COMPILED_FILES) {
     const filePath = path.join(memoryDir, name);
@@ -42,6 +44,7 @@ export function clearCompiledMemoryArtifacts(memoryDir) {
 }
 
 export function clearCompiledSummarySources(summariesDir, summaryManager = null) {
+  new ScopedDerivationStore(path.dirname(summariesDir)).invalidateAll("summary sources reset");
   fs.mkdirSync(summariesDir, { recursive: true });
   for (const entry of fs.readdirSync(summariesDir, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;

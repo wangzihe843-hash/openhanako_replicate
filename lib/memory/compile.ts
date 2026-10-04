@@ -17,6 +17,8 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { normalizeMemoryScope, sameMemoryScope } from "../../shared/memory-scope.ts";
+import { ScopedDerivationStore, type ScopedArtifact, type MemoryDependency } from "./scoped-derivation-store.ts";
 import { DAY_BOUNDARY_HOUR, getLogicalDay, shiftLogicalDate } from "../time-utils.ts";
 import { callText } from "../../core/llm-client.ts";
 import { callTextConfigFromResolvedModel } from "../../core/model-execution-config.ts";
@@ -34,6 +36,7 @@ import {
   buildCompileLongtermPrompt,
   buildCompileTodayPrompt,
 } from "./prompts/compile.ts";
+import { scrubPII } from "../pii-guard.ts";
 import { withMemoryReasoningBuffer } from "./llm-budget.ts";
 import {
   FACT_SECTION_TITLES,
@@ -117,14 +120,14 @@ function writeTodayState(statePath, logicalDate, lastCompiledSummaryUpdatedAt) {
 function getCandidateSummariesForCompile(summaryManager, since = null) {
   if (!summaryManager) return [];
   const filter = (summaries) => (summaries || [])
-    .filter((s) => s?.summary)
+    .filter((s) => s?.summary && isLegacySummary(s))
     .filter((s) => !since || isAfterIso(s.updated_at || s.created_at, since));
 
   if (typeof summaryManager.getAllSummaries === "function") {
     return filter(summaryManager.getAllSummaries());
   }
   if (typeof summaryManager.getSummariesInRange === "function") {
-    return summaryManager.getSummariesInRange(new Date(0), new Date(), { since }).filter((s) => s?.summary);
+    return summaryManager.getSummariesInRange(new Date(0), new Date(), { since }).filter((s) => s?.summary && isLegacySummary(s));
   }
   return [];
 }
@@ -1139,10 +1142,10 @@ function writeEditableFactsState(statePath, lastCompiledSummaryUpdatedAt) {
 function getAllSummariesForFacts(summaryManager) {
   if (!summaryManager) return [];
   if (typeof summaryManager.getAllSummaries === "function") {
-    return summaryManager.getAllSummaries().filter((s) => s?.summary);
+    return summaryManager.getAllSummaries().filter((s) => s?.summary && isLegacySummary(s));
   }
   if (typeof summaryManager.getSummariesInRange === "function") {
-    return summaryManager.getSummariesInRange(new Date(0), new Date()).filter((s) => s?.summary);
+    return summaryManager.getSummariesInRange(new Date(0), new Date()).filter((s) => s?.summary && isLegacySummary(s));
   }
   return [];
 }
@@ -1171,4 +1174,113 @@ function isAfterIso(value, since) {
   if (!since) return true;
   if (!value || Number.isNaN(Date.parse(value))) return false;
   return Date.parse(value) > Date.parse(since);
+}
+
+
+function isLegacySummary(summary) {
+  try { return normalizeMemoryScope(summary?.memoryScope).realm === "legacy"; }
+  catch { return false; }
+}
+
+/**
+ * Explicit scopes use source-sized shards, never the old mixed .md aggregates.
+ * Each day depends on its summary, each week/longterm on those days. Invalidating
+ * A therefore removes A's entire chain while B remains available in that scope.
+ * Historical artifacts and original transcript entries are not deleted.
+ */
+export async function compileScopedMemory(summaryManager, store: ScopedDerivationStore, resolvedModel, opts: {
+  memoryScope?: unknown; referenceDate?: string; since?: string;
+  compact?: (input: string, kind: string) => Promise<string>;
+} = {}) {
+  const referenceDate = opts.referenceDate || getLogicalDay().logicalDate;
+  const cutoff = shiftLogicalDate(referenceDate, -DAILY_WINDOW_RETENTION_DAYS);
+  const records = (summaryManager.getAllSummaries?.() || []).filter((record) => {
+    if (!record?.summary || isLegacySummary(record)) return false;
+    if (opts.since && !isAfterIso(record.updated_at || record.created_at, opts.since)) return false;
+    return !opts.memoryScope || sameMemoryScope(record.memoryScope, opts.memoryScope);
+  });
+  // Stable transcript-entry shards make invalidation precise within one session.
+  // Do not infer which sentences in a mixed LLM summary came from which entry.
+  const shards = records.flatMap((record) => {
+    const snapshots = store.getSessionSourceSnapshots(record.session_id, record.memoryScope);
+    if (!snapshots.length) return [record]; // explicitly registered aggregate/import source
+    return snapshots.map(({ dependency, message }) => {
+      const content = typeof message.content === "string" ? message.content
+        : Array.isArray(message.content) ? message.content.filter((block) => block?.type === "text").map((block) => block.text || "").join("\n") : "";
+      const timestamp = message.timestamp || record.updated_at || record.created_at;
+      const date = logicalDateForIso(timestamp) || referenceDate;
+      const text = `${message.role === "user" ? "User" : "Assistant"}: ${content}`;
+      return {
+        ...record,
+        sourceSlot: JSON.stringify([record.session_id, dependency.entryId]),
+        sourceDependencies: [dependency],
+        summary: `### Key Facts\n\n${text}\n\n### Timeline\n\n- ${date}: ${text}`,
+        source_time_range: null,
+        updated_at: timestamp,
+      };
+    }).filter((record) => record.summary);
+  }).map((record) => ({
+    ...record,
+    // Keep raw source snapshots/hashes intact; only derived text is scrubbed.
+    // Entry shards bypass the rolling-summary sanitizer, as can imported summaries.
+    summary: scrubPII(record.summary).cleaned,
+  }));
+  let committed = 0;
+  for (const record of shards) {
+    const scope = normalizeMemoryScope(record.memoryScope, store.agentId);
+    if (!store.areDependenciesCurrent(record.sourceDependencies, scope)) continue;
+    const slot = record.sourceSlot || record.session_id;
+    const summary = store.commitArtifact({ kind: "summary", slot, memoryScope: scope, body: record.summary, dependencies: record.sourceDependencies });
+    if (!summary) continue;
+    const summaryDependency = [store.artifactDependency(summary)];
+    const compact = async (input: string, kind: "day" | "facts" | "longterm") => {
+      if (opts.compact) return opts.compact(input, kind);
+      const builders = { day: buildCompileDailyPrompt, facts: buildCompileEditableFactsPrompt, longterm: buildCompileLongtermPrompt };
+      const operations = { day: "compile_daily", facts: "compile_editable_facts", longterm: "compile_longterm" };
+      return _compactLLM(input, builders[kind](getLocale()), resolvedModel, kind === "day" ? 220 : 400, operations[kind]);
+    };
+    const build = async (kind: "day" | "facts" | "longterm", artifactSlot: string, input: string, dependencies: MemoryDependency[]) => {
+      const current = store.getArtifact(kind, artifactSlot, scope);
+      const reusable = current && JSON.stringify(current.dependencies) === JSON.stringify(dependencies);
+      const safeInput = scrubPII(input).cleaned;
+      const body = reusable ? scrubPII(current.body).cleaned
+        : safeInput.trim() ? scrubPII(normalizeCompiledLLMResult(String(await compact(safeInput, kind)), `scoped ${kind}`)).cleaned : "";
+      // Supersede unsafe cached text without changing source revisions or
+      // needlessly calling the model again for an otherwise reusable artifact.
+      if (reusable && body === current.body) return current;
+      const result = store.commitArtifact({ kind, slot: artifactSlot, memoryScope: scope, body, dependencies });
+      if (result) committed += 1;
+      return result;
+    };
+    const events = extractTimelineEvents(record);
+    const dates = [...new Set(events.map((event) => event.logicalDate))].sort() as string[];
+    if (!dates.length) {
+      const fallback = fallbackSummaryLogicalDate(record);
+      if (fallback) dates.push(String(fallback));
+    }
+    const days: { date: string; artifact: ScopedArtifact }[] = [];
+    for (const date of dates) {
+      const input = formatTimelineEventsForCompile(timelineEventsForLogicalDate([record], date));
+      const artifact = await build("day", `${slot}:${date}`, input, summaryDependency);
+      if (artifact) days.push({ date, artifact });
+    }
+    for (const [kind, selected] of [
+      ["today", days.filter((entry) => entry.date === referenceDate)],
+      ["week", days.filter((entry) => entry.date >= cutoff && entry.date < referenceDate)],
+    ] as const) {
+      const result = store.commitArtifact({
+        kind, slot, memoryScope: scope,
+        body: selected.map(({ date, artifact }) => `${date}: ${artifact.body}`).join("\n\n"),
+        dependencies: selected.length ? selected.map(({ artifact }) => store.artifactDependency(artifact)) : summaryDependency,
+      });
+      if (result) committed += 1;
+    }
+    const oldDays = days.filter((entry) => entry.date < cutoff);
+    await build("longterm", slot,
+      oldDays.map(({ date, artifact }) => `${date}: ${artifact.body}`).join("\n\n"),
+      oldDays.length ? oldDays.map(({ artifact }) => store.artifactDependency(artifact)) : summaryDependency);
+    const facts = extractFactSection(record.summary);
+    await build("facts", slot, isEmptyFactSection(facts) ? "" : facts, summaryDependency);
+  }
+  return { committed };
 }

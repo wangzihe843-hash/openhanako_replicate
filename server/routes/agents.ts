@@ -47,7 +47,10 @@ import {
 import {
   readPinnedMemoryItems,
   replacePinnedMemoryItems,
+  addPinnedMemoryItem,
 } from "../../lib/memory/pinned-memory-store.ts";
+import { normalizeMemoryScope, sameMemoryScope } from "../../shared/memory-scope.ts";
+import { isValidSessionPath } from "../../core/message-utils.ts";
 import { splitByScope, injectGlobalFields } from '../../shared/config-scope.ts';
 import { validateId, agentExists } from "../utils/validation.ts";
 import { deleteAvatar, writeAvatar } from "../utils/avatar-files.ts";
@@ -874,67 +877,74 @@ export function createAgentsRoute(engine) {
   //  Pinned（pinned.md）
   // ════════════════════════════
 
+  function pinnedRequestScope(id, sessionId) {
+    if (!sessionId) return normalizeMemoryScope(undefined, id);
+    const manifest = engine.getSessionManifest?.(sessionId);
+    if (!manifest?.currentLocator?.path || manifest.lifecycle === "deleted") throw new Error("session not found");
+    if (manifest.ownerAgentId !== id) throw new Error("session agent mismatch");
+    if (!isValidSessionPath(manifest.currentLocator.path, engine.agentsDir)) throw new Error("invalid session path");
+    const memoryScope = normalizeMemoryScope(engine.getSessionMemoryScope?.(manifest.currentLocator.path), id);
+    if (memoryScope.agentId !== id) throw new Error("session memory scope agent mismatch");
+    return memoryScope;
+  }
+
   route.get("/agents/:id/pinned", async (c) => {
     const id = c.req.param("id");
-    if (!validateId(id) || !agentExists(engine, id)) {
-      return c.json({ error: "agent not found" }, 404);
-    }
+    if (!validateId(id) || !agentExists(engine, id)) return c.json({ error: "agent not found" }, 404);
     try {
-      const pins = readPinnedMemoryItems(agentDir(engine, id)).map(item => item.content);
-      return c.json({ pins });
-    } catch (err) {
-      return c.json({ error: err.message }, 500);
-    }
+      const memoryScope = pinnedRequestScope(id, c.req.query("sessionId"));
+      const items = readPinnedMemoryItems(agentDir(engine, id)).filter(item => sameMemoryScope(item.memoryScope, memoryScope));
+      return c.json({ pins: items.map(item => item.content), items, memoryScope });
+    } catch (err) { return c.json({ error: err.message }, 400); }
   });
 
   route.put("/agents/:id/pinned", async (c) => {
     const id = c.req.param("id");
-    if (!validateId(id) || !agentExists(engine, id)) {
-      return c.json({ error: "agent not found" }, 404);
-    }
+    if (!validateId(id) || !agentExists(engine, id)) return c.json({ error: "agent not found" }, 404);
     try {
       const body = await safeJson(c);
       const { pins } = body;
-      if (!Array.isArray(pins)) {
-        return c.json({ error: "pins must be an array" }, 400);
-      }
+      if (!Array.isArray(pins)) return c.json({ error: "pins must be an array" }, 400);
+      const memoryScope = pinnedRequestScope(id, body.sessionId);
       const targetAgentDir = agentDir(engine, id);
+      const currentItems = readPinnedMemoryItems(targetAgentDir).filter(item => sameMemoryScope(item.memoryScope, memoryScope));
       if (Object.hasOwn(body, "expectedPins")) {
         if (!Array.isArray(body.expectedPins) || body.expectedPins.some(pin => typeof pin !== "string")) {
           return c.json({ error: "expectedPins must be an array of strings" }, 400);
         }
-        const currentPins = readPinnedMemoryItems(targetAgentDir).map(item => item.content);
-        if (currentPins.length !== body.expectedPins.length
-          || currentPins.some((pin, index) => pin !== body.expectedPins[index])) {
-          return c.json({
-            error: "置顶记忆已被其他操作更新，本次修改未保存，请重试。",
-            code: "pinned_memory_conflict",
-          }, 409);
+        const currentPins = currentItems.map(item => item.content);
+        if (currentPins.length !== body.expectedPins.length || currentPins.some((pin, index) => pin !== body.expectedPins[index])) {
+          return c.json({ error: "置顶记忆已被其他操作更新，本次修改未保存，请重试。", code: "pinned_memory_conflict" }, 409);
         }
       }
-      // Compare and replace synchronously: a pin_memory call cannot slip between them.
-      replacePinnedMemoryItems(targetAgentDir, pins.filter(p => typeof p === "string"));
-      const pinsCount = pins.filter(p => typeof p === "string" && p.trim().length > 0).length;
+      // Scoped candidate confirmation is append-only. Never accept a client-supplied scope
+      // without comparing it to trusted, current session metadata.
+      if (body.appendItem) {
+        if (typeof body.appendItem.content !== "string" || !body.appendItem.content.trim()
+          || !sameMemoryScope(normalizeMemoryScope(body.appendItem.memoryScope, id), memoryScope)) {
+          return c.json({ error: "pinned memory scope or content mismatch" }, 409);
+        }
+        if (!Object.hasOwn(body, "expectedPins")) return c.json({ error: "expectedPins is required" }, 400);
+        addPinnedMemoryItem(targetAgentDir, body.appendItem.content, {
+          memoryScope, origin: "manual", sourceDependencies: body.appendItem.sourceDependencies,
+        });
+      } else {
+        if (!sameMemoryScope(memoryScope, normalizeMemoryScope(undefined, id))) {
+          return c.json({ error: "scoped pins require structured append" }, 400);
+        }
+        // Bulk replacement and its CAS must target the same default legacy/shared partition.
+        replacePinnedMemoryItems(targetAgentDir, pins.filter(p => typeof p === "string"));
+      }
+      const pinsCount = readPinnedMemoryItems(targetAgentDir).filter(item => sameMemoryScope(item.memoryScope, memoryScope)).length;
       await engine.updateConfig({}, { agentId: id });
       emitAppEvent(engine, "agent-updated", { agentId: id });
-      // 让 xingye.heartbeat consumer 看到这次置顶记忆变动。失败不阻断主流程。
       try {
-        await appendXingyeEvent({
-          agentDir: targetAgentDir,
-          agentId: id,
-          input: {
-            type: "pinned_memory.changed",
-            source: "agents-pinned-route",
-            payload: { pinsCount },
-          },
-        });
-      } catch (err) {
-        log.warn(`[agents/pinned] event log append failed: ${err?.message || err}`);
-      }
+        await appendXingyeEvent({ agentDir: targetAgentDir, agentId: id, input: {
+          type: "pinned_memory.changed", source: "agents-pinned-route", payload: { pinsCount, memoryScope },
+        } });
+      } catch (err) { log.warn(`[agents/pinned] event log append failed: ${err?.message || err}`); }
       return c.json({ ok: true });
-    } catch (err) {
-      return c.json({ error: err.message }, 500);
-    }
+    } catch (err) { return c.json({ error: err.message }, 400); }
   });
 
   // ════════════════════════════

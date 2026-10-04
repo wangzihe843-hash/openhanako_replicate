@@ -13,6 +13,8 @@
  *  - 「丢弃」直接删 draft，不创建任何回忆条目。
  */
 
+import { normalizeMemoryScope, type MemoryScope } from '../../../../shared/memory-scope';
+import { normalizeMemorySourceDependencies, type MemorySourceDependency } from '../../../../shared/memory-provenance';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
@@ -37,6 +39,8 @@ export type XingyePendingMemoryCandidateDraft = {
   source: string;
   sourceEventIds?: string[];
   createdAt: string;
+  memoryScope: MemoryScope;
+  sourceDependencies: MemorySourceDependency[];
 };
 
 async function appendDraftEventBestEffort(
@@ -79,7 +83,7 @@ function importanceNumberFromLevel(level: MemoryCandidateDraftImportanceLevel): 
   return 2;
 }
 
-function normalizeDraftRow(value: unknown): XingyePendingMemoryCandidateDraft | null {
+function normalizeDraftRow(value: unknown, agentId: string): XingyePendingMemoryCandidateDraft | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : '';
@@ -96,7 +100,16 @@ function normalizeDraftRow(value: unknown): XingyePendingMemoryCandidateDraft | 
   const sourceEventIds = Array.isArray(eventIdsRaw)
     ? eventIdsRaw.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
     : undefined;
+  let memoryScope: MemoryScope;
+  let sourceDependencies: MemorySourceDependency[];
+  try {
+    memoryScope = normalizeMemoryScope(raw.memoryScope, agentId);
+    if (memoryScope.agentId !== agentId) return null;
+    sourceDependencies = normalizeMemorySourceDependencies(raw.sourceDependencies);
+  } catch { return null; }
   return {
+    memoryScope,
+    sourceDependencies,
     id,
     content,
     importance: importanceRaw,
@@ -123,7 +136,7 @@ export async function listMemoryCandidateDrafts(
   try {
     const rows = await backend.listJsonl<unknown>(aid, XINGYE_MEMORY_CANDIDATE_DRAFTS_JSONL);
     return rows
-      .map(normalizeDraftRow)
+      .map(row => normalizeDraftRow(row, aid))
       .filter((d): d is XingyePendingMemoryCandidateDraft => Boolean(d))
       .sort(sortDrafts);
   } catch {
@@ -203,6 +216,7 @@ export async function confirmMemoryCandidateDraft(
       body: content,
       summary: content.length > 120 ? `${content.slice(0, 120)}…` : content,
       source: 'xingye-heartbeat-tool',
+      metadata: { memoryScope: draft.memoryScope, sourceDependencies: draft.sourceDependencies, origin: 'derived', sourceStatus: 'unknown' },
       importance: importanceNumberFromLevel(importanceLevel),
       importanceLevel,
       reason,

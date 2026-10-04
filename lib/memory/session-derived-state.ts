@@ -9,8 +9,8 @@ function cloneMemorySnapshot(value: any) {
  * The summary lives on disk while deep facts live in SQLite. FactStore deletes
  * one Session with a single SQLite statement, so a thrown delete leaves facts
  * unchanged; in that case we compensate the preceding summary mutation from a
- * durable snapshot. Already-compiled aggregate memory is intentionally outside
- * this transaction.
+ * durable snapshot. Scoped provenance is compensated first with a compare-and-
+ * restore fence; legacy compiled aggregates remain intentionally outside it.
  */
 export function invalidateSessionDerivedStateSync(input: any = {}) {
   const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
@@ -29,17 +29,48 @@ export function invalidateSessionDerivedStateSync(input: any = {}) {
 
   const retainedMessageCount = Number(input.retainedMessageCount);
   const summarySnapshot = cloneMemorySnapshot(summaryManager.getSummary(sessionId));
+  const scopedStore = input.scopedDerivationStore || summaryManager.scopedDerivationStore;
+  const hasScopedSource = Boolean(scopedStore?.getSourceDependency?.(sessionId))
+    || Boolean(summarySnapshot?.memoryScope && summarySnapshot.memoryScope.realm !== "legacy");
+  const scopedCheckpoint = hasScopedSource ? scopedStore?.createRollbackCheckpoint?.() : null;
+  let expectedScopedFingerprint = scopedCheckpoint?.fingerprint;
   let summaryInvalidated = false;
   let factsDeleted = 0;
   try {
-    summaryInvalidated = Number.isInteger(retainedMessageCount) && retainedMessageCount >= 0
-      ? summaryManager.invalidateSession(sessionId, { retainedMessageCount })
+    if (scopedCheckpoint) {
+      scopedStore.invalidateSource(sessionId, { reason: input.reason || "session source invalidated", preserveEntries: input.preserveSourceEntries === true });
+      expectedScopedFingerprint = scopedStore.getStateFingerprint();
+    }
+    const summaryOptions = {
+      ...(Number.isInteger(retainedMessageCount) && retainedMessageCount >= 0 ? { retainedMessageCount } : {}),
+      ...(input.preserveSourceEntries ? { preserveSourceEntries: true } : {}),
+      ...(scopedCheckpoint ? { skipScopedInvalidation: true } : {}),
+    };
+    summaryInvalidated = Object.keys(summaryOptions).length
+      ? summaryManager.invalidateSession(sessionId, summaryOptions)
       : summaryManager.invalidateSession(sessionId);
-    factsDeleted = factStore.deleteBySession(sessionId);
+    if (input.preserveSourceEntries && Array.isArray(input.sourceMessages) && scopedStore
+      && typeof factStore.invalidateSourceEntries === "function") {
+      scopedStore.syncSessionSourceSnapshot(sessionId, input.memoryScope, input.sourceMessages);
+      expectedScopedFingerprint = scopedStore.getStateFingerprint();
+      factsDeleted = factStore.invalidateSourceEntries(sessionId,
+        scopedStore.getSessionDependencies(sessionId, input.memoryScope));
+    } else {
+      factsDeleted = factStore.deleteBySession(sessionId);
+    }
   } catch (error) {
     try {
+      if (scopedCheckpoint) {
+        scopedStore.restoreRollbackCheckpoint(scopedCheckpoint, expectedScopedFingerprint);
+        if (summarySnapshot?.sourceDependencies) {
+          summarySnapshot.sourceDependencies = scopedStore.rebaseRollbackDependencies(summarySnapshot.sourceDependencies);
+        }
+        if (summarySnapshot?.snapshotSourceDependencies) {
+          summarySnapshot.snapshotSourceDependencies = scopedStore.rebaseRollbackDependencies(summarySnapshot.snapshotSourceDependencies);
+        }
+      }
       if (summarySnapshot) summaryManager.saveSummary(sessionId, summarySnapshot);
-      else summaryManager.invalidateSession(sessionId);
+      else summaryManager.invalidateSession(sessionId, scopedCheckpoint ? { skipScopedInvalidation: true } : undefined);
     } catch (rollbackError) {
       const rollbackFailure: any = new Error(
         `session memory invalidation failed and summary rollback was incomplete (${rollbackError?.message || rollbackError})`,

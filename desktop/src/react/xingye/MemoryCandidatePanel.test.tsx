@@ -61,6 +61,16 @@ describe('MemoryCandidatePanel', () => {
     cleanup();
   });
 
+  it('keeps author-only scene candidates visible to the author review context and hidden from character context', async () => {
+    const memoryScope = { version: 1 as const, agentId, realm: 'story' as const, worldId: 'world', branchId: 'a', knowledge: 'author' as const };
+    const candidate = createXingyeMemoryCandidate(agentId, { content: 'author scene', target: 'scene_archive', memoryScope, sceneSummary: { sessionId: 's1', sourceRevision: 'r1', sourceRefs: [{ entryId: 'e1', hash: 'a'.repeat(64), role: 'user' }], sections: [{ kind: 'event', text: 'author scene', inference: true, evidence: [] }], validity: 'unknown' } });
+    const view = render(<MemoryCandidatePanel agentId={agentId} memoryScope={{ ...memoryScope, viewpoint: 'author' }} />);
+    expect(screen.getByTestId(`memory-candidate-row-${candidate.id}`)).toBeInTheDocument();
+    await waitFor(() => expect(getXingyeMemoryCandidate(candidate.id)?.sceneSummary?.validity).toBe('valid'));
+    view.rerender(<MemoryCandidatePanel agentId={agentId} memoryScope={{ ...memoryScope, viewpoint: 'character' }} />);
+    expect(screen.queryByTestId(`memory-candidate-row-${candidate.id}`)).toBeNull();
+  });
+
   it('shows pending candidate and reject updates status', async () => {
     const c = createXingyeMemoryCandidate(agentId, { content: 'hello memory', target: 'pinned' });
     render(<MemoryCandidatePanel agentId={agentId} />);

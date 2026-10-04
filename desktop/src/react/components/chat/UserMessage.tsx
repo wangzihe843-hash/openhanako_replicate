@@ -234,7 +234,7 @@ export const UserMessage = memo(function UserMessage({
             </span>
           ))}
           {editing ? (
-            <textarea
+            <><p role="note">{t('common.editedTaskWarning')}</p><textarea
               ref={textareaRef}
               className={styles.userEditTextarea}
               value={editValue}
@@ -251,7 +251,7 @@ export const UserMessage = memo(function UserMessage({
               }}
               disabled={busy}
               spellCheck={false}
-            />
+            /></>
           ) : (
             message.textHtml && <MarkdownContent html={message.textHtml} linkContext={{ origin: 'session', sessionPath, messageId: message.id }} />
           )}

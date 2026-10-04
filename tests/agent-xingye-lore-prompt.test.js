@@ -286,11 +286,7 @@ describe("agent Xingye lore prompt", () => {
     roots.push(root);
     writeManagedLore(agentDir);
     agent.id = "";
-
-    const prompt = agent.buildSystemPrompt();
-
-    expect(prompt).not.toContain("# 星野核心设定");
-    expect(prompt).not.toContain("undefined");
+    expect(() => agent.buildSystemPrompt()).toThrow("memory scope requires agentId");
   });
 
   it("fails closed when reading Xingye lore fails", () => {

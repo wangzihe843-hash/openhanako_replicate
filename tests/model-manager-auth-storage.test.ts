@@ -69,6 +69,30 @@ async function getDeepseekApiKey(manager) {
 }
 
 describe("ModelManager AuthStorage ownership", () => {
+  it("publishes models before SDK registration starts asynchronous model readers", async () => {
+    writeAddedModels({
+      openai: { base_url: "http://127.0.0.1:1/v1", api: "openai-completions", api_key: "test-only", models: ["fixture-before"] },
+    });
+    writeAuth({});
+    const manager = new ModelManager({ hanakoHome: tmpDir });
+    await manager.init();
+    await manager.refreshAvailable();
+    manager.providerRegistry.saveProvider("openai", { models: ["fixture-after"] });
+    const reconcile = manager._syncSdkProviderRegistrations.bind(manager);
+    let projectionAtRegistration;
+    const registration = vi.spyOn(manager, "_syncSdkProviderRegistrations").mockImplementation(() => {
+      projectionAtRegistration = JSON.parse(fs.readFileSync(manager.modelsJsonPath, "utf-8"));
+      reconcile();
+    });
+
+    await manager.reloadAndSync();
+
+    expect(registration).toHaveBeenCalledTimes(1);
+    expect(projectionAtRegistration.providers.openai.models.map(model => model.id)).toEqual(["fixture-after"]);
+    expect(manager.availableModels.some(model => model.provider === "openai" && model.id === "fixture-after")).toBe(true);
+    expect(manager.availableModels.some(model => model.provider === "openai" && model.id === "fixture-before")).toBe(false);
+  });
+
   it("registers Grok OAuth with Pi and exposes subscription models only when logged in", async () => {
     writeAddedModels({});
     writeAuth({

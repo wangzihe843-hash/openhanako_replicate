@@ -20,6 +20,9 @@ import {
 } from "./time-context.ts";
 import { createModuleLogger } from "../debug-log.ts";
 import { sessionSummaryRevision } from "./session-summary.ts";
+import { normalizeMemoryScope } from "../../shared/memory-scope.ts";
+import { scrubPII } from "../pii-guard.ts";
+import { buildSourceTimeRange } from "./time-context.ts";
 
 const log = createModuleLogger("deep-memory");
 
@@ -107,6 +110,17 @@ function normalizeFactJsonOutput(raw) {
   return findJsonArrayCandidate(normalized);
 }
 
+// Only model-owned JSON values pass through here. Trusted source dependencies
+// are attached afterward so raw source hashes and revision fences never change.
+function scrubExtractedFactValues(value) {
+  if (typeof value === "string") return scrubPII(value).cleaned;
+  if (Array.isArray(value)) return value.map(scrubExtractedFactValues);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, scrubExtractedFactValues(item)]));
+  }
+  return value;
+}
+
 /**
  * 处理所有脏 session，提取新增元事实写入 fact-store
  *
@@ -156,15 +170,46 @@ export async function processDirtySessions(summaryManager, factStore, resolvedMo
           previousSnapshot = committed.summary || previousSnapshot;
         }
       }
+      const memoryScope = normalizeMemoryScope(session.memoryScope, summaryManager.agentId);
+      const scoped = memoryScope.realm !== "legacy";
+      const scopedStore = summaryManager.scopedDerivationStore;
+      const snapshots = scoped ? scopedStore?.getSessionSourceSnapshots(session.session_id, memoryScope) || [] : [];
       extractionFailed = true;
-      const facts = alreadyCommitted || (replacement && !session.summary?.trim())
+      let facts = alreadyCommitted || (replacement && !session.summary?.trim()) || snapshots.length > 0
         ? []
         : await extractFactsFromDiff(
-          session.summary,
-          replacement ? "" : previousSnapshot,
+          scoped ? scrubPII(session.summary).cleaned : session.summary,
+          replacement ? "" : scoped ? scrubPII(previousSnapshot).cleaned : previousSnapshot,
           resolvedModel,
           timeContext,
         );
+      if (!alreadyCommitted && snapshots.length > 0) {
+        facts = [];
+        for (const { dependency, message } of snapshots) {
+          const slot = JSON.stringify([session.session_id, dependency.entryId]);
+          const cached = scopedStore.getArtifact("deep-facts", slot, memoryScope);
+          let extracted;
+          if (cached) {
+            extracted = JSON.parse(cached.body);
+          } else {
+            const text = typeof message.content === "string" ? message.content
+              : Array.isArray(message.content) ? message.content.filter((block) => block?.type === "text").map((block) => block.text || "").join("\n") : "";
+            const entryTimeContext = buildFactTimeContext({ source_time_range: buildSourceTimeRange([message], { timeZone: opts.timeZone }) }, { timeZone: opts.timeZone });
+            const safeText = scrubPII(text).cleaned;
+            extracted = safeText.trim() ? await extractFactsFromDiff(`${message.role}: ${safeText}`, "", resolvedModel, entryTimeContext) : [];
+          }
+          // FactStore redaction happens after this cache is persisted. Scrub the
+          // parsed values first (not serialized JSON, whose quotes must survive).
+          extracted = scrubExtractedFactValues(extracted);
+          const body = JSON.stringify(extracted);
+          if (!cached || body !== cached.body) {
+            const receipt = scopedStore.commitArtifact({ kind: "deep-facts", slot, memoryScope,
+              body, dependencies: [dependency] });
+            if (!receipt) throw summarySupersededError("source entry changed during fact extraction");
+          }
+          facts.push(...extracted.map((fact) => ({ ...fact, sourceDependencies: [dependency] })));
+        }
+      }
       extractionFailed = false;
       _failCounts.delete(session.session_id);
 
@@ -173,6 +218,9 @@ export async function processDirtySessions(summaryManager, factStore, resolvedMo
         tags: f.tags || [],
         time: f.time || null,
         session_id: session.session_id,
+        memoryScope: session.memoryScope,
+        sourceDependencies: f.sourceDependencies || session.sourceDependencies,
+        sourceStatus: session.memoryScope ? "active" : undefined,
       }));
 
       if (typeof opts.getCurrentBranchProjection === "function") {
@@ -198,7 +246,13 @@ export async function processDirtySessions(summaryManager, factStore, resolvedMo
         throw summarySupersededError("session summary changed during fact extraction");
       }
 
-      const added = factStore.commitSessionRevision(session.session_id, expectedRevision, factEntries, { replace: replacement });
+      const added = factStore.commitSessionRevision(session.session_id, expectedRevision, factEntries, {
+        replace: replacement || scoped,
+        memoryScope: session.memoryScope,
+        ...(scoped ? { currentSourceDependencies: scopedStore.getSessionDependencies(session.session_id, memoryScope) }
+          : { sourceDependencies: session.sourceDependencies }),
+        sourceStatus: session.memoryScope ? "active" : undefined,
+      });
 
       if (factEntries.length > 0) {
         totalFacts += added;

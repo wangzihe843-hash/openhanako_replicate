@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { normalizeMemoryScope, sameMemoryScope, canReadMemoryScope, type MemoryScope, type MemoryScopeContext } from '../../../../shared/memory-scope';
+import { normalizeMemorySourceDependencies, type MemorySourceDependency, type MemorySourceStatus } from '../../../../shared/memory-provenance';
 import { emitAgentPinnedMemoryChanged } from '../agent-pinned-memory';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import { appendXingyeEvent } from './xingye-event-log';
@@ -32,6 +34,7 @@ export type XingyeSceneSection = {
 export type XingyeSceneSummary = {
   sessionId: string;
   branchHeadId?: string;
+  sourceRevision?: string;
   sourceRefs: Array<{ entryId: string; hash: string; role: string }>;
   sections: XingyeSceneSection[];
   validity: 'unknown' | 'valid' | 'stale';
@@ -51,6 +54,10 @@ export type XingyeMemoryCandidate = {
   updatedAt: string;
   writtenAt?: string;
   sceneSummary?: XingyeSceneSummary;
+  memoryScope: MemoryScope;
+  sourceDependencies: MemorySourceDependency[];
+  sourceStatus: MemorySourceStatus;
+  origin: 'manual' | 'derived';
 };
 
 export type XingyeMemoryCandidateMap = Record<string, XingyeMemoryCandidate>;
@@ -109,7 +116,7 @@ function normalizeSceneSummary(value: unknown): XingyeSceneSummary | undefined {
   });
   if (sourceRefs.length === 0 || sections.length === 0) return undefined;
   const validity = value.validity === 'valid' || value.validity === 'stale' ? value.validity : 'unknown';
-  return { sessionId, branchHeadId: normalizeOptionalString(value.branchHeadId), sourceRefs, sections, validity };
+  return { sessionId, sourceRevision: normalizeOptionalString(value.sourceRevision), branchHeadId: normalizeOptionalString(value.branchHeadId), sourceRefs, sections, validity };
 }
 
 export function sceneSummaryContent(sections: XingyeSceneSection[]): string {
@@ -123,6 +130,13 @@ function normalizeCandidate(value: unknown, fallbackId?: string): XingyeMemoryCa
   const agentId = normalizeOptionalString(value.agentId);
   const content = normalizeOptionalString(value.content);
   if (!id || !agentId || !content) return null;
+  let memoryScope: MemoryScope;
+  let sourceDependencies: MemorySourceDependency[];
+  try {
+    memoryScope = normalizeMemoryScope(value.memoryScope, agentId);
+    if (memoryScope.agentId !== agentId) return null;
+    sourceDependencies = normalizeMemorySourceDependencies(value.sourceDependencies);
+  } catch { return null; }
   let target = normalizeXingyeMemoryCandidateTarget(value.target);
   const sceneSummary = normalizeSceneSummary(value.sceneSummary);
   if ((sceneSummary || value.sourceDomain === 'scene_summary') && target !== 'scene_archive') target = 'unknown';
@@ -147,6 +161,10 @@ function normalizeCandidate(value: unknown, fallbackId?: string): XingyeMemoryCa
     sourceId: normalizeOptionalString(value.sourceId),
     reason: normalizeOptionalString(value.reason),
     importance,
+    memoryScope,
+    sourceDependencies,
+    sourceStatus: value.sourceStatus === 'active' || value.sourceStatus === 'stale' ? value.sourceStatus : 'unknown',
+    origin: value.origin === 'derived' || sceneSummary ? 'derived' : 'manual',
   };
   if (sceneSummary) c.sceneSummary = sceneSummary;
   if (writtenAt) c.writtenAt = writtenAt;
@@ -189,9 +207,10 @@ function notifyXingyeMemoryCandidatesChanged() {
 export function listXingyeMemoryCandidates(
   agentId: string,
   storage: StorageLike | null = getLocalStorage(),
+  memoryScope?: MemoryScopeContext,
 ): XingyeMemoryCandidate[] {
   return Object.values(loadXingyeMemoryCandidateMap(storage))
-    .filter((c) => c.agentId === agentId)
+    .filter((c) => c.agentId === agentId && (!memoryScope || canReadMemoryScope(c.memoryScope, memoryScope)))
     .sort((a, b) => {
       const byUpdated = b.updatedAt.localeCompare(a.updatedAt);
       if (byUpdated !== 0) return byUpdated;
@@ -242,6 +261,10 @@ export function createXingyeMemoryCandidate(
     reason?: string;
     importance?: number;
     sceneSummary?: XingyeSceneSummary;
+    memoryScope?: MemoryScope;
+    sourceDependencies?: MemorySourceDependency[];
+    sourceStatus?: MemorySourceStatus;
+    origin?: 'manual' | 'derived';
   },
   storage: StorageLike | null = getLocalStorage(),
 ): XingyeMemoryCandidate {
@@ -262,6 +285,10 @@ export function createXingyeMemoryCandidate(
     reason: input.reason,
     importance: input.importance,
     sceneSummary: input.sceneSummary,
+    memoryScope: input.memoryScope,
+    sourceDependencies: input.sourceDependencies ?? (input.sceneSummary ? [{ sessionId: input.sceneSummary.sessionId, revision: input.sceneSummary.sourceRevision, sourceRefs: input.sceneSummary.sourceRefs }] : []),
+    sourceStatus: input.sourceStatus,
+    origin: input.origin,
     createdAt: now,
     updatedAt: now,
   });
@@ -344,6 +371,14 @@ export function updateXingyeMemoryCandidate(
   if (!prev) throw new Error('memory candidate not found');
   if (prev.agentId !== agentId) throw new Error('memory candidate agent mismatch');
   if (prev.status !== 'pending') throw new Error('candidate is not pending');
+  if (patch.sceneSummary) {
+    const sourceIdentity = (scene?: XingyeSceneSummary) => JSON.stringify(scene ? {
+      sessionId: scene.sessionId, branchHeadId: scene.branchHeadId, sourceRevision: scene.sourceRevision, sourceRefs: scene.sourceRefs,
+    } : null);
+    if (sourceIdentity(patch.sceneSummary) !== sourceIdentity(prev.sceneSummary)) {
+      throw new Error('scene source identity is immutable; generate a new candidate');
+    }
+  }
   const next = patchXingyeMemoryCandidateForAgent(agentId, candidateId, patch, storage);
   if (!next) throw new Error('failed to update memory candidate');
   return next;
@@ -354,12 +389,15 @@ export function setXingyeSceneCandidateValidity(
   candidateId: string,
   validity: XingyeSceneSummary['validity'],
   storage: StorageLike | null = getLocalStorage(),
+  expectedScene?: XingyeSceneSummary,
 ): XingyeMemoryCandidate {
   const prev = getXingyeMemoryCandidate(candidateId, storage);
   if (!prev?.sceneSummary || prev.agentId !== agentId) throw new Error('scene candidate not found for agent');
+  if (expectedScene && JSON.stringify({ ...prev.sceneSummary, validity: undefined }) !== JSON.stringify({ ...expectedScene, validity: undefined })) return prev;
   if (prev.sceneSummary.validity === validity) return prev;
   const next = patchXingyeMemoryCandidateForAgent(agentId, candidateId, {
     sceneSummary: { ...prev.sceneSummary, validity },
+    sourceStatus: validity === 'valid' ? 'active' : validity,
   }, storage);
   if (!next) throw new Error('failed to update scene validity');
   return next;
@@ -379,12 +417,14 @@ export function rejectXingyeMemoryCandidate(
   return next;
 }
 
-export function useXingyeMemoryCandidates(agentId: string | null | undefined): XingyeMemoryCandidate[] {
+export function useXingyeMemoryCandidates(agentId: string | null | undefined, memoryScope?: MemoryScopeContext): XingyeMemoryCandidate[] {
   const id = agentId ?? '';
-  const [rows, setRows] = useState<XingyeMemoryCandidate[]>(() => (id ? listXingyeMemoryCandidates(id) : []));
+  const scopeKey = JSON.stringify(memoryScope ?? null);
+  const [rows, setRows] = useState<XingyeMemoryCandidate[]>(() => (id ? listXingyeMemoryCandidates(id, getLocalStorage(), memoryScope) : []));
 
   useEffect(() => {
-    const refresh = () => setRows(id ? listXingyeMemoryCandidates(id) : []);
+    const scope = JSON.parse(scopeKey) as MemoryScopeContext | undefined;
+    const refresh = () => setRows(id ? listXingyeMemoryCandidates(id, getLocalStorage(), scope) : []);
     refresh();
     if (typeof window === 'undefined') return undefined;
 
@@ -401,9 +441,9 @@ export function useXingyeMemoryCandidates(agentId: string | null | undefined): X
       window.removeEventListener('storage', refreshFromStorage);
       window.removeEventListener('xingye-persistence-changed', onPersistence);
     };
-  }, [id]);
+  }, [id, scopeKey]);
 
-  return rows;
+  return rows.filter(row => row.agentId === id && (!memoryScope || canReadMemoryScope(row.memoryScope, memoryScope)));
 }
 
 export function normalizePinBulletText(content: string): string {
@@ -412,6 +452,19 @@ export function normalizePinBulletText(content: string): string {
 
 function pinsAlreadyHasNormalizedBullet(existingPins: string[], bullet: string): boolean {
   return existingPins.some((p) => normalizePinBulletText(p) === bullet);
+}
+
+function candidateReviewSignature(candidate: XingyeMemoryCandidate): string {
+  return JSON.stringify({ ...candidate, updatedAt: undefined,
+    sourceStatus: undefined,
+    sceneSummary: candidate.sceneSummary ? { ...candidate.sceneSummary, validity: undefined } : undefined });
+}
+
+function assertCandidateUnchanged(candidate: XingyeMemoryCandidate, storage: StorageLike | null): void {
+  const current = getXingyeMemoryCandidate(candidate.id, storage);
+  if (!current || current.status !== 'pending' || candidateReviewSignature(current) !== candidateReviewSignature(candidate)) {
+    throw new Error('candidate changed during confirmation; review it again');
+  }
 }
 
 type FetchLike = (path: string, init?: RequestInit & { timeout?: number }) => Promise<Response>;
@@ -444,11 +497,15 @@ export async function confirmXingyeMemoryCandidate(
       body: JSON.stringify({
         agentId,
         sessionId: c.sceneSummary.sessionId,
+        memoryScope: c.memoryScope,
+        sourceRevision: c.sceneSummary.sourceRevision,
+        branchHeadId: c.sceneSummary.branchHeadId,
         sourceRefs: c.sceneSummary.sourceRefs,
         sections: c.sceneSummary.sections,
       }),
     });
     const result: unknown = await response.json().catch(() => ({}));
+    assertCandidateUnchanged(c, storage);
     if (!response.ok || !isRecord(result) || result.valid !== true) {
       setXingyeSceneCandidateValidity(agentId, candidateId, 'stale', storage);
       throw new Error(isRecord(result) && typeof result.reason === 'string' ? result.reason : 'scene source could not be verified');
@@ -457,6 +514,7 @@ export async function confirmXingyeMemoryCandidate(
       status: 'written',
       writtenAt: new Date().toISOString(),
       sceneSummary: { ...c.sceneSummary, validity: 'valid' },
+      sourceStatus: 'active',
     }, storage);
     if (!updated) throw new Error('failed to archive scene candidate');
     return { candidate: updated, alreadyInPinned: false };
@@ -490,11 +548,19 @@ export async function confirmXingyeMemoryCandidateToPinned(
 
   // The server compares this snapshot before replacing pins. A concurrent edit
   // returns a conflict and leaves this candidate pending for an explicit retry.
-  const getRes = await fetchImpl(`/api/agents/${agentId}/pinned`);
+  const sessionId = c.sourceDependencies[0]?.sessionId;
+  if (c.memoryScope.realm !== 'legacy' && !sessionId) throw new Error('scoped candidate requires a trusted source session');
+  const endpoint = `/api/agents/${encodeURIComponent(agentId)}/pinned`;
+  const getRes = await fetchImpl(`${endpoint}${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`);
   const getJson: unknown = await getRes.json().catch(() => ({}));
   if (!getRes.ok) {
     const err = isRecord(getJson) && typeof getJson.error === 'string' ? getJson.error : `GET pinned failed (${getRes.status})`;
     throw new Error(err);
+  }
+  assertCandidateUnchanged(c, storage);
+  if ((c.memoryScope.realm !== 'legacy' || (isRecord(getJson) && getJson.memoryScope))
+    && (!isRecord(getJson) || !sameMemoryScope(c.memoryScope, getJson.memoryScope))) {
+    throw new Error('candidate scope no longer matches its source session');
   }
   const pinsRaw = isRecord(getJson) ? getJson.pins : undefined;
   const existing: string[] = Array.isArray(pinsRaw)
@@ -503,12 +569,17 @@ export async function confirmXingyeMemoryCandidateToPinned(
 
   const alreadyInPinned = pinsAlreadyHasNormalizedBullet(existing, bullet);
 
-  if (!alreadyInPinned) {
-    const nextPins = [...existing, bullet];
-    const putRes = await fetchImpl(`/api/agents/${agentId}/pinned`, {
+  const matchingDerivedPin = isRecord(getJson) && Array.isArray(getJson.items)
+    && getJson.items.some(item => isRecord(item) && typeof item.content === 'string'
+      && normalizePinBulletText(item.content) === bullet && item.origin === 'derived');
+  if (!alreadyInPinned || matchingDerivedPin) {
+    const nextPins = alreadyInPinned ? existing : [...existing, bullet];
+    const putRes = await fetchImpl(endpoint, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pins: nextPins, expectedPins: existing }),
+      body: JSON.stringify({ pins: nextPins, expectedPins: existing, sessionId,
+        appendItem: { content: bullet, memoryScope: c.memoryScope, origin: 'manual', sourceDependencies: c.sourceDependencies },
+      }),
     });
     const putJson: unknown = await putRes.json().catch(() => ({}));
     if (!putRes.ok) {
@@ -520,6 +591,7 @@ export async function confirmXingyeMemoryCandidateToPinned(
     }
   }
 
+  assertCandidateUnchanged(c, storage);
   const pinsCount = alreadyInPinned ? existing.length : existing.length + 1;
   console.debug('[xingye] confirm pinned ok', {
     agentId,
@@ -532,12 +604,6 @@ export async function confirmXingyeMemoryCandidateToPinned(
     source: 'xingye-secret-space',
     pinsCount,
   });
-  await appendMemoryCandidateWrittenEvent(agentId, {
-    candidateId,
-    alreadyInPinned,
-    pinsCount,
-  });
-
   const writtenAt = new Date().toISOString();
   const updated = patchXingyeMemoryCandidateForAgent(
     agentId,
@@ -546,5 +612,11 @@ export async function confirmXingyeMemoryCandidateToPinned(
     storage,
   );
   if (!updated) throw new Error('failed to update candidate after write');
+  await appendMemoryCandidateWrittenEvent(agentId, {
+    candidateId,
+    alreadyInPinned,
+    pinsCount,
+  });
+
   return { candidate: updated, alreadyInPinned };
 }

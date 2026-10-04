@@ -144,6 +144,8 @@ import {
 import { workspaceRootsForSandbox } from "../shared/workspace-scope.ts";
 import { wrapWithCheckpoint } from "../lib/checkpoint-wrapper.ts";
 import { wrapWithSessionPermission } from "../lib/tools/session-permission-wrapper.ts";
+import { guardMemoryScopeTools } from "./session-memory-scope.ts";
+import { normalizeMemoryScopeContext } from "../shared/memory-scope.ts";
 import { createToolCatalog } from "./tool-catalog.ts";
 import { hashCacheContractValue } from "../lib/llm/cache-prefix-contract.ts";
 import { resolveReferenceBudgetTokens } from "./session-reminders.ts";
@@ -1580,6 +1582,9 @@ export class HanaEngine implements SessionCancellation {
   getSessionStreamFn(p) {
     return this._sessionCoord.getSessionStreamFn(p);
   }
+  getSessionDialogueVariantStreamFn(p: string) {
+    return this._sessionCoord.getSessionDialogueVariantStreamFn(p);
+  }
   getSessionAgentRunRuntime(p) {
     return this._sessionCoord.getSessionAgentRunRuntime(p);
   }
@@ -1636,6 +1641,12 @@ export class HanaEngine implements SessionCancellation {
   }
   getSessionMemoryEnabled(p = this.currentSessionPath) {
     return this._sessionCoord.getSessionMemoryEnabled(p);
+  }
+  getSessionMemoryScope(p = this.currentSessionPath) {
+    return this._sessionCoord.getSessionMemoryScope(p);
+  }
+  setSessionMemoryScope(p, scope) {
+    return this._sessionCoord.setSessionMemoryScope(p, scope);
   }
   async setSessionMemoryEnabled(p, enabled) {
     return this._sessionCoord.setSessionMemoryEnabled(p, enabled);
@@ -3330,6 +3341,18 @@ export class HanaEngine implements SessionCancellation {
     // and the engine has no business keeping a map from sessions to catalogs.
     return {
       ...result,
+      tools: guardMemoryScopeTools(result.tools, opts.getMemoryScope || (() => {
+        const sessionPath = getSessionPath();
+        return sessionPath && this._sessionCoord
+          ? this.getSessionMemoryScope(sessionPath)
+          : normalizeMemoryScopeContext(undefined, agentId || "__legacy__");
+      })),
+      customTools: guardMemoryScopeTools(result.customTools, opts.getMemoryScope || (() => {
+        const sessionPath = getSessionPath();
+        return sessionPath && this._sessionCoord
+          ? this.getSessionMemoryScope(sessionPath)
+          : normalizeMemoryScopeContext(undefined, agentId || "__legacy__");
+      })),
       toolCatalogManifest: deferPlan
         ? buildToolCatalogManifestSnapshot(deferPlan.catalog, opts.modelContextWindowTokens)
         : null,

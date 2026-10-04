@@ -4,6 +4,7 @@ import YAML from "js-yaml";
 import { Hono } from "hono";
 import { injectGlobalFields } from "../../shared/config-scope.ts";
 import { computeSettingsAvailableToolNames } from "../../shared/tool-categories.ts";
+import { normalizeMemoryScope, sameMemoryScope } from "../../shared/memory-scope.ts";
 import { readPinnedMemoryItems } from "../../lib/memory/pinned-memory-store.ts";
 import { listExperienceDocuments } from "../../lib/tools/experience.ts";
 import { createAccessSummary, getLanAddresses } from "./access.ts";
@@ -56,7 +57,12 @@ async function readTextFile(filePath: string) {
 }
 
 function readPinned(agentBaseDir: string) {
-  return readPinnedMemoryItems(agentBaseDir).map(item => item.content);
+  // Settings edits use the pinned endpoint without a sessionId. Its optimistic
+  // concurrency snapshot must therefore contain that same exact legacy scope.
+  const memoryScope = normalizeMemoryScope(undefined, path.basename(agentBaseDir));
+  return readPinnedMemoryItems(agentBaseDir)
+    .filter(item => sameMemoryScope(item.memoryScope, memoryScope))
+    .map(item => item.content);
 }
 
 function isExperienceEnabled(engine: any, id: string, config: Record<string, any>) {

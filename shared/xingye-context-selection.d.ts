@@ -1,4 +1,4 @@
-export type XingyeContextScope = { agentId: string; sessionId?: string; branchId?: string };
+export type XingyeContextScope = { agentId: string; sessionId?: string; branchId?: string; memoryScope?: import('./memory-scope.ts').MemoryScopeContext };
 export type XingyeContextSection = {
   id: string;
   source: string;

@@ -1,3 +1,5 @@
+import { canReadMemoryScope, normalizeMemoryScopeContext } from './memory-scope.ts';
+
 const DEFAULT_MAX_CHARS = 2_000;
 const STABLE_LORE_TITLE = '【星野始终生效设定】';
 const STABLE_LORE_NOTICE =
@@ -135,8 +137,10 @@ export function selectXingyeLoreEntries({
   compose = (blocks) => blocks.join('\n\n'),
   priorityBoostCategories = [],
   onDecision,
+  memoryScope,
 } = {}) {
   const aid = normalizeString(agentId);
+  const context = normalizeMemoryScopeContext(memoryScope, aid || undefined);
   const budget = normalizeMaxChars(maxChars);
   const query = normalizeString(queryText);
   const hasExplicitKeywords = toStringArray(explicitKeywords).some((keyword) => normalizeString(keyword));
@@ -145,7 +149,10 @@ export function selectXingyeLoreEntries({
   for (const entry of toEntryArray(entries)) {
     if (!entry || typeof entry !== 'object' || normalizeString(entry.agentId) !== aid || !aid) continue;
     let reason = '';
-    if (entry.enabled !== true) reason = 'disabled';
+    if (!canReadMemoryScope(entry.memoryScope, context, aid)
+      || entry.sourceStatus === 'stale'
+      || (entry.origin === 'derived' && entry.memoryScope?.realm !== 'legacy' && entry.sourceStatus !== 'active')) reason = 'scope';
+    else if (entry.enabled !== true) reason = 'disabled';
     else if (entry.visibility !== 'canonical') reason = 'visibility';
     else if (!allowedModes.has(entry.insertionMode)) reason = 'mode';
     else if (!normalizeString(entry.content)) reason = 'empty';
@@ -232,9 +239,10 @@ export function buildXingyeStableLoreMemoryContext({
   agentId,
   maxChars = DEFAULT_MAX_CHARS,
   onDecision,
+  memoryScope,
 } = {}) {
   const result = selectXingyeLoreEntries({
-    entries, agentId, mode: 'always', maxChars,
+    entries, agentId, memoryScope, mode: 'always', maxChars,
     formatBlock: (entry, _matched, content) => formatEntryBlock(entry, content),
     compose: composeText,
     onDecision,
@@ -251,10 +259,11 @@ export function buildXingyeRuntimeLoreContext({
   recentMessages,
   maxChars = DEFAULT_MAX_CHARS,
   onDecision,
+  memoryScope,
 } = {}) {
   const queryText = buildQueryText(userText, recentMessages);
   const result = selectXingyeLoreEntries({
-    entries, agentId, mode: 'keyword', queryText, maxChars,
+    entries, agentId, memoryScope, mode: 'keyword', queryText, maxChars,
     formatBlock: formatRuntimeEntryBlock,
     compose: composeRuntimeText,
     onDecision,

@@ -44,6 +44,8 @@ type TickerOverrides = {
   buildSessionCacheSnapshot?: ReturnType<typeof vi.fn>;
   ensureSessionLoaded?: ReturnType<typeof vi.fn>;
   getSessionStreamFn?: ReturnType<typeof vi.fn>;
+  getSessionMemoryScope?: ReturnType<typeof vi.fn>;
+  readMemoryReflectionSnapshot?: ReturnType<typeof vi.fn>;
 };
 
 function writeSession(sessionPath) {
@@ -97,6 +99,8 @@ function makeTicker(tmpDir, injectedMode, overrides: TickerOverrides = {}) {
     getMemoryMasterEnabled: () => true,
     isSessionMemoryEnabled: () => true,
     getCacheSnapshotReflectionMode: () => injectedMode,
+    getSessionMemoryScope: overrides.getSessionMemoryScope,
+    readMemoryReflectionSnapshot: overrides.readMemoryReflectionSnapshot,
     memoryReflectionRunner,
     buildSessionCacheSnapshot,
     ensureSessionLoaded: overrides.ensureSessionLoaded,
@@ -205,4 +209,21 @@ describe("cache snapshot reflection runtime hard gate", () => {
     expect(memoryReflectionRunner.runMemoryReflection).not.toHaveBeenCalled();
     expect(buildSessionCacheSnapshot).not.toHaveBeenCalled();
   });
+  it.each(["write", "shadow"])("explicit story scope bypasses cached prompts and old reflection snapshots in %s mode", async (mode) => {
+    const scope = { version: 1, agentId: "hana", realm: "story", worldId: "w", branchId: "b", knowledge: "shared" };
+    const result = makeTicker(tmpDir, mode, {
+      getSessionMemoryScope: vi.fn(() => scope),
+      readMemoryReflectionSnapshot: vi.fn(() => ({ existingMemory: "Legacy secret", identityAndPersonality: "Old cached prompt" })),
+    });
+    writeSession(result.sessionPath);
+    await result.ticker.flushSession(result.sessionPath);
+    expect(result.summaryManager.rollingSummary).toHaveBeenCalledOnce();
+    const options = result.summaryManager.rollingSummary.mock.calls[0][3];
+    expect(options.memoryScope).toEqual(scope);
+    expect(options.memoryReflectionSnapshot).toBeUndefined();
+    expect(result.memoryReflectionRunner.runMemoryReflection).not.toHaveBeenCalled();
+    expect(result.buildSessionCacheSnapshot).not.toHaveBeenCalled();
+    expect(result.summaryManager.saveSummary).not.toHaveBeenCalled();
+  });
+
 });

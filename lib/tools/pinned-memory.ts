@@ -5,6 +5,8 @@
  * 指导 agent 手动 read→append→write pinned.md 的方式。
  */
 
+import path from "node:path";
+import { normalizeMemoryScope, sameMemoryScope } from "../../shared/memory-scope.ts";
 import { Type } from "../pi-sdk/index.ts";
 import { t } from "../i18n.ts";
 import { scrubPII } from "../pii-guard.ts";
@@ -28,7 +30,8 @@ function stableMemoryTargetId(value: unknown) {
  * @param {string} [agentId] - agent id（用于写 xingye event log；未提供时不打事件）
  * @returns {[import('../pi-sdk/index.ts').ToolDefinition, import('../pi-sdk/index.ts').ToolDefinition]}
  */
-export function createPinnedMemoryTools(agentDir: string, agentId?: string) {
+export function createPinnedMemoryTools(agentDir: string, agentId?: string, opts: { getMemoryScope?: () => unknown } = {}) {
+  const getMemoryScope = () => normalizeMemoryScope(opts.getMemoryScope?.(), agentId || path.basename(agentDir));
   const emitPinnedChanged = async (payload: any) => {
     if (!agentId) return;
     try {
@@ -50,7 +53,7 @@ export function createPinnedMemoryTools(agentDir: string, agentId?: string) {
   const pinTool = {
     name: "pin_memory",
     label: "Pin Memory",
-    description: "Save an item to pinned memory. Use when the user says 'remember this', 'note this down', 'don't forget this later'. Pinned memories are always kept in context.",
+    description: "Save an item to pinned memory. Use when the user says 'remember this', 'note this down', 'don't forget this later'. Pinned memories are kept only in their matching world, branch, and knowledge scope.",
     sessionPermission: {
       resolveInvocation: (params: any = {}) => {
         if (typeof params.content !== "string" || !params.content.trim()) return null;
@@ -72,7 +75,7 @@ export function createPinnedMemoryTools(agentDir: string, agentId?: string) {
       }
 
       const content = cleaned;
-      const result = addPinnedMemoryItem(agentDir, content);
+      const result = addPinnedMemoryItem(agentDir, content, { memoryScope: getMemoryScope(), origin: "manual" });
       if (result.alreadyExists) {
         return {
           content: [{ type: "text", text: t("error.pinnedAlreadyExists") }],
@@ -84,6 +87,7 @@ export function createPinnedMemoryTools(agentDir: string, agentId?: string) {
         action: "pin",
         pinsCount: result.items.length,
         addedBullet: content,
+        memoryScope: result.item?.memoryScope ?? getMemoryScope(),
       });
 
       return {
@@ -127,7 +131,8 @@ export function createPinnedMemoryTools(agentDir: string, agentId?: string) {
       keyword: Type.Optional(Type.String({ description: "Keyword of the memory to remove, matched fuzzily" })),
     }),
     execute: async (_toolCallId, params) => {
-      const existing = readPinnedMemoryItems(agentDir);
+      const memoryScope = getMemoryScope();
+      const existing = readPinnedMemoryItems(agentDir).filter(item => sameMemoryScope(item.memoryScope, memoryScope));
       if (existing.length === 0) {
         return {
           content: [{ type: "text", text: t("error.pinnedEmpty") }],
@@ -135,7 +140,7 @@ export function createPinnedMemoryTools(agentDir: string, agentId?: string) {
         };
       }
 
-      const result = removePinnedMemoryItems(agentDir, params);
+      const result = removePinnedMemoryItems(agentDir, { ...params, memoryScope });
       const removed = result.removed;
 
       if (removed.length === 0) {
@@ -150,6 +155,7 @@ export function createPinnedMemoryTools(agentDir: string, agentId?: string) {
         action: "unpin",
         pinsCount: result.items.length,
         removedCount: removed.length,
+        memoryScope,
         keyword: params.keyword,
       });
 

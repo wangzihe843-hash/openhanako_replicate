@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import fs from 'node:fs';
+import { sessionFileRevision } from '../../core/session-list-projection-cache.ts';
+import { normalizeMemoryScope, normalizeMemoryScopeContext, sameMemoryScope } from '../../shared/memory-scope.ts';
+import { hashScopedSourceMessage } from '../../lib/memory/scoped-derivation-store.ts';
 import { SessionManager } from '../../lib/pi-sdk/index.ts';
 import { extractTextContent, isValidSessionPath } from '../../core/message-utils.ts';
 import { stripSessionReminderBlocks } from '../../core/session-reminders.ts';
@@ -97,11 +101,20 @@ export function readSceneSources(engine, agentId, sessionId) {
       entryId: entry.id,
       role: message.role,
       text,
-      hash: sceneSourceHash(text),
+      hash: hashScopedSourceMessage({ role: message.role, content: message.content, timestamp: entry.timestamp || null }),
+      legacyTextHash: sceneSourceHash(text),
       timestamp: entry.timestamp ?? null,
     });
   }
-  return { sessionPath, sources, branchHeadId: branch.at(-1)?.id ?? null };
+  // Scope is trusted session metadata, never inferred from the transcript/model response.
+  const memoryContext = normalizeMemoryScopeContext(engine.getSessionMemoryScope?.(sessionPath), agentId);
+  const memoryScope = normalizeMemoryScope(memoryContext, agentId);
+  if (memoryScope.agentId !== agentId) throw new Error('session memory scope agent mismatch');
+  let fileRevision = null;
+  try { fileRevision = sessionFileRevision(fs.statSync(sessionPath)); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const sourceRevision = sceneSourceHash(JSON.stringify({ branch, fileRevision }));
+  return { sessionPath, sources, memoryScope, memoryContext, sourceRevision, branchHeadId: branch.at(-1)?.id ?? null };
 }
 
 export function sceneSourcePage(sources, before) {
@@ -171,7 +184,7 @@ export function normalizeSceneSections(rawSections, selected) {
   return out;
 }
 
-export function validateSceneCandidate(sources, sourceRefs, sections) {
+export function validateSceneCandidate(sources, sourceRefs, sections, { allowLegacyTextHash = false } = {}) {
   if (!Array.isArray(sourceRefs) || sourceRefs.length === 0 || sourceRefs.length > MAX_SCENE_MESSAGES) {
     return { valid: false, reason: 'source range is missing or too large' };
   }
@@ -182,7 +195,7 @@ export function validateSceneCandidate(sources, sourceRefs, sections) {
   let previousIndex = -1;
   for (const ref of sourceRefs) {
     const current = byId.get(ref?.entryId);
-    if (!current || current.hash !== ref?.hash || current.role !== ref?.role) return { valid: false, reason: 'source message was deleted, edited, or left the current branch' };
+    if (!current || (current.hash !== ref?.hash && !(allowLegacyTextHash && current.legacyTextHash === ref?.hash)) || current.role !== ref?.role) return { valid: false, reason: 'source message was deleted, edited, or left the current branch' };
     const index = sources.findIndex((row) => row.entryId === ref.entryId);
     if (previousIndex >= 0 && index !== previousIndex + 1) return { valid: false, reason: 'source range is no longer contiguous on this branch' };
     previousIndex = index;
@@ -206,4 +219,27 @@ export function validateSceneCandidate(sources, sourceRefs, sections) {
     }
   }
   return { valid: true, reason: null };
+}
+
+/** Current branch and original-message revision are part of every new scene draft. */
+export function validateSceneSnapshot(snapshot, candidate) {
+  try {
+    if (!sameMemoryScope(snapshot.memoryScope, normalizeMemoryScope(candidate?.memoryScope, snapshot.memoryScope.agentId))) {
+      return { valid: false, reason: 'scene memory scope or branch changed' };
+    }
+  } catch {
+    return { valid: false, reason: 'scene memory scope is invalid' };
+  }
+  if ((snapshot.memoryScope.realm !== 'legacy' && !candidate?.sourceRevision)
+    || (candidate?.sourceRevision && candidate.sourceRevision !== snapshot.sourceRevision)) {
+    return { valid: false, reason: 'scene source revision changed' };
+  }
+  if (candidate?.branchHeadId && candidate.branchHeadId !== snapshot.branchHeadId) {
+    return { valid: false, reason: 'scene branch head changed' };
+  }
+  return validateSceneCandidate(snapshot.sources, candidate?.sourceRefs, candidate?.sections, {
+    // Pre-L1 scene archives hashed display text. Preserve that old verification only
+    // for unrevisioned legacy candidates, never for new or explicitly scoped data.
+    allowLegacyTextHash: snapshot.memoryScope.realm === 'legacy' && !candidate?.sourceRevision,
+  });
 }

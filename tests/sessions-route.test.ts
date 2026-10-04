@@ -71,6 +71,28 @@ vi.mock("../core/session-turn-actions.js", () => ({
 describe("sessions route", () => {
   let tmpDir;
 
+  it("exposes explicit scope read/write without forwarding a client fork bypass", async () => {
+    const { createSessionsRoute } = await import("../server/routes/sessions.ts");
+    const sessionPath = "/tmp/agents/a/sessions/a.jsonl";
+    const memoryScope = { version: 1, agentId: "a", realm: "story", worldId: "world", branchId: "main", knowledge: "character", characterId: "a" };
+    const getSessionMemoryScope = vi.fn(() => memoryScope);
+    const setSessionMemoryScope = vi.fn(async () => memoryScope);
+    const app = new Hono();
+    app.route("/api", createSessionsRoute({
+      agentsDir: "/tmp/agents", getSessionMemoryScope, setSessionMemoryScope,
+      getSessionManifest: vi.fn(() => ({ lifecycle: "active", currentLocator: { path: sessionPath } })),
+    }));
+    const read = await app.request("/api/sessions/memory-scope?sessionId=s1");
+    expect(read.status).toBe(200);
+    expect(await read.json()).toEqual({ memoryScope });
+    const write = await app.request("/api/sessions/memory-scope", { method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "s1", memoryScope, allowNarrativeFork: true }),
+    });
+    expect(write.status).toBe(200);
+    expect(setSessionMemoryScope).toHaveBeenCalledExactlyOnceWith(sessionPath, memoryScope);
+  });
+
   beforeEach(() => {
     vi.resetModules();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-sessions-route-"));

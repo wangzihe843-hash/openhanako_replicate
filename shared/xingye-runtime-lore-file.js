@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { canReadMemoryScope, normalizeMemoryScopeContext } from './memory-scope.ts';
 
 function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -101,7 +102,9 @@ export function readXingyeRuntimeLoreEntriesSync({
   hanakoHome,
   agentId,
   agentDir,
+  memoryScope,
 } = {}) {
+  const context = normalizeMemoryScopeContext(memoryScope, normalizeString(agentId) || undefined);
   const candidates = buildRuntimeLoreSourceCandidates({
     workspaceRoot,
     hanakoHome,
@@ -114,9 +117,15 @@ export function readXingyeRuntimeLoreEntriesSync({
       const entries = candidate.read();
       // An existing official store, including {} or a null deletion tombstone,
       // is authoritative. Falling through would resurrect deleted mirror lore.
-      if (candidate.authoritative || entries.length > 0) return entries;
-    } catch {
-      // Runtime lore is contextual only; unreadable sources must not block chat.
+      if (candidate.authoritative || entries.length > 0) return entries.filter((entry) =>
+        normalizeString(entry?.agentId) === normalizeString(agentId)
+        && canReadMemoryScope(entry.memoryScope, context, normalizeString(agentId) || undefined)
+        && entry.sourceStatus !== 'stale'
+        && !(entry.origin === 'derived' && entry.memoryScope?.realm !== 'legacy' && entry.sourceStatus !== 'active'));
+    } catch (error) {
+      // An unreadable authoritative source is not proof it was deleted. Never
+      // resurrect its old compatibility mirror after a corrupt/torn read.
+      if (candidate.authoritative && error?.code !== 'ENOENT') return [];
     }
   }
 

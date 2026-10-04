@@ -91,10 +91,21 @@ describe("persistence schema tripwire", () => {
     expect(facts).toMatchObject({
       kind: "sqlite-runtime",
       module: "lib/memory/fact-store.ts",
-      runtimeSchema: { userVersion: 3 },
+      runtimeSchema: { userVersion: 4 },
     });
     expect(facts.runtimeSchema.objects.some((entry) => entry.name === "facts_fts")).toBe(true);
     expect(facts.runtimeSchema.objects.every((entry) => !entry.name.startsWith("facts_fts_"))).toBe(true);
+    const factsDdl = facts.runtimeSchema.objects.find((entry) => entry.name === "facts").sql;
+    for (const column of ["memory_scope", "source_dependencies", "source_revision", "source_status", "source_invalidated_reason"]) {
+      expect(factsDdl).toContain(column);
+    }
+    expect(first.schemas.find((entry) => entry.storeId === "agent-scoped-memory-derivations")).toMatchObject({
+      kind: "runtime-contract", module: "lib/memory/scoped-derivation-store.ts",
+      protocolModules: expect.arrayContaining([
+        expect.objectContaining({ module: "shared/memory-scope.ts" }),
+        expect.objectContaining({ module: "shared/memory-provenance.ts" }),
+      ]),
+    });
 
     const sessions = first.schemas.find((entry) => entry.storeId === "session-jsonl");
     expect(sessions).toMatchObject({
@@ -146,6 +157,18 @@ describe("persistence schema tripwire", () => {
       inventory,
       sourceOverrides: new Map([[coordinatorModule, mutatedCoordinator]]),
     })).rejects.toThrow(/persistence schema fingerprint mismatch/);
+  });
+
+  it("rejects scope or scoped-manifest protocol drift rather than treating it as an untracked cache", async () => {
+    const committed = JSON.parse(fs.readFileSync(FINGERPRINT_PATH, "utf-8"));
+    const inventory = JSON.parse(fs.readFileSync(INVENTORY_PATH, "utf-8"));
+    for (const module of ["shared/memory-scope.ts", "lib/memory/scoped-derivation-store.ts"]) {
+      const changed = `${fs.readFileSync(path.join(ROOT, module), "utf-8")}\nexport const scopedProtocolDriftProbe = 1;\n`;
+      await expect(assertCommittedPersistenceSchemaFingerprint({
+        rootDir: ROOT, committedFingerprint: committed, inventory,
+        sourceOverrides: new Map([[module, changed]]),
+      })).rejects.toThrow(/persistence schema fingerprint mismatch/);
+    }
   });
 
   it("ignores comment-only drift in the sources it hashes", async () => {

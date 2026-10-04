@@ -16,9 +16,10 @@ function fixture() {
     { type: 'message', id: 'a1', timestamp: '2026-09-01T00:01:00Z', message: { role: 'assistant', content: [{ type: 'text', text: '我会带伞，明天再谈离开的事。' }] } },
     { type: 'message', id: 'u2', timestamp: '2026-09-01T00:02:00Z', message: { role: 'user', content: '好。' } },
   ];
-  const manifest = { ownerAgentId: 'agent-a', lifecycle: 'active', currentLocator: { path: sessionPath } };
+  const manifest = { memoryScope: undefined, ownerAgentId: 'agent-a', lifecycle: 'active', currentLocator: { path: sessionPath } };
   const engine = {
     agentsDir,
+    getSessionMemoryScope: () => manifest.memoryScope,
     getSessionManifest: (id) => id === 'session-a' ? manifest : null,
     openSessionManagerAtCurrentBranch: () => ({ getBranch: () => branch }),
     resolveUtilityConfig: () => ({ utility: 'configured-scene-model', api: 'openai-completions', base_url: 'https://configured.example/v1', api_key: 'mock-key' }),
@@ -208,5 +209,68 @@ describe('M5 local scene evidence route', () => {
     });
     expect(response.status).toBe(409);
     expect(callText).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe('L1 scene provenance and scope', () => {
+  const story = { version: 1, agentId: 'agent-a', realm: 'story', worldId: 'same-world', branchId: 'a', knowledge: 'shared' };
+  it('verifies unchanged pre-L1 legacy text hashes without allowing the fallback for new/scoped candidates', async () => {
+    const { post, manifest, branch } = fixture();
+    const old = { agentId: 'agent-a', sessionId: 'session-a', sourceRefs: [{ entryId: 'u1', role: 'user', hash: sceneSourceHash('我们在月台见面。') }], sections: [{ kind: 'location', text: '我们在月台见面。', inference: false, evidence: [{ entryId: 'u1', quote: '我们在月台见面。' }] }] };
+    expect((await (await post('validate', old)).json()).valid).toBe(true);
+    const fresh = await (await post('generate', { agentId: 'agent-a', sessionId: 'session-a', startEntryId: 'u1', endEntryId: 'u1' })).json();
+    expect((await (await post('validate', { ...old, sourceRevision: fresh.sourceRevision })).json()).valid).toBe(false);
+    branch[0].message.content = '我们改在港口见面。';
+    expect((await (await post('validate', old)).json()).valid).toBe(false);
+    branch[0].message.content = '我们在月台见面。';
+    manifest.memoryScope = story;
+    expect((await (await post('validate', { ...old, memoryScope: story })).json()).valid).toBe(false);
+  });
+  it('returns author viewpoint separately from persisted candidate scope', async () => {
+    const { app, post, manifest } = fixture();
+    manifest.memoryScope = { ...story, knowledge: 'author', viewpoint: 'author' };
+    const snapshot = await (await app.request('/api/xingye/scene-summary/sources?agentId=agent-a&sessionId=session-a')).json();
+    expect(snapshot.memoryContext.viewpoint).toBe('author');
+    expect(snapshot.memoryScope).not.toHaveProperty('viewpoint');
+    const draft = await (await post('generate', { agentId: 'agent-a', sessionId: 'session-a', startEntryId: 'u1', endEntryId: 'a1' })).json();
+    expect(draft.memoryContext.viewpoint).toBe('author');
+    expect(draft.memoryScope.knowledge).toBe('author');
+    expect(draft.memoryScope).not.toHaveProperty('viewpoint');
+  });
+  it('uses trusted session scope rather than model/request scope and preserves original-message dependencies', async () => {
+    const { post, manifest, branch } = fixture();
+    manifest.memoryScope = story;
+    const draft = await (await post('generate', { agentId: 'agent-a', sessionId: 'session-a', startEntryId: 'u1', endEntryId: 'a1', memoryScope: { ...story, branchId: 'forged' } })).json();
+    expect(draft.memoryScope).toEqual(story);
+    expect(draft.sourceDependencies).toEqual([{ sessionId: 'session-a', revision: draft.sourceRevision, sourceRefs: draft.sourceRefs }]);
+    const body = { agentId: 'agent-a', ...draft };
+    expect((await (await post('validate', body)).json()).valid).toBe(true);
+    // Revision/hash changes even when display text is unchanged.
+    branch[0].message.privateRevision = 2;
+    expect((await (await post('validate', body)).json()).valid).toBe(false);
+  });
+  it('rejects same-message validation and late model completion on a different branch', async () => {
+    const { post, manifest } = fixture();
+    manifest.memoryScope = story;
+    const request = { agentId: 'agent-a', sessionId: 'session-a', startEntryId: 'u1', endEntryId: 'a1' };
+    const draft = await (await post('generate', request)).json();
+    manifest.memoryScope = { ...story, branchId: 'b' };
+    expect((await (await post('validate', { agentId: 'agent-a', ...draft })).json()).valid).toBe(false);
+    manifest.memoryScope = story;
+    vi.mocked(callText).mockImplementation(async () => {
+      manifest.memoryScope = { ...story, branchId: 'b' };
+      return JSON.stringify({ memoryScope: story, sections: draft.sections });
+    });
+    expect((await post('generate', { ...request, generator: 'model', providerConsent: true })).status).toBe(409);
+  });
+  it('fails closed for malformed explicit scope and omitted story validation provenance', async () => {
+    const { post, manifest } = fixture();
+    manifest.memoryScope = { ...story, branchId: undefined };
+    const request = { agentId: 'agent-a', sessionId: 'session-a', startEntryId: 'u1', endEntryId: 'a1' };
+    expect((await post('generate', request)).status).toBe(400);
+    manifest.memoryScope = story;
+    const draft = await (await post('generate', request)).json();
+    expect((await (await post('validate', { agentId: 'agent-a', sessionId: 'session-a', sourceRefs: draft.sourceRefs, sections: draft.sections })).json()).valid).toBe(false);
   });
 });

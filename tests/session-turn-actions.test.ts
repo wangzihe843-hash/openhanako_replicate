@@ -67,7 +67,7 @@ describe("replayLatestUserTurn", () => {
       discardedTaskIds: [],
     }, "/tmp/main.jsonl");
     expect(engine.setSessionBranchHead).toHaveBeenCalledWith("/tmp/main.jsonl", {
-      leafId: priorAssistantId,
+      leafId: manager.getLeafId(),
       reason: "replay_rewind",
     });
     expect(submit).toHaveBeenCalledWith(engine, expect.objectContaining({
@@ -291,7 +291,11 @@ describe("replayLatestUserTurn", () => {
       sourceEntryId: latestUserId,
     }, { submit })).rejects.toThrow("manifest disk full");
 
-    expect(manager.getLeafId()).toBe(oldLeafId);
+    expect(manager.getBranch().at(-1)).toMatchObject({
+      parentId: oldLeafId,
+      customType: "hana-session-branch-reset",
+      data: { rolledBack: true },
+    });
     expect(submit).toHaveBeenCalledOnce();
     expect(submit).toHaveBeenCalledWith(engine, expect.objectContaining({
       beforeInputSideEffects: expect.any(Function),

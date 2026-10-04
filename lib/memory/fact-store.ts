@@ -11,6 +11,39 @@
 import { createRequire } from "module";
 import { scrubPII } from "../pii-guard.ts";
 import { createModuleLogger } from "../debug-log.ts";
+import {
+  canReadMemoryScope,
+  normalizeMemoryScope,
+  normalizeMemoryScopeContext,
+} from "../../shared/memory-scope.ts";
+import {
+  normalizeMemorySourceDependencies,
+  type MemorySourceDependency,
+} from "../../shared/memory-provenance.ts";
+
+export type FactSourceDependency = MemorySourceDependency;
+export interface FactRuntimeOptions {
+  memoryScope?: unknown;
+  sourceDependencies?: FactSourceDependency[];
+  currentSourceDependencies?: FactSourceDependency[];
+  sourceRevision?: string;
+  sourceStatus?: 'active' | 'stale';
+}
+interface FactSearchOptions {
+  scope?: { kind: 'channel'; channelId: string } | null;
+  dateRange?: { from?: string; to?: string };
+  memoryScope?: unknown;
+}
+
+function normalizeSourceDependencies(value: unknown): FactSourceDependency[] {
+  // Retain hashes, source refs and generation fences as well as session/revision.
+  // Losing those during export/reimport would erase the provenance evidence.
+  const unique = new Map<string, FactSourceDependency>();
+  for (const dependency of normalizeMemorySourceDependencies(value)) {
+    unique.set(JSON.stringify(dependency), dependency);
+  }
+  return [...unique.values()];
+}
 
 const log = createModuleLogger("fact-store");
 
@@ -29,7 +62,7 @@ export function loadBetterSqliteDatabase() {
  * 当前 schema 版本。每次改表结构时递增，
  * 并在 _migrate() 里添加对应的迁移逻辑。
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const CJK_RUN_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
 
@@ -100,13 +133,22 @@ export class FactStore {
   declare _tagSearchCache: any;
   declare _ftsSearchCache: Map<string, { all: (params: Record<string, string | number>) => unknown[] }>;
   declare db: any;
+  declare agentId: string;
   /**
    * @param {string} dbPath - facts.db 的路径
    * @param {{ Database?: import("better-sqlite3") }} [opts]
    */
   constructor(dbPath, opts: any = {}) {
     const Database = opts.Database || loadBetterSqliteDatabase();
+    this.agentId = normalizeMemoryScope(undefined, opts.agentId).agentId;
     this.db = new Database(dbPath);
+    this.db.function('memory_scope_can_read', { deterministic: true }, (record, context) => {
+      try {
+        const stored = record == null ? null : JSON.parse(record);
+        if (record != null && stored == null) return 0; // JSON null is not an old SQL NULL row.
+        return canReadMemoryScope(stored, JSON.parse(context), this.agentId) ? 1 : 0;
+      } catch { return 0; }
+    });
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
     this.db.pragma("cache_size = -16000");     // 16MB（默认 ~2MB）
@@ -204,6 +246,17 @@ export class FactStore {
               revision TEXT NOT NULL
             )`);
             break;
+          case 3:
+            // Additive migration: unclassified historical rows remain legacy.
+            this.db.exec(`
+              ALTER TABLE facts ADD COLUMN memory_scope TEXT;
+              ALTER TABLE facts ADD COLUMN source_dependencies TEXT NOT NULL DEFAULT '[]';
+              ALTER TABLE facts ADD COLUMN source_revision TEXT;
+              ALTER TABLE facts ADD COLUMN source_status TEXT NOT NULL DEFAULT 'active';
+              ALTER TABLE facts ADD COLUMN source_invalidated_reason TEXT;
+              CREATE INDEX IF NOT EXISTS idx_facts_source_status ON facts(source_status);
+            `);
+            break;
         }
         v++;
       }
@@ -242,12 +295,17 @@ export class FactStore {
   _prepareStatements() {
     this._stmts = {
       insert: this.db.prepare(`
-        INSERT INTO facts (fact, search_text, tags, time, session_id, created_at)
-        VALUES (@fact, @searchText, @tags, @time, @sessionId, @createdAt)
+        INSERT INTO facts (fact, search_text, tags, time, session_id, created_at,
+          memory_scope, source_dependencies, source_revision, source_status)
+        VALUES (@fact, @searchText, @tags, @time, @sessionId, @createdAt,
+          @memoryScope, @sourceDependencies, @sourceRevision, @sourceStatus)
       `),
-      getAll: this.db.prepare(`SELECT * FROM facts ORDER BY time DESC`),
-      getById: this.db.prepare(`SELECT * FROM facts WHERE id = ?`),
-      getBySession: this.db.prepare(`SELECT * FROM facts WHERE session_id = ? ORDER BY time DESC`),
+      getAll: this.db.prepare(`SELECT * FROM facts WHERE source_status = 'active'
+        AND memory_scope_can_read(memory_scope, @memoryContext) ORDER BY time DESC`),
+      getById: this.db.prepare(`SELECT * FROM facts WHERE id = @id AND source_status = 'active'
+        AND memory_scope_can_read(memory_scope, @memoryContext)`),
+      getBySession: this.db.prepare(`SELECT * FROM facts WHERE session_id = @sessionId AND source_status = 'active'
+        AND memory_scope_can_read(memory_scope, @memoryContext) ORDER BY time DESC`),
       deleteBySession: this.db.prepare(`DELETE FROM facts WHERE session_id = ?`),
       count: this.db.prepare(`SELECT COUNT(*) as cnt FROM facts`),
       deleteById: this.db.prepare(`DELETE FROM facts WHERE id = ?`),
@@ -256,14 +314,6 @@ export class FactStore {
       setSessionCommit: this.db.prepare(`INSERT INTO session_fact_commits (session_id, revision) VALUES (?, ?)
         ON CONFLICT(session_id) DO UPDATE SET revision = excluded.revision`),
       deleteSessionCommit: this.db.prepare(`DELETE FROM session_fact_commits WHERE session_id = ?`),
-      ftsSearch: this.db.prepare(`
-        SELECT f.*, rank
-        FROM facts_fts fts
-        JOIN facts f ON f.id = fts.rowid
-        WHERE facts_fts MATCH ?
-        ORDER BY rank
-        LIMIT ?
-      `),
     };
   }
 
@@ -272,7 +322,21 @@ export class FactStore {
    * @param {{ fact: string, tags: string[], time?: string, session_id?: string }} entry
    * @returns {{ id: number }}
    */
-  add(entry) {
+  add(entry, runtimeOptions: FactRuntimeOptions = {}) {
+    // Explicit runtime metadata always wins over data returned by an extractor.
+    const memoryScope = normalizeMemoryScope(
+      Object.hasOwn(runtimeOptions, 'memoryScope') ? runtimeOptions.memoryScope : entry.memoryScope,
+      this.agentId,
+    );
+    const sourceDependencies = normalizeSourceDependencies(
+      runtimeOptions.sourceDependencies ?? entry.sourceDependencies,
+    );
+    const sourceStatus = runtimeOptions.sourceStatus ?? entry.sourceStatus ?? 'active';
+    if (sourceStatus !== 'active' && sourceStatus !== 'stale') throw new TypeError('invalid fact sourceStatus');
+    const sourceRevision = runtimeOptions.sourceRevision ?? entry.sourceRevision ?? null;
+    if (sourceRevision !== null && (typeof sourceRevision !== 'string' || !sourceRevision)) {
+      throw new TypeError('invalid fact sourceRevision');
+    }
     const { cleaned, detected } = scrubPII(entry.fact);
     if (detected.length > 0) {
       log.warn(`PII detected (${detected.join(", ")}), redacted before storage`);
@@ -286,6 +350,10 @@ export class FactStore {
       time: entry.time || null,
       sessionId: entry.session_id || null,
       createdAt: now,
+      memoryScope: JSON.stringify(memoryScope),
+      sourceDependencies: JSON.stringify(sourceDependencies),
+      sourceRevision,
+      sourceStatus,
     });
     return { id: Number(result.lastInsertRowid) };
   }
@@ -295,10 +363,10 @@ export class FactStore {
    * @param {Array<{ fact: string, tags: string[], time?: string, session_id?: string }>} entries
    * @returns {number} 写入条数
    */
-  addBatch(entries) {
+  addBatch(entries, runtimeOptions: FactRuntimeOptions = {}) {
     const run = this.db.transaction(() => {
       for (const entry of entries) {
-        this.add(entry);
+        this.add(entry, runtimeOptions);
       }
     });
     run();
@@ -310,16 +378,18 @@ export class FactStore {
   }
 
   /** Facts and their source revision commit together; text is never a dedupe key. */
-  commitSessionRevision(sessionId, revision, entries, { replace = false } = {}) {
+  commitSessionRevision(sessionId, revision, entries, options: FactRuntimeOptions & { replace?: boolean } = {}) {
+    const { replace = false } = options;
+    if (Object.hasOwn(options, 'memoryScope')) normalizeMemoryScope(options.memoryScope, this.agentId);
     const owner = typeof sessionId === "string" ? sessionId.trim() : "";
     if (!owner || typeof revision !== "string" || !revision) throw new Error("fact commit requires sessionId and revision");
     if (!Array.isArray(entries)) throw new Error("fact commit requires an entries array");
     return this.db.transaction(() => {
       if (this.getSessionCommitRevision(owner) === revision) return 0;
       if (replace) {
-        this.replaceBySession(owner, entries);
+        this.replaceBySession(owner, entries, { ...options, sourceRevision: revision });
       } else {
-        for (const entry of entries) this.add({ ...entry, session_id: owner });
+        for (const entry of entries) this.add({ ...entry, session_id: owner }, { ...options, sourceRevision: revision });
       }
       this._stmts.setSessionCommit.run(owner, revision);
       return entries.length;
@@ -330,12 +400,18 @@ export class FactStore {
    * Replace every fact owned by one stable session in a single transaction.
    * FTS stays consistent through the existing delete/insert triggers.
    */
-  replaceBySession(sessionId, entries) {
+  replaceBySession(sessionId, entries, runtimeOptions: FactRuntimeOptions = {}) {
+    if (Object.hasOwn(runtimeOptions, 'memoryScope')) normalizeMemoryScope(runtimeOptions.memoryScope, this.agentId);
     const stableSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
     if (!stableSessionId) throw new Error("replaceBySession requires sessionId");
     if (!Array.isArray(entries)) throw new Error("replaceBySession requires an entries array");
 
     const run = this.db.transaction(() => {
+      if (runtimeOptions.currentSourceDependencies !== undefined) {
+        this.invalidateSourceEntries(stableSessionId, runtimeOptions.currentSourceDependencies);
+      } else {
+        this.invalidateSource(stableSessionId, { reason: 'source replaced' });
+      }
       this._stmts.deleteBySession.run(stableSessionId);
       this._stmts.deleteSessionCommit.run(stableSessionId);
       for (const entry of entries) {
@@ -345,7 +421,7 @@ export class FactStore {
         this.add({
           ...entry,
           session_id: stableSessionId,
-        });
+        }, runtimeOptions);
       }
     });
     run();
@@ -363,12 +439,12 @@ export class FactStore {
    * @param {{ kind: 'channel', channelId: string } | null} [scope] - SQL LIMIT 前过滤频道作用域
    * @returns {Array<{ id, fact, tags, time, session_id, created_at, matchCount }>}
    */
-  searchByTags(queryTags, dateRange, limit = 20, scope: { kind: 'channel'; channelId: string } | null = null) {
+  searchByTags(queryTags, dateRange, limit = 20, scope: { kind: 'channel'; channelId: string } | null = null, memoryScope?: unknown) {
     if (!queryTags || queryTags.length === 0) return [];
 
     const stmt = this._getTagSearchStmt(queryTags.length, dateRange, scope);
 
-    const params: any = { limit };
+    const params: Record<string, string | number> = { limit, memoryContext: this._memoryContext(memoryScope) };
     for (let i = 0; i < queryTags.length; i++) {
       params[`tag${i}`] = queryTags[i];
     }
@@ -402,6 +478,7 @@ export class FactStore {
       SELECT f.*, COUNT(DISTINCT je.value) as matchCount
       FROM facts f, json_each(f.tags) je
       WHERE je.value IN (${placeholders})${dateWhere}${scopeWhere}
+        AND f.source_status = 'active' AND memory_scope_can_read(f.memory_scope, @memoryContext)
       GROUP BY f.id
       ORDER BY matchCount DESC, f.time DESC
       LIMIT @limit
@@ -420,8 +497,10 @@ export class FactStore {
    * @param {{scope?: {kind:'channel', channelId:string}, dateRange?: {from?:string, to?:string}}} [opts]
    * @returns {Array<{ id, fact, tags, time, session_id, created_at }>}
    */
-  searchFullText(query, limit = 20, opts: { scope?: { kind: 'channel'; channelId: string } | null; dateRange?: { from?: string; to?: string } } = {}) {
+  searchFullText(query, limit = 20, opts: FactSearchOptions = {}) {
     if (!query || !query.trim()) return [];
+    // Validate outside the FTS fallback: malformed scope must not become legacy.
+    const memoryContext = this._memoryContext(opts.memoryScope);
 
     try {
       const ftsQuery = buildFtsQuery(query);
@@ -430,8 +509,8 @@ export class FactStore {
       const scope = opts?.scope;
       const dateRange = opts?.dateRange;
       const scoped = scope?.kind === "channel" && !!scope.channelId;
-      const where = ["facts_fts MATCH @query"];
-      const params: Record<string, string | number> = { query: ftsQuery, limit };
+      const where = ["facts_fts MATCH @query", "f.source_status = 'active'", "memory_scope_can_read(f.memory_scope, @memoryContext)"];
+      const params: Record<string, string | number> = { query: ftsQuery, limit, memoryContext };
       if (scoped) {
         where.push("(f.session_id IS NULL OR substr(f.session_id, 1, 8) <> 'channel-' OR f.session_id = @channelSession)");
         params.channelSession = `channel-${scope.channelId}`;
@@ -444,23 +523,18 @@ export class FactStore {
         where.push("(f.time IS NULL OR f.time <= @dateTo)");
         params.dateTo = dateRange.to;
       }
-      let rows;
-      if (!scoped && !dateRange?.from && !dateRange?.to) {
-        rows = this._stmts.ftsSearch.all(ftsQuery, limit);
-      } else {
-        const cacheKey = `${scoped ? 1 : 0}:${dateRange?.from ? 1 : 0}:${dateRange?.to ? 1 : 0}`;
-        let stmt = this._ftsSearchCache.get(cacheKey);
-        if (!stmt) {
-          stmt = this.db.prepare(`
-            SELECT f.*, rank FROM facts_fts fts
-            JOIN facts f ON f.id = fts.rowid
-            WHERE ${where.join(" AND ")}
-            ORDER BY rank LIMIT @limit
-          `);
-          this._ftsSearchCache.set(cacheKey, stmt);
-        }
-        rows = stmt.all(params);
+      const cacheKey = `${scoped ? 1 : 0}:${dateRange?.from ? 1 : 0}:${dateRange?.to ? 1 : 0}`;
+      let stmt = this._ftsSearchCache.get(cacheKey);
+      if (!stmt) {
+        stmt = this.db.prepare(`
+          SELECT f.*, rank FROM facts_fts fts
+          JOIN facts f ON f.id = fts.rowid
+          WHERE ${where.join(" AND ")}
+          ORDER BY rank LIMIT @limit
+        `);
+        this._ftsSearchCache.set(cacheKey, stmt);
       }
+      const rows = stmt.all(params);
       if (rows.length === 0 && hasCjk(query)) {
         return this._likeFallback(query, limit, opts);
       }
@@ -474,11 +548,11 @@ export class FactStore {
   /**
    * LIKE 降级搜索（FTS 失败时使用）
    */
-  _likeFallback(query, limit, opts: { scope?: { kind: 'channel'; channelId: string } | null; dateRange?: { from?: string; to?: string } } = {}) {
+  _likeFallback(query, limit, opts: FactSearchOptions = {}) {
     const scope = opts?.scope;
     const dateRange = opts?.dateRange;
-    const where = ["fact LIKE '%' || @query || '%'"];
-    const params: Record<string, string | number> = { query, limit };
+    const where = ["fact LIKE '%' || @query || '%'", "source_status = 'active'", "memory_scope_can_read(memory_scope, @memoryContext)"];
+    const params: Record<string, string | number> = { query, limit, memoryContext: this._memoryContext(opts.memoryScope) };
     if (scope?.kind === "channel" && scope.channelId) {
       where.push("(session_id IS NULL OR substr(session_id, 1, 8) <> 'channel-' OR session_id = @channelSession)");
       params.channelSession = `channel-${scope.channelId}`;
@@ -498,13 +572,13 @@ export class FactStore {
   }
 
   /** 获取所有元事实（按时间降序） */
-  getAll() {
-    return this._stmts.getAll.all().map((row) => this._rowToFact(row));
+  getAll(memoryScope?: unknown) {
+    return this._stmts.getAll.all({ memoryContext: this._memoryContext(memoryScope) }).map((row) => this._rowToFact(row));
   }
 
   /** 按 session_id 查询 */
-  getBySession(sessionId) {
-    return this._stmts.getBySession.all(sessionId).map((row) => this._rowToFact(row));
+  getBySession(sessionId, memoryScope?: unknown) {
+    return this._stmts.getBySession.all({ sessionId, memoryContext: this._memoryContext(memoryScope) }).map((row) => this._rowToFact(row));
   }
 
   /** 删除一个 session 派生出的全部深度记忆事实。FTS 由 facts_ad trigger 同步。 */
@@ -512,14 +586,15 @@ export class FactStore {
     const normalized = typeof sessionId === "string" ? sessionId.trim() : "";
     if (!normalized) throw new Error("fact invalidation requires sessionId");
     return this.db.transaction(() => {
+      this.invalidateSource(normalized, { reason: 'source deleted' });
       this._stmts.deleteSessionCommit.run(normalized);
       return this._stmts.deleteBySession.run(normalized).changes;
     })();
   }
 
   /** 按 id 查询 */
-  getById(id) {
-    const row = this._stmts.getById.get(id);
+  getById(id, memoryScope?: unknown) {
+    const row = this._stmts.getById.get({ id, memoryContext: this._memoryContext(memoryScope) });
     return row ? this._rowToFact(row) : null;
   }
 
@@ -544,7 +619,8 @@ export class FactStore {
 
   /** 导出所有（不含内部字段），供 API 使用 */
   exportAll() {
-    return this.getAll();
+    // Administrative backup only; retrieval and prompt paths must use getAll(context).
+    return this.db.prepare('SELECT * FROM facts ORDER BY time DESC').all().map((row) => this._rowToFact(row));
   }
 
   /**
@@ -559,10 +635,93 @@ export class FactStore {
           tags: entry.tags || [],
           time: entry.time || null,
           session_id: entry.session_id || null,
+          memoryScope: entry.memoryScope,
+          sourceDependencies: entry.sourceDependencies,
+          sourceRevision: entry.sourceRevision,
+          sourceStatus: entry.sourceStatus,
         });
       }
     });
     run();
+  }
+
+  /** Mark provenance stale without deleting historical evidence. */
+  invalidateSource(sessionId, { revision, reason = 'source invalidated' }: { revision?: string; reason?: string } = {}) {
+    const owner = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!owner || (revision !== undefined && (typeof revision !== 'string' || !revision))) {
+      throw new TypeError('fact invalidation requires a source session and valid revision');
+    }
+    return this.db.transaction(() => {
+      const result = this.db.prepare(`UPDATE facts SET source_status = 'stale', source_invalidated_reason = @reason
+        WHERE source_status = 'active' AND (
+          (session_id = @sessionId AND (@revision IS NULL OR source_revision IS NULL OR source_revision = @revision))
+          OR EXISTS (SELECT 1 FROM json_each(facts.source_dependencies) source
+            WHERE json_extract(source.value, '$.sessionId') = @sessionId
+              AND (@revision IS NULL OR json_extract(source.value, '$.revision') IS NULL
+                OR json_extract(source.value, '$.revision') = @revision))
+        )`).run({ sessionId: owner, revision: revision ?? null, reason: String(reason) });
+      if (revision === undefined || this.getSessionCommitRevision(owner) === revision) {
+        this._stmts.deleteSessionCommit.run(owner);
+      }
+      return result.changes;
+    })();
+  }
+
+  /**
+   * Revalidate only facts depending on this source against its current entry
+   * tokens. A changed/deleted A must not evict a fact supported solely by B.
+   */
+  invalidateSourceEntries(sessionId: string, currentDependencies: FactSourceDependency[]): number {
+    const owner = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!owner) throw new TypeError('entry invalidation requires source sessionId');
+    if (!Array.isArray(currentDependencies)) throw new TypeError('current source dependencies must be an array');
+    // Per-fact provenance is bounded, but a whole transcript may exceed that
+    // bound. Validate individual tokens without truncating the active snapshot.
+    const active = new Map<string | null, FactSourceDependency>();
+    for (const raw of currentDependencies) {
+      const source = normalizeSourceDependencies([raw])[0];
+      if (source.sessionId !== owner) continue;
+      const key = source.entryId ?? null;
+      const previous = active.get(key);
+      if (previous && JSON.stringify(previous) !== JSON.stringify(source)) throw new TypeError('conflicting current source entry tokens');
+      active.set(key, source);
+    }
+    const aggregate = active.get(null);
+    const stillCurrent = (source: FactSourceDependency): boolean => {
+      const token = active.get(source.entryId ?? null);
+      if (!token || (source.revision === undefined && source.hash === undefined && source.generation === undefined)) return false;
+      return (source.revision === undefined || source.revision === token.revision)
+        && (source.hash === undefined || source.hash === token.hash)
+        && (source.generation === undefined || source.generation === token.generation);
+    };
+    return this.db.transaction(() => {
+      const rows = this.db.prepare(`SELECT id, session_id, source_revision, source_dependencies FROM facts
+        WHERE source_status = 'active' AND (session_id = @sessionId OR EXISTS (
+          SELECT 1 FROM json_each(CASE WHEN json_valid(source_dependencies) THEN source_dependencies ELSE '[]' END) source
+          WHERE json_extract(source.value, '$.sessionId') = @sessionId
+        ))`).all({ sessionId: owner });
+      const stale = this.db.prepare("UPDATE facts SET source_status = 'stale', source_invalidated_reason = 'source entry changed' WHERE id = ?");
+      let count = 0;
+      for (const row of rows) {
+        let dependencies: FactSourceDependency[];
+        try { dependencies = normalizeSourceDependencies(JSON.parse(row.source_dependencies)); }
+        catch { count += stale.run(row.id).changes; continue; }
+        const ownedDependencies = dependencies.filter(source => source.sessionId === owner);
+        // Explicit entry tokens supersede the old aggregate receipt on a fact.
+        const valid = ownedDependencies.length
+          ? ownedDependencies.every(stillCurrent)
+          : row.session_id === owner && !!aggregate && !!row.source_revision && row.source_revision === aggregate.revision;
+        if (!valid) count += stale.run(row.id).changes;
+      }
+      // Commit receipts contain summary revisions, not source-token revisions.
+      // Leave an unchanged receipt alone; new summaries already have new keys.
+      if (count > 0) this._stmts.deleteSessionCommit.run(owner);
+      return count;
+    })();
+  }
+
+  _memoryContext(value?: unknown): string {
+    return JSON.stringify(normalizeMemoryScopeContext(value, this.agentId));
   }
 
   /** 关闭数据库连接 */
@@ -572,6 +731,8 @@ export class FactStore {
 
   /** 行 → 对象 */
   _rowToFact(row) {
+    const storedScope = row.memory_scope == null ? null : JSON.parse(row.memory_scope);
+    if (row.memory_scope != null && storedScope == null) throw new TypeError('invalid persisted memory scope');
     return {
       id: row.id,
       fact: row.fact,
@@ -582,6 +743,13 @@ export class FactStore {
       session_id: row.session_id,
       created_at: row.created_at,
       matchCount: row.matchCount ?? undefined,
+      // Never export corrupt explicit scope as null: reimporting that would
+      // silently reclassify it as legacy. A corrupt administrative export fails.
+      memoryScope: normalizeMemoryScope(storedScope, this.agentId),
+      sourceDependencies: normalizeSourceDependencies(JSON.parse(row.source_dependencies || '[]')),
+      sourceRevision: row.source_revision ?? null,
+      sourceStatus: row.source_status ?? 'active',
+      sourceInvalidatedReason: row.source_invalidated_reason ?? null,
     };
   }
 }

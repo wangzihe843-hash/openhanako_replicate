@@ -8,7 +8,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const SMOKE_ENABLED = process.platform === "win32" && process.env.HANA_WIN32_SMOKE === "1";
 const smokeDescribe = SMOKE_ENABLED ? describe : describe.skip;
@@ -21,7 +21,7 @@ smokeDescribe("win32 packaged smoke", () => {
   });
 
   afterAll(() => {
-    fs.rmSync(workDir, { recursive: true, force: true });
+    fs.rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   async function loadExec() {
@@ -58,13 +58,15 @@ smokeDescribe("win32 packaged smoke", () => {
   it("3. POSIX route launches via the resolved bash runtime", async () => {
     const exec = (await loadExec())();
     const chunks: string[] = [];
-    const result = await exec("printf '%s\\n' smoke-ok | tr a-z A-Z", workDir, {
+    // Unqualified commands use Windows PowerShell semantics. Request the
+    // POSIX compatibility runtime explicitly, including bundled MinGit sh.
+    const result = await exec("sh -c \"printf '%s\\n' smoke-ok | tr a-z A-Z\"", workDir, {
       onData: (b: any) => chunks.push(String(b)),
       signal: undefined,
       timeout: 60,
       env: process.env,
     });
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode, chunks.join("")).toBe(0);
     expect(chunks.join("")).toContain("SMOKE-OK");
   });
 
@@ -95,7 +97,7 @@ smokeDescribe("win32 packaged smoke", () => {
       });
       expect(result.exitCode).toBe(0);
     } finally {
-      fs.rmSync(hanakoHome, { recursive: true, force: true });
+      fs.rmSync(hanakoHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -105,12 +107,21 @@ smokeDescribe("win32 packaged smoke", () => {
       const { TerminalSessionManager } = await import("../../lib/terminal/terminal-session-manager.ts");
       const manager = new TerminalSessionManager({ hanakoHome });
       const sessionPath = path.join(hanakoHome, "smoke-session.jsonl");
-      const started = await manager.start({ sessionPath, agentId: "smoke", cwd: workDir });
+      const started = await manager.start({
+        sessionPath, agentId: "smoke", cwd: workDir,
+        command: "Write-Output 'PTY-SMOKE'; exit 0",
+      });
       expect(started.status).toBe("running");
       expect(started.terminalId).toBeTruthy();
+      await vi.waitFor(() => {
+        const terminal = manager.list(sessionPath).terminals.find(row => row.terminalId === started.terminalId);
+        expect(terminal?.status).toBe("exited");
+        expect(terminal?.exitCode).toBe(0);
+      }, { timeout: 5000, interval: 50 });
       manager.close({ sessionPath, terminalId: started.terminalId });
     } finally {
-      fs.rmSync(hanakoHome, { recursive: true, force: true });
+      // ConPTY can release the process cwd just after close() returns.
+      fs.rmSync(hanakoHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 

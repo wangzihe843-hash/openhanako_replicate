@@ -4,7 +4,9 @@ import { createPreferencesRoute } from "../server/routes/preferences.ts";
 
 function makeApp(engine, options: any = {}) {
   const app = new Hono();
-  app.route("/api", createPreferencesRoute(engine, options));
+  // Happy-path fixtures explicitly target a supported native platform even
+  // when this unit suite itself runs on Linux. Rejection tests override it.
+  app.route("/api", createPreferencesRoute(engine, { platform: "darwin", ...options }));
   return app;
 }
 
@@ -72,7 +74,7 @@ describe("Computer Use preference routes", () => {
       providers: [],
       activeLease: null,
     });
-    expect(body.selectedProviderId).toBe(body.settings.provider_by_platform[process.platform] || null);
+    expect(body.selectedProviderId).toBe(body.settings.provider_by_platform.darwin);
   });
 
   it("updates settings", async () => {

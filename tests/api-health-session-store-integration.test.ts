@@ -30,7 +30,7 @@ function waitForExit(child: ReturnType<typeof spawn>, timeoutMs = 15000): Promis
   });
 }
 
-function waitForServerInfo(serverInfoPath: string, child: ReturnType<typeof spawn>, timeoutMs = 60000): Promise<any> {
+function waitForServerInfo(serverInfoPath: string, child: ReturnType<typeof spawn>, getStderr: () => string, timeoutMs = 60000): Promise<{ port: number; token: string; host: string; pid: number }> {
   return new Promise((resolve, reject) => {
     let exited = false;
     let exitInfo: any = null;
@@ -38,7 +38,7 @@ function waitForServerInfo(serverInfoPath: string, child: ReturnType<typeof spaw
     const deadline = Date.now() + timeoutMs;
     const poll = () => {
       if (exited) {
-        reject(new Error(`server exited before writing server-info.json: ${JSON.stringify(exitInfo)}`));
+        reject(new Error(`server exited before writing server-info.json: ${JSON.stringify(exitInfo)}\n${getStderr()}`));
         return;
       }
       try {
@@ -49,7 +49,7 @@ function waitForServerInfo(serverInfoPath: string, child: ReturnType<typeof spaw
         // not written yet
       }
       if (Date.now() > deadline) {
-        reject(new Error("timed out waiting for server-info.json"));
+        reject(new Error(`timed out waiting for server-info.json\n${getStderr()}`));
         return;
       }
       setTimeout(poll, 200);
@@ -65,6 +65,10 @@ async function spawnOpenServer(hanaHome: string) {
     env: {
       ...process.env,
       HANA_HOME: hanaHome,
+      // First-run seeding creates a desktop workspace under os.homedir().
+      // Keep that write inside the fixture rather than the developer's home.
+      HOME: path.join(hanaHome, "os-home"),
+      USERPROFILE: path.join(hanaHome, "os-home"),
       HANA_PORT: "0",
       HANA_ROOT: root,
       HANA_SERVER_ENTRY: path.join(root, "server", "main-open.ts"),
@@ -74,8 +78,15 @@ async function spawnOpenServer(hanaHome: string) {
   });
   let stderr = "";
   child.stderr.on("data", (chunk) => { stderr += chunk; });
-  const info = await waitForServerInfo(serverInfoPath, child);
-  return { child, info, getStderr: () => stderr };
+  child.stdout.resume();
+  try {
+    const info = await waitForServerInfo(serverInfoPath, child, () => stderr);
+    return { child, info, getStderr: () => stderr };
+  } catch (error) {
+    child.kill("SIGKILL");
+    await waitForExit(child);
+    throw error;
+  }
 }
 
 describe("/api/health sessionStore block (real spawned server)", () => {

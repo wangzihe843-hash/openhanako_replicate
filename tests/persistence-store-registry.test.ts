@@ -16,6 +16,7 @@ import {
   LocalProviderPluginStore,
 } from "../core/local-provider-plugin-store.ts";
 import { ChannelManager } from "../core/channel-manager.ts";
+import { ScopedDerivationStore } from "../lib/memory/scoped-derivation-store.ts";
 import { createDataEpochCheckpointProvider, expandStorePathPattern } from "../core/data-epoch-checkpoint-provider.ts";
 import { appendDmMessage } from "../lib/channels/channel-store.ts";
 import { recordOutboundDm } from "../lib/desk/social-awareness.js";
@@ -84,6 +85,26 @@ describe("persistent store registry", () => {
     }
   });
 
+  it("checkpoints the scoped manifest and its invalidation evidence under exactly one owner", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "hana-scoped-manifest-inventory-"));
+    tempDirs.push(home);
+    const relativePath = "agents/agent-a/memory/scoped-derivations.v1.json";
+    const store = new ScopedDerivationStore(path.dirname(path.join(home, relativePath)), { agentId: "agent-a" });
+    const memoryScope = { agentId: "agent-a", realm: "story", worldId: "world-a", branchId: "branch-a" };
+    const dependency = store.registerSource({ sessionId: "source-a", revision: "r1", memoryScope });
+    expect(store.commitArtifact({ kind: "today", slot: "today", body: "retained evidence", memoryScope, dependencies: [dependency] })).not.toBeNull();
+    store.invalidateSource("source-a");
+    const bytes = fs.readFileSync(path.join(home, relativePath));
+    expect(ownersOfExistingPath(home, relativePath)).toEqual(["agent-scoped-memory-derivations"]);
+    const receipt = await createDataEpochCheckpointProvider().create({
+      homeDir: home, fromEpoch: 1, toEpoch: 2, transitionId: "scoped-memory-inventory",
+      affectedStoreIds: ["agent-scoped-memory-derivations"],
+    });
+    expect(receipt.itemCount).toBe(1);
+    expect(fs.readFileSync(path.join(receipt.dir, "stores", "agent-scoped-memory-derivations", relativePath))).toEqual(bytes);
+    expect(store.readCompiledContext(memoryScope)).toBe("");
+  });
+
   it("keeps required store contracts explicit and session identity path-independent", () => {
     const ids = new Set(PERSISTENT_STORES.map((store) => store.id));
     expect([...ids]).toEqual(expect.arrayContaining([
@@ -102,6 +123,7 @@ describe("persistent store registry", () => {
       "security-audit-log",
       "user-preferences",
       "agent-facts-sqlite",
+      "agent-scoped-memory-derivations",
       "session-manifest-sqlite",
       "session-jsonl",
       "session-files",
@@ -146,6 +168,12 @@ describe("persistent store registry", () => {
 
     const facts = PERSISTENT_STORES.find((store) => store.id === "agent-facts-sqlite")!;
     expect(facts.schemaSource).toMatchObject({ kind: "sqlite-runtime", module: "lib/memory/fact-store.ts" });
+    const scopedMemory = PERSISTENT_STORES.find((store) => store.id === "agent-scoped-memory-derivations")!;
+    expect(scopedMemory.pathPatterns).toEqual(["agents/{agentId}/memory/scoped-derivations.v1.json"]);
+    expect(scopedMemory.schemaSource).toMatchObject({ kind: "runtime-contract", module: "lib/memory/scoped-derivation-store.ts" });
+    expect(scopedMemory.epochPolicy).toBe("epoch-managed");
+    expect(scopedMemory.checkpointPolicy).toContain("source session JSONL");
+    expect(scopedMemory.restorePolicy).toContain("revalidate source hashes/generations");
 
     const sessions = PERSISTENT_STORES.find((store) => store.id === "session-jsonl")!;
     expect(sessions.schemaSource).toMatchObject({

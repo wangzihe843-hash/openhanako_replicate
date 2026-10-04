@@ -45,6 +45,11 @@
  * Local unsigned run (mirrors the existing `npm run install:local`
  * convention):
  *   CSC_IDENTITY_AUTO_DISCOVERY=false SKIP_NOTARIZE=true npm run build:shell
+ *
+ * The --dir output is a structural package, not a complete Windows install
+ * surface: electron-builder only generates app-update.yml for updater-aware
+ * Windows targets such as NSIS. Build the NSIS target for Windows launch
+ * verification; never bypass the installed-surface integrity check.
  */
 import fs from "fs";
 import path from "path";
@@ -60,9 +65,12 @@ const ROOT = path.resolve(__dirname, "..");
 
 const SIGN_KEY_ENV_VAR = "HANA_SIGN_KEY";
 
-const VITE_BIN = path.join(ROOT, "node_modules", ".bin", "vite");
-const ELECTRON_BUILDER_BIN = path.join(ROOT, "node_modules", ".bin", "electron-builder");
-const ASAR_BIN = path.join(ROOT, "node_modules", ".bin", "asar");
+// Execute the JavaScript entrypoints with Node directly. npm's .bin entries
+// are POSIX symlinks/shell scripts or Windows .cmd shims, not portable native
+// executables for execFileSync. Avoid shell:true so paths remain literal argv.
+const VITE_CLI = path.join(ROOT, "node_modules", "vite", "bin", "vite.js");
+const ELECTRON_BUILDER_CLI = path.join(ROOT, "node_modules", "electron-builder", "cli.js");
+const ASAR_CLI = path.join(ROOT, "node_modules", "@electron", "asar", "bin", "asar.js");
 const VERIFY_SEED_KIT_SCRIPT = path.join(ROOT, "scripts", "verify-seed-kit.mjs");
 const MANIFEST_PATH = path.join(ROOT, "build", "shell-surface-manifest.json");
 
@@ -166,7 +174,9 @@ function verifyBuiltShellStructure({ platform, arch, childEnv }) {
   const resourcesDir = path.dirname(asarPath);
   log(`structural check: found asar at ${asarPath}`);
 
-  const asarListing = readOut(ASAR_BIN, ["list", asarPath], { env: childEnv }).split("\n").map((l) => l.trim()).filter(Boolean);
+  // asar list uses the host path separator; the manifest uses POSIX paths.
+  const asarListing = readOut(process.execPath, [ASAR_CLI, "list", asarPath], { env: childEnv })
+    .split("\n").map((l) => l.trim().replace(/\\/g, "/")).filter(Boolean);
 
   const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf-8"));
 
@@ -239,9 +249,9 @@ async function main() {
   }
 
   // ── 2-4. main / preload / splash — never renderer, never theme ──
-  run("build:main", VITE_BIN, ["build", "--config", "vite.config.main.js"], { env: childEnv });
-  run("build:preload", VITE_BIN, ["build", "--config", "vite.config.preload.js"], { env: childEnv });
-  run("build:splash", VITE_BIN, ["build", "--config", "vite.config.splash.ts"], { env: childEnv });
+  run("build:main", process.execPath, [VITE_CLI, "build", "--config", "vite.config.main.js"], { env: childEnv });
+  run("build:preload", process.execPath, [VITE_CLI, "build", "--config", "vite.config.preload.js"], { env: childEnv });
+  run("build:splash", process.execPath, [VITE_CLI, "build", "--config", "vite.config.splash.ts"], { env: childEnv });
 
   // ── 5. seed kit: verify an existing signed kit, never build one ──
   const { artifactOutDir } = assertSeedKitDirExists({ platform, arch });
@@ -264,7 +274,7 @@ async function main() {
   }
 
   // ── 6. electron-builder --dir ──
-  run("electron-builder --dir", ELECTRON_BUILDER_BIN, ["--dir"], { env: childEnv });
+  run("electron-builder --dir", process.execPath, [ELECTRON_BUILDER_CLI, "--dir"], { env: childEnv });
 
   // ── 7. structural self-check (never launches the built app) ──
   verifyBuiltShellStructure({ platform, arch, childEnv });
@@ -279,4 +289,4 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   });
 }
 
-export { assertSeedKitDirExists, buildChildEnv, findAsarOutputs, verifyBuiltShellStructure };
+export { assertSeedKitDirExists, buildChildEnv, findAsarOutputs, main, verifyBuiltShellStructure };

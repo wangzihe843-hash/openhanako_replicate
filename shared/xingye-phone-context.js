@@ -21,6 +21,7 @@ import {
   isXingyePeerRelationshipLoreEntry,
 } from './xingye-peer-lore.js';
 import { selectXingyeContextSections } from './xingye-context-selection.js';
+import { canReadMemoryScope } from './memory-scope.ts';
 
 const MAX_PEER_RELATIONSHIP_CHARS = 4_800;
 const MAX_LATEST_ALWAYS_LORE_CHARS = 2_400;
@@ -97,7 +98,10 @@ export function buildXingyeAgentPhoneTurnContext({
   // separately. The card can carry 2k of scene plus 4k of examples; appending
   // it to a near-full profile before selection would silently cut it away.
   try {
-    const currentProfile = readXingyeProfileJsonSync({ hanakoHome, agentId: aid });
+    const storedProfile = readXingyeProfileJsonSync({ hanakoHome, agentId: aid });
+    // Phone has no explicit narrative context. Do not relabel a story/author
+    // profile as ordinary conversation metadata when mirroring it into a turn.
+    const currentProfile = canReadMemoryScope(storedProfile?.memoryScope, undefined, aid) ? storedProfile : null;
     add('role-profile', 'role-profile', 110, buildXingyeAgentPhoneProfileContext({
       profile: currentProfile, agentName, locale, includeCharacterCard: false,
     }));

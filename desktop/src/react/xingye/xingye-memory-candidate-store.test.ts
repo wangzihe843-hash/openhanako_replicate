@@ -490,3 +490,58 @@ describe('scene archive candidates', () => {
     expect(getXingyeMemoryCandidate(candidate.id, storage)).toMatchObject({ status: 'pending', sceneSummary: { validity: 'stale' } });
   });
 });
+
+
+describe('L1 candidate scope and review races', () => {
+  const story = { version: 1 as const, agentId: 'agent-1', realm: 'story' as const, worldId: 'world', branchId: 'a', knowledge: 'shared' as const };
+  it('persists scope and full source invalidation metadata through reload and filters unrelated branches', () => {
+    const storage = new MemoryStorage();
+    const sourceDependencies = [{ sessionId: 's1', revision: 'r1', hash: 'f'.repeat(64), generation: 3, type: 'source', sourceRefs: [{ entryId: 'e1', hash: 'a'.repeat(64), role: 'user' }], upstreamSummaryIds: ['summary-a'] }];
+    const c = createXingyeMemoryCandidate('agent-1', { content: 'secret A', memoryScope: story, sourceDependencies, origin: 'derived' }, storage);
+    expect(getXingyeMemoryCandidate(c.id, storage)).toMatchObject({ memoryScope: story, sourceDependencies, origin: 'derived', sourceStatus: 'unknown' });
+    expect(listXingyeMemoryCandidates('agent-1', storage, { ...story, branchId: 'b' })).toEqual([]);
+    expect(listXingyeMemoryCandidates('agent-1', storage, story)).toHaveLength(1);
+    expect(() => createXingyeMemoryCandidate('agent-2', { content: 'wrong agent', memoryScope: story }, storage)).toThrow();
+  });
+  it('does not write a candidate edited while its GET is in flight', async () => {
+    const storage = new MemoryStorage();
+    const c = createXingyeMemoryCandidate('agent-1', { content: 'before' }, storage);
+    let resolveGet!: (response: Response) => void;
+    const fetchImpl = vi.fn(() => new Promise<Response>(resolve => { resolveGet = resolve; }));
+    const confirmation = confirmXingyeMemoryCandidateToPinned('agent-1', c.id, { storage, fetchImpl });
+    updateXingyeMemoryCandidate('agent-1', c.id, { content: 'after' }, storage);
+    resolveGet(Response.json({ pins: [] }));
+    await expect(confirmation).rejects.toThrow('candidate changed');
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(getXingyeMemoryCandidate(c.id, storage)?.status).toBe('pending');
+  });
+  it('keeps scene source identities immutable when review text is edited', () => {
+    const storage = new MemoryStorage();
+    const sceneSummary: XingyeSceneSummary = { sessionId: 's1', sourceRevision: 'revision-a', sourceRefs: [{ entryId: 'e1', hash: 'a'.repeat(64), role: 'user' }], sections: [{ kind: 'event', text: 'scene', inference: true, evidence: [] }], validity: 'unknown' };
+    const c = createXingyeMemoryCandidate('agent-1', { content: 'scene', target: 'scene_archive', sceneSummary }, storage);
+    expect(() => updateXingyeMemoryCandidate('agent-1', c.id, { sceneSummary: { ...sceneSummary, sessionId: 'other' } }, storage)).toThrow('immutable');
+    expect(getXingyeMemoryCandidate(c.id, storage)?.sourceDependencies).toMatchObject([{ sessionId: 's1', revision: 'revision-a', sourceRefs: sceneSummary.sourceRefs }]);
+  });
+  it('does not mark an archive written after the user rejects it during validation', async () => {
+    const storage = new MemoryStorage();
+    const c = createXingyeMemoryCandidate('agent-1', { content: 'scene', target: 'scene_archive', sourceDomain: 'scene_summary', sceneSummary: {
+      sessionId: 's1', sourceRefs: [{ entryId: 'u1', hash: 'a'.repeat(64), role: 'user' }], sections: [{ kind: 'event', text: 'scene', inference: true, evidence: [] }], validity: 'unknown',
+    } }, storage);
+    let resolveValidation!: (response: Response) => void;
+    const fetchImpl = vi.fn(() => new Promise<Response>(resolve => { resolveValidation = resolve; }));
+    const confirmation = confirmXingyeMemoryCandidate('agent-1', c.id, { storage, fetchImpl });
+    rejectXingyeMemoryCandidate('agent-1', c.id, storage);
+    resolveValidation(Response.json({ valid: true }));
+    await expect(confirmation).rejects.toThrow('candidate changed');
+    expect(getXingyeMemoryCandidate(c.id, storage)?.status).toBe('rejected');
+  });
+  it('sends frozen scope and dependencies to the structured pinned write path', async () => {
+    const storage = new MemoryStorage();
+    const sourceDependencies = [{ sessionId: 's1', revision: 'r1' }];
+    const c = createXingyeMemoryCandidate('agent-1', { content: 'scoped', memoryScope: story, sourceDependencies }, storage);
+    const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json({ pins: [], memoryScope: story })).mockResolvedValueOnce(Response.json({ ok: true }));
+    await confirmXingyeMemoryCandidateToPinned('agent-1', c.id, { storage, fetchImpl });
+    expect(fetchImpl.mock.calls[0][0]).toContain('sessionId=s1');
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toMatchObject({ sessionId: 's1', appendItem: { memoryScope: story, sourceDependencies, origin: 'manual' } });
+  });
+});

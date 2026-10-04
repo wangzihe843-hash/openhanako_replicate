@@ -61,7 +61,8 @@ it("B04 captures the actual pinned entity file including IDs and timestamps", as
   const captured = path.join(home, "data-epoch-checkpoints", "pins", "stores", "agent-memory", "agents", "audit", "pinned-memory.json");
   expect(fs.existsSync(captured)).toBe(true);
   expect(fs.readFileSync(captured)).toEqual(fs.readFileSync(path.join(agentDir, "pinned-memory.json")));
-  expect(JSON.parse(fs.readFileSync(captured, "utf8")).items).toEqual(items);
+  expect(JSON.parse(fs.readFileSync(captured, "utf8")).items).toMatchObject(items);
+  expect(JSON.parse(fs.readFileSync(captured, "utf8")).items[0]).toMatchObject({ memoryScope: { realm: "legacy", agentId: "audit" }, origin: "manual" });
   for (const name of markers) {
     expect(fs.readFileSync(path.join(path.dirname(captured), "memory", name), "utf8")).toBe("retained-marker");
   }

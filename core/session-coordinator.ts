@@ -1,4 +1,5 @@
 import { reportNonfatalError } from "../lib/nonfatal-error.ts";
+import type { ExpressionTransport } from "./session-dialogue-variants.ts";
 import type { SessionAbortRequest, SessionCancellation } from "./runtime-contracts.ts";
 import { cancelDesktopSessionSubmission } from './desktop-session-submit.ts';
 /**
@@ -9,7 +10,12 @@ import { cancelDesktopSessionSubmission } from './desktop-session-submit.ts';
  * 不持有 engine 引用，通过构造器注入依赖。
  */
 import fs from "fs";
+import { normalizeMemoryScopeContext } from "../shared/memory-scope.ts";
+import { memoryScopeFromBranch, SESSION_MEMORY_SCOPE_RECORD } from "./session-memory-scope.ts";
+import { prepareChannelPostRetryDispatch } from "../lib/task-outcome/effect-ledger.ts";
+import { setSessionActiveRunSystemPrompt } from "../lib/pi-sdk/index.ts";
 import fsp from "fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "path";
 import { createAgentSession, SessionManager, estimateTokens, refreshSessionModelFromRegistry, setSessionSystemPrompt, getCurrentSystemPrompt, getCurrentTools } from "../lib/pi-sdk/index.ts";
 import { seedXingyeSessionGreeting, type InitialXingyeGreeting } from "./xingye-session-greeting.ts";
@@ -1657,6 +1663,50 @@ export class SessionCoordinator implements SessionCancellation {
     return entry?.session?.agent?.streamFn || null;
   }
 
+  /**
+   * Expression-only side requests retain the SDK transport (auth, limits,
+   * retries, header transforms and stream guard), but never enter the main
+   * session's prefix diagnostics or shared provider-cache lineage.
+   */
+  getSessionDialogueVariantStreamFn(sessionPath: string): ExpressionTransport | null {
+    const entry = this._getSessionEntryByPath(sessionPath);
+    const agent = entry?.session?.agent;
+    const stream = entry?.cachePrefixOriginalStreamFn;
+    if (!agent || typeof stream !== "function") return null;
+    return (_model, context, options) => {
+      const routingId = options?.sessionId;
+      if (!/^dialogue-variant:[0-9a-f-]{36}$/i.test(routingId || "") || routingId === agent.sessionId) {
+        throw new Error("Dialogue variant transport requires an isolated request identity");
+      }
+      if (!Array.isArray(context?.tools) || context.tools.length !== 0) {
+        throw new Error("Dialogue variant transport forbids tools");
+      }
+      if (this._getSessionEntryByPath(sessionPath) !== entry) {
+        throw new Error("Dialogue variant session runtime was replaced");
+      }
+      // Side requests obey the same current allowlist as ordinary turns. Resolve
+      // at dispatch rather than trusting the model captured before async work.
+      const model = this._assertSessionModelAvailable(entry.session);
+      const owner = this._d.getAgentById(entry.agentId) || this._d.getAgent();
+      if (typeof owner?.buildSystemPrompt !== "function" || typeof entry.runtimePromptAppendix !== "string") {
+        throw new Error("Dialogue variant prompt projection is unavailable");
+      }
+      const messages = entry.session.sessionManager.buildSessionContext().messages;
+      const prompt = owner.buildSystemPrompt({
+        memoryScope: this.getSessionMemoryScope(sessionPath),
+        memorySource: this._sessionMemorySource(sessionPath, entry.session.sessionManager),
+        forceMemoryEnabled: entry.memoryEnabled, forceExperienceEnabled: entry.experienceEnabled,
+        targetModel: model, userText: sessionMessageText([...messages].reverse().find(message => message.role === "user")),
+        recentMessages: recentSessionMessageTexts(messages),
+        xingyeWorkspaceRoot: entry.session.sessionManager.getCwd?.() || "", workModeEnabled: entry.workMode === true,
+      });
+      // Reproject provenance for this request without installing it in the main
+      // session's frozen snapshot, active prefix contract, or cache lineage.
+      const isolatedContext = { ...context, systemPrompt: [context.systemPrompt, prompt + entry.runtimePromptAppendix].join("\n\n") };
+      return stream.call(agent, model, isolatedContext, withProviderCacheAffinity(options, model, routingId));
+    };
+  }
+
   getSessionAgentRunRuntime(sessionPath: any) {
     const entry = this._getSessionEntryByPath(sessionPath);
     if (!sessionPath || !entry?.session) {
@@ -2121,13 +2171,15 @@ export class SessionCoordinator implements SessionCancellation {
     // 后续记忆编译、技能变更只影响新对话，已有对话的 prompt 不变（保护 prefix cache）。
     const systemPromptSnapshot = restoredPromptSnapshot?.systemPrompt
       ?? agent.buildSystemPrompt({
+        memoryScope: memoryScopeFromBranch(sessionMgr.getBranch?.() || [], ownerAgentId),
         forceMemoryEnabled: frozenMemoryEnabled,
         forceExperienceEnabled: frozenExperienceEnabled,
         targetModel: promptPatchModel,
         workModeEnabled: frozenWorkMode,
       });
     const memoryReflectionSnapshot = (!restore && typeof agent.buildMemoryReflectionSnapshot === "function")
-      ? agent.buildMemoryReflectionSnapshot({ forceMemoryEnabled: frozenMemoryEnabled })
+      ? agent.buildMemoryReflectionSnapshot({ forceMemoryEnabled: frozenMemoryEnabled,
+        memoryScope: memoryScopeFromBranch(sessionMgr.getBranch?.() || [], ownerAgentId) })
       : null;
 
     const localeSnapshot = agent.config?.locale || getLocale();
@@ -2229,7 +2281,14 @@ export class SessionCoordinator implements SessionCancellation {
     };
     const resourceLoader = Object.create(baseResourceLoader, resourceLoaderProps);
 
-    const toolSnapshotOptions: any = { forceMemoryEnabled: frozenMemoryEnabled, model: effectiveModel };
+    const toolSnapshotOptions: Record<string, unknown> = {
+      forceMemoryEnabled: frozenMemoryEnabled, model: effectiveModel,
+      getMemoryScope: () => memoryScopeFromBranch(sessionMgr.getBranch?.() || [], ownerAgentId),
+      getSourceDependencies: () => {
+        const sessionId = sessionPathRef.current ? this._sessionIdForPath(sessionPathRef.current) : null;
+        return sessionId ? [{ sessionId }] : [];
+      },
+    };
     if (agentHasExperienceSwitch) {
       toolSnapshotOptions.forceExperienceEnabled = frozenExperienceEnabled;
     }
@@ -2247,9 +2306,11 @@ export class SessionCoordinator implements SessionCancellation {
         workspace: effectiveCwd,
         workspaceFolders: workspaceScope.workspaceFolders,
         authorizedFolders: folderScope.authorizedFolders,
+        getSessionPath: () => sessionPathRef.current,
         getAuthorizedFolders: () => this.getSessionAuthorizedFolders(sessionPathRef.current || sessionPathForMeta),
         agentDir: agent.agentDir,
         // Sizes the deferred-tool listing against the model this session froze.
+        getMemoryScope: () => memoryScopeFromBranch(sessionMgr.getBranch?.() || [], ownerAgentId),
         modelContextWindowTokens: effectiveModel?.contextWindow ?? null,
       },
     );
@@ -3620,7 +3681,7 @@ export class SessionCoordinator implements SessionCancellation {
     let sourceManager;
     let sourceBranch;
     try {
-      sourceManager = SessionManager.open(sourceSessionPath, readyAgent.sessionDir);
+      sourceManager = this.openSessionManagerAtCurrentBranch(sourceSessionPath, readyAgent.sessionDir);
       sourceBranch = sourceManager.getBranch();
     } catch (error) {
       throw sessionForkError(
@@ -3646,6 +3707,12 @@ export class SessionCoordinator implements SessionCancellation {
       throw sessionForkError("forkSessionAtNode: target boundary is unavailable", "session_fork_target_invalid", 400);
     }
     const retainedEntries = sourceBranch.slice(0, boundaryIndex + 1);
+    const sourceMemoryScope = memoryScopeFromBranch(retainedEntries, ownership.agentId);
+    if (input.mode === "narrative_branch" && sourceMemoryScope.realm !== "story") {
+      throw sessionForkError("Narrative branches require an explicit story scope", "story_scope_required", 400);
+    }
+    const forkMemoryScope = sourceMemoryScope.realm === "story"
+      ? { ...sourceMemoryScope, branchId: randomUUID() } : sourceMemoryScope;
     this._assertNoSharedActiveForkTasks({
       sourceSessionId,
       sourceSessionPath,
@@ -3700,6 +3767,11 @@ export class SessionCoordinator implements SessionCancellation {
       childSessionPath = sourceManager.createBranchedSession(boundaryEntry.id);
       if (!childSessionPath) {
         throw sessionForkError("forkSessionAtNode: child session path was not created", "session_fork_create_failed", 500);
+      }
+      if (sourceMemoryScope.realm === "story") {
+        sourceManager.appendCustomEntry(SESSION_MEMORY_SCOPE_RECORD, {
+          memoryScope: forkMemoryScope, previousScope: sourceMemoryScope, timestamp: Date.now(),
+        });
       }
       flushSessionManagerSnapshot(sourceManager);
       try {
@@ -3769,6 +3841,7 @@ export class SessionCoordinator implements SessionCancellation {
         );
       }
       await this._d.initializeSessionMemoryForkBaseline({
+        memoryScope: forkMemoryScope,
         agentId: ownership.agentId,
         sessionId: childSessionId,
         sourceSessionId,
@@ -4719,6 +4792,93 @@ export class SessionCoordinator implements SessionCancellation {
     return typeof stored === "boolean" ? stored : true;
   }
 
+  getSessionMemoryScope(sessionPath = this.currentSessionPath) {
+    const liveEntry = this._getSessionEntryByPath(sessionPath);
+    const owner = this.resolveSessionOwnership(sessionPath).agentId || liveEntry?.agentId;
+    if (!owner) throw new Error("Cannot resolve memory scope without the session owner");
+    const live = liveEntry?.session?.sessionManager;
+    const manager = live || this.openSessionManagerAtCurrentBranch(sessionPath);
+    return memoryScopeFromBranch(manager.getBranch?.() || [], owner);
+  }
+
+  _sessionMemorySource(sessionPath: string, manager: Pick<SessionManager, "getBranch">) {
+    const sessionId = this._sessionIdForPath(sessionPath);
+    if (!sessionId) return undefined;
+    return { sessionId, messages: (manager.getBranch?.() || []).flatMap((entry) => {
+      if (entry.type !== "message" || (entry.message.role !== "user" && entry.message.role !== "assistant")) return [];
+      return [{ role: entry.message.role, content: entry.message.content, timestamp: entry.timestamp || null, entryId: entry.id }];
+    }) };
+  }
+
+  _refreshScopedRunPrompt(sessionPath: string, entry: ReturnType<SessionCoordinator["_getSessionEntryByPath"]>, text: string) {
+    const memoryScope = this.getSessionMemoryScope(sessionPath);
+    if (memoryScope.realm === "legacy") return;
+    const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
+    if (typeof agent?.buildSystemPrompt !== "function" || typeof entry.runtimePromptAppendix !== "string") {
+      throw new Error("Scoped session prompt refresh is unavailable");
+    }
+    const prompt = agent.buildSystemPrompt({
+      memoryScope, memorySource: this._sessionMemorySource(sessionPath, entry.session.sessionManager),
+      forceMemoryEnabled: entry.memoryEnabled, forceExperienceEnabled: entry.experienceEnabled,
+      targetModel: entry.session.model, userText: text,
+      recentMessages: recentSessionMessageTexts(entry.session?.messages),
+      xingyeWorkspaceRoot: entry.session.sessionManager?.getCwd?.() || "", workModeEnabled: entry.workMode === true,
+    });
+    const finalPrompt = prompt + entry.runtimePromptAppendix;
+    this._applyFinalPromptSnapshot(entry.session, finalPrompt);
+    entry.runtimePromptBase = prompt;
+    setSessionActiveRunSystemPrompt(entry.session, applySessionTurnSystemContext(finalPrompt,
+      this._getRuntimeValueForPath(this._turnContextBySession, sessionPath)));
+    this._renewCachePrefixContract(sessionPath, entry, "scoped_post_commit_refresh");
+  }
+
+  async setSessionMemoryScope(sessionPath: string, input: unknown) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("An explicit memory scope object is required");
+    this._assertActiveDesktopSessionPath(sessionPath, "setSessionMemoryScope");
+    if (this._isDeletedAgentSessionPath(sessionPath)) throw new Error("Session belongs to a deleted agent");
+    const release = acquireSessionOperation(this._sessionIdForPath(sessionPath) || sessionPath, "memory_scope");
+    try {
+      if (this.isSessionStreaming(sessionPath)) throw new Error("session_busy");
+      const session = await this.ensureSessionLoaded(sessionPath);
+      if (this.isSessionStreaming(sessionPath)) throw new Error("session_busy");
+      const manager = session.sessionManager;
+      const owner = this.resolveSessionOwnership(sessionPath).agentId;
+      if (!owner) throw new Error("Session owner is unavailable");
+      const next = normalizeMemoryScopeContext(input, owner);
+      if (next.agentId !== owner) throw new Error("Memory scope belongs to a different agent");
+      const branch = manager.getBranch();
+      const previous = memoryScopeFromBranch(branch, owner);
+      if (JSON.stringify(previous) === JSON.stringify(next)) return next;
+      const populated = branch.some((entry) => entry.type === "message" || entry.type === "custom_message" || entry.type === "compaction");
+      if (populated) {
+        throw new Error("已有对话不能直接改记忆范围。请新建空白聊天（不含开场白），或使用剧情分支；旧记录会保留在兼容范围，不会被自动重新分类。");
+      }
+      try {
+        manager.appendCustomEntry(SESSION_MEMORY_SCOPE_RECORD, { memoryScope: next, previousScope: previous, timestamp: Date.now() });
+        if (!flushSessionManagerSnapshot(manager)) throw new Error("Memory scope persistence is unavailable");
+        this.setSessionBranchHead(sessionPath, { leafId: manager.getLeafId(), reason: "memory_scope" });
+      } catch (error) {
+        // A head-store failure may happen after the JSONL append (or even after
+        // committing the new head). Keep the compensation a descendant of the
+        // attempted scope, so cold append recovery sees the previous scope
+        // regardless of which head write actually became durable.
+        try {
+          manager.appendCustomEntry(SESSION_MEMORY_SCOPE_RECORD, {
+            memoryScope: previous, rollbackForEntryId: manager.getLeafId?.() || null, timestamp: Date.now(),
+          });
+          if (!flushSessionManagerSnapshot(manager)) throw new Error("Memory scope rollback persistence is unavailable");
+          try { this.setSessionBranchHead(sessionPath, { leafId: manager.getLeafId(), reason: "memory_scope_rollback" }); }
+          catch { /* Durable descendant compensation is sufficient for cold append recovery. */ }
+        } catch (rollbackError) {
+          throw Object.assign(new Error(`Memory scope update failed and requires recovery: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`, { cause: error }),
+            { code: "session_scope_rollback_failed", status: 500 });
+        }
+        throw error;
+      }
+      return next;
+    } finally { release(); }
+  }
+
   async setSessionMemoryEnabled(sessionPath: any, enabled: any) {
     if (!sessionPath) {
       return { ok: false, error: "session memory requires sessionPath", memoryEnabled: true };
@@ -5091,6 +5251,8 @@ export class SessionCoordinator implements SessionCancellation {
           || entry.session?.getCwd?.()
           || "";
         const runtimePrompt = agent.buildSystemPrompt({
+          memoryScope: this.getSessionMemoryScope(sessionPath),
+          memorySource: this._sessionMemorySource(sessionPath, entry.session.sessionManager),
           forceMemoryEnabled: entry.memoryEnabled,
           forceExperienceEnabled: entry.experienceEnabled,
           targetModel: entry.session.model,
@@ -5124,6 +5286,9 @@ export class SessionCoordinator implements SessionCancellation {
             throw new TypeError("promptSession afterInputAccepted must be synchronous");
           }
         }
+        // Retry commits its branch only after SDK preflight. Refresh the active
+        // provider prompt now so discarded story sources cannot survive a turn.
+        this._refreshScopedRunPrompt(sessionPath, entry, text);
       };
       const promptOpts = buildPromptMediaOptions(opts, notifyPromptPreflight);
       const nativeMediaTurn = engine?.beginCurrentTurnNativeMedia?.(sessionPath, opts);
@@ -5215,6 +5380,23 @@ export class SessionCoordinator implements SessionCancellation {
       const commitResult = options?.beforeInputSideEffects?.();
       if (commitResult && typeof commitResult.then === "function") {
         throw new TypeError("deliverCustomMessage: beforeInputSideEffects must be synchronous");
+      }
+      const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
+      if (typeof agent?.buildSystemPrompt === "function" && typeof entry.runtimePromptAppendix === "string") {
+        const refreshed = agent.buildSystemPrompt({
+          memoryScope: this.getSessionMemoryScope(sessionPath),
+          memorySource: this._sessionMemorySource(sessionPath, entry.session.sessionManager),
+          forceMemoryEnabled: entry.memoryEnabled,
+          forceExperienceEnabled: entry.experienceEnabled,
+          targetModel: entry.session.model,
+          xingyeWorkspaceRoot: entry.session.sessionManager?.getCwd?.() || "",
+          userText: extractTextContent(message?.content).text,
+          recentMessages: recentSessionMessageTexts(entry.session?.messages),
+          workModeEnabled: entry.workMode === true,
+        });
+        this._applyFinalPromptSnapshot(entry.session, refreshed + entry.runtimePromptAppendix);
+        entry.runtimePromptBase = refreshed;
+        this._renewCachePrefixContract(sessionPath, entry, "scoped_custom_turn");
       }
       entry.lastTouchedAt = Date.now();
       this._emitTurnInputPresentation(sessionPath, message, "triggerTurn");
@@ -7204,6 +7386,8 @@ export class SessionCoordinator implements SessionCancellation {
     entry.cachePrefixGuardInstalled = true;
     entry.cachePrefixOriginalStreamFn = originalStreamFn;
     agent.streamFn = async (model, context, options) => {
+      const retrySessionId = entry.sessionId || this._sessionIdForPath(sessionPath);
+      prepareChannelPostRetryDispatch(entry.agentId, retrySessionId ? `session-id:${retrySessionId}` : null);
       // 这份前缀契约是诊断工具，不是闸门：发现漂移就记下原文级 diff 并按现状续签放行，
       // 请求照常发出。漂移意味着有人在重建 prompt / 工具表时没走续签，凭那条记录去定位。
       // 契约只覆盖普通轮次，原生压缩与分支摘要用的是各自的 prompt；保缓存的旁路任务

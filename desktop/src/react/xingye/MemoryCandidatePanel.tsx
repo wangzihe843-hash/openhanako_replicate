@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MemoryScopeContext } from '../../../../shared/memory-scope';
 import {
   loadAgentPinnedMemory,
   pinnedListContainsNormalizedContent,
@@ -65,16 +66,21 @@ interface MemoryCandidatePanelProps {
   agentId: string | null;
   /** 写入目标助手展示名（与 agentId 对应） */
   agentName?: string | null;
+  memoryScope?: MemoryScopeContext;
+  sessionId?: string;
   onNavigateSceneSource?: (sessionId: string, entryId: string) => Promise<void>;
 }
 
-export function MemoryCandidatePanel({ agentId, agentName, onNavigateSceneSource }: MemoryCandidatePanelProps) {
-  const candidates = useXingyeMemoryCandidates(agentId);
+export function MemoryCandidatePanel({ agentId, agentName, memoryScope, sessionId, onNavigateSceneSource }: MemoryCandidatePanelProps) {
+  const candidates = useXingyeMemoryCandidates(agentId, memoryScope);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [flash, setFlash] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [remotePins, setRemotePins] = useState<string[] | null>(null);
   const [remotePinsError, setRemotePinsError] = useState<string | null>(null);
+  const currentSelection = useRef({ agentId, sessionId });
+  currentSelection.current = { agentId, sessionId };
+  const pinRequestVersion = useRef(0);
 
   const currentAgentId = useStore(s => s.currentAgentId);
   const currentChatAgentName = useStore(s => s.agentName);
@@ -86,15 +92,19 @@ export function MemoryCandidatePanel({ agentId, agentName, onNavigateSceneSource
 
   const reloadRemotePins = useCallback(async () => {
     if (!agentId || !hasPinnedCandidates) return;
+    const version = ++pinRequestVersion.current;
+    const isCurrent = () => version === pinRequestVersion.current && currentSelection.current.agentId === agentId && currentSelection.current.sessionId === sessionId;
     setRemotePinsError(null);
     try {
-      const pins = await loadAgentPinnedMemory(agentId, hanaFetch);
+      const pins = await loadAgentPinnedMemory(agentId, (url, init) => hanaFetch(`${url}${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`, init));
+      if (!isCurrent()) return;
       setRemotePins(pins);
     } catch (e) {
+      if (!isCurrent()) return;
       setRemotePins(null);
       setRemotePinsError(e instanceof Error ? e.message : String(e));
     }
-  }, [agentId, hasPinnedCandidates]);
+  }, [agentId, sessionId, hasPinnedCandidates]);
 
   useEffect(() => {
     if (!agentId) {
@@ -258,6 +268,10 @@ function MemoryCandidateCard({
   const sceneSectionsSignature = JSON.stringify(c.sceneSummary?.sections ?? []);
   const sceneSourcesSignature = JSON.stringify(c.sceneSummary?.sourceRefs ?? []);
   const sceneSessionId = c.sceneSummary?.sessionId;
+  const sceneScopeSignature = JSON.stringify(c.memoryScope);
+  const sceneIdentitySignature = JSON.stringify(c.sceneSummary ? { ...c.sceneSummary, validity: undefined } : null);
+  const sceneRevision = c.sceneSummary?.sourceRevision;
+  const sceneBranchHead = c.sceneSummary?.branchHeadId;
 
   useEffect(() => {
     setDraftContent(c.content);
@@ -278,6 +292,9 @@ function MemoryCandidateCard({
           body: JSON.stringify({
             agentId,
             sessionId: sceneSessionId,
+            memoryScope: JSON.parse(sceneScopeSignature),
+            sourceRevision: sceneRevision,
+            branchHeadId: sceneBranchHead,
             sourceRefs: JSON.parse(sceneSourcesSignature),
             sections: JSON.parse(sceneSectionsSignature),
           }),
@@ -285,12 +302,12 @@ function MemoryCandidateCard({
         const data = await response.json();
         if (!response.ok) {
           if (active && response.status === 400 && /session|source|branch/i.test(String(data?.error || ''))) {
-            setXingyeSceneCandidateValidity(agentId, c.id, 'stale');
+            setXingyeSceneCandidateValidity(agentId, c.id, 'stale', undefined, JSON.parse(sceneIdentitySignature));
           }
           throw new Error(data?.error || '无法复核场景来源');
         }
         if (!active) return;
-        setXingyeSceneCandidateValidity(agentId, c.id, data.valid === true ? 'valid' : 'stale');
+        setXingyeSceneCandidateValidity(agentId, c.id, data.valid === true ? 'valid' : 'stale', undefined, JSON.parse(sceneIdentitySignature));
         if (!data.valid) setValidationError(data.reason || '原消息已变化');
       } catch (error) {
         if (active) setValidationError(error instanceof Error ? error.message : String(error));
@@ -299,7 +316,7 @@ function MemoryCandidateCard({
       }
     })();
     return () => { active = false; };
-  }, [agentId, c.id, sceneSessionId, sceneSourcesSignature, sceneSectionsSignature]);
+  }, [agentId, c.id, sceneSessionId, sceneSourcesSignature, sceneSectionsSignature, sceneScopeSignature, sceneRevision, sceneBranchHead, sceneIdentitySignature]);
 
   const canEdit = c.status === 'pending';
   const targetWritable = isXingyeMemoryTargetWritable(c.target);
@@ -404,6 +421,10 @@ function MemoryCandidateCard({
           data-testid={`memory-candidate-target-${c.id}`}
         >
           目标 · {getXingyeMemoryTargetLabel(c.target)}
+        </span>
+        <span className={styles.memoryCandidateChip} data-testid={`memory-candidate-scope-${c.id}`}>
+          范围 · {c.memoryScope.realm === 'legacy' ? '历史兼容（未确认范围）' : c.memoryScope.realm === 'reality' ? '现实' : `剧情 / ${c.memoryScope.worldId} / ${c.memoryScope.branchId}`}
+          {c.memoryScope.knowledge === 'character' ? ` · 角色 ${c.memoryScope.characterId}` : c.memoryScope.knowledge === 'author' ? ' · 作者' : ' · 共享'}
         </span>
         {c.sourceDomain ? (
           <span className={styles.memoryCandidateChip}>来源 · {c.sourceDomain === 'scene_summary' ? '场景摘要' : c.sourceDomain}</span>

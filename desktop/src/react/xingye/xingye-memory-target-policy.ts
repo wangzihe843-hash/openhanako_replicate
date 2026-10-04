@@ -19,7 +19,7 @@ const LABELS: Record<XingyeMemoryCandidateTarget, string> = {
 };
 
 const DESCRIPTIONS: Record<XingyeMemoryCandidateTarget, string> = {
-  pinned: '确认后写入 OpenHanako pinned.md，尽快影响对话。',
+  pinned: '确认后保存为手动置顶，仅进入匹配的角色、世界、分支和知情范围。',
   fact: '未来确认后可导入 facts.db；本轮不可用。不保证立刻进入 prompt。',
   longterm: '长期块为 compile 产物，禁止直接写入。',
   scene_archive: '采纳后只保存在当前角色的候选档案中，不自动进入对话上下文。',

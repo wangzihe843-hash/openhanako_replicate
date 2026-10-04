@@ -1,13 +1,14 @@
 export type XingyeLoreDecision = {
   id: string;
   title: string;
-  reason: 'selected' | 'truncated' | 'budget' | 'disabled' | 'visibility' | 'mode' | 'empty' | 'no-keywords' | 'no-query' | 'no-match';
+  reason: 'scope' | 'selected' | 'truncated' | 'budget' | 'disabled' | 'visibility' | 'mode' | 'empty' | 'no-keywords' | 'no-query' | 'no-match';
   matchedKeywords: string[];
   blockChars: number;
 };
 type LoreOptions = {
   entries?: unknown;
   agentId?: string;
+  memoryScope?: unknown;
   maxChars?: number;
   onDecision?: (decision: XingyeLoreDecision) => void;
 };
@@ -16,10 +17,12 @@ export type XingyeLoreSourceEntry = {
   id: string; agentId: string; title?: string; content: string; category?: string;
   keywords?: string[]; enabled: boolean; visibility: string; insertionMode: string;
   priority?: number; updatedAt?: string;
+  memoryScope?: unknown; sourceStatus?: string; origin?: string;
 };
 export function selectXingyeLoreEntries<T extends XingyeLoreSourceEntry>(options: {
   entries?: T[] | Record<string, T>;
   agentId?: string;
+  memoryScope?: unknown;
   mode?: 'always' | 'keyword' | 'all' | 'none';
   queryText?: string;
   explicitKeywords?: string[];

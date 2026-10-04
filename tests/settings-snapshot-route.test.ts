@@ -4,6 +4,7 @@ import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { createSettingsSnapshotRoute } from "../server/routes/settings-snapshot.ts";
+import { addPinnedMemoryItem, readPinnedMemoryItems } from "../lib/memory/pinned-memory-store.ts";
 import { MASKED_SECRET } from "../shared/secret-custody.ts";
 
 let tmpRoot: string | null = null;
@@ -157,6 +158,21 @@ describe("settings snapshot route", () => {
       await fs.rm(tmpRoot, { recursive: true, force: true });
       tmpRoot = null;
     }
+  });
+
+  it("projects only the exact legacy pin scope managed by settings", async () => {
+    const engine = await makeEngine();
+    const agentDir = path.join(engine.agentsDir, "agent-a");
+    addPinnedMemoryItem(agentDir, "reality pin", { memoryScope: { realm: "reality" } });
+    addPinnedMemoryItem(agentDir, "story author pin", { memoryScope: { realm: "story", worldId: "w", branchId: "b", knowledge: "author" } });
+    addPinnedMemoryItem(agentDir, "legacy author pin", { memoryScope: { realm: "legacy", knowledge: "author" } });
+    const before = readPinnedMemoryItems(agentDir);
+    const app = new Hono();
+    app.route("/api", createSettingsSnapshotRoute(engine));
+    const response = await app.request("/api/settings/snapshot?agentId=agent-a");
+    expect(response.status).toBe(200);
+    expect((await response.json()).pinned.pins).toEqual(["keep this"]);
+    expect(readPinnedMemoryItems(agentDir)).toEqual(before);
   });
 
   it("returns one settings snapshot without losing explicit false values", async () => {

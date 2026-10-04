@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HanaEngine } from "../core/engine.ts";
 import { autoProjectIdForCwd, UNCATEGORIZED_PROJECT_ID } from "../shared/session-projects.ts";
 
@@ -12,13 +12,24 @@ import { autoProjectIdForCwd, UNCATEGORIZED_PROJECT_ID } from "../shared/session
 describe("HanaEngine Computer Use lazy runtime", () => {
   let tmpDir = null;
   let engines: HanaEngine[] = [];
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+
+  beforeEach(() => {
+    // Exercise supported-platform lifecycle behavior regardless of the host
+    // running Vitest; Linux support policy is covered explicitly below.
+    Object.defineProperty(process, "platform", { ...originalPlatform, value: "darwin" });
+  });
 
   afterEach(async () => {
-    for (const engine of engines.splice(0).reverse()) {
-      await engine.dispose();
+    try {
+      for (const engine of engines.splice(0).reverse()) {
+        await engine.dispose();
+      }
+      if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = null;
+    } finally {
+      Object.defineProperty(process, "platform", originalPlatform);
     }
-    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
-    tmpDir = null;
   });
 
   function trackEngine(engine: HanaEngine) {
@@ -72,6 +83,17 @@ describe("HanaEngine Computer Use lazy runtime", () => {
     expect(dispose).toHaveBeenCalledOnce();
     expect(engine._computerHost).toBeNull();
     expect(engine._computerProviders).toBeNull();
+  });
+
+  it("rejects enabling Computer Use on unsupported Linux without constructing its runtime", () => {
+    Object.defineProperty(process, "platform", { ...originalPlatform, value: "linux" });
+    const engine = createEngine();
+
+    expect(engine.isComputerUseSupported()).toBe(false);
+    expect(() => engine.setComputerUseSettings({ enabled: true })).toThrow(/not supported/i);
+    expect(engine.getComputerUseSettings().enabled).toBe(false);
+    expect(engine._computerProviders).toBeNull();
+    expect(engine._computerHost).toBeNull();
   });
 
   it("stores usage ledger entries under hanakoHome so engine restarts keep them", () => {

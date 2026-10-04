@@ -71,7 +71,8 @@ describe('AssistantMessage completion actions', () => {
     vi.clearAllMocks();
     Object.assign(window, {
       t: (key: string) => ({
-        'common.regenerate': '重新生成',
+        'common.taskRetry': '重试任务',
+        'common.dialogueVariant': '换个说法',
         'common.forkSession': '分支为新会话',
       }[key] || key),
     });
@@ -129,7 +130,8 @@ describe('AssistantMessage completion actions', () => {
 
     expect(ordered).toEqual([
       '05:43',
-      '重新生成',
+      '换个说法',
+      '重试任务',
       '分支为新会话',
       '复制文本',
       '截图',
@@ -137,12 +139,12 @@ describe('AssistantMessage completion actions', () => {
       '选择消息',
     ]);
 
-    fireEvent.click(screen.getByTitle('重新生成'));
+    fireEvent.click(screen.getByTitle('重试任务'));
 
     expect(retryMock).toHaveBeenCalledWith(
       sessionPath,
       { role: 'assistant', entryId: 'entry-a1' },
-      { message: userMessage },
+      { message: userMessage, mode: 'task_retry' },
     );
   });
 
@@ -200,7 +202,7 @@ describe('AssistantMessage completion actions', () => {
 
     expect(screen.queryByText('05:43')).not.toBeInTheDocument();
     expect(screen.queryByTestId('assistant-completion-actions')).not.toBeInTheDocument();
-    expect(screen.queryByTitle('重新生成')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('重试任务')).not.toBeInTheDocument();
   });
 
   it('keeps retry and fork available for older turn-ending assistant replies', async () => {
@@ -222,7 +224,7 @@ describe('AssistantMessage completion actions', () => {
 
     expect(screen.getByText('05:43')).toBeInTheDocument();
     expect(screen.getByTestId('assistant-completion-actions').className).not.toContain('messageFooterActionsTimePersistent');
-    expect(screen.getByTitle('重新生成')).toBeInTheDocument();
+    expect(screen.getByTitle('重试任务')).toBeInTheDocument();
     fireEvent.click(screen.getByTitle('分支为新会话'));
     await waitFor(() => expect(forkMock).toHaveBeenCalledWith(
       sessionPath,
@@ -256,6 +258,6 @@ describe('AssistantMessage completion actions', () => {
 
     expect(screen.queryByText('05:43')).not.toBeInTheDocument();
     expect(screen.queryByTestId('assistant-completion-actions')).not.toBeInTheDocument();
-    expect(screen.queryByTitle('重新生成')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('重试任务')).not.toBeInTheDocument();
   });
 });

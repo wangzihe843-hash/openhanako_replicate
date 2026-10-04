@@ -1,4 +1,5 @@
 /** Bounded, explainable selection of Xingye prompt sections. */
+import { canReadMemoryScope } from './memory-scope.ts';
 
 const DEFAULT_BUDGET = 18_000;
 const OMISSION = '\n…（本段超出上下文预算，后续内容未选入）';
@@ -21,6 +22,9 @@ function scopedToContext(scope, context) {
   if (!clean(scope.agentId) || clean(scope.agentId) !== clean(context.agentId)) return false;
   if (clean(scope.sessionId) && clean(scope.sessionId) !== clean(context.sessionId)) return false;
   if (clean(scope.branchId) && clean(scope.branchId) !== clean(context.branchId)) return false;
+  if (scope.memoryScope || context.memoryScope) {
+    if (!scope.memoryScope || !context.memoryScope || !canReadMemoryScope(scope.memoryScope, context.memoryScope)) return false;
+  }
   return true;
 }
 

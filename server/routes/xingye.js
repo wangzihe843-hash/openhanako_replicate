@@ -12,7 +12,7 @@ import {
   buildLocalSceneSections,
   buildSceneModelPrompt,
   normalizeSceneSections,
-  validateSceneCandidate,
+  validateSceneSnapshot,
 } from './xingye-scene-summary.js';
 import {
   appendMessage as appendChannelMessage,
@@ -694,7 +694,7 @@ export function createXingyeRoute(engine) {
       const before = beforeRaw == null ? null : Number(beforeRaw);
       if (beforeRaw != null && (!Number.isInteger(before) || before < 0)) return c.json({ error: 'invalid before cursor' }, 400);
       const snapshot = sceneSourcesForRequest(c, agentId, sessionId);
-      return c.json({ ok: true, sessionId, branchHeadId: snapshot.branchHeadId, ...sceneSourcePage(snapshot.sources, before) });
+      return c.json({ ok: true, sessionId, memoryScope: snapshot.memoryScope, memoryContext: snapshot.memoryContext, sourceRevision: snapshot.sourceRevision, branchHeadId: snapshot.branchHeadId, ...sceneSourcePage(snapshot.sources, before) });
     } catch (err) {
       return c.json({ error: errorDetail(err) }, err.status || 400);
     }
@@ -706,8 +706,8 @@ export function createXingyeRoute(engine) {
       const agentId = cleanString(body?.agentId, 120);
       const sessionId = cleanString(body?.sessionId, 180);
       const snapshot = sceneSourcesForRequest(c, agentId, sessionId);
-      const validation = validateSceneCandidate(snapshot.sources, body?.sourceRefs, body?.sections);
-      return c.json({ ok: true, ...validation, branchHeadId: snapshot.branchHeadId });
+      const validation = validateSceneSnapshot(snapshot, body);
+      return c.json({ ok: true, ...validation, memoryScope: snapshot.memoryScope, memoryContext: snapshot.memoryContext, sourceRevision: snapshot.sourceRevision, branchHeadId: snapshot.branchHeadId });
     } catch (err) {
       return c.json({ ok: false, valid: false, error: errorDetail(err) }, err.status || 400);
     }
@@ -724,6 +724,9 @@ export function createXingyeRoute(engine) {
       const agentId = cleanString(body?.agentId, 120);
       const sessionId = cleanString(body?.sessionId, 180);
       const snapshot = sceneSourcesForRequest(c, agentId, sessionId);
+      if (body?.sourceRevision && body.sourceRevision !== snapshot.sourceRevision) {
+        return c.json({ ok: false, error: 'scene source changed; reload before generating' }, 409);
+      }
       const selected = selectSceneRange(snapshot.sources, body?.startEntryId, body?.endEntryId);
       const sourceRefs = selected.map(({ entryId, hash, role }) => ({ entryId, hash, role }));
       let sections;
@@ -745,7 +748,7 @@ export function createXingyeRoute(engine) {
         let current;
         try { current = sceneSourcesForRequest(c, agentId, sessionId); }
         catch (err) { return c.json({ ok: false, error: `scene source changed during generation: ${errorDetail(err)}` }, 409); }
-        const validation = validateSceneCandidate(current.sources, sourceRefs, sections);
+        const validation = validateSceneSnapshot(current, { ...snapshot, sourceRefs, sections });
         if (!validation.valid) return c.json({ ok: false, error: validation.reason }, 409);
       } else {
         sections = buildLocalSceneSections(selected);
@@ -756,6 +759,10 @@ export function createXingyeRoute(engine) {
         generator: generator === 'model' ? 'configured-model' : 'local-evidence-extract',
         ...(modelTier ? { modelTier } : {}),
         sessionId,
+        memoryScope: snapshot.memoryScope,
+        memoryContext: snapshot.memoryContext,
+        sourceRevision: snapshot.sourceRevision,
+        sourceDependencies: [{ sessionId, revision: snapshot.sourceRevision, sourceRefs }],
         branchHeadId: snapshot.branchHeadId,
         sourceRefs,
         sections,

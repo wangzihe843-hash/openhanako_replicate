@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { canReadMemoryScope, normalizeMemoryScope, sameMemoryScope, type MemoryScopeContext } from "../../shared/memory-scope.ts";
+import { normalizeMemorySourceDependencies } from "../../shared/memory-provenance.ts";
+import { hashScopedSourceMessage } from "./scoped-derivation-store.ts";
 import { atomicWriteSync } from "../../shared/safe-fs.ts";
 
 const STORE_FILE = "pinned-memory.json";
@@ -31,21 +34,28 @@ function makeId(content, index = null) {
   return `pin_${suffix}`;
 }
 
-function normalizeItem(raw, index) {
+function normalizeItem(raw, index, agentId = undefined) {
   const content = normalizeContent(raw?.content);
   if (!content) return null;
   const id = normalizeId(raw?.id) || makeId(content, index);
   const createdAt = typeof raw?.createdAt === "string" && raw.createdAt.trim()
     ? raw.createdAt
     : null;
-  return createdAt ? { id, content, createdAt } : { id, content };
+  const memoryScope = normalizeMemoryScope(raw?.memoryScope, agentId);
+  if (agentId && memoryScope.agentId !== agentId) throw new Error("pinned memory agent mismatch");
+  if (raw?.origin !== undefined && raw.origin !== "manual" && raw.origin !== "derived") throw new Error("invalid pinned memory origin");
+  const origin = raw?.origin === "derived" ? "derived" : "manual";
+  const sourceDependencies = normalizeMemorySourceDependencies(raw?.sourceDependencies);
+  const sourceStatus = origin === "derived" && sourceDependencies.length === 0 ? "unknown"
+    : raw?.sourceStatus === "active" || raw?.sourceStatus === "stale" ? raw.sourceStatus : "unknown";
+  return { id, content, ...(createdAt ? { createdAt } : {}), memoryScope, origin, sourceDependencies, sourceStatus };
 }
 
-function serializeItems(items) {
+function serializeItems(items, agentId = undefined) {
   return {
     version: SCHEMA_VERSION,
     items: items.map((item, index) => {
-      const normalized = normalizeItem(item, index);
+      const normalized = normalizeItem(item, index, agentId);
       if (!normalized) {
         throw new Error("Pinned memory item content must be a non-empty string");
       }
@@ -62,7 +72,7 @@ export function renderPinnedMarkdown(items) {
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
 }
 
-function parseLegacyPinnedMarkdown(content) {
+function parseLegacyPinnedMarkdown(content, agentId) {
   const text = String(content ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
   const rawItems = [];
@@ -86,7 +96,7 @@ function parseLegacyPinnedMarkdown(content) {
 
   if (current !== null) rawItems.push(current);
   return rawItems
-    .map((content, index) => normalizeItem({ id: makeId(content, index), content }, index))
+    .map((content, index) => normalizeItem({ id: makeId(content, index), content }, index, agentId))
     .filter(Boolean);
 }
 
@@ -105,7 +115,7 @@ function readStoreItems(agentDir) {
   if (!parsed || parsed.version !== SCHEMA_VERSION || !Array.isArray(parsed.items)) {
     throw new Error(`Invalid pinned memory store schema in ${storePath(agentDir)}`);
   }
-  return serializeItems(parsed.items).items;
+  return serializeItems(parsed.items, path.basename(agentDir)).items;
 }
 
 function shouldPreferMarkdown(agentDir) {
@@ -120,9 +130,9 @@ function shouldPreferMarkdown(agentDir) {
 }
 
 export function writePinnedMemoryItems(agentDir, items) {
-  const data = serializeItems(items);
+  const data = serializeItems(items, path.basename(agentDir));
   fs.mkdirSync(agentDir, { recursive: true });
-  atomicWriteSync(pinnedPath(agentDir), renderPinnedMarkdown(data.items));
+  atomicWriteSync(pinnedPath(agentDir), renderPinnedMarkdown(data.items.filter(item => item.memoryScope.realm === "legacy" && (item.origin === "manual" || item.sourceStatus === "active"))));
   atomicWriteSync(storePath(agentDir), `${JSON.stringify(data, null, 2)}\n`);
   return data.items;
 }
@@ -132,23 +142,64 @@ export function readPinnedMemoryItems(agentDir) {
   if (fs.existsSync(storePath(agentDir)) && !shouldPreferMarkdown(agentDir)) {
     items = readStoreItems(agentDir);
   } else {
-    items = parseLegacyPinnedMarkdown(readMarkdownIfExists(agentDir));
+    const stored = fs.existsSync(storePath(agentDir)) ? readStoreItems(agentDir) : [];
+    const legacy = parseLegacyPinnedMarkdown(readMarkdownIfExists(agentDir), path.basename(agentDir));
+    items = [...legacy.map(item => stored.find(old => old.memoryScope.realm === "legacy" && old.content === item.content) ?? item),
+      ...stored.filter(item => item.memoryScope.realm !== "legacy")];
   }
   return writePinnedMemoryItems(agentDir, items);
 }
 
-export function addPinnedMemoryItem(agentDir, content) {
+/** Only this projection belongs in prompts. Management reads deliberately retain all records. */
+export function readPinnedMemoryForContext(agentDir, memoryScope: MemoryScopeContext): string {
+  return renderPinnedMarkdown(readPinnedMemoryItems(agentDir).filter(item =>
+    canReadMemoryScope(item.memoryScope, memoryScope)
+    && (item.origin === "manual" || item.sourceStatus === "active")));
+}
+
+/** Source retraction never deletes user-pinned or real-world history. */
+export function invalidatePinnedMemoryBySession(agentDir, sessionId, options: { sourceMessages?: Array<{ entryId?: string; id?: string; role?: string; content?: unknown; timestamp?: string | null }> | null } = {}): number {
+  const retainedHashes = Array.isArray(options.sourceMessages)
+    ? new Map(options.sourceMessages.map((message, index) => [String(message.entryId || message.id || `position-${index}`), hashScopedSourceMessage(message)]))
+    : null;
+  let count = 0;
+  const items = readPinnedMemoryItems(agentDir).map(item => {
+    if (item.origin !== "derived" || item.memoryScope.realm !== "story"
+      || !item.sourceDependencies.some(source => source.sessionId === sessionId) || item.sourceStatus === "stale") return item;
+    const matching = item.sourceDependencies.filter(source => source.sessionId === sessionId);
+    const allRetained = retainedHashes && matching.every(source => {
+      if (source.entryId) return retainedHashes.get(source.entryId) === (source.hash || source.revision);
+      return source.sourceRefs?.length > 0 && source.sourceRefs.every(ref => retainedHashes.get(ref.entryId) === ref.hash);
+    });
+    if (allRetained) return item;
+    count++;
+    return { ...item, sourceStatus: "stale" };
+  });
+  if (count) writePinnedMemoryItems(agentDir, items);
+  return count;
+}
+
+export function addPinnedMemoryItem(agentDir, content, metadata: { memoryScope?: unknown; origin?: "manual" | "derived"; sourceDependencies?: unknown; sourceStatus?: string } = {}) {
   const normalized = normalizeContent(content);
   if (!normalized) {
     throw new Error("Pinned memory content must be a non-empty string");
   }
 
+  const memoryScope = normalizeMemoryScope(metadata.memoryScope, path.basename(agentDir));
   const items = readPinnedMemoryItems(agentDir);
-  if (items.some((item) => item.content === normalized)) {
+  const existingIndex = items.findIndex((item) => item.content === normalized && sameMemoryScope(item.memoryScope, memoryScope));
+  if (existingIndex >= 0) {
+    // Explicit user confirmation makes a derived pin independently durable.
+    if (metadata.origin === "manual" && items[existingIndex].origin === "derived") {
+      items[existingIndex] = { ...items[existingIndex], origin: "manual" };
+      return { item: items[existingIndex], items: writePinnedMemoryItems(agentDir, items), alreadyExists: true };
+    }
     return { item: null, items, alreadyExists: true };
   }
 
   const item = {
+    ...metadata,
+    memoryScope,
     id: makeId(normalized),
     content: normalized,
     createdAt: new Date().toISOString(),
@@ -157,7 +208,7 @@ export function addPinnedMemoryItem(agentDir, content) {
   return { item: nextItems[nextItems.length - 1], items: nextItems, alreadyExists: false };
 }
 
-export function removePinnedMemoryItems(agentDir, { id, keyword }: { id?: string; keyword?: string } = {}) {
+export function removePinnedMemoryItems(agentDir, { id, keyword, memoryScope }: { id?: string; keyword?: string; memoryScope?: unknown } = {}) {
   const normalizedId = normalizeId(id);
   const keywordTrim = normalizeContent(keyword);
   const normalizedKeyword = keywordTrim.toLowerCase();
@@ -171,7 +222,7 @@ export function removePinnedMemoryItems(agentDir, { id, keyword }: { id?: string
   // unpin "foo" 把 "foobar"/"FOOZ" 一并删掉的过度删除；没有精确命中
   // 才回退到 i18n 描述承诺的「模糊匹配」（不区分大小写子串）。
   const hasExactKeyword = normalizedKeyword
-    ? items.some((item) => item.content === keywordTrim)
+    ? items.some((item) => (!memoryScope || sameMemoryScope(item.memoryScope, memoryScope)) && item.content === keywordTrim)
     : false;
 
   const removed = [];
@@ -184,7 +235,7 @@ export function removePinnedMemoryItems(agentDir, { id, keyword }: { id?: string
         ? item.content === keywordTrim
         : item.content.toLowerCase().includes(normalizedKeyword)
     );
-    if (matchesId || matchesKeyword) {
+    if ((!memoryScope || sameMemoryScope(item.memoryScope, memoryScope)) && (matchesId || matchesKeyword)) {
       removed.push(item);
     } else {
       remaining.push(item);
@@ -199,13 +250,16 @@ export function removePinnedMemoryItems(agentDir, { id, keyword }: { id?: string
 }
 
 export function replacePinnedMemoryItems(agentDir, contents) {
+  const previous = readPinnedMemoryItems(agentDir);
+  // Match the settings endpoint's default scope exactly. Legacy author/character
+  // records are independently scoped too and must survive a default-pin edit.
+  const memoryScope = normalizeMemoryScope(undefined, path.basename(agentDir));
+  const legacy = previous.filter(item => sameMemoryScope(item.memoryScope, memoryScope));
   const items = contents
     .map((content) => normalizeContent(content))
     .filter(Boolean)
-    .map((content) => ({
-      id: makeId(content),
-      content,
-      createdAt: new Date().toISOString(),
+    .map((content) => legacy.find(item => item.content === content) ?? ({
+      id: makeId(content), content, origin: "manual", createdAt: new Date().toISOString(),
     }));
-  return writePinnedMemoryItems(agentDir, items);
+  return writePinnedMemoryItems(agentDir, [...items, ...previous.filter(item => !sameMemoryScope(item.memoryScope, memoryScope))]);
 }

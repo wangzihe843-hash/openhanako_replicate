@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:02d6fef47b327d073db85b2abbc8449bf2889371a05986a2ec9e040927f52946",
+  "payloadFingerprint": "sha256:28e367906e3c5f22d4ea2ccb1d078f46142c31f65ab33d99ec7a6752ad344990",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -756,7 +756,7 @@
       "firstPossibleWritePhase": "runtime_ready",
       "format": "sqlite",
       "id": "agent-facts-sqlite",
-      "identityContract": "One facts database belongs to one agentId; SQLite user_version is store-local and never DATA_EPOCH.",
+      "identityContract": "One facts database belongs to one agentId; facts additionally carry explicit realm/world/branch/knowledge identity and source dependencies. SQLite user_version is store-local and never DATA_EPOCH.",
       "migrationEntry": [
         "FactStore store-local migrations",
         "lib/compat/checks/facts-db.ts"
@@ -772,10 +772,13 @@
         "agents/{agentId}/memory/facts.db"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "shared/memory-scope.ts",
+        "shared/memory-provenance.ts"
+      ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
-        "compatibility": "The FactStore runtime and its introspection are canonical; test-only v1 DDL is migration fixture data, never the schema source.",
+        "compatibility": "FactStore v4 adds nullable memory_scope and source_revision, source_dependencies defaulting to [], source_status defaulting to active, an optional invalidation reason, and a status index. The v3-to-v4 transaction preserves every existing fact and its FTS identity; missing scope remains legacy. Current readers enforce runtime scope and provenance before retrieval limits. The runtime DDL is canonical; test-only v1 DDL is migration fixture data. This forward-upgrade contract does not authorize downgrade to scope-unaware readers.",
         "kind": "runtime-source",
         "source": "lib/memory/fact-store.ts"
       },
@@ -830,10 +833,16 @@
         "agents/{agentId}/memory/.v2-migrated"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "lib/memory/pinned-memory-store.ts",
+        "lib/memory/session-summary.ts",
+        "lib/memory/compiled-memory-snapshot.ts",
+        "shared/memory-scope.ts",
+        "shared/memory-provenance.ts"
+      ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
-        "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs.",
+        "compatibility": "Historical Markdown and summary/pin JSON remain readable as legacy. Optional explicit memoryScope and source dependency/status fields are preserved in version-1 pin and summary records; scoped pins are excluded from the lossy legacy Markdown mirror. Legacy aggregates are not promoted into explicit worlds. Current source verification may suppress stale derived context without deleting original transcript history.",
         "kind": "protocol",
         "source": "lib/memory/compiled-memory-state.ts"
       },
@@ -935,6 +944,48 @@
         "contract": "agent config and authored Markdown/image profile protocol",
         "kind": "directory-contract",
         "module": "core/agent-manager.ts"
+      }
+    },
+    {
+      "affectedByEpochMigration": true,
+      "bootstrapSafety": null,
+      "checkpointPolicy": "Checkpoint the complete manifest with owning agent facts, pin/summary records and source session JSONL. It contains source tombstones and retained stale/superseded evidence, not merely regenerable rendered context.",
+      "epochPolicy": "epoch-managed",
+      "exemption": null,
+      "firstPossibleOpenPhase": "engine_construct",
+      "firstPossibleWritePhase": "runtime_ready",
+      "format": "json",
+      "id": "agent-scoped-memory-derivations",
+      "identityContract": "agentId owns the manifest. Sources are keyed by stable sessionId plus optional entryId; artifacts carry realm/world/branch/knowledge scope, content hash, dependency generations and a current head. Session paths never establish identity.",
+      "migrationEntry": [],
+      "openEntry": [
+        "ScopedDerivationStore",
+        "Agent scoped prompt reads",
+        "SessionSummaryManager",
+        "memory ticker"
+      ],
+      "ownerModule": "lib/memory/scoped-derivation-store.ts",
+      "pathExclusions": [],
+      "pathKind": "file",
+      "pathPattern": "agents/{agentId}/memory/scoped-derivations.v1.json",
+      "pathPatterns": [
+        "agents/{agentId}/memory/scoped-derivations.v1.json"
+      ],
+      "preCoordinatorReadProjection": null,
+      "protocolModules": [
+        "shared/memory-scope.ts",
+        "shared/memory-provenance.ts"
+      ],
+      "restorePolicy": "Restore the complete manifest only with compatible source histories and readers; revalidate source hashes/generations and artifact dependency heads before injection. Never recreate active scope from an unscoped Markdown fallback.",
+      "schemaContract": {
+        "compatibility": "Absent file is an empty version-1 store. This separate additive path never imports mixed legacy aggregates and does not rewrite source session history. Unknown version or malformed manifest fails closed; stale/superseded artifacts stay available for recovery but are excluded from active context. No old DATA_EPOCH migration is required to read an existing home.",
+        "kind": "runtime-source",
+        "source": "lib/memory/scoped-derivation-store.ts"
+      },
+      "schemaSource": {
+        "contract": "version-1 scoped source/artifact/head manifest, entry revision hashes and generation fences, dependency validation, and atomic writer",
+        "kind": "runtime-contract",
+        "module": "lib/memory/scoped-derivation-store.ts"
       }
     },
     {
@@ -2637,13 +2688,17 @@
       "preCoordinatorReadProjection": null,
       "protocolModules": [
         "core/session-jsonl-file.ts",
+        "lib/session-jsonl.ts",
         "core/session-coordinator.ts",
         "core/desktop-session-submit.ts",
-        "core/xingye-session-greeting.ts"
+        "core/session-turn-actions.ts",
+        "core/xingye-session-greeting.ts",
+        "core/session-memory-scope.ts",
+        "core/session-dialogue-variants.ts"
       ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
-        "compatibility": "The locked Pi package schema/version plus Hana repair and extension readers are canonical; Hana does not duplicate Pi's session schema.",
+        "compatibility": "The locked Pi JSONL v3 package plus Hana repair/extension readers remain canonical. Optional versioned memory-scope, accepted-input task-retry lineage, and dialogue-variant recovery records preserve existing message/tool-result history. Absent scope stays legacy; explicit invalid scope or retry lineage fails closed. Recovery projection readers are guarded alongside metadata writers; these records do not replace Pi's session schema.",
         "kind": "runtime-source",
         "source": "@earendil-works/pi-coding-agent via package-lock.json integrity"
       },
@@ -3313,8 +3368,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Canonical Pi context projection for deleted-agent continuation changes session-coordinator executable hashes without changing JSONL v3, store paths, SQLite schemas, Pi 0.87.1 or DATA_EPOCH 1. See docs/audits/2026-09-29-repository-review.md for compatibility review.",
-    "payloadFingerprint": "sha256:02d6fef47b327d073db85b2abbc8449bf2889371a05986a2ec9e040927f52946"
+    "compatibilityReason": "Compatible additive retry-intent and linked rollback records reviewed in docs/audits/2026-10-02-cloud-review.md and the prior cloud persistence review: uncertain head writes restore original history and scope, retry-only control metadata is not cloned during expression adoption, private pin bulk writes require exact default scope. Existing JSONL/history/effect receipts preserved; DATA_EPOCH 1, Pi JSONL v3 and SQLite versions unchanged; no destructive migration or dependency upgrade. Windows acceptance fixes preserve existing Pi JSONL v3 model_change and thinking_level_change records after expression adoption. No record schema, store version, or DATA_EPOCH change; model catalog writes now complete before SDK registration starts asynchronous readers. Windows acceptance fixes preserve existing Pi JSONL v3 model_change and thinking_level_change records after expression adoption. No record schema, store version, or DATA_EPOCH change; model catalog writes now complete before SDK registration starts asynchronous readers. Windows acceptance fixes preserve existing Pi JSONL v3 model_change and thinking_level_change records after expression adoption. No record schema, store version, or DATA_EPOCH change; model catalog writes now complete before SDK registration starts asynchronous readers.",
+    "payloadFingerprint": "sha256:28e367906e3c5f22d4ea2ccb1d078f46142c31f65ab33d99ec7a6752ad344990"
   },
   "schemas": [
     {
@@ -3335,11 +3390,27 @@
       "contract": "FactStore runtime DDL, PRAGMA user_version, and introspection",
       "kind": "sqlite-runtime",
       "module": "lib/memory/fact-store.ts",
+      "protocolModules": [
+        {
+          "module": "shared/memory-provenance.ts",
+          "sourceHash": "sha256:eedc4ecaa663194496c23d78a362995149cbd515db681dfc97601934e6065d55"
+        },
+        {
+          "module": "shared/memory-scope.ts",
+          "sourceHash": "sha256:7029d1224102a994502def73f1d2371e66f487afb6bdda9cb62b27ab03131dab"
+        }
+      ],
       "runtimeSchema": {
         "objects": [
           {
             "name": "idx_facts_session",
             "sql": "CREATE INDEX idx_facts_session ON facts(session_id)",
+            "tableName": "facts",
+            "type": "index"
+          },
+          {
+            "name": "idx_facts_source_status",
+            "sql": "CREATE INDEX idx_facts_source_status ON facts(source_status)",
             "tableName": "facts",
             "type": "index"
           },
@@ -3351,7 +3422,7 @@
           },
           {
             "name": "facts",
-            "sql": "CREATE TABLE facts ( id INTEGER PRIMARY KEY AUTOINCREMENT, fact TEXT NOT NULL, search_text TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '[]', time TEXT, session_id TEXT, created_at TEXT NOT NULL )",
+            "sql": "CREATE TABLE facts ( id INTEGER PRIMARY KEY AUTOINCREMENT, fact TEXT NOT NULL, search_text TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '[]', time TEXT, session_id TEXT, created_at TEXT NOT NULL , memory_scope TEXT, source_dependencies TEXT NOT NULL DEFAULT '[]', source_revision TEXT, source_status TEXT NOT NULL DEFAULT 'active', source_invalidated_reason TEXT)",
             "tableName": "facts",
             "type": "table"
           },
@@ -3386,16 +3457,38 @@
             "type": "trigger"
           }
         ],
-        "userVersion": 3
+        "userVersion": 4
       },
-      "sourceHash": "sha256:08c7a6cab4318eb79a5861388f63c597370069e10d4928085cb7b6967bea2903",
+      "sourceHash": "sha256:70557fedb17e6034f8ceb518912de1739b00d84a740eb78807651fd87e6baa6b",
       "storeId": "agent-facts-sqlite"
     },
     {
       "contract": "compiled memory, rolling-summary, pinned-memory, and daily-state runtime readers",
       "kind": "directory-contract",
       "module": "lib/memory/compiled-memory-state.ts",
-      "sourceHash": "sha256:f1084e2ec07a0865194a43888ae5d9a6934ed05e0cd0d6afb86d1b1522a64d69",
+      "protocolModules": [
+        {
+          "module": "lib/memory/compiled-memory-snapshot.ts",
+          "sourceHash": "sha256:45f63d1a61b92396153eef484929f9c6aec2cce610ed0006f9cf3b0b7ec4537f"
+        },
+        {
+          "module": "lib/memory/pinned-memory-store.ts",
+          "sourceHash": "sha256:8ae1763c7a98ba601be24814c71e98e3fee11a5308ab713e377775c8f24252bf"
+        },
+        {
+          "module": "lib/memory/session-summary.ts",
+          "sourceHash": "sha256:9f894f04effa5c503cdea2e4ecf5adacfb62f4881f0cc90c99e001ce328cbb6d"
+        },
+        {
+          "module": "shared/memory-provenance.ts",
+          "sourceHash": "sha256:eedc4ecaa663194496c23d78a362995149cbd515db681dfc97601934e6065d55"
+        },
+        {
+          "module": "shared/memory-scope.ts",
+          "sourceHash": "sha256:7029d1224102a994502def73f1d2371e66f487afb6bdda9cb62b27ab03131dab"
+        }
+      ],
+      "sourceHash": "sha256:5c7b4055481eb74a5c1761c0ea45f508eae43fec0a6a2737aaa68f9ca1f976da",
       "storeId": "agent-memory"
     },
     {
@@ -3422,7 +3515,7 @@
       "protocolModules": [
         {
           "module": "core/agent.ts",
-          "sourceHash": "sha256:3230ecfac177df960b7f43acc0b54e95f8dba3ff88b11c7e8a2f304a844c0a6e"
+          "sourceHash": "sha256:c8a66557bd0378c38cf4f67dd5074f834c0fa24c499ba1f1bc11a17ac2e7fff8"
         },
         {
           "module": "core/agents-md-migration.ts",
@@ -3441,6 +3534,23 @@
       "storeId": "agent-profile"
     },
     {
+      "contract": "version-1 scoped source/artifact/head manifest, entry revision hashes and generation fences, dependency validation, and atomic writer",
+      "kind": "runtime-contract",
+      "module": "lib/memory/scoped-derivation-store.ts",
+      "protocolModules": [
+        {
+          "module": "shared/memory-provenance.ts",
+          "sourceHash": "sha256:eedc4ecaa663194496c23d78a362995149cbd515db681dfc97601934e6065d55"
+        },
+        {
+          "module": "shared/memory-scope.ts",
+          "sourceHash": "sha256:7029d1224102a994502def73f1d2371e66f487afb6bdda9cb62b27ab03131dab"
+        }
+      ],
+      "sourceHash": "sha256:681120dfc9b2e7e2bb66fa351ec0678d161a5d3b1745c29b4efcf2624a14fbd3",
+      "storeId": "agent-scoped-memory-derivations"
+    },
+    {
       "contract": "channel.post per-effect JSON record: stable operation identity, prepared/committed/failed/unknown status, attempt, persisted-body digest, and channel receipt",
       "kind": "runtime-contract",
       "module": "lib/task-outcome/effect-ledger.ts",
@@ -3454,7 +3564,7 @@
           "sourceHash": "sha256:6771ee9cb6e461d4c1c801502b23b396c0fb3ec4e9d2c16e0a400f56a1566161"
         }
       ],
-      "sourceHash": "sha256:c658da1b8b1db7daacf85a619b1d61a7ffde2ada45c73a3fce23934e16eafd38",
+      "sourceHash": "sha256:d39fadcbc0bdf80f49c621ee5944838228d17e86b5686af9aea359269e92156f",
       "storeId": "channel-post-effects"
     },
     {
@@ -3811,7 +3921,7 @@
         {
           "contract": "core/session-coordinator.ts Hana metadata extensions",
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:206c6aa082db81b8252f361a174045f667a3d1cd2f7d8565d9915e6ac35d802c"
+          "sourceHash": "sha256:f229102a63e4bcf63697dffdfe9bd607ca2ab8275d6c61db74067ddbcbb8a96e"
         },
         {
           "contract": "core/session-jsonl-file.ts repair contract",
@@ -3831,15 +3941,31 @@
         },
         {
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:206c6aa082db81b8252f361a174045f667a3d1cd2f7d8565d9915e6ac35d802c"
+          "sourceHash": "sha256:f229102a63e4bcf63697dffdfe9bd607ca2ab8275d6c61db74067ddbcbb8a96e"
+        },
+        {
+          "module": "core/session-dialogue-variants.ts",
+          "sourceHash": "sha256:7d3a85ae63fce8e3bfb390c9f1e665e8f9c7ea5c58d957ca9fe8f02fb6bc80ce"
         },
         {
           "module": "core/session-jsonl-file.ts",
           "sourceHash": "sha256:6a311935b1a95c7b6af0c3f2980869de4923fdb9b307cecb8475e400b389af12"
         },
         {
+          "module": "core/session-memory-scope.ts",
+          "sourceHash": "sha256:4cc97e46f8bb18f32fb2caf8235e28002773bc3748ebc3052ac4ad5440c4f579"
+        },
+        {
+          "module": "core/session-turn-actions.ts",
+          "sourceHash": "sha256:102c4e4c0fe57b424bd7069a78aa9c695acb7d0699e9791efbe73c756ba6a255"
+        },
+        {
           "module": "core/xingye-session-greeting.ts",
           "sourceHash": "sha256:8c3c35dc53b3bf397842dbdddc2d231dcfed7d09e88e60d467827e4d3404dd61"
+        },
+        {
+          "module": "lib/session-jsonl.ts",
+          "sourceHash": "sha256:810752d7bb38f9bdc287c78649e21a53aad293cd2e2e817af7575ab3a58dc6ed"
         }
       ],
       "requestedVersion": "0.87.1",
@@ -4115,7 +4241,7 @@
         },
         {
           "module": "lib/xingye/memory-candidate-drafts.js",
-          "sourceHash": "sha256:69a0f69fd360194b59f6bea131a6dd235c4e58eb53a8f8d570116e3a90ee9045"
+          "sourceHash": "sha256:0676c7ecd91a1761d8ba3aee532f7542bdedb426834e841ad26327665ea21c97"
         },
         {
           "module": "lib/xingye/moments-drafts.js",
@@ -4175,7 +4301,7 @@
         },
         {
           "module": "shared/xingye-lore-memory-file.js",
-          "sourceHash": "sha256:15a32fab4abd0fe6e587ef88e84872196249d44df9f0976cb51b0742dd36d01c"
+          "sourceHash": "sha256:dd1bb4f99f19817ef6c6b4a96477f5ed993806ed6dcaadcf08d3480d3910a69f"
         },
         {
           "module": "shared/xingye-profile-file.js",
@@ -4187,7 +4313,7 @@
         },
         {
           "module": "shared/xingye-runtime-lore-file.js",
-          "sourceHash": "sha256:1111778f4d8841667645ae387cbed7626e678e36d670a0ef034c7b6c71e6f3bf"
+          "sourceHash": "sha256:5302db2d8b079de6b85ccffac8ed6b4a9bb2bf7fe0a626169ef1bf01ad7ab802"
         }
       ],
       "sourceHash": "sha256:d0146bc6eab5a4c57a760ca86f4126abcf86f834e6f1de1c985157b4a38b45ec",
@@ -8314,6 +8440,22 @@
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "sourceFile": "lib/memory/pinned-memory-store.ts",
       "storeId": "agent-memory"
+    },
+    {
+      "exemptionId": null,
+      "kind": "atomic-write",
+      "ordinal": 0,
+      "reason": "Creates the per-agent memory directory and atomically replaces its scoped source/artifact manifest.",
+      "sourceFile": "lib/memory/scoped-derivation-store.ts",
+      "storeId": "agent-scoped-memory-derivations"
+    },
+    {
+      "exemptionId": null,
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Creates the per-agent memory directory and atomically replaces its scoped source/artifact manifest.",
+      "sourceFile": "lib/memory/scoped-derivation-store.ts",
+      "storeId": "agent-scoped-memory-derivations"
     },
     {
       "exemptionId": null,

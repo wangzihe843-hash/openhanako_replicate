@@ -9,7 +9,7 @@ import {
 import type { Extension } from "@earendil-works/pi-coding-agent";
 import {
   AuthStorage, createAgentSession, createModelRegistry, DefaultResourceLoader,
-  registerModelProvider, SessionManager, SettingsManager, setSessionSystemPrompt, Type,
+  registerModelProvider, SessionManager, SettingsManager, setSessionSystemPrompt, setSessionActiveRunSystemPrompt, Type,
 } from "../lib/pi-sdk/index.ts";
 import { applySessionTurnSystemContext, createSessionTurnContextExtension } from "../core/session-turn-context.ts";
 import { runCachePreservingCompactionForSession } from "../core/session-compactor.ts";
@@ -89,6 +89,23 @@ async function fixture(createManager = (dir: string) => SessionManager.inMemory(
 }
 
 describe("Pi 0.87 runtime integration", () => {
+  it("projects the post-commit scoped prompt into the actual provider request", async () => {
+    const { session, requests, setTurnContext } = await fixture();
+    setSessionSystemPrompt(session, "branch A contains retracted story event");
+    setTurnContext({ system: "temporary expression direction" });
+    await session.prompt("retry this turn", {
+      preflightResult: (accepted) => {
+        if (!accepted) return;
+        setSessionActiveRunSystemPrompt(session, applySessionTurnSystemContext(
+          "branch B contains independent retained event", { system: "temporary expression direction" }));
+      },
+    });
+    expect(requests).toHaveLength(1);
+    const providerPrompt = getCurrentSystemPrompt(requests[0].messages);
+    expect(providerPrompt).toContain("independent retained event");
+    expect(providerPrompt).toContain("temporary expression direction");
+    expect(providerPrompt).not.toContain("retracted story event");
+  });
   it("continues a pre-upgrade v3 JSONL branch with its history and identity intact", async () => {
     const { session, requests } = await fixture(dir => {
       const file = path.join(dir, "legacy-session.jsonl");

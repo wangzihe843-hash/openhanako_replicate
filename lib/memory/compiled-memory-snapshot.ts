@@ -1,5 +1,7 @@
 import fs from "fs";
 import path from "path";
+import { normalizeMemoryScope } from "../../shared/memory-scope.ts";
+import { ScopedDerivationStore } from "./scoped-derivation-store.ts";
 import { assemble } from "./compile.ts";
 import { normalizeCompiledSectionBody } from "./compiled-memory-state.ts";
 
@@ -36,7 +38,10 @@ export function compactCompiledMemory(compiled) {
   );
 }
 
-export function readCompiledMemorySnapshot(memoryDir) {
+export function readCompiledMemorySnapshot(memoryDir, opts: { memoryScope?: unknown; agentId?: string } = {}) {
+  if (normalizeMemoryScope(opts.memoryScope, opts.agentId).realm !== "legacy") {
+    return normalizeCompiledMemory(new ScopedDerivationStore(memoryDir, { agentId: opts.agentId }).readCompiledSections(opts.memoryScope));
+  }
   const fromSectionFiles = normalizeCompiledMemory(Object.fromEntries(
     COMPILED_MEMORY_BLOCKS.map(({ key, fileName }) => [
       key,

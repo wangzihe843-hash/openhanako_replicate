@@ -176,6 +176,13 @@ export function setSessionSystemPrompt(value: object, systemPrompt: string) {
   if (state && (!descriptor?.get || descriptor.set)) state.systemPrompt = systemPrompt;
 }
 
+/** Refresh a scope-sensitive prompt after Pi preflight committed a branch edit. */
+export function setSessionActiveRunSystemPrompt(value: object, systemPrompt: string) {
+  const session = value as { _runSystemPromptOptions?: { forceSystemPrompt?: string } };
+  if (session._runSystemPromptOptions) session._runSystemPromptOptions.forceSystemPrompt = systemPrompt;
+  else setSessionSystemPrompt(value, systemPrompt);
+}
+
 export function getPiModel(provider, modelId) {
   return rawGetPiModel(provider, modelId);
 }

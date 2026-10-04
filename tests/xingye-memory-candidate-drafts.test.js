@@ -142,3 +142,19 @@ describe("createProposeDraftTool dispatch: module=memory_candidate", () => {
     expect(rows[0].content).toBe("C");
   });
 });
+
+
+describe('L1 memory draft trusted scope', () => {
+  it('ignores model-supplied scope and retains only runtime scope/source metadata', async () => {
+    const memoryScope = { version: 1, agentId: 'agent-a', realm: 'story', worldId: 'world', branchId: 'a', knowledge: 'character', characterId: 'alice' };
+    const sourceDependencies = [{ sessionId: 's1', revision: 'r1', hash: 'a'.repeat(64), type: 'source', generation: 4 }];
+    const tool = createProposeDraftTool({ agentDir, agentId: 'agent-a', getMemoryScope: () => memoryScope, getSourceDependencies: () => sourceDependencies });
+    await tool.execute('call-scoped', { module: 'memory_candidate', memory_candidate: { content: 'A secret', memoryScope: { ...memoryScope, knowledge: 'shared' }, sourceDependencies: [{ sessionId: 'forged' }] } });
+    const rows = readJsonl(path.join(agentDir, 'xingye', 'memory-candidate', 'drafts.jsonl'));
+    expect(rows).toMatchObject([{ memoryScope, sourceDependencies, origin: 'derived', sourceStatus: 'unknown' }]);
+  });
+  it('marks missing old/runtime metadata legacy without inferring the story from text', async () => {
+    const row = await appendMemoryCandidateDraftServer({ agentDir, agentId: 'agent-a', input: { content: 'The scene happened in world-a branch-b', source: 'test', memoryScope: { realm: 'story', worldId: 'forged' } } });
+    expect(row.memoryScope).toEqual({ version: 1, agentId: 'agent-a', realm: 'legacy', knowledge: 'shared' });
+  });
+});

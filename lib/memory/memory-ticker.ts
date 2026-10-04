@@ -33,6 +33,7 @@ import crypto from "crypto";
 import { debugLog, createModuleLogger } from "../debug-log.ts";
 import {
   compileToday,
+  compileScopedMemory,
   compileDaily,
   assembleWeekFromDaily,
   rollDailyWindow,
@@ -54,6 +55,9 @@ import { validateRollingSummaryFormat } from "./rolling-summary-format.ts";
 import { CACHE_STRATEGIES } from "../llm/cache-strategy-contract.ts";
 import { atomicWriteSync } from "../../shared/safe-fs.ts";
 import { invalidateSessionDerivedStateSync } from "./session-derived-state.ts";
+import { ScopedDerivationStore } from "./scoped-derivation-store.ts";
+import { normalizeMemoryScope } from "../../shared/memory-scope.ts";
+import { invalidatePinnedMemoryBySession } from "./pinned-memory-store.ts";
 import { createMemoryDreamRunner } from "./dream/runner.ts";
 import type { DreamErrorCode } from "./dream/state-store.ts";
 import {
@@ -137,10 +141,14 @@ export function createMemoryTicker(opts) {
     getSessionStreamFn,
     getSessionIdForPath,
     getSessionBranchHeadForPath,
+    getSessionMemoryScope,
     readSessionBranchForPath,
     envChangeLedger,
     memoryDir = path.dirname(memoryMdPath),
   } = opts;
+  const scopedDerivationStore = new ScopedDerivationStore(memoryDir, { agentId });
+  summaryManager.scopedDerivationStore = scopedDerivationStore;
+  if (agentId) summaryManager.agentId = agentId;
   const _memoryReflectionRunner = memoryReflectionRunner || { runMemoryReflection: defaultRunMemoryReflection };
   let _aggregateCompileInFlight = 0;
   const _dreamRunner = createMemoryDreamRunner({
@@ -725,7 +733,9 @@ export function createMemoryTicker(opts) {
       const projection = _readSessionBranch(sessionPath, { since: resetAt });
       const { messages } = projection;
 
+      const memoryScope = normalizeMemoryScope(getSessionMemoryScope?.(sessionPath), agentId);
       const rollingOptions: any = {
+        memoryScope,
         resetAt,
         timeZone: _getTimezone(),
         projection,
@@ -733,11 +743,11 @@ export function createMemoryTicker(opts) {
         revalidateProjection: () => _readSessionBranch(sessionPath, { since: resetAt }),
       };
       const memoryReflectionSnapshot = _readMemoryReflectionSnapshot(sessionPath);
-      if (memoryReflectionSnapshot) {
+      if (memoryScope.realm === "legacy" && memoryReflectionSnapshot) {
         rollingOptions.memoryReflectionSnapshot = memoryReflectionSnapshot;
       }
       const resolvedModel = await getResolvedMemoryModel();
-      const cacheSnapshotMode = _getCacheSnapshotReflectionMode();
+      const cacheSnapshotMode = memoryScope.realm === "legacy" ? _getCacheSnapshotReflectionMode() : "off";
       let summaryResult = null;
       if (cacheSnapshotMode === "write") {
         try {
@@ -765,7 +775,7 @@ export function createMemoryTicker(opts) {
           resolvedModel,
           rollingOptions,
         );
-        if (summaryResult?.reason === "branch_changed") {
+        if (["branch_changed", "source_changed"].includes(summaryResult?.reason)) {
           throw new Error("session branch changed while rebuilding its memory summary");
         }
         if (summaryResult?.mode === "replace" && !summaryResult?.data) {
@@ -831,6 +841,9 @@ export function createMemoryTicker(opts) {
       const resetAt = _getCompiledResetAt();
       await compileToday(summaryManager, todayMdPath, await getResolvedMemoryModel(), { since: resetAt });
       assemble(_factsSourcePath(), todayMdPath, weekMdPath, longtermMdPath, memoryMdPath);
+      if ((summaryManager.getAllSummaries?.() || []).some((record) => record?.memoryScope?.realm && record.memoryScope.realm !== "legacy")) {
+        await compileScopedMemory(summaryManager, scopedDerivationStore, await getResolvedMemoryModel(), { since: resetAt });
+      }
       onCompiled?.();
       debugLog()?.log("memory", "today compiled + assembled");
       _markSuccess("compileToday");
@@ -944,6 +957,9 @@ export function createMemoryTicker(opts) {
       try {
         assembleWeekFromDaily(_dailyDir(), weekMdPath);
         assemble(_factsSourcePath(), todayMdPath, weekMdPath, longtermMdPath, memoryMdPath);
+        if ((summaryManager.getAllSummaries?.() || []).some((record) => record?.memoryScope?.realm && record.memoryScope.realm !== "legacy")) {
+          await compileScopedMemory(summaryManager, scopedDerivationStore, await getResolvedMemoryModel(), { since: resetAt });
+        }
         onCompiled?.();
       } catch (err) {
         hasFailed = true;
@@ -1124,12 +1140,24 @@ export function createMemoryTicker(opts) {
     // 把旧任务刚写回的内容覆盖掉。聚合产物（today.md / facts.md / memory.md）
     // 本就声明不追溯改写，一次在途的聚合编译最多把 Retry 之前的历史沉淀进去，
     // 这是既有语义下可以接受的结果，不需要为此阻塞用户操作。
+    const scope = normalizeMemoryScope(ref?.memoryScope || (sessionPath ? getSessionMemoryScope?.(sessionPath) : null), agentId);
+    const retainedCount = Number(ref?.retainedMessageCount);
+    const sourceMessages = Array.isArray(ref?.sourceMessages) ? ref.sourceMessages
+      : scope.realm !== "legacy" && sessionPath && Number.isInteger(retainedCount) && retainedCount >= 0
+        ? _readSessionBranch(sessionPath).messages.slice(0, retainedCount) : null;
+    const preserveSourceEntries = scope.realm !== "legacy" && Array.isArray(sourceMessages);
     const result = invalidateSessionDerivedStateSync({
       sessionId,
+      preserveSourceEntries,
+      sourceMessages,
+      memoryScope: scope,
       retainedMessageCount: ref?.retainedMessageCount,
       summaryManager,
       factStore,
+      scopedDerivationStore,
     });
+    if (preserveSourceEntries) scopedDerivationStore.syncSessionSourceSnapshot(sessionId, scope, sourceMessages);
+    if (agentDir) invalidatePinnedMemoryBySession(agentDir, sessionId, preserveSourceEntries ? { sourceMessages } : {});
     _turnCounts.delete(sessionId);
     debugLog()?.warn?.(
       "memory",
@@ -1380,6 +1408,7 @@ export function createMemoryTicker(opts) {
     flushSession,
     flushSessionAndCompile,
     invalidateSessionDerivedState,
+    scopedDerivationStore,
     getHealthStatus,
     startDream,
     getDreamStatus,

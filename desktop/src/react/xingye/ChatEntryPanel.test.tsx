@@ -17,7 +17,7 @@ vi.mock('./xingye-profile-store', () => ({
   getXingyeRoleProfileDisplay: (agent: { name: string }) => ({ displayName: agent.name }),
 }));
 vi.mock('./XingyeAgentAvatar', () => ({ XingyeAgentAvatar: () => null }));
-vi.mock('./MemoryCandidatePanel', () => ({ MemoryCandidatePanel: () => null }));
+vi.mock('./MemoryCandidatePanel', () => ({ MemoryCandidatePanel: ({ memoryScope }: { memoryScope?: { viewpoint?: string } }) => <div data-testid="review-viewpoint">{memoryScope?.viewpoint ?? ''}</div> }));
 vi.mock('./xingye-memory-candidate-store', () => ({
   createXingyeMemoryCandidate: vi.fn(),
   sceneSummaryContent: () => 'summary',
@@ -64,4 +64,23 @@ describe('M5 scene draft selection lifecycle', () => {
     expect(createXingyeMemoryCandidate).not.toHaveBeenCalled();
     expect(screen.queryByText(/模型摘要草稿已生成/)).toBeNull();
   });
+});
+
+
+it('preserves author viewer context while storing only the plain author candidate scope', async () => {
+  const memoryScope = { version: 1, agentId: 'agent-a', realm: 'story', worldId: 'world', branchId: 'a', knowledge: 'author' };
+  const memoryContext = { ...memoryScope, viewpoint: 'author' };
+  vi.mocked(hanaFetch).mockImplementation(async (input) => {
+    if (String(input).includes('/sources')) return Response.json({ memoryScope, memoryContext, sourceRevision: 'revision-a', rows: [{ entryId: 'a1', role: 'user', preview: '场景', hash: 'a'.repeat(64), ordinal: 0 }], nextBefore: null });
+    if (String(input).endsWith('/generate')) return Response.json({ ok: true, memoryScope, memoryContext, sourceRevision: 'revision-a', sourceRefs: [{ entryId: 'a1', role: 'user', hash: 'a'.repeat(64) }], sections: [{ kind: 'event', text: 'scene', inference: true, evidence: [] }] });
+    return Response.json({ memoryScope: memoryContext });
+  });
+  render(<ChatEntryPanel {...props} selectedAgent={agentA} />);
+  await waitFor(() => expect(screen.getByTestId('review-viewpoint').textContent).toBe('author'));
+  fireEvent.click(await screen.findByRole('button', { name: '生成本地证据草稿' }));
+  await waitFor(() => expect(createXingyeMemoryCandidate).toHaveBeenCalledOnce());
+  const candidate = vi.mocked(createXingyeMemoryCandidate).mock.calls[0][1];
+  expect(candidate.memoryScope).toEqual(memoryScope);
+  expect(candidate.memoryScope).not.toHaveProperty('viewpoint');
+  expect(screen.getByTestId('review-viewpoint').textContent).toBe('author');
 });

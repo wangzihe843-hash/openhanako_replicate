@@ -307,6 +307,9 @@ function createHarness(tempDir, { restoreFails = false } = {}) {
           getCwd: () => path.join(tempDir, "workspace"),
         },
       }));
+  // This fixture models an already selected branch; file-backed projection and
+  // interrupted rollback are covered by session-dialogue-variant-recovery.
+  coordinator.applySessionBranchHead = vi.fn();
 
   return {
     agent,
@@ -390,6 +393,7 @@ describe("SessionCoordinator session fork", () => {
       sourceSessionId: harness.sourceManifest.sessionId,
       throughEntryId: "turn-tail-1",
       messageCount: 2,
+      memoryScope: { version: 1, agentId: "hana", realm: "legacy", knowledge: "shared" },
       forkedAt: expect.any(String),
     });
     expect(harness.notifySessionMemoryForkCreated).toHaveBeenCalledWith({

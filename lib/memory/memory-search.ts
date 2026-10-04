@@ -11,6 +11,7 @@
 import { Type } from "../pi-sdk/index.ts";
 import { t } from "../i18n.ts";
 import { createModuleLogger } from "../debug-log.ts";
+import { normalizeMemoryScopeContext } from "../../shared/memory-scope.ts";
 
 const log = createModuleLogger("memory-search");
 
@@ -69,6 +70,11 @@ export function createMemorySearchTool(factStore, opts: any = {}) {
     execute: async (_toolCallId, params) => {
       try {
         const t0 = performance.now();
+        // The runtime selects the world/viewer. Tool/model parameters cannot widen it.
+        const memoryScope = normalizeMemoryScopeContext(
+          typeof opts.getMemoryScope === 'function' ? opts.getMemoryScope() : opts.memoryScope,
+          opts.agentId ?? factStore.agentId,
+        );
 
         if (factStore.size === 0) {
           return {
@@ -94,6 +100,7 @@ export function createMemorySearchTool(factStore, opts: any = {}) {
             searchDateRange,
             TAG_LIMIT,
             searchScope,
+            memoryScope,
           );
           for (const r of tagResults) {
             seenIds.add(r.id);
@@ -106,6 +113,7 @@ export function createMemorySearchTool(factStore, opts: any = {}) {
           const ftsResults = factStore.searchFullText(params.query, FTS_LIMIT, {
             scope: searchScope,
             dateRange: searchDateRange,
+            memoryScope,
           });
           for (const r of ftsResults) {
             if (seenIds.has(r.id)) {

@@ -11,7 +11,7 @@ const REASONS: Record<XingyeLoreDecision['reason'], string> = {
   selected: '完整选入', truncated: '截断选入：预算不足', budget: '排除：预算不足',
   disabled: '排除：未启用', visibility: '排除：私有备注或草稿', mode: '排除：本路径不使用此插入模式',
   empty: '排除：正文为空', 'no-keywords': '排除：未配置关键词', 'no-query': '排除：未提供查询文本',
-  'no-match': '排除：关键词未命中',
+  'no-match': '排除：关键词未命中', scope: '排除：角色、世界、分支或知情范围不匹配',
 };
 
 export function LoreDiagnostics({ agentId, entries }: { agentId: string; entries: XingyeLoreEntry[] }) {

@@ -4,6 +4,10 @@
 import { appendFileSync } from "fs";
 import fs from "fs/promises";
 import path from "path";
+import {
+  generateSessionDialogueVariant, listSessionDialogueVariants, adoptSessionDialogueVariant,
+  discardSessionDialogueVariant, cancelSessionDialogueVariant,
+} from "../../core/session-dialogue-variants.ts";
 import { Hono } from "hono";
 import { safeJson } from "../hono-helpers.ts";
 import { bodyFromRouteError, routeError, statusFromRouteError } from "./route-errors.ts";
@@ -914,7 +918,11 @@ export function createSessionsRoute(engine, hub = null) {
       ]));
       return c.json(sessions.map(s => {
         const summaryRecord = getSessionSummaryRecord(s.path, s.agentId || null);
+        let memoryScope = null;
+        try { memoryScope = engine.getSessionMemoryScope?.(s.path) || null; }
+        catch { /* Unreadable scope is not silently relabeled as legacy. */ }
         return ({
+          memoryScope,
           path: s.path,
           sessionId: s.sessionId || engine.getSessionIdForPath?.(s.path) || null,
           title: s.title || null,
@@ -1916,10 +1924,57 @@ export function createSessionsRoute(engine, hub = null) {
     }
   });
 
+  // Scope and turn-mode mutations share the established identity/authorization boundary.
+  function authorizeMemoryOperation(c, body, operation) {
+    const requestContext = createRequestContext(c, engine);
+    const sessionRef = resolveSessionLocatorFromBody(body, operation);
+    assertManifestLifecycle(sessionRef, "active", operation);
+    const auth = authorizeSessionRoute(requestContext, "sessions.write", {
+      kind: "session", studioId: requestContext.studioId, sessionPath: sessionRef.sessionPath,
+    });
+    if (!auth.allowed) throw routeError("insufficient_scope", "insufficient_scope", 403);
+    if (!isActiveDesktopSessionPath(sessionRef.sessionPath, engine.agentsDir)
+      || isDeletedAgentSessionPath(sessionRef.sessionPath)) throw routeError("Invalid session path", "invalid_session", 403);
+    return sessionRef;
+  }
+
+  route.get("/sessions/memory-scope", async (c) => {
+    try {
+      const ref = authorizeMemoryOperation(c, { sessionId: c.req.query("sessionId") }, "getSessionMemoryScope");
+      return c.json({ memoryScope: engine.getSessionMemoryScope(ref.sessionPath) });
+    } catch (error) { return c.json(bodyFromRouteError(error), statusFromRouteError(error, 400)); }
+  });
+  route.put("/sessions/memory-scope", async (c) => {
+    try {
+      const body = await safeJson(c);
+      const ref = authorizeMemoryOperation(c, body, "setSessionMemoryScope");
+      return c.json({ memoryScope: await engine.setSessionMemoryScope(ref.sessionPath, body.memoryScope) });
+    } catch (error) { return c.json(bodyFromRouteError(error), statusFromRouteError(error, error?.message === "session_busy" ? 409 : 400)); }
+  });
+  route.get("/sessions/turns/dialogue-variants", async (c) => {
+    try {
+      const ref = authorizeMemoryOperation(c, { sessionId: c.req.query("sessionId") }, "listSessionDialogueVariants");
+      return c.json(await listSessionDialogueVariants(engine, ref));
+    } catch (error) { return c.json(bodyFromRouteError(error), statusFromRouteError(error, 400)); }
+  });
+  for (const [suffix, action] of [
+    ["", generateSessionDialogueVariant], ["/adopt", adoptSessionDialogueVariant],
+    ["/discard", discardSessionDialogueVariant], ["/cancel", cancelSessionDialogueVariant],
+  ] as const) {
+    route.post(`/sessions/turns/dialogue-variants${suffix}`, async (c) => {
+      try {
+        const body = await safeJson(c);
+        const ref = authorizeMemoryOperation(c, body, "dialogueVariant");
+        return c.json(await action(engine, { ...body, ...ref }));
+      } catch (error) { return c.json(bodyFromRouteError(error), statusFromRouteError(error, error?.message === "session_busy" ? 409 : 400)); }
+    });
+  }
+
   route.post("/sessions/turns/retry", async (c) => {
     try {
       const requestContext = createRequestContext(c, engine);
       const body = await safeJson(c);
+      if (body?.mode != null && body.mode !== "task_retry") throw routeError("Unknown session retry mode", "invalid_retry_mode", 400);
       const sessionRef = resolveSessionLocatorFromBody(body, "retrySessionTurn");
       assertManifestLifecycle(sessionRef, "active", "retrySessionTurn");
       const { sessionId, sessionPath } = sessionRef;
@@ -1943,6 +1998,7 @@ export function createSessionsRoute(engine, hub = null) {
       }
 
       const result = await retrySessionTurn(engine, {
+        mode: body?.mode === "task_retry" ? "task_retry" : undefined,
         sessionId,
         sessionPath,
         target: body?.target,
@@ -1990,7 +2046,12 @@ export function createSessionsRoute(engine, hub = null) {
         throw routeError("session fork is unavailable", "session_fork_unavailable", 503);
       }
 
+      const narrativeScope = body?.mode === "narrative_branch" ? engine.getSessionMemoryScope(sessionPath) : null;
+      if (narrativeScope && narrativeScope.realm !== "story") {
+        throw routeError("剧情分支只适用于已明确设置世界和分支的剧情会话；旧会话请保留兼容范围或新建剧情会话。", "story_scope_required", 400);
+      }
       const result = await engine.forkSessionAtNode({
+        ...(narrativeScope ? { mode: "narrative_branch" } : {}),
         sessionId,
         sessionPath,
         target: body?.target,

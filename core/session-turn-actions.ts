@@ -1,4 +1,6 @@
 import fsp from "fs/promises";
+import { SESSION_RETRY_TRANSACTION_RECORD_TYPE, trackActiveSessionRetryTransaction } from "../lib/session-jsonl.ts";
+import { channelPostOperationKey, runWithChannelPostRetryContext, type ChannelPostRetryAction } from "../lib/task-outcome/effect-ledger.ts";
 import { detectMime } from "../lib/file-metadata.ts";
 import {
   AGENT_REVIEW_RECORD_TYPE,
@@ -7,7 +9,9 @@ import {
   submitDesktopSessionMessage,
 } from "./desktop-session-submit.ts";
 import { extractLatestTodos } from "../lib/tools/todo-compat.ts";
+import { flushSessionManagerSnapshot } from "./session-jsonl-file.ts";
 import { acquireSessionOperation } from "./session-operation-lock.ts";
+import { memoryScopeFromBranch, SESSION_MEMORY_SCOPE_RECORD } from "./session-memory-scope.ts";
 import { invalidateSessionDerivedStateSync } from "../lib/memory/session-derived-state.ts";
 import {
   isHiddenTurnInputMessage,
@@ -34,6 +38,7 @@ const HANA_USER_ENVELOPE_TYPES = new Set([
   AGENT_REVIEW_RECORD_TYPE,
 ]);
 export const SESSION_BRANCH_RESET_RECORD_TYPE = "hana-session-branch-reset";
+export const SESSION_TASK_RETRY_RECORD_TYPE = "hana-session-task-retry";
 const BACKGROUND_TASK_ID_KEYS = new Set(["taskId", "runId", "replacesTaskId"]);
 const ACTIVE_BACKGROUND_TASK_STATUSES = new Set(["pending", "running", "paused", "blocked", "recovering"]);
 
@@ -165,6 +170,7 @@ export async function retrySessionTurn(
   opts: Record<string, any> = {},
   deps: Record<string, any> = {},
 ) {
+  if (opts.mode != null && opts.mode !== "task_retry") throw new Error("Unknown session retry mode");
   return retrySessionTurnInternal(engine, opts, deps, {
     allowLegacyPath: false,
     latestUserOnly: false,
@@ -202,8 +208,14 @@ async function retrySessionTurnInternal(engine, opts, deps, compatibility) {
 
   const identity = resolveSessionIdentity(engine, opts, compatibility.allowLegacyPath);
   const { sessionId, sessionPath } = identity;
+  if (opts.mode != null && opts.mode !== "task_retry") throw new Error("session retry mode must be task_retry");
+  if (opts.mode === "task_retry" && replacementText != null) throw new Error("task retry cannot change the original task");
+  if (opts.mode === "task_retry" && engine.getSessionMemoryScope?.(sessionPath)?.realm === "story") {
+    throw Object.assign(new Error("Pure-story sessions use expression variants or narrative branches"), { code: "story_task_retry_forbidden", status: 409 });
+  }
   const operationKey = sessionId || sessionPath;
   const releaseOperation = acquireSessionOperation(operationKey, "retry");
+  let releaseRetryTransaction: (() => void) | null = null;
 
   try {
     if (typeof engine.isSessionStreaming === "function" && engine.isSessionStreaming(sessionPath)) {
@@ -224,6 +236,16 @@ async function retrySessionTurnInternal(engine, opts, deps, compatibility) {
       target = { role: "user", entryId: latest.id };
     }
     const resolved = resolveSessionNodeTarget(branch, target, { mode: "retry" });
+    const ownerAgentId = identity.ownerAgentId || engine.resolveSessionOwnership?.(sessionPath)?.agentId;
+    const retryScope = {
+      agentId: ownerAgentId,
+      sessionIdentity: sessionId ? `session-id:${sessionId}` : null,
+    };
+    const retryContext = opts.mode === "task_retry" ? {
+      ...retryScope,
+      actions: collectChannelPostRetryActions(branch, resolved, retryScope),
+    } : null;
+    if (retryContext && !retryContext.agentId) throw new Error("task retry requires a trusted session owner");
     const customTurnInput = resolved.turnInputEntry?.type === "custom_message";
     if (customTurnInput && replacementText != null) {
       throw new Error("custom turn inputs cannot be edited during retry");
@@ -267,6 +289,13 @@ async function retrySessionTurnInternal(engine, opts, deps, compatibility) {
 
     const retainedEntries = retainedEntriesBeforeRetry(branch, resolved.retryBranchParentId);
     const discardedEntries = branch.slice(retainedEntries.length);
+    // A narrative fork appends its own identity after inherited history. Editing
+    // an inherited turn must not rewind the child back into the parent's scope.
+    const lastScopeEntry = branch.findLast(entry => entry?.type === "custom"
+      && entry.customType === SESSION_MEMORY_SCOPE_RECORD);
+    const scopeToPreserve = lastScopeEntry && discardedEntries.includes(lastScopeEntry)
+      ? memoryScopeFromBranch(branch, ownerAgentId || lastScopeEntry.data?.memoryScope?.agentId)
+      : null;
     const retainedTaskIds = collectStructuredBackgroundTaskIds(retainedEntries);
     const discardedTaskIds = collectStructuredBackgroundTaskIds(discardedEntries)
       .filter((taskId) => !retainedTaskIds.includes(taskId));
@@ -276,6 +305,7 @@ async function retrySessionTurnInternal(engine, opts, deps, compatibility) {
       : [retainedEntries, promptText, nextDisplayMessage]);
     const invalidateDerivedState = deps.invalidateDerivedState || invalidateSessionDerivedState;
     let branchCommitted = false;
+    let resetMarkerId: string | null = null;
     const commitRetryBranch = () => {
       if (branchCommitted) return;
       if (typeof session.sessionManager.appendCustomEntry !== "function") {
@@ -286,22 +316,47 @@ async function retrySessionTurnInternal(engine, opts, deps, compatibility) {
       }
       const originalLeafId = session.sessionManager.getLeafId?.() || null;
       let deferredSuppressionReceipt = null;
-      let branchHeadPersisted = false;
-      let resetMarkerAttempted = false;
+      let transactionId: string | null = null;
+      let preparationAttempted = false;
       let rollbackReason = "branch_commit_failed";
       try {
+        // Write ahead of every preparatory append, including child-scope copies.
+        // This sibling is excluded from both committed and restored branches;
+        // branch-only forks never inherit links to discarded history.
+        preparationAttempted = true;
+        const transaction = {
+          version: 1,
+          sessionId,
+          originalLeafId,
+          sourceEntryId: resolved.turnInputEntry.id,
+          retryBranchParentId: resolved.retryBranchParentId,
+        };
+        transactionId = session.sessionManager.appendCustomEntry(SESSION_RETRY_TRANSACTION_RECORD_TYPE, transaction);
+        releaseRetryTransaction?.();
+        releaseRetryTransaction = trackActiveSessionRetryTransaction(transactionId, transaction);
+        if (session.sessionManager.isPersisted?.() && session.sessionManager.flushed === false) {
+          flushSessionManagerSnapshot(session.sessionManager, { preAssistantOnly: true });
+        }
         branchBeforeResolvedTurnInput(session, resolved);
-        engine.setSessionBranchHead(sessionPath, {
-          leafId: session.sessionManager.getLeafId?.() ?? null,
-          reason: "replay_rewind",
-        });
-        branchHeadPersisted = true;
-        resetMarkerAttempted = true;
-        session.sessionManager.appendCustomEntry(SESSION_BRANCH_RESET_RECORD_TYPE, {
+        resetMarkerId = session.sessionManager.appendCustomEntry(SESSION_BRANCH_RESET_RECORD_TYPE, {
+          version: 2,
+          retryTransactionId: transactionId,
           sourceEntryId: resolved.turnInputEntry.id,
           target: resolved.target,
           retainedMessageCount,
           timestamp: Date.now(),
+        });
+        if (scopeToPreserve) {
+          session.sessionManager.appendCustomEntry(SESSION_MEMORY_SCOPE_RECORD, {
+            memoryScope: scopeToPreserve,
+            retryTransactionId: transactionId,
+            timestamp: Date.now(),
+          });
+        }
+        replaceAgentMessagesFromBranch(session);
+        engine.setSessionBranchHead(sessionPath, {
+          leafId: session.sessionManager.getLeafId?.() ?? null,
+          reason: "replay_rewind",
         });
 
         rollbackReason = "deferred_suppression_failed";
@@ -332,20 +387,20 @@ async function retrySessionTurnInternal(engine, opts, deps, compatibility) {
         } catch (restoreError) {
           console.warn(`session retry deferred rollback failed for ${sessionId || sessionPath}: ${restoreError.message}`);
         }
-        if (resetMarkerAttempted) {
-          restoreRetryBranch(
-            session,
-            originalLeafId,
-            resolved,
-            rollbackReason,
-          );
-        } else {
-          restoreBranchLeaf(session, originalLeafId);
-        }
-        if (branchHeadPersisted) {
+        let rollbackLeafId = originalLeafId;
+        try {
+          if (preparationAttempted) {
+            rollbackLeafId = restoreRetryBranch(session, originalLeafId, resolved, rollbackReason, transactionId);
+          } else {
+            restoreBranchLeaf(session, originalLeafId);
+          }
+        } finally {
+          // A throwing setter may already have committed. The write-ahead
+          // record also compensates a lost acknowledgement here, or a failed
+          // rollback append, without requiring the head store to recover.
           try {
             engine.setSessionBranchHead(sessionPath, {
-              leafId: originalLeafId,
+              leafId: rollbackLeafId,
               reason: "replay_rollback",
             });
           } catch (restoreError) {
@@ -381,49 +436,75 @@ async function retrySessionTurnInternal(engine, opts, deps, compatibility) {
       }, sessionPath);
     };
 
-    let result;
-    if (customTurnInput) {
-      const deliverCustomMessage = deps.deliverCustomMessage
-        || (typeof engine.deliverCustomMessage === "function"
-          ? engine.deliverCustomMessage.bind(engine)
-          : null);
-      if (!deliverCustomMessage) throw new Error("custom turn retry delivery is unavailable");
-      result = await deliverCustomMessage(sessionPath, {
-        customType: resolved.turnInputEntry.customType,
-        content: resolved.turnInputEntry.content,
-        display: resolved.turnInputEntry.display,
-        ...(resolved.turnInputEntry.details !== undefined
-          ? { details: resolved.turnInputEntry.details }
-          : {}),
-      }, {
-        triggerTurn: true,
-        requireIdle: true,
-        beforeInputSideEffects: commitRetryBranch,
+    const persistRetryLineage = () => {
+      const currentBranch = session.sessionManager.getBranch();
+      const resetIndex = currentBranch.findIndex(entry => entry.id === resetMarkerId);
+      const inputIndex = currentBranch.findLastIndex(isSessionTurnInputEntry);
+      const firstInputIndex = currentBranch.findIndex((entry, index) => index > resetIndex && isSessionTurnInputEntry(entry));
+      if (!branchCommitted || resetIndex < 0 || inputIndex <= resetIndex || firstInputIndex !== inputIndex) {
+        throw new Error("Task retry requires a persisted accepted turn input before dispatch");
+      }
+      session.sessionManager.appendCustomEntry(SESSION_TASK_RETRY_RECORD_TYPE, {
+        version: 1,
+        agentId: retryContext.agentId,
+        turnInputEntryId: currentBranch[inputIndex].id,
+        // Resolve keys in the source session now. Authorized forks may copy
+        // these receipts just like tool results, without re-keying an effect.
+        actions: retryContext.actions.map(action => ({
+          ...action,
+          effectId: action.effectId || channelPostOperationKey(retryContext.agentId,
+            action.toolCallId, retryContext.sessionIdentity, action.logicalActionId),
+        })),
       });
-    } else {
-      result = await submit(engine, {
-        ...(sessionId ? { sessionId } : {}),
-        sessionPath,
-        text: promptText,
-        images: images.length ? images : undefined,
-        imageAttachmentPaths: imageAttachmentPaths.length ? imageAttachmentPaths : undefined,
-        videos: videos.length ? videos : undefined,
-        videoAttachmentPaths: videoAttachmentPaths.length ? videoAttachmentPaths : undefined,
-        audios: audios.length ? audios : undefined,
-        audioAttachmentPaths: audioAttachmentPaths.length ? audioAttachmentPaths : undefined,
-        clientMessageId: clientMessageId || undefined,
-        displayMessage: nextDisplayMessage,
-        uiContext,
-        preservePromptEnvelope: true,
-        projectUserMessage,
-        beforeInputSideEffects: commitRetryBranch,
-      });
-    }
-    // Focused test doubles may not invoke the commit hook. A successful delivery
-    // still commits exactly once; failed preflight paths never reach here.
-    commitRetryBranch();
-    return result;
+    };
+
+    const deliver = async () => {
+      let result;
+      if (customTurnInput) {
+        const deliverCustomMessage = deps.deliverCustomMessage
+          || (typeof engine.deliverCustomMessage === "function"
+            ? engine.deliverCustomMessage.bind(engine)
+            : null);
+        if (!deliverCustomMessage) throw new Error("custom turn retry delivery is unavailable");
+        result = await deliverCustomMessage(sessionPath, {
+          customType: resolved.turnInputEntry.customType,
+          content: resolved.turnInputEntry.content,
+          display: resolved.turnInputEntry.display,
+          ...(resolved.turnInputEntry.details !== undefined
+            ? { details: resolved.turnInputEntry.details }
+            : {}),
+        }, {
+          triggerTurn: true,
+          requireIdle: true,
+          beforeInputSideEffects: commitRetryBranch,
+        });
+      } else {
+        result = await submit(engine, {
+          ...(sessionId ? { sessionId } : {}),
+          sessionPath,
+          text: promptText,
+          images: images.length ? images : undefined,
+          imageAttachmentPaths: imageAttachmentPaths.length ? imageAttachmentPaths : undefined,
+          videos: videos.length ? videos : undefined,
+          videoAttachmentPaths: videoAttachmentPaths.length ? videoAttachmentPaths : undefined,
+          audios: audios.length ? audios : undefined,
+          audioAttachmentPaths: audioAttachmentPaths.length ? audioAttachmentPaths : undefined,
+          clientMessageId: clientMessageId || undefined,
+          displayMessage: nextDisplayMessage,
+          uiContext,
+          preservePromptEnvelope: true,
+          projectUserMessage,
+          beforeInputSideEffects: commitRetryBranch,
+        });
+      }
+      // Focused test doubles may not invoke the commit hook. A successful delivery
+      // still commits exactly once; failed preflight paths never reach here.
+      commitRetryBranch();
+      return result;
+    };
+    return retryContext ? await runWithChannelPostRetryContext({ ...retryContext, beforeDispatch: persistRetryLineage }, deliver) : await deliver();
   } finally {
+    releaseRetryTransaction?.();
     releaseOperation();
   }
 }
@@ -474,7 +555,7 @@ function safeSessionIdForPath(engine, sessionPath) {
   }
 }
 
-function invalidateSessionDerivedState(engine, ref) {
+export function invalidateSessionDerivedState(engine, ref) {
   if (!ref.sessionId) return null; // legacy path-only compatibility has no stable key
   const ownerAgentId = engine.resolveSessionOwnership?.(ref.sessionPath)?.agentId
     || engine.getSessionManifest?.(ref.sessionId)?.ownerAgentId
@@ -618,19 +699,27 @@ function projectSessionFilesForRetry(engine, sessionPath, references) {
     .filter(Boolean);
 }
 
-function restoreRetryBranch(session, originalLeafId, resolved, reason) {
+function restoreRetryBranch(session, originalLeafId, resolved, reason, transactionId) {
   if (originalLeafId) session.sessionManager.branch(originalLeafId);
   else session.sessionManager.resetLeaf();
-  // Appending on the original leaf makes the rollback itself the last durable
-  // tree entry, so reopening the append-only JSONL cannot select the failed branch.
+  // Keep the physical tail canonical for SDK readers. If this append is
+  // interrupted, the off-branch write-ahead record restores cold projections.
   try {
-    session.sessionManager.appendCustomEntry(SESSION_BRANCH_RESET_RECORD_TYPE, {
+    return session.sessionManager.appendCustomEntry(SESSION_BRANCH_RESET_RECORD_TYPE, {
+      version: 2,
+      retryTransactionId: transactionId,
       sourceEntryId: resolved.turnInputEntry.id,
       target: resolved.target,
       rolledBack: true,
       reason,
       timestamp: Date.now(),
     });
+  } catch (error) {
+    // Pi updates its in-memory leaf before writing. Never keep a possibly
+    // unwritten rollback entry as the parent of the next accepted input.
+    if (originalLeafId) session.sessionManager.branch(originalLeafId);
+    else session.sessionManager.resetLeaf();
+    throw error;
   } finally {
     // Keep the live agent aligned with the restored branch even when persisting
     // the rollback marker fails; the persistence failure still reaches the caller.
@@ -844,7 +933,6 @@ function branchBeforeResolvedTurnInput(session, resolved) {
   } else {
     session.sessionManager.resetLeaf();
   }
-  replaceAgentMessagesFromBranch(session);
 }
 
 function restoreBranchLeaf(session, leafId) {
@@ -864,4 +952,44 @@ function replaceAgentMessagesFromBranch(session) {
   } else if (session.agent?.state) {
     session.agent.state.messages = context.messages;
   }
+}
+
+
+/** Select identities from the persisted original turn, never from retry request data. */
+type RetryActionEntry = {
+  id: string; type: string;
+  customType?: string;
+  data?: { version?: number; agentId?: string; turnInputEntryId?: string; actions?: ChannelPostRetryAction[] };
+  message?: { role: string; toolCallId?: string; details?: { effect?: { effectId?: string; logicalActionId?: string } }; content?: Array<{ type: string; id?: string; name?: string; arguments?: { action?: string } }> };
+};
+export function collectChannelPostRetryActions(branch: RetryActionEntry[], resolved: { turnInputEntry: { id: string }; turnEndEntry: { id: string } }, scope?: { agentId: string; sessionIdentity: string | null }): ChannelPostRetryAction[] {
+  const start = branch.findIndex(entry => entry.id === resolved.turnInputEntry.id);
+  const end = branch.findIndex(entry => entry.id === resolved.turnEndEntry.id);
+  const entries = branch.slice(start, end + 1);
+  const marker = entries.find(entry => entry.type === "custom"
+    && entry.customType === SESSION_TASK_RETRY_RECORD_TYPE);
+  if (marker) {
+    const lineage = marker.data;
+    if (lineage?.version !== 1 || lineage.turnInputEntryId !== resolved.turnInputEntry.id
+      || !Array.isArray(lineage.actions) || lineage.actions.some(action => !/^[a-f0-9]{64}$/.test(action.effectId || ""))) {
+      throw new Error("Unsupported or invalid persisted task retry lineage");
+    }
+    if (!scope || lineage.agentId !== scope.agentId) {
+      throw new Error("Persisted task retry lineage belongs to a different agent");
+    }
+    return lineage.actions.map(action => ({ ...action }));
+  }
+  const results = new Map(entries.filter(entry => entry.type === "message" && entry.message?.role === "toolResult")
+    .map(entry => [entry.message.toolCallId, entry.message]));
+  return entries.flatMap(entry => entry.type === "message" && entry.message?.role === "assistant"
+    ? (Array.isArray(entry.message.content) ? entry.message.content : []).filter(block => (
+      block.type === "toolCall" && block.name === "channel" && block.arguments?.action === "post"
+    )).map(block => {
+      const effect = results.get(block.id)?.details?.effect;
+      return {
+        toolCallId: block.id,
+        ...(effect?.effectId ? { effectId: effect.effectId } : {}),
+        ...(effect?.logicalActionId ? { logicalActionId: effect.logicalActionId } : {}),
+      };
+    }) : []);
 }

@@ -18,6 +18,9 @@ function spawnServerBootstrap(hanaHome: string, extraEnv: Record<string, string>
     env: {
       ...process.env,
       HANA_HOME: hanaHome,
+      // A successful first run must not create a workspace in the real home.
+      HOME: path.join(hanaHome, "os-home"),
+      USERPROFILE: path.join(hanaHome, "os-home"),
       HANA_PORT: "0",
       HANA_ROOT: root,
       // server/main-full.ts is the thin closed composition entry:
@@ -76,6 +79,9 @@ async function waitForStartupProgress(child: ReturnType<typeof spawn>, marker = 
 
   if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   await childClosed;
+  if (!stdout.includes(marker)) {
+    throw new Error(`server did not reach startup marker ${JSON.stringify(marker)}\n${stdout}\n${stderr}`);
+  }
   return { stdout, stderr };
 }
 

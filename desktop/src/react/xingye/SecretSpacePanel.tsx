@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { normalizeMemoryScope, sameMemoryScope } from '../../../../shared/memory-scope';
+import { normalizeMemorySourceDependencies } from '../../../../shared/memory-provenance';
 import type { Agent } from '../types';
 import {
   emitAgentPinnedMemoryChanged,
@@ -280,6 +282,8 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
   /** memory_fragment 列表卡片上"推到 pinned"操作的 busy / error 状态，按 recordId 分。 */
   const [pushPinnedBusyKey, setPushPinnedBusyKey] = useState<string | null>(null);
   const [pushPinnedFlash, setPushPinnedFlash] = useState<string | null>(null);
+  const currentMemoryAgent = useRef(agent?.id);
+  currentMemoryAgent.current = agent?.id;
 
   /**
    * 「去和 TA 聊聊」：把 draft_reply 记录正文暂存到 stagedChatQuote，不导航——目的地
@@ -527,6 +531,7 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
     }
     try {
       const drafts = await listMemoryCandidateDrafts(agent.id);
+      if (currentMemoryAgent.current !== agent.id) return;
       setPendingMemoryCandidateDrafts(drafts);
     } catch (err) {
       setMemoryDraftError(err instanceof Error ? err.message : String(err));
@@ -592,7 +597,17 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
     setPushPinnedBusyKey(record.key);
     setPushPinnedFlash(null);
     try {
-      const pins = await loadAgentPinnedMemory(agent.id, hanaFetch);
+      const memoryScope = normalizeMemoryScope(record.metadata?.memoryScope, agent.id);
+      if (memoryScope.agentId !== agent.id) throw new Error('回忆所属角色不一致');
+      const sourceDependencies = normalizeMemorySourceDependencies(record.metadata?.sourceDependencies);
+      const sessionId = sourceDependencies[0]?.sessionId;
+      if (memoryScope.realm !== 'legacy' && !sessionId) throw new Error('回忆缺少可验证的会话来源');
+      const getRes = await hanaFetch(`/api/agents/${agent.id}/pinned${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`);
+      const data = await getRes.json();
+      if (!getRes.ok) throw new Error(data?.error || '无法读取置顶记忆');
+      if (currentMemoryAgent.current !== agent.id) return;
+      if ((data?.memoryScope || memoryScope.realm !== 'legacy') && !sameMemoryScope(memoryScope, data?.memoryScope)) throw new Error('回忆来源的范围已变化');
+      const pins: string[] = Array.isArray(data?.pins) ? data.pins : [];
       const already = pins.some((p) => normalizePinBulletForMatch(p) === bullet);
       if (already) {
         setPushPinnedFlash('pinned 中已存在相同内容；无需重复写入。');
@@ -603,9 +618,10 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
       const putRes = await hanaFetch(`/api/agents/${agent.id}/pinned`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pins: nextPins, expectedPins: pins }),
+        body: JSON.stringify({ pins: nextPins, expectedPins: pins, sessionId, appendItem: { content: record.body.trim(), memoryScope, sourceDependencies, origin: 'manual' } }),
       });
       const putJson: unknown = await putRes.json().catch(() => ({}));
+      if (currentMemoryAgent.current !== agent.id) return;
       if (!putRes.ok) {
         const err =
           isRecord(putJson) && typeof putJson.error === 'string'
@@ -624,9 +640,10 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
       setPushPinnedFlash('已推到 pinned。');
       await reloadMemoryFragmentRecords();
     } catch (e) {
+      if (currentMemoryAgent.current !== agent.id) return;
       setPushPinnedFlash(e instanceof Error ? e.message : String(e));
     } finally {
-      setPushPinnedBusyKey(null);
+      if (currentMemoryAgent.current === agent.id) setPushPinnedBusyKey(null);
     }
   };
 

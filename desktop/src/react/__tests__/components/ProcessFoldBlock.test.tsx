@@ -31,7 +31,8 @@ function t(key: string, vars?: Record<string, string | number>): string {
     'processFold.tools': '{n} 个工具',
     'processFold.thinking': '{n} 次思考',
     'processFold.unsuccessful': '{n} 次尝试未成功',
-    'common.regenerate': '重新生成',
+    'common.taskRetry': '重试任务',
+        'common.dialogueVariant': '换个说法',
     'common.forkSession': '分支为新会话',
   };
   return (table[key] || key).replace(/\{(\w+)\}/g, (_, name) => String(vars?.[name] ?? ''));
@@ -100,14 +101,14 @@ describe('ProcessFoldBlock', () => {
     );
 
     const footer = screen.getByTestId('process-fold-completion-actions');
-    expect(within(footer).getByTitle('重新生成')).toBeInTheDocument();
+    expect(within(footer).getByTitle('重试任务')).toBeInTheDocument();
     expect(within(footer).getByTitle('分支为新会话')).toBeInTheDocument();
-    fireEvent.click(within(footer).getByTitle('重新生成'));
+    fireEvent.click(within(footer).getByTitle('重试任务'));
 
     expect(retryMock).toHaveBeenCalledWith(
       sessionPath,
       { role: 'assistant', entryId: 'entry-a3' },
-      { message: expect.objectContaining({ id: 'u1', sourceEntryId: 'entry-u1', text: '做一下' }) },
+      { message: expect.objectContaining({ id: 'u1', sourceEntryId: 'entry-u1', text: '做一下' }), mode: 'task_retry' },
     );
   });
 

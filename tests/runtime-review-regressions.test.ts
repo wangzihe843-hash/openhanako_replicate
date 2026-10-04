@@ -1,15 +1,17 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
-import { it, expect, vi, afterEach } from 'vitest';
+import { it, expect, vi, afterAll, afterEach } from 'vitest';
 import { AgentSession } from '@earendil-works/pi-coding-agent';
 import { SessionCoordinator } from '../core/session-coordinator.ts';
 import { submitDesktopSessionMessage, cancelDesktopSessionSubmission } from '../core/desktop-session-submit.ts';
 import { createWorkflowTool } from '../lib/tools/workflow-tool.ts';
 import { TaskRegistry } from '../lib/task-registry.ts';
 const gate = () => Promise.withResolvers<void>();
-const out = fs.mkdtempSync(path.join(process.env.TEMP!, 'runtime-rereview-'));
+const out = fs.mkdtempSync(path.join(process.env.TEMP || os.tmpdir(), 'runtime-rereview-'));
 afterEach(() => vi.restoreAllMocks());
+afterAll(() => fs.rmSync(out, { recursive: true, force: true }));
 
 it.each(['restore', 'reload', 'stop'])('RR01 %s respects real SDK preflight ownership without receipts', async mode => {
   const entered = gate(), held = gate();

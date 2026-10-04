@@ -140,7 +140,7 @@
       "schemaContract": {
         "kind": "runtime-source",
         "source": "lib/memory/fact-store.ts",
-        "compatibility": "The FactStore runtime and its introspection are canonical; test-only v1 DDL is migration fixture data, never the schema source."
+        "compatibility": "FactStore v4 adds nullable memory_scope and source_revision, source_dependencies defaulting to [], source_status defaulting to active, an optional invalidation reason, and a status index. The v3-to-v4 transaction preserves every existing fact and its FTS identity; missing scope remains legacy. Current readers enforce runtime scope and provenance before retrieval limits. The runtime DDL is canonical; test-only v1 DDL is migration fixture data. This forward-upgrade contract does not authorize downgrade to scope-unaware readers."
       },
       "openEntry": [
         "new FactStore"
@@ -149,7 +149,10 @@
         "FactStore store-local migrations",
         "lib/compat/checks/facts-db.ts"
       ],
-      "protocolModules": [],
+      "protocolModules": [
+        "shared/memory-scope.ts",
+        "shared/memory-provenance.ts"
+      ],
       "firstPossibleOpenPhase": "engine_construct",
       "firstPossibleWritePhase": "runtime_ready",
       "epochPolicy": "epoch-managed",
@@ -158,7 +161,7 @@
       "affectedByEpochMigration": true,
       "bootstrapSafety": null,
       "preCoordinatorReadProjection": null,
-      "identityContract": "One facts database belongs to one agentId; SQLite user_version is store-local and never DATA_EPOCH.",
+      "identityContract": "One facts database belongs to one agentId; facts additionally carry explicit realm/world/branch/knowledge identity and source dependencies. SQLite user_version is store-local and never DATA_EPOCH.",
       "exemption": null
     },
     {
@@ -197,7 +200,7 @@
       "schemaContract": {
         "kind": "protocol",
         "source": "lib/memory/compiled-memory-state.ts",
-        "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs."
+        "compatibility": "Historical Markdown and summary/pin JSON remain readable as legacy. Optional explicit memoryScope and source dependency/status fields are preserved in version-1 pin and summary records; scoped pins are excluded from the lossy legacy Markdown mirror. Legacy aggregates are not promoted into explicit worlds. Current source verification may suppress stale derived context without deleting original transcript history."
       },
       "openEntry": [
         "HanaAgent.init",
@@ -207,7 +210,13 @@
         "HanaAgent v1 memories.db import",
         "core/migrations.ts memory migrations"
       ],
-      "protocolModules": [],
+      "protocolModules": [
+        "lib/memory/pinned-memory-store.ts",
+        "lib/memory/session-summary.ts",
+        "lib/memory/compiled-memory-snapshot.ts",
+        "shared/memory-scope.ts",
+        "shared/memory-provenance.ts"
+      ],
       "firstPossibleOpenPhase": "engine_construct",
       "firstPossibleWritePhase": "runtime_ready",
       "epochPolicy": "epoch-managed",
@@ -311,6 +320,48 @@
       "bootstrapSafety": null,
       "preCoordinatorReadProjection": null,
       "identityContract": "agentId owns the profile; each filename has a fixed semantic role.",
+      "exemption": null
+    },
+    {
+      "id": "agent-scoped-memory-derivations",
+      "ownerModule": "lib/memory/scoped-derivation-store.ts",
+      "pathPattern": "agents/{agentId}/memory/scoped-derivations.v1.json",
+      "pathPatterns": [
+        "agents/{agentId}/memory/scoped-derivations.v1.json"
+      ],
+      "pathExclusions": [],
+      "pathKind": "file",
+      "format": "json",
+      "schemaSource": {
+        "kind": "runtime-contract",
+        "module": "lib/memory/scoped-derivation-store.ts",
+        "contract": "version-1 scoped source/artifact/head manifest, entry revision hashes and generation fences, dependency validation, and atomic writer"
+      },
+      "schemaContract": {
+        "kind": "runtime-source",
+        "source": "lib/memory/scoped-derivation-store.ts",
+        "compatibility": "Absent file is an empty version-1 store. This separate additive path never imports mixed legacy aggregates and does not rewrite source session history. Unknown version or malformed manifest fails closed; stale/superseded artifacts stay available for recovery but are excluded from active context. No old DATA_EPOCH migration is required to read an existing home."
+      },
+      "openEntry": [
+        "ScopedDerivationStore",
+        "Agent scoped prompt reads",
+        "SessionSummaryManager",
+        "memory ticker"
+      ],
+      "migrationEntry": [],
+      "protocolModules": [
+        "shared/memory-scope.ts",
+        "shared/memory-provenance.ts"
+      ],
+      "firstPossibleOpenPhase": "engine_construct",
+      "firstPossibleWritePhase": "runtime_ready",
+      "epochPolicy": "epoch-managed",
+      "checkpointPolicy": "Checkpoint the complete manifest with owning agent facts, pin/summary records and source session JSONL. It contains source tombstones and retained stale/superseded evidence, not merely regenerable rendered context.",
+      "restorePolicy": "Restore the complete manifest only with compatible source histories and readers; revalidate source hashes/generations and artifact dependency heads before injection. Never recreate active scope from an unscoped Markdown fallback.",
+      "affectedByEpochMigration": true,
+      "bootstrapSafety": null,
+      "preCoordinatorReadProjection": null,
+      "identityContract": "agentId owns the manifest. Sources are keyed by stable sessionId plus optional entryId; artifacts carry realm/world/branch/knowledge scope, content hash, dependency generations and a current head. Session paths never establish identity.",
       "exemption": null
     },
     {
@@ -2007,7 +2058,7 @@
       "schemaContract": {
         "kind": "runtime-source",
         "source": "@earendil-works/pi-coding-agent via package-lock.json integrity",
-        "compatibility": "The locked Pi package schema/version plus Hana repair and extension readers are canonical; Hana does not duplicate Pi's session schema."
+        "compatibility": "The locked Pi JSONL v3 package plus Hana repair/extension readers remain canonical. Optional versioned memory-scope, accepted-input task-retry lineage, and dialogue-variant recovery records preserve existing message/tool-result history. Absent scope stays legacy; explicit invalid scope or retry lineage fails closed. Recovery projection readers are guarded alongside metadata writers; these records do not replace Pi's session schema."
       },
       "openEntry": [
         "SessionCoordinator create/restore",
@@ -2019,9 +2070,13 @@
       ],
       "protocolModules": [
         "core/session-jsonl-file.ts",
+        "lib/session-jsonl.ts",
         "core/session-coordinator.ts",
         "core/desktop-session-submit.ts",
-        "core/xingye-session-greeting.ts"
+        "core/session-turn-actions.ts",
+        "core/xingye-session-greeting.ts",
+        "core/session-memory-scope.ts",
+        "core/session-dialogue-variants.ts"
       ],
       "firstPossibleOpenPhase": "engine_construct",
       "firstPossibleWritePhase": "runtime_ready",
@@ -2862,7 +2917,7 @@
     {
       "sourceFile": "core/agent.ts",
       "kind": "persistent-store-constructor",
-      "excerpt": "new FactStore(this.factsDbPath)",
+      "excerpt": "new FactStore(this.factsDbPath, { agentId: this.id })",
       "reason": "Constructs or migrates a FactStore.",
       "storeId": "agent-facts-sqlite",
       "exemptionId": null,
@@ -7299,7 +7354,7 @@
     {
       "sourceFile": "lib/memory/pinned-memory-store.ts",
       "kind": "atomic-write",
-      "excerpt": "atomicWriteSync(pinnedPath(agentDir), renderPinnedMarkdown(data.items))",
+      "excerpt": "atomicWriteSync(pinnedPath(agentDir), renderPinnedMarkdown(data.items.filter(item => item.memoryScope.realm === \"legacy\" && (item.origin === \"manual\" || item.sourceStatus === \"active\"))))",
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "storeId": "agent-memory",
       "exemptionId": null,
@@ -7320,6 +7375,24 @@
       "excerpt": "fs.mkdirSync(agentDir, { recursive: true })",
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "storeId": "agent-memory",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/memory/scoped-derivation-store.ts",
+      "kind": "atomic-write",
+      "excerpt": "atomicWriteSync(this.manifestPath, JSON.stringify(state, null, 2) + \"\\n\")",
+      "reason": "Creates the per-agent memory directory and atomically replaces its scoped source/artifact manifest.",
+      "storeId": "agent-scoped-memory-derivations",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/memory/scoped-derivation-store.ts",
+      "kind": "mkdir",
+      "excerpt": "fs.mkdirSync(this.memoryDir, { recursive: true })",
+      "reason": "Creates the per-agent memory directory and atomically replaces its scoped source/artifact manifest.",
+      "storeId": "agent-scoped-memory-derivations",
       "exemptionId": null,
       "ordinal": 0
     },

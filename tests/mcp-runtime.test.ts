@@ -21,7 +21,15 @@ import { resolveToolInvocationPermission } from "../lib/permission/tool-invocati
  * which writes happen.
  */
 function createManager({ dataDir, config, log = console }: any = {}, options: any = {}) {
-  return new McpManager({ dataDir, log }, { configStore: config, ...options });
+  return new McpManager({ dataDir, log }, {
+    configStore: config,
+    // Fixture endpoints must never reach the network. Tests of HTTP/OAuth
+    // behavior supply their own fetchImpl below; all other tests fail closed.
+    fetchImpl: vi.fn(async (url: unknown) => {
+      throw new Error(`Unexpected network access in MCP runtime fixture: ${String(url)}`);
+    }),
+    ...options,
+  });
 }
 
 describe("MCP runtime policy", () => {
@@ -1093,6 +1101,19 @@ describe("MCP app resources", () => {
       dataDir: path.join(os.tmpdir(), "hana-mcp-apps-test"),
       config: { get: vi.fn(() => stored), set: vi.fn() },
       log: console,
+    }, {
+      // start() also starts enabled connectors. Keep that lifecycle in memory
+      // rather than dialing mcp.acme.test before the individual test's stub is
+      // installed; app-card behavior does not depend on an HTTP transport.
+      clientFactory: () => {
+        const client = {
+          running: false,
+          start: vi.fn(async () => { client.running = true; }),
+          stop: vi.fn(async () => { client.running = false; }),
+          listTools: vi.fn(async () => tools),
+        };
+        return client;
+      },
     });
   }
 
@@ -1188,6 +1209,7 @@ describe("MCP app resources", () => {
       sourceAgentId: "hana",
       sourceSessionId: "sess_1",
     });
+    expect(runtime.fetchImpl).not.toHaveBeenCalled();
   });
 });
 

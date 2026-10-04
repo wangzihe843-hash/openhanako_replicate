@@ -244,7 +244,7 @@ function waitForExit(child: ReturnType<typeof spawn>, timeoutMs = 15000): Promis
   });
 }
 
-function waitForServerInfo(serverInfoPath: string, child: ReturnType<typeof spawn>, timeoutMs = 60000): Promise<any> {
+function waitForServerInfo(serverInfoPath: string, child: ReturnType<typeof spawn>, getStderr: () => string, timeoutMs = 60000): Promise<{ port: number; token: string; host: string; pid: number }> {
   return new Promise((resolve, reject) => {
     let exited = false;
     let exitInfo: any = null;
@@ -252,7 +252,7 @@ function waitForServerInfo(serverInfoPath: string, child: ReturnType<typeof spaw
     const deadline = Date.now() + timeoutMs;
     const poll = () => {
       if (exited) {
-        reject(new Error(`server exited before writing server-info.json: ${JSON.stringify(exitInfo)}`));
+        reject(new Error(`server exited before writing server-info.json: ${JSON.stringify(exitInfo)}\n${getStderr()}`));
         return;
       }
       try {
@@ -263,7 +263,7 @@ function waitForServerInfo(serverInfoPath: string, child: ReturnType<typeof spaw
         // not written yet
       }
       if (Date.now() > deadline) {
-        reject(new Error("timed out waiting for server-info.json"));
+        reject(new Error(`timed out waiting for server-info.json\n${getStderr()}`));
         return;
       }
       setTimeout(poll, 200);
@@ -281,6 +281,9 @@ describe("composition boundary behavior lock: real request smoke against the ful
       env: {
         ...process.env,
         HANA_HOME: hanaHome,
+        // First-run desktop workspace writes belong to this temporary fixture.
+        HOME: path.join(hanaHome, "os-home"),
+        USERPROFILE: path.join(hanaHome, "os-home"),
         HANA_PORT: "0",
         HANA_ROOT: root,
         HANA_SERVER_ENTRY: path.join(root, "server", "main-full.ts"),
@@ -290,9 +293,10 @@ describe("composition boundary behavior lock: real request smoke against the ful
     });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stdout.resume();
 
     try {
-      const info = await waitForServerInfo(serverInfoPath, child);
+      const info = await waitForServerInfo(serverInfoPath, child, () => stderr);
       const base = `http://127.0.0.1:${info.port}`;
       const authHeaders = { Authorization: `Bearer ${info.token}` };
 

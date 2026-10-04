@@ -2,6 +2,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { parseChannel } from "../channels/channel-store.ts";
 
 export type EffectStatus = "prepared" | "committed" | "failed" | "unknown";
@@ -9,6 +10,8 @@ export type EffectStatus = "prepared" | "committed" | "failed" | "unknown";
 export interface EffectRecord {
   effectId: string;
   operationKey: string;
+  /** Engine-authored action identity, when present. Never accepted as a tool argument. */
+  logicalActionId?: string;
   taskId: string;
   attemptId: string;
   attempts: number;
@@ -27,6 +30,7 @@ export function publicEffectRecord(record: EffectRecord) {
     effectId: record.effectId,
     status: record.status,
     attempts: record.attempts,
+    ...(record.logicalActionId ? { logicalActionId: record.logicalActionId } : {}),
     ...(record.receipt ? { receipt: record.receipt } : {}),
     ...(record.errorCode ? { errorCode: record.errorCode } : {}),
   };
@@ -39,14 +43,96 @@ export function digestEffectInput(value: unknown): string {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-export function channelPostOperationKey(agentId: string, toolCallId: string, sessionIdentity?: string | null): string {
+export function channelPostOperationKey(agentId: string, toolCallId: string, sessionIdentity?: string | null, logicalActionId?: string): string {
   if (!toolCallId?.trim()) throw new Error("channel.post requires a stable tool call ID");
+  if (logicalActionId != null) {
+    if (!logicalActionId.trim()) throw new Error("channel.post requires a nonempty logical action ID");
+    return digestEffectInput(["channel.post", "logical", agentId, sessionIdentity?.trim() || null, logicalActionId]);
+  }
   // Pi tool-call IDs are only session-local. A stable Hana session ID (or JSONL
   // locator) separates separate conversations; the two-argument form retains
   // the direct-call/old-ledger identity for callers without runtime context.
   return sessionIdentity?.trim()
     ? digestEffectInput(["channel.post", "session", agentId, sessionIdentity, toolCallId])
     : digestEffectInput(["channel.post", agentId, toolCallId]);
+}
+
+export interface ChannelPostRetryAction {
+  toolCallId: string;
+  effectId?: string;
+  logicalActionId?: string;
+  argsDigest?: string;
+}
+
+export interface ChannelPostRetryContext {
+  agentId: string;
+  sessionIdentity: string | null;
+  /** Original channel.post calls in persisted turn order, supplied by the engine. */
+  actions: readonly ChannelPostRetryAction[];
+  /** Engine-only synchronous durable binding, called before a provider/effect dispatch. */
+  beforeDispatch?: () => void;
+}
+
+interface ChannelPostRetryState {
+  context: Readonly<ChannelPostRetryContext>;
+  bindings: Map<string, Readonly<ChannelPostRetryAction>>;
+  nextAction: number;
+  beforeDispatch?: () => void;
+  dispatchPrepared: boolean;
+}
+
+const channelPostRetryStorage = new AsyncLocalStorage<ChannelPostRetryState>();
+
+/** Read-only trusted runtime context, also usable by the retry tool-permission gate. */
+export function getChannelPostRetryContext(): Readonly<ChannelPostRetryContext> | null {
+  return channelPostRetryStorage.getStore()?.context || null;
+}
+
+/** Bind the retry to the actual accepted input, never an adjacent pending prefix. */
+export function prepareChannelPostRetryDispatch(agentId: string, sessionIdentity?: string | null): void {
+  const retry = channelPostRetryStorage.getStore();
+  if (!retry) return;
+  if (retry.context.agentId !== agentId || retry.context.sessionIdentity !== (sessionIdentity?.trim() || null)) {
+    throw effectError("effect_retry_scope_mismatch", "Task retry effect binding belongs to a different agent or session");
+  }
+  if (retry.dispatchPrepared) return;
+  retry.beforeDispatch?.();
+  retry.dispatchPrepared = true;
+}
+
+/**
+ * Retry identity comes from persisted actions selected by the engine, not model
+ * arguments or a content hash. Calls are rebound in strict original order. A
+ * changed, skipped, or extra action must become an explicit new user operation.
+ */
+export function runWithChannelPostRetryContext<T>(context: ChannelPostRetryContext, callback: () => T): T {
+  if (!context.agentId?.trim()) throw new Error("Task retry requires an agent identity");
+  const seenCalls = new Set<string>();
+  const actions = context.actions.map((action) => {
+    if (!action.toolCallId?.trim() || seenCalls.has(action.toolCallId)) {
+      throw effectError("effect_retry_binding_ambiguous", "Task retry has missing or duplicate original tool call identities");
+    }
+    if (action.effectId != null && !/^[a-f0-9]{64}$/.test(action.effectId)) {
+      throw effectError("effect_retry_binding_ambiguous", "Task retry has an invalid original effect identity");
+    }
+    seenCalls.add(action.toolCallId);
+    return Object.freeze({ ...action });
+  });
+  return channelPostRetryStorage.run({
+    context: Object.freeze({
+      agentId: context.agentId,
+      sessionIdentity: context.sessionIdentity?.trim() || null,
+      actions: Object.freeze(actions),
+    }),
+    bindings: new Map(),
+    nextAction: 0,
+    beforeDispatch: context.beforeDispatch,
+    dispatchPrepared: false,
+  }, callback);
+}
+
+function effectError(code: string, message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
 }
 
 export class EffectLedger {
@@ -102,21 +188,68 @@ export interface ChannelPostEffectInput {
   agentId: string;
   toolCallId: string;
   sessionIdentity?: string | null;
+  /** Trusted engine binding only; channel tool parameters must never supply this. */
+  logicalActionId?: string;
   channelId: string;
   content: string;
   lookupReceipt: (effectId: string, receiptToken: string) => { timestamp: string; sender: string } | null;
   send: (effectId: string, receiptToken: string) => Promise<{ timestamp: string; replayed?: boolean }>;
 }
 
+function resolveChannelPostEffectIdentity(input: ChannelPostEffectInput, argsDigest: string) {
+  if (!input.toolCallId?.trim()) throw new Error("channel.post requires a stable tool call ID");
+  const retry = channelPostRetryStorage.getStore();
+  if (!retry) {
+    return {
+      effectId: channelPostOperationKey(input.agentId, input.toolCallId, input.sessionIdentity, input.logicalActionId),
+      sourceToolCallId: input.toolCallId,
+      logicalActionId: input.logicalActionId,
+      isRetry: false,
+    };
+  }
+  if (retry.context.agentId !== input.agentId || retry.context.sessionIdentity !== (input.sessionIdentity?.trim() || null)) {
+    throw effectError("effect_retry_scope_mismatch", "Task retry effect binding belongs to a different agent or session");
+  }
+  prepareChannelPostRetryDispatch(input.agentId, input.sessionIdentity);
+  const existingBinding = retry.bindings.get(input.toolCallId);
+  const action = existingBinding || retry.context.actions[retry.nextAction];
+  if (!action) {
+    throw effectError("effect_retry_unbound", "Task retry cannot create an additional channel post; request a new operation explicitly");
+  }
+  const effectId = action.effectId || channelPostOperationKey(input.agentId, action.toolCallId, input.sessionIdentity, action.logicalActionId);
+  const record = input.ledger.read(effectId);
+  // The original action may have been interrupted before the model received its
+  // result. Consult the durable ledger even if no effect ID was in that result.
+  // A missing receipt record is never evidence that repeating the send is safe.
+  if (!record) {
+    throw effectError("effect_retry_record_missing", "Task retry cannot establish the original channel post identity from its ledger");
+  }
+  if (record.argsDigest !== argsDigest || (action.argsDigest && action.argsDigest !== argsDigest)) {
+    throw effectError("effect_identity_conflict", "Task retry channel post differs from the next original logical action");
+  }
+  if ((action.logicalActionId && action.logicalActionId !== record.logicalActionId)
+    || (input.logicalActionId && input.logicalActionId !== record.logicalActionId)) {
+    throw effectError("effect_identity_conflict", "Task retry logical action identity differs from its original ledger record");
+  }
+  if (!existingBinding) {
+    retry.bindings.set(input.toolCallId, action);
+    retry.nextAction += 1;
+  }
+  return { effectId, sourceToolCallId: action.toolCallId, logicalActionId: record.logicalActionId, isRetry: true };
+}
+
 /** One in-process runner per logical action; the channel marker is the persisted receipt. */
 export async function runChannelPostEffect(input: ChannelPostEffectInput): Promise<{ record: EffectRecord; sentNow: boolean }> {
-  const effectId = channelPostOperationKey(input.agentId, input.toolCallId, input.sessionIdentity);
+  // appendMessage persists the trimmed body. This digest checks arguments only;
+  // it must not collapse separate intentional operations with identical content.
+  const argsDigest = digestEffectInput([input.channelId, input.agentId, input.content.trim()]);
+  const { effectId, sourceToolCallId, logicalActionId, isRetry } = resolveChannelPostEffectIdentity(input, argsDigest);
   const previous = effectLocks.get(effectId) || Promise.resolve();
   const run = previous.catch(() => {}).then(async () => {
-    // appendMessage persists the trimmed body. Digest that canonical body so a
-    // later artifact check sees the same bytes for posts with outer whitespace.
-    const argsDigest = digestEffectInput([input.channelId, input.agentId, input.content.trim()]);
     let record = input.ledger.read(effectId);
+    if (isRetry && !record) {
+      throw effectError("effect_retry_record_missing", "Original channel post ledger record disappeared before retry execution");
+    }
     if (record && record.argsDigest !== argsDigest) {
       throw Object.assign(new Error("Tool call ID reused with different channel.post arguments"), { code: "effect_identity_conflict" });
     }
@@ -124,7 +257,7 @@ export async function runChannelPostEffect(input: ChannelPostEffectInput): Promi
     // any one of several sessions with the same tool-call ID. Preserve it and
     // block a new send instead of silently treating its absence at the new key
     // as proof that this action has never run.
-    if (!record && input.sessionIdentity?.trim()) {
+    if (!record && !logicalActionId && input.sessionIdentity?.trim()) {
       const legacy = input.ledger.read(channelPostOperationKey(input.agentId, input.toolCallId));
       if (legacy) {
         record = input.ledger.write({
@@ -166,7 +299,8 @@ export async function runChannelPostEffect(input: ChannelPostEffectInput): Promi
     record = input.ledger.write({
       effectId,
       operationKey: effectId,
-      taskId: `tool:${input.toolCallId}`,
+      ...(logicalActionId ? { logicalActionId } : {}),
+      taskId: record?.taskId || `tool:${sourceToolCallId}`,
       attemptId: `${effectId}:${attempts}`,
       attempts,
       toolName: "channel.post",

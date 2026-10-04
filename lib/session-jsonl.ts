@@ -1,6 +1,23 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { isSessionTurnInputEntry } from "./turn-input-presentation.ts";
+
+export const SESSION_RETRY_TRANSACTION_RECORD_TYPE = "hana-session-retry-transaction-v1";
+
+// Memory observers may re-enter the reader synchronously inside the rewind
+// setter. Only a cold/interrupted retry is recoverable before input acceptance.
+const activeRetryTransactions = new Set<string>();
+function retryTransactionKey(id, data) {
+  return JSON.stringify([id, data.sessionId, data.originalLeafId, data.sourceEntryId]);
+}
+export function trackActiveSessionRetryTransaction(id, data) {
+  const key = retryTransactionKey(id, data);
+  activeRetryTransactions.add(key);
+  return () => { activeRetryTransactions.delete(key); };
+}
+
+export const DIALOGUE_VARIANT_ROLLBACK_RECORD_TYPE = "hana-dialogue-variant-rollback-v1";
 
 export class SessionBranchError extends Error {
   declare code: string;
@@ -176,6 +193,108 @@ function isDescendantOf(candidateLeafId, ancestorLeafId, byId) {
   return false;
 }
 
+/** A failed replacement cannot become current again after a lost head-store acknowledgement. */
+function resolveDialogueVariantRollback(sessionEntries, byId, selectedLeafId, physicalTailLeafId, branchHead, filePath) {
+  const positions = new Map(sessionEntries.map((entry, index) => [entry.id, index]));
+  let recovered = false;
+  for (const entry of sessionEntries) {
+    if (entry.type !== "custom" || entry.customType !== DIALOGUE_VARIANT_ROLLBACK_RECORD_TYPE) continue;
+    const data = entry.data;
+    const source = byId.get(data?.sourceEntryId);
+    const rejected = byId.get(data?.rejectedEntryId);
+    const candidate = byId.get(data?.restoredLeafId);
+    const previous = byId.get(candidate?.parentId);
+    const isMatchingCandidate = (value) => value?.type === "custom"
+      && value.customType === "hana-dialogue-variant-v1" && value.data?.version === 1
+      && value.data.status === "ready" && value.data.candidateId === data?.candidateId
+      && value.data.sessionId === data?.sessionId && value.data.sourceEntryId === data?.sourceEntryId;
+    const priorCandidate = lineageToRoot(previous?.id, byId).find(isMatchingCandidate);
+    if (data?.version !== 1 || ![data.sessionId, data.candidateId, data.sourceEntryId, data.rejectedEntryId, data.restoredLeafId]
+      .every(value => typeof value === "string" && value.length > 0)
+      || (branchHead?.sessionId && branchHead.sessionId !== data.sessionId)
+      || source?.type !== "message" || source.message?.role !== "assistant"
+      || rejected?.type !== "message" || rejected.message?.role !== "assistant"
+      || source.id === rejected.id || source.parentId !== rejected.parentId
+      || !previous || !isDescendantOf(previous.id, source.id, byId)
+      || !isMatchingCandidate(candidate) || entry.parentId !== rejected.id || !priorCandidate
+      || JSON.stringify(candidate.data) !== JSON.stringify(priorCandidate.data)
+      || !(positions.get(previous.id) < positions.get(rejected.id)
+        && positions.get(rejected.id) < positions.get(candidate.id) && positions.get(candidate.id) < positions.get(entry.id))) {
+      throw new SessionBranchError("session_branch_invalid_variant_rollback", "Invalid dialogue variant rollback record.", { filePath, entryId: entry.id });
+    }
+    if (isDescendantOf(selectedLeafId, rejected.id, byId)) {
+      selectedLeafId = isDescendantOf(physicalTailLeafId, candidate.id, byId) ? physicalTailLeafId : candidate.id;
+      recovered = true;
+    }
+  }
+  return { selectedLeafId, recovered };
+}
+
+/** Recover only a prepared retry that never durably accepted a replacement input. */
+function resolveInterruptedRetry(sessionEntries, byId, selectedLeafId, physicalTailLeafId, branchHead, filePath) {
+  const positions = new Map(sessionEntries.map((entry, index) => [entry.id, index]));
+  let recovered = false;
+  for (const transaction of sessionEntries) {
+    if (transaction.type !== "custom" || transaction.customType !== SESSION_RETRY_TRANSACTION_RECORD_TYPE) continue;
+    const data = transaction.data;
+    const original = byId.get(data?.originalLeafId);
+    const source = byId.get(data?.sourceEntryId);
+    const originalBranch = lineageToRoot(original?.id, byId);
+    const sourceIndex = originalBranch.indexOf(source);
+    const parentIndex = data?.retryBranchParentId == null ? -1
+      : originalBranch.findIndex(entry => entry.id === data.retryBranchParentId);
+    const linked = sessionEntries.filter(entry => entry.type === "custom"
+      && entry.data?.retryTransactionId === transaction.id);
+    const resets = linked.filter(entry => entry.customType === "hana-session-branch-reset" && !entry.data.rolledBack);
+    const restorations = linked.filter(entry => entry.customType === "hana-session-branch-reset" && entry.data.rolledBack);
+    const scopes = linked.filter(entry => entry.customType === "hana-memory-scope");
+    const reset = resets[0];
+    const restored = restorations[0];
+    const scope = scopes[0];
+    const invalid = () => {
+      throw new SessionBranchError("session_branch_invalid_retry_transaction", "Invalid session retry transaction record.", { filePath, entryId: transaction.id });
+    };
+    if (data?.version !== 1 || !original || !isSessionTurnInputEntry(source)
+      || ![data.originalLeafId, data.sourceEntryId].every(value => typeof value === "string" && value.length > 0)
+      || !(data.sessionId === null || (typeof data.sessionId === "string" && data.sessionId.length > 0))
+      || (branchHead?.sessionId && data.sessionId && branchHead.sessionId !== data.sessionId)
+      || transaction.parentId !== original.id || sourceIndex < 0 || parentIndex >= sourceIndex
+      || (data.retryBranchParentId !== null && parentIndex < 0)
+      || !(positions.get(original.id) < positions.get(transaction.id))
+      || resets.length > 1 || restorations.length > 1 || scopes.length > 1
+      || linked.length !== resets.length + restorations.length + scopes.length) invalid();
+    if (reset && (reset.data.version !== 2 || reset.parentId !== data.retryBranchParentId
+      || reset.data.sourceEntryId !== source.id || !(positions.get(transaction.id) < positions.get(reset.id)))) invalid();
+    if (scope && (!reset || scope.parentId !== reset.id
+      || !(positions.get(reset.id) < positions.get(scope.id)))) invalid();
+    if (restored && (restored.data.version !== 2 || restored.data.rolledBack !== true
+      || restored.parentId !== original.id || restored.data.sourceEntryId !== source.id
+      || !(positions.get(transaction.id) < positions.get(restored.id))
+      || (reset && !(positions.get(reset.id) < positions.get(restored.id)))
+      || (scope && !(positions.get(scope.id) < positions.get(restored.id))))) invalid();
+
+    if (activeRetryTransactions.has(retryTransactionKey(transaction.id, data))) continue;
+    const preparedLeafId = reset?.id || transaction.id;
+    if (!isDescendantOf(selectedLeafId, preparedLeafId, byId)) continue;
+    const selectedBranch = lineageToRoot(selectedLeafId, byId);
+    const preparedIndex = selectedBranch.findIndex(entry => entry.id === preparedLeafId);
+    // The accepted input is the durable commit boundary. A later intentional
+    // rewind must also remain authoritative, even if it selects this reset.
+    if (selectedBranch.slice(preparedIndex + 1).some(isSessionTurnInputEntry)) continue;
+    const observedTailId = branchHead?.observedTailLeafId ?? null;
+    const observedBeforeAttempt = observedTailId == null
+      || (positions.has(observedTailId) && positions.get(observedTailId) < positions.get(transaction.id));
+    const observedPreparation = [transaction.id, reset?.id, scope?.id].includes(observedTailId);
+    if (branchHead && !observedBeforeAttempt && !observedPreparation) continue;
+
+    selectedLeafId = restored?.id || original.id;
+    if (isDescendantOf(physicalTailLeafId, selectedLeafId, byId)
+      && !isDescendantOf(physicalTailLeafId, transaction.id, byId)) selectedLeafId = physicalTailLeafId;
+    recovered = true;
+  }
+  return { selectedLeafId, recovered };
+}
+
 /**
  * Resolve and read the semantic current branch of a Pi JSONL session.
  *
@@ -227,6 +346,14 @@ export function projectCurrentSessionBranchEntries(
     }
   }
 
+  const retry = resolveInterruptedRetry(sessionEntries, byId, selectedLeafId, physicalTailLeafId, opts.branchHead, filePath);
+  selectedLeafId = retry.selectedLeafId;
+  if (retry.recovered) headResolution = "retry_rollback_recovery";
+
+  const rollback = resolveDialogueVariantRollback(sessionEntries, byId, selectedLeafId, physicalTailLeafId, opts.branchHead, filePath);
+  selectedLeafId = rollback.selectedLeafId;
+  if (rollback.recovered) headResolution = "dialogue_variant_rollback_recovery";
+
   const rawLineage = lineageToRoot(selectedLeafId, byId);
   const lineageMetadata = computeSessionLineageMetadata(rawLineage);
   const lineageIndexById = new Map(rawLineage.map((entry, index) => [entry.id, index]));
@@ -254,7 +381,7 @@ export function projectCurrentSessionBranchEntries(
   const recommendedHead = {
     leafId: selectedLeafId,
     observedTailLeafId: physicalTailLeafId,
-    reason: headResolution === "append_recovery" ? "append_recovery" : "branch_read",
+    reason: ["append_recovery", "dialogue_variant_rollback_recovery", "retry_rollback_recovery"].includes(headResolution) ? headResolution : "branch_read",
   };
   return {
     messages,

@@ -94,7 +94,13 @@ function createTestSessionManifestStore() {
   };
 }
 
-function makeCoordinator({ agentsDir, ownerAgent, tempDir, sessionManifestStore }: any) {
+function makeCoordinator({
+  agentsDir,
+  ownerAgent,
+  tempDir,
+  sessionManifestStore,
+  buildTools = (_cwd, customTools, _options) => ({ tools: [makeTool("read")], customTools }),
+}) {
   return new SessionCoordinator({
     agentsDir,
     sessionManifestStore,
@@ -114,7 +120,7 @@ function makeCoordinator({ agentsDir, ownerAgent, tempDir, sessionManifestStore 
       getSkills: () => ({ skills: [], diagnostics: [] }),
     }),
     getSkills: () => ({ getSkillsForAgent: vi.fn(() => ({ skills: [], diagnostics: [] })) }),
-    buildTools: (_cwd, customTools) => ({ tools: [makeTool("read")], customTools }),
+    buildTools,
     emitEvent: vi.fn(),
     getHomeCwd: () => tempDir,
     agentIdFromSessionPath: () => "owner",
@@ -189,6 +195,35 @@ describe("session-scoped invocation capability grants", () => {
     // Granting twice is idempotent rather than accumulating duplicates.
     coordinator.allowInvocationCapability(sessionPath, CAPABILITY);
     expect(coordinator.getAllowedInvocationCapabilities(sessionPath)).toEqual([CAPABILITY]);
+  });
+
+  it("binds desktop tool grants to their owning session after another session loads", async () => {
+    const otherPath = path.join(ownerSessionDir, "other.jsonl");
+    const buildTools = vi.fn((_cwd, customTools, _options) => ({ tools: [], customTools }));
+    createAgentSessionMock
+      .mockImplementationOnce(async () => ({ session: makeRestoredSession(sessionPath) }))
+      .mockImplementationOnce(async () => ({ session: makeRestoredSession(otherPath) }));
+    const coordinator = makeCoordinator({
+      agentsDir,
+      ownerAgent,
+      tempDir,
+      sessionManifestStore: manifestStore,
+      buildTools,
+    });
+
+    await coordinator.ensureSessionLoaded(sessionPath);
+    await coordinator.ensureSessionLoaded(otherPath);
+    expect(buildTools).toHaveBeenCalledTimes(2);
+    const firstOptions = buildTools.mock.calls[0][2];
+    const secondOptions = buildTools.mock.calls[1][2];
+    expect(firstOptions.getSessionPath).toBeTypeOf("function");
+    expect(secondOptions.getSessionPath).toBeTypeOf("function");
+    expect(firstOptions.getSessionPath()).toBe(sessionPath);
+    expect(secondOptions.getSessionPath()).toBe(otherPath);
+
+    coordinator.allowInvocationCapability(sessionPath, CAPABILITY);
+    expect(coordinator.getAllowedInvocationCapabilities(firstOptions.getSessionPath())).toEqual([CAPABILITY]);
+    expect(coordinator.getAllowedInvocationCapabilities(secondOptions.getSessionPath())).toEqual([]);
   });
 
   it("never writes the grant to session meta or the manifest snapshot", async () => {

@@ -172,6 +172,7 @@ export class ModelManager {
       path.join(this._hanakoHome, "models.json"),
     );
     this._syncSdkProviderRegistrations();
+    await this._modelRegistry.refresh({ allowNetwork: false });
 
     this.executionRouter = new ExecutionRouter(
       (ref) => this._resolveFromAvailable(ref),
@@ -262,15 +263,18 @@ export class ModelManager {
    *
    * @returns {boolean} 是否有变化
    */
-  async syncAndRefresh() {
+  async syncAndRefresh({ syncSdkProviders = false } = {}) {
     this._removeApiKeyProviderAuthEntries();
     const projection = this._buildChatProjectionInputs();
     const changed = syncModels(projection.providers, {
       modelsJsonPath: this.modelsJsonPath,
       chatProjectionPlans: projection.planMap,
     });
+    // Pi registration starts async file reads. Publish first so Windows rename
+    // never waits on those readers while blocking their event-loop completion.
+    if (syncSdkProviders) this._syncSdkProviderRegistrations();
     await this._applyRuntimeApiKeyOverrides(projection);
-    if (changed) {
+    if (changed || syncSdkProviders) {
       await this._modelRegistry.refresh({ allowNetwork: false });
     }
     await this.refreshAvailable();
@@ -629,8 +633,7 @@ export class ModelManager {
    */
   async reloadAndSync() {
     this.providerRegistry.reload();
-    this._syncSdkProviderRegistrations();
-    await this.syncAndRefresh();
+    await this.syncAndRefresh({ syncSdkProviders: true });
   }
 
   /**

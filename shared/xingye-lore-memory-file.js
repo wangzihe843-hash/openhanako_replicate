@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { canReadMemoryScope, normalizeMemoryScopeContext } from './memory-scope.ts';
 
 const DEFAULT_MAX_CHARS = 4_000;
 const OMISSION_MARKER = '...';
@@ -150,9 +151,12 @@ function appendManagedBlock(content, block) {
   return `${prepared.slice(0, insertAt).trimEnd()}\n\n${block}\n${prepared.slice(insertAt).trim() ? `\n${prepared.slice(insertAt).trimStart()}` : ''}`.trimEnd();
 }
 
-function isStableLoreCandidate(entry, agentId) {
+function isStableLoreCandidate(entry, agentId, memoryScope) {
   if (!entry || typeof entry !== 'object') return false;
   if (normalizeString(entry.agentId) !== agentId) return false;
+  if (!canReadMemoryScope(entry.memoryScope, memoryScope, agentId)) return false;
+  if (entry.sourceStatus === 'stale'
+    || (entry.origin === 'derived' && entry.memoryScope?.realm !== 'legacy' && entry.sourceStatus !== 'active')) return false;
   if (entry.enabled !== true) return false;
   if (entry.visibility !== 'canonical') return false;
   if (entry.insertionMode !== 'always') return false;
@@ -220,13 +224,14 @@ function fitManagedBlock(block, maxChars) {
   return `${match[1]}${truncateText(match[2], bodyBudget)}${match[3]}`;
 }
 
-function extractManagedPromptContent(content, { entries, agentId, maxChars }) {
+function extractManagedPromptContent(content, { entries, agentId, maxChars, memoryScope }) {
+  const context = normalizeMemoryScopeContext(memoryScope, agentId);
   let ranked;
   if (entries !== undefined) {
     // The canonical store decides eligibility and current content. The managed
     // Markdown is a derived mirror and may lag behind an edit or failed sync.
     ranked = toEntryArray(entries)
-      .filter((entry) => isStableLoreCandidate(entry, agentId))
+      .filter((entry) => isStableLoreCandidate(entry, agentId, context))
       .sort(compareStableLoreEntries)
       .flatMap((entry, index) => {
         try {
@@ -236,6 +241,7 @@ function extractManagedPromptContent(content, { entries, agentId, maxChars }) {
         }
       });
   } else {
+    if (context.realm !== 'legacy') return '';
     // Older installs can have a managed mirror without entries.json. Keep that
     // read-only fallback, including its saved summaries and original order.
     const pattern = /<!-- xingye-lore:id=[^\s>]+\b[^>]*-->[\s\S]*?<!-- \/xingye-lore:id=[^\s>]+ -->/g;
@@ -303,6 +309,9 @@ export async function writeXingyeLoreMemoryFile({ hanakoHome, agentId, content }
 
 export async function upsertXingyeLoreMemoryBlock({ hanakoHome, agentId, lore, content } = {}) {
   const { normalizedAgentId } = assertWritableIdentity({ hanakoHome, agentId });
+  if (!canReadMemoryScope(lore?.memoryScope, undefined, normalizedAgentId)) {
+    throw new Error('scoped lore cannot be written to the legacy markdown mirror');
+  }
   const current = await readXingyeLoreMemoryFile({ hanakoHome, agentId });
   const block = buildLoreBlock({ agentId: normalizedAgentId, lore, content });
   const loreId = sanitizeMarkerValue(lore?.id);
@@ -364,6 +373,7 @@ export async function syncXingyeStableLoreMemoryFile({
 export async function readXingyeStableLoreMemoryForPrompt({
   hanakoHome,
   agentId,
+  memoryScope,
   maxChars = DEFAULT_MAX_CHARS,
 } = {}) {
   const identity = getReadableIdentity({ hanakoHome, agentId });
@@ -375,15 +385,16 @@ export async function readXingyeStableLoreMemoryForPrompt({
   } catch (error) {
     if (error?.code !== 'ENOENT') return '';
   }
-  if (entries !== undefined) return extractManagedPromptContent('', { entries, agentId: normalized.agentId, maxChars });
+  if (entries !== undefined) return extractManagedPromptContent('', { entries, agentId: normalized.agentId, maxChars, memoryScope });
   const content = await readXingyeLoreMemoryFile(normalized);
   if (!content) return '';
-  return extractManagedPromptContent(content, { entries, agentId: normalized.agentId, maxChars });
+  return extractManagedPromptContent(content, { entries, agentId: normalized.agentId, maxChars, memoryScope });
 }
 
 export function readXingyeStableLoreMemoryForPromptSync({
   hanakoHome,
   agentId,
+  memoryScope,
   maxChars = DEFAULT_MAX_CHARS,
 } = {}) {
   const identity = getReadableIdentity({ hanakoHome, agentId });
@@ -394,7 +405,7 @@ export function readXingyeStableLoreMemoryForPromptSync({
   } catch (error) {
     if (error?.code !== 'ENOENT') return '';
   }
-  if (entries !== undefined) return extractManagedPromptContent('', { entries, agentId: identity.normalizedAgentId, maxChars });
+  if (entries !== undefined) return extractManagedPromptContent('', { entries, agentId: identity.normalizedAgentId, maxChars, memoryScope });
   const filePath = path.join(identity.normalizedHanakoHome, 'agents', identity.normalizedAgentId, 'xingye', 'lore-memory.md');
   let content = '';
   try {
@@ -404,5 +415,5 @@ export function readXingyeStableLoreMemoryForPromptSync({
     throw error;
   }
   if (!content) return '';
-  return extractManagedPromptContent(content, { entries, agentId: identity.normalizedAgentId, maxChars });
+  return extractManagedPromptContent(content, { entries, agentId: identity.normalizedAgentId, maxChars, memoryScope });
 }

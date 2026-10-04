@@ -19,6 +19,9 @@ import { FactStore } from "../lib/memory/fact-store.ts";
 import { SessionSummaryManager } from "../lib/memory/session-summary.ts";
 import { createMemoryTicker } from "../lib/memory/memory-ticker.ts";
 import { createMemorySearchTool } from "../lib/memory/memory-search.ts";
+import { canReadMemoryScope, normalizeMemoryScopeContext, type MemoryScopeContext } from "../shared/memory-scope.ts";
+import { readPinnedMemoryForContext, invalidatePinnedMemoryBySession } from "../lib/memory/pinned-memory-store.ts";
+import { ScopedDerivationStore } from "../lib/memory/scoped-derivation-store.ts";
 import { createWebSearchTool } from "../lib/tools/web-search.ts";
 import { createTodoTool } from "../lib/tools/todo.ts";
 import { createDeskManager } from "../lib/desk/desk-manager.ts";
@@ -97,6 +100,8 @@ type RefreshAppearanceSummaryOptions = {
 };
 
 type BuildSystemPromptOptions = {
+  memoryScope?: MemoryScopeContext;
+  memorySource?: { sessionId: string; messages: unknown[] };
   forSubagent?: boolean;
   forceMemoryEnabled?: boolean;
   forceExperienceEnabled?: boolean;
@@ -375,8 +380,8 @@ export class Agent implements RuntimeAgentIdentity {
     // 4. 记忆 v2：FactStore + SessionSummaryManager + ticker
     log(`  [agent] 4. FactStore...`);
     fs.mkdirSync(path.join(this.agentDir, "memory", "summaries"), { recursive: true });
-    this._factStore = new FactStore(this.factsDbPath);
-    this._summaryManager = new SessionSummaryManager(this.summariesDir);
+    this._factStore = new FactStore(this.factsDbPath, { agentId: this.id });
+    this._summaryManager = new SessionSummaryManager(this.summariesDir, { agentId: this.id });
 
     // v1 → v2 迁移：仅当迁移标记不存在且旧 memories.db 存在时执行一次
     const oldMemoriesPath = path.join(this.agentDir, "memory", "memories.db");
@@ -464,6 +469,8 @@ export class Agent implements RuntimeAgentIdentity {
         getMemoryMasterEnabled: () => this._memoryMasterEnabled,
         getDreamAutoEnabled: () => this._config?.memory?.dream?.auto_enabled === true,
         isSessionMemoryEnabled: (sessionPath) => this.isSessionMemoryEnabledFor(sessionPath),
+        getSessionMemoryScope: (sessionPath) => this._cb?.getEngine?.()?.getSessionMemoryScope?.(sessionPath)
+          || normalizeMemoryScopeContext(undefined, this.id),
         getTimezone: () => this._cb?.getTimezone?.() || Intl.DateTimeFormat().resolvedOptions().timeZone,
         getCacheSnapshotReflectionMode: () => getResolvedExperimentValue(
           this._cb?.getPreferences?.(),
@@ -954,9 +961,19 @@ export class Agent implements RuntimeAgentIdentity {
     const experienceEnabled = typeof forceExperienceEnabled === "boolean"
       ? forceExperienceEnabled
       : this.experienceEnabled;
+    const scopedSearch = options.getMemoryScope && this._factStore
+      ? createMemorySearchTool(this._factStore, { getMemoryScope: options.getMemoryScope })
+      : this._memorySearchTool;
+    const scopedPins = options.getMemoryScope
+      ? createPinnedMemoryTools(this.agentDir, this.id, { getMemoryScope: options.getMemoryScope })
+      : this._pinnedMemoryTools;
+    const scopedDrafts = options.getMemoryScope
+      ? createProposeDraftTool({ agentDir: this.agentDir, agentId: this.id,
+        getMemoryScope: options.getMemoryScope, getSourceDependencies: options.getSourceDependencies })
+      : this._xingyeProposeDraftTool;
     const memTools = memoryEnabled ? [
-      this._memorySearchTool,
-      ...this._pinnedMemoryTools,
+      scopedSearch,
+      ...scopedPins,
     ] : [];
     const experienceTools = experienceEnabled ? this._experienceTools : [];
     const computerUseTools = this._isComputerUseCandidateForThisAgent()
@@ -984,7 +1001,7 @@ export class Agent implements RuntimeAgentIdentity {
       ...installSkillTools,
       this._notifyTool,
       this._stopTaskTool,
-      this._xingyeProposeDraftTool,
+      scopedDrafts,
       this._updateSettingsTool,
       this._sessionFoldersTool,
       this._subagentTool,
@@ -1170,8 +1187,12 @@ export class Agent implements RuntimeAgentIdentity {
 
   /** 返回纯人格 prompt（identity + yuan + AGENTS.md），不含记忆、用户档案等 */
   get personality() {
+    return this._renderPersonality(this.userName);
+  }
+
+  _renderPersonality(userName: string) {
     const fill = (text) => text
-      .replace(/\{\{userName\}\}/g, this.userName)
+      .replace(/\{\{userName\}\}/g, userName)
       .replace(/\{\{agentName\}\}/g, this.agentName)
       .replace(/\{\{agentId\}\}/g, this.id);
     const identityMd = this.readIdentitySource().content;
@@ -1262,6 +1283,8 @@ export class Agent implements RuntimeAgentIdentity {
   }
 
   buildMemoryReflectionSnapshot( options: any = {}) {
+    const memoryScope = normalizeMemoryScopeContext(options.memoryScope, this.id);
+    if (memoryScope.agentId !== this.id) throw new Error("Memory scope belongs to a different agent");
     const forceMemoryEnabled = Object.prototype.hasOwnProperty.call(options, "forceMemoryEnabled")
       ? options.forceMemoryEnabled
       : null;
@@ -1271,8 +1294,9 @@ export class Agent implements RuntimeAgentIdentity {
     const isZh = String(this.resolveLocale()).startsWith("zh");
     const readFile = (filePath) => safeReadFile(filePath, "");
 
-    const pinnedMd = readFile(path.join(this.agentDir, "pinned.md")).trim();
-    const memoryMd = readFile(this.memoryMdPath).trim();
+    const pinnedMd = readPinnedMemoryForContext(this.agentDir, memoryScope).trim();
+    const memoryMd = (memoryScope.realm === "legacy" ? readFile(this.memoryMdPath)
+      : new ScopedDerivationStore(path.dirname(this.memoryMdPath), { agentId: this.id }).readCompiledContext(memoryScope)).trim();
     const hasMemory = memoryMd && memoryMd !== "（暂无记忆）" && memoryMd !== "(No memory yet)";
     const existingMemory = memoryEnabled
       ? [
@@ -1284,17 +1308,19 @@ export class Agent implements RuntimeAgentIdentity {
           : "",
       ].filter(Boolean).join("\n\n")
       : "";
+    const reflectedUser = memoryScope.realm === "story" ? (isZh ? "用户扮演的角色" : "the user's character") : this.userName;
 
     return {
       version: 1,
+      memoryScope,
       locale: this.resolveLocale(),
       agentId: this.id,
       agentName: this.agentName,
-      userName: this.userName,
-      identityAndPersonality: this.personality.trim(),
-      userProfile: readFile(userProfilePath(this.userDir)).trim(),
+      userName: reflectedUser,
+      identityAndPersonality: (memoryScope.realm === "story" ? this._renderPersonality(reflectedUser) : this.personality).trim(),
+      userProfile: memoryScope.realm === "story" ? "" : readFile(userProfilePath(this.userDir)).trim(),
       existingMemory,
-      roster: this._formatTeamRoster(isZh, { includeSelf: false }),
+      roster: memoryScope.realm === "story" ? "" : this._formatTeamRoster(isZh, { includeSelf: false }),
     };
   }
 
@@ -1315,6 +1341,8 @@ export class Agent implements RuntimeAgentIdentity {
    * @param {object} [options.targetModel] - 新会话即将使用的模型，用于判断是否能读取头像。
    */
   buildSystemPrompt( options: BuildSystemPromptOptions = {}) {
+    const memoryScope = normalizeMemoryScopeContext(options.memoryScope, this.id);
+    if (memoryScope.agentId !== this.id) throw new Error("Memory scope belongs to a different agent");
     const forSubagent = !!options.forSubagent;
     const workModeEnabled = options.workModeEnabled === true;
     const forceMemoryEnabled = Object.prototype.hasOwnProperty.call(options, "forceMemoryEnabled")
@@ -1338,12 +1366,26 @@ export class Agent implements RuntimeAgentIdentity {
     // identity + yuan + AGENTS.md（复用 personality getter）
     const yuanType = this._config?.agent?.yuan || "hanako";
     if (!this._readYuan()) throw new Error(`Cannot find yuan "${yuanType}". Check lib/yuan/`);
-    const agentsMd = this.personality;
+    const resolvedUserName = memoryScope.realm === "story"
+      ? (isZh ? "用户扮演的角色" : "the user's character") : this.resolveUserName();
+    const agentsMd = memoryScope.realm === "story" ? this._renderPersonality(resolvedUserName) : this.personality;
 
     // 可选文件
-    const userMd = readFile(userProfilePath(this.userDir));
-    const pinnedMd = readFile(path.join(this.agentDir, "pinned.md"));
-    const memory = readFile(this.memoryMdPath);
+    // A real user's profile is not the identity of the character they portray.
+    const userMd = memoryScope.realm === "story" ? "" : readFile(userProfilePath(this.userDir));
+    let memory = "";
+    if (memoryScope.realm === "legacy") memory = readFile(this.memoryMdPath);
+    else {
+      const scopedStore = new ScopedDerivationStore(path.dirname(this.memoryMdPath), { agentId: this.id });
+      if (options.memorySource) {
+        const { sessionId, messages } = options.memorySource;
+        scopedStore.syncSessionSourceSnapshot(sessionId, memoryScope, messages);
+        this._factStore?.invalidateSourceEntries?.(sessionId, scopedStore.getSessionDependencies(sessionId, memoryScope));
+        invalidatePinnedMemoryBySession(this.agentDir, sessionId, { sourceMessages: messages });
+      }
+      memory = scopedStore.readCompiledContext(memoryScope);
+    }
+    const pinnedMd = readPinnedMemoryForContext(this.agentDir, memoryScope);
 
     // 构建 section 分隔格式的 prompt
     const section = (title, content) => ["", "---", "", title, "", content];
@@ -1379,7 +1421,6 @@ export class Agent implements RuntimeAgentIdentity {
     // 名字走 resolveUserName()：全局 preferences → 语言兜底。
     // 因为末端有兜底值，这一行现在总会出现；没配过名字时给出的是"用户"/"User"
     // 这种中性称呼，与 prompt 其它位置对用户的称呼保持一致。
-    const resolvedUserName = this.resolveUserName();
     const userProfileLines = [
       isZh
         ? "以下是用户的自我描述。"
@@ -1391,10 +1432,13 @@ export class Agent implements RuntimeAgentIdentity {
     if (userMd) {
       userProfileLines.push("", userMd);
     }
-    parts.push(...section(
+    if (memoryScope.realm !== "story") parts.push(...section(
       isZh ? "# 用户档案" : "# User Profile",
       userProfileLines.join("\n")
     ));
+    else parts.push(isZh
+      ? "当前是剧情会话。用户在扮演角色；角色身份、经历与现实用户本人相互独立。未提供现实用户档案，不要把剧情事件当作现实事实。"
+      : "This is a narrative session. The user's character and the real user are distinct identities. No real-user profile is supplied; narrative events are not real-world facts.");
 
     // 人格（identity + yuan + AGENTS.md 模板，含 {{userName}} 等替换）
     // 放在用户档案之后：先建立"用户是谁"的语境，再讲"你是谁、你和用户什么关系"。
@@ -1417,26 +1461,26 @@ export class Agent implements RuntimeAgentIdentity {
     // Subagent 场景下整块跳过（无记忆工具 = 规则和 pinned 也是孤儿噪音）
     // 注意：记忆块本身已下移到 prompt 末尾（见下方），这里只是预先准备好规则文本
     const dynamicContextSections: XingyeContextSection[] = [];
-    const dynamicContextScope = { agentId: this.id };
+    const dynamicContextScope = { agentId: this.id, memoryScope };
     if (memoryEnabled && !forSubagent) {
       const memoryRule = isZh ? [
         "",
         "## 记忆使用规则",
         "",
-        "记忆和用户档案是你内化的背景知识。你和" + this.userName + "是认识很久的人，这些事你本来就知道。",
+        "记忆和用户档案是你内化的背景知识。你和" + resolvedUserName + "是认识很久的人，这些事你本来就知道。",
         "",
-        "- **只有当" + this.userName + "提到相关内容，记忆才参与**，而且方式是无声的：影响你的角度、语气、判断，不出现在文字里。" + this.userName + "没提起的话题，不要主动从记忆里翻出来讲。",
-        "- **永远不要让" + this.userName + "感觉到\"记忆\"这个东西的存在。** 禁止\"我记得\"\"你之前说过\"\"根据记忆\"这类表述，除非" + this.userName + "主动问\"你还记得 xxx 吗\"。",
-        "- **记忆可能过时，当前对话永远优先。** 信息冲突时以对话为准，不要用旧记忆纠正" + this.userName + "。",
+        "- **只有当" + resolvedUserName + "提到相关内容，记忆才参与**，而且方式是无声的：影响你的角度、语气、判断，不出现在文字里。" + resolvedUserName + "没提起的话题，不要主动从记忆里翻出来讲。",
+        "- **永远不要让" + resolvedUserName + "感觉到\"记忆\"这个东西的存在。** 禁止\"我记得\"\"你之前说过\"\"根据记忆\"这类表述，除非" + resolvedUserName + "主动问\"你还记得 xxx 吗\"。",
+        "- **记忆可能过时，当前对话永远优先。** 信息冲突时以对话为准，不要用旧记忆纠正" + resolvedUserName + "。",
       ].join("\n") : [
         "",
         "## Memory Rules",
         "",
-        "Memories and the user profile are internalized background knowledge. You and " + this.userName + " have known each other for a long time — you already know these things.",
+        "Memories and the user profile are internalized background knowledge. You and " + resolvedUserName + " have known each other for a long time — you already know these things.",
         "",
-        "- **Memory participates only when " + this.userName + " brings up something related**, and silently: shaping your angle, tone, and judgment without appearing in the text. Don't pull up topics " + this.userName + " hasn't raised.",
-        "- **Never let " + this.userName + " sense that \"memory\" exists as a thing.** Never say \"I remember,\" \"you mentioned before,\" or \"based on my memory\" — unless " + this.userName + " explicitly asks \"do you remember xxx.\"",
-        "- **Memory can be outdated; the current conversation always takes priority.** On conflict, follow the conversation; don't correct " + this.userName + " with old memories.",
+        "- **Memory participates only when " + resolvedUserName + " brings up something related**, and silently: shaping your angle, tone, and judgment without appearing in the text. Don't pull up topics " + resolvedUserName + " hasn't raised.",
+        "- **Never let " + resolvedUserName + " sense that \"memory\" exists as a thing.** Never say \"I remember,\" \"you mentioned before,\" or \"based on my memory\" — unless " + resolvedUserName + " explicitly asks \"do you remember xxx.\"",
+        "- **Memory can be outdated; the current conversation always takes priority.** On conflict, follow the conversation; don't correct " + resolvedUserName + " with old memories.",
       ].join("\n");
 
       // memoryRule 只注入一次，置顶和记忆 section 只放内容
@@ -1602,19 +1646,19 @@ export class Agent implements RuntimeAgentIdentity {
 
     // 团队协作（仅当存在其他 agent 时注入）
     // Subagent 场景下跳过：subagent 没有 subagent 工具，知道其他 agent 也使不上
-    if (!forSubagent) {
+    if (!forSubagent && memoryScope.realm !== "story") {
       const roster = this._formatTeamRoster(isZh, { richPersona: true });
       if (roster) {
         parts.push(isZh
           ? `\n## 团队\n\n` +
-            `下面这些是和你一样的 **AI agent**，各有自己的身份、性格和模型。**他们都不是 ${this.userName}（用户）**——${this.userName} 是你正在服务的那个人，是同一个人；下面列出的每一个都是另一个独立的 AI，和用户是不同的存在。被问到"某个 agent 是谁"时，照这份名单回答，别把他们和用户搞混。\n\n${roster}\n\n` +
+            `下面这些是和你一样的 **AI agent**，各有自己的身份、性格和模型。**他们都不是 ${resolvedUserName}（用户）**——${resolvedUserName} 是你正在服务的那个人，是同一个人；下面列出的每一个都是另一个独立的 AI，和用户是不同的存在。被问到"某个 agent 是谁"时，照这份名单回答，别把他们和用户搞混。\n\n${roster}\n\n` +
             `调用 subagent 工具的 agent 参数或 dm 工具的 to 参数时，必须传上面反引号里的 id 字段值，不是括号里的显示名。\n` +
             `遇到明显更适合其他 agent 专长的任务，或需要不同视角审核重要结论时，用 subagent 并指定 agent 参数请求协助。` +
             `先判断这件事自己做合不合适，再决定是否交出去。不确定找谁时传 \`agent="?"\` 查看详情。\n\n` +
             `而且他们不只是"干活的工具人"。每个 agent 都有自己的性格和正在过的生活（上面每行 — 后面就是他们的对外人设）。你可以纯粹**为了聊天**用 \`dm\` 主动私信任何一个人——分享点什么、问问近况、聊个你们都会感兴趣的话题，都行。` +
             `要不要找人聊、什么时候、聊什么，完全是你自己的事，没人给你派这个活。和委派任务不同：\`dm\` 是像发微信一样的私人对话，对方会以自己的口吻回你。`
           : `\n## Team\n\n` +
-            `These are other **AI agents** like you, each with their own identity, personality, and model. **None of them is ${this.userName} (the user)** — ${this.userName} is the single person you are serving; every entry below is a separate, independent AI, distinct from the user. When asked "who is some agent," answer from this roster and do not confuse them with the user.\n\n${roster}\n\n` +
+            `These are other **AI agents** like you, each with their own identity, personality, and model. **None of them is ${resolvedUserName} (the user)** — ${resolvedUserName} is the single person you are serving; every entry below is a separate, independent AI, distinct from the user. When asked "who is some agent," answer from this roster and do not confuse them with the user.\n\n${roster}\n\n` +
             `For the subagent tool's agent parameter or the dm tool's to parameter, use the id field shown in backticks above, not the display name in parentheses.\n` +
             `When a task clearly falls within another agent's expertise, or when an important conclusion would benefit from a different perspective, use subagent with the agent parameter to request help. ` +
             `Judge whether you're the best fit for the job before deciding to delegate. Pass \`agent="?"\` if unsure who to ask.\n\n` +
@@ -1649,7 +1693,7 @@ export class Agent implements RuntimeAgentIdentity {
           hanakoHome: path.dirname(path.dirname(this.agentDir)),
           agentId: this.id,
           agentName: this.agentName,
-          userName: this.userName,
+          userName: resolvedUserName,
           locale: this.resolveLocale(),
         });
         if (genderPreamble) {
@@ -1672,13 +1716,14 @@ export class Agent implements RuntimeAgentIdentity {
        * 自动写入；用户也可在角色详情页手动编辑。
        */
       try {
-        const relationshipPreamble = readXingyeAgentRelationshipPreambleSync({
+        const relationshipProfile = readXingyeProfileJsonSync({ hanakoHome: path.dirname(path.dirname(this.agentDir)), agentId: this.id });
+        const relationshipPreamble = canReadMemoryScope(relationshipProfile?.memoryScope, memoryScope, this.id) ? readXingyeAgentRelationshipPreambleSync({
           hanakoHome: path.dirname(path.dirname(this.agentDir)),
           agentId: this.id,
           agentName: this.agentName,
-          userName: this.userName,
+          userName: resolvedUserName,
           locale: this.resolveLocale(),
-        });
+        }) : null;
         if (relationshipPreamble) {
           dynamicContextSections.push({
             id: 'role-relationship', source: 'role-relationship', scope: dynamicContextScope, priority: 105,
@@ -1690,13 +1735,14 @@ export class Agent implements RuntimeAgentIdentity {
       }
 
       try {
-        const cardContext = buildCharacterCardContext({
-          profile: readXingyeProfileJsonSync({
+        const cardProfile = readXingyeProfileJsonSync({
             hanakoHome: path.dirname(path.dirname(this.agentDir)), agentId: this.id,
-          }),
+          });
+        const cardContext = canReadMemoryScope(cardProfile?.memoryScope, memoryScope, this.id) ? buildCharacterCardContext({
+          profile: cardProfile,
           character: this.agentName,
-          user: this.userName,
-        });
+          user: resolvedUserName,
+        }) : "";
         if (cardContext) dynamicContextSections.push({
           id: 'role-card', source: 'role-card', scope: dynamicContextScope, priority: 100,
           text: cardContext,
@@ -1707,6 +1753,7 @@ export class Agent implements RuntimeAgentIdentity {
 
       try {
         const xingyeStableLore = readXingyeStableLoreMemoryForPromptSync({
+          memoryScope,
           hanakoHome: path.dirname(path.dirname(this.agentDir)),
           agentId: this.id,
           maxChars: 2400,
@@ -1731,12 +1778,14 @@ export class Agent implements RuntimeAgentIdentity {
 
       try {
         const entries = readXingyeRuntimeLoreEntriesSync({
+          memoryScope,
           workspaceRoot: xingyeWorkspaceRoot,
           hanakoHome: path.dirname(path.dirname(this.agentDir)),
           agentId: this.id,
           agentDir: this.agentDir,
         });
         const runtimeLore = buildXingyeRuntimeLoreContext({
+          memoryScope,
           entries,
           agentId: this.id,
           userText,

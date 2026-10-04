@@ -2281,6 +2281,8 @@ describe("SessionCoordinator", () => {
       forceMemoryEnabled: true,
       forceExperienceEnabled: false,
       model: { name: "test-model" },
+      getMemoryScope: expect.any(Function),
+      getSourceDependencies: expect.any(Function),
     });
   });
 
@@ -3318,6 +3320,7 @@ describe("SessionCoordinator", () => {
     expect(meta[path.basename(sessionFile)].memoryEnabled).toBe(false);
     expect(agent.buildMemoryReflectionSnapshot).toHaveBeenCalledWith({
       forceMemoryEnabled: false,
+      memoryScope: { version: 1, agentId: "hana", realm: "legacy", knowledge: "shared" },
     });
     // memoryReflectionSnapshot 一律外置为 sidecar 引用，需经 hydrate 才能看到实际内容
     expect(meta[path.basename(sessionFile)].memoryReflectionSnapshot).toMatchObject({

@@ -730,18 +730,21 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByLabelText('星野昵称')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^保存[到（]/ })).toBeEnabled();
     });
 
-    vi.mocked(hanaFetch).mockImplementation(async (path: string) => {
-      if (path === '/api/xingye/storage') {
+    const failedProfileWrite = vi.fn();
+    vi.mocked(hanaFetch).mockImplementation(async (path, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (path === '/api/xingye/storage' && body.action === 'writeJson' && body.relativePath === 'profile.json') {
+        failedProfileWrite();
         return {
           ok: false,
           statusText: 'Internal Server Error',
           json: async () => ({ error: 'disk full' }),
         } as Response;
       }
-      return { ok: true, json: async () => ({}) } as Response;
+      return defaultHanaFetch(path, init);
     });
 
     fireEvent.click(screen.getByRole('button', { name: /^保存[到（]/ }));
@@ -749,5 +752,6 @@ describe('RoleDetailPanel OpenHanako sync', () => {
     await waitFor(() => {
       expect(screen.getByText(/保存失败：disk full/)).toBeInTheDocument();
     });
+    expect(failedProfileWrite).toHaveBeenCalledOnce();
   });
 });
