@@ -1,7 +1,9 @@
-import { generateKeyPairSync, sign as cryptoSign } from "crypto";
+import { spawnSync } from "child_process";
+import { generateKeyPairSync, randomUUID, sign as cryptoSign } from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { fileURLToPath } from "url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { packDualKindSeed, seedManifestFileName } from "../scripts/build-server-artifact.mjs";
@@ -101,6 +103,39 @@ function tamperManifestField(
   fs.writeFileSync(manifestPath, bytes);
   fs.writeFileSync(`${manifestPath}.sig`, cryptoSign(null, bytes, privateKey));
 }
+
+describe("verify-seed-kit: CLI entry", () => {
+  const scriptUrl = new URL("../scripts/verify-seed-kit.mjs", import.meta.url);
+
+  it("runs the verifier and exits nonzero for a missing seed kit", () => {
+    const platform = `seed-cli-missing-${randomUUID()}`;
+    const result = spawnSync(process.execPath, [fileURLToPath(scriptUrl), platform, "x64"], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 5000,
+      env: { ...process.env, HANA_SIGN_KEYSET: "" },
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(result.stdout).toContain("[verify-seed-kit] verifying");
+    expect(result.stderr).toContain("manifest missing:");
+    expect(result.stderr).toContain(`seed-train-${platform}-x64.json`);
+  });
+
+  it("remains side-effect free when imported without a CLI entry argument", () => {
+    const result = spawnSync(process.execPath, ["--input-type=module", "--eval", `await import(${JSON.stringify(scriptUrl.href)})`], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 5000,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  });
+});
 
 describe("verify-seed-kit: verifySeedKit (positive case)", () => {
   it("passes for a freshly packed, correctly signed seed kit", async () => {
