@@ -84,14 +84,17 @@ describe("Pi SDK createAgentSession adapter", () => {
     });
   });
 
-  it("promotes explicit Hana tool failures before the existing Pi hook runs", async () => {
+  it("preserves the native Pi outcome hook without echoing tool content", async () => {
     const sdk = await import("@earendil-works/pi-coding-agent");
     const existingHook = vi.fn(async ({ isError }) => ({ isError }));
     const session = { agent: { afterToolCall: existingHook } };
-    vi.mocked(sdk.createAgentSession).mockResolvedValueOnce({ session, modelFallbackMessage: null } as any);
+    vi.mocked(sdk.createAgentSession).mockResolvedValueOnce(
+      { session, modelFallbackMessage: null } as unknown as Awaited<ReturnType<typeof sdk.createAgentSession>>,
+    );
     const adapter = await import("../lib/pi-sdk/index.ts");
 
     await adapter.createAgentSession({ cwd: "/tmp/project" });
+    expect(session.agent.afterToolCall).toBe(existingHook);
     const result = {
       isError: true,
       content: [{ type: "text", text: "permission denied" }],
@@ -101,18 +104,20 @@ describe("Pi SDK createAgentSession adapter", () => {
       toolCall: { id: "call-1", name: "exec_command" },
       args: {},
       result,
-      isError: false,
+      isError: true,
     });
 
-    expect(existingHook).toHaveBeenCalledWith(expect.objectContaining({ result, isError: true }), undefined);
-    expect(patch).toMatchObject({ isError: true });
+    expect(existingHook).toHaveBeenCalledWith(expect.objectContaining({ result, isError: true }));
+    expect(patch).toEqual({ isError: true });
   });
 
   it("keeps an existing Pi hook's explicit outcome override", async () => {
     const sdk = await import("@earendil-works/pi-coding-agent");
-    const existingHook = vi.fn(async (..._args: any[]) => ({ isError: false, details: { recovered: true } }));
+    const existingHook = vi.fn(async (..._args: unknown[]) => ({ isError: false, details: { recovered: true } }));
     const session = { agent: { afterToolCall: existingHook } };
-    vi.mocked(sdk.createAgentSession).mockResolvedValueOnce({ session, modelFallbackMessage: null } as any);
+    vi.mocked(sdk.createAgentSession).mockResolvedValueOnce(
+      { session, modelFallbackMessage: null } as unknown as Awaited<ReturnType<typeof sdk.createAgentSession>>,
+    );
     const adapter = await import("../lib/pi-sdk/index.ts");
 
     await adapter.createAgentSession({ cwd: "/tmp/project" });
@@ -120,7 +125,7 @@ describe("Pi SDK createAgentSession adapter", () => {
       toolCall: { id: "call-2", name: "recoverable" },
       args: {},
       result: { isError: true, content: [{ type: "text", text: "recovered" }], details: {} },
-      isError: false,
+      isError: true,
     });
 
     expect(patch).toMatchObject({ isError: false, details: { recovered: true } });

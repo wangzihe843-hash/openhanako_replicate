@@ -558,6 +558,7 @@
     "node_modules/@earendil-works/pi-coding-agent/dist/core/messages.js",
     "node_modules/@earendil-works/pi-coding-agent/dist/core/resolve-config-value.js",
     "node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js",
+    "node_modules/@earendil-works/pi-coding-agent/dist/core/usage-totals.js",
     "node_modules/@earendil-works/pi-coding-agent/dist/utils/abort.js",
     "node_modules/@earendil-works/pi-coding-agent/dist/utils/child-process.js",
     "node_modules/@earendil-works/pi-coding-agent/dist/utils/paths.js",

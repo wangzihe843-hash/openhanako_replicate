@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:28e367906e3c5f22d4ea2ccb1d078f46142c31f65ab33d99ec7a6752ad344990",
+  "payloadFingerprint": "sha256:333efb6665eb716462a08b54429977168deabfb511698618bc15ec14ea15fc1c",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3368,8 +3368,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Compatible additive retry-intent and linked rollback records reviewed in docs/audits/2026-10-02-cloud-review.md and the prior cloud persistence review: uncertain head writes restore original history and scope, retry-only control metadata is not cloned during expression adoption, private pin bulk writes require exact default scope. Existing JSONL/history/effect receipts preserved; DATA_EPOCH 1, Pi JSONL v3 and SQLite versions unchanged; no destructive migration or dependency upgrade. Windows acceptance fixes preserve existing Pi JSONL v3 model_change and thinking_level_change records after expression adoption. No record schema, store version, or DATA_EPOCH change; model catalog writes now complete before SDK registration starts asynchronous readers. Windows acceptance fixes preserve existing Pi JSONL v3 model_change and thinking_level_change records after expression adoption. No record schema, store version, or DATA_EPOCH change; model catalog writes now complete before SDK registration starts asynchronous readers. Windows acceptance fixes preserve existing Pi JSONL v3 model_change and thinking_level_change records after expression adoption. No record schema, store version, or DATA_EPOCH change; model catalog writes now complete before SDK registration starts asynchronous readers.",
-    "payloadFingerprint": "sha256:28e367906e3c5f22d4ea2ccb1d078f46142c31f65ab33d99ec7a6752ad344990"
+    "compatibilityReason": "Pi 1.0.2 preserves canonical JSONL format v3, checked against its actual source declaration and runtime export. Real SDK regressions cover legacy history and failure projection without rewriting stored bytes, first-user durability on provider failure and abort, context_edit omission and replacement, and repeated compaction across reopen. A synthetic 0.87.1 -> 1.0.2 -> 0.87.1 -> 1.0.2 read/write probe preserves identity, parent chains, metadata, append prefixes and canonical projection. The package version and integrity change; persisted store shapes, Hana session flush and compaction compensation, and DATA_EPOCH 1 remain unchanged. This declaration covers the tested v3 shapes, not every possible historical or future session.",
+    "payloadFingerprint": "sha256:333efb6665eb716462a08b54429977168deabfb511698618bc15ec14ea15fc1c"
   },
   "schemas": [
     {
@@ -3931,9 +3931,9 @@
       ],
       "kind": "external-versioned",
       "lockfile": "package-lock.json",
-      "packageIntegrity": "sha512-m8ArJUtVcQMSe1lLE/Ei7vX/JV7O39sWmWBsXV2NOU70F0qCp8GubA24pT3LnwTmM6LL2xV80/h6sQg85n69ew==",
+      "packageIntegrity": "sha512-3ZdIghMSELMGV3sKi5iASOb1Jwb696fLjmNu0aezaqDxTLLWWoRpqBYkGxJ1CgAMCbtfqXWEF0lcRrlVXmiEGQ==",
       "packageName": "@earendil-works/pi-coding-agent",
-      "packageVersion": "0.87.1",
+      "packageVersion": "1.0.2",
       "protocolModules": [
         {
           "module": "core/desktop-session-submit.ts",
@@ -3968,7 +3968,7 @@
           "sourceHash": "sha256:810752d7bb38f9bdc287c78649e21a53aad293cd2e2e817af7575ab3a58dc6ed"
         }
       ],
-      "requestedVersion": "0.87.1",
+      "requestedVersion": "1.0.2",
       "storeId": "session-jsonl",
       "versionSource": {
         "currentSessionVersion": 3,

@@ -19,8 +19,8 @@ const path = require("path");
 const root = path.join(__dirname, "..");
 const sdkRoot = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent");
 const piAiRoot = path.join(root, "node_modules", "@earendil-works", "pi-ai");
-const verifiedVersions = new Set(["0.87.1"]);
-const verifiedPiAiVersions = new Set(["0.87.1"]);
+const verifiedVersions = new Set(["1.0.2"]);
+const verifiedPiAiVersions = new Set(["1.0.2"]);
 
 function fail(message) {
   console.error(`[verify-pi-sdk] ${message}`);
@@ -55,9 +55,16 @@ if (agentPkg.version !== pkg.version || piAiPkg.version !== pkg.version) {
 }
 const lock = readJson(path.join(root, "package-lock.json"));
 for (const [location, dependency] of Object.entries(lock.packages || {})) {
-  if (/node_modules\/@earendil-works\/(pi-agent-core|pi-ai|pi-coding-agent)$/.test(location)
-    && dependency.version !== pkg.version) {
+  if (!/node_modules\/@earendil-works\/(pi-agent-core|pi-ai|pi-coding-agent)$/.test(location)) continue;
+  if (dependency.version !== pkg.version) {
     fail(`mixed Pi version at ${location}: ${dependency.version}`);
+  }
+  const installedManifest = path.join(root, location, "package.json");
+  if (fs.existsSync(installedManifest)) {
+    const installed = readJson(installedManifest);
+    if (installed.version !== pkg.version) {
+      fail(`mixed installed Pi version at ${location}: ${installed.version}`);
+    }
   }
 }
 for (const [file, markers] of [
