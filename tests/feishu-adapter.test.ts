@@ -19,7 +19,7 @@ const mockWsConstructorArgs: any[] = [];
 let registeredHandlers: any = {};
 let mockWsInstances = [];
 
-vi.mock("@larksuiteoapi/node-sdk", () => {
+vi.mock("../lib/bridge/optional-sdks.ts", () => {
   class MockEventDispatcher {
     register(handlers) {
       registeredHandlers = handlers;
@@ -28,7 +28,7 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
   }
 
   class MockWSClient {
-    declare wsConfig: any;
+    declare wsConfig: { wsInstance: { readyState: number } };
     constructor(args) {
       mockWsConstructorArgs.push(args);
       this.wsConfig = { wsInstance: { readyState: 1 } };
@@ -45,9 +45,19 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
   }
 
   class MockClient {
-    declare contact: any;
-    declare cardkit: any;
-    declare im: any;
+    declare contact: { user: { get: typeof mockContactUserGet } };
+    declare cardkit: {
+      v1: {
+        card: { create: typeof mockCardCreate; settings: typeof mockCardSettings };
+        cardElement: { content: typeof mockCardElementContent };
+      };
+    };
+    declare im: {
+      image: { get: typeof mockImageGet; create: typeof mockImageCreate };
+      file: { create: typeof mockFileCreate };
+      messageResource: { get: typeof mockMessageResourceGet };
+      message: { create: typeof mockMessageCreate; update: typeof mockMessageUpdate };
+    };
     constructor(args) {
       mockClientConstructorArgs.push(args);
       this.contact = {
@@ -85,13 +95,13 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
     }
   }
 
-  return {
+  return { loadFeishuSdk: () => ({
     Client: MockClient,
     Domain: { Feishu: 0, Lark: 1 },
     EventDispatcher: MockEventDispatcher,
     WSClient: MockWSClient,
     LoggerLevel: { warn: "warn" },
-  };
+  }) };
 });
 
 const moduleLoggerMock = vi.hoisted(() => ({

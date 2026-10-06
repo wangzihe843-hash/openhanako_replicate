@@ -4365,6 +4365,23 @@
       "reason": "Reached via esbuild source module graph, imported by lib/bridge/feishu-adapter.ts (import-statement); lib/bridge/media-delivery-service.ts (import-statement); lib/bridge/bridge-manager.ts (import-statement)."
     },
     {
+      "path": "lib/bridge/optional-sdks.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "lib/bridge/telegram-adapter.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/bridge/feishu-adapter.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by lib/bridge/telegram-adapter.ts (import-statement); lib/bridge/feishu-adapter.ts (import-statement)."
+    },
+    {
       "path": "lib/bridge/outbound-http.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -86452,9 +86469,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 7155,
+    "totalFiles": 7156,
     "byInputType": {
-      "source-graph": 731,
+      "source-graph": 732,
       "runtime-asset": 11,
       "nft-runtime-trace": 6413
     }

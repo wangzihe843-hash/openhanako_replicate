@@ -99,6 +99,10 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { build as esbuildBuild } from "esbuild";
+import {
+  DEFERRED_BRIDGE_SDK_PACKAGES,
+  resolveDeferredBridgeSdkEntrypoints,
+} from "./build-server-deps.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const REPOSITORY_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -181,6 +185,7 @@ export const CLOSURE_ROOTS = Object.freeze([
     id: "nft-server-bundle",
     path: "server/index.ts",
     inputType: "nft-runtime-trace",
+    deferredPackages: DEFERRED_BRIDGE_SDK_PACKAGES,
     reason:
       "@vercel/nft trace of an esbuild-compiled bundle of server/index.ts (internal "
       + "repo source inlined, npm packages left external) -- bundle externals / "
@@ -900,7 +905,8 @@ export async function traceNftRoot({ rootDir, root, deps = {} }) {
       );
     }
     const nodeFileTrace = deps.nodeFileTrace || (await import("@vercel/nft")).nodeFileTrace;
-    const { fileList, warnings } = await nodeFileTrace([scratchPath], {
+    const deferredSdkRoots = resolveDeferredBridgeSdkEntrypoints(rootDir, root.deferredPackages || []);
+    const { fileList, warnings } = await nodeFileTrace([scratchPath, ...deferredSdkRoots], {
       base: rootDir,
       conditions: ["node", "import"],
       analysis: { emitGlobs: false },

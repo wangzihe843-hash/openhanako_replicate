@@ -1,5 +1,26 @@
 import fs from "fs";
 import path from "path";
+import { createRequire } from "node:module";
+
+export const DEFERRED_BRIDGE_SDK_PACKAGES = Object.freeze([
+  "@larksuiteoapi/node-sdk",
+  "node-telegram-bot-api",
+]);
+
+// Bundling renames createRequire bindings, which NFT cannot reliably follow.
+// Trace these CJS entrypoints directly so hoisted transitive dependencies survive.
+export function resolveDeferredBridgeSdkEntrypoints(rootDir, packageNames) {
+  const require = createRequire(path.resolve(rootDir, "package.json"));
+  const nodeModules = path.resolve(rootDir, "node_modules");
+  return DEFERRED_BRIDGE_SDK_PACKAGES.filter((name) => packageNames.includes(name)).map((name) => {
+    const entry = require.resolve(name);
+    const relative = path.relative(nodeModules, entry);
+    if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+      throw new Error(`Deferred bridge SDK ${name} resolved outside its runtime tree: ${entry}`);
+    }
+    return entry;
+  });
+}
 
 /**
  * Read and JSON-parse a file, retrying on EMFILE/ENFILE (file handle exhaustion).

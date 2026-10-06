@@ -29,6 +29,7 @@ import {
   buildExternalPackage,
   collectBareImportPackageNames,
   collectInstalledOptionalDependencyDirs,
+  resolveDeferredBridgeSdkEntrypoints,
   verifyExternalEntrypoints,
 } from "./build-server-deps.mjs";
 import { pruneRuntimeDeadFiles } from "./build-server-prune.mjs";
@@ -544,9 +545,10 @@ export async function pruneServerNodeModulesViaNft({
     const fileIOConcurrency = Number.isInteger(requestedConcurrency) && requestedConcurrency > 0
       ? requestedConcurrency
       : (platform === "win32" ? 64 : 1024);
+    const deferredSdkRoots = resolveDeferredBridgeSdkEntrypoints(outDir, externalPackageNames);
     try {
       ({ fileList } = await nodeFileTrace(
-        nftRoots.map((root) => path.join(outDir, root)),
+        [...nftRoots.map((root) => path.join(outDir, root)), ...deferredSdkRoots],
         {
           base: outDir,
           processCwd: outDir,

@@ -241,6 +241,7 @@
     "lib/bridge/media-publisher.ts",
     "lib/bridge/media-roots.ts",
     "lib/bridge/media-utils.ts",
+    "lib/bridge/optional-sdks.ts",
     "lib/bridge/outbound-http.ts",
     "lib/bridge/owner-policy.ts",
     "lib/bridge/qq-adapter.ts",

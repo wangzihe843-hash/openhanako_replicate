@@ -1,26 +1,26 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 const botInstances = [];
 
-vi.mock("node-telegram-bot-api", () => {
+vi.mock("../lib/bridge/optional-sdks.ts", () => {
   class MockTelegramBot {
-    declare _request: any;
-    declare getMe: any;
-    declare getFileLink: any;
-    declare getUserProfilePhotos: any;
-    declare on: any;
-    declare emit: any;
-    declare removeAllListeners: any;
-    declare sendAudio: any;
-    declare sendDocument: any;
-    declare sendMessage: any;
-    declare sendPhoto: any;
-    declare sendVideo: any;
-    declare stopPolling: any;
-    declare handlers: Map<string, any[]>;
+    declare _request: Mock<() => Promise<void>>;
+    declare getMe: Mock<() => Promise<{ username: string }>>;
+    declare getFileLink: Mock<(fileId: string) => Promise<string>>;
+    declare getUserProfilePhotos: Mock<() => Promise<{ photos: { file_id: string }[][] }>>;
+    declare on: Mock<(event: string, handler: (payload: unknown) => unknown) => void>;
+    declare emit: (event: string, payload: unknown) => Promise<void>;
+    declare removeAllListeners: Mock<() => void>;
+    declare sendAudio: Mock<() => Promise<void>>;
+    declare sendDocument: Mock<() => Promise<void>>;
+    declare sendMessage: Mock<() => Promise<void>>;
+    declare sendPhoto: Mock<() => Promise<void>>;
+    declare sendVideo: Mock<() => Promise<void>>;
+    declare stopPolling: Mock<() => void>;
+    declare handlers: Map<string, Array<(payload: unknown) => unknown>>;
     constructor() {
       this.handlers = new Map();
-      this.on = vi.fn((event, handler) => {
+      this.on = vi.fn((event: string, handler: (payload: unknown) => unknown) => {
         const handlers = this.handlers.get(event) || [];
         handlers.push(handler);
         this.handlers.set(event, handlers);
@@ -30,8 +30,8 @@ vi.mock("node-telegram-bot-api", () => {
           await handler(payload);
         }
       };
-      this.removeAllListeners = vi.fn();
-      this.stopPolling = vi.fn();
+      this.removeAllListeners = vi.fn<() => void>();
+      this.stopPolling = vi.fn<() => void>();
       this.sendMessage = vi.fn(async () => {});
       this.sendPhoto = vi.fn(async () => {});
       this.sendVideo = vi.fn(async () => {});
@@ -42,11 +42,11 @@ vi.mock("node-telegram-bot-api", () => {
       this.getUserProfilePhotos = vi.fn(async () => ({
         photos: [[{ file_id: "avatar-small" }, { file_id: "avatar-large" }]],
       }));
-      this.getFileLink = vi.fn(async (fileId) => `https://cdn.example.com/${fileId}.jpg`);
+      this.getFileLink = vi.fn(async (fileId: string) => `https://cdn.example.com/${fileId}.jpg`);
       botInstances.push(this);
     }
   }
-  return { default: MockTelegramBot };
+  return { loadTelegramSdk: () => MockTelegramBot };
 });
 
 vi.mock("../lib/debug-log.js", () => ({
