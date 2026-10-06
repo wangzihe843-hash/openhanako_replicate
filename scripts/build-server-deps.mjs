@@ -7,6 +7,17 @@ export const DEFERRED_BRIDGE_SDK_PACKAGES = Object.freeze([
   "node-telegram-bot-api",
 ]);
 
+export const PI_RUNTIME_PACKAGES = Object.freeze([
+  "@earendil-works/chord",
+  "@earendil-works/pi-agent-core",
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-codemode",
+  "@earendil-works/pi-coding-agent",
+  "@earendil-works/pi-mcp",
+  "@earendil-works/pi-telemetry",
+  "@earendil-works/pi-tui",
+]);
+
 // Bundling renames createRequire bindings, which NFT cannot reliably follow.
 // Trace these CJS entrypoints directly so hoisted transitive dependencies survive.
 export function resolveDeferredBridgeSdkEntrypoints(rootDir, packageNames) {
@@ -91,11 +102,25 @@ export function buildExternalPackage(
     dependencies[packageName] = getLockedPackageVersion(rootLock, packageName);
   }
 
+  // Server artifacts install a fresh dependency tree rather than npm-ci the
+  // root lock. Pi's caret-ranged family must still match the reviewed root
+  // exactly, even when a newer release becomes age-eligible before packaging.
+  let overrides;
+  if (PI_RUNTIME_PACKAGES.some(packageName => Object.hasOwn(dependencies, packageName))) {
+    overrides = Object.fromEntries(PI_RUNTIME_PACKAGES.map(packageName => [
+      packageName, getLockedPackageVersion(rootLock, packageName),
+    ]));
+    if (new Set(Object.values(overrides)).size !== 1) {
+      throw new Error("[build-server] Pi runtime family must use one root-lock version");
+    }
+  }
+
   return {
     name: "hanako-server",
     version: rootPkg.version,
     type: "module",
     dependencies,
+    ...(overrides ? { overrides } : {}),
   };
 }
 

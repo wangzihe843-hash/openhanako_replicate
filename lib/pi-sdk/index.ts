@@ -18,7 +18,7 @@ import {
   formatDimensionNote as rawFormatDimensionNote,
   convertToLlm as rawConvertToLlm,
 } from "@earendil-works/pi-coding-agent";
-import { AuthStorage, getModelRuntime } from "./model-runtime.ts";
+import { AuthStorage, configuredAzureRequestEnv, getModelRuntime } from "./model-runtime.ts";
 // 0.80.0 起 pi-ai 老全局 API 移到 /compat 子入口（根入口是 createModels 新 API）
 import {
   getModel as rawGetPiModel,
@@ -146,7 +146,10 @@ export {
   NATIVE_SUMMARIZATION_SYSTEM_PROMPT,
 } from "./compaction-request-shape.ts";
 
-export const completeSimple = rawCompleteSimple;
+export const completeSimple: typeof rawCompleteSimple = (model, context, options) => {
+  const env = configuredAzureRequestEnv(model, options);
+  return rawCompleteSimple(model, context, env ? { ...options, env } : options);
+};
 export const convertAgentMessagesToLlm = rawConvertToLlm;
 export const prepareCompaction = rawPrepareCompaction;
 

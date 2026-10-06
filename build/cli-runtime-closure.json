@@ -14965,6 +14965,17 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
+      "path": "node_modules/@earendil-works/pi-ai/dist/api/azure-openai-config.js",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
       "path": "node_modules/@earendil-works/pi-ai/dist/api/azure-openai-responses.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -15614,7 +15625,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/@earendil-works/pi-ai/dist/providers/azure-openai-responses.js",
+      "path": "node_modules/@earendil-works/pi-ai/dist/providers/azure.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -15625,7 +15636,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/@earendil-works/pi-ai/dist/providers/azure-openai-responses.models.js",
+      "path": "node_modules/@earendil-works/pi-ai/dist/providers/azure.models.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -15790,7 +15801,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/@earendil-works/pi-ai/dist/providers/data/azure-openai-responses.json",
+      "path": "node_modules/@earendil-works/pi-ai/dist/providers/data/azure.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -27257,6 +27268,17 @@
     },
     {
       "path": "node_modules/@earendil-works/pi-coding-agent/dist/utils/open-browser.js",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/@earendil-works/pi-coding-agent/dist/utils/output-files.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -86469,11 +86491,11 @@
     }
   ],
   "stats": {
-    "totalFiles": 7156,
+    "totalFiles": 7158,
     "byInputType": {
       "source-graph": 732,
       "runtime-asset": 11,
-      "nft-runtime-trace": 6413
+      "nft-runtime-trace": 6415
     }
   }
 }

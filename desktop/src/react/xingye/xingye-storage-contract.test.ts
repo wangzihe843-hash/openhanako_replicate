@@ -22,6 +22,18 @@ function collectSourceFiles(dir: string): string[] {
   return out;
 }
 
+// Bound concurrent reads while keeping the complete source set and its order.
+async function readSourceFiles(files: string[]): Promise<Array<{ file: string; source: string }>> {
+  const sources: Array<{ file: string; source: string }> = [];
+  for (let offset = 0; offset < files.length; offset += 8) {
+    sources.push(...await Promise.all(files.slice(offset, offset + 8).map(async file => ({
+      file,
+      source: await fs.promises.readFile(file, 'utf8'),
+    }))));
+  }
+  return sources;
+}
+
 describe('xingye storage contract', () => {
   beforeEach(() => {
     (hanaFetch as unknown as ReturnType<typeof vi.fn>).mockClear();
@@ -57,26 +69,28 @@ describe('xingye storage contract', () => {
     expect(result).toEqual({ result: 'ok' });
   });
 
-  it('UI business code does not import the legacy workspace v2 storage entry', () => {
+  it('UI business code does not import the legacy workspace v2 storage entry', async () => {
     const root = path.join(process.cwd(), 'desktop', 'src', 'react');
-    const offenders = collectSourceFiles(root)
+    const files = collectSourceFiles(root)
       .filter(file => !file.endsWith('.test.ts') && !file.endsWith('.test.tsx'))
-      .filter(file => path.basename(file) !== 'xingye-workspace-v2.ts')
-      .filter(file => fs.readFileSync(file, 'utf8').includes('xingye-workspace-v2'));
+      .filter(file => path.basename(file) !== 'xingye-workspace-v2.ts');
+    const offenders = (await readSourceFiles(files))
+      .filter(({ source }) => source.includes('xingye-workspace-v2'))
+      .map(({ file }) => file);
 
     expect(offenders.map(file => path.relative(process.cwd(), file))).toEqual([]);
   });
 
-  it('direct postXingyeStorage object calls in production source include agentId', () => {
+  it('direct postXingyeStorage object calls in production source include agentId', async () => {
     const roots = [
       path.join(process.cwd(), 'desktop', 'src', 'react', 'xingye'),
       path.join(process.cwd(), 'server'),
     ];
     const offenders: string[] = [];
     for (const root of roots) {
-      for (const file of collectSourceFiles(root)) {
-        if (/\.test\.(ts|tsx|js|jsx)$/.test(file)) continue;
-        const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+      const files = collectSourceFiles(root).filter(file => !/\.test\.(ts|tsx|js|jsx)$/.test(file));
+      for (const { file, source } of await readSourceFiles(files)) {
+        const lines = source.split(/\r?\n/);
         lines.forEach((line, index) => {
           if (!line.includes('postXingyeStorage({')) return;
           const window = lines.slice(index, index + 8).join('\n');

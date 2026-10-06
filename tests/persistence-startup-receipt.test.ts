@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { buildStartupReceipt, scanPersistentStores } from "../scripts/scan-persistent-stores.mjs";
+import { buildStartupReceipt } from "../scripts/scan-persistent-stores.mjs";
 import {
   FUTURE_EPOCH_COORDINATOR_PHASE,
   STARTUP_PHASES,
@@ -80,7 +80,9 @@ describe("persistence startup receipt", () => {
   });
 
   it("matches the committed deterministic startup receipt", () => {
-    const generated = scanPersistentStores({ rootDir: ROOT, today: "2026-07-13" }).startupReceipt;
+    // The source census is covered by persistence-store-registry.test.ts; this
+    // receipt depends only on the registry and canonical startup phases.
+    const generated = buildStartupReceipt(PERSISTENT_STORES);
     const committed = JSON.parse(fs.readFileSync(STARTUP_RECEIPT_PATH, "utf-8"));
 
     expect(committed).toEqual(generated);

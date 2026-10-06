@@ -10,6 +10,7 @@ import {
   buildJiebaRuntimeSmokeScript,
   collectBareImportPackageNames,
   collectInstalledOptionalDependencyDirs,
+  PI_RUNTIME_PACKAGES,
   readPackageJsonWithRetry,
   verifyExternalEntrypoints,
 } from "../scripts/build-server-deps.mjs";
@@ -29,6 +30,39 @@ afterEach(() => {
 });
 
 describe("build-server external dependency packaging", () => {
+  function piLock() {
+    return { packages: Object.fromEntries(PI_RUNTIME_PACKAGES.map(name => [
+      `node_modules/${name}`, { version: "1.0.3" },
+    ])) };
+  }
+
+  it("pins the whole Pi artifact family to the reviewed root lock", () => {
+    const rootLock = piLock();
+    const before = JSON.stringify(rootLock);
+    const serverPkg = buildExternalPackage(
+      { version: "1.0.0", overrides: { unrelated: "9.9.9" } },
+      { "@earendil-works/pi-coding-agent": "1.0.3" },
+      { rootLock },
+    );
+    expect(serverPkg.dependencies).toEqual({ "@earendil-works/pi-coding-agent": "1.0.3" });
+    expect(serverPkg.overrides).toEqual(Object.fromEntries(PI_RUNTIME_PACKAGES.map(name => [name, "1.0.3"])));
+    expect(serverPkg.overrides).not.toHaveProperty("unrelated");
+    expect(JSON.stringify(rootLock)).toBe(before);
+  });
+
+  it("rejects missing or mixed Pi family locks before artifact installation", () => {
+    const dependencies = { "@earendil-works/pi-coding-agent": "1.0.3" };
+    expect(() => buildExternalPackage({ version: "1.0.0" }, dependencies)).toThrow(/package-lock.json does not contain/);
+    const missing = piLock();
+    delete missing.packages["node_modules/@earendil-works/pi-telemetry"];
+    expect(() => buildExternalPackage({ version: "1.0.0" }, dependencies, { rootLock: missing }))
+      .toThrow(/pi-telemetry/);
+    const mixed = piLock();
+    mixed.packages["node_modules/@earendil-works/pi-tui"].version = "1.0.4";
+    expect(() => buildExternalPackage({ version: "1.0.0" }, dependencies, { rootLock: mixed }))
+      .toThrow(/Pi runtime family must use one root-lock version/);
+  });
+
   it("collects bare static import package names from the emitted server bundle", () => {
     const packages = collectBareImportPackageNames([
       "import fs from 'node:fs';",

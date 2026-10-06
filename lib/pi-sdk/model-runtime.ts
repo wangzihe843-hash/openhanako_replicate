@@ -15,6 +15,47 @@ export type { OAuthLoginCallbacks };
 
 const registryRuntimes = new WeakMap<ModelRegistry, ModelRuntime>();
 
+export function configuredAzureRequestEnv(
+  model: Parameters<ModelRuntime["streamSimple"]>[0],
+  options?: { env?: Record<string, string>; azureBaseUrl?: string; azureResourceName?: string },
+  runtime?: ModelRuntime,
+) {
+  // Pi's Azure catalog leaves baseUrl empty. A concrete endpoint belongs to
+  // Hana's configured model, including provider/model overrides after refresh.
+  if (!model.baseUrl?.trim() || !(model.api === "azure-openai-responses"
+    || (model.provider === "azure" && model.api === "openai-completions"))) return undefined;
+  const extension = runtime?.getRegisteredProviderConfig(model.provider);
+  if (runtime?.getRegisteredNativeProvider(model.provider)
+    || (extension?.streamSimple && extension.api === model.api)) return undefined;
+
+  // Scope defaults before ModelRuntime merges credential env. Only explicit
+  // caller options may override a configured endpoint/deployment, not ambient env.
+  const env = options?.env;
+  const baseUrl = options?.azureBaseUrl?.trim() || env?.AZURE_OPENAI_BASE_URL?.trim();
+  const resourceName = options?.azureResourceName?.trim() || env?.AZURE_OPENAI_RESOURCE_NAME?.trim();
+  return {
+    ...env,
+    AZURE_OPENAI_BASE_URL: baseUrl || (resourceName ? " " : model.baseUrl),
+    AZURE_OPENAI_RESOURCE_NAME: resourceName || " ",
+    // Pi uses || for env fallback: an empty string would restore process.env.
+    // Whitespace is truthy but parses as an empty deployment map/base URL.
+    AZURE_OPENAI_DEPLOYMENT_NAME_MAP: env?.AZURE_OPENAI_DEPLOYMENT_NAME_MAP?.trim() || " ",
+  };
+}
+
+function preserveConfiguredAzureRequests(runtime: ModelRuntime) {
+  const stream = runtime.stream.bind(runtime);
+  const streamSimple = runtime.streamSimple.bind(runtime);
+  runtime.stream = (model, context, options) => {
+    const env = configuredAzureRequestEnv(model, options, runtime);
+    return stream(model, context, env ? { ...options, env } : options);
+  };
+  runtime.streamSimple = (model, context, options) => {
+    const env = configuredAzureRequestEnv(model, options, runtime);
+    return streamSimple(model, context, env ? { ...options, env } : options);
+  };
+}
+
 function abortablePrompt(result: Promise<string>, signal?: AbortSignal): Promise<string> {
   if (!signal) return result;
   return new Promise((resolve, reject) => {
@@ -99,6 +140,7 @@ export class AuthStorage {
       modelsPath,
       allowModelNetwork: false,
     }).then(async runtime => {
+      preserveConfiguredAzureRequests(runtime);
       for (const [providerId, key] of this.runtimeKeys) {
         await runtime.setRuntimeApiKey(providerId, key);
       }

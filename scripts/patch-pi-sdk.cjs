@@ -19,8 +19,11 @@ const path = require("path");
 const root = path.join(__dirname, "..");
 const sdkRoot = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent");
 const piAiRoot = path.join(root, "node_modules", "@earendil-works", "pi-ai");
-const verifiedVersions = new Set(["1.0.2"]);
-const verifiedPiAiVersions = new Set(["1.0.2"]);
+const verifiedVersions = new Set(["1.0.3"]);
+const verifiedPiAiVersions = new Set(["1.0.3"]);
+// The three direct packages share caret-ranged runtime dependencies. Reject
+// family drift too, so a later install cannot silently mix 1.0.3 with 1.0.4.
+const piFamilyPath = /node_modules\/@earendil-works\/(chord|pi-agent-core|pi-ai|pi-coding-agent|pi-codemode|pi-mcp|pi-telemetry|pi-tui)$/;
 
 function fail(message) {
   console.error(`[verify-pi-sdk] ${message}`);
@@ -55,7 +58,7 @@ if (agentPkg.version !== pkg.version || piAiPkg.version !== pkg.version) {
 }
 const lock = readJson(path.join(root, "package-lock.json"));
 for (const [location, dependency] of Object.entries(lock.packages || {})) {
-  if (!/node_modules\/@earendil-works\/(pi-agent-core|pi-ai|pi-coding-agent)$/.test(location)) continue;
+  if (!piFamilyPath.test(location)) continue;
   if (dependency.version !== pkg.version) {
     fail(`mixed Pi version at ${location}: ${dependency.version}`);
   }

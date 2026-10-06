@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:333efb6665eb716462a08b54429977168deabfb511698618bc15ec14ea15fc1c",
+  "payloadFingerprint": "sha256:905ffa2c15b32c64d1a811ac47e7c8eb0d815b46584a49c4130567552b984999",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3368,8 +3368,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Pi 1.0.2 preserves canonical JSONL format v3, checked against its actual source declaration and runtime export. Real SDK regressions cover legacy history and failure projection without rewriting stored bytes, first-user durability on provider failure and abort, context_edit omission and replacement, and repeated compaction across reopen. A synthetic 0.87.1 -> 1.0.2 -> 0.87.1 -> 1.0.2 read/write probe preserves identity, parent chains, metadata, append prefixes and canonical projection. The package version and integrity change; persisted store shapes, Hana session flush and compaction compensation, and DATA_EPOCH 1 remain unchanged. This declaration covers the tested v3 shapes, not every possible historical or future session.",
-    "payloadFingerprint": "sha256:333efb6665eb716462a08b54429977168deabfb511698618bc15ec14ea15fc1c"
+    "compatibilityReason": "Official Pi 1.0.3 fixes cancellation-safe OAuth refresh persistence without changing canonical JSONL v3 or DATA_EPOCH 1. Installed Agent, AgentSession, SessionManager, compaction, SDK, model-registry and provider-composer sources are byte-identical to the verified 1.0.2 baseline. On 1.0.3, 197 focused tests pass, including existing historical/session/context-edit/compaction/tool-outcome coverage and synthetic cancellation, timeout, cross-process rotation and cold credential reopen. Legacy, new and custom Azure identities retain Hana configuration, credentials, same-model call/reasoning IDs and v3 model restoration without a persisted migration. Package version and integrity change; Hana store shapes and session flush/compensation remain unchanged. This declaration covers these verified shapes and paths, not all possible historical sessions or real-provider behavior.",
+    "payloadFingerprint": "sha256:905ffa2c15b32c64d1a811ac47e7c8eb0d815b46584a49c4130567552b984999"
   },
   "schemas": [
     {
@@ -3931,9 +3931,9 @@
       ],
       "kind": "external-versioned",
       "lockfile": "package-lock.json",
-      "packageIntegrity": "sha512-3ZdIghMSELMGV3sKi5iASOb1Jwb696fLjmNu0aezaqDxTLLWWoRpqBYkGxJ1CgAMCbtfqXWEF0lcRrlVXmiEGQ==",
+      "packageIntegrity": "sha512-t2lb0dw4y/jr5a2PRo6eTHGTZOPB3/YAMVyhhYFC1W3Hl5xE+462I/gMWjF4gCLuhGipNEfuNqONFmdqLFz4SQ==",
       "packageName": "@earendil-works/pi-coding-agent",
-      "packageVersion": "1.0.2",
+      "packageVersion": "1.0.3",
       "protocolModules": [
         {
           "module": "core/desktop-session-submit.ts",
@@ -3968,7 +3968,7 @@
           "sourceHash": "sha256:810752d7bb38f9bdc287c78649e21a53aad293cd2e2e817af7575ab3a58dc6ed"
         }
       ],
-      "requestedVersion": "1.0.2",
+      "requestedVersion": "1.0.3",
       "storeId": "session-jsonl",
       "versionSource": {
         "currentSessionVersion": 3,
