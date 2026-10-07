@@ -36,6 +36,7 @@ import {
   resolveSecretPatch,
 } from "../../shared/secret-custody.ts";
 import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.ts";
+import { denyDingTalkDestinationChange } from "../http/dingtalk-destination-guard.ts";
 import { recordSecurityAuditEvent } from "../http/security-audit.ts";
 import { normalizeBridgePermissionMode, SESSION_PERMISSION_MODES } from "../../core/session-permission-mode.ts";
 
@@ -425,6 +426,8 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
       try {
         assertNoUnsupportedDingTalkRobotFields(patch);
         patch = canonicalizeDingTalkBridgeConfig(patch);
+        const destinationDenied = denyDingTalkDestinationChange(c, bridgeCfg, patch);
+        if (destinationDenied) return destinationDenied;
         if (patch.enabled) normalizeDingTalkBridgeCredentials(patch);
       } catch (err: any) {
         return c.json({ ok: false, error: err?.message || String(err) }, 400);
@@ -821,6 +824,10 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
       const effectiveCredentials = shouldUseSavedCredentials && platform !== "dingtalk" && platform !== "qq"
         ? { ...saved, ...resolvedCredentials }
         : resolvedCredentials;
+      if (platform === "dingtalk" && shouldUseSavedCredentials) {
+        const destinationDenied = denyDingTalkDestinationChange(c, saved, effectiveCredentials);
+        if (destinationDenied) return destinationDenied;
+      }
       if (platform === "telegram") {
         const TelegramBot = (await import("node-telegram-bot-api")).default;
         const bot = new TelegramBot(effectiveCredentials.token, telegramBotOptions());

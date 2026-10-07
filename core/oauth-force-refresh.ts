@@ -76,6 +76,6 @@ export async function forceRefreshOAuthApiKey({
   });
 
   // 让同进程的内存副本立刻看到刚写下去的凭证。
-  authStorage.reload?.();
+  await authStorage.reload?.();
   return apiKey;
 }

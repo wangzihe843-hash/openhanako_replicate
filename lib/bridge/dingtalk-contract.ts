@@ -187,6 +187,19 @@ export function canonicalizeDingTalkBridgeConfig(input: Record<string, any> = {}
   return result;
 }
 
+// Use the same token URL for authorization and the outbound request. corpId and
+// legacy mode select different paths even when the configured base is unchanged.
+export function dingTalkCredentialDestinations(input: Record<string, unknown> | DingTalkBridgeCredentials = {}) {
+  const canonical = canonicalizeDingTalkBridgeConfig(input);
+  return {
+    apiBaseUrl: canonical.apiBaseUrl,
+    tokenUrl: buildDingTalkUrl(canonical.apiBaseUrl, canonical.authMode === DINGTALK_LEGACY_AUTH_MODE
+      ? "/oauth2/accessToken"
+      : `/oauth2/${encodeURIComponent(canonical.corpId)}/token`),
+    streamOpenUrl: normalizeDingTalkEndpointUrl(canonical.streamOpenUrl || DINGTALK_STREAM_OPEN_URL, "DingTalk Stream open endpoint"),
+  };
+}
+
 export function normalizeDingTalkBridgeCredentials(input: Record<string, any> = {}): DingTalkBridgeCredentials {
   const canonical = canonicalizeDingTalkBridgeConfig(input);
   const authMode = canonical.authMode === DINGTALK_LEGACY_AUTH_MODE

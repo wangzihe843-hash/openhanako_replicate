@@ -104,7 +104,7 @@ export function createProvidersRoute(engine: any) {
     const oauthProviders = engine.authStorage?.getOAuthProviders?.() || [];
     const oauthLoginMap = new Map();
     for (const p of oauthProviders) {
-      const cred = engine.authStorage.get(p.id);
+      const cred = await engine.authStorage.get(p.id);
       oauthLoginMap.set(p.id, { name: p.name, loggedIn: cred?.type === "oauth" });
     }
 

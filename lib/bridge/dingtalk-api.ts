@@ -1,5 +1,5 @@
 import {
-  buildDingTalkUrl,
+  dingTalkCredentialDestinations,
   normalizeDingTalkBridgeCredentials,
   type DingTalkBridgeCredentials,
 } from "./dingtalk-contract.ts";
@@ -72,9 +72,7 @@ export function buildDingTalkAccessTokenRequest(
       grant_type: "client_credentials" as const,
     };
   return {
-    url: buildDingTalkUrl(credentials.apiBaseUrl, credentials.authMode === "legacy_app"
-      ? "/oauth2/accessToken"
-      : `/oauth2/${encodeURIComponent(credentials.corpId)}/token`),
+    url: dingTalkCredentialDestinations(credentials).tokenUrl,
     init: {
       method: "POST",
       headers: { "Content-Type": "application/json" },

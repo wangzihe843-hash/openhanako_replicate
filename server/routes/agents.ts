@@ -30,7 +30,7 @@ import { bodyLimit } from "hono/body-limit";
 import { emitAppEvent } from "../app-events.ts";
 import { safeJson } from "../hono-helpers.ts";
 import { bodyFromRouteError, statusFromRouteError } from "./route-errors.ts";
-import { saveConfig, clearConfigCache } from "../../lib/memory/config-loader.ts";
+import { saveConfig, clearConfigCache, deepMerge } from "../../lib/memory/config-loader.ts";
 import {
   listExperienceDocuments,
   normalizeExperienceCategory,
@@ -66,11 +66,13 @@ import {
 import { mergeWorkspaceHistory } from "../../shared/workspace-history.ts";
 import {
   collectSecretPatchPaths,
+  isMaskedSecretValue,
   maskObjectSecrets,
   maskSecretValue,
   resolveSecretPatch,
 } from "../../shared/secret-custody.ts";
 import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.ts";
+import { denyDingTalkDestinationChange } from "../http/dingtalk-destination-guard.ts";
 import { recordSecurityAuditEvent } from "../http/security-audit.ts";
 
 function hideDisabledGlobalToolsForSettings(toolNames, engine) {
@@ -126,6 +128,27 @@ function hasProviderMutationPatch(partial) {
   if (!partial || typeof partial !== "object") return false;
   if (hasOwn(partial, "providers")) return true;
   return ["api", "embedding_api", "utility_api"].some((key) => hasInlineProviderCredentialPatch(partial[key]));
+}
+
+function denyAgentDingTalkDestinationChange(c, engine, id, configPath, partial) {
+  if (!hasOwn(partial, "bridge")) return null;
+  // Match saveConfig's disk source and null/alias semantics, not a possibly
+  // stale runtime projection or the Bridge route's request-local alias merge.
+  const saved = YAML.load(fsSync.readFileSync(configPath, "utf-8")) || {};
+  const effective = deepMerge(saved, partial);
+  try {
+    const denied = denyDingTalkDestinationChange(c, saved.bridge?.dingtalk, effective.bridge?.dingtalk, "bridge.dingtalk");
+    if (denied) return denied;
+    // The runtime coordinator falls back to focus when an explicit lookup
+    // misses. A disk path (including a Windows case alias) is insufficient:
+    // keep every DingTalk write bound to the same registered Agent identity.
+    if ((partial.bridge === null || hasOwn(partial.bridge, "dingtalk")) && !engine.getAgent?.(id)) {
+      return c.json({ error: "agent not found" }, 404);
+    }
+    return null;
+  } catch (err) {
+    return c.json({ error: err.message }, 400);
+  }
 }
 
 function getGlobalValue(globalFields, key) {
@@ -633,6 +656,17 @@ export function createAgentsRoute(engine) {
 
       // ── schema-driven 全局字段分流 ──
       const { global: globalFields, agent: agentPartial } = splitByScope(partial) as { global: any[], agent: Record<string, any> };
+      const dingtalkPatch = agentPartial.bridge?.dingtalk;
+      if (dingtalkPatch && typeof dingtalkPatch === "object" && !Array.isArray(dingtalkPatch)) {
+        // A mask means keep, including when only a legacy saved key exists.
+        // Omit it rather than capturing plaintext across later provider awaits.
+        for (const key of ["clientSecret", "appSecret"]) {
+          if (isMaskedSecretValue(dingtalkPatch[key])) delete dingtalkPatch[key];
+        }
+      }
+      const configPath = path.join(agentDir(engine, id), "config.yaml");
+      const destinationDenied = denyAgentDingTalkDestinationChange(c, engine, id, configPath, agentPartial);
+      if (destinationDenied) return destinationDenied;
       for (const { setter, value } of globalFields) {
         engine[setter](value);
       }
@@ -710,7 +744,10 @@ export function createAgentsRoute(engine) {
 
       assertAgentConfigPatchYuan(engine.productDir, agentPartial);
 
-      const configPath = path.join(agentDir(engine, id), "config.yaml");
+      // Provider refresh above can yield. Authorize the latest disk state again
+      // immediately before the synchronous merge/write and runtime refresh.
+      const latestDestinationDenied = denyAgentDingTalkDestinationChange(c, engine, id, configPath, agentPartial);
+      if (latestDestinationDenied) return latestDestinationDenied;
       saveConfig(configPath, agentPartial);
       engine.invalidateAgentListCache();
       // 触发目标 agent 模块刷新 + prompt 重建

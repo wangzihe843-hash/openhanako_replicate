@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { writeSecretFileSync } from "../shared/secret-fs.ts";
 import { normalizePrincipal } from "./security-principal.ts";
+import { isDevicePrincipalActive } from "./device-registry.ts";
 
 export const WEB_SESSIONS_FILE = "web-sessions.json";
 export const WEB_SESSION_COOKIE_NAME = "hana_session";
@@ -81,6 +82,9 @@ export function authenticateWebSession(hanakoHome, cookieHeader, { now = new Dat
     persistWebSessionRegistry(hanakoHome, registry);
     return null;
   }
+
+  if (session.principal.kind === "device"
+    && !isDevicePrincipalActive(hanakoHome, session.principal, { now })) return null;
 
   session.lastUsedAt = now;
   session.updatedAt = now;

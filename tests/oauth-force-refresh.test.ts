@@ -86,7 +86,7 @@ describe("forceRefreshOAuthApiKey", () => {
 
   it("rotates the credential even though the local record is not expired yet", async () => {
     const { backend, authStorage } = seededInMemoryStore();
-    expect(storedCred(authStorage).expires).toBeGreaterThan(Date.now());
+    expect((await storedCred(authStorage)).expires).toBeGreaterThan(Date.now());
 
     const rotated = codexJwt("acct_new");
     mockFetch.mockResolvedValueOnce(tokenResponse({ access: rotated, refresh: "r2" }));
@@ -102,7 +102,7 @@ describe("forceRefreshOAuthApiKey", () => {
     expect(mockFetch.mock.calls[0][0]).toBe(TOKEN_URL);
     expect(apiKey).toBe(rotated);
 
-    const stored = storedCred(authStorage);
+    const stored = await storedCred(authStorage);
     expect(stored.type).toBe("oauth");
     expect(stored.access).toBe(rotated);
     expect(stored.refresh).toBe("r2");
@@ -121,8 +121,8 @@ describe("forceRefreshOAuthApiKey", () => {
 
     expect(mockFetch).not.toHaveBeenCalled();
     expect(apiKey).toBe("B");
-    expect(storedCred(authStorage).access).toBe("B");
-    expect(storedCred(authStorage).refresh).toBe("r1");
+    expect((await storedCred(authStorage)).access).toBe("B");
+    expect((await storedCred(authStorage)).refresh).toBe("r1");
   });
 
   it("leaves the stored credential untouched when the refresh call fails", async () => {
@@ -142,7 +142,7 @@ describe("forceRefreshOAuthApiKey", () => {
     })).rejects.toThrow();
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    const stored = storedCred(authStorage);
+    const stored = await storedCred(authStorage);
     expect(stored.access).toBe("stale-A");
     expect(stored.refresh).toBe("r1");
   });

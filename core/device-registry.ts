@@ -33,24 +33,9 @@ export function watchDevicePrincipal(hanakoHome, principal, onInvalid) {
   const check = () => {
     if (disposed) return;
     if (timer) clearTimeout(timer);
-    let valid = false;
-    let expiresAt = null;
-    try {
-      const devices = readJsonRequired(path.join(hanakoHome, DEVICES_FILE), DEVICES_FILE);
-      const credentials = readJsonRequired(path.join(hanakoHome, DEVICE_CREDENTIALS_FILE), DEVICE_CREDENTIALS_FILE);
-      const credential = credentials.credentials.find((item) => item.credentialId === principal.credentialId);
-      const device = devices.devices.find((item) => item.deviceId === principal.deviceId);
-      expiresAt = credential?.expiresAt ? Date.parse(credential.expiresAt) : null;
-      valid = device?.status === "active" && credential?.status === "active"
-        && credential.deviceId === principal.deviceId
-        && credential.userId === principal.userId
-        && credential.serverNodeId === principal.serverNodeId
-        && (!principal.studioId || credential.studioIds.includes(principal.studioId))
-        && (principal.studioIds || []).every((id) => credential.studioIds.includes(id))
-        && (principal.scopes || []).every((scope) => credential.scopes.includes(scope))
-        && (expiresAt === null || (Number.isFinite(expiresAt) && expiresAt > Date.now()));
-    } catch { /* Invalid or missing registry fails closed. */ }
-    if (!valid) { dispose(); onInvalid(); return; }
+    const access = readDevicePrincipalAccess(hanakoHome, principal, Date.now());
+    if (!access) { dispose(); onInvalid(); return; }
+    const { expiresAt } = access;
     if (expiresAt !== null) {
       timer = setTimeout(check, Math.min(expiresAt - Date.now(), 2_147_483_647));
       timer.unref?.();
@@ -59,6 +44,41 @@ export function watchDevicePrincipal(hanakoHome, principal, onInvalid) {
   listeners.add(check);
   check();
   return dispose;
+}
+
+// Browser sessions and live transports keep the authority granted at login,
+// but only while the source records still authorize that same principal.
+export function isDevicePrincipalActive(hanakoHome, principal, { now = new Date().toISOString() } = {}) {
+  return readDevicePrincipalAccess(hanakoHome, principal, Date.parse(now)) !== null;
+}
+
+function readDevicePrincipalAccess(hanakoHome, principal, now: number) {
+  if (!hanakoHome || principal?.kind !== "device" || principal?.credentialKind !== "device_credential"
+    || !isNonEmptyString(principal.deviceId) || !isNonEmptyString(principal.credentialId)
+    || !Number.isFinite(now)) return null;
+  try {
+    const devices = readJsonRequired(path.join(hanakoHome, DEVICES_FILE), DEVICES_FILE);
+    const credentials = readJsonRequired(path.join(hanakoHome, DEVICE_CREDENTIALS_FILE), DEVICE_CREDENTIALS_FILE);
+    validateDevicesRegistry(devices, DEVICES_FILE);
+    validateCredentialsRegistry(credentials, DEVICE_CREDENTIALS_FILE);
+    const credential = credentials.credentials.find((item) => item.credentialId === principal.credentialId);
+    const device = devices.devices.find((item) => item.deviceId === principal.deviceId);
+    if (!device || !credential) return null;
+    const expiresAt = credential.expiresAt == null ? null : Date.parse(credential.expiresAt);
+    const studios = [principal.studioId, ...(principal.studioIds || [])].filter(Boolean);
+    const valid = device.status === "active" && credential.status === "active"
+      && credential.deviceId === device.deviceId
+      && credential.userId === principal.userId && device.userId === principal.userId
+      && credential.serverNodeId === principal.serverNodeId && device.serverNodeId === principal.serverNodeId
+      && device.trustState === principal.trustState
+      && studios.every((id) => credential.studioIds.includes(id) && device.studioIds.includes(id))
+      && (principal.scopes || []).every((scope) => credential.scopes.includes(scope))
+      && (expiresAt === null || (Number.isFinite(expiresAt) && expiresAt > now));
+    return valid ? { expiresAt } : null;
+  } catch {
+    // Missing or invalid source records cannot authorize a retained snapshot.
+    return null;
+  }
 }
 
 function notifyDeviceAccessChanged(hanakoHome) {

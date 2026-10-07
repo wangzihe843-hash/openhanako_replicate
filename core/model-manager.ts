@@ -160,7 +160,7 @@ export class ModelManager {
     // Same file, same lock: forced OAuth rotation writes through this backend.
     this._authBackend = new FileAuthStorageBackend(path.join(this._hanakoHome, "auth.json"));
     this.providerRegistry.reload();
-    this._removeApiKeyProviderAuthEntries();
+    await this._removeApiKeyProviderAuthEntries();
     const projection = this._buildChatProjectionInputs();
     await this._applyRuntimeApiKeyOverrides(projection);
     syncModels(projection.providers, {
@@ -264,7 +264,7 @@ export class ModelManager {
    * @returns {boolean} 是否有变化
    */
   async syncAndRefresh({ syncSdkProviders = false } = {}) {
-    this._removeApiKeyProviderAuthEntries();
+    await this._removeApiKeyProviderAuthEntries();
     const projection = this._buildChatProjectionInputs();
     const changed = syncModels(projection.providers, {
       modelsJsonPath: this.modelsJsonPath,
@@ -376,13 +376,13 @@ export class ModelManager {
    * AuthStorage 只保留 OAuth 条目，避免 Pi SDK 优先读取 stale auth.json。
    * @private
    */
-  _removeApiKeyProviderAuthEntries() {
+  async _removeApiKeyProviderAuthEntries() {
     if (!this._authStorage || !this.providerRegistry) return;
     migrateLegacyApiKeyAuthToProviders({
       hanakoHome: this._hanakoHome,
       providerRegistry: this.providerRegistry,
     });
-    this._authStorage.reload?.();
+    await this._authStorage.reload?.();
 
     const entries = [...this.providerRegistry.getAll().values()];
     const oauthOwnedAuthKeys = new Set();
@@ -401,8 +401,8 @@ export class ModelManager {
         // catalog, but cleanup must never delete the OAuth owner's credentials
         // while surfacing the collision.
         if (oauthOwnedAuthKeys.has(authKey)) continue;
-        if (!authKey || !this._authStorage.has?.(authKey)) continue;
-        this._authStorage.remove(authKey);
+        if (!authKey || !(await this._authStorage.has?.(authKey))) continue;
+        await this._authStorage.remove(authKey);
       }
     }
   }
@@ -540,12 +540,12 @@ export class ModelManager {
             staleApiKey: options.staleApiKey,
           })
         : await this._authStorage.getApiKey(authKey, { includeFallback: false });
-      this._authStorage.reload?.();
+      await this._authStorage.reload?.();
       this.providerRegistry.clearAuthCache?.();
       if (!refreshedOAuthKey) {
         throw new Error(`${t("error.providerMissingCreds", { provider })} (auth: ${authKey})`);
       }
-      const authEntry = this._authStorage.get?.(authKey) || null;
+      const authEntry = await this._authStorage.get?.(authKey) || null;
       const cred = this.providerRegistry.getCredentials(provider);
       const accountId = authEntry?.accountId || authEntry?.account_id || cred?.accountId || "";
       return {

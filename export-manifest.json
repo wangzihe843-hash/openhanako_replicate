@@ -581,6 +581,7 @@
     "server/http/boundary.ts",
     "server/http/capability-guard.ts",
     "server/http/cors-policy.ts",
+    "server/http/dingtalk-destination-guard.ts",
     "server/http/file-content.ts",
     "server/http/plugin-assets.ts",
     "server/http/plugin-surface-session.ts",

@@ -115,23 +115,23 @@ export class AuthStorage {
     return new AuthStorage(backend);
   }
 
-  reload() { this.credentials.reload(); }
+  async reload() {
+    // Pi's list refreshes its revision-aware cache asynchronously. A signal keeps
+    // storage errors visible instead of falling back to a stale cached snapshot.
+    await this.credentials.list({ signal: new AbortController().signal });
+  }
 
   get(providerId: string) {
-    return this.backend.withLock(current => ({
+    return this.backend.withLockAsync(async current => ({
       result: (current ? JSON.parse(current) : {})[providerId],
     }));
   }
 
-  has(providerId: string) { return this.get(providerId) !== undefined; }
+  async has(providerId: string) { return (await this.get(providerId)) !== undefined; }
 
-  remove(providerId: string) {
-    this.backend.withLock(current => {
-      const data = current ? JSON.parse(current) : {};
-      delete data[providerId];
-      return { result: undefined, next: JSON.stringify(data, null, 2) };
-    });
-    this.reload();
+  async remove(providerId: string) {
+    // Delete under the same asynchronous lock as refresh, using the latest data.
+    await this.credentials.delete(providerId);
   }
 
   async getRuntime(modelsPath: string | null = null): Promise<ModelRuntime> {
@@ -180,7 +180,7 @@ export class AuthStorage {
   }
 
   async getApiKey(providerId: string, options?: { includeFallback?: boolean }) {
-    if (options?.includeFallback === false && !this.has(providerId) && !this.runtimeKeys.has(providerId)) {
+    if (options?.includeFallback === false && !(await this.has(providerId)) && !this.runtimeKeys.has(providerId)) {
       return undefined;
     }
     return (await (await this.getRuntime()).getAuth(providerId))?.auth.apiKey;
@@ -188,13 +188,13 @@ export class AuthStorage {
 
   async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
     await (await this.getRuntime()).login(providerId, "oauth", loginInteraction(callbacks));
-    this.reload();
+    await this.reload();
   }
 
   async logout(providerId: string): Promise<void> {
     await (await this.getRuntime()).logout(providerId);
     this.runtimeKeys.delete(providerId);
-    this.reload();
+    await this.reload();
   }
 }
 

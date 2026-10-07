@@ -352,7 +352,7 @@ export function createAuthRoute(engine) {
     const providers = engine.authStorage.getOAuthProviders();
     const status = {};
     for (const p of providers) {
-      const cred = engine.authStorage.get(p.id);
+      const cred = await engine.authStorage.get(p.id);
       const modelCount = cred?.type === "oauth"
         ? engine.availableModels.filter(m => m.provider === p.id).length
         : 0;
