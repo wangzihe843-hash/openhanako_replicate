@@ -777,6 +777,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "core/web-session-store.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "core/server-auth.ts",
           "kind": "import-statement"
         },
@@ -796,7 +801,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/server-identity.ts (import-statement); core/server-auth.ts (import-statement); server/routes/chat.ts (import-statement); +2 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by core/server-identity.ts (import-statement); core/web-session-store.ts (import-statement); core/server-auth.ts (import-statement); +3 more importer(s)."
     },
     {
       "path": "core/engine.ts",
@@ -4195,6 +4200,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "server/http/dingtalk-destination-guard.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/bridge/dingtalk-api.ts",
           "kind": "import-statement"
         },
@@ -4214,7 +4224,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/migrations.ts (import-statement); lib/bridge/dingtalk-api.ts (import-statement); server/routes/bridge.ts (import-statement); +2 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by core/migrations.ts (import-statement); server/http/dingtalk-destination-guard.ts (import-statement); lib/bridge/dingtalk-api.ts (import-statement); +3 more importer(s)."
     },
     {
       "path": "lib/bridge/feishu-adapter.ts",
@@ -82714,6 +82724,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "server/http/dingtalk-destination-guard.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "server/routes/agents.ts",
           "kind": "import-statement"
         },
@@ -82773,7 +82788,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by server/http/security-audit.ts (import-statement); server/routes/config.ts (import-statement); server/routes/providers.ts (import-statement); +12 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by server/http/security-audit.ts (import-statement); server/routes/config.ts (import-statement); server/routes/providers.ts (import-statement); +13 more importer(s)."
     },
     {
       "path": "server/http/cors-policy.ts",
@@ -82786,6 +82801,23 @@
         }
       ],
       "reason": "Reached via esbuild source module graph, imported by server/index.ts (import-statement)."
+    },
+    {
+      "path": "server/http/dingtalk-destination-guard.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/agents.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/bridge.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by server/routes/agents.ts (import-statement); server/routes/bridge.ts (import-statement)."
     },
     {
       "path": "server/http/file-content.ts",
@@ -86491,9 +86523,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 7158,
+    "totalFiles": 7159,
     "byInputType": {
-      "source-graph": 732,
+      "source-graph": 733,
       "runtime-asset": 11,
       "nft-runtime-trace": 6415
     }
