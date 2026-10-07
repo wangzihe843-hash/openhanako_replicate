@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createChatRoute } from "../server/routes/chat.ts";
 import { AgentReviewTurnCoordinator } from "../lib/agent-review/turn-coordinator.ts";
+import { SessionCoordinator } from "../core/session-coordinator.ts";
+import { submitDesktopSessionMessage } from "../core/desktop-session-submit.ts";
 import { errorBus } from "../shared/error-bus.ts";
+
+const cancelReview = AgentReviewTurnCoordinator.prototype.cancelByParent;
 
 type Payload = Record<string, unknown>;
 type Socket = { readyState: number; send: ReturnType<typeof vi.fn> };
@@ -24,7 +28,7 @@ function mount(streaming = true) {
   const hub = {
     subscribe: vi.fn((fn: typeof subscriber) => { subscriber = fn; }),
     send: vi.fn(async () => undefined),
-    abort: vi.fn(async () => false),
+    abort: vi.fn<(sessionPath: string, options?: { reason?: string }) => Promise<boolean>>(async () => false),
     eventBus: { emit: vi.fn() },
   };
   const engine = {
@@ -55,7 +59,7 @@ function mount(streaming = true) {
   }, ws);
   const startId = streaming ? start() : null;
   ws.send.mockClear();
-  return { hub, emit, start, abort, events, ws, startId };
+  return { hub, engine, sessionPath, emit, start, abort, events, ws, startId };
 }
 const results = (fixture: ReturnType<typeof mount>) => fixture.events().filter(e => e.type === "abort_result");
 
@@ -72,6 +76,64 @@ afterEach(() => {
 });
 
 describe("chat abort failure contract", () => {
+  it("finishes the review's parent stream when the normal stop cancels a pending parent load", async () => {
+    const loading = deferred<{ subscribe: ReturnType<typeof vi.fn> }>();
+    const f = mount(false);
+    const engine = Object.assign(f.engine, {
+      getSessionIdForPath: () => "sess_parent",
+      getSessionManifest: () => ({ currentLocator: { path: f.sessionPath } }),
+      getSessionByPath: vi.fn(() => ({ model: { id: "synthetic-model", provider: "mock" } })),
+      createDetachedSession: vi.fn(async () => ({ sessionId: "sess_review", sessionPath: "/test/review.jsonl" })),
+      ensureSessionLoaded: vi.fn(() => loading.promise), promptSession: vi.fn(), emitEvent: f.emit,
+    });
+    const runtime = new SessionCoordinator({ getEngine: () => engine, emitEvent: f.emit });
+    vi.spyOn(runtime, "_cleanupAbortedSessionSidecars").mockImplementation(() => {});
+    f.hub.abort.mockImplementation((...args) => runtime.abortSession(args[0], args[1]));
+    const review = new AgentReviewTurnCoordinator({ engine,
+      submitSessionMessage: (_engine, input) => input.sessionId === "sess_review"
+        ? Promise.resolve({ text: "Independent findings" }) : submitDesktopSessionMessage(_engine, input),
+      emitStatus: vi.fn(),
+    });
+    vi.mocked(AgentReviewTurnCoordinator.prototype.cancelByParent)
+      .mockImplementation((...args) => cancelReview.apply(review, args));
+    const running = review.start({ reviewedSessionId: "sess_parent", reviewedSessionPath: f.sessionPath,
+      reviewer: { agentId: "critic" }, text: "Review" });
+    await vi.waitFor(() => expect(engine.ensureSessionLoaded).toHaveBeenCalledOnce());
+    const streamId = f.events().find(event => event.type === "status" && event.isStreaming === true)?.streamId;
+    f.abort(streamId);
+    await vi.waitFor(() => expect(results(f)).toHaveLength(1));
+    await running;
+    loading.resolve({ subscribe: vi.fn(() => vi.fn()) });
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(f.hub.abort).toHaveBeenCalledOnce();
+    expect(results(f)[0]).toMatchObject({ status: "accepted", streamId });
+    expect(f.events().filter(event => event.type === "status" && event.isStreaming === false)).toEqual([
+      expect.objectContaining({ streamId, aborted: true }),
+    ]);
+    expect(engine.promptSession).not.toHaveBeenCalled();
+  });
+
+  it("passes stream ownership into delayed review cancellation", async () => {
+    const pending = deferred<boolean>();
+    const cancel = vi.mocked(AgentReviewTurnCoordinator.prototype.cancelByParent);
+    cancel.mockReturnValueOnce(pending.promise);
+    const f = mount();
+    f.abort();
+    const ownsStream = cancel.mock.calls[0]?.[2];
+    const ownedBefore = typeof ownsStream === "function" && ownsStream();
+    f.emit({ type: "turn_end", aborted: true });
+    const nextId = f.start();
+    const ownedAfter = typeof ownsStream === "function" && ownsStream();
+    pending.resolve(true);
+    await vi.waitFor(() => expect(results(f)).toHaveLength(1));
+    expect(ownedBefore).toBe(true);
+    expect(ownedAfter).toBe(false);
+    expect(results(f)[0]).toMatchObject({ status: "rejected", reason: "stale_stream" });
+    expect(f.hub.abort).not.toHaveBeenCalled();
+    expect(f.events().some(e => e.type === "status" && e.isStreaming === false && e.streamId === nextId)).toBe(false);
+  });
+
   it.each([false, true])("reports review failure and still attempts hub cancellation (hub=%s)", async accepted => {
     const error = new Error("review cancel failed");
     vi.mocked(AgentReviewTurnCoordinator.prototype.cancelByParent).mockRejectedValue(error);

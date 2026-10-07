@@ -1073,10 +1073,15 @@ export class AgentManager {
     // 对所有缓存 session 做 final 滚动摘要（带超时保护）
     const entries = sessionCoord ? [...sessionCoord._sessions.entries()] : [];
     if (entries.length > 0) {
-      const summaryPromises = entries.map(([sp, entry]) => {
+      const summaryPromises = entries.map(([key, entry]) => {
+        const sessionPath = sessionCoord._sessionPathForEntry(entry, key);
+        if (!sessionPath) {
+          log.warn("shutdown: session has no locator; skipping final memory summary");
+          return Promise.resolve();
+        }
         const agent = this._agents.get(entry.agentId) || this.agent;
         return Promise.race([
-          agent?._memoryTicker?.notifySessionEnd(sp) ?? Promise.resolve(),
+          agent?._memoryTicker?.notifySessionEnd(sessionPath) ?? Promise.resolve(),
           new Promise(r => setTimeout(r, 4000)),
         ]);
       });

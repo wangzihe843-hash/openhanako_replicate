@@ -38,6 +38,7 @@ interface ReviewTurnRecord {
   state: AgentReviewStatus['status'];
   reviewerSessionId: string | null;
   reviewerSessionPath: string | null;
+  parentStarted: boolean;
 }
 
 interface CoordinatorDeps {
@@ -149,6 +150,14 @@ export class AgentReviewTurnCoordinator {
     this.deps.emitStatus(this.status(record, patch), record.input.reviewedSessionPath);
   }
 
+  private release(record: ReviewTurnRecord): void {
+    if (this.records.get(record.requestId) !== record) return;
+    this.records.delete(record.requestId);
+    if (this.requestByParentSession.get(record.input.reviewedSessionId) === record.requestId) {
+      this.requestByParentSession.delete(record.input.reviewedSessionId);
+    }
+  }
+
   async start(input: ReviewTurnInput): Promise<void> {
     if (this.hasPendingParent(input.reviewedSessionId)) throw new Error('session_busy');
     const requestId = nonEmptyString(input.requestId) || `review_${crypto.randomUUID()}`;
@@ -158,6 +167,7 @@ export class AgentReviewTurnCoordinator {
       state: 'running',
       reviewerSessionId: null,
       reviewerSessionPath: null,
+      parentStarted: false,
     };
     this.records.set(requestId, record);
     this.requestByParentSession.set(input.reviewedSessionId, requestId);
@@ -172,8 +182,8 @@ export class AgentReviewTurnCoordinator {
       const message = error instanceof Error ? error.message : String(error);
       this.emit(record, { error: message });
       this.deps.engine.emitEvent?.({ type: 'session_status', isStreaming: false }, input.reviewedSessionPath);
-      this.requestByParentSession.delete(input.reviewedSessionId);
-      this.records.delete(requestId);
+    } finally {
+      this.release(record);
     }
   }
 
@@ -234,6 +244,7 @@ export class AgentReviewTurnCoordinator {
     const reviewText = nonEmptyString(reviewerResult?.text);
     if (!reviewText) throw new Error('reviewer_returned_empty_result');
 
+    record.parentStarted = true;
     record.state = 'completed';
     const reviewerAgentName = nonEmptyString(input.reviewer.label) || input.reviewer.agentId;
     const review = {
@@ -257,6 +268,7 @@ export class AgentReviewTurnCoordinator {
       reviewText,
       sessionRefs: input.sessionRefs,
     });
+    if (reviewWasCancelled(record)) return;
     await submitSessionMessage(engine, {
       sessionId: input.reviewedSessionId,
       sessionPath: input.reviewedSessionPath,
@@ -267,28 +279,38 @@ export class AgentReviewTurnCoordinator {
       clientMessageId: input.clientMessageId,
       uiContext: input.uiContext,
       sessionFileRefs: input.sessionFileRefs,
+      beforeInputSideEffects: () => {
+        if (reviewWasCancelled(record)) {
+          throw Object.assign(new Error('agent review parent turn cancelled'), { name: 'AbortError' });
+        }
+      },
       displayMessage: {
         ...(input.displayMessage || {}),
         agentReview: review,
       },
     });
-    this.requestByParentSession.delete(input.reviewedSessionId);
-    this.records.delete(record.requestId);
   }
 
-  async cancelByParent(sessionId: string, reason = 'user_cancelled'): Promise<boolean> {
+  async cancelByParent(sessionId: string, reason = 'user_cancelled', isCurrent: () => boolean = () => true): Promise<boolean> {
     const requestId = this.requestByParentSession.get(sessionId);
     if (!requestId) return false;
     const record = this.records.get(requestId);
-    if (!record) return false;
+    if (!record || !isCurrent()) return false;
     record.state = 'cancelled';
-    if (record.reviewerSessionPath) {
-      await this.deps.engine.abortSession?.(record.reviewerSessionPath, { reason });
+    // Parent submit owns cancellation from this point, including its pending
+    // load/preflight. Leave terminal status to that normal stop path.
+    if (record.parentStarted) return false;
+    try {
+      if (record.reviewerSessionPath) {
+        await this.deps.engine.abortSession?.(record.reviewerSessionPath, { reason });
+      }
+      if (isCurrent()) {
+        this.emit(record, { error: reason });
+        this.deps.engine.emitEvent?.({ type: 'session_status', isStreaming: false }, record.input.reviewedSessionPath);
+      }
+      return true;
+    } finally {
+      this.release(record);
     }
-    this.emit(record, { error: reason });
-    this.deps.engine.emitEvent?.({ type: 'session_status', isStreaming: false }, record.input.reviewedSessionPath);
-    this.requestByParentSession.delete(sessionId);
-    this.records.delete(requestId);
-    return true;
   }
 }

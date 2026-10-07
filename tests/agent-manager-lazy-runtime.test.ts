@@ -55,6 +55,7 @@ vi.mock("../core/llm-utils.js", () => ({
 }));
 
 import { AgentManager } from "../core/agent-manager.ts";
+import { SessionCoordinator } from "../core/session-coordinator.ts";
 
 describe("AgentManager lazy runtime initialization", () => {
   let rootDir;
@@ -116,6 +117,31 @@ describe("AgentManager lazy runtime initialization", () => {
 
   afterEach(() => {
     fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it("summarizes real session locators during shutdown and skips missing paths", async () => {
+    vi.useFakeTimers();
+    try {
+      const notifySessionEnd = vi.fn<(sessionPath: string) => Promise<void>>(async () => {});
+      const dispose = vi.fn();
+      manager._agents.set("focus", { _memoryTicker: { notifySessionEnd }, dispose });
+      const paths = ["stored", "sdk", "legacy"].map(name => path.join(rootDir, `${name}.jsonl`));
+      const coordinator = Object.create(SessionCoordinator.prototype);
+      coordinator._sessions = new Map([
+        ["sess_stored", { agentId: "focus", sessionPath: paths[0] }],
+        ["sess_sdk", { agentId: "focus", session: { sessionManager: { getSessionFile: () => paths[1] } } }],
+        [paths[2], { agentId: "focus" }],
+        ["sess_without_locator", { agentId: "focus" }],
+      ]);
+
+      await manager.disposeAll(coordinator);
+
+      expect(notifySessionEnd.mock.calls.map(([locator]) => locator)).toEqual(paths);
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(manager._agents.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("startup loads every agent config but initializes only the active runtime", async () => {

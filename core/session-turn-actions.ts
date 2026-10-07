@@ -225,7 +225,9 @@ async function retrySessionTurnInternal(engine, opts, deps, compatibility) {
     const session = await engine.ensureSessionLoaded(sessionPath);
     if (!session?.sessionManager) throw new Error(`failed to load session ${sessionPath}`);
 
-    const branch = session.sessionManager.getBranch();
+    const retryManager = session.sessionManager;
+    const branch = retryManager.getBranch();
+    const expectedLeafId = retryManager.getLeafId?.() ?? branch.at(-1)?.id ?? null;
     let target = opts.target;
     if (compatibility.latestUserOnly) {
       const latest = findLatestUserEntry(branch);
@@ -314,7 +316,14 @@ async function retrySessionTurnInternal(engine, opts, deps, compatibility) {
       if (typeof engine.setSessionBranchHead !== "function") {
         throw new Error("session branch persistence is unavailable");
       }
-      const originalLeafId = session.sessionManager.getLeafId?.() || null;
+      const currentSession = typeof engine.getSessionByPath === "function"
+        ? engine.getSessionByPath(sessionPath) : session;
+      const originalLeafId = retryManager.getLeafId?.() ?? retryManager.getBranch().at(-1)?.id ?? null;
+      // Attachment loading and submit preflight yield to ordinary turns. Reject
+      // a changed branch before the first transaction write or any rollback.
+      if (currentSession !== session || session.sessionManager !== retryManager || originalLeafId !== expectedLeafId) {
+        throw Object.assign(new Error("session_branch_conflict"), { code: "session_branch_conflict", status: 409 });
+      }
       let deferredSuppressionReceipt = null;
       let transactionId: string | null = null;
       let preparationAttempted = false;

@@ -1820,7 +1820,7 @@ export function createChatRoute(engine: any, hub: any, {
                     });
                   };
                   try {
-                    abortAccepted = !!(await agentReviewTurns.cancelByParent(abortTarget.sessionId, abortReason));
+                    abortAccepted = !!(await agentReviewTurns.cancelByParent(abortTarget.sessionId, abortReason, ownsStream));
                   } catch (error) {
                     reportFailure(error, "cancelByParent");
                   }
@@ -2033,7 +2033,7 @@ export function createChatRoute(engine: any, hub: any, {
               const compactionMode = instantSimple
                 ? INSTANT_SIMPLE_COMPACTION_RUNTIME_MODE
                 : getResolvedCompactionMode(engine.preferences);
-              const compactResult = (status, details: Record<string, any> = {}) => wsSend(ws, {
+              const compactResult = (status, details: Record<string, unknown> = {}) => wsSend(ws, {
                 type: "compaction_result",
                 sessionId: compactSessionId,
                 sessionPath: compactPath,
@@ -2318,7 +2318,7 @@ export function createChatRoute(engine: any, hub: any, {
             errorBus.report(appErr, { context: { wsMessageType: msg.type } });
             const isUserAbort = appErr.name === 'AbortError'
               || appErr.message === 'This operation was aborted'
-              || (appErr as any).type === 'aborted';
+              || (appErr as AppError & { type?: unknown }).type === 'aborted';
             if (!isUserAbort) {
               wsSend(ws, { type: 'error', message: appErr.message || 'Unknown error', error: appErr.toJSON(), sessionPath: msg.sessionPath });
             }

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { cancelDesktopSessionSubmission, submitDesktopSessionMessage } from '../core/desktop-session-submit.ts';
 /* eslint-disable @typescript-eslint/no-explicit-any -- focused runtime boundary test fixtures */
 import {
   AgentReviewTurnCoordinator,
@@ -14,6 +15,102 @@ function deferred<T>() {
 }
 
 describe('AgentReviewTurnCoordinator', () => {
+  function cancellationFixture(parentSubmit?: (engine: any, input: any) => Promise<any>) {
+    const reviewer = Promise.withResolvers<{ text: string }>();
+    const parent = Promise.withResolvers<void>();
+    const committed = vi.fn();
+    const engine = {
+      emitEvent: vi.fn(), abortSession: vi.fn(async () => true),
+      getSessionManifest: vi.fn(() => null),
+      createDetachedSession: vi.fn(async () => ({ sessionId: 'sess_review', sessionPath: '/review.jsonl' })),
+      getSessionByPath: vi.fn(() => ({ model: { id: 'synthetic-model', provider: 'mock' } })),
+    };
+    const submitSessionMessage = vi.fn(async (_engine, input) => {
+      if (input.sessionId === 'sess_review') return reviewer.promise;
+      if (parentSubmit) return parentSubmit(_engine, input);
+      await parent.promise;
+      input.beforeInputSideEffects?.();
+      committed();
+      return { text: 'parent reply' };
+    });
+    const statuses: any[] = [];
+    const coordinator = new AgentReviewTurnCoordinator({ engine, submitSessionMessage, emitStatus: status => statuses.push(status) });
+    const running = coordinator.start({ reviewedSessionId: 'sess_parent', reviewedSessionPath: '/parent.jsonl',
+      reviewer: { agentId: 'critic' }, text: 'Review synthetic history' });
+    return { coordinator, engine, submitSessionMessage, reviewer, parent, running, statuses, committed };
+  }
+
+  it('hands parent cancellation back after review, fencing a parent submit still awaiting preflight', async () => {
+    const f = cancellationFixture();
+    f.reviewer.resolve({ text: 'Findings' });
+    await vi.waitFor(() => expect(f.submitSessionMessage).toHaveBeenCalledTimes(2));
+    f.engine.emitEvent.mockClear();
+
+    expect(await f.coordinator.cancelByParent('sess_parent')).toBe(false);
+    expect(f.engine.abortSession).not.toHaveBeenCalled();
+    expect(f.engine.emitEvent).not.toHaveBeenCalled();
+    f.parent.resolve();
+    await f.running;
+    expect(f.committed).not.toHaveBeenCalled();
+    expect(f.coordinator.hasPendingParent('sess_parent')).toBe(false);
+    expect(f.statuses.at(-1).status).toBe('completed');
+  });
+
+  it('allows the normal stop path to cancel a real pending parent submission without late terminal events', async () => {
+    const loading = Promise.withResolvers<any>();
+    const f = cancellationFixture(submitDesktopSessionMessage);
+    Object.assign(f.engine, {
+      ensureSessionLoaded: vi.fn(() => loading.promise), promptSession: vi.fn(),
+      getSessionManifest: () => ({ currentLocator: { path: '/parent.jsonl' } }),
+    });
+    f.reviewer.resolve({ text: 'Findings' });
+    await vi.waitFor(() => expect(f.submitSessionMessage).toHaveBeenCalledTimes(2));
+    f.engine.emitEvent.mockClear();
+    const delegated = await f.coordinator.cancelByParent('sess_parent');
+    if (!delegated) cancelDesktopSessionSubmission(f.engine, '/parent.jsonl');
+    loading.resolve({ subscribe: vi.fn(() => vi.fn()) });
+    await f.running;
+
+    expect(delegated).toBe(false);
+    expect(f.engine.abortSession).not.toHaveBeenCalled();
+    expect((f.engine as any).promptSession).not.toHaveBeenCalled();
+    expect(f.engine.emitEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not mark a replacement parent stream idle after delayed reviewer cancellation', async () => {
+    const f = cancellationFixture();
+    await vi.waitFor(() => expect(f.submitSessionMessage).toHaveBeenCalledOnce());
+    const stopped = Promise.withResolvers<boolean>();
+    f.engine.abortSession.mockReturnValueOnce(stopped.promise);
+    let ownsStream = true;
+    const cancelling = f.coordinator.cancelByParent('sess_parent', 'user_abort', () => ownsStream);
+    ownsStream = false;
+    f.engine.emitEvent.mockClear();
+    stopped.resolve(true);
+    await cancelling;
+    f.reviewer.reject(new Error('reviewer stopped'));
+    await f.running;
+
+    expect(f.engine.emitEvent).not.toHaveBeenCalled();
+    expect(f.submitSessionMessage).toHaveBeenCalledOnce();
+    expect(f.coordinator.hasPendingParent('sess_parent')).toBe(false);
+  });
+
+  it('ends a cancelled review only after reviewer stop settles', async () => {
+    const f = cancellationFixture();
+    await vi.waitFor(() => expect(f.submitSessionMessage).toHaveBeenCalledOnce());
+    const stopped = Promise.withResolvers<boolean>();
+    f.engine.abortSession.mockReturnValueOnce(stopped.promise);
+    const cancelling = f.coordinator.cancelByParent('sess_parent');
+    expect(f.engine.emitEvent.mock.calls.some(([event]) => event.isStreaming === false)).toBe(false);
+    stopped.resolve(true);
+    expect(await cancelling).toBe(true);
+    f.reviewer.resolve({ text: 'late findings' });
+    await f.running;
+    expect(f.submitSessionMessage).toHaveBeenCalledOnce();
+    expect(f.engine.emitEvent).toHaveBeenLastCalledWith({ type: 'session_status', isStreaming: false }, '/parent.jsonl');
+  });
+
   it('holds the parent turn until the independent reviewer Session completes', async () => {
     const reviewer = deferred<{ text: string }>();
     const calls: any[] = [];

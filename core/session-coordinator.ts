@@ -2793,20 +2793,38 @@ export class SessionCoordinator implements SessionCancellation {
       }
     }
 
-    // LRU 淘汰：按 lastTouchedAt 排序，跳过 streaming 和焦点 session
+    // LRU uses real locators and the same idle contract as runtime hibernation.
     if (this._sessions.size > MAX_CACHED_SESSIONS) {
-      const focusPath = this.currentSessionPath;
+      const canEvict = (key, entry) => {
+        const entryPath = this._sessionPathForEntry(entry, key);
+        if (!entryPath) return false;
+        return key !== mapKey && this._sessions.get(key) === entry
+          && entry.session !== this._session && entryPath !== this.currentSessionPath
+          && this._canHibernateSessionRuntime(entry, entryPath);
+      };
       const candidates = [...this._sessions.entries()]
-        .filter(([key, e]) => key !== mapKey && key !== focusPath && !e.session.isStreaming)
+        .filter(([key, entry]) => canEvict(key, entry))
         .sort((a, b) => a[1].lastTouchedAt - b[1].lastTouchedAt);
       for (const [key, entry] of candidates) {
-        // 记忆收尾（fire-and-forget，淘汰场景不阻塞）
-        const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
-        agent?._memoryTicker?.notifySessionEnd(key).catch((err) =>
-          log.warn(`LRU 淘汰 ${path.basename(key)}: notifySessionEnd failed: ${err.message}`),
-        );
-        await this._teardownSessionEntry(entry, key, "lru");
-        this._sessions.delete(key);
+        const entryPath = this._sessionPathForEntry(entry, key);
+        // Do not wait on another creation/reload while holding our own operation.
+        if (!entryPath || this._sessionRuntimeOperations.has(this._runtimeOperationKey(entryPath))) continue;
+        await this._withSessionRuntimeOperation(entryPath, async () => {
+          // Prior teardown awaits can change focus, ownership or busy state.
+          if (this._sessions.size <= MAX_CACHED_SESSIONS || !canEvict(key, entry)) return;
+          entry._switching = true;
+          try {
+            // Memory finalization is asynchronous; runtime disposal is serialized with attach/reload.
+            const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
+            agent?._memoryTicker?.notifySessionEnd(entryPath).catch((err) =>
+              log.warn(`LRU 淘汰 ${path.basename(entryPath)}: notifySessionEnd failed: ${err.message}`),
+            );
+            await this._teardownSessionEntry(entry, entryPath, "lru");
+            if (this._sessions.get(key) === entry) this._sessions.delete(key);
+          } finally {
+            entry._switching = false;
+          }
+        });
         if (this._sessions.size <= MAX_CACHED_SESSIONS) break;
       }
     }
@@ -5522,7 +5540,14 @@ export class SessionCoordinator implements SessionCancellation {
       return true;
     }
     this._cleanupAbortedSessionSidecars(sessionPath, reason);
-    if (!entry?.session.isStreaming) return canceledSubmission;
+    if (!entry?.session.isStreaming) {
+      // A desktop submit may still be loading, before promptSession installs its
+      // preflight controller. Its cancellation already fenced late input writes.
+      if (canceledSubmission) this._d.emitEvent?.({
+        type: "session_status", isStreaming: false, aborted: true, reason,
+      }, sessionPath);
+      return canceledSubmission;
+    }
     return this._forceReleaseStreamingSession(entry, sessionPath, reason);
   }
 
@@ -6086,7 +6111,7 @@ export class SessionCoordinator implements SessionCancellation {
 
   _canHibernateSessionRuntime(entry: any, sessionPath: any) {
     if (!entry?.session || !sessionPath) return false;
-    if (entry.session.isStreaming || entry.session.isCompacting || entry._switching) return false;
+    if (entry.session.isStreaming || entry.session.isCompacting || isDirectCompactionInProgress(entry.session) || entry._switching) return false;
     if (this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)) return false;
     const pendingDeferred = this._d.getDeferredResultStore?.()?.listPending?.(sessionPath);
     if (Array.isArray(pendingDeferred) && pendingDeferred.length > 0) return false;

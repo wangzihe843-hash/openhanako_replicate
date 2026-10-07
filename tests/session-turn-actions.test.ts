@@ -16,6 +16,7 @@ import {
   AGENT_REVIEW_RECORD_TYPE,
   MESSAGE_ORIGIN_RECORD_TYPE,
   MESSAGE_PRESENTATION_RECORD_TYPE,
+  submitDesktopSessionMessage,
 } from "../core/desktop-session-submit.ts";
 
 function makeNavigableSession(manager) {
@@ -32,6 +33,59 @@ function makeNavigableSession(manager) {
 }
 
 describe("replayLatestUserTurn", () => {
+  it.each(["legacy", "stable ID", "replaced runtime"])("rejects a stale %s retry before writing when a normal send finishes during attachment loading", async identity => {
+    const manager = SessionManager.inMemory("/workspace");
+    const userId = manager.appendMessage({ role: "user", content: "[attached_image: /fixture/image.png]\noriginal" } as Parameters<typeof manager.appendMessage>[0]);
+    manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "old answer" }] } as Parameters<typeof manager.appendMessage>[0]);
+    const session = { ...makeNavigableSession(manager), subscribe: vi.fn(() => vi.fn()) };
+    let currentSession = session;
+    const attachment = Promise.withResolvers<Buffer>();
+    const readFile = vi.fn(() => attachment.promise);
+    const invalidateDerivedState = vi.fn();
+    const engine = {
+      ensureSessionLoaded: vi.fn(async () => currentSession), getSessionByPath: () => currentSession,
+      isSessionStreaming: vi.fn(() => false),
+      getSessionIdForPath: () => "sess_retry", getSessionManifest: () => ({ ownerAgentId: "hana", currentLocator: { path: "/fixture/main.jsonl" } }),
+      emitEvent: vi.fn(), setSessionBranchHead: vi.fn(), taskRegistry: { abort: vi.fn() },
+      promptSession: vi.fn(async (_path, text) => {
+        const currentManager = currentSession.sessionManager;
+        currentManager.appendMessage({ role: "user", content: text } as Parameters<typeof manager.appendMessage>[0]);
+        currentManager.appendCustomEntry("background-task", { taskId: "new-task" });
+        currentManager.appendMessage({ role: "assistant", content: [{ type: "text", text: "new answer" }] } as Parameters<typeof manager.appendMessage>[0]);
+      }),
+    };
+    const submit = vi.fn(async (_engine, input) => {
+      input.beforeInputSideEffects();
+      return { text: "retry answer" };
+    });
+    const retry = identity === "legacy" ? replayLatestUserTurn : retrySessionTurn;
+    const pending = retry(engine, {
+      sessionPath: "/fixture/main.jsonl", sourceEntryId: userId,
+      ...(identity !== "legacy" ? { sessionId: "sess_retry", target: { role: "user", entryId: userId } } : {}),
+    }, { readFile, submit, invalidateDerivedState }).catch(error => error);
+    await vi.waitFor(() => expect(readFile).toHaveBeenCalledOnce());
+    if (identity === "replaced runtime") {
+      currentSession = { ...makeNavigableSession(SessionManager.inMemory("/workspace")), subscribe: vi.fn(() => vi.fn()) };
+    }
+    await submitDesktopSessionMessage(engine, { sessionPath: "/fixture/main.jsonl", text: "a newer ordinary turn" });
+    const newestBranch = currentSession.sessionManager.getBranch();
+    const originalBranch = manager.getBranch();
+    const append = vi.spyOn(manager, "appendCustomEntry");
+    const appendCurrent = vi.spyOn(currentSession.sessionManager, "appendCustomEntry");
+    engine.emitEvent.mockClear();
+    attachment.resolve(Buffer.from("synthetic image"));
+
+    expect(await pending).toMatchObject({ code: "session_branch_conflict", status: 409 });
+    expect(manager.getBranch()).toEqual(originalBranch);
+    expect(currentSession.sessionManager.getBranch()).toEqual(newestBranch);
+    expect(append).not.toHaveBeenCalled();
+    expect(appendCurrent).not.toHaveBeenCalled();
+    expect(engine.setSessionBranchHead).not.toHaveBeenCalled();
+    expect(invalidateDerivedState).not.toHaveBeenCalled();
+    expect(engine.taskRegistry.abort).not.toHaveBeenCalled();
+    expect(engine.emitEvent).not.toHaveBeenCalled();
+  });
+
   it("branches before the latest user message and replays the original prompt", async () => {
     const manager = SessionManager.inMemory("/workspace");
     const priorUserId = manager.appendMessage({ role: "user", content: [{ type: "text", text: "old" }] } as any);

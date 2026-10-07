@@ -52,6 +52,7 @@ vi.mock("../lib/debug-log.js", () => ({
 }));
 
 import { SessionCoordinator } from "../core/session-coordinator.ts";
+import { isDirectCompactionInProgress, runLossyLocalCompactionForSession } from "../core/session-compactor.ts";
 import { EnvChangeLedger } from "../core/env-change-ledger.ts";
 import { VisionBridge, VISION_CONTEXT_START } from "../core/vision-bridge.ts";
 import { createUsageLedger } from "../lib/llm/usage-ledger.ts";
@@ -121,6 +122,108 @@ describe("SessionCoordinator", () => {
 
   afterEach(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function lruFixture() {
+    const notifySessionEnd = vi.fn<(sessionPath: string) => Promise<void>>(async () => {});
+    const agent = { id: "hana", sessionDir: tempDir, buildSystemPrompt: () => "BASE", _memoryTicker: { notifySessionEnd } };
+    const store = createTestSessionManifestStore();
+    const coordinator = new SessionCoordinator({
+      agentsDir: tempDir, sessionManifestStore: store,
+      getAgent: () => agent, getAgentById: () => agent, getActiveAgentId: () => "hana",
+      getModels: () => ({ currentModel: { name: "test-model" }, authStorage: {}, modelRegistry: {}, resolveThinkingLevel: () => "medium" }),
+      getResourceLoader: () => ({ getSystemPrompt: () => "BASE" }), getSkills: () => null,
+      buildTools: () => ({ tools: [], customTools: [] }), emitEvent: vi.fn(),
+      getHomeCwd: () => tempDir, agentIdFromSessionPath: () => "hana", switchAgentOnly: async () => {},
+      getConfig: () => ({}), getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+      getAgents: () => new Map(), getActivityStore: () => null, listAgents: () => [],
+    });
+    const entries = Array.from({ length: 21 }, (_, index) => {
+      const sessionPath = path.join(tempDir, `cached-${index}.jsonl`);
+      const sessionId = store.createForPath({ sessionPath }).sessionId;
+      const entry = { sessionId, sessionPath, agentId: "hana", lastTouchedAt: index,
+        session: { sessionManager: { getSessionFile: () => sessionPath }, isStreaming: false, isCompacting: false },
+        _switching: false };
+      coordinator._sessions.set(sessionId, entry);
+      return entry;
+    });
+    createAgentSessionMock.mockResolvedValueOnce({ session: {
+      sessionManager: { getSessionFile: () => path.join(tempDir, "fresh.jsonl") },
+      subscribe: vi.fn(() => vi.fn()), setActiveToolsByName: vi.fn(),
+    } });
+    const teardown = vi.spyOn(coordinator, "_teardownSessionEntry").mockResolvedValue();
+    return { coordinator, entries, notifySessionEnd, teardown,
+      create: () => coordinator.createSession(null, tempDir, false, null, { focus: false }) };
+  }
+
+  function protectLruEntry(fixture, entry, state) {
+    if (state === "focus") fixture.coordinator._session = entry.session;
+    if (state === "streaming") entry.session.isStreaming = true;
+    if (state === "compacting") entry.session.isCompacting = true;
+    if (state === "switching") entry._switching = true;
+    if (state === "preprompt") fixture.coordinator._prePromptAbortControllers.set(entry.sessionId, new AbortController());
+    if (state === "missing path") {
+      entry.sessionPath = null;
+      entry.session.sessionManager.getSessionFile = () => null;
+    }
+  }
+
+  it.each(["focus", "streaming", "compacting", "switching", "preprompt", "missing path"])(
+    "LRU preserves a stable-ID session that is %s and summarizes only real locators", async state => {
+      const fixture = lruFixture();
+      const protectedEntry = fixture.entries[0];
+      protectLruEntry(fixture, protectedEntry, state);
+
+      await fixture.create();
+
+      expect(fixture.coordinator._sessions.get(protectedEntry.sessionId)).toBe(protectedEntry);
+      expect(fixture.teardown.mock.calls.map(([entry]) => entry)).toEqual(fixture.entries.slice(1, 3));
+      expect(fixture.notifySessionEnd.mock.calls.map(([locator]) => locator)).toEqual(
+        fixture.entries.slice(1, 3).map(entry => entry.sessionPath),
+      );
+    },
+  );
+
+  it.each(["focus", "streaming", "compacting", "switching", "preprompt"])(
+    "LRU rechecks a candidate that becomes %s while the prior teardown awaits", async state => {
+      const fixture = lruFixture();
+      const gate = Promise.withResolvers<void>();
+      fixture.teardown.mockImplementationOnce(() => gate.promise);
+      const creating = fixture.create();
+      await vi.waitFor(() => expect(fixture.teardown).toHaveBeenCalledOnce());
+      protectLruEntry(fixture, fixture.entries[1], state);
+      gate.resolve();
+      await creating;
+
+      expect(fixture.coordinator._sessions.get(fixture.entries[1].sessionId)).toBe(fixture.entries[1]);
+      expect(fixture.teardown.mock.calls.map(([entry]) => entry)).toEqual([fixture.entries[0], fixture.entries[2]]);
+    },
+  );
+
+  it("LRU preserves direct local compaction while its summary source is pending", async () => {
+    const fixture = lruFixture();
+    const sdk = await vi.importActual<typeof import("../lib/pi-sdk/index.ts")>("../lib/pi-sdk/index.ts");
+    const manager = sdk.SessionManager.inMemory(tempDir);
+    for (let index = 0; index < 8; index++) {
+      manager.appendMessage({ role: "user", content: `synthetic turn ${index} ` + "history ".repeat(200), timestamp: index });
+    }
+    const entry = fixture.entries[0];
+    Object.assign(entry.session, { sessionManager: manager, agent: {} });
+    const summary = Promise.withResolvers<null>();
+    const getSummarySource = vi.fn(() => summary.promise);
+    const compacting = runLossyLocalCompactionForSession(entry.session, {
+      settings: { enabled: true, reserveTokens: 100, keepRecentTokens: 10 }, getSummarySource,
+    }).catch(error => error);
+    await vi.waitFor(() => expect(getSummarySource).toHaveBeenCalledOnce());
+    expect(isDirectCompactionInProgress(entry.session)).toBe(true);
+    expect(entry.session.isCompacting).toBe(false);
+    await fixture.create();
+    const wasRetained = fixture.coordinator._sessions.get(entry.sessionId) === entry;
+    summary.reject(new Error("synthetic compaction stopped"));
+    await compacting;
+
+    expect(wasRetained).toBe(true);
+    expect(fixture.teardown.mock.calls.some(([disposed]) => disposed === entry)).toBe(false);
   });
 
   it("reads and writes work mode through sessionId-keyed runtime entries", () => {
