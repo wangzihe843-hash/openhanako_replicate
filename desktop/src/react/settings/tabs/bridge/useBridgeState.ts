@@ -3,6 +3,7 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSettingsStore } from '../../store';
+import { useStore } from '../../../stores';
 import { hanaFetch } from '../../api';
 import { loadSettingsConfig, updateSettingsSnapshot } from '../../actions';
 import { t } from '../../helpers';
@@ -55,21 +56,23 @@ export interface BridgeStatus {
 
 export type BridgePlatform = 'telegram' | 'feishu' | 'dingtalk' | 'whatsapp' | 'qq' | 'wechat';
 
-// WeChat reports `connected` only after its first long-poll succeeds. QR
-// confirmation starts that handshake, so keep the settings view reconciled for
-// a bounded minute without creating a permanent polling loop.
-const WECHAT_STATUS_RECONCILE_INTERVAL_MS = 2_000;
-const WECHAT_STATUS_RECONCILE_MAX_ATTEMPTS = 31;
+// Saves/QR confirmation can return before a platform finishes connecting.
+// Reconcile for a bounded minute, including in the standalone settings window
+// which does not share the main renderer's WebSocket store.
+const BRIDGE_STATUS_RECONCILE_INTERVAL_MS = 2_000;
+const BRIDGE_STATUS_RECONCILE_MAX_ATTEMPTS = 31;
 
-function shouldReconcileWechatStatus(status: BridgeStatus | null) {
+function shouldReconcileBridgeStatus(status: BridgeStatus | null) {
   if (!status) return true;
   const wechat = status.wechat;
-  return wechat?.enabled === true
+  return (wechat?.enabled === true
     && wechat.status !== 'connected'
-    && wechat.status !== 'error';
+    && wechat.status !== 'error')
+    || [status.telegram, status.feishu, status.dingtalk, status.whatsapp, status.qq]
+      .some(platform => platform.enabled === true && platform.status === 'connecting');
 }
 
-function waitForWechatStatusRetry(signal: AbortSignal) {
+function waitForBridgeStatusRetry(signal: AbortSignal) {
   return new Promise<boolean>((resolve) => {
     if (signal.aborted) {
       resolve(false);
@@ -83,7 +86,7 @@ function waitForWechatStatusRetry(signal: AbortSignal) {
     const timer = window.setTimeout(() => {
       signal.removeEventListener('abort', onAbort);
       resolve(true);
-    }, WECHAT_STATUS_RECONCILE_INTERVAL_MS);
+    }, BRIDGE_STATUS_RECONCILE_INTERVAL_MS);
     signal.addEventListener('abort', onAbort, { once: true });
   });
 }
@@ -173,7 +176,13 @@ export function useBridgeState() {
   const statusRequestIdRef = useRef(0);
   const testRequestIdRef = useRef(0);
   const liveStatusOwnersRef = useRef(new Set<string>());
-  const wechatStatusReconcileAbortRef = useRef<AbortController | null>(null);
+  const statusReconcileAbortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // Sync initial value when store becomes ready (only if null)
   useEffect(() => {
@@ -270,13 +279,14 @@ export function useBridgeState() {
     // The status endpoint answers for one named agent. Without an id there is
     // no answer to ask for, so skip the request instead of sending one that
     // would be resolved on the server's terms.
-    if (!agentId) return null;
+    if (!agentId || !mountedRef.current) return null;
     const requestId = ++statusRequestIdRef.current;
     try {
       const res = await hanaFetch(`/api/bridge/status?agentId=${encodeURIComponent(agentId)}`, signal ? { signal } : undefined);
       const data = await res.json();
       if (
-        signal?.aborted
+        !mountedRef.current
+        || signal?.aborted
         || requestId !== statusRequestIdRef.current
         || selectedAgentIdRef.current !== agentId
       ) return null;
@@ -290,7 +300,8 @@ export function useBridgeState() {
       return nextStatus;
     } catch (err) {
       if (
-        (err as Error)?.name === 'AbortError'
+        !mountedRef.current
+        || (err as Error)?.name === 'AbortError'
         || requestId !== statusRequestIdRef.current
       ) return null;
       console.error('[bridge] load status failed:', err);
@@ -302,39 +313,49 @@ export function useBridgeState() {
     await fetchStatusForAgent(selectedAgentIdRef.current, signal);
   }, [fetchStatusForAgent]);
 
-  const reconcileWechatStatus = useCallback(async (
+  const reconcileBridgeStatus = useCallback(async (
     agentId: string,
     signal: AbortSignal,
   ) => {
-    for (let attempt = 0; attempt < WECHAT_STATUS_RECONCILE_MAX_ATTEMPTS; attempt += 1) {
+    for (let attempt = 0; attempt < BRIDGE_STATUS_RECONCILE_MAX_ATTEMPTS; attempt += 1) {
       if (signal.aborted || selectedAgentIdRef.current !== agentId) return;
       const nextStatus = await fetchStatusForAgent(agentId, signal);
       if (
         signal.aborted
         || selectedAgentIdRef.current !== agentId
-        || !shouldReconcileWechatStatus(nextStatus)
-        || attempt === WECHAT_STATUS_RECONCILE_MAX_ATTEMPTS - 1
+        || !shouldReconcileBridgeStatus(nextStatus)
+        || attempt === BRIDGE_STATUS_RECONCILE_MAX_ATTEMPTS - 1
       ) return;
-      if (!await waitForWechatStatusRetry(signal)) return;
+      if (!await waitForBridgeStatusRetry(signal)) return;
     }
   }, [fetchStatusForAgent]);
 
-  // Auto-fetch when selectedAgentId changes (abort stale on switch)
+  const startStatusReconciliation = useCallback(async (agentId: string) => {
+    if (!mountedRef.current || selectedAgentIdRef.current !== agentId) return;
+    statusReconcileAbortRef.current?.abort();
+    const ac = new AbortController();
+    statusReconcileAbortRef.current = ac;
+    try {
+      await reconcileBridgeStatus(agentId, ac.signal);
+    } finally {
+      if (statusReconcileAbortRef.current === ac) statusReconcileAbortRef.current = null;
+    }
+  }, [reconcileBridgeStatus]);
+
+  // Resume reconciliation when revisiting an Agent that is still connecting.
   useEffect(() => {
     if (!selectedAgentId) return;
     if (settingsSnapshot?.agentId !== selectedAgentId) {
       applyStatus(null, selectedAgentId);
     }
-    const ac = new AbortController();
-    loadStatus(ac.signal);
-    return () => ac.abort();
-  }, [applyStatus, selectedAgentId, loadStatus, settingsSnapshot?.agentId]);
+    void startStatusReconciliation(selectedAgentId);
+  }, [applyStatus, selectedAgentId, startStatusReconciliation, settingsSnapshot?.agentId]);
 
   // Reconciliation belongs to the selected Agent. Switching Agent or unmounting
   // cancels both the wait timer and any in-flight request.
   useEffect(() => () => {
-    wechatStatusReconcileAbortRef.current?.abort();
-    wechatStatusReconcileAbortRef.current = null;
+    statusReconcileAbortRef.current?.abort();
+    statusReconcileAbortRef.current = null;
   }, [selectedAgentId]);
 
   useEffect(() => {
@@ -342,18 +363,28 @@ export function useBridgeState() {
       const agentId = selectedAgentIdRef.current;
       if (!agentId) return;
 
-      wechatStatusReconcileAbortRef.current?.abort();
-      const ac = new AbortController();
-      wechatStatusReconcileAbortRef.current = ac;
-      void reconcileWechatStatus(agentId, ac.signal).finally(() => {
-        if (wechatStatusReconcileAbortRef.current === ac) {
-          wechatStatusReconcileAbortRef.current = null;
-        }
-      });
+      void startStatusReconciliation(agentId);
     };
     window.addEventListener('hana-bridge-reload', handler);
     return () => window.removeEventListener('hana-bridge-reload', handler);
-  }, [reconcileWechatStatus]);
+  }, [startStatusReconciliation]);
+
+  // The WebSocket handler increments this store counter for real bridge_status
+  // frames. Coalesce bursts, then read the selected Agent's authoritative status;
+  // never apply another Agent's event payload to the form.
+  useEffect(() => {
+    if (!selectedAgentId) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = useStore.subscribe((next, previous) => {
+      if (next.bridgeStatusTrigger === previous.bridgeStatusTrigger) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => { void startStatusReconciliation(selectedAgentId); }, 100);
+    });
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [selectedAgentId, startStatusReconciliation]);
 
   const saveBridgeConfig = async (plat: string, credentials: Record<string, string> | null, enabled?: boolean) => {
     // Snapshot agentId at call time to avoid stale closure
@@ -371,7 +402,7 @@ export function useBridgeState() {
       markFieldSubmissionsSaved(fieldSubmissions);
       showToast(t('settings.saved'), 'success');
       // Only reload if user hasn't switched agent during the save (read latest from ref)
-      if (selectedAgentIdRef.current === agentId) await loadStatus();
+      if (agentId && selectedAgentIdRef.current === agentId) await startStatusReconciliation(agentId);
     } catch (err: unknown) {
       showToast(t('settings.saveFailed') + ': ' + (err instanceof Error ? err.message : String(err)), 'error');
     }

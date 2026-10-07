@@ -3509,6 +3509,7 @@
     "canceled": "キャンセル済み",
     "aborted": "中断済み",
     "scopeChannel": "ローカルチャンネルに保存済み。受信者の既読は未確認",
+    "scopeChannelUnverified": "ローカルチャンネルへの保存は未確認。受信者の既読も未確認",
     "scopeWeb": "単一レスポンスのテキストのみ",
     "scopeGoal": "依頼された目標",
     "source": "出典",

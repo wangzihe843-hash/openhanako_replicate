@@ -3509,6 +3509,7 @@
     "canceled": "취소됨",
     "aborted": "중단됨",
     "scopeChannel": "로컬 채널에 저장됨. 수신자의 읽음 여부는 확인되지 않음",
+    "scopeChannelUnverified": "로컬 채널에 저장되었는지 확인되지 않음. 수신자의 읽음 여부도 확인되지 않음",
     "scopeWeb": "단일 응답의 텍스트만 확인",
     "scopeGoal": "요청한 목표",
     "source": "출처",

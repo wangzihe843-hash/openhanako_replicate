@@ -7,6 +7,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useBridgeState } from '../../settings/tabs/bridge/useBridgeState';
+import { useStore } from '../../stores';
+import { handleServerMessage } from '../../services/ws-message-handler';
 
 interface MockSnapshot extends Record<string, unknown> {
   agentId: string;
@@ -91,6 +93,20 @@ function BridgeProbe() {
       <span data-testid="wechat-status">{status?.wechat?.status || 'none'}</span>
       <button type="button" onClick={() => loadStatus()}>reload status</button>
       <button type="button" onClick={() => setSelectedAgentId('mio')}>bridge probe switch to mio</button>
+    </div>
+  );
+}
+
+function BridgeLiveStatusProbe() {
+  const bridge = useBridgeState();
+  return (
+    <div>
+      <span data-testid="live-status">{bridge.status?.telegram?.status || 'none'}</span>
+      <span data-testid="live-owner">{bridge.selectedAgentId}</span>
+      <input data-testid="live-secret" value={bridge.tgToken} onChange={event => bridge.setTgToken(event.target.value)} />
+      <button type="button" onClick={() => bridge.saveBridgeConfig('telegram', null, true)}>connect</button>
+      <button type="button" onClick={() => bridge.setSelectedAgentId('mio')}>select mio</button>
+      <button type="button" onClick={() => bridge.setSelectedAgentId('hana')}>select hana</button>
     </div>
   );
 }
@@ -240,6 +256,7 @@ function BridgeOwnerProbe() {
 
 describe('useBridgeState snapshot hydration', () => {
   beforeEach(() => {
+    useStore.setState({ bridgeStatusTrigger: 0 });
     Object.keys(mockState).forEach(key => delete mockState[key]);
     Object.assign(mockState, {
       currentAgentId: 'hana',
@@ -292,6 +309,191 @@ describe('useBridgeState snapshot hydration', () => {
       '/api/bridge/status?agentId=hana',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it('refreshes a saved connecting state from real bridge_status events and coalesces bursts', async () => {
+    vi.useFakeTimers();
+    let nextStatus = 'disconnected';
+    mockHanaFetch.mockImplementation((url: string) => {
+      if (url === '/api/bridge/config?agentId=hana') {
+        nextStatus = 'connecting';
+        return Promise.resolve(new Response('{}'));
+      }
+      if (url === '/api/bridge/status?agentId=hana') {
+        return Promise.resolve(new Response(JSON.stringify(bridgeStatus({
+          telegram: { enabled: true, status: nextStatus, hasToken: true },
+        }))));
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    render(<BridgeLiveStatusProbe />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'connect' })); });
+    expect(screen.getByTestId('live-status')).toHaveTextContent('connecting');
+    fireEvent.change(screen.getByTestId('live-secret'), { target: { value: 'synthetic-unsaved-draft' } });
+    mockHanaFetch.mockClear();
+    nextStatus = 'connected';
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        handleServerMessage({ type: 'bridge_status', agentId: 'hana', platform: 'telegram', status: 'connected' });
+      }
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(screen.getByTestId('live-status')).toHaveTextContent('connected');
+    expect(screen.getByTestId('live-secret')).toHaveValue('synthetic-unsaved-draft');
+    expect(mockHanaFetch).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.runAllTimersAsync(); });
+    expect(mockHanaFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconciles after save without a main-window event source and stops at the terminal state', async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    mockHanaFetch.mockImplementation((url: string) => {
+      if (url === '/api/bridge/config?agentId=hana') return Promise.resolve(new Response('{}'));
+      if (url === '/api/bridge/status?agentId=hana') {
+        reads += 1;
+        return Promise.resolve(new Response(JSON.stringify(bridgeStatus({
+          telegram: { enabled: true, status: reads === 2 ? 'connecting' : 'connected' },
+        }))));
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    render(<BridgeLiveStatusProbe />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'connect' })); });
+    expect(screen.getByTestId('live-status')).toHaveTextContent('connecting');
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(screen.getByTestId('live-status')).toHaveTextContent('connected');
+    expect(reads).toBe(3);
+    await act(async () => { await vi.runAllTimersAsync(); });
+    expect(reads).toBe(3);
+  });
+
+  it('isolates event refreshes by Agent, request generation, and unmount', async () => {
+    vi.useFakeTimers();
+    const requests: Array<{ url: string; signal?: AbortSignal | null; resolve: (res: Response) => void }> = [];
+    mockHanaFetch.mockImplementation((url: string, opts?: RequestInit) => {
+      if (url.startsWith('/api/bridge/status?agentId=')) {
+        return new Promise<Response>(resolve => { requests.push({ url, signal: opts?.signal, resolve }); });
+      }
+      if (url === '/api/agents/mio/public-agents-md') return Promise.resolve(new Response('{"content":""}'));
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const view = render(<BridgeLiveStatusProbe />);
+    await act(async () => { requests[0].resolve(new Response(JSON.stringify(bridgeStatus()))); });
+    const eventRefresh = async (agentId = 'hana') => {
+      await act(async () => {
+        handleServerMessage({ type: 'bridge_status', agentId, platform: 'telegram', status: 'connected' });
+        await vi.advanceTimersByTimeAsync(100);
+      });
+    };
+    await eventRefresh();
+    expect(requests).toHaveLength(2);
+    await eventRefresh();
+    expect(requests).toHaveLength(3);
+    expect(requests[1].signal?.aborted).toBe(true);
+    await act(async () => { requests[2].resolve(new Response(JSON.stringify(bridgeStatus()))); });
+    await act(async () => { requests[1].resolve(new Response(JSON.stringify(bridgeStatus({ telegram: { status: 'error' } })))); });
+    expect(screen.getByTestId('live-status')).toHaveTextContent('connected');
+
+    await eventRefresh();
+    fireEvent.click(screen.getByRole('button', { name: 'select mio' }));
+    expect(requests[3].signal?.aborted).toBe(true);
+    await act(async () => {
+      requests[4].resolve(new Response(JSON.stringify(bridgeStatus({ agentId: 'mio', telegram: { status: 'disconnected' } }))));
+      requests[3].resolve(new Response(JSON.stringify(bridgeStatus())));
+    });
+    expect(screen.getByTestId('live-owner')).toHaveTextContent('mio');
+    expect(screen.getByTestId('live-status')).toHaveTextContent('disconnected');
+    await eventRefresh('hana');
+    expect(requests[5].url).toBe('/api/bridge/status?agentId=mio');
+    await act(async () => { requests[5].resolve(new Response(JSON.stringify(bridgeStatus()))); });
+    expect(screen.getByTestId('live-status')).toHaveTextContent('disconnected');
+
+    await eventRefresh('mio');
+    view.unmount();
+    expect(requests[6].signal?.aborted).toBe(true);
+    await act(async () => { requests[6].resolve(new Response(JSON.stringify(bridgeStatus()))); });
+    const requestCount = requests.length;
+    await eventRefresh();
+    expect(requests).toHaveLength(requestCount);
+  });
+
+  it('bounds reconciliation when a saved platform stays connecting', async () => {
+    vi.useFakeTimers();
+    mockHanaFetch.mockImplementation((url: string) => {
+      if (url === '/api/bridge/config?agentId=hana') return Promise.resolve(new Response('{}'));
+      if (url === '/api/bridge/status?agentId=hana') {
+        return Promise.resolve(new Response(JSON.stringify(bridgeStatus({
+          telegram: { enabled: true, status: 'connecting' },
+        }))));
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    render(<BridgeLiveStatusProbe />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'connect' })); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(screen.getByTestId('live-status')).toHaveTextContent('connecting');
+    const reads = mockHanaFetch.mock.calls.length;
+    expect(reads).toBeGreaterThan(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
+    expect(mockHanaFetch).toHaveBeenCalledTimes(reads);
+  });
+
+  it('resumes reconciliation when revisiting a connecting Agent without WebSocket events', async () => {
+    vi.useFakeTimers();
+    let hanaStatus = 'disconnected';
+    mockHanaFetch.mockImplementation((url: string) => {
+      if (url === '/api/bridge/config?agentId=hana') {
+        hanaStatus = 'connecting';
+        return Promise.resolve(new Response('{}'));
+      }
+      if (url.startsWith('/api/bridge/status?agentId=')) {
+        const agentId = url.endsWith('=hana') ? 'hana' : 'mio';
+        return Promise.resolve(new Response(JSON.stringify(bridgeStatus({
+          agentId, telegram: { enabled: true, status: agentId === 'hana' ? hanaStatus : 'disconnected' },
+        }))));
+      }
+      if (url === '/api/agents/mio/public-agents-md') return Promise.resolve(new Response('{"content":""}'));
+      throw new Error(`unexpected request: ${url}`);
+    });
+    render(<BridgeLiveStatusProbe />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'connect' })); });
+    expect(screen.getByTestId('live-status')).toHaveTextContent('connecting');
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'select mio' })); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'select hana' })); });
+    expect(screen.getByTestId('live-status')).toHaveTextContent('connecting');
+    hanaStatus = 'connected';
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(screen.getByTestId('live-status')).toHaveTextContent('connected');
+  });
+
+  it('does not start status reconciliation when a save finishes after unmount', async () => {
+    vi.useFakeTimers();
+    let resolveSave!: (response: Response) => void;
+    let statusRequests = 0;
+    mockHanaFetch.mockImplementation((url: string) => {
+      if (url === '/api/bridge/config?agentId=hana') {
+        return new Promise<Response>(resolve => { resolveSave = resolve; });
+      }
+      if (url === '/api/bridge/status?agentId=hana') {
+        statusRequests += 1;
+        return Promise.resolve(new Response(JSON.stringify(bridgeStatus({
+          telegram: { enabled: true, status: statusRequests === 1 ? 'connected' : 'connecting' },
+        }))));
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const view = render(<BridgeLiveStatusProbe />);
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(screen.getByRole('button', { name: 'connect' }));
+    view.unmount();
+    await act(async () => { resolveSave(new Response('{}')); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(statusRequests).toBe(1);
   });
 
   it('keeps reconciling WeChat after QR confirmation until the selected Agent connects', async () => {

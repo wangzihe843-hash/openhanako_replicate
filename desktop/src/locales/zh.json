@@ -3828,6 +3828,7 @@
     "canceled": "已取消",
     "aborted": "已中止",
     "scopeChannel": "消息已写入本地频道；不代表成员已读",
+    "scopeChannelUnverified": "尚未确认写入本地频道；不代表成员已读",
     "scopeWeb": "仅核验单次响应的文本",
     "scopeGoal": "用户请求的目标",
     "source": "来源",

@@ -3010,6 +3010,7 @@
     "canceled": "Canceled",
     "aborted": "Aborted",
     "scopeChannel": "Saved in the local channel; recipient reading is unverified",
+    "scopeChannelUnverified": "Local channel write is unverified; recipient reading is unverified",
     "scopeWeb": "One response text only",
     "scopeGoal": "Requested goal",
     "source": "Source",

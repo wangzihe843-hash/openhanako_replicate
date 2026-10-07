@@ -3509,6 +3509,7 @@
     "canceled": "已取消",
     "aborted": "已中止",
     "scopeChannel": "訊息已寫入本機頻道；不代表成員已讀",
+    "scopeChannelUnverified": "尚未確認寫入本機頻道；不代表成員已讀",
     "scopeWeb": "僅核驗單次回應的文字",
     "scopeGoal": "使用者要求的目標",
     "source": "來源",

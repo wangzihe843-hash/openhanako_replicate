@@ -23,6 +23,7 @@ const FALLBACK: Record<string, string> = {
   'taskOutcome.running': 'Running',
   'taskOutcome.unknown': 'Unknown',
   'taskOutcome.scopeChannel': 'Saved in the local channel; recipient reading is unverified',
+  'taskOutcome.scopeChannelUnverified': 'Local channel write is unverified; recipient reading is unverified',
   'taskOutcome.scopeWeb': 'One response text only',
   'taskOutcome.scopeGoal': 'Requested goal',
   'taskOutcome.source': 'Source',
@@ -92,7 +93,9 @@ export const TaskOutcomeCard = memo(function TaskOutcomeCard({ block }: { block:
         if (isCurrent()) setReceiptError(label('taskOutcome.receiptMissing'));
         return;
       }
-      const response = await hanaFetch(`/api/channels/${encodeURIComponent(channelId)}/effects/${effectId}/receipt`);
+      const response = await hanaFetch(`/api/channels/${encodeURIComponent(channelId)}/effects/${effectId}/receipt`, {
+        throwOnHttpError: false,
+      });
       if (!isCurrent()) return;
       if (response.status === 404 || response.status === 409) {
         setReceiptError(label('taskOutcome.receiptMissing'));
@@ -125,7 +128,10 @@ export const TaskOutcomeCard = memo(function TaskOutcomeCard({ block }: { block:
   const titleKey = outcome.kind === 'channel_post' ? 'taskOutcome.channelTitle'
     : outcome.kind === 'web_read' ? 'taskOutcome.webTitle'
     : outcome.kind === 'workflow' ? 'taskOutcome.workflowTitle' : 'taskOutcome.taskTitle';
-  const scopeKey = outcome.goalScope === 'local_channel_append' ? 'taskOutcome.scopeChannel'
+  const hasConfirmedChannelReceipt = outcome.goalResult === 'verified'
+    && outcome.evidence.some(evidence => evidence.kind === 'channel_receipt' && evidence.status === 'confirmed');
+  const scopeKey = outcome.goalScope === 'local_channel_append'
+    ? (hasConfirmedChannelReceipt ? 'taskOutcome.scopeChannel' : 'taskOutcome.scopeChannelUnverified')
     : outcome.goalScope === 'single_response_text' ? 'taskOutcome.scopeWeb' : 'taskOutcome.scopeGoal';
   const tone = outcome.goalResult === 'verified' ? 'success'
     : outcome.goalResult === 'failed' ? 'danger' : outcome.goalResult === 'partial' ? 'accent' : 'muted';

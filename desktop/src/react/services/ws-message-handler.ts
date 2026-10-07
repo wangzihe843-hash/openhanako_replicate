@@ -518,7 +518,7 @@ export function handleServerMessage(msg: any): void {
 
   const rebuildingFor = isStreamResumeRebuilding();
 
-  if (rebuildingFor && msg.type === 'status' && state.currentSessionPath === rebuildingFor) {
+  if (rebuildingFor && msg.type === 'status' && msg.sessionPath === rebuildingFor) {
     return;
   }
 
