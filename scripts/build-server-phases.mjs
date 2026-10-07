@@ -547,11 +547,14 @@ export async function pruneServerNodeModulesViaNft({
       : (platform === "win32" ? 64 : 1024);
     const deferredSdkRoots = resolveDeferredBridgeSdkEntrypoints(outDir, externalPackageNames);
     try {
+      // NFT compares resolved entries against its base; aliases must use the
+      // same real root or in-tree transitive dependencies can be pruned.
+      const traceRoot = fs.realpathSync(outDir);
       ({ fileList } = await nodeFileTrace(
-        [...nftRoots.map((root) => path.join(outDir, root)), ...deferredSdkRoots],
+        [...nftRoots.map((root) => path.join(traceRoot, root)), ...deferredSdkRoots],
         {
-          base: outDir,
-          processCwd: outDir,
+          base: traceRoot,
+          processCwd: traceRoot,
           conditions: ["node", "import"],
           fileIOConcurrency,
           // NFT's default boundary check misses absolute path.relative results

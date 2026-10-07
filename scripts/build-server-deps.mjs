@@ -22,9 +22,11 @@ export const PI_RUNTIME_PACKAGES = Object.freeze([
 // Trace these CJS entrypoints directly so hoisted transitive dependencies survive.
 export function resolveDeferredBridgeSdkEntrypoints(rootDir, packageNames) {
   const require = createRequire(path.resolve(rootDir, "package.json"));
-  const nodeModules = path.resolve(rootDir, "node_modules");
   return DEFERRED_BRIDGE_SDK_PACKAGES.filter((name) => packageNames.includes(name)).map((name) => {
-    const entry = require.resolve(name);
+    const entry = fs.realpathSync(require.resolve(name));
+    // Resolve aliases such as macOS /var, keeping node_modules beneath the
+    // real runtime root so package or node_modules links cannot escape it.
+    const nodeModules = path.join(fs.realpathSync(rootDir), "node_modules");
     const relative = path.relative(nodeModules, entry);
     if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) {
       throw new Error(`Deferred bridge SDK ${name} resolved outside its runtime tree: ${entry}`);

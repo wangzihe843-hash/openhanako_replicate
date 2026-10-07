@@ -32,8 +32,14 @@ afterEach(() => {
 });
 
 describe("deferred bridge SDK distribution", () => {
-  it.each(DEFERRED_BRIDGE_SDK_PACKAGES)("keeps %s transitives when bundled createRequire is renamed", async (sdk) => {
-    const { outDir } = makeFixture();
+  it.each(DEFERRED_BRIDGE_SDK_PACKAGES.flatMap((sdk) =>
+    ["original", "aliased"].map((runtimePath) => ({ sdk, runtimePath })),
+  ))("keeps $sdk transitives when bundled createRequire is renamed ($runtimePath runtime root)", async ({ sdk, runtimePath }) => {
+    const fixture = makeFixture();
+    const outDir = runtimePath === "aliased" ? path.join(fixture.root, "runtime-alias") : fixture.outDir;
+    if (runtimePath === "aliased") {
+      fs.symlinkSync(fixture.outDir, outDir, process.platform === "win32" ? "junction" : "dir");
+    }
     writePackage(outDir, sdk, 'module.exports = require("bridge-transitive-fixture");');
     writePackage(outDir, "bridge-transitive-fixture", 'module.exports = "bridge-sdk-ok";');
     writePackage(outDir, "unrelated-fixture", 'module.exports = "unused";');
@@ -57,17 +63,54 @@ describe("deferred bridge SDK distribution", () => {
       log: () => {},
     });
 
-    expect(fs.existsSync(path.join(outDir, "node_modules/bridge-transitive-fixture/index.cjs"))).toBe(true);
+    expect(fs.realpathSync(path.join(outDir, "node_modules/bridge-transitive-fixture/index.cjs")))
+      .toBe(path.join(fs.realpathSync(fixture.outDir), "node_modules/bridge-transitive-fixture/index.cjs"));
     expect(fs.existsSync(path.join(outDir, "node_modules/unrelated-fixture/index.cjs"))).toBe(false);
     expect(() => execFileSync(process.execPath, ["check.mjs"], { cwd: outDir, windowsHide: true, stdio: "pipe" }))
       .not.toThrow();
   });
 
-  it("rejects a SDK resolved from an ancestor installation", () => {
+  it.each([false, true])("rejects a SDK resolved from an ancestor installation (local node_modules: %s)", (hasNodeModules) => {
+    const { root, outDir } = makeFixture();
+    const sdk = DEFERRED_BRIDGE_SDK_PACKAGES[0];
+    if (hasNodeModules) fs.mkdirSync(path.join(outDir, "node_modules"));
+    writePackage(root, sdk, "module.exports = {};");
+    expect(() => resolveDeferredBridgeSdkEntrypoints(fs.realpathSync(outDir), [sdk]))
+      .toThrow(/outside its runtime tree/);
+  });
+
+  it.each(DEFERRED_BRIDGE_SDK_PACKAGES)("rejects %s linked outside the runtime tree before pruning", async (sdk) => {
+    const { root, outDir } = makeFixture();
+    writePackage(root, sdk, "module.exports = {};");
+    const linkedPackage = path.join(outDir, "node_modules", sdk);
+    fs.mkdirSync(path.dirname(linkedPackage), { recursive: true });
+    fs.symlinkSync(path.join(root, "node_modules", sdk), linkedPackage, process.platform === "win32" ? "junction" : "dir");
+
+    expect(() => resolveDeferredBridgeSdkEntrypoints(fs.realpathSync(outDir), [sdk]))
+      .toThrow(/outside its runtime tree/);
+    const alias = path.join(root, "runtime-alias");
+    fs.symlinkSync(outDir, alias, process.platform === "win32" ? "junction" : "dir");
+    fs.writeFileSync(path.join(outDir, "bundle.mjs"), "export {};\n");
+    await expect(pruneServerNodeModulesViaNft({
+      outDir: alias,
+      env: { HANA_BUILD_SERVER_NFT_TRACE: "1" },
+      nftRoots: ["bundle.mjs"],
+      externalPackageNames: [sdk],
+      runWithTargetNode: () => {},
+      log: () => {},
+    })).rejects.toThrow(/outside its runtime tree/);
+    expect(fs.readFileSync(path.join(root, "node_modules", sdk, "index.cjs"), "utf8"))
+      .toBe("module.exports = {};");
+  });
+
+  it("rejects node_modules linked outside the runtime tree", () => {
     const { root, outDir } = makeFixture();
     const sdk = DEFERRED_BRIDGE_SDK_PACKAGES[0];
     writePackage(root, sdk, "module.exports = {};");
-    expect(() => resolveDeferredBridgeSdkEntrypoints(outDir, [sdk])).toThrow(/outside its runtime tree/);
+    fs.symlinkSync(path.join(root, "node_modules"), path.join(outDir, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+
+    expect(() => resolveDeferredBridgeSdkEntrypoints(fs.realpathSync(outDir), [sdk]))
+      .toThrow(/outside its runtime tree/);
   });
 
   it("fails a forced trace when a declared SDK entrypoint is missing", async () => {
@@ -80,6 +123,6 @@ describe("deferred bridge SDK distribution", () => {
       externalPackageNames: [DEFERRED_BRIDGE_SDK_PACKAGES[0]],
       runWithTargetNode: () => {},
       log: () => {},
-    })).rejects.toThrow(/Cannot find module/);
+    })).rejects.toMatchObject({ code: "MODULE_NOT_FOUND", message: expect.stringContaining("Cannot find module") });
   });
 });

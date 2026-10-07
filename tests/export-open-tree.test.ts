@@ -416,7 +416,7 @@ describe("rehearse-open-export: runRehearsalStep exit-code propagation", () => {
     const env = { ...process.env, npm_execpath: cli, CAPTURE: capture, TEST_TOKEN: "kept" };
     const args = ["ci", "--ignore-scripts=false", "space & literal $(value)"];
     runRehearsalStep({ step: "npm ci", cmd: "npm", args, cwd: dir, env, log: () => {} });
-    expect(JSON.parse(fs.readFileSync(capture, "utf8"))).toEqual({ args, token: "kept", cwd: dir });
+    expect(JSON.parse(fs.readFileSync(capture, "utf8"))).toEqual({ args, token: "kept", cwd: fs.realpathSync(dir) });
     expect(() => runRehearsalStep({ step: "npm failure", cmd: "npm", args: [], cwd: dir, env: { ...env, TEST_EXIT: "7" }, log: () => {} })).toThrow(/non-zero code 7/);
   });
   it("resolves without throwing when the command exits 0", () => {
