@@ -264,6 +264,7 @@ export function AccessTab() {
       const connection = await connectDeviceServerConnection({
         baseUrl: remoteServerUrl,
         credential: remoteServerKey,
+        probeIdentity: window.hana?.probeServerConnection,
       });
       persistServerConnectionSelection(connection);
       const current = useSettingsStore.getState();
@@ -275,6 +276,7 @@ export function AccessTab() {
       setRemoteServerKey('');
       showToast(t('settings.access.remoteServerConnected'), 'success');
       window.hana?.reloadMainWindow?.();
+      if (window.location.pathname.endsWith('/settings.html')) window.location.reload();
     } catch (err: any) {
       showToast(`${t('settings.access.remoteServerFailed')}: ${err.message}`, 'error');
     } finally {

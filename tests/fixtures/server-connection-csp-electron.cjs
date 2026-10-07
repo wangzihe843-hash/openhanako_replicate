@@ -1,0 +1,134 @@
+// Synthetic loopback servers only. No application main process or user profile is loaded.
+const { app, BrowserWindow, ipcMain, session } = require('electron');
+const http = require('node:http');
+const https = require('node:https');
+const fs = require('node:fs');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const { X509Certificate, createHash } = require('node:crypto');
+const { createServerConnectionProbe } = require('../../desktop/server-connection-probe.cjs');
+const output = process.argv[2];
+const root = path.resolve(__dirname, '../..');
+app.setPath('userData', path.join(output, 'user-data'));
+app.setPath('sessionData', path.join(output, 'session-data'));
+app.disableHardwareAcceleration();
+const windows = [];
+const servers = [];
+const sockets = new Set();
+const targets = [];
+const report = { electron: process.versions.electron, cases: [] };
+const fixture = path.join(output, 'settings.html');
+const csp = pathToFileURL(path.join(root, 'desktop/src/modules/connection-csp.js')).href;
+fs.writeFileSync(fixture, `<!doctype html><html><head><script src="${csp}"></script><script src="connection.js"></script></head><body>Connection fixture</body></html>`);
+fs.writeFileSync(path.join(output, 'untrusted.html'), '<!doctype html><title>Untrusted fixture</title>');
+const preload = path.join(output, 'preload.cjs');
+fs.writeFileSync(preload, `const {contextBridge, ipcRenderer} = require('electron'); contextBridge.exposeInMainWorld('fixtureProbe', input => ipcRenderer.invoke('probe-server-connection', input));`);
+ipcMain.handle('probe-server-connection', createServerConnectionProbe(() => targets));
+const cert = fs.readFileSync(path.join(__dirname, 'server-connection-cert.pem'));
+const key = fs.readFileSync(path.join(__dirname, 'server-connection-key.pem'));
+const fingerprint = new X509Certificate(cert).fingerprint256;
+function assert(condition, message) { if (!condition) throw new Error(message); }
+function finish(code) {
+  fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify(report, null, 2));
+  for (const window of windows) if (!window.isDestroyed()) window.destroy();
+  for (const socket of sockets) socket.destroy();
+  for (const server of servers) server.close();
+  app.exit(code);
+}
+const watchdog = setTimeout(() => { report.error = 'CSP fixture timed out'; finish(1); }, 25_000);
+const blockedFetch = (window, url) => window.webContents.executeJavaScript(`(async () => {
+  const violations = [];
+  const listener = event => violations.push(event.effectiveDirective);
+  document.addEventListener('securitypolicyviolation', listener);
+  let blocked = false;
+  try { await fetch(${JSON.stringify(url)}); } catch { blocked = true; }
+  await new Promise(resolve => setTimeout(resolve, 20));
+  document.removeEventListener('securitypolicyviolation', listener);
+  return { blocked, violations };
+})()`);
+app.whenReady().then(async () => {
+  for (const scheme of ['http', 'https']) {
+    const requests = [];
+    const unapprovedRequests = [];
+    let failedResponseClosed = false;
+    const trap = http.createServer((req, res) => {
+      unapprovedRequests.push(req.url);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end('{"ok":true}');
+    });
+    trap.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
+    servers.push(trap);
+    await new Promise(resolve => trap.listen(0, '127.0.0.3', resolve));
+    const unapprovedOrigin = `http://127.0.0.3:${trap.address().port}`;
+    const handler = (req, res) => {
+      requests.push({ method: req.method, path: req.url, cookie: req.headers.cookie || null });
+      const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': 'null', 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': 'authorization, content-type' };
+      if (req.url.startsWith('/redirect/')) { res.writeHead(307, { ...headers, Location: `${unapprovedOrigin}/redirect-target` }); res.end(); return; }
+      if (req.url.startsWith('/streaming-denied/')) {
+        res.once('close', () => { failedResponseClosed = true; });
+        res.writeHead(401, headers);
+        res.write('{"error":"synthetic denial"}');
+        return;
+      }
+      if (req.url.startsWith('/denied/')) { res.writeHead(401, headers); res.end('{}'); return; }
+      if (req.url.endsWith('/login')) headers['Set-Cookie'] = 'fixture_session=synthetic; Path=/; HttpOnly; SameSite=Strict';
+      res.writeHead(200, headers);
+      res.end(JSON.stringify(req.url.endsWith('/identity') ? {
+        connectionKind: 'lan', serverId: 'fixture', studioId: 'fixture', label: 'Synthetic fixture', capabilities: ['chat'],
+      } : { ok: true }));
+    };
+    const server = scheme === 'https' ? https.createServer({ cert, key }, handler) : http.createServer(handler);
+    server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
+    server.on('upgrade', (req, socket) => {
+      requests.push({ method: 'WS', path: req.url, cookie: req.headers.cookie || null });
+      const accept = createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+      socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+    });
+    servers.push(server);
+    await new Promise(resolve => server.listen(0, '127.0.0.2', resolve));
+    const origin = `${scheme}://127.0.0.2:${server.address().port}`;
+    const isolated = session.fromPartition(`connection-${scheme}-${Date.now()}`);
+    // Trust only this synthetic certificate inside this disposable session.
+    isolated.setCertificateVerifyProc(({ hostname, certificate }, callback) => callback(
+      hostname === '127.0.0.2' && new X509Certificate(certificate.data).fingerprint256 === fingerprint ? 0 : -3,
+    ));
+    const window = new BrowserWindow({ show: false, webPreferences: { preload, session: isolated, contextIsolation: true, nodeIntegration: false, sandbox: true } });
+    windows.push(window);
+    targets.push({ webContents: window.webContents, url: pathToFileURL(fixture).href });
+    await window.loadFile(fixture);
+    const before = await blockedFetch(window, `${origin}/api/web-auth/login`);
+    assert(before.blocked && before.violations.includes('connect-src') && requests.length === 0, 'First renderer connection must be blocked by real CSP');
+    const connection = await window.webContents.executeJavaScript(`(async () => {
+      const result = await connectionApi.connectDeviceServerConnection({ baseUrl: ${JSON.stringify(origin + '/prefix/')}, credential: 'synthetic-key', probeIdentity: window.fixtureProbe });
+      connectionApi.persistServerConnectionSelection(result);
+      return result;
+    })()`);
+    assert(connection.serverId === 'fixture', 'Controlled connection must succeed');
+    assert(requests.some(item => item.path === '/prefix/api/server/identity'), 'Identity request must preserve reverse proxy prefix');
+    const cookies = await isolated.cookies.get({ url: origin });
+    assert(cookies.some(cookie => cookie.name === 'fixture_session' && cookie.value === 'synthetic'), 'Probe must retain login cookies in the initiating session');
+    const stillBlocked = await blockedFetch(window, `${origin}/api/server/identity`);
+    assert(stillBlocked.blocked && stillBlocked.violations.includes('connect-src'), 'Probe must not relax the live renderer CSP');
+    await window.loadFile(fixture);
+    const allowed = await window.webContents.executeJavaScript(`fetch(${JSON.stringify(origin + '/api/server/identity')}).then(response => response.status)`);
+    assert(allowed === 200, 'Saved origin must work after reloading the unchanged policy');
+    const wsUrl = `${scheme === 'https' ? 'wss' : 'ws'}://127.0.0.2:${server.address().port}`;
+    await window.webContents.executeJavaScript(`new Promise((resolve, reject) => { const ws = new WebSocket(${JSON.stringify(wsUrl)}); ws.onopen = () => { ws.close(); resolve(true); }; ws.onerror = () => reject(new Error('WebSocket blocked')); })`);
+    const unrelated = await blockedFetch(window, `${unapprovedOrigin}/unapproved`);
+    assert(unrelated.blocked && unrelated.violations.includes('connect-src'), 'Unapproved origins must remain blocked');
+    for (const prefix of ['redirect', 'denied', 'streaming-denied']) {
+      const error = await window.webContents.executeJavaScript(`window.fixtureProbe({baseUrl: ${JSON.stringify(origin) } + '/${prefix}', credential: 'synthetic-key'}).then(() => null, error => String(error))`);
+      assert(error, `${prefix} must fail rather than continuing the handshake`);
+    }
+    for (let wait = 0; !failedResponseClosed && wait < 100; wait++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert(failedResponseClosed, 'Failed probes must terminate unfinished response streams');
+    assert(unapprovedRequests.length === 0, 'Neither renderer requests nor redirects may reach the unapproved origin');
+    await window.loadFile(path.join(output, 'untrusted.html'));
+    const beforeUntrusted = requests.length;
+    const untrustedError = await window.webContents.executeJavaScript(`window.fixtureProbe({baseUrl: ${JSON.stringify(origin)}, credential: 'synthetic-key'}).then(() => null, error => String(error))`);
+    assert(untrustedError && requests.length === beforeUntrusted, 'A navigated application window must lose probe authority');
+    report.cases.push({ scheme, before, connectionId: connection.connectionId, retainedCookie: true, stillBlocked, allowed, websocketConnected: true, unrelated, rejectedUntrustedDocument: true, failedResponseClosed, unapprovedRequests, requests });
+  }
+  clearTimeout(watchdog);
+  finish(0);
+}).catch(error => { report.error = String(error.stack || error); clearTimeout(watchdog); finish(1); });

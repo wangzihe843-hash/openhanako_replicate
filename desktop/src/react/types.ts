@@ -541,6 +541,7 @@ export interface BrowserViewerOpenTarget {
 export interface PlatformApi {
   getServerPort(): Promise<string>;
   getServerToken(): Promise<string>;
+  probeServerConnection?(input: { baseUrl: string; credential: string }): Promise<import('./services/server-connection').ServerIdentity>;
   runEditCommand?(command: 'cut' | 'copy' | 'paste' | 'selectAll'): Promise<boolean>;
   openSettings(tab?: string): void;
   openBrowserViewer(target?: string | BrowserViewerOpenTarget): void;

@@ -417,6 +417,28 @@ describe('server connection helpers', () => {
     expect(connection.connectionId).toBe('lan:node_lan:studio_lan');
   });
 
+  it('can use a controlled identity probe without granting renderer fetch access', async () => {
+    const fetchImpl = vi.fn();
+    const probeIdentity = vi.fn(async () => ({
+      connectionKind: 'lan' as const, serverId: 'fixture-server', studioId: 'fixture-studio', label: 'Fixture',
+    }));
+    const connection = await connectDeviceServerConnection({
+      baseUrl: '192.168.1.7:14500/desktop/?ignored=1#fragment', credential: 'synthetic-key', fetchImpl, probeIdentity,
+    });
+    expect(probeIdentity).toHaveBeenCalledWith({ baseUrl: 'http://192.168.1.7:14500', credential: 'synthetic-key' });
+    expect(connection.baseUrl).toBe('http://192.168.1.7:14500');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('does not bypass connection trust validation after a successful probe', async () => {
+    const probeIdentity = vi.fn(async () => ({
+      connectionKind: 'cloud' as const, serverId: 'fixture-server', studioId: 'fixture-studio', label: 'Fixture',
+    }));
+    await expect(connectDeviceServerConnection({
+      baseUrl: 'http://public.fixture.invalid', credential: 'synthetic-key', probeIdentity,
+    })).rejects.toThrow();
+  });
+
   it('persists only non-local ServerConnections and the active remote selection', () => {
     const storageData = new Map<string, string>();
     const storage = {

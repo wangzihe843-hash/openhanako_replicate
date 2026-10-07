@@ -29,6 +29,7 @@ const { createWorkspaceWatchRegistry } = require("./workspace-watch-registry.cjs
 const { readTextFileSnapshot, writeTextFileIfUnchanged } = require("./file-text-io.cjs");
 const chokidar = require("chokidar");
 const { wrapIpcHandler, wrapIpcBestEffortHandler, wrapIpcOn } = require('./ipc-wrapper.cjs');
+const { createServerConnectionProbe } = require('./server-connection-probe.cjs');
 const themeRegistry = require('./src/shared/theme-registry.cjs');
 const {
   completeOnboardingAndOpenMain,
@@ -5302,6 +5303,18 @@ wrapIpcHandler("pet-sync-context", (event, value) => isPetMainSender(event) ? sy
 wrapIpcHandler("pet-open-main", (event) => { if (isPetWindowSender(event)) openPetSessionInMain(); });
 
 wrapIpcBestEffortHandler("open-settings", (_event, tab, theme) => createSettingsWindow(tab, theme));
+
+wrapIpcHandler("probe-server-connection", createServerConnectionProbe(() => (
+  [[mainWindow, "index"], [settingsWindow, "settings"]]
+    .filter(([win]) => win && !win.isDestroyed())
+    .map(([win, pageName]) => {
+      const built = path.join(_distRenderer, `${pageName}.html`);
+      const url = _isDev && process.env.VITE_DEV_URL
+        ? `${process.env.VITE_DEV_URL}/${pageName}.html`
+        : pathToFileURL(fs.existsSync(built) ? built : path.join(__dirname, "src", `${pageName}.html`)).href;
+      return { webContents: win.webContents, url };
+    })
+)));
 
 // 浏览器查看器窗口
 wrapIpcBestEffortHandler("open-browser-viewer", async (_event, theme, payload) => {

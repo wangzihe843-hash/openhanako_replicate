@@ -33,6 +33,7 @@ function normalizeBrowserViewerOpenTarget(target) {
 contextBridge.exposeInMainWorld("hana", {
   getServerPort: () => ipcRenderer.invoke("get-server-port"),
   getServerToken: () => ipcRenderer.invoke("get-server-token"),
+  probeServerConnection: (input) => ipcRenderer.invoke("probe-server-connection", input),
   runEditCommand: (command) => ipcRenderer.invoke("run-edit-command", command),
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   getPendingAnnouncement: () => ipcRenderer.invoke("get-pending-announcement"),

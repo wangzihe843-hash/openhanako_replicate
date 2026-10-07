@@ -3,6 +3,7 @@ import path from "path";
 import { Hono } from "hono";
 import { safeJson } from "../hono-helpers.ts";
 import { callText } from "../../core/llm-client.ts";
+import { normalizePhoneAiTimeout, normalizePhoneAiTotalTimeout } from "../../shared/xingye-phone-budget.ts";
 import { isLocalBaseUrl } from "../../shared/net-utils.ts";
 import { createRequestContext } from '../http/boundary.ts';
 import {
@@ -772,27 +773,34 @@ export function createXingyeRoute(engine) {
     }
   });
 
-  async function callWithModelFallback({ prompt, agentId, timeoutMs = 60_000, signal, singleProvider = false }) {
+  async function callWithModelFallback({ prompt, agentId, timeoutMs = 60_000, signal, singleProvider = false, deadline, allowAttemptTimeoutFallback = false }) {
     const details = [];
     const messages = [{ role: "user", content: prompt }];
     const checkCancelled = (error) => {
       signal?.throwIfAborted();
+      if (deadline !== undefined && Date.now() >= deadline) throw new DOMException("Phone generation timed out", "TimeoutError");
       // Rehearsal cancellation and timeouts end the whole request, including fallback.
-      if (signal && (error?.name === "AbortError" || error?.name === "TimeoutError" || /timed?\s*out|timeout/i.test(error?.message || ""))) throw error;
+      if (signal && (error?.name === "AbortError" || (!allowAttemptTimeoutFallback && (error?.name === "TimeoutError" || error?.code === "LLM_TIMEOUT" || /timed?\s*out|timeout/i.test(error?.message || ""))))) throw error;
     };
     checkCancelled();
 
-    const tryCall = (opts) => callText({
-      api: opts.api,
-      model: opts.model,
-      apiKey: opts.apiKey,
-      baseUrl: opts.baseUrl,
-      messages,
-      temperature: 0.35,
-      maxTokens: 6_000,
-      timeoutMs,
-      ...(signal ? { signal } : {}),
-    });
+    const tryCall = async (opts) => {
+      checkCancelled();
+      const remainingMs = deadline === undefined ? timeoutMs : deadline - Date.now();
+      const text = await callText({
+        api: opts.api,
+        model: opts.model,
+        apiKey: opts.apiKey,
+        baseUrl: opts.baseUrl,
+        messages,
+        temperature: 0.35,
+        maxTokens: 6_000,
+        timeoutMs: Math.min(timeoutMs, remainingMs),
+        ...(signal ? { signal } : {}),
+      });
+      checkCancelled();
+      return text;
+    };
 
     let utilOpts = null;
     try { utilOpts = resolveUtilityCallOpts(engine, agentId); }
@@ -1257,12 +1265,22 @@ export function createXingyeRoute(engine) {
       const ownerAgentId = cleanString(body?.ownerAgentId, 120);
       const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
       const agentId = cleanString(body?.agentId, 120);
-      const timeoutMs = Math.min(Math.max(Number(body?.timeoutMs) || 60_000, 30_000), 120_000);
+      const timeoutMs = normalizePhoneAiTimeout(body?.timeoutMs);
+      const totalTimeoutMs = normalizePhoneAiTotalTimeout(timeoutMs, body?.totalTimeoutMs);
       if (!prompt) return c.json({ error: "prompt is required" }, 400);
 
-      const result = await callWithModelFallback({ prompt, agentId: agentId || ownerAgentId, timeoutMs });
-      const parsed = parseModelJson(result.text);
-      return c.json({ ok: true, kind, modelTier: result.tier, result: parsed });
+      const controller = new AbortController();
+      const signal = AbortSignal.any([c.req.raw.signal, controller.signal]);
+      const deadline = Date.now() + totalTimeoutMs;
+      const timer = setTimeout(() => controller.abort(new DOMException("Phone generation timed out", "TimeoutError")), totalTimeoutMs);
+      try {
+        const result = await callWithModelFallback({ prompt, agentId: agentId || ownerAgentId, timeoutMs, signal, deadline, allowAttemptTimeoutFallback: true });
+        signal.throwIfAborted();
+        const parsed = parseModelJson(result.text);
+        return c.json({ ok: true, kind, modelTier: result.tier, result: parsed });
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (err) {
       const message = errorDetail(err);
       if (message.startsWith("[")) {
@@ -1270,7 +1288,7 @@ export function createXingyeRoute(engine) {
           return c.json({ ok: false, error: "model call failed", details: JSON.parse(message) }, 502);
         } catch {}
       }
-      return c.json({ ok: false, error: message }, 502);
+      return c.json({ ok: false, error: message }, err?.name === "AbortError" || err?.name === "TimeoutError" ? 408 : 502);
     }
   });
 

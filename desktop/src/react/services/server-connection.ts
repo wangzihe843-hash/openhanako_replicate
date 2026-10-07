@@ -310,14 +310,21 @@ export async function connectDeviceServerConnection({
   baseUrl,
   credential,
   fetchImpl = fetch,
+  probeIdentity,
 }: {
   baseUrl: string;
   credential: string;
   fetchImpl?: typeof fetch;
+  probeIdentity?: (input: { baseUrl: string; credential: string }) => Promise<ServerIdentity>;
 }): Promise<ServerConnection> {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
   const token = normalizeToken(credential);
   if (!token) throw new Error('server access key required');
+
+  if (probeIdentity) {
+    const identity = await probeIdentity({ baseUrl: normalizedBaseUrl, credential: token });
+    return createDeviceServerConnection({ baseUrl: normalizedBaseUrl, credential: token, identity });
+  }
 
   await requestJson(fetchImpl, `${normalizedBaseUrl}/api/web-auth/login`, {
     method: 'POST',

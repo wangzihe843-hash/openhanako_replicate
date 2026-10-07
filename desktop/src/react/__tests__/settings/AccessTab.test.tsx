@@ -428,6 +428,34 @@ describe('AccessTab', () => {
     });
   });
 
+  it('uses the desktop probe for a new origin and saves only a validated connection', async () => {
+    const probeServerConnection = vi.fn(async () => ({
+      connectionKind: 'lan' as const, serverId: 'fixture-server', studioId: 'fixture-studio', label: 'Fixture',
+    }));
+    window.hana.probeServerConnection = probeServerConnection;
+    const { AccessTab } = await import('../../settings/tabs/AccessTab');
+    render(<AccessTab />);
+    fireEvent.change(await screen.findByLabelText('settings.access.remoteServerUrl'), { target: { value: 'https://fixture.invalid' } });
+    fireEvent.change(screen.getByLabelText('settings.access.remoteServerKey'), { target: { value: 'synthetic-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'settings.access.connectLanServer' }));
+    await waitFor(() => expect(window.hana.reloadMainWindow).toHaveBeenCalledTimes(1));
+    expect(probeServerConnection).toHaveBeenCalledWith({ baseUrl: 'https://fixture.invalid', credential: 'synthetic-key' });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mockState.activeServerConnection.serverId).toBe('fixture-server');
+  });
+
+  it('retains the current connection after a failed desktop probe', async () => {
+    window.hana.probeServerConnection = vi.fn(async () => { throw new Error('synthetic rejection'); });
+    const { AccessTab } = await import('../../settings/tabs/AccessTab');
+    render(<AccessTab />);
+    fireEvent.change(await screen.findByLabelText('settings.access.remoteServerUrl'), { target: { value: 'https://fixture.invalid' } });
+    fireEvent.change(screen.getByLabelText('settings.access.remoteServerKey'), { target: { value: 'synthetic-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'settings.access.connectLanServer' }));
+    await waitFor(() => expect(mockState.showToast).toHaveBeenCalledWith(expect.stringContaining('synthetic rejection'), 'error'));
+    expect(mockState.activeServerConnectionId).toBe('local');
+    expect(window.hana.reloadMainWindow).not.toHaveBeenCalled();
+  });
+
   it('renders remote connections as local-only management and can return to the local server', async () => {
     Object.assign(mockState, {
       serverConnections: {

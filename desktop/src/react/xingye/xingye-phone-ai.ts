@@ -1,4 +1,9 @@
 import { hanaFetch } from '../hooks/use-hana-fetch';
+import {
+  normalizePhoneAiTimeout,
+  PHONE_AI_MAX_ATTEMPTS,
+  PHONE_AI_TRANSPORT_MARGIN_MS,
+} from '../../../../shared/xingye-phone-budget';
 import { captureXingyePersistenceBinding } from './xingye-persistence';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile, XingyeRoleProfileMap } from './xingye-profile-store';
@@ -183,53 +188,71 @@ export async function requestPhoneAi(input: {
   existingThreads?: unknown[];
   prompt: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
   /** 后端目前只使用 prompt；结构化字段挂在请求体里便于以后服务端单独消费。 */
   recentContext?: XingyeRecentContext | null;
 }): Promise<{ raw: unknown }> {
-  const timeoutMs = input.timeoutMs ?? 90_000;
-  const response = await hanaFetch('/api/xingye/phone-generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    timeout: timeoutMs,
-    body: JSON.stringify({
-      kind: input.kind,
-      ownerAgentId: input.ownerAgentId,
-      ownerProfile: input.ownerProfile ?? null,
-      contacts: input.contacts.map(contact => ({
-        targetType: contact.targetType,
-        targetId: contact.targetId,
-        displayName: contact.displayName,
-        remark: contact.remark,
-        impression: contact.impression,
-        relationshipHint: contact.relationshipHint,
-        tags: contact.tags,
-        faction: contact.faction,
-        status: contact.status,
-        kind: contact.kind,
-        generatedReason: contact.generatedReason,
-      })),
-      existingThreads: input.existingThreads ?? [],
-      recentContext: input.recentContext
-        ? {
-          messages: input.recentContext.messages,
-          summaryText: input.recentContext.summaryText,
-          sourceNotes: input.recentContext.sourceNotes,
-        }
-        : null,
-      prompt: input.prompt,
-      timeoutMs,
-    }),
-  });
-  let data: any;
+  const timeoutMs = normalizePhoneAiTimeout(input.timeoutMs ?? 90_000);
+  const totalTimeoutMs = timeoutMs * PHONE_AI_MAX_ATTEMPTS;
+  const transportTimeoutMs = totalTimeoutMs + PHONE_AI_TRANSPORT_MARGIN_MS;
+  const controller = new AbortController();
+  const cancel = () => controller.abort(input.signal?.reason);
+  if (input.signal?.aborted) cancel();
+  else input.signal?.addEventListener('abort', cancel, { once: true });
+  const timer = setTimeout(() => controller.abort(new DOMException('Phone generation timed out', 'TimeoutError')), transportTimeoutMs);
   try {
-    data = await response.json();
-  } catch {
-    throw new Error('解析失败');
+    controller.signal.throwIfAborted();
+    const response = await hanaFetch('/api/xingye/phone-generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      timeout: transportTimeoutMs,
+      signal: controller.signal,
+      body: JSON.stringify({
+        kind: input.kind,
+        ownerAgentId: input.ownerAgentId,
+        ownerProfile: input.ownerProfile ?? null,
+        contacts: input.contacts.map(contact => ({
+          targetType: contact.targetType,
+          targetId: contact.targetId,
+          displayName: contact.displayName,
+          remark: contact.remark,
+          impression: contact.impression,
+          relationshipHint: contact.relationshipHint,
+          tags: contact.tags,
+          faction: contact.faction,
+          status: contact.status,
+          kind: contact.kind,
+          generatedReason: contact.generatedReason,
+        })),
+        existingThreads: input.existingThreads ?? [],
+        recentContext: input.recentContext
+          ? {
+            messages: input.recentContext.messages,
+            summaryText: input.recentContext.summaryText,
+            sourceNotes: input.recentContext.sourceNotes,
+          }
+          : null,
+        prompt: input.prompt,
+        timeoutMs,
+        totalTimeoutMs,
+      }),
+    });
+    let data: any;
+    try {
+      data = await response.json();
+    } catch {
+      controller.signal.throwIfAborted();
+      throw new Error('解析失败');
+    }
+    if (!response.ok || data?.ok === false || data?.error) {
+      throw new Error(`模型调用失败：${data?.error || response.statusText || 'unknown error'}`);
+    }
+    controller.signal.throwIfAborted();
+    return { raw: data.result };
+  } finally {
+    clearTimeout(timer);
+    input.signal?.removeEventListener('abort', cancel);
   }
-  if (!response.ok || data?.ok === false || data?.error) {
-    throw new Error(`模型调用失败：${data?.error || response.statusText || 'unknown error'}`);
-  }
-  return { raw: data.result };
 }
 
 function mergeContactSuggestion(ownerAgentId: string, contact: XingyePhoneContactView, suggestion: XingyePhoneAiPayload['contacts'][number]) {
