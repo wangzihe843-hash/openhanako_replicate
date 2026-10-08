@@ -6123,54 +6123,61 @@ export class SessionCoordinator implements SessionCancellation {
     if (!entry) return false;
     if (!this._canHibernateSessionRuntime(entry, sessionPath)) return false;
 
-    const isFocus = this._session === entry.session || this.currentSessionPath === sessionPath;
-    if (isFocus) this._currentSessionPath = sessionPath;
-    this._setRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath, {
-      sessionId: entry.sessionId || this._sessionRuntimeKeyForPath(sessionPath, { warn: false }),
-      sessionPath,
-      agentId: entry.agentId,
-      memoryEnabled: entry.memoryEnabled,
-      experienceEnabled: entry.experienceEnabled,
-      modelId: entry.modelId,
-      modelProvider: entry.modelProvider,
-      modelAvailability: entry.modelAvailability ? { ...entry.modelAvailability } : null,
-      cwd: entry.cwd || entry.session?.sessionManager?.getCwd?.() || null,
-      workspaceFolders: Array.isArray(entry.workspaceFolders) ? [...entry.workspaceFolders] : [],
-      authorizedFolders: Array.isArray(entry.authorizedFolders) ? [...entry.authorizedFolders] : [],
-      permissionMode: entry.permissionMode,
-      accessMode: entry.accessMode,
-      planMode: entry.planMode,
-      thinkingLevel: entry.thinkingLevel,
-      workMode: entry.workMode === true,
-      toolNames: Array.isArray(entry.toolNames) ? [...entry.toolNames] : entry.toolNames,
-      reminderEnvCursor: entry.reminderEnvCursor,
-      reminderEnvStartSeq: entry.reminderEnvStartSeq,
-      reminderCompactionRevision: entry.reminderCompactionRevision,
-      reminderConsumedCompactionRevision: entry.reminderConsumedCompactionRevision,
-      reminderAcceptedUnavailableToolNames: Array.isArray(entry.reminderAcceptedUnavailableToolNames)
-        ? [...entry.reminderAcceptedUnavailableToolNames]
-        : [],
-      reminderUnavailableRevision: entry.reminderUnavailableRevision,
-      // Without these, a woken session would be handed its tool listing a
-      // second time and re-told about catalog changes it already saw.
-      reminderReferenceDelivered: entry.reminderReferenceDelivered === true,
-      reminderAcceptedCatalogFingerprint: entry.reminderAcceptedCatalogFingerprint ?? null,
-      reminderAcceptedCatalogNames: Array.isArray(entry.reminderAcceptedCatalogNames)
-        ? [...entry.reminderAcceptedCatalogNames]
-        : [],
-      toolCatalogManifest: entry.toolCatalogManifest || null,
-      contextUsage: entry.session?.getContextUsage?.() || null,
-      hibernatedAt: Date.now(),
+    return this._withSessionRuntimeOperation(sessionPath, async () => {
+      // A queued request must not hibernate a replacement or a runtime that became busy.
+      if (this._getSessionEntryByPath(sessionPath) !== entry
+        || !this._canHibernateSessionRuntime(entry, sessionPath)) return false;
+
+      const isFocus = this._session === entry.session || this.currentSessionPath === sessionPath;
+      if (isFocus) this._currentSessionPath = sessionPath;
+      this._setRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath, {
+        sessionId: entry.sessionId || this._sessionRuntimeKeyForPath(sessionPath, { warn: false }),
+        sessionPath,
+        agentId: entry.agentId,
+        memoryEnabled: entry.memoryEnabled,
+        experienceEnabled: entry.experienceEnabled,
+        modelId: entry.modelId,
+        modelProvider: entry.modelProvider,
+        modelAvailability: entry.modelAvailability ? { ...entry.modelAvailability } : null,
+        cwd: entry.cwd || entry.session?.sessionManager?.getCwd?.() || null,
+        workspaceFolders: Array.isArray(entry.workspaceFolders) ? [...entry.workspaceFolders] : [],
+        authorizedFolders: Array.isArray(entry.authorizedFolders) ? [...entry.authorizedFolders] : [],
+        permissionMode: entry.permissionMode,
+        accessMode: entry.accessMode,
+        planMode: entry.planMode,
+        thinkingLevel: entry.thinkingLevel,
+        workMode: entry.workMode === true,
+        toolNames: Array.isArray(entry.toolNames) ? [...entry.toolNames] : entry.toolNames,
+        reminderEnvCursor: entry.reminderEnvCursor,
+        reminderEnvStartSeq: entry.reminderEnvStartSeq,
+        reminderCompactionRevision: entry.reminderCompactionRevision,
+        reminderConsumedCompactionRevision: entry.reminderConsumedCompactionRevision,
+        reminderAcceptedUnavailableToolNames: Array.isArray(entry.reminderAcceptedUnavailableToolNames)
+          ? [...entry.reminderAcceptedUnavailableToolNames]
+          : [],
+        reminderUnavailableRevision: entry.reminderUnavailableRevision,
+        // Without these, a woken session would be handed its tool listing a
+        // second time and re-told about catalog changes it already saw.
+        reminderReferenceDelivered: entry.reminderReferenceDelivered === true,
+        reminderAcceptedCatalogFingerprint: entry.reminderAcceptedCatalogFingerprint ?? null,
+        reminderAcceptedCatalogNames: Array.isArray(entry.reminderAcceptedCatalogNames)
+          ? [...entry.reminderAcceptedCatalogNames]
+          : [],
+        toolCatalogManifest: entry.toolCatalogManifest || null,
+        contextUsage: entry.session?.getContextUsage?.() || null,
+        hibernatedAt: Date.now(),
+      });
+      await this._teardownSessionEntry(entry, sessionPath, reason);
+      if (this._getSessionEntryByPath(sessionPath) === entry) {
+        this._deleteRuntimeValueForPath(this._sessions, sessionPath);
+        this._clearRuntimePressureTimer(sessionPath);
+      }
+      // Unloading this runtime does not supersede a pending foreground selection.
+      // Only detach the instance we closed; a same-path replacement owns its own focus.
+      if (this._session === entry.session) this._session = null;
+      log.log(`session runtime hibernated (${reason}): ${path.basename(sessionPath)}`);
+      return true;
     });
-    await this._teardownSessionEntry(entry, sessionPath, reason);
-    this._deleteRuntimeValueForPath(this._sessions, sessionPath);
-    this._clearRuntimePressureTimer(sessionPath);
-    if (isFocus) {
-      this._focusVersion++;
-      this._session = null;
-    }
-    log.log(`session runtime hibernated (${reason}): ${path.basename(sessionPath)}`);
-    return true;
   }
 
   checkRuntimeMemoryPressure(sessionPath: any, reason = "manual") {
