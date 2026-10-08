@@ -6,6 +6,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "hana-computer-use-helper", targets: ["HanaComputerUseHelper"]),
+        // Explicitly built for socket lifecycle tests; never packaged with Hana.
+        .executable(name: "hana-daemon-test-probe", targets: ["HanaDaemonTestProbe"]),
     ],
     dependencies: [
         .package(url: "https://github.com/trycua/cua.git", revision: "d38bfbfb6b1d4296903477f517b1a0fa54af497b"),
@@ -19,6 +21,11 @@ let package = Package(
                 .product(name: "CuaDriverServer", package: "cua"),
                 .product(name: "MCP", package: "swift-sdk"),
             ]
+        ),
+        .executableTarget(
+            name: "HanaDaemonTestProbe",
+            dependencies: [.product(name: "CuaDriverServer", package: "cua")],
+            path: "Tests/DaemonProbe"
         ),
     ]
 )

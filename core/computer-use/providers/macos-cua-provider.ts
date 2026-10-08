@@ -1,6 +1,8 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { randomUUID } from "crypto";
+import type { ChildProcess } from "child_process";
 import { COMPUTER_USE_ERRORS, computerUseError } from "../errors.ts";
 import { createCommandRunner } from "./command-runner.ts";
 
@@ -13,6 +15,8 @@ const HANA_CUA_CURSOR_STYLE = Object.freeze({
 });
 const HANA_AGENT_CURSOR_CONFIG_ENV = "HANA_AGENT_CURSOR_CONFIG_JSON";
 const HANA_AGENT_SOCKET_PATH_ENV = "HANA_COMPUTER_USE_SOCKET_PATH";
+const HANA_DAEMON_INSTANCE_ENV = "HANA_COMPUTER_USE_INSTANCE_ID";
+const HANA_DAEMON_PROTOCOL = "hana-daemon-ownership-v1";
 const HANA_CURSOR_MOTION = Object.freeze({
   start_handle: 0.38,
   end_handle: 0.28,
@@ -32,6 +36,15 @@ const MACOS_CUA_ALLOWED_ACTIONS = [
   "stop",
 ];
 const MACOS_CUA_DISABLED_PIXEL_ACTIONS = new Set(["click_point", "double_click", "drag"]);
+
+interface OwnedDaemon {
+  child: ChildProcess;
+  instanceId: string;
+  exited: boolean;
+  launchError: ReturnType<typeof computerUseError> | null;
+  exitPromise: Promise<void>;
+  stopPromise: Promise<{ stopped: boolean; method: string }> | null;
+}
 
 function expandHome(filePath: any, homeDir = os.homedir()) {
   const value = typeof filePath === "string" ? filePath.trim() : "";
@@ -574,13 +587,12 @@ export function createMacosCuaProvider({
   socketPath = process.env[HANA_AGENT_SOCKET_PATH_ENV] || defaultHanaComputerUseSocketPath(),
   autoStartDaemon = null,
   daemonStartupTimeoutMs = 5000,
+  daemonShutdownTimeoutMs = 2000,
 } = {}) {
   let nativeCursorConfigPromise = null;
   let daemonStartPromise = null;
   let daemonStopPromise = null;
-  let managedDaemonActive = false;
-  let spawnedDaemonChild = null;
-  let spawnedDaemonPid = null;
+  let ownedDaemon: OwnedDaemon | null = null;
   const bundledHanaHelper = commandIsBundledHanaHelper(command);
   const shouldAutoStartDaemon = autoStartDaemon ?? bundledHanaHelper;
   const resolvedCursorStyle = normalizeCursorStyle({ cursorStyle, cursorImagePath, cursorBloomColor });
@@ -649,26 +661,130 @@ export function createMacosCuaProvider({
     return runRaw(args);
   }
 
-  async function isDaemonRunning() {
+  async function isDaemonRunning(instanceId: string | null = null) {
     try {
-      const result: any = await runner.run(command, ["status", "--socket", socketPath], {
+      const args = ["status", "--socket", socketPath];
+      if (instanceId) args.push("--instance", instanceId);
+      const result = await runner.run(command, args, {
         timeoutMs: 2000,
         env: runEnv(process.env),
-      });
+      }) as { exitCode: number | null };
       return result.exitCode === 0;
     } catch {
       return false;
     }
   }
 
+  function trackDaemon(child: ChildProcess, instanceId: string) {
+    const instance: OwnedDaemon = {
+      child, instanceId, exited: false, launchError: null, stopPromise: null, exitPromise: Promise.resolve(),
+    };
+    instance.exitPromise = new Promise<void>((resolve) => {
+      const onError = (err: Error & { code?: string }) => {
+        instance.launchError = computerUseError(
+          COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
+          `Computer Use helper daemon could not be launched: ${err?.message || String(err)}`,
+          { providerId, command, launchCode: err?.code || null },
+        );
+        // ENOENT has no child to reap. Errors on a running child still need
+        // the normal exit/close event before we relinquish ownership.
+        if (!child.pid) onExit();
+      };
+      const onExit = () => {
+        if (instance.exited) return;
+        instance.exited = true;
+        child.removeListener("error", onError);
+        child.removeListener("exit", onExit);
+        child.removeListener("close", onExit);
+        resolve();
+      };
+      child.on("error", onError);
+      child.once("exit", onExit);
+      child.once("close", onExit);
+      if (child.exitCode != null || child.signalCode != null) onExit();
+    });
+    return instance;
+  }
+
+  async function waitForDaemonExit(instance: OwnedDaemon, timeout = daemonShutdownTimeoutMs) {
+    if (instance.exited) return;
+    let timer: ReturnType<typeof setTimeout>;
+    try {
+      await Promise.race([
+        instance.exitPromise,
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, timeout); }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function stopOwnedDaemon(instance: OwnedDaemon) {
+    if (instance.stopPromise) return instance.stopPromise;
+    instance.stopPromise = (async () => {
+      let method = "already-exited";
+      for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+        if (instance.exited) break;
+        // Never send shutdown to whichever daemon happens to occupy the
+        // shared pathname, or signal a saved/reusable numeric PID.
+        instance.child.kill(signal);
+        method = signal.toLowerCase();
+        await waitForDaemonExit(instance);
+      }
+      if (!instance.exited) {
+        throw computerUseError(COMPUTER_USE_ERRORS.PROVIDER_CRASHED,
+          "Computer Use helper child did not exit after shutdown.", { providerId, command });
+      }
+      if (ownedDaemon === instance) {
+        ownedDaemon = null;
+        nativeCursorConfigPromise = null;
+      }
+      return { stopped: true, method };
+    })().finally(() => { instance.stopPromise = null; });
+    return instance.stopPromise;
+  }
+
+  function assertDaemonAlive(instance: OwnedDaemon) {
+    if (instance.launchError) throw instance.launchError;
+    if (instance.exited) {
+      throw computerUseError(COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
+        "Computer Use helper daemon exited before becoming ready.", { providerId, command, socketPath });
+    }
+  }
+
   async function ensureDaemonRunning() {
     if (!shouldAutoStartDaemon) return;
-    if (await isDaemonRunning()) {
-      managedDaemonActive = true;
-      return;
-    }
+    if (daemonStopPromise) await daemonStopPromise;
     if (!daemonStartPromise) {
       daemonStartPromise = (async () => {
+        if (ownedDaemon) {
+          const instance = ownedDaemon;
+          if (!instance.exited && await isDaemonRunning(instance.instanceId)) {
+            assertDaemonAlive(instance);
+            return;
+          }
+          await stopOwnedDaemon(instance);
+        }
+        // Attaching conveys no ownership. Only a child we spawn below may
+        // later be stopped by this provider.
+        if (await isDaemonRunning()) return;
+        if (bundledHanaHelper) {
+          // Older packaged helpers can be attached to, but must not be
+          // launched: their native cleanup can unlink another daemon's UDS.
+          // `version` is also a safe, non-AppKit command in those helpers.
+          let compatible = false;
+          try {
+            const version = await runner.run(command, ["version", "--daemon-protocol"], {
+              timeoutMs: 2000, env: runEnv(process.env),
+            }) as { exitCode: number; stdout: string };
+            compatible = version.exitCode === 0 && version.stdout.trim() === HANA_DAEMON_PROTOCOL;
+          } catch { /* Missing/incompatible helpers must not be spawned. */ }
+          if (!compatible) {
+            throw computerUseError(COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
+              "The bundled Computer Use helper must be rebuilt or updated to support daemon ownership.",
+              { providerId, command, reason: "daemon-protocol-unsupported" });
+          }
+        }
         if (typeof runner.spawn !== "function") {
           throw computerUseError(
             COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
@@ -676,9 +792,11 @@ export function createMacosCuaProvider({
             { providerId, command },
           );
         }
+        const instanceId = randomUUID();
+        let child: ChildProcess;
         try {
-          spawnedDaemonChild = runner.spawn(command, ["serve", "--socket", socketPath], {
-            env: runEnv(process.env),
+          child = runner.spawn(command, ["serve", "--socket", socketPath], {
+            env: { ...runEnv(process.env), [HANA_DAEMON_INSTANCE_ENV]: instanceId },
             detached: true,
             stdio: "ignore",
           });
@@ -689,75 +807,36 @@ export function createMacosCuaProvider({
             { providerId, command, launchCode: err?.code || null },
           );
         }
-        const pid = Number(spawnedDaemonChild?.pid);
-        spawnedDaemonPid = Number.isFinite(pid) && pid > 0 ? pid : null;
-        let daemonLaunchError: any = null;
-        const onDaemonLaunchError = (err: any) => {
-          daemonLaunchError = computerUseError(
-            COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
-            `Computer Use helper daemon could not be launched: ${err?.message || String(err)}`,
-            { providerId, command, launchCode: err?.code || null },
-          );
-        };
-        const observesLaunchErrors = typeof spawnedDaemonChild?.once === "function";
-        if (observesLaunchErrors) {
-          spawnedDaemonChild.once("error", onDaemonLaunchError);
-        }
+        const instance = trackDaemon(child, instanceId);
+        ownedDaemon = instance;
         try {
           const deadline = Date.now() + daemonStartupTimeoutMs;
           while (Date.now() < deadline) {
-            if (daemonLaunchError) throw daemonLaunchError;
-            if (await isDaemonRunning()) {
-              managedDaemonActive = true;
+            assertDaemonAlive(instance);
+            if (await isDaemonRunning(instanceId)) {
+              assertDaemonAlive(instance);
               return;
             }
-            // The child may emit ENOENT while the status probe is in flight.
-            // Check again before sleeping so a failed launch cannot leave a
-            // detached readiness loop polling in the background.
-            if (daemonLaunchError) throw daemonLaunchError;
-            await sleep(120);
+            assertDaemonAlive(instance);
+            await waitForDaemonExit(instance, Math.min(120, Math.max(0, deadline - Date.now())));
           }
-          if (daemonLaunchError) throw daemonLaunchError;
+          assertDaemonAlive(instance);
           throw computerUseError(
             COMPUTER_USE_ERRORS.PROVIDER_UNAVAILABLE,
             "Computer Use helper daemon did not become ready in time.",
             { providerId, command, socketPath },
           );
-        } finally {
-          if (observesLaunchErrors && typeof spawnedDaemonChild?.removeListener === "function") {
-            spawnedDaemonChild.removeListener("error", onDaemonLaunchError);
-          }
+        } catch (err) {
+          await stopOwnedDaemon(instance);
+          throw err;
         }
-      })().catch((err) => {
-        daemonStartPromise = null;
-        throw err;
-      });
+      })();
     }
+    const pendingStart = daemonStartPromise;
     try {
-      await daemonStartPromise;
+      await pendingStart;
     } finally {
-      daemonStartPromise = null;
-    }
-  }
-
-  function markDaemonInactive() {
-    managedDaemonActive = false;
-    nativeCursorConfigPromise = null;
-    spawnedDaemonChild = null;
-    spawnedDaemonPid = null;
-  }
-
-  function killSpawnedDaemon(signal: any) {
-    if (!spawnedDaemonPid || platform !== "darwin") return false;
-    try {
-      process.kill(-spawnedDaemonPid, signal);
-      return true;
-    } catch {
-      try {
-        return spawnedDaemonChild?.kill?.(signal) === true;
-      } catch {
-        return false;
-      }
+      if (daemonStartPromise === pendingStart) daemonStartPromise = null;
     }
   }
 
@@ -768,37 +847,13 @@ export function createMacosCuaProvider({
     if (daemonStopPromise) return daemonStopPromise;
     daemonStopPromise = (async () => {
       if (daemonStartPromise) {
-        try { await daemonStartPromise; } catch {}
+        try { await daemonStartPromise; } catch {
+          // Startup owns its error; a child whose first cleanup failed still
+          // belongs to this provider and must get another shutdown attempt.
+        }
       }
-      if (!managedDaemonActive && !spawnedDaemonPid) {
-        return { stopped: false, reason: "not-running" };
-      }
-
-      let stopResult: any = null;
-      try {
-        stopResult = await runner.run(command, ["stop", "--socket", socketPath], {
-          timeoutMs: 5000,
-          env: runEnv(process.env),
-        });
-      } catch (err) {
-        stopResult = { exitCode: 1, stderr: err?.message || String(err) };
-      }
-
-      if (stopResult?.exitCode === 0) {
-        markDaemonInactive();
-        return { stopped: true, method: "daemon-stop" };
-      }
-
-      const killed = killSpawnedDaemon("SIGTERM");
-      if (killed) {
-        markDaemonInactive();
-      }
-      return {
-        stopped: killed,
-        method: killed ? "sigterm" : "none",
-        exitCode: stopResult?.exitCode ?? null,
-        stderr: stopResult?.stderr || "",
-      };
+      if (!ownedDaemon) return { stopped: false, reason: "not-owned" };
+      return stopOwnedDaemon(ownedDaemon);
     })().finally(() => {
       daemonStopPromise = null;
     });

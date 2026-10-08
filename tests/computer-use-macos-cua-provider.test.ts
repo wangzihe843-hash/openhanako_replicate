@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "events";
+import type { ChildProcess } from "child_process";
 import { createMacosCuaProvider, resolveCuaDriverCommand } from "../core/computer-use/providers/macos-cua-provider.ts";
 import { COMPUTER_USE_ERRORS } from "../core/computer-use/errors.ts";
 
@@ -18,11 +19,17 @@ function makeRunner(handler: any) {
     runner: {
       run: vi.fn(async (command: any, args: any, options: any = {}) => {
         calls.push({ command, args, options });
+        if (args[0] === "version") return { stdout: "hana-daemon-ownership-v1", stderr: "", exitCode: 0 };
         return handler(command, args, options);
       }),
       spawn: vi.fn((command: any, args: any, options: any = {}) => {
-        calls.push({ command, args, options, spawned: true });
-        return { unref: vi.fn() };
+        const child = Object.assign(new EventEmitter(), { pid: 12345, kill: vi.fn<(signal: NodeJS.Signals) => boolean>() });
+        child.kill.mockImplementation((signal) => {
+          queueMicrotask(() => child.emit("exit", null, signal));
+          return true;
+        });
+        calls.push({ command, args, options, spawned: true, child });
+        return child;
       }),
     } as any,
   };
@@ -411,6 +418,7 @@ describe("macos Cua provider", () => {
     });
     expect(calls.map((call) => call.args[0])).toEqual([
       "status",
+      "version",
       "serve",
       "status",
       "set_agent_cursor_style",
@@ -457,12 +465,8 @@ describe("macos Cua provider", () => {
 
     await (provider.stop as any)({}, lease);
 
-    expect(calls.map((call) => call.args[0])).toContain("stop");
-    const stopCall = calls.find((call) => call.args[0] === "stop");
-    expect(stopCall).toMatchObject({
-      command: "/tmp/hana-computer-use-helper",
-      args: ["stop", "--socket", "/tmp/hana.sock"],
-    });
+    expect(calls.map((call) => call.args[0])).not.toContain("stop");
+    expect(calls.find((call) => call.spawned).child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("does not stop external Cua Driver commands", async () => {
@@ -819,7 +823,9 @@ describe("macos Cua provider", () => {
   it("turns an asynchronous bundled daemon spawn error into PROVIDER_UNAVAILABLE", async () => {
     const child = new EventEmitter() as EventEmitter & { pid?: number };
     const runner = {
-      run: vi.fn(async () => ({ stdout: "", stderr: "not running", exitCode: 1 })),
+      run: vi.fn(async (_command, args) => args[0] === "version"
+        ? { stdout: "hana-daemon-ownership-v1", stderr: "", exitCode: 0 }
+        : { stdout: "", stderr: "not running", exitCode: 1 }),
       spawn: vi.fn(() => {
         queueMicrotask(() => {
           child.emit("error", Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));
@@ -849,11 +855,12 @@ describe("macos Cua provider", () => {
     expect(child.listenerCount("error")).toBe(0);
   });
 
-  it("removes the launch-error listener after the bundled daemon becomes ready", async () => {
-    const child = new EventEmitter() as EventEmitter & { pid?: number };
+  it("tracks errors until the bundled daemon exits, then removes its listeners", async () => {
+    const child = new EventEmitter() as ChildProcess;
     let statusCalls = 0;
     const runner = {
-      run: vi.fn(async (_command: any, args: any[]) => {
+      run: vi.fn(async (_command: string, args: string[]) => {
+        if (args[0] === "version") return { stdout: "hana-daemon-ownership-v1", stderr: "", exitCode: 0 };
         if (args[0] === "status") {
           statusCalls += 1;
           return statusCalls === 1
@@ -863,7 +870,7 @@ describe("macos Cua provider", () => {
         return rawResult({ apps: [] });
       }),
       spawn: vi.fn(() => child),
-    } as any;
+    };
     const provider = createMacosCuaProvider({
       platform: "darwin",
       command: "/tmp/hana-computer-use-helper",
@@ -874,6 +881,8 @@ describe("macos Cua provider", () => {
 
     await expect(provider.listApps()).resolves.toEqual([]);
     expect(runner.spawn).toHaveBeenCalledTimes(1);
+    expect(child.listenerCount("error")).toBe(1);
+    child.emit("exit", 0, null);
     expect(child.listenerCount("error")).toBe(0);
   });
 

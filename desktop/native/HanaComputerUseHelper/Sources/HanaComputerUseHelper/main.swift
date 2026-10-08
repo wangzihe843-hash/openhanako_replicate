@@ -44,7 +44,22 @@ struct HanaComputerUseHelper {
 
         switch command {
         case "status":
-            guard DaemonClient.isDaemonListening(socketPath: socketPath) else {
+            let listening: Bool
+            if let instanceId = args.removeOptionValue("--instance") {
+                // A successful connect alone cannot prove that the child
+                // started by this provider owns the shared endpoint.
+                if case .ok(let response) = DaemonClient.sendRequest(
+                    DaemonRequest(method: "hana_instance", name: instanceId),
+                    socketPath: socketPath, readTimeout: 1.0
+                ) {
+                    listening = response.ok
+                } else {
+                    listening = false
+                }
+            } else {
+                listening = DaemonClient.isDaemonListening(socketPath: socketPath)
+            }
+            guard listening else {
                 throw HelperError(code: ExitCode.toolError, message: "hana-computer-use-helper daemon is not running on \(socketPath).")
             }
             print("hana-computer-use-helper daemon running; CuaDriverCore \(CuaDriverCore.version)\n  socket: \(socketPath)")
@@ -56,7 +71,7 @@ struct HanaComputerUseHelper {
         case "stop":
             try stopDaemon(socketPath: socketPath)
         case "version", "--version":
-            print(CuaDriverCore.version)
+            print(args.removeAllFlags(["--daemon-protocol"]) ? DaemonServer.hanaOwnershipProtocol : CuaDriverCore.version)
         case "list-tools":
             if !emitToolsFromDaemon(socketPath: socketPath, compact: compact) {
                 try emitTools(compact: compact)

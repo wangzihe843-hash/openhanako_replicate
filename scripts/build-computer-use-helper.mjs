@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { execFileSync } from "child_process";
 import { fileURLToPath, pathToFileURL } from "url";
+import { patchCuaDriverDaemonServerSource } from "./patch-cua-daemon.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -395,6 +396,22 @@ export function applyCuaDriverSourcePatches({ scratchPath } = {}) {
     fs.chmodSync(clickToolPath, 0o644);
     fs.writeFileSync(clickToolPath, patchedClickTool);
     console.log("[computer-use-helper] patched Cua ClickTool for AXShowDefaultUI row actions");
+    patchedAny = true;
+  }
+
+  const serverDir = path.join(scratchPath, "checkouts", "cua", "libs", "cua-driver", "Sources", "CuaDriverServer");
+  const serverPath = path.join(serverDir, "DaemonServer.swift");
+  const serverSource = fs.readFileSync(serverPath, "utf8");
+  const patchedServer = patchCuaDriverDaemonServerSource(serverSource);
+  if (patchedServer !== serverSource) {
+    fs.chmodSync(serverPath, 0o644);
+    fs.writeFileSync(serverPath, patchedServer);
+    patchedAny = true;
+  }
+  const leaseSource = fs.readFileSync(path.join(__dirname, "..", "desktop", "native", "HanaComputerUseHelper", "Patches", "HanaDaemonSocketLease.swift"), "utf8");
+  const leasePath = path.join(serverDir, "HanaDaemonSocketLease.swift");
+  if (!fs.existsSync(leasePath) || fs.readFileSync(leasePath, "utf8") !== leaseSource) {
+    fs.writeFileSync(leasePath, leaseSource);
     patchedAny = true;
   }
 
