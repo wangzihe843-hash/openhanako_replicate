@@ -3361,7 +3361,10 @@
       "show": "Show HanaAgent",
       "settings": "Settings",
       "quit": "Quit",
-      "repairArtifacts": "Repair Components…"
+      "repairArtifacts": "Repair Components…",
+      "petShow": "Show Desktop Pet",
+      "petHide": "Hide Desktop Pet",
+      "petRestoreClicks": "Restore Pet Mouse Interaction"
     },
     "dialog": {
       "selectFolder": "Select Working Folder",

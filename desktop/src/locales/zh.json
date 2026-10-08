@@ -3301,7 +3301,10 @@
       "show": "显示 HanaAgent",
       "settings": "设置",
       "quit": "退出",
-      "repairArtifacts": "修复组件…"
+      "repairArtifacts": "修复组件…",
+      "petShow": "显示桌宠",
+      "petHide": "隐藏桌宠",
+      "petRestoreClicks": "恢复桌宠鼠标交互"
     },
     "dialog": {
       "selectFolder": "选择工作文件夹",

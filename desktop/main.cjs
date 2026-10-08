@@ -37,7 +37,9 @@ const {
 } = require("./src/shared/onboarding-completion.cjs");
 const { resolveTrashItemPath } = require("./src/shared/trash-item-path.cjs");
 const { resolveAgentAvatarPath } = require("./src/shared/agent-avatar-path.cjs");
-const { clampPetBounds, normalizePetOptions } = require("./src/shared/pet-window-state.cjs");
+const {
+  clampPetBounds, normalizePetOptions, isPetPlatformSupported, petPlatformWindowOptions,
+} = require("./src/shared/pet-window-state.cjs");
 const {
   normalizeDesktopNotificationOptions,
   shouldSuppressDesktopNotification,
@@ -443,13 +445,16 @@ let _distRenderer = path.join(__dirname, "dist-renderer");
 const _distSplash = path.join(__dirname, "dist-splash");
 
 // renderer 崩溃回退闭环的运行时状态。两者只在打包模式下
-// 被 `resolvePackagedArtifactBoot` 赋值一次；dev 模式（无 seed）永远维持
+// 被 artifact boot 或 server reuse renderer 决议赋值；dev 模式（无 seed）永远维持
 // null，是下游所有 renderer 崩溃处理函数判断"当前是否处于 artifact 模式"
 // 的唯一依据——不从 `_isDev`/`app.isPackaged` 推导，理由同 server 侧
 // `artifactBootContext`：唯一决定因素是"这次启动是否真的走过 artifact-boot
 // 决议"，不是平台/构建模式本身。
 let _rendererBootChannel = null; // artifactBoot.rendererPointerChannel(_artifactBootChannel)，如 "stable.renderer"
 let _rendererBootTrain = null;
+// Reused servers may still serve the original renderer. Keep retries read-only
+// until a confirmed server stop allows the normal artifact boot path again.
+let _reusedServerArtifactVersion = null;
 
 // 本次启动实际生效的通道（"stable"/"beta"，未加
 // ".renderer" 限定），由 `resolvePackagedArtifactBoot` 读一次
@@ -1192,7 +1197,19 @@ async function startServer() {
     })();
 
     if (pidAlive) {
-      const verification = await verifyReusableServerInfo(existingInfo);
+      let verification = await verifyReusableServerInfo(existingInfo);
+      if (verification.reusable) {
+        try {
+          await resolvePackagedRendererForServerReuse(
+            verification.identity?.version || verification.health?.version || existingInfo.version || app.getVersion(),
+          );
+        } catch (error) {
+          if (error.code !== "ARTIFACT_REUSE_REQUIRES_RESTART" || !isDesktopOwnedServerInfo(existingInfo)) throw error;
+          // Only our authenticated desktop-owned server may be restarted here.
+          // Artifact mutation remains below the existing confirmed-exit checks.
+          verification = { ...verification, reusable: false, terminate: true, reason: error.message };
+        }
+      }
       if (verification.reusable) {
         console.log(`[desktop] 复用已运行的 server，端口: ${existingInfo.port}, 版本: ${existingInfo.version || "unknown"}, studio: ${verification.identity.studioId}`);
         serverPort = existingInfo.port;
@@ -1338,6 +1355,47 @@ async function startServer() {
 }
 
 /**
+ * A reused server must still initialize the packaged renderer and its crash
+ * tracking/version state. Do not run server boot or either GC while it is live;
+ * both server files and its launch-time renderer directory may still be in use.
+ */
+async function resolvePackagedRendererForServerReuse(serverVersion) {
+  const resourcesPath = process.resourcesPath || "";
+  const platformArch = `${process.platform}-${process.arch}`;
+  if (!artifactBoot.hasSeed(resourcesPath, platformArch)) {
+    if (app.isPackaged) {
+      throw new Error(
+        `Packaged app is missing its artifact seed (expected under ${path.join(resourcesPath, "seed")}). `
+          + "The installation is broken — please reinstall HanaAgent.",
+      );
+    }
+    return;
+  }
+  const bootChannel = readUpdateChannelPreference();
+  const renderer = await artifactBoot.prepareArtifactRendererBoot({
+    homeDir: hanakoHome,
+    resourcesPath,
+    platformArch,
+    keyset: loadPinnedKeyset(),
+    channel: bootChannel,
+    reuseServerVersion: serverVersion,
+    onProgress: () => {
+      if (splashWindow && !splashWindow.isDestroyed()) {
+        loadSplashWindowURL(splashWindow, { query: { mode: "preparing" } });
+      }
+    },
+    log: (msg) => console.log(redactMainLogText(msg)),
+  });
+  _distRenderer = renderer.versionDir;
+  _artifactBootChannel = bootChannel;
+  _rendererBootChannel = artifactBoot.rendererPointerChannel(bootChannel);
+  _rendererBootTrain = renderer.train;
+  _currentContentVersion = renderer.version;
+  _reusedServerArtifactVersion = serverVersion;
+  console.log(`[desktop] renderer artifact reused: train ${renderer.train} (${renderer.version}) slot=${renderer.slot}`);
+}
+
+/**
  * 打包模式启动解析：签名 seed 同时覆盖 server 与 renderer。
  * - Resources/seed/ 在场 → 走 artifact-boot 的双 kind 组合入口
  *   `prepareArtifactBoot`（两个 kind 都必须在场，缺一硬报错 → server 走
@@ -1356,6 +1414,7 @@ async function startServer() {
  * - 已打包却没有 seed → 安装损坏，硬报错（禁止静默落进 dev 分支）。
  */
 async function resolvePackagedArtifactBoot() {
+  _reusedServerArtifactVersion = null;
   const resourcesPath = process.resourcesPath || "";
   const platformArch = `${process.platform}-${process.arch}`;
   if (!artifactBoot.hasSeed(resourcesPath, platformArch)) {
@@ -1549,6 +1608,7 @@ async function handleRendererArtifactLoadFailure({ win, pageName, opts, label, r
       // 崩溃重试时，会用 stable 指针命名空间重新决议，跟本次会话
       // `resolvePackagedArtifactBoot` 决议出的 beta 命名空间脱节。
       channel: _artifactBootChannel,
+      reuseServerVersion: _reusedServerArtifactVersion ?? undefined,
       log: (msg) => console.log(redactMainLogText(msg)),
     });
   } catch (err) {
@@ -1939,6 +1999,7 @@ function monitorServer() {
     if (_intentionalServerStops.has(monitoredProcess) || isQuitting || _isUpdating || isExitingServer || _isApplyingTrainUpdate) return;
     const reason = signal ? `信号 ${signal}` : `退出码 ${code}`;
     console.error(`[desktop] Server 意外退出 (${reason})`);
+    stopBrowserCommands();
 
     if (_serverRestartAttempts < 1) {
       _serverRestartAttempts++;
@@ -1947,6 +2008,7 @@ function monitorServer() {
         await startServer();
         console.log("[desktop] Server 重启成功");
         monitorServer(); // 重新挂监控
+        setupBrowserCommands();
         // 通知前端重连
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send("server-restarted", { port: serverPort, token: serverToken });
@@ -2014,6 +2076,23 @@ function loadTrayImageFromCandidates(fileNames) {
   throw new Error(`Tray icon asset unavailable; checked: ${attempted.join(", ")}`);
 }
 
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
+    { label: mt("tray.show", null, "Show HanaAgent"), click: () => showPrimaryWindow() },
+    { label: mt("tray.settings", null, "Settings"), click: () => createSettingsWindow() },
+    ...buildPetTrayItems(),
+    { type: "separator" },
+    // Keep the existing repair escape hatch in the shared tray menu.
+    { label: mt("tray.repairArtifacts", null, "Repair Components…"), click: () => { triggerArtifactRepairFlow().catch((err) => console.error(`[desktop] repair flow failed: ${err.message}`)); } },
+    { type: "separator" },
+    { label: mt("tray.quit", null, "Quit"), click: () => { isExitingServer = true; isQuitting = true; app.quit(); } },
+  ]);
+}
+
+function refreshTrayMenu() {
+  if (tray && !tray.isDestroyed()) tray.setContextMenu(buildTrayMenu());
+}
+
 function createTray() {
   const isDev = !app.isPackaged;
   let resolved;
@@ -2030,20 +2109,8 @@ function createTray() {
   tray = new Tray(resolved.image);
   tray.setToolTip(isDev ? "HanaAgent (dev)" : "HanaAgent");
 
-  const buildMenu = () => Menu.buildFromTemplate([
-    { label: mt("tray.show", null, "Show HanaAgent"), click: () => showPrimaryWindow() },
-    { label: mt("tray.settings", null, "Settings"), click: () => createSettingsWindow() },
-    { type: "separator" },
-    // 修复逃生门：本仓库没有独立的应用菜单栏基础设施
-    // （grep 全仓只有这一处 + 下面 locale 重建那一处 Menu.buildFromTemplate，
-    // 都是托盘右键菜单），因此复用这个"现有等价菜单组"，不新起一套应用菜单栏。
-    { label: mt("tray.repairArtifacts", null, "Repair Components…"), click: () => { triggerArtifactRepairFlow().catch((err) => console.error(`[desktop] repair flow failed: ${err.message}`)); } },
-    { type: "separator" },
-    { label: mt("tray.quit", null, "Quit"), click: () => { isExitingServer = true; isQuitting = true; app.quit(); } },
-  ]);
-
-  tray.setContextMenu(buildMenu());
-  tray.on("right-click", () => tray.setContextMenu(buildMenu()));
+  refreshTrayMenu();
+  tray.on("right-click", refreshTrayMenu);
   tray.on("double-click", () => showPrimaryWindow());
 }
 
@@ -2518,7 +2585,7 @@ function toggleQuickChatWindow() {
   showQuickChatWindow();
 }
 
-// ── Windows desktop pet: presentation only; the main renderer owns the active session. ──
+// ── Desktop pet: presentation only; the main renderer owns the active session. ──
 const petWindowStatePath = path.join(hanakoHome, "user", "pet-window-state.json");
 function readPetWindowState() {
   try { return JSON.parse(fs.readFileSync(petWindowStatePath, "utf8")); }
@@ -2529,10 +2596,12 @@ let petOptions = normalizePetOptions(savedPetWindowState);
 let petSavedBounds = savedPetWindowState.bounds || null;
 let petContext = null;
 let petSaveTimer = null;
+let petClampTimer = null;
 // A tiny local state file is written synchronously so quit cannot race a delayed write.
 
 function flushPetWindowState() {
-  if (process.platform !== "win32") return;
+  clearPetWindowClamp();
+  if (!isPetPlatformSupported(process.platform)) return;
   if (petSaveTimer) clearTimeout(petSaveTimer);
   petSaveTimer = null;
   const tempPath = `${petWindowStatePath}.${process.pid}.tmp`;
@@ -2548,14 +2617,14 @@ function flushPetWindowState() {
 }
 
 function savePetWindowState() {
-  if (process.platform !== "win32") return;
+  if (!isPetPlatformSupported(process.platform)) return;
   if (petSaveTimer) clearTimeout(petSaveTimer);
   petSaveTimer = setTimeout(flushPetWindowState, 250);
 }
 
 function getPetWindowState() {
   return {
-    supported: process.platform === "win32",
+    supported: isPetPlatformSupported(process.platform),
     visible: !!petWindow && !petWindow.isDestroyed() && petWindow.isVisible(),
     paused: petOptions.paused,
     clickThrough: petOptions.clickThrough,
@@ -2571,9 +2640,49 @@ function sendPetState() {
       win.webContents.send("pet-state-changed", state);
     }
   }
+  // macOS opens the tray menu on primary click, so don't wait for right-click.
+  if (process.platform === "darwin") refreshTrayMenu();
+}
+
+function buildPetTrayItems() {
+  if (process.platform !== "darwin") return [];
+  const state = getPetWindowState();
+  return [
+    { type: "separator" },
+    {
+      id: "pet-toggle",
+      label: state.visible ? mt("tray.petHide", null, "Hide Desktop Pet") : mt("tray.petShow", null, "Show Desktop Pet"),
+      enabled: !!mainWindow && !mainWindow.isDestroyed(),
+      click: () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        if (getPetWindowState().visible) hidePetWindow();
+        else showPetWindow();
+      },
+    },
+    {
+      id: "pet-restore-clicks",
+      label: mt("tray.petRestoreClicks", null, "Restore Pet Mouse Interaction"),
+      enabled: state.clickThrough,
+      click: () => setPetOptions({ clickThrough: false }),
+    },
+  ];
+}
+
+function clearPetWindowClamp() {
+  if (petClampTimer) clearTimeout(petClampTimer);
+  petClampTimer = null;
+}
+
+function schedulePetWindowClamp() {
+  clearPetWindowClamp();
+  petClampTimer = setTimeout(() => {
+    petClampTimer = null;
+    if (!isQuitting && !_isUpdating && !forceQuitApp) clampVisiblePetWindow();
+  }, 200);
 }
 
 function clampVisiblePetWindow() {
+  clearPetWindowClamp();
   if (!petWindow || petWindow.isDestroyed()) return;
   const bounds = clampPetBounds(
     petWindow.getBounds(),
@@ -2589,7 +2698,7 @@ function clampVisiblePetWindow() {
 }
 
 function createPetWindow() {
-  if (process.platform !== "win32") return null;
+  if (!isPetPlatformSupported(process.platform)) return null;
   if (petWindow && !petWindow.isDestroyed()) return petWindow;
   const bounds = clampPetBounds(
     petSavedBounds,
@@ -2609,6 +2718,7 @@ function createPetWindow() {
     fullscreenable: false,
     skipTaskbar: true,
     alwaysOnTop: petOptions.alwaysOnTop,
+    ...petPlatformWindowOptions(process.platform),
     title: "Hana Desktop Pet",
     webPreferences: {
       preload: path.join(__dirname, "src", "pet-preload.cjs"),
@@ -2640,15 +2750,18 @@ function createPetWindow() {
     if (!petWindow || petWindow.isDestroyed()) return;
     petSavedBounds = petWindow.getBounds();
     savePetWindowState();
+    // Electron's macOS `moved` is an alias of `move`, not drag-end. Clamping
+    // during each update traps a pet at display edges while it is being dragged.
+    if (process.platform === "darwin") schedulePetWindowClamp();
   });
-  petWindow.on("moved", clampVisiblePetWindow);
+  if (process.platform === "win32") petWindow.on("moved", clampVisiblePetWindow);
   petWindow.on("close", (event) => {
     if (!isQuitting && !_isUpdating && !forceQuitApp) {
       event.preventDefault();
       hidePetWindow();
     }
   });
-  petWindow.on("closed", () => { petWindow = null; sendPetState(); });
+  petWindow.on("closed", () => { clearPetWindowClamp(); petWindow = null; sendPetState(); });
   return petWindow;
 }
 
@@ -2711,6 +2824,7 @@ function syncPetContext(value) {
 
 function openPetSessionInMain() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (process.platform === "darwin") app.dock.show();
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
@@ -2718,7 +2832,7 @@ function openPetSessionInMain() {
 }
 
 function registerPetDisplayObservers() {
-  if (process.platform !== "win32") return;
+  if (!isPetPlatformSupported(process.platform)) return;
   for (const event of ["display-added", "display-removed", "display-metrics-changed"]) {
     screen.on(event, clampVisiblePetWindow);
   }
@@ -3000,7 +3114,8 @@ function createMainWindow() {
       _screenshotWin = null;
     }
   });
-  if (process.platform === "win32" && petOptions.visible) {
+  if (process.platform === "darwin") refreshTrayMenu();
+  if (isPetPlatformSupported(process.platform) && petOptions.visible) {
     setTimeout(() => { if (mainWindow && !mainWindow.isDestroyed()) showPetWindow(); }, 0);
   }
 }
@@ -4357,6 +4472,21 @@ async function handleBrowserCommand(cmd, params) {
 
 /** 浏览器命令通道的当前连接：viewer 直连主进程改动标签页后，用它把快照同步回 server */
 let _browserCmdWs = null;
+let _browserCmdReconnectTimer = null;
+let _browserCmdGeneration = 0;
+
+function stopBrowserCommands() {
+  _browserCmdGeneration++;
+  if (_browserCmdReconnectTimer !== null) {
+    clearTimeout(_browserCmdReconnectTimer);
+    _browserCmdReconnectTimer = null;
+  }
+  const ws = _browserCmdWs;
+  _browserCmdWs = null;
+  if (ws) {
+    try { ws.close(); } catch {}
+  }
+}
 
 /**
  * 把某个 session 的标签组快照推给 server 的 BrowserManager。
@@ -4391,19 +4521,23 @@ function _sendBrowserUserActivity(sessionPath) {
 
 /** 通过 WebSocket 监听 server 的浏览器命令 */
 function setupBrowserCommands() {
-  if (!serverPort || !serverToken) return;
+  stopBrowserCommands();
+  if (isQuitting || !serverPort || !serverToken) return;
 
   const WebSocket = require("ws");
-  const url = `ws://127.0.0.1:${serverPort}/internal/browser?token=${serverToken}`;
-  let ws;
+  const generation = _browserCmdGeneration;
 
   function connect() {
-    ws = new WebSocket(url);
+    if (isQuitting || generation !== _browserCmdGeneration || !serverPort || !serverToken) return;
+    // A restarted server may publish a different port and always has a new token.
+    const url = `ws://127.0.0.1:${serverPort}/internal/browser?token=${encodeURIComponent(serverToken)}`;
+    const ws = new WebSocket(url);
     _browserCmdWs = ws;
     ws.on("open", () => {
       console.log("[desktop] Browser control WS connected");
     });
     ws.on("message", async (data) => {
+      if (isQuitting || generation !== _browserCmdGeneration || _browserCmdWs !== ws) return;
       let msg;
       try { msg = JSON.parse(data); } catch { return; }
       if (msg?.type !== "browser-cmd") return;
@@ -4414,7 +4548,7 @@ function setupBrowserCommands() {
         const result = await handleBrowserCommand(cmd, params || {});
         const resultLength = JSON.stringify(result).length;
         _bLog(`✓ cmd=${cmd} resultLength=${resultLength} wsReady=${ws.readyState}`);
-        if (ws.readyState === 1) {
+        if (!isQuitting && generation === _browserCmdGeneration && _browserCmdWs === ws && ws.readyState === 1) {
           ws.send(JSON.stringify({ type: "browser-result", id, result }));
           _bLog(`✓ sent result`);
         } else {
@@ -4422,15 +4556,21 @@ function setupBrowserCommands() {
         }
       } catch (err) {
         _bLog(`✗ cmd=${cmd} error=${err.message}`);
-        if (ws.readyState === 1) {
+        if (!isQuitting && generation === _browserCmdGeneration && _browserCmdWs === ws && ws.readyState === 1) {
           ws.send(JSON.stringify({ type: "browser-result", id, error: err.message }));
         }
       }
     });
     ws.on("close", () => {
-      if (_browserCmdWs === ws) _browserCmdWs = null;
-      if (!isQuitting) {
-        setTimeout(connect, 2000);
+      if (_browserCmdWs !== ws || generation !== _browserCmdGeneration) return;
+      _browserCmdWs = null;
+      if (!isQuitting && _browserCmdReconnectTimer === null) {
+        _browserCmdReconnectTimer = setTimeout(() => {
+          if (generation !== _browserCmdGeneration) return;
+          _browserCmdReconnectTimer = null;
+          connect();
+        }, 2000);
+        _browserCmdReconnectTimer.unref?.();
       }
     });
     ws.on("error", () => {}); // close event handles reconnect
@@ -5136,6 +5276,7 @@ async function applyTrainUpdateNow(senderWebContents) {
       _isApplyingTrainUpdate = true;
       const shutdownResult = await shutdownServer();
       trainUpdateApply.assertServerShutdownConfirmed(shutdownResult);
+      stopBrowserCommands();
     },
     startServer: async () => {
       if (isQuitting) {
@@ -5144,6 +5285,7 @@ async function applyTrainUpdateNow(senderWebContents) {
       await startServer();
       _serverRestartAttempts = 0;
       monitorServer(); // 新 serverProcess 需要重新挂一次崩溃监控（旧监听器绑定的是已退出的旧进程实例）
+      setupBrowserCommands();
     },
     reloadWindows: async () => {
       reloadAllWindowsForTrainUpdate();
@@ -5526,17 +5668,7 @@ wrapIpcOn("settings-changed", (_event, type, data) => {
   if (type === "locale-changed") {
     resetMainI18n();
     // 重建托盘菜单，使标签跟随新 locale
-    if (tray && !tray.isDestroyed()) {
-      const buildMenu = () => Menu.buildFromTemplate([
-        { label: mt("tray.show", null, "Show HanaAgent"), click: () => showPrimaryWindow() },
-        { label: mt("tray.settings", null, "Settings"), click: () => createSettingsWindow() },
-        { type: "separator" },
-        { label: mt("tray.repairArtifacts", null, "Repair Components…"), click: () => { triggerArtifactRepairFlow().catch((err) => console.error(`[desktop] repair flow failed: ${err.message}`)); } },
-        { type: "separator" },
-        { label: mt("tray.quit", null, "Quit"), click: () => { isExitingServer = true; isQuitting = true; app.quit(); } },
-      ]);
-      tray.setContextMenu(buildMenu());
-    }
+    refreshTrayMenu();
   }
 });
 
@@ -6418,6 +6550,7 @@ async function shutdownServer() {
 
 app.on("before-quit", async (event) => {
   isQuitting = true;
+  stopBrowserCommands();
   if (petWindow && !petWindow.isDestroyed()) petSavedBounds = petWindow.getBounds();
   flushPetWindowState();
 

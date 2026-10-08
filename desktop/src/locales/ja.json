@@ -3301,7 +3301,10 @@
       "show": "HanaAgent を表示",
       "settings": "設定",
       "quit": "終了",
-      "repairArtifacts": "コンポーネントを修復…"
+      "repairArtifacts": "コンポーネントを修復…",
+      "petShow": "デスクトップペットを表示",
+      "petHide": "デスクトップペットを非表示",
+      "petRestoreClicks": "ペットのマウス操作を復元"
     },
     "dialog": {
       "selectFolder": "作業フォルダを選択",

@@ -3,6 +3,17 @@
 const DEFAULT_PET_WIDTH = 220;
 const DEFAULT_PET_HEIGHT = 252;
 
+function isPetPlatformSupported(platform) {
+  return platform === "win32" || platform === "darwin";
+}
+
+function petPlatformWindowOptions(platform) {
+  if (platform !== "darwin") return {};
+  // A nonactivating panel joins Spaces/fullscreen without changing the app's
+  // activation policy or hiding its Dock icon. Keep normal keyboard access.
+  return { type: "panel", acceptFirstMouse: true, minimizable: false, hiddenInMissionControl: true };
+}
+
 function finite(value) { return typeof value === "number" && Number.isFinite(value); }
 function clamp(value, min, max) { return Math.min(Math.max(value, min), max); }
 
@@ -53,4 +64,7 @@ function normalizePetOptions(saved) {
   };
 }
 
-module.exports = { clampPetBounds, choosePetDisplay, normalizePetOptions, DEFAULT_PET_WIDTH, DEFAULT_PET_HEIGHT };
+module.exports = {
+  clampPetBounds, choosePetDisplay, normalizePetOptions, isPetPlatformSupported,
+  petPlatformWindowOptions, DEFAULT_PET_WIDTH, DEFAULT_PET_HEIGHT,
+};

@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:46c6b5b23726b284ee91ea73fe5ac6caaa0bb587db26dd5df964e17f9a4418a6",
+  "payloadFingerprint": "sha256:c8d6907fdf919c0aef2ebdd6d9e0521ffe3d1a787e6a45fe1ebcb7f49a335320",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3368,8 +3368,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Reviewed the merged A/B/C/D patch set at base a4cb3955e109ed82b31b32fad7c18d818faaf84a. Persisted fields, registry validators/serializers, SQLite schema, DATA_EPOCH=1, Pi 1.0.3 package identity/integrity, JSONL CURRENT_SESSION_VERSION=3 and existing Hana record versions remain unchanged. The five guarded-source hash changes are behavioral: agent-profile only resolves the real session locator for shutdown memory finalization; desktop-window-version-state adds a sender-restricted fixed login/identity IPC handshake without changing window/version state serialization; device-access-registries reuses unchanged source records and validators to recheck retained device authority and expiry; web-session-registry denies a device cookie when its source no longer authorizes its principal before updating existing timestamps, while valid historical cookies retain the same format; session-jsonl adds LRU busy/runtime-owner protection, cancelled pending-submit terminal notification, and retry current-runtime/manager/leaf fencing before any transaction append, preserving all retry/branch record shapes. AuthStorage async locking reads/writes the same provider-keyed auth.json shape; Bridge guards change authorization for redirecting a saved secret, not config shape. Frontend receipt/status changes and phone deadline fields do not change persisted data contracts. CLI closure changes only add core/web-session-store.ts importer provenance for the already included core/device-registry.ts; no runtime files are added or removed. This is a compatibility review for derived fingerprint repinning, not a claim of dynamic validation or blanket approval for unreviewed settings.write paths.",
-    "payloadFingerprint": "sha256:46c6b5b23726b284ee91ea73fe5ac6caaa0bb587db26dd5df964e17f9a4418a6"
+    "compatibilityReason": "Reviewed the merged A/B/C/D patch set at base a4cb3955e109ed82b31b32fad7c18d818faaf84a. Persisted fields, registry validators/serializers, SQLite schema, DATA_EPOCH=1, Pi 1.0.3 package identity/integrity, JSONL CURRENT_SESSION_VERSION=3 and existing Hana record versions remain unchanged. The five guarded-source hash changes are behavioral: agent-profile only resolves the real session locator for shutdown memory finalization; desktop-window-version-state adds a sender-restricted fixed login/identity IPC handshake without changing window/version state serialization; device-access-registries reuses unchanged source records and validators to recheck retained device authority and expiry; web-session-registry denies a device cookie when its source no longer authorizes its principal before updating existing timestamps, while valid historical cookies retain the same format; session-jsonl adds LRU busy/runtime-owner protection, cancelled pending-submit terminal notification, and retry current-runtime/manager/leaf fencing before any transaction append, preserving all retry/branch record shapes. AuthStorage async locking reads/writes the same provider-keyed auth.json shape; Bridge guards change authorization for redirecting a saved secret, not config shape. Frontend receipt/status changes and phone deadline fields do not change persisted data contracts. CLI closure changes only add core/web-session-store.ts importer provenance for the already included core/device-registry.ts; no runtime files are added or removed. This is a compatibility review for derived fingerprint repinning, not a claim of dynamic validation or blanket approval for unreviewed settings.write paths. Additional compatible review on 2026-10-08 for the four macOS desktop patches integrated over local HEAD 12a9037756d5680fd725cec3a1679e1ce2ba56fd; see docs/audits/2026-10-08-macos-desktop-persistence-compatibility.md. The only new payload difference is the executable sourceHash for desktop-window-version-state (desktop/main.cjs). Main/quick-chat bounds and release-bookmark readers/writers keep their existing formats. Pet presentation state keeps user/pet-window-state.json version 1, the same bounds and visible/paused/clickThrough/alwaysOnTop fields, defaults, temporary-write/rename protocol and failed-temp cleanup; Darwin now uses that existing contract. Renderer/server reuse and browser-command reconnect changes affect lifecycle, not these persisted shapes. Shortcut capture and audio entitlement add no persistence store. Registry/ownership/site mappings, all other guarded source hashes, SQLite DDL/userVersion, DATA_EPOCH=1, TypeScript 5.9.3 parse-tree-v1 provenance, Pi 1.0.3 identity/integrity and JSONL version 3 are unchanged. No migration or epoch bump is required, and the generator and tripwire assertions are unchanged. This repin does not establish uncompleted native acceptance.",
+    "payloadFingerprint": "sha256:c8d6907fdf919c0aef2ebdd6d9e0521ffe3d1a787e6a45fe1ebcb7f49a335320"
   },
   "schemas": [
     {
@@ -3691,7 +3691,7 @@
       "contract": "desktop window bounds, pet window options, release announcement bookmark, and update cache version marker readers",
       "kind": "directory-contract",
       "module": "desktop/main.cjs",
-      "sourceHash": "sha256:9060b1d872922624b837eb1df2e4f0e8aec7722eeacba11d5553ef328b92eef3",
+      "sourceHash": "sha256:0210cc68200835fe515a03b55d56576f1007762d28e4ed684d016e5cfae9bb70",
       "storeId": "desktop-window-version-state"
     },
     {

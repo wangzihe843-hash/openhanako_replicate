@@ -1,5 +1,5 @@
 /**
- * Isolated Windows smoke for the real desktop main and pet windows.
+ * Isolated Windows/macOS smoke for the real desktop main and pet windows.
  * Run after build:client: node scripts/smoke-desktop-main-pet.cjs
  * The worker imports the production bootstrap, but runs with a temporary data
  * home and appData path. No provider credentials or model requests are used.
@@ -13,11 +13,12 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { spawn } = require("node:child_process");
 const { SERVER_INFO_MAX_WAIT_MS } = require("../desktop/src/shared/server-readiness.cjs");
+const { isPetPlatformSupported } = require("../desktop/src/shared/pet-window-state.cjs");
 
 const root = path.resolve(__dirname, "..");
 const home = process.env.HANA_HOME;
 const rendererErrors = [];
-// A source-mode Windows cold start can spend longer than a UI action timeout
+// A source-mode cold start can spend longer than a UI action timeout
 // reading modules. Allow the same bounded startup budget as the application.
 const UI_TIMEOUT_MS = 45000;
 const STARTUP_TIMEOUT_MS = SERVER_INFO_MAX_WAIT_MS + UI_TIMEOUT_MS;
@@ -45,8 +46,8 @@ async function waitFor(label, probe, timeoutMs = UI_TIMEOUT_MS) {
 }
 
 async function runWorker() {
-  const { app, BrowserWindow } = require("electron");
-  assert.equal(process.platform, "win32", "this smoke exercises Windows desktop pet behavior");
+  const { app, BrowserWindow, Notification } = require("electron");
+  assert.ok(isPetPlatformSupported(process.platform), "this smoke requires Windows or macOS");
   assert.ok(home, "worker requires an isolated smoke home");
   assertOwnedSmokeHome(home);
 
@@ -55,6 +56,11 @@ async function runWorker() {
   const appData = path.join(home, "electron-appdata");
   fs.mkdirSync(appData, { recursive: true });
   app.setPath("appData", appData);
+
+  // The real app-ready path requests first-launch notification permission on
+  // macOS. This smoke covers the pet, not notifications or OS permissions.
+  // Suppress that separate feature before importing the production bootstrap.
+  if (process.platform === "darwin") Notification.isSupported = () => false;
 
   // Keep real windows visible to Electron lifecycle checks without taking focus
   // or showing pixels on the user's desktop.
@@ -120,6 +126,16 @@ async function runWorker() {
   assert.equal(pet.webContents.getURL(), petUrl,
     "the privileged pet preload must not follow renderer-originated links to another local page");
   assert.equal(pet.isVisible(), true, "saved visible pet state should restore after main window creation");
+  const petPreferences = pet.webContents.getLastWebPreferences();
+  assert.equal(petPreferences.sandbox, true);
+  assert.equal(petPreferences.contextIsolation, true);
+  assert.equal(petPreferences.nodeIntegration, false);
+  if (process.platform === "darwin") {
+    assert.equal(pet.isVisibleOnAllWorkspaces(), true, "the Mac pet panel should join Spaces");
+    assert.equal(pet.isHiddenInMissionControl(), true);
+    assert.equal(pet.isMinimizable(), false);
+    assert.equal(pet.isFocusable(), true, "keep keyboard access to pet controls");
+  }
   const mainPort = await main.webContents.executeJavaScript("window.hana.getServerPort()");
   const petConnection = await pet.webContents.executeJavaScript("window.hanaPet.getConnection()");
   assert.ok(Number.isSafeInteger(mainPort) && mainPort > 0, "main should connect to the real local server");
@@ -169,6 +185,10 @@ async function runWorker() {
   assert.equal((await pet.webContents.executeJavaScript("window.hanaPet.getState()"))?.clickThrough, true);
   await main.webContents.executeJavaScript("window.hana.petSetOptions({ clickThrough: false })");
   assert.equal((await pet.webContents.executeJavaScript("window.hanaPet.getState()"))?.clickThrough, false);
+  await main.webContents.executeJavaScript("window.hana.petSetOptions({ alwaysOnTop: false })");
+  assert.equal(pet.isAlwaysOnTop(), false, "unpin should restore the normal window level");
+  await main.webContents.executeJavaScript("window.hana.petSetOptions({ alwaysOnTop: true })");
+  assert.equal(pet.isAlwaysOnTop(), true);
 
   main.close();
   await waitFor("main hidden after close", () => !main.isVisible());
@@ -182,7 +202,7 @@ async function runWorker() {
 }
 
 async function runController() {
-  assert.equal(process.platform, "win32", "this smoke is Windows-only");
+  assert.ok(isPetPlatformSupported(process.platform), "this smoke requires Windows or macOS");
   for (const artifact of [
     "desktop/preload.bundle.cjs",
     "desktop/dist-splash/splash.html",

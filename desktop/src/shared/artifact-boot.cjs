@@ -324,6 +324,7 @@ async function prepareArtifactServerBoot({
  *   channel?: string,
  *   onProgress?: () => void,
  *   log?: (msg: string) => void,
+ *   reuseServerVersion?: string, // read-only reuse, or a first matching seed install
  * }} opts
  * @returns {Promise<{versionDir: string, train: number, version: string,
  *                    slot: string, activatedSeed: boolean, crashFallback: boolean,
@@ -338,8 +339,14 @@ async function prepareArtifactRendererBoot({
   channel = SEED_CHANNEL,
   onProgress,
   log = console.log,
+  reuseServerVersion,
 }) {
   if (!homeDir) throw new Error("artifact-boot: homeDir is required");
+  if (reuseServerVersion !== undefined) {
+    return prepareArtifactRendererForServerReuse({
+      homeDir, resourcesPath, platformArch, keyset, channel, onProgress, log, reuseServerVersion,
+    });
+  }
   const pointerChannel = rendererPointerChannel(channel);
 
   // Whole-function critical section — same rationale as
@@ -434,6 +441,103 @@ async function prepareArtifactRendererBoot({
       quarantinedTrain,
       fromVersion,
       toVersion,
+    };
+  });
+}
+
+/**
+ * Reattaching to a live server is not an artifact activation boundary. Keep
+ * pending updates and every existing directory intact: the server may still
+ * serve its launch-time HANA_RENDERER_DIST. Only a first-ever renderer install
+ * may extract a matching seed. A rejected reuse is read-only; the desktop can
+ * restart an authenticated, desktop-owned server before normal artifact boot.
+ */
+async function prepareArtifactRendererForServerReuse({
+  homeDir, resourcesPath, platformArch, keyset, channel, onProgress, log, reuseServerVersion,
+}) {
+  const pointerChannel = rendererPointerChannel(channel);
+  const requiresRestart = (reason) => {
+    const error = new Error(`artifact-boot: renderer cannot attach to the running server (${reason}); stop the server before restarting HanaAgent`);
+    error.code = "ARTIFACT_REUSE_REQUIRES_RESTART";
+    return error;
+  };
+  return pointerStore.withPointerMutex(homeDir, async () => {
+    const { manifestPath, sigPath, seedDir } = seedPaths(resourcesPath, platformArch);
+    const { manifest, rendererEntry } = verifySeedManifest({
+      manifestBytes: fs.readFileSync(manifestPath),
+      sigBytes: fs.readFileSync(sigPath),
+      keyset,
+      platformArch,
+      requiredKinds: ["server", "renderer"],
+    });
+    if (await activation.consecutiveFailures(homeDir, pointerChannel) >= CRASH_LOOP_THRESHOLD) {
+      throw requiresRestart("renderer crash recovery is required");
+    }
+    let resolved = await activation.resolveBoot(pointerChannel, homeDir);
+    let activatedSeed = false;
+    if (resolved) {
+      if (resolved.pointer.version !== reuseServerVersion) {
+        throw requiresRestart(`renderer ${resolved.pointer.version} differs from server ${reuseServerVersion}`);
+      }
+    } else {
+      // Validate before touching pointers or extracting anything. In particular,
+      // don't overwrite a pending next update or try to repair a directory that
+      // the live server may still be reading.
+      if (rendererEntry.version !== reuseServerVersion) {
+        throw requiresRestart(`seed renderer ${rendererEntry.version} differs from server ${reuseServerVersion}`);
+      }
+      const assertFreshRendererState = async () => {
+        for (const slot of ["current", "previous", "next"]) {
+          if (await pointerStore.readPointer(homeDir, pointerChannel, slot)) {
+            throw requiresRestart("existing renderer state needs activation or repair");
+          }
+        }
+        const versionDir = path.join(pointerStore.artifactsRoot(homeDir), "renderer", rendererEntry.version);
+        try {
+          fs.lstatSync(versionDir); // Includes dangling links; never replace existing content.
+          throw requiresRestart("the seed renderer directory already exists");
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
+        }
+      };
+      await assertFreshRendererState();
+      // Share OTA's cross-process lock, without stealing it from a live updater.
+      // The in-process pointer mutex alone cannot protect a standalone server's
+      // staged next pointer. Recheck after acquiring the lock as well.
+      const lock = await pointerStore.acquireLock(homeDir, { staleMs: Infinity });
+      if (!lock) {
+        const error = new Error("artifact-boot: another artifact operation is in progress; retry launching HanaAgent after it finishes");
+        error.code = "ARTIFACT_REUSE_BUSY";
+        throw error;
+      }
+      try {
+        await assertFreshRendererState();
+        if (onProgress) onProgress();
+        log(`[artifact-boot] installing first renderer seed for reused server ${reuseServerVersion}`);
+        await activation.activateFromArchive(path.join(seedDir, rendererEntry.path), manifest, {
+          homeDir,
+          channel: pointerChannel,
+          kind: "renderer",
+          allowReplaceProtected: false,
+        });
+        await pointerStore.promote(homeDir, pointerChannel);
+        resolved = await activation.resolveBoot(pointerChannel, homeDir);
+        if (!resolved) throw new Error("artifact-boot: first renderer seed installation did not resolve");
+        activatedSeed = true;
+      } finally {
+        await lock.release();
+      }
+    }
+    return {
+      versionDir: resolved.pointer.versionDir,
+      train: Number.isInteger(resolved.pointer.train) ? resolved.pointer.train : 0,
+      version: resolved.pointer.version,
+      slot: resolved.slot,
+      activatedSeed,
+      crashFallback: false,
+      quarantinedTrain: null,
+      fromVersion: null,
+      toVersion: null,
     };
   });
 }

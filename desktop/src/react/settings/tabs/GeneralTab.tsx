@@ -18,6 +18,7 @@ import {
   DEFAULT_QUICK_CHAT_SHORTCUT,
   normalizeQuickChatPreferences,
 } from '../../../../../shared/quick-chat-preferences.ts';
+import { shortcutFromKeyboardEvent, shortcutKeyLabel } from './quick-chat-shortcut';
 import styles from '../Settings.module.css';
 
 type ChatCompletionNotificationMode = 'never' | 'when_unfocused' | 'when_session_unfocused';
@@ -54,61 +55,11 @@ function formatShortcut(shortcut: string): string[] {
     .filter(Boolean);
 }
 
-function keyLabel(key: string): string {
-  if (key === 'CommandOrControl') return navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl';
-  if (key === 'Control') return 'Ctrl';
-  if (key === 'Alt') return navigator.platform.toLowerCase().includes('mac') ? '⌥' : 'Alt';
-  if (key === 'Shift') return 'Shift';
-  if (key === 'Space') return 'Space';
-  return key.length === 1 ? key.toUpperCase() : key;
-}
-
-function keyFromEvent(event: KeyboardEvent): string | null {
-  if (event.key === 'Escape') return null;
-  if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return null;
-
-  const parts: string[] = [];
-  if (event.metaKey || event.ctrlKey) parts.push('CommandOrControl');
-  if (event.altKey) parts.push('Alt');
-  if (event.shiftKey) parts.push('Shift');
-
-  const rawKey = keyTokenFromKeyboardEvent(event);
-  if (!rawKey) return null;
-  const key = rawKey.length === 1 ? rawKey.toUpperCase() : rawKey;
-  const isFunctionKey = /^F([1-9]|1[0-9]|2[0-4])$/.test(key);
-  if (parts.length === 0 && !isFunctionKey) return null;
-  parts.push(key);
-  return parts.join('+');
-}
-
-function keyTokenFromKeyboardEvent(event: KeyboardEvent): string | null {
-  if (event.code === 'Space' || event.key === ' ' || event.key === '\u00A0' || event.key === 'Spacebar') {
-    return 'Space';
-  }
-  const keyMap: Record<string, string> = {
-    ArrowUp: 'Up',
-    ArrowDown: 'Down',
-    ArrowLeft: 'Left',
-    ArrowRight: 'Right',
-    Enter: 'Enter',
-    Tab: 'Tab',
-    Backspace: 'Backspace',
-    Delete: 'Delete',
-  };
-  if (keyMap[event.code]) return keyMap[event.code];
-  if (keyMap[event.key]) return keyMap[event.key];
-  if (/^Key[A-Z]$/.test(event.code)) return event.code.slice(3);
-  if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5);
-  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(event.code)) return event.code;
-  const key = event.key || '';
-  return key.length === 1 ? key : key || null;
-}
-
 function ShortcutKeycaps({ shortcut }: { shortcut: string }) {
   return (
     <span className={styles['shortcut-keycaps']}>
       {formatShortcut(shortcut).map((part) => (
-        <span key={part} className={styles['shortcut-keycap']}>{keyLabel(part)}</span>
+        <span key={part} className={styles['shortcut-keycap']}>{shortcutKeyLabel(part, navigator.platform)}</span>
       ))}
     </span>
   );
@@ -444,7 +395,7 @@ export function GeneralTab() {
         setQuickChatRecording(false);
         return;
       }
-      const shortcut = keyFromEvent(event);
+      const shortcut = shortcutFromKeyboardEvent(event, navigator.platform);
       if (!shortcut) return;
       setQuickChatRecording(false);
       void saveQuickChatShortcut(shortcut);

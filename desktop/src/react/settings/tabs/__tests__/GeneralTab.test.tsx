@@ -167,6 +167,7 @@ afterEach(() => {
       updatedAt: null,
     },
   });
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -617,4 +618,107 @@ describe('GeneralTab quick-chat failure recovery with real HTTP validation and s
     expect(transport.mock.calls.map(([, options]) => options?.method)).toEqual(['PUT', 'GET']);
   });
 
+});
+
+describe('GeneralTab macOS shortcut capture', () => {
+  beforeEach(() => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    installHana();
+    seedSnapshot();
+  });
+
+  it.each([
+    { name: 'Control', modifiers: { ctrlKey: true }, shortcut: 'Control+K', label: 'CtrlK' },
+    { name: 'Command', modifiers: { metaKey: true }, shortcut: 'CommandOrControl+K', label: '⌘K' },
+    { name: 'Control and Command', modifiers: { ctrlKey: true, metaKey: true }, shortcut: 'Control+CommandOrControl+K', label: 'Ctrl⌘K' },
+    { name: 'all modifiers', modifiers: { ctrlKey: true, metaKey: true, altKey: true, shiftKey: true }, shortcut: 'Control+CommandOrControl+Alt+Shift+K', label: 'Ctrl⌘⌥ShiftK' },
+  ])('saves and displays $name without losing modifiers', async ({ modifiers, shortcut, label }) => {
+    const saved = { ...previousQuickChat, shortcut };
+    hanaFetch.mockResolvedValueOnce(response(saved));
+    quickChatReloadShortcut.mockResolvedValue({ ok: true, shortcut });
+    const page = render(<GeneralTab />);
+    const button = screen.getByLabelText('settings.general.quickChat.shortcut') as HTMLButtonElement;
+    fireEvent.click(button);
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', ...modifiers });
+
+    await waitFor(() => expect(hanaFetch).toHaveBeenCalledWith('/api/preferences/quick-chat', {
+      connection: expect.objectContaining({ baseUrl: 'http://127.0.0.1:32123' }),
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quickChat: saved }),
+    }));
+    await waitFor(() => expect(settingsChanged).toHaveBeenCalledWith('quick-chat-shortcut-changed', { quickChat: saved }));
+    expect(quickChatReloadShortcut).toHaveBeenCalledOnce();
+    expect(useSettingsStore.getState().settingsSnapshot.data?.preferences.quickChat).toEqual(saved);
+    expect(button.textContent).toBe(label);
+    expect(button.disabled).toBe(false);
+
+    page.unmount();
+    render(<GeneralTab />);
+    expect(screen.getByLabelText('settings.general.quickChat.shortcut').textContent).toBe(label);
+    expect(hanaFetch).toHaveBeenCalledOnce();
+  });
+
+  it('continues recording after bare keys and modifiers, then cancels with Escape', () => {
+    render(<GeneralTab />);
+    const button = screen.getByLabelText('settings.general.quickChat.shortcut');
+    fireEvent.click(button);
+    fireEvent.keyDown(window, { key: 'Control', code: 'ControlLeft', ctrlKey: true });
+    fireEvent.keyDown(window, { key: 'Meta', code: 'MetaLeft', metaKey: true });
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK' });
+    expect(button.textContent).toBe('settings.general.quickChat.recording');
+    expect(hanaFetch).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
+    expect(button.textContent).toBe('⌥Space');
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', ctrlKey: true });
+    expect(hanaFetch).not.toHaveBeenCalled();
+    expect(quickChatReloadShortcut).not.toHaveBeenCalled();
+  });
+
+  it('records Option+Space and restores the default with macOS keycaps', async () => {
+    const custom = { ...previousQuickChat, shortcut: 'Control+K' };
+    seedSnapshot(custom);
+    hanaFetch.mockImplementation(async () => response(previousQuickChat));
+    render(<GeneralTab />);
+    const button = screen.getByLabelText('settings.general.quickChat.shortcut') as HTMLButtonElement;
+    fireEvent.click(button);
+    fireEvent.keyDown(window, { key: '\u00A0', code: 'Space', altKey: true });
+    await waitFor(() => expect(button.textContent).toBe('⌥Space'));
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(JSON.parse(hanaFetch.mock.calls[0][1].body).quickChat).toEqual(previousQuickChat);
+
+    await act(async () => seedSnapshot(custom));
+    fireEvent.click(screen.getByText('settings.general.quickChat.restoreDefault'));
+    await waitFor(() => expect(button.textContent).toBe('⌥Space'));
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(JSON.parse(hanaFetch.mock.calls[1][1].body).quickChat).toEqual(previousQuickChat);
+    expect(quickChatReloadShortcut).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { name: 'reserved', key: ' ', code: 'Space', modifiers: { metaKey: true }, shortcut: 'CommandOrControl+Space' },
+    { name: 'unsupported', key: 'Unidentified', code: '', modifiers: { ctrlKey: true }, shortcut: 'Control+Unidentified' },
+  ])('restores the previous preference when the host rejects a $name shortcut', async ({ key, code, modifiers, shortcut }) => {
+    hanaFetch
+      .mockResolvedValueOnce(response({ ...previousQuickChat, shortcut }))
+      .mockResolvedValueOnce(response(previousQuickChat));
+    quickChatReloadShortcut
+      .mockResolvedValueOnce({ ok: false, error: 'shortcut unavailable' })
+      .mockResolvedValueOnce({ ok: true, shortcut: previousQuickChat.shortcut });
+    render(<GeneralTab />);
+    const button = screen.getByLabelText('settings.general.quickChat.shortcut') as HTMLButtonElement;
+    fireEvent.click(button);
+    fireEvent.keyDown(window, { key, code, ...modifiers });
+
+    await waitFor(() => expect(useSettingsStore.getState().toastMessage).toContain('shortcut unavailable'));
+    expect(hanaFetch.mock.calls.map(([, options]) => JSON.parse(options.body).quickChat.shortcut)).toEqual([
+      shortcut, previousQuickChat.shortcut,
+    ]);
+    expect(useSettingsStore.getState().settingsSnapshot.data?.preferences.quickChat).toEqual(previousQuickChat);
+    expect(button.textContent).toBe('⌥Space');
+    expect(button.disabled).toBe(false);
+    expect(quickChatReloadShortcut).toHaveBeenCalledTimes(2);
+    expect(settingsChanged).not.toHaveBeenCalled();
+  });
 });

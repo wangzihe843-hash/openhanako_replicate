@@ -3301,7 +3301,10 @@
       "show": "HanaAgent 표시",
       "settings": "설정",
       "quit": "종료",
-      "repairArtifacts": "구성 요소 복구…"
+      "repairArtifacts": "구성 요소 복구…",
+      "petShow": "데스크톱 펫 표시",
+      "petHide": "데스크톱 펫 숨기기",
+      "petRestoreClicks": "펫 마우스 조작 복원"
     },
     "dialog": {
       "selectFolder": "작업 폴더 선택",
