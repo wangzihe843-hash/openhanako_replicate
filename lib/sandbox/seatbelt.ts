@@ -17,22 +17,28 @@ import { writeScript, writeProfile, cleanup } from "./script.ts";
  * @returns {(command, cwd, opts) => Promise<{exitCode}>}
  */
 export function createSeatbeltExec(policy, { getSandboxNetworkEnabled }: { getSandboxNetworkEnabled?: () => boolean } = {}) {
-  return async (command, cwd, { onData, signal, timeout, env }) => {
-    const { scriptPath } = writeScript(command, cwd);
+  return async (command: string, cwd: string, { onData, signal, timeout, env }: {
+    onData: (data: Buffer) => void;
+    signal?: AbortSignal;
+    timeout?: number;
+    env?: NodeJS.ProcessEnv;
+  }) => {
     const profile = generateProfile(policy, {
       allowNetwork: typeof getSandboxNetworkEnabled === "function"
         ? getSandboxNetworkEnabled()
         : true,
     });
-    const { profilePath } = writeProfile(profile);
+    const { scriptPath } = writeScript(command, cwd);
+    let profilePath: string | undefined;
     try {
+      ({ profilePath } = writeProfile(profile));
       return await spawnAndStream(
         "sandbox-exec",
         ["-f", profilePath, "/bin/bash", scriptPath],
         { cwd, env, onData, signal, timeout },
       );
     } finally {
-      cleanup(scriptPath, profilePath);
+      cleanup(scriptPath, ...(profilePath ? [profilePath] : []));
     }
   };
 }
@@ -46,6 +52,19 @@ function realpath(p) {
   } catch {
     return p;
   }
+}
+
+/** SBPL string literals use escaped backslashes/quotes, not shell quoting. */
+function sbplPath(p: string): string {
+  const resolved = realpath(p);
+  // Reject unvalidated control escapes rather than changing the policy grammar.
+  for (const character of resolved) {
+    const code = character.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f) {
+      throw new Error("Sandbox path contains a control character");
+    }
+  }
+  return `"${resolved.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 /**
@@ -69,13 +88,13 @@ function generateProfile(policy, { allowNetwork = true } = {}) {
   ];
 
   for (const p of policy.writablePaths) {
-    lines.push(`(allow file-write* (subpath "${realpath(p)}"))`);
+    lines.push(`(allow file-write* (subpath ${sbplPath(p)}))`);
   }
 
   // /tmp（macOS 上是 /private/tmp 和 /private/var/folders/...）
   lines.push(
     `(allow file-write* (subpath "/private/tmp"))`,
-    `(allow file-write* (subpath "${realpath(process.env.TMPDIR || "/tmp")}"))`
+    `(allow file-write* (subpath ${sbplPath(process.env.TMPDIR || "/tmp")}))`
   );
 
   lines.push("");
@@ -84,7 +103,7 @@ function generateProfile(policy, { allowNetwork = true } = {}) {
   if (policy.protectedPaths.length) {
     lines.push(";; 写保护");
     for (const p of policy.protectedPaths) {
-      lines.push(`(deny file-write* (subpath "${realpath(p)}"))`);
+      lines.push(`(deny file-write* (subpath ${sbplPath(p)}))`);
     }
     lines.push("");
   }
@@ -93,9 +112,9 @@ function generateProfile(policy, { allowNetwork = true } = {}) {
   if (policy.denyReadPaths.length) {
     lines.push(";; 读取拒绝");
     for (const p of policy.denyReadPaths) {
-      const rp = realpath(p);
-      lines.push(`(deny file-read* (subpath "${rp}"))`);
-      lines.push(`(deny file-write* (subpath "${rp}"))`);
+      const rp = sbplPath(p);
+      lines.push(`(deny file-read* (subpath ${rp}))`);
+      lines.push(`(deny file-write* (subpath ${rp}))`);
     }
     lines.push("");
   }

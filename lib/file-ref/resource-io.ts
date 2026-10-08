@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { canonicalFilesystemPathSync, filesystemIdentityKeySync } from "../../shared/link-aware-fs.ts";
+import { canonicalFilesystemPathSync, filesystemIdentityKeySync, resolveFilesystemPathForCreationSync } from "../../shared/link-aware-fs.ts";
 import { detectMime, extOfName, inferFileKind } from "../file-metadata.ts";
 
 const DEFAULT_CONFLICT_POLICY = "fail";
@@ -9,21 +9,8 @@ type PathFileRef = { type: "path"; path: string };
 type SessionFileRef = { type: "session_file"; fileId: string; sessionId?: string; sessionPath?: string };
 type FileRef = PathFileRef | SessionFileRef;
 
-// 目标还不存在时（copy 的落点），把已存在的那一段祖先解析掉再把剩下的接回去。
-// 共享原语只认存在的路径，所以这个上溯逻辑留在本地，底层归一交给它。
 function normalizePossiblyMissingPath(filePath) {
-  const resolved = path.resolve(filePath);
-  if (fs.existsSync(resolved)) return canonicalFilesystemPathSync(resolved);
-  const parts = [];
-  let cursor = resolved;
-  while (!fs.existsSync(cursor)) {
-    const parent = path.dirname(cursor);
-    if (parent === cursor) break;
-    parts.unshift(path.basename(cursor));
-    cursor = parent;
-  }
-  const base = canonicalFilesystemPathSync(cursor);
-  return parts.length ? path.join(base, ...parts) : base;
+  return canonicalFilesystemPathSync(resolveFilesystemPathForCreationSync(filePath));
 }
 
 /** 两侧都必须是身份键。 */
@@ -274,9 +261,7 @@ export async function copyFileRefToPath({
   });
   assertParentInsideAllowedRoots(rawTargetPath, allowedRoots, cwd);
   const finalTargetPath = resolveConflictPath(rawTargetPath, conflictPolicy);
-  if (fs.existsSync(finalTargetPath)) {
-    assertExistingPathInsideAllowedRoots(finalTargetPath, allowedRoots, cwd, "copy target");
-  }
+  assertExistingPathInsideAllowedRoots(normalizePossiblyMissingPath(finalTargetPath), allowedRoots, cwd, "copy target");
   fs.mkdirSync(path.dirname(finalTargetPath), { recursive: true });
   fs.copyFileSync(resolved.filePath, finalTargetPath);
 

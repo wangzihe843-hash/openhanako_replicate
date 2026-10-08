@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { resolveFilesystemEntryPathSync, resolveFilesystemPathForCreationSync, resolveFilesystemPathForStatSync } from "../../../shared/link-aware-fs.ts";
 import { ResourceIOError, resourceAccessDenied, resourceNotFound, targetAlreadyExists } from "../errors.ts";
 import { normalizeResourceRef, resourceKeyForRef } from "../resource-refs.ts";
 import type {
@@ -74,7 +75,7 @@ export class LocalFsProvider {
   }
 
   async stat(ref: ResourceRef | unknown): Promise<ResourceStat> {
-    const filePath = this.resolvePath(ref);
+    const filePath = resolveFilesystemPathForStatSync(this.resolveRawPath(ref));
     this.assertAllowed(filePath, "read");
     if (!fs.existsSync(filePath)) {
       return {
@@ -163,7 +164,7 @@ export class LocalFsProvider {
   }
 
   async delete(ref: ResourceRef | unknown): Promise<ResourceMutationResult> {
-    const filePath = this.resolvePath(ref);
+    const filePath = this.resolvePath(ref, true);
     this.assertAllowed(filePath, "delete");
     const result = this.mutationResult(filePath, "modified");
     fs.rmSync(filePath, { recursive: true, force: false });
@@ -192,8 +193,14 @@ export class LocalFsProvider {
 
   async move(from: ResourceRef | unknown, to: ResourceRef | unknown): Promise<ResourceMoveResult> {
     const sourcePath = this.resolvePath(from);
-    const targetPath = this.resolvePath(to);
+    const targetPath = this.resolvePath(to, true);
     this.assertAllowed(sourcePath, "delete");
+    // rename addresses a directory entry. A dangling destination still exists,
+    // and must report a conflict without following or replacing that link.
+    if (!fs.existsSync(targetPath) && filesystemEntryExists(targetPath)) {
+      this.assertAllowed(targetPath, "delete");
+      throw targetAlreadyExists(targetPath);
+    }
     this.assertAllowed(targetPath, "write");
     if (!fs.existsSync(sourcePath)) throw resourceNotFound(sourcePath);
     if (fs.existsSync(targetPath)) throw targetAlreadyExists(targetPath);
@@ -307,15 +314,19 @@ export class LocalFsProvider {
     };
   }
 
-  resolvePath(ref: ResourceRef | unknown): string {
+  resolvePath(ref: ResourceRef | unknown, allowDanglingLeaf = false): string {
+    const rawPath = this.resolveRawPath(ref);
+    return allowDanglingLeaf ? resolveFilesystemEntryPathSync(rawPath) : realOrResolved(rawPath);
+  }
+
+  resolveRawPath(ref: ResourceRef | unknown): string {
     const normalized = normalizeResourceRef(ref);
     if (normalized.kind !== "local-file") {
       throw new Error(`local_fs provider cannot resolve ${normalized.kind}`);
     }
-    const rawPath = path.isAbsolute(normalized.path)
+    return path.isAbsolute(normalized.path)
       ? path.normalize(normalized.path)
       : path.resolve(this.cwd, normalized.path);
-    return realOrResolved(rawPath);
   }
 
   resourceForPath(filePath: string): ResourceDescriptor {
@@ -417,22 +428,16 @@ function safeIsDirectory(targetPath: string): boolean {
 }
 
 function realOrResolved(filePath: string): string {
+  return resolveFilesystemPathForCreationSync(filePath);
+}
+
+function filesystemEntryExists(filePath: string): boolean {
   try {
-    return path.normalize(fs.realpathSync(filePath));
-  } catch {
-    const parts: string[] = [];
-    let current = path.resolve(filePath);
-    while (true) {
-      try {
-        const real = fs.realpathSync(current);
-        return path.join(path.normalize(real), ...parts.reverse());
-      } catch {
-        const parent = path.dirname(current);
-        if (parent === current) return path.resolve(filePath);
-        parts.push(path.basename(current));
-        current = parent;
-      }
-    }
+    fs.lstatSync(filePath);
+    return true;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return false;
   }
 }
 

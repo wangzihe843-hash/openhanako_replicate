@@ -2,6 +2,55 @@ import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 
+/** Resolve existing ancestors, but only append genuinely absent path components. */
+export function resolveFilesystemPathForCreationSync(filePath: string): string {
+  const pending: string[] = [];
+  let current = path.resolve(filePath);
+  while (true) {
+    try {
+      return path.join(fs.realpathSync(current), ...pending.reverse());
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      // realpath also reports ENOENT for dangling links. lstat distinguishes
+      // those existing entries from an ordinary file/directory to be created.
+      let entry: fs.Stats | undefined;
+      try {
+        entry = fs.lstatSync(current);
+      } catch (entryError) {
+        if (entryError.code !== "ENOENT") throw entryError;
+      }
+      if (entry) throw error;
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      pending.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+/** Metadata/deletion may address a dangling leaf entry, never its missing target. */
+export function resolveFilesystemEntryPathSync(filePath: string): string {
+  try {
+    return resolveFilesystemPathForCreationSync(filePath);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    const resolved = path.resolve(filePath);
+    // lstat errors and dangling parent components remain failures.
+    if (!fs.lstatSync(resolved).isSymbolicLink()) throw error;
+    return path.join(resolveFilesystemPathForCreationSync(path.dirname(resolved)), path.basename(resolved));
+  }
+}
+
+/** A child of a regular file is missing for stat; callers must still authorize it. */
+export function resolveFilesystemPathForStatSync(filePath: string): string {
+  try {
+    return resolveFilesystemEntryPathSync(filePath);
+  } catch (error) {
+    if (error.code !== "ENOTDIR") throw error;
+    return path.resolve(filePath);
+  }
+}
+
 export function canonicalFilesystemPathSync(filePath) {
   const resolved = path.resolve(filePath);
   try {

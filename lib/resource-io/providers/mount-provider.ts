@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { resolveFilesystemEntryPathSync, resolveFilesystemPathForCreationSync, resolveFilesystemPathForStatSync } from "../../../shared/link-aware-fs.ts";
 import { loadStudioMountRegistry } from "../../../core/studio-mounts.ts";
 import { capabilityDenied, providerNotAvailable, ResourceIOError } from "../errors.ts";
 import { resourceKeyForRef } from "../resource-refs.ts";
@@ -67,7 +68,7 @@ export class MountProvider {
   }
 
   async stat(ref: ResourceRef): Promise<ResourceStat> {
-    const resolved = this.resolveLocalMount(ref, "read");
+    const resolved = this.resolveLocalMount(ref, "read", true);
     return this.mapResult(ref, await resolved.provider.stat({ kind: "local-file", path: resolved.path }));
   }
 
@@ -101,7 +102,7 @@ export class MountProvider {
   }
 
   async delete(ref: ResourceRef): Promise<ResourceMutationResult> {
-    const resolved = this.resolveLocalMount(ref, "write");
+    const resolved = this.resolveLocalMount(ref, "write", true);
     return this.mapResult(ref, await resolved.provider.delete({ kind: "local-file", path: resolved.path }));
   }
 
@@ -162,7 +163,7 @@ export class MountProvider {
   async rename(from: ResourceRef, to: ResourceRef): Promise<ResourceMoveResult> {
     assertSameMount(from, to);
     const source = this.resolveLocalMount(from, "write");
-    const target = this.resolveLocalMount(to, "write");
+    const target = this.resolveLocalMount(to, "write", true);
     return this.mapMoveResult(from, to, await target.provider.rename(
       { kind: "local-file", path: source.path },
       { kind: "local-file", path: target.path },
@@ -172,7 +173,7 @@ export class MountProvider {
   async move(from: ResourceRef, to: ResourceRef): Promise<ResourceMoveResult> {
     assertSameMount(from, to);
     const source = this.resolveLocalMount(from, "write");
-    const target = this.resolveLocalMount(to, "write");
+    const target = this.resolveLocalMount(to, "write", true);
     return this.mapMoveResult(from, to, await target.provider.move(
       { kind: "local-file", path: source.path },
       { kind: "local-file", path: target.path },
@@ -217,7 +218,7 @@ export class MountProvider {
     return mount;
   }
 
-  resolveLocalMount(ref: ResourceRef, capability: "read" | "write" | "list" | "materialize") {
+  resolveLocalMount(ref: ResourceRef, capability: "read" | "write" | "list" | "materialize", allowDanglingLeaf = false) {
     if (ref.kind !== "mount") {
       throw new ResourceIOError(`mount provider cannot resolve ${ref.kind}`, {
         code: "invalid_resource_ref",
@@ -240,7 +241,8 @@ export class MountProvider {
     const mountPath = normalizeMountPath(ref.path);
     const targetPath = mountPath ? path.join(rootPath, ...mountPath.split("/")) : rootPath;
     const rootReal = realOrResolved(rootPath);
-    const targetReal = realOrResolved(targetPath);
+    const resolveEntry = capability === "read" ? resolveFilesystemPathForStatSync : resolveFilesystemEntryPathSync;
+    const targetReal = allowDanglingLeaf ? resolveEntry(targetPath) : realOrResolved(targetPath);
     if (!isInside(rootReal, targetReal)) {
       throw new ResourceIOError("mount path escapes root", {
         code: "invalid_path",
@@ -251,7 +253,9 @@ export class MountProvider {
       cwd: rootReal,
       guard: {
         check: (filePath, operation) => {
-          const candidate = realOrResolved(filePath);
+          const candidate = allowDanglingLeaf && (operation === "read" || operation === "delete")
+            ? resolveEntry(filePath)
+            : realOrResolved(filePath);
           if (!isInside(rootReal, candidate)) return { allowed: false, reason: "mount path escapes root" };
           if (operation === "read" && !mount.capabilities?.includes("read")) return { allowed: false, reason: "mount read denied" };
           if ((operation === "write" || operation === "delete") && !mount.capabilities?.includes("write")) {
@@ -355,23 +359,7 @@ function normalizeMountPath(value: string): string {
 }
 
 function realOrResolved(filePath: string): string {
-  try {
-    return path.normalize(fs.realpathSync(filePath));
-  } catch {
-    const parts: string[] = [];
-    let current = path.resolve(filePath);
-    while (true) {
-      try {
-        const real = fs.realpathSync(current);
-        return path.join(path.normalize(real), ...parts.reverse());
-      } catch {
-        const parent = path.dirname(current);
-        if (parent === current) return path.resolve(filePath);
-        parts.push(path.basename(current));
-        current = parent;
-      }
-    }
-  }
+  return resolveFilesystemPathForCreationSync(filePath);
 }
 
 function normalizeWatchEventPath(rootPath: string, changedPath: string, rootIsDirectory: boolean): string {

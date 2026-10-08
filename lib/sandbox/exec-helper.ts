@@ -48,7 +48,7 @@ export function spawnAndStream(cmd, args, {
   exitStdioGraceMs = EXIT_STDIO_GRACE_MS,
   windowsVerbatimArguments = false,
 }) {
-  return new Promise((resolve, reject) => {
+  return new Promise<{ exitCode: number | null }>((resolve, reject) => {
     const child = spawn(cmd, args, {
       cwd,
       env: env ?? process.env,

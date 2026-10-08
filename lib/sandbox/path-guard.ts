@@ -7,10 +7,9 @@
  * 常量从 policy.js 导入（单一来源）。
  */
 
-import fs from "fs";
 import path from "path";
 import { t } from "../i18n.ts";
-import { filesystemIdentityKeySync } from "../../shared/link-aware-fs.ts";
+import { filesystemIdentityKeySync, resolveFilesystemEntryPathSync, resolveFilesystemPathForCreationSync } from "../../shared/link-aware-fs.ts";
 import {
   BLOCKED_FILES,
   BLOCKED_DIRS,
@@ -71,28 +70,11 @@ export class PathGuard {
    * 对它做 realpath，然后把不存在的段拼回去。
    * 这样 mkdir -p 多层目录时也能正确判断权限。
    */
-  _resolveReal(p) {
-    const abs = path.resolve(p);
+  _resolveReal(p, allowDanglingLeaf = false) {
     try {
-      return fs.realpathSync(abs);
-    } catch (err) {
-      if (err.code !== "ENOENT") return null;
-
-      const pending = [];
-      let current = abs;
-      while (true) {
-        const parent = path.dirname(current);
-        if (parent === current) return null; // 到根目录还找不到
-        pending.push(path.basename(current));
-        try {
-          const realParent = fs.realpathSync(parent);
-          pending.reverse();
-          return path.join(realParent, ...pending);
-        } catch (e) {
-          if (e.code !== "ENOENT") return null;
-          current = parent;
-        }
-      }
+      return allowDanglingLeaf ? resolveFilesystemEntryPathSync(p) : resolveFilesystemPathForCreationSync(p);
+    } catch {
+      return null;
     }
   }
 
@@ -201,7 +183,7 @@ export class PathGuard {
    * @returns {{ allowed: boolean, canonicalPath?: string, reason?: string }}
    */
   check(absolutePath, operation) {
-    const canonicalPath = this._resolveReal(absolutePath);
+    const canonicalPath = this._resolveReal(absolutePath, operation === "read" || operation === "delete");
     if (!canonicalPath) {
       return {
         allowed: false,

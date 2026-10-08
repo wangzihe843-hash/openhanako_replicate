@@ -84236,6 +84236,16 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/resource-io/providers/local-fs-provider.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/resource-io/providers/mount-provider.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/resource-io/resource-access-policy.ts",
           "kind": "import-statement"
         },
@@ -84260,7 +84270,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/session-files/session-file-registry.ts (import-statement); core/migrations.ts (import-statement); lib/desk/cron-store.ts (import-statement); +13 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by lib/session-files/session-file-registry.ts (import-statement); core/migrations.ts (import-statement); lib/desk/cron-store.ts (import-statement); +15 more importer(s)."
     },
     {
       "path": "shared/log-redactor.ts",
