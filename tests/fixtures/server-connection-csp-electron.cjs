@@ -16,7 +16,9 @@ const windows = [];
 const servers = [];
 const sockets = new Set();
 const targets = [];
-const report = { electron: process.versions.electron, cases: [] };
+const report = { electron: process.versions.electron, platform: process.platform, pid: process.pid, cases: [] };
+fs.writeFileSync(path.join(output, 'started.json'), JSON.stringify(report, null, 2));
+let finished = false;
 const fixture = path.join(output, 'settings.html');
 const csp = pathToFileURL(path.join(root, 'desktop/src/modules/connection-csp.js')).href;
 fs.writeFileSync(fixture, `<!doctype html><html><head><script src="${csp}"></script><script src="connection.js"></script></head><body>Connection fixture</body></html>`);
@@ -29,13 +31,33 @@ const key = fs.readFileSync(path.join(__dirname, 'server-connection-key.pem'));
 const fingerprint = new X509Certificate(cert).fingerprint256;
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function finish(code) {
+  if (finished) return;
+  finished = true;
   fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify(report, null, 2));
   for (const window of windows) if (!window.isDestroyed()) window.destroy();
   for (const socket of sockets) socket.destroy();
-  for (const server of servers) server.close();
+  for (const server of servers) server.close(() => {});
   app.exit(code);
 }
-const watchdog = setTimeout(() => { report.error = 'CSP fixture timed out'; finish(1); }, 25_000);
+function fail(error) {
+  report.error = String(error.stack || error);
+  process.stderr.write(`${report.error}\n`);
+  clearTimeout(watchdog);
+  finish(1);
+}
+const watchdog = setTimeout(() => fail(new Error('CSP fixture timed out')), 25_000);
+process.on('uncaughtException', fail);
+process.on('unhandledRejection', fail);
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      server.on('error', fail);
+      resolve();
+    });
+  });
+}
 const blockedFetch = (window, url) => window.webContents.executeJavaScript(`(async () => {
   const violations = [];
   const listener = event => violations.push(event.effectiveDirective);
@@ -58,8 +80,10 @@ app.whenReady().then(async () => {
     });
     trap.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
     servers.push(trap);
-    await new Promise(resolve => trap.listen(0, '127.0.0.3', resolve));
-    const unapprovedOrigin = `http://127.0.0.3:${trap.address().port}`;
+    await listen(trap);
+    // localhost is absent from connect-src's initial loopback allowlist. Separate
+    // ports retain distinct origins without requiring macOS loopback aliases.
+    const unapprovedOrigin = `http://localhost:${trap.address().port}`;
     const handler = (req, res) => {
       requests.push({ method: req.method, path: req.url, cookie: req.headers.cookie || null });
       const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': 'null', 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': 'authorization, content-type' };
@@ -85,12 +109,12 @@ app.whenReady().then(async () => {
       socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
     });
     servers.push(server);
-    await new Promise(resolve => server.listen(0, '127.0.0.2', resolve));
-    const origin = `${scheme}://127.0.0.2:${server.address().port}`;
+    await listen(server);
+    const origin = `${scheme}://localhost:${server.address().port}`;
     const isolated = session.fromPartition(`connection-${scheme}-${Date.now()}`);
     // Trust only this synthetic certificate inside this disposable session.
     isolated.setCertificateVerifyProc(({ hostname, certificate }, callback) => callback(
-      hostname === '127.0.0.2' && new X509Certificate(certificate.data).fingerprint256 === fingerprint ? 0 : -3,
+      hostname === 'localhost' && new X509Certificate(certificate.data).fingerprint256 === fingerprint ? 0 : -3,
     ));
     const window = new BrowserWindow({ show: false, webPreferences: { preload, session: isolated, contextIsolation: true, nodeIntegration: false, sandbox: true } });
     windows.push(window);
@@ -112,7 +136,7 @@ app.whenReady().then(async () => {
     await window.loadFile(fixture);
     const allowed = await window.webContents.executeJavaScript(`fetch(${JSON.stringify(origin + '/api/server/identity')}).then(response => response.status)`);
     assert(allowed === 200, 'Saved origin must work after reloading the unchanged policy');
-    const wsUrl = `${scheme === 'https' ? 'wss' : 'ws'}://127.0.0.2:${server.address().port}`;
+    const wsUrl = `${scheme === 'https' ? 'wss' : 'ws'}://localhost:${server.address().port}`;
     await window.webContents.executeJavaScript(`new Promise((resolve, reject) => { const ws = new WebSocket(${JSON.stringify(wsUrl)}); ws.onopen = () => { ws.close(); resolve(true); }; ws.onerror = () => reject(new Error('WebSocket blocked')); })`);
     const unrelated = await blockedFetch(window, `${unapprovedOrigin}/unapproved`);
     assert(unrelated.blocked && unrelated.violations.includes('connect-src'), 'Unapproved origins must remain blocked');
@@ -131,4 +155,4 @@ app.whenReady().then(async () => {
   }
   clearTimeout(watchdog);
   finish(0);
-}).catch(error => { report.error = String(error.stack || error); clearTimeout(watchdog); finish(1); });
+}).catch(fail);

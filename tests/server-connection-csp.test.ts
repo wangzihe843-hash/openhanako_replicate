@@ -10,7 +10,7 @@ import { expect, it } from 'vitest';
 const require = createRequire(import.meta.url);
 const root = path.resolve(import.meta.dirname, '..');
 
-it.runIf(process.platform === 'win32')('connects a new HTTP/HTTPS server while the real isolated renderer CSP stays restrictive', async () => {
+it.runIf(process.platform === 'win32' || process.platform === 'darwin')('connects a new HTTP/HTTPS server while the real isolated renderer CSP stays restrictive', async () => {
   const output = await fs.mkdtemp(path.join(os.tmpdir(), 'hana-connection-csp-'));
   await build({
     entryPoints: [path.join(root, 'desktop/src/react/services/server-connection.ts')],
@@ -18,7 +18,12 @@ it.runIf(process.platform === 'win32')('connects a new HTTP/HTTPS server while t
   });
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  const executable = process.env.HANA_TEST_ELECTRON_PATH || require('electron');
+  // Unit-test setup mocks require('electron'); the installer records the real
+  // platform executable separately, without changing that shared mock cache.
+  const electronRoot = path.dirname(require.resolve('electron/package.json'));
+  const executable = process.env.HANA_TEST_ELECTRON_PATH || path.join(
+    electronRoot, 'dist', (await fs.readFile(path.join(electronRoot, 'path.txt'), 'utf8')).trim(),
+  );
   try {
     await promisify(execFile)(executable, [path.join(root, 'tests/fixtures/server-connection-csp-electron.cjs'), output], { env, windowsHide: true, timeout: 35_000 });
   } catch (error) {

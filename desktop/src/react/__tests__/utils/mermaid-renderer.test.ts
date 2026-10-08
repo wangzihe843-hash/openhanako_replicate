@@ -9,6 +9,10 @@ import {
   renderMermaidDiagrams,
 } from '../../utils/mermaid-renderer';
 
+function renderedSvg(container: ParentNode) {
+  return container.querySelector('.mermaid-svg')?.shadowRoot?.querySelector('svg');
+}
+
 describe('renderMermaidDiagrams', () => {
   const initialize = vi.fn();
   const render = vi.fn(async (id: string, source: string) => ({
@@ -19,7 +23,14 @@ describe('renderMermaidDiagrams', () => {
     document.body.innerHTML = '';
     initialize.mockClear();
     render.mockClear();
-    __setMermaidLoaderForTests(async () => ({ initialize, render }));
+    __setMermaidLoaderForTests(async () => ({
+      initialize,
+      render: async (id, source) => {
+        const result = await render(id, source);
+        const bytes = new TextEncoder().encode(result.svg);
+        return { ...result, svg: `<iframe sandbox="" src="data:text/html;charset=UTF-8;base64,${btoa(String.fromCharCode(...bytes))}"></iframe>` };
+      },
+    }));
   });
 
   afterEach(() => {
@@ -39,10 +50,12 @@ describe('renderMermaidDiagrams', () => {
 
     expect(initialize).toHaveBeenCalledWith(expect.objectContaining({
       startOnLoad: false,
-      securityLevel: 'strict',
+      securityLevel: 'sandbox',
+      suppressErrorRendering: true,
     }));
     expect(render).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('.mermaid-rendered svg')).toBeInstanceOf(SVGElement);
+    expect(renderedSvg(container)).toBeInstanceOf(SVGElement);
+    expect(container.querySelector('.mermaid-rendered svg')).toBeNull();
     expect(container.querySelector('.mermaid-source')).toHaveAttribute('hidden');
     expect(container.querySelector('.mermaid-source-toggle')).toBeInstanceOf(HTMLButtonElement);
     expect(container.querySelector('.mermaid-source-copy')).toBeInstanceOf(HTMLButtonElement);
@@ -111,7 +124,7 @@ describe('renderMermaidDiagrams', () => {
     await renderMermaidDiagrams(container);
 
     expect(render).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('.mermaid-rendered svg')).toBeInstanceOf(SVGElement);
+    expect(renderedSvg(container)).toBeInstanceOf(SVGElement);
   });
 
   it('rerenders when the source changes even if a previous SVG exists', async () => {
@@ -126,7 +139,7 @@ describe('renderMermaidDiagrams', () => {
     await renderMermaidDiagrams(container);
 
     expect(render).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('.mermaid-rendered text')?.textContent).toContain('A-->C');
+    expect(renderedSvg(container)?.querySelector('text')?.textContent).toContain('A-->C');
   });
 
   it('does not let an older async render overwrite a newer source', async () => {
@@ -154,7 +167,7 @@ describe('renderMermaidDiagrams', () => {
     await first;
 
     expect(render).toHaveBeenCalledTimes(2);
-    expect(container.querySelector('.mermaid-rendered text')?.textContent).toContain('A-->C');
+    expect(renderedSvg(container)?.querySelector('text')?.textContent).toContain('A-->C');
   });
 
   it('copies the latest source after rerendering a changed diagram', async () => {
@@ -207,5 +220,45 @@ describe('renderMermaidDiagrams', () => {
     await renderMermaidDiagrams(container);
 
     expect(render).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes decoded SVG while preserving ordinary text and HTML labels', async () => {
+    render.mockResolvedValueOnce({
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" onload="void 0"><text>安全</text><script>void 0</script><a href="javascript:void(0)">bad</a><foreignObject><div xmlns="http://www.w3.org/1999/xhtml" onclick="void 0"><b>Label</b></div></foreignObject></svg>',
+    });
+    const container = document.createElement('div');
+    container.innerHTML = '<div class="mermaid-diagram"><pre class="mermaid-source"><code>flowchart LR\nA-->B</code></pre></div>';
+    await renderMermaidDiagrams(container);
+    const svg = renderedSvg(container)!;
+    expect(svg.querySelector('text')?.textContent).toBe('安全');
+    expect(svg.querySelector('foreignObject b')?.textContent).toBe('Label');
+    expect(svg.querySelector('script, [onload], [onclick], [href^="javascript:"]')).toBeNull();
+    expect(svg.hasAttribute('onload')).toBe(false);
+    expect(container.querySelector('iframe, svg')).toBeNull();
+  });
+
+  it('rejects a result that did not come from the sandbox envelope', async () => {
+    __setMermaidLoaderForTests(async () => ({
+      initialize,
+      render: async () => ({ svg: '<svg><text>Unisolated result</text></svg>' }),
+    }));
+    const container = document.createElement('div');
+    container.innerHTML = '<div class="mermaid-diagram"><pre class="mermaid-source"><code>flowchart LR\nA-->B</code></pre></div>';
+    await renderMermaidDiagrams(container);
+    expect(container.querySelector('.mermaid-diagram')).toHaveAttribute('data-mermaid-status', 'error');
+    expect(container.querySelector('.mermaid-source')).not.toHaveAttribute('hidden');
+    expect(renderedSvg(container)).toBeUndefined();
+    expect(container.textContent).toContain('unexpected sandbox result');
+  });
+
+  it('rejects decoded content without one SVG root', async () => {
+    render.mockResolvedValueOnce({ svg: '<div>Unexpected HTML</div>' });
+    const container = document.createElement('div');
+    container.innerHTML = '<div class="mermaid-diagram"><pre class="mermaid-source"><code>flowchart LR\nA-->B</code></pre></div>';
+    await renderMermaidDiagrams(container);
+    expect(container.querySelector('.mermaid-diagram')).toHaveAttribute('data-mermaid-status', 'error');
+    expect(container.querySelector('.mermaid-source')).not.toHaveAttribute('hidden');
+    expect(renderedSvg(container)).toBeUndefined();
+    expect(container.textContent).toContain('invalid SVG');
   });
 });

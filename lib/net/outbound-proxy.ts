@@ -17,7 +17,7 @@ import {
 const originalGlobalDispatcher = getGlobalDispatcher();
 let currentConfig = normalizeNetworkProxyConfig(undefined);
 let currentDispatcher: any = null;
-let nodeProxyAgentCache: Map<string, any> = new Map();
+const nodeProxyAgentCache = new Map<NodeJS.ProcessEnv, NodeProxyAgent>();
 let undiciProxyDispatcherCache: Map<string, any> = new Map();
 
 function proxyProtocol(proxyUrl: any) {
@@ -83,11 +83,14 @@ function createGlobalDispatcher(config: any, env = process.env) {
   };
 }
 
-function resetNodeProxyAgentCache() {
+function resetNodeProxyAgentCache(retainAgents = false) {
   for (const agent of nodeProxyAgentCache.values()) {
-    agent.destroy?.();
+    agent.cache.clear();
+    agent.httpAgent.destroy();
+    agent.httpsAgent.destroy();
+    agent.destroy();
   }
-  nodeProxyAgentCache = new Map();
+  if (!retainAgents) nodeProxyAgentCache.clear();
 }
 
 function resetUndiciProxyDispatcherCache() {
@@ -118,7 +121,7 @@ export function createOutboundProxyRuntime({ log = (..._args: any[]) => {}, warn
       const normalized = normalizeNetworkProxyConfig(config, { strict: true });
       const nextDispatcher = createGlobalDispatcher(normalized, env);
       closeDispatcher(currentDispatcher);
-      resetNodeProxyAgentCache();
+      resetNodeProxyAgentCache(true);
       resetUndiciProxyDispatcherCache();
       currentConfig = normalized;
       currentDispatcher = nextDispatcher;
@@ -153,15 +156,22 @@ export function getOutboundProxyConfig() {
   return currentConfig;
 }
 
-export function getNodeProxyAgentForUrl(targetUrl, env = process.env) {
-  const proxyUrl = resolveProxyForUrl(targetUrl, currentConfig, env);
-  if (!proxyUrl) return null;
-  let agent = nodeProxyAgentCache.get(proxyUrl);
+function getNodeProxyAgent(env = process.env) {
+  let agent = nodeProxyAgentCache.get(env);
   if (!agent) {
-    agent = new NodeProxyAgent(proxyUrl);
-    nodeProxyAgentCache.set(proxyUrl, agent);
+    // proxy-agent 6 takes options, not a URL. Resolve every actual request
+    // (including redirects) through our validated policy, never its raw env fallback.
+    agent = new NodeProxyAgent({
+      getProxyForUrl: url => resolveProxyForUrl(url, buildEffectiveProxyConfig(currentConfig, env), {}),
+    });
+    nodeProxyAgentCache.set(env, agent);
   }
   return agent;
+}
+
+export function getNodeProxyAgentForUrl(targetUrl, env = process.env) {
+  const effective = buildEffectiveProxyConfig(currentConfig, env);
+  return resolveProxyForUrl(targetUrl, effective, {}) ? getNodeProxyAgent(env) : null;
 }
 
 /**
@@ -191,14 +201,16 @@ export function webSocketOptionsForUrl(targetUrl: any) {
 }
 
 export function telegramBotOptions(baseOptions: any = {}) {
-  const agent = getNodeProxyAgentForUrl("https://api.telegram.org");
-  if (!agent) return { ...baseOptions };
+  // Telegram retains these options for its lifetime, including direct -> proxy switches.
+  const agent = getNodeProxyAgent();
   return {
     ...baseOptions,
     request: {
       ...(baseOptions.request || {}),
+      // request otherwise resolves raw proxy environment variables before using
+      // the agent, overriding both manual routing and explicit direct mode.
+      proxy: false,
       agent,
     },
   };
 }
-

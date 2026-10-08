@@ -13,9 +13,10 @@ describe('mermaid editor live preview', () => {
     document.body.innerHTML = '';
     __setMermaidLoaderForTests(async () => ({
       initialize: vi.fn(),
-      render: vi.fn(async (id: string, source: string) => ({
-        svg: `<svg data-id="${id}"><text>${source}</text></svg>`,
-      })),
+      render: vi.fn(async (id: string, source: string) => {
+        const bytes = new TextEncoder().encode(`<svg data-id="${id}"><text>${source}</text></svg>`);
+        return { svg: `<iframe sandbox="" src="data:text/html;charset=UTF-8;base64,${btoa(String.fromCharCode(...bytes))}"></iframe>` };
+      }),
     }));
   });
 

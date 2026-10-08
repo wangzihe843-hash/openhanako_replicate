@@ -1,4 +1,5 @@
 import type { MermaidConfig } from 'mermaid';
+import DOMPurify from 'dompurify';
 
 interface MermaidRenderResult {
   svg: string;
@@ -14,7 +15,10 @@ type MermaidLoader = () => Promise<MermaidApi>;
 
 const MERMAID_CONFIG: MermaidConfig = {
   startOnLoad: false,
-  securityLevel: 'strict',
+  // Mermaid inserts styles while measuring the diagram, before returning SVG.
+  // Isolate that temporary document as well as the final displayed diagram.
+  securityLevel: 'sandbox',
+  suppressErrorRendering: true,
 };
 
 let mermaidPromise: Promise<MermaidApi> | null = null;
@@ -103,7 +107,47 @@ function ensureRenderedElement(diagram: Element): HTMLElement {
 }
 
 function hasRenderedSvg(rendered: HTMLElement): boolean {
-  return !!rendered.querySelector('svg');
+  return !!rendered.querySelector('.mermaid-svg')?.shadowRoot?.querySelector('svg');
+}
+
+function insertSandboxedSvg(rendered: HTMLElement, result: string): HTMLElement {
+  // Read Mermaid's sandbox result without ever loading its returned data URL.
+  const template = document.createElement('template');
+  template.innerHTML = result;
+  const frame = template.content.firstElementChild;
+  const prefix = 'data:text/html;charset=UTF-8;base64,';
+  const src = frame?.getAttribute('src') || '';
+  if (template.content.childElementCount !== 1 || frame?.localName !== 'iframe'
+      || !frame.hasAttribute('sandbox') || !src.startsWith(prefix)) {
+    throw new Error('Mermaid returned an unexpected sandbox result');
+  }
+  const decoded = new TextDecoder().decode(Uint8Array.from(atob(src.slice(prefix.length)), byte => byte.charCodeAt(0)));
+  // Sandbox mode skips Mermaid's final sanitizer. Apply the same SVG policy
+  // as its strict mode before bringing the result into the application DOM.
+  const fragment = DOMPurify.sanitize(decoded, {
+    ADD_TAGS: ['foreignobject'],
+    ADD_ATTR: ['dominant-baseline'],
+    HTML_INTEGRATION_POINTS: { foreignobject: true },
+    RETURN_DOM_FRAGMENT: true,
+  });
+  const svg = fragment.firstElementChild;
+  if (fragment.childElementCount !== 1 || svg?.localName !== 'svg'
+      || svg.namespaceURI !== 'http://www.w3.org/2000/svg') {
+    throw new Error('Mermaid returned an invalid SVG');
+  }
+
+  const host = document.createElement('div');
+  host.className = 'mermaid-svg';
+  const shadow = host.attachShadow({ mode: 'open' });
+  // Existing page selectors cannot cross this boundary. Keep their SVG sizing
+  // here; source controls and composed editor events remain in the outer DOM.
+  const style = document.createElement('style');
+  style.textContent = 'svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }';
+  const container = document.createElement('div');
+  container.appendChild(svg);
+  shadow.append(style, container);
+  rendered.replaceChildren(host);
+  return container;
 }
 
 async function renderMermaidDiagram(diagram: HTMLElement): Promise<void> {
@@ -137,8 +181,8 @@ async function renderMermaidDiagram(diagram: HTMLElement): Promise<void> {
     const mermaid = await loadMermaid();
     const { svg, bindFunctions } = await mermaid.render(nextMermaidId(), source);
     if (diagram.dataset.mermaidRenderSeq !== currentRenderSeq || readSource(diagram) !== source) return;
-    rendered.innerHTML = svg;
-    bindFunctions?.(rendered);
+    const container = insertSandboxedSvg(rendered, svg);
+    bindFunctions?.(container);
     sourceBlock?.setAttribute('hidden', '');
     if (sourceBlock) ensureSourceToolbar(diagram, sourceBlock, source);
     diagram.dataset.mermaidStatus = 'rendered';
