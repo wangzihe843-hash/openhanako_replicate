@@ -110,7 +110,12 @@ describe("fork workflow safety", () => {
       expect(job["continue-on-error"] ?? false).toBe(false);
       for (const step of job.steps ?? []) {
         expect(step["continue-on-error"] ?? false).toBe(false);
-        expect([undefined, "runner.os == 'macOS'", "runner.os == 'Windows'", "always()"]).toContain(step.if);
+        if (step.name === "Preserve native Windows auth lock evidence") {
+          expect(step.if).toBe("always() && runner.os == 'Windows'");
+          expect(step.uses).toBe("actions/upload-artifact@v4");
+        } else {
+          expect([undefined, "runner.os == 'macOS'", "runner.os == 'Windows'", "always()"]).toContain(step.if);
+        }
       }
     }
   });
@@ -185,6 +190,30 @@ describe("fork workflow safety", () => {
       if: "runner.os == 'macOS'",
       run: "node node_modules/electron/install.js",
     });
+  });
+
+  it("runs native Windows auth A/B after npm ci and retains evidence on failure", () => {
+    const steps = ci.jobs.test.steps ?? [];
+    const installIndex = steps.findIndex((step) => stepRun(step) === "npm ci");
+    const probeIndex = steps.findIndex((step) => stepRun(step) === "node scripts/probe-windows-auth-lock.mjs");
+    expect(probeIndex).toBeGreaterThan(installIndex);
+    expect(steps[probeIndex]).toEqual({
+      name: "Probe native Windows auth lock delete-pending recovery",
+      if: "runner.os == 'Windows'",
+      "timeout-minutes": 5,
+      run: "node scripts/probe-windows-auth-lock.mjs",
+    });
+    expect(steps[probeIndex + 1]).toEqual({
+      name: "Preserve native Windows auth lock evidence",
+      if: "always() && runner.os == 'Windows'",
+      uses: "actions/upload-artifact@v4",
+      with: {
+        name: "windows-auth-lock-native-${{ matrix.os }}",
+        path: "output/windows-auth-lock-native/",
+        "if-no-files-found": "error",
+      },
+    });
+    expect(steps.findIndex((step) => stepRun(step) === "npm test")).toBeGreaterThan(probeIndex + 1);
   });
 
   it("keeps tag/manual builds and all four installer targets without enabling Release", () => {

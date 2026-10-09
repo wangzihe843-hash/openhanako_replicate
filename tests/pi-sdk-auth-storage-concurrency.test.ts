@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -10,18 +11,29 @@ import { createAuthRoute } from "../server/routes/auth.ts";
 import { createProvidersRoute } from "../server/routes/providers.ts";
 
 const dirs: string[] = [];
+const cleanups: (() => Promise<void>)[] = [];
+const faultScope = new AsyncLocalStorage<symbol>();
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
 const require = createRequire(import.meta.url);
 // Inject at the filesystem boundary used by the real Pi/proper-lockfile backend.
 const lockFs: typeof fs = createRequire(require.resolve("proper-lockfile"))("graceful-fs");
-afterEach(() => {
-  vi.restoreAllMocks();
-  Object.defineProperty(process, "platform", platformDescriptor);
-  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+  try {
+    for (const cleanup of cleanups.splice(0)) await cleanup();
+  } finally {
+    vi.restoreAllMocks();
+    Object.defineProperty(process, "platform", platformDescriptor);
+    for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-function windowsLockFailure(authPath: string, failures = 1) {
-  Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" });
+function windowsLockFailure(authPath: string, failures = 1, platform = "win32") {
+  const scope = Symbol("raw credential read");
+  // A non-Windows negative must not change a concurrent reader's host behavior.
+  Object.defineProperty(process, "platform", {
+    configurable: true, enumerable: platformDescriptor.enumerable,
+    get: () => faultScope.getStore() === scope ? platform : platformDescriptor.value,
+  });
   const lockPath = path.resolve(authPath) + ".lock";
   const error = Object.assign(new Error("Synthetic Windows lock-directory access denied"), {
     code: "EPERM", syscall: "mkdir", path: lockPath,
@@ -29,7 +41,9 @@ function windowsLockFailure(authPath: string, failures = 1) {
   const mkdir = lockFs.mkdir.bind(lockFs);
   let injected = 0;
   vi.spyOn(lockFs, "mkdir").mockImplementation((...args: Parameters<typeof fs.mkdir>) => {
-    if (args[0] === lockPath && injected < failures) {
+    // Other readers of this file (including a failed availability pass's
+    // unfinished siblings) must not consume this operation's failure budget.
+    if (faultScope.getStore() === scope && args[0] === lockPath && injected < failures) {
       injected++;
       const callback = args[args.length - 1] as fs.NoParamCallback;
       queueMicrotask(() => callback(error));
@@ -37,7 +51,7 @@ function windowsLockFailure(authPath: string, failures = 1) {
     }
     return mkdir(...args);
   });
-  return { error, injected: () => injected };
+  return { error, injected: () => injected, run: <T>(operation: () => T) => faultScope.run(scope, operation) };
 }
 function deferred() {
   let resolve!: () => void;
@@ -48,7 +62,7 @@ const providerId = "fixture-oauth";
 const oldCredential = { type: "oauth" as const, access: "fixture-old", refresh: "fixture-refresh-old", expires: 1 };
 const rotatedCredential = () => ({ type: "oauth" as const, access: "fixture-rotated", refresh: "fixture-refresh-new", expires: Date.now() + 3600_000 });
 
-async function fixture(mode = "file", managerFixture = false) {
+async function fixture(mode = "file", managerFixture = false, failRegistration = false) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-auth-lock-"));
   dirs.push(dir);
   const authPath = path.join(dir, "auth.json");
@@ -66,26 +80,52 @@ async function fixture(mode = "file", managerFixture = false) {
       ...JSON.parse(current!), deepseek: { type: "api_key", key: "fixture-stale" },
     }) }));
   } else storage = mode === "cached-file" ? AuthStorage.create(authPath) : AuthStorage.fromStorage(backend);
-  const runtime = await storage.getRuntime();
+  const pendingReads = new Set<Promise<unknown>>();
+  const trackRead = <T>(read: Promise<T>): Promise<T> => {
+    pendingReads.add(read);
+    void read.then(() => pendingReads.delete(read), () => pendingReads.delete(read));
+    return read;
+  };
+  const read = storage.credentials.read.bind(storage.credentials);
+  const list = storage.credentials.list.bind(storage.credentials);
+  vi.spyOn(storage.credentials, "read").mockImplementation((...args) => trackRead(read(...args)));
+  const listReads = vi.spyOn(storage.credentials, "list").mockImplementation((...args) => trackRead(list(...args)));
+  const drainReads = async () => {
+    while (pendingReads.size) await Promise.allSettled([...pendingReads]);
+  };
   const entered = deferred();
   const release = deferred();
+  let refresh: Promise<unknown> = Promise.resolve();
+  cleanups.push(async () => {
+    release.resolve();
+    try { await refresh; }
+    finally { await drainReads(); }
+  });
+  const runtime = await storage.getRuntime();
+  await drainReads();
   const rotated = rotatedCredential();
   let refreshes = 0;
+  let readersAtRotation = 0;
   const unexpected = () => { throw new Error("Synthetic fixture refuses login/model requests"); };
   const registrationRefresh = vi.spyOn(runtime, "refresh");
+  const registrationError = new Error("Synthetic availability-list failure");
+  if (failRegistration) listReads.mockRejectedValueOnce(registrationError);
   runtime.registerNativeProvider({
     id: providerId, name: "Fixture OAuth", getModels: () => [], stream: unexpected, streamSimple: unexpected,
     auth: { oauth: { name: "Fixture OAuth", login: unexpected,
-      async refresh() { refreshes++; entered.resolve(); await release.promise; return rotated; },
+      async refresh() { refreshes++; readersAtRotation = pendingReads.size; entered.resolve(); await release.promise; return rotated; },
       async toAuth(credential) { return { apiKey: credential.access }; },
     } },
   });
-  // Registration starts a background availability pass. Drain it before the
-  // deliberate rotation so it neither consumes injected faults nor outlives cleanup.
+  // Pi catches availability errors, and Promise.all rejects before its sibling
+  // reads settle. Await the public pass AND its actual reads before rotation.
   const registration = registrationRefresh.mock.results[0].value;
   registrationRefresh.mockRestore();
   await registration;
-  const refresh = runtime.getAuth(providerId);
+  const registrationPending = pendingReads.size;
+  if (failRegistration) expect(runtime.getError()).toContain(registrationError.message);
+  await drainReads();
+  refresh = runtime.getAuth(providerId);
   await entered.promise;
   const duringRefresh = async <T>(operation: () => T | Promise<T>): Promise<T> => {
     const result = Promise.resolve().then(operation);
@@ -93,7 +133,7 @@ async function fixture(mode = "file", managerFixture = false) {
     try { return await result; }
     finally { release.resolve(); await refresh; }
   };
-  return { dir, authPath, storage, backend, runtime, manager, rotated, duringRefresh, refreshes: () => refreshes };
+  return { dir, authPath, storage, backend, runtime, manager, rotated, duringRefresh, registrationPending, readersAtRotation, refreshes: () => refreshes };
 }
 
 function appFor(storage: AuthStorage) {
@@ -143,7 +183,7 @@ describe("AuthStorage operations during OAuth rotation", () => {
     const f = await fixture(mode);
     const app = appFor(f.storage);
     const failure = windowsLockFailure(f.authPath);
-    const response = await f.duringRefresh(() => app.request("/api/providers/summary"));
+    const response = await f.duringRefresh(() => failure.run(() => app.request("/api/providers/summary")));
     expect(failure.injected()).toBe(1);
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -156,7 +196,7 @@ describe("AuthStorage operations during OAuth rotation", () => {
   it.each(["file", "cached-file"])("still waits for rotation after repeated Windows lock mkdir failures (%s)", async mode => {
     const f = await fixture(mode);
     const failure = windowsLockFailure(f.authPath, 3);
-    expect(await f.duringRefresh(() => f.storage.get(providerId))).toEqual(f.rotated);
+    expect(await f.duringRefresh(() => failure.run(() => f.storage.get(providerId)))).toEqual(f.rotated);
     expect(failure.injected()).toBe(3);
     expect(f.refreshes()).toBe(1);
     expect(JSON.parse(fs.readFileSync(f.authPath, "utf8"))[providerId]).toEqual(f.rotated);
@@ -168,7 +208,7 @@ describe("AuthStorage operations during OAuth rotation", () => {
     const errors: Error[] = [];
     app.onError((error, c) => { errors.push(error); return c.text("Storage unavailable", 500); });
     const failure = windowsLockFailure(f.authPath, Infinity);
-    const response = await f.duringRefresh(() => app.request("/api/providers/summary"));
+    const response = await f.duringRefresh(() => failure.run(() => app.request("/api/providers/summary")));
     expect(response.status).toBe(500);
     expect(errors).toEqual([failure.error]);
     expect(failure.injected()).toBe(6); // Initial attempt + five bounded waits.
@@ -185,12 +225,31 @@ describe("AuthStorage operations during OAuth rotation", () => {
     { name: "another lock directory", platform: "win32", code: "EPERM", syscall: "mkdir", target: "other.lock" },
   ])("does not retry $name", async ({ platform, code, syscall, target }) => {
     const f = await fixture();
-    const failure = windowsLockFailure(f.authPath, Infinity);
-    Object.defineProperty(process, "platform", { ...platformDescriptor, value: platform });
+    const failure = windowsLockFailure(f.authPath, Infinity, platform);
     Object.assign(failure.error, { code, syscall, path: target === "lock" ? failure.error.path
       : target === "auth" ? f.authPath : target === "parent" ? f.dir : path.join(f.dir, target) });
-    await expect(f.duringRefresh(() => f.storage.get(providerId))).rejects.toBe(failure.error);
+    await expect(f.duringRefresh(() => failure.run(() => f.storage.get(providerId)))).rejects.toBe(failure.error);
     expect(failure.injected()).toBe(1);
+  });
+
+  it.each(["win32", "linux"])("isolates %s denial from another read after an availability pass fails early", async platform => {
+    const f = await fixture("file", false, true);
+    expect(f.registrationPending).toBeGreaterThan(0);
+    expect(f.readersAtRotation).toBe(0);
+    const failure = windowsLockFailure(f.authPath, Infinity, platform);
+    expect(process.platform).toBe(platformDescriptor.value);
+    expect(failure.run(() => process.platform)).toBe(platform);
+    await f.duringRefresh(async () => {
+      const denied = expect(failure.run(() => f.storage.get(providerId))).rejects.toBe(failure.error);
+      // This same-file reader uses the real Pi backend outside the fault's
+      // context. It must still wait for and observe the one committed rotation.
+      const other = f.storage.get(providerId);
+      const [, credential] = await Promise.all([denied, other]);
+      expect(credential).toEqual(f.rotated);
+    });
+    expect(failure.injected()).toBe(platform === "win32" ? 6 : 1);
+    expect(f.refreshes()).toBe(1);
+    expect(await AuthStorage.create(f.authPath).get(providerId)).toEqual(f.rotated);
   });
 
   it("keeps custom-backend errors visible without retry", async () => {
@@ -210,7 +269,7 @@ describe("AuthStorage operations during OAuth rotation", () => {
     await f.duringRefresh(() => undefined);
     fs.writeFileSync(f.authPath, "{broken");
     const failure = windowsLockFailure(f.authPath);
-    await expect(f.storage.get(providerId)).rejects.toBeInstanceOf(SyntaxError);
+    await expect(failure.run(() => f.storage.get(providerId))).rejects.toBeInstanceOf(SyntaxError);
     expect(failure.injected()).toBe(1);
     expect(fs.readFileSync(f.authPath, "utf8")).toBe("{broken");
   });

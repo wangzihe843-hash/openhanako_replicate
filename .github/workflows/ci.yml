@@ -36,6 +36,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Probe native Windows auth lock delete-pending recovery
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        run: node scripts/probe-windows-auth-lock.mjs
+
+      - name: Preserve native Windows auth lock evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-auth-lock-native-${{ matrix.os }}
+          path: output/windows-auth-lock-native/
+          if-no-files-found: error
+
       # Electron 42 installs lazily on require(), which the renderer tests
       # bypass because the shared unit-test setup mocks Electron.
       - name: Install Electron binary for macOS renderer tests
