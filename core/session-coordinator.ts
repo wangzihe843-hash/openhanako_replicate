@@ -1,6 +1,6 @@
 import { reportNonfatalError } from "../lib/nonfatal-error.ts";
 import type { ExpressionTransport } from "./session-dialogue-variants.ts";
-import type { SessionAbortRequest, SessionCancellation } from "./runtime-contracts.ts";
+import type { CompactionRuntime, SessionAbortRequest, SessionCancellation } from "./runtime-contracts.ts";
 import { cancelDesktopSessionSubmission } from './desktop-session-submit.ts';
 /**
  * SessionCoordinator — Session 生命周期管理
@@ -1021,6 +1021,20 @@ function rewriteForkedSessionDraftReferences(sessionManager: any, suggestionIdMa
   return true;
 }
 
+type SessionRuntimeReloadOptions = { refreshCapabilitySnapshots?: boolean };
+
+type SessionTeardownEntry = {
+  session: { dispose?(): void } | null;
+  unsub?: () => void;
+  _switching?: boolean;
+};
+
+export type SessionCompactionScope = {
+  reloadSessionRuntime(options?: SessionRuntimeReloadOptions): Promise<CompactionRuntime>;
+};
+
+type SessionRuntimeClosingScope = { sessionPath?: string; agentId?: string };
+
 type SessionConstructionOptions = {
   sessionMgr?: unknown;
   cwd?: string;
@@ -1070,6 +1084,9 @@ export class SessionCoordinator implements SessionCancellation {
   declare _envChangeLedger: any;
   declare _ensureSessionLoadedInFlight: Map<string, Promise<any>>;
   declare _sessionRuntimeOperations: Map<string, Promise<any>>;
+  declare _sessionCompactionOwners: Map<string, symbol>;
+  declare _sessionRuntimeClosures: Set<SessionRuntimeClosingScope>;
+  declare _sessionRuntimeCreations: Set<SessionRuntimeClosingScope>;
   declare _focusVersion: number;
   declare _metaQuarantines: Map<string, { metaPath: string; backupPath: string; quarantinedAt: string }>;
 
@@ -1121,6 +1138,9 @@ export class SessionCoordinator implements SessionCancellation {
     this._envChangeLedger = deps.envChangeLedger || null;
     this._ensureSessionLoadedInFlight = new Map();
     this._sessionRuntimeOperations = new Map();
+    this._sessionCompactionOwners = new Map();
+    this._sessionRuntimeClosures = new Set();
+    this._sessionRuntimeCreations = new Set();
     this._focusVersion = 0;
     // 运行期 session-meta 隔离记录：key 是 metaPath，value 是隔离详情。
     // 只记内存态（不落盘）——重启后 quarantine 文件仍在磁盘上，但这份
@@ -1804,6 +1824,7 @@ export class SessionCoordinator implements SessionCancellation {
   }
 
   _withSessionRuntimeOperation(sessionPath: string, operation: () => Promise<any>) {
+    this._assertSessionRuntimeOpen(sessionPath);
     const key = this._runtimeOperationKey(sessionPath);
     const previous = this._sessionRuntimeOperations.get(key);
     // A failed operation is reported to its caller; it must not poison the
@@ -1815,6 +1836,83 @@ export class SessionCoordinator implements SessionCancellation {
     };
     void pending.then(release, release);
     return pending;
+  }
+
+  /** Reserve before SDK compact's first await, including recovery and retry. */
+  async withSessionCompaction<T>(sessionPath: string, session: CompactionRuntime, operation: (scope: SessionCompactionScope) => Promise<T>): Promise<T> {
+    this._assertActiveDesktopSessionPath(sessionPath, "withSessionCompaction");
+    this._assertSessionRuntimeOpen(sessionPath);
+    const key = this._runtimeOperationKey(sessionPath);
+    if (this._getSessionEntryByPath(sessionPath)?.session !== session
+      || this.isSessionSwitching(sessionPath) || this._sessionRuntimeOperations.has(key)
+      || this.isSessionStreaming(sessionPath) || session.isCompacting || isDirectCompactionInProgress(session)) {
+      throw new Error("session_busy");
+    }
+    const owner = Symbol("session_compaction");
+    this._sessionCompactionOwners.set(key, owner);
+    try {
+      // This reservation does not hold the runtime queue. Its scoped reload
+      // can join that queue without waiting on the compact operation itself.
+      return await operation({
+        reloadSessionRuntime: (options = {}) => this._reloadSessionRuntime(sessionPath, options, owner),
+      });
+    } finally {
+      if (this._sessionCompactionOwners.get(key) === owner) this._sessionCompactionOwners.delete(key);
+    }
+  }
+
+  _assertSessionCompactionOwner(sessionPath: string, owner?: symbol) {
+    if (this._sessionCompactionOwners.get(this._runtimeOperationKey(sessionPath)) !== owner) {
+      throw new Error("session_busy");
+    }
+  }
+
+  _matchesSessionRuntimeScope(scope: SessionRuntimeClosingScope, sessionPath?: string, agentId?: string) {
+    if (scope.sessionPath) return !!sessionPath
+      && this._runtimeOperationKey(scope.sessionPath) === this._runtimeOperationKey(sessionPath);
+    return !scope.agentId || scope.agentId === (agentId || (sessionPath && this.resolveSessionOwnership(sessionPath).agentId));
+  }
+
+  _sessionRuntimeScopesOverlap(left: SessionRuntimeClosingScope, right: SessionRuntimeClosingScope) {
+    if (left.sessionPath) return this._matchesSessionRuntimeScope(right, left.sessionPath, left.agentId);
+    if (right.sessionPath) return this._matchesSessionRuntimeScope(left, right.sessionPath, right.agentId);
+    return !left.agentId || !right.agentId || left.agentId === right.agentId;
+  }
+
+  _isSessionRuntimeClosing(sessionPath?: string, agentId?: string) {
+    return [...this._sessionRuntimeClosures].some(scope => this._matchesSessionRuntimeScope(scope, sessionPath, agentId));
+  }
+
+  _assertSessionRuntimeOpen(sessionPath?: string, agentId?: string) {
+    if (this._isSessionRuntimeClosing(sessionPath, agentId)) throw new Error("session_busy");
+  }
+
+  async _withSessionRuntimeCreation<T>(scope: SessionRuntimeClosingScope, operation: () => Promise<T>): Promise<T> {
+    this._assertSessionRuntimeOpen(scope.sessionPath, scope.agentId);
+    this._sessionRuntimeCreations.add(scope);
+    try { return await operation(); }
+    finally { this._sessionRuntimeCreations.delete(scope); }
+  }
+
+  async _withSessionRuntimeClosing<T>(scope: SessionRuntimeClosingScope, operation: () => Promise<T>): Promise<T> {
+    // Reject the whole close before any side effect, including when recovery
+    // owns a path whose replacement has not yet been published in _sessions.
+    for (const active of [...this._sessionRuntimeClosures, ...this._sessionRuntimeCreations]) {
+      if (this._sessionRuntimeScopesOverlap(scope, active)) throw new Error("session_busy");
+    }
+    for (const sessionPath of [...this._sessionCompactionOwners.keys(), ...this._sessionRuntimeOperations.keys()]) {
+      if (this._matchesSessionRuntimeScope(scope, sessionPath)) throw new Error("session_busy");
+    }
+    for (const [key, entry] of this._sessions) {
+      if (this._matchesSessionRuntimeScope(scope, this._sessionPathForEntry(entry, key), entry.agentId)
+        && (entry._switching || (!entry.session?.isStreaming
+          && (entry.session?.isCompacting || isDirectCompactionInProgress(entry.session))))) throw new Error("session_busy");
+    }
+    // This fence blocks new admissions until the caller has also finished
+    // disposing an agent/engine. It never waits on a compact or runtime queue.
+    this._sessionRuntimeClosures.add(scope);
+    try { return await operation(); }
+    finally { this._sessionRuntimeClosures.delete(scope); }
   }
 
   _focusSession(session: any, sessionPath: string, version: number) {
@@ -1841,6 +1939,9 @@ export class SessionCoordinator implements SessionCancellation {
     if (options.initialXingyeGreeting !== undefined && options.initialXingyeGreeting !== null && (options.restore || sessionMgr)) {
       throw Object.assign(new Error('A character greeting requires a newly created session.'), { status: 409, code: 'xingye_greeting_requires_new_session' });
     }
+    const agent = options.agent || (options.agentId ? this._d.getAgentById?.(options.agentId) : null) || this._d.getAgent();
+    const sessionPath = sessionMgr?.getSessionFile?.() || null;
+    this._assertSessionRuntimeOpen(sessionPath, options.agentId || agent?.id || this._d.getActiveAgentId());
     const focus = options.focus !== false;
     const focusVersion = focus ? ++this._focusVersion : null;
     // Consume foreground choices before the first await. A detached session
@@ -1851,10 +1952,9 @@ export class SessionCoordinator implements SessionCancellation {
       this._pendingModel = null;
       this._pendingPermissionMode = null;
     }
-    const agent = options.agent || (options.agentId ? this._d.getAgentById?.(options.agentId) : null) || this._d.getAgent();
-    const sessionPath = sessionMgr?.getSessionFile?.() || null;
     const requestedEntry = sessionPath ? this._getSessionEntryByPath(sessionPath) : null;
     const create = async () => {
+      if (sessionPath) this._assertSessionCompactionOwner(sessionPath);
       const existing = sessionPath ? this._getSessionEntryByPath(sessionPath) : null;
       if (existing && existing !== requestedEntry) return this._creationResultForEntry(existing);
       if (existing) {
@@ -1864,7 +1964,8 @@ export class SessionCoordinator implements SessionCancellation {
         await this._teardownSessionEntry(existing, sessionPath, 'explicit_restore');
         if (this._getSessionEntryByPath(sessionPath) === existing) this._deleteRuntimeValueForPath(this._sessions, sessionPath);
       }
-      return this._createSessionRuntime(sessionMgr, cwd, memoryEnabled, selectedModel, { ...options, agent, permissionMode });
+      return this._withSessionRuntimeCreation({ sessionPath, agentId: options.agentId || agent?.id || this._d.getActiveAgentId() },
+        () => this._createSessionRuntime(sessionMgr, cwd, memoryEnabled, selectedModel, { ...options, agent, permissionMode }));
     };
     const result = sessionPath ? await this._withSessionRuntimeOperation(sessionPath, create) : await create();
     if (focus) this._focusSession(result.session, result.sessionPath, focusVersion);
@@ -5223,7 +5324,7 @@ export class SessionCoordinator implements SessionCancellation {
       entry = this._getSessionEntryByPath(sessionPath);
     }
     if (!entry) throw new Error(t("error.sessionNotInCache", { path: sessionPath }));
-    if (entry._switching || entry.session.isStreaming || this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)) throw new Error("session_busy");
+    if (this.isSessionSwitching(sessionPath) || entry.session.isStreaming || this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)) throw new Error("session_busy");
     if (sessionPath === this.currentSessionPath && this._session !== entry.session) {
       this._session = entry.session;
     }
@@ -5257,7 +5358,7 @@ export class SessionCoordinator implements SessionCancellation {
       if (this._getSessionEntryByPath(sessionPath) !== entry) throw Object.assign(new Error("session runtime replaced"), { name: "AbortError" });
       // A custom turn can start during media preparation. Reject before changing
       // the active SDK prompt or storing context from this unaccepted input.
-      if (entry._switching || entry.session.isStreaming) throw new Error("session_busy");
+      if (this.isSessionSwitching(sessionPath) || entry.session.isStreaming) throw new Error("session_busy");
       assertVideoInputSupported(entry.session.model, opts?.videos);
       assertAudioInputSupported(entry.session.model, opts?.audios);
       const agent = this._d.getAgentById(entry.agentId) || this._d.getAgent();
@@ -5291,7 +5392,7 @@ export class SessionCoordinator implements SessionCancellation {
         promptPreflightReported = true;
         if (!success) return;
         abortController.signal.throwIfAborted();
-        if (this._getSessionEntryByPath(sessionPath) !== entry || entry._switching) throw Object.assign(new Error("session runtime replaced"), { name: "AbortError" });
+        if (this._getSessionEntryByPath(sessionPath) !== entry || this.isSessionSwitching(sessionPath)) throw Object.assign(new Error("session runtime replaced"), { name: "AbortError" });
         if (typeof submitOptions?.afterCachePreflight === "function") {
           const hookResult = submitOptions.afterCachePreflight();
           if (hookResult && typeof hookResult.then === "function") {
@@ -5315,7 +5416,7 @@ export class SessionCoordinator implements SessionCancellation {
         // Recheck after asynchronous media preparation. A background custom turn
         // may have started since the route-level guard; no input side effects may
         // be committed onto a now-streaming Session.
-        if (entry._switching || entry.session.isStreaming) throw new Error("session_busy");
+        if (this.isSessionSwitching(sessionPath) || entry.session.isStreaming) throw new Error("session_busy");
         this.preflightSessionInput(sessionPath);
         entry._sdkPromptOwner = abortController;
         await entry.session.prompt(text, promptOpts);
@@ -5371,7 +5472,7 @@ export class SessionCoordinator implements SessionCancellation {
     if (!entry?.session) {
       throw new Error(`deliverCustomMessage: session not loaded for ${sessionPath}`);
     }
-    if (entry._switching || (!entry.session.isStreaming
+    if (this.isSessionSwitching(sessionPath) || (!entry.session.isStreaming
       && this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath))) throw new Error("session_busy");
     if (typeof entry.session.sendCustomMessage !== "function") {
       throw new Error("deliverCustomMessage: session does not support custom messages");
@@ -5563,9 +5664,13 @@ export class SessionCoordinator implements SessionCancellation {
    */
   async switchSessionModel(sessionPath: any, newModel: any) {
     this._assertActiveDesktopSessionPath(sessionPath, "switchSessionModel");
+    this._assertSessionRuntimeOpen(sessionPath);
     let entry = this._getSessionEntryByPath(sessionPath);
     if (!entry) {
       await this.ensureSessionLoaded(sessionPath);
+      // Loading releases its queue before this continuation resumes; an agent
+      // or global close may have acquired its fence in that interval.
+      this._assertSessionRuntimeOpen(sessionPath);
       entry = this._getSessionEntryByPath(sessionPath);
     }
     if (!entry) throw new Error(t("error.sessionNotInCache", { path: sessionPath }));
@@ -5582,7 +5687,8 @@ export class SessionCoordinator implements SessionCancellation {
     // Both kinds of compaction rewrite this session's history, so either one
     // blocks a model switch: isCompacting covers the SDK's own pass, and the
     // direct cache-preserving pass reports itself separately.
-    if (session.isCompacting || isDirectCompactionInProgress(session)) {
+    if (this._sessionCompactionOwners.has(this._runtimeOperationKey(sessionPath))
+      || session.isCompacting || isDirectCompactionInProgress(session)) {
       throw new Error("Cannot switch model while compaction is in progress");
     }
 
@@ -6098,20 +6204,31 @@ export class SessionCoordinator implements SessionCancellation {
    * @param {string} reason - teardown 原因 (lru / close / close_all / isolated)
    * @private
    */
-  async _teardownSessionEntry(entry: any, sessionPath: any, reason: any) {
+  async _teardownSessionEntry(entry: SessionTeardownEntry | null, sessionPath: string | null, reason: string, compactionOwner?: symbol) {
     if (!entry) return;
+    if (sessionPath) this._assertSessionCompactionOwner(sessionPath, compactionOwner);
     const spShort = sessionPath ? path.basename(sessionPath) : "(anon)";
-    await teardownSessionResources({
-      session: entry.session,
-      unsub: entry.unsub,
-      label: `teardown[${reason}] ${spShort}`,
-      warn: (msg) => log.warn(msg),
-    });
+    const wasSwitching = entry._switching;
+    entry._switching = true;
+    try {
+      await teardownSessionResources({
+        session: entry.session,
+        unsub: entry.unsub,
+        label: `teardown[${reason}] ${spShort}`,
+        warn: (msg) => log.warn(msg),
+      });
+      // A disposed entry stays closed until its caller removes it from cache.
+    } catch (error) {
+      entry._switching = wasSwitching;
+      throw error;
+    }
   }
 
   _canHibernateSessionRuntime(entry: any, sessionPath: any) {
     if (!entry?.session || !sessionPath) return false;
-    if (entry.session.isStreaming || entry.session.isCompacting || isDirectCompactionInProgress(entry.session) || entry._switching) return false;
+    if (entry.session.isStreaming || entry.session.isCompacting || isDirectCompactionInProgress(entry.session)
+      || entry._switching || this._isSessionRuntimeClosing(sessionPath)
+      || this._sessionCompactionOwners.has(this._runtimeOperationKey(sessionPath))) return false;
     if (this._hasRuntimeValueForPath(this._prePromptAbortControllers, sessionPath)) return false;
     const pendingDeferred = this._d.getDeferredResultStore?.()?.listPending?.(sessionPath);
     if (Array.isArray(pendingDeferred) && pendingDeferred.length > 0) return false;
@@ -6167,7 +6284,14 @@ export class SessionCoordinator implements SessionCancellation {
         contextUsage: entry.session?.getContextUsage?.() || null,
         hibernatedAt: Date.now(),
       });
-      await this._teardownSessionEntry(entry, sessionPath, reason);
+      // Manual operations do not all join the runtime queue. Reserve the same
+      // busy state as reload/LRU before shutdown yields to extension cleanup.
+      entry._switching = true;
+      try {
+        await this._teardownSessionEntry(entry, sessionPath, reason);
+      } finally {
+        entry._switching = false;
+      }
       if (this._getSessionEntryByPath(sessionPath) === entry) {
         this._deleteRuntimeValueForPath(this._sessions, sessionPath);
         this._clearRuntimePressureTimer(sessionPath);
@@ -6257,6 +6381,10 @@ export class SessionCoordinator implements SessionCancellation {
 
   async discardSessionRuntime(sessionPath: any, reason = "discard", options: { skipMemory?: boolean } = {}) {
     if (!sessionPath) return false;
+    return this._withSessionRuntimeClosing({ sessionPath }, () => this._discardSessionRuntime(sessionPath, reason, options));
+  }
+
+  async _discardSessionRuntime(sessionPath: string, reason: string, options: { skipMemory?: boolean } = {}) {
     this._clearRuntimePressureTimer(sessionPath);
     const hadHibernated = this._deleteRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
     const entry = this._getSessionEntryByPath(sessionPath);
@@ -6295,8 +6423,8 @@ export class SessionCoordinator implements SessionCancellation {
     if (discarded && typeof this._d.onSessionRuntimeDiscarded === "function") {
       try {
         await this._d.onSessionRuntimeDiscarded(sessionPath, reason);
-      } catch (err) {
-        log.warn(`discardSessionRuntime ${path.basename(sessionPath)}: runtime state cleanup failed: ${(err as any).message}`);
+      } catch (err: unknown) {
+        log.warn(`discardSessionRuntime ${path.basename(sessionPath)}: runtime state cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     return discarded;
@@ -6304,7 +6432,19 @@ export class SessionCoordinator implements SessionCancellation {
 
   async discardSessionsForAgent(agentId: any, reason = "agent deleted") {
     if (!agentId) return 0;
-    const paths = new Set();
+    return this.withAgentSessionsClosing(agentId, discard => discard(reason));
+  }
+
+  async withAgentSessionsClosing<T>(agentId: string, operation: (discard: (reason?: string) => Promise<number>) => Promise<T>): Promise<T> {
+    const scope = { agentId };
+    return this._withSessionRuntimeClosing(scope, () => operation((reason = "agent deleted") => {
+      if (!this._sessionRuntimeClosures.has(scope)) throw new Error("session_busy");
+      return this._discardSessionsForAgent(agentId, reason);
+    }));
+  }
+
+  async _discardSessionsForAgent(agentId: string, reason: string) {
+    const paths = new Set<string>();
     for (const [sessionKey, entry] of this._sessions) {
       const sessionPath = this._sessionPathForEntry(entry, sessionKey);
       const entryAgentId = entry?.agentId || this.resolveSessionOwnership(sessionPath).agentId;
@@ -6317,7 +6457,7 @@ export class SessionCoordinator implements SessionCancellation {
     }
     let discarded = 0;
     for (const sessionPath of paths) {
-      if (await this.discardSessionRuntime(sessionPath, reason)) discarded += 1;
+      if (await this._discardSessionRuntime(sessionPath, reason)) discarded += 1;
     }
     return discarded;
   }
@@ -6327,6 +6467,18 @@ export class SessionCoordinator implements SessionCancellation {
   }
 
   async closeAllSessions() {
+    return this.withAllSessionsClosing(close => close());
+  }
+
+  async withAllSessionsClosing<T>(operation: (close: () => Promise<void>) => Promise<T>): Promise<T> {
+    const scope = {};
+    return this._withSessionRuntimeClosing(scope, () => operation(() => {
+      if (!this._sessionRuntimeClosures.has(scope)) throw new Error("session_busy");
+      return this._closeAllSessions();
+    }));
+  }
+
+  async _closeAllSessions() {
     for (const [sessionKey, timer] of this._runtimePressureTimers) {
       const sessionPath = this._sessionPathForEntry(timer, sessionKey) || sessionKey;
       this._clearRuntimePressureTimer(sessionPath);
@@ -6650,8 +6802,13 @@ export class SessionCoordinator implements SessionCancellation {
       .sort((left, right) => left.localeCompare(right));
   }
 
-  async reloadSessionRuntime(sessionPath: any, { refreshCapabilitySnapshots = false }: any = {}) {
+  async reloadSessionRuntime(sessionPath: string, options: SessionRuntimeReloadOptions = {}) {
+    return this._reloadSessionRuntime(sessionPath, options);
+  }
+
+  async _reloadSessionRuntime(sessionPath: string, { refreshCapabilitySnapshots = false }: SessionRuntimeReloadOptions = {}, compactionOwner?: symbol) {
     this._assertActiveDesktopSessionPath(sessionPath, "reloadSessionRuntime");
+    this._assertSessionCompactionOwner(sessionPath, compactionOwner);
     if (this._isDeletedAgentSessionPath(sessionPath)) {
       throw new Error("reloadSessionRuntime: session belongs to a deleted agent");
     }
@@ -6660,6 +6817,7 @@ export class SessionCoordinator implements SessionCancellation {
     const focusVersion = this._focusVersion;
     const wasFocused = this._currentSessionPath === sessionPath;
     return this._withSessionRuntimeOperation(sessionPath, async () => {
+      this._assertSessionCompactionOwner(sessionPath, compactionOwner);
       const oldEntry = this._getSessionEntryByPath(sessionPath);
       if (oldEntry && oldEntry !== requestedEntry && !refreshCapabilitySnapshots) return oldEntry.session;
       const targetAgentId = this.resolveSessionOwnership(sessionPath).agentId;
@@ -6672,7 +6830,7 @@ export class SessionCoordinator implements SessionCancellation {
       const reminderState = oldEntry || this._getRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);
       if (oldEntry) {
         oldEntry._switching = true;
-        try { await this._teardownSessionEntry(oldEntry, sessionPath, "reload"); }
+        try { await this._teardownSessionEntry(oldEntry, sessionPath, "reload", compactionOwner); }
         catch (err) { oldEntry._switching = false; throw err; }
         if (this._getSessionEntryByPath(sessionPath) === oldEntry) this._deleteRuntimeValueForPath(this._sessions, sessionPath);
       }
@@ -6683,10 +6841,10 @@ export class SessionCoordinator implements SessionCancellation {
       this._repairOrphanToolHistory(sessionPath);
       this._repairInlineMediaHistory(sessionPath);
       const sessionMgr = SessionManager.open(sessionPath, readyAgent.sessionDir);
-      const result = await this._createSessionRuntime(sessionMgr, sessionMgr.getCwd?.() || undefined, memoryEnabled, null, {
+      const result = await this._withSessionRuntimeCreation({ sessionPath, agentId: targetAgentId }, () => this._createSessionRuntime(sessionMgr, sessionMgr.getCwd?.() || undefined, memoryEnabled, null, {
         restore: true, agent: readyAgent, agentId: targetAgentId,
         preserveAgentMemoryState: true, refreshCapabilitySnapshots, reminderState,
-      });
+      }));
       if (wasFocused && this._currentSessionPath === sessionPath) this._focusSession(result.session, sessionPath, focusVersion);
       return result.session;
     });
@@ -6723,9 +6881,9 @@ export class SessionCoordinator implements SessionCancellation {
       this._repairOrphanToolHistory(sessionPath);
       this._repairInlineMediaHistory(sessionPath);
       const sessionMgr = SessionManager.open(sessionPath, readyAgent.sessionDir);
-      const result = await this._createSessionRuntime(sessionMgr, sessionMgr.getCwd?.() || undefined, memoryEnabled, null, {
+      const result = await this._withSessionRuntimeCreation({ sessionPath, agentId: targetAgentId }, () => this._createSessionRuntime(sessionMgr, sessionMgr.getCwd?.() || undefined, memoryEnabled, null, {
         restore: true, agent: readyAgent, agentId: targetAgentId, preserveAgentMemoryState: true, reminderState,
-      });
+      }));
       return result.session;
     });
   }
@@ -6735,7 +6893,8 @@ export class SessionCoordinator implements SessionCancellation {
   }
 
   isSessionSwitching(sessionPath: any) {
-    return !!this._getSessionEntryByPath(sessionPath)?._switching;
+    return !!sessionPath && (this._isSessionRuntimeClosing(sessionPath) || this._sessionCompactionOwners.has(this._runtimeOperationKey(sessionPath))
+      || !!this._getSessionEntryByPath(sessionPath)?._switching);
   }
 
   async abortSessionByPath(sessionPath: string, options: SessionAbortRequest = {}): Promise<boolean> {

@@ -58,7 +58,9 @@ describe("AgentManager.deleteAgent skill bundle lifecycle", () => {
       resolveUtilityConfig: () => ({}),
       getSharedModels: () => ({}),
       getChannelManager: () => ({ cleanupAgentFromChannels: vi.fn() }),
-      getSessionCoordinator: () => ({}),
+      getSessionCoordinator: () => ({
+        withAgentSessionsClosing: (_agentId, operation) => operation(async () => 0),
+      }),
     });
     manager.activeAgentId = "active";
   });

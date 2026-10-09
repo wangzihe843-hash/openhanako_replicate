@@ -606,6 +606,7 @@ describe("chat route model switch guard", () => {
       abortAllStreaming: vi.fn(async () => {}),
       getSessionManifest: vi.fn(() => ({ currentLocator: { path: "/tmp/current-b.jsonl" } })),
       getSessionByPath: vi.fn((path) => path === "/tmp/current-b.jsonl" ? session : null),
+      withSessionCompaction: vi.fn((_path, _session, operation) => operation({ reloadSessionRuntime: vi.fn() })),
       isDeletedAgentSession: vi.fn(() => false),
       isSessionStreaming: vi.fn(() => false),
       slashDispatcher: null,
@@ -622,6 +623,7 @@ describe("chat route model switch guard", () => {
     expect(engine.getSessionManifest).toHaveBeenCalledWith("sess_a");
     expect(engine.getSessionByPath).toHaveBeenCalledWith("/tmp/current-b.jsonl");
     expect(session.compact).toHaveBeenCalledTimes(1);
+    expect(engine.withSessionCompaction).toHaveBeenCalledWith("/tmp/current-b.jsonl", session, expect.any(Function));
     expect(ws.send.mock.calls.map(([raw]) => JSON.parse(raw))).toEqual([
       expect.objectContaining({
         type: "compaction_accepted",
@@ -665,6 +667,7 @@ describe("chat route model switch guard", () => {
       getLossyLocalCompactionSummarySource: vi.fn(() => summarySource),
       getSessionManifest: vi.fn(() => ({ currentLocator: { path: "/tmp/current-b.jsonl" } })),
       getSessionByPath: vi.fn(() => session),
+      withSessionCompaction: vi.fn((_path, _session, operation) => operation({ reloadSessionRuntime: vi.fn() })),
       isDeletedAgentSession: vi.fn(() => false),
       isSessionStreaming: vi.fn(() => false),
       slashDispatcher: null,
@@ -687,6 +690,7 @@ describe("chat route model switch guard", () => {
       lifecycleReason: "manual",
     }));
     expect(session.compact).not.toHaveBeenCalled();
+    expect(engine.withSessionCompaction).toHaveBeenCalledWith("/tmp/current-b.jsonl", session, expect.any(Function));
     expect(ws.send.mock.calls.map(([raw]) => JSON.parse(raw))).toEqual([
       expect.objectContaining({
         type: "compaction_accepted",

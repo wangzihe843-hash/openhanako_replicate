@@ -236,10 +236,13 @@ function writeChunk(stream, chunk) {
   });
 }
 
-function closeFile(stream) {
-  return new Promise((resolve, reject) => {
+async function closeFile(stream, mode) {
+  await new Promise((resolve, reject) => {
     stream.end((err) => (err ? reject(err) : resolve()));
   });
+  // Creation modes are filtered by umask. Enforce the artifact's normalized
+  // permissions after writing, including empty files, as we do for directories.
+  await fsp.chmod(stream.path, mode);
 }
 
 /**
@@ -259,7 +262,7 @@ async function extract(archivePath, destDir) {
   const source = fs.createReadStream(archivePath).pipe(zlib.createGunzip());
 
   let buf = Buffer.alloc(0);
-  /** @type {{ out: import('fs').WriteStream, remainingData: number, remainingPad: number, path: string } | null} */
+  /** @type {{ out: import('fs').WriteStream, mode: number, remainingData: number, remainingPad: number, path: string } | null} */
   let fileState = null;
 
   async function flushBuffered() {
@@ -281,7 +284,7 @@ async function extract(archivePath, destDir) {
           offset += take;
           if (fileState.remainingPad > 0) break;
         }
-        await closeFile(fileState.out);
+        await closeFile(fileState.out, fileState.mode);
         fileState = null;
         continue;
       }
@@ -306,13 +309,12 @@ async function extract(archivePath, destDir) {
       } else {
         await fsp.mkdir(path.dirname(destPath), { recursive: true });
         const isExecutable = (header.mode & 0o111) !== 0;
-        const out = fs.createWriteStream(destPath, {
-          mode: isExecutable ? MODE_EXECUTABLE : MODE_REGULAR,
-        });
+        const mode = isExecutable ? MODE_EXECUTABLE : MODE_REGULAR;
+        const out = fs.createWriteStream(destPath, { mode });
         const pad = header.size % BLOCK_SIZE === 0 ? 0 : BLOCK_SIZE - (header.size % BLOCK_SIZE);
-        fileState = { out, remainingData: header.size, remainingPad: pad, path: destPath };
+        fileState = { out, mode, remainingData: header.size, remainingPad: pad, path: destPath };
         if (header.size === 0) {
-          await closeFile(out);
+          await closeFile(out, mode);
           fileState = null;
         }
       }

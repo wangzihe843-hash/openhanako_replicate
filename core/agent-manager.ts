@@ -945,6 +945,13 @@ export class AgentManager {
   // ── Delete ──
 
   async deleteAgent(agentId) {
+    // Keep the agent scope closed through tombstone publication. A busy
+    // session rejects deletion before foreground or resource changes begin.
+    return this._d.getSessionCoordinator().withAgentSessionsClosing(agentId,
+      discardSessions => this._deleteAgentWithSessionsClosing(agentId, discardSessions));
+  }
+
+  async _deleteAgentWithSessionsClosing(agentId, discardSessions: (reason?: string) => Promise<number>) {
     let replacementAgentId = null;
     let replacementSwitchResult = null;
     if (agentId === this._activeAgentId) {
@@ -965,11 +972,7 @@ export class AgentManager {
 
     const ag = this._agents.get(agentId);
     this._d.getHub()?.abortAgentPhoneSessions?.("agent-deleted", { agentId });
-    try {
-      await this._d.getSessionCoordinator()?.discardSessionsForAgent?.(agentId, "agent deleted");
-    } catch (err) {
-      log.warn(`session runtime cleanup failed before deleting agent (${agentId}): ${err.message}`);
-    }
+    await discardSessions("agent deleted");
     if (ag) {
       this._agents.delete(agentId);
       this._activityStores.delete(agentId);

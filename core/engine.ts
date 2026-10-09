@@ -108,7 +108,7 @@ import { AgentManager } from "./agent-manager.ts";
 import { sanitizeMessagesForModel, stripHistoricalInlineMediaForReplay } from "./message-sanitizer.ts";
 import { normalizeProviderContextMessages, normalizeProviderPayload } from "./provider-compat.ts";
 import { VisionBridge } from "./vision-bridge.ts";
-import { SessionCoordinator } from "./session-coordinator.ts";
+import { SessionCoordinator, type SessionCompactionScope } from "./session-coordinator.ts";
 import { SessionManifestResolver } from "./session-manifest/resolver.ts";
 import { SessionManifestStore } from "./session-manifest/store.ts";
 import { ensureSessionRefForPath as establishSessionRefForPath } from "./session-manifest/ref.ts";
@@ -1689,6 +1689,9 @@ export class HanaEngine implements SessionCancellation {
   /** 确保桌面 session 已加载进 cache 但不改 UI 焦点（Phase 2-C：/rc 接管态用） */
   async ensureSessionLoaded(p) { return this._sessionCoord.ensureSessionLoaded(p); }
   async reloadSessionRuntime(p, opts = {}) { return this._sessionCoord.reloadSessionRuntime(p, opts); }
+  withSessionCompaction<T>(sessionPath: string, session: CompactionRuntime, operation: (scope: SessionCompactionScope) => Promise<T>): Promise<T> {
+    return this._sessionCoord.withSessionCompaction(sessionPath, session, operation);
+  }
   getSessionModelAvailability(p = this.currentSessionPath) {
     return this._sessionCoord.getSessionModelAvailability(p);
   }
@@ -2137,26 +2140,29 @@ export class HanaEngine implements SessionCancellation {
   async compactDesktopSession(sessionPath: string) {
     let session: CompactionRuntime | null = this.getSessionByPath(sessionPath);
     if (!session) throw new Error("compactDesktopSession: session not found");
+    if (this.isSessionSwitching(sessionPath)) throw new Error("session_busy");
     if (session.isCompacting) throw new Error("compactDesktopSession: already compacting");
-    let before = session.getContextUsage?.() ?? null;
-    const compacted = await compactSessionWithCachePreservationRecoveringRuntime({
-      session,
-      sessionPath,
-      customInstructions: undefined,
-      reloadSessionRuntime: (path) => this.reloadSessionRuntime(path),
-      onRuntimeReload: ({ session: reloadedSession }) => {
-        if (reloadedSession.isCompacting) throw new Error("compactDesktopSession: already compacting");
-        before = reloadedSession.getContextUsage?.() ?? before;
-      },
+    return this.withSessionCompaction(sessionPath, session, async ({ reloadSessionRuntime }) => {
+      let before = session.getContextUsage?.() ?? null;
+      const compacted = await compactSessionWithCachePreservationRecoveringRuntime({
+        session,
+        sessionPath,
+        customInstructions: undefined,
+        reloadSessionRuntime: () => reloadSessionRuntime(),
+        onRuntimeReload: ({ session: reloadedSession }) => {
+          if (reloadedSession.isCompacting) throw new Error("compactDesktopSession: already compacting");
+          before = reloadedSession.getContextUsage?.() ?? before;
+        },
+      });
+      session = compacted.session;
+      this._sessionCoord._markSessionCompacted(sessionPath);
+      const after = session.getContextUsage?.() ?? null;
+      return {
+        tokensBefore: before?.tokens ?? null,
+        tokensAfter: after?.tokens ?? null,
+        contextWindow: after?.contextWindow ?? before?.contextWindow ?? null,
+      };
     });
-    session = compacted.session;
-    this._sessionCoord._markSessionCompacted(sessionPath);
-    const after = session.getContextUsage?.() ?? null;
-    return {
-      tokensBefore: before?.tokens ?? null,
-      tokensAfter: after?.tokens ?? null,
-      contextWindow: after?.contextWindow ?? before?.contextWindow ?? null,
-    };
   }
 
   /**
@@ -2170,39 +2176,42 @@ export class HanaEngine implements SessionCancellation {
   async freshCompactDesktopSession(sessionPath: string) {
     let session: CompactionRuntime | null = this.getSessionByPath(sessionPath) || await this.ensureSessionLoaded(sessionPath);
     if (!session) throw new Error("freshCompactDesktopSession: session not found");
+    if (this.isSessionSwitching(sessionPath)) throw new Error("session_busy");
     if (session.isCompacting) throw new Error("freshCompactDesktopSession: already compacting");
     if (this.isSessionStreaming(sessionPath)) {
       throw new Error("freshCompactDesktopSession: session is streaming, try again after the reply completes");
     }
-    let before = session.getContextUsage?.() ?? null;
-    let noopReason = null;
-    try {
-      const compacted = await compactSessionWithCachePreservationRecoveringRuntime({
-        session,
-        sessionPath,
-        customInstructions: undefined,
-        reloadSessionRuntime: (path) => this.reloadSessionRuntime(path),
-        onRuntimeReload: ({ session: reloadedSession }) => {
-          if (reloadedSession.isCompacting) throw new Error("freshCompactDesktopSession: already compacting");
-          before = reloadedSession.getContextUsage?.() ?? before;
-        },
-      });
-      session = compacted.session;
-    } catch (error) {
-      noopReason = getFreshCompactNoopReason(error);
-      if (!noopReason) throw error;
-    }
-    const after = session.getContextUsage?.() ?? null;
-    if (!noopReason) this._sessionCoord._markSessionCompacted(sessionPath);
-    // 压缩完成后整体重建 runtime：restore 路径按当前配置重算 prompt/tool 快照并写回 session-meta
-    await this._sessionCoord.reloadSessionRuntime(sessionPath, { refreshCapabilitySnapshots: true });
-    return {
-      tokensBefore: before?.tokens ?? null,
-      tokensAfter: noopReason ? (before?.tokens ?? null) : (after?.tokens ?? null),
-      contextWindow: after?.contextWindow ?? before?.contextWindow ?? null,
-      fresh: true,
-      noopReason,
-    };
+    return this.withSessionCompaction(sessionPath, session, async ({ reloadSessionRuntime }) => {
+      let before = session.getContextUsage?.() ?? null;
+      let noopReason = null;
+      try {
+        const compacted = await compactSessionWithCachePreservationRecoveringRuntime({
+          session,
+          sessionPath,
+          customInstructions: undefined,
+          reloadSessionRuntime: () => reloadSessionRuntime(),
+          onRuntimeReload: ({ session: reloadedSession }) => {
+            if (reloadedSession.isCompacting) throw new Error("freshCompactDesktopSession: already compacting");
+            before = reloadedSession.getContextUsage?.() ?? before;
+          },
+        });
+        session = compacted.session;
+      } catch (error) {
+        noopReason = getFreshCompactNoopReason(error);
+        if (!noopReason) throw error;
+      }
+      const after = session.getContextUsage?.() ?? null;
+      if (!noopReason) this._sessionCoord._markSessionCompacted(sessionPath);
+      // 压缩完成后整体重建 runtime：restore 路径按当前配置重算 prompt/tool 快照并写回 session-meta
+      await reloadSessionRuntime({ refreshCapabilitySnapshots: true });
+      return {
+        tokensBefore: before?.tokens ?? null,
+        tokensAfter: noopReason ? (before?.tokens ?? null) : (after?.tokens ?? null),
+        contextWindow: after?.contextWindow ?? before?.contextWindow ?? null,
+        fresh: true,
+        noopReason,
+      };
+    });
   }
 
   // ════════════════════════════
@@ -2708,6 +2717,11 @@ export class HanaEngine implements SessionCancellation {
   }
 
   async dispose() {
+    // Acquire closing admission before touching agents, plugins or the manifest.
+    return this._sessionCoord.withAllSessionsClosing(closeSessions => this._disposeWithSessionsClosing(closeSessions));
+  }
+
+  async _disposeWithSessionsClosing(closeSessions: () => Promise<void>) {
     try {
       // 先卸载 plugins（它们可能依赖 engine 资源）
       if (this._pluginManager) {
@@ -2727,7 +2741,7 @@ export class HanaEngine implements SessionCancellation {
       this._loopAlarm?.dispose?.();
       this._loopController?.dispose?.();
       await this._agentMgr.disposeAll(this._sessionCoord);
-      await this._sessionCoord.cleanupSession();
+      await closeSessions();
     } finally {
       try {
         await this.disposeComputerRuntime();

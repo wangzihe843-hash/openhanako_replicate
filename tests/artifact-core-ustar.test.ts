@@ -3,6 +3,8 @@ import fsp from "fs/promises";
 import os from "os";
 import path from "path";
 import zlib from "zlib";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import ustarModule from "../shared/artifact-core/ustar.cjs";
@@ -156,6 +158,47 @@ describe("ustar extract: malicious archive rejection", () => {
 });
 
 describe("ustar packTree / extract round-trip", () => {
+  it.skipIf(process.platform === "win32").each([
+    { label: "restrictive", mask: 0o077 },
+    { label: "permissive", mask: 0o000 },
+  ])("normalizes empty and nonempty files under a $label child umask", ({ mask }) => {
+    const parentMask = process.umask();
+    const root = makeTempDir("hana-ustar-modes-");
+    const entries = [
+      { name: "executable", mode: 0o7777, content: "synthetic executable", expected: 0o755 },
+      { name: "empty-executable", mode: 0o7100, content: "", expected: 0o755 },
+      { name: "regular", mode: 0o6666, content: "synthetic data", expected: 0o644 },
+      { name: "empty-regular", mode: 0o6600, content: "", expected: 0o644 },
+    ];
+    const jobs = entries.map((entry) => ({
+      archive: writeArchive(root, `${entry.name}.tar.gz`, buildRawArchive(rawHeaderBlock({
+        name: entry.name, typeflag: "0", mode: entry.mode, size: Buffer.byteLength(entry.content),
+      }), Buffer.from(entry.content))),
+      dest: path.join(root, entry.name),
+      name: entry.name,
+    }));
+    const child = spawnSync(process.execPath, ["--input-type=commonjs", "-e", `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const { extract } = require(process.argv[1]);
+      process.umask(Number(process.argv[3]));
+      (async () => {
+        const results = [];
+        for (const job of JSON.parse(process.argv[2])) {
+          await extract(job.archive, job.dest);
+          const file = path.join(job.dest, job.name);
+          results.push({ mode: fs.statSync(file).mode & 0o7777, content: fs.readFileSync(file, "utf8") });
+        }
+        console.log(JSON.stringify(results));
+      })().catch(error => { console.error(error); process.exitCode = 1; });
+    `, fileURLToPath(new URL("../shared/artifact-core/ustar.cjs", import.meta.url)),
+    JSON.stringify(jobs), String(mask)], { encoding: "utf8", timeout: 10_000 });
+    expect(process.umask()).toBe(parentMask);
+    expect(child.error).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+    expect(JSON.parse(child.stdout)).toEqual(entries.map(({ expected, content }) => ({ mode: expected, content })));
+  });
+
   it("reproduces a nested tree exactly, including executable bit collapse", async () => {
     const root = makeTempDir("hana-ustar-roundtrip-");
     const srcDir = path.join(root, "src");

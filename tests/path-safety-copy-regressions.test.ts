@@ -126,9 +126,9 @@ describe.runIf(process.platform !== "win32")("file-copy path confinement", () =>
   it("does not turn permission or symlink-cycle errors into writable missing paths", async () => {
     const denied = path.join(workspace, "unreadable", "target.txt");
     const realpath = fs.realpathSync;
-    vi.spyOn(fs, "realpathSync").mockImplementation((p: any, ...args: any[]) => {
+    vi.spyOn(fs, "realpathSync").mockImplementation((...[p, ...args]: Parameters<typeof fs.realpathSync>) => {
       if (String(p) === denied) throw Object.assign(new Error("synthetic EACCES"), { code: "EACCES" });
-      return (realpath as any)(p, ...args);
+      return realpath(p, ...args);
     });
     await expect(copy("provider", denied)).rejects.toThrow(/synthetic EACCES/);
     expect(fs.existsSync(path.dirname(denied))).toBe(false);

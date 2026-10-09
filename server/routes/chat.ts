@@ -2061,6 +2061,10 @@ export function createChatRoute(engine: any, hub: any, {
                 compactResult("failed", { reason: "session_unavailable", message: t("error.noActiveSession") });
                 return;
               }
+              if (engine.isSessionSwitching?.(compactPath)) {
+                compactResult("failed", { reason: "session_busy", message: t("error.code.sessionBusy") });
+                return;
+              }
               if (session.isCompacting) {
                 compactResult("failed", { reason: "already_compacting", message: t("error.compacting") });
                 return;
@@ -2069,35 +2073,39 @@ export function createChatRoute(engine: any, hub: any, {
                 compactResult("failed", { reason: "session_streaming", message: t("error.waitForReply") });
                 return;
               }
-              wsSend(ws, {
-                type: "compaction_accepted",
-                sessionId: compactSessionId,
-                sessionPath: compactPath,
-                mode: compactionMode,
-              });
               try {
-                if (instantSimple) {
-                  if (typeof engine.getLossyLocalCompactionSummarySource !== "function") {
-                    throw new Error("Instant simple compaction summary resolver is unavailable");
-                  }
-                  await runInstantSimpleCompaction(session, {
-                    getSummarySource: () => engine.getLossyLocalCompactionSummarySource(compactPath),
-                    lifecycleReason: "manual",
-                  });
-                } else {
-                  const compacted = await compactSessionWithCachePreservationRecoveringRuntime({
-                    session,
+                await engine.withSessionCompaction(compactPath, session, async ({ reloadSessionRuntime }) => {
+                  wsSend(ws, {
+                    type: "compaction_accepted",
+                    sessionId: compactSessionId,
                     sessionPath: compactPath,
-                    customInstructions: undefined,
-                    reloadSessionRuntime: (path) => engine.reloadSessionRuntime?.(path),
+                    mode: compactionMode,
                   });
-                  session = compacted.session;
-                }
+                  if (instantSimple) {
+                    if (typeof engine.getLossyLocalCompactionSummarySource !== "function") {
+                      throw new Error("Instant simple compaction summary resolver is unavailable");
+                    }
+                    await runInstantSimpleCompaction(session, {
+                      getSummarySource: () => engine.getLossyLocalCompactionSummarySource(compactPath),
+                      lifecycleReason: "manual",
+                    });
+                  } else {
+                    const compacted = await compactSessionWithCachePreservationRecoveringRuntime({
+                      session,
+                      sessionPath: compactPath,
+                      customInstructions: undefined,
+                      reloadSessionRuntime: () => reloadSessionRuntime(),
+                    });
+                    session = compacted.session;
+                  }
+                });
                 compactResult("succeeded");
               } catch (err) {
                 const errMsg = err.message || "";
                 const noopReason = compactionNoopReason(errMsg);
-                if (noopReason) {
+                if (errMsg === "session_busy") {
+                  compactResult("failed", { reason: "session_busy", message: t("error.code.sessionBusy") });
+                } else if (noopReason) {
                   compactResult("noop", { reason: noopReason, message: errMsg });
                 } else {
                   compactResult("failed", {

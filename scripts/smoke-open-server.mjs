@@ -5,7 +5,7 @@
  *
  * Positive direction: spawns the built open-composition server (via its
  * packaged Node runtime + bootstrap.js, the same two files the shell/cmd
- * wrapper execs into) under a throwaway HANA_HOME, waits for it to bind and
+ * wrapper execs into) under throwaway application and OS homes, waits for it to bind and
  * publish server-info.json, then makes one authenticated loopback HTTP
  * request to `/api/server/identity` and asserts a 200 with the expected
  * shape. This is the actual proof the open build boots and serves traffic
@@ -97,6 +97,7 @@ function spawnOpenServer({ serverDir, isWin, hanakoHome, extraEnv = {} }) {
 
   let stderrBuf = "";
   let stdoutBuf = "";
+  const smokeUserHome = path.join(hanakoHome, "os-home");
   const child = spawn(bin, [bootstrapPath], {
     cwd: serverDir,
     env: {
@@ -104,6 +105,11 @@ function spawnOpenServer({ serverDir, isWin, hanakoHome, extraEnv = {} }) {
       HANA_ROOT: serverDir,
       HANA_SERVER_ENTRY: path.join(serverDir, "bundle", "index.js"),
       HANA_HOME: hanakoHome,
+      // First-run seeding uses os.homedir() for Desktop/OH-WorkSpace.
+      // Isolate only this child, leaving the home and Desktop absent so the
+      // production initializer must create them. HANA_HOME alone is not enough.
+      HOME: smokeUserHome,
+      USERPROFILE: smokeUserHome,
       ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -168,6 +174,11 @@ export async function runPositiveSmoke({ rootDir = ROOT, platform = process.plat
     const body = await res.json();
     if (typeof body.serverProtocol !== "number" && typeof body.serverProtocol !== "string") {
       throw new Error(`[smoke-open-server] /api/server/identity response missing serverProtocol field: ${JSON.stringify(body)}`);
+    }
+
+    const workspacePath = path.join(hanakoHome, "os-home", "Desktop", "OH-WorkSpace");
+    if (!fs.statSync(workspacePath).isDirectory()) {
+      throw new Error(`[smoke-open-server] first-run workspace is not a directory: ${workspacePath}`);
     }
 
     return { ok: true, url, status: res.status, body };

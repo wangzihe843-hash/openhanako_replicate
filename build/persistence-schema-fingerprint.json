@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:3f8ab348c7ae31babd6aa0873c12b10aaafbcab38809a4d9228d05d98a7cfab2",
+  "payloadFingerprint": "sha256:8616d836d0d15952b0ff47611c30719ec5bcbfdfcf2faf3ae89fd51e25f60bed",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3368,8 +3368,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Reviewed the merged A/B/C/D patch set at base a4cb3955e109ed82b31b32fad7c18d818faaf84a. Persisted fields, registry validators/serializers, SQLite schema, DATA_EPOCH=1, Pi 1.0.3 package identity/integrity, JSONL CURRENT_SESSION_VERSION=3 and existing Hana record versions remain unchanged. The five guarded-source hash changes are behavioral: agent-profile only resolves the real session locator for shutdown memory finalization; desktop-window-version-state adds a sender-restricted fixed login/identity IPC handshake without changing window/version state serialization; device-access-registries reuses unchanged source records and validators to recheck retained device authority and expiry; web-session-registry denies a device cookie when its source no longer authorizes its principal before updating existing timestamps, while valid historical cookies retain the same format; session-jsonl adds LRU busy/runtime-owner protection, cancelled pending-submit terminal notification, and retry current-runtime/manager/leaf fencing before any transaction append, preserving all retry/branch record shapes. AuthStorage async locking reads/writes the same provider-keyed auth.json shape; Bridge guards change authorization for redirecting a saved secret, not config shape. Frontend receipt/status changes and phone deadline fields do not change persisted data contracts. CLI closure changes only add core/web-session-store.ts importer provenance for the already included core/device-registry.ts; no runtime files are added or removed. This is a compatibility review for derived fingerprint repinning, not a claim of dynamic validation or blanket approval for unreviewed settings.write paths. Additional compatible review on 2026-10-08 for the four macOS desktop patches integrated over local HEAD 12a9037756d5680fd725cec3a1679e1ce2ba56fd; see docs/audits/2026-10-08-macos-desktop-persistence-compatibility.md. The only new payload difference is the executable sourceHash for desktop-window-version-state (desktop/main.cjs). Main/quick-chat bounds and release-bookmark readers/writers keep their existing formats. Pet presentation state keeps user/pet-window-state.json version 1, the same bounds and visible/paused/clickThrough/alwaysOnTop fields, defaults, temporary-write/rename protocol and failed-temp cleanup; Darwin now uses that existing contract. Renderer/server reuse and browser-command reconnect changes affect lifecycle, not these persisted shapes. Shortcut capture and audio entitlement add no persistence store. Registry/ownership/site mappings, all other guarded source hashes, SQLite DDL/userVersion, DATA_EPOCH=1, TypeScript 5.9.3 parse-tree-v1 provenance, Pi 1.0.3 identity/integrity and JSONL version 3 are unchanged. No migration or epoch bump is required, and the generator and tripwire assertions are unchanged. This repin does not establish uncompleted native acceptance. Additional compatible review on 2026-10-08 for session runtime hibernation over HEAD fd5376954365aeade7f2c2640fd161fc327acb1f; see docs/audits/2026-10-08-session-hibernation-persistence-compatibility.md. Hibernation now uses the existing per-session runtime operation queue, rechecks entry identity and idle eligibility after queuing, and limits cleanup to the old entry and focused runtime instance. It no longer advances the selection version when unloading an old runtime. Only the core/session-coordinator.ts executable digest changes in session-jsonl extensions and protocolModules. SQLite DDL/userVersion, DATA_EPOCH=1, JSONL version 3, SDK identity/integrity, serializers, record fields, registry and write-site mappings, and TypeScript 5.9.3 parse-tree-v1 provenance are identical. Synthetic JSONL regression cases preserve existing history and permit only the expected appended user/assistant messages for send. No migration or epoch bump is required. This compatible repin does not establish full application acceptance or guarantee data safety for untested scenarios.",
-    "payloadFingerprint": "sha256:3f8ab348c7ae31babd6aa0873c12b10aaafbcab38809a4d9228d05d98a7cfab2"
+    "compatibilityReason": "Reviewed against d754c6cdf97087259ae93412d512a521f5fd781a in docs/audits/2026-10-09-manual-lifecycle-persistence-compatibility.md. Official HEAD overrides exactly reproduce the committed payload. Only agent-profile and session-jsonl guarded source digests change for in-memory lifecycle admission and type annotations. All 65 store contracts, live SQLite schemas/user_version, DATA_EPOCH=1, migrations, Pi 1.0.3 integrity and JSONL v3 remain unchanged. The separate ustar normalization preserves its existing 0755/0644 contract; official inventory changes one excerpt, with unchanged ownership and site mappings. No persisted schema or migration change.",
+    "payloadFingerprint": "sha256:8616d836d0d15952b0ff47611c30719ec5bcbfdfcf2faf3ae89fd51e25f60bed"
   },
   "schemas": [
     {
@@ -3530,7 +3530,7 @@
           "sourceHash": "sha256:65d2a9c931cddced01d501197c4c394dbbde254e1292f64bc33514f5079026ef"
         }
       ],
-      "sourceHash": "sha256:c095ce963cb3b0270294a1b9c945c4844cda8b7adaefcc28863e294ad03fa2ac",
+      "sourceHash": "sha256:bbdb3c02f7517ebaf5b72ec13b1a7730ca2bcf66bd79dcd0500255063f83f957",
       "storeId": "agent-profile"
     },
     {
@@ -3921,7 +3921,7 @@
         {
           "contract": "core/session-coordinator.ts Hana metadata extensions",
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:5a197665868aada6c10d53406795f4f033d7018cbe3229c7ae2bd6e1038be81b"
+          "sourceHash": "sha256:d78f6d7a63b67f371231fbc5e6402324fd96a3edf6412c8ad54dfd53fa1a06ae"
         },
         {
           "contract": "core/session-jsonl-file.ts repair contract",
@@ -3941,7 +3941,7 @@
         },
         {
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:5a197665868aada6c10d53406795f4f033d7018cbe3229c7ae2bd6e1038be81b"
+          "sourceHash": "sha256:d78f6d7a63b67f371231fbc5e6402324fd96a3edf6412c8ad54dfd53fa1a06ae"
         },
         {
           "module": "core/session-dialogue-variants.ts",

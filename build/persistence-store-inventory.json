@@ -10378,7 +10378,7 @@
     {
       "sourceFile": "shared/artifact-core/ustar.cjs",
       "kind": "write-file",
-      "excerpt": "fs.createWriteStream(destPath, { mode: isExecutable ? MODE_EXECUTABLE : MODE_REGULAR, })",
+      "excerpt": "fs.createWriteStream(destPath, { mode })",
       "reason": "The archive codec writes caller-selected archive/extraction paths; signed artifact ownership is assigned at its callers.",
       "storeId": null,
       "exemptionId": "generic-archive-writer",
