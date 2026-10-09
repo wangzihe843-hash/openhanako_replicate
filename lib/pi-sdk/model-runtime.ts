@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AuthInteraction, Credential, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
@@ -5,13 +7,25 @@ import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 // the adapter boundary: forced rotation and ordinary refresh must share a lock.
 import {
   AuthStorage as CredentialStorage,
-  FileAuthStorageBackend,
+  FileAuthStorageBackend as PiFileAuthStorageBackend,
   InMemoryAuthStorageBackend,
   type AuthStorageBackend,
 } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/auth-storage.js";
+import { normalizePath } from "../../node_modules/@earendil-works/pi-coding-agent/dist/utils/paths.js";
 
-export { FileAuthStorageBackend, InMemoryAuthStorageBackend };
+export { InMemoryAuthStorageBackend };
 export type { OAuthLoginCallbacks };
+
+const fileAuthLockPaths = new WeakMap<FileAuthStorageBackend, string>();
+
+export class FileAuthStorageBackend extends PiFileAuthStorageBackend {
+  constructor(authPath?: string) {
+    super(authPath);
+    // Track only explicit files, using the same normalization as Pi and
+    // proper-lockfile. Unknown/custom backends keep their original errors.
+    if (authPath !== undefined) fileAuthLockPaths.set(this, `${resolve(normalizePath(authPath))}.lock`);
+  }
+}
 
 const registryRuntimes = new WeakMap<ModelRegistry, ModelRuntime>();
 
@@ -121,10 +135,26 @@ export class AuthStorage {
     await this.credentials.list({ signal: new AbortController().signal });
   }
 
-  get(providerId: string) {
-    return this.backend.withLockAsync(async current => ({
-      result: (current ? JSON.parse(current) : {})[providerId],
-    }));
+  async get(providerId: string) {
+    const lockPath = this.backend instanceof FileAuthStorageBackend ? fileAuthLockPaths.get(this.backend) : undefined;
+    for (let retry = 0; ; retry++) {
+      let entered = false;
+      try {
+        return await this.backend.withLockAsync(async current => {
+          entered = true;
+          return { result: (current ? JSON.parse(current) : {})[providerId] };
+        });
+      } catch (error) {
+        const ioError = error as NodeJS.ErrnoException | null;
+        // Windows can deny recreation while a removed lock directory still
+        // has open handles. Retry only this raw read's lock acquisition, never
+        // credential callbacks/writes or unrelated EPERM errors. Pi still owns
+        // mutual exclusion; persistent permission failures surface after 620ms.
+        if (process.platform !== "win32" || entered || !lockPath || retry >= 5
+          || ioError?.code !== "EPERM" || ioError.syscall !== "mkdir" || ioError.path !== lockPath) throw error;
+        await sleep(20 * 2 ** retry);
+      }
+    }
   }
 
   async has(providerId: string) { return (await this.get(providerId)) !== undefined; }

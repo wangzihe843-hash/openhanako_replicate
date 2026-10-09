@@ -27314,6 +27314,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/pi-sdk/model-runtime.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js",
           "kind": "import-statement"
         },
@@ -27322,7 +27327,7 @@
           "kind": "nft-trace"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by node_modules/@earendil-works/pi-coding-agent/dist/config.js (import-statement); node_modules/@earendil-works/pi-coding-agent/dist/core/auth-storage.js (import-statement); node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js (import-statement)."
+      "reason": "Reached via esbuild source module graph, imported by node_modules/@earendil-works/pi-coding-agent/dist/config.js (import-statement); node_modules/@earendil-works/pi-coding-agent/dist/core/auth-storage.js (import-statement); lib/pi-sdk/model-runtime.ts (import-statement); +1 more importer(s)."
     },
     {
       "path": "node_modules/@earendil-works/pi-coding-agent/dist/utils/photon.js",
