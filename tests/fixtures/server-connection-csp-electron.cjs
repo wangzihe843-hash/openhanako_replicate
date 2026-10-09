@@ -16,10 +16,15 @@ const windows = [];
 const servers = [];
 const sockets = new Set();
 const targets = [];
-const report = { electron: process.versions.electron, platform: process.platform, pid: process.pid, cases: [], senderChecks: [] };
+const report = { electron: process.versions.electron, node: process.versions.node, platform: process.platform, pid: process.pid, cases: [], senderChecks: [] };
 fs.writeFileSync(path.join(output, 'started.json'), JSON.stringify(report, null, 2));
 let finished = false;
 const fixture = path.join(output, 'settings.html');
+// loadFile's url.format leaves '~' literal and treats '%' as an escape, unlike
+// pathToFileURL. Fix the trusted URL before loading and pass that exact URL to
+// Electron; never derive authority from a window's current document URL.
+const fixtureURL = pathToFileURL(fixture).href;
+const untrustedURL = pathToFileURL(path.join(output, 'untrusted.html')).href;
 const csp = pathToFileURL(path.join(root, 'desktop/src/modules/connection-csp.js')).href;
 fs.writeFileSync(fixture, `<!doctype html><html><head><script src="${csp}"></script><script src="connection.js"></script></head><body>Connection fixture</body></html>`);
 fs.writeFileSync(path.join(output, 'untrusted.html'), '<!doctype html><title>Untrusted fixture</title>');
@@ -61,9 +66,15 @@ ipcMain.handle('probe-server-connection', async (event, input) => {
     check.targets = targets.map(({ webContents, url, scheme, navigation }) => {
       const windowAlive = Boolean(webContents && !webContents.isDestroyed());
       const mainFrame = windowAlive ? webContents.mainFrame : null;
+      const trustedURL = documentURL(url);
       return {
         scheme, navigation, webContentsId: webContents.id,
         mainFrame: frameIdentity(mainFrame), trustedURL: describeURL(url),
+        // Diagnostic only: compare the entire fixed URL and expose no path.
+        // This must never supply or normalize the production probe's targets.
+        documentURLComparison: senderURL === null || trustedURL === null ? 'invalid'
+          : senderURL === trustedURL ? 'equal'
+            : senderURL === trustedURL.replace(/%7E/gi, '~') ? 'literal-vs-encoded-tilde' : 'different',
         predicates: {
           windowAlive,
           webContentsSame: event.sender === webContents,
@@ -178,14 +189,14 @@ app.whenReady().then(async () => {
     ));
     const window = new BrowserWindow({ show: false, webPreferences: { preload, session: isolated, contextIsolation: true, nodeIntegration: false, sandbox: true } });
     windows.push(window);
-    const target = { webContents: window.webContents, url: pathToFileURL(fixture).href, scheme, navigation: 'created' };
+    const target = { webContents: window.webContents, url: fixtureURL, scheme, navigation: 'created' };
     targets.push(target);
     window.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
       if (isMainFrame) target.navigation = 'did-start-navigation';
     });
     window.webContents.on('did-finish-load', () => { target.navigation = 'did-finish-load'; });
     report.phase = `${scheme}:loading-fixture`;
-    await window.loadFile(fixture);
+    await window.loadURL(fixtureURL);
     const before = await blockedFetch(window, `${origin}/api/web-auth/login`);
     assert(before.blocked && before.violations.includes('connect-src') && requests.length === 0, 'First renderer connection must be blocked by real CSP');
     report.phase = `${scheme}:initial-handshake`;
@@ -201,7 +212,7 @@ app.whenReady().then(async () => {
     const stillBlocked = await blockedFetch(window, `${origin}/api/server/identity`);
     assert(stillBlocked.blocked && stillBlocked.violations.includes('connect-src'), 'Probe must not relax the live renderer CSP');
     report.phase = `${scheme}:reloading-fixture`;
-    await window.loadFile(fixture);
+    await window.loadURL(fixtureURL);
     const allowed = await window.webContents.executeJavaScript(`fetch(${JSON.stringify(origin + '/api/server/identity')}).then(response => response.status)`);
     assert(allowed === 200, 'Saved origin must work after reloading the unchanged policy');
     const wsUrl = `${scheme === 'https' ? 'wss' : 'ws'}://localhost:${server.address().port}`;
@@ -217,7 +228,7 @@ app.whenReady().then(async () => {
     assert(failedResponseClosed, 'Failed probes must terminate unfinished response streams');
     assert(unapprovedRequests.length === 0, 'Neither renderer requests nor redirects may reach the unapproved origin');
     report.phase = `${scheme}:loading-untrusted-document`;
-    await window.loadFile(path.join(output, 'untrusted.html'));
+    await window.loadURL(untrustedURL);
     const beforeUntrusted = requests.length;
     report.phase = `${scheme}:untrusted-document`;
     const untrustedError = await window.webContents.executeJavaScript(`window.fixtureProbe({baseUrl: ${JSON.stringify(origin)}, credential: 'synthetic-key'}).then(() => null, error => String(error))`);

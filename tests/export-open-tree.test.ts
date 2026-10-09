@@ -12,6 +12,7 @@ import {
   planExportCopies,
 } from "../scripts/export-open-tree.mjs";
 import { runRehearsalStep } from "../scripts/rehearse-open-export.mjs";
+import { windowsShortPath } from "./helpers/windows-short-path.ts";
 
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXPORT_SCRIPT = path.join(REPOSITORY_ROOT, "scripts", "export-open-tree.mjs");
@@ -134,16 +135,6 @@ function expectRejectedBeforeWrites(root: string, destinations: string[], error 
     for (const guard of guards) guard.mockRestore();
     expect(protectedPaths.map(snapshotTree)).toEqual(before);
   }
-}
-
-function windowsShortPath(directory: string): string {
-  const short = execFileSync("cmd.exe", ["/d", "/c", 'for %I in ("%HANA_EXPORT_ALIAS_DIR%") do @echo %~sI'], {
-    encoding: "utf8", env: { ...process.env, HANA_EXPORT_ALIAS_DIR: directory },
-  }).trim();
-  const long = fs.realpathSync.native(directory);
-  expect(short.toLowerCase(), "Windows fixture requires an actual 8.3 alias").not.toBe(long.toLowerCase());
-  expect(fs.realpathSync.native(short)).toBe(long);
-  return short;
 }
 
 describe("export-open-tree: planExportCopies path semantics", () => {
@@ -364,8 +355,12 @@ describe("export-open-tree: exportOpenTree materialization", () => {
     const source = path.join(root, "Untracked Source Directory");
     fs.mkdirSync(source);
     if (kind === "file") write(source, "payload.ts", "untracked source sentinel");
-    const shortName = path.basename(windowsShortPath(source));
-    expect(shortName.toLowerCase()).not.toBe(path.basename(source).toLowerCase());
+    const shortSource = windowsShortPath(source);
+    const shortName = path.basename(shortSource);
+    // This case needs a repository-relative short name: an alias only above
+    // the repository cannot exercise short-name manifest input protection.
+    expect(shortName.toLowerCase(), `Source fixture needs its own 8.3 name: ${JSON.stringify({ source, shortSource })}`)
+      .not.toBe(path.basename(source).toLowerCase());
     const entry = kind === "file" ? `${shortName}/payload.ts` : `${shortName}/`;
     writeManifest(root, ["src/a.ts", entry]);
     const before = snapshotTree(source);

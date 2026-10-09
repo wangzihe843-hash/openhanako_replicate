@@ -10,8 +10,16 @@ import { expect, it } from 'vitest';
 const require = createRequire(import.meta.url);
 const root = path.resolve(import.meta.dirname, '..');
 
-it.runIf(process.platform === 'win32' || process.platform === 'darwin')('connects a new HTTP/HTTPS server while the real isolated renderer CSP stays restrictive', async () => {
-  const output = await fs.mkdtemp(path.join(os.tmpdir(), 'hana-connection-csp-'));
+it.runIf(process.platform === 'win32' || process.platform === 'darwin').each([
+  'plain',
+  // Reproduce the literal '~' in Windows temp aliases on both native platforms.
+  // Escapes also ensure the loaded document is the intended fixed file.
+  'RUNNER~1',
+  'escaped %25 # 空间',
+])('connects a new HTTP/HTTPS server while the real isolated renderer CSP stays restrictive (%s fixture path)', async directory => {
+  const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'hana-connection-csp-'));
+  const output = path.join(parent, directory);
+  await fs.mkdir(output);
   await build({
     entryPoints: [path.join(root, 'desktop/src/react/services/server-connection.ts')],
     outfile: path.join(output, 'connection.js'), bundle: true, format: 'iife', globalName: 'connectionApi', platform: 'browser',
@@ -43,14 +51,14 @@ it.runIf(process.platform === 'win32' || process.platform === 'darwin')('connect
     expect(result.senderChecks).toContainEqual(expect.objectContaining({
       phase: `${scheme}:initial-handshake`, outcome: 'resolved',
       targets: expect.arrayContaining([expect.objectContaining({
-        scheme, navigation: 'did-finish-load',
+        scheme, navigation: 'did-finish-load', documentURLComparison: 'equal',
         predicates: { windowAlive: true, webContentsSame: true, mainFrameSame: true, documentURLSame: true },
       })]),
     }));
     expect(result.senderChecks).toContainEqual(expect.objectContaining({
       phase: `${scheme}:untrusted-document`, outcome: 'rejected',
       targets: expect.arrayContaining([expect.objectContaining({
-        scheme,
+        scheme, documentURLComparison: 'different',
         predicates: { windowAlive: true, webContentsSame: true, mainFrameSame: true, documentURLSame: false },
       })]),
     }));

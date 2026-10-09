@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { windowsShortPath } from "./helpers/windows-short-path.ts";
 import { resolveFilesystemPathForCreationSync } from "../shared/link-aware-fs.ts";
 import { PathGuard } from "../lib/sandbox/path-guard.ts";
 import { deriveSandboxPolicy } from "../lib/sandbox/policy.ts";
@@ -44,10 +44,7 @@ describe("creation paths across filesystem identities", () => {
     longRoot = path.join(fixture, "Runner Long Identity");
     fs.mkdirSync(longRoot);
     if (process.platform === "win32") {
-      // A runner without 8.3 support must fail this coverage requirement, not skip.
-      shortRoot = execFileSync("cmd.exe", ["/d", "/c", 'for %I in ("%HANA_IDENTITY_FIXTURE%") do @echo %~sI'], {
-        encoding: "utf8", env: { ...process.env, HANA_IDENTITY_FIXTURE: longRoot },
-      }).trim();
+      shortRoot = windowsShortPath(longRoot);
       expect(shortRoot).toMatch(/~\d/);
       expect(shortRoot.toLowerCase()).not.toBe(longRoot.toLowerCase());
     } else {
