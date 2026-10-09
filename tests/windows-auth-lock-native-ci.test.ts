@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  BASELINE_BLOB, BASELINE_COMMIT, readBaseline, runNativeAuthLockCi, validateNativeReport,
+  BASELINE_BLOB, BASELINE_COMMIT, NATIVE_PROBE_FILES, readBaseline, runNativeAuthLockCi, validateNativeReport,
 } from '../scripts/probe-windows-auth-lock.mjs';
 import { checkNativeAuthLockEvidence, REQUIRED_EVIDENCE } from '../scripts/check-windows-auth-lock-evidence.mjs';
 
@@ -17,7 +17,7 @@ function fixture() {
   for (const dir of ['lib/pi-sdk', 'tests/fixtures', 'node_modules', 'evidence']) {
     fs.mkdirSync(path.join(rootDir, dir), { recursive: true });
   }
-  for (const file of ['lib/pi-sdk/model-runtime.ts', 'tests/fixtures/native-windows-lock-probe.mjs',
+  for (const file of ['lib/pi-sdk/model-runtime.ts', ...NATIVE_PROBE_FILES,
     'package.json', 'package-lock.json', 'node_modules/untouched']) {
     fs.writeFileSync(path.join(rootDir, file), 'contract fixture\n');
   }
@@ -27,15 +27,40 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
+function holderEvents(mechanism: string, lockPath: string) {
+  const commands = mechanism === 'classic'
+    ? ['open', 'arm', 'check', 'check', 'release'] : ['open', 'arm', 'check', 'release'];
+  return [...commands.map((command, index) => ({
+    command, id: index + 1, pid: 1234, path: lockPath, handle: '64', mechanism,
+    access: mechanism === 'classic' ? 0x10080 : 0, share: 7, flags: 0x02000000,
+    fileSystem: 'NTFS', volumeRoot: 'C:/', closed: command === 'release',
+    info: command === 'release' ? null : { directory: true, deletePending: command !== 'open', numberOfLinks: 1 },
+    mkdirError: command === 'open' || command === 'release' || (command === 'arm' && mechanism !== 'classic') ? null : 5,
+  })), { command: 'exit', code: 0, signal: null, error: null }];
+}
+
 function report(baseline = false) {
   return {
     passed: true, baseline, platform: 'win32', node: 'v24.15.0', release: 'contract-only',
-    syntheticCredentialsOnly: true, networkAttempts: 0,
-    observations: baseline ? [{ persistent: false, nativeCode: 'EPERM', result: 'visible EPERM' }] : [
-      { persistent: false, nativeCode: 'EPERM', result: 'fresh credential after release' },
-      { persistent: true, nativeCode: 'EPERM', result: 'visible EPERM' },
-    ],
+    syntheticCredentialsOnly: true, networkAttempts: 0, errors: [],
+    diagnostics: [{ mechanism: 'remove-directory', events: holderEvents('remove-directory', 'C:/control.lock'),
+      directMkdir: { code: 'EPERM', syscall: 'mkdir', path: 'C:/control.lock' }, recreated: true }],
+    observations: (baseline ? [false] : [false, true]).map(persistent => {
+      const lockPath = `C:/${persistent ? 'persistent' : 'transient'}/auth.json.lock`;
+      const failure = { code: 'EPERM', syscall: 'mkdir', path: lockPath };
+      return { persistent, lockPath, nativeCode: 'EPERM', preflight: failure,
+        result: persistent || baseline ? 'visible EPERM' : 'fresh credential after release',
+        events: holderEvents('classic', lockPath), originalMkdirRestored: true, recreated: true,
+        attempts: persistent ? Array(6).fill(failure) : baseline ? [failure] : [failure, { code: null, syscall: null, path: null }],
+      };
+    }),
   };
+}
+
+function state(r: ReturnType<typeof report>, index: number) {
+  const event = r.observations[0].events[index];
+  if (!('info' in event)) throw new Error('Expected a holder state, not an exit');
+  return event;
 }
 
 function evidenceFixture() {
@@ -144,6 +169,29 @@ describe('native auth CI evidence contracts (no Win32 emulation)', () => {
   });
 
   it.each([
+    ['missing native state', (r: ReturnType<typeof report>) => { state(r, 1).info = null; }],
+    ['not delete-pending', (r: ReturnType<typeof report>) => { state(r, 1).info!.deletePending = false; }],
+    ['wrong native mkdir error', (r: ReturnType<typeof report>) => { state(r, 2).mkdirError = 183; }],
+    ['wrong share flags', (r: ReturnType<typeof report>) => { state(r, 0).share = 3; }],
+    ['wrong access', (r: ReturnType<typeof report>) => { state(r, 0).access = 0; }],
+    ['stale response', (r: ReturnType<typeof report>) => { state(r, 2).id = 1; }],
+    ['different process', (r: ReturnType<typeof report>) => { state(r, 2).pid = 9876; }],
+    ['different handle', (r: ReturnType<typeof report>) => { state(r, 2).handle = '999'; }],
+    ['early close', (r: ReturnType<typeof report>) => { state(r, 2).closed = true; }],
+    ['missing release', (r: ReturnType<typeof report>) => { r.observations[0].events.splice(4, 1); }],
+    ['missing exit', (r: ReturnType<typeof report>) => { r.observations[0].events.pop(); }],
+    ['no real retry', (r: ReturnType<typeof report>) => { r.observations[0].attempts.pop(); }],
+    ['lost persistent attempts', (r: ReturnType<typeof report>) => { r.observations[1].attempts.pop(); }],
+    ['failed post-release mkdir', (r: ReturnType<typeof report>) => { r.observations[0].recreated = false; }],
+    ['observer not restored', (r: ReturnType<typeof report>) => { r.observations[0].originalMkdirRestored = false; }],
+    ['missing diagnostic control', (r: ReturnType<typeof report>) => { r.diagnostics = []; }],
+  ])('rejects a passing label with %s', (_name, mutate) => {
+    const r = report();
+    mutate(r);
+    expect(() => validateNativeReport(r, false)).toThrow();
+  });
+
+  it.each([
     { platform: 'darwin', nodeVersion: 'v24.15.0' },
     { platform: 'win32', nodeVersion: 'v24.21.0' },
   ])('fails preflight with durable evidence and no child execution: %j', (runtime) => {
@@ -181,6 +229,7 @@ describe('native auth CI evidence contracts (no Win32 emulation)', () => {
   it.each([
     { status: 0, stdout: JSON.stringify(report()), passed: true },
     { status: 7, stdout: JSON.stringify(report()), passed: false },
+    { status: 1, stdout: JSON.stringify({ ...report(), passed: false, errors: ['native precondition failed'] }), passed: false },
     { status: 0, stdout: 'not JSON', passed: false },
     { status: null, stdout: '', error: new Error('spawn failed'), passed: false },
   ])('keeps candidate output after baseline fetch failure, isolates and cleans copies: %j', (child) => {
@@ -196,6 +245,7 @@ describe('native auth CI evidence contracts (no Win32 emulation)', () => {
       caseDir = spawnOptions.cwd;
       expect(caseDir).not.toBe(options.rootDir);
       expect(fs.readFileSync(path.join(caseDir, 'lib/pi-sdk/model-runtime.ts'), 'utf8')).toBe('contract fixture\n');
+      for (const file of NATIVE_PROBE_FILES) expect(fs.readFileSync(path.join(caseDir, file), 'utf8')).toBe('contract fixture\n');
       fs.writeFileSync(path.join(caseDir, 'lib/pi-sdk/model-runtime.ts'), 'changed only in isolated copy');
       expect(fs.readFileSync(path.join(caseDir, 'node_modules/untouched'), 'utf8')).toBe('contract fixture\n');
       return { ...child, signal: null, stderr: 'child diagnostic' };
@@ -204,8 +254,9 @@ describe('native auth CI evidence contracts (no Win32 emulation)', () => {
     expect(result.passed).toBe(false); // Baseline failure cannot be hidden by candidate success.
     expect(result.cases.baseline.passed).toBe(false);
     expect(result.cases.candidate.passed).toBe(child.passed);
+    if (child.status === 1) expect(result.cases.candidate.report.errors).toEqual(['native precondition failed']);
     expect(result.sourceAfter).toEqual(result.sourceBefore);
-    expect(Object.keys(result.sourceBefore)).toHaveLength(4);
+    expect(Object.keys(result.sourceBefore)).toHaveLength(6);
     expect(fs.existsSync(path.dirname(caseDir))).toBe(false);
     expect(fs.readFileSync(path.join(options.rootDir, 'node_modules/untouched'), 'utf8')).toBe('contract fixture\n');
     expect(fs.readFileSync(path.join(options.outputDir, 'candidate.stdout.txt'), 'utf8')).toBe(child.stdout);

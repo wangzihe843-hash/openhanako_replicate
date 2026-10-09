@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertHeldState } from '../tests/fixtures/native-windows-lock-protocol.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const BASELINE_COMMIT = '81ec09c47cb7c3899bba3042c5cc9c4479ed60dc';
@@ -12,11 +13,47 @@ export const BASELINE_BLOB = 'fcbd9e5ddd668b9b7bf35af97bc56fbe7c820ee1';
 export const BASELINE_SHA256 = 'f8e184038e4b6ad5e06fd97f3aae2510c5137898f65ab0b22533a755816441d0';
 const ADAPTER = 'lib/pi-sdk/model-runtime.ts';
 const PROBE = 'tests/fixtures/native-windows-lock-probe.mjs';
-const WATCHED = [ADAPTER, PROBE, 'package.json', 'package-lock.json'];
+export const NATIVE_PROBE_FILES = [PROBE, 'tests/fixtures/native-windows-lock-protocol.mjs',
+  'tests/fixtures/native-windows-lock-holder.ps1'];
+const WATCHED = [ADAPTER, ...NATIVE_PROBE_FILES, 'package.json', 'package-lock.json'];
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const writeJson = (file, value) => fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
 
-// An exit code alone is not native evidence (for example, a skipped probe).
+function validateHolderEvents(events, mechanism, lockPath) {
+  const commands = mechanism === 'classic'
+    ? ['open', 'arm', 'check', 'check', 'release', 'exit']
+    : ['open', 'arm', 'check', 'release', 'exit'];
+  assert.deepEqual(events.map(event => event.command), commands);
+  const opened = events[0];
+  assert.ok(Number.isInteger(opened.pid) && opened.pid > 0);
+  assert.match(opened.handle, /^\d+$/);
+  assert.equal(opened.fileSystem, 'NTFS');
+  assert.ok(typeof opened.volumeRoot === 'string' && opened.volumeRoot.length > 0);
+  assert.equal(opened.path, lockPath);
+  assert.equal(opened.info.deletePending, false);
+  for (const [index, state] of events.slice(0, -1).entries()) {
+    assert.equal(state.id, index + 1);
+    for (const key of ['pid', 'path', 'handle', 'fileSystem', 'volumeRoot']) assert.equal(state[key], opened[key]);
+    assert.equal(state.mechanism, mechanism);
+    assert.equal(state.access, mechanism === 'classic' ? 0x10080 : 0);
+    assert.equal(state.share, 7);
+    assert.equal(state.flags, 0x02000000);
+    assert.equal(state.closed, state.command === 'release');
+    if (state.closed) {
+      assert.equal(state.info, null);
+      assert.equal(state.mkdirError, null);
+    } else {
+      assert.equal(state.info.directory, true);
+      assert.equal(typeof state.info.deletePending, 'boolean');
+      assert.ok(Number.isInteger(state.info.numberOfLinks) && state.info.numberOfLinks >= 0);
+      if (mechanism === 'classic' && state.command !== 'open') assertHeldState(state);
+    }
+  }
+  assert.deepEqual(events.at(-1), { command: 'exit', code: 0, signal: null, error: null });
+}
+
+// An exit code or bare EPERM label alone is not native evidence. Require the
+// live handle state, request/release transcript and actual native mkdir attempts.
 export function validateNativeReport(report, baseline) {
   assert.equal(report.passed, true);
   assert.equal(report.baseline, baseline);
@@ -26,12 +63,29 @@ export function validateNativeReport(report, baseline) {
   assert.ok(report.release.length > 0);
   assert.equal(report.syntheticCredentialsOnly, true);
   assert.equal(report.networkAttempts, 0);
-  assert.deepEqual(report.observations, baseline ? [
-    { persistent: false, nativeCode: 'EPERM', result: 'visible EPERM' },
-  ] : [
-    { persistent: false, nativeCode: 'EPERM', result: 'fresh credential after release' },
-    { persistent: true, nativeCode: 'EPERM', result: 'visible EPERM' },
-  ]);
+  assert.deepEqual(report.errors, []);
+  assert.equal(report.diagnostics.length, 1);
+  const diagnostic = report.diagnostics[0];
+  assert.equal(diagnostic.mechanism, 'remove-directory');
+  assert.equal(diagnostic.recreated, true);
+  validateHolderEvents(diagnostic.events, 'remove-directory', diagnostic.events[0].path);
+  assert.ok(Object.hasOwn(diagnostic.directMkdir, 'code'));
+  assert.equal(report.observations.length, baseline ? 1 : 2);
+  for (const [index, observation] of report.observations.entries()) {
+    const persistent = index === 1;
+    assert.equal(observation.persistent, persistent);
+    assert.equal(observation.nativeCode, 'EPERM');
+    assert.equal(observation.result, persistent || baseline ? 'visible EPERM' : 'fresh credential after release');
+    assert.equal(typeof observation.lockPath, 'string');
+    assert.ok(observation.lockPath.endsWith('auth.json.lock'));
+    const failure = { code: 'EPERM', syscall: 'mkdir', path: observation.lockPath };
+    assert.deepEqual(observation.preflight, failure);
+    assert.deepEqual(observation.attempts, persistent ? Array(6).fill(failure)
+      : baseline ? [failure] : [failure, { code: null, syscall: null, path: null }]);
+    assert.equal(observation.originalMkdirRestored, true);
+    assert.equal(observation.recreated, true);
+    validateHolderEvents(observation.events, 'classic', observation.lockPath);
+  }
 }
 
 function recordCommand(outputDir, name, command, args, options, run) {
@@ -118,7 +172,7 @@ export function runNativeAuthLockCi({
         fs.mkdirSync(path.join(caseDir, 'temp'));
         fs.writeFileSync(path.join(caseDir, 'package.json'), '{"type":"module"}\n');
         fs.writeFileSync(path.join(caseDir, ADAPTER), source);
-        fs.writeFileSync(path.join(caseDir, PROBE), snapshot[PROBE]);
+        for (const file of NATIVE_PROBE_FILES) fs.writeFileSync(path.join(caseDir, file), snapshot[file]);
         // A junction needs no symlink privilege on Windows. Never write through
         // this dependency link or replace any file in the checked-out source.
         fs.symlinkSync(path.resolve(rootDir, 'node_modules'), path.join(caseDir, 'node_modules'), 'junction');
@@ -130,7 +184,9 @@ export function runNativeAuthLockCi({
             },
           }, run);
         result.exitCode = child.code;
-        result.report = JSON.parse(requireSuccess(child));
+        // Retain structured partial diagnostics even when a precondition fails.
+        if (child.stdout.trim()) result.report = JSON.parse(child.stdout);
+        requireSuccess(child);
         validateNativeReport(result.report, name === 'baseline');
         result.passed = true;
       } catch (error) {

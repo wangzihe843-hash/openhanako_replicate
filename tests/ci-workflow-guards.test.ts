@@ -63,7 +63,7 @@ describe("fork workflow safety", () => {
       group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
       "cancel-in-progress": true,
     });
-    expect(Object.keys(ci.jobs).sort()).toEqual(["lint-open-boundary", "open-build-smoke", "test"]);
+    expect(Object.keys(ci.jobs).sort()).toEqual(["lint-open-boundary", "open-build-smoke", "test", "windows-auth-lock-native"]);
     expect(ci.jobs.test["runs-on"]).toBe("${{ matrix.os }}");
     expect(ci.jobs.test.strategy).toEqual({
       "fail-fast": false,
@@ -100,7 +100,7 @@ describe("fork workflow safety", () => {
   it("uses the triggering commit for every checkout without a ref input or secrets", () => {
     for (const [name, job] of Object.entries(ci.jobs)) {
       const checkouts = (job.steps ?? []).filter((step) => String(step.uses).startsWith("actions/checkout@"));
-      expect(checkouts).toEqual([{ uses: name === "test" ? "actions/checkout@v5" : "actions/checkout@v4" }]);
+      expect(checkouts).toEqual([{ uses: ["test", "windows-auth-lock-native"].includes(name) ? "actions/checkout@v5" : "actions/checkout@v4" }]);
     }
     expect(JSON.stringify(ci)).not.toContain("inputs.");
     expect(JSON.stringify(ci)).not.toContain("secrets.");
@@ -226,8 +226,15 @@ describe("fork workflow safety", () => {
     }
   });
 
-  it("runs native Windows auth A/B after npm ci and retains evidence on failure", () => {
-    const steps = ci.jobs.test.steps ?? [];
+  it("runs native Windows auth A/B in an independent strict job after npm ci", () => {
+    const job = ci.jobs["windows-auth-lock-native"];
+    expect(job["runs-on"]).toBe("windows-2022");
+    expect(job.needs).toBeUndefined();
+    expect(job.if).toBeUndefined();
+    expect(job["continue-on-error"]).toBeUndefined();
+    const steps = job.steps ?? [];
+    expect(steps.find(step => step.uses === "actions/setup-node@v5")?.with)
+      .toEqual({ "node-version": "24.15.0", cache: "npm" });
     const installIndex = steps.findIndex((step) => stepRun(step) === "npm ci");
     const probeIndex = steps.findIndex((step) => stepRun(step) === "node scripts/probe-windows-auth-lock.mjs");
     expect(probeIndex).toBeGreaterThan(installIndex);
@@ -249,12 +256,17 @@ describe("fork workflow safety", () => {
       if: NATIVE_UPLOAD_IF,
       uses: "actions/upload-artifact@v4",
       with: {
-        name: "windows-auth-lock-native-${{ matrix.os }}",
+        name: "windows-auth-lock-native-windows-2022",
         path: "output/windows-auth-lock-native/",
         "if-no-files-found": "error",
       },
     });
-    expect(steps.findIndex((step) => stepRun(step) === "npm test")).toBeGreaterThan(probeIndex + 2);
+    expect(steps.at(-1)).toBe(steps[probeIndex + 2]);
+    // No needs edge in either direction; no continue-on-error in either job.
+    // The full Windows gates are unchanged and can run even if this job fails.
+    expect(ci.jobs.test.needs).toBeUndefined();
+    expect(JSON.stringify(ci.jobs.test)).not.toContain("native_auth_lock");
+    expect(ci.jobs.test.steps?.find(step => stepRun(step) === "npm test")?.if).toBeUndefined();
   });
 
   it.each([
@@ -266,7 +278,7 @@ describe("fork workflow safety", () => {
     ["macOS", "skipped", false, false],
     ["Linux", "skipped", false, false],
   ])("collects native evidence for %s / %s without assuming prior success", (os, outcome, check, upload) => {
-    const steps = ci.jobs.test.steps ?? [];
+    const steps = ci.jobs["windows-auth-lock-native"].steps ?? [];
     // These pinned expressions use only the shared JS/Actions boolean subset.
     const context = { always: () => true, runner: { os }, steps: { native_auth_lock: { outcome } } };
     expect(runInNewContext(steps.find(step => step.name === "Check native Windows auth lock evidence")!.if!, context)).toBe(check);

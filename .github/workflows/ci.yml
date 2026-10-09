@@ -38,26 +38,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Probe native Windows auth lock delete-pending recovery
-        id: native_auth_lock
-        if: runner.os == 'Windows'
-        timeout-minutes: 5
-        run: node scripts/probe-windows-auth-lock.mjs
-
-      - name: Check native Windows auth lock evidence
-        if: always() && runner.os == 'Windows'
-        env:
-          NATIVE_AUTH_LOCK_OUTCOME: ${{ steps.native_auth_lock.outcome }}
-        run: node scripts/check-windows-auth-lock-evidence.mjs
-
-      - name: Preserve native Windows auth lock evidence
-        if: always() && runner.os == 'Windows' && steps.native_auth_lock.outcome != 'skipped' && steps.native_auth_lock.outcome != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-auth-lock-native-${{ matrix.os }}
-          path: output/windows-auth-lock-native/
-          if-no-files-found: error
-
       # Electron 42 installs lazily on require(), which the renderer tests
       # bypass because the shared unit-test setup mocks Electron.
       - name: Install Electron binary for macOS renderer tests
@@ -143,6 +123,42 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+  # Native experiment failure must not prevent the independent full test matrix
+  # from collecting its results. This job still fails the workflow on any error.
+  windows-auth-lock-native:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24.15.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Probe native Windows auth lock delete-pending recovery
+        id: native_auth_lock
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        run: node scripts/probe-windows-auth-lock.mjs
+
+      - name: Check native Windows auth lock evidence
+        if: always() && runner.os == 'Windows'
+        env:
+          NATIVE_AUTH_LOCK_OUTCOME: ${{ steps.native_auth_lock.outcome }}
+        run: node scripts/check-windows-auth-lock-evidence.mjs
+
+      - name: Preserve native Windows auth lock evidence
+        if: always() && runner.os == 'Windows' && steps.native_auth_lock.outcome != 'skipped' && steps.native_auth_lock.outcome != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-auth-lock-native-windows-2022
+          path: output/windows-auth-lock-native/
+          if-no-files-found: error
 
   # 独立于上面 test 矩阵：只跑边界 lint 脚本本身，给"开/闭边界回归"一个比
   # 全量矩阵（typecheck/lint/build/test 跑完才轮到 npm test 里的边界用例）
