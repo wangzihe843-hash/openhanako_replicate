@@ -68,6 +68,30 @@ describe("fork workflow safety", () => {
     }
   });
 
+  it("collects both platform results without allowing a failed job to pass", () => {
+    expect(ci.jobs.test).toMatchObject({ strategy: { "fail-fast": false } });
+    expect(ci.jobs.test["continue-on-error"] ?? false).toBe(false);
+  });
+
+  it("gives all three serial typechecks a bounded heap budget only in their CI step", () => {
+    const steps = ci.jobs.test.steps ?? [];
+    const typecheck = steps.filter((step) => step.name === "Typecheck");
+    expect(typecheck).toHaveLength(1);
+    expect(stepRun(typecheck[0])).toBe("npm run typecheck");
+    expect(typecheck[0].env).toEqual({ NODE_OPTIONS: "--max-old-space-size=4096" });
+    expect(typecheck[0].if).toBeUndefined();
+    expect(typecheck[0]["continue-on-error"] ?? false).toBe(false);
+    expect(ci.env ?? {}).not.toHaveProperty("NODE_OPTIONS");
+    expect(ci.jobs.test.env ?? {}).not.toHaveProperty("NODE_OPTIONS");
+    for (const step of steps.filter((step) => step.name !== "Typecheck")) {
+      expect(step.env ?? {}).not.toHaveProperty("NODE_OPTIONS");
+    }
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+    expect(pkg.scripts.typecheck).toBe(
+      "tsc --noEmit && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.test.json",
+    );
+  });
+
   it("grants only contents read in every CI/build job, including dormant publishers", () => {
     for (const doc of [ci, build]) {
       expect(doc.permissions).toEqual({ contents: "read" });

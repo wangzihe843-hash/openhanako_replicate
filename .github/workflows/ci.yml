@@ -17,6 +17,8 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
+      # Collect each platform's result even if another platform fails.
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
         node-version: ["24.15.0"]
@@ -42,6 +44,11 @@ jobs:
         run: node scripts/smoke-windows-sandbox-helper.mjs x64
 
       - name: Typecheck
+        # The test project exceeds Node's ~2 GiB default on the 7 GB macOS
+        # arm64 runner. Keep 4 GiB old-space local to this serial check step,
+        # leaving room for the OS and non-heap allocations.
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: npm run typecheck
 
       - name: Lint
