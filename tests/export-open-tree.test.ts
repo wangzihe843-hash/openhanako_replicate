@@ -82,6 +82,70 @@ function writeManifest(root: string, paths: string[]): void {
   );
 }
 
+type MetadataLayout = "directory" | "pointer" | "worktree";
+
+function makeMetadataFixture(layout: MetadataLayout) {
+  let root = makeFixtureRepo();
+  if (layout === "pointer") {
+    const gitDir = path.join(tempDir("hana-export-metadata-"), "metadata");
+    fs.renameSync(path.join(root, ".git"), gitDir);
+    fs.writeFileSync(path.join(root, ".git"), `gitdir: ${gitDir.replaceAll("\\", "/")}\n`);
+  } else if (layout === "worktree") {
+    const checkout = path.join(tempDir("hana-export-worktree-"), "checkout");
+    git(root, "worktree", "add", "-q", "--detach", checkout);
+    root = checkout;
+  }
+  writeManifest(root, ["src/a.ts"]);
+  const metadata = git(root, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+    .trim().split(/\r?\n/).map((dir) => fs.realpathSync.native(dir));
+  return { root, metadata: [...new Set(metadata)] };
+}
+
+function snapshotTree(root: string): Record<string, string> {
+  const entries: Record<string, string> = {};
+  function visit(relative: string) {
+    const absolute = path.join(root, relative);
+    const stat = fs.lstatSync(absolute);
+    if (stat.isSymbolicLink()) entries[relative] = `link:${fs.readlinkSync(absolute)}`;
+    else if (stat.isDirectory()) {
+      entries[relative] = "directory";
+      for (const name of fs.readdirSync(absolute).sort()) visit(path.join(relative, name));
+    } else entries[relative] = fs.readFileSync(absolute).toString("hex");
+  }
+  visit(".");
+  return entries;
+}
+
+function expectRejectedBeforeWrites(root: string, destinations: string[], error = /overlaps|repository root/) {
+  const protectedPaths = [path.join(root, ".git"), path.join(root, "src"),
+    ...git(root, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir").trim().split(/\r?\n/)];
+  const before = protectedPaths.map(snapshotTree);
+  const stop = () => { throw new Error("unsafe filesystem mutation reached"); };
+  const guards = [vi.spyOn(fs, "mkdirSync").mockImplementation(stop),
+    vi.spyOn(fs, "mkdtempSync").mockImplementation(stop),
+    vi.spyOn(fs, "renameSync").mockImplementation(stop),
+    vi.spyOn(fs, "rmSync").mockImplementation(stop)];
+  try {
+    for (const destDir of destinations) {
+      expect(() => exportOpenTree({ rootDir: root, destDir, force: true, skeleton: [] })).toThrow(error);
+    }
+    for (const guard of guards) expect(guard).not.toHaveBeenCalled();
+  } finally {
+    for (const guard of guards) guard.mockRestore();
+    expect(protectedPaths.map(snapshotTree)).toEqual(before);
+  }
+}
+
+function windowsShortPath(directory: string): string {
+  const short = execFileSync("cmd.exe", ["/d", "/c", 'for %I in ("%HANA_EXPORT_ALIAS_DIR%") do @echo %~sI'], {
+    encoding: "utf8", env: { ...process.env, HANA_EXPORT_ALIAS_DIR: directory },
+  }).trim();
+  const long = fs.realpathSync.native(directory);
+  expect(short.toLowerCase(), "Windows fixture requires an actual 8.3 alias").not.toBe(long.toLowerCase());
+  expect(fs.realpathSync.native(short)).toBe(long);
+  return short;
+}
+
 describe("export-open-tree: planExportCopies path semantics", () => {
   it("expands a trailing-slash directory entry to git-tracked files only", () => {
     const root = makeFixtureRepo();
@@ -236,6 +300,91 @@ describe("export-open-tree: exportOpenTree materialization", () => {
     expect(() => exportOpenTree({ rootDir: root, destDir: path.join(gitDir, "new-output"), force: true, skeleton: [] })).toThrow(/overlaps/);
     expect(remove).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(gitDir, "HEAD"))).toBe(true);
+  });
+
+  it.each<MetadataLayout>(["directory", "pointer", "worktree"])("B01 rejects %s metadata, ancestors and descendants before staging", (layout) => {
+    const { root, metadata } = makeMetadataFixture(layout);
+    expect(metadata).toHaveLength(layout === "worktree" ? 2 : 1);
+    for (const directory of metadata) write(directory, "existing-output/keep.txt", "metadata sentinel");
+    expectRejectedBeforeWrites(root, metadata.flatMap((directory) => [
+      directory, path.dirname(directory), path.join(directory, "existing-output"), path.join(directory, "missing/nested/output"),
+    ]));
+    expectRejectedBeforeWrites(root, [path.join(root, ".git")], /overlaps|must be a directory/);
+
+    // A sibling with the same string prefix is an independent output.
+    const before = metadata.map(snapshotTree);
+    const destDir = `${metadata.at(-1)}-export`;
+    write(destDir, "old.txt", "previous export");
+    exportOpenTree({ rootDir: root, destDir, force: true, skeleton: [], log: () => {} });
+    expect(fs.readFileSync(path.join(destDir, "src/a.ts"))).toEqual(fs.readFileSync(path.join(root, "src/a.ts")));
+    expect(fs.existsSync(path.join(destDir, "old.txt"))).toBe(false);
+    expect(metadata.map(snapshotTree)).toEqual(before);
+  });
+
+  it.each<MetadataLayout>(["directory", "pointer", "worktree"])("B01 models spelling-preserving realpath for %s metadata aliases", (layout) => {
+    const { root, metadata } = makeMetadataFixture(layout);
+    const alias = path.join(tempDir("hana-export-spelling-"), "METADA~1");
+    fs.symlinkSync(metadata[0], alias, process.platform === "win32" ? "junction" : "dir");
+    const native = fs.realpathSync.native;
+    expect(native(alias)).toBe(native(metadata[0]));
+    const realpath = fs.realpathSync;
+    // Model the spelling retained for Windows 8.3 names without spoofing the
+    // host OS. Real native short/long aliases are exercised separately below.
+    const spelling = vi.spyOn(fs, "realpathSync").mockImplementation(((target, options) =>
+      String(target) === alias ? alias : realpath(target, options)) as typeof fs.realpathSync);
+    Object.assign(fs.realpathSync, { native });
+    try {
+      expectRejectedBeforeWrites(root, [path.join(alias, "missing/nested/output")], /overlaps/);
+    } finally {
+      spelling.mockRestore();
+    }
+  });
+
+  it.runIf(process.platform === "win32").each<MetadataLayout>(["directory", "pointer", "worktree"])("B01 rejects native Windows short/long %s metadata aliases in both directions", (layout) => {
+    const { root, metadata } = makeMetadataFixture(layout);
+    for (const directory of metadata) write(directory, "existing-output/keep.txt", "metadata sentinel");
+    const longRoot = fs.realpathSync.native(root);
+    const shortRoot = windowsShortPath(root);
+    for (const directory of metadata) {
+      const longDir = fs.realpathSync.native(directory);
+      const shortDir = windowsShortPath(directory);
+      for (const [rootDir, gitDir] of [[longRoot, shortDir], [shortRoot, longDir]]) {
+        expectRejectedBeforeWrites(rootDir, [gitDir, path.dirname(gitDir),
+          path.join(gitDir, "existing-output"), path.join(gitDir, "missing/nested/output")]);
+      }
+    }
+    const destDir = path.join(shortRoot, "output/independent");
+    exportOpenTree({ rootDir: longRoot, destDir, skeleton: [], log: () => {} });
+    exportOpenTree({ rootDir: shortRoot, destDir: fs.realpathSync.native(destDir), force: true, skeleton: [], log: () => {} });
+    expect(fs.readFileSync(path.join(destDir, "src/a.ts"))).toEqual(fs.readFileSync(path.join(root, "src/a.ts")));
+  }, 30_000);
+
+  it.runIf(process.platform === "win32").each(["file", "empty directory"])("B01 protects an untracked %s declared through a native Windows short name", (kind) => {
+    const root = makeFixtureRepo();
+    const source = path.join(root, "Untracked Source Directory");
+    fs.mkdirSync(source);
+    if (kind === "file") write(source, "payload.ts", "untracked source sentinel");
+    const shortName = path.basename(windowsShortPath(source));
+    expect(shortName.toLowerCase()).not.toBe(path.basename(source).toLowerCase());
+    const entry = kind === "file" ? `${shortName}/payload.ts` : `${shortName}/`;
+    writeManifest(root, ["src/a.ts", entry]);
+    const before = snapshotTree(source);
+    expectRejectedBeforeWrites(root, [source, path.join(source, "missing/output")], /overlaps/);
+    expect(snapshotTree(source)).toEqual(before);
+    const destDir = path.join(root, "output/export");
+    exportOpenTree({ rootDir: root, destDir, skeleton: [], log: () => {} });
+    expect(fs.readFileSync(path.join(destDir, "src/a.ts"))).toEqual(fs.readFileSync(path.join(root, "src/a.ts")));
+    if (kind === "file") expect(fs.readFileSync(path.join(destDir, entry), "utf8")).toBe("untracked source sentinel");
+  });
+
+  it("B01 protects missing unexported tracked trees while allowing independent output", () => {
+    const root = makeFixtureRepo();
+    writeManifest(root, ["src/a.ts"]);
+    fs.rmSync(path.join(root, "pkg"), { recursive: true });
+    expectRejectedBeforeWrites(root, [path.join(root, "pkg/new-output")], /overlaps/);
+    const destDir = path.join(root, "output/export");
+    exportOpenTree({ rootDir: root, destDir, skeleton: [], log: () => {} });
+    expect(fs.readFileSync(path.join(destDir, "src/a.ts"))).toEqual(fs.readFileSync(path.join(root, "src/a.ts")));
   });
 
   it("B01 rejects a filesystem root that cannot be resolved instead of looping", () => {

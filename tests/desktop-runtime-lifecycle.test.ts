@@ -282,6 +282,7 @@ describe("desktop browser control lifecycle", () => {
 });
 
 function makeStartupHarness(options: {
+  platform?: "darwin" | "win32";
   ownerKind?: string;
   rendererError?: Error;
   reusable?: boolean;
@@ -290,25 +291,34 @@ function makeStartupHarness(options: {
   isPackaged?: boolean;
   hasSeed?: boolean;
 } = {}) {
+  // This VM has no real filesystem I/O: keep its paths tied to its platform.
+  const platform = options.platform ?? "darwin";
+  const fixturePath = platform === "win32" ? path.win32 : path.posix;
+  const fixtureRoot = platform === "win32" ? "C:\\" : "/";
+  const resourcesPath = platform === "win32"
+    ? "C:\\Program Files\\HanaAgent\\resources"
+    : "/Applications/HanaAgent.app/Contents/Resources";
+  const rendererDir = fixturePath.join(fixtureRoot, "verified-renderer");
+  const rendererIndex = fixturePath.join(rendererDir, "index.html");
   const calls = [];
   const info = { pid: 1234, port: 14500, token: "trusted-token", version: "1.0.0", ownerKind: options.ownerKind ?? "desktop" };
   const context = vm.createContext({
-    path,
+    path: fixturePath,
     app: { isPackaged: options.isPackaged ?? true, getVersion: () => "1.0.0" },
     process: {
-      platform: "darwin", arch: "arm64", resourcesPath: "/Applications/HanaAgent.app/Contents/Resources", env: {},
+      platform, arch: platform === "win32" ? "x64" : "arm64", resourcesPath, env: {},
       kill: () => { if (options.alive === false) throw new Error("not running"); },
     },
     fs: {
       readFileSync: () => JSON.stringify(info),
-      existsSync: (file) => file.startsWith("/verified-renderer/"),
+      existsSync: (file) => file === rendererIndex,
       unlinkSync: () => calls.push("unlink-info"),
     },
     console: { log() {}, warn() {}, error() {} },
-    hanakoHome: "/test-home",
-    __dirname: "/Applications/HanaAgent.app/Contents/Resources/app.asar/desktop",
+    hanakoHome: fixturePath.join(fixtureRoot, "test-home"),
+    __dirname: fixturePath.join(resourcesPath, "app.asar", "desktop"),
     _isDev: false,
-    _distRenderer: "/app.asar/desktop/dist-renderer",
+    _distRenderer: fixturePath.join(fixtureRoot, "app.asar", "desktop", "dist-renderer"),
     _rendererBootChannel: null,
     _rendererBootTrain: null,
     _reusedServerArtifactVersion: null,
@@ -330,7 +340,7 @@ function makeStartupHarness(options: {
         assert.equal(opts.reuseServerVersion, "1.0.0");
         assert.equal(opts.channel, "beta");
         if (options.rendererError) throw options.rendererError;
-        return { versionDir: "/verified-renderer", version: "1.0.0", train: 7, slot: "current" };
+        return { versionDir: rendererDir, version: "1.0.0", train: 7, slot: "current" };
       },
     },
     verifyReusableServerInfo: async () => {
@@ -345,7 +355,7 @@ function makeStartupHarness(options: {
     STALE_SERVER_EXIT_GRACE_MS: 1,
     SERVER_SHUTDOWN_GRACE_MS: 1,
     SERVER_FORCE_KILL_WAIT_MS: 1,
-    resolvePackagedArtifactBoot: async () => { calls.push("full-boot"); return { serverRoot: "/fresh-server" }; },
+    resolvePackagedArtifactBoot: async () => { calls.push("full-boot"); return { serverRoot: fixturePath.join(fixtureRoot, "fresh-server") }; },
     ensureServerFilesReady: async () => ({ ok: true }),
     _spawnServerOnce: async () => { calls.push("spawn"); },
   });
@@ -355,12 +365,12 @@ function makeStartupHarness(options: {
 
 describe("packaged renderer initialization when reusing a server", () => {
   for (const ownerKind of ["desktop", "standalone"]) {
-    it(`loads a verified renderer and initializes content/crash state with a ${ownerKind} server`, async () => {
-      const h = makeStartupHarness({ ownerKind });
+    it.each(["darwin", "win32"] as const)(`loads a verified renderer and initializes content/crash state with a ${ownerKind} server (%s paths)`, async (platform) => {
+      const h = makeStartupHarness({ ownerKind, platform });
       await h.context.startServer();
       let loadedFile;
       h.context.loadWindowURL({ loadFile: (file) => { loadedFile = file; } }, "index");
-      assert.equal(loadedFile, "/verified-renderer/index.html");
+      assert.equal(loadedFile, platform === "win32" ? "C:\\verified-renderer\\index.html" : "/verified-renderer/index.html");
       assert.equal(h.context._rendererBootChannel, "beta.renderer");
       assert.equal(h.context._artifactBootChannel, "beta");
       assert.equal(h.context._rendererBootTrain, 7);
@@ -494,6 +504,7 @@ async function writeArtifactPointer(fixture, kind, slot, version, train = 7) {
 }
 
 function snapshotTree(root) {
+  // These fixtures touch real files, so snapshot keys use host path semantics.
   const files = {};
   if (!fs.existsSync(root)) return files;
   function visit(directory) {
@@ -578,7 +589,9 @@ describe("artifact boot with an already running server", () => {
       await context.handleRendererArtifactLoadFailure({ win: { isDestroyed: () => false }, pageName: "index", label: "index", reason: "crashed" });
     }
     const after = snapshotTree(f.homeDir);
-    delete after["artifacts/beta.renderer.sentinel.json"];
+    const sentinelKey = path.join("artifacts", "beta.renderer.sentinel.json");
+    assert.ok(Object.hasOwn(after, sentinelKey), "renderer failures must write the expected sentinel");
+    delete after[sentinelKey];
     assert.deepEqual(after, before);
     assert.equal(reloads, 3, "crash-loop recovery must wait for a safe server restart");
     assert.equal(context._distRenderer, current.versionDir);

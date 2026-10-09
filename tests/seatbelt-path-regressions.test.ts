@@ -19,11 +19,15 @@ describe("seatbelt path literals and failure behavior", () => {
   const policy = (p: string) => ({ writablePaths: [p], protectedPaths: [p], denyReadPaths: [p] });
 
   it("encodes quotes and backslashes in every dynamic SBPL path position", () => {
-    const target = path.join(root, 'special"back\\slash');
-    fs.mkdirSync(target);
+    const target = path.join(root, "literal-target");
+    // Exercise macOS SBPL encoding without creating names illegal on Windows.
+    const resolvedTarget = '/seatbelt-fixture/special"back\\slash';
+    const realpathSync = fs.realpathSync;
+    vi.spyOn(fs, "realpathSync").mockImplementation((file) =>
+      file === target ? resolvedTarget : realpathSync(file));
     vi.stubEnv("TMPDIR", target);
     const profile = __testing.generateProfile(policy(target), { allowNetwork: false });
-    const literal = '"' + target.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+    const literal = String.raw`"/seatbelt-fixture/special\"back\\slash"`;
     expect(profile).toContain(`(allow file-write* (subpath ${literal}))`);
     expect(profile).toContain(`(deny file-write* (subpath ${literal}))`);
     expect(profile).toContain(`(deny file-read* (subpath ${literal}))`);

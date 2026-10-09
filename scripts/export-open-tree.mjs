@@ -150,7 +150,7 @@ function resolveWithinRoot(rootDir, relPath) {
   if (typeof relPath !== "string" || !relPath || relPath.includes("\0")) {
     throw new Error("[export-open-tree] invalid repository-relative input path");
   }
-  const absRoot = fs.realpathSync(rootDir);
+  const absRoot = fs.realpathSync.native(rootDir);
   const abs = path.resolve(absRoot, relPath);
   if (path.isAbsolute(relPath) || path.win32.isAbsolute(relPath) || relPath.includes(":") || !containsPath(absRoot, abs) || abs === absRoot) {
     throw new Error(`[export-open-tree] path escapes repository root: "${relPath}" resolved to ${abs}`);
@@ -208,7 +208,7 @@ export function planExportCopies({ rootDir, manifest, skeleton }) {
     const abs = resolveWithinRoot(rootDir, relPath);
     if (!fs.existsSync(abs)) throw new Error(`[export-open-tree] path does not exist in repository: ${relPath}`);
     if (!fs.statSync(abs).isFile()) throw new Error(`[export-open-tree] expected regular file: ${relPath}`);
-    const normalized = toPosix(path.relative(fs.realpathSync(rootDir), abs));
+    const normalized = toPosix(path.relative(fs.realpathSync.native(rootDir), abs));
     if (normalized.split("/").some((part) => part.toLowerCase() === ".git")) {
       throw new Error(`[export-open-tree] Git metadata cannot be exported: ${relPath}`);
     }
@@ -259,7 +259,8 @@ function canonicalDestination(destDir) {
     throw new Error(`[export-open-tree] destination must not be a link: ${destDir}`);
   }
   if (!fs.statSync(existing).isDirectory()) throw new Error(`[export-open-tree] destination must be a directory: ${destDir}`);
-  return path.join(fs.realpathSync(existing), ...tail);
+  // Native resolution unifies Windows 8.3 names with Git's long path spelling.
+  return path.join(fs.realpathSync.native(existing), ...tail);
 }
 
 function validateDestination(rootDir, destDir, inputs) {
@@ -271,11 +272,14 @@ function validateDestination(rootDir, destDir, inputs) {
   const protectedPaths = new Set([path.join(rootDir, ".git"), path.join(rootDir, "export-manifest.json")]);
   // A worktree's .git can be a pointer file; protect the actual metadata too.
   const gitDirectories = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], { cwd: rootDir, encoding: "utf-8" });
-  for (const directory of gitDirectories.trim().split(/\r?\n/)) protectedPaths.add(fs.realpathSync(directory));
+  for (const directory of gitDirectories.trim().split(/\r?\n/)) protectedPaths.add(fs.realpathSync.native(directory));
   for (const rel of [...inputs, ...listGitTrackedFiles(rootDir)]) {
     const absolute = resolveWithinRoot(rootDir, rel.replace(/\/$/, ""));
     const topLevel = path.relative(rootDir, absolute).split(path.sep)[0];
-    protectedPaths.add(path.join(rootDir, topLevel));
+    const source = path.join(rootDir, topLevel);
+    // Manifest-only inputs can also use short names. Links were rejected above;
+    // retain the lexical guard for deleted, unexported tracked source trees.
+    protectedPaths.add(fs.lstatSync(source, { throwIfNoEntry: false }) ? fs.realpathSync.native(source) : source);
   }
   for (const source of protectedPaths) {
     if (containsPath(destDir, source) || containsPath(source, destDir)) {
@@ -305,7 +309,7 @@ export function exportOpenTree({
   log = (msg) => console.log(msg),
 }) {
   if (!destDir) throw new Error("[export-open-tree] destDir is required");
-  const absRoot = fs.realpathSync(rootDir);
+  const absRoot = fs.realpathSync.native(rootDir);
   const absDest = canonicalDestination(destDir);
   resolveWithinRoot(absRoot, "export-manifest.json");
   const manifest = readExportManifest({ rootDir: absRoot });

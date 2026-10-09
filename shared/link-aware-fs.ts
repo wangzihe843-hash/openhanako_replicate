@@ -2,13 +2,20 @@ import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 
-/** Resolve existing ancestors, but only append genuinely absent path components. */
-export function resolveFilesystemPathForCreationSync(filePath: string): string {
+type CreationPathOptions = { native?: boolean };
+
+/**
+ * Resolve existing ancestors, but only append genuinely absent path components.
+ * Identity comparisons opt into native realpath so Windows 8.3 names are expanded
+ * before appending the missing suffix. Keep the default provider path spelling.
+ */
+export function resolveFilesystemPathForCreationSync(filePath: string, { native = false }: CreationPathOptions = {}): string {
   const pending: string[] = [];
   let current = path.resolve(filePath);
   while (true) {
     try {
-      return path.join(fs.realpathSync(current), ...pending.reverse());
+      const ancestor = native ? fs.realpathSync.native(current) : fs.realpathSync(current);
+      return path.join(ancestor, ...pending.reverse());
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       // realpath also reports ENOENT for dangling links. lstat distinguishes
@@ -29,15 +36,15 @@ export function resolveFilesystemPathForCreationSync(filePath: string): string {
 }
 
 /** Metadata/deletion may address a dangling leaf entry, never its missing target. */
-export function resolveFilesystemEntryPathSync(filePath: string): string {
+export function resolveFilesystemEntryPathSync(filePath: string, options: CreationPathOptions = {}): string {
   try {
-    return resolveFilesystemPathForCreationSync(filePath);
+    return resolveFilesystemPathForCreationSync(filePath, options);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
     const resolved = path.resolve(filePath);
     // lstat errors and dangling parent components remain failures.
     if (!fs.lstatSync(resolved).isSymbolicLink()) throw error;
-    return path.join(resolveFilesystemPathForCreationSync(path.dirname(resolved)), path.basename(resolved));
+    return path.join(resolveFilesystemPathForCreationSync(path.dirname(resolved), options), path.basename(resolved));
   }
 }
 

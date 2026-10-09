@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { canonicalFilesystemPathSync, filesystemIdentityKeySync, resolveFilesystemPathForCreationSync } from "../../shared/link-aware-fs.ts";
+import { filesystemIdentityKeySync, resolveFilesystemPathForCreationSync } from "../../shared/link-aware-fs.ts";
 import { detectMime, extOfName, inferFileKind } from "../file-metadata.ts";
 
 const DEFAULT_CONFLICT_POLICY = "fail";
@@ -10,7 +10,7 @@ type SessionFileRef = { type: "session_file"; fileId: string; sessionId?: string
 type FileRef = PathFileRef | SessionFileRef;
 
 function normalizePossiblyMissingPath(filePath) {
-  return canonicalFilesystemPathSync(resolveFilesystemPathForCreationSync(filePath));
+  return resolveFilesystemPathForCreationSync(filePath, { native: true });
 }
 
 /** 两侧都必须是身份键。 */
@@ -22,7 +22,7 @@ function isInsideRoot(filePath, root) {
 function normalizeRoot(root, cwd) {
   if (!root || typeof root !== "string") return null;
   const absolute = path.isAbsolute(root) ? root : path.resolve(cwd || process.cwd(), root);
-  return canonicalFilesystemPathSync(absolute);
+  return normalizePossiblyMissingPath(absolute);
 }
 
 function allowedRootsFor(allowedRoots, cwd) {
@@ -44,7 +44,7 @@ function assertParentInsideAllowedRoots(targetPath, allowedRoots, cwd) {
 function assertExistingPathInsideAllowedRoots(filePath, allowedRoots, cwd, label) {
   const roots = allowedRootsFor(allowedRoots, cwd);
   if (!roots.length) throw new Error(`${label} has no allowed roots`);
-  const pathKey = filesystemIdentityKeySync(filePath);
+  const pathKey = filesystemIdentityKeySync(normalizePossiblyMissingPath(filePath));
   if (roots.some((root) => isInsideRoot(pathKey, filesystemIdentityKeySync(root)))) return;
   throw new Error(`${label} is outside allowed roots: ${filePath}`);
 }
@@ -261,7 +261,7 @@ export async function copyFileRefToPath({
   });
   assertParentInsideAllowedRoots(rawTargetPath, allowedRoots, cwd);
   const finalTargetPath = resolveConflictPath(rawTargetPath, conflictPolicy);
-  assertExistingPathInsideAllowedRoots(normalizePossiblyMissingPath(finalTargetPath), allowedRoots, cwd, "copy target");
+  assertExistingPathInsideAllowedRoots(finalTargetPath, allowedRoots, cwd, "copy target");
   fs.mkdirSync(path.dirname(finalTargetPath), { recursive: true });
   fs.copyFileSync(resolved.filePath, finalTargetPath);
 

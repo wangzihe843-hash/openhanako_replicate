@@ -250,7 +250,7 @@ describe("sandbox workspace roots", () => {
 
     expect(guard.check(link, "stage")).toEqual({
       allowed: true,
-      canonicalPath: fs.realpathSync(target),
+      canonicalPath: fs.realpathSync.native(target),
     });
   });
 });

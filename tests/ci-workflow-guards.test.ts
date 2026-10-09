@@ -51,26 +51,96 @@ describe("fork workflow safety", () => {
   const ci = loadWorkflow(CI_YAML_PATH);
   const build = loadWorkflow(BUILD_YAML_PATH);
 
-  it("checks feature pushes while retaining the existing platform coverage", () => {
+  it("checks the exact acceptance branch and feature pushes with the existing platform coverage", () => {
     expect(ci.on).toEqual({
-      push: { branches: ["main", "feature/xingye-mvp"] },
+      push: { branches: ["main", "feature/xingye-mvp", "review/ci22-integration-20261009"] },
       pull_request: { branches: ["main"] },
     });
     expect(ci.concurrency).toEqual({
       group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
       "cancel-in-progress": true,
     });
-    expect(ci.jobs.test).toMatchObject({
-      strategy: { matrix: { os: ["macos-latest", "windows-latest"] } },
+    expect(Object.keys(ci.jobs).sort()).toEqual(["lint-open-boundary", "open-build-smoke", "test"]);
+    expect(ci.jobs.test["runs-on"]).toBe("${{ matrix.os }}");
+    expect(ci.jobs.test.strategy).toEqual({
+      "fail-fast": false,
+      matrix: { os: ["macos-latest", "windows-latest"], "node-version": ["24.15.0"] },
     });
     for (const name of ["lint-open-boundary", "open-build-smoke"]) {
       expect(ci.jobs[name]?.["runs-on"]).toBe("ubuntu-latest");
     }
   });
 
-  it("collects both platform results without allowing a failed job to pass", () => {
-    expect(ci.jobs.test).toMatchObject({ strategy: { "fail-fast": false } });
-    expect(ci.jobs.test["continue-on-error"] ?? false).toBe(false);
+  it.each([
+    ["main", true],
+    ["feature/xingye-mvp", true],
+    ["review/ci22-integration-20261009", true],
+    ["feature/unrelated", false],
+    ["feature/xingye-mvp-extra", false],
+    ["main-extra", false],
+    ["fix/ci22-macos-electron-init-20261009", false],
+    ["review/xingye-ci-publish-prep-20261009", false],
+    ["review/ci-smoke-20261009", false],
+    ["review/ci22-other-20261009", false],
+    ["review/ci22-integration", false],
+    ["review/ci22-integration-20261010", false],
+    ["review/ci22-integration-20261009-extra", false],
+    ["review/ci22-integration-20261009/nested", false],
+    ["review/CI22-integration-20261009", false],
+    ["other/review/ci22-integration-20261009", false],
+  ])("matches push branch %s only when explicitly allowed (%s)", (branch, expected) => {
+    const events = ci.on as { push: { branches: string[] } };
+    // The trigger assertion above pins literal names, so no glob emulation is needed.
+    expect(events.push.branches.includes(branch)).toBe(expected);
+  });
+
+  it("uses the triggering commit for every checkout without a ref input or secrets", () => {
+    for (const [name, job] of Object.entries(ci.jobs)) {
+      const checkouts = (job.steps ?? []).filter((step) => String(step.uses).startsWith("actions/checkout@"));
+      expect(checkouts).toEqual([{ uses: name === "test" ? "actions/checkout@v5" : "actions/checkout@v4" }]);
+    }
+    expect(JSON.stringify(ci)).not.toContain("inputs.");
+    expect(JSON.stringify(ci)).not.toContain("secrets.");
+  });
+
+  it("collects all platform results and propagates every gate failure, including CSP diagnostics", () => {
+    for (const job of Object.values(ci.jobs)) {
+      expect(job.if).toBeUndefined();
+      expect(job.needs).toBeUndefined();
+      expect(job["continue-on-error"] ?? false).toBe(false);
+      for (const step of job.steps ?? []) {
+        expect(step["continue-on-error"] ?? false).toBe(false);
+        expect([undefined, "runner.os == 'macOS'", "runner.os == 'Windows'", "always()"]).toContain(step.if);
+      }
+    }
+  });
+
+  it("runs the complete test suite and all shared gates without branch-based skips", () => {
+    const requiredRuns = {
+      test: ["npm run typecheck", "npm run lint:warnings", "npm run build:packages", "npm run build:client", "npm test"],
+      "lint-open-boundary": ["node scripts/lint-open-boundary.mjs"],
+      "open-build-smoke": ["npm run build:server:open", "npm run smoke:server:open"],
+    };
+    for (const [jobName, commands] of Object.entries(requiredRuns)) {
+      for (const command of commands) {
+        const steps = ci.jobs[jobName].steps?.filter((step) => stepRun(step) === command) ?? [];
+        expect(steps, `${jobName}: ${command}`).toHaveLength(1);
+        expect(steps[0].if).toBeUndefined();
+      }
+    }
+  });
+
+  it.each([
+    ["build.yml", "release"],
+    ["build.yml", "publish-train"],
+    ["build.yml", "mirror-atomgit"],
+    ["publish-train.yml", "publish-train"],
+    ["mirror-release-to-atomgit.yml", "mirror"],
+  ])("keeps publishing entry %s/%s unconditionally disabled", (file, jobName) => {
+    const doc = loadWorkflow(path.join(ROOT, ".github", "workflows", file));
+    expect(doc.jobs[jobName]?.if).toBe("${{ false }}");
+    expect(doc.permissions).toEqual({ contents: "read" });
+    expect(doc.jobs[jobName]?.permissions ?? doc.permissions).toEqual({ contents: "read" });
   });
 
   it("gives all three serial typechecks a bounded heap budget only in their CI step", () => {
@@ -99,6 +169,22 @@ describe("fork workflow safety", () => {
         expect(job.permissions ?? doc.permissions).toEqual({ contents: "read" });
       }
     }
+  });
+
+  it("installs the locked Electron binary before macOS renderer tests", () => {
+    const steps = ci.jobs.test.steps ?? [];
+    const installIndex = steps.findIndex((step) => stepRun(step) === "npm ci");
+    const electronIndex = steps.findIndex((step) => step.name === "Install Electron binary for macOS renderer tests");
+    const testIndex = steps.findIndex((step) => stepRun(step) === "npm test");
+
+    expect(installIndex).toBeGreaterThanOrEqual(0);
+    expect(electronIndex).toBeGreaterThan(installIndex);
+    expect(testIndex).toBeGreaterThan(electronIndex);
+    expect(steps[electronIndex]).toEqual({
+      name: "Install Electron binary for macOS renderer tests",
+      if: "runner.os == 'macOS'",
+      run: "node node_modules/electron/install.js",
+    });
   });
 
   it("keeps tag/manual builds and all four installer targets without enabling Release", () => {

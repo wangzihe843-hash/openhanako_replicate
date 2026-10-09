@@ -67,12 +67,14 @@ export class PathGuard {
   /**
    * 解析路径（跟踪符号链接）。
    * 文件不存在时递归往上找到最近的存在的祖先目录，
-   * 对它做 realpath，然后把不存在的段拼回去。
+   * 对它做严格 native realpath 统一 Windows 长短名，再把不存在的段拼回去。
    * 这样 mkdir -p 多层目录时也能正确判断权限。
    */
   _resolveReal(p, allowDanglingLeaf = false) {
     try {
-      return allowDanglingLeaf ? resolveFilesystemEntryPathSync(p) : resolveFilesystemPathForCreationSync(p);
+      return allowDanglingLeaf
+        ? resolveFilesystemEntryPathSync(p, { native: true })
+        : resolveFilesystemPathForCreationSync(p, { native: true });
     } catch {
       return null;
     }

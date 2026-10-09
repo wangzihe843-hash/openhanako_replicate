@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/xingye-mvp]
+    # Run the existing gates on this acceptance branch's exact pushed commit.
+    branches: [main, feature/xingye-mvp, review/ci22-integration-20261009]
   pull_request:
     branches: [main]
 
@@ -34,6 +35,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Electron 42 installs lazily on require(), which the renderer tests
+      # bypass because the shared unit-test setup mocks Electron.
+      - name: Install Electron binary for macOS renderer tests
+        if: runner.os == 'macOS'
+        run: node node_modules/electron/install.js
 
       - name: Build Windows sandbox helper
         if: runner.os == 'Windows'

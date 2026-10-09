@@ -33,5 +33,27 @@ it.runIf(process.platform === 'win32' || process.platform === 'darwin')('connect
   const result = JSON.parse(await fs.readFile(path.join(output, 'result.json'), 'utf8'));
   expect(result.error).toBeUndefined();
   expect(result.cases.map((item: { scheme: string }) => item.scheme)).toEqual(['http', 'https']);
+  for (const check of result.senderChecks) {
+    expect(check.snapshotUnavailable).toBeUndefined();
+    for (const url of [check.senderURL, ...check.targets.map((target: { trustedURL: string }) => target.trustedURL)]) {
+      expect(url).toMatch(/^file:\/\/\/<(provided-output|real-output)>\/(settings|untrusted)\.html$/);
+    }
+  }
+  for (const scheme of ['http', 'https']) {
+    expect(result.senderChecks).toContainEqual(expect.objectContaining({
+      phase: `${scheme}:initial-handshake`, outcome: 'resolved',
+      targets: expect.arrayContaining([expect.objectContaining({
+        scheme, navigation: 'did-finish-load',
+        predicates: { windowAlive: true, webContentsSame: true, mainFrameSame: true, documentURLSame: true },
+      })]),
+    }));
+    expect(result.senderChecks).toContainEqual(expect.objectContaining({
+      phase: `${scheme}:untrusted-document`, outcome: 'rejected',
+      targets: expect.arrayContaining([expect.objectContaining({
+        scheme,
+        predicates: { windowAlive: true, webContentsSame: true, mainFrameSame: true, documentURLSame: false },
+      })]),
+    }));
+  }
   console.info(`CSP evidence: ${path.join(output, 'result.json')}`);
 }, 45_000);

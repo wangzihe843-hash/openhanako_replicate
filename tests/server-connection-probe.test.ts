@@ -29,13 +29,47 @@ describe('controlled desktop server connection', () => {
     }));
   });
 
-  it.each(['frame', 'window', 'document'])('rejects an untrusted %s before any request', async kind => {
+  it.each(['destroyed window', 'frame', 'window', 'document'])('rejects an untrusted %s before any request', async kind => {
     const { probe, event, fetch } = fixture();
+    if (kind === 'destroyed window') event.sender.isDestroyed = () => true;
     if (kind === 'frame') event.senderFrame = { url: appUrl };
     if (kind === 'window') event.sender = { ...event.sender };
     if (kind === 'document') event.senderFrame.url = 'file:///D:/fixture/untrusted.html';
     await expect(probe(event, input)).rejects.toThrow('only available in application settings');
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('allows settings query and fragment without changing the trusted document', async () => {
+    const { probe, event, fetch } = fixture();
+    event.senderFrame.url = `${appUrl}?tab=server#connection`;
+    await expect(probe(event, input)).resolves.toEqual({ ok: true });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    'file:///D:/FIXTUR~1/renderer/settings.html',
+    'file:///D:/fixture/renderer/SETTINGS.html',
+  ])('does not assume a different file URL denotes the trusted document: %s', async url => {
+    const { probe, event, fetch } = fixture();
+    event.senderFrame.url = url;
+    await expect(probe(event, input)).rejects.toThrow('only available in application settings');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(['login', 'identity'])('rechecks sender after reading the %s response', async stage => {
+    const { probe, event, fetch } = fixture();
+    const navigatedResponse = () => new Response(new ReadableStream({
+      pull(controller) {
+        event.senderFrame.url = 'file:///D:/fixture/untrusted.html';
+        controller.enqueue(new TextEncoder().encode('{"ok":true}'));
+        controller.close();
+      },
+    }));
+    if (stage === 'identity') fetch.mockResolvedValueOnce(new Response('{"ok":true}'));
+    fetch.mockImplementationOnce(navigatedResponse);
+    await expect(probe(event, input)).rejects.toThrow('only available in application settings');
+    expect(fetch).toHaveBeenCalledTimes(stage === 'login' ? 1 : 2);
+    expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
   });
 
   it.each(['file:///tmp/server', 'https://user:secret@fixture.invalid', 'https://fixture.invalid/?token=x', 'https://fixture.invalid/#x'])('rejects invalid connection target %s', async baseUrl => {

@@ -16,16 +16,75 @@ const windows = [];
 const servers = [];
 const sockets = new Set();
 const targets = [];
-const report = { electron: process.versions.electron, platform: process.platform, pid: process.pid, cases: [] };
+const report = { electron: process.versions.electron, platform: process.platform, pid: process.pid, cases: [], senderChecks: [] };
 fs.writeFileSync(path.join(output, 'started.json'), JSON.stringify(report, null, 2));
 let finished = false;
 const fixture = path.join(output, 'settings.html');
 const csp = pathToFileURL(path.join(root, 'desktop/src/modules/connection-csp.js')).href;
 fs.writeFileSync(fixture, `<!doctype html><html><head><script src="${csp}"></script><script src="connection.js"></script></head><body>Connection fixture</body></html>`);
 fs.writeFileSync(path.join(output, 'untrusted.html'), '<!doctype html><title>Untrusted fixture</title>');
+// Diagnostic labels distinguish supplied vs real paths without exposing the host
+// profile or temp directory. These aliases never participate in authorization.
+const fixtureURLs = new Map();
+for (const [label, directory] of [['real-output', fs.realpathSync(output)], ['provided-output', output]]) {
+  for (const name of ['settings.html', 'untrusted.html']) {
+    fixtureURLs.set(pathToFileURL(path.join(directory, name)).href, `file:///<${label}>/${name}`);
+  }
+}
+function documentURL(value) {
+  try {
+    const url = new URL(value);
+    url.search = url.hash = '';
+    return url.href;
+  } catch { return null; }
+}
+function describeURL(value) {
+  return fixtureURLs.get(documentURL(value)) || '<unrecognized-document>';
+}
+function frameIdentity(frame) {
+  return frame ? { processId: frame.processId, routingId: frame.routingId, frameTreeNodeId: frame.frameTreeNodeId } : null;
+}
 const preload = path.join(output, 'preload.cjs');
 fs.writeFileSync(preload, `const {contextBridge, ipcRenderer} = require('electron'); contextBridge.exposeInMainWorld('fixtureProbe', input => ipcRenderer.invoke('probe-server-connection', input));`);
-ipcMain.handle('probe-server-connection', createServerConnectionProbe(() => targets));
+const probe = createServerConnectionProbe(() => targets);
+ipcMain.handle('probe-server-connection', async (event, input) => {
+  // Snapshot synchronously at IPC entry. Only the unchanged production probe
+  // decides trust, including its later checks across asynchronous requests.
+  const check = { phase: report.phase, outcome: 'pending' };
+  report.senderChecks.push(check);
+  try {
+    const frame = event.senderFrame;
+    const senderURL = documentURL(frame?.url);
+    check.senderId = event.sender.id;
+    check.senderFrame = frameIdentity(frame);
+    check.senderURL = describeURL(frame?.url);
+    check.targets = targets.map(({ webContents, url, scheme, navigation }) => {
+      const windowAlive = Boolean(webContents && !webContents.isDestroyed());
+      const mainFrame = windowAlive ? webContents.mainFrame : null;
+      return {
+        scheme, navigation, webContentsId: webContents.id,
+        mainFrame: frameIdentity(mainFrame), trustedURL: describeURL(url),
+        predicates: {
+          windowAlive,
+          webContentsSame: event.sender === webContents,
+          mainFrameSame: Boolean(frame && frame === mainFrame),
+          documentURLSame: senderURL !== null && senderURL === documentURL(url),
+        },
+      };
+    });
+  } catch {
+    // Diagnostic reads of a disposed frame must not replace the probe's result.
+    check.snapshotUnavailable = true;
+  }
+  try {
+    const result = await probe(event, input);
+    check.outcome = 'resolved';
+    return result;
+  } catch (error) {
+    check.outcome = 'rejected';
+    throw error;
+  }
+});
 const cert = fs.readFileSync(path.join(__dirname, 'server-connection-cert.pem'));
 const key = fs.readFileSync(path.join(__dirname, 'server-connection-key.pem'));
 const fingerprint = new X509Certificate(cert).fingerprint256;
@@ -72,6 +131,7 @@ app.whenReady().then(async () => {
   for (const scheme of ['http', 'https']) {
     const requests = [];
     const unapprovedRequests = [];
+    report.inProgress = { scheme, requests, unapprovedRequests };
     let failedResponseClosed = false;
     const trap = http.createServer((req, res) => {
       unapprovedRequests.push(req.url);
@@ -118,10 +178,17 @@ app.whenReady().then(async () => {
     ));
     const window = new BrowserWindow({ show: false, webPreferences: { preload, session: isolated, contextIsolation: true, nodeIntegration: false, sandbox: true } });
     windows.push(window);
-    targets.push({ webContents: window.webContents, url: pathToFileURL(fixture).href });
+    const target = { webContents: window.webContents, url: pathToFileURL(fixture).href, scheme, navigation: 'created' };
+    targets.push(target);
+    window.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
+      if (isMainFrame) target.navigation = 'did-start-navigation';
+    });
+    window.webContents.on('did-finish-load', () => { target.navigation = 'did-finish-load'; });
+    report.phase = `${scheme}:loading-fixture`;
     await window.loadFile(fixture);
     const before = await blockedFetch(window, `${origin}/api/web-auth/login`);
     assert(before.blocked && before.violations.includes('connect-src') && requests.length === 0, 'First renderer connection must be blocked by real CSP');
+    report.phase = `${scheme}:initial-handshake`;
     const connection = await window.webContents.executeJavaScript(`(async () => {
       const result = await connectionApi.connectDeviceServerConnection({ baseUrl: ${JSON.stringify(origin + '/prefix/')}, credential: 'synthetic-key', probeIdentity: window.fixtureProbe });
       connectionApi.persistServerConnectionSelection(result);
@@ -133,6 +200,7 @@ app.whenReady().then(async () => {
     assert(cookies.some(cookie => cookie.name === 'fixture_session' && cookie.value === 'synthetic'), 'Probe must retain login cookies in the initiating session');
     const stillBlocked = await blockedFetch(window, `${origin}/api/server/identity`);
     assert(stillBlocked.blocked && stillBlocked.violations.includes('connect-src'), 'Probe must not relax the live renderer CSP');
+    report.phase = `${scheme}:reloading-fixture`;
     await window.loadFile(fixture);
     const allowed = await window.webContents.executeJavaScript(`fetch(${JSON.stringify(origin + '/api/server/identity')}).then(response => response.status)`);
     assert(allowed === 200, 'Saved origin must work after reloading the unchanged policy');
@@ -141,18 +209,23 @@ app.whenReady().then(async () => {
     const unrelated = await blockedFetch(window, `${unapprovedOrigin}/unapproved`);
     assert(unrelated.blocked && unrelated.violations.includes('connect-src'), 'Unapproved origins must remain blocked');
     for (const prefix of ['redirect', 'denied', 'streaming-denied']) {
+      report.phase = `${scheme}:${prefix}`;
       const error = await window.webContents.executeJavaScript(`window.fixtureProbe({baseUrl: ${JSON.stringify(origin) } + '/${prefix}', credential: 'synthetic-key'}).then(() => null, error => String(error))`);
       assert(error, `${prefix} must fail rather than continuing the handshake`);
     }
     for (let wait = 0; !failedResponseClosed && wait < 100; wait++) await new Promise(resolve => setTimeout(resolve, 10));
     assert(failedResponseClosed, 'Failed probes must terminate unfinished response streams');
     assert(unapprovedRequests.length === 0, 'Neither renderer requests nor redirects may reach the unapproved origin');
+    report.phase = `${scheme}:loading-untrusted-document`;
     await window.loadFile(path.join(output, 'untrusted.html'));
     const beforeUntrusted = requests.length;
+    report.phase = `${scheme}:untrusted-document`;
     const untrustedError = await window.webContents.executeJavaScript(`window.fixtureProbe({baseUrl: ${JSON.stringify(origin)}, credential: 'synthetic-key'}).then(() => null, error => String(error))`);
     assert(untrustedError && requests.length === beforeUntrusted, 'A navigated application window must lose probe authority');
     report.cases.push({ scheme, before, connectionId: connection.connectionId, retainedCookie: true, stillBlocked, allowed, websocketConnected: true, unrelated, rejectedUntrustedDocument: true, failedResponseClosed, unapprovedRequests, requests });
+    delete report.inProgress;
   }
+  report.phase = 'complete';
   clearTimeout(watchdog);
   finish(0);
 }).catch(fail);

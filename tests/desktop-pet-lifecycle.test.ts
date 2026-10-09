@@ -24,13 +24,18 @@ function extractFunction(name) {
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 
 function makeHarness(platform = "darwin", saved = {}) {
+  // VM paths follow the simulated platform; source reads above use the host path.
+  const fixturePath = platform === "win32" ? path.win32 : path.posix;
+  const fixtureRoot = platform === "win32" ? "C:\\" : "/";
+  const desktopDir = fixturePath.join(fixtureRoot, "repo", "desktop");
+  const hanakoHome = fixturePath.join(fixtureRoot, "pet-test-home");
   const windows: FakeWindow[] = [];
   const timers = new Map<object, { callback: () => void; delay: number }>();
   const files = new Map<string, string>();
   const handlers = new Map<string, (...args) => unknown>();
   const diskOperations = [];
   const displays = [{ id: 1, workArea: { x: 72, y: 38, width: 1440, height: 906 }, scaleFactor: 2 }];
-  const statePath = path.join("/pet-test-home", "user", "pet-window-state.json");
+  const statePath = fixturePath.join(hanakoHome, "user", "pet-window-state.json");
   files.set(statePath, JSON.stringify(saved));
   class FakeContents extends EventEmitter {
     mainFrame = {};
@@ -90,8 +95,8 @@ function makeHarness(platform = "darwin", saved = {}) {
   });
   let dockShows = 0;
   const context = vm.createContext({
-    ...helpers, path, process: { platform, pid: 12345 }, __dirname: "/repo/desktop",
-    hanakoHome: "/pet-test-home", mainWindow: main, petWindow: null,
+    ...helpers, path: fixturePath, process: { platform, pid: 12345 }, __dirname: desktopDir,
+    hanakoHome, mainWindow: main, petWindow: null,
     isQuitting: false, _isUpdating: false, forceQuitApp: false, isExitingServer: false,
     screen, powerMonitor: new EventEmitter(), BrowserWindow: FakeWindow, tray,
     Menu: { buildFromTemplate: (items) => items },
@@ -149,7 +154,8 @@ describe("desktop pet platform lifecycle", () => {
       assert.equal(h.dockShows(), 0, "showing only the pet must not unhide the Dock");
       assert.equal(pet.options.transparent, true); assert.equal(pet.options.frame, false);
       assert.deepEqual(clone(pet.options.webPreferences), {
-        preload: "/repo/desktop/src/pet-preload.cjs", contextIsolation: true, nodeIntegration: false, sandbox: true,
+        preload: platform === "win32" ? "C:\\repo\\desktop\\src\\pet-preload.cjs" : "/repo/desktop/src/pet-preload.cjs",
+        contextIsolation: true, nodeIntegration: false, sandbox: true,
       });
       assert.equal(pet.options.type, platform === "darwin" ? "panel" : undefined);
       assert.equal(pet.options.acceptFirstMouse, platform === "darwin" ? true : undefined);
