@@ -1,10 +1,13 @@
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   BASELINE_BLOB, BASELINE_COMMIT, readBaseline, runNativeAuthLockCi, validateNativeReport,
 } from '../scripts/probe-windows-auth-lock.mjs';
+import { checkNativeAuthLockEvidence, REQUIRED_EVIDENCE } from '../scripts/check-windows-auth-lock-evidence.mjs';
 
 // These are driver contracts, not substitutes for native Windows observations.
 const roots: string[] = [];
@@ -34,6 +37,95 @@ function report(baseline = false) {
     ],
   };
 }
+
+function evidenceFixture() {
+  const options = fixture();
+  const cases = Object.fromEntries(['baseline', 'candidate'].map(name => [name,
+    { passed: true, exitCode: 0, report: report(name === 'baseline') }]));
+  const writeJson = (file: string, value: unknown) => fs.writeFileSync(path.join(options.outputDir, file), JSON.stringify(value));
+  writeJson('summary.json', { passed: true, cases });
+  for (const name of ['baseline', 'candidate']) {
+    writeJson(`${name}.json`, cases[name]);
+    writeJson(`${name}.exit.json`, { code: 0, signal: null, error: null });
+    writeJson(`${name}.stdout.txt`, cases[name].report);
+    fs.writeFileSync(path.join(options.outputDir, `${name}.stderr.txt`), '');
+  }
+  return options;
+}
+
+describe('native probe evidence collection after install/probe failures', () => {
+  it.each(['skipped', ''])('reports not-run for %j even with stale passing files and never manufactures evidence', (outcome) => {
+    const options = evidenceFixture();
+    const before = fs.readFileSync(path.join(options.outputDir, 'summary.json'), 'utf8');
+    expect(checkNativeAuthLockEvidence({ ...options, outcome })).toEqual({ status: 'not-run', passed: false, errors: [] });
+    expect(fs.readFileSync(path.join(options.outputDir, 'summary.json'), 'utf8')).toBe(before);
+    fs.rmSync(options.outputDir, { recursive: true });
+    expect(checkNativeAuthLockEvidence({ ...options, outcome })).toEqual({ status: 'not-run', passed: false, errors: [] });
+    expect(fs.existsSync(options.outputDir)).toBe(false);
+  });
+
+  it.each(['success', 'failure', 'cancelled'])('distinguishes the %s probe result from complete evidence collection', (outcome) => {
+    expect(checkNativeAuthLockEvidence({ ...evidenceFixture(), outcome })).toEqual({
+      status: outcome, passed: outcome === 'success', errors: [],
+    });
+  });
+
+  it.each(REQUIRED_EVIDENCE)('fails if an executed probe loses %s, even while the directory is nonempty', (file) => {
+    const options = evidenceFixture();
+    fs.unlinkSync(path.join(options.outputDir, file));
+    for (const outcome of ['success', 'failure', 'cancelled']) {
+      const result = checkNativeAuthLockEvidence({ ...options, outcome });
+      expect(result.status).toBe('evidence-error');
+      expect(result.passed).toBe(false);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain(file);
+    }
+  });
+
+  it.each(REQUIRED_EVIDENCE.filter(file => file.endsWith('.json')))('fails closed on corrupt %s', (file) => {
+    const options = evidenceFixture();
+    fs.writeFileSync(path.join(options.outputDir, file), '{broken JSON');
+    expect(checkNativeAuthLockEvidence({ ...options, outcome: 'failure' }).status).toBe('evidence-error');
+  });
+
+  it.each([
+    ['summary.json', { passed: false }],
+    ['candidate.json', { passed: true, report: report(true) }],
+    ['baseline.exit.json', { code: 7, signal: null, error: null }],
+    ['candidate.stdout.txt', { ...report(), observations: [] }],
+  ])('refuses a successful outcome with inconsistent %s', (file, value) => {
+    const options = evidenceFixture();
+    fs.writeFileSync(path.join(options.outputDir, file), JSON.stringify(value));
+    expect(checkNativeAuthLockEvidence({ ...options, outcome: 'success' }).status).toBe('evidence-error');
+  });
+
+  it('refuses unknown outcomes instead of turning them into not-run', () => {
+    expect(checkNativeAuthLockEvidence({ ...fixture(), outcome: 'unexpected' }).status).toBe('evidence-error');
+  });
+
+  it.each([
+    ['skipped', false, 0, 'not-run'],
+    ['success', true, 0, 'success'],
+    ['success', false, 1, 'evidence-error'],
+    ['failure', false, 1, 'evidence-error'],
+    ['cancelled', false, 1, 'evidence-error'],
+  ])('CLI records %s with files=%s and propagates collection exit %s', (outcome, files, exit, status) => {
+    const options = evidenceFixture();
+    const outputDir = path.join(options.rootDir, 'output/windows-auth-lock-native');
+    if (files) fs.cpSync(options.outputDir, outputDir, { recursive: true });
+    const summary = path.join(options.rootDir, 'step-summary.md');
+    const child = spawnSync(process.execPath,
+      [fileURLToPath(new URL('../scripts/check-windows-auth-lock-evidence.mjs', import.meta.url))], {
+        cwd: options.rootDir, encoding: 'utf8',
+        env: { ...process.env, NATIVE_AUTH_LOCK_OUTCOME: outcome, GITHUB_STEP_SUMMARY: summary },
+      });
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(exit);
+    expect(JSON.parse(child.stdout)).toMatchObject({ status, passed: status === 'success' });
+    expect(fs.readFileSync(summary, 'utf8')).toContain(status);
+    expect(fs.existsSync(outputDir)).toBe(files);
+  });
+});
 
 describe('native auth CI evidence contracts (no Win32 emulation)', () => {
   it('accepts only the complete baseline/candidate evidence shapes', () => {

@@ -21,7 +21,9 @@ jobs:
       # Collect each platform's result even if another platform fails.
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        # node-gyp 11.5 in the lockfile supports VS 2022, not VS 2026 (18.x).
+        # Keep the native compile fallback usable if a prebuild download fails.
+        os: [macos-latest, windows-2022]
         node-version: ["24.15.0"]
 
     steps:
@@ -37,12 +39,19 @@ jobs:
         run: npm ci
 
       - name: Probe native Windows auth lock delete-pending recovery
+        id: native_auth_lock
         if: runner.os == 'Windows'
         timeout-minutes: 5
         run: node scripts/probe-windows-auth-lock.mjs
 
-      - name: Preserve native Windows auth lock evidence
+      - name: Check native Windows auth lock evidence
         if: always() && runner.os == 'Windows'
+        env:
+          NATIVE_AUTH_LOCK_OUTCOME: ${{ steps.native_auth_lock.outcome }}
+        run: node scripts/check-windows-auth-lock-evidence.mjs
+
+      - name: Preserve native Windows auth lock evidence
+        if: always() && runner.os == 'Windows' && steps.native_auth_lock.outcome != 'skipped' && steps.native_auth_lock.outcome != ''
         uses: actions/upload-artifact@v4
         with:
           name: windows-auth-lock-native-${{ matrix.os }}

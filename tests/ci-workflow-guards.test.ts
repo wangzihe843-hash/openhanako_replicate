@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import yaml from "js-yaml";
 import { describe, expect, it } from "vitest";
 
@@ -19,6 +20,8 @@ import { describe, expect, it } from "vitest";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CI_YAML_PATH = path.join(ROOT, ".github", "workflows", "ci.yml");
 const BUILD_YAML_PATH = path.join(ROOT, ".github", "workflows", "build.yml");
+const NATIVE_EVIDENCE_IF = "always() && runner.os == 'Windows'";
+const NATIVE_UPLOAD_IF = `${NATIVE_EVIDENCE_IF} && steps.native_auth_lock.outcome != 'skipped' && steps.native_auth_lock.outcome != ''`;
 
 interface WorkflowStep {
   name?: string;
@@ -64,7 +67,7 @@ describe("fork workflow safety", () => {
     expect(ci.jobs.test["runs-on"]).toBe("${{ matrix.os }}");
     expect(ci.jobs.test.strategy).toEqual({
       "fail-fast": false,
-      matrix: { os: ["macos-latest", "windows-latest"], "node-version": ["24.15.0"] },
+      matrix: { os: ["macos-latest", "windows-2022"], "node-version": ["24.15.0"] },
     });
     for (const name of ["lint-open-boundary", "open-build-smoke"]) {
       expect(ci.jobs[name]?.["runs-on"]).toBe("ubuntu-latest");
@@ -111,8 +114,10 @@ describe("fork workflow safety", () => {
       for (const step of job.steps ?? []) {
         expect(step["continue-on-error"] ?? false).toBe(false);
         if (step.name === "Preserve native Windows auth lock evidence") {
-          expect(step.if).toBe("always() && runner.os == 'Windows'");
+          expect(step.if).toBe(NATIVE_UPLOAD_IF);
           expect(step.uses).toBe("actions/upload-artifact@v4");
+        } else if (step.name === "Check native Windows auth lock evidence") {
+          expect(step.if).toBe(NATIVE_EVIDENCE_IF);
         } else {
           expect([undefined, "runner.os == 'macOS'", "runner.os == 'Windows'", "always()"]).toContain(step.if);
         }
@@ -192,6 +197,35 @@ describe("fork workflow safety", () => {
     });
   });
 
+  it("keeps npm ci lifecycle scripts and uses the VS 2022 runner for the locked compiler fallback", () => {
+    const steps = ci.jobs.test.steps ?? [];
+    expect(steps.filter((step) => step.name === "Install dependencies")).toEqual([
+      { name: "Install dependencies", run: "npm ci" },
+    ]);
+    const lock = JSON.parse(fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf8"));
+    expect(lock.packages["node_modules/node-gyp"].version).toBe("11.5.0");
+    expect(lock.packages["node_modules/better-sqlite3"].version).toBe("12.6.2");
+    expect(JSON.stringify(ci.jobs.test)).not.toMatch(/ignore-scripts|continue-on-error|npm_config_build_from_source/);
+  });
+
+  it("retains every Windows native, desktop and packaged-server gate on the pinned runner", () => {
+    const steps = ci.jobs.test.steps ?? [];
+    for (const command of [
+      "node scripts/build-windows-sandbox-helper.mjs x64",
+      "node scripts/smoke-windows-sandbox-helper.mjs x64",
+      "node scripts/smoke-desktop-main-pet.cjs",
+      "node scripts/download-mingit.js",
+      "node scripts/build-server.mjs win32 x64",
+      "node scripts/smoke-full-server.mjs",
+      "node scripts/build-standalone-server-artifact.mjs x64",
+      "node scripts/verify-standalone-server-artifact.mjs x64 --smoke",
+    ]) {
+      const matches = steps.filter(step => stepRun(step) === command);
+      expect(matches).toHaveLength(1);
+      expect(matches[0].if).toBe("runner.os == 'Windows'");
+    }
+  });
+
   it("runs native Windows auth A/B after npm ci and retains evidence on failure", () => {
     const steps = ci.jobs.test.steps ?? [];
     const installIndex = steps.findIndex((step) => stepRun(step) === "npm ci");
@@ -199,13 +233,20 @@ describe("fork workflow safety", () => {
     expect(probeIndex).toBeGreaterThan(installIndex);
     expect(steps[probeIndex]).toEqual({
       name: "Probe native Windows auth lock delete-pending recovery",
+      id: "native_auth_lock",
       if: "runner.os == 'Windows'",
       "timeout-minutes": 5,
       run: "node scripts/probe-windows-auth-lock.mjs",
     });
     expect(steps[probeIndex + 1]).toEqual({
+      name: "Check native Windows auth lock evidence",
+      if: NATIVE_EVIDENCE_IF,
+      env: { NATIVE_AUTH_LOCK_OUTCOME: "${{ steps.native_auth_lock.outcome }}" },
+      run: "node scripts/check-windows-auth-lock-evidence.mjs",
+    });
+    expect(steps[probeIndex + 2]).toEqual({
       name: "Preserve native Windows auth lock evidence",
-      if: "always() && runner.os == 'Windows'",
+      if: NATIVE_UPLOAD_IF,
       uses: "actions/upload-artifact@v4",
       with: {
         name: "windows-auth-lock-native-${{ matrix.os }}",
@@ -213,7 +254,23 @@ describe("fork workflow safety", () => {
         "if-no-files-found": "error",
       },
     });
-    expect(steps.findIndex((step) => stepRun(step) === "npm test")).toBeGreaterThan(probeIndex + 1);
+    expect(steps.findIndex((step) => stepRun(step) === "npm test")).toBeGreaterThan(probeIndex + 2);
+  });
+
+  it.each([
+    ["Windows", "skipped", true, false], // npm ci failed: report not-run, no nonexistent upload.
+    ["Windows", "", true, false],
+    ["Windows", "success", true, true],
+    ["Windows", "failure", true, true],
+    ["Windows", "cancelled", true, true],
+    ["macOS", "skipped", false, false],
+    ["Linux", "skipped", false, false],
+  ])("collects native evidence for %s / %s without assuming prior success", (os, outcome, check, upload) => {
+    const steps = ci.jobs.test.steps ?? [];
+    // These pinned expressions use only the shared JS/Actions boolean subset.
+    const context = { always: () => true, runner: { os }, steps: { native_auth_lock: { outcome } } };
+    expect(runInNewContext(steps.find(step => step.name === "Check native Windows auth lock evidence")!.if!, context)).toBe(check);
+    expect(runInNewContext(steps.find(step => step.name === "Preserve native Windows auth lock evidence")!.if!, context)).toBe(upload);
   });
 
   it("keeps tag/manual builds and all four installer targets without enabling Release", () => {
