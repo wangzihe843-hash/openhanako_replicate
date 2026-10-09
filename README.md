@@ -125,6 +125,10 @@ npm run smoke:server:open
 
 完整桌面包使用 `npm run build:server` 的 seed 构建链，需要先有前端产物，并配置 `HANA_SIGN_KEY` 与匹配的 `HANA_SIGN_KEYSET`。本地验证可参考 [CI 的临时测试 key 流程](.github/workflows/ci.yml)；测试 key 不能用于正式分发，私钥不得进入仓库。seed 完整性签名与 Windows/macOS 的操作系统代码签名是两件事。
 
+当前 fork 的 [Build workflow](.github/workflows/build.yml) 在 `v*` tag push 或手动运行时仅生成 Actions 测试产物，保留 macOS arm64/x64、Windows x64、Linux x64 矩阵。它在客户端构建前生成临时 seed key/keyset，不需要发布凭据；不会做 Developer ID 签名或 Apple 公证。临时信任根仅用于本次产物，不能用于正式分发或推进 OTA。
+
+五个发布入口已在 YAML 中明确禁用：Build 下游的 Release、OTA train、AtomGit，以及独立的 Publish Train、AtomGit workflow。手动输入或现有 secrets 都不能开启这些入口。AtomGit 目标仍保留上游 `liliMozi/OpenHanako-Releases` 供后续审查；重新启用必须另行审核本 fork 的目标、签名、更新兼容与写权限。此准备不代表独立发布体系已完成。
+
 在上述前置条件就绪后，本地打包使用 `npm run dist -- --publish never`（macOS）、`npm run dist:win -- --publish never` 或 `npm run dist:linux -- --publish never`，显式禁用发布。它们需要对应平台的构建条件；Windows 打包还依赖 MinGit 等资源。具体流程见 [package.json](package.json)、[构建工作流](.github/workflows/build.yml)。
 
 **正式分发尚有前置工作**：`package.json` 中的 `productName`、`appId`、`publish` 和部分更新地址仍沿用上游。发布本 fork 前必须核对并独立配置应用标识、更新源、签名和发布目标，不能把上游安装包或更新渠道当成本 fork 的分发渠道。
@@ -133,7 +137,7 @@ npm run smoke:server:open
 
 近期已有 Windows 源码 Electron、实际打包 EXE、独立服务端及重启持久化的验收记录；Windows 测试包未签名，也未完成实际安装/卸载流程验证。Linux 有构建与打包服务端检查记录，但这些结果不代表三平台桌面体验都已完整验收，更不代表本 fork 已完成 macOS 签名公证。
 
-可查阅 [2026-10-06 Windows 验收记录](docs/audits/2026-10-06-pi-1.0.2-followup-windows.md)及 [Linux L1 / L2 验证记录](docs/audits/2026-10-01-l1-l2-runtime-validation.md)。历史验收只覆盖各自记录的提交与环境，不能自动视为后续版本全部通过。当前 CI 主要在推送 `main` 或向 `main` 提 PR 时触发；直接推送开发分支没有 CI 结果不等于测试通过。
+可查阅 [2026-10-06 Windows 验收记录](docs/audits/2026-10-06-pi-1.0.2-followup-windows.md)及 [Linux L1 / L2 验证记录](docs/audits/2026-10-01-l1-l2-runtime-validation.md)。历史验收只覆盖各自记录的提交与环境，不能自动视为后续版本全部通过。[CI](.github/workflows/ci.yml) 在推送 `main`、`feature/xingye-mvp` 或向 `main` 提 PR 时触发；保留 Mac/Windows 的检查与测试矩阵，以及 Linux 的边界检查和 open 构建/冒烟检查。CI token 仅授予仓库内容读取权限，同一分支/PR 的新运行会取消旧 CI；Build 保留正在生成的产物，不取消已有运行。配置已接线不等于 GitHub 上的实际运行已通过。
 
 ## 安全与隐私边界
 

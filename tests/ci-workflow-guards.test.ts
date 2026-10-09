@@ -39,16 +39,89 @@ interface WorkflowDoc {
 
 function loadWorkflow(filePath: string): WorkflowDoc {
   const text = fs.readFileSync(filePath, "utf-8");
-  // GitHub Actions workflow YAML uses a bare `on:` key, which YAML 1.1
-  // schemas interpret as the boolean `true`. js-yaml's default schema
-  // resolves it that way too; we only ever read `jobs`, so this quirk is
-  // harmless here and not worked around.
+  // js-yaml 4 uses YAML 1.2, so the Actions `on:` key stays a string.
   return yaml.load(text) as WorkflowDoc;
 }
 
 function stepRun(step: WorkflowStep): string {
   return typeof step.run === "string" ? step.run : "";
 }
+
+describe("fork workflow safety", () => {
+  const ci = loadWorkflow(CI_YAML_PATH);
+  const build = loadWorkflow(BUILD_YAML_PATH);
+
+  it("checks feature pushes while retaining the existing platform coverage", () => {
+    expect(ci.on).toEqual({
+      push: { branches: ["main", "feature/xingye-mvp"] },
+      pull_request: { branches: ["main"] },
+    });
+    expect(ci.concurrency).toEqual({
+      group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+      "cancel-in-progress": true,
+    });
+    expect(ci.jobs.test).toMatchObject({
+      strategy: { matrix: { os: ["macos-latest", "windows-latest"] } },
+    });
+    for (const name of ["lint-open-boundary", "open-build-smoke"]) {
+      expect(ci.jobs[name]?.["runs-on"]).toBe("ubuntu-latest");
+    }
+  });
+
+  it("grants only contents read in every CI/build job, including dormant publishers", () => {
+    for (const doc of [ci, build]) {
+      expect(doc.permissions).toEqual({ contents: "read" });
+      for (const job of Object.values(doc.jobs)) {
+        expect(job.permissions ?? doc.permissions).toEqual({ contents: "read" });
+      }
+    }
+  });
+
+  it("keeps tag/manual builds and all four installer targets without enabling Release", () => {
+    expect(build.on).toEqual({ push: { tags: ["v*"] }, workflow_dispatch: null });
+    expect(build.concurrency).toEqual({
+      group: "${{ github.workflow }}-${{ github.ref }}",
+      "cancel-in-progress": false,
+    });
+    expect(build.jobs.build).toMatchObject({
+      needs: "renderer-box",
+      strategy: { matrix: { include: [
+        { os: "macos-latest", target: "dmg", arch: "arm64" },
+        { os: "macos-latest", target: "dmg", arch: "x64" },
+        { os: "windows-latest", target: "nsis", arch: "x64" },
+        { os: "ubuntu-latest", target: "AppImage", arch: "x64" },
+      ] } },
+    });
+    expect(build.jobs.release?.if).toBe("${{ false }}");
+    for (const job of [build.jobs["renderer-box"], build.jobs.build]) {
+      expect(job.if).toBeUndefined();
+      expect(JSON.stringify(job)).not.toContain("secrets.");
+    }
+    const installers = (build.jobs.build.steps ?? []).filter((s) => stepRun(s).includes("npx electron-builder"));
+    expect(installers).toHaveLength(3);
+    for (const step of installers) expect(stepRun(step)).toContain("--publish never");
+    expect(build.jobs.build.env).toMatchObject({
+      CSC_IDENTITY_AUTO_DISCOVERY: "false",
+      SKIP_NOTARIZE: "true",
+    });
+  });
+
+  it("generates a matching ephemeral seed keyset before bundling the desktop verifier", () => {
+    const steps = build.jobs.build.steps ?? [];
+    const keyIndex = steps.findIndex((s) => s.name === "Prepare ephemeral seed signing key");
+    const clientIndex = steps.findIndex((s) => stepRun(s).includes("npm run build:client"));
+    const serverIndex = steps.findIndex((s) => stepRun(s).includes("node scripts/build-server.mjs"));
+    expect(keyIndex).toBeGreaterThanOrEqual(0);
+    expect(clientIndex).toBeGreaterThan(keyIndex);
+    expect(serverIndex).toBeGreaterThan(clientIndex);
+    expect(stepRun(steps[keyIndex])).toContain("node scripts/artifact-keygen.mjs");
+    expect(stepRun(steps[keyIndex])).toContain("HANA_SIGN_KEY=$RUNNER_TEMP/hana-build-sign-key.pem");
+    expect(stepRun(steps[keyIndex])).toContain("HANA_SIGN_KEYSET=$RUNNER_TEMP/hana-build-keyset.json");
+    const cleanup = steps.find((s) => s.name === "Remove ephemeral private key");
+    expect(cleanup?.if).toBe("always()");
+    expect(stepRun(cleanup ?? {})).toContain('rm -f "$RUNNER_TEMP/hana-build-sign-key.pem"');
+  });
+});
 
 describe("ci.yml: open composition build+smoke guard is wired", () => {
   const doc = loadWorkflow(CI_YAML_PATH);

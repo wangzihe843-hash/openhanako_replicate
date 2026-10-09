@@ -1,5 +1,8 @@
 name: Mirror Release to AtomGit
 
+# Disabled on this fork: the destination below still belongs to upstream.
+# The downstream mirror in build.yml is disabled independently as well.
+
 on:
   release:
     types:
@@ -32,13 +35,16 @@ on:
         default: true
         type: boolean
 
+permissions:
+  contents: read
+
 concurrency:
   group: atomgit-release-mirror
   cancel-in-progress: false
 
 jobs:
   mirror:
-    if: github.event_name == 'workflow_dispatch' || github.event.sender.login != 'github-actions[bot]'
+    if: ${{ false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

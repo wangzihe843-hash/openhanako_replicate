@@ -5,6 +5,15 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# Fork preparation: tag/manual runs produce test artifacts only. The three
+# downstream publishing jobs stay disabled until a separate release review.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # renderer 归档（renderer-<version>.tar.gz）是纯 web 静态资源，构建结果平台
   # 无关。这里单点构建一次，四个平台的 build job 下载同一份字节复用——避免
@@ -49,7 +58,7 @@ jobs:
   build:
     needs: renderer-box
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -68,6 +77,9 @@ jobs:
             arch: x64
 
     runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      SKIP_NOTARIZE: "true"
 
     steps:
       - uses: actions/checkout@v5
@@ -91,93 +103,26 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/smoke-mingit.mjs vendor/mingit
 
+      # Each build uses a throwaway seed key, never a publishing credential.
+      # Generate the matching public keyset BEFORE build:client: the main bundle
+      # embeds it to verify this build's seed. These artifacts are for testing;
+      # their ephemeral trust root is not compatible with production OTA trains.
+      - name: Prepare ephemeral seed signing key
+        shell: bash
+        run: |
+          node scripts/artifact-keygen.mjs \
+            --out "$RUNNER_TEMP/hana-build-sign-key.pem" \
+            --key-id build-ephemeral \
+            > "$RUNNER_TEMP/hana-build-key.json"
+          node -e \
+            'const fs = require("fs"); const entry = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); fs.writeFileSync(process.argv[2], JSON.stringify([entry]));' \
+            "$RUNNER_TEMP/hana-build-key.json" \
+            "$RUNNER_TEMP/hana-build-keyset.json"
+          echo "HANA_SIGN_KEY=$RUNNER_TEMP/hana-build-sign-key.pem" >> "$GITHUB_ENV"
+          echo "HANA_SIGN_KEYSET=$RUNNER_TEMP/hana-build-keyset.json" >> "$GITHUB_ENV"
+
       - name: Build client bundles (main + preload + renderer)
         run: npm run build:client
-
-      # 三平台：materialize seed 列车签名私钥。
-      # build-server.mjs 末尾的 packDualKindSeed 硬性要求 HANA_SIGN_KEY 指向
-      # PKCS8 PEM 私钥文件。secret HANA_SIGN_KEY 的内容是 PEM 文本本体（不是
-      # 路径），这里落到 $RUNNER_TEMP（绝不写进 workspace，防止被打进包），
-      # 再把文件路径导出为 HANA_SIGN_KEY 环境变量。secret 缺失 → 硬失败，
-      # 禁止静默出无签名 seed 的包（本 workflow 只在 tag push / 手动 dispatch
-      # 触发，无 fork PR 无 secrets 的场景，硬失败是安全的）。
-      - name: Materialize seed signing key
-        shell: bash
-        env:
-          HANA_SIGN_KEY_PEM: ${{ secrets.HANA_SIGN_KEY }}
-        run: |
-          if [ -z "$HANA_SIGN_KEY_PEM" ]; then
-            echo "::error::HANA_SIGN_KEY secret is missing; the seed archive MUST be signed"
-            exit 1
-          fi
-          printf '%s\n' "$HANA_SIGN_KEY_PEM" > "$RUNNER_TEMP/hana-train-sign-key.pem"
-          echo "HANA_SIGN_KEY=$RUNNER_TEMP/hana-train-sign-key.pem" >> "$GITHUB_ENV"
-          echo "Seed signing key materialized."
-
-      # macOS: 手动配置签名 keychain + partition-list
-      # electron-builder 内部也会导入证书，但不一定设 partition-list，
-      # 导致 codesign 在无头 CI 上弹 UI 确认对话框而挂起。
-      # 这里先手动搞定，再把 CSC_KEYCHAIN 传给 electron-builder 让它复用。
-      # 位置必须在 "Build server bundle" 之前：build-server.mjs 的
-      # packDualKindSeed 会在装箱前对 seed 箱内 Mach-O 做 Developer ID 签名
-      # （先签名后装箱铁律，见 scripts/build-server-artifact.mjs 文件头），
-      # 签名时 codesign 需要本 keychain 已就位。
-      - name: Setup macOS signing keychain
-        if: runner.os == 'macOS'
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-        run: |
-          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
-          KEYCHAIN_PASSWORD="ci-$(openssl rand -hex 12)"
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          echo "$CSC_LINK" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security import "$RUNNER_TEMP/cert.p12" -P "$CSC_KEY_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          rm -f "$RUNNER_TEMP/cert.p12"
-
-          security set-key-partition-list -S apple-tool:,apple:,codesign: \
-            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
-          security default-keychain -s "$KEYCHAIN_PATH"
-
-          # 传给 electron-builder：CSC_KEYCHAIN 让它复用这个 keychain，不再自己创建
-          echo "CSC_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
-
-      # macOS: 把 code-signing identity 串注册为日志 mask，并导出给 seed 签名器
-      # electron-builder（macPackager 的 log.info）会打印完整的 code-signing
-      # identity 串。本仓库是 public，Actions 日志对所有人可见，而 GitHub 只会
-      # 自动遮盖已知的 secret 值（如 TeamID），不会遮盖证书 identity 串本身。
-      # 这里在所有签名步骤之前从证书读取 identity 并 ::add-mask::，之后整个 job 日志里该串都变 ***。
-      # identity 不硬编码进本 public 文件，证书是唯一来源，保证 mask 串与 electron-builder
-      # 实际打印的串一致、永不漏配；读取不到就 fail（report，不静默降级）。
-      # 同时导出 HANA_MACHO_SIGN_IDENTITY：build-server.mjs 的 seed 签名器
-      # （scripts/build-server-artifact.mjs defaultSignMachOFiles）据此从
-      # ad-hoc 切换为 Developer ID + hardened runtime + secure timestamp
-      # Apple notary 会递归验签箱内 Mach-O，ad-hoc 签名无法通过公证。
-      - name: Mask signing identity in logs
-        if: runner.os == 'macOS'
-        run: |
-          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
-          if [ -z "$IDENTITY" ]; then
-            echo "::error::No 'Developer ID Application' identity in keychain; refusing to sign without masking the identity"
-            exit 1
-          fi
-          IDENTITY_NAME="${IDENTITY#Developer ID Application: }"   # 去前缀
-          IDENTITY_NAME="${IDENTITY_NAME% (*)}"                    # 去 " (TeamID)" 后缀
-          if [ -z "$IDENTITY_NAME" ] || [ "$IDENTITY_NAME" = "$IDENTITY" ]; then
-            echo "::error::Failed to parse signing identity for masking; refusing to proceed"
-            exit 1
-          fi
-          echo "::add-mask::$IDENTITY_NAME"   # 遮 identity 名称部分（TeamID 可能已被遮成 ***，名称部分不会）
-          echo "::add-mask::$IDENTITY"        # 附带：遮完整 identity 串（覆盖我们自己 echo 含真 TeamID 的整行）
-          echo "HANA_MACHO_SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
-          echo "Signing identity registered for log masking and exported for seed signing."
 
       # 下载 renderer-box job 单点构建好的共享归档，让四个平台复用同一份字节
       # （而不是各自现场打包出内容相同但 tar mtime 不同、sha256 不同的四份）。
@@ -258,26 +203,13 @@ jobs:
         if: runner.os == 'macOS'
         run: node scripts/verify-seed-kit.mjs darwin ${{ matrix.arch }}
 
-      # macOS 打包（签名 + 公证）
-      # keychain 与 identity 已由 "Build server bundle" 之前的两个步骤就位
-      # 签名步骤已前移；旧 "Pre-sign server binaries" 步骤已删除。artifact 归档启用后，
-      # extraResources 只取 dist-server-artifact/ 的 seed 归档（箱内 Mach-O
-      # 在 build-server.mjs 装箱前已签好），dist-server/ 散装树不再进包。
-      # --publish never：所有 publish 由 release job 单点控制，避免多 job 并发上传造成
-      # latest-mac.yml 互相覆盖的时间窗口（那是 v0.98.4 "检查更新失败" 的根因之一）。
+      # Test artifacts only: no Developer ID import, notarization, or publishing.
+      # Seed integrity verification above still applies to the ephemeral keyset.
       - name: Build macOS (DMG + ZIP)
         if: runner.os == 'macOS'
         run: |
           ulimit -n 65536
           npx electron-builder --mac dmg zip --${{ matrix.arch }} --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          CSC_KEYCHAIN: ${{ env.CSC_KEYCHAIN }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       # 同上：Windows job 直调 electron-builder，seed kit 校验必须单独接线。
       - name: Verify seed kit (Windows)
@@ -285,16 +217,12 @@ jobs:
         run: node scripts/verify-seed-kit.mjs win32 ${{ matrix.arch }}
 
       # Windows 打包
-      # --publish never：和 mac 同理，由 release job 单点上传。
+      # --publish never：只生成可下载的测试产物，不上传 Release。
       - name: Build Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           npx electron-builder --win nsis --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
       # 同上：Linux job 直调 electron-builder，seed kit 校验必须单独接线。
       - name: Verify seed kit (Linux)
@@ -307,8 +235,6 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           npx electron-builder --linux AppImage deb --${{ matrix.arch }} --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # dist-server-artifact/*/server-*.tar.gz and dist-renderer-artifact/renderer-*.tar.gz
       # are the hot-update boxes packed by packDualKindSeed (see scripts/build-server-artifact.mjs).
@@ -342,12 +268,19 @@ jobs:
             dist-standalone/HanaCore-*-Windows-x64.manifest.json
           if-no-files-found: error
 
+      - name: Remove ephemeral private key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/hana-build-sign-key.pem"
+
+  # Disabled on this fork, including v* tag pushes and manual builds. Re-enabling
+  # requires a reviewed fork destination, signing/OTA plan, and write permissions.
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v5
@@ -523,16 +456,16 @@ jobs:
         run: |
           gh release edit "${{ github.ref_name }}" --prerelease --draft=false
 
-  # Publishes the hot-update train that already-installed clients pull automatically —
+  # Disabled on this fork. Retained upstream OTA publishing implementation —
   # separate from (and downstream of) the installer release above, so a failure here never
   # touches the already-published installer assets. scripts/publish-train.mjs is resumable:
   # rerunning this job after a partial failure is always safe (see the script's file header).
   publish-train:
     needs: release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -542,7 +475,7 @@ jobs:
         with:
           node-version: "24.15.0"
 
-      # Same materialization as the build job's "Materialize seed signing key" step:
+      # Dormant production signing setup; build artifacts use a separate ephemeral key.
       # HANA_SIGN_KEY secret content is the PEM text itself, written to a runner-temp
       # file and exported as a path (never written into the workspace).
       - name: Materialize train signing key
@@ -610,9 +543,10 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # Disabled: this destination still belongs to upstream, not this fork.
   mirror-atomgit:
     needs: release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

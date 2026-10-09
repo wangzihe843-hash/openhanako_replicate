@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import yaml from "js-yaml";
 import {
   buildAtomGitReleasePayload,
   getGithubLatestTag,
@@ -428,16 +429,28 @@ describe("mirror-release-to-atomgit", () => {
     expect(methods).not.toContain("POST");
   });
 
-  it("wires manual GitHub release changes to exact-tag mirroring", () => {
+  it("retains exact-tag release routing behind the fork's disabled mirror job", () => {
     const workflow = readFileSync(new URL("../.github/workflows/mirror-release-to-atomgit.yml", import.meta.url), "utf8");
+    const doc = yaml.load(workflow) as {
+      jobs: Record<string, { if?: string; permissions?: Record<string, string> }>;
+    };
+    // The previous sender filter allowed manual/non-bot publishing. This fork
+    // disables every source; exact-tag routing remains dormant for later review.
+    expect(doc.jobs.mirror.if).toBe("${{ false }}");
+    expect(doc.jobs.mirror.permissions).toEqual({ contents: "read" });
     expect(workflow).toContain("release:");
     expect(workflow).toContain("- published");
     expect(workflow).toContain("- edited");
     expect(workflow).toContain("- prereleased");
     expect(workflow).toContain("- released");
     expect(workflow).toContain("RELEASE_TAG: ${{ github.event.release.tag_name }}");
-    expect(workflow).toContain("ARGS+=(--tag \"$RELEASE_TAG\")");
-    expect(workflow).toContain("github.event.sender.login != 'github-actions[bot]'");
+    const releaseStart = workflow.indexOf('if [ "$EVENT_NAME" = "release" ]; then');
+    const manualStart = workflow.indexOf('elif [ "$INPUT_MODE" = "tag" ]; then');
+    expect(releaseStart).toBeGreaterThan(-1);
+    expect(manualStart).toBeGreaterThan(releaseStart);
+    const releaseRouting = workflow.slice(releaseStart, manualStart);
+    expect(releaseRouting).toContain('ARGS+=(--tag "$RELEASE_TAG")');
+    expect(releaseRouting).not.toMatch(/--(?:newest|latest|stable)\b/);
     expect(workflow).toContain("group: atomgit-release-mirror");
     expect(workflow).toContain("cancel-in-progress: false");
   });

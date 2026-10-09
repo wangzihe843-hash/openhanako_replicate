@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import yaml from "js-yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -121,7 +122,17 @@ describe("publish-train: parseArgs", () => {
 });
 
 describe("publish-train: automatic workflow channel policy", () => {
-  it("gates the automatic stable step on a non-prerelease source while beta remains available", () => {
+  it.each(["build.yml", "publish-train.yml"])("disables OTA publishing in %s regardless of tag or manual inputs", (name) => {
+    const workflow = yaml.load(fs.readFileSync(path.join(process.cwd(), ".github", "workflows", name), "utf8")) as {
+      permissions: object;
+      jobs: Record<string, { if?: string; permissions?: object }>;
+    };
+    expect(workflow.jobs["publish-train"]?.if).toBe("${{ false }}");
+    expect(workflow.permissions).toEqual({ contents: "read" });
+    expect(workflow.jobs["publish-train"]?.permissions ?? workflow.permissions).toEqual({ contents: "read" });
+  });
+
+  it("retains the disabled automatic stable step's non-prerelease source policy", () => {
     const workflow = fs.readFileSync(path.join(process.cwd(), ".github", "workflows", "build.yml"), "utf8");
     const stableStart = workflow.indexOf("- name: Publish stable train");
     const betaStart = workflow.indexOf("- name: Publish beta train");

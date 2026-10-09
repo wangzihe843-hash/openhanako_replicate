@@ -1,10 +1,8 @@
 name: Publish Train
 
-# Manual escape hatch for scripts/publish-train.mjs — the SAME script the
-# automatic `publish-train` job in build.yml calls after every `vX.Y.Z` tag.
-# Use this to retry a failed automatic publish, to publish a single channel
-# on its own, or to rehearse a publish with --dry-run before doing it for
-# real. See the script's file header for the resumable-publish contract.
+# Disabled on this fork, like the downstream publisher in build.yml.
+# Retain upstream inputs/implementation for a separate release review; neither
+# manual inputs nor repository secrets can enable this job as currently written.
 
 on:
   workflow_dispatch:
@@ -29,13 +27,21 @@ on:
         description: "Dry run — compute and print the plan, make no remote writes"
         required: false
         type: boolean
-        default: false
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-publish-train-disabled
+  cancel-in-progress: false
 
 jobs:
   publish-train:
+    if: ${{ false }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v4

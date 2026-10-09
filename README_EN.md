@@ -152,6 +152,14 @@ npm test
 npm run typecheck
 ```
 
+### Fork CI and build status
+
+This fork runs [CI](.github/workflows/ci.yml) for pushes to `main` and `feature/xingye-mvp`, and pull requests targeting `main`. It retains the Mac/Windows test matrix and Linux boundary/open-build smoke jobs, with read-only repository permissions and cancellation of superseded CI runs.
+
+The [Build workflow](.github/workflows/build.yml) keeps tag/manual builds for macOS arm64/x64, Windows x64, and Linux x64, producing Actions test artifacts with ephemeral seed keys. It uses no publishing credentials or Developer ID signing/notarization. All five publishing jobs are explicitly disabled: downstream Release, OTA, and AtomGit, plus standalone OTA and AtomGit. Manual inputs cannot enable them. Both AtomGit destinations remain upstream `liliMozi/OpenHanako-Releases` for later review.
+
+Independent distribution is still pending: application identity, user-data migration, update sources, signing, and OTA compatibility need a separate review. Test artifacts are not production releases; the upstream platform and release descriptions above do not establish this fork's release readiness. See the [Chinese README](README.md) for the fork's current scope. Upstream attribution and licensing remain intact.
+
 ## Acknowledgments
 
 - [tw93/kami](https://github.com/tw93/kami): the progressive-disclosure structure of the beautify plugin's HTML aesthetic guide (a router entry with flat on-demand sections) was inspired by this project.

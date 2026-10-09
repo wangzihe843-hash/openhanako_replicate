@@ -2,9 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/xingye-mvp]
   pull_request:
     branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -58,11 +65,11 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/smoke-desktop-main-pet.cjs
 
-      # The tag-only Build workflow verifies the extracted Windows standalone
+      # The tag/manual Build workflow verifies the extracted Windows standalone
       # package by launching its real hana-server.cmd and exercising exec_command.
       # Keep that release boundary covered in ordinary CI too, using a throwaway
-      # signing key/keyset that exists only under RUNNER_TEMP. Production release
-      # jobs still require the repository HANA_SIGN_KEY secret and pinned keyset.
+      # signing key/keyset that exists only under RUNNER_TEMP. Fork publishing
+      # jobs are disabled; these keys are only for build/smoke verification.
       - name: Prepare ephemeral signing key for Windows standalone smoke
         if: runner.os == 'Windows'
         shell: bash
