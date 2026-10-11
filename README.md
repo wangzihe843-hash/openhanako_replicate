@@ -7,7 +7,7 @@
 “星野陪伴型 Agent”是本仓库的描述性称呼；本项目与同名商业产品没有官方关联。应用名称、包名和部分界面仍沿用 HanaAgent / Hanako。
 
 - 开发分支：[feature/xingye-mvp](https://github.com/wangzihe843-hash/openhanako_replicate/tree/feature/xingye-mvp)
-- 当前状态：持续开发中的源码项目；截至 2026-10-06，本 fork 尚未发布可下载的 [Release](https://github.com/wangzihe843-hash/openhanako_replicate/releases)
+- 当前状态：源码开发项目；截至 2026-10-11，本 fork 尚未发布可下载的 [Release](https://github.com/wangzihe843-hash/openhanako_replicate/releases)，分支与 CI 状态见下方验证边界
 - 本页说明本 fork 已提交的功能；[README_EN.md](README_EN.md) 仍是上游英文介绍，尚未同步为本 fork 的译文
 
 ## 目前能做什么
@@ -47,7 +47,7 @@
 
 ### 工具 Agent 与桌面工作流
 
-沿用并持续适配 OpenHanako 的引擎和 Pi SDK，包括文件读写、终端命令、网页读取/搜索、浏览器工具、工作台、技能、插件、定时任务、多 Agent 委派与频道协作，以及 server-first CLI。桌面端另有桌宠窗口。
+沿用并持续适配 OpenHanako 的引擎和 Pi SDK（当前固定为 1.0.3），包括文件读写、终端命令、网页读取/搜索、浏览器工具、工作台、技能、插件、定时任务、多 Agent 委派与频道协作，以及 server-first CLI。Windows 与 macOS 桌面端另有桌宠窗口；Linux 暂不支持桌宠。Computer Use 当前支持的平台也仅限 macOS 与 Windows，不能由浏览器工具可用推定所有平台都支持原生电脑操作。
 
 这些工具可能产生真实的文件修改或外部操作，需要正确配置模型、工作目录、权限及所需服务。桌面原生能力与沙盒实现随平台而异；本地模型、联网模型和插件也有各自的依赖与限制。
 
@@ -93,6 +93,8 @@ npm run cli -- --help
 
 这些入口应按需要选择，不要把所有启动命令同时执行。浏览器模式不能代替 Electron 原生功能验收。
 
+macOS 完成依赖安装和 workspace 构建后，也可在 Finder 中双击项目根目录的 `Start-HanaAgent-Dev.command`，它调用同一条 `npm start`，不会自动安装或升级依赖。退出应用使用 Command+Q；仅关闭主窗口可能只是隐藏应用。详见 [Mac 开发入口](docs/mac-dev-launcher.md)。这是源码开发入口，不是正式签名的 App / DMG；遇到系统安全拦截时不要绕过。
+
 ### 数据与配置
 
 源码启动命令默认使用 `~/.hanako-dev`；打包运行的默认数据目录是 `~/.hanako`。可通过 `HANA_HOME` 指向独立的绝对路径，Windows 下 `~` 指当前用户主目录。主要配置与数据包括：
@@ -135,9 +137,13 @@ npm run smoke:server:open
 
 ### 当前验证边界
 
-近期已有 Windows 源码 Electron、实际打包 EXE、独立服务端及重启持久化的验收记录；Windows 测试包未签名，也未完成实际安装/卸载流程验证。Linux 有构建与打包服务端检查记录，但这些结果不代表三平台桌面体验都已完整验收，更不代表本 fork 已完成 macOS 签名公证。
+近期已有 Windows 源码 Electron、实际打包 EXE、独立服务端及重启持久化的历史验收记录；Windows 测试包未签名，也未完成实际安装/卸载流程验证。macOS 已提交开发启动入口与桌宠适配，并有 Finder 启动、Command+Q、部分主窗/桌宠交互、用户实体 Control+K 和基本拖动的有限验收记录；穿透、Spaces/全屏、跨屏/混 DPI、实际录音等仍未完成验证。Linux 有构建与打包服务端检查记录。这些结果不代表三平台桌面体验都已完整验收，也不代表本 fork 已完成正式 App / DMG 的签名公证。
 
-可查阅 [2026-10-06 Windows 验收记录](docs/audits/2026-10-06-pi-1.0.2-followup-windows.md)及 [Linux L1 / L2 验证记录](docs/audits/2026-10-01-l1-l2-runtime-validation.md)。历史验收只覆盖各自记录的提交与环境，不能自动视为后续版本全部通过。[CI](.github/workflows/ci.yml) 在推送 `main`、`feature/xingye-mvp` 或向 `main` 提 PR 时触发；保留 Mac/Windows 的检查与测试矩阵，以及 Linux 的边界检查和 open 构建/冒烟检查。CI token 仅授予仓库内容读取权限，同一分支/PR 的新运行会取消旧 CI；Build 保留正在生成的产物，不取消已有运行。配置已接线不等于 GitHub 上的实际运行已通过。
+可查阅 [Windows Pi 1.0.2 验收记录](docs/audits/2026-10-06-pi-1.0.2-followup-windows.md)、[Windows Pi 1.0.3 验收记录](docs/audits/2026-10-06-pi-1.0.3-windows-acceptance.md)、[macOS 开发版验收记录](docs/audits/2026-10-08-macos-desktop-acceptance.md)及 [Linux L1 / L2 验证记录](docs/audits/2026-10-01-l1-l2-runtime-validation.md)。历史验收只覆盖各自记录的提交与环境，不能自动视为后续版本全部通过。
+
+截至 2026-10-11，`feature/xingye-mvp` 的已提交基线仍是 [`682fb5b`](https://github.com/wangzihe843-hash/openhanako_replicate/commit/682fb5b85b9eb3b272cd0b9b5c5b2d8f2bdb0289)：对应 [CI #22](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/37921362743) 的 macOS、Windows 测试步骤失败，Linux 边界检查和 open 构建/冒烟通过。独立 `review/ci22-integration-20261009` 分支的基线 [`7c4d9cd`](https://github.com/wangzihe843-hash/openhanako_replicate/commit/7c4d9cda1349e5cbdb7578a63efddf1618398b06) 对应 [CI #29](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/38139627013)，五项检查均通过；后续提交仍须等待其精确提交的 CI 全部通过后才能合入开发分支。review 分支的修改和结果不计入上述 feature 基线，未提交候选也不计为已交付功能；CI 通过不能替代原生交互、安装卸载或正式签名验收。
+
+[CI](.github/workflows/ci.yml) 在推送 `main`、`feature/xingye-mvp`、`review/ci22-integration-20261009` 或向 `main` 提 PR 时触发；保留 Mac/Windows 的检查与测试矩阵，以及 Linux 的边界检查和 open 构建/冒烟检查。CI token 仅授予仓库内容读取权限，同一分支/PR 的新运行会取消旧 CI；Build 保留正在生成的产物，不取消已有运行。配置已接线不等于 GitHub 上的实际运行已通过。
 
 ## 安全与隐私边界
 
@@ -161,7 +167,7 @@ npm run smoke:server:open
 
 ## 参与与反馈
 
-请到[本 fork 的 Issues](https://github.com/wangzihe843-hash/openhanako_replicate/issues)反馈问题，附上分支/提交、操作系统、Node/npm 版本、复现步骤，以及脱敏后的日志。修改前先阅读相关模块说明；涉及持久化、工具副作用、权限或构建链时，需要同时检查兼容性和失败路径。
+截至 2026-10-11，本 fork 尚未启用 Issues，反馈入口待维护者公布。准备反馈时，请记录分支/提交、操作系统、Node/npm 版本、复现步骤，以及脱敏后的日志；本 fork 特有问题不要直接当成上游问题提交。修改前先阅读相关模块说明；涉及持久化、工具副作用、权限或构建链时，需要同时检查兼容性和失败路径。
 
 [CONTRIBUTING.md](CONTRIBUTING.md)、[插件指南](PLUGINS.md)和 [Plugin SDK](PLUGIN_SDK.md)保留了上游开发背景；其中品牌、投稿政策与分发说明尚未全面针对本 fork 更新。命令和支持范围优先以当前源码及本页为准。
 
