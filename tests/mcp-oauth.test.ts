@@ -43,6 +43,7 @@ describe("MCP OAuth helpers", () => {
       }
       if (String(url) === "https://auth.example.com/.well-known/oauth-authorization-server") {
         return jsonResponse({
+          issuer: "https://auth.example.com",
           authorization_endpoint: "https://auth.example.com/authorize",
           token_endpoint: "https://auth.example.com/token",
           code_challenge_methods_supported: ["S256"],
@@ -78,6 +79,7 @@ describe("MCP OAuth helpers", () => {
       }
       if (String(url) === "https://auth.example.com/.well-known/oauth-authorization-server/tenant") {
         return jsonResponse({
+          issuer: "https://auth.example.com/tenant",
           authorization_endpoint: "https://auth.example.com/tenant/authorize",
           token_endpoint: "https://auth.example.com/tenant/token",
         });
@@ -113,6 +115,7 @@ describe("MCP OAuth helpers", () => {
       }
       if (String(url) === "https://auth.example.com/.well-known/oauth-authorization-server") {
         return jsonResponse({
+          issuer: "https://auth.example.com",
           authorization_endpoint: "https://auth.example.com/authorize",
           token_endpoint: "https://auth.example.com/token",
         });
@@ -212,6 +215,7 @@ describe("MCP OAuth dynamic client registration (RFC 7591)", () => {
       }
       if (String(url) === "https://auth.example.com/.well-known/oauth-authorization-server") {
         return jsonResponse({
+          issuer: "https://auth.example.com",
           authorization_endpoint: "https://auth.example.com/authorize",
           token_endpoint: "https://auth.example.com/token",
           registration_endpoint: "https://auth.example.com/register",
@@ -315,6 +319,7 @@ describe("MCP OAuth dynamic client registration (RFC 7591)", () => {
       }
       if (String(url) === "https://auth.example.com/.well-known/oauth-authorization-server") {
         return jsonResponse({
+          issuer: "https://auth.example.com",
           authorization_endpoint: "https://auth.example.com/authorize",
           token_endpoint: "https://auth.example.com/token",
           registration_endpoint: "https://auth.example.com/register",
@@ -362,6 +367,7 @@ describe("MCP OAuth dynamic client registration (RFC 7591)", () => {
       }
       if (String(url) === "https://auth.example.com/.well-known/oauth-authorization-server") {
         return jsonResponse({
+          issuer: "https://auth.example.com",
           authorization_endpoint: "https://auth.example.com/authorize",
           token_endpoint: "https://auth.example.com/token",
           registration_endpoint: "https://auth.example.com/register",
@@ -401,6 +407,7 @@ describe("MCP OAuth dynamic client registration (RFC 7591)", () => {
       }
       if (String(url) === "https://auth.example.com/.well-known/oauth-authorization-server") {
         return jsonResponse({
+          issuer: "https://auth.example.com",
           authorization_endpoint: "https://auth.example.com/authorize",
           token_endpoint: "https://auth.example.com/token",
         });
@@ -430,6 +437,7 @@ describe("MCP OAuth dynamic client registration (RFC 7591)", () => {
       }
       if (String(url) === "https://auth.example.com/.well-known/oauth-authorization-server") {
         return jsonResponse({
+          issuer: "https://auth.example.com",
           authorization_endpoint: "https://auth.example.com/authorize",
           token_endpoint: "https://auth.example.com/token",
           scopes_supported: ["files:read", "offline_access"],

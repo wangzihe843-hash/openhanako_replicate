@@ -344,7 +344,14 @@ async function fetchAuthorizationServerMetadata(issuer, fetchImpl) {
   for (const url of authorizationServerMetadataUrls(issuer)) {
     const response = await fetchImpl(url);
     if (!response.ok) continue;
-    return response.json();
+    const metadata = await response.json();
+    // RFC 8414 §3.3/§4: compare the decoded issuer to the original identifier,
+    // without URL normalization. An invalid successful response is fatal, like
+    // invalid JSON; only unsuccessful HTTP responses try the next discovery URL.
+    if (typeof metadata?.issuer !== "string" || metadata.issuer !== issuer) {
+      throw new Error("MCP OAuth authorization server metadata issuer does not match the authorization server");
+    }
+    return metadata;
   }
   throw new Error("Unable to discover MCP OAuth authorization server metadata");
 }
