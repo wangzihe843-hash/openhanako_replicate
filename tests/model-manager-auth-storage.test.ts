@@ -5,6 +5,7 @@ import path from "path";
 import YAML from "js-yaml";
 import { ModelManager } from "../core/model-manager.ts";
 import { ProviderRegistry } from "../core/provider-registry.ts";
+import { ProviderCatalogStore } from "../core/provider-catalog.ts";
 import { callText } from "../core/llm-client.ts";
 
 let tmpDir;
@@ -69,6 +70,51 @@ async function getDeepseekApiKey(manager) {
 }
 
 describe("ModelManager AuthStorage ownership", () => {
+  it.each(["auth.json", "models.json"].flatMap(source => [
+    { source, mtime: "same" }, { source, mtime: "changed" },
+  ]))("keeps migrated $source keys visible with $mtime catalog mtime", async ({ source, mtime }) => {
+    const key = "fixture-migrated-key";
+    writeAddedModels({ deepseek: deepseekProvider(undefined) });
+    writeAuth(source === "auth.json" ? { deepseek: { type: "api_key", key } } : {});
+    if (source === "models.json") writeModelsJson({ providers: { deepseek: {
+      baseUrl: "https://api.deepseek.com/v1", api: "openai-completions", apiKey: key,
+      models: [{ id: "deepseek-v4-pro" }],
+    } } });
+    const catalog = new ProviderCatalogStore(tmpDir);
+    catalog.load();
+    let observedMtime = 1000;
+    const stat = fs.statSync.bind(fs);
+    vi.spyOn(fs, "statSync").mockImplementation((...args: Parameters<typeof fs.statSync>) => {
+      const result = stat(...args);
+      // Only this catalog's mtime changes. Auth revision checks and all real
+      // reads/writes keep their native behavior; no clock or filesystem mock.
+      if (args[0] === catalog.catalogPath) Object.defineProperty(result, "mtimeMs", { value: observedMtime });
+      return result;
+    });
+    const manager = new ModelManager({ hanakoHome: tmpDir });
+    manager.providerRegistry.reload();
+    expect(manager.providerRegistry.getAllProvidersRaw().deepseek.api_key).toBeUndefined();
+    const store = manager.providerRegistry._catalog;
+    const save = store.saveProviders.bind(store);
+    vi.spyOn(store, "saveProviders").mockImplementation((...args) => {
+      const saved = save(...args);
+      if (mtime === "changed") observedMtime++;
+      return saved;
+    });
+    await manager.init();
+    await manager.syncAndRefresh();
+    const model = manager.modelRegistry.find("deepseek", "deepseek-v4-pro");
+    const auth = await manager.modelRegistry.getApiKeyAndHeaders(model);
+    const evidence = {
+      source, mtime, disk: readPersistedProviders().deepseek.api_key,
+      store: catalog.getProviders().deepseek.api_key,
+      registry: manager.providerRegistry.getAllProvidersRaw().deepseek.api_key,
+      runtime: auth.ok ? auth.apiKey : undefined,
+    };
+    console.info("R-Mtime", evidence);
+    expect(evidence).toMatchObject({ disk: key, store: key, registry: key, runtime: key });
+  });
+
   it("publishes models before SDK registration starts asynchronous model readers", async () => {
     writeAddedModels({
       openai: { base_url: "http://127.0.0.1:1/v1", api: "openai-completions", api_key: "test-only", models: ["fixture-before"] },

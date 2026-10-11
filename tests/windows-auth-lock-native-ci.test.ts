@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  BASELINE_BLOB, BASELINE_COMMIT, NATIVE_PROBE_FILES, readBaseline, runNativeAuthLockCi, validateNativeReport,
+  BASELINE_BLOB, BASELINE_COMMIT, NATIVE_PROBE_FILES, prepareNativeProbeCase, readBaseline, runNativeAuthLockCi, validateNativeReport,
 } from '../scripts/probe-windows-auth-lock.mjs';
 import { checkNativeAuthLockEvidence, REQUIRED_EVIDENCE } from '../scripts/check-windows-auth-lock-evidence.mjs';
 
@@ -24,7 +24,11 @@ function fixture() {
   return { rootDir, outputDir: path.join(rootDir, 'evidence') };
 }
 afterEach(() => {
-  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) {
+    const link = path.join(root, 'node_modules');
+    if (fs.existsSync(link) && fs.lstatSync(link).isSymbolicLink()) fs.unlinkSync(link);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 function holderEvents(mechanism: string, lockPath: string) {
@@ -42,6 +46,8 @@ function holderEvents(mechanism: string, lockPath: string) {
 function report(baseline = false) {
   return {
     passed: true, baseline, platform: 'win32', node: 'v24.15.0', release: 'contract-only',
+    mode: 'native', nativeStatus: 'passed',
+    initialization: { completed: true, originalMkdirRestored: true, attempts: [{ code: null, syscall: null, path: null }] },
     syntheticCredentialsOnly: true, networkAttempts: 0, errors: [],
     diagnostics: [{ mechanism: 'remove-directory', events: holderEvents('remove-directory', 'C:/control.lock'),
       directMkdir: { code: 'EPERM', syscall: 'mkdir', path: 'C:/control.lock' }, recreated: true }],
@@ -161,6 +167,7 @@ describe('native auth CI evidence contracts (no Win32 emulation)', () => {
 
   it.each([
     { passed: false }, { baseline: true }, { platform: 'darwin' }, { node: 'v24.21.0' },
+    { mode: 'preflight' }, { nativeStatus: 'not-run' }, { initialization: { completed: false } },
     { release: '' }, { syntheticCredentialsOnly: false }, { networkAttempts: 1 },
     { observations: [] }, { observations: report().observations.slice(0, 1) },
     { observations: [{ persistent: false, nativeCode: 'EACCES', result: 'skipped' }] },
@@ -263,5 +270,67 @@ describe('native auth CI evidence contracts (no Win32 emulation)', () => {
     expect(fs.readFileSync(path.join(options.outputDir, 'candidate.stderr.txt'), 'utf8')).toBe('child diagnostic');
     expect(JSON.parse(fs.readFileSync(path.join(options.outputDir, 'candidate.exit.json'), 'utf8')).code).toBe(child.status);
     expect(JSON.parse(fs.readFileSync(path.join(options.outputDir, 'baseline-fetch.exit.json'), 'utf8')).code).toBe(9);
+  });
+});
+
+describe('isolated probe initialization with installed dependencies (no Win32 emulation)', () => {
+  function realCase() {
+    const rootDir = fileURLToPath(new URL('..', import.meta.url));
+    // Exercise URL escaping as well as the exact copied import closure used by
+    // CI. The child is real Node, outside Vitest's transpiler and module mocks.
+    const caseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hana preflight # % 预检-'));
+    roots.push(caseDir);
+    const snapshot = Object.fromEntries(['lib/pi-sdk/model-runtime.ts', ...NATIVE_PROBE_FILES]
+      .map(file => [file, fs.readFileSync(path.join(rootDir, file))]));
+    return prepareNativeProbeCase({ rootDir, caseDir, snapshot });
+  }
+
+  function preflight(prepared: ReturnType<typeof realCase>) {
+    const { probePath, ...options } = prepared;
+    return spawnSync(process.execPath, [probePath, '--preflight'], {
+      ...options, encoding: 'utf8', timeout: 30_000, maxBuffer: 2 * 1024 * 1024,
+    });
+  }
+
+  it('resolves the ESM-only Pi entry and observes a real isolated credential read before the native boundary', () => {
+    const prepared = realCase();
+    const child = preflight(prepared);
+    expect(child.error).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+    const result = JSON.parse(child.stdout);
+    expect(result).toMatchObject({
+      passed: true, baseline: false, mode: 'preflight', nativeStatus: 'not-run',
+      stage: 'native-boundary', platform: process.platform, node: process.version,
+      syntheticCredentialsOnly: true, networkAttempts: 0, diagnostics: [], observations: [], errors: [],
+      initialization: { completed: true, originalMkdirRestored: true,
+        attempts: [{ code: null, syscall: null, path: null }] },
+    });
+    const { dependencies, helperPath } = result.initialization;
+    expect(fs.statSync(fileURLToPath(dependencies.piEntry)).isFile()).toBe(true);
+    for (const file of [dependencies.lockEntry, dependencies.gracefulFsEntry, helperPath]) {
+      expect(path.isAbsolute(file)).toBe(true);
+      expect(fs.statSync(file).isFile()).toBe(true);
+    }
+    expect(helperPath).toBe(fs.realpathSync(path.join(prepared.cwd, 'tests/fixtures/native-windows-lock-holder.ps1')));
+    expect(fs.readdirSync(path.join(prepared.cwd, 'temp'))).toEqual([]);
+    // Even on Windows, portable success can never become native evidence.
+    expect(() => validateNativeReport(result, false)).toThrow();
+  });
+
+  it.each([
+    ['lib/pi-sdk/model-runtime.ts', 'adapter-import'],
+    ['tests/fixtures/native-windows-lock-holder.ps1', 'helper-path'],
+  ])('retains a structured fatal report when the isolated closure loses %s', (file, stage) => {
+    const prepared = realCase();
+    fs.unlinkSync(path.join(prepared.cwd, file));
+    const child = preflight(prepared);
+    expect(child.error).toBeUndefined();
+    expect(child.status, child.stderr).toBe(1);
+    const result = JSON.parse(child.stdout);
+    expect(result).toMatchObject({ passed: false, mode: 'preflight', nativeStatus: 'not-run', stage,
+      initialization: { completed: false }, diagnostics: [], observations: [], networkAttempts: 0 });
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain(path.basename(file));
+    expect(fs.readdirSync(path.join(prepared.cwd, 'temp'))).toEqual([]);
   });
 });

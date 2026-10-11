@@ -56,6 +56,11 @@ function validateHolderEvents(events, mechanism, lockPath) {
 // live handle state, request/release transcript and actual native mkdir attempts.
 export function validateNativeReport(report, baseline) {
   assert.equal(report.passed, true);
+  assert.equal(report.mode, 'native');
+  assert.equal(report.nativeStatus, 'passed');
+  assert.equal(report.initialization.completed, true);
+  assert.equal(report.initialization.originalMkdirRestored, true);
+  assert.deepEqual(report.initialization.attempts, [{ code: null, syscall: null, path: null }]);
   assert.equal(report.baseline, baseline);
   assert.equal(report.platform, 'win32');
   assert.equal(report.node, 'v24.15.0');
@@ -127,6 +132,27 @@ export function readBaseline(rootDir, outputDir, run = spawnSync) {
   return source;
 }
 
+// Shared by the native driver and the real-dependency portable preflight tests.
+// Keep the copied import closure identical; no production source is rewritten.
+export function prepareNativeProbeCase({ rootDir, caseDir, snapshot, adapterSource = snapshot[ADAPTER] }) {
+  fs.mkdirSync(path.join(caseDir, 'lib/pi-sdk'), { recursive: true });
+  fs.mkdirSync(path.join(caseDir, 'tests/fixtures'), { recursive: true });
+  fs.mkdirSync(path.join(caseDir, 'temp'));
+  fs.writeFileSync(path.join(caseDir, 'package.json'), '{"type":"module"}\n');
+  fs.writeFileSync(path.join(caseDir, ADAPTER), adapterSource);
+  for (const file of NATIVE_PROBE_FILES) fs.writeFileSync(path.join(caseDir, file), snapshot[file]);
+  // A junction needs no symlink privilege on Windows. Never write through
+  // this dependency link or replace any file in the checked-out source.
+  fs.symlinkSync(path.resolve(rootDir, 'node_modules'), path.join(caseDir, 'node_modules'), 'junction');
+  return {
+    probePath: path.join(caseDir, PROBE), cwd: caseDir,
+    env: {
+      ...process.env, TEMP: path.join(caseDir, 'temp'), TMP: path.join(caseDir, 'temp'),
+      TMPDIR: path.join(caseDir, 'temp'), PI_CODING_AGENT_DIR: path.join(caseDir, 'pi-home'),
+    },
+  };
+}
+
 export function runNativeAuthLockCi({
   rootDir = ROOT, outputDir = path.join(rootDir, 'output/windows-auth-lock-native'),
   platform = process.platform, nodeVersion = process.version, run = spawnSync,
@@ -167,22 +193,9 @@ export function runNativeAuthLockCi({
       const result = { passed: false, adapterSha256: sha256(source) };
       try {
         const caseDir = path.join(isolationRoot, name);
-        fs.mkdirSync(path.join(caseDir, 'lib/pi-sdk'), { recursive: true });
-        fs.mkdirSync(path.join(caseDir, 'tests/fixtures'), { recursive: true });
-        fs.mkdirSync(path.join(caseDir, 'temp'));
-        fs.writeFileSync(path.join(caseDir, 'package.json'), '{"type":"module"}\n');
-        fs.writeFileSync(path.join(caseDir, ADAPTER), source);
-        for (const file of NATIVE_PROBE_FILES) fs.writeFileSync(path.join(caseDir, file), snapshot[file]);
-        // A junction needs no symlink privilege on Windows. Never write through
-        // this dependency link or replace any file in the checked-out source.
-        fs.symlinkSync(path.resolve(rootDir, 'node_modules'), path.join(caseDir, 'node_modules'), 'junction');
+        const { probePath, ...options } = prepareNativeProbeCase({ rootDir, caseDir, snapshot, adapterSource: source });
         const child = recordCommand(outputDir, name, process.execPath,
-          [path.join(caseDir, PROBE), ...(name === 'baseline' ? ['--baseline'] : [])], {
-            cwd: caseDir, env: {
-              ...process.env, TEMP: path.join(caseDir, 'temp'), TMP: path.join(caseDir, 'temp'),
-              PI_CODING_AGENT_DIR: path.join(caseDir, 'pi-home'),
-            },
-          }, run);
+          [probePath, ...(name === 'baseline' ? ['--baseline'] : [])], options, run);
         result.exitCode = child.code;
         // Retain structured partial diagnostics even when a precondition fails.
         if (child.stdout.trim()) result.report = JSON.parse(child.stdout);

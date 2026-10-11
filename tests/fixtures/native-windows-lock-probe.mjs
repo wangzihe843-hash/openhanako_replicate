@@ -14,26 +14,57 @@ import { clearTimeout, setTimeout } from 'node:timers';
 import { spawn } from 'node:child_process';
 import { assertHeldState, createRequestChannel, observeMkdir } from './native-windows-lock-protocol.mjs';
 
-assert.equal(process.platform, 'win32', 'Native Windows is required; this probe must not be counted as a Mac pass.');
 let networkAttempts = 0;
 globalThis.fetch = async () => { networkAttempts++; throw new Error('Probe refuses network access'); };
-const { AuthStorage } = await import('../../lib/pi-sdk/model-runtime.ts');
-// Observe the exact graceful-fs instance used by Pi's proper-lockfile. Every
-// attempt still calls its real mkdir, and forwards the identical callback error.
-const require = createRequire(import.meta.url);
-const piRequire = createRequire(require.resolve('@earendil-works/pi-coding-agent'));
-const lockRequire = createRequire(piRequire.resolve('proper-lockfile'));
-const lockFs = lockRequire('graceful-fs');
 const baseline = process.argv.includes('--baseline');
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hana-native-auth-lock-'));
+const preflightOnly = process.argv.includes('--preflight');
+let root, AuthStorage, lockFs;
+const helper = fileURLToPath(new URL('./native-windows-lock-holder.ps1', import.meta.url));
 const credential = { type: 'oauth', access: 'public-fixture-old', refresh: 'public-fixture-refresh', expires: 1 };
 const rotated = { ...credential, access: 'public-fixture-rotated', expires: Date.now() + 3600000 };
 const report = {
   passed: false, baseline, platform: process.platform, release: os.release(), node: process.version,
+  mode: preflightOnly ? 'preflight' : 'native', stage: 'dependency-resolution', nativeStatus: 'not-run',
+  initialization: { completed: false },
   syntheticCredentialsOnly: true, networkAttempts: 0, diagnostics: [], observations: [], errors: [],
 };
 const describeError = error => ({ code: error?.code ?? null, syscall: error?.syscall ?? null, path: error?.path ?? null });
 const isLockError = (error, lockPath) => error?.code === 'EPERM' && error.syscall === 'mkdir' && error.path === lockPath;
+
+async function initialize() {
+  // Pi exports only an ESM import entry. Pass its file URL directly to
+  // createRequire; treating it as a path breaks Windows/escaped characters.
+  const piEntry = import.meta.resolve('@earendil-works/pi-coding-agent');
+  const piRequire = createRequire(piEntry);
+  const lockEntry = piRequire.resolve('proper-lockfile');
+  const lockRequire = createRequire(lockEntry);
+  lockFs = lockRequire('graceful-fs');
+  report.initialization.dependencies = { piEntry, lockEntry, gracefulFsEntry: lockRequire.resolve('graceful-fs') };
+  report.stage = 'adapter-import';
+  ({ AuthStorage } = await import('../../lib/pi-sdk/model-runtime.ts'));
+  report.stage = 'helper-path';
+  assert.ok(fs.statSync(helper).isFile());
+  report.initialization.helperPath = helper;
+  report.stage = 'portable-storage';
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'hana-native-auth-lock-'));
+  const authPath = path.join(root, 'initialization-auth.json');
+  fs.writeFileSync(authPath, JSON.stringify({ fixture: credential }));
+  const storage = AuthStorage.create(authPath);
+  // This real, uncontended read also proves that the resolved graceful-fs
+  // instance is the one Pi uses. It does not emulate any Win32 failure.
+  const observer = observeMkdir(lockFs, authPath + '.lock');
+  report.initialization.attempts = observer.attempts;
+  try {
+    assert.deepEqual(await storage.get('fixture'), credential);
+    observer.check();
+    assert.deepEqual(observer.attempts, [describeError(null)]);
+  } finally {
+    observer.restore();
+    report.initialization.originalMkdirRestored = true;
+  }
+  assertRecreatable(authPath + '.lock');
+  report.initialization.completed = true;
+}
 
 async function withHolder(lockPath, mechanism, events, run) {
   fs.mkdirSync(lockPath);
@@ -81,7 +112,6 @@ async function withHolder(lockPath, mechanism, events, run) {
       server.once('error', reject);
       server.listen(`\\\\.\\pipe\\${pipeName}`, resolve);
     });
-    const helper = fileURLToPath(new URL('./native-windows-lock-holder.ps1', import.meta.url));
     child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', helper,
       '-LockPath', lockPath, '-PipeName', pipeName, '-Mechanism', mechanism], {
       stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
@@ -196,20 +226,28 @@ async function probe(persistent) {
 }
 
 try {
-  // Collect each independent experiment even when an earlier precondition
-  // fails. Every failure remains fatal to this report and the CI job.
-  for (const experiment of [diagnoseRemoveDirectory, () => probe(false), ...(baseline ? [] : [() => probe(true)])]) {
-    try { await experiment(); }
-    catch (error) { report.errors.push(String(error.stack || error)); }
+  await initialize();
+  report.stage = 'native-boundary';
+  if (!preflightOnly) {
+    assert.equal(process.platform, 'win32', 'Native Windows is required; this probe must not be counted as a Mac pass.');
+    report.nativeStatus = 'running';
+    report.stage = 'native-experiments';
+    // Collect each independent experiment even when an earlier precondition
+    // fails. Every failure remains fatal to this report and the CI job.
+    for (const experiment of [diagnoseRemoveDirectory, () => probe(false), ...(baseline ? [] : [() => probe(true)])]) {
+      try { await experiment(); }
+      catch (error) { report.errors.push(String(error.stack || error)); }
+    }
   }
   assert.equal(networkAttempts, 0);
 } catch (error) {
   report.errors.push(String(error.stack || error));
 } finally {
-  try { fs.rmSync(root, { recursive: true, force: true }); }
+  try { if (root) fs.rmSync(root, { recursive: true, force: true }); }
   catch (error) { report.errors.push(`Cleanup: ${error.stack || error}`); }
   report.networkAttempts = networkAttempts;
   report.passed = report.errors.length === 0;
+  if (report.nativeStatus === 'running') report.nativeStatus = report.passed ? 'passed' : 'failed';
   console.log(JSON.stringify(report, null, 2));
   process.exitCode = report.passed ? 0 : 1;
 }

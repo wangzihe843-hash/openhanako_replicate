@@ -480,8 +480,6 @@ const BUILTIN_PLUGINS = [
 // ── ProviderRegistry ─────────────────────────────────────────────────────────
 
 export class ProviderRegistry {
-  declare _addedModelsCache: any;
-  declare _addedModelsMtime: any;
   declare _authJsonCache: any;
   declare _authJsonMtime: any;
   declare _builtinPlugins: any;
@@ -512,9 +510,7 @@ export class ProviderRegistry {
     /** @type {Map<string, Promise<object>>} provider id → in-flight refresh */
     this._runtimeMediaRefreshes = new Map();
 
-    // mtime 缓存：避免热路径上重复读盘解析 YAML/JSON
-    /** @private */ this._addedModelsCache = null;
-    /** @private */ this._addedModelsMtime = 0;
+    // Auth 文件的 mtime 缓存，避免热路径上重复读盘。
     /** @private */ this._authJsonCache = null;
     /** @private */ this._authJsonMtime = 0;
 
@@ -839,17 +835,14 @@ export class ProviderRegistry {
     }
   }
 
-  /** 从 Provider Catalog v2 读取用户 provider 配置（mtime 缓存，文件未变时跳过磁盘读取） */
+  /** 从 Provider Catalog v2 读取用户 provider 配置。 */
   _loadAddedModels() {
     try {
       const catalog = this._catalog.load();
-      const mtime = fs.statSync(this._catalog.catalogPath).mtimeMs;
-      if (this._addedModelsCache && mtime === this._addedModelsMtime) {
-        return cloneData(this._addedModelsCache);
-      }
-      this._addedModelsCache = normalizeProviderUserConfigMap(catalog.providers);
-      this._addedModelsMtime = mtime;
-      return cloneData(this._addedModelsCache);
+      // load() already reads the current catalog. A migration can save through
+      // the store directly without changing mtime, so never replace that fresh
+      // content with a previous normalized snapshot.
+      return cloneData(normalizeProviderUserConfigMap(catalog.providers));
     } catch {
       return {};
     }
@@ -858,9 +851,6 @@ export class ProviderRegistry {
   /** 将 providers 对象写入 Provider Catalog v2 */
   _saveAddedModels(providers, meta: any = {}) {
     this._catalog.saveProviders(stripProviderRuntimeMetaMap(providers), meta);
-    // 写入后失效缓存，下次 _loadAddedModels 会重读
-    this._addedModelsCache = null;
-    this._addedModelsMtime = 0;
   }
 
   /**

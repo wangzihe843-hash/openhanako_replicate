@@ -138,7 +138,8 @@ describe('real mkdir callback observation', () => {
     const other = path.join(root, 'other', 'nested');
     const created = await new Promise<string | undefined>((resolve, reject) =>
       lockFs.mkdir(other, { recursive: true }, (error, result) => error ? reject(error) : resolve(result)));
-    expect(created).toBe(path.join(root, 'other'));
+    expect(created).toBeDefined();
+    expect(path.toNamespacedPath(created!)).toBe(path.toNamespacedPath(path.join(root, 'other')));
     expect(fs.statSync(other).isDirectory()).toBe(true);
     expect(observer.attempts).toEqual([]);
     expect(gates).toBe(0);
