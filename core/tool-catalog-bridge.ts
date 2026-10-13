@@ -17,6 +17,7 @@
  */
 
 import { Type } from "../lib/pi-sdk/index.ts";
+import { isAbortSignal, isAbortError, throwIfAborted } from "./mcp/clients/cancellation.ts";
 import { registerToolCapabilityDelegate } from "../lib/permission/tool-invocation-permission.ts";
 import type { ToolCatalog, ToolCatalogEntry } from "./tool-catalog.ts";
 
@@ -296,15 +297,24 @@ export function createBridgeTools({
         ].join("\n"));
       }
 
+      const signal = isAbortSignal(_signal) ? _signal : (ctx as { signal?: AbortSignal })?.signal;
       try {
         if (entry.origin === "builtin") {
           if (!builtinCall) return text(`${entry.name} 当前不可调用。`);
           return await builtinCall(entry.name, args, ctx) as any;
         }
+        throwIfAborted(signal);
+        // The third argument includes the session registry's cancellation signal.
+        if (signal) ctx = { ...(ctx as object), signal };
         return await mcpCall(entry.serverId, entry.toolName, args, ctx) as any;
       } catch (error: any) {
+        if (entry.origin !== "builtin") {
+          throwIfAborted(signal);
+          if (isAbortError(error)) throw error;
+        }
         log?.warn?.(`mcp_call ${entry.name} failed: ${error?.message || error}`);
-        return text(`调用 ${entry.name} 失败：${error?.message || String(error)}`);
+        const result = text(`调用 ${entry.name} 失败：${error?.message || String(error)}`);
+        return entry.origin === "builtin" ? result : { ...result, isError: true };
       }
     },
   };

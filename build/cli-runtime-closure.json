@@ -1123,6 +1123,11 @@
       "provenance": [
         {
           "root": "server-bootstrap",
+          "from": "core/tool-catalog-bridge.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "core/mcp/clients/stdio-client.ts",
           "kind": "import-statement"
         },
@@ -1137,7 +1142,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/mcp/clients/stdio-client.ts (import-statement); core/mcp/clients/http-client.ts (import-statement); core/mcp/manager.ts (import-statement)."
+      "reason": "Reached via esbuild source module graph, imported by core/tool-catalog-bridge.ts (import-statement); core/mcp/clients/stdio-client.ts (import-statement); core/mcp/clients/http-client.ts (import-statement); +1 more importer(s)."
     },
     {
       "path": "core/mcp/clients/http-client.ts",

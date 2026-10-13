@@ -70,6 +70,99 @@ async function run(tool: any, params: unknown) {
   return result.content.map((block: any) => block.text).join("\n");
 }
 
+describe("MCP execution error and cancellation contract", () => {
+  const params = { server: "github", tool: "github_list_issues", arguments: { owner: "fixture" } };
+  function fixture() {
+    const mcpCall = vi.fn(async (_server, _tool, _args, _ctx): Promise<unknown> => ({ content: [] }));
+    const warn = vi.fn();
+    const catalog = seededCatalog();
+    const builtinCall = vi.fn(async (_name, _args, _ctx): Promise<unknown> => { throw new Error("builtin failed"); });
+    catalog.registerSource("builtin", [{ name: "builtin_probe", toolName: "probe", serverId: "builtin", origin: "builtin", description: "fixture", schemaRef: () => ({ type: "object" }) }]);
+    const tool = createBridgeTools({ catalog, mcpCall, builtinCall, resolveMcpPermission: () => "review", log: { warn } }).find((entry) => entry.name === "mcp_call");
+    return { tool, mcpCall, builtinCall, warn };
+  }
+
+  it.each([false, true])("returns the original successful object, including isError=%s", async (isError) => {
+    const h = fixture();
+    const value = { content: [], structuredContent: null, _meta: { fixture: true }, isError };
+    h.mcpCall.mockResolvedValue(value);
+    expect(await h.tool.execute("call", params, undefined, undefined, {})).toBe(value);
+    expect(h.warn).not.toHaveBeenCalled();
+  });
+
+  it("marks a thrown MCP failure while preserving its diagnostic", async () => {
+    const h = fixture();
+    h.mcpCall.mockRejectedValue(new TypeError("body interrupted"));
+    const result = await h.tool.execute("call", params, undefined, undefined, {});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("body interrupted");
+    expect(h.warn).toHaveBeenCalledTimes(1);
+    expect(h.mcpCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("rethrows source AbortError by identity without warning", async () => {
+    const h = fixture();
+    const reason = new DOMException("source cancellation", "AbortError");
+    h.mcpCall.mockRejectedValue(reason);
+    await expect(h.tool.execute("call", params, undefined, undefined, {})).rejects.toBe(reason);
+    expect(h.warn).not.toHaveBeenCalled();
+  });
+
+  it.each(["third", "context", "invalid-third"])("forwards the %s signal without mutating context", async (kind) => {
+    const h = fixture();
+    const third = new AbortController();
+    const upstream = new AbortController();
+    const ctx = Object.freeze({ signal: upstream.signal, agentId: "fixture", sessionPath: "/fixture/session" });
+    // An obsolete context signal must not preempt a live third argument.
+    if (kind === "third") upstream.abort();
+    await h.tool.execute("call", params, kind === "third" ? third.signal : kind === "invalid-third" ? {} : undefined, undefined, ctx);
+    const forwarded = h.mcpCall.mock.calls[0][3];
+    expect(forwarded).toEqual({ ...ctx, signal: kind === "third" ? third.signal : upstream.signal });
+    expect(ctx.signal).toBe(upstream.signal);
+  });
+
+  it("preserves context identity when no signal is present", async () => {
+    const h = fixture();
+    const ctx = Object.freeze({ agentId: "fixture" });
+    await h.tool.execute("call", params, undefined, undefined, ctx);
+    expect(h.mcpCall.mock.calls[0][3]).toBe(ctx);
+  });
+
+  it.each(["AbortError", "TimeoutError"])("does not dispatch a pre-cancelled %s", async (name) => {
+    const h = fixture();
+    const controller = new AbortController();
+    const reason = new DOMException("caller stop", name);
+    controller.abort(reason);
+    await expect(h.tool.execute("call", params, controller.signal, undefined, {})).rejects.toBe(reason);
+    expect(h.mcpCall).not.toHaveBeenCalled();
+    expect(h.warn).not.toHaveBeenCalled();
+  });
+
+  it("prioritizes caller cancellation over a simultaneous ordinary rejection", async () => {
+    const h = fixture();
+    const controller = new AbortController();
+    h.mcpCall.mockImplementation(async () => { controller.abort(); throw new Error("late network failure"); });
+    await expect(h.tool.execute("call", params, controller.signal, undefined, {})).rejects.toBe(controller.signal.reason);
+    expect(h.warn).not.toHaveBeenCalled();
+  });
+
+  it("retains builtin and local validation feedback", async () => {
+    const h = fixture();
+    const controller = new AbortController();
+    controller.abort();
+    const ctx = { signal: controller.signal };
+    const builtin = await h.tool.execute("builtin", { server: "builtin", tool: "builtin_probe", arguments: {} }, controller.signal, undefined, ctx);
+    expect(builtin.isError).toBeUndefined();
+    expect(builtin.content[0].text).toContain("builtin failed");
+    expect(h.builtinCall.mock.calls[0][2]).toBe(ctx);
+    const invalid = await h.tool.execute("invalid", { ...params, arguments: {} }, undefined, undefined, {});
+    const unknown = await h.tool.execute("unknown", { ...params, tool: "missing" }, undefined, undefined, {});
+    expect(invalid.isError).toBeUndefined();
+    expect(unknown.isError).toBeUndefined();
+    expect(h.mcpCall).not.toHaveBeenCalled();
+  });
+});
+
 describe("bridge tool shape", () => {
   it("returns exactly the three bridge tools", () => {
     const { tools } = makeBridge();

@@ -823,7 +823,8 @@ export class McpStreamableHttpClient {
         if (payload.id == null) return null;
 
         const contentType = responseHeader(response, "Content-Type");
-        const text = await waitWithSignal(responseText(response), requestSignal);
+        // RPC body failures must propagate; only HTTP error diagnostics are best effort.
+        const text = await waitWithSignal(response.text(), requestSignal);
         throwIfAborted(requestSignal);
         if (contentType.includes("text/event-stream")) {
           for (const event of parseSseEvents(text)) {
