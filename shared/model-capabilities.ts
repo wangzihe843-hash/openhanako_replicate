@@ -188,7 +188,7 @@ export function normalizeModelProtocolCompat(value: unknown): ModelProtocolCompa
   const input: Record<string, unknown> = value as Record<string, unknown>;
   const out: ModelProtocolCompat = {};
 
-  const thinkingFormat = lower(input.thinkingFormat);
+  const thinkingFormat = lower(input.hanaThinkingFormat || input.thinkingFormat);
   if (MODEL_THINKING_FORMATS.has(thinkingFormat)) {
     out.thinkingFormat = thinkingFormat;
   }
@@ -366,14 +366,15 @@ export function isDeepSeekReasoningModel(model: any, context: any = {}) {
  * Resolve the request-side thinking control format declared by a model.
  *
  * Precedence:
- *   1. Explicit model.compat.thinkingFormat
+ *   1. Explicit Hana extension, then model.compat.thinkingFormat
  *   2. Protocol quirks projected from known-models.json
  *   3. Legacy/runtime derivation for pre-existing models.json entries
  */
 export function getThinkingFormat(model: any, context: any = {}) {
   if (!isPlainObject(model)) return null;
 
-  const explicit = lower(model.compat?.thinkingFormat);
+  // The extension wins over a Pi builtin's inherited thinkingFormat override.
+  const explicit = lower(model.compat?.hanaThinkingFormat || model.compat?.thinkingFormat);
   if (explicit) return explicit;
 
   const quirks = Array.isArray(model.quirks) ? model.quirks : [];

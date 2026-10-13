@@ -67,6 +67,7 @@ function normalizeKimiCodingRuntimeTransport(model) {
   if (!isOfficialKimiCodingRuntime(model)) return model;
   const compat = isPlainObject(model.compat) ? { ...model.compat } : {};
   delete compat.thinkingFormat;
+  delete compat.hanaThinkingFormat;
   delete compat.reasoningProfile;
   return {
     ...model,

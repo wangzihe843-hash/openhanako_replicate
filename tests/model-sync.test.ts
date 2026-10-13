@@ -770,7 +770,7 @@ describe("syncModels", () => {
       reasoning: true,
       compat: {
         supportsDeveloperRole: false,
-        thinkingFormat: "kimi",
+        hanaThinkingFormat: "kimi",
         reasoningProfile: "kimi-openai",
       },
     });
@@ -801,7 +801,7 @@ describe("syncModels", () => {
       input: ["text", "image"],
       compat: {
         supportsDeveloperRole: false,
-        thinkingFormat: "kimi",
+        hanaThinkingFormat: "kimi",
         reasoningProfile: "kimi-openai",
         hanaVideoInput: true,
       },
@@ -923,7 +923,7 @@ describe("syncModels", () => {
       reasoning: true,
       input: ["text"],
       compat: {
-        thinkingFormat: "kimi",
+        hanaThinkingFormat: "kimi",
         reasoningProfile: "kimi-openai",
         reasoningReplay: {
           carrier: "reasoning_content",
@@ -954,7 +954,7 @@ describe("syncModels", () => {
     expect(model.headers).toBeUndefined();
     expect(model.compat).toMatchObject({
       supportsDeveloperRole: false,
-      thinkingFormat: "kimi",
+      hanaThinkingFormat: "kimi",
       reasoningProfile: "kimi-openai",
     });
   });
@@ -994,13 +994,13 @@ describe("syncModels", () => {
       id: "kimi-k2.6",
       compat: {
         supportsDeveloperRole: false,
-        thinkingFormat: "kimi",
+        hanaThinkingFormat: "kimi",
         reasoningProfile: "kimi-openai",
       },
     });
     expect(result.providers.minimax.models[0].compat).toMatchObject({
       supportsDeveloperRole: false,
-      thinkingFormat: "anthropic",
+      hanaThinkingFormat: "anthropic",
     });
     expect(result.providers["minimax-token-plan"].api).toBe("anthropic-messages");
     expect(result.providers["minimax-token-plan"].baseUrl).toBe("https://api.minimaxi.com/anthropic");
@@ -1014,7 +1014,7 @@ describe("syncModels", () => {
       reasoning: true,
       compat: {
         supportsDeveloperRole: false,
-        thinkingFormat: "anthropic",
+        hanaThinkingFormat: "anthropic",
       },
     });
     expect(result.providers["minimax-token-plan"].models[0].compat?.hanaVideoInput).toBeUndefined();
@@ -1037,7 +1037,7 @@ describe("syncModels", () => {
     const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
     expect(result.providers.deepseek.models[0].compat).toMatchObject({
       supportsDeveloperRole: false,
-      thinkingFormat: "anthropic",
+      hanaThinkingFormat: "anthropic",
       reasoningProfile: "deepseek-v4-anthropic",
     });
   });
@@ -1328,7 +1328,7 @@ describe("syncModels", () => {
       reasoning: true,
       compat: {
         supportsDeveloperRole: false,
-        thinkingFormat: "volcengine",
+        hanaThinkingFormat: "volcengine",
       },
     });
   });
@@ -1361,7 +1361,7 @@ describe("syncModels", () => {
         reasoning: true,
         compat: {
           supportsDeveloperRole: false,
-          thinkingFormat: "anthropic",
+          hanaThinkingFormat: "anthropic",
           reasoningProfile: "anthropic-adaptive-only",
         },
       });
@@ -2003,7 +2003,7 @@ describe("syncModels", () => {
       supportsDeveloperRole: false,
       supportsStore: false,
       supportsReasoningEffort: false,
-      thinkingFormat: "zhipu",
+      hanaThinkingFormat: "zhipu",
       reasoningProfile: "zhipu-openai",
     });
   });
@@ -2039,7 +2039,7 @@ describe("syncModels", () => {
         supportsDeveloperRole: false,
         supportsStore: false,
         supportsReasoningEffort: false,
-        thinkingFormat: "zhipu",
+        hanaThinkingFormat: "zhipu",
         reasoningProfile: "zhipu-openai",
       },
     });
@@ -2076,7 +2076,7 @@ describe("syncModels", () => {
         supportsDeveloperRole: false,
         supportsStore: false,
         supportsReasoningEffort: false,
-        thinkingFormat: "zhipu",
+        hanaThinkingFormat: "zhipu",
         reasoningProfile: "zhipu-openai",
       },
       toolUse: {

@@ -14,6 +14,7 @@ function isReasoningModel(model) {
   return model?.reasoning === true
     || !!model?.reasoningProfile
     || !!model?.compat?.thinkingFormat
+    || !!model?.compat?.hanaThinkingFormat
     || !!model?.compat?.reasoningProfile;
 }
 

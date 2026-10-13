@@ -7,6 +7,9 @@ import { ModelManager } from "../core/model-manager.ts";
 import { ProviderRegistry } from "../core/provider-registry.ts";
 import { ProviderCatalogStore } from "../core/provider-catalog.ts";
 import { callText } from "../core/llm-client.ts";
+import { getThinkingFormat, normalizeModelProtocolCompat } from "../shared/model-capabilities.ts";
+import { normalizeProviderPayload } from "../core/provider-compat.ts";
+import { withMemoryReasoningBuffer } from "../lib/memory/llm-budget.ts";
 
 let tmpDir;
 
@@ -409,6 +412,7 @@ describe("ModelManager AuthStorage ownership", () => {
     await manager.init();
     await manager.refreshAvailable();
 
+    expect(manager.modelRegistry.getError()).toBeUndefined();
     const model = manager.availableModels.find((item) => (
       item.provider === "kimi-coding" && item.id === "kimi-for-coding"
     ));
@@ -416,6 +420,48 @@ describe("ModelManager AuthStorage ownership", () => {
     expect(model?.input).toEqual(["text"]);
     expect(model).not.toHaveProperty("visionCapabilities");
   });
+
+  it.each(["anthropic", "zhipu", "kimi", "volcengine", "longcat"])(
+    "loads and reopens Hana %s thinking controls through the installed Pi schema",
+    async (thinkingFormat) => {
+      writeAddedModels({
+        "custom-thinking": {
+          base_url: "https://fixture.invalid/v1",
+          api: thinkingFormat === "anthropic" ? "anthropic-messages" : "openai-completions",
+          api_key: "fixture-only",
+          models: [{
+            id: "custom-model", image: false, reasoning: true, context: 333333, maxOutput: 23456,
+            compat: { thinkingFormat },
+          }],
+        },
+      });
+      writeAuth({});
+
+      for (let load = 0; load < 2; load++) {
+        const manager = new ModelManager({ hanakoHome: tmpDir });
+        await manager.init();
+        await manager.refreshAvailable();
+        expect(manager.modelRegistry.getError()).toBeUndefined();
+        const model = manager.modelRegistry.find("custom-thinking", "custom-model");
+        expect(model).toMatchObject({ input: ["text"], contextWindow: 333333, maxTokens: 23456 });
+        expect(model?.compat).toHaveProperty("hanaThinkingFormat", thinkingFormat);
+        expect(getThinkingFormat(model)).toBe(thinkingFormat);
+        expect(normalizeModelProtocolCompat(model?.compat)?.thinkingFormat).toBe(thinkingFormat);
+        const inherited = { ...model, compat: { ...model?.compat, thinkingFormat: "openai" } };
+        expect(getThinkingFormat(inherited)).toBe(thinkingFormat);
+        expect(normalizeModelProtocolCompat(inherited.compat)?.thinkingFormat).toBe(thinkingFormat);
+        expect(withMemoryReasoningBuffer(100, { ...model, reasoning: undefined })).toBe(1124);
+        if (thinkingFormat !== "anthropic") {
+          const payload = normalizeProviderPayload({ messages: [], thinking: { type: "enabled" } }, inherited, { mode: "utility" });
+          expect(payload.thinking).toEqual({ type: "disabled" });
+        }
+      }
+      const projected = JSON.parse(fs.readFileSync(path.join(tmpDir, "models.json"), "utf-8"));
+      expect(projected.providers["custom-thinking"].models[0].compat).not.toHaveProperty("thinkingFormat");
+      const reloaded = new ProviderRegistry(tmpDir);
+      expect(reloaded.getAllProvidersRaw()["custom-thinking"].models[0].compat.thinkingFormat).toBe(thinkingFormat);
+    },
+  );
 
   it("loads a fetched Kimi K3 id through the real ModelRegistry without projecting it to the default model", async () => {
     writeAddedModels({

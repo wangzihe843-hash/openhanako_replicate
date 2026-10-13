@@ -31,6 +31,9 @@ const PI_BUILTIN_PROVIDER_REUSE = new Set(["kimi-coding", "opencode-go"]);
 const KIMI_CODING_PROVIDER = "kimi-coding";
 const KIMI_CODING_HEADER_MODEL_ID = "kimi-for-coding";
 const CHAT_CREDENTIAL_SOURCES = new Set(["provider-catalog", "auth-storage", "none"]);
+// Pi 1.2 validates thinkingFormat as its own wire-format enum. Keep Hana-only
+// controls in an extension field so one model cannot invalidate models.json.
+const HANA_ONLY_THINKING_FORMATS = new Set(["anthropic", "zhipu", "kimi", "volcengine", "longcat"]);
 
 /**
  * 模型 ID → 人类可读名
@@ -478,7 +481,11 @@ export function syncModels(providers, opts: Record<string, any> = {}) {
   }
 
   const newJson = { providers: newProviders };
-  const newStr = JSON.stringify(newJson, null, 4) + "\n";
+  const newStr = JSON.stringify(newJson, (key, value) => {
+    if (key !== "compat" || !HANA_ONLY_THINKING_FORMATS.has(value?.thinkingFormat)) return value;
+    const { thinkingFormat, ...compat } = value;
+    return { ...compat, hanaThinkingFormat: thinkingFormat };
+  }, 4) + "\n";
 
   // 比较是否有变化
   let oldStr = "";

@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:63bfb7211441ffdc5a2d7b8bf3b37396c3220195f8d8f7fc86bdd497f9a8f502",
+  "payloadFingerprint": "sha256:6cb80ecc6aad34e044ff4ce8b458973b9373c448d05662b371d88e9ae23d930d",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3368,8 +3368,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "MCP OAuth callback completion now validates the in-memory issuer and capability snapshot before processing success or error responses. The manager runtime-contract source hash changes, but persisted MCP configuration, credentials, normalization, store inventory, and DATA_EPOCH remain unchanged.",
-    "payloadFingerprint": "sha256:63bfb7211441ffdc5a2d7b8bf3b37396c3220195f8d8f7fc86bdd497f9a8f502"
+    "compatibilityReason": "Reviewed Pi 1.2.0 JSONL v3: session-manager runtime and types are byte-identical to integrity-verified 1.0.3; old-session reopen, legacy outcomes and durable input tests pass. Only the derived models.json projection moves Hana-only thinking controls to hanaThinkingFormat; canonical provider configuration is unchanged and real registry cold-reload tests preserve controls and capabilities. No stored shape migration required.",
+    "payloadFingerprint": "sha256:6cb80ecc6aad34e044ff4ce8b458973b9373c448d05662b371d88e9ae23d930d"
   },
   "schemas": [
     {
@@ -3931,9 +3931,9 @@
       ],
       "kind": "external-versioned",
       "lockfile": "package-lock.json",
-      "packageIntegrity": "sha512-t2lb0dw4y/jr5a2PRo6eTHGTZOPB3/YAMVyhhYFC1W3Hl5xE+462I/gMWjF4gCLuhGipNEfuNqONFmdqLFz4SQ==",
+      "packageIntegrity": "sha512-h/4WaVWv1VlCaY8x8qEN5U+7jbF/e7+Ck6moPeEOFn5juMTWwNAXjwgYM7gRgbBYh8Zppwt6qWvJDzNTf4GNEQ==",
       "packageName": "@earendil-works/pi-coding-agent",
-      "packageVersion": "1.0.3",
+      "packageVersion": "1.2.0",
       "protocolModules": [
         {
           "module": "core/desktop-session-submit.ts",
@@ -3968,7 +3968,7 @@
           "sourceHash": "sha256:810752d7bb38f9bdc287c78649e21a53aad293cd2e2e817af7575ab3a58dc6ed"
         }
       ],
-      "requestedVersion": "1.0.3",
+      "requestedVersion": "1.2.0",
       "storeId": "session-jsonl",
       "versionSource": {
         "currentSessionVersion": 3,

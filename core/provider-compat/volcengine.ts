@@ -30,7 +30,7 @@ function baseHost(value) {
 
 export function matches(model) {
   if (!model || typeof model !== "object") return false;
-  if (lower(model.compat?.thinkingFormat) === "volcengine") return true;
+  if (lower(model.compat?.hanaThinkingFormat || model.compat?.thinkingFormat) === "volcengine") return true;
 
   const provider = lower(model.provider);
   if (provider === "volcengine" || provider === "volcengine-coding") return true;

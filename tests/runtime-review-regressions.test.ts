@@ -8,6 +8,8 @@ import { SessionCoordinator } from '../core/session-coordinator.ts';
 import { submitDesktopSessionMessage, cancelDesktopSessionSubmission } from '../core/desktop-session-submit.ts';
 import { createWorkflowTool } from '../lib/tools/workflow-tool.ts';
 import { TaskRegistry } from '../lib/task-registry.ts';
+import { installRunLifecycleAdapter, getSessionRunInputState } from '../lib/pi-sdk/run-lifecycle.ts';
+import { getPiCodingAgentVersion } from '../lib/pi-sdk/session-options.ts';
 const gate = () => Promise.withResolvers<void>();
 const out = fs.mkdtempSync(path.join(process.env.TEMP || os.tmpdir(), 'runtime-rereview-'));
 afterEach(() => vi.restoreAllMocks());
@@ -20,9 +22,11 @@ it.each(['restore', 'reload', 'stop'])('RR01 %s respects real SDK preflight owne
   const model = { id: 'fixture', provider: 'fixture', input: ['text'] };
   const sdk: any = Object.create(AgentSession.prototype);
   Object.assign(sdk, {
-    agent: { state: { model, messages: [], isStreaming: false }, isStreaming: false },
+    agent: { state: { model, messages: [], isStreaming: false }, isStreaming: false,
+      prompt: vi.fn(async () => { trace.push('old-sdk-run-started'); }), abort() {} },
     _isAgentRunActive: false,
-    sessionManager: { getSessionFile: () => sp },
+    sessionManager: { getSessionFile: () => sp, getBranch: () => [], getEntries: () => [] },
+    _pendingToolNames: new Set(),
     _resourceLoader: { getPrompts: () => ({ prompts: [] }) },
     _modelRuntime: { hasConfiguredAuth: () => true },
     _baseSystemPrompt: 'fixture prompt',
@@ -34,8 +38,13 @@ it.each(['restore', 'reload', 'stop'])('RR01 %s respects real SDK preflight owne
       trace.push('sdk-preflight-entered'); entered.resolve(); await held.promise; trace.push('sdk-preflight-released');
       return { messages: [], systemPromptOptions: { selectedTools: [] } };
     } },
-    _runAgentPrompt: vi.fn(async () => { trace.push('old-sdk-run-started'); }),
+    _recordSelection() {},
+    _handlePostAgentRun: async () => false, _runBeforeSettleBoundary: async () => false,
+    async _emitAgentSettled() { this._isAgentRunActive = false; this._resolveIdleWaitIfIdle(); },
   });
+  // Use the installed 1.2 lifecycle and the same adapter as createAgentSession.
+  // Pi now owns busy state before before_agent_start, before input is persisted.
+  installRunLifecycleAdapter(sdk, getPiCodingAgentVersion());
   const agent = { id: 'fixture' };
   const c: any = new SessionCoordinator({ getAgent: () => agent, getAgentById: () => agent, getEngine: () => ({}) } as any);
   c._assertActiveDesktopSessionPath = () => {};
@@ -54,7 +63,8 @@ it.each(['restore', 'reload', 'stop'])('RR01 %s respects real SDK preflight owne
   // Real /rc router calls promptSession without submission receipt callbacks.
   const prompted = c.promptSession(sp, 'fixture text', undefined).catch(e => { trace.push('prompt-error:' + e.message); return e; });
   await Promise.race([entered.promise, prompted.then(error => { throw error; })]);
-  expect(sdk.isStreaming).toBe(false);
+  expect(sdk.isStreaming).toBe(true);
+  expect(getSessionRunInputState(sdk)).toBe('pending');
   try {
     if (mode === 'stop') {
       expect(await c.abortSession(sp)).toBe(true);
@@ -72,9 +82,10 @@ it.each(['restore', 'reload', 'stop'])('RR01 %s respects real SDK preflight owne
   } finally { held.resolve(); }
   const result = await prompted;
   if (mode === 'stop') {
-    expect(sdk._runAgentPrompt).not.toHaveBeenCalled();
+    expect(sdk.agent.prompt).not.toHaveBeenCalled();
     expect(result).toMatchObject({ name: 'AbortError' });
-  } else expect(sdk._runAgentPrompt).toHaveBeenCalledOnce();
+  } else expect(sdk.agent.prompt).toHaveBeenCalledOnce();
+  expect(sdk.isStreaming).toBe(false);
   expect(c._prePromptAbortControllers.size).toBe(0);
 });
 

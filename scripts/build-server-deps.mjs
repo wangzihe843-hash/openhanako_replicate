@@ -8,7 +8,6 @@ export const DEFERRED_BRIDGE_SDK_PACKAGES = Object.freeze([
 ]);
 
 export const PI_RUNTIME_PACKAGES = Object.freeze([
-  "@earendil-works/chord",
   "@earendil-works/pi-agent-core",
   "@earendil-works/pi-ai",
   "@earendil-works/pi-codemode",

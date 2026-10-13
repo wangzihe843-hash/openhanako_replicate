@@ -31,7 +31,7 @@ function baseHost(value) {
 
 export function matches(model) {
   if (!model || typeof model !== "object") return false;
-  if (lower(model.compat?.thinkingFormat) === "longcat") return true;
+  if (lower(model.compat?.hanaThinkingFormat || model.compat?.thinkingFormat) === "longcat") return true;
 
   const provider = lower(model.provider);
   if (provider === "longcat" || provider === "longcat-coding") return true;

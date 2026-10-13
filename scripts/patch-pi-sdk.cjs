@@ -20,8 +20,8 @@ const { createHash } = require("node:crypto");
 const root = path.join(__dirname, "..");
 const sdkRoot = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent");
 const piAiRoot = path.join(root, "node_modules", "@earendil-works", "pi-ai");
-const verifiedVersions = new Set(["1.0.3"]);
-const verifiedPiAiVersions = new Set(["1.0.3"]);
+const verifiedVersions = new Set(["1.2.0"]);
+const verifiedPiAiVersions = new Set(["1.2.0"]);
 // The three direct packages share caret-ranged runtime dependencies. Reject
 // family drift too, so a later install cannot silently mix 1.0.3 with 1.0.4.
 const piFamilyPath = /node_modules\/@earendil-works\/(chord|pi-agent-core|pi-ai|pi-coding-agent|pi-codemode|pi-mcp|pi-telemetry|pi-tui)$/;

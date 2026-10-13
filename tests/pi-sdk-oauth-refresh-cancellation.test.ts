@@ -66,7 +66,7 @@ describe("Pi OAuth refresh cancellation and provider compatibility", () => {
   it("preserves configured Azure routes, legacy identities, and persisted Hana history", () => {
     const { dir } = runFixture("pi-azure-compatibility.fixture.js");
     const evidence = JSON.parse(fs.readFileSync(path.join(dir, "evidence/azure-compatibility.json"), "utf8"));
-    expect(evidence).toMatchObject({ version: "1.0.3", networkAttempts: 0, mockFetchCalls: 74, syntheticCredentialsOnly: true, failures: [] });
+    expect(evidence).toMatchObject({ version: "1.2.0", networkAttempts: 0, mockFetchCalls: 74, syntheticCredentialsOnly: true, failures: [] });
     expect(evidence.routing).toHaveLength(74);
     expect(evidence.routing.every((request: { passed: boolean }) => request.passed)).toBe(true);
     expect(evidence.results.map((result: { id: string }) => result.id)).toEqual([
