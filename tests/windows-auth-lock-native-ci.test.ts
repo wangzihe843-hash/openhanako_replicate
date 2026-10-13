@@ -250,7 +250,7 @@ describe('native auth CI evidence contracts (no Win32 emulation)', () => {
         : { status: 0, stdout: 'candidate-commit\n', stderr: '' };
       expect(command).toBe(process.execPath);
       expect(args).toEqual([path.join(spawnOptions.cwd, 'tests/fixtures/native-windows-lock-probe.mjs')]);
-      expect(spawnOptions.timeout).toBe(90_000);
+      expect(spawnOptions.timeout).toBe(270_000);
       caseDir = spawnOptions.cwd;
       expect(caseDir).not.toBe(options.rootDir);
       expect(fs.readFileSync(path.join(caseDir, 'lib/pi-sdk/model-runtime.ts'), 'utf8')).toBe('contract fixture\n');
@@ -295,7 +295,13 @@ describe('isolated probe initialization with installed dependencies (no Win32 em
           return { status: 0, stdout: sources[args[1].split(':')[1]], stderr: '' };
         }
         expect(options.cwd).toBe(dependencyRoot);
-        expect(args).toEqual(['ci', '--ignore-scripts', '--workspaces=false']);
+        expect(command).toBe(process.execPath);
+        expect(fs.statSync(args[0]).isFile()).toBe(true);
+        expect(path.basename(args[0])).toBe('npm-cli.js');
+        expect(args.slice(1)).toEqual(['ci', '--ignore-scripts', '--workspaces=false', '--timing',
+          `--logs-dir=${path.resolve(outputDir, 'baseline-npm-logs')}`]);
+        expect(options.shell).toBe(false);
+        expect(options.timeout).toBe(600_000);
         expect(fs.readFileSync(path.join(dependencyRoot, '.npmrc'), 'utf8')).toContain('min-release-age=1');
         for (const name of names) {
           const dir = path.join(dependencyRoot, 'node_modules', name);
@@ -307,6 +313,9 @@ describe('isolated probe initialization with installed dependencies (no Win32 em
     });
     expect(Object.keys(hashes)).toEqual(Object.keys(sources));
     expect(calls).toHaveLength(4);
+    const installExit = JSON.parse(fs.readFileSync(path.join(outputDir, 'baseline-npm-ci.exit.json'), 'utf8'));
+    expect(Number.isFinite(Date.parse(installExit.startedAt))).toBe(true);
+    expect(installExit.elapsedMs).toBeGreaterThanOrEqual(0);
     expect(fs.realpathSync(path.join(dependencyRoot, 'node_modules'))).not.toBe(fs.realpathSync(path.join(rootDir, 'node_modules')));
     const snapshot = Object.fromEntries(['lib/pi-sdk/model-runtime.ts', ...ADAPTER_SUPPORT_FILES, ...NATIVE_PROBE_FILES]
       .map(file => [file, fs.readFileSync(path.join(rootDir, file))]));

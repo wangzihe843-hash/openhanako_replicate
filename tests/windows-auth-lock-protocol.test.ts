@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Duplex, PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createRequestChannel, observeMkdir } from './fixtures/native-windows-lock-protocol.mjs';
+import { createHolderWatchdog, createRequestChannel, observeMkdir } from './fixtures/native-windows-lock-protocol.mjs';
 
 // Portable transport/pass-through contracts; these are NOT native Windows passes.
 const cleanup: Array<() => void> = [];
@@ -23,6 +23,37 @@ function deferred() {
   const promise = new Promise<void>(r => { resolve = r; });
   return { promise, resolve };
 }
+
+describe('holder startup and experiment deadlines', () => {
+  it('fails before OPEN and refuses a late readiness acknowledgement', async () => {
+    let watchdog: ReturnType<typeof createHolderWatchdog>;
+    const failed = new Promise<Error>(resolve => {
+      watchdog = createHolderWatchdog(resolve, { startupMs: 10, experimentMs: 10_000 });
+    });
+    expect((await failed).message).toMatch(/startup \(before OPEN acknowledgement\) timed out after 10ms/);
+    expect(() => watchdog.opened()).toThrow('startup already timed out');
+    watchdog.close();
+  });
+
+  it('starts a separate experiment deadline only after OPEN', async () => {
+    let watchdog: ReturnType<typeof createHolderWatchdog>;
+    const failed = new Promise<Error>(resolve => {
+      watchdog = createHolderWatchdog(resolve, { startupMs: 10_000, experimentMs: 10 });
+    });
+    watchdog.opened();
+    expect((await failed).message).toBe('Holder experiment timed out after 10ms');
+    watchdog.close();
+  });
+
+  it.each([false, true])('cancels a finished holder deadline after opened=%s', async (opened) => {
+    const failures: Error[] = [];
+    const watchdog = createHolderWatchdog(error => failures.push(error), { startupMs: 10, experimentMs: 10 });
+    if (opened) watchdog.opened();
+    watchdog.close();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(failures).toEqual([]);
+  });
+});
 
 describe('holder request/acknowledgement protocol', () => {
   it('requires correlated complete lines for OPEN, ARM, CHECK and RELEASE', async () => {

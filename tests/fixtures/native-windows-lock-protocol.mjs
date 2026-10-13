@@ -2,6 +2,28 @@
 import assert from 'node:assert/strict';
 import { clearTimeout, setTimeout } from 'node:timers';
 
+// PowerShell startup/Add-Type precedes the OPEN acknowledgement and can be
+// slow on a cold hosted runner. It must not consume the held-lock deadline.
+// Both deadlines fail the experiment; neither releases a handle or implies READY.
+export function createHolderWatchdog(onTimeout, { startupMs = 60_000, experimentMs = 20_000 } = {}) {
+  let timer, failed = false;
+  function arm(phase, timeoutMs) {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      failed = true;
+      onTimeout(new Error(`Holder ${phase} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  }
+  arm('startup (before OPEN acknowledgement)', startupMs);
+  return {
+    opened() {
+      assert.equal(failed, false, 'Holder startup already timed out');
+      arm('experiment', experimentMs);
+    },
+    close() { clearTimeout(timer); },
+  };
+}
+
 export function createRequestChannel(stream, { timeoutMs = 10000, onMessage = () => {} } = {}) {
   let sequence = 0;
   let buffer = '';

@@ -5,6 +5,11 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$startup = [Diagnostics.Stopwatch]::StartNew()
+function Write-StartupStage([string]$Stage) {
+  [Console]::Error.WriteLine((@{ holderStage = $Stage; pid = $PID; elapsedMs = $startup.ElapsedMilliseconds } | ConvertTo-Json -Compress))
+}
+Write-StartupStage 'powershell-started'
 
 # No ACL, execution-policy, privilege, or system configuration changes.
 # BOOLEAN fields are one byte; FILE_STANDARD_INFO has native 8-byte alignment.
@@ -75,6 +80,7 @@ public static class AuthLockNative {
   public static void Close(IntPtr handle) { Require(CloseHandle(handle), "CloseHandle"); }
 }
 '@
+Write-StartupStage 'native-type-ready'
 
 $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', $PipeName, [IO.Pipes.PipeDirection]::InOut)
 $handle = [IntPtr]::new(-1)
@@ -83,6 +89,7 @@ $writer = $null
 try {
   # Explicit IPC stream, independent of PowerShell's host/redirected Console.In.
   $pipe.Connect(10000)
+  Write-StartupStage 'pipe-connected'
   $utf8 = [Text.UTF8Encoding]::new($false)
   $reader = [IO.StreamReader]::new($pipe, $utf8)
   $writer = [IO.StreamWriter]::new($pipe, $utf8)

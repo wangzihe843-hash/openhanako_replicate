@@ -7,12 +7,12 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { performance } from 'node:perf_hooks';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath, URL } from 'node:url';
-import { clearTimeout, setTimeout } from 'node:timers';
 import { spawn } from 'node:child_process';
-import { assertHeldState, createRequestChannel, observeMkdir } from './native-windows-lock-protocol.mjs';
+import { assertHeldState, createHolderWatchdog, createRequestChannel, observeMkdir } from './native-windows-lock-protocol.mjs';
 
 let networkAttempts = 0;
 globalThis.fetch = async () => { networkAttempts++; throw new Error('Probe refuses network access'); };
@@ -67,12 +67,16 @@ async function initialize() {
   report.initialization.completed = true;
 }
 
-async function withHolder(lockPath, mechanism, events, run) {
+async function withHolder(lockPath, mechanism, evidence, run) {
+  const { events } = evidence;
   fs.mkdirSync(lockPath);
   const pipeName = `hana-native-auth-${randomUUID()}`;
   let socket, child, channel, exited, watchdog, opened;
   let released = false;
   const failures = [];
+  const started = performance.now();
+  const elapsedMs = () => Math.round(performance.now() - started);
+  evidence.helper = { startedAt: new Date().toISOString() };
   let connected;
   const connection = new Promise(resolve => { connected = resolve; });
   const server = net.createServer(stream => {
@@ -117,20 +121,28 @@ async function withHolder(lockPath, mechanism, events, run) {
       '-LockPath', lockPath, '-PipeName', pipeName, '-Mechanism', mechanism], {
       stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     });
+    evidence.helper.pid = child.pid;
     let spawnError = null;
     child.on('error', error => { spawnError = String(error); });
     child.stdout.on('data', data => process.stderr.write(data));
     child.stderr.on('data', data => process.stderr.write(data));
     exited = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal, error: spawnError })));
     // A deadline only fails/kills a stuck helper. It never triggers success or release.
-    watchdog = setTimeout(() => child.kill(), 20000);
+    watchdog = createHolderWatchdog(error => {
+      evidence.helper.timeout = { message: error.message, elapsedMs: elapsedMs() };
+      failures.push(error);
+      child.kill();
+    });
     await Promise.race([connection, exited.then(result => { throw new Error(`Holder exited before connection: ${JSON.stringify(result)}`); })]);
+    evidence.helper.connectedMs = elapsedMs();
     channel = createRequestChannel(socket, { onMessage(state) {
       events.push(state);
       console.error(JSON.stringify({ nativeHolder: state }));
     } });
     opened = await request('open');
     assert.equal(opened.info.deletePending, false);
+    evidence.helper.openedMs = elapsedMs();
+    watchdog.opened();
     await run({ request, opened });
   } catch (error) { failures.push(error); }
   finally {
@@ -143,7 +155,8 @@ async function withHolder(lockPath, mechanism, events, run) {
       events.push({ command: 'exit', ...exit });
       try { assert.deepEqual(exit, { code: 0, signal: null, error: null }); } catch (error) { failures.push(error); }
     }
-    clearTimeout(watchdog);
+    evidence.helper.elapsedMs = elapsedMs();
+    watchdog?.close();
     channel?.close();
     socket?.destroy();
     await new Promise(resolve => server.close(resolve));
@@ -165,7 +178,7 @@ async function diagnoseRemoveDirectory() {
   const lockPath = path.join(root, 'remove-directory-control.lock');
   const diagnostic = { mechanism: 'remove-directory', events: [] };
   report.diagnostics.push(diagnostic);
-  await withHolder(lockPath, 'remove-directory', diagnostic.events, async holder => {
+  await withHolder(lockPath, 'remove-directory', diagnostic, async holder => {
     // Same access=0/share=7/RemoveDirectoryW as the old fixture, now with a
     // live handshake and actual handle state. No assumed EPERM in this control.
     await holder.request('arm');
@@ -188,7 +201,7 @@ async function probe(persistent) {
   const storage = AuthStorage.create(authPath);
   const observation = { persistent, lockPath, events: [] };
   report.observations.push(observation);
-  await withHolder(lockPath, 'classic', observation.events, async holder => {
+  await withHolder(lockPath, 'classic', observation, async holder => {
     assertHeldState(await holder.request('arm'));
     observation.preflight = directMkdir(lockPath);
     assert.ok(isLockError(observation.preflight, lockPath), 'The host must reproduce the real delete-pending mkdir EPERM');

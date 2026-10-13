@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { assertHeldState } from '../tests/fixtures/native-windows-lock-protocol.mjs';
 
@@ -98,6 +99,8 @@ export function validateNativeReport(report, baseline) {
 }
 
 function recordCommand(outputDir, name, command, args, options, run) {
+  const startedAt = new Date().toISOString();
+  const started = performance.now();
   let result;
   try {
     result = run(command, args, {
@@ -110,7 +113,8 @@ function recordCommand(outputDir, name, command, args, options, run) {
   fs.writeFileSync(path.join(outputDir, `${name}.stdout.txt`), result.stdout ?? '');
   fs.writeFileSync(path.join(outputDir, `${name}.stderr.txt`), result.stderr ?? '');
   const exit = {
-    command, args, code: result.status ?? null, signal: result.signal ?? null,
+    command, args, startedAt, elapsedMs: Math.round(performance.now() - started),
+    code: result.status ?? null, signal: result.signal ?? null,
     error: result.error ? String(result.error.stack || result.error) : null,
   };
   writeJson(path.join(outputDir, `${name}.exit.json`), exit);
@@ -180,9 +184,16 @@ export function prepareBaselineDependencies({ rootDir, dependencyRoot, outputDir
   assert.match(fs.readFileSync(path.join(dependencyRoot, '.npmrc'), 'utf8'), /^min-release-age=1$/m);
   // npm ci validates every locked tarball integrity. Workspace links are not used
   // by this probe; all three Pi packages resolve from this private install root.
-  requireSuccess(recordCommand(outputDir, 'baseline-npm-ci', process.platform === 'win32' ? 'npm.cmd' : 'npm',
-    ['ci', '--ignore-scripts', '--workspaces=false'],
-    { cwd: dependencyRoot, timeout: 600_000, shell: process.platform === 'win32' }, run));
+  // Target npm itself so a timeout cannot kill only cmd.exe and leave the
+  // installer running alongside the native experiments or isolation cleanup.
+  const nodeDir = path.dirname(process.execPath);
+  const npmCli = [path.join(nodeDir, 'node_modules/npm/bin/npm-cli.js'),
+    path.resolve(nodeDir, '../lib/node_modules/npm/bin/npm-cli.js')].find(file => fs.existsSync(file));
+  assert.ok(npmCli, 'The native CI probe requires npm installed alongside Node');
+  requireSuccess(recordCommand(outputDir, 'baseline-npm-ci', process.execPath,
+    [npmCli, 'ci', '--ignore-scripts', '--workspaces=false', '--timing',
+      `--logs-dir=${path.resolve(outputDir, 'baseline-npm-logs')}`],
+    { cwd: dependencyRoot, timeout: 600_000, shell: false }, run));
   for (const name of ['pi-agent-core', 'pi-ai', 'pi-coding-agent']) {
     assert.equal(JSON.parse(fs.readFileSync(path.join(dependencyRoot, 'node_modules/@earendil-works', name, 'package.json'), 'utf8')).version, '1.0.3');
   }
@@ -236,7 +247,8 @@ export function runNativeAuthLockCi({
         const { probePath, ...options } = prepareNativeProbeCase({ rootDir, caseDir, snapshot, adapterSource: source, dependencyRoot });
         result.dependencyRoot = fs.realpathSync(path.join(dependencyRoot, 'node_modules'));
         const child = recordCommand(outputDir, name, process.execPath,
-          [probePath, ...(name === 'baseline' ? ['--baseline'] : [])], options, run);
+          [probePath, ...(name === 'baseline' ? ['--baseline'] : [])],
+          { ...options, timeout: name === 'baseline' ? 180_000 : 270_000 }, run);
         result.exitCode = child.code;
         // Retain structured partial diagnostics even when a precondition fails.
         if (child.stdout.trim()) result.report = JSON.parse(child.stdout);

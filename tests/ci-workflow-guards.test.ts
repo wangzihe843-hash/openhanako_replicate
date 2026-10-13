@@ -246,7 +246,7 @@ describe("fork workflow safety", () => {
       name: "Probe native Windows auth lock delete-pending recovery",
       id: "native_auth_lock",
       if: "runner.os == 'Windows'",
-      "timeout-minutes": 15,
+      "timeout-minutes": 20,
       run: "node scripts/probe-windows-auth-lock.mjs",
     });
     expect(steps[probeIndex + 1]).toEqual({

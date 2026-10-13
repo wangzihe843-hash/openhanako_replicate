@@ -143,7 +143,9 @@ jobs:
       - name: Probe native Windows auth lock delete-pending recovery
         id: native_auth_lock
         if: runner.os == 'Windows'
-        timeout-minutes: 15
+        # Baseline install (600s) + two/three holders (60s startup + 20s
+        # experiment each), with bounded process/cleanup headroom.
+        timeout-minutes: 20
         run: node scripts/probe-windows-auth-lock.mjs
 
       - name: Check native Windows auth lock evidence
