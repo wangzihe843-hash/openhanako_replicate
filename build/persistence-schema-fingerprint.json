@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:70ccb12ba298266b1652e12df1f2b53dabf0ab45c2890e18af45671a71d11e04",
+  "payloadFingerprint": "sha256:44a48483313a54915c7846329a40c912229824035838fad6327a81999f394adf",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3368,8 +3368,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "MCP cancellation now propagates per invocation through published tools, input rounds and clients. The manager change only affects in-memory request lifetimes; plugin-data/mcp paths, config serialization, OAuth credential shapes, and all stored schemas remain unchanged. This preserves the Pi preparation baseline: the seven Pi packages remain at 1.0.3 with JSONL v3, and DATA_EPOCH stays 1. Review the dependency fingerprint again after the separately scheduled cooled install.",
-    "payloadFingerprint": "sha256:70ccb12ba298266b1652e12df1f2b53dabf0ab45c2890e18af45671a71d11e04"
+    "compatibilityReason": "MCP shared OAuth refresh lifecycle now records detached failures and rejects superseded credential or connection results; only runtime control flow changed, with no stored shape or DATA_EPOCH change.",
+    "payloadFingerprint": "sha256:44a48483313a54915c7846329a40c912229824035838fad6327a81999f394adf"
   },
   "schemas": [
     {
@@ -3802,7 +3802,7 @@
       "contract": "normalizeMcpConfig read-time normalization (servers/connectors alias, auth and OAuth field defaults, per-connector permission policy defaults, deferred-loading defaults)",
       "kind": "runtime-contract",
       "module": "core/mcp/manager.ts",
-      "sourceHash": "sha256:4fcf8b6e944cf94169a8f87f17d2da7126685107719e29df4606fbdb0ce9c8f4",
+      "sourceHash": "sha256:1417c90b1e65829abd3a1a84501f2d947a22547117b16780781f9cac8060d1c4",
       "storeId": "mcp-config"
     },
     {

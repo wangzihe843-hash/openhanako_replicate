@@ -954,8 +954,8 @@ export class McpManager {
     // ignored so a death never gets handled twice (rejected promise + close).
     this.establishing = new Set();
     this.oauthSessions = new Map();
-    // In-flight OAuth refresh promises keyed by connector id. Guarantees a single
-    // refresh per connector even under concurrent near-expiry / 401 callers.
+    // In-flight OAuth refresh records keyed by connector id. Only callers of
+    // the same credentials and connection share a refresh.
     this.refreshInFlight = new Map();
     // In-flight lazy starts keyed by connector id. A burst of tool calls against
     // one idle connector must produce one connection attempt, not one per call.
@@ -995,6 +995,9 @@ export class McpManager {
 
   async dispose() {
     this._tools = [];
+    // Invalidate write-back before awaiting any teardown. The network work may
+    // settle later, but cannot resurrect credentials or state after disposal.
+    this.refreshInFlight.clear();
     for (const dispose of this._busDisposers.splice(0)) {
       try { dispose(); } catch {}
     }
@@ -1017,7 +1020,6 @@ export class McpManager {
     this.connectorStatus.clear();
     this.desiredStates.clear();
     this.oauthSessions.clear();
-    this.refreshInFlight.clear();
     this._lazyStarts.clear();
     this._toolListings.clear();
   }
@@ -1410,6 +1412,7 @@ export class McpManager {
     // touching the client, so a close event racing in during stop() can never
     // resurrect a connector the user just asked to stop.
     this.desiredStates.set(id, "stopped");
+    this.refreshInFlight.delete(id);
     this._cancelReconnect(id);
     this.connectorStatus.delete(id);
     const client = this.clients.get(id);
@@ -2501,32 +2504,54 @@ export class McpManager {
   // promise. The map entry is cleared on settle so a later expiry refreshes anew.
   _refreshConnectorToken(connectorId) {
     const inFlight = this.refreshInFlight.get(connectorId);
-    if (inFlight) return inFlight;
-    const promise = this._doRefreshConnectorToken(connectorId)
+    if (inFlight?.isCurrent()) return inFlight.promise;
+    const client = this.clients.get(connectorId);
+    const credentials = connectorOAuthFingerprint(this.getConfig().connectors.find((item) => item.id === connectorId));
+    const refresh = {
+      promise: null as Promise<string> | null,
+      isCurrent: () => this.refreshInFlight.get(connectorId) === refresh
+        && this.clients.get(connectorId) === client
+        && connectorOAuthFingerprint(this.getConfig().connectors.find((item) => item.id === connectorId)) === credentials,
+    };
+    const assertCurrent = () => {
+      if (!refresh.isCurrent()) {
+        // A new connection or credential set owns the connector now. Do not
+        // persist old tokens, report its old failure, or replay old requests.
+        throw new DOMException("MCP token refresh superseded", "AbortError");
+      }
+    };
+    refresh.promise = this._doRefreshConnectorToken(connectorId, assertCurrent)
       .finally(() => {
-        if (this.refreshInFlight.get(connectorId) === promise) {
+        if (this.refreshInFlight.get(connectorId) === refresh) {
           this.refreshInFlight.delete(connectorId);
         }
       });
-    this.refreshInFlight.set(connectorId, promise);
-    return promise;
+    this.refreshInFlight.set(connectorId, refresh);
+    return refresh.promise;
   }
 
-  async _doRefreshConnectorToken(connectorId) {
+  async _doRefreshConnectorToken(connectorId, assertCurrent) {
     const connector = this.getConfig().connectors.find((item) => item.id === connectorId);
     if (!connector) throw new Error(`MCP connector "${connectorId}" not found`);
     const oauth = connector.oauth || {};
     const refreshToken = stringOrEmpty(oauth.refreshToken);
     if (!refreshToken) throw new Error(`MCP connector "${connectorId}" has no refresh token`);
-    const token = await refreshMcpOAuthToken({
-      tokenEndpoint: stringOrEmpty(oauth.tokenEndpoint),
-      refreshToken,
-      clientId: stringOrEmpty(connector.oauthClientId),
-      clientSecret: stringOrEmpty(connector.oauthClientSecret),
-      scope: stringOrEmpty(oauth.scope),
-      resource: stringOrEmpty(connector.url),
-      fetchImpl: this.fetchImpl,
-    });
+    let token;
+    try {
+      token = await refreshMcpOAuthToken({
+        tokenEndpoint: stringOrEmpty(oauth.tokenEndpoint),
+        refreshToken,
+        clientId: stringOrEmpty(connector.oauthClientId),
+        clientSecret: stringOrEmpty(connector.oauthClientSecret),
+        scope: stringOrEmpty(oauth.scope),
+        resource: stringOrEmpty(connector.url),
+        fetchImpl: this.fetchImpl,
+      });
+    } catch (err) {
+      assertCurrent();
+      throw err;
+    }
+    assertCurrent();
     // Refresh write-back: persist WITHOUT stopping the connector.
     this._writeConnectorOAuth(connectorId, token);
     return stringOrEmpty(token.accessToken);
@@ -2798,6 +2823,16 @@ function connectorClientFingerprint(connector) {
     authType: connector.authType,
     authorizationToken: connector.authorizationToken,
     oauthAccessToken: connector.oauth?.accessToken || "",
+  });
+}
+
+function connectorOAuthFingerprint(connector) {
+  if (!connector) return "";
+  return JSON.stringify({
+    client: connectorClientFingerprint(connector),
+    clientId: connector.oauthClientId,
+    clientSecret: connector.oauthClientSecret,
+    oauth: connector.oauth,
   });
 }
 

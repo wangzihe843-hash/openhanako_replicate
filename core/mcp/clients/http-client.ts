@@ -279,6 +279,19 @@ async function requestAuthToken(server, getAuthToken) {
   return dynamicToken || configuredAuthToken(server);
 }
 
+// Auth work belongs to the connection, not to any one request waiting for it.
+// Observe its real failure before adding a cancellable waiter, so the last
+// waiter leaving cannot hide it. _failLiveSession ignores cancellation/stale
+// work and coalesces concurrent failures into one close notification.
+async function observeAuthFailure(client, getToken) {
+  try {
+    return await getToken();
+  } catch (err) {
+    client._failLiveSession(err);
+    throw err;
+  }
+}
+
 function stringOrEmpty(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -617,7 +630,9 @@ export class McpStreamableHttpClient {
     let newToken = "";
     try {
       throwIfAborted(opts.signal);
-      newToken = stringOrEmpty(await waitWithSignal(this.refreshAuthToken(), opts.signal));
+      newToken = stringOrEmpty(await waitWithSignal(
+        observeAuthFailure(this, () => this.refreshAuthToken()), opts.signal,
+      ));
       throwIfAborted(opts.signal);
     } catch (refreshErr) {
       // Refresh itself failed. Surface that error (an invalid_grant means the
@@ -732,7 +747,11 @@ export class McpStreamableHttpClient {
     if (modern && payload) Object.assign(headers, modernRoutingHeaders(payload, this._toolParamAnnotations));
     // Prefer the runtime's freshest token (handles near-expiry refresh out of
     // band); fall back to the connector snapshot when no callback is injected.
-    const token = await requestAuthToken(this.server, this.getAuthToken);
+    // Session deletion is best effort; teardown must not start another refresh
+    // after a refresh failure closed this connection.
+    const token = await observeAuthFailure(this, () => requestAuthToken(
+      this.server, this._stopping ? null : this.getAuthToken,
+    ));
     if (token) headers.Authorization = `Bearer ${token}`;
     return headers;
   }
@@ -931,7 +950,9 @@ export class McpLegacySseClient {
         // it yields a new token, replay the request once with a fresh id. A second
         // 401 or no refresh rethrows. No loop.
         if (err instanceof McpHttpError && err.status === 401 && this.refreshAuthToken) {
-          const newToken = stringOrEmpty(await waitWithSignal(this.refreshAuthToken(), requestSignal));
+          const newToken = stringOrEmpty(await waitWithSignal(
+            observeAuthFailure(this, () => this.refreshAuthToken()), requestSignal,
+          ));
           throwIfAborted(requestSignal);
           if (newToken) return this._sendRequest(method, params, requestSignal);
         }
@@ -1164,7 +1185,7 @@ export class McpLegacySseClient {
   async _headers({ accept, includeJson }) {
     const headers: any = { ...connectorHeaders(this.server), Accept: accept };
     if (includeJson) headers["Content-Type"] = "application/json";
-    const token = await requestAuthToken(this.server, this.getAuthToken);
+    const token = await observeAuthFailure(this, () => requestAuthToken(this.server, this.getAuthToken));
     if (token) headers.Authorization = `Bearer ${token}`;
     return headers;
   }

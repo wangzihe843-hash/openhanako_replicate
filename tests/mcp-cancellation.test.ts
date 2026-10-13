@@ -53,13 +53,14 @@ function harness(mode = "modern") {
   let holdHandshake = false;
   let handshakeFailure = false;
   let toolReply = async (_body, _init): Promise<unknown> => complete;
+  let tokenReply = () => tokenGate.promise;
   let sseController;
   const encoder = new TextEncoder();
   const sendSse = (body) => sseController.enqueue(encoder.encode(`data: ${JSON.stringify(body)}\n\n`));
   const fetchImpl = vi.fn(async (url, init: RequestInit = {}) => {
     if (String(url) === "https://mcp.test/token") {
       tokenRequests.push(init);
-      return tokenGate.promise;
+      return tokenReply();
     }
     if (init.method === "DELETE") return new Response(null, { status: 202 });
     if (init.method === "GET" && mode === "sse") {
@@ -128,6 +129,7 @@ function harness(mode = "modern") {
     failHandshake: () => { handshakeFailure = true; },
     expireToken: () => { stored.connectors[0].oauth.expiresAt = Date.now() - 1; },
     replyWith: (fn) => { toolReply = fn; },
+    replyTokenWith: (fn) => { tokenReply = fn; },
     run: (signal, args = {}) => tool.execute("call-fixture", args, signal, undefined, ctx),
   };
 }
@@ -148,6 +150,216 @@ function expectLive(h) {
   expect(h.runtime.reconnectState.size).toBe(0);
   expect(h.runtime.connectorStatus.size).toBe(0);
 }
+
+// Independent acceptance reproduced this through the published five-argument
+// tool, manager, real OAuth error classifier and each actual HTTP transport.
+describe.each(["modern", "streamable-legacy", "sse"])("shared refresh lifecycle (%s)", (mode) => {
+  describe.each(["pre-refresh", "401-refresh"])("%s", (phase) => {
+    async function startRefresh() {
+      const h = harness(mode);
+      await h.runtime.startConnector("remote");
+      if (phase === "pre-refresh") h.expireToken();
+      else h.replyWith(async () => json({ error: "unauthorized" }, 401));
+      const refresh = vi.spyOn(h.runtime, "_refreshConnectorToken");
+      const close = vi.spyOn(h.runtime, "_onClientClose");
+      const controller = new AbortController();
+      const cancelled = observe(h.run(controller.signal));
+      await vi.waitFor(() => expect(h.tokenRequests).toHaveLength(1));
+      const shared = observe(refresh.mock.results[0].value);
+      return { h, refresh, close, controller, cancelled, shared };
+    }
+
+    it.each([1, 2])("reports invalid_grant after all %i waiters cancel", async (count) => {
+      const { h, refresh, close, controller, cancelled } = await startRefresh();
+      const lastController = new AbortController();
+      const last = count === 2 ? observe(h.run(lastController.signal)) : cancelled;
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(count));
+      controller.abort();
+      await expectAborted(cancelled);
+      lastController.abort();
+      await expectAborted(last);
+      expectLive(h);
+      expect(h.runtime.refreshInFlight.size).toBe(1);
+      expect(h.tokenRequests[0].signal?.aborted).not.toBe(true);
+      expect(close).not.toHaveBeenCalled();
+
+      h.tokenGate.resolve(json({ error: "invalid_grant", error_description: "fixture refresh expired" }, 400));
+      await vi.waitFor(() => expect(h.runtime.refreshInFlight.size).toBe(0));
+      expect(h.runtime.connectorStatusFor("remote")).toBe("needs-auth");
+      expect(h.runtime.clientErrors.get("remote")).toMatch(/fixture refresh expired/);
+      expect(h.runtime.clients.has("remote")).toBe(false);
+      expect(h.runtime.reconnectState.size).toBe(0);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(close).toHaveBeenCalledWith("remote", expect.objectContaining({ needsAuth: true, expected: false }));
+      expect(h.calls).toHaveLength(phase === "pre-refresh" ? 0 : count);
+      expect(h.tokenRequests).toHaveLength(1);
+      expect(cancelled.error.name).toBe("AbortError");
+      expect(last.error.name).toBe("AbortError");
+      expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+      expect(getEventListeners(lastController.signal, "abort")).toHaveLength(0);
+    });
+
+    it("reports the original failure to surviving waiters and closes only once", async () => {
+      const { h, refresh, close, controller, cancelled } = await startRefresh();
+      const survivors = [observe(h.run(undefined)), observe(h.run(undefined))];
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(3));
+      controller.abort();
+      await expectAborted(cancelled);
+      expectLive(h);
+      h.tokenGate.resolve(json({ error: "invalid_grant", error_description: "fixture refresh expired" }, 400));
+      await Promise.all(survivors.map((state) => state.done));
+      for (const state of survivors) {
+        expect(state.value).toMatchObject({
+          isError: true, content: [{ type: "text", text: expect.stringContaining("fixture refresh expired") }],
+        });
+      }
+      expect(h.runtime.connectorStatusFor("remote")).toBe("needs-auth");
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(h.tokenRequests).toHaveLength(1);
+      expect(h.calls).toHaveLength(phase === "pre-refresh" ? 0 : 3);
+    });
+
+    it("records a detached transient refresh failure without classifying it as needs-auth", async () => {
+      const { h, close, controller, cancelled } = await startRefresh();
+      controller.abort();
+      await expectAborted(cancelled);
+      h.tokenGate.resolve(json({ error: "temporarily_unavailable" }, 503));
+      await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+      expect(close).toHaveBeenCalledWith("remote", expect.objectContaining({ needsAuth: false }));
+      expect(h.runtime.connectorStatusFor("remote")).toBe("reconnecting");
+      expect(h.runtime.clientErrors.get("remote")).toMatch(/temporarily_unavailable/);
+      expect(h.calls).toHaveLength(phase === "pre-refresh" ? 0 : 1);
+      expect(h.tokenRequests).toHaveLength(1);
+    });
+
+    it("does not report an AbortError from shared auth work as connection failure", async () => {
+      const { h, close, controller, cancelled, shared } = await startRefresh();
+      controller.abort();
+      await expectAborted(cancelled);
+      const response = json({});
+      response.text = async () => { throw new DOMException("fixture aborted auth", "AbortError"); };
+      h.tokenGate.resolve(response);
+      await shared.done;
+      expect(shared.error?.name).toBe("AbortError");
+      expect(close).not.toHaveBeenCalled();
+      expectLive(h);
+    });
+
+    it.each(["success", "invalid_grant"])("ignores an old refresh %s after new OAuth credentials and a new connection", async (outcome) => {
+      const { h, close, controller, cancelled, shared } = await startRefresh();
+      controller.abort();
+      await expectAborted(cancelled);
+      const oldClient = h.runtime.clients.get("remote");
+      await h.runtime.saveConnectorOAuth("remote", {
+        accessToken: "fixture-reauthorized", refreshToken: "fixture-new-refresh",
+        tokenEndpoint: "https://mcp.test/token", obtainedAt: Date.now(), expiresIn: 3600,
+      });
+      h.replyWith(async () => complete);
+      await h.runtime.startConnector("remote");
+      const newClient = h.runtime.clients.get("remote");
+      expect(newClient).not.toBe(oldClient);
+
+      h.tokenGate.resolve(outcome === "success"
+        ? json({ access_token: "fixture-obsolete", refresh_token: "fixture-obsolete-refresh", expires_in: 3600 })
+        : json({ error: "invalid_grant", error_description: "fixture obsolete failure" }, 400));
+      await shared.done;
+      expect(h.runtime.getConfig().connectors[0].oauth.accessToken).toBe("fixture-reauthorized");
+      expect(h.runtime.getConfig().connectors[0].oauth.refreshToken).toBe("fixture-new-refresh");
+      expect(h.runtime.clients.get("remote")).toBe(newClient);
+      expectLive(h);
+      expect(close).not.toHaveBeenCalled();
+      expect(cancelled.error.name).toBe("AbortError");
+      expect((await h.run(undefined)).content).toEqual(complete.content);
+    });
+
+    it.each(["success", "invalid_grant"])("keeps a newer refresh alive when old %s settles after credentials change", async (outcome) => {
+      const { h, close, cancelled, shared } = await startRefresh();
+      const client = h.runtime.clients.get("remote");
+      // Persistence can change credentials without replacing the live client.
+      // Keep the original waiter active to verify stale errors never close it.
+      h.runtime._writeConnectorOAuth("remote", {
+        accessToken: "fixture-reauthorized", refreshToken: "fixture-new-refresh",
+        tokenEndpoint: "https://mcp.test/token", obtainedAt: Date.now() - 2000, expiresIn: 1,
+      });
+      const newGate = barrier<Response>();
+      h.replyTokenWith(() => newGate.promise);
+      h.replyWith(async () => complete);
+      const newer = observe(h.run(undefined));
+      try {
+        await vi.waitFor(() => expect(h.tokenRequests).toHaveLength(2));
+        h.tokenGate.resolve(outcome === "success"
+          ? json({ access_token: "fixture-obsolete", expires_in: 3600 })
+          : json({ error: "invalid_grant" }, 400));
+        await shared.done;
+        await expectAborted(cancelled);
+        expect(h.runtime.refreshInFlight.size).toBe(1);
+        expect(h.runtime.getConfig().connectors[0].oauth.accessToken).toBe("fixture-reauthorized");
+        expect(h.runtime.clients.get("remote")).toBe(client);
+        expect(close).not.toHaveBeenCalled();
+        expectLive(h);
+      } finally {
+        newGate.resolve(json({ access_token: "fixture-latest", expires_in: 3600 }));
+        await newer.done;
+      }
+      expect(newer.value).toMatchObject(complete);
+      expect(h.runtime.getConfig().connectors[0].oauth.accessToken).toBe("fixture-latest");
+      expect(h.runtime.refreshInFlight.size).toBe(0);
+      expectLive(h);
+    });
+  });
+
+  it.each(["success", "invalid_grant"])("ignores an old refresh %s after restarting with the same credentials", async (outcome) => {
+    const h = harness(mode);
+    await h.runtime.startConnector("remote");
+    h.replyWith(async () => json({ error: "unauthorized" }, 401));
+    const controller = new AbortController();
+    const cancelled = observe(h.run(controller.signal));
+    await vi.waitFor(() => expect(h.tokenRequests).toHaveLength(1));
+    const shared = observe(h.runtime.refreshIfPossible("remote"));
+    controller.abort();
+    await expectAborted(cancelled);
+    const credentials = h.runtime.getConfig().connectors[0].oauth;
+    await h.runtime.stopConnector("remote");
+    h.replyWith(async () => complete);
+    await h.runtime.startConnector("remote");
+    const client = h.runtime.clients.get("remote");
+    h.tokenGate.resolve(outcome === "success"
+      ? json({ access_token: "fixture-obsolete", expires_in: 3600 })
+      : json({ error: "invalid_grant" }, 400));
+    await shared.done;
+    expect(h.runtime.clients.get("remote")).toBe(client);
+    expect(h.runtime.getConfig().connectors[0].oauth).toEqual(credentials);
+    expectLive(h);
+  });
+});
+
+describe.each(["stop", "dispose", "remove"])("detached refresh after %s", (action) => {
+  it.each(["success", "invalid_grant"])("ignores late %s without resurrecting credentials or connection state", async (outcome) => {
+    const h = harness();
+    await h.runtime.startConnector("remote");
+    h.expireToken();
+    const controller = new AbortController();
+    const cancelled = observe(h.run(controller.signal));
+    await vi.waitFor(() => expect(h.tokenRequests).toHaveLength(1));
+    const shared = observe(h.runtime.refreshIfPossible("remote"));
+    controller.abort();
+    await expectAborted(cancelled);
+    if (action === "stop") await h.runtime.stopConnector("remote");
+    if (action === "dispose") await h.runtime.dispose();
+    if (action === "remove") await h.runtime.removeConnector("remote");
+    const config = h.runtime.getConfig();
+    h.tokenGate.resolve(outcome === "success"
+      ? json({ access_token: "fixture-obsolete", expires_in: 3600 })
+      : json({ error: "invalid_grant" }, 400));
+    await shared.done;
+    expect(h.runtime.getConfig()).toEqual(config);
+    expect(h.runtime.clients.size).toBe(0);
+    expect(h.runtime.connectorStatus.size).toBe(0);
+    expect(h.runtime.clientErrors.size).toBe(0);
+    expect(h.runtime.reconnectState.size).toBe(0);
+    expect(h.runtime.refreshInFlight.size).toBe(0);
+  });
+});
 
 describe.each(["modern", "streamable-legacy", "sse"])("MCP cancellation through the published tool (%s)", (mode) => {
   it("rejects an already-aborted SDK call without starting the connector", async () => {
