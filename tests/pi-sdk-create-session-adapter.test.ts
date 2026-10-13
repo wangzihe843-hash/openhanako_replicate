@@ -40,6 +40,7 @@ vi.mock("@earendil-works/pi-ai/compat", async () => ({
 }));
 
 vi.mock("../lib/pi-sdk/session-options.js", async () => ({
+  getPiCodingAgentVersion: () => "1.0.3",
   PI_BUILTIN_TOOL_NAMES: Object.freeze(["read", "write", "edit", "exec_command", "write_stdin", "grep", "find", "ls"]),
   normalizeCreateAgentSessionOptions: vi.fn(opts => ({
     ...opts,

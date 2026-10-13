@@ -12,6 +12,7 @@ import {
   type AuthStorageBackend,
 } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/auth-storage.js";
 import { normalizePath } from "../../node_modules/@earendil-works/pi-coding-agent/dist/utils/paths.js";
+import { getPiCodingAgentVersion } from "./session-options.ts";
 
 export { InMemoryAuthStorageBackend };
 export type { OAuthLoginCallbacks };
@@ -150,7 +151,9 @@ export class AuthStorage {
         // has open handles. Retry only this raw read's lock acquisition, never
         // credential callbacks/writes or unrelated EPERM errors. Pi still owns
         // mutual exclusion; persistent permission failures surface after 620ms.
-        if (process.platform !== "win32" || entered || !lockPath || retry >= 5
+        // 1.2.0 owns six asynchronous acquisition attempts itself. Keep this
+        // raw asynchronous read, but never multiply those attempts to 36.
+        if (getPiCodingAgentVersion() === "1.2.0" || process.platform !== "win32" || entered || !lockPath || retry >= 5
           || ioError?.code !== "EPERM" || ioError.syscall !== "mkdir" || ioError.path !== lockPath) throw error;
         await sleep(20 * 2 ** retry);
       }

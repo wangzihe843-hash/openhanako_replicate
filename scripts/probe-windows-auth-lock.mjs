@@ -8,14 +8,17 @@ import { fileURLToPath } from 'node:url';
 import { assertHeldState } from '../tests/fixtures/native-windows-lock-protocol.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export const CANDIDATE_PI_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
+  .dependencies['@earendil-works/pi-coding-agent'];
 export const BASELINE_COMMIT = '81ec09c47cb7c3899bba3042c5cc9c4479ed60dc';
 export const BASELINE_BLOB = 'fcbd9e5ddd668b9b7bf35af97bc56fbe7c820ee1';
 export const BASELINE_SHA256 = 'f8e184038e4b6ad5e06fd97f3aae2510c5137898f65ab0b22533a755816441d0';
 const ADAPTER = 'lib/pi-sdk/model-runtime.ts';
+export const ADAPTER_SUPPORT_FILES = ['lib/pi-sdk/session-options.ts'];
 const PROBE = 'tests/fixtures/native-windows-lock-probe.mjs';
 export const NATIVE_PROBE_FILES = [PROBE, 'tests/fixtures/native-windows-lock-protocol.mjs',
   'tests/fixtures/native-windows-lock-holder.ps1'];
-const WATCHED = [ADAPTER, ...NATIVE_PROBE_FILES, 'package.json', 'package-lock.json'];
+const WATCHED = [ADAPTER, ...ADAPTER_SUPPORT_FILES, ...NATIVE_PROBE_FILES, 'package.json', 'package-lock.json'];
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const writeJson = (file, value) => fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
 
@@ -62,6 +65,7 @@ export function validateNativeReport(report, baseline) {
   assert.equal(report.initialization.originalMkdirRestored, true);
   assert.deepEqual(report.initialization.attempts, [{ code: null, syscall: null, path: null }]);
   assert.equal(report.baseline, baseline);
+  assert.equal(report.piVersion, baseline ? '1.0.3' : CANDIDATE_PI_VERSION);
   assert.equal(report.platform, 'win32');
   assert.equal(report.node, 'v24.15.0');
   assert.equal(typeof report.release, 'string');
@@ -134,16 +138,17 @@ export function readBaseline(rootDir, outputDir, run = spawnSync) {
 
 // Shared by the native driver and the real-dependency portable preflight tests.
 // Keep the copied import closure identical; no production source is rewritten.
-export function prepareNativeProbeCase({ rootDir, caseDir, snapshot, adapterSource = snapshot[ADAPTER] }) {
+export function prepareNativeProbeCase({ rootDir, caseDir, snapshot, adapterSource = snapshot[ADAPTER], dependencyRoot = rootDir }) {
   fs.mkdirSync(path.join(caseDir, 'lib/pi-sdk'), { recursive: true });
   fs.mkdirSync(path.join(caseDir, 'tests/fixtures'), { recursive: true });
   fs.mkdirSync(path.join(caseDir, 'temp'));
   fs.writeFileSync(path.join(caseDir, 'package.json'), '{"type":"module"}\n');
   fs.writeFileSync(path.join(caseDir, ADAPTER), adapterSource);
+  for (const file of ADAPTER_SUPPORT_FILES) fs.writeFileSync(path.join(caseDir, file), snapshot[file]);
   for (const file of NATIVE_PROBE_FILES) fs.writeFileSync(path.join(caseDir, file), snapshot[file]);
   // A junction needs no symlink privilege on Windows. Never write through
   // this dependency link or replace any file in the checked-out source.
-  fs.symlinkSync(path.resolve(rootDir, 'node_modules'), path.join(caseDir, 'node_modules'), 'junction');
+  fs.symlinkSync(path.resolve(dependencyRoot, 'node_modules'), path.join(caseDir, 'node_modules'), 'junction');
   return {
     probePath: path.join(caseDir, PROBE), cwd: caseDir,
     env: {
@@ -151,6 +156,37 @@ export function prepareNativeProbeCase({ rootDir, caseDir, snapshot, adapterSour
       TMPDIR: path.join(caseDir, 'temp'), PI_CODING_AGENT_DIR: path.join(caseDir, 'pi-home'),
     },
   };
+}
+
+// Fetching the old adapter alone is insufficient: resolving it against the new
+// SDK would measure the candidate backend twice. Install the immutable baseline
+// lock separately, honoring its normal .npmrc cooling policy. No install scripts
+// or native addons are needed by this synthetic credential probe.
+export function prepareBaselineDependencies({ rootDir, dependencyRoot, outputDir, run = spawnSync }) {
+  fs.mkdirSync(dependencyRoot, { recursive: true });
+  const hashes = {};
+  for (const file of ['package.json', 'package-lock.json', '.npmrc']) {
+    const bytes = requireSuccess(recordCommand(outputDir, `baseline-deps-${file.replaceAll('.', '_')}`, 'git',
+      ['show', `${BASELINE_COMMIT}:${file}`], { cwd: rootDir }, run));
+    fs.writeFileSync(path.join(dependencyRoot, file), bytes);
+    hashes[file] = sha256(bytes);
+  }
+  const pkg = JSON.parse(fs.readFileSync(path.join(dependencyRoot, 'package.json'), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(path.join(dependencyRoot, 'package-lock.json'), 'utf8'));
+  for (const name of ['pi-agent-core', 'pi-ai', 'pi-coding-agent']) {
+    assert.equal(pkg.dependencies[`@earendil-works/${name}`], '1.0.3');
+    assert.equal(lock.packages[`node_modules/@earendil-works/${name}`].version, '1.0.3');
+  }
+  assert.match(fs.readFileSync(path.join(dependencyRoot, '.npmrc'), 'utf8'), /^min-release-age=1$/m);
+  // npm ci validates every locked tarball integrity. Workspace links are not used
+  // by this probe; all three Pi packages resolve from this private install root.
+  requireSuccess(recordCommand(outputDir, 'baseline-npm-ci', process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    ['ci', '--ignore-scripts', '--workspaces=false'],
+    { cwd: dependencyRoot, timeout: 600_000, shell: process.platform === 'win32' }, run));
+  for (const name of ['pi-agent-core', 'pi-ai', 'pi-coding-agent']) {
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dependencyRoot, 'node_modules/@earendil-works', name, 'package.json'), 'utf8')).version, '1.0.3');
+  }
+  return hashes;
 }
 
 export function runNativeAuthLockCi({
@@ -180,9 +216,12 @@ export function runNativeAuthLockCi({
     assert.ok(fs.statSync(path.join(rootDir, 'node_modules')).isDirectory(), 'Run npm ci first');
     isolationRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hana-auth-lock-ci-'));
     let baselineSource;
+    const baselineDependencies = path.join(isolationRoot, 'baseline-dependencies');
     try {
       baselineSource = readBaseline(rootDir, outputDir, run);
+      summary.baselineDependencyHashes = prepareBaselineDependencies({ rootDir, dependencyRoot: baselineDependencies, outputDir, run });
     } catch (error) {
+      baselineSource = undefined;
       summary.cases.baseline.error = String(error.stack || error);
       writeJson(path.join(outputDir, 'baseline.json'), summary.cases.baseline);
     }
@@ -193,7 +232,9 @@ export function runNativeAuthLockCi({
       const result = { passed: false, adapterSha256: sha256(source) };
       try {
         const caseDir = path.join(isolationRoot, name);
-        const { probePath, ...options } = prepareNativeProbeCase({ rootDir, caseDir, snapshot, adapterSource: source });
+        const dependencyRoot = name === 'baseline' ? baselineDependencies : rootDir;
+        const { probePath, ...options } = prepareNativeProbeCase({ rootDir, caseDir, snapshot, adapterSource: source, dependencyRoot });
+        result.dependencyRoot = fs.realpathSync(path.join(dependencyRoot, 'node_modules'));
         const child = recordCommand(outputDir, name, process.execPath,
           [probePath, ...(name === 'baseline' ? ['--baseline'] : [])], options, run);
         result.exitCode = child.code;
@@ -207,6 +248,10 @@ export function runNativeAuthLockCi({
       }
       summary.cases[name] = result;
       writeJson(path.join(outputDir, `${name}.json`), result);
+    }
+    if (summary.cases.baseline.passed && summary.cases.candidate.passed) {
+      assert.notEqual(summary.cases.baseline.dependencyRoot, summary.cases.candidate.dependencyRoot,
+        'Baseline and candidate must not share a dependency tree');
     }
   } catch (error) {
     summary.errors.push(String(error.stack || error));

@@ -7863,6 +7863,23 @@
       "reason": "Reached via esbuild source module graph, imported by lib/pi-sdk/index.ts (import-statement); lib/pi-sdk/index.ts (import-statement)."
     },
     {
+      "path": "lib/pi-sdk/run-lifecycle.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "lib/pi-sdk/index.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "core/session-coordinator.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by lib/pi-sdk/index.ts (import-statement); core/session-coordinator.ts (import-statement)."
+    },
+    {
       "path": "lib/pi-sdk/search-tools.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -7880,11 +7897,16 @@
       "provenance": [
         {
           "root": "server-bootstrap",
+          "from": "lib/pi-sdk/model-runtime.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/pi-sdk/index.ts",
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/pi-sdk/index.ts (import-statement)."
+      "reason": "Reached via esbuild source module graph, imported by lib/pi-sdk/model-runtime.ts (import-statement); lib/pi-sdk/index.ts (import-statement)."
     },
     {
       "path": "lib/pi-sdk/stream-guard.ts",
@@ -86043,9 +86065,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 7114,
+    "totalFiles": 7115,
     "byInputType": {
-      "source-graph": 733,
+      "source-graph": 734,
       "runtime-asset": 11,
       "nft-runtime-trace": 6370
     }

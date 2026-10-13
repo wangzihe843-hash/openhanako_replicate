@@ -15,6 +15,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { createHash } = require("node:crypto");
 
 const root = path.join(__dirname, "..");
 const sdkRoot = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent");
@@ -24,6 +25,7 @@ const verifiedPiAiVersions = new Set(["1.0.3"]);
 // The three direct packages share caret-ranged runtime dependencies. Reject
 // family drift too, so a later install cannot silently mix 1.0.3 with 1.0.4.
 const piFamilyPath = /node_modules\/@earendil-works\/(chord|pi-agent-core|pi-ai|pi-coding-agent|pi-codemode|pi-mcp|pi-telemetry|pi-tui)$/;
+const requiredFamily = ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-codemode", "pi-mcp", "pi-telemetry", "pi-tui"];
 
 function fail(message) {
   console.error(`[verify-pi-sdk] ${message}`);
@@ -57,6 +59,12 @@ if (agentPkg.version !== pkg.version || piAiPkg.version !== pkg.version) {
   fail("pi-agent-core, pi-ai and pi-coding-agent must use the same verified version");
 }
 const lock = readJson(path.join(root, "package-lock.json"));
+for (const name of requiredFamily) {
+  const location = `node_modules/@earendil-works/${name}`;
+  if (!lock.packages?.[location] || !fs.existsSync(path.join(root, location, "package.json"))) {
+    fail(`required Pi family package missing: ${name}`);
+  }
+}
 for (const [location, dependency] of Object.entries(lock.packages || {})) {
   if (!piFamilyPath.test(location)) continue;
   if (dependency.version !== pkg.version) {
@@ -68,6 +76,22 @@ for (const [location, dependency] of Object.entries(lock.packages || {})) {
     if (installed.version !== pkg.version) {
       fail(`mixed installed Pi version at ${location}: ${installed.version}`);
     }
+  }
+}
+if (pkg.version === "1.2.0") {
+  const requested = readJson(path.join(root, "package.json"));
+  for (const name of requiredFamily) {
+    if (requested.overrides?.[`@earendil-works/${name}`] !== "1.2.0") fail(`Pi override must pin ${name} to 1.2.0`);
+  }
+  for (const name of ["pi-agent-core", "pi-ai", "pi-coding-agent"]) {
+    if (requested.dependencies?.[`@earendil-works/${name}`] !== "1.2.0") fail(`Pi dependency must pin ${name} to 1.2.0`);
+  }
+  const source = fs.readFileSync(path.join(sdkRoot, "dist/core/agent-session.js"), "utf8");
+  const start = source.indexOf("    async _startRun(trigger, onStarted) {");
+  const end = source.indexOf("    /**", start);
+  const digest = createHash("sha256").update(source.slice(start, end)).digest("hex");
+  if (start < 0 || end < 0 || digest !== "39279b7a97daff07835880131a5fdf7340ef5d7de5960639039f8ed791549afa") {
+    fail("Pi 1.2.0 _startRun differs from the source-bound lifecycle adapter");
   }
 }
 for (const [file, markers] of [

@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:8616d836d0d15952b0ff47611c30719ec5bcbfdfcf2faf3ae89fd51e25f60bed",
+  "payloadFingerprint": "sha256:3e19163fb231a8efe6b4f3fa71ca27c667830978791766cff70b250a4d93eda2",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3368,8 +3368,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Reviewed against d754c6cdf97087259ae93412d512a521f5fd781a in docs/audits/2026-10-09-manual-lifecycle-persistence-compatibility.md. Official HEAD overrides exactly reproduce the committed payload. Only agent-profile and session-jsonl guarded source digests change for in-memory lifecycle admission and type annotations. All 65 store contracts, live SQLite schemas/user_version, DATA_EPOCH=1, migrations, Pi 1.0.3 integrity and JSONL v3 remain unchanged. The separate ustar normalization preserves its existing 0755/0644 contract; official inventory changes one excerpt, with unchanged ownership and site mappings. No persisted schema or migration change.",
-    "payloadFingerprint": "sha256:8616d836d0d15952b0ff47611c30719ec5bcbfdfcf2faf3ae89fd51e25f60bed"
+    "compatibilityReason": "Pi 1.2.0 preparation keeps the installed 1.0.3 JSONL v3 and all stored schemas unchanged. Coordinator changes only preflight cancellation and event acceptance; no DATA_EPOCH migration is justified. Candidate dependency fingerprint must be reviewed again after the cooled install.",
+    "payloadFingerprint": "sha256:3e19163fb231a8efe6b4f3fa71ca27c667830978791766cff70b250a4d93eda2"
   },
   "schemas": [
     {
@@ -3921,7 +3921,7 @@
         {
           "contract": "core/session-coordinator.ts Hana metadata extensions",
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:d78f6d7a63b67f371231fbc5e6402324fd96a3edf6412c8ad54dfd53fa1a06ae"
+          "sourceHash": "sha256:2362c05f77e2b3e6873b805337ab91b03d7b36a0137f8c882a5d75715dc4a093"
         },
         {
           "contract": "core/session-jsonl-file.ts repair contract",
@@ -3941,7 +3941,7 @@
         },
         {
           "module": "core/session-coordinator.ts",
-          "sourceHash": "sha256:d78f6d7a63b67f371231fbc5e6402324fd96a3edf6412c8ad54dfd53fa1a06ae"
+          "sourceHash": "sha256:2362c05f77e2b3e6873b805337ab91b03d7b36a0137f8c882a5d75715dc4a093"
         },
         {
           "module": "core/session-dialogue-variants.ts",

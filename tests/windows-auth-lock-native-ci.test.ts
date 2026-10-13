@@ -5,7 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  BASELINE_BLOB, BASELINE_COMMIT, NATIVE_PROBE_FILES, prepareNativeProbeCase, readBaseline, runNativeAuthLockCi, validateNativeReport,
+  ADAPTER_SUPPORT_FILES, BASELINE_BLOB, BASELINE_COMMIT, CANDIDATE_PI_VERSION, NATIVE_PROBE_FILES,
+  prepareBaselineDependencies, prepareNativeProbeCase, readBaseline, runNativeAuthLockCi, validateNativeReport,
 } from '../scripts/probe-windows-auth-lock.mjs';
 import { checkNativeAuthLockEvidence, REQUIRED_EVIDENCE } from '../scripts/check-windows-auth-lock-evidence.mjs';
 
@@ -17,7 +18,7 @@ function fixture() {
   for (const dir of ['lib/pi-sdk', 'tests/fixtures', 'node_modules', 'evidence']) {
     fs.mkdirSync(path.join(rootDir, dir), { recursive: true });
   }
-  for (const file of ['lib/pi-sdk/model-runtime.ts', ...NATIVE_PROBE_FILES,
+  for (const file of ['lib/pi-sdk/model-runtime.ts', ...ADAPTER_SUPPORT_FILES, ...NATIVE_PROBE_FILES,
     'package.json', 'package-lock.json', 'node_modules/untouched']) {
     fs.writeFileSync(path.join(rootDir, file), 'contract fixture\n');
   }
@@ -45,7 +46,8 @@ function holderEvents(mechanism: string, lockPath: string) {
 
 function report(baseline = false) {
   return {
-    passed: true, baseline, platform: 'win32', node: 'v24.15.0', release: 'contract-only',
+    passed: true, baseline, piVersion: baseline ? '1.0.3' : CANDIDATE_PI_VERSION,
+    platform: 'win32', node: 'v24.15.0', release: 'contract-only',
     mode: 'native', nativeStatus: 'passed',
     initialization: { completed: true, originalMkdirRestored: true, attempts: [{ code: null, syscall: null, path: null }] },
     syntheticCredentialsOnly: true, networkAttempts: 0, errors: [],
@@ -263,7 +265,7 @@ describe('native auth CI evidence contracts (no Win32 emulation)', () => {
     expect(result.cases.candidate.passed).toBe(child.passed);
     if (child.status === 1) expect(result.cases.candidate.report.errors).toEqual(['native precondition failed']);
     expect(result.sourceAfter).toEqual(result.sourceBefore);
-    expect(Object.keys(result.sourceBefore)).toHaveLength(6);
+    expect(Object.keys(result.sourceBefore)).toHaveLength(6 + ADAPTER_SUPPORT_FILES.length);
     expect(fs.existsSync(path.dirname(caseDir))).toBe(false);
     expect(fs.readFileSync(path.join(options.rootDir, 'node_modules/untouched'), 'utf8')).toBe('contract fixture\n');
     expect(fs.readFileSync(path.join(options.outputDir, 'candidate.stdout.txt'), 'utf8')).toBe(child.stdout);
@@ -274,13 +276,51 @@ describe('native auth CI evidence contracts (no Win32 emulation)', () => {
 });
 
 describe('isolated probe initialization with installed dependencies (no Win32 emulation)', () => {
+  it('installs the baseline lock into its own dependency root with cooling enabled', () => {
+    const { rootDir, outputDir } = fixture();
+    const dependencyRoot = path.join(rootDir, 'old-dependencies');
+    const names = ['pi-agent-core', 'pi-ai', 'pi-coding-agent'].map(name => `@earendil-works/${name}`);
+    const sources = {
+      'package.json': JSON.stringify({ dependencies: Object.fromEntries(names.map(name => [name, '1.0.3'])) }),
+      'package-lock.json': JSON.stringify({ packages: Object.fromEntries(names.map(name => [`node_modules/${name}`, { version: '1.0.3' }])) }),
+      '.npmrc': 'min-release-age=1\nsave-exact=true\n',
+    };
+    const calls: string[][] = [];
+    const hashes = prepareBaselineDependencies({ rootDir, dependencyRoot, outputDir,
+      run(command, args, options) {
+        calls.push([command, ...args]);
+        if (command === 'git') {
+          expect(args[0]).toBe('show');
+          expect(args[1]).toMatch(new RegExp(`^${BASELINE_COMMIT}:`));
+          return { status: 0, stdout: sources[args[1].split(':')[1]], stderr: '' };
+        }
+        expect(options.cwd).toBe(dependencyRoot);
+        expect(args).toEqual(['ci', '--ignore-scripts', '--workspaces=false']);
+        expect(fs.readFileSync(path.join(dependencyRoot, '.npmrc'), 'utf8')).toContain('min-release-age=1');
+        for (const name of names) {
+          const dir = path.join(dependencyRoot, 'node_modules', name);
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version: '1.0.3' }));
+        }
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    });
+    expect(Object.keys(hashes)).toEqual(Object.keys(sources));
+    expect(calls).toHaveLength(4);
+    expect(fs.realpathSync(path.join(dependencyRoot, 'node_modules'))).not.toBe(fs.realpathSync(path.join(rootDir, 'node_modules')));
+    const snapshot = Object.fromEntries(['lib/pi-sdk/model-runtime.ts', ...ADAPTER_SUPPORT_FILES, ...NATIVE_PROBE_FILES]
+      .map(file => [file, fs.readFileSync(path.join(rootDir, file))]));
+    const prepared = prepareNativeProbeCase({ rootDir, dependencyRoot, caseDir: path.join(rootDir, 'old-case'), snapshot });
+    expect(fs.realpathSync(path.join(prepared.cwd, 'node_modules'))).toBe(fs.realpathSync(path.join(dependencyRoot, 'node_modules')));
+    fs.unlinkSync(path.join(prepared.cwd, 'node_modules'));
+  });
   function realCase() {
     const rootDir = fileURLToPath(new URL('..', import.meta.url));
     // Exercise URL escaping as well as the exact copied import closure used by
     // CI. The child is real Node, outside Vitest's transpiler and module mocks.
     const caseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hana preflight # % 预检-'));
     roots.push(caseDir);
-    const snapshot = Object.fromEntries(['lib/pi-sdk/model-runtime.ts', ...NATIVE_PROBE_FILES]
+    const snapshot = Object.fromEntries(['lib/pi-sdk/model-runtime.ts', ...ADAPTER_SUPPORT_FILES, ...NATIVE_PROBE_FILES]
       .map(file => [file, fs.readFileSync(path.join(rootDir, file))]));
     return prepareNativeProbeCase({ rootDir, caseDir, snapshot });
   }

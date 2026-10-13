@@ -1,0 +1,70 @@
+{
+  "baseline": "1c715cbb502ffcf2e2d5de264903a3df67fc4420",
+  "upstreamTag": "v1.2.0",
+  "upstreamCommit": "06a466935536f8c9bcacb2d5efc0fc021be1bdff",
+  "earliestActivation": "2026-10-13T23:04:00.000Z",
+  "familyCooldownSatisfiedAfter": "2026-10-13T23:03:25.459Z",
+  "patchSha256": "255d35d53d678be95f173a81c9bb8a1eb9d183eefc5fd702d623d2f3bb1053a9",
+  "files": {
+    "package.json": {
+      "before": "f8fbf2b60f45df969454a2f7f79a86c954ee9ba8892f220ad1447a688b5bfb05",
+      "after": "293f5952741b2125584c4e1550444d6554fe244d8aacea11dd10a61c1d0420e4"
+    },
+    "scripts/patch-pi-sdk.cjs": {
+      "before": "0ee76e99a20730c784c60bc4698b7d617240eedaec34e2dbd79f02aeeeb4ad81",
+      "after": "de738079e51cc3af69ef94e3188da4d0e63eea5384e66395aa64b201e2808ece"
+    },
+    "scripts/build-server-deps.mjs": {
+      "before": "4475b63f099a16d02f8eee153efc7b8f2c9493b0e02b8dd731c27187e2e0397e",
+      "after": "31ec4606e65f766bacfbf2ca0ac680f698e90787bd18e992a91201e14692815b"
+    },
+    "tests/persistence-schema-tripwire.test.ts": {
+      "before": "3a6661a3c0debaa6b0611a2d5fc5ed5a8ec463fdef88453799ab2f01ab0a4a60",
+      "after": "d160c214b834f7cc9032b4bd2448ade679141d953be64ea60f89d4a385e3141e"
+    }
+  },
+  "packages": [
+    {
+      "name": "@earendil-works/pi-agent-core",
+      "version": "1.2.0",
+      "integrity": "sha512-pUR0vYmGhHkBQGeCeWjwVIA+l1+MrDu6m6VGuysjh6KBzBpovTV/MlcVrEIOaM8jv/slpAyUmuCEQl1jOBqHJQ==",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-1.2.0.tgz"
+    },
+    {
+      "name": "@earendil-works/pi-ai",
+      "version": "1.2.0",
+      "integrity": "sha512-U5/1zXqfV1on7/9sbez03tT4Ru49Lvfb4+zXSDK3DBKF5cRk6KxvAOTOY3HJ4jimlZth+rs7vbJqN6iBQAoNuQ==",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-1.2.0.tgz"
+    },
+    {
+      "name": "@earendil-works/pi-coding-agent",
+      "version": "1.2.0",
+      "integrity": "sha512-h/4WaVWv1VlCaY8x8qEN5U+7jbF/e7+Ck6moPeEOFn5juMTWwNAXjwgYM7gRgbBYh8Zppwt6qWvJDzNTf4GNEQ==",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.2.0.tgz"
+    },
+    {
+      "name": "@earendil-works/pi-codemode",
+      "version": "1.2.0",
+      "integrity": "sha512-UZF7IN0IIrf3bop2wTxrwoAakGctH6d3zdPwhPN+QHMECfoI5E6B6l6I17YGFZPj8cmGex6xX7mLCNJXRf7wsw==",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-codemode/-/pi-codemode-1.2.0.tgz"
+    },
+    {
+      "name": "@earendil-works/pi-mcp",
+      "version": "1.2.0",
+      "integrity": "sha512-ertUv40rUBgssTzw2lIPlejjIBdhvdg4uw+whWCDJYKYHU+ldp1ezhbB0BzwpBfnwef6/YN+m6eKLscj+r3p7w==",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-mcp/-/pi-mcp-1.2.0.tgz"
+    },
+    {
+      "name": "@earendil-works/pi-telemetry",
+      "version": "1.2.0",
+      "integrity": "sha512-NZ3aJE6dr7aTgzzXDe53OW7BsAsF8ZUKHPJTtnjaQcxtlagkUT0Ew8Qas0EvYQsZqR/KpF1lB+z209XBzIC7xg==",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-telemetry/-/pi-telemetry-1.2.0.tgz"
+    },
+    {
+      "name": "@earendil-works/pi-tui",
+      "version": "1.2.0",
+      "integrity": "sha512-OdJCiYklkL3TqmdmGKUflHoLy9zw18GBYO0DPASZvGlP4RkDXAZzLLDt7cidJ6wUR7DBrKb13rrekDsXgMF60g==",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-1.2.0.tgz"
+    }
+  ]
+}

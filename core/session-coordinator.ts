@@ -14,6 +14,7 @@ import { normalizeMemoryScopeContext } from "../shared/memory-scope.ts";
 import { memoryScopeFromBranch, SESSION_MEMORY_SCOPE_RECORD } from "./session-memory-scope.ts";
 import { prepareChannelPostRetryDispatch } from "../lib/task-outcome/effect-ledger.ts";
 import { setSessionActiveRunSystemPrompt } from "../lib/pi-sdk/index.ts";
+import { getSessionRunInputState } from "../lib/pi-sdk/run-lifecycle.ts";
 import fsp from "fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "path";
@@ -395,7 +396,10 @@ function assertAudioInputSupported(model: any, audios: any) {
   }
 }
 
-function buildPromptMediaOptions(opts: any, preflightResult?: (success: boolean) => void) {
+function buildPromptMediaOptions(opts: {
+  images?: unknown[]; videos?: unknown[]; audios?: unknown[];
+  imageAttachmentPaths?: string[]; videoAttachmentPaths?: string[]; audioAttachmentPaths?: string[];
+}, preflightResult?: (success: boolean | string) => void) {
   const media = [
     ...(opts?.images || []),
     ...(opts?.videos || []),
@@ -5387,10 +5391,10 @@ export class SessionCoordinator implements SessionCancellation {
         }
       }
       let promptPreflightReported = false;
-      const notifyPromptPreflight = (success: boolean) => {
+      const notifyPromptPreflight = (success: boolean | string) => {
         if (promptPreflightReported) return;
         promptPreflightReported = true;
-        if (!success) return;
+        if (success !== true && success !== "started") return;
         abortController.signal.throwIfAborted();
         if (this._getSessionEntryByPath(sessionPath) !== entry || this.isSessionSwitching(sessionPath)) throw Object.assign(new Error("session runtime replaced"), { name: "AbortError" });
         if (typeof submitOptions?.afterCachePreflight === "function") {
@@ -5612,7 +5616,7 @@ export class SessionCoordinator implements SessionCancellation {
     const pending = this._getRuntimeValueForPath(this._prePromptAbortControllers, sessionPath);
     pending?.abort();
     const entry = this._getSessionEntryByPath(sessionPath);
-    if (pending && !entry?.session.isStreaming) {
+    if (pending && (!entry?.session.isStreaming || getSessionRunInputState(entry.session) === "pending")) {
       // preflight 窗口的中止不补发 turn_end：promptSession 尚未运行，本轮
       // turn input 还没落入 branch，合成 turn_end 会把上一轮的 entry id
       // 错绑到本轮的乐观消息上。
@@ -5621,6 +5625,9 @@ export class SessionCoordinator implements SessionCancellation {
         // The SDK extension await may ignore cancellation. Quarantine this runtime
         // so a new input cannot share its mutable preflight state after stop.
         entry._switching = true;
+        // Pi 1.2 has already entered startup. Mark cancellation now, but never
+        // wait on the suspended hook's own idle promise before returning stop.
+        void Promise.resolve(entry.session.abort?.()).catch(err => log.warn(`preflight abort failed: ${err?.message || err}`));
         if (this._getSessionEntryByPath(sessionPath) === entry) this._deleteRuntimeValueForPath(this._sessions, sessionPath);
         if (this._session === entry.session) {
           this._focusVersion++;
@@ -6137,7 +6144,9 @@ export class SessionCoordinator implements SessionCancellation {
     // 前端就永远等不到 entry id 回绑（重试/fork/重写按钮的唯一数据源）。
     // 必须在 _sessions 删除之前发出——chat 路由的 turn_end handler 要通过
     // getSessionByPath 读 in-memory branch 才能算出 entry id（事件总线同步分发）。
-    this._d.emitEvent?.({ type: "turn_end", aborted: true, reason }, sessionPath);
+    if (getSessionRunInputState(session) !== "pending") {
+      this._d.emitEvent?.({ type: "turn_end", aborted: true, reason }, sessionPath);
+    }
 
     this._clearRuntimePressureTimer(sessionPath);
     this._deleteRuntimeValueForPath(this._hibernatedSessionMeta, sessionPath);

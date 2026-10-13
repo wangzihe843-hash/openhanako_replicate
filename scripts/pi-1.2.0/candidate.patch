@@ -1,0 +1,67 @@
+--- a/package.json
++++ b/package.json
+@@ -69,9 +69,9 @@
+     "@codemirror/lang-markdown": "^6.5.0",
+     "@codemirror/language-data": "^6.5.2",
+     "@codemirror/view": "6.43.0",
+-    "@earendil-works/pi-agent-core": "1.0.3",
+-    "@earendil-works/pi-ai": "1.0.3",
+-    "@earendil-works/pi-coding-agent": "1.0.3",
++    "@earendil-works/pi-agent-core": "1.2.0",
++    "@earendil-works/pi-ai": "1.2.0",
++    "@earendil-works/pi-coding-agent": "1.2.0",
+     "@firecrawl/anydoc": "0.1.2",
+     "@floating-ui/dom": "^1.7.6",
+     "@fontsource/cormorant-garamond": "5.2.11",
+@@ -131,7 +131,14 @@
+     "form-data": "^4.0.0",
+     "qs": "^6.14.1",
+     "tough-cookie": "^4.1.3",
+-    "tar@^7.0.0": "7.5.21"
++    "tar@^7.0.0": "7.5.21",
++    "@earendil-works/pi-agent-core": "1.2.0",
++    "@earendil-works/pi-ai": "1.2.0",
++    "@earendil-works/pi-coding-agent": "1.2.0",
++    "@earendil-works/pi-codemode": "1.2.0",
++    "@earendil-works/pi-mcp": "1.2.0",
++    "@earendil-works/pi-telemetry": "1.2.0",
++    "@earendil-works/pi-tui": "1.2.0"
+   },
+   "devDependencies": {
+     "@eslint/js": "^9.39.4",
+--- a/scripts/patch-pi-sdk.cjs
++++ b/scripts/patch-pi-sdk.cjs
+@@ -20,8 +20,8 @@
+ const root = path.join(__dirname, "..");
+ const sdkRoot = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent");
+ const piAiRoot = path.join(root, "node_modules", "@earendil-works", "pi-ai");
+-const verifiedVersions = new Set(["1.0.3"]);
+-const verifiedPiAiVersions = new Set(["1.0.3"]);
++const verifiedVersions = new Set(["1.2.0"]);
++const verifiedPiAiVersions = new Set(["1.2.0"]);
+ // The three direct packages share caret-ranged runtime dependencies. Reject
+ // family drift too, so a later install cannot silently mix 1.0.3 with 1.0.4.
+ const piFamilyPath = /node_modules\/@earendil-works\/(chord|pi-agent-core|pi-ai|pi-coding-agent|pi-codemode|pi-mcp|pi-telemetry|pi-tui)$/;
+--- a/scripts/build-server-deps.mjs
++++ b/scripts/build-server-deps.mjs
+@@ -8,7 +8,6 @@
+ ]);
+
+ export const PI_RUNTIME_PACKAGES = Object.freeze([
+-  "@earendil-works/chord",
+   "@earendil-works/pi-agent-core",
+   "@earendil-works/pi-ai",
+   "@earendil-works/pi-codemode",
+--- a/tests/persistence-schema-tripwire.test.ts
++++ b/tests/persistence-schema-tripwire.test.ts
+@@ -111,8 +111,8 @@
+     expect(sessions).toMatchObject({
+       kind: "external-versioned",
+       packageName: "@earendil-works/pi-coding-agent",
+-      packageVersion: "1.0.3",
+-      requestedVersion: "1.0.3",
++      packageVersion: "1.2.0",
++      requestedVersion: "1.2.0",
+       versionSource: {
+         currentSessionVersion: 3,
+         declaration: "export const CURRENT_SESSION_VERSION = 3;",

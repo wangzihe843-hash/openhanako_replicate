@@ -15,6 +15,8 @@ import {
 import { applySessionTurnSystemContext, createSessionTurnContextExtension } from "../core/session-turn-context.ts";
 import { runCachePreservingCompactionForSession } from "../core/session-compactor.ts";
 import { SessionCoordinator } from "../core/session-coordinator.ts";
+import { getPiCodingAgentVersion } from "../lib/pi-sdk/session-options.ts";
+import { getSessionRunInputState } from "../lib/pi-sdk/run-lifecycle.ts";
 
 const disposals: Array<() => void> = [];
 afterEach(() => { for (const dispose of disposals.splice(0).reverse()) dispose(); });
@@ -42,6 +44,7 @@ async function fixture(createManager = (dir: string) => SessionManager.inMemory(
   streamSimple?: (...args: Parameters<StreamFn>) => ReturnType<typeof createAssistantMessageEventStream>;
   beforeSettle?: () => Promise<void>;
   settled?: () => Promise<void>;
+  beforeStart?: (event: { messageType?: string }) => Promise<void>;
 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-pi-runtime-"));
   disposals.push(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -75,6 +78,7 @@ async function fixture(createManager = (dir: string) => SessionManager.inMemory(
     retry: { enabled: false }, cacheWarming: "off",
   });
   const extension = createSessionTurnContextExtension({ getTurnContext: () => turnContext });
+  if (hooks.beforeStart) extension.handlers.set("before_agent_start", [hooks.beforeStart]);
   if (hooks.beforeSettle) extension.handlers.set("agent_before_settle", [hooks.beforeSettle]);
   if (hooks.settled) extension.handlers.set("agent_settled", [hooks.settled]);
   const resourceLoader = new DefaultResourceLoader({
@@ -105,6 +109,44 @@ function deferred() {
 }
 
 describe("Pi 1.0 runtime integration", () => {
+  it("rejects a preflight callback once without persisting input and accepts the next prompt", async () => {
+    const { session, requests } = await fixture();
+    const error = new DOMException("cancelled preflight", "AbortError");
+    const callback = vi.fn(() => { throw error; });
+    await expect(session.prompt("must not persist", { preflightResult: callback })).rejects.toBe(error);
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(session.isStreaming).toBe(false);
+    await session.waitForIdle();
+    expect(JSON.stringify(session.sessionManager.getEntries())).not.toContain("must not persist");
+    expect(requests).toHaveLength(0);
+    await session.prompt("next input");
+    expect(requests).toHaveLength(1);
+  });
+
+  // These exercise the installed candidate only after the cooling period.
+  it.skipIf(getPiCodingAgentVersion() !== "1.2.0").each(["user", "custom"])(
+    "cancels a real suspended %s before_agent_start without late persistence", async kind => {
+      const entered = deferred(), release = deferred();
+      const seen: string[] = [];
+      const { session, requests } = await fixture(undefined, { beforeStart: async event => {
+        seen.push(event.messageType); entered.resolve(); await release.promise;
+      } });
+      const running = kind === "user" ? session.prompt("unaccepted")
+        : session.sendCustomMessage({ customType: "fixture", content: "unaccepted", display: false }, { triggerTurn: true });
+      const rejected = expect(running).rejects.toMatchObject({ name: "AbortError" });
+      await entered.promise;
+      expect(session.isStreaming).toBe(true);
+      expect(getSessionRunInputState(session)).toBe("pending");
+      let abortDone = false;
+      const aborting = session.abort().then(() => { abortDone = true; });
+      const idle = session.waitForIdle();
+      await Promise.resolve(); expect(abortDone).toBe(false);
+      release.resolve(); await rejected; await aborting; await idle;
+      expect(seen).toEqual([kind]);
+      expect(session.isStreaming).toBe(false);
+      expect(requests).toHaveLength(0);
+      expect(JSON.stringify(session.sessionManager.getEntries())).not.toContain("unaccepted");
+    });
   it("projects the post-commit scoped prompt into the actual provider request", async () => {
     const { session, requests, setTurnContext } = await fixture();
     setSessionSystemPrompt(session, "branch A contains retracted story event");

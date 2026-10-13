@@ -370,6 +370,7 @@
     "lib/pi-sdk/compaction-request-shape.ts",
     "lib/pi-sdk/index.ts",
     "lib/pi-sdk/model-runtime.ts",
+    "lib/pi-sdk/run-lifecycle.ts",
     "lib/pi-sdk/search-tools.ts",
     "lib/pi-sdk/session-options.ts",
     "lib/pi-sdk/stream-guard.ts",

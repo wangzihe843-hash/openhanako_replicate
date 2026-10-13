@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const root = path.resolve(import.meta.dirname, "..");
 const temporary: string[] = [];
+const reviewedVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
+  .dependencies["@earendil-works/pi-coding-agent"];
 afterEach(() => { for (const dir of temporary.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
 
 function guardFixture() {
@@ -18,13 +20,14 @@ function guardFixture() {
   };
   const copy = (relative: string) => write(relative, fs.readFileSync(path.join(root, relative), "utf8"));
   copy("scripts/patch-pi-sdk.cjs");
+  copy("package.json");
   const packages = {};
-  for (const name of ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-telemetry"]) {
+  for (const name of ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-codemode", "pi-mcp", "pi-telemetry", "pi-tui"]) {
     const location = `node_modules/@earendil-works/${name}`;
     copy(`${location}/package.json`);
-    packages[location] = { version: "1.0.3" };
+    packages[location] = { version: reviewedVersion };
   }
-  for (const relative of ["index.js", "core/auth-storage.js", "core/compaction/compaction.js"]) {
+  for (const relative of ["index.js", "core/agent-session.js", "core/auth-storage.js", "core/compaction/compaction.js"]) {
     copy(`node_modules/@earendil-works/pi-coding-agent/dist/${relative}`);
   }
   write("package-lock.json", { packages });
@@ -75,7 +78,7 @@ describe("Pi installation version guard", () => {
   it("rejects installed nested drift even if the lock declares the reviewed version", () => {
     const fixture = guardFixture();
     const nested = "node_modules/fixture/node_modules/@earendil-works/pi-ai";
-    fixture.packages[nested] = { version: "1.0.3" };
+    fixture.packages[nested] = { version: reviewedVersion };
     fixture.write("package-lock.json", { packages: fixture.packages });
     fixture.write(`${nested}/package.json`, { version: "0.87.1" });
     expect(fixture.run()).toMatchObject({ status: 1, output: expect.stringContaining("mixed installed Pi version") });
@@ -95,9 +98,16 @@ describe("Pi installation version guard", () => {
     fixture.packages["node_modules/@earendil-works/pi-telemetry"] = { version: "1.0.4" };
     fixture.write("package-lock.json", { packages: fixture.packages });
     expect(fixture.run()).toMatchObject({ status: 1, output: expect.stringContaining("mixed Pi version") });
-    fixture.packages["node_modules/@earendil-works/pi-telemetry"] = { version: "1.0.3" };
+    fixture.packages["node_modules/@earendil-works/pi-telemetry"] = { version: reviewedVersion };
     fixture.write("package-lock.json", { packages: fixture.packages });
     fixture.write("node_modules/@earendil-works/pi-telemetry/package.json", { version: "1.0.4" });
     expect(fixture.run()).toMatchObject({ status: 1, output: expect.stringContaining("mixed installed Pi version") });
+  });
+
+  it("rejects an omitted family package", () => {
+    const fixture = guardFixture();
+    delete fixture.packages["node_modules/@earendil-works/pi-mcp"];
+    fixture.write("package-lock.json", { packages: fixture.packages });
+    expect(fixture.run()).toMatchObject({ status: 1, output: expect.stringContaining("required Pi family package missing") });
   });
 });

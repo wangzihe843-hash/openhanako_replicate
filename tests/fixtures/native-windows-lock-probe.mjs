@@ -35,6 +35,7 @@ async function initialize() {
   // Pi exports only an ESM import entry. Pass its file URL directly to
   // createRequire; treating it as a path breaks Windows/escaped characters.
   const piEntry = import.meta.resolve('@earendil-works/pi-coding-agent');
+  report.piVersion = JSON.parse(fs.readFileSync(new URL('../package.json', piEntry), 'utf8')).version;
   const piRequire = createRequire(piEntry);
   const lockEntry = piRequire.resolve('proper-lockfile');
   const lockRequire = createRequire(lockEntry);

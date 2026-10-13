@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     # Run the existing gates on this acceptance branch's exact pushed commit.
-    branches: [main, feature/xingye-mvp, review/ci22-integration-20261009]
+    branches: [main, feature/xingye-mvp, review/ci22-integration-20261009, review/pi-1.2.0-prep-20261013]
   pull_request:
     branches: [main]
 
@@ -143,7 +143,7 @@ jobs:
       - name: Probe native Windows auth lock delete-pending recovery
         id: native_auth_lock
         if: runner.os == 'Windows'
-        timeout-minutes: 5
+        timeout-minutes: 15
         run: node scripts/probe-windows-auth-lock.mjs
 
       - name: Check native Windows auth lock evidence

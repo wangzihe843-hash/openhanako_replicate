@@ -12,6 +12,7 @@ import { ModelManager } from "../core/model-manager.ts";
 import { createAuthRoute } from "../server/routes/auth.ts";
 import { createProvidersRoute } from "../server/routes/providers.ts";
 import { AuthFixtureLifetime } from "./helpers/auth-fixture-lifetime.ts";
+import { getPiCodingAgentVersion } from "../lib/pi-sdk/session-options.ts";
 
 const dirs: string[] = [];
 const cleanups: (() => Promise<void>)[] = [];
@@ -406,13 +407,15 @@ describe("AuthStorage operations during OAuth rotation", () => {
     { name: "credential-file read denial", platform: "win32", code: "EPERM", syscall: "open", target: "auth" },
     { name: "parent-directory denial", platform: "win32", code: "EPERM", syscall: "mkdir", target: "parent" },
     { name: "another lock directory", platform: "win32", code: "EPERM", syscall: "mkdir", target: "other.lock" },
-  ])("does not retry $name", async ({ platform, code, syscall, target }) => {
+  ])("preserves $name with only the backend's reviewed acquisition budget", async ({ platform, code, syscall, target }) => {
     const f = await fixture();
     const failure = windowsLockFailure(f.authPath, Infinity, platform);
     Object.assign(failure.error, { code, syscall, path: target === "lock" ? failure.error.path
       : target === "auth" ? f.authPath : target === "parent" ? f.dir : path.join(f.dir, target) });
     await expect(f.duringRefresh(() => failure.run(() => f.storage.get(providerId)))).rejects.toBe(failure.error);
-    expect(failure.injected()).toBe(1);
+    // Pi 1.2.0 retries acquisition EPERM itself (even if the OS error metadata
+    // is unusual). Hana must not add an outer retry or replay the read callback.
+    expect(failure.injected()).toBe(getPiCodingAgentVersion() === "1.2.0" && platform === "win32" && code === "EPERM" ? 6 : 1);
   });
 
   it.each(["win32", "linux"])("isolates %s denial from another read after an availability pass fails early", async platform => {

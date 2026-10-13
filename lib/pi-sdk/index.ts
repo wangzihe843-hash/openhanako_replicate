@@ -28,7 +28,9 @@ import {
 import {
   normalizeCreateAgentSessionOptions,
   PI_BUILTIN_TOOL_NAMES,
+  getPiCodingAgentVersion,
 } from "./session-options.ts";
+import { installRunLifecycleAdapter } from "./run-lifecycle.ts";
 import { installAssistantStreamGuard } from "./stream-guard.ts";
 import { installToolOutcomeAdapter } from "./tool-outcome-adapter.ts";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
@@ -75,6 +77,7 @@ export async function createAgentSession(options) {
       : await authStorage.getRuntime();
   }
   const result = await rawCreateAgentSession(normalized);
+  installRunLifecycleAdapter(result.session, getPiCodingAgentVersion());
   // Preserve the base separately from Pi's per-run getter, which includes the
   // temporary before_agent_start projection while a turn is running.
   setSessionSystemPrompt(result.session, result.session.systemPrompt);

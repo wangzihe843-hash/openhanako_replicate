@@ -3690,6 +3690,14 @@ describe("SessionCoordinator", () => {
     await expect(rejectedTurn).rejects.toThrow("Pi preflight rejected");
     expect(rejectedSideEffects).not.toHaveBeenCalled();
     expect(rejectedAcceptedHook).not.toHaveBeenCalled();
+    for (const result of ["handled", "queued"]) {
+      session.prompt.mockImplementationOnce(async (_text, opts) => { opts?.preflightResult?.(result); return "ok"; });
+      await coordinator.promptSession(sessionFile, "not a new input", undefined, {
+        afterCachePreflight: rejectedSideEffects, afterInputAccepted: rejectedAcceptedHook,
+      });
+      expect(rejectedSideEffects).not.toHaveBeenCalled();
+      expect(rejectedAcceptedHook).not.toHaveBeenCalled();
+    }
   });
 
   it("renews the cache prefix contract for an explicit model switch", async () => {

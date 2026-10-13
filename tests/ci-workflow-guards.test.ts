@@ -56,7 +56,7 @@ describe("fork workflow safety", () => {
 
   it("checks the exact acceptance branch and feature pushes with the existing platform coverage", () => {
     expect(ci.on).toEqual({
-      push: { branches: ["main", "feature/xingye-mvp", "review/ci22-integration-20261009"] },
+      push: { branches: ["main", "feature/xingye-mvp", "review/ci22-integration-20261009", "review/pi-1.2.0-prep-20261013"] },
       pull_request: { branches: ["main"] },
     });
     expect(ci.concurrency).toEqual({
@@ -78,6 +78,10 @@ describe("fork workflow safety", () => {
     ["main", true],
     ["feature/xingye-mvp", true],
     ["review/ci22-integration-20261009", true],
+    ["review/pi-1.2.0-prep-20261013", true],
+    ["review/pi-1.2.0-prep-20261013-extra", false],
+    ["review/pi-1.2.0-prep-20261013/nested", false],
+    ["review/pi-1.2.0-prep-20261014", false],
     ["feature/unrelated", false],
     ["feature/xingye-mvp-extra", false],
     ["main-extra", false],
@@ -242,7 +246,7 @@ describe("fork workflow safety", () => {
       name: "Probe native Windows auth lock delete-pending recovery",
       id: "native_auth_lock",
       if: "runner.os == 'Windows'",
-      "timeout-minutes": 5,
+      "timeout-minutes": 15,
       run: "node scripts/probe-windows-auth-lock.mjs",
     });
     expect(steps[probeIndex + 1]).toEqual({

@@ -1,0 +1,51 @@
+    async _startRun(trigger, onStarted) {
+        this._isAgentRunActive = true;
+        this._agentRunAbortRequested = false;
+        let messages;
+        try {
+            messages = await this._prepareRun(trigger);
+        }
+        catch (error) {
+            this._isAgentRunActive = false;
+            this._flushPendingBashMessages();
+            this._flushPendingCustomMessages();
+            this._resolveIdleWaitIfIdle();
+            throw error;
+        }
+        // Messages held while the run was starting go before its starting messages, as they would
+        // have while idle. No run exists yet, so they cannot split a tool call from its result.
+        this._flushPendingBashMessages();
+        this._flushPendingCustomMessages();
+        onStarted?.();
+        // Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
+        this._failedResponse = undefined;
+        this._recordSelection();
+        // The run records the loadout in the transcript; restored tools that did not register by now
+        // are dropped, so a tool that never registers does not stay pending.
+        this._pendingToolNames.clear();
+        try {
+            await this.agent.prompt(messages);
+            while (!this._agentRunAbortRequested) {
+                if (await this._handlePostAgentRun()) {
+                    if (this._agentRunAbortRequested)
+                        break;
+                    await this.agent.continue();
+                    continue;
+                }
+                if (this._agentRunAbortRequested || !(await this._runBeforeSettleBoundary()))
+                    break;
+                if (this._agentRunAbortRequested)
+                    break;
+                await this.agent.continue();
+            }
+        }
+        finally {
+            if (this._agentRunAbortRequested)
+                this._finishCancelledRetry();
+            this._failedResponse = undefined;
+            this._runSystemPromptOptions = undefined;
+            this._flushPendingBashMessages();
+            this._flushPendingCustomMessages();
+            await this._emitAgentSettled();
+        }
+    }
