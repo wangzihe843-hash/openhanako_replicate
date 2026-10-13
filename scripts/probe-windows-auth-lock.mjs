@@ -203,6 +203,7 @@ export function prepareBaselineDependencies({ rootDir, dependencyRoot, outputDir
 export function runNativeAuthLockCi({
   rootDir = ROOT, outputDir = path.join(rootDir, 'output/windows-auth-lock-native'),
   platform = process.platform, nodeVersion = process.version, run = spawnSync,
+  tempDir = process.env.RUNNER_TEMP || os.tmpdir(),
 } = {}) {
   fs.mkdirSync(outputDir, { recursive: true });
   const summary = {
@@ -225,7 +226,10 @@ export function runNativeAuthLockCi({
     summary.candidateCommit = requireSuccess(recordCommand(outputDir, 'candidate-commit', 'git',
       ['rev-parse', 'HEAD'], { cwd: rootDir }, run)).trim();
     assert.ok(fs.statSync(path.join(rootDir, 'node_modules')).isDirectory(), 'Run npm ci first');
-    isolationRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hana-auth-lock-ci-'));
+    // Hosted Windows' user TEMP made a cache-hit baseline unpack take 533s.
+    // Use the runner's job scratch volume, as the ordinary checkout does;
+    // keep independently installed trees and still require live NTFS evidence.
+    isolationRoot = fs.mkdtempSync(path.join(tempDir, 'hana-auth-lock-ci-'));
     let baselineSource;
     const baselineDependencies = path.join(isolationRoot, 'baseline-dependencies');
     try {

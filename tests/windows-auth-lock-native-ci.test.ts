@@ -253,13 +253,14 @@ describe('native auth CI evidence contracts (no Win32 emulation)', () => {
       expect(spawnOptions.timeout).toBe(270_000);
       caseDir = spawnOptions.cwd;
       expect(caseDir).not.toBe(options.rootDir);
+      expect(path.dirname(path.dirname(caseDir))).toBe(options.rootDir);
       expect(fs.readFileSync(path.join(caseDir, 'lib/pi-sdk/model-runtime.ts'), 'utf8')).toBe('contract fixture\n');
       for (const file of NATIVE_PROBE_FILES) expect(fs.readFileSync(path.join(caseDir, file), 'utf8')).toBe('contract fixture\n');
       fs.writeFileSync(path.join(caseDir, 'lib/pi-sdk/model-runtime.ts'), 'changed only in isolated copy');
       expect(fs.readFileSync(path.join(caseDir, 'node_modules/untouched'), 'utf8')).toBe('contract fixture\n');
       return { ...child, signal: null, stderr: 'child diagnostic' };
     };
-    const result = runNativeAuthLockCi({ ...options, platform: 'win32', nodeVersion: 'v24.15.0', run });
+    const result = runNativeAuthLockCi({ ...options, platform: 'win32', nodeVersion: 'v24.15.0', run, tempDir: options.rootDir });
     expect(result.passed).toBe(false); // Baseline failure cannot be hidden by candidate success.
     expect(result.cases.baseline.passed).toBe(false);
     expect(result.cases.candidate.passed).toBe(child.passed);
