@@ -12,6 +12,7 @@ import {
   McpStdioClient,
   resolveMcpStdioSpawnSpec,
 } from "../core/mcp/clients/stdio-client.ts";
+import { McpManager } from "../core/mcp/manager.ts";
 
 class FakeProcess extends EventEmitter {
   declare exitCode: any;
@@ -53,6 +54,107 @@ class FakeProcess extends EventEmitter {
 }
 
 describe("MCP stdio client", () => {
+  it("cancels one published tool request without stopping the shared stdio connector", async () => {
+    const proc = new FakeProcess();
+    spawnMock.mockReturnValueOnce(proc);
+    const writes = [];
+    const reply = (id, result) => proc.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
+    proc.stdin.write.mockImplementation((line) => {
+      const message = JSON.parse(line);
+      writes.push(message);
+      if (message.method === "initialize") {
+        queueMicrotask(() => reply(message.id, { protocolVersion: "2025-11-25", capabilities: {} }));
+      } else if (message.method === "tools/list") {
+        queueMicrotask(() => reply(message.id, { tools: [{ name: "write" }] }));
+      }
+      return true;
+    });
+    let stored = {
+      enabled: true,
+      connectors: [{ id: "local", command: "fixture-mcp", tools: [{ name: "write" }] }],
+    };
+    const manager = new McpManager({ dataDir: "/unused-mcp-fixture", log: console }, {
+      configStore: { get: () => stored, set: (_key, value) => { stored = value; } },
+      fetchImpl: vi.fn(async () => { throw new Error("Unexpected network access"); }),
+    });
+    manager._bus = { request: async () => ({ config: {
+      mcp: { connectors: { local: { enabled: true, tools: { write: true } } } },
+    } }) };
+    await manager.startConnector("local");
+    const tool = manager.getAllTools().find((entry) => entry.name === "mcp_local_write");
+    const controller = new AbortController();
+    const ctx = Object.freeze({ agentId: "fixture-agent" });
+    try {
+      const cancelled = tool.execute("cancelled", { caller: "cancelled" }, controller.signal, undefined, ctx)
+        .then(() => null, (err) => err);
+      const survivor = tool.execute("survivor", { caller: "survivor" }, undefined, undefined, ctx);
+      await vi.waitFor(() => expect(writes.filter((entry) => entry.method === "tools/call")).toHaveLength(2));
+      const calls = writes.filter((entry) => entry.method === "tools/call");
+      const cancelledId = calls.find((entry) => entry.params.arguments.caller === "cancelled").id;
+      const survivorId = calls.find((entry) => entry.params.arguments.caller === "survivor").id;
+      controller.abort();
+      expect(await cancelled).toMatchObject({ name: "AbortError" });
+      expect(writes.filter((entry) => entry.method === "notifications/cancelled")).toEqual([{
+        jsonrpc: "2.0", method: "notifications/cancelled",
+        params: { requestId: cancelledId, reason: "Request cancelled" },
+      }]);
+      expect(manager.clients.get("local")._pending.size).toBe(1);
+      reply(cancelledId, { content: [{ type: "text", text: "late" }] });
+      expect(manager.clients.get("local")._pending.size).toBe(1);
+      reply(survivorId, { content: [{ type: "text", text: "ok" }] });
+      expect((await survivor).content[0].text).toBe("ok");
+      expect(manager.clients.get("local")._pending.size).toBe(0);
+      expect(manager.clients.get("local").running).toBe(true);
+      expect(manager.reconnectState.size).toBe(0);
+      expect(proc.stdin.end).not.toHaveBeenCalled();
+      expect(proc.kill).not.toHaveBeenCalled();
+      expect(ctx).not.toHaveProperty("signal");
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("never sends an already-aborted request or a cancellation for initialize", async () => {
+    const proc = new FakeProcess();
+    spawnMock.mockReturnValueOnce(proc);
+    const client = new McpStdioClient({ id: "local", command: "fixture-mcp" });
+    await client.start();
+    try {
+      const controller = new AbortController();
+      controller.abort();
+      proc.stdin.write.mockClear();
+      await expect(client.callTool("write", {}, { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+      expect(proc.stdin.write).not.toHaveBeenCalled();
+      expect(client._pending.size).toBe(0);
+      const initializing = new AbortController();
+      proc.stdin.write.mockImplementation(() => true);
+      const pending = client.request("initialize", {}, { signal: initializing.signal }).catch((err) => err);
+      initializing.abort();
+      expect(await pending).toMatchObject({ name: "AbortError" });
+      expect(proc.stdin.write).toHaveBeenCalledTimes(1);
+      expect(client._pending.size).toBe(0);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("cleans up the request when a stdio write throws", async () => {
+    const proc = new FakeProcess();
+    spawnMock.mockReturnValueOnce(proc);
+    const client = new McpStdioClient({ id: "local", command: "fixture-mcp" });
+    await client.start();
+    try {
+      proc.stdin.write.mockImplementation(() => { throw new Error("broken pipe"); });
+      const controller = new AbortController();
+      await expect(client.callTool("write", {}, { signal: controller.signal })).rejects.toThrow("broken pipe");
+      expect(client._pending.size).toBe(0);
+      controller.abort();
+      expect(proc.stdin.write).toHaveBeenCalledTimes(3); // initialize, initialized, failed call
+    } finally {
+      await client.stop();
+    }
+  });
+
   it("passes connector env and registry settings to spawned stdio servers", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "darwin", configurable: true });

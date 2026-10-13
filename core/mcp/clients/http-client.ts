@@ -1,4 +1,6 @@
 import { MCP_PROTOCOL_VERSION } from "./stdio-client.ts";
+import { cancellationError, isAbortError, throwIfAborted, waitWithSignal, withRequestDeadline } from "./cancellation.ts";
+import type { McpRequestOptions } from "./cancellation.ts";
 import { getOutboundProxyConfig } from "../../../lib/net/outbound-proxy.ts";
 import {
   normalizeNetworkProxyConfig,
@@ -29,6 +31,17 @@ import {
 const STREAMABLE_ACCEPT = "application/json, text/event-stream";
 const SSE_ACCEPT = "text/event-stream";
 const FALLBACK_STATUSES = new Set([400, 404, 405]);
+
+interface McpHttpRequestOptions extends McpRequestOptions {
+  initializing?: boolean;
+  retryOnSessionExpired?: boolean;
+  era?: string;
+}
+
+interface McpToolCallOptions extends McpRequestOptions {
+  inputResponses?: Record<string, unknown>;
+  requestState?: string;
+}
 
 const MCP_CLIENT_INFO = { name: "hana", title: "Hana", version: "0.1.0" };
 
@@ -284,7 +297,8 @@ function responseHeader(response, name) {
 async function responseText(response) {
   try {
     return await response.text();
-  } catch {
+  } catch (err) {
+    if (isAbortError(err)) throw err;
     return "";
   }
 }
@@ -308,18 +322,8 @@ function resolveEndpoint(endpoint, baseUrl) {
 }
 
 async function fetchWithTimeout(fetchImpl, url, init, timeoutMs) {
-  if (!timeoutMs) return fetchImpl(url, init);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const originalSignal = init?.signal;
-  const abortFromOriginal = () => controller.abort();
-  originalSignal?.addEventListener?.("abort", abortFromOriginal, { once: true });
-  try {
-    return await fetchImpl(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-    originalSignal?.removeEventListener?.("abort", abortFromOriginal);
-  }
+  throwIfAborted(init?.signal);
+  return withRequestDeadline(init?.signal, timeoutMs, (signal) => fetchImpl(url, { ...init, signal }));
 }
 
 function requestTimeoutMs(server) {
@@ -548,22 +552,31 @@ export class McpStreamableHttpClient {
   // inputResponses/requestState carry a previous round's answers back to the
   // server. The server keeps no state of its own between rounds, so the retry
   // must repeat the original arguments and echo the opaque state verbatim.
-  async callTool(name, args, { inputResponses = null, requestState = "" }: any = {}) {
+  async callTool(name, args, { inputResponses = null, requestState = "", signal }: McpToolCallOptions = {}) {
     const params: any = { name, arguments: args || {} };
     if (inputResponses) params.inputResponses = inputResponses;
     if (requestState) params.requestState = requestState;
-    return this.request("tools/call", params);
+    return this.request("tools/call", params, { signal });
   }
 
   async readResource(uri) {
     return this.request("resources/read", { uri });
   }
 
-  async request(method, params: any = {}, opts = {}) {
+  async request(method, params = {}, opts: McpHttpRequestOptions = {}) {
+    throwIfAborted(opts.signal);
     if (!this.running) throw new Error("MCP connector is not running");
+    return withRequestDeadline(opts.signal, requestTimeoutMs(this.server), (signal) => (
+      this._requestWithAuth(method, params, { ...opts, signal })
+    ));
+  }
+
+  async _requestWithAuth(method, params, opts) {
     try {
       return await this._request(method, params, opts);
     } catch (err) {
+      throwIfAborted(opts.signal);
+      if (isAbortError(err)) throw err;
       // The error we ultimately surface. A 401 refresh may replace it with a more
       // specific cause; we track that on a local instead of reassigning the catch
       // binding `err` (no-ex-assign).
@@ -575,6 +588,7 @@ export class McpStreamableHttpClient {
       // the session as needs-auth. No loop.
       if (this._is401(err) && this.refreshAuthToken) {
         const refreshed = await this._tryRefreshAndRetry(method, params, opts);
+        throwIfAborted(opts.signal);
         if (refreshed.recovered) return refreshed.result;
         // Refresh produced a more specific failure (the refresh token itself is
         // dead → invalid_grant, or the retry hit a fresh error). Adopt it as the
@@ -602,7 +616,9 @@ export class McpStreamableHttpClient {
   async _tryRefreshAndRetry(method, params, opts) {
     let newToken = "";
     try {
-      newToken = stringOrEmpty(await this.refreshAuthToken());
+      throwIfAborted(opts.signal);
+      newToken = stringOrEmpty(await waitWithSignal(this.refreshAuthToken(), opts.signal));
+      throwIfAborted(opts.signal);
     } catch (refreshErr) {
       // Refresh itself failed. Surface that error (an invalid_grant means the
       // refresh token is dead → auth-terminal; a 5xx means transient) so the
@@ -621,7 +637,7 @@ export class McpStreamableHttpClient {
   }
 
   _failLiveSession(err) {
-    if (this._stopping || this._closed) return;
+    if (isAbortError(err) || this._stopping || this._closed) return;
     // Auth-terminal (401/403, or a dead refresh token surfacing as an OAuth
     // invalid_grant from the forced refresh) → needs-auth: re-auth, never loop.
     // Everything else (network drop, 5xx, transient refresh failure) stays a
@@ -638,12 +654,14 @@ export class McpStreamableHttpClient {
     }
   }
 
-  async _request(method, params: any = {}, { initializing = false, retryOnSessionExpired = true } = {}) {
+  async _request(method, params = {}, { initializing = false, retryOnSessionExpired = true, signal }: McpHttpRequestOptions = {}) {
+    throwIfAborted(signal);
     const id = this._nextId++;
     const payload = { jsonrpc: "2.0", id, method, params };
     try {
-      return await this._postJsonRpc(payload, { initializing });
+      return await this._postJsonRpc(payload, { initializing, signal });
     } catch (err) {
+      throwIfAborted(signal);
       if (
         retryOnSessionExpired &&
         isSessionExpiredHttpError(err) &&
@@ -651,9 +669,20 @@ export class McpStreamableHttpClient {
       ) {
         this.sessionId = "";
         this._initialized = false;
-        await this.initialize();
-        this._initialized = true;
-        return this._request(method, params, { initializing: false, retryOnSessionExpired: false });
+        // Session establishment is shared connector work. A cancelled waiter
+        // leaves it running, but cannot replay its tool after it completes.
+        const initializingSession = this.initialize()
+          .then(() => { this._initialized = true; })
+          .catch((initializeError) => {
+            // Once the waiter has left, it can no longer report an actual
+            // handshake failure. Keep that lifecycle failure observable; a
+            // live waiter still owns the existing auth recovery path below.
+            if (signal?.aborted) this._failLiveSession(initializeError);
+            throw initializeError;
+          });
+        await waitWithSignal(initializingSession, signal);
+        throwIfAborted(signal);
+        return this._request(method, params, { initializing: false, retryOnSessionExpired: false, signal });
       }
       throw err;
     }
@@ -731,50 +760,71 @@ export class McpStreamableHttpClient {
     });
   }
 
-  async _postJsonRpc(payload, { initializing = false, era = this.era } = {}) {
-    // Validate what the caller handed us, so a diagnostic points at the caller's
-    // own field path rather than at protocol metadata we added underneath.
-    assertValidUnicodeBoundary(payload);
-    const body = era === MCP_ERA_MODERN
-      ? withModernRequestMeta(payload, this._modernProtocolVersion(), MODERN_CLIENT_CAPABILITIES)
-      : payload;
-    const response = await fetchWithTimeout(this.fetchImpl, this.endpoint, {
-      method: "POST",
-      headers: await this._headers({ initializing, era, payload: body }),
-      body: JSON.stringify(body),
-    }, requestTimeoutMs(this.server));
-    if (initializing) {
-      const sessionId = responseHeader(response, "MCP-Session-Id");
-      if (sessionId) this.sessionId = sessionId;
-    }
-    if (response.status === 202 && payload.id == null) return null;
-    if (!response.ok) {
-      const body = await responseText(response);
-      throw new McpHttpError(methodErrorMessage(response.status, body), {
-        status: response.status,
-        body,
-        headers: response.headers,
-      });
-    }
-    if (payload.id == null) return null;
-
-    const contentType = responseHeader(response, "Content-Type");
-    const text = await responseText(response);
-    if (contentType.includes("text/event-stream")) {
-      for (const event of parseSseEvents(text)) {
-        if (!event.data) continue;
-        const message = JSON.parse(event.data);
-        if (isJsonRpcServerRequest(message)) {
-          this._rejectServerRequest(message);
-          continue;
+  async _postJsonRpc(payload, { initializing = false, era = this.era, signal }: McpHttpRequestOptions = {}) {
+    return withRequestDeadline(signal, requestTimeoutMs(this.server), async (requestSignal) => {
+      // Validate what the caller handed us, so a diagnostic points at the caller's
+      // own field path rather than at protocol metadata we added underneath.
+      assertValidUnicodeBoundary(payload);
+      const body = era === MCP_ERA_MODERN
+        ? withModernRequestMeta(payload, this._modernProtocolVersion(), MODERN_CLIENT_CAPABILITIES)
+        : payload;
+      const headers = await waitWithSignal(this._headers({ initializing, era, payload: body }), requestSignal);
+      throwIfAborted(requestSignal);
+      // The handshake-era protocol has a request-id cancellation notification.
+      // Stateless HTTP uses aborting the individual HTTP exchange instead.
+      const onAbort = () => {
+        if (era === MCP_ERA_LEGACY && payload.id != null && payload.method !== "initialize") {
+          this._notify("notifications/cancelled", { requestId: payload.id, reason: "Request cancelled" })
+            .catch((err) => this.log.debug?.(`[mcp:${this.server.id}] cancellation delivery failed: ${err.message}`));
         }
-        if (isJsonRpcResponse(message) && message.id === payload.id) return rpcResult(message);
+      };
+      requestSignal.addEventListener("abort", onAbort, { once: true });
+      try {
+        const response = await waitWithSignal<Response>(this.fetchImpl(this.endpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal: requestSignal,
+        }), requestSignal);
+        throwIfAborted(requestSignal);
+        if (initializing) {
+          const sessionId = responseHeader(response, "MCP-Session-Id");
+          if (sessionId) this.sessionId = sessionId;
+        }
+        if (response.status === 202 && payload.id == null) return null;
+        if (!response.ok) {
+          const body = await waitWithSignal(responseText(response), requestSignal);
+          throwIfAborted(requestSignal);
+          throw new McpHttpError(methodErrorMessage(response.status, body), {
+            status: response.status,
+            body,
+            headers: response.headers,
+          });
+        }
+        if (payload.id == null) return null;
+
+        const contentType = responseHeader(response, "Content-Type");
+        const text = await waitWithSignal(responseText(response), requestSignal);
+        throwIfAborted(requestSignal);
+        if (contentType.includes("text/event-stream")) {
+          for (const event of parseSseEvents(text)) {
+            if (!event.data) continue;
+            const message = JSON.parse(event.data);
+            if (isJsonRpcServerRequest(message)) {
+              this._rejectServerRequest(message);
+              continue;
+            }
+            if (isJsonRpcResponse(message) && message.id === payload.id) return rpcResult(message);
+          }
+          throw new Error(`MCP response for "${payload.method}" was not found in SSE stream`);
+        }
+        const message = text ? JSON.parse(text) : null;
+        if (!message) return null;
+        return rpcResult(message);
+      } finally {
+        requestSignal.removeEventListener("abort", onAbort);
       }
-      throw new Error(`MCP response for "${payload.method}" was not found in SSE stream`);
-    }
-    const message = text ? JSON.parse(text) : null;
-    if (!message) return null;
-    return rpcResult(message);
+    });
   }
 }
 
@@ -857,37 +907,44 @@ export class McpLegacySseClient {
     return Array.isArray(result?.tools) ? result.tools : [];
   }
 
-  async callTool(name, args) {
+  async callTool(name, args, { signal }: McpRequestOptions = {}) {
     return this.request("tools/call", {
       name,
       arguments: args || {},
-    });
+    }, { signal });
   }
 
   async readResource(uri) {
     return this.request("resources/read", { uri });
   }
 
-  async request(method, params: any = {}, { timeout = 30_000 } = {}) {
+  async request(method, params = {}, { timeout = requestTimeoutMs(this.server), signal }: McpRequestOptions = {}) {
+    throwIfAborted(signal);
     if (!this.running) throw new Error("MCP connector is not running");
-    try {
-      return await this._sendRequest(method, params, timeout);
-    } catch (err) {
-      // 401 OAuth self-heal (方案 A, single retry). Force a token refresh and, if
-      // it yields a new token, replay the request once with a fresh id. A second
-      // 401 or no refresh rethrows. No loop.
-      if (err instanceof McpHttpError && err.status === 401 && this.refreshAuthToken) {
-        const newToken = stringOrEmpty(await this.refreshAuthToken());
-        if (newToken) return this._sendRequest(method, params, timeout);
+    return withRequestDeadline(signal, timeout, async (requestSignal) => {
+      try {
+        return await this._sendRequest(method, params, requestSignal);
+      } catch (err) {
+        throwIfAborted(requestSignal);
+        if (isAbortError(err)) throw err;
+        // 401 OAuth self-heal (方案 A, single retry). Force a token refresh and, if
+        // it yields a new token, replay the request once with a fresh id. A second
+        // 401 or no refresh rethrows. No loop.
+        if (err instanceof McpHttpError && err.status === 401 && this.refreshAuthToken) {
+          const newToken = stringOrEmpty(await waitWithSignal(this.refreshAuthToken(), requestSignal));
+          throwIfAborted(requestSignal);
+          if (newToken) return this._sendRequest(method, params, requestSignal);
+        }
+        if (isSessionExpiredHttpError(err)) {
+          this._failLiveSession(err);
+        }
+        throw err;
       }
-      if (isSessionExpiredHttpError(err)) {
-        this._failLiveSession(err);
-      }
-      throw err;
-    }
+    });
   }
 
-  _sendRequest(method, params, timeout) {
+  _sendRequest(method, params, signal) {
+    throwIfAborted(signal);
     const id = this._nextId++;
     const payload = { jsonrpc: "2.0", id, method, params };
     const queued = this._queued.get(id);
@@ -896,25 +953,31 @@ export class McpLegacySseClient {
       return Promise.resolve(rpcResult(queued));
     }
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let sent = false;
+      const cleanup = () => {
         this._pending.delete(id);
-        reject(new Error(`MCP request "${method}" timed out`));
-      }, timeout);
-      this._pending.set(id, {
+        signal.removeEventListener("abort", onAbort);
+      };
+      const pending = {
         resolve: (value) => {
-          clearTimeout(timer);
+          cleanup();
           resolve(value);
         },
         reject: (err) => {
-          clearTimeout(timer);
+          cleanup();
           reject(err);
         },
-      });
-      this._postMessage(payload).catch((err) => {
-        this._pending.delete(id);
-        clearTimeout(timer);
-        reject(err);
-      });
+      };
+      const onAbort = () => {
+        pending.reject(cancellationError(signal));
+        if (sent && method !== "initialize") {
+          this.notify("notifications/cancelled", { requestId: id, reason: "Request cancelled" })
+            .catch((err) => this.log.debug?.(`[mcp:${this.server.id}] cancellation delivery failed: ${err.message}`));
+        }
+      };
+      this._pending.set(id, pending);
+      signal.addEventListener("abort", onAbort, { once: true });
+      this._postMessage(payload, { signal, onDispatch: () => { sent = true; } }).catch(pending.reject);
     });
   }
 
@@ -936,7 +999,7 @@ export class McpLegacySseClient {
   }
 
   _failLiveSession(err) {
-    if (this._stopping || this._closed) return;
+    if (isAbortError(err) || this._stopping || this._closed) return;
     this.messageEndpoint = "";
     this._closed = true;
     for (const pending of this._pending.values()) {
@@ -1046,6 +1109,9 @@ export class McpLegacySseClient {
     if (!isJsonRpcResponse(message)) return;
     const pending = this._pending.get(message.id);
     if (!pending) {
+      // Already issued and settled/cancelled: late replies cannot become a
+      // future response, and must not accumulate in the early-response queue.
+      if (typeof message.id === "number" && message.id < this._nextId) return;
       this._queued.set(message.id, message);
       return;
     }
@@ -1070,21 +1136,29 @@ export class McpLegacySseClient {
     });
   }
 
-  async _postMessage(payload) {
-    assertValidUnicodeBoundary(payload);
-    const response = await fetchWithTimeout(this.fetchImpl, this.messageEndpoint, {
-      method: "POST",
-      headers: await this._headers({ accept: "application/json", includeJson: true }),
-      body: JSON.stringify(payload),
-    }, requestTimeoutMs(this.server));
-    if (!response.ok) {
-      const body = await responseText(response);
-      throw new McpHttpError(methodErrorMessage(response.status, body), {
-        status: response.status,
-        body,
-        headers: response.headers,
-      });
-    }
+  async _postMessage(payload, { signal, onDispatch }: McpRequestOptions & { onDispatch?: () => void } = {}) {
+    return withRequestDeadline(signal, requestTimeoutMs(this.server), async (requestSignal) => {
+      assertValidUnicodeBoundary(payload);
+      const headers = await waitWithSignal(this._headers({ accept: "application/json", includeJson: true }), requestSignal);
+      throwIfAborted(requestSignal);
+      onDispatch?.();
+      const response = await waitWithSignal<Response>(this.fetchImpl(this.messageEndpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        signal: requestSignal,
+      }), requestSignal);
+      throwIfAborted(requestSignal);
+      if (!response.ok) {
+        const body = await waitWithSignal(responseText(response), requestSignal);
+        throwIfAborted(requestSignal);
+        throw new McpHttpError(methodErrorMessage(response.status, body), {
+          status: response.status,
+          body,
+          headers: response.headers,
+        });
+      }
+    });
   }
 
   async _headers({ accept, includeJson }) {

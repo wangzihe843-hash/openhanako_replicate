@@ -64,6 +64,7 @@
     "core/local-provider-plugin-store.ts",
     "core/local-user-account.ts",
     "core/lossy-local-compaction.ts",
+    "core/mcp/clients/cancellation.ts",
     "core/mcp/clients/http-client.ts",
     "core/mcp/clients/jsonrpc.ts",
     "core/mcp/clients/oauth.ts",

@@ -1118,6 +1118,28 @@
       "reason": "Reached via esbuild source module graph, imported by core/session-compactor.ts (import-statement)."
     },
     {
+      "path": "core/mcp/clients/cancellation.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "core/mcp/clients/stdio-client.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "core/mcp/clients/http-client.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "core/mcp/manager.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by core/mcp/clients/stdio-client.ts (import-statement); core/mcp/clients/http-client.ts (import-statement); core/mcp/manager.ts (import-statement)."
+    },
+    {
       "path": "core/mcp/clients/http-client.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -86065,9 +86087,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 7115,
+    "totalFiles": 7116,
     "byInputType": {
-      "source-graph": 734,
+      "source-graph": 735,
       "runtime-asset": 11,
       "nft-runtime-trace": 6370
     }

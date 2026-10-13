@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { isJsonRpcServerRequest, methodNotFoundResponse } from "./jsonrpc.ts";
+import { cancellationError, throwIfAborted } from "./cancellation.ts";
+import type { McpRequestOptions } from "./cancellation.ts";
 
 // The handshake-based revision this client speaks. Known limitation: the
 // stateless revision changes stdio substantially — no initialize, per-request
@@ -108,37 +110,66 @@ export class McpStdioClient {
     return Array.isArray(result?.tools) ? result.tools : [];
   }
 
-  async callTool(name, args) {
+  async callTool(name, args, { signal }: McpRequestOptions = {}) {
     return this.request("tools/call", {
       name,
       arguments: args || {},
-    }, { timeout: requestTimeoutMs(this.server) });
+    }, { timeout: requestTimeoutMs(this.server), signal });
   }
 
   async readResource(uri) {
     return this.request("resources/read", { uri }, { timeout: requestTimeoutMs(this.server) });
   }
 
-  request(method, params: any = {}, { timeout = 30_000 } = {}) {
+  request(method, params = {}, { timeout = 30_000, signal }: McpRequestOptions = {}) {
+    throwIfAborted(signal);
     if (!this.running) throw new Error("MCP server is not running");
     const id = this._nextId++;
     const payload = { jsonrpc: "2.0", id, method, params };
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let sent = false;
+      const cancelRemote = () => {
+        if (!sent || method === "initialize") return;
+        try {
+          this.notify("notifications/cancelled", { requestId: id, reason: "Request cancelled" });
+        } catch (err) {
+          this.log.debug?.(`[mcp:${this.server.id}] cancellation delivery failed: ${err.message}`);
+        }
+      };
+      const cleanup = () => {
+        clearTimeout(timer);
         this._pending.delete(id);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const onAbort = () => {
+        cleanup();
+        reject(cancellationError(signal));
+        cancelRemote();
+      };
+      const timer = setTimeout(() => {
+        cleanup();
         reject(new Error(`MCP request "${method}" timed out`));
+        cancelRemote();
       }, timeout);
       this._pending.set(id, {
         resolve: (value) => {
-          clearTimeout(timer);
+          cleanup();
           resolve(value);
         },
         reject: (err) => {
-          clearTimeout(timer);
+          cleanup();
           reject(err);
         },
       });
-      this._send(payload);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      try {
+        throwIfAborted(signal);
+        this._send(payload);
+        sent = true;
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
     });
   }
 

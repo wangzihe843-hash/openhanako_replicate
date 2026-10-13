@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:3e19163fb231a8efe6b4f3fa71ca27c667830978791766cff70b250a4d93eda2",
+  "payloadFingerprint": "sha256:70ccb12ba298266b1652e12df1f2b53dabf0ab45c2890e18af45671a71d11e04",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3368,8 +3368,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Pi 1.2.0 preparation keeps the installed 1.0.3 JSONL v3 and all stored schemas unchanged. Coordinator changes only preflight cancellation and event acceptance; no DATA_EPOCH migration is justified. Candidate dependency fingerprint must be reviewed again after the cooled install.",
-    "payloadFingerprint": "sha256:3e19163fb231a8efe6b4f3fa71ca27c667830978791766cff70b250a4d93eda2"
+    "compatibilityReason": "MCP cancellation now propagates per invocation through published tools, input rounds and clients. The manager change only affects in-memory request lifetimes; plugin-data/mcp paths, config serialization, OAuth credential shapes, and all stored schemas remain unchanged. This preserves the Pi preparation baseline: the seven Pi packages remain at 1.0.3 with JSONL v3, and DATA_EPOCH stays 1. Review the dependency fingerprint again after the separately scheduled cooled install.",
+    "payloadFingerprint": "sha256:70ccb12ba298266b1652e12df1f2b53dabf0ab45c2890e18af45671a71d11e04"
   },
   "schemas": [
     {
@@ -3802,7 +3802,7 @@
       "contract": "normalizeMcpConfig read-time normalization (servers/connectors alias, auth and OAuth field defaults, per-connector permission policy defaults, deferred-loading defaults)",
       "kind": "runtime-contract",
       "module": "core/mcp/manager.ts",
-      "sourceHash": "sha256:cb2791118d777d23c8a82921238b134bad0c76c6e966a8b732a8337d243f8ed4",
+      "sourceHash": "sha256:4fcf8b6e944cf94169a8f87f17d2da7126685107719e29df4606fbdb0ce9c8f4",
       "storeId": "mcp-config"
     },
     {

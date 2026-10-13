@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { McpStdioClient } from "./clients/stdio-client.ts";
+import { isAbortError, isAbortSignal, throwIfAborted, waitWithSignal } from "./clients/cancellation.ts";
 import {
   McpAutoHttpClient,
   McpLegacySseClient,
@@ -768,6 +769,8 @@ export function createMcpToolDefinition({
         toolName,
       }),
     execute: async (toolCallId, params, runtimeCtx: any = {}) => {
+      const signal = runtimeCtx.signal;
+      throwIfAborted(signal);
       if (getGlobalEnabled() !== true) {
         return mcpToolError("MCP is disabled globally. Enable Connectors in Settings before calling this tool.", {
           connectorId,
@@ -782,7 +785,8 @@ export function createMcpToolDefinition({
           toolName,
         });
       }
-      const agentConfig = await getAgentConfig(runtimeCtx.agentId);
+      const agentConfig = await waitWithSignal(getAgentConfig(runtimeCtx.agentId), signal);
+      throwIfAborted(signal);
       if (!isMcpToolEnabledForAgentConfig(agentConfig, {
         globalEnabled: true,
         connectorId,
@@ -808,6 +812,8 @@ export function createMcpToolDefinition({
           sourceAgentId: stringOrEmpty(runtimeCtx.agentId),
         }) : result;
       } catch (err) {
+        throwIfAborted(signal);
+        if (isAbortError(err)) throw err;
         return mcpToolError(`MCP connector tool "${connectorId}/${toolName}" failed: ${err.message}`, {
           connectorId,
           serverId: connectorId,
@@ -1757,6 +1763,8 @@ export class McpManager {
   }
 
   async callTool(connectorId, toolName, args, runtimeCtx: any = {}) {
+    const signal = runtimeCtx.signal;
+    throwIfAborted(signal);
     const config = this.getConfig();
     if (!config.enabled) throw new Error("MCP connectors are disabled globally");
     const connector = config.connectors.find((entry) => entry.id === connectorId);
@@ -1771,7 +1779,8 @@ export class McpManager {
     }
     let client = this.clients.get(connectorId);
     if (!client?.running) {
-      await this._ensureConnectorStarted(connectorId);
+      await waitWithSignal(this._ensureConnectorStarted(connectorId), signal);
+      throwIfAborted(signal);
       client = this.clients.get(connectorId);
       if (!client?.running) throw new Error(`MCP connector "${connectorId}" is not running`);
     }
@@ -1817,9 +1826,12 @@ export class McpManager {
   // original call with the answer; the server carries its own state across in
   // an opaque blob we echo back untouched.
   async _callToolThroughInputRounds(client, { connectorId, connectorName, toolName, args, runtimeCtx }) {
+    const signal = runtimeCtx.signal;
     let extra = null;
     for (let round = 0; round <= MAX_INPUT_REQUIRED_ROUNDS; round += 1) {
-      const result = await client.callTool(toolName, args, extra || undefined);
+      throwIfAborted(signal);
+      const result = await client.callTool(toolName, args, signal ? { ...extra, signal } : extra || undefined);
+      throwIfAborted(signal);
       if (result?.resultType !== "input_required") return result;
       if (round === MAX_INPUT_REQUIRED_ROUNDS) {
         throw new Error(
@@ -1828,15 +1840,20 @@ export class McpManager {
         );
       }
       extra = await this._gatherInputResponses(result, { connectorId, connectorName, toolName, runtimeCtx });
+      throwIfAborted(signal);
       // The user refused the form. The server is told so it can unwind its own
       // pending work, and then the call fails with the same outcome the user
       // chose — the decline round is a courtesy to the server, not a retry.
       if (extra?.declined) {
         await client
-          .callTool(toolName, args, extra.payload)
+          .callTool(toolName, args, signal ? { ...extra.payload, signal } : extra.payload)
           // Failing to deliver the "no" must not turn a refusal into a
           // different-looking result. Swallow it and report the refusal.
-          .catch(() => {});
+          .catch((err) => {
+            throwIfAborted(signal);
+            if (isAbortError(err)) throw err;
+          });
+        throwIfAborted(signal);
         throw new Error(
           `MCP connector "${connectorName}" needed input for "${toolName}", but the request ended as `
           + `"rejected".`,
@@ -1859,6 +1876,7 @@ export class McpManager {
     const inputResponses = {};
     let declined = false;
     for (const [key, request] of Object.entries(inputRequests)) {
+      throwIfAborted(runtimeCtx.signal);
       const method = (request as any)?.method;
       const params = (request as any)?.params || {};
       // We only ever advertise form-mode elicitation, so anything else is a
@@ -1879,6 +1897,7 @@ export class McpManager {
         toolName,
         runtimeCtx,
       });
+      throwIfAborted(runtimeCtx.signal);
       inputResponses[key] = response;
       if (response.action === "decline") declined = true;
     }
@@ -1889,6 +1908,8 @@ export class McpManager {
   }
 
   async _askUserForElicitation(params, { connectorId, connectorName, toolName, runtimeCtx }) {
+    const signal = runtimeCtx.signal;
+    throwIfAborted(signal);
     const confirmStore = this._getConfirmStore?.() || null;
     const sessionPath = runtimeCtx?.sessionPath || runtimeCtx?.sessionId || null;
     if (!confirmStore || !sessionPath) {
@@ -1906,27 +1927,40 @@ export class McpManager {
       sessionPath,
       MCP_ELICITATION_TIMEOUT_MS,
     );
-    this._emitEvent?.({
-      type: "session_confirmation",
-      request: {
+    const abortPrompt = () => {
+      if (confirmStore.resolve?.(confirmId, "aborted")) {
+        confirmStore.onResolved?.(confirmId, "aborted");
+      }
+    };
+    signal?.addEventListener("abort", abortPrompt, { once: true });
+    let decision;
+    try {
+      if (signal?.aborted) abortPrompt();
+      throwIfAborted(signal);
+      this._emitEvent?.({
         type: "session_confirmation",
-        confirmId,
-        kind: "mcp_elicitation",
-        surface: "input",
-        status: "pending",
-        title: connectorName,
-        body: message,
-        subject: { label: connectorName, detail: toolName },
-        severity: "normal",
-        actions: {
-          confirmLabel: t("approval.confirm"),
-          rejectLabel: t("approval.reject"),
+        request: {
+          type: "session_confirmation",
+          confirmId,
+          kind: "mcp_elicitation",
+          surface: "input",
+          status: "pending",
+          title: connectorName,
+          body: message,
+          subject: { label: connectorName, detail: toolName },
+          severity: "normal",
+          actions: {
+            confirmLabel: t("approval.confirm"),
+            rejectLabel: t("approval.reject"),
+          },
+          payload,
         },
-        payload,
-      },
-    }, sessionPath);
-
-    const decision = await promise;
+      }, sessionPath);
+      decision = await waitWithSignal(promise, signal);
+      throwIfAborted(signal);
+    } finally {
+      signal?.removeEventListener("abort", abortPrompt);
+    }
     // An explicit refusal is a decision the protocol has a word for. It goes
     // back to the server as a decline (no content: a decline submits nothing),
     // and the caller still fails the tool call.
@@ -2122,7 +2156,10 @@ export class McpManager {
       parameters: definition.parameters || { type: "object", properties: {} },
       execute: async (toolCallId, params, signalOrRuntimeCtx, onUpdate, piCtx) => {
         const { ctx: runtimeCtx } = normalizeToolRuntimeContext(signalOrRuntimeCtx, piCtx);
-        return normalizeMcpToolResult(await origExecute(toolCallId, params, runtimeCtx));
+        const signal = isAbortSignal(signalOrRuntimeCtx) ? signalOrRuntimeCtx : runtimeCtx.signal;
+        throwIfAborted(signal);
+        const ctx = signal ? { ...runtimeCtx, signal } : runtimeCtx;
+        return normalizeMcpToolResult(await origExecute(toolCallId, params, ctx));
       },
       _pluginId: MCP_TOOL_NAMESPACE,
     };
