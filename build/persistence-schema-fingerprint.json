@@ -668,7 +668,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:44a48483313a54915c7846329a40c912229824035838fad6327a81999f394adf",
+  "payloadFingerprint": "sha256:63bfb7211441ffdc5a2d7b8bf3b37396c3220195f8d8f7fc86bdd497f9a8f502",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3368,8 +3368,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "MCP shared OAuth refresh lifecycle now records detached failures and rejects superseded credential or connection results; only runtime control flow changed, with no stored shape or DATA_EPOCH change.",
-    "payloadFingerprint": "sha256:44a48483313a54915c7846329a40c912229824035838fad6327a81999f394adf"
+    "compatibilityReason": "MCP OAuth callback completion now validates the in-memory issuer and capability snapshot before processing success or error responses. The manager runtime-contract source hash changes, but persisted MCP configuration, credentials, normalization, store inventory, and DATA_EPOCH remain unchanged.",
+    "payloadFingerprint": "sha256:63bfb7211441ffdc5a2d7b8bf3b37396c3220195f8d8f7fc86bdd497f9a8f502"
   },
   "schemas": [
     {
@@ -3802,7 +3802,7 @@
       "contract": "normalizeMcpConfig read-time normalization (servers/connectors alias, auth and OAuth field defaults, per-connector permission policy defaults, deferred-loading defaults)",
       "kind": "runtime-contract",
       "module": "core/mcp/manager.ts",
-      "sourceHash": "sha256:1417c90b1e65829abd3a1a84501f2d947a22547117b16780781f9cac8060d1c4",
+      "sourceHash": "sha256:a78e729bfb054146a122ad3c9fab24a4125f147ce97df371e4ee98529a331d9b",
       "storeId": "mcp-config"
     },
     {

@@ -2387,17 +2387,24 @@ export class McpManager {
     return { cancelled };
   }
 
-  async completeOAuth({ state, code, error }) {
+  async completeOAuth({ state, code, error, issValues = [] }) {
     const session = this.oauthSessions.get(state);
     if (!session) throw new Error("OAuth session not found");
     // A late redirect must not reopen a wait the user already called off.
     if (session.status === "cancelled") throw new Error("OAuth session was cancelled");
-    if (error) {
-      session.status = "error";
-      session.error = error;
-      return session;
-    }
     try {
+      // URLSearchParams already decoded these values once. RFC 9207 requires
+      // exact comparison to the session snapshot, including on error responses.
+      if (issValues.length > 1) throw new Error("OAuth authorization response issuer is repeated");
+      if (issValues.length === 0 && session.authorizationResponseIssParameterSupported) {
+        throw new Error("OAuth authorization response issuer is missing");
+      }
+      if (issValues.length === 1 && issValues[0] !== session.issuer) {
+        throw new Error("OAuth authorization response issuer does not match");
+      }
+      // Legacy AS responses may omit iss. Any supplied value must still match.
+      // Never echo untrusted callback errors into the page or polling result.
+      if (error) throw new Error("OAuth authorization failed");
       const token = await exchangeMcpOAuthCode({
         tokenEndpoint: session.tokenEndpoint,
         code,

@@ -196,6 +196,10 @@ export async function createMcpOAuthAuthorization({
       redirectUri,
       codeVerifier: pkce.codeVerifier,
       tokenEndpoint: discovery.tokenEndpoint,
+      // RFC 9207: bind callbacks to the verified metadata, preserving the
+      // issuer's original spelling and the capability at authorization time.
+      issuer: discovery.authorizationMetadata.issuer,
+      authorizationResponseIssParameterSupported: discovery.authorizationMetadata.authorization_response_iss_parameter_supported === true,
       scope,
       resource: connector.url,
       createdAt: Date.now(),
@@ -350,6 +354,10 @@ async function fetchAuthorizationServerMetadata(issuer, fetchImpl) {
     // invalid JSON; only unsuccessful HTTP responses try the next discovery URL.
     if (typeof metadata?.issuer !== "string" || metadata.issuer !== issuer) {
       throw new Error("MCP OAuth authorization server metadata issuer does not match the authorization server");
+    }
+    if (Object.hasOwn(metadata, "authorization_response_iss_parameter_supported")
+      && typeof metadata.authorization_response_iss_parameter_supported !== "boolean") {
+      throw new Error("MCP OAuth authorization_response_iss_parameter_supported must be a boolean");
     }
     return metadata;
   }

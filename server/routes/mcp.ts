@@ -364,6 +364,7 @@ export function createMcpRoute(engine) {
         state: url.searchParams.get("state") || "",
         code: url.searchParams.get("code") || "",
         error: url.searchParams.get("error") || "",
+        issValues: url.searchParams.getAll("iss"),
       });
       return c.html(htmlPage("Connector connected", "You can close this window and return to Hana."));
     } catch (err) {

@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { discoverMcpOAuth } from "../core/mcp/clients/oauth.ts";
+import { Hono } from "hono";
+import { createMcpOAuthAuthorization, discoverMcpOAuth } from "../core/mcp/clients/oauth.ts";
 import { McpManager } from "../core/mcp/manager.ts";
+import { createMcpRoute } from "../server/routes/mcp.ts";
 
 const ISSUER = "https://as.example/tenant";
 const RESOURCE = "https://mcp.example/mcp";
@@ -58,7 +60,9 @@ function fixture({ issuer = ISSUER, urls = TENANT_URLS, index = 0,
   const before = structuredClone(stored);
   const setConfig = vi.fn((_key, value) => { stored = value; });
   const register = vi.fn(() => jsonResponse({ client_id: "synthetic-client" }));
-  const token = vi.fn(() => { throw new Error("Unexpected token request during discovery"); });
+  const token = vi.fn(() => jsonResponse({
+    access_token: "synthetic-access-token", refresh_token: "synthetic-refresh-token", token_type: "Bearer",
+  }));
   const fetchImpl = vi.fn(async (url, _init?: RequestInit) => {
     const target = String(url);
     if (target === RESOURCE) return new Response("", {
@@ -83,12 +87,15 @@ function fixture({ issuer = ISSUER, urls = TENANT_URLS, index = 0,
   });
   // Exercise the same default-fetch seam used by Engine; no real network calls.
   vi.stubGlobal("fetch", fetchImpl);
-  const manager = new McpManager({ dataDir: "/unused-in-memory", log: console }, {
+  const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  const manager = new McpManager({ dataDir: "/unused-in-memory", log }, {
     configStore: { get: () => stored, set: setConfig },
   });
+  const app = new Hono();
+  app.route("/api", createMcpRoute({ mcp: manager }));
   const insertSession = vi.spyOn(manager.oauthSessions, "set");
   const saveCredentials = vi.spyOn(manager, "saveConnectorOAuth");
-  return { manager, fetchImpl, register, token, insertSession, saveCredentials,
+  return { manager, app, log, fetchImpl, register, token, insertSession, saveCredentials,
     setConfig, before, getStored: () => stored };
 }
 
@@ -189,5 +196,185 @@ describe("MCP OAuth metadata issuer validation", () => {
     expect(f.manager.oauthSessions.get(result.sessionId).clientIdSource).toBe("manual");
     expect(f.setConfig).not.toHaveBeenCalled();
     expect(f.getStored()).toEqual(f.before);
+  });
+});
+
+const CAPABILITIES = [
+  { name: "supported", value: true },
+  { name: "unsupported", value: false },
+  { name: "undeclared", value: undefined },
+];
+const CALLBACK_PATHS = ["/api/mcp/oauth/callback", "/api/plugins/mcp/oauth/callback"];
+const CODE = "synthetic-authorization-code";
+const MISSING_ISSUER = "OAuth authorization response issuer is missing";
+const REPEATED_ISSUER = "OAuth authorization response issuer is repeated";
+const WRONG_ISSUER = "OAuth authorization response issuer does not match";
+const AUTHORIZATION_ERROR = "OAuth authorization failed";
+
+function callbackQuery(state: string, response: string, values: string[]) {
+  const query = new URLSearchParams({ state, code: CODE });
+  if (response === "error") query.set("error", "access_denied");
+  for (const value of values) query.append("iss", value);
+  return query;
+}
+
+function expectNoCallbackEffects(f: ReturnType<typeof fixture>, fetchCount: number) {
+  expect(f.fetchImpl).toHaveBeenCalledTimes(fetchCount);
+  expect(f.token).not.toHaveBeenCalled();
+  expect(f.saveCredentials).not.toHaveBeenCalled();
+  expect(f.setConfig).not.toHaveBeenCalled();
+  expect(f.getStored()).toEqual(f.before);
+}
+
+async function expectCallbackFailure(f: ReturnType<typeof fixture>, path: string, state: string,
+  query: URLSearchParams | string, expected: string) {
+  const fetchCount = f.fetchImpl.mock.calls.length;
+  const response = await f.app.request(`${path}?${query}`);
+  const page = await response.text();
+  const poll = await f.app.request(`/api/mcp/oauth/poll/${state}`);
+  const status = await poll.json();
+  expectNoCallbackEffects(f, fetchCount);
+  expect(response.status).toBe(400);
+  expect(page).toContain("Connector OAuth failed");
+  expect(page).toContain(expected);
+  expect(status).toEqual({ status: "error", error: expected });
+  const visible = JSON.stringify({ page, status, logs: Object.values(f.log).map((fn) => fn.mock.calls) });
+  for (const secret of [CODE, state, "synthetic-access-token", "synthetic-refresh-token", `${path}?${query}`]) {
+    expect(visible).not.toContain(secret);
+  }
+}
+
+describe("MCP OAuth authorization response capability", () => {
+  it.each(CAPABILITIES)("snapshots the original issuer and the $name capability", async ({ value }) => {
+    const issuer = "https://AS.example:443/tenant/";
+    const f = fixture({ issuer, metadata: { ...metadataFor(issuer), authorization_response_iss_parameter_supported: value } });
+    const auth = await createMcpOAuthAuthorization({
+      connector: { id: "synthetic", url: RESOURCE }, redirectUri: REDIRECT_URI,
+    });
+    expect(auth.session).toMatchObject({ issuer, authorizationResponseIssParameterSupported: value === true });
+    // Later mutation of a discovery object must not change a pending session.
+    auth.discovery.authorizationMetadata.issuer = "https://other.example";
+    auth.discovery.authorizationMetadata.authorization_response_iss_parameter_supported = value !== true;
+    expect(auth.session).toMatchObject({ issuer, authorizationResponseIssParameterSupported: value === true });
+    expect(f.token).not.toHaveBeenCalled();
+    expect(f.setConfig).not.toHaveBeenCalled();
+  });
+
+  describe.each([false, true])("manual client = %s", (manual) => {
+    it.each([null, "true", "false", "", 0, 1, [], {}, [true]])("rejects an explicit non-boolean capability %j before DCR/session creation", async (value) => {
+      const f = fixture({ manual, metadata: { ...metadataFor(ISSUER), authorization_response_iss_parameter_supported: value } });
+      await expect(f.manager.startOAuth("synthetic", REDIRECT_URI)).rejects.toThrow(/authorization_response_iss_parameter_supported must be a boolean/);
+      expectNoEffects(f);
+      expect(f.fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([RESOURCE, RESOURCE_METADATA, TENANT_URLS[0]]);
+    });
+  });
+});
+
+describe.each(CALLBACK_PATHS)("MCP OAuth issuer binding at %s", (path) => {
+  describe.each(CAPABILITIES)("$name capability", ({ value }) => {
+    describe.each(["success", "error"])("%s response", (response) => {
+      it.each([
+        { name: "missing", values: [], error: "" },
+        { name: "exact", values: [ISSUER], error: "" },
+        { name: "empty", values: [""], error: WRONG_ISSUER },
+        { name: "wrong", values: ["https://other.example"], error: WRONG_ISSUER },
+        { name: "identical duplicates", values: [ISSUER, ISSUER], error: REPEATED_ISSUER },
+        { name: "correct then wrong", values: [ISSUER, "https://other.example"], error: REPEATED_ISSUER },
+        { name: "wrong then correct", values: ["https://other.example", ISSUER], error: REPEATED_ISSUER },
+        { name: "empty then correct", values: ["", ISSUER], error: REPEATED_ISSUER },
+        { name: "both empty", values: ["", ""], error: REPEATED_ISSUER },
+        { name: "host case", values: ["https://AS.example/tenant"], error: WRONG_ISSUER },
+        { name: "scheme case", values: ["HTTPS://as.example/tenant"], error: WRONG_ISSUER },
+        { name: "path case", values: ["https://as.example/Tenant"], error: WRONG_ISSUER },
+        { name: "trailing slash", values: [`${ISSUER}/`], error: WRONG_ISSUER },
+        { name: "default port", values: ["https://as.example:443/tenant"], error: WRONG_ISSUER },
+        { name: "leading whitespace", values: [` ${ISSUER}`], error: WRONG_ISSUER },
+        { name: "trailing whitespace", values: [`${ISSUER} `], error: WRONG_ISSUER },
+        { name: "extra encoded layer", values: [encodeURIComponent(ISSUER)], error: WRONG_ISSUER },
+        { name: "encoded path", values: ["https://as.example/%74enant"], error: WRONG_ISSUER },
+      ])("handles $name iss without normalization or extra decoding", async (testCase) => {
+        const f = fixture({ metadata: { ...metadataFor(ISSUER), authorization_response_iss_parameter_supported: value } });
+        const auth = await f.manager.startOAuth("synthetic", REDIRECT_URI);
+        const query = callbackQuery(auth.sessionId, response, testCase.values);
+        const issuerError = testCase.error || (!testCase.values.length && value === true ? MISSING_ISSUER : "");
+        if (issuerError || response === "error") {
+          await expectCallbackFailure(f, path, auth.sessionId, query, issuerError || AUTHORIZATION_ERROR);
+          return;
+        }
+        const fetchCount = f.fetchImpl.mock.calls.length;
+        const result = await f.app.request(`${path}?${query}`);
+        expect(result.status).toBe(200);
+        expect(await result.text()).toContain("Connector connected");
+        expect(f.manager.getOAuthStatus(auth.sessionId)).toEqual({ status: "done", result: { connectorId: "synthetic" } });
+        expect(f.token).toHaveBeenCalledTimes(1);
+        expect(f.saveCredentials).toHaveBeenCalledTimes(1);
+        expect(f.setConfig).toHaveBeenCalledTimes(1);
+        expect(f.getStored().connectors[0]).toMatchObject({ oauth: { accessToken: "synthetic-access-token" } });
+        // The callback uses the session's endpoint and PKCE verifier; it never discovers again.
+        expect(f.fetchImpl).toHaveBeenCalledTimes(fetchCount + 1);
+        const [target, init] = f.fetchImpl.mock.calls.at(-1)!;
+        expect(target).toBe("https://tokens.example/token");
+        expect(init?.method).toBe("POST");
+        const body = new URLSearchParams(String(init?.body));
+        expect(body.get("code")).toBe(CODE);
+        expect(body.get("code_verifier")).toBe(f.manager.oauthSessions.get(auth.sessionId).codeVerifier);
+        expect(body.get("redirect_uri")).toBe(REDIRECT_URI);
+      });
+    });
+  });
+
+  it("preserves a noncanonical raw issuer and decodes the query exactly once with a manual client", async () => {
+    const issuer = "https://AS.example:443/tenant/%2F/";
+    const f = fixture({ issuer, manual: true,
+      urls: ["https://as.example/.well-known/oauth-authorization-server/tenant/%2F"],
+      metadata: { ...metadataFor(issuer), authorization_response_iss_parameter_supported: true },
+    });
+    const auth = await f.manager.startOAuth("synthetic", REDIRECT_URI);
+    const result = await f.app.request(`${path}?${callbackQuery(auth.sessionId, "success", [issuer])}`);
+    expect(result.status).toBe(200);
+    expect(f.register).not.toHaveBeenCalled();
+    expect(f.token).toHaveBeenCalledTimes(1);
+    expect(f.getStored().connectors[0]).toMatchObject({ oauthClientId: "manual-client", oauth: { accessToken: "synthetic-access-token" } });
+  });
+
+  it.each(["success", "error"])("rejects bare iss and encoded duplicate keys on a %s response", async (response) => {
+    for (const extra of ["&iss", `&iss=${encodeURIComponent(ISSUER)}&%69ss=${encodeURIComponent(ISSUER)}`]) {
+      const f = fixture();
+      const auth = await f.manager.startOAuth("synthetic", REDIRECT_URI);
+      const query = `${callbackQuery(auth.sessionId, response, [])}${extra}`;
+      await expectCallbackFailure(f, path, auth.sessionId, query, extra === "&iss" ? WRONG_ISSUER : REPEATED_ISSUER);
+    }
+  });
+
+  it("does not reflect untrusted error, description, or issuer values", async () => {
+    for (const validIssuer of [false, true]) {
+      const f = fixture();
+      const auth = await f.manager.startOAuth("synthetic", REDIRECT_URI);
+      const secretUrl = `${REDIRECT_URI}?code=${CODE}&state=${auth.sessionId}&access_token=synthetic-access-token`;
+      const query = callbackQuery(auth.sessionId, "error", [validIssuer ? ISSUER : secretUrl]);
+      query.set("error", secretUrl);
+      query.set("error_description", secretUrl);
+      await expectCallbackFailure(f, path, auth.sessionId, query, validIssuer ? AUTHORIZATION_ERROR : WRONG_ISSUER);
+    }
+  });
+
+  it.each(["success", "error"])("preserves unknown and cancelled state handling on a %s response", async (response) => {
+    const f = fixture({ metadata: { ...metadataFor(ISSUER), authorization_response_iss_parameter_supported: true } });
+    const auth = await f.manager.startOAuth("synthetic", REDIRECT_URI);
+    f.manager.cancelOAuth("synthetic");
+    const fetchCount = f.fetchImpl.mock.calls.length;
+    for (const state of [auth.sessionId, "unknown-state"]) {
+      for (const issValues of [[], [ISSUER], [""], ["https://other.example"], [ISSUER, ISSUER]]) {
+        const result = await f.app.request(`${path}?${callbackQuery(state, response, issValues)}`);
+        expect(result.status).toBe(400);
+        const page = await result.text();
+        expect(page).toContain(state === auth.sessionId ? "OAuth session was cancelled" : "OAuth session not found");
+        expect(page).not.toContain(state);
+        expect(page).not.toContain(CODE);
+        expect(f.manager.getOAuthStatus(auth.sessionId)).toEqual({ status: "cancelled" });
+        expect(f.manager.getOAuthStatus("unknown-state")).toEqual({ status: "missing" });
+        expectNoCallbackEffects(f, fetchCount);
+      }
+    }
   });
 });
