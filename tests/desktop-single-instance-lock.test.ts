@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
 import path from "path";
 
 import {
@@ -6,13 +8,26 @@ import {
   focusExistingWindow,
 } from "../desktop/src/shared/single-instance-lock.cjs";
 
+let root: string;
+let defaultHome: string;
+let devHome: string;
+let appData: string;
+beforeEach(() => {
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hana-client-lock-")));
+  defaultHome = path.join(root, ".hanako");
+  devHome = path.join(root, ".hanako-dev");
+  appData = path.join(root, "appdata");
+  for (const dir of [defaultHome, devHome, appData]) fs.mkdirSync(dir);
+});
+afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
 function makeApp({ gotLock = true } = {}) {
   const handlers = new Map();
   return {
     app: {
       getPath: vi.fn((name) => {
-        if (name === "appData") return path.join("C:", "Users", "me", "AppData", "Roaming");
-        return path.join("C:", "tmp");
+        if (name === "appData") return appData;
+        return root;
       }),
       setPath: vi.fn(),
       requestSingleInstanceLock: vi.fn(() => gotLock),
@@ -27,8 +42,6 @@ function makeApp({ gotLock = true } = {}) {
 describe("desktop client single instance lock", () => {
   it("sets the dev userData namespace before requesting the lock", () => {
     const { app } = makeApp();
-    const defaultHome = path.join("C:", "Users", "me", ".hanako");
-    const devHome = path.join("C:", "Users", "me", ".hanako-dev");
 
     const acquired = configureClientSingleInstance(app, {
       hanakoHome: devHome,
@@ -39,7 +52,7 @@ describe("desktop client single instance lock", () => {
     expect(acquired).toBe(true);
     expect(app.setPath).toHaveBeenCalledWith(
       "userData",
-      path.join("C:", "Users", "me", "AppData", "Roaming", "Hanako-dev"),
+      path.join(fs.realpathSync(appData), "Hanako-dev"),
     );
     expect(app.setPath.mock.invocationCallOrder[0]).toBeLessThan(
       app.requestSingleInstanceLock.mock.invocationCallOrder[0],
@@ -48,7 +61,6 @@ describe("desktop client single instance lock", () => {
 
   it("keeps production in the legacy Electron userData namespace", () => {
     const { app } = makeApp();
-    const defaultHome = path.join("C:", "Users", "me", ".hanako");
 
     const acquired = configureClientSingleInstance(app, {
       hanakoHome: defaultHome,
@@ -59,7 +71,7 @@ describe("desktop client single instance lock", () => {
     expect(acquired).toBe(true);
     expect(app.setPath).toHaveBeenCalledWith(
       "userData",
-      path.join("C:", "Users", "me", "AppData", "Roaming", "Hanako"),
+      path.join(fs.realpathSync(appData), "Hanako"),
     );
     expect(app.requestSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
@@ -68,8 +80,8 @@ describe("desktop client single instance lock", () => {
     const { app } = makeApp({ gotLock: false });
 
     const acquired = configureClientSingleInstance(app, {
-      hanakoHome: path.join("C:", "Users", "me", ".hanako"),
-      defaultHome: path.join("C:", "Users", "me", ".hanako"),
+      hanakoHome: defaultHome,
+      defaultHome,
       onSecondInstance: vi.fn(),
     });
 
@@ -84,8 +96,8 @@ describe("desktop client single instance lock", () => {
     const onSecondInstance = vi.fn();
 
     configureClientSingleInstance(app, {
-      hanakoHome: path.join("C:", "Users", "me", ".hanako"),
-      defaultHome: path.join("C:", "Users", "me", ".hanako"),
+      hanakoHome: defaultHome,
+      defaultHome,
       onSecondInstance,
     });
 

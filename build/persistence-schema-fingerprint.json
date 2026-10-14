@@ -145,6 +145,18 @@
     },
     {
       "expiresOn": "2027-01-31",
+      "id": "desktop-electron-profile-initialization",
+      "kinds": [
+        "mkdir",
+        "write-file"
+      ],
+      "linePattern": "(?:^fs[.]mkdirSync\\((?:canonicalAppData|namespaceDir|userData)[,)]|^fs[.]openSync\\(markerPath,|^fs[.]writeFileSync\\(fd, JSON[.]stringify\\(marker\\))",
+      "ownerModule": "desktop/src/shared/user-data-identity.cjs",
+      "reason": "Creates Electron appData/profile directories and exclusive v2 namespace/identity markers outside HANA_HOME. Markers authorize only a fresh desktop profile, never migration or credential copying; existing unmarked directories fail closed. This is independent of the business data epoch.",
+      "sourceFile": "desktop/src/shared/user-data-identity.cjs"
+    },
+    {
+      "expiresOn": "2027-01-31",
       "id": "desktop-electron-update-cache",
       "kinds": [
         "remove-path"
@@ -668,7 +680,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:6cb80ecc6aad34e044ff4ce8b458973b9373c448d05662b371d88e9ae23d930d",
+  "payloadFingerprint": "sha256:2af7b5f6a9e6bd5625f357767334bb2885fd49b3403d2a608ea3e9ec33cf0b9d",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3368,8 +3380,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Reviewed Pi 1.2.0 JSONL v3: session-manager runtime and types are byte-identical to integrity-verified 1.0.3; old-session reopen, legacy outcomes and durable input tests pass. Only the derived models.json projection moves Hana-only thinking controls to hanaThinkingFormat; canonical provider configuration is unchanged and real registry cold-reload tests preserve controls and capabilities. No stored shape migration required.",
-    "payloadFingerprint": "sha256:6cb80ecc6aad34e044ff4ce8b458973b9373c448d05662b371d88e9ae23d930d"
+    "compatibilityReason": "Desktop pre-ready profile selection adds six narrowly registered Electron appData directory/marker writes outside HANA_HOME. Existing default/dev profiles and all business store readers, schemas, checkpoint/restore policies and DATA_EPOCH remain unchanged. The desktop-window-version-state source hash changes only because its module now wires profile selection before lock/ready; it does not change that store format.",
+    "payloadFingerprint": "sha256:2af7b5f6a9e6bd5625f357767334bb2885fd49b3403d2a608ea3e9ec33cf0b9d"
   },
   "schemas": [
     {
@@ -3691,7 +3703,7 @@
       "contract": "desktop window bounds, pet window options, release announcement bookmark, and update cache version marker readers",
       "kind": "directory-contract",
       "module": "desktop/main.cjs",
-      "sourceHash": "sha256:0210cc68200835fe515a03b55d56576f1007762d28e4ed684d016e5cfae9bb70",
+      "sourceHash": "sha256:5817c1b601e5196bcef7b466ca73557764aeea04612657bc907f14ffaa9b130d",
       "storeId": "desktop-window-version-state"
     },
     {
@@ -6778,6 +6790,14 @@
       "storeId": "desktop-diagnostics"
     },
     {
+      "exemptionId": null,
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Writes epoch-independent desktop launch diagnostics.",
+      "sourceFile": "desktop/bootstrap.cjs",
+      "storeId": "desktop-diagnostics"
+    },
+    {
       "exemptionId": "desktop-external-text-file",
       "kind": "remove-path",
       "ordinal": 0,
@@ -7144,6 +7164,54 @@
       "reason": "Writes epoch-independent desktop launch diagnostics.",
       "sourceFile": "desktop/src/shared/launch-integrity.cjs",
       "storeId": "desktop-diagnostics"
+    },
+    {
+      "exemptionId": "desktop-electron-profile-initialization",
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Creates Electron appData/profile directories and exclusive v2 namespace/identity markers outside HANA_HOME. Markers authorize only a fresh desktop profile, never migration or credential copying; existing unmarked directories fail closed. This is independent of the business data epoch.",
+      "sourceFile": "desktop/src/shared/user-data-identity.cjs",
+      "storeId": null
+    },
+    {
+      "exemptionId": "desktop-electron-profile-initialization",
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Creates Electron appData/profile directories and exclusive v2 namespace/identity markers outside HANA_HOME. Markers authorize only a fresh desktop profile, never migration or credential copying; existing unmarked directories fail closed. This is independent of the business data epoch.",
+      "sourceFile": "desktop/src/shared/user-data-identity.cjs",
+      "storeId": null
+    },
+    {
+      "exemptionId": "desktop-electron-profile-initialization",
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Creates Electron appData/profile directories and exclusive v2 namespace/identity markers outside HANA_HOME. Markers authorize only a fresh desktop profile, never migration or credential copying; existing unmarked directories fail closed. This is independent of the business data epoch.",
+      "sourceFile": "desktop/src/shared/user-data-identity.cjs",
+      "storeId": null
+    },
+    {
+      "exemptionId": "desktop-electron-profile-initialization",
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Creates Electron appData/profile directories and exclusive v2 namespace/identity markers outside HANA_HOME. Markers authorize only a fresh desktop profile, never migration or credential copying; existing unmarked directories fail closed. This is independent of the business data epoch.",
+      "sourceFile": "desktop/src/shared/user-data-identity.cjs",
+      "storeId": null
+    },
+    {
+      "exemptionId": "desktop-electron-profile-initialization",
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Creates Electron appData/profile directories and exclusive v2 namespace/identity markers outside HANA_HOME. Markers authorize only a fresh desktop profile, never migration or credential copying; existing unmarked directories fail closed. This is independent of the business data epoch.",
+      "sourceFile": "desktop/src/shared/user-data-identity.cjs",
+      "storeId": null
+    },
+    {
+      "exemptionId": "desktop-electron-profile-initialization",
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Creates Electron appData/profile directories and exclusive v2 namespace/identity markers outside HANA_HOME. Markers authorize only a fresh desktop profile, never migration or credential copying; existing unmarked directories fail closed. This is independent of the business data epoch.",
+      "sourceFile": "desktop/src/shared/user-data-identity.cjs",
+      "storeId": null
     },
     {
       "exemptionId": null,

@@ -6,20 +6,10 @@
  * get different namespaces, while duplicate launches within the same home are
  * redirected to the first client.
  */
-const path = require("path");
-
-function normalizeForCompare(filePath) {
-  const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
+const { resolveDesktopIdentity, prepareDesktopUserData } = require("./user-data-identity.cjs");
 
 function getUserDataAppName(hanakoHome, defaultHome) {
-  if (normalizeForCompare(hanakoHome) === normalizeForCompare(defaultHome)) {
-    return "Hanako";
-  }
-  const suffix = path.basename(hanakoHome).replace(/^\./, "");
-  if (!suffix) return "Hanako";
-  return suffix.charAt(0).toUpperCase() + suffix.slice(1);
+  return resolveDesktopIdentity(hanakoHome, defaultHome).appName;
 }
 
 function exitDuplicateClient(app) {
@@ -40,10 +30,17 @@ function focusExistingWindow(win) {
 
 function configureClientSingleInstance(app, opts) {
   const { hanakoHome, defaultHome, onSecondInstance } = opts;
-  const appName = getUserDataAppName(hanakoHome, defaultHome);
-  if (appName) {
-    app.setPath("userData", path.join(app.getPath("appData"), appName));
+  if (app.isReady?.()) {
+    throw Object.assign(new Error("Desktop profile must be selected before Electron is ready."), {
+      code: "HANA_DESKTOP_PROFILE_STARTUP",
+    });
   }
+  const selected = prepareDesktopUserData({
+    hanakoHome, defaultHome, appData: app.getPath("appData"),
+    argv: opts.argv, env: opts.env, fsImpl: opts.fsImpl,
+  });
+  app.setPath("userData", selected.userData);
+  if (selected.sessionData) app.setPath("sessionData", selected.sessionData);
 
   const gotLock = app.requestSingleInstanceLock({ hanakoHome });
   if (!gotLock) {

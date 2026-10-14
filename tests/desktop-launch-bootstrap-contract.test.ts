@@ -133,4 +133,45 @@ setTimeout(() => process.exit(0), 100);
     expect(electronIndex).toBeGreaterThan(enableIndex);
     expect(mainIndex).toBeGreaterThan(enableIndex);
   });
+
+  it.each([false, true])("reports profile refusal and stops without GUI or later work (stderr unavailable=%s)", brokenStderr => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-profile-refusal-"));
+    tmpHomesToCleanup.push(tmpHome);
+    const driverPath = path.join(tmpHome, "driver.cjs");
+    fs.writeFileSync(driverPath, `
+const Module = require('node:module');
+const fs = require('node:fs');
+if (${JSON.stringify(brokenStderr)}) {
+  const originalWrite = fs.writeSync;
+  fs.writeSync = (fd, ...args) => {
+    if (fd === 2) throw Object.assign(new Error('synthetic broken stderr'), { code: 'EPIPE' });
+    return originalWrite(fd, ...args);
+  };
+}
+const originalLoad = Module._load;
+Module._load = function(request, parent, isMain) {
+  if (request === 'electron') return { app: { isPackaged: false, exit: () => {} }, dialog: {
+    showErrorBox: () => { process.stdout.write('UNEXPECTED_GUI'); }
+  } };
+  if (request === './main.cjs') throw Object.assign(new Error('Synthetic desktop profile stopped. Use --hana-new-isolated-desktop-profile; browser logins are not inherited.'), { code: 'HANA_DESKTOP_PROFILE_STARTUP' });
+  return originalLoad.call(this, request, parent, isMain);
+};
+require(${JSON.stringify(bootstrapPath)});
+process.stdout.write('UNEXPECTED_CONTINUE');
+`);
+    const result = spawnSync(process.execPath, [driverPath], {
+      env: { ...process.env, HANA_HOME: tmpHome }, encoding: "utf8", timeout: 15000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    if (!brokenStderr) {
+      expect(result.stderr).toContain("--hana-new-isolated-desktop-profile");
+      expect(result.stderr).toContain("browser logins are not inherited");
+    }
+    const diagnostics = path.join(tmpHome, "diagnostics", "desktop-launch");
+    const failure = JSON.parse(fs.readFileSync(path.join(diagnostics, "desktop-main-load-failed.json"), "utf8"));
+    expect(failure.payload.error.code).toBe("HANA_DESKTOP_PROFILE_STARTUP");
+    expect(failure.payload.error.message).toContain("--hana-new-isolated-desktop-profile");
+    expect(JSON.parse(fs.readFileSync(path.join(diagnostics, "launch-marker.json"), "utf8")).payload.status).toBe("desktop-main-load-failed");
+  });
 });

@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import fs from "fs";
+import os from "node:os";
+import vm from "node:vm";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "node:module";
@@ -9,6 +11,19 @@ import { applyDevEnvironment } from "../scripts/dev-env.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, "..");
+const scratch: string[] = [];
+function isolatedPaths() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-startup-contract-"));
+  scratch.push(root);
+  const home = path.join(root, ".hanako");
+  const appData = path.join(root, "appdata");
+  fs.mkdirSync(home);
+  fs.mkdirSync(appData);
+  return { home, appData };
+}
+afterEach(() => {
+  for (const dir of scratch.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
 
 const requireCjs = createRequire(import.meta.url);
 const { configureClientSingleInstance } = requireCjs(
@@ -87,6 +102,31 @@ describe("local startup contract", () => {
     expect(mainCjs.indexOf("configureClientSingleInstance(app")).toBeLessThan(
       mainCjs.indexOf("app.whenReady()"),
     );
+  });
+
+  it("main passes the explicit launch choice before later startup work and refusal stops that work", () => {
+    const { home, appData } = isolatedPaths();
+    const custom = path.join(path.dirname(home), "custom"); fs.mkdirSync(custom);
+    fs.mkdirSync(path.join(appData, "Custom"));
+    const source = fs.readFileSync(path.join(ROOT, "desktop/main.cjs"), "utf8");
+    const start = source.indexOf('const defaultHome = path.join(os.homedir(), ".hanako");');
+    const end = source.indexOf('\nif (process.platform === "win32")', start);
+    expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
+    const continued = vi.fn(); const setPath = vi.fn();
+    const context = {
+      path, os: { homedir: () => path.dirname(home) }, hanakoHome: custom,
+      app: { getPath: () => appData, setPath, requestSingleInstanceLock: () => true, on: () => {} },
+      process: { argv: [], env: { HANA_HOME: custom }, exit: vi.fn() },
+      configureClientSingleInstance, showPrimaryWindow: vi.fn(), continued,
+    };
+    const block = source.slice(start, end) + "\ncontinued();";
+    expect(() => vm.runInNewContext(block, context)).toThrow(/--hana-new-isolated-desktop-profile/);
+    expect(continued).not.toHaveBeenCalled(); expect(setPath).not.toHaveBeenCalled();
+    context.process.argv.push("--hana-new-isolated-desktop-profile");
+    vm.runInNewContext(block, { ...context });
+    expect(continued).toHaveBeenCalledOnce();
+    expect(setPath.mock.calls.map(c => c[0])).toEqual(["userData", "sessionData"]);
+    expect(context.process.env.HANA_HOME).toBe(custom);
   });
 
   it("keeps jsdom external in the server bundle for packaged runtime", () => {
@@ -169,13 +209,14 @@ describe("local startup contract", () => {
   });
 
   it("configureClientSingleInstance triggers onSecondInstance when Electron emits second-instance", () => {
+    const { home, appData } = isolatedPaths();
     const calls = [];
     const handlers = {};
     const fakeApp = {
       setPath: (key, value) => {
         calls.push(["setPath", key, value]);
       },
-      getPath: (key) => (key === "appData" ? "/tmp/appdata" : ""),
+      getPath: (key) => (key === "appData" ? appData : ""),
       requestSingleInstanceLock: () => true,
       on: (event, fn) => {
         handlers[event] = fn;
@@ -189,8 +230,8 @@ describe("local startup contract", () => {
     };
     let secondInstanceCalls = 0;
     const got = configureClientSingleInstance(fakeApp, {
-      hanakoHome: "/tmp/hana-home",
-      defaultHome: "/home/user/.hanako",
+      hanakoHome: home,
+      defaultHome: home,
       onSecondInstance: () => {
         secondInstanceCalls += 1;
       },
@@ -205,10 +246,11 @@ describe("local startup contract", () => {
   });
 
   it("configureClientSingleInstance exits the duplicate client when the lock cannot be acquired", () => {
+    const { home, appData } = isolatedPaths();
     const calls = [];
     const fakeApp = {
       setPath: () => {},
-      getPath: () => "/tmp/appdata",
+      getPath: () => appData,
       requestSingleInstanceLock: () => false,
       on: () => {
         throw new Error("should not subscribe when no lock");
@@ -222,8 +264,8 @@ describe("local startup contract", () => {
     };
     let secondInstanceCalls = 0;
     const got = configureClientSingleInstance(fakeApp, {
-      hanakoHome: "/tmp/hana-home",
-      defaultHome: "/home/user/.hanako",
+      hanakoHome: home,
+      defaultHome: home,
       onSecondInstance: () => {
         secondInstanceCalls += 1;
       },

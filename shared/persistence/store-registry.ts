@@ -1496,6 +1496,15 @@ function exemption(
 
 export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.freeze([
   exemption(
+    "desktop-electron-profile-initialization",
+    "desktop/src/shared/user-data-identity.cjs",
+    "desktop/src/shared/user-data-identity.cjs",
+    "Creates Electron appData/profile directories and exclusive v2 namespace/identity markers outside HANA_HOME. Markers authorize only a fresh desktop profile, never migration or credential copying; existing unmarked directories fail closed. This is independent of the business data epoch.",
+    "2027-01-31",
+    ["mkdir", "write-file"],
+    "(?:^fs[.]mkdirSync\\((?:canonicalAppData|namespaceDir|userData)[,)]|^fs[.]openSync\\(markerPath,|^fs[.]writeFileSync\\(fd, JSON[.]stringify\\(marker\\))",
+  ),
+  exemption(
     "data-epoch-durable-json-primitive",
     "shared/data-epoch.cjs",
     "shared/data-epoch.cjs",

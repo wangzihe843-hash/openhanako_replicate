@@ -202,10 +202,17 @@ function loadDesktopMain() {
     const diagnosticPath = writeDiagnostic("desktop-main-load-failed.json", "desktop-main-load-failed", payload);
     appendLaunchLog("desktop-main-load-failed", { ...payload, diagnosticPath });
     writeLaunchMarker("desktop-main-load-failed", { diagnosticPath });
-    showBootstrapError(
-      "HanaAgent Launch Failed",
-      `HanaAgent failed before the desktop main process finished loading.\n\n${err?.message || err}\n\nDiagnostic file:\n${diagnosticPath || diagnosticsDir}`,
-    );
+    const detail = `HanaAgent failed before the desktop main process finished loading.\n\n${err?.message || err}\n\nDiagnostic file:\n${diagnosticPath || diagnosticsDir}`;
+    if (err?.code === "HANA_DESKTOP_PROFILE_STARTUP") {
+      // A terminal/relaunch option makes the choice before ready; no GUI prompt
+      // or temporary profile. Synchronous stderr survives the immediate exit.
+      // Even a closed stderr pipe must not reach the uncaughtException handler
+      // (which intentionally ignores EPIPE) and let Electron continue to ready.
+      try { fs.writeSync(2, detail + "\n"); }
+      finally { exitAfterBootstrapFailure(); }
+    } else {
+      showBootstrapError("HanaAgent Launch Failed", detail);
+    }
     exitAfterBootstrapFailure();
   }
 }

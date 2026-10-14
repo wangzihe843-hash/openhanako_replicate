@@ -283,15 +283,17 @@ async function serverEnvironmentForNetworkProxy(baseEnv) {
   }, baseEnv, config);
 }
 
-// 按 HANA_HOME 隔离 Electron userData（localStorage / cache / session）
-// 生产: ~/Library/Application Support/Hanako（历史目录，随 HanaAgent 显示名保留）
-// 开发: ~/Library/Application Support/Hanako-dev
+// 同步选定桌面档案，再申请锁；错误交给 bootstrap 输出并停止加载。
+// 真实默认/惯用 dev 保留 Hanako/Hanako-dev，其他完整规范 HOME 使用摘要。
+// 首次遇到旧档案须显式 --hana-new-isolated-desktop-profile；不复制旧数据。
 const defaultHome = path.join(os.homedir(), ".hanako");
-configureClientSingleInstance(app, {
+if (!configureClientSingleInstance(app, {
   hanakoHome,
   defaultHome,
+  argv: process.argv,
+  env: process.env,
   onSecondInstance: () => showPrimaryWindow(),
-});
+})) process.exit(0);
 
 if (process.platform === "win32") {
   app.setAppUserModelId(APP_USER_MODEL_ID);
