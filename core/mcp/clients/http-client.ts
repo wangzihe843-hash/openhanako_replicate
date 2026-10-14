@@ -871,11 +871,14 @@ export class McpLegacySseClient {
   declare _abort: any;
   declare _buffer: any;
   declare _closed: any;
+  declare _closeError: unknown;
   declare _endpointReject: any;
   declare _endpointResolve: any;
+  declare _generation: number;
   declare _nextId: any;
   declare _pending: any;
   declare _queued: any;
+  declare _reader: ReadableStreamDefaultReader<Uint8Array> | null;
   declare _stopping: any;
   declare fetchImpl: any;
   declare getAuthToken: any;
@@ -902,11 +905,14 @@ export class McpLegacySseClient {
     this._pending = new Map();
     this._queued = new Map();
     this._closed = true;
+    this._closeError = null;
     this._stopping = false;
     this._buffer = "";
     this._abort = null;
     this._endpointResolve = null;
     this._endpointReject = null;
+    this._generation = 0;
+    this._reader = null;
   }
 
   get running() {
@@ -916,18 +922,36 @@ export class McpLegacySseClient {
   async start() {
     if (this.running) return;
     if (!this.sseUrl) throw new Error("MCP connector URL is required");
+    const generation = this._generation + 1;
+    await this.stop();
+    if (generation !== this._generation) throw new Error("MCP connector stopped");
     this._closed = false;
+    this._closeError = null;
     this._stopping = false;
+    const abort = new AbortController();
+    this._abort = abort;
     try {
-      await this._connectSse();
-      await this.initialize();
+      await this._connectSse(generation, abort);
+      this._assertGeneration(generation);
+      await this.initialize(generation);
+      this._assertGeneration(generation);
     } catch (err) {
-      await this.stop().catch(() => {});
-      throw err;
+      const error = abort.signal.aborted ? abort.signal.reason : err;
+      if (generation === this._generation) await this.stop().catch(() => {});
+      throw error;
     }
   }
 
-  async initialize() {
+  _isCurrentGeneration(generation) {
+    return generation === this._generation && !this._closed;
+  }
+
+  _assertGeneration(generation) {
+    if (this._isCurrentGeneration(generation)) return;
+    throw (generation === this._generation && this._closeError) || new Error("MCP connector stopped");
+  }
+
+  async initialize(generation = this._generation) {
     const result = await this.request("initialize", {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
@@ -937,6 +961,7 @@ export class McpLegacySseClient {
         version: "0.1.0",
       },
     });
+    this._assertGeneration(generation);
     await this.notify("notifications/initialized", {});
     return result;
   }
@@ -960,24 +985,28 @@ export class McpLegacySseClient {
   async request(method, params = {}, { timeout = requestTimeoutMs(this.server), signal }: McpRequestOptions = {}) {
     throwIfAborted(signal);
     if (!this.running) throw new Error("MCP connector is not running");
+    const generation = this._generation;
     return withRequestDeadline(signal, timeout, async (requestSignal) => {
       try {
         return await this._sendRequest(method, params, requestSignal);
       } catch (err) {
         throwIfAborted(requestSignal);
+        if (!this._isCurrentGeneration(generation)) throw err;
         if (isAbortError(err)) throw err;
         // 401 OAuth self-heal (方案 A, single retry). Force a token refresh and, if
         // it yields a new token, replay the request once with a fresh id. A second
         // 401 or no refresh rethrows. No loop.
         if (err instanceof McpHttpError && err.status === 401 && this.refreshAuthToken) {
           const newToken = stringOrEmpty(await waitWithSignal(
-            observeAuthFailure(this, () => this.refreshAuthToken()), requestSignal,
+            observeAuthFailure({ _failLiveSession: (error) => this._failLiveSession(error, generation) },
+              () => this.refreshAuthToken()), requestSignal,
           ));
           throwIfAborted(requestSignal);
+          this._assertGeneration(generation);
           if (newToken) return this._sendRequest(method, params, requestSignal);
         }
         if (isSessionExpiredHttpError(err)) {
-          this._failLiveSession(err);
+          this._failLiveSession(err, generation);
         }
         throw err;
       }
@@ -1029,107 +1058,130 @@ export class McpLegacySseClient {
 
   async stop() {
     this._stopping = true;
-    this._closed = true;
-    this.messageEndpoint = "";
-    try { this._abort?.abort(); } catch {}
-    this._abort = null;
-    for (const pending of this._pending.values()) {
-      pending.reject(new Error("MCP connector stopped"));
-    }
-    this._pending.clear();
+    this._handleStreamClosed(new Error("MCP connector stopped"));
+    // Invalidate even an already-closed generation: a start continuation may
+    // still be waiting to open it, and must not undo a newer stop/start intent.
+    this._generation += 1;
   }
 
-  _failLiveSession(err) {
-    if (isAbortError(err) || this._stopping || this._closed) return;
-    this.messageEndpoint = "";
-    this._closed = true;
-    for (const pending of this._pending.values()) {
-      pending.reject(err);
-    }
-    this._pending.clear();
-    this.onClose?.({
-      reason: err?.message || "connection lost",
-      expected: false,
-      needsAuth: isAuthTerminalError(err),
-    });
+  _failLiveSession(err, generation = this._generation) {
+    if (isAbortError(err) || this._stopping) return;
+    this._handleStreamClosed(err, generation, isAuthTerminalError(err));
   }
 
-  async _connectSse() {
-    this._abort = new AbortController();
+  async _connectSse(generation, abort) {
     const endpointPromise = new Promise((resolve, reject) => {
       this._endpointResolve = resolve;
       this._endpointReject = reject;
     });
-    const response = await this.fetchImpl(this.sseUrl, {
-      method: "GET",
-      headers: await this._headers({ accept: SSE_ACCEPT, includeJson: false }),
-      signal: this._abort.signal,
-    });
+    // stop() can settle the endpoint while headers/fetch are still pending.
+    // Observe that rejection immediately, before awaiting those operations.
+    endpointPromise.catch(() => {});
+    const headers = await waitWithSignal(this._headers({ accept: SSE_ACCEPT, includeJson: false }, generation), abort.signal);
+    this._assertGeneration(generation);
+    let fetchedResponse;
+    let response: Response;
+    try {
+      response = await waitWithSignal<Response>(Promise.resolve(this.fetchImpl(this.sseUrl, {
+        method: "GET",
+        headers,
+        signal: abort.signal,
+      })).then((value) => {
+        fetchedResponse = value;
+        if (!this._isCurrentGeneration(generation)) value.body?.cancel().catch(() => {});
+        return value;
+      }), abort.signal);
+      this._assertGeneration(generation);
+    } catch (err) {
+      // The fetch may have resolved just before stop won the cancellable wait.
+      // Its body has not been handed to a reader yet, but still needs disposal.
+      fetchedResponse?.body?.cancel().catch(() => {});
+      throw err;
+    }
     if (!response.ok) {
-      const body = await responseText(response);
+      const body = await waitWithSignal(responseText(response), abort.signal);
+      this._assertGeneration(generation);
       throw new McpHttpError(methodErrorMessage(response.status, body), {
         status: response.status,
         body,
         headers: response.headers,
       });
     }
-    this._readSse(response.body).catch((err) => {
-      if (!this._closed) {
-        this._endpointReject?.(err);
-        for (const pending of this._pending.values()) pending.reject(err);
-        this._pending.clear();
-      }
-    });
+    this._readSse(response.body, generation).catch((err) => this._handleStreamClosed(err, generation));
     await withTimeout(endpointPromise, requestTimeoutMs(this.server), "MCP legacy SSE endpoint event timed out");
   }
 
-  async _readSse(body) {
-    if (!body?.getReader) {
-      const text = await responseText({ text: async () => "" });
-      this._consumeSse(text);
-      this._handleStreamClosed("SSE stream produced no readable body");
+  async _readSse(body, generation = this._generation) {
+    if (!this._isCurrentGeneration(generation)) {
+      body?.cancel?.().catch(() => {});
       return;
     }
-    const decoder = new TextDecoder();
-    const reader = body.getReader();
-    while (!this._closed) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      this._consumeSse(decoder.decode(value, { stream: true }));
+    let reader;
+    try {
+      if (!body?.getReader) throw new Error("SSE stream produced no readable body");
+      const decoder = new TextDecoder();
+      reader = body.getReader();
+      this._reader = reader;
+      while (this._isCurrentGeneration(generation)) {
+        const { value, done } = await reader.read();
+        if (!this._isCurrentGeneration(generation)) return;
+        if (done) break;
+        this._consumeSse(decoder.decode(value, { stream: true }), generation);
+      }
+      this._consumeSse(decoder.decode(), generation);
+      this._handleStreamClosed(new Error("SSE stream closed by remote"), generation);
+    } catch (err) {
+      // A source AbortError is a dead shared GET unless this generation was
+      // deliberately stopped. It is not a caller's per-request cancellation.
+      this._handleStreamClosed(err, generation);
+    } finally {
+      if (this._reader === reader) this._reader = null;
+      reader?.releaseLock();
     }
-    this._consumeSse(decoder.decode());
-    // The stream ended. Whether the remote closed it or stop() aborted it, the
-    // live session is gone — clear messageEndpoint so running() stops lying
-    // (the :288 stale-positive), reject any in-flight requests, and report an
-    // unexpected close unless this was a deliberate stop().
-    this._handleStreamClosed("SSE stream closed by remote");
   }
 
-  _handleStreamClosed(reason) {
-    const wasLive = !this._closed && !!this.messageEndpoint;
-    this.messageEndpoint = "";
-    if (this._stopping) return;
-    if (!wasLive) return;
+  _handleStreamClosed(err, generation = this._generation, needsAuth = false) {
+    if (!this._isCurrentGeneration(generation)) return;
     this._closed = true;
+    this._closeError = err;
+    this.messageEndpoint = "";
+    this._buffer = "";
+    this._queued.clear();
+    this._endpointReject?.(err);
+    this._endpointResolve = null;
+    this._endpointReject = null;
+    // Settle with the original error before onClose can synchronously stop us.
     for (const pending of this._pending.values()) {
-      pending.reject(new Error(reason));
+      pending.reject(err);
     }
     this._pending.clear();
-    this.onClose?.({ reason, expected: false });
+    const abort = this._abort;
+    const reader = this._reader;
+    const expected = this._stopping;
+    this._abort = null;
+    this._reader = null;
+    try { abort?.abort(err); } catch { /* Still dispose the reader if abort fails. */ }
+    reader?.cancel(err).catch(() => {});
+    if (!expected && generation === this._generation) {
+      this.onClose?.({ reason: err?.message || "connection lost", expected: false, needsAuth });
+    }
   }
 
-  _consumeSse(chunk) {
+  _consumeSse(chunk, generation = this._generation) {
+    if (!this._isCurrentGeneration(generation)) return;
     this._buffer += chunk;
     let index;
     while ((index = this._buffer.search(/\r?\n\r?\n/)) !== -1) {
+      if (!this._isCurrentGeneration(generation)) return;
       const block = this._buffer.slice(0, index);
       this._buffer = this._buffer.slice(this._buffer[index] === "\r" ? index + 4 : index + 2);
       const [event] = parseSseEvents(block + "\n\n");
-      if (event) this._handleSseEvent(event);
+      if (event) this._handleSseEvent(event, generation);
     }
   }
 
-  _handleSseEvent(event) {
+  _handleSseEvent(event, generation = this._generation) {
+    if (!this._isCurrentGeneration(generation)) return;
     if (event.event === "endpoint") {
       this.messageEndpoint = resolveEndpoint(event.data, this.sseUrl);
       this._endpointResolve?.(this.messageEndpoint);
@@ -1178,12 +1230,17 @@ export class McpLegacySseClient {
   }
 
   async _postMessage(payload, { signal, onDispatch }: McpRequestOptions & { onDispatch?: () => void } = {}) {
-    return withRequestDeadline(signal, requestTimeoutMs(this.server), async (requestSignal) => {
+    const generation = this._generation;
+    const endpoint = this.messageEndpoint;
+    const connectionSignal = this._abort
+      ? AbortSignal.any([this._abort.signal, ...(signal ? [signal] : [])]) : signal;
+    return withRequestDeadline(connectionSignal, requestTimeoutMs(this.server), async (requestSignal) => {
       assertValidUnicodeBoundary(payload);
-      const headers = await waitWithSignal(this._headers({ accept: "application/json", includeJson: true }), requestSignal);
+      const headers = await waitWithSignal(this._headers({ accept: "application/json", includeJson: true }, generation), requestSignal);
       throwIfAborted(requestSignal);
+      this._assertGeneration(generation);
       onDispatch?.();
-      const response = await waitWithSignal<Response>(this.fetchImpl(this.messageEndpoint, {
+      const response = await waitWithSignal<Response>(this.fetchImpl(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
@@ -1202,10 +1259,11 @@ export class McpLegacySseClient {
     });
   }
 
-  async _headers({ accept, includeJson }) {
+  async _headers({ accept, includeJson }, generation = this._generation) {
     const headers: any = { ...connectorHeaders(this.server), Accept: accept };
     if (includeJson) headers["Content-Type"] = "application/json";
-    const token = await observeAuthFailure(this, () => requestAuthToken(this.server, this.getAuthToken));
+    const token = await observeAuthFailure({ _failLiveSession: (err) => this._failLiveSession(err, generation) },
+      () => requestAuthToken(this.server, this.getAuthToken));
     if (token) headers.Authorization = `Bearer ${token}`;
     return headers;
   }
