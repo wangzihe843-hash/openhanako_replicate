@@ -83,7 +83,7 @@ describe("ProviderRegistry media capabilities", () => {
     const gemini = byId.get("gemini");
 
     const gptImage = openai?.models.find((model) => model.id === "gpt-image-1.5");
-    const dalle = openai?.models.find((model) => model.id === "dall-e-3");
+    const dalle = registry.resolveMediaModel({ providerId: "openai", modelId: "dall-e-3" }).model;
     expect(gptImage?.modes).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "image2image",

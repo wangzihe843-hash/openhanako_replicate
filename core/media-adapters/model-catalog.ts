@@ -1,17 +1,18 @@
 /**
  * core/media-adapters/model-catalog.ts
  *
- * Single source of truth for all image-generation model catalogs.
+ * Legacy image-adapter ID and alias catalog.
  * Adapters use resolveModelId() for short-name → full-ID resolution.
- * Routes use getKnownModels() for provider summary and settings UI.
+ * Current menus come from ProviderRegistry media capabilities; getKnownModels()
+ * also omits unlisted entries while explicit IDs and aliases remain resolvable.
  *
  * Adding a new model: append one entry to the relevant provider array.
  * Set default: true only when the provider's implicit model should change.
- * Everything else (adapter fallback, settings UI, tool description) picks it up automatically.
+ * ProviderRegistry declarations must be maintained separately for current menus.
  */
 
 /**
- * @typedef {{ id: string, name: string, aliases?: string[], default?: boolean }} ModelEntry
+ * @typedef {{ id: string, name: string, aliases?: string[], default?: boolean, listed?: boolean }} ModelEntry
  */
 
 /** @type {Record<string, ModelEntry[]>} */
@@ -24,7 +25,7 @@ export const MODEL_CATALOG = {
     { id: "doubao-seedream-5-0-260128", name: "Seedream 5.0", aliases: ["5.0"] },
   ],
   openai: [
-    { id: "dall-e-3", name: "DALL-E 3", aliases: ["dalle3", "dall-e-3"] },
+    { id: "dall-e-3", name: "DALL-E 3", aliases: ["dalle3", "dall-e-3"], listed: false },
     { id: "gpt-image-1-mini", name: "GPT Image 1 Mini", aliases: ["1-mini", "mini"] },
     { id: "gpt-image-1", name: "GPT Image 1", aliases: ["1"] },
     { id: "gpt-image-1.5", name: "GPT Image 1.5", aliases: ["1.5"], default: true },
@@ -76,7 +77,7 @@ export function resolveModelId(provider, raw) {
 
   throw new Error(
     `Unknown image model "${raw}" for provider "${provider}". `
-    + `Available models: ${catalog.map(entry => entry.id).join(", ")}`,
+    + `Available models: ${getKnownModels(provider).map(entry => entry.id).join(", ")}`,
   );
 }
 
@@ -90,7 +91,7 @@ export function resolveModelId(provider, raw) {
 export function getKnownModels(provider) {
   const catalog = MODEL_CATALOG[provider];
   if (!catalog) return [];
-  return catalog.map(({ id, name }) => ({ id, name }));
+  return catalog.filter(entry => entry.listed !== false).map(({ id, name }) => ({ id, name }));
 }
 
 /**

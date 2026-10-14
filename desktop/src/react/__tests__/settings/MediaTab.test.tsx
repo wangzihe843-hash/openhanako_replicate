@@ -181,6 +181,38 @@ describe('MediaTab media config', () => {
     });
   });
 
+  it.each([false, true])('preserves an old DALL-E default without autosaving (explicitly configured=%s)', async explicitlyConfigured => {
+    const current = { id: 'gpt-image-1.5', name: 'GPT Image 1.5', adapterAvailable: true };
+    mocks.hanaFetch.mockImplementation((path: string) => {
+      if (path === '/api/media/image/providers') {
+        return Promise.resolve(jsonResponse({
+          providers: {
+            openai: {
+              providerId: 'openai',
+              displayName: 'OpenAI',
+              hasCredentials: true,
+              models: [current, ...(explicitlyConfigured ? [{ id: 'dall-e-3', name: 'Saved DALL-E', adapterAvailable: true }] : [])],
+              availableModels: [],
+            },
+          },
+          config: { defaultImageModel: { provider: 'openai', id: 'dall-e-3' } },
+        }));
+      }
+      return Promise.resolve(jsonResponse({ providers: {}, config: {} }));
+    });
+
+    const view = render(<MediaTab />);
+    const select = screen.getByLabelText('settings.media.defaultModel') as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('openai/dall-e-3'));
+    const oldOption = Array.from(select.options).find(option => option.value === 'openai/dall-e-3');
+    expect(oldOption?.disabled).toBe(!explicitlyConfigured);
+    expect(oldOption?.textContent).toBe(explicitlyConfigured ? 'openai / Saved DALL-E' : 'openai / dall-e-3');
+    expect(Array.from(select.options).find(option => option.value === 'openai/gpt-image-1.5')?.disabled).toBe(false);
+    view.rerender(<MediaTab />);
+    expect(select.value).toBe('openai/dall-e-3');
+    expect(mocks.hanaFetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
+  });
+
   it('loads global media config without agent scope and saves through the generic config envelope', async () => {
     render(<MediaTab />);
 

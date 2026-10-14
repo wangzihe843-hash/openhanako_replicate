@@ -1171,7 +1171,7 @@ export class ProviderRegistry {
     return plans;
   }
 
-  getMediaModels(providerId, capability) {
+  getMediaModels(providerId, capability, { includeUnlisted = false } = {}) {
     if (this._entries.size === 0) this.reload();
     const entry = this._entries.get(providerId) || this.get(providerId);
     if (!entry) return [];
@@ -1189,7 +1189,10 @@ export class ProviderRegistry {
       if (hasRuntimeSource && !byId.has(model.id)) continue;
       byId.set(model.id, { ...(byId.get(model.id) || {}), ...model });
     }
-    return [...byId.values()];
+    // Unlisted declarations keep their schemas and aliases for old references.
+    // A model explicitly saved by the user remains in their catalog.
+    const userModelIds = new Set(userModels.map((model) => model.id));
+    return [...byId.values()].filter((model) => includeUnlisted || model.listed !== false || userModelIds.has(model.id));
   }
 
   getMediaCredentialLanes(providerId, capability = "image_generation") {
@@ -1264,12 +1267,12 @@ export class ProviderRegistry {
     };
   }
 
-  getMediaProviders(capability) {
+  getMediaProviders(capability, { includeUnlisted = false } = {}) {
     if (this._entries.size === 0) this.reload();
     const key = capabilityKey(capability);
     const providers = [];
     for (const entry of this._entries.values()) {
-      const models = this.getMediaModels(entry.id, capability);
+      const models = this.getMediaModels(entry.id, capability, { includeUnlisted });
       const runtimeCapability = this.getRuntimeMediaCapabilityState(entry.id);
       const runtimeMedia = this._runtimeMediaCapabilities.get(entry.id)?.media;
       const exposesCapability = entry.capabilities?.media?.[key] !== undefined || runtimeMedia?.[key] !== undefined;
@@ -1304,7 +1307,7 @@ export class ProviderRegistry {
         );
       }
     }
-    const models = this.getMediaModels(providerId, capability);
+    const models = this.getMediaModels(providerId, capability, { includeUnlisted: true });
     const model = models.find((item) => item.id === modelId || item.aliases?.includes?.(modelId));
     if (!model) throw new Error(`Media model "${providerId}/${modelId}" not found`);
     const key = capabilityKey(capability);

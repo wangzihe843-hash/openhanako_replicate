@@ -69,6 +69,8 @@ export const openaiPlugin = {
           gptImageModel("gpt-image-1-mini", "GPT Image 1 Mini", ["1-mini", "mini"]),
           {
             id: "dall-e-3",
+            // Retired by OpenAI on 2026-05-12; retain explicit config/proxy compatibility.
+            listed: false,
             displayName: "DALL-E 3",
             protocolId: "openai-images",
             inputs: ["text"],

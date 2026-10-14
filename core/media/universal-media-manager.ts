@@ -463,7 +463,7 @@ export class UniversalMediaManager {
 
   _validateImageConfigPatch(updates) {
     if (updates.providerDefaults) {
-      validateMediaProviderDefaults(updates.providerDefaults, this._providers.getMediaProviders(IMAGE_CAPABILITY), this.getImageConfig().providerDefaults);
+      validateMediaProviderDefaults(updates.providerDefaults, this._providers.getMediaProviders(IMAGE_CAPABILITY, { includeUnlisted: true }), this.getImageConfig().providerDefaults);
     }
     if (!Object.prototype.hasOwnProperty.call(updates, "defaultImageModel")) return;
     const value = updates.defaultImageModel;
