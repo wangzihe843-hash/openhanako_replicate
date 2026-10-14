@@ -40,12 +40,12 @@ describe.each(httpModes)("%s successful HTTP body", (mode) => {
     await expect(response[method]()).rejects.toBe(error);
   });
 
-  const compatible = [
+  const successfulReads = [
     "normal", "content-empty", "structured-null", "rpc-null", "bare-null",
     "empty-200", "empty-202", "empty-204", "json-wrong-id", "json-notification",
     "sse-normal", "sse-heartbeat-result", "sse-wrong-id-result",
   ];
-  it.each(compatible)("keeps existing successful-read behavior: %s", async (kind) => {
+  it.each(successfulReads)("validates a successfully read reply: %s", async (kind) => {
     const h = await fixture(mode);
     const result = complete(mode);
     h.reply((body) => {
@@ -63,11 +63,16 @@ describe.each(httpModes)("%s successful HTTP body", (mode) => {
       );
       return h.respond(body, result);
     });
+    if (["bare-null", "json-wrong-id", "json-notification"].includes(kind) || kind.startsWith("empty-")) {
+      await expect(h.client.callTool("write", {})).rejects.toThrow("Invalid MCP JSON-RPC response");
+      expect(h.closes).toHaveLength(1);
+      expect(h.closes[0].needsAuth).toBe(false);
+      expect(h.calls).toHaveLength(1);
+      return;
+    }
     const value = await h.client.callTool("write", {});
-    // The empty/mismatched JSON envelope cases are pre-existing permissiveness,
-    // not valid MCP tool results. This patch must not change protocol validation.
-    if (["rpc-null", "bare-null"].includes(kind) || kind.startsWith("empty-")) expect(value).toBeNull();
-    else if (kind === "json-notification") expect(value).toBeUndefined();
+    // A present null result is distinct from a bare null or missing response.
+    if (kind === "rpc-null") expect(value).toBeNull();
     else if (kind === "content-empty") expect(value.content).toEqual([]);
     else if (kind === "structured-null") expect(value.structuredContent).toBeNull();
     else expect(value).toEqual(result);

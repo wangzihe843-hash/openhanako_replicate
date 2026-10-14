@@ -839,7 +839,26 @@ export class McpStreamableHttpClient {
           throw new Error(`MCP response for "${payload.method}" was not found in SSE stream`);
         }
         const message = text ? JSON.parse(text) : null;
-        if (!message) return null;
+        const invalidResponse = `Invalid MCP JSON-RPC response for "${payload.method}"`;
+        if (!message || typeof message !== "object" || Array.isArray(message)
+          || message.jsonrpc !== "2.0" || Object.prototype.hasOwnProperty.call(message, "method")) {
+          throw new Error(`${invalidResponse}: expected a response object`);
+        }
+        const hasResult = Object.prototype.hasOwnProperty.call(message, "result");
+        const hasError = Object.prototype.hasOwnProperty.call(message, "error");
+        if (hasResult === hasError) {
+          throw new Error(`${invalidResponse}: expected exactly one of result or error`);
+        }
+        if (hasError && (!message.error || typeof message.error !== "object" || Array.isArray(message.error)
+          || !Number.isInteger(message.error.code) || typeof message.error.message !== "string")) {
+          throw new Error(`${invalidResponse}: invalid error object`);
+        }
+        // A server unable to read the request ID may omit it (MCP) or send null
+        // (JSON-RPC). Preserve a valid error's diagnostic, never a success result.
+        if (!(hasError && message.id == null)
+          && (!(typeof message.id === "string" || Number.isInteger(message.id)) || message.id !== payload.id)) {
+          throw new Error(`${invalidResponse}: response ID does not match the request`);
+        }
         return rpcResult(message);
       } finally {
         requestSignal.removeEventListener("abort", onAbort);

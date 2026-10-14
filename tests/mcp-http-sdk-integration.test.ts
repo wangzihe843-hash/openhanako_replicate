@@ -31,7 +31,7 @@ function expectErrorAtEveryLayer(out, isError) {
 
 describe.each(httpModes)("%s through engine and installed Pi AgentSession", (mode) => {
   describe.each([false, true])("deferred=%s", (deferred) => {
-    it.each(["body-json", "body-sse", "rpc-error", "tool-error", "abort-source", "empty"])(
+    it.each(["body-json", "body-sse", "rpc-error", "tool-error", "abort-source", "empty", "wrong-id", "string-id", "bare-null"])(
       "preserves %s in event, canonical result and next provider context", async (kind) => {
         const h = await fixture(mode);
         h.reply((body) => {
@@ -40,6 +40,9 @@ describe.each(httpModes)("%s through engine and installed Pi AgentSession", (mod
             { contentType: kind === "body-json" ? "application/json" : "text/event-stream" },
           );
           if (kind === "rpc-error") return json({ jsonrpc: "2.0", id: body.id, error: { code: -32603, message: "fixture RPC failure" } });
+          if (kind === "wrong-id") return json(envelope(body.id + 100, complete(mode)));
+          if (kind === "string-id") return json(envelope(String(body.id), complete(mode)));
+          if (kind === "bare-null") return json(null);
           if (kind === "tool-error") return h.respond(body, { ...complete(mode, "business rejected"), isError: true, structuredContent: { rejected: true } });
           if (kind === "abort-source") return truncated("prefix", { error: new DOMException("source cancelled", "AbortError") });
           return h.respond(body, { ...complete(mode), content: [], structuredContent: null });
@@ -57,6 +60,15 @@ describe.each(httpModes)("%s through engine and installed Pi AgentSession", (mod
           }
           expect(h.closes).toHaveLength(1);
           expect(h.closes[0].needsAuth).toBe(false);
+        }
+        if (["wrong-id", "string-id", "bare-null"].includes(kind)) {
+          for (const result of [out.event.result, out.canonical, out.provider]) {
+            expect(JSON.stringify(result)).toContain("Invalid MCP JSON-RPC response");
+            expect(JSON.stringify(result)).not.toMatch(/Cannot read properties of (null|undefined)/);
+          }
+          expect(h.closes).toHaveLength(1);
+          expect(h.closes[0].needsAuth).toBe(false);
+          expect(h.client.running).toBe(false);
         }
         if (kind === "tool-error") expect(out.event.result.structuredContent).toEqual({ rejected: true });
         if (kind === "empty") {
