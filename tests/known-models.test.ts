@@ -373,13 +373,14 @@ describe("known-models dictionary", () => {
 
   it("declares the stable Kimi for Coding model for Kimi Coding Plan", () => {
     expect(lookupKnown("kimi-coding", "kimi-for-coding")).toMatchObject({
-      name: "Kimi for Coding",
+      name: "Kimi K2.8 Preview",
       context: 262144,
+      maxContext: 1048576,
       maxOutput: 32768,
       image: true,
       reasoning: true,
       thinkingLevels: ["off", "low", "high", "max"],
-      defaultThinkingLevel: "high",
+      defaultThinkingLevel: "max",
       thinkingLevelMap: {
         off: null,
         low: "low",
@@ -399,29 +400,30 @@ describe("known-models dictionary", () => {
     const k3_256k = lookupKnownProvider("kimi-coding", "k3-256k");
     expect(k3).toMatchObject({
       name: "Kimi K3",
-      context: 1048576,
+      context: 262144,
+      maxContext: 1048576,
       image: true,
       reasoning: true,
-      thinkingLevels: ["medium", "high", "max"],
+      thinkingLevels: ["low", "high", "max"],
       thinkingLevelMap: {
         off: null,
         low: "low",
-        medium: "low",
+        medium: "high",
         high: "high",
         xhigh: "max",
       },
-      defaultThinkingLevel: "max",
+      defaultThinkingLevel: "high",
     });
     expect(k3_256k).toMatchObject({
       name: "Kimi K3 256K",
       context: 262144,
       image: true,
       reasoning: true,
-      thinkingLevels: ["medium", "high", "max"],
+      thinkingLevels: ["low", "high", "max"],
       thinkingLevelMap: {
         off: null,
         low: "low",
-        medium: "low",
+        medium: "high",
         high: "high",
         xhigh: "max",
       },
@@ -536,8 +538,8 @@ describe("known-models dictionary", () => {
   it("declares DeepSeek V4 Flash Vision (Exp) as image-capable on the official DeepSeek provider", () => {
     expect(lookupKnown("deepseek", "deepseek-v4-flash-vision-exp")).toMatchObject({
       name: "DeepSeek V4 Flash Vision (Exp)",
-      context: 1000000,
-      maxOutput: 384000,
+      context: 1048576,
+      maxOutput: 393216,
       image: true,
       reasoning: true,
       xhigh: true,

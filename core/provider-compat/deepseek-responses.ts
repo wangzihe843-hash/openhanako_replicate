@@ -8,8 +8,8 @@
  * 解决的协议问题：
  *   1. effort 枚举不同源：Pi SDK 的 OpenAIResponsesOptions.reasoningEffort 是
  *      OpenAI 枚举（含 minimal），DeepSeek 的词汇表是 low/high/max 加关思考的
- *      none。DeepSeek 对不支持的取值静默忽略而非报错，minimal 不翻译就等于档位
- *      悄悄失效。medium / xhigh 服务端自己会映射，不必代劳。
+ *      none。minimal 在这里译成 low，与服务端兼容映射一致；medium / xhigh
+ *      服务端均映射为 high。Hana Max 的 xhigh → max 由 provider 元数据负责。
  *   2. 输出预算字段名：Responses 用 max_output_tokens，ChatCompletions 用 max_tokens。
  *      漏搬同样会被静默忽略。注意这里只搬字段名，不改数值 —— 预算大小由 SDK 的
  *      clampMaxTokensToContext 决定，它才拿得到真实 token 数。
@@ -69,9 +69,11 @@ function isThinkingOff(level) {
 /**
  * 收敛到 DeepSeek 的 effort 词汇表：low / high / max，外加关思考用的 none。
  *
- * medium 和 xhigh 服务端自己会映射到 high / max，原样透传即可；minimal 是
- * OpenAI 专有档位，DeepSeek 不认，归到最接近的 low。
- * 文档：https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
+ * medium 和 xhigh 服务端均映射到 high；保留用户显式 wire 映射。Hana Max
+ * 必须在 serializer 前经 provider 的 thinkingLevelMap 将 xhigh 译成 max，
+ * 不能在此按 reasoningLevel 覆盖用户 map 或恢复已经被 SDK clamp 的档位。
+ * minimal 归到 low，与服务端的兼容映射一致。
+ * 文档：https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/
  */
 function translateEffort(effort) {
   const normalized = lower(effort);

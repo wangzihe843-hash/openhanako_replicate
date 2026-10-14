@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { getInvalidProviderModelIds } from "../shared/provider-model-validation.ts";
 import { providerCredentialAllowsMissingApiKey } from "../shared/provider-auth.ts";
+import type { ProviderRegistry } from "./provider-registry.ts";
 import { ProviderCatalogStore } from "./provider-catalog.ts";
 
 function isPlainObject(value) {
@@ -122,9 +123,16 @@ function filterInvalidProviderModels(providerId, models, baseUrl) {
  * - 不覆盖 catalog 中已有的 api_key，即使它是空字符串；
  * - 不迁移 OAuth token；
  * - 凭证来源优先级为 Provider Catalog 显式值 > models.json 投影值 > auth.json 旧值；
- * - 尽量从 provider 插件或旧 models.json 回填 base_url/api/models，帮助旧配置自愈。
+ * - #19、缺 key 的抢救及自定义 provider 恢复可回填 base_url/api/models；
+ * - 普通同步不把已有 key 的内置 provider 默认值或旧投影提升为用户配置；
+ * - 显式 models（包括空数组和非法值）交给既有选择/校验契约处理。
  */
-export function migrateLegacyApiKeyAuthToProviders({ hanakoHome, providerRegistry, log = () => {} }: { hanakoHome: string; providerRegistry: any; log?: (msg: string) => void }) {
+export function migrateLegacyApiKeyAuthToProviders({ hanakoHome, providerRegistry, mode = "runtime-reconcile", log = () => {} }: {
+  hanakoHome: string;
+  providerRegistry: Partial<Pick<ProviderRegistry, "_catalog" | "reload" | "get" | "getDefaultModels">>;
+  mode?: "legacy-migration" | "runtime-reconcile";
+  log?: (msg: string) => void;
+}) {
   if (!hanakoHome) return { migrated: 0, providers: [] };
 
   const authPath = path.join(hanakoHome, "auth.json");
@@ -169,6 +177,13 @@ export function migrateLegacyApiKeyAuthToProviders({ hanakoHome, providerRegistr
       entry?.authJsonKey,
     );
     const hasExplicitCatalogApiKey = hasOwn(current, "api_key");
+    if (mode === "runtime-reconcile" && hasExplicitCatalogApiKey && entry?.source?.kind === "builtin") {
+      // An existing catalog key, including an intentional clear, is already owned
+      // by the catalog. Residual auth/projection data is not a new selection or
+      // endpoint override. Keep missing models dynamic; #19 and real key rescue
+      // still retain their historical snapshot behavior below.
+      continue;
+    }
     const projectedApiKey = extractProjectedApiKey(modelsJsonProvider);
     const rescuedApiKey = (
       projectedApiKey && !isSyntheticLocalApiKey(projectedApiKey, entry, modelsJsonProvider)
@@ -199,7 +214,7 @@ export function migrateLegacyApiKeyAuthToProviders({ hanakoHome, providerRegistr
     if (entry?.source?.kind === "local-provider-plugin") {
       // Local provider plugin definition owns model metadata. Avoid writing models.json
       // ids into the catalog overlay, where a bare id can erase model capability fields.
-    } else if (!hasOwn(current, "models") || !Array.isArray(current.models)) {
+    } else if (!hasOwn(current, "models")) {
       const modelIds = modelIdsFromModelsJsonProvider(modelsJsonProvider);
       const seededModels = modelIds.length > 0
         ? modelIds

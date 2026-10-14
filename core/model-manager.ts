@@ -381,6 +381,7 @@ export class ModelManager {
     migrateLegacyApiKeyAuthToProviders({
       hanakoHome: this._hanakoHome,
       providerRegistry: this.providerRegistry,
+      mode: "runtime-reconcile",
     });
     await this._authStorage.reload?.();
 

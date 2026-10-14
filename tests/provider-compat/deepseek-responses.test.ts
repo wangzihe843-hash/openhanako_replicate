@@ -90,8 +90,8 @@ describe("deepseek-responses provider plugin", () => {
       expect.objectContaining({
         id: "deepseek-flash",
         api: "openai-responses",
-        context: 1_000_000,
-        maxOutput: 384_000,
+        context: 1_048_576,
+        maxOutput: 393_216,
         reasoning: true,
       }),
     );

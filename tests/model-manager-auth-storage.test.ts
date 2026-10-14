@@ -72,6 +72,144 @@ async function getDeepseekApiKey(manager) {
   return auth.apiKey;
 }
 
+describe("ModelManager runtime migration selection contract", () => {
+  const providers = [
+    { provider: "openai", retainedId: "gpt-4o" },
+    { provider: "kimi-coding", retainedId: "kimi-for-coding" },
+    { provider: "deepseek", retainedId: "deepseek-v4-flash" },
+    { provider: "deepseek-responses", retainedId: "deepseek-v4-pro" },
+  ];
+
+  beforeEach(() => {
+    fs.mkdirSync(path.join(tmpDir, "user"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "user", "preferences.json"), JSON.stringify({ _dataVersion: 53 }));
+  });
+
+  it.each(providers.flatMap(provider => ["default", "disabled", "allowlist"].map(mode => ({ ...provider, mode }))))(
+    "preserves $provider $mode across plain key saves, repeated sync and restart",
+    async ({ provider, retainedId, mode }) => {
+      const manager = new ModelManager({ hanakoHome: tmpDir });
+      await manager.init();
+      await manager.refreshAvailable();
+      expect(manager.availableModels.filter(model => model.provider === provider)).toEqual([]);
+      expect(readPersistedProviders()[provider]).toBeUndefined();
+
+      const config: Record<string, unknown> = { api_key: "fixture-catalog-key" };
+      if (mode !== "default") config.models = mode === "disabled" ? [] : [retainedId];
+      manager.providerRegistry.saveProvider(provider, config);
+      const expectedIds = mode === "default"
+        ? manager.providerRegistry.getDefaultModels(provider)
+        : mode === "disabled" ? [] : [retainedId];
+      const verify = (current: ModelManager) => {
+        expect(current.modelRegistry.getError()).toBeUndefined();
+        expect(current.providerRegistry.getChatModelSelection(provider).selectionMode).toBe(mode);
+        expect(readPersistedProviders()[provider]).toEqual(config);
+        expect(current.availableModels.filter(model => model.provider === provider).map(model => model.id).sort())
+          .toEqual([...expectedIds].sort());
+      };
+
+      await manager.reloadAndSync();
+      verify(manager);
+      await manager.syncAndRefresh();
+      verify(manager);
+      config.api_key = "fixture-rotated-key";
+      manager.providerRegistry.saveProvider(provider, { api_key: config.api_key });
+      await manager.reloadAndSync();
+      verify(manager);
+      const restarted = new ModelManager({ hanakoHome: tmpDir });
+      await restarted.init();
+      await restarted.refreshAvailable();
+      verify(restarted);
+    },
+  );
+
+  it.each(providers)("keeps explicit $provider setup and empty-preset repair seeds intact", async ({ provider }) => {
+    const manager = new ModelManager({ hanakoHome: tmpDir });
+    const defaults = manager.providerRegistry.getDefaultModelEntries(provider);
+    for (const repairEmpty of [false, true]) {
+      if (repairEmpty) manager.providerRegistry.saveProvider(provider, { models: [] });
+      manager.providerRegistry.saveProvider(provider, { api_key: "fixture-seeded-key", seed_default_models: true });
+      expect(readPersistedProviders()[provider].models).toEqual(defaults);
+      await manager.init();
+      await manager.reloadAndSync();
+      expect(manager.modelRegistry.getError()).toBeUndefined();
+      expect(manager.providerRegistry.getChatModelSelection(provider).selectionMode).toBe("allowlist");
+      expect(readPersistedProviders()[provider].models).toEqual(defaults);
+      expect(readPersistedProviders()[provider]).not.toHaveProperty("seed_default_models");
+    }
+  });
+
+  it.each(["fixture-current-key", ""])("does not promote stale projection settings over an explicit catalog key %j", async apiKey => {
+    new ProviderCatalogStore(tmpDir).saveProviders({ openai: { api_key: apiKey } });
+    writeAuth({ openai: { type: "api_key", key: "fixture-stale-auth" } });
+    writeModelsJson({ providers: { openai: {
+      apiKey: "fixture-stale-projection", baseUrl: "https://stale.example/v1", api: "openai-completions",
+      models: [{ id: "gpt-4o" }], modelOverrides: { "gpt-4.1": {} },
+    } } });
+    const manager = new ModelManager({ hanakoHome: tmpDir });
+    await manager.init();
+    await manager.reloadAndSync();
+
+    expect(readPersistedProviders().openai).toEqual({ api_key: apiKey });
+    expect(manager.providerRegistry.getChatModelSelection("openai").selectionMode).toBe("default");
+    expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "auth.json"), "utf8"))).not.toHaveProperty("openai");
+    const models = manager.availableModels.filter(model => model.provider === "openai");
+    if (apiKey) {
+      expect(models.map(model => model.id).sort()).toEqual(manager.providerRegistry.getDefaultModels("openai").sort());
+      expect(models.every(model => model.baseUrl === manager.providerRegistry.get("openai").baseUrl)).toBe(true);
+    } else expect(models).toEqual([]);
+  });
+
+  it.each(["auth", "projection"])("still rescues a missing catalog key from legacy %s after #19", async source => {
+    const registry = new ProviderRegistry(tmpDir);
+    registry.saveProvider("openai", {});
+    writeAuth({ openai: { type: "api_key", key: "fixture-legacy-auth" } });
+    if (source === "projection") writeModelsJson({ providers: { openai: {
+      apiKey: "fixture-legacy-projection", baseUrl: "https://recovered.example/v1", api: "openai-completions",
+      models: [{ id: "gpt-4o" }], modelOverrides: { "gpt-4.1": {} },
+    } } });
+    const manager = new ModelManager({ hanakoHome: tmpDir });
+    await manager.init();
+    const recovered = readPersistedProviders().openai;
+    expect(recovered.api_key).toBe(source === "projection" ? "fixture-legacy-projection" : "fixture-legacy-auth");
+    expect(recovered.models).toEqual(source === "projection" ? ["gpt-4o", "gpt-4.1"] : registry.getDefaultModels("openai"));
+    if (source === "projection") expect(recovered).toMatchObject({ base_url: "https://recovered.example/v1", api: "openai-completions" });
+    expect(JSON.parse(fs.readFileSync(path.join(tmpDir, "auth.json"), "utf8"))).not.toHaveProperty("openai");
+    await manager.reloadAndSync();
+    const restarted = new ModelManager({ hanakoHome: tmpDir });
+    await restarted.init();
+    expect(readPersistedProviders().openai).toEqual(recovered);
+    expect(restarted.modelRegistry.getError()).toBeUndefined();
+  });
+
+  it("still recovers the definition of a secret-only orphan during runtime reconciliation", async () => {
+    new ProviderCatalogStore(tmpDir).saveProviders({ "missing-plugin": { api_key: "fixture-owned-secret" } });
+    writeModelsJson({ providers: { "missing-plugin": {
+      apiKey: "fixture-stale-secret", baseUrl: "https://orphan.example/v1", api: "openai-completions",
+      models: [{ id: "custom-chat" }],
+    } } });
+    const manager = new ModelManager({ hanakoHome: tmpDir });
+    await manager.init();
+    await manager.reloadAndSync();
+    expect(manager.providerRegistry.getAllProvidersRaw()["missing-plugin"]).toMatchObject({
+      api_key: "fixture-owned-secret", base_url: "https://orphan.example/v1", api: "openai-completions", models: ["custom-chat"],
+    });
+    expect(manager.availableModels.find(model => model.provider === "missing-plugin")).toMatchObject({ id: "custom-chat" });
+    expect(manager.modelRegistry.getError()).toBeUndefined();
+  });
+
+  it.each([null, "gpt-4o", { id: "gpt-4o" }])("does not repair explicit invalid models %j into defaults while rescuing a key", async models => {
+    new ProviderCatalogStore(tmpDir).saveProviders({ openai: { models } });
+    writeAuth({ openai: { type: "api_key", key: "fixture-legacy-auth" } });
+    const manager = new ModelManager({ hanakoHome: tmpDir });
+    await manager.init();
+    await manager.reloadAndSync();
+    expect(readPersistedProviders().openai).toMatchObject({ api_key: "fixture-legacy-auth", models });
+    expect(manager.providerRegistry.getChatModelSelection("openai").selectionMode).toBe("invalid");
+    expect(manager.availableModels.filter(model => model.provider === "openai")).toEqual([]);
+  });
+});
+
 describe("ModelManager AuthStorage ownership", () => {
   it.each(["auth.json", "models.json"].flatMap(source => [
     { source, mtime: "same" }, { source, mtime: "changed" },

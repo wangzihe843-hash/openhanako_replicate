@@ -1811,22 +1811,22 @@ describe("syncModels", () => {
     mm._modelRegistry = {
       refresh: vi.fn(),
       getAvailable: vi.fn().mockResolvedValue([
-        { id: "gpt-4o", provider: "openai" },
-        { id: "gpt-4.1", provider: "openai" },
+        { id: "gpt-6-sol", provider: "openai" },
+        { id: "gpt-6-luna", provider: "openai" },
       ]),
     };
     await mm.refreshAvailable();
 
-    const result = await mm.setModelDefaultThinkingLevel({ id: "gpt-4o", provider: "openai" }, "high");
+    const result = await mm.setModelDefaultThinkingLevel({ id: "gpt-6-sol", provider: "openai" }, "high");
 
     const providers = readProviderCatalogProviders();
     expect(providers.openai.models).toBeUndefined();
     expect(providers.openai.model_defaults).toEqual({
-      "gpt-4o": { thinking_level: "high" },
+      "gpt-6-sol": { thinking_level: "high" },
     });
     expect(result.thinkingLevel).toBe("high");
-    expect(mm.availableModels.map(m => m.id)).toEqual(["gpt-4o", "gpt-4.1"]);
-    expect(mm.availableModels.find(m => m.id === "gpt-4o")?.defaultThinkingLevel).toBe("high");
+    expect(mm.availableModels.map(m => m.id)).toEqual(["gpt-6-sol", "gpt-6-luna"]);
+    expect(mm.availableModels.find(m => m.id === "gpt-6-sol")?.defaultThinkingLevel).toBe("high");
   });
 
   it("ignores malformed provider records without breaking valid model projection", async () => {

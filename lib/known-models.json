@@ -25,8 +25,8 @@
   "deepseek-responses": {
     "deepseek-flash": {
       "name": "DeepSeek V4.1 Flash",
-      "context": 1000000,
-      "maxOutput": 384000,
+      "context": 1048576,
+      "maxOutput": 393216,
       "image": true,
       "reasoning": true,
       "api": "openai-responses",
@@ -37,6 +37,19 @@
         "high",
         "max"
       ],
+      "thinkingLevelMap": { "xhigh": "max" },
+      "defaultThinkingLevel": "high"
+    },
+    "deepseek-v4-pro": {
+      "name": "DeepSeek V4 Pro",
+      "context": 1048576,
+      "maxOutput": 393216,
+      "image": false,
+      "reasoning": true,
+      "api": "openai-responses",
+      "xhigh": true,
+      "thinkingLevels": ["off", "low", "high", "max"],
+      "thinkingLevelMap": { "xhigh": "max" },
       "defaultThinkingLevel": "high"
     }
   },
@@ -730,8 +743,8 @@
   "deepseek": {
     "deepseek-flash": {
       "name": "DeepSeek V4.1 Flash",
-      "context": 1000000,
-      "maxOutput": 384000,
+      "context": 1048576,
+      "maxOutput": 393216,
       "image": true,
       "reasoning": true,
       "xhigh": true,
@@ -764,8 +777,8 @@
     },
     "deepseek-v4-pro": {
       "name": "DeepSeek V4 Pro",
-      "context": 1000000,
-      "maxOutput": 384000,
+      "context": 1048576,
+      "maxOutput": 393216,
       "image": false,
       "reasoning": true,
       "xhigh": true,
@@ -774,8 +787,8 @@
     },
     "deepseek-v4-flash": {
       "name": "DeepSeek V4 Flash",
-      "context": 1000000,
-      "maxOutput": 384000,
+      "context": 1048576,
+      "maxOutput": 393216,
       "image": true,
       "reasoning": true,
       "xhigh": true,
@@ -784,8 +797,8 @@
     },
     "deepseek-v4-flash-vision-exp": {
       "name": "DeepSeek V4 Flash Vision (Exp)",
-      "context": 1000000,
-      "maxOutput": 384000,
+      "context": 1048576,
+      "maxOutput": 393216,
       "image": true,
       "reasoning": true,
       "xhigh": true,
@@ -813,6 +826,25 @@
     }
   },
   "openai": {
+    "gpt-6.1-sol": {
+      "name": "GPT-6.1 Sol",
+      "context": 1050000,
+      "maxOutput": 128000,
+      "image": true,
+      "reasoning": true,
+      "api": "openai-responses",
+      "thinkingLevels": ["low", "medium", "high", "max"],
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "max",
+        "max": "max"
+      },
+      "defaultThinkingLevel": "medium"
+    },
     "gpt-6-sol": {
       "name": "GPT-6 Sol",
       "context": 1050000,
@@ -3007,37 +3039,39 @@
   "kimi-coding": {
     "k3": {
       "name": "Kimi K3",
-      "context": 1048576,
+      "context": 262144,
+      "maxContext": 1048576,
       "image": true,
       "reasoning": true,
-      "thinkingLevels": ["medium", "high", "max"],
+      "thinkingLevels": ["low", "high", "max"],
       "thinkingLevelMap": {
         "off": null,
         "low": "low",
-        "medium": "low",
+        "medium": "high",
         "high": "high",
         "xhigh": "max"
       },
-      "defaultThinkingLevel": "max"
+      "defaultThinkingLevel": "high"
     },
     "k3-256k": {
       "name": "Kimi K3 256K",
       "context": 262144,
       "image": true,
       "reasoning": true,
-      "thinkingLevels": ["medium", "high", "max"],
+      "thinkingLevels": ["low", "high", "max"],
       "thinkingLevelMap": {
         "off": null,
         "low": "low",
-        "medium": "low",
+        "medium": "high",
         "high": "high",
         "xhigh": "max"
       },
       "defaultThinkingLevel": "high"
     },
     "kimi-for-coding": {
-      "name": "Kimi for Coding",
+      "name": "Kimi K2.8 Preview",
       "context": 262144,
+      "maxContext": 1048576,
       "maxOutput": 32768,
       "image": true,
       "reasoning": true,
@@ -3049,7 +3083,7 @@
         "high": "high",
         "xhigh": "max"
       },
-      "defaultThinkingLevel": "high",
+      "defaultThinkingLevel": "max",
       "compat": {
         "thinkingFormat": "kimi",
         "reasoningProfile": "kimi-openai"
@@ -7422,6 +7456,26 @@
     }
   },
   "openai-codex-oauth": {
+    "gpt-6.1-sol": {
+      "name": "GPT-6.1 Sol",
+      "context": 272000,
+      "maxContext": 872000,
+      "maxOutput": 128000,
+      "image": true,
+      "reasoning": true,
+      "api": "openai-codex-responses",
+      "thinkingLevels": ["low", "medium", "high", "max"],
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "max",
+        "max": "max"
+      },
+      "defaultThinkingLevel": "low"
+    },
     "gpt-6-sol": {
       "name": "GPT-6 Sol",
       "context": 272000,

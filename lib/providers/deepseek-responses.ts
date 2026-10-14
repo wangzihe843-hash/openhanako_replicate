@@ -12,11 +12,11 @@
  * 旧 V4-Flash / Vision-Exp 已退役，官方仍接收旧 ID 并路由至 V4.1 Flash。
  *
  * 思考档位：两个模型官方声明档位一致，均为 low / high（默认）/ max 三档；
- * medium 与 xhigh 是兼容值，服务端会折算成 high。客户端照常发用户选的档位即可，
- * 服务端具体如何折算不在客户端预判。
+ * medium 与 xhigh 是兼容值，服务端会折算成 high。Hana 的 Max 在 Pi 层使用
+ * xhigh，必须通过 thinkingLevelMap 映射成 max，同时防止 Pi 将 xhigh 降为 high。
  *
  * 文档：https://api-docs.deepseek.com/guides/responses_api/
- *       https://api-docs.deepseek.com/zh-cn/api/create-chat-completion
+ *       https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/
  */
 
 const DEEPSEEK_RESPONSES_MODELS = [
@@ -24,24 +24,26 @@ const DEEPSEEK_RESPONSES_MODELS = [
     id: "deepseek-flash",
     name: "DeepSeek V4.1 Flash",
     api: "openai-responses",
-    context: 1_000_000,
-    maxOutput: 384_000,
+    context: 1_048_576,
+    maxOutput: 393_216,
     image: true,
     reasoning: true,
     xhigh: true,
     thinkingLevels: ["off", "low", "high", "max"],
+    thinkingLevelMap: { xhigh: "max" },
     defaultThinkingLevel: "high",
   },
   {
     id: "deepseek-v4-pro",
     name: "DeepSeek V4 Pro",
     api: "openai-responses",
-    context: 1_000_000,
-    maxOutput: 384_000,
+    context: 1_048_576,
+    maxOutput: 393_216,
     image: false,
     reasoning: true,
     xhigh: true,
     thinkingLevels: ["off", "low", "high", "max"],
+    thinkingLevelMap: { xhigh: "max" },
     defaultThinkingLevel: "high",
   },
 ];

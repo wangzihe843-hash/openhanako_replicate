@@ -409,15 +409,15 @@ describe("ProviderRegistry media capabilities", () => {
       projection: "models-json",
       credentialSource: "auth-storage",
     });
-    expect(registry.getChatModelIds("openai-codex-oauth")).toEqual(expect.arrayContaining([
+    expect(registry.getChatModelIds("openai-codex-oauth")).toEqual([
+      "gpt-6.1-sol",
       "gpt-6-sol",
       "gpt-6-luna",
       "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
-      "gpt-5.5",
-    ]));
+    ]);
     expect(registry.getChatModelIds("openai-codex-oauth")).not.toContain("gpt-5.3-codex-spark");
   });
 

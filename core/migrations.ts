@@ -4661,7 +4661,7 @@ function migrateSubagentDirectThreadSemantics(ctx) {
 }
 
 function migrateLegacyApiKeyAuthEntriesToProviders(ctx) {
-  const result = migrateLegacyApiKeyAuthToProviders(ctx);
+  const result = migrateLegacyApiKeyAuthToProviders({ ...ctx, mode: "legacy-migration" });
   ctx.log?.(`[migrations] #19: legacy API-key auth migrated (${result.providers.join(", ") || "none"})`);
 }
 

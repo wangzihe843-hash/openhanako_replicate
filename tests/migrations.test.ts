@@ -710,16 +710,10 @@ describe("migration #44: OAuth models converge into Provider Catalog", () => {
 
     const catalog = readJson(path.join(tmpDir, "provider-catalog.json"));
     const ids = catalog.providers["openai-codex-oauth"].models.map((model) => typeof model === "object" ? model.id : model);
-    expect(ids).toEqual(expect.arrayContaining([
-      "gpt-6-sol",
-      "gpt-6-luna",
-      "gpt-6-astra",
-      "gpt-5.6-sol",
-      "gpt-5.6-terra",
-      "gpt-5.6-luna",
-      "gpt-5.5",
+    expect(ids).toEqual([
+      ...registry.getDefaultModels("openai-codex-oauth"),
       "my-codex-model",
-    ]));
+    ]);
     expect(prefs.getPreferences()).not.toHaveProperty("oauth_custom_models");
   });
 
@@ -740,6 +734,24 @@ describe("migration #44: OAuth models converge into Provider Catalog", () => {
     expect(catalog.providers["openai-codex-oauth"]).not.toHaveProperty("models");
     registry.reload();
     expect(registry.getChatModelIds("openai-codex-oauth")).toContain("gpt-5.6-sol");
+  });
+
+  it.each([44, LATEST_DATA_VERSION].flatMap(version => [
+    { version, mode: "default", config: {} },
+    { version, mode: "disabled", config: { models: [] } },
+    { version, mode: "allowlist", config: { models: ["gpt-5.5"] } },
+  ]))("preserves post-#44 $mode at data version $version", ({ version, mode, config }) => {
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: version });
+    const registry = new ProviderRegistry(tmpDir);
+    registry.saveProvider("openai-codex-oauth", config);
+    const ctx = { hanakoHome: tmpDir, agentsDir, prefs, providerRegistry: registry, log: () => {} };
+    runMigrations(ctx);
+    registry.reload();
+    expect(registry.getAllProvidersRaw()["openai-codex-oauth"]).toEqual(config);
+    expect(registry.getChatModelSelection("openai-codex-oauth").selectionMode).toBe(mode);
+    runMigrations(ctx);
+    expect(registry.getAllProvidersRaw()["openai-codex-oauth"]).toEqual(config);
   });
 });
 
@@ -4696,6 +4708,39 @@ describe("migration #19 — migrate legacy API-key auth to provider config", () 
     });
     return prefs;
   }
+
+  it.each([18, 19, 41, 42, 44, LATEST_DATA_VERSION])("only snapshots a key-only builtin when #19 is pending at version %i", version => {
+    const registry = new ProviderRegistry(tmpDir);
+    registry.saveProvider("openai", { api_key: "fixture-existing-key" });
+    const prefs = makePrefs(userDir);
+    // Isolate the historical #19 boundary from unrelated numbered migrations.
+    prefs.savePreferences({ _dataVersion: version, _migrationState: {
+      completedIds: Array.from({ length: LATEST_DATA_VERSION }, (_, index) => index + 1).filter(id => id > version && id !== 19),
+      lastFailedIds: [],
+    } });
+    const ctx = { hanakoHome: tmpDir, agentsDir, prefs, providerRegistry: registry, log: () => {} };
+    runMigrations(ctx);
+    const after = readPersistedProviders().openai;
+    if (version < 19) expect(after.models).toEqual(registry.getDefaultModels("openai"));
+    else expect(after).toEqual({ api_key: "fixture-existing-key" });
+    runMigrations(ctx);
+    expect(readPersistedProviders().openai).toEqual(after);
+  });
+
+  it.each([null, "gpt-4o", { id: "gpt-4o" }])("preserves explicit invalid models %j during #19 credential rescue", models => {
+    const registry = new ProviderRegistry(tmpDir);
+    writeJson(path.join(tmpDir, "provider-catalog.json"), {
+      catalogVersion: 2, providers: { openai: { models } }, capabilities: {}, meta: {},
+    });
+    writeAuth({ openai: { type: "api_key", key: "fixture-legacy-key" } });
+    const prefs = makePrefs(userDir);
+    prefs.savePreferences({ _dataVersion: 18, _migrationState: {
+      completedIds: Array.from({ length: LATEST_DATA_VERSION - 19 }, (_, index) => index + 20), lastFailedIds: [],
+    } });
+    runMigrations({ hanakoHome: tmpDir, agentsDir, prefs, providerRegistry: registry, log: () => {} });
+    expect(readPersistedProviders().openai).toMatchObject({ api_key: "fixture-legacy-key", models });
+    expect(registry.getChatModelSelection("openai").selectionMode).toBe("invalid");
+  });
 
   it("moves legacy DeepSeek API key into existing added-models provider before auth cleanup", () => {
     writeAuth({
