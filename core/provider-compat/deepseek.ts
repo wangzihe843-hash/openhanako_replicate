@@ -367,8 +367,21 @@ function applyAnthropicPayload(payload, model, options: Record<string, any> = {}
   return next;
 }
 
-function stripToolChoice(payload) {
+function stripUnsupportedThinkingToolChoice(payload) {
   if (!hasOwn(payload, "tool_choice")) return payload;
+  const choice = payload.tool_choice;
+  // Thinking accepts none/auto. Preserve unknown shapes for validation instead
+  // of silently relaxing them to the default auto behavior.
+  // https://api-docs.deepseek.com/api/create-chat-completion/
+  const namedFunction = choice && typeof choice === "object" && !Array.isArray(choice)
+    && Object.keys(choice).length === 2 && hasOwn(choice, "type") && hasOwn(choice, "function")
+    && choice.type === "function"
+    && choice.function && typeof choice.function === "object" && !Array.isArray(choice.function)
+    && Object.keys(choice.function).length === 1 && hasOwn(choice.function, "name")
+    && typeof choice.function.name === "string"
+    && choice.function.name.length > 0 && choice.function.name.length <= 128
+    && !/[^a-zA-Z0-9_-]/.test(choice.function.name);
+  if (choice !== "required" && !namedFunction) return payload;
   const next = { ...payload };
   delete next.tool_choice;
   return next;
@@ -422,6 +435,6 @@ export function apply(payload, model, options: Record<string, any> = {}) {
     p.messages = contentEnsured;
   }
 
-  next = stripToolChoice(p);
+  next = stripUnsupportedThinkingToolChoice(p);
   return next;
 }

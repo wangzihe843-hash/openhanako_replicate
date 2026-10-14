@@ -6,6 +6,107 @@ import {
 } from "../../core/provider-compat.ts";
 import * as deepseek from "../../core/provider-compat/deepseek.ts";
 
+// https://api-docs.deepseek.com/api/create-chat-completion/
+// Thinking permits none/auto; only required and a named function are unsupported.
+describe("DeepSeek Chat tool_choice contract", () => {
+  const model = {
+    id: "deepseek-v4-pro", provider: "deepseek", api: "openai-completions",
+    reasoning: true, maxTokens: 384000,
+  };
+  const tools = [{ type: "function", function: { name: "date" } }];
+  const choices = [
+    { label: "unset", fields: {}, stripped: false },
+    { label: "none", fields: { tool_choice: "none" }, stripped: false },
+    { label: "auto", fields: { tool_choice: "auto" }, stripped: false },
+    { label: "required", fields: { tool_choice: "required" }, stripped: true },
+    { label: "named", fields: { tool_choice: { type: "function", function: { name: "date" } } }, stripped: true },
+  ];
+
+  describe.each([true, false])("thinking with tools=%s", withTools => {
+    it.each(choices)("$label preserves the supported choice and all other fields", ({ fields, stripped }) => {
+      const payload = {
+        messages: [{ role: "user", content: "Offline choice contract" }],
+        max_tokens: 12345,
+        ...(withTools ? { tools } : {}),
+        ...fields,
+      };
+      const original = structuredClone(payload);
+      const result = normalizeProviderPayload(payload, model, { mode: "chat", reasoningLevel: "high" });
+      if (stripped || !("tool_choice" in fields)) {
+        expect(result).not.toHaveProperty("tool_choice");
+      } else {
+        expect(result).toHaveProperty("tool_choice", fields.tool_choice);
+      }
+      expect(result.thinking).toEqual({ type: "enabled" });
+      expect(result.reasoning_effort).toBe("high");
+      expect(result.max_tokens).toBe(12345);
+      expect(result.messages).toEqual(payload.messages);
+      if (withTools) expect(result.tools).toBe(tools);
+      else expect(result).not.toHaveProperty("tools");
+      expect(payload).toEqual(original);
+    });
+  });
+
+  it.each([
+    ["explicit undefined", undefined], ["null", null], ["boolean", false], ["number", 1],
+    ["unknown string", "any"], ["case variant", "REQUIRED"], ["empty string", ""],
+    ["array", []], ["empty object", {}], ["unknown type", { type: "custom", name: "date" }],
+    ["flat function", { type: "function", name: "date" }],
+    ["missing function", { type: "function" }],
+    ["null function", { type: "function", function: null }],
+    ["array function", { type: "function", function: [] }],
+    ["string function", { type: "function", function: "date" }],
+    ["missing name", { type: "function", function: {} }],
+    ["numeric name", { type: "function", function: { name: 1 } }],
+    ["empty name", { type: "function", function: { name: "" } }],
+    ["blank name", { type: "function", function: { name: " " } }],
+    ["invalid name", { type: "function", function: { name: "date.time" } }],
+    ["overlong name", { type: "function", function: { name: "x".repeat(129) } }],
+    ["unknown outer field", { type: "function", function: { name: "date" }, extension: true }],
+    ["unknown function field", { type: "function", function: { name: "date", extension: true } }],
+  ])("does not silently turn %s into auto", (_label, choice) => {
+    const payload = { messages: [{ role: "user", content: "x" }], tools, tool_choice: choice };
+    const original = structuredClone(payload);
+    const result = normalizeProviderPayload(payload, model, { mode: "chat", reasoningLevel: "high" });
+    expect(result).toHaveProperty("tool_choice", choice);
+    expect(result.tool_choice).toBe(choice);
+    expect(result.tools).toBe(tools);
+    expect(result.thinking).toEqual({ type: "enabled" });
+    expect(payload).toEqual(original);
+  });
+
+  it.each(["x", "date_UTC-1", "x".repeat(128)])("keeps the existing fallback for a valid named function (%s)", name => {
+    const payload = {
+      messages: [{ role: "user", content: "x" }], tools,
+      tool_choice: { type: "function", function: { name } },
+    };
+    const original = structuredClone(payload);
+    const result = normalizeProviderPayload(payload, model, { mode: "chat", reasoningLevel: "high" });
+    expect(result).not.toHaveProperty("tool_choice");
+    expect(result.tools).toBe(tools);
+    expect(payload).toEqual(original);
+  });
+
+  describe.each([
+    { label: "off", options: { mode: "chat", reasoningLevel: "off" }, fields: {} },
+    { label: "none", options: { mode: "chat", reasoningLevel: "none" }, fields: {} },
+    { label: "disabled", options: { mode: "chat", reasoningLevel: "disabled" }, fields: {} },
+    { label: "payload disabled", options: { mode: "chat", reasoningLevel: "high" }, fields: { thinking: { type: "disabled" } } },
+    { label: "utility", options: { mode: "utility", reasoningLevel: "high" }, fields: {} },
+  ])("$label keeps tool choice", ({ options, fields: thinkingFields }) => {
+    it.each(choices)("$label", ({ fields }) => {
+      const payload = { messages: [{ role: "user", content: "x" }], tools, ...fields, ...thinkingFields };
+      const original = structuredClone(payload);
+      const result = normalizeProviderPayload(payload, model, options);
+      if ("tool_choice" in fields) expect(result).toHaveProperty("tool_choice", fields.tool_choice);
+      else expect(result).not.toHaveProperty("tool_choice");
+      expect(result.thinking).toEqual({ type: "disabled" });
+      expect(result.tools).toBe(tools);
+      expect(payload).toEqual(original);
+    });
+  });
+});
+
 describe("provider-compat/deepseek — matches", () => {
   it("导出 matches 函数", () => {
     expect(typeof deepseek.matches).toBe("function");
@@ -398,18 +499,6 @@ describe("provider-compat/deepseek — apply 主流程接入 reasoning_content �
     expect(result.messages[1].content).toBe("");
     expect(result.messages[1].reasoning_content).toBe("调用 date 工具");
     expect(payload.messages[1].content).toBeNull();
-  });
-
-  it("chat mode + 思考开启：移除 DeepSeek V4 thinking 不支持的 tool_choice", () => {
-    const payload = {
-      model: "deepseek-v4-pro",
-      messages: [{ role: "user", content: "use a tool if needed" }],
-      tools: [{ type: "function", function: { name: "date" } }],
-      tool_choice: "auto",
-    };
-    const result = deepseek.apply(payload, deepseekModel, { mode: "chat", reasoningLevel: "high" });
-    expect(result).not.toHaveProperty("tool_choice");
-    expect(payload.tool_choice).toBe("auto");
   });
 
   it("chat mode + 思考开启：tool_calls 历史无可恢复原文 → fail closed", () => {
