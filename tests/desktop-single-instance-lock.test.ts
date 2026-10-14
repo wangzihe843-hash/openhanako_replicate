@@ -13,7 +13,8 @@ let defaultHome: string;
 let devHome: string;
 let appData: string;
 beforeEach(() => {
-  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hana-client-lock-")));
+  // Keep the raw temp spelling as input, including Windows 8.3 aliases.
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-client-lock-"));
   defaultHome = path.join(root, ".hanako");
   devHome = path.join(root, ".hanako-dev");
   appData = path.join(root, "appdata");
@@ -52,11 +53,12 @@ describe("desktop client single instance lock", () => {
     expect(acquired).toBe(true);
     expect(app.setPath).toHaveBeenCalledWith(
       "userData",
-      path.join(fs.realpathSync(appData), "Hanako-dev"),
+      path.join(fs.realpathSync.native(appData), "Hanako-dev"),
     );
     expect(app.setPath.mock.invocationCallOrder[0]).toBeLessThan(
       app.requestSingleInstanceLock.mock.invocationCallOrder[0],
     );
+    expect(app.requestSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
   it("keeps production in the legacy Electron userData namespace", () => {
@@ -71,7 +73,7 @@ describe("desktop client single instance lock", () => {
     expect(acquired).toBe(true);
     expect(app.setPath).toHaveBeenCalledWith(
       "userData",
-      path.join(fs.realpathSync(appData), "Hanako"),
+      path.join(fs.realpathSync.native(appData), "Hanako"),
     );
     expect(app.requestSingleInstanceLock).toHaveBeenCalledTimes(1);
   });

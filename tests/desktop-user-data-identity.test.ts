@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { configureClientSingleInstance, getUserDataAppName } from "../desktop/src/shared/single-instance-lock.cjs";
+import { resolveDesktopIdentity } from "../desktop/src/shared/user-data-identity.cjs";
 
 const FLAG = "--hana-new-isolated-desktop-profile";
 const ENV = "HANA_NEW_ISOLATED_DESKTOP_PROFILE";
@@ -11,18 +13,29 @@ let root: string;
 let defaultHome: string;
 let devHome: string;
 let appData: string;
+let canonicalAppData: string;
 function mkdir(p: string) { fs.mkdirSync(p, { recursive: true }); return p; }
+function entity(p: string) {
+  const { dev, ino } = fs.statSync(p, { bigint: true });
+  return { dev, ino };
+}
+function expectedIdentity(home: string) {
+  const canonicalHome = fs.realpathSync.native(home);
+  const digest = createHash("sha256")
+    .update(`hana-desktop-user-data-v2\0${process.platform}\0${canonicalHome}`, "utf8").digest("hex");
+  return { canonicalHome, digest };
+}
 function tree(p: string): unknown {
   if (!fs.existsSync(p)) return null;
   if (!fs.statSync(p).isDirectory()) return fs.readFileSync(p).toString("hex");
   return Object.fromEntries(fs.readdirSync(p).sort().map(n => [n, tree(path.join(p, n))]));
 }
-function launch(home: string, options: Record<string, unknown> = {}) {
+function launch(home: string, options: Record<string, unknown> = {}, appDataPath = appData) {
   const selected: Record<string, string> = {};
   const events: string[] = [];
   const app = {
     isReady: () => false,
-    getPath: (name: string) => name === "appData" ? appData : selected[name],
+    getPath: (name: string) => name === "appData" ? appDataPath : selected[name],
     setPath: vi.fn((name: string, value: string) => { selected[name] = value; events.push(name); }),
     requestSingleInstanceLock: vi.fn(() => { events.push("lock"); return true; }),
     on: vi.fn(), exit: vi.fn(), quit: vi.fn(),
@@ -30,7 +43,7 @@ function launch(home: string, options: Record<string, unknown> = {}) {
   const run = () => configureClientSingleInstance(app, { hanakoHome: home, defaultHome, ...options });
   return { run, app, selected, events };
 }
-function target(home: string) { return path.join(fs.realpathSync(appData), getUserDataAppName(home, defaultHome)); }
+function target(home: string) { return path.join(canonicalAppData, getUserDataAppName(home, defaultHome)); }
 function legacy(name: string) {
   const dir = mkdir(path.join(appData, name));
   fs.writeFileSync(path.join(dir, "synthetic-login.json"), '{"token":"SYNTHETIC-OLD-TOKEN","cookie":"SYNTHETIC"}');
@@ -45,10 +58,12 @@ function expectBlocked(home: string, options = {}, pattern: RegExp = /desktop pr
   expect(tree(root)).toEqual(before);
 }
 beforeEach(() => {
-  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hana-profile-contract-")));
+  // Exercise raw temp aliases; derive expectations separately via native realpath.
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-profile-contract-"));
   defaultHome = mkdir(path.join(root, "os-home", ".hanako"));
   devHome = mkdir(path.join(root, "os-home", ".hanako-dev"));
   appData = mkdir(path.join(root, "appdata"));
+  canonicalAppData = fs.realpathSync.native(appData);
 });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -58,9 +73,17 @@ describe("pre-ready desktop profile identity and initialization", () => {
     const b = mkdir(path.join(root, "b", name));
     const first = launch(a); const second = launch(b);
     first.run(); second.run();
+    expect(entity(a)).not.toEqual(entity(b));
+    for (const [home, candidate] of [[a, first], [b, second]] as const) {
+      expect(candidate.selected.userData).toBe(path.join(canonicalAppData, "HanaAgent-userData-v2", expectedIdentity(home).digest));
+      expect(candidate.selected.sessionData).toBe(candidate.selected.userData);
+    }
     expect(first.selected.userData).not.toBe(second.selected.userData);
+    expect(entity(first.selected.userData)).not.toEqual(entity(second.selected.userData));
+    fs.writeFileSync(path.join(first.selected.userData, "isolation-sentinel"), "SYNTHETIC-A");
+    expect(fs.existsSync(path.join(second.selected.userData, "isolation-sentinel"))).toBe(false);
     expect(first.selected.userData).toMatch(/HanaAgent-userData-v2[/\\][a-f0-9]{64}$/);
-    expect(first.selected.userData).not.toBe(path.join(appData, name === ".hanako" ? "Hanako" : "Hanako-dev"));
+    expect(first.selected.userData).not.toBe(path.join(canonicalAppData, name === ".hanako" ? "Hanako" : "Hanako-dev"));
   });
   it("separates dot stripping and capitalization collisions", () => {
     const paths = ["a/foo", "a/.foo", "b/Foo"].map(n => mkdir(path.join(root, n)));
@@ -69,11 +92,14 @@ describe("pre-ready desktop profile identity and initialization", () => {
   it.each(["default", "dev"])("preserves ordinary %s without a marker or new sessionData override", which => {
     const home = which === "default" ? defaultHome : devHome;
     const name = which === "default" ? "Hanako" : "Hanako-dev";
-    legacy(name);
+    const old = legacy(name); const oldEntity = entity(old);
     const before = tree(root);
     const candidate = launch(home); candidate.run();
-    expect(candidate.selected.userData).toBe(path.join(appData, name));
+    expect(candidate.selected.userData).toBe(path.join(canonicalAppData, name));
+    expect(entity(candidate.selected.userData)).toEqual(oldEntity);
     expect(candidate.selected.sessionData).toBeUndefined();
+    expect(candidate.events).toEqual(["userData", "lock"]);
+    expect(fs.existsSync(path.join(old, MARKER))).toBe(false);
     expect(tree(root)).toEqual(before);
   });
   it("sets both new paths before acquiring the lock without changing business HOME", () => {
@@ -95,7 +121,12 @@ describe("pre-ready desktop profile identity and initialization", () => {
     const oldBytes = tree(old); const homeBytes = tree(home);
     const first = launch(home, options); first.run();
     const marker = path.join(first.selected.userData, MARKER);
-    expect(JSON.parse(fs.readFileSync(marker, "utf8")).canonicalHome).toBe(fs.realpathSync(home));
+    const identity = expectedIdentity(home);
+    expect(JSON.parse(fs.readFileSync(marker, "utf8"))).toEqual({
+      version: 2, platform: process.platform, ...identity, initializedBy: "explicit-new-profile",
+    });
+    expect(first.selected.userData).toBe(path.join(canonicalAppData, "HanaAgent-userData-v2", identity.digest));
+    expect(first.selected.sessionData).toBe(first.selected.userData);
     expect(fs.readdirSync(first.selected.userData)).toEqual([MARKER]);
     expect(tree(first.selected.userData)).not.toEqual(tree(old));
     const beforeRestart = tree(root); const second = launch(home); second.run();
@@ -147,6 +178,43 @@ describe("pre-ready desktop profile identity and initialization", () => {
     legacy("Alias"); const second = launch(home); second.run();
     expect(second.selected).toEqual(first.selected);
   });
+  it("shares one identity and profile across raw, native and junction HOME/appData paths", () => {
+    const home = mkdir(path.join(root, "physical"));
+    const alias = path.join(root, "home-alias"); fs.symlinkSync(home, alias, "junction");
+    const appDataAlias = path.join(root, "appdata-alias"); fs.symlinkSync(appData, appDataAlias, "junction");
+    const identity = expectedIdentity(home);
+    const appName = path.join("HanaAgent-userData-v2", identity.digest);
+    const expected = path.join(canonicalAppData, appName);
+    const expectedMarker = { version: 2, platform: process.platform, ...identity, initializedBy: "no-legacy-profile" };
+    fs.writeFileSync(path.join(home, "business-sentinel"), "SYNTHETIC-BUSINESS");
+    const first = launch(home); expect(first.run()).toBe(true);
+    expect(first.selected).toEqual({ userData: expected, sessionData: expected });
+    fs.writeFileSync(path.join(expected, "profile-sentinel"), "SYNTHETIC-PROFILE");
+    const before = tree(root); const profileEntity = entity(expected);
+    for (const homePath of [home, identity.canonicalHome, alias]) {
+      expect(entity(homePath)).toEqual(entity(home));
+      const { kind, canonicalHome, digest, appName: actualAppName } = resolveDesktopIdentity(homePath, defaultHome);
+      expect({ kind, canonicalHome, digest, appName: actualAppName }).toEqual({ kind: "custom", ...identity, appName });
+      for (const appDataPath of [appData, canonicalAppData, appDataAlias]) {
+        expect(entity(appDataPath)).toEqual(entity(appData));
+        const candidate = launch(homePath, {}, appDataPath); expect(candidate.run()).toBe(true);
+        expect(candidate.selected).toEqual(first.selected);
+        expect(candidate.events).toEqual(["userData", "sessionData", "lock"]);
+        expect(entity(candidate.selected.userData)).toEqual(profileEntity);
+        expect(JSON.parse(fs.readFileSync(path.join(candidate.selected.userData, MARKER), "utf8"))).toEqual(expectedMarker);
+        expect(fs.readFileSync(path.join(candidate.selected.userData, "profile-sentinel"), "utf8")).toBe("SYNTHETIC-PROFILE");
+      }
+    }
+    expect(tree(root)).toEqual(before);
+    if (process.platform === "win32") {
+      // CI must show whether this run actually exercised short/native divergence.
+      console.info("desktop-profile-path-evidence", JSON.stringify({
+        platform: process.platform, rawHome: home, jsHome: fs.realpathSync(home), nativeHome: identity.canonicalHome,
+        rawAppData: appData, nativeAppData: canonicalAppData,
+        shortPathDifference: fs.realpathSync(home) !== identity.canonicalHome,
+      }));
+    }
+  });
   it.each(["default", "dev"])("blocks historical %s alias ambiguity even with the new-profile option", which => {
     const home = which === "default" ? defaultHome : devHome;
     const alias = path.join(root, "old-alias"); fs.symlinkSync(home, alias, "junction");
@@ -158,7 +226,9 @@ describe("pre-ready desktop profile identity and initialization", () => {
   it("allows a default alias when its old algorithm path does not exist", () => {
     const alias = path.join(root, "new-alias"); fs.symlinkSync(defaultHome, alias, "junction");
     const candidate = launch(alias); candidate.run();
-    expect(candidate.selected.userData).toBe(path.join(appData, "Hanako"));
+    expect(candidate.selected.userData).toBe(path.join(canonicalAppData, "Hanako"));
+    expect(entity(candidate.selected.userData)).toEqual(entity(path.join(appData, "Hanako")));
+    expect(candidate.selected.sessionData).toBeUndefined();
   });
   it("normalizes relative paths, missing ancestors and native /var aliases without creating HOME", () => {
     const home = mkdir(path.join(root, "physical")); const alias = path.join(root, "alias");
@@ -210,13 +280,20 @@ describe("pre-ready desktop profile identity and initialization", () => {
     fs.symlinkSync(outside, path.join(appData, "HanaAgent-userData-v2"), "junction");
     expectBlocked(home, { argv: [FLAG] }, /symlink/i);
   });
-  it("reports EACCES instead of interpreting an inaccessible legacy profile as absent", () => {
+  it.each([{}, { argv: [FLAG] }, { env: { [ENV]: "1" } }])("reports EACCES instead of interpreting an inaccessible legacy profile as absent: %j", options => {
     const home = mkdir(path.join(root, "custom")); legacy("Custom");
-    const fsImpl = { ...fs, lstatSync: (p: string) => {
-      if (p === path.join(appData, "Custom")) throw Object.assign(new Error("synthetic access denied"), { code: "EACCES" });
+    const deniedPath = path.join(canonicalAppData, "Custom");
+    const denied = Object.assign(new Error("synthetic access denied"), { code: "EACCES" });
+    let hits = 0;
+    const lstatSync = vi.fn((p: string) => {
+      if (p === deniedPath) { hits++; throw denied; }
       return fs.lstatSync(p);
-    } };
-    expectBlocked(home, { fsImpl }, /EACCES/);
+    });
+    expectBlocked(home, { ...options, fsImpl: { ...fs, lstatSync } }, /EACCES: synthetic access denied/);
+    expect(hits).toBe(1);
+    expect(lstatSync.mock.calls.filter(([p]) => p === deniedPath)).toEqual([[deniedPath]]);
+    const injectedCall = lstatSync.mock.calls.findIndex(([p]) => p === deniedPath);
+    expect(lstatSync.mock.results[injectedCall]).toEqual({ type: "throw", value: denied });
   });
   it("rejects a retargeted HOME before creating any profile", () => {
     const physical = mkdir(path.join(root, "physical"));
