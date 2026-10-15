@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createRequire } from 'node:module';
+import { URL as NodeURL } from 'node:url';
 import { performance, monitorEventLoopDelay } from 'node:perf_hooks';
 import { ModelRuntime } from '../../node_modules/@earendil-works/pi-coding-agent/dist/core/model-runtime.js';
 import { ModelConfig } from '../../node_modules/@earendil-works/pi-coding-agent/dist/core/model-config.js';
@@ -32,8 +33,9 @@ const api = (value: any) => ['anthropic-messages', 'openai-completions'].include
 const name = (value: any) => value === 'Renamed Kimi' ? 'renamed' : value == null ? 'absent' : 'other';
 const number = (value: any) => typeof value === 'number' && Number.isFinite(value) ? value : null;
 export function errorFields(error: any): Scope {
-  const classes = ['Error', 'TypeError', 'AssertionError', 'AbortError', 'DOMException', 'ModelsError', 'CredentialSynchronizationError'];
-  const codes = ['EPERM', 'EACCES', 'EBUSY', 'ELOCKED', 'ENOENT', 'ENOTEMPTY', 'ABORT_ERR', 'ETIMEDOUT', 'EINVAL'];
+  const classes = ['Error', 'TypeError', 'SyntaxError', 'ReferenceError', 'RangeError', 'AssertionError', 'AbortError', 'DOMException', 'ModelsError', 'CredentialSynchronizationError'];
+  const codes = ['EPERM', 'EACCES', 'EBUSY', 'ELOCKED', 'ENOENT', 'ENOTEMPTY', 'ABORT_ERR', 'ETIMEDOUT', 'EINVAL',
+    'ERR_INVALID_ARG_VALUE', 'ERR_INVALID_URL', 'MODULE_NOT_FOUND', 'ERR_MODULE_NOT_FOUND'];
   const syscalls = ['mkdir', 'rename', 'open', 'read', 'write', 'unlink', 'rmdir', 'stat'];
   return { error_class: classes.includes(error?.name) ? error.name : 'other',
     error_code: codes.includes(error?.code) ? error.code : error?.code == null ? 'absent' : 'other',
@@ -136,55 +138,77 @@ function installModels(runtime: any) {
   }
 }
 export function install(managerPrototype: any, registryPrototype: any, store: any) {
-  if (process.platform !== 'win32' || process.version !== 'v24.15.0' || !output) throw new Error('Native Windows diagnostic only');
-  lag.enable();
-  flushTimer = setInterval(flush, 250); flushTimer.unref();
-  for (const key of ['init', 'reloadAndSync', 'syncAndRefresh', '_removeApiKeyProviderAuthEntries',
-    '_applyRuntimeApiKeyOverrides', 'refreshAvailable', '_syncSdkProviderRegistrations']) {
-    wrap(managerPrototype, key, `manager.${key}`, { scope: self => ({ manager_id: identity(self, 'manager') }) });
+  let stage = 'guard';
+  try {
+    if (process.platform !== 'win32' || process.version !== 'v24.15.0' || !output) throw new Error('Native Windows diagnostic only');
+    // Resolve before mutating any prototype. An explicit NodeURL also avoids the
+    // jsdom/client asset URL transform; resolution remains anchored in the SDK.
+    stage = 'lockfile_resolve';
+    const require = createRequire(new NodeURL('../../node_modules/@earendil-works/pi-coding-agent/dist/core/auth-storage.js', import.meta.url));
+    const lockfile = require('proper-lockfile');
+    stage = 'hook_install';
+    lag.enable();
+    flushTimer = setInterval(flush, 250); flushTimer.unref();
+    for (const key of ['init', 'reloadAndSync', 'syncAndRefresh', '_removeApiKeyProviderAuthEntries',
+      '_applyRuntimeApiKeyOverrides', 'refreshAvailable', '_syncSdkProviderRegistrations']) {
+      wrap(managerPrototype, key, `manager.${key}`, { scope: self => ({ manager_id: identity(self, 'manager') }) });
+    }
+    for (const key of ['saveProvider', 'updateModelEntry']) {
+      wrap(registryPrototype, key, `registry.${key}`, {
+        scope: () => ({ write_revision: currentRevision() }),
+        end: () => { const home = als.getStore()?.fixture_id; const record = [...fixtures.values()].find(f => (f as any).fixture_id === home);
+          if (record) record.revision++; return { write_revision: record?.revision }; } });
+    }
+    const prototype = ModelRuntime.prototype as any;
+    for (const key of ['refresh', 'registerProvider', 'unregisterProvider', 'queueAvailabilityRefresh', 'updateModelSnapshot', 'rebuildProviders']) {
+      wrap(prototype, key, `runtime.${key}`, {
+        before: self => installModels(self),
+        scope: (self, args) => ({ runtime_id: identity(self, 'runtime'),
+          refresh_origin: key === 'registerProvider' ? 'registration' : key === 'unregisterProvider' ? 'unregistration'
+            : (als.getStore()?.refresh_origin ?? (key === 'refresh' ? 'explicit' : undefined)),
+          provider_id: ['registerProvider', 'unregisterProvider'].includes(key) ? provider(args[0]) : undefined,
+          write_revision: currentRevision() }),
+        end: (self, value) => ({ ...snapshot(self), ...resultFields(value), end_write_revision: currentRevision() }) });
+    }
+    wrap(ModelConfig, 'load', 'config.load', { filter: (_self, args) => !!homeFor(args[0]),
+      scope: () => ({ read_id: `read-${++serial}`, write_revision: currentRevision() }),
+      end: (_self, value, _args, spanId) => {
+        reads.set(value, spanId);
+        const c = value.getProvider('kimi-coding');
+        return { config_read_id: spanId, config_error: !!value.getError(), end_write_revision: currentRevision(),
+          ...sampleModel(c?.models?.find((m: any) => m.id === 'kimi-for-coding') ?? c?.modelOverrides?.['kimi-for-coding'], 'config') };
+      } });
+    for (const key of ['withLockAsync', 'acquireLockAsync', 'withLock', 'acquireLockSyncWithRetry']) {
+      wrap(FileAuthStorageBackend.prototype, key, `auth.${key}`, {
+        filter: (self, args) => !!homeFor(self.authPath ?? args[0]), scope: () => ({ file_role: 'auth.json' }) });
+    }
+    for (const key of ['lock', 'lockSync']) wrap(lockfile, key, `auth.${key}.attempt`, {
+      filter: (_self, args) => !!homeFor(args[0]) && role(args[0]) === 'auth.json', scope: () => ({ file_role: 'auth.json' }) });
+    wrap(fs, 'renameSync', 'io.rename', { filter: (_self, args) => !!homeFor(args[1]),
+      scope: (_self, args) => ({ file_role: role(args[1]), write_revision: currentRevision() }) });
+    const unsubscribe = store.subscribe((state: any, previous: any) => {
+      if (state.toastType !== previous.toastType || state.toastMessage !== previous.toastMessage || state.toastVisible !== previous.toastVisible)
+        emit('toast.change', { toast_type: ['success', 'error'].includes(state.toastType) ? state.toastType : 'other', toast_visible: !!state.toastVisible });
+    });
+    restores.push(unsubscribe);
+    emit('instrumentation.ready', { lock_attempts_observed: true, wait_timeout_ms: 1000, test_timeout_ms: 10000 });
+    flush();
+    if (broken) throw new Error('Diagnostic instrumentation failed');
+  } catch (error) {
+    broken = true;
+    emit('instrumentation.failure', { installation_stage: stage, ...errorFields(error) });
+    flush();
+    restoreInstrumentation();
+    throw error;
   }
-  for (const key of ['saveProvider', 'updateModelEntry']) {
-    wrap(registryPrototype, key, `registry.${key}`, {
-      scope: () => ({ write_revision: currentRevision() }),
-      end: () => { const home = als.getStore()?.fixture_id; const record = [...fixtures.values()].find(f => (f as any).fixture_id === home);
-        if (record) record.revision++; return { write_revision: record?.revision }; } });
+}
+function restoreInstrumentation() {
+  clearInterval(flushTimer); lag.disable();
+  for (const restore of restores.splice(0).reverse()) {
+    try { restore(); }
+    catch (error) { broken = true; emit('instrumentation.failure', { installation_stage: 'restore', ...errorFields(error) }); }
   }
-  const prototype = ModelRuntime.prototype as any;
-  for (const key of ['refresh', 'registerProvider', 'unregisterProvider', 'queueAvailabilityRefresh', 'updateModelSnapshot', 'rebuildProviders']) {
-    wrap(prototype, key, `runtime.${key}`, {
-      before: self => installModels(self),
-      scope: (self, args) => ({ runtime_id: identity(self, 'runtime'),
-        refresh_origin: key === 'registerProvider' ? 'registration' : key === 'unregisterProvider' ? 'unregistration'
-          : (als.getStore()?.refresh_origin ?? (key === 'refresh' ? 'explicit' : undefined)),
-        provider_id: ['registerProvider', 'unregisterProvider'].includes(key) ? provider(args[0]) : undefined,
-        write_revision: currentRevision() }),
-      end: (self, value) => ({ ...snapshot(self), ...resultFields(value), end_write_revision: currentRevision() }) });
-  }
-  wrap(ModelConfig, 'load', 'config.load', { filter: (_self, args) => !!homeFor(args[0]),
-    scope: () => ({ read_id: `read-${++serial}`, write_revision: currentRevision() }),
-    end: (_self, value, _args, spanId) => {
-      reads.set(value, spanId);
-      const c = value.getProvider('kimi-coding');
-      return { config_read_id: spanId, config_error: !!value.getError(), end_write_revision: currentRevision(),
-        ...sampleModel(c?.models?.find((m: any) => m.id === 'kimi-for-coding') ?? c?.modelOverrides?.['kimi-for-coding'], 'config') };
-    } });
-  for (const key of ['withLockAsync', 'acquireLockAsync', 'withLock', 'acquireLockSyncWithRetry']) {
-    wrap(FileAuthStorageBackend.prototype, key, `auth.${key}`, {
-      filter: (self, args) => !!homeFor(self.authPath ?? args[0]), scope: () => ({ file_role: 'auth.json' }) });
-  }
-  // Resolve precisely the CJS instance used by this SDK's auth-storage module.
-  const require = createRequire(new URL('../../node_modules/@earendil-works/pi-coding-agent/dist/core/auth-storage.js', import.meta.url));
-  const lockfile = require('proper-lockfile');
-  for (const key of ['lock', 'lockSync']) wrap(lockfile, key, `auth.${key}.attempt`, {
-    filter: (_self, args) => !!homeFor(args[0]) && role(args[0]) === 'auth.json', scope: () => ({ file_role: 'auth.json' }) });
-  wrap(fs, 'renameSync', 'io.rename', { filter: (_self, args) => !!homeFor(args[1]),
-    scope: (_self, args) => ({ file_role: role(args[1]), write_revision: currentRevision() }) });
-  const unsubscribe = store.subscribe((state: any, previous: any) => {
-    if (state.toastType !== previous.toastType || state.toastMessage !== previous.toastMessage || state.toastVisible !== previous.toastVisible)
-      emit('toast.change', { toast_type: ['success', 'error'].includes(state.toastType) ? state.toastType : 'other', toast_visible: !!state.toastVisible });
-  });
-  restores.push(unsubscribe);
-  emit('instrumentation.ready', { lock_attempts_observed: true, wait_timeout_ms: 1000, test_timeout_ms: 10000 });
+  flush();
 }
 function currentRevision() {
   const fixtureId = als.getStore()?.fixture_id;
@@ -279,11 +303,10 @@ export function health() {
   if (broken) throw new Error('Diagnostic instrumentation failed');
 }
 export async function finish() {
-  lifecycle('tail.begin');
-  // Observation only, after the original cleanup and all planned tests; never changes their result.
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  lifecycle('tail.end'); health();
-  clearInterval(flushTimer); lag.disable();
-  for (const restore of restores.reverse()) restore();
-  flush();
+  try {
+    lifecycle('tail.begin');
+    // Observation only, after the original cleanup and all planned tests; never changes their result.
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    lifecycle('tail.end'); health();
+  } finally { restoreInstrumentation(); }
 }

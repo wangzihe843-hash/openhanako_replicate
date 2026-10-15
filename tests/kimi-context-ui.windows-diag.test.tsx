@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
-import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { ModelManager } from '../core/model-manager.ts';
@@ -27,7 +27,8 @@ import { useSettingsStore, type ProviderSummary } from '../desktop/src/react/set
 
 import * as trace from './helpers/kimi-context-windows-trace';
 
-trace.install(ModelManager.prototype, ProviderRegistry.prototype, useSettingsStore);
+// Collection must not install hooks. The native guard still runs before any fixture.
+beforeAll(() => trace.install(ModelManager.prototype, ProviderRegistry.prototype, useSettingsStore));
 afterAll(() => trace.finish());
 let fixtureHome: string;
 beforeEach(() => {
