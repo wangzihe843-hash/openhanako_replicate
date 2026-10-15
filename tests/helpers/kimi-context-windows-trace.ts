@@ -20,7 +20,14 @@ const restores: Array<() => void> = [];
 const modelsSeen = new WeakSet<object>();
 let serial = 0, caseScope: Scope = {}, buffer: Scope[] = [], broken = false;
 let flushTimer: ReturnType<typeof setInterval>;
-const output = process.env.KIMI_DIAG_TRACE;
+let roleLabel = 'target', configuredRole = 'target';
+export function configureRole(peer: boolean) { configuredRole = peer ? 'peer' : 'target'; }
+let output: string | undefined;
+let resourceTimer: ReturnType<typeof setInterval>;
+let lastTick = performance.now();
+const lowFrequency = new Set(['instrumentation.ready', 'instrumentation.failure', 'beforeEach.done', 'test.begin', 'test.body.pass', 'test.body.fail',
+  'cleanup.begin', 'cleanup.end', 'fetch-guard.begin', 'fetch-guard.pass', 'fetch-guard.fail', 'restoreMocks.end', 'fixture.remove.begin', 'fixture.remove.end',
+  'tail.begin', 'tail.end', 'worker.begin', 'worker.end', 'pending.span', 'eventLoop.sample', 'resource.sample']);
 const lag = monitorEventLoopDelay({ resolution: 20 });
 let lastElu = performance.eventLoopUtilization();
 const now = () => performance.now() - started;
@@ -58,9 +65,11 @@ function counts() {
 export function emit(event: string, fields: Scope = {}, scope = als.getStore() ?? caseScope) {
   // All call sites supply only synthetic, enumerated fields. No arbitrary message text.
   try {
-    buffer.push({ cohort: process.env.KIMI_DIAG_COHORT, process_index: Number(process.env.KIMI_DIAG_PROCESS_INDEX),
+    if (scope.case_key !== 'T' && caseScope.case_key !== 'T' && !lowFrequency.has(event)) return;
+    if (buffer.length >= 250_000) { broken = true; return; }
+    buffer.push({ worker_role: roleLabel, worker_id: Number(process.env.VITEST_WORKER_ID), pid: process.pid, wall_ms: Date.now(), cohort: process.env.KIMI_DIAG_COHORT, process_index: Number(process.env.KIMI_DIAG_PROCESS_INDEX),
       ...scope, event, monotonic_ms: now(), ...counts(), ...fields });
-    if (buffer.length > 250_000) { broken = true; buffer = []; }
+
   } catch { broken = true; }
 }
 export function flush() {
@@ -138,6 +147,9 @@ function installModels(runtime: any) {
   }
 }
 export function install(managerPrototype: any, registryPrototype: any, store: any) {
+  // Each isolated importer identifies its file; no child-wide env mutation.
+  roleLabel = configuredRole;
+  output = process.env.KIMI_DIAG_TRACE && `${process.env.KIMI_DIAG_TRACE}.${roleLabel}.jsonl`;
   let stage = 'guard';
   try {
     if (process.platform !== 'win32' || process.version !== 'v24.15.0' || !output) throw new Error('Native Windows diagnostic only');
@@ -149,6 +161,11 @@ export function install(managerPrototype: any, registryPrototype: any, store: an
     stage = 'hook_install';
     lag.enable();
     flushTimer = setInterval(flush, 250); flushTimer.unref();
+    resourceTimer = setInterval(() => { const tick = performance.now();
+      emit('resource.sample', { cpu_user_us: process.cpuUsage().user, cpu_system_us: process.cpuUsage().system, rss_bytes: process.memoryUsage().rss,
+        lag_tick_ms: Math.max(0, tick - lastTick - 100), io_read_bytes: 'unavailable', io_write_bytes: 'unavailable' }); lastTick = tick;
+    }, 100); resourceTimer.unref();
+    emit('worker.begin');
     for (const key of ['init', 'reloadAndSync', 'syncAndRefresh', '_removeApiKeyProviderAuthEntries',
       '_applyRuntimeApiKeyOverrides', 'refreshAvailable', '_syncSdkProviderRegistrations']) {
       wrap(managerPrototype, key, `manager.${key}`, { scope: self => ({ manager_id: identity(self, 'manager') }) });
@@ -203,7 +220,8 @@ export function install(managerPrototype: any, registryPrototype: any, store: an
   }
 }
 function restoreInstrumentation() {
-  clearInterval(flushTimer); lag.disable();
+  emit('worker.end');
+  clearInterval(resourceTimer); clearInterval(flushTimer); lag.disable();
   for (const restore of restores.splice(0).reverse()) {
     try { restore(); }
     catch (error) { broken = true; emit('instrumentation.failure', { installation_stage: 'restore', ...errorFields(error) }); }
@@ -214,12 +232,13 @@ function currentRevision() {
   const fixtureId = als.getStore()?.fixture_id;
   return [...fixtures.values()].find(f => (f as any).fixture_id === fixtureId)?.revision;
 }
-export function beforeTest(home: string) {
+export function beforeTest(home: string, testIndex: number, key: string) {
   const fixtureId = `fixture-${++serial}`;
   fixtures.set(home, { revision: 0, fixture_id: fixtureId } as any);
-  caseScope = { fixture_id: fixtureId };
+  caseScope = { fixture_id: fixtureId, test_index: testIndex, case_key: key };
   emit('beforeEach.done'); flush();
 }
+export function context() { return caseScope; }
 export async function runCase(c: any, fn: () => Promise<void>) {
   caseScope = { ...caseScope, test_index: c.test_index, case_key: c.case_key };
   return als.run(caseScope, async () => {
@@ -279,12 +298,15 @@ export async function save(action: string, click: () => void, wait: (poll: () =>
   return als.run({ ...als.getStore(), action, request_id: `put-${++serial}` }, async () => {
     const clickStart = now(); emit('save.click.begin'); click();
     emit('save.click.return', { elapsed_ms: now() - clickStart });
-    const begin = now(); emit('waitFor.begin', { deadline_ms: begin + 1000 });
+    const begin = now(), cpu = process.cpuUsage(), elu = performance.eventLoopUtilization(); lag.reset();
+    const metrics = () => ({ cpu_user_us: process.cpuUsage(cpu).user, cpu_system_us: process.cpuUsage(cpu).system, rss_bytes: process.memoryUsage().rss,
+      event_loop_max_ms: lag.max / 1e6, event_loop_mean_ms: number(lag.mean / 1e6), event_loop_utilization: performance.eventLoopUtilization(elu).utilization });
+    emit('waitFor.begin', { deadline_ms: begin + 1000 });
     try {
       await wait(() => { emit('waitFor.poll', { on_refresh_count: count() }); assert(); });
-      emit('waitFor.pass', { elapsed_ms: now() - begin, on_refresh_count: count(), panel_present: panel() });
+      emit('waitFor.pass', { ...metrics(), elapsed_ms: now() - begin, on_refresh_count: count(), panel_present: panel() });
     } catch (error) {
-      emit('waitFor.fail', { elapsed_ms: now() - begin, on_refresh_count: count(), panel_present: panel(), ...errorFields(error) });
+      emit('waitFor.fail', { ...metrics(), elapsed_ms: now() - begin, on_refresh_count: count(), panel_present: panel(), ...errorFields(error) });
       flush(); throw error;
     }
   });
