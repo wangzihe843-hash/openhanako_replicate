@@ -7,7 +7,7 @@ import {
   SESSION_APPROVAL_POLICIES,
   SESSION_PERMISSION_MODES,
 } from "../../core/session-permission-mode.ts";
-import { getToolSessionPath, normalizeToolRuntimeContext } from "./tool-session.ts";
+import { getToolSessionPath, mergeToolRuntimeContexts, normalizeToolRuntimeContext } from "./tool-session.ts";
 import { toolError } from "./tool-result.ts";
 import { t } from "../i18n.ts";
 import {
@@ -156,7 +156,6 @@ function createBoundSessionManager(sessionManager: any, sessionBinding: any) {
 
 function createBoundRuntimeCtx(ctx: any, sessionBinding: any) {
   if (!ctx || typeof ctx !== "object") return ctx;
-  const boundCtx = Object.assign(Object.create(Object.getPrototypeOf(ctx)), ctx);
   const wasEnumerable = (property: PropertyKey) => Object.prototype.propertyIsEnumerable.call(ctx, property);
   const boundSessionRef = ctx.sessionRef || sessionBinding.sessionId || sessionBinding.sessionPath
     ? Object.freeze({
@@ -204,8 +203,7 @@ function createBoundRuntimeCtx(ctx: any, sessionBinding: any) {
       configurable: false,
     };
   }
-  Object.defineProperties(boundCtx, fixedFields);
-  return boundCtx;
+  return mergeToolRuntimeContexts(ctx, Object.create(null, fixedFields));
 }
 
 function buildToolApprovalRequest(confirmId: any, toolName: any, params: any) {

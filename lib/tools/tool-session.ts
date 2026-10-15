@@ -1,6 +1,19 @@
 import path from "path";
 
 /**
+ * Merge runtime contexts without evaluating getters or dropping non-enumerable
+ * SDK capabilities. Later sources win, including over non-configurable source
+ * fields: merge descriptors before defining them on the fresh object. Callers
+ * must put host-owned session bindings after incoming context.
+ */
+export function mergeToolRuntimeContexts(...contexts: Array<object | null | undefined>) {
+  const sources = contexts.filter(ctx => ctx != null);
+  const descriptors = Object.assign(Object.create(null),
+    ...sources.map(ctx => Object.getOwnPropertyDescriptors(ctx)));
+  return Object.create(sources.length ? Object.getPrototypeOf(sources[0]) : Object.prototype, descriptors);
+}
+
+/**
  * tool-session.js — 从 tool execute 的 ctx 中提取 sessionPath
  *
  * Pi SDK 调用 tool.execute(toolCallId, params, signal?, onUpdate?, ctx?) 时，

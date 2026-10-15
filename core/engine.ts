@@ -54,6 +54,7 @@ import { LoopController } from "../lib/loop/loop-controller.ts";
 import {
   getToolSessionPath,
   normalizeToolRuntimeContext,
+  mergeToolRuntimeContexts,
   resolveToolSessionRef,
 } from "../lib/tools/tool-session.ts";
 import { loadLocale } from "../lib/i18n.ts";
@@ -3073,8 +3074,7 @@ export class HanaEngine implements SessionCancellation {
             || null;
           const sessionRef = resolveRuntimeSessionRef(runtimeCtx);
           const sessionPath = runtimeSessionPath || sessionRef?.sessionPath || null;
-          const mergedCtx = {
-            ...runtimeCtx,
+          const mergedCtx = mergeToolRuntimeContexts(runtimeCtx, {
             ...(sessionRef ? { sessionId: sessionRef.sessionId, sessionRef } : {}),
             ...(sessionPath ? { sessionPath } : {}),
             ...(opts.bridgeContext ? { bridgeContext: opts.bridgeContext } : {}),
@@ -3083,7 +3083,7 @@ export class HanaEngine implements SessionCancellation {
             approvalPolicy,
             agentId,
             ...executionScope,
-          };
+          });
           return tool.execute(toolCallId, params, signalOrRuntimeCtx, onUpdate, mergedCtx);
         },
       };

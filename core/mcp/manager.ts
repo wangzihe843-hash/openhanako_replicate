@@ -15,7 +15,7 @@ import {
   refreshMcpOAuthToken,
 } from "./clients/oauth.ts";
 import { createSettingsUpdate } from "../../lib/tools/settings-update-result.ts";
-import { normalizeToolRuntimeContext } from "../../lib/tools/tool-session.ts";
+import { mergeToolRuntimeContexts, normalizeToolRuntimeContext } from "../../lib/tools/tool-session.ts";
 import { createPluginConfigStore, normalizePluginConfigSchema } from "../plugin-config.ts";
 import { t } from "../../lib/i18n.ts";
 
@@ -2161,7 +2161,7 @@ export class McpManager {
         const { ctx: runtimeCtx } = normalizeToolRuntimeContext(signalOrRuntimeCtx, piCtx);
         const signal = isAbortSignal(signalOrRuntimeCtx) ? signalOrRuntimeCtx : runtimeCtx.signal;
         throwIfAborted(signal);
-        const ctx = signal ? { ...runtimeCtx, signal } : runtimeCtx;
+        const ctx = signal ? mergeToolRuntimeContexts(runtimeCtx, { signal }) : runtimeCtx;
         return normalizeMcpToolResult(await origExecute(toolCallId, params, ctx));
       },
       _pluginId: MCP_TOOL_NAMESPACE,

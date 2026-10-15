@@ -680,7 +680,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:2af7b5f6a9e6bd5625f357767334bb2885fd49b3403d2a608ea3e9ec33cf0b9d",
+  "payloadFingerprint": "sha256:e8b116416fcb59e5ae779c617782a0a573890ab8efc58930cd103af18f5875c1",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3380,8 +3380,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Desktop pre-ready profile selection adds six narrowly registered Electron appData directory/marker writes outside HANA_HOME. Existing default/dev profiles and all business store readers, schemas, checkpoint/restore policies and DATA_EPOCH remain unchanged. The desktop-window-version-state source hash changes only because its module now wires profile selection before lock/ready; it does not change that store format.",
-    "payloadFingerprint": "sha256:2af7b5f6a9e6bd5625f357767334bb2885fd49b3403d2a608ea3e9ec33cf0b9d"
+    "compatibilityReason": "Independent descriptor-preservation review: only installed-plugins/core/plugin-manager.ts and mcp-config/core/mcp/manager.ts parse-tree source hashes change. Their edits preserve per-invocation SDK context descriptors and effective cancellation signal; plugin manifest/install/receipt/backup readers and writers, normalizeMcpConfig, serialized formats, session JSONL v3, registry/site mappings, checkpoint/restore policies and DATA_EPOCH remain unchanged. Baseline source overrides reproduce the prior fingerprint exactly; repeated candidate generation is deterministic. Nested permission/scope/abort rejection, legacy tool interfaces, old-session reopen and persistence compatibility contracts pass; no stored-shape migration is required.",
+    "payloadFingerprint": "sha256:e8b116416fcb59e5ae779c617782a0a573890ab8efc58930cd103af18f5875c1"
   },
   "schemas": [
     {
@@ -3766,7 +3766,7 @@
       "contract": "installed manifest, install receipt, backup, and source-package directory protocols",
       "kind": "directory-contract",
       "module": "core/plugin-manager.ts",
-      "sourceHash": "sha256:15577f0f551effaf9ae919a24c8adf176c3ebbd8b26c2263822dc4740a8110ad",
+      "sourceHash": "sha256:fd3a4a804539d60fe9b92060dbd538c9397898de7193ce78aa30c3e475781a81",
       "storeId": "installed-plugins"
     },
     {
@@ -3814,7 +3814,7 @@
       "contract": "normalizeMcpConfig read-time normalization (servers/connectors alias, auth and OAuth field defaults, per-connector permission policy defaults, deferred-loading defaults)",
       "kind": "runtime-contract",
       "module": "core/mcp/manager.ts",
-      "sourceHash": "sha256:a78e729bfb054146a122ad3c9fab24a4125f147ce97df371e4ee98529a331d9b",
+      "sourceHash": "sha256:1f46271401b4345fe9c7ac42bda1089db4dac568c8d2d9af4425150cd25002b1",
       "storeId": "mcp-config"
     },
     {

@@ -1,4 +1,4 @@
-import { getToolSessionPath, resolveToolSessionRef } from "./tools/tool-session.ts";
+import { getToolSessionPath, mergeToolRuntimeContexts, resolveToolSessionRef } from "./tools/tool-session.ts";
 
 function nonEmptyText(value: any): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -102,12 +102,11 @@ export function wrapWithSessionExecutionCancellation(tools: any[] = [], deps: an
         if (!nonEmptyText(sessionRef?.sessionId)) {
           throw new Error(`Cannot execute ${tool.name || "tool"}: sessionId is unavailable`);
         }
-        const enrichedRuntimeCtx = {
-          ...(runtimeCtx || {}),
+        const enrichedRuntimeCtx = mergeToolRuntimeContexts(runtimeCtx, {
           sessionId: sessionRef.sessionId,
           sessionRef,
           ...(sessionRef.sessionPath ? { sessionPath: sessionRef.sessionPath } : {}),
-        };
+        });
         const execution = deps.registry.begin({
           sessionId: sessionRef.sessionId,
           toolName: tool.name,

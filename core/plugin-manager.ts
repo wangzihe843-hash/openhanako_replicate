@@ -10,7 +10,7 @@ import { createPluginConfigStore, normalizePluginConfigSchema } from "./plugin-c
 import { semverGte } from "../lib/plugin-versioning.ts";
 import { detectIncompatiblePluginFormat } from "../lib/plugin-format-guard.ts";
 import { createModuleLogger } from "../lib/debug-log.ts";
-import { getToolSessionPath, normalizeToolRuntimeContext } from "../lib/tools/tool-session.ts";
+import { getToolSessionPath, mergeToolRuntimeContexts, normalizeToolRuntimeContext } from "../lib/tools/tool-session.ts";
 
 const log = createModuleLogger("plugin-manager");
 
@@ -901,11 +901,11 @@ export class PluginManager {
             const sessionCtx = normalizeToolSessionRef(runtimeCtx, fallbackSessionPath);
             const helperCtx = withInvocationSessionHelpers(ctx, sessionCtx);
             const invocationResources = typeof ctx.__createInvocationResources === "function"
-              ? ctx.__createInvocationResources({ ...runtimeCtx, ...sessionCtx })
+              ? ctx.__createInvocationResources(mergeToolRuntimeContexts(runtimeCtx, sessionCtx))
               : ctx.resources;
             const mergedCtx = hasExplicitCtx
-              ? { ...ctx, ...runtimeCtx, ...sessionCtx, ...helperCtx, resources: invocationResources }
-              : { ...ctx, ...sessionCtx, ...helperCtx, resources: invocationResources };
+              ? mergeToolRuntimeContexts(ctx, runtimeCtx, sessionCtx, helperCtx, { resources: invocationResources })
+              : mergeToolRuntimeContexts(ctx, sessionCtx, helperCtx, { resources: invocationResources });
             const raw = await origExecute(params, mergedCtx);
             return normalizePluginToolResult(raw, ctx.pluginId);
           },
@@ -939,7 +939,7 @@ export class PluginManager {
         const { ctx: runtimeCtx } = normalizeToolRuntimeContext(signalOrRuntimeCtx, piCtx);
         const fallbackSessionPath = runtimeCtx?.sessionPath || getToolSessionPath(runtimeCtx) || null;
         const sessionCtx = normalizeToolSessionRef(runtimeCtx, fallbackSessionPath);
-        const mergedCtx = { ...runtimeCtx, ...sessionCtx };
+        const mergedCtx = mergeToolRuntimeContexts(runtimeCtx, sessionCtx);
         const raw = invocationStyle === "pi_tool"
           ? origExecute.length >= 5
             ? await origExecute(toolCallId, params, signalOrRuntimeCtx, onUpdate, mergedCtx)
