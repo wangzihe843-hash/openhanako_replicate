@@ -456,6 +456,34 @@ function archivedFiles(memoryDir: string) {
     .map(name => ({ name, body: fs.readFileSync(path.join(root, name), 'utf8') })) : [];
 }
 
+function matchesArchivedSource(archiveName: string, sourceName: string, pathApi = path) {
+  // Recursive readdir names use native separators; require the complete source
+  // path directly beneath one retired generation, not an arbitrary suffix.
+  const [generation] = archiveName.split(pathApi.sep);
+  return /^retired-.+$/.test(generation) && archiveName === pathApi.join(generation, sourceName);
+}
+
+it.each(['posix', 'win32'] as const)('matches complete archive source paths on %s', (platform) => {
+  const pathApi = path[platform];
+  for (const source of ['daily/2026-10-14.md', 'daily/2026-10-14.md.fingerprint', 'editable-facts.md', 'dream/pending-apply.json']) {
+    const native = (name: string) => name.replaceAll('/', pathApi.sep);
+    const expected = [`retired-first/${source}`, `retired-second/${source}`].map(native);
+    const names = [
+      ...expected,
+      ...[
+        source, `retired-/${source}`, `unrelated/${source}`, `not-retired-first/${source}`,
+        `retired-first/nested/${source}`, `retired-first/not${source}`, `retired-first/${source}.bak`,
+        ...(source.includes('/') ? [`retired-first/${path.posix.basename(source)}`] : []),
+      ].map(native),
+    ];
+    expect(names.filter(name => matchesArchivedSource(name, source, pathApi))).toEqual(expected);
+  }
+});
+
+it('keeps literal POSIX backslashes distinct from archive source separators', () => {
+  expect(matchesArchivedSource(String.raw`retired-first/daily\2026-10-14.md`, 'daily/2026-10-14.md', path.posix)).toBe(false);
+});
+
 for (const full of [false, true]) {
   it(`archives recoverable sources and preserves unrelated data full=${full}`, async () => {
     const f = fixture(); await f.ticker.stop();
@@ -479,18 +507,21 @@ for (const full of [false, true]) {
     advance(); await f.reset(full);
     for (const [name, body] of Object.entries(sources)) {
       expect(read(path.join(f.memoryDir, name))).toBeNull();
-      expect(archivedFiles(f.memoryDir).filter(entry => entry.name.endsWith(name)).map(entry => entry.body)).toEqual([body]);
+      expect(archivedFiles(f.memoryDir).filter(entry => matchesArchivedSource(entry.name, name)).map(entry => entry.body)).toEqual([body]);
     }
     for (const [name, body] of Object.entries(retained)) expect(read(path.join(f.memoryDir, name))).toBe(body);
     expect(fs.readFileSync(f.file).equals(session)).toBe(true);
     expect(JSON.stringify(f.facts.exportAll()).includes(OLD)).toBe(!full);
     // A second reset cannot overwrite the first archive, even at the same clock time.
     writeDailyEntryBody(path.join(f.memoryDir, 'daily'), '2026-10-14', NEW);
+    const secondDaily = fs.readFileSync(path.join(f.memoryDir, 'daily/2026-10-14.md'), 'utf8');
     await f.reset(full);
-    expect(archivedFiles(f.memoryDir).filter(entry => entry.name.endsWith('daily/2026-10-14.md'))).toHaveLength(2);
-    expect(archivedFiles(f.memoryDir).some(entry => entry.body === sources['daily/2026-10-14.md'])).toBe(true);
+    const dailyArchives = archivedFiles(f.memoryDir).filter(entry => matchesArchivedSource(entry.name, 'daily/2026-10-14.md'));
+    expect(dailyArchives).toHaveLength(2);
+    expect(dailyArchives.map(entry => entry.body).sort()).toEqual([sources['daily/2026-10-14.md'], secondDaily].sort());
+    expect(read(path.join(f.memoryDir, 'daily/2026-10-14.md'))).toBeNull();
     // Recover one archived file only by an explicit restore/edit; ordinary assembly never reads archives.
-    const restored = archivedFiles(f.memoryDir).find(entry => entry.body === sources['daily/2026-10-14.md'])!;
+    const restored = dailyArchives.find(entry => entry.body === sources['daily/2026-10-14.md'])!;
     writeDailyEntryBody(path.join(f.memoryDir, 'daily'), '2026-10-14', restored.body);
     expect(read(path.join(f.memoryDir, 'daily/2026-10-14.md'))).toContain('MANUAL DAILY');
   });
@@ -658,7 +689,7 @@ for (const marker of ['none', 'timestamp', 'current', 'stale']) {
     expect(recoverPendingDreamApply(f.memoryDir)).toBe(permitted);
     expect(read(f.agent.factsMdPath)).toContain(permitted ? OLD : NEW);
     expect(read(journalPath)).toBeNull();
-    if (!permitted) expect(archivedFiles(f.memoryDir).some(entry => entry.name.endsWith('pending-apply.json'))).toBe(true);
+    if (!permitted) expect(archivedFiles(f.memoryDir).some(entry => matchesArchivedSource(entry.name, 'dream/pending-apply.json'))).toBe(true);
     restoreDreamRevision(f.memoryDir, revision.revisionId);
     expect(read(f.agent.factsMdPath)).toContain(OLD);
   });
