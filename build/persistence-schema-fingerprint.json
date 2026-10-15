@@ -680,7 +680,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:e8b116416fcb59e5ae779c617782a0a573890ab8efc58930cd103af18f5875c1",
+  "payloadFingerprint": "sha256:217daf0addd8c8762357e7e7bd0bc29bb3d0d3c4cda9686e7d8668a860f5707d",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3380,8 +3380,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Independent descriptor-preservation review: only installed-plugins/core/plugin-manager.ts and mcp-config/core/mcp/manager.ts parse-tree source hashes change. Their edits preserve per-invocation SDK context descriptors and effective cancellation signal; plugin manifest/install/receipt/backup readers and writers, normalizeMcpConfig, serialized formats, session JSONL v3, registry/site mappings, checkpoint/restore policies and DATA_EPOCH remain unchanged. Baseline source overrides reproduce the prior fingerprint exactly; repeated candidate generation is deterministic. Nested permission/scope/abort rejection, legacy tool interfaces, old-session reopen and persistence compatibility contracts pass; no stored-shape migration is required.",
-    "payloadFingerprint": "sha256:e8b116416fcb59e5ae779c617782a0a573890ab8efc58930cd103af18f5875c1"
+    "compatibilityReason": "Move existing branch/reset fences into a shared draft revalidation helper and reuse the current scoped dependency check before bounded format repair. Stale requests skip repair; final wrapper/save guards, stored fields, serialization, paths, SQLite schemas, DATA_EPOCH and session persistence contracts remain unchanged. Scoped source rejection preserves the prior empty-string API result. A baseline source override reproduces the previous fingerprint exactly; only session-summary.ts protocol sourceHash changes.",
+    "payloadFingerprint": "sha256:217daf0addd8c8762357e7e7bd0bc29bb3d0d3c4cda9686e7d8668a860f5707d"
   },
   "schemas": [
     {
@@ -3489,7 +3489,7 @@
         },
         {
           "module": "lib/memory/session-summary.ts",
-          "sourceHash": "sha256:9f894f04effa5c503cdea2e4ecf5adacfb62f4881f0cc90c99e001ce328cbb6d"
+          "sourceHash": "sha256:336c00660c82f4c77264a2abb0361805a4cfe9d16536e0b14476cd9a024829d1"
         },
         {
           "module": "shared/memory-provenance.ts",

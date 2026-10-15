@@ -660,12 +660,49 @@ export class SessionSummaryManager {
       };
     }
 
+    // Reuse the final fences before spending another request on a stale draft.
+    const revalidateDraft = async () => {
+      if (projection && typeof opts.revalidateProjection === "function") {
+        const latestProjection = normalizeBranchProjection(await opts.revalidateProjection());
+        if (!latestProjection || !projectionRemainsAncestor(projection, latestProjection)) {
+          return {
+            summary: existing?.summary || "",
+            changed: false,
+            mode,
+            data: null,
+            usage,
+            reason: "branch_changed",
+          };
+        }
+      }
+
+      const latestResetAt = latestSince(resetAt, readCompiledResetAt(path.dirname(this.summariesDir)));
+      if (latestResetAt && !areMessagesAfter(messages, latestResetAt)) {
+        return {
+          summary: prevSummary,
+          changed: false,
+          mode,
+          data: null,
+          usage,
+          reason: "reset_watermark",
+        };
+      }
+
+      if (!this.isSourceCurrent(scopedFields)) {
+        return { summary: "", changed: false, mode, data: null, usage, reason: "source_changed" };
+      }
+      return null;
+    };
+
     // 写入前结构校验 + 有限次数格式修复（#1628）：摘要必须满足 compileEditableFacts
     // 的提取假设，否则 facts 会在编译侧静默丢失。最终修不好就抛错，由调用方
     // （memory ticker / 日记回填）按既有失败通道记录，旧摘要保持不被覆盖。
     let repairsUsed = 0;
     let validation = validateRollingSummaryFormat(newSummary);
     while (!validation.ok && repairsUsed < MAX_ROLLING_SUMMARY_FORMAT_REPAIRS) {
+      const staleDraft = await revalidateDraft();
+      if (staleDraft) return staleDraft;
+
       repairsUsed += 1;
       log.warn(`rolling summary format invalid for ${sessionId} (${validation.issues.join("; ")}), repair attempt ${repairsUsed}/${MAX_ROLLING_SUMMARY_FORMAT_REPAIRS}`);
       const repairResult = await this._callRollingRepairLLM(newSummary, validation.issues, resolvedModel, turnCount, {
@@ -684,31 +721,8 @@ export class SessionSummaryManager {
       throw new Error(`rolling summary format invalid after ${repairsUsed} repair attempt(s): ${validation.issues.join("; ")}`);
     }
 
-    if (projection && typeof opts.revalidateProjection === "function") {
-      const latestProjection = normalizeBranchProjection(await opts.revalidateProjection());
-      if (!latestProjection || !projectionRemainsAncestor(projection, latestProjection)) {
-        return {
-          summary: existing?.summary || "",
-          changed: false,
-          mode,
-          data: null,
-          usage,
-          reason: "branch_changed",
-        };
-      }
-    }
-
-    const latestResetAt = latestSince(resetAt, readCompiledResetAt(path.dirname(this.summariesDir)));
-    if (latestResetAt && !areMessagesAfter(messages, latestResetAt)) {
-      return {
-        summary: prevSummary,
-        changed: false,
-        mode,
-        data: null,
-        usage,
-        reason: "reset_watermark",
-      };
-    }
+    const staleDraft = await revalidateDraft();
+    if (staleDraft) return staleDraft;
 
     // PII 脱敏
     const { cleaned: scrubbedRolling, detected: rollingDetected } = scrubPII(newSummary);
