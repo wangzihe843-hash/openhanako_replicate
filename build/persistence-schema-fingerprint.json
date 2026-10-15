@@ -680,7 +680,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:cb6670b43278479e157492bce205aabc7919601bde3e9c6273c2f13623bcc566",
+  "payloadFingerprint": "sha256:2b8059441ec896c599413b97cea58899ea53afe4fb9cec1696dba736285e5fc8",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3396,8 +3396,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Compatible forward addition reviewed in docs/audits/2026-10-15-reset-lifecycle-persistence-compatibility.md against af4c8303f859c0f2577003b6b89b8e950689f89d. Register the reset candidate's exact retired-source paths, retained week backup, dual compiled/facts marker, optional daily-state v4 revision and Dream journal v1 token, and their boundary consumers. Valid timestamp-only markers and identity-less journals without a marker remain readable. Raw channel Markdown, bookmarks, Pi format, SQLite DDL/user_version and DATA_EPOCH 1 are unchanged. Archives preserve bytes and are not automatic inputs; partial reset failures do not rewind published identity. This classifies forward reading only: code rollback is not data rollback and older binaries sharing an active home cannot enforce the new reset guarantee. No scanner exemptions, source exclusions, tests or product semantics are weakened. Independent full-suite/build/Mac acceptance is still required.",
-    "payloadFingerprint": "sha256:cb6670b43278479e157492bce205aabc7919601bde3e9c6273c2f13623bcc566"
+    "compatibilityReason": "Channel summaries now replace only captured fact IDs in one synchronous SQLite transaction. Failed DELETE or INSERT rolls back facts and FTS together; successful replacement and empty-summary deletion retain existing scope, provenance, session commit and import behavior. Runtime SQLite DDL/user_version, persisted formats, paths, inventory and DATA_EPOCH are unchanged; no migration or data rewrite is required. Only FactStore and ChannelRouter executable source hashes change. Reverting code restores the old non-atomic behavior without requiring a data conversion.",
+    "payloadFingerprint": "sha256:2b8059441ec896c599413b97cea58899ea53afe4fb9cec1696dba736285e5fc8"
   },
   "schemas": [
     {
@@ -3487,7 +3487,7 @@
         ],
         "userVersion": 4
       },
-      "sourceHash": "sha256:70557fedb17e6034f8ceb518912de1739b00d84a740eb78807651fd87e6baa6b",
+      "sourceHash": "sha256:a789fd2e9af5f7ca9d2d76bbd8cc36435483b9d41785ea74026fb1a4c6165e87",
       "storeId": "agent-facts-sqlite"
     },
     {
@@ -3501,7 +3501,7 @@
         },
         {
           "module": "hub/channel-router.ts",
-          "sourceHash": "sha256:f6c333a6842f812f5ff40b3af794a939acdaa28b37d097568580dd1267ad94a9"
+          "sourceHash": "sha256:1fb571f7aa0355f93522b9e0bbb70456ca7aa2ae66b8beb01eb16f99b6645c8a"
         },
         {
           "module": "lib/channels/channel-store.ts",

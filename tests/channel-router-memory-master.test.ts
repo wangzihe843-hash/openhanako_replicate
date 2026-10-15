@@ -3,11 +3,10 @@ import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { callTextMock, factAddMock, factGetBySessionMock, factDeleteMock } = vi.hoisted(() => ({
+const { callTextMock, factReplaceByIdsMock, factGetBySessionMock } = vi.hoisted(() => ({
   callTextMock: vi.fn(),
-  factAddMock: vi.fn(),
+  factReplaceByIdsMock: vi.fn(),
   factGetBySessionMock: vi.fn(),
-  factDeleteMock: vi.fn(),
 }));
 
 vi.mock("../core/llm-client.js", () => ({
@@ -16,9 +15,8 @@ vi.mock("../core/llm-client.js", () => ({
 
 vi.mock("../lib/memory/fact-store.js", () => ({
   FactStore: vi.fn(function FactStoreMock() {
-    this.add = factAddMock;
+    this.replaceByIds = factReplaceByIdsMock;
     this.getBySession = factGetBySessionMock;
-    this.delete = factDeleteMock;
     this.close = vi.fn();
   }),
 }));
@@ -111,9 +109,8 @@ describe("ChannelRouter memory master fallback", () => {
   beforeEach(() => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "channel-memory-master-"));
     callTextMock.mockReset();
-    factAddMock.mockReset();
+    factReplaceByIdsMock.mockReset();
     factGetBySessionMock.mockReset();
-    factDeleteMock.mockReset();
     factGetBySessionMock.mockReturnValue([]);
   });
 
@@ -133,11 +130,11 @@ describe("ChannelRouter memory master fallback", () => {
     );
 
     expect(callTextMock).toHaveBeenCalledOnce();
-    expect(factAddMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(factReplaceByIdsMock).toHaveBeenCalledWith([], [expect.objectContaining({
       fact: "[#general] summary",
       tags: expect.arrayContaining(["general"]),
       session_id: "channel-general",
-    }));
+    })]);
   });
 
   it("skips memory summarization from config.yaml when no live agent instance exists", async () => {
@@ -148,7 +145,7 @@ describe("ChannelRouter memory master fallback", () => {
     await router._memorySummarize("hana", "general", "context");
 
     expect(callTextMock).not.toHaveBeenCalled();
-    expect(factAddMock).not.toHaveBeenCalled();
+    expect(factReplaceByIdsMock).not.toHaveBeenCalled();
   });
 
   it("resolves channel sender ids into display names before summarizing memory", async () => {
@@ -201,12 +198,10 @@ describe("ChannelRouter memory master fallback", () => {
     expect(request.messages[0].content).toContain("已有频道记忆");
     expect(request.messages[0].content).toContain("butter: 旧摘要里还残留 sender id。");
     expect(factGetBySessionMock).toHaveBeenCalledWith("channel-general");
-    expect(factDeleteMock).toHaveBeenCalledWith(3);
-    expect(factDeleteMock).toHaveBeenCalledWith(5);
-    expect(factAddMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(factReplaceByIdsMock).toHaveBeenCalledWith([3, 5], [expect.objectContaining({
       fact: "[#general] Hana 确认频道摘要需要按角色行动记录。",
       session_id: "channel-general",
-    }));
+    })]);
   });
 
   it("clears stale channel memory facts when the summarizer finds no durable memory", async () => {
@@ -219,8 +214,7 @@ describe("ChannelRouter memory master fallback", () => {
       messages: [{ sender: "user", timestamp: "2026-05-14 10:00:00", body: "嗯" }],
     });
 
-    expect(factDeleteMock).toHaveBeenCalledWith(8);
-    expect(factAddMock).not.toHaveBeenCalled();
+    expect(factReplaceByIdsMock).toHaveBeenCalledWith([8], []);
   });
 
   it("passes the engine usage ledger to channel memory summarization", async () => {
@@ -249,6 +243,6 @@ describe("ChannelRouter memory master fallback", () => {
     await router._memorySummarize("hana", "general", "context");
 
     expect(callTextMock).not.toHaveBeenCalled();
-    expect(factAddMock).not.toHaveBeenCalled();
+    expect(factReplaceByIdsMock).not.toHaveBeenCalled();
   });
 });

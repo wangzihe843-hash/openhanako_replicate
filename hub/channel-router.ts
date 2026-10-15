@@ -1067,18 +1067,6 @@ export class ChannelRouter {
     return factStore.getBySession(sessionId) || [];
   }
 
-  _clearPreviousChannelMemoryFacts(factStore, sessionId, previousFacts = null) {
-    if (typeof factStore?.delete !== "function") {
-      return;
-    }
-    const facts = Array.isArray(previousFacts)
-      ? previousFacts
-      : this._getPreviousChannelMemoryFacts(factStore, sessionId);
-    for (const fact of facts) {
-      if (fact?.id != null) factStore.delete(fact.id);
-    }
-  }
-
   _formatChannelMemoryPromptContent(channelName, contextText, previousFacts, isZh) {
     const previousText = previousFacts
       .map(fact => String(fact?.fact || "").trim())
@@ -1197,19 +1185,19 @@ export class ChannelRouter {
       const summaryText = this._normalizeChannelMemorySummary(rawSummary);
 
       if (!current()) return;
-      sourcePayload(); // Revalidate source ownership after the model await, before any delete/add.
+      sourcePayload(); // Revalidate source ownership after the model await, before the synchronous transaction.
       const now = new Date();
-      this._clearPreviousChannelMemoryFacts(factStore, sessionId, previousFacts);
-      if (this._isEmptyChannelMemorySummary(summaryText)) {
-        log.log(`${agentId} memory cleared/no durable summary (#${channelName})`);
-        return;
-      }
-      factStore.add({
+      const entries = this._isEmptyChannelMemorySummary(summaryText) ? [] : [{
         fact: `[#${channelName}] ${summaryText}`,
         tags: [isZhMem ? "频道" : "channel", channelName],
         time: now.toISOString().slice(0, 16),
         session_id: sessionId,
-      });
+      }];
+      factStore.replaceByIds(previousFacts.filter(fact => fact?.id != null).map(fact => fact.id), entries);
+      if (entries.length === 0) {
+        log.log(`${agentId} memory cleared/no durable summary (#${channelName})`);
+        return;
+      }
 
       log.log(`${agentId} memory saved (#${channelName}, ${summaryText.length} chars)`);
     } catch (err) {

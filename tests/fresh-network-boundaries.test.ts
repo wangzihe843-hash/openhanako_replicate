@@ -40,7 +40,7 @@ describe("fresh credential network boundaries", () => {
 
   it("keeps the channel memory request behind the fresh utility boundary", () => {
     const text = source("hub/channel-router.ts");
-    const handler = between(text, "async _memorySummarize", "_clearPreviousChannelMemoryFacts");
+    const handler = between(text, "async _memorySummarize", "const summaryText = this._normalizeChannelMemorySummary(rawSummary);");
     expect(handler).toContain("await engine.resolveUtilityConfigFresh");
     expect(handler).not.toMatch(/engine\.resolveUtilityConfig\s*\(/);
     expect(handler).toContain("await (callText as any)");

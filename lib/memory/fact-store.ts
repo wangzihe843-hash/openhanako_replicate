@@ -373,6 +373,18 @@ export class FactStore {
     return entries.length;
   }
 
+  /**
+   * Replace only a previously captured set of IDs, preserving later imports.
+   * Deletes, inserts and their FTS triggers commit or roll back together.
+   */
+  replaceByIds(ids: number[], entries: Parameters<FactStore["add"]>[0][], runtimeOptions: FactRuntimeOptions = {}) {
+    this.db.transaction(() => {
+      for (const id of ids) this.delete(id);
+      for (const entry of entries) this.add(entry, runtimeOptions);
+    })();
+    return entries.length;
+  }
+
   getSessionCommitRevision(sessionId) {
     return this._stmts.getSessionCommit.get(sessionId)?.revision ?? null;
   }
