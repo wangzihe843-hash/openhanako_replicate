@@ -1721,7 +1721,14 @@ export class ProviderRegistry {
       const mid = typeof m === "object" ? m.id : m;
       if (mid !== modelId) return m;
       found = true;
-      const base = typeof m === "object" ? m : { id: mid };
+      let base = typeof m === "object" ? m : { id: mid };
+      // Preserve historical read/merge precedence until this exact model's
+      // budget is explicitly edited. An old alias must not override that edit.
+      if (providerId === "kimi-coding" && modelId === "kimi-for-coding"
+        && typeof safe.context === "number" && Number.isFinite(safe.context)) {
+        const { contextWindow: _contextWindow, ...withoutLegacyContext } = base;
+        base = withoutLegacyContext;
+      }
       // 删除旧字段 vision，避免残留
       if (base.vision !== undefined) {
         const { vision: _vision, ...cleaned } = base;

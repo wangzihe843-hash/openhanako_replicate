@@ -1,5 +1,6 @@
 import knownModelFallbacks from '../../../../lib/known-model-fallbacks.json';
 import knownModels from '../../../../lib/known-models.json';
+import { applyModelContextDefault } from '../../../../shared/model-context-defaults';
 
 export interface ModelReferenceMeta {
   name?: string;
@@ -25,7 +26,7 @@ function normalizeMeta(value: unknown): ModelReferenceMeta | null {
   return { ...value, _source: 'reference' } as ModelReferenceMeta;
 }
 
-export function lookupReferenceModelMeta(modelId: string, provider?: string): ModelReferenceMeta | null {
+export function lookupReferenceModelMeta(modelId: string, provider?: string, baseUrl?: string): ModelReferenceMeta | null {
   if (!modelId) return null;
   const dict = knownModels as Record<string, unknown>;
   const fallbacks = knownModelFallbacks as Record<string, unknown>;
@@ -35,7 +36,7 @@ export function lookupReferenceModelMeta(modelId: string, provider?: string): Mo
     const providerModels = dict[provider];
     if (isRecord(providerModels)) {
       const exact = normalizeMeta(providerModels[modelId]);
-      if (exact) return exact;
+      if (exact) return applyModelContextDefault(exact, provider, modelId, baseUrl);
       if (bare) {
         const bareHit = normalizeMeta(providerModels[bare]);
         if (bareHit) return bareHit;

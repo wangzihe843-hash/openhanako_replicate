@@ -233,10 +233,11 @@ function buildModelEntry(
   modelDefaults = {},
   executionHeaders = {},
   providerBaseUrl = baseUrl,
+  configuredBaseUrl = baseUrl,
 ) {
   const isObj = typeof modelEntry === "object" && modelEntry !== null;
   const id = getModelId(modelEntry);
-  const known = lookupKnown(provider, id);
+  const known = lookupKnown(provider, id, configuredBaseUrl);
   const providerKnown = lookupKnownProvider(provider, id);
   const piRequestHeaders = getPiRequestHeaders(provider, id);
   const piProtocolBaseline = getPiProtocolBaseline(provider, id);
@@ -458,6 +459,7 @@ export function syncModels(providers, opts: Record<string, any> = {}) {
         modelDefaults,
         modelExecutionHeaders[id],
         effectiveBaseUrl,
+        p.base_url,
       ));
     }
 

@@ -29,6 +29,7 @@ vi.mock('../../../helpers', () => ({
 }));
 
 import { ProviderModelList } from '../ProviderModelList';
+import type { ProviderSummary } from '../../../store';
 
 function jsonResponse(body: unknown): Response {
   return { json: async () => body } as Response;
@@ -483,4 +484,50 @@ describe('ProviderModelList', () => {
     });
     },
   );
+  it.each<[ProviderSummary['models'][number], number]>([
+    ['kimi-for-coding', 1048576],
+    [{ id: 'kimi-for-coding', context: 262144 }, 262144],
+    [{ id: 'kimi-for-coding', contextWindow: 123456 }, 123456],
+    [{ id: 'kimi-for-coding', context: 123456, contextWindow: 234567 }, 123456],
+  ])('shows saved K2.8 entry %j ahead of conflicting discovery cache', async (entry, expected) => {
+    mocks.hanaFetch.mockResolvedValue(jsonResponse({ models: [{ id: 'kimi-for-coding', context: 555555 }] }));
+    const summary: ProviderSummary = {
+      type: 'api-key', auth_type: 'api-key', display_name: 'Kimi',
+      base_url: 'https://api.kimi.com/coding/v1', api: 'openai-completions', api_key: '',
+      models: [entry], custom_models: [], has_credentials: true, supports_oauth: false, can_delete: false,
+    };
+    render(<ProviderModelList providerId="kimi-coding" summary={summary} onRefresh={vi.fn(async () => {})} />);
+    await waitFor(() => expect(mocks.hanaFetch).toHaveBeenCalled());
+    expect(screen.getByText(String(expected))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'settings.api.addModel' }));
+    const option = await screen.findByRole('button', { name: /kimi-for-coding/ });
+    expect(option).toHaveTextContent(String(expected));
+    expect(option).not.toHaveTextContent('555555');
+  });
+
+  it.each<[{ context?: number; contextWindow?: number }, number]>([
+    [{ context: 262144 }, 262144], [{ contextWindow: 123456 }, 123456],
+    [{ context: 123456, contextWindow: 234567 }, 123456], [{}, 1048576],
+  ])('shows pending K2.8 budget %j exactly as the save request will persist', async (budget, expected) => {
+    mocks.hanaFetch.mockResolvedValue(jsonResponse({ models: [{ id: 'kimi-for-coding', ...budget }] }));
+    const summary: ProviderSummary = {
+      type: 'api-key', auth_type: 'api-key', display_name: 'Kimi',
+      base_url: 'https://api.kimi.ai/coding/v1', api: 'openai-completions', api_key: '',
+      models: [], custom_models: [], has_credentials: true, supports_oauth: false, can_delete: false,
+    };
+    const onRefresh = vi.fn(async () => {});
+    const { rerender } = render(<ProviderModelList providerId="kimi-coding" summary={summary} onRefresh={onRefresh} />);
+    fireEvent.click(screen.getByRole('button', { name: 'settings.api.addModel' }));
+    const option = await screen.findByRole('button', { name: /kimi-for-coding/ });
+    expect(option).toHaveTextContent(String(expected));
+    fireEvent.click(option);
+    await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+    const saved = mocks.hanaFetch.mock.calls.find(([url, options]) => url === '/api/config' && options?.method === 'PUT');
+    if (!saved) throw new Error('Expected the K2.8 save request');
+    const models = JSON.parse(saved[1].body).providers['kimi-coding'].models;
+    expect(models).toEqual(Object.keys(budget).length ? [{ id: 'kimi-for-coding', context: expected }] : ['kimi-for-coding']);
+    rerender(<ProviderModelList providerId="kimi-coding" summary={{ ...summary, models }} onRefresh={onRefresh} />);
+    expect(screen.getAllByText(String(expected)).length).toBeGreaterThan(0);
+  });
+
 });

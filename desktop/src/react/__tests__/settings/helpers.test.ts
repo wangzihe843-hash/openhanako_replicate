@@ -3,6 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { kimiExplicitBudgets, kimiProjectionCases } from '../../../../../tests/fixtures/kimi-context-cases';
 
 type MockState = Record<string, any>;
 
@@ -169,5 +170,50 @@ describe('refreshSettingsConfigSnapshot', () => {
     await pending;
 
     expect(mockState.settingsConfig).toBe(snapshotBeforeResolve);
+  });
+});
+
+describe('K2.8 context metadata returned to settings', () => {
+  beforeEach(() => { vi.resetModules(); resetState(); });
+
+  it.each(kimiProjectionCases)('reads the saved projection at $label/$api/$modelApi without migration', async c => {
+    const { lookupModelMeta } = await import('../../settings/helpers');
+    for (const budget of [{}, ...kimiExplicitBudgets]) {
+      const entry = Object.keys(budget).length || c.modelApi
+        ? { id: 'kimi-for-coding', ...(c.modelApi ? { api: c.modelApi } : {}), ...budget } : 'kimi-for-coding';
+      mockState.providersSummary = { 'kimi-coding': {
+        base_url: c.base_url ?? 'https://api.kimi.com/coding/v1', api: c.api, models: [entry],
+      } };
+      const before = structuredClone(mockState.providersSummary);
+      const expected = c.builtin ? budget.contextWindow ?? budget.context ?? c.expected : budget.context ?? budget.contextWindow ?? c.expected;
+      expect(lookupModelMeta('kimi-for-coding', 'kimi-coding').context).toBe(expected);
+      expect(mockState.providersSummary).toEqual(before);
+    }
+  });
+
+  it.each([
+    [{ id: 'kimi-for-coding' }, 1048576],
+    [{ id: 'kimi-for-coding', context: 262144 }, 262144],
+    [{ id: 'kimi-for-coding', context: 1048576 }, 1048576],
+    [{ id: 'kimi-for-coding', contextWindow: 123456 }, 123456],
+    [{ id: 'kimi-for-coding', context: 123456, contextWindow: 234567 }, 123456],
+  ])('resolves explicit aliases before the reference: %j', async (entry, expected) => {
+    mockState.providersSummary = { 'kimi-coding': { base_url: 'https://api.kimi.com/coding/v1', models: [entry] } };
+    const before = structuredClone(mockState.providersSummary);
+    const { lookupModelMeta } = await import('../../settings/helpers');
+    expect(lookupModelMeta('kimi-for-coding', 'kimi-coding').context).toBe(expected);
+    expect(mockState.providersSummary).toEqual(before);
+  });
+
+  it('reads the current summary endpoint on each lookup without changing K3', async () => {
+    const summary = { base_url: 'https://api.kimi.com/coding/v1', models: ['kimi-for-coding'] };
+    mockState.providersSummary = { 'kimi-coding': summary };
+    const { lookupModelMeta } = await import('../../settings/helpers');
+    for (const [url, expected] of [['https://api.kimi.com/coding/v1', 1048576],
+      ['https://proxy.example/coding', 262144], ['https://api.kimi.ai/coding/', 1048576]]) {
+      summary.base_url = url as string;
+      expect(lookupModelMeta('kimi-for-coding', 'kimi-coding').context).toBe(expected);
+      expect(lookupModelMeta('k3', 'kimi-coding').context).toBe(262144);
+    }
   });
 });

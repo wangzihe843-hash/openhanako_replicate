@@ -14,7 +14,9 @@ import {
   resolveProviderHeadersPatch,
 } from "../../shared/provider-auth.ts";
 import { filterDiscoveredProviderModels } from "../../shared/provider-model-validation.ts";
-import { listKnownProviderModels, lookupKnown } from "../../shared/known-models.ts";
+import { listKnownProviderModels, lookupKnown, lookupKnownProvider } from "../../shared/known-models.ts";
+import { resolveKimiContextBudget } from "../../shared/model-context-defaults.ts";
+import { getPiModel } from "../../lib/pi-sdk/index.ts";
 import { enrichOllamaModelMetadata } from "../../shared/ollama-model-metadata.ts";
 import { clearConfigCache } from "../../lib/memory/config-loader.ts";
 import { collectSecretPatchPaths, isMaskedSecretValue, maskSecretValue } from "../../shared/secret-custody.ts";
@@ -286,8 +288,8 @@ export function createProvidersRoute(engine: any) {
     return payload;
   }
 
-  function knownCatalogModel(provider: any, id: any) {
-    const known = lookupKnown(provider, id);
+  function knownCatalogModel(provider: string, id: string, baseUrl = "") {
+    const known = lookupKnown(provider, id, baseUrl);
     return {
       id,
       name: known?.name || id,
@@ -327,15 +329,35 @@ export function createProvidersRoute(engine: any) {
   }
 
   /** Registry → defaults 两级 fallback，fetch-models 和 Anthropic 路径共用 */
-  function registryOrDefaultsFallback(name: any) {
+  function registryOrDefaultsFallback(name: string, baseUrl = "", api = "") {
     if (!name) {
       return { error: "name is required for model discovery fallback", models: [] };
+    }
+
+    // Only K2.8's synthesized fallback uses the request's configured endpoint.
+    // Remote results and already persisted discovery-cache values stay untouched.
+    const savedModels: Array<string | { id: string; api?: string; context?: number; contextWindow?: number }> = name === "kimi-coding"
+      ? engine.providerRegistry.getAllProvidersRaw?.()[name]?.models || []
+      : [];
+    function withKimiContext<T extends { id: string; context: number | null }>(model: T): T {
+      if (name !== "kimi-coding" || model.id !== "kimi-for-coding") return model;
+      const saved = Array.isArray(savedModels)
+        ? savedModels.find(entry => typeof entry === "object" && entry?.id === model.id)
+        : undefined;
+      const budget = resolveKimiContextBudget({
+        provider: name, modelId: model.id, baseUrl, providerApi: api,
+        providerKnownApi: lookupKnownProvider(name, model.id)?.api,
+        model: typeof saved === "object" ? saved : undefined,
+        builtinContext: getPiModel(name, model.id)?.contextWindow,
+      });
+      return { ...model, context: budget.context };
     }
 
     // 尝试 Pi SDK registry（含内置 OAuth 模型 + models.json 模型，不经过 availableModels 白名单）
     const registryModels = engine.getRegistryModelsForProvider(name);
     if (registryModels.length > 0) {
-      const normalized = enrichDiscoveredModelMetadata(name, normalizeRegistryModels(registryModels));
+      const normalized = enrichDiscoveredModelMetadata(name, normalizeRegistryModels(registryModels)
+        .map(model => withKimiContext(model)));
       const payload = filterProviderModels(name, normalized);
       if (payload.models.length === 0 && payload.ignoredModels?.length > 0) {
         return {
@@ -357,7 +379,7 @@ export function createProvidersRoute(engine: any) {
     if (defaults.length > 0) {
       const builtinModels = enrichDiscoveredModelMetadata(
         name,
-        defaults.map(id => ({ id, name: id, context: null, maxOutput: null })),
+        defaults.map(id => withKimiContext({ id, name: id, context: null, maxOutput: null })),
       );
       const payload = filterProviderModels(name, builtinModels);
       saveToCache(name, payload.models);
@@ -457,9 +479,10 @@ export function createProvidersRoute(engine: any) {
     const effectiveKey = bodyKey
       ? (isMaskedSecretValue(bodyKey) ? saved.api_key || "" : bodyKey)
       : saved.api_key || "";
+    const configuredBaseUrl = base_url || saved.base_url || "";
     const effectiveBaseUrl = normalizeProviderBaseUrlForApi({
       provider: name,
-      baseUrl: base_url || saved.base_url || "",
+      baseUrl: configuredBaseUrl,
       api: explicitApi || saved.api || "",
     });
     const effectiveApi = explicitApi || saved.api || "";
@@ -521,7 +544,7 @@ export function createProvidersRoute(engine: any) {
     }
 
     // ── 3. Registry + defaults fallback ──
-    return c.json(registryOrDefaultsFallback(name));
+    return c.json(registryOrDefaultsFallback(name, configuredBaseUrl, effectiveApi));
   });
 
   /**

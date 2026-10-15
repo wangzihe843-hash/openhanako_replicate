@@ -7,6 +7,7 @@ import { useSettingsStore } from './store';
 import { hanaFetch } from './api';
 import registry from '../../shared/theme-registry';
 import { lookupReferenceModelMeta } from '../utils/model-metadata';
+import { resolveKimiContextBudget } from '../../../../shared/model-context-defaults';
 import { API_PROVIDER_PRESETS, getProviderPresetLabel } from '../utils/provider-presets';
 import { settingsPinsKey } from './pinned-state';
 
@@ -40,10 +41,9 @@ export function formatContext(n: number): string {
  */
 export function lookupModelMeta(modelId: string, provider?: string): any {
   if (!modelId) return null;
-  const reference = lookupReferenceModelMeta(modelId, provider);
-
   // 从 provider summaries 提取用户在 added-models.yaml 中设置的模型元数据
   const { providersSummary, settingsConfig } = useSettingsStore.getState();
+  const reference = lookupReferenceModelMeta(modelId, provider, provider ? providersSummary?.[provider]?.base_url : undefined);
   let userEntry: Record<string, any> | null = null;
   if (providersSummary) {
     if (provider && providersSummary[provider]) {
@@ -69,6 +69,13 @@ export function lookupModelMeta(modelId: string, provider?: string): any {
   return {
     ...(reference || {}),
     ...(userEntry || {}),
+    // Resolve the saved provider/model projection without migrating either alias.
+    ...(provider === 'kimi-coding' && modelId === 'kimi-for-coding'
+      ? { context: resolveKimiContextBudget({ provider, modelId,
+        baseUrl: providersSummary?.[provider]?.base_url, providerApi: providersSummary?.[provider]?.api,
+        providerKnownApi: reference?.api, model: userEntry,
+      })?.context }
+      : {}),
     ...(legacyOverride?.displayName ? { displayName: legacyOverride.displayName } : {}),
   };
 }

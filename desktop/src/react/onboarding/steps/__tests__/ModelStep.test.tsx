@@ -198,4 +198,77 @@ describe('ModelStep', () => {
     });
     expect(goToStep).toHaveBeenCalledWith(4);
   });
+  it.each([undefined, 262144, 1048576, 123456])('updates the K2.8 endpoint baseline while retaining draft context %s', async context => {
+    mocks.loadModels.mockResolvedValue({ models: [{ id: 'kimi-for-coding', ...(context ? { context } : {}) }] });
+    const props = {
+      preview: false, hanaFetch: vi.fn(), agentId: 'hana-primary',
+      verificationPlan: { agentConfig: {}, preferenceModels: {}, requiredAgentSecretPaths: [] },
+      providerName: 'kimi-coding', providerUrl: 'https://api.kimi.com/coding/v1',
+      providerApi: 'openai-completions', apiKey: 'sk-k28-synthetic-fixture', goToStep: vi.fn(), showError: vi.fn(),
+    };
+    const { rerender } = render(<ModelStep {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'onboarding.model.addModel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'kimi-for-coding' }));
+    for (const [url, fallback] of [['https://api.kimi.com/coding/v1', 1048576],
+      ['https://proxy.example/coding', 262144], ['https://api.kimi.ai/coding/v1', 1048576]]) {
+      rerender(<ModelStep {...props} providerUrl={url as string} />);
+      fireEvent.click(screen.getByTitle('onboarding.model.editModel'));
+      expect(screen.getByLabelText('onboarding.model.contextLength')).toHaveValue(String(context ?? fallback));
+      fireEvent.click(screen.getByRole('button', { name: 'onboarding.model.cancelEdit' }));
+    }
+    expect(mocks.loadModels).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { context: undefined, manual: false, renamed: false },
+    { context: undefined, manual: false, renamed: true },
+    ...[262144, 1048576, 123456].flatMap(context => [false, true].flatMap(manual =>
+      [false, true].map(renamed => ({ context, manual, renamed })))),
+  ])('retains explicit K2.8 budgets through editing, URL changes and final save: %j', async c => {
+    mocks.loadModels.mockResolvedValue({ models: [{ id: 'kimi-for-coding', ...(!c.manual && c.context ? { context: c.context } : {}) }] });
+    const props = {
+      preview: false, hanaFetch: vi.fn(), agentId: 'hana-primary',
+      verificationPlan: { agentConfig: {}, preferenceModels: {}, requiredAgentSecretPaths: [] },
+      providerName: 'kimi-coding', providerUrl: 'https://api.kimi.com/coding/v1',
+      providerApi: 'openai-completions', apiKey: 'sk-k28-synthetic-fixture', goToStep: vi.fn(), showError: vi.fn(),
+    };
+    const { rerender } = render(<ModelStep {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'onboarding.model.addModel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'kimi-for-coding' }));
+    fireEvent.click(screen.getByTitle('onboarding.model.editModel'));
+    if (c.manual) {
+      // Deliberately edit back to the reference as well as away from it.
+      fireEvent.change(screen.getByLabelText('onboarding.model.contextLength'), { target: { value: '999999' } });
+      fireEvent.change(screen.getByLabelText('onboarding.model.contextLength'), { target: { value: String(c.context) } });
+    }
+    if (c.renamed) fireEvent.change(screen.getByLabelText('onboarding.model.displayName'), { target: { value: 'My Kimi' } });
+    fireEvent.click(screen.getByRole('button', { name: 'onboarding.model.saveEdit' }));
+    rerender(<ModelStep {...props} providerUrl="https://proxy.example/coding/v1" />);
+    fireEvent.click(screen.getByTitle('onboarding.model.editModel'));
+    expect(screen.getByLabelText('onboarding.model.contextLength')).toHaveValue(String(c.context ?? 262144));
+    fireEvent.click(screen.getByRole('button', { name: 'onboarding.model.saveEdit' }));
+    const utilityTriggers = document.querySelectorAll('.ob-select-widget button[aria-haspopup="listbox"]');
+    for (const trigger of utilityTriggers) {
+      fireEvent.click(trigger);
+      fireEvent.click(await screen.findByRole('option', { name: c.renamed ? 'My Kimi' : 'Kimi K2.8 Preview' }));
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'onboarding.model.next' }));
+    await waitFor(() => expect(mocks.saveModel).toHaveBeenCalled());
+    const entry = mocks.saveModel.mock.calls[0][0].addedModels[0];
+    if (c.context !== undefined) expect(entry.context).toBe(c.context);
+    else expect(typeof entry === 'string' ? {} : entry).not.toHaveProperty('context');
+  });
+
+  it.each(['openai-completions', 'anthropic-messages'])('uses the actual implicit projection for onboarding %s', async providerApi => {
+    mocks.loadModels.mockResolvedValue({ models: [{ id: 'kimi-for-coding' }] });
+    render(<ModelStep preview={false} hanaFetch={vi.fn()} agentId="fixture"
+      verificationPlan={{ agentConfig: {}, preferenceModels: {}, requiredAgentSecretPaths: [] }}
+      providerName="kimi-coding" providerUrl="https://proxy.example/coding/v1" providerApi={providerApi}
+      apiKey="sk-k28-synthetic-fixture" goToStep={vi.fn()} showError={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'onboarding.model.addModel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'kimi-for-coding' }));
+    fireEvent.click(screen.getByTitle('onboarding.model.editModel'));
+    expect(screen.getByLabelText('onboarding.model.contextLength')).toHaveValue(providerApi === 'anthropic-messages' ? '1048576' : '262144');
+  });
+
 });

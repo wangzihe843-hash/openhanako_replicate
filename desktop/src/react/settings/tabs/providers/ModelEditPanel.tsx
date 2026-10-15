@@ -18,10 +18,11 @@ function firstNumber(meta: Record<string, unknown>, keys: string[]): number | un
   return undefined;
 }
 
-export function ModelEditPanel({ modelId, providerId, modelMeta, anchorEl, onClose, onRefresh }: {
+export function ModelEditPanel({ modelId, providerId, modelMeta, contextBudget, anchorEl, onClose, onRefresh }: {
   modelId: string;
   providerId: string;
   modelMeta?: Record<string, unknown>;
+  contextBudget?: number;
   anchorEl: HTMLElement | null;
   onClose: () => void;
   onRefresh?: () => Promise<void>;
@@ -36,12 +37,15 @@ export function ModelEditPanel({ modelId, providerId, modelMeta, anchorEl, onClo
   // Resolve aliases inside each ownership layer before falling through to the
   // known catalog. Otherwise known `context`/`maxOutput` can mask a persisted
   // user `contextWindow`/`maxTokens` value after the objects are merged.
-  const initialContext = firstNumber(userMeta, ['context', 'contextWindow'])
+  const isKimiK28 = providerId === 'kimi-coding' && modelId === 'kimi-for-coding';
+  const initialContext = (isKimiK28 ? contextBudget : undefined)
+    ?? firstNumber(userMeta, ['context', 'contextWindow'])
     ?? firstNumber(knownMeta, ['context', 'contextWindow']);
   const initialMaxOutput = firstNumber(userMeta, ['maxOutput', 'maxTokens', 'maxOutputTokens'])
     ?? firstNumber(knownMeta, ['maxOutput', 'maxTokens', 'maxOutputTokens']);
   const [displayName, setDisplayName] = useState(meta.displayName || meta.name || '');
   const [ctxVal, setCtxVal] = useState(String(initialContext ?? ''));
+  const [contextEdited, setContextEdited] = useState(false);
   const [outVal, setOutVal] = useState(String(initialMaxOutput ?? ''));
   // image 字段对应 Pi SDK Model.input 里是否包含 "image"。
   // 兼容读旧 meta.vision（未迁移到新字段的历史配置）；迁移 #7 之后此 fallback 恒不命中。
@@ -71,7 +75,7 @@ export function ModelEditPanel({ modelId, providerId, modelMeta, anchorEl, onClo
     const ctx = ctxVal.trim();
     const maxOut = outVal.trim();
     if (name) entry.name = name;
-    if (ctx) entry.context = parseInt(ctx);
+    if (ctx && (!isKimiK28 || contextEdited)) entry.context = parseInt(ctx);
     if (maxOut) entry.maxOutput = parseInt(maxOut);
     if (dirtyCapabilities.image) entry.image = image;
     if (dirtyCapabilities.video) entry.video = video;
@@ -113,7 +117,7 @@ export function ModelEditPanel({ modelId, providerId, modelMeta, anchorEl, onClo
       <div className={styles['pv-model-edit-row']}>
         <div className={styles['pv-model-edit-field']}>
           <label className={styles['pv-model-edit-label']}>{t('settings.api.contextLength')}</label>
-          <ComboInput presets={CONTEXT_PRESETS} value={ctxVal} onChange={setCtxVal} placeholder="131072" />
+          <ComboInput presets={CONTEXT_PRESETS} value={ctxVal} onChange={value => { setCtxVal(value); setContextEdited(true); }} placeholder="131072" />
         </div>
         <div className={styles['pv-model-edit-field']}>
           <label className={styles['pv-model-edit-label']}>{t('settings.api.maxOutput')}</label>

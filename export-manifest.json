@@ -688,6 +688,7 @@
     "shared/log-redactor.ts",
     "shared/migrate-config-scope.ts",
     "shared/model-capabilities.ts",
+    "shared/model-context-defaults.ts",
     "shared/model-ref.ts",
     "shared/net-utils.ts",
     "shared/network-proxy.ts",

@@ -7,6 +7,7 @@ import { SelectWidget } from '@/ui';
 import type { SelectOption } from '@/ui';
 import { Toggle } from '../../settings/widgets/Toggle';
 import { lookupReferenceModelMeta } from '../../utils/model-metadata';
+import { resolveKimiContextBudget } from '../../../../../shared/model-context-defaults';
 import { describeOnboardingError, loadModels as loadModelsAction, saveModel as saveModelAction } from '../onboarding-actions';
 import type { AddedModelEntry, AddedModelObject, DiscoveredModel, HanaFetch, OnboardingVerificationPlan } from '../onboarding-actions';
 import { StepContainer } from '../onboarding-ui';
@@ -101,6 +102,7 @@ export function ModelStep({
   const [editingModelId, setEditingModelId] = useState('');
   const [editName, setEditName] = useState('');
   const [editContext, setEditContext] = useState('');
+  const [contextEdited, setContextEdited] = useState(false);
   const [editMaxOutput, setEditMaxOutput] = useState('');
   const [editImage, setEditImage] = useState<boolean | undefined>(undefined);
   const [editAudio, setEditAudio] = useState<boolean | undefined>(undefined);
@@ -147,18 +149,20 @@ export function ModelStep({
     : availableModels;
 
   const baselineForModel = useCallback((modelId: string) => {
-    const reference = lookupReferenceModelMeta(modelId, providerName);
+    const reference = lookupReferenceModelMeta(modelId, providerName, providerUrl);
     const fetched = fetchedModels.find(model => model.id === modelId);
     return {
       name: reference?.name || fetched?.name || '',
-      context: numberFromMeta(reference?.context) ?? numberFromMeta(fetched?.context),
+      context: resolveKimiContextBudget({ provider: providerName, modelId, baseUrl: providerUrl,
+        providerApi, providerKnownApi: reference?.api,
+      })?.context ?? numberFromMeta(reference?.context) ?? numberFromMeta(fetched?.context),
       maxOutput: numberFromMeta(reference?.maxOutput) ?? numberFromMeta(fetched?.maxOutput),
       image: boolFromMeta(reference?.image ?? reference?.vision),
       video: boolFromMeta(reference?.video) ?? boolFromMeta(fetched?.video),
       audio: boolFromMeta(reference?.audio),
       reasoning: boolFromMeta(reference?.reasoning),
     };
-  }, [fetchedModels, providerName]);
+  }, [fetchedModels, providerName, providerUrl, providerApi]);
 
   const effectiveModelMeta = useCallback((model: AddedModelDraft) => {
     const baseline = baselineForModel(model.id);
@@ -221,6 +225,7 @@ export function ModelStep({
     setEditingModelId(model.id);
     setEditName(meta.name || '');
     setEditContext(meta.context ? String(meta.context) : '');
+    setContextEdited(false);
     setEditMaxOutput(meta.maxOutput ? String(meta.maxOutput) : '');
     setEditImage(typeof meta.image === 'boolean' ? meta.image : undefined);
     setEditAudio(typeof meta.audio === 'boolean' ? meta.audio : undefined);
@@ -239,11 +244,14 @@ export function ModelStep({
       if (model.id !== editingModelId) return model;
       const baseline = baselineForModel(model.id);
       const name = editName.trim();
+      const savedContext = providerName === 'kimi-coding' && model.id === 'kimi-for-coding'
+        ? (contextEdited ? context : model.context)
+        : (context && context !== baseline.context ? context : undefined);
       return {
         id: model.id,
         ...(typeof model.video === 'boolean' ? { video: model.video } : {}),
         ...(name && name !== baseline.name ? { name } : {}),
-        ...(context && context !== baseline.context ? { context } : {}),
+        ...(typeof savedContext === 'number' ? { context: savedContext } : {}),
         ...(maxOutput && maxOutput !== baseline.maxOutput ? { maxOutput } : {}),
         ...(typeof editImage === 'boolean' && editImage !== baseline.image ? { image: editImage } : {}),
         ...(typeof editAudio === 'boolean' && editAudio !== baseline.audio ? { audio: editAudio } : {}),
@@ -251,7 +259,7 @@ export function ModelStep({
       };
     }));
     setEditingModelId('');
-  }, [baselineForModel, editAudio, editContext, editImage, editMaxOutput, editName, editReasoning, editingModelId, showError]);
+  }, [baselineForModel, editAudio, editContext, contextEdited, editImage, editMaxOutput, editName, editReasoning, editingModelId, providerName, showError]);
 
   const currentEditingModel = editingModelId
     ? addedModels.find(model => model.id === editingModelId)
@@ -345,7 +353,7 @@ export function ModelStep({
               </label>
               <label className="ob-model-edit-field">
                 <span>{t('onboarding.model.contextLength')}</span>
-                <input aria-label={t('onboarding.model.contextLength')} className="ob-input" value={editContext} inputMode="numeric" placeholder="131072" onChange={e => setEditContext(e.target.value)} />
+                <input aria-label={t('onboarding.model.contextLength')} className="ob-input" value={editContext} inputMode="numeric" placeholder="131072" onChange={e => { setEditContext(e.target.value); setContextEdited(true); }} />
               </label>
               <label className="ob-model-edit-field">
                 <span>{t('onboarding.model.maxOutput')}</span>

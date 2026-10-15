@@ -10,6 +10,7 @@
  */
 import { readFileSync } from "fs";
 import { fromRoot } from "./hana-root.ts";
+import { applyModelContextDefault } from "./model-context-defaults.ts";
 
 let _raw = null;
 let _fallbacks = null;
@@ -85,13 +86,17 @@ export function lookupKnownProvider(provider, modelId) {
 
 /**
  * 查询模型元数据并显式返回命中来源。
+ * baseUrl is the effective configured URL, before transport normalization.
  * @returns {{ metadata: object, source: "provider" | "fallback" } | null}
  */
-export function lookupKnownWithSource(provider, modelId) {
+export function lookupKnownWithSource(provider, modelId, baseUrl = "") {
   if (typeof modelId !== "string" || modelId.length === 0) return null;
   _ensureLoaded();
   const providerMetadata = _lookupProviderMetadata(provider, modelId);
-  if (providerMetadata) return { metadata: providerMetadata, source: "provider" };
+  if (providerMetadata) return {
+    metadata: applyModelContextDefault(providerMetadata, provider, modelId, baseUrl),
+    source: "provider",
+  };
   const fallbackMetadata = _lookupFallbackMetadata(modelId);
   return fallbackMetadata ? { metadata: fallbackMetadata, source: "fallback" } : null;
 }
@@ -101,10 +106,11 @@ export function lookupKnownWithSource(provider, modelId) {
  * 通用 fallback 是 best-effort baseline，不能从其他 provider 分区隐式借值。
  * @param {string} provider
  * @param {string} modelId
+ * @param {string} [baseUrl] - effective configured endpoint for reference defaults
  * @returns {object|null}
  */
-export function lookupKnown(provider, modelId) {
-  return lookupKnownWithSource(provider, modelId)?.metadata || null;
+export function lookupKnown(provider, modelId, baseUrl = "") {
+  return lookupKnownWithSource(provider, modelId, baseUrl)?.metadata || null;
 }
 
 /**

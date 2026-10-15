@@ -6,6 +6,8 @@ import { invalidateConfigCache } from '../../../hooks/use-config';
 import { t, formatContext, lookupModelMeta } from '../../helpers';
 import { useAnchoredDropdown } from '../../hooks/useAnchoredDropdown';
 import { ModelEditPanel } from './ModelEditPanel';
+import { lookupReferenceModelMeta } from '../../../utils/model-metadata';
+import { resolveKimiContextBudget } from '../../../../../../shared/model-context-defaults';
 import styles from '../../Settings.module.css';
 
 interface DiscoveredModel {
@@ -152,6 +154,13 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
   }, [providerId, scope]);
 
   const rawModels = summary.models || [];
+  const kimiContextForEntry = (mid: string, entry?: ProviderModelEntry) => {
+    const metadata = typeof entry === 'object' ? entry : undefined;
+    return resolveKimiContextBudget({ provider: providerId, modelId: mid,
+      baseUrl: summary.base_url, providerApi: summary.api, model: metadata,
+      providerKnownApi: lookupReferenceModelMeta(mid, providerId)?.api,
+    })?.context;
+  };
   const currentModelIds = rawModels.map(modelIdOf);
   // Merge: discovered model IDs + custom_models, deduplicated, with currentModelIds included for display
   const discoveredIds = discoveredModels.map(m => m.id);
@@ -301,7 +310,9 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
               const entryMeta: Record<string, unknown> = rawEntry && typeof rawEntry === 'object' ? rawEntry : {};
               const knownMeta: Record<string, any> = lookupModelMeta(mid, providerId) || {};
               const meta = { ...knownMeta, ...entryMeta };
-              const modelContext = numberFromMeta(entryMeta.context)
+              const modelContext = providerId === 'kimi-coding' && mid === 'kimi-for-coding'
+                ? kimiContextForEntry(mid, rawEntry)
+                : numberFromMeta(entryMeta.context)
                 ?? numberFromMeta(entryMeta.contextWindow)
                 ?? numberFromMeta(knownMeta.context)
                 ?? numberFromMeta(knownMeta.contextWindow);
@@ -342,6 +353,7 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
               modelId={editing.id}
               providerId={providerId}
               modelMeta={editingModelMeta}
+              contextBudget={kimiContextForEntry(editing.id, editingRawEntry ?? undefined)}
               anchorEl={editing.anchor}
               onClose={() => setEditing(null)}
               onRefresh={onRefresh}
@@ -394,7 +406,11 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
                 const rawEntry = rawModels.find((model: ProviderModelEntry) => modelIdOf(model) === mid);
                 const userMeta: Record<string, unknown> = rawEntry && typeof rawEntry === 'object' ? rawEntry : {};
                 const discovered = discoveredModels.find(d => d.id === mid);
-                const ctx = numberFromMeta(userMeta.context)
+                // Pending rows show the exact budget addModelToProvider will
+                // persist. Bare IDs use the future saved configuration's budget.
+                const ctx = providerId === 'kimi-coding' && mid === 'kimi-for-coding'
+                  ? kimiContextForEntry(mid, isAdded ? rawEntry : discovered ? compactDiscoveredModelEntry(discovered) : mid)
+                  : numberFromMeta(userMeta.context)
                   ?? numberFromMeta(userMeta.contextWindow)
                   ?? numberFromMeta(meta.context)
                   ?? numberFromMeta(meta.contextWindow)

@@ -126,7 +126,7 @@ describe("2026-10-14 catalog through ModelManager and installed Pi SDK", () => {
       thinkingLevelMap: { off: null, minimal: "low", xhigh: "max" },
     });
     const kimi = availableModel(manager, "kimi-coding", "kimi-for-coding");
-    expect(kimi).toMatchObject({ name: "Kimi K2.8 Preview", contextWindow: 262144, maxContext: 1048576,
+    expect(kimi).toMatchObject({ name: "Kimi K2.8 Preview", contextWindow: 1048576, maxContext: 1048576,
       maxTokens: 32768, defaultThinkingLevel: "max", api: "openai-completions", input: ["text", "image"] });
     expect(resolveModelVideoInputTransport(kimi)).toBe("none");
     for (const provider of ["deepseek", "deepseek-responses"]) {
@@ -234,7 +234,7 @@ describe("2026-10-14 catalog through ModelManager and installed Pi SDK", () => {
     const model = availableModel(manager, "kimi-coding", id);
     expect(model.defaultThinkingLevel).toBe(id === "kimi-for-coding" ? "max" : "high");
     expect(model.thinkingLevelMap.medium).toBe("high");
-    expect(model.contextWindow).toBe(262144);
+    expect(model.contextWindow).toBe(id === "kimi-for-coding" ? 1048576 : 262144);
     expect(resolveModelVideoInputTransport(model)).toBe("none");
     const level = resolveModelDefaultThinkingLevel(model);
     const { normalized } = await captureRuntimePayload(manager, model, normalizePiSdkThinkingLevel(level));

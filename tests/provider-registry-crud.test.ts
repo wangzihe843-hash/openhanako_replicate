@@ -1191,6 +1191,33 @@ describe("saveProvider", () => {
 // ── updateModelEntry type field ───────────────────────────────────────────────
 
 describe("updateModelEntry type field", () => {
+  it.each([
+    { context: 1048576 }, { context: 262144 }, { context: 123456 },
+    { contextWindow: 1048576 }, { context: 123456, contextWindow: 234567 },
+  ])("replaces the old K2.8 contextWindow only for an explicit numeric edit: %j", meta => {
+    const reg = new ProviderRegistry(tmpDir);
+    reg.saveProvider('kimi-coding', { models: [{ id: 'kimi-for-coding', context: 345678, contextWindow: 262144, name: 'Mine' }] });
+    reg.updateModelEntry('kimi-coding', 'kimi-for-coding', meta);
+    expect(reg.getAllProvidersRaw()['kimi-coding'].models).toEqual([
+      { id: 'kimi-for-coding', name: 'Mine', context: meta.context ?? meta.contextWindow },
+    ]);
+  });
+
+  it.each([{}, { name: 'Renamed' }, { api: 'openai-completions' }])("does not migrate K2.8 aliases on non-budget edits: %j", meta => {
+    const reg = new ProviderRegistry(tmpDir);
+    const entry = { id: 'kimi-for-coding', context: 123456, contextWindow: 234567 };
+    reg.saveProvider('kimi-coding', { models: [entry] });
+    reg.updateModelEntry('kimi-coding', entry.id, meta);
+    expect(reg.getAllProvidersRaw()['kimi-coding'].models).toEqual([{ ...entry, ...meta }]);
+  });
+
+  it.each([['kimi-coding', 'k3'], ['test-provider', 'kimi-for-coding']])("preserves the existing alias merge for %s/%s", (provider, id) => {
+    const reg = makeRegistry();
+    reg.saveProvider(provider, { models: [{ id, contextWindow: 234567 }] });
+    reg.updateModelEntry(provider, id, { context: 123456 });
+    expect(reg.getAllProvidersRaw()[provider].models).toEqual([{ id, contextWindow: 234567, context: 123456 }]);
+  });
+
   it("accepts type in updateModelEntry whitelist", () => {
     writeAddedModels({
       "test-provider": {
