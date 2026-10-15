@@ -17,8 +17,9 @@ import fs from "fs";
 import path from "path";
 import { createChannelTicker } from "../lib/channels/channel-ticker.ts";
 import { Type } from "../lib/pi-sdk/index.ts";
-import { appendMessage, formatMessagesForLLM, getChannelMembers, getChannelMeta, getRecentMessages } from "../lib/channels/channel-store.ts";
+import { appendMessage, formatMessagesForLLM, getChannelMembers, getChannelMeta, getRecentMessages, filterChannelMemorySources } from "../lib/channels/channel-store.ts";
 import { extractMentionedAgentIds } from "../lib/channels/channel-mentions.ts";
+import { captureMemoryReset, isMemoryResetCurrent, readMemoryResetMarker } from "../lib/memory/compiled-memory-state.ts";
 import { loadConfig } from "../lib/memory/config-loader.ts";
 import { callText } from "../core/llm-client.ts";
 import { callTextConfigFromUtilityConfig } from "../core/model-execution-config.ts";
@@ -394,6 +395,7 @@ export class ChannelRouter {
       getAgentOrder: () => this.getAgentOrder(),
       executeCheck: (agentId, channelName, newMessages, allUpdates, opts) =>
         this._executeCheck(agentId, channelName, newMessages, allUpdates, opts),
+      captureMemoryContext: (agentId) => this._captureMemoryContext(agentId),
       onMemorySummarize: (agentId, channelName, contextText) =>
         this._memorySummarize(agentId, channelName, contextText),
       onEvent: (event, data) => {
@@ -1106,6 +1108,13 @@ export class ChannelRouter {
    * 频道记忆摘要
    * 从 engine._channelMemorySummarize 搬入
    */
+  _captureMemoryContext(agentId: string) {
+    const agent = this._getAgentInstance(agentId);
+    const memoryDir = agent?.memoryMdPath ? path.dirname(agent.memoryMdPath)
+      : path.join(this._engine.agentsDir, agentId, "memory");
+    return captureMemoryReset(memoryDir, "facts");
+  }
+
   async _memorySummarize(agentId, channelName, payload) {
     const engine = this._engine;
     let factStore = null;
@@ -1119,7 +1128,25 @@ export class ChannelRouter {
         return;
       }
 
+      const memoryDir = agentInstance?.memoryMdPath ? path.dirname(agentInstance.memoryMdPath)
+        : path.join(engine.agentsDir, agentId, "memory");
+      const reset = payload?.memoryContext || this._captureMemoryContext(agentId);
+      const current = () => reset.domain === "facts" && isMemoryResetCurrent(memoryDir, reset);
+      if (!current()) return;
+      const marker = readMemoryResetMarker(memoryDir);
+      const sourcePayload = () => {
+        if (!marker?.factsResetAt) return payload;
+        if (!Array.isArray(payload?.messages) || String(payload?.contextText || "").trim()) {
+          throw new Error("Channel memory needs source positions after a full reset");
+        }
+        const channelFile = path.join(engine.channelsDir, `${channelName}.md`);
+        const messages = filterChannelMemorySources(channelFile, payload.messages, marker.channelSources?.[channelName]);
+        // A post-reset reply may itself be new, provided the task began in this generation.
+        return { ...payload, messages };
+      };
+      const filteredPayload = sourcePayload();
       const utilCfg = await engine.resolveUtilityConfigFresh({ agentId }) || {};
+      if (!current()) return;
       const execution = callTextConfigFromUtilityConfig(utilCfg);
       if (!execution.model || !execution.baseUrl || !execution.api) {
         log.log(`${agentId} 无 API 配置，跳过记忆摘要`);
@@ -1127,7 +1154,7 @@ export class ChannelRouter {
       }
 
       const isZhMem = getLocale().startsWith("zh");
-      const contextText = this._formatChannelMemoryContext(agentId, payload, isZhMem);
+      const contextText = this._formatChannelMemoryContext(agentId, filteredPayload, isZhMem);
       if (!contextText.trim()) return;
 
       // 写入 agent 的 fact store
@@ -1137,7 +1164,8 @@ export class ChannelRouter {
         factStore = agentInstance.factStore;
       } else {
         const { FactStore } = await import("../lib/memory/fact-store.ts");
-        const dbPath = path.join(engine.agentsDir, agentId, "memory", "facts.db");
+        if (!current()) return;
+        const dbPath = path.join(memoryDir, "facts.db");
         factStore = new FactStore(dbPath);
         needClose = true;
       }
@@ -1168,6 +1196,8 @@ export class ChannelRouter {
       });
       const summaryText = this._normalizeChannelMemorySummary(rawSummary);
 
+      if (!current()) return;
+      sourcePayload(); // Revalidate source ownership after the model await, before any delete/add.
       const now = new Date();
       this._clearPreviousChannelMemoryFacts(factStore, sessionId, previousFacts);
       if (this._isEmptyChannelMemorySummary(summaryText)) {

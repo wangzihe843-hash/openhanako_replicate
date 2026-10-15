@@ -25,6 +25,11 @@ import { callTextConfigFromResolvedModel } from "../../core/model-execution-conf
 import { getLocale } from "../i18n.ts";
 import { atomicWriteSync, safeReadFile } from "../../shared/safe-fs.ts";
 import {
+  captureMemoryReset,
+  isMemoryResetCurrent,
+  readCompiledResetAt,
+  archiveRetiredMemorySources,
+  type MemoryResetToken,
   normalizeCompiledLLMResult,
   normalizeCompiledSectionBody,
   stripThinkTagBlocks,
@@ -309,10 +314,12 @@ function formatTimelineEventsForCompile(events, opts: { since?: any; includeRevi
  * @param {import('./session-summary.ts').SessionSummaryManager} summaryManager
  * @param {string} outputPath
  * @param {{ model: string, api: string, api_key: string, base_url: string }} resolvedModel
- * @returns {Promise<"compiled"|"skipped">}
+ * @returns {Promise<"compiled"|"skipped"|"superseded">}
  */
-export async function compileToday(summaryManager, outputPath, resolvedModel, opts: { since?: any; statePath?: string } = {}) {
+export async function compileToday(summaryManager, outputPath, resolvedModel, opts: { since?: string | null; statePath?: string; reset?: MemoryResetToken } = {}) {
   const memoryDir = path.dirname(outputPath);
+  const reset = opts.reset || captureMemoryReset(memoryDir);
+  if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) return "superseded";
   fs.mkdirSync(memoryDir, { recursive: true });
   const statePath = opts.statePath || todayStatePath(memoryDir);
 
@@ -325,7 +332,7 @@ export async function compileToday(summaryManager, outputPath, resolvedModel, op
     state = null;
   }
 
-  const resetSince = opts.since || null;
+  const resetSince = latestIso(opts.since, reset.resetAt);
   const watermark = latestIso(state?.lastCompiledSummaryUpdatedAt, resetSince);
   const sessions = getCandidateSummariesForCompile(summaryManager, watermark);
 
@@ -376,6 +383,9 @@ export async function compileToday(summaryManager, outputPath, resolvedModel, op
     "compile_today",
   );
 
+  // No await between this fence and either write. A superseded job must not
+  // touch the draft/state: a newer compile or user edit may already own them.
+  if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) return "superseded";
   atomicWrite(outputPath, normalizeCompiledLLMResult(result, "compileToday"));
   if (nextWatermark) writeTodayState(statePath, logicalDate, nextWatermark);
   return "compiled";
@@ -403,16 +413,19 @@ export async function compileToday(summaryManager, outputPath, resolvedModel, op
  * @param {string} logicalDate - YYYY-MM-DD，要编译的那个逻辑日
  * @param {object} resolvedModel
  * @param {{ since?: any, todayDraftPath?: string }} [opts] - todayDraftPath 缺省时视为草稿不可用，直接走摘要回落
- * @returns {Promise<"compiled"|"skipped">}
+ * @returns {Promise<"compiled"|"skipped"|"superseded">}
  */
-export async function compileDaily(summaryManager, dailyDir, logicalDate, resolvedModel, opts: { since?: any; todayDraftPath?: string } = {}) {
+export async function compileDaily(summaryManager, dailyDir, logicalDate, resolvedModel, opts: { since?: string | null; todayDraftPath?: string; reset?: MemoryResetToken } = {}) {
+  const memoryDir = path.dirname(dailyDir);
+  const reset = opts.reset || captureMemoryReset(memoryDir);
+  if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) return "superseded";
   fs.mkdirSync(dailyDir, { recursive: true });
 
   const outputPath = path.join(dailyDir, `${logicalDate}.md`);
   const fpPath = outputPath + ".fingerprint";
 
   const draftText = opts.todayDraftPath ? normalizeCompiledSectionBody(safeReadFile(opts.todayDraftPath, "")) : "";
-  const candidateSummaries = getCandidateSummariesForCompile(summaryManager, opts.since || null);
+  const candidateSummaries = getCandidateSummariesForCompile(summaryManager, latestIso(opts.since, reset.resetAt));
   const timelineEvents = timelineEventsForLogicalDate(candidateSummaries, logicalDate, { includeFallback: false });
   const fallbackEvents = timelineEvents.length === 0
     ? timelineEventsForLogicalDate(candidateSummaries, logicalDate, { includeFallback: true })
@@ -457,6 +470,7 @@ export async function compileDaily(summaryManager, dailyDir, logicalDate, resolv
     "compile_daily",
   );
 
+  if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) return "superseded";
   const body = normalizeCompiledLLMResult(result, "compileDaily");
   atomicWrite(outputPath, body ? `## ${logicalDate}\n\n${body}\n` : "");
   fs.writeFileSync(fpPath, fp);
@@ -605,38 +619,40 @@ export function assembleWeekFromDaily(dailyDir, weekPath, opts: { maxDays?: numb
  * @param {{ referenceDate?: string, retentionDays?: number }} [opts]
  * @returns {Promise<{ folded: string[], failed: string[] }>}
  */
-export async function rollDailyWindow(dailyDir, longtermPath, resolvedModel, opts: { referenceDate?: string; retentionDays?: number } = {}) {
+export async function rollDailyWindow(dailyDir, longtermPath, resolvedModel, opts: { referenceDate?: string; retentionDays?: number; reset?: MemoryResetToken } = {}): Promise<{ folded: string[]; failed: string[]; superseded?: boolean }> {
+  const memoryDir = path.dirname(longtermPath);
+  const reset = opts.reset || captureMemoryReset(memoryDir);
+  const superseded = () => ({ folded: [], failed: [], superseded: true });
+  if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) return superseded();
   const retentionDays = opts.retentionDays || DAILY_WINDOW_RETENTION_DAYS;
   const referenceDate = opts.referenceDate || getLogicalDay().logicalDate;
   const cutoffDate = shiftLogicalDate(referenceDate, -retentionDays);
-
-  const entries = _listDailyEntries(dailyDir).filter(({ date }) => date < cutoffDate);
+  const entries = _listDailyEntries(dailyDir).filter(({ date }) => date < cutoffDate)
+    .map((entry) => ({ ...entry, body: readSourceFile(entry.filePath), fingerprint: readSourceFile(`${entry.filePath}.fingerprint`) }));
   if (entries.length === 0) return { folded: [], failed: [] };
-
-  const combined = entries
-    .map(({ date, filePath }) => {
-      const body = safeReadFile(filePath, "").trim();
-      return body ? `## ${date}\n\n${body}` : "";
-    })
-    .filter(Boolean)
-    .join("\n\n");
-
-  if (!combined) {
-    // 全是空文件：直接清掉，不必调用 LLM。
-    for (const { filePath } of entries) removeFileIfExists(filePath);
-    return { folded: entries.map((e) => e.date), failed: [] };
-  }
-
+  const combined = entries.map(({ date, body }) => body?.trim() ? `## ${date}\n\n${body.trim()}` : "")
+    .filter(Boolean).join("\n\n");
   try {
-    // combined 非空，compileLongterm 只会返回 "compiled" 或因 fingerprint 命中返回
-    // "skipped"——两种情况都意味着这批内容已经安全落在 longterm 里，可以删源文件。
-    await compileLongterm(combined, longtermPath, resolvedModel);
-    for (const { filePath } of entries) removeFileIfExists(filePath);
+    const result = combined ? await compileLongterm(combined, longtermPath, resolvedModel, { reset }) : "skipped";
+    if (result === "superseded" || !isMemoryResetCurrent(memoryDir, reset, "compiled")) return superseded();
+    // An explicit edit in the same generation also owns its source file.
+    if (entries.some(({ filePath, body, fingerprint }) =>
+      readSourceFile(filePath) !== body || readSourceFile(`${filePath}.fingerprint`) !== fingerprint)) return superseded();
+    for (const { filePath } of entries) {
+      removeFileIfExists(filePath);
+      removeFileIfExists(`${filePath}.fingerprint`);
+    }
     return { folded: entries.map((e) => e.date), failed: [] };
   } catch (err) {
+    if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) return superseded();
     log.error(`rollDailyWindow: fold 进 longterm 失败，保留 ${entries.length} 份 daily 条目待下轮重试: ${err.message}`);
     return { folded: [], failed: entries.map((e) => e.date) };
   }
+}
+
+function readSourceFile(filePath: string): string | null {
+  try { return fs.readFileSync(filePath, "utf-8"); }
+  catch (error) { if (error?.code === "ENOENT") return null; throw error; }
 }
 
 /**
@@ -648,9 +664,12 @@ export async function rollDailyWindow(dailyDir, longtermPath, resolvedModel, opt
  * @param {string} content - 待吸收的原始内容（调用方已读好的文本，不是文件路径）
  * @param {string} longtermPath
  * @param {object} resolvedModel
- * @returns {Promise<"compiled"|"skipped">}
+ * @returns {Promise<"compiled"|"skipped"|"superseded">}
  */
-export async function compileLongterm(content, longtermPath, resolvedModel) {
+export async function compileLongterm(content, longtermPath, resolvedModel, opts: { reset?: MemoryResetToken } = {}) {
+  const memoryDir = path.dirname(longtermPath);
+  const reset = opts.reset || captureMemoryReset(memoryDir);
+  if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) return "superseded";
   fs.mkdirSync(path.dirname(longtermPath), { recursive: true });
 
   const newContent = String(content || "").trim();
@@ -688,6 +707,7 @@ export async function compileLongterm(content, longtermPath, resolvedModel) {
     "compile_longterm",
   );
 
+  if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) return "superseded";
   atomicWrite(longtermPath, normalizeCompiledLLMResult(result, "compileLongterm"));
   fs.writeFileSync(fpPath, fp);
   return "compiled";
@@ -708,17 +728,24 @@ export async function compileLongterm(content, longtermPath, resolvedModel) {
  * @param {object} resolvedModel
  * @returns {Promise<{ migrated: boolean }>}
  */
-export async function migrateLegacyWeekToLongterm(memoryDir, longtermPath, resolvedModel) {
+export async function migrateLegacyWeekToLongterm(memoryDir, longtermPath, resolvedModel, opts: { reset?: MemoryResetToken } = {}) {
+  const reset = opts.reset || captureMemoryReset(memoryDir);
+  if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) return { migrated: false, superseded: true };
   const weekPath = path.join(memoryDir, "week.md");
-  if (!fs.existsSync(weekPath)) return { migrated: false };
-
-  const weekContent = fs.readFileSync(weekPath, "utf-8").trim();
-  if (weekContent) {
-    await compileLongterm(weekContent, longtermPath, resolvedModel);
-  }
-
+  const source = readSourceFile(weekPath);
+  if (source === null) return { migrated: false };
+  const weekContent = source.trim();
+  const result = weekContent ? await compileLongterm(weekContent, longtermPath, resolvedModel, { reset }) : "skipped";
+  if (result === "superseded" || !isMemoryResetCurrent(memoryDir, reset, "compiled")
+    || readSourceFile(weekPath) !== source) return { migrated: false, superseded: true };
   const backupPath = `${weekPath}.migrated.bak`;
-  atomicWrite(backupPath, weekContent);
+  try {
+    fs.writeFileSync(backupPath, source, { flag: "wx" });
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    archiveRetiredMemorySources(memoryDir, ["week.md"]);
+    return { migrated: true };
+  }
   removeFileIfExists(weekPath);
   return { migrated: true };
 }
@@ -858,6 +885,7 @@ export function ensureEditableFactsBaseline(memoryDir, summaryManager = null, op
   const statePath = opts.statePath || editableFactsStatePath(memoryDir);
   const summaries = opts.summaries || getAllSummariesForFacts(summaryManager);
   const latestSummaryUpdatedAt = latestSummaryUpdate(summaries);
+  const resetAt = readCompiledResetAt(memoryDir);
   let changed = false;
 
   if (!fs.existsSync(outputPath)) {
@@ -866,8 +894,8 @@ export function ensureEditableFactsBaseline(memoryDir, summaryManager = null, op
   }
 
   const state = readEditableFactsState(statePath);
-  if (!state.lastCompiledSummaryUpdatedAt && latestSummaryUpdatedAt) {
-    writeEditableFactsState(statePath, latestSummaryUpdatedAt);
+  if (!state.lastCompiledSummaryUpdatedAt && (resetAt || latestSummaryUpdatedAt)) {
+    writeEditableFactsState(statePath, resetAt || latestSummaryUpdatedAt);
     changed = true;
   }
 
@@ -954,6 +982,9 @@ function removeFileIfExists(filePath) {
 }
 
 export async function compileEditableFacts(summaryManager, outputPath, resolvedModel, opts: Record<string, any> = {}) {
+  const memoryDir = path.dirname(outputPath);
+  const reset = opts.reset || captureMemoryReset(memoryDir);
+  if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) return "superseded";
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   const statePath = opts.statePath || path.join(path.dirname(outputPath), EDITABLE_FACTS_STATE_FILE);
   const summaries = getAllSummariesForFacts(summaryManager);
@@ -963,10 +994,10 @@ export async function compileEditableFacts(summaryManager, outputPath, resolvedM
     statePath,
     summaries,
   });
-  if (baseline.changed) return "compiled";
+  if (baseline.changed && !reset.resetAt) return "compiled";
 
   const state = readEditableFactsState(statePath);
-  const since = latestIso(state.lastCompiledSummaryUpdatedAt, opts.since || null);
+  const since = latestIso(state.lastCompiledSummaryUpdatedAt, latestIso(opts.since, reset.resetAt));
   const sessions = summaries.filter((s) => {
     const updated = s?.updated_at || s?.created_at || "";
     return updated && (!since || updated > since);
@@ -1012,6 +1043,7 @@ export async function compileEditableFacts(summaryManager, outputPath, resolvedM
     "compile_editable_facts",
   );
 
+  if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) return "superseded";
   atomicWrite(outputPath, normalizeCompiledLLMResult(result, "compileEditableFacts"));
   if (nextWatermark) writeEditableFactsState(statePath, nextWatermark);
   return "compiled";

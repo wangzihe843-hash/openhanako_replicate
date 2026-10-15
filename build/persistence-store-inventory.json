@@ -171,8 +171,10 @@
       "pathPatterns": [
         "agents/{agentId}/memory/memory.md",
         "agents/{agentId}/memory/facts.md",
+        "agents/{agentId}/memory/editable-facts.md",
         "agents/{agentId}/memory/today.md",
         "agents/{agentId}/memory/week.md",
+        "agents/{agentId}/memory/week.md.migrated.bak",
         "agents/{agentId}/memory/longterm.md",
         "agents/{agentId}/memory/longterm.md.fingerprint",
         "agents/{agentId}/memory/reset.json",
@@ -186,6 +188,11 @@
         "agents/{agentId}/memory/dream/state.json",
         "agents/{agentId}/memory/dream/pending-apply.json",
         "agents/{agentId}/memory/dream/revisions/{revisionId}.json",
+        "agents/{agentId}/memory/reset-archive/retired-{archiveId}/daily/{date}.md",
+        "agents/{agentId}/memory/reset-archive/retired-{archiveId}/daily/{date}.md.fingerprint",
+        "agents/{agentId}/memory/reset-archive/retired-{archiveId}/editable-facts.md",
+        "agents/{agentId}/memory/reset-archive/retired-{archiveId}/dream/pending-apply.json",
+        "agents/{agentId}/memory/reset-archive/retired-{archiveId}/week.md",
         "agents/{agentId}/memory/memories.db",
         "agents/{agentId}/memory/.v2-migrated"
       ],
@@ -195,12 +202,12 @@
       "schemaSource": {
         "kind": "directory-contract",
         "module": "lib/memory/compiled-memory-state.ts",
-        "contract": "compiled memory, rolling-summary, pinned-memory, and daily-state runtime readers"
+        "contract": "compiled memory and dual-domain reset marker, named retired-source archives, daily-state v4, Dream pending journal v1, rolling-summary and pinned-memory protocols; see docs/audits/2026-10-15-reset-lifecycle-persistence-compatibility.md"
       },
       "schemaContract": {
         "kind": "protocol",
         "source": "lib/memory/compiled-memory-state.ts",
-        "compatibility": "Historical Markdown and summary/pin JSON remain readable as legacy. Optional explicit memoryScope and source dependency/status fields are preserved in version-1 pin and summary records; scoped pins are excluded from the lossy legacy Markdown mirror. Legacy aggregates are not promoted into explicit worlds. Current source verification may suppress stale derived context without deleting original transcript history."
+        "compatibility": "Historical Markdown and summary/pin JSON remain readable as legacy. Optional explicit memoryScope and source dependency/status fields are preserved in version-1 pin and summary records; scoped pins are excluded from the lossy legacy Markdown mirror. Legacy aggregates are not promoted into explicit worlds. Current source verification may suppress stale derived context without deleting original transcript history. reset.json has no schemaVersion: absent and valid timestamp-only markers remain supported; new C/F resets write compiledResetAt and a fresh resetRevision, and F also records factsResetAt/factsResetRevision, v1Retired=true and channelSources[channelId]={messageCount,prefixHash}. C preserves the F tuple. Only ENOENT means no marker; unreadable, malformed or incomplete full-reset markers fail closed. daily-state.json stays schemaVersion 4 with optional resetRevision (missing/non-string reads as null). Dream pending-apply.json stays schemaVersion 1 with optional reset={memoryDir,domain,resetAt,revision}; identity-less legacy journals recover only without a marker, and stale/foreign-home journals are archived. Dream revision snapshots remain version 1 with the existing ten-revision retention policy. Named reset-archive files retain their original bytes and relative paths in unique retired-* directories, with no automatic consumption or pruning. week.md.migrated.bak is created exclusively; a collision archives the current week.md instead of overwriting the backup. These are forward-compatible additions with no SQLite or DATA_EPOCH migration, not authorization to downgrade: older readers ignore the F/source/journal fences and cannot preserve the reset guarantee on the same active home."
       },
       "openEntry": [
         "HanaAgent.init",
@@ -215,17 +222,26 @@
         "lib/memory/session-summary.ts",
         "lib/memory/compiled-memory-snapshot.ts",
         "shared/memory-scope.ts",
-        "shared/memory-provenance.ts"
+        "shared/memory-provenance.ts",
+        "lib/memory/compile.ts",
+        "lib/memory/memory-ticker.ts",
+        "lib/memory/dream/revision-store.ts",
+        "lib/memory/dream/runner.ts",
+        "core/agent.ts",
+        "lib/channels/channel-store.ts",
+        "lib/channels/channel-ticker.ts",
+        "hub/channel-router.ts",
+        "server/routes/config.ts"
       ],
       "firstPossibleOpenPhase": "engine_construct",
       "firstPossibleWritePhase": "runtime_ready",
       "epochPolicy": "epoch-managed",
-      "checkpointPolicy": "Included in a future epoch checkpoint unless the coordinator explicitly classifies it otherwise.",
-      "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
+      "checkpointPolicy": "Capture the registered active memory files, reset marker, daily checkpoint, Dream journal/revisions, retained v1 source and named retired archives together. Include agent-facts-sqlite and channels when their full-reset boundary is affected. Archives are retained source bytes, not regenerable caches; keep partial-reset archives and existing week backups.",
+      "restorePolicy": "Code rollback is not data rollback. Never rewind a published reset marker or automatically consume reset-archive. Restore selected authored bytes only by an explicit compatible edit/import/restore operation with the current reset identity; a copied pending journal is not an instruction to replay into another home. Journal recovery also requires its referenced Dream revision, which retains the existing pruning policy. Reset failure may leave a published marker, cleared facts or partial archive moves; preserve all remaining and moved sources and retry explicitly. No cross-file crash transaction or safe shared-home downgrade is promised.",
       "affectedByEpochMigration": true,
       "bootstrapSafety": null,
       "preCoordinatorReadProjection": null,
-      "identityContract": "agentId owns long-term memory; session summaries are keyed by sessionId, never by sessionPath.",
+      "identityContract": "agentId owns long-term memory; session summaries are keyed by sessionId, never by sessionPath. Reset tokens bind path.resolve(memoryDir), compiled/facts domain, resetAt and revision (not realpath identity). An archiveId is only a unique storage suffix, not a reset revision. Full-reset channel boundaries use parsed message count and a SHA-256 prefix chain; raw channel files and bookmarks remain owned by channels.",
       "exemption": null
     },
     {
@@ -425,7 +441,7 @@
       "schemaContract": {
         "kind": "runtime-source",
         "source": "lib/channels/channel-store.ts",
-        "compatibility": "Existing Markdown and frontmatter readers remain canonical. The optional channel.post receipt marker is written only for new posts and hidden from normal parsed message bodies; older messages and DM records are not rewritten. This corrects the inventory's former YAML path and unifies existing channel, DM, and bookmark ownership without moving records."
+        "compatibility": "Existing Markdown and frontmatter readers remain canonical. The optional channel.post receipt marker is written only for new posts and hidden from normal parsed message bodies; older messages and DM records are not rewritten. This corrects the inventory's former YAML path and unifies existing channel, DM, and bookmark ownership without moving records. Reset memorySource positions and prefix hashes are non-enumerable in-memory metadata, not new Markdown/JSON fields or bookmark semantics. Durable full-reset messageCount/prefixHash boundaries live in agent-memory reset.json. Changed, truncated or reordered prefixes block automatic memory extraction until an explicit new full reset establishes a boundary; chat history is retained."
       },
       "openEntry": [
         "ChannelManager",
@@ -7120,6 +7136,15 @@
     {
       "sourceFile": "lib/memory/compile.ts",
       "kind": "write-file",
+      "excerpt": "fs.writeFileSync(backupPath, source, { flag: \"wx\" })",
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "storeId": "agent-memory",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/memory/compile.ts",
+      "kind": "write-file",
       "excerpt": "fs.writeFileSync(fpPath, fp)",
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "storeId": "agent-memory",
@@ -7183,6 +7208,15 @@
     {
       "sourceFile": "lib/memory/compiled-memory-state.ts",
       "kind": "mkdir",
+      "excerpt": "fs.mkdirSync(archiveRoot, { recursive: true })",
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "storeId": "agent-memory",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/memory/compiled-memory-state.ts",
+      "kind": "mkdir",
       "excerpt": "fs.mkdirSync(memoryDir, { recursive: true })",
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "storeId": "agent-memory",
@@ -7197,6 +7231,15 @@
       "storeId": "agent-memory",
       "exemptionId": null,
       "ordinal": 1
+    },
+    {
+      "sourceFile": "lib/memory/compiled-memory-state.ts",
+      "kind": "mkdir",
+      "excerpt": "fs.mkdirSync(path.dirname(destination), { recursive: true })",
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "storeId": "agent-memory",
+      "exemptionId": null,
+      "ordinal": 0
     },
     {
       "sourceFile": "lib/memory/compiled-memory-state.ts",
@@ -7220,6 +7263,15 @@
       "sourceFile": "lib/memory/compiled-memory-state.ts",
       "kind": "remove-path",
       "excerpt": "fs.unlinkSync(filePath)",
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "storeId": "agent-memory",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/memory/compiled-memory-state.ts",
+      "kind": "rename",
+      "excerpt": "fs.renameSync(path.join(memoryDir, name), destination)",
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "storeId": "agent-memory",
       "exemptionId": null,
@@ -7255,7 +7307,7 @@
     {
       "sourceFile": "lib/memory/dream/revision-store.ts",
       "kind": "atomic-write",
-      "excerpt": "atomicWriteSync(pendingPath(memoryDir), `${JSON.stringify({ schemaVersion: 1, revisionId: options.revision.revisionId, startedAt: new Date().toISOString(), operation: \"dream\", }, null, 2)}\\n`)",
+      "excerpt": "atomicWriteSync(pendingPath(memoryDir), `${JSON.stringify({ schemaVersion: 1, revisionId: options.revision.revisionId, startedAt: new Date().toISOString(), operation: \"dream\", reset, }, null, 2)}\\n`)",
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "storeId": "agent-memory",
       "exemptionId": null,
@@ -7264,7 +7316,7 @@
     {
       "sourceFile": "lib/memory/dream/revision-store.ts",
       "kind": "atomic-write",
-      "excerpt": "atomicWriteSync(pendingPath(memoryDir), `${JSON.stringify({ schemaVersion: 1, revisionId: safetyRevision.revisionId, targetRevisionId: revision.revisionId, startedAt: new Date().toISOString(), operation: \"restore\", }, null, 2)}\\n`)",
+      "excerpt": "atomicWriteSync(pendingPath(memoryDir), `${JSON.stringify({ schemaVersion: 1, revisionId: safetyRevision.revisionId, targetRevisionId: revision.revisionId, startedAt: new Date().toISOString(), operation: \"restore\", reset, }, null, 2)}\\n`)",
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "storeId": "agent-memory",
       "exemptionId": null,

@@ -45,7 +45,7 @@ import {
 } from "./compile.ts";
 import { processDirtySessions } from "./deep-memory.ts";
 import { getLogicalDay, shiftLogicalDate } from "../time-utils.ts";
-import { readCompiledResetAt } from "./compiled-memory-state.ts";
+import { captureMemoryReset, isMemoryResetCurrent, readCompiledResetAt, type MemoryResetToken } from "./compiled-memory-state.ts";
 import { listSessionFiles, readCurrentSessionBranch, sessionIdFromFilename } from "../session-jsonl.ts";
 import { isAgentPhoneSessionPath } from "../conversations/agent-phone-session.ts";
 import { buildSourceTimeRange } from "./time-context.ts";
@@ -364,14 +364,29 @@ export function createMemoryTicker(opts) {
   }
 
   function _dailyContext(logicalDate = getLogicalDay().logicalDate) {
+    const reset = captureMemoryReset(memoryDir);
     return {
       logicalDate,
-      resetAt: _normalizeResetAt(_getCompiledResetAt()),
+      resetAt: _normalizeResetAt(reset.resetAt),
+      resetRevision: reset.revision,
+      reset,
     };
   }
 
   function _dailyContextKey(context) {
-    return [context.logicalDate, context.resetAt || ""].join("\n");
+    return [context.logicalDate, context.resetAt || "", context.resetRevision || ""].join("\n");
+  }
+
+  function _isDailyContextCurrent(context) {
+    return _isResetCurrent(context.reset);
+  }
+
+  function _isResetCurrent(reset: MemoryResetToken | null) {
+    try { return !!reset && isMemoryResetCurrent(memoryDir, reset, "compiled"); }
+    catch (error) {
+      log.error(`Memory reset validation failed: ${error?.message || error}`);
+      return false;
+    }
   }
 
   function _isValidIso(value) {
@@ -389,6 +404,7 @@ export function createMemoryTicker(opts) {
       return {
         logicalDate: typeof raw.logicalDate === "string" ? raw.logicalDate : "",
         resetAt: _normalizeResetAt(raw.resetAt),
+        resetRevision: typeof raw.resetRevision === "string" ? raw.resetRevision : null,
         completedSteps,
         dailyCompletedAt: _isValidIso(raw.dailyCompletedAt) ? new Date(raw.dailyCompletedAt).toISOString() : null,
       };
@@ -403,7 +419,8 @@ export function createMemoryTicker(opts) {
   function _stateMatchesContext(state, context) {
     return Boolean(state)
       && state.logicalDate === context.logicalDate
-      && state.resetAt === context.resetAt;
+      && state.resetAt === context.resetAt
+      && state.resetRevision === context.resetRevision;
   }
 
   function _allDailyStepsCompleted() {
@@ -455,6 +472,7 @@ export function createMemoryTicker(opts) {
       schemaVersion: DAILY_STATE_SCHEMA_VERSION,
       logicalDate: context.logicalDate,
       resetAt: context.resetAt,
+      resetRevision: context.resetRevision,
       completedSteps,
       dailyCompletedAt: _dailyCompletedAt,
       updatedAt: new Date().toISOString(),
@@ -728,8 +746,10 @@ export function createMemoryTicker(opts) {
     if (_summaryInProgress.has(sessionId)) return; // 并发保护
     const replacementEpochAtStart = _branchReplacementEpoch.get(sessionId) || 0;
     _summaryInProgress.add(sessionId);
+    let reset: MemoryResetToken | null = null;
     try {
-      const resetAt = _getCompiledResetAt();
+      reset = captureMemoryReset(memoryDir);
+      const resetAt = reset.resetAt;
       const projection = _readSessionBranch(sessionPath, { since: resetAt });
       const { messages } = projection;
 
@@ -747,6 +767,7 @@ export function createMemoryTicker(opts) {
         rollingOptions.memoryReflectionSnapshot = memoryReflectionSnapshot;
       }
       const resolvedModel = await getResolvedMemoryModel();
+      if (!_isResetCurrent(reset)) return { ok: false, superseded: true };
       const cacheSnapshotMode = memoryScope.realm === "legacy" ? _getCacheSnapshotReflectionMode() : "off";
       let summaryResult = null;
       if (cacheSnapshotMode === "write") {
@@ -775,6 +796,7 @@ export function createMemoryTicker(opts) {
           resolvedModel,
           rollingOptions,
         );
+        if (!_isResetCurrent(reset)) return { ok: false, superseded: true };
         if (["branch_changed", "source_changed"].includes(summaryResult?.reason)) {
           throw new Error("session branch changed while rebuilding its memory summary");
         }
@@ -789,6 +811,7 @@ export function createMemoryTicker(opts) {
             getCurrentBranchProjection: () => _readSessionBranch(sessionPath),
             sessionIds: [sessionId],
           });
+          if (!_isResetCurrent(reset)) return { ok: false, superseded: true };
           if (summaryManager.getSummary(sessionId)?.factReplacementRequired === true) {
             throw new Error("branch fact replacement remains pending");
           }
@@ -805,6 +828,7 @@ export function createMemoryTicker(opts) {
           });
         }
       }
+      if (!_isResetCurrent(reset)) return { ok: false, superseded: true };
       debugLog()?.log("memory", `rolling summary updated: ${sessionId.slice(0, 8)}...`);
       _markSuccess("rollingSummary");
       _markStepRecovered("滚动摘要");
@@ -813,14 +837,15 @@ export function createMemoryTicker(opts) {
         _branchReplacementPending.delete(sessionId);
         _branchReplacementEpoch.delete(sessionId);
       }
-      return { ok: true, summary: summaryManager.getSummary(sessionId) };
+      return { ok: true, superseded: false, summary: summaryManager.getSummary(sessionId) };
     } catch (err) {
+      if (!_isResetCurrent(reset)) return { ok: false, superseded: false, error: err };
       _markFailure("rollingSummary", err);
       _logStepError(`滚动摘要 (${path.basename(sessionPath)})`, err);
       if (trigger === "manual" && _getCacheSnapshotReflectionMode() === "write") {
         throw err;
       }
-      return { ok: false, error: err };
+      return { ok: false, superseded: false, error: err };
     } finally {
       _summaryInProgress.delete(sessionId);
       const newerReplacementPending = (_branchReplacementEpoch.get(sessionId) || 0) > replacementEpochAtStart;
@@ -837,18 +862,26 @@ export function createMemoryTicker(opts) {
   async function _doCompileTodayAndAssemble() {
     if (_dreamRunner.isRunning()) return;
     _aggregateCompileInFlight += 1;
+    let reset: MemoryResetToken | null = null;
     try {
-      const resetAt = _getCompiledResetAt();
-      await compileToday(summaryManager, todayMdPath, await getResolvedMemoryModel(), { since: resetAt });
+      reset = captureMemoryReset(memoryDir);
+      const resolvedModel = await getResolvedMemoryModel();
+      if (!_isResetCurrent(reset)) return;
+      const result = await compileToday(summaryManager, todayMdPath, resolvedModel, { since: reset.resetAt, reset });
+      if (result === "superseded" || !_isResetCurrent(reset)) return;
       assemble(_factsSourcePath(), todayMdPath, weekMdPath, longtermMdPath, memoryMdPath);
       if ((summaryManager.getAllSummaries?.() || []).some((record) => record?.memoryScope?.realm && record.memoryScope.realm !== "legacy")) {
-        await compileScopedMemory(summaryManager, scopedDerivationStore, await getResolvedMemoryModel(), { since: resetAt });
+        const scopedModel = await getResolvedMemoryModel();
+        if (!_isResetCurrent(reset)) return;
+        await compileScopedMemory(summaryManager, scopedDerivationStore, scopedModel, { since: reset.resetAt });
+        if (!_isResetCurrent(reset)) return;
       }
       onCompiled?.();
       debugLog()?.log("memory", "today compiled + assembled");
       _markSuccess("compileToday");
       _markStepRecovered("compileToday");
     } catch (err) {
+      if (!_isResetCurrent(reset)) return;
       _markFailure("compileToday", err);
       _logStepError("compileToday", err);
     } finally {
@@ -873,11 +906,16 @@ export function createMemoryTicker(opts) {
       // week.md 迁移后被更名为 .migrated.bak，之后每次调用都会因文件不存在而 no-op，
       // 不需要独立 checkpoint。必须早于本函数末尾的 assemble（读 weekMdPath）之前跑完。
       try {
-        await migrateLegacyWeekToLongterm(memoryDir, longtermMdPath, await getResolvedMemoryModel());
+        const resolvedModel = await getResolvedMemoryModel();
+        if (!_isDailyContextCurrent(context)) return;
+        const result = await migrateLegacyWeekToLongterm(memoryDir, longtermMdPath, resolvedModel, { reset: context.reset });
+        if (result.superseded || !_isDailyContextCurrent(context)) return;
       } catch (err) {
+        if (!_isDailyContextCurrent(context)) return;
         hasFailed = true;
         log.error(`week.md 迁移失败: ${err.message}`);
       }
+      if (!_isDailyContextCurrent(context)) return;
 
       // Step 0: compileDaily——把已经翻篇的昨天蒸馏成 memory/daily/{date}.md。
       // 必须先于 Step 1 的 compileToday 执行：compileDaily 读取的"昨天最终版今日草稿"
@@ -886,28 +924,38 @@ export function createMemoryTicker(opts) {
       if (!_dailyStepsCompleted.has("compileDaily")) {
         try {
           const yesterday = shiftLogicalDate(todayStr, -1);
-          await compileDaily(summaryManager, _dailyDir(), yesterday, await getResolvedMemoryModel(), {
+          const resolvedModel = await getResolvedMemoryModel();
+          if (!_isDailyContextCurrent(context)) return;
+          const result = await compileDaily(summaryManager, _dailyDir(), yesterday, resolvedModel, {
+            reset: context.reset,
             since: resetAt,
             todayDraftPath: todayMdPath,
           });
+          if (result === "superseded" || !_isDailyContextCurrent(context)) return;
           _markDailyStepCompleted("compileDaily", context);
           _markSuccess("compileDaily");
           _markStepRecovered("compileDaily");
         } catch (err) {
+          if (!_isDailyContextCurrent(context)) return;
           hasFailed = true;
           _markFailure("compileDaily", err);
           _logStepError("compileDaily", err);
         }
       }
+      if (!_isDailyContextCurrent(context)) return;
 
       // Step 1: compileToday（日期切换后刷新 today.md，新一天无 session 时会清空）
       if (!_dailyStepsCompleted.has("compileToday")) {
         try {
-          await compileToday(summaryManager, todayMdPath, await getResolvedMemoryModel(), { since: resetAt });
+          const resolvedModel = await getResolvedMemoryModel();
+          if (!_isDailyContextCurrent(context)) return;
+          const result = await compileToday(summaryManager, todayMdPath, resolvedModel, { since: resetAt, reset: context.reset });
+          if (result === "superseded" || !_isDailyContextCurrent(context)) return;
           _markDailyStepCompleted("compileToday", context);
           _markSuccess("compileToday");
           _markStepRecovered("compileToday(daily)");
         } catch (err) {
+          if (!_isDailyContextCurrent(context)) return;
           hasFailed = true;
           _markFailure("compileToday", err);
           _logStepError("compileToday(daily)", err);
@@ -919,9 +967,14 @@ export function createMemoryTicker(opts) {
       // 判断的是"更早"的条目，但保持与 compileWeek→compileLongterm 相同的顺序约束更安全）。
       if (!_dailyStepsCompleted.has("rollDailyWindow") && _dailyStepsCompleted.has("compileDaily")) {
         try {
-          const { failed } = await rollDailyWindow(_dailyDir(), longtermMdPath, await getResolvedMemoryModel(), {
+          const resolvedModel = await getResolvedMemoryModel();
+          if (!_isDailyContextCurrent(context)) return;
+          const { failed, superseded } = await rollDailyWindow(_dailyDir(), longtermMdPath, resolvedModel, {
+            reset: context.reset,
             referenceDate: todayStr,
           });
+          if (!_isDailyContextCurrent(context)) return;
+          if (superseded) return;
           if (failed.length > 0) {
             throw new Error(`${failed.length} 份 daily 条目 fold 进 longterm 失败: ${failed.join(", ")}`);
           }
@@ -929,54 +982,71 @@ export function createMemoryTicker(opts) {
           _markSuccess("rollDailyWindow");
           _markStepRecovered("rollDailyWindow");
         } catch (err) {
+          if (!_isDailyContextCurrent(context)) return;
           hasFailed = true;
           _markFailure("rollDailyWindow", err);
           _logStepError("rollDailyWindow", err);
         }
       }
+      if (!_isDailyContextCurrent(context)) return;
 
       // Step 3: compileFacts（独立于 step 1-2）——恒走增量编译，facts.md 是唯一产物
       if (!_dailyStepsCompleted.has("compileFacts")) {
         try {
+          const resolvedModel = await getResolvedMemoryModel();
+          if (!_isDailyContextCurrent(context)) return;
           const factsBefore = _readFactsLines();
-          await compileEditableFacts(summaryManager, factsMdPath, await getResolvedMemoryModel(), {
+          const result = await compileEditableFacts(summaryManager, factsMdPath, resolvedModel, {
+            reset: context.reset,
             since: resetAt,
           });
+          if (!_isDailyContextCurrent(context)) return;
+          if (result === "superseded") return;
           _recordNewFactLines(factsBefore);
           _markDailyStepCompleted("compileFacts", context);
           _markSuccess("compileFacts");
           _markStepRecovered("compileFacts");
         } catch (err) {
+          if (!_isDailyContextCurrent(context)) return;
           hasFailed = true;
           _markFailure("compileFacts", err);
           _logStepError("compileFacts", err);
         }
       }
+      if (!_isDailyContextCurrent(context)) return;
 
       // Step 4: assemble（纯文件操作，先从 daily/ 目录装配 week.md 再拼 memory.md，总是执行）
       try {
         assembleWeekFromDaily(_dailyDir(), weekMdPath);
         assemble(_factsSourcePath(), todayMdPath, weekMdPath, longtermMdPath, memoryMdPath);
         if ((summaryManager.getAllSummaries?.() || []).some((record) => record?.memoryScope?.realm && record.memoryScope.realm !== "legacy")) {
-          await compileScopedMemory(summaryManager, scopedDerivationStore, await getResolvedMemoryModel(), { since: resetAt });
+          const scopedModel = await getResolvedMemoryModel();
+          if (!_isDailyContextCurrent(context)) return;
+          await compileScopedMemory(summaryManager, scopedDerivationStore, scopedModel, { since: resetAt });
+          if (!_isDailyContextCurrent(context)) return;
         }
         onCompiled?.();
       } catch (err) {
+        if (!_isDailyContextCurrent(context)) return;
         hasFailed = true;
         log.error(`assemble 失败: ${err.message}`);
       }
+      if (!_isDailyContextCurrent(context)) return;
 
       // Step 5: deep-memory（独立，更新 facts.db）
       if (!_dailyStepsCompleted.has("deepMemory")) {
         try {
+          const resolvedModel = await getResolvedMemoryModel();
+          if (!_isDailyContextCurrent(context)) return;
           const { processed, factsAdded } = await processDirtySessions(
-            summaryManager, factStore, await getResolvedMemoryModel(), {
+            summaryManager, factStore, resolvedModel, {
               since: resetAt,
               timeZone: _getTimezone(),
               getSourceTimeRange: _createSourceTimeRangeResolver(),
               getCurrentBranchProjection: _createSessionBranchProjectionResolver(),
             },
           );
+          if (!_isDailyContextCurrent(context)) return;
           const replacementStillPending = typeof summaryManager.getDirtySessions === "function"
             && summaryManager
               .getDirtySessions({ since: resetAt })
@@ -991,11 +1061,13 @@ export function createMemoryTicker(opts) {
           _markSuccess("deepMemory");
           _markStepRecovered("deep-memory");
         } catch (err) {
+          if (!_isDailyContextCurrent(context)) return;
           hasFailed = true;
           _markFailure("deepMemory", err);
           _logStepError("deep-memory", err);
         }
       }
+      if (!_isDailyContextCurrent(context)) return;
 
       if (hasFailed) {
         const done = [..._dailyStepsCompleted].join(", ");
@@ -1277,6 +1349,7 @@ export function createMemoryTicker(opts) {
     if (!_isSessionMemoryOn(sessionPath)) return;
     try {
       const outcome = await _doRollingSummary(sessionPath, "promoted");
+      if (outcome?.superseded) return;
       if (!outcome?.ok) throw outcome?.error || new Error("rolling summary failed");
       await _doCompileTodayAndAssemble();
       debugLog()?.log("memory", `promoted session summarized: ${path.basename(sessionPath).slice(0, 20)}...`);
@@ -1316,6 +1389,7 @@ export function createMemoryTicker(opts) {
     if (!sessionPath) return;
     if (!_isSessionMemoryOn(sessionPath)) return;
     const outcome = await _doRollingSummary(sessionPath, "manual");
+    if (outcome?.superseded) return;
     if (!outcome?.ok) throw outcome?.error || new Error("rolling summary failed");
   }
 
@@ -1331,6 +1405,7 @@ export function createMemoryTicker(opts) {
     if (!sessionPath) return;
     if (!_isSessionMemoryOn(sessionPath)) return;
     const outcome = await _doRollingSummary(sessionPath, "manual");
+    if (outcome?.superseded) return;
     if (!outcome?.ok) throw outcome?.error || new Error("rolling summary failed");
     await _doCompileTodayAndAssemble();
     _turnCounts.delete(_sessionIdentityForPath(sessionPath));

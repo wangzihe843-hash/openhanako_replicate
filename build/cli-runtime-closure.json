@@ -4756,6 +4756,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "server/routes/config.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/channels/conversation-export.ts",
           "kind": "import-statement"
         },
@@ -4785,7 +4790,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/task-outcome/effect-ledger.ts (import-statement); lib/tools/channel-tool.ts (import-statement); lib/tools/dm-tool.ts (import-statement); +7 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by lib/task-outcome/effect-ledger.ts (import-statement); lib/tools/channel-tool.ts (import-statement); lib/tools/dm-tool.ts (import-statement); +8 more importer(s)."
     },
     {
       "path": "lib/channels/channel-ticker.ts",
@@ -6973,7 +6978,22 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/memory/dream/revision-store.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/memory/dream/runner.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/memory/memory-ticker.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "core/agent.ts",
           "kind": "import-statement"
         },
         {
@@ -6990,9 +7010,19 @@
           "root": "server-bootstrap",
           "from": "server/routes/config.ts",
           "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/channels/channel-ticker.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "hub/channel-router.ts",
+          "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/memory/scoped-derivation-store.ts (import-statement); lib/memory/session-summary.ts (import-statement); lib/memory/compile.ts (import-statement); +4 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by lib/memory/scoped-derivation-store.ts (import-statement); lib/memory/session-summary.ts (import-statement); lib/memory/compile.ts (import-statement); +9 more importer(s)."
     },
     {
       "path": "lib/memory/config-loader.ts",

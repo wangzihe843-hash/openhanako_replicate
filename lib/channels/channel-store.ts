@@ -12,6 +12,8 @@ import path from "path";
 import crypto from "crypto";
 import { getLocale, t } from "../i18n.ts";
 
+import type { ChannelMemoryBoundary } from "../memory/compiled-memory-state.ts";
+
 export const MIN_CHANNEL_AGENT_MEMBERS = 2;
 
 const ENCODED_FRONTMATTER_KEYS = new Set();
@@ -354,6 +356,60 @@ export async function appendDmMessage({
   });
 }
 
+const EMPTY_CHANNEL_PREFIX = crypto.createHash("sha256").update("").digest("hex");
+
+type ChannelMemorySource = { filePath: string; ordinal: number; prefixHash: string };
+
+function channelMessagesWithSource(filePath: string) {
+  const { messages } = parseChannel(fs.readFileSync(filePath, "utf-8"));
+  let prefixHash = EMPTY_CHANNEL_PREFIX;
+  return messages.map((message, ordinal) => {
+    prefixHash = crypto.createHash("sha256")
+      .update(prefixHash).update(JSON.stringify([message.sender, message.timestamp, message.body])).digest("hex");
+    // Internal provenance travels with the selected object, not into chat JSON,
+    // formatting or persisted Markdown. Ordinals precede self/window filtering.
+    return Object.defineProperty(message, "memorySource", {
+      value: { filePath: path.resolve(filePath), ordinal, prefixHash } satisfies ChannelMemorySource,
+    }) as typeof message & { memorySource: ChannelMemorySource };
+  });
+}
+
+export function captureChannelMemoryBoundaries(channelsDir: string | null | undefined): Record<string, ChannelMemoryBoundary> {
+  if (!channelsDir) return {};
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(channelsDir, { withFileTypes: true }); }
+  catch (error) { if (error?.code === "ENOENT") return {}; throw error; }
+  return Object.fromEntries(entries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).map((entry) => {
+    const messages = channelMessagesWithSource(path.join(channelsDir, entry.name));
+    return [entry.name.slice(0, -3), {
+      messageCount: messages.length,
+      prefixHash: messages.at(-1)?.memorySource.prefixHash || EMPTY_CHANNEL_PREFIX,
+    }];
+  }));
+}
+
+// After a full reset, a source must prove its exact parsed position. A changed
+// prefix blocks automatic memory; chat delivery and its bookmarks still work.
+export function filterChannelMemorySources(filePath: string, selected: Array<{ sender: string; timestamp: string; body: string; memorySource?: ChannelMemorySource }>, boundary?: ChannelMemoryBoundary) {
+  const messages = channelMessagesWithSource(filePath);
+  const count = boundary?.messageCount || 0;
+  const hash = count ? messages[count - 1]?.memorySource.prefixHash : EMPTY_CHANNEL_PREFIX;
+  if (messages.length < count || (boundary && hash !== boundary.prefixHash)) {
+    throw new Error("Channel memory source prefix changed; an explicit full memory reset must establish a new boundary");
+  }
+  return selected.filter((message) => {
+    const source = message?.memorySource as ChannelMemorySource | undefined;
+    const current = source && messages[source.ordinal];
+    if (!source || !Number.isSafeInteger(source.ordinal) || source.ordinal < 0
+      || source.filePath !== path.resolve(filePath) || !current
+      || source.prefixHash !== current.memorySource.prefixHash
+      || message.sender !== current.sender || message.timestamp !== current.timestamp || message.body !== current.body) {
+      throw new Error("Channel memory source position cannot be verified");
+    }
+    return source.ordinal >= count;
+  });
+}
+
 /**
  * 读取频道中 bookmark 之后的新消息
  * @param {string} filePath - 频道 MD 文件路径
@@ -361,11 +417,11 @@ export async function appendDmMessage({
  * @param {string} [selfName] - 自己的名字（跳过自己发的消息）
  * @returns {Array<{sender: string, timestamp: string, body: string}>}
  */
-export function getNewMessages(filePath, bookmark, selfName) {
+export function getNewMessages(filePath, bookmark, selfName, { includeMemorySource = false } = {}) {
   if (!fs.existsSync(filePath)) return [];
 
-  const content = fs.readFileSync(filePath, "utf-8");
-  const { messages } = parseChannel(content);
+  const messages = includeMemorySource ? channelMessagesWithSource(filePath)
+    : parseChannel(fs.readFileSync(filePath, "utf-8")).messages;
 
   let filtered = messages;
 
@@ -389,11 +445,11 @@ export function getNewMessages(filePath, bookmark, selfName) {
  * @param {string} [selfName] - 自己的名字（跳过自己发的）
  * @returns {Array<{sender: string, timestamp: string, body: string}>}
  */
-export function getRecentMessages(filePath, count = 10, selfName) {
+export function getRecentMessages(filePath, count = 10, selfName, { includeMemorySource = false } = {}) {
   if (!fs.existsSync(filePath)) return [];
 
-  const content = fs.readFileSync(filePath, "utf-8");
-  const { messages } = parseChannel(content);
+  const messages = includeMemorySource ? channelMessagesWithSource(filePath)
+    : parseChannel(fs.readFileSync(filePath, "utf-8")).messages;
 
   const filtered = selfName
     ? messages.filter(m => m.sender !== selfName)

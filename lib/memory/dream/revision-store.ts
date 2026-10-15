@@ -9,6 +9,7 @@ import {
   readCompiledMemorySections,
   writeDailyEntryBody,
 } from "../compile.ts";
+import { archiveRetiredMemorySources, captureMemoryReset, isMemoryResetCurrent, type MemoryResetToken } from "../compiled-memory-state.ts";
 import { dreamDir, type DreamRunTrigger } from "./state-store.ts";
 
 export type DreamWeekDay = { date: string; body: string };
@@ -210,7 +211,10 @@ export function applyDreamSections(memoryDir: string, options: {
   revision: DreamRevision;
   next: DreamSections;
   memoryMdPath?: string;
+  reset?: MemoryResetToken;
 }) {
+  const reset = options.reset || captureMemoryReset(memoryDir);
+  if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) throw new Error("Dream reset generation was superseded");
   const memoryMdPath = options.memoryMdPath || path.join(memoryDir, "memory.md");
   if (options.next.today !== options.revision.before.today
     || JSON.stringify(options.next.weekDays) !== JSON.stringify(options.revision.before.weekDays)) {
@@ -223,6 +227,7 @@ export function applyDreamSections(memoryDir: string, options: {
     revisionId: options.revision.revisionId,
     startedAt: new Date().toISOString(),
     operation: "dream",
+    reset,
   }, null, 2)}\n`);
 
   try {
@@ -241,6 +246,7 @@ export function applyDreamSections(memoryDir: string, options: {
 }
 
 export function restoreDreamRevision(memoryDir: string, revisionId: string, memoryMdPath?: string) {
+  const reset = captureMemoryReset(memoryDir);
   const revision = readDreamRevision(memoryDir, revisionId);
   const current = snapshotDreamSections(memoryDir);
   if (dreamSectionsHash(current) === dreamSectionsHash(revision.before)) return current;
@@ -261,6 +267,7 @@ export function restoreDreamRevision(memoryDir: string, revisionId: string, memo
     targetRevisionId: revision.revisionId,
     startedAt: new Date().toISOString(),
     operation: "restore",
+    reset,
   }, null, 2)}\n`);
 
   try {
@@ -285,6 +292,14 @@ export function recoverPendingDreamApply(memoryDir: string, memoryMdPath?: strin
   } catch (err: any) {
     if (err?.code === "ENOENT") return false;
     throw new Error(`Dream pending journal is unreadable: ${err?.message || err}`);
+  }
+  const reset = captureMemoryReset(memoryDir);
+  const current = pending?.reset
+    ? pending.reset.domain === "compiled" && isMemoryResetCurrent(memoryDir, pending.reset)
+    : reset.resetAt === null;
+  if (!current) {
+    archiveRetiredMemorySources(memoryDir, ["dream/pending-apply.json"]);
+    return false;
   }
   const revision = readDreamRevision(memoryDir, pending?.revisionId);
   const resolvedMemoryMdPath = memoryMdPath || path.join(memoryDir, "memory.md");

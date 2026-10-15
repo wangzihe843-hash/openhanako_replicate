@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { captureMemoryReset, isMemoryResetCurrent, type MemoryResetToken } from "../compiled-memory-state.ts";
 import { buildCompiledMemoryMarkdown } from "../compile.ts";
 import {
   atomizeDreamMemory,
@@ -137,7 +138,15 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
   }) => {
     let before: DreamSections | null = null;
     let model = "";
+    let reset: MemoryResetToken | null = null;
+    const assertCurrent = () => {
+      if (signal.aborted) throw new DOMException("Dream aborted", "AbortError");
+      if (!reset || !isMemoryResetCurrent(options.memoryDir, reset, "compiled")) {
+        throw new DreamOperationError("dream_memory_changed", "Memory was reset while Dream was running; no changes were applied");
+      }
+    };
     try {
+      reset = captureMemoryReset(options.memoryDir);
       // Startup I/O belongs to the run too: failures must reach a terminal state.
       ensureState();
       if (trigger === "automatic") {
@@ -153,6 +162,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
       }
 
       const resolvedModel = await options.getResolvedMemoryModel();
+      assertCurrent();
       model = dreamModelId(resolvedModel);
       const atomized = await atomizeDreamMemory({
         current: before,
@@ -160,12 +170,14 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
         trigger,
         signal,
       });
+      assertCurrent();
       const deduped = await dedupeDreamMemory({
         units: atomized.units,
         resolvedModel,
         trigger,
         signal,
       });
+      assertCurrent();
       const optimization = await optimizeDreamMemory({
         current: before,
         sourceBlocks: atomized.sourceBlocks,
@@ -175,6 +187,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
         trigger,
         signal,
       });
+      assertCurrent();
       let writerResult = await composeDreamMemory({
         current: before,
         optimization,
@@ -182,6 +195,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
         trigger,
         signal,
       });
+      assertCurrent();
       const firstVerification = await verifyDreamSections({
         current: before,
         plan: writerResult,
@@ -189,6 +203,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
         trigger,
         signal,
       });
+      assertCurrent();
       if (firstVerification.insufficientCompression) {
         writerResult = await composeDreamMemory({
           current: before,
@@ -201,6 +216,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
           },
           signal,
         });
+        assertCurrent();
         // Compression is a soft objective. A second advisory is accepted, while
         // verifyDreamSections still throws for every semantic/provenance failure.
         await verifyDreamSections({
@@ -212,7 +228,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
         });
       }
 
-      if (signal.aborted) throw new DOMException("Dream aborted", "AbortError");
+      assertCurrent();
       const current = snapshotDreamSections(options.memoryDir);
       if (inputHash(current) !== beforeHash) {
         throw new DreamOperationError(
@@ -255,6 +271,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
       const revision = createDreamRevision(options.memoryDir, { runId, trigger, before });
       const applied = applyDreamSections(options.memoryDir, {
         revision,
+        reset,
         next: writerResult.sections,
         memoryMdPath: options.memoryMdPath,
       });
@@ -315,7 +332,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
       // failure report cannot be persisted, retain the failure in runtime.
       if (stateLoaded) {
         try {
-          persist({ ...state, lastRun: report });
+          if (reset && isMemoryResetCurrent(options.memoryDir, reset, "compiled")) persist({ ...state, lastRun: report });
         } catch (persistError: any) {
           report.error = `${report.error}; Dream state persistence failed: ${persistError?.message || persistError}`;
           report.errorCode = "dream_run_failed";

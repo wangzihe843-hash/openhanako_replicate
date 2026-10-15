@@ -1,3 +1,4 @@
+import { captureMemoryReset, isMemoryResetCurrent } from "../lib/memory/compiled-memory-state.ts";
 import type { RuntimeAgentIdentity } from "./runtime-contracts.ts";
 import type { AgentMessage } from "../lib/pi-sdk/index.ts";
 /**
@@ -386,30 +387,37 @@ export class Agent implements RuntimeAgentIdentity {
     // v1 → v2 迁移：仅当迁移标记不存在且旧 memories.db 存在时执行一次
     const oldMemoriesPath = path.join(this.agentDir, "memory", "memories.db");
     const migrationDone = path.join(this.agentDir, "memory", ".v2-migrated");
-    if (!fs.existsSync(migrationDone) && fs.existsSync(oldMemoriesPath)) {
+    const migrationReset = captureMemoryReset(path.dirname(oldMemoriesPath), "facts");
+    if (!migrationReset.resetAt && !fs.existsSync(migrationDone) && fs.existsSync(oldMemoriesPath)) {
       try {
         log(`  [agent] 4. v1→v2 迁移: 发现旧 memories.db，开始迁移...`);
         const Database = (await import("better-sqlite3")).default;
-        const oldDb = new Database(oldMemoriesPath, { readonly: true });
-        const rows = oldDb.prepare("SELECT content, tags, date, created_at FROM memories").all();
-        oldDb.close();
+        if (isMemoryResetCurrent(path.dirname(oldMemoriesPath), migrationReset)) {
+          const oldDb = new Database(oldMemoriesPath, { readonly: true });
+          const rows = oldDb.prepare("SELECT content, tags, date, created_at FROM memories").all();
+          oldDb.close();
 
-        if (rows.length > 0) {
-          const facts = rows.map(row => ({
-            fact: row.content,
-            tags: (() => { try { return JSON.parse(row.tags); } catch { return []; } })(),
-            time: row.date ? row.date + "T00:00" : null,
-            session_id: "v1-migration",
-          }));
-          this._factStore.addBatch(facts);
-          log(`  [agent] 4. v1→v2 迁移完成: ${facts.length} 条记忆已迁入 facts.db`);
+          if (rows.length > 0) {
+            const facts = rows.map(row => ({
+              fact: row.content,
+              tags: (() => { try { return JSON.parse(row.tags); } catch { return []; } })(),
+              time: row.date ? row.date + "T00:00" : null,
+              session_id: "v1-migration",
+            }));
+            this._factStore.addBatch(facts);
+            log(`  [agent] 4. v1→v2 迁移完成: ${facts.length} 条记忆已迁入 facts.db`);
+          }
+          // 写迁移标记，防止重复迁移
+          fs.writeFileSync(migrationDone, new Date().toISOString());
         }
-        // 写迁移标记，防止重复迁移
-        fs.writeFileSync(migrationDone, new Date().toISOString());
       } catch (err) {
         moduleLog.error(`v1→v2 迁移失败（不影响启动）: ${err.message}`);
         // 迁移失败也写标记，避免每次启动重试
-        try { fs.writeFileSync(migrationDone, `failed: ${err.message}`); } catch {}
+        try {
+          if (isMemoryResetCurrent(path.dirname(oldMemoriesPath), migrationReset)) {
+            fs.writeFileSync(migrationDone, `failed: ${err.message}`);
+          }
+        } catch { /* Keep the source and current reset boundary on I/O failure. */ }
       }
     }
 

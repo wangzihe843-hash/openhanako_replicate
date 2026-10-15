@@ -9,6 +9,7 @@ import { safeJson } from "../hono-helpers.ts";
 import { t } from "../../lib/i18n.ts";
 import { debugLog } from "../../lib/debug-log.ts";
 import { clearConfigCache } from "../../lib/memory/config-loader.ts";
+import { captureChannelMemoryBoundaries } from "../../lib/channels/channel-store.ts";
 import { FactStore } from "../../lib/memory/fact-store.ts";
 import {
   clearCompiledMemoryArtifacts,
@@ -611,7 +612,8 @@ export function createConfigRoute(engine: any) {
       const { store, isTemp } = getStoreForAgent(agent.id);
       if (isTemp) tempStore = store;
       const memDir = path.dirname(agent.memoryMdPath);
-      writeCompiledResetMarker(memDir);
+      const channelSources = captureChannelMemoryBoundaries(engine.channelsDir || agent.channelsDir);
+      writeCompiledResetMarker(memDir, new Date().toISOString(), { kind: "full", channelSources });
       store.clearAll();
       clearCompiledMemoryArtifacts(memDir);
       clearCompiledSummarySources(agent.summariesDir, agent.summaryManager);

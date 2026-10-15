@@ -14,6 +14,7 @@
  * 调度器本身不调用 LLM，通过回调委托给 engine。
  */
 
+import { captureMemoryReset } from "../memory/compiled-memory-state.ts";
 import {
   readBookmarks,
   updateBookmark,
@@ -49,7 +50,7 @@ export function buildChannelUnreadDeliveryWindow({
 }) {
   const maxMessages = Math.max(1, Number.isFinite(Number(limit)) ? Math.floor(Number(limit)) : DEFAULT_UNREAD_DELIVERY_WINDOW);
   const normalized = normalizeBookmarkState(bookmark);
-  const unreadMessages = getNewMessages(channelFile, normalized.value, agentId);
+  const unreadMessages = getNewMessages(channelFile, normalized.value, agentId, { includeMemorySource: true });
   const droppedUnreadCount = Math.max(0, unreadMessages.length - maxMessages);
   const messages = droppedUnreadCount > 0 ? unreadMessages.slice(-maxMessages) : unreadMessages;
   return {
@@ -79,6 +80,7 @@ export function createChannelTicker({
   getAgentOrder,
   executeCheck,
   onMemorySummarize,
+  captureMemoryContext = (agentId) => captureMemoryReset(path.join(agentsDir, agentId, "memory"), "facts"),
   onEvent,
   random = Math.random,
   isEnabled = () => true,
@@ -86,9 +88,10 @@ export function createChannelTicker({
   channelsDir: string;
   agentsDir: string;
   getAgentOrder: () => string[];
-  executeCheck: (...args: any[]) => Promise<{ replied: boolean; replyContent?: string; passed?: boolean }>;
-  onMemorySummarize: (...args: any[]) => void | Promise<void>;
-  onEvent?: (event: string, data?: any) => void;
+  executeCheck: (...args: unknown[]) => Promise<{ replied: boolean; replyContent?: string; passed?: boolean }>;
+  onMemorySummarize: (...args: unknown[]) => void | Promise<void>;
+  captureMemoryContext?: (agentId: string) => unknown;
+  onEvent?: (event: string, data?: Record<string, unknown>) => void;
   random?: () => number;
   isEnabled?: () => boolean;
 }) {
@@ -117,6 +120,14 @@ export function createChannelTicker({
       return isEnabled() !== false;
     } catch {
       return false;
+    }
+  }
+
+  function captureMemory(agentId: string) {
+    try { return captureMemoryContext(agentId); }
+    catch (error) {
+      log.error(`Channel memory reset validation failed: ${error?.message || error}`);
+      return { blocked: true };
     }
   }
 
@@ -282,6 +293,7 @@ export function createChannelTicker({
         channelsMdPath,
         bookmark,
         newMessages: deliveryWindow.messages,
+        memoryContext: captureMemory(agentId),
         deliveryWindow,
         hasNew,
       });
@@ -387,6 +399,7 @@ export function createChannelTicker({
       if (hasExplicitDecision(result) && onMemorySummarize) {
         await onMemorySummarize(agentId, update.channelName, {
           messages: update.newMessages,
+          memoryContext: update.memoryContext,
           replyContent: result.replyContent || "",
         });
       }
@@ -566,7 +579,7 @@ export function createChannelTicker({
           const proactive = !proactiveDelivered && proactiveAgentId === agentId;
           const deliveryWindow = proactive
             ? {
-              messages: getRecentMessages(channelFile, DEFAULT_UNREAD_DELIVERY_WINDOW, agentId),
+              messages: getRecentMessages(channelFile, DEFAULT_UNREAD_DELIVERY_WINDOW, agentId, { includeMemorySource: true }),
               totalUnreadCount: 0,
               droppedUnreadCount: 0,
               bookmarkState: "proactive",
@@ -577,6 +590,7 @@ export function createChannelTicker({
               bookmark: bookmarks.get(channelName),
               agentId,
             });
+          const memoryContext = captureMemory(agentId);
           const unreadMsgs = deliveryWindow.messages;
           if (unreadMsgs.length === 0) continue;
           if (proactive) proactiveDelivered = true;
@@ -620,6 +634,7 @@ export function createChannelTicker({
             if (hasExplicitDecision(result) && onMemorySummarize) {
               await onMemorySummarize(agentId, channelName, {
                 messages: unreadMsgs,
+                memoryContext,
                 replyContent: result?.replyContent || "",
               });
             }
