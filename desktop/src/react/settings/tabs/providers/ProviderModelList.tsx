@@ -154,6 +154,9 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
   }, [providerId, scope]);
 
   const rawModels = summary.models || [];
+  const openCodeContext = (mid: string) => providerId === 'opencode' || providerId === 'opencode-go'
+    ? numberFromMeta(summary.model_context_windows?.[mid])
+    : undefined;
   const kimiContextForEntry = (mid: string, entry?: ProviderModelEntry) => {
     const metadata = typeof entry === 'object' ? entry : undefined;
     return resolveKimiContextBudget({ provider: providerId, modelId: mid,
@@ -312,7 +315,8 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
               const meta = { ...knownMeta, ...entryMeta };
               const modelContext = providerId === 'kimi-coding' && mid === 'kimi-for-coding'
                 ? kimiContextForEntry(mid, rawEntry)
-                : numberFromMeta(entryMeta.context)
+                : openCodeContext(mid)
+                ?? numberFromMeta(entryMeta.context)
                 ?? numberFromMeta(entryMeta.contextWindow)
                 ?? numberFromMeta(knownMeta.context)
                 ?? numberFromMeta(knownMeta.contextWindow);
@@ -353,7 +357,7 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
               modelId={editing.id}
               providerId={providerId}
               modelMeta={editingModelMeta}
-              contextBudget={kimiContextForEntry(editing.id, editingRawEntry ?? undefined)}
+              contextBudget={openCodeContext(editing.id) ?? kimiContextForEntry(editing.id, editingRawEntry ?? undefined)}
               anchorEl={editing.anchor}
               onClose={() => setEditing(null)}
               onRefresh={onRefresh}
@@ -410,7 +414,8 @@ export function ProviderModelList({ providerId, summary, onRefresh }: {
                 // persist. Bare IDs use the future saved configuration's budget.
                 const ctx = providerId === 'kimi-coding' && mid === 'kimi-for-coding'
                   ? kimiContextForEntry(mid, isAdded ? rawEntry : discovered ? compactDiscoveredModelEntry(discovered) : mid)
-                  : numberFromMeta(userMeta.context)
+                  : (isAdded ? openCodeContext(mid) : undefined)
+                  ?? numberFromMeta(userMeta.context)
                   ?? numberFromMeta(userMeta.contextWindow)
                   ?? numberFromMeta(meta.context)
                   ?? numberFromMeta(meta.contextWindow)

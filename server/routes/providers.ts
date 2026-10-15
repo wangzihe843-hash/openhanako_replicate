@@ -159,6 +159,14 @@ export function createProvidersRoute(engine: any) {
         config_error: p.config_error || null,
         missing_fields: missingFields,
       };
+      // OpenCode may inherit Pi defaults or reuse a builtin with legacy alias
+      // precedence. Publish the actual runtime window separately from raw models
+      // so settings can display it without materializing an implicit override.
+      if (name === "opencode" || name === "opencode-go") {
+        result[name].model_context_windows = Object.fromEntries((engine.availableModels || [])
+          .filter(model => model.provider === name && Number.isFinite(model.contextWindow))
+          .map(model => [model.id, model.contextWindow]));
+      }
     }
 
     // 追加没有 Provider Catalog overlay 的 OAuth provider。模型仍来自 Hana plugin 默认清单。

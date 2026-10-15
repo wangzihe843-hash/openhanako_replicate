@@ -38,7 +38,9 @@ export function ModelEditPanel({ modelId, providerId, modelMeta, contextBudget, 
   // known catalog. Otherwise known `context`/`maxOutput` can mask a persisted
   // user `contextWindow`/`maxTokens` value after the objects are merged.
   const isKimiK28 = providerId === 'kimi-coding' && modelId === 'kimi-for-coding';
-  const initialContext = (isKimiK28 ? contextBudget : undefined)
+  const isOpenCode = providerId === 'opencode' || providerId === 'opencode-go';
+  const requiresContextEdit = isKimiK28 || isOpenCode;
+  const initialContext = (requiresContextEdit ? contextBudget : undefined)
     ?? firstNumber(userMeta, ['context', 'contextWindow'])
     ?? firstNumber(knownMeta, ['context', 'contextWindow']);
   const initialMaxOutput = firstNumber(userMeta, ['maxOutput', 'maxTokens', 'maxOutputTokens'])
@@ -75,7 +77,7 @@ export function ModelEditPanel({ modelId, providerId, modelMeta, contextBudget, 
     const ctx = ctxVal.trim();
     const maxOut = outVal.trim();
     if (name) entry.name = name;
-    if (ctx && (!isKimiK28 || contextEdited)) entry.context = parseInt(ctx);
+    if (ctx && (!requiresContextEdit || contextEdited)) entry.context = parseInt(ctx);
     if (maxOut) entry.maxOutput = parseInt(maxOut);
     if (dirtyCapabilities.image) entry.image = image;
     if (dirtyCapabilities.video) entry.video = video;

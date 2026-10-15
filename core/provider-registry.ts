@@ -1722,9 +1722,10 @@ export class ProviderRegistry {
       if (mid !== modelId) return m;
       found = true;
       let base = typeof m === "object" ? m : { id: mid };
-      // Preserve historical read/merge precedence until this exact model's
-      // budget is explicitly edited. An old alias must not override that edit.
-      if (providerId === "kimi-coding" && modelId === "kimi-for-coding"
+      // Preserve historical read/merge precedence until a budget is explicitly
+      // edited. OpenCode Go can switch between ordinary and builtin projections;
+      // an old alias must not override the edit in either projection.
+      if (((providerId === "kimi-coding" && modelId === "kimi-for-coding") || providerId === "opencode-go")
         && typeof safe.context === "number" && Number.isFinite(safe.context)) {
         const { contextWindow: _contextWindow, ...withoutLegacyContext } = base;
         base = withoutLegacyContext;

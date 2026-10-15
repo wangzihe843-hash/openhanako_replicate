@@ -42,6 +42,8 @@ export interface ProviderSummary {
   api_key: string;
   headers?: Record<string, string>;
   models: (string | { id: string; [key: string]: any })[];
+  /** Read-only OpenCode budgets from the current runtime projection, not model overrides. */
+  model_context_windows?: Record<string, number>;
   custom_models: string[];
   has_credentials: boolean;
   logged_in?: boolean;
