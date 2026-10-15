@@ -244,7 +244,11 @@ export function ModelStep({
       if (model.id !== editingModelId) return model;
       const baseline = baselineForModel(model.id);
       const name = editName.trim();
-      const savedContext = providerName === 'kimi-coding' && model.id === 'kimi-for-coding'
+      // Zen's reference budget can differ from Pi's default. Keep explicit
+      // values even when they equal the reference, without materializing defaults.
+      const preserveExplicitContext = providerName === 'opencode'
+        || (providerName === 'kimi-coding' && model.id === 'kimi-for-coding');
+      const savedContext = preserveExplicitContext
         ? (contextEdited ? context : model.context)
         : (context && context !== baseline.context ? context : undefined);
       return {
