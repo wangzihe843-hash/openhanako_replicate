@@ -1178,6 +1178,7 @@ export class AgentManager {
       userDir: this._d.userDir,
       channelsDir: this._d.channelsDir,
       searchConfigResolver: () => this._d.getSearchConfig(),
+      fetchConfigResolver: () => this._d.getWebFetchConfig?.() || { provider: "direct" },
     });
     ag.setGetOwnerIds(getOwnerIds);
     // 回调注入：Agent 通过 _cb 访问 Engine 能力，不直接持有 Engine 引用

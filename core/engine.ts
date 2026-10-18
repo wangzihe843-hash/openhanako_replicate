@@ -107,7 +107,7 @@ import { BridgeSessionManager } from "./bridge-session-manager.ts";
 import { createSlashSystem } from "./slash-commands/index.ts";
 import { AgentManager } from "./agent-manager.ts";
 import { sanitizeMessagesForModel, stripHistoricalInlineMediaForReplay } from "./message-sanitizer.ts";
-import { resolveDeepSeekToolApiKey } from "./deepseek-tool-credentials.ts";
+import { resolveDeepSeekToolApiKey, resolveDeepSeekFetchApiKey } from "./deepseek-tool-credentials.ts";
 import { normalizeProviderContextMessages, normalizeProviderPayload } from "./provider-compat.ts";
 import { VisionBridge } from "./vision-bridge.ts";
 import { SessionCoordinator, type SessionCompactionScope } from "./session-coordinator.ts";
@@ -493,6 +493,10 @@ export class HanaEngine implements SessionCancellation {
       getSearchConfig: () => ({
         ...this.getSearchConfig(),
         resolveDeepSeekApiKey: (providerId) => resolveDeepSeekToolApiKey(providerId, this),
+      }),
+      getWebFetchConfig: () => ({
+        ...this.getWebFetchConfig(),
+        resolveApiKey: () => resolveDeepSeekFetchApiKey(this.getWebFetchConfig(), this.getSearchConfig(), this),
       }),
       resolveUtilityConfig: (options) => this.resolveUtilityConfig(options),
       resolveUtilityConfigFresh: (options) => this.resolveUtilityConfigFresh(options),
@@ -1918,6 +1922,8 @@ export class HanaEngine implements SessionCancellation {
   }
   getSearchConfig() { return this._configCoord.getSearchConfig(); }
   setSearchConfig(p) { return this._configCoord.setSearchConfig(p); }
+  getWebFetchConfig() { return this._configCoord.getWebFetchConfig(); }
+  setWebFetchConfig(p) { return this._configCoord.setWebFetchConfig(p); }
   getUtilityApi() { return this._configCoord.getUtilityApi(); }
   setUtilityApi(p) { return this._configCoord.setUtilityApi(p); }
   resolveUtilityConfig( options: any = {}) {

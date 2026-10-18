@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { WebFetchSection } from './WebFetchSection';
 import { useSettingsStore } from '../../store';
 import { hanaFetch } from '../../api';
 import {
@@ -323,6 +324,7 @@ export function OtherModelsSection({ providers }: { providers: Record<string, { 
           )}
         </div>
       </div>
+      <WebFetchSection providers={providers} />
     </div>
   );
 }

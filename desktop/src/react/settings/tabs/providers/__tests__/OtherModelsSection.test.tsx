@@ -115,13 +115,13 @@ describe('OtherModelsSection', () => {
   it('pins the sole official account only when DeepSeek is selected and excludes its key from Auto', () => {
     render(<OtherModelsSection providers={{ official: { base_url: 'https://api.deepseek.com/v1' }, proxy: { base_url: 'https://proxy.test' } }} />);
     expect(screen.getAllByTestId('key-input')).toHaveLength(4);
-    fireEvent.change(screen.getByTestId('select-widget'), { target: { value: 'deepseek' } });
+    fireEvent.change(screen.getAllByTestId('select-widget')[0], { target: { value: 'deepseek' } });
     expect(mocks.autoSaveGlobalModels).toHaveBeenCalledWith({ search: { provider: 'deepseek', credential_provider: 'official' } });
   });
 
   it('requires an explicit choice when there are multiple official accounts', () => {
     render(<OtherModelsSection providers={{ first: { base_url: 'https://api.deepseek.com' }, second: { base_url: 'https://api.deepseek.com/v1' } }} />);
-    fireEvent.change(screen.getByTestId('select-widget'), { target: { value: 'deepseek' } });
+    fireEvent.change(screen.getAllByTestId('select-widget')[0], { target: { value: 'deepseek' } });
     expect(mocks.autoSaveGlobalModels).toHaveBeenCalledWith({ search: { provider: 'deepseek' } });
     act(() => useSettingsStore.setState({ globalModelsConfig: { search: { provider: 'deepseek', api_keys: {} } } }));
     fireEvent.change(screen.getAllByTestId('select-widget')[1], { target: { value: 'second' } });
@@ -145,6 +145,59 @@ describe('OtherModelsSection', () => {
     expect(screen.getByText('removed (settings.api.deepseekReferenceUnavailable)')).toBeTruthy();
     fireEvent.change(screen.getAllByTestId('select-widget')[0], { target: { value: 'deepseek' } });
     expect(mocks.autoSaveGlobalModels).toHaveBeenCalledWith({ search: { provider: 'deepseek' } });
+  });
+
+  it('keeps Fetch direct despite saved Search credentials, then opts in without sending a verification request', () => {
+    useSettingsStore.setState({ globalModelsConfig: { search: { provider: 'deepseek', credential_provider: 'chosen', api_keys: {} } } });
+    render(<OtherModelsSection providers={{ chosen: { base_url: 'https://api.deepseek.com' } }} />);
+    const fetchSelect = screen.getAllByTestId('select-widget')[2] as HTMLSelectElement;
+    expect(fetchSelect.value).toBe('direct');
+    expect(screen.getByText('settings.api.fetchCostHint')).toBeTruthy();
+    expect(mocks.autoSaveGlobalModels).not.toHaveBeenCalled();
+    fireEvent.change(fetchSelect, { target: { value: 'deepseek' } });
+    expect(mocks.autoSaveGlobalModels).toHaveBeenCalledWith({ web_fetch: { provider: 'deepseek' } });
+    expect(mocks.hanaFetch).not.toHaveBeenCalled();
+  });
+
+  it('pins the sole official account for explicit Fetch opt-in only when there is no Search credential', () => {
+    render(<OtherModelsSection providers={{ official: { base_url: 'https://api.deepseek.com' }, proxy: { base_url: 'https://proxy.example' } }} />);
+    fireEvent.change(screen.getAllByTestId('select-widget')[1], { target: { value: 'deepseek' } });
+    expect(mocks.autoSaveGlobalModels).toHaveBeenCalledWith({ web_fetch: { provider: 'deepseek', credential_provider: 'official' } });
+    expect(mocks.hanaFetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps multiple Fetch accounts unselected and preserves an unavailable explicit reference', () => {
+    const providers = { first: { base_url: 'https://api.deepseek.com' }, second: { base_url: 'https://api.deepseek.com/v1' } };
+    render(<OtherModelsSection providers={providers} />);
+    fireEvent.change(screen.getAllByTestId('select-widget')[1], { target: { value: 'deepseek' } });
+    expect(mocks.autoSaveGlobalModels).toHaveBeenCalledWith({ web_fetch: { provider: 'deepseek' } });
+    act(() => useSettingsStore.setState({ globalModelsConfig: { search: { provider: 'auto' }, web_fetch: { provider: 'deepseek', credential_provider: 'removed' } } }));
+    expect(screen.getByText('removed (settings.api.deepseekReferenceUnavailable)')).toBeTruthy();
+    fireEvent.change(screen.getAllByTestId('select-widget')[2], { target: { value: 'second' } });
+    expect(mocks.autoSaveGlobalModels).toHaveBeenLastCalledWith({ web_fetch: { credential_provider: 'second' } });
+  });
+
+  it('saves or clears a Fetch override locally without a paid verification', async () => {
+    useSettingsStore.setState({ globalModelsConfig: { search: { provider: 'bing_browser' }, web_fetch: { provider: 'deepseek', api_key: '********' } } });
+    mocks.hanaFetch.mockResolvedValue(Response.json({ ok: true }));
+    render(<OtherModelsSection providers={{}} />);
+    fireEvent.change(screen.getByTestId('key-input'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('settings.api.fetchSaveKey'));
+    await waitFor(() => expect(mocks.hanaFetch).toHaveBeenCalledTimes(1));
+    expect(mocks.hanaFetch.mock.calls[0][0]).toBe('/api/preferences/models');
+    expect(JSON.parse(mocks.hanaFetch.mock.calls[0][1].body)).toEqual({ web_fetch: { api_key: '' } });
+  });
+
+  it('retains an edited Fetch key when the local settings save fails', async () => {
+    useSettingsStore.setState({ globalModelsConfig: { search: { provider: 'bing_browser' }, web_fetch: { provider: 'deepseek', api_key: '********' } } });
+    const showToast = vi.fn();
+    useSettingsStore.setState({ showToast });
+    mocks.hanaFetch.mockResolvedValue(Response.json({ error: 'save rejected' }, { status: 500 }));
+    render(<OtherModelsSection providers={{}} />);
+    fireEvent.change(screen.getByTestId('key-input'), { target: { value: 'synthetic-draft' } });
+    fireEvent.click(screen.getByText('settings.api.fetchSaveKey'));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('settings.saveFailed', 'error'));
+    expect((screen.getByTestId('key-input') as HTMLInputElement).value).toBe('synthetic-draft');
   });
 
 });

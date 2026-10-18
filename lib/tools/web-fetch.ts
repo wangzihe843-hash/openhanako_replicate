@@ -9,31 +9,17 @@
 
 import { createHash } from "node:crypto";
 import { Type } from "../pi-sdk/index.ts";
-import { lookup } from "dns/promises";
-import { isIP } from "net";
+import { DeepSeekToolError } from "../../shared/deepseek-tools.ts";
+import { fetchDeepSeek } from "./deepseek-fetch.ts";
+import type { FetchRateLimiter } from "./deepseek-fetch.ts";
+import { SearchRateLimitError } from "./search-rate-limiter.ts";
+import { isPrivateFetchHost, validateExternalFetchUrl, withFetchAbort } from "./web-fetch-url.ts";
 import { t } from "../i18n.ts";
 import { htmlToMarkdownDocument } from "./web-reader.ts";
 
 const MAX_CONTENT_LENGTH = 12000;  // 返回最大字符数
 const FETCH_TIMEOUT = 15000;       // 15 秒超时
 const MAX_REDIRECTS = 5;
-
-const PRIVATE_IP_RANGES = [
-  /^127\./, /^::1$/, /^0\.0\.0\.0$/, /^0:0:0:0:0:0:0:1$/,    // loopback
-  /^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./,        // RFC 1918
-  /^169\.254\./, /^fe80:/i,                                      // link-local
-  /^fc00:/i, /^fd[0-9a-f]{2}:/i,                                // IPv6 ULA
-];
-
-async function isPrivateHost(hostname) {
-  if (isIP(hostname)) return PRIVATE_IP_RANGES.some(r => r.test(hostname));
-  try {
-    // 检查所有解析到的 IP（防止部分 A/AAAA 记录指向内网）
-    const results = await lookup(hostname, { all: true });
-    if (results.length === 0) return true;
-    return results.some(r => PRIVATE_IP_RANGES.some(pat => pat.test(r.address)));
-  } catch { return true; }
-}
 
 /**
  * 简易 HTML → 文本：去标签、合并空白
@@ -74,6 +60,11 @@ function htmlToText(html) {
 
 type ReadEvidence = {
   status: "complete" | "partial" | "failed";
+  provider?: "deepseek";
+  preflightUrl?: string;
+  preflightHttpStatus?: number;
+  providerHttpStatus?: number;
+  providerContentHash?: string;
   scope: "single_response_text";
   sourceUrl: string;
   resolvedUrl?: string;
@@ -92,7 +83,12 @@ function textHash(text: string): string {
   return `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`;
 }
 
-export function createWebFetchTool() {
+export type WebFetchRuntimeConfig = { provider?: string; resolveApiKey?: () => string };
+
+export function createWebFetchTool({ fetchConfigResolver, rateLimiter }: {
+  fetchConfigResolver?: (() => WebFetchRuntimeConfig) | null;
+  rateLimiter?: FetchRateLimiter;
+} = {}) {
   return {
     name: "web_fetch",
     label: "Fetch Web Page",
@@ -139,7 +135,18 @@ export function createWebFetchTool() {
       const requestSignal = signal
         ? AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT)])
         : AbortSignal.timeout(FETCH_TIMEOUT);
+      let external = false;
       try {
+        requestSignal.throwIfAborted();
+        const config = fetchConfigResolver?.() || { provider: "direct" };
+        if (config.provider && !["direct", "deepseek"].includes(config.provider)) {
+          return result("Invalid Web Fetch provider.", "invalid_config");
+        }
+        external = config.provider === "deepseek";
+        if (external) {
+          evidence.provider = "deepseek";
+          validateExternalFetchUrl(url);
+        }
         let currentUrl = url;
         let res: Response | undefined;
         for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -149,12 +156,17 @@ export function createWebFetchTool() {
           if (!["http:", "https:"].includes(hopParsed.protocol)) {
             return result(t("error.fetchHttpOnly"), "unsupported_redirect_protocol");
           }
-          // Preserve per-hop SSRF checks, including redirects.
-          if (await isPrivateHost(hopParsed.hostname)) {
+          if (hopParsed.username || hopParsed.password) {
+            return result("Credential-bearing URLs are not supported.", "sensitive_url");
+          }
+          if (external) validateExternalFetchUrl(currentUrl);
+          // Keep the local redirect preflight for both backends. No URL is sent
+          // to an extraction provider before the original per-hop checks pass.
+          if (await withFetchAbort(isPrivateFetchHost(hopParsed.hostname), requestSignal)) {
             return result(t("error.fetchSsrf", { host: hopParsed.hostname }), "private_or_unresolved_host");
           }
           requestSignal.throwIfAborted();
-          res = await fetch(currentUrl, {
+          res = await withFetchAbort(fetch(currentUrl, {
             headers: {
               "User-Agent": "Mozilla/5.0 (compatible; HanaAgentBot/1.0)",
               "Accept": "text/html,application/xhtml+xml,application/json,text/plain,*/*",
@@ -162,11 +174,11 @@ export function createWebFetchTool() {
             },
             redirect: "manual",
             signal: requestSignal,
-          });
+          }), requestSignal);
           evidence.httpStatus = res.status;
           if ([301, 302, 303, 307, 308].includes(res.status)) {
             const location = res.headers.get("location");
-            await res.body?.cancel();
+            await withFetchAbort(Promise.resolve(res.body?.cancel()), requestSignal);
             if (!location) return result("Redirect response has no location.", "redirect_without_location");
             currentUrl = new URL(location, currentUrl).href;
             continue;
@@ -177,7 +189,7 @@ export function createWebFetchTool() {
           return result(t("error.fetchRedirectLimit", { max: MAX_REDIRECTS }), "redirect_limit");
         }
         if (!res.ok) {
-          await res.body?.cancel();
+          await withFetchAbort(Promise.resolve(res.body?.cancel()), requestSignal);
           return result(t("error.fetchHttpError", { status: res.status, statusText: res.statusText }), "http_error");
         }
         if (res.status === 206 || res.headers.has("content-range")) {
@@ -188,10 +200,38 @@ export function createWebFetchTool() {
         const isJson = contentType === "application/json" || contentType.endsWith("+json");
         const isHtml = contentType === "text/html" || contentType === "application/xhtml+xml";
         if (!isJson && !isHtml && !contentType.startsWith("text/")) {
-          await res.body?.cancel();
+          await withFetchAbort(Promise.resolve(res.body?.cancel()), requestSignal);
           return result("The response is not a supported text document.", "unsupported_or_missing_content_type");
         }
-        const raw = await res.text();
+        if (external) {
+          void res.body?.cancel().catch(() => {});
+          evidence.preflightUrl = currentUrl;
+          evidence.preflightHttpStatus = evidence.httpStatus;
+          delete evidence.resolvedUrl;
+          delete evidence.httpStatus;
+          delete evidence.contentType;
+          const page = await fetchDeepSeek(currentUrl, () => {
+            const fresh = fetchConfigResolver?.();
+            if (fresh?.provider !== "deepseek") throw new DeepSeekToolError("disabled", "DeepSeek Fetch is not enabled.");
+            if (!fresh.resolveApiKey) throw new DeepSeekToolError("key_missing", "DeepSeek Fetch credentials are unavailable.");
+            return fresh.resolveApiKey();
+          }, requestSignal, rateLimiter);
+          // The API describes extracted Markdown, not the fetched response or
+          // its redirect chain. Do not reuse preflight evidence as remote proof.
+          evidence.providerHttpStatus = 200;
+          evidence.providerContentHash = textHash(page.content);
+          evidence.missingReasons.push("provider_extraction_unverified", "remote_redirects_unverified");
+          const text = (page.title ? `# ${page.title}\n\n` : "") + page.content;
+          const output = text.slice(0, Math.min(maxLen, MAX_CONTENT_LENGTH));
+          evidence.extractedCharacters = text.length;
+          evidence.returnedCharacters = output.length;
+          evidence.outputTextHash = textHash(output);
+          if (output.length < text.length) evidence.missingReasons.push("output_truncated");
+          evidence.status = "partial";
+          const target = new URL(currentUrl);
+          return result(t("error.fetchSource", { host: target.hostname, path: target.pathname, format: "DeepSeek Markdown" }) + output);
+        }
+        const raw = await withFetchAbort(res.text(), requestSignal);
         requestSignal.throwIfAborted();
         // Hash decoded response text, not HTTP bytes or the truncated output.
         evidence.responseTextHash = textHash(raw);
@@ -230,6 +270,12 @@ export function createWebFetchTool() {
         const header = t("error.fetchSource", { host: finalUrl.hostname, path: finalUrl.pathname, format });
         return result(header + output + (truncated ? t("error.fetchTruncated", { len: text.length }) : ""));
       } catch (err) {
+        if (external && !signal?.aborted && !requestSignal.aborted) {
+          const code = err instanceof SearchRateLimitError ? "rate_limit"
+            : err instanceof DeepSeekToolError ? err.code : "transport_or_read_error";
+          const message = err instanceof DeepSeekToolError || err instanceof SearchRateLimitError ? err.message : "DeepSeek Fetch request failed.";
+          return result(message, code);
+        }
         const reason = signal?.aborted ? "cancelled"
           : requestSignal.aborted || err.name === "TimeoutError" ? "timeout" : "transport_or_read_error";
         const msg = reason === "timeout"

@@ -425,7 +425,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     migrationEntry: ["core/preferences-manager.ts unreadable-source preservation", "core/migrations.ts runMigrations"],
     firstPossibleOpenPhase: "desktop_bootstrap",
     firstPossibleWritePhase: "first_run_seed",
-    compatibility: "PreferencesManager is intentionally permissive; _dataVersion is the legacy migration cursor, not a strict schema validator. Unreadable source bytes are preserved before any replacement document is written. Optional search_credential_provider pins a model provider ID for explicitly selected DeepSeek Search; absent values preserve existing search defaults and keys, and referenced keys are never copied into preferences.",
+    compatibility: "PreferencesManager is intentionally permissive; _dataVersion is the legacy migration cursor, not a strict schema validator. Unreadable source bytes are preserved before any replacement document is written. Optional search_credential_provider pins a model provider ID for explicitly selected DeepSeek Search; absent values preserve existing search defaults and keys, and referenced keys are never copied into preferences. Optional web_fetch_provider, web_fetch_api_key and web_fetch_credential_provider add independently selected Fetch; absent provider keeps direct fetching, while empty Fetch credentials reuse the existing DeepSeek Search override or reference without copying keys.",
     identityContract: "One preferences document belongs to the local user in one HANA_HOME.",
     preCoordinatorReadProjection: {
       compatibility: "additive-only",

@@ -53,6 +53,7 @@ import {
 } from "../../core/computer-use/platform-support.ts";
 import { SESSION_PERMISSION_MODES } from "../../core/session-permission-mode.ts";
 import { collectSecretPatchPaths, isMaskedSecretValue, maskSecretValue, resolveSecretPatch } from "../../shared/secret-custody.ts";
+import { normalizeWebFetchPatch } from "../../shared/web-fetch-config.ts";
 import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.ts";
 import { recordSecurityAuditEvent } from "../http/security-audit.ts";
 import { BrowserManager } from "../../lib/browser/browser-manager.ts";
@@ -170,6 +171,7 @@ export function createPreferencesRoute(engine: any, options: Record<string, any>
     try {
       const models = engine.getSharedModels();
       const search = engine.getSearchConfig();
+      const webFetch = engine.getWebFetchConfig?.() || {};
       const utilityApi = engine.getUtilityApi();
 
       return c.json({
@@ -180,6 +182,11 @@ export function createPreferencesRoute(engine: any, options: Record<string, any>
           api_key: maskSecretValue(search.api_key || ""),
           api_keys: maskSearchApiKeys(search.api_keys || {}),
           ...(search.credential_provider ? { credential_provider: search.credential_provider } : {}),
+        },
+        web_fetch: {
+          provider: webFetch.provider || "direct",
+          api_key: maskSecretValue(webFetch.api_key || ""),
+          credential_provider: webFetch.credential_provider || "",
         },
         utility_api: {
           provider: utilityApi.provider || "",
@@ -204,6 +211,12 @@ export function createPreferencesRoute(engine: any, options: Record<string, any>
       const secretFields = collectSecretPatchPaths(body, new Set(["api_key", "api_keys"]));
       const secretDenied = denySecretMutationWithoutScope(c, secretFields);
       if (secretDenied) return secretDenied;
+
+      let webFetchPatch;
+      if (body.web_fetch !== undefined) {
+        try { webFetchPatch = normalizeWebFetchPatch(body.web_fetch); }
+        catch { return c.json({ error: "Invalid Web Fetch configuration." }, 400); }
+      }
 
       const sections = [];
       let needsModelSync = false;
@@ -235,6 +248,19 @@ export function createPreferencesRoute(engine: any, options: Record<string, any>
       if (body.search) {
         engine.setSearchConfig(resolveSearchPreferencePatch(body.search, engine.getSearchConfig?.() || {}));
         sections.push("search");
+      }
+
+      if (body.web_fetch !== undefined) {
+        try {
+          engine.setWebFetchConfig(resolveSecretPatch({
+            patch: webFetchPatch,
+            existing: engine.getWebFetchConfig?.() || {},
+            secretKeys: new Set(["api_key"]),
+          }));
+        } catch {
+          return c.json({ error: "Invalid Web Fetch configuration." }, 400);
+        }
+        sections.push("web_fetch");
       }
 
       // utility API 配置

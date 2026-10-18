@@ -93,6 +93,7 @@ function maskSearchApiKeys(apiKeys: any) {
 
 function buildGlobalModels(engine: any) {
   const search = engine.getSearchConfig?.() || {};
+  const webFetch = engine.getWebFetchConfig?.() || {};
   const utilityApi = engine.getUtilityApi?.() || {};
   return {
     models: engine.getSharedModels?.() || {},
@@ -102,6 +103,11 @@ function buildGlobalModels(engine: any) {
       api_key: maskSecretValue(search.api_key || ""),
       api_keys: maskSearchApiKeys(search.api_keys || {}),
       ...(search.credential_provider ? { credential_provider: search.credential_provider } : {}),
+    },
+    web_fetch: {
+      provider: webFetch.provider || "direct",
+      api_key: maskSecretValue(webFetch.api_key || ""),
+      credential_provider: webFetch.credential_provider || "",
     },
     utility_api: {
       provider: utilityApi.provider || "",

@@ -152,6 +152,7 @@ export class Agent implements RuntimeAgentIdentity {
   declare _resolveModelFresh: any;
   declare _runtimeInitialized: boolean;
   declare _searchConfigResolver: any;
+  declare _fetchConfigResolver: (() => import("../lib/tools/web-fetch.ts").WebFetchRuntimeConfig) | null;
   declare _sessionFoldersTool: any;
   declare _sessionTool: any;
   declare _stageFilesTool: any;
@@ -196,7 +197,7 @@ export class Agent implements RuntimeAgentIdentity {
    * @param {string} opts.productDir - 产品模板目录（agents.example.md, yuan 模板等）
    * @param {string} opts.userDir    - 用户数据目录（user.md, 用户头像）—— 跨助手共享
    */
-  constructor({ id, agentsDir, productDir, userDir, channelsDir, searchConfigResolver }) {
+  constructor({ id, agentsDir, productDir, userDir, channelsDir, searchConfigResolver, fetchConfigResolver = null }) {
     if (!id) throw new Error("Agent: id is required");
     if (!agentsDir) throw new Error("Agent: agentsDir is required");
 
@@ -210,6 +211,7 @@ export class Agent implements RuntimeAgentIdentity {
     this.userDir = userDir;
     this.channelsDir = channelsDir || null;
     this._searchConfigResolver = searchConfigResolver || null;
+    this._fetchConfigResolver = fetchConfigResolver;
 
     // 路径（全部从 this.agentDir 派生）
     this.configPath = path.join(this.agentDir, "config.yaml");
@@ -538,7 +540,7 @@ export class Agent implements RuntimeAgentIdentity {
       configPath: this.configPath,
       searchConfigResolver: this._searchConfigResolver,
     });
-    this._webFetchTool = createWebFetchTool();
+    this._webFetchTool = createWebFetchTool({ fetchConfigResolver: this._fetchConfigResolver });
     this._todoTool = createTodoTool();
     this._pinnedMemoryTools = createPinnedMemoryTools(this.agentDir, this.id);
     this._experienceTools = createExperienceTools(this.agentDir, {

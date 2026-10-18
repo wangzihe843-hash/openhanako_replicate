@@ -158,13 +158,15 @@ describe("settings snapshot route", () => {
     engine.getSearchConfig = () => ({ provider: "deepseek", api_key: "search-override", api_keys: { deepseek: "search-override" }, credential_provider: "official-account" });
     const resolver = vi.fn(() => ({ api_key: "must-never-reach-frontend" }));
     const app = new Hono();
-    app.route("/api", createSettingsSnapshotRoute({ ...engine, resolveProviderCredentials: resolver }));
+    app.route("/api", createSettingsSnapshotRoute({ ...engine, resolveProviderCredentials: resolver, getWebFetchConfig: () => ({ provider: "deepseek", api_key: "fetch-override", credential_provider: "fetch-account" }) }));
     const response = await app.request("/api/settings/snapshot?agentId=agent-a");
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(JSON.stringify(body)).toContain('"credential_provider":"official-account"');
     expect(JSON.stringify(body)).toContain('"deepseek":"********"');
     expect(JSON.stringify(body)).not.toContain("search-override");
+    expect(body.globalModels.web_fetch).toEqual({ provider: "deepseek", api_key: "********", credential_provider: "fetch-account" });
+    expect(JSON.stringify(body)).not.toContain("fetch-override");
     expect(JSON.stringify(body)).not.toContain("must-never-reach-frontend");
     expect(resolver).not.toHaveBeenCalled();
   });

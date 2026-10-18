@@ -3,6 +3,7 @@ import {
   isOfficialDeepSeekBaseUrl,
   normalizeCredentialProvider,
 } from "../shared/deepseek-tools.ts";
+import type { WebFetchConfig } from "../shared/web-fetch-config.ts";
 import { isMaskedSecretValue } from "../shared/secret-custody.ts";
 
 type CredentialSource = {
@@ -17,7 +18,7 @@ type CredentialSource = {
 export function resolveDeepSeekToolApiKey(providerId: unknown, source: CredentialSource): string {
   const id = normalizeCredentialProvider(providerId);
   if (!id) {
-    throw new DeepSeekToolError("reference_required", "Select an official DeepSeek model provider or enter a separate Search API key. Multiple accounts require an explicit selection.");
+    throw new DeepSeekToolError("reference_required", "Select an official DeepSeek model provider or enter a separate tool API key. Multiple accounts require an explicit selection.");
   }
   try {
     const raw = source.providerRegistry.getAllProvidersRaw();
@@ -44,4 +45,17 @@ export function resolveDeepSeekToolApiKey(providerId: unknown, source: Credentia
     if (error instanceof DeepSeekToolError) throw error;
     throw new DeepSeekToolError("credentials_unavailable", "DeepSeek credentials could not be resolved.");
   }
+}
+
+/** Explicit Fetch selection is independent of Search; inherit credentials only. */
+export function resolveDeepSeekFetchApiKey(config: WebFetchConfig, search: {
+  provider?: string; api_key?: string | null; api_keys?: Record<string, string>; credential_provider?: string;
+}, source: CredentialSource): string {
+  if (config.provider !== "deepseek") throw new DeepSeekToolError("disabled", "DeepSeek Fetch is not enabled.");
+  const ownKey = config.api_key?.trim();
+  if (ownKey && !isMaskedSecretValue(ownKey)) return ownKey;
+  if (config.credential_provider) return resolveDeepSeekToolApiKey(config.credential_provider, source);
+  const searchKey = search.api_keys?.deepseek || (search.provider === "deepseek" ? search.api_key : "");
+  if (searchKey?.trim() && !isMaskedSecretValue(searchKey)) return searchKey.trim();
+  return resolveDeepSeekToolApiKey(search.credential_provider, source);
 }

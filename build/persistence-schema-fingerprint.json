@@ -680,7 +680,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:b1b862b62a1239aeb88a8786c6893463069c65424b3fb8d48c4ed45102453fa4",
+  "payloadFingerprint": "sha256:f2805020e3077375d32e8d080b4267193b12e9481e00ba280a8e86ea7bc65ee7",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3142,7 +3142,7 @@
       "protocolModules": [],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
-        "compatibility": "PreferencesManager is intentionally permissive; _dataVersion is the legacy migration cursor, not a strict schema validator. Unreadable source bytes are preserved before any replacement document is written. Optional search_credential_provider pins a model provider ID for explicitly selected DeepSeek Search; absent values preserve existing search defaults and keys, and referenced keys are never copied into preferences.",
+        "compatibility": "PreferencesManager is intentionally permissive; _dataVersion is the legacy migration cursor, not a strict schema validator. Unreadable source bytes are preserved before any replacement document is written. Optional search_credential_provider pins a model provider ID for explicitly selected DeepSeek Search; absent values preserve existing search defaults and keys, and referenced keys are never copied into preferences. Optional web_fetch_provider, web_fetch_api_key and web_fetch_credential_provider add independently selected Fetch; absent provider keeps direct fetching, while empty Fetch credentials reuse the existing DeepSeek Search override or reference without copying keys.",
         "kind": "runtime-source",
         "source": "core/preferences-manager.ts"
       },
@@ -3396,8 +3396,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Add optional search_credential_provider ID and explicitly selected DeepSeek Search. Existing preference documents, search keys, Auto ordering and data epoch remain compatible; model keys resolve only at runtime and are not copied. No persistent store is removed or reinterpreted.",
-    "payloadFingerprint": "sha256:b1b862b62a1239aeb88a8786c6893463069c65424b3fb8d48c4ed45102453fa4"
+    "compatibilityReason": "Add optional independently selected web_fetch preferences and runtime credential reuse from DeepSeek Search or an official model provider. Missing Fetch settings preserve direct fetching; model keys are never copied, and existing stores, epoch, search defaults and tool permissions remain compatible.",
+    "payloadFingerprint": "sha256:f2805020e3077375d32e8d080b4267193b12e9481e00ba280a8e86ea7bc65ee7"
   },
   "schemas": [
     {
@@ -3497,7 +3497,7 @@
       "protocolModules": [
         {
           "module": "core/agent.ts",
-          "sourceHash": "sha256:1fb5ae039d7421918fca28dd877af001307bde0d9e5a11f7c86d7c7f0795bd42"
+          "sourceHash": "sha256:b625467aab0ead6cb7d023354369ff24f2fa02e256aa8371e1d2d76bd6232131"
         },
         {
           "module": "hub/channel-router.ts",
@@ -3579,7 +3579,7 @@
       "protocolModules": [
         {
           "module": "core/agent.ts",
-          "sourceHash": "sha256:1fb5ae039d7421918fca28dd877af001307bde0d9e5a11f7c86d7c7f0795bd42"
+          "sourceHash": "sha256:b625467aab0ead6cb7d023354369ff24f2fa02e256aa8371e1d2d76bd6232131"
         },
         {
           "module": "core/agents-md-migration.ts",
@@ -3594,7 +3594,7 @@
           "sourceHash": "sha256:65d2a9c931cddced01d501197c4c394dbbde254e1292f64bc33514f5079026ef"
         }
       ],
-      "sourceHash": "sha256:bbdb3c02f7517ebaf5b72ec13b1a7730ca2bcf66bd79dcd0500255063f83f957",
+      "sourceHash": "sha256:218fa1ce3cc45a4c5f79c733826078a25f74564bb60660937302d5b4460827fc",
       "storeId": "agent-profile"
     },
     {

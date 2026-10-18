@@ -8,6 +8,7 @@
 import { createModuleLogger } from "../lib/debug-log.ts";
 import { findModel, parseModelRef, requireModelRef } from "../shared/model-ref.ts";
 import { t } from "../lib/i18n.ts";
+import { normalizeWebFetchPatch } from "../shared/web-fetch-config.ts";
 import { normalizeCredentialProvider } from "../shared/deepseek-tools.ts";
 import { resolveDefaultWorkspacePath } from "../shared/default-workspace.ts";
 import {
@@ -314,6 +315,29 @@ export class ConfigCoordinator {
     }
     this._savePrefs(prefs);
     log.log(`setSearchConfig: provider=${nextProvider || "(cleared)"}`);
+  }
+
+  // ── Web Fetch (explicit opt-in; missing preference keeps direct fetching) ──
+
+  getWebFetchConfig() {
+    const prefs = this._prefs();
+    return {
+      provider: prefs.web_fetch_provider || "direct",
+      api_key: prefs.web_fetch_api_key || "",
+      credential_provider: prefs.web_fetch_credential_provider || "",
+    };
+  }
+
+  setWebFetchConfig(value: unknown) {
+    const patch = normalizeWebFetchPatch(value);
+    const prefs = this._prefs();
+    for (const field of ["provider", "api_key", "credential_provider"] as const) {
+      if (patch[field] === undefined) continue;
+      const key = `web_fetch_${field}`;
+      if (patch[field]) prefs[key] = patch[field];
+      else delete prefs[key];
+    }
+    this._savePrefs(prefs);
   }
 
   // ── Utility API ──

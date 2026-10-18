@@ -2,6 +2,12 @@
 const DEFAULT_RETRY_JITTER_MS = 1_000;
 
 const DEFAULT_POLICIES = Object.freeze({
+  // Fetch has its own account quota; a 429 (including target-domain throttling)
+  // conservatively cools this whole process-wide lane, never Search.
+  deepseek_fetch: Object.freeze({
+    minIntervalMs: 200, jitterMs: 0, maxConcurrent: 5,
+    rateLimitBaseDelayMs: 2_000, retryJitterMs: DEFAULT_RETRY_JITTER_MS, maxCooldownMs: 5 * 60_000,
+  }),
   // Account quota is shared across API keys. A process-wide lane is conservative
   // across all accounts; key/provider IDs cannot identify the server-side account.
   deepseek: Object.freeze({
