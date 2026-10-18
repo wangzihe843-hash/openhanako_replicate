@@ -110,4 +110,21 @@ describe("Pi installation version guard", () => {
     fixture.write("package-lock.json", { packages: fixture.packages });
     expect(fixture.run()).toMatchObject({ status: 1, output: expect.stringContaining("required Pi family package missing") });
   });
+  it("rejects changed source and non-exact family pins", () => {
+    const source = guardFixture();
+    const file = "node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js";
+    source.write(file, fs.readFileSync(path.join(root, file), "utf8").replace("async _startRun(trigger, onStarted)", "async _startRun(trigger, callback)"));
+    expect(source.run()).toMatchObject({ status: 1, output: expect.stringContaining("differs from the source-bound lifecycle adapter") });
+    const auth = guardFixture();
+    auth.write("node_modules/@earendil-works/pi-coding-agent/dist/core/auth-storage.js", "// changed source");
+    expect(auth.run()).toMatchObject({ status: 1, output: expect.stringContaining("differs from the reviewed acquisition budget") });
+    for (const section of ["dependencies", "overrides"]) {
+      const fixture = guardFixture();
+      const requested = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+      requested[section]["@earendil-works/pi-ai"] = `^${reviewedVersion}`;
+      fixture.write("package.json", requested);
+      expect(fixture.run()).toMatchObject({ status: 1, output: expect.stringContaining("must pin pi-ai") });
+    }
+  });
+
 });

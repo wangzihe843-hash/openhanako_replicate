@@ -7,6 +7,7 @@ import {
   buildAnydocRuntimeSmokeScript,
   buildBetterSqliteRuntimeSmokeScript,
   buildExternalPackage,
+  buildExternalDependencyPlan,
   buildJiebaRuntimeSmokeScript,
   collectBareImportPackageNames,
   collectInstalledOptionalDependencyDirs,
@@ -304,6 +305,150 @@ describe("build-server external dependency packaging", () => {
     }));
 
     expect(() => verifyExternalEntrypoints(outDir, ["esm-only-package"])).not.toThrow();
+  });
+});
+
+describe("root-locked external dependency plans", () => {
+  function fixture() {
+    const entry = <T extends object = object>(version: string, extra = {} as T) => ({
+      version,
+      resolved: `https://registry.npmjs.org/fixture/-/fixture-${version}.tgz`,
+      integrity: `sha512-${Buffer.from(version).toString("base64")}`,
+      ...extra,
+    });
+    const rootPkg = {
+      version: "1.0.0",
+      dependencies: { service: "^1.0.0", renderer: "^1.0.0" },
+      overrides: {
+        service: { transport: { ".": "^2.0.0", unused: "9.0.0" } },
+        "shared@^1.0.0": "1.1.0",
+        "shared@^2.0.0": "2.1.0",
+        renderer: { unused: "9.0.0" },
+        unrelated: "9.0.0",
+      },
+    };
+    const rootLock = {
+      lockfileVersion: 3,
+      packages: {
+        "": { dependencies: rootPkg.dependencies },
+        "node_modules/service": entry("1.0.0", {
+          dependencies: { transport: "^2.0.0", shared: "^1.0.0" },
+          optionalDependencies: { "native-linux": "1.0.0", "native-win": "1.0.0" },
+          peerDependencies: { adapter: "^1.0.0", canvas: "^3.0.0" },
+          peerDependenciesMeta: { canvas: { optional: true } },
+        }),
+        "node_modules/transport": entry("2.0.0", { dependencies: { shared: "^2.0.0" } }),
+        "node_modules/shared": entry("1.1.0"),
+        "node_modules/transport/node_modules/shared": entry("2.1.0"),
+        "node_modules/adapter": entry("1.0.0", { peer: true }),
+        "node_modules/native-linux": entry("1.0.0", { optional: true, os: ["linux"], cpu: ["arm64"], libc: ["glibc"] }),
+        "node_modules/native-win": entry("1.0.0", { devOptional: true, os: ["win32"], cpu: ["x64"] }),
+        "node_modules/renderer": entry("1.0.0", { dev: true }),
+      },
+    };
+    return { rootPkg, rootLock };
+  }
+
+  it("preserves consumer-specific versions, bytes, peers and every optional platform", () => {
+    const { rootPkg, rootLock } = fixture();
+    const before = JSON.stringify({ rootPkg, rootLock });
+    const plan = buildExternalDependencyPlan(rootPkg, { service: "^1.0.0" }, { rootLock });
+    expect(plan.externalPkg.dependencies).toEqual({ service: "1.0.0" });
+    expect(plan.externalLock.packages["node_modules/shared"].version).toBe("1.1.0");
+    expect(plan.externalLock.packages["node_modules/transport/node_modules/shared"].version).toBe("2.1.0");
+    for (const [location, entry] of Object.entries(plan.externalLock.packages)) {
+      if (location) expect(entry).toEqual(rootLock.packages[location]);
+    }
+    expect(plan.externalLock.packages).not.toHaveProperty("node_modules/renderer");
+    expect(plan.externalLock.packages["node_modules/adapter"].peer).toBe(true);
+    expect(plan.externalLock.packages["node_modules/native-linux"].libc).toEqual(["glibc"]);
+    expect(plan.externalLock.packages["node_modules/native-win"].devOptional).toBe(true);
+    expect(plan.externalPkg.overrides).toEqual({
+      service: { transport: { ".": "^2.0.0" } },
+      "shared@^1.0.0": "1.1.0",
+      "shared@^2.0.0": "2.1.0",
+    });
+    expect(JSON.stringify({ rootPkg, rootLock })).toBe(before);
+    expect(buildExternalDependencyPlan(rootPkg, { service: "^1.0.0" }, { rootLock })).toEqual(plan);
+    plan.externalLock.packages["node_modules/shared"].version = "9.0.0";
+    expect(rootLock.packages["node_modules/shared"].version).toBe("1.1.0");
+  });
+
+  it("resolves override references against the original root declaration", () => {
+    const { rootPkg, rootLock } = fixture();
+    rootPkg.overrides["shared@^1.0.0"] = "$renderer";
+    const { externalPkg } = buildExternalDependencyPlan(rootPkg, { service: "1.0.0" }, { rootLock });
+    expect(externalPkg.overrides["shared@^1.0.0"]).toBe("^1.0.0");
+    expect(externalPkg.dependencies).not.toHaveProperty("renderer");
+    rootPkg.overrides["shared@^1.0.0"] = "$missing";
+    expect(() => buildExternalDependencyPlan(rootPkg, { service: "1.0.0" }, { rootLock }))
+      .toThrow(/unresolved override reference/);
+  });
+
+  it.each(["transport", "adapter", "native-linux"])("rejects a missing %s node before npm can resolve replacements", name => {
+    const { rootPkg, rootLock } = fixture();
+    delete rootLock.packages[`node_modules/${name}`];
+    expect(() => buildExternalDependencyPlan(rootPkg, { service: "1.0.0" }, { rootLock }))
+      .toThrow(/missing root-lock dependency/);
+  });
+
+  it.each(["version", "resolved", "integrity"])("rejects missing %s rather than trusting an installed tree", field => {
+    const { rootPkg, rootLock } = fixture();
+    delete rootLock.packages["node_modules/transport"][field];
+    expect(() => buildExternalDependencyPlan(rootPkg, { service: "1.0.0" }, { rootLock }))
+      .toThrow(/incomplete or linked root-lock package/);
+  });
+
+  it("rejects linked and dev-only closure nodes", () => {
+    for (const metadata of [{ link: true, resolved: "../../outside" }, { dev: true }]) {
+      const { rootPkg, rootLock } = fixture();
+      Object.assign(rootLock.packages["node_modules/transport"], metadata);
+      expect(() => buildExternalDependencyPlan(rootPkg, { service: "1.0.0" }, { rootLock }))
+        .toThrow(/linked root-lock package|dev-only package/);
+    }
+  });
+
+  it("rejects an incomplete lock format and path-shaped dependency names", () => {
+    const { rootPkg, rootLock } = fixture();
+    expect(() => buildExternalDependencyPlan(rootPkg, {}, { rootLock: { packages: {} } }))
+      .toThrow(/complete v3 root lock/);
+    rootLock.packages["node_modules/service"].dependencies["../escape"] = "1.0.0";
+    expect(() => buildExternalDependencyPlan(rootPkg, { service: "1.0.0" }, { rootLock }))
+      .toThrow(/invalid locked dependency name/);
+  });
+
+  it("rejects a mixed Pi family hidden below a non-Pi external", () => {
+    const { rootPkg, rootLock } = fixture();
+    for (const name of PI_RUNTIME_PACKAGES) {
+      rootLock.packages[`node_modules/${name}`] = { ...rootLock.packages["node_modules/shared"], version: "1.3.0" };
+    }
+    rootLock.packages["node_modules/service"].dependencies["@earendil-works/pi-ai"] = "^1.2.0";
+    rootLock.packages["node_modules/service/node_modules/@earendil-works/pi-ai"] = {
+      ...rootLock.packages["node_modules/shared"], version: "1.2.0",
+    };
+    expect(() => buildExternalDependencyPlan(rootPkg, { service: "1.0.0" }, { rootLock }))
+      .toThrow(/Pi runtime family must use one root-lock version/);
+  });
+
+  it("keeps plugin-only roots out of the smaller closure without hoisting mammoth's argparse", () => {
+    const rootPkg = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf-8"));
+    const rootLock = JSON.parse(fs.readFileSync(path.resolve("package-lock.json"), "utf-8"));
+    const common = { mammoth: rootPkg.dependencies.mammoth, jsdom: rootPkg.dependencies.jsdom };
+    const smaller = buildExternalDependencyPlan(rootPkg, common, { rootLock });
+    const larger = buildExternalDependencyPlan(rootPkg, {
+      ...common, "js-yaml": rootPkg.dependencies["js-yaml"], unpdf: rootPkg.dependencies.unpdf,
+    }, { rootLock });
+    expect(smaller.externalLock.packages).not.toHaveProperty("node_modules/js-yaml");
+    expect(smaller.externalLock.packages).not.toHaveProperty("node_modules/unpdf");
+    expect(larger.externalLock.packages).toHaveProperty("node_modules/js-yaml");
+    expect(larger.externalLock.packages).toHaveProperty("node_modules/unpdf");
+    for (const [location, entry] of Object.entries(smaller.externalLock.packages)) {
+      if (location) expect(larger.externalLock.packages[location]).toEqual(entry);
+    }
+    expect(smaller.externalLock.packages["node_modules/mammoth/node_modules/argparse"])
+      .toEqual(rootLock.packages["node_modules/mammoth/node_modules/argparse"]);
+    expect(smaller.externalPkg.overrides["tough-cookie"]).toBe(rootPkg.overrides["tough-cookie"]);
+    expect(smaller.externalPkg.overrides).not.toHaveProperty("@tiptap/react");
   });
 });
 

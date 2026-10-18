@@ -413,9 +413,9 @@ describe("AuthStorage operations during OAuth rotation", () => {
     Object.assign(failure.error, { code, syscall, path: target === "lock" ? failure.error.path
       : target === "auth" ? f.authPath : target === "parent" ? f.dir : path.join(f.dir, target) });
     await expect(f.duringRefresh(() => failure.run(() => f.storage.get(providerId)))).rejects.toBe(failure.error);
-    // Pi 1.2.0 retries acquisition EPERM itself (even if the OS error metadata
+    // Pi 1.3.0 retries acquisition EPERM itself (even if the OS error metadata
     // is unusual). Hana must not add an outer retry or replay the read callback.
-    expect(failure.injected()).toBe(getPiCodingAgentVersion() === "1.2.0" && platform === "win32" && code === "EPERM" ? 6 : 1);
+    expect(failure.injected()).toBe(getPiCodingAgentVersion() === "1.3.0" && platform === "win32" && code === "EPERM" ? 6 : 1);
   });
 
   it.each(["win32", "linux"])("isolates %s denial from another read after an availability pass fails early", async platform => {

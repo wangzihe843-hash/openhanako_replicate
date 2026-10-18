@@ -48,7 +48,7 @@ function selected(manager, modelId = id) {
   return model;
 }
 
-describe('K2.8 configured context through syncModels and real Pi 1.2 registry', () => {
+describe('K2.8 configured context through syncModels and real Pi registry', () => {
   it.each(kimiProjectionCases)('locks real Pi projection and explicit alias order at $label/$api/$modelApi', async c => {
     const manager = await load({ base_url: c.base_url, api: c.api, models: [id] });
     const entries: KimiModelEntry[] = [id, { id }, { id, name: 'My Kimi' }, ...kimiExplicitBudgets.map(b => ({ id, ...b }))];
@@ -61,7 +61,8 @@ describe('K2.8 configured context through syncModels and real Pi 1.2 registry', 
       expect(selected(manager).contextWindow).toBe(expected);
       expect(manager.providerRegistry.getAllProvidersRaw()[provider].models).toEqual([entry]);
       if (c.label === 'com' && c.modelApi === 'anthropic-messages') {
-        expect(manager.getRegistryModelsForProvider(provider).find(m => m.id === id)?.api).toBe('anthropic-messages');
+        // Pi 1.3's official catalog and the effective .com transport use OpenAI.
+        expect(manager.getRegistryModelsForProvider(provider).find(m => m.id === id)?.api).toBe('openai-completions');
         expect(selected(manager).api).toBe('openai-completions');
       }
     }

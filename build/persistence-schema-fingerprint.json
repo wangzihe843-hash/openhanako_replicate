@@ -680,7 +680,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:2b8059441ec896c599413b97cea58899ea53afe4fb9cec1696dba736285e5fc8",
+  "payloadFingerprint": "sha256:210dc8536dec4fea606d1be668a406549a046f8e4bc2466009985bd78cb33edd",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3396,8 +3396,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Channel summaries now replace only captured fact IDs in one synchronous SQLite transaction. Failed DELETE or INSERT rolls back facts and FTS together; successful replacement and empty-summary deletion retain existing scope, provenance, session commit and import behavior. Runtime SQLite DDL/user_version, persisted formats, paths, inventory and DATA_EPOCH are unchanged; no migration or data rewrite is required. Only FactStore and ChannelRouter executable source hashes change. Reverting code restores the old non-atomic behavior without requiring a data conversion.",
-    "payloadFingerprint": "sha256:2b8059441ec896c599413b97cea58899ea53afe4fb9cec1696dba736285e5fc8"
+    "compatibilityReason": "Reviewed official Pi 1.3.0: session-manager/messages bytes and JSONL v3 contract unchanged from 1.2.0; installed-SDK legacy reopen, context edits, repeated compaction and durable input tests passed. No stored shape migration; DATA_EPOCH unchanged.",
+    "payloadFingerprint": "sha256:210dc8536dec4fea606d1be668a406549a046f8e4bc2466009985bd78cb33edd"
   },
   "schemas": [
     {
@@ -3995,9 +3995,9 @@
       ],
       "kind": "external-versioned",
       "lockfile": "package-lock.json",
-      "packageIntegrity": "sha512-h/4WaVWv1VlCaY8x8qEN5U+7jbF/e7+Ck6moPeEOFn5juMTWwNAXjwgYM7gRgbBYh8Zppwt6qWvJDzNTf4GNEQ==",
+      "packageIntegrity": "sha512-V/WoCjA2hQSe3QLWIUB24cTRdtEdeLiIzkDqU5RMXV6VWuD+KGZnzVBMhglwdnQTySkehZsjt8a3g6Jd2g4nnw==",
       "packageName": "@earendil-works/pi-coding-agent",
-      "packageVersion": "1.2.0",
+      "packageVersion": "1.3.0",
       "protocolModules": [
         {
           "module": "core/desktop-session-submit.ts",
@@ -4032,7 +4032,7 @@
           "sourceHash": "sha256:810752d7bb38f9bdc287c78649e21a53aad293cd2e2e817af7575ab3a58dc6ed"
         }
       ],
-      "requestedVersion": "1.2.0",
+      "requestedVersion": "1.3.0",
       "storeId": "session-jsonl",
       "versionSource": {
         "currentSessionVersion": 3,

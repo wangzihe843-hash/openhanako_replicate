@@ -46,28 +46,25 @@ describe("provider endpoint handling", () => {
     })).toBe("https://api.kimi.com/coding/v1");
   });
 
-  it("normalizes OpenCode Zen per protocol from either a root or full Messages endpoint", () => {
-    for (const configured of [
-      "https://opencode.ai/zen",
-      "https://opencode.ai/zen/v1/messages",
-    ]) {
-      expect(normalizeProviderBaseUrlForApi({
-        provider: "opencode",
-        baseUrl: configured,
-        api: "anthropic-messages",
-      })).toBe("https://opencode.ai/zen");
-      expect(normalizeProviderBaseUrlForApi({
-        provider: "opencode",
-        baseUrl: configured,
-        api: "openai-completions",
-      })).toBe("https://opencode.ai/zen/v1");
-      expect(normalizeProviderBaseUrlForApi({
-        provider: "opencode",
-        baseUrl: configured,
-        api: "openai-responses",
-      })).toBe("https://opencode.ai/zen/v1");
+  it.each(["opencode", "opencode-go"])("normalizes official legacy and current %s roots per protocol", provider => {
+    const lane = provider === "opencode-go" ? "/go" : "";
+    for (const prefix of ["zen", "inference"]) {
+      for (const suffix of ["", "/v1", "/v1/messages", "/v1/chat/completions", "/v1/responses"]) {
+        for (const api of ["anthropic-messages", "openai-completions", "openai-responses", "google-generative-ai"]) {
+          expect(normalizeProviderBaseUrlForApi({ provider, baseUrl: `https://opencode.ai/${prefix}${lane}${suffix}`, api }))
+            .toBe(`https://opencode.ai/inference${lane}${api === "anthropic-messages" ? "" : "/v1"}`);
+        }
+      }
     }
   });
+
+  it("preserves custom OpenCode and Kimi gateway paths", () => {
+    for (const provider of ["opencode", "opencode-go", "kimi-coding"]) {
+      expect(normalizeProviderBaseUrlForApi({ provider, baseUrl: "https://gateway.example/zen/v1", api: "openai-completions" }))
+        .toBe("https://gateway.example/zen/v1");
+    }
+  });
+
 });
 
 describe("provider connectivity probe", () => {

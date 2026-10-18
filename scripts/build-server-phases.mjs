@@ -26,11 +26,12 @@ import {
   buildAnydocRuntimeSmokeScript,
   buildBetterSqliteRuntimeSmokeScript,
   buildJiebaRuntimeSmokeScript,
-  buildExternalPackage,
+  buildExternalDependencyPlan,
   collectBareImportPackageNames,
   collectInstalledOptionalDependencyDirs,
   resolveDeferredBridgeSdkEntrypoints,
   verifyExternalEntrypoints,
+  verifyExternalDependencyTree,
 } from "./build-server-deps.mjs";
 import { pruneRuntimeDeadFiles } from "./build-server-prune.mjs";
 
@@ -413,7 +414,7 @@ export async function resolveAndInstallExternalServerDeps({
   log(`[build-server] derived external deps: ${Object.keys(externalDeps).join(", ")}`);
 
   const rootLock = JSON.parse(fs.readFileSync(path.join(rootDir, "package-lock.json"), "utf-8"));
-  const externalPkg = buildExternalPackage(rootPkg, externalDeps, {
+  const { externalPkg, externalLock } = buildExternalDependencyPlan(rootPkg, externalDeps, {
     rootLock,
     pinnedTransitiveDeps,
   });
@@ -422,13 +423,20 @@ export async function resolveAndInstallExternalServerDeps({
     .join(", ");
   log(`[build-server] pinned server deps: ${pinnedDeps}`);
 
-  fs.writeFileSync(
-    path.join(outDir, "package.json"),
-    JSON.stringify(externalPkg, null, 2) + "\n",
-  );
+  const packageContents = JSON.stringify(externalPkg, null, 2) + "\n";
+  const lockContents = JSON.stringify(externalLock, null, 2) + "\n";
+  fs.writeFileSync(path.join(outDir, "package.json"), packageContents);
+  fs.writeFileSync(path.join(outDir, "package-lock.json"), lockContents);
+  const verification = { outDir, externalLock, cachedNpmCli };
+  await verifyExternalDependencyTree(verification);
 
-  log("[build-server] installing external dependencies...");
-  runWithTargetNode(`"${cachedNpmCli}" install --omit=dev --no-audit --no-fund --ignore-scripts=false`);
+  log(`[build-server] installing ${Object.keys(externalLock.packages).length - 1} root-locked external dependencies...`);
+  runWithTargetNode(`"${cachedNpmCli}" ci --omit=dev --no-audit --no-fund --ignore-scripts=false`);
+  if (fs.readFileSync(path.join(outDir, "package.json"), "utf-8") !== packageContents
+    || fs.readFileSync(path.join(outDir, "package-lock.json"), "utf-8") !== lockContents) {
+    throw new Error("[build-server] external dependency installation changed the derived manifest or lock");
+  }
+  await verifyExternalDependencyTree({ ...verification, installed: true });
   ensureNodePtySpawnHelperExecutable({ baseDir: outDir, platform, arch, isWin });
 
   // Verify every string Vite external actually resolved into node_modules.

@@ -20,10 +20,9 @@ const { createHash } = require("node:crypto");
 const root = path.join(__dirname, "..");
 const sdkRoot = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent");
 const piAiRoot = path.join(root, "node_modules", "@earendil-works", "pi-ai");
-const verifiedVersions = new Set(["1.2.0"]);
-const verifiedPiAiVersions = new Set(["1.2.0"]);
-// The three direct packages share caret-ranged runtime dependencies. Reject
-// family drift too, so a later install cannot silently mix 1.0.3 with 1.0.4.
+const verifiedVersions = new Set(["1.3.0"]);
+const verifiedPiAiVersions = new Set(["1.3.0"]);
+// Reject family drift, including nested copies; 1.3.0 pins its family exactly.
 const piFamilyPath = /node_modules\/@earendil-works\/(chord|pi-agent-core|pi-ai|pi-coding-agent|pi-codemode|pi-mcp|pi-telemetry|pi-tui)$/;
 const requiredFamily = ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-codemode", "pi-mcp", "pi-telemetry", "pi-tui"];
 
@@ -78,20 +77,24 @@ for (const [location, dependency] of Object.entries(lock.packages || {})) {
     }
   }
 }
-if (pkg.version === "1.2.0") {
+if (pkg.version === "1.3.0") {
   const requested = readJson(path.join(root, "package.json"));
   for (const name of requiredFamily) {
-    if (requested.overrides?.[`@earendil-works/${name}`] !== "1.2.0") fail(`Pi override must pin ${name} to 1.2.0`);
+    if (requested.overrides?.[`@earendil-works/${name}`] !== "1.3.0") fail(`Pi override must pin ${name} to 1.3.0`);
   }
   for (const name of ["pi-agent-core", "pi-ai", "pi-coding-agent"]) {
-    if (requested.dependencies?.[`@earendil-works/${name}`] !== "1.2.0") fail(`Pi dependency must pin ${name} to 1.2.0`);
+    if (requested.dependencies?.[`@earendil-works/${name}`] !== "1.3.0") fail(`Pi dependency must pin ${name} to 1.3.0`);
   }
   const source = fs.readFileSync(path.join(sdkRoot, "dist/core/agent-session.js"), "utf8");
   const start = source.indexOf("    async _startRun(trigger, onStarted) {");
   const end = source.indexOf("    /**", start);
   const digest = createHash("sha256").update(source.slice(start, end)).digest("hex");
   if (start < 0 || end < 0 || digest !== "39279b7a97daff07835880131a5fdf7340ef5d7de5960639039f8ed791549afa") {
-    fail("Pi 1.2.0 _startRun differs from the source-bound lifecycle adapter");
+    fail("Pi 1.3.0 _startRun differs from the source-bound lifecycle adapter");
+  }
+  const authSource = fs.readFileSync(path.join(sdkRoot, "dist/core/auth-storage.js"));
+  if (createHash("sha256").update(authSource).digest("hex") !== "59791d54e50bfb86f0bb9e8dcee776547ae1744fc4aeb2fe14ff6610c1f5c567") {
+    fail("Pi 1.3.0 auth-storage differs from the reviewed acquisition budget");
   }
 }
 for (const [file, markers] of [

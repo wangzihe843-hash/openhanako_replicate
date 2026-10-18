@@ -1061,7 +1061,7 @@ describe("model sync related routes", () => {
 
     expect(res.status).toBe(200);
     expect(probeProvider).toHaveBeenCalledWith({
-      baseUrl: "https://opencode.ai/zen",
+      baseUrl: "https://opencode.ai/inference",
       api: "anthropic-messages",
       apiKey: "zen-key",
       headers: {},

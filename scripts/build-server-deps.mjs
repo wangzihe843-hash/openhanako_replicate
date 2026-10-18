@@ -103,9 +103,8 @@ export function buildExternalPackage(
     dependencies[packageName] = getLockedPackageVersion(rootLock, packageName);
   }
 
-  // Server artifacts install a fresh dependency tree rather than npm-ci the
-  // root lock. Pi's caret-ranged family must still match the reviewed root
-  // exactly, even when a newer release becomes age-eligible before packaging.
+  // Pi's caret-ranged family must match the reviewed root exactly, including
+  // members reached transitively from an external entrypoint.
   let overrides;
   if (PI_RUNTIME_PACKAGES.some(packageName => Object.hasOwn(dependencies, packageName))) {
     overrides = Object.fromEntries(PI_RUNTIME_PACKAGES.map(packageName => [
@@ -123,6 +122,144 @@ export function buildExternalPackage(
     dependencies,
     ...(overrides ? { overrides } : {}),
   };
+}
+
+function resolveLockedDependency(packages, parent, name) {
+  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(name)) {
+    throw new Error(`[build-server] invalid locked dependency name: ${name}`);
+  }
+  // Lock paths always use '/', including on Windows. Keep nested versions in
+  // their original locations; resolving only by package name loses consumers.
+  for (let current = parent; ; current = path.posix.dirname(current)) {
+    const candidate = path.posix.join(current, "node_modules", name);
+    if (Object.hasOwn(packages, candidate)) return candidate;
+    if (!current || current === ".") return undefined;
+  }
+}
+
+function filterExternalOverrides(rules, names, rootPkg) {
+  const result = {};
+  for (const [selector, value] of Object.entries(rules || {})) {
+    const versionIndex = selector.indexOf("@", 1);
+    const name = versionIndex < 0 ? selector : selector.slice(0, versionIndex);
+    if (selector !== "." && !names.has(name)) continue;
+    if (typeof value === "string") {
+      // A $reference refers to the original root declaration, which need not
+      // be a direct dependency of the smaller artifact manifest.
+      const referenced = value.startsWith("$") ? value.slice(1) : undefined;
+      const spec = referenced
+        ? rootPkg.dependencies?.[referenced] || rootPkg.optionalDependencies?.[referenced]
+          || rootPkg.devDependencies?.[referenced]
+        : value;
+      if (!spec) throw new Error(`[build-server] unresolved override reference: ${value}`);
+      result[selector] = spec;
+    } else if (value && typeof value === "object" && !Array.isArray(value)) {
+      const children = filterExternalOverrides(value, names, rootPkg);
+      if (Object.keys(children).length) result[selector] = children;
+    } else {
+      throw new Error(`[build-server] invalid override: ${selector}`);
+    }
+  }
+  return result;
+}
+
+/** Project the root lock without re-resolving, hoisting or dropping platforms. */
+export function buildExternalDependencyPlan(rootPkg, externalDeps, options = {}) {
+  const { rootLock } = options;
+  if (rootLock?.lockfileVersion !== 3 || !rootLock.packages?.[""]) {
+    throw new Error("[build-server] external dependencies require a complete v3 root lock");
+  }
+  const externalPkg = buildExternalPackage(rootPkg, externalDeps, options);
+  const selected = new Set();
+  function visit(location) {
+    if (selected.has(location)) return;
+    const entry = rootLock.packages[location];
+    if (!entry || entry.link || !entry.version || !entry.resolved || !entry.integrity) {
+      throw new Error(`[build-server] incomplete or linked root-lock package: ${location}`);
+    }
+    if (entry.dev) {
+      throw new Error(`[build-server] external closure contains dev-only package: ${location}`);
+    }
+    selected.add(location);
+    const dependencies = { ...entry.peerDependencies, ...entry.dependencies, ...entry.optionalDependencies };
+    for (const name of Object.keys(dependencies)) {
+      const target = resolveLockedDependency(rootLock.packages, location, name);
+      if (target) visit(target);
+      else if (!Object.hasOwn(entry.dependencies || {}, name)
+        && !Object.hasOwn(entry.optionalDependencies || {}, name)
+        && entry.peerDependenciesMeta?.[name]?.optional) continue;
+      else throw new Error(`[build-server] missing root-lock dependency: ${location} -> ${name}`);
+    }
+  }
+  for (const name of Object.keys(externalPkg.dependencies)) {
+    visit(resolveLockedDependency(rootLock.packages, "", name));
+  }
+  const names = new Set([...selected].map(location => location.split("node_modules/").at(-1)));
+  const overrides = filterExternalOverrides(rootPkg.overrides, names, rootPkg);
+  if (PI_RUNTIME_PACKAGES.some(name => names.has(name))) {
+    const versions = PI_RUNTIME_PACKAGES.map(name => getLockedPackageVersion(rootLock, name));
+    if (new Set(versions).size !== 1 || [...selected].some(location =>
+      PI_RUNTIME_PACKAGES.includes(location.split("node_modules/").at(-1))
+      && rootLock.packages[location].version !== versions[0])) {
+      throw new Error("[build-server] Pi runtime family must use one root-lock version");
+    }
+    for (const name of PI_RUNTIME_PACKAGES) overrides[name] = versions[0];
+  }
+  if (Object.keys(overrides).length) externalPkg.overrides = overrides;
+  // Copy every field, including optional/devOptional/peer, os/cpu/libc and
+  // lifecycle metadata. The host's installed tree is never the lock source.
+  const externalLock = {
+    name: externalPkg.name,
+    version: externalPkg.version,
+    lockfileVersion: 3,
+    requires: true,
+    packages: {
+      "": { name: externalPkg.name, version: externalPkg.version, dependencies: externalPkg.dependencies },
+      ...Object.fromEntries([...selected].sort().map(location => [location, rootLock.packages[location]])),
+    },
+  };
+  return structuredClone({ externalPkg, externalLock });
+}
+
+/** Read-only validation with the SAME npm implementation used by target ci. */
+export async function verifyExternalDependencyTree({ outDir, externalLock, cachedNpmCli, installed = false }) {
+  const require = createRequire(path.resolve(cachedNpmCli));
+  const Arborist = require("@npmcli/arborist");
+  const arb = new Arborist({ path: outDir, offline: true, audit: false, fund: false });
+  const tree = installed ? await arb.loadActual({ forceActual: true }) : await arb.loadVirtual();
+  const installedLock = installed
+    ? JSON.parse(fs.readFileSync(path.join(outDir, "node_modules", ".package-lock.json"), "utf-8"))
+    : externalLock;
+  for (const node of tree.inventory.values()) {
+    const location = node.location;
+    const expected = externalLock.packages[location];
+    if (!expected || node.isLink || node.package.version !== expected.version) {
+      throw new Error(`[build-server] dependency differs from derived lock: ${location}`);
+    }
+    if (location) {
+      const metadata = installedLock.packages?.[location];
+      for (const key of ["version", "resolved", "integrity"]) {
+        if (metadata?.[key] !== expected[key]) {
+          throw new Error(`[build-server] installed ${key} differs from derived lock: ${location}`);
+        }
+      }
+    }
+    const declarations = { ...expected.peerDependencies, ...expected.dependencies, ...expected.optionalDependencies };
+    if (node.edgesOut.size !== Object.keys(declarations).length
+      || Object.entries(declarations).some(([name, spec]) => node.edgesOut.get(name)?.rawSpec !== spec)) {
+      throw new Error(`[build-server] dependency declarations differ from derived lock: ${location}`);
+    }
+    for (const edge of node.edgesOut.values()) {
+      // Optional platform packages may be absent after ci, but their lock
+      // entries were required before installation. Only optional peers may
+      // be absent from the projected graph itself.
+      if (!edge.to && (edge.type === "peerOptional" || (installed && edge.optional))) continue;
+      const target = resolveLockedDependency(externalLock.packages, location, edge.name);
+      if (!edge.valid || !edge.to || edge.to.location !== target) {
+        throw new Error(`[build-server] invalid locked dependency edge: ${location} -> ${edge.name}`);
+      }
+    }
+  }
 }
 
 function packageNameFromBareSpecifier(specifier) {

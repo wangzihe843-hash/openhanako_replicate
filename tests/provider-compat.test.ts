@@ -988,7 +988,7 @@ describe("normalizeProviderPayload — 通用层", () => {
     expect(result).not.toHaveProperty("max_completion_tokens");
   });
 
-  it("OpenCode Go GLM first-turn payload enables thinking without clear_thinking", () => {
+  it.each(["https://opencode.ai/zen/go/v1", "https://opencode.ai/inference/go/v1"])("OpenCode Go GLM first-turn payload enables thinking without clear_thinking at %s", baseUrl => {
     const payload = {
       model: "glm-5.2",
       messages: [{ role: "user", content: "hi" }],
@@ -999,7 +999,7 @@ describe("normalizeProviderPayload — 通用层", () => {
       id: "glm-5.2",
       provider: "opencode-go",
       api: "openai-completions",
-      baseUrl: "https://opencode.ai/zen/go/v1",
+      baseUrl,
       reasoning: true,
       compat: { thinkingFormat: "zhipu", reasoningProfile: "zhipu-openai" },
     }, { mode: "chat", reasoningLevel: "high" });
@@ -1009,7 +1009,7 @@ describe("normalizeProviderPayload — 通用层", () => {
     expect(payload).not.toHaveProperty("thinking");
   });
 
-  it("OpenCode Go GLM replay preserves reasoning_content without clear_thinking=false", () => {
+  it.each(["https://opencode.ai/zen/go/v1", "https://opencode.ai/inference/go/v1"])("OpenCode Go GLM replay preserves reasoning_content without clear_thinking=false at %s", baseUrl => {
     const payload = {
       model: "glm-5.2",
       messages: [
@@ -1037,7 +1037,7 @@ describe("normalizeProviderPayload — 通用层", () => {
       id: "glm-5.2",
       provider: "opencode-go",
       api: "openai-completions",
-      baseUrl: "https://opencode.ai/zen/go/v1",
+      baseUrl,
       reasoning: true,
       compat: { thinkingFormat: "zhipu", reasoningProfile: "zhipu-openai" },
     }, { mode: "chat", reasoningLevel: "high" });

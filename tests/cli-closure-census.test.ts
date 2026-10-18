@@ -338,18 +338,23 @@ describe("compute-cli-closure: full generation (real esbuild + nft, slow)", () =
   }, 180_000);
 
   it("writeCliRuntimeClosure/writeOpenBoundaryBaseline regenerate the exact committed files in place", async () => {
-    const before = fs.readFileSync(CLOSURE_PATH, "utf-8");
-    const beforeBaseline = fs.readFileSync(BASELINE_PATH, "utf-8");
-    // Reuses the closure writeCliRuntimeClosure already computed (rather
-    // than calling computeCliRuntimeClosure a second time) to avoid paying
-    // for a second full esbuild+nft pass in an already-slow test file.
-    const { closure, outPath } = await writeCliRuntimeClosure({ rootDir: REPOSITORY_ROOT });
-    const { outPath: baselineOutPath } = await writeOpenBoundaryBaseline({ rootDir: REPOSITORY_ROOT, closure });
-    expect(outPath).toBe(CLOSURE_PATH);
-    expect(baselineOutPath).toBe(BASELINE_PATH);
-    const after = fs.readFileSync(CLOSURE_PATH, "utf-8");
-    const afterBaseline = fs.readFileSync(BASELINE_PATH, "utf-8");
-    expect(after).toBe(before);
-    expect(afterBaseline).toBe(beforeBaseline);
+    const before = fs.readFileSync(CLOSURE_PATH);
+    const beforeBaseline = fs.readFileSync(BASELINE_PATH);
+    let after: Buffer;
+    let afterBaseline: Buffer;
+    try {
+      const { closure, outPath } = await writeCliRuntimeClosure({ rootDir: REPOSITORY_ROOT });
+      const { outPath: baselineOutPath } = await writeOpenBoundaryBaseline({ rootDir: REPOSITORY_ROOT, closure });
+      expect(outPath).toBe(CLOSURE_PATH);
+      expect(baselineOutPath).toBe(BASELINE_PATH);
+      after = fs.readFileSync(CLOSURE_PATH);
+      afterBaseline = fs.readFileSync(BASELINE_PATH);
+    } finally {
+      // Restore original bytes even if generation or an assertion throws.
+      fs.writeFileSync(CLOSURE_PATH, before);
+      fs.writeFileSync(BASELINE_PATH, beforeBaseline);
+    }
+    expect(after).toEqual(before);
+    expect(afterBaseline).toEqual(beforeBaseline);
   }, 120_000);
 });

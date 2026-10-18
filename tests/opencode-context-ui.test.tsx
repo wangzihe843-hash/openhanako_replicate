@@ -204,7 +204,7 @@ it.each(['contextWindow', 'conflict'] as const)('does not revive an old alias af
   await switchApi(c, f, 'anthropic-messages');
   expect(f.selected().contextWindow).toBe(E);
   expect(JSON.parse(fs.readFileSync(f.manager.modelsJsonPath, 'utf8')).providers[c.provider]
-    .modelOverrides[c.id].contextWindow).toBe(E);
+    .models.find(model => model.id === c.id).contextWindow).toBe(E);
 });
 
 it.each(cases)('$label keeps direct W normalization and dual-field C write precedence', async c => {

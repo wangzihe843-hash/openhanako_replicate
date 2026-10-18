@@ -117,7 +117,8 @@ function isOpenCodeGoEndpoint(model) {
   const provider = lower(model.provider);
   const baseUrl = lower(model.baseUrl || model.base_url);
   return provider === "opencode-go"
-    || baseUrl.includes("opencode.ai/zen/go");
+    || baseUrl.includes("opencode.ai/zen/go")
+    || baseUrl.includes("opencode.ai/inference/go");
 }
 
 function supportsClearThinkingFlag(model) {

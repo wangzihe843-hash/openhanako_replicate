@@ -23,6 +23,7 @@ import { validateProviderModels } from "../shared/provider-model-validation.ts";
 import { buildRuntimeApiKeyRef } from "../shared/runtime-api-key-ref.ts";
 import { inferOllamaModelMetadata } from "../shared/ollama-model-metadata.ts";
 import { normalizeProviderBaseUrlForApi } from "../lib/llm/provider-client.ts";
+import { resolveKimiContextBudget } from "../shared/model-context-defaults.ts";
 import { normalizeThinkingLevelForModel } from "./session-thinking-level.ts";
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
@@ -57,11 +58,13 @@ function getProviderModelDefaultThinkingLevel(modelDefaults, modelId) {
   return typeof level === "string" ? level : undefined;
 }
 
-function resolveModelApi(modelEntry, provider, providerApi) {
+function resolveModelApi(modelEntry, provider, providerApi, baseUrl) {
   const explicitApi = typeof modelEntry === "object" && modelEntry !== null
     ? modelEntry.api
     : null;
-  return explicitApi || lookupKnownProvider(provider, getModelId(modelEntry))?.api || providerApi;
+  const api = explicitApi || lookupKnownProvider(provider, getModelId(modelEntry))?.api
+    || getPiProtocolBaseline(provider, getModelId(modelEntry))?.api || providerApi;
+  return getKimiCodingEffectiveApi(provider, baseUrl, api);
 }
 
 const THINKING_LEVEL_MAP_KEYS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -109,7 +112,17 @@ function getPiProtocolBaseline(provider, modelId) {
 function shouldReusePiBuiltinModel(provider, modelId, api) {
   return PI_BUILTIN_PROVIDER_REUSE.has(provider)
     && api === "anthropic-messages"
-    && !!getPiBuiltinModel(provider, modelId);
+    && getPiBuiltinModel(provider, modelId)?.api === api;
+}
+
+// Preserve the old builtin budget branch independently of the SDK's current
+// catalog API and of whether an explicit model URL is needed for dispatch.
+function getLegacyBuiltinBudgetModel(modelEntry, provider, providerApi) {
+  const id = getModelId(modelEntry);
+  const api = (typeof modelEntry === "object" && modelEntry !== null && modelEntry.api)
+    || lookupKnownProvider(provider, id)?.api || providerApi;
+  return PI_BUILTIN_PROVIDER_REUSE.has(provider) && api === "anthropic-messages"
+    ? getPiBuiltinModel(provider, id) : null;
 }
 
 function isKimiCodingProvider(provider) {
@@ -234,17 +247,23 @@ function buildModelEntry(
   executionHeaders = {},
   providerBaseUrl = baseUrl,
   configuredBaseUrl = baseUrl,
+  legacyBuiltin = null,
 ) {
   const isObj = typeof modelEntry === "object" && modelEntry !== null;
   const id = getModelId(modelEntry);
   const known = lookupKnown(provider, id, configuredBaseUrl);
   const providerKnown = lookupKnownProvider(provider, id);
   const piRequestHeaders = getPiRequestHeaders(provider, id);
-  const piProtocolBaseline = getPiProtocolBaseline(provider, id);
-  const modelApi = (isObj && modelEntry.api)
-    || providerKnown?.api
-    || piProtocolBaseline?.api
-    || api;
+  const piProtocolBaseline = getPiProtocolBaseline(provider, id) || legacyBuiltin;
+  const modelApi = resolveModelApi(modelEntry, provider, api, configuredBaseUrl);
+  const kimiBudget = resolveKimiContextBudget({
+    provider, modelId: id, baseUrl: configuredBaseUrl, providerApi: api,
+    providerKnownApi: providerKnown?.api, model: isObj ? modelEntry : null,
+    builtinContext: legacyBuiltin?.contextWindow,
+  });
+  const configuredContext = isObj
+    ? (legacyBuiltin ? modelEntry.contextWindow ?? modelEntry.context : modelEntry.context ?? modelEntry.contextWindow)
+    : undefined;
   const endpointReasoning = getEndpointDefaultReasoningCapability({
     id,
     provider,
@@ -270,7 +289,7 @@ function buildModelEntry(
     id,
     name: (isObj && modelEntry.name) || piProtocolBaseline?.name || known?.name || humanizeName(id),
     input: buildPiInputModalities({ image: image === true }),
-    contextWindow: (isObj ? (modelEntry.context ?? modelEntry.contextWindow) : undefined)
+    contextWindow: kimiBudget?.context ?? configuredContext
       ?? piProtocolBaseline?.contextWindow
       ?? known?.context
       ?? DEFAULT_CONTEXT_WINDOW,
@@ -282,6 +301,10 @@ function buildModelEntry(
         || endpointReasoning === true
       ),
   };
+  // A historical builtin forced into an explicit entry still owns its
+  // protocol-independent metadata. Copy only these fields, never its API/root.
+  if (legacyBuiltin?.cost) entry.cost = structuredClone(legacyBuiltin.cost);
+  if (legacyBuiltin?.inputLimits) entry.inputLimits = structuredClone(legacyBuiltin.inputLimits);
   if (baseUrl !== providerBaseUrl) entry.baseUrl = baseUrl;
   if (xhigh === true) entry.xhigh = true;
 
@@ -340,12 +363,21 @@ function buildModelEntry(
   // 3. Gemini OpenAI 兼容层（/v1beta/openai）严格校验，不识别 store 字段会 400。
   //    Native google-generative-ai 不走 Chat Completions，不需要这组 OpenAI 字段兼容。
   if (provider !== "openai") {
-    const piBuiltinCompat = normalizePiBuiltinCompat(piProtocolBaseline) || {};
-    const knownCompat = normalizeModelProtocolCompat(known?.compat) || {};
+    // Catalog compat belongs to its wire API. Pi 1.3's Kimi catalog is
+    // OpenAI; legacy Anthropic endpoints retain their reviewed 1.2 controls.
+    const piBuiltinCompat = piProtocolBaseline?.api === modelApi
+      ? (normalizePiBuiltinCompat(piProtocolBaseline) || {})
+      : (legacyBuiltin && provider === KIMI_CODING_PROVIDER && modelApi === "anthropic-messages"
+        ? { allowEmptySignature: true, forceAdaptiveThinking: true } : {});
+    const knownCompat = legacyBuiltin && provider === KIMI_CODING_PROVIDER && modelApi === "anthropic-messages"
+      ? {} : (normalizeModelProtocolCompat(known?.compat) || {});
     const explicitCompat = isObj
       ? (normalizeModelProtocolCompat(modelEntry.compat) || {})
       : {};
     const compat: Record<string, unknown> = {
+      // Native SDK flags survive only for the exact legacy builtin on the
+      // same wire API. Hana/explicit settings retain their existing priority.
+      ...(legacyBuiltin?.api === modelApi ? structuredClone(legacyBuiltin.compat || {}) : {}),
       ...piBuiltinCompat,
       ...knownCompat,
       ...explicitCompat,
@@ -440,17 +472,20 @@ export function syncModels(providers, opts: Record<string, any> = {}) {
 
     for (const modelEntry of chatModels) {
       const id = getModelId(modelEntry);
-      const modelApi = resolveModelApi(modelEntry, provider, effectiveApi);
-      if (shouldReusePiBuiltinModel(provider, id, modelApi)) {
-        const override = buildModelOverride(modelEntry, modelDefaults, modelExecutionHeaders[id]);
-        if (override) modelOverrides[id] = override;
-        continue;
-      }
+      const modelApi = resolveModelApi(modelEntry, provider, effectiveApi, p.base_url);
       const modelBaseUrl = normalizeProviderBaseUrlForApi({
         provider,
         baseUrl: p.base_url,
         api: modelApi,
       });
+      const legacyBuiltin = getLegacyBuiltinBudgetModel(modelEntry, provider, effectiveApi);
+      // Reused built-ins inherit the provider URL. Mixed-protocol models need
+      // an explicit entry when their SDK expects a different URL root.
+      if (modelBaseUrl === effectiveBaseUrl && shouldReusePiBuiltinModel(provider, id, modelApi)) {
+        const override = buildModelOverride(modelEntry, modelDefaults, modelExecutionHeaders[id]);
+        if (override) modelOverrides[id] = override;
+        continue;
+      }
       customModels.push(buildModelEntry(
         modelEntry,
         provider,
@@ -460,6 +495,7 @@ export function syncModels(providers, opts: Record<string, any> = {}) {
         modelExecutionHeaders[id],
         effectiveBaseUrl,
         p.base_url,
+        legacyBuiltin,
       ));
     }
 

@@ -150,8 +150,22 @@ export function buildProviderRequestHeaders({ api, apiKey, headers, allowMissing
 export function normalizeProviderBaseUrlForApi({ provider, baseUrl, api }: { provider?: string; baseUrl?: string; api?: string } = {}) {
   const raw = String(baseUrl || "").trim();
   if (!raw) return raw;
-  if (provider === "opencode") {
-    const root = stripTerminalProviderPath(raw, ["/v1/messages", "/v1"]);
+  if (provider === "opencode" || provider === "opencode-go") {
+    // Only migrate the official legacy roots. Gateways retain their own paths.
+    let base = raw;
+    try {
+      const parsed = new URL(raw);
+      if (parsed.origin === "https://opencode.ai"
+        && /^\/(?:zen|inference)(?:\/go)?(?:\/v1(?:\/(?:messages|chat\/completions|responses))?)?\/?$/.test(parsed.pathname)) {
+        parsed.pathname = parsed.pathname.replace(/^\/zen(?=\/|$)/, "/inference");
+        base = parsed.toString();
+      } else if (provider === "opencode-go") {
+        return normalizeExactEndpointForSdk(raw, api);
+      }
+    } catch {
+      if (provider === "opencode-go") return normalizeExactEndpointForSdk(raw, api);
+    }
+    const root = stripTerminalProviderPath(base, ["/v1/messages", "/v1/chat/completions", "/v1/responses", "/v1"]);
     return api === "anthropic-messages"
       ? root
       : appendProviderApiPath(root, "/v1");

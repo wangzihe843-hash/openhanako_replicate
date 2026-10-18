@@ -4,8 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { getSessionRunInputState, installRunLifecycleAdapter } from "../lib/pi-sdk/run-lifecycle.ts";
 import { SessionCoordinator } from "../core/session-coordinator.ts";
 
-// Exact published 1.2.0 method, extracted without installing the candidate.
-// This is a source-level regression harness, not real 1.2.0 integration evidence.
+// Published 1.2.0 and 1.3.0 methods are byte-identical; guard checks the installed source.
+// This is a source-level regression harness, not installed-SDK integration evidence.
 const source = fs.readFileSync(new URL("./fixtures/pi-1.2.0-start-run.txt", import.meta.url), "utf8");
 const upstream = new Function(`return ({${source}})._startRun;`)();
 const deferred = () => Promise.withResolvers<void>();
@@ -41,11 +41,11 @@ function fixture(adapt = true) {
     get isStreaming() { return session._isAgentRunActive; },
     dispose: vi.fn(),
   };
-  if (adapt) installRunLifecycleAdapter(session, "1.2.0");
+  if (adapt) installRunLifecycleAdapter(session, "1.3.0");
   return { session, release, entered, idle, branch, order };
 }
 
-describe("source-bound Pi 1.2.0 startup cleanup", () => {
+describe("source-bound Pi 1.3.0 startup cleanup", () => {
   it("pins the published method and demonstrates the upstream failure", async () => {
     expect(createHash("sha256").update(source).digest("hex"))
       .toBe("39279b7a97daff07835880131a5fdf7340ef5d7de5960639039f8ed791549afa");

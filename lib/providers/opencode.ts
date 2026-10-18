@@ -25,7 +25,7 @@ export const opencodePlugin = {
   id: "opencode",
   displayName: "OpenCode Zen",
   authType: "api-key",
-  defaultBaseUrl: "https://opencode.ai/zen",
+  defaultBaseUrl: "https://opencode.ai/inference",
   defaultApi: "anthropic-messages",
   models,
 };

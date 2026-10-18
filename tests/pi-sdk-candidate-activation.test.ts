@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import yaml from "js-yaml";
@@ -8,10 +9,31 @@ import { checkCandidate, REVIEW_BRANCH } from "../scripts/pi-1.2.0/activate.mjs"
 
 const root = path.resolve(import.meta.dirname, "..");
 const metadata = JSON.parse(fs.readFileSync(path.join(root, "scripts/pi-1.2.0/candidate.json"), "utf8"));
+// Fixed baseline 2ab0d24468db04d7718bedb6d142a5950f1f7d8c, stored as
+// inert bytes so historical scripts and tests can never execute as fixtures.
+const fixtureRoot = path.join(root, "tests/fixtures/pi-1.2-activation");
 const dirs: string[] = [];
+function copyInput(dir: string, file: string) {
+  const immutable = Object.hasOwn(metadata.files, file) || ['.npmrc', '.gitattributes'].includes(file);
+  fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+  fs.copyFileSync(immutable ? path.join(fixtureRoot, `${file}.fixture`) : path.join(root, file), path.join(dir, file));
+}
 afterEach(() => { for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe("isolated Pi candidate activation", () => {
+  it("locks each historical input to the sealed after hash and the real checkout policy", () => {
+    for (const [file, hashes] of Object.entries(metadata.files) as [string, { after: string }][]) {
+      expect(createHash("sha256").update(fs.readFileSync(path.join(fixtureRoot, `${file}.fixture`))).digest("hex")).toBe(hashes.after);
+    }
+    for (const file of ['.npmrc', '.gitattributes']) {
+      expect(fs.readFileSync(path.join(fixtureRoot, `${file}.fixture`))).toEqual(fs.readFileSync(path.join(root, file)));
+    }
+  });
+
+  it("still rejects the current Pi 1.3 checkout with the historical activator", () => {
+    expect(() => checkCandidate({ rootDir: root, now: Date.parse(metadata.earliestActivation) })).toThrow(/Unreviewed edit in package.json/);
+  });
+
   it("refuses activation before the seven-package cooling deadline", () => {
     expect(() => checkCandidate({ rootDir: root, now: Date.parse(metadata.earliestActivation) - 1 })).toThrow(/until/);
   });
@@ -19,15 +41,19 @@ describe("isolated Pi candidate activation", () => {
   it("applies only the declared candidate files in a disposable fixture without installing dependencies", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-candidate-patch-")); dirs.push(dir);
     for (const file of [...Object.keys(metadata.files), '.npmrc', '.gitattributes', 'scripts/pi-1.2.0/candidate.json', 'scripts/pi-1.2.0/candidate.patch']) {
-      fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
-      fs.copyFileSync(path.join(root, file), path.join(dir, file));
+      copyInput(dir, file);
     }
     // Outside a Git repository, apply ignores .gitattributes and Windows'
     // autocrlf setting rewrites the sealed LF bytes. Match the real checkout.
     const initialized = spawnSync('git', ['init', '--quiet'], { cwd: dir, encoding: 'utf8' });
     expect(initialized.status, initialized.stderr).toBe(0);
     const checked = checkCandidate({ rootDir: dir, now: Date.parse(metadata.earliestActivation) });
-    if (!checked.applied) {
+    if (checked.applied) {
+      const reversed = spawnSync('git', ['-c', 'core.autocrlf=false', 'apply', '--reverse', checked.patchFile], { cwd: dir, encoding: 'utf8' });
+      expect(reversed.status, reversed.stderr).toBe(0);
+      expect(checkCandidate({ rootDir: dir, now: Date.parse(metadata.earliestActivation) }).applied).toBe(false);
+    }
+    {
       const result = spawnSync('git', ['-c', 'core.autocrlf=true', 'apply', checked.patchFile], { cwd: dir, encoding: 'utf8' });
       expect(result.status, result.stderr).toBe(0);
     }
@@ -45,8 +71,7 @@ describe("isolated Pi candidate activation", () => {
   it.each(['patch', 'metadata', 'partial application', 'content', 'line endings'])("rejects %s drift in the sealed handoff", (drift) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-candidate-drift-")); dirs.push(dir);
     for (const file of [...Object.keys(metadata.files), '.npmrc', 'scripts/pi-1.2.0/candidate.json', 'scripts/pi-1.2.0/candidate.patch']) {
-      fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
-      fs.copyFileSync(path.join(root, file), path.join(dir, file));
+      copyInput(dir, file);
     }
     const now = Date.parse(metadata.earliestActivation);
     const checked = checkCandidate({ rootDir: dir, now });

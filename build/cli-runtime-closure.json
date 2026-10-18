@@ -17226,17 +17226,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/@earendil-works/pi-ai/dist/utils/assistant-message-frame.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/@earendil-works/pi-ai/dist/utils/diagnostics.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -84872,11 +84861,16 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "core/model-sync.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "server/routes/providers.ts",
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by shared/known-models.ts (import-statement); server/routes/providers.ts (import-statement)."
+      "reason": "Reached via esbuild source module graph, imported by shared/known-models.ts (import-statement); core/model-sync.ts (import-statement); server/routes/providers.ts (import-statement)."
     },
     {
       "path": "shared/model-ref.ts",
@@ -86309,11 +86303,11 @@
     }
   ],
   "stats": {
-    "totalFiles": 7132,
+    "totalFiles": 7131,
     "byInputType": {
       "source-graph": 736,
       "runtime-asset": 11,
-      "nft-runtime-trace": 6385
+      "nft-runtime-trace": 6384
     }
   }
 }

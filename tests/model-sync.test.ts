@@ -2061,7 +2061,7 @@ describe("syncModels", () => {
 
     const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
     expect(result.providers["opencode-go"]).toMatchObject({
-      baseUrl: "https://opencode.ai/zen/go/v1",
+      baseUrl: "https://opencode.ai/inference/go/v1",
       api: "openai-completions",
       apiKey: "hana-runtime-api-key:opencode-go",
     });
@@ -2095,19 +2095,19 @@ describe("syncModels", () => {
         base_url: "https://opencode.ai/zen/go/v1",
         api: "openai-completions",
         api_key: "sk-test",
-        models: ["deepseek-v4-flash"],
+        models: ["deepseek-v4-pro"],
       },
     }, { modelsJsonPath });
 
     const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
     expect(result.providers["opencode-go"].models[0]).toMatchObject({
-      id: "deepseek-v4-flash",
+      id: "deepseek-v4-pro",
       contextWindow: 1_000_000,
       maxTokens: 384_000,
       reasoning: true,
       thinkingLevelMap: {
         minimal: null,
-        low: "low",
+        low: null,
         medium: null,
         high: "high",
         max: "max",
@@ -2137,7 +2137,7 @@ describe("syncModels", () => {
 
     const result = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8"));
     expect(result.providers.opencode).toMatchObject({
-      baseUrl: "https://opencode.ai/zen",
+      baseUrl: "https://opencode.ai/inference",
       api: "anthropic-messages",
       apiKey: "hana-runtime-api-key:opencode",
     });
@@ -2147,11 +2147,11 @@ describe("syncModels", () => {
       api: "anthropic-messages",
     });
     expect(models.get("claude-sonnet-4-6").baseUrl ?? result.providers.opencode.baseUrl)
-      .toBe("https://opencode.ai/zen");
+      .toBe("https://opencode.ai/inference");
     expect(models.get("gpt-5.4")).toMatchObject({
       id: "gpt-5.4",
       api: "openai-responses",
-      baseUrl: "https://opencode.ai/zen/v1",
+      baseUrl: "https://opencode.ai/inference/v1",
     });
   });
 
@@ -2332,5 +2332,86 @@ describe("syncModels", () => {
       },
     });
     expect(result.providers["gateway-provider"].models[0].id).toBe("gateway-chat");
+  });
+});
+
+describe("wire projection keeps legacy budgets independent of model roots", () => {
+  it.each([
+    ["kimi-coding", "https://api.kimi.com/coding/v1", "anthropic-messages", "anthropic-messages", "kimi-for-coding", "openai-completions", 234567],
+    ["kimi-coding", "https://api.kimi.ai/coding/v1", "openai-completions", "anthropic-messages", "kimi-for-coding", "anthropic-messages", 234567],
+    ["kimi-coding", "https://proxy.example/coding/v1", "anthropic-messages", undefined, "kimi-for-coding", "anthropic-messages", 234567],
+    ["kimi-coding", "https://proxy.example/coding/v1", "anthropic-messages", "openai-completions", "kimi-for-coding", "openai-completions", 123456],
+    ["opencode-go", "https://opencode.ai/zen/go/v1", "anthropic-messages", undefined, "glm-5.3", "openai-completions", 234567],
+    ["opencode-go", "https://gateway.example/v1/tenant/v1", "openai-completions", undefined, "glm-5.3", "openai-completions", 123456],
+    ["opencode-go", "https://gateway.example/custom/v1", "openai-completions", undefined, "minimax-m3", "anthropic-messages", 123456],
+  ])("preserves %s/%s provider %s model %s", async (provider, base, api, modelApi, id, wireApi, budget) => {
+    const syncModels = await loadSync();
+    const models = [{ id, name: "Preserved name", ...(modelApi === undefined ? {} : { api: modelApi }), context: 123456, contextWindow: 234567,
+      image: false, maxOutput: 4096, reasoning: false, defaultThinkingLevel: "off", compat: { outputCapField: "max_tokens" } }];
+    expect(Object.hasOwn(models[0], "api")).toBe(modelApi !== undefined);
+    const providers = { [provider]: { base_url: base, api, api_key: "synthetic-only", models } };
+    const before = structuredClone(providers);
+    syncModels(providers, { modelsJsonPath, chatProjectionPlans: { [provider]: {
+      modelExecutionHeaders: { [id]: { "x-model-header": "model", "x-execution-header": "execution" } },
+    } } });
+    const projected = JSON.parse(fs.readFileSync(modelsJsonPath, "utf8")).providers[provider];
+    const entry = projected.models.find(model => model.id === id);
+    expect(entry.api || projected.api).toBe(wireApi);
+    expect(entry).toMatchObject({ name: "Preserved name", contextWindow: budget, maxTokens: 4096,
+      reasoning: false, defaultThinkingLevel: "off", input: ["text"], compat: { outputCapField: "max_tokens" },
+      headers: { "x-model-header": "model", "x-execution-header": "execution" } });
+    if (provider === "kimi-coding" && wireApi === "anthropic-messages") {
+      expect(entry.compat).not.toHaveProperty("supportsReasoningEffort");
+      expect(entry.compat).not.toHaveProperty("requiresReasoningContentOnAssistantMessages");
+      expect(entry.compat).not.toHaveProperty("maxTokensField");
+      expect(entry.compat).not.toHaveProperty("supportsStrictMode");
+      expect(entry.compat).not.toHaveProperty("supportsMidConvoSystemMessages");
+      expect(entry.compat).not.toHaveProperty("supportsMidConvoToolAdditions");
+    }
+    if (provider === "opencode-go" && api === "anthropic-messages") {
+      expect(entry.compat).toMatchObject({ maxTokensField: "max_tokens", supportsStrictMode: true,
+        supportsStore: false, supportsDeveloperRole: false, outputCapField: "max_tokens" });
+      expect(entry.cost).toEqual({ input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 });
+    }
+    if (provider === "kimi-coding" && modelApi === "anthropic-messages" && wireApi === "openai-completions") {
+      expect(entry.compat).toMatchObject({ maxTokensField: "max_tokens", supportsStrictMode: false,
+        supportsStore: false, supportsDeveloperRole: false, supportsReasoningEffort: true,
+        requiresReasoningContentOnAssistantMessages: true, supportsMidConvoSystemMessages: true,
+        supportsMidConvoToolAdditions: true });
+    }
+    expect(providers).toEqual(before);
+  });
+
+  it("retains cost and image limits only for exact legacy builtins without reviving image input", async () => {
+    const syncModels = await loadSync();
+    const { getPiModel } = await import("../lib/pi-sdk/index.ts");
+    const builtin = getPiModel("kimi-coding", "k3")!;
+    const before = structuredClone(builtin);
+    const providers = { "kimi-coding": {
+      base_url: "https://proxy.example/coding/v1", api: "anthropic-messages", api_key: "synthetic-only",
+      models: [{ id: "k3", image: false }, "kimi-for-coding", "future-kimi-model"],
+    } };
+    const source = structuredClone(providers);
+    syncModels(providers, { modelsJsonPath });
+    const [k3, k28, unknown] = JSON.parse(fs.readFileSync(modelsJsonPath, "utf8")).providers["kimi-coding"].models;
+    const inputLimits = { images: { resize: { maxWidth: 2000, maxHeight: 2000, maxBytes: 4718592, jpegQuality: 80 } } };
+    expect(k3).toMatchObject({ input: ["text"], contextWindow: 1048576, maxTokens: 131072,
+      cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 }, inputLimits });
+    expect(k28).toMatchObject({ cost: { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 }, inputLimits });
+    expect(unknown).not.toHaveProperty("cost");
+    expect(unknown).not.toHaveProperty("inputLimits");
+    expect(providers).toEqual(source);
+    expect(builtin).toEqual(before);
+
+    // Ordinary projections and another provider with the same ID remain outside
+    // the historical builtin preservation path.
+    syncModels({
+      "kimi-coding": { ...providers["kimi-coding"], api: "openai-completions", models: ["k3"] },
+      "custom-kimi": { base_url: "https://proxy.example/coding/v1", api: "anthropic-messages", api_key: "synthetic-only", models: ["k3"] },
+    }, { modelsJsonPath });
+    for (const projected of Object.values(JSON.parse(fs.readFileSync(modelsJsonPath, "utf8")).providers) as { models: Record<string, unknown>[] }[]) {
+      expect(projected.models[0]).not.toHaveProperty("cost");
+      expect(projected.models[0]).not.toHaveProperty("inputLimits");
+    }
   });
 });

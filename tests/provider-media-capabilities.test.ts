@@ -293,7 +293,7 @@ describe("ProviderRegistry media capabilities", () => {
     expect(registry.get("opencode-go")).toMatchObject({
       id: "opencode-go",
       displayName: "OpenCode Go",
-      baseUrl: "https://opencode.ai/zen/go/v1",
+      baseUrl: "https://opencode.ai/inference/go/v1",
       api: "openai-completions",
     });
     expect(registry.getDefaultModels("opencode-go")).toEqual(["glm-5.3", "glm-5.2"]);
@@ -306,7 +306,7 @@ describe("ProviderRegistry media capabilities", () => {
     expect(registry.get("opencode")).toMatchObject({
       id: "opencode",
       displayName: "OpenCode Zen",
-      baseUrl: "https://opencode.ai/zen",
+      baseUrl: "https://opencode.ai/inference",
       api: "anthropic-messages",
     });
     expect(registry.getDefaultModelEntries("opencode")).toEqual(expect.arrayContaining([

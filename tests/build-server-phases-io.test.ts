@@ -2,9 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nodeFileTrace } from "@vercel/nft";
-import { pruneServerNodeModulesViaNft } from "../scripts/build-server-phases.mjs";
+import { pruneServerNodeModulesViaNft, resolveAndInstallExternalServerDeps } from "../scripts/build-server-phases.mjs";
+import { verifyExternalDependencyTree } from "../scripts/build-server-deps.mjs";
 
 vi.mock("@vercel/nft", () => ({ nodeFileTrace: vi.fn() }));
+vi.mock("../scripts/build-server-deps.mjs", async importOriginal => ({
+  ...await importOriginal<typeof import("../scripts/build-server-deps.mjs")>(),
+  verifyExternalDependencyTree: vi.fn(),
+}));
 const fixtureParent = path.resolve(".cache");
 const fixtures: string[] = [];
 
@@ -34,6 +39,39 @@ afterEach(() => {
 });
 
 describe("shared server build I/O safeguards", () => {
+  it.each([false, true])("installs a derived lock with target ci and rejects lock mutation=%s", async mutateLock => {
+    const rootDir = makeFixture();
+    const outDir = path.join(rootDir, "out");
+    const bundleOutDir = path.join(outDir, "bundle");
+    fs.mkdirSync(bundleOutDir, { recursive: true });
+    fs.writeFileSync(path.join(rootDir, "package.json"), JSON.stringify({ type: "module", version: "1.0.0", dependencies: { service: "^1.0.0" } }));
+    fs.writeFileSync(path.join(rootDir, "vite.config.server.js"), 'export default { build: { rollupOptions: { external: ["service"] } } };');
+    fs.writeFileSync(path.join(bundleOutDir, "index.js"), 'import "service";');
+    const locked = { version: "1.0.0", resolved: "https://registry.npmjs.org/service/-/service-1.0.0.tgz", integrity: "sha512-Zml4dHVyZQ==" };
+    fs.writeFileSync(path.join(rootDir, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: { "": {}, "node_modules/service": locked } }));
+    const runWithTargetNode = vi.fn(command => {
+      expect(command).toBe('"/target/npm-cli.js" ci --omit=dev --no-audit --no-fund --ignore-scripts=false');
+      const lock = JSON.parse(fs.readFileSync(path.join(outDir, "package-lock.json"), "utf-8"));
+      expect(lock.packages["node_modules/service"]).toEqual(locked);
+      expect(verifyExternalDependencyTree).toHaveBeenCalledTimes(1);
+      const pkgDir = path.join(outDir, "node_modules", "service");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ version: "1.0.0", main: "index.js" }));
+      fs.writeFileSync(path.join(pkgDir, "index.js"), "module.exports = {};\n");
+      if (mutateLock) fs.appendFileSync(path.join(outDir, "package-lock.json"), " ");
+    });
+    const build = resolveAndInstallExternalServerDeps({
+      rootDir, outDir, bundleOutDir, platform: "darwin", arch: "arm64", isWin: false,
+      cachedNpmCli: "/target/npm-cli.js", runWithTargetNode, pinnedTransitiveDeps: [], log: () => {},
+    });
+    if (mutateLock) await expect(build).rejects.toThrow(/changed the derived manifest or lock/);
+    else {
+      await expect(build).resolves.toHaveProperty("externalPkg.dependencies.service", "1.0.0");
+      expect(verifyExternalDependencyTree).toHaveBeenLastCalledWith(expect.objectContaining({ installed: true }));
+    }
+    expect(runWithTargetNode).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["better-sqlite3", ".better-sqlite3-smoke.mjs"],
     ["@node-rs/jieba", ".jieba-smoke.mjs"],

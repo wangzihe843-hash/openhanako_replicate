@@ -24,8 +24,10 @@ function fixture() {
   return { file, error, backend: new FileAuthStorageBackend(file) };
 }
 
-// Intentionally deferred until 1.2.0 is actually installed after cooldown.
-describe.skipIf(getPiCodingAgentVersion() !== "1.2.0")("installed Pi 1.2.0 acquisition budget", () => {
+// Require the candidate version: a mismatched install must fail, never skip.
+describe("installed Pi 1.3.0 acquisition budget", () => {
+  it("requires the reviewed installed version", () => { expect(getPiCodingAgentVersion()).toBe("1.3.0"); });
+
   it("makes ten total synchronous attempts, never entering the callback", () => {
     const f = fixture(), callback = vi.fn();
     const mkdir = vi.spyOn(lockFs, "mkdirSync").mockImplementation(() => { throw f.error; });

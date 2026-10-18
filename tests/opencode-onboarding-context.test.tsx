@@ -185,7 +185,7 @@ it('saves an explicit reference budget from the actual Custom provider onboardin
   expect(await finish(f, zen, 200000)).toEqual({ id: zen.id, context: 200000 });
   await verifyColdSession(zen, 200000);
   expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-  expect(vi.mocked(globalThis.fetch).mock.calls[0][0]).toBe('https://opencode.ai/zen/v1/models?limit=1000');
+  expect(vi.mocked(globalThis.fetch).mock.calls[0][0]).toBe('https://opencode.ai/inference/v1/models?limit=1000');
 });
 
 const shapes = [
@@ -255,7 +255,7 @@ it.each([200000, 1000000].flatMap(context => ['noop', 'rename', 'edit-reference'
     await finish(f, zen, expected);
     await verifyColdSession(zen, expected);
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(globalThis.fetch).mock.calls[0][0]).toBe('https://opencode.ai/zen/v1/models?limit=1000');
+    expect(vi.mocked(globalThis.fetch).mock.calls[0][0]).toBe('https://opencode.ai/inference/v1/models?limit=1000');
   },
 );
 

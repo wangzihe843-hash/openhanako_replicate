@@ -1,5 +1,6 @@
 /**
- * Pi 1.2.0 _startRun compatibility boundary (upstream tag 06a466935536f8c9).
+ * Pi 1.2.0/1.3.0 _startRun compatibility boundary.
+ * Reviewed 1.3.0 tag: 71023aec1546d6d677a65669c5665c0927ce0dd0; same method digest.
  * Keep the reviewed run loop, but include onStarted/selection in its existing
  * startup failure path. Upstream calls onStarted outside both cleanup regions.
  * No package files are changed; no input or callback is retried.
@@ -41,11 +42,11 @@ export function getSessionRunInputState(value: object | undefined): "pending" | 
 export function installRunLifecycleAdapter(value: object, version: string): boolean {
   const session = value as LifecycleSession;
   if (version === "1.0.3") return false;
-  if (version !== "1.2.0") throw new Error(`Unreviewed Pi run lifecycle: ${version}`);
+  if (version !== "1.2.0" && version !== "1.3.0") throw new Error(`Unreviewed Pi run lifecycle: ${version}`);
   for (const name of ["_startRun", "_prepareRun", "_flushPendingBashMessages", "_flushPendingCustomMessages",
     "_resolveIdleWaitIfIdle", "_recordSelection", "_handlePostAgentRun", "_runBeforeSettleBoundary",
     "_finishCancelledRetry", "_emitAgentSettled"]) {
-    if (typeof session?.[name] !== "function") throw new Error(`Pi 1.2.0 lifecycle missing ${name}`);
+    if (typeof session?.[name] !== "function") throw new Error(`Pi ${version} lifecycle missing ${name}`);
   }
   if (typeof session.sessionManager?.getBranch !== "function" || typeof session.sessionManager?.getEntries !== "function") {
     throw new Error("Pi lifecycle requires session entries and branch");

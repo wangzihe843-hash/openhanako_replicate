@@ -6,8 +6,8 @@ import {
   createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools,
   type AssistantMessage, type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import type { Extension } from "@earendil-works/pi-coding-agent";
-import type { StreamFn } from "@earendil-works/pi-agent-core";
+import type { BeforeAgentStartEvent, Extension } from "@earendil-works/pi-coding-agent";
+import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import {
   AuthStorage, createAgentSession, createModelRegistry, DefaultResourceLoader,
   registerModelProvider, SessionManager, SettingsManager, setSessionSystemPrompt, setSessionActiveRunSystemPrompt, Type,
@@ -108,7 +108,7 @@ function deferred() {
   return { promise, resolve: () => resolve() };
 }
 
-describe("Pi 1.0 runtime integration", () => {
+describe("Pi 1.3 runtime integration", () => {
   it("rejects a preflight callback once without persisting input and accepts the next prompt", async () => {
     const { session, requests } = await fixture();
     const error = new DOMException("cancelled preflight", "AbortError");
@@ -123,8 +123,29 @@ describe("Pi 1.0 runtime integration", () => {
     expect(requests).toHaveLength(1);
   });
 
-  // These exercise the installed candidate only after the cooling period.
-  it.skipIf(getPiCodingAgentVersion() !== "1.2.0").each(["user", "custom"])(
+  it.each(["user", "custom"])("cleans up a real %s preparation rejection and accepts the next input", async kind => {
+    const { session, requests } = await fixture();
+    const error = new Error("synthetic preparation failure");
+    // The installed SDK declares _prepareRun privately; its source signature
+    // accepts the user/custom trigger subset and returns starting messages.
+    type PrepareTrigger = { messageType: "user"; prompt: string; images?: Extract<BeforeAgentStartEvent, { messageType: "user" }>["images"] }
+      | { messageType: "custom"; message: Extract<BeforeAgentStartEvent, { messageType: "custom" }>["message"] };
+    const preparingSession = session as unknown as { _prepareRun(trigger: PrepareTrigger): Promise<AgentMessage[]> };
+    const prepare = vi.spyOn(preparingSession, "_prepareRun").mockRejectedValueOnce(error);
+    const run = kind === "user" ? session.prompt("must not persist")
+      : session.sendCustomMessage({ customType: "fixture", content: "must not persist", display: false }, { triggerTurn: true });
+    await expect(run).rejects.toBe(error);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(session.isStreaming).toBe(false);
+    await session.waitForIdle();
+    expect(JSON.stringify(session.sessionManager.getEntries())).not.toContain("must not persist");
+    expect(requests).toHaveLength(0);
+    await session.prompt("next input");
+    expect(requests).toHaveLength(1);
+  });
+
+  it("requires the reviewed installed candidate", () => { expect(getPiCodingAgentVersion()).toBe("1.3.0"); });
+  it.each(["user", "custom"])(
     "cancels a real suspended %s before_agent_start without late persistence", async kind => {
       const entered = deferred(), release = deferred();
       const seen: string[] = [];
