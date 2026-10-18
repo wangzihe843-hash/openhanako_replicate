@@ -120,7 +120,8 @@ function resolveSearchApiKeysPatch(patch: any, existing: any) {
       continue;
     }
     if (typeof value !== "string" || !value.trim()) {
-      delete out[provider];
+      // Keep the deletion marker until ConfigCoordinator merges this patch.
+      out[provider] = "";
       continue;
     }
     out[provider] = value.trim();
@@ -129,9 +130,12 @@ function resolveSearchApiKeysPatch(patch: any, existing: any) {
 }
 
 function resolveSearchPreferencePatch(patch: any, existing: any) {
+  const provider = patch?.provider ?? existing?.provider;
+  const savedKey = existing?.api_keys?.[provider]
+    || (provider === existing?.provider ? existing?.api_key : "") || "";
   const resolved: Record<string, any> = resolveSecretPatch({
     patch,
-    existing,
+    existing: { ...existing, api_key: savedKey },
     secretKeys: new Set(["api_key"]),
   });
   if (patch?.api_keys !== undefined) {
@@ -175,6 +179,7 @@ export function createPreferencesRoute(engine: any, options: Record<string, any>
           provider: search.provider || "",
           api_key: maskSecretValue(search.api_key || ""),
           api_keys: maskSearchApiKeys(search.api_keys || {}),
+          ...(search.credential_provider ? { credential_provider: search.credential_provider } : {}),
         },
         utility_api: {
           provider: utilityApi.provider || "",

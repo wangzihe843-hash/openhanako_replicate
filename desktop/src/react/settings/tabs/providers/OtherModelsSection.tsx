@@ -12,11 +12,13 @@ import styles from '../../Settings.module.css';
 import {
   AUTO_SEARCH_PROVIDER,
   SEARCH_API_PROVIDER_IDS,
+  AUTO_SEARCH_API_PROVIDER_IDS,
   isFreeSearchApiProvider,
   isBrowserSearchProvider,
   isSearchApiProvider,
   normalizeSearchApiKeys,
 } from '../../../../../../shared/search-providers.ts';
+import { isOfficialDeepSeekBaseUrl } from '../../../../../../shared/deepseek-tools.ts';
 
 type ModelRef = { id: string; provider: string };
 
@@ -25,6 +27,7 @@ const SEARCH_API_PROVIDER_LABELS: Record<string, string> = {
   tavily: 'Tavily',
   brave: 'Brave Search',
   serper: 'Serper (Google)',
+  deepseek: 'DeepSeek Search',
 };
 
 function searchProviderNeedsApiKey(provider: string): boolean {
@@ -108,6 +111,10 @@ export function OtherModelsSection({ providers }: { providers: Record<string, { 
   }, [globalModelsConfig?.search?.provider, savedLegacySearchKey, savedSearchApiKeysJson, searchKeyEdited]);
 
   const searchProvider = globalModelsConfig?.search?.provider || AUTO_SEARCH_PROVIDER;
+  const credentialProvider = globalModelsConfig?.search?.credential_provider || '';
+  const deepSeekProviders = Object.entries(providers)
+    .filter(([, provider]) => isOfficialDeepSeekBaseUrl(provider.base_url))
+    .map(([id]) => id);
   const searchIsAutoProvider = searchProvider === AUTO_SEARCH_PROVIDER;
   const searchIsKeylessProvider = isBrowserSearchProvider(searchProvider) || isFreeSearchApiProvider(searchProvider);
   const explicitSearchApiProvider = searchProviderNeedsApiKey(searchProvider) ? searchProvider : '';
@@ -115,12 +122,14 @@ export function OtherModelsSection({ providers }: { providers: Record<string, { 
   const verifySearch = async (provider: string) => {
     const apiKey = (searchApiKeys[provider] || '').trim();
     if (!provider) { showToast(t('settings.search.noProvider'), 'error'); return; }
-    if (searchProviderNeedsApiKey(provider) && !apiKey) { showToast(t('settings.search.noKey'), 'error'); return; }
+    if (searchProviderNeedsApiKey(provider) && !apiKey && provider !== 'deepseek') { showToast(t('settings.search.noKey'), 'error'); return; }
     try {
       const res = await hanaFetch('/api/search/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, api_key: apiKey, search_provider: searchProvider }),
+        body: JSON.stringify({ provider, api_key: apiKey, search_provider: searchProvider,
+          ...(provider === 'deepseek' ? { credential_provider: credentialProvider } : {}),
+        }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -262,12 +271,18 @@ export function OtherModelsSection({ providers }: { providers: Record<string, { 
               { value: 'tavily', label: 'Tavily' },
               { value: 'brave', label: 'Brave Search' },
               { value: 'serper', label: 'Serper (Google)' },
+              { value: 'deepseek', label: 'DeepSeek Search' },
             ]}
             value={searchProvider}
             onChange={(val) => {
               setSearchKeyEdited({});
               const keyless = val === AUTO_SEARCH_PROVIDER || isBrowserSearchProvider(val) || isFreeSearchApiProvider(val);
-              autoSaveGlobalModels({ search: keyless ? { provider: val, api_key: '' } : { provider: val } });
+              autoSaveGlobalModels({ search: {
+                provider: val,
+                ...(keyless ? { api_key: '' } : {}),
+                ...(val === 'deepseek' && !credentialProvider && deepSeekProviders.length === 1
+                  ? { credential_provider: deepSeekProviders[0] } : {}),
+              } });
             }}
             placeholder={t('settings.api.searchProviderField')}
           />
@@ -279,14 +294,31 @@ export function OtherModelsSection({ providers }: { providers: Record<string, { 
           ) : searchIsAutoProvider ? (
             <>
               <div className={styles['search-api-key-list']}>
-                {SEARCH_API_PROVIDER_IDS.map((provider) => renderSearchApiKeyRow(provider))}
+                {AUTO_SEARCH_API_PROVIDER_IDS.map((provider) => renderSearchApiKeyRow(provider))}
               </div>
               <span className={styles['settings-form-hint']}>{t('settings.api.searchApiKeysAutoHint')}</span>
             </>
           ) : (
             <>
+              {searchProvider === 'deepseek' && (
+                <>
+                  <label className={styles['settings-form-label']}>{t('settings.api.deepseekCredentialProvider')}</label>
+                  <SelectWidget
+                    options={[
+                      { value: '', label: t('settings.api.deepseekCredentialChoose') },
+                      ...deepSeekProviders.map(id => ({ value: id, label: id })),
+                      ...(credentialProvider && !deepSeekProviders.includes(credentialProvider)
+                        ? [{ value: credentialProvider, label: `${credentialProvider} (${t('settings.api.deepseekReferenceUnavailable')})` }] : []),
+                    ]}
+                    value={credentialProvider}
+                    onChange={value => autoSaveGlobalModels({ search: { credential_provider: value } })}
+                    placeholder={t('settings.api.deepseekCredentialChoose')}
+                  />
+                  <span className={styles['settings-form-hint']}>{t('settings.api.deepseekCostHint')}</span>
+                </>
+              )}
               {explicitSearchApiProvider && renderSearchApiKeyRow(explicitSearchApiProvider)}
-              <span className={styles['settings-form-hint']}>{t('settings.api.searchApiKeyHint')}</span>
+              <span className={styles['settings-form-hint']}>{t(searchProvider === 'deepseek' ? 'settings.api.deepseekKeyHint' : 'settings.api.searchApiKeyHint')}</span>
             </>
           )}
         </div>

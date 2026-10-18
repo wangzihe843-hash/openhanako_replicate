@@ -4,11 +4,12 @@
 
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useSettingsStore } from '../../../store';
 
 const mocks = vi.hoisted(() => ({
   autoSaveGlobalModels: vi.fn(),
+  hanaFetch: vi.fn(),
 }));
 
 vi.mock('../../../helpers', () => ({
@@ -19,7 +20,7 @@ vi.mock('../../../helpers', () => ({
 }));
 
 vi.mock('../../../api', () => ({
-  hanaFetch: vi.fn(),
+  hanaFetch: mocks.hanaFetch,
 }));
 
 vi.mock('../../../actions', () => ({
@@ -31,10 +32,10 @@ vi.mock('../../../widgets/ModelWidget', () => ({
 }));
 
 vi.mock('@/ui', () => ({
-  SelectWidget: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => (
-    <button type="button" data-testid="select-widget" onClick={() => onChange(value)}>
-      select-widget
-    </button>
+  SelectWidget: ({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: { value: string; label: string }[] }) => (
+    <select data-testid="select-widget" value={value} onChange={event => onChange(event.currentTarget.value)}>
+      {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </select>
   ),
   Toggle: ({ on, onChange, label }: { on: boolean; onChange: (next: boolean) => void; label?: string }) => (
     <button
@@ -109,6 +110,41 @@ describe('OtherModelsSection', () => {
     expect(input.value).toBe('test-edited-draft');
     act(() => setSavedKey('test-saved-c'));
     expect(input.value).toBe('test-edited-draft');
+  });
+
+  it('pins the sole official account only when DeepSeek is selected and excludes its key from Auto', () => {
+    render(<OtherModelsSection providers={{ official: { base_url: 'https://api.deepseek.com/v1' }, proxy: { base_url: 'https://proxy.test' } }} />);
+    expect(screen.getAllByTestId('key-input')).toHaveLength(4);
+    fireEvent.change(screen.getByTestId('select-widget'), { target: { value: 'deepseek' } });
+    expect(mocks.autoSaveGlobalModels).toHaveBeenCalledWith({ search: { provider: 'deepseek', credential_provider: 'official' } });
+  });
+
+  it('requires an explicit choice when there are multiple official accounts', () => {
+    render(<OtherModelsSection providers={{ first: { base_url: 'https://api.deepseek.com' }, second: { base_url: 'https://api.deepseek.com/v1' } }} />);
+    fireEvent.change(screen.getByTestId('select-widget'), { target: { value: 'deepseek' } });
+    expect(mocks.autoSaveGlobalModels).toHaveBeenCalledWith({ search: { provider: 'deepseek' } });
+    act(() => useSettingsStore.setState({ globalModelsConfig: { search: { provider: 'deepseek', api_keys: {} } } }));
+    fireEvent.change(screen.getAllByTestId('select-widget')[1], { target: { value: 'second' } });
+    expect(mocks.autoSaveGlobalModels).toHaveBeenLastCalledWith({ search: { credential_provider: 'second' } });
+  });
+
+  it('verifies a selected reference without asking for the model key and shows the charge notice', async () => {
+    useSettingsStore.setState({ globalModelsConfig: { search: { provider: 'deepseek', credential_provider: 'official', api_keys: {} } } });
+    mocks.hanaFetch.mockResolvedValue(Response.json({ ok: true }));
+    render(<OtherModelsSection providers={{ official: { base_url: 'https://api.deepseek.com' } }} />);
+    expect((screen.getByTestId('key-input') as HTMLInputElement).value).toBe('');
+    expect(screen.getByText('settings.api.deepseekCostHint')).toBeTruthy();
+    fireEvent.click(screen.getByText('settings.search.verify'));
+    await waitFor(() => expect(mocks.hanaFetch).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(mocks.hanaFetch.mock.calls[0][1].body)).toEqual({ provider: 'deepseek', search_provider: 'deepseek', api_key: '', credential_provider: 'official' });
+  });
+
+  it('retains and marks a stale reference instead of silently replacing it with another account', () => {
+    useSettingsStore.setState({ globalModelsConfig: { search: { provider: 'deepseek', credential_provider: 'removed', api_keys: {} } } });
+    render(<OtherModelsSection providers={{ replacement: { base_url: 'https://api.deepseek.com' } }} />);
+    expect(screen.getByText('removed (settings.api.deepseekReferenceUnavailable)')).toBeTruthy();
+    fireEvent.change(screen.getAllByTestId('select-widget')[0], { target: { value: 'deepseek' } });
+    expect(mocks.autoSaveGlobalModels).toHaveBeenCalledWith({ search: { provider: 'deepseek' } });
   });
 
 });

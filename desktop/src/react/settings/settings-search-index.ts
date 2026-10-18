@@ -157,7 +157,7 @@ const BUILT_IN_SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     tabId: 'providers',
     titleKey: 'settings.api.searchProvider',
     pathKeys: ['settings.tabs.providers'],
-    aliases: ['search', 'search engine', 'tavily', 'brave', 'serper', 'anysearch', '搜索', '搜索引擎', '联网搜索', '搜索服务'],
+    aliases: ['search', 'search engine', 'tavily', 'brave', 'serper', 'anysearch', 'deepseek search', '搜索', '搜索引擎', '联网搜索', '搜索服务'],
   },
   {
     id: 'media-image-generation',

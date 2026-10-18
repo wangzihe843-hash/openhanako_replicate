@@ -8,6 +8,7 @@
 import { createModuleLogger } from "../lib/debug-log.ts";
 import { findModel, parseModelRef, requireModelRef } from "../shared/model-ref.ts";
 import { t } from "../lib/i18n.ts";
+import { normalizeCredentialProvider } from "../shared/deepseek-tools.ts";
 import { resolveDefaultWorkspacePath } from "../shared/default-workspace.ts";
 import {
   AUTO_SEARCH_PROVIDER,
@@ -268,10 +269,13 @@ export class ConfigCoordinator {
       provider,
       api_key: apiKey,
       api_keys: apiKeys,
+      ...(prefs.search_credential_provider ? { credential_provider: normalizeCredentialProvider(prefs.search_credential_provider) } : {}),
     };
   }
 
   setSearchConfig(partial) {
+    const credentialProvider = partial.credential_provider === undefined
+      ? undefined : normalizeCredentialProvider(partial.credential_provider);
     const prefs = this._prefs();
     const previousProvider = normalizeSearchProvider(prefs.search_provider);
     let apiKeys = normalizeSearchApiKeys(prefs.search_api_keys);
@@ -303,6 +307,10 @@ export class ConfigCoordinator {
       prefs.search_api_key = apiKeys[nextProvider];
     } else {
       delete prefs.search_api_key;
+    }
+    if (credentialProvider !== undefined) {
+      if (credentialProvider) prefs.search_credential_provider = credentialProvider;
+      else delete prefs.search_credential_provider;
     }
     this._savePrefs(prefs);
     log.log(`setSearchConfig: provider=${nextProvider || "(cleared)"}`);

@@ -55,14 +55,17 @@ experience:
 
 # 网页搜索（可选）
 # auto 会优先使用已配置的付费 API provider，再回退到 AnySearch 免费搜索和浏览器搜索。
-# API provider：anysearch / tavily / brave / serper。免费 API provider：anysearch_free。浏览器 provider：bing_browser / google_browser / duckduckgo_browser。
+# API provider：anysearch / tavily / brave / serper / deepseek。免费 API provider：anysearch_free。浏览器 provider：bing_browser / google_browser / duckduckgo_browser。
+# deepseek 仅显式选择时使用（不加入 auto），按次计费，验证也会发起一次搜索。
 search:
   provider: "auto"                       # 也可显式填 anysearch / anysearch_free / bing_browser / google_browser / duckduckgo_browser / tavily / brave / serper
+  # credential_provider: "deepseek"      # Settings 中可引用官方模型供应商 ID；只存引用，不复制 key。独立 api_keys.deepseek 优先。
   api_keys:                              # auto 下可同时配置多个；没有 key 时先走 AnySearch 免费搜索，再走浏览器搜索
     anysearch: ""
     tavily: ""
     brave: ""
     serper: ""
+    deepseek: ""
   api_key: ""                            # 旧单 provider 兼容字段；新配置优先用 api_keys
 
 # Skills（per-agent 技能开关）

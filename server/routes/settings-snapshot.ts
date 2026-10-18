@@ -101,6 +101,7 @@ function buildGlobalModels(engine: any) {
       provider: search.provider || "",
       api_key: maskSecretValue(search.api_key || ""),
       api_keys: maskSearchApiKeys(search.api_keys || {}),
+      ...(search.credential_provider ? { credential_provider: search.credential_provider } : {}),
     },
     utility_api: {
       provider: utilityApi.provider || "",

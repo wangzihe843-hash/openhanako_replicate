@@ -6,7 +6,13 @@ export const SEARCH_API_PROVIDER_IDS = Object.freeze([
   "tavily",
   "brave",
   "serper",
+  "deepseek",
 ] as const);
+
+// DeepSeek is opt-in only, including when a model credential or Search key exists.
+export const AUTO_SEARCH_API_PROVIDER_IDS = Object.freeze(
+  SEARCH_API_PROVIDER_IDS.filter(id => id !== "deepseek"),
+);
 
 export const SEARCH_FREE_API_PROVIDER_IDS = Object.freeze([
   "anysearch_free",

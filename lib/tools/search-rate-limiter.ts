@@ -2,6 +2,16 @@
 const DEFAULT_RETRY_JITTER_MS = 1_000;
 
 const DEFAULT_POLICIES = Object.freeze({
+  // Account quota is shared across API keys. A process-wide lane is conservative
+  // across all accounts; key/provider IDs cannot identify the server-side account.
+  deepseek: Object.freeze({
+    minIntervalMs: 200,
+    jitterMs: 0,
+    maxConcurrent: 5,
+    rateLimitBaseDelayMs: 2_000,
+    retryJitterMs: DEFAULT_RETRY_JITTER_MS,
+    maxCooldownMs: 5 * 60_000,
+  }),
   anysearch: Object.freeze({
     minIntervalMs: 0,
     jitterMs: 0,
@@ -138,11 +148,27 @@ export class SearchRateLimiter {
     this._states.clear();
   }
 
-  async run(provider: any, sourceType: any, operation: any) {
+  async run<T>(provider: string, sourceType: string, operation: () => T | Promise<T>, signal?: AbortSignal): Promise<T> {
     const key = String(provider || sourceType || "search");
     const state = this._stateFor(key);
-    return new Promise((resolve, reject) => {
-      state.queue.push({ sourceType, operation, resolve, reject });
+    return new Promise<T>((resolve, reject) => {
+      const cancelled = () => new DOMException("Search cancelled", "AbortError");
+      if (signal?.aborted) { reject(cancelled()); return; }
+      const task = { sourceType, operation, resolve, reject, cleanup: () => {} };
+      const onAbort = () => {
+        const index = state.queue.indexOf(task);
+        if (index < 0) return;
+        state.queue.splice(index, 1);
+        task.cleanup();
+        reject(cancelled());
+        if (state.queue.length === 0 && state.pumpTimer) {
+          clearTimeout(state.pumpTimer);
+          state.pumpTimer = null;
+        }
+      };
+      task.cleanup = () => signal?.removeEventListener("abort", onAbort);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      state.queue.push(task);
       this._pump(key);
     });
   }
@@ -217,6 +243,7 @@ export class SearchRateLimiter {
   }
 
   _startTask(provider: any, task: any) {
+    task.cleanup();
     const state = this._stateFor(provider);
     const sourceType = task.sourceType;
     state.activeCount += 1;

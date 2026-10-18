@@ -43,6 +43,8 @@ import {
   resolveProviderHeadersPatch,
 } from "../../shared/provider-auth.ts";
 import { isSearchApiProvider, normalizeSearchApiKeys } from "../../shared/search-providers.ts";
+import { resolveDeepSeekToolApiKey } from "../../core/deepseek-tool-credentials.ts";
+import { DeepSeekToolError, normalizeCredentialProvider } from "../../shared/deepseek-tools.ts";
 import { resolveAgentStrict, AgentNotFoundError } from "../utils/resolve-agent.ts";
 import { hasInlineProviderCredentialPatch } from "./provider-credentials.ts";
 import {
@@ -681,17 +683,39 @@ export function createConfigRoute(engine: any) {
 
   route.post("/search/verify", async (c) => {
     const body = await safeJson(c);
+    const settingsDenied = denyWithoutScope(c, "settings.write");
+    if (settingsDenied) return settingsDenied;
+    const secretDenied = denySecretMutationWithoutScope(c, collectSecretPatchPaths(body, new Set(["api_key"])));
+    if (secretDenied) return secretDenied;
     const { provider } = body;
     const selectedProvider = body.search_provider || provider;
     if (!provider) {
       return c.json({ ok: false, error: "provider is required" }, 400);
     }
     const existingSearch = engine.getSearchConfig?.() || {};
+    const savedKey = existingSearch.api_keys?.[provider]
+      || (existingSearch.provider === provider ? existingSearch.api_key : "") || "";
     const api_key = isMaskedSecretValue(body.api_key)
-      ? existingSearch.api_keys?.[provider] || existingSearch.api_key || ""
-      : body.api_key || "";
+      ? savedKey
+      : typeof body.api_key === "string" ? body.api_key.trim() : "";
     try {
       const { searchProviderRequiresApiKey, verifySearchKey } = await import("../../lib/tools/web-search.ts");
+      if (provider === "deepseek") {
+        const credentialProvider = normalizeCredentialProvider(body.credential_provider ?? existingSearch.credential_provider);
+        await verifySearchKey(provider, api_key, {
+          signal: c.req.raw.signal,
+          ...(!api_key ? { resolveApiKey: () => resolveDeepSeekToolApiKey(credentialProvider, engine) } : {}),
+        });
+        if (c.req.raw.signal.aborted) throw new DeepSeekToolError("cancelled", "DeepSeek Search cancelled.");
+        // Persist the reference and optional override only. Never copy a resolved
+        // model credential into search preferences or per-agent config.yaml.
+        engine.setSearchConfig({
+          provider: selectedProvider,
+          credential_provider: credentialProvider,
+          api_keys: { deepseek: api_key },
+        });
+        return c.json({ ok: true });
+      }
       if (searchProviderRequiresApiKey(provider) && !api_key) {
         return c.json({ ok: false, error: "api_key is required" }, 400);
       }
@@ -705,6 +729,13 @@ export function createConfigRoute(engine: any) {
       debugLog()?.log("api", `POST /api/search/verify provider=${provider} selected=${selectedProvider} (ok)`);
       return c.json({ ok: true });
     } catch (err) {
+      if (provider === "deepseek") {
+        const known = err instanceof DeepSeekToolError;
+        const code = c.req.raw.signal.aborted ? "cancelled" : known ? err.code : err?.status === 429 ? "rate_limited" : "verification_failed";
+        const message = c.req.raw.signal.aborted ? "Search cancelled." : known ? err.message : err?.status === 429 ? "DeepSeek Search HTTP 429." : "DeepSeek Search verification failed.";
+        debugLog()?.warn("api", `POST /api/search/verify deepseek failed: ${code}`);
+        return c.json({ ok: false, error: message, code });
+      }
       debugLog()?.warn("api", `POST /api/search/verify provider=${provider} failed: ${err.message}`);
       return c.json({ ok: false, error: err.message });
     }

@@ -14,7 +14,7 @@ import { BrowserManager } from "../browser/browser-manager.ts";
 import {
   AUTO_SEARCH_PROVIDER,
   BROWSER_SEARCH_PROVIDER_IDS,
-  SEARCH_API_PROVIDER_IDS,
+  AUTO_SEARCH_API_PROVIDER_IDS,
   isSearchApiProvider,
   mergeSearchApiKeys,
   normalizeSearchApiKeys,
@@ -24,7 +24,11 @@ import {
   SearchRateLimitError,
   createSearchRateLimiter,
   retryAfterMsFromHeaders,
+  type SearchRateLimiter,
 } from "./search-rate-limiter.ts";
+import { DeepSeekToolError, deepSeekAbortError, normalizeCredentialProvider } from "../../shared/deepseek-tools.ts";
+import { searchDeepSeek, validateDeepSeekQuery } from "./deepseek-search.ts";
+import { isMaskedSecretValue } from "../../shared/secret-custody.ts";
 
 export const DEFAULT_SEARCH_PROVIDER = AUTO_SEARCH_PROVIDER;
 const ANYSEARCH_PROVIDER = "anysearch";
@@ -83,6 +87,9 @@ function isAnySearchProvider(provider) {
 }
 
 function maxResultsForProvider(provider, maxResults) {
+  if (provider === "deepseek") {
+    return clampResultsToRange(maxResults, { defaultValue: DEFAULT_API_RESULTS, max: 50 });
+  }
   if (isAnySearchProvider(provider)) {
     return clampResultsToRange(maxResults, {
       defaultValue: ANYSEARCH_DEFAULT_RESULTS,
@@ -289,6 +296,7 @@ async function searchAnySearchFree(query, maxResults) {
 }
 
 const PROVIDERS = {
+  deepseek: { search: searchDeepSeek, requiresApiKey: true, sourceType: "api" },
   [ANYSEARCH_PROVIDER]: { search: searchAnySearch, requiresApiKey: true, sourceType: "api" },
   [ANYSEARCH_FREE_PROVIDER]: { search: searchAnySearchFree, requiresApiKey: false, sourceType: "api" },
   tavily: { search: searchTavily, requiresApiKey: true, sourceType: "api" },
@@ -340,10 +348,14 @@ async function searchBrowserProvider(query, maxResults, _apiKey, provider) {
  * @param {string} apiKey - 要验证的 key
  * @returns {Promise<boolean>}
  */
-export async function verifySearchKey(provider, apiKey) {
+export async function verifySearchKey(provider, apiKey, options: { signal?: AbortSignal; resolveApiKey?: () => string } = {}) {
   if (normalizeSearchProvider(provider) === AUTO_SEARCH_PROVIDER) return true;
   const meta = providerMeta(provider);
   if (!meta.requiresApiKey) return true;
+  if (provider === "deepseek") {
+    await runProviderSearch({ provider, query: "test", maxResults: 1, apiKey, rateLimiter: defaultSearchRateLimiter, ...options });
+    return true;
+  }
   // 用一个简短查询测试 key 是否可用
   await defaultSearchRateLimiter.run(provider, meta.sourceType, () => (
     meta.search("test", 1, apiKey, provider)
@@ -381,16 +393,29 @@ function normalizeProviderPayload(query, provider, meta, payload) {
   };
 }
 
-async function runProviderSearch({ provider, query, maxResults, apiKey, rateLimiter }) {
+async function runProviderSearch({ provider, query, maxResults, apiKey, rateLimiter, signal, resolveApiKey }: {
+  provider: string; query: string; maxResults: number; apiKey: string; rateLimiter: Pick<SearchRateLimiter, "run">;
+  signal?: AbortSignal; resolveApiKey?: () => string;
+}) {
   const meta = providerMeta(provider);
-  if (meta.requiresApiKey && !apiKey) {
+  if (meta.requiresApiKey && !apiKey && !resolveApiKey) {
+    if (provider === "deepseek") throw new DeepSeekToolError("key_missing", "DeepSeek Search requires an API key or an official model provider reference.");
     throw new Error(t("error.searchProviderMissingKey", { provider }));
   }
+  if (provider === "deepseek") validateDeepSeekQuery(query);
   const providerMaxResults = maxResultsForProvider(provider, maxResults);
   const limiter = rateLimiter || defaultSearchRateLimiter;
-  const payload = await limiter.run(provider, meta.sourceType, () => (
-    meta.search(query, providerMaxResults, apiKey, provider)
-  ));
+  const operation = () => {
+    if (signal?.aborted) throw deepSeekAbortError();
+    const key = resolveApiKey ? resolveApiKey() : apiKey;
+    if (provider === "deepseek" && (!key?.trim() || isMaskedSecretValue(key))) {
+      throw new DeepSeekToolError("key_missing", "DeepSeek Search requires a valid API key.");
+    }
+    return meta.search(query, providerMaxResults, key, provider, signal);
+  };
+  const payload = await (signal
+    ? limiter.run(provider, meta.sourceType, operation, signal)
+    : limiter.run(provider, meta.sourceType, operation));
   return normalizeProviderPayload(query, provider, meta, payload);
 }
 
@@ -409,11 +434,26 @@ function buildSearchRuntimeConfig({ resolverFn, readConfig }) {
   if (isSearchApiProvider(resolvedProvider) && typeof resolved.api_key === "string" && resolved.api_key.trim()) {
     apiKeys[resolvedProvider] = resolved.api_key.trim();
   }
+  if (resolvedProvider === "deepseek") {
+    // A global reference/cleared override must not revive an old agent key.
+    const explicitKey = normalizeSearchApiKeys(resolved.api_keys).deepseek
+      || (typeof resolved.api_key === "string" ? resolved.api_key.trim() : "");
+    if (explicitKey) apiKeys.deepseek = explicitKey;
+    else delete apiKeys.deepseek;
+  }
 
   const apiKey = isSearchApiProvider(provider)
     ? apiKeys[provider] || ""
     : "";
-  return { provider, apiKey, apiKeys };
+  const credentialProvider = provider === "deepseek"
+    ? normalizeCredentialProvider(resolvedProvider ? resolved.credential_provider : configSearch.credential_provider) : "";
+  const resolveApiKey = provider === "deepseek" && !apiKey ? () => {
+    if (typeof resolved.resolveDeepSeekApiKey !== "function") {
+      throw new DeepSeekToolError("credentials_unavailable", "DeepSeek credential reuse requires the server credential resolver. Select a provider in Settings or configure a separate Search API key.");
+    }
+    return resolved.resolveDeepSeekApiKey(credentialProvider);
+  } : undefined;
+  return { provider, apiKey, apiKeys, resolveApiKey };
 }
 
 function classifySearchError(err) {
@@ -472,13 +512,14 @@ function attachAutoDiagnostics(payload, attempts, extra = {}) {
   };
 }
 
-async function doAutoSearch(query, maxResults, { apiKeys, rateLimiter }) {
+async function doAutoSearch(query, maxResults, { apiKeys, rateLimiter, signal }) {
   const attempts = [];
-  const configuredApiProviders = SEARCH_API_PROVIDER_IDS.filter((provider) => !!apiKeys[provider]);
+  const configuredApiProviders = AUTO_SEARCH_API_PROVIDER_IDS.filter((provider) => !!apiKeys[provider]);
   const chain = [...configuredApiProviders, ANYSEARCH_FREE_PROVIDER, ...BROWSER_SEARCH_PROVIDER_IDS];
   let firstLowQualityPayload = null;
 
   for (const provider of chain) {
+    if (signal?.aborted) throw deepSeekAbortError();
     const meta = providerMeta(provider);
     const attempt: Record<string, any> = { provider, source_type: meta.sourceType };
     try {
@@ -488,6 +529,7 @@ async function doAutoSearch(query, maxResults, { apiKeys, rateLimiter }) {
         maxResults,
         apiKey: apiKeys[provider] || "",
         rateLimiter,
+        signal,
       });
       attempt.result_count = payload.results.length;
       if (payload.results.length === 0) {
@@ -505,6 +547,7 @@ async function doAutoSearch(query, maxResults, { apiKeys, rateLimiter }) {
       attempts.push(attempt);
       return attachAutoDiagnostics(payload, attempts);
     } catch (err) {
+      if (signal?.aborted) throw deepSeekAbortError();
       attempt.status = "error";
       attempt.error_type = classifySearchError(err);
       attempt.message = err instanceof Error ? err.message : String(err);
@@ -532,7 +575,9 @@ async function doAutoSearch(query, maxResults, { apiKeys, rateLimiter }) {
   };
 }
 
-async function doSearch(query, maxResults, { configPath, searchConfigResolver, rateLimiter }: Record<string, any> = {}) {
+async function doSearch(query, maxResults, { configPath, searchConfigResolver, rateLimiter, signal }: {
+  configPath?: string; searchConfigResolver?: () => object; rateLimiter?: Pick<SearchRateLimiter, "run">; signal?: AbortSignal;
+} = {}) {
   // Use explicitly passed args; fall back to module globals for backward compat
   const resolverFn = searchConfigResolver ?? _searchConfigResolver;
   const cfgPath = configPath ?? _configPath;
@@ -544,14 +589,14 @@ async function doSearch(query, maxResults, { configPath, searchConfigResolver, r
   };
 
   // 优先从 resolver 获取搜索配置，否则从 agent config 读取。
-  const { provider, apiKey, apiKeys } = buildSearchRuntimeConfig({ resolverFn, readConfig });
+  const { provider, apiKey, apiKeys, resolveApiKey } = buildSearchRuntimeConfig({ resolverFn, readConfig });
 
   if (!provider) {
     throw new Error(t("error.searchProviderNotConfigured"));
   }
 
   if (provider === AUTO_SEARCH_PROVIDER) {
-    return doAutoSearch(query, maxResults, { apiKeys, rateLimiter });
+    return doAutoSearch(query, maxResults, { apiKeys, rateLimiter, signal });
   }
 
   let meta;
@@ -560,13 +605,15 @@ async function doSearch(query, maxResults, { configPath, searchConfigResolver, r
   } catch {
     throw new Error(t("error.searchProviderUnknown", { provider }));
   }
-  if (meta.requiresApiKey && !apiKey) {
+  if (meta.requiresApiKey && !apiKey && !resolveApiKey) {
     throw new Error(t("error.searchProviderMissingKey", { provider }));
   }
 
   try {
-    return await runProviderSearch({ provider, query, maxResults, apiKey, rateLimiter });
+    return await runProviderSearch({ provider, query, maxResults, apiKey, rateLimiter, signal, resolveApiKey });
   } catch (err) {
+    if (signal?.aborted) throw deepSeekAbortError();
+    if (provider === "deepseek") throw err;
     throw new Error(t("error.searchFailed", { msg: err.message }));
   }
 }
@@ -595,7 +642,7 @@ export function createWebSearchTool({ configPath, searchConfigResolver, rateLimi
         Type.Number({ description: "Number of results to return, default 10", default: DEFAULT_DISPLAY_RESULTS })
       ),
     }),
-    execute: async (_toolCallId, params) => {
+    execute: async (_toolCallId, params, signal?: AbortSignal) => {
       const query = params.query?.trim();
       if (!query) {
         return {
@@ -605,7 +652,9 @@ export function createWebSearchTool({ configPath, searchConfigResolver, rateLimi
       }
 
       try {
-        const searchPayload = await doSearch(query, params.maxResults, closureOpts);
+        if (signal?.aborted) throw deepSeekAbortError();
+        const searchPayload = await doSearch(query, params.maxResults, { ...closureOpts, signal });
+        if (signal?.aborted) throw deepSeekAbortError();
         const { results, provider } = searchPayload;
 
         if (results.length === 0) {
@@ -628,7 +677,8 @@ export function createWebSearchTool({ configPath, searchConfigResolver, rateLimi
       } catch (err) {
         return {
           content: [{ type: "text", text: t("error.searchError", { msg: err.message }) }],
-          details: {},
+          details: err instanceof DeepSeekToolError ? { error_type: err.code }
+            : err instanceof SearchRateLimitError ? { error_type: "rate_limited", retry_after_ms: err.retryAfterMs } : {},
         };
       }
     },

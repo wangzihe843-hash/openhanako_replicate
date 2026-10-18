@@ -725,6 +725,23 @@
       "reason": "Reached via esbuild source module graph, imported by cli/data.ts (import-statement)."
     },
     {
+      "path": "core/deepseek-tool-credentials.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "core/engine.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/config.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by core/engine.ts (import-statement); server/routes/config.ts (import-statement)."
+    },
+    {
       "path": "core/desktop-session-submit.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -10290,6 +10307,18 @@
       "reason": "Reached via esbuild source module graph, imported by core/agent.ts (import-statement)."
     },
     {
+      "path": "lib/tools/deepseek-search.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "lib/tools/web-search.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by lib/tools/web-search.ts (import-statement)."
+    },
+    {
       "path": "lib/tools/dm-tool.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -10450,11 +10479,16 @@
       "provenance": [
         {
           "root": "server-bootstrap",
+          "from": "lib/tools/deepseek-search.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/tools/web-search.ts",
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/tools/web-search.ts (import-statement)."
+      "reason": "Reached via esbuild source module graph, imported by lib/tools/deepseek-search.ts (import-statement); lib/tools/web-search.ts (import-statement)."
     },
     {
       "path": "lib/tools/session-folders-tool.ts",
@@ -84041,6 +84075,38 @@
       "reason": "Reached via esbuild source module graph, imported by core/data-epoch-coordinator.ts (import-statement); core/data-epoch-checkpoint-provider.ts (import-statement); core/data-epoch-restore.ts (import-statement); +4 more importer(s)."
     },
     {
+      "path": "shared/deepseek-tools.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "lib/tools/deepseek-search.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/tools/web-search.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "core/deepseek-tool-credentials.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "core/config-coordinator.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/config.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by lib/tools/deepseek-search.ts (import-statement); lib/tools/web-search.ts (import-statement); core/deepseek-tool-credentials.ts (import-statement); +2 more importer(s)."
+    },
+    {
       "path": "shared/default-workspace-constants.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -85589,6 +85655,16 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/tools/web-search.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "core/deepseek-tool-credentials.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "server/routes/provider-credentials.ts",
           "kind": "import-statement"
         },
@@ -85623,7 +85699,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by shared/provider-auth.ts (import-statement); core/security-audit-log.ts (import-statement); server/routes/provider-credentials.ts (import-statement); +6 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by shared/provider-auth.ts (import-statement); core/security-audit-log.ts (import-statement); lib/tools/web-search.ts (import-statement); +8 more importer(s)."
     },
     {
       "path": "shared/secret-fs.ts",
@@ -86303,9 +86379,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 7131,
+    "totalFiles": 7134,
     "byInputType": {
-      "source-graph": 736,
+      "source-graph": 739,
       "runtime-asset": 11,
       "nft-runtime-trace": 6384
     }

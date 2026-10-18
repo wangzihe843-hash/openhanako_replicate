@@ -107,6 +107,7 @@ import { BridgeSessionManager } from "./bridge-session-manager.ts";
 import { createSlashSystem } from "./slash-commands/index.ts";
 import { AgentManager } from "./agent-manager.ts";
 import { sanitizeMessagesForModel, stripHistoricalInlineMediaForReplay } from "./message-sanitizer.ts";
+import { resolveDeepSeekToolApiKey } from "./deepseek-tool-credentials.ts";
 import { normalizeProviderContextMessages, normalizeProviderPayload } from "./provider-compat.ts";
 import { VisionBridge } from "./vision-bridge.ts";
 import { SessionCoordinator, type SessionCompactionScope } from "./session-coordinator.ts";
@@ -489,7 +490,10 @@ export class HanaEngine implements SessionCancellation {
       getModels: () => this._models,
       getHub: () => this._hubCallbacks,
       getSkills: () => this._skills,
-      getSearchConfig: () => this.getSearchConfig(),
+      getSearchConfig: () => ({
+        ...this.getSearchConfig(),
+        resolveDeepSeekApiKey: (providerId) => resolveDeepSeekToolApiKey(providerId, this),
+      }),
       resolveUtilityConfig: (options) => this.resolveUtilityConfig(options),
       resolveUtilityConfigFresh: (options) => this.resolveUtilityConfigFresh(options),
       getSharedModels: () => this._configCoord.getSharedModels(),
