@@ -178,11 +178,13 @@ function compareStableLoreEntries(a, b) {
   return normalizeString(a.id).localeCompare(normalizeString(b.id));
 }
 
-function truncateText(text, maxChars) {
+function truncateText(text, maxChars, preserveSurrogatePairs = false) {
   const normalized = sanitizeMarkdownText(text);
   if (normalized.length <= maxChars) return normalized;
   if (maxChars <= OMISSION_MARKER.length) return OMISSION_MARKER.slice(0, maxChars);
-  return `${normalized.slice(0, maxChars - OMISSION_MARKER.length)}${OMISSION_MARKER}`;
+  let end = maxChars - OMISSION_MARKER.length;
+  if (preserveSurrogatePairs && /[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(normalized.slice(end - 1, end + 1))) end -= 1;
+  return `${normalized.slice(0, end)}${OMISSION_MARKER}`;
 }
 
 function getLoreSummaryContent(entry) {
@@ -215,13 +217,13 @@ function managedPromptHeader() {
 }
 
 /** Keep the closing marker intact even when only part of the body fits. */
-function fitManagedBlock(block, maxChars) {
+function fitManagedBlock(block, maxChars, preserveSurrogatePairs = false) {
   if (block.length <= maxChars) return block;
   const match = /^(<!-- xingye-lore:[^\n]*-->\n### [^\n]*\n)([\s\S]*)(\n<!-- \/xingye-lore:[^\n]*-->)$/.exec(block);
   if (!match) return '';
   const bodyBudget = maxChars - match[1].length - match[3].length;
   if (bodyBudget <= OMISSION_MARKER.length) return '';
-  return `${match[1]}${truncateText(match[2], bodyBudget)}${match[3]}`;
+  return `${match[1]}${truncateText(match[2], bodyBudget, preserveSurrogatePairs)}${match[3]}`;
 }
 
 function extractManagedPromptContent(content, { entries, agentId, maxChars, memoryScope }) {
@@ -263,7 +265,8 @@ function extractManagedPromptContent(content, { entries, agentId, maxChars, memo
   // later blocks have had a chance, preserving the managed closing marker.
   for (const { block, rank } of deferred) {
     const separator = selected.length ? 2 : 0;
-    const fitted = fitManagedBlock(block, remaining - separator);
+    // Read-time repair only: sync keeps its existing mirror bytes by default.
+    const fitted = fitManagedBlock(block, remaining - separator, true);
     if (!fitted) continue;
     selected.push({ block: fitted, rank });
     break;

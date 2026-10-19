@@ -20,6 +20,76 @@ const baseEntry = (overrides = {}) => ({
   updatedAt: overrides.updatedAt ?? '2026-01-02T00:00:00.000Z',
 });
 
+describe('Lore UTF-16 prompt boundaries', () => {
+  it.each([
+    'ASCII text '.repeat(12).trim(),
+    '中文与BMP文字。'.repeat(12),
+    '🌙'.repeat(60),
+    'English中文🌙🧪'.repeat(12),
+    `${'x'.repeat(23)}🌙${'y'.repeat(80)}`,
+  ])('keeps code point pairs at every budget without changing the selection threshold: %s', (content) => {
+    const entry = baseEntry({ content });
+    const before = JSON.stringify(entry);
+    for (let maxChars = 0; maxChars <= content.length + 3; maxChars += 1) {
+      const decisions = [];
+      const result = selectXingyeLoreEntries({
+        entries: [entry], agentId: 'agent-a', mode: 'always', maxChars,
+        formatBlock: (_entry, _matched, text) => text,
+        onDecision: (row) => decisions.push(row),
+      });
+      let expected = content;
+      if (content.length > maxChars) {
+        expected = '';
+        if (maxChars >= 27) {
+          for (const point of content) {
+            if (expected.length + point.length > maxChars - 3) break;
+            expected += point;
+          }
+          expected += '...';
+        }
+      }
+      expect(result.selected.map((item) => item.content).join('')).toBe(expected);
+      expect(result.selected.map((item) => item.block).join('')).toBe(expected);
+      expect(expected.isWellFormed()).toBe(true);
+      expect(result.usedChars).toBe(expected.length);
+      expect(result.usedChars).toBeLessThanOrEqual(maxChars);
+      expect(decisions[0]).toMatchObject({
+        reason: !expected ? 'budget' : content.length <= maxChars ? 'selected' : 'truncated',
+        blockChars: expected.length,
+      });
+    }
+    expect(JSON.stringify(entry)).toBe(before);
+  });
+
+  it('preserves complete-first ordering and selects only one shortened entry at the 24-unit threshold', () => {
+    const entries = [
+      baseEntry({ id: 'long', priority: 100, content: `${'x'.repeat(23)}🌙${'z'.repeat(80)}` }),
+      baseEntry({ id: 'deferred', priority: 90, content: '🌙'.repeat(80) }),
+      baseEntry({ id: 'short-a', priority: 20, content: '甲' }),
+      baseEntry({ id: 'short-b', priority: 10, content: '乙' }),
+    ];
+    const rows = [];
+    const result = selectXingyeLoreEntries({
+      entries, agentId: 'agent-a', mode: 'always', maxChars: 33,
+      formatBlock: (_entry, _matched, text) => text,
+      onDecision: (row) => rows.push(row),
+    });
+    expect(result.selected.map((item) => item.entry.id)).toEqual(['long', 'short-a', 'short-b']);
+    expect(result.selected.map((item) => item.content)).toEqual([`${'x'.repeat(23)}...`, '甲', '乙']);
+    expect(rows.map((row) => row.reason)).toEqual(['truncated', 'budget', 'selected', 'selected']);
+    expect(result.usedChars).toBe(32);
+  });
+
+  it('leaves pre-existing malformed content untouched when no pair is split', () => {
+    const content = `already\ud800invalid${'x'.repeat(80)}`;
+    const result = selectXingyeLoreEntries({
+      entries: [baseEntry({ content })], agentId: 'agent-a', mode: 'always', maxChars: 40,
+      formatBlock: (_entry, _matched, text) => text,
+    });
+    expect(result.selected[0].content).toBe(`${content.slice(0, 37)}...`);
+  });
+});
+
 describe('buildXingyeStableLoreMemoryContext', () => {
   it('includes enabled canonical always background lore in the stable block', () => {
     const result = buildXingyeStableLoreMemoryContext({

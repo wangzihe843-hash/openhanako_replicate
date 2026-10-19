@@ -85,7 +85,9 @@ export function selectXingyeContextSections({
     const remainingTotal = totalBudget - composedLength(selected) - (selected.length ? 2 : 0);
     const allowed = Math.min(remainingSource, remainingTotal);
     if (allowed < OMISSION.length + 24) continue;
-    const cut = candidate.text.slice(0, allowed - OMISSION.length).trimEnd();
+    let cut = candidate.text.slice(0, allowed - OMISSION.length).trimEnd();
+    // Back off at most one UTF-16 unit after the existing budget/trim decision.
+    if (/[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(candidate.text.slice(cut.length - 1, cut.length + 1))) cut = cut.slice(0, -1);
     if (!cut) continue;
     const shortened = { ...candidate, text: `${cut}${OMISSION}`, truncated: true };
     if (composedLength([...selected, shortened]) > totalBudget) continue;

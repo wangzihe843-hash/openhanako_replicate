@@ -204,6 +204,12 @@ export function selectXingyeLoreEntries({
       } else high = mid - 1;
     }
     if (shortened && low > 24) {
+      // Keep the original UTF-16 fit and selection threshold; only repair the cut.
+      const end = shortenedContent.length - OMISSION_MARKER.length;
+      if (/[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(content.slice(end - 1, end + 1))) {
+        shortenedContent = `${content.slice(0, end - 1)}${OMISSION_MARKER}`;
+        shortened = formatter(candidate.entry, candidate.matchedKeywords, shortenedContent);
+      }
       fitted.push({ ...candidate, block: shortened, content: shortenedContent, truncated: true });
       break;
     }

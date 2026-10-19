@@ -680,7 +680,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:7f3c170b78b24f8cf85d39659657ad3b901b5a56c0a2f114df22963fd8b1a0b1",
+  "payloadFingerprint": "sha256:35408dc4578b6e847c61644cf6fd57503971deefed7d6fb3d6ebde3aeaaec133",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3396,8 +3396,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Add optional independently selected web_fetch preferences and runtime credential reuse from DeepSeek Search or an official model provider. Missing Fetch settings preserve direct fetching; model keys are never copied, and existing stores, epoch, search defaults and tool permissions remain compatible.\n\nLore metadata review relative to d730328f9bf6d17033d797c11e279ab1a64197ef: preserve existing own optional memoryScope JSON values and exact string sourceStatus/origin through ordinary desktop whole-map saves, without allowing edits to add, clear or promote guards. Missing/null legacy semantics and existing scope/source validation are retained; explicit invalid scopes stay unreadable and unknown top-level fields remain discarded. This is forward compatible at DATA_EPOCH 1, with no new path, required schema, SQLite/Pi change or migration. Older desktop code drops guards in memory and on subsequent writes; same-home downgrade is not certified and missing historical metadata is not reconstructed. See docs/audits/2026-10-19-lore-metadata-persistence-compatibility.md.",
-    "payloadFingerprint": "sha256:7f3c170b78b24f8cf85d39659657ad3b901b5a56c0a2f114df22963fd8b1a0b1"
+    "compatibilityReason": "Add optional independently selected web_fetch preferences and runtime credential reuse from DeepSeek Search or an official model provider. Missing Fetch settings preserve direct fetching; model keys are never copied, and existing stores, epoch, search defaults and tool permissions remain compatible.\n\nLore metadata review relative to d730328f9bf6d17033d797c11e279ab1a64197ef: preserve existing own optional memoryScope JSON values and exact string sourceStatus/origin through ordinary desktop whole-map saves, without allowing edits to add, clear or promote guards. Missing/null legacy semantics and existing scope/source validation are retained; explicit invalid scopes stay unreadable and unknown top-level fields remain discarded. This is forward compatible at DATA_EPOCH 1, with no new path, required schema, SQLite/Pi change or migration. Older desktop code drops guards in memory and on subsequent writes; same-home downgrade is not certified and missing historical metadata is not reconstructed. See docs/audits/2026-10-19-lore-metadata-persistence-compatibility.md.\n\nPrompt-only Unicode boundary review: the stable Lore readers opt into backing off a split UTF-16 surrogate pair after selection, while truncateText and fitManagedBlock retain their previous defaults for mirror synchronization. Canonical and managed file bytes, write paths, schema, scope/source eligibility, UTF-16 budgets, selection order and DATA_EPOCH 1 remain unchanged. Regression coverage verifies read-only behavior and unchanged sync bytes at the same emoji boundary. Existing malformed input and previously stored replacement characters are not repaired.",
+    "payloadFingerprint": "sha256:35408dc4578b6e847c61644cf6fd57503971deefed7d6fb3d6ebde3aeaaec133"
   },
   "schemas": [
     {
@@ -4365,7 +4365,7 @@
         },
         {
           "module": "shared/xingye-lore-memory-file.js",
-          "sourceHash": "sha256:dd1bb4f99f19817ef6c6b4a96477f5ed993806ed6dcaadcf08d3480d3910a69f"
+          "sourceHash": "sha256:e5a22b2b54bb32e12feeedf105e64e3d92f2288ef7ab2552d7d5f610542a9586"
         },
         {
           "module": "shared/xingye-profile-file.js",

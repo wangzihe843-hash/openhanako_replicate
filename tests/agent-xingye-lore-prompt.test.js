@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { adaptSillyTavernV2Card } from "../lib/character-cards/sillytavern-v2.ts";
 import { Agent } from "../core/agent.js";
+import { buildXingyeRuntimeLoreContext } from "../shared/xingye-lore-context.js";
+import { readXingyeStableLoreMemoryForPromptSync } from "../shared/xingye-lore-memory-file.js";
 
 function makeAgent() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-agent-xingye-lore-"));
@@ -114,6 +116,37 @@ function runtimeLore(overrides = {}) {
 
 describe("agent Xingye lore prompt", () => {
   const roots = [];
+
+  it.each([['always', 0], ['always', 1], ['keyword', 0], ['keyword', 1]])(
+    'keeps paired emoji at the default %s budget with prefix offset %s and pinned pressure', (insertionMode, offset) => {
+      const { agent, root, agentDir } = makeAgent();
+      roots.push(root);
+      const maxChars = insertionMode === 'always' ? 2400 : 2000;
+      const selectedText = (entry) => {
+        writeAgentLoreEntriesJson(agentDir, { [entry.id]: entry });
+        return insertionMode === 'always'
+          ? readXingyeStableLoreMemoryForPromptSync({ hanakoHome: root, agentId: 'hana', maxChars })
+          : buildXingyeRuntimeLoreContext({ entries: [entry], agentId: 'hana', userText: 'observatory', maxChars }).text;
+      };
+      const ascii = selectedText(runtimeLore({ insertionMode, content: 'A'.repeat(5000) }));
+      const capacity = /A{20,}/.exec(ascii)[0].length;
+      const content = 'x'.repeat(offset) + '🌙'.repeat(2500);
+      const selected = selectedText(runtimeLore({ insertionMode, content }));
+      const expectedBody = 'x'.repeat(offset) + '🌙'.repeat(Math.floor((capacity - offset) / 2)) + '...';
+      expect(selected).toContain(expectedBody);
+      expect(selected.isWellFormed()).toBe(true);
+      expect(selected.length).toBeLessThanOrEqual(maxChars);
+      const canonicalPath = path.join(agentDir, 'xingye', 'lore', 'entries.json');
+      const before = fs.readFileSync(canonicalPath);
+      for (const pinned of ['Pinned memory stays.', 'P'.repeat(20_000)]) {
+        fs.writeFileSync(path.join(agentDir, 'pinned.md'), pinned);
+        const prompt = agent.buildSystemPrompt({ userText: 'observatory' });
+        expect(prompt).toContain(selected);
+        expect(prompt.isWellFormed()).toBe(true);
+      }
+      expect(fs.readFileSync(canonicalPath)).toEqual(before);
+    },
+  );
 
   it("activates imported card content once at the existing RP boundary, leaving metadata inert", () => {
     const { agent, root, agentDir } = makeAgent();

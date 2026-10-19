@@ -38,6 +38,64 @@ afterEach(async () => {
 });
 
 describe('xingye lore memory file helper', () => {
+  it.each(['canonical', 'legacy'])('keeps prompt cuts well-formed with unchanged files via %s readers', async (source) => {
+    const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
+    const entriesPath = path.join(tempRoot, 'agents', 'agent-a', 'xingye', 'lore', 'entries.json');
+    const mirrorPath = getXingyeLoreMemoryFilePath(options);
+    for (const body of ['ASCII words '.repeat(6).trim(), '中文BMP文字。'.repeat(8), '🌙'.repeat(35), 'English中文🌙🧪'.repeat(6)]) {
+      const lore = baseLore({ summary: body, content: 'SUMMARY_MUST_TAKE_PRECEDENCE' });
+      await upsertXingyeLoreMemoryBlock({ ...options, lore, content: body });
+      if (source === 'canonical') {
+        await fs.mkdir(path.dirname(entriesPath), { recursive: true });
+        await fs.writeFile(entriesPath, JSON.stringify({ [lore.id]: lore }));
+      }
+      const beforeMirror = await fs.readFile(mirrorPath);
+      const beforeCanonical = source === 'canonical' ? await fs.readFile(entriesPath) : null;
+      const full = readXingyeStableLoreMemoryForPromptSync(options);
+      const [, prefix, , suffix] = /^(.*\n### Childhood\n)([\s\S]*)(\n<!-- \/xingye-lore:id=lore-1 -->)$/s.exec(full);
+      const overhead = prefix.length + suffix.length;
+      expect(full).toBe(prefix + body + suffix);
+      for (let maxChars = 0; maxChars <= full.length + 1; maxChars += 1) {
+        let expected = full;
+        if (maxChars < full.length) {
+          expected = '';
+          if (maxChars > overhead + 3) {
+            let shortened = '';
+            for (const point of body) {
+              if (shortened.length + point.length > maxChars - overhead - 3) break;
+              shortened += point;
+            }
+            expected = `${prefix}${shortened}...${suffix}`;
+          }
+        }
+        const sync = readXingyeStableLoreMemoryForPromptSync({ ...options, maxChars });
+        expect(sync).toBe(expected);
+        expect(await readXingyeStableLoreMemoryForPrompt({ ...options, maxChars })).toBe(sync);
+        expect(sync.isWellFormed()).toBe(true);
+        expect(sync.length).toBeLessThanOrEqual(maxChars);
+        if (sync) expect(sync.endsWith(suffix)).toBe(true);
+      }
+      expect(await fs.readFile(mirrorPath)).toEqual(beforeMirror);
+      if (beforeCanonical) expect(await fs.readFile(entriesPath)).toEqual(beforeCanonical);
+    }
+  });
+
+  it('preserves existing sync bytes even where the read-only prompt cut backs off an emoji', async () => {
+    const options = { hanakoHome: tempRoot, agentId: 'agent-a' };
+    const body = '🌙'.repeat(100);
+    const lore = baseLore({ content: body });
+    const original = await upsertXingyeLoreMemoryBlock({ ...options, lore, content: body });
+    const fullPrompt = readXingyeStableLoreMemoryForPromptSync(options);
+    const maxChars = fullPrompt.length - body.length + 4;
+    expect(readXingyeStableLoreMemoryForPromptSync({ ...options, maxChars }))
+      .toBe(fullPrompt.replace(body, '...'));
+    await syncXingyeStableLoreMemoryFile({ ...options, entries: [lore], maxChars });
+    // Sync retains its existing UTF-16 cut; UTF-8 encoding replaces the orphan.
+    // Making future mirror writes Unicode-safe is a separate persistence change.
+    expect(await fs.readFile(getXingyeLoreMemoryFilePath(options)))
+      .toEqual(Buffer.from(original.replace(body, '\uFFFD...'), 'utf8'));
+  });
+
   it('builds an agent-isolated memory file path', () => {
     expect(getXingyeLoreMemoryFilePath({ hanakoHome: tempRoot, agentId: 'agent-a' })).toBe(
       path.join(tempRoot, 'agents', 'agent-a', 'xingye', 'lore-memory.md'),
