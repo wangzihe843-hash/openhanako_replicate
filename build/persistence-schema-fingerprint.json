@@ -680,7 +680,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:f2805020e3077375d32e8d080b4267193b12e9481e00ba280a8e86ea7bc65ee7",
+  "payloadFingerprint": "sha256:7f3c170b78b24f8cf85d39659657ad3b901b5a56c0a2f114df22963fd8b1a0b1",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3383,7 +3383,7 @@
       ],
       "restorePolicy": "Restore captured bytes to the same agent or reserved scope after reader compatibility is established; preserve authored records, record IDs, deletion tombstones, consumed-event markers, and shared inventory together.",
       "schemaContract": {
-        "compatibility": "This is an additive namespace relative to upstream DATA_EPOCH 1. The new heartbeat/topic-candidates.json version-1 file is optional and does not replace the existing heartbeat or event logs. Existing local files keep their layouts and permissive readers: absent optional fields use defaults, authoritative lore entries (including empty/deletion values) supersede legacy mirrors, and missing gift inventory is distinct from read/parse failure. Registration does not migrate or rewrite data.",
+        "compatibility": "This is an additive namespace relative to upstream DATA_EPOCH 1. The new heartbeat/topic-candidates.json version-1 file is optional and does not replace the existing heartbeat or event logs. Existing local files keep their layouts and permissive readers: absent optional fields use defaults, authoritative lore entries (including empty/deletion values) supersede legacy mirrors, and missing gift inventory is distinct from read/parse failure. Registration does not migrate or rewrite data. Ordinary Lore whole-map saves preserve own optional memoryScope JSON values (including null and invalid values) and exact string sourceStatus/origin; unknown top-level fields remain discarded. Missing metadata retains existing legacy semantics, invalid explicit scopes remain unreadable, and ordinary edits cannot set, clear or promote guards. This is forward compatible at DATA_EPOCH 1; older desktop normalizers drop these guards on read and subsequent save, so same-home downgrade is not certified. See docs/audits/2026-10-19-lore-metadata-persistence-compatibility.md.",
         "kind": "protocol",
         "source": "server/routes/xingye-storage.js"
       },
@@ -3396,8 +3396,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Add optional independently selected web_fetch preferences and runtime credential reuse from DeepSeek Search or an official model provider. Missing Fetch settings preserve direct fetching; model keys are never copied, and existing stores, epoch, search defaults and tool permissions remain compatible.",
-    "payloadFingerprint": "sha256:f2805020e3077375d32e8d080b4267193b12e9481e00ba280a8e86ea7bc65ee7"
+    "compatibilityReason": "Add optional independently selected web_fetch preferences and runtime credential reuse from DeepSeek Search or an official model provider. Missing Fetch settings preserve direct fetching; model keys are never copied, and existing stores, epoch, search defaults and tool permissions remain compatible.\n\nLore metadata review relative to d730328f9bf6d17033d797c11e279ab1a64197ef: preserve existing own optional memoryScope JSON values and exact string sourceStatus/origin through ordinary desktop whole-map saves, without allowing edits to add, clear or promote guards. Missing/null legacy semantics and existing scope/source validation are retained; explicit invalid scopes stay unreadable and unknown top-level fields remain discarded. This is forward compatible at DATA_EPOCH 1, with no new path, required schema, SQLite/Pi change or migration. Older desktop code drops guards in memory and on subsequent writes; same-home downgrade is not certified and missing historical metadata is not reconstructed. See docs/audits/2026-10-19-lore-metadata-persistence-compatibility.md.",
+    "payloadFingerprint": "sha256:7f3c170b78b24f8cf85d39659657ad3b901b5a56c0a2f114df22963fd8b1a0b1"
   },
   "schemas": [
     {
@@ -4241,7 +4241,7 @@
         },
         {
           "module": "desktop/src/react/xingye/xingye-lore-store.ts",
-          "sourceHash": "sha256:539d356d9ab3ea6924b875aa072a2484f96924fc47fcee4bbaf6ef4953d819cd"
+          "sourceHash": "sha256:ff93dac2d26ce96f3abc2566e6ceab4ecf6e3baca063d4375708ecb31cab042d"
         },
         {
           "module": "desktop/src/react/xingye/xingye-persistence.ts",

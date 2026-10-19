@@ -18,7 +18,7 @@
 
 为兼容旧消费者，三类 scope/来源排除仍使用 `reason: 'scope'`，可选 `reasonDetail` 分别为 `scope-unreadable`、`stale-source`、`unconfirmed-derived-source`。组合原因按此顺序只报告首先命中的条件，再考虑未启用、可见性、模式和关键词等既有条件。`scope-unreadable` 包括无效作用范围；旧记录没有详情时显示“作用范围或来源状态不符合要求”。详情只影响回调和显示，不改变选中条目、文本或持久化。
 
-输入边界仍需区分：桌面 lore-store 目前不保留 `memoryScope`、`sourceStatus`、`origin`，桌面 helper 也不传运行时 scope；主聊天的文件读取层则会先做 scope/来源过滤。这里没有新增这些字段的透传，也不是完整的主聊天请求诊断。
+输入边界仍需区分：桌面 lore-store 保留已存的 `memoryScope`、字符串 `sourceStatus` 与 `origin`，普通编辑不会重设这些字段；无效的显式 scope 交由共享校验拒绝，不回退为 legacy。桌面 helper 仍不传运行时 scope，预览使用默认 legacy 上下文，不能代表某个剧情会话；主聊天的文件读取层会先做 scope/来源过滤。这里不是完整的主聊天请求诊断。
 
 ## 真实 SQLite 检索小样（历史发现与当前行为）
 

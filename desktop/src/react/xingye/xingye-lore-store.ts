@@ -27,6 +27,10 @@ export type XingyeLoreEntry = {
   visibility: XingyeLoreVisibility;
   createdAt: string;
   updatedAt: string;
+  /** Untrusted stored guards; shared selectors/readers validate scope and source eligibility. */
+  memoryScope?: unknown;
+  sourceStatus?: string;
+  origin?: string;
 };
 
 export type XingyeLoreEntryMap = Record<string, XingyeLoreEntry>;
@@ -171,6 +175,11 @@ function normalizeLoreEntry(value: unknown, fallbackId?: string): XingyeLoreEntr
     visibility: normalizeVisibility(value.visibility),
     createdAt,
     updatedAt,
+    // Preserve explicit invalid scopes so they stay unreadable, never legacy.
+    // Do not synthesize missing metadata or copy unrelated extension fields.
+    ...(Object.hasOwn(value, 'memoryScope') && value.memoryScope !== undefined ? { memoryScope: value.memoryScope } : {}),
+    ...(Object.hasOwn(value, 'sourceStatus') && typeof value.sourceStatus === 'string' ? { sourceStatus: value.sourceStatus } : {}),
+    ...(Object.hasOwn(value, 'origin') && typeof value.origin === 'string' ? { origin: value.origin } : {}),
   };
 }
 
@@ -275,6 +284,11 @@ export function updateLoreEntry(
   const next = normalizeLoreEntry({
     ...previous,
     ...patch,
+    // Ordinary editing cannot change stored scope or certify a derived source,
+    // including callers that bypass XingyeLoreEntryInput's TypeScript shape.
+    memoryScope: previous.memoryScope,
+    sourceStatus: previous.sourceStatus,
+    origin: previous.origin,
     id: previous.id,
     agentId: previous.agentId,
     createdAt: previous.createdAt,
