@@ -148,10 +148,13 @@ export function selectXingyeLoreEntries({
   const candidates = [];
   for (const entry of toEntryArray(entries)) {
     if (!entry || typeof entry !== 'object' || normalizeString(entry.agentId) !== aid || !aid) continue;
+    // Preserve the legacy reason and guard order; details only refine diagnostics.
+    let reasonDetail;
+    if (!canReadMemoryScope(entry.memoryScope, context, aid)) reasonDetail = 'scope-unreadable';
+    else if (entry.sourceStatus === 'stale') reasonDetail = 'stale-source';
+    else if (entry.origin === 'derived' && entry.memoryScope?.realm !== 'legacy' && entry.sourceStatus !== 'active') reasonDetail = 'unconfirmed-derived-source';
     let reason = '';
-    if (!canReadMemoryScope(entry.memoryScope, context, aid)
-      || entry.sourceStatus === 'stale'
-      || (entry.origin === 'derived' && entry.memoryScope?.realm !== 'legacy' && entry.sourceStatus !== 'active')) reason = 'scope';
+    if (reasonDetail) reason = 'scope';
     else if (entry.enabled !== true) reason = 'disabled';
     else if (entry.visibility !== 'canonical') reason = 'visibility';
     else if (!allowedModes.has(entry.insertionMode)) reason = 'mode';
@@ -161,7 +164,7 @@ export function selectXingyeLoreEntries({
     const matchedKeywords = entry.insertionMode === 'keyword' && !reason
       ? getMatchedKeywords(entry, query, explicitKeywords) : [];
     if (!reason && entry.insertionMode === 'keyword' && !matchedKeywords.length) reason = 'no-match';
-    if (reason) { reportDecision(onDecision, entry, reason); continue; }
+    if (reason) { reportDecision(onDecision, entry, reason, [], 0, reasonDetail); continue; }
     candidates.push({ entry, matchedKeywords });
   }
   const boosts = new Set(toStringArray(priorityBoostCategories).map(normalizeString));
@@ -226,11 +229,12 @@ export function selectXingyeLoreEntries({
 }
 
 // Diagnostics are opt-in and never include another agent's entries or lore content.
-function reportDecision(onDecision, entry, reason, matchedKeywords = [], blockChars = 0) {
+function reportDecision(onDecision, entry, reason, matchedKeywords = [], blockChars = 0, reasonDetail) {
   if (typeof onDecision !== 'function') return;
   onDecision({
     id: normalizeString(entry.id), title: getEntryTitle(entry), reason,
     matchedKeywords, blockChars,
+    ...(reasonDetail ? { reasonDetail } : {}),
   });
 }
 

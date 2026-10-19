@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildXingyeRuntimeLoreContext,
   buildXingyeStableLoreMemoryContext,
+  selectXingyeLoreEntries,
 } from './xingye-lore-context.js';
 
 const baseEntry = (overrides = {}) => ({
@@ -373,6 +374,97 @@ describe('buildXingyeRuntimeLoreContext', () => {
 
 
 describe('opt-in selection diagnostics', () => {
+  it.each([
+    [false, false, false, undefined],
+    [false, false, true, 'unconfirmed-derived-source'],
+    [false, true, false, 'stale-source'],
+    [false, true, true, 'stale-source'],
+    [true, false, false, 'scope-unreadable'],
+    [true, false, true, 'scope-unreadable'],
+    [true, true, false, 'scope-unreadable'],
+    [true, true, true, 'scope-unreadable'],
+  ])('keeps guard precedence for unreadable=%s, stale=%s, derived=%s', (unreadable, stale, derived, detail) => {
+    const rows = [];
+    const entry = {
+      ...baseEntry({ enabled: false, visibility: 'private', insertionMode: 'manual', content: '' }),
+      ...(unreadable ? { memoryScope: { realm: 'reality' } } : {}),
+      ...(stale ? { sourceStatus: 'stale' } : {}),
+      ...(derived ? { origin: 'derived' } : {}),
+    };
+    const result = selectXingyeLoreEntries({ entries: [entry], agentId: 'agent-a', onDecision: (row) => rows.push(row) });
+    expect(result).toEqual({ selected: [], candidateCount: 0, usedChars: 0, truncated: false });
+    expect(rows).toEqual([{
+      id: entry.id, title: entry.title, reason: detail ? 'scope' : 'disabled', matchedKeywords: [], blockChars: 0,
+      ...(detail ? { reasonDetail: detail } : {}),
+    }]);
+  });
+
+  it.each([
+    [{ memoryScope: { realm: 'invalid' } }, undefined, 'scope-unreadable'],
+    [{ memoryScope: { realm: 'story', worldId: 'w', branchId: 'b' } }, { realm: 'story', worldId: 'w', branchId: 'other' }, 'scope-unreadable'],
+    [{ memoryScope: { realm: 'legacy', knowledge: 'author' } }, undefined, 'scope-unreadable'],
+    [{ origin: 'derived' }, undefined, 'unconfirmed-derived-source'],
+    [{ origin: 'derived', sourceStatus: 'pending', memoryScope: { realm: 'reality' } }, { realm: 'reality' }, 'unconfirmed-derived-source'],
+    [{ sourceStatus: 'stale' }, undefined, 'stale-source'],
+    [{ origin: 'derived', memoryScope: { realm: 'legacy' } }, undefined, undefined],
+    [{ origin: 'derived', sourceStatus: 'active', memoryScope: { realm: 'reality' } }, { realm: 'reality' }, undefined],
+    [{}, undefined, undefined],
+  ])('retains legacy and scoped eligibility for %j', (metadata, memoryScope, detail) => {
+    const rows = [];
+    const result = selectXingyeLoreEntries({
+      entries: [{ ...baseEntry(), ...metadata }], agentId: 'agent-a', memoryScope, mode: 'always',
+      onDecision: (row) => rows.push(row),
+    });
+    expect(rows[0].reason).toBe(detail ? 'scope' : 'selected');
+    expect(rows[0].reasonDetail).toBe(detail);
+    expect(result.selected.map(({ entry }) => entry.id)).toEqual(detail ? [] : ['lore-1']);
+    if (!detail) expect(rows[0]).not.toHaveProperty('reasonDetail');
+  });
+
+  it('preserves selected IDs, order, exact budget text, old consumer fields and input bytes', () => {
+    const entries = [
+      baseEntry({ id: 'long', priority: 100, content: '长'.repeat(300) }),
+      baseEntry({ id: 'short', content: '短'.repeat(5) }),
+      { ...baseEntry({ id: 'stale' }), sourceStatus: 'stale' },
+      { ...baseEntry({ id: 'unconfirmed' }), origin: 'derived' },
+      { ...baseEntry({ id: 'unreadable' }), memoryScope: { realm: 'reality' } },
+      { ...baseEntry({ id: 'hidden', agentId: 'agent-b' }), sourceStatus: 'stale' },
+    ];
+    const before = JSON.stringify(entries);
+    const options = { entries, agentId: 'agent-a', mode: 'always', maxChars: 100,
+      formatBlock: (entry, _matched, content) => `${entry.id}:${content}`, compose: (blocks) => blocks.join('\n') };
+    const rows = [];
+    const result = selectXingyeLoreEntries({ ...options, onDecision: (row) => rows.push(row) });
+    expect(result).toEqual(selectXingyeLoreEntries(options));
+    expect(result.selected.map(({ entry }) => entry.id)).toEqual(['long', 'short']);
+    expect(result.selected.map(({ block }) => block).join('\n')).toBe(`long:${'长'.repeat(80)}...\nshort:${'短'.repeat(5)}`);
+    expect(result).toMatchObject({ candidateCount: 2, usedChars: 100, truncated: true });
+    // Existing consumers can continue projecting only the original fields.
+    expect(rows.map(({ id, reason, matchedKeywords, blockChars }) => ({ id, reason, matchedKeywords, blockChars }))).toEqual([
+      { id: 'stale', reason: 'scope', matchedKeywords: [], blockChars: 0 },
+      { id: 'unconfirmed', reason: 'scope', matchedKeywords: [], blockChars: 0 },
+      { id: 'unreadable', reason: 'scope', matchedKeywords: [], blockChars: 0 },
+      { id: 'long', reason: 'truncated', matchedKeywords: [], blockChars: 88 },
+      { id: 'short', reason: 'selected', matchedKeywords: [], blockChars: 11 },
+    ]);
+    expect(rows.every((row) => !('content' in row) && !('memoryScope' in row))).toBe(true);
+    expect(JSON.stringify(entries)).toBe(before);
+  });
+
+  it.each([
+    [buildXingyeStableLoreMemoryContext, 'always'],
+    [buildXingyeRuntimeLoreContext, 'keyword'],
+  ])('forwards details through %s without changing prompt output', (build, insertionMode) => {
+    const entries = [baseEntry({ insertionMode, keywords: ['灯塔'] }),
+      { ...baseEntry({ id: 'stale', insertionMode, keywords: ['灯塔'] }), sourceStatus: 'stale' }];
+    const options = { agentId: 'agent-a', entries, userText: '灯塔' };
+    const rows = [];
+    const result = build({ ...options, onDecision: (row) => rows.push(row) });
+    expect(result).toEqual(build(options));
+    expect(result.entries.map((entry) => entry.id)).toEqual(['lore-1']);
+    expect(rows.find((row) => row.id === 'stale')).toMatchObject({ reason: 'scope', reasonDetail: 'stale-source' });
+  });
+
   it('explains exclusions without changing output or exposing another agent', () => {
     const rows = [];
     const options = { agentId: 'agent-a', entries: [

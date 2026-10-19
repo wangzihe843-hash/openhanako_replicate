@@ -2,6 +2,8 @@ export type XingyeLoreDecision = {
   id: string;
   title: string;
   reason: 'scope' | 'selected' | 'truncated' | 'budget' | 'disabled' | 'visibility' | 'mode' | 'empty' | 'no-keywords' | 'no-query' | 'no-match';
+  /** Optional refinement of legacy reason='scope', in guard precedence order. */
+  reasonDetail?: 'scope-unreadable' | 'stale-source' | 'unconfirmed-derived-source';
   matchedKeywords: string[];
   blockChars: number;
 };

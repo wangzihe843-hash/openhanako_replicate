@@ -11,7 +11,12 @@ const REASONS: Record<XingyeLoreDecision['reason'], string> = {
   selected: '完整选入', truncated: '截断选入：预算不足', budget: '排除：预算不足',
   disabled: '排除：未启用', visibility: '排除：私有备注或草稿', mode: '排除：本路径不使用此插入模式',
   empty: '排除：正文为空', 'no-keywords': '排除：未配置关键词', 'no-query': '排除：未提供查询文本',
-  'no-match': '排除：关键词未命中', scope: '排除：角色、世界、分支或知情范围不匹配',
+  'no-match': '排除：关键词未命中', scope: '排除：作用范围或来源状态不符合要求',
+};
+const REASON_DETAILS: Record<NonNullable<XingyeLoreDecision['reasonDetail']>, string> = {
+  'scope-unreadable': '排除：作用范围无效或角色、世界、分支、知情范围不匹配',
+  'stale-source': '排除：来源已过时',
+  'unconfirmed-derived-source': '排除：派生来源尚未确认有效',
 };
 
 export function LoreDiagnostics({ agentId, entries }: { agentId: string; entries: XingyeLoreEntry[] }) {
@@ -49,7 +54,7 @@ export function LoreDiagnostics({ agentId, entries }: { agentId: string; entries
           <p>已用 {path.used} / {budget} 字符（{path.unit}）；选入 {path.rows.filter((row) => row.reason === 'selected' || row.reason === 'truncated').length} 条。</p>
           {path.rows.length ? <ul>{path.rows.map((row) => (
             <li key={row.id}>
-              <strong>{row.title}</strong>：{REASONS[row.reason]}
+              <strong>{row.title}</strong>：{row.reason === 'scope' && row.reasonDetail ? REASON_DETAILS[row.reasonDetail] ?? REASONS[row.reason] : REASONS[row.reason]}
               {row.matchedKeywords.length > 0 && <span>；命中：{row.matchedKeywords.join('、')}</span>}
               {row.blockChars > 0 && <span>；条目块 {row.blockChars} 字符</span>}
             </li>

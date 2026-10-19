@@ -12,7 +12,7 @@
  *   `options.queryText` 或 `options.keywords`（大小写不敏感；中文用普通 substring）。
  * - `manual` 条目：永远不自动包含。
  * - 排序：`priority` 高的优先；同 priority 时 `updatedAt` 新的优先。
- * - `maxChars` 默认 2000。超额：跳过剩余条目；不进行无界拼接。
+ * - `maxChars` 默认 2000。共享选择器先容纳完整条目，再用剩余预算截断至多一条。
  * - 不使用正则；不递归激活；不做向量检索。
  * - `purpose` 仅做记录/调试用途，不做复杂分支。
  */
@@ -97,7 +97,7 @@ export type XingyeLoreRuntimeContext = {
   totalChars: number;
   /** 统一选择规则计算的条目预算用量，含诊断用字段。 */
   selectionChars: number;
-  /** 是否因 maxChars 超限而丢弃了至少一条候选 */
+  /** 是否因 maxChars 超限而丢弃候选或截断正文 */
   truncated: boolean;
   /** 候选总数（在 maxChars 截断之前，符合规则的全部条目数） */
   candidateCount: number;
@@ -196,8 +196,8 @@ function toCandidate(entry: XingyeLoreEntry, reason: 'always' | 'keyword', match
  * - `boostCategories` 为空：原样返回一份浅拷贝，行为不变。
  * - 非空：返回新数组，命中分类整体排到队首，组内保持入参既有顺序（通常已是
  *   `priority` 降序 → `updatedAt` 降序）。
- * 同时服务两条取 lore 路径：`collectXingyeLoreRuntimeContext` 的候选重排，
- * 以及各小手机模块 always 块（`buildStableLoreFromAlwaysEntries`）的同款重排。
+ * 用于小手机模块 always 块（`buildStableLoreFromAlwaysEntries`）的重排；
+ * `collectXingyeLoreRuntimeContext` 则把分类优先选项传给共享选择器。
  */
 export function applyCategoryBoostOrder<T extends { category: XingyeLoreCategory }>(
   items: ReadonlyArray<T>,
