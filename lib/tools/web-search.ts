@@ -140,6 +140,13 @@ function anySearchResultsFrom(data) {
   return [];
 }
 
+function anySearchExcerpt(result: { snippet?: unknown; description?: unknown; content?: unknown }): string {
+  // Prefer the native summary, then the compatibility description, then body.
+  // Test whitespace without rewriting the selected provider text.
+  return [result.snippet, result.description, result.content]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0) ?? "";
+}
+
 function anySearchMetadataFrom(data) {
   return data?.data?.metadata || data?.metadata || {};
 }
@@ -275,7 +282,7 @@ async function searchAnySearch(query, maxResults, apiKey, provider) {
     results: anySearchResultsFrom(data).slice(0, resultLimit).map((r, index) => ({
       title: r.title || "",
       url: r.url || "",
-      content: r.content || r.description || r.snippet || "",
+      content: anySearchExcerpt(r),
       rank: r.rank ?? index + 1,
       score: r.score ?? r.quality_score ?? null,
       metadata: {
@@ -697,10 +704,18 @@ export function createWebSearchTool({ configPath, searchConfigResolver, rateLimi
 
         const displayLimit = maxResultsForDisplay(params.maxResults);
         const displayed = results.slice(0, displayLimit);
-        const text = provider === "deepseek" ? formatDeepSeekSearchResults(displayed)
-          : t("error.searchResults", { provider, results: displayed
+        let text;
+        if (provider === "deepseek") {
+          text = formatDeepSeekSearchResults(displayed);
+        } else {
+          const resultText = displayed
             .map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content}`)
-            .join("\n\n") });
+            .join("\n\n");
+          // Preserve literal AnySearch URLs/excerpts containing "$&", "$$", etc.
+          text = isAnySearchProvider(provider)
+            ? t("error.searchResults", { provider }).replaceAll("{results}", () => resultText)
+            : t("error.searchResults", { provider, results: resultText });
+        }
 
         const result = {
           content: [{ type: "text", text }],

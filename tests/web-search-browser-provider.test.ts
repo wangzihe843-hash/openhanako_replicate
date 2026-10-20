@@ -260,7 +260,7 @@ describe("web_search browser providers", () => {
         {
           title: "Paid AnySearch Result",
           url: "https://example.com/paid-anysearch",
-          content: "Paid AnySearch content",
+          content: "Paid AnySearch snippet",
         },
       ],
     });
@@ -365,7 +365,7 @@ describe("web_search browser providers", () => {
         {
           title: "AnySearch Result",
           url: "https://example.com/anysearch",
-          content: "AnySearch content",
+          content: "AnySearch description",
           score: 68.5,
           metadata: { quality_score: 68.5 },
         },
