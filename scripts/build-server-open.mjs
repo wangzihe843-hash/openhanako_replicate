@@ -39,6 +39,7 @@ import {
   applyPlatformPackageTrim,
   buildCliBundle,
   buildViteServerBundle,
+  CLI_RUNTIME_FILES,
   copyServerBootstrap,
   copyServerDataFiles,
   finalizeServerPackageJsonVersion,
@@ -86,6 +87,7 @@ export function declaredOpenBuildInputPaths() {
   return [
     OPEN_BUNDLE_ENTRY,
     "cli/entry.ts",
+    ...CLI_RUNTIME_FILES,
     "server/bootstrap.ts",
     "package.json",
     ...OPEN_LIB_DATA_FILES.map((f) => `lib/${f}`),

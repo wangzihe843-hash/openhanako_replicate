@@ -5,8 +5,17 @@ import vm from "node:vm";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "node:module";
+import { buildSync } from "esbuild";
 import viteServerConfig from "../vite.config.server.js";
 import { applyDevEnvironment } from "../scripts/dev-env.js";
+import { buildCliBundle, writeServerWrapperScripts } from "../scripts/build-server-phases.mjs";
+
+// Keep the input/output contract separate from the real compilation and
+// relocated-wrapper checks in cli-packaging.test.ts.
+vi.mock("esbuild", async importOriginal => ({
+  ...await importOriginal<typeof import("esbuild")>(),
+  buildSync: vi.fn(),
+}));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -166,16 +175,32 @@ describe("local startup contract", () => {
   });
 
   it("server-only packaging emits a bundled CLI and wrapper", () => {
-    // The CLI bundle step and wrapper-generation step were extracted onto
-    // shared parameterized primitives in scripts/build-server-phases.mjs
-    // (shared with the open-composition builder); build-server.mjs
-    // now just calls them with rootDir=ROOT/outDir.
-    const buildServerPhases = fs.readFileSync(path.join(ROOT, "scripts", "build-server-phases.mjs"), "utf-8");
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-cli-startup-contract-"));
+    scratch.push(outDir);
+    const bundleOutDir = path.join(outDir, "bundle");
+    vi.mocked(buildSync).mockClear();
+    buildCliBundle({ rootDir: ROOT, bundleOutDir, log: () => {} });
 
-    expect(buildServerPhases).toContain("bundle/cli.js");
-    expect(buildServerPhases).toContain('path.join(rootDir, "cli", "entry.ts")');
-    expect(buildServerPhases).toContain('path.join(outDir, "hana")');
-    expect(buildServerPhases).toContain('path.join(outDir, "hana.cmd")');
+    expect(buildSync).toHaveBeenCalledTimes(1);
+    const [options] = vi.mocked(buildSync).mock.calls[0];
+    expect(options).toEqual(expect.objectContaining({
+      absWorkingDir: ROOT,
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      outfile: path.join(bundleOutDir, "cli.js"),
+    }));
+    expect(options.entryPoints).toEqual([expect.any(String)]);
+    const [entry] = options.entryPoints as string[];
+    expect(path.resolve(options.absWorkingDir!, entry)).toBe(path.join(ROOT, "cli", "entry.ts"));
+
+    for (const isWin of [false, true]) {
+      writeServerWrapperScripts({ outDir, isWin, log: () => {} });
+    }
+    expect(fs.readFileSync(path.join(outDir, "hana"), "utf8"))
+      .toContain('exec "$DIR/node" "$DIR/bundle/cli.js" "$@"');
+    expect(fs.readFileSync(path.join(outDir, "hana.cmd"), "utf8"))
+      .toContain('"%~dp0hana-server.exe" "%~dp0bundle\\cli.js" %*');
   });
 
   it("server dependency install explicitly enables native package scripts", () => {

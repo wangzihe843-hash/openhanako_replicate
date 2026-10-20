@@ -1,10 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { builtinModules } from "node:module";
+import { buildSync } from "esbuild";
 import yaml from "js-yaml";
 import eslintConfig from "../eslint.config.js";
 import serverViteConfig from "../vite.config.server.js";
+import { buildCliBundle } from "../scripts/build-server-phases.mjs";
+
+// Observe the options used by the real packing primitive, independent of
+// esbuild's CLI/JS syntax. cli-packaging.test.ts exercises the real compiler.
+vi.mock("esbuild", async importOriginal => ({
+  ...await importOriginal<typeof import("esbuild")>(),
+  buildSync: vi.fn(),
+}));
 
 function readJson(relativePath) {
   return JSON.parse(fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8"));
@@ -108,7 +118,15 @@ describe("quality gates", () => {
 
     expect(packageJson.engines.node).toBe(">=24.12.0 <25");
     expect(buildServerPhases).toContain('DEFAULT_NODE_VERSION = "v24.15.0"');
-    expect(buildServerPhases).toContain("--target=node24");
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-node-target-contract-"));
+    try {
+      vi.mocked(buildSync).mockClear();
+      buildCliBundle({ rootDir: process.cwd(), bundleOutDir: path.join(outDir, "bundle"), log: () => {} });
+      expect(buildSync).toHaveBeenCalledTimes(1);
+      expect(buildSync).toHaveBeenCalledWith(expect.objectContaining({ target: "node24" }));
+    } finally {
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
     expect(serverConfig).toContain('target: "node24"');
     expect(mainConfig).toContain('target: "node24"');
     expect(preloadConfig).toContain('target: "node24"');

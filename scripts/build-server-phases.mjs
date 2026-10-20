@@ -22,6 +22,7 @@ import { execSync } from "child_process";
 import { builtinModules } from "module";
 import { pathToFileURL } from "url";
 import ts from "typescript";
+import { buildSync } from "esbuild";
 import {
   buildAnydocRuntimeSmokeScript,
   buildBetterSqliteRuntimeSmokeScript,
@@ -182,18 +183,51 @@ export function buildViteServerBundle({ rootDir, viteBundleDir, bundleOutDir, en
   log("[build-server] Vite bundle copied to bundle/");
 }
 
+// cli/server-runner.ts and cli/bundle.ts use locally bound createRequire
+// calls, which esbuild leaves as runtime loads relative to bundle/cli.js.
+// Keep their transitive CJS/JSON dependencies at the same ../shared paths.
+// This explicit list is also checked by the open builder's input whitelist.
+export const CLI_RUNTIME_FILES = [
+  "shared/artifact-core/activation.cjs",
+  "shared/artifact-core/keyset.cjs",
+  "shared/artifact-core/manifest.cjs",
+  "shared/artifact-core/ota-core.cjs",
+  "shared/artifact-core/pinned-keyset.json",
+  "shared/artifact-core/pointer-channels.cjs",
+  "shared/artifact-core/pointer-store.cjs",
+  "shared/artifact-core/ustar.cjs",
+  "shared/contract-versions.cjs",
+  "shared/contract-versions.json",
+];
+
 /**
  * esbuild-bundles the (fully open, shared by every composition) CLI entry
- * into `bundleOutDir/cli.js`.
+ * into `bundleOutDir/cli.js` and copies its unbundled runtime dependencies.
  *
  * @param {{ rootDir: string, bundleOutDir: string, log?: (msg: string) => void }} params
  */
 export function buildCliBundle({ rootDir, bundleOutDir, log = (msg) => console.log(msg) }) {
   log("[build-server] running CLI bundle...");
-  execSync(
-    `npx esbuild "${path.join(rootDir, "cli", "entry.ts")}" --bundle --platform=node --format=esm --target=node24 --external:ws --outfile="${path.join(bundleOutDir, "cli.js")}"`,
-    { cwd: rootDir, stdio: "inherit" },
-  );
+  buildSync({
+    absWorkingDir: rootDir,
+    entryPoints: ["cli/entry.ts"],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node24",
+    external: ["ws"],
+    outfile: path.join(bundleOutDir, "cli.js"),
+    // Bundled CommonJS modules (e.g. data-epoch.cjs) still require Node
+    // builtins. ESM has no ambient require unless we provide one.
+    banner: { js: "import { createRequire as __hanaCreateRequire } from 'node:module';\nconst require = __hanaCreateRequire(import.meta.url);" },
+    logLevel: "info",
+  });
+  for (const relativePath of CLI_RUNTIME_FILES) {
+    const destination = path.resolve(bundleOutDir, "..", relativePath);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    // These files are required, so a missing build input must fail the build.
+    fs.copyFileSync(path.join(rootDir, relativePath), destination);
+  }
   log("[build-server] CLI bundle copied to bundle/cli.js");
 }
 
