@@ -10891,6 +10891,11 @@
       "provenance": [
         {
           "root": "server-bootstrap",
+          "from": "lib/tools/deepseek-search.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/tools/deepseek-fetch.ts",
           "kind": "import-statement"
         },
@@ -10900,7 +10905,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/tools/deepseek-fetch.ts (import-statement); lib/tools/web-fetch.ts (import-statement)."
+      "reason": "Reached via esbuild source module graph, imported by lib/tools/deepseek-search.ts (import-statement); lib/tools/deepseek-fetch.ts (import-statement); lib/tools/web-fetch.ts (import-statement)."
     },
     {
       "path": "lib/tools/web-fetch.ts",
@@ -84119,17 +84124,17 @@
       "provenance": [
         {
           "root": "server-bootstrap",
+          "from": "lib/tools/web-fetch-url.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/tools/deepseek-search.ts",
           "kind": "import-statement"
         },
         {
           "root": "server-bootstrap",
           "from": "lib/tools/web-search.ts",
-          "kind": "import-statement"
-        },
-        {
-          "root": "server-bootstrap",
-          "from": "lib/tools/web-fetch-url.ts",
           "kind": "import-statement"
         },
         {
@@ -84163,7 +84168,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/tools/deepseek-search.ts (import-statement); lib/tools/web-search.ts (import-statement); lib/tools/web-fetch-url.ts (import-statement); +6 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by lib/tools/web-fetch-url.ts (import-statement); lib/tools/deepseek-search.ts (import-statement); lib/tools/web-search.ts (import-statement); +6 more importer(s)."
     },
     {
       "path": "shared/default-workspace-constants.ts",

@@ -40,6 +40,11 @@ const ANYSEARCH_DEFAULT_RESULTS = 20;
 const ANYSEARCH_MAX_RESULTS = 100;
 const TAVILY_MAX_RESULTS = 20;
 const BROWSER_MAX_RESULTS = 10;
+// Includes unchanged details, displayed text and JSON escaping.
+export const MAX_DEEPSEEK_SEARCH_RESULT_BYTES = 512 * 1024;
+// Match the default L1 text-block ceiling so complete sources reach the model.
+// This is independent of the saved-result budget and does not change the hook.
+export const MAX_DEEPSEEK_SEARCH_TEXT_BYTES = 32 * 1024;
 const defaultSearchRateLimiter = createSearchRateLimiter();
 
 /**
@@ -622,6 +627,32 @@ async function doSearch(query, maxResults, { configPath, searchConfigResolver, r
 // Tool 定义
 // ════════════════════════════════════════
 
+function formatDeepSeekSearchResults(results: Awaited<ReturnType<typeof searchDeepSeek>>): string {
+  const excerpts = results.map(r => r.content);
+  // Insert source text literally: "$&" and similar text in URLs/excerpts must
+  // not be interpreted as String.replaceAll replacement patterns by i18n.
+  const format = () => t("error.searchResults", { provider: "deepseek" }).replaceAll("{results}",
+    () => results.map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${excerpts[i]}`).join("\n\n"));
+  const original = format();
+  let bytes = Buffer.byteLength(original, "utf8");
+  if (bytes <= MAX_DEEPSEEK_SEARCH_TEXT_BYTES) return original;
+
+  // Keep as many original summaries as possible. Only use existing, nonblank
+  // snippets when the marked excerpt is smaller in UTF-8; never cut a source.
+  const replacements = results.map((r, index) => {
+    const snippet = r.metadata.snippet;
+    const text = `[Shorter excerpt from search provider] ${snippet}`;
+    return { index, text, savedBytes: snippet.trim()
+      ? Buffer.byteLength(r.content, "utf8") - Buffer.byteLength(text, "utf8") : 0 };
+  }).filter(r => r.savedBytes > 0).sort((a, b) => b.savedBytes - a.savedBytes || a.index - b.index);
+  for (const replacement of replacements) {
+    excerpts[replacement.index] = replacement.text;
+    bytes -= replacement.savedBytes;
+    if (bytes <= MAX_DEEPSEEK_SEARCH_TEXT_BYTES) return format();
+  }
+  throw new DeepSeekToolError("response_too_large", "DeepSeek Search results exceed the display size limit even with available shorter excerpts. Try a narrower query or fewer results.");
+}
+
 /**
  * @param {object} [opts]
  * @param {string} [opts.configPath]           - per-agent config.yaml path
@@ -665,15 +696,22 @@ export function createWebSearchTool({ configPath, searchConfigResolver, rateLimi
         }
 
         const displayLimit = maxResultsForDisplay(params.maxResults);
-        const formatted = results
-          .slice(0, displayLimit)
-          .map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content}`)
-          .join("\n\n");
+        const displayed = results.slice(0, displayLimit);
+        const text = provider === "deepseek" ? formatDeepSeekSearchResults(displayed)
+          : t("error.searchResults", { provider, results: displayed
+            .map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content}`)
+            .join("\n\n") });
 
-        return {
-          content: [{ type: "text", text: t("error.searchResults", { provider, results: formatted }) }],
+        const result = {
+          content: [{ type: "text", text }],
           details: searchPayload,
         };
+        // Budget the actual persisted tool shape, including metadata.snippet.
+        // Reject as a whole to preserve URLs, ranking and all fields on success.
+        if (provider === "deepseek" && Buffer.byteLength(JSON.stringify(result), "utf8") > MAX_DEEPSEEK_SEARCH_RESULT_BYTES) {
+          throw new DeepSeekToolError("response_too_large", "DeepSeek Search result exceeded the saved output size limit. Try a narrower query or fewer results.");
+        }
+        return result;
       } catch (err) {
         return {
           content: [{ type: "text", text: t("error.searchError", { msg: err.message }) }],

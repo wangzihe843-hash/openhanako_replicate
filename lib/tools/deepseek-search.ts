@@ -1,7 +1,11 @@
 import { DeepSeekToolError, deepSeekAbortError } from "../../shared/deepseek-tools.ts";
 import { SearchRateLimitError, retryAfterMsFromHeaders } from "./search-rate-limiter.ts";
+import { withFetchAbort } from "./web-fetch-url.ts";
 
 const SEARCH_URL = "https://api.deepseek.com/v1/tools/search";
+// Search requests omit page content. Allow 50 summary/snippet records, including
+// multibyte text and JSON escaping, without accepting unbounded response bodies.
+export const MAX_DEEPSEEK_SEARCH_BYTES = 1024 * 1024;
 
 type DeepSeekResult = {
   title: string; url: string; snippet: string; summary: string; content: string;
@@ -26,6 +30,38 @@ function validResult(value: unknown): value is DeepSeekResult {
     && Number.isInteger(row.authority) && Number(row.authority) >= -1 && Number(row.authority) <= 4;
 }
 
+// Keep the Fetch reader's byte accounting and abort/cancel discipline, with a
+// Search-specific budget. Fetch exposes the decoded body even for gzip/br.
+async function readBoundedJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  const tooLarge = () => new DeepSeekToolError("response_too_large", "DeepSeek Search response exceeded the size limit. Try a narrower query or fewer results.");
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength && /^\d+$/.test(declaredLength) && Number(declaredLength) > MAX_DEEPSEEK_SEARCH_BYTES) {
+    void response.body?.cancel().catch(() => {});
+    throw tooLarge();
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new DeepSeekToolError("invalid_response", "DeepSeek Search returned no JSON body.");
+  let size = 0;
+  const chunks: Uint8Array[] = [];
+  try {
+    while (true) {
+      const { done, value } = await withFetchAbort(reader.read(), signal);
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_DEEPSEEK_SEARCH_BYTES) throw tooLarge();
+      if (value.byteLength) chunks.push(value);
+    }
+    // Decode once so a multibyte character split across chunks stays intact.
+    return JSON.parse(new TextDecoder().decode(Buffer.concat(chunks)));
+  } catch (error) {
+    if (error instanceof DeepSeekToolError) throw error;
+    throw new DeepSeekToolError("invalid_response", "DeepSeek Search returned invalid JSON.");
+  } finally {
+    void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
 export async function searchDeepSeek(query: string, count: number, apiKey: string, _provider?: string, signal?: AbortSignal) {
   validateDeepSeekQuery(query);
   const controller = new AbortController();
@@ -43,18 +79,15 @@ export async function searchDeepSeek(query: string, count: number, apiKey: strin
       signal: controller.signal,
     });
     if (response.status === 429) {
+      void response.body?.cancel().catch(() => {});
       throw new SearchRateLimitError("DeepSeek Search HTTP 429", { retryAfterMs: retryAfterMsFromHeaders(response.headers) });
     }
     if (!response.ok) {
+      void response.body?.cancel().catch(() => {});
       const code = response.status === 402 ? "balance" : response.status === 401 || response.status === 403 ? "auth" : "http_error";
       throw new DeepSeekToolError(code, `DeepSeek Search HTTP ${response.status}.`);
     }
-    let data: unknown;
-    try {
-      data = await response.json();
-    } catch {
-      throw new DeepSeekToolError("invalid_response", "DeepSeek Search returned invalid JSON.");
-    }
+    const data = await readBoundedJson(response, controller.signal);
     if (signal?.aborted) throw deepSeekAbortError();
     if (timedOut) throw new DeepSeekToolError("timeout", "DeepSeek Search timed out after 30 seconds.");
     const results = (data as { results?: unknown } | null)?.results;
