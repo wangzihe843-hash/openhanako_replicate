@@ -19,7 +19,7 @@
 - 导入原生角色卡 ZIP，以及 SillyTavern V2 / V3 JSON、带角色元数据的 PNG；导出沿用角色卡 ZIP。兼容的是明确支持的字段子集，未知扩展会保留，脚本、正则和系统提示覆盖不会直接执行
 - 世界书支持启用开关、常驻/关键词/手动条目、优先级、预算与命中诊断。不同对话和生成入口按各自规则选取上下文
 
-试演使用独立的文本生成，不执行工具，也不写入正式聊天、关系数值或长期记忆。详情见[角色卡与试演说明](docs/xingye-rehearsal-and-character-cards.md)、[世界书诊断](docs/xingye-lore-diagnostics.md)。
+试演使用独立的文本生成，不执行工具，也不写入正式聊天、关系数值或长期记忆。世界书的选取范围见[世界书诊断](docs/xingye-lore-diagnostics.md)。
 
 ### 对话表达、记忆范围与剧情分支
 
@@ -43,7 +43,7 @@
 
 小手机和这些生活内容属于应用内的角色世界：短信/邮箱不等于真实通信账户，购物/记账/赠礼不执行真实付款，健康数据是角色模拟。秘密空间也不是用于保管真实密码的加密保险箱。角色内容的生成仍会调用所配置的模型。
 
-主动巡检可以结合事件提出待确认草稿，用户确认后再进入对应的正式记录；支持暂停、安静时段和重复抑制。并非所有生成都由巡检触发，也不保证角色永不重复或每次巡检都发言。见[草稿流程](docs/xingye-propose-draft.md)、[主动陪伴与安静时段](docs/xingye-proactive-silence.md)。
+主动巡检可以结合事件提出待确认草稿，用户确认后再进入对应的正式记录；支持暂停、安静时段和重复抑制。并非所有生成都由巡检触发，也不保证角色永不重复或每次巡检都发言。见[草稿流程](docs/xingye-propose-draft.md)。
 
 ### 工具 Agent 与桌面工作流
 
@@ -141,9 +141,9 @@ npm run smoke:server:open
 
 可查阅 [Windows Pi 1.0.2 验收记录](docs/audits/2026-10-06-pi-1.0.2-followup-windows.md)、[Windows Pi 1.0.3 验收记录](docs/audits/2026-10-06-pi-1.0.3-windows-acceptance.md)、[macOS 开发版验收记录](docs/audits/2026-10-08-macos-desktop-acceptance.md)及 [Linux L1 / L2 验证记录](docs/audits/2026-10-01-l1-l2-runtime-validation.md)。历史验收只覆盖各自记录的提交与环境，不能自动视为后续版本全部通过。
 
-截至 2026-10-11，`feature/xingye-mvp` 的已提交基线仍是 [`682fb5b`](https://github.com/wangzihe843-hash/openhanako_replicate/commit/682fb5b85b9eb3b272cd0b9b5c5b2d8f2bdb0289)：对应 [CI #22](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/37921362743) 的 macOS、Windows 测试步骤失败，Linux 边界检查和 open 构建/冒烟通过。独立 `review/ci22-integration-20261009` 分支的基线 [`7c4d9cd`](https://github.com/wangzihe843-hash/openhanako_replicate/commit/7c4d9cda1349e5cbdb7578a63efddf1618398b06) 对应 [CI #29](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/38139627013)，五项检查均通过；后续提交仍须等待其精确提交的 CI 全部通过后才能合入开发分支。review 分支的修改和结果不计入上述 feature 基线，未提交候选也不计为已交付功能；CI 通过不能替代原生交互、安装卸载或正式签名验收。
+本轮已交付基线（2026-10-20）为 [`ec6927a2`](https://github.com/wangzihe843-hash/openhanako_replicate/commit/ec6927a21264d98421710a58134edfe2d4cc6868)，`feature/xingye-mvp` 与远端 `review/ci22-integration-20261009` 对齐到同一提交，七个 Pi 家族包固定为 1.3.0。该提交的 [review CI 39466529603](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/39466529603) 和 [feature CI 39470431534](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/39470431534) 均为五项检查通过；这些结果只对应上述提交与各自运行环境。CI 不能替代完整桌面交互、实际安装/卸载、生产签名公证或真实模型服务验收。
 
-[CI](.github/workflows/ci.yml) 在推送 `main`、`feature/xingye-mvp`、`review/ci22-integration-20261009` 或向 `main` 提 PR 时触发；保留 Mac/Windows 的检查与测试矩阵，以及 Linux 的边界检查和 open 构建/冒烟检查。CI token 仅授予仓库内容读取权限，同一分支/PR 的新运行会取消旧 CI；Build 保留正在生成的产物，不取消已有运行。配置已接线不等于 GitHub 上的实际运行已通过。
+[CI](.github/workflows/ci.yml) 在推送 `main`、`feature/xingye-mvp`、`review/ci22-integration-20261009`、`review/pi-1.2.0-prep-20261013` 或向 `main` 提 PR 时触发。当前包括 macOS / Windows 2022 检查与测试、独立 Windows 原生 auth-lock 检查，以及 Linux 边界检查和 open 构建/冒烟检查。CI token 仅授予仓库内容读取权限，同一分支/PR 的新运行会取消旧 CI；Build 保留正在生成的产物，不取消已有运行。后续提交仍须核验其精确提交的实际运行结果。
 
 ## 安全与隐私边界
 

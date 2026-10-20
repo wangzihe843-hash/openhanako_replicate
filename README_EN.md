@@ -1,3 +1,5 @@
+> **Fork scope:** This is OpenHanako Replicate, a companion and role-play fork of [liliMozi/openhanako](https://github.com/liliMozi/openhanako). The inherited feature overview below is not a complete description of this fork. Use the [Chinese README](README.md) for its implemented scope, source setup, platform limits and feedback status. Upstream downloads, signatures and support statements do not establish this fork's release readiness.
+
 <p align="center">
   <img src=".github/assets/banner.jpg" width="100%" alt="HanaAgent Banner">
 </p>
@@ -13,7 +15,7 @@
 <p align="center"><a href="README.md">中文版</a></p>
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](https://github.com/liliMozi/openhanako/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](README.md#当前验证边界)
 
 ---
 
@@ -64,17 +66,21 @@ As a tool, it is powerful: it remembers everything you've said, operates your co
 
 ## Quick Start
 
-### Download
+### Source setup for this fork
 
-**macOS (Apple Silicon / Intel):** download the latest `.dmg` from [Releases](https://github.com/liliMozi/openhanako/releases).
+The last release-status check recorded in the Chinese README is dated 2026-10-11; it found no fork release. Check this fork's own [Releases](https://github.com/wangzihe843-hash/openhanako_replicate/releases) for published artifacts. Upstream installers are separate products. This fork's Actions builds are test artifacts; independent signing, notarization, update sources and distribution remain pending.
 
-The app is signed and notarized with an Apple Developer ID. macOS should allow it to launch directly.
+Use Git, Node.js `>=24.12.0 <25`, npm `>=11.10.0`, Python and the platform C/C++ build tools. Linux command sandboxing requires Bubblewrap. Electron needs a graphical desktop.
 
-**Windows:** download the latest `.exe` installer from [Releases](https://github.com/liliMozi/openhanako/releases).
+```bash
+git clone --branch feature/xingye-mvp --single-branch https://github.com/wangzihe843-hash/openhanako_replicate.git
+cd openhanako_replicate
+npm ci
+npm run build:packages
+npm start
+```
 
-> **Windows SmartScreen notice:** The installer is not yet code-signed. Windows Defender SmartScreen may show a warning on first run. Click **More info** → **Run anyway**. This is expected for unsigned builds.
-
-**Linux:** download the latest `.AppImage` or `.deb` from [Releases](https://github.com/liliMozi/openhanako/releases).
+Keep install scripts enabled: `npm ci` runs the version and compatibility guard. Model services require your own configuration. Back up the complete data directory before branch or version changes; use a separate `HANA_HOME` for development.
 
 ### First Run
 
@@ -119,19 +125,21 @@ User data is rooted at `HANA_HOME` (`~/.hanako` in production, `~/.hanako-dev` i
 
 ## Platform Support
 
-| Platform | Status |
-|----------|--------|
-| macOS (Apple Silicon) | Supported (signed & notarized) |
-| macOS (Intel) | Supported |
-| Windows | Beta |
-| Linux | Supported (AppImage / deb) |
-| Mobile (PWA) | v0: phone sessions and workbench access through the same HanaAgent Server |
+| Platform | Fork validation boundary |
+|----------|--------------------------|
+| macOS | Limited development launcher/main-window/pet smoke evidence; full interaction, TCC, recording and signed distribution remain unverified |
+| Windows | Historical source and unsigned EXE checks; native failure recovery and installation/uninstallation are separate gates |
+| Linux | Build and server smoke evidence; no desktop pet or native Computer Use support |
+| Mobile (PWA) | Inherited server frontend; not evidence of complete fork platform acceptance |
+
+Computer Use currently targets macOS and Windows. Browser tools do not imply native desktop support on every platform. Historical results apply only to their recorded commits and environments.
 
 ## Development
 
 ```bash
-# Install dependencies
-npm install
+# Install dependencies and build workspace packages
+npm ci
+npm run build:packages
 
 # Start with Electron (builds renderer first)
 npm start
@@ -154,7 +162,9 @@ npm run typecheck
 
 ### Fork CI and build status
 
-This fork runs [CI](.github/workflows/ci.yml) for pushes to `main` and `feature/xingye-mvp`, and pull requests targeting `main`. It retains the Mac/Windows test matrix and Linux boundary/open-build smoke jobs, with read-only repository permissions and cancellation of superseded CI runs.
+The delivered baseline dated 2026-10-20 is [`ec6927a21264d98421710a58134edfe2d4cc6868`](https://github.com/wangzihe843-hash/openhanako_replicate/commit/ec6927a21264d98421710a58134edfe2d4cc6868), shared by feature and the remote `review/ci22-integration-20261009` branch, with seven Pi family packages pinned to 1.3.0. Both [review CI 39466529603](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/39466529603) and [feature CI 39470431534](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/39470431534) passed all five jobs for that exact commit. Those results apply only to the recorded commit and environments; full desktop interaction, installation/uninstallation, production signing/notarization and real model services require separate acceptance.
+
+[CI](.github/workflows/ci.yml) covers macOS / Windows 2022 checks and tests, an independent native Windows auth-lock check, and Linux boundary/open-build smoke jobs. It runs for pushes to `main`, `feature/xingye-mvp`, `review/ci22-integration-20261009` and `review/pi-1.2.0-prep-20261013`, and pull requests targeting `main`. Repository permissions are read-only, and superseded CI runs are cancelled. Later commits need their own exact-commit results.
 
 The [Build workflow](.github/workflows/build.yml) keeps tag/manual builds for macOS arm64/x64, Windows x64, and Linux x64, producing Actions test artifacts with ephemeral seed keys. It uses no publishing credentials or Developer ID signing/notarization. All five publishing jobs are explicitly disabled: downstream Release, OTA, and AtomGit, plus standalone OTA and AtomGit. Manual inputs cannot enable them. Both AtomGit destinations remain upstream `liliMozi/OpenHanako-Releases` for later review.
 
@@ -170,10 +180,12 @@ Independent distribution is still pending: application identity, user-data migra
 
 ## Links
 
+The upstream links below are references, not this fork's feedback or distribution channels. This fork's feedback channel is pending the maintainer's announcement; see the dated status in the Chinese README.
+
 > The repository and release URLs intentionally remain under the legacy `openhanako` path during the current migration. The repository rename is a separate later step.
 
 - [Homepage](https://openhanako.com)
-- [Report an Issue](https://github.com/liliMozi/openhanako/issues)
+- [Upstream Issues](https://github.com/liliMozi/openhanako/issues)
 - [Security](https://github.com/liliMozi/openhanako/security)
 - [Security Policy](SECURITY.md)
 - [Plugin Development](PLUGINS.md)
