@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getXingyePersistenceStorage } from './xingye-persistence';
+import { captureXingyePersistenceBinding, getXingyePersistenceStorage } from './xingye-persistence';
 
 export type XingyeLoreCategory =
   | 'background'
@@ -206,11 +206,8 @@ function loadLoreEntryMap(storage: StorageLike | null = getLocalStorage()): Xing
 }
 
 function saveLoreEntryMap(entries: XingyeLoreEntryMap, storage: StorageLike | null = getLocalStorage()) {
-  try {
-    storage?.setItem(XINGYE_LORE_ENTRIES_STORAGE_KEY, JSON.stringify(entries));
-  } catch (error) {
-    console.warn('[xingye-lore-store] failed to save lore entries:', error);
-  }
+  if (!storage) throw new Error('设定库尚未就绪，请稍后重试。');
+  storage.setItem(XINGYE_LORE_ENTRIES_STORAGE_KEY, JSON.stringify(entries));
 }
 
 function notifyLoreEntriesChanged() {
@@ -245,8 +242,11 @@ export function listLoreEntries(agentId: string | null | undefined, storage: Sto
 export function createLoreEntry(
   agentId: string,
   input: XingyeLoreEntryInput,
-  storage: StorageLike | null = getLocalStorage(),
+  storage?: StorageLike | null,
 ): XingyeLoreEntry {
+  // Default writes must have a real binding, including during cold start and
+  // a role switch. Explicit Storage injection remains available to callers.
+  const targetStorage = storage === undefined ? captureXingyePersistenceBinding(agentId).storage : storage;
   const now = new Date().toISOString();
   const category = input.category ?? 'background';
   const entry = normalizeLoreEntry({
@@ -265,9 +265,9 @@ export function createLoreEntry(
   });
   if (!entry) throw new Error('Unable to create Xingye lore entry without agentId, title, or content.');
 
-  const entries = loadLoreEntryMap(storage);
+  const entries = loadLoreEntryMap(targetStorage);
   entries[entry.id] = entry;
-  saveLoreEntryMap(entries, storage);
+  saveLoreEntryMap(entries, targetStorage);
   notifyLoreEntriesChanged();
   return entry;
 }
@@ -275,11 +275,12 @@ export function createLoreEntry(
 export function updateLoreEntry(
   id: string,
   patch: XingyeLoreEntryInput,
-  storage: StorageLike | null = getLocalStorage(),
+  storage?: StorageLike | null,
 ): XingyeLoreEntry | null {
   const entries = loadLoreEntryMap(storage);
   const previous = entries[id];
   if (!previous) return null;
+  const targetStorage = storage === undefined ? captureXingyePersistenceBinding(previous.agentId).storage : storage;
 
   const next = normalizeLoreEntry({
     ...previous,
@@ -297,7 +298,7 @@ export function updateLoreEntry(
   if (!next) return null;
 
   entries[id] = next;
-  saveLoreEntryMap(entries, storage);
+  saveLoreEntryMap(entries, targetStorage);
   notifyLoreEntriesChanged();
   return next;
 }

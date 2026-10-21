@@ -22,6 +22,7 @@ import {
   importanceNumberFromLevel,
 } from './xingye-memory-candidate-store';
 import { resolveXingyeLoreTemplateUserNameSync } from './xingye-speaker-context';
+import { captureXingyePersistenceBinding, XingyePersistenceBindingError } from './xingye-persistence';
 import { LoreEntryCard } from './LoreEntryCard';
 import { LoreDiagnostics } from './LoreDiagnostics';
 import styles from './XingyeShell.module.css';
@@ -97,7 +98,12 @@ function normalizeAgentNameForTemplate(value: string | null | undefined): string
   return text || '当前角色';
 }
 
-export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
+export function LoreEditor(props: LoreEditorProps) {
+  // A pending save belongs to this form's role, even across A → B → A.
+  return <AgentLoreEditor key={props.agentId} {...props} />;
+}
+
+function AgentLoreEditor({ agentId, agentName }: LoreEditorProps) {
   const entries = useXingyeLoreEntries(agentId);
   const { config } = useConfig();
   const storeUserName = useStore((s) => s.userName);
@@ -116,17 +122,32 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
   const [selectedPeerId, setSelectedPeerId] = useState<string>('');
 
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<LoreDraft>(() => createEmptyDraft());
+  const [draft, setDraftState] = useState<LoreDraft>(() => createEmptyDraft());
+  const draftRevisionRef = useRef(0);
+  const setDraft = useCallback((next: LoreDraft | ((current: LoreDraft) => LoreDraft)) => {
+    // Invalidate the submitted revision at the edit event, even if React batches
+    // its render with a storage acknowledgment in the same turn.
+    draftRevisionRef.current += 1;
+    setDraftState(next);
+  }, []);
   const [flash, setFlash] = useState<string | null>(null);
   const [savingCandidateId, setSavingCandidateId] = useState<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const saveInFlightRef = useRef(false);
+  const savedDraftIdRef = useRef<string | null>(null);
+  const draftSessionRef = useRef(0);
+  const mountedRef = useRef(true);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The entries hook also refreshes on persistence binding changes.
+  let persistenceReady = false;
+  try { captureXingyePersistenceBinding(agentId); persistenceReady = true; } catch { /* wait for binding */ }
 
   useEffect(() => {
     setEditingId(null);
     setDraft(createEmptyDraft());
     setFlash(null);
     setSelectedPeerId('');
-  }, [agentId]);
+  }, [agentId, setDraft]);
 
   /** 选中的 peer 从列表消失（被删 / 切换）时回退到「不指定」，避免烤进失效 id。 */
   useEffect(() => {
@@ -148,19 +169,22 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
       return;
     }
     setDraft(entryToDraft(entry));
-  }, [editingId]);
+  }, [editingId, setDraft]);
 
   /** 正在编辑的条目被删除时退出编辑态。 */
   useEffect(() => {
-    if (editingId == null) return;
+    // An unavailable binding is not evidence that the entry was deleted.
+    if (editingId == null || !persistenceReady || savingDraft) return;
     if (!entries.some((e) => e.id === editingId)) {
       setEditingId(null);
       setDraft(createEmptyDraft());
     }
-  }, [editingId, entries]);
+  }, [editingId, entries, setDraft, persistenceReady, savingDraft]);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     };
   }, []);
@@ -195,11 +219,6 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
     [agentId, showFlash],
   );
 
-  const editingEntry = useMemo(
-    () => entries.find((entry) => entry.id === editingId) ?? null,
-    [editingId, entries],
-  );
-
   const relationshipTemplateBody = useMemo(
     () =>
       buildXingyeRelationshipLoreTemplateContent({
@@ -227,12 +246,16 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
   );
 
   const resetDraft = () => {
+    draftSessionRef.current += 1;
+    savedDraftIdRef.current = null;
     setEditingId(null);
     setDraft(createEmptyDraft());
   };
 
   /** 仅切换 editingId；正文等由 useLayoutEffect 从 store 注入，避免未保存草稿残留在切换后的表单。 */
   const startEdit = useCallback((entry: XingyeLoreEntry) => {
+    draftSessionRef.current += 1;
+    savedDraftIdRef.current = null;
     setEditingId(entry.id);
   }, []);
 
@@ -253,7 +276,7 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
       const head = current.content.trimEnd();
       return { ...current, content: `${head}\n\n${block}` };
     });
-  }, [agentNameForTemplate, applyRelationshipTemplateDefaults, userNameForTemplate]);
+  }, [agentNameForTemplate, applyRelationshipTemplateDefaults, userNameForTemplate, setDraft]);
 
   /** 插入「其他 agent 关系」模板：与用户关系模板平行，描述当前 agent ↔ 另一个 AI agent。
    *  下拉选中具体 peer → 把对方名字 + id 烤进模板；未选 → 通用占位「对方」由作者手填。 */
@@ -294,9 +317,15 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
       const head = current.content.trimEnd();
       return { ...current, content: `${head}\n\n${block}` };
     });
-  }, [agentNameForTemplate, peerAgents, selectedPeerId, userNameForTemplate]);
+  }, [agentNameForTemplate, peerAgents, selectedPeerId, userNameForTemplate, setDraft]);
 
-  const saveDraft = () => {
+  const saveDraft = async () => {
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
+    setSavingDraft(true);
+    setFlash(null);
+    const session = draftSessionRef.current;
+    const submittedRevision = draftRevisionRef.current;
     const keywords = Array.from(
       new Set(draft.keywords.split(/[,\n，、]/).map((s) => s.trim()).filter(Boolean)),
     );
@@ -309,12 +338,28 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
       insertionMode: draft.insertionMode,
       visibility: draft.visibility,
     };
-    if (editingEntry) {
-      updateLoreEntry(editingEntry.id, input);
-    } else {
-      createLoreEntry(agentId, input);
+    try {
+      const binding = captureXingyePersistenceBinding(agentId);
+      const id = savedDraftIdRef.current ?? editingId;
+      const entry = id ? updateLoreEntry(id, input) : createLoreEntry(agentId, input);
+      if (!entry) throw new Error('设定条目已不可用，请保留正文后重新编辑。');
+      // A failed flush may still be retried by persistence. Reuse this ID on
+      // manual retry so an ambiguous/late acknowledgment cannot duplicate it.
+      savedDraftIdRef.current = entry.id;
+      await binding.commit();
+      binding.assertCurrent();
+      if (mountedRef.current && draftSessionRef.current === session && draftRevisionRef.current === submittedRevision) resetDraft();
+    } catch (error) {
+      if (mountedRef.current && draftSessionRef.current === session) {
+        const message = error instanceof XingyePersistenceBindingError
+          ? '角色数据尚未就绪，请稍后重试。'
+          : error instanceof Error ? error.message : String(error);
+        showFlash(`保存失败：${message} 草稿已保留。`);
+      }
+    } finally {
+      saveInFlightRef.current = false;
+      if (mountedRef.current) setSavingDraft(false);
     }
-    resetDraft();
   };
 
   return (
@@ -340,7 +385,7 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
             </p>
           </div>
         </div>
-        {editingEntry && <button type="button" onClick={resetDraft}>取消编辑</button>}
+        {editingId != null && <button type="button" onClick={resetDraft}>取消编辑</button>}
       </div>
 
       <LoreDiagnostics key={agentId} agentId={agentId} entries={entries} />
@@ -465,8 +510,9 @@ export function LoreEditor({ agentId, agentName }: LoreEditorProps) {
             </div>
           </div>
         ) : null}
-        <button type="button" className={styles.primaryAction} onClick={saveDraft}>
-          {editingEntry ? '保存设定条目' : '新增设定条目'}
+        {!persistenceReady && <p className={styles.loreHint} role="status">角色数据尚未就绪，草稿会保留，加载完成后可保存。</p>}
+        <button type="button" className={styles.primaryAction} onClick={saveDraft} disabled={!persistenceReady || savingDraft}>
+          {editingId != null ? '保存设定条目' : '新增设定条目'}
         </button>
       </div>
 
