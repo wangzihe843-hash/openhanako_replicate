@@ -12,13 +12,18 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function fixture() {
+function fixture(useSymlink = false) {
   const parent = path.resolve('output/audit-fixes-2026-09-10/xingye/fixtures');
   fs.mkdirSync(parent, { recursive: true });
-  const root = fs.mkdtempSync(path.join(parent, 'storage-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(parent, 'storage-')));
   roots.push(root);
-  const agentsDir = path.join(root, 'agents');
+  let agentsDir = path.join(root, 'agents');
   fs.mkdirSync(path.join(agentsDir, 'a'), { recursive: true });
+  if (useSymlink) {
+    const alias = path.join(root, 'agents-alias');
+    fs.symlinkSync(agentsDir, alias, 'junction');
+    agentsDir = alias;
+  }
   const app = new Hono();
   app.route('/api', createXingyeStorageRoute({ agentsDir, getAgent: (id: string) => id === 'a' ? { id } : null }));
   const request = (body: Record<string, unknown>) => app.request('/api/xingye/storage', {
@@ -45,20 +50,39 @@ describe('X3/X7 storage row updates against the real HTTP route', () => {
     expect(await store.listJsonl('a', rel)).toEqual([{ id: 'one', count: 2 }, { id: 'two', count: 1 }, { id: 'three', count: 0 }]);
   });
 
-  it('rejects a stale replacement, preserves malformed lines, and retains the original on rename failure', async () => {
-    const { post, request, disk } = fixture();
+  it.each([false, true])('rejects a stale replacement, preserves malformed lines, and retains the original on rename failure (symlink: %s)', async (useSymlink) => {
+    const { post, request, disk } = fixture(useSymlink);
     const relativePath = 'apps/mail/messages.jsonl';
     const row = { id: 'one', isRead: false };
     await post({ action: 'appendJsonl', relativePath, data: row });
     fs.appendFileSync(disk(relativePath), '{broken\n');
     const original = fs.readFileSync(disk(relativePath), 'utf8');
     const update = { action: 'compareAndSwapJsonlRecord', relativePath, recordId: 'one', expected: row, data: { ...row, isRead: true } };
+    // The route resolves its storage root before atomic rename, including aliases.
+    const renameTarget = fs.realpathSync(disk(relativePath));
+    expect(disk(relativePath) === renameTarget).toBe(!useSymlink);
+    const injectedFailure = new Error('injected rename failure');
     const realRename = fs.promises.rename;
-    vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
-      if (String(to) === disk(relativePath)) throw new Error('injected rename failure');
+    const rename = vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+      if (String(to) === renameTarget) throw injectedFailure;
       return realRename(from, to);
     });
-    expect((await request(update)).status).toBe(500);
+    const response = await request(update);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: injectedFailure.message });
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(rename.mock.calls[0][1]).toBe(renameTarget);
+    await expect(rename.mock.results[0].value).rejects.toBe(injectedFailure);
+    expect(fs.readFileSync(disk(relativePath), 'utf8')).toBe(original);
+
+    // A different file with the same basename must still use the real rename.
+    const otherPath = 'apps/other-mail/messages.jsonl';
+    const otherRow = { id: 'other', isRead: false };
+    await post({ action: 'writeJsonl', relativePath: otherPath, records: [otherRow] });
+    expect(fs.readFileSync(disk(otherPath), 'utf8')).toBe(`${JSON.stringify(otherRow)}\n`);
+    expect(rename).toHaveBeenCalledTimes(2);
+    expect(rename.mock.calls[1][1]).toBe(fs.realpathSync(disk(otherPath)));
+    await expect(rename.mock.results[1].value).resolves.toBeUndefined();
     expect(fs.readFileSync(disk(relativePath), 'utf8')).toBe(original);
     vi.restoreAllMocks();
     expect(await post(update)).toMatchObject({ updated: true });

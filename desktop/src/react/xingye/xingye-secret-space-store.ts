@@ -3,10 +3,7 @@ import type { SecretSpaceSampleRecord } from './secret-space-record-types';
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { appendXingyeEvent } from './xingye-event-log';
-import {
-  recordFieldAsString,
-  stableSecretSpaceRecordId,
-} from './xingye-secret-space-record-id';
+import { stableSecretSpaceRecordId } from './xingye-secret-space-record-id';
 import { originFromEntryId } from './xingye-draft-confirm-lock';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
@@ -84,8 +81,8 @@ function logDeleteDebug(
     recordId: payload.recordId.slice(0, 160),
     method: 'POST',
     path: '/api/xingye/storage',
-    action: 'write',
-    bodyKeys: ['action', 'agentId', 'relativePath', 'encoding', 'content'],
+    action: 'deleteSecretSpaceRecord',
+    bodyKeys: ['action', 'agentId', 'relativePath', 'recordId'],
   });
 }
 
@@ -113,20 +110,9 @@ async function appendSecretSpaceEvent(
   }
 }
 
-/** 写回时补齐 recordId/key/id，便于后续删除不再依赖 legacy 推导 */
-function enrichRowForPersist(category: SecretSpaceCategoryId, raw: Record<string, unknown>): Record<string, unknown> {
-  const id = stableSecretSpaceRecordId(category, raw);
-  return {
-    ...raw,
-    recordId: recordFieldAsString(raw.recordId) || id,
-    key: recordFieldAsString(raw.key) || id,
-    id: recordFieldAsString(raw.id) || id,
-  };
-}
-
 /**
- * 删除一条秘密空间记录：listJsonl → 去掉匹配 recordId 的行 → `action:write` 写回 UTF-8 JSONL。
- * 不依赖后端 `deleteJsonlRecord`（避免旧服务端返回 400 invalid action）。
+ * Delete one record under the server's append/delete lock. The dedicated action
+ * requires stable-ID support; an older server must fail without a snapshot write.
  */
 export async function deleteSecretSpaceRecord(
   agentId: string,
@@ -148,36 +134,27 @@ export async function deleteSecretSpaceRecord(
 
   logDeleteDebug('request', { agentId: aid, category, recordId: rid });
 
-  const rel = secretSpaceCategoryRel(category);
-  const rows = await backend.listJsonl<Record<string, unknown>>(aid, rel);
-
-  const next: Record<string, unknown>[] = [];
-  let removed = false;
-  for (const raw of rows) {
-    const sid = stableSecretSpaceRecordId(category, raw);
-    if (!removed && sid === rid) {
-      removed = true;
-      continue;
+  let result;
+  try {
+    result = await postXingyeStorage({
+      action: 'deleteSecretSpaceRecord',
+      agentId: aid,
+      relativePath: secretSpaceCategoryRel(category),
+      recordId: rid,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'invalid action') {
+      throw new Error('删除失败：服务端不支持安全删除，请升级服务端后重试。');
     }
-    next.push(enrichRowForPersist(category, raw));
+    throw error;
   }
-
-  if (!removed) {
+  if (result?.ok !== true || typeof result.deleted !== 'boolean') {
+    throw new Error('删除失败：服务端未确认删除结果，请刷新记录后重试。');
+  }
+  if (!result.deleted) {
     logDeleteDebug('not-found', { agentId: aid, category, recordId: rid });
     return false;
   }
-
-  const content = next.length === 0 ? '' : `${next.map((r) => JSON.stringify(r)).join('\n')}\n`;
-
-  logDeleteDebug('write', { agentId: aid, category, recordId: rid });
-
-  await postXingyeStorage({
-    action: 'write',
-    agentId: aid,
-    relativePath: rel,
-    content,
-    encoding: 'utf8',
-  });
 
   await appendSecretSpaceEvent(aid, {
     // 专访已迁出为独立模块，发专属事件类型而非泛化的 secret_space.record_*。

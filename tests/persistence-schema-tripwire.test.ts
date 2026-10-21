@@ -171,6 +171,40 @@ describe("persistence schema tripwire", () => {
     }
   });
 
+  it.each([
+    ["shared/xingye-secret-space-record-id.ts", "return recordFieldAsString(raw.recordId)", "return recordFieldAsString(raw.key)"],
+    ["desktop/src/react/xingye/xingye-secret-space-store.ts", "action: 'deleteSecretSpaceRecord'", "action: 'write'"],
+  ])("rejects secret-space identity or deletion protocol drift in %s", async (module, before, after) => {
+    const committed = JSON.parse(fs.readFileSync(FINGERPRINT_PATH, "utf-8"));
+    const inventory = JSON.parse(fs.readFileSync(INVENTORY_PATH, "utf-8"));
+    const xingye = committed.schemas.find((entry) => entry.storeId === "xingye-state");
+    expect(xingye.protocolModules).toEqual(expect.arrayContaining([
+      expect.objectContaining({ module }),
+    ]));
+    const original = fs.readFileSync(path.join(ROOT, module), "utf-8");
+    expect(original).toContain(before);
+    await expect(assertCommittedPersistenceSchemaFingerprint({
+      rootDir: ROOT, committedFingerprint: committed, inventory,
+      sourceOverrides: new Map([[module, original.replaceAll(before, after)]]),
+    })).rejects.toThrow(/persistence schema fingerprint mismatch/);
+  });
+
+  it.each([
+    ["!SECRET_SPACE_DELETE_CATEGORIES.has(category)", "!category"],
+    ["!isUtf8(lineBytes)", "false"],
+  ])("rejects removal of the dedicated deletion boundary %s", async (before, after) => {
+    const committed = JSON.parse(fs.readFileSync(FINGERPRINT_PATH, "utf-8"));
+    const inventory = JSON.parse(fs.readFileSync(INVENTORY_PATH, "utf-8"));
+    const module = "server/routes/xingye-storage.js";
+    expect(committed.schemas.find((entry) => entry.storeId === "xingye-state").module).toBe(module);
+    const original = fs.readFileSync(path.join(ROOT, module), "utf-8");
+    expect(original).toContain(before);
+    await expect(assertCommittedPersistenceSchemaFingerprint({
+      rootDir: ROOT, committedFingerprint: committed, inventory,
+      sourceOverrides: new Map([[module, original.replace(before, after)]]),
+    })).rejects.toThrow(/persistence schema fingerprint mismatch/);
+  });
+
   it("ignores comment-only drift in the sources it hashes", async () => {
     // The tripwire exists to catch changes to what lands on disk, and a comment
     // cannot change a persisted byte. Hashing whole files meant it fired on

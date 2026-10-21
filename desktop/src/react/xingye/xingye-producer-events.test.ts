@@ -39,9 +39,11 @@ const postMock = vi.hoisted(() => vi.fn(async (body: Record<string, unknown>) =>
     jsonlStore.set(key, next);
     return { deleted };
   }
-  if (action === 'write') {
-    // raw text write used by secret-space delete path — not exercised here.
-    return {};
+  if (action === 'deleteSecretSpaceRecord') {
+    const rows = (jsonlStore.get(key) ?? []) as Array<Record<string, unknown>>;
+    const index = rows.findIndex((row) => (row.recordId || row.key || row.id) === body.recordId);
+    if (index >= 0) jsonlStore.set(key, rows.filter((_, i) => i !== index));
+    return { ok: true, deleted: index >= 0 };
   }
   throw new Error(`unexpected action: ${String(action)}`);
 }));

@@ -680,7 +680,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:35408dc4578b6e847c61644cf6fd57503971deefed7d6fb3d6ebde3aeaaec133",
+  "payloadFingerprint": "sha256:c59e6dc9c726bf79a1dd53cd4acba086df8f0bd6236fc9917bba5d1b49552aa0",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3374,16 +3374,18 @@
         "shared/xingye-profile-file.js",
         "shared/xingye-relationship-preamble.js",
         "shared/xingye-runtime-lore-file.js",
+        "shared/xingye-secret-space-record-id.ts",
         "desktop/src/react/xingye/xingye-persistence.ts",
         "desktop/src/react/xingye/xingye-storage-backend.ts",
         "desktop/src/react/xingye/xingye-event-log.ts",
         "desktop/src/react/xingye/xingye-profile-store.ts",
         "desktop/src/react/xingye/xingye-lore-store.ts",
-        "desktop/src/react/xingye/xingye-state-store.ts"
+        "desktop/src/react/xingye/xingye-state-store.ts",
+        "desktop/src/react/xingye/xingye-secret-space-store.ts"
       ],
       "restorePolicy": "Restore captured bytes to the same agent or reserved scope after reader compatibility is established; preserve authored records, record IDs, deletion tombstones, consumed-event markers, and shared inventory together.",
       "schemaContract": {
-        "compatibility": "This is an additive namespace relative to upstream DATA_EPOCH 1. The new heartbeat/topic-candidates.json version-1 file is optional and does not replace the existing heartbeat or event logs. Existing local files keep their layouts and permissive readers: absent optional fields use defaults, authoritative lore entries (including empty/deletion values) supersede legacy mirrors, and missing gift inventory is distinct from read/parse failure. Registration does not migrate or rewrite data. Ordinary Lore whole-map saves preserve own optional memoryScope JSON values (including null and invalid values) and exact string sourceStatus/origin; unknown top-level fields remain discarded. Missing metadata retains existing legacy semantics, invalid explicit scopes remain unreadable, and ordinary edits cannot set, clear or promote guards. This is forward compatible at DATA_EPOCH 1; older desktop normalizers drop these guards on read and subsequent save, so same-home downgrade is not certified. See docs/audits/2026-10-19-lore-metadata-persistence-compatibility.md.",
+        "compatibility": "This is an additive namespace relative to upstream DATA_EPOCH 1. The new heartbeat/topic-candidates.json version-1 file is optional and does not replace the existing heartbeat or event logs. Existing local files keep their layouts and permissive readers: absent optional fields use defaults, authoritative lore entries (including empty/deletion values) supersede legacy mirrors, and missing gift inventory is distinct from read/parse failure. Registration does not migrate or rewrite data. Ordinary Lore whole-map saves preserve own optional memoryScope JSON values (including null and invalid values) and exact string sourceStatus/origin; unknown top-level fields remain discarded. Missing metadata retains existing legacy semantics, invalid explicit scopes remain unreadable, and ordinary edits cannot set, clear or promote guards. This is forward compatible at DATA_EPOCH 1; older desktop normalizers drop these guards on read and subsequent save, so same-home downgrade is not certified. See docs/audits/2026-10-19-lore-metadata-persistence-compatibility.md. Secret-space deleteSecretSpaceRecord is an additive action over the existing seven category JSONL files: one first stable match (recordId, key, id, then legacy digest) is removed under the same per-agent in-process lock as appendJsonl; all non-target bytes remain unchanged. Only this dedicated action enforces the seven-category allowlist; drafts and unregistered categories return 400, while generic JSONL actions keep their existing scope. Complete line bytes must be valid UTF-8 before JSON parsing and stable-ID selection: malformed sequences are skipped unchanged, while valid U+FFFD remains deletable. No survivor ID enrichment, format version change or migration occurs. The client requires an explicit boolean deletion result, emits success only for true, and never falls back to snapshot writes or automatic retries. Old services reject this action; coordinated client/server upgrade is required, and old clients remain outside this concurrency guarantee. Code rollback does not restore deleted data; retain the existing complete-tree checkpoint/compatible restore policy. See docs/audits/2026-10-20-secret-space-delete-persistence-compatibility.md.",
         "kind": "protocol",
         "source": "server/routes/xingye-storage.js"
       },
@@ -3396,8 +3398,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Add optional independently selected web_fetch preferences and runtime credential reuse from DeepSeek Search or an official model provider. Missing Fetch settings preserve direct fetching; model keys are never copied, and existing stores, epoch, search defaults and tool permissions remain compatible.\n\nLore metadata review relative to d730328f9bf6d17033d797c11e279ab1a64197ef: preserve existing own optional memoryScope JSON values and exact string sourceStatus/origin through ordinary desktop whole-map saves, without allowing edits to add, clear or promote guards. Missing/null legacy semantics and existing scope/source validation are retained; explicit invalid scopes stay unreadable and unknown top-level fields remain discarded. This is forward compatible at DATA_EPOCH 1, with no new path, required schema, SQLite/Pi change or migration. Older desktop code drops guards in memory and on subsequent writes; same-home downgrade is not certified and missing historical metadata is not reconstructed. See docs/audits/2026-10-19-lore-metadata-persistence-compatibility.md.\n\nPrompt-only Unicode boundary review: the stable Lore readers opt into backing off a split UTF-16 surrogate pair after selection, while truncateText and fitManagedBlock retain their previous defaults for mirror synchronization. Canonical and managed file bytes, write paths, schema, scope/source eligibility, UTF-16 budgets, selection order and DATA_EPOCH 1 remain unchanged. Regression coverage verifies read-only behavior and unchanged sync bytes at the same emoji boundary. Existing malformed input and previously stored replacement characters are not repaired.",
-    "payloadFingerprint": "sha256:35408dc4578b6e847c61644cf6fd57503971deefed7d6fb3d6ebde3aeaaec133"
+    "compatibilityReason": "Add optional independently selected web_fetch preferences and runtime credential reuse from DeepSeek Search or an official model provider. Missing Fetch settings preserve direct fetching; model keys are never copied, and existing stores, epoch, search defaults and tool permissions remain compatible.\n\nLore metadata review relative to d730328f9bf6d17033d797c11e279ab1a64197ef: preserve existing own optional memoryScope JSON values and exact string sourceStatus/origin through ordinary desktop whole-map saves, without allowing edits to add, clear or promote guards. Missing/null legacy semantics and existing scope/source validation are retained; explicit invalid scopes stay unreadable and unknown top-level fields remain discarded. This is forward compatible at DATA_EPOCH 1, with no new path, required schema, SQLite/Pi change or migration. Older desktop code drops guards in memory and on subsequent writes; same-home downgrade is not certified and missing historical metadata is not reconstructed. See docs/audits/2026-10-19-lore-metadata-persistence-compatibility.md.\n\nPrompt-only Unicode boundary review: the stable Lore readers opt into backing off a split UTF-16 surrogate pair after selection, while truncateText and fitManagedBlock retain their previous defaults for mirror synchronization. Canonical and managed file bytes, write paths, schema, scope/source eligibility, UTF-16 budgets, selection order and DATA_EPOCH 1 remain unchanged. Regression coverage verifies read-only behavior and unchanged sync bytes at the same emoji boundary. Existing malformed input and previously stored replacement characters are not repaired. Secret-space atomic deletion is a compatible forward protocol addition at DATA_EPOCH 1: existing category JSONL ownership, paths and formats are unchanged; the same in-process per-agent lock serializes append with read/select/atomic publish; only the first recordId/key/id/legacy-digest match is removed and all non-target bytes are retained, with no migration or survivor enrichment. The client requires ok=true plus boolean deleted and has no snapshot fallback or automatic retry. Old servers reject the action and require a coordinated client/server upgrade; old clients and independent service processes remain outside this concurrency guarantee. Code rollback cannot restore deleted data; keep the registered coherent-tree checkpoint/compatible restore policy. Identity selection and client confirmation are now guarded protocol modules. See docs/audits/2026-10-20-secret-space-delete-persistence-compatibility.md. Final secret-space boundary review: the dedicated action now enforces exactly the seven generated categories, rejecting drafts, interview-drafts and unregistered names without publication; the shared path helper, caller permissions and generic APIs are unchanged. Complete original line bytes pass node:buffer.isUtf8 before JSON parsing or stable-ID selection; invalid sequences are skipped byte-for-byte, valid literal or escaped U+FFFD remains deletable, and the previous BOM parsing boundary is unchanged. No corruption repair, migration, new owner, path, required field, format, DATA_EPOCH, lock, event or rollback-policy change occurs. Actual client/storage API/Hono/synthetic-disk tests cover rejection, false/no-publish/no-event, and corrupt-before-valid identity collisions. This fulfills the earlier seven-category/raw-byte contract; it is not a claim that the pre-existing baseline corruption defect or generic file authority was newly introduced. See docs/audits/2026-10-20-secret-space-delete-persistence-compatibility.md.",
+    "payloadFingerprint": "sha256:c59e6dc9c726bf79a1dd53cd4acba086df8f0bd6236fc9917bba5d1b49552aa0"
   },
   "schemas": [
     {
@@ -4252,6 +4254,10 @@
           "sourceHash": "sha256:cdb561544c5a0e056435a012dcdd30c3b26ae857cdabb29f6b5b8ac91a7d81a2"
         },
         {
+          "module": "desktop/src/react/xingye/xingye-secret-space-store.ts",
+          "sourceHash": "sha256:88853474725bb6e7efb3273ff66f54b4419e2b009e7f60c2eacbfe7d3db0678e"
+        },
+        {
           "module": "desktop/src/react/xingye/xingye-state-store.ts",
           "sourceHash": "sha256:36977a49764b4a0ed285cc8737f10c963ee32717e8113b24079d8525e5f39c9e"
         },
@@ -4378,9 +4384,13 @@
         {
           "module": "shared/xingye-runtime-lore-file.js",
           "sourceHash": "sha256:5302db2d8b079de6b85ccffac8ed6b4a9bb2bf7fe0a626169ef1bf01ad7ab802"
+        },
+        {
+          "module": "shared/xingye-secret-space-record-id.ts",
+          "sourceHash": "sha256:13e76b7eb9b41014ab07db6ccbdd315de70fb16ee9a9a60ea23d059229dfdb50"
         }
       ],
-      "sourceHash": "sha256:d0146bc6eab5a4c57a760ca86f4126abcf86f834e6f1de1c985157b4a38b45ec",
+      "sourceHash": "sha256:be6a389ee398e60b5d3e936505fd69c6fc0a6b828313ab73da195f8119aa1564",
       "storeId": "xingye-state"
     }
   ],

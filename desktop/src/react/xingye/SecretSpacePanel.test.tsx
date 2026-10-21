@@ -90,6 +90,20 @@ const hanaFetchMock = vi.hoisted(() => vi.fn(async (path: string, init?: Request
       return { ok: true, json: async () => ({ ok: true }) } as Response;
     }
 
+    if (body.action === 'deleteSecretSpaceRecord') {
+      const category = /^secret-space\/(state|draft_reply|dream|saved_item|unsent_moment|memory_fragment|interview)\.jsonl$/.exec(relativePath)?.[1];
+      const recordId = typeof body.recordId === 'string' ? body.recordId.trim() : '';
+      if (!category || !recordId) {
+        return { ok: false, status: 400, json: async () => ({ error: 'recordId and secret-space category JSONL path required' }) } as Response;
+      }
+      // Mirror the server's first stable-ID match, without enriching surviving rows.
+      // Real locking and raw-byte preservation are covered by the route/disk suite.
+      const rows = jsonlStore.get(key) ?? [];
+      const index = rows.findIndex(row => stableSecretSpaceRecordId(category, row) === recordId);
+      if (index >= 0) jsonlStore.set(key, [...rows.slice(0, index), ...rows.slice(index + 1)]);
+      return { ok: true, json: async () => ({ ok: true, deleted: index >= 0 }) } as Response;
+    }
+
     if (body.action === 'write') {
       const content = typeof body.content === 'string' ? body.content : '';
       if (!content.trim()) {
@@ -132,7 +146,7 @@ const hanaFetchMock = vi.hoisted(() => vi.fn(async (path: string, init?: Request
       return { ok: true, json: async () => ({ ok: true, event: next }) } as Response;
     }
 
-    return { ok: true, json: async () => ({ ok: true, records: [] }) } as Response;
+    return { ok: false, status: 400, json: async () => ({ error: 'invalid action' }) } as Response;
   }
   return { ok: true, json: async () => ({}) } as Response;
 }));
@@ -412,7 +426,91 @@ describe('SecretSpacePanel secret space navigation', () => {
     const drKey = storeKey('agent-secret-1', 'secret-space/draft_reply.jsonl');
     expect(jsonlStore.get(drKey)?.some((r) => r.key === 'row-a')).toBe(false);
     expect(jsonlStore.get(drKey)?.some((r) => r.key === 'row-b')).toBe(true);
+    const requests = hanaFetchMock.mock.calls.map(([, init]) => init?.body ? JSON.parse(String(init.body)) : {});
+    expect(requests.filter(body => body.action === 'deleteSecretSpaceRecord')).toEqual([{
+      action: 'deleteSecretSpaceRecord', agentId: agent.id,
+      relativePath: 'secret-space/draft_reply.jsonl', recordId: 'row-a',
+    }]);
+    expect(requests.some(body => body.action === 'write' || body.action === 'writeJsonl' || body.action === 'deleteJsonlRecord')).toBe(false);
     confirmSpy.mockRestore();
+  });
+
+  it('keeps the selected record and sends no mutation when deletion is cancelled', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    try {
+      render(<SecretSpacePanel agent={agent} />);
+      fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+      fireEvent.click(await screen.findByTestId('secret-space-record-row-stored-dr1'));
+      hanaFetchMock.mockClear();
+      fireEvent.click(screen.getByTestId('secret-space-delete-stored-dr1'));
+      expect(confirmSpy).toHaveBeenCalledOnce();
+      expect(screen.getByTestId('secret-space-delete-stored-dr1')).toBeInTheDocument();
+      expect(hanaFetchMock).not.toHaveBeenCalled();
+      expect(jsonlStore.get(storeKey(agent.id, 'secret-space/draft_reply.jsonl'))).toHaveLength(1);
+      expect(jsonStore.has(storeKey(agent.id, 'events/log.json'))).toBe(false);
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it.each([
+    ['unsupported server', false, { error: 'invalid action' }, /服务端不支持安全删除/],
+    ['unconfirmed response', true, { ok: true }, /服务端未确认删除结果/],
+  ] as const)('keeps the detail and records without fallback on %s', async (_name, ok, payload, message) => {
+    const originalFetch = hanaFetchMock.getMockImplementation()!;
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const changed = vi.fn();
+    window.addEventListener('xingye-secret-space-changed', changed);
+    hanaFetchMock.mockImplementation((path, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (body.action === 'deleteSecretSpaceRecord') {
+        return Promise.resolve({ ok, status: ok ? 200 : 400, json: async () => payload } as Response);
+      }
+      return originalFetch(path, init);
+    });
+    try {
+      const before = structuredClone(jsonlStore.get(storeKey(agent.id, 'secret-space/draft_reply.jsonl')));
+      render(<SecretSpacePanel agent={agent} />);
+      fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+      fireEvent.click(await screen.findByTestId('secret-space-record-row-stored-dr1'));
+      hanaFetchMock.mockClear();
+      fireEvent.click(screen.getByTestId('secret-space-delete-stored-dr1'));
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(screen.getByTestId('secret-space-delete-stored-dr1')).toBeInTheDocument();
+      expect(hanaFetchMock).toHaveBeenCalledOnce();
+      expect(JSON.parse(String(hanaFetchMock.mock.calls[0][1]?.body))).toEqual({
+        action: 'deleteSecretSpaceRecord', agentId: agent.id,
+        relativePath: 'secret-space/draft_reply.jsonl', recordId: 'stored-dr1',
+      });
+      expect(jsonlStore.get(storeKey(agent.id, 'secret-space/draft_reply.jsonl'))).toEqual(before);
+      expect(changed).not.toHaveBeenCalled();
+      expect(jsonStore.has(storeKey(agent.id, 'events/log.json'))).toBe(false);
+    } finally {
+      hanaFetchMock.mockImplementation(originalFetch);
+      confirmSpy.mockRestore();
+      window.removeEventListener('xingye-secret-space-changed', changed);
+    }
+  });
+
+  it('removes duplicate stable IDs one at a time and emits no event for a missing target', async () => {
+    const first = { recordId: '0', key: 'first-alias', body: 'first' };
+    const second = { recordId: 0, key: 'second-alias', body: 'second' };
+    const key = storeKey(agent.id, 'secret-space/dream.jsonl');
+    jsonlStore.set(key, [first, second]);
+    expect(await deleteSecretSpaceRecord(agent.id, 'dream', 'first-alias')).toBe(false);
+    expect(jsonlStore.get(key)).toEqual([first, second]);
+    expect(jsonStore.has(storeKey(agent.id, 'events/log.json'))).toBe(false);
+    expect(await deleteSecretSpaceRecord(agent.id, 'dream', '0')).toBe(true);
+    expect(jsonlStore.get(key)).toEqual([second]);
+    expect(await deleteSecretSpaceRecord(agent.id, 'dream', '0')).toBe(true);
+    expect(jsonlStore.get(key)).toEqual([]);
+    const events = structuredClone(jsonStore.get(storeKey(agent.id, 'events/log.json')));
+    expect((events as { events: unknown[] }).events).toHaveLength(2);
+    expect(await deleteSecretSpaceRecord(agent.id, 'dream', '0')).toBe(false);
+    expect(jsonStore.get(storeKey(agent.id, 'events/log.json'))).toEqual(events);
+    const actions = hanaFetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).action);
+    expect(actions.filter(action => action === 'deleteSecretSpaceRecord')).toHaveLength(4);
+    expect(actions.some(action => ['listJsonl', 'write', 'writeJsonl', 'deleteJsonlRecord'].includes(action))).toBe(false);
   });
 
   it('does not remove another agent record that shares the same record key', async () => {

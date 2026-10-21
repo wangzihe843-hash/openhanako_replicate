@@ -12,8 +12,10 @@ import fs from "fs";
 import path from "path";
 import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
+import { isUtf8 } from "node:buffer";
 import { Hono } from "hono";
 import { syncXingyeStableLoreMemoryFile } from "../../shared/xingye-lore-memory-file.js";
+import { stableSecretSpaceRecordId } from "../../shared/xingye-secret-space-record-id.ts";
 import {
   appendXingyeEvent,
   appendXingyeEventOnce,
@@ -39,6 +41,11 @@ const XINGYE_ROOT_DIR = "xingye";
  */
 const XINGYE_EVENT_LOG_RELATIVE_PATH = "events/log.json";
 const SAFE_AGENT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
+// Only the dedicated deletion action is limited to generated categories.
+// The generic JSONL actions retain their existing draft/extension contract.
+const SECRET_SPACE_DELETE_CATEGORIES = new Set([
+  "state", "draft_reply", "dream", "saved_item", "unsent_moment", "memory_fragment", "interview",
+]);
 /**
  * 「用户本人」的保留存储作用域。
  *
@@ -57,6 +64,7 @@ const ACTIONS = new Set([
   "listJsonl",
   "writeJsonl",
   "deleteJsonlRecord",
+  "deleteSecretSpaceRecord",
   "compareAndSwapJsonlRecord",
   "read",
   "write",
@@ -418,6 +426,43 @@ export function createXingyeStorageRoute(engine) {
             return { updated: false, record: null };
           });
           return c.json({ ok: true, ...result });
+        }
+        case "deleteSecretSpaceRecord": {
+          const recordId = typeof body?.recordId === "string" ? body.recordId.trim() : "";
+          const category = secretSpaceCategoryFromJsonlRelativePath(relativePath);
+          if (!recordId || !SECRET_SPACE_DELETE_CATEGORIES.has(category)) {
+            return c.json({ error: "recordId and secret-space category JSONL path required" }, 400);
+          }
+          // A separate action makes older servers fail before mutating with their
+          // key/id/positional matcher. Read and publish under the appendJsonl lock.
+          const deleted = await withXingyeAgentEventLock(agentId, async () => {
+            let content;
+            try {
+              content = await fs.promises.readFile(target);
+            } catch (error) {
+              if (error?.code === "ENOENT") return false;
+              throw error;
+            }
+            // Slice the original bytes: keep bad lines, CRLF, blank lines and
+            // missing final newlines intact; never enrich or migrate other rows.
+            for (let start = 0; start < content.length;) {
+              const newline = content.indexOf(10, start);
+              const end = newline === -1 ? content.length : newline + 1;
+              const lineBytes = content.subarray(start, end);
+              // Replacement decoding can turn corrupt bytes into a valid JSON
+              // string and falsely match an ID (including a real U+FFFD ID).
+              if (!isUtf8(lineBytes)) { start = end; continue; }
+              let row;
+              try { row = JSON.parse(lineBytes.toString("utf8")); } catch { /* preserve malformed lines */ }
+              if (isInput(row) && stableSecretSpaceRecordId(category, row) === recordId) {
+                await atomicWrite(target, Buffer.concat([content.subarray(0, start), content.subarray(end)]));
+                return true;
+              }
+              start = end;
+            }
+            return false;
+          });
+          return c.json({ ok: true, deleted });
         }
         case "deleteJsonlRecord": {
           const recordId = typeof body?.recordId === "string" ? body.recordId.trim() : "";

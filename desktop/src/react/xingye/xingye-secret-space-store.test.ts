@@ -1,85 +1,84 @@
 /**
  * @vitest-environment jsdom
  */
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const postMock = vi.hoisted(() => vi.fn());
-
-vi.mock('./xingye-storage-api', () => ({
-  postXingyeStorage: postMock,
-}));
-
+const { postMock, eventMock } = vi.hoisted(() => ({ postMock: vi.fn(), eventMock: vi.fn() }));
+vi.mock('./xingye-storage-api', () => ({ postXingyeStorage: postMock }));
+vi.mock('./xingye-event-log', () => ({ appendXingyeEvent: eventMock }));
 import { deleteSecretSpaceRecord } from './xingye-secret-space-store';
 
 describe('deleteSecretSpaceRecord', () => {
-  let listRows: Record<string, unknown>[];
-
   beforeEach(() => {
-    postMock.mockReset();
-    listRows = [];
-    postMock.mockImplementation(async (body: Record<string, unknown>) => {
-      if (body.action === 'listJsonl') {
-        return { ok: true, records: listRows };
-      }
-      if (body.action === 'write') {
-        return { ok: true };
-      }
-      throw new Error(`unexpected action: ${String(body.action)}`);
+    postMock.mockReset().mockResolvedValue({ ok: true, deleted: true });
+    eventMock.mockReset().mockResolvedValue(null);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('uses one atomic stable-ID delete request and publishes the success event', async () => {
+    const dispatch = vi.spyOn(window, 'dispatchEvent');
+    await expect(deleteSecretSpaceRecord(' agent-z ', 'dream', ' drop-me ')).resolves.toBe(true);
+    expect(postMock).toHaveBeenCalledExactlyOnceWith({
+      action: 'deleteSecretSpaceRecord', agentId: 'agent-z',
+      relativePath: 'secret-space/dream.jsonl', recordId: 'drop-me',
+    });
+    expect(eventMock).toHaveBeenCalledExactlyOnceWith('agent-z', {
+      type: 'secret_space.record_deleted', source: 'xingye-secret-space-store', subjectId: 'dream',
+      payload: { category: 'dream', recordId: 'drop-me' },
+    });
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(dispatch.mock.calls[0][0]).toMatchObject({
+      type: 'xingye-secret-space-changed', detail: { agentId: 'agent-z', category: 'dream' },
     });
   });
 
-  it('does not call deleteJsonlRecord; uses listJsonl + write with UTF-8 content', async () => {
-    listRows = [
-      {
-        recordId: 'keep-me',
-        body: 'b',
-        summary: 's',
-        createdAt: '2026-01-02T00:00:00.000Z',
-        kind: 'dream',
-      },
-      {
-        recordId: 'drop-me',
-        body: 'x',
-        summary: 't',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        kind: 'dream',
-      },
-    ];
-    await expect(deleteSecretSpaceRecord('agent-z', 'dream', 'drop-me')).resolves.toBe(true);
-
-    const actions = postMock.mock.calls.map((c) => (c[0] as { action?: string }).action);
-    expect(actions).toContain('listJsonl');
-    expect(actions).toContain('write');
-    expect(actions).not.toContain('deleteJsonlRecord');
-
-    const writeBody = postMock.mock.calls.find((c) => (c[0] as { action?: string }).action === 'write')?.[0] as {
-      action: string;
-      agentId: string;
-      relativePath: string;
-      content: string;
-      encoding?: string;
-    };
-    expect(writeBody.agentId).toBe('agent-z');
-    expect(writeBody.relativePath).toBe('secret-space/dream.jsonl');
-    expect(writeBody.encoding).toBe('utf8');
-    expect(writeBody.content).toContain('keep-me');
-    expect(writeBody.content).not.toContain('drop-me');
+  it('keeps the interview deletion event semantics', async () => {
+    expect(await deleteSecretSpaceRecord('agent-z', 'interview', 'one')).toBe(true);
+    expect(eventMock).toHaveBeenCalledWith('agent-z', expect.objectContaining({
+      type: 'interview.entry_deleted', subjectId: 'one',
+    }));
   });
 
-  it('returns false when recordId is not in list (no write)', async () => {
-    listRows = [{ recordId: 'only', body: 'a', summary: 's', createdAt: '2026-01-01', kind: 'saved_item' }];
-    await expect(deleteSecretSpaceRecord('agent-z', 'saved_item', 'missing')).resolves.toBe(false);
-    expect(postMock.mock.calls.every((c) => (c[0] as { action?: string }).action !== 'write')).toBe(true);
+  it('returns false without notifications for an already deleted or missing record', async () => {
+    const dispatch = vi.spyOn(window, 'dispatchEvent');
+    postMock.mockResolvedValue({ ok: true, deleted: false });
+    expect(await deleteSecretSpaceRecord('agent-z', 'saved_item', 'missing')).toBe(false);
+    expect(eventMock).not.toHaveBeenCalled(); expect(dispatch).not.toHaveBeenCalled();
+    expect(postMock).toHaveBeenCalledOnce();
   });
 
-  it('rejects invalid agentId before calling API', async () => {
-    await expect(deleteSecretSpaceRecord('no spaces!', 'dream', 'rid')).rejects.toThrow(/agentId/);
+  it.each([
+    ['unsupported', new Error('invalid action'), /升级服务端/],
+    ['server failure', new Error('synthetic EIO'), /synthetic EIO/],
+    ['cancelled transport', new DOMException('synthetic cancel', 'AbortError'), /synthetic cancel/],
+  ])('rejects %s without fallback or success notifications', async (_name, error, message) => {
+    const dispatch = vi.spyOn(window, 'dispatchEvent');
+    postMock.mockRejectedValue(error);
+    await expect(deleteSecretSpaceRecord('agent-z', 'dream', 'one')).rejects.toThrow(message as RegExp);
+    expect(postMock).toHaveBeenCalledOnce();
+    expect(postMock.mock.calls[0][0].action).toBe('deleteSecretSpaceRecord');
+    expect(eventMock).not.toHaveBeenCalled(); expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, {}, { ok: true }, { ok: true, deleted: 'true' }, { deleted: true }, { ok: false, deleted: true }])(
+    'rejects an unconfirmed response: %j', async (response) => {
+      postMock.mockResolvedValue(response);
+      await expect(deleteSecretSpaceRecord('agent-z', 'dream', 'one')).rejects.toThrow(/未确认删除结果/);
+      expect(postMock).toHaveBeenCalledOnce(); expect(eventMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['', 'rid', /agentId/], ['no spaces!', 'rid', /agentId/], ['agent-z', '  ', /recordId/],
+  ])('rejects invalid input before the API: %j', async (agentId, recordId, error) => {
+    await expect(deleteSecretSpaceRecord(agentId as string, 'dream', recordId as string)).rejects.toThrow(error as RegExp);
     expect(postMock).not.toHaveBeenCalled();
   });
 
-  it('rejects empty recordId before calling API', async () => {
-    await expect(deleteSecretSpaceRecord('agent-z', 'dream', '  ')).rejects.toThrow(/recordId/);
-    expect(postMock).not.toHaveBeenCalled();
+  it('keeps a committed delete successful if its best-effort event append fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    eventMock.mockRejectedValue(new Error('synthetic event error'));
+    expect(await deleteSecretSpaceRecord('agent-z', 'dream', 'one')).toBe(true);
+    expect(postMock).toHaveBeenCalledOnce(); expect(warning).toHaveBeenCalledOnce();
   });
 });
