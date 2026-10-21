@@ -11,6 +11,7 @@ import { useStore } from './index';
 import { sessionScopedKey, sessionScopedListIncludes, sessionScopedValue } from './session-slice';
 import { hanaFetch, hanaUrl } from '../hooks/use-hana-fetch';
 import { hydrateInputDrafts } from './input-draft-persistence';
+import { pendingComposerActivationPatch } from './input-slice';
 import { HOME_DRAFT_KEY } from '../../../../shared/input-drafts.ts';
 import { buildItemsFromHistory } from '../utils/history-builder';
 import { migrateLegacyTodos } from '../utils/todo-compat';
@@ -734,7 +735,8 @@ export function upsertOptimisticSessionFirstMessage(
 // Session 切换
 // ══════════════════════════════════════════════════════
 
-export async function switchSession(path: string): Promise<void> {
+export async function switchSession(path: string, pendingComposerDraftId?: string): Promise<void> {
+  let transferredComposer = false;
   const s = useStore.getState();
   const myVersion = ++_switchVersion;
   _switchAbortController?.abort();
@@ -832,6 +834,11 @@ export async function switchSession(path: string): Promise<void> {
       if (myVersion !== _switchVersion) return;
     }
 
+    if (pendingComposerDraftId && useStore.getState().pendingDraftId !== pendingComposerDraftId) {
+      useStore.setState({ pendingSessionSwitchPath: null });
+      return;
+    }
+
     // 批量更新 store（切 currentSessionPath 切换对话内容；可见 desk/preview 状态由 workspace 激活流程恢复）
     useStore.setState((prev: any) => {
       const streamingSessions = reconcileStreamingSessionsForPath(prev, prev.streamingSessions, path, isStreaming);
@@ -845,6 +852,10 @@ export async function switchSession(path: string): Promise<void> {
         delete activeSessionStreams[activeStreamKey];
         delete activeSessionStreams[path];
       }
+      transferredComposer = !!pendingComposerDraftId && prev.pendingNewSession
+        && prev.pendingDraftId === pendingComposerDraftId;
+      const composerPatch = transferredComposer && pendingComposerDraftId
+        ? pendingComposerActivationPatch(prev, path, pendingComposerDraftId) : {};
       return {
       ...currentSessionIdentityPatch(prev, path, data.sessionId),
       pendingSessionSwitchPath: null,
@@ -874,6 +885,7 @@ export async function switchSession(path: string): Promise<void> {
       attachedFiles: sessionScopedValue(prev, prev.attachedFilesBySession || {}, path) || [],
       deskContextAttached: false,
       docContextAttached: false,
+      ...composerPatch,
       ...agentPatch,
       };
     });
@@ -904,7 +916,7 @@ export async function switchSession(path: string): Promise<void> {
     // Committed quotes belong to the source composer and must not leak into the
     // destination session. Xingye cross-session handoff uses stagedChatQuote,
     // which this cleanup deliberately does not touch.
-    useStore.getState().clearQuotedSelection();
+    if (!transferredComposer) useStore.getState().clearQuotedSelection();
 
     emitSessionPermissionMode(data.permissionMode || data.accessMode);
     useStore.getState().setSessionWorkMode?.(data.workMode === true);
@@ -1227,7 +1239,27 @@ export async function createNewSession(options: CreateNewSessionOptions = {}): P
 // 确保 Session 存在（首次发消息时调用）
 // ══════════════════════════════════════════════════════
 
-export async function ensureSession(expectedPendingDraftId?: string | null): Promise<Readonly<SessionRef> | null> {
+// Multiple explicit sends may contain newer input while the first creation is
+// pending. Share only this pending identity's creation/activation, not its payload.
+const composerSessionCreations = new Map<string, Promise<Readonly<SessionRef> | null>>();
+
+export async function ensureSession(expectedPendingDraftId?: string | null, preserveComposer = false): Promise<Readonly<SessionRef> | null> {
+  const state = useStore.getState();
+  const draft = preserveComposer && state.pendingNewSession ? currentPendingSessionDraft() : null;
+  if (!draft) return createAndActivateSession(expectedPendingDraftId, preserveComposer);
+  if (expectedPendingDraftId && state.pendingDraftId !== expectedPendingDraftId) return null;
+  const existing = composerSessionCreations.get(draft.key);
+  if (existing) return existing;
+  const creation = createAndActivateSession(expectedPendingDraftId, preserveComposer);
+  composerSessionCreations.set(draft.key, creation);
+  try {
+    return await creation;
+  } finally {
+    if (composerSessionCreations.get(draft.key) === creation) composerSessionCreations.delete(draft.key);
+  }
+}
+
+async function createAndActivateSession(expectedPendingDraftId?: string | null, preserveComposer = false): Promise<Readonly<SessionRef> | null> {
   try {
     const initialState = useStore.getState() as Record<string, any>;
     if (initialState.pendingNewSession !== true) return frozenSessionRefFromState(initialState);
@@ -1252,12 +1284,14 @@ export async function ensureSession(expectedPendingDraftId?: string | null): Pro
     if (!stillOwnsPendingView) return ref;
 
     stageDetachedSessionForActivation(data, ref, latestState);
-    await switchSession(ref.sessionPath);
+    await switchSession(ref.sessionPath, preserveComposer ? draftId || undefined : undefined);
     const activated = useStore.getState() as Record<string, any>;
     if (activated.currentSessionId === ref.sessionId && activated.currentSessionPath === ref.sessionPath) {
-      activated.clearDraft?.(HOME_DRAFT_KEY);
-      activated.clearDraft?.(ref.sessionId);
-      activated.clearDraft?.(ref.sessionPath);
+      if (!preserveComposer) {
+        activated.clearDraft?.(HOME_DRAFT_KEY);
+        activated.clearDraft?.(ref.sessionId);
+        activated.clearDraft?.(ref.sessionPath);
+      }
       useStore.setState({ pendingDraftId: null });
     }
     return ref;
