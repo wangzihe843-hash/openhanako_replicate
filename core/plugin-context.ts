@@ -802,8 +802,9 @@ function attachTimeoutSignal(init, timeoutMs) {
 }
 
 async function snapshotNetworkResponse(pluginId, response, maxResponseBytes) {
-  const body = await response.arrayBuffer();
-  if (body.byteLength > maxResponseBytes) {
+  // A null body is distinct from an empty stream (e.g. HEAD and 204/205/304).
+  const body = response.body === null ? null : await response.arrayBuffer();
+  if (body !== null && body.byteLength > maxResponseBytes) {
     throw pluginNetworkError(
       "PLUGIN_NETWORK_RESPONSE_TOO_LARGE",
       `Plugin network.fetch response exceeded ${maxResponseBytes} bytes`,
@@ -819,7 +820,7 @@ async function snapshotNetworkResponse(pluginId, response, maxResponseBytes) {
 }
 
 function responseFromSnapshot(snapshot) {
-  return new Response(snapshot.body.slice(0), {
+  return new Response(snapshot.body === null ? null : snapshot.body.slice(0), {
     status: snapshot.status,
     statusText: snapshot.statusText,
     headers: snapshot.headers,
