@@ -1025,7 +1025,8 @@ export async function compileEditableFacts(summaryManager, outputPath, resolvedM
     return "compiled";
   }
 
-  const prevFacts = normalizeCompiledSectionBody(safeReadFile(outputPath, ""));
+  // An unreadable authoritative baseline must not be replaced with only the delta.
+  const prevFacts = normalizeCompiledSectionBody(readSourceFile(outputPath) ?? "");
   const newFacts = factParts.join("\n");
   const isZh = _isZh();
   const combined = prevFacts
