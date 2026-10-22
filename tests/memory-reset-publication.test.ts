@@ -126,6 +126,13 @@ function fixture(agentId = "hana", memoryScope?: MemoryScope) {
     const response = await app.request(`/api/memories${full ? "" : "/compiled"}?agentId=${agentId}`, { method: "DELETE" });
     expect(response.status, await response.clone().text()).toBe(200);
   };
+  const saveToday = async (today: string) => {
+    const response = await app.request(`/api/memories/compiled/today?agentId=${agentId}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ today }),
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    return response.json();
+  };
   const snapshot = () => ({
     today: read(agent.todayMdPath), state: read(path.join(memoryDir, "today-state.json")),
     daily: read(path.join(memoryDir, "daily-state.json")), memory: read(agent.memoryMdPath),
@@ -147,7 +154,7 @@ function fixture(agentId = "hana", memoryScope?: MemoryScope) {
       return Promise.resolve(`${marker} compiled`);
     });
   };
-  const f = { root, agent, file, store, summaries, facts, ticker, calls, published, resolver, memoryDir, append, reset, snapshot, install };
+  const f = { root, agent, file, store, summaries, facts, ticker, calls, published, resolver, memoryDir, append, reset, saveToday, snapshot, install };
   fixtures.push(f);
   install();
   return f;
@@ -459,3 +466,49 @@ for (const full of [false, true]) {
     });
   }
 }
+
+// The real settings route, ConfigCoordinator, ticker and cold disk readers
+// share the Today publication fence. No socket or external model is involved.
+for (const edit of ["AUTHORITATIVE_ROUTE_EDIT", ""]) {
+  it(`manual Today route save survives a pending ticker compile and retries its delta: ${edit || "empty"}`, async () => {
+    const f = fixture(); const gate = holdCompile(f);
+    const work = f.ticker.flushSessionAndCompile(f.file); await gate.entered.promise;
+    expect(await f.saveToday(edit)).toMatchObject({ ok: true, today: edit });
+    const saved = f.snapshot();
+    expect(saved.today).toBe(edit ? `${edit}\n` : "");
+    if (edit) { expect(saved.memory).toContain(edit); expect(saved.prompt).toContain(edit); }
+    gate.result.resolve("STALE_BACKGROUND_RESULT"); await work;
+    const late = f.snapshot();
+    expect({ today: late.today, state: late.state, memory: late.memory, published: late.published })
+      .toEqual({ today: saved.today, state: saved.state, memory: saved.memory, published: saved.published });
+    expect(late.health).toMatchObject({ compileToday: { lastSuccessAt: null, failCount: 0 } });
+    const callStart = f.calls.length;
+    f.install((call) => call.operation === "compile_today" ? Promise.resolve(`${edit} RETRIED_DELTA`) : undefined);
+    await f.ticker.flushSessionAndCompile(f.file);
+    const retry = f.calls.slice(callStart).find(call => call.operation === "compile_today");
+    expect(retry).toBeDefined(); expect(retry.input).toContain(OLD);
+    if (edit) expect(retry.input).toContain(edit);
+    expect(f.snapshot().today).toContain("RETRIED_DELTA");
+    expect(f.snapshot().memory).toContain("RETRIED_DELTA");
+    expect(f.published.at(-1)).toContain("RETRIED_DELTA");
+    expect(JSON.parse(f.snapshot().state).lastCompiledSummaryUpdatedAt).toBe(f.snapshot().coldSummary.updated_at);
+  });
+}
+
+it("daily Today supersession leaves its checkpoint pending and uses the saved base on follow-up", async () => {
+  const f = fixture(); const gate = holdCompile(f);
+  const work = f.ticker.tick(); await gate.entered.promise;
+  await f.saveToday("DAILY_MANUAL_BASE");
+  f.install((call) => call.operation === "compile_today" ? Promise.resolve("DAILY_MANUAL_BASE RETRIED") : undefined);
+  gate.result.resolve("STALE_DAILY_RESULT"); await work;
+  // tick's existing final aggregate pass retries Today, but cannot mark the
+  // skipped daily checkpoint complete on the abandoned pass's behalf.
+  const todayCalls = f.calls.filter(call => call.operation === "compile_today");
+  expect(todayCalls).toHaveLength(2); expect(todayCalls[1].input).toContain("DAILY_MANUAL_BASE");
+  expect(f.snapshot().today).toBe("DAILY_MANUAL_BASE RETRIED");
+  const daily = JSON.parse(f.snapshot().daily);
+  expect(daily.completedSteps.compileToday).toBeUndefined();
+  await f.ticker.tick();
+  expect(JSON.parse(f.snapshot().daily).completedSteps.compileToday).toBeTruthy();
+  expect(f.snapshot().memory).not.toContain("STALE_DAILY_RESULT");
+});
