@@ -1942,7 +1942,7 @@
           "autoSaveFailed": "The daily automatic Dream setting could not be saved. Try again shortly.",
           "revisionsLoadFailed": "Dream versions are temporarily unavailable. Try again shortly.",
           "revisionLoadFailed": "This Dream version could not be loaded. Try again shortly.",
-          "restoreFailed": "The Dream version could not be restored. Current memory was not changed."
+          "restoreFailed": "The Dream version could not be restored. Current memory may have changed. Please review it."
         }
       },
       "sections": {
@@ -3362,7 +3362,7 @@
       "dreamNoMemory": "There are no Key Facts or Long-term memories to organize yet",
       "dreamMemoryChanged": "Memory changed during cleanup. Run Dream again.",
       "dreamRevisionNotFound": "This Dream version could not be found. It may have been cleaned up.",
-      "dreamRestoreFailed": "The Dream version could not be restored. Current memory was not changed.",
+      "dreamRestoreFailed": "The Dream version could not be restored. Current memory may have changed. Please review it.",
       "dreamRunFailed": "Dream cleanup failed. The original memory was not changed.",
       "internalContract": "Something went wrong inside the app; this is not on you. The details are recorded and can be attached to a report"
     }

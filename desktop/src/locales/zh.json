@@ -1941,7 +1941,7 @@
           "autoSaveFailed": "无法保存每日自动 Dream 设置，请稍后重试",
           "revisionsLoadFailed": "暂时无法读取 Dream 版本，请稍后重试",
           "revisionLoadFailed": "暂时无法读取这个 Dream 版本，请稍后重试",
-          "restoreFailed": "恢复 Dream 版本失败，当前记忆没有改动"
+          "restoreFailed": "恢复 Dream 版本失败。当前记忆可能已发生变化，请检查当前内容。"
         }
       },
       "sections": {
@@ -3302,7 +3302,7 @@
       "dreamNoMemory": "当前还没有重要事实或长期记忆可整理",
       "dreamMemoryChanged": "整理期间记忆发生了变化，请重新运行 Dream",
       "dreamRevisionNotFound": "找不到这个 Dream 版本，它可能已经被清理",
-      "dreamRestoreFailed": "恢复 Dream 版本失败，当前记忆没有改动",
+      "dreamRestoreFailed": "恢复 Dream 版本失败。当前记忆可能已发生变化，请检查当前内容。",
       "dreamRunFailed": "Dream 整理失败，原记忆没有改动",
       "internalContract": "应用内部出了点问题，这不是你的操作问题；详情已记录，可在反馈时附上"
     }

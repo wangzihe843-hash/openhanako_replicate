@@ -1872,7 +1872,7 @@
           "autoSaveFailed": "毎日の自動 Dream 設定を保存できませんでした。しばらくしてからお試しください",
           "revisionsLoadFailed": "Dream のバージョンを一時的に読み取れません。しばらくしてからお試しください",
           "revisionLoadFailed": "この Dream バージョンを読み取れません。しばらくしてからお試しください",
-          "restoreFailed": "Dream バージョンを復元できませんでした。現在の記憶は変更されていません"
+          "restoreFailed": "Dream バージョンを復元できませんでした。現在の記憶が変更されている可能性があります。内容を確認してください。"
         }
       },
       "sections": {
@@ -3302,7 +3302,7 @@
       "dreamNoMemory": "整理できる重要な事実や長期記憶がまだありません",
       "dreamMemoryChanged": "整理中に記憶が変更されました。Dream をもう一度実行してください",
       "dreamRevisionNotFound": "この Dream バージョンが見つかりません。すでに整理された可能性があります",
-      "dreamRestoreFailed": "Dream バージョンを復元できませんでした。現在の記憶は変更されていません",
+      "dreamRestoreFailed": "Dream バージョンを復元できませんでした。現在の記憶が変更されている可能性があります。内容を確認してください。",
       "dreamRunFailed": "Dream 整理に失敗しました。元の記憶は変更されていません",
       "internalContract": "アプリ内部で問題が起きました。操作の誤りではありません。詳細は記録済みで、報告の際に添付できます"
     }

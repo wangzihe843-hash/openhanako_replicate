@@ -17,12 +17,16 @@ vi.mock('../agent-memory-dream-actions', () => ({
   restoreDream: vi.fn(),
 }));
 
-vi.mock('../../../helpers', () => ({
-  t: (key: string) => ({
-    'error.code.dreamRevisionNotFound': '找不到这个 Dream 版本，它可能已经被清理',
-    'settings.memory.dream.errors.restoreFailed': '恢复 Dream 版本失败，当前记忆没有改动',
-  } as Record<string, string>)[key] ?? key,
-}));
+vi.mock('../../../helpers', async () => {
+  const { default: zh } = await import('../../../../../locales/zh.json');
+  return {
+    t: (key: string) => ({
+      'error.code.dreamRevisionNotFound': zh.error.code.dreamRevisionNotFound,
+      'error.code.dreamRestoreFailed': zh.error.code.dreamRestoreFailed,
+      'settings.memory.dream.errors.restoreFailed': zh.settings.memory.dream.errors.restoreFailed,
+    } as Record<string, string>)[key] ?? key,
+  };
+});
 
 const summaries = [
   {
@@ -105,5 +109,23 @@ describe('DreamRevisionBrowser', () => {
 
     expect(await screen.findByText('找不到这个 Dream 版本，它可能已经被清理')).toBeInTheDocument();
     expect(screen.queryByText('Dream revision was not found')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['coded', Object.assign(new Error('disk write failed'), { code: 'dream_restore_failed' })],
+    ['uncoded', new TypeError('connection failed')],
+  ])('shows a cautious %s restore failure using the real locale', async (_kind, error) => {
+    vi.mocked(restoreDream).mockRejectedValueOnce(error);
+    render(<DreamRevisionBrowser agentId="hana" open onClose={vi.fn()} />);
+
+    expect(await screen.findByText('- facts rev-2')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('settings.memory.dream.revisions.restoreThis'));
+    fireEvent.click(screen.getByText('settings.memory.dream.revisions.confirmRestore'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '恢复 Dream 版本失败。当前记忆可能已发生变化，请检查当前内容。',
+    );
+    expect(screen.queryByText('settings.memory.dream.revisions.restored')).not.toBeInTheDocument();
+    expect(restoreDream).toHaveBeenCalledTimes(1);
   });
 });
