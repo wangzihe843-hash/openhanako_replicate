@@ -1,4 +1,5 @@
 import path from "path";
+import { isUint8Array } from "node:util/types";
 import { serializeSessionFile } from "../lib/session-files/session-file-response.ts";
 import { createPluginConfigStore } from "./plugin-config.ts";
 
@@ -803,13 +804,41 @@ function attachTimeoutSignal(init, timeoutMs) {
 
 async function snapshotNetworkResponse(pluginId, response, maxResponseBytes) {
   // A null body is distinct from an empty stream (e.g. HEAD and 204/205/304).
-  const body = response.body === null ? null : await response.arrayBuffer();
-  if (body !== null && body.byteLength > maxResponseBytes) {
-    throw pluginNetworkError(
-      "PLUGIN_NETWORK_RESPONSE_TOO_LARGE",
-      `Plugin network.fetch response exceeded ${maxResponseBytes} bytes`,
-      { pluginId, maxResponseBytes, responseBytes: body.byteLength },
-    );
+  let body: ArrayBuffer | null = null;
+  if (response.body !== null) {
+    if (response.bodyUsed) throw new TypeError("Body is unusable: Body has already been read");
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let responseBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!isUint8Array(value)) throw new TypeError("Received non-Uint8Array chunk");
+        responseBytes += value.byteLength;
+        if (responseBytes > maxResponseBytes) {
+          throw pluginNetworkError(
+            "PLUGIN_NETWORK_RESPONSE_TOO_LARGE",
+            `Plugin network.fetch response exceeded ${maxResponseBytes} bytes`,
+            { pluginId, maxResponseBytes, responseBytes },
+          );
+        }
+        if (value.byteLength > 0) chunks.push(value);
+      }
+    } catch (error) {
+      // Do not let slow/failing transport cancellation delay or replace the read error.
+      void reader.cancel().catch(() => {});
+      throw error;
+    } finally {
+      reader.releaseLock();
+    }
+    const bytes = new Uint8Array(responseBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    body = bytes.buffer;
   }
   return {
     body,

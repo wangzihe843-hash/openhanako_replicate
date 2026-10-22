@@ -42,7 +42,7 @@ describe("plugin network response snapshots", () => {
           headers: { "x-snapshot": "original", "content-type": "text/plain; charset=utf-8" },
         });
         responses.push(response);
-        reads.push(vi.spyOn(response, "arrayBuffer"));
+        reads.push(response.body === null ? vi.spyOn(response, "arrayBuffer") : vi.spyOn(response.body, "getReader"));
         return response;
       });
       const api = network(fetchImpl);
@@ -132,8 +132,9 @@ describe("plugin network response snapshots", () => {
   it.each(["fetch", "read", "size"])("propagates %s failures without caching them, and cleans up the timeout and input signal", async (failure) => {
     vi.useFakeTimers();
     const error = new Error(`synthetic ${failure} failure`);
-    const response = new Response("four");
-    if (failure === "read") vi.spyOn(response, "arrayBuffer").mockRejectedValue(error);
+    const response = failure === "read"
+      ? new Response(new ReadableStream({ start(controller) { controller.error(error); } }))
+      : new Response("four");
     const fetchImpl = vi.fn<FetchImpl>();
     if (failure === "fetch") fetchImpl.mockRejectedValueOnce(error);
     else fetchImpl.mockResolvedValueOnce(response);
