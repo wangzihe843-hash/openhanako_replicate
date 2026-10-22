@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
+import { constants } from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import { randomBytes } from "node:crypto";
@@ -67,6 +68,7 @@ describe("dev-web launcher data directory", () => {
       scriptUrl: scriptUrl.href,
       fileURLToPath,
       path,
+      constants,
       randomBytes,
       fs: fsStub,
       spawn,
@@ -164,6 +166,7 @@ describe("dev-web launcher server ownership", () => {
       scriptUrl: scriptUrl.href,
       fileURLToPath,
       path,
+      constants,
       randomBytes,
       fs: fsStub,
       spawn,
