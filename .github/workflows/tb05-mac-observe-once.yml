@@ -1,0 +1,262 @@
+name: TB05 Mac observe once
+
+# Checks belong to diagnostic commit D. Product checkout is immutable B below.
+# Public Actions logs retain normal reporter output; only the two artifacts are sanitized.
+'on':
+  push:
+    branches: [review/tb05-mac-observe-20261022-once]
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/review/tb05-mac-observe-20261022-once' &&
+      github.event.created == true && github.run_attempt == 1
+    runs-on: macos-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout immutable product B
+        id: checkout
+        uses: actions/checkout@v5
+        with:
+          ref: 36d47257e2772c717b04366fa3b0d68749656b35
+          persist-credentials: false
+
+      - name: Prepare inline command timing
+        id: prepare
+        run: |
+          mkdir -p "$RUNNER_TEMP/tb05-observe/artifacts"
+          cat > "$RUNNER_TEMP/tb05-observe/run-command.sh" <<'BASH'
+          set -euo pipefail
+          step_id=$1
+          shift
+          record() {
+            node - "$RUNNER_TEMP/tb05-observe/events.jsonl" "$step_id" "$1" "${2:-}" <<'NODE'
+          const fs = require('node:fs');
+          const [file, id, phase, code] = process.argv.slice(2);
+          fs.appendFileSync(file, JSON.stringify({id, phase, timeMs: Date.now(),
+            exitCode: phase === 'finished' ? Number(code) : null}) + '\n');
+          NODE
+          }
+          record started
+          set +e
+          "$@"
+          command_status=$?
+          set -e
+          record finished "$command_status"
+          exit "$command_status"
+          BASH
+
+      - name: Setup Node.js 24.15.0
+        id: node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24.15.0'
+          cache: npm
+
+      - name: Verify product identity and record environment
+        id: identity
+        env:
+          DIAGNOSTIC_SHA: ${{ github.sha }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const os = require('node:os');
+          const crypto = require('node:crypto');
+          const {execFileSync} = require('node:child_process');
+          const git = (...args) => execFileSync('git', args, {encoding: 'utf8'}).trim();
+          const B = '36d47257e2772c717b04366fa3b0d68749656b35';
+          const tree = '779b56dd37bf462d9694c49185567acb752eb396';
+          const lock = '67a67662f1164aaeb43e22bebee03580e8238ccf771a6adbb3bd007e2e35c2fb';
+          const actualB = git('rev-parse', 'HEAD');
+          const actualTree = git('rev-parse', 'HEAD^{tree}');
+          const actualLock = crypto.createHash('sha256').update(fs.readFileSync('package-lock.json')).digest('hex');
+          const data = {
+            diagnosticCommit: /^[0-9a-f]{40}$/.test(process.env.DIAGNOSTIC_SHA || '') ? process.env.DIAGNOSTIC_SHA : null,
+            productCommit: actualB, productTree: actualTree, lockSha256: actualLock,
+            versions: {node: process.version, npm: execFileSync('npm', ['--version'], {encoding:'utf8'}).trim(),
+              os: os.platform(), osRelease: os.release(), osVersion: os.version(), architecture: os.arch(),
+              macOS: execFileSync('sw_vers', ['-productVersion'], {encoding:'utf8'}).trim()},
+            logicalCpus: os.cpus().length, availableParallelism: os.availableParallelism()
+          };
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/tb05-observe/identity.json', JSON.stringify(data));
+          if (actualB !== B || actualTree !== tree || actualLock !== lock || !data.diagnosticCommit || process.version !== 'v24.15.0') {
+            console.error('Pinned product identity or Node version mismatch'); process.exitCode = 1;
+          }
+          NODE
+
+      - name: Install dependencies
+        id: install
+        run: bash "$RUNNER_TEMP/tb05-observe/run-command.sh" install npm ci
+
+      - name: Install Electron binary for macOS renderer tests
+        id: electron
+        run: bash "$RUNNER_TEMP/tb05-observe/run-command.sh" electron node node_modules/electron/install.js
+
+      - name: Typecheck
+        id: typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: bash "$RUNNER_TEMP/tb05-observe/run-command.sh" typecheck npm run typecheck
+
+      - name: Lint
+        id: lint
+        run: bash "$RUNNER_TEMP/tb05-observe/run-command.sh" lint npm run lint:warnings
+
+      - name: Build packages
+        id: packages
+        run: bash "$RUNNER_TEMP/tb05-observe/run-command.sh" packages npm run build:packages
+
+      - name: Build desktop client entries
+        id: client
+        run: bash "$RUNNER_TEMP/tb05-observe/run-command.sh" client npm run build:client
+
+      - name: Run original full test suite with supported reporters
+        id: tests
+        timeout-minutes: 45
+        run: bash "$RUNNER_TEMP/tb05-observe/run-command.sh" tests npm test -- --reporter=default --reporter=github-actions --reporter=json --outputFile.json="$RUNNER_TEMP/tb05-observe/raw.json"
+
+      # Reporter aggregation, serialization and final I/O add observation overhead.
+      # JSON 4.1.11 has file intervals and case durations, but no case start/end.
+      - name: Rebuild sanitized whitelist artifacts
+        id: sanitize
+        if: always()
+        env:
+          DIAGNOSTIC_SHA: ${{ github.sha }}
+          STEP_OUTCOMES: >-
+            {"checkout":"${{ steps.checkout.outcome }}","prepare":"${{ steps.prepare.outcome }}",
+             "node":"${{ steps.node.outcome }}","identity":"${{ steps.identity.outcome }}",
+             "install":"${{ steps.install.outcome }}","electron":"${{ steps.electron.outcome }}",
+             "typecheck":"${{ steps.typecheck.outcome }}","lint":"${{ steps.lint.outcome }}",
+             "packages":"${{ steps.packages.outcome }}","client":"${{ steps.client.outcome }}",
+             "tests":"${{ steps.tests.outcome }}"}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const crypto = require('node:crypto');
+          const {execFileSync} = require('node:child_process');
+          const dir = path.join(process.env.RUNNER_TEMP, 'tb05-observe');
+          const artifacts = path.join(dir, 'artifacts');
+          fs.mkdirSync(artifacts, {recursive: true});
+          const B = '36d47257e2772c717b04366fa3b0d68749656b35';
+          const tree = '779b56dd37bf462d9694c49185567acb752eb396';
+          const lock = '67a67662f1164aaeb43e22bebee03580e8238ccf771a6adbb3bd007e2e35c2fb';
+          const outcomes = JSON.parse(process.env.STEP_OUTCOMES);
+          const phaseStatus = new Set(['success', 'failure', 'cancelled', 'skipped']);
+          const outcome = id => phaseStatus.has(outcomes[id]) ? outcomes[id] : 'unavailable';
+          const number = v => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
+          const count = v => Number.isSafeInteger(v) && v >= 0 ? v : null;
+          const hash = v => crypto.createHash('sha256').update(v).digest('hex');
+          const sha = v => typeof v === 'string' && /^[0-9a-f]{40}$/.test(v) ? v : null;
+          const sha256 = v => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v) ? v : null;
+          const readBounded = (file, limit) => {
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || stat.isSymbolicLink() || stat.size > limit) throw new Error('invalid input');
+            return fs.readFileSync(file, 'utf8');
+          };
+          let postprocessFailed = false;
+          let identity = {};
+          try { identity = JSON.parse(readBounded(path.join(dir, 'identity.json'), 16384)); }
+          catch { postprocessFailed = true; }
+          const fixedCommands = [
+            ['checkout', 'actions/checkout@v5 ref=' + B + ' persist-credentials=false'],
+            ['prepare', 'inline command timing preparation'],
+            ['node', 'actions/setup-node@v5 node-version=24.15.0 cache=npm'],
+            ['identity', 'inline pinned identity and environment verification'],
+            ['install', 'npm ci'], ['electron', 'node node_modules/electron/install.js'],
+            ['typecheck', 'NODE_OPTIONS=--max-old-space-size=4096 npm run typecheck'],
+            ['lint', 'npm run lint:warnings'], ['packages', 'npm run build:packages'],
+            ['client', 'npm run build:client'],
+            ['tests', 'npm test -- --reporter=default --reporter=github-actions --reporter=json --outputFile.json="$RUNNER_TEMP/tb05-observe/raw.json"']
+          ];
+          let events = [];
+          try {
+            events = readBounded(path.join(dir, 'events.jsonl'), 65536).trim().split('\n').filter(Boolean).map(JSON.parse);
+          } catch { postprocessFailed = true; }
+          const commands = fixedCommands.map(([id, command]) => {
+            const start = events.find(e => e.id === id && e.phase === 'started');
+            const end = events.find(e => e.id === id && e.phase === 'finished');
+            const startedAtMs = number(start?.timeMs), finishedAtMs = number(end?.timeMs);
+            return {id, command, outcome: outcome(id), startedAtMs, finishedAtMs,
+              durationMs: startedAtMs !== null && finishedAtMs !== null && finishedAtMs >= startedAtMs ? finishedAtMs - startedAtMs : null,
+              exitCode: Number.isInteger(end?.exitCode) && end.exitCode >= 0 && end.exitCode <= 255 ? end.exitCode : null};
+          });
+          const tests = commands.find(c => c.id === 'tests');
+          const sanitized = {sourceStatus: 'missing', testStepOutcome: outcome('tests'),
+            exitCode: tests.exitCode, success: null, counts: null, startTime: null, testResults: []};
+          const countKeys = ['numTotalTestSuites', 'numPassedTestSuites', 'numFailedTestSuites',
+            'numPendingTestSuites', 'numTotalTests', 'numPassedTests', 'numFailedTests', 'numPendingTests', 'numTodoTests'];
+          const statuses = new Set(['passed', 'failed', 'skipped', 'pending', 'todo', 'disabled']);
+          const root = process.cwd();
+          let tracked = new Set();
+          try { tracked = new Set(execFileSync('git', ['ls-files', '-z'], {encoding:'utf8'}).split('\0')); }
+          catch { postprocessFailed = true; }
+          const relativeFile = value => {
+            if (typeof value !== 'string' || value.length > 1024 || value.includes('\\')) return null;
+            const relative = path.isAbsolute(value) ? path.relative(root, value) : value;
+            if (!/^[A-Za-z0-9_.@/-]+$/.test(relative) || relative.split('/').some(p => !p || p === '.' || p === '..') || !tracked.has(relative)) return null;
+            return relative;
+          };
+          try {
+            const raw = JSON.parse(readBounded(path.join(dir, 'raw.json'), 64 * 1024 * 1024));
+            if (!raw || typeof raw.success !== 'boolean' || !Array.isArray(raw.testResults) || raw.testResults.length > 10000 || countKeys.some(k => count(raw[k]) === null)) throw new Error('invalid report');
+            let total = 0;
+            const files = raw.testResults.map(file => {
+              if (!file || !Array.isArray(file.assertionResults) || (total += file.assertionResults.length) > 100000) throw new Error('invalid report');
+              const name = relativeFile(file.name);
+              if (!name) throw new Error('invalid file path');
+              const startTime = number(file.startTime), endTime = number(file.endTime);
+              if (startTime === null || endTime === null || endTime < startTime || !['passed', 'failed'].includes(file.status)) throw new Error('invalid interval');
+              return {name, status: file.status, startTime, endTime, durationMs: endTime - startTime,
+                assertionResults: file.assertionResults.map((test, index) => {
+                  if (!test || !statuses.has(test.status) || typeof test.fullName !== 'string' || test.fullName.length > 16384) throw new Error('invalid case');
+                  return {caseIndex: index, caseIdSha256: hash(JSON.stringify([name, test.fullName, index])),
+                    status: test.status, durationMs: number(test.duration), startTime: null, endTime: null};
+                })};
+            });
+            sanitized.sourceStatus = 'present';
+            sanitized.success = raw.success && outcome('tests') === 'success' && tests.exitCode === 0;
+            sanitized.counts = Object.fromEntries(countKeys.map(k => [k, raw[k]]));
+            sanitized.startTime = number(raw.startTime);
+            sanitized.testResults = files;
+            if (tests.exitCode === 0 && (!raw.success || raw.numFailedTests > 0 || raw.numFailedTestSuites > 0)) postprocessFailed = true;
+          } catch (error) {
+            sanitized.sourceStatus = error?.code === 'ENOENT' ? 'missing' : 'invalid';
+            postprocessFailed = true;
+          }
+          fs.writeFileSync(path.join(artifacts, 'test-results.sanitized.json'), JSON.stringify(sanitized, null, 2) + '\n');
+          // Versions are bounded tokens or explicit OS labels, never arbitrary environment data.
+          const token = value => typeof value === 'string' && value.length <= 160 && /^[A-Za-z0-9_ .():/#,+-]+$/.test(value) ? value : null;
+          const versions = {};
+          for (const key of ['node', 'npm', 'os', 'osRelease', 'osVersion', 'architecture', 'macOS']) versions[key] = token(identity.versions?.[key]);
+          for (const key of ['vitest', 'electron']) {
+            try { versions[key] = token(JSON.parse(readBounded(path.join(root, 'node_modules', key, 'package.json'), 32768)).version); }
+            catch { versions[key] = null; }
+          }
+          const info = {diagnosticCommit: sha(process.env.DIAGNOSTIC_SHA), expectedProductCommit: B,
+            actualProductCommit: sha(identity.productCommit), expectedProductTree: tree,
+            actualProductTree: sha(identity.productTree), expectedLockSha256: lock,
+            actualLockSha256: sha256(identity.lockSha256), versions,
+            logicalCpus: count(identity.logicalCpus), availableParallelism: count(identity.availableParallelism),
+            commands, sanitizerExitCode: postprocessFailed ? 1 : 0};
+          fs.writeFileSync(path.join(artifacts, 'run-info.json'), JSON.stringify(info, null, 2) + '\n');
+          if (postprocessFailed) { console.error('Observation incomplete; consult step outcomes and artifact sourceStatus'); process.exitCode = 1; }
+          NODE
+
+      - name: Upload only sanitized whitelist artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tb05-mac-observe-once
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/tb05-observe/artifacts/test-results.sanitized.json
+            ${{ runner.temp }}/tb05-observe/artifacts/run-info.json
