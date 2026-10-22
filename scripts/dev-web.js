@@ -141,7 +141,9 @@ function spawnVite(clientConfig, serverInfo) {
   viteEnv.HANA_DEV_WEB_SERVER_TOKEN = serverInfo.token;
   delete viteEnv.ELECTRON_RUN_AS_NODE;
 
-  viteProcess = spawn(viteBin, [
+  // Run the installed JS entry with this Node; keep paths literal, including on Windows.
+  viteProcess = spawn(process.execPath, [
+    viteBin,
     "--config",
     path.join(rootDir, "vite.config.ts"),
     "--host",
@@ -149,7 +151,7 @@ function spawnVite(clientConfig, serverInfo) {
   ], {
     cwd: rootDir,
     env: viteEnv,
-    shell: process.platform === "win32",
+    shell: false,
     stdio: "inherit",
   });
 

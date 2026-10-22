@@ -48,7 +48,8 @@ export function resolveViteCommand(rootDir, {
   return pathImpl.join(
     rootDir,
     "node_modules",
-    ".bin",
-    platform === "win32" ? "vite.cmd" : "vite",
+    "vite",
+    "bin",
+    "vite.js",
   );
 }
