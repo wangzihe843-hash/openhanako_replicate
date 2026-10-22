@@ -16,6 +16,17 @@ import type {
   ResourceVersion,
 } from "../types.ts";
 
+// Keep ResourceIO's policy local: mapped IPv6 inherits these IPv4 ranges.
+const blockedAddresses = new net.BlockList();
+for (const [address, prefix] of [
+  ["0.0.0.0", 8], ["10.0.0.0", 8], ["127.0.0.0", 8],
+  ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.168.0.0", 16],
+] as const) blockedAddresses.addSubnet(address, prefix, "ipv4");
+blockedAddresses.addAddress("::", "ipv6");
+blockedAddresses.addAddress("::1", "ipv6");
+blockedAddresses.addSubnet("fc00::", 7, "ipv6");
+blockedAddresses.addSubnet("fe80::", 10, "ipv6");
+
 type Options = {
   fetch?: typeof fetch;
   resolveHostname?: (hostname: string) => Promise<string[]>;
@@ -213,7 +224,9 @@ export class UrlProvider {
         status: 403,
       });
     }
-    const addresses = net.isIP(hostname) ? [hostname] : await this.resolveHostname(hostname);
+    // URL has already validated the literal; remove brackets only for classification.
+    const address = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+    const addresses = net.isIP(address) ? [address] : await this.resolveHostname(hostname);
     if (!addresses.length || addresses.some(isBlockedAddress)) {
       throw new ResourceIOError("private URLs are blocked", {
         code: "blocked_private_url",
@@ -253,27 +266,8 @@ function isRedirect(status: number): boolean {
 }
 
 function isBlockedAddress(address: string): boolean {
-  if (net.isIPv4(address)) {
-    const parts = address.split(".").map(Number);
-    const [a, b] = parts;
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    return false;
-  }
-  if (net.isIPv6(address)) {
-    const value = address.toLowerCase();
-    return value === "::1"
-      || value === "::"
-      || value.startsWith("fc")
-      || value.startsWith("fd")
-      || value.startsWith("fe8")
-      || value.startsWith("fe9")
-      || value.startsWith("fea")
-      || value.startsWith("feb");
-  }
-  return true;
+  const family = net.isIP(address);
+  return !family || blockedAddresses.check(address, family === 6 ? "ipv6" : "ipv4");
 }
 
 function extensionFromUrl(url: string): string {
