@@ -73,7 +73,10 @@ export class SlashCommandDispatcher {
         this._timeoutMs,
       );
     });
-    const handlerPromise = Promise.resolve().then(() => def.handler(fullCtx));
+    const handlerPromise = Promise.resolve().then(() => {
+      if (ctx.isCurrent?.() === false) return { silent: true };
+      return def.handler(fullCtx);
+    });
     // C1 fix：handler 输掉 race 后其 Promise 仍会 settle；attach no-op catch 防 UnhandledPromiseRejection 进程崩溃（Node ≥15）
     handlerPromise.catch(() => {});
 

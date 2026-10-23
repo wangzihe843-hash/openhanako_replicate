@@ -39,7 +39,8 @@ const MAX_TURNS_FROM_TAIL = 8;
  * @param {string} sessionPath  桌面 session 绝对路径
  * @returns {Promise<string|null>}
  */
-export async function summarizeSessionForRc(engine, agent, sessionPath) {
+export async function summarizeSessionForRc(engine, agent, sessionPath, isCurrent = () => true) {
+  if (!isCurrent()) return null;
   if (!sessionPath || !fs.existsSync(sessionPath)) return null;
 
   const content = _extractRecentTurns(sessionPath);
@@ -55,6 +56,7 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
     utilConfig = await engine.resolveUtilityConfigFresh?.(agent?.id ? { agentId: agent.id } : undefined);
   } catch { /* ignore, fall through */ }
 
+  if (!isCurrent()) return null;
   const utilityExecution = utilConfig
     ? callTextConfigFromUtilityConfig(utilConfig)
     : null;
@@ -65,7 +67,8 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
       usageContext: usageContextForRc(engine, agent, sessionPath, "rc_summary_utility"),
       messages,
       lengthContract,
-    }, "utility");
+    }, "utility", isCurrent);
+    if (!isCurrent()) return null;
     if (text) return text;
   }
 
@@ -80,7 +83,8 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
       usageContext: usageContextForRc(engine, agent, sessionPath, "rc_summary_utility_large"),
       messages,
       lengthContract,
-    }, "utility_large");
+    }, "utility_large", isCurrent);
+    if (!isCurrent()) return null;
     if (text) return text;
   }
 
@@ -89,6 +93,7 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
   if (chatRef?.id && chatRef?.provider) {
     try {
       const resolved = await engine.resolveModelWithCredentialsFresh?.({ id: chatRef.id, provider: chatRef.provider });
+      if (!isCurrent()) return null;
       if (resolved) {
         const text = await _safeCall({
           ...callTextConfigFromResolvedModel(resolved),
@@ -96,7 +101,7 @@ export async function summarizeSessionForRc(engine, agent, sessionPath) {
           usageContext: usageContextForRc(engine, agent, sessionPath, "rc_summary_chat"),
           messages,
           lengthContract,
-        }, "chat");
+        }, "chat", isCurrent);
         if (text) return text;
       }
     } catch (err) {
@@ -133,10 +138,13 @@ function _summaryLengthContract(isZh): OutputLengthContract {
     : { label: "/rc summary", target: 60, unit: "words", min: 1, locale: "en" };
 }
 
-async function _safeCall({ api, model, apiKey, baseUrl, headers, messages, usageLedger, usageContext, lengthContract }, tierLabel) {
+async function _safeCall({ api, model, apiKey, baseUrl, headers, messages, usageLedger, usageContext, lengthContract }, tierLabel, isCurrent) {
   try {
     const { text } = await callTextWithLengthContract({
-      callText,
+      callText: (request) => {
+        if (!isCurrent()) throw new Error("Bridge binding stopped");
+        return callText(request);
+      },
       request: {
         api, model, apiKey, baseUrl, headers,
         signal: undefined,

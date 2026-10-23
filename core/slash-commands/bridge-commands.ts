@@ -82,6 +82,7 @@ export const bridgeCommands = [
       }
 
       const sessions = await listRecentAgentSessions(ctx.engine, ctx.sessionRef.agentId, { limit: 10 });
+      if (ctx.isCurrent?.() === false) return { silent: true };
       const availableSessions = sessions.filter(s => !rcState.isDesktopSessionAttached(s.path));
       if (availableSessions.length === 0) {
         return { reply: "当前 agent 没有可接管的桌面会话" };
@@ -177,6 +178,7 @@ export const bridgeCommands = [
       // Phase 2-E：接管态下 compact 的目标是桌面 session 的 context，不是 bridge 的
       const ref = _redirectRefIfAttached(ctx);
       try { await ctx.reply("（正在压缩上下文，请稍候...）"); } catch {}
+      if (ctx.isCurrent?.() === false) return { silent: true };
       try {
         const result = await ctx.sessionOps.compact(ref);
         const before = result?.tokensBefore;
@@ -204,6 +206,7 @@ export const bridgeCommands = [
         return { reply: "接管桌面会话期间暂不支持 /fresh-compact，请先 /exitrc 退出接管" };
       }
       try { await ctx.reply("（正在 fresh-compact：刷新提示词与记忆状态后压缩上下文，请稍候...）"); } catch { /* best-effort */ }
+      if (ctx.isCurrent?.() === false) return { silent: true };
       try {
         const result = await ctx.sessionOps.freshCompact(ctx.sessionRef);
         const before = result?.tokensBefore;
@@ -256,6 +259,7 @@ async function _handleLoopCommand(ctx) {
   const isStart = !!args && !LOOP_SUBCOMMANDS.has(firstToken);
   try {
     const target = await controller.targetFromSessionRef(ctx.sessionRef, { ensure: isStart });
+    if (ctx.isCurrent?.() === false) return { silent: true };
     if (!target) return { error: "无法定位当前会话（会话尚未建立或已失效）" };
     if (!args || firstToken === "status") {
       const rendered = _renderLoopStatus(controller.statusForTarget(target));

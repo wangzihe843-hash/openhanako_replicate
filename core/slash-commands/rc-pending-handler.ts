@@ -30,7 +30,8 @@ const STREAM_POLL_INTERVAL_MS = 200;
  * @returns {Promise<{handled: boolean}>}
  */
 export async function handleRcPendingInput(ctx) {
-  const { engine, agentId, sessionKey, text, reply, isGroup = false, chatId = null, messageThreadId = null } = ctx;
+  const { engine, agentId, sessionKey, text, reply, isGroup = false, chatId = null, messageThreadId = null, isCurrent = () => true } = ctx;
+  if (!isCurrent()) return { handled: true };
   const rcState = engine.rcState;
   if (!rcState) return { handled: false };
 
@@ -65,22 +66,26 @@ export async function handleRcPendingInput(ctx) {
   const sessionPath = selected.path;
   const title = selected.title || "未命名会话";
 
-  const initialCheck = await _validateAttachTarget(engine, rcState, sessionKey, sessionPath, agentId);
+  const initialCheck = await _validateAttachTarget(engine, rcState, sessionKey, sessionPath, agentId, isCurrent);
+  if (!isCurrent()) return { handled: true };
   if (initialCheck) {
     await _safeReply(reply, initialCheck);
     return { handled: true };
   }
 
   await _safeReply(reply, "正在接管桌面 session...");
+  if (!isCurrent()) return { handled: true };
 
   // streaming 中等结束再接管（用户决策 ⑤：等结束再接管）
-  const idle = await _waitForSessionIdle(engine, sessionPath);
+  const idle = await _waitForSessionIdle(engine, sessionPath, isCurrent);
+  if (!isCurrent()) return { handled: true };
   if (!idle) {
     await _safeReply(reply, "目标会话持续在回复中（>30s），接管取消。稍后重试 /rc");
     return { handled: true };
   }
 
-  const preSummaryCheck = await _validateAttachTarget(engine, rcState, sessionKey, sessionPath, agentId);
+  const preSummaryCheck = await _validateAttachTarget(engine, rcState, sessionKey, sessionPath, agentId, isCurrent);
+  if (!isCurrent()) return { handled: true };
   if (preSummaryCheck) {
     await _safeReply(reply, preSummaryCheck);
     return { handled: true };
@@ -90,12 +95,14 @@ export async function handleRcPendingInput(ctx) {
   const agent = engine.getAgent?.(agentId);
   let summary = null;
   try {
-    summary = await summarizeSessionForRc(engine, agent, sessionPath);
+    summary = await summarizeSessionForRc(engine, agent, sessionPath, isCurrent);
   } catch (err) {
     log.warn(`summarize threw: ${err.message}`);
   }
+  if (!isCurrent()) return { handled: true };
 
-  const preAttachCheck = await _validateAttachTarget(engine, rcState, sessionKey, sessionPath, agentId);
+  const preAttachCheck = await _validateAttachTarget(engine, rcState, sessionKey, sessionPath, agentId, isCurrent);
+  if (!isCurrent()) return { handled: true };
   if (preAttachCheck) {
     await _safeReply(reply, preAttachCheck);
     return { handled: true };
@@ -153,8 +160,9 @@ function _parseSelectionNumber(text) {
   return n;
 }
 
-async function _validateAttachTarget(engine, rcState, sessionKey, sessionPath, agentId) {
-  const exists = await _desktopSessionExists(engine, sessionPath, agentId);
+async function _validateAttachTarget(engine, rcState, sessionKey, sessionPath, agentId, isCurrent) {
+  const exists = await _desktopSessionExists(engine, sessionPath, agentId, isCurrent);
+  if (!isCurrent()) return null;
   if (!exists) {
     return "目标会话已不存在，接管取消。请重新 /rc";
   }
@@ -165,11 +173,12 @@ async function _validateAttachTarget(engine, rcState, sessionKey, sessionPath, a
   return null;
 }
 
-async function _desktopSessionExists(engine, sessionPath, agentId) {
+async function _desktopSessionExists(engine, sessionPath, agentId, isCurrent) {
   let hadAuthoritativeCheck = false;
   if (typeof engine?.listSessions === "function") {
     hadAuthoritativeCheck = true;
     const sessions = await engine.listSessions();
+    if (!isCurrent()) return false;
     return sessions.some(session => session?.path === sessionPath && (!agentId || session?.agentId === agentId));
   }
   if (typeof engine?.getSessionByPath === "function") {
@@ -179,7 +188,9 @@ async function _desktopSessionExists(engine, sessionPath, agentId) {
   if (typeof engine?.ensureSessionLoaded === "function") {
     hadAuthoritativeCheck = true;
     try {
-      if (await engine.ensureSessionLoaded(sessionPath)) return true;
+      const loaded = await engine.ensureSessionLoaded(sessionPath);
+      if (!isCurrent()) return false;
+      if (loaded) return true;
     } catch {
       return false;
     }
@@ -198,9 +209,10 @@ function _normalizeAttachFailure(err) {
   return "目标会话已被另一个 bridge 会话接管，接管取消。请重新 /rc";
 }
 
-async function _waitForSessionIdle(engine, sessionPath) {
+async function _waitForSessionIdle(engine, sessionPath, isCurrent) {
   const deadline = Date.now() + STREAM_WAIT_TIMEOUT_MS;
   while (Date.now() < deadline) {
+    if (!isCurrent()) return false;
     const streaming = engine.isSessionStreaming?.(sessionPath) ?? false;
     if (!streaming) return true;
     await new Promise(r => setTimeout(r, STREAM_POLL_INTERVAL_MS));

@@ -681,6 +681,8 @@ export class BridgeManager {
   declare _platforms: any;
   declare _proactiveIdempotency: any;
   declare _processing: any;
+  declare _processingOwners: Map<string, { binding: ReturnType<BridgeManager["_captureBinding"]>; released: Promise<void>; release: () => void }>;
+  declare _bindingCleanups: WeakMap<object, Set<() => Promise<void>>>;
   declare _rcMirrorStreams: any;
   declare _rcMirrorUnsubscribe: any;
   declare blockStreaming: any;
@@ -700,6 +702,8 @@ export class BridgeManager {
     this._pending = new Map();
     /** per-sessionKey 处理锁（防止 debounce 触发和 abort 重发并发） */
     this._processing = new Set();
+    this._processingOwners = new Map();
+    this._bindingCleanups = new WeakMap();
     /** 最近消息环形缓冲 per-agent（每个 agent 最多 200 条） */
     // 初始化媒体本地路径白名单：入站附件、用户显式发送媒体、以及
     // legacy_local_path 兼容入口仍需读取本地文件；Agent 回复里的本地文件
@@ -767,6 +771,59 @@ export class BridgeManager {
     return null;
   }
 
+  // The entry object is a generation token; the adapter must also still match.
+  _captureBinding(platform, agentId, entry = this._findPlatformEntry(platform, agentId)) {
+    const adapter = entry?.adapter;
+    const key = this._getPlatformKey(platform, entry?.agentId || agentId);
+    const isCurrent = () => !!adapter && this._platforms.get(key) === entry && entry.adapter === adapter;
+    // Delivery helpers have their own await chains (drafts, streams, media). Check
+    // at each transport invocation, including fallbacks after a rejected send.
+    const guardedAdapter = adapter && new Proxy(adapter, {
+      get(target, name) {
+        const value = Reflect.get(target, name, target);
+        if (typeof value !== "function") return value;
+        return (...args) => isCurrent() ? value.apply(target, args) : Promise.resolve();
+      },
+    });
+    return { entry, adapter: guardedAdapter, isCurrent };
+  }
+
+  _stopBindingReceipts(entry) {
+    const cleanups = this._bindingCleanups.get(entry);
+    this._bindingCleanups.delete(entry);
+    for (const stop of cleanups || []) void stop().catch(() => {});
+  }
+
+  _acquireProcessing(sessionKey, binding) {
+    if (this._processing.has(sessionKey) || !binding.isCurrent()) return null;
+    let release: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const owner = { binding, released, release };
+    this._processing.add(sessionKey);
+    this._processingOwners.set(sessionKey, owner);
+    return owner;
+  }
+
+  _releaseProcessing(sessionKey, owner) {
+    if (this._processingOwners.get(sessionKey) !== owner) return;
+    this._processingOwners.delete(sessionKey);
+    this._processing.delete(sessionKey);
+    owner.release();
+  }
+
+  _waitForPendingOwner(sessionKey, pending) {
+    const owner = this._processingOwners.get(sessionKey);
+    if (!pending || !owner || pending.waitingFor === owner) return;
+    pending.waitingFor = owner;
+    // The pending queue owns this wakeup, even if it belongs to a newer binding.
+    // A stopped owner only releases its own lock; it never schedules a new one.
+    void owner.released.then(() => {
+      if (this._pending.get(sessionKey) !== pending || !pending.binding.isCurrent()) return;
+      pending.waitingFor = null;
+      this._schedulePendingFlush(sessionKey, pending.kind === "group-queue" ? 0 : 500);
+    });
+  }
+
   _clearPending(sessionKey) {
     const pending = this._pending.get(sessionKey);
     if (pending?.timer) clearTimeout(pending.timer);
@@ -790,13 +847,13 @@ export class BridgeManager {
     void this._flushPending(sessionKey).catch((err) => {
       log.error(`pending flush failed (${sessionKey}): ${err.message}`);
       debugLog()?.error("bridge", `pending flush failed (${sessionKey}): ${err.message}`);
-      this._processing.delete(sessionKey);
     });
   }
 
   _schedulePendingFlush(sessionKey, delayMs) {
     const pending = this._pending.get(sessionKey);
-    if (!pending) return;
+    if (!pending || !pending.binding.isCurrent()) return;
+    this._waitForPendingOwner(sessionKey, pending);
     if (delayMs <= 0) {
       if (pending.timer) clearTimeout(pending.timer);
       pending.timer = null;
@@ -804,7 +861,12 @@ export class BridgeManager {
       return;
     }
     if (pending.timer) clearTimeout(pending.timer);
-    pending.timer = setTimeout(() => this._triggerPendingFlush(sessionKey), delayMs);
+    const timer = setTimeout(() => {
+      if (this._pending.get(sessionKey) !== pending || pending.timer !== timer || !pending.binding.isCurrent()) return;
+      pending.timer = null;
+      this._triggerPendingFlush(sessionKey);
+    }, delayMs);
+    pending.timer = timer;
   }
 
   _takePendingBatch(sessionKey) {
@@ -820,6 +882,7 @@ export class BridgeManager {
     if (!pending.lines?.length) return null;
     if (pending.timer) clearTimeout(pending.timer);
     const batch = {
+      binding: pending.binding,
       lines: pending.lines.splice(0),
       attachments: pending.attachments?.splice(0) || [],
       platform: pending.platform,
@@ -909,14 +972,16 @@ export class BridgeManager {
     const spec = ADAPTER_REGISTRY[platform];
     if (!spec) throw new Error(`Unknown platform: ${platform}`);
 
+    const entry = { adapter: null, status: spec.connectsAsync ? "connecting" : "connected", agentId: agentId || null, platform, error: null };
+    const isCurrent = () => this._platforms.get(key) === entry;
     try {
-      const onMessage = (msg) => this._handleMessage(platform, msg);
+      const onMessage = (msg) => this._handleMessage(platform, msg, entry);
       const hooks = {
-        onEvent: (evt) => this._hub.eventBus.emit(evt, null),
-        onQqDmGuild: (userId, guildId) => this._persistQqDmGuild(userId, guildId, agentId),
+        onEvent: (evt) => { if (isCurrent()) this._hub.eventBus.emit(evt, null); },
+        onQqDmGuild: (userId, guildId) => { if (isCurrent()) this._persistQqDmGuild(userId, guildId, agentId); },
         onStatus: (status, error) => {
-          const entry = this._platforms.get(key);
-          if (entry) { entry.status = status; entry.error = error || null; }
+          if (!isCurrent()) return;
+          entry.status = status; entry.error = error || null;
           this._emitStatus(platform, status, error, agentId);
         },
       };
@@ -925,7 +990,8 @@ export class BridgeManager {
       // 异步握手的平台先进入 connecting，直到 adapter 明确上报 connected/error。
       const initialStatus = spec.connectsAsync ? "connecting" : "connected";
 
-      this._platforms.set(key, { adapter, status: initialStatus, agentId: agentId || null, platform });
+      entry.adapter = adapter;
+      this._platforms.set(key, entry);
       log.log(`${platform} 已启动`);
       debugLog()?.log("bridge", `${platform} started`);
 
@@ -956,7 +1022,16 @@ export class BridgeManager {
   stopPlatform(platform, agentId) {
     const key = this._getPlatformKey(platform, agentId);
     const entry = this._platforms.get(key);
+    // A stopped binding must not be revived by a debounce or the lock owner's drain.
+    for (const [sessionKey, pending] of this._pending) {
+      const batch = pending.kind === "group-queue" ? pending.batches[0] : pending;
+      if (batch && this._getPlatformKey(batch.platform, batch.agentId) === key) {
+        this._clearPending(sessionKey);
+      }
+    }
     if (!entry) return;
+    this._platforms.delete(key);
+    this._stopBindingReceipts(entry);
 
     try {
       entry.adapter?.stop();
@@ -964,7 +1039,6 @@ export class BridgeManager {
       // teardown best-effort：adapter.stop() 失败也要继续移除 entry 并广播 disconnected，
       // 否则平台会卡在「无法停止」状态。stop 的副作用（关连接）即便抛错通常也已部分完成。
     }
-    this._platforms.delete(key);
     log.log(`${platform} 已停止`);
     debugLog()?.log("bridge", `${platform} stopped`);
     this._emitStatus(platform, "disconnected", null, agentId);
@@ -976,7 +1050,11 @@ export class BridgeManager {
     try { this._rcMirrorUnsubscribe?.(); } catch {}
     this._rcMirrorUnsubscribe = null;
     this._rcMirrorStreams.clear();
-    for (const [key, entry] of this._platforms) {
+    for (const sessionKey of this._pending.keys()) this._clearPending(sessionKey);
+    const entries = [...this._platforms];
+    this._platforms.clear();
+    for (const [key, entry] of entries) {
+      this._stopBindingReceipts(entry);
       // teardown best-effort：单个 adapter 停止失败不能中断其余平台的清理。
       try { entry.adapter?.stop(); } catch {}
       const name = entry.platform || key;
@@ -984,7 +1062,6 @@ export class BridgeManager {
       debugLog()?.log("bridge", `${name} stopped`);
       this._emitStatus(name, "disconnected", null, entry.agentId);
     }
-    this._platforms.clear();
   }
 
   /** 获取平台状态（可按 agentId 过滤） */
@@ -1028,7 +1105,7 @@ export class BridgeManager {
     };
   }
 
-  _startNativeTypingReceipt(adapter, chatId, capability, replyContext = null) {
+  _startNativeTypingReceipt(adapter, chatId, capability, replyContext = null, binding = null) {
     const options = this._receiptOptions(replyContext);
     const refreshIntervalMs = Number.isFinite(capability.refreshIntervalMs)
       ? capability.refreshIntervalMs
@@ -1037,7 +1114,7 @@ export class BridgeManager {
     let timer = null;
 
     const send = () => {
-      if (stopped) return;
+      if (stopped || (binding && !binding.isCurrent())) return;
       adapter.sendTypingIndicator(chatId, options).catch(() => {});
     };
     send();
@@ -1046,21 +1123,30 @@ export class BridgeManager {
       timer = unrefTimer(setInterval(send, refreshIntervalMs));
     }
 
-    return {
+    const receipt = {
       mode: "native_typing",
       stop: async () => {
         if (stopped) return;
         stopped = true;
         if (timer) clearInterval(timer);
+        this._bindingCleanups.get(binding?.entry)?.delete(receipt.stop);
         if (capability.cancellable && adapter.cancelTypingIndicator) {
-          try { await adapter.cancelTypingIndicator(chatId, options); } catch {}
+          try { await adapter.cancelTypingIndicator(chatId, options); } catch { /* Typing cleanup is best-effort after binding invalidation. */ }
         }
       },
     };
+    if (binding) {
+      const cleanups = this._bindingCleanups.get(binding.entry) || new Set();
+      cleanups.add(receipt.stop);
+      this._bindingCleanups.set(binding.entry, cleanups);
+      if (!binding.isCurrent()) void receipt.stop();
+    }
+    return receipt;
   }
 
-  async _startLlmWaitingReceipt({ delivery, platform, chatId, agentId, replyContext, isGroup = false }) {
+  async _startLlmWaitingReceipt({ delivery, platform, chatId, agentId, replyContext, isGroup = false, binding = null }) {
     const empty = { mode: "none", stop: async () => {} };
+    if (binding && !binding.isCurrent()) return empty;
     if (this._deliveryFoldsReceipt(delivery)) {
       const receiptText = this._llmWaitingReceiptText(agentId);
       if (receiptText) await delivery.startReceipt(receiptText);
@@ -1071,12 +1157,12 @@ export class BridgeManager {
     if (receiptText === undefined) return empty;
 
     const entry = this._platforms.get(this._getPlatformKey(platform, agentId));
-    const adapter = entry?.adapter;
+    const adapter = binding ? binding.adapter : entry?.adapter;
     if (!adapter) return empty;
 
     const capability = this._resolveReceiptCapability(adapter, isGroup);
     if (capability?.mode === "native_typing") {
-      return this._startNativeTypingReceipt(adapter, chatId, capability, replyContext);
+      return this._startNativeTypingReceipt(adapter, chatId, capability, replyContext, binding);
     }
 
     if (receiptText && adapter.sendReply) {
@@ -1093,7 +1179,7 @@ export class BridgeManager {
    * 群聊：立即入队，不 debounce 不 abort，但同一 sessionKey 串行
    * 私聊：debounce 聚合 → 如正在处理则 abort → 合并发送
    */
-  async _handleMessage(platform, msg) {
+  async _handleMessage(platform, msg, expectedEntry = null) {
     const { sessionKey, text, senderName, displayName, avatarUrl, userId, principalId, isGroup, chatId, attachments, agentId: msgAgentId, messageThreadId, qqPrincipal } = msg;
     const identityAliases = Array.isArray(msg.aliases)
       ? msg.aliases
@@ -1111,7 +1197,9 @@ export class BridgeManager {
       log.error(`${platform} 消息缺少 agentId 且 adapter 未绑定，已丢弃。请在 bridge 配置中设置 agentId。`);
       return;
     }
-    if (!entry?.adapter) return;
+    if (!entry?.adapter || (expectedEntry && expectedEntry !== entry)) return;
+    const binding = this._captureBinding(platform, agentId, entry);
+    if (!binding.isCurrent()) return;
 
     const hasAttachments = attachments?.length > 0;
     debugLog()?.log("bridge", `← ${platform} ${isGroup ? "group" : "dm"} (${text.length} chars${hasAttachments ? `, ${attachments.length} attachment(s)` : ""})`);
@@ -1137,7 +1225,7 @@ export class BridgeManager {
     //      让 guest 的 slash 文本直接进 LLM，agent 可以正常回应，体验更符合直觉。
     const dispatcher = this.engine.slashDispatcher;
     if (dispatcher && text && text.trim().startsWith("/") && isOwner) {
-      const sendReply = (t) => this._sendAdapterReply(entry.adapter, chatId, t, replyContext).catch(() => {});
+      const sendReply = (t) => this._sendAdapterReply(binding.adapter, chatId, t, replyContext).catch(() => {});
       const dispatchResult = await dispatcher.tryDispatch(text.trim(), {
         sessionRef: { kind: "bridge", agentId, sessionKey },
         source: platform,
@@ -1147,7 +1235,9 @@ export class BridgeManager {
         isGroup,
         chatId,
         reply: sendReply,
+        isCurrent: binding.isCurrent,
       });
+      if (!binding.isCurrent()) return;
       if (dispatchResult.handled) {
         this._clearPending(sessionKey);
         debugLog()?.log("bridge", `slash dispatched: ${text.trim().slice(0, 40)}`);
@@ -1161,7 +1251,7 @@ export class BridgeManager {
     // pending-selection 按 sessionKey keying，guest 模式天然隔离（guest sessionKey 不同）。
     const rcState = this.engine.rcState;
     if (rcState && !isGroup && rcState.isPending(sessionKey) && text && isOwner) {
-      const sendReply = (t) => this._sendAdapterReply(entry.adapter, chatId, t, replyContext).catch(() => {});
+      const sendReply = (t) => this._sendAdapterReply(binding.adapter, chatId, t, replyContext).catch(() => {});
       const r = await handleRcPendingInput({
         engine: this.engine,
         agentId,
@@ -1171,7 +1261,9 @@ export class BridgeManager {
         text: text.trim(),
         isGroup,
         reply: async (t) => sendReply(t),
+        isCurrent: binding.isCurrent,
       });
+      if (!binding.isCurrent()) return;
       if (r?.handled) {
         // 吞掉同 sessionKey 的 debounce buffer，避免这条消息再被 flush 送进 LLM
         this._clearPending(sessionKey);
@@ -1185,10 +1277,11 @@ export class BridgeManager {
       const line = senderName ? `${senderName}: ${text}` : text;
       let pending = this._pending.get(sessionKey);
       if (!pending) {
-        pending = { kind: "group-queue", batches: [] };
+        pending = { kind: "group-queue", batches: [], binding };
         this._pending.set(sessionKey, pending);
       }
       const batch = {
+        binding,
         lines: [line],
         attachments: [],
         platform,
@@ -1207,9 +1300,7 @@ export class BridgeManager {
       };
       this._appendPendingAttachments(entry, batch.attachments, attachments);
       pending.batches.push(batch);
-      if (!this._processing.has(sessionKey) && pending.batches.length === 1) {
-        this._triggerPendingFlush(sessionKey);
-      }
+      if (pending.batches.length === 1) this._triggerPendingFlush(sessionKey);
       return;
     }
 
@@ -1219,7 +1310,7 @@ export class BridgeManager {
 
     let pending = this._pending.get(sessionKey);
     if (!pending) {
-      pending = { kind: "dm-buffer", lines: [], attachments: [], platform, chatId, senderName, displayName, avatarUrl, userId, principalId, qqPrincipal, isGroup, isOwner, bridgeRole, agentId, messageThreadId, replyContext };
+      pending = { kind: "dm-buffer", binding, lines: [], attachments: [], platform, chatId, senderName, displayName, avatarUrl, userId, principalId, qqPrincipal, isGroup, isOwner, bridgeRole, agentId, messageThreadId, replyContext };
       this._pending.set(sessionKey, pending);
     }
     pending.lines.push(line);
@@ -1245,16 +1336,17 @@ export class BridgeManager {
     return null;
   }
 
-  async _resolveAttachments(platform, attachments, agentId) {
+  async _resolveAttachments(platform, attachments, agentId, binding = null) {
     const images = [];
     const notes = [];
     const inboundFiles = [];
     if (!attachments?.length) return { images, textNotes: "", inboundFiles };
 
     const entry = this._findPlatformEntry(platform, agentId);
-    const adapter = entry?.adapter;
+    const adapter = binding ? binding.adapter : entry?.adapter;
 
     for (const att of attachments) {
+      if (binding && !binding.isCurrent()) break;
       try {
         if (att.size && att.size > MAX_INBOUND_ATTACHMENT_BYTES) {
           throw new Error(`attachment too large: ${att.filename || att.type || "file"}`);
@@ -1894,11 +1986,18 @@ export class BridgeManager {
    * - dm: debounce 聚合后 flush
    */
   async _flushPending(sessionKey) {
-    // 防止并发触发
-    if (this._processing.has(sessionKey)) return;
+    const pending = this._pending.get(sessionKey);
+    if (!pending || !pending.binding.isCurrent()) return;
+    if (this._processing.has(sessionKey)) {
+      this._waitForPendingOwner(sessionKey, pending);
+      return;
+    }
     const batch = this._takePendingBatch(sessionKey);
     if (!batch || batch.lines.length === 0) return;
-    this._processing.add(sessionKey);
+    const binding = batch.binding;
+    const owner = this._acquireProcessing(sessionKey, binding);
+    if (!owner) return;
+    this._waitForPendingOwner(sessionKey, this._pending.get(sessionKey));
     let receiptDelivery = null;
 
     // 取出所有缓冲消息和附件
@@ -1906,7 +2005,8 @@ export class BridgeManager {
 
     try {
       // 解析附件
-      const { images, textNotes, inboundFiles } = await this._resolveAttachments(platform, pendingAttachments, agentId);
+      const { images, textNotes, inboundFiles } = await this._resolveAttachments(platform, pendingAttachments, agentId, binding);
+      if (!binding.isCurrent()) return;
       const prompt = textNotes ? `${lines.join("\n")}\n${textNotes}` : lines.join("\n");
       const merged = `${timeTag()} ${prompt}`;
       const resolvedDisplayName = cleanBridgeMetadataString(displayName) || cleanBridgeMetadataString(senderName);
@@ -1926,7 +2026,9 @@ export class BridgeManager {
       const rcState = this.engine.rcState;
       const rcAttachment = !isGroup && isOwner ? rcState?.getAttachment(sessionKey) : null;
       if (rcAttachment) {
-        if (!(await this._desktopSessionStillExists(rcAttachment.desktopSessionPath))) {
+        const exists = await this._desktopSessionStillExists(rcAttachment.desktopSessionPath, binding.isCurrent);
+        if (!binding.isCurrent()) return;
+        if (!exists) {
           rcState?.detach(sessionKey);
           try {
             this.engine.emitEvent?.({
@@ -1937,10 +2039,10 @@ export class BridgeManager {
           } catch (err) {
             log.warn(`emit bridge_rc_detached failed: ${err?.message}`);
           }
-          const staleEntry = this._platforms.get(this._getPlatformKey(platform, agentId));
+          const staleAdapter = binding.adapter;
           try {
-            if (staleEntry?.adapter?.sendReply) {
-              await this._sendAdapterReply(staleEntry.adapter, chatId, "接管已失效：目标桌面会话不存在，已自动退出 /rc", replyContext);
+            if (staleAdapter?.sendReply) {
+              await this._sendAdapterReply(staleAdapter, chatId, "接管已失效：目标桌面会话不存在，已自动退出 /rc", replyContext);
             }
           } catch {
             // best-effort 用户提示：detach 已完成，提示发送失败不应阻塞后续 return。
@@ -1959,13 +2061,12 @@ export class BridgeManager {
           messageThreadId,
           replyContext,
           alreadyLocked: true,
+          owner,
         });
         return;
       }
 
-      const platformKey = this._getPlatformKey(platform, agentId);
-      const entry = this._platforms.get(platformKey);
-      const adapter = entry?.adapter;
+      const adapter = binding.adapter;
       const delivery: any = this._createStreamDelivery({
         adapter,
         chatId,
@@ -1981,7 +2082,8 @@ export class BridgeManager {
         debugLog()?.log("bridge", `steer ${platform} dm (${lines.length} msg(s))`);
         return;
       }
-      receiptDelivery = await this._startLlmWaitingReceipt({ delivery, platform, chatId, agentId, replyContext, isGroup });
+      receiptDelivery = await this._startLlmWaitingReceipt({ delivery, platform, chatId, agentId, replyContext, isGroup, binding });
+      if (!binding.isCurrent()) return;
 
       debugLog()?.log("bridge", `flush ${platform} ${isGroup ? "group" : "dm"} (${lines.length} msg(s), ${merged.length} chars${images.length ? `, ${images.length} image(s)` : ""})`);
 
@@ -1991,7 +2093,7 @@ export class BridgeManager {
         role: bridgeRole,
         meta,
         isGroup,
-        onDelta: delivery.onDelta,
+        onDelta: delivery.onDelta && ((...args) => { if (binding.isCurrent()) delivery.onDelta(...args); }),
         images: images.length ? images : undefined,
         inboundFiles: inboundFiles.length ? inboundFiles : undefined,
         displayMessage: {
@@ -2000,6 +2102,7 @@ export class BridgeManager {
           bridgeSessionKey: sessionKey,
         },
       });
+      if (!binding.isCurrent()) return;
 
       // executeExternalMessage 合约（#1607）：
       // null 仅出现在 prompt 开始前被中止（如 vision prepare 抛 AbortError）；
@@ -2020,6 +2123,7 @@ export class BridgeManager {
       if (reply && adapter) {
         const cleaned = this._cleanReplyForPlatform(reply);
         let allMediaUrls = await delivery.finish(cleaned);
+        if (!binding.isCurrent()) return;
 
         // 正文因错误中断：附加简短截断说明（人话，不携带低层错误字符串）
         if (replyTruncated) {
@@ -2035,6 +2139,7 @@ export class BridgeManager {
 
         // 统一发送所有提取到的媒体
         for (const item of allMediaUrls) {
+          if (!binding.isCurrent()) return;
           try { await this._sendMediaItem(adapter, chatId, item, { platform, isGroup, agentId, replyContext }); }
           catch (err) {
             debugLog()?.warn("bridge", `media send failed: ${err.message} (${this._describeMediaSource(item)})`);
@@ -2042,6 +2147,7 @@ export class BridgeManager {
           }
         }
 
+        if (!binding.isCurrent()) return;
         debugLog()?.log("bridge", `→ ${platform} reply (${cleaned.length} chars, mode: ${delivery.mode}${allMediaUrls.length ? `, ${allMediaUrls.length} media` : ""})`);
         const agentObj = this.engine.getAgent?.(agentId);
         const sender = agentObj?.agentName || this.engine.agentName;
@@ -2065,13 +2171,7 @@ export class BridgeManager {
       }
     } finally {
       try { await receiptDelivery?.stop?.(); } catch {}
-      this._processing.delete(sessionKey);
-    }
-
-    // 处理期间可能又有新消息进来了，检查并重新 flush
-    const newPending = this._pending.get(sessionKey);
-    if (newPending && ((newPending.kind === "group-queue" && newPending.batches.length > 0) || (newPending.kind !== "group-queue" && newPending.lines.length > 0))) {
-      this._schedulePendingFlush(sessionKey, newPending.kind === "group-queue" ? 0 : 500);
+      this._releaseProcessing(sessionKey, owner);
     }
   }
 
@@ -2098,12 +2198,14 @@ export class BridgeManager {
     const platform = this._platformFromSessionKey(sessionKey);
     const chatId = this._chatIdFromBridgeSessionKey(sessionKey);
     const entry = this._findPlatformEntry(platform, agentId);
-    const adapter = entry?.adapter;
+    const binding = this._captureBinding(platform, agentId, entry);
+    const adapter = binding.adapter;
     if (!adapter || !chatId) {
       throw new Error(`loop turn: bridge platform unavailable for ${sessionKey}`);
     }
 
-    this._processing.add(sessionKey);
+    const owner = this._acquireProcessing(sessionKey, binding);
+    if (!owner) return { mode: "busy" };
     try {
       const delivery: any = this._createStreamDelivery({
         adapter,
@@ -2119,8 +2221,9 @@ export class BridgeManager {
         agentId,
         role: "owner",
         meta: { source: "loop" },
-        onDelta: delivery.onDelta,
+        onDelta: delivery.onDelta && ((...args) => { if (binding.isCurrent()) delivery.onDelta(...args); }),
       });
+      if (!binding.isCurrent()) return { mode: "triggerTurn" };
 
       const reply = result?.text || null;
       const toolMedia = Array.isArray(result?.toolMedia) ? result.toolMedia : [];
@@ -2136,6 +2239,7 @@ export class BridgeManager {
       if (reply) {
         const cleaned = this._cleanReplyForPlatform(reply);
         let allMediaUrls = await delivery.finish(cleaned);
+        if (!binding.isCurrent()) return { mode: "triggerTurn" };
 
         if (replyTruncated) {
           // best-effort 说明：说明本身发送失败不影响已送达的正文。
@@ -2148,6 +2252,7 @@ export class BridgeManager {
         allMediaUrls = normalizeMediaItems(allMediaUrls);
 
         for (const item of allMediaUrls) {
+          if (!binding.isCurrent()) return { mode: "triggerTurn" };
           try { await this._sendMediaItem(adapter, chatId, item, { platform, isGroup: false, agentId, replyContext: null }); }
           catch (err) {
             debugLog()?.warn("bridge", `loop turn media send failed: ${err.message} (${this._describeMediaSource(item)})`);
@@ -2155,6 +2260,7 @@ export class BridgeManager {
           }
         }
 
+        if (!binding.isCurrent()) return { mode: "triggerTurn" };
         debugLog()?.log("bridge", `→ ${platform} loop turn reply (${cleaned.length} chars, mode: ${delivery.mode}${allMediaUrls.length ? `, ${allMediaUrls.length} media` : ""})`);
         const agentObj = this.engine.getAgent?.(agentId);
         const sender = agentObj?.agentName || this.engine.agentName;
@@ -2173,7 +2279,7 @@ export class BridgeManager {
       }
       return { mode: "triggerTurn" };
     } finally {
-      this._processing.delete(sessionKey);
+      this._releaseProcessing(sessionKey, owner);
     }
   }
 
@@ -2187,12 +2293,13 @@ export class BridgeManager {
     });
   }
 
-  async _desktopSessionStillExists(sessionPath) {
+  async _desktopSessionStillExists(sessionPath, isCurrent = () => true) {
     let hadAuthoritativeCheck = false;
 
     if (typeof this.engine?.listSessions === "function") {
       hadAuthoritativeCheck = true;
       const sessions = await this.engine.listSessions();
+      if (!isCurrent()) return false;
       if (sessions.some(session => session?.path === sessionPath)) return true;
     }
 
@@ -2204,7 +2311,9 @@ export class BridgeManager {
     if (typeof this.engine?.ensureSessionLoaded === "function") {
       hadAuthoritativeCheck = true;
       try {
-        if (await this.engine.ensureSessionLoaded(sessionPath)) return true;
+        const loaded = await this.engine.ensureSessionLoaded(sessionPath);
+        if (!isCurrent()) return false;
+        if (loaded) return true;
       } catch {
         return false;
       }
@@ -2228,27 +2337,29 @@ export class BridgeManager {
    *
    * @private
    */
-  async _flushAttachedDesktopSession({ sessionKey, desktopSessionPath, platform, chatId, agentId, text, images, inboundFiles, messageThreadId = null, replyContext = null, alreadyLocked = false }) {
-    if (!alreadyLocked) {
-      if (this._processing.has(sessionKey)) return;
-      this._processing.add(sessionKey);
+  async _flushAttachedDesktopSession({ sessionKey, desktopSessionPath, platform, chatId, agentId, text, images, inboundFiles, messageThreadId = null, replyContext = null, alreadyLocked = false, owner = null }) {
+    const binding = owner?.binding || this._captureBinding(platform, agentId);
+    if (alreadyLocked) {
+      if (!owner || this._processingOwners.get(sessionKey) !== owner
+        || binding.entry !== this._findPlatformEntry(platform, agentId) || !binding.isCurrent()) return;
+    } else {
+      owner = this._acquireProcessing(sessionKey, binding);
+      if (!owner) return;
     }
-
-    const entry = this._platforms.get(this._getPlatformKey(platform, agentId));
-    const adapter = entry?.adapter;
-    const delivery: any = this._createStreamDelivery({
-      adapter,
-      chatId,
-      isGroup: false,
-      platform,
-      messageThreadId,
-      replyContext,
-    });
+    const adapter = binding.adapter;
     let receiptDelivery = null;
 
     debugLog()?.log("bridge", `rc-attached flush ${platform} (${text.length} chars → ${desktopSessionPath})`);
 
     try {
+      const delivery: any = this._createStreamDelivery({
+        adapter,
+        chatId,
+        isGroup: false,
+        platform,
+        messageThreadId,
+        replyContext,
+      });
       receiptDelivery = await this._startLlmWaitingReceipt({
         delivery,
         platform,
@@ -2256,7 +2367,9 @@ export class BridgeManager {
         agentId,
         replyContext,
         isGroup: false,
+        binding,
       });
+      if (!binding.isCurrent()) return;
       const displayMessage = {
         text: sanitizeBridgeVisibleText(text),
         source: "bridge_rc",
@@ -2279,8 +2392,9 @@ export class BridgeManager {
         inboundFiles: inboundFiles?.length ? inboundFiles : undefined,
         displayMessage,
         uiContext: null,
-        onDelta: delivery.onDelta,
+        onDelta: delivery.onDelta && ((...args) => { if (binding.isCurrent()) delivery.onDelta(...args); }),
       });
+      if (!binding.isCurrent()) return;
       const replyText = result?.text || null;
       const toolMedia = Array.isArray(result?.toolMedia) ? result.toolMedia : [];
       const replyError = result?.error || null;
@@ -2294,11 +2408,13 @@ export class BridgeManager {
       if (replyText && adapter) {
         const cleaned = this._cleanReplyForPlatform(replyText);
         const mediaUrls = await delivery.finish(cleaned);
+        if (!binding.isCurrent()) return;
         const allMediaUrls = [...mediaUrls];
         this._appendMediaItems(allMediaUrls, toolMedia);
         const allMediaItems = normalizeMediaItems(allMediaUrls);
 
         for (const item of allMediaItems) {
+          if (!binding.isCurrent()) return;
           try { await this._sendMediaItem(adapter, chatId, item, { platform, isGroup: false, agentId, replyContext }); }
           catch (err) {
             debugLog()?.warn("bridge", `rc-attached media send failed: ${err.message}`);
@@ -2306,6 +2422,7 @@ export class BridgeManager {
           }
         }
 
+        if (!binding.isCurrent()) return;
         debugLog()?.log("bridge", `→ ${platform} rc-attached reply (${cleaned.length} chars)`);
         const agentObj = this.engine.getAgent?.(agentId);
         const sender = agentObj?.agentName || this.engine.agentName;
@@ -2324,7 +2441,7 @@ export class BridgeManager {
         } catch {}
       }
     } catch (err) {
-      if (!isAbortLikeError(err)) {
+      if (binding.isCurrent() && !isAbortLikeError(err)) {
         log.error(`rc-attached prompt failed (${platform}, ${desktopSessionPath}): ${err.message}`);
         debugLog()?.error("bridge", `rc-attached failed: ${err.message}`);
         if (adapter) {
@@ -2338,13 +2455,7 @@ export class BridgeManager {
       }
     } finally {
       try { await receiptDelivery?.stop?.(); } catch {}
-      if (!alreadyLocked) this._processing.delete(sessionKey);
-    }
-
-    // 处理期间又来新消息（debounce 吃了一部分），看是否还需要再 flush
-    const newPending = this._pending.get(sessionKey);
-    if (!alreadyLocked && newPending && ((newPending.kind === "group-queue" && newPending.batches.length > 0) || (newPending.kind !== "group-queue" && newPending.lines.length > 0))) {
-      this._schedulePendingFlush(sessionKey, newPending.kind === "group-queue" ? 0 : 500);
+      if (!alreadyLocked) this._releaseProcessing(sessionKey, owner);
     }
   }
 

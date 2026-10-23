@@ -45,6 +45,13 @@ function makeFakeThis(overrides: any = {}) {
     media,
     adapter,
     _processing: new Set<string>(),
+    _processingOwners: new Map(),
+    _captureBinding: (_platform: string, _agentId: string, entry: { adapter: typeof adapter } | null) => ({
+      adapter: entry?.adapter,
+      isCurrent: () => !!entry?.adapter,
+    }),
+    _acquireProcessing: BridgeManager.prototype._acquireProcessing,
+    _releaseProcessing: BridgeManager.prototype._releaseProcessing,
     _pending: new Map<string, any>(),
     engine: { isBridgeSessionStreaming: () => false, getAgent: () => ({ agentName: "A" }), agentName: "A" },
     _platformFromSessionKey: BridgeManager.prototype._platformFromSessionKey,
