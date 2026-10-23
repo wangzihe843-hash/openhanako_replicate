@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "node:fs";
 import os from "node:os";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll, type TestContext } from "vitest";
 
 const { createAgentSessionMock, sessionManagerCreateMock, sessionManagerOpenMock, emitSessionShutdownMock, refreshSessionModelFromRegistryMock } = vi.hoisted(() => ({
   createAgentSessionMock: vi.fn(),
@@ -43,6 +43,8 @@ import { createChatRoute } from "../server/routes/chat.ts";
 import type { SessionManager as PiSessionManager } from "../lib/pi-sdk/index.ts";
 import type { RuntimeCompactionResult } from "../core/runtime-contracts.ts";
 
+import { ManualTestOwner, type ManualTestScope } from "./helpers/manual-test-lifecycle.ts";
+
 const MODEL = {
   id: "test-model",
   name: "test-model",
@@ -50,58 +52,52 @@ const MODEL = {
   input: ["text", "image"],
 };
 
-// Unit coverage for manual entry points. Keep the SDK operations synthetic;
-// the concurrency suite below separately exercises the real JSONL manager.
-describe("manual operations during runtime hibernation", () => {
+const manualOwner = new ManualTestOwner();
+// All suites in this file share SDK mocks. Never reset them after a failed drain.
+beforeEach(() => manualOwner.assertReady());
+
+let HanaEngine: typeof import("../core/engine.ts").HanaEngine;
+let AgentManager: typeof import("../core/agent-manager.ts").AgentManager;
+const nextModel = { ...MODEL, id: "synthetic-next", contextWindow: 128_000 };
+
+function compactionResult(summary: string): RuntimeCompactionResult {
+  return { summary, firstKeptEntryId: "synthetic-kept-entry", tokensBefore: 0 };
+}
+
+function runtime(sessionPath: string) {
+  const session = makeSession(sessionPath, {
+    disposed: false,
+    abort: vi.fn(async () => {}),
+    extensionRunner: { assertActive: vi.fn(), hasHandlers: vi.fn(() => true) },
+    compact: vi.fn(async () => {
+      if (session.disposed) throw new Error("compact on disposed runtime");
+      return compactionResult("synthetic compaction");
+    }),
+    setModel: vi.fn(async (model: typeof MODEL) => {
+      if (session.disposed) throw new Error("setModel on disposed runtime");
+      session.model = model;
+    }),
+  });
+  session.dispose.mockImplementation(() => { session.disposed = true; });
+  return session;
+}
+
+function resetManualMocks() {
+  for (const mock of [createAgentSessionMock, sessionManagerCreateMock, sessionManagerOpenMock,
+    emitSessionShutdownMock, refreshSessionModelFromRegistryMock]) mock.mockReset();
+}
+
+function createManualFixture(scope: ManualTestScope) {
   let root: string;
   let coord: SessionCoordinator;
   let aPath: string;
   let bPath: string;
   let oldA: ReturnType<typeof runtime>;
   let oldB: ReturnType<typeof runtime>;
-  let releases: Array<() => void>;
-  let pending: Promise<unknown>[];
   let transcripts: Map<string, Buffer>;
-  const nextModel = { ...MODEL, id: "synthetic-next", contextWindow: 128_000 };
-
-  function barrier() {
-    let resolve!: () => void;
-    const promise = new Promise<void>((done) => { resolve = done; });
-    releases.push(resolve);
-    return { promise, resolve };
-  }
-
-  async function bounded<T>(promise: Promise<T>): Promise<T> {
-    let timer: ReturnType<typeof setTimeout>;
-    pending.push(promise);
-    try {
-      return await Promise.race([promise, new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("manual operation did not settle")), 2000);
-      })]);
-    } finally { clearTimeout(timer!); }
-  }
-
-  function compactionResult(summary: string): RuntimeCompactionResult {
-    return { summary, firstKeptEntryId: "synthetic-kept-entry", tokensBefore: 0 };
-  }
-
-  function runtime(sessionPath: string) {
-    const session = makeSession(sessionPath, {
-      disposed: false,
-      abort: vi.fn(async () => {}),
-      extensionRunner: { assertActive: vi.fn(), hasHandlers: vi.fn(() => true) },
-      compact: vi.fn(async () => {
-        if (session.disposed) throw new Error("compact on disposed runtime");
-        return compactionResult("synthetic compaction");
-      }),
-      setModel: vi.fn(async (model: typeof MODEL) => {
-        if (session.disposed) throw new Error("setModel on disposed runtime");
-        session.model = model;
-      }),
-    });
-    session.dispose.mockImplementation(() => { session.disposed = true; });
-    return session;
-  }
+  const barrier = () => scope.barrier();
+  const bounded = <T>(promise: Promise<T>) => scope.bounded(promise);
+  const track = <T extends Promise<unknown>>(promise: T) => scope.track(promise);
 
   function chatHarness() {
     type ChatMessage = { type: string; status?: string; reason?: string };
@@ -128,6 +124,7 @@ describe("manual operations during runtime hibernation", () => {
     return {
       instantCompact,
       compact(sessionId = "a", method?: string) {
+        scope.assertActive();
         const messages: ChatMessage[] = [];
         const result = new Promise<ChatMessage>((resolve) => {
           handlers.onMessage({ data: JSON.stringify({ type: "compact", sessionId, method }) }, {
@@ -145,6 +142,7 @@ describe("manual operations during runtime hibernation", () => {
   }
 
   function delayedShutdown(fail = false) {
+    scope.assertActive();
     const entered = barrier(); const release = barrier();
     emitSessionShutdownMock.mockImplementationOnce(async () => {
       entered.resolve(); await release.promise;
@@ -152,13 +150,92 @@ describe("manual operations during runtime hibernation", () => {
       return true;
     });
     const sleeping = coord.hibernateSessionRuntime(aPath, "test");
-    pending.push(sleeping);
+    track(sleeping);
     return { entered, release, sleeping };
   }
 
-  beforeEach(() => {
+  function cleanupSpies() {
+    const spies = {
+      abortBySession: vi.fn(), clearBySession: vi.fn(), closeTerminalsForSession: vi.fn(),
+      closeAllTerminals: vi.fn(), onSessionRuntimeDiscarded: vi.fn(),
+    };
+    coord._d.getConfirmStore = () => spies;
+    coord._d.getDeferredResultStore = () => spies;
+    Object.assign(coord._d, { closeTerminalsForSession: spies.closeTerminalsForSession,
+      closeAllTerminals: spies.closeAllTerminals, onSessionRuntimeDiscarded: spies.onSessionRuntimeDiscarded });
+    return spies;
+  }
+
+  function holdCompact(session: ReturnType<typeof runtime>, fail: boolean) {
+    const entered = barrier(); const release = barrier();
+    session.compact.mockImplementationOnce(async () => {
+      entered.resolve(); await release.promise;
+      if (fail) throw new Error("synthetic held compact failure");
+      return compactionResult("synthetic held compact");
+    });
+    return { entered, release };
+  }
+
+  async function deletionHarness() {
+    scope.assertActive();
+    const agent = coord._d.getAgentById("hana");
+    agent.dispose = vi.fn(async () => {});
+    const keep = { id: "keep", dispose: vi.fn(async () => {}) };
+    const phoneAbort = vi.fn();
+    const manager = new AgentManager({
+      agentsDir: path.join(root, "agents"),
+      getSessionCoordinator: () => coord,
+      getHub: () => ({ abortAgentPhoneSessions: phoneAbort, scheduler: {
+        removeAgentCron: vi.fn(), stopHeartbeat: vi.fn(),
+      } }),
+      getChannelManager: () => ({ cleanupAgentFromChannels: vi.fn() }),
+      getPrefs: () => ({ getPrimaryAgent: () => "keep", getPreferences: () => ({ agentOrder: [] }) }),
+    });
+    manager._agents.set("hana", agent); manager._agents.set("keep", keep);
+    manager.activeAgentId = "keep";
+    vi.spyOn(manager, "_rebuildAllAgentSystemPrompts").mockImplementation(() => {});
+    return { manager, agent, keep, phoneAbort, tombstone: manager._deletedAgentTombstonePath("hana") };
+  }
+
+  async function suspendModelAfterLoad() {
+    await bounded(coord.hibernateSessionRuntime(bPath, "model_load_test"));
+    coord._currentSessionPath = bPath; coord._session = null;
+    const loaded = barrier(); const resume = barrier();
+    const load = coord.ensureSessionLoaded.bind(coord);
+    const loadSpy = vi.spyOn(coord, "ensureSessionLoaded").mockImplementationOnce(async (file) => {
+      // Run the actual coordinator load, then hold only the model caller's
+      // continuation after the load queue and construction record are gone.
+      const session = await load(file);
+      loaded.resolve(); await resume.promise;
+      return session;
+    });
+    const switching = coord.switchSessionModel(bPath, nextModel);
+    track(switching); void switching.catch(() => {});
+    await bounded(loaded.promise);
+    const entry = coord._getSessionEntryByPath(bPath);
+    expect(entry.session).not.toBe(oldB);
+    expect(coord._sessionRuntimeOperations.size).toBe(0);
+    expect(coord._sessionRuntimeCreations.size).toBe(0);
+    expect(entry._switching).toBeFalsy();
+    const writeMeta = vi.spyOn(coord, "writeSessionMeta");
+    const renewCache = vi.spyOn(coord, "_renewCachePrefixContract");
+    const emitMetadata = vi.spyOn(coord, "_emitSessionMetadataUpdated");
+    const modelState = { modelId: entry.modelId, modelProvider: entry.modelProvider,
+      modelAvailability: entry.modelAvailability, thinkingLevel: entry.thinkingLevel };
+    return { resume, switching, loadSpy, entry, assertUntouched() {
+      expect(entry.session.setModel).not.toHaveBeenCalled();
+      expect(entry).toMatchObject(modelState);
+      for (const spy of [writeMeta, renewCache, emitMetadata]) {
+        expect(spy.mock.calls.filter(([file]) => file === bPath)).toEqual([]);
+      }
+      expect(entry._switching).toBeFalsy();
+    } };
+  }
+
+  try {
     vi.clearAllMocks();
-    releases = []; pending = []; transcripts = new Map();
+    transcripts = new Map();
+    resetManualMocks();
     root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-manual-hibernate-"));
     const sessionDir = path.join(root, "agents", "hana", "sessions");
     fs.mkdirSync(sessionDir, { recursive: true });
@@ -179,21 +256,48 @@ describe("manual operations during runtime hibernation", () => {
     refreshSessionModelFromRegistryMock.mockReturnValue(true);
     sessionManagerOpenMock.mockImplementation((file) => ({ getSessionFile: () => file, getCwd: () => root }));
     createAgentSessionMock.mockImplementation(async ({ sessionManager }) => ({ session: runtime(sessionManager.getSessionFile()) }));
-  });
 
-  afterEach(async () => {
-    for (const release of releases) release();
+  } catch (error) {
+    if (root) fs.rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
+
+  return { root, coord, aPath, bPath, oldA, oldB, barrier, bounded, track, chatHarness, delayedShutdown, cleanupSpies, holdCompact, deletionHarness, suspendModelAfterLoad, verifyAndRemove() {
+
     try {
-      await bounded(Promise.allSettled(pending));
       expect(coord._sessionCompactionOwners.size).toBe(0);
       expect(coord._sessionRuntimeOperations.size).toBe(0);
       expect(coord._sessionRuntimeClosures.size).toBe(0);
       expect(coord._sessionRuntimeCreations.size).toBe(0);
       for (const [file, original] of transcripts) expect(fs.readFileSync(file)).toEqual(original);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
-  });
 
-  it.each([undefined, "instant_simple"])("rejects compact (%s) during shutdown and accepts a retry on the restored runtime", async (method) => {
+  } };
+}
+
+function runManual(context: TestContext, body: (fixture: ReturnType<typeof createManualFixture>) => Promise<void>) {
+  const scope = manualOwner.create(context.signal);
+  let fixture: ReturnType<typeof createManualFixture> | undefined = undefined;
+  context.onTestFinished(async () => {
+    // Retain files and keep the owner occupied if the 2 s drain fails.
+    await manualOwner.finish(scope);
+    try { fixture?.verifyAndRemove(); } finally { resetManualMocks(); }
+  });
+  fixture = createManualFixture(scope);
+  return scope.run(() => body(fixture!));
+}
+
+// Unit coverage for manual entry points. Keep the SDK operations synthetic;
+// the concurrency suite below separately exercises the real JSONL manager.
+describe("manual operations during runtime hibernation", () => {
+  // Module evaluation has its own bounded setup budget. Manual operations keep
+  // the existing 10 s test timeout and 2 s operation/cleanup deadlines.
+  beforeAll(async () => {
+    const [engine, agents] = await Promise.all([import("../core/engine.ts"), import("../core/agent-manager.ts")]);
+    HanaEngine = engine.HanaEngine; AgentManager = agents.AgentManager;
+  }, 10_000);
+
+  it.for([undefined, "instant_simple"])("rejects compact (%s) during shutdown and accepts a retry on the restored runtime", (method, context) => runManual(context, async ({ coord, aPath, oldA, oldB, bounded, chatHarness, delayedShutdown }) => {
     const chat = chatHarness();
     const gate = delayedShutdown();
     await bounded(gate.entered.promise);
@@ -215,9 +319,9 @@ describe("manual operations during runtime hibernation", () => {
     expect(oldA.dispose).toHaveBeenCalledOnce();
     expect(oldA.compact).not.toHaveBeenCalled();
     expect(coord._sessionRuntimeOperations.size).toBe(0);
-  });
+  }));
 
-  it("rejects model switching during shutdown while another path and a restored runtime remain usable", async () => {
+  it("rejects model switching during shutdown while another path and a restored runtime remain usable", (context) => runManual(context, async ({ coord, aPath, bPath, oldA, oldB, bounded, delayedShutdown }) => {
     const gate = delayedShutdown();
     await bounded(gate.entered.promise);
     await expect(bounded(coord.switchSessionModel(aPath, nextModel))).rejects.toThrow("Model switch already in progress");
@@ -234,17 +338,16 @@ describe("manual operations during runtime hibernation", () => {
     expect(oldA.setModel).not.toHaveBeenCalled();
     expect(oldA.dispose).toHaveBeenCalledOnce();
     expect(coord._sessionRuntimeOperations.size).toBe(0);
-  });
+  }));
 
-  it.each(["compactDesktopSession", "freshCompactDesktopSession"])("excludes the %s engine entry point during shutdown", async (method) => {
-    const { HanaEngine } = await import("../core/engine.ts");
+  it.for(["compactDesktopSession", "freshCompactDesktopSession"])("excludes the %s engine entry point during shutdown", (method, context) => runManual(context, async ({ coord, aPath, bPath, oldA, oldB, bounded, track, delayedShutdown }) => {
     // Exercise the real facade method without booting an application or loading credentials.
     const engine = Object.create(HanaEngine.prototype);
     engine._sessionCoord = coord;
     const gate = delayedShutdown();
     await bounded(gate.entered.promise);
     const request = engine[method](aPath);
-    pending.push(request);
+    track(request);
     void request.catch(() => {});
     expect(oldA.compact).not.toHaveBeenCalled();
     await expect(bounded(request)).rejects.toThrow("session_busy");
@@ -259,9 +362,9 @@ describe("manual operations during runtime hibernation", () => {
     expect(oldA.compact).not.toHaveBeenCalled();
     expect(oldA.dispose).toHaveBeenCalledOnce();
     expect(coord._sessionRuntimeOperations.size).toBe(0);
-  });
+  }));
 
-  it("keeps manual operations excluded when shutdown fails and allows both after restoration", async () => {
+  it("keeps manual operations excluded when shutdown fails and allows both after restoration", (context) => runManual(context, async ({ coord, aPath, oldA, bounded, chatHarness, delayedShutdown }) => {
     const chat = chatHarness();
     const gate = delayedShutdown(true);
     await bounded(gate.entered.promise);
@@ -277,9 +380,9 @@ describe("manual operations during runtime hibernation", () => {
     expect(oldA.setModel).not.toHaveBeenCalled();
     expect(coord.isSessionSwitching(aPath)).toBe(false);
     expect(coord._sessionRuntimeOperations.size).toBe(0);
-  });
+  }));
 
-  it("excludes hibernation and compaction during model switching and releases the busy state on failure", async () => {
+  it("excludes hibernation and compaction during model switching and releases the busy state on failure", (context) => runManual(context, async ({ coord, aPath, oldA, barrier, bounded, track, chatHarness }) => {
     const chat = chatHarness();
     const entered = barrier(); const release = barrier();
     oldA.setModel.mockImplementationOnce(async () => {
@@ -287,7 +390,7 @@ describe("manual operations during runtime hibernation", () => {
       throw new Error("synthetic model failure");
     });
     const switching = coord.switchSessionModel(aPath, nextModel);
-    pending.push(switching);
+    track(switching);
     await bounded(entered.promise);
     expect(await chat.compact().result).toMatchObject({ status: "failed", reason: "session_busy" });
     await expect(bounded(coord.hibernateSessionRuntime(aPath, "test"))).resolves.toBe(false);
@@ -299,9 +402,9 @@ describe("manual operations during runtime hibernation", () => {
     await bounded(coord.switchSessionModel(aPath, nextModel));
     expect(coord.getSessionByPath(aPath)).not.toBe(oldA);
     expect(coord._sessionRuntimeOperations.size).toBe(0);
-  });
+  }));
 
-  it("excludes hibernation and model switching during compact and recovers after compact failure", async () => {
+  it("excludes hibernation and model switching during compact and recovers after compact failure", (context) => runManual(context, async ({ coord, aPath, oldA, barrier, bounded, chatHarness }) => {
     const chat = chatHarness();
     const entered = barrier(); const release = barrier();
     oldA.compact.mockImplementationOnce(async () => {
@@ -322,9 +425,9 @@ describe("manual operations during runtime hibernation", () => {
     expect(await chat.compact().result).toMatchObject({ status: "succeeded" });
     expect(coord.getSessionByPath(aPath)).not.toBe(oldA);
     expect(coord._sessionRuntimeOperations.size).toBe(0);
-  });
+  }));
 
-  it.each(["websocket", "compactDesktopSession", "freshCompactDesktopSession"])("reserves %s across the asynchronous SDK abort before its busy marker", async (surface) => {
+  it.for(["websocket", "compactDesktopSession", "freshCompactDesktopSession"])("reserves %s across the asynchronous SDK abort before its busy marker", (surface, context) => runManual(context, async ({ coord, aPath, oldA, barrier, bounded, chatHarness }) => {
     const entered = barrier(); const release = barrier();
     // Match the locked SDK's ordering: compact awaits abort before it marks
     // itself busy. This controlled boundary is not a real-SDK acceptance run.
@@ -341,7 +444,6 @@ describe("manual operations during runtime hibernation", () => {
     let request: Promise<unknown>;
     if (surface === "websocket") request = chat.compact().result;
     else {
-      const { HanaEngine } = await import("../core/engine.ts");
       const engine = Object.create(HanaEngine.prototype);
       engine._sessionCoord = coord;
       request = bounded(engine[surface](aPath));
@@ -360,12 +462,12 @@ describe("manual operations during runtime hibernation", () => {
     expect(coord.isSessionSwitching(aPath)).toBe(false);
     await expect(bounded(coord.hibernateSessionRuntime(aPath, "after_compact"))).resolves.toBe(true);
     expect(coord._sessionRuntimeOperations.size).toBe(0);
-  });
+  }));
 
-  it.each([
+  it.for([
     ["websocket", false], ["compactDesktopSession", false], ["freshCompactDesktopSession", false],
     ["websocket", true], ["compactDesktopSession", true], ["freshCompactDesktopSession", true],
-  ] as const)("keeps %s reserved after reload and through retry (retry fails: %s)", async (surface, failRetry) => {
+  ] as const)("keeps %s reserved after reload and through retry (retry fails: %s)", ([surface, failRetry], context) => runManual(context, async ({ coord, aPath, oldA, barrier, bounded, track, chatHarness }) => {
     const reloaded = barrier(); const resumeRecovery = barrier();
     const retrying = barrier(); const resumeRetry = barrier();
     oldA.extensionRunner.hasHandlers.mockReturnValue(false);
@@ -392,11 +494,10 @@ describe("manual operations during runtime hibernation", () => {
     let request: Promise<unknown>;
     if (surface === "websocket") request = chat.compact().result;
     else {
-      const { HanaEngine } = await import("../core/engine.ts");
       const engine = Object.create(HanaEngine.prototype);
       engine._sessionCoord = coord;
       request = engine[surface](aPath);
-      pending.push(request);
+      track(request);
     }
     void request.catch(() => {});
     try {
@@ -431,21 +532,20 @@ describe("manual operations during runtime hibernation", () => {
       resumeRecovery.resolve(); resumeRetry.resolve();
       reloadSpy.mockRestore();
     }
-  });
+  }));
 
-  it("rejects compact before acceptance when hibernation is queued but has not entered shutdown", async () => {
+  it("rejects compact before acceptance when hibernation is queued but has not entered shutdown", (context) => runManual(context, async ({ coord, aPath, oldA, bounded, track, chatHarness }) => {
     const chat = chatHarness();
     const sleeping = coord.hibernateSessionRuntime(aPath, "queued_first");
-    pending.push(sleeping);
+    track(sleeping);
     const request = chat.compact();
     expect(await request.result).toMatchObject({ status: "failed", reason: "session_busy" });
     expect(request.messages.some((message) => message.type === "compaction_accepted")).toBe(false);
     expect(oldA.compact).not.toHaveBeenCalled();
     await expect(bounded(sleeping)).resolves.toBe(true);
-  });
+  }));
 
-  it("releases a failed fresh refresh so the missing runtime can be restored", async () => {
-    const { HanaEngine } = await import("../core/engine.ts");
+  it("releases a failed fresh refresh so the missing runtime can be restored", (context) => runManual(context, async ({ coord, aPath, oldA, bounded, chatHarness }) => {
     const engine = Object.create(HanaEngine.prototype);
     engine._sessionCoord = coord;
     createAgentSessionMock.mockRejectedValueOnce(new Error("synthetic fresh refresh failure"));
@@ -455,9 +555,9 @@ describe("manual operations during runtime hibernation", () => {
     expect(coord.isSessionSwitching(aPath)).toBe(false);
     expect(await chatHarness().compact().result).toMatchObject({ status: "succeeded" });
     expect(coord.getSessionByPath(aPath)).not.toBe(oldA);
-  });
+  }));
 
-  it("expires scoped reload after a synchronous operation failure", async () => {
+  it("expires scoped reload after a synchronous operation failure", (context) => runManual(context, async ({ coord, aPath, oldA, bounded, chatHarness }) => {
     let staleReload: () => Promise<unknown>;
     await expect(bounded(coord.withSessionCompaction(aPath, oldA, ({ reloadSessionRuntime }) => {
       staleReload = reloadSessionRuntime;
@@ -467,88 +567,11 @@ describe("manual operations during runtime hibernation", () => {
     await expect(bounded(staleReload!())).rejects.toThrow("session_busy");
     expect(oldA.dispose).not.toHaveBeenCalled();
     expect(await chatHarness().compact().result).toMatchObject({ status: "succeeded" });
-  });
+  }));
 
   describe("closing admission during compact", () => {
-    function cleanupSpies() {
-      const spies = {
-        abortBySession: vi.fn(), clearBySession: vi.fn(), closeTerminalsForSession: vi.fn(),
-        closeAllTerminals: vi.fn(), onSessionRuntimeDiscarded: vi.fn(),
-      };
-      coord._d.getConfirmStore = () => spies;
-      coord._d.getDeferredResultStore = () => spies;
-      Object.assign(coord._d, { closeTerminalsForSession: spies.closeTerminalsForSession,
-        closeAllTerminals: spies.closeAllTerminals, onSessionRuntimeDiscarded: spies.onSessionRuntimeDiscarded });
-      return spies;
-    }
 
-    function holdCompact(session: ReturnType<typeof runtime>, fail: boolean) {
-      const entered = barrier(); const release = barrier();
-      session.compact.mockImplementationOnce(async () => {
-        entered.resolve(); await release.promise;
-        if (fail) throw new Error("synthetic held compact failure");
-        return compactionResult("synthetic held compact");
-      });
-      return { entered, release };
-    }
-
-    async function deletionHarness() {
-      const { AgentManager } = await import("../core/agent-manager.ts");
-      const agent = coord._d.getAgentById("hana");
-      agent.dispose = vi.fn(async () => {});
-      const keep = { id: "keep", dispose: vi.fn(async () => {}) };
-      const phoneAbort = vi.fn();
-      const manager = new AgentManager({
-        agentsDir: path.join(root, "agents"),
-        getSessionCoordinator: () => coord,
-        getHub: () => ({ abortAgentPhoneSessions: phoneAbort, scheduler: {
-          removeAgentCron: vi.fn(), stopHeartbeat: vi.fn(),
-        } }),
-        getChannelManager: () => ({ cleanupAgentFromChannels: vi.fn() }),
-        getPrefs: () => ({ getPrimaryAgent: () => "keep", getPreferences: () => ({ agentOrder: [] }) }),
-      });
-      manager._agents.set("hana", agent); manager._agents.set("keep", keep);
-      manager.activeAgentId = "keep";
-      vi.spyOn(manager, "_rebuildAllAgentSystemPrompts").mockImplementation(() => {});
-      return { manager, agent, keep, phoneAbort, tombstone: manager._deletedAgentTombstonePath("hana") };
-    }
-
-    async function suspendModelAfterLoad() {
-      await bounded(coord.hibernateSessionRuntime(bPath, "model_load_test"));
-      coord._currentSessionPath = bPath; coord._session = null;
-      const loaded = barrier(); const resume = barrier();
-      const load = coord.ensureSessionLoaded.bind(coord);
-      const loadSpy = vi.spyOn(coord, "ensureSessionLoaded").mockImplementationOnce(async (file) => {
-        // Run the actual coordinator load, then hold only the model caller's
-        // continuation after the load queue and construction record are gone.
-        const session = await load(file);
-        loaded.resolve(); await resume.promise;
-        return session;
-      });
-      const switching = coord.switchSessionModel(bPath, nextModel);
-      pending.push(switching); void switching.catch(() => {});
-      await bounded(loaded.promise);
-      const entry = coord._getSessionEntryByPath(bPath);
-      expect(entry.session).not.toBe(oldB);
-      expect(coord._sessionRuntimeOperations.size).toBe(0);
-      expect(coord._sessionRuntimeCreations.size).toBe(0);
-      expect(entry._switching).toBeFalsy();
-      const writeMeta = vi.spyOn(coord, "writeSessionMeta");
-      const renewCache = vi.spyOn(coord, "_renewCachePrefixContract");
-      const emitMetadata = vi.spyOn(coord, "_emitSessionMetadataUpdated");
-      const modelState = { modelId: entry.modelId, modelProvider: entry.modelProvider,
-        modelAvailability: entry.modelAvailability, thinkingLevel: entry.thinkingLevel };
-      return { resume, switching, loadSpy, entry, assertUntouched() {
-        expect(entry.session.setModel).not.toHaveBeenCalled();
-        expect(entry).toMatchObject(modelState);
-        for (const spy of [writeMeta, renewCache, emitMetadata]) {
-          expect(spy.mock.calls.filter(([file]) => file === bPath)).toEqual([]);
-        }
-        expect(entry._switching).toBeFalsy();
-      } };
-    }
-
-    it.each(["closeAllSessions", "discardSessionsForAgent"] as const)("rejects model continuation after runtime load when %s has started", async (method) => {
+    it.for(["closeAllSessions", "discardSessionsForAgent"] as const)("rejects model continuation after runtime load when %s has started", (method, context) => runManual(context, async ({ coord, bPath, oldA, barrier, bounded, track, suspendModelAfterLoad }) => {
       const model = await suspendModelAfterLoad();
       const entered = barrier(); const release = barrier();
       emitSessionShutdownMock.mockImplementationOnce(async (session) => {
@@ -556,7 +579,7 @@ describe("manual operations during runtime hibernation", () => {
         entered.resolve(); await release.promise; return true;
       });
       const closing = method === "closeAllSessions" ? coord.closeAllSessions() : coord.discardSessionsForAgent("hana");
-      pending.push(closing);
+      track(closing);
       await bounded(entered.promise);
       expect(coord._sessionRuntimeClosures.size).toBe(1);
       expect(model.entry._switching).toBeFalsy();
@@ -575,9 +598,9 @@ describe("manual operations during runtime hibernation", () => {
       const restored = coord.getSessionByPath(bPath);
       expect(restored).not.toBe(model.entry.session);
       expect(restored.setModel).toHaveBeenCalledWith(nextModel);
-    });
+    }));
 
-    it("rejects model continuation after runtime load during active-agent deletion and foreground replacement", async () => {
+    it("rejects model continuation after runtime load during active-agent deletion and foreground replacement", (context) => runManual(context, async ({ root, coord, oldA, barrier, bounded, track, deletionHarness, suspendModelAfterLoad }) => {
       const { manager, agent, keep, tombstone } = await deletionHarness();
       const keepDir = path.join(root, "agents", "keep");
       const keepPath = path.join(keepDir, "sessions", "keep.jsonl");
@@ -602,7 +625,7 @@ describe("manual operations during runtime hibernation", () => {
         expect(session).toBe(oldA);
         entered.resolve(); await release.promise; return true;
       });
-      const deletion = manager.deleteAgent("hana"); pending.push(deletion); void deletion.catch(() => {});
+      const deletion = manager.deleteAgent("hana"); track(deletion); void deletion.catch(() => {});
       await bounded(entered.promise);
       expect(switchAgent).toHaveBeenCalledWith("keep");
       expect(manager.activeAgentId).toBe("keep");
@@ -628,9 +651,9 @@ describe("manual operations during runtime hibernation", () => {
       expect(coord._session).toBe(focused);
       expect(coord._sessions.size).toBe(1);
       model.loadSpy.mockRestore();
-    });
+    }));
 
-    it.each([false, true])("preflights all A/B/C before batch close and retries after compact settles (fails: %s)", async (fail) => {
+    it.for([false, true])("preflights all A/B/C before batch close and retries after compact settles (fails: %s)", (fail, context) => runManual(context, async ({ coord, aPath, bPath, oldA, oldB, bounded, chatHarness, cleanupSpies, holdCompact }) => {
       const cPath = path.join(path.dirname(aPath), "c.jsonl");
       const c = runtime(cPath);
       coord._sessions.set(cPath, { session: c, agentId: "hana", unsub: vi.fn() });
@@ -658,10 +681,9 @@ describe("manual operations during runtime hibernation", () => {
       expect(coord._sessions.size).toBe(0);
       expect(coord._session).toBeNull();
       expect(coord.currentSessionPath).toBeNull();
-    });
+    }));
 
-    it("rejects engine disposal before agent and manifest teardown, then succeeds on retry", async () => {
-      const { HanaEngine } = await import("../core/engine.ts");
+    it("rejects engine disposal before agent and manifest teardown, then succeeds on retry", (context) => runManual(context, async ({ coord, oldA, oldB, bounded, chatHarness, holdCompact }) => {
       const engine = Object.create(HanaEngine.prototype);
       engine._sessionCoord = coord;
       engine._agentMgr = { disposeAll: vi.fn(async () => {}) };
@@ -680,14 +702,14 @@ describe("manual operations during runtime hibernation", () => {
       expect(engine._agentMgr.disposeAll).toHaveBeenCalledOnce();
       expect(engine._sessionManifestStore.close).toHaveBeenCalledOnce();
       expect(coord._sessions.size).toBe(0);
-    });
+    }));
 
-    it.each([
+    it.for([
       ["recovery", "closeSession"], ["recovery", "discardSessionRuntime"],
       ["recovery", "closeAllSessions"], ["recovery", "discardSessionsForAgent"],
       ["fresh", "closeSession"], ["fresh", "discardSessionRuntime"],
       ["fresh", "closeAllSessions"], ["fresh", "discardSessionsForAgent"],
-    ] as const)("rejects %s/%s before replacement publication without clearing sidecars or focus", async (mode, closeMethod) => {
+    ] as const)("rejects %s/%s before replacement publication without clearing sidecars or focus", ([mode, closeMethod], context) => runManual(context, async ({ coord, aPath, oldA, oldB, barrier, bounded, track, cleanupSpies }) => {
       const entered = barrier(); const release = barrier();
       const spies = cleanupSpies();
       if (mode === "recovery") oldA.extensionRunner.hasHandlers.mockReturnValue(false);
@@ -696,11 +718,10 @@ describe("manual operations during runtime hibernation", () => {
         entered.resolve(); await release.promise;
         return { session: runtime(sessionManager.getSessionFile()) };
       });
-      const { HanaEngine } = await import("../core/engine.ts");
       const engine = Object.create(HanaEngine.prototype);
       engine._sessionCoord = coord;
       const request = engine[mode === "fresh" ? "freshCompactDesktopSession" : "compactDesktopSession"](aPath);
-      pending.push(request); void request.catch(() => {});
+      track(request); void request.catch(() => {});
       await bounded(entered.promise);
       expect(coord.getSessionByPath(aPath)).toBeNull();
       const focus = coord._session; const focusVersion = coord._focusVersion;
@@ -716,9 +737,9 @@ describe("manual operations during runtime hibernation", () => {
       expect(coord.getSessionByPath(aPath)?.disposed).toBe(false);
       await bounded(coord.closeAllSessions());
       expect(coord._sessions.size).toBe(0);
-    });
+    }));
 
-    it.each([false, true])("rejects agent deletion with held compact and another session, then retries (compact fails: %s)", async (fail) => {
+    it.for([false, true])("rejects agent deletion with held compact and another session, then retries (compact fails: %s)", (fail, context) => runManual(context, async ({ coord, oldA, oldB, bounded, chatHarness, holdCompact, deletionHarness }) => {
       const { manager, agent, keep, phoneAbort, tombstone } = await deletionHarness();
       const gate = holdCompact(oldA, fail);
       const request = chatHarness().compact();
@@ -737,9 +758,9 @@ describe("manual operations during runtime hibernation", () => {
       expect(oldA.dispose).toHaveBeenCalledOnce();
       expect(oldB.dispose).toHaveBeenCalledOnce();
       expect(coord._sessions.size).toBe(0);
-    });
+    }));
 
-    it("does not delete or tombstone an agent if runtime cleanup unexpectedly rejects", async () => {
+    it("does not delete or tombstone an agent if runtime cleanup unexpectedly rejects", (context) => runManual(context, async ({ coord, bounded, deletionHarness }) => {
       const { manager, agent, tombstone } = await deletionHarness();
       vi.spyOn(coord, "_teardownSessionEntry").mockRejectedValueOnce(new Error("synthetic cleanup failure"));
       await expect(bounded(manager.deleteAgent("hana"))).rejects.toThrow("synthetic cleanup failure");
@@ -749,12 +770,12 @@ describe("manual operations during runtime hibernation", () => {
       await bounded(manager.deleteAgent("hana"));
       expect(agent.dispose).toHaveBeenCalledOnce();
       expect(coord._sessions.size).toBe(0);
-    });
+    }));
 
-    it("blocks new compact, load and model admissions for the entire batch shutdown", async () => {
+    it("blocks new compact, load and model admissions for the entire batch shutdown", (context) => runManual(context, async ({ coord, aPath, bPath, oldA, oldB, barrier, bounded, track, chatHarness }) => {
       const entered = barrier(); const release = barrier();
       emitSessionShutdownMock.mockImplementationOnce(async () => { entered.resolve(); await release.promise; return true; });
-      const closing = coord.closeAllSessions(); pending.push(closing);
+      const closing = coord.closeAllSessions(); track(closing);
       await bounded(entered.promise);
       expect(await chatHarness().compact("b").result).toMatchObject({ status: "failed", reason: "session_busy" });
       await expect(bounded(coord.ensureSessionLoaded(bPath))).rejects.toThrow("session_busy");
@@ -765,12 +786,12 @@ describe("manual operations during runtime hibernation", () => {
       expect(oldB.dispose).toHaveBeenCalledOnce();
       await bounded(coord.ensureSessionLoaded(aPath));
       expect(coord.getSessionByPath(aPath)?.disposed).toBe(false);
-    });
+    }));
 
-    it("allows another path to compact while a single-path close is pending", async () => {
+    it("allows another path to compact while a single-path close is pending", (context) => runManual(context, async ({ coord, aPath, oldA, oldB, barrier, bounded, track, chatHarness }) => {
       const entered = barrier(); const release = barrier();
       emitSessionShutdownMock.mockImplementationOnce(async () => { entered.resolve(); await release.promise; return true; });
-      const closing = coord.closeSession(aPath); pending.push(closing);
+      const closing = coord.closeSession(aPath); track(closing);
       await bounded(entered.promise);
       const chat = chatHarness();
       expect(await chat.compact().result).toMatchObject({ status: "failed", reason: "session_busy" });
@@ -778,9 +799,9 @@ describe("manual operations during runtime hibernation", () => {
       release.resolve(); await bounded(closing);
       expect(oldA.dispose).toHaveBeenCalledOnce();
       expect(oldB.dispose).not.toHaveBeenCalled();
-    });
+    }));
 
-    it("holds the agent fence after runtime removal until agent disposal and tombstone finish", async () => {
+    it("holds the agent fence after runtime removal until agent disposal and tombstone finish", (context) => runManual(context, async ({ root, coord, aPath, barrier, bounded, track, deletionHarness }) => {
       const { manager, agent, tombstone } = await deletionHarness();
       const entered = barrier(); const release = barrier();
       agent.dispose.mockImplementationOnce(async () => { entered.resolve(); await release.promise; });
@@ -788,7 +809,7 @@ describe("manual operations during runtime hibernation", () => {
       const keepPath = path.join(root, "agents", "keep", "sessions", "keep.jsonl");
       const keepRuntime = runtime(keepPath);
       coord._sessions.set(keepPath, { session: keepRuntime, agentId: "keep", unsub: vi.fn() });
-      const deletion = manager.deleteAgent("hana"); pending.push(deletion);
+      const deletion = manager.deleteAgent("hana"); track(deletion);
       await bounded(entered.promise);
       expect(coord.getSessionByPath(aPath)).toBeNull();
       expect(fs.existsSync(tombstone)).toBe(false);
@@ -796,7 +817,6 @@ describe("manual operations during runtime hibernation", () => {
       const focusVersion = coord._focusVersion;
       await expect(bounded(coord.createSession(null, root, true, MODEL, { agent }))).rejects.toThrow("session_busy");
       expect(coord._focusVersion).toBe(focusVersion);
-      const { HanaEngine } = await import("../core/engine.ts");
       const engine = Object.create(HanaEngine.prototype); engine._sessionCoord = coord;
       await bounded(engine.compactDesktopSession(keepPath));
       expect(keepRuntime.compact).toHaveBeenCalledOnce();
@@ -804,9 +824,9 @@ describe("manual operations during runtime hibernation", () => {
       expect(fs.existsSync(tombstone)).toBe(true);
       expect(keepRuntime.dispose).not.toHaveBeenCalled();
       expect(coord._sessions.size).toBe(1);
-    });
+    }));
 
-    it.each(["recovery", "fresh"])("rejects deletion before %s publication and releases ownership when creation fails", async (mode) => {
+    it.for(["recovery", "fresh"])("rejects deletion before %s publication and releases ownership when creation fails", (mode, context) => runManual(context, async ({ coord, aPath, oldA, oldB, barrier, bounded, track, deletionHarness }) => {
       const { manager, agent, tombstone } = await deletionHarness();
       const entered = barrier(); const release = barrier();
       if (mode === "recovery") oldA.extensionRunner.hasHandlers.mockReturnValue(false);
@@ -814,10 +834,9 @@ describe("manual operations during runtime hibernation", () => {
         entered.resolve(); await release.promise;
         throw new Error("synthetic pre-publication creation failure");
       });
-      const { HanaEngine } = await import("../core/engine.ts");
       const engine = Object.create(HanaEngine.prototype); engine._sessionCoord = coord;
       const compact = engine[mode === "fresh" ? "freshCompactDesktopSession" : "compactDesktopSession"](aPath);
-      pending.push(compact); void compact.catch(() => {});
+      track(compact); void compact.catch(() => {});
       await bounded(entered.promise);
       expect(coord.getSessionByPath(aPath)).toBeNull();
       await expect(bounded(manager.deleteAgent("hana"))).rejects.toThrow("session_busy");
@@ -831,9 +850,9 @@ describe("manual operations during runtime hibernation", () => {
       expect(agent.dispose).toHaveBeenCalledOnce();
       expect(fs.existsSync(tombstone)).toBe(true);
       expect(coord._sessions.size).toBe(0);
-    });
+    }));
 
-    it("preflights unpublished creation that has no existing path queue", async () => {
+    it("preflights unpublished creation that has no existing path queue", (context) => runManual(context, async ({ root, coord, aPath, oldA, barrier, bounded, track }) => {
       const entered = barrier(); const release = barrier();
       const cPath = path.join(path.dirname(aPath), "new.jsonl");
       // Hold the construction boundary, while exercising actual create admission.
@@ -844,7 +863,7 @@ describe("manual operations during runtime hibernation", () => {
         const session = runtime(cPath) as unknown as CreatedRuntime["session"];
         return { session, sessionPath: cPath, sessionId: null, agentId: "hana" };
       });
-      const creating = coord.createSession(null, root, true, MODEL, { focus: false }); pending.push(creating);
+      const creating = coord.createSession(null, root, true, MODEL, { focus: false }); track(creating);
       await bounded(entered.promise);
       expect(coord._sessionRuntimeOperations.size).toBe(0);
       await expect(bounded(coord.closeAllSessions())).rejects.toThrow("session_busy");
@@ -853,10 +872,10 @@ describe("manual operations during runtime hibernation", () => {
       release.resolve(); await bounded(creating);
       await bounded(coord.closeAllSessions());
       expect(coord._sessions.size).toBe(0);
-    });
+    }));
   });
 
-  it.each([false, true])("compaction runtime recovery settles without recursive queue waits (load fails: %s)", async (failLoad) => {
+  it.for([false, true])("compaction runtime recovery settles without recursive queue waits (load fails: %s)", (failLoad, context) => runManual(context, async ({ coord, aPath, oldA, chatHarness }) => {
     const chat = chatHarness();
     oldA.extensionRunner.hasHandlers.mockReturnValue(false);
     if (failLoad) createAgentSessionMock.mockRejectedValueOnce(new Error("synthetic runtime load failure"));
@@ -875,7 +894,7 @@ describe("manual operations during runtime hibernation", () => {
     expect(oldA.compact).not.toHaveBeenCalled();
     expect(oldA.dispose).toHaveBeenCalledOnce();
     expect(coord._sessionRuntimeOperations.size).toBe(0);
-  });
+  }));
 });
 
 function makeSession<Overrides extends object>(sessionPath: string, overrides: Overrides = {} as Overrides) {
@@ -1256,11 +1275,49 @@ describe.sequential("runtime hibernation concurrency", () => {
     return session;
   }
 
-  beforeEach(async () => {
+  beforeEach(async (context) => {
+    // A file-level guard can reject before this hook runs. Register cleanup only
+    // for a setup that actually started, and capture that invocation's resources.
+    const owned = {
+      root: undefined as string | undefined,
+      gates: [] as Array<ReturnType<typeof barrier>>,
+      fixtures: new Map<string, Buffer>(),
+      allowedAppends: new Set<string>(),
+      ready: false,
+      closed: false,
+    };
+    context.onTestFinished(() => {
+      owned.closed = true;
+      const { root, gates, fixtures, allowedAppends } = owned;
+      for (const gate of gates) gate.resolve();
+      try {
+        if (owned.ready) state("test-end");
+        // Validate every transcript already captured, even if setup failed later.
+        const evidenceDir = process.env.HANA_HIBERNATION_EVIDENCE_DIR;
+        if (root && evidenceDir) {
+          fs.mkdirSync(evidenceDir, { recursive: true });
+          fs.cpSync(root, path.join(evidenceDir, path.basename(root)), { recursive: true });
+        }
+        for (const [file, original] of fixtures) {
+          if (!allowedAppends.has(file)) expect(fs.readFileSync(file)).toEqual(original);
+          else {
+            const before = original.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
+            const after = fs.readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+            expect(after.slice(0, before.length)).toEqual(before);
+            expect(after.slice(before.length).map((r) => r.message?.role)).toEqual(["user", "assistant"]);
+            expect(after[before.length].message.content[0].text).toBe("synthetic next turn");
+          }
+        }
+      } finally { if (root) fs.rmSync(root, { recursive: true, force: true }); }
+    });
     vi.clearAllMocks();
-    phases = []; gates = []; fixtures = new Map(); allowedAppends = new Set();
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-hibernate-race-"));
+    phases = []; gates = owned.gates; fixtures = owned.fixtures; allowedAppends = owned.allowedAppends;
+    root = owned.root = fs.mkdtempSync(path.join(os.tmpdir(), "hana-hibernate-race-"));
     const sdk = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>("@earendil-works/pi-coding-agent");
+    // Hook timeout does not stop import evaluation. Do not publish a late setup
+    // into shared suite state after its own cleanup or cancellation.
+    context.signal.throwIfAborted();
+    if (owned.closed) throw new Error("hibernation fixture setup is closed");
     const agent = makeAgent(root);
     fs.mkdirSync(agent.sessionDir, { recursive: true });
     const manager = (name: string) => {
@@ -1294,30 +1351,8 @@ describe.sequential("runtime hibernation concurrency", () => {
     }));
     emitSessionShutdownMock.mockResolvedValue(true);
     refreshSessionModelFromRegistryMock.mockReturnValue(true);
+    owned.ready = true;
     state("fixture-ready");
-  });
-
-  afterEach(() => {
-    for (const gate of gates) gate.resolve();
-    state("test-end");
-    // Pure lifecycle operations may update metadata, but never rewrite these valid transcripts.
-    const evidenceDir = process.env.HANA_HIBERNATION_EVIDENCE_DIR;
-    if (evidenceDir) {
-      fs.mkdirSync(evidenceDir, { recursive: true });
-      fs.cpSync(root, path.join(evidenceDir, path.basename(root)), { recursive: true });
-    }
-    try {
-      for (const [file, original] of fixtures) {
-        if (!allowedAppends.has(file)) expect(fs.readFileSync(file)).toEqual(original);
-        else {
-          const before = original.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
-          const after = fs.readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-          expect(after.slice(0, before.length)).toEqual(before);
-          expect(after.slice(before.length).map((r) => r.message?.role)).toEqual(["user", "assistant"]);
-          expect(after[before.length].message.content[0].text).toBe("synthetic next turn");
-        }
-      }
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
   it("preserves an established B focus when A shutdown returns", async () => {
@@ -1421,7 +1456,7 @@ describe.sequential("runtime hibernation concurrency", () => {
     expect(after.slice(0, before.length)).toEqual(before);
     expect(after.slice(before.length).map((r) => r.message?.role)).toEqual(["user", "assistant"]);
     expect(after[before.length].message.content[0].text).toBe("synthetic next turn");
-    // afterEach independently validates this allowed append, including on assertion failure.
+    // Per-test cleanup independently validates this allowed append, including on assertion failure.
     expect(coord._sessionRuntimeOperations.size).toBe(0);
   });
 
