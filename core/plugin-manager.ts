@@ -1160,20 +1160,16 @@ export class PluginManager {
       try {
         const mod = await freshImport(filePath);
         this._assertActiveLoad(entry, loadToken);
-        if (typeof mod.default === "function") {
-          const sub = mod.default;
-          if (sub && typeof sub.fetch === "function") {
-            // Static Hono app — inject the same request-context middleware onto sub-app too
-            sub.use("*", async (c, next) => {
-              injectRequestContext(c);
-              await next();
-            });
-            const prefix = "/" + stripPluginSourceExt(file);
-            app.route(prefix, sub);
-          } else if (typeof sub === "function") {
-            // Factory function — pass ctx as second arg
-            sub(app, ctx);
-          }
+        const sub = mod.default;
+        if (sub && typeof sub.fetch === "function"
+          && typeof sub.route === "function" && Array.isArray(sub.routes)) {
+          // The parent middleware runs before mounted handlers. Keep the
+          // exported app unchanged so shared instances are safe to remount.
+          const prefix = "/" + stripPluginSourceExt(file);
+          app.route(prefix, sub);
+        } else if (typeof sub === "function") {
+          // Factory function — pass ctx as second arg
+          sub(app, ctx);
         }
         if (mod.register && typeof mod.register === "function") {
           mod.register(app, ctx);
