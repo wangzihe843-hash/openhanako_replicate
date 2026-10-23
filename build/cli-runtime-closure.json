@@ -2792,11 +2792,16 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "core/session-dialogue-variants.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/extensions/compaction-guard-ext.ts",
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/session-compaction-runtime.ts (import-statement); core/bridge-session-manager.ts (import-statement); core/session-coordinator.ts (import-statement); +3 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by core/session-compaction-runtime.ts (import-statement); core/bridge-session-manager.ts (import-statement); core/session-coordinator.ts (import-statement); +4 more importer(s)."
     },
     {
       "path": "core/session-coordinator.ts",

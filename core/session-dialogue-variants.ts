@@ -2,6 +2,7 @@
 import crypto from "crypto";
 import type { AgentMessage, SessionManager } from "../lib/pi-sdk/index.ts";
 import { acquireSessionOperation } from "./session-operation-lock.ts";
+import { isDirectCompactionInProgress } from "./session-compactor.ts";
 import { resolveSessionNodeTarget, invalidateSessionDerivedState, SESSION_BRANCH_RESET_RECORD_TYPE } from "./session-turn-actions.ts";
 import { DIALOGUE_VARIANT_ROLLBACK_RECORD_TYPE, SESSION_RETRY_TRANSACTION_RECORD_TYPE } from "../lib/session-jsonl.ts";
 import { SESSION_MEMORY_SCOPE_RECORD } from "./session-memory-scope.ts";
@@ -33,6 +34,7 @@ interface DialogueSession {
   sessionManager: SessionManager;
   model?: unknown;
   isStreaming?: boolean;
+  isCompacting?: boolean;
   refreshContext?: () => unknown;
   agent?: { streamFn?: ExpressionTransport; state?: { systemPrompt?: string; model?: unknown; messages?: AgentMessage[] }; replaceMessages?: (messages: AgentMessage[]) => unknown };
 }
@@ -41,6 +43,7 @@ interface DialogueEngine {
   getSessionIdForPath?: (sessionPath: string) => string | null;
   ensureSessionLoaded: (sessionPath: string) => Promise<DialogueSession>;
   isSessionStreaming?: (sessionPath: string) => boolean;
+  isSessionSwitching?: (sessionPath: string) => boolean;
   getSessionDialogueVariantStreamFn?: (sessionPath: string) => ExpressionTransport | null;
   setSessionBranchHead?: (sessionPath: string, state: { leafId: string | null; reason: string }) => unknown;
   emitEvent?: (event: Record<string, unknown>, sessionPath: string) => unknown;
@@ -263,6 +266,10 @@ export async function adoptSessionDialogueVariant(engine: DialogueEngine, opts: 
   const release = acquireSessionOperation(ref.sessionId, "adopt_dialogue_variant");
   try {
     assertIdle(engine, ref);
+    // Compaction owns its retained branch across summary generation and runtime reload.
+    // Admission through the branch write below is synchronous; do not move it before load.
+    if (engine.isSessionSwitching?.(ref.sessionPath) || ref.session.isCompacting
+      || isDirectCompactionInProgress(ref.session)) throw fail("session_busy");
     const candidate = recoverInterrupted(engine, ref).get(opts.candidateId);
     if (!candidate || candidate.sessionId !== ref.sessionId) throw fail("dialogue_variant_not_found");
     if (candidate.status === "adopted") return { candidate: publicCandidate(candidate) };
