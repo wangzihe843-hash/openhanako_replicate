@@ -1,0 +1,72 @@
+name: Windows network single-file diagnostic (once)
+
+on:
+  push:
+    branches: [diagnostic/windows-network-4357162-once]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-network-4357162-once
+  cancel-in-progress: false
+
+jobs:
+  observe:
+    if: github.event.created == true && github.run_attempt == 1 && github.ref == 'refs/heads/diagnostic/windows-network-4357162-once'
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: source
+    steps:
+      - name: Checkout observation layer from this diagnostic commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: observer
+          persist-credentials: false
+          sparse-checkout: scripts/diagnostic-network
+          sparse-checkout-cone-mode: true
+      - name: Checkout immutable tested source
+        uses: actions/checkout@v5
+        with:
+          ref: 4357162b20417dab20e65a27dda1002a96467d0a
+          path: source
+          persist-credentials: false
+      - name: Set up exact Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24.15.0'
+      - name: Install existing lock once
+        timeout-minutes: 12
+        run: npm ci --no-audit --no-fund
+      - name: Prepare identity-checked test observation overlay
+        env:
+          NETWORK_DIAG_OUT: ${{ runner.temp }}/network-single-file-diagnostic
+        run: node ../observer/scripts/diagnostic-network/prepare.cjs
+      - name: Observe one single-file forks invocation
+        timeout-minutes: 5
+        env:
+          NETWORK_DIAG_OUT: ${{ runner.temp }}/network-single-file-diagnostic
+        run: node ../observer/scripts/diagnostic-network/run.cjs
+      - name: Independently verify final evidence (never reruns tests)
+        if: always()
+        env:
+          NETWORK_DIAG_OUT: ${{ runner.temp }}/network-single-file-diagnostic
+        run: node ../observer/scripts/diagnostic-network/run.cjs --verify-final
+      - name: Preserve only bounded exit and phase evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-network-single-file-4357162-${{ github.run_id }}
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/network-single-file-diagnostic/identity.json
+            ${{ runner.temp }}/network-single-file-diagnostic/session.json
+            ${{ runner.temp }}/network-single-file-diagnostic/transport.json
+            ${{ runner.temp }}/network-single-file-diagnostic/final.json
+            ${{ runner.temp }}/network-single-file-diagnostic/events-*.jsonl
+            ${{ runner.temp }}/network-single-file-diagnostic/observer-failure-*.flag
