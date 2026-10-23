@@ -7,8 +7,9 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, type ChangeEvent } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
-import type { Editor, JSONContent } from '@tiptap/core';
+import type { Editor, EditorEvents, JSONContent } from '@tiptap/core';
 import { useStore } from '../stores';
+import { composerOwnerKey } from '../stores/input-slice';
 import { XingyeExpressionControls } from '../xingye/XingyeExpressionControls';
 import { HOME_DRAFT_KEY } from '../../../../shared/input-drafts.ts';
 import { selectPreviewItems, selectActiveTabId } from '../stores/preview-slice';
@@ -519,7 +520,11 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   const setPermissionMode = useStore(s => s.setSessionPermissionMode);
   const workMode = useStore(s => s.sessionWorkMode);
   const setWorkMode = useStore(s => s.setSessionWorkMode);
-  const [sending, setSending] = useState(false);
+  const [audioSending, setAudioSending] = useState(false);
+  const composerSending = useStore(s => s.composerSubmissions.some(submission => (
+    submission.owner === composerOwnerKey(s)
+  )));
+  const sending = audioSending || composerSending;
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashSelected, setSlashSelected] = useState(0);
   const [slashBusy, setSlashBusy] = useState<string | null>(null);
@@ -647,11 +652,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   // Zustand actions
   const addAttachedFile = useStore(s => s.addAttachedFile);
   const removeAttachedFile = useStore(s => s.removeAttachedFile);
-  const clearAttachedFiles = useStore(s => s.clearAttachedFiles);
-  const clearAttachedFilesForSession = useStore(s => s.clearAttachedFilesForSession);
   const setDocContextAttached = useStore(s => s.setDocContextAttached);
   const setDraft = useStore(s => s.setDraft);
-  const clearDraft = useStore(s => s.clearDraft);
   // 草稿 key：session 内用 sessionPath（store 内解析为 sessionId）；首页 pending 态用保留键
   const draftKey = currentSessionPath ?? (pendingNewSession ? HOME_DRAFT_KEY : null);
 
@@ -706,7 +708,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   });
 
   useEffect(() => {
-    editor?.setEditable?.(!inputLocked);
+    // Permission/view changes are not document edits and must not renew send ownership.
+    editor?.setEditable?.(!inputLocked, false);
     if (inputLocked) {
       setSlashMenuOpen(false);
       setFileMenuOpen(false);
@@ -1140,7 +1143,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       return false;
     }
 
-    setSending(true);
+    setAudioSending(true);
     try {
       const sessionRef = await ensureVoiceSessionRef();
       const ws = getWebSocket();
@@ -1175,7 +1178,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       }));
       return true;
     } finally {
-      setSending(false);
+      setAudioSending(false);
     }
   }, [
     connected,
@@ -1439,13 +1442,28 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       }
       // 保存草稿到 store（session 内 + 首页 pending 态）；setDraft 幂等，避免空转
       if (draftKey) {
-        setDraft(draftKey, text, editorJson);
+        setDraft(draftKey, text, editorJson, true);
       }
       // 内容超出可见区域时，自动滚动到光标位置
-      requestAnimationFrame(() => editor.commands.scrollIntoView());
+      requestAnimationFrame(() => {
+        if (!editor.isDestroyed) editor.commands.scrollIntoView();
+      });
+    };
+    // TipTap suppresses update when a replacement transaction ends with an
+    // equal document. It is still a new edit, unlike selection/focus or restore.
+    const equalEdit = ({ transaction, appendedTransactions }: EditorEvents['transaction']) => {
+      if (!draftKey || transaction.getMeta('preventUpdate')
+        || ![transaction, ...appendedTransactions].some(tr => tr.docChanged)
+        || !transaction.before.eq(editor.state.doc)) return;
+      const doc = editor.getJSON();
+      setDraft(draftKey, serializeEditor(doc).text, doc, true);
     };
     editor.on('update', handler);
-    return () => { editor.off('update', handler); };
+    editor.on('transaction', equalEdit);
+    return () => {
+      editor.off('update', handler);
+      editor.off('transaction', equalEdit);
+    };
   }, [editor, draftKey, setDraft, slashCommands]);
 
   // 切换 session / 回到首页 / 草稿 hydrate 完成时恢复草稿
@@ -1736,7 +1754,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   // ── Send / interject message ──
   const submitEditorMessage = useCallback(async (type: 'prompt' | 'interject') => {
     if (inputLocked) return;
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     const editorJson = editor.getJSON();
     const { text: rawText, skills, fileRefs, sessionRefs, agentMentions } = serializeEditor(editorJson);
     const text = rawText.trim();
@@ -1751,7 +1769,11 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     const clickedSessionRef: Readonly<SessionRef> | null = clickedSessionPath && clickedSessionId && clickedAgentId
       ? Object.freeze({ sessionId: clickedSessionId, sessionPath: clickedSessionPath, agentId: clickedAgentId })
       : null;
-    const clickedAttachedFiles = attachedFiles.map(file => ({ ...file }));
+    const submittedFiles = clickState.attachedFiles;
+    const submittedQuotes = clickState.quotedSelections;
+    const clickedDraftKey = clickedSessionPath || HOME_DRAFT_KEY;
+    const clickedDraftRevision = sessionScopedValue(clickState, clickState.draftRevisions, clickedDraftKey) || 0;
+    const clickedAttachedFiles = submittedFiles.map(file => ({ ...file }));
     const clickedQuotes = clickState.quotedSelections.map(quote => ({ ...quote }));
     const clickedDocContextAttached = docContextAttached;
     const clickedDoc = currentDoc ? { ...currentDoc } : null;
@@ -1793,7 +1815,6 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     }) || !connected) return;
     if (type === 'prompt' && isStreaming) return;
     if (type === 'interject' && !isStreaming) return;
-    if (sending) return;
     if (modelSwitching) return;
     if (useStore.getState().pendingSessionSwitchPath) return;
     const guardState = useStore.getState();
@@ -1820,13 +1841,38 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         || isSessionCompacting(guardState, guardPath)
       )) return;
     }
-    voiceTurns.interrupt();
-    setSending(true);
+    const owner = composerOwnerKey(clickState);
+    if (!owner) {
+      clickState.addToast(t('error.noActiveSession'), 'error', 6000, { dedupeKey: 'send-missing-session' });
+      return;
+    }
+    const submissionId = clickState.claimComposerSubmission({
+      owner, revision: clickedDraftRevision,
+      files: submittedFiles, quotes: submittedQuotes,
+      context: JSON.stringify([clickedDocContextAttached, clickedDocContextAttached ? clickedDoc?.path : null]),
+    });
+    if (!submissionId) return;
+    let docContextChanged = false;
+    // Track transitions, including A → B → A in one render, not just final equality.
+    const contextIdentity = (state: ReturnType<typeof useStore.getState>) => {
+      const active = selectPreviewItems(state).find(item => item.id === selectActiveTabId(state));
+      return JSON.stringify(state.docContextAttached ? [true, selectActiveTabId(state), active?.filePath] : [false]);
+    };
+    const stopTrackingContext = useStore.subscribe((next, previous) => {
+      const currentClaim = next.composerSubmissions.find(item => item.id === submissionId);
+      const previousClaim = previous.composerSubmissions.find(item => item.id === submissionId);
+      const consumedContext = currentClaim?.context !== previousClaim?.context;
+      if (!docContextChanged && !consumedContext && contextIdentity(next) !== contextIdentity(previous)) {
+        docContextChanged = true;
+        next.invalidateComposerSubmissionContext(submissionId);
+      }
+    });
 
     try {
+      voiceTurns.interrupt();
       let sessionRef = clickedSessionRef;
       if (clickedPendingDraftId) {
-        sessionRef = await ensureSession(clickedPendingDraftId);
+        sessionRef = await ensureSession(clickedPendingDraftId, true);
         if (!sessionRef) {
           // ensureSession 拿不到会话身份：不能静默吞掉这次发送，否则用户会以为点了没反应（#2101）。
           useStore.getState().addToast(t('error.noActiveSession'), 'error', 6000, {
@@ -2012,26 +2058,6 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       const allFiles = [...(hasFiles ? inputFiles : [])];
       if (docForRender) allFiles.push({ path: docForRender.path, name: docForRender.name });
 
-      const beforeCleanup = useStore.getState();
-      const stillOwnsPendingComposer = !!clickedPendingDraftId
-        && beforeCleanup.pendingNewSession === true
-        && beforeCleanup.pendingDraftId === clickedPendingDraftId;
-      const stillOwnsComposer = stillOwnsPendingComposer || (
-        beforeCleanup.currentSessionId === sessionRef.sessionId
-        && beforeCleanup.currentSessionPath === sessionRef.sessionPath
-      );
-      clearDraft(sessionRef.sessionPath);
-      clearAttachedFilesForSession(sessionRef.sessionPath);
-      if (clickedPendingDraftId && beforeCleanup.pendingDraftId === clickedPendingDraftId) {
-        clearDraft(HOME_DRAFT_KEY);
-      }
-      if (stillOwnsComposer) {
-        editor.commands.clearContent();
-        if (stillOwnsPendingComposer) clearAttachedFiles();
-        if (clickedDocContextAttached) setDocContextAttached(false);
-        if (clickedQuotes.length > 0) useStore.getState().clearQuotedSelections();
-      }
-
       const clientMessageId = createClientUserMessageId();
       const displayMessage = {
         text,
@@ -2100,16 +2126,30 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
       }
       try {
         ws.send(JSON.stringify(wsMsg));
-        upsertOptimisticSessionFirstMessage(sessionPathForSend, text, new Date().toISOString());
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         useStore.getState().markOptimisticUserMessageFailed(sessionPathForSend, clientMessageId, message);
         throw err;
       }
+
+      // Local send accepted the frozen payload. Consume only its still-owned input.
+      const beforeCleanup = useStore.getState();
+      const stillOwnsPendingComposer = !!clickedPendingDraftId
+        && beforeCleanup.pendingNewSession && beforeCleanup.pendingDraftId === clickedPendingDraftId;
+      const stillOwnsComposer = stillOwnsPendingComposer || (
+        !beforeCleanup.pendingNewSession
+        && beforeCleanup.currentSessionId === sessionRef.sessionId
+        && beforeCleanup.currentSessionPath === sessionRef.sessionPath
+      );
+      const consumeContext = stillOwnsComposer && clickedDocContextAttached && !docContextChanged
+        && selectPreviewItems(beforeCleanup).find(item => item.id === selectActiveTabId(beforeCleanup))?.filePath === clickedDoc?.path;
+      beforeCleanup.consumeComposerSubmission(submissionId, sessionRef.sessionPath, stillOwnsComposer, consumeContext);
+      upsertOptimisticSessionFirstMessage(sessionPathForSend, text, new Date().toISOString());
     } finally {
-      setSending(false);
+      stopTrackingContext();
+      useStore.getState().releaseComposerSubmission(submissionId);
     }
-  }, [addToast, editor, inputLocked, attachedFiles, docContextAttached, connected, isStreaming, sending, currentDoc, clearAttachedFiles, clearAttachedFilesForSession, clearDraft, setDocContextAttached, slashCommands, slashSelected, handleSlashSelect, supportsVision, currentModelInfo, loadVisionAuxiliaryConfig, modelSwitching, t]);
+  }, [addToast, editor, inputLocked, docContextAttached, connected, isStreaming, currentDoc, slashCommands, slashSelected, handleSlashSelect, supportsVision, currentModelInfo, loadVisionAuxiliaryConfig, modelSwitching, t]);
 
   const handleSend = useCallback(async () => {
     await submitEditorMessage('prompt');
