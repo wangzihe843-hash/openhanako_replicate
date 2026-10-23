@@ -4,6 +4,7 @@ import fs from "fs";
 import net from "net";
 import os from "os";
 import path from "path";
+import { isUint8Array } from "node:util/types";
 import { capabilityDenied, ResourceIOError } from "../errors.ts";
 import { resourceKeyForRef } from "../resource-refs.ts";
 import type {
@@ -143,12 +144,14 @@ export class UrlProvider {
     for (let redirect = 0; redirect <= this.maxRedirects; redirect += 1) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      let response: Response | undefined;
       try {
-        const response = await this.fetchImpl(current.href, {
+        response = await this.fetchImpl(current.href, {
           redirect: "manual",
           signal: controller.signal,
         });
         if (isRedirect(response.status)) {
+          cancelBody(response.body);
           if (redirect === this.maxRedirects) {
             throw new ResourceIOError("URL redirect limit exceeded", {
               code: "url_redirect_limit",
@@ -173,18 +176,9 @@ export class UrlProvider {
         }
         const contentLength = Number(response.headers.get("content-length") || "");
         if (Number.isFinite(contentLength) && contentLength > this.maxBytes) {
-          throw new ResourceIOError("URL response too large", {
-            code: "url_response_too_large",
-            status: 413,
-          });
+          throw responseTooLarge();
         }
-        const content = Buffer.from(await response.arrayBuffer());
-        if (content.byteLength > this.maxBytes) {
-          throw new ResourceIOError("URL response too large", {
-            code: "url_response_too_large",
-            status: 413,
-          });
-        }
+        const content = await readBoundedBody(response, this.maxBytes, controller.signal);
         return {
           finalUrl: current.href,
           content,
@@ -193,6 +187,9 @@ export class UrlProvider {
         };
       } finally {
         clearTimeout(timer);
+        // Header/HTTP/redirect failures must not leave an unread body running.
+        // A reader owned by somebody else must remain untouched.
+        if (response && !response.bodyUsed && !response.body?.locked) cancelBody(response.body);
       }
     }
     throw new ResourceIOError("URL redirect limit exceeded", {
@@ -234,6 +231,59 @@ export class UrlProvider {
       });
     }
     return url;
+  }
+}
+
+function responseTooLarge(): ResourceIOError {
+  return new ResourceIOError("URL response too large", {
+    code: "url_response_too_large",
+    status: 413,
+  });
+}
+
+function cancelBody(body: { cancel(reason?: unknown): Promise<void> } | null, reason?: unknown): void {
+  // Cleanup cannot replace the read error or wait indefinitely on a transport.
+  try { void body?.cancel(reason).catch(() => {}); } catch { /* Best effort. */ }
+}
+
+async function readBoundedBody(response: Response, maxBytes: number, signal: AbortSignal): Promise<Buffer> {
+  // Preserve arrayBuffer()'s rejection of already-consumed and locked bodies.
+  if (response.bodyUsed) throw new TypeError("Body has already been read");
+  signal.throwIfAborted();
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  let complete = false;
+  let cancelled = false;
+  const cancel = () => {
+    if (cancelled) return;
+    cancelled = true;
+    cancelBody(reader, signal.aborted ? signal.reason : undefined);
+  };
+  // Cancelling a native stream settles any pending read even if the underlying
+  // cancel promise never settles. Check the signal before accepting that EOF.
+  signal.addEventListener("abort", cancel, { once: true });
+  let size = 0;
+  const chunks: Uint8Array[] = [];
+  try {
+    signal.throwIfAborted();
+    while (true) {
+      const { done, value } = await reader.read();
+      signal.throwIfAborted();
+      if (done) {
+        complete = true;
+        return Buffer.concat(chunks, size);
+      }
+      if (!isUint8Array(value)) throw new TypeError("Received non-Uint8Array chunk");
+      size += value.byteLength;
+      // Count delivered bytes; do not retain the first chunk that exceeds the
+      // budget. Fetch/decoder buffers and that chunk are already allocated.
+      if (size > maxBytes) throw responseTooLarge();
+      if (value.byteLength) chunks.push(value);
+    }
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    if (!complete) cancel();
+    reader.releaseLock();
   }
 }
 
