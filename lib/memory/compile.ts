@@ -70,6 +70,17 @@ export const EDITABLE_FACTS_STATE_FILE = "editable-facts-state.json";
 export const TODAY_STATE_FILE = "today-state.json";
 export const TODAY_STATE_SCHEMA_VERSION = 1;
 
+// Only in-flight work in this server process needs a manual-save fence. Keep
+// per-job identities instead of comparing draft bytes: ordinary compiles still
+// publish in completion order, while even a same-text save supersedes old work.
+const pendingTodayPublications = new Map<string, Set<{ superseded: boolean }>>();
+
+function todayPublicationKey(outputPath: string) {
+  // Canonicalize the parent, not the replaceable Markdown inode. This also
+  // matches relative paths and aliases through a symlinked memory directory.
+  return path.join(fs.realpathSync(path.dirname(outputPath)), path.basename(outputPath));
+}
+
 // daily 传送带默认参数：week 段展示今天之前的 6 个已结束逻辑日；更早的条目 fold 进 longterm。
 export const DAILY_WINDOW_RETENTION_DAYS = 6;
 // week.md 硬性总长上限（字符数）：6 条 daily（单条极紧的 budget）加合理结构开销后的总量级，
@@ -375,20 +386,30 @@ export async function compileToday(summaryManager, outputPath, resolvedModel, op
         ? `## 新增或修订的时间线条目（delta）\n\n${delta}`
         : `## New or revised timeline entries (delta)\n\n${delta}`);
 
-  const result = await _compactLLM(
-    input,
-    buildCompileTodayPrompt(getLocale()),
-    resolvedModel,
-    450,
-    "compile_today",
-  );
+  const publicationKey = todayPublicationKey(outputPath);
+  const publications = pendingTodayPublications.get(publicationKey) || new Set<{ superseded: boolean }>();
+  const publication = { superseded: false };
+  publications.add(publication);
+  pendingTodayPublications.set(publicationKey, publications);
+  try {
+    const result = await _compactLLM(
+      input,
+      buildCompileTodayPrompt(getLocale()),
+      resolvedModel,
+      450,
+      "compile_today",
+    );
 
-  // No await between this fence and either write. A superseded job must not
-  // touch the draft/state: a newer compile or user edit may already own them.
-  if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) return "superseded";
-  atomicWrite(outputPath, normalizeCompiledLLMResult(result, "compileToday"));
-  if (nextWatermark) writeTodayState(statePath, logicalDate, nextWatermark);
-  return "compiled";
+    // No await between either fence and the body/watermark writes. A manual
+    // save leaves the previous watermark intact so the next job retries delta.
+    if (publication.superseded || !isMemoryResetCurrent(memoryDir, reset, "compiled")) return "superseded";
+    atomicWrite(outputPath, normalizeCompiledLLMResult(result, "compileToday"));
+    if (nextWatermark) writeTodayState(statePath, logicalDate, nextWatermark);
+    return "compiled";
+  } finally {
+    publications.delete(publication);
+    if (publications.size === 0) pendingTodayPublications.delete(publicationKey);
+  }
 }
 
 /**
@@ -807,7 +828,10 @@ function _assembleMemoryMd(memoryDir, opts: Record<string, any> = {}) {
 export function writeTodaySection(memoryDir, today, opts: Record<string, any> = {}) {
   const targetPath = path.join(memoryDir, "today.md");
   const normalized = normalizeCompiledSectionBody(String(today ?? ""));
+  const publicationKey = todayPublicationKey(targetPath);
   atomicWrite(targetPath, normalized ? `${normalized}\n` : "");
+  // Invalidate only after the body commits, but before assembly can fail.
+  for (const publication of pendingTodayPublications.get(publicationKey) || []) publication.superseded = true;
   _assembleMemoryMd(memoryDir, opts);
   return normalized;
 }
