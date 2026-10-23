@@ -107,6 +107,23 @@ export class ExecutionRouter {
     return normalizeExecutionCredential(await this._resolveProviderCredentialsFresh(provider));
   }
 
+  _utilityBaseUrl(model, credential, baseUrl, usesOverride = false) {
+    // The synchronous registry omits credentialSource; infer it just as
+    // ModelManager does, so OAuth resource URLs remain authoritative.
+    const credentialSource = usesOverride
+      ? "explicit-utility-override"
+      : credential?.credentialSource || credential?.credential_source
+        || this._providerRegistry?.resolveChatProvider?.(model.provider)?.credentialSource
+        || (this._providerRegistry?.getAuthType?.(model.provider) === "oauth" ? "auth-storage" : "");
+    // Use the selected endpoint (including an explicit override), not the
+    // placeholder credential used by the fresh override's metadata path.
+    // Only compose the URL here; existing key/header/model behavior is unchanged.
+    return composeResolvedModelExecution({
+      model,
+      credential: { ...credential, baseUrl, credentialSource },
+    }).baseUrl;
+  }
+
   /**
    * 解析角色 -> 完整执行参数
    *
@@ -201,9 +218,11 @@ export class ExecutionRouter {
       options,
     );
 
+    const usesOverride = hasUtilityApiOverride(utilApiOverride);
+
     // utility 凭证
     let apiKey, baseUrl, api, utilCred;
-    if (hasUtilityApiOverride(utilApiOverride)) {
+    if (usesOverride) {
       // 校验 provider 一致性（与原 ModelManager.resolveUtilityConfig 行为一致）
       if (utilApiOverride.provider && utilApiOverride.provider !== utilModel.provider) {
         throw new Error(t("error.utilityApiProviderMismatch", { model: utilityModelRef }));
@@ -248,10 +267,12 @@ export class ExecutionRouter {
       utility: withCredentialMetadata(utilModel, utilCred),
       utility_large: largeModel ? withCredentialMetadata(largeModel, largeCred) : null,
       api_key: apiKey,
-      base_url: baseUrl,
+      base_url: this._utilityBaseUrl(utilModel, utilCred, baseUrl, usesOverride),
       api,
       large_api_key,
-      large_base_url,
+      large_base_url: largeModel
+        ? this._utilityBaseUrl(largeModel, largeCred, large_base_url, usesOverride && largeModel.provider === utilModel.provider)
+        : null,
       large_api,
     };
   }
@@ -326,11 +347,13 @@ export class ExecutionRouter {
       utility: utilExecution.model,
       utility_large: largeExecution?.model || null,
       api_key: apiKey,
-      base_url: baseUrl,
+      base_url: this._utilityBaseUrl(utilModel, utilCred, baseUrl, usesOverride),
       api,
       headers: utilExecution.headers,
       large_api_key,
-      large_base_url,
+      large_base_url: largeModel
+        ? this._utilityBaseUrl(largeModel, largeCred, large_base_url, usesOverride && largeModel.provider === utilModel.provider)
+        : null,
       large_api,
       large_headers: largeExecution?.headers || null,
     };
