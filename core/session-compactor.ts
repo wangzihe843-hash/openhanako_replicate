@@ -2,6 +2,7 @@ import type { CompactionRuntime, CompactionRecoveryDependencies, CompactionRecov
 import { randomUUID } from "node:crypto";
 import {
   buildNativeCompactionRequestShapes,
+  estimateDefaultCompactionOutputTokens,
   convertAgentMessagesToLlm,
   estimateTokens,
   prepareCompaction,
@@ -25,7 +26,7 @@ import {
   normalizeProviderContextMessages,
   normalizeProviderPayload,
 } from "./provider-compat.ts";
-import { resolveOutputCapCapability } from "./provider-compat/output-budget.ts";
+import { DEFAULT_CHAT_OUTPUT_TOKENS, resolveOutputCapCapability } from "./provider-compat/output-budget.ts";
 import {
   isReasoningReplayUnavailable,
   reasoningReplayCanClear,
@@ -1290,6 +1291,7 @@ export function estimateCachePreservingCompactionRequest({
   systemPrompt = "",
   tools = [],
   customInstructions,
+  outputPolicy = COMPACTION_OUTPUT_POLICIES.PROVIDER_DEFAULT,
 }: {
   preparation?: any;
   messages?: any[];
@@ -1299,7 +1301,9 @@ export function estimateCachePreservingCompactionRequest({
   systemPrompt?: string;
   tools?: any[];
   customInstructions?: any;
+  outputPolicy?: "provider-default" | "bounded";
 } = {}) {
+  const policy = normalizeCompactionOutputPolicy(outputPolicy);
   const nativePreparation = preparation;
   preparation = stripInlineMediaFromCompactionPreparation(preparation);
   const systemPromptTokens = estimateTextTokens(systemPrompt);
@@ -1316,7 +1320,19 @@ export function estimateCachePreservingCompactionRequest({
   const toolSchemaTokens = providerVisibleTools.length > 0
     ? estimateTextTokens(stableSerialize(providerVisibleTools))
     : 0;
-  const cacheMaxTokens = getCachePreservingCompactionMaxTokens(preparation);
+  const cacheMaxTokens = policy === COMPACTION_OUTPUT_POLICIES.BOUNDED
+    ? getCachePreservingCompactionMaxTokens(preparation)
+    : undefined;
+  const sdkDefaultOutputTokens = cacheMaxTokens === undefined
+    ? estimateDefaultCompactionOutputTokens(model, [...liveMessages, cacheInstruction], systemPrompt, providerVisibleTools)
+    : undefined;
+  // The extension removes caps for optional-cap providers. Its server default
+  // is then bounded only by model capability; the SDK's pre-hook context clamp
+  // is no longer an enforced wire limit. Required-cap protocols keep that SDK
+  // ceiling, additionally lowered by Hana's ordinary 64K default policy.
+  const cacheOutputBudgetTokens = cacheMaxTokens ?? (resolveOutputCapCapability(model).required
+    ? Math.min(sdkDefaultOutputTokens, DEFAULT_CHAT_OUTPUT_TOKENS)
+    : Number(model.maxTokens));
   const cachePromptTokens = cacheMessageTokens
     + cacheInstructionTokens
     + systemPromptTokens
@@ -1326,7 +1342,9 @@ export function estimateCachePreservingCompactionRequest({
     kind: "cache-preserving",
     promptTokens: cachePromptTokens,
     maxTokens: cacheMaxTokens,
-    totalTokens: cachePromptTokens + cacheMaxTokens,
+    outputBudgetTokens: cacheOutputBudgetTokens,
+    outputPolicy: policy,
+    totalTokens: cachePromptTokens + cacheOutputBudgetTokens,
     messageTokens: cacheMessageTokens,
     instructionTokens: cacheInstructionTokens,
     systemPromptTokens,
@@ -1351,7 +1369,9 @@ export function estimateCachePreservingCompactionRequest({
       kind: request.kind,
       promptTokens,
       maxTokens: request.maxTokens,
-      totalTokens: promptTokens + request.maxTokens,
+      outputBudgetTokens: request.outputBudgetTokens,
+      outputPolicy: COMPACTION_OUTPUT_POLICIES.PROVIDER_DEFAULT,
+      totalTokens: promptTokens + request.outputBudgetTokens,
       messageTokens,
       instructionTokens: estimateTextTokens(request.promptText),
       systemPromptTokens,
@@ -1364,8 +1384,10 @@ export function estimateCachePreservingCompactionRequest({
   ), null) || {
     kind: "history",
     promptTokens: COMPACTION_REQUEST_BUFFER_TOKENS,
-    maxTokens: cacheMaxTokens,
-    totalTokens: COMPACTION_REQUEST_BUFFER_TOKENS + cacheMaxTokens,
+    maxTokens: undefined,
+    outputBudgetTokens: cacheOutputBudgetTokens,
+    outputPolicy: COMPACTION_OUTPUT_POLICIES.PROVIDER_DEFAULT,
+    totalTokens: COMPACTION_REQUEST_BUFFER_TOKENS + cacheOutputBudgetTokens,
     messageTokens: 0,
     instructionTokens: 0,
     systemPromptTokens: 0,
@@ -1389,6 +1411,7 @@ export function shouldHardTruncateCachePreservingCompaction({
   tools,
   customInstructions,
   hardTruncateThreshold = DEFAULT_HARD_TRUNCATE_THRESHOLD,
+  outputPolicy = COMPACTION_OUTPUT_POLICIES.PROVIDER_DEFAULT,
 }: {
   preparation?: any;
   messages?: any[];
@@ -1399,8 +1422,13 @@ export function shouldHardTruncateCachePreservingCompaction({
   tools?: any[];
   customInstructions?: any;
   hardTruncateThreshold?: number;
+  outputPolicy?: "provider-default" | "bounded";
 } = {}) {
-  const contextWindow = model?.contextWindow ?? 0;
+  const contextWindow = Number(model?.contextWindow ?? 0);
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0
+    || !Number.isFinite(hardTruncateThreshold) || hardTruncateThreshold <= 0 || hardTruncateThreshold > 1) {
+    throw new Error("Compaction fit requires a finite positive contextWindow and a threshold in (0, 1]");
+  }
   const budgets = estimateCachePreservingCompactionRequest({
     preparation,
     messages,
@@ -1410,22 +1438,25 @@ export function shouldHardTruncateCachePreservingCompaction({
     systemPrompt,
     tools,
     customInstructions,
+    outputPolicy,
   });
   const { cachePreservingBudget, nativeSummaryBudget } = budgets;
-  if (contextWindow <= 0) {
-    return {
-      ...budgets,
-      cachePreservingFits: false,
-      nativeSummaryFits: false,
-      shouldUseNativeFallback: false,
-      shouldHardTruncate: true,
-      threshold: 0,
-      contextWindow,
-    };
-  }
   const threshold = Math.floor(contextWindow * hardTruncateThreshold);
-  const cachePreservingFits = cachePreservingBudget.totalTokens <= threshold;
-  const nativeSummaryFits = nativeSummaryBudget.totalTokens <= threshold;
+  // A default output ceiling is capacity, not an explicit reservation: Pi 1.4
+  // already tightens it to the remaining context. Keep 85% as input headroom,
+  // and independently require the complete estimated request to fit the window.
+  // Explicit bounded requests preserve the previous total-at-threshold policy.
+  const fits = (budget) => {
+    if (!Number.isFinite(budget.promptTokens) || !Number.isFinite(budget.outputBudgetTokens)
+      || !Number.isFinite(budget.totalTokens)) {
+      throw new Error("Compaction fit cannot use a non-finite request budget");
+    }
+    return budget.outputPolicy === COMPACTION_OUTPUT_POLICIES.BOUNDED
+      ? budget.totalTokens <= threshold
+      : budget.promptTokens <= threshold && budget.totalTokens <= contextWindow;
+  };
+  const cachePreservingFits = fits(cachePreservingBudget);
+  const nativeSummaryFits = nativeRequestsFit(budgets.nativeRequests, nativeSummaryBudget, fits);
   return {
     ...budgets,
     cachePreservingFits,
@@ -1435,6 +1466,10 @@ export function shouldHardTruncateCachePreservingCompaction({
     threshold,
     contextWindow,
   };
+}
+
+function nativeRequestsFit(requests, fallbackBudget, fits) {
+  return requests.length > 0 ? requests.every(fits) : fits(fallbackBudget);
 }
 
 function hardTruncateCachePreservingCompaction(branchEntries, preparation, {

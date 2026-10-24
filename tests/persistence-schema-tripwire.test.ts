@@ -111,8 +111,8 @@ describe("persistence schema tripwire", () => {
     expect(sessions).toMatchObject({
       kind: "external-versioned",
       packageName: "@earendil-works/pi-coding-agent",
-      packageVersion: "1.3.0",
-      requestedVersion: "1.3.0",
+      packageVersion: "1.4.0",
+      requestedVersion: "1.4.0",
       versionSource: {
         currentSessionVersion: 3,
         declaration: "export const CURRENT_SESSION_VERSION = 3;",

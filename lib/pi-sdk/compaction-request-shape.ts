@@ -2,6 +2,8 @@ import {
   convertToLlm as defaultConvertToLlm,
   serializeConversation as defaultSerializeConversation,
 } from "@earendil-works/pi-coding-agent";
+import { normalizeContext, type Api, type Message, type Model, type Tool } from "@earendil-works/pi-ai";
+import { clampMaxTokensToContext } from "@earendil-works/pi-ai/api/simple-options";
 
 export const NATIVE_SUMMARIZATION_SYSTEM_PROMPT =
   `You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.
@@ -95,12 +97,32 @@ Create a concise checkpoint of the user's request and the progress shown above. 
 
 Only summarize information explicitly present above. Do not infer or recreate later messages.`;
 
-function cappedOutputTokens(reserveTokens: number, fraction: number, model: any) {
-  const reserveCap = Math.floor(fraction * reserveTokens);
-  const modelCap = model?.maxTokens > 0
-    ? model.maxTokens
-    : Number.POSITIVE_INFINITY;
-  return Math.min(reserveCap, modelCap);
+/**
+ * Pi 1.4 omits the summary request's explicit cap. The shared simple-provider
+ * layer still defaults to the model output limit and reserves context room.
+ * Keep this planning value separate from the options sent to the stream.
+ * Invalid model declarations are errors: a NaN budget must never silently
+ * choose destructive hard truncation.
+ */
+export function estimateDefaultCompactionOutputTokens(
+  model: Pick<Model<Api>, "maxTokens"> & { contextWindow?: number; api?: string },
+  messages: Message[],
+  systemPrompt = "",
+  tools: Tool[] = [],
+) {
+  const maxTokens = Number(model?.maxTokens);
+  const contextWindow = Number(model?.contextWindow ?? 0);
+  if (!Number.isFinite(maxTokens) || maxTokens <= 0 || !Number.isFinite(contextWindow)) {
+    throw new Error("Compaction output estimation requires a finite positive model.maxTokens and finite contextWindow");
+  }
+  const outputTokens = clampMaxTokensToContext(
+    { ...model, maxTokens, contextWindow } as Model<Api>,
+    normalizeContext({ systemPrompt, messages, tools }),
+    maxTokens,
+  );
+  return model?.api === "openai-responses" || model?.api === "azure-openai-responses"
+    ? Math.max(16, outputTokens)
+    : outputTokens;
 }
 
 function requestMessage(promptText: string) {
@@ -134,7 +156,6 @@ export function buildNativeCompactionRequestShapes({
   const turnPrefixMessages = Array.isArray(preparation?.turnPrefixMessages)
     ? preparation.turnPrefixMessages
     : [];
-  const reserveTokens = preparation?.settings?.reserveTokens ?? 4096;
   const requests: any[] = [];
 
   if (!preparation?.isSplitTurn || messagesToSummarize.length > 0) {
@@ -159,24 +180,29 @@ export function buildNativeCompactionRequestShapes({
       systemPrompt: NATIVE_SUMMARIZATION_SYSTEM_PROMPT,
       promptText,
       messages: [requestMessage(promptText)],
-      maxTokens: cappedOutputTokens(reserveTokens, 0.8, model),
+      maxTokens: undefined,
+      outputBudgetTokens: model ? estimateDefaultCompactionOutputTokens(model, [requestMessage(promptText)], NATIVE_SUMMARIZATION_SYSTEM_PROMPT) : undefined,
     });
   }
 
-  if (preparation?.isSplitTurn && turnPrefixMessages.length > 0) {
+  if (preparation?.isSplitTurn) {
     const conversationText = serializeNativeConversation(
       turnPrefixMessages,
       convertToLlm,
       serializeConversation,
     );
-    const promptText =
+    let promptText =
       `# Conversation\n${conversationText}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
+    if (customInstructions) {
+      promptText = `${promptText}\n\nAdditional focus: ${customInstructions}`;
+    }
     requests.push({
       kind: "turn-prefix",
       systemPrompt: NATIVE_SUMMARIZATION_SYSTEM_PROMPT,
       promptText,
       messages: [requestMessage(promptText)],
-      maxTokens: cappedOutputTokens(reserveTokens, 0.5, model),
+      maxTokens: undefined,
+      outputBudgetTokens: model ? estimateDefaultCompactionOutputTokens(model, [requestMessage(promptText)], NATIVE_SUMMARIZATION_SYSTEM_PROMPT) : undefined,
     });
   }
 

@@ -1533,13 +1533,14 @@ describe("session-compactor", () => {
       preparation,
       messages,
       retainedMessageCount: 1,
+      model: { contextWindow: 3_000, maxTokens: 512 },
       systemPrompt: "",
     } as any);
     const fit = shouldHardTruncateCachePreservingCompaction({
       preparation,
       messages,
       retainedMessageCount: 1,
-      model: { contextWindow: 3_000 },
+      model: { contextWindow: 3_000, maxTokens: 512 },
       systemPrompt: "",
       hardTruncateThreshold: 1,
     } as any);
@@ -1568,7 +1569,7 @@ describe("session-compactor", () => {
       preparation,
       messages: [oversized, piUser("tail", 2)],
       retainedMessageCount: 1,
-      model: { contextWindow: 3_000 },
+      model: { contextWindow: 3_000, maxTokens: 512 },
       systemPrompt: "",
       hardTruncateThreshold: 1,
     } as any);
@@ -1649,7 +1650,7 @@ describe("session-compactor", () => {
     expect(toolFit.cachePreservingFits).toBe(false);
   });
 
-  it("uses the exact native request total at the B-fit threshold boundary", () => {
+  it("uses the SDK minimum output plus the native prompt at the B-fit window boundary", () => {
     const old = piUser("serialized history with wrapper overhead", 1);
     const retained = piAssistant("x".repeat(20_000), 2);
     const preparation = {
@@ -1666,7 +1667,9 @@ describe("session-compactor", () => {
       systemPrompt: "",
       model: { maxTokens: 512 },
     } as any);
-    const nativeTotal = estimate.nativeSummaryBudget.totalTokens;
+    // At this tiny context Pi's 4096 safety reserve lowers output to one
+    // token; count that token separately from the input-threshold gate.
+    const nativeTotal = estimate.nativeSummaryBudget.promptTokens + 1;
 
     const bFits = shouldHardTruncateCachePreservingCompaction({
       preparation,
@@ -1978,7 +1981,7 @@ describe("session-compactor", () => {
     const appendCompaction = vi.fn();
     const replaceMessages = vi.fn();
     const session = {
-      model: { id: "model", reasoning: false, contextWindow: 128000 },
+      model: { id: "model", reasoning: false, contextWindow: 128000, maxTokens: 8192 },
       settingsManager: {
         getCompactionSettings: vi.fn(() => ({ enabled: true, reserveTokens: 2000 })),
       },
@@ -2051,7 +2054,7 @@ describe("session-compactor", () => {
       })),
     }));
     const session = {
-      model: { id: "tiny", reasoning: false, contextWindow: 1000 },
+      model: { id: "tiny", reasoning: false, contextWindow: 1000, maxTokens: 512 },
       settingsManager: {
         getCompactionSettings: vi.fn(() => ({ enabled: true, reserveTokens: 2000, keepRecentTokens: 100 })),
       },
@@ -2162,7 +2165,7 @@ describe("session-compactor", () => {
     expect(onEventFailure).not.toHaveBeenCalled();
   });
 
-  it("hard truncates direct session compaction when model context window is unknown", async () => {
+  it("fails before provider calls or history mutation when model context window is unknown", async () => {
     const oldMessage = { role: "user", content: "old context" };
     const retainedMessage = { role: "assistant", content: "keep" };
     const preparation = {
@@ -2211,22 +2214,17 @@ describe("session-compactor", () => {
       },
     };
 
-    const result = await runCachePreservingCompactionForSession(session);
+    await expect(runCachePreservingCompactionForSession(session)).rejects.toThrow("Compaction fit requires");
 
     expect(streamFn).not.toHaveBeenCalled();
-    expect(appendCompaction).toHaveBeenCalledWith(
-      expect.stringContaining("早期对话历史已被硬截断"),
-      "entry-keep",
-      expect.any(Number),
-      expect.objectContaining({ reason: "cache-preserving-compaction-hard-truncate" }),
-      true,
-    );
-    expect(result.details.reason).toBe("cache-preserving-compaction-hard-truncate");
+    expect(appendCompaction).not.toHaveBeenCalled();
+    expect(session.agent.replaceMessages).not.toHaveBeenCalled();
+    expect(isDirectCompactionInProgress(session)).toBe(false);
   });
 
   it("emits lifecycle events for direct model-switch compaction", async () => {
     const oldMessage = { role: "user", content: "before compaction" };
-    const retainedMessage = { role: "assistant", content: "retained tail" };
+    const retainedMessage = { role: "assistant", content: [{ type: "text", text: "retained tail" }] };
     const preparation = {
       firstKeptEntryId: "entry-keep",
       tokensBefore: 4321,
@@ -2243,7 +2241,7 @@ describe("session-compactor", () => {
     const emit = vi.fn();
     const extensionEmit = vi.fn(async () => {});
     const session = {
-      model: { id: "model", reasoning: false, contextWindow: 128000 },
+      model: { id: "model", reasoning: false, contextWindow: 128000, maxTokens: 8192 },
       _emit: emit,
       extensionRunner: {
         hasHandlers: vi.fn((event) => event === "session_compact"),

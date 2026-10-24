@@ -16,7 +16,7 @@ function buildShape(input: Record<string, any>) {
 }
 
 describe("Pi native compaction request shape adapter", () => {
-  it("matches installed Pi's actual split-turn request contexts and output caps", async () => {
+  it("matches installed Pi's uncapped split-turn contexts including custom focus", async () => {
     const installedPi = await import("@earendil-works/pi-coding-agent");
     const preparation = {
       firstKeptEntryId: "kept-entry",
@@ -94,7 +94,10 @@ describe("Pi native compaction request shape adapter", () => {
         role: "user",
         content: [{ type: "text", text: adapterRequest.promptText }],
       });
-      expect(actualRequest?.options.maxTokens).toBe(adapterRequest.maxTokens);
+      expect(actualRequest?.options).not.toHaveProperty("maxTokens");
+      expect(adapterRequest.maxTokens).toBeUndefined();
+      expect(adapterRequest.outputBudgetTokens).toBe(1_200);
+      expect(adapterRequest.promptText).toContain("Additional focus: focus on migrations");
     }
   });
 
@@ -113,7 +116,8 @@ describe("Pi native compaction request shape adapter", () => {
     expect(result.requests).toHaveLength(1);
     expect(result.requests[0]).toMatchObject({
       kind: "history",
-      maxTokens: 3_200,
+      maxTokens: undefined,
+      outputBudgetTokens: 8_000,
       systemPrompt: expect.stringContaining("context summarization assistant"),
     });
     expect(result.requests[0].promptText).toContain(
@@ -147,7 +151,7 @@ describe("Pi native compaction request shape adapter", () => {
     expect(prompt).toContain("Additional focus: focus on migrations");
   });
 
-  it("builds the separate installed-Pi split-turn request with its half-reserve output cap", () => {
+  it("builds the separate installed-Pi split-turn request using the same model-default ceiling", () => {
     const result = buildShape({
       preparation: {
         messagesToSummarize: [user("older history", 1)],
@@ -159,10 +163,12 @@ describe("Pi native compaction request shape adapter", () => {
     });
 
     expect(result.requests.map((request) => request.kind)).toEqual(["history", "turn-prefix"]);
-    expect(result.requests[0].maxTokens).toBe(3_200);
+    expect(result.requests[0].maxTokens).toBeUndefined();
+    expect(result.requests[0].outputBudgetTokens).toBe(8_000);
     expect(result.requests[1]).toMatchObject({
       kind: "turn-prefix",
-      maxTokens: 2_000,
+      maxTokens: undefined,
+      outputBudgetTokens: 8_000,
       promptText: expect.stringContaining("The messages above are earlier context from an ongoing conversation"),
     });
     expect(result.requests[1].promptText).toContain("[User]: split request prefix");
@@ -194,7 +200,7 @@ describe("Pi native compaction request shape adapter", () => {
     expect(result.requests[0].promptText).toContain("[attached_audio: /tmp/original.wav]");
   });
 
-  it("caps history and turn-prefix output by positive model.maxTokens", () => {
+  it("uses model-default output for history and prefix independently of reserveTokens", () => {
     const capped = buildShape({
       preparation: {
         messagesToSummarize: [user("history")],
@@ -214,7 +220,8 @@ describe("Pi native compaction request shape adapter", () => {
       model: { maxTokens: 6_000 },
     });
 
-    expect(capped.requests.map((request) => request.maxTokens)).toEqual([1_200, 1_200]);
-    expect(reserveLimited.requests.map((request) => request.maxTokens)).toEqual([6_000, 5_000]);
+    expect(capped.requests.map((request) => request.maxTokens)).toEqual([undefined, undefined]);
+    expect(capped.requests.map((request) => request.outputBudgetTokens)).toEqual([1_200, 1_200]);
+    expect(reserveLimited.requests.map((request) => request.outputBudgetTokens)).toEqual([6_000, 6_000]);
   });
 });

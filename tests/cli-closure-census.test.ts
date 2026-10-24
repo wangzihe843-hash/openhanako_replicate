@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   REPOSITORY_ROOT,
+  DYNAMIC_CALL_ALLOWLIST,
   RUNTIME_ASSETS,
   classifyRepoPath,
   computeCliRuntimeClosure,
@@ -297,6 +298,27 @@ describe("compute-cli-closure: open/closed classification", () => {
   });
 });
 
+describe("formal Pi 1.4 Windows process-cleanup closure", () => {
+  it("accepts only the reviewed System32 expression and rejects old or arbitrary launch targets", () => {
+    const relative = "node_modules/@earendil-works/pi-coding-agent/dist/utils/shell.js";
+    const source = fs.readFileSync(path.join(ROOT, relative), "utf8");
+    const entry = DYNAMIC_CALL_ALLOWLIST.find(item => item.file === relative)!;
+    expect(source).toContain(entry.argText);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hana-pi14-shell-closure-"));
+    const file = path.join(dir, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    try {
+      fs.writeFileSync(file, source);
+      expect(() => scanAndValidateDynamicCallSites({ rootDir: dir, relPaths: [relative], allowlist: [entry] })).not.toThrow();
+      for (const expression of [entry.argText.replace(" || ", " ?? "), entry.argText.replace("process.env.SystemRoot", "process.env.PATH")]) {
+        fs.writeFileSync(file, source.replace(entry.argText, expression));
+        expect(() => scanAndValidateDynamicCallSites({ rootDir: dir, relPaths: [relative], allowlist: [entry] }))
+          .toThrow(/no\s+DYNAMIC_CALL_ALLOWLIST entry/);
+      }
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
 describe("compute-cli-closure: full generation (real esbuild + nft, slow)", () => {
   it("matches the committed deterministic closure and baseline", async () => {
     const generatedClosure = await computeCliRuntimeClosure({ rootDir: REPOSITORY_ROOT, includeNftTrace: true });
@@ -309,7 +331,7 @@ describe("compute-cli-closure: full generation (real esbuild + nft, slow)", () =
     for (const site of portableClosure.dynamicCallSites) {
       if (site.file === "node_modules/@earendil-works/pi-coding-agent/dist/utils/shell.js"
         && site.callee === "spawn"
-        && site.argText === 'join(process.env.SystemRoot ?? "C:\\\\Windows", "System32", "taskkill.exe")') {
+        && site.argText === 'join(process.env.SystemRoot || "C:\\\\Windows", "System32", "taskkill.exe")') {
         site.argText = "reviewed System32 taskkill expression";
       }
     }

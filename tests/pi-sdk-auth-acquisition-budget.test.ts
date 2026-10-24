@@ -25,8 +25,8 @@ function fixture() {
 }
 
 // Require the candidate version: a mismatched install must fail, never skip.
-describe("installed Pi 1.3.0 acquisition budget", () => {
-  it("requires the reviewed installed version", () => { expect(getPiCodingAgentVersion()).toBe("1.3.0"); });
+describe("installed Pi 1.4.0 acquisition budget", () => {
+  it("requires the reviewed installed version", () => { expect(getPiCodingAgentVersion()).toBe("1.4.0"); });
 
   it("makes ten total synchronous attempts, never entering the callback", () => {
     const f = fixture(), callback = vi.fn();

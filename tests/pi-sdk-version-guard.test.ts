@@ -25,10 +25,14 @@ function guardFixture() {
   for (const name of ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-codemode", "pi-mcp", "pi-telemetry", "pi-tui"]) {
     const location = `node_modules/@earendil-works/${name}`;
     copy(`${location}/package.json`);
-    packages[location] = { version: reviewedVersion };
+    packages[location] = { version: reviewedVersion, integrity: JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8")).packages[location].integrity };
+    copy(`${location}/dist/index.js`);
   }
   for (const relative of ["index.js", "core/agent-session.js", "core/auth-storage.js", "core/compaction/compaction.js"]) {
     copy(`node_modules/@earendil-works/pi-coding-agent/dist/${relative}`);
+  }
+  for (const relative of ["api/simple-options.js", "utils/estimate.js"]) {
+    copy(`node_modules/@earendil-works/pi-ai/dist/${relative}`);
   }
   write("package-lock.json", { packages });
   const run = () => {
@@ -78,7 +82,7 @@ describe("Pi installation version guard", () => {
   it("rejects installed nested drift even if the lock declares the reviewed version", () => {
     const fixture = guardFixture();
     const nested = "node_modules/fixture/node_modules/@earendil-works/pi-ai";
-    fixture.packages[nested] = { version: reviewedVersion };
+    fixture.packages[nested] = { ...fixture.packages["node_modules/@earendil-works/pi-ai"] };
     fixture.write("package-lock.json", { packages: fixture.packages });
     fixture.write(`${nested}/package.json`, { version: "0.87.1" });
     expect(fixture.run()).toMatchObject({ status: 1, output: expect.stringContaining("mixed installed Pi version") });
@@ -87,7 +91,7 @@ describe("Pi installation version guard", () => {
   it("still rejects missing deep internals and adapter import bypasses", () => {
     const missing = guardFixture();
     missing.write("node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js", "export {};");
-    expect(missing.run()).toMatchObject({ status: 1, output: expect.stringContaining("prepareCompaction missing") });
+    expect(missing.run()).toMatchObject({ status: 1, output: expect.stringContaining("compaction differs from the reviewed request-shape mirror") });
     const bypass = guardFixture();
     bypass.write("core/fixture.ts", 'import { Agent } from "@earendil-works/pi-agent-core";');
     expect(bypass.run()).toMatchObject({ status: 1, output: expect.stringContaining("production files bypass lib/pi-sdk") });
@@ -98,10 +102,26 @@ describe("Pi installation version guard", () => {
     fixture.packages["node_modules/@earendil-works/pi-telemetry"] = { version: "1.0.4" };
     fixture.write("package-lock.json", { packages: fixture.packages });
     expect(fixture.run()).toMatchObject({ status: 1, output: expect.stringContaining("mixed Pi version") });
-    fixture.packages["node_modules/@earendil-works/pi-telemetry"] = { version: reviewedVersion };
+    fixture.packages["node_modules/@earendil-works/pi-telemetry"] = { version: reviewedVersion, integrity: JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8")).packages["node_modules/@earendil-works/pi-telemetry"].integrity };
     fixture.write("package-lock.json", { packages: fixture.packages });
     fixture.write("node_modules/@earendil-works/pi-telemetry/package.json", { version: "1.0.4" });
     expect(fixture.run()).toMatchObject({ status: 1, output: expect.stringContaining("mixed installed Pi version") });
+  });
+
+  it.each(["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-codemode", "pi-mcp", "pi-telemetry", "pi-tui"])("rejects an altered official integrity or dist entry for %s", name => {
+    const integrity = guardFixture();
+    integrity.packages[`node_modules/@earendil-works/${name}`].integrity = "sha512-forged";
+    integrity.write("package-lock.json", { packages: integrity.packages });
+    expect(integrity.run()).toMatchObject({ status: 1, output: expect.stringContaining("official tarball integrity differs") });
+    const entry = guardFixture();
+    entry.write(`node_modules/@earendil-works/${name}/dist/index.js`, "// altered published entry");
+    expect(entry.run()).toMatchObject({ status: 1, output: expect.stringContaining("published dist entry differs") });
+  });
+
+  it.each(["api/simple-options.js", "utils/estimate.js"])("rejects an altered published output-budget helper %s", relative => {
+    const fixture = guardFixture();
+    fixture.write(`node_modules/@earendil-works/pi-ai/dist/${relative}`, "// altered budget helper");
+    expect(fixture.run()).toMatchObject({ status: 1, output: expect.stringContaining("output-budget helper differs") });
   });
 
   it("rejects an omitted family package", () => {

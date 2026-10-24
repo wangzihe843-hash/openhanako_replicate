@@ -20,11 +20,42 @@ const { createHash } = require("node:crypto");
 const root = path.join(__dirname, "..");
 const sdkRoot = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent");
 const piAiRoot = path.join(root, "node_modules", "@earendil-works", "pi-ai");
-const verifiedVersions = new Set(["1.3.0"]);
-const verifiedPiAiVersions = new Set(["1.3.0"]);
-// Reject family drift, including nested copies; 1.3.0 pins its family exactly.
+const verifiedVersions = new Set(["1.4.0"]);
+const verifiedPiAiVersions = new Set(["1.4.0"]);
+// Reject family drift, including nested copies; 1.4.0 pins its family exactly.
 const piFamilyPath = /node_modules\/@earendil-works\/(chord|pi-agent-core|pi-ai|pi-coding-agent|pi-codemode|pi-mcp|pi-telemetry|pi-tui)$/;
 const requiredFamily = ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-codemode", "pi-mcp", "pi-telemetry", "pi-tui"];
+// Official npm 1.4.0 tarball integrities and published dist entry fingerprints.
+const reviewedFamily = {
+  "pi-agent-core": {
+    "integrity": "sha512-PoKY84SKUwnt7S5QBZaGUqfNO1kjP3KHpHUA9QpFTj4cOjaVWMYIcBPJ6FDRCdE8Zen9OSECQUd0uUfVgtSmgA==",
+    "distIndexSha256": "40cb358d7f05594e9b67845a78ae50ad05e8375f0cfa8cee8a74801556c09afd"
+  },
+  "pi-ai": {
+    "integrity": "sha512-hQM/C4+1w8rHYACzDDf+0vQMnEnpzIop1tptIERVgR3ZeT/hHSzBNG8PaWPgxWQjqSeKCyBZSyp8uTT6eKK1pQ==",
+    "distIndexSha256": "7808fc618b4c816322005628af2726a53c4db678b37fb311163210c4fbab5ed0"
+  },
+  "pi-coding-agent": {
+    "integrity": "sha512-Z41LpZ3yYHSC/UUps6Mr39UMFPwH8elhJBG9DY1P7kuzsE5qSK/6eMj2EHzO5evJRQWLbKSqUMw+4nCNtIyiQg==",
+    "distIndexSha256": "4569157e6038be9840fa514db4b00a27fd0be9e3622cc7b49a281de6c027d7ff"
+  },
+  "pi-codemode": {
+    "integrity": "sha512-23CNAXpS9DuLzPMyYuvrXVVio46x4YhffCgCqaWmF7F5H8PooqjrQvX4ucF6M0BhUd+x2tV6r1J0dv8cCME4Cg==",
+    "distIndexSha256": "ae755805c5022213d9a43d3b9a8da39d04ab0f4278e6053b888682675a281ce2"
+  },
+  "pi-mcp": {
+    "integrity": "sha512-92aZmmGsUpHHknYuKXZHRINQfahntw5hU9If0I0ZM49GojOaFHpkl5/GF3/aatqpt7v7GjZbBfpfSygGKW+pnw==",
+    "distIndexSha256": "e954af0d87891dab3bab10a5ca7b7ce12d9baf796bd17a7983e39f0bba404111"
+  },
+  "pi-telemetry": {
+    "integrity": "sha512-MLIfowwUYIY65jSjMX82paZOrX/NTvLk6D08h+3Jq42a99RzUOewzuCR0zOlPul3D6UBfddat76VT6LvsHEs1w==",
+    "distIndexSha256": "b34be60c5fac72aefc31e9fddd80aafb32d2a76332a49ce42887555990e15da6"
+  },
+  "pi-tui": {
+    "integrity": "sha512-4obPOjgOD7g4mGSlngIvxyujC1UPdmyI9zdVthbr8GufacFEX+Ce0+scPgHg++k2xj5+QjESM2d5TxvIuzCVmg==",
+    "distIndexSha256": "6068ae4207de753d9ec00dbe14aee199e6160d1dea0db9c8a92f65d08ffc6e80"
+  }
+};
 
 function fail(message) {
   console.error(`[verify-pi-sdk] ${message}`);
@@ -69,6 +100,10 @@ for (const [location, dependency] of Object.entries(lock.packages || {})) {
   if (dependency.version !== pkg.version) {
     fail(`mixed Pi version at ${location}: ${dependency.version}`);
   }
+  const familyName = location.slice(location.lastIndexOf("/") + 1);
+  if (reviewedFamily[familyName] && dependency.integrity !== reviewedFamily[familyName].integrity) {
+    fail(`Pi 1.4.0 official tarball integrity differs at ${location}`);
+  }
   const installedManifest = path.join(root, location, "package.json");
   if (fs.existsSync(installedManifest)) {
     const installed = readJson(installedManifest);
@@ -77,24 +112,46 @@ for (const [location, dependency] of Object.entries(lock.packages || {})) {
     }
   }
 }
-if (pkg.version === "1.3.0") {
+if (pkg.version === "1.4.0") {
   const requested = readJson(path.join(root, "package.json"));
   for (const name of requiredFamily) {
-    if (requested.overrides?.[`@earendil-works/${name}`] !== "1.3.0") fail(`Pi override must pin ${name} to 1.3.0`);
+    if (requested.overrides?.[`@earendil-works/${name}`] !== "1.4.0") fail(`Pi override must pin ${name} to 1.4.0`);
   }
   for (const name of ["pi-agent-core", "pi-ai", "pi-coding-agent"]) {
-    if (requested.dependencies?.[`@earendil-works/${name}`] !== "1.3.0") fail(`Pi dependency must pin ${name} to 1.3.0`);
+    if (requested.dependencies?.[`@earendil-works/${name}`] !== "1.4.0") fail(`Pi dependency must pin ${name} to 1.4.0`);
   }
   const source = fs.readFileSync(path.join(sdkRoot, "dist/core/agent-session.js"), "utf8");
   const start = source.indexOf("    async _startRun(trigger, onStarted) {");
   const end = source.indexOf("    /**", start);
   const digest = createHash("sha256").update(source.slice(start, end)).digest("hex");
   if (start < 0 || end < 0 || digest !== "39279b7a97daff07835880131a5fdf7340ef5d7de5960639039f8ed791549afa") {
-    fail("Pi 1.3.0 _startRun differs from the source-bound lifecycle adapter");
+    fail("Pi 1.4.0 _startRun differs from the source-bound lifecycle adapter");
+  }
+  for (const [name, seal] of Object.entries(reviewedFamily)) {
+    const location = `node_modules/@earendil-works/${name}`;
+    if (lock.packages[location].integrity !== seal.integrity) fail(`Pi 1.4.0 official tarball integrity differs for ${name}`);
+    const entrySource = fs.readFileSync(path.join(root, location, "dist/index.js"));
+    if (createHash("sha256").update(entrySource).digest("hex") !== seal.distIndexSha256) {
+      fail(`Pi 1.4.0 published dist entry differs for ${name}`);
+    }
+  }
+  // Budget planning relies on the published simple-provider context clamp.
+  for (const [relative, expected] of Object.entries({
+  "api/simple-options.js": "ff234becff46a6c25c1e437c86d72fbe7aeb4e107266d1bf6951622d223b0ae0",
+  "utils/estimate.js": "b5b606011ab0dce2a5db309dd812c9b8ddd0bbcbc9416de699fb9cd087cc84d6"
+})) {
+    const budgetSource = fs.readFileSync(path.join(piAiRoot, "dist", relative));
+    if (createHash("sha256").update(budgetSource).digest("hex") !== expected) {
+      fail(`Pi 1.4.0 output-budget helper differs: ${relative}`);
+    }
+  }
+  const compactionSource = fs.readFileSync(path.join(sdkRoot, "dist/core/compaction/compaction.js"));
+  if (createHash("sha256").update(compactionSource).digest("hex") !== "f51e78ef1da66b5803fc91e185f07b968f8f989ab9326b7744958416aad3f6f6") {
+    fail("Pi 1.4.0 compaction differs from the reviewed request-shape mirror");
   }
   const authSource = fs.readFileSync(path.join(sdkRoot, "dist/core/auth-storage.js"));
   if (createHash("sha256").update(authSource).digest("hex") !== "59791d54e50bfb86f0bb9e8dcee776547ae1744fc4aeb2fe14ff6610c1f5c567") {
-    fail("Pi 1.3.0 auth-storage differs from the reviewed acquisition budget");
+    fail("Pi 1.4.0 auth-storage differs from the reviewed acquisition budget");
   }
 }
 for (const [file, markers] of [

@@ -1,6 +1,6 @@
 /**
- * Pi 1.2.0/1.3.0 _startRun compatibility boundary.
- * Reviewed 1.3.0 tag: 71023aec1546d6d677a65669c5665c0927ce0dd0; same method digest.
+ * Pi 1.2.0/1.3.0/1.4.0 _startRun compatibility boundary.
+ * Reviewed 1.4.0 tag: 4a080252f06caf63a525d7873c5d94d3c23887e0; same method digest.
  * Keep the reviewed run loop, but include onStarted/selection in its existing
  * startup failure path. Upstream calls onStarted outside both cleanup regions.
  * No package files are changed; no input or callback is retried.
@@ -42,7 +42,7 @@ export function getSessionRunInputState(value: object | undefined): "pending" | 
 export function installRunLifecycleAdapter(value: object, version: string): boolean {
   const session = value as LifecycleSession;
   if (version === "1.0.3") return false;
-  if (version !== "1.2.0" && version !== "1.3.0") throw new Error(`Unreviewed Pi run lifecycle: ${version}`);
+  if (version !== "1.2.0" && version !== "1.3.0" && version !== "1.4.0") throw new Error(`Unreviewed Pi run lifecycle: ${version}`);
   for (const name of ["_startRun", "_prepareRun", "_flushPendingBashMessages", "_flushPendingCustomMessages",
     "_resolveIdleWaitIfIdle", "_recordSelection", "_handlePostAgentRun", "_runBeforeSettleBoundary",
     "_finishCancelledRetry", "_emitAgentSettled"]) {

@@ -151,9 +151,9 @@ export class AuthStorage {
         // has open handles. Retry only this raw read's lock acquisition, never
         // credential callbacks/writes or unrelated EPERM errors. Pi still owns
         // mutual exclusion; persistent permission failures surface after 620ms.
-        // 1.2.0 and 1.3.0 each own six asynchronous acquisition attempts. Keep this
+        // 1.2.0, 1.3.0 and 1.4.0 own six asynchronous acquisition attempts. Keep this
         // raw asynchronous read, but never multiply those attempts to 36.
-        if (["1.2.0", "1.3.0"].includes(getPiCodingAgentVersion()) || process.platform !== "win32" || entered || !lockPath || retry >= 5
+        if (["1.2.0", "1.3.0", "1.4.0"].includes(getPiCodingAgentVersion()) || process.platform !== "win32" || entered || !lockPath || retry >= 5
           || ioError?.code !== "EPERM" || ioError.syscall !== "mkdir" || ioError.path !== lockPath) throw error;
         await sleep(20 * 2 ** retry);
       }

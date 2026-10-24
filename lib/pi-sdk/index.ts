@@ -146,6 +146,7 @@ export {
 export { generateSummary } from "@earendil-works/pi-coding-agent";
 export {
   buildNativeCompactionRequestShapes,
+  estimateDefaultCompactionOutputTokens,
   NATIVE_SUMMARIZATION_SYSTEM_PROMPT,
 } from "./compaction-request-shape.ts";
 

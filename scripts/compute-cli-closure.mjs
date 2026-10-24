@@ -225,10 +225,10 @@ export const DYNAMIC_CALL_ALLOWLIST = Object.freeze([
   {
     file: "node_modules/@earendil-works/pi-coding-agent/dist/utils/shell.js",
     callee: "spawn",
-    argText: 'join(process.env.SystemRoot ?? "C:\\\\Windows", "System32", "taskkill.exe")',
+    argText: 'join(process.env.SystemRoot || "C:\\\\Windows", "System32", "taskkill.exe")',
     reason:
-      "Pi 0.87.1 stops a tracked Windows child process tree using the absolute "
-      + "System32 taskkill executable. This is OS process cleanup, not a repo module.",
+      "Pi 1.4.0 stops a tracked Windows child process tree using the absolute "
+      + "System32 taskkill executable. Its reviewed || fallback also handles an empty SystemRoot. This is OS process cleanup, not a repo module.",
   },
   {
     file: "node_modules/@earendil-works/pi-coding-agent/dist/core/resolve-config-value.js",

@@ -144,7 +144,7 @@ describe("Pi 1.3 runtime integration", () => {
     expect(requests).toHaveLength(1);
   });
 
-  it("requires the reviewed installed candidate", () => { expect(getPiCodingAgentVersion()).toBe("1.3.0"); });
+  it("requires the reviewed installed candidate", () => { expect(getPiCodingAgentVersion()).toBe("1.4.0"); });
   it.each(["user", "custom"])(
     "cancels a real suspended %s before_agent_start without late persistence", async kind => {
       const entered = deferred(), release = deferred();
