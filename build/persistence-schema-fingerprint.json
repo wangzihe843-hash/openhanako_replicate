@@ -680,7 +680,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:f699d1f5498ba6b9cec960040bce5fbaffb92cbee2a4a3232468c0f2b5589014",
+  "payloadFingerprint": "sha256:1f2333587023651f220bc0f9658d951fb94a08d114ae96315b43b9f30b5d5269",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -861,6 +861,7 @@
         "lib/memory/compile.ts",
         "lib/memory/memory-ticker.ts",
         "lib/memory/dream/revision-store.ts",
+        "lib/memory/dream/file-transaction.ts",
         "lib/memory/dream/runner.ts",
         "core/agent.ts",
         "lib/channels/channel-store.ts",
@@ -868,14 +869,14 @@
         "hub/channel-router.ts",
         "server/routes/config.ts"
       ],
-      "restorePolicy": "Code rollback is not data rollback. Never rewind a published reset marker or automatically consume reset-archive. Restore selected authored bytes only by an explicit compatible edit/import/restore operation with the current reset identity; a copied pending journal is not an instruction to replay into another home. Journal recovery also requires its referenced Dream revision, which retains the existing pruning policy. Reset failure may leave a published marker, cleared facts or partial archive moves; preserve all remaining and moved sources and retry explicitly. No cross-file crash transaction or safe shared-home downgrade is promised.",
+      "restorePolicy": "Code rollback is not data rollback. Never rewind a published reset marker or automatically consume reset-archive. Restore selected authored bytes only by an explicit compatible edit/import/restore operation with the current reset identity; a copied pending journal is not an instruction to replay into another home. Legacy journal recovery also requires its referenced Dream revision, which retains the existing pruning policy; v2 recovery uses the self-contained beforeFiles instead. Preserve an unresolved v2 journal with its bound output files and use a compatible reader; code rollback cannot recover already lost bytes. Reset failure may leave a published marker, cleared facts or partial archive moves; preserve all remaining and moved sources and retry explicitly. No cross-file crash transaction or safe shared-home downgrade is promised.",
       "schemaContract": {
-        "compatibility": "Historical Markdown and summary/pin JSON remain readable as legacy. Optional explicit memoryScope and source dependency/status fields are preserved in version-1 pin and summary records; scoped pins are excluded from the lossy legacy Markdown mirror. Legacy aggregates are not promoted into explicit worlds. Current source verification may suppress stale derived context without deleting original transcript history. reset.json has no schemaVersion: absent and valid timestamp-only markers remain supported; new C/F resets write compiledResetAt and a fresh resetRevision, and F also records factsResetAt/factsResetRevision, v1Retired=true and channelSources[channelId]={messageCount,prefixHash}. C preserves the F tuple. Only ENOENT means no marker; unreadable, malformed or incomplete full-reset markers fail closed. daily-state.json stays schemaVersion 4 with optional resetRevision (missing/non-string reads as null). Dream pending-apply.json stays schemaVersion 1 with optional reset={memoryDir,domain,resetAt,revision}; identity-less legacy journals recover only without a marker, and stale/foreign-home journals are archived. Dream revision snapshots remain version 1 with the existing ten-revision retention policy. Named reset-archive files retain their original bytes and relative paths in unique retired-* directories, with no automatic consumption or pruning. week.md.migrated.bak is created exclusively; a collision archives the current week.md instead of overwriting the backup. These are forward-compatible additions with no SQLite or DATA_EPOCH migration, not authorization to downgrade: older readers ignore the F/source/journal fences and cannot preserve the reset guarantee on the same active home. Facts incremental compilation treats only ENOENT at the authoritative merge read as an absent baseline; other read errors propagate before model execution or body/watermark publication, leaving the delta retryable. First-use initialization and successful compilation retain their existing file formats, watermark, reset and concurrency semantics. No historical Facts reconstruction or migration is performed; older code retains the read-error overwrite defect. Today manual saves invalidate already-pending compileToday publications for the same canonical target in the server process only after the body rename succeeds, including unchanged and empty saves. Superseded jobs preserve body and watermark; subsequent compilation consumes the unchanged delta from the saved baseline. Other compiles retain completion-order publication. This transient fence adds no persisted fields or files and does not provide cross-process exclusion or a body/state crash transaction. Existing reset, logical-day rollover, reflection and recovery contracts remain unchanged. No migration is performed; code rollback reintroduces the overwrite defect. See docs/audits/2026-10-21-today-manual-edit-persistence-compatibility.md.",
+        "compatibility": "Historical Markdown and summary/pin JSON remain readable as legacy. Optional explicit memoryScope and source dependency/status fields are preserved in version-1 pin and summary records; scoped pins are excluded from the lossy legacy Markdown mirror. Legacy aggregates are not promoted into explicit worlds. Current source verification may suppress stale derived context without deleting original transcript history. reset.json has no schemaVersion: absent and valid timestamp-only markers remain supported; new C/F resets write compiledResetAt and a fresh resetRevision, and F also records factsResetAt/factsResetRevision, v1Retired=true and channelSources[channelId]={messageCount,prefixHash}. C preserves the F tuple. Only ENOENT means no marker; unreadable, malformed or incomplete full-reset markers fail closed. daily-state.json stays schemaVersion 4 with optional resetRevision (missing/non-string reads as null). Historical Dream pending-apply.json uses schemaVersion 1 with optional reset={memoryDir,domain,resetAt,revision}; identity-less legacy journals recover only without a marker, and stale/foreign-home journals are archived. Dream revision snapshots remain version 1 with the existing ten-revision retention policy. New Dream operations publish schemaVersion 2 pending journals with self-contained, checksummed raw beforeFiles (base64 bytes or null for absence), a bound compiled output path and the current reset token before body writes. New compensation/recovery verifies exact bytes and absence before removing the journal and does not depend on revision retention. Strict Dream reads propagate non-ENOENT errors and do not initialize Facts baselines. Historical revision snapshots remain version 1; old journals keep their legacy content-only replay and cannot reconstruct missing before-images. Successful historical daily membership and pre_restore undo semantics are unchanged. Only newly created files in the recorded write set can be removed during compensation; unrelated daily sources, watermarks, fingerprints and scoped metadata are untouched. Non-regular output files and overlapping source/output paths are rejected before publication. The shared preflight/capture/v2-reader check covers fixed inputs and metadata plus their atomic-write scratch names, and daily, dream, summaries and reset-archive namespaces even outside the write set; normal memory.md and separate custom outputs remain supported. This is logical path/platform-case normalization, not symlink/inode resolution or file authorization. Earlier unshipped v2 journals with conflicting outputs are refused unchanged, without repair or rebinding; the persisted shape stays v2. The guarantee covers synchronous file application in one process, not post-commit notifications, other processes, arbitrary old-data recovery or power-loss durability. Downgrade while a v2 journal exists is unsafe: older readers ignore its beforeFiles and replay the lossy revision. See docs/audits/2026-10-24-dream-file-transaction-compatibility.md. Named reset-archive files retain their original bytes and relative paths in unique retired-* directories, with no automatic consumption or pruning. week.md.migrated.bak is created exclusively; a collision archives the current week.md instead of overwriting the backup. These are forward-compatible additions with no SQLite or DATA_EPOCH migration, not authorization to downgrade: older readers ignore the F/source/journal fences and cannot preserve the reset guarantee on the same active home. Facts incremental compilation treats only ENOENT at the authoritative merge read as an absent baseline; other read errors propagate before model execution or body/watermark publication, leaving the delta retryable. First-use initialization and successful compilation retain their existing file formats, watermark, reset and concurrency semantics. No historical Facts reconstruction or migration is performed; older code retains the read-error overwrite defect. Today manual saves invalidate already-pending compileToday publications for the same canonical target in the server process only after the body rename succeeds, including unchanged and empty saves. Superseded jobs preserve body and watermark; subsequent compilation consumes the unchanged delta from the saved baseline. Other compiles retain completion-order publication. This transient fence adds no persisted fields or files and does not provide cross-process exclusion or a body/state crash transaction. Existing reset, logical-day rollover, reflection and recovery contracts remain unchanged. No migration is performed; code rollback reintroduces the overwrite defect. See docs/audits/2026-10-21-today-manual-edit-persistence-compatibility.md.",
         "kind": "protocol",
         "source": "lib/memory/compiled-memory-state.ts"
       },
       "schemaSource": {
-        "contract": "compiled memory and dual-domain reset marker, named retired-source archives, daily-state v4, Dream pending journal v1, rolling-summary and pinned-memory protocols; see docs/audits/2026-10-15-reset-lifecycle-persistence-compatibility.md",
+        "contract": "compiled memory and dual-domain reset marker, named retired-source archives, daily-state v4, Dream pending journal v1/v2, rolling-summary and pinned-memory protocols; see docs/audits/2026-10-15-reset-lifecycle-persistence-compatibility.md",
         "kind": "directory-contract",
         "module": "lib/memory/compiled-memory-state.ts"
       }
@@ -3398,8 +3399,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Add optional independently selected web_fetch preferences and runtime credential reuse from DeepSeek Search or an official model provider. Missing Fetch settings preserve direct fetching; model keys are never copied, and existing stores, epoch, search defaults and tool permissions remain compatible.\n\nLore metadata review relative to d730328f9bf6d17033d797c11e279ab1a64197ef: preserve existing own optional memoryScope JSON values and exact string sourceStatus/origin through ordinary desktop whole-map saves, without allowing edits to add, clear or promote guards. Missing/null legacy semantics and existing scope/source validation are retained; explicit invalid scopes stay unreadable and unknown top-level fields remain discarded. This is forward compatible at DATA_EPOCH 1, with no new path, required schema, SQLite/Pi change or migration. Older desktop code drops guards in memory and on subsequent writes; same-home downgrade is not certified and missing historical metadata is not reconstructed. See docs/audits/2026-10-19-lore-metadata-persistence-compatibility.md.\n\nPrompt-only Unicode boundary review: the stable Lore readers opt into backing off a split UTF-16 surrogate pair after selection, while truncateText and fitManagedBlock retain their previous defaults for mirror synchronization. Canonical and managed file bytes, write paths, schema, scope/source eligibility, UTF-16 budgets, selection order and DATA_EPOCH 1 remain unchanged. Regression coverage verifies read-only behavior and unchanged sync bytes at the same emoji boundary. Existing malformed input and previously stored replacement characters are not repaired. Secret-space atomic deletion is a compatible forward protocol addition at DATA_EPOCH 1: existing category JSONL ownership, paths and formats are unchanged; the same in-process per-agent lock serializes append with read/select/atomic publish; only the first recordId/key/id/legacy-digest match is removed and all non-target bytes are retained, with no migration or survivor enrichment. The client requires ok=true plus boolean deleted and has no snapshot fallback or automatic retry. Old servers reject the action and require a coordinated client/server upgrade; old clients and independent service processes remain outside this concurrency guarantee. Code rollback cannot restore deleted data; keep the registered coherent-tree checkpoint/compatible restore policy. Identity selection and client confirmation are now guarded protocol modules. See docs/audits/2026-10-20-secret-space-delete-persistence-compatibility.md. Final secret-space boundary review: the dedicated action now enforces exactly the seven generated categories, rejecting drafts, interview-drafts and unregistered names without publication; the shared path helper, caller permissions and generic APIs are unchanged. Complete original line bytes pass node:buffer.isUtf8 before JSON parsing or stable-ID selection; invalid sequences are skipped byte-for-byte, valid literal or escaped U+FFFD remains deletable, and the previous BOM parsing boundary is unchanged. No corruption repair, migration, new owner, path, required field, format, DATA_EPOCH, lock, event or rollback-policy change occurs. Actual client/storage API/Hono/synthetic-disk tests cover rejection, false/no-publish/no-event, and corrupt-before-valid identity collisions. This fulfills the earlier seven-category/raw-byte contract; it is not a claim that the pre-existing baseline corruption defect or generic file authority was newly introduced. See docs/audits/2026-10-20-secret-space-delete-persistence-compatibility.md. Facts authoritative merge-read review relative to 79f900778dbb2f35cf968d4f23459980b33070f5: compileEditableFacts uses the existing module-local readSourceFile helper, tolerating only ENOENT and propagating all other errors before the model and body/watermark publication. The established ticker records failure without completing the Facts step; the unchanged pending delta remains retryable. First-use initialization, readable Markdown, state schema, reset fencing, same-generation completion order, all paths, ownership and DATA_EPOCH 1 remain unchanged. There is no historical Facts reconstruction, migration, global safeReadFile change, dependency or Pi change. Older code remains format-compatible but reintroduces the overwrite defect; code rollback does not recover lost data. See docs/audits/2026-10-20-facts-read-persistence-compatibility.md. This local candidate review does not authorize upload or claim independent acceptance.\n\nBHP06 corrects static Hono route loading in core/plugin-manager.ts, the whole-module directory-contract source for installed-plugins. It recognizes static apps before factory functions and mounts their handlers under the existing filename prefix using the parent request-context middleware, without mutating the shared child app. Only that module's executable source hash changes in the persistence payload. Installed manifests, install receipts, backups, marketplace records, paths, plugin identity, store ownership, persistence sites, serialized schemas, startup phases, checkpoint/restore policies and DATA_EPOCH 1 remain unchanged; no migration or rewrite is needed. Existing full-access/source/dev approval and request capability/grant checks still apply. Newly reachable static handlers may use the existing permitted APIs, as factory/register handlers already can; this does not introduce a storage API or certify arbitrary third-party plugin data contracts. The installed-plugins store-local reader/protocol declaration remains accurate, so registry, inventory, startup receipt and runtime closure require no change. Rolling back this correction preserves persisted-data readability and restores the prior static-route loading defect; async factory support is unchanged.\n\nMA01 adopt/compaction admission review relative to 8800c762b91cdd69d0f36740321db7166758bf47: after loading the current session and acquiring the existing operation lease, adoption rejects coordinator switching, SDK compaction, or direct compaction with the existing session_busy error before interrupted-candidate recovery, branch changes, or append operations. The admission-to-write interval stays synchronous. This source-only concurrency fix changes no JSONL record fields, required values, paths, ownership, readers, successful idle adoption writes, recovery records, SQLite DDL, Pi 1.3.0 / JSONL v3 contract, or DATA_EPOCH 1. The registered session-jsonl protocol module already covers this code; inventory, startup receipt, and store-local persisted-format contracts remain unchanged. No migration or checkpoint transition is needed. Older code can read the same format but still has the race; code rollback does not repair historical damage or certify concurrent use. Busy requests can now return session_busy before previously reachable idempotent/not-found outcomes. This declaration covers persistence compatibility, not final independent acceptance or full closure/NFT/CI certification.\n\nMA01 integration review against bf19a577a8cebf86fc49825e4ed128f0ea402201 (the exact Composer commit whose sole parent is 14aa37b68775cbd4da3dc0feb3936e2ff8031e6d): preserve the independently accepted MA01 runtime and regression-test bytes without adaptation. The complete bf19 baseline, including Composer submission ownership, BHP06 plugin-manager fingerprint, MA02 utility-execution endpoint projection, BHP02 bridge binding generation, Facts read-failure and secret-space atomic-delete contracts, registry, inventory, startup receipt, all schema entries and existing compatibility-review text is retained. The official generator changes only the registered session-dialogue-variants parse-tree source digest and bound payload/review fingerprints. No persisted format, path, required field, migration, DATA_EPOCH, Node/Pi version, dependency, lockfile or public API shape changes are introduced. Historical damage is not repaired; code rollback cannot repair historical damage or certify cross-process concurrent use. Busy requests may return session_busy before old idempotent/not-found outcomes. The preceding MA01 compatibility limits remain applicable. This declaration does not transfer old test results or certify final independent acceptance, full closure/NFT or exact-commit CI; those require fresh evidence on this combined tree.\n\nToday manual-save publication review relative to c6c4118b52ed6de04713ce06ec1dc464f018283b: successful writeTodaySection body rename invalidates already-pending compileToday jobs for the same canonical parent-directory and filename in this server process, including unchanged and empty saves. Superseded jobs preserve body and watermark; later compiles retain the delta and saved baseline. Ordinary concurrent compiles retain completion-order publication. The transient fence drains in finally and adds no persisted fields/files, cross-process exclusion, or body/state crash transaction. MA01 executable/session compaction contracts, CLI closure, all prior protocol hashes, reset, logical-day rollover, reflection, strict Facts reads, recovery, ownership, schema versions and DATA_EPOCH 1 remain unchanged. No migration or historical reconstruction. Code rollback reintroduces the overwrite defect. See docs/audits/2026-10-21-today-manual-edit-persistence-compatibility.md. This is a candidate review, not independent acceptance or publication.\n\nLore draft-save confirmation review relative to 73f9afbda713fac2f9a4801d3704f1c47cfebd8d: the default Lore create/update paths capture a live binding for the target agent, and missing storage or setItem failure no longer reports a successful store write. LoreEditor awaits the captured binding commit and checks that token is still current before clearing only the same mounted form session and revision. A synchronous in-flight guard prevents duplicate submissions; a failed commit preserves the draft and the returned entry ID for manual retry after a possible background flush. Later edits, including clearing or returning to the same text, survive old completions. Store return values still describe synchronous memory writes and do not promise disk commit for other callers; explicitly injected Storage remains supported. Cancel cannot revoke writes already dispatched, partial writes are not rolled back, and role switches keep the existing discard-on-unmount semantics rather than persisting drafts across roles. This changes write admission and UI success confirmation only: paths, stored JSON shape and fields, agent ownership, ID generation, defaults, normalization and metadata guard rules remain unchanged at DATA_EPOCH 1. No migration, data repair or global idempotency protocol is introduced. Code rollback can reintroduce the race; it cannot recover previously lost drafts or undo confirmed writes. Data recovery still requires the registered coherent-tree checkpoint/compatible restore process, and all earlier metadata downgrade restrictions remain in force.",
-    "payloadFingerprint": "sha256:f699d1f5498ba6b9cec960040bce5fbaffb92cbee2a4a3232468c0f2b5589014"
+    "compatibilityReason": "Dream v2 file application now rejects compiled output conflicts with complete internal input and transaction namespaces in writer preflight/capture and reader. The v2 persisted shape, revision v1 and legacy-journal behavior remain unchanged; separate custom outputs remain supported. Earlier unshipped conflicting v2 journals are refused unchanged, not migrated or rebound. Existing v2 downgrade and data-recovery limits remain; see docs/audits/2026-10-24-dream-file-transaction-compatibility.md.",
+    "payloadFingerprint": "sha256:1f2333587023651f220bc0f9658d951fb94a08d114ae96315b43b9f30b5d5269"
   },
   "schemas": [
     {
@@ -3493,7 +3494,7 @@
       "storeId": "agent-facts-sqlite"
     },
     {
-      "contract": "compiled memory and dual-domain reset marker, named retired-source archives, daily-state v4, Dream pending journal v1, rolling-summary and pinned-memory protocols; see docs/audits/2026-10-15-reset-lifecycle-persistence-compatibility.md",
+      "contract": "compiled memory and dual-domain reset marker, named retired-source archives, daily-state v4, Dream pending journal v1/v2, rolling-summary and pinned-memory protocols; see docs/audits/2026-10-15-reset-lifecycle-persistence-compatibility.md",
       "kind": "directory-contract",
       "module": "lib/memory/compiled-memory-state.ts",
       "protocolModules": [
@@ -3515,19 +3516,23 @@
         },
         {
           "module": "lib/memory/compile.ts",
-          "sourceHash": "sha256:a02c3b49ec807b4324fa0a36b0cd8144f7ee8df49a5a303200747f5a80bd0f69"
+          "sourceHash": "sha256:88ec006ebefc262487c973ccd32e04cfa00a06a4b31541d077fa27c7e97a2273"
         },
         {
           "module": "lib/memory/compiled-memory-snapshot.ts",
           "sourceHash": "sha256:45f63d1a61b92396153eef484929f9c6aec2cce610ed0006f9cf3b0b7ec4537f"
         },
         {
+          "module": "lib/memory/dream/file-transaction.ts",
+          "sourceHash": "sha256:9a469afcca041234b0160ce2f1e1e64bd46e2f8e9b79569508a4314665e7c12f"
+        },
+        {
           "module": "lib/memory/dream/revision-store.ts",
-          "sourceHash": "sha256:6f2fa957ef7f870e10e089a40390f2103c5dd2f082a9908a6a8b26b3988efeae"
+          "sourceHash": "sha256:e50f067b8bb732e2b3d66a0ff10ce2820b78aae57efb1bdbec04e169b7012b13"
         },
         {
           "module": "lib/memory/dream/runner.ts",
-          "sourceHash": "sha256:23aad03d9cef3f8c4bbf855ac1084dae5459ee2a28a78d669ce1b58c065ccdcb"
+          "sourceHash": "sha256:7d07ce9d238c0a1c1f826916e27eb56009065615673673c6b5373d5f1fc76516"
         },
         {
           "module": "lib/memory/memory-ticker.ts",
@@ -8432,7 +8437,31 @@
       "kind": "atomic-write",
       "ordinal": 0,
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
-      "sourceFile": "lib/memory/dream/revision-store.ts",
+      "sourceFile": "lib/memory/dream/file-transaction.ts",
+      "storeId": "agent-memory"
+    },
+    {
+      "exemptionId": null,
+      "kind": "atomic-write",
+      "ordinal": 0,
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "sourceFile": "lib/memory/dream/file-transaction.ts",
+      "storeId": "agent-memory"
+    },
+    {
+      "exemptionId": null,
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "sourceFile": "lib/memory/dream/file-transaction.ts",
+      "storeId": "agent-memory"
+    },
+    {
+      "exemptionId": null,
+      "kind": "remove-path",
+      "ordinal": 0,
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "sourceFile": "lib/memory/dream/file-transaction.ts",
       "storeId": "agent-memory"
     },
     {
@@ -8453,14 +8482,6 @@
     },
     {
       "exemptionId": null,
-      "kind": "atomic-write",
-      "ordinal": 0,
-      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
-      "sourceFile": "lib/memory/dream/revision-store.ts",
-      "storeId": "agent-memory"
-    },
-    {
-      "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
@@ -8479,14 +8500,6 @@
       "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
-      "sourceFile": "lib/memory/dream/revision-store.ts",
-      "storeId": "agent-memory"
-    },
-    {
-      "exemptionId": null,
-      "kind": "mkdir",
-      "ordinal": 1,
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "sourceFile": "lib/memory/dream/revision-store.ts",
       "storeId": "agent-memory"
@@ -8527,14 +8540,6 @@
       "exemptionId": null,
       "kind": "remove-path",
       "ordinal": 3,
-      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
-      "sourceFile": "lib/memory/dream/revision-store.ts",
-      "storeId": "agent-memory"
-    },
-    {
-      "exemptionId": null,
-      "kind": "remove-path",
-      "ordinal": 4,
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "sourceFile": "lib/memory/dream/revision-store.ts",
       "storeId": "agent-memory"

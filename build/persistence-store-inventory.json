@@ -202,12 +202,12 @@
       "schemaSource": {
         "kind": "directory-contract",
         "module": "lib/memory/compiled-memory-state.ts",
-        "contract": "compiled memory and dual-domain reset marker, named retired-source archives, daily-state v4, Dream pending journal v1, rolling-summary and pinned-memory protocols; see docs/audits/2026-10-15-reset-lifecycle-persistence-compatibility.md"
+        "contract": "compiled memory and dual-domain reset marker, named retired-source archives, daily-state v4, Dream pending journal v1/v2, rolling-summary and pinned-memory protocols; see docs/audits/2026-10-15-reset-lifecycle-persistence-compatibility.md"
       },
       "schemaContract": {
         "kind": "protocol",
         "source": "lib/memory/compiled-memory-state.ts",
-        "compatibility": "Historical Markdown and summary/pin JSON remain readable as legacy. Optional explicit memoryScope and source dependency/status fields are preserved in version-1 pin and summary records; scoped pins are excluded from the lossy legacy Markdown mirror. Legacy aggregates are not promoted into explicit worlds. Current source verification may suppress stale derived context without deleting original transcript history. reset.json has no schemaVersion: absent and valid timestamp-only markers remain supported; new C/F resets write compiledResetAt and a fresh resetRevision, and F also records factsResetAt/factsResetRevision, v1Retired=true and channelSources[channelId]={messageCount,prefixHash}. C preserves the F tuple. Only ENOENT means no marker; unreadable, malformed or incomplete full-reset markers fail closed. daily-state.json stays schemaVersion 4 with optional resetRevision (missing/non-string reads as null). Dream pending-apply.json stays schemaVersion 1 with optional reset={memoryDir,domain,resetAt,revision}; identity-less legacy journals recover only without a marker, and stale/foreign-home journals are archived. Dream revision snapshots remain version 1 with the existing ten-revision retention policy. Named reset-archive files retain their original bytes and relative paths in unique retired-* directories, with no automatic consumption or pruning. week.md.migrated.bak is created exclusively; a collision archives the current week.md instead of overwriting the backup. These are forward-compatible additions with no SQLite or DATA_EPOCH migration, not authorization to downgrade: older readers ignore the F/source/journal fences and cannot preserve the reset guarantee on the same active home. Facts incremental compilation treats only ENOENT at the authoritative merge read as an absent baseline; other read errors propagate before model execution or body/watermark publication, leaving the delta retryable. First-use initialization and successful compilation retain their existing file formats, watermark, reset and concurrency semantics. No historical Facts reconstruction or migration is performed; older code retains the read-error overwrite defect. Today manual saves invalidate already-pending compileToday publications for the same canonical target in the server process only after the body rename succeeds, including unchanged and empty saves. Superseded jobs preserve body and watermark; subsequent compilation consumes the unchanged delta from the saved baseline. Other compiles retain completion-order publication. This transient fence adds no persisted fields or files and does not provide cross-process exclusion or a body/state crash transaction. Existing reset, logical-day rollover, reflection and recovery contracts remain unchanged. No migration is performed; code rollback reintroduces the overwrite defect. See docs/audits/2026-10-21-today-manual-edit-persistence-compatibility.md."
+        "compatibility": "Historical Markdown and summary/pin JSON remain readable as legacy. Optional explicit memoryScope and source dependency/status fields are preserved in version-1 pin and summary records; scoped pins are excluded from the lossy legacy Markdown mirror. Legacy aggregates are not promoted into explicit worlds. Current source verification may suppress stale derived context without deleting original transcript history. reset.json has no schemaVersion: absent and valid timestamp-only markers remain supported; new C/F resets write compiledResetAt and a fresh resetRevision, and F also records factsResetAt/factsResetRevision, v1Retired=true and channelSources[channelId]={messageCount,prefixHash}. C preserves the F tuple. Only ENOENT means no marker; unreadable, malformed or incomplete full-reset markers fail closed. daily-state.json stays schemaVersion 4 with optional resetRevision (missing/non-string reads as null). Historical Dream pending-apply.json uses schemaVersion 1 with optional reset={memoryDir,domain,resetAt,revision}; identity-less legacy journals recover only without a marker, and stale/foreign-home journals are archived. Dream revision snapshots remain version 1 with the existing ten-revision retention policy. New Dream operations publish schemaVersion 2 pending journals with self-contained, checksummed raw beforeFiles (base64 bytes or null for absence), a bound compiled output path and the current reset token before body writes. New compensation/recovery verifies exact bytes and absence before removing the journal and does not depend on revision retention. Strict Dream reads propagate non-ENOENT errors and do not initialize Facts baselines. Historical revision snapshots remain version 1; old journals keep their legacy content-only replay and cannot reconstruct missing before-images. Successful historical daily membership and pre_restore undo semantics are unchanged. Only newly created files in the recorded write set can be removed during compensation; unrelated daily sources, watermarks, fingerprints and scoped metadata are untouched. Non-regular output files and overlapping source/output paths are rejected before publication. The shared preflight/capture/v2-reader check covers fixed inputs and metadata plus their atomic-write scratch names, and daily, dream, summaries and reset-archive namespaces even outside the write set; normal memory.md and separate custom outputs remain supported. This is logical path/platform-case normalization, not symlink/inode resolution or file authorization. Earlier unshipped v2 journals with conflicting outputs are refused unchanged, without repair or rebinding; the persisted shape stays v2. The guarantee covers synchronous file application in one process, not post-commit notifications, other processes, arbitrary old-data recovery or power-loss durability. Downgrade while a v2 journal exists is unsafe: older readers ignore its beforeFiles and replay the lossy revision. See docs/audits/2026-10-24-dream-file-transaction-compatibility.md. Named reset-archive files retain their original bytes and relative paths in unique retired-* directories, with no automatic consumption or pruning. week.md.migrated.bak is created exclusively; a collision archives the current week.md instead of overwriting the backup. These are forward-compatible additions with no SQLite or DATA_EPOCH migration, not authorization to downgrade: older readers ignore the F/source/journal fences and cannot preserve the reset guarantee on the same active home. Facts incremental compilation treats only ENOENT at the authoritative merge read as an absent baseline; other read errors propagate before model execution or body/watermark publication, leaving the delta retryable. First-use initialization and successful compilation retain their existing file formats, watermark, reset and concurrency semantics. No historical Facts reconstruction or migration is performed; older code retains the read-error overwrite defect. Today manual saves invalidate already-pending compileToday publications for the same canonical target in the server process only after the body rename succeeds, including unchanged and empty saves. Superseded jobs preserve body and watermark; subsequent compilation consumes the unchanged delta from the saved baseline. Other compiles retain completion-order publication. This transient fence adds no persisted fields or files and does not provide cross-process exclusion or a body/state crash transaction. Existing reset, logical-day rollover, reflection and recovery contracts remain unchanged. No migration is performed; code rollback reintroduces the overwrite defect. See docs/audits/2026-10-21-today-manual-edit-persistence-compatibility.md."
       },
       "openEntry": [
         "HanaAgent.init",
@@ -226,6 +226,7 @@
         "lib/memory/compile.ts",
         "lib/memory/memory-ticker.ts",
         "lib/memory/dream/revision-store.ts",
+        "lib/memory/dream/file-transaction.ts",
         "lib/memory/dream/runner.ts",
         "core/agent.ts",
         "lib/channels/channel-store.ts",
@@ -237,7 +238,7 @@
       "firstPossibleWritePhase": "runtime_ready",
       "epochPolicy": "epoch-managed",
       "checkpointPolicy": "Capture the registered active memory files, reset marker, daily checkpoint, Dream journal/revisions, retained v1 source and named retired archives together. Include agent-facts-sqlite and channels when their full-reset boundary is affected. Archives are retained source bytes, not regenerable caches; keep partial-reset archives and existing week backups.",
-      "restorePolicy": "Code rollback is not data rollback. Never rewind a published reset marker or automatically consume reset-archive. Restore selected authored bytes only by an explicit compatible edit/import/restore operation with the current reset identity; a copied pending journal is not an instruction to replay into another home. Journal recovery also requires its referenced Dream revision, which retains the existing pruning policy. Reset failure may leave a published marker, cleared facts or partial archive moves; preserve all remaining and moved sources and retry explicitly. No cross-file crash transaction or safe shared-home downgrade is promised.",
+      "restorePolicy": "Code rollback is not data rollback. Never rewind a published reset marker or automatically consume reset-archive. Restore selected authored bytes only by an explicit compatible edit/import/restore operation with the current reset identity; a copied pending journal is not an instruction to replay into another home. Legacy journal recovery also requires its referenced Dream revision, which retains the existing pruning policy; v2 recovery uses the self-contained beforeFiles instead. Preserve an unresolved v2 journal with its bound output files and use a compatible reader; code rollback cannot recover already lost bytes. Reset failure may leave a published marker, cleared facts or partial archive moves; preserve all remaining and moved sources and retry explicitly. No cross-file crash transaction or safe shared-home downgrade is promised.",
       "affectedByEpochMigration": true,
       "bootstrapSafety": null,
       "preCoordinatorReadProjection": null,
@@ -7298,9 +7299,36 @@
       "ordinal": 0
     },
     {
-      "sourceFile": "lib/memory/dream/revision-store.ts",
+      "sourceFile": "lib/memory/dream/file-transaction.ts",
       "kind": "atomic-write",
-      "excerpt": "atomicWriteSync(filePath, body ? `${body}\\n` : \"\")",
+      "excerpt": "atomicWriteSync(journalPath, bytes)",
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "storeId": "agent-memory",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/memory/dream/file-transaction.ts",
+      "kind": "atomic-write",
+      "excerpt": "atomicWriteSync(target, Buffer.from(image.base64, \"base64\"))",
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "storeId": "agent-memory",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/memory/dream/file-transaction.ts",
+      "kind": "mkdir",
+      "excerpt": "fs.mkdirSync(path.dirname(target), { recursive: true })",
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "storeId": "agent-memory",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/memory/dream/file-transaction.ts",
+      "kind": "remove-path",
+      "excerpt": "fs.unlinkSync(target)",
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "storeId": "agent-memory",
       "exemptionId": null,
@@ -7309,16 +7337,7 @@
     {
       "sourceFile": "lib/memory/dream/revision-store.ts",
       "kind": "atomic-write",
-      "excerpt": "atomicWriteSync(pendingPath(memoryDir), `${JSON.stringify({ schemaVersion: 1, revisionId: options.revision.revisionId, startedAt: new Date().toISOString(), operation: \"dream\", reset, }, null, 2)}\\n`)",
-      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
-      "storeId": "agent-memory",
-      "exemptionId": null,
-      "ordinal": 0
-    },
-    {
-      "sourceFile": "lib/memory/dream/revision-store.ts",
-      "kind": "atomic-write",
-      "excerpt": "atomicWriteSync(pendingPath(memoryDir), `${JSON.stringify({ schemaVersion: 1, revisionId: safetyRevision.revisionId, targetRevisionId: revision.revisionId, startedAt: new Date().toISOString(), operation: \"restore\", reset, }, null, 2)}\\n`)",
+      "excerpt": "atomicWriteSync(filePath, markdown)",
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "storeId": "agent-memory",
       "exemptionId": null,
@@ -7350,15 +7369,6 @@
       "storeId": "agent-memory",
       "exemptionId": null,
       "ordinal": 0
-    },
-    {
-      "sourceFile": "lib/memory/dream/revision-store.ts",
-      "kind": "mkdir",
-      "excerpt": "fs.mkdirSync(dreamDir(memoryDir), { recursive: true })",
-      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
-      "storeId": "agent-memory",
-      "exemptionId": null,
-      "ordinal": 1
     },
     {
       "sourceFile": "lib/memory/dream/revision-store.ts",
@@ -7413,15 +7423,6 @@
       "storeId": "agent-memory",
       "exemptionId": null,
       "ordinal": 3
-    },
-    {
-      "sourceFile": "lib/memory/dream/revision-store.ts",
-      "kind": "remove-path",
-      "excerpt": "fs.rmSync(pendingPath(memoryDir), { force: true })",
-      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
-      "storeId": "agent-memory",
-      "exemptionId": null,
-      "ordinal": 4
     },
     {
       "sourceFile": "lib/memory/dream/state-store.ts",

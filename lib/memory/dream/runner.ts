@@ -155,7 +155,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
       if (recoverPendingDreamApply(options.memoryDir, options.memoryMdPath)) {
         options.onCompiled?.();
       }
-      before = snapshotDreamSections(options.memoryDir);
+      before = snapshotDreamSections(options.memoryDir, { strictReads: true });
       const beforeHash = inputHash(before);
       if (editableBodyChars(before) === 0) {
         throw new DreamOperationError("dream_no_memory", "There is no memory to organize yet");
@@ -229,7 +229,7 @@ export function createMemoryDreamRunner(options: CreateMemoryDreamRunnerOptions)
       }
 
       assertCurrent();
-      const current = snapshotDreamSections(options.memoryDir);
+      const current = snapshotDreamSections(options.memoryDir, { strictReads: true });
       if (inputHash(current) !== beforeHash) {
         throw new DreamOperationError(
           "dream_memory_changed",

@@ -294,8 +294,12 @@ for (const full of [false,true]) {
     const before=snapshotDreamSections(f.memoryDir);
     const revision=createDreamRevision(f.memoryDir,{runId:'synthetic-failed-apply',trigger:'manual',before});
     const rename=fs.renameSync;
+    let factsWrites=0;
     const fail=vi.spyOn(fs,'renameSync').mockImplementation((from,to)=>{
-      if(String(to)===f.agent.factsMdPath)throw Object.assign(new Error('synthetic EIO during apply and rollback'),{code:'EIO'});
+      // Commit Facts first, fail the next apply step, then fail its compensation.
+      // Rejecting the first write leaves no changed file to compensate.
+      if(String(to)===f.agent.longtermMdPath || String(to)===f.agent.factsMdPath && ++factsWrites===2)
+        throw Object.assign(new Error('synthetic EIO during apply and rollback'),{code:'EIO'});
       return rename(from,to);
     });
     expect(()=>applyDreamSections(f.memoryDir,{revision,next:{...before,facts:`${OLD} organized`}})).toThrow('rollback also failed');
@@ -673,14 +677,18 @@ for (const marker of ['none', 'timestamp', 'current', 'stale']) {
     const before = snapshotDreamSections(f.memoryDir);
     const revision = createDreamRevision(f.memoryDir, { runId: 'recoverable', trigger: 'manual', before });
     const rename = fs.renameSync;
+    let factsWrites = 0;
     const failure = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
-      if (String(to) === f.agent.factsMdPath) throw new Error('synthetic apply and rollback failure');
+      if (String(to) === f.agent.longtermMdPath || String(to) === f.agent.factsMdPath && ++factsWrites === 2)
+        throw new Error('synthetic apply and rollback failure');
       return rename(from, to);
     });
     expect(() => applyDreamSections(f.memoryDir, { revision, next: { ...before, facts: 'ORGANIZED' } })).toThrow('rollback also failed');
     failure.mockRestore(); const journalPath = path.join(f.memoryDir, 'dream/pending-apply.json');
-    const journal = JSON.parse(read(journalPath)!);
-    if (marker === 'none' || marker === 'timestamp') delete journal.reset; // genuine old-format compatibility
+    // Identity-less compatibility uses an actual v1 journal, not an invalid v2.
+    const journal = marker === 'none' || marker === 'timestamp'
+      ? { schemaVersion: 1, revisionId: revision.revisionId, operation: 'dream' }
+      : JSON.parse(read(journalPath)!);
     if (marker === 'timestamp') fs.writeFileSync(path.join(f.memoryDir, 'reset.json'), JSON.stringify({ compiledResetAt: new Date().toISOString() }));
     if (marker === 'stale') { await f.reset(false); fs.writeFileSync(journalPath, JSON.stringify(journal)); }
     else fs.writeFileSync(journalPath, JSON.stringify(journal));

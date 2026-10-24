@@ -11,6 +11,16 @@ import {
 } from "../compile.ts";
 import { archiveRetiredMemorySources, captureMemoryReset, isMemoryResetCurrent, type MemoryResetToken } from "../compiled-memory-state.ts";
 import { dreamDir, type DreamRunTrigger } from "./state-store.ts";
+import {
+  assertNoPendingDreamJournal,
+  assertDreamOutputSeparated,
+  captureDreamFileJournal,
+  publishDreamFileJournal,
+  readDreamFileJournal,
+  rollbackDreamFiles,
+  verifyDreamFileWrites,
+  type DreamFileJournal,
+} from "./file-transaction.ts";
 
 export type DreamWeekDay = { date: string; body: string };
 export type DreamSections = {
@@ -76,12 +86,12 @@ function sectionCharSummary(sections: DreamSections) {
   };
 }
 
-export function snapshotDreamSections(memoryDir: string): DreamSections {
-  const sections = readCompiledMemorySections(memoryDir);
+export function snapshotDreamSections(memoryDir: string, opts: { strictReads?: boolean } = {}): DreamSections {
+  const sections = readCompiledMemorySections(memoryDir, { strictReads: opts.strictReads, skipBaseline: opts.strictReads });
   return {
     facts: sections.facts,
     today: sections.today,
-    weekDays: listWeekDayEntries(memoryDir),
+    weekDays: listWeekDayEntries(memoryDir, opts),
     longterm: sections.longterm,
   };
 }
@@ -170,41 +180,69 @@ function normalizeSections(sections: DreamSections) {
 }
 
 function writeSectionFile(filePath: string, body: string) {
-  atomicWriteSync(filePath, body ? `${body}\n` : "");
+  const markdown = body ? `${body}\n` : "";
+  atomicWriteSync(filePath, markdown);
+  return markdown;
 }
 
-function assembleMemory(memoryDir: string, memoryMdPath: string) {
-  assemble(
+function assembleMemory(memoryDir: string, memoryMdPath: string, strictReads = false) {
+  return assemble(
     path.join(memoryDir, "facts.md"),
     path.join(memoryDir, "today.md"),
     path.join(memoryDir, "week.md"),
     path.join(memoryDir, "longterm.md"),
     memoryMdPath,
+    { strictReads },
   );
 }
 
-function applyAllFiles(memoryDir: string, sections: DreamSections, memoryMdPath: string) {
+function applyAllFiles(memoryDir: string, sections: DreamSections, memoryMdPath: string, strictReads = false) {
   const normalized = normalizeSections(sections);
   const dailyDir = path.join(memoryDir, "daily");
   fs.mkdirSync(dailyDir, { recursive: true });
-
-  writeSectionFile(path.join(memoryDir, "facts.md"), normalized.facts);
-  writeSectionFile(path.join(memoryDir, "today.md"), normalized.today);
-  writeSectionFile(path.join(memoryDir, "longterm.md"), normalized.longterm);
-  for (const entry of normalized.weekDays) {
-    writeDailyEntryBody(dailyDir, entry.date, entry.body);
+  const writes: Record<string, string> = {};
+  for (const section of ["facts", "today", "longterm"] as const) {
+    const name = `${section}.md`;
+    writes[name] = writeSectionFile(path.join(memoryDir, name), normalized[section]);
   }
-  assembleWeekFromDaily(dailyDir, path.join(memoryDir, "week.md"));
-  assembleMemory(memoryDir, memoryMdPath);
+  for (const entry of normalized.weekDays) {
+    const body = writeDailyEntryBody(dailyDir, entry.date, entry.body);
+    writes[`daily/${entry.date}.md`] = body ? `## ${entry.date}\n\n${body}\n` : "";
+  }
+  writes["week.md"] = assembleWeekFromDaily(dailyDir, path.join(memoryDir, "week.md"), { strictReads });
+  writes["memory.md"] = assembleMemory(memoryDir, memoryMdPath, strictReads);
+  if (strictReads) verifyDreamFileWrites(memoryDir, memoryMdPath, writes);
   return normalized;
 }
 
-function applyDreamFiles(memoryDir: string, sections: DreamSections, memoryMdPath: string) {
+function applyDreamFiles(memoryDir: string, sections: DreamSections, memoryMdPath: string, strictReads = false) {
   const normalized = normalizeSections(sections);
-  writeSectionFile(path.join(memoryDir, "facts.md"), normalized.facts);
-  writeSectionFile(path.join(memoryDir, "longterm.md"), normalized.longterm);
-  assembleMemory(memoryDir, memoryMdPath);
-  return snapshotDreamSections(memoryDir);
+  const writes = {
+    "facts.md": writeSectionFile(path.join(memoryDir, "facts.md"), normalized.facts),
+    "longterm.md": writeSectionFile(path.join(memoryDir, "longterm.md"), normalized.longterm),
+    "memory.md": assembleMemory(memoryDir, memoryMdPath, strictReads),
+  };
+  if (strictReads) verifyDreamFileWrites(memoryDir, memoryMdPath, writes);
+  return snapshotDreamSections(memoryDir, { strictReads });
+}
+
+function applyWithFileJournal<T>(memoryDir: string, journal: DreamFileJournal, apply: () => T): T {
+  fs.mkdirSync(dreamDir(memoryDir), { recursive: true });
+  // Publication and read-back must finish before the first active-file write.
+  publishDreamFileJournal(pendingPath(memoryDir), journal);
+  try {
+    const result = apply();
+    fs.rmSync(pendingPath(memoryDir), { force: true });
+    return result;
+  } catch (error) {
+    try {
+      rollbackDreamFiles(memoryDir, journal);
+      fs.rmSync(pendingPath(memoryDir), { force: true });
+    } catch (rollbackError) {
+      throw new Error(`Dream ${journal.operation === "restore" ? "restore" : "apply"} failed and rollback also failed: ${rollbackError?.message || rollbackError}`, { cause: error });
+    }
+    throw error;
+  }
 }
 
 export function applyDreamSections(memoryDir: string, options: {
@@ -216,41 +254,43 @@ export function applyDreamSections(memoryDir: string, options: {
   const reset = options.reset || captureMemoryReset(memoryDir);
   if (!isMemoryResetCurrent(memoryDir, reset, "compiled")) throw new Error("Dream reset generation was superseded");
   const memoryMdPath = options.memoryMdPath || path.join(memoryDir, "memory.md");
+  assertDreamOutputSeparated(memoryDir, memoryMdPath);
   if (options.next.today !== options.revision.before.today
     || JSON.stringify(options.next.weekDays) !== JSON.stringify(options.revision.before.weekDays)) {
     throw new Error("Dream may not rewrite Today or Week");
   }
 
-  fs.mkdirSync(dreamDir(memoryDir), { recursive: true });
-  atomicWriteSync(pendingPath(memoryDir), `${JSON.stringify({
-    schemaVersion: 1,
+  assertNoPendingDreamJournal(pendingPath(memoryDir));
+  normalizeSections(options.next);
+  snapshotDreamSections(memoryDir, { strictReads: true });
+  const journal = captureDreamFileJournal(memoryDir, {
     revisionId: options.revision.revisionId,
-    startedAt: new Date().toISOString(),
     operation: "dream",
     reset,
-  }, null, 2)}\n`);
-
-  try {
-    const normalized = applyDreamFiles(memoryDir, options.next, memoryMdPath);
-    fs.rmSync(pendingPath(memoryDir), { force: true });
-    return normalized;
-  } catch (err) {
-    try {
-      applyDreamFiles(memoryDir, options.revision.before, memoryMdPath);
-      fs.rmSync(pendingPath(memoryDir), { force: true });
-    } catch (rollbackErr: any) {
-      throw new Error(`Dream apply failed and rollback also failed: ${rollbackErr?.message || rollbackErr}`, { cause: err });
-    }
-    throw err;
-  }
+    memoryMdPath,
+  });
+  return applyWithFileJournal(memoryDir, journal, () => applyDreamFiles(memoryDir, options.next, memoryMdPath, true));
 }
 
 export function restoreDreamRevision(memoryDir: string, revisionId: string, memoryMdPath?: string) {
+  const resolvedMemoryMdPath = memoryMdPath || path.join(memoryDir, "memory.md");
+  assertDreamOutputSeparated(memoryDir, resolvedMemoryMdPath);
   const reset = captureMemoryReset(memoryDir);
+  assertNoPendingDreamJournal(pendingPath(memoryDir));
   const revision = readDreamRevision(memoryDir, revisionId);
-  const current = snapshotDreamSections(memoryDir);
+  const target = normalizeSections(revision.before);
+  const current = snapshotDreamSections(memoryDir, { strictReads: true });
   if (dreamSectionsHash(current) === dreamSectionsHash(revision.before)) return current;
 
+  // Capture absence and raw bytes before safety-revision creation or normalization writes.
+  const before = captureDreamFileJournal(memoryDir, {
+    revisionId: revision.revisionId,
+    targetRevisionId: revision.revisionId,
+    operation: "restore",
+    reset,
+    memoryMdPath: resolvedMemoryMdPath,
+    dailyDates: target.weekDays.map(entry => entry.date),
+  });
   const safetyRevision = createDreamRevision(memoryDir, {
     runId: `restore-${crypto.randomUUID()}`,
     trigger: "manual",
@@ -259,30 +299,8 @@ export function restoreDreamRevision(memoryDir: string, revisionId: string, memo
     restoresRevisionId: revision.revisionId,
     retainRevisionIds: [revision.revisionId],
   });
-  const resolvedMemoryMdPath = memoryMdPath || path.join(memoryDir, "memory.md");
-  fs.mkdirSync(dreamDir(memoryDir), { recursive: true });
-  atomicWriteSync(pendingPath(memoryDir), `${JSON.stringify({
-    schemaVersion: 1,
-    revisionId: safetyRevision.revisionId,
-    targetRevisionId: revision.revisionId,
-    startedAt: new Date().toISOString(),
-    operation: "restore",
-    reset,
-  }, null, 2)}\n`);
-
-  try {
-    const restored = applyAllFiles(memoryDir, revision.before, resolvedMemoryMdPath);
-    fs.rmSync(pendingPath(memoryDir), { force: true });
-    return restored;
-  } catch (err) {
-    try {
-      applyAllFiles(memoryDir, current, resolvedMemoryMdPath);
-      fs.rmSync(pendingPath(memoryDir), { force: true });
-    } catch (rollbackErr: any) {
-      throw new Error(`Dream restore failed and rollback also failed: ${rollbackErr?.message || rollbackErr}`, { cause: err });
-    }
-    throw err;
-  }
+  return applyWithFileJournal(memoryDir, { ...before, revisionId: safetyRevision.revisionId }, () =>
+    applyAllFiles(memoryDir, target, resolvedMemoryMdPath, true));
 }
 
 export function recoverPendingDreamApply(memoryDir: string, memoryMdPath?: string) {
@@ -293,6 +311,13 @@ export function recoverPendingDreamApply(memoryDir: string, memoryMdPath?: strin
     if (err?.code === "ENOENT") return false;
     throw new Error(`Dream pending journal is unreadable: ${err?.message || err}`);
   }
+  const resolvedMemoryMdPath = memoryMdPath || path.join(memoryDir, "memory.md");
+  const fileJournal = pending?.schemaVersion === 2
+    ? readDreamFileJournal(pending, memoryDir, resolvedMemoryMdPath)
+    : null;
+  if (pending?.schemaVersion !== undefined && ![1, 2].includes(pending.schemaVersion)) {
+    throw new Error("Dream pending journal has an unsupported schema version");
+  }
   const reset = captureMemoryReset(memoryDir);
   const current = pending?.reset
     ? pending.reset.domain === "compiled" && isMemoryResetCurrent(memoryDir, pending.reset)
@@ -301,8 +326,12 @@ export function recoverPendingDreamApply(memoryDir: string, memoryMdPath?: strin
     archiveRetiredMemorySources(memoryDir, ["dream/pending-apply.json"]);
     return false;
   }
+  if (fileJournal) {
+    rollbackDreamFiles(memoryDir, fileJournal);
+    fs.rmSync(pendingPath(memoryDir), { force: true });
+    return true;
+  }
   const revision = readDreamRevision(memoryDir, pending?.revisionId);
-  const resolvedMemoryMdPath = memoryMdPath || path.join(memoryDir, "memory.md");
   if (pending?.operation === "dream") {
     applyDreamFiles(memoryDir, revision.before, resolvedMemoryMdPath);
   } else {

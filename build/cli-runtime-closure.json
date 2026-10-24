@@ -7126,6 +7126,18 @@
       "reason": "Reached via esbuild source module graph, imported by lib/memory/memory-ticker.ts (import-statement)."
     },
     {
+      "path": "lib/memory/dream/file-transaction.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "lib/memory/dream/revision-store.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by lib/memory/dream/revision-store.ts (import-statement)."
+    },
+    {
       "path": "lib/memory/dream/memory-units.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -85528,6 +85540,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/memory/dream/file-transaction.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/memory/dream/revision-store.ts",
           "kind": "import-statement"
         },
@@ -85652,7 +85669,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/provider-media-config.ts (import-statement); core/execution-lease-registry.ts (import-statement); core/grant-registry.ts (import-statement); +48 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by core/provider-media-config.ts (import-statement); core/execution-lease-registry.ts (import-statement); core/grant-registry.ts (import-statement); +49 more importer(s)."
     },
     {
       "path": "shared/safe-parse.ts",
@@ -86475,9 +86492,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 7137,
+    "totalFiles": 7138,
     "byInputType": {
-      "source-graph": 742,
+      "source-graph": 743,
       "runtime-asset": 11,
       "nft-runtime-trace": 6384
     }

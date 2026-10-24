@@ -344,6 +344,7 @@
     "lib/memory/compiled-memory-state.ts",
     "lib/memory/config-loader.ts",
     "lib/memory/deep-memory.ts",
+    "lib/memory/dream/file-transaction.ts",
     "lib/memory/dream/memory-units.ts",
     "lib/memory/dream/model-runner.ts",
     "lib/memory/dream/revision-store.ts",

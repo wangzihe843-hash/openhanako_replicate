@@ -498,11 +498,12 @@ export async function compileDaily(summaryManager, dailyDir, logicalDate, resolv
   return "compiled";
 }
 
-function _listDailyEntries(dailyDir) {
+function _listDailyEntries(dailyDir, strictReads = false) {
   let names;
   try {
     names = fs.readdirSync(dailyDir);
-  } catch {
+  } catch (error) {
+    if (strictReads && error?.code !== "ENOENT") throw error;
     return [];
   }
   return names
@@ -521,9 +522,9 @@ function _listDailyEntries(dailyDir) {
  * @param {{ maxDays?: number }} [opts]
  * @returns {{ date: string, filePath: string }[]}
  */
-export function listDailyEntries(dailyDir, opts: { maxDays?: number } = {}) {
+export function listDailyEntries(dailyDir, opts: { maxDays?: number; strictReads?: boolean } = {}) {
   const maxDays = opts.maxDays || DAILY_WINDOW_RETENTION_DAYS;
-  return _listDailyEntries(dailyDir).slice(-maxDays);
+  return _listDailyEntries(dailyDir, opts.strictReads).slice(-maxDays);
 }
 
 /**
@@ -534,9 +535,9 @@ export function listDailyEntries(dailyDir, opts: { maxDays?: number } = {}) {
  * @param {string} date - YYYY-MM-DD
  * @returns {string}
  */
-export function readDailyEntryBody(dailyDir, date) {
+export function readDailyEntryBody(dailyDir, date, opts: { strictReads?: boolean } = {}) {
   const filePath = path.join(dailyDir, `${date}.md`);
-  return normalizeCompiledSectionBody(safeReadFile(filePath, ""));
+  return normalizeCompiledSectionBody(opts.strictReads ? readSourceFile(filePath) || "" : safeReadFile(filePath, ""));
 }
 
 function isValidIsoDate(value) {
@@ -607,12 +608,13 @@ export function writeDailyEntryBody(dailyDir, date, body) {
  * @param {string} weekPath
  * @param {{ maxDays?: number, maxChars?: number }} [opts]
  */
-export function assembleWeekFromDaily(dailyDir, weekPath, opts: { maxDays?: number; maxChars?: number } = {}) {
+export function assembleWeekFromDaily(dailyDir, weekPath, opts: { maxDays?: number; maxChars?: number; strictReads?: boolean } = {}) {
   const maxDays = opts.maxDays || DAILY_WINDOW_RETENTION_DAYS;
   const maxChars = opts.maxChars || WEEK_ASSEMBLY_MAX_CHARS;
 
-  const entries = _listDailyEntries(dailyDir).slice(-maxDays);
-  const blocks = entries.map(({ filePath }) => safeReadFile(filePath, "").trim()).filter(Boolean);
+  const entries = _listDailyEntries(dailyDir, opts.strictReads).slice(-maxDays);
+  const blocks = entries.map(({ filePath }) =>
+    (opts.strictReads ? readSourceFile(filePath) || "" : safeReadFile(filePath, "")).trim()).filter(Boolean);
 
   let content = blocks.join("\n\n");
   if (content.length > maxChars) {
@@ -627,7 +629,9 @@ export function assembleWeekFromDaily(dailyDir, weekPath, opts: { maxDays?: numb
     log.warn(`assembleWeekFromDaily: 总长超过上限（${maxChars} 字），已从最老条目开始截断`);
   }
 
-  atomicWrite(weekPath, content ? `${content}\n` : "");
+  const markdown = content ? `${content}\n` : "";
+  atomicWrite(weekPath, markdown);
+  return markdown;
 }
 
 /**
@@ -780,12 +784,15 @@ export function readEditableFactsText(memoryDir) {
 }
 
 export function readCompiledMemorySections(memoryDir, opts: Record<string, any> = {}) {
-  ensureEditableFactsBaseline(memoryDir, opts.summaryManager || null, {});
+  if (!opts.skipBaseline) ensureEditableFactsBaseline(memoryDir, opts.summaryManager || null, {});
+  const read = (name: string) => opts.strictReads
+    ? readSourceFile(path.join(memoryDir, name)) || ""
+    : safeReadFile(path.join(memoryDir, name), "");
   return {
-    facts: normalizeCompiledSectionBody(safeReadFile(path.join(memoryDir, "facts.md"), "")),
-    today: normalizeCompiledSectionBody(safeReadFile(path.join(memoryDir, "today.md"), "")),
-    week: normalizeCompiledWeekSectionBody(safeReadFile(path.join(memoryDir, "week.md"), "")),
-    longterm: normalizeCompiledSectionBody(safeReadFile(path.join(memoryDir, "longterm.md"), "")),
+    facts: normalizeCompiledSectionBody(read("facts.md")),
+    today: normalizeCompiledSectionBody(read("today.md")),
+    week: normalizeCompiledWeekSectionBody(read("week.md")),
+    longterm: normalizeCompiledSectionBody(read("longterm.md")),
   };
 }
 
@@ -861,11 +868,11 @@ export function writeLongtermSection(memoryDir, longterm, opts: Record<string, a
  * @param {string} memoryDir
  * @returns {{ date: string, body: string }[]}
  */
-export function listWeekDayEntries(memoryDir) {
+export function listWeekDayEntries(memoryDir, opts: { strictReads?: boolean } = {}) {
   const dailyDir = path.join(memoryDir, "daily");
-  return listDailyEntries(dailyDir).map(({ date }) => ({
+  return listDailyEntries(dailyDir, opts).map(({ date }) => ({
     date,
-    body: readDailyEntryBody(dailyDir, date),
+    body: readDailyEntryBody(dailyDir, date, opts),
   }));
 }
 
@@ -1082,15 +1089,20 @@ export async function compileEditableFacts(summaryManager, outputPath, resolvedM
  * @param {string} longtermPath
  * @param {string} memoryMdPath
  */
-export function assemble(factsPath, todayPath, weekPath, longtermPath, memoryMdPath) {
-  const read = (p) => { try { return fs.readFileSync(p, "utf-8").trim(); } catch { return ""; } };
+export function assemble(factsPath, todayPath, weekPath, longtermPath, memoryMdPath, opts: { strictReads?: boolean } = {}) {
+  const read = (p) => {
+    if (opts.strictReads) return (readSourceFile(p) || "").trim();
+    try { return fs.readFileSync(p, "utf-8").trim(); } catch { return ""; }
+  };
 
   const facts    = normalizeCompiledSectionBody(read(factsPath));
   const today    = normalizeCompiledSectionBody(read(todayPath));
   const week     = normalizeCompiledWeekSectionBody(read(weekPath));
   const longterm = normalizeCompiledSectionBody(read(longtermPath));
 
-  atomicWrite(memoryMdPath, buildCompiledMemoryMarkdown({ facts, today, week, longterm }));
+  const markdown = buildCompiledMemoryMarkdown({ facts, today, week, longterm });
+  atomicWrite(memoryMdPath, markdown);
+  return markdown;
 }
 
 export function buildCompiledMemoryMarkdown({ facts = "", today = "", week = "", longterm = "" } = {}) {
